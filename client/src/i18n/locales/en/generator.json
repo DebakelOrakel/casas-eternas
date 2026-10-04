@@ -268,6 +268,9 @@
   "generator.jobs.phase.verify": "Check",
   "generator.jobs.phase.history": "History",
   "generator.jobs.phase.hydrology": "Waters",
+  "generator.jobs.phase.read": "Reading",
+  "generator.jobs.phase.store": "Storing",
+  "generator.jobs.phase.plan": "Planning tiles",
   "generator.jobs.end.estimate": "end ~ {time}",
   "generator.jobs.end.took": "took {duration}",
   "generator.artifacts.rebuild.label": "Rebuild {artifact}"

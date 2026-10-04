@@ -134,9 +134,9 @@ type specFor func(ctx context.Context, jobID string, request Request) (Spec, err
 // the server checks nobody and a task carries no token.
 type tokenFor func(jobID, worldUID string) (string, time.Time, error)
 
-// presentFor answers whether an artifact is whole in the store
+// presentFor answers, per key, whether that artifact is whole in the store
 // (Config.ArtifactPresent); nil where the coordinator cannot ask.
-type presentFor func(ctx context.Context, key ArtifactKey) bool
+type presentFor func(ctx context.Context, keys []ArtifactKey) []bool
 
 type coordinator struct {
 	mu       sync.Mutex
@@ -435,20 +435,29 @@ func (c *coordinator) storedTiles(report taskDoneReport) map[[3]int]bool {
 	if !ok || job.Request.Plan != PlanRefine {
 		return nil
 	}
-	stored := map[[3]int]bool{}
+	var tiles [][3]int
+	var keys []ArtifactKey
 	for _, p := range filterPlanned(report.Tasks, job.Request.Stage) {
 		version := report.TileVersions[strconv.Itoa(p.Level)]
 		if version == "" {
 			continue
 		}
 		stage := Request{Stage: p.Level, Scope: Scope{Kind: ScopeTile, X: p.X, Y: p.Y}}.StageName()
-		if c.present(c.ctx, ArtifactKey{WorldUID: job.Request.WorldUID, WorldID: report.Result.WorldID, PipelineVersion: version, Stage: stage}) {
-			stored[[3]int{p.Level, p.X, p.Y}] = true
+		tiles = append(tiles, [3]int{p.Level, p.X, p.Y})
+		keys = append(keys, ArtifactKey{WorldUID: job.Request.WorldUID, WorldID: report.Result.WorldID, PipelineVersion: version, Stage: stage})
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	started := time.Now()
+	whole := c.present(c.ctx, keys)
+	stored := map[[3]int]bool{}
+	for i, ok := range whole {
+		if ok && i < len(tiles) {
+			stored[tiles[i]] = true
 		}
 	}
-	if len(stored) > 0 {
-		slog.Info("jobs: planned tiles already stored", "job", job.ID, "stored", len(stored), "planned", len(report.Tasks))
-	}
+	slog.Info("jobs: planned tiles checked against the store", "job", job.ID, "stored", len(stored), "planned", len(keys), "took", time.Since(started).Round(time.Millisecond))
 	return stored
 }
 

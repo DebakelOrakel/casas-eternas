@@ -381,6 +381,31 @@ func (s *Store) Resolve(ctx context.Context, key Key, create bool) (string, []st
 	return uid, s.fileNames(uid), nil
 }
 
+// Whole answers, per key, whether that artifact is in the store with its
+// meta.json — the writer's last file, so a whole one. One index refresh for
+// the lot: a Resolve per key scans the store directory each time, which for
+// a refine plan's tiles against 11k artifacts cost 21 ms a key and held the
+// jobs coordinator for minutes (2026-10-04).
+func (s *Store) Whole(ctx context.Context, keys []Key) ([]bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refresh(); err != nil {
+		return nil, err
+	}
+	whole := make([]bool, len(keys))
+	for i, key := range keys {
+		uid, ok := s.byKey[key.String()]
+		if !ok {
+			continue
+		}
+		if e, ok := s.entries[uid]; ok && e.meta != nil {
+			whole[i] = true
+			e.lastAccess = time.Now()
+		}
+	}
+	return whole, nil
+}
+
 // WorldOf answers which world an artifact belongs to — the checks' join
 // key. From the meta when one has landed, from the reservation's key before
 // that; false only for an entry that has neither (junk from before this

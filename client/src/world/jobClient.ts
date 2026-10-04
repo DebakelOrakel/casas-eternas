@@ -144,9 +144,12 @@ const POLL_MS = 2000
 // the waters. From the epoch costs measured 2026-09-30 (budget 4 ~5 s,
 // budget 1 ~60 s an epoch): the check is ~8 % of the whole.
 const PHASE_BANDS: Record<string, [number, number]> = {
+  read: [0, 0],
   verify: [0, 0.08],
   history: [0.08, 0.97],
-  hydrology: [0.97, 1],
+  hydrology: [0.97, 0.98],
+  store: [0.98, 0.99],
+  plan: [0.99, 1],
 }
 // A tile's (pipeline/meshTileBake, scripts/jobWorker's bakeTile): reading
 // level 1, building the tile's mesh, eroding it. Set, not measured.

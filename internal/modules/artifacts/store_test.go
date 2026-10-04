@@ -347,3 +347,29 @@ func TestCapSparesFreshMetalessEntries(t *testing.T) {
 		t.Errorf("an aged meta-less entry must be the first victim: %v", err)
 	}
 }
+
+// Whole is the batch presence answer: an artifact counts once its meta.json
+// is there, a reservation or an unknown key does not.
+func TestWholeAnswersPerKey(t *testing.T) {
+	s := newTestStore(t)
+	done := testKey()
+	bake(t, s, done, "done", "x")
+	reserved := testKey()
+	reserved.Stage = "3"
+	uid, _, err := s.Resolve(context.Background(), reserved, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(context.Background(), uid, "elevation.u16", strings.NewReader("x")); err != nil {
+		t.Fatal(err)
+	}
+	unknown := testKey()
+	unknown.Stage = "4"
+	whole, err := s.Whole(context.Background(), []Key{done, reserved, unknown})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(whole) != 3 || !whole[0] || whole[1] || whole[2] {
+		t.Fatalf("Whole = %v, want [true false false]", whole)
+	}
+}

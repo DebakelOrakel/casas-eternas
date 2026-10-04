@@ -380,11 +380,15 @@ func TestCoordinatorSkipsStoredTiles(t *testing.T) {
 	reg := newRegistry(jobHistory)
 	var asked []ArtifactKey
 	var mu sync.Mutex
-	present := func(_ context.Context, key ArtifactKey) bool {
+	present := func(_ context.Context, keys []ArtifactKey) []bool {
 		mu.Lock()
-		asked = append(asked, key)
+		asked = append(asked, keys...)
 		mu.Unlock()
-		return key.Stage == "L2:0,0"
+		whole := make([]bool, len(keys))
+		for i, key := range keys {
+			whole[i] = key.Stage == "L2:0,0"
+		}
+		return whole
 	}
 	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, present)
 	if err != nil {

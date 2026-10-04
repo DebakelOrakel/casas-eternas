@@ -53,11 +53,14 @@ const POLL_MS = 2000
 // How often the projected ends are worked out again without an event.
 const REPAINT_MS = 5000
 
-// A whole level's phase names (scripts/jobWorker.ts, replayLevel).
+// A whole level's phase names (scripts/jobWorker.ts, runJob and replayLevel).
 const PHASE_KEYS: Record<string, TKey> = {
+  read: 'generator.jobs.phase.read',
   verify: 'generator.jobs.phase.verify',
   history: 'generator.jobs.phase.history',
   hydrology: 'generator.jobs.phase.hydrology',
+  store: 'generator.jobs.phase.store',
+  plan: 'generator.jobs.phase.plan',
 }
 
 // What a level row says: its state, its share done, the line under its

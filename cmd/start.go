@@ -338,9 +338,17 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 	// the workers find out themselves, as before.
 	if artifactsModule != nil {
 		store := artifactsModule.Store()
-		bcfg.ArtifactPresent = func(ctx context.Context, key jobs.ArtifactKey) bool {
-			_, files, err := store.Resolve(ctx, artifacts.Key{WorldUID: key.WorldUID, WorldID: key.WorldID, PipelineVersion: key.PipelineVersion, Stage: key.Stage}, false)
-			return err == nil && slices.Contains(files, "meta.json")
+		bcfg.ArtifactPresent = func(ctx context.Context, keys []jobs.ArtifactKey) []bool {
+			lookup := make([]artifacts.Key, len(keys))
+			for i, key := range keys {
+				lookup[i] = artifacts.Key{WorldUID: key.WorldUID, WorldID: key.WorldID, PipelineVersion: key.PipelineVersion, Stage: key.Stage}
+			}
+			whole, err := store.Whole(ctx, lookup)
+			if err != nil {
+				slog.Warn("jobs: checking planned tiles against the store", "err", err)
+				return nil
+			}
+			return whole
 		}
 	}
 	return bcfg, nil

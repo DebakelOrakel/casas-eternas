@@ -268,6 +268,9 @@
   "generator.jobs.phase.verify": "Prüfung",
   "generator.jobs.phase.history": "Geschichte",
   "generator.jobs.phase.hydrology": "Gewässer",
+  "generator.jobs.phase.read": "Lesen",
+  "generator.jobs.phase.store": "Speichern",
+  "generator.jobs.phase.plan": "Kacheln planen",
   "generator.jobs.end.estimate": "Ende ~ {time}",
   "generator.jobs.end.took": "Dauer {duration}",
   "generator.artifacts.rebuild.label": "{artifact} neu erzeugen"

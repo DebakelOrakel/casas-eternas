@@ -435,11 +435,12 @@ async function main(): Promise<void> {
 // job status, and keeping stdout clean means the result stays one parseable
 // line no matter how chatty the pipeline gets.
 function stderrProgress(): (phase: string, fraction: number) => void {
-  let lastPercent = -1
+  let last = ''
   return (phase, fraction) => {
     const percent = Math.floor(fraction * 100)
-    if (percent === lastPercent) return
-    lastPercent = percent
+    // A new phase is said even at the same percent.
+    if (`${phase}:${percent}` === last) return
+    last = `${phase}:${percent}`
     process.stderr.write(`${JSON.stringify({ phase, percent })}\n`)
   }
 }
@@ -509,6 +510,7 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   const held = worldKey && cache ? recall(cache.worlds, worldKey) : undefined
   let inputs: WorldInputs | undefined = held && job.worldZip ? held.inputs : undefined
   if (!inputs) {
+    if (job.stage === 1) onProgress('read', 0)
     const read = await readWorld(job, held?.etag ?? undefined)
     if (read === 'unchanged') inputs = held!.inputs
     else {
@@ -528,9 +530,11 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
   const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
   if (job.reuse) {
+    onProgress('read', 0)
     const stored = await readMeshLevelArtifact(store, key)
     if (stored) {
       if (cache) remember(cache.levels, `${key.worldUid}/${key.worldId}/${key.pipelineVersion}`, { artifact: stored.artifact }, CACHED_LEVELS)
+      onProgress('plan', 0)
       return {
         result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.artifact.count, durationMs: stored.bakeMs },
         tasks: planOf(inputs, stored.artifact),
@@ -540,10 +544,14 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   }
   const level = await replayLevel(job, inputs, onProgress)
   const durationMs = Date.now() - started
+  onProgress('store', 0)
   const artifact = meshLevelToArtifact(level)
   if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   if (cache) remember(cache.levels, `${key.worldUid}/${key.worldId}/${key.pipelineVersion}`, { artifact }, CACHED_LEVELS)
   if (job.checkpointDir) await rm(checkpointPath(job.checkpointDir, inputs), { recursive: true, force: true })
+  // The plan's phase stays on show until the tile levels' rows appear: it
+  // covers the coordinator's check of the stored tiles too.
+  onProgress('plan', 0)
   return {
     result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs },
     tasks: planOf(inputs, artifact),
@@ -937,11 +945,11 @@ async function serve(config: ServeConfig): Promise<void> {
     const heartbeat = setInterval(() => msg.working(), TASK_HEARTBEAT_MS)
     // A task that reaches its stores over HTTP carries a token; keep it fresh.
     const stopToken = job.authToken && taskId ? await keepJobToken(nc, job, taskId) : null
-    let lastPercent = -1
+    let last = ''
     const onProgress = (phase: string, fraction: number): void => {
       const percent = Math.floor(fraction * 100)
-      if (percent === lastPercent || !job.jobId) return
-      lastPercent = percent
+      if (`${phase}:${percent}` === last || !job.jobId) return
+      last = `${phase}:${percent}`
       nc.publish(`jobs.event.${job.jobId}`, JSON.stringify({ taskId, phase, percent }))
     }
     try {
