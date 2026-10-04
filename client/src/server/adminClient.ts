@@ -96,6 +96,33 @@ export async function rotateService(account: string): Promise<string | AdminFail
 }
 export const deleteService = (account: string) => call<void>('DELETE', `/services/${name(account)}`)
 
+// A worker connected to the relay now, as it last reported
+// (internal/modules/jobs/presence.go).
+export interface ConnectedWorker {
+  id: string
+  // The service account it proved itself with; none for the jobs module's
+  // own pool.
+  account?: string
+  host: string
+  cores: number
+  pools?: string[]
+  build?: string
+  startedAt: string
+  seenAt: string
+  task?: { jobId: string; taskId: string; stage?: string; phase?: string; percent: number }
+}
+
+// The jobs module's list, for an admin: not under /auth/admin, since the
+// workers are the jobs module's to know.
+export async function listWorkers(): Promise<ConnectedWorker[] | AdminFailure> {
+  const base = await apiBase()
+  if (!base) return { failed: null }
+  const response = await authFetch(`${base}/jobs/workers`, { cache: 'no-store' }).catch(() => null)
+  if (!response) return { failed: null }
+  if (!response.ok) return { failed: await refusalText(response) }
+  return ((await response.json()) as { workers: ConnectedWorker[] }).workers
+}
+
 // A user's picture as an object URL, fetched once per version (the route
 // wants a session, which an <img src> cannot send).
 // Let go with the session that fetched them.

@@ -11,7 +11,7 @@ summary.en: The account panels of the design move into the client. A profile whe
   self-signup. Avatars live with the identity, in the auth module's storage.
 summary.de: Die Konto-Panels aus dem Design kommen in den Client. Ein Profil, in dem
   ein Nutzer Anzeigename, Avatar und eigenes Passwort setzt; ein Admin-Panel
-  übers Netz für Nutzer, Einladungscodes und Rechenknoten, freigegeben über
+  übers Netz für Nutzer, Einladungscodes und Worker, freigegeben über
   den Claim adm im Token, der Admin-Socket bleibt für Erststart und Notfall;
   nirgends E-Mail — ein neues Konto entsteht nur aus einem Einladungscode,
   den ein Admin für eine feste Zahl von Registrierungen erzeugt, ohne

@@ -91,6 +91,18 @@ func TestWorkerGrantCoversAServingWorker(t *testing.T) {
 		if _, err := worker.Request("jobs.token.t1", nil, 2*time.Second); !errors.Is(err, nats.ErrNoResponders) {
 			t.Errorf("the worker's token request: %v, want no responders", err)
 		}
+		// Its presence reaches the module (internal/modules/jobs/presence.go).
+		seen, err := module.NATS().SubscribeSync("jobs.worker.*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = module.NATS().Flush()
+		if err := worker.Publish("jobs.worker.w1", []byte("{}")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := seen.NextMsg(2 * time.Second); err != nil {
+			t.Errorf("the worker's presence did not arrive: %v", err)
+		}
 		if _, err := js.Publish(ctx, "jobs.done.t1", []byte("{}")); err != nil {
 			t.Fatalf("the worker reports done: %v", err)
 		}

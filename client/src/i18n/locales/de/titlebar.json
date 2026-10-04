@@ -47,5 +47,5 @@
   "titlebar.profile.label": "Profil",
   "titlebar.profile.help": "Dein Anzeigename, Bild und Passwort.",
   "titlebar.admin.label": "Admin-Einstellungen",
-  "titlebar.admin.help": "Benutzer, Einladungscodes und Rechenknoten."
+  "titlebar.admin.help": "Benutzer, Einladungscodes und Worker."
 }

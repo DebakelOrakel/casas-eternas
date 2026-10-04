@@ -76,6 +76,8 @@ func WorkerGrant() relay.Grant {
 			// A fresh job token for the task in hand (coordinator.go,
 			// handleToken); the answer comes back on the worker's inbox.
 			"jobs.token.>",
+			// That it is there, and what it does (presence.go).
+			"jobs.worker.>",
 			// The JetStream API calls of a pull consumer on TASKS: the
 			// account check, creating or updating the shared consumer,
 			// reading it, pulling the next task.

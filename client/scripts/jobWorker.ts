@@ -27,7 +27,7 @@ import { readFile, mkdir, writeFile, rename, readdir, rm, stat } from 'node:fs/p
 import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
-import { availableParallelism } from 'node:os'
+import { availableParallelism, hostname } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import { BAKE_PIPELINE_DEPTH, EngineStalledError, reusableWorkers, type PipelineOptions, type ReusableWorkers, type WorkerLike } from '../src/generator/surface/erosionEnginePool'
 import { levelBudget, levelHydrology, type MeshLevel } from '../src/generator/pipeline/meshBakeStage'
@@ -890,6 +890,18 @@ const TASK_CONSUMER = 'workers'
 const TASK_ACK_WAIT_MS = 5 * 60_000
 const TASK_HEARTBEAT_MS = 30_000
 const TASK_MAX_DELIVER = 5
+// How often a worker says it is there (internal/modules/jobs/presence.go,
+// presenceEvery): who it is, and what it computes.
+const PRESENCE_EVERY_MS = 15_000
+
+// The service account a worker proves itself with, as its credential file
+// names it; empty for one of the jobs module's own pool.
+async function accountName(): Promise<string> {
+  const file = process.env.RELAY_CREDENTIALS
+  if (!file) return ''
+  const credential = (await readFile(file, 'utf8').catch(() => '')).trim()
+  return credential.slice(0, Math.max(0, credential.indexOf(':')))
+}
 
 async function serve(config: ServeConfig): Promise<void> {
   const token = await busToken(config)
@@ -913,6 +925,16 @@ async function serve(config: ServeConfig): Promise<void> {
   const cache: JobCache = { worlds: new Map(), levels: new Map(), tiles: new Map() }
   let current: { msg: JsMsg; jobId: string } | null = null
 
+  // PRESENCE: that this worker is there, and the task in hand.
+  const self = { id: randomUUID(), account: await accountName(), host: hostname(), cores: availableParallelism(), pools: config.pools, build: GENERATOR_CODE, startedAt: new Date().toISOString() }
+  let doing: { jobId: string; taskId: string; stage: string; phase: string; percent: number } | null = null
+  const announce = (leaving = false): void => {
+    if (nc.isClosed()) return
+    nc.publish(`jobs.worker.${self.id}`, JSON.stringify({ ...self, task: doing ?? undefined, leaving: leaving || undefined }))
+  }
+  announce()
+  setInterval(() => announce(), PRESENCE_EVERY_MS).unref()
+
   // A cancelled job's task in hand is ended, and the worker with it — the
   // pipeline cannot be stopped from outside; the pool starts a fresh one.
   nc.subscribe('jobs.cancel.*', {
@@ -928,6 +950,7 @@ async function serve(config: ServeConfig): Promise<void> {
   // drain that does not finish does not keep the worker alive (2026-10-02:
   // a hung worker ignored SIGTERM for as long as it hung).
   process.on('SIGTERM', () => {
+    announce(true)
     current?.msg.nak()
     setTimeout(() => process.exit(0), 5_000).unref()
     void nc.drain().finally(() => process.exit(0))
@@ -946,6 +969,8 @@ async function serve(config: ServeConfig): Promise<void> {
     }
     const taskId = job.taskId ?? ''
     current = { msg, jobId: job.jobId ?? '' }
+    doing = { jobId: job.jobId ?? '', taskId, stage: job.tile ? `L${job.stage}:${job.tile.x},${job.tile.y}` : `L${job.stage}`, phase: '', percent: 0 }
+    announce()
     const heartbeat = setInterval(() => msg.working(), TASK_HEARTBEAT_MS)
     // A task that reaches its stores over HTTP carries a token; keep it fresh.
     const stopToken = job.authToken && taskId ? await keepJobToken(nc, job, taskId) : null
@@ -954,6 +979,7 @@ async function serve(config: ServeConfig): Promise<void> {
       const percent = Math.floor(fraction * 100)
       if (`${phase}:${percent}` === last || !job.jobId) return
       last = `${phase}:${percent}`
+      if (doing) Object.assign(doing, { phase, percent })
       nc.publish(`jobs.event.${job.jobId}`, JSON.stringify({ taskId, phase, percent }))
     }
     try {
@@ -978,6 +1004,8 @@ async function serve(config: ServeConfig): Promise<void> {
       clearInterval(heartbeat)
       stopToken?.()
       current = null
+      doing = null
+      announce()
     }
   }
 }

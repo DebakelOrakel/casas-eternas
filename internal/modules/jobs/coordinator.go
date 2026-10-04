@@ -152,6 +152,8 @@ type coordinator struct {
 	consume  jetstream.ConsumeContext
 	events   *nats.Subscription
 	tokens   *nats.Subscription
+	workers  *nats.Subscription
+	presence *presence
 	ctx      context.Context
 	cancel   context.CancelFunc
 }
@@ -167,7 +169,7 @@ func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor, t
 		return nil, fmt.Errorf("jobs.storage: %w (is another process holding jobs.db?)", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &coordinator{db: db, conn: conn, registry: reg, spec: spec, token: token, present: present, tasks: map[string]*Task{}, byJob: map[string][]string{}, ctx: ctx, cancel: cancel}
+	c := &coordinator{db: db, conn: conn, registry: reg, spec: spec, token: token, present: present, tasks: map[string]*Task{}, byJob: map[string][]string{}, presence: newPresence(), ctx: ctx, cancel: cancel}
 	fail := func(err error) (*coordinator, error) {
 		c.close()
 		return nil, err
@@ -198,6 +200,11 @@ func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor, t
 	}
 	// A worker's fresh credential, asked for while it holds a task.
 	c.tokens, err = conn.NATS().Subscribe(conn.Subject("token", "*"), c.handleToken)
+	if err != nil {
+		return fail(fmt.Errorf("jobs: %w", err))
+	}
+	// Who is connected (presence.go).
+	c.workers, err = conn.NATS().Subscribe(conn.Subject("worker", "*"), c.presence.handle)
 	if err != nil {
 		return fail(fmt.Errorf("jobs: %w", err))
 	}
@@ -815,6 +822,9 @@ func (c *coordinator) close() {
 	}
 	if c.tokens != nil {
 		_ = c.tokens.Unsubscribe()
+	}
+	if c.workers != nil {
+		_ = c.workers.Unsubscribe()
 	}
 	c.cancel()
 	if c.db != nil {

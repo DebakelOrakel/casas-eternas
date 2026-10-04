@@ -4,7 +4,7 @@
   "admin.sub": "{users} users · {admins} administrators",
   "admin.nav.users": "Users",
   "admin.nav.invites": "Invite codes",
-  "admin.nav.nodes": "Compute nodes",
+  "admin.nav.nodes": "Workers",
   "admin.users.search": "Search users",
   "admin.users.col.user": "User",
   "admin.users.col.role": "Role",

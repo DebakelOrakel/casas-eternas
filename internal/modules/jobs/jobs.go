@@ -257,6 +257,7 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST /v1/jobs", m.handleEnqueue)
 	mux.HandleFunc("GET /v1/jobs", m.handleList)
 	mux.HandleFunc("GET /v1/jobs/events", m.handleEvents)
+	mux.HandleFunc("GET /v1/jobs/workers", m.handleWorkers)
 	mux.HandleFunc("GET /v1/jobs/{id}", m.handleGet)
 	mux.HandleFunc("DELETE /v1/jobs/{id}", m.handleCancel)
 	return nil
