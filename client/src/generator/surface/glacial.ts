@@ -166,25 +166,52 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
     starStart[i + 1] = starTo.length
   }
   const sortScratch = new Int32Array(order.length)
+  // Which land node a slot is (-1: none), and the surface of the round
+  // before: a node's steepest descent reads its own surface and its star's,
+  // so after the first round only a node whose surface moved, and its
+  // neighbours, can have a new receiver — mostly the ice and its rim, a
+  // small part of the land. The full scan every round was most of this
+  // function's time (profiled 2026-10-04, level 1 on 2048×1024).
+  const landIndex = new Int32Array(slots).fill(-1)
+  for (let i = 0; i < land.length; i++) landIndex[land[i]] = i
+  const surfaceBefore = new Float32Array(slots)
+  const stale = new Uint8Array(land.length)
+  const descend = (i: number): void => {
+    const v = land[i]
+    let best = -1
+    let bestDrop = 0
+    for (let k = starStart[i]; k < starStart[i + 1]; k++) {
+      const u = starTo[k]
+      const drop = (surface[v] - surface[u]) / (starLength[k] * cellM)
+      if (drop > bestDrop) { bestDrop = drop; best = u }
+    }
+    receiver[v] = best
+    slope[v] = bestDrop
+  }
   let massIn = 0
   let massMelt = 0
   let massOut = 0
   for (let round = 0; round < t.iceFlowRounds; round++) {
     for (let v = 0; v < slots; v++) surface[v] = mesh.vAlive[v] ? elevationToMeters(z[v] - SEA_LEVEL) + thickness[v] : 0
     // Steepest descent on the surface over the node's star; the sea is a
-    // sink (ice that reaches it calves).
-    for (let i = 0; i < land.length; i++) {
-      const v = land[i]
-      let best = -1
-      let bestDrop = 0
-      for (let k = starStart[i]; k < starStart[i + 1]; k++) {
-        const u = starTo[k]
-        const drop = (surface[v] - surface[u]) / (starLength[k] * cellM)
-        if (drop > bestDrop) { bestDrop = drop; best = u }
+    // sink (ice that reaches it calves). Only a sea node's surface never
+    // moves (the ice lies on land), so a moved surface is a land node's.
+    if (round === 0) {
+      for (let i = 0; i < land.length; i++) descend(i)
+    } else {
+      stale.fill(0)
+      for (let i = 0; i < land.length; i++) {
+        const v = land[i]
+        if (surface[v] === surfaceBefore[v]) continue
+        stale[i] = 1
+        for (let k = starStart[i]; k < starStart[i + 1]; k++) {
+          const j = landIndex[starTo[k]]
+          if (j >= 0) stale[j] = 1
+        }
       }
-      receiver[v] = best
-      slope[v] = bestDrop
+      for (let i = 0; i < land.length; i++) if (stale[i]) descend(i)
     }
+    surfaceBefore.set(surface)
     sortBySurfaceDescending(order, surface, sortScratch)
     flux.fill(0)
     massIn = 0

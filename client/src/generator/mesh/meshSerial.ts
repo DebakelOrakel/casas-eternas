@@ -59,26 +59,40 @@ export function hilbertVertexOrder(mesh: PeriodicTriangulation): Int32Array {
   return result
 }
 
+// Vertex `v`'s neighbours counter-clockwise as new ids into `out`, starting
+// at the smallest, so the list is a function of the numbering, not of the
+// edge pointer: what the codec writes per node, and what the compaction
+// builds from (one function, so the two cannot drift apart).
+function canonicalStar(mesh: PeriodicTriangulation, v: number, newId: Int32Array, star: Int32Array, out: Int32Array): number {
+  const n = mesh.neighbours(v, star)
+  let first = 0
+  for (let s = 1; s < n; s++) if (newId[star[s]] < newId[star[first]]) first = s
+  for (let s = 0; s < n; s++) out[s] = newId[star[(first + s) % n]]
+  return n
+}
+
+const newIds = (mesh: PeriodicTriangulation, order: Int32Array): Int32Array => {
+  const newId = new Int32Array(mesh.vertexSlots).fill(-1)
+  for (let i = 0; i < order.length; i++) newId[order[i]] = i
+  return newId
+}
+
 // Encodes the mesh with vertex i of the output being `order[i]` of the
 // input.
 export function encodeMesh(mesh: PeriodicTriangulation, order: Int32Array): SerializedMesh {
   const count = order.length
-  const newId = new Int32Array(mesh.vertexSlots).fill(-1)
-  for (let i = 0; i < count; i++) newId[order[i]] = i
+  const newId = newIds(mesh, order)
   const nodes = new Float32Array(count * 2)
   const bytes: number[] = []
   const star = new Int32Array(256)
+  const ring = new Int32Array(256)
   for (let i = 0; i < count; i++) {
     const v = order[i]
     nodes[2 * i] = mesh.vx[v]
     nodes[2 * i + 1] = mesh.vy[v]
-    const n = mesh.neighbours(v, star)
-    // Start at the smallest new id, so the list is a function of the
-    // numbering, not of the edge pointer.
-    let first = 0
-    for (let s = 1; s < n; s++) if (newId[star[s]] < newId[star[first]]) first = s
+    const n = canonicalStar(mesh, v, newId, star, ring)
     writeVarint(bytes, n)
-    for (let s = 0; s < n; s++) writeVarint(bytes, zigzag(newId[star[(first + s) % n]] - i))
+    for (let s = 0; s < n; s++) writeVarint(bytes, zigzag(ring[s] - i))
   }
   return { count, nodes, connectivity: Uint8Array.from(bytes) }
 }
@@ -109,13 +123,46 @@ export function decodeMesh(domain: Domain, serial: SerializedMesh): PeriodicTria
   return buildFromTriangles(domain, xs, ys, count, Int32Array.from(tris))
 }
 
-// The mesh in canonical form: Hilbert-numbered, rebuilt through the codec.
-// Returns the new mesh and, per new vertex, the old vertex id — the
-// permutation for every per-node field (`permute`).
+// The mesh in canonical form: Hilbert-numbered, rebuilt as the codec
+// rebuilds it. Returns the new mesh and, per new vertex, the old vertex id
+// — the permutation for every per-node field (`permute`).
+//
+// decodeMesh(encodeMesh(mesh, order)) without the bytes: the same
+// positions, the same canonical stars, the triangles emitted in the same
+// order (each at its smallest vertex), so buildFromTriangles makes the
+// same mesh. Writing and reading the varints back was over a third of the
+// compaction, itself a fourteenth of a history epoch (profiled 2026-10-04).
 export function compactMesh(mesh: PeriodicTriangulation): { mesh: PeriodicTriangulation; order: Int32Array } {
   const order = hilbertVertexOrder(mesh)
-  const serial = encodeMesh(mesh, order)
-  return { mesh: decodeMesh(mesh.domain, serial), order }
+  const count = order.length
+  const newId = newIds(mesh, order)
+  const xs = new Float64Array(count)
+  const ys = new Float64Array(count)
+  const star = new Int32Array(256)
+  const ring = new Int32Array(256)
+  let tris = new Int32Array(count * 6 + 3)
+  let length = 0
+  for (let i = 0; i < count; i++) {
+    const v = order[i]
+    // Through float32, as the codec's node file carries them.
+    xs[i] = Math.fround(mesh.vx[v])
+    ys[i] = Math.fround(mesh.vy[v])
+    const n = canonicalStar(mesh, v, newId, star, ring)
+    for (let s = 0; s < n; s++) {
+      const a = ring[s]
+      const b = ring[(s + 1) % n]
+      if (!(i < a && i < b)) continue
+      if (length + 3 > tris.length) {
+        const grown = new Int32Array(tris.length * 2)
+        grown.set(tris)
+        tris = grown
+      }
+      tris[length++] = i
+      tris[length++] = a
+      tris[length++] = b
+    }
+  }
+  return { mesh: buildFromTriangles(mesh.domain, xs, ys, count, tris.slice(0, length)), order }
 }
 
 // A per-node field reordered: out[i] = field[order[i]].

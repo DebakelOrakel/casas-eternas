@@ -94,7 +94,14 @@ export interface MeshErosionOptions {
 const PROGRESS_CHUNKS = 8
 
 // The engine index over the mesh for a terrain z (per vertex slot).
-export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS, refM = METERS_PER_CELL, extraFrozen?: Uint8Array): EngineIndex {
+//
+// `reuse`: an index built on this same mesh, unchanged since (the epoch's
+// erosion index, for the routing after it). The index is a function of the
+// mesh and of which nodes are frozen, so where z freezes the same nodes it
+// IS that index, and is returned as it is — only the frozen set is worked
+// out again. A second full build per history epoch was a twentieth of its
+// time (profiled 2026-10-04).
+export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS, refM = METERS_PER_CELL, extraFrozen?: Uint8Array, reuse?: EngineIndex): EngineIndex {
   const slots = mesh.vertexSlots
   const star = new Int32Array(256)
   // The world ocean: the largest component of z ≤ 0 over alive vertices.
@@ -218,6 +225,11 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
       frozenCount++
     }
   }
+  if (reuse && reuse.kind === 'mesh' && reuse.cellCount === slots && reuse.refM === refM && reuse.frozenCount === frozenCount) {
+    let same = true
+    for (let v = 0; v < slots && same; v++) same = (mesh.vAlive[v] && !frozen[v]) === (reuse.activeOf[v] >= 0)
+    if (same) return reuse
+  }
   // Active indices in vertex order.
   let activeCount = 0
   for (let v = 0; v < slots; v++) if (mesh.vAlive[v] && !frozen[v]) activeCount++
@@ -246,9 +258,22 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
   const diffFactor = new Float32Array(edgeCount)
   const mfdFactor = new Float32Array(edgeCount)
   const areaRel = new Float32Array(activeCount)
-  // Per active node the halfedge of each slot, to find reverse slots.
+  // Per active node the halfedge of each slot, and per halfedge its slot:
+  // the reverse slot is the twin's (a scan of the neighbour's slots for it
+  // was the hottest line of the index, profiled 2026-10-04).
   const slotEdge = new Int32Array(edgeCount)
+  const slotOfEdge = new Int32Array(mesh.twin.length).fill(-1)
+  // cot at each halfedge's apex, once: an edge's two slots both need both.
+  const cotOf = new Float64Array(mesh.twin.length).fill(NaN)
   const f = new Float64Array(6)
+  const cotAt = (e: number): number => {
+    let c = cotOf[e]
+    if (Number.isNaN(c)) {
+      c = cotAtApex(mesh, e, f)
+      cotOf[e] = c
+    }
+    return c
+  }
   for (let k = 0; k < activeCount; k++) {
     const v = active[k]
     const n = mesh.outgoing(v, outgoing)
@@ -264,12 +289,13 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
       const e = outgoing[(first + s) % n]
       const u = mesh.to(e)
       slotEdge[base + s] = e
+      slotOfEdge[e] = base + s
       nbr[base + s] = activeOf[u]
       const len = mesh.edgeLength(e)
       lenRel[base + s] = len
       // cot α + cot β over the two triangles on the edge: the apex of e's
       // triangle and of its twin's.
-      const cot = cotAtApex(mesh, e, f) + cotAtApex(mesh, mesh.twin[e], f)
+      const cot = cotAt(e) + cotAt(mesh.twin[e])
       const geom = Math.max(0, cot / 2)
       diffFactor[base + s] = geom
       mfdFactor[base + s] = geom
@@ -281,15 +307,8 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
     for (let s = base; s < end; s++) {
       const j = nbr[s]
       if (j < 0) continue
-      const twin = mesh.twin[slotEdge[s]]
-      const jBase = nbrStart[j]
-      const jEnd = nbrStart[j + 1]
-      for (let t = jBase; t < jEnd; t++) {
-        if (slotEdge[t] === twin) {
-          edgeRev[s] = t
-          break
-        }
-      }
+      const t = slotOfEdge[mesh.twin[slotEdge[s]]]
+      if (t >= nbrStart[j] && t < nbrStart[j + 1]) edgeRev[s] = t
       if (edgeRev[s] < 0) throw new Error('buildMeshEngineIndex: reverse edge not found')
     }
   }

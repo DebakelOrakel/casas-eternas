@@ -1,5 +1,6 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { DEFAULT_ENGINE_PARAMS, ErosionEngine, type ErosionEngineParams } from '../surface/erosionEngine'
+import type { EngineIndex } from '../surface/erosionEngineState'
 import type { FlowSubstrate } from '../surface/flowSubstrate'
 import { SEA_WATER_LEVEL, SURFACE_ICE, SURFACE_LAKE, SURFACE_SEA, type WaterBody } from '../surface/hydrology'
 import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
@@ -49,8 +50,10 @@ export function meshAreas(mesh: PeriodicTriangulation): Float32Array {
 // world needs (the save carries the mesh and its heights, the routing is
 // derived): the engine's index and one routing refresh, exactly the flood
 // and receivers an erosion run ends with.
-export function meshRouting(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS): MeshRouting {
-  const index = buildMeshEngineIndex(mesh, z, params)
+// `reuse`: an engine index of this same mesh (buildMeshEngineIndex), taken
+// as it is where z freezes the same nodes.
+export function meshRouting(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS, reuse?: EngineIndex): MeshRouting {
+  const index = buildMeshEngineIndex(mesh, z, params, undefined, undefined, reuse)
   const neutral = new Float32Array(index.cellCount)
   const engine = ErosionEngine.onIndex(index, z, { uplift: neutral, erodibility: neutral }, params)
   engine.refreshRouting()

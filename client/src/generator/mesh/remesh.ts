@@ -55,7 +55,11 @@ export interface RemeshStats {
 
 // A target spacing per vertex in DOMAIN units, recomputed by the caller
 // whenever the state changed (the refine calls it once per round).
-export type TargetSpacing = (mesh: PeriodicTriangulation, targets: Float64Array) => void
+// `changed`, when given: the only nodes whose target can differ from the
+// value already in `targets` are these and their neighbours (refine's last
+// round: the nodes it inserted — see refine). A rule may recompute just
+// those; one that ignores the hint recomputes all, which is never wrong.
+export type TargetSpacing = (mesh: PeriodicTriangulation, targets: Float64Array, changed?: ArrayLike<number>) => void
 
 const scratch = new Int32Array(256)
 
@@ -70,10 +74,24 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
   let round = 0
   const perRound: number[] = []
   const bary = new Float64Array(3)
+  // The nodes the last round inserted. After the first round only they and
+  // their neighbours can have a new target: an insertion re-triangulates a
+  // cavity whose every vertex ends up next to the new node (each later
+  // change to a vertex's star leaves it next to that insertion's node),
+  // and it sets fields on the new node alone (MeshState.inheritInsert,
+  // the `sample` hook). A full pass every round was a seventh of a
+  // level-1 history epoch (profiled 2026-10-04).
+  let insertedLast: number[] | null = null
   for (; round < maxRounds; round++) {
     state.ensure(mesh)
-    if (targets.length < mesh.vertexSlots) targets = new Float64Array(mesh.vx.length)
-    target(mesh, targets)
+    if (targets.length < mesh.vertexSlots) {
+      const grown = new Float64Array(mesh.vx.length)
+      grown.set(targets)
+      targets = grown
+    }
+    if (insertedLast) target(mesh, targets, insertedLast)
+    else target(mesh, targets)
+    insertedLast = []
     // Candidates: one per long edge (each undirected edge once — the
     // halfedge with the smaller id).
     const cx: number[] = []
@@ -150,6 +168,7 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
       // A new node's target until the next round: its parents' finest.
       targets[v] = Math.min(targets[ta], targets[tb], targets[tc])
       options.sample?.(v, mesh.vx[v], mesh.vy[v], ta, tb, tc)
+      insertedLast.push(v)
       insertedThisRound++
     }
     inserted += insertedThisRound

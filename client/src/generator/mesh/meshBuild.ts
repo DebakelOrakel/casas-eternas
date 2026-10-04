@@ -50,7 +50,8 @@ export const MESH_DISCHARGE = 'discharge'
 // ocean below sea level. Spacing in domain units.
 export function densityTarget(state: MeshState, budget = 1, unitsToM = METERS_PER_CELL): TargetSpacing {
   const relief = new Float64Array(2)
-  return (mesh, targets) => {
+  const star = new Int32Array(256)
+  return (mesh, targets, changed) => {
     const z = state.get(MESH_Z)
     const q = state.has(MESH_DISCHARGE) ? state.get(MESH_DISCHARGE) : null
     // The sediment column (phase 5.2): where a fill lies, h_column of the
@@ -58,12 +59,33 @@ export function densityTarget(state: MeshState, budget = 1, unitsToM = METERS_PE
     // thickness over the whole stack is the same number, the unused layers
     // being zero.
     const column = state.has(MESH_COLUMN) ? state.get(MESH_COLUMN) : null
-    for (let v = 0; v < mesh.vertexSlots; v++) {
-      if (!mesh.vAlive[v]) continue
+    const at = (v: number): void => {
       reliefAt(mesh, z, v, unitsToM, ELEVATION_METERS, relief)
       const columnM = column ? columnThickness(column, v, COLUMN_TUNING.layerCap) : 0
       const h = targetSpacingM(relief[0], q ? q[v] : 0, relief[1], columnM, z[v] * ELEVATION_METERS, budget)
       targets[v] = h / unitsToM
+    }
+    if (!changed) {
+      for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) at(v)
+      return
+    }
+    // The changed nodes and their neighbours, each once: the same value a
+    // full pass gives them, the rest keep theirs (TargetSpacing).
+    const done = new Uint8Array(mesh.vertexSlots)
+    for (let i = 0; i < changed.length; i++) {
+      const v = changed[i]
+      if (!mesh.vAlive[v]) continue
+      if (!done[v]) {
+        done[v] = 1
+        at(v)
+      }
+      const n = mesh.neighbours(v, star)
+      for (let k = 0; k < n; k++) {
+        const u = star[k]
+        if (done[u]) continue
+        done[u] = 1
+        at(u)
+      }
     }
   }
 }

@@ -752,7 +752,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // body of 53 k nodes from −2.7 km to +430 m, painted as a lake over
   // 41 k ocean cells (the "lakes in the ocean" of the picture check).
   // The lakes below and the hydrology stage read this one instead.
-  const routing = meshRouting(mesh, result.z, scaled)
+  const routing = meshRouting(mesh, result.z, scaled, result.index)
   // THE LAKES' AGES (phase 5.4, decision B of 5.2): the standing water on
   // the epoch's terrain, each body matched to the nearest of last epoch's
   // by its seed (within LAKE_MATCH_CELLS macro cells — the seed drifts with
