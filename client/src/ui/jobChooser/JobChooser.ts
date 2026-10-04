@@ -1,4 +1,5 @@
 import { t, type TKey } from '../../i18n/i18n'
+import { JOB_PHASE_KEYS } from './jobPhases'
 import { formatClock, formatDuration, formatWhen } from '../../ui/format'
 import { bakeFraction, cancelBake, jobStageName, listBakes, watchJobs, type BakeJob, type JobLevel } from '../../world/jobClient'
 import { getServerStatus } from '../../server/serverStatus'
@@ -53,15 +54,6 @@ const POLL_MS = 2000
 // How often the projected ends are worked out again without an event.
 const REPAINT_MS = 5000
 
-// A whole level's phase names (scripts/jobWorker.ts, runJob and replayLevel).
-const PHASE_KEYS: Record<string, TKey> = {
-  read: 'generator.jobs.phase.read',
-  verify: 'generator.jobs.phase.verify',
-  history: 'generator.jobs.phase.history',
-  hydrology: 'generator.jobs.phase.hydrology',
-  store: 'generator.jobs.phase.store',
-  plan: 'generator.jobs.phase.plan',
-}
 
 // What a level row says: its state, its share done, the line under its
 // bar, and when it ends (projected while it runs).
@@ -256,7 +248,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     }
     const parts: string[] = []
     if (tiles) parts.push(t('generator.jobs.level.tiles', { done: level.done, total: level.total, running: level.running }))
-    else if (level.running > 0 && level.phase && PHASE_KEYS[level.phase]) parts.push(t(PHASE_KEYS[level.phase]))
+    else if (level.running > 0 && level.phase && JOB_PHASE_KEYS[level.phase]) parts.push(t(JOB_PHASE_KEYS[level.phase]))
     if (level.failed > 0 && tiles) parts.push(t('generator.jobs.level.failed', { failed: level.failed }))
     // The end: when it ended, or — while it runs — where the rate so far
     // puts it. No projection before the first share is done.

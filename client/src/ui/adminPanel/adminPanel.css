@@ -238,6 +238,20 @@
 .adm-table--nodes {
   grid-template-columns: minmax(0, 1fr) 160px auto;
 }
+.adm-table--workers {
+  grid-template-columns: minmax(0, 1fr) 160px 60px minmax(0, 1.4fr);
+}
+
+/* A block's heading inside a section: the connected workers under the
+   accounts they prove themselves with. */
+.adm-subhead {
+  margin: 14px 0 0;
+  font-size: 11.5px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dc-muted);
+}
 .adm-table > * {
   grid-column: 1 / -1;
 }

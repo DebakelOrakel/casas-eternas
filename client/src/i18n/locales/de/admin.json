@@ -42,5 +42,12 @@
   "admin.nodes.col.name": "Dienstkonto",
   "admin.nodes.col.created": "Angelegt",
   "admin.nodes.rotate": "Neues Geheimnis",
-  "admin.nodes.empty": "Keine Dienstkonten."
+  "admin.nodes.empty": "Keine Dienstkonten.",
+  "admin.workers.title": "Verbunden",
+  "admin.workers.col.host": "Host",
+  "admin.workers.col.cores": "Kerne",
+  "admin.workers.col.task": "Aufgabe",
+  "admin.workers.pool": "eigener Pool",
+  "admin.workers.idle": "wartet",
+  "admin.workers.empty": "Kein Worker verbunden."
 }

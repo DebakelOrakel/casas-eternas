@@ -2,10 +2,11 @@ import { t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { formatWhen, initialsOf } from '../format'
 import { icon } from '../chooserIcons'
+import { JOB_PHASE_KEYS } from '../jobChooser/jobPhases'
 import { currentProfile } from '../../server/profileClient'
 import {
   avatarOf, createInvite, createReset, createService, deleteService, deleteUser, isFailure, listInvites, listServices, listUsers,
-  revokeInvite, rotateService, setBlocked, setRole, type AdminFailure, type AdminUser, type Invite, type ServiceAccount,
+  listWorkers, revokeInvite, rotateService, setBlocked, setRole, type AdminFailure, type AdminUser, type ConnectedWorker, type Invite, type ServiceAccount,
 } from '../../server/adminClient'
 import type { NotificationManager } from '../notifications/NotificationManager'
 import '../theme/design.css'
@@ -102,6 +103,8 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
               <button type="submit" class="adm-button adm-button--accent" data-t="admin.nodes.create"></button>
             </form>
             <div class="adm-table adm-table--nodes" data-slot="nodes"></div>
+            <h2 class="adm-subhead" data-t="admin.workers.title"></h2>
+            <div class="adm-table adm-table--workers" data-slot="workers"></div>
           </div>
         </section>
       </div>
@@ -113,6 +116,7 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
   const usersTable = q<HTMLElement>('[data-slot="users"]')
   const invitesTable = q<HTMLElement>('[data-slot="invites"]')
   const nodesTable = q<HTMLElement>('[data-slot="nodes"]')
+  const workersTable = q<HTMLElement>('[data-slot="workers"]')
   const search = q<HTMLInputElement>('[data-slot="search"]')
   const secret = q<HTMLElement>('[data-slot="secret"]')
   const secretValue = q<HTMLElement>('[data-slot="secret-value"]')
@@ -131,6 +135,7 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
   let users: AdminUser[] = []
   let invites: Invite[] = []
   let nodes: ServiceAccount[] = []
+  let workers: ConnectedWorker[] = []
   // The user whose deletion asks to be confirmed.
   let confirming: string | null = null
 
@@ -339,11 +344,58 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
     }
   }
 
+  function paintWorkers(): void {
+    workersTable.replaceChildren()
+    if (workers.length === 0) {
+      workersTable.appendChild(el('p', 'adm-empty', t('admin.workers.empty')))
+      return
+    }
+    const header = el('div', 'adm-row adm-row--head')
+    header.append(...(['admin.workers.col.host', 'admin.nodes.col.name', 'admin.workers.col.cores', 'admin.workers.col.task'] as TKey[]).map((key) => el('span', '', t(key))))
+    workersTable.appendChild(header)
+    for (const worker of workers) {
+      const task = worker.task
+      const phase = task?.phase && JOB_PHASE_KEYS[task.phase] ? t(JOB_PHASE_KEYS[task.phase]) : ''
+      const doing = task ? [task.stage ?? task.taskId, [phase, `${task.percent} %`].filter(Boolean).join(' ')].join(' · ') : t('admin.workers.idle')
+      const row = el('div', 'adm-row')
+      row.append(
+        el('span', 'mono', worker.host),
+        el('span', worker.account ? 'mono' : 'adm-muted', worker.account || t('admin.workers.pool')),
+        el('span', 'adm-muted', String(worker.cores)),
+        el('span', task ? '' : 'adm-muted', doing),
+      )
+      workersTable.appendChild(row)
+    }
+  }
+
+  // The connected workers, asked again every few seconds while their
+  // section shows. A refusal says nothing: a server without the jobs module
+  // has no list, and a toast every few seconds would be the worse answer.
+  const WORKERS_POLL_MS = 5000
+  let workersTimer: ReturnType<typeof setInterval> | null = null
+  async function reloadWorkers(): Promise<void> {
+    const out = await listWorkers()
+    workers = isFailure(out) ? [] : out
+    if (!root.hidden) paintWorkers()
+  }
+  function pollWorkers(): void {
+    const wanted = !root.hidden && section === 'nodes'
+    if (wanted && !workersTimer) {
+      void reloadWorkers()
+      workersTimer = setInterval(() => void reloadWorkers(), WORKERS_POLL_MS)
+    } else if (!wanted && workersTimer) {
+      clearInterval(workersTimer)
+      workersTimer = null
+    }
+  }
+
   function paint(): void {
     paintFrame()
     paintUsers()
     paintInvites()
     paintNodes()
+    paintWorkers()
+    pollWorkers()
   }
 
   async function reload(): Promise<void> {
@@ -388,6 +440,7 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
 
   function close(): void {
     root.hidden = true
+    pollWorkers()
     secret.hidden = true
     secretValue.textContent = ''
     confirming = null
@@ -414,6 +467,7 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
     isOpen: () => !root.hidden,
     dispose(): void {
       document.removeEventListener('keydown', onKeyDown)
+      if (workersTimer) clearInterval(workersTimer)
       root.remove()
     },
   }

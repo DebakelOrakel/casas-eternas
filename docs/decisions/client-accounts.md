@@ -187,8 +187,12 @@ a blocked user cannot sign in, renew or spend a reset code, and their
 access token is refused by the auth module at once and elsewhere within its
 life. The CLI agreed and built: `auth user reset|block|unblock <name>`,
 `auth code add [--uses N] [--valid DURATION]`, `auth code list`,
-`auth code revoke <id>`. Open: the workers connected to the relay in the
-compute nodes section.
+`auth code revoke <id>`. The section is called "Worker" now, and lists the
+workers connected to the relay under the service accounts: each worker
+reports itself on jobs.worker.<id> every 15 s with its task, the jobs
+module keeps the list (internal/modules/jobs/presence.go) and answers it
+to an admin at `GET /v1/jobs/workers` — the jobs module's knowledge, so
+the auth module gains no edge to the relay.
 
 2026-10-04, after a review: the network admin gate checks the stored role
 as well as the token's adm claim, so a demoted admin is out at once; the

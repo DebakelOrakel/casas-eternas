@@ -7,6 +7,7 @@ the format.
 - **changed** Server: a sign-in lasts as long as `global.auth.session-ttl` and renews its access token (`global.auth.token-ttl`, now 15 minutes) at `/v1/auth/refresh`; changing or resetting a password signs the user out everywhere. `auth`
 - **changed** Server: a password has at least 10 characters, upper- and lower-case letters among them. `auth`
 - **new** Server: an admin can block a user, in the admin window or with `auth user block|unblock`; `auth code add|list|revoke` and `auth user reset` make and manage codes from the command line. `auth`
+- **new** Server: the admin window lists the workers connected now, with what each computes. `jobs`
 
 ## 2026-10-02
 - **fixed** Server: a tile comes out the same on every job worker, also on a machine with fewer than four cores. `jobs`

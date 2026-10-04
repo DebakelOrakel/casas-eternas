@@ -42,5 +42,12 @@
   "admin.nodes.col.name": "Service account",
   "admin.nodes.col.created": "Created",
   "admin.nodes.rotate": "New secret",
-  "admin.nodes.empty": "No service accounts."
+  "admin.nodes.empty": "No service accounts.",
+  "admin.workers.title": "Connected",
+  "admin.workers.col.host": "Host",
+  "admin.workers.col.cores": "Cores",
+  "admin.workers.col.task": "Task",
+  "admin.workers.pool": "own pool",
+  "admin.workers.idle": "waiting",
+  "admin.workers.empty": "No worker connected."
 }
