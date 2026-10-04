@@ -56,50 +56,50 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
   root.className = 'world-chooser admin-window design-light'
   root.hidden = true
   root.innerHTML = `
-    <div class="wc-sheet ad-sheet">
-      <div class="ad-head">
+    <div class="wc-sheet adm-sheet">
+      <div class="adm-head">
         <div class="wc-head">
-          <span class="ad-kicker mono" data-t="admin.kicker"></span>
+          <span class="adm-kicker mono" data-t="admin.kicker"></span>
           <h1 class="wc-title" data-t="admin.title"></h1>
           <p class="wc-subtitle" data-slot="sub"></p>
         </div>
-        <button type="button" class="ad-close" data-act="close" data-t-aria="common.action.close.label"></button>
+        <button type="button" class="adm-close" data-act="close" data-t-aria="common.action.close.label"></button>
       </div>
-      <div class="ad-body">
-        <nav class="ad-nav" data-t-aria="admin.title">
-          <button type="button" data-section="users"><span data-t="admin.nav.users"></span><span class="ad-count mono" data-count="users"></span></button>
-          <button type="button" data-section="invites"><span data-t="admin.nav.invites"></span><span class="ad-count mono" data-count="invites"></span></button>
-          <button type="button" data-section="nodes"><span data-t="admin.nav.nodes"></span><span class="ad-count mono" data-count="nodes"></span></button>
+      <div class="adm-body">
+        <nav class="adm-nav" data-t-aria="admin.title">
+          <button type="button" data-section="users"><span data-t="admin.nav.users"></span><span class="adm-count mono" data-count="users"></span></button>
+          <button type="button" data-section="invites"><span data-t="admin.nav.invites"></span><span class="adm-count mono" data-count="invites"></span></button>
+          <button type="button" data-section="nodes"><span data-t="admin.nav.nodes"></span><span class="adm-count mono" data-count="nodes"></span></button>
         </nav>
-        <section class="ad-main">
-          <div class="ad-secret" data-slot="secret" hidden>
-            <span class="ad-secret__title" data-t="admin.secret.title"></span>
-            <code class="ad-secret__value mono" data-slot="secret-value"></code>
-            <button type="button" class="ad-button" data-act="copy" data-t="admin.secret.copy"></button>
-            <span class="ad-secret__hint" data-t="admin.secret.hint"></span>
+        <section class="adm-main">
+          <div class="adm-secret" data-slot="secret" hidden>
+            <span class="adm-secret__title" data-t="admin.secret.title"></span>
+            <code class="adm-secret__value mono" data-slot="secret-value"></code>
+            <button type="button" class="adm-button" data-act="copy" data-t="admin.secret.copy"></button>
+            <span class="adm-secret__hint" data-t="admin.secret.hint"></span>
           </div>
           <div data-panel="users">
-            <label class="ad-search">
-              <span class="ad-hidden" data-t="admin.users.search"></span>
+            <label class="adm-search">
+              <span class="adm-hidden" data-t="admin.users.search"></span>
               <input type="search" data-slot="search" data-t-placeholder="admin.users.search" />
             </label>
-            <div class="ad-table" data-slot="users"></div>
+            <div class="adm-table" data-slot="users"></div>
           </div>
           <div data-panel="invites">
-            <form class="ad-form" data-slot="invite-form">
+            <form class="adm-form" data-slot="invite-form">
               <label><span data-t="admin.invites.uses"></span><input type="number" name="uses" min="1" max="1000" value="5" required /></label>
               <label><span data-t="admin.invites.valid"></span><select name="valid"></select></label>
-              <button type="submit" class="ad-button ad-button--accent" data-t="admin.invites.create"></button>
+              <button type="submit" class="adm-button adm-button--accent" data-t="admin.invites.create"></button>
             </form>
-            <div class="ad-table ad-table--invites" data-slot="invites"></div>
+            <div class="adm-table adm-table--invites" data-slot="invites"></div>
           </div>
           <div data-panel="nodes">
-            <p class="ad-hint" data-t="admin.nodes.hint"></p>
-            <form class="ad-form" data-slot="node-form">
+            <p class="adm-hint" data-t="admin.nodes.hint"></p>
+            <form class="adm-form" data-slot="node-form">
               <label><span data-t="admin.nodes.name"></span><input type="text" name="name" pattern="[a-z0-9][a-z0-9-]{0,62}" required /></label>
-              <button type="submit" class="ad-button ad-button--accent" data-t="admin.nodes.create"></button>
+              <button type="submit" class="adm-button adm-button--accent" data-t="admin.nodes.create"></button>
             </form>
-            <div class="ad-table ad-table--nodes" data-slot="nodes"></div>
+            <div class="adm-table adm-table--nodes" data-slot="nodes"></div>
           </div>
         </section>
       </div>
@@ -162,7 +162,7 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
   }
 
   const head = (keys: TKey[]): HTMLElement => {
-    const row = el('div', 'ad-row ad-row--head')
+    const row = el('div', 'adm-row adm-row--head')
     for (const key of keys) row.appendChild(el('span', '', t(key)))
     row.appendChild(el('span'))
     return row
@@ -175,19 +175,19 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
     usersTable.replaceChildren(head(['admin.users.col.user', 'admin.users.col.role', 'admin.users.col.lastLogin', 'admin.users.col.invitedBy']))
     for (const u of shown) {
       const self = u.id === me
-      const row = el('div', 'ad-row')
-      const who = el('div', 'ad-user')
-      const picture = el('span', 'ad-avatar', initialsOf(u.displayName || u.name))
+      const row = el('div', 'adm-row')
+      const who = el('div', 'adm-user')
+      const picture = el('span', 'adm-avatar', initialsOf(u.displayName || u.name))
       picture.setAttribute('aria-hidden', 'true')
       void avatarOf(u).then((url) => {
         if (!url) return
         picture.textContent = ''
         picture.style.backgroundImage = `url("${url}")`
       })
-      const names = el('div', 'ad-names')
-      names.append(el('span', 'ad-name', u.displayName || u.name), el('span', 'ad-login mono', self ? `${u.name} · ${t('admin.users.you')}` : u.name))
+      const names = el('div', 'adm-names')
+      names.append(el('span', 'adm-name', u.displayName || u.name), el('span', 'adm-login mono', self ? `${u.name} · ${t('admin.users.you')}` : u.name))
       who.append(picture, names)
-      const role = el('select', 'ad-select')
+      const role = el('select', 'adm-select')
       role.setAttribute('aria-label', t('admin.users.col.role'))
       for (const value of ['user', 'admin'] as const) {
         const option = el('option', '', t(value === 'admin' ? 'profile.role.admin' : 'profile.role.user'))
@@ -208,12 +208,12 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
           void reload()
         })
       })
-      const last = el('span', 'ad-muted', u.lastLoginAt ? formatWhen(u.lastLoginAt) : t('admin.users.never'))
-      const invited = el('span', 'ad-muted mono', u.invitedBy ? u.invitedBy.slice(0, 8) : '–')
-      const actions = el('div', 'ad-actions')
+      const last = el('span', 'adm-muted', u.lastLoginAt ? formatWhen(u.lastLoginAt) : t('admin.users.never'))
+      const invited = el('span', 'adm-muted mono', u.invitedBy ? u.invitedBy.slice(0, 8) : '–')
+      const actions = el('div', 'adm-actions')
       if (confirming === u.name) {
-        actions.append(el('span', 'ad-confirm', t('admin.users.deleteConfirm', { user: u.displayName || u.name })))
-        const yes = el('button', 'ad-button ad-button--danger', t('admin.action.delete'))
+        actions.append(el('span', 'adm-confirm', t('admin.users.deleteConfirm', { user: u.displayName || u.name })))
+        const yes = el('button', 'adm-button adm-button--danger', t('admin.action.delete'))
         yes.type = 'button'
         yes.addEventListener('click', () => {
           confirming = null
@@ -222,17 +222,17 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
             void reload()
           })
         })
-        const no = el('button', 'ad-button', t('profile.cancel'))
+        const no = el('button', 'adm-button', t('profile.cancel'))
         no.type = 'button'
         no.addEventListener('click', () => { confirming = null; paintUsers() })
         actions.append(yes, no)
       } else {
-        const reset = el('button', 'ad-button', t('admin.users.reset'))
+        const reset = el('button', 'adm-button', t('admin.users.reset'))
         reset.type = 'button'
         reset.addEventListener('click', () => {
           void createReset(u.name).then((out) => (isFailure(out) ? refused(out) : showSecret(out.code)))
         })
-        const remove = el('button', 'ad-button ad-button--quiet', t('admin.action.delete'))
+        const remove = el('button', 'adm-button adm-button--quiet', t('admin.action.delete'))
         remove.type = 'button'
         remove.disabled = self
         remove.addEventListener('click', () => { confirming = u.name; paintUsers() })
@@ -246,13 +246,13 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
   function paintInvites(): void {
     invitesTable.replaceChildren()
     if (invites.length === 0) {
-      invitesTable.appendChild(el('p', 'ad-empty', t('admin.invites.empty')))
+      invitesTable.appendChild(el('p', 'adm-empty', t('admin.invites.empty')))
       return
     }
     invitesTable.appendChild(head(['admin.invites.col.code', 'admin.invites.col.left', 'admin.invites.col.expires', 'admin.invites.col.by']))
     for (const invite of invites) {
-      const row = el('div', 'ad-row')
-      const revoke = el('button', 'ad-button ad-button--quiet', t('admin.invites.revoke'))
+      const row = el('div', 'adm-row')
+      const revoke = el('button', 'adm-button adm-button--quiet', t('admin.invites.revoke'))
       revoke.type = 'button'
       revoke.addEventListener('click', () => {
         void revokeInvite(invite.id).then((out) => {
@@ -260,15 +260,15 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
           void reload()
         })
       })
-      const actions = el('div', 'ad-actions')
+      const actions = el('div', 'adm-actions')
       actions.appendChild(revoke)
       row.append(
         // The code's last group, never the record's id: the code is shown once,
         // in the box above, and an id in this column was taken for it.
         el('span', 'mono', invite.hint ? `••••-••••-••••-${invite.hint}` : '••••'),
         el('span', '', t('admin.invites.left', { left: invite.left, uses: invite.uses })),
-        el('span', 'ad-muted', formatWhen(invite.expiresAt)),
-        el('span', 'ad-muted', invite.createdBy),
+        el('span', 'adm-muted', formatWhen(invite.expiresAt)),
+        el('span', 'adm-muted', invite.createdBy),
         actions,
       )
       invitesTable.appendChild(row)
@@ -278,20 +278,20 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
   function paintNodes(): void {
     nodesTable.replaceChildren()
     if (nodes.length === 0) {
-      nodesTable.appendChild(el('p', 'ad-empty', t('admin.nodes.empty')))
+      nodesTable.appendChild(el('p', 'adm-empty', t('admin.nodes.empty')))
       return
     }
-    const header = el('div', 'ad-row ad-row--head ad-row--nodes')
+    const header = el('div', 'adm-row adm-row--head adm-row--nodes')
     header.append(el('span', '', t('admin.nodes.col.name')), el('span', '', t('admin.nodes.col.created')), el('span'))
     nodesTable.appendChild(header)
     for (const node of nodes) {
-      const row = el('div', 'ad-row ad-row--nodes')
-      const rotate = el('button', 'ad-button', t('admin.nodes.rotate'))
+      const row = el('div', 'adm-row adm-row--nodes')
+      const rotate = el('button', 'adm-button', t('admin.nodes.rotate'))
       rotate.type = 'button'
       rotate.addEventListener('click', () => {
         void rotateService(node.name).then((out) => (isFailure(out) ? refused(out) : showSecret(out)))
       })
-      const remove = el('button', 'ad-button ad-button--quiet', t('admin.action.delete'))
+      const remove = el('button', 'adm-button adm-button--quiet', t('admin.action.delete'))
       remove.type = 'button'
       remove.addEventListener('click', () => {
         void deleteService(node.name).then((out) => {
@@ -299,9 +299,9 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
           void reload()
         })
       })
-      const actions = el('div', 'ad-actions')
+      const actions = el('div', 'adm-actions')
       actions.append(rotate, remove)
-      row.append(el('span', 'mono', node.name), el('span', 'ad-muted', formatWhen(node.createdAt)), actions)
+      row.append(el('span', 'mono', node.name), el('span', 'adm-muted', formatWhen(node.createdAt)), actions)
       nodesTable.appendChild(row)
     }
   }

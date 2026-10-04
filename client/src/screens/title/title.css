@@ -29,7 +29,9 @@
   text-align: center;
 }
 
-.title-screen h1 {
+/* The title block's heading only: the windows the menu opens over this screen
+   (jobs, artifacts, admin) live inside it and have headings of their own. */
+.title-screen .title-block h1 {
   margin: 0;
   font-size: clamp(3rem, 9vw, 7rem);
   font-weight: 900;
