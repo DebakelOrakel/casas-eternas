@@ -45,5 +45,7 @@
   "titlebar.handbook.label": "Handbook",
   "titlebar.handbook.help": "Explains each step, its concepts and its controls. Opens on the current step.",
   "titlebar.profile.label": "Profile",
-  "titlebar.profile.help": "Your display name, picture and password."
+  "titlebar.profile.help": "Your display name, picture and password.",
+  "titlebar.admin.label": "Admin settings",
+  "titlebar.admin.help": "Users, invite codes and compute nodes."
 }

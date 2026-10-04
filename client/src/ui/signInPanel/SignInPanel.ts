@@ -1,6 +1,6 @@
 import { t } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
-import { signIn } from '../../server/session'
+import { redeemCode, signIn } from '../../server/session'
 import '../theme/design.css'
 import './signInPanel.css'
 
@@ -23,9 +23,11 @@ import './signInPanel.css'
 // 4K in this browser and save it to a file should never meet a password prompt.
 // See docs/decisions/server-auth.md.
 //
-// A sign-in form and nothing else. The design's "no account yet? register" line
-// is left out: this server has no registration — accounts are made with the
-// `auth user` command — and a link that leads nowhere is worse than no link.
+// A sign-in form, and behind "I have a code" a second one that redeems a code
+// (docs/decisions/client-accounts.md, fork 4): an invite code makes the
+// account, a reset code sets a new password, and either signs in. There is
+// no registration without a code, so the design's "no account yet?
+// register" line stays out.
 
 export interface SignInPanel {
   open(): void
@@ -60,12 +62,43 @@ export function createSignInPanel(host: HTMLElement, onChange: () => void): Sign
       </label>
       <p class="signin-error" role="alert" hidden></p>
       <button type="submit" class="signin-submit" data-t="common.panel.signIn.action.submit"></button>
+      <button type="button" class="signin-switch" data-action="toRedeem" data-t="common.panel.signIn.redeem"></button>
+    </form>
+    <form class="signin-dialog" data-form="redeem" role="dialog" aria-modal="true" hidden>
+      <div class="signin-head">
+        <div class="signin-head__text">
+          <h2 class="signin-title" data-t="common.panel.signIn.redeem.title"></h2>
+          <p class="signin-intro" data-t="common.panel.signIn.redeem.intro"></p>
+        </div>
+        <button type="button" class="signin-close" data-action="close" data-t-aria="common.action.close.label">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <label class="signin-field">
+        <span data-t="common.panel.signIn.code"></span>
+        <input type="text" name="code" autocomplete="one-time-code" spellcheck="false" required />
+      </label>
+      <label class="signin-field">
+        <span data-t="common.panel.signIn.user"></span>
+        <input type="text" name="user" autocomplete="username" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{1,31}" />
+      </label>
+      <label class="signin-field">
+        <span data-t="common.panel.signIn.password"></span>
+        <input type="password" name="password" autocomplete="new-password" required />
+      </label>
+      <p class="signin-error" role="alert" hidden></p>
+      <button type="submit" class="signin-submit" data-t="common.panel.signIn.redeem.submit"></button>
+      <button type="button" class="signin-switch" data-action="toSignIn" data-t="common.panel.signIn.back"></button>
     </form>
   `
   relabel(root)
   host.appendChild(root)
 
-  const form = root.querySelector<HTMLFormElement>('.signin-dialog')!
+  const form = root.querySelector<HTMLFormElement>('.signin-dialog:not([data-form])')!
+  const redeemForm = root.querySelector<HTMLFormElement>('[data-form="redeem"]')!
+  redeemForm.setAttribute('aria-label', t('common.panel.signIn.redeem.title'))
   const userInput = form.querySelector<HTMLInputElement>('input[name="user"]')!
   const passwordInput = form.querySelector<HTMLInputElement>('input[name="password"]')!
   const error = form.querySelector<HTMLElement>('.signin-error')!
@@ -74,6 +107,48 @@ export function createSignInPanel(host: HTMLElement, onChange: () => void): Sign
   function close(): void {
     root.hidden = true
   }
+
+  // --- redeeming a code -------------------------------------------------------
+
+  const codeInput = redeemForm.querySelector<HTMLInputElement>('input[name="code"]')!
+  const redeemUser = redeemForm.querySelector<HTMLInputElement>('input[name="user"]')!
+  const redeemPassword = redeemForm.querySelector<HTMLInputElement>('input[name="password"]')!
+  const redeemError = redeemForm.querySelector<HTMLElement>('.signin-error')!
+  const redeemSubmit = redeemForm.querySelector<HTMLButtonElement>('.signin-submit')!
+  function showForm(redeem: boolean): void {
+    form.hidden = redeem
+    redeemForm.hidden = !redeem
+    error.hidden = true
+    redeemError.hidden = true
+    queueMicrotask(() => (redeem ? codeInput : userInput).focus())
+  }
+  form.querySelector('[data-action="toRedeem"]')!.addEventListener('click', () => showForm(true))
+  redeemForm.querySelector('[data-action="toSignIn"]')!.addEventListener('click', () => showForm(false))
+  redeemForm.querySelector('[data-action="close"]')!.addEventListener('click', close)
+  redeemForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    redeemSubmit.disabled = true
+    redeemError.hidden = true
+    void redeemCode(codeInput.value.trim(), redeemUser.value.trim(), redeemPassword.value).then((outcome) => {
+      redeemSubmit.disabled = false
+      redeemPassword.value = ''
+      if (outcome === 'ok') {
+        codeInput.value = ''
+        onChange()
+        close()
+        return
+      }
+      // A name the server will not take is caught by the field's own pattern
+      // first; the rare one that gets past it reads as a code that failed.
+      const key = outcome === 'taken' ? 'common.panel.signIn.redeem.taken'
+        : outcome === 'limited' ? 'common.panel.signIn.redeem.limited'
+        : outcome === 'unreachable' ? 'common.panel.signIn.unreachable'
+        : 'common.panel.signIn.redeem.failed'
+      redeemError.textContent = t(key)
+      redeemError.hidden = false
+      ;(outcome === 'taken' ? redeemUser : codeInput).focus()
+    })
+  })
 
   // Escape closes, but only while this window is the one on screen — otherwise
   // a key press would silently close a hidden dialog and every dialog ever
@@ -118,6 +193,11 @@ export function createSignInPanel(host: HTMLElement, onChange: () => void): Sign
       // rebuild itself on a language switch, so a window built once would
       // otherwise keep the language it was born in.
       relabel(root)
+      redeemForm.setAttribute('aria-label', t('common.panel.signIn.redeem.title'))
+      form.hidden = false
+      redeemForm.hidden = true
+      redeemError.hidden = true
+      redeemPassword.value = ''
       error.hidden = true
       // Never left behind: a password sitting in a hidden form is a password a
       // later screenshot or a memory dump still has.

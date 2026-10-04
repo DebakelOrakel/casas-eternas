@@ -178,6 +178,15 @@ proposed before it is added.
 
 ## Status
 
+2026-10-04, later: the administration BUILT (forks 1, 3, 4 and 8) — the
+admin API on the network under /v1/auth/admin behind the adm claim, with no
+self-demotion or self-deletion there (internal/modules/auth/adminnet.go);
+invite and reset codes in auth.db and the public /v1/auth/redeem, rate-
+limited (codes.go); the admin window with users, invite codes and service
+accounts (ui/adminPanel), and redeeming in the sign-in window. Open: the
+workers connected to the relay in the compute nodes section, blocking (fork
+7), and the CLI for codes.
+
 decided 2026-10-04 in conversation. The profile BUILT the same day (forks 5
 and 6): display name, last sign-in, the own password and the avatar, as
 routes under /v1/auth/me (internal/modules/auth/profile.go) and as the

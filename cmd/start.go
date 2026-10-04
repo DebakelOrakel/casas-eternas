@@ -252,6 +252,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		server.CapabilitiesPath, // "is this server answering", asked while logged out
 		auth.Path,               // the login endpoint itself
 		auth.TokenPath,          // a service account trading its secret for a bus token
+		auth.RedeemPath,         // spending an invite or reset code, which signs in
 	}), nil
 }
 

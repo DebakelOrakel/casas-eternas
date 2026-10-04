@@ -50,5 +50,14 @@
   "common.confirm.discard.title": "Unsaved changes",
   "common.confirm.discard.new": "This world is saved nowhere yet. If you leave it, it is gone.",
   "common.confirm.discard.unsaved": "This world changed since the last save. If you leave it, the changes are gone.",
-  "common.confirm.discard.action.discard": "Discard"
+  "common.confirm.discard.action.discard": "Discard",
+  "common.panel.signIn.redeem": "I have a code",
+  "common.panel.signIn.redeem.title": "Redeem a code",
+  "common.panel.signIn.redeem.intro": "An invite code makes your account; a reset code sets a new password.",
+  "common.panel.signIn.code": "Code",
+  "common.panel.signIn.redeem.submit": "Redeem",
+  "common.panel.signIn.redeem.failed": "The code is not valid.",
+  "common.panel.signIn.redeem.taken": "The login name is taken.",
+  "common.panel.signIn.redeem.limited": "Too many attempts; try again later.",
+  "common.panel.signIn.back": "Back to sign-in"
 }

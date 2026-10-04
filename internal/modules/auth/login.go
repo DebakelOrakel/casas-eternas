@@ -50,6 +50,8 @@ type Config struct {
 // Module serves the login endpoint.
 type Module struct {
 	cfg Config
+	// Failed code redemptions per client address (codes.go).
+	redeem limiter
 }
 
 // New checks the module can actually do its job before the server starts.
@@ -77,7 +79,9 @@ func (m *Module) Name() string { return "auth" }
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST "+Path, m.serveLogin)
 	mux.HandleFunc("POST "+TokenPath, m.serveServiceToken)
+	mux.HandleFunc("POST "+RedeemPath, m.serveRedeem)
 	m.MountProfile(mux)
+	m.mountNetworkAdmin(mux)
 	return nil
 }
 
@@ -122,23 +126,29 @@ func (m *Module) serveLogin(w http.ResponseWriter, r *http.Request) {
 		unauthorized(w)
 		return
 	}
+	m.signIn(w, entry)
+}
+
+// signIn issues the session a verified user gets — after a login, or after
+// redeeming a code (codes.go) — and answers it.
+func (m *Module) signIn(w http.ResponseWriter, entry user.User) {
 	issued, expires, err := m.cfg.Tokens.IssueSession(entry.ID, entry.Admin(), m.cfg.TTL)
 	if err != nil {
-		slog.Error("cannot issue a token", "error", err, "user", name)
+		slog.Error("cannot issue a token", "error", err, "user", entry.Name)
 		http.Error(w, "cannot issue a token", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("logged in", "user", name, "id", entry.ID, "admin", entry.Admin(), "expires", expires)
+	slog.Info("logged in", "user", entry.Name, "id", entry.ID, "admin", entry.Admin(), "expires", expires)
 	// For the admin table; a login that cannot be noted is still a login.
 	if err := m.cfg.Registry.RecordLogin(entry.ID); err != nil {
-		slog.Warn("cannot note a login", "user", name, "error", err)
+		slog.Warn("cannot note a login", "user", entry.Name, "error", err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	// A credential must never sit in a shared cache, and "no-store" is the only
 	// directive that says so without exception.
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(response{Token: issued, ExpiresAt: expires, User: name})
+	_ = json.NewEncoder(w).Encode(response{Token: issued, ExpiresAt: expires, User: entry.Name})
 }
 
 // unauthorized refuses without saying which half was wrong, and — deliberately —

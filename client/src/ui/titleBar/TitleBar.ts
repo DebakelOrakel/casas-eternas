@@ -4,6 +4,7 @@ import { hasSession, onSessionChange, signedInUser, signOut } from '../../server
 import { getServerStatus } from '../../server/serverStatus'
 import { currentAvatarUrl, currentProfile, onProfileChange } from '../../server/profileClient'
 import { createProfilePanel, initialsOf, USER_ICON, type ProfilePanel } from '../profilePanel/ProfilePanel'
+import { createAdminPanel, type AdminPanel } from '../adminPanel/AdminPanel'
 import type { NotificationManager } from '../notifications/NotificationManager'
 import '../theme/design.css'
 import './titleBar.css'
@@ -115,6 +116,8 @@ const MENU_ICON = 'M4 6h16M4 12h16M4 18h16'
 const LANGUAGE_ICON = 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9M12 3c-2.5 2.5-3.5 5.5-3.5 9s1 6.5 3.5 9'
 const SIGN_IN_ICON = 'M14 4h5v16h-5M3 12h11M10 8l4 4-4 4'
 const SIGN_OUT_ICON = 'M10 4H5v16h5M9 12h12M17 8l4 4-4 4'
+// A shield: the administration.
+const ADMIN_ICON = 'M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z'
 const HOME_ICON = 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3'
 
 // Up to two letters from the user name, for the account chip. Falls back to
@@ -321,6 +324,8 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
       // The profile only where the server keeps one: a session means a
       // server in mode password, which always does.
       accountSlot.appendChild(menuRow(USER_ICON, t('titlebar.profile.label'), 'titlebar.profile', () => profile().open()))
+      // The administration, for an admin (the profile says so once read).
+      if (currentProfile()?.admin) accountSlot.appendChild(menuRow(ADMIN_ICON, t('titlebar.admin.label'), 'titlebar.admin', () => administration().open()))
       accountSlot.appendChild(menuRow(SIGN_OUT_ICON, t('titlebar.signOut.label'), null, () => signOut()))
     } else if (canSignIn === true) {
       accountSlot.appendChild(menuRow(SIGN_IN_ICON, t('titlebar.signIn.label'), 'titlebar.signIn', () => options.onSignIn()))
@@ -389,7 +394,10 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   // The profile window, made the first time it is asked for, on the screen
   // the bar sits on.
   let profileWindow: ProfilePanel | null = null
-  const profile = (): ProfilePanel => (profileWindow ??= createProfilePanel(host, options.notifications))
+  const profile = (): ProfilePanel => (profileWindow ??= createProfilePanel(host, options.notifications, () => administration().open()))
+  // The admin window, the same way.
+  let adminWindow: AdminPanel | null = null
+  const administration = (): AdminPanel => (adminWindow ??= createAdminPanel(host, options.notifications))
 
   // --- leaving the screen ---------------------------------------------------
 
@@ -462,6 +470,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
       stopWatchingSession()
       stopWatchingProfile()
       profileWindow?.dispose()
+      adminWindow?.dispose()
       bar.remove()
       host.classList.remove('has-title-bar')
     },

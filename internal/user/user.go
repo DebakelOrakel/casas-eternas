@@ -63,6 +63,9 @@ type User struct {
 	// module keeps beside auth.db (fork 6). Empty: no picture.
 	Avatar     string `json:"avatar,omitempty"`
 	AvatarType string `json:"avatarType,omitempty"`
+	// InvitedBy is the invite code this user registered with (its id), so an
+	// admin sees who came with which code. Empty: made by an admin.
+	InvitedBy string `json:"invitedBy,omitempty"`
 }
 
 // The role vocabulary. RoleUser is the accepted SPELLING of the default —
@@ -128,7 +131,7 @@ func NewRegistry(dir string) (*Registry, error) {
 	}
 	r := &Registry{db: db, now: time.Now}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, name := range [][]byte{bucketUsers, bucketCredentials, bucketServices, bucketServiceSecrets} {
+		for _, name := range [][]byte{bucketUsers, bucketCredentials, bucketServices, bucketServiceSecrets, bucketInvites, bucketResets} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}

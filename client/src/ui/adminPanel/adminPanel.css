@@ -1,0 +1,320 @@
+/* The admin window — the design canvas's "Admin-Einstellungen" (Main.dc.html),
+   light column, in the world list's frame (.world-chooser, .wc-sheet from
+   worldChooser.css), with the artifact window's table shape
+   (artifactChooser.css): a side navigation and one section at a time. */
+
+.ad-sheet {
+  gap: 20px;
+  max-width: 1180px;
+}
+
+.ad-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ad-kicker {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dc-accent-text, var(--dc-accent));
+}
+
+.ad-close {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text2);
+}
+.ad-close:hover {
+  background: var(--dc-hover);
+}
+.ad-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ad-body {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.ad-nav {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ad-nav button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text2);
+  font-size: 13.5px;
+  text-align: left;
+}
+.ad-nav button > span:first-child {
+  flex-grow: 1;
+}
+.ad-nav button:hover {
+  background: var(--dc-hover);
+}
+.ad-nav button[aria-current='page'] {
+  background: var(--dc-hover);
+  color: var(--dc-strong);
+  font-weight: 600;
+}
+.ad-count {
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+
+.ad-main {
+  flex-grow: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ad-main > [data-panel] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ad-main > [data-panel][hidden] {
+  display: none;
+}
+
+.ad-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.ad-search input,
+.ad-form input,
+.ad-form select,
+.ad-select {
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--dc-input-line);
+  border-radius: 6px;
+  background: var(--dc-bg);
+  color: var(--dc-text);
+  font: inherit;
+  font-size: 13px;
+}
+.ad-search input {
+  width: min(360px, 100%);
+}
+
+.ad-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+.ad-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dc-text2);
+}
+.ad-form input[type='number'] {
+  width: 110px;
+}
+
+.ad-hint,
+.ad-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dc-muted);
+}
+
+.ad-button {
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.ad-button:hover:not(:disabled) {
+  background: var(--dc-hover);
+}
+.ad-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ad-button--quiet {
+  border-color: transparent;
+  color: var(--dc-muted);
+}
+.ad-button--accent {
+  height: 36px;
+  border-color: var(--dc-accent);
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+  font-weight: 600;
+}
+.ad-button--accent:hover:not(:disabled) {
+  background: var(--dc-accent);
+  filter: brightness(0.95);
+}
+.ad-button--danger {
+  border-color: var(--dc-red-text);
+  background: var(--dc-red-text);
+  color: #fff;
+}
+.ad-button--danger:hover:not(:disabled) {
+  background: var(--dc-red-text);
+  filter: brightness(0.95);
+}
+
+/* The one-time code or credential, above its list until the section changes. */
+.ad-secret {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--dc-accent);
+  border-radius: 6px;
+  background: var(--dc-hover);
+}
+.ad-secret[hidden] {
+  display: none;
+}
+.ad-secret__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+.ad-secret__value {
+  font-size: 14px;
+  word-break: break-all;
+  color: var(--dc-text);
+}
+.ad-secret__hint {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--dc-muted);
+}
+
+/* The tables: the artifact window's subgrid rows. */
+.ad-table {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 140px 130px 110px auto;
+  column-gap: 14px;
+  border-top: 1px solid var(--dc-line);
+}
+.ad-table--invites {
+  grid-template-columns: 110px 100px minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+.ad-table--nodes {
+  grid-template-columns: minmax(0, 1fr) 160px auto;
+}
+.ad-table > * {
+  grid-column: 1 / -1;
+}
+.ad-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: 52px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--dc-line);
+  font-size: 13px;
+}
+.ad-row--head {
+  min-height: 34px;
+  font-size: 11px;
+  color: var(--dc-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ad-table .ad-empty {
+  padding: 14px 4px;
+}
+
+.ad-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.ad-avatar {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--dc-teal) center / cover no-repeat;
+  color: var(--dc-on-teal);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ad-names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ad-name {
+  font-weight: 600;
+  color: var(--dc-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ad-login {
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+.ad-muted {
+  color: var(--dc-muted);
+}
+.ad-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.ad-confirm {
+  font-size: 12.5px;
+  color: var(--dc-red-text);
+}
+
+/* At phone width the navigation goes over the section. */
+@media (max-width: 760px) {
+  .ad-body {
+    flex-direction: column;
+  }
+  .ad-nav {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}

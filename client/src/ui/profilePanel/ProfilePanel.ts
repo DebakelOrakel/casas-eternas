@@ -43,7 +43,8 @@ function strengthOf(password: string): 0 | 1 | 2 | 3 {
 }
 const STRENGTH_KEY = ['profile.password.strength.empty', 'profile.password.strength.weak', 'profile.password.strength.ok', 'profile.password.strength.strong'] as const
 
-export function createProfilePanel(host: HTMLElement, notifications: NotificationManager | undefined): ProfilePanel {
+// `onOpenAdmin`: where the window's admin button leads, for an admin.
+export function createProfilePanel(host: HTMLElement, notifications: NotificationManager | undefined, onOpenAdmin?: () => void): ProfilePanel {
   const root = document.createElement('div')
   root.className = 'signin-backdrop design-light'
   root.hidden = true
@@ -94,6 +95,7 @@ export function createProfilePanel(host: HTMLElement, notifications: Notificatio
       </fieldset>
       <div class="profile-foot">
         <button type="button" class="profile-button profile-button--quiet" data-action="signOut" data-t="titlebar.signOut.label"></button>
+        <button type="button" class="profile-button profile-button--quiet" data-action="admin" hidden><span data-t="titlebar.admin.label"></span> →</button>
         <span class="profile-foot__gap"></span>
         <button type="button" class="profile-button profile-button--quiet" data-action="close" data-t="profile.cancel"></button>
         <button type="submit" class="signin-submit profile-save" data-t="profile.save"></button>
@@ -113,6 +115,11 @@ export function createProfilePanel(host: HTMLElement, notifications: Notificatio
   const strength = form.querySelector<HTMLElement>('.profile-strength')!
   const strengthLabel = form.querySelector<HTMLElement>('[data-slot="strength"]')!
   const save = form.querySelector<HTMLButtonElement>('.profile-save')!
+  const adminButton = form.querySelector<HTMLButtonElement>('[data-action="admin"]')!
+  adminButton.addEventListener('click', () => {
+    close()
+    onOpenAdmin?.()
+  })
 
   // The picture as chosen in this window: a new one, its removal, or nothing
   // yet — applied with Save, like the fields.
@@ -144,6 +151,7 @@ export function createProfilePanel(host: HTMLElement, notifications: Notificatio
     sub.textContent = t('profile.sub', { role: t(profile.admin ? 'profile.role.admin' : 'profile.role.user'), date })
     displayName.value = profile.displayName
     loginName.value = profile.name
+    adminButton.hidden = !profile.admin || !onOpenAdmin
     paintPicture()
     paintStrength()
   }

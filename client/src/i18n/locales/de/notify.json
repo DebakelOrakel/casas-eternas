@@ -25,5 +25,7 @@
   "notify.profile.saved": "Profil gespeichert.",
   "notify.profile.passwordWrong": "Das aktuelle Passwort stimmt nicht.",
   "notify.profile.failed": "Das Profil konnte nicht gespeichert werden: {reason}",
-  "notify.profile.avatarUnreadable": "Das Bild konnte nicht gelesen werden."
+  "notify.profile.avatarUnreadable": "Das Bild konnte nicht gelesen werden.",
+  "notify.admin.failed": "Die Änderung wurde abgelehnt: {reason}",
+  "notify.admin.roleChanged": "{user} ist jetzt {role}; das gilt ab der nächsten Anmeldung."
 }

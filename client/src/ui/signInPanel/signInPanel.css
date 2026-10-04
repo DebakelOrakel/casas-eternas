@@ -146,3 +146,26 @@
 .signin-error[hidden] {
   display: none;
 }
+
+/* The way between the two forms: sign in, and redeem a code. Quiet, under
+   the action — the code is the exception, the password the rule. */
+.signin-switch {
+  align-self: center;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--dc-text2);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.signin-switch:hover {
+  color: var(--dc-accent);
+}
+
+.signin-dialog[hidden] {
+  display: none;
+}

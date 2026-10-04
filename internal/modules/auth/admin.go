@@ -1,9 +1,9 @@
-// The user administration — served ONLY on the admin socket
-// (server.AdminModule): possession of the socket is the authorization, which
-// is why no handler here looks at a token. When the admin panels arrive
-// (docs/design/frontend-surfaces.md) these same handlers appear on the
-// network listener token-gated behind the adm claim — they gain a gate, they
-// do not move.
+// The user administration — served on the admin socket (server.AdminModule),
+// where possession of the socket is the authorization, which is why no
+// handler here looks at a token; and since 2026-10-04 also on the network
+// listener under /v1/auth/admin, behind the adm claim (adminnet.go,
+// docs/decisions/client-accounts.md, fork 1). They gained a gate; they did
+// not move.
 
 package auth
 
@@ -35,6 +35,10 @@ func (m *Module) MountAdmin(mux *http.ServeMux) error {
 	mux.HandleFunc("DELETE "+UsersPath+"/{name}", m.serveDeleteUser)
 	mux.HandleFunc("PUT "+UsersPath+"/{name}/password", m.serveSetPassword)
 	mux.HandleFunc("PUT "+UsersPath+"/{name}/role", m.serveSetRole)
+	mux.HandleFunc("POST "+UsersPath+"/{name}/reset", m.serveCreateReset)
+	mux.HandleFunc("GET "+InvitesPath, m.serveListInvites)
+	mux.HandleFunc("POST "+InvitesPath, m.serveCreateInvite)
+	mux.HandleFunc("DELETE "+InvitesPath+"/{id}", m.serveRevokeInvite)
 	m.MountServiceAdmin(mux)
 	return nil
 }
@@ -70,7 +74,7 @@ func (m *Module) serveCreateUser(w http.ResponseWriter, r *http.Request) {
 		adminError(w, "creating a user", err)
 		return
 	}
-	slog.Info("user created over the admin socket", "user", entry.Name, "id", entry.ID)
+	slog.Info("user created through the admin API", "user", entry.Name, "id", entry.ID)
 	httpjson.Write(w, http.StatusCreated, entry)
 }
 
@@ -86,7 +90,7 @@ func (m *Module) serveDeleteUser(w http.ResponseWriter, r *http.Request) {
 		adminError(w, "deleting a user", err)
 		return
 	}
-	slog.Info("user deleted over the admin socket", "user", name)
+	slog.Info("user deleted through the admin API", "user", name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -100,7 +104,7 @@ func (m *Module) serveSetPassword(w http.ResponseWriter, r *http.Request) {
 		adminError(w, "setting a password", err)
 		return
 	}
-	slog.Info("password set over the admin socket", "user", name)
+	slog.Info("password set through the admin API", "user", name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -116,7 +120,7 @@ func (m *Module) serveSetRole(w http.ResponseWriter, r *http.Request) {
 		adminError(w, "setting a role", err)
 		return
 	}
-	slog.Info("role set over the admin socket", "user", name, "role", body.Role)
+	slog.Info("role set through the admin API", "user", name, "role", body.Role)
 	w.WriteHeader(http.StatusNoContent)
 }
 

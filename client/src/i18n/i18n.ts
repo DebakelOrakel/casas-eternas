@@ -15,6 +15,7 @@ import enReadout from './locales/en/readout.json'
 import enKoppen from './locales/en/koppen.json'
 import enHandbook from './locales/en/handbook.json'
 import enProfile from './locales/en/profile.json'
+import enAdmin from './locales/en/admin.json'
 import deCommon from './locales/de/common.json'
 import deTitleBar from './locales/de/titlebar.json'
 import deNotify from './locales/de/notify.json'
@@ -28,11 +29,12 @@ import deReadout from './locales/de/readout.json'
 import deKoppen from './locales/de/koppen.json'
 import deHandbook from './locales/de/handbook.json'
 import deProfile from './locales/de/profile.json'
+import deAdmin from './locales/de/admin.json'
 
 // The area catalogs merged into one flat lookup. English is the type
 // source: TKey is every key that exists, so `t('typo.key')` fails to compile.
 //
-// Thirteen catalogs, cut three ways.
+// Fourteen catalogs, cut three ways.
 //
 // By SCREEN REGION. `titlebar` is the same strip on every screen and owns its
 // own vocabulary. `generator` is everything that screen says — its load
@@ -42,7 +44,8 @@ import deProfile from './locales/de/profile.json'
 // same for the incubator screen (2026-09-30). `handbook` is the handbook
 // panel's own chrome (2026-10-03); its pages are not catalog strings but
 // docs/handbook/. `profile` is the account's own window, the same on every
-// screen (2026-10-04, docs/decisions/client-accounts.md). There was a `game`
+// screen (2026-10-04, docs/decisions/client-accounts.md); `admin` the
+// administration window beside it (the same day). There was a `game`
 // catalog too, holding one unreferenced action; it was removed the same day,
 // because a namespace reserved for a screen nobody has written yet is a guess
 // about what that screen will say.
@@ -67,7 +70,7 @@ import deProfile from './locales/de/profile.json'
 // biomes, resources, species, readout lines, event lines. It held six unrelated
 // things because each was about "the world", which is true of everything here.
 // A drawer is not a namespace; it was taken apart 2026-09-20.
-const en = { ...enCommon, ...enTitleBar, ...enNotify, ...enGenerator, ...enIncubator, ...enOverlay, ...enBiome, ...enResource, ...enSpecies, ...enReadout, ...enKoppen, ...enHandbook, ...enProfile }
+const en = { ...enCommon, ...enTitleBar, ...enNotify, ...enGenerator, ...enIncubator, ...enOverlay, ...enBiome, ...enResource, ...enSpecies, ...enReadout, ...enKoppen, ...enHandbook, ...enProfile, ...enAdmin }
 
 export type Locale = 'en' | 'de'
 export type TKey = keyof typeof en
@@ -75,7 +78,7 @@ export type TKey = keyof typeof en
 // German is complete: typing it `Record<TKey, string>` makes a missing German
 // key a compile error (tsc is the completeness gate). `t()` still falls back to
 // English at runtime for safety.
-const de: Record<TKey, string> = { ...deCommon, ...deTitleBar, ...deNotify, ...deGenerator, ...deIncubator, ...deOverlay, ...deBiome, ...deResource, ...deSpecies, ...deReadout, ...deKoppen, ...deHandbook, ...deProfile }
+const de: Record<TKey, string> = { ...deCommon, ...deTitleBar, ...deNotify, ...deGenerator, ...deIncubator, ...deOverlay, ...deBiome, ...deResource, ...deSpecies, ...deReadout, ...deKoppen, ...deHandbook, ...deProfile, ...deAdmin }
 
 const catalogs: Partial<Record<Locale, Record<string, string>>> = { en, de }
 let locale: Locale = 'en'

@@ -148,6 +148,41 @@ export async function signIn(user: string, password: string): Promise<SignInOutc
   }
 }
 
+export type RedeemOutcome = 'ok' | 'invalid' | 'taken' | 'badName' | 'limited' | 'unreachable'
+
+/**
+ * Spend an invite or reset code (docs/decisions/client-accounts.md, fork 4):
+ * an invite makes the account `user`, a reset sets the password of the
+ * account it was made for; either way the answer is a session, kept like a
+ * sign-in's.
+ */
+export async function redeemCode(code: string, user: string, password: string): Promise<RedeemOutcome> {
+  const status = await getServerStatus()
+  if (!status.loginPath || !status.apiBase) return 'unreachable'
+  try {
+    const response = await fetch(`${status.apiBase}/auth/redeem`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, name: user, password }),
+    })
+    if (response.status === 403) return 'invalid'
+    if (response.status === 409) return 'taken'
+    if (response.status === 400) return 'badName'
+    if (response.status === 429) return 'limited'
+    if (!response.ok) return 'unreachable'
+    const body = (await response.json()) as { token?: string; user?: string }
+    if (!body.token) return 'unreachable'
+    current = { token: body.token, user: body.user ?? user }
+    write(current)
+    announce()
+    void refreshServerStatus()
+    return 'ok'
+  } catch {
+    return 'unreachable'
+  }
+}
+
 /**
  * Forget the session.
  *

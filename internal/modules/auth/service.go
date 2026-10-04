@@ -77,7 +77,7 @@ func (m *Module) serveCreateService(w http.ResponseWriter, r *http.Request) {
 		adminError(w, "creating a service account", err)
 		return
 	}
-	slog.Info("service account created over the admin socket", "service", created.Name, "id", created.ID)
+	slog.Info("service account created through the admin API", "service", created.Name, "id", created.ID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpjson.Write(w, http.StatusCreated, CreatedService{Service: created, Secret: secret})
 }
@@ -88,7 +88,7 @@ func (m *Module) serveDeleteService(w http.ResponseWriter, r *http.Request) {
 		adminError(w, "deleting a service account", err)
 		return
 	}
-	slog.Info("service account deleted over the admin socket", "service", name)
+	slog.Info("service account deleted through the admin API", "service", name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -99,7 +99,7 @@ func (m *Module) serveRotateService(w http.ResponseWriter, r *http.Request) {
 		adminError(w, "rotating a service account's secret", err)
 		return
 	}
-	slog.Info("service account secret rotated over the admin socket", "service", name)
+	slog.Info("service account secret rotated through the admin API", "service", name)
 	w.Header().Set("Cache-Control", "no-store")
 	httpjson.Write(w, http.StatusOK, CreatedService{Service: user.Service{Name: name}, Secret: secret})
 }

@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-04
+- **new** Every screen: an admin opens the admin settings from the menu — users and their roles, invite codes for a number of registrations, reset codes and service accounts — and the sign-in window redeems a code to make an account or set a new password. `titlebar.admin`
 - **new** Every screen: signed in, the menu opens your profile — a picture, a display name shown in the title bar, and a new password. `titlebar.profile`
 
 ## 2026-10-03
