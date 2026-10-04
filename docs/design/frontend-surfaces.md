@@ -21,7 +21,7 @@ summary.de: Eine Karte aller Oberflächen für Nutzer, die das Projekt bekommen 
 area: platform
 stage: decided
 createdAt: 2026-08-12
-updatedAt: 2026-08-13
+updatedAt: 2026-10-04
 related: [DES-0013]
 ---
 
@@ -88,7 +88,9 @@ creating users, exists server-side since 2026-08-13 — the auth module's
 admin handlers, today served only on the unix admin socket
 (docs/decisions/server-user-admin.md). An admin panel would put the same
 handlers on the network listener behind the `adm` claim; they gain a gate,
-they do not move.
+they do not move. Decided so on 2026-10-04 in
+[client-accounts.md](../decisions/client-accounts.md) (DEC-0034), with a
+profile panel beside it; not built.
 
 **Login** — server-side, YES: that is the planned auth target
 (docs/design/access-control.md). Frontend-side, NO standalone login page: a
@@ -117,6 +119,8 @@ being its own per-instance surface rather than another client screen — but
 that, too, waits for the game-side write-up.
 
 ## Status
+
+2026-10-04: the admin and profile panels are decided in DEC-0034; not built.
 
 direction agreed in discussion 2026-08-12 — nothing here is built or
 scheduled; the notes fork and the game screen deliberately wait for the

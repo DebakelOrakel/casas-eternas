@@ -21,7 +21,7 @@ summary.de: Wer ein Nutzer IST, im Unterschied dazu, wie er sich anmeldet. Ein R
 area: platform
 stage: built
 createdAt: 2026-08-12
-updatedAt: 2026-08-13
+updatedAt: 2026-10-04
 related: [DES-0011, DEC-0019, DEC-0023]
 ---
 
@@ -90,6 +90,10 @@ checks that will consult this all answer yes there anyway.
   to be decided when the auth target is cut.
 
 ## Status
+
+2026-10-04: DEC-0034 adds a display name, the last sign-in and the invite
+code a user came with to the user record; the login name stays the
+credential's key. Not built.
 
 decided and BUILT 2026-08-12 — registry, session hook, admin claim,
 identity.Admin, deploy wiring. Steps 2–5 of docs/design/access-control.md

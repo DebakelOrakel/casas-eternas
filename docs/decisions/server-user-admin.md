@@ -21,7 +21,7 @@ summary.de: Wie lokale Nutzer verwaltet werden, sobald es eine Admin-Oberfläche
 area: platform
 stage: built
 createdAt: 2026-08-13
-updatedAt: 2026-08-13
+updatedAt: 2026-10-04
 related: [DEC-0022, DES-0013]
 ---
 
@@ -245,7 +245,10 @@ account gets its password back with `auth user passwd <name>`, which is
 exactly why SetPassword and Create are separate operations. A stranger
 arriving with an htpasswd someday re-types passwords the same way.
 
-**Out of scope, stated:** the panels-based admin UI (frontend-surfaces),
+**Out of scope, stated:** the panels-based admin UI (frontend-surfaces —
+decided since 2026-10-04 in [client-accounts.md](./client-accounts.md),
+DEC-0034: the same handlers on the network behind the `adm` claim, this
+socket kept for bootstrap and emergencies),
 revocation (`notBefore` — server-auth.md step 8, which now has its bucket
 waiting), OIDC, and any grants/ACL work (access-control step 5 is a
 separate track). `global.auth.admins` stays config — policy an operator
@@ -303,6 +306,11 @@ ever set it.
   worlds, deliberately, and nothing here moves them.
 
 ## Status
+
+2026-10-04: extended by DEC-0034 — the admin handlers also on the network
+for an adm session, invite codes as the only way to a new account; the
+socket stays the way in for the first user and a locked-out deployment. Not
+built.
 
 decided, sequenced and ALL SIX steps built 2026-08-13 (end-to-end smoke
 against the real binary passed). Step 6 landed as a HARD BREAK, decided the

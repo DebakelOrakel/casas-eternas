@@ -23,7 +23,7 @@ summary.de: Wie der Server feststellt, wer fragt. Drei Modi bleiben — aber `to
 area: platform
 stage: built
 createdAt: 2026-08-09
-updatedAt: 2026-08-13
+updatedAt: 2026-10-04
 related: [DEC-0022, DEC-0023, DES-0011]
 ---
 
@@ -673,6 +673,9 @@ something else and needs restating.
   audience, and the reason secrets must not live in the environment
 
 ## Status
+
+2026-10-04: blocking an account (DEC-0034, fork 7) waits on step 8, the
+revocation: a flag that leaves a 720-hour token working blocks nothing.
 
 decided, sequenced in seven steps. ALL SEVEN BUILT 2026-08-09 — the server
 authenticates and enforces, the client signs in and behaves like a

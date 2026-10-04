@@ -19,7 +19,7 @@ summary.de: Die Deployment-Karte der kleinen Dateien des Servers — was jede is
 area: platform
 stage: built
 createdAt: 2026-08-13
-updatedAt: 2026-08-13
+updatedAt: 2026-10-04
 related: [DEC-0021, DEC-0023]
 ---
 
@@ -67,7 +67,10 @@ not mint identities. Rotation is a rollout, identically on both platforms.
 one process per store directory (with bbolt, kernel-enforced). Never a
 ConfigMap, never a Secret — those are operator→process channels, and this
 file goes the other way. On the cluster: a PVC on the auth Deployment,
-replicas 1. On a plain machine: a directory. Identical code path on both,
+replicas 1. On a plain machine: a directory. Decided 2026-10-04, not built
+([client-accounts.md](../decisions/client-accounts.md), DEC-0034): the
+invite codes are records in auth.db, and the avatars are files beside it
+under `auth.storage` — the same volume, the same one process. Identical code path on both,
 which is the property the whole user-admin decision buys. (Its predecessor —
 an htpasswd file in the Secret — was the one row whose write path differed
 between platforms, and that asymmetry is why it is gone;
@@ -139,6 +142,9 @@ Nothing in this doc changes them; the map here is only the small files that
 were ever tempted to be "just config".
 
 ## Status
+
+2026-10-04: DEC-0034 adds invite codes to auth.db and avatar files beside it
+under auth.storage; not built.
 
 agreed, built and made true in one day (2026-08-13,
 decisions/server-user-admin.md): auth target, admin socket and `auth user`
