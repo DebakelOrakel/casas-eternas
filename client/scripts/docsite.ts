@@ -29,6 +29,7 @@ import remarkGfm from 'remark-gfm'
 import remarkRehype from 'remark-rehype'
 import rehypeStringify from 'rehype-stringify'
 import { parseChangelog, type ChangelogSection } from './parseChangelog'
+import { frontMatter, frontMatterList } from './frontMatter'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DOCS = join(REPO, 'docs')
@@ -128,38 +129,9 @@ interface CliReference {
 
 // ---------------------------------------------------------------- collection
 
-// The front matter convention is FLAT — `key: rest of the line`, wrapped
-// continuations indented, a language as a dotted key (`title.de`), a list
-// as `[a, b]` — and the summaries freely contain colons and dashes, which
-// strict YAML refuses in unquoted scalars. So: a tolerant line parser for
-// exactly the convention, not a YAML dependency that would force quoting
-// onto every doc.
-function frontMatter(raw: string): { meta: Record<string, string>; body: string } {
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(raw)
-  if (!match) return { meta: {}, body: raw }
-  const meta: Record<string, string> = {}
-  let lastKey: string | null = null
-  for (const line of match[1].split('\n')) {
-    const kv = /^([A-Za-z][A-Za-z0-9.-]*):\s?(.*)$/.exec(line)
-    if (kv) {
-      meta[kv[1]] = kv[2].trim()
-      lastKey = kv[1]
-    } else if (lastKey && /^\s+\S/.test(line)) {
-      meta[lastKey] += ' ' + line.trim()
-    }
-  }
-  return { meta, body: raw.slice(match[0].length) }
-}
-
 function firstHeading(body: string, fallback: string): string {
   const match = /^#\s+(.+)$/m.exec(body)
   return match ? match[1].trim() : fallback
-}
-
-// `[a, b]` → ['a', 'b']; absent → [].
-function list(value: string | undefined): string[] {
-  if (!value) return []
-  return value.replace(/^\[|\]$/g, '').split(',').map((v) => v.trim()).filter(Boolean)
 }
 
 const ID_PREFIX: Record<Genre, string> = { decisions: 'DEC', design: 'DES' }
@@ -196,7 +168,7 @@ function collectDocs(): Doc[] {
         stage: (meta.stage as Stage) ?? 'idea',
         summary: String(meta['summary.en'] ?? ''),
         supersededBy: meta.supersededBy ? String(meta.supersededBy) : undefined,
-        related: list(meta.related),
+        related: frontMatterList(meta.related),
         date,
         // Stated in the front matter, not read out of git. git says when the
         // FILE moved, which is a different fact: a rename, a typo, or a change

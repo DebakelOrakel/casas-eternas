@@ -295,6 +295,13 @@
   transition: border-color 0.4s, background-color 0.4s;
 }
 
+/* A card outside the page's body (a concept's "used in" and background)
+   reads like one inside it. */
+.handbook__card p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
 .handbook__card h3 {
   margin: 0;
   font-size: 13px;
@@ -317,6 +324,11 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+/* The same link out to the doc site, an anchor rather than a button. */
+a.handbook__link {
+  text-decoration: none;
 }
 
 .handbook__link::after {

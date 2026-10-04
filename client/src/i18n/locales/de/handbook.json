@@ -8,5 +8,7 @@
   "handbook.group.overlays": "Overlays",
   "handbook.group.overlays.short": "OVL",
   "handbook.here": "hier",
-  "handbook.overlays": "Overlays in diesem Schritt"
+  "handbook.overlays": "Overlays in diesem Schritt",
+  "handbook.usedIn": "Verwendet in",
+  "handbook.background": "Hintergrund"
 }

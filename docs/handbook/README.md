@@ -46,6 +46,13 @@ Intro: two or three sentences.
 - A paragraph that is only `{{concept <file>}}` includes `concepts/<file>.md`
   as a card whose title leads to the concept's page. A concept's text must
   therefore read on its own: no "this step".
+- A concept's own page adds two lists below its text, both generated, never
+  written: **Used in**, the steps that include it, and **Background**, the
+  design and decision docs whose `concepts` front matter names its anchor
+  (docs/README.md), with their number, title and summary in the page's
+  language and a link to the doc site. Background shows only where the
+  server's docs module runs. A doc naming an anchor the handbook does not
+  have fails the build.
 
 ## Anchors
 

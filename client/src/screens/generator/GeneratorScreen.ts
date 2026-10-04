@@ -68,7 +68,7 @@ import { createSaveMenu, type SaveTarget } from '../../ui/titleBar/SaveMenu'
 import { createConfirmDialog } from '../../ui/confirmDialog/ConfirmDialog'
 import { keepWorldInBrowser } from '../../world/browserWorlds'
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
-import { getServerStatus } from '../../server/serverStatus'
+import { getServerStatus, peekServerStatus } from '../../server/serverStatus'
 import { hasSession } from '../../server/session'
 import { bakeFraction, commissionBake, listBakes, watchJobs, type BakeJob, type CommissionOutcome } from '../../world/jobClient'
 import { listServerArtifacts } from '../../server/artifactsClient'
@@ -5875,6 +5875,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // handbook does not repeat either.
   const stepPage = (id: StepId): string => `generator.step.${id}`
   const handbookPanel = createHandbookPanel(root, {
+    // The doc site is the server's docs module; without a server there is
+    // nothing to link a concept's documents to.
+    docsAvailable: () => peekServerStatus()?.modules.includes('docs') ?? false,
     current: () => (panelEverShown ? stepPage(STEP_IDS[panelIndex]) : null),
     overlays: () => OVERLAY_IDS.map((id) => ({
       anchor: overlayKey(id),

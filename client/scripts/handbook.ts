@@ -19,7 +19,8 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkRehype from 'remark-rehype'
 import rehypeStringify from 'rehype-stringify'
-import type { Handbook, HandbookKind, HandbookPage, HandbookSection } from '../src/ui/handbook/handbookTypes'
+import type { Handbook, HandbookDoc, HandbookKind, HandbookPage, HandbookSection } from '../src/ui/handbook/handbookTypes'
+import { frontMatter, frontMatterList } from './frontMatter'
 
 const KIND_DIRS: Record<string, HandbookKind> = { steps: 'step', concepts: 'concept', overlays: 'overlay' }
 
@@ -30,17 +31,6 @@ function markdownIn(dir: string): string[] {
   } catch {
     return []
   }
-}
-
-function frontMatter(text: string): { meta: Record<string, string>; body: string } {
-  const match = /^---\n([\s\S]*?)\n---\n/.exec(text)
-  if (!match) return { meta: {}, body: text }
-  const meta: Record<string, string> = {}
-  for (const line of match[1].split('\n')) {
-    const at = line.indexOf(':')
-    if (at > 0) meta[line.slice(0, at).trim()] = line.slice(at + 1).trim()
-  }
-  return { meta, body: text.slice(match[0].length) }
 }
 
 type Node = { type: string; value?: string; depth?: number; children?: Node[]; data?: { hProperties?: Record<string, unknown> } }
@@ -68,7 +58,8 @@ const escapeHtml = (text: string): string => text.replace(/&/g, '&amp;').replace
 
 // Replaces each `{{concept <file>}}` paragraph with the concept as a card.
 // The card's heading is the way to the concept's own page (`data-page`).
-function conceptIncludes(concepts: Map<string, HandbookPage>, source: string) {
+// `uses` collects the anchors of the concepts included.
+function conceptIncludes(concepts: Map<string, HandbookPage>, source: string, uses: string[]) {
   const walk = (node: Node): void => {
     const children = node.children ?? []
     for (let i = 0; i < children.length; i++) {
@@ -80,6 +71,7 @@ function conceptIncludes(concepts: Map<string, HandbookPage>, source: string) {
       }
       const concept = concepts.get(match[1])
       if (!concept) throw new Error(`handbook: ${source} includes concept ${match[1]}, which does not exist`)
+      uses.push(concept.anchor)
       const anchor = escapeHtml(concept.anchor)
       children[i] = {
         type: 'html',
@@ -94,17 +86,18 @@ export function renderHandbookPage(text: string, source: string, kind: HandbookK
   const { meta, body } = frontMatter(text)
   if (!meta.anchor) throw new Error(`handbook: ${source} has no anchor in its front matter`)
   const sections: HandbookSection[] = []
+  const uses: string[] = []
   const html = String(
     unified()
       .use(remarkParse)
       .use(remarkGfm)
       .use(() => headingAnchors(sections))
-      .use(() => conceptIncludes(concepts, source))
+      .use(() => conceptIncludes(concepts, source, uses))
       .use(remarkRehype, { allowDangerousHtml: true })
       .use(rehypeStringify, { allowDangerousHtml: true })
       .processSync(body),
   )
-  return { kind, anchor: meta.anchor, title: meta.title ?? meta.anchor, order: Number(meta.order ?? 99), html, sections }
+  return { kind, anchor: meta.anchor, title: meta.title ?? meta.anchor, order: Number(meta.order ?? 99), html, sections, ...(uses.length ? { uses } : {}) }
 }
 
 // One locale's pages. Concepts first, so the steps can include them; a
@@ -125,6 +118,37 @@ function buildLocale(dir: string, locale: string, english: Map<string, HandbookP
   return { pages, concepts }
 }
 
+// THE DOCUMENTS BEHIND THE CONCEPTS: every design and decision doc beside
+// the handbook (docs/decisions/, docs/design/) that names concepts in its
+// front matter (docs/README.md), with its titles and summaries per language.
+interface ConceptDoc {
+  id: string
+  route: string
+  title: Record<string, string>
+  summary: Record<string, string>
+  concepts: string[]
+}
+
+function conceptDocs(docsDir: string): ConceptDoc[] {
+  const out: ConceptDoc[] = []
+  for (const genre of ['decisions', 'design']) {
+    for (const path of markdownIn(join(docsDir, genre))) {
+      if (basename(path) === 'README.md') continue
+      const { meta } = frontMatter(readFileSync(path, 'utf8'))
+      const concepts = frontMatterList(meta.concepts)
+      if (!concepts.length) continue
+      out.push({
+        id: meta.id,
+        route: `${genre}/${basename(path, '.md')}.html`,
+        title: { en: meta['title.en'], de: meta['title.de'] },
+        summary: { en: meta['summary.en'], de: meta['summary.de'] },
+        concepts,
+      })
+    }
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id))
+}
+
 // The whole handbook: one entry per locale directory. Fails on a page's
 // anchor or a catalog-key anchor (one with a dot) used twice in one locale:
 // those are the handbook's addresses. A plain section id (`does`) is local
@@ -140,9 +164,28 @@ export function buildHandbook(dir: string): Handbook {
   // English first: the others include its concepts where they have none.
   locales.sort((a, b) => (a === 'en' ? -1 : b === 'en' ? 1 : a.localeCompare(b)))
   let english = new Map<string, HandbookPage>()
+  const docs = conceptDocs(join(dir, '..'))
   for (const locale of locales) {
     const { pages, concepts } = buildLocale(dir, locale, english)
-    if (locale === 'en') english = concepts
+    if (locale === 'en') {
+      english = concepts
+      // A document naming a concept the handbook does not have is a link
+      // into nothing: refused, as a concept included twice is.
+      const known = new Set([...concepts.values()].map((page) => page.anchor))
+      for (const doc of docs) {
+        for (const anchor of doc.concepts) if (!known.has(anchor)) throw new Error(`handbook: ${doc.id} names concept ${anchor}, which the handbook does not have`)
+      }
+    }
+    for (const page of pages) {
+      if (page.kind !== 'concept') continue
+      const background: HandbookDoc[] = docs.filter((doc) => doc.concepts.includes(page.anchor)).map((doc) => ({
+        id: doc.id,
+        title: doc.title[locale] ?? doc.title.en,
+        summary: doc.summary[locale] ?? doc.summary.en,
+        route: doc.route,
+      }))
+      if (background.length) page.background = background
+    }
     const seen = new Set<string>()
     for (const page of pages) {
       for (const anchor of [page.anchor, ...page.sections.map((section) => section.anchor).filter((anchor) => anchor.includes('.'))]) {

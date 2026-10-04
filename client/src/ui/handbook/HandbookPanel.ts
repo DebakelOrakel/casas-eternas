@@ -42,6 +42,9 @@ export interface HandbookPanelOptions {
   stepOverlays?(anchor: string): string[]
   // Called after the panel opened or closed.
   onToggle?(open: boolean): void
+  // Whether the doc site is there to link into (/docs/, the server's docs
+  // module): a concept's background documents are listed only then.
+  docsAvailable?(): boolean
 }
 
 export interface HandbookPanel {
@@ -271,34 +274,95 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
     // A step's layers, each the way to its own page.
     const anchors = page.kind === 'step' ? options.stepOverlays?.(page.anchor) ?? [] : []
     const layers = anchors.map((anchor) => (options.overlays?.() ?? []).find((layer) => layer.anchor === anchor)).filter((layer): layer is HandbookOverlay => !!layer)
-    if (layers.length > 0) {
-      const section = document.createElement('section')
-      section.className = 'handbook__overlays'
-      const heading = document.createElement('h2')
-      heading.textContent = t('handbook.overlays')
-      section.appendChild(heading)
-      for (const layer of layers) {
-        const row = document.createElement('button')
-        row.type = 'button'
-        row.className = 'handbook__overlay'
-        row.dataset.page = layer.anchor
+    listSection('handbook.overlays', layers.map((layer) => ({ label: layer.label, help: layer.help, icon: layer.icon, page: layer.anchor })))
+    if (page.kind !== 'concept') return
+    // On a concept's own page, below what the steps include: the steps that
+    // include it, and the documents behind it on the doc site.
+    const steps = pagesOf('step', pagesNow()).filter((step) => step.uses?.includes(page.anchor))
+    cardSection('handbook.usedIn', steps.map((step) => ({ title: step.title, page: step.anchor })))
+    if (options.docsAvailable?.()) {
+      cardSection('handbook.background', (page.background ?? []).map((doc) => ({ title: `${doc.id} · ${doc.title}`, text: doc.summary, href: `/docs/${doc.route}` })))
+    }
+  }
+
+  // Cards under a heading, in the shape of an included concept (the build's
+  // conceptIncludes): the title is the link, the text below it. A card leads
+  // to a page of the handbook (`page`) or out to the doc site (`href`, in a
+  // tab of its own). Nothing for no cards.
+  function cardSection(headingKey: TKey, cards: { title: string; text?: string; page?: string; href?: string }[]): void {
+    if (cards.length === 0) return
+    const section = document.createElement('section')
+    section.className = 'handbook__overlays'
+    const heading = document.createElement('h2')
+    heading.textContent = t(headingKey)
+    section.appendChild(heading)
+    for (const entry of cards) {
+      const card = document.createElement('section')
+      card.className = 'handbook__card handbook__card--concept'
+      const title = document.createElement('h3')
+      let link: HTMLElement
+      if (entry.href) {
+        const anchor = document.createElement('a')
+        anchor.href = entry.href
+        anchor.target = '_blank'
+        anchor.rel = 'noopener'
+        link = anchor
+      } else {
+        const button = document.createElement('button')
+        button.type = 'button'
+        if (entry.page) button.dataset.page = entry.page
+        link = button
+      }
+      link.className = 'handbook__link'
+      link.textContent = entry.title
+      title.appendChild(link)
+      card.appendChild(title)
+      if (entry.text) {
+        const text = document.createElement('p')
+        text.textContent = entry.text
+        card.appendChild(text)
+      }
+      section.appendChild(card)
+    }
+    pageBox.appendChild(section)
+  }
+
+  // A list under a heading, each row the way to a page of the handbook.
+  // Nothing for no rows.
+  function listSection(headingKey: TKey, rows: { label: string; help?: string; icon?: string; page: string }[]): void {
+    if (rows.length === 0) return
+    const section = document.createElement('section')
+    section.className = 'handbook__overlays'
+    const heading = document.createElement('h2')
+    heading.textContent = t(headingKey)
+    section.appendChild(heading)
+    for (const entry of rows) {
+      const row = document.createElement('button')
+      row.type = 'button'
+      row.dataset.page = entry.page
+      row.className = 'handbook__overlay'
+      if (entry.icon) {
         const icon = document.createElement('img')
-        icon.src = layer.icon
+        icon.src = entry.icon
         icon.alt = ''
-        const text = document.createElement('span')
-        text.className = 'handbook__overlay-text'
-        const label = document.createElement('span')
-        label.className = 'handbook__overlay-label'
-        label.textContent = layer.label
+        row.appendChild(icon)
+      }
+      const text = document.createElement('span')
+      text.className = 'handbook__overlay-text'
+      const label = document.createElement('span')
+      label.className = 'handbook__overlay-label'
+      label.textContent = entry.label
+      text.appendChild(label)
+      if (entry.help) {
         const help = document.createElement('span')
         help.className = 'handbook__overlay-help'
-        help.textContent = layer.help
-        text.append(label, help)
-        row.append(icon, text)
-        section.appendChild(row)
+        help.textContent = entry.help
+        text.appendChild(help)
       }
-      pageBox.appendChild(section)
+      row.appendChild(text)
+      section.appendChild(row)
     }
+    pageBox.appendChild(section)
   }
 
   // Shows the page holding `anchor` and, for a section, scrolls to it and

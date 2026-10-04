@@ -16,6 +16,16 @@ export interface HandbookSection {
 // steps share and include, or a map layer. The panel's bookmarks are these.
 export type HandbookKind = 'step' | 'concept' | 'overlay'
 
+// A design or decision document behind a concept (docs/decisions/,
+// docs/design/, their `concepts` front matter), in the page's language.
+// `route` is the document's page on the doc site, under /docs/.
+export interface HandbookDoc {
+  id: string
+  title: string
+  summary: string
+  route: string
+}
+
 export interface HandbookPage {
   kind: HandbookKind
   // The page's anchor (front matter), e.g. `generator.step.world`. A
@@ -29,6 +39,11 @@ export interface HandbookPage {
   // concept's anchor.
   html: string
   sections: HandbookSection[]
+  // A step: the anchors of the concepts it includes — what a concept's
+  // page lists as the steps it is used in.
+  uses?: string[]
+  // A concept: the documents that name it, by id.
+  background?: HandbookDoc[]
 }
 
 // Per locale, the pages that locale has. A page missing in one locale is
