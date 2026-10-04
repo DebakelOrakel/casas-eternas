@@ -1,6 +1,6 @@
 import { wrapValue } from '../core/field'
 import { SEA_LEVEL } from '../elevation/elevationScale'
-import { runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
+import { DEFAULT_ROUTING_EVERY, runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { meshAreas } from '../mesh/meshHydrology'
 import { buildTileMesh, tileCorner, TILE_ROLE_EDGE, TILE_ROLE_HALO, tileSpec, type TileId, type TileMesh, type TileParent } from '../mesh/meshTile'
 import { tileAt } from './tilePlan'
@@ -171,7 +171,11 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
   const result = await runMeshErosion(mesh, tile.z, forcing, {
     age: options.rounds,
     params: { ...params, upliftDt: BAKE_ENGINE_OVERRIDES.upliftDt },
-    pool: options.pool,
+    // The pool on the single engine's cadence: fresh routing every
+    // DEFAULT_ROUTING_EVERY rounds, waited for (erosionEnginePool.ts,
+    // PipelineOptions.synchronous). A tile's rounds are few, and water that
+    // follows the cut is the point of eroding them.
+    pool: options.pool && { ...options.pool, pipelineDepth: DEFAULT_ROUTING_EVERY, synchronous: true },
     frozen,
     onProgress: (fraction) => options.onProgress?.('erosion', fraction),
   })

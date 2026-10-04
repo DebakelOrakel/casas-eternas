@@ -152,6 +152,16 @@ levels, a coordinator for the tiles: [design/tile-coordinator.md](../design/tile
 
 ## Status
 
+2026-10-04, later: a tile's erosion routes afresh every four rounds and
+waits for it (erosionEnginePool.ts, PipelineOptions.synchronous) — before,
+the pool's overlapped cadence kept a tile's starting routing for all 12
+rounds. The tile pipeline versions moved with it; every world computes its
+tiles again. Measured on 24 level-2 tiles of Calvessor: mean height change
+0.76 m, at most 63 m, more cut than fill, ~50 ms a tile. In the same change,
+not moving the bytes: a dense hint grid over a level-3 tile's parent
+(meshSampler.ts, DenseRegion) and its bootstrap lattice removed farthest
+first (meshTile.ts) — a level-3 tile ~30 % faster in a serving worker.
+
 2026-10-04: BUILT — the tile, its bake, its artifact and its job; the tile pick in the Finishing step went with decisions/detail-ladder.md (DEC-0032, fork 4).
 
 decided 2026-09-29; the tile's mesh, its bake, its artifact and its job

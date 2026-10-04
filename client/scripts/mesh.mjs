@@ -439,6 +439,16 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     for (let a = 0; a < index.activeCount; a++) if (pool.z[a] !== single.z[a]) poolDiffer++
     check(`a pool of ${workers} workers gives the single-threaded bytes`, poolDiffer === 0, `${poolDiffer} nodes differ`)
   }
+  // The pipelined pool on the synchronous cadence (a level's tiles,
+  // meshTileBake.ts): fresh routing every D iterations, waited for — the
+  // single engine's cadence at routingEvery = D, so its bytes.
+  const piped = await P.PipelinedErosionEngine.create(0, 0, z0, { uplift, erodibility }, spawn, { stencilWorkers: 2, refreshWorkers: 1, pipelineDepth: 2, synchronous: true }, { ...M.engine.DEFAULT_ENGINE_PARAMS, epsM: 0 }, index)
+  piped.run(AGE)
+  const pipedZ = Float32Array.from(piped.activeEngineViews.z)
+  await piped.close()
+  let pipedDiffer = 0
+  for (let a = 0; a < index.activeCount; a++) if (pipedZ[a] !== single.z[a]) pipedDiffer++
+  check('the synchronous pipelined pool gives the single engine\'s bytes', pipedDiffer === 0, `${pipedDiffer} nodes differ`)
 }
 
 // The save's form of the mesh (phase 4.3): canonical numbering, the codec,

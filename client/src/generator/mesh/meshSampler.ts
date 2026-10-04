@@ -43,24 +43,61 @@ export interface MeshSampler {
 // wide where the mesh is dense, still one step where it is coarse.
 const HINT_CELLS_PER_UNIT = 0.25
 
-export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array): MeshSampler {
-  const { domain } = mesh
-  const cols = Math.max(4, Math.round(domain.width * HINT_CELLS_PER_UNIT))
-  const rows = Math.max(4, Math.round(domain.height * HINT_CELLS_PER_UNIT))
+// A region the mesh is dense in — a level-3 tile's parent, the level-2
+// tiles it overlaps (meshTile.ts, tileParentFromTiles) — and how many nodes
+// it holds. Over it the sampler keeps a second hint grid at the region's own
+// density, about HINT_NODES_PER_CELL nodes a cell: under the world grid's
+// 4 × 4 cells sit hundreds of level-2 triangles, and a walk across them was
+// 37 % of a level-3 tile (2026-10-04, Calvessor's largest).
+export interface DenseRegion {
+  x: number
+  y: number
+  width: number
+  height: number
+  nodes: number
+}
+const HINT_NODES_PER_CELL = 4
+
+// A hint grid of cols × rows cells of sx × sy from (x0, y0), each the
+// triangle under its corner, found by a scanline walk.
+function hintGrid(mesh: PeriodicTriangulation, x0: number, y0: number, cols: number, rows: number, sx: number, sy: number): Int32Array {
   const hints = new Int32Array(cols * rows)
-  const sx = domain.width / cols
-  const sy = domain.height / rows
   let hint = mesh.lastTri
   let rowStart = hint
   for (let r = 0; r < rows; r++) {
     hint = rowStart
     for (let c = 0; c < cols; c++) {
-      hint = mesh.locate(c * sx, r * sy, hint)
+      hint = mesh.locate(mesh.domain.wrapX(x0 + c * sx), mesh.domain.wrapY(y0 + r * sy), hint)
       if (c === 0) rowStart = hint
       hints[r * cols + c] = hint
     }
   }
+  return hints
+}
+
+export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array, dense?: DenseRegion): MeshSampler {
+  const { domain } = mesh
+  const cols = Math.max(4, Math.round(domain.width * HINT_CELLS_PER_UNIT))
+  const rows = Math.max(4, Math.round(domain.height * HINT_CELLS_PER_UNIT))
+  const sx = domain.width / cols
+  const sy = domain.height / rows
+  const hints = hintGrid(mesh, 0, 0, cols, rows, sx, sy)
+  // The dense region's grid: square cells of HINT_NODES_PER_CELL nodes on
+  // average, never coarser than the world's.
+  let fine: { hints: Int32Array; cols: number; rows: number; s: number } | null = null
+  if (dense && dense.nodes > 0) {
+    const s = Math.min(sx, Math.sqrt((dense.width * dense.height * HINT_NODES_PER_CELL) / dense.nodes))
+    const fineCols = Math.max(1, Math.ceil(dense.width / s))
+    const fineRows = Math.max(1, Math.ceil(dense.height / s))
+    fine = { hints: hintGrid(mesh, dense.x, dense.y, fineCols, fineRows, s, s), cols: fineCols, rows: fineRows, s }
+  }
   const hintAt = (x: number, y: number): number => {
+    if (fine && dense) {
+      // Offsets into the region on the torus: a region may cross the seam.
+      const c = Math.floor(domain.wrapX(x - dense.x) / fine.s)
+      const r = Math.floor(domain.wrapY(y - dense.y) / fine.s)
+      if (c < fine.cols && r < fine.rows) return fine.hints[r * fine.cols + c]
+    }
     const c = Math.min(cols - 1, Math.max(0, Math.floor(domain.wrapX(x) / sx)))
     const r = Math.min(rows - 1, Math.max(0, Math.floor(domain.wrapY(y) / sy)))
     return hints[r * cols + c]

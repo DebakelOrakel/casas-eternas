@@ -8,7 +8,7 @@ import { hexLattice } from './lattice'
 import { targetSpacingM } from './meshDensity'
 import { levelSynthesis } from './meshRefine'
 import { reliefAt } from './meshRelief'
-import type { MeshSampler } from './meshSampler'
+import type { DenseRegion, MeshSampler } from './meshSampler'
 import { compactMesh, permute } from './meshSerial'
 import type { PeriodicTriangulation } from './periodicDelaunay'
 import { barycentric } from './remesh'
@@ -230,7 +230,9 @@ export interface TilePiece {
 // The patchwork parent's mesh: the pieces' nodes in world positions, a
 // node on a shared edge row once, triangulated on the world's torus (the
 // empty rest of the world is spanned by long triangles no tile reads).
-export function tileParentFromTiles(pieces: TilePiece[], width: number, height: number): { mesh: PeriodicTriangulation; z: Float32Array } {
+// Answers the region the pieces cover too, with their node count: the
+// sampler's dense hint grid (meshSampler.ts, DenseRegion).
+export function tileParentFromTiles(pieces: TilePiece[], width: number, height: number): { mesh: PeriodicTriangulation; z: Float32Array; region: DenseRegion } {
   const seen = new Map<string, number>()
   const xs: number[] = []
   const ys: number[] = []
@@ -268,11 +270,50 @@ export function tileParentFromTiles(pieces: TilePiece[], width: number, height: 
     mapping[n] = mesh.insert(ox[n], oy[n])
     if (mapping[n] < latticeCount) again.push(n)
   }
-  for (let v = 0; v < latticeCount; v++) if (mesh.vAlive[v]) mesh.remove(v)
+  // The lattice goes FARTHEST FROM THE PIECES FIRST. In index order each
+  // removal left a longer fan across the emptied rows for the next, ~0.6 s
+  // for a median level-3 tile's 9 500 nodes, two thirds of its bake; far
+  // first keeps the stars small (~80 % less), leaves shorter edges across
+  // the empty world, and the pieces' triangles come out the same — the
+  // tiles byte for byte (2026-10-04, Calvessor, 60 tiles).
+  const region = piecesBounds(pieces, width, height)
+  const cx = region.x + region.width / 2
+  const cy = region.y + region.height / 2
+  const lattice: number[] = []
+  const away = new Float64Array(latticeCount)
+  for (let v = 0; v < latticeCount; v++) {
+    const dx = mesh.domain.deltaX(mesh.vx[v], cx)
+    const dy = mesh.domain.deltaY(mesh.vy[v], cy)
+    away[v] = dx * dx + dy * dy
+    lattice.push(v)
+  }
+  lattice.sort((a, b) => away[b] - away[a] || a - b)
+  for (const v of lattice) if (mesh.vAlive[v]) mesh.remove(v)
   for (const n of again) mapping[n] = mesh.insert(ox[n], oy[n])
   const z = new Float32Array(mesh.vertexSlots)
   for (let n = 0; n < xs.length; n++) z[mapping[n]] = zs[order[n]]
-  return { mesh, z }
+  return { mesh, z, region: { ...region, nodes: xs.length } }
+}
+
+// The square the pieces cover, from the first piece's corner, on the torus:
+// the pieces are neighbours, so each lies within half a period of the first.
+function piecesBounds(pieces: TilePiece[], width: number, height: number): { x: number; y: number; width: number; height: number } {
+  const first = tileCorner(pieces[0].tile, tileSpec(pieces[0].tile.level))
+  let minX = 0
+  let minY = 0
+  let maxX = 0
+  let maxY = 0
+  for (const piece of pieces) {
+    const spec = tileSpec(piece.tile.level)
+    const corner = tileCorner(piece.tile, spec)
+    const dx = wrapValue(corner.x - first.x + width / 2, width) - width / 2
+    const dy = wrapValue(corner.y - first.y + height / 2, height) - height / 2
+    minX = Math.min(minX, dx)
+    minY = Math.min(minY, dy)
+    maxX = Math.max(maxX, dx + spec.cells)
+    maxY = Math.max(maxY, dy + spec.cells)
+  }
+  return { x: wrapValue(first.x + minX, width), y: wrapValue(first.y + minY, height), width: maxX - minX, height: maxY - minY }
 }
 
 // The bootstrap lattice's spacing for a patchwork, in cells: coarse, the

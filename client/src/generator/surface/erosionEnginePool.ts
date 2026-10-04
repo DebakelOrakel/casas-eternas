@@ -394,6 +394,14 @@ export interface PipelineOptions {
   // The fixed swap cadence D, iterations. Also the refresh budget: a
   // refresh slower than D iterations of physics stalls the boundary.
   pipelineDepth: number
+  // Refresh at each boundary from the terrain as it is THERE, and wait for
+  // it: the routing during [kD, (k+1)D) is routing(z_kD), staleness 0..D —
+  // the single engine's cadence at D = its routingEvery, so the two agree.
+  // For a level's tiles (meshTileBake.ts): with 12 rounds and the
+  // overlapped D = 8, a tile eroded under its starting routing throughout,
+  // and the water never followed what the erosion cut (2026-10-04). Costs
+  // the refresh's time at each boundary, which overlapping would hide.
+  synchronous?: boolean
 }
 
 export class PipelinedErosionEngine {
@@ -601,6 +609,12 @@ export class PipelinedErosionEngine {
   }
 
   private boundary(): void {
+    if (this.options.synchronous) {
+      if (this.inFlight) this.waitAndAdopt()
+      this.startRefresh(this.activeIndex === -1 ? 0 : 1 - this.activeIndex)
+      this.waitAndAdopt()
+      return
+    }
     if (this.activeIndex === -1) {
       // Bootstrap: physics cannot start without routing — one synchronous
       // refresh, then immediately launch the overlapped one (same z, the

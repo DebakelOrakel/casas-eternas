@@ -785,7 +785,7 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
       pieces.push({ tile: piece, count: read.count, nodes: read.nodes, z: read.z })
     }
     const patch = tileParentFromTiles(pieces, inputs.width, inputs.height)
-    parent = { mesh: patch.mesh, z: patch.z, discharge: null, sampler: createMeshSampler(patch.mesh, patch.z), macro }
+    parent = { mesh: patch.mesh, z: patch.z, discharge: null, sampler: createMeshSampler(patch.mesh, patch.z, patch.region), macro }
   }
   // The upstream tiles' outflow; each was computed first (it is a dep).
   const upstream: UpstreamTile[] = []
