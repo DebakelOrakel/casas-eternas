@@ -263,7 +263,9 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
       const actions = el('div', 'ad-actions')
       actions.appendChild(revoke)
       row.append(
-        el('span', 'mono', invite.id.slice(0, 8)),
+        // The code's last group, never the record's id: the code is shown once,
+        // in the box above, and an id in this column was taken for it.
+        el('span', 'mono', invite.hint ? `••••-••••-••••-${invite.hint}` : '••••'),
         el('span', '', t('admin.invites.left', { left: invite.left, uses: invite.uses })),
         el('span', 'ad-muted', formatWhen(invite.expiresAt)),
         el('span', 'ad-muted', invite.createdBy),

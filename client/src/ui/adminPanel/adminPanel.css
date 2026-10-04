@@ -230,7 +230,7 @@
   border-top: 1px solid var(--dc-line);
 }
 .ad-table--invites {
-  grid-template-columns: 110px 100px minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: 190px 100px minmax(0, 1fr) minmax(0, 1fr) auto;
 }
 .ad-table--nodes {
   grid-template-columns: minmax(0, 1fr) 160px auto;

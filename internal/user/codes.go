@@ -49,6 +49,11 @@ type Invite struct {
 	CreatedBy string    `json:"createdBy"`
 	CreatedAt time.Time `json:"createdAt"`
 	Hash      string    `json:"hash"`
+	// Hint is the code's last group, so an admin tells the codes in the list
+	// apart: the list showed the record's id under "Code" at first, and the id
+	// was taken for the code (2026-10-04). Four of sixteen characters leave
+	// 60 bits to guess.
+	Hint string `json:"hint"`
 }
 
 type reset struct {
@@ -108,7 +113,7 @@ func (r *Registry) CreateInvite(uses int, valid time.Duration, createdBy string)
 		return Invite{}, "", err
 	}
 	now := r.now().UTC()
-	invite := Invite{ID: id, Uses: uses, Left: uses, ExpiresAt: now.Add(valid), CreatedBy: createdBy, CreatedAt: now, Hash: hashCode(code)}
+	invite := Invite{ID: id, Uses: uses, Left: uses, ExpiresAt: now.Add(valid), CreatedBy: createdBy, CreatedAt: now, Hash: hashCode(code), Hint: code[len(code)-4:]}
 	raw, err := json.Marshal(invite)
 	if err != nil {
 		return Invite{}, "", err

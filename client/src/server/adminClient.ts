@@ -24,6 +24,8 @@ export interface Invite {
   expiresAt: string
   createdBy: string
   createdAt: string
+  // The code's last group; the code itself is shown once, at creation.
+  hint?: string
 }
 
 export interface ServiceAccount {

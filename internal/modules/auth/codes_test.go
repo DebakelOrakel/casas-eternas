@@ -57,6 +57,13 @@ func TestCodesAndNetworkAdmin(t *testing.T) {
 		t.Fatalf("create invite = %d %s", created.Code, created.Body.String())
 	}
 
+	// Listed with the code's last group as its hint — never the code, and
+	// never its hash.
+	open := do(http.MethodGet, AdminPrefix+"/invites", admin, "").Body.String()
+	if !strings.Contains(open, `"hint":"`+invite.Code[15:]+`"`) || strings.Contains(open, invite.Code) || !strings.Contains(open, `"hash":""`) {
+		t.Errorf("the open invite is listed as %s", open)
+	}
+
 	// Registering: lower case and without dashes is the same code.
 	sloppy := strings.ToLower(strings.ReplaceAll(invite.Code, "-", ""))
 	grace := tokenOf(do(http.MethodPost, RedeemPath, "", `{"code":"`+sloppy+`","name":"grace","password":"pw"}`))
