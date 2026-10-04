@@ -144,9 +144,10 @@ function collectDocs(): Doc[] {
     for (const file of readdirSync(join(DOCS, genre)).sort()) {
       if (!file.endsWith('.md') || file === 'README.md') continue
       const sourcePath = join(DOCS, genre, file)
-      const { meta, body } = frontMatter(readFileSync(sourcePath, 'utf8'))
+      const { meta, body, ignored } = frontMatter(readFileSync(sourcePath, 'utf8'))
       const slug = file.replace(/\.md$/, '')
       const where = `docs/${genre}/${file}`
+      for (const line of ignored) problems.push(`${where}: a front-matter line that is not \`key: value\` or its indented continuation: ${line.trim()}`)
       const id = String(meta.id ?? '')
       if (!new RegExp(`^${ID_PREFIX[genre]}-\\d{4}$`).test(id)) problems.push(`${where}: id "${id}" is not ${ID_PREFIX[genre]}-NNNN`)
       for (const key of ['title.en', 'title.de', 'summary.en', 'summary.de', 'area', 'stage', 'createdAt']) {

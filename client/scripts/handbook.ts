@@ -137,6 +137,7 @@ function conceptDocs(docsDir: string): ConceptDoc[] {
       const { meta } = frontMatter(readFileSync(path, 'utf8'))
       const concepts = frontMatterList(meta.concepts)
       if (!concepts.length) continue
+      if (!meta.id) throw new Error(`${path}: names concepts but has no id`)
       out.push({
         id: meta.id,
         route: `${genre}/${basename(path, '.md')}.html`,
