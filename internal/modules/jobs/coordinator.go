@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,11 @@ type taskDoneReport struct {
 	// from level 1's drainage by the worker (client/src/generator/pipeline/
 	// tilePlan.ts). The coordinator wires them and knows no hydrology.
 	Tasks []plannedTask `json:"tasks,omitempty"`
+	// With them, each tile level's pipeline version, by level: with the
+	// result's worldId, the key a planned tile is stored under — what the
+	// coordinator asks the store about before handing a tile out. The
+	// coordinator derives no version itself; the worker's code does.
+	TileVersions map[string]string `json:"tileVersions,omitempty"`
 }
 
 // plannedTask is one tile of a refine plan: its level and place, the
@@ -128,6 +134,10 @@ type specFor func(ctx context.Context, jobID string, request Request) (Spec, err
 // the server checks nobody and a task carries no token.
 type tokenFor func(jobID, worldUID string) (string, time.Time, error)
 
+// presentFor answers whether an artifact is whole in the store
+// (Config.ArtifactPresent); nil where the coordinator cannot ask.
+type presentFor func(ctx context.Context, key ArtifactKey) bool
+
 type coordinator struct {
 	mu       sync.Mutex
 	db       *bolt.DB
@@ -135,6 +145,7 @@ type coordinator struct {
 	registry *registry
 	spec     specFor
 	token    tokenFor
+	present  presentFor
 	tasks    map[string]*Task
 	byJob    map[string][]string
 	stream   jetstream.Stream
@@ -147,7 +158,7 @@ type coordinator struct {
 
 // newCoordinator opens jobs.db, restores the jobs into the registry, and
 // starts reading the workers' reports.
-func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor, token tokenFor) (*coordinator, error) {
+func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor, token tokenFor, present presentFor) (*coordinator, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("jobs.storage: %w", err)
 	}
@@ -156,7 +167,7 @@ func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor, t
 		return nil, fmt.Errorf("jobs.storage: %w (is another process holding jobs.db?)", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &coordinator{db: db, conn: conn, registry: reg, spec: spec, token: token, tasks: map[string]*Task{}, byJob: map[string][]string{}, ctx: ctx, cancel: cancel}
+	c := &coordinator{db: db, conn: conn, registry: reg, spec: spec, token: token, present: present, tasks: map[string]*Task{}, byJob: map[string][]string{}, ctx: ctx, cancel: cancel}
 	fail := func(err error) (*coordinator, error) {
 		c.close()
 		return nil, err
@@ -397,13 +408,51 @@ func (c *coordinator) handleDone(msg jetstream.Msg) {
 		_ = msg.Term()
 		return
 	}
+	stored := c.storedTiles(report)
 	c.mu.Lock()
-	c.applyDone(report)
+	c.applyDone(report, stored)
 	c.mu.Unlock()
 	_ = msg.Ack()
 }
 
-func (c *coordinator) applyDone(report taskDoneReport) {
+// storedTiles is which of a level report's planned tiles are whole in the
+// store already, as [level, x, y]: those are marked done when the plan is
+// wired, and no worker is handed one to find that out — a round over the
+// relay, a read of the world and an answer per tile, for nothing
+// (2026-10-04). Asked outside the lock: a store behind HTTP takes its time.
+// Nil where there is nothing to ask, or nobody to ask it of.
+func (c *coordinator) storedTiles(report taskDoneReport) map[[3]int]bool {
+	if c.present == nil || len(report.Tasks) == 0 || report.Result == nil || report.Result.WorldID == "" {
+		return nil
+	}
+	c.mu.Lock()
+	task, ok := c.tasks[report.TaskID]
+	var job Job
+	if ok {
+		job, ok = c.registry.get(task.JobID)
+	}
+	c.mu.Unlock()
+	if !ok || job.Request.Plan != PlanRefine {
+		return nil
+	}
+	stored := map[[3]int]bool{}
+	for _, p := range filterPlanned(report.Tasks, job.Request.Stage) {
+		version := report.TileVersions[strconv.Itoa(p.Level)]
+		if version == "" {
+			continue
+		}
+		stage := Request{Stage: p.Level, Scope: Scope{Kind: ScopeTile, X: p.X, Y: p.Y}}.StageName()
+		if c.present(c.ctx, ArtifactKey{WorldUID: job.Request.WorldUID, WorldID: report.Result.WorldID, PipelineVersion: version, Stage: stage}) {
+			stored[[3]int{p.Level, p.X, p.Y}] = true
+		}
+	}
+	if len(stored) > 0 {
+		slog.Info("jobs: planned tiles already stored", "job", job.ID, "stored", len(stored), "planned", len(report.Tasks))
+	}
+	return stored
+}
+
+func (c *coordinator) applyDone(report taskDoneReport, stored map[[3]int]bool) {
 	task, ok := c.tasks[report.TaskID]
 	if !ok || task.State == taskDone || task.State == taskCancelled {
 		// Unknown, a second report of one done, or one the caller stopped.
@@ -438,6 +487,13 @@ func (c *coordinator) applyDone(report taskDoneReport) {
 		for _, p := range planned {
 			request := Request{WorldUID: job.Request.WorldUID, Stage: p.Level, ErosionRounds: job.Request.ErosionRounds, Scope: Scope{Kind: ScopeTile, X: p.X, Y: p.Y}}
 			t := &Task{ID: fmt.Sprintf("%s-%d", job.ID, len(c.byJob[job.ID])+len(added)), JobID: job.ID, Pool: poolTile, Request: request, Deps: []string{task.ID}, Upstream: p.Upstream, State: taskWaiting}
+			if stored[[3]int{p.Level, p.X, p.Y}] {
+				// Already in the store: done as wired, never handed out. A tile
+				// that waits on it is ready as soon as its other inputs are.
+				t.State = taskDone
+				t.EndedAt = &ended
+				t.Result = &Result{WorldID: report.Result.WorldID, PipelineVersion: report.TileVersions[strconv.Itoa(p.Level)], Stage: request.StageName()}
+			}
 			byPlace[[3]int{p.Level, p.X, p.Y}] = t.ID
 			added = append(added, t)
 		}

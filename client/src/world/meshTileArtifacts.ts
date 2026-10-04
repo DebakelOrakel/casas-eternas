@@ -132,6 +132,25 @@ export async function writeMeshTileArtifact(store: ArtifactStore, key: ArtifactK
   )
 }
 
+// A tile's artifact as far as reusing it needs: there, whole, its node count
+// and how long it took — from the resolve's file list and meta.json, not
+// the arrays. A plan's worker asks this of every tile before computing it,
+// and reading the whole tile to answer was about as slow as computing it
+// (2026-10-04). Whole means every file listed: meta.json is written last
+// (writeMeshTileArtifact), and each file is one complete write.
+export async function meshTileArtifactInfo(store: ArtifactStore, key: ArtifactKey): Promise<{ nodes: number; bakeMs: number } | null> {
+  const handle = await store.resolve(key, false)
+  if (!handle || !Object.values(MESH_TILE_FILES).every((name) => handle.files.includes(name))) return null
+  const metaBytes = await store.read(handle, MESH_TILE_FILES.meta)
+  if (!metaBytes) return null
+  try {
+    const meta = JSON.parse(new TextDecoder().decode(metaBytes)) as MeshTileMeta
+    return { nodes: meta.nodes, bakeMs: meta.bakeMs }
+  } catch {
+    return null
+  }
+}
+
 export async function readMeshTileArtifact(store: ArtifactStore, key: ArtifactKey): Promise<{ artifact: MeshTileArtifact; bakeMs: number } | null> {
   const handle = await store.resolve(key, false)
   if (!handle) return null

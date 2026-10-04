@@ -92,6 +92,17 @@ type Result struct {
 	DurationMs      int64  `json:"durationMs"`
 }
 
+// ArtifactKey names an artifact as the store does (worlds' uid, the
+// terrain's id, the pipeline version, the stage). Its own type here: the
+// artifacts module's layout and types are its own, and the lookup is a
+// function cmd/ composes (Config.ArtifactPresent).
+type ArtifactKey struct {
+	WorldUID        string
+	WorldID         string
+	PipelineVersion string
+	Stage           string
+}
+
 // Job is a request plus everything that happened to it.
 type Job struct {
 	ID      string  `json:"id"`

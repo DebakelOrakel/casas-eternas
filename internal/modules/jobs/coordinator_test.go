@@ -84,6 +84,10 @@ func fakeWorker(t *testing.T, server *natsserver.Server, failTile bool) (stop fu
 		}
 		report := taskDoneReport{TaskID: spec.TaskID, OK: true, Result: &Result{Stage: stage}}
 		if spec.Stage == 1 {
+			// The terrain's id and the tile levels' versions: the key each
+			// planned tile is stored under.
+			report.Result = &Result{Stage: stage, WorldID: "terrain"}
+			report.TileVersions = map[string]string{"2": "v2", "3": "v3"}
 			report.Tasks = []plannedTask{
 				{Level: 2, X: 1, Y: 0, After: [][3]int{{2, 0, 0}}, Upstream: []TileRef{{X: 0, Y: 0}}},
 				{Level: 2, X: 0, Y: 0},
@@ -126,7 +130,7 @@ var computedOrder struct {
 func TestCoordinatorRunsTilesInPlanOrder(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +193,7 @@ func submitted(t *testing.T, c *coordinator, reg *registry, request Request) Job
 func TestCoordinatorRunsARefinePlan(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +221,7 @@ func TestCoordinatorRunsARefinePlan(t *testing.T) {
 func TestCoordinatorStopsAPlanAtItsStage(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +244,7 @@ func TestCoordinatorStopsAPlanAtItsStage(t *testing.T) {
 func TestCoordinatorFailsAJobOnAFailedTask(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +262,7 @@ func TestCoordinatorFailsAJobOnAFailedTask(t *testing.T) {
 func TestCoordinatorWithdrawsACancelledJob(t *testing.T) {
 	_, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +294,7 @@ func TestCoordinatorSurvivesARestart(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	dir := t.TempDir()
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(dir, conn, reg, plainSpec, nil)
+	c, err := newCoordinator(dir, conn, reg, plainSpec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +302,7 @@ func TestCoordinatorSurvivesARestart(t *testing.T) {
 	c.close()
 
 	again := newRegistry(jobHistory)
-	c2, err := newCoordinator(dir, conn, again, plainSpec, nil)
+	c2, err := newCoordinator(dir, conn, again, plainSpec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +332,7 @@ func TestCoordinatorRenewsTokensForOpenTasksOnly(t *testing.T) {
 	reg := newRegistry(jobHistory)
 	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, func(jobID, worldUID string) (string, time.Time, error) {
 		return tokens.IssueJob(jobID, worldUID, time.Hour)
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,5 +370,53 @@ func TestCoordinatorRenewsTokensForOpenTasksOnly(t *testing.T) {
 	}
 	if reply := ask(job.ID + "-0"); reply.Token != "" || reply.Error == "" {
 		t.Errorf("a cancelled job's task got %+v", reply)
+	}
+}
+
+// A plan's tiles already in the store are done as the plan is wired: no
+// worker is handed one, and what waits on it goes ahead.
+func TestCoordinatorSkipsStoredTiles(t *testing.T) {
+	server, conn := coordinatorRelay(t)
+	reg := newRegistry(jobHistory)
+	var asked []ArtifactKey
+	var mu sync.Mutex
+	present := func(_ context.Context, key ArtifactKey) bool {
+		mu.Lock()
+		asked = append(asked, key)
+		mu.Unlock()
+		return key.Stage == "L2:0,0"
+	}
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, present)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	computedOrder.Lock()
+	computedOrder.names = nil
+	computedOrder.Unlock()
+	stop, computed, _ := fakeWorker(t, server, false)
+	defer stop()
+	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 3, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	waitForJob(t, reg, job.ID, StateDone)
+	if computed.Load() != 3 {
+		t.Errorf("computed %d tasks, want 3: level 1, L2:1,0 and L3:0,0", computed.Load())
+	}
+	computedOrder.Lock()
+	order := append([]string(nil), computedOrder.names...)
+	computedOrder.Unlock()
+	for _, name := range order {
+		if name == "L2:0,0" {
+			t.Errorf("the stored tile was handed out: %v", order)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(asked) != 3 {
+		t.Fatalf("asked the store %d times, want once per planned tile: %+v", len(asked), asked)
+	}
+	for _, key := range asked {
+		if key.WorldUID != "w" || key.WorldID != "terrain" || (key.Stage[:2] == "L2" && key.PipelineVersion != "v2") || (key.Stage[:2] == "L3" && key.PipelineVersion != "v3") {
+			t.Errorf("asked for %+v", key)
+		}
 	}
 }

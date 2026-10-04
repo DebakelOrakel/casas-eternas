@@ -82,6 +82,11 @@ func New(cfg Config) (*Module, error) {
 // Name identifies the module in logs and errors.
 func (m *Module) Name() string { return "artifacts" }
 
+// Store is the module's store, for a co-resident module's injected lookup
+// (the jobs coordinator's ArtifactPresent, composed in cmd/) — the same
+// handing-out the world module does.
+func (m *Module) Store() *Store { return m.store }
+
 // Mount claims the artifact routes.
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST /v1/artifacts/resolve", m.handleResolve)

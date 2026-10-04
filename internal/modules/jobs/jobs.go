@@ -118,6 +118,12 @@ type Config struct {
 	RelayURL string
 	// The coordinator's state directory (jobs.storage), for jobs.db.
 	StorageDir string
+	// ArtifactPresent answers whether an artifact is whole in the store: what
+	// lets the coordinator mark a refine plan's tiles that are already there
+	// done instead of handing each to a worker to find out (coordinator.go,
+	// handleDone). Composed by cmd/ over a co-resident artifacts module; nil
+	// leaves the check to the workers.
+	ArtifactPresent func(ctx context.Context, key ArtifactKey) bool
 }
 
 type Module struct {
@@ -209,7 +215,7 @@ func New(cfg Config) (*Module, error) {
 			return cfg.Tokens.IssueJob(jobID, worldUID, jobTokenTTL)
 		}
 	}
-	m.coord, err = newCoordinator(cfg.StorageDir, cfg.Relay, m.jobs, m.buildSpec, token)
+	m.coord, err = newCoordinator(cfg.StorageDir, cfg.Relay, m.jobs, m.buildSpec, token, cfg.ArtifactPresent)
 	if err != nil {
 		cancel()
 		return nil, err

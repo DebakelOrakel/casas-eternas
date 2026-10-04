@@ -37,7 +37,7 @@ import { encodeCoupledTerrain, HISTORY_DEFAULTS } from '../src/generator/pipelin
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../src/generator/climate/climateField'
 import { replayHistory, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
 import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
-import { bakedTileToArtifact, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact, type MeshTileArtifact } from '../src/world/meshTileArtifacts'
+import { bakedTileToArtifact, meshTileArtifactInfo, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact, type MeshTileArtifact } from '../src/world/meshTileArtifacts'
 import { bakeMeshTile, type UpstreamTile } from '../src/generator/pipeline/meshTileBake'
 import { parentTilesOf, TILE_SPECS, tileCorner, tileGrid, tileParentFromTiles, tileSpec, type TileParent, type TilePiece, type TileSpec } from '../src/generator/mesh/meshTile'
 import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
@@ -449,6 +449,16 @@ function stderrProgress(): (phase: string, fraction: number) => void {
 interface JobOutcome {
   result: { worldId: string; pipelineVersion: string; stage: string; width: number; height: number; nodes: number; durationMs: number }
   tasks?: PlannedTask[]
+  // With a plan: each tile level's pipeline version, by level — with the
+  // result's worldId, the key each planned tile is stored under, so the
+  // coordinator marks the tiles already stored done instead of handing them
+  // out (internal/modules/jobs/coordinator.go, storedTiles).
+  tileVersions?: Record<string, string>
+}
+
+// The pipeline version of every tile level, as the plan's report carries it.
+function tileVersionsOf(job: Job): Record<string, string> {
+  return Object.fromEntries(Object.keys(TILE_SPECS).map((level) => [level, meshTilePipelineVersion(Number(level), job.erosionRounds)]))
 }
 
 type WorldInputs = NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>
@@ -524,6 +534,7 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
       return {
         result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.artifact.count, durationMs: stored.bakeMs },
         tasks: planOf(inputs, stored.artifact),
+        tileVersions: tileVersionsOf(job),
       }
     }
   }
@@ -536,6 +547,7 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   return {
     result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs },
     tasks: planOf(inputs, artifact),
+    tileVersions: tileVersionsOf(job),
   }
 }
 
@@ -729,8 +741,8 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   const pipelineVersion = meshTilePipelineVersion(spec.level, job.erosionRounds)
   const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(tile))
   if (job.reuse) {
-    const stored = await readMeshTileArtifact(store, key)
-    if (stored) return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.artifact.count, durationMs: stored.bakeMs } }
+    const stored = await meshTileArtifactInfo(store, key)
+    if (stored) return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.nodes, durationMs: stored.bakeMs } }
   }
   onProgress('parent', 0)
   const parentKey = artifactKey(inputs.worldUid, inputs.worldId, meshPipelineVersion(1, job.erosionRounds), meshLevelStage(1))
@@ -934,7 +946,7 @@ async function serve(config: ServeConfig): Promise<void> {
     }
     try {
       const outcome = await runJob(job, onProgress, cache)
-      await js.publish(`jobs.done.${taskId}`, JSON.stringify({ taskId, ok: true, result: outcome.result, tasks: outcome.tasks }))
+      await js.publish(`jobs.done.${taskId}`, JSON.stringify({ taskId, ok: true, result: outcome.result, tasks: outcome.tasks, tileVersions: outcome.tileVersions }))
       msg.ack()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

@@ -670,6 +670,11 @@ cmd/ already did. `bakeRunner` in `/v1/capabilities` always answers
 
 ## Status
 
+2026-10-04: a refine plan's tiles already in the store are marked done by
+the coordinator as it wires the plan, asked of the co-resident artifact
+store with the keys level 1's report carries (worldId and the tile levels'
+versions); no worker is handed one to find out.
+
 2026-10-04: a task's job token holds an hour and is renewed by the worker on
 jobs.token.<taskId> while the task and its job are open
 (internal/modules/jobs/coordinator.go, handleToken); a cancelled job's

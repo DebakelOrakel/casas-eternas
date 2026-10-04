@@ -170,7 +170,7 @@ func newTestModuleWith(t *testing.T, caller *identity.Resolver) (*Module, *heldW
 		slots:    1,
 	}
 	var err error
-	m.coord, err = newCoordinator(m.cfg.StorageDir, conn, m.jobs, m.buildSpec, nil)
+	m.coord, err = newCoordinator(m.cfg.StorageDir, conn, m.jobs, m.buildSpec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

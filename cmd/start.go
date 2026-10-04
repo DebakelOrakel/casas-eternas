@@ -166,6 +166,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	// so the grants, the per-world locks and the layout have one owner in
 	// the process.
 	var worldModule *world.Module
+	var artifactsModule *artifacts.Module
 	if targets.Has(config.TargetWorld) {
 		if err := cfg.World.Storage.Validate("world"); err != nil {
 			return nil, nil, err
@@ -207,9 +208,10 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 			return nil, nil, err
 		}
 		modules = append(modules, m)
+		artifactsModule = m
 	}
 	if targets.Has(config.TargetJobs) {
-		bcfg, err := bakeConfig(targets, cfg, worldModule, rankWorld, caller, tokens)
+		bcfg, err := bakeConfig(targets, cfg, worldModule, artifactsModule, rankWorld, caller, tokens)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -277,7 +279,7 @@ func relayToken(tokens *token.Tokens, module string) func() string {
 	}
 }
 
-func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *token.Tokens) (jobs.Config, error) {
+func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, artifactsModule *artifacts.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *token.Tokens) (jobs.Config, error) {
 	inCluster := jobs.InCluster()
 	selfURL := serverBaseURL(cfg.Global.Listen)
 	if inCluster && selfURL == "" {
@@ -327,6 +329,18 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		bcfg.ArtifactsURL = base + server.APIPrefix
 	default:
 		return jobs.Config{}, fmt.Errorf("jobs need an artifact sink: select the artifacts target too, or set global.services.artifacts")
+	}
+	// Which planned tiles are already stored, asked of the co-resident store
+	// whatever the workers use: the coordinator runs here. Whole means its
+	// meta.json is there — the client writes it last (world/
+	// meshTileArtifacts.ts). Over global.services.artifacts there is none;
+	// the workers find out themselves, as before.
+	if artifactsModule != nil {
+		store := artifactsModule.Store()
+		bcfg.ArtifactPresent = func(ctx context.Context, key jobs.ArtifactKey) bool {
+			_, files, err := store.Resolve(ctx, artifacts.Key{WorldUID: key.WorldUID, WorldID: key.WorldID, PipelineVersion: key.PipelineVersion, Stage: key.Stage}, false)
+			return err == nil && slices.Contains(files, "meta.json")
+		}
 	}
 	return bcfg, nil
 }
