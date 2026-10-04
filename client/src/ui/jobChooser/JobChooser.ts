@@ -1,7 +1,7 @@
 import { t, type TKey } from '../../i18n/i18n'
 import { JOB_PHASE_KEYS } from './jobPhases'
 import { formatClock, formatDuration, formatWhen } from '../../ui/format'
-import { bakeFraction, cancelBake, jobStageName, listBakes, watchJobs, type BakeJob, type JobLevel } from '../../world/jobClient'
+import { bakeFraction, cancelBake, jobStageName, listBakes, watchJobs, workerCount, type BakeJob, type JobLevel } from '../../world/jobClient'
 import { getServerStatus } from '../../server/serverStatus'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
@@ -124,6 +124,9 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
   let jobs: BakeJob[] | null = []
   let worldNames = new Map<string, string>()
   let workers = 0
+  // Workers the server wants but not yet connected — a cluster scaling up;
+  // null when every wanted worker is there, or the server cannot say.
+  let starting: { connected: number; wanted: number } | null = null
   let timer: ReturnType<typeof setInterval> | null = null
   let repaintTimer: ReturnType<typeof setInterval> | null = null
   let unwatch: (() => void) | null = null
@@ -147,6 +150,14 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     if (seq !== reloadSeq) return
     jobs = listed
     paint()
+  }
+
+  // The workers starting, asked again at every repaint: the event stream
+  // carries jobs, not workers, and a cluster scaling up changes nothing a
+  // job says until a worker takes a task.
+  async function refreshWorkers(): Promise<void> {
+    const count = await workerCount()
+    starting = count && count.wanted !== undefined && count.connected < count.wanted ? { connected: count.connected, wanted: count.wanted } : null
   }
 
   // One job changed, as the event stream sends it: in place, or on top when
@@ -241,13 +252,16 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       stateText = t('generator.jobs.state.running')
     } else if (level.queued > 0) {
       state = 'queued'
-      stateText = t('generator.jobs.level.waitingWorker')
+      stateText = starting ? t('generator.jobs.level.workersStarting', starting) : t('generator.jobs.level.waitingWorker')
     } else {
       state = 'queued'
       stateText = before && before.state !== 'done' ? t('generator.jobs.level.waitingFor', { level: before.stage }) : t('generator.jobs.state.queued')
     }
     const parts: string[] = []
     if (tiles) parts.push(t('generator.jobs.level.tiles', { done: level.done, total: level.total, running: level.running }))
+    // Running, with tiles still queued while workers start: say so, or the
+    // queued tiles look forgotten.
+    if (starting && level.queued > 0 && (level.running > 0 || level.startedAt)) parts.push(t('generator.jobs.level.workersStarting', starting))
     else if (level.running > 0 && level.phase && JOB_PHASE_KEYS[level.phase]) parts.push(t(JOB_PHASE_KEYS[level.phase]))
     if (level.failed > 0 && tiles) parts.push(t('generator.jobs.level.failed', { failed: level.failed }))
     // The end: when it ended, or — while it runs — where the rate so far
@@ -541,9 +555,9 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     open() {
       root.hidden = false
       closeButton.focus()
-      void loadNames().then(reload)
+      void Promise.all([loadNames(), refreshWorkers()]).then(reload)
       stopPolling()
-      repaintTimer = setInterval(() => paint(), REPAINT_MS)
+      repaintTimer = setInterval(() => void refreshWorkers().then(paint), REPAINT_MS)
       unwatch = watchJobs(apply, () => {
         unwatch = null
         if (!root.hidden) timer = setInterval(() => void reload(), POLL_MS)

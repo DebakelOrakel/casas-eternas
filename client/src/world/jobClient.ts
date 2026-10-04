@@ -96,6 +96,23 @@ export async function listBakes(): Promise<BakeJob[] | null> {
   }
 }
 
+// How many workers are connected now and how many the server wants
+// (internal/modules/jobs/presence.go): while a cluster scales up, the
+// difference is what a waiting tile waits for. Null where the server cannot
+// say — no jobs module, or one from before the count.
+export async function workerCount(): Promise<{ connected: number; wanted?: number } | null> {
+  const base = await apiBase()
+  if (!base) return null
+  try {
+    const response = await authFetch(`${base}/jobs/workers`, { cache: 'no-store' })
+    if (!response.ok) return null
+    const body = (await response.json()) as { connected: number; wanted?: number }
+    return { connected: body.connected, wanted: body.wanted }
+  } catch {
+    return null
+  }
+}
+
 // Stops a job: a waiting one never starts, a running one is aborted. False
 // when the server refused or could not be reached.
 export async function cancelBake(id: string): Promise<boolean> {

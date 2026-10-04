@@ -145,6 +145,9 @@ type Module struct {
 	// How many jobs run at once (jobs.max-concurrent): the local workers,
 	// or the most the worker Deployment is scaled to.
 	slots int
+	// The cluster's worker scaler; nil where this process starts its own
+	// workers.
+	scaler *workerScaler
 }
 
 func New(cfg Config) (*Module, error) {
@@ -232,6 +235,8 @@ func New(cfg Config) (*Module, error) {
 			return nil, fmt.Errorf("worker scaler: %w", err)
 		}
 		scaler := &workerScaler{api: api, workload: m.coord.workload, max: workers}
+		scaler.wanted.Store(-1)
+		m.scaler = scaler
 		go scaler.run(ctx)
 	}
 	slog.Info("jobs ready", "coordinator", cfg.StorageDir, "workers", workers, "checks identity", cfg.Identity.ChecksIdentity())

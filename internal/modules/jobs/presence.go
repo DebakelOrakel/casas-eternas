@@ -103,13 +103,35 @@ func (p *presence) list() []WorkerPresence {
 	return out
 }
 
-// handleWorkers answers the connected workers, to an admin: hosts and
-// accounts are the operator's business. Where nothing checks identity,
-// everyone is let through, as every check is there.
+// workersAnswer is what GET /v1/jobs/workers answers. `connected` and
+// `wanted` to anyone who may see jobs: the jobs window says "2 of 6
+// workers connected" while a cluster scales up, which is otherwise a
+// silent wait. `wanted` is the replicas the scaler last set, or this
+// process's own workers; absent before the scaler has looked. The list
+// itself — hosts, accounts — to an admin only: the operator's business.
+type workersAnswer struct {
+	Connected int              `json:"connected"`
+	Wanted    *int             `json:"wanted,omitempty"`
+	Workers   []WorkerPresence `json:"workers,omitempty"`
+}
+
 func (m *Module) handleWorkers(w http.ResponseWriter, r *http.Request) {
-	if m.cfg.Identity.ChecksIdentity() && !m.cfg.Identity.Admin(r) {
-		httpjson.ClientError(w, http.StatusForbidden, "the worker list is for administrators")
-		return
+	listed := m.coord.presence.list()
+	answer := workersAnswer{Connected: len(listed)}
+	wanted := m.slots
+	if m.scaler != nil {
+		wanted = int(m.scaler.wanted.Load())
 	}
-	httpjson.Write(w, http.StatusOK, map[string]any{"workers": m.coord.presence.list()})
+	if wanted >= 0 {
+		answer.Wanted = &wanted
+	}
+	// Where nothing checks identity, everyone counts as admin, as every
+	// check answers yes there.
+	if !m.cfg.Identity.ChecksIdentity() || m.cfg.Identity.Admin(r) {
+		answer.Workers = listed
+		if answer.Workers == nil {
+			answer.Workers = []WorkerPresence{}
+		}
+	}
+	httpjson.Write(w, http.StatusOK, answer)
 }

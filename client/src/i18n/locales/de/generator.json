@@ -263,6 +263,7 @@
   "generator.jobs.plan": "bis L{stage} · bestellt {time}",
   "generator.jobs.level.waitingFor": "wartet auf L{level}",
   "generator.jobs.level.waitingWorker": "wartet auf einen Worker",
+  "generator.jobs.level.workersStarting": "Worker starten: {connected} von {wanted} verbunden",
   "generator.jobs.level.tiles": "{done} / {total} Kacheln · {running} laufen",
   "generator.jobs.level.failed": "{failed} fehlgeschlagen",
   "generator.jobs.phase.verify": "Prüfung",

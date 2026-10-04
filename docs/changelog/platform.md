@@ -8,6 +8,7 @@ the format.
 - **changed** Server: a password has at least 10 characters, upper- and lower-case letters among them. `auth`
 - **new** Server: an admin can block a user, in the admin window or with `auth user block|unblock`; `auth code add|list|revoke` and `auth user reset` make and manage codes from the command line. `auth`
 - **new** Server: the admin window lists the workers connected now, with what each computes. `jobs`
+- **new** Jobs window: while the cluster starts workers, a waiting level says how many of them are connected. `jobs`
 
 ## 2026-10-02
 - **fixed** Server: a tile comes out the same on every job worker, also on a machine with fewer than four cores. `jobs`

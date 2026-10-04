@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,6 +33,9 @@ type workerScaler struct {
 	// The open jobs and their handed-out tasks (coordinator.workload).
 	workload func() (open, tasks int)
 	max      int
+	// The replicas last seen or set, -1 before the first look: what the
+	// jobs window compares the connected workers with (presence.go).
+	wanted atomic.Int64
 	// The Deployment the scaler found, remembered so a missing one is said
 	// once rather than every ten seconds.
 	missingSaid bool
@@ -92,6 +96,7 @@ func (s *workerScaler) step(ctx context.Context) {
 	}
 	open, tasks := s.workload()
 	want := wantWorkers(open, tasks, current, s.max)
+	s.wanted.Store(int64(current))
 	if want == current {
 		return
 	}
@@ -99,5 +104,6 @@ func (s *workerScaler) step(ctx context.Context) {
 		slog.Warn("worker scaler", "err", err)
 		return
 	}
+	s.wanted.Store(int64(want))
 	slog.Info("workers scaled", "deployment", names[0], "from", current, "to", want, "open jobs", open, "tasks", tasks)
 }

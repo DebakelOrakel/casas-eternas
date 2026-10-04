@@ -120,7 +120,7 @@ export async function listWorkers(): Promise<ConnectedWorker[] | AdminFailure> {
   const response = await authFetch(`${base}/jobs/workers`, { cache: 'no-store' }).catch(() => null)
   if (!response) return { failed: null }
   if (!response.ok) return { failed: await refusalText(response) }
-  return ((await response.json()) as { workers: ConnectedWorker[] }).workers
+  return ((await response.json()) as { workers?: ConnectedWorker[] }).workers ?? []
 }
 
 // A user's picture as an object URL, fetched once per version (the route
