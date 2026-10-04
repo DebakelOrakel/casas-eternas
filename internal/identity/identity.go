@@ -90,7 +90,7 @@ func (r *Resolver) ResolveBearer(authorization string) (caller string, admin boo
 	if r.tokens == nil {
 		return Anonymous, false
 	}
-	raw := bearerOf(authorization)
+	raw := BearerOf(authorization)
 	if raw == "" {
 		return Anonymous, false
 	}
@@ -156,10 +156,12 @@ func (r *Resolver) JobToken(req *http.Request) (jobID, worldUID string, ok bool)
 // on the scheme because RFC 7235 says the scheme is not case sensitive and some
 // clients send "bearer".
 func bearer(req *http.Request) string {
-	return bearerOf(req.Header.Get("Authorization"))
+	return BearerOf(req.Header.Get("Authorization"))
 }
 
-func bearerOf(header string) string {
+// BearerOf is the token of an Authorization header's Bearer scheme, the
+// scheme matched without regard to case; empty for any other header.
+func BearerOf(header string) string {
 	scheme, value, found := strings.Cut(strings.TrimSpace(header), " ")
 	if !found || !strings.EqualFold(scheme, "Bearer") {
 		return ""

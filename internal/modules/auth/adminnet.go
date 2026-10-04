@@ -23,25 +23,15 @@ func (m *Module) mountNetworkAdmin(mux *http.ServeMux) {
 	inner := http.NewServeMux()
 	_ = m.MountAdmin(inner)
 	gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		id, admin, err := m.cfg.Tokens.VerifySession(raw)
-		if err != nil || raw == "" {
-			http.Error(w, "authentication required", http.StatusUnauthorized)
-			return
-		}
-		if !admin {
-			http.Error(w, "the admin API needs an administrator", http.StatusForbidden)
-			return
-		}
-		caller, ok := m.cfg.Registry.ByID(id)
+		caller, ok := m.me(w, r)
 		if !ok {
-			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
-		// The claim says what the role WAS at sign-in; the registry what it
-		// is. A demoted admin's token keeps its claim until it runs out, and
-		// over the network that would be time enough to demote the one who
-		// demoted them.
+		// The registry's role, not the token's adm claim: the claim says what
+		// the role WAS at sign-in. A demoted admin's token keeps its claim
+		// until it runs out, and over the network that would be time enough
+		// to demote the one who demoted them; a promoted user's lacks it
+		// while the panel already offers them the window.
 		if !caller.Admin() {
 			http.Error(w, "the admin API needs an administrator", http.StatusForbidden)
 			return

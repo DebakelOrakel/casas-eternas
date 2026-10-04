@@ -439,11 +439,10 @@ func (c *coordinator) storedTiles(report taskDoneReport) map[[3]int]bool {
 	var tiles [][3]int
 	var keys []ArtifactKey
 	for _, p := range filterPlanned(report.Tasks, job.Request.Stage) {
-		version := report.TileVersions[strconv.Itoa(p.Level)]
+		version, stage := tileArtifact(report, p)
 		if version == "" {
 			continue
 		}
-		stage := Request{Stage: p.Level, Scope: Scope{Kind: ScopeTile, X: p.X, Y: p.Y}}.StageName()
 		tiles = append(tiles, [3]int{p.Level, p.X, p.Y})
 		keys = append(keys, ArtifactKey{WorldUID: job.Request.WorldUID, WorldID: report.Result.WorldID, PipelineVersion: version, Stage: stage})
 	}
@@ -460,6 +459,14 @@ func (c *coordinator) storedTiles(report taskDoneReport) map[[3]int]bool {
 	}
 	slog.Info("jobs: planned tiles checked against the store", "job", job.ID, "stored", len(stored), "planned", len(keys), "took", time.Since(started).Round(time.Millisecond))
 	return stored
+}
+
+// tileArtifact is a planned tile's artifact as the worker that bakes it
+// files it: the pipeline version of its level (empty where the report
+// names none) and its stage. One place, so the check of the store and the
+// result of a tile found there cannot name different artifacts.
+func tileArtifact(report taskDoneReport, p plannedTask) (version, stage string) {
+	return report.TileVersions[strconv.Itoa(p.Level)], Request{Stage: p.Level, Scope: Scope{Kind: ScopeTile, X: p.X, Y: p.Y}}.StageName()
 }
 
 func (c *coordinator) applyDone(report taskDoneReport, stored map[[3]int]bool) {
@@ -511,7 +518,8 @@ func (c *coordinator) applyDone(report taskDoneReport, stored map[[3]int]bool) {
 				t.State = taskDone
 				t.StartedAt = &ended
 				t.EndedAt = &ended
-				t.Result = &Result{WorldID: report.Result.WorldID, PipelineVersion: report.TileVersions[strconv.Itoa(p.Level)], Stage: request.StageName()}
+				version, stage := tileArtifact(report, p)
+				t.Result = &Result{WorldID: report.Result.WorldID, PipelineVersion: version, Stage: stage}
 			}
 			byPlace[[3]int{p.Level, p.X, p.Y}] = t.ID
 			added = append(added, t)

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
+	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 	"github.com/DebakelOrakel/casas-eternas/internal/user"
 )
 
@@ -72,7 +73,7 @@ func profileOf(u user.User) profile {
 
 // me resolves the caller's own entry from a session token, or answers 401.
 func (m *Module) me(w http.ResponseWriter, r *http.Request) (user.User, bool) {
-	raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	raw := identity.BearerOf(r.Header.Get("Authorization"))
 	id, _, err := m.cfg.Tokens.VerifySession(raw)
 	if err != nil || raw == "" {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
@@ -141,7 +142,7 @@ func (m *Module) serveChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("password changed by its user", "user", entry.Name, "id", entry.ID)
 	entry, _ = m.cfg.Registry.ByID(entry.ID)
-	m.signIn(w, entry)
+	m.issueSession(w, entry)
 }
 
 // --- avatars ----------------------------------------------------------------
@@ -188,6 +189,8 @@ func (m *Module) servePutAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := m.cfg.Registry.SetAvatar(entry.ID, version, mediaType); err != nil {
+		// Not recorded (the user was deleted meanwhile, say): the file goes.
+		_ = os.Remove(path)
 		adminError(w, "recording an avatar", err)
 		return
 	}

@@ -147,7 +147,7 @@
 
 .handbook__group,
 .handbook__body h2,
-.handbook__overlays h2 {
+.handbook__section h2 {
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
   font-size: 10.5px;
   font-weight: 400;
@@ -348,13 +348,13 @@ a.handbook__link {
   background: var(--dc-hover);
 }
 
-.handbook__overlays {
+.handbook__section {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.handbook__overlays h2 {
+.handbook__section h2 {
   margin: 12px 0 0;
 }
 

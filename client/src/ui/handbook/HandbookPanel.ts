@@ -292,7 +292,7 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
   function cardSection(headingKey: TKey, cards: { title: string; text?: string; page?: string; href?: string }[]): void {
     if (cards.length === 0) return
     const section = document.createElement('section')
-    section.className = 'handbook__overlays'
+    section.className = 'handbook__section'
     const heading = document.createElement('h2')
     heading.textContent = t(headingKey)
     section.appendChild(heading)
@@ -332,7 +332,7 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
   function listSection(headingKey: TKey, rows: { label: string; help?: string; icon?: string; page: string }[]): void {
     if (rows.length === 0) return
     const section = document.createElement('section')
-    section.className = 'handbook__overlays'
+    section.className = 'handbook__section'
     const heading = document.createElement('h2')
     heading.textContent = t(headingKey)
     section.appendChild(heading)

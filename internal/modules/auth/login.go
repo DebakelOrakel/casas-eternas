@@ -16,9 +16,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
 	"github.com/DebakelOrakel/casas-eternas/internal/user"
 )
@@ -145,27 +145,36 @@ func (m *Module) serveLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // signIn issues the session a verified user gets — after a login, or after
-// redeeming a code (codes.go) — and answers it.
+// redeeming a code (codes.go) — notes the sign-in, and answers it.
 func (m *Module) signIn(w http.ResponseWriter, entry user.User) {
+	if !m.issueSession(w, entry) {
+		return
+	}
+	slog.Info("logged in", "user", entry.Name, "id", entry.ID, "admin", entry.Admin())
+	// For the admin table; a login that cannot be noted is still a login.
+	if err := m.cfg.Registry.RecordLogin(entry.ID); err != nil {
+		slog.Warn("cannot note a login", "user", entry.Name, "error", err)
+	}
+}
+
+// issueSession answers a session, access and refresh token, for a user;
+// false, and a 500 answered, where none can be signed. Not a sign-in by
+// itself: a changed password is answered one too (profile.go).
+func (m *Module) issueSession(w http.ResponseWriter, entry user.User) bool {
 	issued, expires, err := m.cfg.Tokens.IssueSession(entry.ID, entry.Admin(), m.cfg.TTL)
 	if err != nil {
 		slog.Error("cannot issue a token", "error", err, "user", entry.Name)
 		http.Error(w, "cannot issue a token", http.StatusInternalServerError)
-		return
+		return false
 	}
 	refresh, refreshExpires, err := m.cfg.Tokens.IssueRefresh(entry.ID, entry.SessionGeneration, m.cfg.SessionTTL)
 	if err != nil {
 		slog.Error("cannot issue a token", "error", err, "user", entry.Name)
 		http.Error(w, "cannot issue a token", http.StatusInternalServerError)
-		return
+		return false
 	}
-	slog.Info("logged in", "user", entry.Name, "id", entry.ID, "admin", entry.Admin(), "expires", expires)
-	// For the admin table; a login that cannot be noted is still a login.
-	if err := m.cfg.Registry.RecordLogin(entry.ID); err != nil {
-		slog.Warn("cannot note a login", "user", entry.Name, "error", err)
-	}
-
 	writeSession(w, response{Token: issued, ExpiresAt: expires, User: entry.Name, RefreshToken: refresh, RefreshExpiresAt: &refreshExpires})
+	return true
 }
 
 func writeSession(w http.ResponseWriter, body response) {
@@ -186,7 +195,7 @@ func writeSession(w http.ResponseWriter, body response) {
 const RefreshPath = "/v1/auth/refresh"
 
 func (m *Module) serveRefresh(w http.ResponseWriter, r *http.Request) {
-	raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	raw := identity.BearerOf(r.Header.Get("Authorization"))
 	id, generation, err := m.cfg.Tokens.VerifyRefresh(raw)
 	if err != nil || raw == "" {
 		unauthorized(w)
