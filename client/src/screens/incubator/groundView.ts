@@ -6,12 +6,13 @@ import { createGroundWater } from '../../map/groundWater'
 import { MAP_EXAGGERATION, MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_HEIGHT_SCALE, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import { artifactKey, type ArtifactStore } from '../../storage/ArtifactStore'
 import type { MeshLevelArtifact } from '../../world/meshArtifacts'
-import { readMeshTileArtifact } from '../../world/meshTileArtifacts'
+import { meshTileStage, readMeshTileArtifact } from '../../world/meshTileArtifacts'
 import { tileAt } from '../../generator/pipeline/tilePlan'
 import type { TileId } from '../../generator/mesh/meshTile'
 import { LEVEL1_GRID_LEVEL, level1Stage, rasterBytes } from './groundRaster'
 import type { GridField } from './groundSource'
 import type { GroundWorkerInbound, GroundWorkerOutbound } from './groundWorker'
+import { neighbourTiles, type TileRim } from './groundSeams'
 
 // THE INCUBATOR'S GROUND: the rings (map/groundRings.ts) over a worker
 // that paints them (groundWorker.ts), the light that shows them and the
@@ -210,7 +211,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       if (w === undefined) return
       const tile = level1Queue.shift()!
       level1Busy.add(w)
-      workers[w].postMessage({ type: 'rasterise', stage: level1Stage(tile.x, tile.y), tile, artifact: null } satisfies GroundWorkerInbound)
+      workers[w].postMessage({ type: 'rasterise', stage: level1Stage(tile.x, tile.y), tile, artifact: null, rims: [] } satisfies GroundWorkerInbound)
     }
   }
   // A raster arrived: into the registry, to every worker, the waiting
@@ -241,7 +242,45 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       rasterBytesHeld -= h.bytes
       tileAsked.delete(oldest)
       held.delete(oldest)
+      forgetSeams(oldest)
       for (const worker of workers) worker.postMessage({ type: 'dropRaster', stage: oldest } satisfies GroundWorkerInbound)
+    }
+  }
+
+  // THE SEAMS between a level's tiles (groundSeams.ts): each tile's edge
+  // nodes with their normal sums, which worker keeps the tile to patch it,
+  // the neighbours whose edges each tile has taken, and the rings painted
+  // from a tile, painted again once a seam of it is patched.
+  const rims = new Map<string, TileRim>()
+  const keeper = new Map<string, number>()
+  const seamed = new Map<string, Set<string>>()
+  const usedBy = new Map<string, Set<number>>()
+  const forgetSeams = (stage: string): void => {
+    rims.delete(stage)
+    keeper.delete(stage)
+    seamed.delete(stage)
+    usedBy.delete(stage)
+  }
+  // A tile's edge arrived: it takes its neighbours' known edges, and the
+  // neighbours rastered without it take its.
+  const joinSeams = (stage: string, tile: TileId, rim: TileRim, worker: number): void => {
+    rims.set(stage, rim)
+    keeper.set(stage, worker)
+    const mine = seamed.get(stage) ?? new Set<string>()
+    seamed.set(stage, mine)
+    for (const n of neighbourTiles(tile, worldWidthCells, worldHeightCells)) {
+      const other = meshTileStage(n)
+      const theirs = rims.get(other)
+      if (theirs && !mine.has(other)) {
+        mine.add(other)
+        workers[worker].postMessage({ type: 'reseam', stage, rim: theirs } satisfies GroundWorkerInbound)
+      }
+      const holder = keeper.get(other)
+      const taken = seamed.get(other)
+      if (holder !== undefined && taken && !taken.has(stage)) {
+        taken.add(stage)
+        workers[holder].postMessage({ type: 'reseam', stage: other, rim } satisfies GroundWorkerInbound)
+      }
     }
   }
 
@@ -364,6 +403,9 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       for (const stage of message.used) {
         const h = rasters.get(stage)
         if (h) h.lastUsed = now
+        const rings = usedBy.get(stage) ?? new Set<number>()
+        rings.add(build.k)
+        usedBy.set(stage, rings)
       }
       let again = false
       const waits = new Set<string>()
@@ -426,7 +468,12 @@ export function createGroundView(options: GroundViewOptions): GroundView {
         if (!rasters.has(message.stage)) adopt(message.stage, message.tile, message.n, message.data, index)
         tileAsked.add(message.stage)
         pump()
-      } else adopt(message.stage, message.tile, message.n, message.data, index)
+      } else {
+        adopt(message.stage, message.tile, message.n, message.data, index)
+        if (message.rim) joinSeams(message.stage, message.tile, message.rim, index)
+      }
+    } else if (message.type === 'reseamed') {
+      for (const k of usedBy.get(message.stage) ?? []) rebuildSoon(k)
     } else if (message.type === 'want') {
       if (!key) return
       // Asked once, whichever worker asks: the answer goes to all.
@@ -478,7 +525,10 @@ export function createGroundView(options: GroundViewOptions): GroundView {
           const i = MESH_HOLDERS + (nextRasteriser++ % Math.max(1, workers.length - MESH_HOLDERS))
           const w = Math.min(i, workers.length - 1)
           held.add(job.stage)
-          workers[w].postMessage({ type: 'rasterise', stage: job.stage, tile: job.tile, artifact: a } satisfies GroundWorkerInbound, [a.nodes.buffer, a.triangles.buffer, a.z.buffer, a.role.buffer, a.outflow.buffer])
+          // The neighbours' edges known now; the rest follow as they come.
+          const known = neighbourTiles(job.tile, worldWidthCells, worldHeightCells).map(meshTileStage).filter((s) => rims.has(s))
+          seamed.set(job.stage, new Set(known))
+          workers[w].postMessage({ type: 'rasterise', stage: job.stage, tile: job.tile, artifact: a, rims: known.map((s) => rims.get(s)!) } satisfies GroundWorkerInbound, [a.nodes.buffer, a.triangles.buffer, a.z.buffer, a.role.buffer, a.outflow.buffer])
         }
         pumpTiles()
       })

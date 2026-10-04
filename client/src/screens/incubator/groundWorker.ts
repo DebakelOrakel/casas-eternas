@@ -4,6 +4,7 @@ import { createMeshSampler, type MeshSampler } from '../../generator/mesh/meshSa
 import type { TileId } from '../../generator/mesh/meshTile'
 import { tileSpec } from '../../generator/mesh/meshTile'
 import { createTileSampler } from '../../generator/mesh/tileSampler'
+import { addRims, seamReach, tileOffset, tileRim, type TileRim } from './groundSeams'
 import { makeGroundDetail } from '../../map/groundDetail'
 import { enlargeRgba, paintRing, type RingPaintRequest } from '../../map/groundPaint'
 import { meshLevelMesh, type MeshLevelArtifact } from '../../world/meshArtifacts'
@@ -40,8 +41,12 @@ export type GroundWorkerInbound =
     }
   | ({ type: 'paint'; id: number; started: number; preview: boolean } & RingPaintRequest)
   // Make a raster: a tile's from its artifact, level 1's (artifact null)
-  // from the mesh.
-  | { type: 'rasterise'; stage: string; tile: TileId; artifact: MeshTileArtifact | null }
+  // from the mesh. `rims`: the edges of the tile's neighbours already
+  // known, whose halves its edge normals take (groundSeams.ts).
+  | { type: 'rasterise'; stage: string; tile: TileId; artifact: MeshTileArtifact | null; rims: TileRim[] }
+  // A neighbour's edge arrived after the tile was rastered: the tile's
+  // samples along that side made again, in place.
+  | { type: 'reseam'; stage: string; rim: TileRim }
   // A raster made (here or elsewhere), to read from now on.
   | { type: 'raster'; stage: string; tile: TileId; n: number; data: Float32Array }
   | { type: 'dropRaster'; stage: string }
@@ -54,7 +59,12 @@ export type GroundWorkerOutbound =
   | { type: 'ready' }
   | { type: 'want'; stage: string; tile: TileId }
   | { type: 'painted'; id: number; heights: Float32Array; albedo: Uint8Array; normals: Uint8Array; materials: Uint8Array; wanted: string[]; used: string[]; counts: { held: number; loading: number; missing: number; answered: number[] } }
-  | { type: 'rastered'; stage: string; tile: TileId; n: number; data: Float32Array; ms: number }
+  // `rim`: the tile's edge nodes and their normal sums, for its neighbours.
+  | { type: 'rastered'; stage: string; tile: TileId; n: number; data: Float32Array; ms: number; rim: TileRim | null }
+  // A seam patched, in the shared raster. (Where the page is not cross-
+  // origin isolated the raster went to the main thread as a copy, and the
+  // seams stay as first rastered.)
+  | { type: 'reseamed'; stage: string }
   // From the mesh holder: the level's terrain on the world raster and
   // the water levels its bodies stand at (waterLevels.ts).
   | { type: 'levels'; elevation: Float32Array; level: Float32Array; floor: Float32Array; dam: Float32Array; body: Int32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]; ms: number }
@@ -69,6 +79,27 @@ const post = (message: GroundWorkerOutbound, transfer: Transferable[] = []): voi
 
 let source: RasterGroundSource | null = null
 let base: MeshSampler | null = null
+let worldWidth = 0
+let worldHeight = 0
+
+// The tiles this worker rastered, kept while their raster is held: what a
+// seam patch makes the samples along one side from again.
+interface Kept {
+  tile: TileId
+  nodes: Float32Array
+  triangles: Uint32Array
+  z: Float32Array
+  role: Uint8Array
+  rims: Map<string, TileRim>
+  reach: [number, number, number, number]
+  n: number
+  data: Float32Array
+}
+const kept = new Map<string, Kept>()
+
+// A tile's sampler with its neighbours' halves added to its edge normals.
+const seamedSampler = (k: Kept): ReturnType<typeof createTileSampler> =>
+  createTileSampler(k.nodes, k.triangles, k.z, tileSpec(k.tile.level).cells, (sums) => addRims(k.tile, k.nodes, k.role, sums, k.rims.values(), worldWidth, worldHeight))
 
 const rasterFrom = (tile: TileId, n: number, data: Float32Array): Raster => {
   const frame = tileFrame(tile)
@@ -78,6 +109,9 @@ const rasterFrom = (tile: TileId, n: number, data: Float32Array): Raster => {
 worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
   const message = event.data
   if (message.type === 'world') {
+    worldWidth = message.width
+    worldHeight = message.height
+    kept.clear()
     const mesh = message.level ? meshLevelMesh(message.level, message.width, message.height) : null
     base = mesh && message.level ? createMeshSampler(mesh, message.level.z) : null
     const fields = { ...message.fields }
@@ -110,7 +144,7 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
             const n = rasterSamples(1, frame.cells, METERS_PER_CELL)
             const data = rasterBuffer(n)
             rasteriseLevel(base!, frame.cornerX, frame.cornerY, frame.cells, n, data)
-            post({ type: 'rastered', stage, tile, n, data, ms: Math.round(performance.now() - started) }, data.buffer instanceof ArrayBuffer ? [data.buffer] : [])
+            post({ type: 'rastered', stage, tile, n, data, ms: Math.round(performance.now() - started), rim: null }, data.buffer instanceof ArrayBuffer ? [data.buffer] : [])
             return rasterFrom(tile, n, data)
           }
         : undefined,
@@ -130,15 +164,49 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
     const frame = tileFrame(message.tile)
     const n = rasterSamples(message.tile.level, frame.cells, METERS_PER_CELL)
     const data = rasterBuffer(n)
+    let rim: TileRim | null = null
     if (message.artifact) {
       const a = message.artifact
-      rasteriseTile(createTileSampler(a.nodes, a.triangles, a.z, tileSpec(message.tile.level).cells), message.tile.level, n, data)
+      const cells = tileSpec(message.tile.level).cells
+      const k: Kept = {
+        tile: message.tile, nodes: a.nodes, triangles: a.triangles, z: a.z, role: a.role,
+        rims: new Map(message.rims.map((r) => [`${r.tile.x},${r.tile.y}`, r])),
+        reach: seamReach(a.nodes, a.triangles, a.role, cells), n, data,
+      }
+      const sampler = createTileSampler(a.nodes, a.triangles, a.z, cells, (sums) => {
+        rim = tileRim(message.tile, a.nodes, a.role, sums)
+        addRims(k.tile, k.nodes, k.role, sums, k.rims.values(), worldWidth, worldHeight)
+      })
+      rasteriseTile(sampler, message.tile.level, n, data)
+      kept.set(message.stage, k)
     } else if (base) {
       rasteriseLevel(base, frame.cornerX, frame.cornerY, frame.cells, n, data)
     } else return
     source.setRaster(message.stage, rasterFrom(message.tile, n, data))
-    // A shared buffer is not transferable (nor need be); a plain one is.
-    post({ type: 'rastered', stage: message.stage, tile: message.tile, n, data, ms: Math.round(performance.now() - started) }, data.buffer instanceof ArrayBuffer ? [data.buffer] : [])
+    // A shared buffer is not transferable (nor need be); a plain one is —
+    // and then the copy kept for the seams goes with it.
+    const transfer = data.buffer instanceof ArrayBuffer
+    if (transfer) kept.delete(message.stage)
+    post({ type: 'rastered', stage: message.stage, tile: message.tile, n, data, ms: Math.round(performance.now() - started), rim }, transfer ? [data.buffer as ArrayBuffer] : [])
+    return
+  }
+  if (message.type === 'reseam') {
+    const k = kept.get(message.stage)
+    if (!k) return
+    const id = `${message.rim.tile.x},${message.rim.tile.y}`
+    if (k.rims.has(id)) return
+    k.rims.set(id, message.rim)
+    // The samples a change of this side's (or corner's) edge normals can
+    // reach: within the side's reach, plus a sample.
+    const cells = tileSpec(k.tile.level).cells
+    const step = cells / (k.n - 1)
+    const { dx, dy } = tileOffset(k.tile, message.rim.tile, worldWidth, worldHeight)
+    const [left, right, bottom, top] = k.reach
+    const only = (x: number, y: number): boolean =>
+      (dx === 0 || (dx < 0 ? x <= left + step : cells - x <= right + step)) &&
+      (dy === 0 || (dy < 0 ? y <= bottom + step : cells - y <= top + step))
+    rasteriseTile(seamedSampler(k), k.tile.level, k.n, k.data, only)
+    post({ type: 'reseamed', stage: message.stage })
     return
   }
   if (message.type === 'raster') {
@@ -146,6 +214,7 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
     return
   }
   if (message.type === 'dropRaster') {
+    kept.delete(message.stage)
     source.dropRaster(message.stage)
     return
   }

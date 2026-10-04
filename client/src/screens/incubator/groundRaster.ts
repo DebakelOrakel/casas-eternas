@@ -62,7 +62,8 @@ export function rasterBuffer(n: number): Float32Array {
 const EDGE_NUDGE = 1e-4
 
 // A tile's raster from its sampler (positions in cells from the corner).
-export function rasteriseTile(sampler: TileSurfaceSampler, level: number, n: number, out: Float32Array): void {
+// With `only`, just the samples it accepts (a seam patched, groundSeams.ts).
+export function rasteriseTile(sampler: TileSurfaceSampler, level: number, n: number, out: Float32Array, only?: (x: number, y: number) => boolean): void {
   const cells = tileSpec(level).cells
   const step = cells / (n - 1)
   const s = new Float64Array(5)
@@ -70,6 +71,7 @@ export function rasteriseTile(sampler: TileSurfaceSampler, level: number, n: num
     const y = Math.min(cells - EDGE_NUDGE, Math.max(EDGE_NUDGE, j * step))
     for (let i = 0; i < n; i++) {
       const x = Math.min(cells - EDGE_NUDGE, Math.max(EDGE_NUDGE, i * step))
+      if (only && !only(x, y)) continue
       const p = (j * n + i) * 3
       if (sampler.surfaceAt(x, y, s)) {
         out[p] = s[0]

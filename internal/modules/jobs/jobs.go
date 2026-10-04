@@ -414,11 +414,16 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 
 // jobTokenTTL bounds a job's credential.
 //
-// The token travels in the task message, readable by anyone who can read
-// the relay's task stream, so its value is how long that exposure lasts. An
-// hour is generous for one task and short enough that a leaked one goes
-// stale the same morning.
-const jobTokenTTL = time.Hour
+// It is minted when the task is handed out and must outlive the task's
+// wait in the queue plus its whole run: the worker reads the world at the
+// start and writes the artifact at the end. An hour did not — a level-1
+// replay in the cluster ran 7 h 45 min and its artifact write was refused
+// (2026-10-04), and a tile of a large plan can wait hours behind the
+// others. The token travels in the task message, which only workers
+// admitted to the relay read (the hour dated from Kubernetes Job specs,
+// readable by anyone who could read Jobs in the namespace), and it names
+// one job and one world.
+const jobTokenTTL = 48 * time.Hour
 
 // buildSpec resolves a request into what a worker needs, a task at a time
 // (the coordinator's specFor).

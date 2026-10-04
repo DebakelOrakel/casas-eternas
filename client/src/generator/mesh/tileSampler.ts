@@ -14,6 +14,14 @@ import { detHypot } from '../core/detMath'
 // instead of as facets, which with the map's exaggeration every triangle
 // was (the incubator's mid views, 2026-10-03). Metre-true: the
 // horizontal in metres per cell, the height in metres per elevation unit.
+//
+// A node on the tile's edge has only its inside triangles here, so its
+// normal is half a star, and the tile beside it has the other half: the
+// two tiles disagree on the one node they share, by about as much as the
+// terrain is tilted (measured 2026-10-03: median 0.5°, p90 2°), and the
+// hillshade draws every tile border. The sums are additive, so `adjust`
+// lets a caller that knows the neighbours add their halves before the
+// normalisation (screens/incubator/groundSeams.ts).
 
 export interface TileSurfaceSampler {
   heightAt(x: number, y: number): number
@@ -28,22 +36,12 @@ export interface TileSurfaceSampler {
 // triangles a bucket.
 const BUCKETS = 64
 
-export function createTileSampler(nodes: Float32Array, triangles: Uint32Array, z: Float32Array, cells: number): TileSurfaceSampler {
-  const size = cells / BUCKETS
-  const buckets: number[][] = Array.from({ length: BUCKETS * BUCKETS }, () => [])
-  const clamp = (v: number): number => Math.max(0, Math.min(BUCKETS - 1, Math.floor(v / size)))
-  const count = nodes.length / 2
-  const normals = new Float32Array(count * 3)
-  const spacing = new Float32Array(triangles.length / 3)
+// The area-weighted normal sums per node (3 each, y up, metres): every
+// triangle's normal, its length twice the area, added at its corners.
+export function tileNormalSums(nodes: Float32Array, triangles: Uint32Array, z: Float32Array): Float64Array {
+  const sums = new Float64Array((nodes.length / 2) * 3)
   for (let t = 0; t < triangles.length; t += 3) {
     const a = triangles[t], b = triangles[t + 1], c = triangles[t + 2]
-    const x0 = clamp(Math.min(nodes[2 * a], nodes[2 * b], nodes[2 * c]))
-    const x1 = clamp(Math.max(nodes[2 * a], nodes[2 * b], nodes[2 * c]))
-    const y0 = clamp(Math.min(nodes[2 * a + 1], nodes[2 * b + 1], nodes[2 * c + 1]))
-    const y1 = clamp(Math.max(nodes[2 * a + 1], nodes[2 * b + 1], nodes[2 * c + 1]))
-    for (let by = y0; by <= y1; by++) for (let bx = x0; bx <= x1; bx++) buckets[by * BUCKETS + bx].push(t)
-    // The triangle's normal in metres, its length twice the area — the
-    // weight at each corner.
     const abx = (nodes[2 * b] - nodes[2 * a]) * METERS_PER_CELL
     const abz = (nodes[2 * b + 1] - nodes[2 * a + 1]) * METERS_PER_CELL
     const aby = (z[b] - z[a]) * ELEVATION_METERS
@@ -53,18 +51,43 @@ export function createTileSampler(nodes: Float32Array, triangles: Uint32Array, z
     let nx = aby * acz - abz * acy
     let ny = abz * acx - abx * acz
     let nz = abx * acy - aby * acx
-    // Twice the triangle's area in cells² is |ab × ac| of the horizontal.
-    spacing[t / 3] = Math.sqrt(Math.abs((abx * acz - abz * acx) / (METERS_PER_CELL * METERS_PER_CELL)))
     if (ny < 0) {
       nx = -nx
       ny = -ny
       nz = -nz
     }
     for (const v of [a, b, c]) {
-      normals[3 * v] += nx
-      normals[3 * v + 1] += ny
-      normals[3 * v + 2] += nz
+      sums[3 * v] += nx
+      sums[3 * v + 1] += ny
+      sums[3 * v + 2] += nz
     }
+  }
+  return sums
+}
+
+// `adjust` sees the normal sums (tileNormalSums) before they are
+// normalised, and may change them.
+export function createTileSampler(nodes: Float32Array, triangles: Uint32Array, z: Float32Array, cells: number, adjust?: (sums: Float64Array) => void): TileSurfaceSampler {
+  const size = cells / BUCKETS
+  const buckets: number[][] = Array.from({ length: BUCKETS * BUCKETS }, () => [])
+  const clamp = (v: number): number => Math.max(0, Math.min(BUCKETS - 1, Math.floor(v / size)))
+  const count = nodes.length / 2
+  const normals = tileNormalSums(nodes, triangles, z)
+  adjust?.(normals)
+  const spacing = new Float32Array(triangles.length / 3)
+  for (let t = 0; t < triangles.length; t += 3) {
+    const a = triangles[t], b = triangles[t + 1], c = triangles[t + 2]
+    const x0 = clamp(Math.min(nodes[2 * a], nodes[2 * b], nodes[2 * c]))
+    const x1 = clamp(Math.max(nodes[2 * a], nodes[2 * b], nodes[2 * c]))
+    const y0 = clamp(Math.min(nodes[2 * a + 1], nodes[2 * b + 1], nodes[2 * c + 1]))
+    const y1 = clamp(Math.max(nodes[2 * a + 1], nodes[2 * b + 1], nodes[2 * c + 1]))
+    for (let by = y0; by <= y1; by++) for (let bx = x0; bx <= x1; bx++) buckets[by * BUCKETS + bx].push(t)
+    // Twice the triangle's area in cells² is |ab × ac| of the horizontal.
+    const abx = nodes[2 * b] - nodes[2 * a]
+    const abz = nodes[2 * b + 1] - nodes[2 * a + 1]
+    const acx = nodes[2 * c] - nodes[2 * a]
+    const acz = nodes[2 * c + 1] - nodes[2 * a + 1]
+    spacing[t / 3] = Math.sqrt(Math.abs(abx * acz - abz * acx))
   }
   for (let v = 0; v < count; v++) {
     const l = detHypot(normals[3 * v], normals[3 * v + 1], normals[3 * v + 2])
