@@ -13,9 +13,9 @@ summary.de: Entwurf für die 3D-Weltansicht — eine zoombare Kamera über der K
   Kamera-Leiter bis zur Abstiegsansicht im Hex-Massstab ist GEBAUT (siehe
   Status); Kacheln, Ports und Siedlungen sind Entwurf.
 area: ui
-stage: building
+stage: idea
 createdAt: 2026-08-06
-updatedAt: 2026-08-15
+updatedAt: 2026-10-04
 related: [DEC-0024, DEC-0025]
 ---
 
@@ -924,6 +924,8 @@ was considered and rejected as a hidden dependency. The overlays are being
 rethought separately, so this waits for that rather than being designed around.
 
 ## Status
+
+2026-10-04: idea — the built part (the world map screen down to the descent view) was removed with that screen on 2026-09-20, to be rebuilt; the incubator carries the near ground now. What stands is the design: hex tiles, ports, settlements, and the forks in DEC-0024.
 
 partially built (worldmap screen through the descent view, 2026-08-07) —
 hex/port/settlement layers still design-only; unifying the two screens' map

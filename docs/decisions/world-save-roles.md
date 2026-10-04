@@ -16,8 +16,9 @@ summary.de: Das Welt-Save hält drei Dinge mit drei verschiedenen Lebensdauern �
   die von Level 0. Die Identität einer nachgespielten Ebene sind Rezept und
   Code, nicht die Raster von Level 0.
 area: platform
-stage: decided
+stage: building
 createdAt: 2026-10-01
+updatedAt: 2026-10-04
 concepts: [generator.concept.same-world]
 related: [DEC-0005, DEC-0009, DEC-0032]
 ---
@@ -102,6 +103,8 @@ screen's side is asked first; 4 when levels 2 and 3 carry layers.
   bodies) is for the levels to decide when they are built.
 
 ## Status
+
+2026-10-04: building — changes 1 and 3 are built, 2 and 4 open.
 
 decided 2026-10-01 — the four changes, in the order listed; the monthly and
 weather layers stay in the save. 1 and 3 built 2026-10-01 with level 1's

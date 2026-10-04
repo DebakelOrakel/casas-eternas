@@ -16,8 +16,10 @@ summary.de: Eine Richtung für die Detail-Leiter nach den ersten Kachel-Jobs —
   Transport und den Zustand des Koordinators. Ideen und Messungen; nichts
   entschieden.
 area: platform
-stage: idea
+stage: superseded
+supersededBy: DEC-0032
 createdAt: 2026-09-30
+updatedAt: 2026-10-04
 concepts: [generator.concept.detail-levels, generator.concept.jobs]
 related: [DEC-0032, DEC-0031]
 ---
@@ -186,6 +188,8 @@ the state, whatever carries the messages.
    today's path (level 1 at 0.5, level-2 tiles at 1/16).
 
 ## Status
+
+SUPERSEDED 2026-10-04 by decisions/detail-ladder.md (DEC-0032) — the ladder, the coordinator, the seams and the transport were carried into it on 2026-10-01 and built.
 
 design discussion of 2026-09-30 — measured where marked; decided only that
 the coordinator's state is bbolt; nothing of the coordinator built. The tile

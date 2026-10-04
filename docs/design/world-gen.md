@@ -9,8 +9,8 @@ summary.de: Wie die Weltgenerierung in die Client-Server-Architektur passt — w
 area: generator
 stage: built
 createdAt: 2026-07-20
-updatedAt: 2026-08-12
-related: [DEC-0001]
+updatedAt: 2026-10-04
+related: [DEC-0001, DES-0017]
 ---
 
 This doc is about how the pieces fit together architecturally, as opposed
@@ -196,3 +196,8 @@ From building the live world-creation preview
   not decided.
 - Rivers/lakes and climate/biomes design notes to be added here as they
   firm up.
+
+## Status
+
+2026-10-04: the sphere sections describe the removed sphere generator; a sphere
+is planned again (DES-0017), so they stay as written.

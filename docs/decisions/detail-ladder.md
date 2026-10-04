@@ -15,9 +15,9 @@ summary.de: Die Detail-Leiter nach den ersten Kachel-Jobs — fünf Ebenen, im A
   nur nahe der Kamera; ein Koordinator plant die Kacheln als Graph und
   verteilt sie von Anfang an über NATS; die Kachelwahl entfällt.
 area: generator
-stage: decided
+stage: building
 createdAt: 2026-10-01
-updatedAt: 2026-10-03
+updatedAt: 2026-10-04
 concepts: [generator.concept.detail-levels, generator.concept.jobs, generator.concept.same-world]
 related: [DEC-0031, DES-0022, DEC-0033]
 ---
@@ -669,6 +669,8 @@ cmd/ already did. `bakeRunner` in `/v1/capabilities` always answers
 `relay`.
 
 ## Status
+
+2026-10-04: building — level 1 by replay, the coordinator, the relay and the worker Deployment are built; levels 2 to 4 as the ladder sets them are open.
 
 decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay
 of the whole history (fork 2), the coordinator with its graph and NATS from

@@ -8,9 +8,10 @@ summary.de: Warum die Auflösung der Tektonik- und Erosionssimulation und die
   Detailauflösung der fertigen Welt getrennte Ebenen sind, nicht ein Gitter,
   das man vergrössert.
 area: generator
-stage: building
+stage: superseded
+supersededBy: DEC-0032
 createdAt: 2026-07-23
-updatedAt: 2026-08-12
+updatedAt: 2026-10-04
 concepts: [generator.concept.detail-levels]
 related: [DEC-0016]
 ---
@@ -117,6 +118,8 @@ and channels) come from the procedural micro layer on top, never from
 upscaling the coarse erosion raster.
 
 ## Status
+
+SUPERSEDED 2026-10-04 by decisions/detail-ladder.md (DEC-0032) — the middle tier this doc found in the raster amplification bake went with it on 2026-09-29; the detail now comes from the ladder of mesh levels and their tile jobs.
 
 
 direction agreed; the middle tier became real 2026-08-07 as the worldmap amplification bake (see the update at the end) — the procedural micro tier below the bake's ~2 km reach remains unbuilt

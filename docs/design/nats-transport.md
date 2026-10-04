@@ -9,9 +9,10 @@ summary.de: Ergebnisse einer hypothetischen Diskussion über NATS als Message-Bu
   in die Architektur passen würde, was es brächte, und warum es verteilte
   Bakes nicht attraktiv macht.
 area: platform
-stage: idea
+stage: superseded
+supersededBy: DEC-0032
 createdAt: 2026-08-16
-updatedAt: 2026-09-30
+updatedAt: 2026-10-04
 concepts: [generator.concept.jobs]
 related: [DEC-0032, DES-0022]
 ---
@@ -117,5 +118,7 @@ trigger 1 — a coordinator that gives tile computations to a pool of
 workers.
 
 ## Status
+
+SUPERSEDED 2026-10-04 by decisions/detail-ladder.md (DEC-0032) — NATS is the relay there (fork 8, its own target), decided 2026-10-01 and built.
 
 unfinished discussion notes — nothing decided, nothing built; triggers named at the end

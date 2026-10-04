@@ -16,8 +16,9 @@ summary.de: Ein Eismodell für die gekoppelte Geländegeschichte — Massenbilan
   bei der Flusserosion; der Eisfluss zählt als Abfluss in der Dichteregel.
   Ein Vorläufer ohne Erosion ersetzt zuerst die heutigen falschen Gletscher.
 area: generator
-stage: idea
+stage: building
 createdAt: 2026-09-22
+updatedAt: 2026-10-04
 concepts: [generator.concept.erosion, generator.concept.history-climate]
 related: [DES-0018, DEC-0029]
 ---
@@ -138,6 +139,8 @@ appear from the 4K/8K bake at one to two kilometres.
   the coast process shares the eustasy with this one.
 
 ## Status
+
+2026-10-04: building — the forerunner and the ice in the coupled history (computeIceOnMesh, per epoch) are built; erosion by ice and till are open.
 
 sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided.
 Its forks are listed at the end for a session of its own after step 5 of

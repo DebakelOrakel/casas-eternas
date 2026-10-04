@@ -18,9 +18,9 @@ summary.de: Ein Plan, den Erosionsschritt — Makrodurchgang, verfeinerte Bakes 
   Phasen mit Entscheidungspunkten und einer ehrlichen Schätzung des
   Ergebnisses.
 area: generator
-stage: idea
+stage: built
 createdAt: 2026-08-16
-updatedAt: 2026-08-16
+updatedAt: 2026-10-04
 concepts: [generator.concept.erosion, generator.concept.rivers-and-lakes]
 related: [DEC-0020, DEC-0027]
 ---
@@ -830,6 +830,8 @@ Deliberately out of scope: GPU compute (second stage), erosion inside the
 tectonic epoch loop (rejected for gameplay), glacial/aeolian processes.
 
 ## Status
+
+2026-10-04: BUILT — this engine is the erosion that runs today; since step 4 of decisions/adaptive-mesh.md (DEC-0029) it computes on the mesh (surface/erosionEngine.ts through mesh/meshErosion.ts). The raster passes and the bake tiers below went with the raster amplification bake on 2026-09-29.
 
 plan agreed 2026-08-16; P0 prototype RUN the same day and its original gate
 FAILED — by design, cheaply, and informatively. The failure revised the plan

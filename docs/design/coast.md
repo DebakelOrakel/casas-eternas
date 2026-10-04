@@ -17,8 +17,9 @@ summary.de: Ein Küstenprozess für die gekoppelte Geländegeschichte — Meeres
   ergeben sich aus schon getroffenen Entscheiden. Eine Klassifikation als
   Vorläufer (Küstentyp je Abschnitt, ohne Physik) kommt zuerst.
 area: generator
-stage: idea
+stage: building
 createdAt: 2026-09-22
+updatedAt: 2026-10-04
 concepts: [generator.concept.erosion]
 related: [DES-0018, DEC-0029]
 ---
@@ -101,6 +102,8 @@ time, and the coast takes its eustasy from the same climate history.
   sea level.
 
 ## Status
+
+2026-10-04: building — the classification forerunner and the coastal process in the coupled history are built; the shore generator below the resolution and the tides are open.
 
 sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided,
 after the glacial process. Tides deferred — they need a moon, a Planet-stage

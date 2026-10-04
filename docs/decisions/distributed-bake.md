@@ -19,9 +19,10 @@ summary.de: Amplifikations-Bakes auf dem Server werden zu Kubernetes-Jobs, wenn 
   schreiben darf. Ein lokaler Server behält den einfachen Subprozess ohne
   Prüfungen.
 area: platform
-stage: building
+stage: superseded
+supersededBy: DEC-0032
 createdAt: 2026-08-08
-updatedAt: 2026-10-03
+updatedAt: 2026-10-04
 concepts: [generator.concept.jobs]
 related: [DES-0009, DEC-0032]
 ---
@@ -412,6 +413,8 @@ break: no old name is accepted. What a job computes keeps its name, the level
 bake.
 
 ## Status
+
+SUPERSEDED 2026-10-04 by decisions/detail-ladder.md (DEC-0032) — the Kubernetes Job runner was retired on 2026-10-03; jobs run through the coordinator and the worker Deployment it scales (its addendum of 2026-10-03). What follows is the record of the Job design.
 
 The jobs now bake mesh level 1 (stage 1 only); the raster amplification bake
 was removed on 2026-09-29; detail comes from the mesh levels and their tile

@@ -11,9 +11,9 @@ summary.de: Gestaltungsrichtung für die Weltkarte — Aquarell-Darstellung, und
   erforscht / aktiv) den Stufen eines echten Aquarells entsprechen, sodass
   das Medium den Zustand ohne Legende zeigt.
 area: ui
-stage: building
+stage: idea
 createdAt: 2026-08-11
-updatedAt: 2026-08-12
+updatedAt: 2026-10-04
 related: [DES-0004]
 ---
 
@@ -409,6 +409,10 @@ them wait on mechanics that do not exist yet.
   lit world — the same seam the exaggeration fade already crosses.
 
 ## Status
+
+2026-10-04: idea — the three prototype stages were built in the world map
+screen, which was removed on 2026-09-20, to be rebuilt; parts of the code
+remain in map/ unused. What stands is the direction.
 
 all three prototype stages BUILT 2026-08-11 (knowledge registers on the CPU,
 the paper post-process, edge darkening) — with two of the plan's calls

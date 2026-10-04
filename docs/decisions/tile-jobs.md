@@ -17,8 +17,9 @@ summary.de: Wie die oberste Ebene der Detail-Leiter läuft — Level 1 bleibt di
   ist an die Elternfläche gepinnt, damit Kacheln unabhängig bleiben und
   Nähte schliessen; ein Artefakt je Kachel.
 area: generator
-stage: decided
+stage: built
 createdAt: 2026-09-29
+updatedAt: 2026-10-04
 concepts: [generator.concept.detail-levels, generator.concept.jobs]
 related: [DEC-0032, DES-0022]
 ---
@@ -150,6 +151,8 @@ Where the ladder may go next — level 1 as a replayed history, more tile
 levels, a coordinator for the tiles: [design/tile-coordinator.md](../design/tile-coordinator.md).
 
 ## Status
+
+2026-10-04: BUILT — the tile, its bake, its artifact and its job; the tile pick in the Finishing step went with decisions/detail-ladder.md (DEC-0032, fork 4).
 
 decided 2026-09-29; the tile's mesh, its bake, its artifact and its job
 built 2026-09-29/30 (mesh/meshTile.ts, pipeline/meshTileBake.ts,
