@@ -80,8 +80,8 @@ func (m *Module) me(w http.ResponseWriter, r *http.Request) (user.User, bool) {
 		return user.User{}, false
 	}
 	entry, ok := m.cfg.Registry.ByID(id)
-	if !ok {
-		// A valid token for a deleted user: as good as none.
+	if !ok || entry.Blocked {
+		// A valid token for a deleted or a blocked user: as good as none.
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return user.User{}, false
 	}

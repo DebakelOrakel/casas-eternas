@@ -47,6 +47,39 @@
       "long": "Administers the auth subsystem of a RUNNING server, over its unix\nadmin socket (global.admin.socket). Whoever can reach the socket is admin —\nfile permissions gate it, no login. In a split deployment these commands\nanswer only in the process running the auth target."
     },
     {
+      "path": "casas-eternas auth code",
+      "use": "code",
+      "short": "Manages invite codes — how a new user makes an account."
+    },
+    {
+      "path": "casas-eternas auth code add",
+      "use": "add",
+      "short": "Makes an invite code for a number of registrations, valid for a while.",
+      "example": "  casas-eternas auth code add                          # one registration, 14 days\n  casas-eternas auth code add --uses 5 --valid 72h",
+      "flags": [
+        {
+          "name": "uses",
+          "default": "1",
+          "usage": "How many registrations the code allows."
+        },
+        {
+          "name": "valid",
+          "default": "336h0m0s",
+          "usage": "How long the code holds, rounded up to whole hours."
+        }
+      ]
+    },
+    {
+      "path": "casas-eternas auth code list",
+      "use": "list",
+      "short": "Lists the invite codes not yet spent or expired."
+    },
+    {
+      "path": "casas-eternas auth code revoke",
+      "use": "revoke \u003cid\u003e",
+      "short": "Ends an invite code before it is spent."
+    },
+    {
       "path": "casas-eternas auth role",
       "use": "role",
       "short": "Manages global roles — what a user's sessions may claim."
@@ -54,7 +87,7 @@
     {
       "path": "casas-eternas auth role bind",
       "use": "bind \u003cname\u003e \u003cuser|admin\u003e",
-      "short": "Binds a user's global role; admin sessions carry the adm claim from their next login on.",
+      "short": "Binds a user's global role; it takes effect within an access token's life.",
       "example": "  casas-eternas auth role bind ada admin\n  casas-eternas auth role bind ada user     # back to the default"
     },
     {
@@ -107,6 +140,11 @@
       ]
     },
     {
+      "path": "casas-eternas auth user block",
+      "use": "block \u003cname\u003e",
+      "short": "Blocks a user: no sign-in, and their sessions end within an access token's life. Their worlds stay theirs."
+    },
+    {
       "path": "casas-eternas auth user delete",
       "use": "delete \u003cname\u003e",
       "short": "Removes a user. Their worlds fall to admins; re-adding the name mints a NEW identity."
@@ -128,6 +166,17 @@
           "usage": "Read the password from stdin instead of prompting — for scripts and Jobs. Trailing newlines are stripped; nothing else is."
         }
       ]
+    },
+    {
+      "path": "casas-eternas auth user reset",
+      "use": "reset \u003cname\u003e",
+      "short": "Makes a reset code: it sets the user's password once, within a day, and ends their sessions.",
+      "long": "Makes a reset code for a user who cannot sign in. The code is printed\nONCE on stdout; the user spends it in the sign-in window (\"I have a code\")\nwith a new password. A new code for the same user ends the last one."
+    },
+    {
+      "path": "casas-eternas auth user unblock",
+      "use": "unblock \u003cname\u003e",
+      "short": "Lets a blocked user sign in again."
     },
     {
       "path": "casas-eternas start",

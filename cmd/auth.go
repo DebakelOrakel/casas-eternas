@@ -1,5 +1,6 @@
-// The admin CLI: `casas-eternas auth user add|list|delete|passwd`,
-// `auth role bind|list` and `auth service add|list|delete|rotate` — thin
+// The admin CLI: `casas-eternas auth user add|list|delete|passwd|reset|block|
+// unblock`, `auth role bind|list`, `auth code add|list|revoke` and
+// `auth service add|list|delete|rotate` — thin
 // clients over the RUNNING server's unix admin socket, decided 2026-08-13
 // (docs/decisions/server-user-admin.md). The grammar is <module> <resource>
 // <verb>, the fourth surface of the one-vocabulary rule: `auth` is already
@@ -32,7 +33,11 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/user"
 )
 
-const flagPasswordStdin = "password-stdin"
+const (
+	flagPasswordStdin = "password-stdin"
+	flagCodeUses      = "uses"
+	flagCodeValid     = "valid"
+)
 
 const textPasswordStdin = `Read the password from stdin instead of prompting — for scripts and Jobs. Trailing newlines are stripped; nothing else is.`
 
@@ -77,6 +82,66 @@ var authUserDeleteCmd = &cobra.Command{
 	RunE:              runAuthUserDelete,
 }
 
+var authUserResetCmd = &cobra.Command{
+	Use:   "reset <name>",
+	Short: "Makes a reset code: it sets the user's password once, within a day, and ends their sessions.",
+	Long: `Makes a reset code for a user who cannot sign in. The code is printed
+ONCE on stdout; the user spends it in the sign-in window ("I have a code")
+with a new password. A new code for the same user ends the last one.`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeUserNames,
+	RunE:              runAuthUserReset,
+}
+
+var authUserBlockCmd = &cobra.Command{
+	Use:               "block <name>",
+	Short:             "Blocks a user: no sign-in, and their sessions end within an access token's life. Their worlds stay theirs.",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeUserNames,
+	RunE:              func(cmd *cobra.Command, args []string) error { return setBlocked(cmd, args[0], true) },
+}
+
+var authUserUnblockCmd = &cobra.Command{
+	Use:               "unblock <name>",
+	Short:             "Lets a blocked user sign in again.",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeUserNames,
+	RunE:              func(cmd *cobra.Command, args []string) error { return setBlocked(cmd, args[0], false) },
+}
+
+// The code RESOURCE: invite codes, the only way to a new account besides
+// `user add` (docs/decisions/client-accounts.md, fork 4). `add` prints the
+// code ONCE on stdout, like a service credential; the server keeps only
+// its hash.
+var authCodeCmd = &cobra.Command{
+	Use:   "code",
+	Short: "Manages invite codes — how a new user makes an account.",
+}
+
+var authCodeAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "Makes an invite code for a number of registrations, valid for a while.",
+	Example: `  casas-eternas auth code add                          # one registration, 14 days
+  casas-eternas auth code add --uses 5 --valid 72h`,
+	Args: cobra.NoArgs,
+	RunE: runAuthCodeAdd,
+}
+
+var authCodeListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "Lists the invite codes not yet spent or expired.",
+	Args:  cobra.NoArgs,
+	RunE:  runAuthCodeList,
+}
+
+var authCodeRevokeCmd = &cobra.Command{
+	Use:               "revoke <id>",
+	Short:             "Ends an invite code before it is spent.",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeCodeIDs,
+	RunE:              runAuthCodeRevoke,
+}
+
 // The role RESOURCE, beside the user resource: `user` is who exists and how
 // they prove it, `role` is what their sessions may claim. One global role
 // per user — a field, not a set — so bind REPLACES, and binding `user` is
@@ -91,7 +156,7 @@ var authRoleCmd = &cobra.Command{
 
 var authRoleBindCmd = &cobra.Command{
 	Use:   "bind <name> <user|admin>",
-	Short: "Binds a user's global role; admin sessions carry the adm claim from their next login on.",
+	Short: "Binds a user's global role; it takes effect within an access token's life.",
 	Example: `  casas-eternas auth role bind ada admin
   casas-eternas auth role bind ada user     # back to the default`,
 	Args:              cobra.ExactArgs(2),
@@ -226,7 +291,7 @@ func runAuthRoleBind(cmd *cobra.Command, args []string) error {
 		map[string]string{"role": args[1]}, nil); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "role %s bound to %s (takes effect at their next login)\n", args[1], args[0])
+	fmt.Fprintf(cmd.OutOrStdout(), "role %s bound to %s (takes effect at their next token renewal)\n", args[1], args[0])
 	return nil
 }
 
@@ -294,10 +359,13 @@ func completeUserNames(cmd *cobra.Command, args []string, toComplete string) ([]
 func init() {
 	authUserAddCmd.Flags().Bool(flagPasswordStdin, false, textPasswordStdin)
 	authUserPasswdCmd.Flags().Bool(flagPasswordStdin, false, textPasswordStdin)
-	authUserCmd.AddCommand(authUserAddCmd, authUserListCmd, authUserDeleteCmd, authUserPasswdCmd)
+	authCodeAddCmd.Flags().Int(flagCodeUses, 1, "How many registrations the code allows.")
+	authCodeAddCmd.Flags().Duration(flagCodeValid, 14*24*time.Hour, "How long the code holds, rounded up to whole hours.")
+	authUserCmd.AddCommand(authUserAddCmd, authUserListCmd, authUserDeleteCmd, authUserPasswdCmd, authUserResetCmd, authUserBlockCmd, authUserUnblockCmd)
 	authRoleCmd.AddCommand(authRoleBindCmd, authRoleListCmd)
+	authCodeCmd.AddCommand(authCodeAddCmd, authCodeListCmd, authCodeRevokeCmd)
 	authServiceCmd.AddCommand(authServiceAddCmd, authServiceListCmd, authServiceDeleteCmd, authServiceRotateCmd)
-	authCmd.AddCommand(authUserCmd, authRoleCmd, authServiceCmd)
+	authCmd.AddCommand(authUserCmd, authRoleCmd, authCodeCmd, authServiceCmd)
 	RootCmd.AddCommand(authCmd)
 }
 
@@ -335,6 +403,9 @@ func runAuthUserList(cmd *cobra.Command, args []string) error {
 			// before passwords moved into the store, or OIDC-only one day.
 			login = "no password"
 		}
+		if u.Blocked {
+			login = "blocked"
+		}
 		role := u.Role
 		if role == "" {
 			role = user.RoleUser
@@ -363,6 +434,100 @@ func runAuthUserPasswd(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "password set for %s\n", args[0])
 	return nil
+}
+
+func runAuthUserReset(cmd *cobra.Command, args []string) error {
+	var created struct {
+		Code      string    `json:"code"`
+		ExpiresAt time.Time `json:"expiresAt"`
+	}
+	if err := adminRequest(http.MethodPost, auth.UsersPath+"/"+args[0]+"/reset", nil, &created); err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), created.Code)
+	fmt.Fprintf(cmd.ErrOrStderr(), "reset code for %s, valid until %s; shown once\n", args[0], created.ExpiresAt.Local().Format("2006-01-02 15:04"))
+	return nil
+}
+
+func setBlocked(cmd *cobra.Command, name string, blocked bool) error {
+	if err := adminRequest(http.MethodPut, auth.UsersPath+"/"+name+"/blocked", map[string]bool{"blocked": blocked}, nil); err != nil {
+		return err
+	}
+	if blocked {
+		fmt.Fprintf(cmd.OutOrStdout(), "blocked %s; their sessions end within an access token's life\n", name)
+	} else {
+		fmt.Fprintf(cmd.OutOrStdout(), "unblocked %s\n", name)
+	}
+	return nil
+}
+
+func runAuthCodeAdd(cmd *cobra.Command, args []string) error {
+	uses, err := cmd.Flags().GetInt(flagCodeUses)
+	if err != nil {
+		return err
+	}
+	valid, err := cmd.Flags().GetDuration(flagCodeValid)
+	if err != nil {
+		return err
+	}
+	hours := int((valid + time.Hour - 1) / time.Hour)
+	var created struct {
+		user.Invite
+		Code string `json:"code"`
+	}
+	if err := adminRequest(http.MethodPost, auth.InvitesPath, map[string]int{"uses": uses, "validHours": hours}, &created); err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), created.Code)
+	fmt.Fprintf(cmd.ErrOrStderr(), "invite %s for %d registration(s), valid until %s; shown once\n", created.ID, created.Uses, created.ExpiresAt.Local().Format("2006-01-02 15:04"))
+	return nil
+}
+
+func runAuthCodeList(cmd *cobra.Command, args []string) error {
+	var listing struct {
+		Invites []user.Invite `json:"invites"`
+	}
+	if err := adminRequest(http.MethodGet, auth.InvitesPath, nil, &listing); err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "ID	CODE	LEFT	EXPIRES	BY")
+	for _, invite := range listing.Invites {
+		// The code's last group: the code itself is never kept.
+		code := "••••-••••-••••-" + invite.Hint
+		if invite.Hint == "" {
+			code = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%d/%d\t%s\t%s\n", invite.ID, code, invite.Left, invite.Uses, invite.ExpiresAt.Local().Format("2006-01-02 15:04"), invite.CreatedBy)
+	}
+	return w.Flush()
+}
+
+func runAuthCodeRevoke(cmd *cobra.Command, args []string) error {
+	if err := adminRequest(http.MethodDelete, auth.InvitesPath+"/"+args[0], nil, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "revoked %s\n", args[0])
+	return nil
+}
+
+// completeCodeIDs offers the open invite codes' ids, best effort like
+// completeUserNames.
+func completeCodeIDs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) != 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var listing struct {
+		Invites []user.Invite `json:"invites"`
+	}
+	if err := adminRequest(http.MethodGet, auth.InvitesPath, nil, &listing); err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	ids := make([]string, 0, len(listing.Invites))
+	for _, invite := range listing.Invites {
+		ids = append(ids, invite.ID)
+	}
+	return ids, cobra.ShellCompDirectiveNoFileComp
 }
 
 // readPassword takes the password from the terminal (echo off, asked twice —

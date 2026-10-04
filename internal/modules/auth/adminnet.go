@@ -57,8 +57,8 @@ func (m *Module) mountNetworkAdmin(mux *http.ServeMux) {
 	}
 }
 
-// selfDemotion is a call that deletes the caller or sets the caller's role.
+// selfDemotion is a call that deletes, blocks or sets the role of the caller.
 func selfDemotion(method, path, name string) bool {
 	own := UsersPath + "/" + name
-	return (method == http.MethodDelete && path == own) || (method == http.MethodPut && path == own+"/role")
+	return (method == http.MethodDelete && path == own) || (method == http.MethodPut && (path == own+"/role" || path == own+"/blocked"))
 }

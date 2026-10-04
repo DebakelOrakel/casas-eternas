@@ -321,3 +321,8 @@
     flex-wrap: wrap;
   }
 }
+
+/* A blocked user: their row recedes, the controls stay as they are. */
+.adm-row--blocked .adm-user {
+  opacity: 0.55;
+}

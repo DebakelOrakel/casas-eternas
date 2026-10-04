@@ -5,7 +5,7 @@ import { icon } from '../chooserIcons'
 import { currentProfile } from '../../server/profileClient'
 import {
   avatarOf, createInvite, createReset, createService, deleteService, deleteUser, isFailure, listInvites, listServices, listUsers,
-  revokeInvite, rotateService, setRole, type AdminFailure, type AdminUser, type Invite, type ServiceAccount,
+  revokeInvite, rotateService, setBlocked, setRole, type AdminFailure, type AdminUser, type Invite, type ServiceAccount,
 } from '../../server/adminClient'
 import type { NotificationManager } from '../notifications/NotificationManager'
 import '../theme/design.css'
@@ -205,7 +205,9 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
         picture.style.backgroundImage = `url("${url}")`
       })
       const names = el('div', 'adm-names')
-      names.append(el('span', 'adm-name', u.displayName || u.name), el('span', 'adm-login mono', self ? `${u.name} · ${t('admin.users.you')}` : u.name))
+      const login = [u.name, ...(self ? [t('admin.users.you')] : []), ...(u.blocked ? [t('admin.users.blocked')] : [])].join(' · ')
+      names.append(el('span', 'adm-name', u.displayName || u.name), el('span', 'adm-login mono', login))
+      if (u.blocked) row.classList.add('adm-row--blocked')
       who.append(picture, names)
       const role = el('select', 'adm-select')
       role.setAttribute('aria-label', t('admin.users.col.role'))
@@ -253,11 +255,21 @@ export function createAdminPanel(host: HTMLElement, notifications: NotificationM
         reset.addEventListener('click', () => {
           void createReset(u.name).then((out) => (isFailure(out) ? refused(out) : showSecret(out.code)))
         })
+        // Not on yourself, like the role: the network refuses it.
+        const block = el('button', 'adm-button', t(u.blocked ? 'admin.users.unblock' : 'admin.users.block'))
+        block.type = 'button'
+        block.disabled = self
+        block.addEventListener('click', () => {
+          void setBlocked(u.name, !u.blocked).then((out) => {
+            if (isFailure(out)) refused(out)
+            void reload()
+          })
+        })
         const remove = el('button', 'adm-button adm-button--quiet', t('admin.action.delete'))
         remove.type = 'button'
         remove.disabled = self
         remove.addEventListener('click', () => { confirming = u.name; paintUsers() })
-        actions.append(reset, remove)
+        actions.append(reset, block, remove)
       }
       row.append(who, role, last, invited, actions)
       usersTable.appendChild(row)

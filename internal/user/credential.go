@@ -78,7 +78,9 @@ func (r *Registry) Verify(name, password string) (User, bool, error) {
 		_ = bcrypt.CompareHashAndPassword([]byte(absentUserHash), []byte(password))
 		return User{}, false, nil
 	}
-	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil {
+	// A blocked user's right password is refused like a wrong one: the
+	// bcrypt burn is spent either way, and the answer tells nothing.
+	if bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil || entry.Blocked {
 		return User{}, false, nil
 	}
 	return entry, true, nil

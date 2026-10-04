@@ -230,7 +230,7 @@ func (r *Registry) Redeem(code, name, password string) (User, error) {
 				return nil
 			}
 			u, ok := byID(tx, rec.UserID)
-			if !ok {
+			if !ok || u.Blocked {
 				spent = true
 				return nil
 			}

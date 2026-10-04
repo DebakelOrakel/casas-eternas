@@ -181,6 +181,15 @@ proposed before it is added.
 
 ## Status
 
+2026-10-04, last: blocking BUILT (fork 7) on the session generation —
+`PUT /v1/auth/users/{name}/blocked`, refused on oneself over the network;
+a blocked user cannot sign in, renew or spend a reset code, and their
+access token is refused by the auth module at once and elsewhere within its
+life. The CLI agreed and built: `auth user reset|block|unblock <name>`,
+`auth code add [--uses N] [--valid DURATION]`, `auth code list`,
+`auth code revoke <id>`. Open: the workers connected to the relay in the
+compute nodes section.
+
 2026-10-04, after a review: the network admin gate checks the stored role
 as well as the token's adm claim, so a demoted admin is out at once; the
 redeem limiter reads X-Forwarded-For only behind a private-network router,

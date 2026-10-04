@@ -134,6 +134,35 @@ func TestCodesAndNetworkAdmin(t *testing.T) {
 		t.Errorf("an access token as a refresh token = %d, want 401", got.Code)
 	}
 
+	// Blocked: no sign-in, no renewal, and the session in hand is refused
+	// on the profile; not on yourself; unblocked, the password works again.
+	if got := do(http.MethodPut, AdminPrefix+"/users/ada/blocked", admin, `{"blocked":true}`); got.Code != http.StatusConflict {
+		t.Errorf("blocking yourself = %d, want 409", got.Code)
+	}
+	var linus struct {
+		Token        string `json:"token"`
+		RefreshToken string `json:"refreshToken"`
+	}
+	_ = json.Unmarshal(login(t, m, "linus", "Pw-passwort1").Body.Bytes(), &linus)
+	if got := do(http.MethodPut, AdminPrefix+"/users/linus/blocked", admin, `{"blocked":true}`); got.Code != http.StatusNoContent {
+		t.Fatalf("blocking = %d, want 204", got.Code)
+	}
+	if got := login(t, m, "linus", "Pw-passwort1"); got.Code != http.StatusUnauthorized {
+		t.Errorf("a blocked sign-in = %d, want 401", got.Code)
+	}
+	if got := do(http.MethodPost, RefreshPath, linus.RefreshToken, ""); got.Code != http.StatusUnauthorized {
+		t.Errorf("a blocked renewal = %d, want 401", got.Code)
+	}
+	if got := do(http.MethodGet, MePath, linus.Token, ""); got.Code != http.StatusUnauthorized {
+		t.Errorf("a blocked user's profile = %d, want 401", got.Code)
+	}
+	if got := do(http.MethodPut, AdminPrefix+"/users/linus/blocked", admin, `{"blocked":false}`); got.Code != http.StatusNoContent {
+		t.Fatalf("unblocking = %d, want 204", got.Code)
+	}
+	if got := login(t, m, "linus", "Pw-passwort1"); got.Code != http.StatusOK {
+		t.Errorf("a sign-in after unblocking = %d, want 200", got.Code)
+	}
+
 	// Demoted: the token still carries the claim, the registry decides.
 	graceAdmin := tokenOf(login(t, m, "grace", "Neu-passwort"))
 	if got := do(http.MethodGet, AdminPrefix+"/users", graceAdmin, ""); got.Code != http.StatusOK {

@@ -75,6 +75,11 @@ type User struct {
 	// ends every session of the user, everywhere, within an access token's
 	// life. Up with every password set.
 	SessionGeneration uint64 `json:"sessionGeneration,omitempty"`
+	// Blocked keeps a user out without deleting them (docs/decisions/
+	// client-accounts.md, fork 7): no sign-in, no renewal, no code; their
+	// worlds stay theirs. Blocking ends their sessions as a password set
+	// does.
+	Blocked bool `json:"blocked,omitempty"`
 }
 
 // The role vocabulary. RoleUser is the accepted SPELLING of the default —
@@ -322,6 +327,25 @@ func findByName(tx *bolt.Tx, name string) (User, bool) {
 }
 
 // putUser writes one entry inside the caller's transaction.
+// SetBlocked blocks or unblocks the named user. Blocking ends their
+// sessions; unblocking lets them sign in again, with no session back.
+func (r *Registry) SetBlocked(name string, blocked bool) error {
+	return r.db.Update(func(tx *bolt.Tx) error {
+		u, ok := findByName(tx, name)
+		if !ok {
+			return fmt.Errorf("user %q: %w", name, ErrUnknown)
+		}
+		if u.Blocked == blocked {
+			return nil
+		}
+		u.Blocked = blocked
+		if blocked {
+			return endSessions(tx, u)
+		}
+		return putUser(tx, u)
+	})
+}
+
 // endSessions counts a user's session generation up: their refresh tokens
 // renew nothing from now on.
 func endSessions(tx *bolt.Tx, u User) error {

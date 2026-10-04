@@ -202,7 +202,7 @@ func (m *Module) serveRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry, ok := m.cfg.Registry.ByID(id)
-	if !ok || entry.SessionGeneration != generation {
+	if !ok || entry.Blocked || entry.SessionGeneration != generation {
 		unauthorized(w)
 		return
 	}

@@ -19,6 +19,9 @@ export interface AdminUser {
   // Who made the invite code the user came with (a login name, or "admin
   // socket").
   inviter?: string
+  // Kept out: no sign-in, no renewal (docs/decisions/client-accounts.md,
+  // fork 7).
+  blocked?: boolean
 }
 
 export interface Invite {
@@ -66,6 +69,7 @@ export async function listUsers(): Promise<AdminUser[] | AdminFailure> {
   return isFailure(out) ? out : out.users
 }
 export const setRole = (user: string, role: 'user' | 'admin') => call<void>('PUT', `/users/${name(user)}/role`, { role })
+export const setBlocked = (user: string, blocked: boolean) => call<void>('PUT', `/users/${name(user)}/blocked`, { blocked })
 export const deleteUser = (user: string) => call<void>('DELETE', `/users/${name(user)}`)
 export const createReset = (user: string) => call<{ code: string; expiresAt: string }>('POST', `/users/${name(user)}/reset`)
 

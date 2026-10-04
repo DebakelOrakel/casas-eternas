@@ -35,6 +35,7 @@ func (m *Module) MountAdmin(mux *http.ServeMux) error {
 	mux.HandleFunc("DELETE "+UsersPath+"/{name}", m.serveDeleteUser)
 	mux.HandleFunc("PUT "+UsersPath+"/{name}/password", m.serveSetPassword)
 	mux.HandleFunc("PUT "+UsersPath+"/{name}/role", m.serveSetRole)
+	mux.HandleFunc("PUT "+UsersPath+"/{name}/blocked", m.serveSetBlocked)
 	mux.HandleFunc("POST "+UsersPath+"/{name}/reset", m.serveCreateReset)
 	mux.HandleFunc("GET "+InvitesPath, m.serveListInvites)
 	mux.HandleFunc("POST "+InvitesPath, m.serveCreateInvite)
@@ -121,6 +122,24 @@ func (m *Module) serveSetRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("role set through the admin API", "user", name, "role", body.Role)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// serveSetBlocked blocks or unblocks a user (docs/decisions/
+// client-accounts.md, fork 7).
+func (m *Module) serveSetBlocked(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Blocked bool `json:"blocked"`
+	}
+	if !decodeAdminBody(w, r, &body) {
+		return
+	}
+	name := r.PathValue("name")
+	if err := m.cfg.Registry.SetBlocked(name, body.Blocked); err != nil {
+		adminError(w, "blocking a user", err)
+		return
+	}
+	slog.Info("user blocked through the admin API", "user", name, "blocked", body.Blocked, "by", actorOf(r))
 	w.WriteHeader(http.StatusNoContent)
 }
 

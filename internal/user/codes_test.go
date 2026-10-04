@@ -127,3 +127,38 @@ func TestPasswordRuleAndSessionGeneration(t *testing.T) {
 		t.Errorf("a reset: %v, generation %d", err, generation())
 	}
 }
+
+// Blocked: the right password is refused, a reset code too, and blocking
+// ends the sessions; unblocked, the password works again.
+func TestBlocking(t *testing.T) {
+	r := open(t, t.TempDir())
+	ada, err := r.Create("ada", "Alt-passwort")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := r.CreateReset("ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetBlocked("ada", true); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := r.ByID(ada.ID); !u.Blocked || u.SessionGeneration != ada.SessionGeneration+1 {
+		t.Errorf("blocked = %+v", u)
+	}
+	if _, ok, _ := r.Verify("ada", "Alt-passwort"); ok {
+		t.Error("a blocked user signed in")
+	}
+	if _, err := r.Redeem(code, "", "Reset-passwort"); !errors.Is(err, ErrCode) {
+		t.Errorf("a blocked user's reset = %v, want ErrCode", err)
+	}
+	if err := r.SetBlocked("ada", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := r.Verify("ada", "Alt-passwort"); !ok {
+		t.Error("an unblocked user cannot sign in")
+	}
+	if err := r.SetBlocked("nobody", true); !errors.Is(err, ErrUnknown) {
+		t.Errorf("blocking nobody = %v, want ErrUnknown", err)
+	}
+}
