@@ -1,6 +1,6 @@
 import { t } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
-import { redeemCode, signIn } from '../../server/session'
+import { meetsPasswordRule, redeemCode, signIn } from '../../server/session'
 import '../theme/design.css'
 import './signInPanel.css'
 
@@ -127,6 +127,12 @@ export function createSignInPanel(host: HTMLElement, onChange: () => void): Sign
   redeemForm.querySelector('[data-action="close"]')!.addEventListener('click', close)
   redeemForm.addEventListener('submit', (event) => {
     event.preventDefault()
+    if (!meetsPasswordRule(redeemPassword.value)) {
+      redeemError.textContent = t('common.password.rule')
+      redeemError.hidden = false
+      redeemPassword.focus()
+      return
+    }
     redeemSubmit.disabled = true
     redeemError.hidden = true
     void redeemCode(codeInput.value.trim(), redeemUser.value.trim(), redeemPassword.value).then((outcome) => {

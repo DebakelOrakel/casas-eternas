@@ -59,6 +59,7 @@
   "common.panel.signIn.redeem.failed": "The code is not valid.",
   "common.panel.signIn.redeem.taken": "The login name is taken.",
   "common.panel.signIn.redeem.badName": "Please choose a login name: 2–32 letters, digits, dots or dashes.",
+  "common.password.rule": "A password has at least 10 characters, with upper- and lower-case letters among them.",
   "common.panel.signIn.redeem.limited": "Too many attempts; try again later.",
   "common.panel.signIn.back": "Back to sign-in"
 }

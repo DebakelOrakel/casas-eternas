@@ -159,6 +159,16 @@ async function begin(response: Response, user: string): Promise<boolean> {
   return true
 }
 
+/**
+ * Whether a password meets the rule the server holds a person's password to
+ * (internal/user/credential.go, personPassword): at least 10 characters,
+ * upper- and lower-case letters among them. Checked here too, so the form
+ * can say which rule failed; the server's check is the one that counts.
+ */
+export function meetsPasswordRule(password: string): boolean {
+  return [...password].length >= 10 && /\p{Lu}/u.test(password) && /\p{Ll}/u.test(password)
+}
+
 export type RedeemOutcome = 'ok' | 'invalid' | 'taken' | 'badName' | 'limited' | 'unreachable'
 
 /**

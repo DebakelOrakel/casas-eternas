@@ -1,7 +1,7 @@
 import { t } from '../../i18n/i18n'
 import { formatMonth, initialsOf } from '../format'
 import { relabel } from '../../i18n/relabel'
-import { signOut } from '../../server/session'
+import { meetsPasswordRule, signOut } from '../../server/session'
 import { avatarFromFile, changePassword, currentAvatarUrl, currentProfile, loadProfile, removeAvatar, saveDisplayName, uploadAvatar, type ProfileOutcome } from '../../server/profileClient'
 import type { NotificationManager } from '../notifications/NotificationManager'
 import '../theme/design.css'
@@ -27,12 +27,13 @@ export interface ProfilePanel {
 // The menu row's icon: a person.
 export const USER_ICON = 'M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10'
 
-// A password's strength as the design draws it: four steps, from its length
-// and whether it holds anything but lower-case letters. A nudge, not a rule —
-// the server takes any password that is not empty.
+// A password's strength as the design draws it: four steps. Weak until it
+// meets the server's rule (meetsPasswordRule); past it, strong with a digit
+// or a sign, or from 16 characters on.
 function strengthOf(password: string): 0 | 1 | 2 | 3 {
   if (!password) return 0
-  return Math.max(1, Math.min(3, Math.floor(password.length / 4) + (/[^a-z]/.test(password) ? 1 : 0))) as 1 | 2 | 3
+  if (!meetsPasswordRule(password)) return 1
+  return /[^\p{L}]/u.test(password) || [...password].length >= 16 ? 3 : 2
 }
 const STRENGTH_KEY = ['profile.password.strength.empty', 'profile.password.strength.weak', 'profile.password.strength.ok', 'profile.password.strength.strong'] as const
 
@@ -202,6 +203,11 @@ export function createProfilePanel(host: HTMLElement, notifications: Notificatio
     event.preventDefault()
     const profile = currentProfile()
     if (!profile) return
+    if (newPassword.value && !meetsPasswordRule(newPassword.value)) {
+      notifications?.show({ message: t('common.password.rule'), icon: '/icons/warning.png', durationMs: 8000 })
+      newPassword.focus()
+      return
+    }
     save.disabled = true
     void (async () => {
       const steps: (() => Promise<ProfileOutcome>)[] = []
