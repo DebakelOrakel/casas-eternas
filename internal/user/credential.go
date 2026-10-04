@@ -199,5 +199,10 @@ func hashPassword(password string) ([]byte, error) {
 	if password == "" {
 		return nil, fmt.Errorf("%w: refusing an empty password", ErrInvalid)
 	}
+	// bcrypt reads 72 bytes and refuses more; said here as the caller's
+	// mistake, not as a server error.
+	if len(password) > 72 {
+		return nil, fmt.Errorf("%w: a password is at most 72 bytes", ErrInvalid)
+	}
 	return bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 }

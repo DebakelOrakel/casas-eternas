@@ -1,6 +1,7 @@
 package user
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -69,17 +70,31 @@ func (r *Registry) RecordLogin(id string) error {
 
 // ChangePassword sets a user's password, given the current one: false, and
 // nothing changed, when the current password is wrong.
+//
+// The comparison runs outside any transaction: bbolt has one writer, and a
+// bcrypt compare held inside it would stall every login, redemption and
+// admin call behind a caller who loops wrong passwords. The write then
+// checks that the stored hash is still the one compared against.
 func (r *Registry) ChangePassword(id, current, next string) (bool, error) {
 	hash, err := hashPassword(next)
 	if err != nil {
 		return false, err
 	}
+	var stored []byte
+	if err := r.db.View(func(tx *bolt.Tx) error {
+		stored = bytes.Clone(tx.Bucket(bucketCredentials).Get([]byte(id)))
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	if stored == nil || bcrypt.CompareHashAndPassword(stored, []byte(current)) != nil {
+		return false, nil
+	}
 	changed := false
 	err = r.db.Update(func(tx *bolt.Tx) error {
 		credentials := tx.Bucket(bucketCredentials)
-		stored := credentials.Get([]byte(id))
-		if stored == nil || bcrypt.CompareHashAndPassword(stored, []byte(current)) != nil {
-			return nil
+		if !bytes.Equal(credentials.Get([]byte(id)), stored) {
+			return nil // changed meanwhile: the current password is no longer known right
 		}
 		changed = true
 		return credentials.Put([]byte(id), hash)

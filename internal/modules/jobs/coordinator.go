@@ -419,8 +419,9 @@ func (c *coordinator) handleDone(msg jetstream.Msg) {
 // store already, as [level, x, y]: those are marked done when the plan is
 // wired, and no worker is handed one to find that out — a round over the
 // relay, a read of the world and an answer per tile, for nothing
-// (2026-10-04). Asked outside the lock: a store behind HTTP takes its time.
-// Nil where there is nothing to ask, or nobody to ask it of.
+// (2026-10-04). Asked outside the lock: one scan of the store directory,
+// which the event and token handlers need not wait for. Nil where there is
+// nothing to ask, or nobody to ask it of.
 func (c *coordinator) storedTiles(report taskDoneReport) map[[3]int]bool {
 	if c.present == nil || len(report.Tasks) == 0 || report.Result == nil || report.Result.WorldID == "" {
 		return nil

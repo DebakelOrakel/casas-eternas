@@ -118,6 +118,24 @@ func TestCodesAndNetworkAdmin(t *testing.T) {
 	if got := do(http.MethodPut, AdminPrefix+"/users/grace/role", admin, `{"role":"admin"}`); got.Code != http.StatusNoContent {
 		t.Errorf("another's role = %d, want 204", got.Code)
 	}
+
+	// Demoted: the token still carries the claim, the registry decides.
+	graceAdmin := tokenOf(login(t, m, "grace", "neu"))
+	if got := do(http.MethodGet, AdminPrefix+"/users", graceAdmin, ""); got.Code != http.StatusOK {
+		t.Fatalf("a promoted admin = %d, want 200", got.Code)
+	}
+	if got := do(http.MethodPut, AdminPrefix+"/users/grace/role", admin, `{"role":"user"}`); got.Code != http.StatusNoContent {
+		t.Fatalf("demoting = %d, want 204", got.Code)
+	}
+	if got := do(http.MethodPut, AdminPrefix+"/users/ada/role", graceAdmin, `{"role":"user"}`); got.Code != http.StatusForbidden {
+		t.Errorf("a demoted admin's old token = %d, want 403", got.Code)
+	}
+
+	// A password bcrypt cannot take is the caller's mistake, not a 500.
+	long := strings.Repeat("x", 73)
+	if got := do(http.MethodPost, RedeemPath, "", `{"code":"AAAA-BBBB-CCCC-DDDD","name":"bob","password":"`+long+`"}`); got.Code != http.StatusBadRequest {
+		t.Errorf("a 73-byte password = %d, want 400", got.Code)
+	}
 }
 
 // Guessing codes is turned away after a few tries from one address.
@@ -137,6 +155,37 @@ func TestRedeemIsRateLimited(t *testing.T) {
 	}
 	if last != http.StatusTooManyRequests {
 		t.Errorf("after %d wrong codes = %d, want 429", redeemFailures, last)
+	}
+
+	// From a public address, X-Forwarded-For is the client's own word: a
+	// new one per request changes nothing.
+	request := httptest.NewRequest(http.MethodPost, RedeemPath, strings.NewReader(`{"code":"AAAA-BBBB-CCCC-DDDD","name":"eve","password":"pw"}`))
+	request.RemoteAddr = "198.51.100.7:999"
+	request.Header.Set("X-Forwarded-For", "203.0.113.99")
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Errorf("a forged X-Forwarded-For = %d, want 429", recorder.Code)
+	}
+}
+
+// Behind a router (a private peer), the address it appended counts — the
+// last one, not the client's first.
+func TestClientAddrBehindARouter(t *testing.T) {
+	for _, c := range []struct{ peer, forwarded, want string }{
+		{"198.51.100.7:1", "1.2.3.4", "198.51.100.7"},
+		{"10.0.0.5:1", "1.2.3.4, 203.0.113.9", "203.0.113.9"},
+		{"127.0.0.1:1", "203.0.113.9", "203.0.113.9"},
+		{"10.0.0.5:1", "", "10.0.0.5"},
+	} {
+		request := httptest.NewRequest(http.MethodPost, RedeemPath, nil)
+		request.RemoteAddr = c.peer
+		if c.forwarded != "" {
+			request.Header.Set("X-Forwarded-For", c.forwarded)
+		}
+		if got := clientAddr(request); got != c.want {
+			t.Errorf("peer %s, forwarded %q = %s, want %s", c.peer, c.forwarded, got, c.want)
+		}
 	}
 }
 

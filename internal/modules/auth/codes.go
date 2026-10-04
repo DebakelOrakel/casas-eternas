@@ -132,25 +132,47 @@ func (l *limiter) blocked(addr string, now time.Time) bool {
 	return len(recent) >= redeemFailures
 }
 
+// limiterSweepAt is the number of addresses past which a failure sweeps
+// every address's stale entries: blocked prunes only the address it is
+// asked about, so addresses that fail once and never come back would
+// otherwise stay for good.
+const limiterSweepAt = 1024
+
 func (l *limiter) fail(addr string, now time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.failures == nil {
 		l.failures = map[string][]time.Time{}
 	}
+	if len(l.failures) >= limiterSweepAt {
+		for known, times := range l.failures {
+			if now.Sub(times[len(times)-1]) >= redeemWindow {
+				delete(l.failures, known)
+			}
+		}
+	}
 	l.failures[addr] = append(l.failures[addr], now)
 }
 
-// clientAddr is who is asking, for the limiter: the first address of
-// X-Forwarded-For where a router stands in front (the cluster's), else the
-// connection's.
+// clientAddr is who is asking, for the limiter. The connection's address,
+// unless that is a private or loopback one — a router in front (the
+// cluster's) — and X-Forwarded-For is set: then its LAST entry, the one
+// that router appended. The first entry is the client's own word and was
+// trusted until 2026-10-04, which let anyone pass the limiter with a new
+// address per request.
 func clientAddr(r *http.Request) string {
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		return strings.TrimSpace(strings.Split(forwarded, ",")[0])
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	forwarded := r.Header.Values("X-Forwarded-For")
+	if peer == nil || !(peer.IsLoopback() || peer.IsPrivate()) || len(forwarded) == 0 {
+		return host
+	}
+	hops := strings.Split(forwarded[len(forwarded)-1], ",")
+	if last := strings.TrimSpace(hops[len(hops)-1]); last != "" {
+		return last
 	}
 	return host
 }
@@ -179,6 +201,12 @@ func (m *Module) serveRedeem(w http.ResponseWriter, r *http.Request) {
 		m.redeem.fail(addr, now)
 		slog.Info("a code was refused", "from", addr)
 		httpjson.ClientError(w, http.StatusForbidden, err.Error())
+		return
+	case errors.Is(err, user.ErrInvalid):
+		// A bad name is checked after the code, so its answer tells a valid
+		// code from an invalid one: it counts against the limiter too.
+		m.redeem.fail(addr, now)
+		adminError(w, "redeeming a code", err)
 		return
 	case err != nil:
 		adminError(w, "redeeming a code", err)

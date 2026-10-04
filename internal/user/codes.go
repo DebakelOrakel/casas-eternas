@@ -213,6 +213,10 @@ func (r *Registry) Redeem(code, name, password string) (User, error) {
 	key := hashCode(code)
 	now := r.now()
 	var out User
+	// A reset that has run out, or whose user is gone, is refused AND
+	// deleted: returning ErrCode from the transaction would roll the
+	// delete back (as it did until 2026-10-04), so it commits and says so.
+	spent := false
 	err = r.db.Update(func(tx *bolt.Tx) error {
 		// A reset first: it names its user.
 		resets := tx.Bucket(bucketResets)
@@ -222,11 +226,13 @@ func (r *Registry) Redeem(code, name, password string) (User, error) {
 				return err
 			}
 			if json.Unmarshal(raw, &rec) != nil || now.After(rec.ExpiresAt) {
-				return ErrCode
+				spent = true
+				return nil
 			}
 			u, ok := byID(tx, rec.UserID)
 			if !ok {
-				return ErrCode
+				spent = true
+				return nil
 			}
 			out = u
 			return tx.Bucket(bucketCredentials).Put([]byte(u.ID), hash)
@@ -244,6 +250,10 @@ func (r *Registry) Redeem(code, name, password string) (User, error) {
 		if id == nil || invite.Left <= 0 || now.After(invite.ExpiresAt) {
 			return ErrCode
 		}
+		// After the code, so a reset's holder who leaves the name empty
+		// hears that the code is spent. That a bad name answers otherwise
+		// for a valid code tells a guesser something; the limiter counts it
+		// as a failure for that reason (auth/codes.go, serveRedeem).
 		if !loginName.MatchString(name) {
 			return fmt.Errorf("%w: a login name is 2 to 32 letters, digits, dots, dashes or underscores", ErrInvalid)
 		}
@@ -269,5 +279,8 @@ func (r *Registry) Redeem(code, name, password string) (User, error) {
 		out = u
 		return invites.Put(id, raw)
 	})
+	if err == nil && spent {
+		return User{}, ErrCode
+	}
 	return out, err
 }

@@ -292,9 +292,12 @@ function artifactStoreFor(job: Job): ArtifactStore | null {
 // So a worker asks for a fresh one on jobs.token.<taskId> when it starts the
 // task and again at half its life, and puts it into the job, where every
 // request reads it. The coordinator answers only while the task and its job
-// are open; refused, the worker stops asking — the job was cancelled, and
-// the cancel ends the task. A request that gets no answer is tried again in
-// a minute, while the token in hand still holds. Answers the stop.
+// are open. Refused or unanswered, the worker asks again in a minute while
+// the token in hand still holds: a refusal can pass (a coordinator just
+// restarted answers "not open" until it has reconciled its tasks, a signing
+// hiccup "cannot issue"), and one that does not is a cancelled job, whose
+// cancel ends the task and with it the asking. Until 2026-10-04 a refusal
+// stopped the asking for good. Answers the stop.
 type Relay = Awaited<ReturnType<typeof connect>>
 const TOKEN_RETRY_MS = 60_000
 async function keepJobToken(nc: Relay, job: Job, taskId: string): Promise<() => void> {
@@ -313,6 +316,7 @@ async function keepJobToken(nc: Relay, job: Job, taskId: string): Promise<() => 
         return
       }
       process.stderr.write(`task ${taskId}: no fresh token: ${answer.error ?? 'no answer'}\n`)
+      again(TOKEN_RETRY_MS)
     } catch (error) {
       process.stderr.write(`task ${taskId}: token request: ${error instanceof Error ? error.message : String(error)}\n`)
       again(TOKEN_RETRY_MS)

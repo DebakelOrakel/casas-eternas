@@ -38,6 +38,14 @@ func (m *Module) mountNetworkAdmin(mux *http.ServeMux) {
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
+		// The claim says what the role WAS at sign-in; the registry what it
+		// is. A demoted admin's token keeps its claim until it runs out, and
+		// over the network that would be time enough to demote the one who
+		// demoted them.
+		if !caller.Admin() {
+			http.Error(w, "the admin API needs an administrator", http.StatusForbidden)
+			return
+		}
 		path := "/v1/auth" + strings.TrimPrefix(r.URL.Path, AdminPrefix)
 		if selfDemotion(r.Method, path, caller.Name) {
 			http.Error(w, "not on yourself over the network: another admin, or the admin socket, can", http.StatusConflict)
