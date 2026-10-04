@@ -1,0 +1,21 @@
+{
+  "profile.title": "My profile",
+  "profile.sub": "{role} · member since {date}",
+  "profile.role.admin": "Administrator",
+  "profile.role.user": "User",
+  "profile.avatar.pick": "Choose picture",
+  "profile.avatar.clear": "Remove",
+  "profile.avatar.hint": "PNG or JPG, cut to a square of 256 px.",
+  "profile.displayName": "Display name",
+  "profile.displayName.help": "What others see. Empty: your login name.",
+  "profile.loginName": "Login name",
+  "profile.password.title": "Change password",
+  "profile.password.current": "Current password",
+  "profile.password.new": "New password",
+  "profile.password.strength.empty": "empty",
+  "profile.password.strength.weak": "weak",
+  "profile.password.strength.ok": "fair",
+  "profile.password.strength.strong": "strong",
+  "profile.save": "Save",
+  "profile.cancel": "Cancel"
+}

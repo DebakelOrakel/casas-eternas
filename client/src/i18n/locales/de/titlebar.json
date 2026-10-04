@@ -43,5 +43,7 @@
   "titlebar.menu.label": "Menü",
   "titlebar.menu.help": "Jobs, Artefakte, Sprache und Konto.",
   "titlebar.handbook.label": "Handbuch",
-  "titlebar.handbook.help": "Erklärt jeden Schritt, seine Konzepte und Regler. Öffnet beim aktuellen Schritt."
+  "titlebar.handbook.help": "Erklärt jeden Schritt, seine Konzepte und Regler. Öffnet beim aktuellen Schritt.",
+  "titlebar.profile.label": "Profil",
+  "titlebar.profile.help": "Dein Anzeigename, Bild und Passwort."
 }

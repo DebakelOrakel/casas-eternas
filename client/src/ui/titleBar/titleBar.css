@@ -319,6 +319,9 @@ button.title-bar__mark:hover {
   flex: none;
   border-radius: 4px;
   background: var(--dc-teal);
+  /* The user's picture, where there is one (server/profileClient). */
+  background-position: center;
+  background-size: cover;
   color: var(--dc-on-teal);
   font-size: 12px;
   font-weight: 600;

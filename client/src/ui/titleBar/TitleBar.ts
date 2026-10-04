@@ -2,6 +2,9 @@ import { getLocale, setLocale, t, type Locale, type TKey } from '../../i18n/i18n
 import { formatWhen } from '../format'
 import { hasSession, onSessionChange, signedInUser, signOut } from '../../server/session'
 import { getServerStatus } from '../../server/serverStatus'
+import { currentAvatarUrl, currentProfile, onProfileChange } from '../../server/profileClient'
+import { createProfilePanel, initialsOf, USER_ICON, type ProfilePanel } from '../profilePanel/ProfilePanel'
+import type { NotificationManager } from '../notifications/NotificationManager'
 import '../theme/design.css'
 import './titleBar.css'
 
@@ -71,6 +74,9 @@ export interface TitleBarOptions {
   // already build a SignInPanel for the server indicator, and a second one
   // would put two sign-in windows on the same screen.
   onSignIn(): void
+  // Where the profile window says what became of a save; none, and it says
+  // nothing (ui/profilePanel).
+  notifications?: NotificationManager
   // What the bar calls this screen, as a catalog key. Left out on a screen that
   // IS the product — the title screen, the world map — which then shows the
   // product's name. The generator names itself, because it is one workshop
@@ -114,12 +120,6 @@ const HOME_ICON = 'M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3'
 // Up to two letters from the user name, for the account chip. Falls back to
 // the first character of whatever came back, so a single-word or non-Latin
 // name still gets a mark rather than an empty circle.
-function initialsOf(user: string): string {
-  const parts = user.trim().split(/[\s._-]+/).filter(Boolean)
-  if (parts.length === 0) return '?'
-  if (parts.length === 1) return [...parts[0]].slice(0, 2).join('').toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-}
 
 export function createTitleBar(host: HTMLElement, options: TitleBarOptions): TitleBar {
   host.classList.add('has-title-bar')
@@ -266,12 +266,16 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
     menuButton.dataset.help = hasSession() ? 'titlebar.account' : 'titlebar.menu'
     menuButton.classList.toggle('title-menu__button--account', hasSession())
     if (hasSession()) {
-      const user = signedInUser()
+      // The display name and the picture once the profile is in; the login
+      // name and its initials until then (server/profileClient).
+      const user = currentProfile()?.displayName || signedInUser()
       menuButton.setAttribute('aria-label', t('titlebar.account.label', { user }))
       const initials = document.createElement('span')
       initials.className = 'title-bar__initials'
       initials.setAttribute('aria-hidden', 'true')
-      initials.textContent = initialsOf(user)
+      const picture = currentAvatarUrl()
+      if (picture) initials.style.backgroundImage = `url("${picture}")`
+      else initials.textContent = initialsOf(user)
       const name = document.createElement('span')
       name.className = 'title-bar__tool-label'
       name.textContent = user
@@ -314,6 +318,9 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   function paintAccount(): void {
     accountSlot.replaceChildren()
     if (hasSession()) {
+      // The profile only where the server keeps one: a session means a
+      // server in mode password, which always does.
+      accountSlot.appendChild(menuRow(USER_ICON, t('titlebar.profile.label'), 'titlebar.profile', () => profile().open()))
       accountSlot.appendChild(menuRow(SIGN_OUT_ICON, t('titlebar.signOut.label'), null, () => signOut()))
     } else if (canSignIn === true) {
       accountSlot.appendChild(menuRow(SIGN_IN_ICON, t('titlebar.signIn.label'), 'titlebar.signIn', () => options.onSignIn()))
@@ -376,6 +383,13 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   // `signOut()` and a session lost to the server both land here, so the name
   // on the button never outlives the session it names.
   const stopWatchingSession = onSessionChange(() => paintMenu())
+  // The display name and the picture, once the profile is read or changed.
+  const stopWatchingProfile = onProfileChange(() => paintButton())
+
+  // The profile window, made the first time it is asked for, on the screen
+  // the bar sits on.
+  let profileWindow: ProfilePanel | null = null
+  const profile = (): ProfilePanel => (profileWindow ??= createProfilePanel(host, options.notifications))
 
   // --- leaving the screen ---------------------------------------------------
 
@@ -446,6 +460,8 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
     dispose() {
       closeMenu()
       stopWatchingSession()
+      stopWatchingProfile()
+      profileWindow?.dispose()
       bar.remove()
       host.classList.remove('has-title-bar')
     },

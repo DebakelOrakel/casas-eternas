@@ -18,7 +18,7 @@ summary.de: Die Konto-Panels aus dem Design kommen in den Client. Ein Profil, in
   Selbstregistrierung. Avatare liegen bei der Identität, im Speicher des
   Auth-Moduls.
 area: platform
-stage: decided
+stage: building
 createdAt: 2026-10-04
 updatedAt: 2026-10-04
 related: [DEC-0023, DEC-0022, DEC-0019, DES-0011, DES-0012, DES-0013]
@@ -178,5 +178,10 @@ proposed before it is added.
 
 ## Status
 
-decided 2026-10-04 in conversation; nothing built. The CLI names in the
-build order are proposals, not decided.
+decided 2026-10-04 in conversation. The profile BUILT the same day (forks 5
+and 6): display name, last sign-in, the own password and the avatar, as
+routes under /v1/auth/me (internal/modules/auth/profile.go) and as the
+profile window on every screen (ui/profilePanel); the title bar shows the
+display name and the picture. Open: the invite codes and registration (fork
+4), the admin routes on the network and the admin panel (forks 1 and 8),
+reset codes. The CLI names in the build order are proposals, not decided.

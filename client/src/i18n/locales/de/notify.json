@@ -21,5 +21,9 @@
   "notify.event.continentBreakupNamed": "{name} zerbricht",
   "notify.event.continentBreakup": "Ein Kontinent zerbricht",
   "notify.event.supercontinentFormedNamed": "Superkontinent {name} ist entstanden",
-  "notify.event.supercontinentFormed": "Ein Superkontinent ist entstanden"
+  "notify.event.supercontinentFormed": "Ein Superkontinent ist entstanden",
+  "notify.profile.saved": "Profil gespeichert.",
+  "notify.profile.passwordWrong": "Das aktuelle Passwort stimmt nicht.",
+  "notify.profile.failed": "Das Profil konnte nicht gespeichert werden: {reason}",
+  "notify.profile.avatarUnreadable": "Das Bild konnte nicht gelesen werden."
 }

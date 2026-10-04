@@ -133,9 +133,10 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	loginPath := ""
 	if registry != nil {
 		login, err := auth.New(auth.Config{
-			Tokens:   tokens,
-			TTL:      cfg.Global.Auth.TokenTTL,
-			Registry: registry,
+			Tokens:     tokens,
+			TTL:        cfg.Global.Auth.TokenTTL,
+			Registry:   registry,
+			StorageDir: cfg.Auth.Storage.DirPath(),
 		})
 		if err != nil {
 			return nil, nil, err

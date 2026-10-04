@@ -74,6 +74,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
 
   const titleBar = createTitleBar(root, {
     onSignIn: () => serverIndicator.openSignIn(),
+    notifications: ctx.notifications,
     menuItems: [
       { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openWindow(jobChooser) },
       { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openWindow(artifactChooser) },

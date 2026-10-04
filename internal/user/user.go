@@ -52,6 +52,17 @@ type User struct {
 	// OIDCSubject joins a foreign provider's `sub` to this entry, once OIDC
 	// exists. Reserved now so the record format does not change under it.
 	OIDCSubject string `json:"oidcSubject,omitempty"`
+	// DisplayName is what the panels show (docs/decisions/client-accounts.md,
+	// fork 5); empty means the login name. The user sets it; it is never a
+	// key for anything.
+	DisplayName string `json:"displayName,omitempty"`
+	// LastLoginAt is when the user last signed in, for the admin table.
+	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
+	// Avatar is the version of the user's picture (its content hash) and
+	// AvatarType its media type; the picture itself is a file the auth
+	// module keeps beside auth.db (fork 6). Empty: no picture.
+	Avatar     string `json:"avatar,omitempty"`
+	AvatarType string `json:"avatarType,omitempty"`
 }
 
 // The role vocabulary. RoleUser is the accepted SPELLING of the default —

@@ -144,6 +144,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const titleBar = createTitleBar(root, {
     nameKey: 'common.title.nav.incubator',
     onSignIn: () => serverIndicator.openSignIn(),
+    notifications: ctx.notifications,
     // Nothing here is lost by leaving: the world stays where it is kept.
     onHomeClick: () => ctx.goTo('title'),
     // The jobs and the artifacts on every screen, not only in the generator;

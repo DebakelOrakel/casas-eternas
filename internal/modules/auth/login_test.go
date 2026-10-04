@@ -27,7 +27,7 @@ func newTestModule(t *testing.T, ttl time.Duration) (*Module, *token.Tokens) {
 	if _, err := registry.Create("ada", "geheim"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	m, err := New(Config{Tokens: tokens, TTL: ttl, Registry: registry})
+	m, err := New(Config{Tokens: tokens, TTL: ttl, Registry: registry, StorageDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -161,6 +161,7 @@ func TestNewRequiresEverything(t *testing.T) {
 		{"no tokens", Config{Registry: registry, TTL: time.Hour}},
 		{"no lifetime", Config{Registry: registry, Tokens: tokens}},
 		{"negative lifetime", Config{Registry: registry, Tokens: tokens, TTL: -time.Hour}},
+		{"no storage", Config{Registry: registry, Tokens: tokens, TTL: time.Hour}},
 		{"no registry", Config{Tokens: tokens, TTL: time.Hour}},
 	} {
 		if _, err := New(c.cfg); err == nil {

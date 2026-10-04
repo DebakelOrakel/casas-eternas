@@ -43,5 +43,7 @@
   "titlebar.menu.label": "Menu",
   "titlebar.menu.help": "Jobs, artifacts, language and account.",
   "titlebar.handbook.label": "Handbook",
-  "titlebar.handbook.help": "Explains each step, its concepts and its controls. Opens on the current step."
+  "titlebar.handbook.help": "Explains each step, its concepts and its controls. Opens on the current step.",
+  "titlebar.profile.label": "Profile",
+  "titlebar.profile.help": "Your display name, picture and password."
 }

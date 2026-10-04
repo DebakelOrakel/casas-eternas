@@ -857,6 +857,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const titleBar = createTitleBar(root, {
     nameKey: 'generator.title',
     onSignIn: () => serverIndicator.openSignIn(),
+    notifications: ctx.notifications,
     onHomeClick: () => { void leaveWorld(() => ctx.goTo('title')) },
     // The doors to the jobs (the fine simulation on the server) and to the
     // artifacts, each a window over the generator. Not while the world list

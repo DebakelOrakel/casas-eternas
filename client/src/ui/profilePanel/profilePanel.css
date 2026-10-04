@@ -1,0 +1,141 @@
+/* The profile window — design canvas (Main.dc.html), "Benutzerprofil",
+   light theme — in the sign-in window's frame (signInPanel.css), a little
+   wider for the picture beside its buttons. */
+.profile-dialog {
+  width: min(460px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+
+.profile-avatar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* The picture, or the initials on the account colour where there is none:
+   the same square-ish corners as the title bar's initials. */
+.profile-avatar__picture {
+  width: 68px;
+  height: 68px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--dc-teal) center / cover no-repeat;
+  color: var(--dc-on-teal);
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.profile-avatar__side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.profile-avatar__buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.profile-hint {
+  font-size: 11.5px;
+  color: var(--dc-faint);
+}
+
+.profile-button {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.profile-button:hover {
+  background: var(--dc-hover);
+}
+
+.profile-button--quiet {
+  border-color: transparent;
+  color: var(--dc-text2);
+}
+
+.profile-button:focus-visible {
+  outline: 2px solid var(--dc-accent);
+  outline-offset: 2px;
+}
+
+.signin-field input[readonly] {
+  background: transparent;
+  color: var(--dc-muted);
+}
+
+.profile-password {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.profile-kicker {
+  padding: 0;
+  margin-bottom: 2px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dc-faint);
+}
+
+/* Four steps: empty, weak, fair, strong — the bar fills and takes the
+   step's colour. */
+.profile-strength {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: -4px;
+  font-size: 12px;
+  color: var(--dc-muted);
+}
+
+.profile-strength__bar {
+  flex-grow: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--dc-line2);
+  overflow: hidden;
+}
+
+.profile-strength__bar > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  transition: width 0.2s, background-color 0.2s;
+}
+
+.profile-strength[data-strength="1"] .profile-strength__bar > span { width: 33%; background: var(--dc-red-text); }
+.profile-strength[data-strength="2"] .profile-strength__bar > span { width: 66%; background: var(--dc-accent); }
+.profile-strength[data-strength="3"] .profile-strength__bar > span { width: 100%; background: var(--dc-teal); }
+
+.profile-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.profile-foot__gap {
+  flex-grow: 1;
+}
+
+.profile-save {
+  padding: 0 18px;
+}

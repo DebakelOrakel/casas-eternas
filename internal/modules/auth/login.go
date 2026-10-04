@@ -42,6 +42,9 @@ type Config struct {
 	// not a config list, since 2026-08-13. The module OWNS the registry's
 	// lifetime: Close releases auth.db and its file lock.
 	Registry *user.Registry
+	// StorageDir is auth.storage, where auth.db lives: the avatars are files
+	// beside it (profile.go), kept by the same one process.
+	StorageDir string
 }
 
 // Module serves the login endpoint.
@@ -60,16 +63,21 @@ func New(cfg Config) (*Module, error) {
 	if cfg.Registry == nil {
 		return nil, fmt.Errorf("auth: no user registry")
 	}
+	if cfg.StorageDir == "" {
+		return nil, fmt.Errorf("auth: no storage directory for the avatars")
+	}
 	return &Module{cfg: cfg}, nil
 }
 
 // Name identifies the module in logs and errors.
 func (m *Module) Name() string { return "auth" }
 
-// Mount claims the login route and the service accounts' token route.
+// Mount claims the login route, the service accounts' token route and the
+// signed-in user's profile (profile.go).
 func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST "+Path, m.serveLogin)
 	mux.HandleFunc("POST "+TokenPath, m.serveServiceToken)
+	m.MountProfile(mux)
 	return nil
 }
 
@@ -121,6 +129,10 @@ func (m *Module) serveLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("logged in", "user", name, "id", entry.ID, "admin", entry.Admin(), "expires", expires)
+	// For the admin table; a login that cannot be noted is still a login.
+	if err := m.cfg.Registry.RecordLogin(entry.ID); err != nil {
+		slog.Warn("cannot note a login", "user", name, "error", err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	// A credential must never sit in a shared cache, and "no-store" is the only

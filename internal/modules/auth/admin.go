@@ -76,6 +76,12 @@ func (m *Module) serveCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (m *Module) serveDeleteUser(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	// The picture goes with its user; the id is gone once the entry is.
+	if entry, ok := m.cfg.Registry.ByName(name); ok {
+		if err := m.removeAvatar(entry.ID); err != nil {
+			slog.Warn("cannot remove a deleted user's avatar", "user", name, "error", err)
+		}
+	}
 	if err := m.cfg.Registry.Delete(name); err != nil {
 		adminError(w, "deleting a user", err)
 		return

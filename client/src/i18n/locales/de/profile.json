@@ -1,0 +1,21 @@
+{
+  "profile.title": "Mein Profil",
+  "profile.sub": "{role} · dabei seit {date}",
+  "profile.role.admin": "Administrator",
+  "profile.role.user": "Benutzer",
+  "profile.avatar.pick": "Bild wählen",
+  "profile.avatar.clear": "Entfernen",
+  "profile.avatar.hint": "PNG oder JPG, zugeschnitten auf ein Quadrat von 256 px.",
+  "profile.displayName": "Anzeigename",
+  "profile.displayName.help": "Was andere sehen. Leer: dein Anmeldename.",
+  "profile.loginName": "Anmeldename",
+  "profile.password.title": "Passwort ändern",
+  "profile.password.current": "Aktuelles Passwort",
+  "profile.password.new": "Neues Passwort",
+  "profile.password.strength.empty": "leer",
+  "profile.password.strength.weak": "schwach",
+  "profile.password.strength.ok": "brauchbar",
+  "profile.password.strength.strong": "stark",
+  "profile.save": "Speichern",
+  "profile.cancel": "Abbrechen"
+}
