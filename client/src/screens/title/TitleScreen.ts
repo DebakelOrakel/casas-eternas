@@ -4,6 +4,8 @@ import { t } from '../../i18n/i18n'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createTitleBar } from '../../ui/titleBar/TitleBar'
+import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
+import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import '../../ui/theme/design.css'
 import './title.css'
 
@@ -52,8 +54,30 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
   //
   // Rebuilding on a language change is what this screen already did, and it can
   // still afford to — there is nothing here to lose.
+  // The jobs and the artifacts, reachable from here too rather than only
+  // from inside the generator; there is no world on this screen, so "this
+  // world" has nothing to show and the windows open on all of them.
+  const artifactChooser = createArtifactChooser(root, {
+    currentWorld: () => null,
+    onClose: () => artifactChooser.close(),
+    onCommissioned: (outcome) => reportCommission(ctx.notifications, outcome),
+  })
+  const jobChooser = createJobChooser(root, {
+    currentWorld: () => null,
+    onClose: () => jobChooser.close(),
+  })
+  const openWindow = (window: typeof artifactChooser | typeof jobChooser): void => {
+    if (window.isOpen()) return
+    ;(window === artifactChooser ? jobChooser : artifactChooser).close()
+    window.open()
+  }
+
   const titleBar = createTitleBar(root, {
     onSignIn: () => serverIndicator.openSignIn(),
+    menuItems: [
+      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openWindow(jobChooser) },
+      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openWindow(artifactChooser) },
+    ],
     onLocaleChange: () => ctx.goTo('title'),
   })
   titleBar.setWorld(null)
@@ -69,6 +93,8 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     scene,
     dispose() {
       titleBar.dispose()
+      artifactChooser.dispose()
+      jobChooser.dispose()
       helpTooltip.dispose()
       serverIndicator.dispose()
       scene.dispose()

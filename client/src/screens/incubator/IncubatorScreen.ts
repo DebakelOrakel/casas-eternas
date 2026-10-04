@@ -17,6 +17,8 @@ import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createSidebar } from '../../ui/sidebar/Sidebar'
 import { createTitleBar } from '../../ui/titleBar/TitleBar'
 import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
+import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
+import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { createGroundView } from './groundView'
 import type { GridField } from './groundSource'
 import '../../ui/theme/design.css'
@@ -144,10 +146,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onSignIn: () => serverIndicator.openSignIn(),
     // Nothing here is lost by leaving: the world stays where it is kept.
     onHomeClick: () => ctx.goTo('title'),
+    // The jobs and the artifacts on every screen, not only in the generator;
+    // not while the world list covers the screen, as there.
+    menuItems: [
+      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openWindow(jobChooser), visible: () => !worldChooser.isOpen() },
+      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openWindow(artifactChooser), visible: () => !worldChooser.isOpen() },
+    ],
     onLocaleChange: () => {
       sidebar.relabel()
       relabel(sidebar.body)
       worldChooser.relabel()
+      artifactChooser.relabel()
+      jobChooser.relabel()
     },
   })
   titleBar.setWorld(null)
@@ -268,6 +278,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     step('ground ready')
     if (disposed) return false
     shown = true
+    held = { uid, name: '', seed: '', worldId: chosen.worldId }
     scaleBar.element.hidden = false
     return true
   }
@@ -291,6 +302,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onOpenArchive: (archive, kept) => {
       void (async () => {
         if (!(await showLevel(archive, kept.uid))) return
+        if (held) held = { ...held, name: kept.name, seed: kept.seed }
         titleBar.setWorld({ name: kept.name || undefined, seed: kept.seed })
         titleBar.setSaveState({ kind: kept.where === 'server' ? 'server' : 'local', at: new Date(kept.savedAt) })
         worldChooser.close()
@@ -298,6 +310,33 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       })()
     },
   })
+
+  // The jobs and the artifacts, full screen over the ground as in the
+  // generator; one at a time, the column out of the way while one is up.
+  // "This world" is the world shown. They open only while the world list is
+  // closed, which is when the column stands, so closing one stands it again.
+  let held: { uid: string; name: string; seed: string; worldId: string | null } | null = null
+  const closeWindow = (window: { isOpen(): boolean; close(): void }): void => {
+    if (!window.isOpen()) return
+    window.close()
+    sidebar.setVisible(true)
+  }
+  const artifactChooser = createArtifactChooser(root, {
+    currentWorld: () => held,
+    onClose: () => closeWindow(artifactChooser),
+    onCommissioned: (outcome) => reportCommission(ctx.notifications, outcome),
+  })
+  const jobChooser = createJobChooser(root, {
+    currentWorld: () => held,
+    onClose: () => closeWindow(jobChooser),
+  })
+  function openWindow(window: typeof artifactChooser | typeof jobChooser): void {
+    if (window.isOpen()) return
+    const other = window === artifactChooser ? jobChooser : artifactChooser
+    if (other.isOpen()) closeWindow(other)
+    sidebar.setVisible(false)
+    window.open()
+  }
 
   // The list first, the column behind it — as the generator opens.
   sidebar.setVisible(false)
@@ -359,6 +398,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     dispose() {
       disposed = true
       worldChooser.dispose()
+      artifactChooser.dispose()
+      jobChooser.dispose()
       sidebar.dispose()
       titleBar.dispose()
       helpTooltip.dispose()

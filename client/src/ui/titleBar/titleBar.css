@@ -223,11 +223,11 @@ button.title-bar__mark:hover {
   width: 112px;
 }
 
+/* The corners of every other button in the bar (6px), not a pill. */
 .title-menu__button--account {
   width: auto;
   max-width: 220px;
   padding-left: 4px;
-  border-radius: 18px;
 }
 
 .title-menu__button--account .title-bar__tool-label {
@@ -317,7 +317,7 @@ button.title-bar__mark:hover {
   width: 28px;
   height: 28px;
   flex: none;
-  border-radius: 14px;
+  border-radius: 4px;
   background: var(--dc-teal);
   color: var(--dc-on-teal);
   font-size: 12px;

@@ -76,8 +76,8 @@ import { meshLevelStage } from '../../world/meshArtifacts'
 import { isCurrentArtifact, parseStage } from '../../world/levels'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
-import { createArtifactChooser } from './ArtifactChooser'
-import { createJobChooser } from './JobChooser'
+import { ARTIFACTS_ICON, createArtifactChooser, reportCommission as reportCommissionTo } from '../../ui/artifactChooser/ArtifactChooser'
+import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { openWorld } from '../../world/query'
 import { createStepBar } from './StepBar'
 import { createSidebar } from '../../ui/sidebar/Sidebar'
@@ -863,8 +863,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // is up: it covers the screen the window would open over.
     menuItems: [
       { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open(), visible: () => !chooserOpen },
-      { key: 'titlebar.jobs', icon: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01', onSelect: () => openJobs(), visible: () => !chooserOpen },
-      { key: 'common.action.storage', icon: 'M4 6a8 3 0 1 0 16 0a8 3 0 1 0-16 0M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3', onSelect: () => openArtifacts(), visible: () => !chooserOpen },
+      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openJobs(), visible: () => !chooserOpen },
+      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openArtifacts(), visible: () => !chooserOpen },
     ],
     onLocaleChange: () => {
       // One call for the whole column: every step block in it carries its keys
@@ -4990,14 +4990,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // dropped, so a refused order (no rights, server busy, world not uploaded)
   // only showed as a button that came back. The server's own message is the
   // reason; the jobs window shows the rest of a job's life.
-  function reportCommission(outcome: CommissionOutcome): void {
-    if (outcome.ok) return
-    if (outcome.reason === 'unknownWorld') {
-      ctx.notifications.show({ message: t('notify.bake.needsUpload'), icon: '/icons/warning.png', durationMs: 8000 })
-      return
-    }
-    ctx.notifications.show({ message: t('notify.bake.failed', { reason: outcome.message ?? outcome.reason }), icon: '/icons/warning.png', durationMs: 8000 })
-  }
+  const reportCommission = (outcome: CommissionOutcome): void => reportCommissionTo(ctx.notifications, outcome)
   refineButton.addEventListener('click', () => {
     refineButton.disabled = true
     void commissionBake(worldUid, refineDepth, AMPLIFY_EROSION_ROUNDS, { plan: 'refine' }).then((outcome) => {

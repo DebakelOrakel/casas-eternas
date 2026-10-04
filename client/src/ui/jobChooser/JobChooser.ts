@@ -7,7 +7,7 @@ import { listBrowserWorlds } from '../../world/browserWorlds'
 import { icon } from '../../ui/chooserIcons'
 import '../../ui/theme/design.css'
 import '../../ui/worldChooser/worldChooser.css'
-import './artifactChooser.css'
+import '../artifactChooser/artifactChooser.css'
 
 // The jobs window: the fine simulation of the viewer's worlds on the server —
 // what waits, runs, is done (the design canvas's "Jobliste", Main.dc.html),
@@ -26,8 +26,11 @@ import './artifactChooser.css'
 // their own, so it repaints every few seconds besides. No pausing (decided
 // 2026-09-29); a job is cancelled, and that confirms in place.
 
+// The menu entry's icon, the same on every screen that offers the window.
+export const JOBS_ICON = 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01'
+
 export interface JobChooserOptions {
-  // The world the generator holds, or null before there is one — what
+  // The world the screen holds, or null where there is none — what
   // "this world" filters by.
   currentWorld(): { uid: string } | null
   onClose(): void

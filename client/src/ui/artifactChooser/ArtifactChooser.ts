@@ -9,6 +9,7 @@ import { currentPipelineVersion, parseStage } from '../../world/levels'
 import { commissionBake, type CommissionOutcome } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { BROWSER_ICON, SERVER_ICON, icon } from '../../ui/chooserIcons'
+import type { NotificationManager } from '../notifications/NotificationManager'
 import '../../ui/theme/design.css'
 import '../../ui/worldChooser/worldChooser.css'
 import './artifactChooser.css'
@@ -32,8 +33,21 @@ import './artifactChooser.css'
 // the server let the viewer see (the server lists by the worlds' access, and
 // says per row what the viewer may do).
 
+// The menu entry's icon, the same on every screen that offers the window.
+export const ARTIFACTS_ICON = 'M4 6a8 3 0 1 0 16 0a8 3 0 1 0-16 0M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'
+
+// Says why an order failed, as every screen that places one says it.
+export function reportCommission(notifications: NotificationManager, outcome: CommissionOutcome): void {
+  if (outcome.ok) return
+  if (outcome.reason === 'unknownWorld') {
+    notifications.show({ message: t('notify.bake.needsUpload'), icon: '/icons/warning.png', durationMs: 8000 })
+    return
+  }
+  notifications.show({ message: t('notify.bake.failed', { reason: outcome.message ?? outcome.reason }), icon: '/icons/warning.png', durationMs: 8000 })
+}
+
 export interface ArtifactChooserOptions {
-  // The world the generator holds, or null before there is one; `worldId` its
+  // The world the screen holds, or null where there is none; `worldId` its
   // last save's terrain id, null before it was saved.
   currentWorld(): { uid: string; name: string; seed: string; worldId: string | null } | null
   onClose(): void
