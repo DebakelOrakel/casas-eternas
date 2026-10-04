@@ -123,24 +123,31 @@ var (
 // builder.
 type specFor func(ctx context.Context, jobID string, request Request) (Spec, error)
 
+// tokenFor mints a job's credential for its world (token.IssueJob): what a
+// worker asks for on jobs.token.<taskId> while it holds the task. Nil where
+// the server checks nobody and a task carries no token.
+type tokenFor func(jobID, worldUID string) (string, time.Time, error)
+
 type coordinator struct {
 	mu       sync.Mutex
 	db       *bolt.DB
 	conn     *relay.Conn
 	registry *registry
 	spec     specFor
+	token    tokenFor
 	tasks    map[string]*Task
 	byJob    map[string][]string
 	stream   jetstream.Stream
 	consume  jetstream.ConsumeContext
 	events   *nats.Subscription
+	tokens   *nats.Subscription
 	ctx      context.Context
 	cancel   context.CancelFunc
 }
 
 // newCoordinator opens jobs.db, restores the jobs into the registry, and
 // starts reading the workers' reports.
-func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor) (*coordinator, error) {
+func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor, token tokenFor) (*coordinator, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("jobs.storage: %w", err)
 	}
@@ -149,7 +156,7 @@ func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor) (
 		return nil, fmt.Errorf("jobs.storage: %w (is another process holding jobs.db?)", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &coordinator{db: db, conn: conn, registry: reg, spec: spec, tasks: map[string]*Task{}, byJob: map[string][]string{}, ctx: ctx, cancel: cancel}
+	c := &coordinator{db: db, conn: conn, registry: reg, spec: spec, token: token, tasks: map[string]*Task{}, byJob: map[string][]string{}, ctx: ctx, cancel: cancel}
 	fail := func(err error) (*coordinator, error) {
 		c.close()
 		return nil, err
@@ -175,6 +182,11 @@ func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor) (
 	}
 	// Progress is fleeting: a core subscription, no acknowledgement.
 	c.events, err = conn.NATS().Subscribe(conn.Subject("event", "*"), c.handleEvent)
+	if err != nil {
+		return fail(fmt.Errorf("jobs: %w", err))
+	}
+	// A worker's fresh credential, asked for while it holds a task.
+	c.tokens, err = conn.NATS().Subscribe(conn.Subject("token", "*"), c.handleToken)
 	if err != nil {
 		return fail(fmt.Errorf("jobs: %w", err))
 	}
@@ -547,6 +559,54 @@ func (c *coordinator) handleEvent(msg *nats.Msg) {
 	})
 }
 
+// THE JOB TOKEN, KEPT FRESH: a task carries a token for its world that
+// holds an hour (jobTokenTTL), minted when the task is handed out; a worker
+// asks for a fresh one on jobs.token.<taskId> when it starts the task and
+// again before the one in hand runs out. Only for a task still open in a
+// job still open: a cancelled job's worker gets no new token, so what it
+// would write after the cancel is refused. Before 2026-10-04 the token was
+// minted once for 48 hours, the length of the longest task with room.
+type tokenReply struct {
+	Token     string    `json:"token,omitempty"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+	Error     string    `json:"error,omitempty"`
+}
+
+func (c *coordinator) handleToken(msg *nats.Msg) {
+	answer := func(reply tokenReply) {
+		raw, _ := json.Marshal(reply)
+		_ = msg.Respond(raw)
+	}
+	taskID := strings.TrimPrefix(msg.Subject, c.conn.Subject("token")+".")
+	c.mu.Lock()
+	task, ok := c.tasks[taskID]
+	open := ok && (task.State == taskQueued || task.State == taskRunning)
+	if open {
+		job, found := c.registry.get(task.JobID)
+		open = found && (job.State == StateQueued || job.State == StateRunning)
+	}
+	var jobID, world string
+	if open {
+		jobID, world = task.JobID, task.Request.WorldUID
+	}
+	c.mu.Unlock()
+	if !open {
+		answer(tokenReply{Error: "the task is not open"})
+		return
+	}
+	if c.token == nil {
+		answer(tokenReply{Error: "this server issues no job tokens"})
+		return
+	}
+	issued, expires, err := c.token(jobID, world)
+	if err != nil {
+		slog.Error("jobs: cannot issue a job token", "task", taskID, "err", err)
+		answer(tokenReply{Error: "cannot issue a token"})
+		return
+	}
+	answer(tokenReply{Token: issued, ExpiresAt: expires})
+}
+
 // failJob ends a job and withdraws what of it is still queued. Called with
 // the lock held.
 func (c *coordinator) failJob(jobID, reason string) {
@@ -669,6 +729,9 @@ func (c *coordinator) close() {
 	}
 	if c.events != nil {
 		_ = c.events.Unsubscribe()
+	}
+	if c.tokens != nil {
+		_ = c.tokens.Unsubscribe()
 	}
 	c.cancel()
 	if c.db != nil {

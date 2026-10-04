@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -84,6 +85,11 @@ func TestWorkerGrantCoversAServingWorker(t *testing.T) {
 		}
 		if err := worker.Publish("jobs.event.j1", []byte("{}")); err != nil {
 			t.Fatal(err)
+		}
+		// A fresh job token is the coordinator's to answer; with none here,
+		// an allowed request is told so at once, a refused one times out.
+		if _, err := worker.Request("jobs.token.t1", nil, 2*time.Second); !errors.Is(err, nats.ErrNoResponders) {
+			t.Errorf("the worker's token request: %v, want no responders", err)
 		}
 		if _, err := js.Publish(ctx, "jobs.done.t1", []byte("{}")); err != nil {
 			t.Fatalf("the worker reports done: %v", err)

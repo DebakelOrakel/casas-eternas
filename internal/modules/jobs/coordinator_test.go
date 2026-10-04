@@ -14,6 +14,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/relay"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // A relay with the jobs streams, for the coordinator's tests.
@@ -125,7 +126,7 @@ var computedOrder struct {
 func TestCoordinatorRunsTilesInPlanOrder(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func submitted(t *testing.T, c *coordinator, reg *registry, request Request) Job
 func TestCoordinatorRunsARefinePlan(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +217,7 @@ func TestCoordinatorRunsARefinePlan(t *testing.T) {
 func TestCoordinatorStopsAPlanAtItsStage(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +240,7 @@ func TestCoordinatorStopsAPlanAtItsStage(t *testing.T) {
 func TestCoordinatorFailsAJobOnAFailedTask(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +258,7 @@ func TestCoordinatorFailsAJobOnAFailedTask(t *testing.T) {
 func TestCoordinatorWithdrawsACancelledJob(t *testing.T) {
 	_, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +290,7 @@ func TestCoordinatorSurvivesARestart(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	dir := t.TempDir()
 	reg := newRegistry(jobHistory)
-	c, err := newCoordinator(dir, conn, reg, plainSpec)
+	c, err := newCoordinator(dir, conn, reg, plainSpec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +298,7 @@ func TestCoordinatorSurvivesARestart(t *testing.T) {
 	c.close()
 
 	again := newRegistry(jobHistory)
-	c2, err := newCoordinator(dir, conn, again, plainSpec)
+	c2, err := newCoordinator(dir, conn, again, plainSpec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,5 +313,58 @@ func TestCoordinatorSurvivesARestart(t *testing.T) {
 	// it would have been dropped by its message id.
 	if computed.Load() != 3 {
 		t.Errorf("computed %d tasks, want 3", computed.Load())
+	}
+}
+
+// A worker holding a task gets a fresh job token for it, naming the job and
+// its world; once the job is cancelled, or for a task that is not there,
+// it gets none — which is what makes a cancel stop a worker's writes.
+func TestCoordinatorRenewsTokensForOpenTasksOnly(t *testing.T) {
+	_, conn := coordinatorRelay(t)
+	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := newRegistry(jobHistory)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, func(jobID, worldUID string) (string, time.Time, error) {
+		return tokens.IssueJob(jobID, worldUID, time.Hour)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	ask := func(taskID string) tokenReply {
+		t.Helper()
+		msg, err := conn.NATS().Request(conn.Subject("token", taskID), nil, 5*time.Second)
+		if err != nil {
+			t.Fatalf("token request: %v", err)
+		}
+		var reply tokenReply
+		if err := json.Unmarshal(msg.Data, &reply); err != nil {
+			t.Fatal(err)
+		}
+		return reply
+	}
+	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+
+	fresh := ask(job.ID + "-0")
+	if fresh.Token == "" {
+		t.Fatalf("no token for an open task: %+v", fresh)
+	}
+	if time.Until(fresh.ExpiresAt) <= 0 {
+		t.Errorf("the token expires at %v", fresh.ExpiresAt)
+	}
+	subject, jobID, world, err := tokens.VerifyJob(fresh.Token)
+	if err != nil || subject != token.SubjectJob || jobID != job.ID || world != "w" {
+		t.Errorf("token names %q %q %q (%v), want the job and its world", subject, jobID, world, err)
+	}
+	if reply := ask("no-such-task"); reply.Token != "" || reply.Error == "" {
+		t.Errorf("an unknown task got %+v", reply)
+	}
+	if !c.cancelJob(job.ID) {
+		t.Fatal("cancel refused")
+	}
+	if reply := ask(job.ID + "-0"); reply.Token != "" || reply.Error == "" {
+		t.Errorf("a cancelled job's task got %+v", reply)
 	}
 }

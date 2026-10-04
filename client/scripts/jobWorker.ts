@@ -263,10 +263,9 @@ async function readWorld(job: Job, held?: string): Promise<{ archive: Uint8Array
 
 // This job's credentials, attached to every request it makes.
 //
-// A fixed token, unlike the browser's, which changes at sign-in and at expiry —
-// so where the browser passes a fetch that ends its session on a 401, this one
-// simply always adds the same header. Absent when the server checks nobody, in
-// which case the header is omitted rather than sent empty.
+// Read at every request, not once: a worker serving the relay replaces the
+// token while it holds a task (keepJobToken). Absent when the server checks
+// nobody, in which case the header is omitted rather than sent empty.
 function authorizedFetch(job: Job): (input: string, init?: RequestInit) => Promise<Response> {
   return (input, init = {}) => {
     if (!job.authToken) return fetch(input, init)
@@ -285,6 +284,45 @@ function artifactStoreFor(job: Job): ArtifactStore | null {
     return createHttpArtifactStore({ resolveBase: async () => base, fetch: authorizedFetch(job) })
   }
   return null
+}
+
+// THE JOB TOKEN, KEPT FRESH (internal/modules/jobs/coordinator.go,
+// handleToken): the token a task carries holds an hour from when the task
+// was handed out, and a task can wait longer than that and run for hours.
+// So a worker asks for a fresh one on jobs.token.<taskId> when it starts the
+// task and again at half its life, and puts it into the job, where every
+// request reads it. The coordinator answers only while the task and its job
+// are open; refused, the worker stops asking — the job was cancelled, and
+// the cancel ends the task. A request that gets no answer is tried again in
+// a minute, while the token in hand still holds. Answers the stop.
+type Relay = Awaited<ReturnType<typeof connect>>
+const TOKEN_RETRY_MS = 60_000
+async function keepJobToken(nc: Relay, job: Job, taskId: string): Promise<() => void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let stopped = false
+  const again = (ms: number): void => {
+    if (!stopped) timer = setTimeout(() => void ask(), ms)
+  }
+  const ask = async (): Promise<void> => {
+    try {
+      const reply = await nc.request(`jobs.token.${taskId}`, '', { timeout: 10_000 })
+      const answer = JSON.parse(reply.string()) as { token?: string; expiresAt?: string; error?: string }
+      if (answer.token) {
+        job.authToken = answer.token
+        again(Math.max(TOKEN_RETRY_MS, (Date.parse(answer.expiresAt ?? '') - Date.now()) / 2))
+        return
+      }
+      process.stderr.write(`task ${taskId}: no fresh token: ${answer.error ?? 'no answer'}\n`)
+    } catch (error) {
+      process.stderr.write(`task ${taskId}: token request: ${error instanceof Error ? error.message : String(error)}\n`)
+      again(TOKEN_RETRY_MS)
+    }
+  }
+  await ask()
+  return () => {
+    stopped = true
+    clearTimeout(timer)
+  }
 }
 
 function fail(message: string): never {
@@ -885,6 +923,8 @@ async function serve(config: ServeConfig): Promise<void> {
     const taskId = job.taskId ?? ''
     current = { msg, jobId: job.jobId ?? '' }
     const heartbeat = setInterval(() => msg.working(), TASK_HEARTBEAT_MS)
+    // A task that reaches its stores over HTTP carries a token; keep it fresh.
+    const stopToken = job.authToken && taskId ? await keepJobToken(nc, job, taskId) : null
     let lastPercent = -1
     const onProgress = (phase: string, fraction: number): void => {
       const percent = Math.floor(fraction * 100)
@@ -912,6 +952,7 @@ async function serve(config: ServeConfig): Promise<void> {
       msg.term()
     } finally {
       clearInterval(heartbeat)
+      stopToken?.()
       current = null
     }
   }

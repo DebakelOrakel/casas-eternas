@@ -203,7 +203,13 @@ func New(cfg Config) (*Module, error) {
 	// The coordinator plans and hands out the tasks, and workers compute
 	// them — off a cluster the local ones this module starts, in a cluster
 	// the worker Deployment it scales (scaler.go).
-	m.coord, err = newCoordinator(cfg.StorageDir, cfg.Relay, m.jobs, m.buildSpec)
+	var token tokenFor
+	if cfg.Tokens != nil {
+		token = func(jobID, worldUID string) (string, time.Time, error) {
+			return cfg.Tokens.IssueJob(jobID, worldUID, jobTokenTTL)
+		}
+	}
+	m.coord, err = newCoordinator(cfg.StorageDir, cfg.Relay, m.jobs, m.buildSpec, token)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -414,16 +420,15 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 
 // jobTokenTTL bounds a job's credential.
 //
-// It is minted when the task is handed out and must outlive the task's
-// wait in the queue plus its whole run: the worker reads the world at the
-// start and writes the artifact at the end. An hour did not — a level-1
-// replay in the cluster ran 7 h 45 min and its artifact write was refused
-// (2026-10-04), and a tile of a large plan can wait hours behind the
-// others. The token travels in the task message, which only workers
-// admitted to the relay read (the hour dated from Kubernetes Job specs,
-// readable by anyone who could read Jobs in the namespace), and it names
-// one job and one world.
-const jobTokenTTL = 48 * time.Hour
+// The task carries one minted when it is handed out; the worker asks the
+// coordinator for a fresh one when it starts the task and again before the
+// one in hand runs out (coordinator.go, handleToken), so a task of any
+// length stays authorized while its job is open, and a cancelled job's
+// worker is refused within the hour. (For a day of 2026-10-04 it was 48
+// hours, minted once: a level-1 replay ran 7 h 45 min in the cluster and
+// its artifact write was refused with the hour.) It names one job and one
+// world.
+const jobTokenTTL = time.Hour
 
 // buildSpec resolves a request into what a worker needs, a task at a time
 // (the coordinator's specFor).

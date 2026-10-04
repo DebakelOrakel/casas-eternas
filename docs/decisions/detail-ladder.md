@@ -670,6 +670,11 @@ cmd/ already did. `bakeRunner` in `/v1/capabilities` always answers
 
 ## Status
 
+2026-10-04: a task's job token holds an hour and is renewed by the worker on
+jobs.token.<taskId> while the task and its job are open
+(internal/modules/jobs/coordinator.go, handleToken); a cancelled job's
+worker gets no new one.
+
 2026-10-04: building — level 1 by replay, the coordinator, the relay and the worker Deployment are built; levels 2 to 4 as the ladder sets them are open.
 
 decided 2026-10-01 — the ladder's five budgets (fork 1), level 1 as a replay
