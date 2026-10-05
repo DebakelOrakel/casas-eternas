@@ -12,7 +12,7 @@ mit dem Wetter macht, bevor du Zeit in seine Geschichte steckst.
 ## Was dieser Schritt tut {#does}
 
 - Er gibt der Welt einen Namen und einen Seed.
-- Er legt die Topologie fest, also wie die Ränder der Karte zusammenhängen.
+- Er zeigt die Topologie, also wie die Ränder der Karte zusammenhängen.
 - Er stellt den Planeten ein: Achsneigung, Tageslänge, Treibhaus,
   Temperaturkontrast und Feuchtigkeit.
 
@@ -34,7 +34,9 @@ Dateinamen. Er ändert an der Welt nichts.
 
 ### Topologie {#generator.world.topology}
 
-Wie die Ränder der Karte zusammenhängen. Die Welt ist heute ein flacher
+Wie die Ränder der Karte zusammenhängen. Du wählst sie beim Anlegen, im
+Menü von „Neue Welt erstellen“; danach steht sie fest, und Schritt 0
+zeigt sie nur noch. Die Welt ist heute ein flacher
 Torus: Wer rechts hinausläuft, kommt links wieder herein, und wer oben
 hinausläuft, unten. Platten, Winde und Meeresströmungen laufen so ohne
 Rand um. Die waagrechte Mitte der Karte ist der Äquator, der obere und

@@ -86,8 +86,6 @@
   "generator.world.rollName.help": "Picks a name at random. It can be changed at any time.",
   "generator.world.seed.label": "Seed",
   "generator.world.seed.help": "The same seed and the same parameters produce the same world.",
-  "generator.world.topology.label": "Topology",
-  "generator.world.topology.help": "The topology decides how the edges of the map connect, and with that how plates, winds and currents wrap around.",
   "generator.world.topology.flat.label": "Flat",
   "generator.world.topology.flat.help": "A flat map whose four edges wrap, no poles, evenly spread currents.",
   "generator.world.topology.sphere.label": "Sphere",

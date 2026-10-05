@@ -12,7 +12,7 @@ weather before you spend time on its history.
 ## What this step does {#does}
 
 - It gives the world a name and a seed.
-- It sets the topology: how the edges of the map join.
+- It shows the topology: how the edges of the map join.
 - It sets up the planet: axial tilt, day length, greenhouse, temperature
   contrast and humidity.
 
@@ -34,7 +34,9 @@ changes nothing about the world.
 
 ### Topology {#generator.world.topology}
 
-How the edges of the map join. Today the world is a flat torus: leave at
+How the edges of the map join. You pick it when you create the world, in
+the menu of "Create new world"; after that it is fixed, and step 0 only
+shows it. Today the world is a flat torus: leave at
 the right and you come back at the left; leave at the top and you come
 back at the bottom. Plates, winds and ocean currents go round without an
 edge. The horizontal middle of the map is the equator, and the top and

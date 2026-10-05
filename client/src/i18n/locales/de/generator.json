@@ -86,8 +86,6 @@
   "generator.world.rollName.help": "Wählt einen Namen zufällig. Er lässt sich jederzeit ändern.",
   "generator.world.seed.label": "Seed",
   "generator.world.seed.help": "Gleicher Seed und gleiche Parameter ergeben dieselbe Welt.",
-  "generator.world.topology.label": "Topologie",
-  "generator.world.topology.help": "Die Topologie legt fest, wie die Ränder der Karte zusammenhängen, und damit wie Platten, Winde und Strömungen umlaufen.",
   "generator.world.topology.flat.label": "Flach",
   "generator.world.topology.flat.help": "Eine flache Karte, keine Pole, gleichmässig verteilte Strömungen.",
   "generator.world.topology.sphere.label": "Kugel",

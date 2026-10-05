@@ -1,3 +1,4 @@
+import { relabel } from '../../i18n/relabel'
 import { t, type TKey } from '../../i18n/i18n'
 import { formatBytes, formatWhen } from '../../ui/format'
 import { hasSession } from '../../server/session'
@@ -28,6 +29,15 @@ import { BROWSER_ICON, SERVER_ICON, icon } from '../chooserIcons'
 // because "where is it kept" is a property of a world, not a place to navigate
 // to. The filter narrows that; it does not switch between two lists.
 
+// The shapes a new world can take (docs/design/two-topologies.md). The
+// sphere is listed and locked until it exists, as step 0 listed it before
+// the choice moved here (2026-10-05).
+export type WorldShape = 'flat' | 'sphere'
+const SHAPES: readonly { shape: WorldShape; ready: boolean }[] = [
+  { shape: 'flat', ready: true },
+  { shape: 'sphere', ready: false },
+]
+
 export interface WorldChooserOptions {
   // The heading and the line under it. The generator's when left out.
   titleKey?: TKey
@@ -36,9 +46,9 @@ export interface WorldChooserOptions {
   // base of a `.label`/`.help` key pair, as data-help takes it. The
   // generator's when left out; null for none.
   cardHelpKey?: string | null
-  // Keep the world the generator already built and get out of the way.
-  // Without it (and without onPickFile) the two big choices are not shown.
-  onNewWorld?(): void
+  // A new world of the shape picked in the choice's menu. Without it (and
+  // without onPickFile) the two big choices are not shown.
+  onNewWorld?(shape: WorldShape): void
   // Hands an archive over; the screen owns the loading itself. `kept`
   // says where the world rests and since when — an opened world is a saved
   // one, and the title bar says so — and which world the list meant.
@@ -96,10 +106,20 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
         <p class="wc-subtitle"></p>
       </div>
       <div class="wc-choices">
-        <button type="button" class="wc-choice wc-choice--new" data-act="new">
-          <span class="wc-choice__mark"></span>
-          <span class="wc-choice__text"><span class="wc-choice__label"></span><span class="wc-choice__sub"></span></span>
-        </button>
+        <div class="wc-new">
+          <button type="button" class="wc-choice wc-choice--new" data-act="new" aria-haspopup="menu" aria-expanded="false">
+            <span class="wc-choice__mark"></span>
+            <span class="wc-choice__text"><span class="wc-choice__label"></span><span class="wc-choice__sub"></span></span>
+            <span class="wc-choice__chevron"></span>
+          </button>
+          <div class="wc-shapes" role="menu" hidden>
+            ${SHAPES.map(({ shape, ready }) => `
+            <button type="button" class="wc-shape" role="menuitem" data-shape="${shape}"${ready ? '' : ' aria-disabled="true"'}>
+              <span class="wc-shape__name" data-t="generator.world.topology.${shape}.label"></span>
+              <span class="wc-shape__desc" data-t="generator.world.topology.${shape}.help"></span>
+            </button>`).join('')}
+          </div>
+        </div>
         <button type="button" class="wc-choice wc-choice--upload" data-act="upload">
           <span class="wc-choice__mark"></span>
           <span class="wc-choice__text"><span class="wc-choice__label"></span><span class="wc-choice__sub"></span></span>
@@ -131,6 +151,8 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   // under the label is noise. The `.help` key is the same string either way —
   // it is shown, not hidden.
   newChoice.querySelector('.wc-choice__mark')!.appendChild(icon('<path d="M12 5v14M5 12h14"/>'))
+  newChoice.querySelector('.wc-choice__chevron')!.appendChild(icon('<path d="m6 9 6 6 6-6"/>'))
+  const shapeMenu = root.querySelector<HTMLElement>('.wc-shapes')!
   uploadChoice.querySelector('.wc-choice__mark')!.appendChild(icon('<path d="M12 19V8M7 13l5-5 5 5M5 4h14"/>'))
 
   // Every string the frame itself holds, in one place, so saying them again in
@@ -141,6 +163,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     root.querySelector('.wc-listtitle')!.textContent = t('generator.load.existing')
     newChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.new.label')
     newChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.new.help')
+    relabel(shapeMenu)
     uploadChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.upload.label')
     uploadChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.upload.help')
     for (const button of filterButtons) {
@@ -152,7 +175,35 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   // it knows the world is actually there: an archive that turns out not to be
   // one must leave the list standing rather than drop you into the generator
   // with a notification and no way back.
-  newChoice.addEventListener('click', () => options.onNewWorld?.())
+  // The new world's shape, in a menu under the choice: the shape is set once,
+  // here, and step 0 only shows it (2026-10-05).
+  const closeShapes = (): void => {
+    shapeMenu.hidden = true
+    newChoice.setAttribute('aria-expanded', 'false')
+  }
+  newChoice.addEventListener('click', () => {
+    const open = shapeMenu.hidden
+    shapeMenu.hidden = !open
+    newChoice.setAttribute('aria-expanded', String(open))
+    if (open) shapeMenu.querySelector<HTMLButtonElement>('.wc-shape:not([aria-disabled])')?.focus()
+  })
+  for (const item of shapeMenu.querySelectorAll<HTMLButtonElement>('.wc-shape')) {
+    item.addEventListener('click', () => {
+      if (item.getAttribute('aria-disabled') === 'true') return
+      closeShapes()
+      options.onNewWorld?.(item.dataset.shape as WorldShape)
+    })
+  }
+  root.addEventListener('pointerdown', (event) => {
+    if (!shapeMenu.hidden && !(event.target as Element).closest('.wc-new')) closeShapes()
+  })
+  root.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !shapeMenu.hidden) {
+      event.stopPropagation()
+      closeShapes()
+      newChoice.focus()
+    }
+  })
   uploadChoice.addEventListener('click', () => options.onPickFile?.())
   newChoice.hidden = !options.onNewWorld
   uploadChoice.hidden = !options.onPickFile

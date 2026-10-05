@@ -566,19 +566,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             </button>
           </span>
         </label>
-        <div class="world-field world-field--topology">
-          <span class="world-field__label" data-help="generator.world.topology" data-t="generator.world.topology.label"></span>
-          <div class="topology-list">
-            <button type="button" class="topology" aria-pressed="true">
-              <span class="topology__name" data-t="generator.world.topology.flat.label"></span>
-              <span class="topology__desc" data-t="generator.world.topology.flat.help"></span>
-            </button>
-            <button type="button" class="topology" aria-pressed="false" aria-disabled="true">
-              <span class="topology__name" data-t="generator.world.topology.sphere.label"></span>
-              <span class="topology__desc" data-t="generator.world.topology.sphere.help"></span>
-            </button>
-          </div>
-        </div>
       </div>
     </div>
     <!-- Step 0's second part: the planet's sliders and the step's foot. Apart

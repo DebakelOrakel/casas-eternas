@@ -328,51 +328,6 @@
   background: var(--dc-hover);
 }
 
-.generator-screen .topology-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.generator-screen .topology {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px 12px;
-  border: 1px solid var(--dc-line2);
-  border-radius: 8px;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.generator-screen .topology[aria-pressed='true'] {
-  border-color: var(--dc-teal);
-  background: var(--dc-hover);
-}
-
-/* The shape that does not exist yet. aria-disabled rather than disabled, so
-   the row can still be read and pointed at — a control the pointer cannot
-   reach cannot explain itself. */
-.generator-screen .topology[aria-disabled='true'] {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.generator-screen .topology__name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--dc-strong);
-}
-
-.generator-screen .topology__desc {
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--dc-muted);
-  text-wrap: pretty;
-}
-
 .generator-screen .world-create {
   /* Beside the reset icon, the width the run button has in the other steps. */
   flex-grow: 1;
