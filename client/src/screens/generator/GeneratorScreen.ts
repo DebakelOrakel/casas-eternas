@@ -3,6 +3,7 @@ import { BUILD_VERSION } from '../../app/buildVersion'
 import { GENERATOR_CODE } from '../../app/generatorCode'
 import { createGeneratorCamera } from '../../camera/generatorCamera'
 import { createToroidalMapView } from '../../map/ToroidalMapView'
+import { createSphereView, type SphereView } from '../../map/sphereView'
 import { createScaleBar, pickMapPlane } from '../../map/ScaleBar'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { buildProbeCard } from '../../ui/mapProbe/probeCard'
@@ -75,7 +76,7 @@ import { listServerArtifacts } from '../../server/artifactsClient'
 import { meshLevelStage } from '../../world/meshArtifacts'
 import { isCurrentArtifact, parseStage } from '../../world/levels'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
-import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
+import { createWorldChooser, type WorldShape } from '../../ui/worldChooser/WorldChooser'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission as reportCommissionTo } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { openWorld } from '../../world/query'
@@ -859,6 +860,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // rather than its strings (see i18n/relabel).
       relabel(sidebar.body)
       relabel(sidebar.foot)
+      cameraResetButton.setAttribute('aria-label', t('generator.camera.reset.label'))
       climatePlayer.relabel()
       ecologyPlayer.relabel()
       sidebar.relabel()
@@ -970,6 +972,36 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // (see entryRequirementUnmet) — until then there is a map on screen, but it
   // is the one the screen starts with, not one anybody asked for.
   let worldCreated = false
+  // The world's shape, picked when it was made (ui/worldChooser). A sphere
+  // has step 0 only for now (2026-10-09): its globe in a scene of its own
+  // (map/sphereView.ts), the later steps locked, nothing to create. A world
+  // from a file is flat: the saves are tori.
+  let worldShape: WorldShape = 'flat'
+  let sphereView: SphereView | null = null
+  // The globe's view back to where it started (orbitSwoopCamera.reset);
+  // shown with the sphere only, where the flat map's scale bar stood.
+  const cameraResetButton = document.createElement('button')
+  cameraResetButton.type = 'button'
+  cameraResetButton.className = 'camera-reset'
+  cameraResetButton.setAttribute('aria-label', t('generator.camera.reset.label'))
+  cameraResetButton.dataset.help = 'generator.camera.reset'
+  cameraResetButton.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>'
+  cameraResetButton.addEventListener('click', () => sphereView?.resetCamera())
+  root.appendChild(cameraResetButton)
+  const setWorldShape = (shape: WorldShape): void => {
+    worldShape = shape
+    root.classList.toggle('generator-screen--sphere', shape === 'sphere')
+    // The flat map's readout would describe the hidden flat world under the
+    // pointer.
+    hoverTooltip?.setEnabled(shape !== 'sphere')
+    if (shape === 'sphere' && !sphereView) {
+      sphereView = createSphereView(ctx.engine, ctx.canvas)
+      sphereView.setObliquity(Number(obliquityInput.value))
+    } else if (shape !== 'sphere' && sphereView) {
+      sphereView.dispose()
+      sphereView = null
+    }
+  }
   // THE APPLIED WORLD (2026-09-29): step 0's seed and levers as the world was
   // last created or opened with. Once a world exists, moving them changes
   // nothing yet — "create world" takes them, with a question, since it
@@ -1026,7 +1058,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     resetPlanetButton.disabled = busy
     // Once a world exists, "create world" is for taking changed levers, and
     // the levers move only after the step's reset unlocked them.
-    createWorldButton.disabled = busy || (applied !== null && !step0Pending())
+    createWorldButton.disabled = busy || worldShape === 'sphere' || (applied !== null && !step0Pending())
     const step0Locked = busy || (applied !== null && !step0Unlocked)
     sayResetPlanet()
     for (const el of [seedInput, obliquityInput, tempBandInput, contrastInput, rotationInput, humidityInput]) el.disabled = step0Locked
@@ -3791,6 +3823,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // "create world" lights up when it differs from the world's.
   function planetLeverMoved(): void {
     updateControlsDisabled()
+    // The sphere's globe leans with the obliquity; it has no climate to
+    // compute yet, and the sample world's preview behind it is not shown.
+    if (sphereView) {
+      sphereView.setObliquity(Number(obliquityInput.value))
+      return
+    }
     clearTimeout(climateDebounce)
     climateDebounce = setTimeout(requestPlanetForcing, 150)
   }
@@ -4774,7 +4812,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // 0 with the planet preview on the sample world, nothing applied, the
     // later steps locked until "create world". It used to leave the last
     // world loaded and its steps open. Leaving that world already asked.
-    onNewWorld: () => {
+    onNewWorld: (shape) => {
+      setWorldShape(shape)
       worldName = randomWorldName()
       worldNameInput.value = worldName
       seedInput.value = randomSeed()
@@ -5183,6 +5222,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
 
     // Past the point where the archive can turn out not to be a world.
+    setWorldShape('flat')
     worldCreated = true
     closeWorldChooser()
     // An opened world lands on the mantle, NOT on step 0: that step warns that
@@ -5825,6 +5865,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // tectonics a world of proto-cratons that are still dissolving.
   const MIN_ARCHEAN_STABILISED = 0.5
   const entryRequirementUnmet = (index: number): string | null => {
+    // A sphere has its first step only: the later ones are locked, and
+    // say nothing — there is nothing to do that would open them.
+    if (index > panelIndexOf('world') && worldShape === 'sphere') return ''
     // Nothing exists before step 0 is answered — the steps after it all work on
     // the world it names and seeds.
     if (index > panelIndexOf('world') && !worldCreated) return t('notify.gate.needsWorld')
@@ -5926,10 +5969,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onSelect: (index) => {
       if (index === panelIndex) return
       const reason = entryRequirementUnmet(index)
-      if (reason) {
+      if (reason !== null) {
         // Answered rather than refused: the bar stays clickable precisely so a
-        // blocked step can say what it is waiting for.
-        ctx.notifications.show({ message: reason, icon: '/icons/erosion.png', durationMs: 4000 })
+        // blocked step can say what it is waiting for. An empty reason is a
+        // step locked without one (a sphere's later steps).
+        if (reason) ctx.notifications.show({ message: reason, icon: '/icons/erosion.png', durationMs: 4000 })
         return
       }
       if (isBusy()) return
@@ -5977,7 +6021,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           // Step 0 reports the shape it set rather than a computation it did
           // not do, which is what the design's chip shows: "Flat · set".
           status: id === 'world'
-            ? `${t('generator.world.topology.flat.label')} · ${t('generator.step.status.set')}`
+            ? `${t(worldShape === 'sphere' ? 'generator.world.topology.sphere.label' : 'generator.world.topology.flat.label')} · ${t('generator.step.status.set')}`
             : t(stale ? 'generator.step.status.stale' : settled ? 'generator.step.status.computed' : 'generator.step.status.pending'),
           settled,
           // The busy lock is the same one the controls get: stepping away
@@ -6156,8 +6200,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   ctx.overlay.appendChild(root)
 
   return {
-    scene,
+    // The sphere's own scene while a sphere world is open; the app renders
+    // whichever this answers, frame by frame.
+    get scene() {
+      return sphereView?.scene ?? scene
+    },
     dispose() {
+      sphereView?.dispose()
+      sphereView = null
       // Everything that ticks on its own goes first: each one held the whole
       // screen (rasters, mesh, refined climate) after it was left, and the
       // month players painted into a disposed scene (2026-10-01).

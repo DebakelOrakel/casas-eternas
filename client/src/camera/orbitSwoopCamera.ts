@@ -53,6 +53,9 @@ export interface OrbitSwoopCamera {
   // Parent the main object (and anything that should spin/orbit with it)
   // to this — never to the camera itself, which never moves on drag.
   viewPivot: TransformNode
+  // Back to the opening view, eased: zoomed out, the pivot unturned. A
+  // drag meanwhile takes over from where the easing has got to.
+  reset: () => void
   dispose: () => void
 }
 
@@ -100,12 +103,16 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
   const viewPivot = new TransformNode('orbitSwoopViewPivot', scene)
   viewPivot.rotationQuaternion = Quaternion.Identity()
 
+  // Set by reset(): the pivot eases back to identity until it arrives or a
+  // drag takes over.
+  let returning = false
   let isDragging = false
   let lastPointerX = 0
   let lastPointerY = 0
   const pointerObserver: Observer<PointerInfo> | null = scene.onPointerObservable.add((pointerInfo) => {
     if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
       isDragging = true
+      returning = false
       lastPointerX = pointerInfo.event.clientX
       lastPointerY = pointerInfo.event.clientY
     } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
@@ -144,11 +151,23 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
     currentZoom = Scalar.Lerp(currentZoom, targetZoom, easeFactor)
     camera.position.copyFrom(Vector3.Lerp(farPosition, closePosition, currentZoom))
     camera.setTarget(Vector3.Lerp(farTarget, closeTarget, currentZoom))
+    if (returning) {
+      const turned = viewPivot.rotationQuaternion!
+      Quaternion.SlerpToRef(turned, Quaternion.Identity(), easeFactor, turned)
+      if (Math.abs(Math.abs(turned.w) - 1) < 1e-6) {
+        viewPivot.rotationQuaternion = Quaternion.Identity()
+        returning = false
+      }
+    }
   })
 
   return {
     camera,
     viewPivot,
+    reset() {
+      targetZoom = 0
+      returning = true
+    },
     dispose() {
       scene.onPointerObservable.remove(pointerObserver)
       scene.onBeforeRenderObservable.remove(renderObserver)

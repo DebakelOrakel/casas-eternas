@@ -30,12 +30,11 @@ import { BROWSER_ICON, SERVER_ICON, icon } from '../chooserIcons'
 // to. The filter narrows that; it does not switch between two lists.
 
 // The shapes a new world can take (docs/design/two-topologies.md). The
-// sphere is listed and locked until it exists, as step 0 listed it before
-// the choice moved here (2026-10-05).
+// sphere since 2026-10-09 with its first step only (map/sphereView.ts).
 export type WorldShape = 'flat' | 'sphere'
 const SHAPES: readonly { shape: WorldShape; ready: boolean }[] = [
   { shape: 'flat', ready: true },
-  { shape: 'sphere', ready: false },
+  { shape: 'sphere', ready: true },
 ]
 
 export interface WorldChooserOptions {

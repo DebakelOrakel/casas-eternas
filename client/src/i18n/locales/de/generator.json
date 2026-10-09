@@ -106,6 +106,8 @@
   "generator.panel.genesis.seed.placeholder": "Seed",
   "generator.action.randomizeSeed.label": "Seed würfeln",
   "generator.action.randomizeSeed.help": "Einen neuen Zufalls-Seed für die Welt würfeln.",
+  "generator.camera.reset.label": "Ansicht zurücksetzen",
+  "generator.camera.reset.help": "Bringt die Kamera in die Ausgangsstellung: die ganze Kugel, ungedreht.",
   "generator.action.resetArchean.label": "Archaikum neu starten",
   "generator.action.resetArchean.help": "Die junge Welt verwerfen und das Archaikum neu beginnen.",
   "generator.panel.genesis.mantleVigour.label": "Mantelaktivität",

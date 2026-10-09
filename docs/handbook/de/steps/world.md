@@ -40,8 +40,9 @@ zeigt sie nur noch. Die Welt ist heute ein flacher
 Torus: Wer rechts hinausläuft, kommt links wieder herein, und wer oben
 hinausläuft, unten. Platten, Winde und Meeresströmungen laufen so ohne
 Rand um. Die waagrechte Mitte der Karte ist der Äquator, der obere und
-der untere Rand sind zusammen der Pol. Die Kugel ist vorgesehen, aber noch
-nicht verfügbar.
+der untere Rand sind zusammen der Pol. Die Kugel gibt es bisher nur mit
+diesem ersten Schritt: eine Ozeankugel, deren Achse der Achsneigung
+folgt; die späteren Schritte sind für sie gesperrt.
 
 ## Parameter {#parameters}
 

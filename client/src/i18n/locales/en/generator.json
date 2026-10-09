@@ -106,6 +106,8 @@
   "generator.panel.genesis.seed.placeholder": "Seed",
   "generator.action.randomizeSeed.label": "Randomize seed",
   "generator.action.randomizeSeed.help": "Roll a new random seed for the world.",
+  "generator.camera.reset.label": "Reset view",
+  "generator.camera.reset.help": "Puts the camera back where it started: the whole globe, unturned.",
   "generator.action.resetArchean.label": "Restart the Archean",
   "generator.action.resetArchean.help": "Discard the young world and start the Archean over.",
   "generator.panel.genesis.mantleVigour.label": "Mantle vigour",

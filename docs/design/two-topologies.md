@@ -176,6 +176,13 @@ Order of magnitude: 1.5–2.5k new lines plus the mechanical threading.
 
 ## Status
 
+2026-10-09: the sphere's first step BUILT — a world of the sphere shape,
+picked from the world list, shows an ocean globe on the white page with
+its axis at the obliquity and an atmosphere band at the rim
+(client/src/map/sphereView.ts, taken from the screen removed on
+2026-09-20), in a scene of its own under the orbit-swoop camera. Its later
+steps are locked; nothing of the generator runs on it yet.
+
 draft — first analysis from a design conversation, numbers are estimates
 from grep and line counts; nothing decided, nothing built. Not a
 reconstruction of the removed sphere generator (see

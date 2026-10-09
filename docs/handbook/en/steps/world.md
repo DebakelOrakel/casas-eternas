@@ -40,8 +40,9 @@ shows it. Today the world is a flat torus: leave at
 the right and you come back at the left; leave at the top and you come
 back at the bottom. Plates, winds and ocean currents go round without an
 edge. The horizontal middle of the map is the equator, and the top and
-bottom edges together are the pole. The sphere is planned but not
-available yet.
+bottom edges together are the pole. The sphere exists with this first
+step only: an ocean globe whose axis follows the axial tilt; the later
+steps are locked for it.
 
 ## Parameters {#parameters}
 
