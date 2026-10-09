@@ -5,17 +5,20 @@ title.de: Zwei Topologien, ein Generator
 summary.en: Could the flat-torus generator also run a sphere, with one code base and a
   topology parameter? A first analysis of what the generator already shares,
   where the torus is actually baked in, which sphere substrate keeps the
-  most, and where the real cost sits (outside the generator). Draft — to be
-  refined.
+  most, and where the real cost sits (outside the generator). The seams
+  are decided in DEC-0035; the substrate analysis below predates the
+  adaptive mesh.
 summary.de: Könnte der Torus-Generator auch eine Kugel rechnen, mit einer Codebasis und
   einem Topologie-Parameter? Eine erste Analyse, was der Generator schon
   teilt, wo der Torus wirklich eingebaut ist, welches Kugel-Substrat am
   meisten erhält und wo die echten Kosten liegen (ausserhalb des
-  Generators). Entwurf — wird verfeinert.
+  Generators). Die Nähte sind in DEC-0035 entschieden; die Analyse des
+  Substrats unten ist älter als das adaptive Netz.
 area: generator
 stage: idea
 createdAt: 2026-09-20
-related: [DEC-0015]
+related: [DEC-0015, DEC-0035]
+updatedAt: 2026-10-09
 ---
 
 The torus was chosen over the sphere before any rationale was written
@@ -66,6 +69,14 @@ arithmetic):
 | pipeline | 1904 | 0 | topology-agnostic |
 
 ## Which sphere substrate keeps the most
+
+> **Overtaken, 2026-10-09.** Written when the generator was rasters
+> throughout. The history now runs on the adaptive mesh (DEC-0029), whose
+> topology already sits behind `Domain` — candidate C below is partly
+> what exists. The decision taken on that basis is
+> [two-shapes.md](../decisions/two-shapes.md) (DEC-0035): the mesh
+> computed on the globe, its nodes and the remaining rasters kept in one
+> 2:1 chart in longitude and latitude, the display behind a `WorldView`.
 
 Three candidates. The choice decides the reuse, so it is the first fork.
 
@@ -175,6 +186,13 @@ Order of magnitude: 1.5–2.5k new lines plus the mechanical threading.
   adaptive mesh, candidate C's sibling
 
 ## Status
+
+2026-10-09: the sphere's first step built (`client/src/map/sphereView.ts`:
+an ocean globe with its axis at the obliquity and an atmosphere around
+it, picked from the world list, the later steps locked), and the seams
+between the two shapes decided in
+[two-shapes.md](../decisions/two-shapes.md) (DEC-0035). The substrate
+section is history from that date on.
 
 2026-10-09: the sphere's first step BUILT — a world of the sphere shape,
 picked from the world list, shows an ocean globe on the white page with
