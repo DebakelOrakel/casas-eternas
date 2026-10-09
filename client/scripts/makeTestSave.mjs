@@ -80,7 +80,7 @@ const precipBytes = M.layers.bakeLayer(precipitation, PRECIP_SPEC)
 const zip = new JSZip()
 zip.file('manifest.json', JSON.stringify({
   formatVersion: 1, generatorVersion: 'casas-eternas/v1alpha1',
-  world: { width: W, height: H, topology: 'torus' },
+  world: { width: W, height: H },
   layers: [
     { name: 'elevation', file: 'elevation.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 }, unit: 'relative', landOnly: false },
     { name: 'precipitation', file: 'precipitation.u16', kind: 'raster', resX: CRX, resY: CRY, dtype: PRECIP_SPEC.dtype, encoding: { scale: PRECIP_SPEC.scale, offset: PRECIP_SPEC.offset }, unit: PRECIP_SPEC.unit, landOnly: PRECIP_SPEC.landOnly },

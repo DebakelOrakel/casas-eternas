@@ -189,7 +189,7 @@ shape, so one reader serves both.
     "variant": "macro"
   },
   "status": {
-    "world": { "width": 2048, "height": 1024, "topology": "torus" },
+    "world": { "width": 2048, "height": 1024 },
     "generator": "<BUILD_VERSION>",
     "layers": [
       { "name": "biome", "file": "biome.u8", "kind": "raster",

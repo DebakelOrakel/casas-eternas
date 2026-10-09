@@ -69,7 +69,7 @@ baked **layer files**. A consumer needs *only* the manifest + a ~50-line sampler
 {
   "formatVersion": 2,             // 2 since 2026-09-22: the manifest may list `table` entries
   "generatorVersion": "…",        // provenance; NOT needed to read
-  "world": { "width": 2048, "height": 1024, "topology": "torus" },  // wraps x & y
+  "world": { "width": 2048, "height": 1024 },  // the shape is world.yaml's kind (DEC-0035)
   "layers": [
     { "name": "elevation",   "file": "layers/elevation.u16",  "kind": "raster",
       "resX": 2048, "resY": 1024, "dtype": "u16",

@@ -290,7 +290,7 @@ const zipBodies = [
 zip.file('layers/waterBodies.json', JSON.stringify(zipBodies))
 zip.file('manifest.json', JSON.stringify({
   formatVersion: 2,
-  world: { width: W, height: H, topology: 'torus' },
+  world: { width: W, height: H },
   layers: [
     { name: 'waterBodies', file: 'layers/waterBodies.json', kind: 'table' },
     { name: 'elevation', file: 'layers/elevation.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },

@@ -36,7 +36,7 @@ export interface WorldManifestLayer {
 }
 
 export interface WorldManifest {
-  world: { width: number; height: number; topology: string }
+  world: { width: number; height: number }
   layers: WorldManifestLayer[]
 }
 

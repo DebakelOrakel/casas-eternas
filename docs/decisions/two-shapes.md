@@ -7,8 +7,9 @@ summary.en: How the torus and the sphere share one generator and one screen with
   (with a lint gate), both shapes keep their data in one 2:1 chart (the
   sphere's in longitude and latitude, as an address, while its mesh is
   computed on the globe), and the screen draws through a WorldView with a
-  flat and a globe implementation. The shape is a spec field; the steps are
-  a plan per shape. Order: extract WorldView, thread Domain with the torus
+  flat and a globe implementation. The shape is the save's kind, FlatWorld
+  or SphereWorld, and part of the world's id; the steps are a plan per
+  shape. Order: extract WorldView, thread Domain with the torus
   byte-identical, then the sphere.
 summary.de: Wie Torus und Kugel einen Generator und einen Screen teilen, ohne sich zu
   verheddern. Drei Nähte: Der Generator erreicht die Gestalt nur über
@@ -16,7 +17,8 @@ summary.de: Wie Torus und Kugel einen Generator und einen Screen teilen, ohne si
   2:1-Karte (die Kugel in Länge und Breite, als Adresse, während ihr Netz
   auf der Kugel gerechnet wird), und der Screen zeichnet über eine
   WorldView mit einer flachen und einer Kugel-Umsetzung. Die Gestalt ist
-  ein Spec-Feld, die Schritte ein Plan je Gestalt. Reihenfolge: WorldView
+  das kind des Saves, FlatWorld oder SphereWorld, und Teil der Welt-ID;
+  die Schritte ein Plan je Gestalt. Reihenfolge: WorldView
   herauslösen, Domain durchziehen mit bitgleichem Torus, dann die Kugel.
 area: generator
 stage: decided
@@ -93,9 +95,23 @@ storage form per shape (a cube map, an icosahedral index for the sphere).
   the display oversamples the poles. Cube textures can replace that later
   without touching the mesh.
 
-**The shape is a spec field**: `topology: 'torus' | 'sphere'` in the
-recipe, in `deriveWorldId` and in `derivePipelineVersion`. One tree, one
-generator, one parameter.
+**The shape is the save's `kind`.** `world.yaml` already says `kind:
+FlatWorld` (`world/worldRecord.ts`); a sphere is `kind: SphereWorld`. One
+place says the shape, and nothing beside it:
+
+- `kind` is READ and checked on load: `FlatWorld` is the torus,
+  `SphereWorld` the sphere, anything else is refused as an unknown world.
+  The old `kind: World` of the first saves is not accepted any more.
+- `kind` goes into `deriveWorldId` and `derivePipelineVersion`, for both
+  shapes. That changes the id of every flat world saved before it, and
+  with it the keys of their artifacts; accepted — the old worlds and
+  their artifacts are made again, not migrated.
+- `manifest.json`'s `world.topology: 'torus'` goes: it said the same thing
+  a second time, and two places for one fact can disagree.
+
+One tree, one generator, one parameter — and the parameter is the kind
+the save already had. (Decided first as a spec field `topology`, changed
+the same day: the kind was there and said it already.)
 
 **Why.** The chart keeps everything that is not geometry unchanged. A
 storage form per shape would double the save format, the artifact layout
@@ -150,6 +166,7 @@ is agreed before it starts.
 
 ## Status
 
-2026-10-09: decided in conversation. Built: the sphere's first step only
+2026-10-09: decided in conversation; fork 2 changed the same day from a
+spec field to the save's `kind`, the manifest's duplicate removed with it. Built: the sphere's first step only
 (`client/src/map/sphereView.ts`, the shape picked from the world list, the
 later steps locked). None of the four steps of fork 4 is started.

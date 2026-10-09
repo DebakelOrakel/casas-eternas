@@ -233,7 +233,8 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
     formatVersion: WORLD_ARCHIVE_FORMAT_VERSION,
     // The same provenance string status.generator carries.
     generatorVersion: parts.generatorVersion,
-    world: { width, height, topology: 'torus' },
+    // The shape is the record's kind (world.yaml), said once (DEC-0035).
+    world: { width, height },
     layers,
     mesh: mesh ? { nodes: mesh.count, files: { nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32', column: mesh.column ? 'mesh/column.bin' : undefined } } : undefined,
   }

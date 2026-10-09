@@ -127,7 +127,8 @@ of the mechanical work and is exactly what the golden hash harness
 (layer 4) guards: **the torus must stay byte-identical while the sphere
 is built.**
 
-**Topology is a spec field.** `topology: 'torus' | 'sphere'` in the
+**Topology is a spec field** (decided otherwise in DEC-0035: the save's
+`kind`, FlatWorld or SphereWorld). `topology: 'torus' | 'sphere'` in the
 recipe, in `deriveWorldId` and in `derivePipelineVersion`. One tree, one
 generator, one parameter — the opposite of the three side-by-side
 attempts removed on 2026-09-20.
