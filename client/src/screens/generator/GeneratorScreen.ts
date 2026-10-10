@@ -92,7 +92,7 @@ import { wrapValue } from '../../generator/core/field'
 import { TECTONICS_INPUTS } from '../../generator/tectonics/tectonicsInputParams'
 import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputParams'
 import { WORLD_SPEC_FIELDS } from '../../world/save/worldSpec'
-import { recordDiff, recordFromYaml, recordSignature, recordToYaml, type WorldRecord } from '../../world/worldRecord'
+import { recordDiff, recordFromYaml, recordSignature, recordToYaml, worldKindOf, type WorldRecord } from '../../world/worldRecord'
 import { GENESIS_RUN_FIELDS, TECTONICS_RUN_FIELDS, emptyWorldHistory, openRun, runValues, tallyRun, type WorldHistory, type WorldRun } from '../../world/save/worldHistory'
 import { planFromRecipe } from '../../world/replay'
 import type { WorldSpec } from '../../world/save/worldSpec'
@@ -4444,6 +4444,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // a save writes to world.yaml and what the comparison below reads.
   function currentRecord(): WorldRecord {
     return {
+      kind: worldShape === 'sphere' ? 'SphereWorld' : 'FlatWorld',
       uid: worldUid, name: worldName, revision: worldRevision, spec: readSpec(), history: structuredClone(history),
       archeanEpochs: lastArcheanEpochs, epoch: lastEpoch, erosionRun: erosionRunCount,
     }
@@ -5119,6 +5120,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }
       }
       yaml = await yamlFile.async('string')
+      // A world of a kind this screen restores: the torus (worldRecord.ts,
+      // worldKindOf). A sphere world has nothing to restore yet; an unknown
+      // kind is not a world.
+      if (worldKindOf(yaml) !== 'FlatWorld') throw new Error('not a flat world')
       elevation = await elevFile.async('arraybuffer')
       if (!archeanPayload) {
         if (!stateFile || !oceanFile) throw new Error('missing files')

@@ -90,7 +90,10 @@ legacyPaths`), never written; `planet.water` is read the same way for the
 few saves written while the water sat on the planet.
 
 - **`kind: FlatWorld`** — the flat-torus generator (as opposed to the legacy sphere /
-  Mars generators). Not validated on load, so older files with `kind: World` still load.
+  Mars generators); `kind: SphereWorld` is the sphere. Since 2026-10-10 the
+  shape of the world, read and checked on load — any other kind, the first
+  saves' `kind: World` included, is refused — and part of the terrain's id
+  (`deriveWorldId`, [two-shapes.md](../decisions/two-shapes.md)).
 - **`spec`** mirrors the generation controls. On load, each field is written back to its
   slider (missing fields fall back to the slider's default), so a loaded world shows the
   parameters it was made with. The sim itself does **not** regenerate from `spec` — that

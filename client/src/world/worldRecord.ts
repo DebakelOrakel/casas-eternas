@@ -14,7 +14,22 @@ import { specFromYaml, specToYamlLines, WORLD_SPEC_FIELDS, type WorldSpec } from
 // the computed fields — those are the snapshot and the layers of the
 // archive (world/save/worldArchive.ts), written beside this.
 
+// THE SAVE'S KIND is the world's shape (docs/decisions/two-shapes.md,
+// DEC-0035, fork 2): `FlatWorld` the torus, `SphereWorld` the sphere. Said
+// once, in world.yaml, and part of the terrain's identity
+// (identity.deriveWorldId). Read and checked: anything else is not a world
+// this client opens — the first saves' `kind: World` included.
+export type WorldKind = 'FlatWorld' | 'SphereWorld'
+
+// The kind world.yaml declares, or null for none this client knows.
+export function worldKindOf(yaml: string): WorldKind | null {
+  const kind = readRecipeValue(yaml, 'kind')
+  return kind === 'FlatWorld' || kind === 'SphereWorld' ? kind : null
+}
+
 export interface WorldRecord {
+  // The world's shape (see WorldKind).
+  kind: WorldKind
   // The world's stable identity in the server's store (`metadata.uid`).
   uid: string
   // Its name — not part of the spec: renaming does not make another world.
@@ -38,7 +53,7 @@ export interface WorldRecord {
 export function recordToYaml(record: WorldRecord, generator: string): string {
   return [
     'apiVersion: casas-eternas/v1alpha1',
-    'kind: FlatWorld',
+    `kind: ${record.kind}`,
     'metadata:',
     `  name: ${record.name || record.spec.seed || 'world'}`,
     // The world's own identity, stable across further erosion and across
@@ -62,9 +77,15 @@ export function recordToYaml(record: WorldRecord, generator: string): string {
 
 // A record from world.yaml and the snapshot's epochs. `fallbackUid` names a
 // save written before `metadata.uid` existed (identity.deriveWorldUid).
+//
+// Throws on a kind it does not know (worldKindOf): a file that is not a world
+// of this client is refused, never read as a torus.
 export function recordFromYaml(yaml: string, epochs: { archeanEpochs: number; epoch: number }, fallbackUid: () => string): WorldRecord {
+  const kind = worldKindOf(yaml)
+  if (!kind) throw new Error(`not a world this client opens: kind ${readRecipeValue(yaml, 'kind') ?? 'missing'}`)
   const seed = readRecipeValue(yaml, 'spec.seed') ?? ''
   return {
+    kind,
     uid: readRecipeValue(yaml, 'metadata.uid') || fallbackUid(),
     // A world saved before step 0 existed was named after its seed.
     name: readRecipeValue(yaml, 'metadata.name') ?? seed,

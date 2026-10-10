@@ -175,6 +175,7 @@ console.log('\n— run history —')
   const values = Object.fromEntries(M.spec.WORLD_SPEC_FIELDS.map((f, i) => [f.path, f.input.min + ((i * 7) % 5) * ((f.input.max - f.input.min) / 5)]))
   const run = (fields, epochs, extra = {}) => ({ epochs, generator: 'abc1234', code: 'deadbeefdeadbeef', values: WH.runValues(fields, values), ...extra })
   const record = {
+    kind: 'FlatWorld',
     uid: '0f8e5c1a-7b2d-4c3e-9a1f-123456789abc', name: 'Calvessor', revision: 7,
     spec: { seed: '983721401', values },
     history: { genesis: [run(WH.GENESIS_RUN_FIELDS, 41)], tectonics: [run(WH.TECTONICS_RUN_FIELDS, 30), run(WH.TECTONICS_RUN_FIELDS, 12, { restored: true })] },
@@ -188,6 +189,16 @@ console.log('\n— run history —')
   check('a rename reads as a change, by name', WR.recordDiff(record, renamed).length === 1 && WR.recordDiff(record, renamed)[0].startsWith('name:'))
   const legacy = WR.recordFromYaml(yaml.replace(/  uid: .*\n/, '').replace(/  name: .*\n/, ''), { archeanEpochs: 0, epoch: 0 }, () => 'derived-uid')
   check('a save without uid or name takes the derived uid and the seed as its name', legacy.uid === 'derived-uid' && legacy.name === '983721401', `${legacy.uid} ${legacy.name}`)
+  // The kind is the shape (DEC-0035): read back as written, and a kind this
+  // client does not know — the first saves' `World` included — refused.
+  const sphere = WR.recordFromYaml(WR.recordToYaml({ ...record, kind: 'SphereWorld' }, 'abc1234'), { archeanEpochs: 41, epoch: 42 }, () => 'unused')
+  check('the kind survives world.yaml', sphere.kind === 'SphereWorld' && back.kind === 'FlatWorld')
+  let refused = 0
+  for (const kind of ['World', 'MarsWorld', null]) {
+    const text = kind ? yaml.replace('kind: FlatWorld', `kind: ${kind}`) : yaml.replace('kind: FlatWorld\n', '')
+    try { WR.recordFromYaml(text, { archeanEpochs: 0, epoch: 0 }, () => 'x') } catch { refused++ }
+  }
+  check('an unknown or missing kind is refused', refused === 3 && WR.worldKindOf(yaml) === 'FlatWorld', `${refused} of 3`)
 }
 
 // --- 3. identity -------------------------------------------------------------
@@ -201,17 +212,20 @@ for (let i = 0; i < elev.length; i++) elev[i] = Math.sin(i * 0.017) * 0.4
 const precip = new Float32Array(16 * 8).fill(800)
 // Re-frozen at the P5 teardown: v1's strength/refresh left the hash shape, a
 // deliberate id break (ALGO v11 had already orphaned every older artifact).
-const id = M.key.deriveWorldId({ elevation: elev, precipitation: precip, landscapeAge: 40, alluvium: 50, rockContrast: 50 })
-check('deriveWorldId is stable for fixed bytes', id === '79f9328a6cf7c80c', `got ${id}`)
+// Re-frozen 2026-10-10: the save's kind entered the hash (DEC-0035), a
+// deliberate break for every world saved before.
+const id = M.key.deriveWorldId({ kind: 'FlatWorld', elevation: elev, precipitation: precip, landscapeAge: 40, alluvium: 50, rockContrast: 50 })
+check('deriveWorldId is stable for fixed bytes', id === '4086cd3b4e2075bf', `got ${id}`)
+check('the kind enters the identity', id !== M.key.deriveWorldId({ kind: 'SphereWorld', elevation: elev, precipitation: precip, landscapeAge: 40, alluvium: 50, rockContrast: 50 }))
 // The snapshot (phase 5.8): a save that carries the mesh is identified by
 // the mesh's bytes too — a different column under the same rasterisation is
 // a different world; a save without one keeps the raster id above.
 {
   const nodes = new Float32Array([1, 2, 3, 4]), z = new Float32Array([0.1, 0.2])
-  const withMesh = M.key.deriveWorldId({ elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50, mesh: { nodes, z } })
-  const withColumn = M.key.deriveWorldId({ elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50, mesh: { nodes, z, column: new Uint8Array([1, 0, 0, 0]) } })
-  const otherColumn = M.key.deriveWorldId({ elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50, mesh: { nodes, z, column: new Uint8Array([2, 0, 0, 0]) } })
-  check('a mesh enters the identity', withMesh !== M.key.deriveWorldId({ elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50 }))
+  const withMesh = M.key.deriveWorldId({ kind: 'FlatWorld', elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50, mesh: { nodes, z } })
+  const withColumn = M.key.deriveWorldId({ kind: 'FlatWorld', elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50, mesh: { nodes, z, column: new Uint8Array([1, 0, 0, 0]) } })
+  const otherColumn = M.key.deriveWorldId({ kind: 'FlatWorld', elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50, mesh: { nodes, z, column: new Uint8Array([2, 0, 0, 0]) } })
+  check('a mesh enters the identity', withMesh !== M.key.deriveWorldId({ kind: 'FlatWorld', elevation: elev, precipitation: precip, alluvium: 50, rockContrast: 50 }))
   check('the column enters the identity', withColumn !== withMesh && withColumn !== otherColumn)
 }
 check('the id is a pure 16-hex hash (label dropped 2026-08-12)', /^[0-9a-f]{16}$/.test(id), id)
@@ -273,7 +287,7 @@ for (let i = 0; i < W * H; i++) {
   zipMonsoon[i] = isOcean(i) ? -1 : (i % 9) / 10 - 0.4 // both signs, since the index is signed
 }
 const zip = new JSZip()
-zip.file('world.yaml', ['spec:', `  seed: "zip-welt"`, '  erosion:', '    landscapeAge: 25', '    alluvium: 60', '    rockContrast: 35', 'metadata:', '  uid: 0192abcd-0000-8000-8000-000000000000', ''].join('\n'))
+zip.file('world.yaml', ['kind: FlatWorld', 'spec:', `  seed: "zip-welt"`, '  erosion:', '    landscapeAge: 25', '    alluvium: 60', '    rockContrast: 35', 'metadata:', '  uid: 0192abcd-0000-8000-8000-000000000000', ''].join('\n'))
 zip.file('layers/elevation.f32', zipElev.buffer)
 zip.file('layers/precipitation.u16', M.layers.bakeLayer(zipPrecip, precipSpec))
 zip.file('layers/uplift.f32', M.layers.bakeLayer(zipUplift, forcingSpecs.uplift))
@@ -319,6 +333,7 @@ else {
   // The reader must reach the SAME id as deriving it here by hand — and it must
   // hash the STORED (dequantised) precipitation, never a raw float array.
   const direct = M.key.deriveWorldId({
+    kind: 'FlatWorld',
     elevation: loaded.elevations, precipitation: loaded.climate?.data ?? null, landscapeAge: 25, alluvium: 60, rockContrast: 35,
   })
   check('reader and direct derivation agree on the worldId', loaded.worldId === direct, `${loaded.worldId} vs ${direct}`)
@@ -443,7 +458,7 @@ console.log('\n— zip writer —')
   const precipitation = new Float32Array(W * H)
   for (let i = 0; i < W * H; i++) precipitation[i] = isOcean(i) ? OCEAN_PRECIP : 600 + i
   const meshZ = new Float32Array([0.1, 0.2, 0.3])
-  const yaml = ['spec:', '  seed: "writer-welt"', '  erosion:', '    landscapeAge: 30', '    alluvium: 40', '    rockContrast: 55', 'metadata:', '  uid: 0192abcd-0000-8000-8000-00000000beef', ''].join('\n')
+  const yaml = ['kind: FlatWorld', 'spec:', '  seed: "writer-welt"', '  erosion:', '    landscapeAge: 30', '    alluvium: 40', '    rockContrast: 55', 'metadata:', '  uid: 0192abcd-0000-8000-8000-00000000beef', ''].join('\n')
   const written = await writer.writeWorldArchive({
     kind: 'tectonic', width: W, height: H, yaml, generatorVersion: 'roundtrip', preview: null, elevation: zipElev.buffer.slice(0),
     snapshot: { epoch: 3 }, mantle: new ArrayBuffer(8), latticeAccumulated: new ArrayBuffer(4), latticeLockedEpochs: new ArrayBuffer(2),

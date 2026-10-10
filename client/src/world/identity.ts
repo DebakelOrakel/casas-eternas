@@ -60,6 +60,9 @@ const hex8 = (value: number): string => (value >>> 0).toString(16).padStart(8, '
 // rasters. Order matters (it is hashed as written), so this stays a single
 // literal rather than an object spread from several places.
 export interface BakeInputs {
+  // The world's shape, the save's kind (worldRecord.ts, WorldKind): a torus
+  // and a sphere with the same bytes are different terrains.
+  kind: string
   elevation: Float32Array
   precipitation: Float32Array | null
   // The v2 engine's controls. v1's erosionStrength/drainageRefresh were
@@ -113,7 +116,7 @@ export function deriveWorldId(inputs: BakeInputs): string {
   // The scalars go in through the same mixer, as text, so an absent value
   // and a zero cannot collapse into each other.
   const scalars = new TextEncoder().encode(
-    `|a=${inputs.landscapeAge ?? 'd'}|al=${inputs.alluvium ?? 'd'}|rc=${inputs.rockContrast ?? 'd'}`,
+    `|k=${inputs.kind}|a=${inputs.landscapeAge ?? 'd'}|al=${inputs.alluvium ?? 'd'}|rc=${inputs.rockContrast ?? 'd'}`,
   )
   let [sa, sb] = hashBytes(scalars, a, b)
   if (inputs.mesh) {

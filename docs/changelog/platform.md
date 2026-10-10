@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-10
+- **changed** Saves: a world's file says its shape, flat or sphere, and the shape is part of its identity; worlds saved before get a new one, so their stored levels and tiles are computed again, and a file of an unknown kind is refused. `generator.load`
+
 ## 2026-10-04
 - **changed** Jobs: a level-3 tile bakes about a third faster, and a tile's erosion routes its water afresh every four rounds, so the fine levels of every world are computed again. `jobs`
 - **changed** Server: a sign-in lasts as long as `global.auth.session-ttl` and renews its access token (`global.auth.token-ttl`, now 15 minutes) at `/v1/auth/refresh`; changing or resetting a password signs the user out everywhere. `auth`

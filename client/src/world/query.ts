@@ -6,6 +6,7 @@ import type { FieldSpec } from './save/fieldSpec'
 import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
 import { historyFromYaml, type WorldHistory } from './save/worldHistory'
 import { deriveWorldId } from './identity'
+import { worldKindOf } from './worldRecord'
 import { coastalWarpSeed } from '../generator/archean/archeanState'
 import { FINE_DETAIL_SEED_SALT } from '../generator/elevation/ridgedNoise'
 import { erosionLithoSeed } from '../generator/surface/erosionForcingFields'
@@ -132,6 +133,9 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
   // line-anchored pattern never matched it, and a leaf name matched anywhere
   // would collide the moment two groups share a key.
   const yamlText = (await zip.file('world.yaml')?.async('string')) ?? ''
+  // Not a world this client opens: no world (worldRecord.ts, worldKindOf).
+  const kind = worldKindOf(yamlText)
+  if (!kind) return null
   const seedText = readRecipeValue(yamlText, 'spec.seed') ?? 'casas-eternas'
   // THE GENERATOR'S OWN fine-detail seed, derived rather than read: `warpSeed`
   // is `coastalWarpSeed(seed)` (archean/archeanState.ts) and
@@ -214,6 +218,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       const precipitation = await fromSave('precipitation')
       const mesh = await world.mesh()
       return deriveWorldId({
+        kind,
         elevation: elevation.data,
         precipitation: precipitation?.data ?? null,
         landscapeAge: recipe.erosionControls.landscapeAge,

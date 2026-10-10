@@ -102,10 +102,12 @@ place says the shape, and nothing beside it:
 - `kind` is READ and checked on load: `FlatWorld` is the torus,
   `SphereWorld` the sphere, anything else is refused as an unknown world.
   The old `kind: World` of the first saves is not accepted any more.
-- `kind` goes into `deriveWorldId` and `derivePipelineVersion`, for both
-  shapes. That changes the id of every flat world saved before it, and
-  with it the keys of their artifacts; accepted — the old worlds and
-  their artifacts are made again, not migrated.
+- `kind` goes into `deriveWorldId`, for both shapes. That changes the id
+  of every flat world saved before it, and with it the keys of their
+  artifacts; accepted — the old worlds and their artifacts are made again,
+  not migrated. Not into `derivePipelineVersion`: that hashes the code's
+  constants and knows no world, and the world id already keeps a torus's
+  and a sphere's artifacts apart (changed when built, 2026-10-10).
 - `manifest.json`'s `world.topology: 'torus'` goes: it said the same thing
   a second time, and two places for one fact can disagree.
 
@@ -165,6 +167,12 @@ is agreed before it starts.
 - Whether the flat map gets a camera reset like the globe's.
 
 ## Status
+
+2026-10-10: step 3c BUILT — `world.yaml`'s kind is read and checked
+(`worldKindOf`, `WorldRecord.kind`), written from the world's shape, and
+hashed into `deriveWorldId`; every world saved before has a new id, and
+its artifacts are made again. The generator restores only `FlatWorld`.
+Stage 3 of fork 4 complete; step 4 (the sphere Domain) not started.
 
 2026-10-10: step 3b BUILT — the raster side: every raster wrap in
 `generator/` goes through a `DomainGrid` from `domain.grid(resX, resY)`
