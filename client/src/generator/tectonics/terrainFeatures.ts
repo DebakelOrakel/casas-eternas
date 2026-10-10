@@ -142,6 +142,7 @@ export function findOrCreateFeatureIndex(
   domain: Domain,
 ): number {
   const mergeRadiusSq = MERGE_RADIUS * MERGE_RADIUS
+  const offset = { x: 0, y: 0 }
   for (let i = 0; i < features.length; i++) {
     const feature = features[i]
     // Kind must also match — a trench and its own arc's range feature
@@ -151,8 +152,9 @@ export function findOrCreateFeatureIndex(
     if (feature.kind !== kind) continue
     const samePair = (feature.plateA === plateA && feature.plateB === plateB) || (feature.plateA === plateB && feature.plateB === plateA)
     if (!samePair) continue
-    const dx = domain.deltaX(x, feature.x)
-    const dy = domain.deltaY(y, feature.y)
+    domain.delta(x, y, feature.x, feature.y, offset)
+    const dx = offset.x
+    const dy = offset.y
     if (dx * dx + dy * dy <= mergeRadiusSq) {
       // Refresh orientation toward the current boundary tangent. Tangent
       // direction is sign-ambiguous (a line and its reverse are the same

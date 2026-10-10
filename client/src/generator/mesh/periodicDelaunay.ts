@@ -15,7 +15,7 @@ import { sq } from '../core/detMath'
 //
 // Periodicity is handled at exactly one place: `frame(t)` unwraps a
 // triangle's second and third corner into the frame of its first through
-// the domain's `deltaX`/`deltaY`, and a query point is unwrapped into the
+// the domain's `delta`, and a query point is unwrapped into the
 // same frame. Every predicate (orientation, in-circle, circumcentre) is
 // then the planar one. This is sound as long as every triangle is small
 // against the period — the one-sheeted-cover condition of periodic
@@ -122,13 +122,18 @@ export class PeriodicTriangulation {
     const ay = this.vy[a]
     out[0] = ax
     out[1] = ay
-    out[2] = ax + this.domain.deltaX(this.vx[b], ax)
-    out[3] = ay + this.domain.deltaY(this.vy[b], ay)
-    out[4] = ax + this.domain.deltaX(this.vx[c], ax)
-    out[5] = ay + this.domain.deltaY(this.vy[c], ay)
+    const d = this.d
+    this.domain.delta(this.vx[b], this.vy[b], ax, ay, d)
+    out[2] = ax + d.x
+    out[3] = ay + d.y
+    this.domain.delta(this.vx[c], this.vy[c], ax, ay, d)
+    out[4] = ax + d.x
+    out[5] = ay + d.y
   }
 
   private readonly f = new Float64Array(6)
+  // The one offset `domain.delta` writes into, so no call allocates.
+  private readonly d = { x: 0, y: 0 }
 
   // Squared length of halfedge e.
   edgeLengthSq(e: number): number {
@@ -225,6 +230,7 @@ export class PeriodicTriangulation {
   voronoiArea(v: number): number {
     const vx = this.vx[v]
     const vy = this.vy[v]
+    const d = this.d
     const start = this.vEdge[v]
     let e = start
     let area = 0
@@ -239,8 +245,9 @@ export class PeriodicTriangulation {
       // bring it into v's frame.
       const a = this.tris[3 * t]
       this.circumcentre(t, this.cc)
-      const ax = vx + this.domain.deltaX(this.vx[a], vx)
-      const ay = vy + this.domain.deltaY(this.vy[a], vy)
+      this.domain.delta(this.vx[a], this.vy[a], vx, vy, d)
+      const ax = vx + d.x
+      const ay = vy + d.y
       const x = ax + this.cc[0] - vx
       const y = ay + this.cc[1] - vy
       if (first) {
@@ -294,6 +301,7 @@ export class PeriodicTriangulation {
   locate(x: number, y: number, hint = this.lastTri): number {
     let t = this.tAlive[hint] ? hint : this.anyAliveTriangle()
     const f = this.f
+    const d = this.d
     const maxSteps = this.triSlots * 2 + 16
     let steps = 0
     const { width, height } = this.domain
@@ -306,11 +314,13 @@ export class PeriodicTriangulation {
     // gave up (2026-10-01: 2 in 20 000 far-hinted locates on 2048×1024,
     // 13 in 20 000 on a tile-sized torus).
     this.frame(t, f)
-    let carriedX = f[0] + this.domain.deltaX(x, f[0])
-    let carriedY = f[1] + this.domain.deltaY(y, f[1])
+    this.domain.delta(x, y, f[0], f[1], d)
+    let carriedX = f[0] + d.x
+    let carriedY = f[1] + d.y
     for (;;) {
-      let px = f[0] + this.domain.deltaX(x, f[0])
-      let py = f[1] + this.domain.deltaY(y, f[1])
+      this.domain.delta(x, y, f[0], f[1], d)
+      let px = f[0] + d.x
+      let py = f[1] + d.y
       if (Math.abs(px - carriedX) > width / 2) px = carriedX
       if (Math.abs(py - carriedY) > height / 2) py = carriedY
       const o0 = PeriodicTriangulation.orient(f[0], f[1], f[2], f[3], px, py)
@@ -547,6 +557,7 @@ export class PeriodicTriangulation {
   // rechecked.
   private legalise(): void {
     const f = this.f
+    const d = this.d
     const stack = this.stack
     while (stack.length > 0) {
       const e = stack.pop() as number
@@ -561,8 +572,9 @@ export class PeriodicTriangulation {
       const px = f[(2 * i + 4) % 6]
       const py = f[(2 * i + 5) % 6]
       const dv = this.apex(this.twin[e])
-      const dx = ax + this.domain.deltaX(this.vx[dv], ax)
-      const dy = ay + this.domain.deltaY(this.vy[dv], ay)
+      this.domain.delta(this.vx[dv], this.vy[dv], ax, ay, d)
+      const dx = ax + d.x
+      const dy = ay + d.y
       if (!PeriodicTriangulation.inCircle(ax, ay, bx, by, px, py, dx, dy)) continue
       // Both triangles of the flip must be strictly counter-clockwise, by
       // a margin: a sliver flipped into existence is a sliver the next
@@ -677,18 +689,22 @@ export class PeriodicTriangulation {
     const l = this.to(this.star[(i + 1) % n])
     const rx = this.vx[r]
     const ry = this.vy[r]
-    const ux = rx + this.domain.deltaX(this.vx[u], rx)
-    const uy = ry + this.domain.deltaY(this.vy[u], ry)
-    const lx = rx + this.domain.deltaX(this.vx[l], rx)
-    const ly = ry + this.domain.deltaY(this.vy[l], ry)
+    const d = this.d
+    this.domain.delta(this.vx[u], this.vy[u], rx, ry, d)
+    const ux = rx + d.x
+    const uy = ry + d.y
+    this.domain.delta(this.vx[l], this.vy[l], rx, ry, d)
+    const lx = rx + d.x
+    const ly = ry + d.y
     const area = PeriodicTriangulation.orient(rx, ry, ux, uy, lx, ly)
     const scale = sq(ux - rx) + sq(uy - ry) + sq(lx - rx) + sq(ly - ry)
     if (area <= ORIENT_EPS * scale) return false
     for (let j = 0; j < n; j++) {
       const w = this.to(this.star[j])
       if (w === u || w === r || w === l) continue
-      const wx = rx + this.domain.deltaX(this.vx[w], rx)
-      const wy = ry + this.domain.deltaY(this.vy[w], ry)
+      this.domain.delta(this.vx[w], this.vy[w], rx, ry, d)
+      const wx = rx + d.x
+      const wy = ry + d.y
       if (PeriodicTriangulation.orient(rx, ry, ux, uy, wx, wy) >= 0
         && PeriodicTriangulation.orient(ux, uy, lx, ly, wx, wy) >= 0
         && PeriodicTriangulation.orient(lx, ly, rx, ry, wx, wy) >= 0) return false
@@ -705,15 +721,19 @@ export class PeriodicTriangulation {
     const r = this.apex(this.twin[e])
     const rx = this.vx[r]
     const ry = this.vy[r]
-    const ux = rx + this.domain.deltaX(this.vx[u], rx)
-    const uy = ry + this.domain.deltaY(this.vy[u], ry)
-    const lx = rx + this.domain.deltaX(this.vx[l], rx)
-    const ly = ry + this.domain.deltaY(this.vy[l], ry)
+    const d = this.d
+    this.domain.delta(this.vx[u], this.vy[u], rx, ry, d)
+    const ux = rx + d.x
+    const uy = ry + d.y
+    this.domain.delta(this.vx[l], this.vy[l], rx, ry, d)
+    const lx = rx + d.x
+    const ly = ry + d.y
     for (let i = 0; i < n; i++) {
       const w = this.to(this.star[i])
       if (w === u || w === l || w === r) continue
-      const wx = rx + this.domain.deltaX(this.vx[w], rx)
-      const wy = ry + this.domain.deltaY(this.vy[w], ry)
+      this.domain.delta(this.vx[w], this.vy[w], rx, ry, d)
+      const wx = rx + d.x
+      const wy = ry + d.y
       if (PeriodicTriangulation.inCircle(rx, ry, ux, uy, lx, ly, wx, wy)) return false
     }
     return true
@@ -729,6 +749,7 @@ export class PeriodicTriangulation {
   validate(checkDelaunay = true): string[] {
     const errors: string[] = []
     const f = this.f
+    const d = this.d
     let aliveT = 0
     const maxLenSq = sq(Math.min(this.domain.width, this.domain.height) * MAX_EDGE_FRACTION)
     let maxEdgeSq = 0
@@ -753,8 +774,9 @@ export class PeriodicTriangulation {
         for (let i = 0; i < 3; i++) {
           const e = 3 * t + i
           const dv = this.apex(this.twin[e])
-          const dx = f[0] + this.domain.deltaX(this.vx[dv], f[0])
-          const dy = f[1] + this.domain.deltaY(this.vy[dv], f[1])
+          this.domain.delta(this.vx[dv], this.vy[dv], f[0], f[1], d)
+          const dx = f[0] + d.x
+          const dy = f[1] + d.y
           if (PeriodicTriangulation.inCircle(f[0], f[1], f[2], f[3], f[4], f[5], dx, dy)) nonDelaunay++
         }
       }

@@ -3,6 +3,10 @@ import type { Domain } from '../core/domain'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { detCos, detSin } from '../core/detMath'
 
+// The offset `domain.delta` writes into: one per module, so no call
+// allocates. Read it at once, before the next delta.
+const offset = { x: 0, y: 0 }
+
 // Flat-torus analog of a real tectonic plate's Euler-pole rotation, stored in a
 // RIGID-BODY form: a drift (translation) plus a spin (rotation about the plate's
 // own centroid). This is equivalent to a single Euler pole — a rotation about an
@@ -55,8 +59,9 @@ export function generatePlateMotions(seeds: PlateSeed[], domain: Domain, random:
     const spin = (direction * targetSpeed) / radius
     // Velocity of the centroid (= seed) under rotation about the offset center:
     // ω · ẑ × (centroid − center). ẑ × (rx, ry) = (−ry, rx).
-    const rx = domain.deltaX(seed.x, centerX)
-    const ry = domain.deltaY(seed.y, centerY)
+    domain.delta(seed.x, seed.y, centerX, centerY, offset)
+    const rx = offset.x
+    const ry = offset.y
     return { driftX: -ry * spin, driftY: rx * spin, spin, centroidX: seed.x, centroidY: seed.y }
   })
 }
@@ -65,8 +70,9 @@ export function generatePlateMotions(seeds: PlateSeed[], domain: Domain, random:
 // the wrapped offset from the centroid to the point. Equivalent to the old
 // ω × r about an offset Euler center (drift folds in the center offset).
 export function getVelocityAt(point: PlateSeed, motion: PlateMotion, domain: Domain): { vx: number; vy: number } {
-  const rx = domain.deltaX(point.x, motion.centroidX)
-  const ry = domain.deltaY(point.y, motion.centroidY)
+  domain.delta(point.x, point.y, motion.centroidX, motion.centroidY, offset)
+  const rx = offset.x
+  const ry = offset.y
   return { vx: motion.driftX - ry * motion.spin, vy: motion.driftY + rx * motion.spin }
 }
 
@@ -122,8 +128,9 @@ export function fitMotionsToFlow(seeds: PlateSeed[], flow: Float32Array, domain:
       const i = gy * MANTLE_RES_X + gx
       const ux = flow[i * 2]
       const uy = flow[i * 2 + 1]
-      const rx = domain.deltaX(wx, seeds[best].x)
-      const ry = domain.deltaY(wy, seeds[best].y)
+      domain.delta(wx, wy, seeds[best].x, seeds[best].y, offset)
+      const rx = offset.x
+      const ry = offset.y
       sumUx[best] += ux
       sumUy[best] += uy
       sumCross[best] += rx * uy - ry * ux

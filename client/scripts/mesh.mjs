@@ -163,9 +163,11 @@ const effectiveTarget = (mesh, targets, v, nb) => {
 // a valley river whose discharge grows downstream. Heights in elevation
 // units (ELEVATION_METERS per unit).
 const m = (x) => M.scale.metersToElevation(x)
+const gaussOffset = { x: 0, y: 0 }
 const gauss = (x, y, cx, cy, sx, sy) => {
-  const dx = domain.deltaX(x, cx) / sx
-  const dy = domain.deltaY(y, cy) / sy
+  domain.delta(x, y, cx, cy, gaussOffset)
+  const dx = gaussOffset.x / sx
+  const dy = gaussOffset.y / sy
   return Math.exp(-(dx * dx + dy * dy))
 }
 const synthetic = {
@@ -182,7 +184,8 @@ const synthetic = {
     // A river along y = 128 from x = 180 to x = 330, widening downstream
     // (east), a few cells wide.
     if (x < 180 || x > 330) return 0
-    const d = Math.abs(domain.deltaY(y, 128))
+    domain.delta(x, y, x, 128, gaussOffset)
+    const d = Math.abs(gaussOffset.y)
     if (d > 1.5) return 0
     return 200 + (x - 180) * 60
   },

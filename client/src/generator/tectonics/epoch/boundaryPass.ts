@@ -10,6 +10,10 @@ import { findOrCreateFeatureIndex } from '../terrainFeatures'
 import type { MergeEvent, PlateSimulation, RiftEvent } from '../plateSimulationTypes'
 import { detPow } from '../../core/detMath'
 
+// The offset `domain.delta` writes into: one per module, so no call
+// allocates. Read it at once, before the next delta.
+const offset = { x: 0, y: 0 }
+
 
 
 function motionClassCode(motionClass: 'convergent' | 'divergent' | 'transform'): number {
@@ -128,8 +132,9 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       // seed-to-seed normal, so a feature can be laid down as an oriented
       // ridge segment rather than an isotropic blob (see
       // TerrainFeature.tangentX / computeElevation's anisotropic falloff).
-      const ndx = domain.deltaX(seedA.x, seedB.x)
-      const ndy = domain.deltaY(seedA.y, seedB.y)
+      domain.delta(seedA.x, seedA.y, seedB.x, seedB.y, offset)
+      const ndx = offset.x
+      const ndy = offset.y
       const nlen = Math.sqrt(ndx * ndx + ndy * ndy) || 1
       const tangentX = -ndy / nlen
       const tangentY = ndx / nlen
@@ -155,8 +160,9 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       if (classification.character === 'subductionArc' || classification.character === 'islandArc') {
         const subductingPlate = classification.upliftSide === 'a' ? boundary.plateB : boundary.plateA
         const subductingSeed = sim.seeds[subductingPlate]
-        let offsetX = domain.deltaX(subductingSeed.x, boundary.x)
-        let offsetY = domain.deltaY(subductingSeed.y, boundary.y)
+        domain.delta(subductingSeed.x, subductingSeed.y, boundary.x, boundary.y, offset)
+        let offsetX = offset.x
+        let offsetY = offset.y
         const offsetLen = Math.sqrt(offsetX * offsetX + offsetY * offsetY) || 1
         offsetX /= offsetLen
         offsetY /= offsetLen
@@ -175,8 +181,9 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       // Throttled to every Nth epoch so continents grow at a measured pace.
       if (classification.character === 'subductionArc' && sim.epoch % TECTONICS_TUNING.accretionEpochInterval === 0) {
         const continentalSeed = classification.upliftSide === 'a' ? seedA : seedB
-        const inX = domain.deltaX(continentalSeed.x, boundary.x)
-        const inY = domain.deltaY(continentalSeed.y, boundary.y)
+        domain.delta(continentalSeed.x, continentalSeed.y, boundary.x, boundary.y, offset)
+        const inX = offset.x
+        const inY = offset.y
         const inLen = Math.sqrt(inX * inX + inY * inY) || 1
         const accreteX = domain.wrapX(boundary.x + (inX / inLen) * TECTONICS_TUNING.accretionInset)
         const accreteY = domain.wrapY(boundary.y + (inY / inLen) * TECTONICS_TUNING.accretionInset)

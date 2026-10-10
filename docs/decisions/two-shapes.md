@@ -185,6 +185,13 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: step 4a BUILT — `Domain.delta(ax, ay, bx, by, out)`, the
+offset from b to a in b's local frame, replaces `deltaX`/`deltaY`; 33
+call sites moved (the mesh's triangle unwrapping among them), the `out`
+object held per caller so the hot loops allocate nothing. Golden harness
+byte-identical against the tree before 3a; timings unchanged. Next: 4b,
+the sphere Domain and its grid with pole handling (fork 5).
+
 2026-10-10: step 3c BUILT — `world.yaml`'s kind is read and checked
 (`worldKindOf`, `WorldRecord.kind`), written from the world's shape, and
 hashed into `deriveWorldId`; every world saved before has a new id, and

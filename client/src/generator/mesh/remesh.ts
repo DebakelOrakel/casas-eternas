@@ -99,6 +99,7 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
     const ca: number[] = []
     const cb: number[] = []
     const d = mesh.domain
+    const offset = { x: 0, y: 0 }
     for (let t = 0; t < mesh.triSlots; t++) {
       if (!mesh.tAlive[t]) continue
       for (let i = 0; i < 3; i++) {
@@ -111,8 +112,9 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
         if (lsq <= sq(insertRatio * h)) continue
         const ax = mesh.vx[a]
         const ay = mesh.vy[a]
-        cx.push(ax + d.deltaX(mesh.vx[b], ax) / 2)
-        cy.push(ay + d.deltaY(mesh.vy[b], ay) / 2)
+        d.delta(mesh.vx[b], mesh.vy[b], ax, ay, offset)
+        cx.push(ax + offset.x / 2)
+        cy.push(ay + offset.y / 2)
         ca.push(a)
         cb.push(b)
       }
@@ -129,8 +131,9 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
       if (!mesh.vAlive[a] || !mesh.vAlive[b] || !adjacent(mesh, a, b)) continue
       const ax = mesh.vx[a]
       const ay = mesh.vy[a]
-      const ex = d.deltaX(mesh.vx[b], ax)
-      const ey = d.deltaY(mesh.vy[b], ay)
+      d.delta(mesh.vx[b], mesh.vy[b], ax, ay, offset)
+      const ex = offset.x
+      const ey = offset.y
       // Across the edge (its left normal), a symmetric jitter; along it a
       // smaller one so the split is not always exactly halfway.
       const across = (rng() * 2 - 1) * jitter
@@ -273,12 +276,14 @@ function adjacent(mesh: PeriodicTriangulation, a: number, b: number): boolean {
 }
 
 const frame = new Float64Array(6)
+const frameOffset = { x: 0, y: 0 }
 
 // Barycentric weights of (x, y) in triangle t, clamped to the simplex.
 export function barycentric(mesh: PeriodicTriangulation, t: number, x: number, y: number, out: Float64Array): void {
   mesh.frame(t, frame)
-  const px = frame[0] + mesh.domain.deltaX(x, frame[0])
-  const py = frame[1] + mesh.domain.deltaY(y, frame[1])
+  mesh.domain.delta(x, y, frame[0], frame[1], frameOffset)
+  const px = frame[0] + frameOffset.x
+  const py = frame[1] + frameOffset.y
   const v0x = frame[2] - frame[0]
   const v0y = frame[3] - frame[1]
   const v1x = frame[4] - frame[0]

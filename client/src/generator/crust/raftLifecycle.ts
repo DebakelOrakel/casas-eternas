@@ -5,6 +5,10 @@ import type { Domain } from '../core/domain'
 import { deservesContinentName, pickUnusedRaftName } from './raftNames'
 import { detHypot } from '../core/detMath'
 
+// The offset `domain.delta` writes into: one per module, so no call
+// allocates. Read it at once, before the next delta.
+const offset = { x: 0, y: 0 }
+
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
 // plates, decoupled from them — see docs/decisions/continental-crust-rafts.md. A
 // raft is a set of soft metaball blobs whose union is one continent's outline.
@@ -150,8 +154,9 @@ export function compactRafts(rafts: Raft[], rate: number, domain: Domain): void 
     let sumY = 0
     let radiusSum = 0
     for (const blob of raft.blobs) {
-      sumX += domain.deltaX(blob.x, ref.x)
-      sumY += domain.deltaY(blob.y, ref.y)
+      domain.delta(blob.x, blob.y, ref.x, ref.y, offset)
+      sumX += offset.x
+      sumY += offset.y
       radiusSum += blob.radius
     }
     const cx = ref.x + sumX / n
@@ -175,8 +180,9 @@ export function compactRafts(rafts: Raft[], rate: number, domain: Domain): void 
     const spacing = Math.min(1.2 * meanRadius, Math.max(0.5 * meanRadius, nearest[n >> 1]))
     const compactRadius = Math.sqrt(n / Math.PI) * spacing
     for (const blob of raft.blobs) {
-      const dx = domain.deltaX(blob.x, cx)
-      const dy = domain.deltaY(blob.y, cy)
+      domain.delta(blob.x, blob.y, cx, cy, offset)
+      const dx = offset.x
+      const dy = offset.y
       const dist = detHypot(dx, dy)
       const excess = dist - compactRadius
       if (excess <= 0) continue
@@ -229,8 +235,9 @@ export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisation
         const wa = a.radius * a.radius
         const wb = b.radius * b.radius
         const t = wb / (wa + wb)
-        a.x = domain.wrapX(a.x + domain.deltaX(b.x, a.x) * t)
-        a.y = domain.wrapY(a.y + domain.deltaY(b.y, a.y) * t)
+        domain.delta(b.x, b.y, a.x, a.y, offset)
+        a.x = domain.wrapX(a.x + offset.x * t)
+        a.y = domain.wrapY(a.y + offset.y * t)
         a.radius = newRadius
         a.birthEpoch = Math.round((a.birthEpoch ?? 0) * (1 - t) + (b.birthEpoch ?? 0) * t)
         dead[j] = 1
@@ -369,8 +376,9 @@ export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, epoc
           const nameB = rafts[j].name
           // Seam point: midpoint of the meeting blob pair (wrapped). Seam
           // tangent: perpendicular to the convergence direction between them.
-          const dx = domain.deltaX(overlap.blobB.x, overlap.blobA.x)
-          const dy = domain.deltaY(overlap.blobB.y, overlap.blobA.y)
+          domain.delta(overlap.blobB.x, overlap.blobB.y, overlap.blobA.x, overlap.blobA.y, offset)
+          const dx = offset.x
+          const dy = offset.y
           const seamX = domain.wrapX(overlap.blobA.x + dx / 2)
           const seamY = domain.wrapY(overlap.blobA.y + dy / 2)
           const len = detHypot(dx, dy) || 1
@@ -423,7 +431,8 @@ export function splitRaftAtRift(
   const near: RaftBlob[] = []
   const far: RaftBlob[] = []
   for (const blob of raft.blobs) {
-    const side = domain.deltaX(blob.x, riftX) * normalX + domain.deltaY(blob.y, riftY) * normalY
+    domain.delta(blob.x, blob.y, riftX, riftY, offset)
+    const side = offset.x * normalX + offset.y * normalY
     if (side >= 0) near.push(blob)
     else far.push(blob)
   }

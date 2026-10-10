@@ -18,6 +18,7 @@ import type { Raft } from '../crust/raftTypes'
 // carries the raft id (the renderer ignores it, it's just a stable key).
 export function computeRaftLabelPlacements(rafts: Raft[], domain: Domain): ContinentLabelPlacement[] {
   const placements: ContinentLabelPlacement[] = []
+  const offset = { x: 0, y: 0 }
   for (const raft of rafts) {
     if (!raft.name || raft.blobs.length === 0) continue
     let anchor = raft.blobs[0]
@@ -27,8 +28,9 @@ export function computeRaftLabelPlacements(rafts: Raft[], domain: Domain): Conti
     let meanX = 0
     let meanY = 0
     for (const b of raft.blobs) {
-      const dx = domain.deltaX(b.x, anchor.x)
-      const dy = domain.deltaY(b.y, anchor.y)
+      domain.delta(b.x, b.y, anchor.x, anchor.y, offset)
+      const dx = offset.x
+      const dy = offset.y
       const w = b.radius * b.radius
       pts.push({ dx, dy, r: b.radius, w })
       sumW += w

@@ -15,6 +15,10 @@ import { detExp, detPow } from '../core/detMath'
 // plus the perpendicular cap radius. The spatial bucket index must be at
 // least this wide/tall in each axis so any in-range feature lands in a point's
 // own bucket or a neighbor.
+// The offset `domain.delta` writes into: one per module, so no call
+// allocates. Read it at once, before the next delta.
+const offset = { x: 0, y: 0 }
+
 const FEATURE_MAX_REACH = Math.max(ELEVATION_TUNING.rangeSegmentHalfLength + ELEVATION_TUNING.rangePerpRadius, ELEVATION_TUNING.trenchSegmentHalfLength + ELEVATION_TUNING.trenchPerpRadius)
 
 export interface FeatureBuckets {
@@ -179,7 +183,8 @@ export function computeElevation(
         const isTrench = feature.kind === 'trench'
         const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
         const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
-        const weight = capsuleWeight(domain.deltaX(wx, feature.x), domain.deltaY(wy, feature.y), feature.tangentX, feature.tangentY, halfLength, perpRadius)
+        domain.delta(wx, wy, feature.x, feature.y, offset)
+        const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)
         if (weight <= 0) continue
         upliftSum += feature.thickness * ELEVATION_TUNING.thicknessToElevationScale * weight
         weightSum += weight

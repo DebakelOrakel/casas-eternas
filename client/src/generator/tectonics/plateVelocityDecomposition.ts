@@ -3,6 +3,10 @@ import { getVelocityAt } from './plateMotion'
 import type { PlateSeed } from './plateSeeds'
 import type { Domain } from '../core/domain'
 
+// The offset `domain.delta` writes into: one per module, so no call
+// allocates. Read it at once, before the next delta.
+const offset = { x: 0, y: 0 }
+
 export type BoundaryMotionClass = 'convergent' | 'divergent' | 'transform'
 
 export interface BoundaryConvergence {
@@ -40,8 +44,9 @@ export function classifyBoundaryMotion(
   // Unit vector from B's seed toward A's seed — the direction along
   // which the distance between the two plates is measured, wrapped like
   // everything else on this map.
-  const dirX = domain.deltaX(seedA.x, seedB.x)
-  const dirY = domain.deltaY(seedA.y, seedB.y)
+  domain.delta(seedA.x, seedA.y, seedB.x, seedB.y, offset)
+  const dirX = offset.x
+  const dirY = offset.y
   const dirLength = Math.sqrt(dirX * dirX + dirY * dirY) || 1
   const normalX = dirX / dirLength
   const normalY = dirY / dirLength

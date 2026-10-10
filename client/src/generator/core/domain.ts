@@ -10,11 +10,11 @@ import { rotateAroundCenter, wrappedDelta } from './toroidal'
 // (docs/design/two-topologies.md). The planetary forcing acts on
 // latitude(p) either way.
 //
-// The mesh (phase 4) reads only `delta*`, `wrap*` and `distanceSq`: every
+// The mesh (phase 4) reads only `delta`, `wrap*` and `distanceSq`: every
 // triangle is unwrapped into the frame of one of its own corners through
-// `deltaX`/`deltaY`, so the triangulation code never sees a period. That is
-// what makes the sphere a second implementation of THIS interface rather
-// than a second triangulation. The neighbour search over a point set lives
+// `delta`, so the triangulation code never sees a period. That is what
+// makes the sphere a second implementation of THIS interface rather than
+// a second triangulation. The neighbour search over a point set lives
 // beside the mesh (`mesh/pointBuckets.ts`) because it needs the domain's
 // extent, not its topology.
 export interface Domain {
@@ -26,11 +26,13 @@ export interface Domain {
   latitude(yNorm: number): number
   // Which hemisphere a row lies in: true for the top ("north").
   north(yNorm: number): boolean
-  // Shortest signed offset from b to a along each axis (the minimum-image
-  // convention of core/toroidal.ts): `bx + deltaX(ax, bx)` is a's image
-  // nearest to b.
-  deltaX(ax: number, bx: number): number
-  deltaY(ay: number, by: number): number
+  // The offset from b to a, in domain units, in b's local frame: written
+  // into `out`, which the caller holds (one per loop, so a hot loop does
+  // not allocate). The two axes are one call because on a sphere the
+  // east-west offset depends on latitude: the offset lies in b's LOCAL
+  // TANGENT PLANE. On the torus it is the minimum-image offset per axis
+  // (core/toroidal.ts wrappedDelta): `bx + out.x` is a's image nearest to b.
+  delta(ax: number, ay: number, bx: number, by: number, out: { x: number; y: number }): void
   // A coordinate brought back into [0, width) × [0, height).
   wrapX(x: number): number
   wrapY(y: number): number
@@ -175,21 +177,21 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
     const y = yNorm - equatorOffset
     return y - Math.floor(y)
   }
-  const deltaX = (ax: number, bx: number): number => wrappedDelta(ax, bx, width)
-  const deltaY = (ay: number, by: number): number => wrappedDelta(ay, by, height)
   const domain: Domain = {
     kind: 'torus',
     width,
     height,
     latitude: (yNorm) => Math.abs(shifted(yNorm) - 0.5) * 2,
     north: (yNorm) => shifted(yNorm) < 0.5,
-    deltaX,
-    deltaY,
+    delta: (ax, ay, bx, by, out) => {
+      out.x = wrappedDelta(ax, bx, width)
+      out.y = wrappedDelta(ay, by, height)
+    },
     wrapX: (x) => wrapValue(x, width),
     wrapY: (y) => wrapValue(y, height),
     distanceSq: (ax, ay, bx, by) => {
-      const dx = deltaX(ax, bx)
-      const dy = deltaY(ay, by)
+      const dx = wrappedDelta(ax, bx, width)
+      const dy = wrappedDelta(ay, by, height)
       return dx * dx + dy * dy
     },
     rotateAround: (x, y, centerX, centerY, angle) => rotateAroundCenter(x, y, centerX, centerY, angle, width, height),

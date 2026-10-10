@@ -72,8 +72,10 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
   if (continentalRift) {
     const cSeedA = sim.seeds[continentalRift.plateA]
     const cSeedB = sim.seeds[continentalRift.plateB]
-    const cnx = domain.deltaX(cSeedA.x, cSeedB.x)
-    const cny = domain.deltaY(cSeedA.y, cSeedB.y)
+    const seedOffset = { x: 0, y: 0 }
+    domain.delta(cSeedA.x, cSeedA.y, cSeedB.x, cSeedB.y, seedOffset)
+    const cnx = seedOffset.x
+    const cny = seedOffset.y
     const cnl = Math.sqrt(cnx * cnx + cny * cny) || 1
     const newRaftId = sim.rafts.reduce((max, raft) => Math.max(max, raft.id), -1) + 1
     raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, TECTONICS_TUNING.splitMaxDistSq, TECTONICS_TUNING.splitGap, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.splitMergeImmunityEpochs, domain)

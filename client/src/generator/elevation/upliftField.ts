@@ -71,6 +71,7 @@ export function computeUpliftField(
   const decayPerEpoch = detLog(2) / params.activityHalfLifeEpochs
   const scaleX = domain.width / outWidth
   const scaleY = domain.height / outHeight
+  const offset = { x: 0, y: 0 }
   for (let py = 0; py < outHeight; py++) {
     const wy = py * scaleY
     for (let px = 0; px < outWidth; px++) {
@@ -87,7 +88,8 @@ export function computeUpliftField(
             const isTrench = feature.kind === 'trench'
             const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
             const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
-            const weight = capsuleWeight(domain.deltaX(wx, feature.x), domain.deltaY(wy, feature.y), feature.tangentX, feature.tangentY, halfLength, perpRadius)
+            domain.delta(wx, wy, feature.x, feature.y, offset)
+            const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)
             if (weight <= 0) continue
             const activity = detExp(-feature.epochsSinceDeposit * decayPerEpoch)
             upliftSum += feature.thickness * activity * weight

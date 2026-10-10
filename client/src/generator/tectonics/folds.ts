@@ -6,6 +6,10 @@ import { METERS_PER_CELL } from '../core/mapConfig'
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
 import { detCos } from '../core/detMath'
 
+// The offset `domain.delta` writes into: one per module, so no call
+// allocates. Read it at once, before the next delta.
+const offset = { x: 0, y: 0 }
+
 // FOLDS (ADAPTIVE_MESH_PLAN.md phase 5.7): at a convergent margin the
 // uplift is not a smooth dome but a train of anticlines and synclines
 // ACROSS the convergence direction — the crust buckles under the
@@ -38,8 +42,9 @@ export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, doma
       const bx = grid.wrapCol(centerBx + dx)
       for (const feature of buckets.buckets[by * bucketsX + bx]) {
         if (feature.kind !== 'range' || feature.thickness <= 0) continue
-        const offX = domain.deltaX(x, feature.x)
-        const offY = domain.deltaY(y, feature.y)
+        domain.delta(x, y, feature.x, feature.y, offset)
+        const offX = offset.x
+        const offY = offset.y
         const weight = capsuleWeight(offX, offY, feature.tangentX, feature.tangentY, ELEVATION_TUNING.rangeSegmentHalfLength, ELEVATION_TUNING.rangePerpRadius)
         if (weight <= bestWeight) continue
         bestWeight = weight

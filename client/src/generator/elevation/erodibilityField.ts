@@ -99,6 +99,7 @@ export function computeErodibilityField(
   // the factor to extremes no single geology story tells. Young and old
   // effects crossfade on the suture's age.
   if (sutures.length > 0) {
+    const offset = { x: 0, y: 0 }
     for (let py = 0; py < outHeight; py++) {
       const wy = (py + 0.5) * cellH
       for (let px = 0; px < outWidth; px++) {
@@ -106,9 +107,10 @@ export function computeErodibilityField(
         let strongest = 1
         let strongestDeviation = 0
         for (const suture of sutures) {
+          domain.delta(wx, wy, suture.x, suture.y, offset)
           const weight = capsuleWeight(
-            domain.deltaX(wx, suture.x),
-            domain.deltaY(wy, suture.y),
+            offset.x,
+            offset.y,
             suture.tangentX,
             suture.tangentY,
             params.sutureHalfLength,

@@ -282,9 +282,11 @@ export function tileParentFromTiles(pieces: TilePiece[], width: number, height: 
   const cy = region.y + region.height / 2
   const lattice: number[] = []
   const away = new Float64Array(latticeCount)
+  const offset = { x: 0, y: 0 }
   for (let v = 0; v < latticeCount; v++) {
-    const dx = mesh.domain.deltaX(mesh.vx[v], cx)
-    const dy = mesh.domain.deltaY(mesh.vy[v], cy)
+    mesh.domain.delta(mesh.vx[v], mesh.vy[v], cx, cy, offset)
+    const dx = offset.x
+    const dy = offset.y
     away[v] = dx * dx + dy * dy
     lattice.push(v)
   }
