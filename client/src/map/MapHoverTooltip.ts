@@ -1,9 +1,11 @@
-import { PointerEventTypes, Scene } from '@babylonjs/core'
-import type { Observer, PointerInfo } from '@babylonjs/core'
+import type { ChartPoint } from './worldView'
 import { createFloatingCard } from '../ui/tooltip/floatingCard'
 
 export interface MapHoverTooltipOptions {
-  scene: Scene
+  // What lies under the pointer: a world view's groundAt (worldView.ts), in
+  // canvas pixels. The pointer is followed on `surface`, the canvas.
+  locate: (screenX: number, screenY: number) => ChartPoint | null
+  surface: HTMLElement
   // The tooltip element is appended here (position: fixed, so this only scopes
   // its lifetime/cleanup — any on-screen container works).
   host: HTMLElement
@@ -33,15 +35,14 @@ export interface MapHoverTooltip {
   dispose(): void
 }
 
-// A hover tooltip for the flat map: converts the pointer to a map texel via
-// Babylon picking (the map plane's UVs map straight onto the data texture, and
-// every wrapped tile instance shares those UVs, so a hover over any copy — or
-// the debug relief mesh — resolves to the right cell), then shows a
+// A hover tooltip for a world view: converts the pointer to a map texel
+// through the view's own pick (worldView.ts, groundAt — on the flat map the
+// plane's UVs, shared by every wrap copy and the relief), then shows a
 // caller-described readout following the cursor. Reusable by any full-surface
 // map screen (worldgen now, game later). Babylon-side only knows "cursor → cell";
 // the meaning of a cell is entirely the `describe` callback's.
 export function createMapHoverTooltip(options: MapHoverTooltipOptions): MapHoverTooltip {
-  const { scene, host, textureWidth, textureHeight, describe } = options
+  const { locate, surface, host, textureWidth, textureHeight, describe } = options
 
   // The shared white floating card, following the cursor (see floatingCard.ts).
   const card = createFloatingCard(host, 'tooltip-card--readout')
@@ -83,32 +84,23 @@ export function createMapHoverTooltip(options: MapHoverTooltipOptions): MapHover
     if (!enabled) return
     lastClientX = clientX
     lastClientY = clientY
-    const pick = scene.pick(scene.pointerX, scene.pointerY)
-    const uv = pick?.hit ? pick.getTextureCoordinates() : null
-    if (!uv) {
+    const rect = surface.getBoundingClientRect()
+    const at = locate(clientX - rect.left, clientY - rect.top)
+    if (!at) {
       hide()
       return
     }
-    // UVs are 0..1 across the plane; v runs top→bottom in step with the texture
-    // data's row order (RawTexture uploaded invertY=false), so no flip.
-    const cellX = Math.min(textureWidth - 1, Math.max(0, Math.floor(uv.x * textureWidth)))
-    const cellY = Math.min(textureHeight - 1, Math.max(0, Math.floor(uv.y * textureHeight)))
+    const cellX = Math.min(textureWidth - 1, Math.max(0, Math.floor(at.u * textureWidth)))
+    const cellY = Math.min(textureHeight - 1, Math.max(0, Math.floor(at.v * textureHeight)))
     lastCellX = cellX
     lastCellY = cellY
     show(cellX, cellY, clientX, clientY)
   }
 
-  const observer: Observer<PointerInfo> | null = scene.onPointerObservable.add((info) => {
-    if (info.type === PointerEventTypes.POINTERMOVE) {
-      probe(info.event.clientX, info.event.clientY)
-    }
-  })
-
-  // Babylon's pointer observable only fires over the canvas, so a plain leave
-  // never arrives — hide explicitly when the cursor exits.
-  const canvas = scene.getEngine().getRenderingCanvas()
+  const onMove = (event: PointerEvent): void => probe(event.clientX, event.clientY)
   const onLeave = (): void => hide()
-  canvas?.addEventListener('pointerleave', onLeave)
+  surface.addEventListener('pointermove', onMove)
+  surface.addEventListener('pointerleave', onLeave)
 
   return {
     setEnabled(next: boolean): void {
@@ -120,8 +112,8 @@ export function createMapHoverTooltip(options: MapHoverTooltipOptions): MapHover
       show(lastCellX, lastCellY, lastClientX, lastClientY)
     },
     dispose(): void {
-      scene.onPointerObservable.remove(observer)
-      canvas?.removeEventListener('pointerleave', onLeave)
+      surface.removeEventListener('pointermove', onMove)
+      surface.removeEventListener('pointerleave', onLeave)
       card.dispose()
     },
   }

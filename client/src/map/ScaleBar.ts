@@ -26,11 +26,26 @@ export function pickMapPlane(scene: Scene, screenX: number, screenY: number): { 
 }
 
 export interface ScaleBarOptions {
-  scene: Scene
-  // One toroidal period of the map, world units, and what one unit is.
-  worldWidth: number
-  worldHeight: number
-  metresPerWorldUnit: number
+  // Metres on the world between two screen points (canvas pixels), or null
+  // where either is off it: a world view's metresBetween over its chartAt,
+  // or planeMeasure below.
+  measure(ax: number, ay: number, bx: number, by: number): number | null
+}
+
+// The measure of a flat map's plane, for a screen that draws without a
+// world view (the incubator): one toroidal period in world units, and what
+// one unit is on the world.
+export function planeMeasure(scene: Scene, worldWidth: number, worldHeight: number, metresPerWorldUnit: number): ScaleBarOptions['measure'] {
+  return (ax, ay, bx, by) => {
+    const a = pickMapPlane(scene, ax, ay)
+    const b = pickMapPlane(scene, bx, by)
+    if (!a || !b) return null
+    let dx = Math.abs(b.x - a.x) % worldWidth
+    if (dx > worldWidth / 2) dx = worldWidth - dx
+    let dz = Math.abs(b.z - a.z) % worldHeight
+    if (dz > worldHeight / 2) dz = worldHeight - dz
+    return Math.hypot(dx, dz) * metresPerWorldUnit
+  }
 }
 
 export interface ScaleBar {
@@ -45,7 +60,7 @@ const MIN_PX = 70
 const MAX_PX = 170
 
 export function createScaleBar(host: HTMLElement, options: ScaleBarOptions): ScaleBar {
-  const { scene, worldWidth, worldHeight, metresPerWorldUnit } = options
+  const { measure } = options
   const bar = document.createElement('div')
   bar.className = 'scale-bar'
   bar.setAttribute('role', 'img')
@@ -64,14 +79,9 @@ export function createScaleBar(host: HTMLElement, options: ScaleBarOptions): Sca
     const rect = bar.getBoundingClientRect()
     const y = bar.hidden ? window.innerHeight - 40 : rect.top + rect.height / 2
     const xRight = bar.hidden ? window.innerWidth - 24 : rect.right - 8
-    const a = pickMapPlane(scene, xRight - PROBE_PX, y)
-    const b = pickMapPlane(scene, xRight, y)
-    if (!a || !b) { bar.hidden = true; return }
-    let dx = Math.abs(b.x - a.x) % worldWidth
-    if (dx > worldWidth / 2) dx = worldWidth - dx
-    let dz = Math.abs(b.z - a.z) % worldHeight
-    if (dz > worldHeight / 2) dz = worldHeight - dz
-    const metresPerPx = (Math.hypot(dx, dz) * metresPerWorldUnit) / PROBE_PX
+    const metres = measure(xRight - PROBE_PX, y, xRight, y)
+    if (metres === null) { bar.hidden = true; return }
+    const metresPerPx = metres / PROBE_PX
     if (!(metresPerPx > 0)) { bar.hidden = true; return }
     // The round length whose bar fits the band, the largest such.
     let lengthKm = 0

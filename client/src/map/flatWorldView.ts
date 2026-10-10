@@ -5,7 +5,7 @@ import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_FINE_ZOOM, RELIEF_MIN_ZOOM } 
 import { pickMapPlane } from './ScaleBar'
 import { createToroidalMapView } from './ToroidalMapView'
 import { createToroidalRibbonOverlay } from './ToroidalRibbonOverlay'
-import type { WorldView } from './worldView'
+import type { ChartPoint, WorldView } from './worldView'
 
 // THE FLAT WORLD VIEW (docs/decisions/two-shapes.md, fork 3): the torus
 // drawn as the map plane with its wrap copies (ToroidalMapView), the river
@@ -13,21 +13,13 @@ import type { WorldView } from './worldView'
 // camera rig (camera/generatorCamera.ts). Moved out of the generator
 // screen on 2026-10-10, unchanged in what it draws.
 //
-// Beyond WorldView it still offers the flat camera's state and the plane
-// pick, which the screen's scale bar, temperature scale and hover readout
-// read until they ask in chart coordinates.
+// Chart and scene: the plane spans MAP_WORLD_WIDTH × MAP_WORLD_HEIGHT
+// centred on the origin, and its UVs run u = x / W + 0.5, v = z / H + 0.5
+// (Babylon's ground, measured 2026-10-10), so a scene point's chart point is
+// its fraction of the period from the far corner, wrapped.
 
 export interface FlatWorldView extends WorldView {
   readonly shape: 'flat'
-  getFocus(): { x: number; z: number }
-  getZoom(): number
-  getYaw(): number
-  // The map PLANE's point under a screen pixel, in scene units (x, z): met
-  // analytically (ScaleBar.ts, pickMapPlane), never a pick against the
-  // relief — that cost milliseconds a ray at deep zoom, and the temperature
-  // scale's 64 of them made the pan stutter (2026-09-27, and again for a day
-  // on 2026-10-10 when the move wired the mesh pick here).
-  pickPlane(screenX: number, screenY: number): { x: number; z: number } | null
 }
 
 export interface FlatWorldViewOptions {
@@ -36,10 +28,15 @@ export interface FlatWorldViewOptions {
   // The chart's size in texels: the layers' textures.
   textureWidth: number
   textureHeight: number
+  // The chart's size on the world, metres: one period of the torus.
+  metresWide: number
+  metresHigh: number
 }
 
 export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldView {
-  const { engine, canvas, textureWidth, textureHeight } = options
+  const { engine, canvas, textureWidth, textureHeight, metresWide, metresHigh } = options
+  const wrapUnit = (f: number): number => ((f % 1) + 1) % 1
+  const chartOfScene = (x: number, z: number): ChartPoint => ({ u: wrapUnit(x / MAP_WORLD_WIDTH + 0.5), v: wrapUnit(z / MAP_WORLD_HEIGHT + 0.5) })
   const scene = new Scene(engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
 
@@ -136,10 +133,34 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
     setDeepZoom: (enabled) => camera.setDeepZoomEnabled(enabled),
     // Not asked for the flat map yet (DEC-0035, "what this does not decide").
     resetCamera: () => {},
-    getFocus: camera.getFocus,
-    getZoom: camera.getZoom,
-    getYaw: camera.getYaw,
-    pickPlane: (screenX, screenY) => pickMapPlane(scene, screenX, screenY),
+    chartAt(screenX, screenY) {
+      // The plane, analytically (ScaleBar.ts, pickMapPlane) — never a pick
+      // against the relief, which cost milliseconds a ray at deep zoom: the
+      // temperature scale's 64 of them made the pan stutter (2026-09-27,
+      // and again for a day on 2026-10-10 when the move wired the mesh pick
+      // here).
+      const point = pickMapPlane(scene, screenX, screenY)
+      return point ? chartOfScene(point.x, point.z) : null
+    },
+    groundAt(screenX, screenY) {
+      // What is drawn: the plane, its wrap copies, the relief — they all
+      // carry the chart in their UVs (the texture uploaded top row first).
+      const pick = scene.pick(screenX, screenY)
+      const uv = pick?.hit ? pick.getTextureCoordinates() : null
+      return uv ? { u: uv.x, v: uv.y } : null
+    },
+    metresBetween(a, b) {
+      // The shorter way round the torus on each axis.
+      let du = Math.abs(b.u - a.u) % 1
+      if (du > 0.5) du = 1 - du
+      let dv = Math.abs(b.v - a.v) % 1
+      if (dv > 0.5) dv = 1 - dv
+      return Math.hypot(du * metresWide, dv * metresHigh)
+    },
+    viewKey() {
+      const focus = camera.getFocus()
+      return `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${camera.getZoom().toFixed(4)},${camera.getYaw().toFixed(3)}`
+    },
     dispose() {
       ribbons.dispose()
       map.dispose()

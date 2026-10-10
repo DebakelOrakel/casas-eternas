@@ -12,7 +12,7 @@ import { createMeshSurface } from '../../map/meshSurface'
 import { createMeshSampler } from '../../generator/mesh/meshSampler'
 import { decodeMesh } from '../../generator/mesh/meshSerial'
 import { torusDomain } from '../../generator/core/domain'
-import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from '../../map/mapSceneSettings'
+import { MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from '../../map/mapSceneSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/mapConfig'
 
@@ -280,7 +280,7 @@ function randomWorldName(): string {
 export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   // The flat world, drawn (map/flatWorldView.ts): its scene, camera, map
   // plane, relief and river ribbons.
-  const flatView = createFlatWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT })
+  const flatView = createFlatWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresWide: METERS_PER_CELL * MAP_WIDTH, metresHigh: METERS_PER_CELL * MAP_HEIGHT })
 
   const initialSeed = randomSeed()
   // The world's own name, as opposed to its seed. Until step 0 existed the two
@@ -348,8 +348,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let viewChangedAt = 0
   let viewDirty = true
   flatView.scene.onBeforeRenderObservable.add(() => {
-    const focus = flatView.getFocus()
-    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${flatView.getZoom().toFixed(4)},${flatView.getYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`
+    const key = `${flatView.viewKey()},${window.innerWidth},${window.innerHeight}`
     if (key !== viewKeySeen) {
       viewKeySeen = key
       viewChangedAt = performance.now()
@@ -3023,15 +3022,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // greenhouse, the contrast and the planet's forcing as they stand, and
   // nothing of the terrain. A reading aid, not a field: it follows the
   // camera, since a row's latitude does, and stands in every step (decided
-  // 2026-09-26). The pick is the map's plane (map/ScaleBar's pickMapPlane),
-  // per sampled row.
-  const pickPlane = (screenX: number, screenY: number): { x: number; z: number } | null => flatView.pickPlane(screenX, screenY)
+  // 2026-09-26). The view's chartAt, per sampled row — its reference
+  // surface, met analytically, never the relief.
 
   // The scale bar at the map's lower right (map/ScaleBar).
-  const scaleBar = createScaleBar(root, { scene: flatView.scene, worldWidth: WORLD_WIDTH, worldHeight: WORLD_HEIGHT, metresPerWorldUnit: (METERS_PER_CELL * MAP_WIDTH) / WORLD_WIDTH })
+  const scaleBar = createScaleBar(root, {
+    measure: (ax, ay, bx, by) => {
+      const a = flatView.chartAt(ax, ay)
+      const b = flatView.chartAt(bx, by)
+      return a && b ? flatView.metresBetween(a, b) : null
+    },
+  })
   function renderScaleBar(): void {
-    const focus = flatView.getFocus()
-    scaleBar.update(`${focus.x.toFixed(1)},${focus.z.toFixed(1)},${flatView.getZoom().toFixed(4)},${flatView.getYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`)
+    scaleBar.update(`${flatView.viewKey()},${window.innerWidth},${window.innerHeight}`)
   }
 
   const tempScale = root.querySelector<HTMLCanvasElement>('[data-value="temp-scale"]')!
@@ -3039,8 +3042,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const TEMP_SCALE_SAMPLES = 64
   let tempScaleSeen = ''
   function renderTemperatureScale(force = false): void {
-    const focus = flatView.getFocus()
-    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${flatView.getZoom().toFixed(4)},${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${tempScale.clientHeight}`
+    // The whole view key, the turn included: turning the view changes
+    // which latitude a row looks at (until 2026-10-10 the key left it out,
+    // and a turn alone kept the old scale).
+    const key = `${flatView.viewKey()},${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${tempScale.clientHeight}`
     if (!force && key === tempScaleSeen) return
     tempScaleSeen = key
     const params = weatherParams()
@@ -3058,13 +3063,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const values: (number | null)[] = []
     for (let i = 0; i <= TEMP_SCALE_SAMPLES; i++) {
       const screenY = rect.top + (rect.height * i) / TEMP_SCALE_SAMPLES
-      const ground = pickPlane(pickX, screenY)
-      if (!ground) { values.push(null); continue }
-      // The map's plane is centred on the origin (ToroidalMapView places
-      // the copies at centerZ ± worldHeight), so z = 0 is the equator and
-      // the poles lie at ±H/2: half a turn from the row fraction.
-      const v = (((ground.z / WORLD_HEIGHT + 0.5) % 1) + 1) % 1
-      const row = Math.min(band.length - 1, Math.max(0, Math.floor(v * band.length)))
+      const at = flatView.chartAt(pickX, screenY)
+      if (!at) { values.push(null); continue }
+      const row = Math.min(band.length - 1, Math.max(0, Math.floor(at.v * band.length)))
       values.push(band[row])
     }
     const step = h / TEMP_SCALE_SAMPLES
@@ -5550,11 +5551,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   root.appendChild(originGhost)
   let draggingOriginRace = -1
 
-  // Pointer → full-res map texel (Babylon picking; wraps with the torus tiling).
+  // Pointer → full-res map texel, through the view's pick of what is drawn.
   const pointerToTexel = (): { mx: number; my: number } | null => {
-    const pick = flatView.scene.pick(flatView.scene.pointerX, flatView.scene.pointerY)
-    const uv = pick?.hit ? pick.getTextureCoordinates() : null
-    return uv ? { mx: uv.x * MAP_WIDTH, my: uv.y * MAP_HEIGHT } : null
+    const at = flatView.groundAt(flatView.scene.pointerX, flatView.scene.pointerY)
+    return at ? { mx: at.u * MAP_WIDTH, my: at.v * MAP_HEIGHT } : null
   }
   // Nearest land cell (coarse grid) to a texel; spirals out if it lands on ocean.
   const snapToLandCell = (mx: number, my: number): number => {
@@ -6055,7 +6055,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // That's deliberate on a worldgen tool screen: a height readout is what makes
   // the metre calibration checkable by hovering.
   hoverTooltip = createMapHoverTooltip({
-    scene: flatView.scene,
+    locate: (x, y) => flatView.groundAt(x, y),
+    surface: ctx.canvas,
     host: root,
     textureWidth: MAP_WIDTH,
     textureHeight: MAP_HEIGHT,

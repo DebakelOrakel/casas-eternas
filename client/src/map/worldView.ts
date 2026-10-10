@@ -15,6 +15,13 @@ import type { ElevationSurface } from './elevationSurface'
 
 export type WorldShape = 'flat' | 'sphere'
 
+// A point of the chart, as fractions: u across, v down its rows, each in
+// [0, 1) — texel (u · width, v · height) of any layer.
+export interface ChartPoint {
+  u: number
+  v: number
+}
+
 // Polylines in chart texels, as the hydrology hands them over.
 export interface WorldRivers {
   setPolylines(points: Float32Array, lengths: Uint32Array, regimes?: Uint8Array): void
@@ -42,6 +49,18 @@ export interface WorldView {
   setRelief(coarse: ElevationSurface | null, fine?: ElevationSurface | null): void
   setHeightScale(scale: number): void
   readonly rivers: WorldRivers
+  // The chart point under a screen pixel (canvas pixels). `chartAt` meets
+  // the view's REFERENCE surface analytically — the flat map's plane, the
+  // globe's sphere — in microseconds, for readings that need many points
+  // (the temperature scale, the scale bar); `groundAt` picks what is drawn,
+  // relief included, for the pointer. Null off the world.
+  chartAt(screenX: number, screenY: number): ChartPoint | null
+  groundAt(screenX: number, screenY: number): ChartPoint | null
+  // How far apart two chart points are on the world, in metres.
+  metresBetween(a: ChartPoint, b: ChartPoint): number
+  // Changes whenever what the screen shows of the world does (position,
+  // zoom, turn): a key to compare, not to read.
+  viewKey(): string
   // Camera: drag on or off (another gesture may own the drag), the deep zoom
   // that only eroded terrain earns, and back to where it started.
   setPanEnabled(enabled: boolean): void
