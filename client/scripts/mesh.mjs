@@ -1361,6 +1361,115 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   check('and to the same column', ca.length === cb.length && ca.every((v, i) => v === cb[i]))
 }
 
+// ---------------------------------------------------------- sphere domain
+
+// The sphere Domain and its grid (DEC-0035 step 4b): no stage runs on it
+// yet, so its geometry is checked here against known great-circle values,
+// and its raster against the sphere's area and the pole's neighbours.
+console.log('\n[1s] the sphere domain')
+{
+  const t0 = performance.now()
+  const SW = 512, SH = 256
+  const S = M.domain.sphereDomain(SW, SH)
+  const R = SW / (2 * Math.PI)
+  const near = (a, b, tol = 1e-9) => Math.abs(a - b) <= tol * Math.max(1, Math.abs(b))
+  const dist = (ax, ay, bx, by) => Math.sqrt(S.distanceSq(ax, ay, bx, by))
+  check('sphere: an equator quarter is πR/2', near(dist(0, SH / 2, SW / 4, SH / 2), Math.PI * R / 2), `${dist(0, SH / 2, SW / 4, SH / 2)}`)
+  check('sphere: pole to equator is πR/2', near(dist(37, 0, 300, SH / 2), Math.PI * R / 2) && near(dist(5, SH, 99, SH / 2), Math.PI * R / 2))
+  check('sphere: antipodes are πR apart', near(dist(10, 40, 10 + SW / 2, SH - 40), Math.PI * R) && near(dist(0, 0, 123, SH), Math.PI * R))
+  check('sphere: a degree along a meridian is a degree of arc', near(dist(77, 10, 77, 10 + SH / 180), Math.PI * R / 180) && near(dist(77, SH - 1, 77 + SW / 2, SH - 1), 2 * Math.PI * R / SH))
+  // Symmetry and |delta| = distance over a spread of point pairs, the
+  // poles, near-poles and near-antipodes among them.
+  const out = { x: 0, y: 0 }
+  let asym = 0, lenErr = 0
+  let seed = 11
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
+  const pairs = [[0, 0, 100, 3], [5, SH, 300, SH - 1], [1, 1e-7, 200, 1e-7], [10, 40, 10 + SW / 2, SH - 40 - 1e-6]]
+  for (let i = 0; i < 2000; i++) pairs.push([rnd() * SW, rnd() * SH, rnd() * SW, rnd() * SH])
+  for (const [ax, ay, bx, by] of pairs) {
+    const d = dist(ax, ay, bx, by)
+    asym = Math.max(asym, Math.abs(d - dist(bx, by, ax, ay)) / R)
+    S.delta(ax, ay, bx, by, out)
+    lenErr = Math.max(lenErr, Math.abs(Math.hypot(out.x, out.y) - d) / R)
+  }
+  check('sphere: the distance is symmetric', asym < 1e-12, `${asym.toExponential(1)} R`)
+  check('sphere: |delta(a, b)| is the distance', lenErr < 1e-12, `${lenErr.toExponential(1)} R`)
+  S.delta(10, SH / 2, 9, SH / 2, out)
+  const east = out.x > 0 && Math.abs(out.y) < 1e-12
+  S.delta(9, SH / 2 + 1, 9, SH / 2, out)
+  const south = out.y > 0 && Math.abs(out.x) < 1e-12
+  S.delta(9, SH / 2 - 1, 9, SH / 2, out)
+  const north = out.y < 0
+  check('sphere: delta on the equator points east (+x) and south (+y)', east && south && north)
+  S.delta(9, 30, 9, 30, out)
+  const self = out.x === 0 && out.y === 0
+  S.delta(0, SH, 0, 0, out)
+  check('sphere: delta to itself is zero, to the antipode πR', self && near(Math.hypot(out.x, out.y), Math.PI * R))
+  // At the north pole the frame follows b's own meridian: a point down
+  // meridian x_b is due "south", one a quarter turn east is due east.
+  S.delta(64, 3, 64, 0, out)
+  const poleSouth = out.y > 0 && Math.abs(out.x) < 1e-9
+  S.delta(64 + SW / 4, 3, 64, 0, out)
+  check('sphere: at the pole the frame follows b\'s meridian', poleSouth && out.x > 0 && Math.abs(out.y) < 1e-9 && near(Math.hypot(out.x, out.y), 3 * Math.PI * R / SH))
+  // rotateAround: the distance to the centre is kept, −angle undoes it, and
+  // +90° takes east toward south as on the torus.
+  let keep = 0, back = 0
+  for (let i = 0; i < 500; i++) {
+    const x = rnd() * SW, y = rnd() * SH, cx = rnd() * SW, cy = rnd() * SH, a = (rnd() - 0.5) * 6
+    const p = S.rotateAround(x, y, cx, cy, a)
+    keep = Math.max(keep, Math.abs(dist(p.x, p.y, cx, cy) - dist(x, y, cx, cy)) / R)
+    const q = S.rotateAround(p.x, p.y, cx, cy, -a)
+    back = Math.max(back, dist(q.x, q.y, x, y) / R)
+  }
+  check('sphere: rotateAround keeps the distance to its centre', keep < 1e-12, `${keep.toExponential(1)} R`)
+  check('sphere: rotateAround by −angle undoes it', back < 1e-9, `${back.toExponential(1)} R`)
+  const turned = S.rotateAround(101, SH / 2, 100, SH / 2, Math.PI / 2)
+  S.delta(turned.x, turned.y, 100, SH / 2, out)
+  check('sphere: +90° about a centre turns east toward south', out.y > 0 && Math.abs(out.x) < 1e-9, `(${out.x.toExponential(1)}, ${out.y.toFixed(6)})`)
+  // wrapPoint across each pole: x + W/2, y reflected; wrapX the longitude.
+  S.wrapPoint(30, -5, out)
+  const overNorth = near(out.x, 30 + SW / 2) && near(out.y, 5)
+  S.wrapPoint(SW - 10, SH + 7, out)
+  const overSouth = near(out.x, SW / 2 - 10) && near(out.y, SH - 7)
+  S.wrapPoint(-3, 2 * SH + 4, out)
+  const twice = near(out.x, SW - 3) && near(out.y, 4)
+  check('sphere: wrapPoint across a pole lands at x + W/2, y reflected', overNorth && overSouth && twice && S.wrapY(-5) === 5 && S.wrapX(SW + 2) === 2)
+  check('sphere: latitude 0 at the equator, 1 at the poles, north above it', S.latitude(0.5) === 0 && S.latitude(0) === 1 && S.latitude(1) === 1 && S.north(0.25) && !S.north(0.75))
+  // The grid.
+  const G = S.grid(64, 32)
+  let area = 0
+  for (let j = 0; j < G.resY; j++) area += G.cellArea(j) * G.resX
+  const chartCell = (SW / G.resX) * (SH / G.resY)
+  check('sphere grid: the cells sum to 4πR²', Math.abs(area * chartCell - 4 * Math.PI * R * R) / (4 * Math.PI * R * R) < 1e-9, `${(area * chartCell / (4 * Math.PI * R * R)).toFixed(12)} of 4πR²`)
+  check('sphere grid: rowScale is cos φ at the row centre', near(G.rowScale(15), Math.cos(Math.PI / 2 - (15.5 * Math.PI) / 32), 1e-12) && G.rowScale(0) < 0.05)
+  const nN = G.neighbour(5, 0, 0, -1), nS = G.neighbour(5, 31, 1, 1)
+  check('sphere grid: a step across the north pole lands in row 0, column + resX/2', nN === 0 * 64 + 37, `${nN}`)
+  check('sphere grid: a step across the south pole lands in row 31, column + resX/2', nS === 31 * 64 + 38, `${nS}`)
+  check('sphere grid: columns wrap in longitude', G.neighbour(63, 10, 1, 0) === 10 * 64 && G.index(-1, 10) === 10 * 64 + 63)
+  let threw = false
+  try { G.rowTable(1) } catch { threw = true }
+  check('sphere grid: rowTable refuses a margin (the pole needs neighbour)', threw)
+  // averagePoleRows: each pole row constant, the area-weighted mean kept.
+  const f = new Float32Array(64 * 32)
+  for (let i = 0; i < f.length; i++) f[i] = Math.sin(i * 0.37) * 10 + (i % 64)
+  const mean = (field) => { let s = 0, w = 0; for (let j = 0; j < 32; j++) for (let i = 0; i < 64; i++) { s += field[j * 64 + i] * G.cellArea(j); w += G.cellArea(j) } return s / w }
+  const before = mean(f)
+  G.averagePoleRows(f)
+  const constRow = (j) => f.subarray(j * 64, j * 64 + 64).every((v) => v === f[j * 64])
+  check('sphere grid: averagePoleRows makes each pole row one value', constRow(0) && constRow(31) && !constRow(1))
+  check('and keeps the area-weighted mean', near(mean(f), before, 1e-6), `${before.toFixed(6)} → ${mean(f).toFixed(6)}`)
+  // The samplers: continuous across the pole, wrapping in longitude.
+  const g = new Float32Array(64 * 32)
+  for (let j = 0; j < 32; j++) for (let i = 0; i < 64; i++) g[j * 64 + i] = j * 100 + i
+  const atPole = G.sampleBilinear(g, 5, -0.5)
+  check('sphere grid: a bilinear sample at the pole is the mean of the two meridians', near(atPole, (g[5] + g[37]) / 2), `${atPole}`)
+  check('and a domain point just past the pole samples as its wrapPoint', near(G.sampleBilinearAt(g, 40, -1), G.sampleBilinearAt(g, 40 + SW / 2, 1)) && G.cellAt(40, -1) === G.cellAt(40 + SW / 2, 1))
+  const same = G.upscale(g, 64, 32)
+  check('sphere grid: upscale maps cell centre onto cell centre', same.every((v, i) => v === g[i]) && G.upscale(g, 128, 64).length === 128 * 64)
+  const ms = performance.now() - t0
+  check(`sphere: the section is quick (${ms.toFixed(0)} ms)`, ms < 1000)
+}
+
 // ------------------------------------------------------------ determinism
 
 console.log('\n[2] determinism')

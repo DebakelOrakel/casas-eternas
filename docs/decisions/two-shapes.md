@@ -185,6 +185,18 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: step 4b BUILT — `sphereDomain(width, height)` beside the
+torus in `core/domain.ts`: the 2:1 chart as longitude × colatitude (y = 0
+the north pole), distances on the globe of radius W / 2π, `delta` the log
+map in b's east/south tangent frame (at a pole the frame follows b's
+meridian), `rotateAround` an Euler rotation. `Domain.wrapPoint` is new:
+crossing a pole turns the longitude by half, which wrapX/wrapY alone
+cannot say. The sphere's grid steps across the pole to column + resX / 2,
+samples continuously across it, gives exact band areas and
+`averagePoleRows` (a no-op on the torus); its `rowTable` refuses a margin.
+`harness:mesh` checks it; no stage runs on it yet. Golden harness
+byte-identical. Next: 4d, the stages onto the sphere.
+
 2026-10-10: step 4a BUILT — `Domain.delta(ax, ay, bx, by, out)`, the
 offset from b to a in b's local frame, replaces `deltaX`/`deltaY`; 33
 call sites moved (the mesh's triangle unwrapping among them), the `out`

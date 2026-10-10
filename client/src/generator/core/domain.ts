@@ -1,5 +1,6 @@
 import { sampleBilinearGrid, sampleBilinearWorld, sampleNearestWorld, upscaleBilinearToroidal, wrapValue } from './field'
 import { rotateAroundCenter, wrappedDelta } from './toroidal'
+import { detAtan2, detCos, detSin } from './detMath'
 
 // THE DOMAIN (decision 11 of docs/decisions/adaptive-mesh.md, born with the
 // Planet stage): the world's topology behind one interface — what a point
@@ -17,8 +18,13 @@ import { rotateAroundCenter, wrappedDelta } from './toroidal'
 // a second triangulation. The neighbour search over a point set lives
 // beside the mesh (`mesh/pointBuckets.ts`) because it needs the domain's
 // extent, not its topology.
+//
+// Two implementations: `torusDomain` and `sphereDomain` (DEC-0035,
+// docs/decisions/two-shapes.md). Both keep their points in one 2:1 chart;
+// on the sphere the chart is an ADDRESS (longitude, colatitude), and every
+// answer below is computed on the globe.
 export interface Domain {
-  readonly kind: 'torus'
+  readonly kind: 'torus' | 'sphere'
   readonly width: number
   readonly height: number
   // Latitude 0..1 of a normalised row position y in 0..1: 0 at the equator,
@@ -33,9 +39,17 @@ export interface Domain {
   // TANGENT PLANE. On the torus it is the minimum-image offset per axis
   // (core/toroidal.ts wrappedDelta): `bx + out.x` is a's image nearest to b.
   delta(ax: number, ay: number, bx: number, by: number, out: { x: number; y: number }): void
-  // A coordinate brought back into [0, width) × [0, height).
+  // A coordinate brought back into [0, width) × [0, height) ([0, height]
+  // on the sphere). One axis at a time: on the sphere wrapX is the
+  // longitude wrap and wrapY a reflection over the pole, which alone is NOT
+  // where a moved point lands (crossing a pole also turns the longitude by
+  // half a turn). A moved POINT goes through wrapPoint.
   wrapX(x: number): number
   wrapY(y: number): number
+  // A point brought back into the domain, both axes at once, written into
+  // `out`. The torus: wrapX and wrapY. The sphere: y beyond a pole is
+  // reflected and x moved by width / 2.
+  wrapPoint(x: number, y: number, out: { x: number; y: number }): void
   distanceSq(ax: number, ay: number, bx: number, by: number): number
   // (x, y) turned by `angle` radians about (centerX, centerY), the result
   // brought back into the domain — the plates' rigid rotation
@@ -75,10 +89,19 @@ export interface DomainGrid {
   // (the sphere, across the pole) needs a different form here.
   colTable(margin: number): Int32Array
   rowTable(margin: number): Int32Array
-  // A row's cell width against the equator's, and a cell's area against an
-  // equator cell's. 1 everywhere on the torus; cos φ on the sphere.
+  // A row's cell width against the equator's, and a cell's area against a
+  // chart cell's ((width / resX) · (height / resY) domain units²), so that
+  // the sum of cellArea over all cells, times a chart cell, is the domain's
+  // area (4πR² on the sphere). 1 everywhere on the torus; on the sphere
+  // rowScale is cos φ at the row centre and cellArea the row's exact
+  // spherical band, ≈ cos φ.
   rowScale(y: number): number
   cellArea(y: number): number
+  // Each pole row made one value, its area-weighted mean, in place: on the
+  // sphere a pole row is in truth one point, and a raster stage that leaves
+  // its cells apart draws a star at the pole (DEC-0035, fork 5). The torus
+  // has no pole: nothing happens. A stage calls it without asking the shape.
+  averagePoleRows(field: Float32Array): void
   // Bilinear sample at fractional GRID coordinates, cell centres at
   // integers (core/field.ts sampleBilinearGrid).
   sampleBilinear(field: Float32Array, gx: number, gy: number): number
@@ -146,6 +169,8 @@ class TorusGrid implements DomainGrid {
     return 1
   }
 
+  averagePoleRows(_field: Float32Array): void {}
+
   sampleBilinear(field: Float32Array, gx: number, gy: number): number {
     return sampleBilinearGrid(field, this.resX, this.resY, gx, gy)
   }
@@ -189,6 +214,10 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
     },
     wrapX: (x) => wrapValue(x, width),
     wrapY: (y) => wrapValue(y, height),
+    wrapPoint: (x, y, out) => {
+      out.x = wrapValue(x, width)
+      out.y = wrapValue(y, height)
+    },
     distanceSq: (ax, ay, bx, by) => {
       const dx = wrappedDelta(ax, bx, width)
       const dy = wrappedDelta(ay, by, height)
@@ -199,4 +228,300 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
     scaledTo: (w, h) => torusDomain(w, h, equatorOffset),
   }
   return domain
+}
+
+// THE SPHERE (DEC-0035 fork 2, step 4b). The chart is an ADDRESS: a domain
+// of width W and height H = W / 2, x in [0, W) the longitude (λ = 2π·x/W,
+// east toward +x), y in [0, H] the colatitude from the NORTH pole at y = 0
+// to the south pole at y = H (φ = π/2 − π·y/H) — the globe view's chart
+// (map/sphereView.ts: v = 0 at the north pole). Every distance is measured
+// on the globe of radius R = W / (2π), so one domain unit is one unit of
+// arc at the equator.
+//
+// The local frame of a point b, the one `delta` writes in: east (+x) and
+// SOUTH (+y), the chart's own orientation, so a small offset reads as the
+// chart's dx, dy scaled by cos φ in x. At a pole the frame is the limit
+// along b's own meridian: "south" points along longitude x_b (away from
+// the north pole, toward it at the south pole), "east" a quarter turn
+// further. That is the same formula as everywhere else, so it needs no
+// branch, and it is stable: a point held at a pole keeps its x and with it
+// its frame. A point that ARRIVES at a pole by a rotation keeps no
+// longitude (the chart's x there is arbitrary, and 0 is written).
+export function sphereDomain(width: number, height: number, _equatorOffset = 0): Domain {
+  // `equatorOffset` slides the torus's THERMAL equator: there the equator is
+  // a declared row, so moving it is a choice. On the sphere the equator is
+  // the geometry's, and a shifted climate equator is the climate's business
+  // (the planet's season), not the Domain's — accepted because callers pass
+  // it, and ignored.
+  if (Math.abs(width - 2 * height) > 1e-9 * width) {
+    throw new Error(`a sphere domain is a 2:1 chart (longitude × colatitude), got ${width} × ${height}`)
+  }
+  const radius = width / (2 * Math.PI)
+  const toLon = (2 * Math.PI) / width
+  const toColat = Math.PI / height
+  const half = width / 2
+  // Point a seen from b: its components along b's east and south axes
+  // (each sin of the arc times the direction's cosine) and the arc's cosine.
+  // In the haversine form, so that a short offset keeps its precision.
+  let pe = 0
+  let ps = 0
+  let pc = 0
+  const project = (ax: number, ay: number, bx: number, by: number): void => {
+    const ta = ay * toColat
+    const tb = by * toColat
+    const dl = (ax - bx) * toLon
+    const sa = detSin(ta)
+    const h = detSin(dl / 2)
+    const h2 = 2 * h * h
+    pe = sa * detSin(dl)
+    ps = detSin(ta - tb) - detCos(tb) * sa * h2
+    pc = detCos(ta - tb) - sa * detSin(tb) * h2
+  }
+  const wrapY = (y: number): number => {
+    const folded = wrapValue(y, 2 * height)
+    return folded > height ? 2 * height - folded : folded
+  }
+  const domain: Domain = {
+    kind: 'sphere',
+    width,
+    height,
+    // The torus's rule, which is the sphere's geometry: |φ| / 90°, linear
+    // in the row.
+    latitude: (yNorm) => Math.abs(yNorm - 0.5) * 2,
+    north: (yNorm) => yNorm < 0.5,
+    // The log map (azimuthal-equidistant): the direction from b toward a in
+    // b's tangent plane, its length the great-circle distance. At the
+    // antipode every direction is a shortest one; "south" is taken.
+    delta: (ax, ay, bx, by, out) => {
+      project(ax, ay, bx, by)
+      const st = Math.sqrt(pe * pe + ps * ps)
+      if (st === 0) {
+        out.x = 0
+        out.y = pc < 0 ? Math.PI * radius : 0
+        return
+      }
+      const scale = (radius * detAtan2(st, pc)) / st
+      out.x = pe * scale
+      out.y = ps * scale
+    },
+    wrapX: (x) => wrapValue(x, width),
+    // A reflection over the pole, the row alone — a moved point goes through
+    // wrapPoint, which turns the longitude with it.
+    wrapY,
+    wrapPoint: (x, y, out) => {
+      const folded = wrapValue(y, 2 * height)
+      if (folded > height) {
+        out.x = wrapValue(x + half, width)
+        out.y = 2 * height - folded
+      } else {
+        out.x = wrapValue(x, width)
+        out.y = folded
+      }
+    },
+    // (R · arc)², the arc as atan2(|a × b|, a · b): sound at every distance,
+    // where acos(a · b) loses the short ones.
+    distanceSq: (ax, ay, bx, by) => {
+      project(ax, ay, bx, by)
+      const arc = radius * detAtan2(Math.sqrt(pe * pe + ps * ps), pc)
+      return arc * arc
+    },
+    // A rotation by `angle` about the axis through the centre — an Euler
+    // rotation, the plates' spin about their own centre (Rodrigues). In the
+    // torus's sense on the chart: a positive angle turns east toward south.
+    rotateAround: (x, y, centerX, centerY, angle) => {
+      const tp = y * toColat
+      const lp = x * toLon
+      const sp = detSin(tp)
+      const vx = sp * detCos(lp)
+      const vy = sp * detSin(lp)
+      const vz = detCos(tp)
+      const tc = centerY * toColat
+      const lc = centerX * toLon
+      const sc = detSin(tc)
+      const kx = sc * detCos(lc)
+      const ky = sc * detSin(lc)
+      const kz = detCos(tc)
+      // About the axis with angle −α: the right-hand turn about the outward
+      // axis takes east toward NORTH, the chart's −y.
+      const c = detCos(angle)
+      const s = -detSin(angle)
+      const kv = (kx * vx + ky * vy + kz * vz) * (1 - c)
+      const rx = vx * c + (ky * vz - kz * vy) * s + kx * kv
+      const ry = vy * c + (kz * vx - kx * vz) * s + ky * kv
+      const rz = vz * c + (kx * vy - ky * vx) * s + kz * kv
+      return {
+        x: wrapValue(detAtan2(ry, rx) / toLon, width),
+        y: detAtan2(Math.sqrt(rx * rx + ry * ry), rz) / toColat,
+      }
+    },
+    grid: (resX, resY) => new SphereGrid(domain, resX, resY),
+    scaledTo: (w, h) => sphereDomain(w, h),
+  }
+  return domain
+}
+
+// The sphere's raster over the 2:1 chart (DEC-0035, fork 5): row j covers
+// the colatitude band [j, j + 1) · π / resY, so row 0 touches the north
+// pole and row resY − 1 the south pole. Columns wrap in longitude. A step
+// past a pole row lands in the same row, column + resX / 2 — the cell on
+// the other side of the pole — so resX must be even.
+//
+// The samplers do the same: a bilinear sample near a pole interpolates
+// toward the reflected row on the opposite meridian, not toward a clamped
+// copy of the pole row, so a field is continuous across the pole; at the
+// pole itself the sample is the mean of the two meridians it lies between.
+// After averagePoleRows a pole row is one value and the two agree.
+//
+// Hot-loop tables: colTable is the longitude wrap and works as on the
+// torus. rowTable cannot express the column shift that goes with a row
+// beyond a pole, so it refuses any margin; a sphere stage walks
+// neighbours through `neighbour` (or a pole-aware table, when a hot loop
+// in step 4d needs one).
+class SphereGrid implements DomainGrid {
+  readonly domain: Domain
+  readonly resX: number
+  readonly resY: number
+  private readonly width: number
+  private readonly height: number
+  private readonly halfCols: number
+  private readonly rowScales: Float64Array
+  private readonly cellAreas: Float64Array
+  private readonly point = { x: 0, y: 0 }
+
+  constructor(domain: Domain, resX: number, resY: number) {
+    if (resX % 2 !== 0) throw new Error(`a sphere grid needs an even column count (across a pole is column + resX / 2), got ${resX}`)
+    this.domain = domain
+    this.resX = resX
+    this.resY = resY
+    this.width = domain.width
+    this.height = domain.height
+    this.halfCols = resX / 2
+    // The band of row j has the area 2πR²(cos θ0 − cos θ1) / resX per cell,
+    // = 2πR² · 2 sin θc sin(Δθ / 2) / resX; a chart cell has 2π²R² /
+    // (resX · resY). Their ratio is 2 sin θc sin(Δθ / 2) · resY / π, which
+    // sums over the rows to exactly 2 · resY / π (Σ cos θ0 − cos θ1 = 2).
+    const band = (2 * detSin(Math.PI / (2 * resY)) * resY) / Math.PI
+    this.rowScales = new Float64Array(resY)
+    this.cellAreas = new Float64Array(resY)
+    for (let j = 0; j < resY; j++) {
+      const scale = detSin(((j + 0.5) * Math.PI) / resY)
+      this.rowScales[j] = scale
+      this.cellAreas[j] = scale * band
+    }
+  }
+
+  wrapCol(x: number): number {
+    return wrapValue(x, this.resX)
+  }
+
+  // Reflected over the poles, in the convention of cell centres at
+  // integers: the north pole lies at −0.5, the south at resY − 0.5. An
+  // integer row comes back as a row index in [0, resY); a fractional one in
+  // [−0.5, resY − 0.5]. The row alone: the column shift that goes with it
+  // is `neighbour`'s.
+  wrapRow(y: number): number {
+    const n = this.resY
+    const folded = wrapValue(y + 0.5, 2 * n) - 0.5
+    return folded <= n - 0.5 ? folded : 2 * n - 1 - folded
+  }
+
+  // Whether the integer row r lies an odd number of poles away: then its
+  // cells are on the opposite meridian.
+  private crossed(r: number): boolean {
+    return (Math.floor(r / this.resY) & 1) === 1
+  }
+
+  index(x: number, y: number): number {
+    return this.neighbour(x, y, 0, 0)
+  }
+
+  neighbour(x: number, y: number, dx: number, dy: number): number {
+    const r = y + dy
+    const c = this.crossed(r) ? x + dx + this.halfCols : x + dx
+    return this.wrapRow(r) * this.resX + wrapValue(c, this.resX)
+  }
+
+  colTable(margin: number): Int32Array {
+    const out = new Int32Array(this.resX + 2 * margin)
+    for (let k = 0; k < out.length; k++) out[k] = wrapValue(k - margin, this.resX)
+    return out
+  }
+
+  rowTable(margin: number): Int32Array {
+    if (margin > 0) {
+      throw new Error('a row table cannot express the column shift across a pole: on the sphere use DomainGrid.neighbour (DEC-0035, fork 5)')
+    }
+    const out = new Int32Array(this.resY)
+    for (let k = 0; k < out.length; k++) out[k] = k * this.resX
+    return out
+  }
+
+  // `y` a row index.
+  rowScale(y: number): number {
+    return this.rowScales[this.wrapRow(Math.floor(y))]
+  }
+
+  cellArea(y: number): number {
+    return this.cellAreas[this.wrapRow(Math.floor(y))]
+  }
+
+  // The cells of a pole row are all the same size, so the area-weighted mean
+  // is the plain one; the field's area-weighted mean over the sphere is kept.
+  averagePoleRows(field: Float32Array): void {
+    const rows = this.resY === 1 ? [0] : [0, this.resY - 1]
+    for (const row of rows) {
+      const base = row * this.resX
+      let sum = 0
+      for (let i = 0; i < this.resX; i++) sum += field[base + i]
+      field.fill(sum / this.resX, base, base + this.resX)
+    }
+  }
+
+  // Row r (any integer) sampled linearly at fractional column gx.
+  private rowSample(field: Float32Array, r: number, gx: number): number {
+    const x = wrapValue(this.crossed(r) ? gx + this.halfCols : gx, this.resX)
+    const x0 = Math.floor(x)
+    const x1 = x0 + 1 < this.resX ? x0 + 1 : 0
+    const tx = x - x0
+    const base = this.wrapRow(r) * this.resX
+    return field[base + x0] * (1 - tx) + field[base + x1] * tx
+  }
+
+  sampleBilinear(field: Float32Array, gx: number, gy: number): number {
+    const y0 = Math.floor(gy)
+    const ty = gy - y0
+    const top = this.rowSample(field, y0, gx)
+    const bottom = this.rowSample(field, y0 + 1, gx)
+    return top * (1 - ty) + bottom * ty
+  }
+
+  sampleBilinearAt(field: Float32Array, x: number, y: number): number {
+    return this.sampleBilinear(field, (x / this.width) * this.resX - 0.5, (y / this.height) * this.resY - 0.5)
+  }
+
+  cellAt(x: number, y: number): number {
+    this.domain.wrapPoint(x, y, this.point)
+    const gx = Math.min(this.resX - 1, Math.floor((this.point.x / this.width) * this.resX))
+    const gy = Math.min(this.resY - 1, Math.floor((this.point.y / this.height) * this.resY))
+    return gy * this.resX + gx
+  }
+
+  sampleNearestAt(field: Float32Array, x: number, y: number): number {
+    return field[this.cellAt(x, y)]
+  }
+
+  // Cell centre onto cell centre. Not the torus's convention, which samples
+  // the target cell's corner and so shifts by half a source cell — kept
+  // there byte-identical; on the sphere a shift in y is a shift in
+  // latitude.
+  upscale(field: Float32Array, toResX: number, toResY: number): Float32Array {
+    const out = new Float32Array(toResX * toResY)
+    const fx = this.resX / toResX
+    const fy = this.resY / toResY
+    for (let y = 0; y < toResY; y++) {
+      const gy = (y + 0.5) * fy - 0.5
+      for (let x = 0; x < toResX; x++) out[y * toResX + x] = this.sampleBilinear(field, (x + 0.5) * fx - 0.5, gy)
+    }
+    return out
+  }
 }
