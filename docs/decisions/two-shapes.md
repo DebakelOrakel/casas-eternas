@@ -185,6 +185,17 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: STEP 2 OPEN on the sphere — a sphere world goes on from the
+Archean into plate tectonics, and the globe wears the step's layers
+(terrain, boundaries, mantle, hotspots, volcanoes). Three things stay
+off: the continent names, because the globe's label layer is still to be
+built (the layer is shown locked, not inert); the chain a settled run
+starts by itself — the climate, its refinement and the rivers — because
+the sphere's hydrology throws (`flowRouting` asks for a row table) and
+the refinement has no pole filter yet; and with it the save's compute of
+those stages, so a sphere world saves its terrain only. The later steps
+stay locked.
+
 2026-10-10: step 4d5 BUILT — the coupled epoch runs on the sphere: the
 plates, the nodes' motion, the rebuild and remesh, the erosion engine, the
 column, the climate of the epoch, the ice, the coast and the flexure, and

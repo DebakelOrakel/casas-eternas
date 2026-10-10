@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-10
+- **new** Generator: a sphere world runs its second step, Plate tectonics — plates, erosion and the climate of each epoch on the globe; continent names and the later steps are still locked. `generator.step.tectonics`
 - **changed** Generator: on a sphere world the terrain's texture and coastlines are no longer stretched toward the poles. `generator.step.genesis`
 - **new** Generator: a sphere world runs its first step, the Mantle — crust forms and drifts on the globe, which shows the step's layers. `generator.step.genesis`
 

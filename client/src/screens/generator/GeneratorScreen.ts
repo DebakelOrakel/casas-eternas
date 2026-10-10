@@ -2089,9 +2089,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // markers (added via overlay.addMarker).
   // Latest composited RGBA (retained for the save preview thumbnail).
   let lastCompositePixels: Uint8Array | null = null
-  // THE GLOBE'S LAYERS (DEC-0035, step 4d2). A sphere world's own layers —
-  // step 1's, the one step after the planet it runs — are painted into the
-  // globe's textures and laid on it. Never the planet preview's: those are
+  // THE GLOBE'S LAYERS (DEC-0035, steps 4d2 and 4d5). A sphere world's own
+  // layers — those of the steps after the planet it runs, the Archean and
+  // the plates — are painted into the globe's textures and laid on it. Never the planet preview's: those are
   // the flat sample world's (step 0, and the moment after "create world"
   // until the new world's first render lands), and the globe shows the bare
   // sea then; they go to the flat view, out of sight.
@@ -2495,7 +2495,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Blocked during the Archean: proto-cratons are not continents yet, they merge
     // and fragment constantly, and naming something that dissolves ten epochs later
     // is noise. finalizeArchean names them all when plate tectonics begins.
-    names: { available: () => archeanFinalised && lastRaftLabels.length > 0, legend: null, probe: null },
+    // Not on the globe yet: its label layer is still to be built
+    // (map/sphereView.ts takes the texture and ignores it).
+    names: { available: () => archeanFinalised && lastRaftLabels.length > 0 && worldShape !== 'sphere', legend: null, probe: null },
     mantle: {
       available: () => lastMantle !== null,
       legend: () => ({ type: 'swatches', title: t('overlay.mantle.legend.title'), items: [
@@ -3761,6 +3763,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })
   // The chain of computes goes by itself unless a flow sequences it.
   const chainDriven = (): boolean => saveChainActive || restoreChainActive
+  // Whether the stages after the plates — the climate step's climate, its
+  // refinement and the rivers, and all that reads them — run on this
+  // world's shape. Not on the sphere yet (DEC-0035: its hydrology and the
+  // refinement's pole handling are still to come), so a sphere world's run
+  // settles, and saves, without them.
+  const laterStagesRun = (): boolean => worldShape !== 'sphere'
 
   // Posts a hydrology compute. Needs a computed climate (the worker caches its
   // precipitation as the river water source); every caller posts climateRun
@@ -4201,7 +4209,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // pipeline order. erosionRunCount 0 is a run that stopped before its
       // first epoch — un-eroded terrain gets no rivers. The save chain
       // sequences its own computes.
-      if (runJustSettled && erosionRunCount >= 1 && !saveChainActive) {
+      if (runJustSettled && erosionRunCount >= 1 && !saveChainActive && laterStagesRun()) {
         // The refinement and the rivers follow the climate by themselves
         // (handleClimateData).
         if (lastTemperature === null) requestClimate()
@@ -5101,7 +5109,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // independent of which panels were visited. Climate/hydrology/ecology need
     // eroded terrain (same gate as their panels) — pre-erosion, only elevation is
     // baked. No panel switch: the computes run in the worker regardless of the view.
-    if (erosionRunCount >= 1) {
+    if (erosionRunCount >= 1 && laterStagesRun()) {
       saveChainActive = true
       try {
         // Only when missing, like the restore's and the migration's chains:
@@ -5832,10 +5840,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // tectonics a world of proto-cratons that are still dissolving.
   const MIN_ARCHEAN_STABILISED = 0.5
   const entryRequirementUnmet = (index: number): string | null => {
-    // A sphere runs the planet and the Archean only (DEC-0035, step 4d2):
-    // the later steps are locked, and say nothing — there is nothing to do
-    // that would open them.
-    if (index > panelIndexOf('genesis') && worldShape === 'sphere') return ''
+    // A sphere runs the planet, the Archean and the plates' history only
+    // (DEC-0035, steps 4d2–4d5): the later steps are locked, and say
+    // nothing — there is nothing to do that would open them.
+    if (index > panelIndexOf('tectonics') && worldShape === 'sphere') return ''
     // Nothing exists before step 0 is answered — the steps after it all work on
     // the world it names and seeds.
     if (index > panelIndexOf('world') && !worldCreated) return t('notify.gate.needsWorld')

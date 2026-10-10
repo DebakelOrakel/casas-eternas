@@ -378,9 +378,9 @@
   height: 100%;
 }
 
-/* A sphere world (map/sphereView.ts) shows its own layers in step 1 only
-   (DEC-0035, step 4d2: --sphere-layers, set by the screen while the globe
-   wears them). Elsewhere the legend and the step's layer list would
+/* A sphere world (map/sphereView.ts) shows its own layers in steps 1 and
+   2 (DEC-0035, steps 4d2 and 4d5: --sphere-layers, set by the screen while
+   the globe wears them). Elsewhere the legend and the step's layer list would
    describe the flat sample world, and are hidden. The scale bar and the
    temperature scale could read the globe (its chartAt), but the orbit
    camera's swoop does not suit them as they are; left out until their
