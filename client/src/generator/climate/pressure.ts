@@ -141,12 +141,23 @@ export function computePressureWind(
   const relief = downsampleBox(elevation, domain.width, domain.height, RX, RY)
   for (let i = 0; i < n; i++) relief[i] = Math.max(0, relief[i] * ELEVATION_METERS)
 
+  // The gradients are per LENGTH, over one equator cell each way (step 4e,
+  // as the monsoon's, monsoon.computeMonsoonWind): east-west a row takes the
+  // difference `reach` of its own cells apart, as many as span an equator
+  // cell, over the length they span — the polar filter of fork 5 of
+  // DEC-0035 (two neighbours of a pole row are a few km apart, and their
+  // difference would read the coarse raster's coast as a front 80 times as
+  // steep). North-south the grid steps across a pole. On the torus the reach
+  // is 1 and its length 1: the torus's arithmetic, as it was.
   const wind = new Float32Array(n * 2)
   for (let gy = 0; gy < RY; gy++) {
+    const s = grid.rowScale(gy)
+    const reach = Math.min((RX >> 1) - 1, Math.max(1, Math.round(1 / s)))
+    const gradE = 1 / (reach * s)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       // −∇p of the thermal part, in grid axes (x east, y down), per cell.
-      const gx_ = -(thermal[grid.index(gx + 1, gy)] - thermal[grid.index(gx - 1, gy)]) / 2 * CLIMATE_TUNING.pressureWindPerHpa
+      const gx_ = -(thermal[grid.index(gx + reach, gy)] - thermal[grid.index(gx - reach, gy)]) / 2 * gradE * CLIMATE_TUNING.pressureWindPerHpa
       const gy_ = -(thermal[grid.index(gx, gy + 1)] - thermal[grid.index(gx, gy - 1)]) / 2 * CLIMATE_TUNING.pressureWindPerHpa
       // The balance G + f·(v, −u)_north − r·u = 0, solved in north-up axes
       // (the y axis flips), then back.
@@ -161,12 +172,12 @@ export function computePressureWind(
 
       // A range turns the wind: take away a part of the component up the
       // slope, more for a higher barrier.
-      const hx = (relief[grid.index(gx + 1, gy)] - relief[grid.index(gx - 1, gy)]) / 2
+      const hx = (relief[grid.index(gx + reach, gy)] - relief[grid.index(gx - reach, gy)]) / 2 * gradE
       const hy = (relief[grid.index(gx, gy + 1)] - relief[grid.index(gx, gy - 1)]) / 2
       const slope = detHypot(hx, hy)
       if (slope > 0) {
         const up = (wu * hx + wv * hy) / slope
-        const top = Math.max(relief[i], relief[grid.index(gx + Math.sign(wu), gy)], relief[grid.index(gx, gy + Math.sign(wv))])
+        const top = Math.max(relief[i], relief[grid.index(gx + reach * Math.sign(wu), gy)], relief[grid.index(gx, gy + Math.sign(wv))])
         const block = Math.min(1, Math.max(0, (top - CLIMATE_TUNING.pressureBlockFromM) / (CLIMATE_TUNING.pressureBlockFullM - CLIMATE_TUNING.pressureBlockFromM))) * CLIMATE_TUNING.pressureBlockMax
         if (up > 0) {
           wu -= block * up * hx / slope

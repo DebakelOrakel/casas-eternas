@@ -12,7 +12,9 @@ import { detHypot } from '../core/detMath'
 // the bake and the raster consumers still produce) and the mesh
 // (mesh/meshHydrology.ts). The raster wrapper reproduces the old per-cell
 // arithmetic exactly — same neighbour order, same integer distances, area
-// one — so the raster path stays bit-identical to what it was.
+// one — so the raster path stays bit-identical to what it was. On the
+// sphere (step 4e) a cell's area is its row's (DomainGrid.cellArea, cos φ)
+// and a step the arc between the two cell centres (Domain.delta).
 //
 // Positions are TEXEL coordinates (world cells): `x`/`y` where an element
 // is drawn (a cell's centre, +0.5; a node's own position), `px`/`py` where
@@ -34,9 +36,10 @@ export interface FlowSubstrate {
   y(c: number): number
   px(c: number): number
   py(c: number): number
-  // The element's area in macro cells (1 on the raster).
+  // The element's area in macro cells (1 on the torus's raster; a row's
+  // cellArea on the sphere's).
   area(c: number): number
-  // Distance from a to b in cells, across the seam.
+  // Distance from a to b in cells, across the seam (and a pole).
   step(a: number, b: number): number
   // Neighbours that share a facet (4-connected on the raster; the star on
   // the mesh) — what a basin region is gathered over. Writes into `out`,
@@ -51,6 +54,7 @@ const EIGHT: ReadonlyArray<readonly [number, number]> = [[-1, -1], [0, -1], [1, 
 
 export function rasterSubstrate(routing: FlowRouting): FlowSubstrate {
   const { width, height, domain, grid } = routing
+  const offset = { x: 0, y: 0 }
   return {
     kind: 'raster',
     width,
@@ -65,19 +69,17 @@ export function rasterSubstrate(routing: FlowRouting): FlowSubstrate {
     y: (c) => Math.floor(c / width) + 0.5,
     px: (c) => c % width,
     py: (c) => Math.floor(c / width),
-    area: () => 1,
+    area: (c) => grid.cellArea(Math.floor(c / width)),
     step: (a, b) => {
-      // The old receiverSlope's distance, to the operation: axis deltas
-      // folded over the seam, hypot, and 1 for a coincident pair.
+      // The old receiverSlope's distance: the offset between the two cell
+      // centres (on the torus the axis deltas folded over the seam, the
+      // same integers up to their sign), hypot, and 1 for a coincident pair.
       const ax = a % width
       const ay = (a - ax) / width
       const bx = b % width
       const by = (b - bx) / width
-      let dx = Math.abs(bx - ax)
-      if (dx > width / 2) dx = width - dx
-      let dy = Math.abs(by - ay)
-      if (dy > height / 2) dy = height - dy
-      return detHypot(dx, dy) || 1
+      domain.delta(bx + 0.5, by + 0.5, ax + 0.5, ay + 0.5, offset)
+      return detHypot(offset.x, offset.y) || 1
     },
     facetNeighbours: (c, out) => {
       const cx = c % width

@@ -1,6 +1,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { bilinearTaps, sampleTaps, type Domain, type DomainGrid } from '../core/domain'
+import { CyclicLine, LINE_COUPLING } from './cyclicLine'
 import { detCos, detExp, detHypot, detSin } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
@@ -306,14 +307,23 @@ class RowLines {
 // (so the field balances), and no flow into a coast (the potential mirrors
 // at land). Returns [u, v] per cell, 0 on land, scaled so its fastest cell
 // is 1. `grid`: the climate grid.
+//
+// In the grid's finite-volume metric (step 4e), as computeOceanCurrents'
+// solve: the faces east and west weigh wE = 1 / rowScale, north and south
+// the row edges (0 across a pole), the source and the sea's mean by the
+// cell's area, the flow east-west per length; the rows where the
+// east-west coupling dominates (the sphere from about 45°) relaxed as
+// lines. On the torus every weight is 1 and no row is a line: the
+// arithmetic is the torus's, as it was.
 export function computeSinkInflow(sink: Float32Array, land: Uint8Array, grid: DomainGrid): Float32Array {
   const n = RX * RY
   let total = 0
   let sea = 0
   for (let i = 0; i < n; i++) {
     if (land[i]) continue
-    total += sink[i]
-    sea++
+    const a = grid.cellArea((i / RX) | 0)
+    total += sink[i] * a
+    sea += a
   }
   const inflow = new Float32Array(n * 2)
   if (total <= 0 || sea === 0) return inflow
@@ -322,28 +332,97 @@ export function computeSinkInflow(sink: Float32Array, land: Uint8Array, grid: Do
   for (let i = 0; i < n; i++) if (!land[i]) source[i] = sink[i] - rise
 
   const neighbours = (gx: number, gy: number): [number, number, number, number] => [grid.index(gx - 1, gy), grid.index(gx + 1, gy), grid.index(gx, gy - 1), grid.index(gx, gy + 1)]
+  // Per row: the four faces' weights (west, east, north, south), the area,
+  // the east-west gradient, and the line solver where the row is one.
+  const faceW = new Float64Array(RY * 4)
+  const areaOf = new Float64Array(RY)
+  const gradE = new Float64Array(RY)
+  const lines: (CyclicLine | null)[] = []
+  for (let gy = 0; gy < RY; gy++) {
+    const s = grid.rowScale(gy)
+    const a = grid.cellArea(gy)
+    faceW[gy * 4] = 1 / s
+    faceW[gy * 4 + 1] = 1 / s
+    faceW[gy * 4 + 2] = grid.edgeScale(gy)
+    faceW[gy * 4 + 3] = grid.edgeScale(gy + 1)
+    areaOf[gy] = a
+    gradE[gy] = 1 / s
+    lines.push(1 / s / a > LINE_COUPLING ? new CyclicLine(RX) : null)
+  }
   const chi = new Float32Array(n)
+  // One row as a line: the sea's cells the unknowns, each coupled to its
+  // sea neighbours east and west, north and south read from the iterate; a
+  // land cell (and a coast face) stands out of the system. A small share of
+  // the diagonal is added to both sides — the fixed point is the same, and
+  // a run of sea with no sea north or south of it (a pure Neumann line) is
+  // not singular.
+  const relaxRow = (line: CyclicLine, gy: number): void => {
+    const wE = faceW[gy * 4]
+    const wN = faceW[gy * 4 + 2]
+    const wS = faceW[gy * 4 + 3]
+    const a = areaOf[gy]
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      line.diagIm[gx] = 0
+      line.rhsIm[gx] = 0
+      line.lower[gx] = 0
+      line.upper[gx] = 0
+      if (land[i]) {
+        line.diagRe[gx] = 1
+        line.rhsRe[gx] = chi[i]
+        continue
+      }
+      const [l, r, u, d] = neighbours(gx, gy)
+      let diag = 0
+      let rhs = a * source[i]
+      if (!land[l]) { diag += wE; line.lower[gx] = -wE }
+      if (!land[r]) { diag += wE; line.upper[gx] = -wE }
+      if (!land[u]) { diag += wN; rhs += wN * chi[u] }
+      if (!land[d]) { diag += wS; rhs += wS * chi[d] }
+      const shift = 1e-6 * diag + 1e-30
+      line.diagRe[gx] = diag + shift
+      line.rhsRe[gx] = rhs + shift * chi[i]
+    }
+    line.solve()
+    for (let gx = 0; gx < RX; gx++) if (!land[gy * RX + gx]) chi[gy * RX + gx] = line.outRe[gx]
+  }
   for (let iter = 0; iter < CLIMATE_TUNING.conveyorSolveIters; iter++) {
     for (let gy = 0; gy < RY; gy++) {
+      const line = lines[gy]
+      if (line !== null) {
+        relaxRow(line, gy)
+        continue
+      }
+      const w0 = faceW[gy * 4]
+      const w1 = faceW[gy * 4 + 1]
+      const w2 = faceW[gy * 4 + 2]
+      const w3 = faceW[gy * 4 + 3]
+      const wSum = w0 + w1 + w2 + w3
+      const a = areaOf[gy]
       for (let gx = 0; gx < RX; gx++) {
         const i = gy * RX + gx
         if (land[i]) continue
         // A land neighbour stands in with this cell's own value: no flow
         // across the coast.
+        const [l, r, u, d] = neighbours(gx, gy)
         let sum = 0
-        for (const j of neighbours(gx, gy)) sum += land[j] ? chi[i] : chi[j]
-        chi[i] = (sum + source[i]) / 4
+        sum += w0 * (land[l] ? chi[i] : chi[l])
+        sum += w1 * (land[r] ? chi[i] : chi[r])
+        sum += w2 * (land[u] ? chi[i] : chi[u])
+        sum += w3 * (land[d] ? chi[i] : chi[d])
+        chi[i] = (sum + a * source[i]) / wSum
       }
     }
   }
   let fastest = 0
   for (let gy = 0; gy < RY; gy++) {
+    const g = gradE[gy]
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       if (land[i]) continue
       const [l, r, u, d] = neighbours(gx, gy)
       const at = (j: number): number => (land[j] ? chi[i] : chi[j])
-      const vx = (at(r) - at(l)) / 2
+      const vx = (at(r) - at(l)) / 2 * g
       const vy = (at(d) - at(u)) / 2
       inflow[i * 2] = vx
       inflow[i * 2 + 1] = vy
@@ -386,10 +465,16 @@ export function computeUpwelling(wind: Float32Array, land: Uint8Array, grid: Dom
   // The divergence over the cell's four faces; a face with land on either
   // side carries nothing. So a coast cell with the water leaving it takes the
   // whole transport as upwelling, not half of it as a central difference
-  // would give.
+  // would give. In the grid's metric (step 4e): the transport through a
+  // face times the face's length — 1 east and west, the row edge north and
+  // south (0 at a pole, which is a point, so nothing is read across it) —
+  // over the cell's area. On the torus each weight is 1.
   const face = (a: number, b: number, fa: number, fb: number): number => (land[a] || land[b] ? 0 : (fa + fb) / 2)
   const out = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
+    const wN = grid.edgeScale(gy)
+    const wS = grid.edgeScale(gy + 1)
+    const area = grid.cellArea(gy)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       if (land[i]) continue
@@ -397,9 +482,13 @@ export function computeUpwelling(wind: Float32Array, land: Uint8Array, grid: Dom
       const l = grid.index(gx - 1, gy)
       const d = grid.index(gx, gy + 1)
       const u = grid.index(gx, gy - 1)
-      out[i] = face(i, r, ex[i], ex[r]) - face(l, i, ex[l], ex[i]) + face(i, d, ey[i], ey[d]) - face(u, i, ey[u], ey[i])
+      out[i] = (face(i, r, ex[i], ex[r]) - face(l, i, ex[l], ex[i]) + face(i, d, ey[i], ey[d]) * wS - face(u, i, ey[u], ey[i]) * wN) / area
     }
   }
+  // A pole row is one point: its sea one value (a no-op on the torus).
+  const sea = new Uint8Array(n)
+  for (let i = 0; i < n; i++) sea[i] = land[i] ? 0 : 1
+  grid.averagePoleRows(out, sea)
   return out
 }
 
@@ -425,8 +514,9 @@ export function eastwardInBasin(land: Uint8Array, grid: DomainGrid): Float32Arra
 
 // Where a sea cell lies across its basin, along its row: −1 at the western
 // shore, +1 at the eastern, scaled down in a basin narrower than
-// `fullWidthCells` (a sea between two coasts close together has no east and
-// west of its own); 0 where the row has no shore. `grid`: the climate grid.
+// `fullWidthCells` equator cells (a sea between two coasts close together has
+// no east and west of its own); 0 where the row has no shore. `grid`: the
+// climate grid.
 export function basinFlank(land: Uint8Array, grid: DomainGrid, fullWidthCells: number): Float32Array {
   const n = RX * RY
   const out = new Float32Array(n)
@@ -436,7 +526,9 @@ export function basinFlank(land: Uint8Array, grid: DomainGrid, fullWidthCells: n
       let len = 0
       while (len < RX && !land[gy * RX + grid.wrapCol(x0 + 1 + len)]) len++
       if (len < 2) continue
-      const width = Math.min(1, len / fullWidthCells)
+      // The basin's width is a length: its cells times the row's width
+      // (1 on the torus).
+      const width = Math.min(1, (len * grid.rowScale(gy)) / fullWidthCells)
       for (let k = 0; k < len; k++) out[gy * RX + grid.wrapCol(x0 + 1 + k)] = (2 * k / (len - 1) - 1) * width
     }
   }

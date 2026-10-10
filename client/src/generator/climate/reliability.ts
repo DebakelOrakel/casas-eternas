@@ -90,6 +90,9 @@ export function computeReliability(precipitation: Float32Array, monsoonIndex: Fl
   for (let gy = 0; gy < RY; gy++) {
     const lat = latitudeAt(gy, equatorOffset) * 90
     const byLat = detExp(-sq(lat / T.ensoReachLatDeg))
+    // The reach is a length: a row's cells are rowScale wide (cos φ on the
+    // sphere, 1 on the torus; step 4e).
+    const across = grid.rowScale(gy)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       if (!land[i]) continue
@@ -97,8 +100,8 @@ export function computeReliability(precipitation: Float32Array, monsoonIndex: Fl
       for (const b of basins) {
         // The land past the basin's east end is wetter in the warm phase,
         // the land before its west end drier.
-        const wet = detExp(-sq(zonal(gx, b.east) / T.ensoReachCells))
-        const dry = detExp(-sq(zonal(gx, b.west) / T.ensoReachCells))
+        const wet = detExp(-sq((zonal(gx, b.east) * across) / T.ensoReachCells))
+        const dry = detExp(-sq((zonal(gx, b.west) * across) / T.ensoReachCells))
         mark += b.strength * byLat * (wet - dry)
       }
       ensoPattern[i] = Math.max(-1, Math.min(1, mark))
@@ -115,6 +118,10 @@ export function computeReliability(precipitation: Float32Array, monsoonIndex: Fl
     const enso = T.ensoVariability * Math.abs(ensoPattern[i])
     rainVariability[i] = Math.min(T.rainVariabilityMax, detHypot(own, enso))
   }
+
+  // A pole row is one point: its land one value (a no-op on the torus).
+  grid.averagePoleRows(ensoPattern, land)
+  grid.averagePoleRows(rainVariability, land)
 
   let best: Basin | null = null
   for (const b of basins) if (!best || b.strength > best.strength) best = b

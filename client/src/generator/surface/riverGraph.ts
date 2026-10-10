@@ -2,7 +2,8 @@ import type { SpringFeature } from './hydrogeology'
 import type { FlowRouting } from './flowRouting'
 import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
-import type { DomainGrid } from '../core/domain'
+import type { Domain, DomainGrid } from '../core/domain'
+import { detHypot } from '../core/detMath'
 import { buildChannelMaskOn, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE } from './hydrology'
 import type { RegimeInputs, RiverPolylines, WaterBody } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
@@ -382,6 +383,10 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
   // node and the last land cell). The raster's step is one cell, so it keeps
   // the cell centre as it always did.
   if (sub.kind === 'mesh') {
+    // Along the step in the land node's frame (Domain.delta, advance): on
+    // the torus the minimum image and the wrap, as written by hand before;
+    // on the sphere the arc.
+    const step = { x: 0, y: 0 }
     for (const r of reaches) {
       if (r.cellCount < 2) continue
       const last = r.cellStart + r.cellCount - 1
@@ -389,14 +394,10 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
       const zSea = elevation[cells[last]]
       if (!(zLand > SEA_LEVEL && zSea <= SEA_LEVEL)) continue
       const f = (zLand - SEA_LEVEL) / (zLand - zSea)
-      let dx = cellX[last] - cellX[last - 1]
-      let dy = cellY[last] - cellY[last - 1]
-      if (dx > width / 2) dx -= width
-      else if (dx < -width / 2) dx += width
-      if (dy > height / 2) dy -= height
-      else if (dy < -height / 2) dy += height
-      cellX[last] = sub.domain.wrapX(cellX[last - 1] + f * dx)
-      cellY[last] = sub.domain.wrapY(cellY[last - 1] + f * dy)
+      sub.domain.delta(cellX[last], cellY[last], cellX[last - 1], cellY[last - 1], step)
+      sub.domain.advance(cellX[last - 1], cellY[last - 1], f * step.x, f * step.y, step)
+      cellX[last] = step.x
+      cellY[last] = step.y
     }
   }
   return { width, height, substrate: sub.kind, nodes, reaches, cells, cellX, cellY, bodies: bodies.slice() }
@@ -411,10 +412,20 @@ export function rasterCellAt(x: number, y: number, grid: DomainGrid): number {
 }
 
 // Seam test for consecutive line points: a jump of more than half the
-// raster is the torus seam, whatever the point spacing.
+// raster is the torus seam, whatever the point spacing. On the sphere a
+// river that crosses a pole turns its longitude by half a turn in one short
+// step, and a line drawn in the chart would run along the pole row (or
+// across the map): a turn by more than a quarter of the width in one step
+// cuts the line too (step 4e). No line point on the torus is a quarter of
+// the world from the one before it unless it crosses the seam, which the
+// first test already cuts.
 function seamStep(ax: number, ay: number, bx: number, by: number, width: number, height: number): boolean {
-  return Math.abs(bx - ax) > width / 2 || Math.abs(by - ay) > height / 2
+  return Math.abs(bx - ax) > width / 2 || Math.abs(by - ay) > height / 2 || Math.abs(bx - ax) > width / 4
 }
+
+// The longest piece of a river step in the chart where the chart stretches
+// it (riverPolylinesFromGraph), texels.
+const RIVER_CHART_STEP = 2
 
 // The ribbons the map draws, from the graph: chains of reaches along the
 // main stem (at a junction the tributary with the larger discharge
@@ -423,8 +434,19 @@ function seamStep(ax: number, ay: number, bx: number, by: number, width: number,
 // (the ribbon overlay never crosses it). Widths run linearly from a reach's
 // in to its out discharge, so the line thickens along the reach as the old
 // per-cell tracing did in steps.
-export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number): RiverPolylines {
+//
+// `domain` (the graph's texel frame, one cell per unit): where a step is
+// longer in the chart than on the world — on the sphere toward a pole, where
+// a short step east-west spans many texels of a row — the step is drawn
+// along the great circle, cut into pieces of at most RIVER_CHART_STEP
+// texels, so a consumer that draws chart polylines follows the river; a
+// piece that crosses a pole is a seam step and cuts the line there. On the
+// torus a step is as long in the chart as on the world, and nothing is
+// added. Without a domain the steps are drawn as they stand.
+export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number, domain?: Domain): RiverPolylines {
   const { width, height, nodes, reaches, cells } = graph
+  const offset = { x: 0, y: 0 }
+  const piece = { x: 0, y: 0 }
   const points: number[] = []
   const lengths: number[] = []
   const regimes: number[] = []
@@ -458,12 +480,46 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number)
   }
   let prevX = -1
   let prevY = -1
-  const emitXY = (x: number, y: number, w: number): void => {
+  let prevW = 0
+  const emitPoint = (x: number, y: number, w: number): void => {
     if (prevX >= 0 && seamStep(prevX, prevY, x, y, width, height)) flush()
     points.push(x, y, w)
     prevX = x
     prevY = y
+    prevW = w
     len++
+  }
+  // The chart's length of a step (across a seam the short way, as the
+  // torus wraps) against its length on the world.
+  const stretched = (ax: number, ay: number, bx: number, by: number): boolean => {
+    let cx = Math.abs(bx - ax)
+    if (cx > width / 2) cx = width - cx
+    let cy = Math.abs(by - ay)
+    if (cy > height / 2) cy = height - cy
+    const chart = detHypot(cx, cy)
+    return domain !== undefined && chart > RIVER_CHART_STEP && chart > 1.01 * Math.sqrt(domain.distanceSq(ax, ay, bx, by))
+  }
+  // A stretched step halved along the great circle until each piece is
+  // short in the chart (a piece over a pole stays stretched: it is a seam
+  // step, and the depth bounds it).
+  const emitPiece = (ax: number, ay: number, aw: number, bx: number, by: number, bw: number, depth: number): void => {
+    if (domain && depth < 12 && stretched(ax, ay, bx, by)) {
+      domain.delta(bx, by, ax, ay, offset)
+      domain.advance(ax, ay, offset.x / 2, offset.y / 2, piece)
+      // A point on a pole has no longitude of its own: it keeps the
+      // meridian it came along, so the step onto it is not stretched.
+      const my = piece.y
+      const mx = my < 1e-6 || my > height - 1e-6 ? ax : piece.x
+      const mw = (aw + bw) / 2
+      emitPiece(ax, ay, aw, mx, my, mw, depth + 1)
+      emitPiece(mx, my, mw, bx, by, bw, depth + 1)
+      return
+    }
+    emitPoint(bx, by, bw)
+  }
+  const emitXY = (x: number, y: number, w: number): void => {
+    if (domain && prevX >= 0) emitPiece(prevX, prevY, prevW, x, y, w, 0)
+    else emitPoint(x, y, w)
   }
   const emitLine = (line: Float32Array, wIn: number, wOut: number): void => {
     const count = line.length / 2

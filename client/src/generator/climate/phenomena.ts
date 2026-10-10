@@ -37,20 +37,29 @@ export function applyPhenomena(monthsT: Float32Array, months: number, wind: Floa
   const foehn = new Float32Array(n)
 
   // The coast's reach: each land cell's nearest sea cell within
-  // `fogReachCells`, by rings; the fog thins with each cell inland.
+  // `fogReachCells`, by rings; the fog thins with each cell inland. The
+  // distance is a length (step 4e): the offset between the two cells'
+  // centres on the climate grid's own domain (`cells`, one unit a cell) —
+  // on the torus the integers dx, dy themselves; on the sphere the arc, and
+  // a row reaches as many of its cells east-west as span the reach.
+  const cells = domain.scaledTo(RX, RY)
+  const offset = { x: 0, y: 0 }
   const seaOf = new Int32Array(n).fill(-1)
   const reach = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
+    const rx = Math.min(RX >> 1, Math.ceil(T.fogReachCells / grid.rowScale(gy)))
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       if (!land[i]) continue
       let best = -1
       let bestD = Infinity
       for (let dy = -T.fogReachCells; dy <= T.fogReachCells; dy++) {
-        for (let dx = -T.fogReachCells; dx <= T.fogReachCells; dx++) {
+        for (let dx = -rx; dx <= rx; dx++) {
           const j = grid.index(gx + dx, gy + dy)
           if (land[j]) continue
-          const d = detHypot(dx, dy)
+          const jx = j % RX
+          cells.delta(jx + 0.5, (j - jx) / RX + 0.5, gx + 0.5, gy + 0.5, offset)
+          const d = detHypot(offset.x, offset.y)
           if (d < bestD) { bestD = d; best = j }
         }
       }
@@ -84,13 +93,12 @@ export function applyPhenomena(monthsT: Float32Array, months: number, wind: Floa
         if (sea >= 0 && speed > 0) {
           const sx = sea % RX
           const sy = (sea - sx) / RX
-          // Toward the land from the sea cell, on the torus.
-          let dx = gx - sx
-          let dy = gy - sy
-          if (dx > RX / 2) dx -= RX
-          if (dx < -RX / 2) dx += RX
-          if (dy > RY / 2) dy -= RY
-          if (dy < -RY / 2) dy += RY
+          // Toward the land from the sea cell, in the land cell's frame
+          // (its wind's): the offset to the sea turned round. On the torus
+          // the minimum image, as it was.
+          cells.delta(sx + 0.5, sy + 0.5, gx + 0.5, gy + 0.5, offset)
+          const dx = -offset.x
+          const dy = -offset.y
           const onshore = (u * dx + v * dy) / (speed * detHypot(dx, dy))
           const cold = Math.min(1, Math.max(0, -anomaly[sea] / T.fogFullColdC))
           const lift = Math.min(1, Math.max(0, (monthsT[at + i] - monthsT[at + sea]) / T.fogFullContrastC))
@@ -105,7 +113,9 @@ export function applyPhenomena(monthsT: Float32Array, months: number, wind: Floa
         if (speed > 0) {
           let barrier = 0
           for (let k = 1; k <= T.foehnReachCells; k++) {
-            const j = grid.index(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
+            // Upwind along the globe on the sphere (DomainGrid.cellDisplaced;
+            // the torus rounds the chart's step, as it did).
+            const j = grid.cellDisplaced(gx, gy, -(u / speed) * k, -(v / speed) * k)
             barrier = Math.max(barrier, peak[j] - ground[i])
           }
           const f = Math.min(1, Math.max(0, (barrier - T.foehnMinBarrierM) / T.foehnFullBarrierM))
@@ -118,5 +128,8 @@ export function applyPhenomena(monthsT: Float32Array, months: number, wind: Floa
       }
     }
   }
+  // A pole row is one point: its land one value (a no-op on the torus).
+  grid.averagePoleRows(fog, land)
+  grid.averagePoleRows(foehn, land)
   return { fog, foehn }
 }

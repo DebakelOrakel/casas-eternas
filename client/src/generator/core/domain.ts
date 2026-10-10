@@ -57,6 +57,16 @@ export interface Domain {
   // as advance (its coordinates name a point anywhere, so there is nothing
   // to keep unwrapped).
   displace(x: number, y: number, dx: number, dy: number, out: { x: number; y: number }): void
+  // A point of the plane about a reference point brought back to the
+  // domain (step 4e): the plane is the one `refX + delta(…).x`,
+  // `refY + delta(…).y` builds about (refX, refY), so a caller can draw a
+  // short figure (a river's bends) in it with planar arithmetic and put
+  // the result back. The torus: the plane is the chart unwrapped, and the
+  // point is wrapPoint(px, py) — the reference is not read, so a caller
+  // that wrapped by hand keeps its bits. The sphere: the azimuthal-
+  // equidistant plane about the reference, advance(ref, px − refX, py −
+  // refY).
+  fromPlane(px: number, py: number, refX: number, refY: number, out: { x: number; y: number }): void
   // A coordinate brought back into [0, width) × [0, height) ([0, height]
   // on the sphere). One axis at a time: on the sphere wrapX is the
   // longitude wrap and wrapY a reflection over the pole, which alone is NOT
@@ -229,6 +239,13 @@ export interface DomainGrid {
   // (index(round(gx + dx), round(gy + dy))), the sphere moves along the
   // great circle as tapsAt does and takes the cell that holds the point.
   cellDisplaced(gx: number, gy: number, dx: number, dy: number): number
+  // The fractional grid point (cell centres at integers) reached from grid
+  // point (gx, gy) by (dx, dy) cells — equator cells, a length — in its
+  // local frame, written into `out` (step 4e): a track that marches cell
+  // by cell (a storm, the dust on the wind). The torus: gx + dx, gy + dy,
+  // unwrapped, the addition the track did by hand, so its bits stay. The
+  // sphere: along the great circle as tapsAt, wrapped into the chart.
+  displaced(gx: number, gy: number, dx: number, dy: number, out: { x: number; y: number }): void
   // Bilinear sample at DOMAIN coordinates, cell centres at (i + 0.5) cells
   // (core/field.ts sampleBilinearWorld).
   sampleBilinearAt(field: Float32Array, x: number, y: number): number
@@ -400,6 +417,11 @@ class TorusGrid implements DomainGrid {
     return this.index(Math.round(gx + dx), Math.round(gy + dy))
   }
 
+  displaced(gx: number, gy: number, dx: number, dy: number, out: { x: number; y: number }): void {
+    out.x = gx + dx
+    out.y = gy + dy
+  }
+
   sampleBilinearAt(field: Float32Array, x: number, y: number): number {
     return sampleBilinearWorld(field, this.resX, this.resY, x, y, this.width, this.height)
   }
@@ -444,6 +466,10 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
     displace: (x, y, dx, dy, out) => {
       out.x = x + dx
       out.y = y + dy
+    },
+    fromPlane: (px, py, _refX, _refY, out) => {
+      out.x = wrapValue(px, width)
+      out.y = wrapValue(py, height)
     },
     wrapX: (x) => wrapValue(x, width),
     wrapY: (y) => wrapValue(y, height),
@@ -629,6 +655,7 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
     // Every chart coordinate names a point of the sphere (a colatitude past
     // a pole is the point over it), so there is nothing to leave unwrapped.
     displace: (x, y, dx, dy, out) => domain.advance(x, y, dx, dy, out),
+    fromPlane: (px, py, refX, refY, out) => domain.advance(refX, refY, px - refX, py - refY, out),
     wrapX: (x) => wrapValue(x, width),
     // A reflection over the pole, the row alone — a moved point goes through
     // wrapPoint, which turns the longitude with it.
@@ -957,6 +984,14 @@ class SphereGrid implements DomainGrid {
     const cellH = this.height / this.resY
     this.domain.advance((gx + 0.5) * cellW, (gy + 0.5) * cellH, dx * cellW, dy * cellH, this.point)
     return this.cellAt(this.point.x, this.point.y)
+  }
+
+  displaced(gx: number, gy: number, dx: number, dy: number, out: { x: number; y: number }): void {
+    const cellW = this.width / this.resX
+    const cellH = this.height / this.resY
+    this.domain.advance((gx + 0.5) * cellW, (gy + 0.5) * cellH, dx * cellW, dy * cellH, this.point)
+    out.x = this.point.x / cellW - 0.5
+    out.y = this.point.y / cellH - 0.5
   }
 
   // Row r (any integer) sampled linearly at fractional column gx.

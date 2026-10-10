@@ -1,9 +1,9 @@
 import { Color3, Mesh, StandardMaterial, VertexBuffer, VertexData } from '@babylonjs/core'
 import type { InstancedMesh, Scene } from '@babylonjs/core'
-import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH } from '../generator/surface/hydrology'
 import type { ElevationSurface } from './elevationSurface'
 import { UNITS_PER_METER } from './mapSceneSettings'
 import { RibbonWidthMaterialPlugin } from './ribbonWidthMaterialPlugin'
+import { catmullRom, INK_BINS, presenceThreshold, relativeWidth, RIVER_RGB, riverCartoPx, riverWidthMetres, SUBDIV } from './riverWidth'
 
 export interface ToroidalRibbonOverlayOptions {
   scene: Scene
@@ -33,7 +33,7 @@ export interface ToroidalRibbonOverlayOptions {
   // by the ground they are draped on. See ToroidalMapView.NEAR_RENDERING_GROUP
   // for what the split buys and what it costs.
   renderingGroupId?: number
-  // Whether the presence rule (the zoom-Q ink budget below) applies. Default
+  // Whether the presence rule (the zoom-Q ink budget, riverWidth.ts) applies. Default
   // true — rivers thin with distance. Off for line work whose stored width is
   // not a discharge: lake shorelines carry the thinnest pen at every point,
   // and the budget would cull all of them at far zoom rather than the least
@@ -60,7 +60,7 @@ export interface ToroidalRibbonOverlay {
   // point count. Each polyline is Catmull-Rom smoothed into a continuous curved
   // ribbon. The width component is the hydrology's cartographic width
   // (RIVER_MIN_WIDTH..RIVER_MAX_WIDTH, √ of relative discharge) — how the
-  // ribbon actually widens per zoom is the width rule below. Empty clears the
+  // ribbon actually widens per zoom is the width rule (riverWidth.ts). Empty clears the
   // mesh. `regimes` is one byte per polyline (hydrology.RIVER_REGIME_CODE):
   // an intermittent river draws dashed, an ephemeral one dotted; absent, all
   // are perennial.
@@ -85,96 +85,18 @@ export interface ToroidalRibbonOverlay {
   dispose(): void
 }
 
-// --- the width rule ---------------------------------------------------------
-//
-// Every ribbon vertex derives TWO half-widths (plus its relative discharge,
-// for the presence rule below) from the stored cartographic width, and the
-// vertex shader takes the max per frame (RibbonWidthMaterialPlugin):
-//
-// - a PHYSICAL width in world units — what the river would measure on the
-//   ground. Wins near the ground, where a map line would read as a flood.
-// - a CARTOGRAPHIC width in SCREEN pixels — how wide the line draws on a
-//   map, whatever the zoom. Wins in the map regime, where even the largest
-//   river's physical width is subpixel.
-//
-// This replaces three stepped zoom profiles that scaled world-fixed widths
-// down per relief level. Each step REDUCED the on-screen width at the moment
-// it fired (measured: 0.80 px → 0.40 px across the first boundary), and
-// between the steps small rivers spent the whole middle zoom band under one
-// pixel. A screen floor is the thing a world-fixed width cannot express,
-// whatever it is multiplied by — and with the floor in the shader, zoom
-// changes no geometry at all.
-
-// Physical scale: the world's largest river reads ~3 km wide near its mouth
-// (Amazon-class lower courses run 2–5 km); width falls with √discharge below
-// that, floored at what the channel threshold's smallest basins (Moselle
-// scale) plausibly measure.
-const RIVER_PHYSICAL_MAX_M = 3000
-const RIVER_PHYSICAL_MIN_M = 80
-
-// Cartographic scale: the line hierarchy on the map, in pixels. The top end
-// matches what the old flat profile drew at far zoom (~6.6 px for the
-// biggest river); the bottom stays a resolvable line under MSAA.
-const RIBBON_CARTO_MAX_PX = 6
-const RIBBON_CARTO_MIN_PX = 1.1
-
-// Where a stored width sits between the hydrology's min and max — i.e. the
-// √ of discharge relative to the world's biggest river.
-const relativeWidth = (widthPx: number): number =>
-  Math.min(1, Math.max(0, (widthPx - RIVER_MIN_WIDTH) / (RIVER_MAX_WIDTH - RIVER_MIN_WIDTH)))
-
-// --- the presence rule (zoom-Q filter) --------------------------------------
-//
-// An 8K bake's network is legitimately ~5× the macro network's total line
-// length (measured on world 558937267: 30.4 vs 5.9 world-widths of
-// centerline) — the channel threshold is a cell count on purpose, so a finer
-// grid resolves more tributaries. Drawn in full at every zoom, that reads as
-// "far too many rivers": the cartographic pixel floor above hands even the
-// smallest rill a resolvable line. Width already follows zoom; PRESENCE is
-// what this rule adds.
-//
-// The rule: the screen gets a constant ink budget. On-screen line length is
-// (network length above the threshold) × z × renderWidth, where z is the
-// visible fraction of the world's width — so holding visual density constant
-// means a drawn-length target of INK / z, and the per-frame threshold is that
-// target pushed through the inverse of the network's own length-vs-discharge
-// distribution (the histogram below, rebuilt with the geometry). Anchoring
-// INK at the macro network's total keeps a freshly loaded world unfiltered
-// (its budget exceeds its total at every zoom, threshold 0), while an 8K
-// network thins to the same far-zoom look — the two nets are near-identical
-// above r≈0.15 (8K 3.84 vs macro 3.67 world-widths at r≥0.15), so what
-// remains is the SAME major-river map, and the tributaries surface as the
-// budget grows on the way down (full 8K detail from z≈0.2).
-//
-// Threshold r is √ of discharge relative to the network's biggest river —
-// the same value the width rules key on, carried per vertex; the shader
-// tapers a band below the threshold instead of cutting (see
-// RibbonWidthMaterialPlugin), so tips grow out of their trunks smoothly.
-const FULL_VIEW_INK_WORLD_WIDTHS = 6
-const INK_BINS = 200
-
-// Catmull-Rom subdivisions per input span — turns the D8 cell-to-cell staircase
-// into a smooth curve.
-const SUBDIV = 5
-
-function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
-  const t2 = t * t
-  const t3 = t2 * t
-  return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
-}
-
 // Draws connected polylines (rivers, later lake outlines / paths) as real
 // scene-space ribbon geometry over the toroidal map — NOT baked into the map
 // texture — so they stay crisp at any zoom and carry per-point width for free.
 // Each polyline is Catmull-Rom smoothed and turned into one continuous ribbon
 // (perpendicular-offset strip, widened in the vertex shader per the width rule
-// above), so rivers read as flowing curves, not straight segments. Mirrors
+// in riverWidth.ts), so rivers read as flowing curves, not straight segments. Mirrors
 // ToroidalMapView: one real mesh + 8 instances forming a 3x3 wrap block,
 // repositioned each frame on the tile under the camera. Unlit emissive (a flat
 // data overlay). Reusable by any full-surface map screen.
 export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOptions): ToroidalRibbonOverlay {
   const { scene, worldWidth, worldHeight, textureWidth, textureHeight, getViewWidth } = options
-  const color = options.color ?? new Color3(45 / 255, 95 / 255, 175 / 255)
+  const color = options.color ?? new Color3(RIVER_RGB[0] / 255, RIVER_RGB[1] / 255, RIVER_RGB[2] / 255)
   const yOffset = options.yOffset ?? 0.03
   const drapedYOffset = options.drapedYOffset ?? 0.0002
   const renderingGroupId = options.renderingGroupId ?? 0
@@ -187,19 +109,9 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
   // points; the spline conserves length to well under a bin's worth.
   let inkByBin: Float64Array | null = null
 
-  // The presence threshold for this frame: the smallest r whose remaining
-  // drawn length fits the zoom's ink budget. A 200-bin top-down scan per
-  // frame — noise next to the scene's own per-frame work.
+  // The presence threshold for this frame (riverWidth.ts, the presence rule).
   function minRelForView(): number {
-    if (!inkByBin) return 0
-    const z = Math.min(1, Math.max(1e-6, getViewWidth() / worldWidth))
-    const budget = FULL_VIEW_INK_WORLD_WIDTHS / z
-    let acc = 0
-    for (let b = INK_BINS - 1; b >= 0; b--) {
-      acc += inkByBin[b]
-      if (acc > budget) return (b + 1) / INK_BINS
-    }
-    return 0
+    return inkByBin ? presenceThreshold(inkByBin, getViewWidth() / worldWidth) : 0
   }
 
   const material = new StandardMaterial('ribbonOverlayMat', scene)
@@ -296,8 +208,8 @@ export function createToroidalRibbonOverlay(options: ToroidalRibbonOverlayOption
       const nx = -tz
       const nz = tx
       const r = relativeWidth(sw[i])
-      const physHalf = (Math.max(RIVER_PHYSICAL_MIN_M, r * RIVER_PHYSICAL_MAX_M) * UNITS_PER_METER) / 2
-      const cartoHalfPx = (RIBBON_CARTO_MIN_PX + r * (RIBBON_CARTO_MAX_PX - RIBBON_CARTO_MIN_PX)) / 2
+      const physHalf = (riverWidthMetres(sw[i]) * UNITS_PER_METER) / 2
+      const cartoHalfPx = riverCartoPx(sw[i]) / 2
       // r rides along as the third component — the presence rule's per-vertex
       // side (the shader compares it against the frame's threshold).
       // Draped: terrain height at this point (world x/z back to the map's

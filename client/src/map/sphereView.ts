@@ -6,6 +6,7 @@ import {
   type Engine,
   HemisphericLight,
   Matrix,
+  Mesh,
   MeshBuilder,
   PostProcess,
   RawTexture,
@@ -15,10 +16,16 @@ import {
   Texture,
   TransformNode,
   Vector3,
+  VertexBuffer,
+  VertexData,
 } from '@babylonjs/core'
 import { createOrbitSwoopCamera } from '../camera/orbitSwoopCamera'
+import { buildGlobeRibbons } from './globeRibbons'
+import { RibbonWidthMaterialPlugin } from './ribbonWidthMaterialPlugin'
+import { presenceThreshold, RIVER_RGB } from './riverWidth'
 import { createSymbolLayerSet } from './symbolLayer'
 import { globeChartOfFrame, globeSymbolFrame, globeSymbolVertex } from './symbolPlacement'
+import { WaterField, WaterMaterialPlugin } from './waterMaterialPlugin'
 import type { ChartPoint, WorldView } from './worldView'
 
 // THE SPHERE'S FIRST VIEW (docs/design/two-topologies.md): an ocean globe on
@@ -45,13 +52,25 @@ import type { ChartPoint, WorldView } from './worldView'
 // answers (u, v). The globe shows the sea until told to show its layers
 // (setLayersShown): the screen lays a sphere world's own on it (its first
 // step, since 2026-10-10), never the flat sample world's. What it cannot
-// show yet (relief, rivers, water) it takes and ignores.
+// show yet (the relief: setRelief and setHeightScale) it takes and ignores
+// — relief on the globe is a later decision.
 //
 // The symbols and names (WorldView.symbols) lie on the globe as objects,
 // in the surface at every point — round at the poles as at the equator,
 // where a circle painted into the chart is an ellipse 1 / cos φ tall — a
 // little above it (SYMBOL_LIFT), hidden by the globe on its far side, and
 // under the atmosphere like the rest of the scene.
+//
+// THE RIVERS AND THE LAKES (2026-10-10), from the data the flat map takes:
+// - the rivers are ribbons on the sphere (globeRibbons.ts), under the
+//   symbols (RIVER_LIFT), as wide as on the flat map by the same width rule,
+//   the same presence rule and dashes; lit like the globe, one mesh.
+// - the standing water is the flat map's water plugin (waterMaterialPlugin.ts,
+//   style 'globe') on the material that wears the layers: the shore where the
+//   terrain crosses the level, the lakes' depth ramp, the coast types — read
+//   from the chart texels the sphere's UVs give, with the cells across a pole
+//   row half a turn round. Painted before the light, so the water darkens
+//   on the night side with the land.
 
 export interface GlobeWorldView extends WorldView {
   readonly shape: 'sphere'
@@ -92,6 +111,11 @@ const SYMBOL_LIFT = 1.001
 // The largest angle, radians, a quad of a picture spans: a larger picture is
 // cut finer, so it follows the curve instead of standing off it as a chord.
 const SYMBOL_SEGMENT_ANGLE = 0.02
+// The radius the rivers lie at: over the globe's faces (a face of the
+// 96-segment sphere lies up to 2.6e-4 radii inside the unit sphere,
+// scripts/globeWater.mjs), under the symbols. About 3 km on an Earth-sized
+// world.
+const RIVER_LIFT = 1.0005
 
 const SHADER = 'sphereAtmosphere'
 Effect.ShadersStore[`${SHADER}FragmentShader`] = `
@@ -213,6 +237,16 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   const emptyLayer = (): RawTexture => RawTexture.CreateRGBATexture(new Uint8Array(textureWidth * textureHeight * 4), textureWidth, textureHeight, scene, false, false)
   const baseTexture = emptyLayer()
   const reliefTexture = emptyLayer()
+  // The globe in its layers: the sea's light, the unshaded composite, and
+  // the standing water over it. A material of its own, not the bare sea's
+  // with a texture swapped in: the water reads the sphere's UVs, which a
+  // material without a texture does not carry.
+  const layered = new StandardMaterial('sphereLayers', scene)
+  layered.diffuseTexture = reliefTexture
+  layered.specularColor = sea.specularColor.clone()
+  layered.specularPower = sea.specularPower
+  const waterField = new WaterField(scene, 'sphere')
+  const waterPlugin = new WaterMaterialPlugin(layered, 'globe', waterField)
 
   // The chart point of a world direction: into the globe's own frame
   // (below the tilt and the turn), then longitude and latitude.
@@ -235,6 +269,64 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   }
   const radiusMetres = metresRound / (2 * Math.PI)
 
+  // The rivers: one mesh in the globe's frame, built again on each
+  // setPolylines. The width rule's pixel: the angle a pixel spans (the
+  // camera's fov is vertical), times the vertex's distance to the eye in
+  // the shader. The presence rule's view: how much of the equator the view
+  // spans at the surface nearest the camera, as the flat map's visible
+  // fraction of its width.
+  const riverMaterial = new StandardMaterial('sphereRivers', scene)
+  riverMaterial.diffuseColor = new Color3(RIVER_RGB[0] / 255, RIVER_RGB[1] / 255, RIVER_RGB[2] / 255)
+  riverMaterial.specularColor = new Color3(0, 0, 0)
+  riverMaterial.backFaceCulling = false
+  let riverMesh: Mesh | null = null
+  let riverInk: Float64Array | null = null
+  let riversOn = false
+  const toRiverFrame = new Matrix()
+  const riverEye = new Vector3()
+  const viewFraction = (): number => {
+    const height = Math.max(1e-6, rig.camera.globalPosition.length() - RADIUS)
+    const across = 2 * height * Math.tan(rig.camera.fov / 2) * engine.getAspectRatio(rig.camera)
+    return across / (2 * Math.PI * RADIUS)
+  }
+  new RibbonWidthMaterialPlugin(
+    riverMaterial,
+    () => (2 * Math.tan(rig.camera.fov / 2)) / Math.max(1, engine.getRenderHeight()),
+    () => (riverInk ? presenceThreshold(riverInk, viewFraction()) : 0),
+    {
+      getEye: () => {
+        tilt.computeWorldMatrix(true).invertToRef(toRiverFrame)
+        Vector3.TransformCoordinatesToRef(rig.camera.globalPosition, toRiverFrame, riverEye)
+        return riverEye
+      },
+    },
+  )
+  const setRiverPolylines = (points: Float32Array, lengths: Uint32Array, regimes?: Uint8Array): void => {
+    riverMesh?.dispose()
+    riverMesh = null
+    riverInk = null
+    const geometry = buildGlobeRibbons(points, lengths, regimes, textureWidth, textureHeight, radiusMetres, RIVER_LIFT)
+    if (!geometry) return
+    riverInk = geometry.ink
+    const mesh = new Mesh('sphereRivers', scene)
+    const data = new VertexData()
+    data.positions = geometry.positions
+    data.normals = geometry.normals
+    data.indices = geometry.indices
+    data.applyToMesh(mesh)
+    mesh.setVerticesBuffer(new VertexBuffer(engine, geometry.dirs, 'ribbonDir', { size: 3 }))
+    mesh.setVerticesBuffer(new VertexBuffer(engine, geometry.widths, 'ribbonWidths', { size: 3 }))
+    mesh.setVerticesBuffer(new VertexBuffer(engine, geometry.styles, 'ribbonStyle', { size: 2 }))
+    mesh.material = riverMaterial
+    mesh.isPickable = false
+    // The shader moves the vertices off their centreline: the bounds from
+    // the centreline alone would cull a ribbon at the screen's edge.
+    mesh.alwaysSelectAsActiveMesh = true
+    mesh.parent = tilt
+    mesh.setEnabled(riversOn)
+    riverMesh = mesh
+  }
+
   // The symbol layers, in the globe's own frame: they turn and lean with it.
   const symbolSet = createSymbolLayerSet(scene, 'globeSymbols', {
     frame: (symbol) => globeSymbolFrame(symbol.at, symbol.angle, symbol.readable ?? false),
@@ -250,12 +342,19 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     scene,
     baseTexture,
     reliefTexture,
-    setLakesVisible: () => {},
-    setWaterLevels: () => {},
-    setWaterElevation: () => {},
+    setLakesVisible: (visible) => waterPlugin.setLakesVisible(visible),
+    setWaterLevels: (level, surface, coast = null) => waterField.setLevels(level, surface, coast),
+    setWaterElevation: (data, width, height) => waterField.setElevation(data, width, height),
+    // Relief on the globe is a later decision (DEC-0035): taken and ignored.
     setRelief: () => {},
     setHeightScale: () => {},
-    rivers: { setPolylines: () => {}, setEnabled: () => {} },
+    rivers: {
+      setPolylines: setRiverPolylines,
+      setEnabled(enabled) {
+        riversOn = enabled
+        riverMesh?.setEnabled(enabled)
+      },
+    },
     symbols: (id) => symbolSet.symbols(id),
     chartAt,
     // The globe is its reference surface: what is drawn is the sphere.
@@ -281,13 +380,16 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
       tilt.rotation.z = (degrees * Math.PI) / 180
     },
     setLayersShown(shown) {
-      sea.diffuseTexture = shown ? reliefTexture : null
-      sea.diffuseColor = shown ? new Color3(1, 1, 1) : OCEAN
+      globe.material = shown ? layered : sea
     },
     resetCamera: () => rig.reset(),
     dispose() {
       engine.onResizeObservable.remove(resized)
       symbolSet.dispose()
+      riverMesh?.dispose()
+      riverMaterial.dispose()
+      waterField.dispose()
+      layered.dispose()
       baseTexture.dispose()
       reliefTexture.dispose()
       glow.dispose(rig.camera)

@@ -59,17 +59,21 @@ export function dischargeToM3s(dischargeUnits: number, cellM: number): number {
 // Mean per-cell runoff over land — the reference the critical-area threshold
 // multiplies against (so "A cells of drainage" translates to a discharge value).
 // `domain`: what the elevation raster covers, one cell per unit.
+// By area: a cell weighs its row's cellArea (1 on the torus, cos φ on the
+// sphere).
 export function meanLandRunoff(precip: Float32Array, elevation: Float32Array, domain: Domain, climateResX: number, climateResY: number): number {
   const worldW = domain.width
   const climate = domain.grid(climateResX, climateResY)
+  const world = domain.grid(worldW, domain.height)
   let sum = 0
   let count = 0
   for (let cell = 0; cell < elevation.length; cell++) {
     if (elevation[cell] <= SEA_LEVEL) continue
     const cx = cell % worldW
     const cy = (cell - cx) / worldW
-    sum += precipRunoffAt(precip, cx, cy, climate)
-    count++
+    const area = world.cellArea(cy)
+    sum += precipRunoffAt(precip, cx, cy, climate) * area
+    count += area
   }
   return count > 0 ? sum / count : 0
 }
@@ -807,9 +811,10 @@ export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Ar
 // Only basins of at least `minAreaCells` keep a label (id 1.., largest
 // first); the coastal fringe of micro-catchments stays 0 — colouring tens of
 // thousands of one-cell "systems" reads as noise, not as a map. Uint16: the
-// filter keeps the id space tiny.
+// filter keeps the id space tiny. The areas are in equator cells (a cell
+// weighs its row's cellArea, 1 on the torus).
 export function computeWatersheds(routing: FlowRouting, elevation: Float32Array, minAreaCells = 200): Uint16Array {
-  const { width, height, flowTarget, popOrder, poppedCount } = routing
+  const { width, height, flowTarget, popOrder, poppedCount, grid } = routing
   const n = width * height
   const label = new Int32Array(n).fill(-1)
   let nextId = 0
@@ -820,8 +825,8 @@ export function computeWatersheds(routing: FlowRouting, elevation: Float32Array,
     if (t >= 0 && elevation[t] > SEA_LEVEL && label[t] >= 0) label[cell] = label[t]
     else label[cell] = nextId++
   }
-  const areas = new Uint32Array(nextId)
-  for (let i = 0; i < n; i++) if (label[i] >= 0) areas[label[i]]++
+  const areas = new Float64Array(nextId)
+  for (let i = 0; i < n; i++) if (label[i] >= 0) areas[label[i]] += grid.cellArea(Math.floor(i / width))
   const order = Array.from({ length: nextId }, (_, i) => i)
     .filter((id) => areas[id] >= minAreaCells)
     .sort((a2, b2) => areas[b2] - areas[a2])
@@ -887,19 +892,43 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
     if (w > strength[gi]) strength[gi] = w
   }
   // Decay-bleed into neighbours (through the climate grid), taking the max so
-  // a band forms.
+  // a band forms. A step is one equator cell long: east-west a row reaches
+  // as many of its own cells as span one (1 / rowScale, all but one of the
+  // row at most), each decayed by the length it lies away — so the band is
+  // as wide east-west as north-south near a pole too (step 4e). On the
+  // torus the reach is 1 and its decay riparianDecay: the same four
+  // neighbours (a maximum does not depend on their order).
+  const reachOf = new Int32Array(climateResY)
+  const decayOf: Float64Array[] = []
+  for (let gy = 0; gy < climateResY; gy++) {
+    const s = climate.rowScale(gy)
+    const reach = Math.min((climateResX >> 1) - 1, Math.max(1, Math.round(1 / s)))
+    reachOf[gy] = reach
+    const decay = new Float64Array(reach + 1)
+    for (let k = 1; k <= reach; k++) decay[k] = k * s === 1 ? SURFACE_TUNING.riparianDecay : detPow(SURFACE_TUNING.riparianDecay, k * s)
+    decayOf.push(decay)
+  }
   let field = strength
   for (let it = 0; it < SURFACE_TUNING.riparianSpread; it++) {
     const next = field.slice()
     for (let gy = 0; gy < climateResY; gy++) {
+      const reach = reachOf[gy]
+      const decay = decayOf[gy]
       for (let gx = 0; gx < climateResX; gx++) {
         const gi = gy * climateResX + gx
-        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-          const v = field[climate.neighbour(gx, gy, dx, dy)] * SURFACE_TUNING.riparianDecay
-          if (v > next[gi]) next[gi] = v
+        for (let k = 1; k <= reach; k++) {
+          const w = field[climate.neighbour(gx, gy, -k, 0)] * decay[k]
+          if (w > next[gi]) next[gi] = w
+          const e = field[climate.neighbour(gx, gy, k, 0)] * decay[k]
+          if (e > next[gi]) next[gi] = e
         }
+        const north = field[climate.neighbour(gx, gy, 0, -1)] * SURFACE_TUNING.riparianDecay
+        if (north > next[gi]) next[gi] = north
+        const south = field[climate.neighbour(gx, gy, 0, 1)] * SURFACE_TUNING.riparianDecay
+        if (south > next[gi]) next[gi] = south
       }
     }
+    climate.averagePoleRows(next)
     field = next
   }
   const precipEff = precip.slice()

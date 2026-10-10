@@ -1,7 +1,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { bandFactor, evaporation } from './precipitation'
-import type { DomainGrid } from '../core/domain'
+import { bilinearTaps, sampleTaps, type DomainGrid } from '../core/domain'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -50,17 +50,27 @@ export function computeSalinity(seaTemperature: Float32Array, landRain: Float32A
 
   // The rivers: each land cell's surplus (rain over what evaporates there)
   // reaches the sea at the nearest sea cell — the drainage without its
-  // routing, which runs after the climate.
+  // routing, which runs after the climate. Nearest by length (step 4e): a
+  // step east or west costs the row's cell width (rowScale), north or south
+  // one cell, and the queue corrects a cell when a shorter path reaches it
+  // later (label-correcting, as seasonality's continentality). On the torus
+  // every step costs 1, no cell is ever corrected, and the search is the
+  // BFS it was. The surplus is a depth over the land cell: on the sea cell
+  // it is that depth times the two cells' area ratio (1 on the torus).
   const nearestSea = new Int32Array(n).fill(-1)
+  const dist = new Float64Array(n).fill(Infinity)
   const queue: number[] = []
-  for (let i = 0; i < n; i++) if (!land[i]) { nearestSea[i] = i; queue.push(i) }
+  for (let i = 0; i < n; i++) if (!land[i]) { nearestSea[i] = i; dist[i] = 0; queue.push(i) }
   for (let h = 0; h < queue.length; h++) {
     const i = queue[h]
     const x = i % RX
     const y = (i - x) / RX
+    const across = grid.rowScale(y)
     for (const [dx, dy] of NEIGHBOURS) {
       const j = grid.index(x + dx, y + dy)
-      if (nearestSea[j] >= 0) continue
+      const d = dist[i] + (dy === 0 ? across : 1)
+      if (!(d < dist[j])) continue
+      dist[j] = d
       nearestSea[j] = nearestSea[i]
       queue.push(j)
     }
@@ -69,7 +79,7 @@ export function computeSalinity(seaTemperature: Float32Array, landRain: Float32A
   for (let i = 0; i < n; i++) {
     if (!land[i] || landRain[i] < 0 || nearestSea[i] < 0) continue
     const surplus = landRain[i] - T.salinityEvapMm * T.salinityLandEvapShare * evaporation(seaTemperature[i])
-    if (surplus > 0) riverIn[nearestSea[i]] += surplus
+    if (surplus > 0) riverIn[nearestSea[i]] += surplus * grid.cellArea((i / RX) | 0) / grid.cellArea((nearestSea[i] / RX) | 0)
   }
 
   // The budget per sea cell, psu per pass: evaporation up, rain and rivers
@@ -82,22 +92,31 @@ export function computeSalinity(seaTemperature: Float32Array, landRain: Float32A
     if (seaTemperature[i] < T.ebmSeaIceBelowC) budget[i] += T.salinityBrinePsu
   }
 
-  // Carried by the currents, relaxed toward the ocean's mean.
+  // Carried by the currents, relaxed toward the ocean's mean. The
+  // departure is the grid's (DomainGrid.tapsAt, as applyOceanSST's): on the
+  // sphere along the great circle, on the torus the chart's sample as it
+  // was; a pole row's sea one value each pass.
+  const taps = bilinearTaps(n)
+  const sea = new Uint8Array(n)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      if (land[i]) continue
+      sea[i] = 1
+      grid.tapsAt(gx, gy, -currents[i * 2] * T.currentsAdvectStep, -currents[i * 2 + 1] * T.currentsAdvectStep, taps, i)
+    }
+  }
   let salinity = new Float32Array(n).fill(T.salinityMeanPsu)
   for (let iter = 0; iter < T.salinityIters; iter++) {
     const next = salinity.slice()
-    for (let gy = 0; gy < RY; gy++) {
-      for (let gx = 0; gx < RX; gx++) {
-        const i = gy * RX + gx
-        if (land[i]) continue
-        const u = currents[i * 2]
-        const v = currents[i * 2 + 1]
-        const upstream = grid.sampleBilinear(salinity, gx - u * T.currentsAdvectStep, gy - v * T.currentsAdvectStep)
-        next[i] = upstream * (1 - T.salinityRelax) + T.salinityMeanPsu * T.salinityRelax + budget[i]
-      }
+    for (let i = 0; i < n; i++) {
+      if (land[i]) continue
+      const upstream = sampleTaps(salinity, taps, i)
+      next[i] = upstream * (1 - T.salinityRelax) + T.salinityMeanPsu * T.salinityRelax + budget[i]
     }
     // Land keeps the mean, so a sample at the coast blends in a sane value.
     for (let i = 0; i < n; i++) if (land[i]) next[i] = T.salinityMeanPsu
+    grid.averagePoleRows(next, sea)
     salinity = next
   }
   for (let i = 0; i < n; i++) salinity[i] = land[i] ? 0 : Math.max(T.salinityMinPsu, Math.min(T.salinityMaxPsu, salinity[i]))
@@ -136,6 +155,7 @@ export function computeSalinity(seaTemperature: Float32Array, landRain: Float32A
       deepWater[i] = cold * salty
     }
   }
+  grid.averagePoleRows(deepWater, sea)
 
   return { salinity, deepWater }
 }

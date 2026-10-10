@@ -1,5 +1,5 @@
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
-import type { Domain, DomainGrid } from '../core/domain'
+import { torusDomain, type Domain, type DomainGrid } from '../core/domain'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { rasterCellAt, type RiverGraph } from './riverGraph'
 import { detHypot } from '../core/detMath'
@@ -174,6 +174,8 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
   const hard = new Float32Array(n)
   const supply = new Float32Array(n)
   const fetchCap = Math.max(1, Math.round((SURFACE_TUNING.coastFetchCapKm * 1000) / cellM))
+  const march = { x: 0, y: 0 }
+  const moved = { x: 0, y: 0 }
   let maxExposure = 0
   for (let c = 0; c < n; c++) {
     if (!coast[c]) continue
@@ -186,15 +188,20 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
     const v = wind[gi * 2 + 1]
     const speed = detHypot(u, v)
     if (speed > 1e-6) {
-      // March upwind over the sea, one cell per step.
-      const dx = -u / speed
-      const dy = -v / speed
+      // March upwind over the sea, one cell per step: on the sphere along
+      // the great circle, the direction carried along with the point
+      // (Domain.displace, transport — on the torus the sum by hand and the
+      // same direction, as before; step 4e).
+      march.x = -u / speed
+      march.y = -v / speed
       let fetch = 0
       let px = x + 0.5
       let py = y + 0.5
       for (let k = 0; k < fetchCap; k++) {
-        px += dx
-        py += dy
+        domain.displace(px, py, march.x, march.y, moved)
+        domain.transport(march.x, march.y, px, py, moved.x, moved.y, march)
+        px = moved.x
+        py = moved.y
         if (!isSea(at(Math.floor(px), Math.floor(py)))) break
         fetch++
       }
@@ -232,7 +239,10 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
       const y = (c - x) / width
       let s = 0
       for (const m of mouths) {
-        const d2 = domain.distanceSq(x, y, m.x, m.y)
+        // Between the cells' centres: on the sphere a row's index is not
+        // its colatitude (row 0's would be the pole). On the torus the same
+        // offsets.
+        const d2 = domain.distanceSq(x + 0.5, y + 0.5, m.x + 0.5, m.y + 0.5)
         if (d2 > r2) continue
         s += m.load * (1 - Math.sqrt(d2) / reachCells)
       }
@@ -245,10 +255,15 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
 
   // The type per cell.
   const type = new Uint8Array(n)
+  // Two cells each way, east-west as many of a row's cells as span two
+  // equator cells (the sphere's narrow rows; 2 on the torus).
+  const deltaReach = new Int32Array(height)
+  for (let y = 0; y < height; y++) deltaReach[y] = Math.min(width >> 1, Math.max(2, Math.round(2 / grid.rowScale(y))))
   const nearDelta = (c: number): boolean => {
     const x = c % width
     const y = (c - x) / width
-    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (deltaAt[at(x + dx, y + dy)]) return true
+    const rx = deltaReach[y]
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -rx; dx <= rx; dx++) if (deltaAt[at(x + dx, y + dy)]) return true
     return false
   }
   for (let c = 0; c < n; c++) {
@@ -296,10 +311,12 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
       ex += exposure[c]; rl += relief[c]; hd += hard[c]; sp += supply[c]
       votes[type[c]]++
       if (k > start) {
+        // The step between the two cells' centres: 1 or √2 cells on the
+        // torus (sqrt of 1 or 2, Math.SQRT2's bits), the arc on the sphere.
         const a = cells[k - 1]
-        const dx = Math.min(Math.abs((c % width) - (a % width)), width - Math.abs((c % width) - (a % width)))
-        const dy = Math.min(Math.abs(Math.floor(c / width) - Math.floor(a / width)), height - Math.abs(Math.floor(c / width) - Math.floor(a / width)))
-        km += dx > 0 && dy > 0 ? cellKm * Math.SQRT2 : cellKm
+        const ax = a % width
+        const cx = c % width
+        km += cellKm * Math.sqrt(domain.distanceSq(cx + 0.5, (c - cx) / width + 0.5, ax + 0.5, (a - ax) / width + 0.5))
       }
     }
     let best = 1
@@ -338,7 +355,9 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
 
 // The invariants of a coast graph, as riverGraphInvariants: check name →
 // violations.
-export function coastGraphInvariants(coast: CoastGraph, elevation: Float32Array): Record<string, number> {
+// `grid`: the coast's raster over its domain (the torus's when not given,
+// as the graph was checked before the sphere).
+export function coastGraphInvariants(coast: CoastGraph, elevation: Float32Array, grid: DomainGrid = torusDomain(coast.width, coast.height).grid(coast.width, coast.height)): Record<string, number> {
   const out: Record<string, number> = { cellsOnCoast: 0, cellsOnce: 0, typeKnown: 0, reachesContiguous: 0 }
   const seen = new Uint8Array(coast.width * coast.height)
   for (const r of coast.reaches) {
@@ -349,10 +368,14 @@ export function coastGraphInvariants(coast: CoastGraph, elevation: Float32Array)
       if (seen[c]) out.cellsOnce++
       seen[c] = 1
       if (k > 0) {
+        // One of the previous cell's eight neighbours, through the grid (on
+        // the sphere across a pole too).
         const a = coast.cells[r.cellStart + k - 1]
-        const dx = Math.abs((c % coast.width) - (a % coast.width))
-        const dy = Math.abs(Math.floor(c / coast.width) - Math.floor(a / coast.width))
-        if (Math.min(dx, coast.width - dx) > 1 || Math.min(dy, coast.height - dy) > 1) out.reachesContiguous++
+        const ax = a % coast.width
+        const ay = (a - ax) / coast.width
+        let adjacent = false
+        for (const [dx, dy] of D8) if (grid.neighbour(ax, ay, dx, dy) === c) adjacent = true
+        if (!adjacent) out.reachesContiguous++
       }
     }
   }

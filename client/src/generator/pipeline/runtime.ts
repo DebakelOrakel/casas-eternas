@@ -1153,7 +1153,7 @@ function handleHydrologyRun(): void {
       for (let c = 0; c < biomesOut.length; c++) if (result.ice[c] > 0 && elevation[c] > 0) biomesOut[c] = Biome.Glacier
     }
     const rivers = result.graph
-      ? riverPolylinesFromGraph(result.graph, result.maxDischarge)
+      ? riverPolylinesFromGraph(result.graph, result.maxDischarge, domain)
       : extractRiverPolylines(result.routing, result.discharge, elevation, threshold, result.maxDischarge)
     // The glaciers (computed above with the graph) ride in the level field the shore drawing reads: an ice
     // cell's level is its ice surface, its surface kind ice — the map

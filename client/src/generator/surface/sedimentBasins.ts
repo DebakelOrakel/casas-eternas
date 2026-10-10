@@ -3,6 +3,7 @@ import { SURFACE_TUNING } from './surfaceTuneParams'
 import type { FlowRouting } from './flowRouting'
 import { rasterCellAt, type RiverGraph } from './riverGraph'
 import { detAtan2, detCos, detSin } from '../core/detMath'
+import { globeFrame } from '../core/domain'
 
 // SEDIMENT BASINS AS FEATURES (ADAPTIVE_MESH_PLAN.md F1, decision 4a of
 // adaptive-mesh.md): where the erosion pass left material — the
@@ -20,6 +21,11 @@ import { detAtan2, detCos, detSin } from '../core/detMath'
 // shedding into a basin is what makes placer gold and banded iron
 // plausible there. Basins no river reaches (marine wedges off a cliff
 // coast, deposits of hillslope creep) carry the mean over their own cells.
+//
+// Every sum is by area (step 4e): a cell weighs its row's cellArea, 1 on
+// the torus and cos φ on the sphere, so a basin's area, volume, means and
+// minimum size are the world's and not the chart's; `cells` stays the
+// count.
 export interface SedimentBasin {
   id: number
   kind: 'alluvial' | 'marine'
@@ -28,12 +34,14 @@ export interface SedimentBasin {
   volumeKm3: number
   meanThicknessM: number
   maxThicknessM: number
-  // Centroid in texel coordinates (toroidal mean).
+  // Centroid in texel coordinates: the torus's circular mean per axis, the
+  // sphere's mean position on the globe.
   x: number
   y: number
   // The river reaches ending in this basin.
   mouthReaches: number[]
-  // Provenance over the feeding catchments (own cells when none).
+  // Provenance over the feeding catchments (own cells when none); the
+  // catchment's area in cells.
   catchmentCells: number
   cratonAge: number
   hardness: number
@@ -62,8 +70,16 @@ export interface SedimentBasinResult {
 
 export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinResult {
   const { before, after, width, height, routing, graph, cellM } = input
-  const { grid } = routing
+  const { grid, domain } = routing
   const n = width * height
+  const areaOf = (c: number): number => grid.cellArea(Math.floor(c / width))
+  // The centroid on the globe when the domain is one (Domain.noise names the
+  // space its points lie in): the mean of the cells' positions, put back
+  // on the surface. The torus's points have no such space, and keep the
+  // circular mean per axis.
+  const globe = domain.noise.kind === 'globe' ? domain.noise : null
+  const frame = globeFrame()
+  const centre = { x: 0, y: 0 }
   const minThickness = SURFACE_TUNING.sedimentBasinMinThicknessM
   const thickness = new Float32Array(n)
   for (let c = 0; c < n; c++) {
@@ -107,7 +123,9 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
         }
       }
     }
-    if (members.length < SURFACE_TUNING.sedimentBasinMinCells) {
+    let area = 0
+    for (const c of members) area += areaOf(c)
+    if (area < SURFACE_TUNING.sedimentBasinMinCells) {
       for (const c of members) label[c] = 0
       continue
     }
@@ -115,36 +133,48 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
     let max = 0
     let marine = 0
     let sx = 0, sy = 0, cx = 0, cy = 0
+    let gx = 0, gy = 0, gz = 0
     let craton = 0, hard = 0
     for (const c of members) {
       const t = thickness[c]
-      volume += t
+      const w = areaOf(c)
+      volume += t * w
       if (t > max) max = t
-      if (after[c] <= SEA_LEVEL) marine++
+      if (after[c] <= SEA_LEVEL) marine += w
       const x = c % width
       const y = (c - x) / width
-      const ax = (x / width) * Math.PI * 2
-      const ay = (y / height) * Math.PI * 2
-      sx += detSin(ax); cx += detCos(ax); sy += detSin(ay); cy += detCos(ay)
-      craton += coarse(input.cratonAge, c)
-      hard += coarse(input.hardness, c)
+      if (globe) {
+        globe.frame(x + 0.5, y + 0.5, frame)
+        gx += frame.px * w; gy += frame.py * w; gz += frame.pz * w
+      } else {
+        const ax = (x / width) * Math.PI * 2
+        const ay = (y / height) * Math.PI * 2
+        sx += detSin(ax); cx += detCos(ax); sy += detSin(ay); cy += detCos(ay)
+      }
+      craton += coarse(input.cratonAge, c) * w
+      hard += coarse(input.hardness, c) * w
     }
-    const mx = ((detAtan2(sx, cx) / (Math.PI * 2)) + 1) % 1
-    const my = ((detAtan2(sy, cy) / (Math.PI * 2)) + 1) % 1
+    let mx = ((detAtan2(sx, cx) / (Math.PI * 2)) + 1) % 1
+    let my = ((detAtan2(sy, cy) / (Math.PI * 2)) + 1) % 1
+    if (globe) {
+      globe.locate(gx, gy, gz, centre)
+      mx = centre.x / width
+      my = centre.y / height
+    }
     basins.push({
       id: id - 1,
-      kind: marine * 2 > members.length ? 'marine' : 'alluvial',
+      kind: marine * 2 > area ? 'marine' : 'alluvial',
       cells: members.length,
-      areaKm2: members.length * cellAreaKm2,
+      areaKm2: area * cellAreaKm2,
       volumeKm3: (volume * cellAreaKm2) / 1000,
-      meanThicknessM: volume / members.length,
+      meanThicknessM: volume / area,
       maxThicknessM: max,
       x: mx * width,
       y: my * height,
       mouthReaches: [],
-      catchmentCells: members.length,
-      cratonAge: craton / members.length,
-      hardness: hard / members.length,
+      catchmentCells: area,
+      cratonAge: craton / area,
+      hardness: hard / area,
     })
   }
 
@@ -171,9 +201,10 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
     for (let c = 0; c < n; c++) {
       const m = drainsTo[c]
       if (m < 0) continue
-      count[m]++
-      cratonSum[m] += coarse(input.cratonAge, c)
-      hardSum[m] += coarse(input.hardness, c)
+      const w = areaOf(c)
+      count[m] += w
+      cratonSum[m] += coarse(input.cratonAge, c) * w
+      hardSum[m] += coarse(input.hardness, c) * w
     }
     const fed = basins.map(() => ({ cells: 0, craton: 0, hard: 0 }))
     for (const r of graph.reaches) {

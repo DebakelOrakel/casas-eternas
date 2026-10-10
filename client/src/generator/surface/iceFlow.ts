@@ -4,7 +4,7 @@ import type { Domain } from '../core/domain'
 import { CLIMATE_TUNING } from '../climate/climateTuneParams'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { SURFACE_TUNING } from './surfaceTuneParams'
-import { detPow } from '../core/detMath'
+import { detHypot, detPow } from '../core/detMath'
 
 // ICE THICKNESS ON THE FINAL TERRAIN (ADAPTIVE_MESH_PLAN.md F4, docs/design/
 // glacial.md "Forerunner"): the shallow-ice flow once, with the final
@@ -108,14 +108,19 @@ export function computeIceThickness(input: IceFlowInputs): IceFlowResult {
     for (let c = 0; c < n; c++) surface[c] = elevation[c] > SEA_LEVEL ? elevationToMeters(elevation[c] - SEA_LEVEL) + thickness[c] : elevationToMeters(elevation[c] - SEA_LEVEL)
     // Steepest descent on the surface (8 neighbours, the sea included as
     // a sink: ice that reaches the sea calves).
+    // A step's length in cells: east-west the row's width (cos φ on the
+    // sphere), a diagonal hypot of the two (√2 and 1 on the torus, to the
+    // bit; step 4e).
     for (const c of land) {
       const x = c % width
       const y = (c - x) / width
+      const ew = grid.rowScale(y)
+      const diag = detHypot(ew, 1)
       let best = -1
       let bestDrop = 0
       for (let k = 0; k < 8; k++) {
         const nb = at(x + D8[k][0], y + D8[k][1])
-        const dist = (D8[k][0] !== 0 && D8[k][1] !== 0) ? Math.SQRT2 : 1
+        const dist = (D8[k][0] !== 0 && D8[k][1] !== 0) ? diag : D8[k][0] !== 0 ? ew : 1
         const drop = (surface[c] - surface[nb]) / (dist * cellM)
         if (drop > bestDrop) { bestDrop = drop; best = nb }
       }
@@ -127,7 +132,7 @@ export function computeIceThickness(input: IceFlowInputs): IceFlowResult {
     order.sort((a, b) => surface[b] - surface[a])
     flux.fill(0)
     for (const c of order) {
-      const q = flux[c] + balance[c] * cellArea
+      const q = flux[c] + balance[c] * (cellArea * grid.cellArea(Math.floor(c / width)))
       flux[c] = q > 0 ? q : 0
       const r = receiver[c]
       if (q > 0 && r >= 0 && elevation[r] > SEA_LEVEL) flux[r] += q

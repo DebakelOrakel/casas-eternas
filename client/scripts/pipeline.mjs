@@ -923,6 +923,416 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   check(`an epoch on the sphere at this size costs ${(s.ms / EPOCHS).toFixed(0)} ms (the torus ${(t.ms / EPOCHS).toFixed(0)} ms)`, s.ms / EPOCHS < 20000)
 })
 
+// THE CLIMATE STEP ON THE SPHERE (DEC-0035, step 4e): what the step runs —
+// the climate, its refinement, the rivers, lakes, coast, ice, basins and
+// the ground water — through the runtime on a sphere world after its
+// history, then four of its primitives on the modules with a mutation
+// each. The torus's checks of the same stages (golden's invariants) are
+// mirrored where the messages carry what they read.
+test('a sphere world runs the climate step through the runtime: finite, pole-handled, seamless, rivers that flow', async () => {
+  const p = await freshPipeline()
+  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere' })
+  await until(() => p.count('rendered') >= 1, { label: 'the first sphere render' })
+  p.dispatch({ type: 'genesisStart' })
+  await until(() => p.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: `${ARCHEAN_EPOCHS} sphere epochs` })
+  p.dispatch({ type: 'genesisStop' })
+  await quiet(p)
+  const handed = p.count('rendered')
+  p.dispatch({ type: 'genesisFinalize' })
+  await until(() => p.count('rendered') > handed, { label: 'the sphere hand-over render' })
+  await quiet(p)
+  await runEpochs(p, 4)
+  p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  await until(() => p.count('climateData') >= 1, { label: 'the sphere climate' })
+  p.dispatch({ type: 'climateRefine' })
+  await until(() => p.count('climateRefined') >= 1 && p.messages.some((m) => m.type === 'climateData' && m.refined), { label: 'the sphere refinement', timeout: 120000 })
+  p.dispatch({ type: 'hydrologyRun' })
+  await until(() => p.count('hydrologyData') >= 1, { label: 'the sphere hydrology', timeout: 120000 })
+  await quiet(p)
+  const errors = p.messages.filter((m) => m.type === 'error')
+  check('climateRun, the refinement and hydrologyRun answer on a sphere world, no error', errors.length === 0, errors.map((e) => e.message).join('; '))
+
+  const c0 = p.messages.find((m) => m.type === 'climateData' && !m.refined)
+  const cr = p.messages.filter((m) => m.type === 'climateData' && m.refined).at(-1)
+  const r = p.last('climateRefined')
+  const h = p.last('hydrologyData')
+  const RX = r.resX
+  const RY = r.resY
+  const n = RX * RY
+  const f32 = (b) => new Float32Array(b)
+
+  // Finite, every field the three answers carry.
+  const fields = {
+    ...Object.fromEntries(['temperature', 'wind', 'currents', 'currentAnomaly', 'precipitation', 'seasonalAmplitude', 'monsoonIndex'].flatMap((k) => [[`climate.${k}`, f32(c0[k])], [`refined.${k}`, f32(cr[k])]])),
+    ...Object.fromEntries(['temperature', 'precipitation', 'fog', 'foehn', 'rainVariability', 'ensoPattern', 'salinity', 'deepWater', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder', 'pressure', 'wind', 'currents', 'currentAnomaly', 'upwelling'].map((k) => [`months.${k}`, f32(r[k])])),
+    ...Object.fromEntries(['lakeDepth', 'discharge', 'waterLevel', 'iceThickness', 'waterTable', 'precipitationEffective', 'riverPoints'].map((k) => [`hydrology.${k}`, f32(h[k])])),
+  }
+  const notFinite = Object.entries(fields).filter(([, f]) => f.length === 0 || !allFinite(f)).map(([k]) => k)
+  check(`every field of the climate, the refinement and the hydrology is whole and finite (${Object.keys(fields).length} fields)`, notFinite.length === 0 && Number.isFinite(r.ensoPeriodYears) && Number.isFinite(h.maxDischarge), notFinite.join(', '))
+
+  // The pole rows: a field the step smooths, solves or carries is one
+  // value along a pole row, its land and its sea each (a row may hold both).
+  const landC = new Uint8Array(n)
+  const precipA = f32(cr.precipitation)
+  for (let i = 0; i < n; i++) landC[i] = precipA[i] >= 0 ? 1 : 0
+  const poleSpread = (field, layers = 1) => {
+    let worst = 0
+    for (let m = 0; m < layers; m++) {
+      for (const row of [0, RY - 1]) {
+        for (const kind of [0, 1]) {
+          let lo = Infinity
+          let hi = -Infinity
+          for (let x = 0; x < RX; x++) {
+            const i = row * RX + x
+            if (landC[i] !== kind) continue
+            const v = field[m * n + i]
+            lo = Math.min(lo, v)
+            hi = Math.max(hi, v)
+          }
+          if (hi > lo) worst = Math.max(worst, hi - lo)
+        }
+      }
+    }
+    return worst
+  }
+  // The months' temperature is the year's mean plus the cycle and the
+  // overturning's warmth: the parts the refinement adds are what is one
+  // value. (The mean carries each cell's own lapse over its ground.)
+  const cycle = f32(r.temperature).map((v, k) => v - f32(cr.temperature)[k % n])
+  const scalars = {
+    pressure: [f32(r.pressure), r.months], cycle: [cycle, r.months], precipitation: [f32(r.precipitation), r.months],
+    salinity: [f32(r.salinity), 1], deepWater: [f32(r.deepWater), 1], upwelling: [f32(r.upwelling), 1], currentAnomaly: [f32(r.currentAnomaly), 1],
+    fog: [f32(r.fog), 1], foehn: [f32(r.foehn), 1], rainVariability: [f32(r.rainVariability), 1], ensoPattern: [f32(r.ensoPattern), 1],
+    cyclone: [f32(r.cyclone), 1], tornado: [f32(r.tornado), 1], blizzard: [f32(r.blizzard), 1], dust: [f32(r.dust), 1], thunder: [f32(r.thunder), 1],
+    'climate.seasonalAmplitude': [f32(c0.seasonalAmplitude), 1], 'refined.seasonalAmplitude': [f32(cr.seasonalAmplitude), 1], 'refined.monsoonIndex': [f32(cr.monsoonIndex), 1],
+  }
+  const spread = Object.entries(scalars).map(([k, [f, layers]]) => [k, poleSpread(f, layers)]).filter(([, s]) => s > 1e-3)
+  check(`the refined fields are one value along each pole row, land and sea apart (${Object.keys(scalars).length} fields)`, spread.length === 0, spread.map(([k, s]) => `${k} ${s.toFixed(4)}`).join(', '))
+  const tSpread = poleSpread(f32(cr.temperature))
+  check('the temperature along a pole row differs only by its cells\' ground (under 1 °C)', tSpread < 1, `${tSpread.toFixed(3)} °C`)
+
+  // The seam: the step across x = 0 / W is a step like any other in its row.
+  const seamOf = (field, rx, ry, layers = 1) => {
+    let seam = 0
+    let inner = 0
+    for (let m = 0; m < layers; m++) {
+      for (let y = 0; y < ry; y++) {
+        const row = field.subarray(m * rx * ry + y * rx, m * rx * ry + (y + 1) * rx)
+        seam = Math.max(seam, Math.abs(row[0] - row[rx - 1]))
+        for (let x = 1; x < rx; x++) inner = Math.max(inner, Math.abs(row[x] - row[x - 1]))
+      }
+    }
+    return { seam, inner }
+  }
+  // The fields that vary smoothly; the derived ones (fog, föhn, the storms)
+  // jump from cell to cell anywhere, and a seam check reads nothing there.
+  const smooth = ['pressure', 'cycle', 'precipitation', 'salinity', 'currentAnomaly', 'climate.seasonalAmplitude', 'refined.seasonalAmplitude', 'refined.monsoonIndex']
+  const seamed = Object.entries({ ...Object.fromEntries(smooth.map((k) => [k, scalars[k]])), temperature: [f32(r.temperature), r.months] })
+    .map(([k, [f, layers]]) => [k, seamOf(f, RX, RY, layers)]).filter(([, s]) => s.seam > s.inner)
+  check(`no smooth field of the climate step has a seam at x = 0 / W (${smooth.length + 1} fields)`, seamed.length === 0, seamed.map(([k, s]) => `${k} ${s.seam.toFixed(3)} > ${s.inner.toFixed(3)}`).join(', '))
+
+  // The rivers: every polyline step short in the chart where the chart
+  // stretches it, none across a pole or the seam, one regime per line.
+  const rendered = p.last('rendered')
+  const W2 = rendered.elevationResX
+  const H2 = rendered.elevationResY
+  const elevation = f32(rendered.elevation)
+  const D = await server.ssrLoadModule('/src/generator/core/domain.ts')
+  const world = D.sphereDomain(W2, H2)
+  const points = f32(h.riverPoints)
+  const lengths = new Uint32Array(h.riverLengths)
+  let offset = 0
+  let segments = 0
+  let stretched = 0
+  let crossings = 0
+  let longest = 0
+  for (const len of lengths) {
+    for (let k = 1; k < len; k++) {
+      const a = (offset + k - 1) * 3
+      const b = (offset + k) * 3
+      const dx = Math.abs(points[b] - points[a])
+      const dy = Math.abs(points[b + 1] - points[a + 1])
+      const chart = Math.hypot(dx, dy)
+      const truth = Math.sqrt(world.distanceSq(points[a], points[a + 1], points[b], points[b + 1]))
+      if (dx > W2 / 4) crossings++
+      if (chart > Math.max(RIVER_CHART_STEP_HARNESS + 0.5, 1.02 * truth)) stretched++
+      longest = Math.max(longest, chart)
+      segments++
+    }
+    offset += len
+  }
+  check(`the rivers' polylines step short in the chart: none stretched by the chart past a few texels, none across a pole or the seam (${lengths.length} lines, ${segments} steps, the longest ${longest.toFixed(1)} texels)`,
+    lengths.length > 0 && stretched === 0 && crossings === 0 && new Uint8Array(h.riverRegimes).length === lengths.length, `${stretched} stretched, ${crossings} across`)
+
+  // The graph's own invariants, as golden checks them on the torus, on the
+  // mesh's heights (the saved mesh: the graph's cells are its vertices).
+  const before = p.count('worldData')
+  p.dispatch({ type: 'serializeWorld' })
+  await until(() => p.count('worldData') > before, { label: 'the serialized sphere world' })
+  const z = f32(p.last('worldData').mesh.z)
+  const RG = await server.ssrLoadModule('/src/generator/surface/riverGraph.ts')
+  const parsed = JSON.parse(h.riverGraph.json)
+  const graph = { ...parsed, cells: new Int32Array(h.riverGraph.cells) }
+  const broken = Object.entries(RG.riverGraphInvariants(graph, z)).filter(([, c]) => c > 0)
+  const mouths = graph.nodes.filter((node) => node.kind === 'mouth').length
+  const uphill = graph.reaches.filter((rc) => rc.kind === 'river' && rc.dropM < -1).length
+  check(`the river graph holds its invariants on the sphere: acyclic, discharge monotone, every mouth in water (${graph.reaches.length} reaches, ${mouths} mouths)`,
+    broken.length === 0 && graph.reaches.length > 0 && mouths > 0, broken.map(([k, c]) => `${k}:${c}`).join(' '))
+  check('every river reach runs downhill', uphill === 0, `${uphill} reaches rise over a metre`)
+  const courses = parsed.courses ?? []
+  const coursePoints = f32(h.riverGraph.coursePoints)
+  check(`the courses are finite with a sane sinuosity (${courses.length} courses)`, allFinite(coursePoints) && courses.every((c) => c.sinuosity >= 0.99 && c.sinuosity < 4))
+
+  // The lakes and the water bodies: levels above their floors, depths only
+  // under a body, the lakes a small share of the land.
+  const lakeDepth = f32(h.lakeDepth)
+  const bodies = h.waterBodies ?? []
+  let wet = 0
+  let land = 0
+  for (let i = 0; i < elevation.length; i++) {
+    if (elevation[i] > 0) land++
+    if (lakeDepth[i] > 0) wet++
+  }
+  const badBodies = bodies.filter((b) => !(Number.isFinite(b.level) && b.level >= b.floor - 1e-6 && b.cells > 0))
+  check(`the lakes are plausible on the sphere (${bodies.length} bodies, ${wet} wet cells, ${(100 * wet / Math.max(1, land)).toFixed(1)} % of the land)`,
+    badBodies.length === 0 && lakeDepth.every((d) => d >= 0) && wet < 0.15 * land)
+
+  // The coast's invariants on the sphere's grid, the ice on land only.
+  const CG = await server.ssrLoadModule('/src/generator/surface/coastGraph.ts')
+  const coast = { width: W2, height: H2, reaches: h.coast.reaches, cells: new Int32Array(h.coast.cells), type: new Uint8Array(h.coastType) }
+  const coastBroken = Object.entries(CG.coastGraphInvariants(coast, elevation, world.grid(W2, H2))).filter(([, c]) => c > 0)
+  check(`the coast holds its invariants on the sphere's grid (${coast.reaches.length} reaches)`, coastBroken.length === 0 && coast.reaches.length > 0, coastBroken.map(([k, c]) => `${k}:${c}`).join(' '))
+  const ice = f32(h.iceThickness)
+  check('the ice lies on land only', ice.every((t, i) => t <= 0 || elevation[i] > 0))
+
+  // The basins: finite, their areas the world's (a cell's area between the
+  // pole row's and the equator's), the centroid on the globe.
+  const basins = h.sedimentBasins ?? []
+  const cellKm2 = (40000 / W2) ** 2
+  const badBasins = basins.filter((b) => !(Number.isFinite(b.x) && Number.isFinite(b.y) && b.x >= 0 && b.x < W2 && b.y >= 0 && b.y <= H2 && Number.isFinite(b.cratonAge) && b.areaKm2 > 0 && b.areaKm2 <= b.cells * cellKm2 * 1.5))
+  check(`the sediment basins are finite and on the globe (${basins.length} basins)`, badBasins.length === 0, JSON.stringify(badBasins[0] ?? ''))
+})
+
+// The picture's step: RIVER_CHART_STEP in surface/riverGraph.ts.
+const RIVER_CHART_STEP_HARNESS = 2
+
+test('the climate step\'s primitives on the sphere, each against its mutation', async () => {
+  const L = (m) => server.ssrLoadModule(m)
+  const [D, FR, SB, RG, ES, CT, EB, OC, CF, PF, RC, MAP] = await Promise.all([
+    L('/src/generator/core/domain.ts'), L('/src/generator/surface/flowRouting.ts'), L('/src/generator/surface/sedimentBasins.ts'),
+    L('/src/generator/surface/riverGraph.ts'), L('/src/generator/elevation/elevationScale.ts'), L('/src/generator/climate/climateTuneParams.ts'),
+    L('/src/generator/climate/energyBalance.ts'), L('/src/generator/climate/oceanCurrents.ts'), L('/src/generator/climate/climateField.ts'),
+    L('/src/generator/planet/planetForcing.ts'), L('/src/generator/surface/riverCourse.ts'), L('/src/generator/core/mapConfig.ts'),
+  ])
+  const sphere = D.sphereDomain(W, H)
+  const torus = D.torusDomain(W, H)
+  const R = W / (2 * Math.PI)
+  const frame = D.globeFrame()
+  // Unit vector of a chart point, and the arc between two (in cells).
+  const unit = (x, y) => { sphere.noise.frame(x, y, frame); return [frame.px / R, frame.py / R, frame.pz / R] }
+  const arc = (ax, ay, bx, by) => Math.sqrt(sphere.distanceSq(ax, ay, bx, by))
+
+  // (1) The sediment basins' centroid on the globe: four discs of deposit —
+  // a cap on the north pole, one holding the south pole off its centre, one
+  // across the seam, one at mid-latitude. The centroid lies in its basin
+  // and at the disc's centre; the torus's circular mean over the same
+  // cells (the formula before step 4e) misses the polar ones by cells.
+  {
+    const discs = [[0, 0, 4.5], [50, H - 3, 6.5], [0.5, 64, 4.5], [180, 40, 3.5]]
+    const before = new Float32Array(W * H).fill(0.05)
+    const after = before.slice()
+    const add = ES.metersToElevation(80)
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        for (const [cx, cy, r] of discs) if (arc(x + 0.5, y + 0.5, cx, cy) <= r) after[y * W + x] += add
+      }
+    }
+    const centroids = async (domain) => {
+      const routing = await FR.fillDepressionsAndRouteFlow(after, domain, 0)
+      return SB.findSedimentBasins({ before, after, width: W, height: H, routing, graph: null, cellM: 1000 })
+    }
+    const s = await centroids(sphere)
+    const t = await centroids(torus)
+    const missOf = (result) => discs.map(([cx, cy]) => {
+      const b = result.basins.reduce((best, bb) => (arc(bb.x, bb.y, cx, cy) < arc(best.x, best.y, cx, cy) ? bb : best))
+      return arc(b.x, b.y, cx, cy)
+    })
+    const inside = s.basins.every((b) => s.label[sphere.grid(W, H).cellAt(b.x, b.y)] === b.id + 1)
+    const miss = missOf(s)
+    const missTorus = missOf(t)
+    check(`the basins' centroids lie in their basins, at the discs' centres on the globe (${s.basins.length} basins, off by ${miss.map((m) => m.toFixed(2)).join(', ')} cells)`,
+      s.basins.length === discs.length && inside && miss.every((m) => m < 0.75))
+    check(`mutation: the torus's circular mean on the same cells misses the polar basins (${missTorus.map((m) => m.toFixed(2)).join(', ')} cells)`, missTorus[0] > 1 && missTorus[1] > 1)
+  }
+
+  // (2) The river ribbons near and across a pole: a reach along a meridian
+  // over the north pole, and one that steps east-west in the pole row. With
+  // the domain the ribbons step at most a few texels in the chart and are
+  // cut where they cross the pole; without it (the drawing before step 4e)
+  // the pole-row step is one chart line across a sixth of the map.
+  {
+    const path = [[10, 6], [10, 4], [10, 2], [10, 0.6], [10 + W / 2, 0.7], [10 + W / 2, 2.5], [10 + W / 2, 4]]
+    const ring = [[40, 0.8], [80, 0.8], [81, 2]]
+    const cells = [...path, ...ring]
+    const graph = {
+      width: W, height: H, substrate: 'mesh', bodies: [],
+      nodes: [{ id: 0, kind: 'source', cell: 0 }, { id: 1, kind: 'mouth', cell: path.length - 1 }, { id: 2, kind: 'source', cell: path.length }, { id: 3, kind: 'mouth', cell: cells.length - 1 }],
+      reaches: [
+        { id: 0, from: 0, to: 1, cellStart: 0, cellCount: path.length, dischargeIn: 1, dischargeOut: 2, regime: 'perennial' },
+        { id: 1, from: 2, to: 3, cellStart: path.length, cellCount: ring.length, dischargeIn: 1, dischargeOut: 2, regime: 'perennial' },
+      ],
+      cells: Int32Array.from(cells.map((_, i) => i)),
+      cellX: Float32Array.from(cells.map((c) => c[0])),
+      cellY: Float32Array.from(cells.map((c) => c[1])),
+    }
+    const measure = (lines) => {
+      let o = 0
+      let longest = 0
+      let across = 0
+      for (const len of lines.lengths) {
+        for (let k = 1; k < len; k++) {
+          const dx = Math.abs(lines.points[(o + k) * 3] - lines.points[(o + k - 1) * 3])
+          if (dx > W / 4) across++
+          longest = Math.max(longest, Math.hypot(dx, lines.points[(o + k) * 3 + 1] - lines.points[(o + k - 1) * 3 + 1]))
+        }
+        o += len
+      }
+      return { longest, across, lines: lines.lengths.length }
+    }
+    const withDomain = measure(RG.riverPolylinesFromGraph(graph, 2, sphere))
+    const without = measure(RG.riverPolylinesFromGraph(graph, 2))
+    check(`a ribbon over a pole is cut there and every step is a few texels at most (${withDomain.lines} lines, the longest step ${withDomain.longest.toFixed(1)} texels)`, withDomain.across === 0 && withDomain.longest <= RIVER_CHART_STEP_HARNESS + 0.5 && withDomain.lines >= 3)
+    check(`mutation: drawn without the domain, the pole row's step is one chart line of ${without.longest.toFixed(0)} texels`, without.longest > 30)
+  }
+
+  // (3) The single-flow receiver measures in lengths: at 70°N a plane that
+  // falls as steeply east as south, in length (z falls by rowScale per cell
+  // east-west), so the true fall line is 45° from east. The receivers'
+  // mean step, in length, points that way; on the chart's square metric
+  // (the torus grid over the same raster) they turn toward the south, to
+  // atan(1 / cos φ).
+  {
+    const grid = sphere.grid(W, H)
+    const y0 = Math.round(H * (20 / 180))
+    const x0 = W / 2
+    const raw = new Float32Array(W * H).fill(-0.2)
+    for (let y = y0 - 10; y <= y0 + 10; y++) {
+      for (let x = x0 - 40; x <= x0 + 40; x++) raw[y * W + x] = 0.5 + 0.004 * (-(x - x0) * grid.rowScale(y0) - (y - y0))
+    }
+    const angleOf = async (domain) => {
+      const routing = await FR.fillDepressionsAndRouteFlow(raw, domain, 0)
+      let east = 0
+      let south = 0
+      const s = grid.rowScale(y0)
+      for (let y = y0 - 5; y <= y0 + 5; y++) {
+        for (let x = x0 - 25; x <= x0 + 25; x++) {
+          const t = routing.flowTarget[y * W + x]
+          if (t < 0) continue
+          east += ((t % W) - x) * s
+          south += Math.floor(t / W) - y
+        }
+      }
+      return (Math.atan2(south, east) * 180) / Math.PI
+    }
+    const onSphere = await angleOf(sphere)
+    const onChart = await angleOf(torus)
+    check(`the receivers follow the fall line in length at 70° (${onSphere.toFixed(1)}° from east, the plane's 45°)`, Math.abs(onSphere - 45) < 6)
+    check(`mutation: on the chart's square cells they turn to ${onChart.toFixed(1)}°`, onChart > 60)
+  }
+
+  // (4) A river's course at 75°N: a meandering reach along the parallel.
+  // Its bends are laid out in the plane about the reach on the globe, so
+  // the course's own sinuosity is the true one — the line put back on the
+  // globe is as long as it says. In the chart's plane (the torus's frame,
+  // the course before step 4e) the parallel is four times too long, the
+  // bends crowd four times as close on the globe, and the line on the globe
+  // is far longer than its sinuosity says.
+  {
+    const y = H * (15 / 180)
+    const path = []
+    for (let x = 20; x <= 80; x++) path.push([x, y])
+    const graph = {
+      width: W, height: H, substrate: 'mesh', bodies: [],
+      nodes: [{ id: 0, kind: 'source', cell: 0 }, { id: 1, kind: 'junction', cell: path.length - 1 }],
+      reaches: [{ id: 0, kind: 'river', from: 0, to: 1, cellStart: 0, cellCount: path.length, dischargeIn: 1e7, dischargeOut: 2e7, slope: 1e-4, bank: -1, sedimentM3: 0, regime: 'perennial' }],
+      cells: Int32Array.from(path.map((_, i) => i)), cellX: Float32Array.from(path.map((c) => c[0])), cellY: Float32Array.from(path.map((c) => c[1])),
+    }
+    let reachLength = 0
+    for (let k = 1; k < path.length; k++) reachLength += arc(path[k - 1][0], y, path[k][0], y)
+    const truthOf = (domain) => {
+      const [c] = RC.computeRiverCourses(graph, { cellM: MAP.METERS_PER_CELL, seed: 7, domain })
+      if (!c || c.pattern !== 'meandering') return { pattern: c?.pattern, ratio: NaN, finite: false }
+      const line = c.lines[0]
+      let length = 0
+      for (let k = 1; k < line.length / 2; k++) length += arc(line[2 * k - 2], line[2 * k - 1], line[2 * k], line[2 * k + 1])
+      return { pattern: c.pattern, ratio: length / (reachLength * c.sinuosity), sinuosity: c.sinuosity, finite: allFinite(line) }
+    }
+    const s = truthOf(sphere)
+    const t = truthOf(torus)
+    check(`a meandering course at 75°N is as long on the globe as its sinuosity says (${s.ratio.toFixed(3)}, sinuosity ${s.sinuosity?.toFixed(2)})`, s.finite && Math.abs(s.ratio - 1) < 0.03)
+    check(`mutation: laid out in the chart's plane it is ${t.ratio.toFixed(2)} times as long`, !(Math.abs(t.ratio - 1) < 0.3))
+  }
+
+  // (5) The refinement's two solves on the sphere: the year's temperature
+  // cycle and the overturning's inflow, at the tuned iteration counts
+  // against four times as many, on a world with land in the polar rows
+  // (where point Gauss-Seidel would leave a row near its start). The cycle
+  // converges; the inflow's Poisson solve does not on either shape at its
+  // tuned count (found 2026-10-10, left as it is), and on the sphere it
+  // must come no further from its limit than the torus's does.
+  {
+    const RXc = CF.CLIMATE_RES_X
+    const RYc = CF.CLIMATE_RES_Y
+    const nc = RXc * RYc
+    const g = sphere.grid(RXc, RYc)
+    const landC = new Uint8Array(nc)
+    const annual = new Float32Array(nc)
+    const wind = new Float32Array(nc * 2)
+    const sink = new Float32Array(nc)
+    for (let y = 0; y < RYc; y++) {
+      for (let x = 0; x < RXc; x++) {
+        const i = y * RXc + x
+        const u = unit((x + 0.5) * (W / RXc), (y + 0.5) * (H / RYc))
+        landC[i] = u[0] * 0.8 + u[2] * 0.6 > 0.55 || Math.abs(u[1]) > 0.97 ? 1 : 0
+        annual[i] = 28 - 50 * (Math.abs(u[2]) ** 1.5)
+        wind[i * 2] = 0.6 * Math.cos(3 * Math.asin(u[2]))
+        sink[i] = !landC[i] && u[2] > 0.85 ? 1 : 0
+      }
+    }
+    const iters = { ebm: CT.CLIMATE_TUNING.ebmSolveIters, conveyor: CT.CLIMATE_TUNING.conveyorSolveIters }
+    const cycleA = EB.seasonalCycle(landC, annual, wind, g, PF.DEFAULT_PLANET_FORCING, 0, 12)
+    const inflowA = OC.computeSinkInflow(sink, landC, g)
+    CT.CLIMATE_TUNING.ebmSolveIters = iters.ebm * 4
+    CT.CLIMATE_TUNING.conveyorSolveIters = iters.conveyor * 4
+    let cycleB, inflowB
+    try {
+      cycleB = EB.seasonalCycle(landC, annual, wind, g, PF.DEFAULT_PLANET_FORCING, 0, 12)
+      inflowB = OC.computeSinkInflow(sink, landC, g)
+    } finally {
+      CT.CLIMATE_TUNING.ebmSolveIters = iters.ebm
+      CT.CLIMATE_TUNING.conveyorSolveIters = iters.conveyor
+    }
+    let dCycle = 0
+    let range = 0
+    for (let k = 0; k < cycleA.length; k++) { dCycle = Math.max(dCycle, Math.abs(cycleA[k] - cycleB[k])); range = Math.max(range, Math.abs(cycleB[k])) }
+    let dInflow = 0
+    for (let k = 0; k < inflowA.length; k++) dInflow = Math.max(dInflow, Math.abs(inflowA[k] - inflowB[k]))
+    const gt = torus.grid(RXc, RYc)
+    const torusA = OC.computeSinkInflow(sink, landC, gt)
+    CT.CLIMATE_TUNING.conveyorSolveIters = iters.conveyor * 4
+    let torusB
+    try {
+      torusB = OC.computeSinkInflow(sink, landC, gt)
+    } finally {
+      CT.CLIMATE_TUNING.conveyorSolveIters = iters.conveyor
+    }
+    let dTorus = 0
+    for (let k = 0; k < torusA.length; k++) dTorus = Math.max(dTorus, Math.abs(torusA[k] - torusB[k]))
+    check(`the year's cycle converges on the sphere (within ${dCycle.toFixed(4)} °C of a ${range.toFixed(1)} °C swing), the inflow no worse than on the torus (${dInflow.toFixed(3)} against ${dTorus.toFixed(3)})`,
+      allFinite(cycleA) && allFinite(inflowA) && dCycle < 0.01 * range && dInflow <= dTorus)
+  }
+})
+
 // The sphere's coordinate noise (DEC-0035, fork 1): the warp, the ridged and
 // fine noise and the hypsometry are sampled at the point's place on the
 // globe (Domain.noise), not at its chart coordinates. Checked on the noise

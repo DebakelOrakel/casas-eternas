@@ -921,6 +921,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (shape === 'sphere' && !globeView) {
       globeView = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresRound: METERS_PER_CELL * MAP_WIDTH })
       globeView.setObliquity(Number(obliquityInput.value))
+      sendWater(globeView)
     } else if (shape !== 'sphere' && globeView) {
       globeView.dispose()
       globeView = null
@@ -1335,9 +1336,35 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // invalidated.
   let lastRiverData: { points: Float32Array; lengths: Uint32Array; regimes: Uint8Array } | null = null
 
+  // THE WATER ON EVERY VIEW (2026-10-10): the rivers, the levels and the
+  // terrain the shores are found on go to the flat map and, on a sphere
+  // world, to the globe as well — the globe draws them from the same data
+  // (map/sphereView.ts). A globe made later gets what there is (sendWater).
+  // What the views show follows the 'rivers' layer, on the globe only while
+  // it wears this world's layers (syncWaterShown).
+  let lastWaterElevation: { data: Float32Array; width: number; height: number } | null = null
+  const waterViews = (): WorldView[] => (globeView ? [flatView, globeView] : [flatView])
+  function sendWater(view: WorldView): void {
+    if (lastWaterElevation) view.setWaterElevation(lastWaterElevation.data, lastWaterElevation.width, lastWaterElevation.height)
+    if (lastWaterLevel && lastWaterSurface) view.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
+    else view.setWaterLevels(null, null)
+    if (lastRiverData) view.rivers.setPolylines(lastRiverData.points, lastRiverData.lengths, lastRiverData.regimes)
+    else view.rivers.setPolylines(new Float32Array(0), new Uint32Array(0))
+    syncWaterShown()
+  }
+  function syncWaterShown(): void {
+    const show = overlayShown('rivers')
+    for (const view of waterViews()) {
+      const on = show && (view !== globeView || (paintsGlobe() && globePainted))
+      view.rivers.setEnabled(on)
+      view.setLakesVisible(on)
+    }
+  }
+
   // The rivers on the map.
   function drawRivers(): void {
-    if (lastRiverData) flatView.rivers.setPolylines(lastRiverData.points, lastRiverData.lengths, lastRiverData.regimes)
+    if (!lastRiverData) return
+    for (const view of waterViews()) view.rivers.setPolylines(lastRiverData.points, lastRiverData.lengths, lastRiverData.regimes)
   }
   let lastWatersheds: Uint16Array | null = null
   let lastDischargeField: Float32Array | null = null
@@ -2077,6 +2104,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     root.classList.toggle('generator-screen--sphere-layers', shown)
     hoverTooltip?.setEnabled(worldShape !== 'sphere' || shown)
     syncSymbols()
+    syncWaterShown()
   }
   const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => {
     lastCompositePixels = pixels
@@ -3011,8 +3039,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (const id of OVERLAY_IDS) {
       const show = overlayShown(id)
       if (id === 'rivers') {
-        flatView.rivers.setEnabled(show)
-        flatView.setLakesVisible(show)
+        syncWaterShown()
       } else if (id === 'names') {
         labelsShown = show
       } else {
@@ -3716,7 +3743,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (message.coastType.byteLength > 0) lastCoastType = new Uint8Array(message.coastType)
     if (message.coast) lastCoast = { reaches: message.coast.reaches, cells: new Int32Array(message.coast.cells) }
     if (message.sedimentBasins) lastSedimentBasins = message.sedimentBasins
-    if (lastWaterLevel && lastWaterSurface) flatView.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
+    if (lastWaterLevel && lastWaterSurface) for (const view of waterViews()) view.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
     if (message.watersheds.byteLength > 0) lastWatersheds = new Uint16Array(message.watersheds)
     if (message.discharge.byteLength > 0) lastDischargeField = new Float32Array(message.discharge)
     if (message.maxDischarge > 0) lastMaxDischarge = message.maxDischarge
@@ -3746,11 +3773,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastCoastType = null
     lastCoast = null
     lastSedimentBasins = null
-    flatView.setWaterLevels(null, null)
     // Derived from the channel set, so it stales with it.
     lastPrecipitationEffective = null
-    flatView.rivers.setPolylines(new Float32Array(0), new Uint32Array(0))
-    flatView.rivers.setEnabled(false)
+    for (const view of waterViews()) {
+      view.setWaterLevels(null, null)
+      view.rivers.setPolylines(new Float32Array(0), new Uint32Array(0))
+      view.rivers.setEnabled(false)
+    }
     compositeOverlays()
   }
 
@@ -3781,12 +3810,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })
   // The chain of computes goes by itself unless a flow sequences it.
   const chainDriven = (): boolean => saveChainActive || restoreChainActive
-  // Whether the stages after the plates — the climate step's climate, its
-  // refinement and the rivers, and all that reads them — run on this
-  // world's shape. Not on the sphere yet (DEC-0035: its hydrology and the
-  // refinement's pole handling are still to come), so a sphere world's run
-  // settles, and saves, without them.
-  const laterStagesRun = (): boolean => worldShape !== 'sphere'
 
   // Posts a hydrology compute. Needs a computed climate (the worker caches its
   // precipitation as the river water source); every caller posts climateRun
@@ -4026,7 +4049,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
       // The shores are found on the PHYSICAL raster at draw time — the one
       // the hydrology set its levels against, not the display copy.
-      flatView.setWaterElevation(new Float32Array(message.raw), message.width, message.height)
+      lastWaterElevation = { data: new Float32Array(message.raw), width: message.width, height: message.height }
+      for (const view of waterViews()) view.setWaterElevation(lastWaterElevation.data, message.width, message.height)
       // The surfaces are metre-true now; exaggeration is a view property
       // (see mapSceneSettings). This screen is a map register throughout —
       // and the ribbons must carry the same scale as the ground they drape
@@ -4226,7 +4250,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // pipeline order. erosionRunCount 0 is a run that stopped before its
       // first epoch — un-eroded terrain gets no rivers. The save chain
       // sequences its own computes.
-      if (runJustSettled && erosionRunCount >= 1 && !saveChainActive && laterStagesRun()) {
+      if (runJustSettled && erosionRunCount >= 1 && !saveChainActive) {
         // The refinement and the rivers follow the climate by themselves
         // (handleClimateData).
         if (lastTemperature === null) requestClimate()
@@ -5126,7 +5150,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // independent of which panels were visited. Climate/hydrology/ecology need
     // eroded terrain (same gate as their panels) — pre-erosion, only elevation is
     // baked. No panel switch: the computes run in the worker regardless of the view.
-    if (erosionRunCount >= 1 && laterStagesRun()) {
+    if (erosionRunCount >= 1) {
       saveChainActive = true
       try {
         // Only when missing, like the restore's and the migration's chains:
@@ -5857,10 +5881,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // tectonics a world of proto-cratons that are still dissolving.
   const MIN_ARCHEAN_STABILISED = 0.5
   const entryRequirementUnmet = (index: number): string | null => {
-    // A sphere runs the planet, the Archean and the plates' history only
-    // (DEC-0035, steps 4d2–4d5): the later steps are locked, and say
-    // nothing — there is nothing to do that would open them.
-    if (index > panelIndexOf('tectonics') && worldShape === 'sphere') return ''
+    // A sphere runs the planet, the Archean, the plates' history and the
+    // climate step only (DEC-0035, steps 4d2–4e): the later steps are
+    // locked, and say nothing — there is nothing to do that would open them.
+    if (index > panelIndexOf('climate') && worldShape === 'sphere') return ''
     // Nothing exists before step 0 is answered — the steps after it all work on
     // the world it names and seeds.
     if (index > panelIndexOf('world') && !worldCreated) return t('notify.gate.needsWorld')

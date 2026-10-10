@@ -68,8 +68,10 @@ function computeContinentality(elevation: Float32Array, worldWidth: number, worl
 // cell per unit.
 export function computeSeasonalAmplitude(elevation: Float32Array, domain: Domain, equatorOffset = 0, dryLand?: Uint8Array, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float32Array {
   const { width: worldWidth, height: worldHeight } = domain
-  const continentality = computeContinentality(elevation, worldWidth, worldHeight, domain.grid(RX, RY), dryLand)
+  const grid = domain.grid(RX, RY)
+  const continentality = computeContinentality(elevation, worldWidth, worldHeight, grid, dryLand)
   const amplitude = new Float32Array(RX * RY)
+  const land = new Uint8Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {
     const yNorm = shiftedYNorm(gy, RY, equatorOffset)
     const phi = Math.abs(yNorm - 0.5) * 2
@@ -77,8 +79,12 @@ export function computeSeasonalAmplitude(elevation: Float32Array, domain: Domain
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       const ocean = !isLandAtCell(elevation, dryLand, gx, gy, worldWidth, worldHeight)
+      land[i] = ocean ? 0 : 1
       amplitude[i] = ocean ? OCEAN_AMPLITUDE : ampLat * (CLIMATE_TUNING.seasonCoastDamp + (1 - CLIMATE_TUNING.seasonCoastDamp) * continentality[i])
     }
   }
+  // A pole row is one point: its land one value (step 4e; the distance to
+  // the sea differs along the row's ring of cells). A no-op on the torus.
+  grid.averagePoleRows(amplitude, land)
   return amplitude
 }

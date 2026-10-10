@@ -59,6 +59,7 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
     north[gy] = gy < RY / 2 ? 1 : -1
   }
   const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
+  const track = { x: 0, y: 0 }
 
   for (let m = 0; m < months; m++) {
     const at = m * n
@@ -90,7 +91,9 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
         if (u > 0 && ground[i] < T.tornadoPlainBelowM) {
           let barrier = 0
           for (let k = 1; k <= T.tornadoReachCells; k++) {
-            const j = grid.index(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
+            // Upwind along the globe on the sphere (cellDisplaced; the
+            // torus rounds the chart's step, as it did).
+            const j = grid.cellDisplaced(gx, gy, -(u / speed) * k, -(v / speed) * k)
             barrier = Math.max(barrier, peak[j])
           }
           const moist = clamp01((t - T.tornadoFromC) / T.tornadoSpanC) * clamp01(rainMonth / T.tornadoFullRainMm)
@@ -114,16 +117,20 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
         let x = gx
         let y = gy
         for (let step = 0; step < T.cycloneSteps && weight > T.cycloneFadeBelow; step++) {
-          const cx = grid.wrapCol(Math.round(x))
-          const cy = grid.wrapRow(Math.round(y))
-          const i = cy * RX + cx
+          // The track's cell (across a pole the far meridian's, through the
+          // grid; on the torus the wrapped column and row, as before).
+          const i = grid.index(Math.round(x), Math.round(y))
+          const cy = (i / RX) | 0
           cyclone[i] += weight
           const pole = north[cy] // +1 top: poleward is −y
           const dx = wind[(at + i) * 2] - T.cycloneDriftWest
           const dy = wind[(at + i) * 2 + 1] - pole * T.cycloneDriftPole
           const d = detHypot(dx, dy) || 1
-          x += dx / d
-          y += dy / d
+          // One cell along the globe on the sphere (DomainGrid.displaced);
+          // the torus's sum, unwrapped, as it was.
+          grid.displaced(x, y, dx / d, dy / d, track)
+          x = track.x
+          y = track.y
           if (land[i]) weight *= T.cycloneLandKeep
           else if (monthsT[at + i] < T.cycloneColdC) weight *= T.cycloneColdKeep
         }
@@ -148,8 +155,9 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
         const v = meanWind[i * 2 + 1]
         const s = detHypot(u, v)
         if (s < 0.05) break
-        x += u / s
-        y += v / s
+        grid.displaced(x, y, u / s, v / s, track)
+        x = track.x
+        y = track.y
         load *= T.dustKeep
       }
     }
@@ -159,6 +167,16 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
   normalise(dust)
   normalise(thunder)
   normalise(tornado)
+  // A pole row is one point: one value each, its land and its sea apart
+  // where the field has both (a no-op on the torus).
+  const sea = new Uint8Array(n)
+  for (let i = 0; i < n; i++) sea[i] = land[i] ? 0 : 1
+  for (const field of [cyclone, dust, thunder]) {
+    grid.averagePoleRows(field, land)
+    grid.averagePoleRows(field, sea)
+  }
+  grid.averagePoleRows(tornado, land)
+  grid.averagePoleRows(blizzard, land)
   return { cyclone, tornado, blizzard, dust, thunder }
 }
 

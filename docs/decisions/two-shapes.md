@@ -187,6 +187,96 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: STEP 3 OPEN on the sphere — the climate step runs on a sphere
+world: the climate, its refinement and the rivers (step 4e), drawn on
+the globe with its rivers and lakes. The chain a settled run starts, and
+the save's compute of those stages, run on both shapes again. Ecology and
+the later steps stay locked.
+
+2026-10-10: step 4e BUILT — the climate step's stages run on the sphere
+through the runtime: climateRun, the refinement and hydrologyRun (the
+rivers, the lakes and water levels, the watersheds, the coast, the ice,
+the sediment basins, the ground water). The screen's gate stays shut
+(`laterStagesRun`); the globe's rivers and lakes are the screen's work.
+THE ROUTING: the hydrology no longer throws — `largestWaterComponent`
+walks the grid's neighbours, not a row table. The raster's D8-LTD measures
+in lengths: a step east-west is rowScale long, a diagonal hypot(rowScale,
+1), a facet Tarboton's rectangle (the cardinal d1 away, the diagonal d2
+beyond, the angle clamped at atan(d2 / d1)); the flood's epsilon and the
+MFD weights take the same lengths. The raster substrate's area is the
+row's cellArea, its step the arc between the cell centres; the mean
+runoff, the watersheds' size filter and the riparian bleed (as many cells
+east-west as span one equator cell, decayed by their length; the pole
+rows one value) are by area and length. THE GRAPH AND ITS DRAWING: the
+mesh mouth's last point moves along the step through `delta` and
+`advance`. The ribbons (`riverPolylinesFromGraph`, given the domain) cut a
+step that turns the longitude by more than a quarter turn (a pole
+crossing) and halve a step along the great circle where the chart
+stretches it, to 2 texels a piece — on the torus a step is as long in the
+chart as on the world, and nothing is added. The course lays its bends
+out in the plane about the reach's first cell (`delta`) and puts them
+back through the new `Domain.fromPlane` (the torus: wrapPoint, the
+reference unread, so its bits stay; the sphere: `advance` from the
+reference). THE COAST: the fetch marches a great circle (`displace`,
+`transport`), the supply's distance is between cell centres, the delta's
+neighbourhood spans two equator cells east-west, a reach's length is the
+arc between its cells; its invariant checks adjacency through the grid.
+THE BASINS: area, volume, the means, the minimum size and the catchment
+by cellArea; the centroid the mean position on the globe (the torus keeps
+its circular mean — the branch is on `Domain.noise`, as the lithology's).
+THE ICE (F4's fallback): the steps' lengths and the cells' areas. THE
+REFINEMENT: the pressure's thermal and relief gradients over one equator
+cell east-west (the monsoon's polar filter); the energy balance in the
+finite-volume metric, its rows from about 45° relaxed as cyclic complex
+LINES (new `climate/cyclicLine.ts`, Thomas with Sherman–Morrison), the
+carry per length, the cycle's pole rows one value; the overturning's
+inflow the same (area-weighted mean, line rows, the flow per length); the
+upwelling's divergence over the faces' lengths and the area; the basin's
+flank by length; the salinity advected through `tapsAt`, its rivers to
+the nearest sea by length (label-correcting) at the area ratio, its pole
+rows one value; the fog's nearest sea by the arc and its onshore
+direction in the land cell's frame, the föhn and the tornado upwind
+through `cellDisplaced`; the cyclone and dust tracks through the new
+`DomainGrid.displaced` (the torus: the unwrapped sum); the ENSO reach by
+length; the derived fields' and the climate's seasonal amplitude's pole
+rows one value. PROOF: `harness:pipeline` runs a sphere world's Archean,
+hand-over and four eroding epochs, then climateRun, the refinement and
+hydrologyRun through the runtime: no error, 39 fields finite, 19 refined
+fields one value along each pole row (land and sea apart; the
+temperature's mean differs there only by each cell's lapse), no seam in
+the smooth fields, 12 ribbons whose 254 steps none the chart stretches
+past 2.9 texels and none crosses a pole, the graph's invariants (24
+reaches, 10 mouths, none rising), 28 water bodies, the coast's invariants
+on the sphere's grid, the ice on land, the basins finite. On the modules,
+each with its mutation: four deposit discs (a polar cap, one holding the
+south pole off its centre, one across the seam, one at mid-latitude) give
+centroids in their basins 0.00–0.22 cells off the discs' centres (the
+circular mean: 39.5 and 1.4 cells off the polar ones); a ribbon over the
+pole is cut there with 2.0-texel steps (without the domain a 40-texel
+chart line); on a plane falling 45° in length at 70°N the receivers' mean
+step points 46.9° (the square metric: 82.8°); a meandering course at
+75°N is as long on the globe as its sinuosity says, 0.999 (laid out in
+the chart: 1.88); the year's cycle converged. Found, not changed: the
+overturning's inflow (`computeSinkInflow`) is not converged at its 700
+sweeps on either shape — four times as many move it by 0.43 of its
+fastest cell on the torus, 0.28 on the sphere; the sediment basins'
+craton age averages the oldness field's −1 'no crust' marker (both
+shapes; clamping it as the column does moves golden's `sediment.basins`
+on all three worlds, so it waits for a decision); the elevation raster
+samples the mesh at cell corners, so the sphere's row 0 is the pole
+point itself while the grid's metric is the row's centre. Golden harness
+byte-identical; the mesh harness's torus build hash unchanged.
+
+2026-10-10: THE GLOBE DRAWS RIVERS AND LAKES, from the data the flat map
+takes, ready for the climate step (which stays closed on the sphere). The
+rivers are ribbons on the sphere (`map/globeRibbons.ts`): the curve runs on
+unit vectors, so a span is a great-circle arc and no step crosses the seam
+or a pole the long way; the width and presence rules are the flat map's
+(`map/riverWidth.ts`), the pixel measured per vertex. The standing water is
+the flat map's water plugin in a lit 'globe' style, the cells across a pole
+row half a turn round. The relief stays off the globe. The screen hands the
+water to every view. PROOF: `scripts/globeWater.mjs`.
+
 2026-10-10: SYMBOLS AND NAMES ARE OBJECTS the view places, on both
 shapes — the plumes, the volcanoes, the event markers, the migration's
 origins and the continent names. Painted into the chart, a circle was an

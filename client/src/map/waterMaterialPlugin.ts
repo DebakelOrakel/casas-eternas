@@ -41,7 +41,12 @@ const LAKE_SHADE_SATURATION_M = 900
 const RELIEF_EXAGGERATION = 45
 const LIGHT = [-0.502, -0.502, 0.703] as const
 
-export type WaterStyle = 'paper' | 'paperUnshaded'
+// 'globe' (sphereView.ts): the unshaded paper's colours, painted into the
+// surface's colour BEFORE the light, since the globe is lit and its water
+// must darken on the night side with the land; and the cells across a pole
+// row are the cells half a turn round, not the opposite pole's (the chart's
+// rows on the sphere, DEC-0035 fork 2).
+export type WaterStyle = 'paper' | 'paperUnshaded' | 'globe'
 
 const glslFloat = (v: number): string => (Number.isInteger(v) ? `${v}.0` : `${v}`)
 
@@ -61,11 +66,15 @@ export class WaterField {
   private coast: Uint8Array | null = null
   private packed: Float32Array | null = null
   private readonly scene: Scene
+  // On the sphere a pole row's neighbour across the pole is its own row half
+  // a turn round; on the torus, the opposite edge's row.
+  private readonly globe: boolean
   width = 1
   height = 1
 
-  constructor(scene: Scene) {
+  constructor(scene: Scene, shape: 'torus' | 'sphere' = 'torus') {
     this.scene = scene
+    this.globe = shape === 'sphere'
   }
 
   get current(): RawTexture | null {
@@ -125,15 +134,25 @@ export class WaterField {
     // Shore cells of the sea: the same neighbourhood rule the renderer
     // paints shore by, so the two agree on which cells the shader owns.
     const votes = new Int32Array(8)
+    const half = width >> 1
     for (let y = 0; y < height; y++) {
-      const up = ((y - 1 + height) % height) * width
-      const down = ((y + 1) % height) * width
+      // Across a pole row on the sphere: the same row, half a turn round.
+      const upPole = this.globe && y === 0
+      const downPole = this.globe && y === height - 1
+      const up = upPole ? 0 : ((y - 1 + height) % height) * width
+      const down = downPole ? (height - 1) * width : ((y + 1) % height) * width
+      const upShift = upPole ? half : 0
+      const downShift = downPole ? half : 0
       const row = y * width
       for (let x = 0; x < width; x++) {
         if (elevation[row + x] > 0) continue
         const left = (x - 1 + width) % width
         const right = (x + 1) % width
-        const around = [row + left, row + right, up + x, up + left, up + right, down + x, down + left, down + right]
+        const around = [
+          row + left, row + right,
+          up + (x + upShift) % width, up + (left + upShift) % width, up + (right + upShift) % width,
+          down + (x + downShift) % width, down + (left + downShift) % width, down + (right + downShift) % width,
+        ]
         let shore = false
         votes.fill(0)
         for (const nb of around) {
@@ -250,7 +269,10 @@ export class WaterMaterialPlugin extends MaterialPluginBase {
           #ifdef WATER
           uniform sampler2D waterFieldSampler;
           ivec2 waterWrap(ivec2 i) {
-            ivec2 s = ivec2(waterTexSize);
+            ivec2 s = ivec2(waterTexSize);${this.style === 'globe' ? `
+            // Across a pole: the same row, half a turn round.
+            if (i.y < 0) { i.y = -1 - i.y; i.x += s.x / 2; }
+            else if (i.y >= s.y) { i.y = 2 * s.y - 1 - i.y; i.x += s.x / 2; }` : ''}
             return ivec2((i.x % s.x + s.x) % s.x, (i.y % s.y + s.y) % s.y);
           }
           float waterElevationAt(ivec2 i) {
@@ -264,9 +286,9 @@ export class WaterMaterialPlugin extends MaterialPluginBase {
             float ndotl = (-dzdx * ${glslFloat(LIGHT[0])} - dzdy * ${glslFloat(LIGHT[1])} + ${glslFloat(LIGHT[2])}) / length(vec3(dzdx, dzdy, 1.0));
             return clamp(ndotl, 0.0, 1.0);
           }
-          #endif`,
-        CUSTOM_FRAGMENT_MAIN_END: `#ifdef WATER
-          {
+          // The water over a colour: the fragment's at the end (the paper
+          // styles), the surface's before the light (the globe).
+          void waterPaint(inout vec3 rgb) {
             // Terrain height between the four nearest cell centres (centres
             // sit at half-texels), wrapping across both seams.
             vec2 p = vWaterUV * waterTexSize - 0.5;
@@ -304,13 +326,13 @@ export class WaterMaterialPlugin extends MaterialPluginBase {
               float upM = -depth * waterParams.y;
               if (coastType < 2.5) {
                 float line = 1.0 - smoothstep(aa, 3.0 * aa, -depth);
-                gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(72.0, 60.0, 50.0) / 255.0, 0.85 * line);
+                rgb = mix(rgb, vec3(72.0, 60.0, 50.0) / 255.0, 0.85 * line);
               } else if (coastType < 3.5) {
                 float band = 1.0 - smoothstep(4.0, 8.0, upM);
-                gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(238.0, 224.0, 178.0) / 255.0, 0.9 * band);
+                rgb = mix(rgb, vec3(238.0, 224.0, 178.0) / 255.0, 0.9 * band);
               } else if (coastType < 4.5) {
                 float band = 1.0 - smoothstep(2.0, 5.0, upM);
-                gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(150.0, 168.0, 130.0) / 255.0, 0.7 * band);
+                rgb = mix(rgb, vec3(150.0, 168.0, 130.0) / 255.0, 0.7 * band);
               }
             }
             if (paintable && coverage > 0.0) {
@@ -332,9 +354,19 @@ export class WaterMaterialPlugin extends MaterialPluginBase {
                 water = vec3(216.0 - 12.0 * shade, 230.0 - 10.0 * shade, 242.0 - 6.0 * shade) / 255.0;
                 alpha = 0.75;
               }
-              gl_FragColor.rgb = mix(gl_FragColor.rgb, water, coverage * alpha);
+              rgb = mix(rgb, water, coverage * alpha);
             }
           }
+          #endif`,
+        // Both points on every style, one of them empty: Babylon collects the
+        // point NAMES once, from the base class's constructor — before
+        // this.style is set (materialPluginManager._addPlugin) — and injects
+        // only into those. An empty code is skipped.
+        CUSTOM_FRAGMENT_UPDATE_DIFFUSE: this.style === 'globe' ? `#ifdef WATER
+          waterPaint(baseColor.rgb);
+          #endif` : '',
+        CUSTOM_FRAGMENT_MAIN_END: this.style === 'globe' ? '' : `#ifdef WATER
+          waterPaint(gl_FragColor.rgb);
           #endif`,
       }
     }

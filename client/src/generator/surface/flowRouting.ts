@@ -12,7 +12,38 @@ import { detAtan2, detHypot, detSin } from '../core/detMath'
 // The model is Cordonnier et al. 2016 (see
 // docs/decisions/plate-tectonics-simulation.md), on the domain's grid: on the
 // torus it wraps in BOTH axes, y exactly like x, and every cell has identical
-// area and spacing, so nothing here weights by latitude.
+// area and spacing. On the sphere (DEC-0035, step 4e) a row's cells are
+// rowScale wide (cos φ), so a step east or west is that long and a diagonal
+// step hypot(rowScale, 1): `RowMetric` below. On the torus each of its
+// numbers is the constant the code used before (1, 1, √2, π/4), so the
+// arithmetic is the torus's, as it was.
+
+// The step lengths of one row, in equator cells: east-west `ew`, north-south
+// 1, diagonal `diag`; and the two facet angles of the LTD rule (the angle of
+// the diagonal from an east-west and from a north-south cardinal).
+interface RowMetric {
+  ew: Float64Array
+  diag: Float64Array
+  fromEw: Float64Array
+  fromNs: Float64Array
+}
+
+function rowMetric(grid: DomainGrid): RowMetric {
+  const rows = grid.resY
+  const ew = new Float64Array(rows)
+  const diag = new Float64Array(rows)
+  const fromEw = new Float64Array(rows)
+  const fromNs = new Float64Array(rows)
+  for (let y = 0; y < rows; y++) {
+    const s = grid.rowScale(y)
+    ew[y] = s
+    // detHypot(1, 1) is Math.SQRT2 and detAtan2(1, 1) is π / 4, bit for bit.
+    diag[y] = detHypot(s, 1)
+    fromEw[y] = detAtan2(1, s)
+    fromNs[y] = detAtan2(s, 1)
+  }
+  return { ew, diag, fromEw, fromNs }
+}
 
 // Called at every progress-reporting checkpoint across this module's
 // long loops (fillDepressions' pop count). When it yields, it awaits
@@ -99,8 +130,6 @@ const EPSILON_FLOOD_STEP = 1e-7
 export function largestWaterComponent(raw: Float32Array, grid: DomainGrid, seaLevel: number): Uint8Array | null {
   const width = grid.resX
   const n = width * grid.resY
-  const cols = grid.colTable(1)
-  const rows = grid.rowTable(1)
   const label = new Int32Array(n).fill(-1)
   const sizes: number[] = []
   const stack: number[] = []
@@ -115,7 +144,10 @@ export function largestWaterComponent(raw: Float32Array, grid: DomainGrid, seaLe
       size++
       const y = (i / width) | 0
       const x = i - y * width
-      for (const nb of [y * width + cols[x + 2], y * width + cols[x], rows[y + 2] + x, rows[y] + x]) {
+      // The four sides through the grid: on the sphere the side across a
+      // pole is the far meridian's cell (a row table cannot say that). The
+      // order of the four does not change the mask, only the walk.
+      for (const nb of [grid.neighbour(x, y, 1, 0), grid.neighbour(x, y, -1, 0), grid.neighbour(x, y, 0, 1), grid.neighbour(x, y, 0, -1)]) {
         if (raw[nb] <= seaLevel && label[nb] === -1) {
           label[nb] = id
           stack.push(nb)
@@ -172,6 +204,7 @@ async function fillDepressions(raw: Float32Array, grid: DomainGrid, seaLevel: nu
   // TERMINAL SEA and sets its real water level from inflow vs evaporation
   // (the Caspian/Chad class).
   const oceanSeed = largestWaterComponent(raw, grid, seaLevel)
+  const metric = rowMetric(grid)
   for (let i = 0; i < cellCount; i++) {
     if (oceanSeed && oceanSeed[i] === 1) {
       filled[i] = raw[i]
@@ -212,7 +245,7 @@ async function fillDepressions(raw: Float32Array, grid: DomainGrid, seaLevel: nu
       // to real per-pass elevation deltas (~1e-3) for its own distance
       // scaling to matter. Left in as a real (if minor) correctness fix
       // on its own terms, not as the fix for that drift.
-      const stepDistance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1
+      const stepDistance = dx !== 0 && dy !== 0 ? metric.diag[y] : dx !== 0 ? metric.ew[y] : 1
       filled[neighbor] = Math.max(raw[neighbor], filled[current]) + EPSILON_FLOOD_STEP * stepDistance
       heap.push(filled[neighbor], neighbor)
     }
@@ -279,10 +312,16 @@ const LTD_FACETS: ReadonlyArray<readonly [cardinal: number, diagonal: number, or
   [6, 7, +1], // W  → NW
   [0, 7, -1], // N  → NW
 ]
-const QUARTER_TURN = Math.PI / 4
 
+// On the sphere a facet is a rectangle's half (Tarboton's general form): the
+// cardinal `d1` away, the diagonal `d2` beyond it, the angle clamped at
+// atan(d2 / d1) instead of 45°, and each offset from the fall line times
+// its own step's length. The facets across a pole keep the chart's
+// orientation, which is mirrored there: a pole row's fall direction is
+// approximate, its receiver still a downhill neighbour.
 function computeLtdFlowTargets(filled: Float32Array, grid: DomainGrid, popOrder: Int32Array, poppedCount: number): Int32Array {
   const width = grid.resX
+  const metric = rowMetric(grid)
   const cellCount = width * grid.resY
   const flowTarget = new Int32Array(cellCount).fill(-1)
   // λ, and the main-stem bookkeeping that decides whose λ a confluence
@@ -298,6 +337,8 @@ function computeLtdFlowTargets(filled: Float32Array, grid: DomainGrid, popOrder:
     const x = cell % width
     const y = (cell - x) / width
     const ownElevation = filled[cell]
+    const ew = metric.ew[y]
+    const diag = metric.diag[y]
 
     // One scan finds both the steepest facet (the true fall direction) and
     // the plain steepest neighbour (the fallback for cells whose facets are
@@ -313,27 +354,30 @@ function computeLtdFlowTargets(filled: Float32Array, grid: DomainGrid, popOrder:
       const facet = LTD_FACETS[f]
       const co = D8_OFFSETS[facet[0]]
       const dd = D8_OFFSETS[facet[1]]
+      // The cardinal's distance and the diagonal's beyond it: 1 and 1 on
+      // the torus.
+      const d1 = co[0] !== 0 ? ew : 1
+      const d2 = co[0] !== 0 ? 1 : ew
       const nc = grid.neighbour(x, y, co[0], co[1])
       if (nc >= 0) {
-        const gradient = ownElevation - filled[nc] // cardinal distance is 1
+        const gradient = (ownElevation - filled[nc]) / d1
         if (gradient > bestGradient) { bestGradient = gradient; fallback = nc }
       }
       const nd = grid.neighbour(x, y, dd[0], dd[1])
       if (nd >= 0 && f % 2 === 0) {
         // Each diagonal appears in two facets; checking it once is enough
         // for the fallback.
-        const gradient = (ownElevation - filled[nd]) / Math.SQRT2
+        const gradient = (ownElevation - filled[nd]) / diag
         if (gradient > bestGradient) { bestGradient = gradient; fallback = nd }
       }
       if (nc < 0 || nd < 0) continue
-      // Tarboton's facet slopes, in cell units — the cardinal neighbour is
-      // one cell away and the diagonal one further cell from IT, so both
-      // denominators are 1 and drop out.
-      const s1 = ownElevation - filled[nc]
-      const s2 = filled[nc] - filled[nd]
+      // Tarboton's facet slopes, per length — the cardinal neighbour is d1
+      // away and the diagonal d2 further from IT (both 1 on the torus).
+      const s1 = (ownElevation - filled[nc]) / d1
+      const s2 = (filled[nc] - filled[nd]) / d2
       let slope: number
       if (s2 <= 0) slope = s1 // direction clamps onto the cardinal
-      else if (s2 >= s1) slope = (ownElevation - filled[nd]) / Math.SQRT2 // onto the diagonal
+      else if (s2 * d1 >= s1 * d2) slope = (ownElevation - filled[nd]) / diag // onto the diagonal
       else slope = detHypot(s1, s2)
       if (slope > bestSlope) { bestSlope = slope; bestFacet = f; bestS1 = s1; bestS2 = s2 }
     }
@@ -347,11 +391,16 @@ function computeLtdFlowTargets(filled: Float32Array, grid: DomainGrid, popOrder:
       const dd = D8_OFFSETS[facet[1]]
       const nc = grid.neighbour(x, y, co[0], co[1])
       const nd = grid.neighbour(x, y, dd[0], dd[1])
-      const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : detAtan2(bestS2, bestS1)
+      const d1 = co[0] !== 0 ? ew : 1
+      const d2 = co[0] !== 0 ? 1 : ew
+      // The facet's widest angle: π / 4 on the torus, to the bit.
+      const alphaMax = co[0] !== 0 ? metric.fromEw[y] : metric.fromNs[y]
+      const alpha = bestS2 <= 0 ? 0 : bestS2 * d1 >= bestS1 * d2 ? alphaMax : detAtan2(bestS2, bestS1)
       // Perpendicular offset of each candidate from the true fall line: the
-      // cardinal sits sin α off it, the diagonal √2·sin(45° − α) the other way.
-      const deltaCardinal = -orient * detSin(alpha)
-      const deltaDiagonal = orient * Math.SQRT2 * detSin(QUARTER_TURN - alpha)
+      // cardinal sits d1·sin α off it, the diagonal diag·sin(αmax − α) the
+      // other way (sin α and √2·sin(45° − α) on the torus).
+      const deltaCardinal = -orient * d1 * detSin(alpha)
+      const deltaDiagonal = orient * diag * detSin(alphaMax - alpha)
       const lam = lambda[cell]
       const cardinalDown = filled[nc] < ownElevation
       const diagonalDown = filled[nd] < ownElevation
@@ -446,6 +495,7 @@ function computeMfdEdges(filled: Float32Array, grid: DomainGrid): MfdEdges {
   // most 8 entries ever live at once (one per D8 neighbor).
   const scratchDirections = new Uint8Array(8)
   const scratchWeights = new Float32Array(8)
+  const metric = rowMetric(grid)
 
   const collectDownhillNeighbors = (cell: number, x: number, y: number): number => {
     const ownElevation = filled[cell]
@@ -457,7 +507,7 @@ function computeMfdEdges(filled: Float32Array, grid: DomainGrid): MfdEdges {
       if (neighbor < 0) continue
       const drop = ownElevation - filled[neighbor]
       if (drop <= 0) continue
-      const distance = dx !== 0 && dy !== 0 ? Math.SQRT2 : 1
+      const distance = dx !== 0 && dy !== 0 ? metric.diag[y] : dx !== 0 ? metric.ew[y] : 1
       const weight = drop / distance
       scratchDirections[count] = dir
       scratchWeights[count] = weight

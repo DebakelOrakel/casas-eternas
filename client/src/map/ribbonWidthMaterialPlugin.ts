@@ -31,14 +31,27 @@ const REVEAL_BAND = 0.03
 const DASH_PERIOD_PX = [1, 22, 10]
 const DASH_ON = [1, 0.64, 0.4]
 
+// THE GLOBE (sphereView.ts, globeRibbons.ts): the ribbons lie on a sphere, so
+// a vertex's offset direction is a 3D vector in the surface, and a pixel's
+// size on the world changes from vertex to vertex with the distance to the
+// eye. With `globe`, getWorldPerPixel gives the world units per pixel at
+// unit distance (the pixel's angle), and the shader multiplies it by the
+// vertex's distance to the eye — in the mesh's own frame, which getEye
+// gives.
+export interface RibbonGlobe {
+  getEye: () => { x: number; y: number; z: number }
+}
+
 export class RibbonWidthMaterialPlugin extends MaterialPluginBase {
   private getWorldPerPixel: () => number
   private getMinRel: () => number
+  private globe: RibbonGlobe | null
 
-  constructor(material: Material, getWorldPerPixel: () => number, getMinRel: () => number = () => 0) {
+  constructor(material: Material, getWorldPerPixel: () => number, getMinRel: () => number = () => 0, globe: RibbonGlobe | null = null) {
     super(material, 'RibbonWidth', 190)
     this.getWorldPerPixel = getWorldPerPixel
     this.getMinRel = getMinRel
+    this.globe = globe
     this._enable(true)
   }
 
@@ -51,6 +64,19 @@ export class RibbonWidthMaterialPlugin extends MaterialPluginBase {
   }
 
   override getUniforms(): { ubo: { name: string; size: number; type: string }[]; vertex: string; fragment: string } {
+    if (this.globe) {
+      return {
+        ubo: [
+          { name: 'ribbonWorldPerPixel', size: 1, type: 'float' },
+          { name: 'ribbonMinRel', size: 1, type: 'float' },
+          { name: 'ribbonEye', size: 3, type: 'vec3' },
+        ],
+        vertex: `uniform float ribbonWorldPerPixel;
+uniform float ribbonMinRel;
+uniform vec3 ribbonEye;`,
+        fragment: `uniform float ribbonWorldPerPixel;`,
+      }
+    }
     return {
       ubo: [
         { name: 'ribbonWorldPerPixel', size: 1, type: 'float' },
@@ -65,9 +91,14 @@ uniform float ribbonMinRel;`,
   override bindForSubMesh(uniformBuffer: UniformBuffer, _scene: Scene, _engine: unknown, _subMesh: SubMesh): void {
     uniformBuffer.updateFloat('ribbonWorldPerPixel', this.getWorldPerPixel())
     uniformBuffer.updateFloat('ribbonMinRel', this.getMinRel())
+    if (this.globe) {
+      const eye = this.globe.getEye()
+      uniformBuffer.updateFloat3('ribbonEye', eye.x, eye.y, eye.z)
+    }
   }
 
   override getCustomCode(shaderType: string): { [pointName: string]: string } | null {
+    if (this.globe) return this.globeCode(shaderType)
     if (shaderType === 'fragment') {
       return {
         CUSTOM_FRAGMENT_DEFINITIONS: `varying vec2 vRibbonStyle;`,
@@ -91,6 +122,38 @@ varying vec2 vRibbonStyle;`,
       // The band sits BELOW the threshold (smoothstep hits 1 exactly at
       // ribbonMinRel), so a threshold of zero reveals everything in full.
       CUSTOM_VERTEX_UPDATE_POSITION: `positionUpdated.xz += ribbonDir * (max(ribbonWidths.x, ribbonWidths.y * ribbonWorldPerPixel) * smoothstep(ribbonMinRel - ${REVEAL_BAND.toFixed(3)}, ribbonMinRel, ribbonWidths.z));`,
+    }
+  }
+
+  // The globe's form of the same rules: the offset along a 3D direction in
+  // the surface, the pixel's size from the vertex's distance to the eye,
+  // carried to the fragment for the dashes. The SAME injection points as the
+  // plane's: Babylon collects the point names from the base class's
+  // constructor, before this.globe is set (materialPluginManager._addPlugin).
+  // The uniforms are collected later, when the material is first prepared.
+  private globeCode(shaderType: string): { [pointName: string]: string } | null {
+    if (shaderType === 'fragment') {
+      return {
+        CUSTOM_FRAGMENT_DEFINITIONS: `varying vec2 vRibbonStyle;
+varying float vRibbonWorldPerPixel;`,
+        CUSTOM_FRAGMENT_MAIN_BEGIN: `if (vRibbonStyle.y > 0.5) {
+  float period = vRibbonWorldPerPixel * (vRibbonStyle.y > 1.5 ? ${DASH_PERIOD_PX[2].toFixed(1)} : ${DASH_PERIOD_PX[1].toFixed(1)});
+  float on = vRibbonStyle.y > 1.5 ? ${DASH_ON[2].toFixed(2)} : ${DASH_ON[1].toFixed(2)};
+  if (fract(vRibbonStyle.x / period) > on) discard;
+}`,
+      }
+    }
+    if (shaderType !== 'vertex') return null
+    return {
+      CUSTOM_VERTEX_DEFINITIONS: `attribute vec3 ribbonDir;
+attribute vec3 ribbonWidths;
+attribute vec2 ribbonStyle;
+varying vec2 vRibbonStyle;
+varying float vRibbonWorldPerPixel;`,
+      CUSTOM_VERTEX_MAIN_END: `vRibbonStyle = ribbonStyle;`,
+      CUSTOM_VERTEX_UPDATE_POSITION: `float ribbonPixel = ribbonWorldPerPixel * distance(positionUpdated, ribbonEye);
+vRibbonWorldPerPixel = ribbonPixel;
+positionUpdated += ribbonDir * (max(ribbonWidths.x, ribbonWidths.y * ribbonPixel) * smoothstep(ribbonMinRel - ${REVEAL_BAND.toFixed(3)}, ribbonMinRel, ribbonWidths.z));`,
     }
   }
 }

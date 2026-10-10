@@ -113,28 +113,22 @@ export function classifyPattern(dischargeM3s: number, slope: number, lengthM: nu
   return 'straight'
 }
 
-// The reach's cell path as a polyline in metres, unwrapped across the seams.
-function unwrappedPath(graph: RiverGraph, reach: RiverReach, cellM: number): Float64Array {
-  const { width, height } = graph
+// The reach's cell path as a polyline in metres, in the plane about its
+// first cell (`ref`): each point is ref + Domain.delta(point, ref). On the
+// torus that is the image of the point nearest the first, which is the
+// path unwrapped across the seams as it always was (a reach is far shorter
+// than half the world); on the sphere the azimuthal-equidistant plane about
+// it, so the bends are laid out in true lengths near a pole too (step 4e).
+// toTexels puts a line of that plane back through Domain.fromPlane.
+function unwrappedPath(graph: RiverGraph, reach: RiverReach, cellM: number, domain: Domain, ref: { x: number; y: number }): Float64Array {
   const out = new Float64Array(reach.cellCount * 2)
-  let px = 0
-  let py = 0
+  const offset = { x: 0, y: 0 }
+  ref.x = graph.cellX[reach.cellStart]
+  ref.y = graph.cellY[reach.cellStart]
   for (let k = 0; k < reach.cellCount; k++) {
-    let x = graph.cellX[reach.cellStart + k]
-    let y = graph.cellY[reach.cellStart + k]
-    if (k > 0) {
-      // Follow the previous point across the seam instead of jumping back.
-      const dx = x - px
-      const dy = y - py
-      if (dx > width / 2) x -= width
-      else if (dx < -width / 2) x += width
-      if (dy > height / 2) y -= height
-      else if (dy < -height / 2) y += height
-    }
-    px = x
-    py = y
-    out[k * 2] = x * cellM
-    out[k * 2 + 1] = y * cellM
+    domain.delta(graph.cellX[reach.cellStart + k], graph.cellY[reach.cellStart + k], ref.x, ref.y, offset)
+    out[k * 2] = (ref.x + offset.x) * cellM
+    out[k * 2 + 1] = (ref.y + offset.y) * cellM
   }
   return out
 }
@@ -190,13 +184,17 @@ function distanceToPath(x: number, y: number, p: Float64Array, count: number): n
   return best
 }
 
-const toTexels = (p: Float64Array, count: number, cellM: number, domain: Domain): Float32Array => {
+// A line of the plane about `ref` (unwrappedPath) back in texels of the
+// domain.
+const toTexels = (p: Float64Array, count: number, cellM: number, domain: Domain, ref: { x: number; y: number }): Float32Array => {
   const out = new Float32Array(count * 2)
+  const at = { x: 0, y: 0 }
   for (let i = 0; i < count; i++) {
     const x = p[i * 2] / cellM
     const y = p[i * 2 + 1] / cellM
-    out[i * 2] = domain.wrapX(x)
-    out[i * 2 + 1] = domain.wrapY(y)
+    domain.fromPlane(x, y, ref.x, ref.y, at)
+    out[i * 2] = at.x
+    out[i * 2 + 1] = at.y
   }
   return out
 }
@@ -341,7 +339,8 @@ export function computeRiverCourses(graph: RiverGraph, options: RiverCourseOptio
     const dischargeM3s = dischargeToM3s(reach.dischargeOut, cellM)
     const widthM = channelWidthM(dischargeM3s)
     if (widthM < minWidthM) continue
-    const base = unwrappedPath(graph, reach, cellM)
+    const ref = { x: 0, y: 0 }
+    const base = unwrappedPath(graph, reach, cellM, options.domain, ref)
     const lengthM = pathLength(base, reach.cellCount)
     if (lengthM <= 0) continue
     const bankStrength = BANK_STRENGTH[reach.bank] ?? 0.5
@@ -356,23 +355,23 @@ export function computeRiverCourses(graph: RiverGraph, options: RiverCourseOptio
     let beltWidthM = 0
     if (pattern === 'meandering') {
       const m = meander(base, reach.cellCount, widthM, bankStrength, steps, spacing, rng)
-      lines.push(toTexels(m.line, m.count, cellM, options.domain))
+      lines.push(toTexels(m.line, m.count, cellM, options.domain, ref))
       lineWidth.push(1)
       sinuosity = pathLength(m.line, m.count) / lengthM
       beltWidthM = m.beltWidthM
-      for (const o of m.oxbows) oxbows.push(toTexels(o, o.length / 2, cellM, options.domain))
+      for (const o of m.oxbows) oxbows.push(toTexels(o, o.length / 2, cellM, options.domain, ref))
     } else if (pattern === 'braided' || pattern === 'anastomosing') {
       const braided = pattern === 'braided'
       const sc = braidingSlope(dischargeM3s)
       const count = braided ? Math.min(5, Math.max(2, 2 + Math.round(detLog2(Math.max(1, slope / sc))))) : 2 + (rng() < 0.4 ? 1 : 0)
       const threads = weave(base, reach.cellCount, widthM, count, braided ? 1.6 * widthM : 2 * widthM, braided ? 8 * widthM : 25 * widthM, spacing, rng)
       for (const t of threads) {
-        lines.push(toTexels(t, t.length / 2, cellM, options.domain))
+        lines.push(toTexels(t, t.length / 2, cellM, options.domain, ref))
         lineWidth.push(1 / Math.sqrt(count))
       }
     } else {
       const p = resample(base, reach.cellCount, spacing)
-      lines.push(toTexels(p, p.length / 2, cellM, options.domain))
+      lines.push(toTexels(p, p.length / 2, cellM, options.domain, ref))
       lineWidth.push(1)
     }
     // A delta where a sediment-laden, flat reach meets the open sea: two to
@@ -407,7 +406,7 @@ export function computeRiverCourses(graph: RiverGraph, options: RiverCourseOptio
         line[4] = ex
         line[5] = ey
         const age = (k - active + count) % count
-        lines.push(toTexels(line, 3, cellM, options.domain))
+        lines.push(toTexels(line, 3, cellM, options.domain, ref))
         lineWidth.push(age === 0 ? 0.8 : 0.35 / age)
         lobeAges.push(age)
       }

@@ -15,7 +15,9 @@ periodic noise lattices excepted. See `docs/decisions/world-topology-torus.md`.
 `grid.rowScale(y)`, a cell weighs `grid.cellArea(y)`, a face between rows
 `grid.edgeScale(y)` (0 at a pole); a semi-Lagrangian departure goes through
 `grid.tapsAt` + `sampleTaps`, a step to a displaced cell through
-`grid.cellDisplaced`; a field the stage smooths ends with
+`grid.cellDisplaced`, a track that marches through `grid.displaced`, a
+figure drawn in the plane about a point back through `Domain.fromPlane`;
+a field the stage smooths ends with
 `grid.averagePoleRows`. On the torus every one of these is 1 or the old
 arithmetic, so write each formula so that it IS the torus's operations when
 the weights are 1 (`1 * x`, `x / 1` and `x + 0` keep the bits; a changed
