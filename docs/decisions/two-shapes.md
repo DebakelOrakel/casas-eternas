@@ -24,7 +24,7 @@ area: generator
 stage: decided
 createdAt: 2026-10-09
 updatedAt: 2026-10-09
-related: [DES-0017, DEC-0029, DEC-0015, DEC-0024]
+related: [DES-0017, DEC-0029, DEC-0015, DEC-0024, DES-0025]
 ---
 
 ## Where this starts
@@ -158,12 +158,29 @@ bar, layer list and readout by hand — the symptom (a) removes.
 Steps 2 and 3 change existing code without changing what it does; each
 is agreed before it starts.
 
+## Fork 5 — The rasters at the poles
+
+**Options.** (a) Pole handling in the raster: the sphere's `DomainGrid`
+gives the metric (cell area and scale ∝ cos φ) and the neighbours across
+the pole (longitude + 180°), and each raster stage averages or filters
+its pole rows and sub-steps where it needs to. (b) Move the mantle and the
+climate off the raster onto a coarse, uniform mesh
+([fields-on-a-mesh.md](../design/fields-on-a-mesh.md), DES-0025). (c) Keep
+the poles under ice and sea, where a coarse treatment does not show.
+
+**Answer: (a), for now.** Land at the poles must be possible, which rules
+out (c). (b) is the more correct shape in principle and is kept for a
+later pass; (a) is smaller and probably enough.
+
+**Why.** The vector layer and the mesh are computed on the globe and have
+no pole problem; only the rasters do, and for them (a) is the climate
+models' usual remedy.
+
 ## What this does not decide
 
 - Hex tiles on a sphere (Goldberg polyhedron or patches) —
   [hex-tiling.md](./hex-tiling.md) is torus-snapped throughout, and
   DES-0017 asks the question; it waits for the game's answer.
-- Polar fidelity, and the mantle's pole rows — DES-0017's open questions.
 - Whether the flat map gets a camera reset like the globe's.
 
 ## Status
