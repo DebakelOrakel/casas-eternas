@@ -7,7 +7,7 @@ import { RIDGE_MEAN } from './ridgedNoise'
 import { oceanAgeGrid, sampleOceanAge } from '../tectonics/oceanAge'
 import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
 import { continentalHypsometry } from './hypsometry'
-import { raftField, sampleOwnerField, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
+import { buildBlobIndex, raftField, sampleOwnerField, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
 import { detExp, detPow } from '../core/detMath'
 
@@ -59,10 +59,17 @@ export interface FeatureBuckets {
 // for points near that specific wrap edge, producing a real, measured
 // elevation discontinuity there (confirmed with the previous radius: ~13x
 // the color difference of a typical interior row).
+//
+// Without features (the Archean) any lattice serves, and it is two buckets
+// by one: a lattice every grid can carry — the sphere's needs an even column
+// count (across a pole is column + resX / 2), and floor(width / reach) is
+// odd at 2048. The query over buckets near a pole is the torus's still; the
+// sphere's features come with its tectonics (DEC-0035, step 4d3).
 export function buildFeatureBuckets(features: TerrainFeature[], domain: Domain): FeatureBuckets {
   const { width, height } = domain
-  const bucketsX = Math.max(1, Math.floor(width / FEATURE_MAX_REACH))
-  const bucketsY = Math.max(1, Math.floor(height / FEATURE_MAX_REACH))
+  const none = features.length === 0
+  const bucketsX = none ? 2 : Math.max(1, Math.floor(width / FEATURE_MAX_REACH))
+  const bucketsY = none ? 1 : Math.max(1, Math.floor(height / FEATURE_MAX_REACH))
   const bucketSizeX = width / bucketsX
   const bucketSizeY = height / bucketsY
   const buckets: TerrainFeature[][] = Array.from({ length: bucketsX * bucketsY }, () => [])
@@ -123,15 +130,19 @@ export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oc
   return marginProfile(t, oceanicBaseline) + continentalHypsometry(wx, wy, t, domain.width, domain.height, warpSeed) - seaLevelOffset
 }
 
+// The raft field through a blob index (the same bits as the scan): every
+// pixel used to ask every blob, which the sphere's dearer distance made a
+// matter of seconds per frame.
 export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, domain: Domain, warpSeed: number, seaLevelOffset = 0): Float32Array {
   const result = new Float32Array(renderWidth * renderHeight)
   const scaleX = domain.width / renderWidth
   const scaleY = domain.height / renderHeight
+  const blobs = buildBlobIndex(rafts, domain)
   for (let py = 0; py < renderHeight; py++) {
     const worldY = py * scaleY
     for (let px = 0; px < renderWidth; px++) {
       const worldX = px * scaleX
-      result[py * renderWidth + px] = raftBaselineAt(worldX, worldY, rafts, oceanAge, domain, warpSeed, seaLevelOffset)
+      result[py * renderWidth + px] = raftBaselineAt(worldX, worldY, rafts, oceanAge, domain, warpSeed, seaLevelOffset, blobs)
     }
   }
   return result
@@ -149,13 +160,19 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, rende
 // bucket; the domain's own wrapping makes the later distance checks
 // correct regardless, but the bucket lookup isn't covered by that the same
 // way.
+//
+// The warp is a periodic noise in CHART units (domainWarp.ts), on the sphere
+// too: there it is stretched toward the poles, and at a pole it does not
+// agree with itself between longitudes — a known simplification until the
+// sphere samples a 3D noise (DEC-0035, fork 1). A warped point that crosses
+// a pole is brought back as a point (wrapPoint turns its longitude by half),
+// not one axis at a time.
+const warped = { x: 0, y: 0 }
 export function warpedSamplePoint(x: number, y: number, domain: Domain, warpSeed: number): { wx: number; wy: number } {
   const rawWx = x + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'x')
   const rawWy = y + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'y')
-  return {
-    wx: domain.wrapX(rawWx),
-    wy: domain.wrapY(rawWy),
-  }
+  domain.wrapPoint(rawWx, rawWy, warped)
+  return { wx: warped.x, wy: warped.y }
 }
 
 export function computeElevation(

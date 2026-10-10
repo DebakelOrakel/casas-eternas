@@ -264,6 +264,9 @@ export interface WorkerGenesisInitMessage {
   seed: string
   width: number
   height: number
+  // The world's shape (DEC-0035): the torus, or the sphere over the same
+  // 2:1 chart. Absent is the torus.
+  shape?: 'torus' | 'sphere'
   renderOptions: RenderSimulationOptions
   epochIntervalMs: number
   // Mantle mixing per epoch — the "mantle vigour" knob (ArcheanParams.diffusion).

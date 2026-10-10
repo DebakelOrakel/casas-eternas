@@ -1,6 +1,6 @@
 import { sampleBilinearGrid, sampleBilinearWorld, sampleNearestWorld, upscaleBilinearToroidal, wrapValue } from './field'
 import { rotateAroundCenter, wrappedDelta } from './toroidal'
-import { detAtan2, detCos, detSin } from './detMath'
+import { detAsin, detAtan2, detCos, detSin } from './detMath'
 
 // THE DOMAIN (decision 11 of docs/decisions/adaptive-mesh.md, born with the
 // Planet stage): the world's topology behind one interface — what a point
@@ -48,6 +48,13 @@ export interface Domain {
   // The sphere: the exp map, along the great circle from (x, y) in the
   // offset's direction for its length in arc.
   advance(x: number, y: number, dx: number, dy: number, out: { x: number; y: number }): void
+  // advance without bringing the result back into the domain: for a caller
+  // that keeps a point unwrapped as the torus code always could (a centroid,
+  // a jitter, the first of two offsets). The torus: x + dx, y + dy, the
+  // addition the caller did by hand, so its bits stay. The sphere: the same
+  // as advance (its coordinates name a point anywhere, so there is nothing
+  // to keep unwrapped).
+  displace(x: number, y: number, dx: number, dy: number, out: { x: number; y: number }): void
   // A coordinate brought back into [0, width) × [0, height) ([0, height]
   // on the sphere). One axis at a time: on the sphere wrapX is the
   // longitude wrap and wrapY a reflection over the pole, which alone is NOT
@@ -106,6 +113,24 @@ export interface DomainGrid {
   // spherical band, ≈ cos φ.
   rowScale(y: number): number
   cellArea(y: number): number
+  // The width of the edge between row y − 1 and row y (y in 0..resY)
+  // against the equator's cell width: 1 on the torus; on the sphere sin of
+  // the edge's colatitude, 0 at a pole. With rowScale and cellArea it gives
+  // a raster stage the finite-volume weights of a diffusion or a Laplacian:
+  // the flux across a face is its width over the distance of the two
+  // centres, divided by the cell's area.
+  edgeScale(y: number): number
+  // The cells a disc of `radius` (domain units, measured on the domain)
+  // about (x, y) can reach: every cell that holds a point of the disc lies
+  // in columns out.x0..x1 and rows out.y0..y1 — integer grid indices,
+  // unwrapped, to be read through `index(col, row)`, each cell met at most
+  // once. A box, so it may hold cells the disc does not reach. The torus: the square
+  // ±radius about the point, floor and ceil, as the scatter loops always
+  // computed it (whole axes when it is wider than the grid). The sphere:
+  // the rows of the cap, clamped at the poles (never across one), and the
+  // columns of its widest longitude span, asin(sin α / sin θ) — every
+  // column when the cap holds a pole.
+  discBox(x: number, y: number, radius: number, out: CellBox): void
   // Each pole row made one value, its area-weighted mean, in place: on the
   // sphere a pole row is in truth one point, and a raster stage that leaves
   // its cells apart draws a star at the pole (DEC-0035, fork 5). The torus
@@ -123,6 +148,22 @@ export interface DomainGrid {
   // The whole raster resampled bilinearly onto a finer grid of the same
   // domain (core/field.ts upscaleBilinearToroidal).
   upscale(field: Float32Array, toResX: number, toResY: number): Float32Array
+}
+
+// A range of grid cells (DomainGrid.discBox): columns x0..x1, rows y0..y1,
+// both ends included, unwrapped.
+export interface CellBox {
+  x0: number
+  x1: number
+  y0: number
+  y1: number
+}
+
+// The domain of a shape: the torus or the sphere over a width × height
+// chart. The one place a shape's NAME becomes its Domain — a message
+// carries the name, since a Domain does not cross a worker boundary.
+export function domainOfKind(kind: Domain['kind'], width: number, height: number): Domain {
+  return kind === 'sphere' ? sphereDomain(width, height) : torusDomain(width, height)
 }
 
 // The torus's grid: both axes wrap, every cell is the same size. A class,
@@ -178,6 +219,21 @@ class TorusGrid implements DomainGrid {
     return 1
   }
 
+  edgeScale(_y: number): number {
+    return 1
+  }
+
+  discBox(x: number, y: number, radius: number, out: CellBox): void {
+    const cellW = this.width / this.resX
+    const cellH = this.height / this.resY
+    out.x0 = Math.floor((x - radius) / cellW)
+    out.x1 = Math.ceil((x + radius) / cellW)
+    out.y0 = Math.floor((y - radius) / cellH)
+    out.y1 = Math.ceil((y + radius) / cellH)
+    if (out.x1 - out.x0 + 1 > this.resX) { out.x0 = 0; out.x1 = this.resX - 1 }
+    if (out.y1 - out.y0 + 1 > this.resY) { out.y0 = 0; out.y1 = this.resY - 1 }
+  }
+
   averagePoleRows(_field: Float32Array): void {}
 
   sampleBilinear(field: Float32Array, gx: number, gy: number): number {
@@ -224,6 +280,10 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
     advance: (x, y, dx, dy, out) => {
       out.x = wrapValue(x + dx, width)
       out.y = wrapValue(y + dy, height)
+    },
+    displace: (x, y, dx, dy, out) => {
+      out.x = x + dx
+      out.y = y + dy
     },
     wrapX: (x) => wrapValue(x, width),
     wrapY: (y) => wrapValue(y, height),
@@ -273,22 +333,62 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
   const toLon = (2 * Math.PI) / width
   const toColat = Math.PI / height
   const half = width / 2
+  // A point's trig, cached: sin and cos of its colatitude θ and of HALF its
+  // longitude λ. The hot loops ask the distance from one point to many — a
+  // pixel to every blob, a blob to every cell — and four trig calls per
+  // point per pair (seven per distance) made it 9× the torus's
+  // (2026-10-10: 200 ns against 23; 55 ns with the cache). Direct-mapped by the coordinates' value; a hit returns the
+  // very bits a miss computes, so the cache changes the time and nothing
+  // else. Half the longitude, so that sin((λa − λb) / 2) is a difference of
+  // two products, exactly 0 for one point twice.
+  // 4096 slots, indexed by the top 12 bits of a multiplicative hash (the
+  // low bits of a product see only the low bits of the coordinate).
+  const CACHE = 4096
+  const CACHE_SHIFT = 20
+  const keyX = new Float64Array(CACHE).fill(Number.NaN)
+  const keyY = new Float64Array(CACHE).fill(Number.NaN)
+  const sinT = new Float64Array(CACHE)
+  const cosT = new Float64Array(CACHE)
+  const sinH = new Float64Array(CACHE)
+  const cosH = new Float64Array(CACHE)
+  const slot = (x: number, y: number): number => {
+    const k = (Math.imul((x * 1024) | 0, 0x9e3779b1) ^ Math.imul((y * 1024) | 0, 0x85ebca77)) >>> CACHE_SHIFT
+    if (keyX[k] !== x || keyY[k] !== y) {
+      const t = y * toColat
+      const h = (x * toLon) / 2
+      sinT[k] = detSin(t)
+      cosT[k] = detCos(t)
+      sinH[k] = detSin(h)
+      cosH[k] = detCos(h)
+      keyX[k] = x
+      keyY[k] = y
+    }
+    return k
+  }
   // Point a seen from b: its components along b's east and south axes
   // (each sin of the arc times the direction's cosine) and the arc's cosine.
-  // In the haversine form, so that a short offset keeps its precision.
+  // In the haversine form, so that a short offset keeps its precision: with
+  // h = sin(Δλ / 2), sin Δλ = 2h cos(Δλ / 2) and 1 − cos Δλ = 2h², and the
+  // colatitude's difference by its own sin and cos.
   let pe = 0
   let ps = 0
   let pc = 0
   const project = (ax: number, ay: number, bx: number, by: number): void => {
-    const ta = ay * toColat
-    const tb = by * toColat
-    const dl = (ax - bx) * toLon
-    const sa = detSin(ta)
-    const h = detSin(dl / 2)
+    let k = slot(ax, ay)
+    const sa = sinT[k]
+    const ca = cosT[k]
+    const sha = sinH[k]
+    const cha = cosH[k]
+    k = slot(bx, by)
+    const sb = sinT[k]
+    const cb = cosT[k]
+    const shb = sinH[k]
+    const chb = cosH[k]
+    const h = sha * chb - cha * shb
     const h2 = 2 * h * h
-    pe = sa * detSin(dl)
-    ps = detSin(ta - tb) - detCos(tb) * sa * h2
-    pc = detCos(ta - tb) - sa * detSin(tb) * h2
+    pe = sa * (2 * h * (cha * chb + sha * shb))
+    ps = (sa * cb - ca * sb) - cb * sa * h2
+    pc = (ca * cb + sa * sb) - sa * sb * h2
   }
   const wrapY = (y: number): number => {
     const folded = wrapValue(y, 2 * height)
@@ -304,6 +404,7 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
       out.y = folded
     }
   }
+  const grids = new Map<number, SphereGrid>()
   const domain: Domain = {
     kind: 'sphere',
     width,
@@ -360,6 +461,9 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
       const qz = ct * ca + tz * sa
       wrapPoint(detAtan2(qy, qx) / toLon, detAtan2(Math.sqrt(qx * qx + qy * qy), qz) / toColat, out)
     },
+    // Every chart coordinate names a point of the sphere (a colatitude past
+    // a pole is the point over it), so there is nothing to leave unwrapped.
+    displace: (x, y, dx, dy, out) => domain.advance(x, y, dx, dy, out),
     wrapX: (x) => wrapValue(x, width),
     // A reflection over the pole, the row alone — a moved point goes through
     // wrapPoint, which turns the longitude with it.
@@ -401,7 +505,19 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
         y: detAtan2(Math.sqrt(rx * rx + ry * ry), rz) / toColat,
       }
     },
-    grid: (resX, resY) => new SphereGrid(domain, resX, resY),
+    // One grid per size, kept: a sphere grid builds its row tables in trig,
+    // and callers ask for one per call (some per point — the ocean-age
+    // sampler's, 2026-10-10: four seconds of a full render). A grid holds
+    // no state between calls.
+    grid: (resX, resY) => {
+      const key = resX * 65536 + resY
+      let g = grids.get(key)
+      if (!g) {
+        g = new SphereGrid(domain, resX, resY)
+        grids.set(key, g)
+      }
+      return g
+    },
     scaledTo: (w, h) => sphereDomain(w, h),
   }
   return domain
@@ -433,6 +549,7 @@ class SphereGrid implements DomainGrid {
   private readonly halfCols: number
   private readonly rowScales: Float64Array
   private readonly cellAreas: Float64Array
+  private readonly edgeScales: Float64Array
   private readonly point = { x: 0, y: 0 }
 
   constructor(domain: Domain, resX: number, resY: number) {
@@ -455,6 +572,9 @@ class SphereGrid implements DomainGrid {
       this.rowScales[j] = scale
       this.cellAreas[j] = scale * band
     }
+    // The poles' edges are points: exactly 0, not detSin(π)'s last bit.
+    this.edgeScales = new Float64Array(resY + 1)
+    for (let j = 1; j < resY; j++) this.edgeScales[j] = detSin((j * Math.PI) / resY)
   }
 
   wrapCol(x: number): number {
@@ -510,6 +630,36 @@ class SphereGrid implements DomainGrid {
 
   cellArea(y: number): number {
     return this.cellAreas[this.wrapRow(Math.floor(y))]
+  }
+
+  // `y` an edge index, 0 (the north pole) to resY (the south pole).
+  edgeScale(y: number): number {
+    return this.edgeScales[Math.max(0, Math.min(this.resY, Math.round(y)))]
+  }
+
+  discBox(x: number, y: number, radius: number, out: CellBox): void {
+    this.domain.wrapPoint(x, y, this.point)
+    const cellW = this.width / this.resX
+    const cellH = this.height / this.resY
+    const yc = this.point.y
+    out.y0 = Math.max(0, Math.floor((yc - radius) / cellH))
+    out.y1 = Math.min(this.resY - 1, Math.ceil((yc + radius) / cellH))
+    out.x0 = 0
+    out.x1 = this.resX - 1
+    // A cap that holds a pole reaches every longitude.
+    if (yc - radius <= 0 || yc + radius >= this.height) return
+    // Its widest span in longitude, in chart units (R · Δλ): the cap of arc
+    // α = radius / R about colatitude θ reaches asin(sin α / sin θ) east and
+    // west. A margin far above the rounding, as the blob index files with.
+    const R = this.width / (2 * Math.PI)
+    const ratio = detSin(radius / R) / detSin(yc / R)
+    if (!(ratio < 1)) return
+    const span = detAsin(ratio) * R * (1 + 1e-9) + 1e-6
+    const x0 = Math.floor((this.point.x - span) / cellW)
+    const x1 = Math.ceil((this.point.x + span) / cellW)
+    if (x1 - x0 + 1 > this.resX) return
+    out.x0 = x0
+    out.x1 = x1
   }
 
   // The cells of a pole row are all the same size, so the area-weighted mean

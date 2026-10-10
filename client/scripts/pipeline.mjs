@@ -297,6 +297,114 @@ test('archeanReset rebuilds the same world from the same seed', async () => {
   check('archeanReset returns to epoch 0 exactly', hash(a.last('rendered').elevation) === first)
 })
 
+// ------------------------------------------------------------------ the sphere
+
+// A SPHERE world's first step (DEC-0035, step 4d2): the Archean on a
+// sphereDomain — mantle, plumes, nucleation, rafts. Two halves. Through the
+// runtime at this harness's size: the shape reaches the worker, the
+// Archean steps, pauses (the paused render places the plate preview, a
+// Voronoi on the globe) and resets on the sphere. Then the stage modules
+// directly at the world's real size, sphere against torus for one seed:
+// the numbers that say whether the sphere makes a plausible world.
+const poleRowsConstant = (field, resX, resY) => [0, resY - 1].every((j) => field.subarray(j * resX, (j + 1) * resX).every((v) => v === field[j * resX]))
+const allFinite = (field) => field.every((v) => Number.isFinite(v))
+
+test('a sphere world runs its Archean through the runtime', async () => {
+  const p = await freshPipeline()
+  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere' })
+  await until(() => p.count('rendered') >= 1, { label: 'the first sphere render' })
+  const first = p.last('rendered')
+  const firstMantle = hash(first.mantle)
+  const t = await freshPipeline()
+  t.dispatch({ ...ARCHEAN_INIT })
+  await until(() => t.count('rendered') >= 1, { label: 'the first torus render' })
+  check('the shape reaches the worker (a sphere mantle is not the torus\'s)', hash(t.last('rendered').mantle) !== firstMantle)
+
+  p.dispatch({ type: 'genesisStart' })
+  await until(() => p.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: `${ARCHEAN_EPOCHS} sphere epochs` })
+  p.dispatch({ type: 'genesisStop' })
+  await quiet(p)
+  const r = p.last('rendered')
+  const mantle = new Float32Array(r.mantle)
+  const status = p.last('genesisStatus')
+  check('the sphere Archean steps', status.epoch >= ARCHEAN_EPOCHS - 1 && hash(r.mantle) !== firstMantle, `epoch ${status.epoch}`)
+  check('its mantle, craton age and elevation are finite', allFinite(mantle) && allFinite(new Float32Array(r.cratonAge)) && allFinite(new Float32Array(r.elevation)))
+  check('its mantle is one value along each pole row', poleRowsConstant(mantle, r.mantleResX, r.mantleResY))
+  check('its land fraction and gauges are in range', r.landFraction >= 0 && r.landFraction <= 1 && status.stabilisedFraction >= 0 && status.stabilisedFraction <= 1 && Number.isFinite(status.crustFraction), `land ${r.landFraction.toFixed(3)}, stabilised ${status.stabilisedFraction.toFixed(3)}, ${status.cratonCount} cratons`)
+  check('the plumes lie on the sphere', r.hotspots.every((h) => h.x >= 0 && h.x < W && h.y >= 0 && h.y <= H), `${r.hotspots.length} plumes`)
+
+  const before = p.count('rendered')
+  p.dispatch({ type: 'resetStage', stage: 'genesis' })
+  await until(() => p.count('rendered') > before, { label: 'the sphere reset render' })
+  await quiet(p)
+  check('a reset makes the sphere again, not a torus', hash(p.last('rendered').mantle) === firstMantle)
+})
+
+test('a sphere Archean at full size: finite, pole-handled, plausible against the torus', async () => {
+  const L = (m) => server.ssrLoadModule(m)
+  const [AS, AT, RF, MF, IM, OA] = await Promise.all([
+    L('/src/generator/archean/archeanState.ts'), L('/src/generator/archean/archeanStep.ts'),
+    L('/src/generator/crust/raftField.ts'), L('/src/generator/mantle/mantleField.ts'),
+    L('/src/generator/render/elevationMapImage.ts'), L('/src/generator/tectonics/oceanAge.ts'),
+  ])
+  // The REAL slice renderer this time (elevationRenderWorker.ts), driven in
+  // this process through a stand-in `self`: the sphere's warp and noise are
+  // the part of the render the synthetic one above skips. The stand-in goes
+  // again when this test ends.
+  const shim = { postMessage: (m) => { shim.posted = m } }
+  globalThis.self = shim
+  try {
+    await sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA })
+  } finally {
+    delete globalThis.self
+  }
+})
+
+async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA }) {
+  await L('/src/generator/render/elevationRenderWorker.ts')
+  const slices = {
+    async renderElevations(rw, rh, ww, wh, base, features, warpSeed, shape) {
+      shim.onmessage({ data: { type: 'renderSlice', requestId: 0, startY: 0, endY: rh, renderWidth: rw, renderHeight: rh, worldWidth: ww, worldHeight: wh, blendedBaselineSlice: base.slice().buffer, features, warpSeed, shape } })
+      return new Float32Array(shim.posted.elevations)
+    },
+  }
+  const FW = 2048, FH = 1024, EPOCHS = 60
+  const result = {}
+  for (const shape of ['torus', 'sphere']) {
+    const started = performance.now()
+    const sim = AS.createArcheanSimulation('harness', FW, FH, 0, shape)
+    for (let e = 0; e < EPOCHS; e++) AT.archeanStep(sim, AT.DEFAULT_ARCHEAN_PARAMS)
+    const stepped = performance.now() - started
+    const flow = MF.computeMantleFlow(sim.mantle, sim.domain)
+    const age = RF.computeCratonOldnessField(sim.rafts, sim.epoch, MF.MANTLE_RES_X, MF.MANTLE_RES_Y, sim.domain)
+    // The live preview's render, a quarter of the world per axis.
+    const rendered = await IM.renderSimulationImage(
+      { width: FW, height: FH, domain: sim.domain, seeds: [], rafts: sim.rafts, features: [], oceanAge: new Float32Array(OA.OCEAN_AGE_RES_X * OA.OCEAN_AGE_RES_Y), warpSeed: sim.warpSeed, seaLevelOffset: 0, mantle: sim.mantle },
+      slices, { elevationScale: 4 },
+    )
+    result[shape] = {
+      finite: allFinite(sim.mantle) && allFinite(flow) && allFinite(age) && allFinite(rendered.rawElevations),
+      poles: poleRowsConstant(sim.mantle, MF.MANTLE_RES_X, MF.MANTLE_RES_Y),
+      land: rendered.landFraction,
+      stabilised: RF.stabilisedFraction(sim.rafts, sim.epoch, AT.DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs),
+      cratons: sim.rafts.length,
+      ms: stepped,
+      renderMs: performance.now() - started - stepped,
+    }
+  }
+  const say = (r) => `land ${r.land.toFixed(3)}, stabilised ${r.stabilised.toFixed(3)}, ${r.cratons} cratons, ${EPOCHS} epochs in ${(r.ms / 1000).toFixed(1)} s, render ${(r.renderMs / 1000).toFixed(1)} s`
+  const { torus, sphere } = result
+  check('the sphere\'s mantle, flow, craton age and elevation are finite', sphere.finite && torus.finite)
+  check('the sphere\'s mantle is one value along each pole row (the torus has none)', sphere.poles && !torus.poles)
+  // Plausible, not calibrated: crust has formed and some of it has
+  // stabilised, and land stays a minority. The sphere's surface is W² / π
+  // against the torus's W · H, 64 % of it, so the same crust covers more of
+  // it — its land fraction runs higher for the same seed.
+  check('the sphere makes land, and not too much', sphere.land > 0.01 && sphere.land < 0.6, say(sphere))
+  check('its crust has begun to stabilise', sphere.stabilised > 0 && sphere.stabilised <= 1 && sphere.cratons > 0)
+  check('the torus, same seed, for comparison', torus.land > 0.01 && torus.land < 0.6, say(torus))
+}
+
 // ------------------------------------------------------- hand-over and resets
 
 test('the hand-over is what resetTectonics goes back to', async () => {

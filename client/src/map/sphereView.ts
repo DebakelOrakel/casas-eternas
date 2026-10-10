@@ -41,9 +41,9 @@ import type { ChartPoint, WorldView } from './worldView'
 // axis from the frame's +x toward −z, v from the north pole (+y, v = 0) to
 // the south. So a layer's texel (u · width, v · height) shows where chartAt
 // answers (u, v). The globe shows the sea until told to show its layers
-// (setLayersShown): a sphere world has none until its stages run, and the
-// flat sample world's are not its. What it cannot show yet (relief, rivers,
-// water, names) it takes and ignores.
+// (setLayersShown): the screen lays a sphere world's own on it (its first
+// step, since 2026-10-10), never the flat sample world's. What it cannot
+// show yet (relief, rivers, water, names) it takes and ignores.
 
 export interface GlobeWorldView extends WorldView {
   readonly shape: 'sphere'

@@ -378,13 +378,15 @@
   height: 100%;
 }
 
-/* A sphere world (map/sphereView.ts) has no layers of its own yet: the
-   legend and the step's layer list would describe the flat sample world.
-   The scale bar and the temperature scale could read the globe (its
-   chartAt), but the orbit camera's swoop does not suit them as they are;
-   left out until their globe form is thought through (2026-10-10). */
-.generator-screen--sphere .overlay-legend,
-.generator-screen--sphere .gen-layers,
+/* A sphere world (map/sphereView.ts) shows its own layers in step 1 only
+   (DEC-0035, step 4d2: --sphere-layers, set by the screen while the globe
+   wears them). Elsewhere the legend and the step's layer list would
+   describe the flat sample world, and are hidden. The scale bar and the
+   temperature scale could read the globe (its chartAt), but the orbit
+   camera's swoop does not suit them as they are; left out until their
+   globe form is thought through (2026-10-10). */
+.generator-screen--sphere:not(.generator-screen--sphere-layers) .overlay-legend,
+.generator-screen--sphere:not(.generator-screen--sphere-layers) .gen-layers,
 .generator-screen--sphere .scale-bar,
 .generator-screen--sphere .temp-scale {
   display: none;

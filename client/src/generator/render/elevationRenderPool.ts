@@ -1,4 +1,5 @@
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
+import type { Domain } from '../core/domain'
 import type { RenderSliceResponse } from './elevationRenderWorker'
 // Imported via Vite's `?worker` suffix rather than `new Worker(new URL(...,
 // import.meta.url))`: this pool is itself constructed *inside*
@@ -41,6 +42,9 @@ export interface ElevationRenderer {
     blendedBaselines: Float32Array,
     features: TerrainFeature[],
     warpSeed: number,
+    // The world's shape (Domain.kind): a Domain does not cross a worker
+    // boundary, its name does.
+    shape: Domain['kind'],
   ): Promise<Float32Array>
 }
 
@@ -71,6 +75,7 @@ export class ElevationRenderPool implements ElevationRenderer {
     blendedBaselines: Float32Array,
     features: TerrainFeature[],
     warpSeed: number,
+    shape: Domain['kind'],
   ): Promise<Float32Array> {
     const poolSize = this.workers.length
     const rowsPerWorker = Math.ceil(renderHeight / poolSize)
@@ -95,7 +100,7 @@ export class ElevationRenderPool implements ElevationRenderer {
           resolve()
         }
         worker.addEventListener('message', handleMessage)
-        const message = { type: 'renderSlice', requestId, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, blendedBaselineSlice: baselineSlice.buffer, features, warpSeed }
+        const message = { type: 'renderSlice', requestId, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, blendedBaselineSlice: baselineSlice.buffer, features, warpSeed, shape }
         worker.postMessage(message, [message.blendedBaselineSlice])
       })
     })

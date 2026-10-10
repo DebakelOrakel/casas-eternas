@@ -1,7 +1,7 @@
 import type { Raft } from '../crust/raftTypes'
 import type { SeededRandom } from '../core/rng'
 import type { Domain } from '../core/domain'
-import { torusDomain } from '../core/domain'
+import { domainOfKind } from '../core/domain'
 import { mulberry32, hashSeedString } from '../core/rng'
 import { createMantleField, MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 
@@ -56,9 +56,11 @@ export interface ArcheanSimulation {
 // three files.
 export const coastalWarpSeed = (seedString: string): number => hashSeedString(`${seedString}:coastalWarp`)
 
-export function createArcheanSimulation(seedString: string, width: number, height: number, seaLevelOffset = 0): ArcheanSimulation {
+// `shape`: the world's (DEC-0035) — the torus, or the sphere over the same
+// 2:1 chart. Everything the Archean computes reaches it through the domain.
+export function createArcheanSimulation(seedString: string, width: number, height: number, seaLevelOffset = 0, shape: Domain['kind'] = 'torus'): ArcheanSimulation {
   const random = mulberry32(hashSeedString(seedString))
-  const domain = torusDomain(width, height)
+  const domain = domainOfKind(shape, width, height)
   return {
     width,
     height,

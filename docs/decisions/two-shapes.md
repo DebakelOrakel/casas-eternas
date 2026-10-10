@@ -23,7 +23,7 @@ summary.de: Wie Torus und Kugel einen Generator und einen Screen teilen, ohne si
 area: generator
 stage: decided
 createdAt: 2026-10-09
-updatedAt: 2026-10-09
+updatedAt: 2026-10-10
 related: [DES-0017, DEC-0029, DEC-0015, DEC-0024, DES-0025]
 ---
 
@@ -184,6 +184,31 @@ models' usual remedy.
 - Whether the flat map gets a camera reset like the globe's.
 
 ## Status
+
+2026-10-10: step 4d2 BUILT — a sphere world runs its first step. The
+screen sends its shape with `genesisInit`, the worker builds
+`sphereDomain` (`domainOfKind`), and the Archean and its render run on it;
+the step's layers are painted into the globe's textures and laid on it
+(never step 0's: those are the flat sample world's), with the legend, the
+layer list and the readout. Steps 2+ stay locked. Per stage:
+the mantle on the grid's finite-volume metric (new
+`DomainGrid.edgeScale`), the blur's east-west share sub-stepped near a
+pole, the flow solve's high-latitude rows relaxed as cyclic lines, the
+field averaged at the pole rows, mean and RMS area-weighted; the nuclei
+offered per area; the raft scatters and the blob index filed by
+`DomainGrid.discBox` (a cap's rows and its widest longitude span); the
+point moves through `advance` and the new `Domain.displace` (advance
+without the wrap, which keeps the torus's unwrapped sums); the warped
+sample point wrapped as a point; the render's last row and the land
+fraction through the grid (area-weighted). The sphere's distance caches
+each point's trig, and its grids are kept per size. Left: the noise
+lattices (warp, ridged, hypsometry) are sampled in chart units on the
+sphere, stretched toward the poles and not single-valued at a pole; the
+feature query is the torus's (the Archean has no features). Saving a
+sphere world writes `SphereWorld` with its own data; it cannot be opened
+yet. `harness:pipeline` runs the sphere's Archean through the runtime and
+at 2048 × 1024 beside the torus. Golden harness byte-identical. Next:
+4d3, the tectonics on the sphere.
 
 2026-10-10: step 4c BUILT — the globe can show the layers
 (`GlobeWorldView.setLayersShown`, the unshaded composite on the lit

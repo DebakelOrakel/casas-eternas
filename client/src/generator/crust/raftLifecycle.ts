@@ -8,6 +8,8 @@ import { detHypot } from '../core/detMath'
 // The offset `domain.delta` writes into: one per module, so no call
 // allocates. Read it at once, before the next delta.
 const offset = { x: 0, y: 0 }
+// A point between two moves (Domain.displace), the same way.
+const moved = { x: 0, y: 0 }
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
 // plates, decoupled from them — see docs/decisions/continental-crust-rafts.md. A
@@ -103,12 +105,17 @@ export function advanceRaftsOnFlow(
     }
     meanX /= raft.blobs.length
     meanY /= raft.blobs.length
+    // The flow is in each cell's own east/south frame (computeMantleFlow),
+    // so the mean of a raft's blobs is a mean of components in nearby
+    // frames: right for a raft that is small against its distance to a pole.
+    // Two moves, the mean and then the blob's own share — on the torus the
+    // sum the code always added, (x + mean) + differential, bit for bit.
     const differential = 1 - rigidity
     for (const blob of raft.blobs) {
       const localX = flowAt(blob.x, blob.y, 0)
       const localY = flowAt(blob.x, blob.y, 1)
-      blob.x = domain.wrapX(blob.x + meanX + differential * (localX - meanX))
-      blob.y = domain.wrapY(blob.y + meanY + differential * (localY - meanY))
+      domain.displace(blob.x, blob.y, meanX, meanY, moved)
+      domain.advance(moved.x, moved.y, differential * (localX - meanX), differential * (localY - meanY), blob)
     }
   }
 }
@@ -159,8 +166,11 @@ export function compactRafts(rafts: Raft[], rate: number, domain: Domain): void 
       sumY += offset.y
       radiusSum += blob.radius
     }
-    const cx = ref.x + sumX / n
-    const cy = ref.y + sumY / n
+    // The centroid: the blobs' mean offset from the first, taken from it
+    // (unwrapped on the torus, as it always was).
+    domain.displace(ref.x, ref.y, sumX / n, sumY / n, moved)
+    const cx = moved.x
+    const cy = moved.y
     const meanRadius = radiusSum / n
     // Median nearest-neighbour spacing — O(n²), but n is a few hundred and
     // this runs once per raft per epoch, far below the mantle solve's cost.
@@ -187,8 +197,7 @@ export function compactRafts(rafts: Raft[], rate: number, domain: Domain): void 
       const excess = dist - compactRadius
       if (excess <= 0) continue
       const pull = (excess * rate) / dist
-      blob.x = domain.wrapX(blob.x - dx * pull)
-      blob.y = domain.wrapY(blob.y - dy * pull)
+      domain.advance(blob.x, blob.y, -dx * pull, -dy * pull, blob)
     }
   }
 }
@@ -378,8 +387,9 @@ export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, epoc
           domain.delta(overlap.blobB.x, overlap.blobB.y, overlap.blobA.x, overlap.blobA.y, offset)
           const dx = offset.x
           const dy = offset.y
-          const seamX = domain.wrapX(overlap.blobA.x + dx / 2)
-          const seamY = domain.wrapY(overlap.blobA.y + dy / 2)
+          domain.advance(overlap.blobA.x, overlap.blobA.y, dx / 2, dy / 2, moved)
+          const seamX = moved.x
+          const seamY = moved.y
           const len = detHypot(dx, dy) || 1
           merges.push({ nameA, nameB, x: seamX, y: seamY, tangentX: -dy / len, tangentY: dx / len })
           if (!rafts[i].name && rafts[j].name) rafts[i].name = rafts[j].name

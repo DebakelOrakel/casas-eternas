@@ -70,10 +70,18 @@ export function findNucleationSites(
   domain: Domain,
 ): { x: number; y: number }[] {
   const { width, height } = domain
-  const candidates: { x: number; y: number; streak: number }[] = []
+  const grid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
+  const candidates: { x: number; y: number; streak: number; row: number }[] = []
 
   for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
     const wy = ((gy + 0.5) / MANTLE_RES_Y) * height
+    // One candidate per `stride` cells of the row, so that candidates stand
+    // as densely per AREA everywhere: on the sphere a row toward a pole is
+    // narrower by rowScale, and a pole row of 128 cells is one small cap —
+    // offering all of them would put the per-epoch budget at the pole
+    // (DEC-0035, fork 5). 1 on the torus: every cell, as before. The streak
+    // itself is counted in every cell.
+    const stride = Math.max(1, Math.round(1 / grid.rowScale(gy)))
     for (let gx = 0; gx < MANTLE_RES_X; gx++) {
       const i = gy * MANTLE_RES_X + gx
       if (mantle[i] < params.upwellingThreshold) {
@@ -82,12 +90,13 @@ export function findNucleationSites(
       }
       streak[i] += 1
       if (streak[i] < params.persistenceEpochs) continue
+      if (gx % stride !== 0) continue
 
       // The ocean condition. Without it this whole function is a feedback loop.
       const wx = ((gx + 0.5) / MANTLE_RES_X) * width
       if (raftField(wx, wy, rafts, domain) > params.occupiedFieldLevel) continue
 
-      candidates.push({ x: wx, y: wy, streak: streak[i] })
+      candidates.push({ x: wx, y: wy, streak: streak[i], row: gy })
     }
   }
 
@@ -105,13 +114,19 @@ export function findNucleationSites(
     streak[gy * MANTLE_RES_X + gx] = 0
   }
 
-  // Jitter within the cell so nuclei don't sit on a visible 128×64 grid.
+  // Jitter within the cell so nuclei don't sit on a visible 128×64 grid: an
+  // offset of up to half a cell each way, in the cell's own frame — on the
+  // sphere a cell is narrower by rowScale (1 on the torus), and the point is
+  // left unwrapped there as it always was (Domain.displace).
   const cellW = width / MANTLE_RES_X
   const cellH = height / MANTLE_RES_Y
-  return chosen.map((c) => ({
-    x: c.x + (random() - 0.5) * cellW,
-    y: c.y + (random() - 0.5) * cellH,
-  }))
+  return chosen.map((c) => {
+    const dx = (random() - 0.5) * cellW * grid.rowScale(c.row)
+    const dy = (random() - 0.5) * cellH
+    const site = { x: 0, y: 0 }
+    domain.displace(c.x, c.y, dx, dy, site)
+    return site
+  })
 }
 
 // Places a nucleated blob: welded onto a nearby raft if one is within reach,

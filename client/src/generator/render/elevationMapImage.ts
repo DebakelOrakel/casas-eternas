@@ -1,7 +1,7 @@
 import { elevationToColor } from '../elevation/elevationColor'
 import { applyMountainRedistribution, computeRaftBaseline } from '../elevation/elevationField'
 import type { PlateSimulation } from '../tectonics/plateSimulation'
-import type { Domain } from '../core/domain'
+import type { Domain, DomainGrid } from '../core/domain'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
@@ -49,7 +49,7 @@ export interface SimulationRenderResult {
   // Per-raft continent-name label geometry (position/angle/fit size) for the
   // names overlay — computed from raft blobs, no text drawn here.
   raftLabels: ContinentLabelPlacement[]
-  // Fraction of the map (by pixel count, computed from this same pass —
+  // Fraction of the world (by area — the pixel count on the torus — from this same pass —
   // not from plate type counts) whose elevation is above sea level.
   // Plate type alone is a poor proxy for this: a continental plate's own
   // baseline can dip below zero near its jittered low end or a nearby
@@ -110,14 +110,19 @@ const BASIN_ROCK_COLOR: [number, number, number] = [196, 178, 148]
 const SHORE_COLOR = elevationToColor(0)
 
 // Whether any of a cell's eight neighbours is land (above sea level, or a dry
-// basin floor that renders as land), wrapped by the grid's tables (`cols`,
-// `rows`: DomainGrid colTable(1) and rowTable(1)).
-function touchesLand(elevations: Float32Array, cols: Int32Array, rows: Int32Array, x: number, y: number, dryBasin: Uint8Array | undefined): boolean {
+// basin floor that renders as land). Inside the raster through the column
+// table (`cols`: DomainGrid colTable(1)); in the first and the last row
+// through the grid's own step, which on the sphere crosses the pole to the
+// opposite meridian (on the torus it is the wrapped row, as a row table
+// gave it).
+function touchesLand(elevations: Float32Array, grid: DomainGrid, cols: Int32Array, x: number, y: number, dryBasin: Uint8Array | undefined): boolean {
+  const { resX: width, resY: height } = grid
+  const edge = y === 0 || y === height - 1
   for (let dy = -1; dy <= 1; dy++) {
-    const ny = rows[y + dy + 1]
+    const ny = (y + dy) * width
     for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue
-      const n = ny + cols[x + dx + 1]
+      const n = edge && dy !== 0 ? grid.neighbour(x, y, dx, dy) : ny + cols[x + dx + 1]
       if (elevations[n] > 0 || (dryBasin !== undefined && dryBasin[n] === 1)) return true
     }
   }
@@ -195,7 +200,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
     // stands now — instantaneous, never crustal.
     const dynamic = dynamicTopographyField(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, renderWidth, renderHeight, sim.domain)
     for (let i = 0; i < blendedBaselines.length; i++) blendedBaselines[i] += dynamic[i]
-    const rendered = await pool.renderElevations(renderWidth, renderHeight, width, height, blendedBaselines, sim.features, sim.warpSeed)
+    const rendered = await pool.renderElevations(renderWidth, renderHeight, width, height, blendedBaselines, sim.features, sim.warpSeed, sim.domain.kind)
     elevations = scale === 1 ? rendered : sim.domain.grid(renderWidth, renderHeight).upscale(rendered, width, height)
   }
   // Captured before redistribution reshapes elevations in place — see
@@ -236,20 +241,27 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   // Forward-difference hillshade lit from the top-left; exaggerated since
   // normalized elevation deltas are tiny per pixel. See GeneratorScreen.
   const relief = new Uint8Array(width * height)
-  let landPixelCount = 0
+  // The land counted by AREA (cellArea: 1 a cell on the torus, so a plain
+  // count there; on the sphere the polar rows' cells are small).
+  let landArea = 0
+  let totalArea = 0
+  for (let y = 0; y < height; y++) totalArea += grid.cellArea(y) * width
   const cols = grid.colTable(1)
-  const rows = grid.rowTable(1)
   for (let y = 0; y < height; y++) {
-    const downRow = rows[y + 2]
+    // The row below; the last row's through the grid's step (across the
+    // south pole on the sphere, the wrap on the torus).
+    const lastRow = y === height - 1
+    const downRow = (y + 1) * width
+    const rowArea = grid.cellArea(y)
     for (let x = 0; x < width; x++) {
       const right = y * width + cols[x + 2]
-      const down = downRow + x
+      const down = lastRow ? grid.neighbour(x, y, 0, 1) : downRow + x
       const idx = y * width + x
       const plateIndex = cellIds[idx]
       if (plateIndex !== cellIds[right] || plateIndex !== cellIds[down]) boundaryMask[idx] = 1
       const elevation = elevations[idx]
       const dryFloor = options.dryBasin !== undefined && options.dryBasin[idx] === 1
-      if (elevation > 0 || dryFloor) landPixelCount++
+      if (elevation > 0 || dryFloor) landArea += rowArea
       const shade = reliefShadeAt(elevations, idx, right, down)
       relief[idx] = (elevation > 0 || dryFloor ? 128 : 0) | Math.round(shade * 127)
       // A sea cell next to land paints as SHORE, not as water: the water
@@ -259,7 +271,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
       // above the level — land, at the shoreline's height.
       const color = dryFloor
         ? (options.saltFlat !== undefined && options.saltFlat[idx] === 1 ? SALT_CRUST_COLOR : BASIN_ROCK_COLOR)
-        : elevation <= 0 && touchesLand(elevations, cols, rows, x, y, options.dryBasin)
+        : elevation <= 0 && touchesLand(elevations, grid, cols, x, y, options.dryBasin)
           ? SHORE_COLOR
           : elevationToColor(elevation)
       const pixelIndex = idx * 4
@@ -274,5 +286,5 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   // thread. Labels come from raft blobs.
   const raftLabels = computeRaftLabelPlacements(sim.rafts, sim.domain)
 
-  return { buffer, relief, boundaryMask, raftLabels, landFraction: landPixelCount / (width * height), rawElevations, elevations }
+  return { buffer, relief, boundaryMask, raftLabels, landFraction: landArea / totalArea, rawElevations, elevations }
 }

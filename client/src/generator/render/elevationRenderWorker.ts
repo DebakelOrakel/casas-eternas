@@ -1,7 +1,7 @@
 import { buildFeatureBuckets, computeElevation, warpedSamplePoint } from '../elevation/elevationField'
 import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from '../elevation/ridgedNoise'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
-import { torusDomain, type Domain } from '../core/domain'
+import { domainOfKind, type Domain } from '../core/domain'
 
 // Computes raw (unshaped, unclamped-differently, uncolored) elevation for
 // one horizontal band [startY, endY) of the map — spawned and owned by
@@ -35,6 +35,7 @@ interface RenderSliceRequest {
   blendedBaselineSlice: ArrayBuffer
   features: TerrainFeature[]
   warpSeed: number
+  shape: Domain['kind']
 }
 
 export interface RenderSliceResponse {
@@ -57,6 +58,7 @@ export interface RenderSliceResponse {
 // cache stays valid until a new world (new warpSeed or resized map) arrives.
 interface StaticFieldCache {
   warpSeed: number
+  shape: Domain['kind']
   startY: number
   endY: number
   renderWidth: number
@@ -86,6 +88,7 @@ function getStaticFieldCache(
   if (
     staticCache &&
     staticCache.warpSeed === warpSeed &&
+    staticCache.shape === domain.kind &&
     staticCache.startY === startY &&
     staticCache.endY === endY &&
     staticCache.renderWidth === renderWidth &&
@@ -112,20 +115,23 @@ function getStaticFieldCache(
       const { wx, wy } = warpedSamplePoint(worldX, worldY, domain, warpSeed)
       warpedX[idx] = wx
       warpedY[idx] = wy
+      // Periodic noise in CHART units, on the sphere too (stretched toward
+      // the poles there) — a known simplification until the sphere samples a
+      // 3D noise (DEC-0035, fork 1).
       ridge[idx] = ridgedMultifractal(wx, wy, worldWidth, worldHeight, warpSeed)
       fine[idx] = fineDetailNoise(wx, wy, worldWidth, worldHeight, fineSeed)
     }
   }
-  staticCache = { warpSeed, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, warpedX, warpedY, ridge, fine }
+  staticCache = { warpSeed, shape: domain.kind, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, warpedX, warpedY, ridge, fine }
   return staticCache
 }
 
 self.onmessage = (event: MessageEvent<RenderSliceRequest>) => {
-  const { requestId, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, blendedBaselineSlice, features, warpSeed } = event.data
+  const { requestId, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, blendedBaselineSlice, features, warpSeed, shape } = event.data
   const baselineSlice = new Float32Array(blendedBaselineSlice)
-  // A Domain does not cross the message boundary; the world's size does,
-  // so the slice builds its own from it.
-  const domain = torusDomain(worldWidth, worldHeight)
+  // A Domain does not cross the message boundary; the world's shape and
+  // size do, so the slice builds its own from them.
+  const domain = domainOfKind(shape, worldWidth, worldHeight)
   // Rebuilt locally from the FULL feature list (not just ones inside this
   // band) rather than trying to hand each worker a pre-filtered slice —
   // a feature just outside this band's row range can still be within

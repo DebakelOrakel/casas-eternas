@@ -80,18 +80,20 @@ const DETAIL_CAP = metersToElevation(DETAIL_CAP_M)
 export function applyErosionDetailTexture(display: Float32Array, reference: Float32Array, grid: DomainGrid, warpSeed: number): void {
   const { resX: width, resY: height } = grid
   const cols = grid.colTable(1)
-  const rows = grid.rowTable(1)
   const noiseSeed = (warpSeed ^ 0x9e3779b9) >>> 0
   for (let y = 0; y < height; y++) {
     const row = y * width
-    const downRow = rows[y + 2]
+    // The row below; the last row's through the grid's step (across the
+    // south pole on the sphere, the wrap on the torus).
+    const lastRow = y === height - 1
+    const downRow = (y + 1) * width
     for (let x = 0; x < width; x++) {
       const i = row + x
       const e = reference[i]
       if (e <= 0) continue // ocean untouched
       const right = cols[x + 2]
       const dzdx = reference[row + right] - e
-      const dzdy = reference[downRow + x] - e
+      const dzdy = reference[lastRow ? grid.neighbour(x, y, 0, 1) : downRow + x] - e
       const slope = Math.hypot(dzdx, dzdy)
       // Amplitude additionally capped by the cell's own height above sea level,
       // so display-only texture can never flip a land pixel's sign: a delta

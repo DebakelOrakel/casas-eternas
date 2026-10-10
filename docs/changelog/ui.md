@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-10
+- **new** Generator: a sphere world runs its first step, the Mantle — crust forms and drifts on the globe, which shows the step's layers. `generator.step.genesis`
+
 ## 2026-10-09
 - **new** Generator: a new world can be a sphere — for now its first step only, an ocean globe whose axis follows the axial tilt, with the later steps locked. `generator.load.new`
 

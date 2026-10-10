@@ -168,7 +168,7 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, domain, params.diffusion)
   // Internal heating keeps convection running; without it the field decays to
   // nothing on a planet that has no crust yet. See sustainMantleVigour.
-  sim.mantle = sustainMantleVigour(sim.mantle, params.mantleRms)
+  sim.mantle = sustainMantleVigour(sim.mantle, params.mantleRms, domain)
   const flow = computeMantleFlow(sim.mantle, domain)
 
   // 2. Crust rides the convection directly. No plates exist yet. Compaction

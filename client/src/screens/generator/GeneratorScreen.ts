@@ -895,15 +895,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // is the one the screen starts with, not one anybody asked for.
   let worldCreated = false
   // The world's shape, picked when it was made (ui/worldChooser). A sphere
-  // has step 0 only for now (2026-10-09): its globe in a scene of its own
-  // (map/sphereView.ts), the later steps locked, nothing to create. A world
-  // from a file is flat: the saves are tori.
+  // runs steps 0 and 1 for now (2026-10-10, DEC-0035 step 4d2): its globe in
+  // a scene of its own (map/sphereView.ts), the Archean on the sphere, the
+  // later steps locked. A world from a file is flat: the saves are tori.
   let worldShape: WorldShape = 'flat'
   let globeView: GlobeWorldView | null = null
   // The view on screen (map/worldView.ts): the globe for a sphere world,
   // the flat map otherwise. The pointer, the scales and the camera ask it.
-  // The layers are still painted into the flat view alone: they are the
-  // flat world's (or the sample world's), and a sphere world has none yet.
+  // The layers go to the view whose shape is theirs (layerView, at the
+  // compositor below).
   const activeView = (): WorldView => globeView ?? flatView
   // The view back to where it started (WorldView.resetCamera); shown with
   // the sphere only, where the flat map's scale bar stands.
@@ -918,9 +918,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const setWorldShape = (shape: WorldShape): void => {
     worldShape = shape
     root.classList.toggle('generator-screen--sphere', shape === 'sphere')
-    // The readout describes the layers' cells, and a sphere world has no
-    // layers yet: it would describe the flat sample world.
-    hoverTooltip?.setEnabled(shape !== 'sphere')
     if (shape === 'sphere' && !globeView) {
       globeView = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresRound: METERS_PER_CELL * MAP_WIDTH })
       globeView.setObliquity(Number(obliquityInput.value))
@@ -928,6 +925,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       globeView.dispose()
       globeView = null
     }
+    // A new shape is a new world: nothing of it is on the globe yet.
+    globePainted = false
+    syncGlobeLayers()
   }
   // THE APPLIED WORLD (2026-09-29): step 0's seed and levers as the world was
   // last created or opened with. Once a world exists, moving them changes
@@ -985,7 +985,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     resetPlanetButton.disabled = busy
     // Once a world exists, "create world" is for taking changed levers, and
     // the levers move only after the step's reset unlocked them.
-    createWorldButton.disabled = busy || worldShape === 'sphere' || (applied !== null && !step0Pending())
+    createWorldButton.disabled = busy || (applied !== null && !step0Pending())
     const step0Locked = busy || (applied !== null && !step0Unlocked)
     sayResetPlanet()
     for (const el of [seedInput, obliquityInput, tempBandInput, contrastInput, rotationInput, humidityInput]) el.disabled = step0Locked
@@ -2089,9 +2089,31 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // markers (added via overlay.addMarker).
   // Latest composited RGBA (retained for the save preview thumbnail).
   let lastCompositePixels: Uint8Array | null = null
+  // THE GLOBE'S LAYERS (DEC-0035, step 4d2). A sphere world's own layers —
+  // step 1's, the one step after the planet it runs — are painted into the
+  // globe's textures and laid on it. Never the planet preview's: those are
+  // the flat sample world's (step 0, and the moment after "create world"
+  // until the new world's first render lands), and the globe shows the bare
+  // sea then; they go to the flat view, out of sight.
+  // `baseIsWorld`: the base the compositor holds is the world's own render.
+  // `globePainted`: the globe's textures hold this world's layers.
+  let baseIsWorld = false
+  let globePainted = false
+  const paintsGlobe = (): boolean => globeView !== null && baseIsWorld && STEP_IDS[panelIndex] !== 'world'
+  const layerView = (): WorldView => (paintsGlobe() ? globeView! : flatView)
+  // The globe shows its layers when they are this world's and the step's;
+  // the legend, the layer list and the readout follow, since they describe
+  // the layers on show (the scale bar and the temperature scale stay off
+  // the globe — their globe form is still to be thought through).
+  function syncGlobeLayers(): void {
+    const shown = paintsGlobe() && globePainted
+    globeView?.setLayersShown(shown)
+    root.classList.toggle('generator-screen--sphere-layers', shown)
+    hoverTooltip?.setEnabled(worldShape !== 'sphere' || shown)
+  }
   const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => {
     lastCompositePixels = pixels
-    flatView.baseTexture.update(pixels)
+    layerView().baseTexture.update(pixels)
   })
 
   // Second compositor output for the relief meshes: identical layer stack
@@ -2102,12 +2124,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // event markers are main-compositor-only, which is fine — they belong to
   // the map reading, not the relief look.
   const reliefOverlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => {
-    flatView.reliefTexture.update(pixels)
+    layerView().reliefTexture.update(pixels)
   })
+  // Whether the unshaded composite is wanted: for the flat map's relief
+  // (eroded terrain), and for a sphere world always — the globe is lit and
+  // wears it, and its base must follow every base the world gets, whichever
+  // step it arrives in.
+  const reliefWanted = (): boolean => erosionRunCount >= 1 || globeView !== null
   // Every composite goes through here so the two outputs can never drift.
   function compositeOverlays(): void {
     overlay.composite()
-    if (erosionRunCount >= 1) reliefOverlay.composite()
+    if (reliefWanted()) reliefOverlay.composite()
+    if (paintsGlobe() && !globePainted) {
+      globePainted = true
+      syncGlobeLayers()
+    }
   }
 
   // Torus wrap for VECTOR overlays (labels, markers, arrows): the compositor canvas is
@@ -3170,7 +3201,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function applyBase(): void {
     const base = buildSimplifiedBase()
     if (base) overlay.setBase(base)
-    if (erosionRunCount >= 1) {
+    if (reliefWanted()) {
       const unshaded = buildUnshadedBase()
       if (unshaded) reliefOverlay.setBase(unshaded)
     }
@@ -3415,6 +3446,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     lastColoredBase = new Uint8ClampedArray(message.buffer)
     lastRelief = new Uint8Array(message.relief)
+    baseIsWorld = false
     simplifiedBaseCache = null
     unshadedBaseCache = null
     terrainTintCache = null
@@ -3438,6 +3470,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (planetPreviewRealBase) {
       lastColoredBase = planetPreviewRealBase.base
       lastRelief = planetPreviewRealBase.relief
+      baseIsWorld = true
       simplifiedBaseCache = null
       unshadedBaseCache = null
       terrainTintCache = null
@@ -4062,6 +4095,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     } else {
       lastColoredBase = new Uint8ClampedArray(message.buffer)
       lastRelief = new Uint8Array(message.relief)
+      baseIsWorld = true
     }
     lastMantle = new Float32Array(message.mantle)
     mantleNorm = mantleTintNorm(lastMantle)
@@ -4186,11 +4220,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     tectonicsRunRestored = false
     genesisTallied = 0
     forgetOverlays()
+    // A new world: nothing of it is on the globe yet.
+    globePainted = false
+    syncGlobeLayers()
     postToWorker({
       type: 'genesisInit',
       seed,
       width: MAP_WIDTH,
       height: MAP_HEIGHT,
+      shape: worldShape === 'sphere' ? 'sphere' : 'torus',
       epochIntervalMs: EPOCH_INTERVAL_MS,
       mantleDiffusion: mantleDiffusionFromVigour(vigour),
       seaLevelOffset: seaLevelOffsetFromWater(water),
@@ -5794,9 +5832,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // tectonics a world of proto-cratons that are still dissolving.
   const MIN_ARCHEAN_STABILISED = 0.5
   const entryRequirementUnmet = (index: number): string | null => {
-    // A sphere has its first step only: the later ones are locked, and
-    // say nothing — there is nothing to do that would open them.
-    if (index > panelIndexOf('world') && worldShape === 'sphere') return ''
+    // A sphere runs the planet and the Archean only (DEC-0035, step 4d2):
+    // the later steps are locked, and say nothing — there is nothing to do
+    // that would open them.
+    if (index > panelIndexOf('genesis') && worldShape === 'sphere') return ''
     // Nothing exists before step 0 is answered — the steps after it all work on
     // the world it names and seeds.
     if (index > panelIndexOf('world') && !worldCreated) return t('notify.gate.needsWorld')
@@ -6003,6 +6042,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (panelEverShown && index !== panelIndex) rememberOverlays()
     panelEverShown = true
     panelIndex = index
+    // In and out of the planet step the globe hides or shows its layers.
+    syncGlobeLayers()
     sidebar.setStep(STEP_IDS[index])
     // An open handbook follows to the new step's page, where it has one.
     if (handbookPanel.isOpen() && handbookPanel.has(stepPage(STEP_IDS[index]))) handbookPanel.open(stepPage(STEP_IDS[index]))

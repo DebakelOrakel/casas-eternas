@@ -1,7 +1,7 @@
 import type { PlateSeed } from '../tectonics/plateSeeds'
 import type { PlateType } from '../tectonics/plateTypes'
 import type { Raft } from './raftTypes'
-import type { Domain, DomainGrid } from '../core/domain'
+import type { CellBox, Domain, DomainGrid } from '../core/domain'
 import { smoothstepBetween } from '../core/interpolation'
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
@@ -82,7 +82,6 @@ const INDEX_NY = 16
 // `reach` in radii: a blob is filed wherever a point within reach × its
 // radius can lie (1 for raftField; the nearest search's own reach for it).
 export function buildBlobIndex(rafts: Raft[], domain: Domain, reach = 1): BlobIndex {
-  const { width, height } = domain
   let total = 0
   for (const raft of rafts) total += raft.blobs.length
   const bx = new Float64Array(total)
@@ -102,30 +101,26 @@ export function buildBlobIndex(rafts: Raft[], domain: Domain, reach = 1): BlobIn
   const nx = INDEX_NX
   const ny = INDEX_NY
   const grid = domain.grid(nx, ny)
-  const cw = width / nx
-  const ch = height / ny
   const buckets: number[][] = Array.from({ length: nx * ny }, () => [])
-  // `c`: the centre already wrapped into the domain; `wrapCell`: the
-  // lattice's wrap along the same axis.
-  const span = (c: number, extent: number, size: number, n: number, period: number, wrapCell: (i: number) => number): number[] => {
-    // A margin far above the wrapped distance's rounding and the point's
-    // wrap: the filing must cover every point the kernel could reach.
-    const e = extent * (1 + 1e-9) + 1e-6
-    if (!(e < Infinity) || 2 * e >= period) return Array.from({ length: n }, (_, i) => i)
-    const i0 = Math.floor((c - e) / size)
-    const i1 = Math.floor((c + e) / size)
-    if (i1 - i0 + 1 >= n) return Array.from({ length: n }, (_, i) => i)
-    const out: number[] = []
-    for (let i = i0; i <= i1; i++) out.push(wrapCell(i))
-    return out
-  }
-  const wrapCol = (i: number): number => grid.wrapCol(i)
-  const wrapRow = (j: number): number => grid.wrapRow(j)
+  // Each blob is filed in every bucket its reach can touch, as the grid
+  // measures a disc (DomainGrid.discBox: on the sphere the cap's rows and
+  // its widest longitude span, all of a row near a pole). A margin far above
+  // the distance's rounding: the filing must cover every point the kernel
+  // could reach. Filing a blob in a bucket more is harmless (its kernel
+  // adds an exact 0 there); filing it in one less is not.
+  const box: CellBox = { x0: 0, x1: 0, y0: 0, y1: 0 }
   for (let k = 0; k < total; k++) {
     const extent = br[k] * reach
-    const xs = span(domain.wrapX(bx[k]), extent, cw, nx, width, wrapCol)
-    const ys = span(domain.wrapY(by[k]), extent, ch, ny, height, wrapRow)
-    for (const j of ys) for (const i of xs) buckets[j * nx + i].push(k)
+    const e = extent * (1 + 1e-9) + 1e-6
+    if (!(e < Infinity)) {
+      box.x0 = 0
+      box.x1 = nx - 1
+      box.y0 = 0
+      box.y1 = ny - 1
+    } else {
+      grid.discBox(bx[k], by[k], e, box)
+    }
+    for (let j = box.y0; j <= box.y1; j++) for (let i = box.x0; i <= box.x1; i++) buckets[grid.index(i, j)].push(k)
   }
   const start = new Int32Array(nx * ny + 1)
   for (let b = 0; b < nx * ny; b++) start[b + 1] = start[b] + buckets[b].length
@@ -186,13 +181,17 @@ export function raftMembership(x: number, y: number, rafts: Raft[], domain: Doma
 // second independent sweep for the ocean-age sink would have roughly quintupled it
 // at the 256×128 age resolution. One field, sampled by world coordinate, keeps it
 // at a single sweep regardless of how many consumers there are.
+// Through a blob index (the same bits as the scan, see BlobIndex): on the
+// sphere a distance costs a few times the torus's, and the scan asked every
+// blob at every cell.
 export function computeMembershipField(rafts: Raft[], resX: number, resY: number, domain: Domain): Float32Array {
   const out = new Float32Array(resX * resY)
+  const blobs = buildBlobIndex(rafts, domain)
   for (let gy = 0; gy < resY; gy++) {
     const wy = ((gy + 0.5) / resY) * domain.height
     for (let gx = 0; gx < resX; gx++) {
       const wx = ((gx + 0.5) / resX) * domain.width
-      out[gy * resX + gx] = raftMembership(wx, wy, rafts, domain)
+      out[gy * resX + gx] = smoothstepBetween(FIELD_LO, FIELD_HI, raftFieldIndexed(wx, wy, blobs))
     }
   }
   return out
@@ -230,24 +229,22 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, r
   const cellW = domain.width / resX
   const cellH = domain.height / resY
   const grid = domain.grid(resX, resY)
+  const box: CellBox = { x0: 0, x1: 0, y0: 0, y1: 0 }
 
   for (const raft of rafts) {
     for (const blob of raft.blobs) {
       const birth = blob.birthEpoch ?? 0
-      // Cell range the blob's radius can reach. Left unwrapped here and wrapped per
-      // cell below, so a blob straddling the seam covers both sides.
-      const gx0 = Math.floor((blob.x - blob.radius) / cellW)
-      const gx1 = Math.ceil((blob.x + blob.radius) / cellW)
-      const gy0 = Math.floor((blob.y - blob.radius) / cellH)
-      const gy1 = Math.ceil((blob.y + blob.radius) / cellH)
-      for (let gy = gy0; gy <= gy1; gy++) {
+      // Cell range the blob's radius can reach (DomainGrid.discBox). Left
+      // unwrapped here and wrapped per cell below, so a blob straddling the
+      // seam covers both sides.
+      grid.discBox(blob.x, blob.y, blob.radius, box)
+      for (let gy = box.y0; gy <= box.y1; gy++) {
         const wy = (gy + 0.5) * cellH
-        const row = grid.wrapRow(gy) * resX
-        for (let gx = gx0; gx <= gx1; gx++) {
+        for (let gx = box.x0; gx <= box.x1; gx++) {
           const wx = (gx + 0.5) * cellW
           const w = blobKernel(domain.distanceSq(wx, wy, blob.x, blob.y), blob.radius)
           if (w <= 0) continue
-          const i = row + grid.wrapCol(gx)
+          const i = grid.index(gx, gy)
           weight[i] += w
           ageWeighted[i] += w * birth
         }
@@ -286,19 +283,16 @@ export function computeOwnerField(rafts: Raft[], resX: number, resY: number, dom
   const cellW = domain.width / resX
   const cellH = domain.height / resY
   const grid = domain.grid(resX, resY)
+  const box: CellBox = { x0: 0, x1: 0, y0: 0, y1: 0 }
   rafts.forEach((raft, raftIndex) => {
     for (const blob of raft.blobs) {
-      const gx0 = Math.floor((blob.x - blob.radius) / cellW)
-      const gx1 = Math.ceil((blob.x + blob.radius) / cellW)
-      const gy0 = Math.floor((blob.y - blob.radius) / cellH)
-      const gy1 = Math.ceil((blob.y + blob.radius) / cellH)
-      for (let gy = gy0; gy <= gy1; gy++) {
+      grid.discBox(blob.x, blob.y, blob.radius, box)
+      for (let gy = box.y0; gy <= box.y1; gy++) {
         const wy = (gy + 0.5) * cellH
-        const row = grid.wrapRow(gy) * resX
-        for (let gx = gx0; gx <= gx1; gx++) {
+        for (let gx = box.x0; gx <= box.x1; gx++) {
           const wx = (gx + 0.5) * cellW
           const v = blobKernel(domain.distanceSq(wx, wy, blob.x, blob.y), blob.radius)
-          const i = row + grid.wrapCol(gx)
+          const i = grid.index(gx, gy)
           if (v <= best[i]) continue
           best[i] = v
           owner[i] = raftIndex

@@ -102,6 +102,9 @@ let archeanParams: ArcheanParams = DEFAULT_ARCHEAN_PARAMS
 let archeanWater = 0
 let archeanWidth = 0
 let archeanHeight = 0
+// The shape the Archean was made on (genesisInit), for a reset to make it
+// on again.
+let archeanShape: Domain['kind'] = 'torus'
 let renderOptions: RenderSimulationOptions = {}
 let epochIntervalMs = 400
 let intervalId: ReturnType<typeof setInterval> | undefined
@@ -1452,6 +1455,8 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
     if (message.mantleDiffusion !== undefined) archeanParams = { ...DEFAULT_ARCHEAN_PARAMS, diffusion: message.mantleDiffusion }
     archeanWidth = archean.width
     archeanHeight = archean.height
+    // A save is a torus (the generator restores only FlatWorld, 3c).
+    archeanShape = archean.domain.kind
     lastRawElevations = new Float32Array(message.elevation)
     preErosionElevations = lastRawElevations
     void renderArcheanAndPost()
@@ -1521,7 +1526,8 @@ function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genes
   archeanWater = message.seaLevelOffset ?? 0
   archeanWidth = message.width
   archeanHeight = message.height
-  archean = createArcheanSimulation(message.seed, message.width, message.height, archeanWater)
+  archeanShape = message.shape ?? 'torus'
+  archean = createArcheanSimulation(message.seed, message.width, message.height, archeanWater, archeanShape)
   lastRawElevations = null
   preErosionElevations = null
   coupled = null
@@ -1632,7 +1638,7 @@ function resetGenesis(): void {
   worldGeneration += 1
   dropHandover()
   sim = null
-  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanWater)
+  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanWater, archeanShape)
   lastRawElevations = null
   preErosionElevations = null
   coupled = null
