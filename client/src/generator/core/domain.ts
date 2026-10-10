@@ -11,11 +11,13 @@ import { detAsin, detAtan2, detCos, detSin } from './detMath'
 // (docs/design/two-topologies.md). The planetary forcing acts on
 // latitude(p) either way.
 //
-// The mesh (phase 4) reads only `delta`, `wrap*` and `distanceSq`: every
-// triangle is unwrapped into the frame of one of its own corners through
-// `delta`, so the triangulation code never sees a period. That is what
-// makes the sphere a second implementation of THIS interface rather than
-// a second triangulation. The neighbour search over a point set lives
+// The mesh (phase 4) reads `delta`, `wrap*`, `distanceSq` and, to place a
+// node, `advance`/`displace`/`transport`: on the torus every triangle is
+// unwrapped into the frame of one of its own corners through `delta`, so
+// the triangulation code never sees a period. On the sphere the same
+// triangulation takes its predicates from the nodes' unit vectors on the
+// globe (mesh/periodicDelaunay.ts, step 4d4) — the topology code is one,
+// only the geometry is the shape's. The neighbour search over a point set lives
 // beside the mesh (`mesh/pointBuckets.ts`) because it needs the domain's
 // extent, not its topology.
 //

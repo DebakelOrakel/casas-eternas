@@ -27,7 +27,9 @@ core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, inte
             domain (the topology: periodicity, distance and latitude on the torus),
             detMath (exp, log, sin, cos … the same bits in every JS engine)
 mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay (the
-            triangulation on a domain), lattice (the bootstrap), hilbert (the insertion
+            triangulation on a domain — one topology code, the geometry planar on the
+            torus and exact 3D on the sphere), lattice (the bootstrap: hex on the torus,
+            geodesic on the sphere), hilbert (the insertion
             order), meshDensity (the ONE density rule, MESH_TUNING), meshState (per-node
             fields that survive remeshing), meshRelief, remesh (hysteresis insert/remove),
             meshBuild (fields in, mesh out), meshErosion (the erosion engine's graph index

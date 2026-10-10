@@ -185,6 +185,56 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: step 4d4 BUILT — the adaptive mesh runs on the sphere
+(the mesh itself; its erosion, flexure and climate are the coupled epoch's,
+4d5, and step 2 stays locked). ONE TRIANGULATION: `PeriodicTriangulation`
+keeps its topology code for both shapes — halfedges, splits, flips, the
+ear clipping of a removal, the Lawson stack, the walk — and only its
+geometry methods take a globe path (`globe`, from `domain.kind`). A node
+keeps its chart position as its address and caches its unit vector,
+derived from the stored float32 position, so a reload rebuilds the same
+geometry. The predicates are exact in 3D, not a projection: the
+orientation is the sign of det[a, b, c], the in-circle which side of the
+plane through a, b, c the fourth point lies on (the spherical Delaunay
+triangulation is the convex hull), with an absolute tolerance on top of
+the relative one for the unit vectors' last bit; the circumcentre is the
+plane's normal, a Voronoi cell a fan of spherical triangles (Van
+Oosterom–Strackee), an edge the arc from its chord. The winding is the
+chart's on both shapes (det < 0 on the globe), so the shared code reads
+one sign. `frame` stays the log map, for the callers that want a local
+picture (the sampler's normals, the erosion index's cotangents — close on
+the globe, to O(ℓ²/R²); whether 4d5 wants them exact is its question).
+`barycentric` moved into the triangulation: on the globe the weights of
+the flat triangle the ray meets. THE BOOTSTRAP: `bootstrapLattice` — the
+torus's hex lattice, the sphere's geodesic one (the icosahedron, each face
+cut n × n, n matching the hex lattice's node area; turned off the poles
+and the seam, since every (x, 0) is the north pole). THE REST: the remesh
+places a node along an edge and across it through `displace`, `transport`
+and `advance` (the torus's additions in their order, so its bits stay);
+the codec, the canonical rebuild, the sampler's hint grid and the
+rasteriser work unchanged over the chart; the routing and the density rule
+were shape-free already. `createCoupledTerrain` builds a sphere world's
+terrain. `harness:mesh` [1g], 5 s: on a 512 × 256 sphere, a synthetic
+world (a continent across the seam, a massif on the south pole) builds
+35 060 nodes in 0.2 s, against independent checks — V − E + F = 2, every
+triangle wound one way, no point in a circumcircle across any edge (by
+angle), the Voronoi cells 1e-14 off 4πR², settled in the hysteresis band
+and a fixed point of the remesh; locate holds 3 131 points from far hints
+(both poles at 16 longitudes, the seam), no fallback; 600 inserts and
+5 094 removals stay Delaunay, none lost; a perturbed remesh goes to 0
+long edges and crowded nodes 2 936 → 360 (the coarsen's four rounds, as
+on the torus), an extensive field kept to 1e-9; the codec bit for bit;
+`triangulatePoints` keeps every moved node; the raster without a seam and
+with constant pole rows; the same bytes twice; the routing's reaches the
+arcs; a real sphere world (Archean, two plate epochs, 256 × 128) starts
+its coupled terrain valid (35 625 nodes). Cost: 6.3 µs a node against
+the torus's 5.2 at 512; at 2048 × 1024 1.02 M nodes in 6.9 s against
+0.95 M in 5.4. Found, not changed: a point landing exactly on a lattice
+node collapses onto it and leaves with the lattice in `triangulatePoints`
+(both shapes; meshTile inserts such points again). Tiles stay torus-only.
+Golden harness byte-identical; the mesh harness's torus output and byte
+hash unchanged.
+
 2026-10-10: step 4d3 BUILT — the plate simulation runs on the sphere
 (`stepEpoch`, the plate half of the coupled epoch; the mesh, the erosion
 and the climate on the sphere are 4d4 and 4d5, and step 2 stays locked).

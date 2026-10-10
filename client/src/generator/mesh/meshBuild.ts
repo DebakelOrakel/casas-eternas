@@ -1,7 +1,7 @@
 import { METERS_PER_CELL } from '../core/mapConfig'
 import type { Domain } from '../core/domain'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
-import { hexLattice } from './lattice'
+import { bootstrapLattice } from './lattice'
 import { COLUMN_TUNING, columnThickness, MESH_COLUMN } from './meshColumn'
 import { MESH_TUNING, targetSpacingM } from './meshDensity'
 import { reliefAt } from './meshRelief'
@@ -98,7 +98,7 @@ export function densityTarget(state: MeshState, budget = 1, unitsToM = METERS_PE
 // lattice in the order given, the lattice removed after; the caller runs
 // the remesh for what the motion crowded or stretched.
 export function triangulatePoints(domain: Domain, xs: ArrayLike<number>, ys: ArrayLike<number>, count: number, latticeSpacing: number): { mesh: PeriodicTriangulation; mapping: Int32Array } {
-  const mesh = hexLattice(domain, latticeSpacing)
+  const mesh = bootstrapLattice(domain, latticeSpacing)
   const latticeCount = mesh.vertexSlots
   const mapping = new Int32Array(count)
   for (let i = 0; i < count; i++) mapping[i] = mesh.insert(xs[i], ys[i])
@@ -108,7 +108,7 @@ export function triangulatePoints(domain: Domain, xs: ArrayLike<number>, ys: Arr
 
 export function buildMesh(domain: Domain, sampler: FieldSampler, options: BuildOptions, unitsToM = METERS_PER_CELL): BuiltMesh {
   const budget = options.budget ?? 1
-  const mesh = hexLattice(domain, (MESH_TUNING.oceanSpacingM * budget) / unitsToM)
+  const mesh = bootstrapLattice(domain, (MESH_TUNING.oceanSpacingM * budget) / unitsToM)
   const state = new MeshState(mesh.vertexSlots * 4)
   state.add(MESH_Z, 'intensive')
   if (sampler.dischargeAt) state.add(MESH_DISCHARGE, 'intensive')

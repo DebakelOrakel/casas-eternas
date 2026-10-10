@@ -16,7 +16,8 @@
 // removal that depends on iteration order still validates. So:
 //
 //   1. INVARIANTS   what must hold of every mesh: the structure (twins,
-//                   orientation, Euler's formula for the torus, the edge
+//                   orientation, Euler's formula for the torus — the
+//                   sphere's in [1g], with the globe's geometry —, the edge
 //                   margin, the empty circumcircle), the Voronoi areas
 //                   summing to the domain, the remesh converging inside
 //                   its hysteresis band, extensive state conserved by a
@@ -96,6 +97,7 @@ const M = {
   planet: await L('/src/generator/planet/planetForcing.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
+  plates: await L('/src/generator/tectonics/plateSimulation.ts'),
   finalize: await L('/src/generator/archean/finalizeArchean.ts'),
   artifacts: await L('/src/world/meshArtifacts.ts'),
   tileArtifacts: await L('/src/world/meshTileArtifacts.ts'),
@@ -1509,6 +1511,381 @@ console.log('\n[1s] the sphere domain')
   check('sphere grid: upscale maps cell centre onto cell centre', same.every((v, i) => v === g[i]) && G.upscale(g, 128, 64).length === 128 * 64)
   const ms = performance.now() - t0
   check(`sphere: the section is quick (${ms.toFixed(0)} ms)`, ms < 1000)
+}
+
+// ------------------------------------------------------------ sphere mesh
+
+// The adaptive mesh on the sphere (DEC-0035 step 4d4): the same
+// triangulation code with the globe's geometry — exact 3D predicates, a
+// geodesic bootstrap, spherical areas. Checked here against independent
+// computations (plain Math on unit vectors), not against the predicates
+// the triangulation itself uses: a Delaunay check that shares the
+// in-circle test with the legalisation would pass a sign error.
+console.log('\n[1g] the mesh on the sphere')
+{
+  const t0 = performance.now()
+  const SW = 512, SH = 256
+  const S = M.domain.sphereDomain(SW, SH)
+  const R = SW / (2 * Math.PI)
+  // A chart point's unit vector on the globe of a W × W/2 chart.
+  const toUnit = (x, y, w = SW) => {
+    const t = (y * 2 * Math.PI) / w, l = (x * 2 * Math.PI) / w
+    return [Math.sin(t) * Math.cos(l), Math.sin(t) * Math.sin(l), Math.cos(t)]
+  }
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+  const crs = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+  const det = (a, b, c) => dot(a, crs(b, c))
+  const unitOfV = (mesh, v) => toUnit(mesh.vx[v], mesh.vy[v], mesh.domain.width)
+  const angle = (a, b) => Math.atan2(Math.hypot(...crs(a, b)), dot(a, b))
+  // Every structural property, by its own arithmetic: one winding about the
+  // centre (det[a, b, c] < 0, which is counter-clockwise in the chart's
+  // east/south frame — the torus's convention) and counter-clockwise in
+  // the first corner's tangent frame; V − E + F = 2 with E counted; the
+  // empty circumcircle across every edge as an angle (the circumcentre the
+  // normal of the triangle's plane, its radius the angle to a corner); the
+  // Voronoi cells summing to 4πR².
+  const audit = (mesh) => {
+    let wound = 0, chartCcw = 0, triangles = 0, inside = 0, worst = 0
+    const edges = new Set()
+    const d1 = { x: 0, y: 0 }, d2 = { x: 0, y: 0 }
+    const D = mesh.domain
+    for (let t = 0; t < mesh.triSlots; t++) {
+      if (!mesh.tAlive[t]) continue
+      triangles++
+      const ids = [mesh.tris[3 * t], mesh.tris[3 * t + 1], mesh.tris[3 * t + 2]]
+      const [a, b, c] = ids.map((v) => unitOfV(mesh, v))
+      if (det(a, b, c) < 0) wound++
+      D.delta(mesh.vx[ids[1]], mesh.vy[ids[1]], mesh.vx[ids[0]], mesh.vy[ids[0]], d1)
+      D.delta(mesh.vx[ids[2]], mesh.vy[ids[2]], mesh.vx[ids[0]], mesh.vy[ids[0]], d2)
+      if (d1.x * d2.y - d1.y * d2.x > 0) chartCcw++
+      let n = crs(sub(b, a), sub(c, a))
+      if (dot(n, a) < 0) n = n.map((k) => -k)
+      const nl = Math.hypot(...n)
+      n = n.map((k) => k / nl)
+      const r = angle(n, a)
+      for (let i = 0; i < 3; i++) {
+        const e = 3 * t + i
+        const u = ids[i], w = ids[(i + 1) % 3]
+        edges.add(Math.min(u, w) * 4194304 + Math.max(u, w))
+        const opposite = unitOfV(mesh, mesh.apex(mesh.twin[e]))
+        const excess = (r - angle(n, opposite)) / r
+        if (excess > 1e-7) inside++
+        if (excess > worst) worst = excess
+      }
+    }
+    let area = 0
+    for (const v of aliveVertices(mesh)) area += mesh.voronoiArea(v)
+    const full = (D.width * D.width) / Math.PI
+    return {
+      triangles, wound, chartCcw, inside, worst,
+      euler: mesh.aliveVertices - edges.size + triangles,
+      areaErr: Math.abs(area - full) / full,
+    }
+  }
+  const sound = (mesh, a = audit(mesh)) => mesh.validate().length === 0 && a.wound === a.triangles && a.chartCcw === a.triangles && a.inside === 0 && a.euler === 2 && a.areaErr < 1e-9
+  const sayAudit = (a) => `V − E + F = ${a.euler}, ${a.triangles - a.wound} unwound, ${a.inside} edges with a point in the circumcircle (worst ${a.worst.toExponential(1)}), areas ${a.areaErr.toExponential(1)} off 4πR²`
+
+  // The bootstrap: the geodesic lattice at the ocean spacing.
+  const lat = M.lattice.geodesicLattice(S, T.oceanSpacingM / UNITS_TO_M)
+  const latAudit = audit(lat)
+  check(`sphere: the geodesic lattice is a Delaunay triangulation of the sphere (${lat.aliveVertices} nodes)`, sound(lat, latAudit) && (lat.aliveVertices - 2) % 10 === 0, sayAudit(latAudit))
+  let nearPole = Infinity
+  for (const v of aliveVertices(lat)) nearPole = Math.min(nearPole, lat.vy[v], SH - lat.vy[v])
+  check('sphere: no lattice node sits at a pole (every (x, 0) is the pole)', nearPole > 1, `${nearPole.toFixed(2)} units from it at the closest`)
+
+  // A synthetic sphere world: a continent across the seam on the equator,
+  // a sharp range near the north pole, a massif ON the south pole, a river
+  // across the seam. Distances on the globe.
+  const g = (x, y, cx, cy, s) => Math.exp(-S.distanceSq(x, y, cx, cy) / (s * s))
+  const sphereWorld = {
+    heightAt(x, y) {
+      const land = Math.max(g(x, y, 0, 128, 70), g(x, y, 0, SH, 40), g(x, y, 150, 30, 40))
+      let z = m(-4000) + (m(300) - m(-4000)) * Math.min(1, land * 1.6)
+      z += m(4000) * g(x, y, 150, 22, 9) // a range by the north pole
+      z += m(2500) * g(x, y, 0, SH, 14) // a massif on the south pole
+      z += m(1500) * g(x, y, 20, 120, 10)
+      return z
+    },
+    dischargeAt(x, y) {
+      // Along the equator across the seam, x from −40 to 40.
+      const off = { x: 0, y: 0 }
+      S.delta(x, y, 0, 128, off)
+      if (Math.abs(off.x) > 40 || Math.abs(off.y) > 1.5) return 0
+      return 200 + (off.x + 40) * 60
+    },
+  }
+  let tb = performance.now()
+  const built = M.build.buildMesh(S, sphereWorld, { seed: 42 })
+  const sphereMs = performance.now() - tb
+  const { mesh, state } = built
+  const a0 = audit(mesh)
+  check(`sphere: the built mesh is a Delaunay triangulation of the sphere (${mesh.aliveVertices} nodes, ${sphereMs.toFixed(0)} ms)`, sound(mesh, a0), sayAudit(a0))
+  {
+    // Settled as the torus's build is: no edge long, no node crowded, a
+    // fixed point of the remesh.
+    const targets = targetsOf(mesh, state)
+    const nb = new Int32Array(256)
+    let edges = 0, long = 0, crowded = 0
+    for (let t = 0; t < mesh.triSlots; t++) {
+      if (!mesh.tAlive[t]) continue
+      for (let i = 0; i < 3; i++) {
+        const e = 3 * t + i
+        if (mesh.twin[e] < e) continue
+        edges++
+        if (mesh.edgeLength(e) > T.insertRatio * Math.min(targets[mesh.tris[e]], targets[mesh.to(e)])) long++
+      }
+    }
+    for (const v of aliveVertices(mesh)) if (M.remesh.meanSpacing(mesh, v) < T.removeRatio * effectiveTarget(mesh, targets, v, nb)) crowded++
+    const copy = M.build.buildMesh(S, sphereWorld, { seed: 42 })
+    const again = M.remesh.remesh(copy.mesh, copy.state, M.build.densityTarget(copy.state), { seed: 43 })
+    check('sphere: the build settles inside the hysteresis band, a fixed point of the remesh', long <= edges * 0.001 && crowded === 0 && again.inserted + again.removed <= mesh.aliveVertices * 0.001,
+      `${long} of ${edges} edges long, ${crowded} nodes crowded; a remesh +${again.inserted} −${again.removed}`)
+  }
+  {
+    // Graded like the torus's: the land denser than the ocean, the poles'
+    // relief as dense as the equator's would be.
+    const z = state.get('z')
+    let landN = 0, landA = 0, seaN = 0, seaA = 0, poleN = 0
+    for (const v of aliveVertices(mesh)) {
+      const a = mesh.voronoiArea(v)
+      if (z[v] > 0) { landN++; landA += a } else { seaN++; seaA += a }
+      if (S.distanceSq(mesh.vx[v], mesh.vy[v], 0, SH) < 14 * 14) poleN++
+    }
+    check('sphere: the density rule grades it (land denser than sea, the south pole\'s massif refined)', landN / landA > 4 * (seaN / seaA) && poleN > 50, `${(landA / landN).toFixed(2)} vs ${(seaA / seaN).toFixed(2)} units² a node, ${poleN} nodes on the polar massif`)
+  }
+  // Against the torus: the harness's own synthetic world on a torus of
+  // the same chart, the same rule.
+  tb = performance.now()
+  const torusBuilt = M.build.buildMesh(domain, synthetic, { seed: 42 })
+  const torusMs = performance.now() - tb
+  check(`sphere: the build costs about what the torus's does per node (sphere ${(1000 * sphereMs / mesh.aliveVertices).toFixed(1)} µs a node, torus ${(1000 * torusMs / torusBuilt.mesh.aliveVertices).toFixed(1)})`,
+    sphereMs / mesh.aliveVertices < 3 * (torusMs / torusBuilt.mesh.aliveVertices), `${mesh.aliveVertices} vs ${torusBuilt.mesh.aliveVertices} nodes`)
+
+  // Point location: random points from random far hints, both poles at
+  // many longitudes, the longitude seam on both sides. The answer must
+  // hold the point, by plain Math.
+  {
+    const rand = M.rng.mulberry32(99)
+    const pts = []
+    for (let i = 0; i < 3000; i++) pts.push([rand() * SW, Math.acos(1 - 2 * rand()) * SH / Math.PI])
+    for (let i = 0; i < 16; i++) pts.push([i * 31.7, 0], [i * 31.7, SH])
+    for (let i = 0; i <= 32; i++) pts.push([0, (i * SH) / 32], [SW - 1e-4, (i * SH) / 32], [Math.fround(SW - 1e-9), (i * SH) / 32])
+    const alive = []
+    for (let t = 0; t < mesh.triSlots; t++) if (mesh.tAlive[t]) alive.push(t)
+    let wrong = 0, worstOut = 0
+    const before = mesh.walkFallbacks
+    for (const [x, y] of pts) {
+      const t = mesh.locate(x, y, alive[Math.floor(rand() * alive.length)])
+      const [a, b, c] = [0, 1, 2].map((k) => unitOfV(mesh, mesh.tris[3 * t + k]))
+      const q = toUnit(x, y)
+      // Chart-positive sides: −det, as the stored winding is.
+      const sides = [-det(a, b, q), -det(b, c, q), -det(c, a, q)]
+      const scale = Math.hypot(...sub(a, b)) ** 2
+      const out = Math.min(...sides) / scale
+      if (out < -1e-9) wrong++
+      worstOut = Math.min(worstOut, out)
+    }
+    check(`sphere: locate finds the triangle holding the point (${pts.length} points, the poles and the seam among them, from far hints)`, wrong === 0 && mesh.walkFallbacks === before, `${wrong} wrong, worst ${worstOut.toExponential(1)}, ${mesh.walkFallbacks - before} fallbacks`)
+  }
+
+  // Insert and remove at random, near the poles and the seam too. No node
+  // lost (every inserted point a live vertex at its float32 position),
+  // none duplicated (a repeat returns the vertex it is).
+  {
+    const ops = M.serial.compactMesh(mesh).mesh
+    const rand = M.rng.mulberry32(5)
+    const placed = []
+    for (let i = 0; i < 600; i++) {
+      const x = i % 6 === 0 ? 0 : rand() * SW
+      const y = i % 5 === 0 ? (rand() < 0.5 ? rand() * 3 : SH - rand() * 3) : Math.acos(1 - 2 * rand()) * SH / Math.PI
+      placed.push([x, y, ops.insert(x, y)])
+    }
+    const repeat = placed.slice(0, 50).every(([x, y, v]) => ops.insert(x, y) === v)
+    const kept = placed.every(([x, y, v]) => ops.vAlive[v] && ops.vx[v] === M.domain.sphereDomain(SW, SH).wrapX(Math.fround(x)) && ops.vy[v] === Math.fround(y))
+    const afterInsert = audit(ops)
+    let removed = 0
+    const victims = aliveVertices(ops).filter((_, i) => i % 7 === 3)
+    for (const v of victims) if (ops.remove(v)) removed++
+    const afterRemove = audit(ops)
+    check(`sphere: inserting 600 points and removing ${removed} keeps it a Delaunay triangulation`, sound(ops, afterInsert) && sound(ops, afterRemove) && removed > 0.9 * victims.length, sayAudit(afterRemove))
+    check('sphere: no inserted node lost or moved, a repeated point is the vertex it was', kept && repeat)
+  }
+
+  // The remesh: a change of state (the southern massif raised, the
+  // continent's west drowned), then coarsen + refine. Valid, and inside
+  // the hysteresis band again where it was not.
+  {
+    const work = M.build.buildMesh(S, sphereWorld, { seed: 42 })
+    const z = work.state.get('z')
+    for (const v of aliveVertices(work.mesh)) {
+      const x = work.mesh.vx[v], y = work.mesh.vy[v]
+      z[v] += m(3000) * g(x, y, 300, 200, 20)
+      if (S.distanceSq(x, y, SW - 40, 128) < 30 * 30) z[v] = m(-4000)
+    }
+    const nb = new Int32Array(256)
+    const outOfBand = (mesh, state) => {
+      const targets = targetsOf(mesh, state)
+      let long = 0, crowded = 0
+      for (let t = 0; t < mesh.triSlots; t++) {
+        if (!mesh.tAlive[t]) continue
+        for (let i = 0; i < 3; i++) {
+          const e = 3 * t + i
+          if (mesh.twin[e] < e) continue
+          if (mesh.edgeLength(e) > T.insertRatio * Math.min(targets[mesh.tris[e]], targets[mesh.to(e)])) long++
+        }
+      }
+      for (const v of aliveVertices(mesh)) if (M.remesh.meanSpacing(mesh, v) < T.removeRatio * effectiveTarget(mesh, targets, v, nb)) crowded++
+      return { long, crowded }
+    }
+    // An extensive field rides along: a coarsen hands it to the
+    // neighbours by area, so its total is kept.
+    const sed = work.state.add('sediment', 'extensive')
+    const rand = M.rng.mulberry32(3)
+    for (const v of aliveVertices(work.mesh)) sed[v] = rand() * 100
+    const massOf = () => { const f = work.state.get('sediment'); let sum = 0; for (const v of aliveVertices(work.mesh)) sum += f[v] * work.mesh.voronoiArea(v); return sum }
+    const mass0 = massOf()
+    const b0 = outOfBand(work.mesh, work.state)
+    const nodes0 = work.mesh.aliveVertices
+    const target = M.build.densityTarget(work.state)
+    const c = M.remesh.coarsen(work.mesh, work.state, target, { seed: 7 })
+    const mass1 = massOf()
+    const r = M.remesh.refine(work.mesh, work.state, target, { seed: 7 })
+    const b1 = outOfBand(work.mesh, work.state)
+    // The coarsen's four rounds take a drowned plain most of the way to the
+    // ocean's spacing (each round at most every other node); the rest is
+    // the next epoch's, as on the torus.
+    check(`sphere: the remesh keeps it valid and moves it to the target (long edges ${b0.long} → ${b1.long}, crowded nodes ${b0.crowded} → ${b1.crowded}; −${c.removed} +${r.inserted}, ${nodes0} → ${work.mesh.aliveVertices} nodes)`,
+      sound(work.mesh) && b1.long <= 0.001 * work.mesh.aliveVertices && b1.crowded <= 0.2 * b0.crowded && r.inserted > 0 && c.removed > 0)
+    check('sphere: an extensive field is conserved through the coarsen', Math.abs(mass1 - mass0) < 1e-9 * mass0, `${mass0.toFixed(1)} → ${mass1.toFixed(1)}`)
+  }
+
+  // The routing over the graph is shape-free: its reaches are the
+  // triangulation's edge lengths, which on the globe are arcs (to the
+  // index's float32), and its
+  // receivers form a forest draining to the sea.
+  {
+    const z = state.get('z')
+    const index = M.erosion.buildMeshEngineIndex(mesh, z)
+    let lenErr = 0
+    for (let k = 0; k < index.activeCount; k++) {
+      const v = index.active[k]
+      for (let s = index.nbrStart[k]; s < index.nbrStart[k + 1]; s++) {
+        const j = index.nbr[s]
+        if (j < 0) continue
+        const arc = R * angle(unitOfV(mesh, v), unitOfV(mesh, index.active[j]))
+        lenErr = Math.max(lenErr, Math.abs(index.lenRel[s] - arc) / arc)
+      }
+    }
+    const routing = M.meshHydro.meshRouting(mesh, z)
+    const nb = new Int32Array(256)
+    let notEdge = 0, cyclic = 0
+    for (const v of aliveVertices(mesh)) {
+      const t = routing.flowTarget[v]
+      if (t < 0) continue
+      const n = mesh.neighbours(v, nb)
+      if (!nb.subarray(0, n).includes(t)) notEdge++
+      let w = v, hops = 0
+      while (w >= 0 && hops <= mesh.aliveVertices) { w = routing.flowTarget[w]; hops++ }
+      if (w >= 0) cyclic++
+    }
+    check(`sphere: the routing's reaches are the arcs, its receivers an acyclic forest along the mesh's edges (${index.activeCount} active nodes)`, lenErr < 2e-7 && notEdge === 0 && cyclic === 0 && routing.poppedCount > 0, `reach vs arc ${lenErr.toExponential(1)}, ${notEdge} off-edge, ${cyclic} in a cycle`)
+  }
+
+  // The codec: the canonical form round-trips bit for bit — the same
+  // positions, triangles and twins, the same bytes again.
+  {
+    const { mesh: canon } = M.serial.compactMesh(mesh)
+    const order = Int32Array.from({ length: canon.vertexSlots }, (_, i) => i)
+    const bytes = M.serial.encodeMesh(canon, order)
+    const back = M.serial.decodeMesh(S, bytes)
+    const again = M.serial.encodeMesh(back, order)
+    const same = (a, b, n) => { for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false; return true }
+    const identical = back.vertexSlots === canon.vertexSlots && back.triSlots === canon.triSlots
+      && same(back.vx, canon.vx, canon.vertexSlots) && same(back.vy, canon.vy, canon.vertexSlots)
+      && same(back.tris, canon.tris, 3 * canon.triSlots) && same(back.twin, canon.twin, 3 * canon.triSlots)
+      && Buffer.compare(Buffer.from(bytes.connectivity), Buffer.from(again.connectivity)) === 0
+      && Buffer.compare(Buffer.from(bytes.nodes.buffer), Buffer.from(again.nodes.buffer)) === 0
+    const positions = new Set()
+    for (let i = 0; i < bytes.count; i++) positions.add(`${bytes.nodes[2 * i]},${bytes.nodes[2 * i + 1]}`)
+    check(`sphere: the codec round-trips bit for bit (${bytes.connectivity.length} bytes of connectivity, ${(bytes.connectivity.length / bytes.count).toFixed(1)} a node)`, identical && sound(back) && positions.size === mesh.aliveVertices, `${positions.size} distinct positions of ${mesh.aliveVertices}`)
+  }
+
+  // triangulatePoints, the coupled loop's rebuild: the nodes moved (here a
+  // rigid turn about a point, as a plate turns them), triangulated again —
+  // every point a vertex of its own, the bootstrap lattice gone. (A point
+  // that lands exactly on a lattice node collapses onto it and goes with
+  // the lattice, on both shapes; the build's own lattice nodes, unmoved,
+  // would — moved nodes do not.)
+  {
+    const xs = [], ys = []
+    for (const v of aliveVertices(mesh)) {
+      const p = S.rotateAround(mesh.vx[v], mesh.vy[v], 200, 70, 0.01)
+      xs.push(p.x)
+      ys.push(p.y)
+    }
+    const { mesh: tri, mapping } = M.build.triangulatePoints(S, xs, ys, xs.length, T.oceanSpacingM / UNITS_TO_M)
+    const distinct = new Set(mapping).size === xs.length && Array.from(mapping).every((v) => tri.vAlive[v])
+    check(`sphere: triangulatePoints keeps every node and removes its lattice (${xs.length} → ${tri.aliveVertices})`, distinct && tri.aliveVertices === xs.length && sound(tri))
+  }
+
+  // The rasterisation: a smooth field of the position has no seam at
+  // x = 0 / W; a field constant on each polar cap gives constant pole
+  // rows (row 0 is the north pole itself — the raster's convention, cell
+  // px is the field AT x = px, the sphere's synthesis render's too).
+  {
+    const field = new Float32Array(mesh.vertexSlots)
+    for (const v of aliveVertices(mesh)) {
+      const [x, y, z] = unitOfV(mesh, v)
+      field[v] = z > 0.95 ? 7 : z < -0.95 ? -3 : x + 0.5 * y * z
+    }
+    const RW = 512, RH = 256
+    const r = M.raster.rasteriseNodeField(mesh, field, RW, RH)
+    // Per row away from the caps: the step across the seam (column W − 1
+    // to column 0) against the largest step between two other columns.
+    let seam = 0, worstRatio = 0
+    for (let y = 40; y < RH - 40; y++) {
+      let step = 0
+      for (let x = 1; x < RW; x++) step = Math.max(step, Math.abs(r[y * RW + x] - r[y * RW + x - 1]))
+      const s = Math.abs(r[y * RW] - r[y * RW + RW - 1])
+      seam = Math.max(seam, s)
+      worstRatio = Math.max(worstRatio, s / step)
+    }
+    const rowConst = (row, value) => { for (let x = 0; x < RW; x++) if (Math.abs(r[row * RW + x] - value) > 1e-6) return false; return true }
+    check('sphere: the rasterised mesh has no seam at x = 0 / W (the step across it is one column\'s)', worstRatio <= 1.01, `largest seam step ${seam.toExponential(2)}, at most ${worstRatio.toFixed(2)} of its row's largest`)
+    check('sphere: and constant pole rows over a constant polar cap', rowConst(0, 7) && rowConst(RH - 1, -3) && rowConst(1, 7))
+  }
+
+  // Determinism: the same fields and seed, the same bytes; the codec too.
+  {
+    const again = M.build.buildMesh(S, sphereWorld, { seed: 42 })
+    const enc = (b) => { const { mesh: c } = M.serial.compactMesh(b.mesh); return M.serial.encodeMesh(c, M.serial.hilbertVertexOrder(c)) }
+    const e1 = enc(built), e2 = enc(again)
+    check('sphere: the same world and seed build the same mesh, byte for byte', meshHash(built.mesh) === meshHash(again.mesh)
+      && Buffer.compare(Buffer.from(e1.connectivity), Buffer.from(e2.connectivity)) === 0 && Buffer.compare(Buffer.from(e1.nodes.buffer), Buffer.from(e2.nodes.buffer)) === 0, meshHash(built.mesh))
+  }
+
+  // A real sphere world: a small Archean and two plate epochs on the
+  // sphere, then the coupled terrain's start — the mesh from the synthesis
+  // (createCoupledTerrain), no erosion.
+  {
+    const ta = performance.now()
+    const archean = M.archean.createArcheanSimulation('mesh-sphere', 256, 128, 0, 'sphere')
+    for (let e = 0; e < 40; e++) M.archeanStep.archeanStep(archean)
+    const sim = M.finalize.finalizeArchean(archean)
+    for (let e = 0; e < 2; e++) M.plates.stepEpoch(sim)
+    const tc = performance.now()
+    const terrain = M.coupled.createCoupledTerrain(sim)
+    const terrainMs = performance.now() - tc
+    const finite = Array.from(terrain.z).every(Number.isFinite) && Array.from(terrain.baseline).every(Number.isFinite)
+    let land = 0
+    for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.z[v] > 0) land += terrain.areas[v]
+    const ta2 = audit(terrain.mesh)
+    check(`sphere: a real sphere world's coupled terrain starts as a valid mesh (${terrain.mesh.aliveVertices} nodes in ${terrainMs.toFixed(0)} ms, the world ${(tc - ta).toFixed(0)} ms; land ${(100 * land / (4 * Math.PI * (256 / (2 * Math.PI)) ** 2)).toFixed(1)} %)`,
+      sound(terrain.mesh, ta2) && finite && land > 0, sayAudit(ta2))
+  }
+  const ms = performance.now() - t0
+  check(`sphere mesh: the section is quick (${(ms / 1000).toFixed(1)} s)`, ms < 20000)
 }
 
 // ------------------------------------------------------------ determinism

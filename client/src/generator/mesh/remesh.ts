@@ -100,6 +100,9 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
     const cb: number[] = []
     const d = mesh.domain
     const offset = { x: 0, y: 0 }
+    const mid = { x: 0, y: 0 }
+    const side = { x: 0, y: 0 }
+    const point = { x: 0, y: 0 }
     for (let t = 0; t < mesh.triSlots; t++) {
       if (!mesh.tAlive[t]) continue
       for (let i = 0; i < 3; i++) {
@@ -113,8 +116,9 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
         const ax = mesh.vx[a]
         const ay = mesh.vy[a]
         d.delta(mesh.vx[b], mesh.vy[b], ax, ay, offset)
-        cx.push(ax + offset.x / 2)
-        cy.push(ay + offset.y / 2)
+        d.displace(ax, ay, offset.x / 2, offset.y / 2, mid)
+        cx.push(mid.x)
+        cy.push(mid.y)
         ca.push(a)
         cb.push(b)
       }
@@ -138,8 +142,16 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
       // smaller one so the split is not always exactly halfway.
       const across = (rng() * 2 - 1) * jitter
       const along = 0.5 + (rng() * 2 - 1) * jitter * 0.5
-      let px = d.wrapX(ax + ex * along - ey * across)
-      let py = d.wrapY(ay + ey * along + ex * across)
+      // Along the edge, then across it: on the sphere along the edge's
+      // great circle and then perpendicular to it where the first step
+      // ended (the normal carried there, `transport`). On the torus these
+      // are the additions this was always written as, in their order —
+      // (a + e·along) − n·across — so the bits are the same.
+      d.displace(ax, ay, ex * along, ey * along, mid)
+      d.transport(-ey * across, ex * across, ax, ay, mid.x, mid.y, side)
+      d.advance(mid.x, mid.y, side.x, side.y, point)
+      let px = point.x
+      let py = point.y
       let t = mesh.locate(px, py, mesh.triangleOf(mesh.vEdge[a]))
       if (mesh.atVertex >= 0) continue
       let ta = mesh.tris[3 * t]
@@ -150,8 +162,9 @@ export function refine(mesh: PeriodicTriangulation, state: MeshState, target: Ta
       // both ends by construction; if even that is crowded (a sliver),
       // the edge stays long and the harness counts it.
       if (tooClose(mesh, px, py, ta, tb, tc, removeRatio, targets)) {
-        px = d.wrapX(ax + ex / 2)
-        py = d.wrapY(ay + ey / 2)
+        d.advance(ax, ay, ex / 2, ey / 2, point)
+        px = point.x
+        py = point.y
         t = mesh.locate(px, py, t)
         if (mesh.atVertex >= 0) continue
         ta = mesh.tris[3 * t]
@@ -275,29 +288,9 @@ function adjacent(mesh: PeriodicTriangulation, a: number, b: number): boolean {
   return false
 }
 
-const frame = new Float64Array(6)
-const frameOffset = { x: 0, y: 0 }
-
-// Barycentric weights of (x, y) in triangle t, clamped to the simplex.
+// Barycentric weights of (x, y) in triangle t, clamped to the simplex —
+// the triangulation's own (PeriodicTriangulation.barycentric), the planar
+// one on the torus and the flat triangle's on the globe.
 export function barycentric(mesh: PeriodicTriangulation, t: number, x: number, y: number, out: Float64Array): void {
-  mesh.frame(t, frame)
-  mesh.domain.delta(x, y, frame[0], frame[1], frameOffset)
-  const px = frame[0] + frameOffset.x
-  const py = frame[1] + frameOffset.y
-  const v0x = frame[2] - frame[0]
-  const v0y = frame[3] - frame[1]
-  const v1x = frame[4] - frame[0]
-  const v1y = frame[5] - frame[1]
-  const v2x = px - frame[0]
-  const v2y = py - frame[1]
-  const den = v0x * v1y - v1x * v0y
-  let wb = (v2x * v1y - v1x * v2y) / den
-  let wc = (v0x * v2y - v2x * v0y) / den
-  wb = Math.min(1, Math.max(0, wb))
-  wc = Math.min(1, Math.max(0, wc))
-  const wa = Math.max(0, 1 - wb - wc)
-  const s = wa + wb + wc
-  out[0] = wa / s
-  out[1] = wb / s
-  out[2] = wc / s
+  mesh.barycentric(t, x, y, out)
 }
