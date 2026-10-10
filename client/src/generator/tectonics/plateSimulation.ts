@@ -1,7 +1,7 @@
 import { generateDetectionLattice } from './boundaryLattice'
 import { createMantleField } from '../mantle/mantleField'
 import { mulberry32 } from '../core/rng'
-import { torusDomain } from '../core/domain'
+import { domainOfKind, type Domain } from '../core/domain'
 import { derivePlateTypes } from '../crust/raftField'
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
 import { coupleMantleToPlates } from './epoch/mantleCoupling'
@@ -60,9 +60,12 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
   }
 }
 
-export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array, mantle?: Float32Array): PlateSimulation {
-  const domain = torusDomain(snap.width, snap.height)
-  const lattice = generateDetectionLattice(snap.width, snap.height, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
+// `shape` is the world's: a snapshot does not carry it (a save says it in its
+// kind, world/worldRecord.ts), and a sphere's motions are Euler motions that
+// only a sphere domain reads.
+export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array, mantle?: Float32Array, shape: Domain['kind'] = 'torus'): PlateSimulation {
+  const domain = domainOfKind(shape, snap.width, snap.height)
+  const lattice = generateDetectionLattice(domain, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
   // COPIED out of the snapshot, not adopted from it. serializePlateSimulation
   // hands back the sim's own arrays and says so; this is the mirror half, and it
   // was missing. A snapshot read from a file is usually thrown away immediately,

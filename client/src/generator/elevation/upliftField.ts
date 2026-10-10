@@ -2,7 +2,7 @@ import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { capsuleWeight } from './capsule'
 import type { Domain } from '../core/domain'
-import { buildFeatureBuckets } from './elevationField'
+import { buildFeatureBuckets, nearFeatureBuckets } from './elevationField'
 import { detExp, detLog } from '../core/detMath'
 
 // U(x) — the tectonic uplift-rate field, the erosion-v2 engine's forcing
@@ -67,7 +67,6 @@ export function computeUpliftField(
   const result = new Float32Array(outWidth * outHeight)
   if (features.length === 0) return result
   const buckets = buildFeatureBuckets(features, domain)
-  const { grid, bucketsX, bucketsY, bucketSizeX, bucketSizeY } = buckets
   const decayPerEpoch = detLog(2) / params.activityHalfLifeEpochs
   const scaleX = domain.width / outWidth
   const scaleY = domain.height / outHeight
@@ -76,25 +75,20 @@ export function computeUpliftField(
     const wy = py * scaleY
     for (let px = 0; px < outWidth; px++) {
       const wx = px * scaleX
-      const centerBx = Math.min(bucketsX - 1, Math.floor(wx / bucketSizeX))
-      const centerBy = Math.min(bucketsY - 1, Math.floor(wy / bucketSizeY))
+      const nearCount = nearFeatureBuckets(buckets, wx, wy)
       let upliftSum = 0
       let weightSum = 0
-      for (let dy = -1; dy <= 1; dy++) {
-        const by = grid.wrapRow(centerBy + dy)
-        for (let dx = -1; dx <= 1; dx++) {
-          const bx = grid.wrapCol(centerBx + dx)
-          for (const feature of buckets.buckets[by * bucketsX + bx]) {
-            const isTrench = feature.kind === 'trench'
-            const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
-            const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
-            domain.delta(wx, wy, feature.x, feature.y, offset)
-            const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)
-            if (weight <= 0) continue
-            const activity = detExp(-feature.epochsSinceDeposit * decayPerEpoch)
-            upliftSum += feature.thickness * activity * weight
-            weightSum += weight
-          }
+      for (let k = 0; k < nearCount; k++) {
+        for (const feature of buckets.buckets[buckets.near[k]]) {
+          const isTrench = feature.kind === 'trench'
+          const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
+          const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
+          domain.delta(wx, wy, feature.x, feature.y, offset)
+          const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)
+          if (weight <= 0) continue
+          const activity = detExp(-feature.epochsSinceDeposit * decayPerEpoch)
+          upliftSum += feature.thickness * activity * weight
+          weightSum += weight
         }
       }
       result[py * outWidth + px] = weightSum > 0 ? upliftSum / Math.max(1, weightSum) : 0

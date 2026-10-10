@@ -9,7 +9,7 @@ import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './el
 import { continentalHypsometry, hypsometryRelief, hypsometryWeight } from './hypsometry'
 import { buildBlobIndex, raftField, sampleOwnerField, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
-import { detExp, detPow } from '../core/detMath'
+import { detAsin, detExp, detPow, detSin } from '../core/detMath'
 
 // Farthest a feature can influence in any direction — its segment half-length
 // plus the perpendicular cap radius. The spatial bucket index must be at
@@ -29,6 +29,15 @@ export interface FeatureBuckets {
   bucketsY: number
   bucketSizeX: number
   bucketSizeY: number
+  // Per bucket row, how many columns either side of the query's own a
+  // feature in that row may lie and still reach it; −1 for every column.
+  // 1 on the torus. Rows past the first and the last are wrapped on the
+  // torus and skipped on the sphere (clampRows), where the row beyond a
+  // pole is the same row across it, already searched whole.
+  rowSpan: Int32Array
+  clampRows: boolean
+  // The bucket indices nearFeatureBuckets writes, read before its next call.
+  near: Int32Array
 }
 
 // Spatial hash over the terrain features, bucket size at least as large
@@ -60,15 +69,21 @@ export interface FeatureBuckets {
 // elevation discontinuity there (confirmed with the previous radius: ~13x
 // the color difference of a typical interior row).
 //
-// Without features (the Archean) any lattice serves, and it is two buckets
-// by one: a lattice every grid can carry — the sphere's needs an even column
-// count (across a pole is column + resX / 2), and floor(width / reach) is
-// odd at 2048. The query over buckets near a pole is the torus's still; the
-// sphere's features come with its tectonics (DEC-0035, step 4d3).
+// THE SPHERE (DEC-0035, step 4d3): a row of buckets is still at least the
+// reach tall (a chart row is arc), so ±1 rows hold every feature in reach;
+// but a bucket's width in arc shrinks as sin θ toward a pole, so a row is
+// searched as far either side as a feature in it can reach in longitude —
+// asin(sin α / sin θ) for the cap of arc α about a feature at colatitude θ,
+// at the row's smallest sin θ — and whole where a cap in it can hold a pole.
+// The column count is even, as every sphere grid's (across a pole is
+// column + resX / 2). Without features (the Archean) any lattice serves,
+// and it is two buckets by one.
 export function buildFeatureBuckets(features: TerrainFeature[], domain: Domain): FeatureBuckets {
   const { width, height } = domain
+  const sphere = domain.kind === 'sphere'
   const none = features.length === 0
-  const bucketsX = none ? 2 : Math.max(1, Math.floor(width / FEATURE_MAX_REACH))
+  const fitX = Math.max(1, Math.floor(width / FEATURE_MAX_REACH))
+  const bucketsX = none ? 2 : sphere ? Math.max(2, fitX - (fitX % 2)) : fitX
   const bucketsY = none ? 1 : Math.max(1, Math.floor(height / FEATURE_MAX_REACH))
   const bucketSizeX = width / bucketsX
   const bucketSizeY = height / bucketsY
@@ -78,7 +93,46 @@ export function buildFeatureBuckets(features: TerrainFeature[], domain: Domain):
     const by = Math.min(bucketsY - 1, Math.floor(feature.y / bucketSizeY))
     buckets[by * bucketsX + bx].push(feature)
   }
-  return { buckets, grid: domain.grid(bucketsX, bucketsY), bucketsX, bucketsY, bucketSizeX, bucketSizeY }
+  const rowSpan = new Int32Array(bucketsY).fill(1)
+  if (sphere) {
+    const R = width / (2 * Math.PI)
+    const sinReach = detSin(Math.min(Math.PI / 2, FEATURE_MAX_REACH / R))
+    for (let r = 0; r < bucketsY; r++) {
+      const sinMin = Math.min(detSin((r * bucketSizeY) / R), detSin(Math.min(Math.PI, ((r + 1) * bucketSizeY) / R)))
+      if (!(sinMin > sinReach)) {
+        rowSpan[r] = -1
+        continue
+      }
+      // A margin far above the rounding, as discBox's.
+      const span = Math.ceil((detAsin(sinReach / sinMin) * R * (1 + 1e-9) + 1e-6) / bucketSizeX)
+      rowSpan[r] = 2 * span + 1 >= bucketsX ? -1 : span
+    }
+  }
+  return { buckets, grid: domain.grid(bucketsX, bucketsY), bucketsX, bucketsY, bucketSizeX, bucketSizeY, rowSpan, clampRows: sphere, near: new Int32Array(3 * Math.max(3, bucketsX)) }
+}
+
+// The buckets a query at (x, y) — a point in the domain — must search,
+// written into `b.near`; returns their count. Each bucket once, in the
+// order the torus's 3 × 3 loop always visited them (rows outer, columns
+// inner, −1 to +1), so its sums are the same bits.
+export function nearFeatureBuckets(b: FeatureBuckets, x: number, y: number): number {
+  const { grid, bucketsX, bucketsY, rowSpan, near } = b
+  const centerBx = Math.min(bucketsX - 1, Math.floor(x / b.bucketSizeX))
+  const centerBy = Math.min(bucketsY - 1, Math.floor(y / b.bucketSizeY))
+  let count = 0
+  for (let dy = -1; dy <= 1; dy++) {
+    const row = centerBy + dy
+    if (b.clampRows && (row < 0 || row >= bucketsY)) continue
+    const by = grid.wrapRow(row)
+    const base = by * bucketsX
+    const span = rowSpan[by]
+    if (span < 0) {
+      for (let bx = 0; bx < bucketsX; bx++) near[count++] = base + bx
+      continue
+    }
+    for (let dx = -span; dx <= span; dx++) near[count++] = base + grid.wrapCol(centerBx + dx)
+  }
+  return count
 }
 
 // Baseline elevation field from the raft crust field (rafts.ts) — this replaced
@@ -260,28 +314,23 @@ export function computeElevation(
   ridgeValue: number,
   fineValue = 0,
 ): number {
-  const { buckets, grid, bucketsX, bucketsY, bucketSizeX, bucketSizeY } = featureBuckets
-  const centerBx = Math.min(bucketsX - 1, Math.floor(wx / bucketSizeX))
-  const centerBy = Math.min(bucketsY - 1, Math.floor(wy / bucketSizeY))
+  const { buckets, near } = featureBuckets
+  const nearCount = nearFeatureBuckets(featureBuckets, wx, wy)
 
   let upliftSum = 0
   let weightSum = 0
-  for (let dy = -1; dy <= 1; dy++) {
-    const by = grid.wrapRow(centerBy + dy)
-    for (let dx = -1; dx <= 1; dx++) {
-      const bx = grid.wrapCol(centerBx + dx)
-      for (const feature of buckets[by * bucketsX + bx]) {
-        // Capsule falloff (capsule.ts): the tangent's arbitrary orientation
-        // sign doesn't matter — the segment is symmetric about the feature.
-        const isTrench = feature.kind === 'trench'
-        const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
-        const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
-        domain.delta(wx, wy, feature.x, feature.y, offset)
-        const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)
-        if (weight <= 0) continue
-        upliftSum += feature.thickness * ELEVATION_TUNING.thicknessToElevationScale * weight
-        weightSum += weight
-      }
+  for (let k = 0; k < nearCount; k++) {
+    for (const feature of buckets[near[k]]) {
+      // Capsule falloff (capsule.ts): the tangent's arbitrary orientation
+      // sign doesn't matter — the segment is symmetric about the feature.
+      const isTrench = feature.kind === 'trench'
+      const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
+      const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
+      domain.delta(wx, wy, feature.x, feature.y, offset)
+      const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)
+      if (weight <= 0) continue
+      upliftSum += feature.thickness * ELEVATION_TUNING.thicknessToElevationScale * weight
+      weightSum += weight
     }
   }
   // Divide by max(1, weightSum), not weightSum itself. A plain weighted

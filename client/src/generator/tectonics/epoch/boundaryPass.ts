@@ -132,7 +132,10 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       // seed-to-seed normal, so a feature can be laid down as an oriented
       // ridge segment rather than an isotropic blob (see
       // TerrainFeature.tangentX / computeElevation's anisotropic falloff).
+      // Found at B's seed and carried to the boundary point, where the
+      // feature lies (on the torus the same two numbers).
       domain.delta(seedA.x, seedA.y, seedB.x, seedB.y, offset)
+      domain.transport(offset.x, offset.y, seedB.x, seedB.y, boundary.x, boundary.y, offset)
       const ndx = offset.x
       const ndy = offset.y
       const nlen = Math.sqrt(ndx * ndx + ndy * ndy) || 1
@@ -166,8 +169,11 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
         const offsetLen = Math.sqrt(offsetX * offsetX + offsetY * offsetY) || 1
         offsetX /= offsetLen
         offsetY /= offsetLen
-        const trenchX = domain.wrapX(boundary.x + offsetX * TECTONICS_TUNING.trenchOffset)
-        const trenchY = domain.wrapY(boundary.y + offsetY * TECTONICS_TUNING.trenchOffset)
+        // Moved as a point (across a pole on the sphere): advance, which on
+        // the torus is the wrapped sum this always was.
+        domain.advance(boundary.x, boundary.y, offsetX * TECTONICS_TUNING.trenchOffset, offsetY * TECTONICS_TUNING.trenchOffset, offset)
+        const trenchX = offset.x
+        const trenchY = offset.y
         addDeposit(
           // Trenches are always oceanic (the subducting slab), so they subside.
           findOrCreateFeatureIndex(sim.features, trenchX, trenchY, boundary.plateA, boundary.plateB, subductingPlate, tangentX, tangentY, 'trench', true, domain),
@@ -185,8 +191,9 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
         const inX = offset.x
         const inY = offset.y
         const inLen = Math.sqrt(inX * inX + inY * inY) || 1
-        const accreteX = domain.wrapX(boundary.x + (inX / inLen) * TECTONICS_TUNING.accretionInset)
-        const accreteY = domain.wrapY(boundary.y + (inY / inLen) * TECTONICS_TUNING.accretionInset)
+        domain.advance(boundary.x, boundary.y, (inX / inLen) * TECTONICS_TUNING.accretionInset, (inY / inLen) * TECTONICS_TUNING.accretionInset, offset)
+        const accreteX = offset.x
+        const accreteY = offset.y
         accreteToNearestRaft(sim.rafts, accreteX, accreteY, TECTONICS_TUNING.accretionBlobRadius, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.accretionMinGapSq, TECTONICS_TUNING.accretionMaxAttachSq, domain)
       }
     }

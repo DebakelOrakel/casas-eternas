@@ -43,6 +43,8 @@ function depositHotspotVolcanoes(sim: PlateSimulation): void {
   }
 }
 
+const sutureTangent = { x: 0, y: 0 }
+
 // Phase 1. Advance every plate and everything riding on it — rafts, sutures,
 // terrain features, the ocean-age field — along its own rotation.
 export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32Array): void {
@@ -78,8 +80,13 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32A
       if (d < bestSq) { bestSq = d; host = p }
     }
     const rotated = advancePointByMotion(s.x, s.y, sim.motions[host], TECTONICS_TUNING.epochAngleStep, domain)
+    // Its seam tangent carried with it (the point's frame turns on the
+    // sphere; on the torus the same two numbers).
+    domain.transport(s.tangentX, s.tangentY, s.x, s.y, rotated.x, rotated.y, sutureTangent)
     s.x = rotated.x
     s.y = rotated.y
+    s.tangentX = sutureTangent.x
+    s.tangentY = sutureTangent.y
   }
   sim.types = derivePlateTypes(sim.seeds, sim.rafts, domain)
   // Advect the ocean-age field along with the plates that just moved (Phase 3).

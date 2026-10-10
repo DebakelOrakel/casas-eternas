@@ -4,8 +4,7 @@ import { deservesContinentName, pickUnusedRaftName } from '../../crust/raftNames
 import type { RaftMergeEvent, RaftSplitEvent } from '../../crust/raftTypes'
 import { coolMantleAt } from '../../mantle/mantleField'
 import { resetOceanAgeAround } from '../oceanAge'
-import { getVelocityAt } from '../plateMotion'
-import type { PlateMotion } from '../plateMotion'
+import { getVelocityAt, motionMovingAt } from '../plateMotion'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import { MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR } from '../../crust/crustTuneParams'
 import { findOrCreateFeatureIndex } from '../terrainFeatures'
@@ -23,19 +22,15 @@ import type { BoundaryPassResult } from './boundaryPass'
 // so it stops strobing on its own — no global timer needed. The new plate takes
 // the MEAN velocity of the two flanks AT the rift point (pure drift, spin 0), so
 // it sits centred between them and the basin opens symmetrically, Atlantic-style;
-// the mantle coupling refines the motion next epoch. Ocean-floor age at the point
+// the mantle coupling refines the motion next epoch. On the sphere "pure
+// drift" is the rotation that moves the rift point with that velocity and
+// does not turn about it (plateMotion.motionMovingAt). Ocean-floor age at the point
 // is already reset to 0 by the divergent-boundary reset in the boundary loop, and
 // advection then ages the new seafloor outward from the ridge.
 function birthRidgePlate(sim: PlateSimulation, x: number, y: number, flankA: number, flankB: number): void {
   const vA = getVelocityAt({ x, y }, sim.motions[flankA], sim.domain)
   const vB = getVelocityAt({ x, y }, sim.motions[flankB], sim.domain)
-  const motion: PlateMotion = {
-    driftX: (vA.vx + vB.vx) / 2,
-    driftY: (vA.vy + vB.vy) / 2,
-    spin: 0,
-    centroidX: x,
-    centroidY: y,
-  }
+  const motion = motionMovingAt(x, y, (vA.vx + vB.vx) / 2, (vA.vy + vB.vy) / 2, sim.domain)
   sim.seeds.push({ x, y })
   sim.types.push('oceanic')
   sim.motions.push(motion)
@@ -73,7 +68,10 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
     const cSeedA = sim.seeds[continentalRift.plateA]
     const cSeedB = sim.seeds[continentalRift.plateB]
     const seedOffset = { x: 0, y: 0 }
+    // B toward A, found at B and carried to the rift point, where the split
+    // and the flood basalt use it (the same two numbers on the torus).
     domain.delta(cSeedA.x, cSeedA.y, cSeedB.x, cSeedB.y, seedOffset)
+    domain.transport(seedOffset.x, seedOffset.y, cSeedB.x, cSeedB.y, continentalRift.x, continentalRift.y, seedOffset)
     const cnx = seedOffset.x
     const cny = seedOffset.y
     const cnl = Math.sqrt(cnx * cnx + cny * cny) || 1

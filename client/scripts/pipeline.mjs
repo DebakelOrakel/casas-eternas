@@ -340,7 +340,7 @@ test('a sphere world runs its Archean through the runtime', async () => {
   check('a reset makes the sphere again, not a torus', hash(p.last('rendered').mantle) === firstMantle)
 })
 
-test('a sphere Archean at full size: finite, pole-handled, plausible against the torus', async () => {
+test('a sphere Archean at full size, then its plates: finite, pole-handled, plausible against the torus', async () => {
   const L = (m) => server.ssrLoadModule(m)
   const [AS, AT, RF, MF, IM, OA] = await Promise.all([
     L('/src/generator/archean/archeanState.ts'), L('/src/generator/archean/archeanStep.ts'),
@@ -383,6 +383,7 @@ async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA }) {
       slices, { elevationScale: 4 },
     )
     result[shape] = {
+      sim,
       finite: allFinite(sim.mantle) && allFinite(flow) && allFinite(age) && allFinite(rendered.rawElevations),
       poles: poleRowsConstant(sim.mantle, MF.MANTLE_RES_X, MF.MANTLE_RES_Y),
       land: rendered.landFraction,
@@ -403,6 +404,182 @@ async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA }) {
   check('the sphere makes land, and not too much', sphere.land > 0.01 && sphere.land < 0.6, say(sphere))
   check('its crust has begun to stabilise', sphere.stabilised > 0 && sphere.stabilised <= 1 && sphere.cratons > 0)
   check('the torus, same seed, for comparison', torus.land > 0.01 && torus.land < 0.6, say(torus))
+  await spherePlatesAtFullSize(L, slices, IM, { torus: torus.sim, sphere: sphere.sim })
+}
+
+// THE PLATES ON THE SPHERE (DEC-0035, step 4d3): the hand-over from the
+// Archean just run and the plate simulation alone (stepEpoch — what the
+// coupled epoch calls for the plates, without the mesh, the erosion and
+// the climate), sphere against torus for the same seed. The motion model's
+// own arithmetic first (an Euler rotation forth and back, a velocity field
+// that is rigid and tangent, a fit that finds a rigid flow's ω again),
+// then the run: finite, pole-handled, a plate count that neither collapses
+// nor runs away, speeds, land and boundaries of the torus's order. Then the
+// elevation's feature query near a pole against every feature.
+async function spherePlatesAtFullSize(L, slices, IM, archeans) {
+  const [FA, PS, PM, TT, BD, EF, MF, FO] = await Promise.all([
+    L('/src/generator/archean/finalizeArchean.ts'), L('/src/generator/tectonics/plateSimulation.ts'),
+    L('/src/generator/tectonics/plateMotion.ts'), L('/src/generator/tectonics/tectonicsTuneParams.ts'),
+    L('/src/generator/tectonics/boundaryDetection.ts'), L('/src/generator/elevation/elevationField.ts'),
+    L('/src/generator/mantle/mantleField.ts'), L('/src/generator/tectonics/folds.ts'),
+  ])
+  const EPOCHS = 30
+  const step = TT.TECTONICS_TUNING.epochAngleStep
+  const result = {}
+  for (const shape of ['torus', 'sphere']) {
+    const started = performance.now()
+    const sim = FA.finalizeArchean(archeans[shape])
+    const { domain } = sim
+    const speed = () => sim.seeds.reduce((sum, s, i) => { const v = PM.getVelocityAt(s, sim.motions[i], domain); return sum + Math.hypot(v.vx, v.vy) }, 0) / sim.seeds.length
+    const counts = [sim.seeds.length]
+    const speeds = [speed()]
+    for (let e = 0; e < EPOCHS; e++) {
+      PS.stepEpoch(sim)
+      counts.push(sim.seeds.length)
+      speeds.push(speed())
+    }
+    const stepped = performance.now() - started
+    const rendered = await IM.renderSimulationImage(sim, slices, { elevationScale: 4 })
+    const boundaries = BD.detectBoundaries(sim.lattice, sim.seeds, domain)
+    const grid = domain.grid(sim.width, sim.height)
+    let edge = 0
+    let area = 0
+    for (let y = 0; y < sim.height; y++) {
+      const a = grid.cellArea(y)
+      area += a * sim.width
+      for (let x = 0; x < sim.width; x++) edge += rendered.boundaryMask[y * sim.width + x] * a
+    }
+    const motionsFinite = sim.motions.every((m) => Object.values(m).every(Number.isFinite))
+    result[shape] = {
+      sim,
+      finite: allFinite(sim.oceanAge) && allFinite(rendered.rawElevations) && allFinite(sim.mantle) && motionsFinite
+        && sim.seeds.every((s) => Number.isFinite(s.x + s.y)) && sim.features.every((f) => Number.isFinite(f.x + f.y + f.thickness + f.tangentX + f.tangentY))
+        && sim.rafts.every((r) => r.blobs.every((b) => Number.isFinite(b.x + b.y))) && rendered.boundaryMask.some((v) => v === 1),
+      onDomain: [...sim.seeds, ...sim.features, ...sim.hotspots, ...sim.rafts.flatMap((r) => r.blobs)].every((p) => p.x >= 0 && p.x < sim.width && p.y >= 0 && p.y <= sim.height),
+      poles: poleRowsConstant(sim.oceanAge, 256, 128) && poleRowsConstant(sim.mantle, MF.MANTLE_RES_X, MF.MANTLE_RES_Y),
+      counts,
+      speeds,
+      meanSpeed: speeds.reduce((a, b) => a + b, 0) / speeds.length,
+      land: rendered.landFraction,
+      boundary: boundaries.length / sim.lattice.length,
+      edge: edge / area,
+      features: sim.features.length,
+      ms: stepped,
+      renderMs: performance.now() - started - stepped,
+    }
+  }
+  const { torus, sphere } = result
+  const say = (r) => `plates ${r.counts.join(' ')}; speed ${r.speeds[0].toFixed(1)} → ${r.speeds.at(-1).toFixed(1)} (mean ${r.meanSpeed.toFixed(1)}); land ${r.land.toFixed(3)}; on a boundary ${(100 * r.boundary).toFixed(1)} % of the lattice, Voronoi edges ${(100 * r.edge).toFixed(2)} % of the surface; ${r.features} features; ${EPOCHS} epochs in ${(r.ms / 1000).toFixed(1)} s, render ${(r.renderMs / 1000).toFixed(1)} s`
+  check('the sphere\'s seeds, motions, ocean age, rafts, features, boundaries and elevation are finite (the torus\'s too)', sphere.finite && torus.finite)
+  check('every point the plates move stays on the sphere', sphere.onDomain && torus.onDomain)
+  check('the sphere\'s ocean age and mantle are one value along each pole row', sphere.poles && !torus.poles)
+  const plausibleCount = (r) => r.counts.every((n) => n >= Math.max(2, TT.TECTONICS_TUNING.minPlateCount) && n <= 3 * r.counts[0])
+  check('the sphere\'s plate count neither collapses nor runs away', plausibleCount(sphere) && plausibleCount(torus))
+  // Speeds: generated in the torus's range (LINEAR_SPEED_MIN_PX..MAX_PX at
+  // the seed) and, fitted to the mantle flow from then on, of its order.
+  check('the sphere\'s plates move at the torus\'s speeds', sphere.speeds[0] >= 30 && sphere.speeds[0] <= 90 && sphere.meanSpeed > 0.5 * torus.meanSpeed && sphere.meanSpeed < 2 * torus.meanSpeed)
+  check('land and boundaries are plausible', [sphere, torus].every((r) => r.land > 0.02 && r.land < 0.6 && r.boundary > 0.03 && r.boundary < 0.6 && r.edge > 0.002 && r.edge < 0.1), say(sphere))
+  check('the torus, same seed, for comparison', torus.finite, say(torus))
+
+  // The motion model on the sphere itself, over the motions of the run.
+  const sim = sphere.sim
+  const { domain } = sim
+  const R = domain.noise.radius
+  const frame = { px: 0, py: 0, pz: 0, ex: 0, ey: 0, ez: 0, sx: 0, sy: 0, sz: 0 }
+  let rand = 0x2545f491
+  const random = () => ((rand = (Math.imul(rand, 1664525) + 1013904223) >>> 0) / 4294967296)
+  const points = [{ x: 0, y: 0 }, { x: 700, y: sim.height }, { x: 123.4, y: 1e-7 }]
+  for (let i = 0; i < 400; i++) points.push({ x: random() * sim.width, y: (Math.acos(1 - 2 * random()) * sim.height) / Math.PI })
+  let roundTrip = 0
+  let rigid = 0
+  let rigidRef = 0
+  let speedLaw = 0
+  for (const motion of sim.motions) {
+    for (const p of points) {
+      const there = PM.advancePointByMotion(p.x, p.y, motion, step, domain)
+      const back = PM.reversePointByMotion(there.x, there.y, motion, step, domain)
+      roundTrip = Math.max(roundTrip, Math.sqrt(domain.distanceSq(back.x, back.y, p.x, p.y)) / R)
+      const v = PM.getVelocityAt(p, motion, domain)
+      speedLaw = Math.max(speedLaw, Math.abs(Math.hypot(v.vx, v.vy) - motion.rate * R * Math.sin(PM.arcToEulerPole(p.x, p.y, motion, domain))) / (motion.rate * R))
+    }
+    // Rigid and tangent: two points' velocities in 3D, (v_p − v_q) · (r_p − r_q)
+    // = 0 and v · r = 0, against |v| |r|.
+    const at = (p) => {
+      const v = PM.getVelocityAt(p, motion, domain)
+      domain.noise.frame(p.x, p.y, frame)
+      return { r: [frame.px, frame.py, frame.pz], v: [0, 1, 2].map((k) => v.vx * [frame.ex, frame.ey, frame.ez][k] + v.vy * [frame.sx, frame.sy, frame.sz][k]) }
+    }
+    for (let i = 0; i + 1 < points.length; i += 2) {
+      const a = at(points[i])
+      const b = at(points[i + 1])
+      const dot = (u, w) => u[0] * w[0] + u[1] * w[1] + u[2] * w[2]
+      const sub = (u, w) => u.map((c, k) => c - w[k])
+      rigid = Math.max(rigid, Math.abs(dot(sub(a.v, b.v), sub(a.r, b.r))), Math.abs(dot(a.v, a.r)))
+      rigidRef = Math.max(rigidRef, motion.rate * R * R)
+    }
+  }
+  check('a point turned by +ω and then −ω returns', roundTrip <= 1e-12, `${roundTrip.toExponential(1)} R over ${sim.motions.length} motions × ${points.length} points`)
+  check('a plate\'s velocity is rigid and tangent, |v| = |ω| R sin θ', rigid <= 1e-12 * rigidRef && speedLaw <= 1e-12, `rigidity ${(rigid / rigidRef).toExponential(1)}, speed law ${speedLaw.toExponential(1)}`)
+  // The fit finds a rigid flow's ω again: the flow of the run's own motions,
+  // each laid under the cells nearest its seed.
+  const flow = new Float32Array(MF.MANTLE_RES_X * MF.MANTLE_RES_Y * 2)
+  for (let gy = 0; gy < MF.MANTLE_RES_Y; gy++) {
+    for (let gx = 0; gx < MF.MANTLE_RES_X; gx++) {
+      const x = ((gx + 0.5) / MF.MANTLE_RES_X) * sim.width
+      const y = ((gy + 0.5) / MF.MANTLE_RES_Y) * sim.height
+      let best = 0
+      for (let p = 1; p < sim.seeds.length; p++) if (domain.distanceSq(x, y, sim.seeds[p].x, sim.seeds[p].y) < domain.distanceSq(x, y, sim.seeds[best].x, sim.seeds[best].y)) best = p
+      const v = PM.getVelocityAt({ x, y }, sim.motions[best], domain)
+      flow[(gy * MF.MANTLE_RES_X + gx) * 2] = v.vx
+      flow[(gy * MF.MANTLE_RES_X + gx) * 2 + 1] = v.vy
+    }
+  }
+  const fitted = PM.fitMotionsToFlow(sim.seeds, flow, domain)
+  let fitError = 0
+  for (let p = 0; p < fitted.length; p++) {
+    const m = sim.motions[p]
+    const f = fitted[p]
+    fitError = Math.max(fitError, Math.hypot(f.poleX * f.rate - m.poleX * m.rate, f.poleY * f.rate - m.poleY * m.rate, f.poleZ * f.rate - m.poleZ * m.rate) / m.rate)
+  }
+  check('the fit to the mantle flow finds a rigid flow\'s ω again', fitError < 1e-3, `largest error ${fitError.toExponential(1)} of |ω|`)
+
+  // The feature query (the elevation, the folds) near a pole: every feature
+  // a point can reach is in the buckets it searches. Points on a ring of
+  // colatitudes down to the pole, features laid round them.
+  const reach = 65
+  const ring = []
+  for (const y of [0, 3, 20, 60, 120, 300, 512]) for (let k = 0; k < 24; k++) ring.push({ x: (k / 24) * sim.width + 0.37, y })
+  const probe = ring.map((p, i) => ({ x: p.x, y: p.y, thickness: 1, tangentX: 1, tangentY: 0, kind: 'range', subsides: false, plateA: 0, plateB: 1, movesWithPlate: 0, epochsSinceDeposit: 0, id: i }))
+  const scatter = []
+  for (const p of ring) {
+    for (let k = 0; k < 6; k++) {
+      const out = { x: 0, y: 0 }
+      const a = (k / 6) * 2 * Math.PI + 0.2
+      domain.advance(p.x, p.y, 0.9 * reach * Math.cos(a), 0.9 * reach * Math.sin(a), out)
+      scatter.push({ ...probe[0], x: out.x, y: out.y })
+    }
+  }
+  const buckets = EF.buildFeatureBuckets([...probe, ...scatter], domain)
+  let missed = 0
+  let reachable = 0
+  for (const p of ring) {
+    const found = new Set()
+    const n = EF.nearFeatureBuckets(buckets, p.x, p.y)
+    const seen = new Set()
+    for (let k = 0; k < n; k++) {
+      if (seen.has(buckets.near[k])) missed += 1000
+      seen.add(buckets.near[k])
+      for (const f of buckets.buckets[buckets.near[k]]) found.add(f)
+    }
+    for (const f of [...probe, ...scatter]) {
+      if (domain.distanceSq(p.x, p.y, f.x, f.y) > reach * reach) continue
+      reachable++
+      if (!found.has(f)) missed++
+    }
+  }
+  check('the feature query near a pole finds every feature in reach, each bucket once', missed === 0 && reachable > ring.length, `${reachable} in reach, ${missed} missed`)
+  const fold = FO.foldFactorAt(buckets, 0, 0, domain)
+  check('a fold at the pole reads the features there', Number.isFinite(fold) && fold !== 1, `factor ${fold.toFixed(3)}`)
 }
 
 // The sphere's coordinate noise (DEC-0035, fork 1): the warp, the ridged and

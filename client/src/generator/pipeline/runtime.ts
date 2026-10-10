@@ -1609,7 +1609,7 @@ function resetTectonics(): void {
   stopTicking()
   // Fresh copies each time, so a second reset restores the same state as the first
   // rather than whatever the last run left in the buffers.
-  sim = deserializePlateSimulation(handoverSnapshot, handoverOceanAge.slice(), handoverMantle.slice())
+  sim = deserializePlateSimulation(handoverSnapshot, handoverOceanAge.slice(), handoverMantle.slice(), archeanShape)
   sim.epochMa = TECTONIC_MA_PER_EPOCH
   lastRawElevations = null
   preErosionElevations = null

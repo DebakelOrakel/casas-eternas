@@ -124,7 +124,7 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
   const oceanAge = createOceanAgeField(TECTONICS_TUNING.oceanAgeInit)
   const seaLevelOffset = archean.seaLevelOffset
   const seeds = convectionCellSeeds(archean.mantle, domain)
-  const lattice = generateDetectionLattice(width, height, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
+  const lattice = generateDetectionLattice(domain, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
 
   return {
     width,

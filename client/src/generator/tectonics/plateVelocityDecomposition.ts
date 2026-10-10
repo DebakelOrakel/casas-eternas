@@ -44,7 +44,10 @@ export function classifyBoundaryMotion(
   // Unit vector from B's seed toward A's seed — the direction along
   // which the distance between the two plates is measured, wrapped like
   // everything else on this map.
+  // Found at B's seed and carried to the point, the frame the velocities
+  // are in (on the torus the same two numbers).
   domain.delta(seedA.x, seedA.y, seedB.x, seedB.y, offset)
+  domain.transport(offset.x, offset.y, seedB.x, seedB.y, point.x, point.y, offset)
   const dirX = offset.x
   const dirY = offset.y
   const dirLength = Math.sqrt(dirX * dirX + dirY * dirY) || 1

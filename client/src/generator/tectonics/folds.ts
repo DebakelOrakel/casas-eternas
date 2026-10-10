@@ -1,7 +1,7 @@
 import { capsuleWeight } from '../elevation/capsule'
 import { ELEVATION_TUNING } from '../elevation/elevationTuneParams'
 import type { Domain } from '../core/domain'
-import type { FeatureBuckets } from '../elevation/elevationField'
+import { nearFeatureBuckets, type FeatureBuckets } from '../elevation/elevationField'
 import { METERS_PER_CELL } from '../core/mapConfig'
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
 import { detCos } from '../core/detMath'
@@ -31,26 +31,20 @@ const offset = { x: 0, y: 0 }
 
 // The uplift's multiplier at a world point, from the range features.
 export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, domain: Domain): number {
-  const { grid, bucketsX, bucketsY, bucketSizeX, bucketSizeY } = buckets
-  const centerBx = Math.min(bucketsX - 1, Math.floor(x / bucketSizeX))
-  const centerBy = Math.min(bucketsY - 1, Math.floor(y / bucketSizeY))
+  const nearCount = nearFeatureBuckets(buckets, x, y)
   let bestWeight = 0
   let across = 0
-  for (let dy = -1; dy <= 1; dy++) {
-    const by = grid.wrapRow(centerBy + dy)
-    for (let dx = -1; dx <= 1; dx++) {
-      const bx = grid.wrapCol(centerBx + dx)
-      for (const feature of buckets.buckets[by * bucketsX + bx]) {
-        if (feature.kind !== 'range' || feature.thickness <= 0) continue
-        domain.delta(x, y, feature.x, feature.y, offset)
-        const offX = offset.x
-        const offY = offset.y
-        const weight = capsuleWeight(offX, offY, feature.tangentX, feature.tangentY, ELEVATION_TUNING.rangeSegmentHalfLength, ELEVATION_TUNING.rangePerpRadius)
-        if (weight <= bestWeight) continue
-        bestWeight = weight
-        // The signed distance across the range: along its normal.
-        across = -offX * feature.tangentY + offY * feature.tangentX
-      }
+  for (let k = 0; k < nearCount; k++) {
+    for (const feature of buckets.buckets[buckets.near[k]]) {
+      if (feature.kind !== 'range' || feature.thickness <= 0) continue
+      domain.delta(x, y, feature.x, feature.y, offset)
+      const offX = offset.x
+      const offY = offset.y
+      const weight = capsuleWeight(offX, offY, feature.tangentX, feature.tangentY, ELEVATION_TUNING.rangeSegmentHalfLength, ELEVATION_TUNING.rangePerpRadius)
+      if (weight <= bestWeight) continue
+      bestWeight = weight
+      // The signed distance across the range: along its normal.
+      across = -offX * feature.tangentY + offY * feature.tangentX
     }
   }
   if (bestWeight <= 0) return 1

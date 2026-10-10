@@ -1,6 +1,6 @@
 import { computeMembershipField } from '../../crust/raftField'
 import { MANTLE_RES_X, MANTLE_RES_Y, computeMantleFlow, evolveMantleField } from '../../mantle/mantleField'
-import { fitMotionsToFlow } from '../plateMotion'
+import { fitMotionsToFlow, relaxMotionToward } from '../plateMotion'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import type { PlateSimulation } from '../plateSimulationTypes'
 
@@ -34,14 +34,6 @@ export function coupleMantleToPlates(sim: PlateSimulation): Float32Array {
   sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, sim.domain)
   const flow = computeMantleFlow(sim.mantle, sim.domain)
   const fitted = fitMotionsToFlow(sim.seeds, flow, sim.domain)
-  for (let i = 0; i < sim.motions.length; i++) {
-    const m = sim.motions[i]
-    const f = fitted[i]
-    m.driftX += (f.driftX - m.driftX) * TECTONICS_TUNING.mantleCouplingRate
-    m.driftY += (f.driftY - m.driftY) * TECTONICS_TUNING.mantleCouplingRate
-    m.spin += (f.spin - m.spin) * TECTONICS_TUNING.mantleCouplingRate
-    m.centroidX = f.centroidX
-    m.centroidY = f.centroidY
-  }
+  for (let i = 0; i < sim.motions.length; i++) relaxMotionToward(sim.motions[i], fitted[i], TECTONICS_TUNING.mantleCouplingRate)
   return membership
 }

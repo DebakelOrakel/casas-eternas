@@ -185,6 +185,45 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: step 4d3 BUILT — the plate simulation runs on the sphere
+(`stepEpoch`, the plate half of the coupled epoch; the mesh, the erosion
+and the climate on the sphere are 4d4 and 4d5, and step 2 stays locked).
+THE MOTION: on the sphere a plate turns about an Euler pole —
+`EulerMotion` (a unit pole in the globe's frame and a rate) beside the
+torus's drift + spin, now `RigidMotion`, in one union `PlateMotion`
+(`tectonics/plateMotion.ts`). Its functions are the interface the rest of
+tectonics uses, and each tells the forms apart by the motion's fields, so
+the torus's data and arithmetic are as they were: the velocity ω × r in
+the point's east/south frame, a point turned by Rodrigues and named in the
+chart again (new `GlobeNoise.locate`, the inverse of `frame`), back by the
+negative angle; the fit to the mantle flow the area-weighted least-squares
+ω over the plate's cells, Σ w (|r|² I − r rᵀ) ω = Σ w (r × u), in 3D;
+the coupling's inertia `relaxMotionToward` (ω relaxed as a vector), a
+ridge plate's pure drift `motionMovingAt` (ω = r × v / |r|²). A fresh
+plate's pole lies 30°–90° from its seed, its rate gives the seed the
+torus's 30–90 units per time unit. THE REST through the Domain: new
+`Domain.transport` carries a tangent vector from one point's frame to
+another's (parallel transport along the great circle; the same two numbers
+on the torus) — the boundary normal from the seeds to the boundary point,
+the rift normal to each blob it pushes, a feature's and a suture's axis
+after they move, a seam tangent to its seam; the trench, the accretion and
+the split move as points (`advance`); the detection lattice keeps per row
+the points its length holds, area-uniform; the ocean age's pole rows are
+averaged after the advection and a reset, the reset's cells are the
+disc's box (`discBox`); the feature buckets search a row as far in
+longitude as a feature in it can reach (all of it where a cap may hold a
+pole), the rows clamped at the poles — one query, `nearFeatureBuckets`,
+for the elevation, the folds and the uplift field, in the torus's order.
+`deserializePlateSimulation` takes the shape. `harness:pipeline` runs the
+hand-over and 30 epochs at 2048 × 1024 beside the torus (seed `harness`):
+everything finite and on the domain, pole rows constant, plates 10 → 10
+(torus 19 → 19; over 200 epochs 10 → 8 and 19 → 19), mean seed speed
+66.6 (torus 51.1), land 0.124 (0.053), 17.8 % of the lattice on a
+boundary (18.1 %), 3.1 s for the 30 epochs (1.7 s); a turn by ±ω returns
+to 1.9e-15 R, the velocity is rigid and |v| = |ω| R sin θ to 1e-14, the
+fit finds a rigid flow's ω to 9e-6, the feature query near a pole misses
+none. Golden harness byte-identical.
+
 2026-10-10: 3D noise on the sphere BUILT — the coordinate noise is sampled
 where the Domain says: `Domain.noise` is the chart on the torus (the
 periodic 2D lattices, unchanged) and the globe on the sphere, whose

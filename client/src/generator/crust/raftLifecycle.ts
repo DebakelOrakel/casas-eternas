@@ -391,7 +391,10 @@ export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, epoc
           const seamX = moved.x
           const seamY = moved.y
           const len = detHypot(dx, dy) || 1
-          merges.push({ nameA, nameB, x: seamX, y: seamY, tangentX: -dy / len, tangentY: dx / len })
+          // The tangent found at A, carried to the seam it marks (the same
+          // two numbers on the torus).
+          domain.transport(-dy / len, dx / len, overlap.blobA.x, overlap.blobA.y, seamX, seamY, offset)
+          merges.push({ nameA, nameB, x: seamX, y: seamY, tangentX: offset.x, tangentY: offset.y })
           if (!rafts[i].name && rafts[j].name) rafts[i].name = rafts[j].name
           for (const blob of rafts[j].blobs) rafts[i].blobs.push(blob)
           rafts.splice(j, 1)
@@ -450,13 +453,17 @@ export function splitRaftAtRift(
   // rift line, so their seam blobs no longer overlap and the merge pass won't
   // immediately weld them back together — a rift genuinely separates the
   // diverging continents. They keep drifting apart afterward with their plates.
+  //
+  // The normal is the rift point's; each blob moves along it as carried to
+  // the blob (Domain.transport), as a point (advance — across a pole on the
+  // sphere). On the torus both are what the wrapped sum always did.
   for (const blob of near) {
-    blob.x = domain.wrapX(blob.x + normalX * gap)
-    blob.y = domain.wrapY(blob.y + normalY * gap)
+    domain.transport(normalX, normalY, riftX, riftY, blob.x, blob.y, offset)
+    domain.advance(blob.x, blob.y, offset.x * gap, offset.y * gap, blob)
   }
   for (const blob of far) {
-    blob.x = domain.wrapX(blob.x - normalX * gap)
-    blob.y = domain.wrapY(blob.y - normalY * gap)
+    domain.transport(normalX, normalY, riftX, riftY, blob.x, blob.y, offset)
+    domain.advance(blob.x, blob.y, -offset.x * gap, -offset.y * gap, blob)
   }
   const parentName = raft.name
   raft.blobs = near

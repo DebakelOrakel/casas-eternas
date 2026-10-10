@@ -156,6 +156,11 @@ export function findOrCreateFeatureIndex(
     const dx = offset.x
     const dy = offset.y
     if (dx * dx + dy * dy <= mergeRadiusSq) {
+      // The incoming tangent is the deposit point's; read it in the
+      // feature's frame (the same two numbers on the torus).
+      domain.transport(tangentX, tangentY, x, y, feature.x, feature.y, offset)
+      tangentX = offset.x
+      tangentY = offset.y
       // Refresh orientation toward the current boundary tangent. Tangent
       // direction is sign-ambiguous (a line and its reverse are the same
       // axis), so flip the incoming one to the stored one's hemisphere
@@ -187,8 +192,17 @@ export function findOrCreateFeatureIndex(
 // (a fraction of a degree), this agrees closely with an exact rotation;
 // single-sided features keep the exact rotation since only one motion
 // applies and there's no reason to approximate it.
+//
+// The tangent is carried along with the point (Domain.transport): it is
+// written in the point's own frame, which on the sphere turns as the point
+// moves, most of all near a pole. On the torus the frame is the same
+// everywhere and the tangent stays as it was. (Neither follows the plate's
+// own turn about the point — the torus's spin never turned it either.)
+const tangent = { x: 0, y: 0 }
 export function advanceTerrainFeatures(features: TerrainFeature[], motions: PlateMotion[], angleStep: number, domain: Domain): void {
   for (const feature of features) {
+    const fromX = feature.x
+    const fromY = feature.y
     if (feature.movesWithPlate === 'both') {
       const velocityA = getVelocityAt(feature, motions[feature.plateA], domain)
       const velocityB = getVelocityAt(feature, motions[feature.plateB], domain)
@@ -201,5 +215,8 @@ export function advanceTerrainFeatures(features: TerrainFeature[], motions: Plat
       feature.x = rotated.x
       feature.y = rotated.y
     }
+    domain.transport(feature.tangentX, feature.tangentY, fromX, fromY, feature.x, feature.y, tangent)
+    feature.tangentX = tangent.x
+    feature.tangentY = tangent.y
   }
 }

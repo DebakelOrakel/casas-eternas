@@ -97,6 +97,9 @@ export function advectOceanAge(
       next[i] = advected > MAX_SEAFLOOR_AGE ? MAX_SEAFLOOR_AGE : advected
     }
   }
+  // On the sphere a pole row is one point (DEC-0035, fork 5); the torus has
+  // none, and nothing happens.
+  grid.averagePoleRows(next)
   return next
 }
 
@@ -109,23 +112,34 @@ export function advectOceanAge(
 // cell. Everything else in the gap kept whatever age it had, so the new basin
 // opened with a one-cell-wide young streak down the middle of otherwise old
 // floor. Sized by the caller to the gap it actually opened.
+//
+// The cells looked at are the disc's box (DomainGrid.discBox: on the sphere
+// its rows, never across a pole, and its widest span in longitude — every
+// column when it holds a pole), each reset if its centre lies within the
+// radius; a pole row it touched is made one value again. On the torus the
+// box is a superset of the square of ±floor(radius / cell) cells this
+// used to walk, and with the two radii in use (12 and 80 world units, 1.5
+// and 10 cells, about boundary points at cell centres) the cells within the
+// radius are the same, and so are the bytes (golden, 2026-10-10).
+const resetBox = { x0: 0, x1: 0, y0: 0, y1: 0 }
 export function resetOceanAgeAround(age: Float32Array, x: number, y: number, worldRadius: number, domain: Domain): void {
   const grid = oceanAgeGrid(domain)
   const cellW = domain.width / OCEAN_AGE_RES_X
   const cellH = domain.height / OCEAN_AGE_RES_Y
-  const spanX = Math.floor(worldRadius / cellW)
-  const spanY = Math.floor(worldRadius / cellH)
-  const cx = Math.floor((x / domain.width) * OCEAN_AGE_RES_X)
-  const cy = Math.floor((y / domain.height) * OCEAN_AGE_RES_Y)
   const radiusSq = worldRadius * worldRadius
-  for (let dy = -spanY; dy <= spanY; dy++) {
-    const gy = grid.wrapRow(cy + dy)
+  grid.discBox(x, y, worldRadius, resetBox)
+  let pole = false
+  for (let row = resetBox.y0; row <= resetBox.y1; row++) {
+    const gy = grid.wrapRow(row)
     const wy = (gy + 0.5) * cellH
-    for (let dx = -spanX; dx <= spanX; dx++) {
-      const gx = grid.wrapCol(cx + dx)
+    for (let col = resetBox.x0; col <= resetBox.x1; col++) {
+      const gx = grid.wrapCol(col)
       const wx = (gx + 0.5) * cellW
       // Round, not square — a square patch of fresh crust would show as one.
-      if (domain.distanceSq(wx, wy, x, y) <= radiusSq) age[gy * OCEAN_AGE_RES_X + gx] = 0
+      if (domain.distanceSq(wx, wy, x, y) > radiusSq) continue
+      age[gy * OCEAN_AGE_RES_X + gx] = 0
+      if (gy === 0 || gy === OCEAN_AGE_RES_Y - 1) pole = true
     }
   }
+  if (pole) grid.averagePoleRows(age)
 }

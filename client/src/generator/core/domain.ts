@@ -71,6 +71,15 @@ export interface Domain {
   // brought back into the domain — the plates' rigid rotation
   // (core/toroidal.ts rotateAroundCenter).
   rotateAround(x: number, y: number, centerX: number, centerY: number, angle: number): { x: number; y: number }
+  // A tangent vector (vx, vy) in the frame of (fromX, fromY) carried to the
+  // frame of (toX, toY), written into `out`: for a direction found at one
+  // point and used at another (a boundary normal from the seeds, a rift
+  // normal at a blob, a feature's axis after it moved). The torus: the same
+  // two numbers, since its frame is the same everywhere. The sphere: parallel
+  // transport along the great circle between the two points (the rotation
+  // that takes one to the other about their common normal), so the length is
+  // kept and a direction along the circle stays along it.
+  transport(vx: number, vy: number, fromX: number, fromY: number, toX: number, toY: number, out: { x: number; y: number }): void
   // A raster of resX × resY cells laid over the whole domain. Make it once
   // per field or per call, never inside a per-cell loop.
   grid(resX: number, resY: number): DomainGrid
@@ -105,6 +114,12 @@ export interface GlobeNoise {
   // and read offsets in (at a pole the limit along x's meridian). A 3D
   // vector v at the point is the tangent offset (v · east, v · south).
   frame(x: number, y: number, out: GlobeFrame): void
+  // The inverse of frame's position: the chart point (x, y) of the globe's
+  // point in the direction (px, py, pz) from its centre (any length but 0),
+  // written into `out`. At a pole x is 0, as rotateAround writes it. For a
+  // caller that moves a point in 3D (a plate's Euler rotation,
+  // tectonics/plateMotion.ts) and must name it in the chart again.
+  locate(px: number, py: number, pz: number, out: { x: number; y: number }): void
 }
 
 export interface GlobeFrame {
@@ -344,6 +359,10 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
       return dx * dx + dy * dy
     },
     rotateAround: (x, y, centerX, centerY, angle) => rotateAroundCenter(x, y, centerX, centerY, angle, width, height),
+    transport: (vx, vy, _fromX, _fromY, _toX, _toY, out) => {
+      out.x = vx
+      out.y = vy
+    },
     grid: (resX, resY) => new TorusGrid(domain, resX, resY),
     scaledTo: (w, h) => torusDomain(w, h, equatorOffset),
     noise: CHART_NOISE,
@@ -553,6 +572,51 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
         y: detAtan2(Math.sqrt(rx * rx + ry * ry), rz) / toColat,
       }
     },
+    // R = I + [v]× + [v]×² / (1 + c), the rotation taking u_from to u_to,
+    // with v = u_from × u_to and c = u_from · u_to, applied to the vector
+    // t: c·t + v × t + v (v · t) / (1 + c). Read in u_to's east/south
+    // frame. Two antipodal points have no single great circle; the vector
+    // is then read as it stands.
+    transport: (vx, vy, fromX, fromY, toX, toY, out) => {
+      const ta = fromY * toColat
+      const la = fromX * toLon
+      const sta = detSin(ta)
+      const cta = detCos(ta)
+      const sla = detSin(la)
+      const cla = detCos(la)
+      const tb = toY * toColat
+      const lb = toX * toLon
+      const stb = detSin(tb)
+      const ctb = detCos(tb)
+      const slb = detSin(lb)
+      const clb = detCos(lb)
+      // t in 3D from the start's east (−sin λ, cos λ, 0) and south
+      // (cos θ cos λ, cos θ sin λ, −sin θ).
+      const tx = -sla * vx + cta * cla * vy
+      const ty = cla * vx + cta * sla * vy
+      const tz = -sta * vy
+      const ax = sta * cla
+      const ay = sta * sla
+      const az = cta
+      const bx = stb * clb
+      const by = stb * slb
+      const bz = ctb
+      const c = ax * bx + ay * by + az * bz
+      let rx = tx
+      let ry = ty
+      let rz = tz
+      if (c > -1 + 1e-12) {
+        const wx = ay * bz - az * by
+        const wy = az * bx - ax * bz
+        const wz = ax * by - ay * bx
+        const k = (wx * tx + wy * ty + wz * tz) / (1 + c)
+        rx = c * tx + (wy * tz - wz * ty) + wx * k
+        ry = c * ty + (wz * tx - wx * tz) + wy * k
+        rz = c * tz + (wx * ty - wy * tx) + wz * k
+      }
+      out.x = -slb * rx + clb * ry
+      out.y = ctb * clb * rx + ctb * slb * ry - stb * rz
+    },
     // One grid per size, kept: a sphere grid builds its row tables in trig,
     // and callers ask for one per call (some per point — the ocean-age
     // sampler's, 2026-10-10: four seconds of a full render). A grid holds
@@ -590,6 +654,10 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
         out.sx = ct * cl
         out.sy = ct * sl
         out.sz = -st
+      },
+      locate: (px, py, pz, out) => {
+        out.x = wrapValue(detAtan2(py, px) / toLon, width)
+        out.y = detAtan2(Math.sqrt(px * px + py * py), pz) / toColat
       },
     },
   }
