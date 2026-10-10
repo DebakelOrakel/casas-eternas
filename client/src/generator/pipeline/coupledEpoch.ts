@@ -490,12 +490,13 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // slivers — counted as whole cells they made the sea level's ocean a
   // fifth too large and the mean land temperature colder by its poles).
   let oceanCells = 0
+  let oceanDepthSum = 0
   let landTempSum = 0
   let landClimateCells = 0
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     const a = climateGrid.cellArea(gy)
     for (let i = gy * CLIMATE_RES_X, end = i + CLIMATE_RES_X; i < end; i++) {
-      if (coarseZ[i] <= 0) oceanCells += a
+      if (coarseZ[i] <= 0) { oceanCells += a; oceanDepthSum -= a * coarseZ[i] }
       else { landTempSum += a * weather.temperature[i]; landClimateCells += a }
     }
   }
@@ -506,7 +507,13 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // ice's volume is what sets the sea level below.
   const areasNow = meshAreasOf(mesh)
   const cellM2Now = METERS_PER_CELL * METERS_PER_CELL
+  // The provenance the column records, 0..1. The field marks a cell with no
+  // crust −1; such a source is oceanic, as young as crust gets, so it
+  // enters as 0 — taken as −1 it made a layer's craton product negative
+  // (found 2026-10-10). Clamped before the upsample, so a coastal node does
+  // not blend the marker in either.
   const cratonFieldForTill = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, domain)
+  for (let i = 0; i < cratonFieldForTill.length; i++) if (cratonFieldForTill[i] < 0) cratonFieldForTill[i] = 0
   const ice = computeIceOnMesh({ mesh, z: zCanon, temperature: weather.temperature, precipitation, coarseZ, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, width, height, cellM: METERS_PER_CELL })
   const glacial = glacialErosionOnMesh(mesh, zCanon, ice, (sim.epochMa || TECTONIC_MA_PER_EPOCH) * 1e6, METERS_PER_CELL)
   let iceVolumeM3 = 0
@@ -543,7 +550,15 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   timing.ice = lap()
   // The sea as a global water level: the ice's water, at its density,
   // taken out of the ocean's area — applied to z after the erosion below.
-  const seaLevelM = oceanCells > 0 ? -(iceVolumeM3 * 0.917) / (oceanCells * climateCellM2) : 0
+  //
+  // The ice cannot take more water than the ocean holds: the fall stops at
+  // the ocean's mean depth. Without that bound a world with almost no
+  // ocean divided the ice over a vanishing area and its sea fell to −18 km
+  // (found 2026-10-10 on small sphere harness worlds). Real worlds are far
+  // from it: on the golden worlds the sea falls at most 28 m, with the
+  // ocean at 79 % of the area or more.
+  const oceanMeanDepthM = oceanCells > 0 ? (oceanDepthSum / oceanCells) * ELEVATION_METERS : 0
+  const seaLevelM = oceanCells > 0 ? Math.max(-oceanMeanDepthM, -(iceVolumeM3 * 0.917) / (oceanCells * climateCellM2)) : 0
   const meanLandTempC = landClimateCells > 0 ? landTempSum / landClimateCells : 0
   // THE COVER (phase 5.5): the epoch's coarse biomes, as the vegetation
   // that holds the ground — once the planet's schedule has land plants.

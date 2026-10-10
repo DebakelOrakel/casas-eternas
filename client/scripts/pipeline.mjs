@@ -700,16 +700,15 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   check('every epoch has a sane climate (land temperature, ice ≥ 0, sea level ≤ 0)', s.climate)
   {
     // The temperature product may be negative (a layer laid down below
-    // freezing); so may the craton product, on both shapes: a deposit over
-    // a cell with no crust carries the oldness field's −1 (found 2026-10-10,
-    // step 4d5, not changed — this world meets it on the torus too).
+    // freezing); nothing else may — the craton product neither, since a
+    // source with no crust enters as 0, not as the oldness field's −1.
     let negative = 0
     const d = terrain.column.data
     for (let v = 0; v < terrain.mesh.vertexSlots; v++) {
       if (!terrain.mesh.vAlive[v]) continue
-      for (let k = 0; k < MC.COLUMN_DEPTH; k++) if (k % MC.COLUMN_VALUES !== 4 && k % MC.COLUMN_VALUES !== 2 && d[v * MC.COLUMN_DEPTH + k] < 0) negative++
+      for (let k = 0; k < MC.COLUMN_DEPTH; k++) if (k % MC.COLUMN_VALUES !== 4 && d[v * MC.COLUMN_DEPTH + k] < 0) negative++
     }
-    check('no thickness, hardness or precipitation value of a layer goes negative', negative === 0, `${negative}`)
+    check('no thickness, craton, hardness or precipitation value of a layer goes negative', negative === 0, `${negative}`)
   }
 
   // (2) The rasters of the epoch's terrain: no seam, finite; the climate's.
