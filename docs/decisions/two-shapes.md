@@ -126,7 +126,9 @@ globe implementation; the screen talks to it alone. (b) The screen keeps
 talking to the flat view and switches to the globe where it must.
 
 **Answer: (a).** A `WorldView` takes layers as textures in chart
-coordinates (the globe wraps them round itself), optionally the mesh with
+coordinates (the globe wraps them round itself), symbols and names as
+objects at chart points (it lays them in its surface, so they keep their
+shape — since 2026-10-10, see Status), optionally the mesh with
 heights for relief, and answers which chart point lies under the pointer;
 it holds its own camera, with a reset, and is disposed as one. The
 implementations: the flat one around today's `ToroidalMapView`, and the
@@ -185,16 +187,30 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: SYMBOLS AND NAMES ARE OBJECTS the view places, on both
+shapes — the plumes, the volcanoes, the event markers, the migration's
+origins and the continent names. Painted into the chart, a circle was an
+ellipse on the globe, 1 / cos φ tall (11× at 85°). New on `WorldView`:
+`symbols(id)`, a layer of pictures (a canvas each, its size on the world in
+metres) placed at chart points, upright or along a chart direction
+(`map/worldView.ts`, `map/symbolLayer.ts`, the arithmetic in
+`map/symbolPlacement.ts`). The globe lays each one in its surface by the
+exponential map, a little over it; the flat map lays them on the plane in
+its label group, in the wrap copies, at the height of the relief on screen.
+The label texture went. PROOF: `scripts/symbolPlacement.mjs` — both
+charts against Babylon's own vertex data, the round trip at the seam and
+the poles, east and north extents equal at 0°, 60°, 85° and 89.9°, no
+picture mirrored, a turned one along its chart direction.
+
 2026-10-10: STEP 2 OPEN on the sphere — a sphere world goes on from the
 Archean into plate tectonics, and the globe wears the step's layers
-(terrain, boundaries, mantle, hotspots, volcanoes). Three things stay
-off: the continent names, because the globe's label layer is still to be
-built (the layer is shown locked, not inert); the chain a settled run
-starts by itself — the climate, its refinement and the rivers — because
-the sphere's hydrology throws (`flowRouting` asks for a row table) and
-the refinement has no pole filter yet; and with it the save's compute of
-those stages, so a sphere world saves its terrain only. The later steps
-stay locked.
+(terrain, boundaries, names, mantle, hotspots, volcanoes). The continent
+names came the same day, once the globe placed them (the entry above).
+Two things stay off: the chain a settled run starts by itself — the
+climate, its refinement and the rivers — because the sphere's hydrology
+throws (`flowRouting` asks for a row table) and the refinement has no pole
+filter yet; and with it the save's compute of those stages, so a sphere
+world saves its terrain only. The later steps stay locked.
 
 2026-10-10: step 4d5 BUILT — the coupled epoch runs on the sphere: the
 plates, the nodes' motion, the rebuild and remesh, the erosion engine, the

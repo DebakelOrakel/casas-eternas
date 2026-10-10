@@ -12,6 +12,11 @@ import type { ElevationSurface } from './elevationSurface'
 // its wrap copies) and the globe (sphereView.ts). A screen talks to this
 // interface alone; what only one shape can show, the other takes and
 // ignores.
+//
+// SYMBOLS AND NAMES are not painted into the textures (2026-10-10): a circle
+// in the chart is an ellipse on the globe, stretched 1 / cos φ toward the
+// poles. The screen hands them over as OBJECTS (WorldSymbols), and the view
+// lays each one in its surface, round wherever it lies.
 
 export type WorldShape = 'flat' | 'sphere'
 
@@ -28,6 +33,42 @@ export interface WorldRivers {
   setEnabled(enabled: boolean): void
 }
 
+// A picture symbols show: drawn by the screen into a canvas of its own,
+// upright (the canvas's top is the picture's top), and its size ON THE
+// WORLD in metres — it zooms with the world, it does not keep its size on
+// the screen. The canvas's resolution is the screen's choice.
+export interface SymbolPicture {
+  image: HTMLCanvasElement
+  width: number
+  height: number
+}
+
+// One symbol: a picture of its layer, its centre at a chart point, lying in
+// the surface. Without `angle` it stands upright: its top toward the view's
+// top when the view is turned north up (the flat map's grid bottom, the
+// globe's north pole). With `angle`, its x axis runs along that CHART
+// direction, radians in texels (x across, y down the rows) — the view
+// measures the direction on its own surface. `readable`: a half turn more
+// where the x axis would point to the left, for text. `alpha` (default 1)
+// fades it.
+export interface WorldSymbol {
+  at: ChartPoint
+  picture: number
+  angle?: number
+  readable?: boolean
+  alpha?: number
+}
+
+// A layer of symbols: its pictures, its symbols, on or off. Drawn over the
+// world's layers, relief, water and rivers, the layers in the order they
+// were first asked for (WorldView.symbols). Setting the symbols alone is
+// cheap — for a fade, frame by frame.
+export interface WorldSymbols {
+  setPictures(pictures: SymbolPicture[]): void
+  setSymbols(symbols: WorldSymbol[]): void
+  setEnabled(enabled: boolean): void
+}
+
 export interface WorldView {
   readonly shape: WorldShape
   readonly scene: Scene
@@ -36,9 +77,6 @@ export interface WorldView {
   // The same composite without the hillshade, for the relief, whose own
   // normals and light shade it.
   readonly reliefTexture: RawTexture
-  // The names over the map.
-  readonly labelTexture: RawTexture
-  setLabelsVisible(visible: boolean): void
   setLakesVisible(visible: boolean): void
   // Standing water: the per-cell level and surface kind, and the coast type,
   // or nulls for "the sea everywhere"; the terrain the shores are found on.
@@ -49,6 +87,9 @@ export interface WorldView {
   setRelief(coarse: ElevationSurface | null, fine?: ElevationSurface | null): void
   setHeightScale(scale: number): void
   readonly rivers: WorldRivers
+  // The symbol layer of an id, made on the first ask and kept with the view;
+  // hidden until enabled.
+  symbols(id: string): WorldSymbols
   // The chart point under a screen pixel (canvas pixels). `chartAt` meets
   // the view's REFERENCE surface analytically — the flat map's plane, the
   // globe's sphere — in microseconds, for readings that need many points

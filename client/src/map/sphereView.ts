@@ -17,6 +17,8 @@ import {
   Vector3,
 } from '@babylonjs/core'
 import { createOrbitSwoopCamera } from '../camera/orbitSwoopCamera'
+import { createSymbolLayerSet } from './symbolLayer'
+import { globeChartOfFrame, globeSymbolFrame, globeSymbolVertex } from './symbolPlacement'
 import type { ChartPoint, WorldView } from './worldView'
 
 // THE SPHERE'S FIRST VIEW (docs/design/two-topologies.md): an ocean globe on
@@ -43,7 +45,13 @@ import type { ChartPoint, WorldView } from './worldView'
 // answers (u, v). The globe shows the sea until told to show its layers
 // (setLayersShown): the screen lays a sphere world's own on it (its first
 // step, since 2026-10-10), never the flat sample world's. What it cannot
-// show yet (relief, rivers, water, names) it takes and ignores.
+// show yet (relief, rivers, water) it takes and ignores.
+//
+// The symbols and names (WorldView.symbols) lie on the globe as objects,
+// in the surface at every point — round at the poles as at the equator,
+// where a circle painted into the chart is an ellipse 1 / cos φ tall — a
+// little above it (SYMBOL_LIFT), hidden by the globe on its far side, and
+// under the atmosphere like the rest of the scene.
 
 export interface GlobeWorldView extends WorldView {
   readonly shape: 'sphere'
@@ -76,6 +84,14 @@ const OCEAN = new Color3(0.08, 0.35, 0.75)
 const GLOW_COLOR = new Color3(0.42, 0.62, 0.92)
 const GLOW_INTENSITY = 0.55
 const GLOW_BLUR = 0.012
+// The radius the symbols lie at: over the globe's faces (its vertices are on
+// the unit sphere, its flat faces inside it), which they would otherwise
+// fight for depth, and close enough not to float in the swoop's closest view
+// (0.15 radii up). About 6 km on an Earth-sized world.
+const SYMBOL_LIFT = 1.001
+// The largest angle, radians, a quad of a picture spans: a larger picture is
+// cut finer, so it follows the curve instead of standing off it as a chord.
+const SYMBOL_SEGMENT_ANGLE = 0.02
 
 const SHADER = 'sphereAtmosphere'
 Effect.ShadersStore[`${SHADER}FragmentShader`] = `
@@ -197,17 +213,14 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   const emptyLayer = (): RawTexture => RawTexture.CreateRGBATexture(new Uint8Array(textureWidth * textureHeight * 4), textureWidth, textureHeight, scene, false, false)
   const baseTexture = emptyLayer()
   const reliefTexture = emptyLayer()
-  const labelTexture = emptyLayer()
 
   // The chart point of a world direction: into the globe's own frame
   // (below the tilt and the turn), then longitude and latitude.
   const toFrame = new Matrix()
   const chartOfWorld = (point: Vector3): ChartPoint => {
     tilt.computeWorldMatrix(true).invertToRef(toFrame)
-    const p = Vector3.TransformCoordinates(point, toFrame).normalize()
-    const longitude = Math.atan2(-p.z, p.x)
-    const latitude = Math.asin(Math.max(-1, Math.min(1, p.y)))
-    return { u: (longitude / (2 * Math.PI) + 1) % 1, v: 0.5 - latitude / Math.PI }
+    const p = Vector3.TransformCoordinates(point, toFrame)
+    return globeChartOfFrame([p.x, p.y, p.z])
   }
   // The pixel's ray against the sphere, analytically: the nearer crossing.
   const chartAt = (screenX: number, screenY: number): ChartPoint | null => {
@@ -222,19 +235,28 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   }
   const radiusMetres = metresRound / (2 * Math.PI)
 
+  // The symbol layers, in the globe's own frame: they turn and lean with it.
+  const symbolSet = createSymbolLayerSet(scene, 'globeSymbols', {
+    frame: (symbol) => globeSymbolFrame(symbol.at, symbol.angle, symbol.readable ?? false),
+    vertex: (frame, x, y, out, offset) => globeSymbolVertex(frame, x, y, radiusMetres, SYMBOL_LIFT, out, offset),
+    segments: (picture) => Math.min(32, Math.max(1, Math.ceil(Math.max(picture.width, picture.height) / radiusMetres / SYMBOL_SEGMENT_ANGLE))),
+  }, (mesh) => {
+    mesh.parent = tilt
+    return []
+  })
+
   return {
     shape: 'sphere',
     scene,
     baseTexture,
     reliefTexture,
-    labelTexture,
-    setLabelsVisible: () => {},
     setLakesVisible: () => {},
     setWaterLevels: () => {},
     setWaterElevation: () => {},
     setRelief: () => {},
     setHeightScale: () => {},
     rivers: { setPolylines: () => {}, setEnabled: () => {} },
+    symbols: (id) => symbolSet.symbols(id),
     chartAt,
     // The globe is its reference surface: what is drawn is the sphere.
     groundAt: chartAt,
@@ -265,9 +287,9 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     resetCamera: () => rig.reset(),
     dispose() {
       engine.onResizeObservable.remove(resized)
+      symbolSet.dispose()
       baseTexture.dispose()
       reliefTexture.dispose()
-      labelTexture.dispose()
       glow.dispose(rig.camera)
       rig.dispose()
       scene.dispose()

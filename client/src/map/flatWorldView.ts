@@ -1,11 +1,13 @@
-import { Color4, type Engine, Scene } from '@babylonjs/core'
+import { type AbstractMesh, Color4, type Engine, type InstancedMesh, Scene } from '@babylonjs/core'
 import { createGeneratorCamera, type GeneratorCamera } from '../camera/generatorCamera'
 import type { ElevationSurface } from './elevationSurface'
 import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_FINE_ZOOM, RELIEF_MIN_ZOOM } from './mapSceneSettings'
 import { pickMapPlane } from './ScaleBar'
-import { createToroidalMapView } from './ToroidalMapView'
+import { createSymbolLayerSet } from './symbolLayer'
+import { type FlatChart, flatChartOfScene, flatSymbolFrame, flatSymbolVertex } from './symbolPlacement'
+import { createToroidalMapView, LABEL_RENDERING_GROUP } from './ToroidalMapView'
 import { createToroidalRibbonOverlay } from './ToroidalRibbonOverlay'
-import type { ChartPoint, WorldView } from './worldView'
+import type { WorldView } from './worldView'
 
 // THE FLAT WORLD VIEW (docs/decisions/two-shapes.md, fork 3): the torus
 // drawn as the map plane with its wrap copies (ToroidalMapView), the river
@@ -17,6 +19,11 @@ import type { ChartPoint, WorldView } from './worldView'
 // centred on the origin, and its UVs run u = x / W + 0.5, v = z / H + 0.5
 // (Babylon's ground, measured 2026-10-10), so a scene point's chart point is
 // its fraction of the period from the far corner, wrapped.
+//
+// The symbols and names (WorldView.symbols) lie on the plane in the label
+// group (ToroidalMapView, LABEL_RENDERING_GROUP), over everything else, in
+// the 3 × 3 copies the map plane has; each one at the height of the relief
+// on screen under its centre, so it stays on its place when the view tilts.
 
 export interface FlatWorldView extends WorldView {
   readonly shape: 'flat'
@@ -35,8 +42,7 @@ export interface FlatWorldViewOptions {
 
 export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldView {
   const { engine, canvas, textureWidth, textureHeight, metresWide, metresHigh } = options
-  const wrapUnit = (f: number): number => ((f % 1) + 1) % 1
-  const chartOfScene = (x: number, z: number): ChartPoint => ({ u: wrapUnit(x / MAP_WORLD_WIDTH + 0.5), v: wrapUnit(z / MAP_WORLD_HEIGHT + 0.5) })
+  const chart: FlatChart = { width: MAP_WORLD_WIDTH, height: MAP_WORLD_HEIGHT }
   const scene = new Scene(engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
 
@@ -55,6 +61,48 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
   let coarseSurface: ElevationSurface | null = null
   let fineSurface: ElevationSurface | null = null
   let ribbonLevel: 'flat' | 'coarse' | 'fine' = 'flat'
+  let heightScale = 1
+
+  // The symbol layers: each mesh with its 8 wrap copies, placed with the
+  // map plane's copies on every recenter.
+  const symbolMeshes: { base: AbstractMesh; copies: InstancedMesh[] }[] = []
+  const unitsPerMetre = MAP_WORLD_WIDTH / metresWide
+  let symbolCentre = { x: 0, z: 0 }
+  const liftSurface = (): ElevationSurface | null => (ribbonLevel === 'flat' ? null : ribbonLevel === 'fine' ? fineSurface ?? coarseSurface : coarseSurface)
+  const symbolSet = createSymbolLayerSet(scene, 'flatSymbols', {
+    frame(symbol) {
+      const surface = liftSurface()
+      return flatSymbolFrame(chart, symbol.at, surface ? surface.heightAtUV(symbol.at.u, symbol.at.v) : 0, symbol.angle, symbol.readable ?? false)
+    },
+    vertex: (frame, x, y, out, offset) => flatSymbolVertex(frame, x, y, unitsPerMetre, out, offset),
+    segments: () => 1,
+  }, (mesh) => {
+    mesh.renderingGroupId = LABEL_RENDERING_GROUP
+    mesh.scaling.y = heightScale
+    const copies: InstancedMesh[] = []
+    for (let i = 0; i < 8; i++) {
+      const copy = mesh.createInstance(`${mesh.name}_copy${i}`)
+      copy.renderingGroupId = LABEL_RENDERING_GROUP
+      copy.isPickable = false
+      copy.scaling.y = heightScale
+      copies.push(copy)
+    }
+    symbolMeshes.push({ base: mesh, copies })
+    placeSymbolCopies(symbolMeshes.length - 1)
+    return copies
+  })
+  function placeSymbolCopies(index: number): void {
+    const { base, copies } = symbolMeshes[index]
+    const { x: centerX, z: centerZ } = symbolCentre
+    base.position.set(centerX, 0, centerZ)
+    let i = 0
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dz === 0) continue
+        copies[i++].position.set(centerX + dx * MAP_WORLD_WIDTH, 0, centerZ + dz * MAP_WORLD_HEIGHT)
+      }
+    }
+  }
 
   // Scene-space river ribbons (crisp at any zoom, not baked into the map
   // texture), tiled for the torus wrap through the recenter hook. Made
@@ -74,6 +122,10 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
       return zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
     },
     onRecenter: (centerX, centerZ) => {
+      if (centerX !== symbolCentre.x || centerZ !== symbolCentre.z) {
+        symbolCentre = { x: centerX, z: centerZ }
+        for (let i = 0; i < symbolMeshes.length; i++) placeSymbolCopies(i)
+      }
       if (!rivers) return
       rivers.recenter(centerX, centerZ)
       // Keep the ribbons draped on whichever relief surface is on screen
@@ -86,6 +138,7 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
       if (level !== ribbonLevel) {
         ribbonLevel = level
         if (coarseSurface) rivers.setHeightSurface(level === 'fine' && fineSurface ? fineSurface : coarseSurface)
+        symbolSet.relayout()
       }
     },
   })
@@ -106,8 +159,6 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
     scene,
     baseTexture: map.texture,
     reliefTexture: map.reliefTexture,
-    labelTexture: map.labelTexture,
-    setLabelsVisible: (visible) => map.setLabelsVisible(visible),
     setLakesVisible: (visible) => map.setLakesVisible(visible),
     setWaterLevels: (level, surface, coast) => map.setWaterLevels(level, surface, coast),
     setWaterElevation: (data, width, height) => map.setWaterElevation(data, width, height),
@@ -118,17 +169,24 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
       if (!coarse) {
         ribbonLevel = 'flat'
         ribbons.setHeightSurface(null)
-        return
+      } else {
+        ribbons.setHeightSurface(ribbonLevel === 'fine' ? fineSurface : coarseSurface)
       }
-      ribbons.setHeightSurface(ribbonLevel === 'fine' ? fineSurface : coarseSurface)
+      symbolSet.relayout()
     },
     setHeightScale(scale) {
       // The ribbons carry the ground's scale, or they sink inside it
       // (ToroidalRibbonOverlay.setHeightScale).
       map.setHeightScale(scale)
       ribbons.setHeightScale(scale)
+      heightScale = scale
+      for (const { base, copies } of symbolMeshes) {
+        base.scaling.y = scale
+        for (const copy of copies) copy.scaling.y = scale
+      }
     },
     rivers: ribbons,
+    symbols: (id) => symbolSet.symbols(id),
     setPanEnabled: (enabled) => camera.setPanEnabled(enabled),
     setDeepZoom: (enabled) => camera.setDeepZoomEnabled(enabled),
     // Not asked for the flat map yet (DEC-0035, "what this does not decide").
@@ -140,7 +198,7 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
       // and again for a day on 2026-10-10 when the move wired the mesh pick
       // here).
       const point = pickMapPlane(scene, screenX, screenY)
-      return point ? chartOfScene(point.x, point.z) : null
+      return point ? flatChartOfScene(chart, point.x, point.z) : null
     },
     groundAt(screenX, screenY) {
       // What is drawn: the plane, its wrap copies, the relief — they all
@@ -162,6 +220,7 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
       return `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${camera.getZoom().toFixed(4)},${camera.getYaw().toFixed(3)}`
     },
     dispose() {
+      symbolSet.dispose()
       ribbons.dispose()
       map.dispose()
       // scene.dispose() does not remove the camera rig's own 'wheel'

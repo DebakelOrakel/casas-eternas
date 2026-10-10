@@ -3,7 +3,7 @@ import { BUILD_VERSION } from '../../app/buildVersion'
 import { GENERATOR_CODE } from '../../app/generatorCode'
 import { createFlatWorldView } from '../../map/flatWorldView'
 import { createGlobeWorldView, type GlobeWorldView } from '../../map/sphereView'
-import type { WorldView } from '../../map/worldView'
+import type { SymbolPicture, WorldSymbol, WorldSymbols, WorldView } from '../../map/worldView'
 import { createScaleBar } from '../../map/ScaleBar'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { buildProbeCard } from '../../ui/mapProbe/probeCard'
@@ -27,7 +27,6 @@ import { dischargeToM3s } from '../../generator/surface/hydrology'
 import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
-import { drawContinentLabels } from '../../generator/render/continentLabelRenderer'
 import type { ContinentLabelPlacement } from '../../generator/render/continentLabelRenderer'
 import { elevationToMeters } from '../../generator/elevation/elevationScale'
 import { formatWorldAge, worldAgeMa } from '../../generator/core/worldTime'
@@ -61,6 +60,7 @@ import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlay
 const NO_PICK_PREFIX = 'none:'
 const noPickOf = (group: number | 'fields'): string => `${NO_PICK_PREFIX}${group}`
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
+import { type ChartSize, eventPictures, type VolcanoMark, eventSymbol, hotspotSymbols, nameSymbols, originSymbols, volcanoSymbols } from './mapSymbols'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleBar'
@@ -1195,9 +1195,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // thread over the worker's base color raster — the worker has no Canvas2D
   // (fonts/strokes) and toggling must be instant, so the base raster + overlay
   // source data are retained here and re-composited on demand rather than
-  // re-rendered. The generic mechanism (canvas, toggle state, marker fade,
-  // texture upload) lives in MapOverlayCompositor; only the worldgen-specific
-  // layer drawing + event→marker/notification mapping stays here.
+  // re-rendered. The generic mechanism (canvas, toggle state, texture
+  // upload) lives in MapOverlayCompositor; only the worldgen-specific layer
+  // drawing + event→marker/notification mapping stays here. The symbols and
+  // names are not painted: the world view places them (syncSymbols).
   let lastBoundaryMask: Uint8Array | null = null
   let lastRaftLabels: ContinentLabelPlacement[] = []
   // Coarse mantle buoyancy field + hotspot plumes (from each render) for the
@@ -1212,7 +1213,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // at epoch 0). Drives the "Craton age" overlay — see computeCratonOldnessField.
   let lastCratonAge: Float32Array | null = null
   let lastHotspots: { x: number; y: number }[] = []
-  let lastVolcanoes: { x: number; y: number; thickness: number; kind: 'hotspot' | 'flood' | 'arc' }[] = []
+  let lastVolcanoes: VolcanoMark[] = []
   // Coarse elevation for the hover readout's metre line (see
   // WorkerRenderedMessage.elevation). Present from the first render on, which is
   // why the readout works before any climate has been computed.
@@ -1470,47 +1471,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
-  // Mantle-driver markers, drawn onto the base texture so the toroidal tiling wraps
-  // them: the volcanic PRODUCTS (red cones = hotspot chains, dark cones = flood-basalt
-  // provinces, sized by thickness) underneath, then the fixed plume SOURCES (orange
-  // rings) the hotspot chains trail from.
-  function drawVolcanoes(c: CanvasRenderingContext2D): void {
-    for (const v of lastVolcanoes) {
-      // Arc volcanoes are smaller (individual cones in a chain); hotspot cones and
-      // flood-basalt provinces are larger single edifices. Cone height ∝ thickness.
-      const isArc = v.kind === 'arc'
-      const s = isArc ? Math.max(3, Math.min(9, 2 + v.thickness * 0.25)) : Math.max(4, Math.min(15, 3 + v.thickness * 0.35))
-      // The base texture is displayed Y-flipped, so the apex sits at +s (canvas
-      // space) to point up on screen.
-      c.beginPath()
-      c.moveTo(v.x, v.y + s)
-      c.lineTo(v.x - s * 0.85, v.y - s * 0.6)
-      c.lineTo(v.x + s * 0.85, v.y - s * 0.6)
-      c.closePath()
-      // flood = dark maroon province, hotspot = bright red cone, arc = orange cone.
-      c.fillStyle = v.kind === 'flood' ? 'rgba(120, 25, 20, 0.85)' : v.kind === 'arc' ? 'rgba(235, 120, 30, 0.9)' : 'rgba(220, 55, 30, 0.9)'
-      c.fill()
-      c.lineWidth = isArc ? 1 : 1.5
-      c.strokeStyle = 'rgba(60, 12, 0, 0.9)'
-      c.stroke()
-    }
-  }
-
-  // The plume SOURCES, split from the cones they produce: a plume is a fixture of the
-  // deep mantle, the volcanoes are what it prints onto whatever drifts over it. They
-  // also do not exist in the same phases — the Archean has neither, while the mantle
-  // field it shares a button with is that phase's main content.
-  function drawHotspots(c: CanvasRenderingContext2D): void {
-    for (const hs of lastHotspots) {
-      c.beginPath()
-      c.arc(hs.x, hs.y, 9, 0, Math.PI * 2)
-      c.fillStyle = 'rgba(255, 140, 0, 0.9)'
-      c.fill()
-      c.lineWidth = 3
-      c.strokeStyle = 'rgba(90, 30, 0, 0.95)'
-      c.stroke()
-    }
-  }
+  // The mantle-driver markers — the volcanic PRODUCTS (red cones = hotspot
+  // chains, dark cones = flood-basalt provinces, sized by thickness) and the
+  // fixed plume SOURCES (orange rings) the hotspot chains trail from — are
+  // symbols the world view places (mapSymbols.ts, syncSymbols). A plume is a
+  // fixture of the deep mantle, the volcanoes are what it prints onto
+  // whatever drifts over it, and they do not exist in the same phases — the
+  // Archean has neither, while the mantle field is that phase's main content.
 
   // Temperature heatmap tint (climate) — a pixel layer blended over the terrain
   // so both show. Samples the coarse climate grid (nearest cell) per map pixel.
@@ -2082,11 +2049,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // from below sea level. Deliberately garish and unshaded — the job is "where did the
   // sediment go", and a tasteful tint would disappear against the ocean blue at the
   // very sizes (a handful of cells) that matter most here.
-  // Layer draw/list order: temperature first (a base tint), names last so labels
-  // stay on top (always readable); the climate layers (temperature, wind) are
-  // not offered by every step — see steps.ts. The
+  // Layer draw/list order: temperature first (a base tint); the climate layers
+  // (temperature, wind) are not offered by every step — see steps.ts. The
   // 'events' layer has no static paint — it just gates the transient event
-  // markers (added via overlay.addMarker).
+  // markers (addEventMarker), symbols like the names (syncSymbols).
   // Latest composited RGBA (retained for the save preview thumbnail).
   let lastCompositePixels: Uint8Array | null = null
   // THE GLOBE'S LAYERS (DEC-0035, steps 4d2 and 4d5). A sphere world's own
@@ -2110,6 +2076,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     globeView?.setLayersShown(shown)
     root.classList.toggle('generator-screen--sphere-layers', shown)
     hoverTooltip?.setEnabled(worldShape !== 'sphere' || shown)
+    syncSymbols()
   }
   const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => {
     lastCompositePixels = pixels
@@ -2139,11 +2106,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       globePainted = true
       syncGlobeLayers()
     }
+    syncSymbols()
   }
 
-  // Torus wrap for VECTOR overlays (labels, markers, arrows): the compositor canvas is
+  // Torus wrap for VECTOR overlays (lines, arrows): the compositor canvas is
   // MAP_WIDTH×MAP_HEIGHT and doesn't wrap, so an element straddling the seam gets clipped
-  // at the edge — a wide continent name near x=0/x=MAP_WIDTH loses half itself, then the
+  // at the edge — a long arrow near x=0/x=MAP_WIDTH loses half itself, then the
   // 3×3 texture tiling just repeats the clipped copy. Drawing `fn` at all 9 tile offsets
   // makes the overflow reappear on the opposite edge, so it stitches back together across
   // the seam. (Full-raster paintPixels layers already cover the whole canvas, so only the
@@ -2259,23 +2227,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
-  // Origin markers: a filled disc in the race hue at each enabled race's origin.
-  function drawMigrationOrigins(c: CanvasRenderingContext2D): void {
-    for (const o of migrationOrigins) {
-      if (!lastMigration || !migrationRaceEnabled[o.race]) continue
-      const gy = Math.floor(o.cell / lastMigration.resX)
-      const gx = o.cell - gy * lastMigration.resX
-      const wx = ((gx + 0.5) / lastMigration.resX) * MAP_WIDTH
-      const wy = ((gy + 0.5) / lastMigration.resY) * MAP_HEIGHT
-      const [r, g, b] = MIGRATION_RACES[o.race].rgb
-      c.beginPath()
-      c.arc(wx, wy, 16, 0, Math.PI * 2)
-      c.fillStyle = `rgb(${r},${g},${b})`
-      c.fill()
-      c.lineWidth = 4
-      c.strokeStyle = 'rgba(255,255,255,0.9)'
-      c.stroke()
-    }
+  // Origin markers: a filled disc in the race hue at each enabled race's
+  // origin, a symbol of the 'migration' layer (syncSymbols).
+  function migrationOriginMarks(): { x: number; y: number; race: number }[] {
+    const migration = lastMigration
+    if (!migration) return []
+    return migrationOrigins.filter((o) => migrationRaceEnabled[o.race]).map((o) => {
+      const gy = Math.floor(o.cell / migration.resX)
+      const gx = o.cell - gy * migration.resX
+      return { x: ((gx + 0.5) / migration.resX) * MAP_WIDTH, y: ((gy + 0.5) / migration.resY) * MAP_HEIGHT, race: o.race }
+    })
   }
 
   overlay.setLayers([
@@ -2288,12 +2249,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     { id: 'koppen', enabled: false, paintPixels: paintKoppen },
     { id: 'biomes', enabled: false, paintPixels: paintBiomes },
     { id: 'ecology', enabled: false, paintPixels: paintEcology },
-    // Migration: race-tinted density fill (paintPixels) + origin markers (paint).
-    { id: 'migration', enabled: false, paintPixels: paintMigration, paint: (c) => paintWrapped(c, (cc) => { drawMigrationArrows(cc); drawMigrationOrigins(cc) }) },
+    // Migration: race-tinted density fill (paintPixels) + the arrow tree
+    // (paint); its origin markers are symbols (syncSymbols).
+    { id: 'migration', enabled: false, paintPixels: paintMigration, paint: (c) => paintWrapped(c, drawMigrationArrows) },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
     { id: 'mantle', enabled: false, paintPixels: paintMantle },
-    { id: 'volcanoes', enabled: false, paint: (c) => paintWrapped(c, drawVolcanoes) },
-    { id: 'hotspots', enabled: false, paint: (c) => paintWrapped(c, drawHotspots) },
+    // Symbols only (syncSymbols): the layers hold their switch, not paint.
+    { id: 'volcanoes', enabled: false },
+    { id: 'hotspots', enabled: false },
     // After 'mantle', so on land the crust's own age wins over the tint of the
     // mantle beneath it — the mantle field is the cause and covers the whole map,
     // this is the result and covers only the crust.
@@ -2311,55 +2274,112 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     { id: 'waterBalance', enabled: false, paintPixels: paintWaterBalance },
     { id: 'watersheds', enabled: false, paintPixels: paintWatersheds },
     // Events are always on — a persistent notification-coupled marker layer,
-    // not a user toggle.
+    // not a user toggle; its markers are symbols (syncSymbols).
     { id: 'events', enabled: true },
   ])
   // Same layer OBJECTS in both compositors — toggles/enabled flags are
   // shared state, only the base differs (shaded vs. unshaded paper).
   reliefOverlay.setLayers([...overlay.getLayers()])
 
-  // THE CONTINENT NAMES are not a compositor layer: painted into the map
-  // texture they sat under the water, the relief and the river ribbons. They
-  // go on the map view's label layer instead, drawn over all of it
-  // (map/ToroidalMapView.ts, LABEL_RENDERING_GROUP) — same canvas size and
-  // pixel path as the compositor, so the same orientation.
-  const labelCanvas = document.createElement('canvas')
-  labelCanvas.width = MAP_WIDTH
-  labelCanvas.height = MAP_HEIGHT
-  const labelCtx = labelCanvas.getContext('2d', { willReadFrequently: true })!
+  // THE SYMBOLS AND NAMES (2026-10-10) are not painted into the map texture:
+  // a circle in the chart is an ellipse on the globe, 1 / cos φ tall, and the
+  // names sat under the water, the relief and the river ribbons. The world
+  // view places them as objects (map/worldView.ts, WorldSymbols), round on
+  // both shapes and over all of that. They go to the view the layers go to
+  // (layerView), and show where the layers do: on the globe only once it
+  // wears this world's (syncGlobeLayers). Per layer, the data its symbols
+  // were last built from, so a composite with nothing new builds nothing.
+  const symbolChart: ChartSize = { width: MAP_WIDTH, height: MAP_HEIGHT, metresPerTexel: METERS_PER_CELL }
   let labelsShown = false
-  function repaintLabels(): void {
-    flatView.setLabelsVisible(labelsShown)
-    if (!labelsShown) return
-    labelCtx.clearRect(0, 0, MAP_WIDTH, MAP_HEIGHT)
-    paintWrapped(labelCtx, (cc) => drawContinentLabels(cc, lastRaftLabels))
-    flatView.labelTexture.update(new Uint8Array(labelCtx.getImageData(0, 0, MAP_WIDTH, MAP_HEIGHT).data.buffer))
+  type SymbolSource = { id: string; shown: () => boolean; inputs: () => unknown[]; build: () => { pictures: SymbolPicture[]; symbols: WorldSymbol[] } }
+  const symbolSources: SymbolSource[] = [
+    { id: 'volcanoes', shown: () => overlay.isLayerEnabled('volcanoes'), inputs: () => [lastVolcanoes], build: () => volcanoSymbols(lastVolcanoes, symbolChart) },
+    { id: 'hotspots', shown: () => overlay.isLayerEnabled('hotspots'), inputs: () => [lastHotspots], build: () => hotspotSymbols(lastHotspots, symbolChart) },
+    {
+      id: 'migration',
+      shown: () => overlay.isLayerEnabled('migration'),
+      inputs: () => [lastMigration, migrationOrigins, ...migrationRaceEnabled],
+      build: () => originSymbols(migrationOriginMarks(), MIGRATION_RACES.map((r) => r.rgb), symbolChart),
+    },
+    { id: 'names', shown: () => labelsShown, inputs: () => [lastRaftLabels], build: () => nameSymbols(lastRaftLabels, symbolChart) },
+  ]
+  // What each view's layer was last handed: the inputs it was built from.
+  const symbolsSent = new WeakMap<WorldSymbols, unknown[]>()
+  const sameInputs = (a: unknown[] | undefined, b: unknown[]): boolean => a !== undefined && a.length === b.length && a.every((x, i) => x === b[i])
+  function syncSymbols(): void {
+    const target = layerView()
+    // The globe shows the bare sea until it wears this world's layers.
+    const visible = target !== globeView || globePainted
+    for (const view of [flatView, globeView]) {
+      if (!view) continue
+      for (const source of symbolSources) {
+        const layer = view.symbols(source.id)
+        if (view !== target) {
+          layer.setEnabled(false)
+          continue
+        }
+        // Built when shown only: the names' pictures are a canvas each.
+        const shown = visible && source.shown()
+        const inputs = source.inputs()
+        if (shown && !sameInputs(symbolsSent.get(layer), inputs)) {
+          const { pictures, symbols } = source.build()
+          layer.setPictures(pictures)
+          layer.setSymbols(symbols)
+          symbolsSent.set(layer, inputs)
+        }
+        layer.setEnabled(shown)
+      }
+      // The events last, over everything; their symbols follow the fade.
+      const events = view.symbols('events')
+      if (!symbolsSent.has(events)) {
+        events.setPictures(eventPictures({ halfLength: EVENT_MARKER_HALF_LENGTH, collisionColor: COLLISION_COLOR, breakupColor: BREAKUP_COLOR }, symbolChart))
+        symbolsSent.set(events, [])
+      }
+      events.setEnabled(view === target && visible && overlay.isLayerEnabled('events'))
+      if (view === target) pushEventSymbols()
+    }
   }
 
-  // Draws one tectonic event's geologic marker, faded by `alpha`: a suture band
-  // (collision), a dashed rift axis (breakup), or a ring (supercontinent /
-  // routine point). The worldgen-specific side of the generic marker facility.
-  function drawEventMarker(c: CanvasRenderingContext2D, ev: SimEvent, alpha: number): void {
-    const color = ev.type === 'continent_broke_up' ? BREAKUP_COLOR : COLLISION_COLOR
-    c.strokeStyle = `rgba(${color}, ${alpha})`
-    c.lineCap = 'round'
-    if (ev.x === undefined || ev.y === undefined) return
-    if (ev.dirX && ev.dirY) {
-      const hl = EVENT_MARKER_HALF_LENGTH
-      c.lineWidth = ev.type === 'continent_collided' ? 8 : 5
-      if (ev.type === 'continent_broke_up') c.setLineDash([14, 10])
-      c.beginPath()
-      c.moveTo(ev.x - ev.dirX * hl, ev.y - ev.dirY * hl)
-      c.lineTo(ev.x + ev.dirX * hl, ev.y + ev.dirY * hl)
-      c.stroke()
-      c.setLineDash([])
-    } else {
-      const r = ev.type === 'supercontinent_formed' ? 26 : 12
-      c.lineWidth = ev.type === 'supercontinent_formed' ? 5 : 3
-      c.beginPath()
-      c.arc(ev.x, ev.y, r, 0, Math.PI * 2)
-      c.stroke()
+  // THE EVENT MARKERS: each fades out over its own wall-clock lifetime, even
+  // while the simulation is paused; their symbols are set again at ~15 fps
+  // while any is alive — a few quads, no texture.
+  const EVENT_FRAME_INTERVAL_MS = 66
+  let liveEvents: { ev: SimEvent; birth: number }[] = []
+  let eventFrame: number | null = null
+  function pushEventSymbols(): void {
+    const now = Date.now()
+    const symbols: WorldSymbol[] = []
+    for (const { ev, birth } of liveEvents) {
+      const symbol = eventSymbol(ev, 1 - (now - birth) / EVENT_CONTINENT_LIFETIME_MS, symbolChart)
+      if (symbol && (symbol.alpha ?? 1) > 0) symbols.push(symbol)
     }
+    layerView().symbols('events').setSymbols(symbols)
+  }
+  function addEventMarker(ev: SimEvent): void {
+    liveEvents.push({ ev, birth: Date.now() })
+    pushEventSymbols()
+    if (eventFrame !== null) return
+    let lastFrame = 0
+    const tick = (timestamp: number): void => {
+      if (timestamp - lastFrame >= EVENT_FRAME_INTERVAL_MS) {
+        lastFrame = timestamp
+        const now = Date.now()
+        liveEvents = liveEvents.filter((e) => now - e.birth < EVENT_CONTINENT_LIFETIME_MS)
+        pushEventSymbols()
+        if (liveEvents.length === 0) {
+          eventFrame = null
+          return
+        }
+      }
+      eventFrame = requestAnimationFrame(tick)
+    }
+    eventFrame = requestAnimationFrame(tick)
+  }
+  function clearEventMarkers(): void {
+    liveEvents = []
+    if (eventFrame !== null) cancelAnimationFrame(eventFrame)
+    eventFrame = null
+    pushEventSymbols()
   }
 
   function eventText(ev: SimEvent): { message: string; icon: string } {
@@ -2387,7 +2407,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // cryptic clutter. Re-add here if that seafloor activity is wanted back.
       if (eventCategory(ev.type) !== 'continent') continue
       if (ev.x !== undefined && ev.y !== undefined) {
-        overlay.addMarker('events', { lifetimeMs: EVENT_CONTINENT_LIFETIME_MS, paint: (c, alpha) => paintWrapped(c, (cc) => drawEventMarker(cc, ev, alpha)) })
+        addEventMarker(ev)
       }
       const { message, icon } = eventText(ev)
       ctx.notifications.show({ message, icon, durationMs: EVENT_CONTINENT_LIFETIME_MS })
@@ -2495,9 +2515,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Blocked during the Archean: proto-cratons are not continents yet, they merge
     // and fragment constantly, and naming something that dissolves ten epochs later
     // is noise. finalizeArchean names them all when plate tectonics begins.
-    // Not on the globe yet: its label layer is still to be built
-    // (map/sphereView.ts takes the texture and ignores it).
-    names: { available: () => archeanFinalised && lastRaftLabels.length > 0 && worldShape !== 'sphere', legend: null, probe: null },
+    names: { available: () => archeanFinalised && lastRaftLabels.length > 0, legend: null, probe: null },
     mantle: {
       available: () => lastMantle !== null,
       legend: () => ({ type: 'swatches', title: t('overlay.mantle.legend.title'), items: [
@@ -3001,7 +3019,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         overlay.setLayerEnabled(id, show)
       }
     }
-    repaintLabels()
     compositeOverlays()
     hoverTooltip?.refresh()
   }
@@ -3219,8 +3236,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   //
   // Hence the screen, not the raster, is the frame of reference. The raster the
   // map wears reaches the screen MIRRORED VERTICALLY: +y in the raster is UP on
-  // screen, which is why the volcano cones draw their apex at +y to point up
-  // (drawVolcanoes). A layer painted into the raster is mirrored with it and
+  // screen, which is why the volcano cones drew their apex at +y to point up
+  // while they were painted into it (now symbols the world view turns,
+  // map/symbolPlacement.ts). A layer painted into the raster is mirrored with it and
   // stays consistent; this arrow is drawn in the page, outside that mirror, so
   // it is put into the screen's frame here. That is not a correction of the
   // picture — the picture IS the world as it is seen.
@@ -4096,7 +4114,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     lastBoundaryMask = new Uint8Array(message.boundaryMask)
     lastRaftLabels = message.raftLabels
-    if (labelsShown) repaintLabels()
     if (underPreview) {
       planetPreviewRealBase = { base: new Uint8ClampedArray(message.buffer), relief: new Uint8Array(message.relief) }
       planetPreviewRealClimate = null
@@ -5209,7 +5226,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
     stopSim()
     ctx.notifications.clearAll()
-    overlay.clearMarkers()
+    clearEventMarkers()
     invalidateAfter('tectonics')
     restoredRefinement = await readRefinement(zip)
     forgetSavedWorldId()
@@ -5684,7 +5701,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const regenerate = (): void => {
     stopSim()
     ctx.notifications.clearAll()
-    overlay.clearMarkers()
+    clearEventMarkers()
     invalidateAfter('tectonics')
     migrationOrigins = [] // fresh world → re-auto-place origins on the next migration open
     erosionRunCount = 0
@@ -5719,7 +5736,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     stopSim()
     ctx.notifications.clearAll()
-    overlay.clearMarkers()
+    clearEventMarkers()
     invalidateAfter('tectonics')
     migrationOrigins = []
     erosionRunCount = 0
@@ -6210,8 +6227,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       saveMenu.dispose()
       confirmDialog.dispose()
       hoverTooltip?.dispose()
-      overlay.dispose()
-      reliefOverlay.dispose()
+      if (eventFrame !== null) cancelAnimationFrame(eventFrame)
       flatView.dispose()
       worker.terminate()
     },

@@ -9,11 +9,11 @@
 //  1. pixel layers (`paintPixels`) mutate the base image bytes directly —
 //     for full-raster overlays like a plate-boundary mask;
 //  2. vector layers (`paint`) draw on the 2D context on top — for arrows,
-//     labels, and the like.
-// Plus transient MARKERS attached to a layer: short-lived drawings that fade
-// out over their own wall-clock lifetime (a re-composite loop runs while any
-// are alive, even while the sim is paused, since it's wall-clock). Markers of
-// a disabled layer are hidden but still age out.
+//     lines, and the like.
+// Symbols and names at points are not painted here: the world view places
+// them as objects (map/worldView.ts, WorldSymbols), so they keep their shape
+// on the globe. The transient event markers that faded out here went with
+// them on 2026-10-10.
 //
 // Toggling a layer just re-runs composite() from the retained base — no
 // re-render round-trip — so it's instant.
@@ -27,21 +27,6 @@ export interface OverlayLayer {
   paint?: (ctx: CanvasRenderingContext2D) => void
 }
 
-export interface OverlayMarkerSpec {
-  lifetimeMs: number
-  // Draws the marker; `alpha` runs 1→0 over its lifetime for a fade.
-  paint: (ctx: CanvasRenderingContext2D, alpha: number) => void
-}
-
-interface ActiveMarker extends OverlayMarkerSpec {
-  layerId: string
-  birth: number
-}
-
-// ~15fps is plenty for a multi-second fade and keeps the full-canvas readback
-// + texture upload each marker frame off the 60fps path.
-const MARKER_FRAME_INTERVAL_MS = 66
-
 export class MapOverlayCompositor {
   private readonly canvas: HTMLCanvasElement
   private readonly ctx: CanvasRenderingContext2D
@@ -50,8 +35,6 @@ export class MapOverlayCompositor {
   private readonly onComposite: (pixels: Uint8Array) => void
   private base: Uint8ClampedArray | null = null
   private layers: OverlayLayer[] = []
-  private markers: ActiveMarker[] = []
-  private raf: number | null = null
 
   constructor(width: number, height: number, onComposite: (pixels: Uint8Array) => void) {
     this.width = width
@@ -81,23 +64,10 @@ export class MapOverlayCompositor {
     if (layer) layer.enabled = enabled
   }
 
-  // The base color raster (RGBA, width*height). Retained so toggles and marker
-  // frames can re-composite without a fresh render.
+  // The base color raster (RGBA, width*height). Retained so toggles can
+  // re-composite without a fresh render.
   setBase(rgba: Uint8ClampedArray): void {
     this.base = rgba
-  }
-
-  addMarker(layerId: string, spec: OverlayMarkerSpec): void {
-    this.markers.push({ layerId, lifetimeMs: spec.lifetimeMs, paint: spec.paint, birth: Date.now() })
-    this.ensureAnimation()
-  }
-
-  clearMarkers(): void {
-    this.markers = []
-    if (this.raf !== null) {
-      cancelAnimationFrame(this.raf)
-      this.raf = null
-    }
   }
 
   composite(): void {
@@ -107,45 +77,9 @@ export class MapOverlayCompositor {
       if (layer.enabled && layer.paintPixels) layer.paintPixels(image.data)
     }
     this.ctx.putImageData(image, 0, 0)
-    const now = Date.now()
     for (const layer of this.layers) {
-      if (!layer.enabled) continue
-      layer.paint?.(this.ctx)
-      for (const marker of this.markers) {
-        if (marker.layerId !== layer.id) continue
-        const alpha = 1 - (now - marker.birth) / marker.lifetimeMs
-        if (alpha > 0) marker.paint(this.ctx, alpha)
-      }
+      if (layer.enabled) layer.paint?.(this.ctx)
     }
     this.onComposite(new Uint8Array(this.ctx.getImageData(0, 0, this.width, this.height).data.buffer))
-  }
-
-  // Re-composites (~15fps) while any marker is alive, pruning expired ones, and
-  // stops once none remain. Wall-clock, so markers keep fading even when the
-  // rest of the screen is idle/paused.
-  private ensureAnimation(): void {
-    if (this.raf !== null) return
-    let lastFrame = 0
-    const tick = (timestamp: number): void => {
-      if (timestamp - lastFrame >= MARKER_FRAME_INTERVAL_MS) {
-        lastFrame = timestamp
-        const now = Date.now()
-        this.markers = this.markers.filter((m) => now - m.birth < m.lifetimeMs)
-        this.composite()
-        if (this.markers.length === 0) {
-          this.raf = null
-          return
-        }
-      }
-      this.raf = requestAnimationFrame(tick)
-    }
-    this.raf = requestAnimationFrame(tick)
-  }
-
-  dispose(): void {
-    if (this.raf !== null) {
-      cancelAnimationFrame(this.raf)
-      this.raf = null
-    }
   }
 }

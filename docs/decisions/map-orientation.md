@@ -14,7 +14,7 @@ summary.de: Der Bildschirm ist der Bezugsrahmen für Richtungen, nicht das Raste
 area: ui
 stage: built
 createdAt: 2026-09-20
-updatedAt: 2026-09-20
+updatedAt: 2026-10-10
 related: [DEC-0015]
 ---
 
@@ -33,6 +33,10 @@ discovery; its `scale(-1, 1)` is a separate matter — glyph order, noted there 
 empirical, not a second geometric mirror). A third was about to be added when the
 map readout gained a direction arrow, which is drawn in the page rather than into
 the raster and therefore disagreed with the wind arrows on the map beside it.
+(Since 2026-10-10 the cones and the labels are no longer painted into the
+raster: they are pictures drawn upright that the world view places and turns —
+`map/symbolPlacement.ts`, DEC-0035 — so the cones need no compensation; the
+labels' renderer still draws for the raster, and its picture is mirrored back.)
 
 Several local corrections for one global fact means no place owns the fact. The
 fork: put the raster the right way up, or declare the screen to be the frame of
