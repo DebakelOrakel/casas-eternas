@@ -250,12 +250,12 @@ async function buildWorld(seed) {
   // epochs' forcing evaluates the chain per epoch, on the mesh). The
   // post-erosion climate truth is the terminal-basin refinement below,
   // which runs on the same field exactly as the worker's hydrology handler.
-  let temperature = M.temperature.computeTemperature(el, W, H)
+  let temperature = M.temperature.computeTemperature(el, sim.domain)
   const wind = M.wind.computeWind()
-  let currents = M.currents.computeOceanCurrents(el, wind, W, H)
-  M.currents.applyOceanSST(temperature, currents, el, W, H, wind)
-  let seasonal = M.seasonality.computeSeasonalAmplitude(el, W, H)
-  let seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, W, H, 1, 0)
+  let currents = M.currents.computeOceanCurrents(el, wind, sim.domain)
+  M.currents.applyOceanSST(temperature, currents, el, sim.domain, wind)
+  let seasonal = M.seasonality.computeSeasonalAmplitude(el, sim.domain)
+  let seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, sim.domain, 1, 0)
   let precipitation = seasonalPrecip.annual
   let biomes = M.biomes.computeBiomes(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
   // The worker computes BOTH, and only the coarse one was guarded here. The
@@ -263,11 +263,11 @@ async function buildWorld(seed) {
   // `biome` fullRes), so leaving it out meant the harness watched the path with
   // the fewer consequences. Same arguments as above, deliberately — a
   // divergence between the two calls would be the harness's own bug.
-  let biomesFine = M.biomes.computeBiomesFine(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
+  let biomesFine = M.biomes.computeBiomesFine(temperature, precipitation, seasonal, seasonalPrecip.index, el, sim.domain)
 
-  const routing = await M.routing.fillDepressionsAndRouteFlow(el, W, H, 0)
+  const routing = await M.routing.fillDepressionsAndRouteFlow(el, sim.domain, 0)
   const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
-  const meanRunoff = M.hydro.meanLandRunoff(precipitation, el, W, H, CRX, CRY)
+  const meanRunoff = M.hydro.meanLandRunoff(precipitation, el, sim.domain, CRX, CRY)
   let discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   let maxDis = M.hydro.maxDischargeOverLand(discharge, el)
   // Climate refinement, mirroring the worker (k=1) — UNCONDITIONAL since the
@@ -289,14 +289,14 @@ async function buildWorld(seed) {
     return { ...M.meshHydro.waterFieldsFromMesh(terrain.mesh, meshLakes.body, meshLakes.bodies, el, W, H), bodies: meshLakes.bodies }
   }
   let lakes = lakesOnMesh(temperature, precipitation)
-  const t2 = M.temperature.computeTemperature(el, W, H, 0, 1, 0, lakes.dryBasin)
-  const c2 = M.currents.computeOceanCurrents(el, wind, W, H, lakes.dryBasin)
-  M.currents.applyOceanSST(t2, c2, el, W, H, wind, lakes.dryBasin)
-  const s2 = M.seasonality.computeSeasonalAmplitude(el, W, H, 0, lakes.dryBasin)
-  const sp2 = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, W, H, 1, 0, lakes.dryBasin)
+  const t2 = M.temperature.computeTemperature(el, sim.domain, 0, 1, 0, lakes.dryBasin)
+  const c2 = M.currents.computeOceanCurrents(el, wind, sim.domain, lakes.dryBasin)
+  M.currents.applyOceanSST(t2, c2, el, sim.domain, wind, lakes.dryBasin)
+  const s2 = M.seasonality.computeSeasonalAmplitude(el, sim.domain, 0, lakes.dryBasin)
+  const sp2 = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, sim.domain, 1, 0, lakes.dryBasin)
   precipitation = sp2.annual
   const biomes2 = M.biomes.computeBiomes(t2, precipitation, s2, sp2.index, el, W, H, lakes.dryBasin)
-  const biomesFine2 = M.biomes.computeBiomesFine(t2, precipitation, s2, sp2.index, el, W, H, lakes.dryBasin)
+  const biomesFine2 = M.biomes.computeBiomesFine(t2, precipitation, s2, sp2.index, el, sim.domain, lakes.dryBasin)
   discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   lakes = lakesOnMesh(t2, precipitation)
   // The graph's discharge scale is the mesh's, like the worker's.
@@ -307,7 +307,8 @@ async function buildWorld(seed) {
   // erosion's sediment flux per node as load.
   const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), meanRunoff)
   const bankAtNode = new Uint8Array(terrain.mesh.vertexSlots)
-  for (let v = 0; v < bankAtNode.length; v++) if (terrain.mesh.vAlive[v]) bankAtNode[v] = biomesFine2[M.graph.rasterCellAt(terrain.mesh.vx[v], terrain.mesh.vy[v], W, H)]
+  const rasterGrid = sim.domain.grid(W, H)
+  for (let v = 0; v < bankAtNode.length; v++) if (terrain.mesh.vAlive[v]) bankAtNode[v] = biomesFine2[M.graph.rasterCellAt(terrain.mesh.vx[v], terrain.mesh.vy[v], rasterGrid)]
   // The flow regime (F6) from the refined climate, like the worker — on
   // the graph's substrate, and kept for the invariant that re-applies it.
   const graphRegime = M.hydro.accumulateRegimeInputsOn(meshSub, terrain.z, t2, precipitation, sp2.index, CRX, CRY)
@@ -327,7 +328,7 @@ async function buildWorld(seed) {
     regime: graphRegime, discharge: meshDischarge, cellM: M.engine.WORLD_WIDTH_METERS / W,
   })
   // The course (phase 3), seeded from the world like the worker does.
-  graph.courses = M.course.computeRiverCourses(graph, { cellM: M.engine.WORLD_WIDTH_METERS / W, seed: sim.warpSeed })
+  graph.courses = M.course.computeRiverCourses(graph, { cellM: M.engine.WORLD_WIDTH_METERS / W, seed: sim.warpSeed, domain: sim.domain })
   // The coast (F5), as the worker builds it after the graph.
   const coast = M.coast.buildCoastGraph({
     elevation: el, width: W, height: H, domain: sim.domain, wind, climateResX: CRX, climateResY: CRY,
@@ -367,7 +368,7 @@ async function buildWorld(seed) {
     // basin is a glacier and feeds no fishery.
     discharge, maxDischarge: maxDis, lakeDepth: lakes.depth.map((d, i) => (lakes.frozen[i] ? 0 : d)), saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, waterTable: M.meshRaster.rasteriseNodeField(terrain.mesh, ground.waterTableDepthM, W, H), oases: ground.springs.filter((s) => s.oasis), volcanoes,
     orogenPoints: sim.sutures.map((s) => ({ x: s.x, y: s.y })),
-    cratonAge, warpSeed: sim.warpSeed, worldWidth: W, worldHeight: H,
+    cratonAge, warpSeed: sim.warpSeed, domain: sim.domain,
   }, { carryingCapacity: 100, concentration: 0, provinceStrength: M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.toModel(M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.default) })
 
   // The origin has to be picked FROM the world, not fixed by index. It used to
@@ -382,7 +383,7 @@ async function buildWorld(seed) {
   }
   const mig = M.migration.computeMigration(
     eco.fields.carryingCapacity, precipitation, el, null, 0,
-    [{ cell: originCell, race: 0 }], W, H,
+    [{ cell: originCell, race: 0 }], sim.domain,
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
 

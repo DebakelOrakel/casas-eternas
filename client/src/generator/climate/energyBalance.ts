@@ -1,6 +1,6 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { wrapIndex2 } from '../core/field'
+import type { DomainGrid } from '../core/domain'
 import type { PlanetForcing } from '../planet/planetForcing'
 import { detAcos, detAsin, detCos, detSin, detTan, sq } from '../core/detMath'
 
@@ -30,8 +30,8 @@ const YEAR_S = 365.25 * 86400
 // The months' temperature departures, °C, month-major (month 0 January).
 // `annualTemperature` gives the albedo (ice below `ebmIceBelowC`), `land`
 // the heat capacity, `wind` the transport (the history's banded wind: the
-// pressure wind needs these temperatures first).
-export function seasonalCycle(land: Uint8Array, annualTemperature: Float32Array, wind: Float32Array, planet: PlanetForcing, equatorOffset: number, months: number): Float32Array {
+// pressure wind needs these temperatures first), `grid` the climate grid.
+export function seasonalCycle(land: Uint8Array, annualTemperature: Float32Array, wind: Float32Array, grid: DomainGrid, planet: PlanetForcing, equatorOffset: number, months: number): Float32Array {
   const n = RX * RY
   const T = CLIMATE_TUNING
   const omega = (2 * Math.PI) / YEAR_S
@@ -71,8 +71,8 @@ export function seasonalCycle(land: Uint8Array, annualTemperature: Float32Array,
       capacity[i] = land[i] || frozen ? T.ebmCapacityLand : T.ebmCapacitySea
       const u = wind[i * 2]
       const v = wind[i * 2 + 1]
-      upwindX[i] = wrapIndex2(gx - Math.sign(u), gy, RX, RY)
-      upwindY[i] = wrapIndex2(gx, gy - Math.sign(v), RX, RY)
+      upwindX[i] = grid.index(gx - Math.sign(u), gy)
+      upwindY[i] = grid.index(gx, gy - Math.sign(v))
       carryX[i] = Math.abs(u) * T.ebmCarryPerWind
       carryY[i] = Math.abs(v) * T.ebmCarryPerWind
     }
@@ -84,10 +84,10 @@ export function seasonalCycle(land: Uint8Array, annualTemperature: Float32Array,
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      left[i] = wrapIndex2(gx - 1, gy, RX, RY)
-      right[i] = wrapIndex2(gx + 1, gy, RX, RY)
-      up[i] = wrapIndex2(gx, gy - 1, RX, RY)
-      down[i] = wrapIndex2(gx, gy + 1, RX, RY)
+      left[i] = grid.index(gx - 1, gy)
+      right[i] = grid.index(gx + 1, gy)
+      up[i] = grid.index(gx, gy - 1)
+      down[i] = grid.index(gx, gy + 1)
     }
   }
 

@@ -53,6 +53,17 @@ lint:
 	@! grep -rnE "from '(\.\./)*(core/|\./)toroidal'" \
 		client/src/generator --include='*.ts' --exclude=domain.ts --exclude=toroidal.ts \
 		|| (echo "use the Domain (core/domain.ts) in client/src/generator, not core/toroidal.ts" >&2; exit 1)
+	# A raster wraps through the DomainGrid its Domain gives (DEC-0035, fork
+	# 1): core/field.ts's torus wrap and the samplers built on it belong to
+	# the torus Domain, and nothing outside core/ calls them. The periodic
+	# noise lattices are excepted: their period is a parameter (a level's
+	# grid, the lithology lattice, a texture), and the sphere replaces the
+	# noise, not its wrap.
+	@! grep -rnwE 'wrapValue|sampleBilinearGrid|sampleBilinearWorld|sampleNearestWorld|upscaleBilinearToroidal' \
+		client/src/generator --include='*.ts' --exclude-dir=core \
+		--exclude=ridgedNoise.ts --exclude=domainWarp.ts --exclude=hypsometry.ts \
+		| grep -vE ':[0-9]+:[[:space:]]*(//|\*)' \
+		|| (echo "wrap a raster through its DomainGrid (core/domain.ts) in client/src/generator, not core/field.ts" >&2; exit 1)
 	gofmt -l . | tee /dev/stderr | (! read)
 	go vet ./...
 	# The committed CLI/config reference must match the cobra tree it is

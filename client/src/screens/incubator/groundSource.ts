@@ -1,6 +1,7 @@
 import type { MeshSampler } from '../../generator/mesh/meshSampler'
 import { tileCorner, tileSpec, type TileId } from '../../generator/mesh/meshTile'
 import { tileAt } from '../../generator/pipeline/tilePlan'
+import { torusDomain } from '../../generator/core/domain'
 import type { GroundSource } from '../../map/groundPaint'
 import { meshTileStage } from '../../world/meshTileArtifacts'
 import { LEVEL1_GRID_LEVEL, level1Stage, rasterAt, type Raster } from './groundRaster'
@@ -84,6 +85,7 @@ const wrap = (v: number, n: number): number => ((v % n) + n) % n
 
 export function createGroundSource(options: GroundSourceOptions): RasterGroundSource {
   const { width, height, base, stages } = options
+  const world = torusDomain(width, height)
   const fields = { ...options.fields }
   const rasters = new Map<string, Raster | 'loading' | 'missing'>()
   const wanted = new Set<string>()
@@ -208,7 +210,7 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
     for (let lv = Math.min(3, maxLevel); lv >= 2; lv--) {
       let raster = inLast(lv, x, y)
       if (!raster) {
-        const tile = tileAt(lv, x, y, width, height)
+        const tile = tileAt(lv, x, y, world)
         const stage = meshTileStage(tile)
         raster = rasterOf(stage, tile, stages.has(stage))
         if (!raster) continue
@@ -221,7 +223,7 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
     answered[1]++
     let raster = inLast(1, x, y)
     if (!raster) {
-      const tile = tileAt(LEVEL1_GRID_LEVEL, x, y, width, height)
+      const tile = tileAt(LEVEL1_GRID_LEVEL, x, y, world)
       const stage = level1Stage(tile.x, tile.y)
       const id = { level: 1, x: tile.x, y: tile.y }
       if (options.makeLevel1 && !rasters.has(stage)) {

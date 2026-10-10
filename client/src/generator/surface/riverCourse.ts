@@ -1,5 +1,6 @@
 import { COVER_BY_BIOME } from './cover'
 import { mulberry32 } from '../core/rng'
+import type { Domain } from '../core/domain'
 import { dischargeToM3s } from './hydrology'
 import type { RiverGraph, RiverReach } from './riverGraph'
 import { detAtan2, detExp, detHypot, detLog2, detPow, detSin } from '../core/detMath'
@@ -66,6 +67,8 @@ export interface RiverCourse {
 export interface RiverCourseOptions {
   cellM: number
   seed: number
+  // The graph's texel frame (graph.width × graph.height), one cell per unit.
+  domain: Domain
   // Reaches narrower than this get no course (default cellM / 50: a belt of
   // ten widths is then a fifth of a cell, the least the ribbon can show).
   minWidthM?: number
@@ -187,13 +190,13 @@ function distanceToPath(x: number, y: number, p: Float64Array, count: number): n
   return best
 }
 
-const toTexels = (p: Float64Array, count: number, cellM: number, width: number, height: number): Float32Array => {
+const toTexels = (p: Float64Array, count: number, cellM: number, domain: Domain): Float32Array => {
   const out = new Float32Array(count * 2)
   for (let i = 0; i < count; i++) {
     const x = p[i * 2] / cellM
     const y = p[i * 2 + 1] / cellM
-    out[i * 2] = ((x % width) + width) % width
-    out[i * 2 + 1] = ((y % height) + height) % height
+    out[i * 2] = domain.wrapX(x)
+    out[i * 2 + 1] = domain.wrapY(y)
   }
   return out
 }
@@ -353,23 +356,23 @@ export function computeRiverCourses(graph: RiverGraph, options: RiverCourseOptio
     let beltWidthM = 0
     if (pattern === 'meandering') {
       const m = meander(base, reach.cellCount, widthM, bankStrength, steps, spacing, rng)
-      lines.push(toTexels(m.line, m.count, cellM, graph.width, graph.height))
+      lines.push(toTexels(m.line, m.count, cellM, options.domain))
       lineWidth.push(1)
       sinuosity = pathLength(m.line, m.count) / lengthM
       beltWidthM = m.beltWidthM
-      for (const o of m.oxbows) oxbows.push(toTexels(o, o.length / 2, cellM, graph.width, graph.height))
+      for (const o of m.oxbows) oxbows.push(toTexels(o, o.length / 2, cellM, options.domain))
     } else if (pattern === 'braided' || pattern === 'anastomosing') {
       const braided = pattern === 'braided'
       const sc = braidingSlope(dischargeM3s)
       const count = braided ? Math.min(5, Math.max(2, 2 + Math.round(detLog2(Math.max(1, slope / sc))))) : 2 + (rng() < 0.4 ? 1 : 0)
       const threads = weave(base, reach.cellCount, widthM, count, braided ? 1.6 * widthM : 2 * widthM, braided ? 8 * widthM : 25 * widthM, spacing, rng)
       for (const t of threads) {
-        lines.push(toTexels(t, t.length / 2, cellM, graph.width, graph.height))
+        lines.push(toTexels(t, t.length / 2, cellM, options.domain))
         lineWidth.push(1 / Math.sqrt(count))
       }
     } else {
       const p = resample(base, reach.cellCount, spacing)
-      lines.push(toTexels(p, p.length / 2, cellM, graph.width, graph.height))
+      lines.push(toTexels(p, p.length / 2, cellM, options.domain))
       lineWidth.push(1)
     }
     // A delta where a sediment-laden, flat reach meets the open sea: two to
@@ -404,7 +407,7 @@ export function computeRiverCourses(graph: RiverGraph, options: RiverCourseOptio
         line[4] = ex
         line[5] = ey
         const age = (k - active + count) % count
-        lines.push(toTexels(line, 3, cellM, graph.width, graph.height))
+        lines.push(toTexels(line, 3, cellM, options.domain))
         lineWidth.push(age === 0 ? 0.8 : 0.35 / age)
         lobeAges.push(age)
       }

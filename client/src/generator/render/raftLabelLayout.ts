@@ -1,6 +1,5 @@
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import type { Domain } from '../core/domain'
-import { wrapValue } from '../core/field'
 import type { Raft } from '../crust/raftTypes'
 
 // Label geometry for each named raft, computed straight from its blob set —
@@ -75,8 +74,8 @@ export function computeRaftLabelPlacements(rafts: Raft[], domain: Domain): Conti
       along = anchor.radius
       perp = anchor.radius
     }
-    const centerX = wrapValue((anchor.x + localX), domain.width)
-    const centerY = wrapValue((anchor.y + localY), domain.height)
+    const centerX = domain.wrapX(anchor.x + localX)
+    const centerY = domain.wrapY(anchor.y + localY)
     placements.push({ plateIndex: raft.id, name: raft.name, centerX, centerY, angle, alongExtent: along * 2, perpExtent: perp * 2 })
   }
   return placements

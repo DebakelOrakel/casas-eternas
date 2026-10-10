@@ -1,3 +1,4 @@
+import type { Domain, DomainGrid } from '../core/domain'
 import { fineDetailNoise } from '../elevation/ridgedNoise'
 import { DEFAULT_ENGINE_PARAMS, type ErosionEngineParams, type ErosionForcing } from './erosionEngine'
 import { detExp, detPow } from '../core/detMath'
@@ -63,36 +64,51 @@ export interface ErosionControlsV2 {
   rockContrast?: number
 }
 
-// Torus-wrapped bilinear sample of a coarse field at a fine-grid cell.
-export function upsampleAt(coarse: Float32Array, resX: number, resY: number, x: number, y: number, width: number, height: number): number {
-  const u = (x / width) * resX
-  const v = (y / height) * resY
+// Bilinear sample of a coarse field at a point of its grid's domain, cell
+// corners at integers (neither core/field.ts convention), wrapped by the grid.
+export function upsampleAt(coarse: Float32Array, grid: DomainGrid, x: number, y: number): number {
+  const { resX, resY } = grid
+  const u = (x / grid.domain.width) * resX
+  const v = (y / grid.domain.height) * resY
   const x0 = Math.floor(u)
   const y0 = Math.floor(v)
   const fx = u - x0
   const fy = v - y0
-  const at = (xx: number, yy: number): number => coarse[(((yy % resY) + resY) % resY) * resX + (((xx % resX) + resX) % resX)]
-  return (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy
+  const c0 = grid.wrapCol(x0)
+  const c1 = grid.wrapCol(x0 + 1)
+  const r0 = grid.wrapRow(y0) * resX
+  const r1 = grid.wrapRow(y0 + 1) * resX
+  return (coarse[r0 + c0] * (1 - fx) + coarse[r0 + c1] * fx) * (1 - fy) + (coarse[r1 + c0] * (1 - fx) + coarse[r1 + c1] * fx) * fy
+}
+
+// The coarse inputs' two grids over the frame the forcing is evaluated in.
+export interface ForcingGrids {
+  forcing: DomainGrid
+  water: DomainGrid
+}
+
+export function forcingGrids(coarse: CoarseForcingInputs, domain: Domain): ForcingGrids {
+  return { forcing: domain.grid(coarse.forcingResX, coarse.forcingResY), water: domain.grid(coarse.waterResX, coarse.waterResY) }
 }
 
 // The forcing at ONE point: U upsampled, erodibility as the lithology
 // lattice's log-normal contrast times the crust hardness, both evaluated
-// at (x, y) of a grid `width` × `height` cells wide. A raster passes its
-// cell indices and its own size; the mesh passes world coordinates and
-// the world's size (mesh/meshErosion.ts) — the lattice and the coarse
-// fields are world-space either way, so the same rock band runs under a
-// cell and under the node that sits on it. Writes [uplift, erodibility]
-// into `out`.
-export function forcingAt(coarse: CoarseForcingInputs, sigma: number, x: number, y: number, width: number, height: number, out: Float64Array): void {
-  out[0] = coarse.uplift ? upsampleAt(coarse.uplift, coarse.forcingResX, coarse.forcingResY, x, y, width, height) : 0
+// at (x, y) of the grids' domain. A raster passes its cell indices and a
+// domain one cell per unit; the mesh passes world coordinates and the
+// world (mesh/meshErosion.ts) — the lattice and the coarse fields are
+// world-space either way, so the same rock band runs under a cell and
+// under the node that sits on it. Writes [uplift, erodibility] into `out`.
+export function forcingAt(coarse: CoarseForcingInputs, grids: ForcingGrids, sigma: number, x: number, y: number, out: Float64Array): void {
+  const { width, height } = grids.forcing.domain
+  out[0] = coarse.uplift ? upsampleAt(coarse.uplift, grids.forcing, x, y) : 0
   out[1] = detExp(sigma * fineDetailNoise((x * LITHO_LATTICE_X) / width, (y * LITHO_LATTICE_Y) / height, LITHO_LATTICE_X, LITHO_LATTICE_Y, coarse.lithoSeed))
-    * (coarse.hardness ? upsampleAt(coarse.hardness, coarse.forcingResX, coarse.forcingResY, x, y, width, height) : 1)
+    * (coarse.hardness ? upsampleAt(coarse.hardness, grids.forcing, x, y) : 1)
 }
 
 // The water forcing at one point, before normalisation (0 where the
 // caller has no water field — the caller then fills 1).
-export function waterAt(coarse: CoarseForcingInputs, x: number, y: number, width: number, height: number): number {
-  return coarse.water ? Math.max(0, upsampleAt(coarse.water, coarse.waterResX, coarse.waterResY, x, y, width, height)) : 1
+export function waterAt(coarse: CoarseForcingInputs, grids: ForcingGrids, x: number, y: number): number {
+  return coarse.water ? Math.max(0, upsampleAt(coarse.water, grids.water, x, y)) : 1
 }
 
 export function rockContrastSigma(controls: ErosionControlsV2): number {
@@ -117,13 +133,15 @@ export function engineParamsFor(controls: ErosionControlsV2): ErosionEngineParam
   }
 }
 
+// `domain`: what the raster covers, one cell per unit.
 export function assembleFineForcing(
   coarse: CoarseForcingInputs,
   rawElevations: Float32Array,
-  width: number,
-  height: number,
+  domain: Domain,
   controls: ErosionControlsV2 = {},
 ): { forcing: ErosionForcing; params: ErosionEngineParams } {
+  const { width, height } = domain
+  const grids = forcingGrids(coarse, domain)
   const n = width * height
   const sigma = rockContrastSigma(controls)
   const uplift = new Float32Array(n)
@@ -133,7 +151,7 @@ export function assembleFineForcing(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
-      forcingAt(coarse, sigma, x, y, width, height, pair)
+      forcingAt(coarse, grids, sigma, x, y, pair)
       uplift[i] = pair[0]
       erodibility[i] = pair[1]
       if (rawElevations[i] > 0) coastMask[i] = 1
@@ -152,7 +170,7 @@ export function assembleFineForcing(
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const i = y * width + x
-        const weight = waterAt(coarse, x, y, width, height)
+        const weight = waterAt(coarse, grids, x, y)
         accumulationWeights[i] = weight
         if (rawElevations[i] > 0) { landSum += weight; landCount++ }
       }
@@ -167,8 +185,7 @@ export function assembleFineForcing(
 }
 
 // The same forcing on a POINT SET — the mesh's nodes (mesh/meshErosion.ts):
-// `xs`/`ys` in world coordinates on a world `worldWidth` × `worldHeight`
-// units wide, `alive` marking the slots that hold a node, `areas` the
+// `xs`/`ys` in coordinates of `domain` (the world), `alive` marking the slots that hold a node, `areas` the
 // nodes' areas for the water normalisation. Arrays come back in the
 // point set's slot layout. `meanLandWater` replaces the water mean the
 // weights are normalised by: a tile of the top level is a piece of a world
@@ -182,11 +199,11 @@ export function assembleNodeForcing(
   count: number,
   z: Float32Array,
   areas: ArrayLike<number>,
-  worldWidth: number,
-  worldHeight: number,
+  domain: Domain,
   controls: ErosionControlsV2 = {},
   meanLandWater?: number,
 ): { forcing: ErosionForcing; params: ErosionEngineParams } {
+  const grids = forcingGrids(coarse, domain)
   const sigma = rockContrastSigma(controls)
   const uplift = new Float32Array(count)
   const erodibility = new Float32Array(count)
@@ -199,11 +216,11 @@ export function assembleNodeForcing(
   let landArea = 0
   for (let i = 0; i < count; i++) {
     if (!alive[i]) continue
-    forcingAt(coarse, sigma, xs[i], ys[i], worldWidth, worldHeight, pair)
+    forcingAt(coarse, grids, sigma, xs[i], ys[i], pair)
     uplift[i] = pair[0]
     erodibility[i] = pair[1]
     if (z[i] > 0) coastMask[i] = 1
-    const weight = waterAt(coarse, xs[i], ys[i], worldWidth, worldHeight)
+    const weight = waterAt(coarse, grids, xs[i], ys[i])
     accumulationWeights[i] = weight
     if (z[i] > 0) { landSum += weight * areas[i]; landArea += areas[i] }
   }

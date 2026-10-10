@@ -1,5 +1,6 @@
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { periodicValueNoise2D } from '../elevation/ridgedNoise'
+import type { DomainGrid } from '../core/domain'
 import { CANONICAL_RIVER_DENSITY, CHANNEL_SLOPE_EXPONENT } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { DEFAULT_ENGINE_PARAMS, STATUS_CLAMP_M } from './erosionEngine'
@@ -294,27 +295,27 @@ export function ridgedAt(x: number, y: number, width: number, height: number, se
 // stand-in for the generator's `uplift`, computable from a raster alone.
 // Sampled on a coarse ring rather than a full window: this only has to say
 // "is this raised ground", and a full min-filter at this radius would cost
-// more than the rest of the bake.
-export function localRelief(field: Float32Array, width: number, height: number): Float32Array {
+// more than the rest of the bake. `grid`: the macro grid over the domain.
+export function localRelief(field: Float32Array, grid: DomainGrid): Float32Array {
+  const { resX: width, resY: height } = grid
   const out = new Float32Array(field.length)
   const at = (x: number, y: number): number => field[y * width + x]
   for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) out[y * width + x] = localReliefAt(at, x, y, width, height)
+    for (let x = 0; x < width; x++) out[y * width + x] = localReliefAt(at, x, y, grid)
   }
   return out
 }
 
 // One cell of localRelief, over any source of the macro grid's heights —
 // the tiles of the top mesh level (mesh/meshTile.ts) need it for a few
-// cells around themselves, not for the world.
-export function localReliefAt(at: (x: number, y: number) => number, x: number, y: number, width: number, height: number): number {
-  const radius = Math.max(1, Math.round(width * RELIEF_RADIUS_FRACTION))
-  const wrap = (v: number, n: number): number => ((v % n) + n) % n
+// cells around themselves, not for the world. Cells wrap through `grid`.
+export function localReliefAt(at: (x: number, y: number) => number, x: number, y: number, grid: DomainGrid): number {
+  const radius = Math.max(1, Math.round(grid.resX * RELIEF_RADIUS_FRACTION))
   let lowest = Infinity
   for (let dy = -radius; dy <= radius; dy += radius) {
-    const ny = wrap(y + dy, height)
+    const ny = grid.wrapRow(y + dy)
     for (let dx = -radius; dx <= radius; dx += radius) {
-      const value = at(wrap(x + dx, width), ny)
+      const value = at(grid.wrapCol(x + dx), ny)
       if (value < lowest) lowest = value
     }
   }
@@ -324,5 +325,5 @@ export function localReliefAt(at: (x: number, y: number) => number, x: number, y
   // alpine crest — 36,000 cells were driven below sea level and the
   // plains moved by an average of 258 m. Relief means height above the
   // surrounding LAND.
-  return Math.max(0, at(wrap(x, width), wrap(y, height)) - Math.max(SEA_LEVEL, lowest))
+  return Math.max(0, at(grid.wrapCol(x), grid.wrapRow(y)) - Math.max(SEA_LEVEL, lowest))
 }

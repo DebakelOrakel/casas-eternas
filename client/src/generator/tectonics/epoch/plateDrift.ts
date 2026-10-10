@@ -46,7 +46,7 @@ function depositHotspotVolcanoes(sim: PlateSimulation): void {
 // Phase 1. Advance every plate and everything riding on it — rafts, sutures,
 // terrain features, the ocean-age field — along its own rotation.
 export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32Array): void {
-  const { width, height, domain } = sim
+  const { domain } = sim
   // 1. Advance every plate (and whatever terrain is attached to it)
   // along its own rotation.
   for (let i = 0; i < sim.seeds.length; i++) {
@@ -65,7 +65,7 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32A
   // derivePlateTypes below reads the result. Blobs accreted last epoch are one
   // epoch old now, so they are candidates — crust has to survive to the next epoch
   // to count, which is the right gate. See TECTONICS_TUNING.stabilisationEpochs.
-  recycleUnstabilisedCrust(sim.rafts, sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.stabilisationEpochs, TECTONICS_TUNING.recycleDownwellingThreshold, width, height)
+  recycleUnstabilisedCrust(sim.rafts, sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.stabilisationEpochs, TECTONICS_TUNING.recycleDownwellingThreshold, domain)
   // Sutures are welded into the drifting crust — advect each with the plate it
   // sits on, so a collision belt stays ON its continent instead of being left
   // behind in open ocean as the plates move (which would strand the tin/gem

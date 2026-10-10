@@ -11,7 +11,6 @@ import type { PlateSimulation } from '../plateSimulationTypes'
 // flow-fitted rigid motion. Returns the continental-membership field, which
 // phase 1 reuses rather than recomputing.
 export function coupleMantleToPlates(sim: PlateSimulation): Float32Array {
-  const { width, height } = sim
   // 0. The mantle drives the plates. Evolve the field under the current crust
   // (continents insulate → upwelling; ocean cools → downwelling), derive its
   // surface flow, and relax each plate's motion toward the flow-fitted rigid
@@ -32,8 +31,8 @@ export function coupleMantleToPlates(sim: PlateSimulation): Float32Array {
   // preserve, and "is this under a continent" is a broad question, so the coarser
   // grid is fine for it.
   const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, sim.domain)
-  sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, width, height)
-  const flow = computeMantleFlow(sim.mantle)
+  sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, sim.domain)
+  const flow = computeMantleFlow(sim.mantle, sim.domain)
   const fitted = fitMotionsToFlow(sim.seeds, flow, sim.domain)
   for (let i = 0; i < sim.motions.length; i++) {
     const m = sim.motions[i]

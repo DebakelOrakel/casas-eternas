@@ -1,4 +1,5 @@
-import { D8_OFFSETS, d8Neighbor, largestWaterComponent } from './flowRouting'
+import { D8_OFFSETS, largestWaterComponent } from './flowRouting'
+import type { DomainGrid } from '../core/domain'
 
 // EROSION V2 — the engine's state layout (docs/design/erosion-v2.md, P2;
 // ADAPTIVE_MESH_PLAN.md phases 0 and 4.2).
@@ -108,9 +109,11 @@ export interface EngineIndex {
 // caller (params.shelfBandKm over the cell size). The world ocean is the
 // largest 4-connected ≤ 0 component, the same rule the flood seeds by; an
 // enclosed basin is not ocean and stays active whatever its depth.
-export function buildEngineIndex(z: Float32Array, width: number, height: number, bandCells: number, cellM: number): EngineIndex {
+// `grid`: the raster's grid over the domain.
+export function buildEngineIndex(z: Float32Array, grid: DomainGrid, bandCells: number, cellM: number): EngineIndex {
+  const { resX: width, resY: height } = grid
   const n = width * height
-  const ocean = largestWaterComponent(z, width, height, 0)
+  const ocean = largestWaterComponent(z, grid, 0)
   const frozen = new Uint8Array(n)
   let frozenCount = 0
   if (ocean) {
@@ -134,7 +137,7 @@ export function buildEngineIndex(z: Float32Array, width: number, height: number,
       const x = cell % width
       const y = (cell - x) / width
       for (const [dx, dy] of D8_OFFSETS) {
-        const nb = d8Neighbor(x, y, dx, dy, width, height)
+        const nb = grid.neighbour(x, y, dx, dy)
         if (depth[nb] === -1) {
           depth[nb] = d + 1
           queue[tail++] = nb
@@ -172,7 +175,7 @@ export function buildEngineIndex(z: Float32Array, width: number, height: number,
     for (let slot = 0; slot < 8; slot++) {
       const [dx, dy] = D8_OFFSETS[slot]
       const e = k * 8 + slot
-      const j = activeOf[d8Neighbor(x, y, dx, dy, width, height)]
+      const j = activeOf[grid.neighbour(x, y, dx, dy)]
       nbr[e] = j
       // The opposite slot of the same pair sits in the neighbour's run.
       edgeRev[e] = j >= 0 ? j * 8 + ((slot + 4) % 8) : -1

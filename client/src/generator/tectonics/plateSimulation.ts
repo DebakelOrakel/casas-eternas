@@ -129,7 +129,7 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     // Saves written before the field was persisted still land here, and still get a
     // regenerated one. The fallback RNG is independent of `random` so it cannot
     // disturb the bit-identical continuation.
-    mantle: mantle ?? createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0)),
+    mantle: mantle ?? createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0), domain),
     hotspots: owned.hotspots,
     // Old saves predate the suture cache — start empty; sutures re-accumulate as
     // the restored world keeps colliding continents (deep-time record is lost for

@@ -1,4 +1,4 @@
-import { torusDomain } from '../core/domain'
+import { torusDomain, type DomainGrid } from '../core/domain'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
@@ -101,7 +101,7 @@ export async function bakeMeshLevel(inputs: MeshBakeInputs, options: MeshBakeOpt
     water: inputs.precipitation, waterResX: inputs.climateResX || 1, waterResY: inputs.climateResY || 1,
     lithoSeed: inputs.lithoSeed,
   }
-  const { forcing, params } = assembleNodeForcing(coarse, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, refined.z, areas, width, height, inputs.controls)
+  const { forcing, params } = assembleNodeForcing(coarse, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, refined.z, areas, domain, inputs.controls)
   // The coastline is the parent's: every node is pinned to the land/sea
   // status of the parent surface where it stands.
   const statusMask = new Uint8Array(mesh.vertexSlots)
@@ -151,7 +151,8 @@ export function levelHydrology(
   // The channel criterion as the raster bake derives it: the canonical
   // density over the world's mean runoff.
   const macroLand = new Float32Array(width * height)
-  const meanRunoff = meanLandRunoff(precipitation, macroLandFrom(mesh, z, width, height, macroLand), width, height, CRX, CRY)
+  const macro = mesh.domain.scaledTo(width, height)
+  const meanRunoff = meanLandRunoff(precipitation, macroLandFrom(mesh, z, macro.grid(width, height), macroLand), macro, CRX, CRY)
   const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), meanRunoff)
   const maxDischarge = maxDischargeOverLand(discharge, z)
   const graph = buildRiverGraph({
@@ -160,18 +161,17 @@ export function levelHydrology(
     regime: accumulateRegimeInputsOn(sub, z, temperature, precipitation, climate.monsoonIndex ?? undefined, CRX, CRY),
     criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
   })
-  graph.courses = computeRiverCourses(graph, { cellM: (WORLD_WIDTH_METERS / width) * level.budget, seed: level.detailSeed })
+  graph.courses = computeRiverCourses(graph, { cellM: (WORLD_WIDTH_METERS / width) * level.budget, seed: level.detailSeed, domain: mesh.domain })
   return { discharge, waterBodies: lakes.bodies, graph, rivers: riverPolylinesFromGraph(graph, maxDischarge) }
 }
 
 // The land mask the mean runoff is taken over — the macro grid's cells
-// under land nodes, a rasterisation cheap enough to be exact here.
-function macroLandFrom(mesh: PeriodicTriangulation, z: Float32Array, width: number, height: number, out: Float32Array): Float32Array {
+// under land nodes, a rasterisation cheap enough to be exact here. `grid`:
+// the macro grid, one cell per world unit.
+function macroLandFrom(mesh: PeriodicTriangulation, z: Float32Array, grid: DomainGrid, out: Float32Array): Float32Array {
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v] || z[v] <= SEA_LEVEL) continue
-    const cx = ((Math.floor(mesh.vx[v]) % width) + width) % width
-    const cy = ((Math.floor(mesh.vy[v]) % height) + height) % height
-    out[cy * width + cx] = 1
+    out[grid.index(Math.floor(mesh.vx[v]), Math.floor(mesh.vy[v]))] = 1
   }
   return out
 }

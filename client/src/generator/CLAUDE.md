@@ -4,8 +4,11 @@ The world **wraps in both X and Y**. Every distance, offset and rotation between
 points goes through the `Domain` (`core/domain.ts`), never `core/toroidal.ts`
 directly — `make lint` refuses that import (DEC-0035,
 `docs/decisions/two-shapes.md`); a plain `dx = a - b` is a bug near the seam.
-Raster wraps (`wrapValue`, `% width`) still stand beside it until step 3b of
-that decision. See `docs/decisions/world-topology-torus.md`.
+A raster wraps through the `DomainGrid` its Domain gives (`domain.grid(resX,
+resY)`: `wrapCol`, `index`, `neighbour`, the samplers, and `colTable` /
+`rowTable` for hot loops), never `wrapValue` or `% width` — `make lint`
+refuses `core/field.ts`'s wrap and samplers outside `core/` too, the
+periodic noise lattices excepted. See `docs/decisions/world-topology-torus.md`.
 
 `generatorWorker.ts` is the entry point and stays at this root, but it is **only
 transport** — twenty-odd lines wiring `self` to the pipeline. The pipeline is

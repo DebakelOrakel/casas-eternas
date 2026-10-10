@@ -779,7 +779,7 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     // orders them first.
     const above = tileSpec(spec.level - 1)
     const pieces: TilePiece[] = []
-    for (const piece of parentTilesOf(tile, above, inputs.width, inputs.height)) {
+    for (const piece of parentTilesOf(tile, above, level1.mesh.domain)) {
       const read = await readTile(store, artifactKey(inputs.worldUid, inputs.worldId, meshTilePipelineVersion(above.level, job.erosionRounds), meshTileStage(piece)), cache)
       if (!read) throw new Error(`tile ${meshTileStage(piece)} of this world is not in the artifact store — the level above comes first`)
       pieces.push({ tile: piece, count: read.count, nodes: read.nodes, z: read.z })

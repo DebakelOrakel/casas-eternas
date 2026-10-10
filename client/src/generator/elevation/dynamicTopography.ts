@@ -1,4 +1,4 @@
-import { sampleBilinearWorld } from '../core/field'
+import type { Domain, DomainGrid } from '../core/domain'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 
 // DYNAMIC TOPOGRAPHY (ADAPTIVE_MESH_PLAN.md F3, decision 5 of
@@ -21,22 +21,23 @@ import { ELEVATION_TUNING } from './elevationTuneParams'
 // from carries it, so plateaus get cut and sagging basins fill, as they
 // should. The term is added to the raft baseline (the smooth deck the
 // features stack on), sampled bilinearly from the coarse mantle raster,
-// whose cells are wider than any range.
-export function dynamicTopographyAt(mantle: Float32Array, resX: number, resY: number, x: number, y: number, worldWidth: number, worldHeight: number): number {
-  return sampleBilinearWorld(mantle, resX, resY, x, y, worldWidth, worldHeight) * ELEVATION_TUNING.dynamicTopographyPerUnit
+// whose cells are wider than any range. `mantleGrid`: the mantle raster's
+// grid over the domain.
+export function dynamicTopographyAt(mantle: Float32Array, mantleGrid: DomainGrid, x: number, y: number): number {
+  return mantleGrid.sampleBilinearAt(mantle, x, y) * ELEVATION_TUNING.dynamicTopographyPerUnit
 }
 
-// The term over a `width`×`height` grid that covers the world (a render
-// grid may be coarser than the world; `worldWidth`/`worldHeight` say how
-// its pixels map onto world coordinates).
-export function dynamicTopographyField(mantle: Float32Array, resX: number, resY: number, width: number, height: number, worldWidth: number, worldHeight: number): Float32Array {
+// The term over a `width`×`height` grid that covers the domain (a render
+// grid may be coarser than the world).
+export function dynamicTopographyField(mantle: Float32Array, resX: number, resY: number, width: number, height: number, domain: Domain): Float32Array {
   const out = new Float32Array(width * height)
   if (ELEVATION_TUNING.dynamicTopographyPerUnit === 0) return out
-  const scaleX = worldWidth / width
-  const scaleY = worldHeight / height
+  const mantleGrid = domain.grid(resX, resY)
+  const scaleX = domain.width / width
+  const scaleY = domain.height / height
   for (let py = 0; py < height; py++) {
     for (let px = 0; px < width; px++) {
-      out[py * width + px] = dynamicTopographyAt(mantle, resX, resY, px * scaleX, py * scaleY, worldWidth, worldHeight)
+      out[py * width + px] = dynamicTopographyAt(mantle, mantleGrid, px * scaleX, py * scaleY)
     }
   }
   return out

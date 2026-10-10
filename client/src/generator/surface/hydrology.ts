@@ -1,6 +1,6 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { SURFACE_TUNING } from './surfaceTuneParams'
-import { wrapValue, sampleNearestWorld } from '../core/field'
+import type { Domain, DomainGrid } from '../core/domain'
 import type { FlowRouting } from './flowRouting'
 import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
 import { Biome, computeBiomesFine, computeBiomesFineFromMonths } from '../climate/biomes'
@@ -36,8 +36,9 @@ export const CANONICAL_RIVER_DENSITY = 55
 // exactly the climate-blindness v2 retires. Called for land cells only, so an
 // ocean-sentinel precip (coarse cell reads as ocean at the coast) clamps to
 // 0 — the cell still passes upstream discharge along, it just adds none.
-function precipRunoffAt(precip: Float32Array, cx: number, cy: number, worldW: number, worldH: number, climateResX: number, climateResY: number): number {
-  const p = sampleNearestWorld(precip, climateResX, climateResY, cx, cy, worldW, worldH)
+// `climate`: the climate grid over the cells' domain.
+function precipRunoffAt(precip: Float32Array, cx: number, cy: number, climate: DomainGrid): number {
+  const p = climate.sampleNearestAt(precip, cx, cy)
   return p > 0 ? p : 0
 }
 
@@ -57,14 +58,17 @@ export function dischargeToM3s(dischargeUnits: number, cellM: number): number {
 
 // Mean per-cell runoff over land — the reference the critical-area threshold
 // multiplies against (so "A cells of drainage" translates to a discharge value).
-export function meanLandRunoff(precip: Float32Array, elevation: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number): number {
+// `domain`: what the elevation raster covers, one cell per unit.
+export function meanLandRunoff(precip: Float32Array, elevation: Float32Array, domain: Domain, climateResX: number, climateResY: number): number {
+  const worldW = domain.width
+  const climate = domain.grid(climateResX, climateResY)
   let sum = 0
   let count = 0
   for (let cell = 0; cell < elevation.length; cell++) {
     if (elevation[cell] <= SEA_LEVEL) continue
     const cx = cell % worldW
     const cy = (cell - cx) / worldW
-    sum += precipRunoffAt(precip, cx, cy, worldW, worldH, climateResX, climateResY)
+    sum += precipRunoffAt(precip, cx, cy, climate)
     count++
   }
   return count > 0 ? sum / count : 0
@@ -80,8 +84,8 @@ export function evaporationPotential(tempC: number): number {
   return pet < SURFACE_TUNING.petMinMm ? SURFACE_TUNING.petMinMm : pet > SURFACE_TUNING.petMaxMm ? SURFACE_TUNING.petMaxMm : pet
 }
 
-function tempAtCell(temperature: Float32Array, cx: number, cy: number, worldW: number, worldH: number, climateResX: number, climateResY: number): number {
-  return sampleNearestWorld(temperature, climateResX, climateResY, cx, cy, worldW, worldH)
+function tempAtCell(temperature: Float32Array, cx: number, cy: number, climate: DomainGrid): number {
+  return climate.sampleNearestAt(temperature, cx, cy)
 }
 
 // One standing water body — or a basin that failed to hold one — as the
@@ -161,7 +165,9 @@ export const SEA_WATER_LEVEL = SEA_LEVEL
 // from the list and the terrain alone, which is what lets a save consumer
 // (or the map, at draw time) derive the depth raster and the shore without
 // a drainage network. Returns cell indices.
-export function basinCellsBelow(elevation: Float32Array, width: number, height: number, body: WaterBody): Int32Array {
+// `grid`: the elevation raster's grid over the domain.
+export function basinCellsBelow(elevation: Float32Array, grid: DomainGrid, body: WaterBody): Int32Array {
+  const { resX: width, resY: height } = grid
   const seed = Math.floor(body.seedY) * width + Math.floor(body.seedX)
   if (!(elevation[seed] < body.spill)) return Int32Array.of(seed)
   const seen = new Uint8Array(width * height)
@@ -172,7 +178,7 @@ export function basinCellsBelow(elevation: Float32Array, width: number, height: 
     const cx = c % width
     const cy = (c - cx) / width
     for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-      const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
+      const nb = grid.neighbour(cx, cy, dx, dy)
       if (seen[nb] || !(elevation[nb] < body.spill)) continue
       seen[nb] = 1
       queue.push(nb)
@@ -196,14 +202,15 @@ export const SURFACE_SEA = 0
 export const SURFACE_LAKE = 1
 export const SURFACE_ICE = 2
 
-export function waterLevelField(bodies: readonly WaterBody[], elevation: Float32Array, width: number, height: number): { level: Float32Array; body: Int32Array; surface: Uint8Array } {
-  const n = width * height
+export function waterLevelField(bodies: readonly WaterBody[], elevation: Float32Array, grid: DomainGrid): { level: Float32Array; body: Int32Array; surface: Uint8Array } {
+  const width = grid.resX
+  const n = width * grid.resY
   const level = new Float32Array(n).fill(SEA_WATER_LEVEL)
   const body = new Int32Array(n).fill(-1)
   const surface = new Uint8Array(n).fill(SURFACE_SEA)
   const rim: number[] = []
   for (const b of bodies) {
-    const cells = basinCellsBelow(elevation, width, height, b)
+    const cells = basinCellsBelow(elevation, grid, b)
     const kind = b.frozen ? SURFACE_ICE : SURFACE_LAKE
     for (const c of cells) {
       level[c] = b.level
@@ -216,7 +223,7 @@ export function waterLevelField(bodies: readonly WaterBody[], elevation: Float32
       const cy = (c - cx) / width
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
-          const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
+          const nb = grid.neighbour(cx, cy, dx, dy)
           if (body[nb] === -1 && elevation[nb] > SEA_LEVEL && elevation[nb] >= b.level) rim.push(nb)
         }
       }
@@ -234,11 +241,11 @@ export function waterLevelField(bodies: readonly WaterBody[], elevation: Float32
 // The depth raster from the list: level minus terrain over each basin's
 // extent, zero elsewhere — what the save's `lakeDepth` layer IS, so a reader
 // can check the layer against the list, or rebuild it on a finer terrain.
-export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Float32Array, width: number, height: number): Float32Array {
-  const depth = new Float32Array(width * height)
+export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Float32Array, grid: DomainGrid): Float32Array {
+  const depth = new Float32Array(grid.resX * grid.resY)
   for (const b of bodies) {
     if (b.kind === 'dry') continue
-    for (const c of basinCellsBelow(elevation, width, height, b)) {
+    for (const c of basinCellsBelow(elevation, grid, b)) {
       if (elevation[c] <= b.level) depth[c] = b.level - elevation[c]
     }
   }
@@ -246,11 +253,10 @@ export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Flo
 }
 
 export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
-  const { width, height } = routing
   const on = computeLakesOn(rasterSubstrate(routing), discharge, elevation, temperature, precip, climateResX, climateResY, minBasinReliefM)
   // The raster's level and body fields carry the rim (waterLevelField), as
   // they did before the substrate existed.
-  const levels = waterLevelField(on.bodies, elevation, width, height)
+  const levels = waterLevelField(on.bodies, elevation, routing.grid)
   return { depth: on.depth, saltFlat: on.saltFlat, dryBasin: on.dryBasin, frozen: on.frozen, bodies: on.bodies, level: levels.level, body: levels.body }
 }
 
@@ -262,7 +268,8 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
 // raster fields). Areas are the elements' (a cell counts 1), so the
 // balance `inflow < pet × area` reads the same on a mesh.
 export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
-  const { width, height, filled, count: n } = sub
+  const { filled, count: n } = sub
+  const climate = sub.domain.grid(climateResX, climateResY)
   const EPS = 1e-5
   const depth = new Float32Array(n)
   const saltFlat = new Uint8Array(n)
@@ -303,7 +310,7 @@ export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elev
       regionArea += sub.area(c)
       if (filled[c] > spill) spill = filled[c]
       if (discharge[c] > inflow) inflow = discharge[c]
-      tempSum += tempAtCell(temperature, sub.px(c), sub.py(c), width, height, climateResX, climateResY) * sub.area(c)
+      tempSum += tempAtCell(temperature, sub.px(c), sub.py(c), climate) * sub.area(c)
       const k = sub.facetNeighbours(c, nb)
       for (let i = 0; i < k; i++) {
         const o = nb[i]
@@ -348,7 +355,7 @@ export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elev
       // over the whole region: rain on the wet surface feeds the balance,
       // rain on the dry floor runs down to it.
       let basinRain = 0
-      for (const c of region) basinRain += precipRunoffAt(precip, sub.px(c), sub.py(c), width, height, climateResX, climateResY) * sub.area(c)
+      for (const c of region) basinRain += precipRunoffAt(precip, sub.px(c), sub.py(c), climate) * sub.area(c)
       inflow += basinRain
       // TERMINAL SEA (the Caspian/Chad class): an enclosed basin whose floor
       // lies below sea level — a landlocked ocean remnant or deep rift graben.
@@ -422,11 +429,12 @@ export function accumulateDischarge(routing: FlowRouting, elevation: Float32Arra
 // Over any substrate: an element's own runoff is its sampled precipitation
 // times its area in cells, so the unit stays "mm/yr summed over cells".
 export function accumulateDischargeOn(sub: FlowSubstrate, elevation: Float32Array, precip: Float32Array, climateResX: number, climateResY: number): Float32Array {
-  const { width, height, flowTarget, popOrder, poppedCount, count } = sub
+  const { flowTarget, popOrder, poppedCount, count } = sub
+  const climate = sub.domain.grid(climateResX, climateResY)
   const discharge = new Float32Array(count)
   for (let cell = 0; cell < count; cell++) {
     if (elevation[cell] <= SEA_LEVEL) continue // ocean is a sink, no runoff
-    discharge[cell] = precipRunoffAt(precip, sub.px(cell), sub.py(cell), width, height, climateResX, climateResY) * sub.area(cell)
+    discharge[cell] = precipRunoffAt(precip, sub.px(cell), sub.py(cell), climate) * sub.area(cell)
   }
   for (let i = poppedCount - 1; i >= 0; i--) {
     const cell = popOrder[i]
@@ -848,10 +856,14 @@ export function computeWatersheds(routing: FlowRouting, elevation: Float32Array,
 // something regional (see docs/decisions/worldmap-amplification.md).
 // `months`: the climate step's refinement, when the climate is refined — the
 // biomes are then classified from its real months, the riparian bonus
-// scaling each month's rain (biomes.computeBiomesFineFromMonths).
-export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, worldW: number, worldH: number, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array, frozen?: Uint8Array,
+// scaling each month's rain (biomes.computeBiomesFineFromMonths). The world
+// is the routing's domain.
+export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array, frozen?: Uint8Array,
   months?: { temperature: Float32Array; precipitation: Float32Array; count: number },
 ): { biomes: Uint8Array; precipEff: Float32Array } {
+  const { domain } = routing
+  const { width: worldW, height: worldH } = domain
+  const climate = domain.grid(climateResX, climateResY)
   const scale = maxDischarge > 0 ? maxDischarge : 1
   // The same downstream-closed mask the polyline extractor draws — the two
   // disagreed silently once before, which drew mountain rivers with no green
@@ -874,7 +886,8 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
     const gi = gy * climateResX + gx
     if (w > strength[gi]) strength[gi] = w
   }
-  // Decay-bleed into neighbours (toroidal), taking the max so a band forms.
+  // Decay-bleed into neighbours (through the climate grid), taking the max so
+  // a band forms.
   let field = strength
   for (let it = 0; it < SURFACE_TUNING.riparianSpread; it++) {
     const next = field.slice()
@@ -882,9 +895,7 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
       for (let gx = 0; gx < climateResX; gx++) {
         const gi = gy * climateResX + gx
         for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-          const nx = wrapValue((gx + dx), climateResX)
-          const ny = wrapValue((gy + dy), climateResY)
-          const v = field[ny * climateResX + nx] * SURFACE_TUNING.riparianDecay
+          const v = field[climate.neighbour(gx, gy, dx, dy)] * SURFACE_TUNING.riparianDecay
           if (v > next[gi]) next[gi] = v
         }
       }
@@ -901,8 +912,8 @@ export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Ar
   // would be a different model rather than a sharper one. Only the
   // classification moves, which is the part that reads elevation.
   const biomes = months
-    ? computeBiomesFineFromMonths(months.temperature, months.precipitation, months.count, temperature, precipEff, elevation, worldW, worldH, dryLand)
-    : computeBiomesFine(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, worldW, worldH, dryLand)
+    ? computeBiomesFineFromMonths(months.temperature, months.precipitation, months.count, temperature, precipEff, elevation, domain, dryLand)
+    : computeBiomesFine(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, domain, dryLand)
   // Salt-flat override (see computeLakes' LakeFields.saltFlat): a terminal
   // basin's exposed floor is a hydrology state, not a climate — it wins over
   // whatever the Whittaker mapping said.

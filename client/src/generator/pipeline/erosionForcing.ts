@@ -63,7 +63,6 @@ export function assembleErosionForcing(
   controls: ErosionControlsV2 = {},
   weather: WeatherParams = defaultWeatherParams(),
 ): { forcing: ErosionForcing; params: ErosionEngineParams } {
-  const { width, height } = domain
   const { uplift, hardness } = coarseForcingFields(sources, domain)
 
   // The climate as the water forcing — the FULL weather chain (currents and
@@ -73,7 +72,7 @@ export function assembleErosionForcing(
   // than read from the climate stage's cache: the forcing must not depend
   // on whether that stage has run, and both compute the same chain on the
   // same terrain (climate/weather.computeWeather — one function, no drift).
-  const water = computeWeather(rawElevations, width, height, weather).seasonal.annual
+  const water = computeWeather(rawElevations, domain, weather).seasonal.annual
 
   return assembleFineForcing({
     uplift,
@@ -84,5 +83,5 @@ export function assembleErosionForcing(
     waterResX: CLIMATE_RES_X,
     waterResY: CLIMATE_RES_Y,
     lithoSeed: erosionLithoSeed(sources.warpSeed),
-  }, rawElevations, width, height, controls)
+  }, rawElevations, domain, controls)
 }

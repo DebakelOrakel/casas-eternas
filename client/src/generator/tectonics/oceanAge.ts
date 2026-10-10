@@ -1,7 +1,6 @@
 import type { PlateSeed } from './plateSeeds'
 import { reversePointByMotion, type PlateMotion } from './plateMotion'
-import type { Domain } from '../core/domain'
-import { sampleBilinearWorld } from '../core/field'
+import type { Domain, DomainGrid } from '../core/domain'
 import { sampleMembershipField } from '../crust/raftField'
 
 // Ocean-floor age as a coarse full-surface field (Phase 3, see
@@ -22,10 +21,15 @@ export function createOceanAgeField(initialAge: number): Float32Array {
   return field
 }
 
-// Bilinear sample of the age field at a world point, wrapped toroidally (cell
-// centers sit at (i+0.5)·cellSize, hence the −0.5).
-export function sampleOceanAge(age: Float32Array, x: number, y: number, worldWidth: number, worldHeight: number): number {
-  return sampleBilinearWorld(age, OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y, x, y, worldWidth, worldHeight)
+// The age field's grid over the domain.
+export function oceanAgeGrid(domain: Domain): DomainGrid {
+  return domain.grid(OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y)
+}
+
+// Bilinear sample of the age field at a world point, through its grid (cell
+// centers sit at (i+0.5)·cellSize).
+export function sampleOceanAge(age: Float32Array, grid: DomainGrid, x: number, y: number): number {
+  return grid.sampleBilinearAt(age, x, y)
 }
 
 // Oldest seafloor that can exist, in epochs. Earth's oceanic crust tops out
@@ -65,6 +69,8 @@ export function advectOceanAge(
   membershipResY: number,
 ): Float32Array {
   const next = new Float32Array(age.length)
+  const grid = oceanAgeGrid(domain)
+  const membershipGrid = domain.grid(membershipResX, membershipResY)
   const cellW = domain.width / OCEAN_AGE_RES_X
   const cellH = domain.height / OCEAN_AGE_RES_Y
   for (let cy = 0; cy < OCEAN_AGE_RES_Y; cy++) {
@@ -81,13 +87,13 @@ export function advectOceanAge(
         }
       }
       const i = cy * OCEAN_AGE_RES_X + cx
-      if (sampleMembershipField(membership, membershipResX, membershipResY, wx, wy, domain.width, domain.height) > 0.5) {
+      if (sampleMembershipField(membership, membershipGrid, wx, wy) > 0.5) {
         next[i] = 0
         continue
       }
       const motion = motions[nearest]
       const prev = reversePointByMotion(wx, wy, motion, angleStep, domain)
-      const advected = sampleOceanAge(age, prev.x, prev.y, domain.width, domain.height) + 1
+      const advected = sampleOceanAge(age, grid, prev.x, prev.y) + 1
       next[i] = advected > MAX_SEAFLOOR_AGE ? MAX_SEAFLOOR_AGE : advected
     }
   }
@@ -104,6 +110,7 @@ export function advectOceanAge(
 // opened with a one-cell-wide young streak down the middle of otherwise old
 // floor. Sized by the caller to the gap it actually opened.
 export function resetOceanAgeAround(age: Float32Array, x: number, y: number, worldRadius: number, domain: Domain): void {
+  const grid = oceanAgeGrid(domain)
   const cellW = domain.width / OCEAN_AGE_RES_X
   const cellH = domain.height / OCEAN_AGE_RES_Y
   const spanX = Math.floor(worldRadius / cellW)
@@ -112,10 +119,10 @@ export function resetOceanAgeAround(age: Float32Array, x: number, y: number, wor
   const cy = Math.floor((y / domain.height) * OCEAN_AGE_RES_Y)
   const radiusSq = worldRadius * worldRadius
   for (let dy = -spanY; dy <= spanY; dy++) {
-    const gy = ((cy + dy) % OCEAN_AGE_RES_Y + OCEAN_AGE_RES_Y) % OCEAN_AGE_RES_Y
+    const gy = grid.wrapRow(cy + dy)
     const wy = (gy + 0.5) * cellH
     for (let dx = -spanX; dx <= spanX; dx++) {
-      const gx = ((cx + dx) % OCEAN_AGE_RES_X + OCEAN_AGE_RES_X) % OCEAN_AGE_RES_X
+      const gx = grid.wrapCol(cx + dx)
       const wx = (gx + 0.5) * cellW
       // Round, not square — a square patch of fresh crust would show as one.
       if (domain.distanceSq(wx, wy, x, y) <= radiusSq) age[gy * OCEAN_AGE_RES_X + gx] = 0

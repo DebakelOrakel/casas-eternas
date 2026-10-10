@@ -1,9 +1,8 @@
 import type { PlateSeed } from '../tectonics/plateSeeds'
 import type { PlateType } from '../tectonics/plateTypes'
 import type { Raft } from './raftTypes'
-import type { Domain } from '../core/domain'
+import type { Domain, DomainGrid } from '../core/domain'
 import { smoothstepBetween } from '../core/interpolation'
-import { sampleNearestWorld, wrapValue } from '../core/field'
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
 // plates, decoupled from them — see docs/decisions/continental-crust-rafts.md. A
@@ -67,8 +66,8 @@ export function raftField(x: number, y: number, rafts: Raft[], domain: Domain): 
 export interface BlobIndex {
   rafts: Raft[]
   domain: Domain
-  nx: number
-  ny: number
+  // The bucket lattice, INDEX_NX × INDEX_NY over the domain.
+  grid: DomainGrid
   start: Int32Array
   items: Int32Array
   bx: Float64Array
@@ -102,46 +101,43 @@ export function buildBlobIndex(rafts: Raft[], domain: Domain, reach = 1): BlobIn
   }
   const nx = INDEX_NX
   const ny = INDEX_NY
+  const grid = domain.grid(nx, ny)
   const cw = width / nx
   const ch = height / ny
   const buckets: number[][] = Array.from({ length: nx * ny }, () => [])
-  const span = (centre: number, extent: number, size: number, n: number, period: number): number[] => {
+  // `c`: the centre already wrapped into the domain; `wrapCell`: the
+  // lattice's wrap along the same axis.
+  const span = (c: number, extent: number, size: number, n: number, period: number, wrapCell: (i: number) => number): number[] => {
     // A margin far above the wrapped distance's rounding and the point's
     // wrap: the filing must cover every point the kernel could reach.
     const e = extent * (1 + 1e-9) + 1e-6
     if (!(e < Infinity) || 2 * e >= period) return Array.from({ length: n }, (_, i) => i)
-    const c = wrapValue(centre, period)
     const i0 = Math.floor((c - e) / size)
     const i1 = Math.floor((c + e) / size)
     if (i1 - i0 + 1 >= n) return Array.from({ length: n }, (_, i) => i)
     const out: number[] = []
-    for (let i = i0; i <= i1; i++) out.push(((i % n) + n) % n)
+    for (let i = i0; i <= i1; i++) out.push(wrapCell(i))
     return out
   }
+  const wrapCol = (i: number): number => grid.wrapCol(i)
+  const wrapRow = (j: number): number => grid.wrapRow(j)
   for (let k = 0; k < total; k++) {
     const extent = br[k] * reach
-    const xs = span(bx[k], extent, cw, nx, width)
-    const ys = span(by[k], extent, ch, ny, height)
+    const xs = span(domain.wrapX(bx[k]), extent, cw, nx, width, wrapCol)
+    const ys = span(domain.wrapY(by[k]), extent, ch, ny, height, wrapRow)
     for (const j of ys) for (const i of xs) buckets[j * nx + i].push(k)
   }
   const start = new Int32Array(nx * ny + 1)
   for (let b = 0; b < nx * ny; b++) start[b + 1] = start[b] + buckets[b].length
   const items = new Int32Array(start[nx * ny])
   for (let b = 0; b < nx * ny; b++) items.set(buckets[b], start[b])
-  return { rafts, domain, nx, ny, start, items, bx, by, br, braft }
-}
-
-function bucketOf(index: BlobIndex, x: number, y: number): number {
-  const { width, height } = index.domain
-  const i = Math.min(index.nx - 1, Math.floor((wrapValue(x, width) / width) * index.nx))
-  const j = Math.min(index.ny - 1, Math.floor((wrapValue(y, height) / height) * index.ny))
-  return j * index.nx + i
+  return { rafts, domain, grid, start, items, bx, by, br, braft }
 }
 
 // raftField through the index: the same value, bit for bit.
 export function raftFieldIndexed(x: number, y: number, index: BlobIndex): number {
   if (!(Math.abs(x) < Infinity && Math.abs(y) < Infinity)) return raftField(x, y, index.rafts, index.domain)
-  const b = bucketOf(index, x, y)
+  const b = index.grid.cellAt(x, y)
   const { items, bx, by, br, domain } = index
   let field = 0
   for (let k = index.start[b]; k < index.start[b + 1]; k++) {
@@ -165,7 +161,7 @@ export function nearestRaftIndexed(x: number, y: number, index: BlobIndex, reach
     }
     return onRaft
   }
-  const b = bucketOf(index, x, y)
+  const b = index.grid.cellAt(x, y)
   for (let k = index.start[b]; k < index.start[b + 1]; k++) {
     const g = items[k]
     const d = Math.sqrt(domain.distanceSq(x, y, bx[g], by[g])) / br[g]
@@ -202,13 +198,13 @@ export function computeMembershipField(rafts: Raft[], resX: number, resY: number
   return out
 }
 
-// Nearest-cell sample of a membership field at a world point (torus-wrapped), so
+// Nearest-cell sample of a membership field at a world point, through its grid, so
 // consumers on their own grids can read it without caring what resolution it was
 // computed at. Nearest rather than bilinear on purpose: every consumer thresholds
 // the result (> 0.5) rather than using its magnitude, so interpolation would only
 // cost time.
-export function sampleMembershipField(field: Float32Array, resX: number, resY: number, x: number, y: number, width: number, height: number): number {
-  return sampleNearestWorld(field, resX, resY, x, y, width, height)
+export function sampleMembershipField(field: Float32Array, grid: DomainGrid, x: number, y: number): number {
+  return grid.sampleNearestAt(field, x, y)
 }
 
 // A coarse (resX×resY) field of continental crust "oldness" 0..1 — 1 where the
@@ -233,6 +229,7 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, r
   const ageWeighted = new Float64Array(resX * resY)
   const cellW = domain.width / resX
   const cellH = domain.height / resY
+  const grid = domain.grid(resX, resY)
 
   for (const raft of rafts) {
     for (const blob of raft.blobs) {
@@ -245,12 +242,12 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, r
       const gy1 = Math.ceil((blob.y + blob.radius) / cellH)
       for (let gy = gy0; gy <= gy1; gy++) {
         const wy = (gy + 0.5) * cellH
-        const row = (((gy % resY) + resY) % resY) * resX
+        const row = grid.wrapRow(gy) * resX
         for (let gx = gx0; gx <= gx1; gx++) {
           const wx = (gx + 0.5) * cellW
           const w = blobKernel(domain.distanceSq(wx, wy, blob.x, blob.y), blob.radius)
           if (w <= 0) continue
-          const i = row + (((gx % resX) + resX) % resX)
+          const i = row + grid.wrapCol(gx)
           weight[i] += w
           ageWeighted[i] += w * birth
         }
@@ -288,6 +285,7 @@ export function computeOwnerField(rafts: Raft[], resX: number, resY: number, dom
   const owner = new Int32Array(resX * resY).fill(-1)
   const cellW = domain.width / resX
   const cellH = domain.height / resY
+  const grid = domain.grid(resX, resY)
   rafts.forEach((raft, raftIndex) => {
     for (const blob of raft.blobs) {
       const gx0 = Math.floor((blob.x - blob.radius) / cellW)
@@ -296,11 +294,11 @@ export function computeOwnerField(rafts: Raft[], resX: number, resY: number, dom
       const gy1 = Math.ceil((blob.y + blob.radius) / cellH)
       for (let gy = gy0; gy <= gy1; gy++) {
         const wy = (gy + 0.5) * cellH
-        const row = (((gy % resY) + resY) % resY) * resX
+        const row = grid.wrapRow(gy) * resX
         for (let gx = gx0; gx <= gx1; gx++) {
           const wx = (gx + 0.5) * cellW
           const v = blobKernel(domain.distanceSq(wx, wy, blob.x, blob.y), blob.radius)
-          const i = row + (((gx % resX) + resX) % resX)
+          const i = row + grid.wrapCol(gx)
           if (v <= best[i]) continue
           best[i] = v
           owner[i] = raftIndex
@@ -311,10 +309,8 @@ export function computeOwnerField(rafts: Raft[], resX: number, resY: number, dom
   return owner
 }
 
-export function sampleOwnerField(owner: Int32Array, resX: number, resY: number, x: number, y: number, worldWidth: number, worldHeight: number): number {
-  const gx = Math.min(resX - 1, Math.floor((wrapValue(x, worldWidth) / worldWidth) * resX))
-  const gy = Math.min(resY - 1, Math.floor((wrapValue(y, worldHeight) / worldHeight) * resY))
-  return owner[gy * resX + gx]
+export function sampleOwnerField(owner: Int32Array, grid: DomainGrid, x: number, y: number): number {
+  return owner[grid.cellAt(x, y)]
 }
 
 // Phase 1 bridge: the existing crust-type-consuming code (boundary

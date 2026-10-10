@@ -1,8 +1,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, shiftedYNorm, beltYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL } from '../elevation/elevationScale'
-import { sampleBilinearGrid } from '../core/field'
-import { wrapValue } from '../core/field'
+import type { Domain } from '../core/domain'
 import { detCos, detExp, detHypot } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
@@ -33,10 +32,11 @@ export function bandFactor(phi: number): number {
 // local rather than folded into field.ts: that module samples coarse fields, and
 // this is the opposite — the orographic term needs the fine gradient, which is
 // the entire reason it reads full-res here instead of off the climate grid.
-function elevationAtWorld(elevation: Float32Array, wx: number, wy: number, worldW: number, worldH: number): number {
-  const x = Math.floor(wrapValue(wx, worldW))
-  const y = Math.floor(wrapValue(wy, worldH))
-  return elevation[y * worldW + x]
+// `domain`: what the raster covers, one texel per unit.
+function elevationAtWorld(elevation: Float32Array, domain: Domain, wx: number, wy: number): number {
+  const x = Math.floor(domain.wrapX(wx))
+  const y = Math.floor(domain.wrapY(wy))
+  return elevation[y * domain.width + x]
 }
 
 // Annual precipitation (mm/yr) on the climate grid, land only (ocean cells =
@@ -75,7 +75,10 @@ export interface RefinedRain {
   highHpa: Float32Array
 }
 
-export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, worldW: number, worldH: number, humidity = 1, equatorOffset = 0, dryLand?: Uint8Array, beltShift = 0, refined?: RefinedRain): Float32Array {
+// `domain`: what the elevation raster covers, one cell per unit.
+export function computePrecipitation(elevation: Float32Array, temperature: Float32Array, wind: Float32Array, domain: Domain, humidity = 1, equatorOffset = 0, dryLand?: Uint8Array, beltShift = 0, refined?: RefinedRain): Float32Array {
+  const { width: worldW, height: worldH } = domain
+  const grid = domain.grid(RX, RY)
   const n = RX * RY
   const ocean = new Uint8Array(n)
   const evap = new Float32Array(n)
@@ -116,10 +119,10 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
         for (const k of [-0.5, 0, 0.5]) {
           const px = -ay * k * 2
           const py = ax * k * 2
-          const eUp = elevationAtWorld(elevation, wx - ax + px, wy - ay + py, worldW, worldH)
+          const eUp = elevationAtWorld(elevation, domain, wx - ax + px, wy - ay + py)
           if (eUp <= SEA_LEVEL) upLand = false
           up += eUp / 3
-          down += elevationAtWorld(elevation, wx + ax + px, wy + ay + py, worldW, worldH) / 3
+          down += elevationAtWorld(elevation, domain, wx + ax + px, wy + ay + py) / 3
         }
         if (upLand) upslope = Math.max(0, down - up) * speed * CLIMATE_TUNING.precipOrogLeverPx / (2 * half)
       }
@@ -149,7 +152,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
         const v = wind[i * 2 + 1]
         const fx = gx - u * CLIMATE_TUNING.precipAdvectStep
         const fy = gy - v * CLIMATE_TUNING.precipAdvectMeridionalScale * CLIMATE_TUNING.precipAdvectStep
-        const advected = sampleBilinearGrid(moisture, RX, RY, fx, fy)
+        const advected = grid.sampleBilinear(moisture, fx, fy)
         if (ocean[i]) {
           next[i] = evap[i] // ocean is a fixed moisture source
           if (refined) nextCarried[i] = carried[i]
@@ -162,7 +165,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
         next[i] = advected - rain * (1 - CLIMATE_TUNING.precipLandRecycleFrac)
         if (sinking) next[i] *= 1 - CLIMATE_TUNING.rainSubsidenceMix * sinking[i]
         if (refined && advected > 0) {
-          const anomaly = sampleBilinearGrid(carried, RX, RY, fx, fy) / advected
+          const anomaly = grid.sampleBilinear(carried, fx, fy) / advected
           sourceAnomaly[i] = anomaly
           nextCarried[i] = next[i] * anomaly
         }

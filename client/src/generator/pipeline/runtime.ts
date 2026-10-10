@@ -45,7 +45,7 @@ import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
 import { computeBiomes, computeBiomesFine, computeBiomesFromMonths, computeBiomesFineFromMonths, computeKoppenField } from '../climate/biomes'
 import { annualFromMonths, refineClimate } from '../climate/refinement'
-import { downsampleMax, sampleBilinearWorld } from '../core/field'
+import { downsampleMax } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import type { WaterBody } from '../surface/hydrology'
 import { buildRiverGraph, riverPolylinesFromGraph, serializeRiverGraph } from '../surface/riverGraph'
@@ -754,12 +754,14 @@ interface ClimateParams {
 // amplitude → monsoon/precipitation → biomes. `dryLand` is the terminal-basin
 // dry-floor override (LakeFields.dryBasin): those sub-sea cells count as land
 // throughout, with an unclamped downward lapse (see computeTemperature).
-function computeClimateChain(elevation: Float32Array, width: number, height: number, params: ClimateParams, dryLand?: Uint8Array) {
+// `domain`: what the elevation raster covers, one cell per unit.
+function computeClimateChain(elevation: Float32Array, domain: Domain, params: ClimateParams, dryLand?: Uint8Array) {
+  const { width, height } = domain
   // The meteorology is climate/weather.computeWeather — shared with the
   // erosion engine's water forcing (the stage-2 coupling), so the panel's
   // overlays and the carved valleys can never disagree about what the
   // climate IS.
-  const { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal } = computeWeather(elevation, width, height, params, dryLand)
+  const { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal } = computeWeather(elevation, domain, params, dryLand)
   // Classified twice, on purpose, from identical inputs: `biomes` on the climate
   // grid for the ecology step, `biomesFine` on the world raster for everything
   // the user sees or saves (see climate/biomes.computeBiomesFine, and
@@ -767,7 +769,7 @@ function computeClimateChain(elevation: Float32Array, width: number, height: num
   // pass is a pointwise loop over an existing field — measured well under the
   // precipitation advection it follows.
   const biomes = computeBiomes(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
-  const biomesFine = computeBiomesFine(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
+  const biomesFine = computeBiomesFine(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, domain, dryLand)
   const koppen = computeKoppenField(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
   return { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine, koppen }
 }
@@ -825,7 +827,7 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
     equatorOffset: message.equatorOffset,
     planet: message.planet,
   }
-  cacheAndPostClimate(computeClimateChain(elevation, sim.width, sim.height, params), params)
+  cacheAndPostClimate(computeClimateChain(elevation, sim.domain, params), params)
   invalidateAfter('climate')
 }
 
@@ -837,9 +839,9 @@ function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'cli
   const elevation = preErosionElevations ?? lastRawElevations
   if (!sim || !elevation) { decline('climate', 'tectonics'); return }
   if (!climate) { decline('climate', 'climate'); return }
-  const { width, height } = sim
+  const { width, height, domain } = sim
   // A save's refinement is taken as it is; otherwise it is computed.
-  const r = message.restored ?? refineClimate(elevation, width, height, climate.params, climate.temperature, climate.wind, (share) => {
+  const r = message.restored ?? refineClimate(elevation, domain, climate.params, climate.temperature, climate.wind, (share) => {
     const progress: WorkerClimateRefineProgressMessage = { type: 'climateRefineProgress', share: share * 0.85 }
     emit(progress)
   })
@@ -850,7 +852,7 @@ function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'cli
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const annual = annualFromMonths(r)
   const biomes = computeBiomesFromMonths(r.temperature, r.precipitation, r.months, annual.precipitation, elevation, width, height)
-  const biomesFine = computeBiomesFineFromMonths(r.temperature, r.precipitation, r.months, annual.temperature, annual.precipitation, elevation, width, height)
+  const biomesFine = computeBiomesFineFromMonths(r.temperature, r.precipitation, r.months, annual.temperature, annual.precipitation, elevation, domain)
   const annualWind = new Float32Array(n * 2)
   for (let m = 0; m < r.months; m++) for (let i = 0; i < n * 2; i++) annualWind[i] += r.wind[m * n * 2 + i] / r.months
   climate = {
@@ -934,6 +936,8 @@ function handleHydrologyRun(): void {
   const terrain = lastRawElevations
   const width = sim.width
   const height = sim.height
+  const domain = sim.domain
+  const grid = domain.grid(width, height)
   // Run hydrology on the basins-intact (pre-fill) terrain when erosion produced
   // it, so lakes have depressions to fill and rivers flow into them; otherwise
   // the final drained terrain (few lakes). Same grid, so river/lake coords still
@@ -958,11 +962,11 @@ function handleHydrologyRun(): void {
     let rerouted = false
     let result = hydrology
     if (!result) {
-      const routing = await fillDepressionsAndRouteFlow(elevation, width, height, SEA_LEVEL)
+      const routing = await fillDepressionsAndRouteFlow(elevation, domain, SEA_LEVEL)
       if (stale()) return
       let discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
       let maxDischarge = maxDischargeOverLand(discharge, elevation)
-      let meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+      let meanRunoff = meanLandRunoff(weather.precipitation, elevation, domain, CLIMATE_RES_X, CLIMATE_RES_Y)
       {
         // With the mesh, the lakes are the mesh's (hydrologyOnMesh); the
         // raster routing above still serves the cell-walking consumers.
@@ -988,7 +992,7 @@ function handleHydrologyRun(): void {
         // land mask, without the dry-basin override, and recomputing the
         // cheap chain here would put the history's climate back in its place.
         if (!weather.months) {
-          const chain = computeClimateChain(terrain, width, height, weather.params, lakes.dryBasin)
+          const chain = computeClimateChain(terrain, domain, weather.params, lakes.dryBasin)
           // Update the caches + screen WITHOUT invalidateAfter('climate'):
           // the very next lines recompute the dependent hydrology themselves,
           // and dropping the hydrology result here would force a needless full
@@ -996,7 +1000,7 @@ function handleHydrologyRun(): void {
           weather = cacheAndPostClimate(chain, weather.params, true)
           discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
           maxDischarge = maxDischargeOverLand(discharge, elevation)
-          meanRunoff = meanLandRunoff(weather.precipitation, elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+          meanRunoff = meanLandRunoff(weather.precipitation, elevation, domain, CLIMATE_RES_X, CLIMATE_RES_Y)
           onMesh = meshTerrain ? hydrologyOnMesh(meshTerrain, elevation, width, height, weather) : null
           lakes = onMesh ? { ...onMesh.raster, bodies: onMesh.lakes.bodies } : computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
         }
@@ -1012,7 +1016,7 @@ function handleHydrologyRun(): void {
         if (stale()) return
         result = {
           routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
-          bodies: lakes.bodies, level: lakes.level, surface: onMesh ? onMesh.raster.surface : waterLevelField(lakes.bodies, elevation, width, height).surface, body: lakes.body,
+          bodies: lakes.bodies, level: lakes.level, surface: onMesh ? onMesh.raster.surface : waterLevelField(lakes.bodies, elevation, grid).surface, body: lakes.body,
           maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null, waterTable: null, oases: [], biomesFine: null,
           onMesh,
         }
@@ -1039,7 +1043,7 @@ function handleHydrologyRun(): void {
     let biomesOut: Uint8Array = new Uint8Array(0)
     let precipEffOut: Float32Array = new Float32Array(0)
     if (rerouted) {
-      const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, threshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, width, height, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined, result.frozen ?? undefined, weather.months)
+      const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, threshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined, result.frozen ?? undefined, weather.months)
       // The riparian-effective precipitation rides along: it is what lets the
       // worldmap reclassify at bake resolution without re-running hydrology.
       biomesOut = riparian.biomes
@@ -1059,7 +1063,7 @@ function handleHydrologyRun(): void {
         // riparian biomes at each node.
         const sub = meshSubstrate(meshTerrain.mesh, meshTerrain.routing, meshTerrain.areas)
         const bankAtNode = new Uint8Array(meshTerrain.mesh.vertexSlots)
-        for (let v = 0; v < bankAtNode.length; v++) if (meshTerrain.mesh.vAlive[v]) bankAtNode[v] = riparian.biomes[rasterCellAt(meshTerrain.mesh.vx[v], meshTerrain.mesh.vy[v], width, height)]
+        for (let v = 0; v < bankAtNode.length; v++) if (meshTerrain.mesh.vAlive[v]) bankAtNode[v] = riparian.biomes[rasterCellAt(meshTerrain.mesh.vx[v], meshTerrain.mesh.vy[v], grid)]
         const regime = accumulateRegimeInputsOn(sub, meshTerrain.z, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y, weather.months)
         result.graph = buildRiverGraph({
           substrate: sub, discharge: result.onMesh.discharge, elevation: meshTerrain.z, threshold, maxDischarge: result.maxDischarge,
@@ -1106,7 +1110,7 @@ function handleHydrologyRun(): void {
       }
       // THE RIVER COURSE (phase 3): pattern, meanders, braids and deltas per
       // reach, seeded from the world so a world always gets the same bends.
-      result.graph.courses = computeRiverCourses(result.graph, { cellM: WORLD_WIDTH_METERS / width, seed: sim.warpSeed })
+      result.graph.courses = computeRiverCourses(result.graph, { cellM: WORLD_WIDTH_METERS / width, seed: sim.warpSeed, domain })
       // THE COAST (F5): exposure from the wind, hardness from the erosion
       // forcing's field, sediment from the graph's mouths — a type per reach.
       result.coast = buildCoastGraph({
@@ -1137,7 +1141,7 @@ function handleHydrologyRun(): void {
         result.ice = ice
       } else {
         result.ice = computeIceThickness({
-          elevation, width, height, temperature: weather.temperature, precipitation: weather.precipitation,
+          elevation, width, height, domain, temperature: weather.temperature, precipitation: weather.precipitation,
           climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, cellM: WORLD_WIDTH_METERS / width,
         }).thickness
       }
@@ -1232,8 +1236,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     orogenPoints: [...collectOrogens(sim.features), ...sim.sutures],
     cratonAge,
     warpSeed: sim.warpSeed,
-    worldWidth: sim.width,
-    worldHeight: sim.height,
+    domain: sim.domain,
   }) }
   }
   ecologyParams = {
@@ -1283,7 +1286,7 @@ function handleMigrationRun(message: Extract<WorkerInboundMessage, { type: 'migr
   if (!climate) { decline('migration', 'climate'); return }
   if (!ecology) { decline('migration', 'ecology'); return }
   const coarseDischarge = hydrology ? downsampleMax(hydrology.discharge, sim.width, sim.height, CLIMATE_RES_X, CLIMATE_RES_Y) : null
-  const mig = computeMigration(ecology.carryingCapacity, climate.precipitation, lastRawElevations, coarseDischarge, hydrology?.maxDischarge ?? 0, message.origins, sim.width, sim.height, {
+  const mig = computeMigration(ecology.carryingCapacity, climate.precipitation, lastRawElevations, coarseDischarge, hydrology?.maxDischarge ?? 0, message.origins, sim.domain, {
     spreadBudget: message.spreadBudget,
     seaCrossing: message.seaCrossing,
   })
@@ -1714,17 +1717,20 @@ function previewElevation(domain: Domain): Float32Array {
   const { width, height } = domain
   const out = new Float32Array(width * height)
   const { elevation, width: sw, height: sh } = planetSample
+  // The sample is its own frame, one texel per unit.
+  const sampleGrid = domain.scaledTo(sw, sh).grid(sw, sh)
   for (let y = 0; y < height; y++) {
     const wy = ((y + 0.5) / height) * sh
-    for (let x = 0; x < width; x++) out[y * width + x] = sampleBilinearWorld(elevation, sw, sh, ((x + 0.5) / width) * sw, wy, sw, sh)
+    for (let x = 0; x < width; x++) out[y * width + x] = sampleGrid.sampleBilinearAt(elevation, ((x + 0.5) / width) * sw, wy)
   }
   return out
 }
 
 async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type: 'planetPreview' }>): Promise<void> {
   const { width, height } = message
+  // A Domain does not cross the message boundary; the preview's size does.
+  const domain = torusDomain(width, height)
   if (!sampleWorld || sampleWorld.width !== width || sampleWorld.height !== height) {
-    const domain = torusDomain(width, height)
     const elevation = previewElevation(domain)
     const rendered = await renderSimulationImage(
       { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: 0, seaLevelOffset: 0, mantle: new Float32Array(MANTLE_RES_X * MANTLE_RES_Y) },
@@ -1734,7 +1740,7 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     sampleWorld = { width, height, elevation, buffer: rendered.buffer, relief: rendered.relief }
   }
   const params: ClimateParams = message.weather ?? defaultWeatherParams()
-  const chain = computeClimateChain(sampleWorld.elevation, width, height, params)
+  const chain = computeClimateChain(sampleWorld.elevation, domain, params)
   const preview: WorkerPlanetPreviewDataMessage = {
     type: 'planetPreviewData',
     width,

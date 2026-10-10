@@ -2,7 +2,7 @@ import type { SpringFeature } from './hydrogeology'
 import type { FlowRouting } from './flowRouting'
 import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
-import { wrapValue } from '../core/field'
+import type { DomainGrid } from '../core/domain'
 import { buildChannelMaskOn, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE } from './hydrology'
 import type { RegimeInputs, RiverPolylines, WaterBody } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
@@ -395,8 +395,8 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
       else if (dx < -width / 2) dx += width
       if (dy > height / 2) dy -= height
       else if (dy < -height / 2) dy += height
-      cellX[last] = wrapValue(cellX[last - 1] + f * dx, width)
-      cellY[last] = wrapValue(cellY[last - 1] + f * dy, height)
+      cellX[last] = sub.domain.wrapX(cellX[last - 1] + f * dx)
+      cellY[last] = sub.domain.wrapY(cellY[last - 1] + f * dy)
     }
   }
   return { width, height, substrate: sub.kind, nodes, reaches, cells, cellX, cellY, bodies: bodies.slice() }
@@ -405,10 +405,9 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
 // The raster cell under a texel position — how a raster consumer (the
 // coast, the sediment basins) places a graph node or reach cell, whatever
 // substrate the graph came from. On a raster graph it is the cell itself.
-export function rasterCellAt(x: number, y: number, width: number, height: number): number {
-  const cx = ((Math.floor(x) % width) + width) % width
-  const cy = ((Math.floor(y) % height) + height) % height
-  return cy * width + cx
+// `grid`: the raster's grid over the domain, one cell per texel.
+export function rasterCellAt(x: number, y: number, grid: DomainGrid): number {
+  return grid.index(Math.floor(x), Math.floor(y))
 }
 
 // Seam test for consecutive line points: a jump of more than half the

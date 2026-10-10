@@ -1,5 +1,6 @@
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
 import { detExp, detLog, detPow } from '../core/detMath'
+import type { DomainGrid } from '../core/domain'
 
 // FLEXURAL ISOSTASY (ADAPTIVE_MESH_PLAN.md phase 5.3, decision 5 of
 // docs/decisions/adaptive-mesh.md): the lithosphere answers a change of
@@ -58,9 +59,14 @@ function bandAlphaKm(band: number): number {
   return BAND_BASE_KM * detPow(BAND_STEP, band)
 }
 
-// A toroidal separable Gaussian blur of `field` in place, σ in cells.
-function blurToroidal(field: Float32Array, resX: number, resY: number, sigmaCells: number, scratch: Float32Array): void {
+// A separable Gaussian blur of `field` in place over its grid, σ in cells.
+// The wrapped taps come from the grid's tables, so the kernel loops stay
+// plain arithmetic.
+function blurOnGrid(field: Float32Array, grid: DomainGrid, sigmaCells: number, scratch: Float32Array): void {
+  const { resX, resY } = grid
   const radius = Math.max(1, Math.ceil(3 * sigmaCells))
+  const cols = grid.colTable(radius)
+  const rows = grid.rowTable(radius)
   const kernel = new Float64Array(2 * radius + 1)
   let sum = 0
   for (let k = -radius; k <= radius; k++) { const w = detExp(-(k * k) / (2 * sigmaCells * sigmaCells)); kernel[k + radius] = w; sum += w }
@@ -69,14 +75,14 @@ function blurToroidal(field: Float32Array, resX: number, resY: number, sigmaCell
     const row = y * resX
     for (let x = 0; x < resX; x++) {
       let acc = 0
-      for (let k = -radius; k <= radius; k++) acc += kernel[k + radius] * field[row + (((x + k) % resX) + resX) % resX]
+      for (let k = -radius; k <= radius; k++) acc += kernel[k + radius] * field[row + cols[x + k + radius]]
       scratch[row + x] = acc
     }
   }
   for (let x = 0; x < resX; x++) {
     for (let y = 0; y < resY; y++) {
       let acc = 0
-      for (let k = -radius; k <= radius; k++) acc += kernel[k + radius] * scratch[((((y + k) % resY) + resY) % resY) * resX + x]
+      for (let k = -radius; k <= radius; k++) acc += kernel[k + radius] * scratch[rows[y + k + radius] + x]
       field[y * resX + x] = acc
     }
   }
@@ -84,10 +90,10 @@ function blurToroidal(field: Float32Array, resX: number, resY: number, sigmaCell
 
 // The plate's deflection, metres (+ up), for a load change `loadM`
 // (metres of rock added per cell, negative where removed) with the
-// elastic thickness `teKm` per cell, both on a raster of `resX` × `resY`
-// cells `cellKm` wide.
-export function flexuralResponse(loadM: Float32Array, teKm: Float32Array, resX: number, resY: number, cellKm: number): Float32Array {
-  const n = resX * resY
+// elastic thickness `teKm` per cell, both on the raster `grid` of cells
+// `cellKm` wide.
+export function flexuralResponse(loadM: Float32Array, teKm: Float32Array, grid: DomainGrid, cellKm: number): Float32Array {
+  const n = grid.resX * grid.resY
   const T = TECTONICS_TUNING
   const compensation = (T.flexureCrustDensity / T.flexureMantleDensity) * T.flexureDeflectionScale
   const bands: (Float32Array | null)[] = new Array(BAND_COUNT).fill(null)
@@ -104,20 +110,25 @@ export function flexuralResponse(loadM: Float32Array, teKm: Float32Array, resX: 
   for (let b = 0; b < BAND_COUNT; b++) {
     const field = bands[b]
     if (!field) continue
-    blurToroidal(field, resX, resY, bandAlphaKm(b) / cellKm, scratch)
+    blurOnGrid(field, grid, bandAlphaKm(b) / cellKm, scratch)
     for (let i = 0; i < n; i++) w[i] -= compensation * field[i]
   }
   return w
 }
 
-// Torus-wrapped bilinear read of the deflection raster at a world point.
-export function deflectionAt(w: Float32Array, resX: number, resY: number, x: number, y: number, worldWidth: number, worldHeight: number): number {
-  const u = (x / worldWidth) * resX - 0.5
-  const v = (y / worldHeight) * resY - 0.5
+// Bilinear read of the deflection raster at a point of its grid's domain,
+// wrapped by the grid.
+export function deflectionAt(w: Float32Array, grid: DomainGrid, x: number, y: number): number {
+  const { resX, resY } = grid
+  const u = (x / grid.domain.width) * resX - 0.5
+  const v = (y / grid.domain.height) * resY - 0.5
   const x0 = Math.floor(u)
   const y0 = Math.floor(v)
   const fx = u - x0
   const fy = v - y0
-  const at = (xx: number, yy: number): number => w[(((yy % resY) + resY) % resY) * resX + (((xx % resX) + resX) % resX)]
-  return (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy
+  const c0 = grid.wrapCol(x0)
+  const c1 = grid.wrapCol(x0 + 1)
+  const r0 = grid.wrapRow(y0) * resX
+  const r1 = grid.wrapRow(y0 + 1) * resX
+  return (w[r0 + c0] * (1 - fx) + w[r0 + c1] * fx) * (1 - fy) + (w[r1 + c0] * (1 - fx) + w[r1 + c1] * fx) * fy
 }

@@ -1,5 +1,5 @@
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
-import type { Domain } from '../core/domain'
+import type { Domain, DomainGrid } from '../core/domain'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { rasterCellAt, type RiverGraph } from './riverGraph'
 import { detHypot } from '../core/detMath'
@@ -108,14 +108,15 @@ function normaliseToP90(field: Float32Array, coast: Uint8Array): void {
 
 // The nearest coast cell to `cell` within `radius` cells (rings outward,
 // the first hit), or `cell` itself when none is.
-function nearestCoastCell(coast: Uint8Array, cell: number, width: number, height: number, radius: number): number {
+function nearestCoastCell(coast: Uint8Array, cell: number, grid: DomainGrid, radius: number): number {
+  const width = grid.resX
   const cx = cell % width
   const cy = (cell - cx) / width
   for (let r = 1; r <= radius; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
-        const c = (((cy + dy) % height + height) % height) * width + (((cx + dx) % width + width) % width)
+        const c = grid.index(cx + dx, cy + dy)
         if (coast[c]) return c
       }
     }
@@ -128,7 +129,8 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
   const n = width * height
   const cellKm = cellM / 1000
   const isSea = (c: number): boolean => elevation[c] <= SEA_LEVEL
-  const at = (x: number, y: number): number => ((y + height) % height) * width + ((x + width) % width)
+  const grid = domain.grid(width, height)
+  const at = (x: number, y: number): number => grid.index(x, y)
 
   // Coast cells.
   const coast = new Uint8Array(n)
@@ -153,13 +155,13 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
       const node = graph.nodes[r.to]
       // Graph places as raster cells: the graph may be the mesh's
       // (phase 4.3), so its ids are read through their positions.
-      if (node.kind !== 'mouth' || !isSea(rasterCellAt(node.x, node.y, width, height))) continue
+      if (node.kind !== 'mouth' || !isSea(rasterCellAt(node.x, node.y, grid))) continue
       const k = r.cellStart + r.cellCount - 2
-      let last = k >= r.cellStart ? rasterCellAt(graph.cellX[k], graph.cellY[k], width, height) : undefined
+      let last = k >= r.cellStart ? rasterCellAt(graph.cellX[k], graph.cellY[k], grid) : undefined
       // A mesh reach's last land node need not sit ON a raster coast cell
       // (its nodes stand kilometres apart): the nearest coast cell within
       // three cells is the mouth's.
-      if (last !== undefined && !coast[last]) last = nearestCoastCell(coast, last, width, height, 3)
+      if (last !== undefined && !coast[last]) last = nearestCoastCell(coast, last, grid, 3)
       if (last === undefined || !coast[last]) continue
       if (mouthAt[last] < 0 || graph.reaches[mouthAt[last]].dischargeOut < r.dischargeOut) mouthAt[last] = r.id
       if (courseOf.get(r.id)) deltaAt[last] = 1

@@ -1,5 +1,6 @@
 import type { FlowRouting, MfdEdges } from './flowRouting'
 import type { EngineIndex, EngineViews } from './erosionEngineState'
+import type { Domain } from '../core/domain'
 
 // EROSION V2 — the bridge to the hydrology (docs/design/erosion-v2.md,
 // "Hydrology merges into the engine").
@@ -28,7 +29,9 @@ import type { EngineIndex, EngineViews } from './erosionEngineState'
 // deliberately single-flow), but the contract is honest rather than
 // stubbed — a consumer that walks routing.mfd gets the real edges.
 
-export function engineFlowRouting(views: EngineViews, index: EngineIndex, poppedCount: number, elevations: Float32Array): FlowRouting {
+// `domain`: what the raster covers, one cell per unit (the index's width ×
+// height).
+export function engineFlowRouting(views: EngineViews, index: EngineIndex, domain: Domain, poppedCount: number, elevations: Float32Array): FlowRouting {
   const { width, height, active, activeCount } = index
   const n = width * height
   const filled = new Float32Array(n)
@@ -58,5 +61,5 @@ export function engineFlowRouting(views: EngineViews, index: EngineIndex, popped
   const popOrder = new Int32Array(poppedCount)
   for (let i = 0; i < poppedCount; i++) popOrder[i] = active[views.popOrder[i]]
   const mfd: MfdEdges = { outEdgeStart, outEdgeDirections, outEdgeWeights }
-  return { width, height, filled, flowTarget, mfd, popOrder, poppedCount }
+  return { width, height, domain, grid: domain.grid(width, height), filled, flowTarget, mfd, popOrder, poppedCount }
 }

@@ -1,11 +1,10 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { bandFactor, evaporation } from './precipitation'
-import { sampleBilinearGrid, wrapIndex2 } from '../core/field'
+import type { DomainGrid } from '../core/domain'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
-const wrapIndex = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
 
 // SALINITY AND THE CONVEYOR (build step 9 of
@@ -36,7 +35,8 @@ export interface Salinity {
 // the same zonal profile the model rains by, times the evaporation of the
 // sea there — wet at the equator, dry in the subtropics, moderate at mid
 // latitudes, little at the poles, as Earth's oceans are.
-export function computeSalinity(seaTemperature: Float32Array, landRain: Float32Array, currents: Float32Array, land: Uint8Array, equatorOffset: number, humidity: number): Salinity {
+// `grid`: the climate grid.
+export function computeSalinity(seaTemperature: Float32Array, landRain: Float32Array, currents: Float32Array, land: Uint8Array, grid: DomainGrid, equatorOffset: number, humidity: number): Salinity {
   const n = RX * RY
   const T = CLIMATE_TUNING
   const seaRain = new Float32Array(n)
@@ -59,7 +59,7 @@ export function computeSalinity(seaTemperature: Float32Array, landRain: Float32A
     const x = i % RX
     const y = (i - x) / RX
     for (const [dx, dy] of NEIGHBOURS) {
-      const j = wrapIndex(x + dx, y + dy)
+      const j = grid.index(x + dx, y + dy)
       if (nearestSea[j] >= 0) continue
       nearestSea[j] = nearestSea[i]
       queue.push(j)
@@ -92,7 +92,7 @@ export function computeSalinity(seaTemperature: Float32Array, landRain: Float32A
         if (land[i]) continue
         const u = currents[i * 2]
         const v = currents[i * 2 + 1]
-        const upstream = sampleBilinearGrid(salinity, RX, RY, gx - u * T.currentsAdvectStep, gy - v * T.currentsAdvectStep)
+        const upstream = grid.sampleBilinear(salinity, gx - u * T.currentsAdvectStep, gy - v * T.currentsAdvectStep)
         next[i] = upstream * (1 - T.salinityRelax) + T.salinityMeanPsu * T.salinityRelax + budget[i]
       }
     }

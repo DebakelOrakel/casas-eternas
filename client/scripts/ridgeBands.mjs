@@ -109,7 +109,7 @@ for (let e = 0; e < ARCHEAN_EPOCHS; e++) M.archeanStep.archeanStep(archean)
 const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < EPOCHS; e++) M.sim.stepEpoch(sim)
 const baseline = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, sim.domain, sim.warpSeed)
-const buckets = M.field.buildFeatureBuckets(sim.features, W, H)
+const buckets = M.field.buildFeatureBuckets(sim.features, sim.domain)
 const fineSalt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
 console.log(`world "${SEED}": ${sim.rafts.length} rafts, ${sim.features.length} features\n`)
 
@@ -118,7 +118,7 @@ for (const c of CANDIDATES) {
   const el = new Float32Array(W * H)
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
+      const s = M.field.warpedSamplePoint(x, y, sim.domain, sim.warpSeed)
       const ridge = ridgedWith(c.cells, c.amps, s.wx, s.wy, sim.warpSeed)
       // computeElevation subtracts RIDGE_MEAN internally, so hand it a value
       // already re-centred onto that constant: ridge - mean + RIDGE_MEAN.
@@ -132,7 +132,7 @@ for (const c of CANDIDATES) {
   // forced by the sim — v1's pass is gone (P5 teardown); "after erosion" now
   // means the same solve the generator runs.
   const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, el, sim.domain, {})
-  const ero = await M.erosionPassV2.runErosionPassV2(el, W, H, forcing, { age: 40, params })
+  const ero = await M.erosionPassV2.runErosionPassV2(el, sim.domain, forcing, { age: 40, params })
   const m = crestMetrics(ero.elevations)
   const km = c.cells.map((n) => Math.round(WORLD_KM / n)).join('/')
   console.log(`${c.name} mean=${mean.toFixed(4)}  ${km} km` +

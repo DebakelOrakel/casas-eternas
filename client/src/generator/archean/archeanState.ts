@@ -58,10 +58,11 @@ export const coastalWarpSeed = (seedString: string): number => hashSeedString(`$
 
 export function createArcheanSimulation(seedString: string, width: number, height: number, seaLevelOffset = 0): ArcheanSimulation {
   const random = mulberry32(hashSeedString(seedString))
+  const domain = torusDomain(width, height)
   return {
     width,
     height,
-    domain: torusDomain(width, height),
+    domain,
     epoch: 0,
     random,
     // Same salted derivation the old createPlateSimulation used, so a seed produces
@@ -70,7 +71,7 @@ export function createArcheanSimulation(seedString: string, width: number, heigh
     // The Archean starts with a wet planet and no land: Jack Hills zircons put
     // liquid water at the surface by ~4.4 Ga, well before the Archean begins.
     rafts: [],
-    mantle: createMantleField(random),
+    mantle: createMantleField(random, domain),
     upwellingStreak: new Int16Array(MANTLE_RES_X * MANTLE_RES_Y),
     lastRecycled: 0,
     lastSplits: 0,

@@ -1,6 +1,5 @@
 import type { PlateSeed } from './plateSeeds'
 import type { Domain } from '../core/domain'
-import { wrapValue } from '../core/field'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { detCos, detSin } from '../core/detMath'
 
@@ -78,8 +77,8 @@ export function getVelocityAt(point: PlateSeed, motion: PlateMotion, domain: Dom
 export function advancePointByMotion(x: number, y: number, motion: PlateMotion, step: number, domain: Domain): { x: number; y: number } {
   const rotated = domain.rotateAround(x, y, motion.centroidX, motion.centroidY, motion.spin * step)
   return {
-    x: wrapValue((rotated.x + motion.driftX * step), domain.width),
-    y: wrapValue((rotated.y + motion.driftY * step), domain.height),
+    x: domain.wrapX(rotated.x + motion.driftX * step),
+    y: domain.wrapY(rotated.y + motion.driftY * step),
   }
 }
 

@@ -136,6 +136,7 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
   // EXPOSURE: the wind at the climate cell, the fetch upwind over the sea
   // on the climate raster (F5's rule), speed² × fetch, to the p90.
   const fetchCap = Math.max(1, Math.round((T.coastFetchCapKm * 1000) / ((width / RX) * cellM)))
+  const climate = mesh.domain.grid(RX, RY)
   const windU = new Float32Array(slots)
   const windV = new Float32Array(slots)
   for (let i = 0; i < shore.length; i++) {
@@ -157,8 +158,8 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
     for (let k = 0; k < fetchCap; k++) {
       px += dx
       py += dy
-      const cx = ((Math.floor(px) % RX) + RX) % RX
-      const cy = ((Math.floor(py) % RY) + RY) % RY
+      const cx = climate.wrapCol(Math.floor(px))
+      const cy = climate.wrapRow(Math.floor(py))
       if (coarseZ[cy * RX + cx] > SEA_LEVEL) break
       fetch++
     }

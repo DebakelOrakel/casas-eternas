@@ -1,5 +1,6 @@
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
-import { downsampleBox, sampleBilinearWorld } from '../core/field'
+import { downsampleBox } from '../core/field'
+import type { Domain } from '../core/domain'
 import { CLIMATE_TUNING } from '../climate/climateTuneParams'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { SURFACE_TUNING } from './surfaceTuneParams'
@@ -36,6 +37,8 @@ export interface IceFlowInputs {
   elevation: Float32Array
   width: number
   height: number
+  // What the raster covers, one cell per unit.
+  domain: Domain
   temperature: Float32Array
   precipitation: Float32Array
   climateResX: number
@@ -54,9 +57,11 @@ export interface IceFlowResult {
 const D8: [number, number][] = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]]
 
 export function computeIceThickness(input: IceFlowInputs): IceFlowResult {
-  const { elevation, width, height, temperature, precipitation, climateResX, climateResY, cellM } = input
+  const { elevation, width, height, domain, temperature, precipitation, climateResX, climateResY, cellM } = input
   const n = width * height
-  const at = (x: number, y: number): number => ((y + height) % height) * width + ((x + width) % width)
+  const grid = domain.grid(width, height)
+  const climate = domain.grid(climateResX, climateResY)
+  const at = (x: number, y: number): number => grid.index(x, y)
   const t = SURFACE_TUNING
 
   // The coarse cell's mean height, for the lapse correction.
@@ -70,10 +75,10 @@ export function computeIceThickness(input: IceFlowInputs): IceFlowResult {
       const c = y * width + x
       const z = elevation[c]
       if (z <= SEA_LEVEL) continue
-      const tc = sampleBilinearWorld(temperature, climateResX, climateResY, x + 0.5, y + 0.5, width, height)
-      const zc = sampleBilinearWorld(coarseZ, climateResX, climateResY, x + 0.5, y + 0.5, width, height)
+      const tc = climate.sampleBilinearAt(temperature, x + 0.5, y + 0.5)
+      const zc = climate.sampleBilinearAt(coarseZ, x + 0.5, y + 0.5)
       const local = tc - CLIMATE_TUNING.lapseCPerElevation * (z - Math.max(SEA_LEVEL, zc))
-      let p = sampleBilinearWorld(precipitation, climateResX, climateResY, x + 0.5, y + 0.5, width, height)
+      let p = climate.sampleBilinearAt(precipitation, x + 0.5, y + 0.5)
       if (p === OCEAN_PRECIP || p < 0) p = 0
       const snow = local <= -5 ? 1 : local >= 5 ? 0 : (5 - local) / 10
       const accumulation = (p / 1000) * snow * t.iceSnowToIce

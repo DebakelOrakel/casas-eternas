@@ -1,6 +1,5 @@
 import { classifyBoundary } from '../boundaryClassification'
 import { detectBoundaries } from '../boundaryDetection'
-import { wrapValue } from '../../core/field'
 import { raftMembership } from '../../crust/raftField'
 import { accreteToNearestRaft } from '../../crust/raftLifecycle'
 import { worldEpoch } from '../../core/worldTime'
@@ -36,7 +35,7 @@ export interface BoundaryPassResult {
 // one each) plate rift, plate merge and continental rift this epoch has earned.
 // Applying those is phases 4 and 5 — this phase only decides.
 export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
-  const { width, height, domain } = sim
+  const { domain } = sim
   // 2. Detect this epoch's boundaries against the fixed lattice.
   const boundaries = detectBoundaries(sim.lattice, sim.seeds, domain)
 
@@ -161,8 +160,8 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
         const offsetLen = Math.sqrt(offsetX * offsetX + offsetY * offsetY) || 1
         offsetX /= offsetLen
         offsetY /= offsetLen
-        const trenchX = wrapValue((boundary.x + offsetX * TECTONICS_TUNING.trenchOffset), width)
-        const trenchY = wrapValue((boundary.y + offsetY * TECTONICS_TUNING.trenchOffset), height)
+        const trenchX = domain.wrapX(boundary.x + offsetX * TECTONICS_TUNING.trenchOffset)
+        const trenchY = domain.wrapY(boundary.y + offsetY * TECTONICS_TUNING.trenchOffset)
         addDeposit(
           // Trenches are always oceanic (the subducting slab), so they subside.
           findOrCreateFeatureIndex(sim.features, trenchX, trenchY, boundary.plateA, boundary.plateB, subductingPlate, tangentX, tangentY, 'trench', true, domain),
@@ -179,8 +178,8 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
         const inX = domain.deltaX(continentalSeed.x, boundary.x)
         const inY = domain.deltaY(continentalSeed.y, boundary.y)
         const inLen = Math.sqrt(inX * inX + inY * inY) || 1
-        const accreteX = (((boundary.x + (inX / inLen) * TECTONICS_TUNING.accretionInset) % width) + width) % width
-        const accreteY = (((boundary.y + (inY / inLen) * TECTONICS_TUNING.accretionInset) % height) + height) % height
+        const accreteX = domain.wrapX(boundary.x + (inX / inLen) * TECTONICS_TUNING.accretionInset)
+        const accreteY = domain.wrapY(boundary.y + (inY / inLen) * TECTONICS_TUNING.accretionInset)
         accreteToNearestRaft(sim.rafts, accreteX, accreteY, TECTONICS_TUNING.accretionBlobRadius, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.accretionMinGapSq, TECTONICS_TUNING.accretionMaxAttachSq, domain)
       }
     }

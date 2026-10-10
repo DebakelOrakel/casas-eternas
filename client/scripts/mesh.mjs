@@ -691,7 +691,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const key = (x, y) => `${x},${y}`
     const edgeNodes = (t) => {
       const map = new Map()
-      for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === T.TILE_ROLE_EDGE) map.set(key(T.tileWorldX(t, t.mesh.vx[v], W), T.tileWorldY(t, t.mesh.vy[v], H)), v)
+      for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === T.TILE_ROLE_EDGE) map.set(key(T.tileWorldX(t, t.mesh.vx[v], domain), T.tileWorldY(t, t.mesh.vy[v], domain)), v)
       return map
     }
     const edgeA = edgeNodes(A), edgeB = edgeNodes(B)
@@ -741,7 +741,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
         if (!t.mesh.tAlive[tri]) continue
         const vs = [0, 1, 2].map((c) => t.mesh.tris[3 * tri + c])
         if (vs.some((v) => t.role[v] === T.TILE_ROLE_HALO)) continue
-        set.add(vs.map((v) => `${t.role[v]}@` + key(T.tileWorldX(t, t.mesh.vx[v], W), T.tileWorldY(t, t.mesh.vy[v], H)) + ':' + t.z[v]).sort().join('|'))
+        set.add(vs.map((v) => `${t.role[v]}@` + key(T.tileWorldX(t, t.mesh.vx[v], domain), T.tileWorldY(t, t.mesh.vy[v], domain)) + ':' + t.z[v]).sort().join('|'))
       }
       return set
     }
@@ -769,7 +769,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       parent, parentGraph: level.graph, width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
       uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
       precipitation: precip, climateResX: CRX, climateResY: CRY,
-      meanLandWater: M.hydro.meanLandRunoff(precip, macro, W, H, CRX, CRY),
+      meanLandWater: M.hydro.meanLandRunoff(precip, macro, domain, CRX, CRY),
       upstream: [],
     }
     const t2 = performance.now()
@@ -848,7 +848,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       parent: parent1, parentGraph: level.graph, width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
       uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
       precipitation: precip, climateResX: CRX, climateResY: CRY,
-      meanLandWater: M.hydro.meanLandRunoff(precip, macro, W, H, CRX, CRY),
+      meanLandWater: M.hydro.meanLandRunoff(precip, macro, domain, CRX, CRY),
       upstream: [],
     }
     // A level-3 tile on a level-2 seam with land, and its east neighbour.
@@ -856,11 +856,11 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     let pick = null
     for (let ty = 0; ty < r3 && !pick; ty++) for (let tx = 0; tx < c3 && !pick; tx++) {
       const c = T.tileCorner({ level: 3, x: tx, y: ty }, s3)
-      if (sampler.heightAt((c.x + 4) % W, (c.y + 4) % H) > 0 && T.parentTilesOf({ level: 3, x: tx, y: ty }, s2, W, H).length >= 2) pick = { level: 3, x: tx, y: ty }
+      if (sampler.heightAt((c.x + 4) % W, (c.y + 4) % H) > 0 && T.parentTilesOf({ level: 3, x: tx, y: ty }, s2, domain).length >= 2) pick = { level: 3, x: tx, y: ty }
     }
     const pair = [pick, { level: 3, x: (pick.x + 1) % c3, y: pick.y }]
     const needed = new Map()
-    for (const t of pair) for (const p of T.parentTilesOf(t, s2, W, H)) needed.set(`${p.x},${p.y}`, p)
+    for (const t of pair) for (const p of T.parentTilesOf(t, s2, domain)) needed.set(`${p.x},${p.y}`, p)
     const pieces = []
     for (const p of needed.values()) {
       const art = M.tileArtifacts.bakedTileToArtifact(await M.tileBake.bakeMeshTile(inputs2, p, { rounds: 2 }))
@@ -883,18 +883,18 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     // Each tile on its OWN patchwork, as a worker builds it: the two share
     // some level-2 tiles, not all.
     const own = (t) => {
-      const mine = pieces.filter((piece) => T.parentTilesOf(t, s2, W, H).some((p) => p.x === piece.tile.x && p.y === piece.tile.y))
+      const mine = pieces.filter((piece) => T.parentTilesOf(t, s2, domain).some((p) => p.x === piece.tile.x && p.y === piece.tile.y))
       const joined = T.tileParentFromTiles(mine, W, H)
       return { mesh: joined.mesh, z: joined.z, discharge: null, sampler: M.sampler.createMeshSampler(joined.mesh, joined.z), macro: sampler }
     }
     const opts = { seed: 1234, width: W, height: H }
     const A = T.buildTileMesh(own(pair[0]), pair[0], opts), B = T.buildTileMesh(own(pair[1]), pair[1], opts)
-    const edge = (t) => { const m = new Map(); for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === T.TILE_ROLE_EDGE) m.set(`${T.tileWorldX(t, t.mesh.vx[v], W)},${T.tileWorldY(t, t.mesh.vy[v], H)}`, v); return m }
+    const edge = (t) => { const m = new Map(); for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === T.TILE_ROLE_EDGE) m.set(`${T.tileWorldX(t, t.mesh.vx[v], domain)},${T.tileWorldY(t, t.mesh.vy[v], domain)}`, v); return m }
     const eA = edge(A), eB = edge(B)
     const sharedX = T.tileCorner(pair[1], s3).x % W
     let shared = 0, bad = 0
     for (const [k, v] of eA) { if (Number(k.split(',')[0]) !== sharedX) continue; shared++; const u = eB.get(k); if (u === undefined || A.z[v] !== B.z[u]) bad++ }
-    check('level-3 tiles on the patchwork are valid and meet on their shared edge', A.mesh.validate().length === 0 && B.mesh.validate().length === 0 && shared === s3.edgeSteps + 1 && bad === 0, `${shared} shared, ${bad} differ; tile ${pick.x},${pick.y} over ${T.parentTilesOf(pick, s2, W, H).length} level-2 tiles`)
+    check('level-3 tiles on the patchwork are valid and meet on their shared edge', A.mesh.validate().length === 0 && B.mesh.validate().length === 0 && shared === s3.edgeSteps + 1 && bad === 0, `${shared} shared, ${bad} differ; tile ${pick.x},${pick.y} over ${T.parentTilesOf(pick, s2, domain).length} level-2 tiles`)
     const baked3 = await M.tileBake.bakeMeshTile({ ...inputs2, parent: parent3 }, pair[0], { rounds: 2 })
     let stuck = 0, drained = 0
     const target = baked3.routing.flowTarget, bt = baked3.tile
@@ -953,7 +953,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       parent: parent1, parentGraph: level.graph, width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
       uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
       precipitation: precip, climateResX: CRX, climateResY: CRY,
-      meanLandWater: M.hydro.meanLandRunoff(precip, macro, W, H, CRX, CRY), upstream: [],
+      meanLandWater: M.hydro.meanLandRunoff(precip, macro, domain, CRX, CRY), upstream: [],
     }
     const ups = []
     for (const u of down.upstream) {
@@ -964,7 +964,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     // What the upstream tiles let out on the edges they share with it.
     const spec = T.tileSpec(2)
     const own = new Set()
-    for (let v = 0; v < fed.tile.mesh.vertexSlots; v++) if (fed.tile.mesh.vAlive[v] && fed.tile.role[v] === T.TILE_ROLE_EDGE) own.add(`${T.tileWorldX(fed.tile, fed.tile.mesh.vx[v], W)},${T.tileWorldY(fed.tile, fed.tile.mesh.vy[v], H)}`)
+    for (let v = 0; v < fed.tile.mesh.vertexSlots; v++) if (fed.tile.mesh.vAlive[v] && fed.tile.role[v] === T.TILE_ROLE_EDGE) own.add(`${T.tileWorldX(fed.tile, fed.tile.mesh.vx[v], domain)},${T.tileWorldY(fed.tile, fed.tile.mesh.vy[v], domain)}`)
     let sent = 0
     for (const u of ups) {
       const c = T.tileCorner(u.tile, spec)
@@ -998,7 +998,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const load = new Float32Array(RX * RY)
     const te = new Float32Array(RX * RY).fill(teKm)
     for (let y = 0; y < RY; y++) for (let x = 62; x <= 65; x++) load[y * RX + x] = 2000
-    return { load, te, w: M.flexure.flexuralResponse(load, te, RX, RY, cellKm) }
+    return { load, te, w: M.flexure.flexuralResponse(load, te, M.domain.torusDomain(RX, RY).grid(RX, RY), cellKm) }
   }
   const soft = ridge(20), stiff = ridge(70)
   const row = (r, x) => r.w[32 * RX + x]
@@ -1021,10 +1021,10 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
 {
   const W = 256, H = 128
   const feature = { x: 128, y: 64, thickness: 1, tangentX: 1, tangentY: 0, kind: 'range', subsides: false, plateA: 0, plateB: 1, movesWithPlate: 0, epochsSinceDeposit: 0 }
-  const buckets = M.field.buildFeatureBuckets([feature], W, H)
+  const foldDomain = M.domain.torusDomain(W, H)
+  const buckets = M.field.buildFeatureBuckets([feature], foldDomain)
   const T = M.tectonicsTune.TECTONICS_TUNING
   const lambda = (T.foldWavelengthKm * 1000) / M.mapConfig.METERS_PER_CELL
-  const foldDomain = M.domain.torusDomain(W, H)
   const at = (x, y) => M.folds.foldFactorAt(buckets, x, y, foldDomain)
   check('the axis is an anticline', Math.abs(at(128, 64) - (1 + T.foldAmplitude)) < 1e-6, at(128, 64).toFixed(3))
   check('half a wavelength across, a syncline', Math.abs(at(128, 64 + lambda / 2) - (1 - T.foldAmplitude)) < 1e-6, at(128, 64 + lambda / 2).toFixed(3))
@@ -1283,11 +1283,12 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
     const RX = M.climateField.CLIMATE_RES_X, RY = M.climateField.CLIMATE_RES_Y
     const sub = M.meshHydro.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
     const coarseZ = M.raster.rasteriseNodeField(terrain.mesh, terrain.z, RX, RY)
-    const weather = M.weather.computeWeather(coarseZ, RX, RY, M.weather.defaultWeatherParams())
+    const coarse = M.domain.torusDomain(RX, RY)
+    const weather = M.weather.computeWeather(coarseZ, coarse, M.weather.defaultWeatherParams())
     const precip = weather.seasonal.annual
     const discharge = M.hydro.accumulateDischargeOn(sub, terrain.z, precip, RX, RY)
     const lakes = M.hydro.computeLakesOn(sub, discharge, terrain.z, weather.temperature, precip, RX, RY)
-    const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), M.hydro.meanLandRunoff(precip, coarseZ, RX, RY, RX, RY))
+    const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), M.hydro.meanLandRunoff(precip, coarseZ, coarse, RX, RY))
     const regime = M.hydro.accumulateRegimeInputsOn(sub, terrain.z, weather.temperature, precip, weather.seasonal.index, RX, RY)
     const graph = M.graph.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: M.hydro.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY) })
     const biomes = M.biomes.computeBiomes(weather.temperature, precip, weather.seasonalAmplitude, weather.seasonal.index, coarseZ, RX, RY)
@@ -1506,14 +1507,14 @@ if (MODE === 'measure') {
     const meshZ0 = state.get('z').slice()
     const areas = new Float64Array(mesh.vertexSlots)
     for (const v of aliveVertices(mesh)) areas[v] = mesh.voronoiArea(v)
-    const nodeForcing = M.forcing.assembleNodeForcing(coarse, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, meshZ0, areas, RW, RH, controls)
+    const nodeForcing = M.forcing.assembleNodeForcing(coarse, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, meshZ0, areas, real, controls)
     let t1 = performance.now()
     const meshRun = await M.erosion.runMeshErosion(mesh, meshZ0, nodeForcing.forcing, { age: AGE, params: nodeForcing.params })
     const meshMs = performance.now() - t1
     // The raster: the save's elevation, the bake's forcing assembly.
-    const rasterForcing = M.forcing.assembleFineForcing(coarse, z, RW, RH, controls)
+    const rasterForcing = M.forcing.assembleFineForcing(coarse, z, real, controls)
     t1 = performance.now()
-    const rasterRun = await M.passV2.runErosionPassV2(z, RW, RH, rasterForcing.forcing, { age: AGE, params: rasterForcing.params })
+    const rasterRun = await M.passV2.runErosionPassV2(z, real, rasterForcing.forcing, { age: AGE, params: rasterForcing.params })
     const rasterMs = performance.now() - t1
     const meshGrid = M.raster.rasteriseNodeField(mesh, meshRun.z, RW, RH)
     const stats = (field, name) => {

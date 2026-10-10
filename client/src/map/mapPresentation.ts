@@ -1,5 +1,6 @@
 import { computeReliefBytes } from '../generator/render/reliefShade'
 import { upscaleBilinearToroidal } from '../generator/core/field'
+import { torusDomain } from '../generator/core/domain'
 import { buildPaperBase, buildUnshadedPaperBase } from './paperBase'
 import { dilateLandBiomes, expandBiomeIds } from './biomeIds'
 import { applyLakeWash, applyTerrainWash, DEFAULT_TERRAIN_WASH } from './terrainPalette'
@@ -192,6 +193,9 @@ const smoothstep = (edge0: number, edge1: number, x: number): number => {
 
 export function createMapPresentation(options: MapPresentationOptions): MapPresentation {
   const { textureWidth, textureHeight, onPaper, onSurfaces } = options
+  // The texture's own frame, one texel per unit, and its grid.
+  const texture = torusDomain(textureWidth, textureHeight)
+  const textureGrid = texture.grid(textureWidth, textureHeight)
 
   // The paper's hillshade bytes and the per-texel biome ids, retained so a
   // repaint costs neither again.
@@ -372,7 +376,7 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
     }
     const ids = computeBiomesFine(
       temperature.data, precipitationEffective.data, seasonalAmplitude.data, monsoonIndex.data,
-      paperField, textureWidth, textureHeight, dryLand, seaLevelTemperature,
+      paperField, texture, dryLand, seaLevelTemperature,
     )
     // Hydrology-state biomes (HYDROLOGY_STATE_BIOMES — the classification has
     // no way to reach them) are carried over from the macro authority rather
@@ -579,7 +583,7 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
       } else if (fieldWidth !== textureWidth) {
         paperField = upscaleBilinearToroidal(field, fieldWidth, fieldHeight, textureWidth, textureHeight)
       }
-      lastRelief = computeReliefBytes(paperField, textureWidth, textureHeight)
+      lastRelief = computeReliefBytes(paperField, textureGrid)
       reclassifyBiomes(paperField)
       buildInteriorEdge()
       currentField = { data: field, width: fieldWidth, height: fieldHeight, detailSeed }

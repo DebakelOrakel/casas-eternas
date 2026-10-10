@@ -15,7 +15,7 @@ import { computeCratonOldnessField } from '../crust/raftField'
 import { deflectionAt, elasticThicknessKm, flexuralResponse } from '../tectonics/flexure'
 import { foldFactorAt } from '../tectonics/folds'
 import { buildFeatureBuckets } from '../elevation/elevationField'
-import { sampleOceanAge } from '../tectonics/oceanAge'
+import { oceanAgeGrid, sampleOceanAge } from '../tectonics/oceanAge'
 import { computeWeather, defaultWeatherParams, type Weather, type WeatherParams } from '../climate/weather'
 import { computeBiomes } from '../climate/biomes'
 import { coverField, COVER_TUNING } from '../surface/cover'
@@ -283,7 +283,7 @@ function baselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobInde
 // 2026-10-04 on 2048×1024).
 function solidBaselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobIndex): number {
   return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.domain, sim.warpSeed, sim.seaLevelOffset, blobs)
-    + dynamicTopographyAt(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, x, y, sim.width, sim.height)
+    + dynamicTopographyAt(sim.mantle, sim.domain.grid(MANTLE_RES_X, MANTLE_RES_Y), x, y)
 }
 
 // The terrain at the start of the history: the mesh from the synthesis,
@@ -308,6 +308,7 @@ function meshAreasOf(mesh: PeriodicTriangulation): Float32Array {
 export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTerrain, options: CoupledEpochOptions): Promise<CoupledEpochStats> {
   const { width, height } = sim
   const domain: Domain = terrain.mesh.domain
+  const climateGrid = domain.grid(CLIMATE_RES_X, CLIMATE_RES_Y)
   const mesh0 = terrain.mesh
   const nodesBefore = mesh0.aliveVertices
   const timing = { membership: 0, tectonics: 0, rebuild: 0, remesh: 0, baseline: 0, forcing: 0, erosion: 0, flexure: 0, climate: 0, lakes: 0, ice: 0, coast: 0 }
@@ -479,7 +480,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const paramsKey = JSON.stringify(weatherParams)
   const cached = terrain.weather
   const climateDue = climateDueAt(sim.epoch, cached, paramsKey, climateEvery)
-  const weather = climateDue || !cached ? computeWeather(coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y, weatherParams) : cached.result
+  const weather = climateDue || !cached ? computeWeather(coarseZ, domain.scaledTo(CLIMATE_RES_X, CLIMATE_RES_Y), weatherParams) : cached.result
   if (climateDue) terrain.weather = { epoch: sim.epoch, params: paramsKey, result: weather }
   const precipitation = weather.seasonal.annual
   const climateCellM = (width / CLIMATE_RES_X) * METERS_PER_CELL
@@ -521,9 +522,9 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     }
     const tillM = glacial.tillM[v]
     if (tillM > 0) {
-      const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
-      const precipHere = Math.max(0, upsampleAt(precipitation, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height))
-      const cratonHere = upsampleAt(cratonFieldForTill, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
+      const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
+      const precipHere = Math.max(0, upsampleAt(precipitation, climateGrid, mesh.vx[v], mesh.vy[v]))
+      const cratonHere = upsampleAt(cratonFieldForTill, climateGrid, mesh.vx[v], mesh.vy[v])
       iceCoastColumnM3 += tillM * areaM2
       deposit(column, v, tillM * SURFACE_TUNING.glacialTillCoarse, cratonHere, 1, tempC, precipHere, true)
       deposit(column, v, tillM * (1 - SURFACE_TUNING.glacialTillCoarse), cratonHere, 1, tempC, precipHere, false)
@@ -550,7 +551,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const { forcing, params } = assembleNodeForcing({
     uplift, hardness, forcingResX: CLIMATE_RES_X, forcingResY: CLIMATE_RES_Y,
     water: precipitation, waterResX: CLIMATE_RES_X, waterResY: CLIMATE_RES_Y, lithoSeed: erosionLithoSeed(sim.warpSeed),
-  }, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, zCanon, areas, width, height, options.controls ?? {})
+  }, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, zCanon, areas, domain, options.controls ?? {})
   // The column's word on the forcing: a node under a fill erodes as
   // sediment, not as its bedrock; and what a cut hands to the walk carries
   // the craton oldness and the crust hardness under the node (the coarse
@@ -558,7 +559,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const cratonField = cratonFieldForTill
   // THE FOLDS (phase 5.7): the uplift modulated across every range by the
   // buckling train — the same features the uplift field is built from.
-  const featureBuckets = buildFeatureBuckets(sim.features, width, height)
+  const featureBuckets = buildFeatureBuckets(sim.features, domain)
   let foldedArea = 0
   const cratonAge = new Float32Array(mesh.vertexSlots)
   const rockHard = new Float32Array(mesh.vertexSlots)
@@ -570,11 +571,11 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   let solifluctionArea = 0
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
-    cratonAge[v] = upsampleAt(cratonField, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
-    rockHard[v] = upsampleAt(hardness, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
+    cratonAge[v] = upsampleAt(cratonField, climateGrid, mesh.vx[v], mesh.vy[v])
+    rockHard[v] = upsampleAt(hardness, climateGrid, mesh.vx[v], mesh.vy[v])
     // The cover holds the ground: the erodibility falls with it, after the
     // column's word (a fill under forest is soft fill, held).
-    const c = zCanon[v] > 0 ? upsampleAt(cover, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height) : 0
+    const c = zCanon[v] > 0 ? upsampleAt(cover, climateGrid, mesh.vx[v], mesh.vy[v]) : 0
     if (forcing.uplift[v] > 0) {
       const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], domain)
       if (fold !== 1) { forcing.uplift[v] *= fold; if (zCanon[v] > 0) foldedArea += areas[v] }
@@ -589,7 +590,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // periglacial band, where freeze and thaw move regolith that nothing
     // else would.
     slopeScale[v] = detPow(k, -SURFACE_TUNING.massWastingLithoExponent) * (1 + COVER_TUNING.criticalSlopeRise * c)
-    const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
+    const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
     const cold = Math.min(1, Math.max(0, (SURFACE_TUNING.solifluctionBelowC - tempC) / SURFACE_TUNING.solifluctionSpanC))
     diffScale[v] = 1 + (SURFACE_TUNING.solifluctionBoost - 1) * cold
     if (zCanon[v] > 0) { coverSum += c * areas[v]; coverArea += areas[v]; if (cold > 0) solifluctionArea += areas[v] }
@@ -633,8 +634,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       // Tallied apart from the walk's deposits: the scree's supply is the
       // creep's loss, not the cut, and the harness closes both ledgers.
       screeM3 += hill
-      const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
-      const precip = Math.max(0, upsampleAt(precipitation, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height))
+      const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
+      const precip = Math.max(0, upsampleAt(precipitation, climateGrid, mesh.vx[v], mesh.vy[v]))
       deposit(column, v, hill / areaM2, cratonAge[v], rockHard[v], tempC, precip, true)
     }
     const depositM3 = result.depositM3[v]
@@ -644,8 +645,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       const hard = result.depositHard[v] / depositM3
       const coarseM3 = result.depositCoarseM3[v]
       // The climate the layer formed under: the epoch's, at the node.
-      const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
-      const precip = Math.max(0, upsampleAt(precipitation, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height))
+      const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
+      const precip = Math.max(0, upsampleAt(precipitation, climateGrid, mesh.vx[v], mesh.vy[v]))
       deposit(column, v, (depositM3 - coarseM3) / areaM2, craton, hard, tempC, precip, false)
       deposit(column, v, coarseM3 / areaM2, craton, hard, tempC, precip, true)
     }
@@ -675,8 +676,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     }
     const depM = coastal.depositM[v]
     if (depM > 0) {
-      const tempC = upsampleAt(weather.temperature, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height)
-      const precipHere = Math.max(0, upsampleAt(precipitation, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height))
+      const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
+      const precipHere = Math.max(0, upsampleAt(precipitation, climateGrid, mesh.vx[v], mesh.vy[v]))
       iceCoastColumnM3 += depM * coastAreaM2
       deposit(column, v, depM, cratonAge[v], rockHard[v], tempC, precipHere, true)
       result.z[v] = Math.min(1, result.z[v] + depM / ELEVATION_METERS)
@@ -693,6 +694,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const flexResY = Math.max(8, Math.round(height / FLEXURE_CELL))
   const flexCellKm = ((width / flexResX) * METERS_PER_CELL) / 1000
   const flexCellM2 = (flexCellKm * 1000) * (flexCellKm * 1000)
+  const flexGrid = domain.grid(flexResX, flexResY)
+  const ageGrid = oceanAgeGrid(domain)
   const loadM = new Float32Array(flexResX * flexResY)
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
@@ -700,8 +703,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // cut and till, and the ice itself at its density over the rock's.
     const dv = result.depositM3[v] - result.cutM3[v] + (glacial.tillM[v] - glacial.cutM[v] + coastal.depositM[v] - coastal.cutM[v] + ice.thickness[v] * (917 / TECTONICS_TUNING.flexureCrustDensity)) * areas[v] * cellM2
     if (dv === 0) continue
-    const cx = (((Math.floor((mesh.vx[v] / width) * flexResX) % flexResX) + flexResX) % flexResX)
-    const cy = (((Math.floor((mesh.vy[v] / height) * flexResY) % flexResY) + flexResY) % flexResY)
+    const cx = flexGrid.wrapCol(Math.floor((mesh.vx[v] / width) * flexResX))
+    const cy = flexGrid.wrapRow(Math.floor((mesh.vy[v] / height) * flexResY))
     loadM[cy * flexResX + cx] += dv / flexCellM2
   }
   const teKm = new Float32Array(flexResX * flexResY)
@@ -710,17 +713,17 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       const x = ((cx + 0.5) / flexResX) * width
       const y = ((cy + 0.5) / flexResY) * height
       const continental = raftFieldIndexed(x, y, blobs) > 0.5
-      const oldness = upsampleAt(cratonField, CLIMATE_RES_X, CLIMATE_RES_Y, x, y, width, height)
-      const ageMa = sampleOceanAge(sim.oceanAge, x, y, width, height) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
+      const oldness = upsampleAt(cratonField, climateGrid, x, y)
+      const ageMa = sampleOceanAge(sim.oceanAge, ageGrid, x, y) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
       teKm[cy * flexResX + cx] = elasticThicknessKm(continental, oldness, ageMa)
     }
   }
-  const deflection = flexuralResponse(loadM, teKm, flexResX, flexResY, flexCellKm)
+  const deflection = flexuralResponse(loadM, teKm, flexGrid, flexCellKm)
   let reboundMaxM = 0
   let subsidenceMaxM = 0
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
-    const wM = deflectionAt(deflection, flexResX, flexResY, mesh.vx[v], mesh.vy[v], width, height)
+    const wM = deflectionAt(deflection, flexGrid, mesh.vx[v], mesh.vy[v])
     if (wM > reboundMaxM) reboundMaxM = wM
     if (-wM > subsidenceMaxM) subsidenceMaxM = -wM
     result.z[v] = Math.max(-1, Math.min(1, result.z[v] + wM / ELEVATION_METERS))

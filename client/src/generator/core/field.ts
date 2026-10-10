@@ -21,18 +21,12 @@
 //  - ecology's and worldSave's `downsampleMax` -> downsampleMax
 // plus oceanAge's own bilinear-in-world-coordinates sampler -> sampleBilinearWorld.
 
-// Wrap a value into [0, n) for any sign. The one-liner that had nine private
-// copies across eight files. What deliberately stays inline is the wrapped
-// RASTER INDEX in the per-cell loops (`((y + h) % h) * w + ((x + w) % w)` and
-// kin, in the flow routing, the coast graph, the raft scatter …): a call per
-// cell there is a performance lever, and the idiom is the same six characters
-// wherever it appears.
-// A wrapped 2-D index on a resX×resY grid — the helper oceanCurrents,
-// seasonality and monsoon each used to write for themselves (BUG_BOUNTY 34).
-export function wrapIndex2(x: number, y: number, resX: number, resY: number): number {
-  return wrapValue(y, resY) * resX + wrapValue(x, resX)
-}
-
+// Wrap a value into [0, n) for any sign — the torus's one wrap. The torus
+// Domain and its grids (core/domain.ts) are built on it and on the samplers
+// below; the generator outside core/ wraps a raster through its DomainGrid
+// (DEC-0035, fork 1: `make lint` refuses this import there), so the sphere
+// can give rasters its own rule. The periodic noise lattices are the one
+// exception (see the Makefile).
 // The same bits as `((v % n) + n) % n`, with the two remainders replaced by
 // compares where v is within one period of [0, n) — the common case, and
 // 13.6 % of an epoch's time as two remainders (profiled 2026-10-02). Each

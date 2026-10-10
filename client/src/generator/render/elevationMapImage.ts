@@ -6,7 +6,6 @@ import { rasterizeVoronoiPlates } from './voronoiRaster'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
 import type { ElevationRenderer } from './elevationRenderPool'
-import { upscaleBilinearToroidal } from '../core/field'
 import { computeOwnerField } from '../crust/raftField'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { dynamicTopographyField } from '../elevation/dynamicTopography'
@@ -111,13 +110,14 @@ const BASIN_ROCK_COLOR: [number, number, number] = [196, 178, 148]
 const SHORE_COLOR = elevationToColor(0)
 
 // Whether any of a cell's eight neighbours is land (above sea level, or a dry
-// basin floor that renders as land), wrapping across both seams.
-function touchesLand(elevations: Float32Array, width: number, height: number, x: number, y: number, dryBasin: Uint8Array | undefined): boolean {
+// basin floor that renders as land), wrapped by the grid's tables (`cols`,
+// `rows`: DomainGrid colTable(1) and rowTable(1)).
+function touchesLand(elevations: Float32Array, cols: Int32Array, rows: Int32Array, x: number, y: number, dryBasin: Uint8Array | undefined): boolean {
   for (let dy = -1; dy <= 1; dy++) {
-    const ny = (y + dy + height) % height
+    const ny = rows[y + dy + 1]
     for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue
-      const n = ny * width + ((x + dx + width) % width)
+      const n = ny + cols[x + dx + 1]
       if (elevations[n] > 0 || (dryBasin !== undefined && dryBasin[n] === 1)) return true
     }
   }
@@ -164,6 +164,7 @@ export interface RenderableWorld {
 export async function renderSimulationImage(sim: RenderableWorld, pool: ElevationRenderer, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
   const { precomputedElevations } = options
   const { width, height } = sim
+  const grid = sim.domain.grid(width, height)
   // The Archean phase runs with no plates at all — plate tectonics has not started
   // yet (see archean/). Everything plate-shaped below is therefore skipped rather
   // than given a second render function: the elevation raster, hillshade and colour
@@ -192,10 +193,10 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
     // Dynamic topography (elevation/dynamicTopography.ts): the mantle's
     // anomaly as a height term on the deck, evaluated from the field as it
     // stands now — instantaneous, never crustal.
-    const dynamic = dynamicTopographyField(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, renderWidth, renderHeight, width, height)
+    const dynamic = dynamicTopographyField(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, renderWidth, renderHeight, sim.domain)
     for (let i = 0; i < blendedBaselines.length; i++) blendedBaselines[i] += dynamic[i]
     const rendered = await pool.renderElevations(renderWidth, renderHeight, width, height, blendedBaselines, sim.features, sim.warpSeed)
-    elevations = scale === 1 ? rendered : upscaleBilinearToroidal(rendered, renderWidth, renderHeight, width, height)
+    elevations = scale === 1 ? rendered : sim.domain.grid(renderWidth, renderHeight).upscale(rendered, width, height)
   }
   // Captured before redistribution reshapes elevations in place — see
   // SimulationRenderResult.rawElevations.
@@ -213,14 +214,14 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   // the same MANTLE_RES grid every other raft-derived field already uses.
   if (ACCENTUATE_MOUNTAINS) {
     const ownerField = computeOwnerField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, sim.domain)
-    applyMountainRedistribution(elevations, width, height, ownerField, MANTLE_RES_X, MANTLE_RES_Y)
+    applyMountainRedistribution(elevations, sim.domain, ownerField, MANTLE_RES_X, MANTLE_RES_Y)
   }
 
   // Slope-conditioned fine detail — see erosionDetailTexture.ts. Reads slope
   // from rawElevations (pre-redistribution, physically meaningful) but paints
   // onto `elevations` (the display copy), so the two effects stay
   // independent of each other's reshaping.
-  if (APPLY_EROSION_DETAIL_TEXTURE) applyErosionDetailTexture(elevations, rawElevations, width, height, sim.warpSeed)
+  if (APPLY_EROSION_DETAIL_TEXTURE) applyErosionDetailTexture(elevations, rawElevations, grid, sim.warpSeed)
 
   // Base color raster + the boundary mask, in one pass. The mask marks a
   // pixel whose right or down neighbor belongs to a different plate — the
@@ -236,17 +237,20 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   // normalized elevation deltas are tiny per pixel. See GeneratorScreen.
   const relief = new Uint8Array(width * height)
   let landPixelCount = 0
+  const cols = grid.colTable(1)
+  const rows = grid.rowTable(1)
   for (let y = 0; y < height; y++) {
-    const downRow = (y + 1) % height
+    const downRow = rows[y + 2]
     for (let x = 0; x < width; x++) {
-      const rightCol = (x + 1) % width
+      const right = y * width + cols[x + 2]
+      const down = downRow + x
       const idx = y * width + x
       const plateIndex = cellIds[idx]
-      if (plateIndex !== cellIds[y * width + rightCol] || plateIndex !== cellIds[downRow * width + x]) boundaryMask[idx] = 1
+      if (plateIndex !== cellIds[right] || plateIndex !== cellIds[down]) boundaryMask[idx] = 1
       const elevation = elevations[idx]
       const dryFloor = options.dryBasin !== undefined && options.dryBasin[idx] === 1
       if (elevation > 0 || dryFloor) landPixelCount++
-      const shade = reliefShadeAt(elevations, width, height, x, y)
+      const shade = reliefShadeAt(elevations, idx, right, down)
       relief[idx] = (elevation > 0 || dryFloor ? 128 : 0) | Math.round(shade * 127)
       // A sea cell next to land paints as SHORE, not as water: the water
       // itself is drawn at draw time as the iso-line of its level on the
@@ -255,7 +259,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
       // above the level — land, at the shoreline's height.
       const color = dryFloor
         ? (options.saltFlat !== undefined && options.saltFlat[idx] === 1 ? SALT_CRUST_COLOR : BASIN_ROCK_COLOR)
-        : elevation <= 0 && touchesLand(elevations, width, height, x, y, options.dryBasin)
+        : elevation <= 0 && touchesLand(elevations, cols, rows, x, y, options.dryBasin)
           ? SHORE_COLOR
           : elevationToColor(elevation)
       const pixelIndex = idx * 4

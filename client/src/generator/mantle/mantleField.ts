@@ -1,6 +1,5 @@
 import type { Domain } from '../core/domain'
 import { MANTLE_TUNING } from './mantleTuneParams'
-import { wrapValue } from '../core/field'
 import { sampleMembershipField } from '../crust/raftField'
 
 // A coarse, evolving mantle buoyancy/temperature field under the whole torus
@@ -30,13 +29,18 @@ export const MANTLE_RES_Y = 64
 const RX = MANTLE_RES_X
 const RY = MANTLE_RES_Y
 
-// The callers step one cell from a cell of the grid, so a compare wraps the
-// integer index; wrapValue only past that. The same index either way —
-// wrapValue on integers is exact — and 8 % of an epoch less (2026-10-02).
-function wrapIdx(x: number, y: number): number {
-  const wy = y < 0 ? (y >= -RY ? y + RY : wrapValue(y, RY)) : y < RY ? y : y < 2 * RY ? y - RY : wrapValue(y, RY)
-  const wx = x < 0 ? (x >= -RX ? x + RX : wrapValue(x, RX)) : x < RX ? x : x < 2 * RX ? x - RX : wrapValue(x, RX)
-  return wy * RX + wx
+// The mantle raster's neighbours, from the domain's grid once per call: the
+// loops below step one cell from a cell, and a table lookup there keeps the
+// sweep plain arithmetic (the wrap was 8 % of an epoch as calls, 2026-10-02).
+// cols[x + 1] is column x wrapped, rows[y + 1] the start of row y wrapped.
+interface MantleNeighbours {
+  cols: Int32Array
+  rows: Int32Array
+}
+
+function mantleNeighbours(domain: Domain): MantleNeighbours {
+  const grid = domain.grid(RX, RY)
+  return { cols: grid.colTable(1), rows: grid.rowTable(1) }
 }
 
 // Smoothed random initial field — a few upwelling/downwelling blobs so there's
@@ -64,19 +68,24 @@ function wrapIdx(x: number, y: number): number {
 // the starting scale, with no claim to steer anything.
 export const DEFAULT_INITIAL_SMOOTHING = 6
 
-export function createMantleField(random: () => number, smoothingPasses = DEFAULT_INITIAL_SMOOTHING): Float32Array {
+export function createMantleField(random: () => number, domain: Domain, smoothingPasses = DEFAULT_INITIAL_SMOOTHING): Float32Array {
+  const nb = mantleNeighbours(domain)
   let field: Float32Array = new Float32Array(RX * RY)
   for (let i = 0; i < field.length; i++) field[i] = random() * 2 - 1
-  for (let pass = 0; pass < smoothingPasses; pass++) field = boxBlur(field, 0.5)
+  for (let pass = 0; pass < smoothingPasses; pass++) field = boxBlur(field, 0.5, nb)
   return zeroMean(clampField(field))
 }
 
-function boxBlur(field: Float32Array, weight: number): Float32Array {
+function boxBlur(field: Float32Array, weight: number, nb: MantleNeighbours): Float32Array {
+  const { cols, rows } = nb
   const out = new Float32Array(RX * RY)
   for (let y = 0; y < RY; y++) {
+    const up = rows[y]
+    const row = rows[y + 1]
+    const down = rows[y + 2]
     for (let x = 0; x < RX; x++) {
       const c = field[y * RX + x]
-      const n = field[wrapIdx(x, y - 1)] + field[wrapIdx(x, y + 1)] + field[wrapIdx(x - 1, y)] + field[wrapIdx(x + 1, y)]
+      const n = field[up + cols[x + 1]] + field[down + cols[x + 1]] + field[row + cols[x]] + field[row + cols[x + 2]]
       out[y * RX + x] = c * (1 - weight) + (n / 4) * weight
     }
   }
@@ -104,26 +113,27 @@ export function evolveMantleField(
   membership: Float32Array,
   membershipResX: number,
   membershipResY: number,
-  worldWidth: number,
-  worldHeight: number,
+  domain: Domain,
   diffusionPasses: number = MANTLE_TUNING.diffusionPasses,
 ): Float32Array {
+  const membershipGrid = domain.grid(membershipResX, membershipResY)
   for (let gy = 0; gy < RY; gy++) {
-    const wy = ((gy + 0.5) / RY) * worldHeight
+    const wy = ((gy + 0.5) / RY) * domain.height
     for (let gx = 0; gx < RX; gx++) {
-      const wx = ((gx + 0.5) / RX) * worldWidth
+      const wx = ((gx + 0.5) / RX) * domain.width
       const i = gy * RX + gx
-      if (sampleMembershipField(membership, membershipResX, membershipResY, wx, wy, worldWidth, worldHeight) > 0.5) field[i] += MANTLE_TUNING.insulationRate
+      if (sampleMembershipField(membership, membershipGrid, wx, wy) > 0.5) field[i] += MANTLE_TUNING.insulationRate
       else field[i] -= MANTLE_TUNING.oceanCoolRate
     }
   }
   // Fractional passes: whole ones at full weight, then a partial one for the
   // remainder. Integer passes alone would give the Archean's mixing knob three
   // usable positions (0, 1, 2 — it saturates past that), which is not a slider.
+  const nb = mantleNeighbours(domain)
   const wholePasses = Math.floor(diffusionPasses)
-  for (let p = 0; p < wholePasses; p++) field = boxBlur(field, MANTLE_TUNING.diffusionWeight)
+  for (let p = 0; p < wholePasses; p++) field = boxBlur(field, MANTLE_TUNING.diffusionWeight, nb)
   const remainder = diffusionPasses - wholePasses
-  if (remainder > 0) field = boxBlur(field, MANTLE_TUNING.diffusionWeight * remainder)
+  if (remainder > 0) field = boxBlur(field, MANTLE_TUNING.diffusionWeight * remainder, nb)
   for (let i = 0; i < field.length; i++) field[i] *= MANTLE_TUNING.decayKeep
   return zeroMean(clampField(field))
 }
@@ -186,24 +196,31 @@ export function coolMantleAt(field: Float32Array, x: number, y: number, domain: 
 // torus, Gauss-Seidel), then u = ∇φ. u DIVERGES from hot upwellings and CONVERGES
 // to cold downwellings (φ has a minimum at a hot source, so ∇φ points outward).
 // Returns interleaved [ux, uy] per cell, scaled to world pixels.
-export function computeMantleFlow(field: Float32Array): Float32Array {
+export function computeMantleFlow(field: Float32Array, domain: Domain): Float32Array {
+  const { cols, rows } = mantleNeighbours(domain)
   const n = RX * RY
   const phi = new Float32Array(n)
   for (let iter = 0; iter < MANTLE_TUNING.solveIters; iter++) {
     for (let y = 0; y < RY; y++) {
+      const up = rows[y]
+      const row = rows[y + 1]
+      const down = rows[y + 2]
       for (let x = 0; x < RX; x++) {
         const i = y * RX + x
-        const neighbors = phi[wrapIdx(x - 1, y)] + phi[wrapIdx(x + 1, y)] + phi[wrapIdx(x, y - 1)] + phi[wrapIdx(x, y + 1)]
+        const neighbors = phi[row + cols[x]] + phi[row + cols[x + 2]] + phi[up + cols[x + 1]] + phi[down + cols[x + 1]]
         phi[i] = (neighbors - field[i]) / 4
       }
     }
   }
   const flow = new Float32Array(n * 2)
   for (let y = 0; y < RY; y++) {
+    const up = rows[y]
+    const row = rows[y + 1]
+    const down = rows[y + 2]
     for (let x = 0; x < RX; x++) {
       const i = y * RX + x
-      const ux = (phi[wrapIdx(x + 1, y)] - phi[wrapIdx(x - 1, y)]) / 2
-      const uy = (phi[wrapIdx(x, y + 1)] - phi[wrapIdx(x, y - 1)]) / 2
+      const ux = (phi[row + cols[x + 2]] - phi[row + cols[x]]) / 2
+      const uy = (phi[down + cols[x + 1]] - phi[up + cols[x + 1]]) / 2
       flow[i * 2] = ux * MANTLE_TUNING.flowSpeedScale
       flow[i * 2 + 1] = uy * MANTLE_TUNING.flowSpeedScale
     }

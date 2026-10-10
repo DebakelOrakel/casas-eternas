@@ -8,6 +8,7 @@ import { artifactKey, type ArtifactStore } from '../../storage/ArtifactStore'
 import type { MeshLevelArtifact } from '../../world/meshArtifacts'
 import { meshTileStage, readMeshTileArtifact } from '../../world/meshTileArtifacts'
 import { tileAt } from '../../generator/pipeline/tilePlan'
+import { torusDomain } from '../../generator/core/domain'
 import type { TileId } from '../../generator/mesh/meshTile'
 import { LEVEL1_GRID_LEVEL, level1Stage, rasterBytes } from './groundRaster'
 import type { GridField } from './groundSource'
@@ -173,9 +174,10 @@ export function createGroundView(options: GroundViewOptions): GroundView {
     const half = (message.quads / 2) * message.spacing
     const out = new Set<string>()
     const step = 16 // level 2's tile side, cells
+    const world = torusDomain(worldWidthCells, worldHeightCells)
     for (let y = message.centerY - half; y <= message.centerY + half + step; y += step) {
       for (let x = message.centerX - half; x <= message.centerX + half + step; x += step) {
-        const t = tileAt(LEVEL1_GRID_LEVEL, x, y, worldWidthCells, worldHeightCells)
+        const t = tileAt(LEVEL1_GRID_LEVEL, x, y, world)
         out.add(level1Stage(t.x, t.y))
       }
     }

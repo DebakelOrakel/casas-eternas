@@ -1,4 +1,4 @@
-import { wrapValue } from '../core/field'
+import type { Domain } from '../core/domain'
 import type { FlowRouting } from './flowRouting'
 import { detHypot } from '../core/detMath'
 
@@ -20,9 +20,11 @@ import { detHypot } from '../core/detMath'
 // climate samplers were written in; a node's position again).
 export interface FlowSubstrate {
   readonly kind: 'raster' | 'mesh'
-  // The world's extent in cells, for seam tests and climate sampling.
+  // The world's extent in cells, for seam tests and climate sampling, and
+  // the domain of that extent (positions are its coordinates).
   readonly width: number
   readonly height: number
+  readonly domain: Domain
   readonly count: number
   readonly filled: Float32Array
   readonly flowTarget: Int32Array
@@ -48,12 +50,12 @@ const FOUR: ReadonlyArray<readonly [number, number]> = [[-1, 0], [1, 0], [0, -1]
 const EIGHT: ReadonlyArray<readonly [number, number]> = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
 
 export function rasterSubstrate(routing: FlowRouting): FlowSubstrate {
-  const { width, height } = routing
-  const wrap = (x: number, y: number): number => wrapValue(y, height) * width + wrapValue(x, width)
+  const { width, height, domain, grid } = routing
   return {
     kind: 'raster',
     width,
     height,
+    domain,
     count: width * height,
     filled: routing.filled,
     flowTarget: routing.flowTarget,
@@ -80,13 +82,13 @@ export function rasterSubstrate(routing: FlowRouting): FlowSubstrate {
     facetNeighbours: (c, out) => {
       const cx = c % width
       const cy = (c - cx) / width
-      for (let i = 0; i < 4; i++) out[i] = wrap(cx + FOUR[i][0], cy + FOUR[i][1])
+      for (let i = 0; i < 4; i++) out[i] = grid.neighbour(cx, cy, FOUR[i][0], FOUR[i][1])
       return 4
     },
     rimNeighbours: (c, out) => {
       const cx = c % width
       const cy = (c - cx) / width
-      for (let i = 0; i < 8; i++) out[i] = wrap(cx + EIGHT[i][0], cy + EIGHT[i][1])
+      for (let i = 0; i < 8; i++) out[i] = grid.neighbour(cx, cy, EIGHT[i][0], EIGHT[i][1])
       return 8
     },
   }

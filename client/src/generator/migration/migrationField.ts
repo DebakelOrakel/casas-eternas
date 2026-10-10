@@ -8,7 +8,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { MinHeap } from '../core/minHeap'
-import { wrapValue } from '../core/field'
+import type { Domain } from '../core/domain'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { MIGRATION_TUNING } from './migrationTuneParams'
 import { detHypot } from '../core/detMath'
@@ -46,7 +46,10 @@ export interface MigrationFields {
 // discounted on coast/river corridors. Water: rises with depth; beyond the
 // sea-crossing max depth it's Infinity (a hard barrier). Land bridges are just
 // land, so they're always passable regardless of seaCrossing.
-function buildCostField(precipitation: Float32Array, elevation: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, seaCrossing: number, worldWidth: number, worldHeight: number): Float32Array {
+// `domain`: what the elevation raster covers, one cell per unit.
+function buildCostField(precipitation: Float32Array, elevation: Float32Array, coarseDischarge: Float32Array | null, maxDischarge: number, seaCrossing: number, domain: Domain): Float32Array {
+  const { width: worldWidth, height: worldHeight } = domain
+  const grid = domain.grid(CLIMATE_RES_X, CLIMATE_RES_Y)
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const cost = new Float32Array(n)
   const maxDepth = MIGRATION_TUNING.seaCrossingMaxDepth * Math.max(0, Math.min(1, seaCrossing))
@@ -60,16 +63,16 @@ function buildCostField(precipitation: Float32Array, elevation: Float32Array, co
         cost[i] = depth <= maxDepth ? MIGRATION_TUNING.waterBase + MIGRATION_TUNING.waterDepthCost * Math.max(0, depth) : Infinity
         continue
       }
-      const eE = sampleElevationAtCell(elevation, wrapValue(gx + 1, CLIMATE_RES_X), gy, worldWidth, worldHeight)
-      const eS = sampleElevationAtCell(elevation, gx, wrapValue(gy + 1, CLIMATE_RES_Y), worldWidth, worldHeight)
+      const eE = sampleElevationAtCell(elevation, grid.wrapCol(gx + 1), gy, worldWidth, worldHeight)
+      const eS = sampleElevationAtCell(elevation, gx, grid.wrapRow(gy + 1), worldWidth, worldHeight)
       const slope = detHypot(eE - e, eS - e)
       let c = MIGRATION_TUNING.landBase + MIGRATION_TUNING.slopeCost * slope
       // Corridor discount: coastal (an ocean 4-neighbour) or a river cell.
       const coastal =
-        precipitation[wrapValue(gy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrapValue(gx + 1, CLIMATE_RES_X)] === OCEAN_PRECIP ||
-        precipitation[wrapValue(gy, CLIMATE_RES_Y) * CLIMATE_RES_X + wrapValue(gx - 1, CLIMATE_RES_X)] === OCEAN_PRECIP ||
-        precipitation[wrapValue(gy + 1, CLIMATE_RES_Y) * CLIMATE_RES_X + gx] === OCEAN_PRECIP ||
-        precipitation[wrapValue(gy - 1, CLIMATE_RES_Y) * CLIMATE_RES_X + gx] === OCEAN_PRECIP
+        precipitation[grid.index(gx + 1, gy)] === OCEAN_PRECIP ||
+        precipitation[grid.index(gx - 1, gy)] === OCEAN_PRECIP ||
+        precipitation[grid.wrapRow(gy + 1) * CLIMATE_RES_X + gx] === OCEAN_PRECIP ||
+        precipitation[grid.wrapRow(gy - 1) * CLIMATE_RES_X + gx] === OCEAN_PRECIP
       const river = coarseDischarge != null && maxDischarge > 0 && coarseDischarge[i] > MIGRATION_TUNING.riverDischargeFrac * maxDischarge
       if (coastal || river) c *= MIGRATION_TUNING.corridorDiscount
       cost[i] = c
@@ -93,15 +96,16 @@ export function computeMigration(
   coarseDischarge: Float32Array | null,
   maxDischarge: number,
   origins: MigrationOrigin[],
-  worldWidth: number,
-  worldHeight: number,
+  // What the elevation raster covers, one cell per unit.
+  domain: Domain,
   params: MigrationParams,
 ): MigrationFields {
   const rx = CLIMATE_RES_X
   const ry = CLIMATE_RES_Y
   const n = rx * ry
   const budget = params.spreadBudget
-  const cellCost = buildCostField(precipitation, elevation, coarseDischarge, maxDischarge, params.seaCrossing, worldWidth, worldHeight)
+  const grid = domain.grid(rx, ry)
+  const cellCost = buildCostField(precipitation, elevation, coarseDischarge, maxDischarge, params.seaCrossing, domain)
 
   const cost = new Float32Array(n).fill(Infinity)
   const race = new Int8Array(n).fill(-1)
@@ -128,9 +132,7 @@ export function computeMigration(
     const gy = Math.floor(cell / rx)
     const gx = cell - gy * rx
     for (const nb of NEIGHBOURS) {
-      const nx = wrapValue(gx + nb.dx, rx)
-      const ny = wrapValue(gy + nb.dy, ry)
-      const ni = ny * rx + nx
+      const ni = grid.neighbour(gx, gy, nb.dx, nb.dy)
       if (settled[ni]) continue
       const step = cellCost[ni]
       if (step === Infinity) continue

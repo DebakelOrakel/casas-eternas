@@ -2,7 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, sampleDryLandAtCell, sample
 import { classifyKoppen, koppenCode, synthesizeMonths } from './koppen'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL, isLandAt } from '../elevation/elevationScale'
-import { sampleBilinearWorld, wrapValue } from '../core/field'
+import type { Domain, DomainGrid } from '../core/domain'
 import { seasonalityMagnitude } from './monsoon'
 import { OCEAN_PRECIP } from './precipitation'
 
@@ -280,17 +280,18 @@ export function reduceTemperatureToSeaLevel(temperature: Float32Array, elevation
 // on nearest. Dropping the ocean corners and renormalising the remaining weights
 // keeps the sentinel out by construction; with no land corner at all there is
 // nothing to blend and the containing cell's own value stands.
-function sampleLandBilinear(field: Float32Array, wx: number, wy: number, worldWidth: number, worldHeight: number, fallback: number): number {
-  const gx = ((wx + 0.5) / worldWidth) * RX - 0.5
-  const gy = ((wy + 0.5) / worldHeight) * RY - 0.5
+// `grid`: the climate grid over the pixels' domain.
+function sampleLandBilinear(field: Float32Array, grid: DomainGrid, wx: number, wy: number, fallback: number): number {
+  const gx = ((wx + 0.5) / grid.domain.width) * RX - 0.5
+  const gy = ((wy + 0.5) / grid.domain.height) * RY - 0.5
   const x0 = Math.floor(gx)
   const y0 = Math.floor(gy)
   const fx = gx - x0
   const fy = gy - y0
-  const x0m = wrapValue(x0, RX)
-  const y0m = wrapValue(y0, RY)
-  const x1m = (x0m + 1) % RX
-  const y1m = (y0m + 1) % RY
+  const x0m = grid.wrapCol(x0)
+  const y0m = grid.wrapRow(y0)
+  const x1m = grid.wrapCol(x0m + 1)
+  const y1m = grid.wrapRow(y0m + 1)
   let sum = 0
   let weight = 0
   const add = (index: number, w: number): void => {
@@ -307,13 +308,16 @@ function sampleLandBilinear(field: Float32Array, wx: number, wy: number, worldWi
   return weight > 0 ? sum / weight : fallback
 }
 
-export function computeBiomesFine(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array,
+// `domain`: what the elevation raster covers, one pixel per unit.
+export function computeBiomesFine(temperature: Float32Array, precipitation: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, elevation: Float32Array, domain: Domain, dryLand?: Uint8Array,
   // The sea-level reduction of `temperature`, when the caller classifies a
   // DIFFERENT terrain than the climate was computed on (see
   // reduceTemperatureToSeaLevel). Omitted where the two are the same field,
   // which is the generator's case.
   seaLevelTemperature?: Float32Array,
 ): Uint8Array {
+  const { width: worldWidth, height: worldHeight } = domain
+  const grid = domain.grid(RX, RY)
   const biomes = new Uint8Array(worldWidth * worldHeight)
   const seasonality = seasonalityMagnitude(monsoonIndex)
   const seaLevelTemp = seaLevelTemperature ?? reduceTemperatureToSeaLevel(temperature, elevation, worldWidth, worldHeight, dryLand)
@@ -339,15 +343,15 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
       const cell = gy * RX + gx
       // Sea-level temperature interpolated, THEN this cell's own lapse — so the
       // regional part is smooth while the elevation term stays strictly local.
-      const reduced = sampleBilinearWorld(seaLevelTemp, RX, RY, wx + 0.5, wy + 0.5, worldWidth, worldHeight)
+      const reduced = grid.sampleBilinearAt(seaLevelTemp, wx + 0.5, wy + 0.5)
       const temp = reduced - CLIMATE_TUNING.lapseCPerElevation * (dry ? here - SEA_LEVEL : Math.max(0, here - SEA_LEVEL))
-      const precip = sampleLandBilinear(precipitation, wx, wy, worldWidth, worldHeight, islandPrecip[gy])
-      const amp = sampleLandBilinear(seasonalAmplitude, wx, wy, worldWidth, worldHeight, islandAmp[gy])
+      const precip = sampleLandBilinear(precipitation, grid, wx, wy, islandPrecip[gy])
+      const amp = sampleLandBilinear(seasonalAmplitude, grid, wx, wy, islandAmp[gy])
       // The index is blended as a magnitude (neighbours across the rain
       // belt carry opposite signs, and blending them would read an even
       // year exactly where the wet-dry savanna lives); its sign, the phase,
       // is the containing cell's.
-      const season = sampleLandBilinear(seasonality, wx, wy, worldWidth, worldHeight, islandSeason[gy])
+      const season = sampleLandBilinear(seasonality, grid, wx, wy, islandSeason[gy])
       const index = monsoonIndex[cell] < 0 ? -season : season
       const base = classifyAnnual(temp, precip, amp, index, north, months, rain).biome
       biomes[world] = here > CLIMATE_TUNING.alpineTreelineElevation && base !== Biome.Ice ? Biome.Alpine : base
@@ -487,8 +491,11 @@ export function computeBiomesFromMonths(monthsT: Float32Array, monthsP: Float32A
 // month's temperature reduced to sea level, interpolated, given this pixel's
 // own lapse; each month's rain interpolated over the land corners only.
 // `annualTemperature` is the months' mean, which carries the coarse lapse the
-// reduction removes (the lapse is the same in every month).
-export function computeBiomesFineFromMonths(monthsT: Float32Array, monthsP: Float32Array, months: number, annualTemperature: Float32Array, precipitation: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Uint8Array {
+// reduction removes (the lapse is the same in every month). `domain`: what
+// the elevation raster covers, one pixel per unit.
+export function computeBiomesFineFromMonths(monthsT: Float32Array, monthsP: Float32Array, months: number, annualTemperature: Float32Array, precipitation: Float32Array, elevation: Float32Array, domain: Domain, dryLand?: Uint8Array): Uint8Array {
+  const { width: worldWidth, height: worldHeight } = domain
+  const grid = domain.grid(RX, RY)
   const n = RX * RY
   const lapseBack = reduceTemperatureToSeaLevel(annualTemperature, elevation, worldWidth, worldHeight, dryLand)
   const seaT = new Float32Array(monthsT.length)
@@ -508,8 +515,8 @@ export function computeBiomesFineFromMonths(monthsT: Float32Array, monthsP: Floa
     const fy = ((wy + 0.5) / worldHeight) * RY - 0.5
     const y0 = Math.floor(fy)
     const ty = fy - y0
-    const r0 = wrapValue(y0, RY) * RX
-    const r1 = wrapValue(y0 + 1, RY) * RX
+    const r0 = grid.wrapRow(y0) * RX
+    const r1 = grid.wrapRow(y0 + 1) * RX
     for (let wx = 0; wx < worldWidth; wx++) {
       const world = wy * worldWidth + wx
       const here = elevation[world]
@@ -521,8 +528,8 @@ export function computeBiomesFineFromMonths(monthsT: Float32Array, monthsP: Floa
       const fx = ((wx + 0.5) / worldWidth) * RX - 0.5
       const x0 = Math.floor(fx)
       const tx = fx - x0
-      const c0 = wrapValue(x0, RX)
-      const c1 = wrapValue(x0 + 1, RX)
+      const c0 = grid.wrapCol(x0)
+      const c1 = grid.wrapCol(x0 + 1)
       corners[0] = r0 + c0; corners[1] = r0 + c1; corners[2] = r1 + c0; corners[3] = r1 + c1
       weights[0] = (1 - tx) * (1 - ty); weights[1] = tx * (1 - ty); weights[2] = (1 - tx) * ty; weights[3] = tx * ty
       // Land corners for the rain; with none, the island's (its row's land).

@@ -35,6 +35,7 @@ const M = {
   uplift: await L('/src/generator/elevation/upliftField.ts'),
   erodibility: await L('/src/generator/elevation/erodibilityField.ts'),
   engine: await L('/src/generator/surface/erosionEngine.ts'),
+  domain: await L('/src/generator/core/domain.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
   finalize: await L('/src/generator/archean/finalizeArchean.ts'),
@@ -47,15 +48,15 @@ const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < 50; e++) M.sim.stepEpoch(sim)
 const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, sim.domain, sim.warpSeed)
 { // dynamic topography (F3), as the pipeline adds it
-  const dyn = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, W, H)
+  const dyn = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, sim.domain)
   for (let i = 0; i < base.length; i++) base[i] += dyn[i]
 }
-const bk = M.field.buildFeatureBuckets(sim.features, W, H)
+const bk = M.field.buildFeatureBuckets(sim.features, sim.domain)
 const salt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
 const raw = new Float32Array(W * H)
 for (let y = 0; y < H; y++) {
   for (let x = 0; x < W; x++) {
-    const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
+    const s = M.field.warpedSamplePoint(x, y, sim.domain, sim.warpSeed)
     raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, sim.domain,
       M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed),
       M.ridged.fineDetailNoise(s.wx, s.wy, W, H, salt))
@@ -238,7 +239,7 @@ for (const [name, forcing, erod] of [
   ['real', uReal, erodibility],
   ['realk', uReal, erodibilityReal],
 ] as const) {
-  const engine = new M.engine.ErosionEngine(RES_X, RES_Y, z0, {
+  const engine = M.engine.ErosionEngine.onRaster(M.domain.torusDomain(RES_X, RES_Y).grid(RES_X, RES_Y), z0, {
     uplift: upsample(forcing),
     erodibility: erod,
     coastMask,

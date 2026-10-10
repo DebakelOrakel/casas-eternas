@@ -1,13 +1,12 @@
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { capsuleWeight } from './capsule'
-import type { Domain } from '../core/domain'
+import type { Domain, DomainGrid } from '../core/domain'
 import { domainWarpDelta } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
-import { sampleOceanAge } from '../tectonics/oceanAge'
+import { oceanAgeGrid, sampleOceanAge } from '../tectonics/oceanAge'
 import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
 import { continentalHypsometry } from './hypsometry'
-import { wrapValue } from '../core/field'
 import { raftField, sampleOwnerField, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
 import { detExp, detPow } from '../core/detMath'
@@ -20,6 +19,8 @@ const FEATURE_MAX_REACH = Math.max(ELEVATION_TUNING.rangeSegmentHalfLength + ELE
 
 export interface FeatureBuckets {
   buckets: TerrainFeature[][]
+  // The bucket lattice, bucketsX × bucketsY over the domain.
+  grid: DomainGrid
   bucketsX: number
   bucketsY: number
   bucketSizeX: number
@@ -54,7 +55,8 @@ export interface FeatureBuckets {
 // for points near that specific wrap edge, producing a real, measured
 // elevation discontinuity there (confirmed with the previous radius: ~13x
 // the color difference of a typical interior row).
-export function buildFeatureBuckets(features: TerrainFeature[], width: number, height: number): FeatureBuckets {
+export function buildFeatureBuckets(features: TerrainFeature[], domain: Domain): FeatureBuckets {
+  const { width, height } = domain
   const bucketsX = Math.max(1, Math.floor(width / FEATURE_MAX_REACH))
   const bucketsY = Math.max(1, Math.floor(height / FEATURE_MAX_REACH))
   const bucketSizeX = width / bucketsX
@@ -65,7 +67,7 @@ export function buildFeatureBuckets(features: TerrainFeature[], width: number, h
     const by = Math.min(bucketsY - 1, Math.floor(feature.y / bucketSizeY))
     buckets[by * bucketsX + bx].push(feature)
   }
-  return { buckets, bucketsX, bucketsY, bucketSizeX, bucketSizeY }
+  return { buckets, grid: domain.grid(bucketsX, bucketsY), bucketsX, bucketsY, bucketSizeX, bucketSizeY }
 }
 
 // Baseline elevation field from the raft crust field (rafts.ts) — this replaced
@@ -106,7 +108,7 @@ export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oc
   // Ocean floor deepens with its crustal age; the margin profile then shapes
   // everything from that floor up onto the continent, putting the shoreline
   // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
-  const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, wx, wy, domain.width, domain.height))
+  const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, oceanAgeGrid(domain), wx, wy))
   const t = marginParameter(blobs ? raftFieldIndexed(wx, wy, blobs) : raftField(wx, wy, rafts, domain))
   // The water knob: the whole solid surface sits lower relative to a sea level
   // that stays at zero. Applied here rather than to the anchors because the two
@@ -143,12 +145,12 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, rende
 // bucket; the domain's own wrapping makes the later distance checks
 // correct regardless, but the bucket lookup isn't covered by that the same
 // way.
-export function warpedSamplePoint(x: number, y: number, width: number, height: number, warpSeed: number): { wx: number; wy: number } {
-  const rawWx = x + domainWarpDelta(x, y, width, height, warpSeed, 'x')
-  const rawWy = y + domainWarpDelta(x, y, width, height, warpSeed, 'y')
+export function warpedSamplePoint(x: number, y: number, domain: Domain, warpSeed: number): { wx: number; wy: number } {
+  const rawWx = x + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'x')
+  const rawWy = y + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'y')
   return {
-    wx: wrapValue(rawWx, width),
-    wy: wrapValue(rawWy, height),
+    wx: domain.wrapX(rawWx),
+    wy: domain.wrapY(rawWy),
   }
 }
 
@@ -161,16 +163,16 @@ export function computeElevation(
   ridgeValue: number,
   fineValue = 0,
 ): number {
-  const { buckets, bucketsX, bucketsY, bucketSizeX, bucketSizeY } = featureBuckets
+  const { buckets, grid, bucketsX, bucketsY, bucketSizeX, bucketSizeY } = featureBuckets
   const centerBx = Math.min(bucketsX - 1, Math.floor(wx / bucketSizeX))
   const centerBy = Math.min(bucketsY - 1, Math.floor(wy / bucketSizeY))
 
   let upliftSum = 0
   let weightSum = 0
   for (let dy = -1; dy <= 1; dy++) {
-    const by = wrapValue((centerBy + dy), bucketsY)
+    const by = grid.wrapRow(centerBy + dy)
     for (let dx = -1; dx <= 1; dx++) {
-      const bx = wrapValue((centerBx + dx), bucketsX)
+      const bx = grid.wrapCol(centerBx + dx)
       for (const feature of buckets[by * bucketsX + bx]) {
         // Capsule falloff (capsule.ts): the tangent's arbitrary orientation
         // sign doesn't matter — the segment is symmetric about the feature.
@@ -219,12 +221,13 @@ export function computeElevation(
 
 export function applyMountainRedistribution(
   elevations: Float32Array,
-  width: number,
-  height: number,
+  domain: Domain,
   ownerField: Int32Array,
   ownerResX: number,
   ownerResY: number,
 ): void {
+  const { width, height } = domain
+  const ownerGrid = domain.grid(ownerResX, ownerResY)
   // Owner looked up once per pixel and cached, not resampled in the second
   // pass — sampleOwnerField's coordinate math is cheap but pointless to redo
   // 2.1M times twice over.
@@ -233,7 +236,7 @@ export function applyMountainRedistribution(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
-      const owner = sampleOwnerField(ownerField, ownerResX, ownerResY, x, y, width, height)
+      const owner = sampleOwnerField(ownerField, ownerGrid, x, y)
       ownerAt[i] = owner
       const elevation = elevations[i]
       if (elevation <= 0) continue

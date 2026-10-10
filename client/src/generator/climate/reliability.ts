@@ -2,6 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { OCEAN_PRECIP } from './precipitation'
 import { detExp, detHypot, sq } from '../core/detMath'
+import type { DomainGrid } from '../core/domain'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
@@ -37,8 +38,8 @@ export interface Reliability {
 // `precipitation` is the annual rain (mm/yr, OCEAN_PRECIP on the sea),
 // `monsoonIndex` its signed seasonality, `anomaly` the sea surface's
 // departure from its latitude (the currents and the upwelling), `land` 1 on
-// land.
-export function computeReliability(precipitation: Float32Array, monsoonIndex: Float32Array, anomaly: Float32Array, land: Uint8Array, equatorOffset: number): Reliability {
+// land, `grid` the climate grid.
+export function computeReliability(precipitation: Float32Array, monsoonIndex: Float32Array, anomaly: Float32Array, land: Uint8Array, grid: DomainGrid, equatorOffset: number): Reliability {
   const n = RX * RY
   const T = CLIMATE_TUNING
 
@@ -53,23 +54,23 @@ export function computeReliability(precipitation: Float32Array, monsoonIndex: Fl
     if (latitudeAt(gy, equatorOffset) * 90 > T.ensoRowsDeg) continue
     for (let x0 = 0; x0 < RX; x0++) {
       // A run of sea starts after a land cell.
-      if (!land[gy * RX + x0] || land[gy * RX + (x0 + 1) % RX]) continue
+      if (!land[gy * RX + x0] || land[gy * RX + grid.wrapCol(x0 + 1)]) continue
       let len = 0
-      while (len < RX && !land[gy * RX + (x0 + 1 + len) % RX]) len++
+      while (len < RX && !land[gy * RX + grid.wrapCol(x0 + 1 + len)]) len++
       if (len >= RX) continue
       const third = Math.max(1, Math.floor(len / 3))
       let warm = 0
       let cold = 0
       for (let k = 0; k < third; k++) {
-        warm += anomaly[gy * RX + (x0 + 1 + k) % RX] / third
-        cold += anomaly[gy * RX + (x0 + len - k) % RX] / third
+        warm += anomaly[gy * RX + grid.wrapCol(x0 + 1 + k)] / third
+        cold += anomaly[gy * RX + grid.wrapCol(x0 + len - k)] / third
       }
       const widthDeg = (len * 360) / RX
       const strength = Math.min(1, Math.max(0, (warm - cold) / T.ensoFullGradientC))
         * Math.min(1, Math.max(0, (widthDeg - T.ensoMinWidthDeg) / (T.ensoFullWidthDeg - T.ensoMinWidthDeg)))
       if (strength <= 0) continue
-      const west = (x0 + 1) % RX
-      const east = (x0 + len) % RX
+      const west = grid.wrapCol(x0 + 1)
+      const east = grid.wrapCol(x0 + len)
       const same = basins.find((b) => Math.abs(b.west - west) <= 3 && Math.abs(b.east - east) <= 3)
       if (same) {
         if (strength > same.strength) Object.assign(same, { west, east, strength, widthDeg })

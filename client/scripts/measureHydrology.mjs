@@ -60,14 +60,14 @@ const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < 50; e++) M.sim.stepEpoch(sim)
 const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, sim.domain, sim.warpSeed)
 { // dynamic topography (F3), as the pipeline adds it
-  const dyn = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, W, H)
+  const dyn = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, sim.domain)
   for (let i = 0; i < base.length; i++) base[i] += dyn[i]
 }
-const bk = M.field.buildFeatureBuckets(sim.features, W, H)
+const bk = M.field.buildFeatureBuckets(sim.features, sim.domain)
 const salt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
 const raw = new Float32Array(W * H)
 for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-  const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
+  const s = M.field.warpedSamplePoint(x, y, sim.domain, sim.warpSeed)
   raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, sim.domain,
     M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed),
     M.ridged.fineDetailNoise(s.wx, s.wy, W, H, salt))
@@ -76,7 +76,7 @@ log(`world built in ${((Date.now() - t0) / 1000).toFixed(0)}s`)
 
 // Pre-erosion closed-basin depth: which depressions exist BEFORE the engine
 // runs (tectonic) — the provenance test for high lakes.
-const rawRouting = await M.routing.fillDepressionsAndRouteFlow(raw, W, H, 0)
+const rawRouting = await M.routing.fillDepressionsAndRouteFlow(raw, sim.domain, 0)
 const rawBasinDepth = new Float32Array(W * H)
 for (let i = 0; i < raw.length; i++) rawBasinDepth[i] = rawRouting.filled[i] - raw[i]
 
@@ -139,26 +139,26 @@ async function measure(name, controls) {
   log(`\n=== ${name} (age ${controls.age}, alluvium ${controls.alluvium}, rockContrast ${controls.rockContrast}) ===`)
   t0 = Date.now()
   const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, sim.domain, controls)
-  const ero = await M.erosionPassV2.runErosionPassV2(raw, W, H, forcing, { age: controls.age, params })
+  const ero = await M.erosionPassV2.runErosionPassV2(raw, sim.domain, forcing, { age: controls.age, params })
   const el = ero.elevations
   log(`erosion solved in ${((Date.now() - t0) / 1000).toFixed(0)}s`)
 
   // Climate v1 on raw (as the worker does), then the refinement on eroded.
-  let temperature = M.temperature.computeTemperature(raw, W, H)
+  let temperature = M.temperature.computeTemperature(raw, sim.domain)
   const wind = M.wind.computeWind()
-  let currents = M.currents.computeOceanCurrents(raw, wind, W, H)
-  M.currents.applyOceanSST(temperature, currents, raw, W, H, wind)
-  let seasonal = M.seasonality.computeSeasonalAmplitude(raw, W, H)
-  let precipitation = M.monsoon.computeSeasonalPrecipitation(raw, temperature, seasonal, wind, W, H, 1, 0).annual
+  let currents = M.currents.computeOceanCurrents(raw, wind, sim.domain)
+  M.currents.applyOceanSST(temperature, currents, raw, sim.domain, wind)
+  let seasonal = M.seasonality.computeSeasonalAmplitude(raw, sim.domain)
+  let precipitation = M.monsoon.computeSeasonalPrecipitation(raw, temperature, seasonal, wind, sim.domain, 1, 0).annual
 
-  const routing = await M.routing.fillDepressionsAndRouteFlow(el, W, H, 0)
+  const routing = await M.routing.fillDepressionsAndRouteFlow(el, sim.domain, 0)
   let discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   let lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, precipitation, CRX, CRY)
-  const t2 = M.temperature.computeTemperature(el, W, H, 0, 1, 0, lakes.dryBasin)
-  const c2 = M.currents.computeOceanCurrents(el, wind, W, H, lakes.dryBasin)
-  M.currents.applyOceanSST(t2, c2, el, W, H, wind, lakes.dryBasin)
-  const s2 = M.seasonality.computeSeasonalAmplitude(el, W, H, 0, lakes.dryBasin)
-  precipitation = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, W, H, 1, 0, lakes.dryBasin).annual
+  const t2 = M.temperature.computeTemperature(el, sim.domain, 0, 1, 0, lakes.dryBasin)
+  const c2 = M.currents.computeOceanCurrents(el, wind, sim.domain, lakes.dryBasin)
+  M.currents.applyOceanSST(t2, c2, el, sim.domain, wind, lakes.dryBasin)
+  const s2 = M.seasonality.computeSeasonalAmplitude(el, sim.domain, 0, lakes.dryBasin)
+  precipitation = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, sim.domain, 1, 0, lakes.dryBasin).annual
   discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   const maxDis = M.hydro.maxDischargeOverLand(discharge, el)
   lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, precipitation, CRX, CRY)
@@ -195,7 +195,7 @@ async function measure(name, controls) {
   // --- B. rivers, real vs floored counterfactual ---
   const CANON = M.hydro.CANONICAL_RIVER_DENSITY
   const stats = (precipField) => {
-    const meanRunoff = M.hydro.meanLandRunoff(precipField, el, W, H, CRX, CRY)
+    const meanRunoff = M.hydro.meanLandRunoff(precipField, el, sim.domain, CRX, CRY)
     const dis = M.hydro.accumulateDischarge(routing, el, precipField, CRX, CRY)
     const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(CANON), meanRunoff)
     const mask = M.hydro.buildChannelMask(routing, el, dis, threshold)

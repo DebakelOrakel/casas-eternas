@@ -39,11 +39,11 @@ for (let e = 0; e < 180; e++) M.archeanStep.archeanStep(archean)
 const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < 50; e++) M.sim.stepEpoch(sim)
 const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, sim.domain, sim.warpSeed)
-const bk = M.field.buildFeatureBuckets(sim.features, W, H)
+const bk = M.field.buildFeatureBuckets(sim.features, sim.domain)
 const salt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
 const raw = new Float32Array(W * H)
 for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-  const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
+  const s = M.field.warpedSamplePoint(x, y, sim.domain, sim.warpSeed)
   raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, sim.domain,
     M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed),
     M.ridged.fineDetailNoise(s.wx, s.wy, W, H, salt))
@@ -56,15 +56,15 @@ const CONTROLS = {
   rockContrast: M.surfaceInputs.SURFACE_INPUTS.rockContrast.default,
 }
 const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, sim.domain, CONTROLS)
-const ero = await M.erosionPassV2.runErosionPassV2(raw, W, H, forcing, { age: CONTROLS.age, params })
+const ero = await M.erosionPassV2.runErosionPassV2(raw, sim.domain, forcing, { age: CONTROLS.age, params })
 const el = ero.elevations
 
-const temperature = M.temperature.computeTemperature(el, W, H)
+const temperature = M.temperature.computeTemperature(el, sim.domain)
 const wind = M.wind.computeWind()
-const currents = M.currents.computeOceanCurrents(el, wind, W, H)
-M.currents.applyOceanSST(temperature, currents, el, W, H, wind)
-const seasonal = M.seasonality.computeSeasonalAmplitude(el, W, H)
-const precipitation = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, W, H, 1, 0).annual
+const currents = M.currents.computeOceanCurrents(el, wind, sim.domain)
+M.currents.applyOceanSST(temperature, currents, el, sim.domain, wind)
+const seasonal = M.seasonality.computeSeasonalAmplitude(el, sim.domain)
+const precipitation = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, sim.domain, 1, 0).annual
 const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
 process.stderr.write('ok\n')
 

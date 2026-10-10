@@ -40,13 +40,14 @@ export interface ElevationSampler {
 
 export function synthesisSampler(s: SynthesisSources): ElevationSampler {
   const { width, height, domain, warpSeed } = s
-  const buckets = buildFeatureBuckets(s.features, width, height)
+  const buckets = buildFeatureBuckets(s.features, domain)
+  const mantleGrid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
   const fineSeed = (warpSeed ^ FINE_DETAIL_SEED_SALT) >>> 0
   return {
     heightAt(x, y) {
       const baseline = raftBaselineAt(x, y, s.rafts, s.oceanAge, domain, warpSeed, s.seaLevelOffset)
-        + dynamicTopographyAt(s.mantle, MANTLE_RES_X, MANTLE_RES_Y, x, y, width, height)
-      const { wx, wy } = warpedSamplePoint(x, y, width, height, warpSeed)
+        + dynamicTopographyAt(s.mantle, mantleGrid, x, y)
+      const { wx, wy } = warpedSamplePoint(x, y, domain, warpSeed)
       return computeElevation(wx, wy, baseline, buckets, domain,
         ridgedMultifractal(wx, wy, width, height, warpSeed),
         fineDetailNoise(wx, wy, width, height, fineSeed))

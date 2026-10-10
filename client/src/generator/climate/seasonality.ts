@@ -1,6 +1,6 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { wrapIndex2 } from '../core/field'
+import type { Domain, DomainGrid } from '../core/domain'
 import { DEFAULT_PLANET_FORCING, seasonalityFactor, type PlanetForcing } from '../planet/planetForcing'
 
 const RX = CLIMATE_RES_X
@@ -10,13 +10,11 @@ const RY = CLIMATE_RES_Y
 // land; the ocean's near-nil swing would just flood the overlay with one color).
 export const OCEAN_AMPLITUDE = -1
 
-const wrapIndex = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
-
 // Continentality 0..1 = normalized distance to the nearest ocean cell
-// (multi-source BFS, 4-connected, toroidally wrapped). 0 at the coast/ocean,
+// (multi-source BFS, 4-connected, wrapped by the grid). 0 at the coast/ocean,
 // saturating to 1 deep inland. A fully-land or fully-ocean world degenerates
-// gracefully (all 1 / all 0).
-function computeContinentality(elevation: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array): Float32Array {
+// gracefully (all 1 / all 0). `grid`: the climate grid.
+function computeContinentality(elevation: Float32Array, worldWidth: number, worldHeight: number, grid: DomainGrid, dryLand?: Uint8Array): Float32Array {
   const n = RX * RY
   const dist = new Float32Array(n).fill(Infinity)
   const queue: number[] = []
@@ -36,7 +34,7 @@ function computeContinentality(elevation: Float32Array, worldWidth: number, worl
     const gy = (i - gx) / RX
     const d = dist[i]
     for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-      const j = wrapIndex(gx + dx, gy + dy)
+      const j = grid.index(gx + dx, gy + dy)
       if (d + 1 < dist[j]) {
         dist[j] = d + 1
         queue.push(j)
@@ -57,9 +55,11 @@ function computeContinentality(elevation: Float32Array, worldWidth: number, worl
 // classification later reads T_mean ± amplitude/2 for cold-winter / growing-
 // season distinctions. See docs/decisions/climate-biomes.md.
 // `planet` (planet/planetForcing.ts): the tilt sets the swing, the orbit
-// biases one hemisphere's.
-export function computeSeasonalAmplitude(elevation: Float32Array, worldWidth: number, worldHeight: number, equatorOffset = 0, dryLand?: Uint8Array, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float32Array {
-  const continentality = computeContinentality(elevation, worldWidth, worldHeight, dryLand)
+// biases one hemisphere's. `domain`: what the elevation raster covers, one
+// cell per unit.
+export function computeSeasonalAmplitude(elevation: Float32Array, domain: Domain, equatorOffset = 0, dryLand?: Uint8Array, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float32Array {
+  const { width: worldWidth, height: worldHeight } = domain
+  const continentality = computeContinentality(elevation, worldWidth, worldHeight, domain.grid(RX, RY), dryLand)
   const amplitude = new Float32Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {
     const yNorm = shiftedYNorm(gy, RY, equatorOffset)

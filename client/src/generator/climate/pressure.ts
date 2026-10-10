@@ -1,13 +1,13 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, beltYNorm, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { hadleyEdge } from '../planet/planetForcing'
-import { downsampleBox, wrapIndex2 } from '../core/field'
+import { downsampleBox } from '../core/field'
+import type { Domain, DomainGrid } from '../core/domain'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import { detCos, detHypot, detSin } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
-const wrapIndex = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
 
 // Surface pressure and the wind it drives, for one month, on the climate grid
 // (build step 2 of docs/design/climate-refinement.md). The climate step's
@@ -50,27 +50,27 @@ function bandPressure(phi: number, e1: number, e2: number): number {
   return 1013 + a * t
 }
 
-// Wrapped box blur on the climate grid, in place through a scratch buffer;
-// three passes approach a Gaussian of σ ≈ radius. Exported for the
+// Wrapped box blur on the climate grid (`grid`), in place through a scratch
+// buffer; three passes approach a Gaussian of σ ≈ radius. Exported for the
 // refinement's ocean highs.
-export function blur(field: Float32Array, radius: number): void {
+export function blur(field: Float32Array, radius: number, grid: DomainGrid): void {
   const tmp = new Float32Array(field.length)
   const width = 2 * radius + 1
   for (let pass = 0; pass < 3; pass++) {
     for (let gy = 0; gy < RY; gy++) {
       let sum = 0
-      for (let dx = -radius; dx <= radius; dx++) sum += field[wrapIndex(dx, gy)]
+      for (let dx = -radius; dx <= radius; dx++) sum += field[grid.index(dx, gy)]
       for (let gx = 0; gx < RX; gx++) {
         tmp[gy * RX + gx] = sum / width
-        sum += field[wrapIndex(gx + radius + 1, gy)] - field[wrapIndex(gx - radius, gy)]
+        sum += field[grid.index(gx + radius + 1, gy)] - field[grid.index(gx - radius, gy)]
       }
     }
     for (let gx = 0; gx < RX; gx++) {
       let sum = 0
-      for (let dy = -radius; dy <= radius; dy++) sum += tmp[wrapIndex(gx, dy)]
+      for (let dy = -radius; dy <= radius; dy++) sum += tmp[grid.index(gx, dy)]
       for (let gy = 0; gy < RY; gy++) {
         field[gy * RX + gx] = sum / width
-        sum += tmp[wrapIndex(gx, gy + radius + 1)] - tmp[wrapIndex(gx, gy - radius)]
+        sum += tmp[grid.index(gx, gy + radius + 1)] - tmp[grid.index(gx, gy - radius)]
       }
     }
   }
@@ -80,10 +80,11 @@ export function blur(field: Float32Array, radius: number): void {
 // (biomes.reduceTemperatureToSeaLevel: a high range is cold by its height,
 // and the pressure here is sea-level pressure), `land` 1 on
 // land cells of the climate grid, `elevation` the full-res raster (for the
-// relief the wind meets), `baseWind` wind.ts's banded wind. `rotationHours`
+// relief the wind meets) over `domain` one cell per unit, `baseWind`
+// wind.ts's banded wind. `rotationHours`
 // scales the Coriolis parameter and moves the band edges.
 export function computePressureWind(
-  temperature: Float32Array, land: Uint8Array, elevation: Float32Array, worldWidth: number, worldHeight: number,
+  temperature: Float32Array, land: Uint8Array, elevation: Float32Array, domain: Domain,
   baseWind: Float32Array, equatorOffset: number, rotationHours: number,
   // The season's shift of the bands (climateField.beltYNorm), the same the
   // month's rain and `baseWind` were made with.
@@ -93,6 +94,7 @@ export function computePressureWind(
   extraHpa?: Float32Array,
 ): PressureWind {
   const n = RX * RY
+  const grid = domain.grid(RX, RY)
   const e1 = hadleyEdge(rotationHours)
   const e2 = (1 + e1) / 2
 
@@ -105,7 +107,7 @@ export function computePressureWind(
     mean /= RX
     for (let gx = 0; gx < RX; gx++) thermal[gy * RX + gx] = -(temperature[gy * RX + gx] - mean) * CLIMATE_TUNING.pressureHpaPerC
   }
-  blur(thermal, CLIMATE_TUNING.pressureSmoothCells)
+  blur(thermal, CLIMATE_TUNING.pressureSmoothCells, grid)
   if (extraHpa) for (let i = 0; i < n; i++) thermal[i] += extraHpa[i]
 
   const pressure = new Float32Array(n)
@@ -122,7 +124,7 @@ export function computePressureWind(
 
   // The relief the wind meets: the box mean of the full-res raster per cell,
   // in metres, land only.
-  const relief = downsampleBox(elevation, worldWidth, worldHeight, RX, RY)
+  const relief = downsampleBox(elevation, domain.width, domain.height, RX, RY)
   for (let i = 0; i < n; i++) relief[i] = Math.max(0, relief[i] * ELEVATION_METERS)
 
   const wind = new Float32Array(n * 2)
@@ -130,8 +132,8 @@ export function computePressureWind(
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       // −∇p of the thermal part, in grid axes (x east, y down), per cell.
-      const gx_ = -(thermal[wrapIndex(gx + 1, gy)] - thermal[wrapIndex(gx - 1, gy)]) / 2 * CLIMATE_TUNING.pressureWindPerHpa
-      const gy_ = -(thermal[wrapIndex(gx, gy + 1)] - thermal[wrapIndex(gx, gy - 1)]) / 2 * CLIMATE_TUNING.pressureWindPerHpa
+      const gx_ = -(thermal[grid.index(gx + 1, gy)] - thermal[grid.index(gx - 1, gy)]) / 2 * CLIMATE_TUNING.pressureWindPerHpa
+      const gy_ = -(thermal[grid.index(gx, gy + 1)] - thermal[grid.index(gx, gy - 1)]) / 2 * CLIMATE_TUNING.pressureWindPerHpa
       // The balance G + f·(v, −u)_north − r·u = 0, solved in north-up axes
       // (the y axis flips), then back.
       const gn = -gy_
@@ -145,12 +147,12 @@ export function computePressureWind(
 
       // A range turns the wind: take away a part of the component up the
       // slope, more for a higher barrier.
-      const hx = (relief[wrapIndex(gx + 1, gy)] - relief[wrapIndex(gx - 1, gy)]) / 2
-      const hy = (relief[wrapIndex(gx, gy + 1)] - relief[wrapIndex(gx, gy - 1)]) / 2
+      const hx = (relief[grid.index(gx + 1, gy)] - relief[grid.index(gx - 1, gy)]) / 2
+      const hy = (relief[grid.index(gx, gy + 1)] - relief[grid.index(gx, gy - 1)]) / 2
       const slope = detHypot(hx, hy)
       if (slope > 0) {
         const up = (wu * hx + wv * hy) / slope
-        const top = Math.max(relief[i], relief[wrapIndex(gx + Math.sign(wu), gy)], relief[wrapIndex(gx, gy + Math.sign(wv))])
+        const top = Math.max(relief[i], relief[grid.index(gx + Math.sign(wu), gy)], relief[grid.index(gx, gy + Math.sign(wv))])
         const block = Math.min(1, Math.max(0, (top - CLIMATE_TUNING.pressureBlockFromM) / (CLIMATE_TUNING.pressureBlockFullM - CLIMATE_TUNING.pressureBlockFromM))) * CLIMATE_TUNING.pressureBlockMax
         if (up > 0) {
           wu -= block * up * hx / slope

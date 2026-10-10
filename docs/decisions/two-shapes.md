@@ -166,11 +166,23 @@ is agreed before it starts.
 
 ## Status
 
+2026-10-10: step 3b BUILT — the raster side: every raster wrap in
+`generator/` goes through a `DomainGrid` from `domain.grid(resX, resY)`
+(wraps, indices, neighbours, the samplers, neighbour tables for the hot
+loops; `rowScale`/`cellArea` 1 on the torus), threaded from the stage
+that owns the Domain; a second lint gate refuses `core/field.ts`'s wrap
+and samplers outside `core/`. The periodic noise lattices
+(`ridgedNoise`, `domainWarp`, `hypsometry`) are excepted: the sphere
+replaces the noise, not its wrap. Steps 3a and 3b together checked
+against the tree before 3a with the golden harness's byte hashes: three
+worlds × 46 stages byte-identical. Step 3c (the kind in the world id) not
+started.
+
 2026-10-10: step 3a BUILT — the vector layer reaches the torus only
 through `Domain` (with `rotateAround` added); a lint gate in `make lint`
-refuses `core/toroidal` imports outside `core/domain.ts`. Golden harness
-byte-identical (0 moved stages). Steps 3b (raster wraps) and 3c (the kind
-in the world id) not started.
+refuses `core/toroidal` imports outside `core/domain.ts`. (The golden
+run of that day had no byte hashes recorded, so it proved the metrics
+only; the byte check against the tree before 3a came with 3b, below.)
 
 2026-10-10: step 2 of fork 4 BUILT — `client/src/map/worldView.ts` (with
 chart points as fractions u, v), `flatWorldView.ts` around the map plane,

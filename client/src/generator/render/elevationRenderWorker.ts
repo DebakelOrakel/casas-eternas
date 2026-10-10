@@ -1,7 +1,7 @@
 import { buildFeatureBuckets, computeElevation, warpedSamplePoint } from '../elevation/elevationField'
 import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from '../elevation/ridgedNoise'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
-import { torusDomain } from '../core/domain'
+import { torusDomain, type Domain } from '../core/domain'
 
 // Computes raw (unshaped, unclamped-differently, uncolored) elevation for
 // one horizontal band [startY, endY) of the map — spawned and owned by
@@ -80,9 +80,9 @@ function getStaticFieldCache(
   endY: number,
   renderWidth: number,
   renderHeight: number,
-  worldWidth: number,
-  worldHeight: number,
+  domain: Domain,
 ): StaticFieldCache {
+  const { width: worldWidth, height: worldHeight } = domain
   if (
     staticCache &&
     staticCache.warpSeed === warpSeed &&
@@ -109,7 +109,7 @@ function getStaticFieldCache(
     for (let px = 0; px < renderWidth; px++) {
       const idx = rowOffset + px
       const worldX = px * scaleX
-      const { wx, wy } = warpedSamplePoint(worldX, worldY, worldWidth, worldHeight, warpSeed)
+      const { wx, wy } = warpedSamplePoint(worldX, worldY, domain, warpSeed)
       warpedX[idx] = wx
       warpedY[idx] = wy
       ridge[idx] = ridgedMultifractal(wx, wy, worldWidth, worldHeight, warpSeed)
@@ -133,8 +133,8 @@ self.onmessage = (event: MessageEvent<RenderSliceRequest>) => {
   // cheap regardless (buildFeatureBuckets measured under 1ms even for
   // the full map). Buckets are in world units (features live in world
   // coordinates), independent of the render grid's resolution.
-  const buckets = buildFeatureBuckets(features, worldWidth, worldHeight)
-  const cache = getStaticFieldCache(warpSeed, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight)
+  const buckets = buildFeatureBuckets(features, domain)
+  const cache = getStaticFieldCache(warpSeed, startY, endY, renderWidth, renderHeight, domain)
 
   const rowCount = endY - startY
   const elevations = new Float32Array(renderWidth * rowCount)

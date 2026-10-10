@@ -1,4 +1,4 @@
-import { wrapIndex2 } from '../core/field'
+import type { Domain, DomainGrid } from '../core/domain'
 import { OCEAN_AMPLITUDE } from './seasonality'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
@@ -46,14 +46,14 @@ function seasonalTemperature(annual: Float32Array, amplitude: Float32Array, equa
 // Monsoon surface wind = base zonal wind + k·∇T(seasonal). ∇T points toward the warm
 // anomaly, so near a coast it points from cool ocean to hot summer land (onshore, wet)
 // and reverses in winter (offshore, dry). Interleaved [u, v] like computeWind.
-function computeMonsoonWind(base: Float32Array, seasonalTemp: Float32Array): Float32Array {
+// `grid`: the climate grid.
+function computeMonsoonWind(base: Float32Array, seasonalTemp: Float32Array, grid: DomainGrid): Float32Array {
   const out = new Float32Array(base.length)
-  const wrap = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      const dTdx = (seasonalTemp[wrap(gx + 1, gy)] - seasonalTemp[wrap(gx - 1, gy)]) / 2
-      const dTdy = (seasonalTemp[wrap(gx, gy + 1)] - seasonalTemp[wrap(gx, gy - 1)]) / 2
+      const dTdx = (seasonalTemp[grid.index(gx + 1, gy)] - seasonalTemp[grid.index(gx - 1, gy)]) / 2
+      const dTdy = (seasonalTemp[grid.index(gx, gy + 1)] - seasonalTemp[grid.index(gx, gy - 1)]) / 2
       out[i * 2] = base[i * 2] + CLIMATE_TUNING.monsoonWindStrength * dTdx
       out[i * 2 + 1] = base[i * 2 + 1] + CLIMATE_TUNING.monsoonWindStrength * dTdy
     }
@@ -103,20 +103,21 @@ export function computeSeasonalPrecipitation(
   annualTemp: Float32Array,
   amplitude: Float32Array,
   baseWind: Float32Array,
-  worldW: number,
-  worldH: number,
+  // What the elevation raster covers, one cell per unit.
+  domain: Domain,
   humidity: number,
   equatorOffset: number,
   dryLand?: Uint8Array,
 ): SeasonalPrecipitation {
   const tempN = seasonalTemperature(annualTemp, amplitude, equatorOffset, true) // top hemisphere summer
   const tempS = seasonalTemperature(annualTemp, amplitude, equatorOffset, false)
-  const windN = computeMonsoonWind(baseWind, tempN)
-  const windS = computeMonsoonWind(baseWind, tempS)
+  const grid = domain.grid(RX, RY)
+  const windN = computeMonsoonWind(baseWind, tempN, grid)
+  const windS = computeMonsoonWind(baseWind, tempS, grid)
   // ITCZ migrates toward the summer hemisphere. +equatorOffset moves the equator toward
   // the bottom, so a top-hemisphere summer (belt shifts up) uses a SMALLER offset.
-  const precipN = computePrecipitation(elevation, tempN, windN, worldW, worldH, humidity, equatorOffset, dryLand, CLIMATE_TUNING.monsoonItczSeasonalShift)
-  const precipS = computePrecipitation(elevation, tempS, windS, worldW, worldH, humidity, equatorOffset, dryLand, -CLIMATE_TUNING.monsoonItczSeasonalShift)
+  const precipN = computePrecipitation(elevation, tempN, windN, domain, humidity, equatorOffset, dryLand, CLIMATE_TUNING.monsoonItczSeasonalShift)
+  const precipS = computePrecipitation(elevation, tempS, windS, domain, humidity, equatorOffset, dryLand, -CLIMATE_TUNING.monsoonItczSeasonalShift)
 
   const n = precipN.length
   const annual = new Float32Array(n)

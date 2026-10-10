@@ -1,5 +1,4 @@
 import type { Domain } from '../core/domain'
-import { sampleNearestWorld } from '../core/field'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { detHypot, sq } from '../core/detMath'
 
@@ -60,9 +59,6 @@ const PLUME_MIN_SEPARATION_FRAC = 0.14
 // fault that is noticed only long after it is introduced.
 const PLUME_MAX_STEP_PX = 3
 
-function mantleAt(mantle: Float32Array, x: number, y: number, width: number, height: number): number {
-  return sampleNearestWorld(mantle, MANTLE_RES_X, MANTLE_RES_Y, x, y, width, height)
-}
 
 // The strongest upwellings, strongest first, thinned so each is a distinct one.
 // Kin to finalizeArchean's convectionCellSeeds, which does the same sweep for plate
@@ -83,6 +79,7 @@ export interface Plume {
 // simulation state (and none has to be serialised).
 export function findPlumeSites(mantle: Float32Array, domain: Domain, epoch = 0, exclude: Plume[] = []): Plume[] {
   const { width, height } = domain
+  const grid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
   let nextId = exclude.reduce((m, p) => Math.max(m, p.id), -1) + 1
   const candidates: { x: number; y: number; strength: number }[] = []
   for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
@@ -93,9 +90,7 @@ export function findPlumeSites(mantle: Float32Array, domain: Domain, epoch = 0, 
       for (let dy = -1; dy <= 1 && isMax; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue
-          const nx = (((gx + dx) % MANTLE_RES_X) + MANTLE_RES_X) % MANTLE_RES_X
-          const ny = (((gy + dy) % MANTLE_RES_Y) + MANTLE_RES_Y) % MANTLE_RES_Y
-          if (mantle[ny * MANTLE_RES_X + nx] > v) { isMax = false; break }
+          if (mantle[grid.neighbour(gx, gy, dx, dy)] > v) { isMax = false; break }
         }
       }
       if (!isMax) continue
@@ -126,26 +121,28 @@ export function advancePlumes(plumes: Plume[], mantle: Float32Array, domain: Dom
   const { width, height } = domain
   const cellW = width / MANTLE_RES_X
   const cellH = height / MANTLE_RES_Y
+  const grid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
+  const mantleAt = (x: number, y: number): number => grid.sampleNearestAt(mantle, x, y)
   for (const plume of plumes) {
     // Uphill by one step: sample the four neighbours a cell away and move toward the
     // steepest rise. Hill-climbing rather than gradient descent on a smooth function
     // because the field is coarse (128x64) and its cells are what the plume follows.
-    const here = mantleAt(mantle, plume.x, plume.y, width, height)
+    const here = mantleAt(plume.x, plume.y)
     let bestX = 0
     let bestY = 0
     let best = here
     for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-      const v = mantleAt(mantle, plume.x + dx * cellW, plume.y + dy * cellH, width, height)
+      const v = mantleAt(plume.x + dx * cellW, plume.y + dy * cellH)
       if (v > best) { best = v; bestX = dx; bestY = dy }
     }
     if (bestX === 0 && bestY === 0) continue
     const len = detHypot(bestX * cellW, bestY * cellH) || 1
     const step = Math.min(PLUME_MAX_STEP_PX, len)
-    plume.x = (((plume.x + (bestX * cellW / len) * step) % width) + width) % width
-    plume.y = (((plume.y + (bestY * cellH / len) * step) % height) + height) % height
+    plume.x = domain.wrapX(plume.x + (bestX * cellW / len) * step)
+    plume.y = domain.wrapY(plume.y + (bestY * cellH / len) * step)
   }
   for (let i = plumes.length - 1; i >= 0; i--) {
-    if (mantleAt(mantle, plumes[i].x, plumes[i].y, width, height) < PLUME_RETIRE_THRESHOLD) plumes.splice(i, 1)
+    if (mantleAt(plumes[i].x, plumes[i].y) < PLUME_RETIRE_THRESHOLD) plumes.splice(i, 1)
   }
   plumes.push(...findPlumeSites(mantle, domain, epoch, plumes))
 }

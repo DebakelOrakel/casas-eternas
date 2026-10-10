@@ -47,8 +47,8 @@ const MIN_SEED_SEPARATION_FRAC = 0.22
 export function convectionCellSeeds(mantle: Float32Array, domain: Domain): PlateSeed[] {
   const { width, height } = domain
   const candidates: { x: number; y: number; strength: number }[] = []
-  const at = (gx: number, gy: number): number =>
-    mantle[(((gy % MANTLE_RES_Y) + MANTLE_RES_Y) % MANTLE_RES_Y) * MANTLE_RES_X + (((gx % MANTLE_RES_X) + MANTLE_RES_X) % MANTLE_RES_X)]
+  const grid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
+  const at = (gx: number, gy: number): number => mantle[grid.index(gx, gy)]
 
   for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
     for (let gx = 0; gx < MANTLE_RES_X; gx++) {

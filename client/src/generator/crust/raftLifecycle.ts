@@ -2,7 +2,6 @@ import type { PlateSeed } from '../tectonics/plateSeeds'
 import { advancePointByMotion, type PlateMotion } from '../tectonics/plateMotion'
 import type { Raft, RaftBlob, RaftMergeEvent, RaftSplitEvent } from './raftTypes'
 import type { Domain } from '../core/domain'
-import { sampleNearestWorld, wrapValue } from '../core/field'
 import { deservesContinentName, pickUnusedRaftName } from './raftNames'
 import { detHypot } from '../core/detMath'
 
@@ -84,15 +83,11 @@ export function advanceRaftsOnFlow(
   flow: Float32Array,
   flowResX: number,
   flowResY: number,
-  width: number,
-  height: number,
+  domain: Domain,
   rigidity: number,
 ): void {
-  const flowAt = (x: number, y: number, component: number): number => {
-    const gx = Math.min(flowResX - 1, Math.floor((wrapValue(x, width) / width) * flowResX))
-    const gy = Math.min(flowResY - 1, Math.floor((wrapValue(y, height) / height) * flowResY))
-    return flow[(gy * flowResX + gx) * 2 + component]
-  }
+  const flowGrid = domain.grid(flowResX, flowResY)
+  const flowAt = (x: number, y: number, component: number): number => flow[flowGrid.cellAt(x, y) * 2 + component]
   for (const raft of rafts) {
     if (raft.blobs.length === 0) continue
     // Averaging velocities, not positions — so no seam handling is needed here.
@@ -108,8 +103,8 @@ export function advanceRaftsOnFlow(
     for (const blob of raft.blobs) {
       const localX = flowAt(blob.x, blob.y, 0)
       const localY = flowAt(blob.x, blob.y, 1)
-      blob.x = wrapValue(blob.x + meanX + differential * (localX - meanX), width)
-      blob.y = wrapValue(blob.y + meanY + differential * (localY - meanY), height)
+      blob.x = domain.wrapX(blob.x + meanX + differential * (localX - meanX))
+      blob.y = domain.wrapY(blob.y + meanY + differential * (localY - meanY))
     }
   }
 }
@@ -186,8 +181,8 @@ export function compactRafts(rafts: Raft[], rate: number, domain: Domain): void 
       const excess = dist - compactRadius
       if (excess <= 0) continue
       const pull = (excess * rate) / dist
-      blob.x = wrapValue(blob.x - dx * pull, domain.width)
-      blob.y = wrapValue(blob.y - dy * pull, domain.height)
+      blob.x = domain.wrapX(blob.x - dx * pull)
+      blob.y = domain.wrapY(blob.y - dy * pull)
     }
   }
 }
@@ -234,8 +229,8 @@ export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisation
         const wa = a.radius * a.radius
         const wb = b.radius * b.radius
         const t = wb / (wa + wb)
-        a.x = wrapValue(a.x + domain.deltaX(b.x, a.x) * t, domain.width)
-        a.y = wrapValue(a.y + domain.deltaY(b.y, a.y) * t, domain.height)
+        a.x = domain.wrapX(a.x + domain.deltaX(b.x, a.x) * t)
+        a.y = domain.wrapY(a.y + domain.deltaY(b.y, a.y) * t)
         a.radius = newRadius
         a.birthEpoch = Math.round((a.birthEpoch ?? 0) * (1 - t) + (b.birthEpoch ?? 0) * t)
         dead[j] = 1
@@ -270,15 +265,15 @@ export function recycleUnstabilisedCrust(
   epoch: number,
   stabilisationEpochs: number,
   downwellingThreshold: number,
-  width: number,
-  height: number,
+  domain: Domain,
 ): number {
+  const mantleGrid = domain.grid(mantleResX, mantleResY)
   let recycled = 0
   for (const raft of rafts) {
     const kept: RaftBlob[] = []
     for (const blob of raft.blobs) {
       const age = epoch - (blob.birthEpoch ?? 0)
-      const overDownwelling = sampleNearestWorld(mantle, mantleResX, mantleResY, blob.x, blob.y, width, height) < downwellingThreshold
+      const overDownwelling = mantleGrid.sampleNearestAt(mantle, blob.x, blob.y) < downwellingThreshold
       if (age < stabilisationEpochs && overDownwelling) { recycled++; continue }
       kept.push(blob)
     }
@@ -376,8 +371,8 @@ export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, epoc
           // tangent: perpendicular to the convergence direction between them.
           const dx = domain.deltaX(overlap.blobB.x, overlap.blobA.x)
           const dy = domain.deltaY(overlap.blobB.y, overlap.blobA.y)
-          const seamX = wrapValue((overlap.blobA.x + dx / 2), domain.width)
-          const seamY = wrapValue((overlap.blobA.y + dy / 2), domain.height)
+          const seamX = domain.wrapX(overlap.blobA.x + dx / 2)
+          const seamY = domain.wrapY(overlap.blobA.y + dy / 2)
           const len = detHypot(dx, dy) || 1
           merges.push({ nameA, nameB, x: seamX, y: seamY, tangentX: -dy / len, tangentY: dx / len })
           if (!rafts[i].name && rafts[j].name) rafts[i].name = rafts[j].name
@@ -438,12 +433,12 @@ export function splitRaftAtRift(
   // immediately weld them back together — a rift genuinely separates the
   // diverging continents. They keep drifting apart afterward with their plates.
   for (const blob of near) {
-    blob.x = wrapValue((blob.x + normalX * gap), domain.width)
-    blob.y = wrapValue((blob.y + normalY * gap), domain.height)
+    blob.x = domain.wrapX(blob.x + normalX * gap)
+    blob.y = domain.wrapY(blob.y + normalY * gap)
   }
   for (const blob of far) {
-    blob.x = wrapValue((blob.x - normalX * gap), domain.width)
-    blob.y = wrapValue((blob.y - normalY * gap), domain.height)
+    blob.x = domain.wrapX(blob.x - normalX * gap)
+    blob.y = domain.wrapY(blob.y - normalY * gap)
   }
   const parentName = raft.name
   raft.blobs = near

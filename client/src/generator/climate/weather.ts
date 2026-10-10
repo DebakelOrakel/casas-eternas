@@ -1,3 +1,4 @@
+import type { Domain } from '../core/domain'
 import { computeTemperature } from './temperature'
 import { DEFAULT_PLANET_FORCING, type PlanetForcing } from '../planet/planetForcing'
 import { computeWind } from './wind'
@@ -60,13 +61,14 @@ export interface Weather {
 // `dryLand` is the terminal-basin dry-floor override (LakeFields.dryBasin):
 // those sub-sea cells count as land throughout, with an unclamped downward
 // lapse — see computeTemperature.
-export function computeWeather(elevation: Float32Array, width: number, height: number, params: WeatherParams, dryLand?: Uint8Array): Weather {
+// `domain`: what the elevation raster covers, one cell per unit.
+export function computeWeather(elevation: Float32Array, domain: Domain, params: WeatherParams, dryLand?: Uint8Array): Weather {
   const planet = params.planet ?? DEFAULT_PLANET_FORCING
-  const temperature = computeTemperature(elevation, width, height, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, dryLand, planet)
+  const temperature = computeTemperature(elevation, domain, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, dryLand, planet)
   const wind = computeWind(params.equatorOffset, planet.rotationHours)
-  const currents = computeOceanCurrents(elevation, wind, width, height, dryLand, params.equatorOffset)
-  const currentAnomaly = applyOceanSST(temperature, currents, elevation, width, height, wind, dryLand)
-  const seasonalAmplitude = computeSeasonalAmplitude(elevation, width, height, params.equatorOffset, dryLand, planet)
-  const seasonal = computeSeasonalPrecipitation(elevation, temperature, seasonalAmplitude, wind, width, height, params.humidity, params.equatorOffset, dryLand)
+  const currents = computeOceanCurrents(elevation, wind, domain, dryLand, params.equatorOffset)
+  const currentAnomaly = applyOceanSST(temperature, currents, elevation, domain, wind, dryLand)
+  const seasonalAmplitude = computeSeasonalAmplitude(elevation, domain, params.equatorOffset, dryLand, planet)
+  const seasonal = computeSeasonalPrecipitation(elevation, temperature, seasonalAmplitude, wind, domain, params.humidity, params.equatorOffset, dryLand)
   return { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal }
 }

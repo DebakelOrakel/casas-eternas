@@ -1,5 +1,4 @@
 import { hashSeedString } from '../core/rng'
-import { sampleBilinearGrid } from '../core/field'
 import { fineDetailNoise } from '../elevation/ridgedNoise'
 import { CASCADE_FALLOFF, localRelief, RIDGE_FIELD_MEAN, RIDGE_STRENGTH, ridgedAt, seedCascadeScales, seedRoughnessAmplitude } from '../surface/amplify'
 import { densityTarget, MESH_Z } from './meshBuild'
@@ -73,8 +72,9 @@ export function refineMeshLevel(parentMesh: PeriodicTriangulation, parentZ: Floa
   // The relief the ridging scales by: the parent's heights on the macro
   // grid, ranged over the amplification's radius.
   const macro = rasteriseNodeField(mesh, parentZ, width, height)
-  const relief = localRelief(macro, width, height)
-  const synthesise = levelSynthesis(options, (x, y) => sampleBilinearGrid(relief, width, height, x, y))
+  const macroGrid = mesh.domain.grid(width, height)
+  const relief = localRelief(macro, macroGrid)
+  const synthesise = levelSynthesis(options, (x, y) => macroGrid.sampleBilinear(relief, x, y))
   const sample = (v: number, x: number, y: number): void => {
     // The parent's height at this point, then the two layers on top.
     state.get(MESH_Z)[v] = synthesise(x, y, parentSampler.heightAt(x, y))

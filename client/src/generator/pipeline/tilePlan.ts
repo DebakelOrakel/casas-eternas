@@ -1,4 +1,4 @@
-import { wrapValue } from '../core/field'
+import type { Domain } from '../core/domain'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import type { MeshRouting } from '../mesh/meshErosion'
 import { parentTilesOf, tileGrid, tileSpec, type TileId } from '../mesh/meshTile'
@@ -44,17 +44,21 @@ export interface TilePlanInput {
 
 const keyOf = (t: TileId): string => `${t.level}:${t.x},${t.y}`
 
-// The tile of `level` that holds a world point.
-export function tileAt(level: number, x: number, y: number, width: number, height: number): TileId {
+// The tile of `level` that holds a world point (`world`: one macro cell per
+// unit).
+export function tileAt(level: number, x: number, y: number, world: Domain): TileId {
   const spec = tileSpec(level)
-  const { cols, rows } = tileGrid(width, height, spec)
-  const tx = Math.floor(wrapValue(x - spec.offset, width) / spec.cells) % cols
-  const ty = Math.floor(wrapValue(y - spec.offset, height) / spec.cells) % rows
+  const { cols, rows } = tileGrid(world.width, world.height, spec)
+  const tiles = world.grid(cols, rows)
+  const tx = tiles.wrapCol(Math.floor(world.wrapX(x - spec.offset) / spec.cells))
+  const ty = tiles.wrapRow(Math.floor(world.wrapY(y - spec.offset) / spec.cells))
   return { level, x: tx, y: ty }
 }
 
 export function planTiles(input: TilePlanInput): PlannedTile[] {
-  const { mesh, z, routing, width, height, levels } = input
+  const { mesh, z, routing, levels } = input
+  // The world level 1 lies on, one macro cell per unit.
+  const world = mesh.domain
   // The tiles per level: a level's land, and every tile a finer level's
   // tile needs as a parent.
   const sets = new Map<number, Map<string, TileId>>()
@@ -63,20 +67,20 @@ export function planTiles(input: TilePlanInput): PlannedTile[] {
     const set = new Map<string, TileId>()
     for (const t of input.landTiles(level)) set.set(keyOf(t), t)
     const finer = sets.get(levels[i + 1])
-    if (finer) for (const t of finer.values()) for (const p of parentTilesOf(t, tileSpec(level), width, height)) set.set(keyOf(p), p)
+    if (finer) for (const t of finer.values()) for (const p of parentTilesOf(t, tileSpec(level), world)) set.set(keyOf(p), p)
     sets.set(level, set)
   }
   const out: PlannedTile[] = []
   for (let i = 0; i < levels.length; i++) {
     const level = levels[i]
     const set = sets.get(level)!
-    const upstream = flowEdges(mesh, z, routing, width, height, level, set)
+    const upstream = flowEdges(mesh, z, routing, world, level, set)
     const above = i > 0 ? tileSpec(levels[i - 1]) : null
     const tiles = [...set.values()].sort((a, b) => a.y - b.y || a.x - b.x)
     for (const tile of tiles) {
       out.push({
         tile,
-        parents: above ? parentTilesOf(tile, above, width, height) : [],
+        parents: above ? parentTilesOf(tile, above, world) : [],
         upstream: (upstream.get(keyOf(tile)) ?? []).map((k) => set.get(k)!),
       })
     }
@@ -86,7 +90,7 @@ export function planTiles(input: TilePlanInput): PlannedTile[] {
 
 // A level's flow edges, acyclic: for each tile the tiles whose water
 // enters it, by the water level 1 moves across their shared edges.
-function flowEdges(mesh: PeriodicTriangulation, z: Float32Array, routing: MeshRouting, width: number, height: number, level: number, set: Map<string, TileId>): Map<string, string[]> {
+function flowEdges(mesh: PeriodicTriangulation, z: Float32Array, routing: MeshRouting, world: Domain, level: number, set: Map<string, TileId>): Map<string, string[]> {
   // The water crossing from tile a into tile b: the drainage of every
   // land node whose receiver lies in another tile of the set.
   const crossing = new Map<string, number>()
@@ -94,7 +98,7 @@ function flowEdges(mesh: PeriodicTriangulation, z: Float32Array, routing: MeshRo
   const keyAt = (v: number): string => {
     let k = tileKey.get(v)
     if (k === undefined) {
-      k = keyOf(tileAt(level, mesh.vx[v], mesh.vy[v], width, height))
+      k = keyOf(tileAt(level, mesh.vx[v], mesh.vy[v], world))
       tileKey.set(v, k)
     }
     return k

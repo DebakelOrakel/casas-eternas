@@ -1,7 +1,6 @@
 import type { Domain } from '../core/domain'
 import { getVelocityAt, advancePointByMotion } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
-import { wrapValue } from '../core/field'
 
 // A feature is a mountain *range* (or arc/ridge), or a *trench* — the
 // paired negative depression on the subducting side of a subduction/
@@ -193,8 +192,8 @@ export function advanceTerrainFeatures(features: TerrainFeature[], motions: Plat
       const velocityB = getVelocityAt(feature, motions[feature.plateB], domain)
       const vx = (velocityA.vx + velocityB.vx) / 2
       const vy = (velocityA.vy + velocityB.vy) / 2
-      feature.x = wrapValue((feature.x + vx * angleStep), domain.width)
-      feature.y = wrapValue((feature.y + vy * angleStep), domain.height)
+      feature.x = domain.wrapX(feature.x + vx * angleStep)
+      feature.y = domain.wrapY(feature.y + vy * angleStep)
     } else {
       const motion = motions[feature.movesWithPlate]
       const rotated = advancePointByMotion(feature.x, feature.y, motion, angleStep, domain)

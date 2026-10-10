@@ -1,4 +1,5 @@
 import { MinHeap } from '../core/minHeap'
+import type { DomainGrid } from '../core/domain'
 import { MAP_WIDTH, METERS_PER_CELL } from '../core/mapConfig'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import {
@@ -1215,17 +1216,16 @@ export class ErosionEngine {
   private readonly scratch: CoordinatorScratch
   private readonly kernelParams: KernelParams
 
-  // On a raster: the index is built here from the initial terrain. On any
-  // other substrate, build the index yourself and use `onIndex`.
-  constructor(
+  // Over a prepared index: `onRaster` builds a raster's, `onIndex` takes any
+  // other substrate's.
+  private constructor(
     width: number,
     height: number,
     initial: Float32Array,
     forcing: ErosionForcing,
-    params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS,
-    index?: EngineIndex,
+    params: ErosionEngineParams,
+    built: EngineIndex,
   ) {
-    const built = index ?? buildRasterIndex(width, height, initial, forcing, params)
     this.width = width
     this.height = height
     this.params = params
@@ -1234,6 +1234,11 @@ export class ErosionEngine {
     loadTerrain(built, this.views, initial, forcing)
     this.scratch = createCoordinatorScratch(built.activeCount)
     this.kernelParams = kernelParamsFor(built.refM, params)
+  }
+
+  // The engine on a raster: the index is built from the initial terrain.
+  static onRaster(grid: DomainGrid, initial: Float32Array, forcing: ErosionForcing, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS): ErosionEngine {
+    return new ErosionEngine(grid.resX, grid.resY, initial, forcing, params, buildRasterIndex(grid, initial, forcing, params))
   }
 
   // The engine over a prepared index (a mesh, mesh/meshErosion.ts): the
@@ -1325,13 +1330,14 @@ export class ErosionEngine {
 }
 
 // The raster index for a run: the size check and the shelf band in cells.
-// One function for every driver.
-export function buildRasterIndex(width: number, height: number, initial: Float32Array, forcing: ErosionForcing, params: ErosionEngineParams): EngineIndex {
+// One function for every driver. `grid`: the raster's grid over the domain.
+export function buildRasterIndex(grid: DomainGrid, initial: Float32Array, forcing: ErosionForcing, params: ErosionEngineParams): EngineIndex {
+  const { resX: width, resY: height } = grid
   const n = width * height
   if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
     throw new Error('field size mismatch')
   }
-  return buildEngineIndex(initial, width, height, shelfBandCells(width, params), rasterCellM(width))
+  return buildEngineIndex(initial, grid, shelfBandCells(width, params), rasterCellM(width))
 }
 
 // The terrain section's initial contents, gathered from the caller's full

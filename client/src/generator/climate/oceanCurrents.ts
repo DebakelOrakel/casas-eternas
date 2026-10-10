@@ -1,13 +1,10 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { sampleBilinearGrid } from '../core/field'
-import { wrapIndex2 } from '../core/field'
+import type { Domain, DomainGrid } from '../core/domain'
 import { detCos, detExp, detHypot, detSin } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
-
-const wrapIndex = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
 
 // Wind-driven ocean surface currents as gyres, on the climate grid. Solves a
 // streamfunction ψ forced by the wind-stress curl, then derives the
@@ -31,7 +28,10 @@ const wrapIndex = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
 // cells: the circulation around its coast. So net flow passes between two
 // landmasses, and an open zonal band gives a circumpolar current.
 // `equatorOffset` places the latitude for β (see climateField.shiftedYNorm).
-export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array, worldWidth: number, worldHeight: number, dryLand?: Uint8Array, equatorOffset = 0): Float32Array {
+// `domain`: what the elevation raster covers, one cell per unit.
+export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array, domain: Domain, dryLand?: Uint8Array, equatorOffset = 0): Float32Array {
+  const { width: worldWidth, height: worldHeight } = domain
+  const grid = domain.grid(RX, RY)
   const n = RX * RY
   const land = new Uint8Array(n)
   for (let gy = 0; gy < RY; gy++) {
@@ -47,10 +47,10 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
   const curl = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
-      const uUp = wind[wrapIndex(gx, gy - 1) * 2]
-      const uDown = wind[wrapIndex(gx, gy + 1) * 2]
-      const vLeft = wind[wrapIndex(gx - 1, gy) * 2 + 1]
-      const vRight = wind[wrapIndex(gx + 1, gy) * 2 + 1]
+      const uUp = wind[grid.index(gx, gy - 1) * 2]
+      const uDown = wind[grid.index(gx, gy + 1) * 2]
+      const vLeft = wind[grid.index(gx - 1, gy) * 2 + 1]
+      const vRight = wind[grid.index(gx + 1, gy) * 2 + 1]
       curl[gy * RX + gx] = (vRight - vLeft) / 2 - (uDown - uUp) / 2
     }
   }
@@ -70,10 +70,10 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
   for (let gy = 0; gy < RY; gy++) {
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      left[i] = wrapIndex(gx - 1, gy)
-      right[i] = wrapIndex(gx + 1, gy)
-      up[i] = wrapIndex(gx, gy - 1)
-      down[i] = wrapIndex(gx, gy + 1)
+      left[i] = grid.index(gx - 1, gy)
+      right[i] = grid.index(gx + 1, gy)
+      up[i] = grid.index(gx, gy - 1)
+      down[i] = grid.index(gx, gy + 1)
     }
   }
 
@@ -107,8 +107,8 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       if (land[i]) continue
-      const u = -(psi[wrapIndex(gx, gy + 1)] - psi[wrapIndex(gx, gy - 1)]) / 2
-      const v = psi[wrapIndex(gx + 1, gy)] - psi[wrapIndex(gx - 1, gy)]
+      const u = -(psi[grid.index(gx, gy + 1)] - psi[grid.index(gx, gy - 1)]) / 2
+      const v = psi[grid.index(gx + 1, gy)] - psi[grid.index(gx - 1, gy)]
       current[i * 2] = u
       current[i * 2 + 1] = v / 2
       vmax = Math.max(vmax, detHypot(u, v / 2))
@@ -126,8 +126,8 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
 // as `s` and the water that sank coming up again spread over the whole sea
 // (so the field balances), and no flow into a coast (the potential mirrors
 // at land). Returns [u, v] per cell, 0 on land, scaled so its fastest cell
-// is 1.
-export function computeSinkInflow(sink: Float32Array, land: Uint8Array): Float32Array {
+// is 1. `grid`: the climate grid.
+export function computeSinkInflow(sink: Float32Array, land: Uint8Array, grid: DomainGrid): Float32Array {
   const n = RX * RY
   let total = 0
   let sea = 0
@@ -142,7 +142,7 @@ export function computeSinkInflow(sink: Float32Array, land: Uint8Array): Float32
   const source = new Float32Array(n)
   for (let i = 0; i < n; i++) if (!land[i]) source[i] = sink[i] - rise
 
-  const neighbours = (gx: number, gy: number): [number, number, number, number] => [wrapIndex(gx - 1, gy), wrapIndex(gx + 1, gy), wrapIndex(gx, gy - 1), wrapIndex(gx, gy + 1)]
+  const neighbours = (gx: number, gy: number): [number, number, number, number] => [grid.index(gx - 1, gy), grid.index(gx + 1, gy), grid.index(gx, gy - 1), grid.index(gx, gy + 1)]
   const chi = new Float32Array(n)
   for (let iter = 0; iter < CLIMATE_TUNING.conveyorSolveIters; iter++) {
     for (let gy = 0; gy < RY; gy++) {
@@ -183,8 +183,8 @@ export function computeSinkInflow(sink: Float32Array, land: Uint8Array): Float32
 // winds, where f changes sign — cold water comes up from below. Returns the
 // divergence per ocean cell, positive where water comes up, 0 on land.
 // `land` is 1 on land cells; the transport is 0 there, so a coast with the
-// water moving away from it diverges.
-export function computeUpwelling(wind: Float32Array, land: Uint8Array, equatorOffset: number, rotationHours: number): Float32Array {
+// water moving away from it diverges. `grid`: the climate grid.
+export function computeUpwelling(wind: Float32Array, land: Uint8Array, grid: DomainGrid, equatorOffset: number, rotationHours: number): Float32Array {
   const n = RX * RY
   // Transport in grid axes (x east, y down).
   const ex = new Float32Array(n)
@@ -214,10 +214,10 @@ export function computeUpwelling(wind: Float32Array, land: Uint8Array, equatorOf
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       if (land[i]) continue
-      const r = wrapIndex(gx + 1, gy)
-      const l = wrapIndex(gx - 1, gy)
-      const d = wrapIndex(gx, gy + 1)
-      const u = wrapIndex(gx, gy - 1)
+      const r = grid.index(gx + 1, gy)
+      const l = grid.index(gx - 1, gy)
+      const d = grid.index(gx, gy + 1)
+      const u = grid.index(gx, gy - 1)
       out[i] = face(i, r, ex[i], ex[r]) - face(l, i, ex[l], ex[i]) + face(i, d, ey[i], ey[d]) - face(u, i, ey[u], ey[i])
     }
   }
@@ -228,17 +228,17 @@ export function computeUpwelling(wind: Float32Array, land: Uint8Array, equatorOf
 // shore, 1 at the eastern, 0.5 where the row has no shore. The thermocline
 // tilts with the trade winds — deep under the warm pool in the west, shallow
 // in the east — so upwelling brings cold water only in the east (the
-// equatorial cold tongue).
-export function eastwardInBasin(land: Uint8Array): Float32Array {
+// equatorial cold tongue). `grid`: the climate grid.
+export function eastwardInBasin(land: Uint8Array, grid: DomainGrid): Float32Array {
   const n = RX * RY
   const out = new Float32Array(n).fill(0.5)
   for (let gy = 0; gy < RY; gy++) {
     for (let x0 = 0; x0 < RX; x0++) {
       // A run of sea starts after a land cell.
-      if (!land[gy * RX + x0] || land[gy * RX + (x0 + 1) % RX]) continue
+      if (!land[gy * RX + x0] || land[gy * RX + grid.wrapCol(x0 + 1)]) continue
       let len = 0
-      while (len < RX && !land[gy * RX + (x0 + 1 + len) % RX]) len++
-      for (let k = 0; k < len; k++) out[gy * RX + (x0 + 1 + k) % RX] = len > 1 ? k / (len - 1) : 0.5
+      while (len < RX && !land[gy * RX + grid.wrapCol(x0 + 1 + len)]) len++
+      for (let k = 0; k < len; k++) out[gy * RX + grid.wrapCol(x0 + 1 + k)] = len > 1 ? k / (len - 1) : 0.5
     }
   }
   return out
@@ -247,18 +247,18 @@ export function eastwardInBasin(land: Uint8Array): Float32Array {
 // Where a sea cell lies across its basin, along its row: −1 at the western
 // shore, +1 at the eastern, scaled down in a basin narrower than
 // `fullWidthCells` (a sea between two coasts close together has no east and
-// west of its own); 0 where the row has no shore.
-export function basinFlank(land: Uint8Array, fullWidthCells: number): Float32Array {
+// west of its own); 0 where the row has no shore. `grid`: the climate grid.
+export function basinFlank(land: Uint8Array, grid: DomainGrid, fullWidthCells: number): Float32Array {
   const n = RX * RY
   const out = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
     for (let x0 = 0; x0 < RX; x0++) {
-      if (!land[gy * RX + x0] || land[gy * RX + (x0 + 1) % RX]) continue
+      if (!land[gy * RX + x0] || land[gy * RX + grid.wrapCol(x0 + 1)]) continue
       let len = 0
-      while (len < RX && !land[gy * RX + (x0 + 1 + len) % RX]) len++
+      while (len < RX && !land[gy * RX + grid.wrapCol(x0 + 1 + len)]) len++
       if (len < 2) continue
       const width = Math.min(1, len / fullWidthCells)
-      for (let k = 0; k < len; k++) out[gy * RX + (x0 + 1 + k) % RX] = (2 * k / (len - 1) - 1) * width
+      for (let k = 0; k < len; k++) out[gy * RX + grid.wrapCol(x0 + 1 + k)] = (2 * k / (len - 1) - 1) * width
     }
   }
   return out
@@ -274,8 +274,8 @@ export function basinFlank(land: Uint8Array, fullWidthCells: number): Float32Arr
 // sea cell. Until 2026-09-29 every coast took its neighbour's anomaly the
 // same way, four cells in, whatever the wind, and Europe's interior got
 // little of the North Atlantic's (on Earth's relief Oslo's year came out
-// 4 °C too cold, now 1).
-export function carryInland(seaAnomaly: Float32Array, land: Uint8Array, wind: Float32Array): Float32Array {
+// 4 °C too cold, now 1). `grid`: the climate grid.
+export function carryInland(seaAnomaly: Float32Array, land: Uint8Array, wind: Float32Array, grid: DomainGrid): Float32Array {
   const n = RX * RY
   const out = new Float32Array(n)
   const reach = CLIMATE_TUNING.currentsInlandReachCells
@@ -285,7 +285,7 @@ export function carryInland(seaAnomaly: Float32Array, land: Uint8Array, wind: Fl
       if (!land[i]) continue
       let lee = 0
       for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-        const a = seaAnomaly[wrapIndex(gx + dx, gy + dy)]
+        const a = seaAnomaly[grid.index(gx + dx, gy + dy)]
         if (Math.abs(a) > Math.abs(lee)) lee = a
       }
       let carried = 0
@@ -294,7 +294,7 @@ export function carryInland(seaAnomaly: Float32Array, land: Uint8Array, wind: Fl
       const speed = detHypot(u, v)
       if (speed > 0) {
         for (let k = 1; k <= reach; k++) {
-          const j = wrapIndex(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
+          const j = grid.index(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
           if (land[j]) continue
           carried = seaAnomaly[j] * detExp(-(k - 1) / CLIMATE_TUNING.currentsInlandDecayCells)
           break
@@ -396,7 +396,10 @@ function findIslands(land: Uint8Array, left: Int32Array, right: Int32Array, up: 
 // Returns the current's own mark on the sea: SST minus the base temperature,
 // °C per ocean cell, 0 on land. Positive is a warm current, negative a cold
 // one — what the map colours the currents by.
-export function applyOceanSST(temperature: Float32Array, current: Float32Array, elevation: Float32Array, worldWidth: number, worldHeight: number, wind: Float32Array, dryLand?: Uint8Array): Float32Array {
+// `domain`: what the elevation raster covers, one cell per unit.
+export function applyOceanSST(temperature: Float32Array, current: Float32Array, elevation: Float32Array, domain: Domain, wind: Float32Array, dryLand?: Uint8Array): Float32Array {
+  const { width: worldWidth, height: worldHeight } = domain
+  const grid = domain.grid(RX, RY)
   const n = RX * RY
   const land = new Uint8Array(n)
   for (let gy = 0; gy < RY; gy++) {
@@ -416,7 +419,7 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
         if (land[i]) continue
         const u = current[i * 2]
         const v = current[i * 2 + 1]
-        const advected = sampleBilinearGrid(sst, RX, RY, gx - u * CLIMATE_TUNING.currentsAdvectStep, gy - v * CLIMATE_TUNING.currentsAdvectStep)
+        const advected = grid.sampleBilinear(sst, gx - u * CLIMATE_TUNING.currentsAdvectStep, gy - v * CLIMATE_TUNING.currentsAdvectStep)
         next[i] = advected * (1 - CLIMATE_TUNING.currentsBaseRelax) + temperature[i] * CLIMATE_TUNING.currentsBaseRelax
       }
     }
@@ -427,7 +430,7 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
   // temperature[] here), then onto the land with the wind (carryInland).
   const oceanAnomaly = new Float32Array(n)
   for (let i = 0; i < n; i++) if (!land[i]) oceanAnomaly[i] = sst[i] - temperature[i]
-  const inland = carryInland(oceanAnomaly, land, wind)
+  const inland = carryInland(oceanAnomaly, land, wind, grid)
   for (let i = 0; i < n; i++) if (land[i]) temperature[i] += CLIMATE_TUNING.currentsCoastalFactor * inland[i]
 
   // Ocean cells take the sea-surface temperature (so the temperature overlay

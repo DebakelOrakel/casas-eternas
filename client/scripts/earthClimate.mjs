@@ -43,6 +43,7 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const L = (p) => server.ssrLoadModule(p)
 const M = {
   weather: await L('/src/generator/climate/weather.ts'),
+  domain: await L('/src/generator/core/domain.ts'),
   refinement: await L('/src/generator/climate/refinement.ts'),
   biomes: await L('/src/generator/climate/biomes.ts'),
   koppen: await L('/src/generator/climate/koppen.ts'),
@@ -117,9 +118,10 @@ for (let y = 0; y < H; y++) {
 // --- the climate ---------------------------------------------------------------
 
 const params = M.weather.defaultWeatherParams()
-const cheap = M.weather.computeWeather(elevation, W, H, params)
+const domain = M.domain.torusDomain(W, H)
+const cheap = M.weather.computeWeather(elevation, domain, params)
 const started = performance.now()
-const r = M.refinement.refineClimate(elevation, W, H, params, cheap.temperature, cheap.wind)
+const r = M.refinement.refineClimate(elevation, domain, params, cheap.temperature, cheap.wind)
 const ms = performance.now() - started
 const RX = 256, RY = 128, n = RX * RY
 const land = (i) => r.precipitation[i] >= 0

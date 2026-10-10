@@ -62,6 +62,7 @@ export interface SedimentBasinResult {
 
 export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinResult {
   const { before, after, width, height, routing, graph, cellM } = input
+  const { grid } = routing
   const n = width * height
   const minThickness = SURFACE_TUNING.sedimentBasinMinThicknessM
   const thickness = new Float32Array(n)
@@ -71,7 +72,7 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
   }
   // Components.
   const label = new Uint16Array(n)
-  const at = (x: number, y: number): number => ((y + height) % height) * width + ((x + width) % width)
+  const at = (x: number, y: number): number => grid.index(x, y)
   const stack: number[] = []
   const basins: SedimentBasin[] = []
   const cellAreaKm2 = (cellM / 1000) * (cellM / 1000)
@@ -155,7 +156,7 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
     // Graph places as raster cells: the graph may be the mesh's (phase
     // 4.3), so its ids are read through their positions.
     const mouthAt = new Int32Array(n).fill(-1)
-    for (const node of graph.nodes) if (node.kind === 'mouth') mouthAt[rasterCellAt(node.x, node.y, width, height)] = node.id
+    for (const node of graph.nodes) if (node.kind === 'mouth') mouthAt[rasterCellAt(node.x, node.y, grid)] = node.id
     const drainsTo = new Int32Array(n).fill(-1)
     for (let k = 0; k < poppedCount; k++) {
       const c = popOrder[k]
@@ -179,8 +180,8 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
       const node = graph.nodes[r.to]
       if (node.kind !== 'mouth') continue
       const k = r.cellStart + r.cellCount - 2
-      const last = k >= r.cellStart ? rasterCellAt(graph.cellX[k], graph.cellY[k], width, height) : undefined
-      const b = label[rasterCellAt(node.x, node.y, width, height)] || (last !== undefined ? label[last] : 0)
+      const last = k >= r.cellStart ? rasterCellAt(graph.cellX[k], graph.cellY[k], grid) : undefined
+      const b = label[rasterCellAt(node.x, node.y, grid)] || (last !== undefined ? label[last] : 0)
       if (!b) continue
       basins[b - 1].mouthReaches.push(r.id)
       fed[b - 1].cells += count[node.id]

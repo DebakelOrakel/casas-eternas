@@ -13,6 +13,8 @@ import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { koppenFromMonths } from '../../generator/climate/biomes'
 import { annualFromMonths } from '../../generator/climate/refinement'
 import { computeReliability } from '../../generator/climate/reliability'
+import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../../generator/climate/climateField'
+import { torusDomain } from '../../generator/core/domain'
 import type { Storms } from '../../generator/climate/storms'
 
 const STORM_NAMES = ['cyclone', 'tornado', 'blizzard', 'dust', 'thunder'] as const satisfies readonly (keyof Storms)[]
@@ -113,6 +115,7 @@ export function refinedFromLayers(get: (name: string) => Float32Array | null, n:
   const land = new Uint8Array(n)
   for (let i = 0; i < n; i++) land[i] = landMask[i] > 0.5 ? 1 : 0
   const annual = annualFromMonths({ months: REFINED_MONTHS, temperature, precipitation })
-  const reliability = computeReliability(annual.precipitation, annual.monsoonIndex, currentAnomaly, land, 0)
+  const climateGrid = torusDomain(CLIMATE_RES_X, CLIMATE_RES_Y).grid(CLIMATE_RES_X, CLIMATE_RES_Y)
+  const reliability = computeReliability(annual.precipitation, annual.monsoonIndex, currentAnomaly, land, climateGrid, 0)
   return { months: REFINED_MONTHS, temperature, precipitation, koppen, fog, foehn, salinity, deepWater, reliability, storms, pressure, wind, currents, currentAnomaly, upwelling }
 }

@@ -1,3 +1,4 @@
+import type { DomainGrid } from '../core/domain'
 import { fineDetailNoise } from '../elevation/ridgedNoise'
 import { metersToElevation } from '../elevation/elevationScale'
 
@@ -75,17 +76,20 @@ const DETAIL_CAP = metersToElevation(DETAIL_CAP_M)
 // the texture amplitude doesn't get coupled to whatever the mountain-
 // redistribution gamma curve happened to do to the SAME pixel it's about to
 // paint over).
-export function applyErosionDetailTexture(display: Float32Array, reference: Float32Array, width: number, height: number, warpSeed: number): void {
+// `grid`: the rasters' grid over the domain.
+export function applyErosionDetailTexture(display: Float32Array, reference: Float32Array, grid: DomainGrid, warpSeed: number): void {
+  const { resX: width, resY: height } = grid
+  const cols = grid.colTable(1)
+  const rows = grid.rowTable(1)
   const noiseSeed = (warpSeed ^ 0x9e3779b9) >>> 0
   for (let y = 0; y < height; y++) {
-    const down = (y + 1) % height
     const row = y * width
-    const downRow = down * width
+    const downRow = rows[y + 2]
     for (let x = 0; x < width; x++) {
       const i = row + x
       const e = reference[i]
       if (e <= 0) continue // ocean untouched
-      const right = (x + 1) % width
+      const right = cols[x + 2]
       const dzdx = reference[row + right] - e
       const dzdy = reference[downRow + x] - e
       const slope = Math.hypot(dzdx, dzdy)

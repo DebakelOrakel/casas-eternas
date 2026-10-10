@@ -3,7 +3,6 @@ import { ELEVATION_TUNING } from './elevationTuneParams'
 import { capsuleWeight } from './capsule'
 import type { Domain } from '../core/domain'
 import { buildFeatureBuckets } from './elevationField'
-import { wrapValue } from '../core/field'
 import { detExp, detLog } from '../core/detMath'
 
 // U(x) — the tectonic uplift-rate field, the erosion-v2 engine's forcing
@@ -67,8 +66,8 @@ export function computeUpliftField(
 ): Float32Array {
   const result = new Float32Array(outWidth * outHeight)
   if (features.length === 0) return result
-  const buckets = buildFeatureBuckets(features, domain.width, domain.height)
-  const { bucketsX, bucketsY, bucketSizeX, bucketSizeY } = buckets
+  const buckets = buildFeatureBuckets(features, domain)
+  const { grid, bucketsX, bucketsY, bucketSizeX, bucketSizeY } = buckets
   const decayPerEpoch = detLog(2) / params.activityHalfLifeEpochs
   const scaleX = domain.width / outWidth
   const scaleY = domain.height / outHeight
@@ -81,9 +80,9 @@ export function computeUpliftField(
       let upliftSum = 0
       let weightSum = 0
       for (let dy = -1; dy <= 1; dy++) {
-        const by = wrapValue(centerBy + dy, bucketsY)
+        const by = grid.wrapRow(centerBy + dy)
         for (let dx = -1; dx <= 1; dx++) {
-          const bx = wrapValue(centerBx + dx, bucketsX)
+          const bx = grid.wrapCol(centerBx + dx)
           for (const feature of buckets.buckets[by * bucketsX + bx]) {
             const isTrench = feature.kind === 'trench'
             const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength

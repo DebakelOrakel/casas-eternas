@@ -1,12 +1,12 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { downsampleBox, downsampleMax, wrapIndex2 } from '../core/field'
+import { downsampleBox, downsampleMax } from '../core/field'
+import type { Domain } from '../core/domain'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import { detHypot } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
-const wrapIndex = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
 
 // WEATHER PHENOMENA of the climate step's refinement (build step 6 of
 // docs/design/climate-refinement.md): fields derived from its months, winds
@@ -26,8 +26,11 @@ export interface Phenomena {
 // `monthsT` °C, month-major, CHANGED in place: fog cools a coast's month
 // toward the sea beside it, föhn warms the lee. `wind` is the months' [u, v]
 // (v toward +y), `anomaly` the sea surface's departure from its latitude's
-// base (the currents and the upwelling), `land` 1 on land.
-export function applyPhenomena(monthsT: Float32Array, months: number, wind: Float32Array, anomaly: Float32Array, land: Uint8Array, elevation: Float32Array, worldWidth: number, worldHeight: number): Phenomena {
+// base (the currents and the upwelling), `land` 1 on land, `domain` what
+// the elevation raster covers, one cell per unit.
+export function applyPhenomena(monthsT: Float32Array, months: number, wind: Float32Array, anomaly: Float32Array, land: Uint8Array, elevation: Float32Array, domain: Domain): Phenomena {
+  const { width: worldWidth, height: worldHeight } = domain
+  const grid = domain.grid(RX, RY)
   const n = RX * RY
   const T = CLIMATE_TUNING
   const fog = new Float32Array(n)
@@ -45,7 +48,7 @@ export function applyPhenomena(monthsT: Float32Array, months: number, wind: Floa
       let bestD = Infinity
       for (let dy = -T.fogReachCells; dy <= T.fogReachCells; dy++) {
         for (let dx = -T.fogReachCells; dx <= T.fogReachCells; dx++) {
-          const j = wrapIndex(gx + dx, gy + dy)
+          const j = grid.index(gx + dx, gy + dy)
           if (land[j]) continue
           const d = detHypot(dx, dy)
           if (d < bestD) { bestD = d; best = j }
@@ -102,7 +105,7 @@ export function applyPhenomena(monthsT: Float32Array, months: number, wind: Floa
         if (speed > 0) {
           let barrier = 0
           for (let k = 1; k <= T.foehnReachCells; k++) {
-            const j = wrapIndex(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
+            const j = grid.index(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
             barrier = Math.max(barrier, peak[j] - ground[i])
           }
           const f = Math.min(1, Math.max(0, (barrier - T.foehnMinBarrierM) / T.foehnFullBarrierM))

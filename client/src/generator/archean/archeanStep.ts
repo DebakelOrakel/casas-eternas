@@ -159,22 +159,22 @@ export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
 //     equilibrium sits higher than the parameters say it should.
 //  4. **Merge and fragment last**, on the settled geometry.
 export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFAULT_ARCHEAN_PARAMS): void {
-  const { width, height, domain } = sim
+  const { domain } = sim
 
   // 1. Convection. Crust insulates the mantle beneath it exactly as it does in the
   // tectonic phase — which is what eventually turns a craton into the dome that
   // rifts it, and also why nucleation must exclude cells that already hold crust.
   const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, domain)
-  sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, width, height, params.diffusion)
+  sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, domain, params.diffusion)
   // Internal heating keeps convection running; without it the field decays to
   // nothing on a planet that has no crust yet. See sustainMantleVigour.
   sim.mantle = sustainMantleVigour(sim.mantle, params.mantleRms)
-  const flow = computeMantleFlow(sim.mantle)
+  const flow = computeMantleFlow(sim.mantle, domain)
 
   // 2. Crust rides the convection directly. No plates exist yet. Compaction
   // runs with the motion step: drift stretches rafts along the convergence
   // lines, compaction trades that length back into width — see compactRafts.
-  advanceRaftsOnFlow(sim.rafts, flow, MANTLE_RES_X, MANTLE_RES_Y, width, height, params.raftRigidity)
+  advanceRaftsOnFlow(sim.rafts, flow, MANTLE_RES_X, MANTLE_RES_Y, domain, params.raftRigidity)
   compactRafts(sim.rafts, params.compaction, domain)
 
   // 3. New crust over persistent upwellings that are still ocean.
@@ -187,7 +187,7 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // production settles at an equilibrium instead of carpeting the planet.
   sim.lastRecycled = recycleUnstabilisedCrust(
     sim.rafts, sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, sim.epoch,
-    params.stabilisationEpochs, params.recycleThreshold, width, height,
+    params.stabilisationEpochs, params.recycleThreshold, domain,
   )
 
   // 5. Collisions weld, and crust pulled across two convection cells falls apart

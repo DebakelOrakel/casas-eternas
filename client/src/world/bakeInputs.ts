@@ -4,6 +4,7 @@ import type { TileParent } from '../generator/mesh/meshTile'
 import type { SavedMesh } from '../generator/mesh/meshSerial'
 import type { RiverGraph } from '../generator/surface/riverGraph'
 import { meanLandRunoff } from '../generator/surface/hydrology'
+import { torusDomain } from '../generator/core/domain'
 import type { WorldInputs } from './save/loadWorldInputs'
 
 // A SAVE'S INPUTS AS A BAKE TAKES THEM — one mapping for the level bake and
@@ -59,6 +60,6 @@ export function tileBakeInputs(inputs: WorldInputs, parent: TileParent, parentGr
     precipitation,
     climateResX,
     climateResY,
-    meanLandWater: precipitation ? meanLandRunoff(precipitation, inputs.elevations, inputs.width, inputs.height, climateResX, climateResY) : 0,
+    meanLandWater: precipitation ? meanLandRunoff(precipitation, inputs.elevations, torusDomain(inputs.width, inputs.height), climateResX, climateResY) : 0,
   }
 }

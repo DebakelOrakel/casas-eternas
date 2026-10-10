@@ -32,6 +32,7 @@ const M = {
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
   amplify: await L('/src/generator/surface/amplify.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
+  domain: await L('/src/generator/core/domain.ts'),
   history: await L('/src/world/save/worldHistory.ts'),
   refined: await L('/src/world/save/refinedLayers.ts'),
 }
@@ -356,7 +357,8 @@ else {
   bowl[2 * bw + 7] = 0.2 // the pour point: at the spill, not below it
   bowl[2 * bw + 8] = 0.05 // the valley beyond it, lower than the lake
   const body = { id: 0, kind: 'lake', level: 0.2, spill: 0.2, floor: 0.1, seedX: 3.5, seedY: 2.5, outletX: 6.5, outletY: 2.5, cells: 8, frozen: false }
-  const depth = M.hydro.lakeDepthFromBodies([body], bowl, bw, bh)
+  const bowlGrid = M.domain.torusDomain(bw, bh).grid(bw, bh)
+  const depth = M.hydro.lakeDepthFromBodies([body], bowl, bowlGrid)
   let wet = 0, leaked = false
   for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
     const d = depth[y * bw + x]
@@ -365,7 +367,7 @@ else {
   }
   check('the derived lake fills its bowl and stops at the pour point', wet === 8 && !leaked, `${wet} wet, leaked ${leaked}`)
   check('the derived depth is level minus terrain', Math.abs(depth[2 * bw + 3] - 0.1) < 1e-6)
-  const field = M.hydro.waterLevelField([body], bowl, bw, bh)
+  const field = M.hydro.waterLevelField([body], bowl, bowlGrid)
   const near = (a, b) => Math.abs(a - b) < 1e-6
   check('the level field carries the level onto the rim', near(field.level[2 * bw + 7], 0.2) && near(field.level[1 * bw + 3], 0.2) && field.level[0] === 0 && field.level[2 * bw + 8] === 0)
 }

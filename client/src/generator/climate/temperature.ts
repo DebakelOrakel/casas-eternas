@@ -2,6 +2,7 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt, sampleDryLandAtCell, sampleEl
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { ELEVATION_METERS, SEA_LEVEL } from '../elevation/elevationScale'
 import { blur } from './pressure'
+import type { Domain } from '../core/domain'
 import { DEFAULT_PLANET_FORCING, obliquityContrast, solarTemperatureOffsetC, type PlanetForcing } from '../planet/planetForcing'
 import { detCos } from '../core/detMath'
 
@@ -45,7 +46,9 @@ export function seaLevelTemperatureBand(offsetC: number, contrast: number, plane
   return band
 }
 
-export function computeTemperature(elevation: Float32Array, worldWidth: number, worldHeight: number, offsetC = 0, contrast = 1, equatorOffset = 0, dryLand?: Uint8Array, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float32Array {
+// `domain`: what the elevation raster covers, one cell per unit.
+export function computeTemperature(elevation: Float32Array, domain: Domain, offsetC = 0, contrast = 1, equatorOffset = 0, dryLand?: Uint8Array, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float32Array {
+  const { width: worldWidth, height: worldHeight } = domain
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
   const temperature = new Float32Array(n)
   const offset = offsetC + solarTemperatureOffsetC(planet.solarConstant)
@@ -72,7 +75,7 @@ export function computeTemperature(elevation: Float32Array, worldWidth: number, 
     }
   }
   if (CLIMATE_TUNING.tempPlateauCPerKm > 0) {
-    blur(plateauKm, CLIMATE_TUNING.tempPlateauRadiusCells)
+    blur(plateauKm, CLIMATE_TUNING.tempPlateauRadiusCells, domain.grid(CLIMATE_RES_X, CLIMATE_RES_Y))
     for (let i = 0; i < n; i++) if (land[i]) temperature[i] += CLIMATE_TUNING.tempPlateauCPerKm * plateauKm[i]
   }
   return temperature

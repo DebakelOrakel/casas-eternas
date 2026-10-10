@@ -1,5 +1,4 @@
-import { torusDomain } from '../core/domain'
-import { wrapValue } from '../core/field'
+import { torusDomain, type Domain } from '../core/domain'
 import { METERS_PER_CELL } from '../core/mapConfig'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import { localReliefAt } from '../surface/amplify'
@@ -201,20 +200,21 @@ export interface TileParent {
 
 // The tiles of the level above that a tile with its halo overlaps — its
 // patchwork parent (detail-ladder.md step 5): one to four, the grids being
-// staggered.
-export function parentTilesOf(tile: TileId, parentSpec: TileSpec, width: number, height: number): TileId[] {
+// staggered. `world`: the domain, one macro cell per unit.
+export function parentTilesOf(tile: TileId, parentSpec: TileSpec, world: Domain): TileId[] {
   const spec = tileSpec(tile.level)
   const corner = tileCorner(tile, spec)
-  const { cols, rows } = tileGrid(width, height, parentSpec)
-  const span = (start: number, count: number): number[] => {
+  const { cols, rows } = tileGrid(world.width, world.height, parentSpec)
+  const tiles = world.grid(cols, rows)
+  const span = (start: number, wrap: (i: number) => number): number[] => {
     const first = Math.floor((start - spec.halo - parentSpec.offset) / parentSpec.cells)
     const last = Math.floor((start + spec.cells + spec.halo - parentSpec.offset - 1e-9) / parentSpec.cells)
     const out: number[] = []
-    for (let i = first; i <= last; i++) out.push(((i % count) + count) % count)
+    for (let i = first; i <= last; i++) out.push(wrap(i))
     return [...new Set(out)]
   }
   const out: TileId[] = []
-  for (const y of span(corner.y, rows)) for (const x of span(corner.x, cols)) out.push({ level: parentSpec.level, x, y })
+  for (const y of span(corner.y, (j) => tiles.wrapRow(j))) for (const x of span(corner.x, (i) => tiles.wrapCol(i))) out.push({ level: parentSpec.level, x, y })
   return out
 }
 
@@ -233,6 +233,7 @@ export interface TilePiece {
 // Answers the region the pieces cover too, with their node count: the
 // sampler's dense hint grid (meshSampler.ts, DenseRegion).
 export function tileParentFromTiles(pieces: TilePiece[], width: number, height: number): { mesh: PeriodicTriangulation; z: Float32Array; region: DenseRegion } {
+  const world = torusDomain(width, height)
   const seen = new Map<string, number>()
   const xs: number[] = []
   const ys: number[] = []
@@ -240,8 +241,8 @@ export function tileParentFromTiles(pieces: TilePiece[], width: number, height: 
   for (const piece of pieces) {
     const corner = tileCorner(piece.tile, tileSpec(piece.tile.level))
     for (let i = 0; i < piece.count; i++) {
-      const x = wrapValue(corner.x + piece.nodes[2 * i], width)
-      const y = wrapValue(corner.y + piece.nodes[2 * i + 1], height)
+      const x = world.wrapX(corner.x + piece.nodes[2 * i])
+      const y = world.wrapY(corner.y + piece.nodes[2 * i + 1])
       const key = `${x},${y}`
       if (seen.has(key)) continue
       seen.set(key, xs.length)
@@ -262,7 +263,7 @@ export function tileParentFromTiles(pieces: TilePiece[], width: number, height: 
   // again once the lattice is gone, as buildTileMesh does. Not compacted:
   // the codec's canonical rebuild cannot take the long triangles across
   // the empty world; a reader walks the live slots.
-  const mesh = hexLattice(torusDomain(width, height), PATCH_LATTICE_CELLS)
+  const mesh = hexLattice(world, PATCH_LATTICE_CELLS)
   const latticeCount = mesh.vertexSlots
   const mapping = new Int32Array(xs.length)
   const again: number[] = []
@@ -276,7 +277,7 @@ export function tileParentFromTiles(pieces: TilePiece[], width: number, height: 
   // first keeps the stars small (~80 % less), leaves shorter edges across
   // the empty world, and the pieces' triangles come out the same — the
   // tiles byte for byte (2026-10-04, Calvessor, 60 tiles).
-  const region = piecesBounds(pieces, width, height)
+  const region = piecesBounds(pieces, world)
   const cx = region.x + region.width / 2
   const cy = region.y + region.height / 2
   const lattice: number[] = []
@@ -297,7 +298,8 @@ export function tileParentFromTiles(pieces: TilePiece[], width: number, height: 
 
 // The square the pieces cover, from the first piece's corner, on the torus:
 // the pieces are neighbours, so each lies within half a period of the first.
-function piecesBounds(pieces: TilePiece[], width: number, height: number): { x: number; y: number; width: number; height: number } {
+function piecesBounds(pieces: TilePiece[], world: Domain): { x: number; y: number; width: number; height: number } {
+  const { width, height } = world
   const first = tileCorner(pieces[0].tile, tileSpec(pieces[0].tile.level))
   let minX = 0
   let minY = 0
@@ -306,14 +308,14 @@ function piecesBounds(pieces: TilePiece[], width: number, height: number): { x: 
   for (const piece of pieces) {
     const spec = tileSpec(piece.tile.level)
     const corner = tileCorner(piece.tile, spec)
-    const dx = wrapValue(corner.x - first.x + width / 2, width) - width / 2
-    const dy = wrapValue(corner.y - first.y + height / 2, height) - height / 2
+    const dx = world.wrapX(corner.x - first.x + width / 2) - width / 2
+    const dy = world.wrapY(corner.y - first.y + height / 2) - height / 2
     minX = Math.min(minX, dx)
     minY = Math.min(minY, dy)
     maxX = Math.max(maxX, dx + spec.cells)
     maxY = Math.max(maxY, dy + spec.cells)
   }
-  return { x: wrapValue(first.x + minX, width), y: wrapValue(first.y + minY, height), width: maxX - minX, height: maxY - minY }
+  return { x: world.wrapX(first.x + minX), y: world.wrapY(first.y + minY), width: maxX - minX, height: maxY - minY }
 }
 
 // The bootstrap lattice's spacing for a patchwork, in cells: coarse, the
@@ -347,6 +349,8 @@ export interface TileMesh {
 
 export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOptions): TileMesh {
   const { width, height, seed } = options
+  // The world the parent lies on, one macro cell per unit.
+  const world = parent.mesh.domain
   const spec = tileSpec(tile.level)
   const halo = options.halo ?? spec.halo
   const side = spec.cells + 2 * halo
@@ -362,8 +366,8 @@ export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOpt
   const inClear = (x: number, y: number): boolean =>
     Math.abs(x - lo) < clear || Math.abs(x - hi) < clear || Math.abs(y - lo) < clear || Math.abs(y - hi) < clear
   const inside = (x: number, y: number): boolean => x > lo && x < hi && y > lo && y < hi
-  const toWorldX = (x: number): number => wrapValue(originX + x, width)
-  const toWorldY = (y: number): number => wrapValue(originY + y, height)
+  const toWorldX = (x: number): number => world.wrapX(originX + x)
+  const toWorldY = (y: number): number => world.wrapY(originY + y)
 
   const surface = parentSurface(parent, options, spec)
   const xs: number[] = []
@@ -383,19 +387,24 @@ export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOpt
   // line counts too.
   const { cols, rows } = tileGrid(width, height, spec)
   const steps = spec.edgeSteps
-  const along = (line: number, first: number, k: number, salt: number, count: number): number => {
-    const global = (((first * steps + k) % (count * steps)) + count * steps) % (count * steps)
+  // The tiles over the world, and the edge steps along their lines.
+  const tiles = world.grid(cols, rows)
+  const edgeSteps = world.grid(cols * steps, rows * steps)
+  const alongRow = (i: number): number => edgeSteps.wrapCol(i)
+  const alongCol = (j: number): number => edgeSteps.wrapRow(j)
+  const along = (line: number, first: number, k: number, salt: number, wrapStep: (i: number) => number): number => {
+    const global = wrapStep(first * steps + k)
     const offset = global % steps === 0 ? 0 : EDGE_JITTER * (2 * hash01(line, global, salt + LEVEL_SALT * spec.level, seed) - 1)
     return q((k + offset) * step)
   }
-  const rowLine = (ty: number): number => ((ty % rows) + rows) % rows
-  const colLine = (tx: number): number => ((tx % cols) + cols) % cols
+  const rowLine = (ty: number): number => tiles.wrapRow(ty)
+  const colLine = (tx: number): number => tiles.wrapCol(tx)
   const addEdge = (x: number, y: number): void => add(x, y, surface.synthesisedAt(toWorldX(x), toWorldY(y)), TILE_ROLE_EDGE)
   for (let k = 0; k < steps; k++) {
-    addEdge(lo + along(rowLine(tile.y), tile.x, k, EDGE_SALT_ROW, cols), lo)
-    addEdge(hi, lo + along(colLine(tile.x + 1), tile.y, k, EDGE_SALT_COL, rows))
-    addEdge(lo + along(rowLine(tile.y + 1), tile.x, k + 1, EDGE_SALT_ROW, cols), hi)
-    addEdge(lo, lo + along(colLine(tile.x), tile.y, k + 1, EDGE_SALT_COL, rows))
+    addEdge(lo + along(rowLine(tile.y), tile.x, k, EDGE_SALT_ROW, alongRow), lo)
+    addEdge(hi, lo + along(colLine(tile.x + 1), tile.y, k, EDGE_SALT_COL, alongCol))
+    addEdge(lo + along(rowLine(tile.y + 1), tile.x, k + 1, EDGE_SALT_ROW, alongRow), hi)
+    addEdge(lo, lo + along(colLine(tile.x), tile.y, k + 1, EDGE_SALT_COL, alongCol))
   }
 
   // The occupancy grid the placement tests against: the parents first,
@@ -407,8 +416,8 @@ export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOpt
   // The parent nodes in the window.
   for (let v = 0; v < parent.mesh.vertexSlots; v++) {
     if (!parent.mesh.vAlive[v]) continue
-    const x = wrapValue(q(parent.mesh.vx[v]) - originX, width)
-    const y = wrapValue(q(parent.mesh.vy[v]) - originY, height)
+    const x = world.wrapX(q(parent.mesh.vx[v]) - originX)
+    const y = world.wrapY(q(parent.mesh.vy[v]) - originY)
     if (x >= side || y >= side || inClear(x, y)) continue
     add(x, y, parent.z[v], inside(x, y) ? TILE_ROLE_PARENT : TILE_ROLE_HALO)
     grid.add(x, y)
@@ -419,21 +428,22 @@ export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOpt
     const s = stepOf(level, spec)
     const cols = Math.round(width / s)
     const rows = Math.round(height / s)
+    const lattice = world.grid(cols, rows)
     const i0 = Math.floor(originX / s)
     const j0 = Math.floor(originY / s)
     const i1 = Math.ceil((originX + side) / s)
     const j1 = Math.ceil((originY + side) / s)
     const accepted: number[] = []
     for (let j = j0; j < j1; j++) {
-      const jw = ((j % rows) + rows) % rows
+      const jw = lattice.wrapRow(j)
       for (let i = i0; i < i1; i++) {
-        const iw = ((i % cols) + cols) % cols
+        const iw = lattice.wrapCol(i)
         // The world position from the WRAPPED cell, so a node is the
         // same number whichever side of the world's seam a frame reaches
         // it from; then into the frame.
         const salt = 2 * level + LEVEL_SALT * spec.level
-        const x = wrapValue(q((iw + 0.5 + JITTER * (2 * hash01(iw, jw, salt, seed) - 1)) * s) - originX, width)
-        const y = wrapValue(q((jw + 0.5 + JITTER * (2 * hash01(iw, jw, salt + 1, seed) - 1)) * s) - originY, height)
+        const x = world.wrapX(q((iw + 0.5 + JITTER * (2 * hash01(iw, jw, salt, seed) - 1)) * s) - originX)
+        const y = world.wrapY(q((jw + 0.5 + JITTER * (2 * hash01(iw, jw, salt + 1, seed) - 1)) * s) - originY)
         if (x < 0 || y < 0 || x >= side || y >= side || inClear(x, y)) continue
         const wx = toWorldX(x)
         const wy = toWorldY(y)
@@ -483,12 +493,12 @@ export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOpt
   return { tile, originX, originY, halo, mesh, z, role }
 }
 
-// A tile's node as a world point.
-export function tileWorldX(tile: TileMesh, x: number, width: number): number {
-  return wrapValue(tile.originX + x, width)
+// A tile's node as a world point (`world`: one macro cell per unit).
+export function tileWorldX(tile: TileMesh, x: number, world: Domain): number {
+  return world.wrapX(tile.originX + x)
 }
-export function tileWorldY(tile: TileMesh, y: number, height: number): number {
-  return wrapValue(tile.originY + y, height)
+export function tileWorldY(tile: TileMesh, y: number, world: Domain): number {
+  return world.wrapY(tile.originY + y)
 }
 
 function stepOf(level: number, spec: TileSpec): number {
@@ -502,6 +512,7 @@ function stepOf(level: number, spec: TileSpec): number {
 function parentSurface(parent: TileParent, options: TileOptions, spec: TileSpec): { synthesisedAt(x: number, y: number): number; targetAt(x: number, y: number): number } {
   const { width, height } = options
   const { mesh, z, discharge, sampler } = parent
+  const macroGrid = mesh.domain.grid(width, height)
   const cellHeight = new Map<number, number>()
   const heightOfCell = (cx: number, cy: number): number => {
     const key = cy * width + cx
@@ -517,18 +528,18 @@ function parentSurface(parent: TileParent, options: TileOptions, spec: TileSpec)
     const key = cy * width + cx
     let r = cellRelief.get(key)
     if (r === undefined) {
-      r = localReliefAt(heightOfCell, cx, cy, width, height)
+      r = localReliefAt(heightOfCell, cx, cy, macroGrid)
       cellRelief.set(key, r)
     }
     return r
   }
-  // Bilinear over the relief cells, as core/field.sampleBilinearGrid reads
-  // the level-1 refinement's relief raster.
+  // Bilinear over the relief cells, as DomainGrid.sampleBilinear reads the
+  // level-1 refinement's relief raster.
   const reliefPoint = (x: number, y: number): number => {
     const x0 = Math.floor(x)
     const y0 = Math.floor(y)
-    const x1 = (x0 + 1) % width
-    const y1 = (y0 + 1) % height
+    const x1 = macroGrid.wrapCol(x0 + 1)
+    const y1 = macroGrid.wrapRow(y0 + 1)
     const tx = x - x0
     const ty = y - y0
     const top = reliefOfCell(x0, y0) * (1 - tx) + reliefOfCell(x1, y0) * tx

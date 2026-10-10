@@ -1,4 +1,5 @@
 import { MinHeap } from '../core/minHeap'
+import type { Domain, DomainGrid } from '../core/domain'
 import { detAtan2, detHypot, detSin } from '../core/detMath'
 
 // Drainage routing on the flat torus: priority-flood depression filling, D8-LTD
@@ -9,9 +10,9 @@ import { detAtan2, detHypot, detSin } from '../core/detMath'
 // a FlowRouting through erosionEngineBridge.ts.
 //
 // The model is Cordonnier et al. 2016 (see
-// docs/decisions/plate-tectonics-simulation.md), on a grid that wraps in BOTH
-// axes: d8Neighbor wraps y exactly like x, and every cell has identical area
-// and spacing, so nothing here weights by latitude.
+// docs/decisions/plate-tectonics-simulation.md), on the domain's grid: on the
+// torus it wraps in BOTH axes, y exactly like x, and every cell has identical
+// area and spacing, so nothing here weights by latitude.
 
 // Called at every progress-reporting checkpoint across this module's
 // long loops (fillDepressions' pop count). When it yields, it awaits
@@ -60,15 +61,13 @@ export const D8_OFFSETS: ReadonlyArray<readonly [dx: number, dy: number]> = [
   [-1, -1],
 ]
 
-export function d8Neighbor(x: number, y: number, dx: number, dy: number, width: number, height: number): number {
-  const nx = (x + dx + width) % width
-  const ny = (y + dy + height) % height
-  return ny * width + nx
-}
-
 export interface FlowRouting {
   width: number
   height: number
+  // The domain the raster covers, one cell per unit (its extent is
+  // width × height), and the raster's grid over it.
+  domain: Domain
+  grid: DomainGrid
   // Depression-filled elevations — always >= raw everywhere. A cell whose
   // filled value differs from its raw value is (part of) a lake; this is
   // also exactly the data a future rivers/lakes pass needs (see the
@@ -97,8 +96,11 @@ const EPSILON_FLOOD_STEP = 1e-7
 // Mask of the largest 4-connected ≤ seaLevel component — the world ocean.
 // Null when there is no water at all. O(n) flood fill; cheap next to the
 // priority flood it feeds.
-export function largestWaterComponent(raw: Float32Array, width: number, height: number, seaLevel: number): Uint8Array | null {
-  const n = width * height
+export function largestWaterComponent(raw: Float32Array, grid: DomainGrid, seaLevel: number): Uint8Array | null {
+  const width = grid.resX
+  const n = width * grid.resY
+  const cols = grid.colTable(1)
+  const rows = grid.rowTable(1)
   const label = new Int32Array(n).fill(-1)
   const sizes: number[] = []
   const stack: number[] = []
@@ -113,7 +115,7 @@ export function largestWaterComponent(raw: Float32Array, width: number, height: 
       size++
       const y = (i / width) | 0
       const x = i - y * width
-      for (const nb of [y * width + ((x + 1) % width), y * width + ((x + width - 1) % width), (((y + 1) % height) * width) + x, (((y + height - 1) % height) * width) + x]) {
+      for (const nb of [y * width + cols[x + 2], y * width + cols[x], rows[y + 2] + x, rows[y] + x]) {
         if (raw[nb] <= seaLevel && label[nb] === -1) {
           label[nb] = id
           stack.push(nb)
@@ -152,8 +154,9 @@ export function largestWaterComponent(raw: Float32Array, width: number, height: 
 // zero — a graceful no-routing degradation (computeSteepestDescentFlowTargets
 // then finds no downhill gradient anywhere and leaves every flowTarget at
 // -1) rather than a crash.
-async function fillDepressions(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void): Promise<{ filled: Float32Array; popOrder: Int32Array; poppedCount: number }> {
-  const cellCount = width * height
+async function fillDepressions(raw: Float32Array, grid: DomainGrid, seaLevel: number, onProgress?: (fraction: number) => void): Promise<{ filled: Float32Array; popOrder: Int32Array; poppedCount: number }> {
+  const width = grid.resX
+  const cellCount = width * grid.resY
   const filled = new Float32Array(cellCount)
   const popOrder = new Int32Array(cellCount)
   const visited = new Uint8Array(cellCount)
@@ -168,7 +171,7 @@ async function fillDepressions(raw: Float32Array, width: number, height: number,
   // flood fills it to its spill, computeLakes then classifies it as a
   // TERMINAL SEA and sets its real water level from inflow vs evaporation
   // (the Caspian/Chad class).
-  const oceanSeed = largestWaterComponent(raw, width, height, seaLevel)
+  const oceanSeed = largestWaterComponent(raw, grid, seaLevel)
   for (let i = 0; i < cellCount; i++) {
     if (oceanSeed && oceanSeed[i] === 1) {
       filled[i] = raw[i]
@@ -195,7 +198,7 @@ async function fillDepressions(raw: Float32Array, width: number, height: number,
     const y = (current / width) | 0
     const x = current - y * width
     for (const [dx, dy] of D8_OFFSETS) {
-      const neighbor = d8Neighbor(x, y, dx, dy, width, height)
+      const neighbor = grid.neighbour(x, y, dx, dy)
       if (neighbor < 0 || visited[neighbor]) continue
       visited[neighbor] = 1
       // Scaled by step distance (a diagonal hop is really √2 away, not
@@ -278,8 +281,9 @@ const LTD_FACETS: ReadonlyArray<readonly [cardinal: number, diagonal: number, or
 ]
 const QUARTER_TURN = Math.PI / 4
 
-function computeLtdFlowTargets(filled: Float32Array, width: number, height: number, popOrder: Int32Array, poppedCount: number): Int32Array {
-  const cellCount = width * height
+function computeLtdFlowTargets(filled: Float32Array, grid: DomainGrid, popOrder: Int32Array, poppedCount: number): Int32Array {
+  const width = grid.resX
+  const cellCount = width * grid.resY
   const flowTarget = new Int32Array(cellCount).fill(-1)
   // λ, and the main-stem bookkeeping that decides whose λ a confluence
   // inherits. Contributor counts are exact integers on purpose: Float32
@@ -309,12 +313,12 @@ function computeLtdFlowTargets(filled: Float32Array, width: number, height: numb
       const facet = LTD_FACETS[f]
       const co = D8_OFFSETS[facet[0]]
       const dd = D8_OFFSETS[facet[1]]
-      const nc = d8Neighbor(x, y, co[0], co[1], width, height)
+      const nc = grid.neighbour(x, y, co[0], co[1])
       if (nc >= 0) {
         const gradient = ownElevation - filled[nc] // cardinal distance is 1
         if (gradient > bestGradient) { bestGradient = gradient; fallback = nc }
       }
-      const nd = d8Neighbor(x, y, dd[0], dd[1], width, height)
+      const nd = grid.neighbour(x, y, dd[0], dd[1])
       if (nd >= 0 && f % 2 === 0) {
         // Each diagonal appears in two facets; checking it once is enough
         // for the fallback.
@@ -341,8 +345,8 @@ function computeLtdFlowTargets(filled: Float32Array, width: number, height: numb
       const orient = facet[2]
       const co = D8_OFFSETS[facet[0]]
       const dd = D8_OFFSETS[facet[1]]
-      const nc = d8Neighbor(x, y, co[0], co[1], width, height)
-      const nd = d8Neighbor(x, y, dd[0], dd[1], width, height)
+      const nc = grid.neighbour(x, y, co[0], co[1])
+      const nd = grid.neighbour(x, y, dd[0], dd[1])
       const alpha = bestS2 <= 0 ? 0 : bestS2 >= bestS1 ? QUARTER_TURN : detAtan2(bestS2, bestS1)
       // Perpendicular offset of each candidate from the true fall line: the
       // cardinal sits sin α off it, the diagonal √2·sin(45° − α) the other way.
@@ -387,7 +391,7 @@ export interface MfdEdges {
   outEdgeStart: Int32Array
   // An edge's target as a D8 DIRECTION INDEX into D8_OFFSETS, not as a cell
   // index — a target is always one of the eight neighbors, so it fits in a
-  // byte, and the cell index is recovered with the same d8Neighbor call
+  // byte, and the cell index is recovered with the same grid.neighbour call
   // that built it (see edgeTarget below). Storing absolute Int32 indices
   // cost four bytes per edge for information three bits carry; at ~2.9
   // edges per cell that is ~9 bytes per cell of pure overhead, which on the
@@ -400,11 +404,11 @@ export interface MfdEdges {
 }
 
 // Decode one CSR edge back to its target cell index.
-export function edgeTarget(mfd: MfdEdges, cell: number, edge: number, width: number, height: number): number {
-  const x = cell % width
-  const y = (cell - x) / width
+export function edgeTarget(mfd: MfdEdges, cell: number, edge: number, grid: DomainGrid): number {
+  const x = cell % grid.resX
+  const y = (cell - x) / grid.resX
   const [dx, dy] = D8_OFFSETS[mfd.outEdgeDirections[edge]]
-  return d8Neighbor(x, y, dx, dy, width, height)
+  return grid.neighbour(x, y, dx, dy)
 }
 
 // Multiple-flow-direction routing (Freeman 1991 / Quinn et al. 1991):
@@ -434,7 +438,8 @@ export function edgeTarget(mfd: MfdEdges, cell: number, edge: number, width: num
 // rather than caching it between passes — twice through an 8-neighbor
 // scan is still a small, linear cost next to the actual per-pixel
 // elevation query elsewhere in this app's render pipeline.
-function computeMfdEdges(filled: Float32Array, width: number, height: number): MfdEdges {
+function computeMfdEdges(filled: Float32Array, grid: DomainGrid): MfdEdges {
+  const { resX: width, resY: height } = grid
   const cellCount = width * height
   const outDegree = new Uint8Array(cellCount)
   // Reused across every cell rather than allocated fresh each time — at
@@ -448,7 +453,7 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number): M
     let weightSum = 0
     for (let dir = 0; dir < D8_OFFSETS.length; dir++) {
       const [dx, dy] = D8_OFFSETS[dir]
-      const neighbor = d8Neighbor(x, y, dx, dy, width, height)
+      const neighbor = grid.neighbour(x, y, dx, dy)
       if (neighbor < 0) continue
       const drop = ownElevation - filled[neighbor]
       if (drop <= 0) continue
@@ -490,8 +495,11 @@ function computeMfdEdges(filled: Float32Array, width: number, height: number): M
   return { outEdgeStart, outEdgeDirections, outEdgeWeights }
 }
 
-export async function fillDepressionsAndRouteFlow(raw: Float32Array, width: number, height: number, seaLevel: number, onProgress?: (fraction: number) => void): Promise<FlowRouting> {
-  const { filled, popOrder, poppedCount } = await fillDepressions(raw, width, height, seaLevel, onProgress)
+// `domain`: what the raster covers, one cell per unit.
+export async function fillDepressionsAndRouteFlow(raw: Float32Array, domain: Domain, seaLevel: number, onProgress?: (fraction: number) => void): Promise<FlowRouting> {
+  const { width, height } = domain
+  const grid = domain.grid(width, height)
+  const { filled, popOrder, poppedCount } = await fillDepressions(raw, grid, seaLevel, onProgress)
   // popOrder remains a valid topological order for both of these, with
   // no change needed: both the LTD receiver and every MFD edge only ever
   // route a cell to a neighbor strictly below its own filled elevation, and
@@ -499,7 +507,7 @@ export async function fillDepressionsAndRouteFlow(raw: Float32Array, width: numb
   // construction — so a cell's target(s) were always popped no later
   // than the cell itself, exactly what the discharge accumulation's reverse walk
   // requires.
-  const flowTarget = computeLtdFlowTargets(filled, width, height, popOrder, poppedCount)
-  const mfd = computeMfdEdges(filled, width, height)
-  return { width, height, filled, flowTarget, mfd, popOrder, poppedCount }
+  const flowTarget = computeLtdFlowTargets(filled, grid, popOrder, poppedCount)
+  const mfd = computeMfdEdges(filled, grid)
+  return { width, height, domain, grid, filled, flowTarget, mfd, popOrder, poppedCount }
 }

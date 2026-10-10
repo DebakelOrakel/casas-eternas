@@ -1,7 +1,9 @@
 import type { FlowRouting } from './flowRouting'
+import type { Domain } from '../core/domain'
 import {
   ErosionEngine,
   DEFAULT_ENGINE_PARAMS,
+  buildRasterIndex,
   type ErosionEngineParams,
   type ErosionForcing,
 } from './erosionEngine'
@@ -65,19 +67,20 @@ export interface ErosionPassV2Options {
 
 const PROGRESS_CHUNKS = 8
 
+// `domain`: what the raster covers, one cell per unit.
 export async function runErosionPassV2(
   rawElevations: Float32Array,
-  width: number,
-  height: number,
+  domain: Domain,
   forcing: ErosionForcing,
   options: ErosionPassV2Options,
 ): Promise<ErosionPassV2Result> {
+  const grid = domain.grid(domain.width, domain.height)
   const params = options.params ?? DEFAULT_ENGINE_PARAMS
   const chunkSize = Math.max(1, Math.ceil(options.age / PROGRESS_CHUNKS))
 
   if (options.pool) {
     const { createWorker, ...pipeline } = options.pool
-    const engine = await PipelinedErosionEngine.create(width, height, rawElevations, forcing, createWorker, pipeline, params)
+    const engine = await PipelinedErosionEngine.create(grid.resX, grid.resY, rawElevations, forcing, createWorker, pipeline, params, buildRasterIndex(grid, rawElevations, forcing, params))
     try {
       let done = 0
       while (done < options.age) {
@@ -92,7 +95,7 @@ export async function runErosionPassV2(
       return {
         elevations,
         preFillElevations: engine.expandZ(rawElevations),
-        routing: engineFlowRouting(engine.activeEngineViews, engine.index, popped, elevations),
+        routing: engineFlowRouting(engine.activeEngineViews, engine.index, domain, popped, elevations),
         accumulation: expandActive(engine.index, engine.activeEngineViews.accumulation, 0),
         sedimentFlux: totalFlux(engine.index, engine.activeEngineViews),
       }
@@ -101,7 +104,7 @@ export async function runErosionPassV2(
     }
   }
 
-  const engine = new ErosionEngine(width, height, rawElevations, forcing, params)
+  const engine = ErosionEngine.onRaster(grid, rawElevations, forcing, params)
   const routingEvery = options.routingEvery ?? 4
   let done = 0
   while (done < options.age) {
@@ -116,7 +119,7 @@ export async function runErosionPassV2(
   return {
     elevations,
     preFillElevations: engine.expandZ(rawElevations),
-    routing: engineFlowRouting(engine.views, engine.index, engine.poppedCount, elevations),
+    routing: engineFlowRouting(engine.views, engine.index, domain, engine.poppedCount, elevations),
     accumulation: expandActive(engine.index, engine.views.accumulation, 0),
     sedimentFlux: totalFlux(engine.index, engine.views),
   }

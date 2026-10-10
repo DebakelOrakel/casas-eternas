@@ -1,4 +1,4 @@
-import { wrapValue } from '../core/field'
+import type { Domain } from '../core/domain'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { DEFAULT_ROUTING_EVERY, runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { meshAreas } from '../mesh/meshHydrology'
@@ -98,6 +98,8 @@ export interface BakedTile {
 
 export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: TileBakeOptions): Promise<BakedTile> {
   const { width, height, parent } = inputs
+  // The world the parent lies on, one macro cell per unit.
+  const world = parent.mesh.domain
   options.onProgress?.('mesh', 0)
   const tile = buildTileMesh(parent, id, { seed: inputs.detailSeed, width, height })
   options.onProgress?.('mesh', 1)
@@ -106,8 +108,8 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
   const xs = new Float64Array(slots)
   const ys = new Float64Array(slots)
   for (let v = 0; v < slots; v++) {
-    xs[v] = wrapValue(tile.originX + mesh.vx[v], width)
-    ys[v] = wrapValue(tile.originY + mesh.vy[v], height)
+    xs[v] = world.wrapX(tile.originX + mesh.vx[v])
+    ys[v] = world.wrapY(tile.originY + mesh.vy[v])
   }
   const areas = meshAreas(mesh)
   const coarse = {
@@ -116,7 +118,7 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
     water: inputs.precipitation, waterResX: inputs.climateResX || 1, waterResY: inputs.climateResY || 1,
     lithoSeed: inputs.lithoSeed,
   }
-  const { forcing, params } = assembleNodeForcing(coarse, xs, ys, mesh.vAlive, slots, tile.z, areas, width, height, inputs.controls, inputs.meanLandWater > 0 ? inputs.meanLandWater : undefined)
+  const { forcing, params } = assembleNodeForcing(coarse, xs, ys, mesh.vAlive, slots, tile.z, areas, world, inputs.controls, inputs.meanLandWater > 0 ? inputs.meanLandWater : undefined)
   // The coastline is the parent's, as in the level bake.
   const statusMask = new Uint8Array(slots)
   for (let v = 0; v < slots; v++) if (mesh.vAlive[v]) statusMask[v] = parent.sampler.heightAt(xs[v], ys[v]) > SEA_LEVEL ? 1 : 2
@@ -143,7 +145,7 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
       const corner = tileCorner(up.tile, spec)
       for (let i = 0; i < up.count; i++) {
         if (!(up.outflow[i] > 0)) continue
-        const e = edgeAt.get(`${wrapValue(corner.x + up.nodes[2 * i], width)},${wrapValue(corner.y + up.nodes[2 * i + 1], height)}`)
+        const e = edgeAt.get(`${world.wrapX(corner.x + up.nodes[2 * i])},${world.wrapY(corner.y + up.nodes[2 * i + 1])}`)
         if (e === undefined) continue
         const v = insideNodeNear(tile, e)
         if (v < 0 || areas[v] <= 0) continue
@@ -158,8 +160,8 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
   let inflowDischarge = 0
   if (inputs.parentGraph && forcing.accumulationWeights && inputs.meanLandWater > 0) {
     const weights = forcing.accumulationWeights
-    for (const crossing of inflowCrossings(inputs.parentGraph, tile, width, height)) {
-      const from = tileAt(id.level, crossing.fromX, crossing.fromY, width, height)
+    for (const crossing of inflowCrossings(inputs.parentGraph, tile, world)) {
+      const from = tileAt(id.level, crossing.fromX, crossing.fromY, world)
       if (upstreamKeys.has(`${from.x},${from.y}`)) continue
       const v = firstInsideNode(tile, crossing.x, crossing.y)
       if (v < 0 || areas[v] <= 0) continue
@@ -193,11 +195,11 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
 // Where level 1's rivers cross the tile's edge inward: the first cell of a
 // reach inside the tile after one outside it, in the tile's local frame,
 // with the discharge there (interpolated along the reach by cell count).
-function inflowCrossings(graph: RiverGraph, tile: TileMesh, width: number, height: number): { x: number; y: number; fromX: number; fromY: number; discharge: number }[] {
+function inflowCrossings(graph: RiverGraph, tile: TileMesh, world: Domain): { x: number; y: number; fromX: number; fromY: number; discharge: number }[] {
   const out: { x: number; y: number; fromX: number; fromY: number; discharge: number }[] = []
   const x0 = tile.originX + tile.halo
   const y0 = tile.originY + tile.halo
-  const local = (x: number, y: number): [number, number] => [wrapValue(x - x0, width), wrapValue(y - y0, height)]
+  const local = (x: number, y: number): [number, number] => [world.wrapX(x - x0), world.wrapY(y - y0)]
   const cells = tileSpec(tile.tile.level).cells
   const inside = (lx: number, ly: number): boolean => lx < cells && ly < cells
   for (const reach of graph.reaches) {

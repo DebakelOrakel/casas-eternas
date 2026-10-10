@@ -1,12 +1,12 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { downsampleBox, downsampleMax, wrapIndex2 } from '../core/field'
+import { downsampleBox, downsampleMax } from '../core/field'
+import type { Domain } from '../core/domain'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import { detHypot } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
 const RY = CLIMATE_RES_Y
-const wrapIndex = (x: number, y: number): number => wrapIndex2(x, y, RX, RY)
 
 // STORMS of the climate step's refinement (build step 8 of
 // docs/design/climate-refinement.md): where the months' heat, water and
@@ -32,8 +32,11 @@ export interface Storms {
 }
 
 // `monthsT` °C and `monthsP` mm/yr rates (OCEAN_PRECIP on the sea), month-
-// major; `wind` the months' [u, v]; `land` 1 on land.
-export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, months: number, wind: Float32Array, land: Uint8Array, elevation: Float32Array, worldWidth: number, worldHeight: number, equatorOffset: number): Storms {
+// major; `wind` the months' [u, v]; `land` 1 on land; `domain` what the
+// elevation raster covers, one cell per unit.
+export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, months: number, wind: Float32Array, land: Uint8Array, elevation: Float32Array, domain: Domain, equatorOffset: number): Storms {
+  const { width: worldWidth, height: worldHeight } = domain
+  const grid = domain.grid(RX, RY)
   const n = RX * RY
   const T = CLIMATE_TUNING
   const cyclone = new Float32Array(n)
@@ -87,7 +90,7 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
         if (u > 0 && ground[i] < T.tornadoPlainBelowM) {
           let barrier = 0
           for (let k = 1; k <= T.tornadoReachCells; k++) {
-            const j = wrapIndex(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
+            const j = grid.index(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
             barrier = Math.max(barrier, peak[j])
           }
           const moist = clamp01((t - T.tornadoFromC) / T.tornadoSpanC) * clamp01(rainMonth / T.tornadoFullRainMm)
@@ -111,8 +114,8 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
         let x = gx
         let y = gy
         for (let step = 0; step < T.cycloneSteps && weight > T.cycloneFadeBelow; step++) {
-          const cx = ((Math.round(x) % RX) + RX) % RX
-          const cy = ((Math.round(y) % RY) + RY) % RY
+          const cx = grid.wrapCol(Math.round(x))
+          const cy = grid.wrapRow(Math.round(y))
           const i = cy * RX + cx
           cyclone[i] += weight
           const pole = north[cy] // +1 top: poleward is −y
@@ -139,7 +142,7 @@ export function computeStorms(monthsT: Float32Array, monthsP: Float32Array, mont
       let x = gx
       let y = gy
       for (let step = 0; step < T.dustSteps && load > 0.01; step++) {
-        const i = wrapIndex(Math.round(x), Math.round(y))
+        const i = grid.index(Math.round(x), Math.round(y))
         dust[i] += load
         const u = meanWind[i * 2]
         const v = meanWind[i * 2 + 1]
