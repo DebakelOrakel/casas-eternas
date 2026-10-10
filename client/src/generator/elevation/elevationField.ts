@@ -6,7 +6,7 @@ import { domainWarpPoint } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
 import { oceanAgeGrid, sampleOceanAge } from '../tectonics/oceanAge'
 import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
-import { continentalHypsometry } from './hypsometry'
+import { continentalHypsometry, hypsometryRelief, hypsometryWeight } from './hypsometry'
 import { buildBlobIndex, raftField, sampleOwnerField, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
 import { detExp, detPow } from '../core/detMath'
@@ -116,8 +116,13 @@ export function oceanFloorAtAge(age: number): number {
 const baselineWarp = { x: 0, y: 0 }
 export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float32Array, domain: Domain, warpSeed: number, seaLevelOffset = 0, blobs?: BlobIndex): number {
   domainWarpPoint(worldX, worldY, domain, warpSeed, baselineWarp)
-  const wx = baselineWarp.x
-  const wy = baselineWarp.y
+  return baselineAtWarped(baselineWarp.x, baselineWarp.y, rafts, oceanAge, domain, warpSeed, seaLevelOffset, blobs)
+}
+
+// raftBaselineAt after the warp. `relief`, when given, holds
+// hypsometryRelief per cell for the same warped points (NaN = not yet
+// computed), and cell `index` is read from it or written into it.
+function baselineAtWarped(wx: number, wy: number, rafts: Raft[], oceanAge: Float32Array, domain: Domain, warpSeed: number, seaLevelOffset: number, blobs?: BlobIndex, relief?: Float64Array, index = 0): number {
   // Ocean floor deepens with its crustal age; the margin profile then shapes
   // everything from that floor up onto the continent, putting the shoreline
   // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
@@ -129,25 +134,97 @@ export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oc
   // Interior relief on top of the margin profile — see hypsometry.ts. Without it
   // the inside of a continent is one flat height, which is what made the water
   // control a switch rather than a slider.
-  return marginProfile(t, oceanicBaseline) + continentalHypsometry(wx, wy, t, domain, warpSeed) - seaLevelOffset
+  let hypsometry = 0
+  if (!relief) hypsometry = continentalHypsometry(wx, wy, t, domain, warpSeed)
+  else if (t > ELEVATION_TUNING.hypsometryTIn) {
+    let r = relief[index]
+    if (r !== r) {
+      r = hypsometryRelief(wx, wy, domain, warpSeed)
+      relief[index] = r
+    }
+    hypsometry = r * hypsometryWeight(t)
+  }
+  return marginProfile(t, oceanicBaseline) + hypsometry - seaLevelOffset
 }
 
 // The raft field through a blob index (the same bits as the scan): every
 // pixel used to ask every blob, which the sphere's dearer distance made a
 // matter of seconds per frame.
+//
+// What of a cell's baseline does not change between renders of one world is
+// kept (baselineStaticCache): the warped sample point and the hypsometry's
+// relief there. Both are pure functions of (x, y, warpSeed) on the domain,
+// and warpSeed is constant for a world's lifetime — the same reasoning as
+// the render slice worker's StaticFieldCache (elevationRenderWorker.ts).
+// Only the rafts and the ocean age move between renders. Measured
+// 2026-10-10 at 2048 × 1024, a render after the first: 2.3 s → 0.55 s on
+// the sphere (the warp and the relief on the globe lattice), 0.79 s →
+// 0.28 s on the torus. The first render of a size pays the same as before.
 export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, domain: Domain, warpSeed: number, seaLevelOffset = 0): Float32Array {
   const result = new Float32Array(renderWidth * renderHeight)
-  const scaleX = domain.width / renderWidth
-  const scaleY = domain.height / renderHeight
   const blobs = buildBlobIndex(rafts, domain)
+  const cache = baselineStaticCache(renderWidth, renderHeight, domain, warpSeed)
+  const { warpedX, warpedY, relief } = cache
+  for (let i = 0; i < result.length; i++) {
+    result[i] = baselineAtWarped(warpedX[i], warpedY[i], rafts, oceanAge, domain, warpSeed, seaLevelOffset, blobs, relief, i)
+  }
+  return result
+}
+
+// Per world and render size: the warped point of every cell, kept in
+// doubles (the bits the warp returns — the baseline sums them unwrapped,
+// unlike warpedSamplePoint), and the hypsometry's relief there, filled on
+// the first render that reaches a cell's continent. The key is everything
+// the two depend on: the shape and size of the domain, the render size and
+// the seed. Two entries, the live preview's size and the full one; the
+// older goes when a third arrives. 24 bytes per cell (48 MB at 2048 × 1024).
+interface BaselineStaticCache {
+  shape: Domain['kind']
+  worldWidth: number
+  worldHeight: number
+  renderWidth: number
+  renderHeight: number
+  warpSeed: number
+  warpedX: Float64Array
+  warpedY: Float64Array
+  relief: Float64Array
+}
+
+const BASELINE_CACHE_ENTRIES = 2
+const baselineCaches: BaselineStaticCache[] = []
+
+function baselineStaticCache(renderWidth: number, renderHeight: number, domain: Domain, warpSeed: number): BaselineStaticCache {
+  const { width: worldWidth, height: worldHeight } = domain
+  for (const c of baselineCaches) {
+    if (
+      c.shape === domain.kind &&
+      c.worldWidth === worldWidth &&
+      c.worldHeight === worldHeight &&
+      c.renderWidth === renderWidth &&
+      c.renderHeight === renderHeight &&
+      c.warpSeed === warpSeed
+    ) {
+      return c
+    }
+  }
+  const scaleX = worldWidth / renderWidth
+  const scaleY = worldHeight / renderHeight
+  const warpedX = new Float64Array(renderWidth * renderHeight)
+  const warpedY = new Float64Array(renderWidth * renderHeight)
+  const relief = new Float64Array(renderWidth * renderHeight).fill(NaN)
   for (let py = 0; py < renderHeight; py++) {
     const worldY = py * scaleY
     for (let px = 0; px < renderWidth; px++) {
       const worldX = px * scaleX
-      result[py * renderWidth + px] = raftBaselineAt(worldX, worldY, rafts, oceanAge, domain, warpSeed, seaLevelOffset, blobs)
+      domainWarpPoint(worldX, worldY, domain, warpSeed, baselineWarp)
+      warpedX[py * renderWidth + px] = baselineWarp.x
+      warpedY[py * renderWidth + px] = baselineWarp.y
     }
   }
-  return result
+  const cache: BaselineStaticCache = { shape: domain.kind, worldWidth, worldHeight, renderWidth, renderHeight, warpSeed, warpedX, warpedY, relief }
+  if (baselineCaches.length >= BASELINE_CACHE_ENTRIES) baselineCaches.shift()
+  baselineCaches.push(cache)
+  return cache
 }
 
 // The warped sample point for a pixel — the same warp computeRaftBaseline

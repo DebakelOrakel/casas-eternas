@@ -72,7 +72,19 @@ const HYPSOMETRY_OCTAVES: readonly (readonly [cellsX: number, cellsY: number, am
 const frame = globeFrame()
 export function continentalHypsometry(wx: number, wy: number, t: number, domain: Domain, seed: number): number {
   if (t <= ELEVATION_TUNING.hypsometryTIn) return 0
-  const weight = smoothstep(Math.min(1, (t - ELEVATION_TUNING.hypsometryTIn) / (ELEVATION_TUNING.hypsometryTFull - ELEVATION_TUNING.hypsometryTIn)))
+  const weight = hypsometryWeight(t)
+  return hypsometryRelief(wx, wy, domain, seed) * weight
+}
+
+// The two halves of continentalHypsometry, apart: how much of the relief a
+// point carries (by its t, which changes as the rafts move), and the relief
+// itself (by its place and the seed only). computeRaftBaseline keeps the
+// second per cell across renders. Only for t above hypsometryTIn.
+export function hypsometryWeight(t: number): number {
+  return smoothstep(Math.min(1, (t - ELEVATION_TUNING.hypsometryTIn) / (ELEVATION_TUNING.hypsometryTFull - ELEVATION_TUNING.hypsometryTIn)))
+}
+
+export function hypsometryRelief(wx: number, wy: number, domain: Domain, seed: number): number {
   const space = domain.noise
   const worldWidth = domain.width
   const worldHeight = domain.height
@@ -88,5 +100,5 @@ export function continentalHypsometry(wx: number, wy: number, t: number, domain:
     amplitudeSum += amplitude
     octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0
   }
-  return metersToElevation((sum / amplitudeSum) * (ELEVATION_TUNING.hypsometryRangeM / 2)) * weight
+  return metersToElevation((sum / amplitudeSum) * (ELEVATION_TUNING.hypsometryRangeM / 2))
 }
