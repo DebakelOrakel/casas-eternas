@@ -166,6 +166,17 @@ is agreed before it starts.
 
 ## Status
 
+2026-10-10: step 2 of fork 4 BUILT — `client/src/map/worldView.ts` (with
+chart points as fractions u, v), `flatWorldView.ts` around the map plane,
+its camera and river ribbons, and the globe (`sphereView.ts`) as the second
+implementation; the generator screen asks the view on screen for the
+pointer, the scales and the camera. The layers are still painted into the
+flat view alone: a sphere world has none yet. The scale bar and the
+temperature scale are hidden on the globe for now: they read it through
+chartAt, but the orbit camera zooms by swooping, which they do not suit
+as built — their globe form is to be thought through. Steps 3 and 4 not
+started.
+
 2026-10-09: decided in conversation; fork 2 changed the same day from a
 spec field to the save's `kind`, the manifest's duplicate removed with it. Built: the sphere's first step only
 (`client/src/map/sphereView.ts`, the shape picked from the world list, the

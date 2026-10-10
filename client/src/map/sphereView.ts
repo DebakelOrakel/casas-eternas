@@ -5,8 +5,10 @@ import {
   Effect,
   type Engine,
   HemisphericLight,
+  Matrix,
   MeshBuilder,
   PostProcess,
+  RawTexture,
   RenderTargetTexture,
   Scene,
   StandardMaterial,
@@ -15,6 +17,7 @@ import {
   Vector3,
 } from '@babylonjs/core'
 import { createOrbitSwoopCamera } from '../camera/orbitSwoopCamera'
+import type { ChartPoint, WorldView } from './worldView'
 
 // THE SPHERE'S FIRST VIEW (docs/design/two-topologies.md): an ocean globe on
 // the white page, its axis tilted by the planet's obliquity, a band of
@@ -31,14 +34,29 @@ import { createOrbitSwoopCamera } from '../camera/orbitSwoopCamera'
 //
 // Its own Scene, not the flat map's: the two share nothing but the canvas,
 // and the screen renders whichever is shown.
+//
+// THE GLOBE AS A WORLD VIEW (worldView.ts, DEC-0035 fork 3). The chart is
+// longitude and latitude in the globe's own frame (below the tilt): u runs
+// once round the axis from the frame's +x toward +z, v from the north pole
+// (+y, v = 0) to the south. The layers' textures are held, not yet laid on
+// the globe — a sphere world has no layers of its own yet, and the flat
+// sample world's are not its — and what it cannot show (relief, rivers,
+// water, names) it takes and ignores.
 
-export interface SphereView {
-  scene: Scene
+export interface GlobeWorldView extends WorldView {
+  readonly shape: 'sphere'
   // The planet's obliquity, degrees: the axis leans by it.
   setObliquity(degrees: number): void
-  // Back to the view it opened with, eased: the whole globe, unturned.
-  resetCamera(): void
-  dispose(): void
+}
+
+export interface GlobeWorldViewOptions {
+  engine: Engine
+  canvas: HTMLCanvasElement
+  // The chart's size in texels: the layers' textures.
+  textureWidth: number
+  textureHeight: number
+  // The equator's length on the world, metres: the chart's width.
+  metresRound: number
 }
 
 const RADIUS = 1
@@ -91,7 +109,8 @@ Effect.ShadersStore[`${SHADER}FragmentShader`] = `
   }
 `
 
-export function createSphereView(engine: Engine, canvas: HTMLCanvasElement): SphereView {
+export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorldView {
+  const { engine, canvas, textureWidth, textureHeight, metresRound } = options
   const scene = new Scene(engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
 
@@ -168,14 +187,78 @@ export function createSphereView(engine: Engine, canvas: HTMLCanvasElement): Sph
     effect.setFloat('blurRadius', GLOW_BLUR)
   }
 
+  // The layers' textures: kept for the screen to paint, laid on the globe
+  // once a sphere world has layers of its own.
+  const emptyLayer = (): RawTexture => RawTexture.CreateRGBATexture(new Uint8Array(textureWidth * textureHeight * 4), textureWidth, textureHeight, scene, false, false)
+  const baseTexture = emptyLayer()
+  const reliefTexture = emptyLayer()
+  const labelTexture = emptyLayer()
+
+  // The chart point of a world direction: into the globe's own frame
+  // (below the tilt and the turn), then longitude and latitude.
+  const toFrame = new Matrix()
+  const chartOfWorld = (point: Vector3): ChartPoint => {
+    tilt.computeWorldMatrix(true).invertToRef(toFrame)
+    const p = Vector3.TransformCoordinates(point, toFrame).normalize()
+    const longitude = Math.atan2(p.z, p.x)
+    const latitude = Math.asin(Math.max(-1, Math.min(1, p.y)))
+    return { u: (longitude / (2 * Math.PI) + 1) % 1, v: 0.5 - latitude / Math.PI }
+  }
+  // The pixel's ray against the sphere, analytically: the nearer crossing.
+  const chartAt = (screenX: number, screenY: number): ChartPoint | null => {
+    const ray = scene.createPickingRay(screenX, screenY, Matrix.Identity(), rig.camera)
+    const b = Vector3.Dot(ray.origin, ray.direction)
+    const c = ray.origin.lengthSquared() - RADIUS * RADIUS
+    const disc = b * b - c
+    if (disc < 0) return null
+    const t = -b - Math.sqrt(disc)
+    if (t <= 0) return null
+    return chartOfWorld(ray.origin.add(ray.direction.scale(t)))
+  }
+  const radiusMetres = metresRound / (2 * Math.PI)
+
   return {
+    shape: 'sphere',
     scene,
+    baseTexture,
+    reliefTexture,
+    labelTexture,
+    setLabelsVisible: () => {},
+    setLakesVisible: () => {},
+    setWaterLevels: () => {},
+    setWaterElevation: () => {},
+    setRelief: () => {},
+    setHeightScale: () => {},
+    rivers: { setPolylines: () => {}, setEnabled: () => {} },
+    chartAt,
+    // The globe is its reference surface: what is drawn is the sphere.
+    groundAt: chartAt,
+    metresBetween(a, b) {
+      // The great circle (haversine).
+      const lat1 = (0.5 - a.v) * Math.PI
+      const lat2 = (0.5 - b.v) * Math.PI
+      const dLat = lat2 - lat1
+      const dLon = (b.u - a.u) * 2 * Math.PI
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
+      return 2 * radiusMetres * Math.asin(Math.min(1, Math.sqrt(h)))
+    },
+    viewKey() {
+      const q = rig.viewPivot.rotationQuaternion!
+      const at = rig.camera.position
+      return `${q.x.toFixed(4)},${q.y.toFixed(4)},${q.z.toFixed(4)},${q.w.toFixed(4)},${at.x.toFixed(3)},${at.y.toFixed(3)},${at.z.toFixed(3)},${tilt.rotation.z.toFixed(4)}`
+    },
+    // The orbit rig has no pan to hold and no deep zoom to earn.
+    setPanEnabled: () => {},
+    setDeepZoom: () => {},
     setObliquity(degrees) {
       tilt.rotation.z = (degrees * Math.PI) / 180
     },
     resetCamera: () => rig.reset(),
     dispose() {
       engine.onResizeObservable.remove(resized)
+      baseTexture.dispose()
+      reliefTexture.dispose()
+      labelTexture.dispose()
       glow.dispose(rig.camera)
       rig.dispose()
       scene.dispose()

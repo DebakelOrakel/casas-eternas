@@ -2,7 +2,8 @@ import { PointerEventTypes } from '@babylonjs/core'
 import { BUILD_VERSION } from '../../app/buildVersion'
 import { GENERATOR_CODE } from '../../app/generatorCode'
 import { createFlatWorldView } from '../../map/flatWorldView'
-import { createSphereView, type SphereView } from '../../map/sphereView'
+import { createGlobeWorldView, type GlobeWorldView } from '../../map/sphereView'
+import type { WorldView } from '../../map/worldView'
 import { createScaleBar } from '../../map/ScaleBar'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { buildProbeCard } from '../../ui/mapProbe/probeCard'
@@ -347,8 +348,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let viewKeySeen = ''
   let viewChangedAt = 0
   let viewDirty = true
-  flatView.scene.onBeforeRenderObservable.add(() => {
-    const key = `${flatView.viewKey()},${window.innerWidth},${window.innerHeight}`
+  // On the engine's frame, not a scene's: the view on screen is the flat
+  // one or the globe, each with its own scene.
+  const viewSettleObserver = ctx.engine.onBeginFrameObservable.add(() => {
+    const key = `${activeView().viewKey()},${window.innerWidth},${window.innerHeight}`
     if (key !== viewKeySeen) {
       viewKeySeen = key
       viewChangedAt = performance.now()
@@ -896,29 +899,34 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // (map/sphereView.ts), the later steps locked, nothing to create. A world
   // from a file is flat: the saves are tori.
   let worldShape: WorldShape = 'flat'
-  let sphereView: SphereView | null = null
-  // The globe's view back to where it started (orbitSwoopCamera.reset);
-  // shown with the sphere only, where the flat map's scale bar stood.
+  let globeView: GlobeWorldView | null = null
+  // The view on screen (map/worldView.ts): the globe for a sphere world,
+  // the flat map otherwise. The pointer, the scales and the camera ask it.
+  // The layers are still painted into the flat view alone: they are the
+  // flat world's (or the sample world's), and a sphere world has none yet.
+  const activeView = (): WorldView => globeView ?? flatView
+  // The view back to where it started (WorldView.resetCamera); shown with
+  // the sphere only, where the flat map's scale bar stands.
   const cameraResetButton = document.createElement('button')
   cameraResetButton.type = 'button'
   cameraResetButton.className = 'camera-reset'
   cameraResetButton.setAttribute('aria-label', t('generator.camera.reset.label'))
   cameraResetButton.dataset.help = 'generator.camera.reset'
   cameraResetButton.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>'
-  cameraResetButton.addEventListener('click', () => sphereView?.resetCamera())
+  cameraResetButton.addEventListener('click', () => activeView().resetCamera())
   root.appendChild(cameraResetButton)
   const setWorldShape = (shape: WorldShape): void => {
     worldShape = shape
     root.classList.toggle('generator-screen--sphere', shape === 'sphere')
-    // The flat map's readout would describe the hidden flat world under the
-    // pointer.
+    // The readout describes the layers' cells, and a sphere world has no
+    // layers yet: it would describe the flat sample world.
     hoverTooltip?.setEnabled(shape !== 'sphere')
-    if (shape === 'sphere' && !sphereView) {
-      sphereView = createSphereView(ctx.engine, ctx.canvas)
-      sphereView.setObliquity(Number(obliquityInput.value))
-    } else if (shape !== 'sphere' && sphereView) {
-      sphereView.dispose()
-      sphereView = null
+    if (shape === 'sphere' && !globeView) {
+      globeView = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresRound: METERS_PER_CELL * MAP_WIDTH })
+      globeView.setObliquity(Number(obliquityInput.value))
+    } else if (shape !== 'sphere' && globeView) {
+      globeView.dispose()
+      globeView = null
     }
   }
   // THE APPLIED WORLD (2026-09-29): step 0's seed and levers as the world was
@@ -3028,13 +3036,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The scale bar at the map's lower right (map/ScaleBar).
   const scaleBar = createScaleBar(root, {
     measure: (ax, ay, bx, by) => {
-      const a = flatView.chartAt(ax, ay)
-      const b = flatView.chartAt(bx, by)
-      return a && b ? flatView.metresBetween(a, b) : null
+      const view = activeView()
+      const a = view.chartAt(ax, ay)
+      const b = view.chartAt(bx, by)
+      return a && b ? view.metresBetween(a, b) : null
     },
   })
   function renderScaleBar(): void {
-    scaleBar.update(`${flatView.viewKey()},${window.innerWidth},${window.innerHeight}`)
+    scaleBar.update(`${activeView().viewKey()},${window.innerWidth},${window.innerHeight}`)
   }
 
   const tempScale = root.querySelector<HTMLCanvasElement>('[data-value="temp-scale"]')!
@@ -3045,7 +3054,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The whole view key, the turn included: turning the view changes
     // which latitude a row looks at (until 2026-10-10 the key left it out,
     // and a turn alone kept the old scale).
-    const key = `${flatView.viewKey()},${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${tempScale.clientHeight}`
+    const key = `${activeView().viewKey()},${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${tempScale.clientHeight}`
     if (!force && key === tempScaleSeen) return
     tempScaleSeen = key
     const params = weatherParams()
@@ -3063,7 +3072,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const values: (number | null)[] = []
     for (let i = 0; i <= TEMP_SCALE_SAMPLES; i++) {
       const screenY = rect.top + (rect.height * i) / TEMP_SCALE_SAMPLES
-      const at = flatView.chartAt(pickX, screenY)
+      const at = activeView().chartAt(pickX, screenY)
       if (!at) { values.push(null); continue }
       const row = Math.min(band.length - 1, Math.max(0, Math.floor(at.v * band.length)))
       values.push(band[row])
@@ -3746,8 +3755,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     updateControlsDisabled()
     // The sphere's globe leans with the obliquity; it has no climate to
     // compute yet, and the sample world's preview behind it is not shown.
-    if (sphereView) {
-      sphereView.setObliquity(Number(obliquityInput.value))
+    if (globeView) {
+      globeView.setObliquity(Number(obliquityInput.value))
       return
     }
     clearTimeout(climateDebounce)
@@ -6055,7 +6064,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // That's deliberate on a worldgen tool screen: a height readout is what makes
   // the metre calibration checkable by hovering.
   hoverTooltip = createMapHoverTooltip({
-    locate: (x, y) => flatView.groundAt(x, y),
+    locate: (x, y) => activeView().groundAt(x, y),
     surface: ctx.canvas,
     host: root,
     textureWidth: MAP_WIDTH,
@@ -6119,11 +6128,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The sphere's own scene while a sphere world is open; the app renders
     // whichever this answers, frame by frame.
     get scene() {
-      return sphereView?.scene ?? flatView.scene
+      return activeView().scene
     },
     dispose() {
-      sphereView?.dispose()
-      sphereView = null
+      ctx.engine.onBeginFrameObservable.remove(viewSettleObserver)
+      globeView?.dispose()
+      globeView = null
       // Everything that ticks on its own goes first: each one held the whole
       // screen (rasters, mesh, refined climate) after it was left, and the
       // month players painted into a disposed scene (2026-10-01).

@@ -378,18 +378,20 @@
   height: 100%;
 }
 
-/* A sphere world (map/sphereView.ts): the flat map's furniture — its
-   legend, temperature scale, scale bar and the step's layer list — has
-   nothing to describe on the globe yet. */
+/* A sphere world (map/sphereView.ts) has no layers of its own yet: the
+   legend and the step's layer list would describe the flat sample world.
+   The scale bar and the temperature scale could read the globe (its
+   chartAt), but the orbit camera's swoop does not suit them as they are;
+   left out until their globe form is thought through (2026-10-10). */
 .generator-screen--sphere .overlay-legend,
-.generator-screen--sphere .temp-scale,
+.generator-screen--sphere .gen-layers,
 .generator-screen--sphere .scale-bar,
-.generator-screen--sphere .gen-layers {
+.generator-screen--sphere .temp-scale {
   display: none;
 }
 
-/* The globe's view reset (sphere worlds only), where the scale bar stands
-   on the flat map. */
+/* The globe's view reset (sphere worlds only), where the flat map's scale
+   bar stands. */
 .generator-screen .camera-reset {
   position: fixed;
   right: 1rem;
