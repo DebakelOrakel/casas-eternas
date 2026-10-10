@@ -1,5 +1,5 @@
 import type { PlateSeed } from './plateSeeds'
-import { rotateAroundCenter, toroidalDistanceSq, wrappedDelta } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { wrapValue } from '../core/field'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { detCos, detSin } from '../core/detMath'
@@ -41,8 +41,8 @@ const ROTATION_RADIUS_MAX_FACTOR = 2.5
 const LINEAR_SPEED_MIN_PX = 30
 const LINEAR_SPEED_MAX_PX = 90
 
-export function generatePlateMotions(seeds: PlateSeed[], width: number, height: number, random: () => number): PlateMotion[] {
-  const typicalSpacing = Math.sqrt((width * height) / seeds.length)
+export function generatePlateMotions(seeds: PlateSeed[], domain: Domain, random: () => number): PlateMotion[] {
+  const typicalSpacing = Math.sqrt((domain.width * domain.height) / seeds.length)
   return seeds.map((seed) => {
     // Same draw as before (an offset Euler center + a signed angular speed),
     // then decomposed into the equivalent drift+spin about the seed. Keeps the
@@ -56,8 +56,8 @@ export function generatePlateMotions(seeds: PlateSeed[], width: number, height: 
     const spin = (direction * targetSpeed) / radius
     // Velocity of the centroid (= seed) under rotation about the offset center:
     // ω · ẑ × (centroid − center). ẑ × (rx, ry) = (−ry, rx).
-    const rx = wrappedDelta(seed.x, centerX, width)
-    const ry = wrappedDelta(seed.y, centerY, height)
+    const rx = domain.deltaX(seed.x, centerX)
+    const ry = domain.deltaY(seed.y, centerY)
     return { driftX: -ry * spin, driftY: rx * spin, spin, centroidX: seed.x, centroidY: seed.y }
   })
 }
@@ -65,31 +65,31 @@ export function generatePlateMotions(seeds: PlateSeed[], width: number, height: 
 // Instantaneous linear velocity at `point`: drift + spin · (ẑ × r), where r is
 // the wrapped offset from the centroid to the point. Equivalent to the old
 // ω × r about an offset Euler center (drift folds in the center offset).
-export function getVelocityAt(point: PlateSeed, motion: PlateMotion, width: number, height: number): { vx: number; vy: number } {
-  const rx = wrappedDelta(point.x, motion.centroidX, width)
-  const ry = wrappedDelta(point.y, motion.centroidY, height)
+export function getVelocityAt(point: PlateSeed, motion: PlateMotion, domain: Domain): { vx: number; vy: number } {
+  const rx = domain.deltaX(point.x, motion.centroidX)
+  const ry = domain.deltaY(point.y, motion.centroidY)
   return { vx: motion.driftX - ry * motion.spin, vy: motion.driftY + rx * motion.spin }
 }
 
 // Advances a point by one finite motion step: rotate about the centroid by
 // `spin · step`, then translate by `drift · step` (wrapped). Replaces the old
-// pure rotateAroundCenter advection — a rigid transform (rotation + translation),
+// pure rotation advection (Domain.rotateAround) — a rigid transform (rotation + translation),
 // the drift+spin form of the same per-epoch move.
-export function advancePointByMotion(x: number, y: number, motion: PlateMotion, step: number, width: number, height: number): { x: number; y: number } {
-  const rotated = rotateAroundCenter(x, y, motion.centroidX, motion.centroidY, motion.spin * step, width, height)
+export function advancePointByMotion(x: number, y: number, motion: PlateMotion, step: number, domain: Domain): { x: number; y: number } {
+  const rotated = domain.rotateAround(x, y, motion.centroidX, motion.centroidY, motion.spin * step)
   return {
-    x: wrapValue((rotated.x + motion.driftX * step), width),
-    y: wrapValue((rotated.y + motion.driftY * step), height),
+    x: wrapValue((rotated.x + motion.driftX * step), domain.width),
+    y: wrapValue((rotated.y + motion.driftY * step), domain.height),
   }
 }
 
 // The inverse of advancePointByMotion — used for ocean-age's backward
 // semi-Lagrangian step (where does the material now here come FROM). Undo the
 // translation first, then the rotation: p = R(−θ)(p' − drift·step).
-export function reversePointByMotion(x: number, y: number, motion: PlateMotion, step: number, width: number, height: number): { x: number; y: number } {
+export function reversePointByMotion(x: number, y: number, motion: PlateMotion, step: number, domain: Domain): { x: number; y: number } {
   const untranslatedX = x - motion.driftX * step
   const untranslatedY = y - motion.driftY * step
-  return rotateAroundCenter(untranslatedX, untranslatedY, motion.centroidX, motion.centroidY, -motion.spin * step, width, height)
+  return domain.rotateAround(untranslatedX, untranslatedY, motion.centroidX, motion.centroidY, -motion.spin * step)
 }
 
 // Fits each plate's rigid motion {drift, spin} to the mantle flow under its
@@ -100,7 +100,7 @@ export function reversePointByMotion(x: number, y: number, motion: PlateMotion, 
 // Lives here rather than beside the field it reads: it speaks PlateSeed in and
 // PlateMotion out, so keeping it in `mantle/` would have made the substrate
 // depend on what rides on it. It iterates the MANTLE grid, hence the import.
-export function fitMotionsToFlow(seeds: PlateSeed[], flow: Float32Array, worldWidth: number, worldHeight: number): PlateMotion[] {
+export function fitMotionsToFlow(seeds: PlateSeed[], flow: Float32Array, domain: Domain): PlateMotion[] {
   const n = seeds.length
   const sumUx = new Float64Array(n)
   const sumUy = new Float64Array(n)
@@ -108,13 +108,13 @@ export function fitMotionsToFlow(seeds: PlateSeed[], flow: Float32Array, worldWi
   const sumRsq = new Float64Array(n)
   const count = new Int32Array(n)
   for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
-    const wy = ((gy + 0.5) / MANTLE_RES_Y) * worldHeight
+    const wy = ((gy + 0.5) / MANTLE_RES_Y) * domain.height
     for (let gx = 0; gx < MANTLE_RES_X; gx++) {
-      const wx = ((gx + 0.5) / MANTLE_RES_X) * worldWidth
+      const wx = ((gx + 0.5) / MANTLE_RES_X) * domain.width
       let best = 0
       let bestSq = Infinity
       for (let p = 0; p < n; p++) {
-        const d = toroidalDistanceSq(wx, wy, seeds[p].x, seeds[p].y, worldWidth, worldHeight)
+        const d = domain.distanceSq(wx, wy, seeds[p].x, seeds[p].y)
         if (d < bestSq) {
           bestSq = d
           best = p
@@ -123,8 +123,8 @@ export function fitMotionsToFlow(seeds: PlateSeed[], flow: Float32Array, worldWi
       const i = gy * MANTLE_RES_X + gx
       const ux = flow[i * 2]
       const uy = flow[i * 2 + 1]
-      const rx = wrappedDelta(wx, seeds[best].x, worldWidth)
-      const ry = wrappedDelta(wy, seeds[best].y, worldHeight)
+      const rx = domain.deltaX(wx, seeds[best].x)
+      const ry = domain.deltaY(wy, seeds[best].y)
       sumUx[best] += ux
       sumUy[best] += uy
       sumCross[best] += rx * uy - ry * ux

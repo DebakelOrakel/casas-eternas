@@ -6,6 +6,7 @@ import type { TerrainFeature } from './terrainFeatures'
 import type { LatticePoint } from './boundaryLattice'
 import type { Raft, Suture } from '../crust/raftTypes'
 import type { SeededRandom } from '../core/rng'
+import type { Domain } from '../core/domain'
 
 // The simulation's data shapes and its event vocabulary, held apart from the code
 // that operates on them. This is what lets the per-epoch phases live in epoch/
@@ -19,6 +20,10 @@ import type { SeededRandom } from '../core/rng'
 export interface PlateSimulation {
   width: number
   height: number
+  // The world's topology (core/domain.ts) on width × height — every
+  // distance, offset and rotation of the plates and rafts goes through it.
+  // Built at creation and on restore, never serialised.
+  domain: Domain
   // Million years one epoch spans (phase 5.1): the erosion's time per plate
   // step, and the ocean floor's age in Ma for the subsidence.
   epochMa: number

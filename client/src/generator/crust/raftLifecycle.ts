@@ -1,7 +1,7 @@
 import type { PlateSeed } from '../tectonics/plateSeeds'
 import { advancePointByMotion, type PlateMotion } from '../tectonics/plateMotion'
 import type { Raft, RaftBlob, RaftMergeEvent, RaftSplitEvent } from './raftTypes'
-import { toroidalDistanceSq, wrappedDelta } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { sampleNearestWorld, wrapValue } from '../core/field'
 import { deservesContinentName, pickUnusedRaftName } from './raftNames'
 import { detHypot } from '../core/detMath'
@@ -15,11 +15,11 @@ import { detHypot } from '../core/detMath'
 // collide, tearing at a rift, and shattering into separate continents when the
 // tear leaves disconnected pieces. Blob-set operations, all of them.
 
-export function nearestPlateIndex(x: number, y: number, seeds: PlateSeed[], width: number, height: number): number {
+export function nearestPlateIndex(x: number, y: number, seeds: PlateSeed[], domain: Domain): number {
   let best = 0
   let bestDistSq = Infinity
   for (let i = 0; i < seeds.length; i++) {
-    const distSq = toroidalDistanceSq(x, y, seeds[i].x, seeds[i].y, width, height)
+    const distSq = domain.distanceSq(x, y, seeds[i].x, seeds[i].y)
     if (distSq < bestDistSq) {
       bestDistSq = distSq
       best = i
@@ -33,13 +33,13 @@ export function nearestPlateIndex(x: number, y: number, seeds: PlateSeed[], widt
 // one nearest the raft's first blob), re-resolved every epoch so it stays
 // correct as plate indices shift (rift/merge) without storing a stale
 // host. Splitting a raft across a rift is a later phase.
-export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMotion[], angleStep: number, width: number, height: number): void {
+export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMotion[], angleStep: number, domain: Domain): void {
   for (const raft of rafts) {
     if (raft.blobs.length === 0) continue
-    const host = nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, seeds, width, height)
+    const host = nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, seeds, domain)
     const motion = motions[host]
     for (const blob of raft.blobs) {
-      const rotated = advancePointByMotion(blob.x, blob.y, motion, angleStep, width, height)
+      const rotated = advancePointByMotion(blob.x, blob.y, motion, angleStep, domain)
       blob.x = rotated.x
       blob.y = rotated.y
     }
@@ -145,7 +145,7 @@ export function advanceRaftsOnFlow(
 // Archean-only by design: in the tectonic phase a raft's geometry is plate
 // kinematics' business, and a compaction force there would fight the very
 // motions the mantle coupling fits.
-export function compactRafts(rafts: Raft[], rate: number, width: number, height: number): void {
+export function compactRafts(rafts: Raft[], rate: number, domain: Domain): void {
   if (rate <= 0) return
   for (const raft of rafts) {
     const n = raft.blobs.length
@@ -155,8 +155,8 @@ export function compactRafts(rafts: Raft[], rate: number, width: number, height:
     let sumY = 0
     let radiusSum = 0
     for (const blob of raft.blobs) {
-      sumX += wrappedDelta(blob.x, ref.x, width)
-      sumY += wrappedDelta(blob.y, ref.y, height)
+      sumX += domain.deltaX(blob.x, ref.x)
+      sumY += domain.deltaY(blob.y, ref.y)
       radiusSum += blob.radius
     }
     const cx = ref.x + sumX / n
@@ -171,7 +171,7 @@ export function compactRafts(rafts: Raft[], rate: number, width: number, height:
       for (let j = 0; j < n; j++) {
         if (j === i) continue
         const bj = raft.blobs[j]
-        const d = toroidalDistanceSq(bi.x, bi.y, bj.x, bj.y, width, height)
+        const d = domain.distanceSq(bi.x, bi.y, bj.x, bj.y)
         if (d < best) best = d
       }
       nearest[i] = Math.sqrt(best)
@@ -180,14 +180,14 @@ export function compactRafts(rafts: Raft[], rate: number, width: number, height:
     const spacing = Math.min(1.2 * meanRadius, Math.max(0.5 * meanRadius, nearest[n >> 1]))
     const compactRadius = Math.sqrt(n / Math.PI) * spacing
     for (const blob of raft.blobs) {
-      const dx = wrappedDelta(blob.x, cx, width)
-      const dy = wrappedDelta(blob.y, cy, height)
+      const dx = domain.deltaX(blob.x, cx)
+      const dy = domain.deltaY(blob.y, cy)
       const dist = detHypot(dx, dy)
       const excess = dist - compactRadius
       if (excess <= 0) continue
       const pull = (excess * rate) / dist
-      blob.x = wrapValue(blob.x - dx * pull, width)
-      blob.y = wrapValue(blob.y - dy * pull, height)
+      blob.x = wrapValue(blob.x - dx * pull, domain.width)
+      blob.y = wrapValue(blob.y - dy * pull, domain.height)
     }
   }
 }
@@ -213,7 +213,7 @@ export function compactRafts(rafts: Raft[], rate: number, width: number, height:
 // - Radius combines area-conservingly (√(r₁²+r₂²)) and each blob merges at
 //   most once per epoch — consolidation is gradual and measurable, not a
 //   one-epoch phase change.
-export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisationEpochs: number, proximityFactor: number, maxRadius: number, width: number, height: number): number {
+export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisationEpochs: number, proximityFactor: number, maxRadius: number, domain: Domain): number {
   let merged = 0
   for (const raft of rafts) {
     const blobs = raft.blobs
@@ -230,12 +230,12 @@ export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisation
         const newRadius = Math.sqrt(a.radius * a.radius + b.radius * b.radius)
         if (newRadius > maxRadius) continue
         const reach = proximityFactor * Math.min(a.radius, b.radius)
-        if (toroidalDistanceSq(a.x, a.y, b.x, b.y, width, height) >= reach * reach) continue
+        if (domain.distanceSq(a.x, a.y, b.x, b.y) >= reach * reach) continue
         const wa = a.radius * a.radius
         const wb = b.radius * b.radius
         const t = wb / (wa + wb)
-        a.x = wrapValue(a.x + wrappedDelta(b.x, a.x, width) * t, width)
-        a.y = wrapValue(a.y + wrappedDelta(b.y, a.y, height) * t, height)
+        a.x = wrapValue(a.x + domain.deltaX(b.x, a.x) * t, domain.width)
+        a.y = wrapValue(a.y + domain.deltaY(b.y, a.y) * t, domain.height)
         a.radius = newRadius
         a.birthEpoch = Math.round((a.birthEpoch ?? 0) * (1 - t) + (b.birthEpoch ?? 0) * t)
         dead[j] = 1
@@ -305,14 +305,13 @@ export function accreteToNearestRaft(
   epoch: number,
   minGapSq: number,
   maxAttachSq: number,
-  width: number,
-  height: number,
+  domain: Domain,
 ): boolean {
   let nearestRaft = -1
   let nearestDistSq = Infinity
   for (let i = 0; i < rafts.length; i++) {
     for (const blob of rafts[i].blobs) {
-      const d = toroidalDistanceSq(x, y, blob.x, blob.y, width, height)
+      const d = domain.distanceSq(x, y, blob.x, blob.y)
       if (d < nearestDistSq) {
         nearestDistSq = d
         nearestRaft = i
@@ -337,13 +336,13 @@ export function accreteToNearestRaft(
 // within the overlap threshold), or null if none overlap. That pair's
 // midpoint is where the two coastlines actually meet — the collision seam —
 // so it doubles as the overlap test and the seam-geometry source.
-function closestOverlappingBlobs(a: Raft, b: Raft, overlapFactor: number, width: number, height: number): { blobA: RaftBlob; blobB: RaftBlob } | null {
+function closestOverlappingBlobs(a: Raft, b: Raft, overlapFactor: number, domain: Domain): { blobA: RaftBlob; blobB: RaftBlob } | null {
   let best: { blobA: RaftBlob; blobB: RaftBlob } | null = null
   let bestDistSq = Infinity
   for (const ba of a.blobs) {
     for (const bb of b.blobs) {
       const threshold = (ba.radius + bb.radius) * overlapFactor
-      const d = toroidalDistanceSq(ba.x, ba.y, bb.x, bb.y, width, height)
+      const d = domain.distanceSq(ba.x, ba.y, bb.x, bb.y)
       if (d < threshold * threshold && d < bestDistSq) {
         bestDistSq = d
         best = { blobA: ba, blobB: bb }
@@ -360,7 +359,7 @@ function closestOverlappingBlobs(a: Raft, b: Raft, overlapFactor: number, width:
 // survivor is unnamed but the absorbed raft had a name, the survivor inherits
 // it, so a named continent doesn't lose its identity by absorbing a nameless
 // (freshly-split or arc-born) piece.
-export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, epoch: number, width: number, height: number): RaftMergeEvent[] {
+export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, epoch: number, domain: Domain): RaftMergeEvent[] {
   const merges: RaftMergeEvent[] = []
   let mergedAny = true
   while (mergedAny) {
@@ -369,16 +368,16 @@ export function mergeOverlappingRafts(rafts: Raft[], overlapFactor: number, epoc
       for (let j = i + 1; j < rafts.length && !mergedAny; j++) {
         // Skip a pair while either side is in its post-split no-merge window.
         if ((rafts[i].noMergeUntilEpoch ?? 0) > epoch || (rafts[j].noMergeUntilEpoch ?? 0) > epoch) continue
-        const overlap = closestOverlappingBlobs(rafts[i], rafts[j], overlapFactor, width, height)
+        const overlap = closestOverlappingBlobs(rafts[i], rafts[j], overlapFactor, domain)
         if (overlap) {
           const nameA = rafts[i].name
           const nameB = rafts[j].name
           // Seam point: midpoint of the meeting blob pair (wrapped). Seam
           // tangent: perpendicular to the convergence direction between them.
-          const dx = wrappedDelta(overlap.blobB.x, overlap.blobA.x, width)
-          const dy = wrappedDelta(overlap.blobB.y, overlap.blobA.y, height)
-          const seamX = wrapValue((overlap.blobA.x + dx / 2), width)
-          const seamY = wrapValue((overlap.blobA.y + dy / 2), height)
+          const dx = domain.deltaX(overlap.blobB.x, overlap.blobA.x)
+          const dy = domain.deltaY(overlap.blobB.y, overlap.blobA.y)
+          const seamX = wrapValue((overlap.blobA.x + dx / 2), domain.width)
+          const seamY = wrapValue((overlap.blobA.y + dy / 2), domain.height)
           const len = detHypot(dx, dy) || 1
           merges.push({ nameA, nameB, x: seamX, y: seamY, tangentX: -dy / len, tangentY: dx / len })
           if (!rafts[i].name && rafts[j].name) rafts[i].name = rafts[j].name
@@ -411,14 +410,13 @@ export function splitRaftAtRift(
   gap: number,
   currentEpoch: number,
   mergeImmunity: number,
-  width: number,
-  height: number,
+  domain: Domain,
 ): RaftSplitEvent | null {
   let target = -1
   let bestDistSq = Infinity
   for (let i = 0; i < rafts.length; i++) {
     for (const blob of rafts[i].blobs) {
-      const d = toroidalDistanceSq(riftX, riftY, blob.x, blob.y, width, height)
+      const d = domain.distanceSq(riftX, riftY, blob.x, blob.y)
       if (d < bestDistSq) {
         bestDistSq = d
         target = i
@@ -430,7 +428,7 @@ export function splitRaftAtRift(
   const near: RaftBlob[] = []
   const far: RaftBlob[] = []
   for (const blob of raft.blobs) {
-    const side = wrappedDelta(blob.x, riftX, width) * normalX + wrappedDelta(blob.y, riftY, height) * normalY
+    const side = domain.deltaX(blob.x, riftX) * normalX + domain.deltaY(blob.y, riftY) * normalY
     if (side >= 0) near.push(blob)
     else far.push(blob)
   }
@@ -440,12 +438,12 @@ export function splitRaftAtRift(
   // immediately weld them back together — a rift genuinely separates the
   // diverging continents. They keep drifting apart afterward with their plates.
   for (const blob of near) {
-    blob.x = wrapValue((blob.x + normalX * gap), width)
-    blob.y = wrapValue((blob.y + normalY * gap), height)
+    blob.x = wrapValue((blob.x + normalX * gap), domain.width)
+    blob.y = wrapValue((blob.y + normalY * gap), domain.height)
   }
   for (const blob of far) {
-    blob.x = wrapValue((blob.x - normalX * gap), width)
-    blob.y = wrapValue((blob.y - normalY * gap), height)
+    blob.x = wrapValue((blob.x - normalX * gap), domain.width)
+    blob.y = wrapValue((blob.y - normalY * gap), domain.height)
   }
   const parentName = raft.name
   raft.blobs = near
@@ -465,7 +463,7 @@ export function splitRaftAtRift(
 // (small) blob set. connectFactor is chosen wider than MERGE_OVERLAP_FACTOR so
 // pieces declared disconnected here are also beyond merge range — they won't
 // immediately re-weld and ping-pong.
-function connectedBlobComponents(blobs: RaftBlob[], connectFactor: number, width: number, height: number): RaftBlob[][] {
+function connectedBlobComponents(blobs: RaftBlob[], connectFactor: number, domain: Domain): RaftBlob[][] {
   const n = blobs.length
   const parent = Array.from({ length: n }, (_, i) => i)
   const find = (i: number): number => {
@@ -478,7 +476,7 @@ function connectedBlobComponents(blobs: RaftBlob[], connectFactor: number, width
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const threshold = (blobs[i].radius + blobs[j].radius) * connectFactor
-      if (toroidalDistanceSq(blobs[i].x, blobs[i].y, blobs[j].x, blobs[j].y, width, height) <= threshold * threshold) {
+      if (domain.distanceSq(blobs[i].x, blobs[i].y, blobs[j].x, blobs[j].y) <= threshold * threshold) {
         parent[find(i)] = find(j)
       }
     }
@@ -509,11 +507,11 @@ function connectedBlobComponents(blobs: RaftBlob[], connectFactor: number, width
 // stream of names for things that dissolved a few epochs later — and then
 // finalizeArchean reshuffled them all anyway, so the names visibly changed the moment
 // you left the phase.
-export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, random: () => number, width: number, height: number, nameNewFragments = true): number {
+export function splitDisconnectedRafts(rafts: Raft[], connectFactor: number, random: () => number, domain: Domain, nameNewFragments = true): number {
   let maxId = rafts.reduce((m, raft) => Math.max(m, raft.id), -1)
   const result: Raft[] = []
   for (const raft of rafts) {
-    const components = connectedBlobComponents(raft.blobs, connectFactor, width, height)
+    const components = connectedBlobComponents(raft.blobs, connectFactor, domain)
     if (components.length <= 1) {
       result.push(raft)
       continue

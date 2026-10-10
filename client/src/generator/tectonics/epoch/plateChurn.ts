@@ -19,7 +19,7 @@ import { detHypot } from '../../core/detMath'
 // needed.
 function applyRift(sim: PlateSimulation, event: RiftEvent): void {
   const newSeed: PlateSeed = { x: event.x, y: event.y }
-  const newMotion = generatePlateMotions([newSeed], sim.width, sim.height, sim.random)[0]
+  const newMotion = generatePlateMotions([newSeed], sim.domain, sim.random)[0]
   sim.seeds.push(newSeed)
   sim.types.push('oceanic')
   sim.motions.push(newMotion)

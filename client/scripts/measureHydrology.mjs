@@ -58,7 +58,7 @@ const archean = M.archean.createArcheanSimulation('alpha', W, H)
 for (let e = 0; e < 180; e++) M.archeanStep.archeanStep(archean)
 const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < 50; e++) M.sim.stepEpoch(sim)
-const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, W, H, sim.warpSeed)
+const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, sim.domain, sim.warpSeed)
 { // dynamic topography (F3), as the pipeline adds it
   const dyn = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, W, H)
   for (let i = 0; i < base.length; i++) base[i] += dyn[i]
@@ -68,7 +68,7 @@ const salt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
 const raw = new Float32Array(W * H)
 for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
   const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
-  raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, W, H,
+  raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, sim.domain,
     M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed),
     M.ridged.fineDetailNoise(s.wx, s.wy, W, H, salt))
 }
@@ -138,7 +138,7 @@ function precipBandStats(mask, el, precip) {
 async function measure(name, controls) {
   log(`\n=== ${name} (age ${controls.age}, alluvium ${controls.alluvium}, rockContrast ${controls.rockContrast}) ===`)
   t0 = Date.now()
-  const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, W, H, controls)
+  const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, sim.domain, controls)
   const ero = await M.erosionPassV2.runErosionPassV2(raw, W, H, forcing, { age: controls.age, params })
   const el = ero.elevations
   log(`erosion solved in ${((Date.now() - t0) / 1000).toFixed(0)}s`)

@@ -3,7 +3,7 @@ import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeCratonOldnessField } from '../crust/raftField'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { capsuleWeight } from './capsule'
-import { wrappedDelta, toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 
 // The K(x) inputs — the erosion-v2 engine's erodibility, assembled from the
 // crust's own history (docs/design/erosion-v2.md, "The tectonics
@@ -68,8 +68,8 @@ export const DEFAULT_ERODIBILITY_FIELD_PARAMS: ErodibilityFieldParams = {
   floodRadiusPerThickness: 2,
 }
 
-// The smooth K-factor field at `outWidth`×`outHeight` over a world of
-// `width`×`height` cells. `currentEpoch` is the CONTINUOUS world epoch
+// The smooth K-factor field at `outWidth`×`outHeight` over the world's
+// `domain`. `currentEpoch` is the CONTINUOUS world epoch
 // (core/worldTime.worldEpoch) — the axis birthEpoch and suture stamps use. Neutral is 1.0 everywhere; ocean floor stays
 // neutral (the engine's marine steps have their own physics).
 export function computeErodibilityField(
@@ -77,19 +77,18 @@ export function computeErodibilityField(
   sutures: Suture[],
   features: TerrainFeature[],
   currentEpoch: number,
-  width: number,
-  height: number,
+  domain: Domain,
   outWidth: number,
   outHeight: number,
   params: ErodibilityFieldParams = DEFAULT_ERODIBILITY_FIELD_PARAMS,
 ): Float32Array {
   const result = new Float32Array(outWidth * outHeight).fill(1)
-  const cellW = width / outWidth
-  const cellH = height / outHeight
+  const cellW = domain.width / outWidth
+  const cellH = domain.height / outHeight
 
   // Cratons: linear toward cratonHardness with the oldness field (-1 = no
   // crust → neutral).
-  const oldness = computeCratonOldnessField(rafts, currentEpoch, outWidth, outHeight, width, height)
+  const oldness = computeCratonOldnessField(rafts, currentEpoch, outWidth, outHeight, domain)
   for (let i = 0; i < result.length; i++) {
     if (oldness[i] >= 0) result[i] *= 1 + (params.cratonHardness - 1) * oldness[i]
   }
@@ -108,8 +107,8 @@ export function computeErodibilityField(
         let strongestDeviation = 0
         for (const suture of sutures) {
           const weight = capsuleWeight(
-            wrappedDelta(wx, suture.x, width),
-            wrappedDelta(wy, suture.y, height),
+            domain.deltaX(wx, suture.x),
+            domain.deltaY(wy, suture.y),
             suture.tangentX,
             suture.tangentY,
             params.sutureHalfLength,
@@ -141,7 +140,7 @@ export function computeErodibilityField(
         for (const flood of floods) {
           const radius = Math.min(params.floodRadiusMax,
             Math.max(params.floodRadiusMin, Math.abs(flood.thickness) * params.floodRadiusPerThickness))
-          const distanceSq = toroidalDistanceSq(wx, wy, flood.x, flood.y, width, height)
+          const distanceSq = domain.distanceSq(wx, wy, flood.x, flood.y)
           if (distanceSq >= radius * radius) continue
           const falloff = 1 - Math.sqrt(distanceSq) / radius
           const weight = falloff * falloff * (3 - 2 * falloff)

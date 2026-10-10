@@ -1,5 +1,5 @@
 import { metersToElevation, ABYSSAL_FLOOR } from '../elevation/elevationScale'
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 
 // THE SAMPLE WORLD'S FALLBACK — a fixed terrain the Planet step shows its
 // controls on before any world exists: three continents, a coastal range
@@ -10,7 +10,8 @@ import { toroidalDistanceSq } from '../core/toroidal'
 // world instead. Since 2026-09-27 the screen hands the worker a real world
 // for this (public/sample/, scripts/sampleWorld.mjs), and this one stands in
 // where that file is missing or fails to load — and in the harnesses.
-export function sampleWorldElevation(width: number, height: number): Float32Array {
+export function sampleWorldElevation(domain: Domain): Float32Array {
+  const { width, height } = domain
   const out = new Float32Array(width * height).fill(ABYSSAL_FLOOR)
   // Continents as smooth domes: centre (fractions of the map), radius
   // (fraction of the width), height (metres at the crown).
@@ -27,7 +28,7 @@ export function sampleWorldElevation(width: number, height: number): Float32Arra
     for (let x = 0; x < width; x++) {
       let hM = -Infinity
       for (const [cx, cy, r, top] of domes) {
-        const d = Math.sqrt(toroidalDistanceSq(x, y, cx * width, cy * height, width, height)) / (r * width)
+        const d = Math.sqrt(domain.distanceSq(x, y, cx * width, cy * height)) / (r * width)
         // Land inside the dome, a shelf just outside it.
         const h = d < 1 ? top * (1 - d * d) + 60 : d < 1.15 ? shelfM : -Infinity
         if (h > hM) hM = h
@@ -38,7 +39,7 @@ export function sampleWorldElevation(width: number, height: number): Float32Arra
         if (across < 1) hM = Math.max(hM, ridge.heightM * (1 - across * across) + 300)
       }
       for (const [ax, ay] of arc) {
-        const d = Math.sqrt(toroidalDistanceSq(x, y, ax * width, ay * height, width, height)) / (0.012 * width)
+        const d = Math.sqrt(domain.distanceSq(x, y, ax * width, ay * height)) / (0.012 * width)
         if (d < 1) hM = Math.max(hM, 800 * (1 - d * d) + 40)
       }
       if (hM > -Infinity) out[y * width + x] = metersToElevation(hM)

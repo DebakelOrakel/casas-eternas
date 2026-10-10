@@ -1,6 +1,6 @@
 import type { PlateSeed } from './plateSeeds'
 import { reversePointByMotion, type PlateMotion } from './plateMotion'
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { sampleBilinearWorld } from '../core/field'
 import { sampleMembershipField } from '../crust/raftField'
 
@@ -59,15 +59,14 @@ export function advectOceanAge(
   seeds: PlateSeed[],
   motions: PlateMotion[],
   angleStep: number,
-  worldWidth: number,
-  worldHeight: number,
+  domain: Domain,
   membership: Float32Array,
   membershipResX: number,
   membershipResY: number,
 ): Float32Array {
   const next = new Float32Array(age.length)
-  const cellW = worldWidth / OCEAN_AGE_RES_X
-  const cellH = worldHeight / OCEAN_AGE_RES_Y
+  const cellW = domain.width / OCEAN_AGE_RES_X
+  const cellH = domain.height / OCEAN_AGE_RES_Y
   for (let cy = 0; cy < OCEAN_AGE_RES_Y; cy++) {
     const wy = (cy + 0.5) * cellH
     for (let cx = 0; cx < OCEAN_AGE_RES_X; cx++) {
@@ -75,20 +74,20 @@ export function advectOceanAge(
       let nearest = 0
       let nearestDistSq = Infinity
       for (let s = 0; s < seeds.length; s++) {
-        const d = toroidalDistanceSq(wx, wy, seeds[s].x, seeds[s].y, worldWidth, worldHeight)
+        const d = domain.distanceSq(wx, wy, seeds[s].x, seeds[s].y)
         if (d < nearestDistSq) {
           nearestDistSq = d
           nearest = s
         }
       }
       const i = cy * OCEAN_AGE_RES_X + cx
-      if (sampleMembershipField(membership, membershipResX, membershipResY, wx, wy, worldWidth, worldHeight) > 0.5) {
+      if (sampleMembershipField(membership, membershipResX, membershipResY, wx, wy, domain.width, domain.height) > 0.5) {
         next[i] = 0
         continue
       }
       const motion = motions[nearest]
-      const prev = reversePointByMotion(wx, wy, motion, angleStep, worldWidth, worldHeight)
-      const advected = sampleOceanAge(age, prev.x, prev.y, worldWidth, worldHeight) + 1
+      const prev = reversePointByMotion(wx, wy, motion, angleStep, domain)
+      const advected = sampleOceanAge(age, prev.x, prev.y, domain.width, domain.height) + 1
       next[i] = advected > MAX_SEAFLOOR_AGE ? MAX_SEAFLOOR_AGE : advected
     }
   }
@@ -104,13 +103,13 @@ export function advectOceanAge(
 // cell. Everything else in the gap kept whatever age it had, so the new basin
 // opened with a one-cell-wide young streak down the middle of otherwise old
 // floor. Sized by the caller to the gap it actually opened.
-export function resetOceanAgeAround(age: Float32Array, x: number, y: number, worldRadius: number, worldWidth: number, worldHeight: number): void {
-  const cellW = worldWidth / OCEAN_AGE_RES_X
-  const cellH = worldHeight / OCEAN_AGE_RES_Y
+export function resetOceanAgeAround(age: Float32Array, x: number, y: number, worldRadius: number, domain: Domain): void {
+  const cellW = domain.width / OCEAN_AGE_RES_X
+  const cellH = domain.height / OCEAN_AGE_RES_Y
   const spanX = Math.floor(worldRadius / cellW)
   const spanY = Math.floor(worldRadius / cellH)
-  const cx = Math.floor((x / worldWidth) * OCEAN_AGE_RES_X)
-  const cy = Math.floor((y / worldHeight) * OCEAN_AGE_RES_Y)
+  const cx = Math.floor((x / domain.width) * OCEAN_AGE_RES_X)
+  const cy = Math.floor((y / domain.height) * OCEAN_AGE_RES_Y)
   const radiusSq = worldRadius * worldRadius
   for (let dy = -spanY; dy <= spanY; dy++) {
     const gy = ((cy + dy) % OCEAN_AGE_RES_Y + OCEAN_AGE_RES_Y) % OCEAN_AGE_RES_Y
@@ -119,7 +118,7 @@ export function resetOceanAgeAround(age: Float32Array, x: number, y: number, wor
       const gx = ((cx + dx) % OCEAN_AGE_RES_X + OCEAN_AGE_RES_X) % OCEAN_AGE_RES_X
       const wx = (gx + 0.5) * cellW
       // Round, not square — a square patch of fresh crust would show as one.
-      if (toroidalDistanceSq(wx, wy, x, y, worldWidth, worldHeight) <= radiusSq) age[gy * OCEAN_AGE_RES_X + gx] = 0
+      if (domain.distanceSq(wx, wy, x, y) <= radiusSq) age[gy * OCEAN_AGE_RES_X + gx] = 0
     }
   }
 }

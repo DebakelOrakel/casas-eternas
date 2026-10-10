@@ -1,7 +1,7 @@
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { capsuleWeight } from './capsule'
-import { wrappedDelta } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { domainWarpDelta } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
 import { sampleOceanAge } from '../tectonics/oceanAge'
@@ -100,32 +100,32 @@ export function oceanFloorAtAge(age: number): number {
 // itself, exactly as the grid loop did.
 // `blobs`, when given, is an index of these same rafts (crust/raftField
 // buildBlobIndex) — for a sweep over many points; the value is the same.
-export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float32Array, worldWidth: number, worldHeight: number, warpSeed: number, seaLevelOffset = 0, blobs?: BlobIndex): number {
-  const wx = worldX + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'x')
-  const wy = worldY + domainWarpDelta(worldX, worldY, worldWidth, worldHeight, warpSeed, 'y')
+export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float32Array, domain: Domain, warpSeed: number, seaLevelOffset = 0, blobs?: BlobIndex): number {
+  const wx = worldX + domainWarpDelta(worldX, worldY, domain.width, domain.height, warpSeed, 'x')
+  const wy = worldY + domainWarpDelta(worldX, worldY, domain.width, domain.height, warpSeed, 'y')
   // Ocean floor deepens with its crustal age; the margin profile then shapes
   // everything from that floor up onto the continent, putting the shoreline
   // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
-  const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, wx, wy, worldWidth, worldHeight))
-  const t = marginParameter(blobs ? raftFieldIndexed(wx, wy, blobs) : raftField(wx, wy, rafts, worldWidth, worldHeight))
+  const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, wx, wy, domain.width, domain.height))
+  const t = marginParameter(blobs ? raftFieldIndexed(wx, wy, blobs) : raftField(wx, wy, rafts, domain))
   // The water knob: the whole solid surface sits lower relative to a sea level
   // that stays at zero. Applied here rather than to the anchors because the two
   // are identical and this is one subtraction — see WATER_OFFSET_MAX_M.
   // Interior relief on top of the margin profile — see hypsometry.ts. Without it
   // the inside of a continent is one flat height, which is what made the water
   // control a switch rather than a slider.
-  return marginProfile(t, oceanicBaseline) + continentalHypsometry(wx, wy, t, worldWidth, worldHeight, warpSeed) - seaLevelOffset
+  return marginProfile(t, oceanicBaseline) + continentalHypsometry(wx, wy, t, domain.width, domain.height, warpSeed) - seaLevelOffset
 }
 
-export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, worldWidth: number, worldHeight: number, warpSeed: number, seaLevelOffset = 0): Float32Array {
+export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, domain: Domain, warpSeed: number, seaLevelOffset = 0): Float32Array {
   const result = new Float32Array(renderWidth * renderHeight)
-  const scaleX = worldWidth / renderWidth
-  const scaleY = worldHeight / renderHeight
+  const scaleX = domain.width / renderWidth
+  const scaleY = domain.height / renderHeight
   for (let py = 0; py < renderHeight; py++) {
     const worldY = py * scaleY
     for (let px = 0; px < renderWidth; px++) {
       const worldX = px * scaleX
-      result[py * renderWidth + px] = raftBaselineAt(worldX, worldY, rafts, oceanAge, worldWidth, worldHeight, warpSeed, seaLevelOffset)
+      result[py * renderWidth + px] = raftBaselineAt(worldX, worldY, rafts, oceanAge, domain, warpSeed, seaLevelOffset)
     }
   }
   return result
@@ -140,7 +140,7 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, rende
 // elevationRenderWorker.ts). Wrapped into [0, width)/[0, height) because the
 // result drives a bucket *index* in computeElevation — Math.floor of a
 // negative or overflowing coord would pick the wrong (or an out-of-bounds)
-// bucket; toroidalDistanceSq's own wrapping makes the later distance checks
+// bucket; the domain's own wrapping makes the later distance checks
 // correct regardless, but the bucket lookup isn't covered by that the same
 // way.
 export function warpedSamplePoint(x: number, y: number, width: number, height: number, warpSeed: number): { wx: number; wy: number } {
@@ -157,8 +157,7 @@ export function computeElevation(
   wy: number,
   blendedBaseline: number,
   featureBuckets: FeatureBuckets,
-  width: number,
-  height: number,
+  domain: Domain,
   ridgeValue: number,
   fineValue = 0,
 ): number {
@@ -178,7 +177,7 @@ export function computeElevation(
         const isTrench = feature.kind === 'trench'
         const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
         const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
-        const weight = capsuleWeight(wrappedDelta(wx, feature.x, width), wrappedDelta(wy, feature.y, height), feature.tangentX, feature.tangentY, halfLength, perpRadius)
+        const weight = capsuleWeight(domain.deltaX(wx, feature.x), domain.deltaY(wy, feature.y), feature.tangentX, feature.tangentY, halfLength, perpRadius)
         if (weight <= 0) continue
         upliftSum += feature.thickness * ELEVATION_TUNING.thicknessToElevationScale * weight
         weightSum += weight

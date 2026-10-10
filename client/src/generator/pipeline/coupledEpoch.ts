@@ -1,5 +1,4 @@
-import { torusDomain, type Domain } from '../core/domain'
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { ITERATION_YEARS } from '../surface/erosionEngine'
 import { TECTONIC_MA_PER_EPOCH } from '../core/worldTime'
 import { buildBlobIndex, nearestRaftIndexed, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
@@ -283,19 +282,18 @@ function baselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobInde
 // change — re-evaluated, it was a twentieth of a level-1 epoch (profiled
 // 2026-10-04 on 2048×1024).
 function solidBaselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobIndex): number {
-  return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.width, sim.height, sim.warpSeed, sim.seaLevelOffset, blobs)
+  return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.domain, sim.warpSeed, sim.seaLevelOffset, blobs)
     + dynamicTopographyAt(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, x, y, sim.width, sim.height)
 }
 
 // The terrain at the start of the history: the mesh from the synthesis,
 // the baseline evaluated at every node, the relief the difference.
 export function createCoupledTerrain(sim: PlateSimulation, budget = 1): CoupledTerrain {
-  const domain = torusDomain(sim.width, sim.height)
-  const built = buildMesh(domain, synthesisSampler(sim), { seed: sim.warpSeed, budget })
+  const built = buildMesh(sim.domain, synthesisSampler(sim), { seed: sim.warpSeed, budget })
   const { mesh, order } = compactMesh(built.mesh)
   const z = permute(built.state.get(MESH_Z), order)
   const baseline = new Float32Array(mesh.vertexSlots)
-  const blobs = buildBlobIndex(sim.rafts, sim.width, sim.height)
+  const blobs = buildBlobIndex(sim.rafts, sim.domain)
   for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
   return { mesh, z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: z.slice(), column: createColumn(mesh.vertexSlots), ice: new Float32Array(0), weather: null }
 }
@@ -328,15 +326,15 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // after the ranges' boundaries went quiet, land p99 held at 4.1 km
   // instead of falling to 2.6, the top 5 % at 3.5 instead of 2.3, the land
   // fraction unchanged (15.8 against 15.6 %).
-  const raftHosts = sim.rafts.map((raft) => raft.blobs.length > 0 ? nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, sim.seeds, width, height) : -1)
+  const raftHosts = sim.rafts.map((raft) => raft.blobs.length > 0 ? nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, sim.seeds, domain) : -1)
   const host = new Int32Array(mesh0.vertexSlots).fill(-1)
-  const hostBlobs = buildBlobIndex(sim.rafts, width, height, RAFT_RELIEF_REACH)
+  const hostBlobs = buildBlobIndex(sim.rafts, domain, RAFT_RELIEF_REACH)
   for (let v = 0; v < mesh0.vertexSlots; v++) {
     if (!mesh0.vAlive[v]) continue
     const x = mesh0.vx[v]
     const y = mesh0.vy[v]
     const onRaft = nearestRaftIndexed(x, y, hostBlobs, RAFT_RELIEF_REACH)
-    host[v] = onRaft >= 0 && raftHosts[onRaft] >= 0 ? raftHosts[onRaft] : nearestPlateIndex(x, y, sim.seeds, width, height)
+    host[v] = onRaft >= 0 && raftHosts[onRaft] >= 0 ? raftHosts[onRaft] : nearestPlateIndex(x, y, sim.seeds, domain)
   }
   timing.membership = lap()
   // The plates' motions by the index `host` was taken with. The step
@@ -360,7 +358,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const columnData = terrain.column.data
   for (let v = 0; v < mesh0.vertexSlots; v++) {
     if (!mesh0.vAlive[v]) continue
-    const moved = advancePointByMotion(mesh0.vx[v], mesh0.vy[v], motions[host[v]], TECTONICS_TUNING.epochAngleStep, width, height)
+    const moved = advancePointByMotion(mesh0.vx[v], mesh0.vy[v], motions[host[v]], TECTONICS_TUNING.epochAngleStep, domain)
     xs[k] = moved.x
     ys[k] = moved.y
     hMoved[k] = terrain.z[v] - terrain.baseline[v]
@@ -392,7 +390,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const z = state.add(MESH_Z, 'intensive')
   // The rafts as the step left them, for every sweep below up to the end
   // of the epoch — nothing after the step moves them.
-  const blobs = buildBlobIndex(sim.rafts, width, height)
+  const blobs = buildBlobIndex(sim.rafts, domain)
   const sea = sim.eustaticM / ELEVATION_METERS
   // The solid baseline per slot of the rebuilt mesh, kept for the sweeps
   // below (solidBaselineAt); the refine adds its new nodes' and may grow it.
@@ -500,7 +498,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // ice's volume is what sets the sea level below.
   const areasNow = meshAreasOf(mesh)
   const cellM2Now = METERS_PER_CELL * METERS_PER_CELL
-  const cratonFieldForTill = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, width, height)
+  const cratonFieldForTill = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, domain)
   const ice = computeIceOnMesh({ mesh, z: zCanon, temperature: weather.temperature, precipitation, coarseZ, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, width, height, cellM: METERS_PER_CELL })
   const glacial = glacialErosionOnMesh(mesh, zCanon, ice, (sim.epochMa || TECTONIC_MA_PER_EPOCH) * 1e6, METERS_PER_CELL)
   let iceVolumeM3 = 0
@@ -547,7 +545,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const cover = coverField(biomes, plantsPresent)
   // Erosion for the epoch, with the tectonics' forcing at the nodes, the
   // epoch's water, and the rates scaled to the step.
-  const { uplift, hardness } = coarseForcingFields(sim, width, height)
+  const { uplift, hardness } = coarseForcingFields(sim, domain)
   const areas = meshAreasOf(mesh)
   const { forcing, params } = assembleNodeForcing({
     uplift, hardness, forcingResX: CLIMATE_RES_X, forcingResY: CLIMATE_RES_Y,
@@ -578,7 +576,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // column's word (a fill under forest is soft fill, held).
     const c = zCanon[v] > 0 ? upsampleAt(cover, CLIMATE_RES_X, CLIMATE_RES_Y, mesh.vx[v], mesh.vy[v], width, height) : 0
     if (forcing.uplift[v] > 0) {
-      const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], width, height)
+      const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], domain)
       if (fold !== 1) { forcing.uplift[v] *= fold; if (zCanon[v] > 0) foldedArea += areas[v] }
     }
     const bedrockK = forcing.erodibility[v]
@@ -773,7 +771,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     let bestSq = LAKE_MATCH_CELLS * LAKE_MATCH_CELLS
     for (const p of previous) {
       if (Math.abs(p.level - body.level) * ELEVATION_METERS > LAKE_MATCH_LEVEL_M) continue
-      const dSq = toroidalDistanceSq(p.x, p.y, body.seedX, body.seedY, width, height)
+      const dSq = domain.distanceSq(p.x, p.y, body.seedX, body.seedY)
       if (dSq >= bestSq) continue
       bestSq = dSq
       ageMa = p.ageMa + epochMaForAges
@@ -828,9 +826,9 @@ export function encodeCoupledTerrain(terrain: CoupledTerrain): { nodes: Float32A
 // A terrain restored from its bytes: the baseline re-evaluated from the sim.
 // A save from before the column (formatVersion 3) restores with an empty one.
 export function decodeCoupledTerrain(sim: PlateSimulation, bytes: { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array; column?: Uint8Array }): CoupledTerrain {
-  const mesh = decodeMesh(torusDomain(sim.width, sim.height), { count: bytes.z.length, nodes: bytes.nodes, connectivity: bytes.connectivity })
+  const mesh = decodeMesh(sim.domain, { count: bytes.z.length, nodes: bytes.nodes, connectivity: bytes.connectivity })
   const baseline = new Float32Array(mesh.vertexSlots)
-  const blobs = buildBlobIndex(sim.rafts, sim.width, sim.height)
+  const blobs = buildBlobIndex(sim.rafts, sim.domain)
   for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
   const column = bytes.column ? decodeColumn(bytes.column, bytes.z.length, mesh.vertexSlots) : createColumn(mesh.vertexSlots)
   return { mesh, z: bytes.z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: bytes.z.slice(), column, ice: new Float32Array(0), weather: null }

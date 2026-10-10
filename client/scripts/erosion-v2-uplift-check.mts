@@ -45,7 +45,7 @@ const archean = M.archean.createArcheanSimulation('alpha', W, H)
 for (let e = 0; e < 180; e++) M.archeanStep.archeanStep(archean)
 const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < 50; e++) M.sim.stepEpoch(sim)
-const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, W, H, sim.warpSeed)
+const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, sim.domain, sim.warpSeed)
 { // dynamic topography (F3), as the pipeline adds it
   const dyn = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, W, H)
   for (let i = 0; i < base.length; i++) base[i] += dyn[i]
@@ -56,7 +56,7 @@ const raw = new Float32Array(W * H)
 for (let y = 0; y < H; y++) {
   for (let x = 0; x < W; x++) {
     const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
-    raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, W, H,
+    raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, sim.domain,
       M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed),
       M.ridged.fineDetailNoise(s.wx, s.wy, W, H, salt))
   }
@@ -66,7 +66,7 @@ process.stderr.write(`ok (${sim.features.length} features)\n`)
 // --- the two forcings at 256×128 --------------------------------------------
 const FW = 256
 const FH = 128
-const uReal = M.uplift.computeUpliftField(sim.features, W, H, FW, FH)
+const uReal = M.uplift.computeUpliftField(sim.features, sim.domain, FW, FH)
 
 const uStandin = new Float32Array(FW * FH)
 {
@@ -147,7 +147,7 @@ const uStandin = new Float32Array(FW * FH)
 // The continuous world-epoch axis (core/worldTime.worldEpoch) — the axis
 // every crust-age stamp uses since the 2026-08-16 handover fix.
 const hardness = M.erodibility.computeErodibilityField(
-  sim.rafts, sim.sutures, sim.features, sim.epoch + sim.archeanEpochs, W, H, FW, FH)
+  sim.rafts, sim.sutures, sim.features, sim.epoch + sim.archeanEpochs, sim.domain, FW, FH)
 {
   let min = Infinity
   let max = -Infinity

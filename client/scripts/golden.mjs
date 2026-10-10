@@ -322,7 +322,7 @@ async function buildWorld(seed) {
   // water table — kept for the invariants below.
   const ground = M.ground.computeHydrogeology({
     sub: meshSub, elevation: terrain.z, graph, column: coupled.column,
-    hardness: M.erosionForcing.coarseForcingFields(sim, W, H).hardness, climateResX: CRX, climateResY: CRY,
+    hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, climateResX: CRX, climateResY: CRY,
     precipitation, temperature: t2, monsoonIndex: sp2.index, cover: M.cover.coverField(biomes2, true),
     regime: graphRegime, discharge: meshDischarge, cellM: M.engine.WORLD_WIDTH_METERS / W,
   })
@@ -330,8 +330,8 @@ async function buildWorld(seed) {
   graph.courses = M.course.computeRiverCourses(graph, { cellM: M.engine.WORLD_WIDTH_METERS / W, seed: sim.warpSeed })
   // The coast (F5), as the worker builds it after the graph.
   const coast = M.coast.buildCoastGraph({
-    elevation: el, width: W, height: H, wind, climateResX: CRX, climateResY: CRY,
-    hardness: M.erosionForcing.coarseForcingFields(sim, W, H).hardness, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,
+    elevation: el, width: W, height: H, domain: sim.domain, wind, climateResX: CRX, climateResY: CRY,
+    hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,
   })
 
   // Downstream reads the REFINED fields, exactly as the worker's
@@ -343,7 +343,7 @@ async function buildWorld(seed) {
   biomes = biomes2
   biomesFine = biomesFine2
 
-  const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, W, H)
+  const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, sim.domain)
   // The ice (F4) on the eroded terrain with the refined climate.
   // The ice: the history's last epoch on the mesh (phase 6), rasterised as
   // the worker does; the ice body is the Glacier biome.
@@ -353,7 +353,7 @@ async function buildWorld(seed) {
   // The sediment basins (F1) of the erosion pass, with provenance.
   const basins = M.basins.findSedimentBasins({
     before: staged.before, after: el, width: W, height: H, routing, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,
-    cratonAge, hardness: M.erosionForcing.coarseForcingFields(sim, W, H).hardness, coarseResX: CRX, coarseResY: CRY,
+    cratonAge, hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, coarseResX: CRX, coarseResY: CRY,
   })
   // Real volcanoes and sutures, and real params — through the very function the
   // worker uses, not a copy of it. This used to pass empty arrays and `{}`,

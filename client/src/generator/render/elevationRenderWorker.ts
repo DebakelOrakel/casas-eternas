@@ -1,6 +1,7 @@
 import { buildFeatureBuckets, computeElevation, warpedSamplePoint } from '../elevation/elevationField'
 import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from '../elevation/ridgedNoise'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
+import { torusDomain } from '../core/domain'
 
 // Computes raw (unshaped, unclamped-differently, uncolored) elevation for
 // one horizontal band [startY, endY) of the map — spawned and owned by
@@ -122,6 +123,9 @@ function getStaticFieldCache(
 self.onmessage = (event: MessageEvent<RenderSliceRequest>) => {
   const { requestId, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, blendedBaselineSlice, features, warpSeed } = event.data
   const baselineSlice = new Float32Array(blendedBaselineSlice)
+  // A Domain does not cross the message boundary; the world's size does,
+  // so the slice builds its own from it.
+  const domain = torusDomain(worldWidth, worldHeight)
   // Rebuilt locally from the FULL feature list (not just ones inside this
   // band) rather than trying to hand each worker a pre-filtered slice —
   // a feature just outside this band's row range can still be within
@@ -138,7 +142,7 @@ self.onmessage = (event: MessageEvent<RenderSliceRequest>) => {
     const rowOffset = (py - startY) * renderWidth
     for (let px = 0; px < renderWidth; px++) {
       const idx = rowOffset + px
-      elevations[idx] = computeElevation(cache.warpedX[idx], cache.warpedY[idx], baselineSlice[idx], buckets, worldWidth, worldHeight, cache.ridge[idx], cache.fine[idx])
+      elevations[idx] = computeElevation(cache.warpedX[idx], cache.warpedY[idx], baselineSlice[idx], buckets, domain, cache.ridge[idx], cache.fine[idx])
     }
   }
 

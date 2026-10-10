@@ -31,10 +31,10 @@ export function coupleMantleToPlates(sim: PlateSimulation): Float32Array {
   // different path. The ocean-age sink is a new consumer with no behaviour to
   // preserve, and "is this under a continent" is a broad question, so the coarser
   // grid is fine for it.
-  const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, width, height)
+  const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, sim.domain)
   sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, width, height)
   const flow = computeMantleFlow(sim.mantle)
-  const fitted = fitMotionsToFlow(sim.seeds, flow, width, height)
+  const fitted = fitMotionsToFlow(sim.seeds, flow, sim.domain)
   for (let i = 0; i < sim.motions.length; i++) {
     const m = sim.motions[i]
     const f = fitted[i]

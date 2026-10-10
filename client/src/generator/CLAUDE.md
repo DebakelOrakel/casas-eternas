@@ -1,8 +1,11 @@
 # generator — the flat-torus generator
 
-The world **wraps in both X and Y**. Every distance, sample and neighbour lookup
-must go through the toroidal helpers in `core/`; a plain `dx = a - b` is a bug
-near the seam. See `docs/decisions/world-topology-torus.md`.
+The world **wraps in both X and Y**. Every distance, offset and rotation between
+points goes through the `Domain` (`core/domain.ts`), never `core/toroidal.ts`
+directly — `make lint` refuses that import (DEC-0035,
+`docs/decisions/two-shapes.md`); a plain `dx = a - b` is a bug near the seam.
+Raster wraps (`wrapValue`, `% width`) still stand beside it until step 3b of
+that decision. See `docs/decisions/world-topology-torus.md`.
 
 `generatorWorker.ts` is the entry point and stays at this root, but it is **only
 transport** — twenty-odd lines wiring `self` to the pipeline. The pipeline is

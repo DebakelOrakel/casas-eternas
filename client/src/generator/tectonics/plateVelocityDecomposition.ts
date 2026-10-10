@@ -1,7 +1,7 @@
 import type { PlateMotion } from './plateMotion'
 import { getVelocityAt } from './plateMotion'
 import type { PlateSeed } from './plateSeeds'
-import { wrappedDelta } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 
 export type BoundaryMotionClass = 'convergent' | 'divergent' | 'transform'
 
@@ -30,19 +30,18 @@ export function classifyBoundaryMotion(
   motionA: PlateMotion,
   seedB: PlateSeed,
   motionB: PlateMotion,
-  width: number,
-  height: number,
+  domain: Domain,
 ): BoundaryConvergence {
-  const velocityA = getVelocityAt(point, motionA, width, height)
-  const velocityB = getVelocityAt(point, motionB, width, height)
+  const velocityA = getVelocityAt(point, motionA, domain)
+  const velocityB = getVelocityAt(point, motionB, domain)
   const relVx = velocityA.vx - velocityB.vx
   const relVy = velocityA.vy - velocityB.vy
 
   // Unit vector from B's seed toward A's seed — the direction along
   // which the distance between the two plates is measured, wrapped like
   // everything else on this map.
-  const dirX = wrappedDelta(seedA.x, seedB.x, width)
-  const dirY = wrappedDelta(seedA.y, seedB.y, height)
+  const dirX = domain.deltaX(seedA.x, seedB.x)
+  const dirY = domain.deltaY(seedA.y, seedB.y)
   const dirLength = Math.sqrt(dirX * dirX + dirY * dirY) || 1
   const normalX = dirX / dirLength
   const normalY = dirY / dirLength

@@ -38,13 +38,13 @@ const archean = M.archean.createArcheanSimulation('alpha', W, H)
 for (let e = 0; e < 180; e++) M.archeanStep.archeanStep(archean)
 const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < 50; e++) M.sim.stepEpoch(sim)
-const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, W, H, sim.warpSeed)
+const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, sim.domain, sim.warpSeed)
 const bk = M.field.buildFeatureBuckets(sim.features, W, H)
 const salt = (sim.warpSeed ^ M.ridged.FINE_DETAIL_SEED_SALT) >>> 0
 const raw = new Float32Array(W * H)
 for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
   const s = M.field.warpedSamplePoint(x, y, W, H, sim.warpSeed)
-  raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, W, H,
+  raw[y * W + x] = M.field.computeElevation(s.wx, s.wy, base[y * W + x], bk, sim.domain,
     M.ridged.ridgedMultifractal(s.wx, s.wy, W, H, sim.warpSeed),
     M.ridged.fineDetailNoise(s.wx, s.wy, W, H, salt))
 }
@@ -55,7 +55,7 @@ const CONTROLS = {
   alluvium: M.surfaceInputs.SURFACE_INPUTS.alluvium.default,
   rockContrast: M.surfaceInputs.SURFACE_INPUTS.rockContrast.default,
 }
-const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, W, H, CONTROLS)
+const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, sim.domain, CONTROLS)
 const ero = await M.erosionPassV2.runErosionPassV2(raw, W, H, forcing, { age: CONTROLS.age, params })
 const el = ero.elevations
 

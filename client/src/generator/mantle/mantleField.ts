@@ -1,4 +1,4 @@
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { MANTLE_TUNING } from './mantleTuneParams'
 import { wrapValue } from '../core/field'
 import { sampleMembershipField } from '../crust/raftField'
@@ -168,13 +168,13 @@ export function sustainMantleVigour(field: Float32Array, targetRms: number): Flo
 // that forcing regionally, so the flow (recomputed next epoch) stops pushing the
 // halves apart at that spot and the strobing stops on its own. Mutates the field;
 // the next evolveMantleField re-clamps + re-zero-means it.
-export function coolMantleAt(field: Float32Array, x: number, y: number, worldWidth: number, worldHeight: number, worldRadius: number, amount: number): void {
+export function coolMantleAt(field: Float32Array, x: number, y: number, domain: Domain, worldRadius: number, amount: number): void {
   const r2 = worldRadius * worldRadius
   for (let gy = 0; gy < RY; gy++) {
-    const wy = ((gy + 0.5) / RY) * worldHeight
+    const wy = ((gy + 0.5) / RY) * domain.height
     for (let gx = 0; gx < RX; gx++) {
-      const wx = ((gx + 0.5) / RX) * worldWidth
-      const d2 = toroidalDistanceSq(wx, wy, x, y, worldWidth, worldHeight)
+      const wx = ((gx + 0.5) / RX) * domain.width
+      const d2 = domain.distanceSq(wx, wy, x, y)
       if (d2 > r2) continue
       const falloff = 1 - Math.sqrt(d2) / worldRadius
       field[gy * RX + gx] = Math.max(-MANTLE_TUNING.clamp, field[gy * RX + gx] - amount * falloff)

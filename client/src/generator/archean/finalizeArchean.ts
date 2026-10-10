@@ -9,7 +9,7 @@ import { generateDetectionLattice } from '../tectonics/boundaryLattice'
 import { createOceanAgeField } from '../tectonics/oceanAge'
 import { findPlumeSites } from '../tectonics/plumes'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { assignRaftNames } from '../crust/raftNames'
 import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
 import { sq } from '../core/detMath'
@@ -44,7 +44,8 @@ const MIN_SEED_SEPARATION_FRAC = 0.22
 // Exported so the Genesis panel can PREVIEW the plates a handover would produce
 // while the Archean is paused. It is the same function finalizeArchean uses, so the
 // preview is the answer, not an approximation of it.
-export function convectionCellSeeds(mantle: Float32Array, width: number, height: number): PlateSeed[] {
+export function convectionCellSeeds(mantle: Float32Array, domain: Domain): PlateSeed[] {
+  const { width, height } = domain
   const candidates: { x: number; y: number; strength: number }[] = []
   const at = (gx: number, gy: number): number =>
     mantle[(((gy % MANTLE_RES_Y) + MANTLE_RES_Y) % MANTLE_RES_Y) * MANTLE_RES_X + (((gx % MANTLE_RES_X) + MANTLE_RES_X) % MANTLE_RES_X)]
@@ -74,7 +75,7 @@ export function convectionCellSeeds(mantle: Float32Array, width: number, height:
   const minSepSq = sq(MIN_SEED_SEPARATION_FRAC * Math.min(width, height))
   const seeds: PlateSeed[] = []
   for (const c of candidates) {
-    if (seeds.some((s) => toroidalDistanceSq(s.x, s.y, c.x, c.y, width, height) < minSepSq)) continue
+    if (seeds.some((s) => domain.distanceSq(s.x, s.y, c.x, c.y) < minSepSq)) continue
     seeds.push({ x: c.x, y: c.y })
   }
   return seeds
@@ -90,17 +91,17 @@ export function convectionCellSeeds(mantle: Float32Array, width: number, height:
 const LAND_MEASURE_RES_X = 512
 const LAND_MEASURE_RES_Y = 256
 
-function measureRaftLandAreas(rafts: Raft[], width: number, height: number): number[] {
+function measureRaftLandAreas(rafts: Raft[], domain: Domain): number[] {
   const areas = new Array<number>(rafts.length).fill(0)
   for (let gy = 0; gy < LAND_MEASURE_RES_Y; gy++) {
-    const wy = ((gy + 0.5) / LAND_MEASURE_RES_Y) * height
+    const wy = ((gy + 0.5) / LAND_MEASURE_RES_Y) * domain.height
     for (let gx = 0; gx < LAND_MEASURE_RES_X; gx++) {
-      const wx = ((gx + 0.5) / LAND_MEASURE_RES_X) * width
-      if (marginProfile(marginParameter(raftField(wx, wy, rafts, width, height)), ABYSSAL_FLOOR) <= 0) continue
+      const wx = ((gx + 0.5) / LAND_MEASURE_RES_X) * domain.width
+      if (marginProfile(marginParameter(raftField(wx, wy, rafts, domain)), ABYSSAL_FLOOR) <= 0) continue
       let best = -1
       let bestField = 0
       for (let i = 0; i < rafts.length; i++) {
-        const f = raftField(wx, wy, [rafts[i]], width, height)
+        const f = raftField(wx, wy, [rafts[i]], domain)
         if (f > bestField) { bestField = f; best = i }
       }
       if (best >= 0) areas[best] += 1
@@ -113,28 +114,29 @@ function measureRaftLandAreas(rafts: Raft[], width: number, height: number): num
 // target the offset would be solved for existed as dead code until
 // 2026-09-22 — BUG_BOUNTY 12; wiring one is a decision of its own.)
 export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
-  const { width, height, random } = archean
+  const { width, height, domain, random } = archean
   // Continents are named HERE, not during the Archean. Proto-cratons merge and
   // fragment constantly — splitDisconnectedRafts hands out a name every time a
   // raft breaks in two — so naming during the phase produces a stream of names for
   // things that dissolve a few epochs later. A continent gets its name when it
   // becomes a continent, which is now.
-  const named = assignRaftNames(archean.rafts, random, measureRaftLandAreas(archean.rafts, width, height))
+  const named = assignRaftNames(archean.rafts, random, measureRaftLandAreas(archean.rafts, domain))
   const oceanAge = createOceanAgeField(TECTONICS_TUNING.oceanAgeInit)
   const seaLevelOffset = archean.seaLevelOffset
-  const seeds = convectionCellSeeds(archean.mantle, width, height)
+  const seeds = convectionCellSeeds(archean.mantle, domain)
   const lattice = generateDetectionLattice(width, height, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
 
   return {
     width,
     height,
+    domain,
     // The count the plate-count homeostasis steers back toward is whatever the
     // convection produced, not a configured number.
     initialPlateCount: seeds.length,
     seeds,
     rafts: named,
-    types: derivePlateTypes(seeds, named, width, height),
-    motions: generatePlateMotions(seeds, width, height, random),
+    types: derivePlateTypes(seeds, named, domain),
+    motions: generatePlateMotions(seeds, domain, random),
     ages: seeds.map(() => 0),
     features: [],
     // The tectonic clock starts at zero; the Archean's epochs are carried
@@ -162,7 +164,7 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
     mantle: archean.mantle,
     // Derived from the mantle field the world just spent a whole eon shaping, not
     // scattered at random — see plumes.ts. They keep moving with it from here on.
-    hotspots: findPlumeSites(archean.mantle, width, height),
+    hotspots: findPlumeSites(archean.mantle, domain),
     sutures: [],
   }
 }

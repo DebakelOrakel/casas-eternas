@@ -1,6 +1,6 @@
 import type { LatticePoint } from './boundaryLattice'
 import type { PlateSeed } from './plateSeeds'
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 
 export interface BoundaryPoint {
   latticeIndex: number
@@ -22,7 +22,7 @@ const BOUNDARY_GAP_THRESHOLD = 0.15
 // boundary. No explicit boundary-curve object is built — this implicit,
 // recomputed-every-epoch approach is what the sphere version already
 // uses, adapted to wrapped 2D distance instead of geodesic distance.
-export function detectBoundaries(lattice: LatticePoint[], seeds: PlateSeed[], width: number, height: number): BoundaryPoint[] {
+export function detectBoundaries(lattice: LatticePoint[], seeds: PlateSeed[], domain: Domain): BoundaryPoint[] {
   const boundaries: BoundaryPoint[] = []
   for (let i = 0; i < lattice.length; i++) {
     const point = lattice[i]
@@ -31,7 +31,7 @@ export function detectBoundaries(lattice: LatticePoint[], seeds: PlateSeed[], wi
     let secondIndex = -1
     let secondDistSq = Infinity
     for (let p = 0; p < seeds.length; p++) {
-      const distSq = toroidalDistanceSq(point.x, point.y, seeds[p].x, seeds[p].y, width, height)
+      const distSq = domain.distanceSq(point.x, point.y, seeds[p].x, seeds[p].y)
       if (distSq < nearestDistSq) {
         secondDistSq = nearestDistSq
         secondIndex = nearestIndex

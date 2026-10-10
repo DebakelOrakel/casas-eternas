@@ -1,5 +1,5 @@
 import { wrapValue } from './field'
-import { wrappedDelta } from './toroidal'
+import { rotateAroundCenter, wrappedDelta } from './toroidal'
 
 // THE DOMAIN (decision 11 of docs/decisions/adaptive-mesh.md, born with the
 // Planet stage): the world's topology behind one interface — what a point
@@ -35,6 +35,10 @@ export interface Domain {
   wrapX(x: number): number
   wrapY(y: number): number
   distanceSq(ax: number, ay: number, bx: number, by: number): number
+  // (x, y) turned by `angle` radians about (centerX, centerY), the result
+  // brought back into the domain — the plates' rigid rotation
+  // (core/toroidal.ts rotateAroundCenter).
+  rotateAround(x: number, y: number, centerX: number, centerY: number, angle: number): { x: number; y: number }
 }
 
 // The torus, with the thermal equator slid by `equatorOffset` (fraction of
@@ -62,5 +66,6 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
       const dy = deltaY(ay, by)
       return dx * dx + dy * dy
     },
+    rotateAround: (x, y, centerX, centerY, angle) => rotateAroundCenter(x, y, centerX, centerY, angle, width, height),
   }
 }

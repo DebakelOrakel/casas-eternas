@@ -159,12 +159,12 @@ export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
 //     equilibrium sits higher than the parameters say it should.
 //  4. **Merge and fragment last**, on the settled geometry.
 export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFAULT_ARCHEAN_PARAMS): void {
-  const { width, height } = sim
+  const { width, height, domain } = sim
 
   // 1. Convection. Crust insulates the mantle beneath it exactly as it does in the
   // tectonic phase — which is what eventually turns a craton into the dome that
   // rifts it, and also why nucleation must exclude cells that already hold crust.
-  const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, width, height)
+  const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, domain)
   sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, width, height, params.diffusion)
   // Internal heating keeps convection running; without it the field decays to
   // nothing on a planet that has no crust yet. See sustainMantleVigour.
@@ -175,12 +175,12 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // runs with the motion step: drift stretches rafts along the convergence
   // lines, compaction trades that length back into width — see compactRafts.
   advanceRaftsOnFlow(sim.rafts, flow, MANTLE_RES_X, MANTLE_RES_Y, width, height, params.raftRigidity)
-  compactRafts(sim.rafts, params.compaction, width, height)
+  compactRafts(sim.rafts, params.compaction, domain)
 
   // 3. New crust over persistent upwellings that are still ocean.
-  const sites = findNucleationSites(sim.mantle, sim.upwellingStreak, sim.rafts, params.nucleation, sim.random, width, height)
+  const sites = findNucleationSites(sim.mantle, sim.upwellingStreak, sim.rafts, params.nucleation, sim.random, domain)
   for (const site of sites) {
-    nucleateCrust(sim.rafts, site, sim.epoch, params.nucleation.blobRadius, params.attachDistSq, width, height)
+    nucleateCrust(sim.rafts, site, sim.epoch, params.nucleation.blobRadius, params.attachDistSq, domain)
   }
 
   // 4. Recycling — the same sink the tectonic phase uses, and the reason crust
@@ -194,13 +194,13 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // into separate continents. The merge events are discarded here: sutures are a
   // tectonic-phase concept, and stamping them with Archean epochs would put them on
   // a different clock from the ones the Ecology layer already consumes.
-  mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, sim.epoch, width, height)
-  sim.lastSplits = splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, width, height, false)
+  mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, sim.epoch, domain)
+  sim.lastSplits = splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, domain, false)
 
   // 6. Consolidation, on the settled geometry: heavily-overlapped stabilised
   // blobs collapse into fewer larger ones — see consolidateRaftBlobs.
   if (params.consolidateProximity > 0) {
-    consolidateRaftBlobs(sim.rafts, sim.epoch, params.stabilisationEpochs, params.consolidateProximity, params.consolidateMaxRadius, width, height)
+    consolidateRaftBlobs(sim.rafts, sim.epoch, params.stabilisationEpochs, params.consolidateProximity, params.consolidateMaxRadius, domain)
   }
 
   sim.epoch += 1

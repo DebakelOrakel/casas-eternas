@@ -1,5 +1,5 @@
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { rasterCellAt, type RiverGraph } from './riverGraph'
 import { detHypot } from '../core/detMath'
@@ -75,6 +75,9 @@ export interface CoastGraphInputs {
   elevation: Float32Array
   width: number
   height: number
+  // The world's topology; the raster above is its grid, one cell per
+  // world unit, so a cell's (x, y) is a world point.
+  domain: Domain
   // The climate grid's wind, interleaved [u, v] (climate/wind.ts).
   wind: Float32Array
   climateResX: number
@@ -121,7 +124,7 @@ function nearestCoastCell(coast: Uint8Array, cell: number, width: number, height
 }
 
 export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
-  const { elevation, width, height, wind, climateResX, climateResY, hardness, graph, cellM } = input
+  const { elevation, width, height, domain, wind, climateResX, climateResY, hardness, graph, cellM } = input
   const n = width * height
   const cellKm = cellM / 1000
   const isSea = (c: number): boolean => elevation[c] <= SEA_LEVEL
@@ -227,7 +230,7 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
       const y = (c - x) / width
       let s = 0
       for (const m of mouths) {
-        const d2 = toroidalDistanceSq(x, y, m.x, m.y, width, height)
+        const d2 = domain.distanceSq(x, y, m.x, m.y)
         if (d2 > r2) continue
         s += m.load * (1 - Math.sqrt(d2) / reachCells)
       }

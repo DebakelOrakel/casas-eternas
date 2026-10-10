@@ -1,7 +1,6 @@
 import { classifyBoundary } from '../boundaryClassification'
 import { detectBoundaries } from '../boundaryDetection'
 import { wrapValue } from '../../core/field'
-import { wrappedDelta } from '../../core/toroidal'
 import { raftMembership } from '../../crust/raftField'
 import { accreteToNearestRaft } from '../../crust/raftLifecycle'
 import { worldEpoch } from '../../core/worldTime'
@@ -37,9 +36,9 @@ export interface BoundaryPassResult {
 // one each) plate rift, plate merge and continental rift this epoch has earned.
 // Applying those is phases 4 and 5 — this phase only decides.
 export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
-  const { width, height } = sim
+  const { width, height, domain } = sim
   // 2. Detect this epoch's boundaries against the fixed lattice.
-  const boundaries = detectBoundaries(sim.lattice, sim.seeds, width, height)
+  const boundaries = detectBoundaries(sim.lattice, sim.seeds, domain)
 
   // Scales the rift/merge thresholds toward whichever makes the currently-
   // scarce event easier — see TECTONICS_TUNING.plateCountPressureStrength's own comment.
@@ -93,8 +92,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       sim.motions[boundary.plateA],
       seedB,
       sim.motions[boundary.plateB],
-      width,
-      height,
+      domain,
     )
     const classification = classifyBoundary(sim.types[boundary.plateA], sim.ages[boundary.plateA], sim.types[boundary.plateB], sim.ages[boundary.plateB], convergence.motionClass)
 
@@ -102,7 +100,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     // opening rift) — reset its floor age to 0 so age-depth reads it as young
     // and shallow (Phase 3).
     if (convergence.motionClass === 'divergent') {
-      resetOceanAgeAround(sim.oceanAge, boundary.x, boundary.y, TECTONICS_TUNING.ridgeFreshCrustRadius, width, height)
+      resetOceanAgeAround(sim.oceanAge, boundary.x, boundary.y, TECTONICS_TUNING.ridgeFreshCrustRadius, domain)
     }
 
     const classCode = motionClassCode(convergence.motionClass)
@@ -131,8 +129,8 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       // seed-to-seed normal, so a feature can be laid down as an oriented
       // ridge segment rather than an isotropic blob (see
       // TerrainFeature.tangentX / computeElevation's anisotropic falloff).
-      const ndx = wrappedDelta(seedA.x, seedB.x, width)
-      const ndy = wrappedDelta(seedA.y, seedB.y, height)
+      const ndx = domain.deltaX(seedA.x, seedB.x)
+      const ndy = domain.deltaY(seedA.y, seedB.y)
       const nlen = Math.sqrt(ndx * ndx + ndy * ndy) || 1
       const tangentX = -ndy / nlen
       const tangentY = ndx / nlen
@@ -145,7 +143,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       // drift off their boundary; continental ones (fold mountains, subduction
       // arcs) persist — see TerrainFeature.subsides.
       const featureSubsides = classification.character === 'islandArc' || classification.character === 'midOceanRidge'
-      const rangeIdx = findOrCreateFeatureIndex(sim.features, boundary.x, boundary.y, boundary.plateA, boundary.plateB, movesWithPlate, tangentX, tangentY, 'range', featureSubsides, width, height)
+      const rangeIdx = findOrCreateFeatureIndex(sim.features, boundary.x, boundary.y, boundary.plateA, boundary.plateB, movesWithPlate, tangentX, tangentY, 'range', featureSubsides, domain)
       // Subduction/island arcs are volcanic (a chain of volcanoes); flag them so the
       // screen can mark them (see TerrainFeature.volcanic). Only ever set true — a
       // shared feature reused across epochs stays flagged once it's been an arc.
@@ -158,8 +156,8 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       if (classification.character === 'subductionArc' || classification.character === 'islandArc') {
         const subductingPlate = classification.upliftSide === 'a' ? boundary.plateB : boundary.plateA
         const subductingSeed = sim.seeds[subductingPlate]
-        let offsetX = wrappedDelta(subductingSeed.x, boundary.x, width)
-        let offsetY = wrappedDelta(subductingSeed.y, boundary.y, height)
+        let offsetX = domain.deltaX(subductingSeed.x, boundary.x)
+        let offsetY = domain.deltaY(subductingSeed.y, boundary.y)
         const offsetLen = Math.sqrt(offsetX * offsetX + offsetY * offsetY) || 1
         offsetX /= offsetLen
         offsetY /= offsetLen
@@ -167,7 +165,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
         const trenchY = wrapValue((boundary.y + offsetY * TECTONICS_TUNING.trenchOffset), height)
         addDeposit(
           // Trenches are always oceanic (the subducting slab), so they subside.
-          findOrCreateFeatureIndex(sim.features, trenchX, trenchY, boundary.plateA, boundary.plateB, subductingPlate, tangentX, tangentY, 'trench', true, width, height),
+          findOrCreateFeatureIndex(sim.features, trenchX, trenchY, boundary.plateA, boundary.plateB, subductingPlate, tangentX, tangentY, 'trench', true, domain),
           -Math.abs(amount) * TECTONICS_TUNING.trenchDepthFraction,
         )
       }
@@ -178,12 +176,12 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       // Throttled to every Nth epoch so continents grow at a measured pace.
       if (classification.character === 'subductionArc' && sim.epoch % TECTONICS_TUNING.accretionEpochInterval === 0) {
         const continentalSeed = classification.upliftSide === 'a' ? seedA : seedB
-        const inX = wrappedDelta(continentalSeed.x, boundary.x, width)
-        const inY = wrappedDelta(continentalSeed.y, boundary.y, height)
+        const inX = domain.deltaX(continentalSeed.x, boundary.x)
+        const inY = domain.deltaY(continentalSeed.y, boundary.y)
         const inLen = Math.sqrt(inX * inX + inY * inY) || 1
         const accreteX = (((boundary.x + (inX / inLen) * TECTONICS_TUNING.accretionInset) % width) + width) % width
         const accreteY = (((boundary.y + (inY / inLen) * TECTONICS_TUNING.accretionInset) % height) + height) % height
-        accreteToNearestRaft(sim.rafts, accreteX, accreteY, TECTONICS_TUNING.accretionBlobRadius, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.accretionMinGapSq, TECTONICS_TUNING.accretionMaxAttachSq, width, height)
+        accreteToNearestRaft(sim.rafts, accreteX, accreteY, TECTONICS_TUNING.accretionBlobRadius, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.accretionMinGapSq, TECTONICS_TUNING.accretionMaxAttachSq, domain)
       }
     }
 
@@ -197,7 +195,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       convergence.motionClass === 'divergent' &&
       sim.latticeLockedEpochs[index] >= TECTONICS_TUNING.contRiftLockEpochs &&
       sim.latticeAccumulated[index] <= effectiveRiftThreshold * TECTONICS_TUNING.contRiftThresholdFactor &&
-      raftMembership(boundary.x, boundary.y, sim.rafts, width, height) > 0.5
+      raftMembership(boundary.x, boundary.y, sim.rafts, domain) > 0.5
     ) {
       continentalRift = { x: boundary.x, y: boundary.y, plateA: boundary.plateA, plateB: boundary.plateB, index }
     }

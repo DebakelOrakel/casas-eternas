@@ -1,6 +1,6 @@
 import { capsuleWeight } from '../elevation/capsule'
 import { ELEVATION_TUNING } from '../elevation/elevationTuneParams'
-import { wrappedDelta } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { wrapValue } from '../core/field'
 import type { FeatureBuckets } from '../elevation/elevationField'
 import { METERS_PER_CELL } from '../core/mapConfig'
@@ -27,7 +27,7 @@ import { detCos } from '../core/detMath'
 // not, which is one more thing the mesh sees that the raster averaged.
 
 // The uplift's multiplier at a world point, from the range features.
-export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, width: number, height: number): number {
+export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, domain: Domain): number {
   const { bucketsX, bucketsY, bucketSizeX, bucketSizeY } = buckets
   const centerBx = Math.min(bucketsX - 1, Math.floor(x / bucketSizeX))
   const centerBy = Math.min(bucketsY - 1, Math.floor(y / bucketSizeY))
@@ -39,8 +39,8 @@ export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, widt
       const bx = wrapValue(centerBx + dx, bucketsX)
       for (const feature of buckets.buckets[by * bucketsX + bx]) {
         if (feature.kind !== 'range' || feature.thickness <= 0) continue
-        const offX = wrappedDelta(x, feature.x, width)
-        const offY = wrappedDelta(y, feature.y, height)
+        const offX = domain.deltaX(x, feature.x)
+        const offY = domain.deltaY(y, feature.y)
         const weight = capsuleWeight(offX, offY, feature.tangentX, feature.tangentY, ELEVATION_TUNING.rangeSegmentHalfLength, ELEVATION_TUNING.rangePerpRadius)
         if (weight <= bestWeight) continue
         bestWeight = weight

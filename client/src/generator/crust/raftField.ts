@@ -1,7 +1,7 @@
 import type { PlateSeed } from '../tectonics/plateSeeds'
 import type { PlateType } from '../tectonics/plateTypes'
 import type { Raft } from './raftTypes'
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { smoothstepBetween } from '../core/interpolation'
 import { sampleNearestWorld, wrapValue } from '../core/field'
 
@@ -43,11 +43,11 @@ const FIELD_HI = 0.65
 // itself, not the thresholded membership: the margin profile (elevationScale.ts)
 // runs its own, wider band over this same field so a continental shelf has room
 // to exist. Thresholding first would throw away exactly the range it needs.
-export function raftField(x: number, y: number, rafts: Raft[], width: number, height: number): number {
+export function raftField(x: number, y: number, rafts: Raft[], domain: Domain): number {
   let field = 0
   for (const raft of rafts) {
     for (const blob of raft.blobs) {
-      field += blobKernel(toroidalDistanceSq(x, y, blob.x, blob.y, width, height), blob.radius)
+      field += blobKernel(domain.distanceSq(x, y, blob.x, blob.y), blob.radius)
     }
   }
   return field
@@ -66,8 +66,7 @@ export function raftField(x: number, y: number, rafts: Raft[], width: number, he
 // sweep, never keep it across a step that moves, grows or merges rafts.
 export interface BlobIndex {
   rafts: Raft[]
-  width: number
-  height: number
+  domain: Domain
   nx: number
   ny: number
   start: Int32Array
@@ -83,7 +82,8 @@ const INDEX_NY = 16
 
 // `reach` in radii: a blob is filed wherever a point within reach × its
 // radius can lie (1 for raftField; the nearest search's own reach for it).
-export function buildBlobIndex(rafts: Raft[], width: number, height: number, reach = 1): BlobIndex {
+export function buildBlobIndex(rafts: Raft[], domain: Domain, reach = 1): BlobIndex {
+  const { width, height } = domain
   let total = 0
   for (const raft of rafts) total += raft.blobs.length
   const bx = new Float64Array(total)
@@ -128,24 +128,25 @@ export function buildBlobIndex(rafts: Raft[], width: number, height: number, rea
   for (let b = 0; b < nx * ny; b++) start[b + 1] = start[b] + buckets[b].length
   const items = new Int32Array(start[nx * ny])
   for (let b = 0; b < nx * ny; b++) items.set(buckets[b], start[b])
-  return { rafts, width, height, nx, ny, start, items, bx, by, br, braft }
+  return { rafts, domain, nx, ny, start, items, bx, by, br, braft }
 }
 
 function bucketOf(index: BlobIndex, x: number, y: number): number {
-  const i = Math.min(index.nx - 1, Math.floor((wrapValue(x, index.width) / index.width) * index.nx))
-  const j = Math.min(index.ny - 1, Math.floor((wrapValue(y, index.height) / index.height) * index.ny))
+  const { width, height } = index.domain
+  const i = Math.min(index.nx - 1, Math.floor((wrapValue(x, width) / width) * index.nx))
+  const j = Math.min(index.ny - 1, Math.floor((wrapValue(y, height) / height) * index.ny))
   return j * index.nx + i
 }
 
 // raftField through the index: the same value, bit for bit.
 export function raftFieldIndexed(x: number, y: number, index: BlobIndex): number {
-  if (!(Math.abs(x) < Infinity && Math.abs(y) < Infinity)) return raftField(x, y, index.rafts, index.width, index.height)
+  if (!(Math.abs(x) < Infinity && Math.abs(y) < Infinity)) return raftField(x, y, index.rafts, index.domain)
   const b = bucketOf(index, x, y)
-  const { items, bx, by, br, width, height } = index
+  const { items, bx, by, br, domain } = index
   let field = 0
   for (let k = index.start[b]; k < index.start[b + 1]; k++) {
     const g = items[k]
-    field += blobKernel(toroidalDistanceSq(x, y, bx[g], by[g], width, height), br[g])
+    field += blobKernel(domain.distanceSq(x, y, bx[g], by[g]), br[g])
   }
   return field
 }
@@ -154,12 +155,12 @@ export function raftFieldIndexed(x: number, y: number, index: BlobIndex): number
 // the scan `d < nearest` over every blob in order, through the index (built
 // with at least this reach).
 export function nearestRaftIndexed(x: number, y: number, index: BlobIndex, reach: number): number {
-  const { items, bx, by, br, braft, width, height } = index
+  const { items, bx, by, br, braft, domain } = index
   let onRaft = -1
   let nearest = reach
   if (!(Math.abs(x) < Infinity && Math.abs(y) < Infinity)) {
     for (let g = 0; g < bx.length; g++) {
-      const d = Math.sqrt(toroidalDistanceSq(x, y, bx[g], by[g], width, height)) / br[g]
+      const d = Math.sqrt(domain.distanceSq(x, y, bx[g], by[g])) / br[g]
       if (d < nearest) { nearest = d; onRaft = braft[g] }
     }
     return onRaft
@@ -167,7 +168,7 @@ export function nearestRaftIndexed(x: number, y: number, index: BlobIndex, reach
   const b = bucketOf(index, x, y)
   for (let k = index.start[b]; k < index.start[b + 1]; k++) {
     const g = items[k]
-    const d = Math.sqrt(toroidalDistanceSq(x, y, bx[g], by[g], width, height)) / br[g]
+    const d = Math.sqrt(domain.distanceSq(x, y, bx[g], by[g])) / br[g]
     if (d < nearest) { nearest = d; onRaft = braft[g] }
   }
   return onRaft
@@ -177,8 +178,8 @@ export function nearestRaftIndexed(x: number, y: number, index: BlobIndex, reach
 // continental interior. This is the "is it continental crust" question (plate
 // typing, accretion, mantle insulation, rift eligibility), NOT "is it above
 // water" — see marginProfile for the latter.
-export function raftMembership(x: number, y: number, rafts: Raft[], width: number, height: number): number {
-  return smoothstepBetween(FIELD_LO, FIELD_HI, raftField(x, y, rafts, width, height))
+export function raftMembership(x: number, y: number, rafts: Raft[], domain: Domain): number {
+  return smoothstepBetween(FIELD_LO, FIELD_HI, raftField(x, y, rafts, domain))
 }
 
 // Continental membership sampled onto a coarse grid, computed ONCE per epoch and
@@ -189,13 +190,13 @@ export function raftMembership(x: number, y: number, rafts: Raft[], width: numbe
 // second independent sweep for the ocean-age sink would have roughly quintupled it
 // at the 256×128 age resolution. One field, sampled by world coordinate, keeps it
 // at a single sweep regardless of how many consumers there are.
-export function computeMembershipField(rafts: Raft[], resX: number, resY: number, width: number, height: number): Float32Array {
+export function computeMembershipField(rafts: Raft[], resX: number, resY: number, domain: Domain): Float32Array {
   const out = new Float32Array(resX * resY)
   for (let gy = 0; gy < resY; gy++) {
-    const wy = ((gy + 0.5) / resY) * height
+    const wy = ((gy + 0.5) / resY) * domain.height
     for (let gx = 0; gx < resX; gx++) {
-      const wx = ((gx + 0.5) / resX) * width
-      out[gy * resX + gx] = raftMembership(wx, wy, rafts, width, height)
+      const wx = ((gx + 0.5) / resX) * domain.width
+      out[gy * resX + gx] = raftMembership(wx, wy, rafts, domain)
     }
   }
   return out
@@ -224,14 +225,14 @@ export function sampleMembershipField(field: Float32Array, resX: number, resY: n
 // recomputes this every epoch at 180 ms: gathering cost about 5 million kernel
 // evaluations per frame at 256×128 with 156 blobs, scattering costs about 40
 // thousand.
-export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, resX: number, resY: number, width: number, height: number): Float32Array {
+export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, resX: number, resY: number, domain: Domain): Float32Array {
   // Float64 accumulators, not Float32: the gathering version this replaces summed
   // in JS numbers, and rounding each partial sum to float32 instead moved ~10% of
   // cells by up to 9e-8 — enough to shift the Ecology hashes downstream.
   const weight = new Float64Array(resX * resY)
   const ageWeighted = new Float64Array(resX * resY)
-  const cellW = width / resX
-  const cellH = height / resY
+  const cellW = domain.width / resX
+  const cellH = domain.height / resY
 
   for (const raft of rafts) {
     for (const blob of raft.blobs) {
@@ -247,7 +248,7 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, r
         const row = (((gy % resY) + resY) % resY) * resX
         for (let gx = gx0; gx <= gx1; gx++) {
           const wx = (gx + 0.5) * cellW
-          const w = blobKernel(toroidalDistanceSq(wx, wy, blob.x, blob.y, width, height), blob.radius)
+          const w = blobKernel(domain.distanceSq(wx, wy, blob.x, blob.y), blob.radius)
           if (w <= 0) continue
           const i = row + (((gx % resX) + resX) % resX)
           weight[i] += w
@@ -282,11 +283,11 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, r
 // reach the same cell: whichever's blob is closer/bigger there wins that
 // cell, which is the same tie-break spirit as raftMembership's own summed
 // field, just tracked per-raft instead of pooled.
-export function computeOwnerField(rafts: Raft[], resX: number, resY: number, width: number, height: number): Int32Array {
+export function computeOwnerField(rafts: Raft[], resX: number, resY: number, domain: Domain): Int32Array {
   const best = new Float32Array(resX * resY)
   const owner = new Int32Array(resX * resY).fill(-1)
-  const cellW = width / resX
-  const cellH = height / resY
+  const cellW = domain.width / resX
+  const cellH = domain.height / resY
   rafts.forEach((raft, raftIndex) => {
     for (const blob of raft.blobs) {
       const gx0 = Math.floor((blob.x - blob.radius) / cellW)
@@ -298,7 +299,7 @@ export function computeOwnerField(rafts: Raft[], resX: number, resY: number, wid
         const row = (((gy % resY) + resY) % resY) * resX
         for (let gx = gx0; gx <= gx1; gx++) {
           const wx = (gx + 0.5) * cellW
-          const v = blobKernel(toroidalDistanceSq(wx, wy, blob.x, blob.y, width, height), blob.radius)
+          const v = blobKernel(domain.distanceSq(wx, wy, blob.x, blob.y), blob.radius)
           const i = row + (((gx % resX) + resX) % resX)
           if (v <= best[i]) continue
           best[i] = v
@@ -323,8 +324,8 @@ export function sampleOwnerField(owner: Int32Array, resX: number, resY: number, 
 // onto direct raft geometry and this goes away.
 const SEED_CONTINENTAL_THRESHOLD = 0.5
 
-export function derivePlateTypes(seeds: PlateSeed[], rafts: Raft[], width: number, height: number): PlateType[] {
-  return seeds.map((seed) => (raftMembership(seed.x, seed.y, rafts, width, height) >= SEED_CONTINENTAL_THRESHOLD ? 'continental' : 'oceanic'))
+export function derivePlateTypes(seeds: PlateSeed[], rafts: Raft[], domain: Domain): PlateType[] {
+  return seeds.map((seed) => (raftMembership(seed.x, seed.y, rafts, domain) >= SEED_CONTINENTAL_THRESHOLD ? 'continental' : 'oceanic'))
 }
 
 // Fraction of crust blobs that have passed the stabilisation age and can no longer

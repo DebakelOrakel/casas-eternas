@@ -1,7 +1,7 @@
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { capsuleWeight } from './capsule'
-import { wrappedDelta } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { buildFeatureBuckets } from './elevationField'
 import { wrapValue } from '../core/field'
 import { detExp, detLog } from '../core/detMath'
@@ -56,23 +56,22 @@ export const DEFAULT_UPLIFT_FIELD_PARAMS: UpliftFieldParams = {
 
 // Samples U at `outWidth`×`outHeight` (climate resolution is the intended
 // consumer grid — U is smooth by construction) over features living in
-// world coordinates `width`×`height`. Returns values in [-1, 1] after the
+// world coordinates on `domain`. Returns values in [-1, 1] after the
 // per-world peak normalization; all-zero when no feature is active.
 export function computeUpliftField(
   features: TerrainFeature[],
-  width: number,
-  height: number,
+  domain: Domain,
   outWidth: number,
   outHeight: number,
   params: UpliftFieldParams = DEFAULT_UPLIFT_FIELD_PARAMS,
 ): Float32Array {
   const result = new Float32Array(outWidth * outHeight)
   if (features.length === 0) return result
-  const buckets = buildFeatureBuckets(features, width, height)
+  const buckets = buildFeatureBuckets(features, domain.width, domain.height)
   const { bucketsX, bucketsY, bucketSizeX, bucketSizeY } = buckets
   const decayPerEpoch = detLog(2) / params.activityHalfLifeEpochs
-  const scaleX = width / outWidth
-  const scaleY = height / outHeight
+  const scaleX = domain.width / outWidth
+  const scaleY = domain.height / outHeight
   for (let py = 0; py < outHeight; py++) {
     const wy = py * scaleY
     for (let px = 0; px < outWidth; px++) {
@@ -89,7 +88,7 @@ export function computeUpliftField(
             const isTrench = feature.kind === 'trench'
             const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
             const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
-            const weight = capsuleWeight(wrappedDelta(wx, feature.x, width), wrappedDelta(wy, feature.y, height), feature.tangentX, feature.tangentY, halfLength, perpRadius)
+            const weight = capsuleWeight(domain.deltaX(wx, feature.x), domain.deltaY(wy, feature.y), feature.tangentX, feature.tangentY, halfLength, perpRadius)
             if (weight <= 0) continue
             const activity = detExp(-feature.epochsSinceDeposit * decayPerEpoch)
             upliftSum += feature.thickness * activity * weight

@@ -1,4 +1,3 @@
-import { toroidalDistanceSq } from '../../core/toroidal'
 import { derivePlateTypes } from '../../crust/raftField'
 import { advanceRafts, recycleUnstabilisedCrust } from '../../crust/raftLifecycle'
 import { worldEpoch } from '../../core/worldTime'
@@ -19,18 +18,18 @@ import { detHypot } from '../../core/detMath'
 // age (old seamounts sink). plateA===plateB marks these as hotspot features so
 // they only merge with each other, never with boundary ranges.
 function depositHotspotVolcanoes(sim: PlateSimulation): void {
-  const { width, height } = sim
+  const { domain } = sim
   for (const hs of sim.hotspots) {
     let plate = 0
     let bestSq = Infinity
     for (let p = 0; p < sim.seeds.length; p++) {
-      const d = toroidalDistanceSq(hs.x, hs.y, sim.seeds[p].x, sim.seeds[p].y, width, height)
+      const d = domain.distanceSq(hs.x, hs.y, sim.seeds[p].x, sim.seeds[p].y)
       if (d < bestSq) {
         bestSq = d
         plate = p
       }
     }
-    const v = getVelocityAt(hs, sim.motions[plate], width, height)
+    const v = getVelocityAt(hs, sim.motions[plate], domain)
     const speed = detHypot(v.vx, v.vy) || 1
     // plateB = -1 is a dedicated hotspot marker (no real boundary can have it, and
     // plate-index shifts on merge only ever decrease indices, never to -1) — so
@@ -38,7 +37,7 @@ function depositHotspotVolcanoes(sim: PlateSimulation): void {
     // boundary ranges. Always subsides: the edifice cools + erodes once the plate
     // carries it off the plume, so the trail fades with age (old seamounts sink),
     // which also lets the feature prune bound the chain length.
-    const idx = findOrCreateFeatureIndex(sim.features, hs.x, hs.y, plate, -1, plate, v.vx / speed, v.vy / speed, 'range', true, width, height)
+    const idx = findOrCreateFeatureIndex(sim.features, hs.x, hs.y, plate, -1, plate, v.vx / speed, v.vy / speed, 'range', true, domain)
     sim.features[idx].thickness += TECTONICS_TUNING.hotspotDepositPerEpoch
     sim.features[idx].epochsSinceDeposit = 0
   }
@@ -47,12 +46,12 @@ function depositHotspotVolcanoes(sim: PlateSimulation): void {
 // Phase 1. Advance every plate and everything riding on it — rafts, sutures,
 // terrain features, the ocean-age field — along its own rotation.
 export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32Array): void {
-  const { width, height } = sim
+  const { width, height, domain } = sim
   // 1. Advance every plate (and whatever terrain is attached to it)
   // along its own rotation.
   for (let i = 0; i < sim.seeds.length; i++) {
     const motion = sim.motions[i]
-    const rotated = advancePointByMotion(sim.seeds[i].x, sim.seeds[i].y, motion, TECTONICS_TUNING.epochAngleStep, width, height)
+    const rotated = advancePointByMotion(sim.seeds[i].x, sim.seeds[i].y, motion, TECTONICS_TUNING.epochAngleStep, domain)
     sim.seeds[i].x = rotated.x
     sim.seeds[i].y = rotated.y
     sim.ages[i] += 1
@@ -61,7 +60,7 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32A
   // from the new raft positions so boundary classification below sees the
   // current crust layout. Phase 1: rafts only drift; split/merge/accretion
   // come later.
-  advanceRafts(sim.rafts, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, width, height)
+  advanceRafts(sim.rafts, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, domain)
   // Crust recycling, immediately after the drift that carried it here and before
   // derivePlateTypes below reads the result. Blobs accreted last epoch are one
   // epoch old now, so they are candidates — crust has to survive to the next epoch
@@ -75,17 +74,17 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32A
     let host = 0
     let bestSq = Infinity
     for (let p = 0; p < sim.seeds.length; p++) {
-      const d = toroidalDistanceSq(s.x, s.y, sim.seeds[p].x, sim.seeds[p].y, width, height)
+      const d = domain.distanceSq(s.x, s.y, sim.seeds[p].x, sim.seeds[p].y)
       if (d < bestSq) { bestSq = d; host = p }
     }
-    const rotated = advancePointByMotion(s.x, s.y, sim.motions[host], TECTONICS_TUNING.epochAngleStep, width, height)
+    const rotated = advancePointByMotion(s.x, s.y, sim.motions[host], TECTONICS_TUNING.epochAngleStep, domain)
     s.x = rotated.x
     s.y = rotated.y
   }
-  sim.types = derivePlateTypes(sim.seeds, sim.rafts, width, height)
+  sim.types = derivePlateTypes(sim.seeds, sim.rafts, domain)
   // Advect the ocean-age field along with the plates that just moved (Phase 3).
-  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, width, height, membership, MANTLE_RES_X, MANTLE_RES_Y)
-  advanceTerrainFeatures(sim.features, sim.motions, TECTONICS_TUNING.epochAngleStep, width, height)
+  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, domain, membership, MANTLE_RES_X, MANTLE_RES_Y)
+  advanceTerrainFeatures(sim.features, sim.motions, TECTONICS_TUNING.epochAngleStep, domain)
   for (const feature of sim.features) {
     feature.thickness *= TECTONICS_TUNING.thicknessDecayPerEpoch
     // Age-depth subsidence for oceanic features once idle (no longer fed by
@@ -102,6 +101,6 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32A
   // the decay above, so today's deposit stands full height). See M3 / mantleField.
   // Before the deposit, so a cone lands where the plume is now. The plume creeps with
   // its upwelling while the plate above races over it — which is what bends a chain.
-  advancePlumes(sim.hotspots, sim.mantle, sim.width, sim.height, sim.epoch)
+  advancePlumes(sim.hotspots, sim.mantle, domain, sim.epoch)
   if (sim.epoch % TECTONICS_TUNING.hotspotEpochInterval === 0) depositHotspotVolcanoes(sim)
 }

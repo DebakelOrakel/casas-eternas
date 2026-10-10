@@ -1,4 +1,4 @@
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { sampleNearestWorld } from '../core/field'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { detHypot, sq } from '../core/detMath'
@@ -81,7 +81,8 @@ export interface Plume {
 
 // Ids continue from whatever is already there, so no counter has to be carried in the
 // simulation state (and none has to be serialised).
-export function findPlumeSites(mantle: Float32Array, width: number, height: number, epoch = 0, exclude: Plume[] = []): Plume[] {
+export function findPlumeSites(mantle: Float32Array, domain: Domain, epoch = 0, exclude: Plume[] = []): Plume[] {
+  const { width, height } = domain
   let nextId = exclude.reduce((m, p) => Math.max(m, p.id), -1) + 1
   const candidates: { x: number; y: number; strength: number }[] = []
   for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
@@ -107,7 +108,7 @@ export function findPlumeSites(mantle: Float32Array, width: number, height: numb
   const fresh: Plume[] = []
   for (const c of candidates) {
     if (chosen.length >= PLUME_MAX_COUNT) break
-    if (chosen.some((s) => toroidalDistanceSq(s.x, s.y, c.x, c.y, width, height) < minSepSq)) continue
+    if (chosen.some((s) => domain.distanceSq(s.x, s.y, c.x, c.y) < minSepSq)) continue
     chosen.push({ x: c.x, y: c.y })
     fresh.push({ x: c.x, y: c.y, id: nextId++, birthEpoch: epoch })
   }
@@ -121,7 +122,8 @@ export function findPlumeSites(mantle: Float32Array, width: number, height: numb
 //
 // Retired when its upwelling dies; new ones appear where a strong upwelling has none.
 // The count therefore breathes with the convection instead of being a constant.
-export function advancePlumes(plumes: Plume[], mantle: Float32Array, width: number, height: number, epoch: number): void {
+export function advancePlumes(plumes: Plume[], mantle: Float32Array, domain: Domain, epoch: number): void {
+  const { width, height } = domain
   const cellW = width / MANTLE_RES_X
   const cellH = height / MANTLE_RES_Y
   for (const plume of plumes) {
@@ -145,5 +147,5 @@ export function advancePlumes(plumes: Plume[], mantle: Float32Array, width: numb
   for (let i = plumes.length - 1; i >= 0; i--) {
     if (mantleAt(mantle, plumes[i].x, plumes[i].y, width, height) < PLUME_RETIRE_THRESHOLD) plumes.splice(i, 1)
   }
-  plumes.push(...findPlumeSites(mantle, width, height, epoch, plumes))
+  plumes.push(...findPlumeSites(mantle, domain, epoch, plumes))
 }

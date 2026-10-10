@@ -1,7 +1,7 @@
 import type { Raft, RaftBlob } from '../crust/raftTypes'
 import { raftField } from '../crust/raftField'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
-import { toroidalDistanceSq } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { SHORELINE_FIELD } from '../elevation/elevationScale'
 
 // Where new continental crust appears in the Archean.
@@ -67,9 +67,9 @@ export function findNucleationSites(
   rafts: Raft[],
   params: NucleationParams,
   random: () => number,
-  width: number,
-  height: number,
+  domain: Domain,
 ): { x: number; y: number }[] {
+  const { width, height } = domain
   const candidates: { x: number; y: number; streak: number }[] = []
 
   for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
@@ -85,7 +85,7 @@ export function findNucleationSites(
 
       // The ocean condition. Without it this whole function is a feedback loop.
       const wx = ((gx + 0.5) / MANTLE_RES_X) * width
-      if (raftField(wx, wy, rafts, width, height) > params.occupiedFieldLevel) continue
+      if (raftField(wx, wy, rafts, domain) > params.occupiedFieldLevel) continue
 
       candidates.push({ x: wx, y: wy, streak: streak[i] })
     }
@@ -124,15 +124,14 @@ export function nucleateCrust(
   epoch: number,
   blobRadius: number,
   attachDistSq: number,
-  width: number,
-  height: number,
+  domain: Domain,
 ): void {
   const blob: RaftBlob = { x: site.x, y: site.y, radius: blobRadius, birthEpoch: epoch }
   let nearest = -1
   let nearestDistSq = Infinity
   for (let i = 0; i < rafts.length; i++) {
     for (const b of rafts[i].blobs) {
-      const d = toroidalDistanceSq(site.x, site.y, b.x, b.y, width, height)
+      const d = domain.distanceSq(site.x, site.y, b.x, b.y)
       if (d < nearestDistSq) { nearestDistSq = d; nearest = i }
     }
   }

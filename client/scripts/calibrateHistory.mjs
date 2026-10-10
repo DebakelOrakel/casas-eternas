@@ -50,11 +50,11 @@ for (let e = 0; e < opt.plain; e++) M.sim.stepEpoch(sim)
   // The uplift forcing's reach: over the land cells of the forcing grid
   // (raft membership at the cell centre), the mean of U and the share of
   // cells forced at all / above a half.
-  const { uplift } = M.forcing.coarseForcingFields(sim, opt.width, opt.height)
+  const { uplift } = M.forcing.coarseForcingFields(sim, sim.domain)
   const RX = M.climate.CLIMATE_RES_X, RY = M.climate.CLIMATE_RES_Y
   let land = 0, forced = 0, strong = 0, sum = 0
   for (let y = 0; y < RY; y++) for (let x = 0; x < RX; x++) {
-    if (M.raft.raftField(((x + 0.5) / RX) * opt.width, ((y + 0.5) / RY) * opt.height, sim.rafts, opt.width, opt.height) <= 0.5) continue
+    if (M.raft.raftField(((x + 0.5) / RX) * opt.width, ((y + 0.5) / RY) * opt.height, sim.rafts, sim.domain) <= 0.5) continue
     land++
     const u = uplift[y * RX + x]
     sum += u

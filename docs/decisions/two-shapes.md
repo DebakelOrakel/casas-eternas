@@ -166,6 +166,12 @@ is agreed before it starts.
 
 ## Status
 
+2026-10-10: step 3a BUILT — the vector layer reaches the torus only
+through `Domain` (with `rotateAround` added); a lint gate in `make lint`
+refuses `core/toroidal` imports outside `core/domain.ts`. Golden harness
+byte-identical (0 moved stages). Steps 3b (raster wraps) and 3c (the kind
+in the world id) not started.
+
 2026-10-10: step 2 of fork 4 BUILT — `client/src/map/worldView.ts` (with
 chart points as fractions u, v), `flatWorldView.ts` around the map plane,
 its camera and river ribbons, and the globe (`sphereView.ts`) as the second

@@ -1,5 +1,7 @@
 import type { Raft } from '../crust/raftTypes'
 import type { SeededRandom } from '../core/rng'
+import type { Domain } from '../core/domain'
+import { torusDomain } from '../core/domain'
 import { mulberry32, hashSeedString } from '../core/rng'
 import { createMantleField, MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 
@@ -23,6 +25,9 @@ import { createMantleField, MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleF
 export interface ArcheanSimulation {
   width: number
   height: number
+  // The world's topology on width × height (core/domain.ts); handed on to
+  // the PlateSimulation, never serialised.
+  domain: Domain
   epoch: number
   random: SeededRandom
   // Carried through to the PlateSimulation so the coastline warp is stable for a
@@ -56,6 +61,7 @@ export function createArcheanSimulation(seedString: string, width: number, heigh
   return {
     width,
     height,
+    domain: torusDomain(width, height),
     epoch: 0,
     random,
     // Same salted derivation the old createPlateSimulation used, so a seed produces

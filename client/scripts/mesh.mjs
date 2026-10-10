@@ -1024,7 +1024,8 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const buckets = M.field.buildFeatureBuckets([feature], W, H)
   const T = M.tectonicsTune.TECTONICS_TUNING
   const lambda = (T.foldWavelengthKm * 1000) / M.mapConfig.METERS_PER_CELL
-  const at = (x, y) => M.folds.foldFactorAt(buckets, x, y, W, H)
+  const foldDomain = M.domain.torusDomain(W, H)
+  const at = (x, y) => M.folds.foldFactorAt(buckets, x, y, foldDomain)
   check('the axis is an anticline', Math.abs(at(128, 64) - (1 + T.foldAmplitude)) < 1e-6, at(128, 64).toFixed(3))
   check('half a wavelength across, a syncline', Math.abs(at(128, 64 + lambda / 2) - (1 - T.foldAmplitude)) < 1e-6, at(128, 64 + lambda / 2).toFixed(3))
   check('one wavelength across, the next anticline', Math.abs(at(128, 64 + lambda) - (1 + T.foldAmplitude)) < 1e-6)

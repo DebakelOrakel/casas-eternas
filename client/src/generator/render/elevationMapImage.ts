@@ -1,6 +1,7 @@
 import { elevationToColor } from '../elevation/elevationColor'
 import { applyMountainRedistribution, computeRaftBaseline } from '../elevation/elevationField'
 import type { PlateSimulation } from '../tectonics/plateSimulation'
+import type { Domain } from '../core/domain'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
@@ -148,6 +149,7 @@ function touchesLand(elevations: Float32Array, width: number, height: number, x:
 export interface RenderableWorld {
   width: number
   height: number
+  domain: Domain
   seeds: PlateSimulation['seeds']
   rafts: PlateSimulation['rafts']
   features: PlateSimulation['features']
@@ -168,7 +170,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   // ramp are ~90% of this and need no plates, so a parallel renderer would be
   // almost entirely duplication. "No plates yet" is an honest special case.
   const hasPlates = sim.seeds.length > 0
-  const cellIds = hasPlates ? rasterizeVoronoiPlates(sim.seeds, width, height) : new Uint16Array(width * height)
+  const cellIds = hasPlates ? rasterizeVoronoiPlates(sim.seeds, sim.domain) : new Uint16Array(width * height)
   const buffer = new Uint8Array(width * height * 4)
 
   let elevations: Float32Array
@@ -186,7 +188,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
     const scale = Math.max(1, Math.floor(options.elevationScale ?? 1))
     const renderWidth = Math.floor(width / scale)
     const renderHeight = Math.floor(height / scale)
-    const blendedBaselines = computeRaftBaseline(sim.rafts, sim.oceanAge, renderWidth, renderHeight, width, height, sim.warpSeed, sim.seaLevelOffset)
+    const blendedBaselines = computeRaftBaseline(sim.rafts, sim.oceanAge, renderWidth, renderHeight, sim.domain, sim.warpSeed, sim.seaLevelOffset)
     // Dynamic topography (elevation/dynamicTopography.ts): the mantle's
     // anomaly as a height term on the deck, evaluated from the field as it
     // stands now — instantaneous, never crustal.
@@ -210,7 +212,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   // review) — via a coarse "which raft owns this point" field computed at
   // the same MANTLE_RES grid every other raft-derived field already uses.
   if (ACCENTUATE_MOUNTAINS) {
-    const ownerField = computeOwnerField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, width, height)
+    const ownerField = computeOwnerField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, sim.domain)
     applyMountainRedistribution(elevations, width, height, ownerField, MANTLE_RES_X, MANTLE_RES_Y)
   }
 
@@ -266,7 +268,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
 
   // Overlay source data — always produced (cheap), toggled on the main
   // thread. Labels come from raft blobs.
-  const raftLabels = computeRaftLabelPlacements(sim.rafts, width, height)
+  const raftLabels = computeRaftLabelPlacements(sim.rafts, sim.domain)
 
   return { buffer, relief, boundaryMask, raftLabels, landFraction: landPixelCount / (width * height), rawElevations, elevations }
 }

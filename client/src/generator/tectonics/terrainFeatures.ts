@@ -1,4 +1,4 @@
-import { wrappedDelta } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { getVelocityAt, advancePointByMotion } from './plateMotion'
 import type { PlateMotion } from './plateMotion'
 import { wrapValue } from '../core/field'
@@ -140,8 +140,7 @@ export function findOrCreateFeatureIndex(
   tangentY: number,
   kind: FeatureKind,
   subsides: boolean,
-  width: number,
-  height: number,
+  domain: Domain,
 ): number {
   const mergeRadiusSq = MERGE_RADIUS * MERGE_RADIUS
   for (let i = 0; i < features.length; i++) {
@@ -153,8 +152,8 @@ export function findOrCreateFeatureIndex(
     if (feature.kind !== kind) continue
     const samePair = (feature.plateA === plateA && feature.plateB === plateB) || (feature.plateA === plateB && feature.plateB === plateA)
     if (!samePair) continue
-    const dx = wrappedDelta(x, feature.x, width)
-    const dy = wrappedDelta(y, feature.y, height)
+    const dx = domain.deltaX(x, feature.x)
+    const dy = domain.deltaY(y, feature.y)
     if (dx * dx + dy * dy <= mergeRadiusSq) {
       // Refresh orientation toward the current boundary tangent. Tangent
       // direction is sign-ambiguous (a line and its reverse are the same
@@ -181,24 +180,24 @@ export function findOrCreateFeatureIndex(
 // rotate-then-rewrap toroidal treatment plate seeds themselves get.
 // Symmetric ('both') features use Euler integration (velocity * angle
 // step) off the average of both plates' instantaneous velocity at the
-// feature's own position, rather than an exact rotateAroundCenter —
+// feature's own position, rather than an exact Domain.rotateAround —
 // there's no single shared center to rotate two different plates'
 // motions around. For the small per-epoch angle steps this system uses
 // (a fraction of a degree), this agrees closely with an exact rotation;
 // single-sided features keep the exact rotation since only one motion
 // applies and there's no reason to approximate it.
-export function advanceTerrainFeatures(features: TerrainFeature[], motions: PlateMotion[], angleStep: number, width: number, height: number): void {
+export function advanceTerrainFeatures(features: TerrainFeature[], motions: PlateMotion[], angleStep: number, domain: Domain): void {
   for (const feature of features) {
     if (feature.movesWithPlate === 'both') {
-      const velocityA = getVelocityAt(feature, motions[feature.plateA], width, height)
-      const velocityB = getVelocityAt(feature, motions[feature.plateB], width, height)
+      const velocityA = getVelocityAt(feature, motions[feature.plateA], domain)
+      const velocityB = getVelocityAt(feature, motions[feature.plateB], domain)
       const vx = (velocityA.vx + velocityB.vx) / 2
       const vy = (velocityA.vy + velocityB.vy) / 2
-      feature.x = wrapValue((feature.x + vx * angleStep), width)
-      feature.y = wrapValue((feature.y + vy * angleStep), height)
+      feature.x = wrapValue((feature.x + vx * angleStep), domain.width)
+      feature.y = wrapValue((feature.y + vy * angleStep), domain.height)
     } else {
       const motion = motions[feature.movesWithPlate]
-      const rotated = advancePointByMotion(feature.x, feature.y, motion, angleStep, width, height)
+      const rotated = advancePointByMotion(feature.x, feature.y, motion, angleStep, domain)
       feature.x = rotated.x
       feature.y = rotated.y
     }

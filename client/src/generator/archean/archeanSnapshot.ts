@@ -1,6 +1,7 @@
 import type { ArcheanSimulation } from './archeanState'
 import type { Raft } from '../crust/raftTypes'
 import { mulberry32 } from '../core/rng'
+import { torusDomain } from '../core/domain'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 
 // Saving a world that is still in the Archean.
@@ -42,6 +43,7 @@ export function deserializeArchean(snap: ArcheanSnapshot, mantle: Float32Array, 
   return {
     width: snap.width,
     height: snap.height,
+    domain: torusDomain(snap.width, snap.height),
     epoch: snap.epoch,
     warpSeed: snap.warpSeed,
     seaLevelOffset: snap.seaLevelOffset ?? 0,

@@ -1,4 +1,5 @@
 import type { PlateSimulation } from '../tectonics/plateSimulation'
+import type { Domain } from '../core/domain'
 import { computeUpliftField } from '../elevation/upliftField'
 import { computeErodibilityField } from '../elevation/erodibilityField'
 import { computeWeather, defaultWeatherParams } from '../climate/weather'
@@ -45,26 +46,25 @@ export type { ErosionControlsV2 }
 // with or written down.
 export function coarseForcingFields(
   sources: ErosionForcingSources,
-  width: number,
-  height: number,
+  domain: Domain,
 ): { uplift: Float32Array; hardness: Float32Array } {
-  const uplift = computeUpliftField(sources.features, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const uplift = computeUpliftField(sources.features, domain, CLIMATE_RES_X, CLIMATE_RES_Y)
   const hardness = computeErodibilityField(
     sources.rafts, sources.sutures, sources.features,
     worldEpoch(sources.archeanEpochs, sources.epoch),
-    width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
+    domain, CLIMATE_RES_X, CLIMATE_RES_Y)
   return { uplift, hardness }
 }
 
 export function assembleErosionForcing(
   sources: ErosionForcingSources,
   rawElevations: Float32Array,
-  width: number,
-  height: number,
+  domain: Domain,
   controls: ErosionControlsV2 = {},
   weather: WeatherParams = defaultWeatherParams(),
 ): { forcing: ErosionForcing; params: ErosionEngineParams } {
-  const { uplift, hardness } = coarseForcingFields(sources, width, height)
+  const { width, height } = domain
+  const { uplift, hardness } = coarseForcingFields(sources, domain)
 
   // The climate as the water forcing — the FULL weather chain (currents and
   // SST included) with the climate panel's own parameters, evaluated on the

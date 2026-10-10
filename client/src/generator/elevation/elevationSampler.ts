@@ -1,4 +1,5 @@
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import type { Domain } from '../core/domain'
 import type { PlateSimulation } from '../tectonics/plateSimulation'
 import { dynamicTopographyAt } from './dynamicTopography'
 import { buildFeatureBuckets, computeElevation, raftBaselineAt, warpedSamplePoint } from './elevationField'
@@ -24,6 +25,7 @@ import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from './ri
 export interface SynthesisSources {
   width: number
   height: number
+  domain: Domain
   rafts: PlateSimulation['rafts']
   features: PlateSimulation['features']
   oceanAge: Float32Array
@@ -37,15 +39,15 @@ export interface ElevationSampler {
 }
 
 export function synthesisSampler(s: SynthesisSources): ElevationSampler {
-  const { width, height, warpSeed } = s
+  const { width, height, domain, warpSeed } = s
   const buckets = buildFeatureBuckets(s.features, width, height)
   const fineSeed = (warpSeed ^ FINE_DETAIL_SEED_SALT) >>> 0
   return {
     heightAt(x, y) {
-      const baseline = raftBaselineAt(x, y, s.rafts, s.oceanAge, width, height, warpSeed, s.seaLevelOffset)
+      const baseline = raftBaselineAt(x, y, s.rafts, s.oceanAge, domain, warpSeed, s.seaLevelOffset)
         + dynamicTopographyAt(s.mantle, MANTLE_RES_X, MANTLE_RES_Y, x, y, width, height)
       const { wx, wy } = warpedSamplePoint(x, y, width, height, warpSeed)
-      return computeElevation(wx, wy, baseline, buckets, width, height,
+      return computeElevation(wx, wy, baseline, buckets, domain,
         ridgedMultifractal(wx, wy, width, height, warpSeed),
         fineDetailNoise(wx, wy, width, height, fineSeed))
     },

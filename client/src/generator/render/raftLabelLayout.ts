@@ -1,5 +1,5 @@
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
-import { wrappedDelta } from '../core/toroidal'
+import type { Domain } from '../core/domain'
 import { wrapValue } from '../core/field'
 import type { Raft } from '../crust/raftTypes'
 
@@ -12,12 +12,12 @@ import type { Raft } from '../crust/raftTypes'
 // text renderer can size the label to fit inside the continent.
 //
 // Wrapping is handled by working in a local frame anchored on the largest
-// blob (every other blob expressed as a wrappedDelta offset from it), so a
+// blob (every other blob expressed as the domain's delta from it), so a
 // continent straddling the map seam still gets a sane center and axis instead
 // of one smeared across the whole width. Reuses ContinentLabelPlacement so
 // the existing drawContinentLabel renderer works unchanged; `plateIndex`
 // carries the raft id (the renderer ignores it, it's just a stable key).
-export function computeRaftLabelPlacements(rafts: Raft[], width: number, height: number): ContinentLabelPlacement[] {
+export function computeRaftLabelPlacements(rafts: Raft[], domain: Domain): ContinentLabelPlacement[] {
   const placements: ContinentLabelPlacement[] = []
   for (const raft of rafts) {
     if (!raft.name || raft.blobs.length === 0) continue
@@ -28,8 +28,8 @@ export function computeRaftLabelPlacements(rafts: Raft[], width: number, height:
     let meanX = 0
     let meanY = 0
     for (const b of raft.blobs) {
-      const dx = wrappedDelta(b.x, anchor.x, width)
-      const dy = wrappedDelta(b.y, anchor.y, height)
+      const dx = domain.deltaX(b.x, anchor.x)
+      const dy = domain.deltaY(b.y, anchor.y)
       const w = b.radius * b.radius
       pts.push({ dx, dy, r: b.radius, w })
       sumW += w
@@ -75,8 +75,8 @@ export function computeRaftLabelPlacements(rafts: Raft[], width: number, height:
       along = anchor.radius
       perp = anchor.radius
     }
-    const centerX = wrapValue((anchor.x + localX), width)
-    const centerY = wrapValue((anchor.y + localY), height)
+    const centerX = wrapValue((anchor.x + localX), domain.width)
+    const centerY = wrapValue((anchor.y + localY), domain.height)
     placements.push({ plateIndex: raft.id, name: raft.name, centerX, centerY, angle, alongExtent: along * 2, perpExtent: perp * 2 })
   }
   return placements

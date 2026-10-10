@@ -1,4 +1,3 @@
-import { toroidalDistanceSq, wrappedDelta } from '../../core/toroidal'
 import { mergeOverlappingRafts, splitDisconnectedRafts, splitRaftAtRift } from '../../crust/raftLifecycle'
 import { worldEpoch } from '../../core/worldTime'
 import { deservesContinentName, pickUnusedRaftName } from '../../crust/raftNames'
@@ -28,8 +27,8 @@ import type { BoundaryPassResult } from './boundaryPass'
 // is already reset to 0 by the divergent-boundary reset in the boundary loop, and
 // advection then ages the new seafloor outward from the ridge.
 function birthRidgePlate(sim: PlateSimulation, x: number, y: number, flankA: number, flankB: number): void {
-  const vA = getVelocityAt({ x, y }, sim.motions[flankA], sim.width, sim.height)
-  const vB = getVelocityAt({ x, y }, sim.motions[flankB], sim.width, sim.height)
+  const vA = getVelocityAt({ x, y }, sim.motions[flankA], sim.domain)
+  const vB = getVelocityAt({ x, y }, sim.motions[flankB], sim.domain)
   const motion: PlateMotion = {
     driftX: (vA.vx + vB.vx) / 2,
     driftY: (vA.vy + vB.vy) / 2,
@@ -52,12 +51,12 @@ export interface RaftEventResult {
 // continental rift tears a continent in two and opens an ocean basin in the gap,
 // and any raft left as spatially separate clusters is decomposed.
 export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult): RaftEventResult {
-  const { width, height } = sim
+  const { domain } = sim
   const { boundaries, continentalRift } = pass
   // Continents that have drifted (or grown by accretion) into contact this
   // epoch suture into one (Phase 2c). Each suture is a continent-collision
   // event (name + seam geometry) for the notification/overlay layer.
-  const raftMerges = mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, worldEpoch(sim.archeanEpochs, sim.epoch), width, height)
+  const raftMerges = mergeOverlappingRafts(sim.rafts, MERGE_OVERLAP_FACTOR, worldEpoch(sim.archeanEpochs, sim.epoch), domain)
   // Persist each collision belt for the world's life — terrain features get
   // pruned, so this is the only durable record of deep-time orogens (Ecology
   // provenance for tin / lode gold / gems). Stamped with the current epoch
@@ -73,11 +72,11 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
   if (continentalRift) {
     const cSeedA = sim.seeds[continentalRift.plateA]
     const cSeedB = sim.seeds[continentalRift.plateB]
-    const cnx = wrappedDelta(cSeedA.x, cSeedB.x, width)
-    const cny = wrappedDelta(cSeedA.y, cSeedB.y, height)
+    const cnx = domain.deltaX(cSeedA.x, cSeedB.x)
+    const cny = domain.deltaY(cSeedA.y, cSeedB.y)
     const cnl = Math.sqrt(cnx * cnx + cny * cny) || 1
     const newRaftId = sim.rafts.reduce((max, raft) => Math.max(max, raft.id), -1) + 1
-    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, TECTONICS_TUNING.splitMaxDistSq, TECTONICS_TUNING.splitGap, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.splitMergeImmunityEpochs, width, height)
+    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, TECTONICS_TUNING.splitMaxDistSq, TECTONICS_TUNING.splitGap, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.splitMergeImmunityEpochs, domain)
     // Reset that point's divergence accumulator so it doesn't immediately
     // re-split the fresh halves next epoch.
     if (raftSplit) {
@@ -91,7 +90,7 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
       // epoch. See the TECTONICS_TUNING.riftResetRadius const.
       const rr2 = TECTONICS_TUNING.riftResetRadius * TECTONICS_TUNING.riftResetRadius
       for (const b of boundaries) {
-        if (toroidalDistanceSq(b.x, b.y, continentalRift.x, continentalRift.y, width, height) <= rr2) {
+        if (domain.distanceSq(b.x, b.y, continentalRift.x, continentalRift.y) <= rr2) {
           // Negative lock = a passive-margin recovery delay: needs
           // TECTONICS_TUNING.riftMarginRecoveryEpochs + TECTONICS_TUNING.contRiftLockEpochs of sustained
           // divergence to rift again. Local, so a separate supercontinent is unaffected.
@@ -118,7 +117,7 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
       // rift line (tangent ⟂ the seed-to-seed normal), riding one half. See M3.
       const fbTangentX = -cny / cnl
       const fbTangentY = cnx / cnl
-      const fbIdx = findOrCreateFeatureIndex(sim.features, continentalRift.x, continentalRift.y, continentalRift.plateA, -2, continentalRift.plateA, fbTangentX, fbTangentY, 'range', false, width, height)
+      const fbIdx = findOrCreateFeatureIndex(sim.features, continentalRift.x, continentalRift.y, continentalRift.plateA, -2, continentalRift.plateA, fbTangentX, fbTangentY, 'range', false, domain)
       sim.features[fbIdx].thickness += TECTONICS_TUNING.floodBasaltDeposit
       sim.features[fbIdx].epochsSinceDeposit = 0
       // Open a real ocean basin in the gap: a young oceanic plate (mid-ocean
@@ -129,11 +128,11 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
       // too narrow to cover a breakup's gap on its own, and without this the new
       // basin inherits the age that kept ticking under the continent and renders at
       // full abyssal depth: a newborn Atlantic as deep as the oldest Pacific.
-      resetOceanAgeAround(sim.oceanAge, continentalRift.x, continentalRift.y, TECTONICS_TUNING.breakupFreshCrustRadius, width, height)
+      resetOceanAgeAround(sim.oceanAge, continentalRift.x, continentalRift.y, TECTONICS_TUNING.breakupFreshCrustRadius, domain)
       // Release the thermal doming that drove the breakup — this is what actually
       // retires the global cooldown: it collapses the broad divergent forcing under
       // the (former) supercontinent so neighbouring points stop re-qualifying.
-      coolMantleAt(sim.mantle, continentalRift.x, continentalRift.y, width, height, TECTONICS_TUNING.riftCoolRadius, TECTONICS_TUNING.riftCoolAmount)
+      coolMantleAt(sim.mantle, continentalRift.x, continentalRift.y, domain, TECTONICS_TUNING.riftCoolRadius, TECTONICS_TUNING.riftCoolAmount)
     }
   }
 
@@ -141,6 +140,6 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
   // separate clusters (renders as several landmasses under one name) is
   // decomposed into one named continent per cluster. No events — this isn't a
   // tectonic breakup, just keeping "one raft = one visible landmass".
-  splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, width, height)
+  splitDisconnectedRafts(sim.rafts, RAFT_CONNECT_FACTOR, sim.random, domain)
   return { raftMerges, raftSplit }
 }

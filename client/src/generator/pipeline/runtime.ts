@@ -1,4 +1,5 @@
 import { serializePlateSimulation, deserializePlateSimulation } from '../tectonics/plateSimulation'
+import { torusDomain, type Domain } from '../core/domain'
 import { sampleWorldElevation } from '../planet/sampleWorld'
 import type { PlanetForcing } from '../planet/planetForcing'
 import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
@@ -478,7 +479,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     mantle: sim.mantle.slice().buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), MANTLE_RES_X, MANTLE_RES_Y, sim.width, sim.height).buffer as ArrayBuffer,
+    cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), MANTLE_RES_X, MANTLE_RES_Y, sim.domain).buffer as ArrayBuffer,
     elevation: coarseElevation(result.elevations, sim.width, sim.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
@@ -512,7 +513,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   const gen = worldGeneration
   renderOptions.precomputedElevations = undefined
   renderOptions.elevationScale = elevationScale
-  const previewSeeds = intervalId === undefined ? convectionCellSeeds(archean.mantle, archean.width, archean.height) : []
+  const previewSeeds = intervalId === undefined ? convectionCellSeeds(archean.mantle, archean.domain) : []
   const result = await renderSimulationImage(
     // While PAUSED, show the plates this world would hand over — the same seeds
     // finalizeArchean would place, so the preview is the answer rather than a guess.
@@ -521,7 +522,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     //
     // Seeds only drive the Voronoi mask; the elevation raster reads rafts, ocean age
     // and features, so previewing cannot disturb the terrain.
-    { width: archean.width, height: archean.height, seeds: previewSeeds, rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset, mantle: archean.mantle },
+    { width: archean.width, height: archean.height, domain: archean.domain, seeds: previewSeeds, rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset, mantle: archean.mantle },
     renderPool(),
     renderOptions,
   )
@@ -537,14 +538,14 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     mantle: archean.mantle.slice().buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    cratonAge: computeCratonOldnessField(archean.rafts, archean.epoch, MANTLE_RES_X, MANTLE_RES_Y, archean.width, archean.height).buffer as ArrayBuffer,
+    cratonAge: computeCratonOldnessField(archean.rafts, archean.epoch, MANTLE_RES_X, MANTLE_RES_Y, archean.domain).buffer as ArrayBuffer,
     elevation: coarseElevation(result.elevations, archean.width, archean.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
     // The Archean has plumes too — the same persistent upwellings crustNucleation
     // reads to decide where crust appears. Showing them costs nothing new: the phase
     // already computes them, and seeing WHERE crust is about to form is the point.
-    hotspots: findPlumeSites(archean.mantle, archean.width, archean.height),
+    hotspots: findPlumeSites(archean.mantle, archean.domain),
     volcanoes: [],
     width: archean.width,
     height: archean.height,
@@ -1048,7 +1049,7 @@ function handleHydrologyRun(): void {
       // biomes as bank material and the last erosion pass's sediment flux as
       // load. The ribbons below derive from it.
       // The forcing's hardness: the coast's and the hydrogeology's input.
-      const forcingFields = coarseForcingFields(sim, width, height)
+      const forcingFields = coarseForcingFields(sim, sim.domain)
       // The cover (phase 5.5) from the coarse biomes, for the infiltration.
       const plantsFromMa = (historyControls.weather.planet ?? DEFAULT_PLANET_FORCING).landPlantsFromMa
       const cover = coverField(weather.biomes, worldAgeMa(sim.archeanEpochs, sim.epoch) >= plantsFromMa)
@@ -1109,7 +1110,7 @@ function handleHydrologyRun(): void {
       // THE COAST (F5): exposure from the wind, hardness from the erosion
       // forcing's field, sediment from the graph's mouths — a type per reach.
       result.coast = buildCoastGraph({
-        elevation, width, height, wind: weather.wind, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
+        elevation, width, height, domain: sim.domain, wind: weather.wind, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
         hardness: forcingFields.hardness, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
       })
       // SEDIMENT BASINS (F1): what the last erosion pass deposited, with the
@@ -1122,7 +1123,7 @@ function handleHydrologyRun(): void {
       result.sedimentBasins = before && before !== terrain && before.length === terrain.length
         ? findSedimentBasins({
           before, after: terrain, width, height, routing: result.routing, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
-          cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, width, height),
+          cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.domain),
           hardness: forcingFields.hardness, coarseResX: CLIMATE_RES_X, coarseResY: CLIMATE_RES_Y,
         }).basins
         : []
@@ -1201,7 +1202,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
   // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
   // yet, fish falls back to its marine component; the ecology panel re-triggers
   // this once hydrology lands (see GeneratorScreen's chaining).
-  const cratonAge = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.width, sim.height)
+  const cratonAge = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.domain)
   // The physics depends on the world alone; while only the sliders move,
   // the last one stands (prepareEcology is some 2 s at 2048, the sliders a
   // tenth of that).
@@ -1362,7 +1363,7 @@ function handleSerializeWorld(): void {
   // The engine's coarse forcing, derived from the sim being serialized — the
   // same derivation the erode stage runs (pipeline/erosionForcing.ts), so the
   // bake erodes with the forcing this world was made with.
-  const { uplift, hardness } = coarseForcingFields(sim, sim.width, sim.height)
+  const { uplift, hardness } = coarseForcingFields(sim, sim.domain)
   const worldMessage: WorkerWorldDataMessage = {
     type: 'worldData',
     snapshot: serializePlateSimulation(sim),
@@ -1708,8 +1709,9 @@ function handlePlanetSample(message: Extract<WorkerInboundMessage, { type: 'plan
   planetSample = { width: message.width, height: message.height, elevation: new Float32Array(message.elevation) }
   sampleWorld = null
 }
-function previewElevation(width: number, height: number): Float32Array {
-  if (!planetSample) return sampleWorldElevation(width, height)
+function previewElevation(domain: Domain): Float32Array {
+  if (!planetSample) return sampleWorldElevation(domain)
+  const { width, height } = domain
   const out = new Float32Array(width * height)
   const { elevation, width: sw, height: sh } = planetSample
   for (let y = 0; y < height; y++) {
@@ -1722,9 +1724,10 @@ function previewElevation(width: number, height: number): Float32Array {
 async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type: 'planetPreview' }>): Promise<void> {
   const { width, height } = message
   if (!sampleWorld || sampleWorld.width !== width || sampleWorld.height !== height) {
-    const elevation = previewElevation(width, height)
+    const domain = torusDomain(width, height)
+    const elevation = previewElevation(domain)
     const rendered = await renderSimulationImage(
-      { width, height, seeds: [], rafts: [], features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: 0, seaLevelOffset: 0, mantle: new Float32Array(MANTLE_RES_X * MANTLE_RES_Y) },
+      { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: 0, seaLevelOffset: 0, mantle: new Float32Array(MANTLE_RES_X * MANTLE_RES_Y) },
       renderPool(),
       { precomputedElevations: elevation },
     )

@@ -1,6 +1,7 @@
 import { generateDetectionLattice } from './boundaryLattice'
 import { createMantleField } from '../mantle/mantleField'
 import { mulberry32 } from '../core/rng'
+import { torusDomain } from '../core/domain'
 import { derivePlateTypes } from '../crust/raftField'
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
 import { coupleMantleToPlates } from './epoch/mantleCoupling'
@@ -60,6 +61,7 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
 }
 
 export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array, mantle?: Float32Array): PlateSimulation {
+  const domain = torusDomain(snap.width, snap.height)
   const lattice = generateDetectionLattice(snap.width, snap.height, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
   // COPIED out of the snapshot, not adopted from it. serializePlateSimulation
   // hands back the sim's own arrays and says so; this is the mirror half, and it
@@ -92,10 +94,11 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
   return {
     width: snap.width,
     height: snap.height,
+    domain,
     initialPlateCount: snap.initialPlateCount,
     seeds: owned.seeds,
     rafts: owned.rafts,
-    types: derivePlateTypes(owned.seeds, owned.rafts, snap.width, snap.height),
+    types: derivePlateTypes(owned.seeds, owned.rafts, domain),
     motions: owned.motions,
     ages: owned.ages,
     features: owned.features,

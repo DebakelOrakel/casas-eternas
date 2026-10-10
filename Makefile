@@ -47,6 +47,12 @@ lint:
 		client/src/generator --include='*.ts' --exclude-dir=render --exclude=detMath.ts \
 		| grep -vE ':[0-9]+:[[:space:]]*(//|\*)' \
 		|| (echo "use core/detMath.ts in client/src/generator, not the Math functions above or **" >&2; exit 1)
+	# The generator reaches the world's topology only through core/domain.ts
+	# (DEC-0035, docs/decisions/two-shapes.md, fork 1): core/toroidal.ts is
+	# the torus Domain's own arithmetic, and no other file may import it.
+	@! grep -rnE "from '(\.\./)*(core/|\./)toroidal'" \
+		client/src/generator --include='*.ts' --exclude=domain.ts --exclude=toroidal.ts \
+		|| (echo "use the Domain (core/domain.ts) in client/src/generator, not core/toroidal.ts" >&2; exit 1)
 	gofmt -l . | tee /dev/stderr | (! read)
 	go vet ./...
 	# The committed CLI/config reference must match the cobra tree it is
