@@ -1,6 +1,8 @@
 import { smoothstep } from '../core/interpolation'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { wrapValue } from '../core/field'
+import { globeFrame, type Domain } from '../core/domain'
+import { globeOctave } from './globeNoise'
 // Every contour the elevation field produces (elevationField.ts) is a sum
 // of smooth radial falloffs — baseline blend, feature uplift — so it's
 // geometrically incapable of looking jagged anywhere, coastlines
@@ -16,7 +18,8 @@ import { wrapValue } from '../core/field'
 // lattice, hashed modulo the period, is the simplest way to guarantee
 // that: lattice coordinate 0 and lattice coordinate `period` hash
 // identically by construction, so the noise field itself has no seam to
-// begin with.
+// begin with. A sphere world samples a 3D lattice on the globe instead
+// (domainWarpPoint, globeNoise.ts).
 
 // Cheap integer hash (bit-mixing, no trig/sqrt) — only needs to look
 // unrelated between neighboring lattice points, not survive any
@@ -91,4 +94,48 @@ function fbmNoise(x: number, y: number, width: number, height: number, warpSeed:
 export function domainWarpDelta(x: number, y: number, width: number, height: number, warpSeed: number, axis: 'x' | 'y'): number {
   const axisSalt = axis === 'x' ? ELEVATION_TUNING.axisSaltX : ELEVATION_TUNING.axisSaltY
   return fbmNoise(x, y, width, height, warpSeed, axisSalt) * ELEVATION_TUNING.warpAmplitudePx
+}
+
+// The point (x, y) warped: displaced by the warp before the elevation field
+// is sampled there, written into `out`. Where the Domain says (Domain.noise):
+//
+// The torus: (x + the x offset, y + the y offset), the sum left unwrapped as
+// the callers always kept it — the same operations, the same bits.
+//
+// The sphere: a displacement that is a 2D chart offset would not be one
+// field (at a pole the chart's axes turn with x), so the warp is a 3D
+// vector field instead — three fBm noises on the globe lattice, one per
+// axis, each with the torus's amplitude — of which the part tangent to the
+// globe moves the point, along the great circle (Domain.advance). Its two
+// tangent components have the torus's two components' spread. Continuous
+// everywhere, the poles included: at a pole the frame turns with x, and the
+// tangent offset in it with the frame, to the same point.
+const frame = globeFrame()
+export function domainWarpPoint(x: number, y: number, domain: Domain, warpSeed: number, out: { x: number; y: number }): void {
+  const space = domain.noise
+  if (space.kind === 'chart') {
+    out.x = x + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'x')
+    out.y = y + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'y')
+    return
+  }
+  space.frame(x, y, frame)
+  const vx = globeFbm(domain.width, warpSeed, ELEVATION_TUNING.axisSaltX) * ELEVATION_TUNING.warpAmplitudePx
+  const vy = globeFbm(domain.width, warpSeed, ELEVATION_TUNING.axisSaltY) * ELEVATION_TUNING.warpAmplitudePx
+  const vz = globeFbm(domain.width, warpSeed, ELEVATION_TUNING.axisSaltZ) * ELEVATION_TUNING.warpAmplitudePx
+  const east = vx * frame.ex + vy * frame.ey + vz * frame.ez
+  const south = vx * frame.sx + vy * frame.sy + vz * frame.sz
+  domain.advance(x, y, east, south, out)
+}
+
+// fbmNoise on the globe lattice at the point in `frame`: WARP_OCTAVES, the
+// axis's salt folded into the seed (the 3D hash takes one).
+function globeFbm(width: number, warpSeed: number, axisSalt: number): number {
+  const seed = (warpSeed + Math.imul(axisSalt, 0x9e3779b9)) | 0
+  let sum = 0
+  let amplitudeSum = 0
+  for (const octave of WARP_OCTAVES) {
+    sum += (globeOctave(frame, octave.cellsX, width, seed) * 2 - 1) * octave.amplitude
+    amplitudeSum += octave.amplitude
+  }
+  return sum / amplitudeSum
 }

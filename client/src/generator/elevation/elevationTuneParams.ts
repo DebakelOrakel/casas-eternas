@@ -282,6 +282,11 @@ export const ELEVATION_TUNING = {
 
   axisSaltY: 97,
 
+  // The third axis of the sphere's warp, a 3D vector field
+  // (domainWarp.domainWarpPoint); the torus's warp has two axes and does
+  // not read it.
+  axisSaltZ: 193,
+
   // --- from dynamicTopography.ts ---
   // Height per unit of mantle buoyancy anomaly (elevation units; the field
   // is the tectonic era's `sim.mantle`, zero-mean, clamped to ±2.5). The

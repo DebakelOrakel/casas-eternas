@@ -1,5 +1,5 @@
 import type { DomainGrid } from '../core/domain'
-import { fineDetailNoise } from '../elevation/ridgedNoise'
+import { fineDetailNoiseOn } from '../elevation/ridgedNoise'
 import { metersToElevation } from '../elevation/elevationScale'
 
 // Render-only fine detail texture — the smallest honest slice of
@@ -81,6 +81,9 @@ export function applyErosionDetailTexture(display: Float32Array, reference: Floa
   const { resX: width, resY: height } = grid
   const cols = grid.colTable(1)
   const noiseSeed = (warpSeed ^ 0x9e3779b9) >>> 0
+  // The noise in the raster's own units (one per cell), sampled where the
+  // Domain says: the chart lattice on the torus, the globe's on the sphere.
+  const noiseDomain = grid.domain.scaledTo(width, height)
   for (let y = 0; y < height; y++) {
     const row = y * width
     // The row below; the last row's through the grid's step (across the
@@ -105,7 +108,7 @@ export function applyErosionDetailTexture(display: Float32Array, reference: Floa
       // fades the texture smoothly toward every coastline instead of clipping.
       const headroom = Math.min(e, display[i] > 0 ? display[i] : e)
       const amplitude = Math.min(DETAIL_CAP, DETAIL_FLOOR + DETAIL_SLOPE_GAIN * slope, headroom)
-      display[i] += fineDetailNoise(x, y, width, height, noiseSeed) * amplitude
+      display[i] += fineDetailNoiseOn(noiseDomain, x, y, noiseSeed) * amplitude
     }
   }
 }

@@ -1,5 +1,5 @@
 import { buildFeatureBuckets, computeElevation, warpedSamplePoint } from '../elevation/elevationField'
-import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from '../elevation/ridgedNoise'
+import { FINE_DETAIL_SEED_SALT, fineDetailNoiseOn, ridgedMultifractalOn } from '../elevation/ridgedNoise'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { domainOfKind, type Domain } from '../core/domain'
 
@@ -115,11 +115,10 @@ function getStaticFieldCache(
       const { wx, wy } = warpedSamplePoint(worldX, worldY, domain, warpSeed)
       warpedX[idx] = wx
       warpedY[idx] = wy
-      // Periodic noise in CHART units, on the sphere too (stretched toward
-      // the poles there) — a known simplification until the sphere samples a
-      // 3D noise (DEC-0035, fork 1).
-      ridge[idx] = ridgedMultifractal(wx, wy, worldWidth, worldHeight, warpSeed)
-      fine[idx] = fineDetailNoise(wx, wy, worldWidth, worldHeight, fineSeed)
+      // Sampled where the Domain says: the chart lattice on the torus, the
+      // globe's 3D lattice on the sphere (DEC-0035, fork 1).
+      ridge[idx] = ridgedMultifractalOn(domain, wx, wy, warpSeed)
+      fine[idx] = fineDetailNoiseOn(domain, wx, wy, fineSeed)
     }
   }
   staticCache = { warpSeed, shape: domain.kind, startY, endY, renderWidth, renderHeight, worldWidth, worldHeight, warpedX, warpedY, ridge, fine }

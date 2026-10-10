@@ -405,6 +405,148 @@ async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA }) {
   check('the torus, same seed, for comparison', torus.land > 0.01 && torus.land < 0.6, say(torus))
 }
 
+// The sphere's coordinate noise (DEC-0035, fork 1): the warp, the ridged and
+// fine noise and the hypsometry are sampled at the point's place on the
+// globe (Domain.noise), not at its chart coordinates. Checked on the noise
+// functions themselves at the world's real size: one value at each pole,
+// no seam at the longitude wrap, the same roughness east-west as
+// north-south at 60° (the chart's lattice is stretched 1 / cos φ = 2× there),
+// and the torus noise's spread over the torus.
+test('the sphere samples its noise on the globe: poles, seam, isotropy, spread', async () => {
+  const L = (m) => server.ssrLoadModule(m)
+  const [D, RN, HY, EF] = await Promise.all([
+    L('/src/generator/core/domain.ts'), L('/src/generator/elevation/ridgedNoise.ts'),
+    L('/src/generator/elevation/hypsometry.ts'), L('/src/generator/elevation/elevationField.ts'),
+  ])
+  const FW = 2048, FH = 1024
+  const sphere = D.sphereDomain(FW, FH)
+  const torus = D.torusDomain(FW, FH)
+  const frame = D.globeFrame()
+  const SEED = 0x2545f491
+  // The scalar noises, by name, and the warp as the warped point's place on
+  // the globe (a chart point at a pole names one place under every x).
+  const noises = {
+    ridged: (d, x, y) => RN.ridgedMultifractalOn(d, x, y, SEED),
+    fine: (d, x, y) => RN.fineDetailNoiseOn(d, x, y, SEED),
+    hypsometry: (d, x, y) => HY.continentalHypsometry(x, y, 1, d, SEED),
+  }
+  const warpedAt = (x, y) => {
+    const { wx, wy } = EF.warpedSamplePoint(x, y, sphere, SEED)
+    sphere.noise.frame(wx, wy, frame)
+    return [frame.px, frame.py, frame.pz]
+  }
+  const gap3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+  const xs = Array.from({ length: 97 }, (_, i) => (i * FW) / 97 + 0.37)
+
+  // (1) One value at each pole, for every x.
+  const poleSpread = {}
+  for (const [name, f] of Object.entries(noises)) {
+    let worst = 0
+    for (const y of [0, FH]) {
+      const ref = f(sphere, 0, y)
+      for (const x of xs) worst = Math.max(worst, Math.abs(f(sphere, x, y) - ref) / Math.max(Math.abs(ref), 1e-3))
+    }
+    poleSpread[name] = worst
+  }
+  let warpPole = 0
+  for (const y of [0, FH]) {
+    const ref = warpedAt(0, y)
+    for (const x of xs) warpPole = Math.max(warpPole, gap3(warpedAt(x, y), ref) / sphere.noise.radius)
+  }
+  // The chart's lattice, for contrast: a different value at every x.
+  const chartPole = Math.max(...xs.map((x) => Math.abs(RN.ridgedMultifractal(x, 0, FW, FH, SEED) - RN.ridgedMultifractal(0, 0, FW, FH, SEED))))
+  const fmt = (o) => Object.entries(o).map(([k, v]) => `${k} ${v.toExponential(1)}`).join(', ')
+  check('the sphere\'s noise is one value at each pole', Object.values(poleSpread).every((v) => v <= 1e-12) && warpPole <= 1e-12,
+    `worst relative spread ${fmt(poleSpread)}, warped point ${warpPole.toExponential(1)} (the chart lattice's ridged noise: ${chartPole.toFixed(3)})`)
+
+  // (2) No seam: x just below W and x = 0 agree for the same y.
+  const seam = {}
+  const ys = Array.from({ length: 64 }, (_, j) => ((j + 0.5) * FH) / 64)
+  for (const [name, f] of Object.entries(noises)) {
+    let worst = 0
+    for (const y of ys) worst = Math.max(worst, Math.abs(f(sphere, FW - 1e-9, y) - f(sphere, 0, y)) / Math.max(Math.abs(f(sphere, 0, y)), 1e-3))
+    seam[name] = worst
+  }
+  let warpSeam = 0
+  for (const y of ys) warpSeam = Math.max(warpSeam, gap3(warpedAt(FW - 1e-9, y), warpedAt(0, y)))
+  check('no seam at the longitude wrap', Object.values(seam).every((v) => v <= 1e-6) && warpSeam <= 1e-6, `worst relative step ${fmt(seam)}, warped point ${warpSeam.toExponential(1)} units`)
+
+  // (3) Isotropy at 60° latitude: the mean |difference| over one domain unit
+  // along the globe east-west against north-south, both hemispheres.
+  const step = { x: 0, y: 0 }
+  const roughness = (f, d, x, y, dx, dy) => {
+    sphere.advance(x, y, dx, dy, step)
+    const a = f(d, step.x, step.y)
+    sphere.advance(x, y, -dx, -dy, step)
+    return Math.abs(a - f(d, step.x, step.y))
+  }
+  // Many seeds: the hypsometry's lattice has three cells round that circle,
+  // and its ratio converges slowly (16 seeds 1.13, 64 1.06, 256 1.02).
+  const seeded = {
+    ridged: (k) => (d, x, y) => RN.ridgedMultifractalOn(d, x, y, k),
+    fine: (k) => (d, x, y) => RN.fineDetailNoiseOn(d, x, y, k),
+    hypsometry: (k) => (d, x, y) => HY.continentalHypsometry(x, y, 1, d, k),
+  }
+  const iso = {}
+  let chartRatio = 0
+  for (const [name, at] of Object.entries(seeded)) {
+    let ew = 0, ns = 0, cew = 0, cns = 0
+    const seeds = name === 'hypsometry' ? 256 : 16
+    for (let k = 0; k < seeds; k++) {
+      const f = at((k * 2654435761 + 5) >>> 0)
+      for (let i = 0; i < 16000 / seeds; i++) {
+        const x = ((i * 0.618034) % 1) * FW
+        const y = (i % 2 ? 1 / 6 : 5 / 6) * FH + ((i * 0.414214) % 1 - 0.5) * 4
+        ew += roughness(f, sphere, x, y, 0.5, 0)
+        ns += roughness(f, sphere, x, y, 0, 0.5)
+        // The same steps on the chart's lattice (the torus's noise at the chart point).
+        if (name === 'ridged') { cew += roughness(f, torus, x, y, 0.5, 0); cns += roughness(f, torus, x, y, 0, 0.5) }
+      }
+    }
+    iso[name] = ew / ns
+    if (name === 'ridged') chartRatio = cew / cns
+  }
+  check('the noise is as rough east-west as north-south at 60°', Object.values(iso).every((r) => Math.abs(r - 1) <= 0.1),
+    `east-west / north-south ${Object.entries(iso).map(([k, v]) => `${k} ${v.toFixed(3)}`).join(', ')} (the chart lattice's ridged: ${chartRatio.toFixed(2)})`)
+
+  // (4) The spread: mean and standard deviation over the sphere (area-
+  // uniform points) against the torus noise over the torus, many seeds;
+  // the warp as the distance it moves a point. The hypsometry's coarsest
+  // octave has about ten cells over the whole sphere (fifteen on the
+  // torus), so its spread per seed varies much and needs the seeds; over
+  // 256 seeds its sphere std is 8 % under the torus's (2026-10-10), the
+  // few cells' share of a field this coarse, not a gain.
+  let rng = 1
+  const rand = () => { rng = (Math.imul(rng, 1664525) + 1013904223) >>> 0; return rng / 4294967296 }
+  const onTorus = () => [rand() * FW, rand() * FH]
+  const onSphere = () => [rand() * FW, (Math.acos(1 - 2 * rand()) * FH) / Math.PI]
+  const moment = (f, at) => {
+    let m = 0, m2 = 0, n = 0
+    for (let k = 0; k < 128; k++) {
+      const seed = (k * 2654435761 + 11) >>> 0
+      for (let i = 0; i < 1500; i++) { const [x, y] = at(); const v = f(x, y, seed); m += v; m2 += v * v; n++ }
+    }
+    return { mean: m / n, std: Math.sqrt(m2 / n - (m / n) ** 2) }
+  }
+  const spreadOf = {
+    ridged: [(x, y, k) => RN.ridgedMultifractalOn(torus, x, y, k), (x, y, k) => RN.ridgedMultifractalOn(sphere, x, y, k)],
+    fine: [(x, y, k) => RN.fineDetailNoiseOn(torus, x, y, k), (x, y, k) => RN.fineDetailNoiseOn(sphere, x, y, k)],
+    hypsometry: [(x, y, k) => HY.continentalHypsometry(x, y, 1, torus, k), (x, y, k) => HY.continentalHypsometry(x, y, 1, sphere, k)],
+    warp: [
+      (x, y, k) => { const w = EF.warpedSamplePoint(x, y, torus, k); return Math.sqrt(torus.distanceSq(x, y, w.wx, w.wy)) },
+      (x, y, k) => { const w = EF.warpedSamplePoint(x, y, sphere, k); return Math.sqrt(sphere.distanceSq(x, y, w.wx, w.wy)) },
+    ],
+  }
+  const spread = {}
+  for (const [name, [ft, fs]] of Object.entries(spreadOf)) {
+    const t = moment(ft, onTorus)
+    const sp = moment(fs, onSphere)
+    spread[name] = { t, s: sp, ok: Math.abs(sp.mean - t.mean) <= 0.15 * Math.max(Math.abs(t.mean), t.std) && Math.abs(sp.std / t.std - 1) <= 0.15 }
+  }
+  check('the sphere\'s noise has the torus noise\'s spread', Object.values(spread).every((r) => r.ok),
+    Object.entries(spread).map(([k, r]) => `${k} mean ${r.s.mean.toPrecision(3)} / ${r.t.mean.toPrecision(3)}, std ${r.s.std.toPrecision(3)} / ${r.t.std.toPrecision(3)}`).join('; '))
+})
+
 // ------------------------------------------------------- hand-over and resets
 
 test('the hand-over is what resetTectonics goes back to', async () => {

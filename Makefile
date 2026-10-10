@@ -57,8 +57,9 @@ lint:
 	# 1): core/field.ts's torus wrap and the samplers built on it belong to
 	# the torus Domain, and nothing outside core/ calls them. The periodic
 	# noise lattices are excepted: their period is a parameter (a level's
-	# grid, the lithology lattice, a texture), and the sphere replaces the
-	# noise, not its wrap.
+	# grid, the lithology lattice, a texture), and their wrap is the chart
+	# lattice's own. A sphere world does not reach it: Domain.noise sends
+	# its samples to the 3D lattice (elevation/globeNoise.ts, not excepted).
 	@! grep -rnwE 'wrapValue|sampleBilinearGrid|sampleBilinearWorld|sampleNearestWorld|upscaleBilinearToroidal' \
 		client/src/generator --include='*.ts' --exclude-dir=core \
 		--exclude=ridgedNoise.ts --exclude=domainWarp.ts --exclude=hypsometry.ts \

@@ -2,7 +2,7 @@ import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { capsuleWeight } from './capsule'
 import type { Domain, DomainGrid } from '../core/domain'
-import { domainWarpDelta } from './domainWarp'
+import { domainWarpPoint } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
 import { oceanAgeGrid, sampleOceanAge } from '../tectonics/oceanAge'
 import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
@@ -113,9 +113,11 @@ export function oceanFloorAtAge(age: number): number {
 // itself, exactly as the grid loop did.
 // `blobs`, when given, is an index of these same rafts (crust/raftField
 // buildBlobIndex) — for a sweep over many points; the value is the same.
+const baselineWarp = { x: 0, y: 0 }
 export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float32Array, domain: Domain, warpSeed: number, seaLevelOffset = 0, blobs?: BlobIndex): number {
-  const wx = worldX + domainWarpDelta(worldX, worldY, domain.width, domain.height, warpSeed, 'x')
-  const wy = worldY + domainWarpDelta(worldX, worldY, domain.width, domain.height, warpSeed, 'y')
+  domainWarpPoint(worldX, worldY, domain, warpSeed, baselineWarp)
+  const wx = baselineWarp.x
+  const wy = baselineWarp.y
   // Ocean floor deepens with its crustal age; the margin profile then shapes
   // everything from that floor up onto the continent, putting the shoreline
   // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
@@ -127,7 +129,7 @@ export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oc
   // Interior relief on top of the margin profile — see hypsometry.ts. Without it
   // the inside of a continent is one flat height, which is what made the water
   // control a switch rather than a slider.
-  return marginProfile(t, oceanicBaseline) + continentalHypsometry(wx, wy, t, domain.width, domain.height, warpSeed) - seaLevelOffset
+  return marginProfile(t, oceanicBaseline) + continentalHypsometry(wx, wy, t, domain, warpSeed) - seaLevelOffset
 }
 
 // The raft field through a blob index (the same bits as the scan): every
@@ -161,17 +163,14 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, rende
 // correct regardless, but the bucket lookup isn't covered by that the same
 // way.
 //
-// The warp is a periodic noise in CHART units (domainWarp.ts), on the sphere
-// too: there it is stretched toward the poles, and at a pole it does not
-// agree with itself between longitudes — a known simplification until the
-// sphere samples a 3D noise (DEC-0035, fork 1). A warped point that crosses
-// a pole is brought back as a point (wrapPoint turns its longitude by half),
-// not one axis at a time.
+// The warp is sampled where the Domain says (domainWarp.domainWarpPoint): a
+// chart offset on the torus, a tangent offset on the sphere moved along the
+// globe. The point is brought back as a point (wrapPoint), not one axis at
+// a time.
 const warped = { x: 0, y: 0 }
 export function warpedSamplePoint(x: number, y: number, domain: Domain, warpSeed: number): { wx: number; wy: number } {
-  const rawWx = x + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'x')
-  const rawWy = y + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'y')
-  domain.wrapPoint(rawWx, rawWy, warped)
+  domainWarpPoint(x, y, domain, warpSeed, warped)
+  domain.wrapPoint(warped.x, warped.y, warped)
   return { wx: warped.x, wy: warped.y }
 }
 

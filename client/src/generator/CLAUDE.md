@@ -66,7 +66,8 @@ tectonics/  plate*, boundary*, oceanAge, terrainFeatures, volcanoes,
 crust/      continental crust as rafts — deliberately decoupled from the plates
             (docs/decisions/continental-crust-rafts.md); crustTuneParams holds the
             raft rules both eras pass in
-elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise
+elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise,
+            globeNoise (the 3D lattice the sphere samples its noise on, Domain.noise)
 surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), erosionPassV2,
             hydrology, riverGraph (the feature graph), riverCourse, coastGraph, sedimentBasins,
             iceFlow, cover (phase 5.5: the vegetation's hold per biome — one table for the

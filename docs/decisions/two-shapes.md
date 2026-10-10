@@ -185,6 +185,25 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: 3D noise on the sphere BUILT — the coordinate noise is sampled
+where the Domain says: `Domain.noise` is the chart on the torus (the
+periodic 2D lattices, unchanged) and the globe on the sphere, whose
+`frame` gives a point's position R · u and its east and south axes. The
+ridged and fine noise (`ridgedMultifractalOn`, `fineDetailNoiseOn`), the
+hypsometry and the slope-conditioned detail texture sample a 3D value
+noise there (`elevation/globeNoise.ts`: the same octave tables, one cell
+of width / cellsX, trilinear with smoothstep, an integer hash, the
+spread gained back to the 2D noise's, the lattice turned off the globe's
+axes so it is isotropic at every latitude, the ridged mean taken back to
+RIDGE_MEAN). The warp is a 3D vector field there, its tangent part moving
+the point along the globe (`domainWarpPoint`, through `advance`). One
+value at each pole, no seam, as rough east-west as north-south at 60°
+(the chart's lattice was 1.5× rougher east-west), the torus's spread:
+`harness:pipeline` checks all four. The paths whose period is not the
+world's (the level bake, the lithology lattice, the map's textures) do
+not run on a sphere world and keep the chart lattice. Golden harness
+byte-identical.
+
 2026-10-10: step 4d2 BUILT — a sphere world runs its first step. The
 screen sends its shape with `genesisInit`, the worker builds
 `sphereDomain` (`domainOfKind`), and the Archean and its render run on it;

@@ -1,5 +1,7 @@
 import { smoothstep } from '../core/interpolation'
 import { wrapValue } from '../core/field'
+import { globeFrame, type Domain } from '../core/domain'
+import { globeOctave } from './globeNoise'
 // Periodic ridged multifractal, used by elevationField.ts to give
 // tectonically-uplifted terrain fine ridge-and-valley structure that the
 // smooth distance-field uplift alone can't produce (docs/vision.md Phase 3
@@ -9,7 +11,8 @@ import { wrapValue } from '../core/field'
 //
 // Must tile exactly at the map's own wrap period in both axes — this is a
 // torus, and a non-periodic noise field would leave a seam at the wrap
-// edge. Same periodic-value-noise construction as domainWarp.ts, but kept
+// edge. A sphere world samples the same octaves on a 3D lattice instead
+// (ridgedMultifractalOn, globeNoise.ts). Same periodic-value-noise construction as domainWarp.ts, but kept
 // separate and independently tuned: domainWarp perturbs query points at
 // continent scale, this shapes relief at range scale, and folding both
 // into one parameterized helper would read worse than a second small copy
@@ -142,6 +145,34 @@ export function ridgedMultifractal(x: number, y: number, width: number, height: 
   return sum / amplitudeSum
 }
 
+// The ridged fBm at domain point (x, y), sampled where the Domain says
+// (Domain.noise): the torus's chart lattice above, unchanged; on the sphere
+// the same octave table on the 3D lattice at the point's place on the globe
+// (globeNoise.ts), so a ridge does not stretch toward a pole. Its mean is
+// RIDGE_MEAN on both: the 3D noise has the 2D noise's spread but not quite
+// its shape (an average of eight corners is nearer a bell than one of
+// four), and its ridged mean, measured as RIDGE_MEAN was, is
+// GLOBE_RIDGE_MEAN (2026-10-10: 0.4805 over 1.8 M area-uniform points and
+// six seeds; the torus's 0.4702 the same way). The difference is taken off.
+const GLOBE_RIDGE_MEAN = 0.4805
+const frame = globeFrame()
+export function ridgedMultifractalOn(domain: Domain, x: number, y: number, seed: number): number {
+  const space = domain.noise
+  if (space.kind === 'chart') return ridgedMultifractal(x, y, domain.width, domain.height, seed)
+  space.frame(x, y, frame)
+  let sum = 0
+  let amplitudeSum = 0
+  let octaveSeed = seed
+  for (const octave of RIDGE_OCTAVES) {
+    const n = globeOctave(frame, octave.cellsX, domain.width, octaveSeed)
+    const ridge = 1 - Math.abs(2 * n - 1)
+    sum += ridge * ridge * octave.amplitude
+    amplitudeSum += octave.amplitude
+    octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0
+  }
+  return sum / amplitudeSum - (GLOBE_RIDGE_MEAN - RIDGE_MEAN)
+}
+
 // Finer-frequency companion to ridgedMultifractal, for
 // render/erosionDetailTexture.ts's cosmetic detail pass — see that module's
 // own comment for why it exists (plains get near-zero detail from
@@ -180,6 +211,23 @@ export function fineDetailNoise(x: number, y: number, width: number, height: num
     const ly = (y / height) * octave.cellsY
     const n = periodicValueNoise2D(lx, ly, octave.cellsX, octave.cellsY, octaveSeed)
     sum += (n - 0.5) * octave.amplitude
+    amplitudeSum += octave.amplitude
+    octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0
+  }
+  return sum / amplitudeSum
+}
+
+// fineDetailNoise at domain point (x, y), sampled where the Domain says —
+// see ridgedMultifractalOn.
+export function fineDetailNoiseOn(domain: Domain, x: number, y: number, seed: number): number {
+  const space = domain.noise
+  if (space.kind === 'chart') return fineDetailNoise(x, y, domain.width, domain.height, seed)
+  space.frame(x, y, frame)
+  let sum = 0
+  let amplitudeSum = 0
+  let octaveSeed = seed
+  for (const octave of DETAIL_OCTAVES) {
+    sum += (globeOctave(frame, octave.cellsX, domain.width, octaveSeed) - 0.5) * octave.amplitude
     amplitudeSum += octave.amplitude
     octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0
   }

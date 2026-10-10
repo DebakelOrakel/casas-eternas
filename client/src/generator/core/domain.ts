@@ -77,7 +77,54 @@ export interface Domain {
   // The same domain measured in other units: width × height of them (a
   // coarse raster that is its own frame, one cell per unit).
   scaledTo(width: number, height: number): Domain
+  // Where the coordinate noise is sampled (DEC-0035, fork 1): the noise
+  // lattices (elevation/ridgedNoise, domainWarp, hypsometry) ask this, not
+  // the shape. The torus: the chart itself, a 2D lattice periodic in both
+  // axes. The sphere: the point's place on the globe, a 3D lattice.
+  readonly noise: NoiseSpace
 }
+
+// How a Domain's coordinate noise is sampled (Domain.noise).
+export type NoiseSpace = ChartNoise | GlobeNoise
+
+// The torus: the noise lattices tile the chart, periodic at its width and
+// height. There is nothing to compute here; the lattice does it.
+export interface ChartNoise {
+  readonly kind: 'chart'
+}
+
+// The sphere: the noise is a 3D field sampled at the point's position on
+// the globe, so it is isotropic, has no seam at the longitude wrap and has
+// one value at a pole.
+export interface GlobeNoise {
+  readonly kind: 'globe'
+  // The globe's radius in domain units, width / 2π.
+  readonly radius: number
+  // The point (x, y) on the globe: its position R · u in domain units, and
+  // its east and south unit axes — the frame `delta` and `advance` write
+  // and read offsets in (at a pole the limit along x's meridian). A 3D
+  // vector v at the point is the tangent offset (v · east, v · south).
+  frame(x: number, y: number, out: GlobeFrame): void
+}
+
+export interface GlobeFrame {
+  px: number
+  py: number
+  pz: number
+  ex: number
+  ey: number
+  ez: number
+  sx: number
+  sy: number
+  sz: number
+}
+
+// A GlobeFrame to hold, one per caller, so a hot loop does not allocate.
+export function globeFrame(): GlobeFrame {
+  return { px: 0, py: 0, pz: 0, ex: 0, ey: 0, ez: 0, sx: 0, sy: 0, sz: 0 }
+}
+
+const CHART_NOISE: ChartNoise = { kind: 'chart' }
 
 // A raster over the domain: cell (i, j) covers [i, i + 1) × [j, j + 1) in
 // grid units, that is (width / resX) × (height / resY) domain units. Every
@@ -299,6 +346,7 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
     rotateAround: (x, y, centerX, centerY, angle) => rotateAroundCenter(x, y, centerX, centerY, angle, width, height),
     grid: (resX, resY) => new TorusGrid(domain, resX, resY),
     scaledTo: (w, h) => torusDomain(w, h, equatorOffset),
+    noise: CHART_NOISE,
   }
   return domain
 }
@@ -519,6 +567,31 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
       return g
     },
     scaledTo: (w, h) => sphereDomain(w, h),
+    // The unit vector and the axes are advance's: u = (sin θ cos λ,
+    // sin θ sin λ, cos θ), east (−sin λ, cos λ, 0), south (cos θ cos λ,
+    // cos θ sin λ, −sin θ). At the north pole sin θ is exactly 0, so the
+    // position is (0, 0, R) for every x.
+    noise: {
+      kind: 'globe',
+      radius,
+      frame: (x, y, out) => {
+        const t = y * toColat
+        const l = x * toLon
+        const st = detSin(t)
+        const ct = detCos(t)
+        const sl = detSin(l)
+        const cl = detCos(l)
+        out.px = radius * st * cl
+        out.py = radius * st * sl
+        out.pz = radius * ct
+        out.ex = -sl
+        out.ey = cl
+        out.ez = 0
+        out.sx = ct * cl
+        out.sy = ct * sl
+        out.sz = -st
+      },
+    },
   }
   return domain
 }

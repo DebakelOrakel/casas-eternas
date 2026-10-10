@@ -2,6 +2,8 @@ import { smoothstep } from '../core/interpolation'
 import { wrapValue } from '../core/field'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { metersToElevation } from './elevationScale'
+import { globeFrame, type Domain } from '../core/domain'
+import { globeOctave } from './globeNoise'
 
 // Relief across the continental interior — the thing the margin profile does not have.
 //
@@ -34,6 +36,7 @@ function hashLatticePoint(ix: number, iy: number, seed: number): number {
 // same construction, as ridgedNoise and domainWarp. Kept as its own small copy for
 // the reason ridgedNoise.ts already records: these three shape different things at
 // different scales, and one parameterised helper would read worse than three short ones.
+// A sphere world samples the 3D lattice of globeNoise.ts instead.
 function periodicValueNoise(x: number, y: number, cellsX: number, cellsY: number, seed: number): number {
   const x0 = Math.floor(x)
   const y0 = Math.floor(y)
@@ -61,14 +64,26 @@ const HYPSOMETRY_OCTAVES: readonly (readonly [cellsX: number, cellsY: number, am
 
 // Signed elevation offset to add to the margin profile at a warped world point.
 // `t` is marginParameter's output: 0 = open ocean, 1 = continental interior.
-export function continentalHypsometry(wx: number, wy: number, t: number, worldWidth: number, worldHeight: number, seed: number): number {
+// Sampled where the Domain says (Domain.noise): the chart lattice on the
+// torus; on the sphere the same octaves on the 3D lattice at the point's
+// place on the globe (globeNoise.ts), each octave's cell the chart cell's
+// width (width / cellsX — the torus's cells here are 5:6, not square, and
+// the globe's lattice has one size).
+const frame = globeFrame()
+export function continentalHypsometry(wx: number, wy: number, t: number, domain: Domain, seed: number): number {
   if (t <= ELEVATION_TUNING.hypsometryTIn) return 0
   const weight = smoothstep(Math.min(1, (t - ELEVATION_TUNING.hypsometryTIn) / (ELEVATION_TUNING.hypsometryTFull - ELEVATION_TUNING.hypsometryTIn)))
+  const space = domain.noise
+  const worldWidth = domain.width
+  const worldHeight = domain.height
+  if (space.kind === 'globe') space.frame(wx, wy, frame)
   let sum = 0
   let amplitudeSum = 0
   let octaveSeed = seed ^ 0x5f3759df // salted off warpSeed so it does not echo the warp
   for (const [cellsX, cellsY, amplitude] of HYPSOMETRY_OCTAVES) {
-    const n = periodicValueNoise((wx / worldWidth) * cellsX, (wy / worldHeight) * cellsY, cellsX, cellsY, octaveSeed)
+    const n = space.kind === 'chart'
+      ? periodicValueNoise((wx / worldWidth) * cellsX, (wy / worldHeight) * cellsY, cellsX, cellsY, octaveSeed)
+      : globeOctave(frame, cellsX, worldWidth, octaveSeed)
     sum += (n - 0.5) * 2 * amplitude
     amplitudeSum += amplitude
     octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0

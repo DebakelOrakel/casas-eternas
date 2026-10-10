@@ -3,7 +3,7 @@ import type { Domain } from '../core/domain'
 import type { PlateSimulation } from '../tectonics/plateSimulation'
 import { dynamicTopographyAt } from './dynamicTopography'
 import { buildFeatureBuckets, computeElevation, raftBaselineAt, warpedSamplePoint } from './elevationField'
-import { FINE_DETAIL_SEED_SALT, fineDetailNoise, ridgedMultifractal } from './ridgedNoise'
+import { FINE_DETAIL_SEED_SALT, fineDetailNoiseOn, ridgedMultifractalOn } from './ridgedNoise'
 
 // THE SYNTHESIS AT A POINT — the pre-erosion terrain as a function of
 // (x, y), the form the adaptive mesh needs ("tectonics evaluates its fields
@@ -39,7 +39,7 @@ export interface ElevationSampler {
 }
 
 export function synthesisSampler(s: SynthesisSources): ElevationSampler {
-  const { width, height, domain, warpSeed } = s
+  const { domain, warpSeed } = s
   const buckets = buildFeatureBuckets(s.features, domain)
   const mantleGrid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
   const fineSeed = (warpSeed ^ FINE_DETAIL_SEED_SALT) >>> 0
@@ -49,8 +49,8 @@ export function synthesisSampler(s: SynthesisSources): ElevationSampler {
         + dynamicTopographyAt(s.mantle, mantleGrid, x, y)
       const { wx, wy } = warpedSamplePoint(x, y, domain, warpSeed)
       return computeElevation(wx, wy, baseline, buckets, domain,
-        ridgedMultifractal(wx, wy, width, height, warpSeed),
-        fineDetailNoise(wx, wy, width, height, fineSeed))
+        ridgedMultifractalOn(domain, wx, wy, warpSeed),
+        fineDetailNoiseOn(domain, wx, wy, fineSeed))
     },
   }
 }
