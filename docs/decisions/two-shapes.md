@@ -185,6 +185,22 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: step 4c BUILT — the globe can show the layers
+(`GlobeWorldView.setLayersShown`, the unshaded composite on the lit
+globe), and its chart is laid as Babylon's sphere lays its UVs (u from +x
+toward −z, v from the north pole), so a texel shows where `chartAt`
+answers. No screen shows them yet: a sphere world has no layers until its
+stages run (4d).
+
+2026-10-10: step 4d1 BUILT — `Domain.advance(x, y, dx, dy, out)`, the
+inverse of `delta`: the point reached by a tangent offset in the start's
+frame. On the torus it is `wrapX(x + dx)`, `wrapY(y + dy)`; on the sphere
+the exp map along the great circle, in delta's frame at a pole too. Four
+sites moved as the proof (the drift in `advancePointByMotion`, the plumes'
+climb, the two-sided terrain features, the raft blob merge); the other
+point moves follow stage by stage. `harness:mesh` checks advance against
+delta. Golden harness byte-identical.
+
 2026-10-10: step 4b BUILT — `sphereDomain(width, height)` beside the
 torus in `core/domain.ts`: the 2:1 chart as longitude × colatitude (y = 0
 the north pole), distances on the globe of radius W / 2π, `delta` the log

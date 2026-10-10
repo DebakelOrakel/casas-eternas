@@ -1434,6 +1434,47 @@ console.log('\n[1s] the sphere domain')
   S.wrapPoint(-3, 2 * SH + 4, out)
   const twice = near(out.x, SW - 3) && near(out.y, 4)
   check('sphere: wrapPoint across a pole lands at x + W/2, y reflected', overNorth && overSouth && twice && S.wrapY(-5) === 5 && S.wrapX(SW + 2) === 2)
+  // advance (step 4d1): the exp map, delta's inverse.
+  const d = { x: 0, y: 0 }
+  let inv = 0
+  for (const [ax, ay, bx, by] of [...pairs, [64, 3, 64, 0], [200, SH - 2, 17, SH], [5, 0, 300, SH / 2]]) {
+    S.delta(ax, ay, bx, by, d)
+    S.advance(bx, by, d.x, d.y, out)
+    inv = Math.max(inv, dist(out.x, out.y, ax, ay) / R)
+  }
+  check('sphere: advance undoes delta (2000 pairs, poles among them)', inv < 1e-12, `${inv.toExponential(1)} R`)
+  let still = 0
+  for (const [x, y] of [[0, 0], [123, SH], [77.5, 40], [SW - 1e-9, SH / 2]]) {
+    S.advance(x, y, 0, 0, out)
+    still = Math.max(still, dist(out.x, out.y, x, y) / R)
+  }
+  check('sphere: advance by (0, 0) is the identity', still < 1e-12, `${still.toExponential(1)} R`)
+  S.advance(40, SH / 2, Math.PI * R / 2, 0, out)
+  check('sphere: πR/2 east along the equator is lon + 90°', near(out.x, 40 + SW / 4) && near(out.y, SH / 2), `(${out.x}, ${out.y})`)
+  S.advance(100, 0, 0, Math.PI * R / 2, out)
+  const fromNorth = near(out.x, 100) && near(out.y, SH / 2)
+  // At the south pole delta's frame is the limit along meridian x too, so
+  // its "south" points on across the pole: north (−y) is the way to x.
+  S.advance(100, SH, 0, -Math.PI * R / 2, out)
+  const fromSouth = near(out.x, 100) && near(out.y, SH / 2)
+  S.advance(100, SH, 0, Math.PI * R / 2, out)
+  const across = near(out.x, 100 + SW / 2) && near(out.y, SH / 2)
+  check('sphere: πR/2 south from the north pole along meridian x reaches the equator at x', fromNorth && fromSouth && across, `(${out.x}, ${out.y})`)
+  let circle = 0
+  for (const [x, y, dx, dy] of [[40, SH / 2, 1, 0], [100, 0, 0, 1], [300, 70, 0.6, -0.8], [10, 200, -1, 0.3]]) {
+    const k = (2 * Math.PI * R) / Math.hypot(dx, dy)
+    S.advance(x, y, dx * k, dy * k, out)
+    circle = Math.max(circle, dist(out.x, out.y, x, y) / R)
+  }
+  check('sphere: a full great circle (2πR) returns to the start', circle < 1e-12, `${circle.toExponential(1)} R`)
+  const T = M.domain.torusDomain(SW, SH)
+  let torusSame = true
+  for (let i = 0; i < 2000; i++) {
+    const x = rnd() * SW, y = rnd() * SH, dx = (rnd() - 0.5) * 3 * SW, dy = (rnd() - 0.5) * 3 * SH
+    T.advance(x, y, dx, dy, out)
+    if (out.x !== T.wrapX(x + dx) || out.y !== T.wrapY(y + dy)) torusSame = false
+  }
+  check('torus: advance is wrapX(x + dx), wrapY(y + dy), bit for bit', torusSame)
   check('sphere: latitude 0 at the equator, 1 at the poles, north above it', S.latitude(0.5) === 0 && S.latitude(0) === 1 && S.latitude(1) === 1 && S.north(0.25) && !S.north(0.75))
   // The grid.
   const G = S.grid(64, 32)

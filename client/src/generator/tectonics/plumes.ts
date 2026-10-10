@@ -138,8 +138,7 @@ export function advancePlumes(plumes: Plume[], mantle: Float32Array, domain: Dom
     if (bestX === 0 && bestY === 0) continue
     const len = detHypot(bestX * cellW, bestY * cellH) || 1
     const step = Math.min(PLUME_MAX_STEP_PX, len)
-    plume.x = domain.wrapX(plume.x + (bestX * cellW / len) * step)
-    plume.y = domain.wrapY(plume.y + (bestY * cellH / len) * step)
+    domain.advance(plume.x, plume.y, (bestX * cellW / len) * step, (bestY * cellH / len) * step, plume)
   }
   for (let i = plumes.length - 1; i >= 0; i--) {
     if (mantleAt(plumes[i].x, plumes[i].y) < PLUME_RETIRE_THRESHOLD) plumes.splice(i, 1)

@@ -194,8 +194,7 @@ export function advanceTerrainFeatures(features: TerrainFeature[], motions: Plat
       const velocityB = getVelocityAt(feature, motions[feature.plateB], domain)
       const vx = (velocityA.vx + velocityB.vx) / 2
       const vy = (velocityA.vy + velocityB.vy) / 2
-      feature.x = domain.wrapX(feature.x + vx * angleStep)
-      feature.y = domain.wrapY(feature.y + vy * angleStep)
+      domain.advance(feature.x, feature.y, vx * angleStep, vy * angleStep, feature)
     } else {
       const motion = motions[feature.movesWithPlate]
       const rotated = advancePointByMotion(feature.x, feature.y, motion, angleStep, domain)

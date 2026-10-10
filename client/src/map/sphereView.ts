@@ -36,17 +36,22 @@ import type { ChartPoint, WorldView } from './worldView'
 // and the screen renders whichever is shown.
 //
 // THE GLOBE AS A WORLD VIEW (worldView.ts, DEC-0035 fork 3). The chart is
-// longitude and latitude in the globe's own frame (below the tilt): u runs
-// once round the axis from the frame's +x toward +z, v from the north pole
-// (+y, v = 0) to the south. The layers' textures are held, not yet laid on
-// the globe — a sphere world has no layers of its own yet, and the flat
-// sample world's are not its — and what it cannot show (relief, rivers,
+// longitude and latitude in the globe's own frame (below the tilt), laid as
+// Babylon's sphere lays its UVs (measured 2026-10-10): u runs once round the
+// axis from the frame's +x toward −z, v from the north pole (+y, v = 0) to
+// the south. So a layer's texel (u · width, v · height) shows where chartAt
+// answers (u, v). The globe shows the sea until told to show its layers
+// (setLayersShown): a sphere world has none until its stages run, and the
+// flat sample world's are not its. What it cannot show yet (relief, rivers,
 // water, names) it takes and ignores.
 
 export interface GlobeWorldView extends WorldView {
   readonly shape: 'sphere'
   // The planet's obliquity, degrees: the axis leans by it.
   setObliquity(degrees: number): void
+  // Lay the layers (reliefTexture: the composite without the baked
+  // hillshade, the globe being lit) on the globe, or show the bare sea.
+  setLayersShown(shown: boolean): void
 }
 
 export interface GlobeWorldViewOptions {
@@ -200,7 +205,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   const chartOfWorld = (point: Vector3): ChartPoint => {
     tilt.computeWorldMatrix(true).invertToRef(toFrame)
     const p = Vector3.TransformCoordinates(point, toFrame).normalize()
-    const longitude = Math.atan2(p.z, p.x)
+    const longitude = Math.atan2(-p.z, p.x)
     const latitude = Math.asin(Math.max(-1, Math.min(1, p.y)))
     return { u: (longitude / (2 * Math.PI) + 1) % 1, v: 0.5 - latitude / Math.PI }
   }
@@ -252,6 +257,10 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     setDeepZoom: () => {},
     setObliquity(degrees) {
       tilt.rotation.z = (degrees * Math.PI) / 180
+    },
+    setLayersShown(shown) {
+      sea.diffuseTexture = shown ? reliefTexture : null
+      sea.diffuseColor = shown ? new Color3(1, 1, 1) : OCEAN
     },
     resetCamera: () => rig.reset(),
     dispose() {

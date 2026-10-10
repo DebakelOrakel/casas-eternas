@@ -39,11 +39,20 @@ export interface Domain {
   // TANGENT PLANE. On the torus it is the minimum-image offset per axis
   // (core/toroidal.ts wrappedDelta): `bx + out.x` is a's image nearest to b.
   delta(ax: number, ay: number, bx: number, by: number, out: { x: number; y: number }): void
+  // The inverse of delta: the point reached from (x, y) by the offset
+  // (dx, dy) in (x, y)'s local frame, brought into the domain and written
+  // into `out` (which may be the moved point itself). After
+  // `delta(ax, ay, bx, by, d)`, `advance(bx, by, d.x, d.y, out)` is a again.
+  // The torus: wrapX(x + dx), wrapY(y + dy) — the same operations a caller
+  // that moves a point by hand does, so a move through it is byte-identical.
+  // The sphere: the exp map, along the great circle from (x, y) in the
+  // offset's direction for its length in arc.
+  advance(x: number, y: number, dx: number, dy: number, out: { x: number; y: number }): void
   // A coordinate brought back into [0, width) × [0, height) ([0, height]
   // on the sphere). One axis at a time: on the sphere wrapX is the
   // longitude wrap and wrapY a reflection over the pole, which alone is NOT
   // where a moved point lands (crossing a pole also turns the longitude by
-  // half a turn). A moved POINT goes through wrapPoint.
+  // half a turn). A moved POINT goes through wrapPoint, or advance.
   wrapX(x: number): number
   wrapY(y: number): number
   // A point brought back into the domain, both axes at once, written into
@@ -212,6 +221,10 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
       out.x = wrappedDelta(ax, bx, width)
       out.y = wrappedDelta(ay, by, height)
     },
+    advance: (x, y, dx, dy, out) => {
+      out.x = wrapValue(x + dx, width)
+      out.y = wrapValue(y + dy, height)
+    },
     wrapX: (x) => wrapValue(x, width),
     wrapY: (y) => wrapValue(y, height),
     wrapPoint: (x, y, out) => {
@@ -281,6 +294,16 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
     const folded = wrapValue(y, 2 * height)
     return folded > height ? 2 * height - folded : folded
   }
+  const wrapPoint = (x: number, y: number, out: { x: number; y: number }): void => {
+    const folded = wrapValue(y, 2 * height)
+    if (folded > height) {
+      out.x = wrapValue(x + half, width)
+      out.y = 2 * height - folded
+    } else {
+      out.x = wrapValue(x, width)
+      out.y = folded
+    }
+  }
   const domain: Domain = {
     kind: 'sphere',
     width,
@@ -304,20 +327,44 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
       out.x = pe * scale
       out.y = ps * scale
     },
+    // The exp map: p · cos α + t · sin α, with p the start's unit vector, t
+    // the offset's direction in its east/south frame and α the offset's
+    // length in arc. The frame is delta's, the same formula at a pole
+    // (south along the start's meridian x), so the two are inverse there
+    // too. An end at a pole keeps no longitude: atan2(0, 0) writes 0, as
+    // rotateAround does.
+    advance: (x, y, dx, dy, out) => {
+      const d = Math.sqrt(dx * dx + dy * dy)
+      if (d === 0) {
+        wrapPoint(x, y, out)
+        return
+      }
+      const t = y * toColat
+      const l = x * toLon
+      const st = detSin(t)
+      const ct = detCos(t)
+      const sl = detSin(l)
+      const cl = detCos(l)
+      // The start, its east axis (−sin λ, cos λ, 0) and its south axis
+      // (cos θ cos λ, cos θ sin λ, −sin θ).
+      const ue = dx / d
+      const us = dy / d
+      const tx = -sl * ue + ct * cl * us
+      const ty = cl * ue + ct * sl * us
+      const tz = -st * us
+      const a = d / radius
+      const ca = detCos(a)
+      const sa = detSin(a)
+      const qx = st * cl * ca + tx * sa
+      const qy = st * sl * ca + ty * sa
+      const qz = ct * ca + tz * sa
+      wrapPoint(detAtan2(qy, qx) / toLon, detAtan2(Math.sqrt(qx * qx + qy * qy), qz) / toColat, out)
+    },
     wrapX: (x) => wrapValue(x, width),
     // A reflection over the pole, the row alone — a moved point goes through
     // wrapPoint, which turns the longitude with it.
     wrapY,
-    wrapPoint: (x, y, out) => {
-      const folded = wrapValue(y, 2 * height)
-      if (folded > height) {
-        out.x = wrapValue(x + half, width)
-        out.y = 2 * height - folded
-      } else {
-        out.x = wrapValue(x, width)
-        out.y = folded
-      }
-    },
+    wrapPoint,
     // (R · arc)², the arc as atan2(|a × b|, a · b): sound at every distance,
     // where acos(a · b) loses the short ones.
     distanceSq: (ax, ay, bx, by) => {

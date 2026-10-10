@@ -236,8 +236,7 @@ export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisation
         const wb = b.radius * b.radius
         const t = wb / (wa + wb)
         domain.delta(b.x, b.y, a.x, a.y, offset)
-        a.x = domain.wrapX(a.x + offset.x * t)
-        a.y = domain.wrapY(a.y + offset.y * t)
+        domain.advance(a.x, a.y, offset.x * t, offset.y * t, a)
         a.radius = newRadius
         a.birthEpoch = Math.round((a.birthEpoch ?? 0) * (1 - t) + (b.birthEpoch ?? 0) * t)
         dead[j] = 1

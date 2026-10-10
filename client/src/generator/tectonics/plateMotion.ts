@@ -82,10 +82,8 @@ export function getVelocityAt(point: PlateSeed, motion: PlateMotion, domain: Dom
 // the drift+spin form of the same per-epoch move.
 export function advancePointByMotion(x: number, y: number, motion: PlateMotion, step: number, domain: Domain): { x: number; y: number } {
   const rotated = domain.rotateAround(x, y, motion.centroidX, motion.centroidY, motion.spin * step)
-  return {
-    x: domain.wrapX(rotated.x + motion.driftX * step),
-    y: domain.wrapY(rotated.y + motion.driftY * step),
-  }
+  domain.advance(rotated.x, rotated.y, motion.driftX * step, motion.driftY * step, rotated)
+  return rotated
 }
 
 // The inverse of advancePointByMotion — used for ocean-age's backward
