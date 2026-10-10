@@ -1,20 +1,18 @@
-import { Color4, PointerEventTypes, Scene } from '@babylonjs/core'
+import { PointerEventTypes } from '@babylonjs/core'
 import { BUILD_VERSION } from '../../app/buildVersion'
 import { GENERATOR_CODE } from '../../app/generatorCode'
-import { createGeneratorCamera } from '../../camera/generatorCamera'
-import { createToroidalMapView } from '../../map/ToroidalMapView'
+import { createFlatWorldView } from '../../map/flatWorldView'
 import { createSphereView, type SphereView } from '../../map/sphereView'
-import { createScaleBar, pickMapPlane } from '../../map/ScaleBar'
+import { createScaleBar } from '../../map/ScaleBar'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { buildProbeCard } from '../../ui/mapProbe/probeCard'
 import type { ProbeChart, ProbeRow } from '../../ui/mapProbe/probeCard'
-import { createToroidalRibbonOverlay } from '../../map/ToroidalRibbonOverlay'
 import { createElevationSurface, downsampleElevation } from '../../map/elevationSurface'
 import { createMeshSurface } from '../../map/meshSurface'
 import { createMeshSampler } from '../../generator/mesh/meshSampler'
 import { decodeMesh } from '../../generator/mesh/meshSerial'
 import { torusDomain } from '../../generator/core/domain'
-import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_FINE_ZOOM, RELIEF_HEIGHT_SCALE, RELIEF_MIN_ZOOM } from '../../map/mapSceneSettings'
+import { MAP_WORLD_WIDTH as WORLD_WIDTH, MAP_WORLD_HEIGHT as WORLD_HEIGHT, MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from '../../map/mapSceneSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/mapConfig'
 
@@ -280,24 +278,9 @@ function randomWorldName(): string {
 }
 
 export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
-  const scene = new Scene(ctx.engine)
-  scene.clearColor = new Color4(1, 1, 1, 1)
-
-  const {
-    dispose: disposeCamera,
-    getFocus: getCameraFocus,
-    setPanEnabled: setCameraPanEnabled,
-    setDeepZoomEnabled: setCameraDeepZoom,
-    getZoom: getCameraZoom,
-    getYaw: getCameraYaw,
-    getViewWidth: getCameraViewWidth,
-  } = createGeneratorCamera({
-    scene,
-    canvas: ctx.canvas,
-    engine: ctx.engine,
-    worldWidth: WORLD_WIDTH,
-    worldHeight: WORLD_HEIGHT,
-  })
+  // The flat world, drawn (map/flatWorldView.ts): its scene, camera, map
+  // plane, relief and river ribbons.
+  const flatView = createFlatWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT })
 
   const initialSeed = randomSeed()
   // The world's own name, as opposed to its seed. Until step 0 existed the two
@@ -353,20 +336,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // at 100, restarting at 100 stops at 200, and so on.
   let autoStopAtEpoch = MAX_TECTONICS_EPOCHS
 
-  // Scene-space river ribbons (crisp at any zoom, not baked into the map
-  // texture). Declared before the map view so its onRecenter can tile them.
-  let riverLayer: ReturnType<typeof createToroidalRibbonOverlay> | null = null
-
-  // The relief preview's two surfaces (see the 'elevationField' handler) +
-  // which relief level the ribbons are currently styled for — swapped in
-  // lockstep with the mesh LOD from the per-frame onRecenter hook below, so
-  // rivers always lie on the surface that is actually on screen, at widths
-  // that fit its scale.
-  let reliefCoarseSurface: ReturnType<typeof createElevationSurface> | null = null
-  let reliefFineSurface: ReturnType<typeof createElevationSurface> | null = null
-  let ribbonLevel: 'flat' | 'coarse' | 'fine' = 'flat'
-
-  // The flat map plane + its toroidal 3x3 recentering (see ToroidalMapView).
   // The temperature scale and the scale bar follow the camera — but only
   // once it has come to rest: both read the map through ground picks (a
   // ray against the relief meshes and their wrapped copies, a hundred of
@@ -378,9 +347,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let viewKeySeen = ''
   let viewChangedAt = 0
   let viewDirty = true
-  scene.onBeforeRenderObservable.add(() => {
-    const focus = getCameraFocus()
-    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${getCameraZoom().toFixed(4)},${getCameraYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`
+  flatView.scene.onBeforeRenderObservable.add(() => {
+    const focus = flatView.getFocus()
+    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${flatView.getZoom().toFixed(4)},${flatView.getYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`
     if (key !== viewKeySeen) {
       viewKeySeen = key
       viewChangedAt = performance.now()
@@ -394,37 +363,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   })
 
-  const mapView = createToroidalMapView({
-    scene,
-    worldWidth: WORLD_WIDTH,
-    worldHeight: WORLD_HEIGHT,
-    textureWidth: MAP_WIDTH,
-    textureHeight: MAP_HEIGHT,
-    getFocus: getCameraFocus,
-    getYaw: getCameraYaw,
-    reliefDetail: () => {
-      const zoom = getCameraZoom()
-      return zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
-    },
-    onRecenter: (centerX, centerZ) => {
-      riverLayer?.recenter(centerX, centerZ)
-      // Keep the ribbons draped on whichever relief surface is on screen
-      // (rebuilds are a few ms and only happen on an actual level
-      // transition; width follows zoom continuously in the overlay's own
-      // shader). Level is 'flat' whenever no relief exists, whatever the
-      // zoom.
-      if (!riverLayer) return
-      const zoom = getCameraZoom()
-      const level: typeof ribbonLevel = !reliefCoarseSurface ? 'flat' : zoom > RELIEF_FINE_ZOOM ? 'fine' : zoom > RELIEF_MIN_ZOOM ? 'coarse' : 'flat'
-      if (level !== ribbonLevel) {
-        ribbonLevel = level
-        if (reliefCoarseSurface) {
-          riverLayer.setHeightSurface(level === 'fine' && reliefFineSurface ? reliefFineSurface : reliefCoarseSurface)
-        }
-      }
-    },
-  })
-
   // Relief preview gate: eroded terrain unlocks the deeper zoom ceiling and
   // the tilt envelope; losing it (reset/regenerate/tectonics rerun) folds the
   // view back flat and drops the stale surface. Called from the 'rendered'
@@ -434,27 +372,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // inside the envelope (decided 2026-09-30, camera/generatorCamera.ts).
   const syncReliefGate = (): void => {
     const active = erosionRunCount >= 1
-    setCameraDeepZoom(active)
-    if (!active) {
-      reliefCoarseSurface = null
-      reliefFineSurface = null
-      ribbonLevel = 'flat'
-      mapView.setReliefSurfaces(null)
-      riverLayer?.setHeightSurface(null)
-    }
+    flatView.setDeepZoom(active)
+    if (!active) flatView.setRelief(null)
   }
-
-  // River ribbons live in the scene over the map plane; segments come from the
-  // hydrology step, tiled for the torus wrap via the recenter hook above.
-  riverLayer = createToroidalRibbonOverlay({
-    scene,
-    worldWidth: WORLD_WIDTH,
-    worldHeight: WORLD_HEIGHT,
-    textureWidth: MAP_WIDTH,
-    textureHeight: MAP_HEIGHT,
-    getViewWidth: getCameraViewWidth,
-  })
-  riverLayer.setEnabled(false)
 
   const root = document.createElement('div')
   // Own root class (not the shared 'worldgen-screen') so this screen's CSS
@@ -1409,7 +1329,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // The rivers on the map.
   function drawRivers(): void {
-    if (lastRiverData) riverLayer?.setPolylines(lastRiverData.points, lastRiverData.lengths, lastRiverData.regimes)
+    if (lastRiverData) flatView.rivers.setPolylines(lastRiverData.points, lastRiverData.lengths, lastRiverData.regimes)
   }
   let lastWatersheds: Uint16Array | null = null
   let lastDischargeField: Float32Array | null = null
@@ -2164,7 +2084,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastCompositePixels: Uint8Array | null = null
   const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => {
     lastCompositePixels = pixels
-    mapView.texture.update(pixels)
+    flatView.baseTexture.update(pixels)
   })
 
   // Second compositor output for the relief meshes: identical layer stack
@@ -2175,7 +2095,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // event markers are main-compositor-only, which is fine — they belong to
   // the map reading, not the relief look.
   const reliefOverlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => {
-    mapView.reliefTexture.update(pixels)
+    flatView.reliefTexture.update(pixels)
   })
   // Every composite goes through here so the two outputs can never drift.
   function compositeOverlays(): void {
@@ -2371,11 +2291,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const labelCtx = labelCanvas.getContext('2d', { willReadFrequently: true })!
   let labelsShown = false
   function repaintLabels(): void {
-    mapView.setLabelsVisible(labelsShown)
+    flatView.setLabelsVisible(labelsShown)
     if (!labelsShown) return
     labelCtx.clearRect(0, 0, MAP_WIDTH, MAP_HEIGHT)
     paintWrapped(labelCtx, (cc) => drawContinentLabels(cc, lastRaftLabels))
-    mapView.labelTexture.update(new Uint8Array(labelCtx.getImageData(0, 0, MAP_WIDTH, MAP_HEIGHT).data.buffer))
+    flatView.labelTexture.update(new Uint8Array(labelCtx.getImageData(0, 0, MAP_WIDTH, MAP_HEIGHT).data.buffer))
   }
 
   // Draws one tectonic event's geologic marker, faded by `alpha`: a suture band
@@ -3033,8 +2953,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (const id of OVERLAY_IDS) {
       const show = overlayShown(id)
       if (id === 'rivers') {
-        riverLayer?.setEnabled(show)
-        mapView.setLakesVisible(show)
+        flatView.rivers.setEnabled(show)
+        flatView.setLakesVisible(show)
       } else if (id === 'names') {
         labelsShown = show
       } else {
@@ -3105,13 +3025,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // camera, since a row's latitude does, and stands in every step (decided
   // 2026-09-26). The pick is the map's plane (map/ScaleBar's pickMapPlane),
   // per sampled row.
-  const pickPlane = (screenX: number, screenY: number): { x: number; z: number } | null => pickMapPlane(scene, screenX, screenY)
+  const pickPlane = (screenX: number, screenY: number): { x: number; z: number } | null => flatView.pickPlane(screenX, screenY)
 
   // The scale bar at the map's lower right (map/ScaleBar).
-  const scaleBar = createScaleBar(root, { scene, worldWidth: WORLD_WIDTH, worldHeight: WORLD_HEIGHT, metresPerWorldUnit: (METERS_PER_CELL * MAP_WIDTH) / WORLD_WIDTH })
+  const scaleBar = createScaleBar(root, { scene: flatView.scene, worldWidth: WORLD_WIDTH, worldHeight: WORLD_HEIGHT, metresPerWorldUnit: (METERS_PER_CELL * MAP_WIDTH) / WORLD_WIDTH })
   function renderScaleBar(): void {
-    const focus = getCameraFocus()
-    scaleBar.update(`${focus.x.toFixed(1)},${focus.z.toFixed(1)},${getCameraZoom().toFixed(4)},${getCameraYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`)
+    const focus = flatView.getFocus()
+    scaleBar.update(`${focus.x.toFixed(1)},${focus.z.toFixed(1)},${flatView.getZoom().toFixed(4)},${flatView.getYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`)
   }
 
   const tempScale = root.querySelector<HTMLCanvasElement>('[data-value="temp-scale"]')!
@@ -3119,8 +3039,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const TEMP_SCALE_SAMPLES = 64
   let tempScaleSeen = ''
   function renderTemperatureScale(force = false): void {
-    const focus = getCameraFocus()
-    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${getCameraZoom().toFixed(4)},${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${tempScale.clientHeight}`
+    const focus = flatView.getFocus()
+    const key = `${focus.x.toFixed(1)},${focus.z.toFixed(1)},${flatView.getZoom().toFixed(4)},${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${tempScale.clientHeight}`
     if (!force && key === tempScaleSeen) return
     tempScaleSeen = key
     const params = weatherParams()
@@ -3733,7 +3653,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (message.coastType.byteLength > 0) lastCoastType = new Uint8Array(message.coastType)
     if (message.coast) lastCoast = { reaches: message.coast.reaches, cells: new Int32Array(message.coast.cells) }
     if (message.sedimentBasins) lastSedimentBasins = message.sedimentBasins
-    if (lastWaterLevel && lastWaterSurface) mapView.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
+    if (lastWaterLevel && lastWaterSurface) flatView.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
     if (message.watersheds.byteLength > 0) lastWatersheds = new Uint16Array(message.watersheds)
     if (message.discharge.byteLength > 0) lastDischargeField = new Float32Array(message.discharge)
     if (message.maxDischarge > 0) lastMaxDischarge = message.maxDischarge
@@ -3763,11 +3683,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     lastCoastType = null
     lastCoast = null
     lastSedimentBasins = null
-    mapView.setWaterLevels(null, null)
+    flatView.setWaterLevels(null, null)
     // Derived from the channel set, so it stales with it.
     lastPrecipitationEffective = null
-    riverLayer?.setPolylines(new Float32Array(0), new Uint32Array(0))
-    riverLayer?.setEnabled(false)
+    flatView.rivers.setPolylines(new Float32Array(0), new Uint32Array(0))
+    flatView.rivers.setEnabled(false)
     compositeOverlays()
   }
 
@@ -4029,25 +3949,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (message.mesh) {
         const decoded = decodeMesh(torusDomain(message.width, message.height), { count: message.mesh.count, nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity) })
         const surface = createMeshSurface(createMeshSampler(decoded, new Float32Array(message.mesh.z)), RELIEF_HEIGHT_SCALE)
-        reliefCoarseSurface = surface
-        reliefFineSurface = surface
+        flatView.setRelief(surface, surface)
       } else {
         const full = new Float32Array(message.elevation)
         const decimated = downsampleElevation(full, message.width, message.height, RELIEF_DECIMATION)
-        reliefCoarseSurface = createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE)
-        reliefFineSurface = createElevationSurface(full, message.width, message.height, RELIEF_HEIGHT_SCALE)
+        flatView.setRelief(createElevationSurface(decimated.data, decimated.resX, decimated.resY, RELIEF_HEIGHT_SCALE), createElevationSurface(full, message.width, message.height, RELIEF_HEIGHT_SCALE))
       }
-      mapView.setReliefSurfaces(reliefCoarseSurface, reliefFineSurface)
       // The shores are found on the PHYSICAL raster at draw time — the one
       // the hydrology set its levels against, not the display copy.
-      mapView.setWaterElevation(new Float32Array(message.raw), message.width, message.height)
+      flatView.setWaterElevation(new Float32Array(message.raw), message.width, message.height)
       // The surfaces are metre-true now; exaggeration is a view property
       // (see mapSceneSettings). This screen is a map register throughout —
       // and the ribbons must carry the same scale as the ground they drape
       // on, or they sink inside it (see ToroidalRibbonOverlay.setHeightScale).
-      mapView.setHeightScale(MAP_EXAGGERATION)
-      riverLayer?.setHeightScale(MAP_EXAGGERATION)
-      riverLayer?.setHeightSurface(ribbonLevel === 'fine' ? reliefFineSurface : reliefCoarseSurface)
+      flatView.setHeightScale(MAP_EXAGGERATION)
       return
     }
 
@@ -5637,7 +5552,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // Pointer → full-res map texel (Babylon picking; wraps with the torus tiling).
   const pointerToTexel = (): { mx: number; my: number } | null => {
-    const pick = scene.pick(scene.pointerX, scene.pointerY)
+    const pick = flatView.scene.pick(flatView.scene.pointerX, flatView.scene.pointerY)
     const uv = pick?.hit ? pick.getTextureCoordinates() : null
     return uv ? { mx: uv.x * MAP_WIDTH, my: uv.y * MAP_HEIGHT } : null
   }
@@ -5660,7 +5575,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     return -1
   }
-  scene.onPointerObservable.add((info) => {
+  flatView.scene.onPointerObservable.add((info) => {
     if (panelIndex !== MIGRATION_PANEL_INDEX || !lastMigration) return
     const { resX, resY } = lastMigration
     if (info.type === PointerEventTypes.POINTERDOWN) {
@@ -5682,7 +5597,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
       if (best >= 0) {
         draggingOriginRace = best
-        setCameraPanEnabled(false)
+        flatView.setPanEnabled(false)
         const [r, g, b] = MIGRATION_RACES[best].rgb
         originGhost.style.background = `rgb(${r},${g},${b})`
         originGhost.style.left = `${info.event.clientX}px`
@@ -5695,7 +5610,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     } else if (info.type === PointerEventTypes.POINTERUP && draggingOriginRace >= 0) {
       const t = pointerToTexel()
       originGhost.hidden = true
-      setCameraPanEnabled(true)
+      flatView.setPanEnabled(true)
       const race = draggingOriginRace
       draggingOriginRace = -1
       if (t) {
@@ -6140,7 +6055,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // That's deliberate on a worldgen tool screen: a height readout is what makes
   // the metre calibration checkable by hovering.
   hoverTooltip = createMapHoverTooltip({
-    scene,
+    scene: flatView.scene,
     host: root,
     textureWidth: MAP_WIDTH,
     textureHeight: MAP_HEIGHT,
@@ -6203,7 +6118,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The sphere's own scene while a sphere world is open; the app renders
     // whichever this answers, frame by frame.
     get scene() {
-      return sphereView?.scene ?? scene
+      return sphereView?.scene ?? flatView.scene
     },
     dispose() {
       sphereView?.dispose()
@@ -6230,16 +6145,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       saveMenu.dispose()
       confirmDialog.dispose()
       hoverTooltip?.dispose()
-      riverLayer?.dispose()
       overlay.dispose()
       reliefOverlay.dispose()
-      mapView.dispose()
+      flatView.dispose()
       worker.terminate()
-      // scene.dispose() doesn't remove the camera module's own 'wheel'
-      // listener on the shared canvas, so the rig has to be disposed by hand
-      // (see orbitSwoopCamera's equivalent comment).
-      disposeCamera()
-      scene.dispose()
     },
   }
 }

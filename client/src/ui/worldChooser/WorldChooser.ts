@@ -1,4 +1,5 @@
 import { relabel } from '../../i18n/relabel'
+import type { WorldShape } from '../../map/worldView'
 import { t, type TKey } from '../../i18n/i18n'
 import { formatBytes, formatWhen } from '../../ui/format'
 import { hasSession } from '../../server/session'
@@ -31,7 +32,7 @@ import { BROWSER_ICON, SERVER_ICON, icon } from '../chooserIcons'
 
 // The shapes a new world can take (docs/design/two-topologies.md). The
 // sphere since 2026-10-09 with its first step only (map/sphereView.ts).
-export type WorldShape = 'flat' | 'sphere'
+export type { WorldShape }
 const SHAPES: readonly { shape: WorldShape; ready: boolean }[] = [
   { shape: 'flat', ready: true },
   { shape: 'sphere', ready: true },
