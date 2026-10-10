@@ -288,6 +288,64 @@ func TestCoordinatorWithdrawsACancelledJob(t *testing.T) {
 	}
 }
 
+// A cancelled job's running task is withdrawn too: its message waits for
+// the worker's ack, and would go to another worker if this one died.
+func TestCoordinatorWithdrawsARunningTask(t *testing.T) {
+	_, conn := coordinatorRelay(t)
+	reg := newRegistry(jobHistory)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// A worker takes the task, reports progress and never acks.
+	consumer, err := conn.JetStream().CreateOrUpdateConsumer(ctx, conn.StreamName(streamTasks), jetstream.ConsumerConfig{Durable: "dies", AckPolicy: jetstream.AckExplicitPolicy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := consumer.Fetch(1, jetstream.FetchMaxWait(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec Spec
+	for msg := range batch.Messages() {
+		_ = json.Unmarshal(msg.Data(), &spec)
+	}
+	if spec.TaskID == "" {
+		t.Fatal("no task fetched")
+	}
+	event, _ := json.Marshal(taskEvent{TaskID: spec.TaskID, Phase: "erosion", Percent: 10})
+	if err := conn.NATS().Publish(conn.Subject("event", job.ID), event); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c.mu.Lock()
+		state := c.tasks[spec.TaskID].State
+		c.mu.Unlock()
+		if state == taskRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s, want running", state)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !c.cancelJob(job.ID) {
+		t.Fatal("cancel refused")
+	}
+	info, err := c.stream.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State.Msgs != 0 {
+		t.Errorf("%d tasks left on the relay, want none", info.State.Msgs)
+	}
+}
+
 // A coordinator started again over the same jobs.db knows its jobs, and a
 // job whose task waited finishes once a worker comes.
 func TestCoordinatorSurvivesARestart(t *testing.T) {

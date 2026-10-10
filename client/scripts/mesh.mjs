@@ -1813,10 +1813,10 @@ console.log('\n[1g] the mesh on the sphere')
 
   // triangulatePoints, the coupled loop's rebuild: the nodes moved (here a
   // rigid turn about a point, as a plate turns them), triangulated again —
-  // every point a vertex of its own, the bootstrap lattice gone. (A point
-  // that lands exactly on a lattice node collapses onto it and goes with
-  // the lattice, on both shapes; the build's own lattice nodes, unmoved,
-  // would — moved nodes do not.)
+  // every point a vertex of its own, the bootstrap lattice gone. Then the
+  // nodes unmoved: the build's own lattice nodes among them land exactly on
+  // the new lattice's, collapse onto them, and must be inserted again
+  // rather than go with the lattice (lost before 2026-10-10).
   {
     const xs = [], ys = []
     for (const v of aliveVertices(mesh)) {
@@ -1827,6 +1827,15 @@ console.log('\n[1g] the mesh on the sphere')
     const { mesh: tri, mapping } = M.build.triangulatePoints(S, xs, ys, xs.length, T.oceanSpacingM / UNITS_TO_M)
     const distinct = new Set(mapping).size === xs.length && Array.from(mapping).every((v) => tri.vAlive[v])
     check(`sphere: triangulatePoints keeps every node and removes its lattice (${xs.length} → ${tri.aliveVertices})`, distinct && tri.aliveVertices === xs.length && sound(tri))
+
+    const sx = [], sy = []
+    for (const v of aliveVertices(mesh)) {
+      sx.push(mesh.vx[v])
+      sy.push(mesh.vy[v])
+    }
+    const { mesh: same, mapping: sameMap } = M.build.triangulatePoints(S, sx, sy, sx.length, T.oceanSpacingM / UNITS_TO_M)
+    const kept = new Set(sameMap).size === sx.length && Array.from(sameMap).every((v, i) => same.vAlive[v] && same.vx[v] === sx[i] && same.vy[v] === sy[i])
+    check(`sphere: triangulatePoints keeps nodes that land on its lattice (${sx.length} → ${same.aliveVertices})`, kept && same.aliveVertices === sx.length && sound(same))
   }
 
   // The rasterisation: a smooth field of the position has no seam at

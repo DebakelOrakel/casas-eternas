@@ -302,8 +302,7 @@ test('archeanReset rebuilds the same world from the same seed', async () => {
 // A SPHERE world's first step (DEC-0035, step 4d2): the Archean on a
 // sphereDomain — mantle, plumes, nucleation, rafts. Two halves. Through the
 // runtime at this harness's size: the shape reaches the worker, the
-// Archean steps, pauses (the paused render places the plate preview, a
-// Voronoi on the globe) and resets on the sphere. Then the stage modules
+// Archean steps, pauses and resets on the sphere. Then the stage modules
 // directly at the world's real size, sphere against torus for one seed:
 // the numbers that say whether the sphere makes a plausible world.
 const poleRowsConstant = (field, resX, resY) => [0, resY - 1].every((j) => field.subarray(j * resX, (j + 1) * resX).every((v) => v === field[j * resX]))

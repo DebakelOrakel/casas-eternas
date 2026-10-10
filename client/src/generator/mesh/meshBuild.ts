@@ -96,13 +96,20 @@ export function densityTarget(state: MeshState, budget = 1, unitsToM = METERS_PE
 // point coinciding with an earlier one collapses onto it and maps to that
 // vertex — `mapping` says which). Built by insertion into the bootstrap
 // lattice in the order given, the lattice removed after; the caller runs
-// the remesh for what the motion crowded or stretched.
+// the remesh for what the motion crowded or stretched. A point that lands
+// exactly on a lattice node collapses onto it, and would go with it; it is
+// inserted again once the lattice is gone, as meshTile's builds do.
 export function triangulatePoints(domain: Domain, xs: ArrayLike<number>, ys: ArrayLike<number>, count: number, latticeSpacing: number): { mesh: PeriodicTriangulation; mapping: Int32Array } {
   const mesh = bootstrapLattice(domain, latticeSpacing)
   const latticeCount = mesh.vertexSlots
   const mapping = new Int32Array(count)
-  for (let i = 0; i < count; i++) mapping[i] = mesh.insert(xs[i], ys[i])
+  const again: number[] = []
+  for (let i = 0; i < count; i++) {
+    mapping[i] = mesh.insert(xs[i], ys[i])
+    if (mapping[i] < latticeCount) again.push(i)
+  }
   for (let v = 0; v < latticeCount; v++) if (mesh.vAlive[v]) mesh.remove(v)
+  for (const i of again) mapping[i] = mesh.insert(xs[i], ys[i])
   return { mesh, mapping }
 }
 

@@ -111,8 +111,7 @@ export const STEPS: readonly Step[] = [
     stage: 'genesis',
     // No continent names: nothing is named until the hand-over, so the row
     // would be permanently unavailable. No plate outlines either — the Archean
-    // has no plates, and the preview of the ones a hand-over would produce is
-    // an answer the world has not taken yet.
+    // has no plates, and its renders place none.
     overlays: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
     groups: [],
     defaults: ['terrain', 'mantle', 'hotspots', 'cratonAge'],

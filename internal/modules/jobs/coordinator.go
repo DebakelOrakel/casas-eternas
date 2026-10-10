@@ -697,7 +697,7 @@ func (c *coordinator) handleToken(msg *nats.Msg) {
 	answer(tokenReply{Token: issued, ExpiresAt: expires})
 }
 
-// failJob ends a job and withdraws what of it is still queued. Called with
+// failJob ends a job and withdraws what of it is still open. Called with
 // the lock held.
 func (c *coordinator) failJob(jobID, reason string) {
 	c.endJob(jobID, StateFailed, reason)
@@ -719,19 +719,19 @@ func (c *coordinator) cancelJob(jobID string) bool {
 
 func (c *coordinator) endJob(jobID string, state State, reason string) {
 	var ended []*Task
-	queued := false
 	for _, id := range c.byJob[jobID] {
 		task := c.tasks[id]
 		if task.State == taskDone || task.State == taskFailed {
 			continue
 		}
-		queued = queued || task.State == taskQueued
 		task.State = taskCancelled
 		ended = append(ended, task)
 	}
-	// What waits in the stream goes with one purge of the job's subjects. A
-	// task a worker holds is gone from under it too; its report is ignored.
-	if queued {
+	// What is in the stream goes with one purge of the job's subjects: the
+	// queued tasks, and the running ones too — their message stays until the
+	// worker acks it, and would be handed out again if that worker died. A
+	// task a worker holds is gone from under it; its report is ignored.
+	if len(ended) > 0 {
 		ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
 		if err := c.stream.Purge(ctx, jetstream.WithPurgeSubject(c.conn.Subject("task", "*", jobID))); err != nil {
 			slog.Warn("jobs: could not withdraw the tasks", "job", jobID, "err", err)

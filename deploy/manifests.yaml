@@ -141,10 +141,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
-            # At most three job workers: the most replicas the jobs server
-            # scales casas-eternas-worker to. Each reserves its honest 7Gi, so
-            # the ceiling in practice is the nodes' free memory — beyond it
-            # the extra workers sit Pending and the work waits for them.
+            # At most six job workers: the most replicas the jobs server
+            # scales casas-eternas-worker to. Each reserves the memory its
+            # request names (below), so the ceiling in practice is the
+            # nodes' free memory — beyond it the extra workers sit Pending
+            # and the work waits for them.
             - name: CASAS_JOBS_MAX_CONCURRENT
               value: "6"
             # Authentication. Environment rather than args because CMD already

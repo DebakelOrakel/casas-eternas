@@ -32,7 +32,7 @@ import { createArcheanSimulation } from '../archean/archeanState'
 import { deserializeArchean, serializeArchean } from '../archean/archeanSnapshot'
 import type { ArcheanParams } from '../archean/archeanStep'
 import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from '../archean/archeanStep'
-import { convectionCellSeeds, finalizeArchean } from '../archean/finalizeArchean'
+import { finalizeArchean } from '../archean/finalizeArchean'
 import { findPlumeSites } from '../tectonics/plumes'
 import { stabilisedFraction } from '../crust/raftField'
 import { TECTONIC_MA_PER_EPOCH, worldAgeMa, worldEpoch } from '../core/worldTime'
@@ -516,16 +516,15 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   const gen = worldGeneration
   renderOptions.precomputedElevations = undefined
   renderOptions.elevationScale = elevationScale
-  const previewSeeds = intervalId === undefined ? convectionCellSeeds(archean.mantle, archean.domain) : []
   const result = await renderSimulationImage(
-    // While PAUSED, show the plates this world would hand over — the same seeds
-    // finalizeArchean would place, so the preview is the answer rather than a guess.
-    // While running they are omitted: the convection reorganises every epoch, so a
-    // live preview would be a flicker of boundaries that mean nothing yet.
-    //
-    // Seeds only drive the Voronoi mask; the elevation raster reads rafts, ocean age
-    // and features, so previewing cannot disturb the terrain.
-    { width: archean.width, height: archean.height, domain: archean.domain, seeds: previewSeeds, rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset, mantle: archean.mantle },
+    // No seeds, so no plate Voronoi: the Archean has no plates. A paused
+    // render used to place the seeds finalizeArchean would, as a preview of
+    // the plates to come — but the genesis step offers no plate outlines
+    // (steps.ts), so nothing showed it, and the Voronoi over the whole map
+    // cost ~1.4 s a pause on the sphere (removed 2026-10-10). Seeds only
+    // drive the Voronoi mask; the elevation reads rafts, ocean age and
+    // features, so this changes no terrain.
+    { width: archean.width, height: archean.height, domain: archean.domain, seeds: [], rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset, mantle: archean.mantle },
     renderPool(),
     renderOptions,
   )
