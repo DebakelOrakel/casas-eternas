@@ -53,16 +53,29 @@ function bandPressure(phi: number, e1: number, e2: number): number {
 // Wrapped box blur on the climate grid (`grid`), in place through a scratch
 // buffer; three passes approach a Gaussian of σ ≈ radius. Exported for the
 // refinement's ocean highs.
+//
+// `radius` is in equator cells, a length. A row whose cells are narrower
+// (the sphere toward a pole, DomainGrid.rowScale = cos φ) takes as many of
+// its own cells as cover that length east-west, up to its whole width but
+// one: a pole row is a small circle the blur's length spans many times.
+// The north-south pass steps across a pole as the grid does, and the pole
+// rows come out one value each (fork 5 of DEC-0035). On the torus every
+// row's radius is `radius` and the pole rows are none: the arithmetic is
+// the torus's, as it was.
 export function blur(field: Float32Array, radius: number, grid: DomainGrid): void {
   const tmp = new Float32Array(field.length)
   const width = 2 * radius + 1
+  const rowRadius = new Int32Array(RY)
+  for (let gy = 0; gy < RY; gy++) rowRadius[gy] = Math.min((RX - 1) >> 1, Math.round(radius / grid.rowScale(gy)))
   for (let pass = 0; pass < 3; pass++) {
     for (let gy = 0; gy < RY; gy++) {
+      const r = rowRadius[gy]
+      const rowWidth = 2 * r + 1
       let sum = 0
-      for (let dx = -radius; dx <= radius; dx++) sum += field[grid.index(dx, gy)]
+      for (let dx = -r; dx <= r; dx++) sum += field[grid.index(dx, gy)]
       for (let gx = 0; gx < RX; gx++) {
-        tmp[gy * RX + gx] = sum / width
-        sum += field[grid.index(gx + radius + 1, gy)] - field[grid.index(gx - radius, gy)]
+        tmp[gy * RX + gx] = sum / rowWidth
+        sum += field[grid.index(gx + r + 1, gy)] - field[grid.index(gx - r, gy)]
       }
     }
     for (let gx = 0; gx < RX; gx++) {
@@ -74,6 +87,7 @@ export function blur(field: Float32Array, radius: number, grid: DomainGrid): voi
       }
     }
   }
+  grid.averagePoleRows(field)
 }
 
 // `temperature` is the month's air temperature reduced to sea level

@@ -70,7 +70,11 @@ import { detAsin, detAtan2, detCos, detSin, sq } from '../core/detMath'
 // both shapes — what a caller that wants a local picture of a triangle
 // reads (the sampler's normals, the erosion index's cotangents). It is
 // exact on the torus and close on the globe (an edge's length and angles
-// to O(ℓ²/R²)); no predicate of the triangulation reads it there.
+// to O(ℓ²/R²)); no predicate of the triangulation reads it there. Step
+// 4d5 measured both callers against the exact sphere: the cotangents are
+// close enough as they are (meshErosion.cotAtApex), the normals were not
+// until each corner's frame was its own (meshSampler: a vector found in
+// the first corner's frame is carried to the others, Domain.transport).
 //
 // Robustness: predicates are plain doubles. A configuration too close to
 // degenerate may leave a locally non-Delaunay edge (the in-circle test has

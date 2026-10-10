@@ -103,6 +103,21 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array, 
     return hints[r * cols + c]
   }
   // Vertex normals from the triangles, in metres.
+  //
+  // Each triangle's normal comes out in the frame of its first corner
+  // (`frame`), and each vertex keeps its normal in its OWN frame: the
+  // horizontal part is carried to the other two corners (Domain.transport)
+  // before it is added there, and a normal read between three corners is
+  // carried to the point it is read at (normalAt). On the torus every frame
+  // is the same and transport hands back the same two numbers — the bits
+  // are the torus's. On the globe two corners' east axes differ by their
+  // longitudes' difference times sin of the latitude, all of it near a
+  // pole. Measured on a 2048-wide sphere world (step 4d5) against each
+  // triangle seen from each of its own corners: added unturned, a vertex
+  // normal was off by up to 0.6° above 80° latitude on the gentle terrain
+  // of a young history, p99 2 % of the slope where it passes 3°; carried,
+  // by 0.002° at most — the frame's own O(ℓ² / R²).
+  const carried = { x: 0, y: 0 }
   const normals = new Float32Array(mesh.vertexSlots * 3)
   const f = new Float64Array(6)
   for (let t = 0; t < mesh.triSlots; t++) {
@@ -126,9 +141,10 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array, 
     if (ny < 0) { nx = -nx; ny = -ny; nz = -nz }
     // Its length is twice the area — the weight.
     for (const v of [a, b, c]) {
-      normals[3 * v] += nx
+      domain.transport(nx, nz, mesh.vx[a], mesh.vy[a], mesh.vx[v], mesh.vy[v], carried)
+      normals[3 * v] += carried.x
       normals[3 * v + 1] += ny
-      normals[3 * v + 2] += nz
+      normals[3 * v + 2] += carried.y
     }
   }
   for (let v = 0; v < mesh.vertexSlots; v++) {
@@ -181,9 +197,10 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array, 
       let nz = 0
       for (let k = 0; k < 3; k++) {
         const v = mesh.tris[3 * t + k]
-        nx += bary[k] * normals[3 * v]
+        domain.transport(normals[3 * v], normals[3 * v + 2], mesh.vx[v], mesh.vy[v], x, y, carried)
+        nx += bary[k] * carried.x
         ny += bary[k] * normals[3 * v + 1]
-        nz += bary[k] * normals[3 * v + 2]
+        nz += bary[k] * carried.y
       }
       const l = detHypot(nx, ny, nz) || 1
       out[0] = nx / l

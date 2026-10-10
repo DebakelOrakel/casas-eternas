@@ -1,7 +1,7 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, shiftedYNorm, beltYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { SEA_LEVEL } from '../elevation/elevationScale'
-import type { Domain } from '../core/domain'
+import { bilinearTaps, sampleTaps, type Domain } from '../core/domain'
 import { detCos, detExp, detHypot } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
@@ -33,9 +33,18 @@ export function bandFactor(phi: number): number {
 // this is the opposite — the orographic term needs the fine gradient, which is
 // the entire reason it reads full-res here instead of off the climate grid.
 // `domain`: what the raster covers, one texel per unit.
-function elevationAtWorld(elevation: Float32Array, domain: Domain, wx: number, wy: number): number {
-  const x = Math.floor(domain.wrapX(wx))
-  const y = Math.floor(domain.wrapY(wy))
+//
+// The point is reached from (wx, wy) by two offsets in turn (step 4d5): the
+// first left unwrapped (Domain.displace), the second brought into the
+// domain (Domain.advance) — on the torus wrapX(wx + dx + px), the sum in
+// the order it was written; on the sphere along the globe, so a point
+// across a pole lands on its far side. `at` holds the point.
+function elevationAtWorld(elevation: Float32Array, domain: Domain, wx: number, wy: number, dx: number, dy: number, px: number, py: number, at: { x: number; y: number }): number {
+  domain.displace(wx, wy, dx, dy, at)
+  domain.advance(at.x, at.y, px, py, at)
+  // The sphere's south pole is y = height; its row is the last.
+  const x = Math.min(domain.width - 1, Math.floor(at.x))
+  const y = Math.min(domain.height - 1, Math.floor(at.y))
   return elevation[y * domain.width + x]
 }
 
@@ -80,6 +89,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
   const { width: worldW, height: worldH } = domain
   const grid = domain.grid(RX, RY)
   const n = RX * RY
+  const point = { x: 0, y: 0 }
   const ocean = new Uint8Array(n)
   const evap = new Float32Array(n)
   const rainFrac = new Float32Array(n)
@@ -119,10 +129,10 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
         for (const k of [-0.5, 0, 0.5]) {
           const px = -ay * k * 2
           const py = ax * k * 2
-          const eUp = elevationAtWorld(elevation, domain, wx - ax + px, wy - ay + py)
+          const eUp = elevationAtWorld(elevation, domain, wx, wy, -ax, -ay, px, py, point)
           if (eUp <= SEA_LEVEL) upLand = false
           up += eUp / 3
-          down += elevationAtWorld(elevation, domain, wx + ax + px, wy + ay + py) / 3
+          down += elevationAtWorld(elevation, domain, wx, wy, ax, ay, px, py, point) / 3
         }
         if (upLand) upslope = Math.max(0, down - up) * speed * CLIMATE_TUNING.precipOrogLeverPx / (2 * half)
       }
@@ -142,33 +152,40 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
   let carried = new Float32Array(n)
   const sourceAnomaly = new Float32Array(n)
   if (refined) for (let i = 0; i < n; i++) carried[i] = ocean[i] ? evap[i] * refined.seaAnomaly[i] : 0
+  // The departure point of every land cell, upwind (DomainGrid.tapsAt: on
+  // the sphere along the great circle, the wind in the cell's frame), once:
+  // the wind does not change between the iterations. A sea cell's moisture
+  // is its fixed source and reads none.
+  const taps = bilinearTaps(n)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      if (ocean[i]) continue
+      const u = wind[i * 2]
+      const v = wind[i * 2 + 1]
+      grid.tapsAt(gx, gy, -u * CLIMATE_TUNING.precipAdvectStep, -v * CLIMATE_TUNING.precipAdvectMeridionalScale * CLIMATE_TUNING.precipAdvectStep, taps, i)
+    }
+  }
   for (let iter = 0; iter < CLIMATE_TUNING.precipIters; iter++) {
     const next = new Float32Array(n)
     const nextCarried = refined ? new Float32Array(n) : carried
-    for (let gy = 0; gy < RY; gy++) {
-      for (let gx = 0; gx < RX; gx++) {
-        const i = gy * RX + gx
-        const u = wind[i * 2]
-        const v = wind[i * 2 + 1]
-        const fx = gx - u * CLIMATE_TUNING.precipAdvectStep
-        const fy = gy - v * CLIMATE_TUNING.precipAdvectMeridionalScale * CLIMATE_TUNING.precipAdvectStep
-        const advected = grid.sampleBilinear(moisture, fx, fy)
-        if (ocean[i]) {
-          next[i] = evap[i] // ocean is a fixed moisture source
-          if (refined) nextCarried[i] = carried[i]
-          continue
-        }
-        const rain = advected * rainFrac[i]
-        rainedOut[i] = rain // steady-state rainout — the last iteration wins
-        // Depletes by the rain that stays on the ground; the recycled fraction re-enters
-        // the pool so downwind interiors keep getting fed (see CLIMATE_TUNING.precipLandRecycleFrac).
-        next[i] = advected - rain * (1 - CLIMATE_TUNING.precipLandRecycleFrac)
-        if (sinking) next[i] *= 1 - CLIMATE_TUNING.rainSubsidenceMix * sinking[i]
-        if (refined && advected > 0) {
-          const anomaly = grid.sampleBilinear(carried, fx, fy) / advected
-          sourceAnomaly[i] = anomaly
-          nextCarried[i] = next[i] * anomaly
-        }
+    for (let i = 0; i < n; i++) {
+      if (ocean[i]) {
+        next[i] = evap[i] // ocean is a fixed moisture source
+        if (refined) nextCarried[i] = carried[i]
+        continue
+      }
+      const advected = sampleTaps(moisture, taps, i)
+      const rain = advected * rainFrac[i]
+      rainedOut[i] = rain // steady-state rainout — the last iteration wins
+      // Depletes by the rain that stays on the ground; the recycled fraction re-enters
+      // the pool so downwind interiors keep getting fed (see CLIMATE_TUNING.precipLandRecycleFrac).
+      next[i] = advected - rain * (1 - CLIMATE_TUNING.precipLandRecycleFrac)
+      if (sinking) next[i] *= 1 - CLIMATE_TUNING.rainSubsidenceMix * sinking[i]
+      if (refined && advected > 0) {
+        const anomaly = sampleTaps(carried, taps, i) / advected
+        sourceAnomaly[i] = anomaly
+        nextCarried[i] = next[i] * anomaly
       }
     }
     moisture = next

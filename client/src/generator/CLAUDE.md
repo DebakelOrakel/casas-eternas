@@ -10,6 +10,19 @@ resY)`: `wrapCol`, `index`, `neighbour`, the samplers, and `colTable` /
 refuses `core/field.ts`'s wrap and samplers outside `core/` too, the
 periodic noise lattices excepted. See `docs/decisions/world-topology-torus.md`.
 
+**A raster stage measures in lengths, not in cells** (DEC-0035 fork 5, step
+4d5): the sphere's rows narrow as cos φ. A step east-west costs
+`grid.rowScale(y)`, a cell weighs `grid.cellArea(y)`, a face between rows
+`grid.edgeScale(y)` (0 at a pole); a semi-Lagrangian departure goes through
+`grid.tapsAt` + `sampleTaps`, a step to a displaced cell through
+`grid.cellDisplaced`; a field the stage smooths ends with
+`grid.averagePoleRows`. On the torus every one of these is 1 or the old
+arithmetic, so write each formula so that it IS the torus's operations when
+the weights are 1 (`1 * x`, `x / 1` and `x + 0` keep the bits; a changed
+summation order does not) — golden then stays byte-identical. A vector read
+across a pole (its east is the far side's west) needs thought; a scalar does
+not.
+
 `generatorWorker.ts` is the entry point and stays at this root, but it is **only
 transport** — twenty-odd lines wiring `self` to the pipeline. The pipeline is
 `pipeline/runtime.ts`: it holds every stage's live state as module-level `let`s

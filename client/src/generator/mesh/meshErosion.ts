@@ -317,6 +317,20 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
 
 // Cotangent of the angle at the apex of halfedge e's triangle (the corner
 // opposite e).
+//
+// On the globe the triangle is the log map's picture in its first corner's
+// tangent plane (PeriodicTriangulation.frame), not the spherical triangle,
+// and the facet it gives is close to the exact one to O(ℓ² / R²). Kept so by
+// measurement (step 4d5, 2026-10-10), against the exact Voronoi edge on the
+// sphere (the arc between the two triangles' circumcentres) over a real
+// sphere world's mesh at budget 4: on 2048 × 1024 facet / length is off by
+// a median 1.4e-5 and a p99 1.1e-3 (max 2.5e-2, a near-zero facet), on the
+// harness's 256 × 128 (ℓ / R eight times larger) by 1.3e-3 and 9.7e-3. The
+// engine's mass balance does not depend on it — an edge's two slots read
+// one facet, so what one node gives the other takes — and the node areas
+// are the exact spherical cells (voronoiArea). An exact facet would be a
+// second geometry path here for a change below the engine's own
+// discretisation error.
 function cotAtApex(mesh: PeriodicTriangulation, e: number, f: Float64Array): number {
   const t = mesh.triangleOf(e)
   const i = e - 3 * t

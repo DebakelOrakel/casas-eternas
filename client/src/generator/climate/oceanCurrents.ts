@@ -1,6 +1,6 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, isLandAtCell, latitudeAt, shiftedYNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import type { Domain, DomainGrid } from '../core/domain'
+import { bilinearTaps, sampleTaps, type Domain, type DomainGrid } from '../core/domain'
 import { detCos, detExp, detHypot, detSin } from '../core/detMath'
 
 const RX = CLIMATE_RES_X
@@ -40,25 +40,62 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
     }
   }
 
+  // THE METRIC (DEC-0035, fork 5, step 4d5). Every equation below is the
+  // finite-volume form over the grid's cells, in equator-cell units: a row's
+  // cells are rowScale wide (cos φ on the sphere), its cells cellArea, the
+  // edge between two rows edgeScale long (0 at a pole, which is a point).
+  // Per row: across the east and west faces wE = 1 / rowScale (face length
+  // 1 over the centres' distance), across the north and south faces wN, wS
+  // = edgeScale (over a distance of 1), the cell's area A and the east-west
+  // gradient's 1 / rowScale. Each equation is the cell's balance times its
+  // area. On the torus every weight is exactly 1 and each formula is the
+  // torus's own arithmetic, operation for operation: its bits stay.
+  const wE = new Float64Array(RY)
+  const wN = new Float64Array(RY)
+  const wS = new Float64Array(RY)
+  const area = new Float64Array(RY)
+  const gradE = new Float64Array(RY)
+  for (let gy = 0; gy < RY; gy++) {
+    const s = grid.rowScale(gy)
+    wE[gy] = 1 / s
+    wN[gy] = grid.edgeScale(gy)
+    wS[gy] = grid.edgeScale(gy + 1)
+    area[gy] = grid.cellArea(gy)
+    gradE[gy] = 1 / s
+  }
+
   // Wind-stress curl, ∂τ_v/∂x − ∂τ_u/∂y in grid axes (central differences).
   // For the history's banded wind the first term is exactly 0 (the wind is
   // the same along a row), so the epochs' result is the same bit for bit as
   // before the term (2026-09-28); the climate step's pressure wind has it.
+  // On the sphere the curl of a vector on the globe: (∂τ_v/∂x − ∂(τ_u cos φ)/
+  // ∂y) / cos φ, which the row scales give. τ_u cos φ is continuous across a
+  // pole as it stands — the cell beyond is on the far meridian, its east the
+  // opposite way and its cos φ signed so too, and the two signs cancel —
+  // so the row beyond a pole is read as it is.
   const curl = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
+    const g = gradE[gy]
+    const sUp = grid.rowScale(grid.wrapRow(gy - 1))
+    const sDown = grid.rowScale(grid.wrapRow(gy + 1))
     for (let gx = 0; gx < RX; gx++) {
       const uUp = wind[grid.index(gx, gy - 1) * 2]
       const uDown = wind[grid.index(gx, gy + 1) * 2]
       const vLeft = wind[grid.index(gx - 1, gy) * 2 + 1]
       const vRight = wind[grid.index(gx + 1, gy) * 2 + 1]
-      curl[gy * RX + gx] = (vRight - vLeft) / 2 - (uDown - uUp) / 2
+      curl[gy * RX + gx] = ((vRight - vLeft) / 2) * g - ((uDown * sDown - uUp * sUp) / 2) * g
     }
   }
 
   // Half of β per row, for the central difference: β·cos(latitude), the same
-  // sign in both hemispheres.
+  // sign in both hemispheres. `halfBetaA`: the same times the cell's area
+  // over its width — the β term of the area-weighted balance.
   const halfBeta = new Float32Array(RY)
-  for (let gy = 0; gy < RY; gy++) halfBeta[gy] = CLIMATE_TUNING.currentsBeta * detCos(latitudeAt(gy, equatorOffset) * Math.PI / 2) / 2
+  const halfBetaA = new Float64Array(RY)
+  for (let gy = 0; gy < RY; gy++) {
+    halfBeta[gy] = CLIMATE_TUNING.currentsBeta * detCos(latitudeAt(gy, equatorOffset) * Math.PI / 2) / 2
+    halfBetaA[gy] = halfBeta[gy] * area[gy] * gradE[gy]
+  }
 
   // The four wrapped neighbours of every cell are indexed once: at 700 sweeps
   // the wrapping's modulos were 0.6 s of every history epoch (profiled
@@ -77,38 +114,63 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
     }
   }
 
-  const islands = findIslands(land, left, right, up, down, halfBeta, curl)
+  const islands = findIslands(land, left, right, up, down, halfBetaA, curl, { wE, wN, wS, area })
+
+  // A row whose east-west coupling is strong (the sphere from 45° on, wE ∝
+  // 1 / cos² φ against the area) is relaxed as LINES: each run of sea on it
+  // solved at once against its north and south neighbours and the coast
+  // values at its ends, all of a row of sea as a ring. Point Gauss-Seidel
+  // moves such a row's mean by wN / (2 wE) of its error a sweep — a pole
+  // row's 1/3300 — and 700 sweeps leave it near its start (the mantle's
+  // flow solve met the same, mantleField.computeMantleFlow). The torus
+  // relaxes point by point, as it did.
+  const lines: (RowLines | null)[] = []
+  for (let gy = 0; gy < RY; gy++) lines.push(wE[gy] / area[gy] > LINE_SOLVE_COUPLING ? new RowLines(land, gy, wE[gy], wN[gy] + wS[gy], halfBetaA[gy]) : null)
 
   // Gauss-Seidel in place over the ocean cells, then one update per island.
   // An island's value is written to its coast cells only: they are the only
   // land cells an ocean cell reads.
   const psi = new Float32Array(n)
   for (let iter = 0; iter < CLIMATE_TUNING.currentsSolveIters; iter++) {
-    for (let i = 0; i < n; i++) {
-      if (land[i]) continue
-      const b = halfBeta[(i / RX) | 0]
-      psi[i] = (psi[left[i]] + psi[right[i]] + psi[up[i]] + psi[down[i]] + b * (psi[right[i]] - psi[left[i]]) - curl[i]) / 4
+    for (let gy = 0; gy < RY; gy++) {
+      const e = wE[gy]
+      const nN = wN[gy]
+      const nS = wS[gy]
+      const a = area[gy]
+      const b = halfBetaA[gy]
+      const d = 2 * e + nN + nS
+      const line = lines[gy]
+      if (line !== null) {
+        line.relax(psi, up, down, curl, nN, nS, a)
+        continue
+      }
+      for (let i = gy * RX, end = i + RX; i < end; i++) {
+        if (land[i]) continue
+        psi[i] = (e * psi[left[i]] + e * psi[right[i]] + nN * psi[up[i]] + nS * psi[down[i]] + b * (psi[right[i]] - psi[left[i]]) - a * curl[i]) / d
+      }
     }
     for (const island of islands) {
       let sum = -island.curl
-      for (const j of island.faces) sum += psi[j]
+      for (let k = 0; k < island.faces.length; k++) sum += island.faceWeight[k] * psi[island.faces[k]]
       for (let k = 0; k < island.east.length; k++) sum += island.eastBeta[k] * psi[island.east[k]]
       for (let k = 0; k < island.west.length; k++) sum -= island.westBeta[k] * psi[island.west[k]]
-      const value = sum / island.faces.length
+      const value = sum / island.weight
       for (const c of island.coast) psi[c] = value
     }
   }
 
   // Velocity from ψ (non-divergent): u = −∂ψ/∂y, v = ∂ψ/∂x. Sign chosen so the
   // coastal warm/cold pattern comes out right (validated). Normalize to max 1.
+  // ψ is a scalar: across a pole the cell beyond is read as it is.
   const current = new Float32Array(n * 2)
   let vmax = 1e-9
   for (let gy = 0; gy < RY; gy++) {
+    const g = gradE[gy]
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
       if (land[i]) continue
       const u = -(psi[grid.index(gx, gy + 1)] - psi[grid.index(gx, gy - 1)]) / 2
-      const v = psi[grid.index(gx + 1, gy)] - psi[grid.index(gx - 1, gy)]
+      const v = (psi[grid.index(gx + 1, gy)] - psi[grid.index(gx - 1, gy)]) * g
       current[i * 2] = u
       current[i * 2 + 1] = v / 2
       vmax = Math.max(vmax, detHypot(u, v / 2))
@@ -116,6 +178,123 @@ export function computeOceanCurrents(elevation: Float32Array, wind: Float32Array
   }
   for (let i = 0; i < current.length; i++) current[i] /= vmax
   return current
+}
+
+// A row is relaxed as lines (RowLines) when its east-west weight over its
+// area passes this — mantleField's LINE_SOLVE_COUPLING, the same reason.
+// The torus's is 1 and never does.
+const LINE_SOLVE_COUPLING = 2
+
+// THE LINES OF ONE ROW: its runs of sea, each a tridiagonal system in the
+// row's constant coefficients — diag 2 wE + wN + wS, west −(wE − b), east
+// −(wE + b) with b the β term — closed by the coast values at its two ends,
+// or cyclic (Sherman–Morrison) when the whole row is sea. Factored once per
+// call: the land does not move within a solve.
+class RowLines {
+  private readonly base: number
+  private readonly runs: { start: number; length: number }[] = []
+  private readonly ring: boolean
+  private readonly lower: number
+  private readonly upper: number
+  private readonly diag: number
+  private readonly rhs: Float64Array
+  private readonly x: Float64Array
+  private readonly cp: Float64Array
+  // The ring's correction (Sherman–Morrison, as mantleField's LineSolver):
+  // B⁻¹u and the denominator, B the ring with its corners taken out.
+  private readonly z: Float64Array = new Float64Array(0)
+  private readonly denom: number = 1
+  private readonly gamma: number = 1
+
+  constructor(land: Uint8Array, row: number, wE: number, wNS: number, b: number) {
+    this.base = row * RX
+    this.lower = -(wE - b)
+    this.upper = -(wE + b)
+    this.diag = 2 * wE + wNS
+    this.rhs = new Float64Array(RX)
+    this.x = new Float64Array(RX)
+    this.cp = new Float64Array(RX)
+    let sea = 0
+    for (let x = 0; x < RX; x++) if (!land[this.base + x]) sea++
+    this.ring = sea === RX
+    if (this.ring) {
+      // A = B + u vᵀ with u = (γ, 0 … 0, upper), v = (1, 0 … 0, lower / γ):
+      // u vᵀ supplies A's corners (row 0's west term at column n − 1, row
+      // n − 1's east term at column 0) and takes γ and upper · lower / γ
+      // off B's first and last diagonal.
+      this.gamma = -this.diag
+      const u = new Float64Array(RX)
+      u[0] = this.gamma
+      u[RX - 1] = this.upper
+      this.z = new Float64Array(RX)
+      this.solveRun(u, this.z, RX, this.diag - this.gamma, this.diag - (this.upper * this.lower) / this.gamma)
+      this.denom = 1 + this.z[0] + (this.lower / this.gamma) * this.z[RX - 1]
+      return
+    }
+    // The runs of sea, each starting after a land cell, in the row's order
+    // from its first land cell.
+    let first = 0
+    while (!land[this.base + first]) first++
+    for (let k = 1; k <= RX; k++) {
+      const x = (first + k) % RX
+      if (land[this.base + x]) continue
+      const start = x
+      let length = 0
+      while (!land[this.base + ((start + length) % RX)]) length++
+      this.runs.push({ start, length })
+      k += length
+    }
+  }
+
+  // One sweep of the row: every run solved against psi's values north and
+  // south of it (the rows above already swept, as point Gauss-Seidel reads
+  // them) and its coasts.
+  relax(psi: Float32Array, up: Int32Array, down: Int32Array, curl: Float32Array, wN: number, wS: number, a: number): void {
+    const { base, rhs, x } = this
+    const at = (k: number): number => base + (k % RX)
+    if (this.ring) {
+      for (let k = 0; k < RX; k++) {
+        const i = base + k
+        rhs[k] = wN * psi[up[i]] + wS * psi[down[i]] - a * curl[i]
+      }
+      this.solveRun(rhs, x, RX, this.diag - this.gamma, this.diag - (this.upper * this.lower) / this.gamma)
+      const factor = (x[0] + (this.lower / this.gamma) * x[RX - 1]) / this.denom
+      for (let k = 0; k < RX; k++) psi[base + k] = x[k] - factor * this.z[k]
+      return
+    }
+    for (const { start, length } of this.runs) {
+      for (let k = 0; k < length; k++) {
+        const i = at(start + k)
+        rhs[k] = wN * psi[up[i]] + wS * psi[down[i]] - a * curl[i]
+      }
+      // The coasts at the two ends, moved to the right-hand side.
+      rhs[0] -= this.lower * psi[at(start + RX - 1)]
+      rhs[length - 1] -= this.upper * psi[at(start + length)]
+      this.solveRun(rhs, x, length, this.diag, this.diag)
+      for (let k = 0; k < length; k++) psi[at(start + k)] = x[k]
+    }
+  }
+
+  // The tridiagonal system of `length` unknowns in the row's coefficients,
+  // the first and last diagonal given (the ring's B changes them), by the
+  // Thomas algorithm; b into out.
+  private solveRun(b: Float64Array, out: Float64Array, length: number, firstDiag: number, lastDiag: number): void {
+    const { cp, lower, upper, diag } = this
+    let pivot = firstDiag
+    if (length === 1) {
+      out[0] = b[0] / pivot
+      return
+    }
+    cp[0] = upper / pivot
+    out[0] = b[0] / pivot
+    for (let k = 1; k < length; k++) {
+      const d = k === length - 1 ? lastDiag : diag
+      pivot = d - lower * cp[k - 1]
+      cp[k] = upper / pivot
+      out[k] = (b[k] - lower * out[k - 1]) / pivot
+    }
+    for (let k = length - 2; k >= 0; k--) out[k] -= cp[k] * out[k + 1]
+  }
 }
 
 // THE OVERTURNING'S SURFACE INFLOW (build step 9 of
@@ -294,7 +473,7 @@ export function carryInland(seaAnomaly: Float32Array, land: Uint8Array, wind: Fl
       const speed = detHypot(u, v)
       if (speed > 0) {
         for (let k = 1; k <= reach; k++) {
-          const j = grid.index(Math.round(gx - (u / speed) * k), Math.round(gy - (v / speed) * k))
+          const j = grid.cellDisplaced(gx, gy, -(u / speed) * k, -(v / speed) * k)
           if (land[j]) continue
           carried = seaAnomaly[j] * detExp(-(k - 1) / CLIMATE_TUNING.currentsInlandDecayCells)
           break
@@ -315,22 +494,34 @@ function latitudeSign(gy: number, equatorOffset: number): number {
 interface Island {
   // Its coast cells (land with an ocean neighbour), which carry its ψ.
   coast: Int32Array
-  // One entry per face to the ocean: the ocean cell's index.
+  // One entry per face to the ocean: the ocean cell's index, and the face's
+  // weight in the balance (wE, wN or wS of its row; 1 on the torus) — with
+  // their sum.
   faces: Int32Array
+  faceWeight: Float64Array
+  weight: number
   // The ocean cells east and west of its cells, with half of β on their row:
   // what the β term leaves after the sum over the island telescopes.
   east: Int32Array
   eastBeta: Float32Array
   west: Int32Array
   westBeta: Float32Array
-  // The wind-stress curl summed over its cells.
+  // The wind-stress curl summed over its cells, each times its area.
   curl: number
+}
+
+// The balance's weights per row (computeOceanCurrents' metric).
+interface CurrentWeights {
+  wE: Float64Array
+  wN: Float64Array
+  wS: Float64Array
+  area: Float64Array
 }
 
 // The landmasses (4-connected, wrapped) except the largest, which stays the
 // reference at ψ = 0. A landmass with no ocean face (the whole world) has no
 // equation and is left out too.
-function findIslands(land: Uint8Array, left: Int32Array, right: Int32Array, up: Int32Array, down: Int32Array, halfBeta: Float32Array, curl: Float32Array): Island[] {
+function findIslands(land: Uint8Array, left: Int32Array, right: Int32Array, up: Int32Array, down: Int32Array, halfBeta: Float64Array, curl: Float32Array, weights: CurrentWeights): Island[] {
   const n = land.length
   const label = new Int32Array(n).fill(-1)
   const members: number[][] = []
@@ -361,23 +552,33 @@ function findIslands(land: Uint8Array, left: Int32Array, right: Int32Array, up: 
     if (id === largest) continue
     const coast: number[] = []
     const faces: number[] = []
+    const faceWeight: number[] = []
     const east: number[] = []
     const eastBeta: number[] = []
     const west: number[] = []
     const westBeta: number[] = []
     let curlSum = 0
+    let weight = 0
     for (const i of members[id]) {
-      curlSum += curl[i]
+      const row = (i / RX) | 0
+      curlSum += weights.area[row] * curl[i]
       const before = faces.length
-      for (const j of [left[i], right[i], up[i], down[i]]) if (!land[j]) faces.push(j)
+      const nbrs = [left[i], right[i], up[i], down[i]]
+      const w = [weights.wE[row], weights.wE[row], weights.wN[row], weights.wS[row]]
+      for (let k = 0; k < 4; k++) {
+        if (land[nbrs[k]]) continue
+        faces.push(nbrs[k])
+        faceWeight.push(w[k])
+        weight += w[k]
+      }
       if (faces.length > before) coast.push(i)
-      const b = halfBeta[(i / RX) | 0]
+      const b = halfBeta[row]
       if (!land[right[i]]) { east.push(right[i]); eastBeta.push(b) }
       if (!land[left[i]]) { west.push(left[i]); westBeta.push(b) }
     }
     if (faces.length === 0) continue
     islands.push({
-      coast: Int32Array.from(coast), faces: Int32Array.from(faces),
+      coast: Int32Array.from(coast), faces: Int32Array.from(faces), faceWeight: Float64Array.from(faceWeight), weight,
       east: Int32Array.from(east), eastBeta: Float32Array.from(eastBeta),
       west: Int32Array.from(west), westBeta: Float32Array.from(westBeta),
       curl: curlSum,
@@ -409,20 +610,30 @@ export function applyOceanSST(temperature: Float32Array, current: Float32Array, 
   }
 
   // Advect SST from the base. Land cells stay at base (never updated), so a
-  // sample near the coast blends in a sane value rather than garbage.
+  // sample near the coast blends in a sane value rather than garbage. The
+  // departure point is the grid's (DomainGrid.tapsAt): upstream along the
+  // current, on the sphere along the great circle, found once per cell.
+  // A pole row's sea is one point: made one value each iteration (a no-op
+  // on the torus).
+  const taps = bilinearTaps(n)
+  for (let gy = 0; gy < RY; gy++) {
+    for (let gx = 0; gx < RX; gx++) {
+      const i = gy * RX + gx
+      if (land[i]) continue
+      grid.tapsAt(gx, gy, -current[i * 2] * CLIMATE_TUNING.currentsAdvectStep, -current[i * 2 + 1] * CLIMATE_TUNING.currentsAdvectStep, taps, i)
+    }
+  }
+  const sea = new Uint8Array(n)
+  for (let i = 0; i < n; i++) sea[i] = land[i] ? 0 : 1
   let sst = temperature.slice()
   for (let iter = 0; iter < CLIMATE_TUNING.currentsAdvectIters; iter++) {
     const next = sst.slice()
-    for (let gy = 0; gy < RY; gy++) {
-      for (let gx = 0; gx < RX; gx++) {
-        const i = gy * RX + gx
-        if (land[i]) continue
-        const u = current[i * 2]
-        const v = current[i * 2 + 1]
-        const advected = grid.sampleBilinear(sst, gx - u * CLIMATE_TUNING.currentsAdvectStep, gy - v * CLIMATE_TUNING.currentsAdvectStep)
-        next[i] = advected * (1 - CLIMATE_TUNING.currentsBaseRelax) + temperature[i] * CLIMATE_TUNING.currentsBaseRelax
-      }
+    for (let i = 0; i < n; i++) {
+      if (land[i]) continue
+      const advected = sampleTaps(sst, taps, i)
+      next[i] = advected * (1 - CLIMATE_TUNING.currentsBaseRelax) + temperature[i] * CLIMATE_TUNING.currentsBaseRelax
     }
+    grid.averagePoleRows(next, sea)
     sst = next
   }
 

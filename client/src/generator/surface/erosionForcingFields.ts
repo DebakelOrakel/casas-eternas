@@ -1,5 +1,5 @@
 import type { Domain, DomainGrid } from '../core/domain'
-import { fineDetailNoise } from '../elevation/ridgedNoise'
+import { fineDetailNoise, fineDetailNoiseOn } from '../elevation/ridgedNoise'
 import { DEFAULT_ENGINE_PARAMS, type ErosionEngineParams, type ErosionForcing } from './erosionEngine'
 import { detExp, detPow } from '../core/detMath'
 
@@ -65,20 +65,23 @@ export interface ErosionControlsV2 {
 }
 
 // Bilinear sample of a coarse field at a point of its grid's domain, cell
-// corners at integers (neither core/field.ts convention), wrapped by the grid.
+// corners at integers (neither core/field.ts convention), wrapped by the grid
+// (DomainGrid.interpolate: on the sphere across the pole to the far
+// meridian). The convention puts a row's value half a cell north of its
+// centre — on the sphere 0.35° of latitude at the climate grid, the
+// forcing's convention on both shapes and kept so.
 export function upsampleAt(coarse: Float32Array, grid: DomainGrid, x: number, y: number): number {
-  const { resX, resY } = grid
-  const u = (x / grid.domain.width) * resX
-  const v = (y / grid.domain.height) * resY
-  const x0 = Math.floor(u)
-  const y0 = Math.floor(v)
-  const fx = u - x0
-  const fy = v - y0
-  const c0 = grid.wrapCol(x0)
-  const c1 = grid.wrapCol(x0 + 1)
-  const r0 = grid.wrapRow(y0) * resX
-  const r1 = grid.wrapRow(y0 + 1) * resX
-  return (coarse[r0 + c0] * (1 - fx) + coarse[r0 + c1] * fx) * (1 - fy) + (coarse[r1 + c0] * (1 - fx) + coarse[r1 + c1] * fx) * fy
+  return grid.interpolate(coarse, (x / grid.domain.width) * grid.resX, (y / grid.domain.height) * grid.resY)
+}
+
+// The lithology lattice's noise at a point of `domain`: on the torus the
+// chart lattice of LITHO_LATTICE_X × LITHO_LATTICE_Y cells over the world,
+// as it was; on the sphere the same octaves on the globe (Domain.noise,
+// ridgedNoise.fineDetailNoiseOn), whose first octave has the lattice's cell —
+// so a band of rock neither stretches toward a pole nor has a seam.
+function lithologyNoiseAt(domain: Domain, x: number, y: number, seed: number): number {
+  if (domain.noise.kind === 'chart') return fineDetailNoise((x * LITHO_LATTICE_X) / domain.width, (y * LITHO_LATTICE_Y) / domain.height, LITHO_LATTICE_X, LITHO_LATTICE_Y, seed)
+  return fineDetailNoiseOn(domain, x, y, seed)
 }
 
 // The coarse inputs' two grids over the frame the forcing is evaluated in.
@@ -99,9 +102,8 @@ export function forcingGrids(coarse: CoarseForcingInputs, domain: Domain): Forci
 // world-space either way, so the same rock band runs under a cell and
 // under the node that sits on it. Writes [uplift, erodibility] into `out`.
 export function forcingAt(coarse: CoarseForcingInputs, grids: ForcingGrids, sigma: number, x: number, y: number, out: Float64Array): void {
-  const { width, height } = grids.forcing.domain
   out[0] = coarse.uplift ? upsampleAt(coarse.uplift, grids.forcing, x, y) : 0
-  out[1] = detExp(sigma * fineDetailNoise((x * LITHO_LATTICE_X) / width, (y * LITHO_LATTICE_Y) / height, LITHO_LATTICE_X, LITHO_LATTICE_Y, coarse.lithoSeed))
+  out[1] = detExp(sigma * lithologyNoiseAt(grids.forcing.domain, x, y, coarse.lithoSeed))
     * (coarse.hardness ? upsampleAt(coarse.hardness, grids.forcing, x, y) : 1)
 }
 

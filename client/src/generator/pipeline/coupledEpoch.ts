@@ -485,12 +485,19 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const precipitation = weather.seasonal.annual
   const climateCellM = (width / CLIMATE_RES_X) * METERS_PER_CELL
   const climateCellM2 = climateCellM * ((height / CLIMATE_RES_Y) * METERS_PER_CELL)
+  // The ocean's area and the land's mean temperature by AREA: a cell counts
+  // its cellArea (1 on the torus, cos φ on the sphere, whose polar rows are
+  // slivers — counted as whole cells they made the sea level's ocean a
+  // fifth too large and the mean land temperature colder by its poles).
   let oceanCells = 0
   let landTempSum = 0
   let landClimateCells = 0
-  for (let i = 0; i < coarseZ.length; i++) {
-    if (coarseZ[i] <= 0) oceanCells++
-    else { landTempSum += weather.temperature[i]; landClimateCells++ }
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    const a = climateGrid.cellArea(gy)
+    for (let i = gy * CLIMATE_RES_X, end = i + CLIMATE_RES_X; i < end; i++) {
+      if (coarseZ[i] <= 0) oceanCells += a
+      else { landTempSum += a * weather.temperature[i]; landClimateCells += a }
+    }
   }
   timing.climate = lap()
   // THE ICE (phase 6, surface/glacial.ts): the epoch's climate as ice on
@@ -705,7 +712,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     if (dv === 0) continue
     const cx = flexGrid.wrapCol(Math.floor((mesh.vx[v] / width) * flexResX))
     const cy = flexGrid.wrapRow(Math.floor((mesh.vy[v] / height) * flexResY))
-    loadM[cy * flexResX + cx] += dv / flexCellM2
+    // Per the cell's own area (flexGrid.cellArea: 1 on the torus).
+    loadM[cy * flexResX + cx] += dv / (flexCellM2 * flexGrid.cellArea(cy))
   }
   const teKm = new Float32Array(flexResX * flexResY)
   for (let cy = 0; cy < flexResY; cy++) {

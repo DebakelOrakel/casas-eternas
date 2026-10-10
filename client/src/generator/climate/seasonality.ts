@@ -14,6 +14,13 @@ export const OCEAN_AMPLITUDE = -1
 // (multi-source BFS, 4-connected, wrapped by the grid). 0 at the coast/ocean,
 // saturating to 1 deep inland. A fully-land or fully-ocean world degenerates
 // gracefully (all 1 / all 0). `grid`: the climate grid.
+//
+// The distance is a length (step 4d5): a step east or west costs the row's
+// cell width (DomainGrid.rowScale — cos φ on the sphere, where a polar
+// row's cells are a few km wide), a step north or south one cell. The queue
+// then corrects a cell's distance when a shorter path reaches it later
+// (label-correcting); on the torus every step costs 1, no cell is ever
+// corrected, and the search is the BFS it was.
 function computeContinentality(elevation: Float32Array, worldWidth: number, worldHeight: number, grid: DomainGrid, dryLand?: Uint8Array): Float32Array {
   const n = RX * RY
   const dist = new Float32Array(n).fill(Infinity)
@@ -33,10 +40,12 @@ function computeContinentality(elevation: Float32Array, worldWidth: number, worl
     const gx = i % RX
     const gy = (i - gx) / RX
     const d = dist[i]
+    const across = grid.rowScale(gy)
     for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
       const j = grid.index(gx + dx, gy + dy)
-      if (d + 1 < dist[j]) {
-        dist[j] = d + 1
+      const step = dy === 0 ? across : 1
+      if (d + step < dist[j]) {
+        dist[j] = d + step
         queue.push(j)
       }
     }

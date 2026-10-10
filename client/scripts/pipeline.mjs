@@ -581,6 +581,349 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
   check('a fold at the pole reads the features there', Number.isFinite(fold) && fold !== 1, `factor ${fold.toFixed(3)}`)
 }
 
+// THE HISTORY ON THE SPHERE (DEC-0035, step 4d5): the coupled epoch —
+// plates, node motion, rebuild and remesh, the erosion engine, the column,
+// the climate per epoch, the ice, the coast, the flexure — on a sphere
+// world. Through the runtime first: the hand-over and the tectonics step's
+// eroding epochs, then the save's mesh read back and checked on the globe.
+test('a sphere world runs its history through the runtime', async () => {
+  const p = await freshPipeline()
+  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere' })
+  await until(() => p.count('rendered') >= 1, { label: 'the first sphere render' })
+  p.dispatch({ type: 'genesisStart' })
+  await until(() => p.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: `${ARCHEAN_EPOCHS} sphere epochs` })
+  p.dispatch({ type: 'genesisStop' })
+  await quiet(p)
+  const handed = p.count('rendered')
+  p.dispatch({ type: 'genesisFinalize' })
+  await until(() => p.count('rendered') > handed, { label: 'the sphere hand-over render' })
+  await quiet(p)
+  const epoch0 = p.last('rendered').epoch
+  const EPOCHS = 7
+  await runEpochs(p, EPOCHS)
+  const r = p.last('rendered')
+  const elevation = new Float32Array(r.elevation)
+  check('the sphere\'s eroding epochs run and render', r.epoch >= epoch0 + EPOCHS && !p.messages.some((m) => m.type === 'error'), `epoch ${epoch0} → ${r.epoch}`)
+  check('its rendered terrain is finite, with land and sea', allFinite(elevation) && elevation.some((v) => v > 0) && elevation.some((v) => v <= 0) && Number.isFinite(r.landFraction), `land ${r.landFraction.toFixed(3)}`)
+  // The seam: the step across x = 0 / W is a step like any other in its row.
+  let seam = 0
+  let inner = 0
+  for (let y = 0; y < r.elevationResY; y++) {
+    const row = elevation.subarray(y * r.elevationResX, (y + 1) * r.elevationResX)
+    seam = Math.max(seam, Math.abs(row[0] - row[row.length - 1]))
+    for (let x = 1; x < row.length; x++) inner = Math.max(inner, Math.abs(row[x] - row[x - 1]))
+  }
+  check('the rendered terrain has no seam at x = 0 / W', seam <= inner, `seam step ${seam.toFixed(3)}, largest inner step ${inner.toFixed(3)}`)
+  const before = p.count('worldData')
+  p.dispatch({ type: 'serializeWorld' })
+  await until(() => p.count('worldData') > before, { label: 'the serialized sphere world' })
+  const saved = p.last('worldData')
+  const [D, MS] = await Promise.all([server.ssrLoadModule('/src/generator/core/domain.ts'), server.ssrLoadModule('/src/generator/mesh/meshSerial.ts')])
+  const z = new Float32Array(saved.mesh.z)
+  const mesh = MS.decodeMesh(D.sphereDomain(W, H), { count: z.length, nodes: new Float32Array(saved.mesh.nodes), connectivity: new Uint8Array(saved.mesh.connectivity) })
+  const errors = mesh.validate()
+  check('the saved mesh is a valid triangulation of the globe (Euler, winding, Delaunay, cells to 4πR²)', errors.length === 0 && allFinite(z), `${mesh.aliveVertices} nodes; ${errors.slice(0, 2).join('; ')}`)
+})
+
+// The coupled epoch on the sphere, on the modules at this harness's size:
+// the checks harness:mesh makes of the torus's history (a valid mesh every
+// epoch, the column's ledger, supply-bounded deposits, a sane climate,
+// determinism, a restore that continues the same bytes), made on the globe
+// — the mesh by Euler's formula and its cells' sum, the rasters by their
+// pole rows and their seam, the climate by its zonal means toward both
+// poles — and a continent laid on the north pole. The pole handling's
+// primitives each against the globe, each with a mutation the check must
+// catch (the pole handling broken on purpose).
+test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-handled, plausible', async () => {
+  const L = (m) => server.ssrLoadModule(m)
+  const [D, AS, AT, FA, CE, MR, CF, WE, FX, MH, HY, RG, BI, CO, GW, MC, MAP, ES] = await Promise.all([
+    L('/src/generator/core/domain.ts'), L('/src/generator/archean/archeanState.ts'), L('/src/generator/archean/archeanStep.ts'),
+    L('/src/generator/archean/finalizeArchean.ts'), L('/src/generator/pipeline/coupledEpoch.ts'), L('/src/generator/mesh/meshRaster.ts'),
+    L('/src/generator/climate/climateField.ts'), L('/src/generator/climate/weather.ts'), L('/src/generator/tectonics/flexure.ts'),
+    L('/src/generator/mesh/meshHydrology.ts'), L('/src/generator/surface/hydrology.ts'), L('/src/generator/surface/riverGraph.ts'),
+    L('/src/generator/climate/biomes.ts'), L('/src/generator/surface/cover.ts'), L('/src/generator/surface/hydrogeology.ts'),
+    L('/src/generator/mesh/meshColumn.ts'), L('/src/generator/core/mapConfig.ts'), L('/src/generator/elevation/elevationScale.ts'),
+  ])
+  const RX = CF.CLIMATE_RES_X, RY = CF.CLIMATE_RES_Y
+  const R = W / (2 * Math.PI)
+  const sphereArea = 4 * Math.PI * R * R
+  // Seed and Archean length chosen so the small sphere keeps a sea with
+  // both poles under it (most at this size end nearly all land, the
+  // disproportion a small world has — see the torus beside it).
+  const world = (shape, seed = 'harness', archeanEpochs = 30) => {
+    const archean = AS.createArcheanSimulation(seed, W, H, 0, shape)
+    for (let e = 0; e < archeanEpochs; e++) AT.archeanStep(archean)
+    return FA.finalizeArchean(archean)
+  }
+  const OPTIONS = { ...CE.HISTORY_DEFAULTS, climateEvery: 1, remeshEvery: 2 }
+  const EPOCHS = 6
+  // V − E + F from the halfedges themselves, and the cells' sum.
+  const globeAudit = (mesh) => {
+    let F = 0
+    for (let t = 0; t < mesh.triSlots; t++) if (mesh.tAlive[t]) F++
+    let area = 0
+    for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) area += mesh.voronoiArea(v)
+    return { euler: mesh.aliveVertices - (3 * F) / 2 + F, area: area / sphereArea - 1, errors: mesh.validate() }
+  }
+  const run = async (sim, terrain, epochs) => {
+    const r = { valid: true, worstEuler: 2, worstArea: 0, finite: true, ledger: 0, column: 0, bounded: true, climate: true, trace: [], ms: 0 }
+    for (let e = 0; e < epochs; e++) {
+      const t0 = performance.now()
+      const st = await CE.stepCoupledEpoch(sim, terrain, OPTIONS)
+      r.ms += performance.now() - t0
+      const a = globeAudit(terrain.mesh)
+      if (a.errors.length > 0) r.valid = false
+      if (a.euler !== 2) r.worstEuler = a.euler
+      r.worstArea = Math.max(r.worstArea, Math.abs(a.area))
+      for (const f of [terrain.z, terrain.baseline, terrain.column.data, terrain.ice, terrain.sedimentFlux]) if (!allFinite(f)) r.finite = false
+      r.ledger += st.depositedM3 + st.screeM3 - st.reErodedM3 + st.iceCoastColumnM3
+      r.column = st.columnVolumeM3
+      if (st.depositedM3 + st.exportedFluxM3 > st.erodedFluxM3 * 1.001 + 1) r.bounded = false
+      if (!Number.isFinite(st.meanLandTempC) || st.meanLandTempC < -60 || st.meanLandTempC > 60 || st.iceVolumeKm3 < 0 || st.seaLevelM > 0) r.climate = false
+      r.trace.push(`${st.nodesAfter}n ${st.meanLandTempC.toFixed(1)}°C ${(performance.now() - t0).toFixed(0)}ms`)
+    }
+    return r
+  }
+
+  // (1) The history on a sphere world, beside the torus of the same seed.
+  const sim = world('sphere')
+  const terrain = CE.createCoupledTerrain(sim, CE.HISTORY_DEFAULTS.budget)
+  const s = await run(sim, terrain, EPOCHS)
+  const simT = world('torus')
+  const t = await run(simT, CE.createCoupledTerrain(simT, CE.HISTORY_DEFAULTS.budget), EPOCHS)
+  check(`${EPOCHS} coupled epochs on the sphere keep a valid globe (V − E + F = 2, wound one way, Delaunay, cells sum to 4πR²)`, s.valid && s.worstEuler === 2 && s.worstArea < 1e-9, `cells off 4πR² by ${s.worstArea.toExponential(1)}`)
+  check('every height, baseline, column value, ice thickness and flux stays finite', s.finite)
+  console.log(`        sphere ${s.trace.join(' | ')}`)
+  console.log(`        torus  ${t.trace.join(' | ')}`)
+  check(`the column's ledger closes on the sphere (${(s.ledger / 1e9).toFixed(1)} vs ${(s.column / 1e9).toFixed(1)} km³; the torus ${(t.ledger / 1e9).toFixed(1)} vs ${(t.column / 1e9).toFixed(1)})`, s.column > 0 && Math.abs(s.ledger - s.column) <= 0.15 * Math.max(s.ledger, s.column))
+  check('every epoch\'s deposits are bounded by its supply', s.bounded && t.bounded)
+  check('every epoch has a sane climate (land temperature, ice ≥ 0, sea level ≤ 0)', s.climate)
+  {
+    // The temperature product may be negative (a layer laid down below
+    // freezing); so may the craton product, on both shapes: a deposit over
+    // a cell with no crust carries the oldness field's −1 (found 2026-10-10,
+    // step 4d5, not changed — this world meets it on the torus too).
+    let negative = 0
+    const d = terrain.column.data
+    for (let v = 0; v < terrain.mesh.vertexSlots; v++) {
+      if (!terrain.mesh.vAlive[v]) continue
+      for (let k = 0; k < MC.COLUMN_DEPTH; k++) if (k % MC.COLUMN_VALUES !== 4 && k % MC.COLUMN_VALUES !== 2 && d[v * MC.COLUMN_DEPTH + k] < 0) negative++
+    }
+    check('no thickness, hardness or precipitation value of a layer goes negative', negative === 0, `${negative}`)
+  }
+
+  // (2) The rasters of the epoch's terrain: no seam, finite; the climate's.
+  const seamOf = (field, rx, ry) => {
+    let seam = 0, inner = 0
+    for (let y = 0; y < ry; y++) {
+      const row = field.subarray(y * rx, (y + 1) * rx)
+      seam = Math.max(seam, Math.abs(row[0] - row[rx - 1]))
+      for (let x = 1; x < rx; x++) inner = Math.max(inner, Math.abs(row[x] - row[x - 1]))
+    }
+    return { seam, inner }
+  }
+  const weather = terrain.weather.result
+  const coarseZ = MR.rasteriseNodeField(terrain.mesh, terrain.preErosionZ, RX, RY)
+  const fineZ = MR.rasteriseNodeField(terrain.mesh, terrain.z, W, H)
+  const seams = { z: seamOf(fineZ, W, H), temperature: seamOf(weather.temperature, RX, RY), precipitation: seamOf(weather.seasonal.annual, RX, RY) }
+  check('the rasterised terrain and the epoch\'s temperature and precipitation have no seam at x = 0 / W', Object.values(seams).every((q) => q.seam <= q.inner), Object.entries(seams).map(([k, q]) => `${k} ${q.seam.toFixed(2)} ≤ ${q.inner.toFixed(2)}`).join(', '))
+  check('the epoch\'s climate is finite', [weather.temperature, weather.seasonal.annual, weather.currents, weather.seasonalAmplitude, weather.wind].every(allFinite))
+  // Temperature by latitude, area-weighted: it falls from the equator toward
+  // BOTH poles (the sphere's y is colatitude; the climate reads it so).
+  const grid = sim.domain.grid(RX, RY)
+  const band = (lo, hi, north) => {
+    let sum = 0, area = 0
+    for (let gy = 0; gy < RY; gy++) {
+      const lat = 90 - ((gy + 0.5) / RY) * 180
+      if ((north ? lat : -lat) < lo || (north ? lat : -lat) >= hi) continue
+      for (let gx = 0; gx < RX; gx++) { sum += weather.temperature[gy * RX + gx] * grid.cellArea(gy); area += grid.cellArea(gy) }
+    }
+    return sum / area
+  }
+  const bands = [true, false].map((north) => [band(0, 20, north), band(40, 60, north), band(70, 90, north)])
+  check('the temperature falls from the equator toward both poles', bands.every(([eq, mid, pole]) => eq > mid && mid > pole), bands.map((b, i) => `${i === 0 ? 'N' : 'S'} ${b.map((v) => v.toFixed(1)).join(' > ')} °C`).join('; '))
+  const latitudeTrue = Array.from({ length: RY }, (_, gy) => Math.abs(CF.latitudeAt(gy) - sim.domain.latitude((gy + 0.5) / RY)) + Math.abs(CF.latitudeAt(gy) - Math.abs(90 - ((gy + 0.5) / RY) * 180) / 90)).every((d) => d < 1e-12)
+  check('the climate\'s latitude per row is the sphere\'s own (the Domain\'s, and |φ| / 90° of the row centre)', latitudeTrue)
+
+  // (3) The pole handling, each on its primitive, each with a mutation.
+  // A grid that breaks one method on purpose (the domain otherwise the same).
+  const broken = (domain, patch) => ({ ...domain, scaledTo: (w, h) => broken(domain.scaledTo(w, h), patch), grid: (rx, ry) => {
+    const g = domain.grid(rx, ry)
+    return new Proxy(g, { get: (target, key) => (key in patch ? (...args) => patch[key](target, ...args) : typeof target[key] === 'function' ? target[key].bind(target) : target[key]) })
+  } })
+  // (a) No star at a pole: the sea of each pole row is one value (the SST
+  // after the currents carry it), and the pole rows of a field the stage
+  // smooths (the flexure's deflection) too.
+  const climateDomain = sim.domain.scaledTo(RX, RY)
+  const starAt = (temperature, z) => {
+    let spread = 0
+    for (const row of [0, RY - 1]) {
+      let lo = Infinity, hi = -Infinity
+      for (let gx = 0; gx < RX; gx++) if (z[row * RX + gx] <= 0) { lo = Math.min(lo, temperature[row * RX + gx]); hi = Math.max(hi, temperature[row * RX + gx]) }
+      if (hi >= lo) spread = Math.max(spread, hi - lo)
+    }
+    return spread
+  }
+  const params = WE.defaultWeatherParams()
+  const sea = starAt(WE.computeWeather(coarseZ, climateDomain, params).temperature, coarseZ)
+  const seaBroken = starAt(WE.computeWeather(coarseZ, broken(climateDomain, { averagePoleRows: () => {} }), params).temperature, coarseZ)
+  check('the sea at each pole is one temperature (no star); without the pole averaging it is not', sea === 0 && seaBroken > 0, `spread ${sea} °C; mutated ${seaBroken.toFixed(3)} °C`)
+  // (b) A departure along the globe: tapsAt reaches the point its offset's
+  // length away, east-west near a pole too, and across it. Checked against
+  // the Domain's own distance from the cell centre to the sampled point.
+  const departure = (g) => {
+    let worst = 0
+    const taps = D.bilinearTaps(1)
+    const cell = sim.domain.width / RX
+    for (const gy of [0, 1, 3, 10, 64, 120, 127]) {
+      for (const [dx, dy] of [[3, 0], [0, -2], [-2, 1.5], [0, 4]]) {
+        g.tapsAt(17, gy, dx, dy, taps, 0)
+        // Where the taps point: the cell centres they weigh, mean of the
+        // two rows by ty, read back as a point (good to a cell's size).
+        const at = (k) => { const c = taps.cells[k]; return { x: ((c % RX) + 0.5) * cell, y: (Math.floor(c / RX) + 0.5) * cell } }
+        const p0 = at(0), p3 = at(3)
+        const mid = { x: 0, y: 0 }
+        const dd = { x: 0, y: 0 }
+        sim.domain.delta(p3.x, p3.y, p0.x, p0.y, dd)
+        sim.domain.advance(p0.x, p0.y, dd.x / 2, dd.y / 2, mid)
+        const reached = Math.sqrt(sim.domain.distanceSq((17 + 0.5) * cell, (gy + 0.5) * cell, mid.x, mid.y)) / cell
+        worst = Math.max(worst, Math.abs(reached - Math.hypot(dx, dy)))
+      }
+    }
+    return worst
+  }
+  const sphereGrid = sim.domain.grid(RX, RY)
+  const chartStep = { tapsAt: (g, gx, gy, dx, dy, out, at) => D.torusDomain(sim.domain.width, sim.domain.height).grid(RX, RY).tapsAt(gx, gy, dx, dy, out, at) }
+  const dep = departure(sphereGrid)
+  const depBroken = departure(broken(sim.domain, chartStep).grid(RX, RY))
+  check('an advection departs along the globe, its offset\'s length away, near and across a pole; stepping the chart does not', dep < 1.5 && depBroken > 3, `worst ${dep.toFixed(2)} cells off (to the taps' cell size); chart-stepped ${depBroken.toFixed(1)}`)
+  // (c) The flexure answers a load with its weight, wherever it lies: the
+  // deflection's integral over the globe is the compensated load's, a load
+  // at the equator, at 70° and at the pole alike (∫ G dA = 1); its pole
+  // rows one value. Without the area weights a polar load's answer grows.
+  const flexX = W / 4, flexY = H / 4
+  const TT = await L('/src/generator/tectonics/tectonicsTuneParams.ts')
+  const compensation = (TT.TECTONICS_TUNING.flexureCrustDensity / TT.TECTONICS_TUNING.flexureMantleDensity) * TT.TECTONICS_TUNING.flexureDeflectionScale
+  const flexGrid = sim.domain.grid(flexX, flexY)
+  const flexIntegral = (domain, row) => {
+    const load = new Float32Array(flexX * flexY)
+    const te = new Float32Array(flexX * flexY).fill(30)
+    load[row * flexX + 5] = 1
+    const w = FX.flexuralResponse(load, te, domain.grid(flexX, flexY), 31.2)
+    let integral = 0
+    for (let y = 0; y < flexY; y++) for (let x = 0; x < flexX; x++) integral += w[y * flexX + x] * flexGrid.cellArea(y)
+    return { ratio: -integral / (compensation * flexGrid.cellArea(row)), w }
+  }
+  const ratios = [flexY >> 1, Math.round(flexY * 0.11), 0].map((row) => flexIntegral(sim.domain, row))
+  const brokenRatio = flexIntegral(broken(sim.domain, { cellArea: () => 1 }), 0).ratio
+  const poleFlat = poleRowsConstant(ratios[2].w, flexX, flexY)
+  const spreadRatios = ratios.map((q) => q.ratio)
+  check('a load\'s deflection integrates to its compensated weight at the equator, at 70° and at the pole; without the area weights not', spreadRatios.every((q) => Math.abs(q - 1) < 1e-4) && poleFlat && Math.abs(brokenRatio - 1) > 0.1, `∫w dA over the compensated load: ${spreadRatios.map((q) => q.toFixed(6)).join(', ')}; area weights off, a polar load: ${brokenRatio.toFixed(3)}`)
+  // (d) The smoothing in a length: the climate's box blur spreads a point
+  // as far east-west as north-south at 60° (in distance on the globe); in
+  // cells it would be half as far.
+  const PR = await L('/src/generator/climate/pressure.ts')
+  const spreadOf = (g) => {
+    const f = new Float32Array(RX * RY)
+    const gy = Math.round(RY / 6 - 0.5)
+    f[gy * RX + 100] = 1
+    PR.blur(f, 3, g)
+    let ew = 0, ns = 0, m = 0
+    const s0 = sphereGrid.rowScale(gy)
+    for (let y = 0; y < RY; y++) for (let x = 0; x < RX; x++) {
+      const v = f[y * RX + x] * sphereGrid.cellArea(y)
+      let dx = x - 100; if (dx > RX / 2) dx -= RX; if (dx < -RX / 2) dx += RX
+      ew += v * (dx * s0) ** 2; ns += v * (y - gy) ** 2; m += v
+    }
+    return Math.sqrt(ew / m) / Math.sqrt(ns / m)
+  }
+  const iso = spreadOf(sphereGrid)
+  const isoBroken = spreadOf(broken(sim.domain, { rowScale: () => 1 }).grid(RX, RY))
+  check('the climate\'s blur spreads as far east-west as north-south at 60°; counting cells it does not', Math.abs(iso - 1) < 0.15 && isoBroken < 0.7, `east-west / north-south ${iso.toFixed(2)}; in cells ${isoBroken.toFixed(2)}`)
+
+  // (4) Determinism and a restore on the sphere.
+  const simB = world('sphere')
+  const terrainB = CE.createCoupledTerrain(simB, CE.HISTORY_DEFAULTS.budget)
+  for (let e = 0; e < EPOCHS; e++) await CE.stepCoupledEpoch(simB, terrainB, OPTIONS)
+  const encA = CE.encodeCoupledTerrain(terrain), encB = CE.encodeCoupledTerrain(terrainB)
+  const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
+  check('the same sphere history gives the same terrain and column bytes', same(encA.z, encB.z) && same(encA.nodes, encB.nodes) && same(encA.column, encB.column) && JSON.stringify(sim.climateHistory) === JSON.stringify(simB.climateHistory))
+  const restored = CE.decodeCoupledTerrain(simB, encB)
+  await CE.stepCoupledEpoch(sim, terrain, OPTIONS)
+  await CE.stepCoupledEpoch(simB, restored, OPTIONS)
+  const nextA = CE.encodeCoupledTerrain(terrain), nextB = CE.encodeCoupledTerrain(restored)
+  check('a sphere terrain restored from its bytes continues identically', same(nextA.z, nextB.z) && same(nextA.column, nextB.column))
+
+  // (5) The hydrogeology on the sphere's history terrain (as harness:mesh
+  // runs it on the torus's): its invariants hold.
+  {
+    const sub = MH.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
+    const rz = MR.rasteriseNodeField(terrain.mesh, terrain.z, RX, RY)
+    const wx = WE.computeWeather(rz, climateDomain, params)
+    const precip = wx.seasonal.annual
+    const discharge = HY.accumulateDischargeOn(sub, terrain.z, precip, RX, RY)
+    const lakes = HY.computeLakesOn(sub, discharge, terrain.z, wx.temperature, precip, RX, RY)
+    const threshold = HY.channelThreshold(HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY), HY.meanLandRunoff(precip, rz, climateDomain, RX, RY))
+    const regime = HY.accumulateRegimeInputsOn(sub, terrain.z, wx.temperature, precip, wx.seasonal.index, RX, RY)
+    const graph = RG.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: HY.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY) })
+    const biomes = BI.computeBiomes(wx.temperature, precip, wx.seasonalAmplitude, wx.seasonal.index, rz, RX, RY)
+    const ground = GW.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, climateResX: RX, climateResY: RY, precipitation: precip, temperature: wx.temperature, monsoonIndex: wx.seasonal.index, cover: CO.coverField(biomes, true), regime, discharge, cellM: MAP.METERS_PER_CELL })
+    const bad = Object.entries(GW.hydrogeologyInvariants(ground, graph, terrain.z)).filter(([, n]) => n > 0)
+    check(`the hydrogeology holds its invariants on the sphere (${ground.springs.length} springs, ${graph.reaches.length} reaches)`, bad.length === 0 && graph.reaches.length > 0, bad.map(([k, n]) => `${k}:${n}`).join(' '))
+  }
+
+  // (6) Land at a pole: the largest raft turned on the globe so its first
+  // blob sits on the north pole, then the history. The terrain starts with
+  // land there, the epochs keep the globe valid and finite, and the pole's
+  // land is cold.
+  {
+    const simP = world('sphere', 'polar-continent', 60)
+    const frame = D.globeFrame()
+    const raft = simP.rafts.reduce((best, r) => (r.blobs.length > best.blobs.length ? r : best))
+    simP.domain.noise.frame(raft.blobs[0].x, raft.blobs[0].y, frame)
+    const u = [frame.px / R, frame.py / R, frame.pz / R]
+    // The rotation taking u to the north pole (0, 0, 1): about u × k by acos(u_z).
+    const k = [u[1], -u[0], 0]
+    const kl = Math.hypot(k[0], k[1]) || 1
+    const axis = k.map((c) => c / kl)
+    const angle = Math.acos(Math.max(-1, Math.min(1, u[2])))
+    const turn = (p) => {
+      const c = Math.cos(angle), sn = Math.sin(angle)
+      const kv = axis[0] * p[0] + axis[1] * p[1] + axis[2] * p[2]
+      const kx = [axis[1] * p[2] - axis[2] * p[1], axis[2] * p[0] - axis[0] * p[2], axis[0] * p[1] - axis[1] * p[0]]
+      return [0, 1, 2].map((i) => p[i] * c + kx[i] * sn + axis[i] * kv * (1 - c))
+    }
+    const out = { x: 0, y: 0 }
+    for (const b of raft.blobs) {
+      simP.domain.noise.frame(b.x, b.y, frame)
+      const q = turn([frame.px, frame.py, frame.pz])
+      simP.domain.noise.locate(q[0], q[1], q[2], out)
+      b.x = out.x
+      b.y = out.y
+    }
+    const terrainP = CE.createCoupledTerrain(simP, CE.HISTORY_DEFAULTS.budget)
+    const polarLand = (tr) => {
+      let land = 0, cap = 0
+      for (let v = 0; v < tr.mesh.vertexSlots; v++) {
+        if (!tr.mesh.vAlive[v] || tr.mesh.vy[v] > H / 18) continue
+        cap += tr.areas[v]
+        if (tr.z[v] > 0) land += tr.areas[v]
+      }
+      return land / cap
+    }
+    const landStart = polarLand(terrainP)
+    const rp = await run(simP, terrainP, 3)
+    const wp = terrainP.weather.result
+    const cz = MR.rasteriseNodeField(terrainP.mesh, terrainP.preErosionZ, RX, RY)
+    let poleLandT = 0, poleLand = 0
+    for (let gx = 0; gx < RX; gx++) if (cz[gx] > 0) { poleLandT += wp.temperature[gx]; poleLand++ }
+    check('a continent on the north pole: land there from the start, the epochs valid and finite, the pole\'s land cold',
+      landStart > 0.5 && rp.valid && rp.worstEuler === 2 && rp.finite && poleLand > 0 && poleLandT / poleLand < 0,
+      `land over 80°N ${(100 * landStart).toFixed(0)} % → ${(100 * polarLand(terrainP)).toFixed(0)} %; ${poleLand} land cells in the pole row at ${(poleLandT / Math.max(1, poleLand)).toFixed(1)} °C`)
+  }
+  check(`an epoch on the sphere at this size costs ${(s.ms / EPOCHS).toFixed(0)} ms (the torus ${(t.ms / EPOCHS).toFixed(0)} ms)`, s.ms / EPOCHS < 20000)
+})
+
 // The sphere's coordinate noise (DEC-0035, fork 1): the warp, the ridged and
 // fine noise and the hypsometry are sampled at the point's place on the
 // globe (Domain.noise), not at its chart coordinates. Checked on the noise

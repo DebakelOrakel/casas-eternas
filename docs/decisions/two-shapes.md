@@ -185,6 +185,97 @@ models' usual remedy.
 
 ## Status
 
+2026-10-10: step 4d5 BUILT — the coupled epoch runs on the sphere: the
+plates, the nodes' motion, the rebuild and remesh, the erosion engine, the
+column, the climate of the epoch, the ice, the coast and the flexure, and
+the history loop through the runtime (the tectonics step's epochs); step 2
+stays locked. THE RASTERS BY FORK 5 (a): a raster stage now measures in
+lengths. New on `DomainGrid`: `tapsAt` (a semi-Lagrangian departure from a
+cell's centre by an offset in equator cells — on the sphere along the great
+circle, so an east-west step near a pole is its length and a step across a
+pole lands on the far side; with `sampleTaps`, found once per cell),
+`cellDisplaced` (the cell such a step reaches), `interpolate` (the bilinear
+form the forcing and the flexure readers were written in, across the pole on
+the sphere) and a mask on `averagePoleRows`. Per stage: the temperature's
+plateau blur (`pressure.blur`) takes as many of a row's cells east-west as
+span its radius, and its pole rows are one value; the ocean currents solve
+Stommel's equation in the grid's finite-volume metric (east-west 1 / cos φ,
+the row edges, the cell areas; the island rule with the same face weights;
+the curl of the wind on the globe), the rows from 45° on relaxed as LINES
+(each run of sea a tridiagonal system against its coasts, a row all sea as
+a ring), as the mantle's flow solve does — point Gauss-Seidel left a pole
+row near its start; the SST and the rain advect from departures on the
+globe, the sea of a pole row averaged each iteration; the air carries the
+sea's anomaly inland along the globe; the continentality is a distance in
+length (a label-correcting BFS); the monsoon's gradient is taken over one
+equator cell east-west, the polar filter (a pole row's neighbours are a km
+apart, and a coast the coarse raster resolves by chance read 80× as
+steep); the orographic rain reads its points through `displace` and
+`advance`. The latitude needs no change: the torus's linear row mapping IS
+the sphere's |φ| / 90° at the row centre (`harness:pipeline` checks it row
+by row). No stage needed sub-steps: the climate's schemes are
+semi-Lagrangian or implicit, and the engine's explicit kernels run on the
+mesh, which has no pole. The flexure blurs east-west with σ / cos φ of a
+row's own cells (folded onto the row once wider than it) and north-south
+with each source row's load spread by the rows' areas and normalised at
+the source, so ∫ G dA = 1 wherever a load lies (equator, 70° and pole to
+1e-6; area weights off, a polar load answered 5×); the load is binned per
+cell area; its pole rows are one value. The epoch's sea level and mean land
+temperature are by area. THE REST: `upsampleAt` and `deflectionAt` read
+through `interpolate` (the forcing's half-cell convention kept on both
+shapes: 0.35° of latitude on the sphere); the lithology lattice is the
+globe noise's on the sphere; the coast's offsets go through `delta` (until
+now the torus's minimum image by hand) and its fetch marches a great
+circle. FRAME ON THE GLOBE, decided by measurement against the exact
+sphere on a real sphere world at budget 4: the erosion index's cotangent
+facets are the exact Voronoi edges to a median 1.4e-5 and a p99 1.1e-3 on
+2048 × 1024 (1.3e-3 and 9.7e-3 on 256 × 128) — kept, since an edge's two
+slots read one facet (mass conserved either way) and the areas are exact.
+The sampler's vertex normals were not, for a different reason than
+frame(): a triangle's normal found in its first corner's frame was added
+unturned at the other corners — up to 0.6° off above 80°, p99 2 % of the
+slope over 3°; now carried by `Domain.transport`, ≤ 0.002°. PROOF:
+`harness:pipeline` runs a sphere world's Archean, hand-over and eroding
+epochs through the runtime (finite, land and sea, no seam, the saved mesh
+a valid globe), and on the modules at 256 × 128 six epochs beside the torus
+of the same seed: the globe valid every epoch (V − E + F = 2, Delaunay,
+cells 3e-15 off 4πR²), everything finite, the column's ledger closed
+(306 036 against 291 225 km³), deposits bounded by supply,
+a sane climate, temperature falling to both poles (N 24.3 > 8.6 > −12.6 °C,
+S 24.7 > 8.5 > −12.2 by area), no seam in z, temperature or rain, the
+same bytes twice, a restore that continues them, the hydrogeology's
+invariants (390 springs), a continent turned onto the north pole (all land
+above 80°N, valid and finite, −33 °C); and four primitives with a mutation
+each — the sea of a pole row one temperature (unaveraged 1.2 °C apart), a
+departure its length away near and across a pole (stepping the chart 124
+cells off), the flexure's integral above, the blur as wide east-west as
+north-south at 60° (counting cells 0.5). `harness:mesh` [1g] checks the
+facets and the normals (with the transport left out: 0.74° against
+0.001°). At 2048 × 1024 (seed `harness`, 100 Archean epochs, 12 epochs at
+the history's defaults, Node, one thread): the mesh valid, no seam, land
+9.7–11 %, the bands N 26.9 > 8.9 > −13.0 °C. COST, the same run: an epoch
+1.47 s on the sphere against 1.33 on the torus — 1.10×, not the 0.65–0.8
+the area promised: the nodes are 0.83× (58.7 k against 70.6 k mean; the
+density follows land and coast, and the sphere has 0.75× the torus's land
+area, not 0.64×), a node costs 1.33× (25.0 against 18.8 µs), and the
+climate and flexure rasters keep their cell count. Per epoch, torus /
+sphere, ms: rebuild and remesh 503 / 440, erosion 168 / 164, climate (every
+third epoch) 130 / 140, flexure 67 / 110, baseline 114 / 156, forcing 93 /
+132, tectonics 50 / 91, membership 10 / 36, lakes 85 / 89, ice 93 / 83,
+coast 16 / 24 — the sphere's extra is its trig (the Domain's distance and
+advance, the 3D noise), not the mesh. Found, not changed: the column's
+craton product goes negative where a deposit lies over no crust (the
+oldness field's −1 enters it; both shapes); on a world with almost no sea
+the ice's sea level runs away (the ice over a vanishing ocean's area, to
+−18 km on a small sphere — the small spheres are 80–100 % land); the
+history's first remesh doubles the build's node count (35 k → 66 k on the
+torus, 27 k → 59 k on the sphere). Not reached yet: the stages after the
+history — the hydrology step's raster routing refuses a row table on the
+sphere (`flowRouting.largestWaterComponent`), and the climate step's
+refinement (the pressure wind's gradients, the basin rows) is not
+pole-filtered. Golden harness byte-identical; the mesh harness's torus
+build hash unchanged.
+
 2026-10-10: step 4d4 BUILT — the adaptive mesh runs on the sphere
 (the mesh itself; its erosion, flexure and climate are the coupled epoch's,
 4d5, and step 2 stays locked). ONE TRIANGULATION: `PeriodicTriangulation`

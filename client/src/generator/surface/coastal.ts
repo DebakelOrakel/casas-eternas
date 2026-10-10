@@ -106,6 +106,11 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
 
   // THE SHORE: land nodes with a sea neighbour; the landward normal from
   // the sea neighbours' mean offset.
+  // Offsets between neighbours through the Domain (step 4d5; until then the
+  // torus's minimum image by hand, the same numbers there): each in v's own
+  // frame, the frame its normal and its wind are read in.
+  const domain = mesh.domain
+  const offset = { x: 0, y: 0 }
   const isShore = new Uint8Array(slots)
   const shoreList: number[] = []
   const normalX = new Float32Array(slots)
@@ -120,8 +125,10 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
       const u = mesh.to(out[k])
       if (z[u] > SEA_LEVEL) continue
       seaCount++
-      nx += mesh.vx[v] - mesh.vx[u] > width / 2 ? mesh.vx[v] - mesh.vx[u] - width : mesh.vx[v] - mesh.vx[u] < -width / 2 ? mesh.vx[v] - mesh.vx[u] + width : mesh.vx[v] - mesh.vx[u]
-      ny += mesh.vy[v] - mesh.vy[u] > height / 2 ? mesh.vy[v] - mesh.vy[u] - height : mesh.vy[v] - mesh.vy[u] < -height / 2 ? mesh.vy[v] - mesh.vy[u] + height : mesh.vy[v] - mesh.vy[u]
+      // From the sea neighbour to v: minus the offset from v to it.
+      domain.delta(mesh.vx[u], mesh.vy[u], mesh.vx[v], mesh.vy[v], offset)
+      nx -= offset.x
+      ny -= offset.y
     }
     if (seaCount === 0) continue
     isShore[v] = 1
@@ -135,8 +142,17 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
 
   // EXPOSURE: the wind at the climate cell, the fetch upwind over the sea
   // on the climate raster (F5's rule), speed² × fetch, to the p90.
+  // The march upwind is a walk over the climate raster in its own cells
+  // (`cells`, the domain one climate cell per unit): each step one cell's
+  // length along the wind, the direction carried along with the point
+  // (Domain.transport) — on the sphere a great circle that steps across a
+  // pole, on the torus the straight line it was (displace adds as `+=`
+  // did, transport keeps the two numbers).
   const fetchCap = Math.max(1, Math.round((T.coastFetchCapKm * 1000) / ((width / RX) * cellM)))
-  const climate = mesh.domain.grid(RX, RY)
+  const climate = domain.grid(RX, RY)
+  const cells = domain.scaledTo(RX, RY)
+  const at = { x: 0, y: 0 }
+  const heading = { x: 0, y: 0 }
   const windU = new Float32Array(slots)
   const windV = new Float32Array(slots)
   for (let i = 0; i < shore.length; i++) {
@@ -150,17 +166,17 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
     windV[v] = w
     const speed = detHypot(u, w)
     if (speed <= 1e-6) continue
-    const dx = -u / speed
-    const dy = -w / speed
+    heading.x = -u / speed
+    heading.y = -w / speed
     let fetch = 0
     let px = gx + 0.5
     let py = gy + 0.5
     for (let k = 0; k < fetchCap; k++) {
-      px += dx
-      py += dy
-      const cx = climate.wrapCol(Math.floor(px))
-      const cy = climate.wrapRow(Math.floor(py))
-      if (coarseZ[cy * RX + cx] > SEA_LEVEL) break
+      cells.displace(px, py, heading.x, heading.y, at)
+      cells.transport(heading.x, heading.y, px, py, at.x, at.y, heading)
+      px = at.x
+      py = at.y
+      if (coarseZ[climate.index(Math.floor(px), Math.floor(py))] > SEA_LEVEL) break
       fetch++
     }
     exposure[v] = speed * speed * (fetch / fetchCap)
@@ -221,12 +237,9 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
     for (let k = 0; k < n; k++) {
       const c = mesh.to(out[k])
       if (!isShore[c]) continue
-      let dx = mesh.vx[c] - mesh.vx[v]
-      let dy = mesh.vy[c] - mesh.vy[v]
-      if (dx > width / 2) dx -= width
-      if (dx < -width / 2) dx += width
-      if (dy > height / 2) dy -= height
-      if (dy < -height / 2) dy += height
+      domain.delta(mesh.vx[c], mesh.vy[c], mesh.vx[v], mesh.vy[v], offset)
+      const dx = offset.x
+      const dy = offset.y
       const len = detHypot(dx, dy) || 1
       const dot = (dx * ax + dy * ay) / (len * aLen)
       if (dot > bestDot) { bestDot = dot; best = c }

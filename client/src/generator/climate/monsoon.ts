@@ -47,12 +47,25 @@ function seasonalTemperature(annual: Float32Array, amplitude: Float32Array, equa
 // anomaly, so near a coast it points from cool ocean to hot summer land (onshore, wet)
 // and reverses in winter (offshore, dry). Interleaved [u, v] like computeWind.
 // `grid`: the climate grid.
+//
+// The gradient is per LENGTH, over one equator cell each way (step 4d5):
+// east-west a row takes the difference `reach` of its own cells apart, as
+// many as span an equator cell (1 / rowScale, so cos φ on the sphere), and
+// divides by the length they span. Toward a pole a row's cells are a few
+// km wide, and the difference of two neighbours there would read a coast
+// the coarse raster resolves only by chance as a front 80 times as steep
+// — the polar filter of fork 5 of DEC-0035. North-south the grid steps
+// across a pole. On the torus the reach is 1 and the length 1: the
+// difference of the two neighbours over 2, as it was.
 function computeMonsoonWind(base: Float32Array, seasonalTemp: Float32Array, grid: DomainGrid): Float32Array {
   const out = new Float32Array(base.length)
   for (let gy = 0; gy < RY; gy++) {
+    const s = grid.rowScale(gy)
+    const reach = Math.min((RX >> 1) - 1, Math.max(1, Math.round(1 / s)))
+    const gradE = 1 / (reach * s)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
-      const dTdx = (seasonalTemp[grid.index(gx + 1, gy)] - seasonalTemp[grid.index(gx - 1, gy)]) / 2
+      const dTdx = ((seasonalTemp[grid.index(gx + reach, gy)] - seasonalTemp[grid.index(gx - reach, gy)]) / 2) * gradE
       const dTdy = (seasonalTemp[grid.index(gx, gy + 1)] - seasonalTemp[grid.index(gx, gy - 1)]) / 2
       out[i * 2] = base[i * 2] + CLIMATE_TUNING.monsoonWindStrength * dTdx
       out[i * 2 + 1] = base[i * 2 + 1] + CLIMATE_TUNING.monsoonWindStrength * dTdy

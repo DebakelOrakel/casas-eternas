@@ -1622,6 +1622,68 @@ console.log('\n[1g] the mesh on the sphere')
   const a0 = audit(mesh)
   check(`sphere: the built mesh is a Delaunay triangulation of the sphere (${mesh.aliveVertices} nodes, ${sphereMs.toFixed(0)} ms)`, sound(mesh, a0), sayAudit(a0))
   {
+    // frame() on the globe is the log map, close to O(ℓ²/R²) (step 4d5).
+    // The erosion index's facets from its cotangents against the exact
+    // Voronoi edge (the arc between the two circumcentres), and the
+    // sampler's vertex normals against each triangle seen from each of its
+    // corners — with a mutation: the sampler without carrying a normal from
+    // one corner's frame to the next is off near the poles.
+    const f = new Float64Array(6)
+    const cotAt = (e) => {
+      const t = mesh.triangleOf(e), i = e - 3 * t
+      mesh.frame(t, f)
+      const ux = f[(2 * i) % 6] - f[(2 * i + 4) % 6], uy = f[(2 * i + 1) % 6] - f[(2 * i + 5) % 6]
+      const wx = f[(2 * i + 2) % 6] - f[(2 * i + 4) % 6], wy = f[(2 * i + 3) % 6] - f[(2 * i + 5) % 6]
+      return (ux * wx + uy * wy) / Math.abs(ux * wy - uy * wx)
+    }
+    const cc = (t) => { const o = new Float64Array(3); mesh.circumcentreOnGlobe(t, o); return [o[0], o[1], o[2]] }
+    const errs = []
+    for (let t = 0; t < mesh.triSlots; t++) {
+      if (!mesh.tAlive[t]) continue
+      for (let i = 0; i < 3; i++) {
+        const e = 3 * t + i, tw = mesh.twin[e]
+        if (e > tw) continue
+        const n = crs(unitOfV(mesh, mesh.from(e)), unitOfV(mesh, mesh.to(e)))
+        const c1 = cc(t), c2 = cc(mesh.triangleOf(tw))
+        if (Math.sign(dot(c1, n)) === Math.sign(dot(c2, n))) continue
+        const exact = (angle(c1, c2) * R) / mesh.edgeLength(e)
+        errs.push(Math.abs((cotAt(e) + cotAt(tw)) / 2 - exact) / exact)
+      }
+    }
+    errs.sort((p, q) => p - q)
+    const p99 = errs[Math.floor(0.99 * errs.length)]
+    check('sphere: the erosion index\'s cotangent facets are the exact Voronoi edges to O(ℓ²/R²)', p99 < 5e-3 && errs[errs.length >> 1] < 5e-4, `median ${errs[errs.length >> 1].toExponential(1)}, p99 ${p99.toExponential(1)} over ${errs.length} edges`)
+    const z = state.get('z')
+    const normalError = () => {
+      const sampler = M.sampler.createMeshSampler(mesh, z)
+      const ref = new Float64Array(mesh.vertexSlots * 3)
+      const d = { x: 0, y: 0 }
+      for (let t = 0; t < mesh.triSlots; t++) {
+        if (!mesh.tAlive[t]) continue
+        const cs = [mesh.tris[3 * t], mesh.tris[3 * t + 1], mesh.tris[3 * t + 2]]
+        for (const v of cs) {
+          const p = cs.map((c) => { S.delta(mesh.vx[c], mesh.vy[c], mesh.vx[v], mesh.vy[v], d); return [d.x * UNITS_TO_M, z[c] * M.scale.ELEVATION_METERS, d.y * UNITS_TO_M] })
+          let n = crs(sub(p[1], p[0]), sub(p[2], p[0]))
+          if (n[1] < 0) n = n.map((k) => -k)
+          for (let k = 0; k < 3; k++) ref[3 * v + k] += n[k]
+        }
+      }
+      const out = new Float64Array(3)
+      let worst = 0
+      for (const v of aliveVertices(mesh)) {
+        sampler.normalAt(mesh.vx[v], mesh.vy[v], out)
+        const r = [ref[3 * v], ref[3 * v + 1], ref[3 * v + 2]]
+        worst = Math.max(worst, Math.acos(Math.min(1, dot(r, [out[0], out[1], out[2]]) / Math.hypot(...r))))
+      }
+      return (worst * 180) / Math.PI
+    }
+    const carried = normalError()
+    mesh.domain = { ...S, transport: (vx, vy, _a, _b, _c, _d, out) => { out.x = vx; out.y = vy } }
+    const unturned = normalError()
+    mesh.domain = S
+    check('sphere: the sampler\'s vertex normals are in each vertex\'s own frame; left in the first corner\'s they are not', carried < 0.01 && unturned > 10 * carried, `worst ${carried.toFixed(4)}°; unturned ${unturned.toFixed(2)}°`)
+  }
+  {
     // Settled as the torus's build is: no edge long, no node crowded, a
     // fixed point of the remesh.
     const targets = targetsOf(mesh, state)

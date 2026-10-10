@@ -199,10 +199,36 @@ export interface DomainGrid {
   // sphere a pole row is in truth one point, and a raster stage that leaves
   // its cells apart draws a star at the pole (DEC-0035, fork 5). The torus
   // has no pole: nothing happens. A stage calls it without asking the shape.
-  averagePoleRows(field: Float32Array): void
+  // `mask`: only the cells it marks (non-zero) take part and take the mean —
+  // the sea of a pole row that also holds land, for a field that has a
+  // value only there.
+  averagePoleRows(field: Float32Array, mask?: Uint8Array): void
   // Bilinear sample at fractional GRID coordinates, cell centres at
   // integers (core/field.ts sampleBilinearGrid).
   sampleBilinear(field: Float32Array, gx: number, gy: number): number
+  // The same sample in the form the erosion forcing's and the flexure's
+  // readers were written in (step 4d5): the fraction taken from the
+  // coordinate as given, not from its wrapped copy. On the torus that is a
+  // different rounding from sampleBilinear's (wrapValue's subtraction
+  // costs the fraction its last bits), and those readers keep theirs; on
+  // the sphere it is sampleBilinear, across the pole as there. The caller
+  // keeps (gx, gy) within one period of the grid.
+  interpolate(field: Float32Array, gx: number, gy: number): number
+  // A semi-Lagrangian departure (step 4d5): the bilinear taps of the point
+  // reached from cell (gx, gy)'s centre by (dx, dy) cells — equator cells,
+  // so a length — in that cell's local frame, written into `out` for
+  // sampleTaps. The torus: sampleBilinear's taps at (gx + dx, gy + dy), so a
+  // sample through them is that sample's bits. The sphere: the point
+  // reached along the great circle (Domain.advance), so an east-west step
+  // near a pole is the distance it says and not 1 / cos φ of it, and a step
+  // across a pole lands on the far side. Taps once per cell, read every
+  // iteration: an advection's departure stays where its wind put it.
+  tapsAt(gx: number, gy: number, dx: number, dy: number, out: BilinearTaps, at: number): void
+  // The cell reached from cell (gx, gy)'s centre by (dx, dy) cells in its
+  // local frame, the nearest one: the torus rounds the grid coordinates
+  // (index(round(gx + dx), round(gy + dy))), the sphere moves along the
+  // great circle as tapsAt does and takes the cell that holds the point.
+  cellDisplaced(gx: number, gy: number, dx: number, dy: number): number
   // Bilinear sample at DOMAIN coordinates, cell centres at (i + 0.5) cells
   // (core/field.ts sampleBilinearWorld).
   sampleBilinearAt(field: Float32Array, x: number, y: number): number
@@ -212,6 +238,35 @@ export interface DomainGrid {
   // The whole raster resampled bilinearly onto a finer grid of the same
   // domain (core/field.ts upscaleBilinearToroidal).
   upscale(field: Float32Array, toResX: number, toResY: number): Float32Array
+}
+
+// The bilinear taps of many points, one per slot (DomainGrid.tapsAt): the
+// four cells and the fractions, kept apart per row because on the sphere
+// the two rows may lie on opposite meridians (the far side of a pole).
+export interface BilinearTaps {
+  // Per slot: cells i00, i10 (the first row), i01, i11 (the second).
+  cells: Int32Array
+  // Per slot: tx of the first row, tx of the second, ty.
+  weights: Float64Array
+}
+
+export function bilinearTaps(count: number): BilinearTaps {
+  return { cells: new Int32Array(4 * count), weights: new Float64Array(3 * count) }
+}
+
+// A field sampled through the taps of slot `at`: in sampleBilinearGrid's
+// form, top · (1 − ty) + bottom · ty.
+export function sampleTaps(field: Float32Array, taps: BilinearTaps, at: number): number {
+  const c = taps.cells
+  const w = taps.weights
+  const i = 4 * at
+  const k = 3 * at
+  const tx0 = w[k]
+  const tx1 = w[k + 1]
+  const ty = w[k + 2]
+  const top = field[c[i]] * (1 - tx0) + field[c[i + 1]] * tx0
+  const bottom = field[c[i + 2]] * (1 - tx1) + field[c[i + 3]] * tx1
+  return top * (1 - ty) + bottom * ty
 }
 
 // A range of grid cells (DomainGrid.discBox): columns x0..x1, rows y0..y1,
@@ -298,10 +353,51 @@ class TorusGrid implements DomainGrid {
     if (out.y1 - out.y0 + 1 > this.resY) { out.y0 = 0; out.y1 = this.resY - 1 }
   }
 
-  averagePoleRows(_field: Float32Array): void {}
+  averagePoleRows(_field: Float32Array, _mask?: Uint8Array): void {}
 
   sampleBilinear(field: Float32Array, gx: number, gy: number): number {
     return sampleBilinearGrid(field, this.resX, this.resY, gx, gy)
+  }
+
+  // The arithmetic of erosionForcingFields.upsampleAt and
+  // flexure.deflectionAt as they were written, operation for operation.
+  interpolate(field: Float32Array, gx: number, gy: number): number {
+    const resX = this.resX
+    const x0 = Math.floor(gx)
+    const y0 = Math.floor(gy)
+    const fx = gx - x0
+    const fy = gy - y0
+    const c0 = wrapValue(x0, resX)
+    const c1 = wrapValue(x0 + 1, resX)
+    const r0 = wrapValue(y0, this.resY) * resX
+    const r1 = wrapValue(y0 + 1, this.resY) * resX
+    return (field[r0 + c0] * (1 - fx) + field[r0 + c1] * fx) * (1 - fy) + (field[r1 + c0] * (1 - fx) + field[r1 + c1] * fx) * fy
+  }
+
+  // sampleBilinearGrid's index arithmetic, kept for sampleTaps.
+  tapsAt(gx: number, gy: number, dx: number, dy: number, out: BilinearTaps, at: number): void {
+    const resX = this.resX
+    const resY = this.resY
+    const x = wrapValue(gx + dx, resX)
+    const y = wrapValue(gy + dy, resY)
+    const x0 = Math.floor(x)
+    const y0 = Math.floor(y)
+    const x1 = (x0 + 1) % resX
+    const y1 = (y0 + 1) % resY
+    const tx = x - x0
+    const i = 4 * at
+    out.cells[i] = y0 * resX + x0
+    out.cells[i + 1] = y0 * resX + x1
+    out.cells[i + 2] = y1 * resX + x0
+    out.cells[i + 3] = y1 * resX + x1
+    const k = 3 * at
+    out.weights[k] = tx
+    out.weights[k + 1] = tx
+    out.weights[k + 2] = y - y0
+  }
+
+  cellDisplaced(gx: number, gy: number, dx: number, dy: number): number {
+    return this.index(Math.round(gx + dx), Math.round(gy + dy))
   }
 
   sampleBilinearAt(field: Float32Array, x: number, y: number): number {
@@ -807,14 +903,60 @@ class SphereGrid implements DomainGrid {
 
   // The cells of a pole row are all the same size, so the area-weighted mean
   // is the plain one; the field's area-weighted mean over the sphere is kept.
-  averagePoleRows(field: Float32Array): void {
+  averagePoleRows(field: Float32Array, mask?: Uint8Array): void {
     const rows = this.resY === 1 ? [0] : [0, this.resY - 1]
     for (const row of rows) {
       const base = row * this.resX
+      if (!mask) {
+        let sum = 0
+        for (let i = 0; i < this.resX; i++) sum += field[base + i]
+        field.fill(sum / this.resX, base, base + this.resX)
+        continue
+      }
       let sum = 0
-      for (let i = 0; i < this.resX; i++) sum += field[base + i]
-      field.fill(sum / this.resX, base, base + this.resX)
+      let count = 0
+      for (let i = 0; i < this.resX; i++) if (mask[base + i]) { sum += field[base + i]; count++ }
+      if (count === 0) continue
+      const mean = sum / count
+      for (let i = 0; i < this.resX; i++) if (mask[base + i]) field[base + i] = mean
     }
+  }
+
+  interpolate(field: Float32Array, gx: number, gy: number): number {
+    return this.sampleBilinear(field, gx, gy)
+  }
+
+  // From the cell centre along the great circle (Domain.advance, in domain
+  // units: a grid cell is width / resX of them at the equator), then the
+  // reached point's taps in sampleBilinear's convention, row by row as
+  // rowSample takes them.
+  tapsAt(gx: number, gy: number, dx: number, dy: number, out: BilinearTaps, at: number): void {
+    const cellW = this.width / this.resX
+    const cellH = this.height / this.resY
+    this.domain.advance((gx + 0.5) * cellW, (gy + 0.5) * cellH, dx * cellW, dy * cellH, this.point)
+    const sx = this.point.x / cellW - 0.5
+    const sy = this.point.y / cellH - 0.5
+    const y0 = Math.floor(sy)
+    const i = 4 * at
+    const k = 3 * at
+    for (let r = 0; r < 2; r++) {
+      const row = y0 + r
+      const x = wrapValue(this.crossed(row) ? sx + this.halfCols : sx, this.resX)
+      const x0 = Math.floor(x)
+      const x1 = x0 + 1 < this.resX ? x0 + 1 : 0
+      const base = this.wrapRow(row) * this.resX
+      out.cells[i + 2 * r] = base + x0
+      out.cells[i + 2 * r + 1] = base + x1
+      out.weights[k + r] = x - x0
+    }
+    out.weights[k + 2] = sy - y0
+  }
+
+  cellDisplaced(gx: number, gy: number, dx: number, dy: number): number {
+    const cellW = this.width / this.resX
+    const cellH = this.height / this.resY
+    this.domain.advance((gx + 0.5) * cellW, (gy + 0.5) * cellH, dx * cellW, dy * cellH, this.point)
+    return this.cellAt(this.point.x, this.point.y)
   }
 
   // Row r (any integer) sampled linearly at fractional column gx.
