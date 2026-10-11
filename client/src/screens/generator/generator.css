@@ -381,9 +381,9 @@
 /* A sphere world (map/sphereView.ts) shows its own layers in steps 1 and
    2 (DEC-0035, steps 4d2 and 4d5: --sphere-layers, set by the screen while
    the globe wears them). Elsewhere the legend and the step's layer list would
-   describe the flat sample world, and are hidden. The temperature scale
-   could read the globe (its chartAt) but is left out until its globe form
-   is thought through (2026-10-10). The scale bar is shown again since the
+   describe the flat sample world, and are hidden. The temperature strip
+   is hidden too: the globe has its own form of it, an arc on the left of
+   the globe (map/globeTemperatureArc.ts, 2026-10-11). The scale bar is shown again since the
    orbit camera's zoom no longer tilts the view (2026-10-11): straight down,
    it reads the globe as the flat map. */
 .generator-screen--sphere:not(.generator-screen--sphere-layers) .overlay-legend,

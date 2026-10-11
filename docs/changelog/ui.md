@@ -4,9 +4,11 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-11
+- **new** Generator: a curved temperature scale on the left of the globe shows the sea-level temperature along its edge, pole to pole. `overlay.temperature.scale`
+- **changed** Generator: a turning globe turns faster or slower with the planet's day length. `generator.camera.spin`
 - **new** Generator: a sphere world's planet step shows the climate its controls make on a sample globe, as a flat world's shows it on a sample map. `generator.step.world`
 - **changed** Generator: in the planet step the globe is seen side on to its axis, so the tilt shows whole; the other steps keep the view from above the north. `generator.camera.reset`
-- **new** Generator: the globe shows its equator and polar circles as bands just above the surface; the polar circles follow the axial tilt. `generator.load.new`
+- **new** Generator: the globe shows its equator and polar circles as bands just above the surface (the polar circles orange); the polar circles follow the axial tilt. `generator.load.new`
 - **new** Generator: a curved scale beside the globe measures along its edge; zoomed in or tilted, the scale bar measures at the centre of the screen. `generator.camera.tilt`
 - **changed** Generator: the globe opens larger, zooms slower and straight toward the surface, keeps the grabbed point under the cursor while dragged, shows the scale bar again, and has buttons at the lower left to reset the view, turn the globe and tilt the view toward the horizon. `generator.camera.reset`
 - **new** Generator: a step whose computation fails says so in a notice instead of waiting forever. `generator.step.climate`

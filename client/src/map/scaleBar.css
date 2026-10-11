@@ -63,3 +63,18 @@
   stroke-width: 3px;
   stroke-linejoin: round;
 }
+
+/* The globe's temperature scale (map/globeTemperatureArc.ts): the same arc
+   on the left, a band in the temperature colours in place of the line, its
+   labels to the left of the ticks. The band's width is BAND_WIDTH there. */
+.scale-arc--temperature .scale-arc__band-halo {
+  stroke-width: 9px;
+  stroke-linecap: butt;
+}
+.scale-arc__band path {
+  fill: none;
+  stroke-width: 6px;
+}
+.scale-arc--temperature .scale-arc__labels text {
+  text-anchor: end;
+}

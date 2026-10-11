@@ -69,17 +69,19 @@ export function globeSilhouette(view: { distance: number; radius: number; fov: n
 // lengths (outward), the gap between a major tick and its label, the arc's
 // least distance to the free area's right edge (the bar's 1rem), and the
 // hysteresis: the arc comes back only with this much more room than it
-// needs, so that a slow zoom past the limit does not flicker.
-const ARC_GAP = 24
-const TICK_MAJOR = 7
+// needs, so that a slow zoom past the limit does not flicker. The
+// temperature arc on the left (globeTemperatureArc.ts) uses the same
+// measures.
+export const ARC_GAP = 24
+export const TICK_MAJOR = 7
 const TICK_MINOR = 4
-const LABEL_GAP = 4
-const EDGE_MARGIN = 16
-const HYSTERESIS = 24
+export const LABEL_GAP = 4
+export const EDGE_MARGIN = 16
+export const HYSTERESIS = 24
 // The part of the free area's height the arc spans, and the least half
 // height it may have (shorter, it says too little).
 const ARC_HEIGHT_FRACTION = 2 / 3
-const MIN_HALF_HEIGHT = 40
+export const MIN_HALF_HEIGHT = 40
 // The most of the arc's radius its half height may take: the arc stays on
 // the right of the outline, never round its top and bottom.
 const MAX_HALF_SINE = 0.9
@@ -93,7 +95,7 @@ const MAX_STEPS = 9
 const PREFERRED_STEPS = 6
 // The least distance between two labels along the arc, pixels: a label's
 // height and a gap.
-const LABEL_SPACING = 28
+export const LABEL_SPACING = 28
 
 export interface GlobeArcTick {
   // The screen angle round the outline's centre, radians, upward from the

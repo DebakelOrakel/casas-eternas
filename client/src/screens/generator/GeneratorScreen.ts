@@ -5,6 +5,7 @@ import { createFlatWorldView } from '../../map/flatWorldView'
 import { createGlobeWorldView, type GlobeWorldView } from '../../map/sphereView'
 import type { SymbolPicture, WorldSymbol, WorldSymbols, WorldView } from '../../map/worldView'
 import { createGlobeScaleArc } from '../../map/globeScaleArc'
+import { createGlobeTemperatureArc } from '../../map/globeTemperatureArc'
 import { createScaleBar } from '../../map/ScaleBar'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { buildProbeCard } from '../../ui/mapProbe/probeCard'
@@ -798,6 +799,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       handbookPanel.relabel()
       saveMenu.relabel()
       tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
+      temperatureArc.element.setAttribute('aria-label', t('overlay.temperature.scale'))
       // The step statuses are words the screen chooses, not the bar's; this is
       // what puts the new language into them.
       updateNavState()
@@ -965,6 +967,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (shape === 'sphere' && !globeView) {
       globeView = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresRound: METERS_PER_CELL * MAP_WIDTH })
       globeView.setObliquity(Number(obliquityInput.value))
+      globeView.setDayLength(Number(rotationInput.value))
       globeView.setSpinning(globeSpinning)
       globeView.setTilted(globeTilted)
       globeView.setFreeArea(globeFreeArea)
@@ -3262,6 +3265,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
     }
     const shown = scaleArc.update(input)
+    renderTemperatureArc(input)
     if (shown && !arcShown) arcShows++
     arcShown = shown
     if (shown) scaleBar.element.hidden = true
@@ -3275,7 +3279,25 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
   const TEMP_SCALE_SAMPLES = 64
   let tempScaleSeen = ''
+  // On a sphere world the strip is hidden (generator.css), and the globe's
+  // temperature scale (map/globeTemperatureArc.ts) stands in for it: an
+  // arc on the left of the globe that gives each point the temperature of
+  // the limb's latitude at its screen angle, pole to pole. Like the
+  // distance arc it reads no pick and follows the view at once
+  // (renderScaleArc), and the temperature levers redraw it with the strip.
+  const temperatureArc = createGlobeTemperatureArc(root, t('overlay.temperature.scale'))
+  function renderTemperatureArc(view: Parameters<typeof scaleArc.update>[0]): void {
+    const globe = globeView
+    if (!view || !globe) { temperatureArc.update(null); return }
+    const params = weatherParams()
+    temperatureArc.update({
+      ...view,
+      limbV: (psi) => globe.limbChartAt(psi)?.v ?? null,
+      band: seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet),
+    })
+  }
   function renderTemperatureScale(force = false): void {
+    if (force) renderScaleArc()
     // The whole view key, the turn included: turning the view changes
     // which latitude a row looks at (until 2026-10-10 the key left it out,
     // and a turn alone kept the old scale).
@@ -4034,6 +4056,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The sphere's globe leans with the obliquity, and shows the preview on
     // the sphere's sample world as the flat map shows the flat one's.
     globeView?.setObliquity(Number(obliquityInput.value))
+    globeView?.setDayLength(Number(rotationInput.value))
     clearTimeout(climateDebounce)
     climateDebounce = setTimeout(requestPlanetForcing, 150)
   }
@@ -5551,6 +5574,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     tectonicsRunRestored = !archeanPayload
     // The globe leans with the world's tilt, which the recipe just set.
     globeView?.setObliquity(Number(obliquityInput.value))
+    globeView?.setDayLength(Number(rotationInput.value))
     postToWorker({ type: 'restoreWorld', seed, shape: shape === 'sphere' ? 'sphere' : 'torus', snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
   }
 

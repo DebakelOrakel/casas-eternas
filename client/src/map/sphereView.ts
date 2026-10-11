@@ -86,6 +86,9 @@ export interface GlobeWorldView extends WorldView {
   // Turn the globe slowly about its axis (SPIN_SECONDS_PER_TURN), or stop
   // it where it is. Drag and zoom work while it turns.
   setSpinning(spinning: boolean): void
+  // The planet's day, hours: the spin turns in proportion to it (a turn
+  // in SPIN_SECONDS_PER_TURN at a 24-hour day).
+  setDayLength(hours: number): void
   // Look toward the horizon (true) or straight down (false, the start):
   // the camera rig's toggle (OrbitSwoopCamera.setTilted).
   setTilted(tilted: boolean): void
@@ -103,6 +106,12 @@ export interface GlobeWorldView extends WorldView {
   // globe's centre (globeScaleArc.ts), or null while it looks past it (the
   // tilt on, or easing in or out).
   silhouette(): GlobeSilhouette | null
+  // The chart point of the limb (the globe's visible edge) at the screen
+  // angle `psi` round the outline's centre, radians, upward from the
+  // horizontal to the right (globeScaleArc.ts's ψ); null with the camera
+  // inside the globe. Analytic, no pick. It is correct only while
+  // silhouette() is not null: the camera must look at the globe's centre.
+  limbChartAt(psi: number): ChartPoint | null
 }
 
 export interface GlobeWorldViewOptions {
@@ -134,11 +143,13 @@ const PROFILE_FILL = 0.78
 const OCEAN = new Color3(0.08, 0.35, 0.75)
 // The latitude bands: their radius over the globe's (a little above the
 // surface, over the relief to come), their thickness, and their colours —
-// the first sphere screen's (403c2d7^, WorldGenScreen.ts).
+// the first sphere screen's at first (403c2d7^, WorldGenScreen.ts). Wider
+// and the polar circles orange-yellow since 2026-10-11 (the user's
+// check): the equator red, the polar circles apart from it in hue.
 const BAND_LIFT = 1.01
-const BAND_THICKNESS = RADIUS * 0.006
-const EQUATOR_COLOR = new Color3(0.9, 0.25, 0.05)
-const POLAR_CIRCLE_COLOR = new Color3(0.12, 0.32, 0.85)
+const BAND_THICKNESS = RADIUS * 0.01
+const EQUATOR_COLOR = new Color3(0.9, 0.2, 0.08)
+const POLAR_CIRCLE_COLOR = new Color3(1.0, 0.68, 0.12)
 // The atmosphere: its colour at the rim, how strongly it covers there, and
 // how far it reaches out, in mask units (0..1 across the screen). OUTSIDE
 // the globe only, from the camera's view: a haze around it, fading from the
@@ -152,12 +163,15 @@ const GLOW_BLUR = 0.012
 // scripts/globeWater.mjs), under the symbols. About 3 km on an Earth-sized
 // world.
 const RIVER_LIFT = 1.0005
-// The spin's period: one turn in three minutes (2° a second), as the sphere
-// screen removed on 2026-09-20 turned — slow enough to stay in the
-// background. Eastward, as the Earth turns: every point of the globe moves
+// The spin's period at a 24-hour day: one turn in three minutes (2° a
+// second), as the sphere screen removed on 2026-09-20 turned — slow enough
+// to stay in the background. Other day lengths scale it (setDayLength): a
+// 16-hour day turns in two minutes, a 36-hour one in four and a half.
+// Eastward, as the Earth turns: every point of the globe moves
 // toward growing u (the chart's u runs from the frame's +x toward −z, and
 // a growing rotation.y turns +x toward −z).
 const SPIN_SECONDS_PER_TURN = 180
+const SPIN_REFERENCE_DAY_HOURS = 24
 // How far the camera's look may be off the globe's centre, radians, for the
 // outline to count as a circle about the screen's centre (silhouette): at
 // 5e-4 the outline moves by less than a pixel on an 800 px canvas.
@@ -438,14 +452,14 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   // The spin: the angle grows while spinning. resetCamera brings a globe
   // that stands still back to its first angle, eased (the shorter way); a
   // globe that turns keeps turning.
-  const SPIN_RATE = (2 * Math.PI) / SPIN_SECONDS_PER_TURN
+  let spinRate = (2 * Math.PI) / SPIN_SECONDS_PER_TURN
   const SPIN_RETURN_RATE = 6
   let spinning = false
   let spinReturning = false
   const spinObserver = scene.onBeforeRenderObservable.add(() => {
     const dt = engine.getDeltaTime() / 1000
     if (spinning) {
-      spin.rotation.y = (spin.rotation.y + SPIN_RATE * dt) % (2 * Math.PI)
+      spin.rotation.y = (spin.rotation.y + spinRate * dt) % (2 * Math.PI)
     } else if (spinReturning) {
       const from = Math.atan2(Math.sin(spin.rotation.y), Math.cos(spin.rotation.y))
       const next = from * Math.exp(-SPIN_RETURN_RATE * dt)
@@ -509,6 +523,9 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
       spinning = on
       spinReturning = false
     },
+    setDayLength(hours) {
+      spinRate = (2 * Math.PI) / (SPIN_SECONDS_PER_TURN * Math.max(1, hours) / SPIN_REFERENCE_DAY_HOURS)
+    },
     setTilted: (tilted) => rig.setTilted(tilted),
     setFreeArea: (area) => rig.setFreeArea(area),
     setHome(view, now) {
@@ -549,6 +566,25 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
       glow.dispose(rig.camera)
       rig.dispose()
       scene.dispose()
+    },
+    limbChartAt(psi) {
+      // The limb is the small circle where the rays from the eye touch the
+      // globe: its centre on the line to the eye at R² / d from the globe's
+      // centre, its radius R · √(1 − R² / d²). With the camera on the line
+      // to the centre, the camera's right and up lie in the circle's plane,
+      // and the screen angle round the outline is the angle round the circle
+      // (scripts/globeScale.mjs). The globe's centre is the scene's origin
+      // and the camera has no parent (silhouette).
+      const eye = rig.camera.position
+      const distance = eye.length()
+      if (!(distance > RADIUS)) return null
+      const across = RADIUS * Math.sqrt(1 - (RADIUS / distance) ** 2)
+      const right = rig.camera.getDirection(Vector3.Right()).normalize()
+      const up = rig.camera.getDirection(Vector3.Up()).normalize()
+      const point = eye.scale((RADIUS * RADIUS) / (distance * distance))
+        .addInPlace(right.scaleInPlace(across * Math.cos(psi)))
+        .addInPlace(up.scaleInPlace(across * Math.sin(psi)))
+      return chartOfWorld(point)
     },
   }
 }
