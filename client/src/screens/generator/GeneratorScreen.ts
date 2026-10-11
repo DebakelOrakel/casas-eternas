@@ -2363,7 +2363,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     { id: 'boundaries', enabled: false, paintPixels: paintBoundaryMask },
     // The equator is always drawn, like the events — a property of the map,
     // not a user toggle (decided 2026-09-26 on the picture check).
-    { id: 'equator', enabled: true, paint: (c) => paintWrapped(c, drawEquator) },
+    // Not on the globe: it draws its equator and polar circles as bands of
+    // its own (map/sphereView.ts).
+    { id: 'equator', enabled: true, paint: (c) => { if (worldShape !== 'sphere') paintWrapped(c, drawEquator) } },
     { id: 'upwelling', enabled: false, paintPixels: paintUpwelling },
     { id: 'salinity', enabled: false, paintPixels: paintSalinity },
     ...WEATHER_IDS.map((id) => ({ id, enabled: false, paintPixels: (data: Uint8ClampedArray) => paintWeather(data, id) })),

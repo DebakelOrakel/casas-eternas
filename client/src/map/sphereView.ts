@@ -108,9 +108,24 @@ export interface GlobeWorldViewOptions {
 }
 
 const RADIUS = 1
+// The camera's vertical field of view. Narrow, so the far shot stands far
+// off and sees nearly a hemisphere: at 1 rad the globe filled the frame
+// from 2.27 R and showed a cap of 64° round the centre only, at 0.4 rad
+// from about 5.6 R it shows 80° (2026-10-11, the user found too little of
+// the globe in view). The close shot keeps its height (0.15 R), so it sees
+// a smaller patch than at 1 rad — a deeper zoom; lifted to keep the patch
+// (0.40 R), the tilted look (38° down) would pass over the horizon there.
+const GLOBE_FOV = 0.4
 // The ocean's blue: the old screen's mid-depth stop (texture.ts,
 // OCEAN_COLOR_STOPS), the sphere having no depths yet.
 const OCEAN = new Color3(0.08, 0.35, 0.75)
+// The latitude bands: their radius over the globe's (a little above the
+// surface, over the relief to come), their thickness, and their colours —
+// the first sphere screen's (403c2d7^, WorldGenScreen.ts).
+const BAND_LIFT = 1.01
+const BAND_THICKNESS = RADIUS * 0.006
+const EQUATOR_COLOR = new Color3(0.9, 0.25, 0.05)
+const POLAR_CIRCLE_COLOR = new Color3(0.12, 0.32, 0.85)
 // The atmosphere: its colour at the rim, how strongly it covers there, and
 // how far it reaches out, in mask units (0..1 across the screen). OUTSIDE
 // the globe only, from the camera's view: a haze around it, fading from the
@@ -197,7 +212,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     radius: RADIUS,
     globeFrame: () => ({ lean: tilt.rotation.z, turn: spin.rotation.y }),
   })
-  rig.camera.fov = 1.0
+  rig.camera.fov = GLOBE_FOV
   tilt.parent = rig.viewPivot
 
   // The sun rakes from the upper left; the fill keeps the night side from
@@ -223,6 +238,41 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   axisMaterial.specularColor = new Color3(0, 0, 0)
   axisMaterial.emissiveColor = new Color3(0.35, 0.35, 0.35)
   axis.material = axisMaterial
+
+  // THE LATITUDE BANDS, as the first sphere screen had them (removed
+  // 2026-09-20, 403c2d7^): the equator and the two polar circles, thin rings
+  // a little above the surface. They lean with the axis (`tilt`) and do not
+  // turn with the spin — a circle of latitude is the same at every turn. A
+  // polar circle lies at 90° − the obliquity, so it moves with the tilt
+  // lever; at 0° it shrinks to the pole and is not drawn. They take the
+  // place of the dashed equator the flat map paints into its texture.
+  const bandMaterial = (name: string, color: Color3): StandardMaterial => {
+    const material = new StandardMaterial(name, scene)
+    material.diffuseColor = new Color3(0, 0, 0)
+    material.specularColor = new Color3(0, 0, 0)
+    material.emissiveColor = color
+    material.disableLighting = true
+    return material
+  }
+  const equatorMaterial = bandMaterial('sphereEquatorMaterial', EQUATOR_COLOR)
+  const polarMaterial = bandMaterial('spherePolarMaterial', POLAR_CIRCLE_COLOR)
+  const band = (name: string, latitude: number, material: StandardMaterial): Mesh | null => {
+    const ringRadius = RADIUS * BAND_LIFT * Math.cos(latitude)
+    if (ringRadius < BAND_THICKNESS) return null
+    const ring = MeshBuilder.CreateTorus(name, { diameter: ringRadius * 2, thickness: BAND_THICKNESS, tessellation: 192 }, scene)
+    ring.parent = tilt
+    ring.position.y = RADIUS * BAND_LIFT * Math.sin(latitude)
+    ring.material = material
+    ring.isPickable = false
+    return ring
+  }
+  band('sphereEquator', 0, equatorMaterial)
+  let polarBands: (Mesh | null)[] = []
+  const placePolarBands = (obliquityDeg: number): void => {
+    for (const ring of polarBands) ring?.dispose()
+    const latitude = ((90 - obliquityDeg) * Math.PI) / 180
+    polarBands = [band('sphereArctic', latitude, polarMaterial), band('sphereAntarctic', -latitude, polarMaterial)]
+  }
 
   // The atmosphere: a white copy of the globe rendered alone into a mask,
   // then a post-process that lays the haze over the pixels just outside it.
@@ -437,6 +487,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     setDeepZoom: () => {},
     setObliquity(degrees) {
       tilt.rotation.z = (degrees * Math.PI) / 180
+      placePolarBands(degrees)
     },
     setLayersShown(shown) {
       globe.material = shown ? layered : sea
