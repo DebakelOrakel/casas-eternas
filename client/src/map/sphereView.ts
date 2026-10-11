@@ -54,7 +54,8 @@ import type { ChartPoint, WorldView } from './worldView'
 // the south. So a layer's texel (u · width, v · height) shows where chartAt
 // answers (u, v). The globe shows the sea until told to show its layers
 // (setLayersShown): the screen lays a sphere world's own on it (its first
-// step, since 2026-10-10), never the flat sample world's. What it cannot
+// step, since 2026-10-10), and in the planet step the preview on the
+// sphere's sample world (2026-10-11), never the flat sample's. What it cannot
 // show yet (the relief: setRelief and setHeightScale) it takes and ignores
 // — relief on the globe is a later decision.
 //

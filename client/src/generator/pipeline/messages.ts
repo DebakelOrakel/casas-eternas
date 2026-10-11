@@ -66,28 +66,37 @@ export interface WorkerResetStageMessage {
 // is invalidated; the screen shows the answer while the step is open and
 // drops it on leaving. Once a world has plates the screen asks for a real
 // climateRun instead.
+// `shape` (2026-10-11): the shape of the world the preview stands in for,
+// so the climate runs on that shape and on its sample (default 'torus').
 export interface WorkerPlanetPreviewMessage {
   type: 'planetPreview'
   width: number
   height: number
   weather?: WorkerWeatherParams
+  shape?: 'torus' | 'sphere'
 }
 // THE SAMPLE WORLD ITSELF (2026-09-27): a real world's elevation, handed
 // over once by the screen (public/sample/, decoded with the save's own
 // layer), at its own size — the worker resamples it to the map on the next
 // preview. Without it the preview runs on planet/sampleWorld.ts's three
 // domes. Sent once, not with every preview: the buffer is two megabytes.
+// `shape` (2026-10-11): the shape the sample is a world of (default
+// 'torus'). The worker keeps one sample per shape: a session can make a
+// flat world and then a sphere world.
 export interface WorkerPlanetSampleMessage {
   type: 'planetSample'
   width: number
   height: number
   elevation: ArrayBuffer
+  shape?: 'torus' | 'sphere'
 }
 
 export interface WorkerPlanetPreviewDataMessage {
   type: 'planetPreviewData'
   width: number
   height: number
+  // The shape the preview was computed on, as the request gave it.
+  shape: 'torus' | 'sphere'
   // The sample world's colour render and relief, as a 'rendered' message
   // carries them, for the map under the overlays.
   buffer: ArrayBuffer

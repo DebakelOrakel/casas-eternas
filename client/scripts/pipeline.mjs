@@ -2192,6 +2192,82 @@ test('the Planet preview answers on the sample world and touches nothing', async
   check('the preview runs on the supplied sample', after.byteLength === before.byteLength && hash(after) !== hash(before))
 })
 
+// A sphere world's planet step (2026-10-11): the preview on the sphere's
+// own sample, the climate on the sphere. The synthetic sample first (the
+// fallback while no file is supplied), then a supplied one; the torus's
+// sample and preview stay as they were beside it.
+test('the Planet preview answers on a sphere sample: finite, pole rows one value, no seam', async () => {
+  const p = await freshPipeline()
+  const size = { width: ARCHEAN_INIT.width, height: ARCHEAN_INIT.height }
+  p.dispatch({ type: 'planetPreview', ...size })
+  await until(() => p.count('planetPreviewData') >= 1, { label: 'the torus preview', timeout: 60000 })
+  const torus = p.last('planetPreviewData')
+  const torusHash = hash(torus.buffer) + hash(torus.temperature)
+  p.dispatch({ type: 'planetPreview', ...size, shape: 'sphere' })
+  await until(() => p.count('planetPreviewData') >= 2, { label: 'the sphere preview', timeout: 60000 })
+  const s = p.last('planetPreviewData')
+  check('the preview says which shape it ran on', torus.shape === 'torus' && s.shape === 'sphere')
+  check('the sphere preview carries a render at the map\'s size', s.buffer.byteLength === size.width * size.height * 4)
+  check('the sphere\'s synthetic sample is not the torus\'s', hash(s.buffer) !== hash(torus.buffer))
+  const RX = s.resX
+  const RY = s.resY
+  const n = RX * RY
+  const f32 = (b) => new Float32Array(b)
+  const scalars = { temperature: f32(s.temperature), precipitation: f32(s.precipitation), seasonalAmplitude: f32(s.seasonalAmplitude), monsoonIndex: f32(s.monsoonIndex), currentAnomaly: f32(s.currentAnomaly) }
+  const fields = { ...scalars, wind: f32(s.wind), currents: f32(s.currents) }
+  const notFinite = Object.entries(fields).filter(([, f]) => f.length === 0 || !allFinite(f)).map(([k]) => k)
+  check(`every climate field of the sphere preview is whole and finite (${Object.keys(fields).length} fields)`, notFinite.length === 0, notFinite.join(', '))
+  // Pole rows: one value, land and sea apart; the temperature apart from
+  // its cells' ground (as the climate step's sphere test reads them).
+  const land = new Uint8Array(n)
+  for (let i = 0; i < n; i++) land[i] = scalars.precipitation[i] >= 0 ? 1 : 0
+  const poleSpread = (field) => {
+    let worst = 0
+    for (const row of [0, RY - 1]) {
+      for (const kind of [0, 1]) {
+        let lo = Infinity
+        let hi = -Infinity
+        for (let x = 0; x < RX; x++) {
+          const i = row * RX + x
+          if (land[i] !== kind) continue
+          lo = Math.min(lo, field[i])
+          hi = Math.max(hi, field[i])
+        }
+        if (hi > lo) worst = Math.max(worst, hi - lo)
+      }
+    }
+    return worst
+  }
+  const spread = Object.entries(scalars).filter(([k]) => k !== 'temperature').map(([k, f]) => [k, poleSpread(f)]).filter(([, v]) => v > 1e-3)
+  check('the preview\'s fields are one value along each pole row, land and sea apart', spread.length === 0, spread.map(([k, v]) => `${k} ${v.toFixed(4)}`).join(', '))
+  const tSpread = poleSpread(scalars.temperature)
+  check('the preview\'s temperature along a pole row differs only by its cells\' ground (under 1 °C)', tSpread < 1, `${tSpread.toFixed(3)} °C`)
+  // No seam: the step from the last column to the first is no larger than
+  // the largest step between neighbours inside the chart.
+  const seams = Object.entries(scalars).map(([k, f]) => {
+    let seam = 0
+    let inner = 0
+    for (let y = 0; y < RY; y++) {
+      const row = y * RX
+      seam = Math.max(seam, Math.abs(f[row] - f[row + RX - 1]))
+      for (let x = 0; x + 1 < RX; x++) inner = Math.max(inner, Math.abs(f[row + x + 1] - f[row + x]))
+    }
+    return [k, seam, inner]
+  }).filter(([, seam, inner]) => seam > inner)
+  check('no field steps at the chart\'s seam more than inside it', seams.length === 0, seams.map(([k, a, b]) => `${k} ${a.toFixed(3)} > ${b.toFixed(3)}`).join(', '))
+
+  // A supplied sphere sample replaces the synthetic one on the sphere only.
+  const flat = new Float32Array((size.width / 2) * (size.height / 2)).fill(-0.5)
+  p.dispatch({ type: 'planetSample', width: size.width / 2, height: size.height / 2, elevation: flat.buffer, shape: 'sphere' })
+  p.dispatch({ type: 'planetPreview', ...size, shape: 'sphere' })
+  await until(() => p.count('planetPreviewData') >= 3, { label: 'the sphere preview on the supplied sample', timeout: 60000 })
+  check('the sphere preview runs on the supplied sphere sample', hash(p.last('planetPreviewData').buffer) !== hash(s.buffer))
+  p.dispatch({ type: 'planetPreview', ...size })
+  await until(() => p.count('planetPreviewData') >= 4, { label: 'the torus preview again', timeout: 60000 })
+  const again = p.last('planetPreviewData')
+  check('the torus preview is untouched by the sphere\'s sample', hash(again.buffer) + hash(again.temperature) === torusHash)
+})
+
 test('every message type is dispatchable from a cold start', async () => {
   // Not "does something sensible" — that is what the tests above are for. This
   // asks the cheaper question the HANDLERS table cannot: does any handler throw

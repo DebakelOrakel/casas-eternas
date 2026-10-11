@@ -2162,15 +2162,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastCompositePixels: Uint8Array | null = null
   // THE GLOBE'S LAYERS (DEC-0035, steps 4d2 and 4d5). A sphere world's own
   // layers — those of the steps after the planet it runs, the Archean and
-  // the plates — are painted into the globe's textures and laid on it. Never the planet preview's: those are
-  // the flat sample world's (step 0, and the moment after "create world"
-  // until the new world's first render lands), and the globe shows the bare
-  // sea then; they go to the flat view, out of sight.
+  // the plates — are painted into the globe's textures and laid on it. In
+  // step 0 the planet preview's are (2026-10-11): a sphere world's preview
+  // runs on the sphere's sample world (planetPreviewShape). The world's own
+  // stay off the globe there, and the moment after "create world" until
+  // the new world's first render lands the globe shows the bare sea; the
+  // compositor's output goes to the flat view then, out of sight.
   // `baseIsWorld`: the base the compositor holds is the world's own render.
-  // `globePainted`: the globe's textures hold this world's layers.
+  // `globePainted`: the globe's textures hold the layers paintsGlobe means.
   let baseIsWorld = false
   let globePainted = false
-  const paintsGlobe = (): boolean => globeView !== null && baseIsWorld && STEP_IDS[panelIndex] !== 'world'
+  // The shape the planet preview on show was computed on, null while none
+  // is (THE PLANET PREVIEW, below).
+  let planetPreviewShape: 'torus' | 'sphere' | null = null
+  const paintsGlobe = (): boolean => globeView !== null && (STEP_IDS[panelIndex] === 'world' ? planetPreviewShape === 'sphere' : baseIsWorld)
   const layerView = (): WorldView => (paintsGlobe() ? globeView! : flatView)
   // The globe shows its layers when they are this world's and the step's;
   // the legend, the layer list and the readout follow, since they describe
@@ -3542,6 +3547,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // long as it stands and are cleared with it, so nothing downstream ever
   // sees them as the world's climate.
   let planetPreviewShown = false
+  // The shape of the preview this world wants: its own.
+  const previewShape = (): 'torus' | 'sphere' => (worldShape === 'sphere' ? 'sphere' : 'torus')
   let planetPreviewRealBase: { base: Uint8ClampedArray; relief: Uint8Array } | null = null
   // The world's own climate, its refinement included, kept aside the same
   // way while the preview's fields stand in the mirrors (2026-10-01). Until
@@ -3563,38 +3570,45 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the bundle. Decoded with the bake artifacts' elevation encoding, handed
   // to the worker once; a missing or malformed file leaves the worker on its
   // synthetic sample, which is what the preview was before.
-  const PLANET_SAMPLE_URL = '/sample/astrakan-elevation.u16'
+  // One per shape (2026-10-11): a sphere world's preview runs on Pyrrhen, a
+  // sphere world baked the same way, and without that file on the synthetic
+  // sample made on the sphere — as the flat preview falls back.
+  const PLANET_SAMPLE_URL: Record<'torus' | 'sphere', string> = { torus: '/sample/astrakan-elevation.u16', sphere: '/sample/pyrrhen-elevation.u16' }
   const PLANET_SAMPLE_WIDTH = MAP_WIDTH / 2
   const PLANET_SAMPLE_HEIGHT = MAP_HEIGHT / 2
   // Settles once the sample is with the worker, or once it is clear it will
   // not come (then the worker keeps its synthetic sample). A preview waits for
   // it: drawing the synthetic world first and Astrakan a moment later was a
   // visible flash of the wrong world (fixed 2026-09-28).
-  let planetSample: Promise<void> | null = null
-  function loadPlanetSample(): Promise<void> {
-    planetSample ??= (async () => {
+  const planetSamples: Partial<Record<'torus' | 'sphere', Promise<void>>> = {}
+  function loadPlanetSample(shape: 'torus' | 'sphere'): Promise<void> {
+    planetSamples[shape] ??= (async () => {
       try {
-        const response = await fetch(PLANET_SAMPLE_URL, { cache: 'force-cache' })
+        const response = await fetch(PLANET_SAMPLE_URL[shape], { cache: 'force-cache' })
         if (!response.ok) return
         const bytes = await response.arrayBuffer()
         if (bytes.byteLength !== PLANET_SAMPLE_WIDTH * PLANET_SAMPLE_HEIGHT * 2) return
         const elevation = decodeLayer(bytes, ELEVATION_ENCODING)
-        worker.postMessage({ type: 'planetSample', width: PLANET_SAMPLE_WIDTH, height: PLANET_SAMPLE_HEIGHT, elevation: elevation.buffer }, [elevation.buffer])
+        worker.postMessage({ type: 'planetSample', width: PLANET_SAMPLE_WIDTH, height: PLANET_SAMPLE_HEIGHT, elevation: elevation.buffer, shape }, [elevation.buffer])
       } catch {
         // offline, or a dev server without the file: the fallback stands
       }
     })()
-    return planetSample
+    return planetSamples[shape]
   }
-  // Fetched as the screen opens rather than on the first preview, so step 0
-  // does not wait for a megabyte after the world list closes.
-  void loadPlanetSample()
+  // The flat sample is fetched as the screen opens rather than on the first
+  // preview, so step 0 does not wait for a megabyte after the world list
+  // closes. The sphere's on the first sphere world's preview: most sessions
+  // never make one.
+  void loadPlanetSample('torus')
   function requestPlanetPreview(): void {
     // The worker takes messages in order, so the sample is in place before
-    // the preview is asked for. The step may have been left in the meantime.
-    void loadPlanetSample().then(() => {
-      if (STEP_IDS[panelIndex] !== 'world' || ((archeanFinalised || hasHandover) && !step0Unlocked)) return
-      postToWorker({ type: 'planetPreview', width: MAP_WIDTH, height: MAP_HEIGHT, weather: weatherParams(step0Unlocked) })
+    // the preview is asked for. The step may have been left in the meantime,
+    // or another world, of the other shape, opened.
+    const shape = previewShape()
+    void loadPlanetSample(shape).then(() => {
+      if (STEP_IDS[panelIndex] !== 'world' || ((archeanFinalised || hasHandover) && !step0Unlocked) || shape !== previewShape()) return
+      postToWorker({ type: 'planetPreview', width: MAP_WIDTH, height: MAP_HEIGHT, weather: weatherParams(step0Unlocked), shape })
     })
   }
   // A Planet control moved: the world's own climate when it has plates to
@@ -3615,8 +3629,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     clearTimeout(planetPreviewDebounce)
     planetPreviewDebounce = setTimeout(requestPlanetPreview, 150)
   }
+  // The preview is off: on a sphere world the globe's textures hold the
+  // sample world until the world's own layers are composited onto it again.
+  function dropPlanetPreview(): void {
+    planetPreviewShown = false
+    planetPreviewShape = null
+    globePainted = false
+    syncGlobeLayers()
+  }
   function handlePlanetPreviewData(message: WorkerPlanetPreviewDataMessage): void {
     if (STEP_IDS[panelIndex] !== 'world') return // left the step while it computed
+    if (message.shape !== previewShape()) return // a world of the other shape opened meanwhile
     if (!planetPreviewShown) {
       planetPreviewShown = true
       planetPreviewRealBase = lastColoredBase && lastRelief ? { base: lastColoredBase, relief: lastRelief } : null
@@ -3633,6 +3656,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         monthFields = null
         climatePlayer.show(0)
       }
+    }
+    // A preview of a new shape (the first, or one standing when a world of
+    // the other shape was made): the globe's textures hold something else
+    // until the preview's first composite (compositeOverlays).
+    if (planetPreviewShape !== message.shape) {
+      planetPreviewShape = message.shape
+      globePainted = false
+      syncGlobeLayers()
     }
     lastColoredBase = new Uint8ClampedArray(message.buffer)
     lastRelief = new Uint8Array(message.relief)
@@ -3656,7 +3687,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   function leavePlanetPreview(): void {
     if (!planetPreviewShown) return
-    planetPreviewShown = false
+    dropPlanetPreview()
     if (planetPreviewRealBase) {
       lastColoredBase = planetPreviewRealBase.base
       lastRelief = planetPreviewRealBase.relief
@@ -4000,12 +4031,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // "create world" lights up when it differs from the world's.
   function planetLeverMoved(): void {
     updateControlsDisabled()
-    // The sphere's globe leans with the obliquity; it has no climate to
-    // compute yet, and the sample world's preview behind it is not shown.
-    if (globeView) {
-      globeView.setObliquity(Number(obliquityInput.value))
-      return
-    }
+    // The sphere's globe leans with the obliquity, and shows the preview on
+    // the sphere's sample world as the flat map shows the flat one's.
+    globeView?.setObliquity(Number(obliquityInput.value))
     clearTimeout(climateDebounce)
     climateDebounce = setTimeout(requestPlanetForcing, 150)
   }
@@ -4187,8 +4215,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const link = document.createElement('a')
     link.href = url
     link.download = filename
+    // In the document while it is clicked, and the URL kept a while: a
+    // browser may read it only after the click returns, and Safari dropped
+    // the download when the URL was revoked at once (2026-10-11).
+    document.body.appendChild(link)
     link.click()
-    URL.revokeObjectURL(url)
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
   worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
@@ -4300,7 +4333,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // else the render carries (mantle, ages, counters) is taken as always.
     const underPreview = planetPreviewShown && STEP_IDS[panelIndex] === 'world'
     if (planetPreviewShown && !underPreview) {
-      planetPreviewShown = false
+      dropPlanetPreview()
       planetPreviewRealBase = null
       planetPreviewRealClimate = null
       clearClimate()

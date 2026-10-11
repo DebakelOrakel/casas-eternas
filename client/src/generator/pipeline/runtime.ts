@@ -1,5 +1,5 @@
 import { serializePlateSimulation, deserializePlateSimulation } from '../tectonics/plateSimulation'
-import { torusDomain, type Domain } from '../core/domain'
+import { domainOfKind, type Domain } from '../core/domain'
 import { sampleWorldElevation } from '../planet/sampleWorld'
 import type { PlanetForcing } from '../planet/planetForcing'
 import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
@@ -1715,23 +1715,29 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
 // covers all of them rather than listing them by hand and quietly falling behind.
 export const HANDLED_MESSAGE_TYPES: readonly string[] = Object.keys(HANDLERS)
 
-// The sample world's terrain and colour render, made once per size; the
-// climate on it is recomputed per request (the controls change it).
-let sampleWorld: { width: number; height: number; elevation: Float32Array; buffer: Uint8Array; relief: Uint8Array } | null = null
+// The sample world's terrain and colour render, made once per size and
+// shape; the climate on it is recomputed per request (the controls change it).
+let sampleWorld: { width: number; height: number; shape: Domain['kind']; elevation: Float32Array; buffer: Uint8Array; relief: Uint8Array } | null = null
 
 // The elevation the preview runs on when the screen has supplied one (a
 // real world, at its own size), else the synthetic sample. Resampled to the
-// map at the preview's size, bilinear in world coordinates.
-let planetSample: { width: number; height: number; elevation: Float32Array } | null = null
+// map at the preview's size, bilinear in world coordinates. One per shape:
+// a flat world's sample is a torus, a sphere world's a globe (2026-10-11).
+const planetSamples: Partial<Record<Domain['kind'], { width: number; height: number; elevation: Float32Array }>> = {}
 function handlePlanetSample(message: Extract<WorkerInboundMessage, { type: 'planetSample' }>): void {
-  planetSample = { width: message.width, height: message.height, elevation: new Float32Array(message.elevation) }
-  sampleWorld = null
+  const shape = message.shape ?? 'torus'
+  planetSamples[shape] = { width: message.width, height: message.height, elevation: new Float32Array(message.elevation) }
+  if (sampleWorld?.shape === shape) sampleWorld = null
 }
+// Without a supplied sample, the synthetic one is made on the preview's own
+// domain: its domes are drawn through the domain's distances, so on the
+// sphere they are round on the globe.
 function previewElevation(domain: Domain): Float32Array {
-  if (!planetSample) return sampleWorldElevation(domain)
+  const sample = planetSamples[domain.kind]
+  if (!sample) return sampleWorldElevation(domain)
   const { width, height } = domain
   const out = new Float32Array(width * height)
-  const { elevation, width: sw, height: sh } = planetSample
+  const { elevation, width: sw, height: sh } = sample
   // The sample is its own frame, one texel per unit.
   const sampleGrid = domain.scaledTo(sw, sh).grid(sw, sh)
   for (let y = 0; y < height; y++) {
@@ -1743,16 +1749,17 @@ function previewElevation(domain: Domain): Float32Array {
 
 async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type: 'planetPreview' }>): Promise<void> {
   const { width, height } = message
-  // A Domain does not cross the message boundary; the preview's size does.
-  const domain = torusDomain(width, height)
-  if (!sampleWorld || sampleWorld.width !== width || sampleWorld.height !== height) {
+  const shape = message.shape ?? 'torus'
+  // A Domain does not cross the message boundary; the preview's size and shape do.
+  const domain = domainOfKind(shape, width, height)
+  if (!sampleWorld || sampleWorld.width !== width || sampleWorld.height !== height || sampleWorld.shape !== shape) {
     const elevation = previewElevation(domain)
     const rendered = await renderSimulationImage(
       { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: 0, seaLevelOffset: 0, mantle: new Float32Array(MANTLE_RES_X * MANTLE_RES_Y) },
       renderPool(),
       { precomputedElevations: elevation },
     )
-    sampleWorld = { width, height, elevation, buffer: rendered.buffer, relief: rendered.relief }
+    sampleWorld = { width, height, shape, elevation, buffer: rendered.buffer, relief: rendered.relief }
   }
   const params: ClimateParams = message.weather ?? defaultWeatherParams()
   const chain = computeClimateChain(sampleWorld.elevation, domain, params)
@@ -1760,6 +1767,7 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     type: 'planetPreviewData',
     width,
     height,
+    shape,
     buffer: sampleWorld.buffer.slice().buffer as ArrayBuffer,
     relief: sampleWorld.relief.slice().buffer as ArrayBuffer,
     resX: CLIMATE_RES_X,
