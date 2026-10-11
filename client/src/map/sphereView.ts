@@ -20,6 +20,7 @@ import {
   VertexData,
 } from '@babylonjs/core'
 import { createOrbitSwoopCamera } from '../camera/orbitSwoopCamera'
+import { globeSilhouette, type GlobeSilhouette } from './globeScaleArc'
 import { buildGlobeRibbons } from './globeRibbons'
 import { RibbonWidthMaterialPlugin } from './ribbonWidthMaterialPlugin'
 import { presenceThreshold, RIVER_RGB } from './riverWidth'
@@ -90,6 +91,10 @@ export interface GlobeWorldView extends WorldView {
   // The part of the canvas no bar covers (OrbitSwoopCamera.setFreeArea):
   // the far shot fits the globe into it.
   setFreeArea(area: { left: number; top: number; right: number; bottom: number } | null): void
+  // The globe's outline on the screen while the camera looks at the
+  // globe's centre (globeScaleArc.ts), or null while it looks past it (the
+  // tilt on, or easing in or out).
+  silhouette(): GlobeSilhouette | null
 }
 
 export interface GlobeWorldViewOptions {
@@ -125,6 +130,10 @@ const RIVER_LIFT = 1.0005
 // toward growing u (the chart's u runs from the frame's +x toward −z, and
 // a growing rotation.y turns +x toward −z).
 const SPIN_SECONDS_PER_TURN = 180
+// How far the camera's look may be off the globe's centre, radians, for the
+// outline to count as a circle about the screen's centre (silhouette): at
+// 5e-4 the outline moves by less than a pixel on an 800 px canvas.
+const LOOK_AT_CENTRE_TOLERANCE = 5e-4
 
 const SHADER = 'sphereAtmosphere'
 Effect.ShadersStore[`${SHADER}FragmentShader`] = `
@@ -438,6 +447,24 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     },
     setTilted: (tilted) => rig.setTilted(tilted),
     setFreeArea: (area) => rig.setFreeArea(area),
+    silhouette() {
+      // The globe's centre is the scene's origin (the pivots turn, they do
+      // not move); the camera has no parent.
+      const eye = rig.camera.position
+      const distance = eye.length()
+      const look = rig.camera.getTarget().subtract(eye)
+      const cosOff = -Vector3.Dot(look, eye) / Math.max(1e-12, look.length() * distance)
+      if (Math.acos(Math.min(1, cosOff)) > LOOK_AT_CENTRE_TOLERANCE) return null
+      const scale = engine.getHardwareScalingLevel()
+      return globeSilhouette({
+        distance,
+        radius: RADIUS,
+        fov: rig.camera.fov,
+        width: engine.getRenderWidth() * scale,
+        height: engine.getRenderHeight() * scale,
+        radiusMetres,
+      })
+    },
     resetCamera() {
       rig.reset()
       spinReturning = !spinning

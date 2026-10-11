@@ -29,3 +29,37 @@
   border: 1.5px solid var(--dc-strong, #15191d);
   border-top: none;
 }
+
+/* The globe's curved scale (map/globeScaleArc.ts): an SVG over the canvas,
+   in the bar's stroke, font and colours. With no paper box round it, a
+   halo of the bar's paper keeps the line and the labels readable over the
+   page, the atmosphere and the globe's edge. */
+.scale-arc {
+  position: fixed;
+  z-index: 2;
+  overflow: visible;
+  pointer-events: none;
+  color: var(--dc-text, #1f2328);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 0.72rem;
+}
+.scale-arc__halo {
+  fill: none;
+  stroke: rgba(251, 248, 242, 0.9);
+  stroke-width: 4.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.scale-arc__line {
+  fill: none;
+  stroke: var(--dc-strong, #15191d);
+  stroke-width: 1.5px;
+}
+.scale-arc__labels text {
+  fill: currentColor;
+  dominant-baseline: central;
+  paint-order: stroke;
+  stroke: rgba(251, 248, 242, 0.9);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}

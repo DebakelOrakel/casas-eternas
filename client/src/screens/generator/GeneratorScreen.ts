@@ -4,6 +4,7 @@ import { GENERATOR_CODE } from '../../app/generatorCode'
 import { createFlatWorldView } from '../../map/flatWorldView'
 import { createGlobeWorldView, type GlobeWorldView } from '../../map/sphereView'
 import type { SymbolPicture, WorldSymbol, WorldSymbols, WorldView } from '../../map/worldView'
+import { createGlobeScaleArc } from '../../map/globeScaleArc'
 import { createScaleBar } from '../../map/ScaleBar'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { buildProbeCard } from '../../ui/mapProbe/probeCard'
@@ -352,11 +353,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // On the engine's frame, not a scene's: the view on screen is the flat
   // one or the globe, each with its own scene.
   const viewSettleObserver = ctx.engine.onBeginFrameObservable.add(() => {
-    const key = `${activeView().viewKey()},${window.innerWidth},${window.innerHeight}`
+    const key = `${activeView().viewKey()},${window.innerWidth},${window.innerHeight},${freeAreaKey}`
     if (key !== viewKeySeen) {
       viewKeySeen = key
       viewChangedAt = performance.now()
       viewDirty = true
+      // The globe's curved scale reads no pick: it follows at once, and
+      // does not stand beside a globe that has grown over it.
+      renderScaleArc()
       return
     }
     if (viewDirty && performance.now() - viewChangedAt >= VIEW_SETTLE_MS) {
@@ -948,6 +952,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The part of the canvas no bar covers (measureFreeArea, below): the
   // globe's far shot fits into it.
   let globeFreeArea: { left: number; top: number; right: number; bottom: number } | null = null
+  // The same as a key, for the scales' redraw (renderScaleArc).
+  let freeAreaKey = ''
   const setWorldShape = (shape: WorldShape): void => {
     worldShape = shape
     root.classList.toggle('generator-screen--sphere', shape === 'sphere')
@@ -3219,9 +3225,36 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const b = view.chartAt(bx, by)
       return a && b ? view.metresBetween(a, b) : null
     },
+    at: () => (globeView ? { x: ctx.canvas.clientWidth / 2, y: ctx.canvas.clientHeight / 2 } : null),
   })
+  // On the globe (2026-10-11) the bar measures at the screen's centre, and
+  // the curved scale beside the globe (map/globeScaleArc.ts) stands in for
+  // it while it fits and the camera looks at the globe's centre (the tilt
+  // off). The flat map's bar is as before. arcShows counts the arc's
+  // appearances: the bar's key holds it, so that a bar hidden under the arc
+  // measures again when the arc goes, even at a view it measured before.
+  const scaleArc = createGlobeScaleArc(root)
+  let arcShown = false
+  let arcShows = 0
+  function renderScaleArc(): void {
+    let input: Parameters<typeof scaleArc.update>[0] = null
+    if (globeView) {
+      const canvasRect = ctx.canvas.getBoundingClientRect()
+      const area = globeFreeArea ?? { left: 0, top: 0, right: 1, bottom: 1 }
+      input = {
+        silhouette: globeView.silhouette(),
+        free: { left: area.left * canvasRect.width, top: area.top * canvasRect.height, right: area.right * canvasRect.width, bottom: area.bottom * canvasRect.height },
+        canvas: { left: canvasRect.left, top: canvasRect.top, width: canvasRect.width, height: canvasRect.height },
+      }
+    }
+    const shown = scaleArc.update(input)
+    if (shown && !arcShown) arcShows++
+    arcShown = shown
+    if (shown) scaleBar.element.hidden = true
+  }
   function renderScaleBar(): void {
-    scaleBar.update(`${activeView().viewKey()},${window.innerWidth},${window.innerHeight}`)
+    if (arcShown) return
+    scaleBar.update(`${activeView().viewKey()},${window.innerWidth},${window.innerHeight},${freeAreaKey},${arcShows}`)
   }
 
   const tempScale = root.querySelector<HTMLCanvasElement>('[data-value="temp-scale"]')!
@@ -6325,6 +6358,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       bottom: steps ? clamp((steps.top - canvasRect.top) / canvasRect.height) : 1,
     }
     globeView?.setFreeArea(globeFreeArea)
+    freeAreaKey = `${globeFreeArea.left.toFixed(4)},${globeFreeArea.top.toFixed(4)},${globeFreeArea.bottom.toFixed(4)}`
   }
   const freeAreaObserver = new ResizeObserver(measureFreeArea)
   for (const el of [ctx.canvas, titleBar.element, stepBar.element, sidebar.element]) freeAreaObserver.observe(el)
