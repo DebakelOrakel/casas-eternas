@@ -53,7 +53,6 @@ import { computeRiverCourses } from '../surface/riverCourse'
 import { buildCoastGraph, type CoastGraph } from '../surface/coastGraph'
 import { findSedimentBasins, type SedimentBasin } from '../surface/sedimentBasins'
 import { computeIceThickness } from '../surface/iceFlow'
-import { WORLD_WIDTH_METERS } from '../surface/erosionEngine'
 import type { RiverGraph } from '../surface/riverGraph'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { applyEcology, ecologyMonth, encodeFineField, isSeasonalEcologyField, prepareEcology, type EcologyBase, type EcologyFieldId, type EcologyParams } from '../ecology/ecologyField'
@@ -1091,7 +1090,7 @@ function handleHydrologyRun(): void {
           column: coupled && coupled.mesh === meshTerrain.mesh ? coupled.column : null,
           hardness: forcingFields.hardness, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
           precipitation: weather.precipitation, temperature: weather.temperature, monsoonIndex: weather.monsoonIndex,
-          cover, regime, discharge: result.onMesh.discharge, cellM: WORLD_WIDTH_METERS / width,
+          cover, regime, discharge: result.onMesh.discharge, cellM: domain.metresAround / width,
         })
         const table = rasteriseNodeField(meshTerrain.mesh, ground.waterTableDepthM, width, height)
         for (let c = 0; c < table.length; c++) if (elevation[c] <= 0 || table[c] < 0) table[c] = -1
@@ -1113,19 +1112,19 @@ function handleHydrologyRun(): void {
           sub: rasterSubstrate(result.routing), elevation, graph: result.graph, column: null,
           hardness: forcingFields.hardness, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
           precipitation: weather.precipitation, temperature: weather.temperature, monsoonIndex: weather.monsoonIndex,
-          cover, regime, discharge: result.discharge, cellM: WORLD_WIDTH_METERS / width,
+          cover, regime, discharge: result.discharge, cellM: domain.metresAround / width,
         })
         result.waterTable = ground.waterTableDepthM
         result.oases = ground.springs.filter((s) => s.oasis)
       }
       // THE RIVER COURSE (phase 3): pattern, meanders, braids and deltas per
       // reach, seeded from the world so a world always gets the same bends.
-      result.graph.courses = computeRiverCourses(result.graph, { cellM: WORLD_WIDTH_METERS / width, seed: sim.warpSeed, domain })
+      result.graph.courses = computeRiverCourses(result.graph, { cellM: domain.metresAround / width, seed: sim.warpSeed, domain })
       // THE COAST (F5): exposure from the wind, hardness from the erosion
       // forcing's field, sediment from the graph's mouths — a type per reach.
       result.coast = buildCoastGraph({
         elevation, width, height, domain: sim.domain, wind: weather.wind, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
-        hardness: forcingFields.hardness, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
+        hardness: forcingFields.hardness, graph: result.graph, cellM: domain.metresAround / width,
       })
       // SEDIMENT BASINS (F1): what the last erosion pass deposited, with the
       // provenance of the catchments feeding each basin. Needs the terrain
@@ -1136,7 +1135,7 @@ function handleHydrologyRun(): void {
       const before = meshBefore ?? preErosionElevations
       result.sedimentBasins = before && before !== terrain && before.length === terrain.length
         ? findSedimentBasins({
-          before, after: terrain, width, height, routing: result.routing, graph: result.graph, cellM: WORLD_WIDTH_METERS / width,
+          before, after: terrain, width, height, routing: result.routing, graph: result.graph, cellM: domain.metresAround / width,
           cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.domain),
           hardness: forcingFields.hardness, coarseResX: CLIMATE_RES_X, coarseResY: CLIMATE_RES_Y,
         }).basins
@@ -1152,7 +1151,7 @@ function handleHydrologyRun(): void {
       } else {
         result.ice = computeIceThickness({
           elevation, width, height, domain, temperature: weather.temperature, precipitation: weather.precipitation,
-          climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, cellM: WORLD_WIDTH_METERS / width,
+          climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, cellM: domain.metresAround / width,
         }).thickness
       }
       // THE ICE BODY IS A BIOME (phase 6, decided 2026-09-23: the climate

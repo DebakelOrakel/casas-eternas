@@ -1,6 +1,8 @@
 import { Color3, Color4, DirectionalLight, DynamicTexture, HemisphericLight, Mesh, MeshBuilder, RawTexture2DArray, Scene, ShadowGenerator, StandardMaterial, Texture, Vector3 } from '@babylonjs/core'
 import { GROUND_MATERIALS } from '../../map/groundDetail'
-import { METERS_PER_CELL } from '../../generator/core/mapConfig'
+import { TORUS_METERS_PER_CELL } from '../../generator/core/mapConfig'
+// The incubator's worlds are tori (groundSource.ts: torusDomain), so its metres
+// are the torus's (DEC-0035 fork 6).
 import { createGroundRings, type GroundRings, type RingBuildRequest, type RingBuildResult } from '../../map/groundRings'
 import { createGroundWater } from '../../map/groundWater'
 import { MAP_EXAGGERATION, MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_HEIGHT_SCALE, UNITS_PER_METER } from '../../map/mapSceneSettings'
@@ -345,7 +347,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
         // the plane's centre u = ½ is cell (width/2 − ½).
         const centerX = (request.centerX / MAP_WORLD_WIDTH + 0.5) * worldWidthCells - 0.5
         const centerY = (request.centerZ / MAP_WORLD_HEIGHT + 0.5) * worldHeightCells - 0.5
-        const spacing = request.spacing / UNITS_PER_METER / METERS_PER_CELL
+        const spacing = request.spacing / UNITS_PER_METER / TORUS_METERS_PER_CELL
         const message: GroundWorkerInbound = {
           type: 'paint',
           id,

@@ -17,10 +17,17 @@ import { decodeMesh } from '../../generator/mesh/meshSerial'
 import { domainOfKind } from '../../generator/core/domain'
 import { MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from '../../map/mapSceneSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
-import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/mapConfig'
+import { MAP_HEIGHT, MAP_WIDTH } from '../../generator/core/mapConfig'
 
-// Discharge display conversion at the macro cell size (hydrology.dischargeToM3s).
-const DISCHARGE_TO_M3S = dischargeToM3s(1, METERS_PER_CELL)
+// What the world raster measures on each shape (DEC-0035 fork 6), read from
+// its Domain: a cell's metres and the world's extent round the equator.
+// The flat map is the torus's view, the globe the sphere's.
+const metresOfShape = (kind: 'torus' | 'sphere'): { perCell: number; around: number } => {
+  const domain = domainOfKind(kind, MAP_WIDTH, MAP_HEIGHT)
+  return { perCell: domain.metresPerUnit, around: domain.metresAround }
+}
+const TORUS_METRES = metresOfShape('torus')
+const SPHERE_METRES = metresOfShape('sphere')
 import JSZip from 'jszip'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
@@ -285,7 +292,7 @@ function randomWorldName(): string {
 export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   // The flat world, drawn (map/flatWorldView.ts): its scene, camera, map
   // plane, relief and river ribbons.
-  const flatView = createFlatWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresWide: METERS_PER_CELL * MAP_WIDTH, metresHigh: METERS_PER_CELL * MAP_HEIGHT })
+  const flatView = createFlatWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresWide: TORUS_METRES.perCell * MAP_WIDTH, metresHigh: TORUS_METRES.perCell * MAP_HEIGHT })
 
   const initialSeed = randomSeed()
   // The world's own name, as opposed to its seed. Until step 0 existed the two
@@ -910,6 +917,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // a scene of its own (map/sphereView.ts), the Archean on the sphere, the
   // later steps locked. A world from a file is flat: the saves are tori.
   let worldShape: WorldShape = 'flat'
+  // Discharge display conversion at the macro cell size of the world's shape
+  // (hydrology.dischargeToM3s).
+  const dischargeUnitM3s = (): number => dischargeToM3s(1, (worldShape === 'sphere' ? SPHERE_METRES : TORUS_METRES).perCell)
   let globeView: GlobeWorldView | null = null
   // The globe's home view, by step (GlobeWorldView.setHome): side on to the
   // axis in the planet step, where the obliquity is set; from above the
@@ -969,7 +979,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     worldShape = shape
     root.classList.toggle('generator-screen--sphere', shape === 'sphere')
     if (shape === 'sphere' && !globeView) {
-      globeView = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresRound: METERS_PER_CELL * MAP_WIDTH })
+      globeView = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresRound: SPHERE_METRES.around })
       globeView.setObliquity(Number(obliquityInput.value))
       globeView.setDayLength(Number(rotationInput.value))
       globeView.setSpinning(globeSpinning)
@@ -2411,45 +2421,56 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // (layerView), and show where the layers do: on the globe only once it
   // wears this world's (syncGlobeLayers). Per layer, the data its symbols
   // were last built from, so a composite with nothing new builds nothing.
-  const symbolChart: ChartSize = { width: MAP_WIDTH, height: MAP_HEIGHT, metresPerTexel: METERS_PER_CELL }
+  // Per view: a picture's texels are metres of the view's own scale — the
+  // torus's on the flat map, the sphere's on the globe (DEC-0035 fork 6) —
+  // so a symbol keeps its size against the map on either.
+  const flatSymbolChart: ChartSize = { width: MAP_WIDTH, height: MAP_HEIGHT, metresPerTexel: TORUS_METRES.perCell }
+  const globeSymbolChart: ChartSize = { width: MAP_WIDTH, height: MAP_HEIGHT, metresPerTexel: SPHERE_METRES.perCell }
+  const chartOf = (view: WorldView): ChartSize => (view === flatView ? flatSymbolChart : globeSymbolChart)
   let labelsShown = false
-  type SymbolSource = { id: string; shown: () => boolean; inputs: () => unknown[]; build: () => { pictures: SymbolPicture[]; symbols: WorldSymbol[] } }
+  type SymbolSource = { id: string; shown: () => boolean; inputs: () => unknown[]; build: (chart: ChartSize) => { pictures: SymbolPicture[]; symbols: WorldSymbol[] } }
   // The wind's and the currents' pictures do not change with the field:
-  // made once, so a new month sets the symbols alone, not a new atlas.
-  let windPictureSet: SymbolPicture[] | null = null
-  let currentPictureSet: SymbolPicture[] | null = null
+  // made once per chart, so a new month sets the symbols alone, not a new atlas.
+  const windPictureSets = new Map<ChartSize, SymbolPicture[]>()
+  const currentPictureSets = new Map<ChartSize, SymbolPicture[]>()
+  const picturesOf = (sets: Map<ChartSize, SymbolPicture[]>, chart: ChartSize, make: (chart: ChartSize) => SymbolPicture[]): SymbolPicture[] => {
+    let set = sets.get(chart)
+    if (!set) {
+      set = make(chart)
+      sets.set(chart, set)
+    }
+    return set
+  }
   const symbolSources: SymbolSource[] = [
     // First, so the other symbols and the names lie over the marks.
     {
       id: 'wind',
       shown: () => overlay.isLayerEnabled('wind'),
       inputs: () => [displayWind(), worldShape],
-      build: () => {
+      build: (chart) => {
         const field = displayWind()
-        windPictureSet ??= windPictures(symbolChart)
-        return { pictures: windPictureSet, symbols: field ? windSymbols(windMarks(field)) : [] }
+        return { pictures: picturesOf(windPictureSets, chart, windPictures), symbols: field ? windSymbols(windMarks(field)) : [] }
       },
     },
     {
       id: 'currents',
       shown: () => overlay.isLayerEnabled('currents'),
       inputs: () => [displayCurrents(), displayCurrentAnomaly(), worldShape],
-      build: () => {
+      build: (chart) => {
         const field = displayCurrents()
         const anomaly = displayCurrentAnomaly()
-        currentPictureSet ??= currentPictures(symbolChart)
-        return { pictures: currentPictureSet, symbols: field ? currentSymbols(currentMarks(field), (m) => currentClass(m, anomaly)) : [] }
+        return { pictures: picturesOf(currentPictureSets, chart, currentPictures), symbols: field ? currentSymbols(currentMarks(field), (m) => currentClass(m, anomaly)) : [] }
       },
     },
-    { id: 'volcanoes', shown: () => overlay.isLayerEnabled('volcanoes'), inputs: () => [lastVolcanoes], build: () => volcanoSymbols(lastVolcanoes, symbolChart) },
-    { id: 'hotspots', shown: () => overlay.isLayerEnabled('hotspots'), inputs: () => [lastHotspots], build: () => hotspotSymbols(lastHotspots, symbolChart) },
+    { id: 'volcanoes', shown: () => overlay.isLayerEnabled('volcanoes'), inputs: () => [lastVolcanoes], build: (chart) => volcanoSymbols(lastVolcanoes, chart) },
+    { id: 'hotspots', shown: () => overlay.isLayerEnabled('hotspots'), inputs: () => [lastHotspots], build: (chart) => hotspotSymbols(lastHotspots, chart) },
     {
       id: 'migration',
       shown: () => overlay.isLayerEnabled('migration'),
       inputs: () => [lastMigration, migrationOrigins, ...migrationRaceEnabled],
-      build: () => originSymbols(migrationOriginMarks(), MIGRATION_RACES.map((r) => r.rgb), symbolChart),
+      build: (chart) => originSymbols(migrationOriginMarks(), MIGRATION_RACES.map((r) => r.rgb), chart),
     },
-    { id: 'names', shown: () => labelsShown, inputs: () => [lastRaftLabels], build: () => nameSymbols(lastRaftLabels, symbolChart) },
+    { id: 'names', shown: () => labelsShown, inputs: () => [lastRaftLabels], build: (chart) => nameSymbols(lastRaftLabels, chart) },
   ]
   // What each view's layer was last handed: the inputs it was built from,
   // and its pictures (a source that keeps its pictures is not sent them
@@ -2473,7 +2494,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const shown = visible && source.shown()
         const inputs = source.inputs()
         if (shown && !sameInputs(symbolsSent.get(layer), inputs)) {
-          const { pictures, symbols } = source.build()
+          const { pictures, symbols } = source.build(chartOf(view))
           if (picturesSent.get(layer) !== pictures) {
             // The old symbols away first: they name the old pictures.
             layer.setSymbols([])
@@ -2488,7 +2509,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // The events last, over everything; their symbols follow the fade.
       const events = view.symbols('events')
       if (!symbolsSent.has(events)) {
-        events.setPictures(eventPictures({ halfLength: EVENT_MARKER_HALF_LENGTH, collisionColor: COLLISION_COLOR, breakupColor: BREAKUP_COLOR }, symbolChart))
+        events.setPictures(eventPictures({ halfLength: EVENT_MARKER_HALF_LENGTH, collisionColor: COLLISION_COLOR, breakupColor: BREAKUP_COLOR }, chartOf(view)))
         symbolsSent.set(events, [])
       }
       events.setEnabled(view === target && visible && overlay.isLayerEnabled('events'))
@@ -2505,8 +2526,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function pushEventSymbols(): void {
     const now = Date.now()
     const symbols: WorldSymbol[] = []
+    const chart = chartOf(layerView())
     for (const { ev, birth } of liveEvents) {
-      const symbol = eventSymbol(ev, 1 - (now - birth) / EVENT_CONTINENT_LIFETIME_MS, symbolChart)
+      const symbol = eventSymbol(ev, 1 - (now - birth) / EVENT_CONTINENT_LIFETIME_MS, chart)
       if (symbol && (symbol.alpha ?? 1) > 0) symbols.push(symbol)
     }
     layerView().symbols('events').setSymbols(symbols)
@@ -2876,7 +2898,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           // channel, and naming a flow there would invent a river.
           // Grouped thousands once a river is big enough to need them, one
           // decimal while it is small enough for one to mean something.
-          const m3s = lastDischargeField[cell.fine] * DISCHARGE_TO_M3S
+          const m3s = lastDischargeField[cell.fine] * dischargeUnitM3s()
           const flow = m3s >= 100 ? Math.round(m3s).toLocaleString(getLocale()) : m3s.toFixed(1)
           rows.push({ label: t('readout.row.discharge'), value: formatValue(flow, 'common.unit.cubicMetresPerSecond') })
         }
@@ -5028,7 +5050,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           koppen: displayKoppen(),
           lakeDepth: lastLakeDepth,
           waterTable: lastWaterTable,
-          dischargeM3s: lastDischargeField ? lastDischargeField.map((q) => q * DISCHARGE_TO_M3S) : null,
+          dischargeM3s: lastDischargeField ? ((unit) => lastDischargeField.map((q) => q * unit))(dischargeUnitM3s()) : null,
           refined: lastRefined,
           waterBodies: lastWaterBodies,
           coast: lastCoast,

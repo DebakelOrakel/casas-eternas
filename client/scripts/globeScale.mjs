@@ -29,7 +29,7 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const B = await server.ssrLoadModule('@babylonjs/core')
 const V = await server.ssrLoadModule('/src/map/sphereView.ts')
 const A = await server.ssrLoadModule('/src/map/globeScaleArc.ts')
-const C = await server.ssrLoadModule('/src/generator/core/mapConfig.ts')
+const D = await server.ssrLoadModule('/src/generator/core/domain.ts')
 B.Logger.LogLevels = B.Logger.ErrorLogLevel * 0
 
 let failures = 0
@@ -38,7 +38,9 @@ const check = (name, ok, detail = '') => {
   else { failures++; console.log(`  FAIL  ${name}${detail ? `  ${detail}` : ''}`) }
 }
 
-const METRES_ROUND = C.METERS_PER_CELL * C.MAP_WIDTH
+// The sphere's own extent (DEC-0035 fork 6: 20 000 km), as the screen
+// hands it to the globe.
+const METRES_ROUND = D.sphereDomain(64, 32).metresAround
 const RADIUS_METRES = METRES_ROUND / (2 * Math.PI)
 const PROBE_PX = 10 // ScaleBar's probe at a given place (PROBE_AT_PX)
 const views = []

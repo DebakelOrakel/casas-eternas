@@ -325,14 +325,14 @@ async function buildWorld(seed) {
     sub: meshSub, elevation: terrain.z, graph, column: coupled.column,
     hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, climateResX: CRX, climateResY: CRY,
     precipitation, temperature: t2, monsoonIndex: sp2.index, cover: M.cover.coverField(biomes2, true),
-    regime: graphRegime, discharge: meshDischarge, cellM: M.engine.WORLD_WIDTH_METERS / W,
+    regime: graphRegime, discharge: meshDischarge, cellM: sim.domain.metresAround / W,
   })
   // The course (phase 3), seeded from the world like the worker does.
-  graph.courses = M.course.computeRiverCourses(graph, { cellM: M.engine.WORLD_WIDTH_METERS / W, seed: sim.warpSeed, domain: sim.domain })
+  graph.courses = M.course.computeRiverCourses(graph, { cellM: sim.domain.metresAround / W, seed: sim.warpSeed, domain: sim.domain })
   // The coast (F5), as the worker builds it after the graph.
   const coast = M.coast.buildCoastGraph({
     elevation: el, width: W, height: H, domain: sim.domain, wind, climateResX: CRX, climateResY: CRY,
-    hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,
+    hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, graph, cellM: sim.domain.metresAround / W,
   })
 
   // Downstream reads the REFINED fields, exactly as the worker's
@@ -353,7 +353,7 @@ async function buildWorld(seed) {
   for (let c = 0; c < biomesFine2.length; c++) if (ice.thickness[c] > 0 && el[c] > 0) biomesFine2[c] = M.biomes.Biome.Glacier
   // The sediment basins (F1) of the erosion pass, with provenance.
   const basins = M.basins.findSedimentBasins({
-    before: staged.before, after: el, width: W, height: H, routing, graph, cellM: M.engine.WORLD_WIDTH_METERS / W,
+    before: staged.before, after: el, width: W, height: H, routing, graph, cellM: sim.domain.metresAround / W,
     cratonAge, hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, coarseResX: CRX, coarseResY: CRY,
   })
   // Real volcanoes and sutures, and real params — through the very function the

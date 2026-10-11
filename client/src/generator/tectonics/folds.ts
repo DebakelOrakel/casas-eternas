@@ -2,7 +2,6 @@ import { capsuleWeight } from '../elevation/capsule'
 import { ELEVATION_TUNING } from '../elevation/elevationTuneParams'
 import type { Domain } from '../core/domain'
 import { nearFeatureBuckets, type FeatureBuckets } from '../elevation/elevationField'
-import { METERS_PER_CELL } from '../core/mapConfig'
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
 import { detCos } from '../core/detMath'
 
@@ -48,6 +47,6 @@ export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, doma
     }
   }
   if (bestWeight <= 0) return 1
-  const wavelengthUnits = (TECTONICS_TUNING.foldWavelengthKm * 1000) / METERS_PER_CELL
+  const wavelengthUnits = (TECTONICS_TUNING.foldWavelengthKm * 1000) / domain.metresPerUnit
   return 1 + TECTONICS_TUNING.foldAmplitude * detCos((2 * Math.PI * across) / wavelengthUnits)
 }

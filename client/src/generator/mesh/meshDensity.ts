@@ -58,13 +58,16 @@
 // neighbour's target); the second one moves nothing — the hysteresis
 // band holds.
 //
-// The ceiling is ONE MACRO CELL (METERS_PER_CELL) and not the 16 km the
+// The ceiling is ONE MACRO CELL (the torus's, 7.8 km) and not the 16 km the
 // first measurements ran with: the plains' micro-relief (elevationField's
 // fineValue, 20 m) has a 15.6 km octave that the raster samples at 7.8 km
 // and a 16 km node spacing would alias away — and it is what makes lowland
 // drainage dendritic (elevationTuneParams.plainDetailMax). While the
 // consumers still read a 2048 rasterisation of the mesh, the mesh is
 // nowhere coarser than that raster on land; the price was +25 % nodes.
+// The constant is a macro cell stated in metres: on the sphere a macro cell
+// is 9.8 km (DEC-0035 fork 6) and the ceiling stays 7.8 km, a mesh finer
+// than its raster there — left to the calibration.
 // The golden worlds (35 % land at most) build 1.6–4.2 M nodes.
 export const MESH_TUNING = {
   // Spacing floor and ceiling on land (the shelf and the continental slope

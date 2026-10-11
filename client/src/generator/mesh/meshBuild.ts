@@ -1,4 +1,3 @@
-import { METERS_PER_CELL } from '../core/mapConfig'
 import type { Domain } from '../core/domain'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import { bootstrapLattice } from './lattice'
@@ -20,9 +19,10 @@ import { coarsen, refine, type RemeshStats, type TargetSpacing } from './remesh'
 // The node state this creates: `z` (height, elevation units, intensive)
 // and `discharge` (m³/s, intensive; zero when the sampler has none — then
 // the discharge term is inert and only relief and curvature drive the
-// density). Coordinates are in world cells (METERS_PER_CELL each), heights
-// in elevation units (ELEVATION_METERS per unit); the density rule reads
-// metres and the conversion happens in `densityTarget` alone.
+// density). Coordinates are in world cells (the domain's metresPerUnit
+// each — the shape's, DEC-0035 fork 6), heights in elevation units
+// (ELEVATION_METERS per unit); the density rule reads metres and the
+// conversion happens in `densityTarget` and the bootstrap spacing alone.
 
 export interface FieldSampler {
   heightAt(x: number, y: number): number
@@ -47,11 +47,13 @@ export const MESH_DISCHARGE = 'discharge'
 
 // The density rule as a target-spacing function over the mesh's own state:
 // slope and curvature from the node's star, discharge from the node,
-// ocean below sea level. Spacing in domain units.
-export function densityTarget(state: MeshState, budget = 1, unitsToM = METERS_PER_CELL): TargetSpacing {
+// ocean below sea level. Spacing in domain units, the mesh's domain's
+// metresPerUnit each.
+export function densityTarget(state: MeshState, budget = 1): TargetSpacing {
   const relief = new Float64Array(2)
   const star = new Int32Array(256)
   return (mesh, targets, changed) => {
+    const unitsToM = mesh.domain.metresPerUnit
     const z = state.get(MESH_Z)
     const q = state.has(MESH_DISCHARGE) ? state.get(MESH_DISCHARGE) : null
     // The sediment column (phase 5.2): where a fill lies, h_column of the
@@ -113,9 +115,9 @@ export function triangulatePoints(domain: Domain, xs: ArrayLike<number>, ys: Arr
   return { mesh, mapping }
 }
 
-export function buildMesh(domain: Domain, sampler: FieldSampler, options: BuildOptions, unitsToM = METERS_PER_CELL): BuiltMesh {
+export function buildMesh(domain: Domain, sampler: FieldSampler, options: BuildOptions): BuiltMesh {
   const budget = options.budget ?? 1
-  const mesh = bootstrapLattice(domain, (MESH_TUNING.oceanSpacingM * budget) / unitsToM)
+  const mesh = bootstrapLattice(domain, (MESH_TUNING.oceanSpacingM * budget) / domain.metresPerUnit)
   const state = new MeshState(mesh.vertexSlots * 4)
   state.add(MESH_Z, 'intensive')
   if (sampler.dischargeAt) state.add(MESH_DISCHARGE, 'intensive')
@@ -124,7 +126,7 @@ export function buildMesh(domain: Domain, sampler: FieldSampler, options: BuildO
     if (sampler.dischargeAt) state.get(MESH_DISCHARGE)[v] = sampler.dischargeAt(x, y)
   }
   for (let v = 0; v < mesh.vertexSlots; v++) sample(v, mesh.vx[v], mesh.vy[v])
-  const target = densityTarget(state, budget, unitsToM)
+  const target = densityTarget(state, budget)
   const stats = refine(mesh, state, target, { seed: options.seed, sample, maxRounds: options.maxRounds })
   // The refine leaves about one node in a hundred under the removal
   // threshold (placed before a neighbour's target tightened); one coarsen

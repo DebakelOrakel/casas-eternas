@@ -7,7 +7,6 @@ import { detHypot } from '../core/detMath'
 import { buildChannelMaskOn, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE } from './hydrology'
 import type { RegimeInputs, RiverPolylines, WaterBody } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
-import { WORLD_WIDTH_METERS } from './erosionEngine'
 import type { RiverCourse } from './riverCourse'
 
 // THE FEATURE GRAPH — the erosion's output as data (ADAPTIVE_MESH_PLAN.md
@@ -175,7 +174,7 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
   const sub = input.substrate ?? (input.routing ? rasterSubstrate(input.routing) : null)
   if (!sub) throw new Error('buildRiverGraph: a routing or a substrate is needed')
   const { width, height, flowTarget, popOrder, poppedCount, count: n } = sub
-  const cellKm = WORLD_WIDTH_METERS / width / 1000
+  const cellKm = sub.domain.metresAround / width / 1000
   const channel = buildChannelMaskOn(sub, elevation, discharge, threshold)
   // Catchment sizes in CELLS: the land area draining to each element, all
   // of it, not only channels — popOrder backward puts every donor before

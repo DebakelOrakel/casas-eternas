@@ -65,6 +65,16 @@ lint:
 		--exclude=ridgedNoise.ts --exclude=domainWarp.ts --exclude=hypsometry.ts \
 		| grep -vE ':[0-9]+:[[:space:]]*(//|\*)' \
 		|| (echo "wrap a raster through its DomainGrid (core/domain.ts) in client/src/generator, not core/field.ts" >&2; exit 1)
+	# What a metre is belongs to the world's shape (DEC-0035, fork 6): code
+	# reads it from the Domain (metresPerUnit, metresAround), not from the
+	# shape constants in core/mapConfig.ts. Excepted: the places that mean
+	# the torus's own scale and say so — the flat map's scene and its fine
+	# relief, the tile sampler, the incubator (its worlds are tori).
+	@! grep -rnwE 'TORUS_METERS_PER_CELL|SPHERE_EQUATOR_METERS' \
+		client/src --include='*.ts' --exclude=mapConfig.ts --exclude=domain.ts \
+		--exclude=mapSceneSettings.ts --exclude=channelField.ts --exclude=tileSampler.ts --exclude-dir=incubator \
+		| grep -vE ':[0-9]+:[[:space:]]*(//|\*)' \
+		|| (echo "read a length's scale from the Domain (metresPerUnit, metresAround), not from core/mapConfig.ts's shape constants" >&2; exit 1)
 	gofmt -l . | tee /dev/stderr | (! read)
 	go vet ./...
 	# The committed CLI/config reference must match the cobra tree it is

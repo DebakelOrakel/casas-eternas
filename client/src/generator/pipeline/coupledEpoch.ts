@@ -40,7 +40,6 @@ import { assembleNodeForcing, erosionLithoSeed, scaleEngineParamsForDt, upsample
 import { advancePointByMotion } from '../tectonics/plateMotion'
 import { stepEpoch, type PlateSimulation, type SimEvent } from '../tectonics/plateSimulation'
 import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
-import { METERS_PER_CELL } from '../core/mapConfig'
 import { coarseForcingFields } from './erosionForcing'
 import { detPow } from '../core/detMath'
 
@@ -308,6 +307,9 @@ function meshAreasOf(mesh: PeriodicTriangulation): Float32Array {
 export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTerrain, options: CoupledEpochOptions): Promise<CoupledEpochStats> {
   const { width, height } = sim
   const domain: Domain = terrain.mesh.domain
+  // Metres per domain unit, the shape's (DEC-0035 fork 6): every length and
+  // area below is the mesh's units times this.
+  const unitM = domain.metresPerUnit
   const climateGrid = domain.grid(CLIMATE_RES_X, CLIMATE_RES_Y)
   const mesh0 = terrain.mesh
   const nodesBefore = mesh0.aliveVertices
@@ -370,7 +372,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   // The mesh from the moved nodes, then the remesh: crowded nodes go
   // (subduction), gaps fill (rifting).
-  const rebuilt = triangulatePoints(domain, xs, ys, count, MESH_TUNING.oceanSpacingM / METERS_PER_CELL)
+  const rebuilt = triangulatePoints(domain, xs, ys, count, MESH_TUNING.oceanSpacingM / unitM)
   timing.rebuild = lap()
   const mesh1 = rebuilt.mesh
   const state = new MeshState(mesh1.vertexSlots * 2)
@@ -483,8 +485,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const weather = climateDue || !cached ? computeWeather(coarseZ, domain.scaledTo(CLIMATE_RES_X, CLIMATE_RES_Y), weatherParams) : cached.result
   if (climateDue) terrain.weather = { epoch: sim.epoch, params: paramsKey, result: weather }
   const precipitation = weather.seasonal.annual
-  const climateCellM = (width / CLIMATE_RES_X) * METERS_PER_CELL
-  const climateCellM2 = climateCellM * ((height / CLIMATE_RES_Y) * METERS_PER_CELL)
+  const climateCellM = (width / CLIMATE_RES_X) * unitM
+  const climateCellM2 = climateCellM * ((height / CLIMATE_RES_Y) * unitM)
   // The ocean's area and the land's mean temperature by AREA: a cell counts
   // its cellArea (1 on the torus, cos φ on the sphere, whose polar rows are
   // slivers — counted as whole cells they made the sea level's ocean a
@@ -506,7 +508,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // run (the cut, the buzzsaw at the ELA), the till at the termini. The
   // ice's volume is what sets the sea level below.
   const areasNow = meshAreasOf(mesh)
-  const cellM2Now = METERS_PER_CELL * METERS_PER_CELL
+  const cellM2Now = unitM * unitM
   // The provenance the column records, 0..1. The field marks a cell with no
   // crust −1; such a source is oceanic, as young as crust gets, so it
   // enters as 0 — taken as −1 it made a layer's craton product negative
@@ -514,8 +516,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // not blend the marker in either.
   const cratonFieldForTill = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, domain)
   for (let i = 0; i < cratonFieldForTill.length; i++) if (cratonFieldForTill[i] < 0) cratonFieldForTill[i] = 0
-  const ice = computeIceOnMesh({ mesh, z: zCanon, temperature: weather.temperature, precipitation, coarseZ, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, width, height, cellM: METERS_PER_CELL })
-  const glacial = glacialErosionOnMesh(mesh, zCanon, ice, (sim.epochMa || TECTONIC_MA_PER_EPOCH) * 1e6, METERS_PER_CELL)
+  const ice = computeIceOnMesh({ mesh, z: zCanon, temperature: weather.temperature, precipitation, coarseZ, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, width, height, cellM: unitM })
+  const glacial = glacialErosionOnMesh(mesh, zCanon, ice, (sim.epochMa || TECTONIC_MA_PER_EPOCH) * 1e6, unitM)
   let iceVolumeM3 = 0
   let iceCoastColumnM3 = 0
   let iceArea = 0
@@ -641,7 +643,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // its column first, what it gained is SCREE — a coarse layer of the
   // node's own rock, formed under the epoch's climate. Uplift moves no
   // column.
-  const cellM2 = METERS_PER_CELL * METERS_PER_CELL
+  const cellM2 = unitM * unitM
   let depositedM3 = 0
   let reErodedM3 = 0
   let screeM3 = 0
@@ -685,12 +687,12 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // sand layer (coarse) under the epoch's climate. Both move z now, so
   // the plate answers to them below and the lakes see the new shore.
   const coastal = computeCoastal({
-    mesh, z: result.z, areas, wind: weather.wind, coarseZ, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, width, height, cellM: METERS_PER_CELL,
+    mesh, z: result.z, areas, wind: weather.wind, coarseZ, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, width, height, cellM: unitM,
     hardness: rockHard, sedimentFlux: result.sedimentFlux, iterations: options.iterationsPerEpoch, epochYears: (sim.epochMa || TECTONIC_MA_PER_EPOCH) * 1e6,
   })
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
-    const coastAreaM2 = areas[v] * METERS_PER_CELL * METERS_PER_CELL
+    const coastAreaM2 = areas[v] * unitM * unitM
     const cutM = coastal.cutM[v]
     if (cutM > 0) {
       iceCoastColumnM3 -= cut(column, v, cutM) * coastAreaM2
@@ -714,7 +716,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // takes the deflection as height over the baseline.
   const flexResX = Math.max(16, Math.round(width / FLEXURE_CELL))
   const flexResY = Math.max(8, Math.round(height / FLEXURE_CELL))
-  const flexCellKm = ((width / flexResX) * METERS_PER_CELL) / 1000
+  const flexCellKm = ((width / flexResX) * unitM) / 1000
   const flexCellM2 = (flexCellKm * 1000) * (flexCellKm * 1000)
   const flexGrid = domain.grid(flexResX, flexResY)
   const ageGrid = oceanAgeGrid(domain)

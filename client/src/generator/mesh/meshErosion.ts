@@ -1,4 +1,3 @@
-import { METERS_PER_CELL } from '../core/mapConfig'
 import {
   DEFAULT_ENGINE_PARAMS,
   ErosionEngine,
@@ -25,7 +24,8 @@ export const DEFAULT_ROUTING_EVERY = 4
 // (facet/length = (cot α + cot β)/2 over the two angles opposite the edge,
 // non-negative on a Delaunay triangulation); a node's area is its Voronoi
 // cell. Lengths are in domain units, and the reference length is the
-// macro cell, METERS_PER_CELL — a domain unit IS a macro cell, so every
+// macro cell, the domain's metresPerUnit (the shape's, DEC-0035 fork 6) —
+// a domain unit IS a macro cell, so every
 // length-bearing constant of the engine (settling lengths, diffusivity,
 // the shelf band) reads on the mesh exactly as it does on the 2048
 // raster. The frozen deep ocean and the shelf band follow the raster's
@@ -101,7 +101,7 @@ const PROGRESS_CHUNKS = 8
 // IS that index, and is returned as it is — only the frozen set is worked
 // out again. A second full build per history epoch was a twentieth of its
 // time (profiled 2026-10-04).
-export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS, refM = METERS_PER_CELL, extraFrozen?: Uint8Array, reuse?: EngineIndex): EngineIndex {
+export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS, refM = mesh.domain.metresPerUnit, extraFrozen?: Uint8Array, reuse?: EngineIndex): EngineIndex {
   const slots = mesh.vertexSlots
   const star = new Int32Array(256)
   // The world ocean: the largest component of z ≤ 0 over alive vertices.
@@ -356,7 +356,7 @@ function cotAtApex(mesh: PeriodicTriangulation, e: number, f: Float64Array): num
 // otherwise — the same kernels either way.
 export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float32Array, forcing: ErosionForcing, options: MeshErosionOptions): Promise<MeshErosionResult> {
   const params = options.params ?? DEFAULT_ENGINE_PARAMS
-  const index = buildMeshEngineIndex(mesh, initial, params, METERS_PER_CELL, options.frozen)
+  const index = buildMeshEngineIndex(mesh, initial, params, mesh.domain.metresPerUnit, options.frozen)
   const chunkSize = Math.max(1, Math.ceil(options.age / PROGRESS_CHUNKS))
   const chunks = async (run: (step: number, done: number) => void, expand: () => Float32Array): Promise<void> => {
     let done = 0

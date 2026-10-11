@@ -32,7 +32,7 @@ const S = await server.ssrLoadModule('/src/map/globeScaleArc.ts')
 const T = await server.ssrLoadModule('/src/map/globeTemperatureArc.ts')
 const TEMP = await server.ssrLoadModule('/src/generator/climate/temperature.ts')
 const P = await server.ssrLoadModule('/src/generator/planet/planetForcing.ts')
-const C = await server.ssrLoadModule('/src/generator/core/mapConfig.ts')
+const D = await server.ssrLoadModule('/src/generator/core/domain.ts')
 B.Logger.LogLevels = B.Logger.ErrorLogLevel * 0
 
 let failures = 0
@@ -41,7 +41,8 @@ const check = (name, ok, detail = '') => {
   else { failures++; console.log(`  FAIL  ${name}${detail ? `  ${detail}` : ''}`) }
 }
 
-const METRES_ROUND = C.METERS_PER_CELL * C.MAP_WIDTH
+// The sphere's own extent (DEC-0035 fork 6), as the screen hands it to the globe.
+const METRES_ROUND = D.sphereDomain(64, 32).metresAround
 const views = []
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a))
 const label = (text) => 7 * text.length

@@ -7,7 +7,8 @@ import type { SymbolPicture, WorldSymbol } from '../../map/worldView'
 // (map/worldView.ts, WorldSymbols): the pictures, drawn as the map texture
 // drew them until 2026-10-10 — same colours, shapes and sizes in chart
 // texels — and the symbols at the chart points. A picture's size on the
-// world is its size in texels at the equator, METERS_PER_CELL each; it no
+// world is its size in texels at the equator, ChartSize.metresPerTexel each
+// (the view's shape's, DEC-0035 fork 6); it no
 // longer stretches toward the globe's poles as a painted circle did.
 //
 // Each picture is drawn UPRIGHT (its top the top of the view, north up),
@@ -182,7 +183,7 @@ export function originSymbols(origins: { x: number; y: number; race: number }[],
 // axis and reads left to right whichever way the axis points.
 //
 // The placement is in the generator's local units (one texel at the
-// equator, true lengths on the sphere), so METERS_PER_CELL each is the
+// equator, true lengths on the sphere), so metresPerTexel each is the
 // name's true size on either shape.
 //
 // The picture holds the name as drawn, not the continent's whole extent:

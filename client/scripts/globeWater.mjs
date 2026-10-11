@@ -37,6 +37,7 @@ const G = await server.ssrLoadModule('/src/map/globeRibbons.ts')
 const RW = await server.ssrLoadModule('/src/map/riverWidth.ts')
 const S = await server.ssrLoadModule('/src/map/mapSceneSettings.ts')
 const C = await server.ssrLoadModule('/src/generator/core/mapConfig.ts')
+const D = await server.ssrLoadModule('/src/generator/core/domain.ts')
 const HY = await server.ssrLoadModule('/src/generator/surface/hydrology.ts')
 const TR = await server.ssrLoadModule('/src/map/ToroidalRibbonOverlay.ts')
 const WM = await server.ssrLoadModule('/src/map/waterMaterialPlugin.ts')
@@ -57,10 +58,10 @@ const angle = (a, b) => Math.atan2(norm(cross(a, b)), dot(a, b))
 const at3 = (arr, i) => [arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]]
 
 // The generator's chart and the globe the screen makes (GeneratorScreen:
-// metresRound = METERS_PER_CELL × MAP_WIDTH).
+// metresRound = the sphere Domain's metresAround, DEC-0035 fork 6).
 const W = C.MAP_WIDTH
 const H = C.MAP_HEIGHT
-const RADIUS_METRES = (C.METERS_PER_CELL * W) / (2 * Math.PI)
+const RADIUS_METRES = D.sphereDomain(W, H).metresAround / (2 * Math.PI)
 const sphereSource = readFileSync(`${CLIENT}/src/map/sphereView.ts`, 'utf8')
 const constant = (name) => Number(sphereSource.match(new RegExp(`const ${name} = ([0-9.]+)`))[1])
 const RIVER_LIFT = constant('RIVER_LIFT')

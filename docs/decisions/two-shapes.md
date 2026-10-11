@@ -178,6 +178,37 @@ later pass; (a) is smaller and probably enough.
 no pole problem; only the rasters do, and for them (a) is the climate
 models' usual remedy.
 
+## Fork 6 — How large the sphere is
+
+Both shapes measured one cell as 7.8 km (`METERS_PER_CELL`): the torus is
+2048 × 7.8 km = 15 974 km by 7 987 km, and the sphere on the same 2:1
+chart (R = W / 2π) had an equator of the same 15 974 km — and only 64 %
+of the torus's area (W² / π against W · H).
+
+**Options.** (A) The same 2048 × 1024 raster, a larger cell on the
+sphere. (B) A larger raster for the sphere, 2560 × 1280, at the torus's
+cell. (C) Keep the sphere at 16 000 km.
+
+**Answer: (A), with an equator of 20 000 km.** A sphere cell is
+20 000 km / 2048 = 9 765.625 m at the equator; R = 3 183 km; the area
+1.273 · 10⁸ km², 99.5 % of the torus's. The torus keeps 7.8 km exactly.
+
+**Why.** Two worlds of one game should be about one size, and 20 000 km is
+a round number that gets there. (B) costs 1.56× the cells in every raster
+stage and every texture, and every grid size that is now one constant
+would become a shape's. (C) leaves the sphere a smaller world for no
+reason but history. The price of (A): the sphere's cells are coarser at
+low latitudes, and every constant that is calibrated per cell means 25 %
+more on the sphere (see Status, 2026-10-11).
+
+**How.** The scale is the Domain's: `domain.metresPerUnit` (metres per
+domain unit, a macro cell, at the equator on the sphere) and
+`domain.metresAround` (the world's extent east-west, fixed whatever raster
+samples it). `core/mapConfig.ts` holds the two shapes' constants
+(`TORUS_METERS_PER_CELL`, `SPHERE_EQUATOR_METERS`), and a lint gate refuses
+them outside `core/` and the places that mean the torus's own scale (the
+flat map's scene and fine relief, the tile sampler, the incubator).
+
 ## What this does not decide
 
 - Hex tiles on a sphere (Goldberg polyhedron or patches) —
@@ -186,6 +217,29 @@ models' usual remedy.
 - Whether the flat map gets a camera reset like the globe's.
 
 ## Status
+
+2026-10-11: fork 6 BUILT — the sphere is 20 000 km round. `Domain` carries
+`metresPerUnit` and `metresAround`; every metre in the generator, the map
+and the screen is read from them (the mesh's density rule and bootstrap,
+the erosion engine's reference length, the column's, the ice's, the
+coast's and the flexure's areas and lengths, the folds, the river graph
+and courses, the ecology's reach, the globe's size, the symbols, the
+discharge readout). The torus by the same arithmetic in the same order:
+golden 3 worlds × 46 stages byte-identical, `harness:mesh`'s build hash
+unchanged. Old sphere saves record another generator code
+(`GENERATOR_CODE`) in their runs and are made again, as any change in
+`src/generator` makes them. MEASURED (one-off, seed "harness", 2048 ×
+1024, 60 Archean epochs, then 16 coupled epochs at HISTORY_DEFAULTS,
+single-threaded): the sphere 73.2 k nodes, 1.61 s an epoch, land 7.6 %,
+10 plates; at 16 000 km it was 49.4 k nodes, 1.22 s, land 7.5 %; the torus
+56.4 k nodes, 1.09 s, land 4.3 %, 19 plates. The sphere's nodes grew with
+its area in m² (the ocean's spacing is 40 km, now fewer units). LEFT TO
+THE CALIBRATION, all stated per cell or per unit and now 25 % longer on
+the sphere: the mesh's land ceiling (`MESH_TUNING.maxSpacingM`, one torus
+cell in metres), the noise and feature sizes of the elevation and the
+tectonics (`rangePerpRadius`, `warpAmplitudePx`, the ridged octaves, the
+rift and accretion radii), the climate's reaches in cells, the channel's
+critical area in cells, the coast's reach and cliff rules in cells.
 
 2026-10-11: STEP 4 OPEN on the sphere — the ecology step runs on a
 sphere world (step 4f): its resources and the carrying capacity, the

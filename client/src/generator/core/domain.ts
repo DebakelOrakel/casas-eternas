@@ -1,6 +1,7 @@
 import { sampleBilinearGrid, sampleBilinearWorld, sampleNearestWorld, upscaleBilinearToroidal, wrapValue } from './field'
 import { rotateAroundCenter, wrappedDelta } from './toroidal'
 import { detAsin, detAtan2, detCos, detSin } from './detMath'
+import { MAP_WIDTH, SPHERE_EQUATOR_METERS, TORUS_METERS_PER_CELL } from './mapConfig'
 
 // THE DOMAIN (decision 11 of docs/decisions/adaptive-mesh.md, born with the
 // Planet stage): the world's topology behind one interface — what a point
@@ -29,6 +30,20 @@ export interface Domain {
   readonly kind: 'torus' | 'sphere'
   readonly width: number
   readonly height: number
+  // What a length IS on this shape (DEC-0035 fork 6): both shapes keep the
+  // 2048 × 1024 raster, the sphere's cell is the larger (core/mapConfig.ts).
+  // `metresPerUnit`: metres per domain unit, at the equator on the sphere
+  // (one unit of arc). A domain made by torusDomain / sphereDomain counts in
+  // macro cells whatever its width — a harness world of 512 units is a
+  // smaller world, not coarser cells; scaledTo makes the unit larger.
+  // `metresAround`: the world's extent east-west at the equator, fixed for
+  // the shape whatever raster samples it — a grid of w cells has cells
+  // metresAround / w wide. At the world raster's width (MAP_WIDTH) the two
+  // agree; in a narrower harness world they do not, and the generator
+  // carries both readings from before the fork (the mesh counted in
+  // macro cells, the raster stages in the fixed world).
+  readonly metresPerUnit: number
+  readonly metresAround: number
   // Latitude 0..1 of a normalised row position y in 0..1: 0 at the equator,
   // 1 at the pole.
   latitude(yNorm: number): number
@@ -441,10 +456,16 @@ class TorusGrid implements DomainGrid {
   }
 }
 
+// The torus's extent: MAP_WIDTH cells of TORUS_METERS_PER_CELL, the product
+// in the order the old WORLD_WIDTH_METERS took it.
+const TORUS_METRES_AROUND = MAP_WIDTH * TORUS_METERS_PER_CELL
+// The sphere's metres per macro cell at the equator: 9 765.625, exact.
+const SPHERE_METRES_PER_UNIT = SPHERE_EQUATOR_METERS / MAP_WIDTH
+
 // The torus, with the thermal equator slid by `equatorOffset` (fraction of
 // the height, positive toward the bottom) — the climate's one "move the
 // equator" knob, applied once here.
-export function torusDomain(width: number, height: number, equatorOffset = 0): Domain {
+export function torusDomain(width: number, height: number, equatorOffset = 0, metresPerUnit = TORUS_METERS_PER_CELL): Domain {
   const shifted = (yNorm: number): number => {
     const y = yNorm - equatorOffset
     return y - Math.floor(y)
@@ -453,6 +474,8 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
     kind: 'torus',
     width,
     height,
+    metresPerUnit,
+    metresAround: TORUS_METRES_AROUND,
     latitude: (yNorm) => Math.abs(shifted(yNorm) - 0.5) * 2,
     north: (yNorm) => shifted(yNorm) < 0.5,
     delta: (ax, ay, bx, by, out) => {
@@ -488,7 +511,7 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
       out.y = vy
     },
     grid: (resX, resY) => new TorusGrid(domain, resX, resY),
-    scaledTo: (w, h) => torusDomain(w, h, equatorOffset),
+    scaledTo: (w, h) => torusDomain(w, h, equatorOffset, (metresPerUnit * width) / w),
     noise: CHART_NOISE,
   }
   return domain
@@ -511,7 +534,7 @@ export function torusDomain(width: number, height: number, equatorOffset = 0): D
 // branch, and it is stable: a point held at a pole keeps its x and with it
 // its frame. A point that ARRIVES at a pole by a rotation keeps no
 // longitude (the chart's x there is arbitrary, and 0 is written).
-export function sphereDomain(width: number, height: number, _equatorOffset = 0): Domain {
+export function sphereDomain(width: number, height: number, _equatorOffset = 0, metresPerUnit = SPHERE_METRES_PER_UNIT): Domain {
   // `equatorOffset` slides the torus's THERMAL equator: there the equator is
   // a declared row, so moving it is a choice. On the sphere the equator is
   // the geometry's, and a shifted climate equator is the climate's business
@@ -600,6 +623,8 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
     kind: 'sphere',
     width,
     height,
+    metresPerUnit,
+    metresAround: SPHERE_EQUATOR_METERS,
     // The torus's rule, which is the sphere's geometry: |φ| / 90°, linear
     // in the row.
     latitude: (yNorm) => Math.abs(yNorm - 0.5) * 2,
@@ -755,7 +780,7 @@ export function sphereDomain(width: number, height: number, _equatorOffset = 0):
       }
       return g
     },
-    scaledTo: (w, h) => sphereDomain(w, h),
+    scaledTo: (w, h) => sphereDomain(w, h, 0, (metresPerUnit * width) / w),
     // The unit vector and the axes are advance's: u = (sin θ cos λ,
     // sin θ sin λ, cos θ), east (−sin λ, cos λ, 0), south (cos θ cos λ,
     // cos θ sin λ, −sin θ). At the north pole sin θ is exactly 0, so the

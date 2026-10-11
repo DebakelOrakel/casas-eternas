@@ -27,7 +27,6 @@ import { OCEAN_PRECIP } from '../climate/precipitation'
 import { Biome, reduceTemperatureToSeaLevel } from '../climate/biomes'
 import { clamp01, smoothstep } from '../core/interpolation'
 import { globeFrame, type Domain, type DomainGrid } from '../core/domain'
-import { MAP_WIDTH, METERS_PER_CELL } from '../core/mapConfig'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { ECOLOGY_TUNING, PASTURE_BY_BIOME, TIMBER_BY_BIOME } from './ecologyTuneParams'
 import type { Volcano } from '../tectonics/volcanoes'
@@ -449,9 +448,9 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
   const T = ECOLOGY_TUNING
   const n = w * h
   const nc = CLIMATE_RES_X * CLIMATE_RES_Y
-  // Metres per pixel: the generator's world is MAP_WIDTH × METERS_PER_CELL
-  // wide whatever raster it is sampled on.
-  const mPerPx = (MAP_WIDTH * METERS_PER_CELL) / w
+  // Metres per pixel: the world is the shape's metresAround wide whatever
+  // raster it is sampled on (at the equator on the sphere).
+  const mPerPx = domain.metresAround / w
   // The slope's scale: flatness was measured on the rise across a climate
   // cell, and a pixel's rise is read against the same length.
   const pxPerCell = w / CLIMATE_RES_X

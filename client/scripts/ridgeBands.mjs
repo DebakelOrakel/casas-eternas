@@ -40,7 +40,7 @@ const M = {
 }
 
 // World width in km, for reporting octave wavelengths in something physical.
-const WORLD_KM = (W * M.config.METERS_PER_CELL) / 1000
+const WORLD_KM = (W * M.config.TORUS_METERS_PER_CELL) / 1000
 
 const CANDIDATES = [
   { name: 'A former          ', cells: [32, 64, 128, 256], amps: [1, 0.5, 0.25, 0.125] },

@@ -1,5 +1,5 @@
 import { ELEVATION_METERS } from '../elevation/elevationScale'
-import { METERS_PER_CELL } from '../core/mapConfig'
+import { TORUS_METERS_PER_CELL } from '../core/mapConfig'
 import { detHypot } from '../core/detMath'
 
 // A TILE'S SURFACE as a point lookup: the tile artifact's triangles
@@ -14,6 +14,10 @@ import { detHypot } from '../core/detMath'
 // instead of as facets, which with the map's exaggeration every triangle
 // was (the incubator's mid views, 2026-10-03). Metre-true: the
 // horizontal in metres per cell, the height in metres per elevation unit.
+// The cell is the TORUS's: a tile is cut from a flat world (meshTile.ts
+// triangulates it as a small torus, docs/decisions/tile-jobs.md) and the
+// artifact carries no domain; tiles of a sphere world would have to carry
+// their scale (DEC-0035 fork 6).
 //
 // A node on the tile's edge has only its inside triangles here, so its
 // normal is half a star, and the tile beside it has the other half: the
@@ -42,11 +46,11 @@ export function tileNormalSums(nodes: Float32Array, triangles: Uint32Array, z: F
   const sums = new Float64Array((nodes.length / 2) * 3)
   for (let t = 0; t < triangles.length; t += 3) {
     const a = triangles[t], b = triangles[t + 1], c = triangles[t + 2]
-    const abx = (nodes[2 * b] - nodes[2 * a]) * METERS_PER_CELL
-    const abz = (nodes[2 * b + 1] - nodes[2 * a + 1]) * METERS_PER_CELL
+    const abx = (nodes[2 * b] - nodes[2 * a]) * TORUS_METERS_PER_CELL
+    const abz = (nodes[2 * b + 1] - nodes[2 * a + 1]) * TORUS_METERS_PER_CELL
     const aby = (z[b] - z[a]) * ELEVATION_METERS
-    const acx = (nodes[2 * c] - nodes[2 * a]) * METERS_PER_CELL
-    const acz = (nodes[2 * c + 1] - nodes[2 * a + 1]) * METERS_PER_CELL
+    const acx = (nodes[2 * c] - nodes[2 * a]) * TORUS_METERS_PER_CELL
+    const acz = (nodes[2 * c + 1] - nodes[2 * a + 1]) * TORUS_METERS_PER_CELL
     const acy = (z[c] - z[a]) * ELEVATION_METERS
     let nx = aby * acz - abz * acy
     let ny = abz * acx - abx * acz

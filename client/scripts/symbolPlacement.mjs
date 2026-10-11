@@ -68,7 +68,8 @@ const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 const norm = (a) => Math.hypot(a[0], a[1], a[2])
 
-// The generator's chart: 2048 × 1024 texels, METERS_PER_CELL ≈ 7 813 m.
+// The generator's chart, 2048 × 1024 texels, at a scale of the check's own
+// (any metres per texel will do; the sphere's is 9 766 m, DEC-0035 fork 6).
 const W = 2048
 const H = 1024
 const MPT = 40_000_000 / W

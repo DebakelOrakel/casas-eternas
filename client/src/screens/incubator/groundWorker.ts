@@ -1,4 +1,6 @@
-import { METERS_PER_CELL } from '../../generator/core/mapConfig'
+import { TORUS_METERS_PER_CELL } from '../../generator/core/mapConfig'
+// The incubator's worlds are tori (groundSource.ts: torusDomain), so its metres
+// are the torus's (DEC-0035 fork 6).
 import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
 import { createMeshSampler, type MeshSampler } from '../../generator/mesh/meshSampler'
 import type { TileId } from '../../generator/mesh/meshTile'
@@ -132,7 +134,7 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
     source = createGroundSource({
       width: message.width,
       height: message.height,
-      metersPerCell: METERS_PER_CELL,
+      metersPerCell: TORUS_METERS_PER_CELL,
       elevationMeters: ELEVATION_METERS,
       base,
       stages: new Set(message.stages),
@@ -141,7 +143,7 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
         ? (stage, tile) => {
             const started = performance.now()
             const frame = tileFrame(tile)
-            const n = rasterSamples(1, frame.cells, METERS_PER_CELL)
+            const n = rasterSamples(1, frame.cells, TORUS_METERS_PER_CELL)
             const data = rasterBuffer(n)
             rasteriseLevel(base!, frame.cornerX, frame.cornerY, frame.cells, n, data)
             post({ type: 'rastered', stage, tile, n, data, ms: Math.round(performance.now() - started), rim: null }, data.buffer instanceof ArrayBuffer ? [data.buffer] : [])
@@ -162,7 +164,7 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
   if (message.type === 'rasterise') {
     const started = performance.now()
     const frame = tileFrame(message.tile)
-    const n = rasterSamples(message.tile.level, frame.cells, METERS_PER_CELL)
+    const n = rasterSamples(message.tile.level, frame.cells, TORUS_METERS_PER_CELL)
     const data = rasterBuffer(n)
     let rim: TileRim | null = null
     if (message.artifact) {

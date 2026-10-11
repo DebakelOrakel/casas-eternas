@@ -1,7 +1,7 @@
 import { Scene } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { createGeneratorCamera } from '../../camera/generatorCamera'
-import { MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/mapConfig'
+import { MAP_WIDTH, TORUS_METERS_PER_CELL } from '../../generator/core/mapConfig'
 import { relabel } from '../../i18n/relabel'
 import { createScaleBar, planeMeasure } from '../../map/ScaleBar'
 import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, UNITS_PER_METER } from '../../map/mapSceneSettings'
@@ -164,8 +164,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   titleBar.setWorld(null)
 
   // The scale bar at the lower right, as in the generator. Measured every
-  // frame; it does nothing while the view has not changed.
-  const scaleBar = createScaleBar(root, { measure: planeMeasure(scene, MAP_WORLD_WIDTH, MAP_WORLD_HEIGHT, (METERS_PER_CELL * MAP_WIDTH) / MAP_WORLD_WIDTH) })
+  // frame; it does nothing while the view has not changed. The incubator's
+  // worlds are tori (groundSource.ts: torusDomain), so the torus's metres.
+  const scaleBar = createScaleBar(root, { measure: planeMeasure(scene, MAP_WORLD_WIDTH, MAP_WORLD_HEIGHT, (TORUS_METERS_PER_CELL * MAP_WIDTH) / MAP_WORLD_WIDTH) })
   scaleBar.element.hidden = true
   scene.onBeforeRenderObservable.add(() => {
     if (!shown || !ground) return

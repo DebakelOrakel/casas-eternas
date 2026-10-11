@@ -126,8 +126,9 @@ const W = 512, H = 256
 // See the deterministic math check in [2].
 const DET_MATH_HASH = 'dadf96b6'
 const T = M.density.MESH_TUNING
-const UNITS_TO_M = M.config.METERS_PER_CELL
 const domain = M.domain.torusDomain(W, H)
+// Metres per domain unit, the torus's (DEC-0035 fork 6): the synthetic world's.
+const UNITS_TO_M = domain.metresPerUnit
 
 // ---------------------------------------------------------------- helpers
 
@@ -366,7 +367,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   // The budget: what the nodes gained in volume equals the uplift added
   // minus what left over the rim — erosion moves material, it does not
   // make or lose it. Volumes in m³ over the Voronoi areas.
-  const unitM = M.config.METERS_PER_CELL
+  const unitM = UNITS_TO_M
   const upliftDt = M.engine.DEFAULT_ENGINE_PARAMS.upliftDt
   let dV = 0
   let addedV = 0
@@ -1029,7 +1030,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const foldDomain = M.domain.torusDomain(W, H)
   const buckets = M.field.buildFeatureBuckets([feature], foldDomain)
   const T = M.tectonicsTune.TECTONICS_TUNING
-  const lambda = (T.foldWavelengthKm * 1000) / M.mapConfig.METERS_PER_CELL
+  const lambda = (T.foldWavelengthKm * 1000) / foldDomain.metresPerUnit
   const at = (x, y) => M.folds.foldFactorAt(buckets, x, y, foldDomain)
   check('the axis is an anticline', Math.abs(at(128, 64) - (1 + T.foldAmplitude)) < 1e-6, at(128, 64).toFixed(3))
   check('half a wavelength across, a syncline', Math.abs(at(128, 64 + lambda / 2) - (1 - T.foldAmplitude)) < 1e-6, at(128, 64 + lambda / 2).toFixed(3))
@@ -1082,7 +1083,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v] && z[v] > 0) { land0++; if (lee(v)) leeLand0++ }
   let ledgerOk = true, cutTotal = 0, depTotal = 0
   for (let epoch = 0; epoch < 4; epoch++) {
-    const r = M.coastal.computeCoastal({ mesh: lat, z: zNow, areas, wind, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: M.mapConfig.METERS_PER_CELL, hardness, sedimentFlux: flux, iterations: 4, epochYears: 1e6 })
+    const r = M.coastal.computeCoastal({ mesh: lat, z: zNow, areas, wind, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: UNITS_TO_M, hardness, sedimentFlux: flux, iterations: 4, epochYears: 1e6 })
     if (Math.abs(r.erodedM3 + r.suppliedM3 - r.depositedM3 - r.exportedM3) > 1e-6 * Math.max(1, r.erodedM3 + r.suppliedM3)) ledgerOk = false
     cutTotal += r.erodedM3; depTotal += r.depositedM3
     for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v]) zNow[v] += (r.depositM[v] - r.cutM[v]) / M.scale.ELEVATION_METERS
@@ -1127,7 +1128,7 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   // −4 °C at 2300 m, 6.5 °C per km — cold walls, a warm floor.
   const temperature = new Float32Array(RX * RY)
   for (let i = 0; i < temperature.length; i++) temperature[i] = -4 - 6.5 * (coarseZ[i] * M.scale.ELEVATION_METERS - 2300) / 1000
-  const ice = M.glacial.computeIceOnMesh({ mesh: lat, z, temperature, precipitation, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: M.mapConfig.METERS_PER_CELL })
+  const ice = M.glacial.computeIceOnMesh({ mesh: lat, z, temperature, precipitation, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: UNITS_TO_M })
   let iced = 0, maxH = 0
   for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v] && ice.thickness[v] > 0) { iced++; maxH = Math.max(maxH, ice.thickness[v]) }
   let landNodes = 0
@@ -1151,8 +1152,8 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   const zAfter = z.slice()
   let floorCut = 0, floorN = 0, wallCut = 0, wallN = 0, maxCut = 0
   for (let epoch = 0; epoch < 3; epoch++) {
-    const iceNow = M.glacial.computeIceOnMesh({ mesh: lat, z: zAfter, temperature, precipitation, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: M.mapConfig.METERS_PER_CELL })
-    const g = M.glacial.glacialErosionOnMesh(lat, zAfter, iceNow, 1e6, M.mapConfig.METERS_PER_CELL)
+    const iceNow = M.glacial.computeIceOnMesh({ mesh: lat, z: zAfter, temperature, precipitation, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: UNITS_TO_M })
+    const g = M.glacial.glacialErosionOnMesh(lat, zAfter, iceNow, 1e6, UNITS_TO_M)
     for (let v = 0; v < lat.vertexSlots; v++) {
       if (!lat.vAlive[v]) continue
       zAfter[v] -= g.cutM[v] / M.scale.ELEVATION_METERS
@@ -1297,7 +1298,7 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
     const regime = M.hydro.accumulateRegimeInputsOn(sub, terrain.z, weather.temperature, precip, weather.seasonal.index, RX, RY)
     const graph = M.graph.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: M.hydro.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY) })
     const biomes = M.biomes.computeBiomes(weather.temperature, precip, weather.seasonalAmplitude, weather.seasonal.index, coarseZ, RX, RY)
-    const ground = M.ground.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, climateResX: RX, climateResY: RY, precipitation: precip, temperature: weather.temperature, monsoonIndex: weather.seasonal.index, cover: M.cover.coverField(biomes, true), regime, discharge, cellM: M.mapConfig.METERS_PER_CELL })
+    const ground = M.ground.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, climateResX: RX, climateResY: RY, precipitation: precip, temperature: weather.temperature, monsoonIndex: weather.seasonal.index, cover: M.cover.coverField(biomes, true), regime, discharge, cellM: UNITS_TO_M })
     const broken = Object.entries(M.ground.hydrogeologyInvariants(ground, graph, terrain.z)).filter(([, n]) => n > 0)
     check(`the hydrogeology holds its invariants (${ground.springs.length} springs, ${graph.reaches.filter((r) => r.springFed).length} spring-fed of ${graph.reaches.length} reaches)`, broken.length === 0, broken.map(([k, n]) => `${k}:${n}`).join(' '))
     let land = 0, wet = 0, sum = 0
@@ -1587,7 +1588,7 @@ console.log('\n[1g] the mesh on the sphere')
   const sayAudit = (a) => `V − E + F = ${a.euler}, ${a.triangles - a.wound} unwound, ${a.inside} edges with a point in the circumcircle (worst ${a.worst.toExponential(1)}), areas ${a.areaErr.toExponential(1)} off 4πR²`
 
   // The bootstrap: the geodesic lattice at the ocean spacing.
-  const lat = M.lattice.geodesicLattice(S, T.oceanSpacingM / UNITS_TO_M)
+  const lat = M.lattice.geodesicLattice(S, T.oceanSpacingM / S.metresPerUnit)
   const latAudit = audit(lat)
   check(`sphere: the geodesic lattice is a Delaunay triangulation of the sphere (${lat.aliveVertices} nodes)`, sound(lat, latAudit) && (lat.aliveVertices - 2) % 10 === 0, sayAudit(latAudit))
   let nearPole = Infinity
@@ -1662,7 +1663,7 @@ console.log('\n[1g] the mesh on the sphere')
         if (!mesh.tAlive[t]) continue
         const cs = [mesh.tris[3 * t], mesh.tris[3 * t + 1], mesh.tris[3 * t + 2]]
         for (const v of cs) {
-          const p = cs.map((c) => { S.delta(mesh.vx[c], mesh.vy[c], mesh.vx[v], mesh.vy[v], d); return [d.x * UNITS_TO_M, z[c] * M.scale.ELEVATION_METERS, d.y * UNITS_TO_M] })
+          const p = cs.map((c) => { S.delta(mesh.vx[c], mesh.vy[c], mesh.vx[v], mesh.vy[v], d); return [d.x * S.metresPerUnit, z[c] * M.scale.ELEVATION_METERS, d.y * S.metresPerUnit] })
           let n = crs(sub(p[1], p[0]), sub(p[2], p[0]))
           if (n[1] < 0) n = n.map((k) => -k)
           for (let k = 0; k < 3; k++) ref[3 * v + k] += n[k]
@@ -1886,7 +1887,7 @@ console.log('\n[1g] the mesh on the sphere')
       xs.push(p.x)
       ys.push(p.y)
     }
-    const { mesh: tri, mapping } = M.build.triangulatePoints(S, xs, ys, xs.length, T.oceanSpacingM / UNITS_TO_M)
+    const { mesh: tri, mapping } = M.build.triangulatePoints(S, xs, ys, xs.length, T.oceanSpacingM / S.metresPerUnit)
     const distinct = new Set(mapping).size === xs.length && Array.from(mapping).every((v) => tri.vAlive[v])
     check(`sphere: triangulatePoints keeps every node and removes its lattice (${xs.length} → ${tri.aliveVertices})`, distinct && tri.aliveVertices === xs.length && sound(tri))
 
@@ -1895,7 +1896,7 @@ console.log('\n[1g] the mesh on the sphere')
       sx.push(mesh.vx[v])
       sy.push(mesh.vy[v])
     }
-    const { mesh: same, mapping: sameMap } = M.build.triangulatePoints(S, sx, sy, sx.length, T.oceanSpacingM / UNITS_TO_M)
+    const { mesh: same, mapping: sameMap } = M.build.triangulatePoints(S, sx, sy, sx.length, T.oceanSpacingM / S.metresPerUnit)
     const kept = new Set(sameMap).size === sx.length && Array.from(sameMap).every((v, i) => same.vAlive[v] && same.vx[v] === sx[i] && same.vy[v] === sy[i])
     check(`sphere: triangulatePoints keeps nodes that land on its lattice (${sx.length} → ${same.aliveVertices})`, kept && same.aliveVertices === sx.length && sound(same))
   }

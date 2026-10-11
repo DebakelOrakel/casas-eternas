@@ -9,6 +9,9 @@ resY)`: `wrapCol`, `index`, `neighbour`, the samplers, and `colTable` /
 `rowTable` for hot loops), never `wrapValue` or `% width` — `make lint`
 refuses `core/field.ts`'s wrap and samplers outside `core/` too, the
 periodic noise lattices excepted. See `docs/decisions/world-topology-torus.md`.
+What a unit or a cell measures in metres is the Domain's too
+(`domain.metresPerUnit`, `domain.metresAround`; DEC-0035 fork 6) — `make
+lint` refuses `core/mapConfig.ts`'s shape constants elsewhere.
 
 **A raster stage measures in lengths, not in cells** (DEC-0035 fork 5, step
 4d5): the sphere's rows narrow as cos φ. A step east-west costs
@@ -104,7 +107,7 @@ answers here.
 
 | Grid | Size | Holds |
 |---|---|---|
-| World / macro raster | 2048×1024, 7800 m per cell | elevation, discharge, lakeDepth, biome |
+| World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation, discharge, lakeDepth, biome |
 | Climate | 256×128 (~62 km per cell) | temperature, precipitation, seasonality, monsoon, all ecology |
 | Ocean age | 256×128 | oceanAge |
 | Mantle | 128×64 | mantle buoyancy and flow |

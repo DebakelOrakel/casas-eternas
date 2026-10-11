@@ -1,11 +1,16 @@
 import { ELEVATION_METERS } from '../generator/elevation/elevationScale'
-import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../generator/core/mapConfig'
+import { MAP_HEIGHT, MAP_WIDTH, TORUS_METERS_PER_CELL } from '../generator/core/mapConfig'
 
 // Shared scene scale + relief-preview settings for the flat map screens
 // (worldgen, worldmap). One module on purpose: both screens render the same
 // world through the same ToroidalMapView machinery, and these numbers ARE
 // the shared look — a screen with its own copy would drift the moment
 // someone tunes one of them.
+//
+// The flat map is the TORUS's view, so its metres are the torus's
+// (TORUS_METERS_PER_CELL); a sphere world is drawn on the globe
+// (map/sphereView.ts), which takes its size from the sphere's Domain
+// (DEC-0035 fork 6).
 
 // One toroidal period of the map, in Babylon world units.
 export const MAP_WORLD_WIDTH = 20
@@ -13,12 +18,12 @@ export const MAP_WORLD_HEIGHT = 10
 
 // World-Y units per display-elevation unit, METRE-TRUE: 1.0 elevation =
 // ELEVATION_METERS of real height, mapped through the map's horizontal scale
-// (METERS_PER_CELL per raster cell, MAP_WIDTH cells across MAP_WORLD_WIDTH
+// (TORUS_METERS_PER_CELL per raster cell, MAP_WIDTH cells across MAP_WORLD_WIDTH
 // world units). Exaggeration deliberately does NOT live here — it is a
 // property of the VIEW (see the constants below), applied as a vertical
 // scale on the meshes, so it can change with the zoom without recomputing a
 // single height.
-export const RELIEF_HEIGHT_SCALE = (ELEVATION_METERS / (METERS_PER_CELL * MAP_WIDTH)) * MAP_WORLD_WIDTH
+export const RELIEF_HEIGHT_SCALE = (ELEVATION_METERS / (TORUS_METERS_PER_CELL * MAP_WIDTH)) * MAP_WORLD_WIDTH
 
 // Vertical exaggeration per REGISTER. The map register may exaggerate and
 // has to: at its ~480 km view width a 6.4 km peak is 2.7 % of the frame —
@@ -59,7 +64,7 @@ export const RELIEF_FINE_ZOOM = 0.31
 
 // Scene units per real metre (the horizontal scale the relief height scale
 // above is built on) — for expressing real-world lengths in scene units.
-export const UNITS_PER_METER = MAP_WORLD_WIDTH / (METERS_PER_CELL * MAP_WIDTH)
+export const UNITS_PER_METER = MAP_WORLD_WIDTH / (TORUS_METERS_PER_CELL * MAP_WIDTH)
 
 // The near regime's (worldmap perspective descent) deepest camera altitude.
 // ~2.5 km real: view width ends up a handful of km — the scale where the
@@ -75,8 +80,8 @@ export const NEAR_MIN_ALTITUDE = 2500 * UNITS_PER_METER
 // tiles one toroidal period exactly — otherwise the grid would seam at the
 // wrap. The snap distorts the hexes by ~0.003%: invisible.
 const HEX_WIDTH_M = 300
-const WORLD_WIDTH_M = METERS_PER_CELL * MAP_WIDTH
-const WORLD_HEIGHT_M = METERS_PER_CELL * MAP_HEIGHT
+const WORLD_WIDTH_M = TORUS_METERS_PER_CELL * MAP_WIDTH
+const WORLD_HEIGHT_M = TORUS_METERS_PER_CELL * MAP_HEIGHT
 export const HEX_COLUMNS = Math.round(WORLD_WIDTH_M / HEX_WIDTH_M)
 export const HEX_ROWS = 2 * Math.round(WORLD_HEIGHT_M / (HEX_WIDTH_M * (Math.sqrt(3) / 2)) / 2)
 export const HEX_COL_SPACING = MAP_WORLD_WIDTH / HEX_COLUMNS

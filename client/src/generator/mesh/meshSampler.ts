@@ -1,4 +1,3 @@
-import { METERS_PER_CELL } from '../core/mapConfig'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import type { PeriodicTriangulation } from './periodicDelaunay'
 import { barycentric } from './remesh'
@@ -120,6 +119,7 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array, 
   const carried = { x: 0, y: 0 }
   const normals = new Float32Array(mesh.vertexSlots * 3)
   const f = new Float64Array(6)
+  const unitM = mesh.domain.metresPerUnit
   for (let t = 0; t < mesh.triSlots; t++) {
     if (!mesh.tAlive[t]) continue
     mesh.frame(t, f)
@@ -128,11 +128,11 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array, 
     const c = mesh.tris[3 * t + 2]
     // Edges in metres; the normal of (b − a) × (c − a) with y up: the
     // horizontal plane is x (east) and z (south, the raster's row axis).
-    const abx = (f[2] - f[0]) * METERS_PER_CELL
-    const abz = (f[3] - f[1]) * METERS_PER_CELL
+    const abx = (f[2] - f[0]) * unitM
+    const abz = (f[3] - f[1]) * unitM
     const aby = (z[b] - z[a]) * ELEVATION_METERS
-    const acx = (f[4] - f[0]) * METERS_PER_CELL
-    const acz = (f[5] - f[1]) * METERS_PER_CELL
+    const acx = (f[4] - f[0]) * unitM
+    const acz = (f[5] - f[1]) * unitM
     const acy = (z[c] - z[a]) * ELEVATION_METERS
     // Cross product (ab × ac), oriented so y is up whatever the winding.
     let nx = aby * acz - abz * acy

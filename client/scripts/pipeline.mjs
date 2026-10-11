@@ -944,7 +944,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
     const regime = HY.accumulateRegimeInputsOn(sub, terrain.z, wx.temperature, precip, wx.seasonal.index, RX, RY)
     const graph = RG.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: HY.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY) })
     const biomes = BI.computeBiomes(wx.temperature, precip, wx.seasonalAmplitude, wx.seasonal.index, rz, RX, RY)
-    const ground = GW.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, climateResX: RX, climateResY: RY, precipitation: precip, temperature: wx.temperature, monsoonIndex: wx.seasonal.index, cover: CO.coverField(biomes, true), regime, discharge, cellM: MAP.METERS_PER_CELL })
+    const ground = GW.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, climateResX: RX, climateResY: RY, precipitation: precip, temperature: wx.temperature, monsoonIndex: wx.seasonal.index, cover: CO.coverField(biomes, true), regime, discharge, cellM: terrain.mesh.domain.metresPerUnit })
     const bad = Object.entries(GW.hydrogeologyInvariants(ground, graph, terrain.z)).filter(([, n]) => n > 0)
     check(`the hydrogeology holds its invariants on the sphere (${ground.springs.length} springs, ${graph.reaches.length} reaches)`, bad.length === 0 && graph.reaches.length > 0, bad.map(([k, n]) => `${k}:${n}`).join(' '))
   }
@@ -1390,7 +1390,7 @@ test('the climate step\'s primitives on the sphere, each against its mutation', 
     let reachLength = 0
     for (let k = 1; k < path.length; k++) reachLength += arc(path[k - 1][0], y, path[k][0], y)
     const truthOf = (domain) => {
-      const [c] = RC.computeRiverCourses(graph, { cellM: MAP.METERS_PER_CELL, seed: 7, domain })
+      const [c] = RC.computeRiverCourses(graph, { cellM: domain.metresPerUnit, seed: 7, domain })
       if (!c || c.pattern !== 'meandering') return { pattern: c?.pattern, ratio: NaN, finite: false }
       const line = c.lines[0]
       let length = 0

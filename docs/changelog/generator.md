@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-11
+- **changed** Topology: a sphere world is now about as large as a flat one.
+
 ## 2026-10-02
 - **changed** Tectonics: an epoch of the history runs about a third faster, with the same result. `generator.step.tectonics`
 - **fixed** Refinement: a world made in one browser is made again identically by the server and in every other browser, so its refinement no longer fails its check. `generator.finishing.refine`

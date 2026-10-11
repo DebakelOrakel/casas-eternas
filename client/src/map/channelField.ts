@@ -1,4 +1,4 @@
-import { MAP_WIDTH, METERS_PER_CELL } from '../generator/core/mapConfig'
+import { MAP_WIDTH, TORUS_METERS_PER_CELL } from '../generator/core/mapConfig'
 import { elevationToMeters, metersToElevation } from '../generator/elevation/elevationScale'
 // Worldgen's own width vocabulary — reading its units and pure values is what
 // the map→worldgen boundary allows (see the root CLAUDE.md), the same import
@@ -31,8 +31,9 @@ export const CHANNEL_FIELD_RES_X = 4096
 export const CHANNEL_FIELD_RES_Y = 2048
 
 // The world is 2:1 in metres as well as in cells, so field pixels are square
-// and the chamfer weights below are valid on both axes.
-const PIXEL_METERS = (MAP_WIDTH * METERS_PER_CELL) / CHANNEL_FIELD_RES_X
+// and the chamfer weights below are valid on both axes. The flat map's
+// fine relief, so the torus's metres (mapSceneSettings).
+const PIXEL_METERS = (MAP_WIDTH * TORUS_METERS_PER_CELL) / CHANNEL_FIELD_RES_X
 
 // Distance is stored in u8 steps. 125 m resolution over a 31.9 km reach: the
 // reach only has to cover the widest valley the profile can open (see

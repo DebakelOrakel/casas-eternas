@@ -21,7 +21,6 @@
 // An explicit metre anchor removes the ambiguity: a height is a height, the
 // reference points below are checkable against the real Earth, and the
 // translation hack disappears.
-import { METERS_PER_CELL } from '../core/mapConfig'
 import { smoothstep } from '../core/interpolation'
 import { detTan } from '../core/detMath'
 
@@ -203,16 +202,16 @@ export const MARGIN_FIELD_HI = 1.0
 // A real-world terrain angle, expressed in the units the erosion code measures
 // slope in: elevation units of rise per CELL of run (`drop / distance`, where
 // distance is 1 or √2 cells). Converting needs both
-// scales — the vertical one from this module and the horizontal one from
-// mapConfig — which is exactly why an angle stated as a bare number was so easy
+// scales — the vertical one from this module and the horizontal one, the
+// shape's (`domain.metresPerUnit`, DEC-0035 fork 6) — which is exactly why an angle stated as a bare number was so easy
 // to get wrong.
 //
-// Worked example: a 45° slope is 7800 m of rise across one 7800 m cell, which is
+// Worked example: a 45° slope is 7800 m of rise across one 7800 m torus cell, which is
 // 7800/9000 = 0.867 elevation units per cell. So the grid units are almost the
 // same size as tan(θ) here, but only by coincidence of the two scales — don't
 // assume that.
-export function slopeFromAngle(degrees: number): number {
-  return detTan((degrees * Math.PI) / 180) * (METERS_PER_CELL / ELEVATION_METERS)
+export function slopeFromAngle(degrees: number, metresPerCell: number): number {
+  return detTan((degrees * Math.PI) / 180) * (metresPerCell / ELEVATION_METERS)
 }
 
 // How much gentler land slopes became under the recalibration, measured rather

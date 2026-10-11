@@ -2,7 +2,6 @@ import type { MeshSampler } from '../generator/mesh/meshSampler'
 import type { ElevationSurface } from './elevationSurface'
 import { MAP_WORLD_WIDTH } from './mapSceneSettings'
 import { ELEVATION_METERS } from '../generator/elevation/elevationScale'
-import { METERS_PER_CELL } from '../generator/core/mapConfig'
 
 // The terrain surface read from the MESH (decision 7 of
 // docs/decisions/adaptive-mesh.md): the same ElevationSurface contract the
@@ -22,10 +21,10 @@ import { METERS_PER_CELL } from '../generator/core/mapConfig'
 export function createMeshSurface(sampler: MeshSampler, heightScale: number, clampAtSeaLevel = true): ElevationSurface {
   const { width, height } = sampler.mesh.domain
   const normal = new Float64Array(3)
-  // Scene units per metre, from THIS domain's width across the map's
-  // period (mapSceneSettings.UNITS_PER_METER assumes the world raster's;
-  // a harness world is smaller).
-  const unitsPerMeter = MAP_WORLD_WIDTH / (width * METERS_PER_CELL)
+  // Scene units per metre, from THIS domain's width and metres per unit
+  // across the map's period (mapSceneSettings.UNITS_PER_METER assumes the
+  // torus's world raster; a harness world is smaller, a sphere's cell larger).
+  const unitsPerMeter = MAP_WORLD_WIDTH / (width * sampler.mesh.domain.metresPerUnit)
   return {
     heightAtUV(u, v) {
       const h = sampler.heightAt(u * width - 0.5, v * height - 0.5)

@@ -11,7 +11,6 @@ import { BAKE_ENGINE_OVERRIDES } from '../surface/amplify'
 import type { PipelineOptions, WorkerLike } from '../surface/erosionEnginePool'
 import { assembleNodeForcing, type ErosionControlsV2 } from '../surface/erosionForcingFields'
 import { accumulateDischargeOn, accumulateRegimeInputsOn, CANONICAL_RIVER_DENSITY, channelThreshold, computeLakesOn, densityToCriticalArea, maxDischargeOverLand, meanLandRunoff, type RiverPolylines, type WaterBody } from '../surface/hydrology'
-import { WORLD_WIDTH_METERS } from '../surface/erosionEngine'
 import { computeRiverCourses } from '../surface/riverCourse'
 import { buildRiverGraph, riverPolylinesFromGraph, type RiverGraph } from '../surface/riverGraph'
 import type { SavedMesh } from '../mesh/meshSerial'
@@ -161,7 +160,7 @@ export function levelHydrology(
     regime: accumulateRegimeInputsOn(sub, z, temperature, precipitation, climate.monsoonIndex ?? undefined, CRX, CRY),
     criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
   })
-  graph.courses = computeRiverCourses(graph, { cellM: (WORLD_WIDTH_METERS / width) * level.budget, seed: level.detailSeed, domain: mesh.domain })
+  graph.courses = computeRiverCourses(graph, { cellM: (mesh.domain.metresAround / width) * level.budget, seed: level.detailSeed, domain: mesh.domain })
   return { discharge, waterBodies: lakes.bodies, graph, rivers: riverPolylinesFromGraph(graph, maxDischarge) }
 }
 

@@ -98,7 +98,7 @@ export interface EngineIndex {
   // Per node: the Voronoi area over refM².
   areaRel: Float32Array
   // The reference length in metres: the cell size on a raster, the macro
-  // cell (METERS_PER_CELL) on a mesh. Every length-bearing constant of the
+  // cell (the domain's metresPerUnit) on a mesh. Every length-bearing constant of the
   // engine is read against it.
   refM: number
 }

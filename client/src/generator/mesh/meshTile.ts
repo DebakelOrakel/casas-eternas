@@ -1,5 +1,4 @@
 import { torusDomain, type Domain } from '../core/domain'
-import { METERS_PER_CELL } from '../core/mapConfig'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import { localReliefAt } from '../surface/amplify'
 import { hilbertOrder } from './hilbert'
@@ -552,11 +551,12 @@ function parentSurface(parent: TileParent, options: TileOptions, spec: TileSpec)
 
   const targets = new Map<number, number>()
   const relief = new Float64Array(2)
+  const unitM = mesh.domain.metresPerUnit
   const targetOfNode = (v: number): number => {
     let h = targets.get(v)
     if (h === undefined) {
-      reliefAt(mesh, z, v, METERS_PER_CELL, ELEVATION_METERS, relief)
-      h = targetSpacingM(relief[0], discharge ? discharge[v] : 0, relief[1], 0, z[v] * ELEVATION_METERS, spec.budget) / METERS_PER_CELL
+      reliefAt(mesh, z, v, unitM, ELEVATION_METERS, relief)
+      h = targetSpacingM(relief[0], discharge ? discharge[v] : 0, relief[1], 0, z[v] * ELEVATION_METERS, spec.budget) / unitM
       targets.set(v, h)
     }
     return h

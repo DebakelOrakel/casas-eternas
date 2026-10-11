@@ -1,6 +1,5 @@
 import { MinHeap } from '../core/minHeap'
-import type { DomainGrid } from '../core/domain'
-import { MAP_WIDTH, METERS_PER_CELL } from '../core/mapConfig'
+import type { Domain, DomainGrid } from '../core/domain'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import {
   buildEngineIndex,
@@ -279,12 +278,6 @@ const LTD_FACETS: ReadonlyArray<readonly [number, number, number]> = [
 // mask (who is pinned), built by the caller.
 export const STATUS_CLAMP_M = 0.5
 
-// The world's physical width is fixed (the macro raster's cells × their
-// size); a grid only chooses how finely it samples it. Exported for callers
-// that need a grid's cell size in the engine's own terms (the bake's
-// delta-allowance radius).
-export const WORLD_WIDTH_METERS = MAP_WIDTH * METERS_PER_CELL
-
 // The subset of params the parallel kernels need (a plain object so the
 // pool can structured-clone it to workers once). `cellM` is the index's
 // reference length (EngineIndex.refM): the cell size on a raster, the
@@ -311,14 +304,16 @@ export function kernelParamsFor(refM: number, params: ErosionEngineParams): Kern
   }
 }
 
-// A raster grid's cell size in metres.
-export function rasterCellM(width: number): number {
-  return WORLD_WIDTH_METERS / width
+// A raster grid's cell size in metres. The world's physical width is fixed
+// (the shape's metresAround, DEC-0035 fork 6); a grid only chooses how
+// finely it samples it.
+export function rasterCellM(domain: Domain, width: number): number {
+  return domain.metresAround / width
 }
 
 // The shelf band in cells for a grid — the index builder's unit.
-export function shelfBandCells(width: number, params: ErosionEngineParams): number {
-  return Math.max(1, Math.ceil((params.shelfBandKm * 1000) / (WORLD_WIDTH_METERS / width)))
+export function shelfBandCells(domain: Domain, width: number, params: ErosionEngineParams): number {
+  return Math.max(1, Math.ceil((params.shelfBandKm * 1000) / (domain.metresAround / width)))
 }
 
 // ------------------------------------------------------------------- scans
@@ -1337,7 +1332,7 @@ export function buildRasterIndex(grid: DomainGrid, initial: Float32Array, forcin
   if (initial.length !== n || forcing.uplift.length !== n || forcing.erodibility.length !== n) {
     throw new Error('field size mismatch')
   }
-  return buildEngineIndex(initial, grid, shelfBandCells(width, params), rasterCellM(width))
+  return buildEngineIndex(initial, grid, shelfBandCells(grid.domain, width, params), rasterCellM(grid.domain, width))
 }
 
 // The terrain section's initial contents, gathered from the caller's full
