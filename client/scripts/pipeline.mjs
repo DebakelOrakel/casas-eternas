@@ -91,12 +91,21 @@ async function freshPipeline() {
     // that never neuters cannot tell whether that copy is still there.
     messages.push(structuredClone(message, transfer ? { transfer } : undefined))
   })
-  rt.setElevationRenderer({ renderElevations: syntheticElevations })
+  // The renderer can be made to throw (failRenders): the host seam is how a
+  // test makes an Archean step fail without a hook in the pipeline.
+  let renderFault = false
+  rt.setElevationRenderer({
+    renderElevations: (...args) => {
+      if (renderFault) throw new Error('the harness renderer refuses')
+      return syntheticElevations(...args)
+    },
+  })
   return {
     dispatch: (message) => {
       dispatchedTypes.add(message.type)
       rt.dispatch(message)
     },
+    failRenders: (on) => { renderFault = on },
     messages,
     count: (type) => messages.filter((m) => m.type === type).length,
     // The tectonics redraw once per epoch while they tick (those carry
@@ -153,19 +162,32 @@ async function growWorld(p, { epochs = ARCHEAN_EPOCHS } = {}) {
   await quiet(p)
 }
 
-// The tectonics for AT LEAST n epochs, then the stop and its settled render.
-// Since the coupled history (phase 5.1) every epoch erodes: this is how a
-// harness world gets its eroded terrain. "At least", because an epoch the
-// tick started just before the stop finishes and renders as the settled one
-// — a test that needs an exact count uses runOneEpoch.
+// The world's epoch now, read in this macrotask: the serialized world's,
+// whose message is taken off the list again (a test counts worldData).
+// An epoch does not yield here (no render pool), so between two macrotasks
+// no epoch is half done and this is the epoch a stop dispatched right
+// after it settles on.
+function worldEpoch(p) {
+  return worldDataOf(p).snapshot.epoch
+}
+
+// The tectonics for n epochs, then the stop and its settled render. Since
+// the coupled history (phase 5.1) every epoch erodes: this is how a harness
+// world gets its eroded terrain. Counted in EPOCHS, read off the world
+// between two epochs (worldEpoch), not in pictures — those come every
+// HISTORY_DEFAULTS.renderEvery-th epoch, which made "n pictures" about 3n − 2
+// epochs, a different number from run to run. Exactly n here, since the
+// epochs do not yield; with a render pool it would be n plus the epoch in
+// flight at the stop. Returns the epoch the world settled on.
 async function runEpochs(p, n) {
   const settledBefore = p.settledRenders()
-  const renders = p.count('rendered')
+  const target = worldEpoch(p) + n
   p.dispatch({ type: 'tectonicsStart' })
-  await until(() => p.count('rendered') >= renders + n, { label: `${n} eroding epoch${n === 1 ? '' : 's'}`, timeout: 180000 })
+  await until(() => worldEpoch(p) >= target, { label: `${n} eroding epoch${n === 1 ? '' : 's'}`, timeout: 180000 * n })
   p.dispatch({ type: 'tectonicsStop' })
   await until(() => p.settledRenders() > settledBefore, { label: 'the settled render', timeout: 180000 })
   await quiet(p)
+  return p.last('rendered').epoch
 }
 
 // EXACTLY one epoch: the start runs its first epoch with the gesture, the
@@ -195,6 +217,14 @@ const asRestore = (worldData, seed = 'harness') => {
     archean: w.archean,
     lattice: { accumulated: w.latticeAccumulated, lockedEpochs: w.latticeLockedEpochs, lastClassCode: w.latticeLastClassCode },
   }
+}
+
+// The world as serializeWorld answers it, taken off the message list.
+function worldDataOf(p) {
+  p.dispatch({ type: 'serializeWorld' })
+  const data = p.messages.pop()
+  if (data?.type !== 'worldData') throw new Error(`serializeWorld answered ${data?.type}`)
+  return data
 }
 
 const TESTS = []
@@ -1115,7 +1145,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
 // each. The torus's checks of the same stages (golden's invariants) are
 // mirrored where the messages carry what they read.
 // A sphere world through the runtime up to the climate step's end: its
-// Archean, the hand-over, four eroding epochs, climateRun, the refinement
+// Archean, the hand-over, eleven eroding epochs, climateRun, the refinement
 // and hydrologyRun — what the climate step's test and the ecology's stand on.
 async function sphereThroughHydrology() {
   const p = await freshPipeline()
@@ -1132,7 +1162,11 @@ async function sphereThroughHydrology() {
   p.dispatch({ type: 'genesisFinalize' })
   await until(() => p.count('rendered') > handed, { label: 'the sphere hand-over render' })
   await quiet(p)
-  await runEpochs(p, 4)
+  // Eleven epochs: what this seed was chosen on, when runEpochs counted
+  // four pictures (epochs 1, 4, 7, 10) and the stop then came after the
+  // eleventh had begun. At ten, two climate checks fail on this seed
+  // (the polar currents, the monsoon's seam; measured 2026-10-11).
+  await runEpochs(p, 11)
   p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'the sphere climate' })
   p.dispatch({ type: 'climateRefine' })
@@ -2495,12 +2529,13 @@ test('two pipelines given the same messages agree byte for byte', async () => {
 
 // A stop that lands BETWEEN two epochs — as the screen's does: the message
 // waits in the worker's queue while an epoch runs. No epoch may START after
-// it: one settled render follows, of the epoch that was running or the
-// terrain as it stands — at most renderEvery epochs past the last picture,
-// since the pictures come every renderEvery-th epoch and the epochs between
-// are never shown. The seamless tick (2026-09-26) once ran epochs past the
-// stop here (renders 1i 2s 3s …), and the hydrology then drew the rivers
-// of N+1 over the land of N.
+// it, so the settled picture is of the epoch the world stood at when the
+// stop was handled — read in the same macrotask (worldEpoch), not off a
+// picture, which shows only every renderEvery-th epoch. Until 2026-10-11
+// the loop was an interval plus a zero-delay tick per late epoch: the
+// ticks built chains that queued ahead of the stop and ran epochs past it
+// (settled one epoch behind the stop, now and then), and the hydrology then
+// drew the rivers of N+1 over the land of N.
 test('a stop between two epochs runs no epoch after it', async () => {
   const p = await freshPipeline()
   await growWorld(p)
@@ -2508,17 +2543,126 @@ test('a stop between two epochs runs no epoch after it', async () => {
   const renders = p.count('rendered')
   p.dispatch({ type: 'tectonicsStart' })
   await until(() => p.count('rendered') > renders, { label: 'the first epoch picture', timeout: 180000 })
-  const shown = p.last('rendered').epoch
-  // Queued as the screen's message would be: a macrotask that lands before
-  // the tick the epoch's end may have scheduled with a zero delay.
-  await new Promise((r) => setTimeout(() => { p.dispatch({ type: 'tectonicsStop' }); r() }, 0))
+  // One epoch more, so the stop finds the loop between two epochs and not
+  // just after its first.
+  const first = worldEpoch(p)
+  await until(() => worldEpoch(p) > first, { label: 'a second epoch', timeout: 180000 })
+  // Queued as the screen's message would be: a macrotask between two epochs.
+  // The world's epoch is read in that same macrotask.
+  let atStop = -1
+  await new Promise((r) => setTimeout(() => {
+    atStop = worldEpoch(p)
+    p.dispatch({ type: 'tectonicsStop' })
+    r()
+  }, 0))
   await until(() => p.settledRenders() > settledBefore, { label: 'the settled render', timeout: 180000 })
   await quiet(p)
-  const settled = p.messages.filter((m) => m.type === 'rendered' && !m.intermediate).at(-1)
-  const sequence = p.messages.filter((m) => m.type === 'rendered').slice(renders).map((m) => `${m.epoch}${m.intermediate ? 'i' : 's'}`).join(' ')
-  const renderEvery = (await server.ssrLoadModule('/src/generator/pipeline/coupledEpoch.ts')).HISTORY_DEFAULTS.renderEvery
-  check('no epoch starts after the stop', settled.epoch >= shown && settled.epoch <= shown + renderEvery, `shown epoch ${shown}, settled epoch ${settled.epoch}; renders: ${sequence}`)
+  const all = p.messages.filter((m) => m.type === 'rendered').slice(renders)
+  const settled = all.findLast((m) => !m.intermediate)
+  const sequence = all.map((m) => `${m.epoch}${m.intermediate ? 'i' : 's'}`).join(' ')
+  check('no epoch starts after the stop', settled.epoch === atStop && all.at(-1) === settled && all.every((m) => m.epoch <= atStop) && worldEpoch(p) === atStop, `epoch at the stop ${atStop}, settled epoch ${settled.epoch}; renders: ${sequence}`)
   check('exactly one settled render follows the stop', p.settledRenders() === settledBefore + 1, `+${p.settledRenders() - settledBefore}`)
+})
+
+// The loop keeps ONE timer at most: a step, then the next one scheduled
+// when it is done. The interval it replaced added a zero-delay tick per
+// epoch that outlasted the interval, and those chains never died (6 after
+// 22 epochs, 2026-10-11). Counted on the timers the runtime module itself
+// creates, by the stack that creates them.
+test('the history keeps one timer at most, and none after the stop', async () => {
+  const p = await freshPipeline()
+  await growWorld(p)
+  const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval }
+  const pending = new Set()
+  let most = 0
+  const fromRuntime = () => (new Error().stack ?? '').includes('pipeline/runtime.ts')
+  const track = (handle) => {
+    pending.add(handle)
+    most = Math.max(most, pending.size)
+    return handle
+  }
+  globalThis.setTimeout = (fn, ms, ...args) => {
+    if (!fromRuntime()) return real.setTimeout(fn, ms, ...args)
+    const handle = real.setTimeout((...a) => { pending.delete(handle); fn(...a) }, ms, ...args)
+    return track(handle)
+  }
+  globalThis.setInterval = (fn, ms, ...args) => {
+    const handle = real.setInterval(fn, ms, ...args)
+    return fromRuntime() ? track(handle) : handle
+  }
+  globalThis.clearTimeout = (handle) => { pending.delete(handle); real.clearTimeout(handle) }
+  globalThis.clearInterval = (handle) => { pending.delete(handle); real.clearInterval(handle) }
+  try {
+    const settledBefore = p.settledRenders()
+    const target = worldEpoch(p) + 6
+    p.dispatch({ type: 'tectonicsStart' })
+    await until(() => worldEpoch(p) >= target, { label: 'six epochs', timeout: 600000 })
+    p.dispatch({ type: 'tectonicsStop' })
+    const atStop = worldEpoch(p)
+    await until(() => p.settledRenders() > settledBefore, { label: 'the settled render', timeout: 180000 })
+    await quiet(p)
+    check('at most one runtime timer pending at any time while it ran', most === 1, `at most ${most}`)
+    check('none pending after the stop', pending.size === 0, `${pending.size} pending`)
+    const messages = p.messages.length
+    await settle(1500)
+    check('and nothing runs after it: no message, the same epoch', p.messages.length === messages && worldEpoch(p) === atStop, `${p.messages.length - messages} messages, epoch ${atStop} → ${worldEpoch(p)}`)
+  } finally {
+    Object.assign(globalThis, real)
+  }
+})
+
+// A step that throws ends its loop: the stage is said to have failed
+// (stageFailed, which the screen shows and on which it leaves its running
+// state), the settled picture follows without a stop, and the harness — or
+// the worker — lives on. Before 2026-10-11 the step's promise had no catch:
+// in node the rejection ended the process, in the browser the screen waited
+// for a settled picture that never came. Made to throw from outside: the
+// Archean through the host's renderer, the tectonics on a world with no
+// plates (a restored snapshot without seeds).
+test('a history step that throws stops its loop and says so', async () => {
+  const quietConsole = console.error
+  console.error = () => {}
+  try {
+    const a = await freshPipeline()
+    a.dispatch({ ...ARCHEAN_INIT })
+    await until(() => a.count('rendered') >= 1, { label: 'the first Archean render' })
+    a.dispatch({ type: 'genesisStart' })
+    await until(() => a.count('genesisStatus') >= 3, { label: 'three Archean epochs' })
+    a.failRenders(true)
+    await until(() => a.count('stageFailed') >= 1, { label: 'the failed Archean step' })
+    const statuses = a.count('genesisStatus')
+    await settle(300)
+    check('a throwing Archean step answers stageFailed for the genesis', a.count('stageFailed') === 1 && a.last('stageFailed').stage === 'genesis', a.messages.filter((m) => m.type === 'stageFailed').map((m) => `${m.stage}: ${m.error}`).join('; '))
+    check('and its loop stops', a.count('genesisStatus') === statuses, `${statuses} -> ${a.count('genesisStatus')} statuses`)
+    a.failRenders(false)
+    a.dispatch({ type: 'genesisStart' })
+    await until(() => a.count('genesisStatus') > statuses + 2, { label: 'the Archean again' })
+    a.dispatch({ type: 'genesisStop' })
+    await quiet(a)
+    check('the Archean starts again after it', a.count('stageFailed') === 1)
+
+    const p = await freshPipeline()
+    await growWorld(p)
+    const world = structuredClone(worldDataOf(p))
+    world.snapshot.seeds = []
+    const q = await freshPipeline()
+    q.dispatch({ ...asRestore(world), mesh: world.mesh })
+    await until(() => q.count('rendered') >= 1, { label: 'the restore render' })
+    await quiet(q)
+    const settledBefore = q.settledRenders()
+    q.dispatch({ type: 'tectonicsStart' })
+    await until(() => q.count('stageFailed') >= 1, { label: 'the failed epoch', timeout: 180000 })
+    await until(() => q.settledRenders() > settledBefore, { label: 'the settled render after the failure', timeout: 180000 })
+    await quiet(q)
+    check('a throwing epoch answers stageFailed for the tectonics', q.count('stageFailed') === 1 && q.last('stageFailed').stage === 'tectonics', q.messages.filter((m) => m.type === 'stageFailed').map((m) => `${m.stage}: ${m.error}`).join('; '))
+    const after = q.messages.slice(q.messages.findIndex((m) => m.type === 'stageFailed'))
+    check('the settled picture follows it, unasked, and nothing after', q.settledRenders() === settledBefore + 1 && after.filter((m) => m.type === 'rendered').length === 1 && !q.last('rendered').intermediate, after.map((m) => m.type).join(' '))
+    const messages = q.messages.length
+    await settle(500)
+    check('the loop is stopped', q.messages.length === messages)
+  } finally {
+    console.error = quietConsole
+  }
 })
 
 // --------------------------------------------------------- level 1's replay

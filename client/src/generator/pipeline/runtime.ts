@@ -97,7 +97,7 @@ let sim: PlateSimulation | null = null
 // second, and archeanReset goes back the other way.
 let archean: ArcheanSimulation | null = null
 let archeanSeed = ''
-// The Archean's tuning, held here because archeanStep needs it every tick and a
+// The Archean's tuning, held here because archeanStep needs it every step and a
 // reset has to rebuild the same world. Only `diffusion` is user-facing.
 let archeanParams: ArcheanParams = DEFAULT_ARCHEAN_PARAMS
 let archeanWater = 0
@@ -107,8 +107,9 @@ let archeanHeight = 0
 // on again.
 let archeanShape: Domain['kind'] = 'torus'
 let renderOptions: RenderSimulationOptions = {}
+// The Archean's pace (genesisInit): the shortest time from one step's
+// start to the next's, so its crust animates at a steady tempo.
 let epochIntervalMs = 400
-let intervalId: ReturnType<typeof setInterval> | undefined
 // Epochs run since the last intermediate picture (HISTORY_DEFAULTS.renderEvery);
 // starts at the count so the first epoch of a run draws.
 let epochsSinceRender: number = HISTORY_DEFAULTS.renderEvery
@@ -286,7 +287,6 @@ let meshTerrain: MeshTerrain | null = null
 let coupled: CoupledTerrain | null = null
 // The tectonics panel's controls for the history (tectonicsInputParams).
 let historyControls: { alluvium: number; rockContrast: number; weather: WeatherParams } = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, weather: defaultWeatherParams() }
-let epochInFlight = false
 
 // The coupled terrain as what the hydrology reads (a routing is required
 // there): the same arrays, once an epoch or a restore has routed it.
@@ -417,15 +417,12 @@ const renderPool = (): ElevationRenderer => (renderer ??= new ElevationRenderPoo
 export function setElevationRenderer(next: ElevationRenderer): void {
   renderer = next
 }
-// Renders are now async (they await the pool) — without this guard, a
-// render that takes longer than epochIntervalMs would still be in
-// flight when the next interval tick fires, and that tick's stepEpoch
-// call would mutate sim.seeds/features while the in-flight render's
-// pool dispatch is still reading them. Skipping the whole tick (not just
-// the render) when busy keeps stepEpoch and an in-flight render from
-// ever overlapping — the simulation simply paces itself to whatever the
-// render pool can actually keep up with, rather than risking a torn
-// read.
+// Renders are async (they await the pool). A render in flight reads the
+// world (sim.seeds/features) across its awaits, so nothing may step the
+// world under it: the step loop takes this flag for a step and its render,
+// and a step that finds it taken waits (BUSY_RETRY_MS). The simulation
+// paces itself to what the render pool can keep up with, rather than
+// risking a torn read.
 let renderInFlight = false
 
 // Bumped whenever the world is REPLACED (a fresh init, or a restored save).
@@ -642,10 +639,112 @@ function hydrologyOnMesh(terrain: MeshTerrain, elevationRaster: Float32Array, wi
   return { discharge, lakes, raster: waterFieldsFromMesh(terrain.mesh, lakes.body, lakes.bodies, elevationRaster, width, height) }
 }
 
+// THE STEP LOOP: one for both eras, the Archean's steps and the
+// tectonics' epochs. A step runs; when it and its render are done, exactly
+// one next step is scheduled, `minIntervalMs` after the last one STARTED
+// (0: back to back). There is one pending timer at most, and a stop clears
+// it: nothing starts after the stop is handled. A step in flight at the stop
+// finishes and posts the SETTLED picture.
+//
+// It replaces a setInterval plus a zero-delay "seamless" tick per epoch
+// that outlasted the interval (2026-09-26). An epoch does not yield in a
+// process without a render pool, so every interval beat ran one, and each
+// late epoch queued one more tick: the timer chains grew and never died
+// (6 after 22 epochs), and a stop waited behind them (2026-10-11).
+interface StepLoop {
+  stage: 'genesis' | 'tectonics'
+  minIntervalMs: number
+  // One step. True when it posted the settled picture itself (it was
+  // stopped before its render began).
+  step: (loop: StepLoop) => Promise<boolean>
+  // The settled picture of the world as it stands — after a stop that came
+  // during a step's render, and after a step that threw.
+  settle: () => Promise<void>
+  timer: ReturnType<typeof setTimeout> | undefined
+  inFlight: boolean
+  // How the loop ended: 'stop' is the user's stop (a settled picture is
+  // owed), 'drop' a handler that replaced the world (it draws its own).
+  ended: 'stop' | 'drop' | undefined
+}
+let loop: StepLoop | null = null
+
+// The wait before a step retries when another render (an init's, a stop's)
+// is still in flight — a step must not move the world under it.
+const BUSY_RETRY_MS = 16
+
+function startLoop(stage: StepLoop['stage'], minIntervalMs: number, firstDelayMs: number, step: StepLoop['step'], settle: StepLoop['settle']): void {
+  const next: StepLoop = { stage, minIntervalMs, step, settle, timer: undefined, inFlight: false, ended: undefined }
+  loop = next
+  // No delay: the first step runs inside the gesture's own handler, so a
+  // stop queued right behind the start finds it in flight, not pending.
+  if (firstDelayMs === 0) runStep(next)
+  else scheduleStep(next, firstDelayMs)
+}
+
+function scheduleStep(l: StepLoop, delayMs: number): void {
+  l.timer = setTimeout(() => {
+    l.timer = undefined
+    runStep(l)
+  }, delayMs)
+}
+
+function runStep(l: StepLoop): void {
+  if (loop !== l) return
+  if (renderInFlight) {
+    scheduleStep(l, BUSY_RETRY_MS)
+    return
+  }
+  l.inFlight = true
+  renderInFlight = true
+  const startedAt = performance.now()
+  void l.step(l)
+    .then((posted) => ({ posted, threw: false, error: undefined as unknown }), (error: unknown) => ({ posted: false, threw: true, error }))
+    .then(async ({ posted, threw, error }) => {
+      l.inFlight = false
+      if (threw) {
+        // A step that threw ends its loop. The screen is told (it leaves its
+        // running state on it) and gets the settled picture it waits for —
+        // unless the world was replaced meanwhile, which is not its world.
+        if (loop === l) loop = null
+        if (l.ended === 'drop') console.error(`[generator] a ${l.stage} step of a replaced world failed`, error)
+        else {
+          l.ended = 'stop'
+          fail(l.stage, error)
+        }
+      }
+      if (loop === l) {
+        renderInFlight = false
+        scheduleStep(l, Math.max(0, l.minIntervalMs - (performance.now() - startedAt)))
+        return
+      }
+      // Stopped while the step ran. The step drew the settled picture if the
+      // stop came before its render; a stop during the render (an awaiting
+      // pool) left an intermediate one, and a failure none.
+      if (l.ended === 'stop' && !posted) {
+        try {
+          await l.settle()
+        } catch (error) {
+          console.error(`[generator] the ${l.stage} stage's settled picture failed`, error)
+        }
+      }
+      renderInFlight = false
+    })
+}
+
+// Ends the running loop, if any; returns it. A step in flight finishes.
+function stopLoop(ended: 'stop' | 'drop'): StepLoop | null {
+  const l = loop
+  if (!l) return null
+  if (l.timer !== undefined) clearTimeout(l.timer)
+  l.timer = undefined
+  l.ended = ended
+  loop = null
+  return l
+}
+
+// What every handler that replaces the world calls: its own render follows.
 function stopTicking(): void {
-  if (intervalId === undefined) return
-  clearInterval(intervalId)
-  intervalId = undefined
+  stopLoop('drop')
 }
 
 // One handler per inbound message type. The dispatcher below used to be a single
@@ -656,84 +755,67 @@ function stopTicking(): void {
 
 
 function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'tectonicsStart' }>): void {
-  if (intervalId !== undefined) return
+  if (loop) return
   // No plates yet: the Archean has not been handed over. Said out loud rather
-  // than armed anyway — the interval is one variable for both phases, so a
-  // loop of idle ticks here kept the next genesisStart from starting at all.
+  // than started anyway.
   if (!sim) { decline('tectonics', 'genesis'); return }
   historyControls = {
     alluvium: message.alluvium ?? TECTONICS_INPUTS.alluvium.default,
     rockContrast: message.rockContrast ?? TECTONICS_INPUTS.rockContrast.default,
     weather: message.weather ?? defaultWeatherParams(),
   }
-  if (sim) sim.epochMa = TECTONIC_MA_PER_EPOCH
+  sim.epochMa = TECTONIC_MA_PER_EPOCH
   // THE COUPLED EPOCH (phase 5.1): the plates move, the mesh follows,
   // erosion runs inside the epoch, the terrain is rasterised and drawn. An
-  // epoch is asynchronous (the engine) and takes what it takes; the interval
-  // only says how often to try, and a tick while one is in flight is
-  // skipped — the loop runs as fast as an epoch runs, never faster. The
-  // first epoch starts with the gesture rather than one interval later:
-  // a start followed by a stop is then exactly one epoch, which is what
-  // the pipeline harness's determinism check builds its two worlds with.
-  const tick = (): void => {
-    // A tick after the stop is no tick: the seamless tick below queues one
-    // with a zero delay, and a stop message queued during the epoch is
-    // handled before it — without this line that tick ran an epoch behind
-    // the settled picture (pipeline harness, "a stop between two epochs").
-    if (intervalId === undefined) return
-    if (!sim || renderInFlight || epochInFlight) return
-    const currentSim = sim
-    epochInFlight = true
-    renderInFlight = true
-    const startedAt = performance.now()
-    ;(async () => {
-      // A world restored without a mesh (a save from before the history)
-      // gets one from its own synthesis on the first epoch.
-      if (!coupled) coupled = createCoupledTerrain(currentSim, HISTORY_DEFAULTS.budget)
-      const stats = await stepCoupledEpoch(currentSim, coupled, {
-        iterationsPerEpoch: HISTORY_DEFAULTS.iterationsPerEpoch,
-        budget: HISTORY_DEFAULTS.budget,
-        climateEvery: HISTORY_DEFAULTS.climateEvery,
-        remeshEvery: HISTORY_DEFAULTS.remeshEvery,
-        upliftScale: HISTORY_DEFAULTS.upliftScale,
-        controls: { alluvium: historyControls.alluvium, rockContrast: historyControls.rockContrast },
-        weather: historyControls.weather,
-      })
-      // Events are forwarded to the main thread (batched with the next
-      // render), which owns their notifications + faded map markers now.
-      pendingEvents.push(...stats.events)
-      meshTerrain = asMeshTerrain(coupled)
-      // Intermediate while the loop still ticks, and only every
-      // HISTORY_DEFAULTS.renderEvery-th epoch (the first always): the next
-      // picture replaces this one. The epoch that finishes after the stop
-      // is the settled one — drawn whatever the count, the screen then
-      // pulls the elevation field and runs the chain.
-      epochsSinceRender++
-      if (intervalId === undefined || epochsSinceRender >= HISTORY_DEFAULTS.renderEvery) {
-        epochsSinceRender = 0
-        await renderTerrain(intervalId !== undefined)
-      }
-    })().finally(() => {
-      epochInFlight = false
-      renderInFlight = false
-      // The interval is the pacing's minimum, not a wait: an epoch that
-      // outlasted it starts the next one now rather than at the interval's
-      // next beat (up to a beat idle per epoch, measured 2026-09-26).
-      if (intervalId !== undefined && performance.now() - startedAt >= epochIntervalMs) setTimeout(tick, 0)
-    })
-  }
+  // epoch takes what it takes; the epochs run back to back (minimum 0). The
+  // first epoch starts with the gesture: a start followed by a stop is then
+  // exactly one epoch, which is what the pipeline harness's determinism
+  // check builds its two worlds with.
   epochsSinceRender = HISTORY_DEFAULTS.renderEvery
-  intervalId = setInterval(tick, epochIntervalMs)
-  tick()
+  startLoop('tectonics', 0, 0, async (l) => {
+    const currentSim = sim
+    if (!currentSim) return false
+    // A world restored without a mesh (a save from before the history)
+    // gets one from its own synthesis on the first epoch.
+    if (!coupled) coupled = createCoupledTerrain(currentSim, HISTORY_DEFAULTS.budget)
+    const stats = await stepCoupledEpoch(currentSim, coupled, {
+      iterationsPerEpoch: HISTORY_DEFAULTS.iterationsPerEpoch,
+      budget: HISTORY_DEFAULTS.budget,
+      climateEvery: HISTORY_DEFAULTS.climateEvery,
+      remeshEvery: HISTORY_DEFAULTS.remeshEvery,
+      upliftScale: HISTORY_DEFAULTS.upliftScale,
+      controls: { alluvium: historyControls.alluvium, rockContrast: historyControls.rockContrast },
+      weather: historyControls.weather,
+    })
+    // The world was replaced while the epoch ran: its result describes
+    // nothing that is still here.
+    if (l.ended === 'drop') return false
+    // Events are forwarded to the main thread (batched with the next
+    // render), which owns their notifications + faded map markers now.
+    pendingEvents.push(...stats.events)
+    meshTerrain = asMeshTerrain(coupled)
+    // Intermediate while the loop still runs, and only every
+    // HISTORY_DEFAULTS.renderEvery-th epoch (the first always): the next
+    // picture replaces this one. The epoch that finishes after the stop
+    // is the settled one — drawn whatever the count, the screen then
+    // pulls the elevation field and runs the chain.
+    epochsSinceRender++
+    const running = loop === l
+    if (!running || epochsSinceRender >= HISTORY_DEFAULTS.renderEvery) {
+      epochsSinceRender = 0
+      await renderTerrain(running)
+    }
+    return !running
+  }, () => renderTerrain(false))
 }
 
 function handleTectonicsStop(): void {
-  stopTicking()
-  // The settled render: the last epoch's, if one is still in flight (it
-  // sees the interval gone and renders as settled), otherwise the terrain
-  // as it stands, once more. NOT a render from the synthesis — that would
-  // replace the history's terrain with the fields'.
-  if (sim && coupled && !epochInFlight && !renderInFlight) {
+  // The settled render: the last epoch's, if one is still in flight (the
+  // loop settles it), otherwise the terrain as it stands, once more. NOT a
+  // render from the synthesis — that would replace the history's terrain
+  // with the fields'.
+  if (stopLoop('stop')?.inFlight) return
+  if (sim && coupled && !renderInFlight) {
     renderInFlight = true
     renderTerrain(false).finally(() => {
       renderInFlight = false
@@ -1547,7 +1629,7 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
 
 
 // --- Archean phase ---
-// Mirrors the tectonic init/start/stop trio: same interval stepper, same
+// Mirrors the tectonic init/start/stop trio: the same step loop, same
 // renderInFlight guard, same coarse-while-running / full-res-when-paused split.
 // What differs is only which state is being advanced.
 
@@ -1573,24 +1655,28 @@ function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genes
 }
 
 function handleGenesisStart(message: Extract<WorkerInboundMessage, { type: 'genesisStart' }>): void {
-  if (intervalId !== undefined) return
+  if (loop) return
   if (message.mantleDiffusion !== undefined) archeanParams = { ...archeanParams, diffusion: message.mantleDiffusion }
   if (message.seaLevelOffset !== undefined) {
     archeanWater = message.seaLevelOffset
     if (archean) archean.seaLevelOffset = message.seaLevelOffset
   }
-  intervalId = setInterval(() => {
-    if (!archean || renderInFlight) return
+  // Paced (epochIntervalMs from one step's start to the next's), the first
+  // step one interval after the gesture. A step is synchronous up to its
+  // render, so a stop always finds it before or inside the render.
+  startLoop('genesis', epochIntervalMs, epochIntervalMs, async () => {
+    if (!archean) return false
     archeanStep(archean, archeanParams)
-    renderInFlight = true
-    renderArcheanAndPost(PREVIEW_RENDER_SCALE).finally(() => { renderInFlight = false })
-  }, epochIntervalMs)
+    await renderArcheanAndPost(PREVIEW_RENDER_SCALE)
+    return false
+  }, () => renderArcheanAndPost(1))
 }
 
 // A pause, not an ending — the phase is resumable, and only becomes final when
 // archeanFinalize starts the tectonic phase.
 function handleGenesisStop(): void {
-  stopTicking()
+  // A step in flight: the loop draws the full-resolution picture after it.
+  if (stopLoop('stop')?.inFlight) return
   if (archean && !renderInFlight) {
     renderInFlight = true
     renderArcheanAndPost(1).finally(() => { renderInFlight = false })

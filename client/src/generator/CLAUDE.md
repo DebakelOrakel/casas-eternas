@@ -37,6 +37,13 @@ browser API itself, so it can be driven directly from Node — which is the only
 way this part of the generator can be tested at all, since the golden harness
 does not reach it. `pipeline/messages.ts` is the message contract.
 
+**The history runs on ONE step loop** (`runtime.ts` `startLoop`, both eras,
+2026-10-11): a step and its render, then exactly one timer for the next
+step. Never a `setInterval`, never a second timer: a stop clears the one
+timer, a step in flight finishes as the settled picture, nothing starts
+after the stop. A step that throws ends the loop with `stageFailed` and a
+settled picture.
+
 Where this is going: [docs/design/generator-pipeline.md](../../../docs/design/generator-pipeline.md).
 
 ```

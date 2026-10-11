@@ -3924,6 +3924,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ecologyMonthInFlight = false
       ecologyMonthWanted = null
     }
+    // A step of the history threw: the worker ended its loop and draws the
+    // settled picture without a stop. The run ends here as a stop ends it.
+    if (message.stage === 'tectonics') endTectonicsRun()
+    if (message.stage === 'genesis' && archeanRunning) {
+      archeanRunChanged(false)
+      updateOverlays()
+      updateProgress()
+    }
     handleStageDeclined({ type: 'stageDeclined', stage: message.stage })
   }
 
@@ -4725,9 +4733,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let tectonicsSettling = false
   const stopSim = (): void => {
     if (!tectonicsRunning) return
+    postToWorker({ type: 'tectonicsStop' })
+    endTectonicsRun()
+  }
+  // The run is over on this side: the settled render is on its way — after
+  // the stop, or after an epoch that threw (the worker ended the loop and
+  // draws it unasked, see handleStageFailed).
+  const endTectonicsRun = (): void => {
+    if (!tectonicsRunning) return
     tectonicsRunning = false
     tectonicsSettling = true
-    postToWorker({ type: 'tectonicsStop' })
     updateOverlays()
     sayTectonicsButton(false)
     updateControlsDisabled()
