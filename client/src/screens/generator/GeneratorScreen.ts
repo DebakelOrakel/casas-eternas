@@ -3713,6 +3713,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // result, as before it ran.
   function handleStageFailed(message: WorkerStageFailedMessage): void {
     console.error(`[generator] the ${message.stage} stage failed in the worker: ${message.error}`)
+    // Said, not only logged: a chain that waited on it goes on below, and
+    // without a word the step would just stay empty. The stage by the name
+    // the screen already shows for it: the rivers' own, else its step's.
+    const stageName = message.stage === 'hydrology'
+      ? t('generator.progress.hydrology')
+      : t(`generator.step.${STEPS.find((s) => s.stage === message.stage)?.id ?? 'climate'}.label`)
+    ctx.notifications.show({ message: t('notify.stage.failed', { stage: stageName, reason: message.error }), icon: '/icons/warning.png', durationMs: 8000 })
     if (message.stage === 'ecology') {
       // The month's request may be the one that failed; the year stays.
       ecologyMonthInFlight = false
