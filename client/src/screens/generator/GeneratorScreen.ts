@@ -12,7 +12,7 @@ import { createElevationSurface, downsampleElevation } from '../../map/elevation
 import { createMeshSurface } from '../../map/meshSurface'
 import { createMeshSampler } from '../../generator/mesh/meshSampler'
 import { decodeMesh } from '../../generator/mesh/meshSerial'
-import { torusDomain } from '../../generator/core/domain'
+import { domainOfKind } from '../../generator/core/domain'
 import { MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from '../../map/mapSceneSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH, METERS_PER_CELL } from '../../generator/core/mapConfig'
@@ -1750,8 +1750,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
       const y0 = Math.floor(fy)
       const ty = fy - y0
-      const r0 = wrapValue(y0, climateResY) * climateResX
-      const r1 = wrapValue(y0 + 1, climateResY) * climateResX
+      const r0 = climateRow(y0) * climateResX
+      const r1 = climateRow(y0 + 1) * climateResX
       for (let x = 0; x < MAP_WIDTH; x++) {
         if (lastRelief[y * MAP_WIDTH + x] & 128) continue // land
         const fx = (x + 0.5) / MAP_WIDTH * climateResX - 0.5
@@ -1817,8 +1817,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
       const y0 = Math.floor(fy)
       const ty = fy - y0
-      const r0 = wrapValue(y0, climateResY) * climateResX
-      const r1 = wrapValue(y0 + 1, climateResY) * climateResX
+      const r0 = climateRow(y0) * climateResX
+      const r1 = climateRow(y0 + 1) * climateResX
       for (let x = 0; x < MAP_WIDTH; x++) {
         if (!(lastRelief[y * MAP_WIDTH + x] & 128)) continue // sea
         const fx = (x + 0.5) / MAP_WIDTH * climateResX - 0.5
@@ -1859,8 +1859,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
       const y0 = Math.floor(fy)
       const ty = fy - y0
-      const r0 = wrapValue(y0, climateResY) * climateResX
-      const r1 = wrapValue(y0 + 1, climateResY) * climateResX
+      const r0 = climateRow(y0) * climateResX
+      const r1 = climateRow(y0 + 1) * climateResX
       for (let x = 0; x < MAP_WIDTH; x++) {
         if (lastRelief[y * MAP_WIDTH + x] & 128) continue // land
         const fx = (x + 0.5) / MAP_WIDTH * climateResX - 0.5
@@ -2003,9 +2003,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
+  // A climate-grid row for a row index that may lie past the grid's edge:
+  // wrapped on the torus; on the sphere held at the pole row — past a pole
+  // lies the same pole, not the other one, and the pole rows hold one value
+  // each (DEC-0035, fork 5). Row-wise readers that blend two rows use this.
+  function climateRow(y: number): number {
+    return worldShape === 'sphere' ? Math.max(0, Math.min(climateResY - 1, y)) : wrapValue(y, climateResY)
+  }
+
   // Bilinear-sampled (u,v) of a climate-grid vector field at a map pixel,
-  // wrapped. The currents are zero over land.
+  // wrapped. The currents are zero over land. The TORUS'S flow lines only:
+  // on the sphere a cell's (u, v) is in that cell's own east/south frame,
+  // and a blend of two cells' components is no vector near a pole — the
+  // sphere's marks read the field through map/vectorMarks.ts globeVectorAt.
   function sampleVector(field: Float32Array, px: number, py: number): [number, number] {
+    if (worldShape === 'sphere') throw new Error('sampleVector is the torus\'s; the sphere reads vectors through globeVectorAt')
     const fx = (px / MAP_WIDTH) * climateResX - 0.5
     const fy = (py / MAP_HEIGHT) * climateResY - 0.5
     const x0 = Math.floor(fx)
@@ -2022,10 +2034,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return [lerp2(0), lerp2(1)]
   }
 
-  // Nearest-cell read of a climate-grid scalar field at a map pixel, wrapped.
+  // Nearest-cell read of a climate-grid scalar field at a map pixel: the
+  // column wrapped, the row by climateRow (held at a pole on the sphere).
   function sampleScalar(field: Float32Array, px: number, py: number): number {
     const gx = wrapValue(Math.floor((px / MAP_WIDTH) * climateResX), climateResX)
-    const gy = wrapValue(Math.floor((py / MAP_HEIGHT) * climateResY), climateResY)
+    const gy = climateRow(Math.floor((py / MAP_HEIGHT) * climateResY))
     return field[gy * climateResX + gx]
   }
   // Under this SST anomaly (°C either way) a current is drawn neutral.
@@ -2059,13 +2072,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // direction (poleward = warm), which is right on the ocean's western and
   // eastern edges and noise on every current that runs east–west. Since
   // 2026-10-11 the arrows are symbols the world view places (syncSymbols).
-  const CURRENT_GLOBE_SPACING = 80
+  // The globe's spacing about the torus's line separation (52), with arrows
+  // short enough not to touch along the flow (80 apart and 64 long was too
+  // coarse, the user's check 2026-10-11).
+  const CURRENT_GLOBE_SPACING = 48
+  const CURRENT_GLOBE_LENGTH = 40
   // Under this speed the sea counts as still (the flow lines end there).
   const CURRENT_MIN_SPEED = 0.1
   function currentMarks(field: Float32Array): VectorMark[] {
     const ref = vectorReferenceSpeed(field)
     if (worldShape === 'sphere') {
-      return globeVectorMarks(field, climateResX, climateResY, { width: MAP_WIDTH, spacing: CURRENT_GLOBE_SPACING, length: CURRENT_LENGTH, minSpeed: CURRENT_MIN_SPEED, refSpeed: ref })
+      return globeVectorMarks(field, climateResX, climateResY, { width: MAP_WIDTH, spacing: CURRENT_GLOBE_SPACING, length: CURRENT_GLOBE_LENGTH, minSpeed: CURRENT_MIN_SPEED, refSpeed: ref })
     }
     const lines = traceFlowLines((x, y) => sampleVector(field, x, y), {
       width: MAP_WIDTH, height: MAP_HEIGHT,
@@ -2075,10 +2092,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return flowLineMarks(lines, { width: MAP_WIDTH, height: MAP_HEIGHT, length: CURRENT_LENGTH, gap: CURRENT_GAP, closeLoops: true, minPoints: 4, speedCap: 1 })
   }
   // A mark's class from the anomaly under its middle: warm (0), cold (1),
-  // neutral (2). The row is held inside the grid: a mark at the south pole
-  // (v = 1) would wrap to the north pole's row.
+  // neutral (2).
   function currentClass(mark: VectorMark, anomaly: Float32Array | null): number {
-    const a = anomaly ? sampleScalar(anomaly, mark.mid.u * MAP_WIDTH, Math.min(mark.mid.v, 1 - 1e-9) * MAP_HEIGHT) : 0
+    const a = anomaly ? sampleScalar(anomaly, mark.mid.u * MAP_WIDTH, mark.mid.v * MAP_HEIGHT) : 0
     return a > CURRENT_NEUTRAL_C ? 0 : a < -CURRENT_NEUTRAL_C ? 1 : 2
   }
 
@@ -4088,7 +4104,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // the decimated raster drives the half-res mesh and the full raster
       // the fine mesh, as before.
       if (message.mesh) {
-        const decoded = decodeMesh(torusDomain(message.width, message.height), { count: message.mesh.count, nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity) })
+        const decoded = decodeMesh(domainOfKind(worldShape === 'sphere' ? 'sphere' : 'torus', message.width, message.height), { count: message.mesh.count, nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity) })
         const surface = createMeshSurface(createMeshSampler(decoded, new Float32Array(message.mesh.z)), RELIEF_HEIGHT_SCALE)
         flatView.setRelief(surface, surface)
       } else {
