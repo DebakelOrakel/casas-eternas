@@ -16,8 +16,8 @@ summary.de: Ideenskizze: den Mantel und das Klima — heute Raster in der 2:1-Ka
 area: generator
 stage: idea
 createdAt: 2026-10-10
-updatedAt: 2026-10-10
-related: [DEC-0035, DES-0017, DEC-0029]
+updatedAt: 2026-10-11
+related: [DEC-0036, DEC-0035, DES-0017, DEC-0029]
 ---
 
 Records a discussion (2026-10-10), while planning the sphere's generator
@@ -92,6 +92,14 @@ at sea, and the climate wants the same resolution everywhere.
   on its raster for a while?
 
 ## Status
+
+2026-10-11: DECIDED as [fields-on-meshes.md](../decisions/fields-on-meshes.md)
+(DEC-0036), wider than sketched here: every simulated field leaves the
+chart — the coarse global ones onto a uniform field mesh (the Goldberg dual
+of a subdivided icosahedron on the sphere, a hexagonal lattice on the
+torus), the fine land fields onto the adaptive terrain mesh; the torus takes
+the same path; the save format stays. The open questions below are
+answered there.
 
 2026-10-10: IDEA — kept for a later pass. The user leans toward it as the
 more correct approach in principle; for now the sphere's rasters get pole

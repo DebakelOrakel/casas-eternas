@@ -72,6 +72,11 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             (pipeline/meshErosionStage.ts), the lakes and the river graph run on it
             (meshHydrology: the flow substrate) and the save carries it; the map and the
             raster consumers still read its 2048 rasterisation until 4.4
+fields/     the field mesh (DEC-0036): fieldMesh (a uniform mesh over a Domain at a spacing
+            in metres — Goldberg cells on the sphere, hexagons on the torus — its geometry,
+            the sampler, the chart rasters in and out), fieldOperators (diffusion, gradient,
+            divergence, semi-Lagrangian transport, the Helmholtz/Poisson CG solve).
+            `npm run harness:fields` holds each against an analytic answer
 planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
             what depends on the planet and not on the relief; the climate reads it
 mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
@@ -99,6 +104,16 @@ surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), e
             (the mesh level's synthesis layers and the level bake's constants)
 climate/ ecology/ migration/ render/
 ```
+
+**A new simulated field goes on a mesh, not on the 2:1 raster** (DEC-0036,
+`docs/decisions/fields-on-meshes.md`). A coarse global field (mantle, ocean
+age, climate, flexure) lives on the field mesh (`fields/`), a fine land field
+on the adaptive terrain mesh; the chart is the address, the textures and the
+save. Read a field mesh through its `FieldSampler`, never by a grid index;
+write it out with `rasteriseField` (cell centres, the DomainGrid's convention).
+Its vectors are east/south pairs in each cell's own frame — carry a
+neighbour's through `carryFrom` before adding it. Phase 0 (the operators) is
+built; the stages move one per phase, so the table below still holds.
 
 ## Resolutions — check before you sample
 
@@ -138,6 +153,7 @@ not assume; look up which one the field you touched uses.
 ```
 cd client && npm run harness:roundtrip       # the save format; 0.2 s
 cd client && npm run harness:mesh            # the adaptive mesh; ~5 s
+cd client && npm run harness:fields          # the field mesh's operators; ~30 s
 cd client && npm run harness:pipeline        # the pipeline's behaviour; ~3 min
 cd client && npm run harness:golden          # the generator; ~20 min (4 world builds at 2048×1024, 4 coupled epochs each)
 cd client && npm run harness:golden:record   # re-record the metric baseline, on purpose

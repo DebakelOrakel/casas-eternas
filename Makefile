@@ -93,6 +93,7 @@ test:
 	cd client && npm run harness:roundtrip
 	cd client && npm run harness:pipeline
 	cd client && npm run harness:mesh
+	cd client && npm run harness:fields
 	cd client && npm run harness:golden
 
 # The job worker, bundled for Node. Lands beside the binary because that is

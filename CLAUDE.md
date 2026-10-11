@@ -19,7 +19,7 @@ client/src/
   storage/        artifact stores (OPFS / HTTP / tiered), bytes at paths
   server/         client-side HTTP clients for the Go server
   map/ ui/ camera/ app/ i18n/
-client/scripts/   the four harnesses (golden, pipeline, roundtrip, mesh) and
+client/scripts/   the five harnesses (golden, pipeline, roundtrip, mesh, fields) and
                   jobWorker.ts → job-worker.mjs, the server-side job worker bundle
 internal/ cmd/    the Go server
 docs/             see docs/README.md for the taxonomy
@@ -127,9 +127,10 @@ make test      # go test plus the harnesses (~14 min, nearly all of it golden)
 make run       # build baker + client, then start the server locally
 cd client && npm run dev   # the usual loop
 
-# The four harnesses, cheapest first — each guards what the others cannot.
+# The five harnesses, cheapest first — each guards what the others cannot.
 cd client && npm run harness:roundtrip   # the save format; 0.2 s, run it freely
 cd client && npm run harness:mesh        # the adaptive mesh; ~5 s
+cd client && npm run harness:fields      # the field mesh's operators (DEC-0036); ~30 s
 cd client && npm run harness:pipeline    # the generator pipeline's behaviour; ~3 min
 cd client && npm run harness:golden      # the generator's fields; ~20 min
 

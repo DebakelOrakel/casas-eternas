@@ -58,8 +58,9 @@ export interface DenseRegion {
 const HINT_NODES_PER_CELL = 4
 
 // A hint grid of cols × rows cells of sx × sy from (x0, y0), each the
-// triangle under its corner, found by a scanline walk.
-function hintGrid(mesh: PeriodicTriangulation, x0: number, y0: number, cols: number, rows: number, sx: number, sy: number): Int32Array {
+// triangle under its corner, found by a scanline walk. The field mesh
+// (fields/fieldMesh.ts) locates through the same grid at its own spacing.
+export function hintGrid(mesh: PeriodicTriangulation, x0: number, y0: number, cols: number, rows: number, sx: number, sy: number): Int32Array {
   const hints = new Int32Array(cols * rows)
   let hint = mesh.lastTri
   let rowStart = hint
