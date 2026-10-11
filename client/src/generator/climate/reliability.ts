@@ -1,11 +1,8 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, latitudeAt } from './climateField'
+import { latitudeOfNorm, shiftedNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { OCEAN_PRECIP } from './precipitation'
+import type { BasinRows, ClimateTerrain } from './climateMesh'
 import { detExp, detHypot, sq } from '../core/detMath'
-import type { DomainGrid } from '../core/domain'
-
-const RX = CLIMATE_RES_X
-const RY = CLIMATE_RES_Y
 
 // THE RAIN'S RELIABILITY (build step 7 of docs/design/climate-refinement.md):
 // how much one year's rain differs from the next, derived rather than
@@ -21,96 +18,101 @@ const RY = CLIMATE_RES_Y
 // beyond it: Peru) gets rain it does not usually get, and its western shore
 // (the east coast of the land before it: Indonesia, Australia) goes dry. An
 // open equatorial band has no shores to pile water against, and no see-saw.
+//
+// Per cell of the climate's field mesh (DEC-0036 phase 5); the basins are
+// the seas along the parallels (climateMesh.basinRows), the reach a length
+// in metres along the parallel.
 
 export interface Reliability {
   // The annual rain's coefficient of variation per land cell (0.3 = one
   // year in three off by 30 %); 0 on the sea.
-  rainVariability: Float32Array
+  rainVariability: Float64Array
   // The see-saw's mark per land cell, −1..1: + wetter in the warm phase
   // (El Niño), − drier; 0 where it does not reach, and on the sea.
-  ensoPattern: Float32Array
+  ensoPattern: Float64Array
   // Its period in years, and its strength (0..1) — the world's strongest
   // basin; 0 and 0 where no basin can hold one.
   ensoPeriodYears: number
   ensoStrength: number
 }
 
-// `precipitation` is the annual rain (mm/yr, OCEAN_PRECIP on the sea),
-// `monsoonIndex` its signed seasonality, `anomaly` the sea surface's
-// departure from its latitude (the currents and the upwelling), `land` 1 on
-// land, `grid` the climate grid.
-export function computeReliability(precipitation: Float32Array, monsoonIndex: Float32Array, anomaly: Float32Array, land: Uint8Array, grid: DomainGrid, equatorOffset: number): Reliability {
-  const n = RX * RY
+// `precipitation` is the annual rain per cell (mm/yr, OCEAN_PRECIP on the
+// sea), `monsoonIndex` its signed seasonality, `anomaly` the sea surface's
+// departure from its latitude (the currents and the upwelling), 0 on land.
+export function computeReliability(terrain: ClimateTerrain, rows: BasinRows, precipitation: ArrayLike<number>, monsoonIndex: ArrayLike<number>, anomaly: ArrayLike<number>, equatorOffset: number): Reliability {
+  const { cm, domain, land } = terrain
+  const { mesh } = cm
+  const n = mesh.count
   const T = CLIMATE_TUNING
+  const W = domain.width
 
-  // The basins on the equator: runs of sea along the rows within
-  // `ensoRowsDeg` of it, shore to shore. A run's strength is its west-to-east
-  // warmth, full at `ensoFullGradientC`, times its width past
-  // `ensoMinWidthDeg`, full at `ensoFullWidthDeg`. The same basin found on
-  // several rows counts once, at its best row.
+  // The basins on the equator: runs of sea along the parallels within
+  // `ensoRowsDeg` of it, shore to shore (basinRows' rings). A run's strength
+  // is its west-to-east warmth, full at `ensoFullGradientC`, times its width
+  // past `ensoMinWidthDeg` of longitude, full at `ensoFullWidthDeg`. The same
+  // basin found on several parallels counts once, at its best — two runs
+  // whose ends lie within `ensoSameBasinM` of each other.
   type Basin = { west: number; east: number; strength: number; widthDeg: number }
   const basins: Basin[] = []
-  for (let gy = 0; gy < RY; gy++) {
-    if (latitudeAt(gy, equatorOffset) * 90 > T.ensoRowsDeg) continue
-    for (let x0 = 0; x0 < RX; x0++) {
-      // A run of sea starts after a land cell.
-      if (!land[gy * RX + x0] || land[gy * RX + grid.wrapCol(x0 + 1)]) continue
-      let len = 0
-      while (len < RX && !land[gy * RX + grid.wrapCol(x0 + 1 + len)]) len++
-      if (len >= RX) continue
+  const same = T.ensoSameBasinM / mesh.unitM
+  const zonal = (a: number, b: number): number => {
+    let d = Math.abs(a - b)
+    if (d > W / 2) d = W - d
+    return d
+  }
+  for (const ring of rows.rings) {
+    if (latitudeOfNorm(shiftedNorm(ring.y / domain.height, equatorOffset)) * 90 > T.ensoRowsDeg) continue
+    const N = ring.count
+    for (let k0 = 0; k0 < N; k0++) {
+      // A run of sea starts after a land point.
+      if (!ring.land[k0] || ring.land[(k0 + 1) % N]) continue
+      const len = ring.runLength[(k0 + 1) % N]
+      if (len >= N) continue
       const third = Math.max(1, Math.floor(len / 3))
       let warm = 0
       let cold = 0
       for (let k = 0; k < third; k++) {
-        warm += anomaly[gy * RX + grid.wrapCol(x0 + 1 + k)] / third
-        cold += anomaly[gy * RX + grid.wrapCol(x0 + len - k)] / third
+        warm += anomaly[ring.cell[(k0 + 1 + k) % N]] / third
+        cold += anomaly[ring.cell[(k0 + len - k) % N]] / third
       }
-      const widthDeg = (len * 360) / RX
+      const widthDeg = (len * 360) / N
       const strength = Math.min(1, Math.max(0, (warm - cold) / T.ensoFullGradientC))
         * Math.min(1, Math.max(0, (widthDeg - T.ensoMinWidthDeg) / (T.ensoFullWidthDeg - T.ensoMinWidthDeg)))
       if (strength <= 0) continue
-      const west = grid.wrapCol(x0 + 1)
-      const east = grid.wrapCol(x0 + len)
-      const same = basins.find((b) => Math.abs(b.west - west) <= 3 && Math.abs(b.east - east) <= 3)
-      if (same) {
-        if (strength > same.strength) Object.assign(same, { west, east, strength, widthDeg })
+      const west = (((k0 + 1) % N) + 0.5) * (W / N)
+      const east = (((k0 + len) % N) + 0.5) * (W / N)
+      const known = basins.find((b) => zonal(b.west, west) <= same && zonal(b.east, east) <= same)
+      if (known) {
+        if (strength > known.strength) Object.assign(known, { west, east, strength, widthDeg })
       } else {
         basins.push({ west, east, strength, widthDeg })
       }
     }
   }
 
-  // The see-saw's reach on land: near the basin's shores, near the equator.
-  const ensoPattern = new Float32Array(n)
-  const zonal = (a: number, b: number): number => {
-    let d = Math.abs(a - b)
-    if (d > RX / 2) d = RX - d
-    return d
-  }
-  for (let gy = 0; gy < RY; gy++) {
-    const lat = latitudeAt(gy, equatorOffset) * 90
+  // The see-saw's reach on land: near the basin's shores, along the
+  // parallel (its length cos φ of the equator's on the sphere), near the
+  // equator.
+  const ensoPattern = new Float64Array(n)
+  for (let i = 0; i < n; i++) {
+    if (!land[i]) continue
+    const lat = latitudeOfNorm(shiftedNorm(cm.yNorm[i], equatorOffset)) * 90
     const byLat = detExp(-sq(lat / T.ensoReachLatDeg))
-    // The reach is a length: a row's cells are rowScale wide (cos φ on the
-    // sphere, 1 on the torus; step 4e).
-    const across = grid.rowScale(gy)
-    for (let gx = 0; gx < RX; gx++) {
-      const i = gy * RX + gx
-      if (!land[i]) continue
-      let mark = 0
-      for (const b of basins) {
-        // The land past the basin's east end is wetter in the warm phase,
-        // the land before its west end drier.
-        const wet = detExp(-sq((zonal(gx, b.east) * across) / T.ensoReachCells))
-        const dry = detExp(-sq((zonal(gx, b.west) * across) / T.ensoReachCells))
-        mark += b.strength * byLat * (wet - dry)
-      }
-      ensoPattern[i] = Math.max(-1, Math.min(1, mark))
+    const perUnit = mesh.unitM * rows.rings[cm.band[i]].scale
+    let mark = 0
+    for (const b of basins) {
+      // The land past the basin's east end is wetter in the warm phase,
+      // the land before its west end drier.
+      const wet = detExp(-sq((zonal(mesh.x[i], b.east) * perUnit) / T.ensoReachM))
+      const dry = detExp(-sq((zonal(mesh.x[i], b.west) * perUnit) / T.ensoReachM))
+      mark += b.strength * byLat * (wet - dry)
     }
+    ensoPattern[i] = Math.max(-1, Math.min(1, mark))
   }
 
   // The spread: the rain's own, from its dryness and its season, and the
   // see-saw's on top, as independent parts add (in quadrature).
-  const rainVariability = new Float32Array(n)
+  const rainVariability = new Float64Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i] || precipitation[i] === OCEAN_PRECIP) continue
     const own = Math.min(T.rainVariabilityMax, T.rainVariabilityScale / Math.sqrt(Math.max(precipitation[i], T.rainVariabilityFloorMm)))
@@ -118,10 +120,6 @@ export function computeReliability(precipitation: Float32Array, monsoonIndex: Fl
     const enso = T.ensoVariability * Math.abs(ensoPattern[i])
     rainVariability[i] = Math.min(T.rainVariabilityMax, detHypot(own, enso))
   }
-
-  // A pole row is one point: its land one value (a no-op on the torus).
-  grid.averagePoleRows(ensoPattern, land)
-  grid.averagePoleRows(rainVariability, land)
 
   let best: Basin | null = null
   for (const b of basins) if (!best || b.strength > best.strength) best = b

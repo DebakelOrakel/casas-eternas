@@ -43,10 +43,11 @@ import { accumulateDischarge, accumulateDischargeOn, extractRiverPolylines, comp
 import type { LakeFields } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y, mantleMesh, rasteriseMantle, savedMantle } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
-import { computeWeather, defaultWeatherParams, type Weather, type WeatherParams } from '../climate/weather'
+import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
 import { climateTerrain } from '../climate/climateMesh'
 import { computeBiomes, computeBiomesFine, computeBiomesFromMonths, computeBiomesFineFromMonths, computeKoppenField } from '../climate/biomes'
-import { annualFromMonths, refineClimate } from '../climate/refinement'
+import { annualFromMonths, refineClimate, refinedAnnualWind, refinedRasters, refinementFits, type RefinedClimate } from '../climate/refinement'
+import type { CellVectors } from '../climate/wind'
 import { downsampleMax } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import type { WaterBody } from '../surface/hydrology'
@@ -192,6 +193,10 @@ interface ClimateResult {
   rainVariability: Float32Array | null
   // The wind (climate/wind.ts, interleaved) — the coast's exposure reads it.
   wind: Float32Array
+  // The same climate per cell of its field mesh (DEC-0036): the annual
+  // temperature and wind the step's refinement starts from
+  // (refinement.refineClimate).
+  mesh: { temperature: Float64Array; wind: CellVectors }
   // Set when this is the climate step's refinement (handleClimateRefine):
   // the real months the annual fields above were derived from. The riparian
   // biomes classify from them, and the hydrology's own climate pass (the
@@ -863,14 +868,15 @@ function computeClimateChain(elevation: Float32Array, domain: Domain, params: Cl
   const biomes = computeBiomes(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
   const biomesFine = computeBiomesFine(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, domain, dryLand)
   const koppen = computeKoppenField(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
-  return { temperature, wind, windMesh: meshVectorPayload(weather, weather.mesh.wind), currents, currentsMesh: meshVectorPayload(weather, weather.mesh.currents), currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine, koppen }
+  return { temperature, wind, windMesh: meshVectorPayload(weather.terrain.cm.cellM, weather.mesh.wind), currents, currentsMesh: meshVectorPayload(weather.terrain.cm.cellM, weather.mesh.currents), currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine, koppen, mesh: { temperature: weather.mesh.temperature, wind: weather.mesh.wind } }
 }
 
 // A vector field on the climate's field mesh for the screen's marks — the
-// wind (DEC-0036 phase 3) and the currents (phase 4),
-// WorkerClimateDataMessage.windMesh and .currentsMesh: copies, transferred.
-function meshVectorPayload(weather: Weather, field: { e: Float64Array; s: Float64Array }): { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer } {
-  return { cells: field.e.length, spacingM: weather.terrain.cm.cellM, e: field.e.slice().buffer as ArrayBuffer, s: field.s.slice().buffer as ArrayBuffer }
+// wind (DEC-0036 phase 3), the currents (phase 4), the refinement's
+// (phase 5), WorkerClimateDataMessage.windMesh and .currentsMesh: copies
+// in Float64, transferred.
+function meshVectorPayload(spacingM: number, field: { e: ArrayLike<number>; s: ArrayLike<number> }): { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer } {
+  return { cells: field.e.length, spacingM, e: Float64Array.from(field.e).buffer as ArrayBuffer, s: Float64Array.from(field.s).buffer as ArrayBuffer }
 }
 
 // Cache copies for hydrology/ecology (the message buffers get transferred,
@@ -889,6 +895,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     upwelling: null,
     rainVariability: null,
     wind: chain.wind.slice(),
+    mesh: chain.mesh,
   }
   const climateMessage: WorkerClimateDataMessage = {
     type: 'climateData',
@@ -933,29 +940,38 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
 }
 
 // The climate step's refinement (climate/refinement.ts), on the climate the
-// step shows and the terrain it was computed on. The worker keeps nothing of
-// it yet: nothing downstream reads it until the
-// energy balance feeds the biomes, so the screen holds the only copy.
+// step shows and the terrain it was computed on. It runs on the climate's
+// field mesh (DEC-0036 phase 5); its values per cell go to the screen,
+// which keeps them for the save, and its rasters (the transition's,
+// refinement.refinedRasters, phase 7) feed the biomes and everything
+// downstream here and the screen's textures.
 function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'climateRefine' }>): void {
   const elevation = preErosionElevations ?? lastRawElevations
   if (!sim || !elevation) { decline('climate', 'tectonics'); return }
   if (!climate) { decline('climate', 'climate'); return }
   const { width, height, domain } = sim
-  // A save's refinement is taken as it is; otherwise it is computed.
-  const r = message.restored ?? refineClimate(elevation, domain, climate.params, climate.temperature, climate.wind, (share) => {
+  // A save's refinement is taken as it is — its values belong to this
+  // world's climate mesh, or it is no refinement of it; otherwise it is
+  // computed.
+  const restored = message.restored
+  if (restored && !refinementFits(domain, restored.cells, restored.spacingM)) throw new Error('the saved refinement belongs to another climate mesh')
+  const r: RefinedClimate = restored ?? refineClimate(elevation, domain, climate.params, climate.mesh.temperature, climate.mesh.wind, (share) => {
     const progress: WorkerClimateRefineProgressMessage = { type: 'climateRefineProgress', share: share * 0.85 }
     emit(progress)
   })
+  const rasters = refinedRasters(r, climateTerrain(domain, elevation, width, height))
 
   // The refined climate takes the history's place (build step 5b): its
   // annual fields derived from the months, its biomes classified from them.
   // Everything downstream is then stale — the rivers run on the new rain.
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
-  const annual = annualFromMonths(r)
-  const biomes = computeBiomesFromMonths(r.temperature, r.precipitation, r.months, annual.precipitation, elevation, width, height)
-  const biomesFine = computeBiomesFineFromMonths(r.temperature, r.precipitation, r.months, annual.temperature, annual.precipitation, elevation, domain)
+  const annual = annualFromMonths(rasters, n)
+  const biomes = computeBiomesFromMonths(rasters.temperature, rasters.precipitation, rasters.months, annual.precipitation, elevation, width, height)
+  const biomesFine = computeBiomesFineFromMonths(rasters.temperature, rasters.precipitation, rasters.months, annual.temperature, annual.precipitation, elevation, domain)
   const annualWind = new Float32Array(n * 2)
-  for (let m = 0; m < r.months; m++) for (let i = 0; i < n * 2; i++) annualWind[i] += r.wind[m * n * 2 + i] / r.months
+  for (let m = 0; m < rasters.months; m++) for (let i = 0; i < n * 2; i++) annualWind[i] += rasters.wind[m * n * 2 + i] / rasters.months
+  const meshWind = refinedAnnualWind(r)
+  const meshAnnual = annualFromMonths(r, r.cells)
   climate = {
     params: climate.params,
     temperature: annual.temperature,
@@ -963,41 +979,47 @@ function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'cli
     seasonalAmplitude: annual.seasonalAmplitude,
     monsoonIndex: annual.monsoonIndex,
     biomes,
-    upwelling: r.upwelling.slice(),
-    rainVariability: r.reliability.rainVariability.slice(),
+    upwelling: rasters.upwelling.slice(),
+    rainVariability: rasters.reliability.rainVariability.slice(),
     wind: annualWind,
-    months: { temperature: r.temperature, precipitation: r.precipitation, count: r.months },
+    mesh: { temperature: Float64Array.from(meshAnnual.temperature), wind: meshWind },
+    months: { temperature: rasters.temperature, precipitation: rasters.precipitation, count: rasters.months },
   }
 
+  // The values per cell, copied: the screen keeps them (the save's), the
+  // worker its own.
+  const values: RefinedClimate = structuredCopy(r)
   const reply: WorkerClimateRefinedMessage = {
     type: 'climateRefined',
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
-    months: r.months,
-    temperature: r.temperature.slice().buffer as ArrayBuffer,
-    precipitation: r.precipitation.slice().buffer as ArrayBuffer,
-    koppen: r.koppen.slice().buffer as ArrayBuffer,
-    fog: r.fog.buffer as ArrayBuffer,
-    foehn: r.foehn.buffer as ArrayBuffer,
-    rainVariability: r.reliability.rainVariability.buffer as ArrayBuffer,
-    ensoPattern: r.reliability.ensoPattern.buffer as ArrayBuffer,
-    ensoPeriodYears: r.reliability.ensoPeriodYears,
-    ensoStrength: r.reliability.ensoStrength,
-    salinity: r.salinity.buffer as ArrayBuffer,
-    deepWater: r.deepWater.buffer as ArrayBuffer,
-    cyclone: r.storms.cyclone.buffer as ArrayBuffer,
-    tornado: r.storms.tornado.buffer as ArrayBuffer,
-    blizzard: r.storms.blizzard.buffer as ArrayBuffer,
-    dust: r.storms.dust.buffer as ArrayBuffer,
-    thunder: r.storms.thunder.buffer as ArrayBuffer,
-    pressure: r.pressure.buffer as ArrayBuffer,
-    wind: r.wind.buffer as ArrayBuffer,
-    currents: r.currents.slice().buffer as ArrayBuffer,
-    currentAnomaly: r.currentAnomaly.slice().buffer as ArrayBuffer,
-    upwelling: r.upwelling.buffer as ArrayBuffer,
+    months: rasters.months,
+    refined: values,
+    temperature: rasters.temperature.slice().buffer as ArrayBuffer,
+    precipitation: rasters.precipitation.slice().buffer as ArrayBuffer,
+    koppen: rasters.koppen.slice().buffer as ArrayBuffer,
+    fog: rasters.fog.buffer as ArrayBuffer,
+    foehn: rasters.foehn.buffer as ArrayBuffer,
+    rainVariability: rasters.reliability.rainVariability.buffer as ArrayBuffer,
+    ensoPattern: rasters.reliability.ensoPattern.buffer as ArrayBuffer,
+    ensoPeriodYears: rasters.reliability.ensoPeriodYears,
+    ensoStrength: rasters.reliability.ensoStrength,
+    salinity: rasters.salinity.buffer as ArrayBuffer,
+    deepWater: rasters.deepWater.buffer as ArrayBuffer,
+    cyclone: rasters.storms.cyclone.buffer as ArrayBuffer,
+    tornado: rasters.storms.tornado.buffer as ArrayBuffer,
+    blizzard: rasters.storms.blizzard.buffer as ArrayBuffer,
+    dust: rasters.storms.dust.buffer as ArrayBuffer,
+    thunder: rasters.storms.thunder.buffer as ArrayBuffer,
+    pressure: rasters.pressure.buffer as ArrayBuffer,
+    wind: rasters.wind.buffer as ArrayBuffer,
+    currents: rasters.currents.slice().buffer as ArrayBuffer,
+    currentAnomaly: rasters.currentAnomaly.slice().buffer as ArrayBuffer,
+    upwelling: rasters.upwelling.buffer as ArrayBuffer,
   }
-  emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.fog, reply.foehn, reply.rainVariability, reply.ensoPattern, reply.salinity, reply.deepWater, reply.cyclone, reply.tornado, reply.blizzard, reply.dust, reply.thunder, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling])
-  // The screen's annual fields follow, as a climate of its own kind.
+  emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.fog, reply.foehn, reply.rainVariability, reply.ensoPattern, reply.salinity, reply.deepWater, reply.cyclone, reply.tornado, reply.blizzard, reply.dust, reply.thunder, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling, ...refinedBuffers(values)])
+  // The screen's annual fields follow, as a climate of its own kind; the
+  // marks read the year's wind and the currents on the mesh.
   const climateMessage: WorkerClimateDataMessage = {
     type: 'climateData',
     refined: true,
@@ -1005,16 +1027,39 @@ function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'cli
     resY: CLIMATE_RES_Y,
     temperature: annual.temperature.slice().buffer as ArrayBuffer,
     wind: annualWind.slice().buffer as ArrayBuffer,
-    currents: r.currents.slice().buffer as ArrayBuffer,
-    currentAnomaly: r.currentAnomaly.buffer as ArrayBuffer,
+    windMesh: meshVectorPayload(r.spacingM, meshWind),
+    currents: rasters.currents.slice().buffer as ArrayBuffer,
+    currentsMesh: meshVectorPayload(r.spacingM, { e: r.currentE, s: r.currentS }),
+    currentAnomaly: rasters.currentAnomaly.buffer as ArrayBuffer,
     precipitation: annual.precipitation.slice().buffer as ArrayBuffer,
     seasonalAmplitude: annual.seasonalAmplitude.slice().buffer as ArrayBuffer,
     monsoonIndex: annual.monsoonIndex.slice().buffer as ArrayBuffer,
-    koppen: r.koppen.buffer as ArrayBuffer,
+    koppen: rasters.koppen.buffer as ArrayBuffer,
     biomes: biomesFine.buffer as ArrayBuffer,
   }
-  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
+  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.windMesh.e, climateMessage.windMesh.s, climateMessage.currents, climateMessage.currentsMesh.e, climateMessage.currentsMesh.s, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
   invalidateAfter('climate')
+}
+
+// A refinement's arrays copied, its solves left out (a diagnostic of the
+// run, not part of the climate).
+function structuredCopy(r: RefinedClimate): RefinedClimate {
+  return {
+    months: r.months, cells: r.cells, spacingM: r.spacingM,
+    temperature: r.temperature.slice(), precipitation: r.precipitation.slice(), pressure: r.pressure.slice(),
+    windE: r.windE.slice(), windS: r.windS.slice(), currentE: r.currentE.slice(), currentS: r.currentS.slice(),
+    currentAnomaly: r.currentAnomaly.slice(), upwelling: r.upwelling.slice(), salinity: r.salinity.slice(), deepWater: r.deepWater.slice(),
+    fog: r.fog.slice(), foehn: r.foehn.slice(),
+    reliability: { ...r.reliability, rainVariability: r.reliability.rainVariability.slice(), ensoPattern: r.reliability.ensoPattern.slice() },
+    storms: { cyclone: r.storms.cyclone.slice(), tornado: r.storms.tornado.slice(), blizzard: r.storms.blizzard.slice(), dust: r.storms.dust.slice(), thunder: r.storms.thunder.slice() },
+  }
+}
+
+function refinedBuffers(r: RefinedClimate): ArrayBuffer[] {
+  return [
+    r.temperature, r.precipitation, r.pressure, r.windE, r.windS, r.currentE, r.currentS, r.currentAnomaly, r.upwelling, r.salinity, r.deepWater, r.fog, r.foehn,
+    r.reliability.rainVariability, r.reliability.ensoPattern, r.storms.cyclone, r.storms.tornado, r.storms.blizzard, r.storms.dust, r.storms.thunder,
+  ].map((f) => f.buffer as ArrayBuffer)
 }
 
 // The lake depths with frozen basins zeroed — what the ecology (fish) and the

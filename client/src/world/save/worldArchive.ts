@@ -7,8 +7,9 @@ import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import type { PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulation'
-import { DISCHARGE_LAYER, FORCING_LAYERS, REFINED_LAYERS, WORLD_LAYERS, bakeLayer } from './worldLayers'
-import { refinedLayerSources } from './refinedLayers'
+import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from './worldLayers'
+import { refinedEntries, refinedFromEntries } from './refinedFields'
+import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 
 // THE SAVE'S WRITER: a world's parts in, the .zip's bytes out — its files,
 // its quantised "query layers" (docs/decisions/queryable-world-save.md) and
@@ -41,7 +42,8 @@ export interface WorldArchiveFields {
   waterTable: Float32Array | null
   // River discharge per world cell, m³/s.
   dischargeM3s: Float32Array | null
-  // The climate step's refinement (formatVersion 6).
+  // The climate step's refinement, its values per cell of the climate's
+  // field mesh (refinedFields.ts; DEC-0036 phase 5).
   refined: RefinedClimate | null
   waterBodies: WaterBody[] | null
   coast: { reaches: CoastReach[]; cells: Int32Array } | null
@@ -97,7 +99,10 @@ export type WorldArchiveParts = ArcheanArchiveParts | TectonicArchiveParts
 // 2) in place of the 256 × 128 raster oceanAge.f32 — a save without them is
 // refused, not converted. The DEC-0036 phases are one move, so one version:
 // a version-8 save from a build before phase 2 lacks oceanAge.f64 and is
-// refused by its absence.
+// refused by its absence. The climate step's refinement as its field mesh's
+// values (refined.json + refined/, phase 5) in place of the quantised
+// raster layers (layers/temperature.01 … layers/thunder, layers/enso.json)
+// — a save with those layers and without refined.json is refused.
 export const WORLD_ARCHIVE_FORMAT_VERSION = 8
 
 export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8Array<ArrayBuffer>> {
@@ -117,6 +122,13 @@ export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8
     writeField(zip, 'oceanAge', parts.oceanAge)
     zip.file('elevation.f32', parts.elevation)
     writeQueryLayers(zip, parts)
+    // The climate step's refinement: a world saved unrefined loads
+    // unrefined.
+    if (parts.fields.refined) {
+      const { meta, files } = refinedEntries(parts.fields.refined, CLIMATE_TUNING.windSpeedMsPerUnit)
+      zip.file('refined.json', meta)
+      for (const [file, bytes] of files) zip.file(file, bytes)
+    }
   }
   if (parts.preview) zip.file('preview.png', parts.preview)
   // A fresh buffer of JSZip's own, never shared memory: typed as such so a
@@ -146,6 +158,21 @@ export async function readField(zip: JSZip, name: string): Promise<FieldPayload>
   const bytes = await values.async('arraybuffer')
   if (typeof cells !== 'number' || typeof spacingM !== 'number' || bytes.byteLength !== cells * 8) throw new Error(`${name}: ${bytes.byteLength} bytes for ${String(cells)} cells`)
   return { values: bytes, cells, spacingM }
+}
+
+// The climate step's refinement back (refinedFields.ts), for the loader:
+// null for a save without one (unrefined); an error for a save whose
+// refinement is incomplete, or still the quantised raster layers of a build
+// before DEC-0036 phase 5 (refused, not converted). Whether the values
+// belong to this world's climate mesh is the loader's check
+// (refinement.refinementFits).
+export async function readRefined(zip: JSZip): Promise<RefinedClimate | null> {
+  const meta = zip.file('refined.json')
+  if (!meta) {
+    if (zip.file('layers/enso.json') || zip.file('layers/currentU.u16')) throw new Error('a refinement as raster layers: a save from before the refinement moved onto its mesh')
+    return null
+  }
+  return refinedFromEntries(await meta.async('string'), async (file) => (await zip.file(file)?.async('arraybuffer')) ?? null)
 }
 
 type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector' | 'table'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }
@@ -214,24 +241,6 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
         unit: DISCHARGE_LAYER.unit, landOnly: DISCHARGE_LAYER.landOnly,
       })
     }
-  }
-  // The climate step's refinement, one layer per month and component
-  // (world/save/refinedLayers.ts). A world saved unrefined loads unrefined.
-  if (fields.refined && rx > 0) {
-    const sources = refinedLayerSources(fields.refined, rx * ry)
-    for (const spec of REFINED_LAYERS) {
-      const src = sources.get(spec.name)
-      if (!src) continue
-      zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
-      layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: rx, resY: ry, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
-    }
-  }
-  // The ENSO see-saw's period and strength, beside its pattern layer: what
-  // a reader needs to roll the phase of a year.
-  if (fields.refined) {
-    const { ensoPeriodYears, ensoStrength } = fields.refined.reliability
-    zip.file('layers/enso.json', JSON.stringify({ periodYears: ensoPeriodYears, strength: ensoStrength }))
-    layers.push({ name: 'enso', file: 'layers/enso.json', kind: 'table' })
   }
   // The standing-water list: a table beside the rasters, the truth
   // `lakeDepth` derives from (hydrology.lakeDepthFromBodies), in this

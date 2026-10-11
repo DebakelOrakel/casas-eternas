@@ -106,73 +106,13 @@ function rowPhase(k: number): number {
   return (h >>> 0) / 4294967296
 }
 
-// A sphere's vector field on its climate grid (resX × resY cells, the cell
-// centres at ((i + ½) / resX, (j + ½) / resY) of the chart), each cell
-// [east, south] in its own frame (the climate's convention, Domain.delta),
-// read at a chart point in that point's frame: [east, south], written into
-// `out`. Bilinear, but in 3D: the four cells' vectors turn into vectors in
-// space, are mixed, and are put into the point's own east and south. A mix
-// of the two numbers alone would mix vectors of different frames — near a
-// pole, where the frames of a row turn round once, that is a different
-// direction in each cell. Above the first row's centres and below the last
-// one's, the nearest row alone; at a pole the frame is the limit along the
-// point's meridian (Domain), which the same formulas give.
-export function globeVectorAt(field: Float32Array, resX: number, resY: number, at: ChartPoint, out: [number, number]): [number, number] {
-  const fx = at.u * resX - 0.5
-  const fy = Math.max(0, Math.min(resY - 1, at.v * resY - 0.5))
-  const x0 = Math.floor(fx)
-  const y0 = Math.min(resY - 2, Math.floor(fy))
-  const tx = fx - x0
-  const ty = fy - y0
-  let sx = 0
-  let sy = 0
-  let sz = 0
-  for (let dj = 0; dj <= 1; dj++) {
-    const j = y0 + dj
-    const wy = dj === 0 ? 1 - ty : ty
-    if (wy === 0) continue
-    const theta = (Math.PI * (j + 0.5)) / resY
-    const st = Math.sin(theta)
-    const ct = Math.cos(theta)
-    for (let di = 0; di <= 1; di++) {
-      const w = wy * (di === 0 ? 1 - tx : tx)
-      if (w === 0) continue
-      const i = (((x0 + di) % resX) + resX) % resX
-      const lambda = (2 * Math.PI * (i + 0.5)) / resX
-      const sl = Math.sin(lambda)
-      const cl = Math.cos(lambda)
-      const e = field[(j * resX + i) * 2]
-      const s = field[(j * resX + i) * 2 + 1]
-      // east (−sin λ, cos λ, 0), south (cos θ cos λ, cos θ sin λ, −sin θ)
-      sx += w * (-sl * e + ct * cl * s)
-      sy += w * (cl * e + ct * sl * s)
-      sz += w * (-st * s)
-    }
-  }
-  const theta = Math.PI * Math.max(0, Math.min(1, at.v))
-  const lambda = 2 * Math.PI * at.u
-  const sl = Math.sin(lambda)
-  const cl = Math.cos(lambda)
-  out[0] = -sl * sx + cl * sy
-  out[1] = Math.cos(theta) * (cl * sx + sl * sy) - Math.sin(theta) * sz
-  return out
-}
-
 // A vector field read at a chart point, in that point's own frame
-// ([east, south], Domain.delta's), written into `out`: a raster's
-// (rasterVectorReader) or a field mesh's, whose sampler mixes the corners'
-// vectors in 3D (fields/fieldMesh.FieldSampler.sampleVector — the static
-// climate's wind and currents since DEC-0036 phases 3 and 4; the screen
-// makes that reader, so this module reads no simulation).
+// ([east, south], Domain.delta's), written into `out`: a field mesh's,
+// whose sampler mixes the corners' vectors in 3D (fields/fieldMesh.
+// FieldSampler.sampleVector — every wind and current the screen shows since
+// DEC-0036 phase 5; the screen makes that reader, so this module reads no
+// simulation).
 export type VectorReader = (at: ChartPoint, out: [number, number]) => [number, number]
-
-// DEC-0036 transition: removed in phase 5. A sphere's climate-grid raster
-// as a reader (globeVectorAt): the refinement's winds and currents, until
-// phase 5 puts them on the field mesh (the static climate's wind and
-// currents come with their mesh since phases 3 and 4).
-export function rasterVectorReader(field: Float32Array, resX: number, resY: number): VectorReader {
-  return (at, out) => globeVectorAt(field, resX, resY, at, out)
-}
 
 // One mark per point of globeSamplePoints where the field is faster than
 // `minSpeed`: along the field's direction there, `length` texels long, its

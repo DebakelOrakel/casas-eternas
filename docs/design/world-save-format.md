@@ -35,6 +35,7 @@ Five entries, assembled in `saveWorld` / read back in the load handler:
 | `state.json` | The full simulation snapshot (`PlateSimulationSnapshot`) | **Yes** — the sim is rebuilt from this |
 | `elevation.f32` | Full-resolution, post-erosion elevation raster | **Yes** — injected as-is (no re-erosion) |
 | `oceanAge.f64` + `oceanAge.json` | The ocean-floor age, its field mesh's values (Float64 per cell) and that mesh's identity (`{ cells, spacingM }`, DEC-0036 phase 2; the 256 × 128 raster `oceanAge.f32` until 2026-10-11) | **Yes** — restored into the sim; another mesh's is refused |
+| `refined.json` + `refined/<field>.f32` | The climate step's refinement as its values per cell of the climate's field mesh (DEC-0036 phase 5; the quantised raster layers `layers/temperature.01` … `layers/thunder` and `layers/enso.json` until 2026-10-11): Float32, a month-stacked field months × cells; the json holds the mesh's cells and spacing, the months, each field's file and unit, the wind's unit and the ENSO see-saw's period and strength (`world/save/refinedFields.ts`). Present when the world was refined | **Yes** — adopted as saved, bit for bit, no recompute; another mesh's, or the old raster layers without it, is refused |
 | `preview.png` | Thumbnail for the file/gallery | No — cosmetic, not read on load |
 | `manifest.json` + `layers/…` | The queryable layers (queryable-world-save.md); since `formatVersion` 2 also `layers/waterBodies.json`, the standing-water list every lake and shore derives from | No — read by consumers, not by restore |
 | `mesh/nodes.f32`, `mesh/connectivity.bin`, `mesh/z.f32` | The adaptive mesh the erosion ran on (ADAPTIVE_MESH_PLAN.md phase 4.3): node positions, neighbours as varint deltas in Hilbert numbering, eroded heights — the terrain proper since 2026-09-23, from which `elevation.f32` is rasterised. Present since `formatVersion` 3 when the world was eroded; the manifest's `mesh` entry names the files and the node count | **Yes** — restored into the worker so a later save carries it on; a save without one restores the raster alone |
@@ -49,9 +50,9 @@ Restore is a **rehydrate, not a replay**: `state.json` rebuilds the plate
 simulation, `elevation.f32` is dropped in as the finished (eroded) terrain, the
 mesh files rebuild the triangulation (bit for bit — the codec is the canonical
 form, see `mesh/meshSerial.ts`), and `oceanAge.f64` restores the ocean floor —
-nothing re-steps or re-erodes. Climate and
-hydrology are *not* stored; they're recomputed on demand from the restored terrain
-when their panels are opened.
+nothing re-steps or re-erodes. The static climate and the
+hydrology are *not* stored; they're recomputed on demand from the restored
+terrain. The climate step's refinement, when saved, is taken as it was.
 
 ## `world.yaml`
 
@@ -153,6 +154,11 @@ elsewhere):
   age's field mesh (`tectonics/oceanAge.ts`, spacing W / 256), the count in
   `oceanAge.json` = the ocean-floor age in epochs, which drives age–depth on oceanic
   points (`elevationField.ts`).
+- **`refined/<field>.f32`** — raw little-endian `Float32Array`, one value per cell of
+  the climate's field mesh (`climate/climateMesh.ts`, spacing W / 256, the ocean
+  age's mesh), months × cells for a month-stacked field, month-major; vectors as
+  east and south components in each cell's own frame. The sea's fields are 0 on the
+  mesh's land cells, the rain's sea is OCEAN_PRECIP (−1).
 
 ## Compatibility
 

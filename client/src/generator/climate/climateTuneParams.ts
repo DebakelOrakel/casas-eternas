@@ -335,21 +335,27 @@ export const CLIMATE_TUNING = {
   // --- from phenomena.ts (the climate step's weather phenomena) ---
   // Not measured yet (2026-09-28); orders of magnitude.
 
-  // Fog reaches this many cells (62 km) inland, thinning each cell; it is
+  // Fog reaches this far inland from its sea cell (the distance between
+  // the two cells' centres, metres; 2 cells of the former 62.4 km climate
+  // grid, DEC-0036 phase 5), full up to `fogFullWithinM` (the next cell's)
+  // and thinning by the reach beyond it (half at the reach), none past it;
+  // it is
   // full where the sea is this much colder than its latitude's base and the
   // air this much warmer than the sea, and it takes this share of the
   // difference off the coast's month (the marine layer's chill).
-  fogReachCells: 2,
+  fogReachM: 124_800,
+  fogFullWithinM: 62_400,
   fogFullColdC: 2,
   fogFullContrastC: 3,
   // A wind this onshore (the cosine to the coast's normal) counts in full.
   fogFullOnshore: 0.5,
   fogCooling: 0.5,
-  // Föhn: the highest ground within this many cells upwind, over the ground
+  // Föhn: the highest ground within this far upwind (metres, 4 former
+  // cells, in steps of `climateTrackStepM`), over the ground
   // here, from this barrier (m) on, full at this much more; full at this wind
   // (8 m/s units); this much warmer on a month of it, °C (a monthly mean; the
   // days themselves run 10–20 °C warmer).
-  foehnReachCells: 4,
+  foehnReachM: 249_600,
   // From 600 m: the air sheds its water above the cloud base on the
   // windward side and comes down the lee dry, some 0.4 °C warmer per 100 m.
   foehnMinBarrierM: 600,
@@ -377,10 +383,14 @@ export const CLIMATE_TUNING = {
   ensoFullGradientC: 3,
   ensoMinWidthDeg: 50,
   ensoFullWidthDeg: 120,
-  // Its reach on land: this latitude and this many cells (62 km) from the
-  // basin's ends, as Gaussians; this much spread at full reach.
+  // Its reach on land: this latitude and this far (metres along the
+  // parallel, 20 former cells) from the basin's ends, as Gaussians; this
+  // much spread at full reach. Two runs whose ends lie within
+  // `ensoSameBasinM` of each other (at the equator, 3 former cells) are
+  // one basin seen on two parallels.
   ensoReachLatDeg: 25,
-  ensoReachCells: 20,
+  ensoReachM: 1_248_000,
+  ensoSameBasinM: 187_200,
   ensoVariability: 0.3,
   // Its period, years, from a narrow basin to one of 180°: a 150° basin
   // comes out at about 4.5 years (Earth's ENSO recurs every 2–7, some 4 on
@@ -403,18 +413,19 @@ export const CLIMATE_TUNING = {
   blizzardMinSnowMm: 15,
   blizzardMinWind: 0.7,
   // Dust: a month under this rain (mm) is dry, a wind this strong lifts in
-  // full; it drifts this many cells along the year's wind, keeping this
-  // share per cell.
+  // full; it drifts this far along the year's wind (metres, 20 former
+  // cells), keeping this share per step of `climateTrackStepM`.
   dustDryBelowMm: 25,
   dustFullWind: 0.8,
-  dustSteps: 20,
+  dustTrackM: 1_248_000,
   dustKeep: 0.75,
   // Tornado: a plain below this height (m); ground this high within this
-  // many cells upwind, full this much higher (the dry air aloft); warm and
+  // far upwind (metres, 12 former cells), full this much higher (the dry
+  // air aloft); warm and
   // moist from this °C, full this much warmer and at this month's rain;
   // full at this wind.
   tornadoPlainBelowM: 1000,
-  tornadoReachCells: 12,
+  tornadoReachM: 748_800,
   tornadoMinBarrierM: 1500,
   tornadoFullBarrierM: 1500,
   tornadoFromC: 12,
@@ -422,10 +433,10 @@ export const CLIMATE_TUNING = {
   tornadoFullRainMm: 80,
   tornadoFullWind: 1,
   // Cyclones form between these latitudes over sea warmer than 26.5 °C,
-  // full this much warmer; each step one cell along the month's wind with
-  // this drift west and poleward; over land a track keeps this share per
-  // cell, over sea colder than this °C that share; it ends below this weight
-  // or after this many cells.
+  // full this much warmer; each step `climateTrackStepM` along the month's
+  // wind with this drift west and poleward; over land a track keeps this
+  // share per step, over sea colder than this °C that share; it ends below
+  // this weight or after this far (metres, 60 former cells).
   cycloneMinLatDeg: 5,
   cycloneMaxLatDeg: 20,
   cycloneWarmC: 26.5,
@@ -436,7 +447,12 @@ export const CLIMATE_TUNING = {
   cycloneColdC: 24,
   cycloneColdKeep: 0.8,
   cycloneFadeBelow: 0.02,
-  cycloneSteps: 60,
+  cycloneTrackM: 3_744_000,
+  // The step of the refinement's tracks and marches (the cyclones, the
+  // dust, the föhn's and the tornado's look upwind), metres along the
+  // great circle: the former climate cell, so the keeps per step above
+  // keep their values (DEC-0036 phase 5).
+  climateTrackStepM: 62_400,
 
     // --- from salinity.ts (the sea's salt and the overturning) ---
   // Not measured yet (2026-09-29); orders of magnitude.
@@ -497,8 +513,10 @@ export const CLIMATE_TUNING = {
   rainSourcePerC: 0.2,
   rainSourceMin: 0.2,
   // The ocean highs (refinement.ts): ± hPa from a basin's western shore to
-  // its eastern, in full in a basin this many cells wide, over the latitudes
-  // between (a sine bump); smoothed over the radius, cells, as a mean over
+  // its eastern, in full in a basin this wide along its parallel (metres,
+  // 40 former cells), over the latitudes
+  // between (a sine bump); smoothed by a Gaussian of this σ (metres, the
+  // former three box passes of 8 cells: √(8 · 9) cells) as a mean over
   // the sea, and nothing where less than the share of the smoothing is sea.
   // Under the western flank the band's dryness gives way toward
   // `rainFlankFactor`, in full at −`rainFlankFullHpa`
@@ -511,10 +529,10 @@ export const CLIMATE_TUNING = {
   // was tried first and dried the east coasts further: their warm currents
   // come out at +0.5 °C here, and the cold seas set the mean.
   oceanHighFlankHpa: 8,
-  oceanHighBasinCells: 40,
+  oceanHighBasinM: 2_496_000,
   oceanHighFromDeg: 15,
   oceanHighToDeg: 50,
-  oceanHighSmoothCells: 8,
+  oceanHighSmoothSigmaM: 529_000,
   oceanHighMinSeaShare: 0.05,
   rainFlankFactor: 1,
   rainFlankFullHpa: 1.5,

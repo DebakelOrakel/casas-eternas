@@ -17,14 +17,14 @@
 // game asks about a PLACE — elevation, biome, lakes, rivers — has to be on the
 // world raster or it cannot answer.
 //
-// `oceanAge` and the mantle field live on field meshes of their own (DEC-0036)
-// and are NOT here: the save holds their mesh values for the generator's
-// restore, not queryable layers. Whether oceanAge
-// should become one is an open question in queryable-world-save.md, and this
-// registry is where it would land if it does.
+// `oceanAge`, the mantle field and the climate step's refinement live on
+// field meshes of their own (DEC-0036) and are NOT here: the save holds
+// their mesh values (oceanAge.f64, mantle.f64, refined/ — see
+// refinedFields.ts) for the generator's restore, not queryable layers.
+// Whether oceanAge should become one is an open question in
+// queryable-world-save.md, and this registry is where it would land if it
+// does.
 export type FieldGrid = 'world' | 'climate'
-
-import { REFINED_MONTHS } from '../../generator/climate/pressure'
 
 export interface FieldSpec {
   name: string
@@ -77,48 +77,7 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   climate('erodibility', '', false),
 ]
 
-// THE CLIMATE STEP'S REFINEMENT (docs/design/climate-refinement.md), one field
-// per month rather than a stack, so every reader that samples a field can
-// sample a month: `pressure.01` is January. Wind in m/s with v positive toward
-// the map's bottom (south), as the climate grid's vectors are; the currents'
-// two components normalised to the fastest (relative), 0 on land.
-export const refinedMonthField = (base: 'temperature' | 'precipitation' | 'pressure' | 'windU' | 'windV', month: number): string => `${base}.${String(month).padStart(2, '0')}`
-const MONTHS = Array.from({ length: REFINED_MONTHS }, (_, i) => i + 1)
-export const REFINED_FIELDS: readonly FieldSpec[] = [
-  ...MONTHS.map((m) => climate(refinedMonthField('temperature', m), '°C', false)),
-  // At the month's rate, mm/yr; the year's total is the mean of the twelve.
-  ...MONTHS.map((m) => climate(refinedMonthField('precipitation', m), 'mm/yr', true)),
-  ...MONTHS.map((m) => climate(refinedMonthField('pressure', m), 'hPa', false)),
-  ...MONTHS.map((m) => climate(refinedMonthField('windU', m), 'm/s', false)),
-  ...MONTHS.map((m) => climate(refinedMonthField('windV', m), 'm/s', false)),
-  climate('currentU', 'relative', false),
-  climate('currentV', 'relative', false),
-  // The sea-surface anomaly of the currents and the upwelling, °C, 0 on land.
-  climate('currentAnomaly', '°C', false),
-  // Ekman upwelling, positive where cold water comes up (relative), 0 on land.
-  climate('upwelling', 'relative', false),
-  // The sea's salt, psu (0 on land), and where its surface water sinks
-  // (0..1).
-  climate('salinity', 'psu', false),
-  climate('deepWater', 'relative', false),
-  // Weather phenomena, each the share of the year it happens (0..1), land.
-  climate('fog', 'share', true),
-  climate('foehn', 'share', true),
-  // The rain's reliability: its year-to-year coefficient of variation, and
-  // the ENSO see-saw's mark (−1 drier … +1 wetter in the warm phase); the
-  // see-saw's period and strength are the table `enso`.
-  climate('rainVariability', 'share', true),
-  climate('ensoPattern', '', true),
-  // The storms: cyclone tracks, tornado readiness, dust and thunder relative
-  // to the world's strongest (0..1), blizzards the share of the year.
-  climate('cyclone', 'relative', false),
-  climate('tornado', 'relative', true),
-  climate('blizzard', 'share', true),
-  climate('dust', 'relative', false),
-  climate('thunder', 'relative', false),
-]
-
-const BY_NAME = new Map([...WORLD_FIELDS, ...REFINED_FIELDS].map((f) => [f.name, f]))
+const BY_NAME = new Map(WORLD_FIELDS.map((f) => [f.name, f]))
 
 // Throws rather than returning undefined: a name that is not a field is a typo
 // or a field someone forgot to register, and both are better loud.

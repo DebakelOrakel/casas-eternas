@@ -397,14 +397,13 @@ console.log('9. vector marks (wind strokes, current arrows)')
     check(`globe spacing ${spacing}: at most one mark within ${((0.5 * spacing * MPT) / 1000).toFixed(0)} km of each pole`, nearPole(0) <= 1 && nearPole(1) <= 1, `north ${nearPole(0)}, south ${nearPole(1)}`)
   }
 
-  // The sphere: a field on the climate grid (256 × 128, east and south in
+  // The sphere: a field on the climate's field mesh (east and south in
   // each cell's frame) from rotations about tilted axes, the second's
   // weight a function of the point in 3D — continuous everywhere, the
   // poles included (a weight in the longitude was not, which a field
   // mesh's interpolation across the pole shows), not zero at the
-  // geographic poles — read into marks and placed. The placed x axis against the field's true direction.
-  const RX = 256
-  const RY = 128
+  // geographic poles — read into marks and placed. The placed x axis
+  // against the field's true direction.
   // 3D in the domain's frame (x, y, z = cos θ); Babylon's is (x, z, −y).
   const axes = [[Math.sin(0.5), 0, Math.cos(0.5)], [0.3, -0.8, 0.2]]
   const truth = (theta, lambda) => {
@@ -413,20 +412,9 @@ console.log('9. vector marks (wind strokes, current arrows)')
     axes.forEach((a, k) => { const c = cross(a, p); const w = k === 0 ? 1 : 0.6 * Math.cos(3 * p[0] + 2 * p[1]); v[0] += c[0] * w; v[1] += c[1] * w; v[2] += c[2] * w })
     return v
   }
-  const field = new Float32Array(RX * RY * 2)
-  for (let j = 0; j < RY; j++) {
-    for (let i = 0; i < RX; i++) {
-      const th = (Math.PI * (j + 0.5)) / RY
-      const la = (TAU * (i + 0.5)) / RX
-      const v = truth(th, la)
-      field[(j * RX + i) * 2] = -Math.sin(la) * v[0] + Math.cos(la) * v[1]
-      field[(j * RX + i) * 2 + 1] = Math.cos(th) * Math.cos(la) * v[0] + Math.cos(th) * Math.sin(la) * v[1] - Math.sin(th) * v[2]
-    }
-  }
-  // Read two ways: the climate raster's (map/vectorMarks.rasterVectorReader,
-  // the refinement's winds and the currents) and the climate's field
-  // mesh's (DEC-0036 phase 3: the static wind, through the mesh's sampler,
-  // as the screen reads it) — the same truth in each cell's frame.
+  // Read as the screen reads every wind and current since DEC-0036 phase
+  // 5: through the mesh's sampler, in each point's own frame (the climate
+  // raster's reader, map/vectorMarks.rasterVectorReader, went with it).
   const CM = await server.ssrLoadModule('/src/generator/climate/climateMesh.ts')
   const cm = CM.climateMesh(D.sphereDomain(W, H))
   const me = new Float64Array(cm.mesh.count), ms = new Float64Array(cm.mesh.count)
@@ -439,7 +427,6 @@ console.log('9. vector marks (wind strokes, current arrows)')
   }
   const pt = { x: 0, y: 0 }
   const readers = {
-    raster: VM.rasterVectorReader(field, RX, RY),
     mesh: (at, out) => { cm.sampler.sampleVector(me, ms, at.u * W, at.v * H, -1, pt); out[0] = pt.x; out[1] = pt.y; return out },
   }
   for (const [name, read] of Object.entries(readers)) {

@@ -39,6 +39,8 @@ loads are **instant** and survive generator-code changes.
 ├── oceanAge.f64          # ocean-floor age (epochs), Float64 per cell of its field mesh
 ├── oceanAge.json         # that mesh: { cells, spacingM } (DEC-0036 phase 2, formatVersion 8)
 ├── elevation.f32         # current (post-erosion) elevation, Float32 2048×1024
+├── refined.json          # the climate refinement's mesh, months, fields, ENSO (DEC-0036 phase 5)
+├── refined/…             # its values, Float32 per cell of the climate's field mesh, one file a field
 ├── manifest.json         # layer index for consumers (see queryable-world-save.md)
 ├── layers/…              # baked query layers (climate / ecology / rivers)
 └── preview.png           # 512×256 thumbnail of the composited map
@@ -137,6 +139,19 @@ the same way, for `oceanAge.f64` (its field mesh's values, Float64) and
 version-8 save from a build before phase 2 among them — is refused on load. An
 Archean save has none (no ocean age before the hand-over).
 
+The same day (DEC-0036 phase 5, still formatVersion 8): the climate step's
+refinement left its quantised raster layers (`layers/temperature.01` …
+`layers/thunder`, one per month and field at 256 × 128, and
+`layers/enso.json`) for its field mesh's values: `refined/<field>.f32`,
+Float32 per cell of the climate's mesh (a month-stacked field months ×
+cells), and `refined.json` (cells, spacing, months, the fields with their
+units, the wind's unit in m/s, the ENSO see-saw's period and strength).
+Float32 is what the session itself keeps, so a loaded refinement is the
+session's to the bit and is adopted without computing it again; the layers
+were coarser (u8/u16) and clipped at their ranges. A save without a
+refinement loads unrefined; a save with the old layers and no
+`refined.json`, or with the values of another mesh, is refused.
+
 ### Format choices
 
 - Elevation → **binary Float32** (`.f32`), the field meshes' values (mantle,
@@ -180,7 +195,8 @@ Archean save has none (no ocean age before the hand-over).
 The fourteen ecology layers are no longer written: the ecology is a rule
 evaluated where one looks (decisions/ecology-as-function.md) and is
 computed on load. The generator now loads the climate refinement from the
-save (the layers of formatVersion 6) instead of computing it again; a save
+save (the layers of formatVersion 6; its field mesh's values since DEC-0036
+phase 5) instead of computing it again; a save
 without it is refined on load. The hydrology is still computed on load;
 whether to load it from the save too is open.
 

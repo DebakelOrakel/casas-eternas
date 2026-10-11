@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-12
+- **changed** Climate: the refined climate — its months, fog, föhn, storms and the rain's reliability — is worked out as evenly at the poles as at the equator, and refined worlds saved before this change no longer open. `generator.step.climate`
+
 ## 2026-10-11
 - **changed** Climate: the ocean currents and the warm and cold seas they make are worked out as evenly at the poles as at the equator, so the climate looks somewhat different and a seed makes a different world. `generator.step.climate`
 - **changed** Climate: temperature, wind and rain are worked out as evenly at the poles as at the equator, so the climate looks somewhat different and a seed makes a different world. `generator.step.climate`

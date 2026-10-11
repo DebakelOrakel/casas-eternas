@@ -108,8 +108,8 @@ export interface WorkerPlanetPreviewDataMessage {
   wind: ArrayBuffer
   // The wind and the currents on the climate's field mesh, as
   // WorkerClimateDataMessage's.
-  windMesh?: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
-  currentsMesh?: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
+  windMesh: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
+  currentsMesh: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
   currents: ArrayBuffer
   currentAnomaly: ArrayBuffer
   precipitation: ArrayBuffer
@@ -145,9 +145,10 @@ export interface WorkerClimateRunMessage {
 // WorkerClimateRefinedMessage, or declines when no climate exists.
 export interface WorkerClimateRefineMessage {
   type: 'climateRefine'
-  // A refinement read back from a save (refinedLayers.refinedFromLayers):
-  // taken as it is instead of computed, so a loaded world keeps the climate
-  // it was saved with.
+  // A refinement read back from a save (world/save/refinedFields.ts: its
+  // values per cell of the climate's field mesh, DEC-0036 phase 5): taken
+  // as it is instead of computed, so a loaded world keeps the climate it
+  // was saved with, to the bit. Values of another mesh make the stage fail.
   restored?: RefinedClimate
 }
 // Requests a rivers/lakes (hydrology) compute on the current topography, using
@@ -501,16 +502,16 @@ export interface WorkerClimateDataMessage {
   // east and south per cell, each in its cell's frame, with the mesh's cell
   // count and spacing (the screen rebuilds the mesh from the world's shape,
   // climate/climateMesh.climateMesh, and reads the marks' directions
-  // through its sampler). Absent on the refinement's climate (`refined`),
-  // whose wind is still a raster (phase 5).
-  windMesh?: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
+  // through its sampler). On the refinement's climate (`refined`) the
+  // year's mean of its months' winds (phase 5).
+  windMesh: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
   // Ocean surface currents, Float32 interleaved [u0,v0,…], normalized to max 1,
   // zero on land. See climate/oceanCurrents.ts.
   currents: ArrayBuffer
   // The same currents on the climate's field mesh (DEC-0036 phase 4), as
-  // `windMesh` carries the wind; absent on the refinement's climate, whose
-  // currents reach the screen as a raster until phase 5.
-  currentsMesh?: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
+  // `windMesh` carries the wind; on the refinement's climate its currents
+  // (phase 5).
+  currentsMesh: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
   // The SST anomaly the currents make, °C, Float32 resX*resY, 0 on land:
   // positive = warm current, negative = cold (applyOceanSST).
   currentAnomaly: ArrayBuffer
@@ -536,11 +537,16 @@ export interface WorkerClimateDataMessage {
   biomes: ArrayBuffer
 }
 
-// The climate step's refinement: `months` twelve-month stacks on the climate
-// grid, month 0 = January. Build step 2 of docs/design/climate-refinement.md;
-// B, Köppen and the rest add their fields here.
+// The climate step's refinement: its values per cell of the climate's
+// field mesh (`refined`, DEC-0036 phase 5 — what the screen saves and
+// hands back on a load, and what the marks read), and the same rasterised
+// onto the climate grid once (refinement.refinedRasters, the transition
+// until phase 7): `months` twelve-month stacks, month 0 = January. Build
+// step 2 of docs/design/climate-refinement.md; B, Köppen and the rest add
+// their fields here.
 export interface WorkerClimateRefinedMessage {
   type: 'climateRefined'
+  refined: RefinedClimate
   resX: number
   resY: number
   months: number

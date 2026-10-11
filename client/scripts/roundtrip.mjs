@@ -34,7 +34,7 @@ const M = {
   hydro: await L('/src/generator/surface/hydrology.ts'),
   domain: await L('/src/generator/core/domain.ts'),
   history: await L('/src/world/save/worldHistory.ts'),
-  refined: await L('/src/world/save/refinedLayers.ts'),
+  refined: await L('/src/world/save/refinedFields.ts'),
 }
 const JSZip = (await import(`${CLIENT}/node_modules/jszip/dist/jszip.min.js`)).default
 
@@ -405,10 +405,15 @@ else {
   check('the level field carries the level onto the rim', near(field.level[2 * bw + 7], 0.2) && near(field.level[1 * bw + 3], 0.2) && field.level[0] === 0 && field.level[2 * bw + 8] === 0)
 }
 
-// The climate step's refinement (formatVersion 6): taken apart into its
-// per-month layers, quantised, decoded and put back, every value within half
-// a step of its layer, and the wind back in model units.
+// The climate step's refinement (DEC-0036 phase 5): its values per cell of
+// the climate's field mesh, written as Float32 files under refined/ with
+// refined.json, through the real writer and read back by the loader's
+// reader — every value bit for bit, the sea's rain mark kept, no raster
+// layer of it in the manifest. A field missing, or a save from before the
+// move (the raster layers, no refined.json), is refused; a save without a
+// refinement reads as none.
 {
+  const writer = await L('/src/world/save/worldArchive.ts')
   const n = 8 * 4
   const months = 12
   const rnd = (i) => Math.sin(i * 12.9898) * 0.5 + 0.5
@@ -416,11 +421,15 @@ else {
   const sea = (i) => i % 3 === 0
   const r = {
     months,
+    cells: n,
+    spacingM: 62400.125,
     temperature: Float32Array.from({ length: months * n }, (_, i) => (rnd(i + 11) - 0.5) * 80),
     precipitation: Float32Array.from({ length: months * n }, (_, i) => (sea(i % n) ? -1 : 3000 * rnd(i + 13))),
     pressure: Float32Array.from({ length: months * n }, (_, i) => 995 + 30 * rnd(i)),
-    wind: Float32Array.from({ length: months * n * 2 }, (_, i) => (rnd(i + 7) - 0.5) * 3),
-    currents: Float32Array.from({ length: n * 2 }, (_, i) => rnd(i + 3) * 2 - 1),
+    windE: Float32Array.from({ length: months * n }, (_, i) => (rnd(i + 7) - 0.5) * 3),
+    windS: Float32Array.from({ length: months * n }, (_, i) => (rnd(i + 8) - 0.5) * 3),
+    currentE: Float32Array.from({ length: n }, (_, i) => rnd(i + 3) * 2 - 1),
+    currentS: Float32Array.from({ length: n }, (_, i) => rnd(i + 4) * 2 - 1),
     currentAnomaly: Float32Array.from({ length: n }, (_, i) => (rnd(i + 5) - 0.5) * 12),
     upwelling: Float32Array.from({ length: n }, (_, i) => (rnd(i + 9) - 0.3) * 6),
     salinity: Float32Array.from({ length: n }, (_, i) => 30 + 9 * rnd(i + 37)),
@@ -435,31 +444,41 @@ else {
     },
     storms: Object.fromEntries(['cyclone', 'tornado', 'blizzard', 'dust', 'thunder'].map((k, j) => [k, Float32Array.from({ length: n }, (_, i) => rnd(i + 31 + j))])),
   }
-  const sources = M.refined.refinedLayerSources(r, n)
-  const decoded = new Map()
-  for (const spec of M.layers.REFINED_LAYERS) decoded.set(spec.name, M.layers.decodeLayer(M.layers.bakeLayer(sources.get(spec.name), spec), spec))
-  decoded.set('landMask', Float32Array.from({ length: n }, (_, i) => (sea(i) ? 0 : 1)))
-  check('every refinement layer has a source', M.layers.REFINED_LAYERS.every((spec) => sources.has(spec.name)))
-  const back = M.refined.refinedFromLayers((name) => decoded.get(name) ?? null, n)
-  const ms = 8
-  const worst = (a, b, tol) => { let w = 0; for (let i = 0; i < a.length; i++) w = Math.max(w, Math.abs(a[i] - b[i]) / tol); return w }
-  const stepOf = (name) => M.layers.REFINED_LAYERS.find((l) => l.name === name).scale
-  const within = back !== null
-    && worst(r.temperature, back.temperature, stepOf('temperature.01')) <= 0.51
-    && worst(r.precipitation, back.precipitation, stepOf('precipitation.01')) <= 0.51
-    && worst(r.pressure, back.pressure, stepOf('pressure.01')) <= 0.51
-    && worst(r.wind, back.wind, stepOf('windU.01') / ms) <= 0.51
-    && worst(r.currents, back.currents, stepOf('currentU')) <= 0.51
-    && worst(r.currentAnomaly, back.currentAnomaly, stepOf('currentAnomaly')) <= 0.51
-    && worst(r.upwelling, back.upwelling, stepOf('upwelling')) <= 0.51
-    && worst(r.fog, back.fog, stepOf('fog')) <= 0.51
-    && worst(r.salinity, back.salinity, stepOf('salinity')) <= 0.51
-    && worst(r.deepWater, back.deepWater, stepOf('deepWater')) <= 0.51
-    && worst(r.foehn, back.foehn, stepOf('foehn')) <= 0.51
-    && ['cyclone', 'tornado', 'blizzard', 'dust', 'thunder'].every((k) => worst(r.storms[k], back.storms[k], stepOf(k)) <= 0.51)
-  check('the refinement survives the save within half a step', within)
-  decoded.delete('upwelling')
-  check('a refinement with a layer missing is not one', M.refined.refinedFromLayers((name) => decoded.get(name) ?? null, n) === null)
+  const write = (refined) => writer.writeWorldArchive({
+    kind: 'tectonic', width: 4, height: 2, yaml: 'kind: FlatWorld\n', generatorVersion: 'roundtrip', preview: null, elevation: new Float32Array(8).buffer,
+    snapshot: { epoch: 1 }, mantle: { values: new Float64Array(1).buffer, cells: 1, spacingM: 1 }, latticeAccumulated: new ArrayBuffer(4), latticeLockedEpochs: new ArrayBuffer(2),
+    latticeLastClassCode: new ArrayBuffer(1), oceanAge: { values: new Float64Array(1).buffer, cells: 1, spacingM: 1 }, forcing: null, mesh: undefined,
+    fields: {
+      climateResX: 0, climateResY: 0, temperature: null, precipitation: null, precipitationEffective: null, biome: null, seasonalAmplitude: null, monsoonIndex: null,
+      koppen: null, lakeDepth: null, waterTable: null, dischargeM3s: null, refined, waterBodies: null, coast: null, sedimentBasins: null,
+    },
+  })
+  const zip = await JSZip.loadAsync(await write(r))
+  const back = await writer.readRefined(zip)
+  const fields = (v) => M.refined.REFINED_SAVE_FIELDS.map((f) => f.get(v))
+  const same = back !== null && back.cells === n && back.spacingM === r.spacingM && back.months === months
+    && fields(r).every((f, k) => f.length === fields(back)[k].length && f.every((x, i) => Object.is(x, fields(back)[k][i])))
+    && back.reliability.ensoPeriodYears === 4.5 && back.reliability.ensoStrength === 0.3
+  check('the refinement comes back as its mesh values, bit for bit, with its mesh and the sea\'s rain mark', same && back.precipitation[0] === -1)
+  const manifest = JSON.parse(await zip.file('manifest.json').async('string'))
+  check('the refinement writes no raster layer (no layers/temperature.01 … thunder, no enso table)', !manifest.layers.some((l) => /\.\d\d$/.test(l.name) || ['currentU', 'fog', 'cyclone', 'enso'].includes(l.name)) && zip.file(/^layers\/(temperature\.|enso|currentU|fog)/).length === 0)
+  check('a world saved unrefined reads as unrefined', (await writer.readRefined(await JSZip.loadAsync(await write(null)))) === null)
+  zip.remove('refined/upwelling.f32')
+  let partial = false
+  try { await writer.readRefined(zip) } catch { partial = true }
+  check('a refinement with a field missing is refused', partial)
+  const old = await JSZip.loadAsync(await write(null))
+  old.file('layers/enso.json', '{}')
+  old.file('layers/currentU.u16', new ArrayBuffer(2))
+  let before = false
+  try { await writer.readRefined(old) } catch { before = true }
+  check('a save with the refinement as raster layers (before DEC-0036 phase 5) is refused', before)
+  const RM = await L('/src/generator/climate/refinement.ts')
+  const D = await L('/src/generator/core/domain.ts')
+  const CMm = await L('/src/generator/climate/climateMesh.ts')
+  const torus = D.torusDomain(2048, 1024)
+  const cm = CMm.climateMesh(torus)
+  check('a refinement fits its world\'s climate mesh only', RM.refinementFits(torus, cm.mesh.count, cm.cellM) && !RM.refinementFits(torus, cm.mesh.count + 1, cm.cellM) && !RM.refinementFits(torus, cm.mesh.count, cm.cellM * 2))
 }
 
 // --- 5b. the zip writer ------------------------------------------------------

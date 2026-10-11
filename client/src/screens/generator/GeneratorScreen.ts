@@ -56,10 +56,9 @@ import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/c
 import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
-import { ELEVATION_ENCODING, REFINED_LAYERS, decodeLayer } from '../../world/save/worldLayers'
-import { refinedFromLayers } from '../../world/save/refinedLayers'
-import { readField, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
-import type { RefinedClimate } from '../../generator/climate/refinement'
+import { ELEVATION_ENCODING, decodeLayer } from '../../world/save/worldLayers'
+import { readField, readRefined, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
+import { refinementFits, type RefinedClimate, type RefinedClimateRasters } from '../../generator/climate/refinement'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createOverlayList } from './OverlayList'
@@ -111,7 +110,7 @@ import type { WorldSpec } from '../../world/save/worldSpec'
 import { displayValue, type InputParam } from '../../generator/core/inputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
 import { traceFlowLines } from '../../map/flowLines'
-import { flowLineMarks, globeVectorMarks, rasterVectorReader, type VectorMark, type VectorReader } from '../../map/vectorMarks'
+import { flowLineMarks, globeVectorMarks, type VectorMark, type VectorReader } from '../../map/vectorMarks'
 import { climateMesh } from '../../generator/climate/climateMesh'
 import { traceIsolines, drawIsolines, type Isoline } from '../../map/isolines'
 import './generator.css'
@@ -1340,7 +1339,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // months of pressure and wind, month-major. Null until it ran (by itself,
   // once the world stands, or read back from a save), and dropped with every
   // new climate.
-  let lastRefined: RefinedClimate | null = null
+  let lastRefined: RefinedClimateRasters | null = null
+  // The same refinement as its values per cell of the climate's field mesh
+  // (DEC-0036 phase 5): what the save writes and a load hands back, and
+  // what the month's wind marks read. Set and dropped with lastRefined.
+  let lastRefinedValues: RefinedClimate | null = null
   // A loaded save's refinement, held until the catch-up has computed the
   // climate it refines: that fresh climate would drop it otherwise.
   let restoredRefinement: RefinedClimate | null = null
@@ -1388,6 +1391,30 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
       // The sea keeps its mark: a mean of twelve marks is the mark again.
       for (let i = 0; i < n; i++) if (lastRefined.precipitation[i] === OCEAN_PRECIP) precipitation[i] = OCEAN_PRECIP
+    }
+    // The month's wind on the mesh, for its marks (the year: the months'
+    // mean per cell).
+    const values = lastRefinedValues
+    if (values) {
+      const cells = values.cells
+      let e: ArrayLike<number>
+      let s: ArrayLike<number>
+      if (climateMonth > 0) {
+        e = values.windE.subarray((climateMonth - 1) * cells, climateMonth * cells)
+        s = values.windS.subarray((climateMonth - 1) * cells, climateMonth * cells)
+      } else {
+        const me = new Float64Array(cells)
+        const ms = new Float64Array(cells)
+        for (let m = 0; m < values.months; m++) {
+          for (let i = 0; i < cells; i++) {
+            me[i] += values.windE[m * cells + i] / values.months
+            ms[i] += values.windS[m * cells + i] / values.months
+          }
+        }
+        e = me
+        s = ms
+      }
+      vectorMeshOf.set(wind, { shape: previewShape(), cells, e, s })
     }
     monthFields = { source: lastRefined, month: climateMonth, pressure, wind, temperature, precipitation }
     return monthFields
@@ -1781,10 +1808,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function windMarks(field: Float32Array): VectorMark[] {
     const ref = vectorReferenceSpeed(field)
     const mesh = meshVectorReader(field)
+    if (!mesh) return []
     if (worldShape === 'sphere') {
-      return globeVectorMarks(mesh?.atPoint ?? rasterVectorReader(field, climateResX, climateResY), { width: MAP_WIDTH, spacing: WIND_GLOBE_SPACING, length: WIND_LENGTH, minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref })
+      return globeVectorMarks(mesh.atPoint, { width: MAP_WIDTH, spacing: WIND_GLOBE_SPACING, length: WIND_LENGTH, minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref })
     }
-    const lines = traceFlowLines(mesh?.atPixel ?? ((x, y) => sampleVector(field, x, y)), {
+    const lines = traceFlowLines(mesh.atPixel, {
       width: MAP_WIDTH, height: MAP_HEIGHT,
       separation: 16, stopRatio: 0.5, step: 2, maxLength: 600,
       minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref,
@@ -2081,15 +2109,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return worldShape === 'sphere' ? Math.max(0, Math.min(climateResY - 1, y)) : wrapValue(y, climateResY)
   }
 
-  // The static climate's wind (DEC-0036 phase 3) and currents (phase 4) on
-  // its field mesh, per raster they came with (WorkerClimateDataMessage.
-  // windMesh, .currentsMesh): the marks read their directions there,
-  // through the mesh's sampler, each in its point's own frame. DEC-0036
-  // transition: removed in phase 5 — the refinement's winds and currents
-  // have no mesh yet and read their raster.
-  const vectorMeshOf = new WeakMap<Float32Array, { shape: 'torus' | 'sphere'; cells: number; e: Float64Array; s: Float64Array }>()
-  function keepVectorMesh(raster: Float32Array, shape: 'torus' | 'sphere', payload: { cells: number; e: ArrayBuffer; s: ArrayBuffer } | undefined): void {
-    if (payload) vectorMeshOf.set(raster, { shape, cells: payload.cells, e: new Float64Array(payload.e), s: new Float64Array(payload.s) })
+  // Every wind and current the screen shows, on the climate's field mesh,
+  // per raster it came with: the static climate's (DEC-0036 phases 3 and
+  // 4, WorkerClimateDataMessage.windMesh, .currentsMesh) and the
+  // refinement's (phase 5: its year and its months, its currents). The
+  // marks read their directions there, through the mesh's sampler, each in
+  // its point's own frame — never the raster's (a raster with no mesh has
+  // no marks).
+  const vectorMeshOf = new WeakMap<Float32Array, { shape: 'torus' | 'sphere'; cells: number; e: ArrayLike<number>; s: ArrayLike<number> }>()
+  function keepVectorMesh(raster: Float32Array, shape: 'torus' | 'sphere', payload: { cells: number; e: ArrayBuffer; s: ArrayBuffer }): void {
+    vectorMeshOf.set(raster, { shape, cells: payload.cells, e: new Float64Array(payload.e), s: new Float64Array(payload.s) })
   }
   function meshVectorReader(field: Float32Array): { atPoint: VectorReader; atPixel: (x: number, y: number) => [number, number] } | null {
     const wind = vectorMeshOf.get(field)
@@ -2113,29 +2142,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         return [v.x, v.y]
       },
     }
-  }
-
-  // Bilinear-sampled (u,v) of a climate-grid vector field at a map pixel,
-  // wrapped. The currents are zero over land. The TORUS'S flow lines only:
-  // on the sphere a cell's (u, v) is in that cell's own east/south frame,
-  // and a blend of two cells' components is no vector near a pole — the
-  // sphere's marks read the field through map/vectorMarks.ts globeVectorAt.
-  function sampleVector(field: Float32Array, px: number, py: number): [number, number] {
-    if (worldShape === 'sphere') throw new Error('sampleVector is the torus\'s; the sphere reads vectors through globeVectorAt')
-    const fx = (px / MAP_WIDTH) * climateResX - 0.5
-    const fy = (py / MAP_HEIGHT) * climateResY - 0.5
-    const x0 = Math.floor(fx)
-    const y0 = Math.floor(fy)
-    const tx = fx - x0
-    const ty = fy - y0
-    const xa = wrapValue(x0, climateResX)
-    const xb = wrapValue(x0 + 1, climateResX)
-    const ya = wrapValue(y0, climateResY)
-    const yb = wrapValue(y0 + 1, climateResY)
-    const at = (xw: number, yw: number, comp: number): number => field[(yw * climateResX + xw) * 2 + comp]
-    const lerp2 = (comp: number): number =>
-      (at(xa, ya, comp) * (1 - tx) + at(xb, ya, comp) * tx) * (1 - ty) + (at(xa, yb, comp) * (1 - tx) + at(xb, yb, comp) * tx) * ty
-    return [lerp2(0), lerp2(1)]
   }
 
   // Nearest-cell read of a climate-grid scalar field at a map pixel: the
@@ -2186,10 +2192,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function currentMarks(field: Float32Array): VectorMark[] {
     const ref = vectorReferenceSpeed(field)
     const mesh = meshVectorReader(field)
+    if (!mesh) return []
     if (worldShape === 'sphere') {
-      return globeVectorMarks(mesh?.atPoint ?? rasterVectorReader(field, climateResX, climateResY), { width: MAP_WIDTH, spacing: CURRENT_GLOBE_SPACING, length: CURRENT_GLOBE_LENGTH, minSpeed: CURRENT_MIN_SPEED, refSpeed: ref })
+      return globeVectorMarks(mesh.atPoint, { width: MAP_WIDTH, spacing: CURRENT_GLOBE_SPACING, length: CURRENT_GLOBE_LENGTH, minSpeed: CURRENT_MIN_SPEED, refSpeed: ref })
     }
-    const lines = traceFlowLines(mesh?.atPixel ?? ((x, y) => sampleVector(field, x, y)), {
+    const lines = traceFlowLines(mesh.atPixel, {
       width: MAP_WIDTH, height: MAP_HEIGHT,
       separation: 52, stopRatio: 0.55, step: 4, maxLength: 1800,
       minSpeed: CURRENT_MIN_SPEED, refSpeed: ref,
@@ -3647,7 +3654,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   interface ClimateMirrors {
     temperature: Float32Array | null; wind: Float32Array | null; currents: Float32Array | null; currentAnomaly: Float32Array | null
     precipitation: Float32Array | null; seasonality: Float32Array | null; monsoonIndex: Float32Array | null; koppen: Uint8Array | null
-    biomes: Uint8Array | null; resX: number; resY: number; refined: RefinedClimate | null
+    biomes: Uint8Array | null; resX: number; resY: number; refined: RefinedClimateRasters | null; refinedValues: RefinedClimate | null
   }
   let planetPreviewRealClimate: ClimateMirrors | null = null
   let planetPreviewDebounce: ReturnType<typeof setTimeout> | undefined
@@ -3733,13 +3740,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       planetPreviewRealClimate = lastTemperature === null ? null : {
         temperature: lastTemperature, wind: lastWind, currents: lastCurrents, currentAnomaly: lastCurrentAnomaly,
         precipitation: lastPrecipitation, seasonality: lastSeasonality, monsoonIndex: lastMonsoonIndex, koppen: lastKoppen,
-        biomes: lastBiomes, resX: climateResX, resY: climateResY, refined: lastRefined,
+        biomes: lastBiomes, resX: climateResX, resY: climateResY, refined: lastRefined, refinedValues: lastRefinedValues,
       }
       // The refinement is the world's, not the sample's: off the map while
       // the preview stands. Kept above, not dropped.
       if (lastRefined) {
         climatePlayer.stop()
         lastRefined = null
+        lastRefinedValues = null
         monthFields = null
         climatePlayer.show(0)
       }
@@ -3805,6 +3813,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     climateResX = real.resX
     climateResY = real.resY
     lastRefined = real.refined
+    lastRefinedValues = real.refinedValues
     monthFields = null
     updateControlsDisabled()
     updateOverlays()
@@ -3968,6 +3977,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function handleClimateRefined(message: WorkerClimateRefinedMessage): void {
     refineInFlight = false
     updateProgress()
+    lastRefinedValues = message.refined
     lastRefined = {
       months: message.months,
       temperature: new Float32Array(message.temperature),
@@ -3996,6 +4006,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         thunder: new Float32Array(message.thunder),
       },
     }
+    // The refined currents' marks read them on the mesh.
+    vectorMeshOf.set(lastRefined.currents, { shape: previewShape(), cells: message.refined.cells, e: message.refined.currentE, s: message.refined.currentS })
     updateControlsDisabled()
     updateOverlays()
   }
@@ -4005,6 +4017,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!lastRefined && !refineInFlight) return
     climatePlayer.stop()
     lastRefined = null
+    lastRefinedValues = null
     monthFields = null
     climatePlayer.show(0)
     updateControlsDisabled()
@@ -5109,7 +5122,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           lakeDepth: lastLakeDepth,
           waterTable: lastWaterTable,
           dischargeM3s: lastDischargeField ? ((unit) => lastDischargeField.map((q) => q * unit))(dischargeUnitM3s()) : null,
-          refined: lastRefined,
+          refined: lastRefinedValues,
           waterBodies: lastWaterBodies,
           coast: lastCoast,
           sedimentBasins: lastSedimentBasins,
@@ -5377,29 +5390,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // climate feeds hydrology, both feed ecology — and quietly: nothing here is
   // a user's request, it is the screen catching up with the world it was just
   // handed. The step bar repaints as each lands (updateControlsDisabled).
-  // The save's refinement layers, decoded through the manifest's encodings;
-  // null for a save without them (before formatVersion 6, or unrefined).
-  async function readRefinement(zip: JSZip): Promise<RefinedClimate | null> {
-    try {
-      const manifestFile = zip.file('manifest.json')
-      if (!manifestFile) return null
-      const manifest = JSON.parse(await manifestFile.async('string')) as { layers?: { name: string; file: string; dtype?: string; resX?: number; resY?: number; encoding?: { scale: number; offset: number } }[] }
-      const decoded = new Map<string, Float32Array>()
-      let n = 0
-      for (const entry of manifest.layers ?? []) {
-        // The refinement's layers, and the land mask its rain is masked by.
-        if ((entry.name !== 'landMask' && !REFINED_LAYERS.some((l) => l.name === entry.name)) || !entry.encoding || !entry.resX || !entry.resY) continue
-        const buffer = await zip.file(entry.file)?.async('arraybuffer')
-        if (!buffer) continue
-        n = entry.resX * entry.resY
-        decoded.set(entry.name, decodeLayer(buffer, { dtype: entry.dtype as 'u8' | 'u16' | 'f32', scale: entry.encoding.scale, offset: entry.encoding.offset }))
-      }
-      return n > 0 ? refinedFromLayers((name) => decoded.get(name) ?? null, n) : null
-    } catch {
-      return null
-    }
-  }
-
   async function catchUpAfterRestore(): Promise<void> {
     // Each request is guarded against one already being in flight: landing on
     // the Ecology step and loading a world there would otherwise have the
@@ -5506,6 +5496,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The mesh terrain (formatVersion 3); a save without one restores the
     // raster alone, as every save did before.
     let meshPayload: MeshPayload | undefined
+    // The climate step's refinement as its field mesh's values (DEC-0036
+    // phase 5); null for a save without one. A save that holds it as the
+    // former raster layers is refused (worldArchive.readRefined).
+    let refined: RefinedClimate | null = null
     try {
       zip = await JSZip.loadAsync(file)
       const yamlFile = zip.file('world.yaml')
@@ -5559,6 +5553,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (!mantleFits(domain, saved.cells, saved.spacingM)) throw new Error('another mantle mesh')
       // The ocean age's the same (oceanAge.oceanAgeFits).
       if (oceanAge && !oceanAgeFits(domain, oceanAge.cells, oceanAge.spacingM)) throw new Error('another ocean-age mesh')
+      // And the refinement's (refinement.refinementFits).
+      if (!archeanPayload) refined = await readRefined(zip)
+      if (refined && !refinementFits(domain, refined.cells, refined.spacingM)) throw new Error('another climate mesh')
     } catch {
       ctx.notifications.show({ message: t('notify.open.invalidFile'), icon: '/icons/folder.png', durationMs: 6000 })
       return
@@ -5578,7 +5575,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ctx.notifications.clearAll()
     clearEventMarkers()
     invalidateAfter('tectonics')
-    restoredRefinement = await readRefinement(zip)
+    restoredRefinement = refined
     forgetSavedWorldId()
     // The previous world's peoples start on the previous world's land.
     migrationOrigins = []

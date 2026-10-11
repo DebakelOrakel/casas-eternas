@@ -227,7 +227,7 @@ Classification, not a size cut:
 | Recipe | `world.yaml` | World record (a DB row) |
 | Irreducible history | `state.json`, `mantle.f64` + `mantle.json`, `lattice.{acc.f32,lock.i16,class.i8}`, `oceanAge.f64` + `oceanAge.json` | World record — 300 epochs of replay, not recomputable |
 | Authority | `elevation.f32` | World record — **stays**, see below |
-| Derived, coarse | `layers/` at 256×128 (temperature, precipitation, precipitationEffective, seasonalAmplitude, monsoonIndex, landMask, 13 ecology fields) | Save — ~64 KB each, and `precipitation` feeds `deriveWorldId` |
+| Derived, coarse | `layers/` at 256×128 (temperature, precipitation, precipitationEffective, seasonalAmplitude, monsoonIndex, landMask, 13 ecology fields); the climate refinement as its field mesh's values (`refined.json` + `refined/*.f32`, DEC-0036 phase 5) | Save — ~64 KB each, and `precipitation` feeds `deriveWorldId` |
 | Derived, full-res | `layers/biome.u8`, `layers/lakeDepth.u8`, `layers/discharge.u16` | **→ `WorldLayers` artifact** |
 | Face | `preview.png` | Save — 50 KB, the server already extracts it for listings |
 

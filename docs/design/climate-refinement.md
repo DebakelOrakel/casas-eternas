@@ -253,9 +253,12 @@ physics.
    stop (`generator.action.runClimate.labelActive` exists for it).
    The save keeps the refinement since formatVersion 6 (2026-09-28): one
    climate-grid layer per month and component (`pressure.01`, `windU.01`,
-   …, `currentU`, `currentAnomaly`, `upwelling`; world/save/refinedLayers.ts),
-   and a load puts it back on the recomputed climate. B adds its monthly
-   temperature and precipitation the same way.
+   …, `currentU`, `currentAnomaly`, `upwelling`), and a load puts it back
+   on the recomputed climate. B adds its monthly temperature and
+   precipitation the same way. Since DEC-0036 phase 5 (2026-10-11) the
+   refinement runs on the climate's field mesh and the save keeps its
+   values per cell (`refined.json` + `refined/*.f32`,
+   world/save/refinedFields.ts), adopted bit for bit on a load.
 5. Köppen, feeding the biomes.
    5a BUILT 2026-09-28 (climate/koppen.ts, Peel et al. 2007): the biomes
    of every path follow the class; where only annual figures exist (the

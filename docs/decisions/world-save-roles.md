@@ -91,7 +91,12 @@ screen's side is asked first; 4 when levels 2 and 3 carry layers.
   Without them a load runs the climate refinement again — 4.4 s on
   Astrakan (design/climate-refinement.md) instead of reading ~5 MB — and a
   game server could not look up a seasonal value without the climate code,
-  which is the point of queryable-world-save.md.
+  which is the point of queryable-world-save.md. Since DEC-0036 phase 5
+  (2026-10-11) they are the climate field mesh's values (`refined.json` +
+  `refined/*.f32`), not raster layers: a reader needs that mesh, rebuilt
+  from the world's shape and size, to sample them — the generator's
+  `climate/climateMesh.ts` and the field mesh's sampler, no climate code
+  beyond that. The manifest does not list them.
 - The zip, `manifest.json` describing each raster (dtype, encoding, unit),
   and the readable `world.yaml` in its `spec`/`status` shape.
 

@@ -23,7 +23,7 @@ summary.de: Die Raster-Stufen des Generators verlassen die 2:1-Karte. Die groben
 area: generator
 stage: building
 createdAt: 2026-10-11
-updatedAt: 2026-10-11
+updatedAt: 2026-10-12
 related: [DES-0025, DEC-0035, DES-0017, DEC-0029]
 ---
 
@@ -196,6 +196,136 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-12: phase 5 BUILT — the climate refinement and its phenomena on
+the climate's field mesh, both shapes, one path (`climate/refinement.ts`,
+`phenomena.ts`, `reliability.ts`, `storms.ts`): the months' sea-level air,
+the plateau heat, pressure and wind, the ocean, the cold tongue and the
+ocean highs, the rain, the overturning's warmth, fog and föhn, the rain's
+reliability and ENSO, cyclones, tornadoes, blizzards, dust and thunder —
+every part per cell, the lengths in metres. No raster, no pole handling
+(the pole-row averaging of fog, föhn, reliability and storms is gone).
+
+**The method.** The basins east-west (the cold tongue's place, the
+ocean highs' flank, the ENSO basins) are the seas along the parallels:
+per zonal band of the mesh a ring of points along its centre parallel,
+one per mesh spacing of its true length, each the land or sea of its cell
+(`climateMesh.basinRows`; on the torus a band is a row of cells and a
+ring has the old row's 256 points). The ocean highs are smoothed by the
+mesh's Gaussian; the fog's sea is the nearest sea cell over the links
+(`distanceToSea`), its distance the straight one between the centres;
+the föhn's and the tornado's barrier the highest texel of the cells
+upwind every 62.4 km along the great circle (`ClimateTerrain.
+peakElevation`, the texels' owners shared with the mean). The tracks
+(cyclones, dust) step 62.4 km along the great circle (`Domain.advance`),
+read the reached cell's wind carried into the point's frame
+(`Domain.transport`), and find the cell by a walk over the links in each
+cell's tangent plane; a cyclone launches from every other warm sea cell
+weighted by its area over the mean.
+
+**Constants converted** (the torus's 62.4 km climate cell, no
+calibration):
+
+| Was | Now |
+|---|---|
+| fogReachCells 2 (and the implicit first cell) | fogReachM 124 800, fogFullWithinM 62 400 |
+| foehnReachCells 4 | foehnReachM 249 600 |
+| tornadoReachCells 12 | tornadoReachM 748 800 |
+| ensoReachCells 20 (and the same basin within 3 cells) | ensoReachM 1 248 000, ensoSameBasinM 187 200 |
+| dustSteps 20 | dustTrackM 1 248 000 |
+| cycloneSteps 60 | cycloneTrackM 3 744 000 |
+| one cell a step (cyclones, dust, the looks upwind) | climateTrackStepM 62 400 (the keeps per step unchanged) |
+| oceanHighBasinCells 40 | oceanHighBasinM 2 496 000 |
+| oceanHighSmoothCells 8 (three box passes) | oceanHighSmoothSigmaM 529 000 (σ = √(8 · 9) cells) |
+
+**Transition adapters.** Removed: refinement.ts's raster ↔ mesh
+conversions (its land raster, `toMesh`, the transition rasters of every
+step), its box blur (`blur`), `eastwardInBasin` and `basinFlank`;
+`climateMesh.climateVectorFromRaster`; `map/vectorMarks.
+rasterVectorReader` (and `globeVectorAt`) and the screen's raster
+fallback for the marks (`sampleVector`): every wind and current mark
+reads a field mesh in its point's own frame, the refinement's year and
+months and its currents included, and a raster without its mesh has no
+marks. Added, marked for phase 7: `refinement.refinedRasters` (the
+refinement on the climate raster, once per refinement in the worker: the
+biomes, the ecology, the hydrology's climate and the screen's textures,
+readouts and month player read it) and `climateMesh.
+climateLandOnlyRaster` (a land field that is 0 on the sea). Remaining for
+phase 7, as before: weather.ts's rasters and climateMesh's
+`climateRaster`, `climateVectorRaster`, `climateSeaRaster`,
+`climateSeaVectorRaster`, `climateLandRaster`.
+
+**Save** (fork 5 as revised, formatVersion 8 kept): the refinement's
+quantised raster layers (`layers/temperature.01` … `layers/thunder`,
+`layers/enso.json`; world/save/refinedLayers.ts, fieldSpec's
+REFINED_FIELDS, worldLayers' REFINED_LAYERS) are gone. In their place
+`refined/<field>.f32` per field, Float32 per cell of the climate mesh
+(months × cells for the five month stacks), and `refined.json` (cells,
+spacing, months, fields and units, the wind's unit, ENSO's period and
+strength; world/save/refinedFields.ts). Float32, not Float64: no
+simulation continues from the refinement, and the session itself keeps
+these Float32 values (`RefinedClimate`), so a load is the session's to
+the bit and is adopted without computing (the layers were u8/u16,
+clipped at their ranges, the rain's sea mark lost). A save with the old
+layers and no `refined.json`, with a field missing, or of another mesh
+(`refinement.refinementFits`) is refused. The annual climate layers
+(temperature, precipitation, seasonalAmplitude, monsoonIndex, koppen,
+landMask) stay rasters for the save's own step. Readers: only the
+screen read the refined layers (and roundtrip); the job worker, the
+bake, world/query, the incubator and the Go server never did.
+
+**Measured** (2048 × 1024, seed `bench`, 100 Archean + 12 coupled
+epochs at HISTORY_DEFAULTS, the climate and the refinement on the mesh
+rasterised to 2048, Node, one thread; the same worlds — the refinement
+feeds nothing back):
+
+| | torus HEAD | torus mesh | sphere HEAD | sphere mesh |
+|---|---|---|---|---|
+| climate (computeWeather) | 364 ms | 374 ms | 279 ms | 282 ms |
+| the refinement | 4.84 s | 4.54 s | 4.24 s | 4.04 s |
+| of it: phenomena / storms / reliability | 15 / 74 / 2 ms | 55 / 239 / 2 ms | 51 / 242 / 1 ms | 77 / 756 / 1 ms |
+| its rasters (refinedRasters, worker) | — | 370 ms | — | 407 ms |
+| the refinement in the save, deflated | 2.83 MB | 6.83 MB | 2.92 MB | 4.63 MB |
+| the whole save | 15.14 MB | 19.14 MB | 16.57 MB | 18.28 MB |
+
+Zonal means over land, the refined year (0–15° … 75–90°): temperature
+torus 25.8 / 22.8 / 14.2 / 3.2 / −6.3 / −16.6 → 25.8 / 22.8 / 14.2 /
+3.1 / −6.4 / −16.6 °C, sphere 25.2 / 23.4 / 14.0 / 5.1 / −5.1 / −10.3 →
+the same to 0.1 °C (January and July within 0.3 °C); rain torus 1912 /
+982 / 730 / 808 / 405 / 95 → 1859 / 946 / 686 / 782 / 373 / 93 mm,
+sphere 1427 / 864 / 450 / 876 / 596 / 698 → 1361 / 834 / 416 / 903 /
+637 / 712 mm. ENSO the same (torus 5.0 years at strength 1, the sphere
+none). The fog's land mean 0.011 → 0.020 (torus), 0.013 → 0.009
+(sphere). On Earth's relief (scripts/earthClimate.mjs): groups off 9 →
+6 points, places 16/47 classes both, rain ×1.71 → ×1.77, the refinement
+5.3 → 5.4 s. Two refinements give the same bytes; a refinement read back
+through the save's form and handed back is adopted to the bit — values,
+rasters, refined climate and the rivers after it (pipeline harness).
+
+The storms' tracks cost: a cyclone step is a great-circle advance, a
+transport and a walk, against the raster's index arithmetic; launching
+from every cell doubled it (the sphere's 1.4 s), the walk by the
+sampler's locate tripled it (19 s on Earth through the torus's
+distanceSq; the tangent-plane walk is the fix).
+
+**The sphere's seeds** (`SPHERE_SEED=c2…c6 node scripts/pipeline.mjs
+sphere`): every refined field is now held smooth round each pole
+(ringRoughness; the raster pole-row check had nothing left to check) and
+passes on all five, as do the winds and currents across the poles. c2
+and c4 pass whole; c3 (20.5 %), c5 (22.0 %) and now c6 (15.2 %, the
+bound 15 %; it passed in phase 4 — the refined rain moved its lakes) fail
+only the lakes' plausibility — found, not fixed. c5 also failed the seam
+check on the months' cycle, 2.4 °C across x = 0: a fog step on a
+fogbound coast (fog share 0.36–0.39 on both sides, no föhn), not a seam —
+the cycle carries the fog and the föhn, which switch per cell and month,
+so it left the seam check's smooth fields. The sphere filter takes
+263–290 s a seed; the whole pipeline harness 743 s.
+
+**Golden**: 0 hard failures, 0 drifted metrics, 0 moved stages — the
+golden worlds never refine (its "refinement" is the hydrology's climate
+pass); `ClimateTerrain.meanElevation` through the shared texel owners
+kept its bytes. `golden.json` re-recorded and the guard re-armed (both
+unchanged): 0 / 0 / 0, 46 stages byte-identical × 3.
 
 2026-10-11: phase 4 BUILT — the ocean on the climate's field mesh, both
 shapes, one path (`climate/oceanCurrents.ts`, `energyBalance.ts`,

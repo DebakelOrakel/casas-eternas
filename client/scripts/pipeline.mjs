@@ -1005,31 +1005,12 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   const poleFlat = poleRowsConstant(ratios[2].w, flexX, flexY)
   const spreadRatios = ratios.map((q) => q.ratio)
   check('a load\'s deflection integrates to its compensated weight at the equator, at 70° and at the pole; without the area weights not', spreadRatios.every((q) => Math.abs(q - 1) < 1e-4) && poleFlat && Math.abs(brokenRatio - 1) > 0.1, `∫w dA over the compensated load: ${spreadRatios.map((q) => q.toFixed(6)).join(', ')}; area weights off, a polar load: ${brokenRatio.toFixed(3)}`)
-  // (d) The smoothing in a length: the refinement's box blur (on the
-  // climate raster until phase 5) spreads a point as far east-west as
-  // north-south at 60° (in distance on the globe); in cells it would be
-  // half as far. The static climate's smoothing on the mesh below.
-  const PR = await L('/src/generator/climate/refinement.ts')
-  const spreadOf = (g) => {
-    const f = new Float32Array(RX * RY)
-    const gy = Math.round(RY / 6 - 0.5)
-    f[gy * RX + 100] = 1
-    PR.blur(f, 3, g)
-    let ew = 0, ns = 0, m = 0
-    const s0 = sphereGrid.rowScale(gy)
-    for (let y = 0; y < RY; y++) for (let x = 0; x < RX; x++) {
-      const v = f[y * RX + x] * sphereGrid.cellArea(y)
-      let dx = x - 100; if (dx > RX / 2) dx -= RX; if (dx < -RX / 2) dx += RX
-      ew += v * (dx * s0) ** 2; ns += v * (y - gy) ** 2; m += v
-    }
-    return Math.sqrt(ew / m) / Math.sqrt(ns / m)
-  }
-  const iso = spreadOf(sphereGrid)
-  const isoBroken = spreadOf(broken(sim.domain, { rowScale: () => 1 }).grid(RX, RY))
-  check('the refinement\'s blur spreads as far east-west as north-south at 60°; counting cells it does not', Math.abs(iso - 1) < 0.15 && isoBroken < 0.7, `east-west / north-south ${iso.toFixed(2)}; in cells ${isoBroken.toFixed(2)}`)
-  // The static climate's smoothing (fields/fieldOperators.smoothGaussian
-  // on the climate's mesh): a point at 60° and one 1° from the pole spread
-  // as far east-west as north-south, the σ asked for.
+  // (d) The smoothing in a length: the climate's smoothing
+  // (fields/fieldOperators.smoothGaussian on the climate's mesh — the
+  // static climate's and, since DEC-0036 phase 5, the refinement's ocean
+  // highs, whose box blur on the raster it replaced): a point at 60° and
+  // one 1° from the pole spread as far east-west as north-south, the σ
+  // asked for.
   {
     const FO = await L('/src/generator/fields/fieldOperators.ts')
     const cm = CMx.climateMesh(sim.domain)
@@ -1052,7 +1033,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
       }
       return { ratio: Math.sqrt(ee / ss), sigma: Math.sqrt((ee + ss) / (2 * m)) / sigma }
     })
-    check('the static climate\'s smoothing on its mesh spreads as far east-west as north-south, at 60° and 1° from the pole, by the σ asked for', iso2.every((q) => Math.abs(q.ratio - 1) < 0.1 && Math.abs(q.sigma - 1) < 0.1), iso2.map((q) => `east-west / north-south ${q.ratio.toFixed(2)}, σ ${q.sigma.toFixed(2)} of the asked`).join('; '))
+    check('the climate\'s smoothing on its mesh spreads as far east-west as north-south, at 60° and 1° from the pole, by the σ asked for', iso2.every((q) => Math.abs(q.ratio - 1) < 0.1 && Math.abs(q.sigma - 1) < 0.1), iso2.map((q) => `east-west / north-south ${q.ratio.toFixed(2)}, σ ${q.sigma.toFixed(2)} of the asked`).join('; '))
   }
 
   // (4) Determinism and a restore on the sphere.
@@ -1200,34 +1181,13 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   const notFinite = Object.entries(fields).filter(([, f]) => f.length === 0 || !allFinite(f)).map(([k]) => k)
   check(`every field of the climate, the refinement and the hydrology is whole and finite (${Object.keys(fields).length} fields)`, notFinite.length === 0 && Number.isFinite(r.ensoPeriodYears) && Number.isFinite(h.maxDischarge), notFinite.join(', '))
 
-  // The pole rows: a field the step smooths, solves or carries is one
-  // value along a pole row, its land and its sea each (a row may hold both).
+  // The pole rows, its land and its sea each (a row may hold both).
   const landC = new Uint8Array(n)
   const precipA = f32(cr.precipitation)
   for (let i = 0; i < n; i++) landC[i] = precipA[i] >= 0 ? 1 : 0
-  const poleSpread = (field, layers = 1) => {
-    let worst = 0
-    for (let m = 0; m < layers; m++) {
-      for (const row of [0, RY - 1]) {
-        for (const kind of [0, 1]) {
-          let lo = Infinity
-          let hi = -Infinity
-          for (let x = 0; x < RX; x++) {
-            const i = row * RX + x
-            if (landC[i] !== kind) continue
-            const v = field[m * n + i]
-            lo = Math.min(lo, v)
-            hi = Math.max(hi, v)
-          }
-          if (hi > lo) worst = Math.max(worst, hi - lo)
-        }
-      }
-    }
-    return worst
-  }
   // The months' temperature is the year's mean plus the cycle and the
-  // overturning's warmth: the parts the refinement adds are what is one
-  // value. (The mean carries each cell's own lapse over its ground.)
+  // overturning's warmth: the parts the refinement adds are what is held
+  // smooth. (The mean carries each cell's own lapse over its ground.)
   const cycle = f32(r.temperature).map((v, k) => v - f32(cr.temperature)[k % n])
   const scalars = {
     pressure: [f32(r.pressure), r.months], cycle: [cycle, r.months], precipitation: [f32(r.precipitation), r.months],
@@ -1236,20 +1196,12 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
     cyclone: [f32(r.cyclone), 1], tornado: [f32(r.tornado), 1], blizzard: [f32(r.blizzard), 1], dust: [f32(r.dust), 1], thunder: [f32(r.thunder), 1],
     'climate.seasonalAmplitude': [f32(c0.seasonalAmplitude), 1], 'refined.seasonalAmplitude': [f32(cr.seasonalAmplitude), 1], 'refined.monsoonIndex': [f32(cr.monsoonIndex), 1],
   }
-  // Since DEC-0036 phase 3 the static climate and the refinement's
-  // pressure and rain are made on the climate's field mesh, which has no
-  // pole row: rasterised, a pole row is a ring of points 0.35° round the
-  // pole, and a field made from them is no longer one value along it
-  // Since phase 4 the year's cycle (and so the refined seasonal range) and
-  // the ocean (the sea's anomaly, the salt, the sinking, the upwelling)
-  // are made there too. Those are held
-  // to be smooth round the pole instead (ringRoughness). The rest stay the
-  // raster's.
-  const meshFed = new Set(['pressure', 'cycle', 'currentAnomaly', 'salinity', 'deepWater', 'upwelling', 'precipitation', 'climate.seasonalAmplitude', 'refined.seasonalAmplitude', 'refined.monsoonIndex'])
-  const spread = Object.entries(scalars).filter(([k]) => !meshFed.has(k)).map(([k, [f, layers]]) => [k, poleSpread(f, layers)]).filter(([, s]) => s > 1e-3)
-  check(`the refined fields made on the raster are one value along each pole row, land and sea apart (${Object.keys(scalars).length - meshFed.size} fields)`, spread.length === 0, spread.map(([k, s]) => `${k} ${s.toFixed(4)}`).join(', '))
-  const across = [...meshFed].map((k) => {
-    const [f, layers] = scalars[k]
+  // Since DEC-0036 phase 3 the static climate, and since phase 5 the whole
+  // refinement, are made on the climate's field mesh, which has no pole
+  // row: rasterised, a pole row is a ring of points 0.35° round the pole,
+  // and a field made from them is not one value along it. Every field is
+  // held to be smooth round the pole instead (ringRoughness).
+  const across = Object.entries(scalars).map(([k, [f, layers]]) => {
     let worst = 0
     for (let m = 0; m < layers; m++) worst = Math.max(worst, ringRoughness(f.slice(m * n, (m + 1) * n), RX, RY, landC))
     return [k, worst]
@@ -1366,7 +1318,11 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   }
   // The fields that vary smoothly; the derived ones (fog, föhn, the storms)
   // jump from cell to cell anywhere, and a seam check reads nothing there.
-  const smooth = ['pressure', 'cycle', 'precipitation', 'salinity', 'currentAnomaly', 'climate.seasonalAmplitude', 'refined.seasonalAmplitude', 'refined.monsoonIndex']
+  // Nor does the months' cycle: it carries the fog and the föhn, which
+  // switch on and off per cell and month (SPHERE_SEED=c5, 2026-10-12: a
+  // fogbound coast across x = 0 stepped 2.4 °C in one month, a fog step;
+  // the coast's fog share 0.36–0.39 on both sides, the föhn 0).
+  const smooth = ['pressure', 'precipitation', 'salinity', 'currentAnomaly', 'climate.seasonalAmplitude', 'refined.seasonalAmplitude', 'refined.monsoonIndex']
   const seamed = Object.entries({ ...Object.fromEntries(smooth.map((k) => [k, scalars[k]])), temperature: [f32(r.temperature), r.months] })
     .map(([k, [f, layers]]) => [k, seamOf(f, RX, RY, layers)]).filter(([, s]) => s.seam > s.inner)
   check(`no smooth field of the climate step has a seam at x = 0 / W (${smooth.length + 1} fields)`, seamed.length === 0, seamed.map(([k, s]) => `${k} ${s.seam.toFixed(3)} > ${s.inner.toFixed(3)}`).join(', '))
@@ -2217,6 +2173,40 @@ test('the climate refinement answers with twelve months, and declines without a 
   p.dispatch({ type: 'hydrologyRun' })
   await until(() => p.messages.slice(before).some((m) => m.type === 'hydrologyData'), { label: 'rivers on the refined climate' })
   check('the rivers do not replace the refined climate', !p.messages.slice(before).some((m) => m.type === 'climateData'))
+
+  // DEC-0036 phase 5: the refinement's values per cell of the climate's
+  // field mesh come with it. The same climate refined again gives the same
+  // bytes; those values read back through the save's form (world/save/
+  // refinedFields.ts) and handed back as `restored` are adopted — the same
+  // rasters, the same refined climate, the same rivers after it — to the bit.
+  const RF = await server.ssrLoadModule('/src/world/save/refinedFields.ts')
+  const valuesHash = (v) => [v.temperature, v.precipitation, v.pressure, v.windE, v.windS, v.currentE, v.currentS, v.currentAnomaly, v.upwelling, v.salinity, v.deepWater, v.fog, v.foehn,
+    v.reliability.rainVariability, v.reliability.ensoPattern, ...Object.values(v.storms)].map((f) => hash(f.buffer)).join('') + `${v.cells}/${v.spacingM}/${v.reliability.ensoPeriodYears}/${v.reliability.ensoStrength}`
+  const rasterHash = (m) => ['temperature', 'precipitation', 'pressure', 'wind', 'currents', 'currentAnomaly', 'upwelling', 'koppen', 'salinity', 'deepWater', 'fog', 'foehn', 'rainVariability', 'ensoPattern', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder'].map((k) => hash(m[k])).join('')
+  const climateHash = (m) => ['temperature', 'wind', 'currents', 'currentAnomaly', 'precipitation', 'seasonalAmplitude', 'monsoonIndex', 'koppen', 'biomes'].map((k) => hash(m[k])).join('') + hash(m.windMesh.e) + hash(m.currentsMesh.e)
+  const first = { values: valuesHash(r.refined), rasters: rasterHash(r), climate: climateHash(refinedClimate), rivers: hash(p.last('hydrologyData').discharge) }
+  const { meta, files } = RF.refinedEntries(r.refined, 2.5)
+  const saved = await RF.refinedFromEntries(meta, async (file) => files.find(([f]) => f === file)?.[1] ?? null)
+  check('the refinement\'s values are one mesh\'s, and read back through the save\'s form unchanged', r.refined.cells > 0 && r.refined.temperature.length === 12 * r.refined.cells && valuesHash(saved) === first.values)
+  const again = async (restored) => {
+    const climates = p.count('climateData')
+    p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+    await until(() => p.count('climateData') > climates, { label: 'climate again' })
+    const refinements = p.count('climateRefined')
+    p.dispatch(restored ? { type: 'climateRefine', restored } : { type: 'climateRefine' })
+    // The refined climate follows the refinement in the same handler.
+    await until(() => p.count('climateRefined') > refinements && p.messages.filter((m) => m.type === 'climateData').at(-1).refined, { label: 'the refinement again' })
+    const rivers = p.count('hydrologyData')
+    p.dispatch({ type: 'hydrologyRun' })
+    await until(() => p.count('hydrologyData') > rivers, { label: 'rivers again' })
+    const answer = p.last('climateRefined')
+    return { values: valuesHash(answer.refined), rasters: rasterHash(answer), climate: climateHash(p.messages.filter((m) => m.type === 'climateData' && m.refined).at(-1)), rivers: hash(p.last('hydrologyData').discharge) }
+  }
+  const computed = await again()
+  check('the same climate refined twice gives the same bytes (values, rasters, refined climate, rivers)', JSON.stringify(computed) === JSON.stringify(first))
+  const adopted = await again(saved)
+  check('a saved refinement handed back is adopted to the bit: the same values, rasters, refined climate and rivers after it', JSON.stringify(adopted) === JSON.stringify(first),
+    Object.keys(first).filter((k) => adopted[k] !== first[k]).join(', '))
 })
 
 test('INVALIDATION: the epochs stale everything downstream, per the declared chain', async () => {

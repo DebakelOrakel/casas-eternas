@@ -120,10 +120,14 @@ for (let y = 0; y < H; y++) {
 
 const params = M.weather.defaultWeatherParams()
 const domain = M.domain.torusDomain(W, H)
-const cheap = M.weather.computeWeather(M.climateMesh.climateTerrain(domain, elevation, W, H), params)
+const terrain = M.climateMesh.climateTerrain(domain, elevation, W, H)
+const cheap = M.weather.computeWeather(terrain, params)
 const started = performance.now()
-const r = M.refinement.refineClimate(elevation, domain, params, cheap.temperature, cheap.wind)
+const refined = M.refinement.refineClimate(elevation, domain, params, cheap.mesh.temperature, cheap.mesh.wind)
 const ms = performance.now() - started
+// Read on the climate raster, as the screen reads it (the refinement on
+// its field mesh rasterised: refinement.refinedRasters, DEC-0036 phase 5).
+const r = M.refinement.refinedRasters(refined, terrain)
 const RX = 256, RY = 128, n = RX * RY
 const land = (i) => r.precipitation[i] >= 0
 // The months' temperatures at sea level (the lapse of the cell's own sampled

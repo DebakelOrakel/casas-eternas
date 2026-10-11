@@ -1,5 +1,5 @@
 import type { Domain } from '../core/domain'
-import { fieldFromRasterAreaWeighted, rasteriseField, rasteriseVectorField, sharedFieldMesh, type FieldMesh, type FieldSampler } from '../fields/fieldMesh'
+import { fieldFromRasterAreaWeighted, fieldMaxFromRaster, rasteriseField, rasteriseVectorField, rasterOwners, sharedFieldMesh, type FieldMesh, type FieldSampler } from '../fields/fieldMesh'
 import { isLandAt } from '../elevation/elevationScale'
 import { MinHeap } from '../core/minHeap'
 
@@ -180,6 +180,91 @@ export function meshComponents(mesh: FieldMesh, mask: Uint8Array): MeshComponent
   return { label, area: Float64Array.from(areas), cells: parts }
 }
 
+// THE SEAS ALONG THE PARALLELS (DEC-0036 phase 5): where a sea cell lies
+// east-west in its basin, which the refinement's equatorial cold tongue,
+// its ocean highs and the ENSO see-saw read. Per zonal band of the mesh
+// (ClimateMesh.bands) a RING of points along the band's centre parallel,
+// one per mesh spacing of the parallel's true length (cos φ of the
+// equator's on the sphere; on the torus a band is a row of cells and the
+// ring has 256 points, the former raster row's), each the land or sea of
+// the cell it lies in. A run of sea from a land point to the next is a
+// basin's width along that parallel; a ring with no land has no shore.
+// A cell reads its band's ring at its own longitude.
+export interface BasinRing {
+  // The parallel's chart y, the points along it, metres per point along
+  // the parallel, and the parallel's length over the equator's (cos φ on
+  // the sphere, 1 on the torus).
+  readonly y: number
+  readonly count: number
+  readonly pointM: number
+  readonly scale: number
+  // Per point: the cell it lies in, land 1 / sea 0, and its sea run (the
+  // run's first point and its length in points; −1 and 0 on land and
+  // where the ring has no shore).
+  readonly cell: Int32Array
+  readonly land: Uint8Array
+  readonly runStart: Int32Array
+  readonly runLength: Int32Array
+}
+
+export interface BasinRows {
+  readonly rings: BasinRing[]
+  // Per cell, read from its band's ring at its longitude: how far east it
+  // lies in its basin, 0 at the western shore … 1 at the eastern, 0.5 where
+  // the parallel has no shore or the run is one point; the run's length in
+  // points (0: none) and in metres along the parallel.
+  readonly eastward: Float64Array
+  readonly runPoints: Int32Array
+  readonly runM: Float64Array
+}
+
+export function basinRows(terrain: ClimateTerrain): BasinRows {
+  const { cm, domain, land } = terrain
+  const { mesh, sampler, bands } = cm
+  const rowScale = domain.grid(2, bands)
+  const around = domain.width * mesh.unitM
+  const rings: BasinRing[] = []
+  for (let b = 0; b < bands; b++) {
+    const y = ((b + 0.5) / bands) * domain.height
+    const scale = rowScale.rowScale(b)
+    const count = Math.max(8, Math.round((around * scale) / cm.cellM))
+    const cell = new Int32Array(count)
+    const ringLand = new Uint8Array(count)
+    for (let k = 0; k < count; k++) {
+      cell[k] = sampler.nearestCell(((k + 0.5) / count) * domain.width, y)
+      ringLand[k] = land[cell[k]]
+    }
+    const runStart = new Int32Array(count).fill(-1)
+    const runLength = new Int32Array(count)
+    for (let k0 = 0; k0 < count; k0++) {
+      // A run of sea starts after a land point.
+      if (!ringLand[k0] || ringLand[(k0 + 1) % count]) continue
+      let len = 0
+      while (len < count && !ringLand[(k0 + 1 + len) % count]) len++
+      for (let k = 0; k < len; k++) {
+        const at = (k0 + 1 + k) % count
+        runStart[at] = (k0 + 1) % count
+        runLength[at] = len
+      }
+    }
+    rings.push({ y, count, pointM: (around * scale) / count, scale, cell, land: ringLand, runStart, runLength })
+  }
+  const eastward = new Float64Array(mesh.count).fill(0.5)
+  const runPoints = new Int32Array(mesh.count)
+  const runM = new Float64Array(mesh.count)
+  for (let i = 0; i < mesh.count; i++) {
+    const ring = rings[cm.band[i]]
+    const k = Math.min(ring.count - 1, Math.max(0, Math.floor((mesh.x[i] / domain.width) * ring.count)))
+    const len = ring.runLength[k]
+    if (len === 0) continue
+    const along = (k - ring.runStart[k] + ring.count) % ring.count
+    eastward[i] = len > 1 ? along / (len - 1) : 0.5
+    runPoints[i] = len
+    runM[i] = len * ring.pointM
+  }
+  return { rings, eastward, runPoints, runM }
+}
+
 // THE TERRAIN THE CLIMATE READS (DEC-0036 phase 3): an elevation raster
 // over the domain (the world's 2048 × 1024 in the climate step, the
 // epoch's 256 × 128 rasterisation of the mesh in the history) and its
@@ -193,7 +278,9 @@ export function meshComponents(mesh: FieldMesh, mask: Uint8Array): MeshComponent
 // readers and the save's land mask still make. The AREA-WEIGHTED mean
 // (fields/fieldMesh.fieldFromRasterAreaWeighted) where an integral is
 // meant: the relief the wind meets (pressure.ts), formerly the raster's
-// box mean — computed on first use, it costs a locate per texel.
+// box mean — computed on first use, it costs a locate per texel. The
+// MAXIMUM over each cell (the highest ground a wind crosses: the
+// refinement's föhn and tornadoes) from the same texels' owners.
 // The orography reads the raster at points along the wind (elevationAt).
 export interface ClimateTerrain {
   readonly cm: ClimateMesh
@@ -217,6 +304,8 @@ export interface ClimateTerrain {
   elevationAt(x: number, y: number): number
   // The mean elevation over each cell, model units (cached).
   meanElevation(): Float64Array
+  // The highest texel in each cell, model units (cached).
+  peakElevation(): Float64Array
 }
 
 export function climateTerrain(domain: Domain, elevation: Float32Array, resX: number, resY: number, dryLand?: Uint8Array | null): ClimateTerrain {
@@ -239,6 +328,9 @@ export function climateTerrain(domain: Domain, elevation: Float32Array, resX: nu
     land[i] = isLandAt(z[i], dry[i] === 1) ? 1 : 0
   }
   let mean: Float64Array | null = null
+  let peak: Float64Array | null = null
+  let owners: Int32Array | null = null
+  const ownersOf = (): Int32Array => (owners ??= rasterOwners(cm.sampler, resX, resY))
   return {
     cm,
     domain,
@@ -251,18 +343,18 @@ export function climateTerrain(domain: Domain, elevation: Float32Array, resX: nu
     land,
     dry,
     elevationAt: (x, y) => elevation[texel(x, y)],
-    meanElevation: () => (mean ??= fieldFromRasterAreaWeighted(mesh, cm.sampler, elevation, resX, resY)),
+    meanElevation: () => (mean ??= fieldFromRasterAreaWeighted(mesh, cm.sampler, elevation, resX, resY, undefined, ownersOf())),
+    peakElevation: () => (peak ??= fieldMaxFromRaster(mesh, elevation, resX, resY, ownersOf())),
   }
 }
 
 // ------------------------------------------------ DEC-0036 transition
 
 // The climate grid's rasters of the mesh's fields, for the readers that
-// keep the 256 × 128 raster until their own phase: the refinement and the
-// phenomena (phase 5), biomes, ecology, hydrology and hydrogeology, the
-// ice, the coast, the column's ledger, the save's layers and the screen's
-// overlays (phase 7 and the save's own step). Each is made once per climate
-// run.
+// keep the 256 × 128 raster until their own phase: biomes, ecology,
+// hydrology and hydrogeology, the ice, the coast, the column's ledger, the
+// save's annual layers and the screen's textures and readouts (phase 7 and
+// the save's own step). Each is made once per climate run or refinement.
 
 // DEC-0036 transition: removed in phase 7. A scalar field without a
 // sentinel (temperature), cell centres.
@@ -274,49 +366,6 @@ export function climateRaster(cm: ClimateMesh, field: ArrayLike<number>, resX: n
 // vector in its own frame (fields/fieldMesh.rasteriseVectorField).
 export function climateVectorRaster(cm: ClimateMesh, fe: ArrayLike<number>, fs: ArrayLike<number>, resX: number, resY: number): Float32Array {
   return rasteriseVectorField(cm.sampler, fe, fs, resX, resY)
-}
-
-// DEC-0036 transition: removed in phase 5. A vector raster ([east, south]
-// per pixel in the pixel's own frame, the climate grid's convention) onto
-// the mesh: per cell the bilinear mix of the four pixels about its centre,
-// each pixel's vector carried from its centre to the cell's
-// (Domain.transport) before it is weighed — so across a pole, where the
-// pixels' frames turn round, the mix is a vector. The refinement's input
-// wind (refinement.ts), until the refinement is on the mesh.
-export function climateVectorFromRaster(cm: ClimateMesh, raster: Float32Array, resX: number, resY: number): { e: Float64Array; s: Float64Array } {
-  const { mesh } = cm
-  const { domain } = mesh
-  const grid = domain.grid(resX, resY)
-  const e = new Float64Array(mesh.count)
-  const s = new Float64Array(mesh.count)
-  const sx = domain.width / resX
-  const sy = domain.height / resY
-  const v = { x: 0, y: 0 }
-  for (let i = 0; i < mesh.count; i++) {
-    const fx = mesh.x[i] / sx - 0.5
-    const fy = mesh.y[i] / sy - 0.5
-    const x0 = Math.floor(fx)
-    const y0 = Math.floor(fy)
-    const tx = fx - x0
-    const ty = fy - y0
-    let ae = 0
-    let as = 0
-    for (let k = 0; k < 4; k++) {
-      const dx = k & 1
-      const dy = k >> 1
-      const w = (dx ? tx : 1 - tx) * (dy ? ty : 1 - ty)
-      if (w === 0) continue
-      const p = grid.index(x0 + dx, y0 + dy)
-      const px = ((p % resX) + 0.5) * sx
-      const py = (Math.floor(p / resX) + 0.5) * sy
-      domain.transport(raster[2 * p], raster[2 * p + 1], px, py, mesh.x[i], mesh.y[i], v)
-      ae += w * v.x
-      as += w * v.y
-    }
-    e[i] = ae
-    s[i] = as
-  }
-  return { e, s }
 }
 
 // DEC-0036 transition: removed in phase 7. A sea field of the mesh (0 on
@@ -368,10 +417,21 @@ export function rasterLand(terrain: ClimateTerrain, resX: number, resY: number):
 // a land pixel with no land corner (an island smaller than a cell) its
 // latitude's land mean, the island rule of climateField.zonalLandMean.
 export function climateLandRaster(terrain: ClimateTerrain, field: ArrayLike<number>, sentinel: number, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
+  return landRaster(terrain, field, (i) => terrain.land[i] === 1 && field[i] !== sentinel, sentinel, resX, resY, landPixels)
+}
+
+// DEC-0036 transition: removed in phase 7. A land field that is an
+// ordinary 0 on the sea (the refinement's fog, föhn, reliability,
+// tornadoes, blizzards): the same rule over the mesh's land cells, the
+// sea's pixels 0.
+export function climateLandOnlyRaster(terrain: ClimateTerrain, field: ArrayLike<number>, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
+  return landRaster(terrain, field, (i) => terrain.land[i] === 1, 0, resX, resY, landPixels)
+}
+
+function landRaster(terrain: ClimateTerrain, field: ArrayLike<number>, isLand: (i: number) => boolean, seaValue: number, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
   const { cm, domain } = terrain
   const { sampler } = cm
   const out = new Float32Array(resX * resY)
-  const isLand = (i: number): boolean => terrain.land[i] === 1 && field[i] !== sentinel
   const islands = zonalMean(cm, field, isLand)
   const corners = new Int32Array(3)
   const weights = new Float64Array(3)
@@ -382,7 +442,7 @@ export function climateLandRaster(terrain: ClimateTerrain, field: ArrayLike<numb
     for (let gx = 0; gx < resX; gx++) {
       const p = gy * resX + gx
       if (!landPixels[p]) {
-        out[p] = sentinel
+        out[p] = seaValue
         continue
       }
       const x = (gx + 0.5) * sx

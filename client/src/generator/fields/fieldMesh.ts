@@ -534,6 +534,22 @@ export function fieldFromRasterAtCentres(fm: FieldMesh, raster: Float32Array, re
   return result
 }
 
+// The cell of the field mesh that owns each raster cell of a resX × resY
+// chart raster: the Voronoi cell its centre lies in (FieldSampler.
+// nearestCell). A locate per raster cell, so a reader that reduces one
+// raster several ways (a mean and a maximum) finds the owners once.
+export function rasterOwners(sampler: FieldSampler, resX: number, resY: number): Int32Array {
+  const { domain } = sampler.mesh
+  const owners = new Int32Array(resX * resY)
+  const sx = domain.width / resX
+  const sy = domain.height / resY
+  for (let py = 0; py < resY; py++) {
+    const y = (py + 0.5) * sy
+    for (let px = 0; px < resX; px++) owners[py * resX + px] = sampler.nearestCell((px + 0.5) * sx, y)
+  }
+  return owners
+}
+
 // A chart raster onto the field mesh as the AREA-WEIGHTED mean of the
 // raster cells whose centres lie in each Voronoi cell (each raster cell
 // weighs its true area, DomainGrid.cellArea). For a raster FINER than the
@@ -541,8 +557,9 @@ export function fieldFromRasterAtCentres(fm: FieldMesh, raster: Float32Array, re
 // whose mean must be kept: Σ area · value over the mesh equals the
 // raster's to the assignment of the straddling raster cells. A mesh cell
 // that no raster centre falls in (a raster coarser than the mesh) takes
-// the centre sample instead.
-export function fieldFromRasterAreaWeighted(fm: FieldMesh, sampler: FieldSampler, raster: Float32Array, resX: number, resY: number, out?: Float64Array): Float64Array {
+// the centre sample instead. `owners`: rasterOwners of the same raster
+// size, when the caller has them (the same bits either way).
+export function fieldFromRasterAreaWeighted(fm: FieldMesh, sampler: FieldSampler, raster: Float32Array, resX: number, resY: number, out?: Float64Array, owners?: Int32Array): Float64Array {
   const result = out ?? new Float64Array(fm.count)
   const weight = new Float64Array(fm.count)
   const sum = new Float64Array(fm.count)
@@ -553,7 +570,7 @@ export function fieldFromRasterAreaWeighted(fm: FieldMesh, sampler: FieldSampler
     const w = grid.cellArea(py)
     const y = (py + 0.5) * sy
     for (let px = 0; px < resX; px++) {
-      const i = sampler.nearestCell((px + 0.5) * sx, y)
+      const i = owners ? owners[py * resX + px] : sampler.nearestCell((px + 0.5) * sx, y)
       sum[i] += w * raster[py * resX + px]
       weight[i] += w
     }
@@ -561,5 +578,20 @@ export function fieldFromRasterAreaWeighted(fm: FieldMesh, sampler: FieldSampler
   for (let i = 0; i < fm.count; i++) {
     result[i] = weight[i] > 0 ? sum[i] / weight[i] : grid.sampleBilinearAt(raster, fm.x[i], fm.y[i])
   }
+  return result
+}
+
+// The MAXIMUM of the raster cells whose centres lie in each Voronoi cell
+// (`owners`, rasterOwners) — the highest ground a cell holds, where a mean
+// would flatten a range into its valleys. A mesh cell no raster centre
+// falls in takes the centre sample.
+export function fieldMaxFromRaster(fm: FieldMesh, raster: Float32Array, resX: number, resY: number, owners: Int32Array): Float64Array {
+  const result = new Float64Array(fm.count).fill(-Infinity)
+  for (let p = 0; p < owners.length; p++) {
+    const i = owners[p]
+    if (raster[p] > result[i]) result[i] = raster[p]
+  }
+  const grid = fm.domain.grid(resX, resY)
+  for (let i = 0; i < fm.count; i++) if (result[i] === -Infinity) result[i] = grid.sampleBilinearAt(raster, fm.x[i], fm.y[i])
   return result
 }
