@@ -241,6 +241,7 @@
 
 .wc-listhead {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
@@ -302,11 +303,12 @@
 }
 
 /* The card is a div holding two buttons rather than one big button: a button
-   inside a button is invalid, and removal must not be something the opening
-   gesture can hit by accident. */
+   inside a button is invalid. The card's own button opens its panel; the Open
+   button beside it opens the world. */
 .wc-card {
   position: relative;
   display: flex;
+  align-items: center;
   border: 1px solid var(--dc-line2);
   border-radius: 10px;
   background: transparent;
@@ -317,22 +319,17 @@
 }
 
 /* A world this screen cannot open (the incubator: no level 1 yet). It stays
-   in the list, drawn as an outline of a card: dashed, faded, no hover. The
-   remove button keeps working. */
+   in the list, drawn as an outline of a card: dashed, faded. Its panel still
+   opens. */
 .wc-card--closed {
   border-style: dashed;
 }
 
-.wc-card--closed:hover {
-  background: transparent;
-}
-
-.wc-card--closed .wc-card__open {
-  cursor: default;
+.wc-card--closed .wc-card__info {
   opacity: 0.55;
 }
 
-.wc-card__open {
+.wc-card__info {
   flex-grow: 1;
   min-width: 0;
   display: flex;
@@ -354,6 +351,11 @@
   overflow: hidden;
   border: 1px solid var(--dc-line2);
   background: var(--dc-line);
+}
+
+.wc-thumb--large {
+  width: 144px;
+  height: 96px;
 }
 
 .wc-thumb img {
@@ -393,6 +395,44 @@
   flex-shrink: 0;
 }
 
+/* The shape, and the warning that two places differ, as small pills. */
+.wc-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wc-badges:empty {
+  display: none;
+}
+
+.wc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px 1px 6px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 10px;
+  font-size: 11.5px;
+  color: var(--dc-text2);
+}
+
+.wc-badge svg,
+.wc-badge__icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+/* Two different versions: the warning colour of the app, with the
+   notifications' warning icon. */
+.wc-badge--warn {
+  border-color: var(--dc-red);
+  background: color-mix(in srgb, var(--dc-red) 10%, transparent);
+  color: var(--dc-red-text);
+  font-weight: 600;
+}
+
 .wc-progress {
   display: flex;
   align-items: center;
@@ -408,14 +448,20 @@
   border-radius: 4px;
 }
 
-/* Teal for a world that has been through erosion, accent for one that has not
-   — the same two colours the step list uses for computed and outstanding. */
-.wc-dot[data-state='eroded'] {
+/* Teal for a finished world, accent for one on its way, and an empty ring
+   for one with no step accepted — the step list's colours for computed and
+   outstanding. */
+.wc-dot[data-state='done'] {
   background: var(--dc-teal);
 }
 
-.wc-dot[data-state='fresh'] {
+.wc-dot[data-state='started'] {
   background: var(--dc-accent);
+}
+
+.wc-dot[data-state='none'] {
+  border: 1px solid var(--dc-muted);
+  box-sizing: border-box;
 }
 
 .wc-dot[data-state='closed'] {
@@ -437,28 +483,211 @@
   flex-shrink: 0;
 }
 
-.wc-remove {
-  align-self: flex-start;
-  margin: 12px 12px 0 0;
-  padding: 3px 9px;
+/* The card's Open and the panel's buttons. */
+.wc-open,
+.wc-action {
+  padding: 5px 12px;
   border: 1px solid var(--dc-line2);
   border-radius: 6px;
   background: transparent;
-  color: var(--dc-muted);
-  font-size: 11.5px;
-}
-
-.wc-remove:hover {
-  background: var(--dc-line);
   color: var(--dc-text);
+  font-size: 12.5px;
+  white-space: nowrap;
 }
 
-/* Armed: the next click deletes, so it stops looking like a quiet secondary
-   control for the few seconds it means something else. */
-.wc-remove--armed {
+.wc-open {
+  margin-right: 12px;
+  flex-shrink: 0;
   border-color: var(--dc-accent);
   background: var(--dc-accent);
   color: var(--dc-on-accent);
+  font-weight: 600;
+}
+
+.wc-open:hover:not([aria-disabled='true']) {
+  filter: brightness(0.95);
+}
+
+.wc-action:hover:not([aria-disabled='true']) {
+  background: var(--dc-hover);
+}
+
+.wc-action--open {
+  border-color: var(--dc-accent);
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+  font-weight: 600;
+}
+
+.wc-action--open:hover:not([aria-disabled='true']) {
+  background: var(--dc-accent);
+  filter: brightness(0.95);
+}
+
+.wc-action--remove {
+  color: var(--dc-muted);
+}
+
+/* Readable, not usable: two different versions on the card, or a world this
+   screen cannot open. Greyed rather than hidden, so the help card can say
+   why. */
+.wc-open[aria-disabled='true'],
+.wc-action[aria-disabled='true'] {
+  border-color: var(--dc-line2);
+  background: var(--dc-line);
+  color: var(--dc-faint);
+  font-weight: 400;
+  cursor: default;
+}
+
+/* Armed: the next click acts, so it stops looking like a quiet secondary
+   control for the few seconds it means something else. */
+.wc-armed,
+.wc-armed:hover {
+  border-color: var(--dc-accent);
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+}
+
+/* --- the panel ------------------------------------------------------------- */
+
+/* The modal vocabulary of the confirm window: the same card, over the list. */
+.wc-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--dc-backdrop);
+}
+
+.wc-detail-backdrop[hidden] {
+  display: none;
+}
+
+.wc-detail {
+  width: min(620px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  border: 1px solid var(--dc-menu-line);
+  border-radius: 12px;
+  background: var(--dc-menu-bg);
+  box-shadow: 0 24px 60px var(--dc-dialog-shadow);
+  color: var(--dc-text);
+}
+
+.wc-detail__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.wc-detail__title {
+  flex-grow: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wc-detail__name {
+  margin: 0;
+  font-family: 'Bricolage Grotesque', Georgia, serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--dc-strong);
+  overflow-wrap: anywhere;
+}
+
+.wc-detail__close {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dc-muted);
+}
+
+.wc-detail__close:hover {
+  background: var(--dc-hover);
+  color: var(--dc-text);
+}
+
+.wc-detail__close svg {
+  width: 18px;
+  height: 18px;
+}
+
+.wc-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  font-size: 13px;
+}
+
+.wc-facts dt {
+  color: var(--dc-muted);
+}
+
+.wc-facts dd {
+  margin: 0;
+  color: var(--dc-text);
+  overflow-wrap: anywhere;
+}
+
+.wc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wc-versions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.wc-version {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 10px;
+}
+
+.wc-version__title {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dc-text2);
+}
+
+.wc-version__newer {
+  padding: 0 7px;
+  border-radius: 8px;
+  background: var(--dc-teal);
+  color: var(--dc-on-teal);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .wc-note {
@@ -478,7 +707,8 @@
 
 @media (max-width: 820px) {
   .wc-choices,
-  .wc-list {
+  .wc-list,
+  .wc-versions {
     grid-template-columns: minmax(0, 1fr);
   }
 }

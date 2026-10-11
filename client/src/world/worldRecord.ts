@@ -1,6 +1,7 @@
 import { readRecipeValue } from './save/recipeYaml'
 import { historyFromYaml, historyToYamlLines, type WorldHistory } from './save/worldHistory'
 import { specFromYaml, specToYamlLines, WORLD_SPEC_FIELDS, type WorldSpec } from './save/worldSpec'
+import { progressStepOf, type ProgressStep } from './worldProgress'
 
 // A WORLD AS THE GENERATOR HOLDS IT, as one value: who it is, what it was
 // made with, and how far it was taken — everything world.yaml says and a
@@ -46,6 +47,10 @@ export interface WorldRecord {
   archeanEpochs: number
   epoch: number
   erosionRun: number
+  // The last step the user accepted (worldProgress.ts), in
+  // `status.progress`; null for none. Documentation: not compared by
+  // recordSignature, and not part of any id.
+  progress: ProgressStep | null
 }
 
 // world.yaml. `generator` is the build that writes it — provenance, never
@@ -69,6 +74,9 @@ export function recordToYaml(record: WorldRecord, generator: string): string {
     `  revision: ${record.revision}`,
     // PROVENANCE (app/buildVersion.ts): which build wrote this stand.
     `  generator: ${generator}`,
+    // How far the user took it (worldProgress.ts), absent while no step is
+    // accepted.
+    ...(record.progress ? [`  progress: ${record.progress}`] : []),
     // The runs, absent while no run has happened.
     ...historyToYamlLines(record.history),
     '',
@@ -95,12 +103,15 @@ export function recordFromYaml(yaml: string, epochs: { archeanEpochs: number; ep
     archeanEpochs: epochs.archeanEpochs,
     epoch: epochs.epoch,
     erosionRun: Number(readRecipeValue(yaml, 'status.erosionRun') ?? 0),
+    progress: progressStepOf(readRecipeValue(yaml, 'status.progress')),
   }
 }
 
 // What "unchanged since the save" compares: the name, the recipe, how far
-// the world was taken and the code its runs were made with. Not the uid or
-// the revision (bookkeeping, not the world), not the rest of the history
+// the world was taken, the progress (the steps the user accepted — a move
+// forward the save does not hold yet is unsaved, the user's call
+// 2026-10-11) and the code its runs were made with. Not the uid or the
+// revision (bookkeeping, not the world), not the rest of the history
 // (it follows the epochs and the values). The code, because a world made
 // again by other code (world/replay.ts) is a different world under the
 // same values.
@@ -123,6 +134,7 @@ function signatureParts(record: WorldRecord): Record<string, unknown> {
     archeanEpochs: record.archeanEpochs,
     epoch: record.epoch,
     erosionRun: record.erosionRun,
+    progress: record.progress,
     code: [...record.history.genesis, ...record.history.tectonics].map((run) => run.code),
   }
   for (const field of WORLD_SPEC_FIELDS) parts[field.path] = record.spec.values[field.path]

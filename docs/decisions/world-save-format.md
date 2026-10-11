@@ -57,6 +57,7 @@ spec:
   humidity: <int>           # …and the rest of the climate / erosion / ecology sliders
 status:
   erosionRun: <passes>
+  progress: <step id>       # since 2026-10-11; the last step accepted by moving forward — documentation, in no id or hash; absent for none
 history:                    # since 2026-09-27; absent while no run has happened
   genesis:
     0: { epochs: 120, generator: <build>, values: { genesis: {…} } }

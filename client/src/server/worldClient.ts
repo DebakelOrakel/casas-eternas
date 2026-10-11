@@ -31,6 +31,13 @@ export interface WorldSummary {
   seed: string
   generator: string
   contentHash: string
+  // The save's kind (`FlatWorld`/`SphereWorld`) and its accepted progress
+  // (a step id), mirrored the same way since 2026-10-11 — empty for worlds
+  // not re-uploaded since, and absent from a server older than that. Kept
+  // as plain strings: the world layer reads them, this module only carries
+  // them.
+  kind?: string
+  progress?: string
 }
 
 // Why an upload failed, in terms a caller can act on rather than a status code.

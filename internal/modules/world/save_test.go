@@ -54,6 +54,7 @@ func sampleYAML() string {
 		"status:",
 		"  erosionRun: 3",
 		"  revision: 7",
+		"  progress: tectonics",
 		"",
 	}, "\n")
 }
@@ -136,6 +137,10 @@ func TestInspectSaveReadsMetadataAndPreview(t *testing.T) {
 	if info.Name != "alpha" {
 		t.Errorf("name = %q", info.Name)
 	}
+	// The display values the world list shows: the shape and the progress.
+	if info.Kind != "FlatWorld" || info.Progress != "tectonics" {
+		t.Errorf("kind/progress = %q/%q, want FlatWorld/tectonics", info.Kind, info.Progress)
+	}
 	if info.Revision != 7 || info.ErosionRun != 3 {
 		t.Errorf("revision/erosionRun = %d/%d, want 7/3", info.Revision, info.ErosionRun)
 	}
@@ -176,5 +181,18 @@ func TestInspectSaveToleratesAnUnusablePreview(t *testing.T) {
 	}
 	if info.UID != sampleUID {
 		t.Error("metadata should still have been read")
+	}
+}
+
+// A save written before the shape and the progress were recorded lists
+// without them, rather than with a guess.
+func TestInspectSaveLeavesMissingKindAndProgressEmpty(t *testing.T) {
+	yaml := "metadata:\n  name: old\n  uid: " + sampleUID + "\nstatus:\n  erosionRun: 1\n"
+	info, err := inspectSave(buildSave(t, yaml, nil, nil))
+	if err != nil {
+		t.Fatalf("inspectSave: %v", err)
+	}
+	if info.Kind != "" || info.Progress != "" {
+		t.Errorf("kind/progress = %q/%q, want both empty", info.Kind, info.Progress)
 	}
 }

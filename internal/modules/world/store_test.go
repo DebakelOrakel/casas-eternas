@@ -34,7 +34,7 @@ func newTestStore(t *testing.T) *Store {
 // DEFLATE-compressed, so its payload does not appear literally in the file.
 func putSave(t *testing.T, s *Store, uid string, body string, expected int) (Meta, []byte, error) {
 	t.Helper()
-	yaml := "metadata:\n  name: alpha\n  uid: " + uid + "\nspec:\n  seed: alpha-seed\nstatus:\n  erosionRun: 2\n  revision: 1\n  generator: test-build\n"
+	yaml := "kind: SphereWorld\nmetadata:\n  name: alpha\n  uid: " + uid + "\nspec:\n  seed: alpha-seed\nstatus:\n  erosionRun: 2\n  revision: 1\n  generator: test-build\n  progress: climate\n"
 	data := buildSave(t, yaml, []byte("PNG-"+body), map[string][]byte{"payload": []byte(body)})
 	info, err := inspectSave(data)
 	if err != nil {
@@ -60,6 +60,15 @@ func TestPutThenReadRoundTrips(t *testing.T) {
 	// world meta so the load/save panels need no unzip.
 	if meta.Seed != "alpha-seed" || meta.Generator != "test-build" || len(meta.ContentHash) != 64 {
 		t.Errorf("display meta = seed %q, generator %q, hash %q", meta.Seed, meta.Generator, meta.ContentHash)
+	}
+	// The shape and the progress, mirrored the same way (2026-10-11), and
+	// kept in meta.json: the listing reads them back from disk.
+	if meta.Kind != "SphereWorld" || meta.Progress != "climate" {
+		t.Errorf("display meta = kind %q, progress %q", meta.Kind, meta.Progress)
+	}
+	listed, err := s.List(context.Background())
+	if err != nil || len(listed) != 1 || listed[0].Kind != "SphereWorld" || listed[0].Progress != "climate" {
+		t.Errorf("listed = %+v, err = %v", listed, err)
 	}
 
 	data, read, err := s.ReadCurrent(context.Background(), sampleUID)

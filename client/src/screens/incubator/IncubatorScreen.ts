@@ -289,7 +289,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     subtitleKey: 'incubator.load.subtitle',
     // The generator's says "loads this world into the generator"; the
     // incubator has no line of its own yet (a debug screen, no new keys).
-    cardHelpKey: null,
+    openHelpKey: null,
+    notifications: ctx.notifications,
     // A browser world never holds a level: the levels are server jobs.
     openable: {
       load: async () => {

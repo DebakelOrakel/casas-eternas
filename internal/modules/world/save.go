@@ -12,11 +12,12 @@ import (
 
 // How much of a save the server understands, and no more.
 //
-// Exactly two things are read out of an uploaded .zip: the `metadata` block of
-// world.yaml, and preview.png. Everything else stays opaque bytes. That is a
-// deliberate constraint rather than laziness — it is what lets the save format
-// keep evolving (new rasters, new spec groups, a reshuffled snapshot) without
-// the server needing a matching release. See docs/decisions/server-storage.md.
+// Exactly two things are read out of an uploaded .zip: world.yaml (its
+// `metadata` block and a few display values), and preview.png. Everything
+// else stays opaque bytes. That is a deliberate constraint rather than
+// laziness — it is what lets the save format keep evolving (new rasters, new
+// spec groups, a reshuffled snapshot) without the server needing a matching
+// release. See docs/decisions/server-storage.md.
 
 // previewLimit caps the extracted thumbnail. A preview is a small PNG of the
 // map; anything far larger is not one, and decompressing it into memory on an
@@ -81,7 +82,13 @@ type SaveInfo struct {
 	// predate them.
 	Seed      string
 	Generator string
-	Preview   []byte
+	// The world's shape (the top-level `kind`: FlatWorld or SphereWorld) and
+	// the last step its user accepted (status.progress, a step id). Both are
+	// display data, as above: the server does not check them. Empty for saves
+	// that predate them.
+	Kind     string
+	Progress string
+	Preview  []byte
 }
 
 // inspectSave reads the two things above out of a .zip.
@@ -133,6 +140,8 @@ func inspectSave(data []byte) (SaveInfo, error) {
 	}
 	info.Seed, _ = readYAMLValue(yamlText, "spec.seed")
 	info.Generator, _ = readYAMLValue(yamlText, "status.generator")
+	info.Kind, _ = readYAMLValue(yamlText, "kind")
+	info.Progress, _ = readYAMLValue(yamlText, "status.progress")
 	return info, nil
 }
 

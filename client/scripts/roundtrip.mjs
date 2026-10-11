@@ -179,7 +179,7 @@ console.log('\n— run history —')
     uid: '0f8e5c1a-7b2d-4c3e-9a1f-123456789abc', name: 'Calvessor', revision: 7,
     spec: { seed: '983721401', values },
     history: { genesis: [run(WH.GENESIS_RUN_FIELDS, 41)], tectonics: [run(WH.TECTONICS_RUN_FIELDS, 30), run(WH.TECTONICS_RUN_FIELDS, 12, { restored: true })] },
-    archeanEpochs: 41, epoch: 42, erosionRun: 42,
+    archeanEpochs: 41, epoch: 42, erosionRun: 42, progress: 'climate',
   }
   const yaml = WR.recordToYaml(record, 'abc1234')
   const back = WR.recordFromYaml(yaml, { archeanEpochs: 41, epoch: 42 }, () => 'unused')
@@ -198,6 +198,24 @@ console.log('\n— run history —')
     const text = kind ? yaml.replace('kind: FlatWorld', `kind: ${kind}`) : yaml.replace('kind: FlatWorld\n', '')
     try { WR.recordFromYaml(text, { archeanEpochs: 0, epoch: 0 }, () => 'x') } catch { refused++ }
   }
+  // The progress (world/worldProgress.ts) is documentation: it reads back,
+  // a save without one (or with a step this client does not know) has
+  // none, and it is not part of the "unchanged" comparison.
+  const unstarted = WR.recordFromYaml(WR.recordToYaml({ ...record, progress: null }, 'abc1234'), { archeanEpochs: 41, epoch: 42 }, () => 'unused')
+  const unknownStep = WR.recordFromYaml(yaml.replace('progress: climate', 'progress: weaving'), { archeanEpochs: 41, epoch: 42 }, () => 'unused')
+  check('the progress survives world.yaml, and none or an unknown step reads as none', back.progress === 'climate' && unstarted.progress === null && unknownStep.progress === null && !WR.recordToYaml({ ...record, progress: null }, 'x').includes('progress:'))
+  // The rule that sets it: a move forward accepts every step before the one
+  // it enters, a move back changes nothing, and it never goes down.
+  const WP = await L('/src/world/worldProgress.ts')
+  const order = [...WP.PROGRESS_STEPS, 'migration']
+  const moves = [[0, 1], [1, 0], [1, 2], [2, 4], [4, 2], [2, 3], [5, 6]]
+  const walked = []
+  let progress = null
+  for (const [from, to] of moves) walked.push(progress = WP.advanceProgress(progress, order, from, to))
+  check('progress follows the forward moves only', walked.join(',') === 'world,world,genesis,climate,climate,climate,finishing', walked.join(','))
+  check('a reset withdraws its step and the steps after it, not those before', WP.withdrawProgress('ecology', 'tectonics') === 'genesis' && WP.withdrawProgress('ecology', 'ecology') === 'climate' && WP.withdrawProgress('genesis', 'world') === null && WP.withdrawProgress('genesis', 'ecology') === 'genesis' && WP.withdrawProgress('climate', 'migration') === 'climate' && WP.withdrawProgress(null, 'genesis') === null)
+  check('and counts on the chain without the aside', JSON.stringify(WP.progressPosition('genesis')) === '{"n":2,"all":6,"done":false}' && WP.progressPosition('finishing').done && WP.progressPosition(null) === null)
+  check('a new progress reads as a change, by name', WR.recordDiff(record, { ...record, progress: 'finishing' }).some((d) => d.startsWith('progress:')))
   check('an unknown or missing kind is refused', refused === 3 && WR.worldKindOf(yaml) === 'FlatWorld', `${refused} of 3`)
 }
 

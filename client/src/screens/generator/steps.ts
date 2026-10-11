@@ -19,6 +19,7 @@ import { STAGES, type StageId } from '../../generator/pipeline/stages'
 import { ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputParams'
 import type { EcologyFieldId } from '../../generator/ecology/ecologyField'
 import type { OverlayId } from './overlays'
+import { PROGRESS_STEPS } from '../../world/worldProgress'
 
 export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'ecology' | 'finishing' | 'migration'
 
@@ -228,4 +229,13 @@ for (const s of STAGES) {
 const pipelineOrder = STAGES.map((s) => s.id).filter((id) => stepped.includes(id))
 if (String(pipelineOrder) !== String(stepped)) {
   throw new Error(`generator steps are out of pipeline order: ${stepped} vs ${pipelineOrder}`)
+}
+
+// A world's progress (world/worldProgress.ts) is counted on this chain without
+// the aside. The world layer names the steps again, since it may not import a
+// screen; the two lists must agree, or a saved progress would name a step the
+// bar does not have.
+const chain = STEPS.filter((s) => !s.aside).map((s) => s.id)
+if (String(chain) !== String(PROGRESS_STEPS)) {
+  throw new Error(`generator step chain ${chain} does not match the progress steps ${PROGRESS_STEPS}`)
 }

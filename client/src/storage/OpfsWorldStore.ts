@@ -48,6 +48,10 @@ export interface WorldArchiveStore<M> {
   // out of quota is the expected case — having removed the partial entry, so
   // a refused save never leaves a half-world that would list as real.
   put(uid: string, archive: Blob, meta: M, thumbnail?: Blob | null): Promise<boolean>
+  // Replaces the meta of a world that is already kept, and leaves its archive
+  // and thumbnail as they are. False when there is no such world, or the
+  // write failed; a failed write leaves the old meta in place.
+  putMeta(uid: string, meta: M): Promise<boolean>
   // The archive bytes, or null when this browser does not hold that world.
   get(uid: string): Promise<Blob | null>
   // The thumbnail written alongside, or null when there is none.
@@ -118,6 +122,19 @@ export async function createOpfsWorldStore<M>(): Promise<WorldArchiveStore<M> | 
         // than leaving bytes that count against the quota and belong to no
         // world the user can see or delete.
         await removeWorld(uid)
+        return false
+      }
+    },
+
+    async putMeta(uid: string, meta: M): Promise<boolean> {
+      const dir = await worldDir(uid, false)
+      if (!dir || !(await readFile(dir, ARCHIVE))) return false
+      try {
+        // createWritable writes to a swap file and replaces the old one on
+        // close, so an interrupted write keeps the old meta.
+        await write(dir, META, JSON.stringify(meta))
+        return true
+      } catch {
         return false
       }
     },

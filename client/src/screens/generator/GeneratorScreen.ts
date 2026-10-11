@@ -69,6 +69,7 @@ import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleB
 import { createSaveMenu, type SaveTarget } from '../../ui/titleBar/SaveMenu'
 import { createConfirmDialog } from '../../ui/confirmDialog/ConfirmDialog'
 import { keepWorldInBrowser } from '../../world/browserWorlds'
+import { advanceProgress, withdrawProgress, type ProgressStep } from '../../world/worldProgress'
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { getServerStatus, peekServerStatus } from '../../server/serverStatus'
 import { hasSession } from '../../server/session'
@@ -334,6 +335,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the world was saved or loaded.
   let savedWorldId: string | null = null
   let worldRevision = 0
+  // The last step the user accepted by moving forward (world/worldProgress.ts):
+  // written to world.yaml's status, read back on load, none for a new world.
+  let worldProgress: ProgressStep | null = null
   // Epoch the safety auto-stop will fire at. Re-armed to (current epoch +
   // MAX_TECTONICS_EPOCHS) every time the sim is started (see startSim), so
   // each run halts ~MAX_TECTONICS_EPOCHS after it began: start at 0 stops
@@ -4556,6 +4560,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   })
 
   resetArcheanButton.addEventListener('click', () => {
+    worldProgress = withdrawProgress(worldProgress, 'genesis')
+    updateSaveIndicator()
     postToWorker({ type: 'resetStage', stage: 'genesis' })
     archeanRunChanged(false)
     lastArcheanEpochs = 0
@@ -4759,6 +4765,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       kind: worldShape === 'sphere' ? 'SphereWorld' : 'FlatWorld',
       uid: worldUid, name: worldName, revision: worldRevision, spec: readSpec(), history: structuredClone(history),
       archeanEpochs: lastArcheanEpochs, epoch: lastEpoch, erosionRun: erosionRunCount,
+      progress: worldProgress,
     }
   }
 
@@ -4923,6 +4930,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         erosionRun: erosionRunCount,
         savedAt: new Date().toISOString(),
         generator: BUILD_VERSION,
+        kind: worldShape === 'sphere' ? 'SphereWorld' : 'FlatWorld',
+        progress: worldProgress,
       }, await makePreviewBlob())
       if (kept) {
         ctx.notifications.show({ message: t('notify.save.browser.stored'), icon: '/icons/ok.png', durationMs: 4000 })
@@ -5075,6 +5084,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // once the archive has actually turned out to be a world.
     onOpenArchive: (archive, kept) => { void loadWorldFromZip(new File([archive], 'world.zip'), kept) },
     onPickFile: () => pickLocalWorldFile(),
+    notifications: ctx.notifications,
   })
 
   // Back to the world list. The step bar is for steps WITHIN a world; leaving
@@ -5516,6 +5526,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // identity.deriveWorldUid.
     worldUid = record.uid
     worldRevision = record.revision
+    // A world opened keeps the progress it was saved with.
+    worldProgress = record.progress
     mantleVigourInput.value = String(spec.values['genesis.mantleVigour'])
     waterInput.value = String(spec.values['genesis.water'])
     obliquityInput.value = String(spec.values['planet.obliquity'])
@@ -5859,6 +5871,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   resetEcologyButton.addEventListener('click', () => {
     resetInputs('ecology')
+    worldProgress = withdrawProgress(worldProgress, 'ecology')
+    updateSaveIndicator()
     // The thirteen abundance nudges are not named controls — they share one range
     // and reach the save as a group (ECOLOGY_ABUNDANCE_GROUPS), so they are not in
     // the stage's `inputs` and are reset here.
@@ -5968,6 +5982,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     replaying = null
     replayedHistory = null
     worldRevision = 0
+    worldProgress = null
     archeanFinalised = false
     hasHandover = false
     markCleanOnNextRender = true
@@ -5996,6 +6011,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     erosionRunCount = 0
     // Back at the hand-over: the tectonics runs are undone, the Archean's stand.
     history.tectonics = []
+    worldProgress = withdrawProgress(worldProgress, 'tectonics')
+    updateSaveIndicator()
     postToWorker({ type: 'resetStage', stage: 'tectonics' })
     updateNavState() // topography is back to the hand-over → re-lock erosion onwards
   })
@@ -6059,6 +6076,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // preview stands until then instead.
     planetPreviewRealBase = null
     planetPreviewRealClimate = null
+    // Creating the world is the move forward out of step 0: it accepts that
+    // step, as the step bar would (regenerate above cleared the progress).
+    worldProgress = advanceProgress(worldProgress, STEP_IDS, panelIndex, GENESIS_PANEL_INDEX)
+    updateSaveIndicator()
     showPanel(GENESIS_PANEL_INDEX)
   })
   // The Archean's levers act from its next start (2026-09-29): a run goes on
@@ -6227,6 +6248,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // the next arrow, and hangs off the same gesture here: any move to a
       // later step, not merely the adjacent one.
       if (STEP_IDS[panelIndex] === 'genesis' && index > GENESIS_PANEL_INDEX) commitGenesis()
+      // The same gesture accepts the steps it leaves behind: the world's
+      // progress, which the world list shows. A move back does not lower it.
+      worldProgress = advanceProgress(worldProgress, STEP_IDS, panelIndex, index)
+      updateSaveIndicator()
       showPanel(index)
     },
   })

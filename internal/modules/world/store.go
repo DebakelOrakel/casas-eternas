@@ -74,6 +74,11 @@ type Meta struct {
 	Seed        string `json:"seed"`
 	Generator   string `json:"generator"`
 	ContentHash string `json:"contentHash"`
+	// The save's shape and its accepted progress, mirrored the same way
+	// (2026-10-11, for the world list): `kind` and `status.progress` of
+	// world.yaml. Empty until a world is uploaded again.
+	Kind     string `json:"kind"`
+	Progress string `json:"progress"`
 }
 
 // RevisionMeta is {dir}/{uid}/rev/{n}/meta.json.
@@ -379,6 +384,8 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 		Seed:        info.Seed,
 		Generator:   info.Generator,
 		ContentHash: contentHash,
+		Kind:        info.Kind,
+		Progress:    info.Progress,
 	}
 	if meta.CreatedAt.IsZero() {
 		meta.CreatedAt = now
