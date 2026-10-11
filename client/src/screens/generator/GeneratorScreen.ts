@@ -24,7 +24,7 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
-import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import type { ContinentLabelPlacement } from '../../generator/render/continentLabelRenderer'
@@ -1246,10 +1246,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   const GENESIS_PANEL_INDEX = panelIndexOf('genesis')
   // Whether a step runs on this world's shape. A sphere runs the planet, the
-  // Archean, the plates' history and the climate step only (DEC-0035, steps
-  // 4d2–4e); the later steps are locked, and nothing may compute them for
-  // it — not the gate alone, a load's catch-up too.
-  const stepRunsOnShape = (index: number): boolean => worldShape !== 'sphere' || index <= panelIndexOf('climate')
+  // Archean, the plates' history, the climate step and the ecology only
+  // (DEC-0035, steps 4d2–4f); the later steps (the finishing and the
+  // migration) are locked, and nothing may compute them for it — not the
+  // gate alone, a load's catch-up too.
+  const stepRunsOnShape = (index: number): boolean => worldShape !== 'sphere' || index <= panelIndexOf('ecology')
 
   // Entering this panel is what commits the Archean — see commitGenesis.
   const TECTONICS_PANEL_INDEX = panelIndexOf('tectonics')
@@ -3705,6 +3706,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     updateProgress()
   }
 
+  // A stage's compute threw in the worker: released as a decline is, so
+  // the chain that waits for it (a load's catch-up, the save's, the
+  // migration's) goes on instead of waiting forever. The failure goes to
+  // the console, as a worker's uncaught error does; the stage shows no
+  // result, as before it ran.
+  function handleStageFailed(message: WorkerStageFailedMessage): void {
+    console.error(`[generator] the ${message.stage} stage failed in the worker: ${message.error}`)
+    if (message.stage === 'ecology') {
+      // The month's request may be the one that failed; the year stays.
+      ecologyMonthInFlight = false
+      ecologyMonthWanted = null
+    }
+    handleStageDeclined({ type: 'stageDeclined', stage: message.stage })
+  }
+
   function clearStage(id: StageId): void {
     switch (id) {
       case 'planet':
@@ -4141,6 +4157,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
     if (message.type === 'stageDeclined') {
       handleStageDeclined(message)
+      return
+    }
+    if (message.type === 'stageFailed') {
+      handleStageFailed(message)
       return
     }
 

@@ -433,6 +433,18 @@ export interface WorkerStageDeclinedMessage {
   needs?: StageId
 }
 
+// A stage's compute THREW in the worker. Not a decline — something it reads
+// is there, and the computation failed on it — but the same consequence for
+// the screen: what waits for the stage's result is released, else it waits
+// forever (found 2026-10-11, a sphere save's load requesting the ecology
+// before step 4 ran on the sphere). `error` is the exception's text, for
+// the console; the stage's state in the worker is as it was before the run.
+export interface WorkerStageFailedMessage {
+  type: 'stageFailed'
+  stage: StageId
+  error: string
+}
+
 // The computed climate rasters (coarse grid — see climate/climateField.ts).
 // Grows per phase.
 export interface WorkerClimateDataMessage {
@@ -712,3 +724,4 @@ export type WorkerOutboundMessage =
   | WorkerGenesisStatusMessage
   | WorkerElevationFieldMessage
   | WorkerStageDeclinedMessage
+  | WorkerStageFailedMessage

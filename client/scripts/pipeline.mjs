@@ -676,19 +676,27 @@ test('a sphere world runs its history through the runtime', async () => {
   await until(() => q.count('rendered') >= 1, { label: 'the sphere load render' })
   await quiet(q)
   check('a loaded sphere world renders the world that was saved', hash(q.last('rendered').elevation) === savedRender && !q.messages.some((m) => m.type === 'error'))
-  await runOneEpoch(p)
+  // And it goes on: an epoch on the loaded world runs on the sphere and
+  // renders a sane globe. Not the saved one's bytes: a restore runs its
+  // climate on its first epoch, an unbroken run only every climateEvery-th
+  // (coupledEpoch.ts, TerrainState.weather) — the two agree only when the
+  // next epoch is a climate epoch anyway.
+  const loadedEpoch = q.last('rendered').epoch
   await runOneEpoch(q)
-  const goesOn = hash(p.last('rendered').elevation)
-  check('a loaded sphere world goes on as the saved one does (one epoch, same bytes)', hash(q.last('rendered').elevation) === goesOn && !q.messages.some((m) => m.type === 'error'))
-  // (A torus cannot even rebuild the globe's mesh: the restore throws.)
+  const next = q.last('rendered')
+  const nextElevation = new Float32Array(next.elevation)
+  check('a loaded sphere world goes on (an epoch, finite, land and sea, no failure)', next.epoch > loadedEpoch && allFinite(nextElevation) && nextElevation.some((v) => v > 0) && nextElevation.some((v) => v <= 0) && !q.messages.some((m) => m.type === 'error' || m.type === 'stageFailed'), `epoch ${loadedEpoch} → ${next.epoch}`)
+  // Loaded without its shape the save is not the world that was saved: the
+  // restore throws (a torus cannot rebuild the globe's mesh) or renders
+  // something else. No epoch is run on it — a torus stepping the globe's
+  // plates throws inside the tick, out of reach of any check.
   let differs = false
   try {
     const t2 = await freshPipeline()
     t2.dispatch(restore(undefined))
-    await until(() => t2.count('rendered') >= 1 || t2.messages.some((m) => m.type === 'error'), { label: 'the shapeless load' })
+    await until(() => t2.count('rendered') >= 1 || t2.messages.some((m) => m.type === 'error' || m.type === 'stageFailed'), { label: 'the shapeless load' })
     await quiet(t2)
-    if (!t2.messages.some((m) => m.type === 'error')) await runOneEpoch(t2)
-    differs = t2.messages.some((m) => m.type === 'error') || hash(t2.last('rendered').elevation) !== goesOn
+    differs = t2.messages.some((m) => m.type === 'error' || m.type === 'stageFailed') || hash(t2.last('rendered').elevation) !== savedRender
   } catch {
     differs = true
   }
@@ -999,7 +1007,10 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
 // history, then four of its primitives on the modules with a mutation
 // each. The torus's checks of the same stages (golden's invariants) are
 // mirrored where the messages carry what they read.
-test('a sphere world runs the climate step through the runtime: finite, pole-handled, seamless, rivers that flow', async () => {
+// A sphere world through the runtime up to the climate step's end: its
+// Archean, the hand-over, four eroding epochs, climateRun, the refinement
+// and hydrologyRun — what the climate step's test and the ecology's stand on.
+async function sphereThroughHydrology() {
   const p = await freshPipeline()
   p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere' })
   await until(() => p.count('rendered') >= 1, { label: 'the first sphere render' })
@@ -1019,6 +1030,11 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   p.dispatch({ type: 'hydrologyRun' })
   await until(() => p.count('hydrologyData') >= 1, { label: 'the sphere hydrology', timeout: 120000 })
   await quiet(p)
+  return p
+}
+
+test('a sphere world runs the climate step through the runtime: finite, pole-handled, seamless, rivers that flow', async () => {
+  const p = await sphereThroughHydrology()
   const errors = p.messages.filter((m) => m.type === 'error')
   check('climateRun, the refinement and hydrologyRun answer on a sphere world, no error', errors.length === 0, errors.map((e) => e.message).join('; '))
 
@@ -1462,6 +1478,206 @@ test('the climate step\'s primitives on the sphere, each against its mutation', 
     const slid = jump('torus')
     check(`the season's wind cells end at the pole on the sphere: the step across a pole ${kept.toFixed(2)} × the step to the next row (the bands slid across it: ${slid.toFixed(2)})`, kept < 2 && slid > 2)
   }
+})
+
+// THE ECOLOGY ON THE SPHERE (DEC-0035, step 4f): the step's run and a
+// month through the runtime on a sphere world after its climate step, then
+// a deposit's halo on the module at high latitude against its mutation.
+test('a sphere world runs the ecology step through the runtime: finite, pole-handled, seamless, plausible by latitude', async () => {
+  const p = await sphereThroughHydrology()
+  const EI = await server.ssrLoadModule('/src/generator/ecology/ecologyInputParams.ts')
+  const EF = await server.ssrLoadModule('/src/generator/ecology/ecologyField.ts')
+  const strength = EI.ECOLOGY_INPUTS.provinceStrength.toModel(EI.ECOLOGY_INPUTS.provinceStrength.default)
+  p.dispatch({ type: 'ecologyRun', carryingCapacity: 100, concentration: 0, provinceStrength: strength, tinRarity: 0, weights: {} })
+  await until(() => p.count('ecologyData') >= 1 || p.count('stageFailed') > 0, { label: 'the sphere ecology', timeout: 120000 })
+  p.dispatch({ type: 'ecologyMonth', field: 'fish', month: 1 })
+  p.dispatch({ type: 'ecologyMonth', field: 'arable', month: 7 })
+  await until(() => p.count('ecologyMonthData') >= 2 || p.count('stageFailed') > 0, { label: 'two sphere months', timeout: 60000 })
+  const failed = p.messages.filter((m) => m.type === 'stageFailed' || m.type === 'stageDeclined')
+  check('ecologyRun and ecologyMonth answer on a sphere world, nothing failed or declined', failed.length === 0 && p.count('ecologyData') === 1, failed.map((m) => `${m.stage}: ${m.error ?? m.needs}`).join('; '))
+
+  const e = p.last('ecologyData')
+  const RX = e.resX
+  const RY = e.resY
+  const FX = e.fine.resX
+  const FY = e.fine.resY
+  const coarse = Object.fromEntries(e.fields.map((f) => [f.id, new Float32Array(f.data)]))
+  const fine = Object.fromEntries(e.fine.fields.map((f) => [f.id, new Uint8Array(f.data)]))
+  const ids = EF.ECOLOGY_FIELD_IDS
+  // Finite: the coarse fields are the fine ones' means over each cell's
+  // land, so a NaN pixel of land shows there; the fine codes in range.
+  const bad = ids.filter((id) => !coarse[id] || coarse[id].length !== RX * RY || !allFinite(coarse[id]) || !fine[id] || fine[id].length !== FX * FY)
+  check(`every ecology field is whole and finite on the sphere (${ids.length} fields, ${RX}×${RY} and ${FX}×${FY})`, bad.length === 0, bad.join(', '))
+
+  // The pole rows: one value along each, the land's (and the fish's sea)
+  // apart — on the climate grid and on the fine raster, the months too.
+  const fineSea = fine.carryingCapacity.map((c) => (c === EF.ECOLOGY_FINE_OCEAN ? 1 : 0))
+  const spreadOf = (field, rx, ry, isSea, value = (v) => v) => {
+    let worst = 0
+    for (const row of [0, ry - 1]) {
+      for (const kind of [0, 1]) {
+        let lo = Infinity
+        let hi = -Infinity
+        for (let x = 0; x < rx; x++) {
+          const i = row * rx + x
+          if (isSea(i) !== kind) continue
+          const v = value(field[i])
+          lo = Math.min(lo, v)
+          hi = Math.max(hi, v)
+        }
+        if (hi > lo) worst = Math.max(worst, hi - lo)
+      }
+    }
+    return worst
+  }
+  const coarseSea = (i) => (coarse.carryingCapacity[i] === EF.ECOLOGY_OCEAN ? 1 : 0)
+  const poles = ids.flatMap((id) => [[`coarse.${id}`, spreadOf(coarse[id], RX, RY, coarseSea)], [`fine.${id}`, spreadOf(fine[id], FX, FY, (i) => fineSea[i])]])
+  const months = p.messages.filter((m) => m.type === 'ecologyMonthData')
+  for (const m of months) poles.push([`month ${m.field} ${m.month}`, m.data.byteLength === FX * FY ? spreadOf(new Uint8Array(m.data), FX, FY, (i) => fineSea[i]) : Infinity])
+  const spread = poles.filter(([, v]) => v > 1e-6)
+  let polarLand = 0
+  for (const row of [0, FY - 1]) for (let x = 0; x < FX; x++) if (!fineSea[row * FX + x]) polarLand++
+  check(`the ecology's fields are one value along each pole row, land and sea apart (${poles.length} fields, ${polarLand} pole-row land pixels)`, spread.length === 0 && months.length === 2 && months.every((m) => m.data.byteLength === FX * FY), spread.map(([k, v]) => `${k} ${v}`).join(', '))
+
+  // The seam: the step across x = 0 / W no larger than the steps in a row,
+  // on average over the land (the fields jump where the land does).
+  const seamOf = (field) => {
+    let seam = 0
+    let seamN = 0
+    let inner = 0
+    let innerN = 0
+    for (let y = 0; y < FY; y++) {
+      for (let x = 0; x < FX; x++) {
+        const a = y * FX + x
+        const b = y * FX + ((x + 1) % FX)
+        if (fineSea[a] || fineSea[b]) continue
+        const d = Math.abs(field[a] - field[b])
+        if (x === FX - 1) { seam += d; seamN++ } else { inner += d; innerN++ }
+      }
+    }
+    return { seam: seam / Math.max(1, seamN), inner: inner / Math.max(1, innerN), seamN }
+  }
+  const seams = ['carryingCapacity', 'arable', 'game', 'pasture', 'fish', 'iron'].map((id) => [id, seamOf(fine[id])])
+  const seamed = seams.filter(([, s]) => s.seam > 2 * s.inner + 1)
+  check(`no ecology field has a seam at x = 0 / W (${seams.map(([id, s]) => `${id} ${s.seam.toFixed(1)}/${s.inner.toFixed(1)}`).join(', ')} codes, ${seams[0][1].seamN} seam pairs)`, seamed.length === 0)
+
+  // By latitude: the carrying capacity and the game fall toward the poles
+  // (land area-weighted, per band of |latitude|); every value in its range.
+  const band = (field, from, to) => {
+    let sum = 0
+    let area = 0
+    for (let y = 0; y < RY; y++) {
+      const lat = 90 - (180 * (y + 0.5)) / RY
+      if (Math.abs(lat) < from || Math.abs(lat) >= to) continue
+      const a = Math.cos((lat * Math.PI) / 180)
+      for (let x = 0; x < RX; x++) {
+        const v = field[y * RX + x]
+        if (v === EF.ECOLOGY_OCEAN) continue
+        sum += v * a
+        area += a
+      }
+    }
+    return area > 0 ? sum / area : NaN
+  }
+  const bands = [[0, 30], [30, 55], [55, 70], [70, 90]]
+  const cc = bands.map(([a, b]) => band(coarse.carryingCapacity, a, b))
+  const game = bands.map(([a, b]) => band(coarse.game, a, b))
+  const arable = bands.map(([a, b]) => band(coarse.arable, a, b))
+  const known = (v) => Number.isFinite(v)
+  const low = [cc, game, arable].every((f) => !known(f[3]) || f[3] < Math.max(...f.slice(0, 2).filter(known)))
+  const inRange = ids.every((id) => coarse[id].every((v) => v === EF.ECOLOGY_OCEAN || (v >= 0 && v <= 3)))
+  const fishSea = [...fine.fish].filter((c, i) => fineSea[i]).map((c) => c * EF.ECOLOGY_FINE_STEP)
+  const fishMean = fishSea.reduce((a, b) => a + b, 0) / Math.max(1, fishSea.length)
+  const fmt = (f) => f.map((v) => (known(v) ? v.toFixed(3) : '—')).join(' / ')
+  check(`plausible by latitude (bands 0–30–55–70–90°): carrying capacity ${fmt(cc)}, game ${fmt(game)}, arable ${fmt(arable)} — the polar band the lowest; every field in range, the sea's fish ${fishMean.toFixed(3)}`,
+    known(cc[0]) && low && inRange && fishSea.length > 0 && fishMean > 0 && fishMean < 1)
+})
+
+test('the ecology on the sphere at high latitude: a deposit\'s halo is a disc in true lengths, against its mutation', async () => {
+  const L = (m) => server.ssrLoadModule(m)
+  const [D, EF, ET, B, CF] = await Promise.all([
+    L('/src/generator/core/domain.ts'), L('/src/generator/ecology/ecologyField.ts'), L('/src/generator/ecology/ecologyTuneParams.ts'),
+    L('/src/generator/climate/biomes.ts'), L('/src/generator/climate/climateField.ts'),
+  ])
+  // A world of land at a real deposit size: 1024 × 512, σ = 0.02 · 512
+  // = 10.2 pixels. Arc volcanoes along 75°N and 75°S, 128 pixels apart in
+  // the chart (33 on the globe: their halos stay apart), and a row along
+  // the equator for the reference; many, since the copper lottery keeps a
+  // third.
+  const FW = 1024
+  const FH = 512
+  const RXc = CF.CLIMATE_RES_X
+  const RYc = CF.CLIMATE_RES_Y
+  const nc = RXc * RYc
+  const yAt = (lat) => ((90 - lat) / 180) * FH
+  const volcanoes = []
+  for (let k = 0; k < 8; k++) volcanoes.push({ x: 20.3 + k * (FW / 8), y: yAt(75) + 0.37, thickness: 1, kind: 'arc' })
+  for (let k = 0; k < 8; k++) volcanoes.push({ x: 84.6 + k * (FW / 8), y: yAt(-75) + 0.29, thickness: 1, kind: 'arc' })
+  for (let k = 0; k < 24; k++) volcanoes.push({ x: 31.7 + k * (FW / 24), y: yAt(0) + 0.21, thickness: 1, kind: 'arc' })
+  const inputsOn = (domain) => ({
+    temperature: new Float32Array(nc).fill(12), precipitation: new Float32Array(nc).fill(800), biomes: new Uint8Array(nc).fill(B.Biome.Grassland),
+    biomesFine: null, upwelling: null, months: null, rainVariability: null, elevation: new Float32Array(FW * FH).fill(0.05),
+    discharge: null, maxDischarge: 0, lakeDepth: null, saltFlat: null, dryBasin: null, waterTable: null, oases: [], volcanoes, orogenPoints: [],
+    cratonAge: new Float32Array(nc).fill(0.5), warpSeed: 12345, domain,
+  })
+  const sphere = D.sphereDomain(FW, FH)
+  const params = { carryingCapacity: 100, concentration: 0, provinceStrength: 0.5 }
+  const s = EF.computeEcology(inputsOn(sphere), params)
+  const t = EF.computeEcology(inputsOn(D.torusDomain(FW, FH)), params)
+  const notFinite = EF.ECOLOGY_FIELD_IDS.filter((id) => !allFinite(s.fine.fields[id]) || !allFinite(s.fields[id]))
+  check('every fine and coarse field is finite on a sphere of land', notFinite.length === 0, notFinite.join(', '))
+  // Each kept volcano's half-maximum: walked east and south from its pixel,
+  // the true distance (on the globe) where the copper falls below 0.5.
+  const sigma = Math.min(FW, FH) * ET.ECOLOGY_TUNING.copperRadiusFrac
+  const expected = sigma * Math.sqrt(2 * Math.log(2))
+  const halfWidths = (field, v) => {
+    const cx = Math.floor(v.x)
+    const cy = Math.floor(v.y)
+    if (field[cy * FW + cx] < 0.9) return null
+    const walk = (dx, dy) => {
+      for (let k = 1; k < FW / 2; k++) {
+        const x = (cx + dx * k + FW) % FW
+        const y = cy + dy * k
+        if (field[y * FW + x] < 0.5) return Math.sqrt(sphere.distanceSq(x + 0.5, y + 0.5, v.x, v.y))
+      }
+      return Infinity
+    }
+    return { east: (walk(1, 0) + walk(-1, 0)) / 2, south: (walk(0, 1) + walk(0, -1)) / 2 }
+  }
+  const measure = (field, lat) => volcanoes.filter((v) => Math.abs(v.y - yAt(lat)) < 1).map((v) => halfWidths(field, v)).filter((m) => m !== null)
+  const high = [...measure(s.fine.fields.copper, 75), ...measure(s.fine.fields.copper, -75)]
+  const equator = measure(s.fine.fields.copper, 0)
+  const highTorus = [...measure(t.fine.fields.copper, 75), ...measure(t.fine.fields.copper, -75)]
+  const ratio = (ms) => ms.reduce((a, m) => a + m.east / m.south, 0) / ms.length
+  const mean = (ms, k) => ms.reduce((a, m) => a + m[k], 0) / ms.length
+  check(`a copper halo at 75° is a disc in true lengths: east-west / north-south ${ratio(high).toFixed(2)}, half-maximum ${mean(high, 'east').toFixed(1)} / ${mean(high, 'south').toFixed(1)} px against σ√(2 ln 2) = ${expected.toFixed(1)} (${high.length} halos; at the equator ${ratio(equator).toFixed(2)})`,
+    high.length > 0 && equator.length > 0 && Math.abs(ratio(high) - 1) < 0.12 && Math.abs(mean(high, 'south') / expected - 1) < 0.15 && Math.abs(ratio(equator) - 1) < 0.12)
+  check(`mutation: drawn in the chart (the torus over the same pixels), the halo at 75° is ${ratio(highTorus).toFixed(2)} as wide east-west as north-south in true lengths (cos 75° = ${Math.cos((75 * Math.PI) / 180).toFixed(2)})`,
+    highTorus.length > 0 && ratio(highTorus) < 0.5)
+})
+
+// A compute that throws in the worker releases what waits for it: the
+// runtime answers stageFailed for the stage (the screen releases it as a
+// decline, GeneratorScreen.handleStageFailed) and goes on answering. A
+// save's refinement that is not one (restored: {}) makes the climate
+// refinement throw.
+test('a compute that throws says so instead of leaving the screen waiting', async () => {
+  const p = await freshPipeline()
+  await growWorld(p)
+  p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
+  await until(() => p.count('climateData') >= 1, { label: 'the climate' })
+  const quietConsole = console.error
+  console.error = () => {}
+  try {
+    p.dispatch({ type: 'climateRefine', restored: {} })
+  } finally {
+    console.error = quietConsole
+  }
+  const failed = p.messages.filter((m) => m.type === 'stageFailed')
+  check(`a throwing refinement answers stageFailed for the climate (${failed.map((m) => m.error).join('; ')})`, failed.length === 1 && failed[0].stage === 'climate' && failed[0].error.length > 0)
+  p.dispatch({ type: 'hydrologyRun' })
+  await until(() => p.count('hydrologyData') >= 1 || p.count('stageFailed') > 1, { label: 'the hydrology after the failure', timeout: 60000 })
+  check('the pipeline goes on: the hydrology runs on the climate that stood', p.count('hydrologyData') === 1 && p.count('stageFailed') === 1)
 })
 
 // The sphere's coordinate noise (DEC-0035, fork 1): the warp, the ridged and

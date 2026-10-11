@@ -288,10 +288,13 @@ function sampleLandBilinear(field: Float32Array, grid: DomainGrid, wx: number, w
   const y0 = Math.floor(gy)
   const fx = gx - x0
   const fy = gy - y0
-  const x0m = grid.wrapCol(x0)
-  const y0m = grid.wrapRow(y0)
-  const x1m = grid.wrapCol(x0m + 1)
-  const y1m = grid.wrapRow(y0m + 1)
+  // The four corners through the grid's index: across a pole the corner is
+  // on the far meridian (row mirrored AND column half a turn round), which
+  // wrapRow alone missed on the sphere. The torus's cells are the same.
+  const i00 = grid.index(x0, y0)
+  const i10 = grid.index(x0 + 1, y0)
+  const i01 = grid.index(x0, y0 + 1)
+  const i11 = grid.index(x0 + 1, y0 + 1)
   let sum = 0
   let weight = 0
   const add = (index: number, w: number): void => {
@@ -301,10 +304,10 @@ function sampleLandBilinear(field: Float32Array, grid: DomainGrid, wx: number, w
       weight += w
     }
   }
-  add(y0m * RX + x0m, (1 - fx) * (1 - fy))
-  add(y0m * RX + x1m, fx * (1 - fy))
-  add(y1m * RX + x0m, (1 - fx) * fy)
-  add(y1m * RX + x1m, fx * fy)
+  add(i00, (1 - fx) * (1 - fy))
+  add(i10, fx * (1 - fy))
+  add(i01, (1 - fx) * fy)
+  add(i11, fx * fy)
   return weight > 0 ? sum / weight : fallback
 }
 
@@ -323,9 +326,10 @@ export function computeBiomesFine(temperature: Float32Array, precipitation: Floa
   const seaLevelTemp = seaLevelTemperature ?? reduceTemperatureToSeaLevel(temperature, elevation, worldWidth, worldHeight, dryLand)
   // An island's climate (climateField.zonalLandMean): its row's land mean.
   const onLand = (i: number): boolean => precipitation[i] >= 0
-  const islandPrecip = zonalLandMean(precipitation, onLand)
-  const islandAmp = zonalLandMean(seasonalAmplitude, onLand)
-  const islandSeason = zonalLandMean(seasonality, onLand)
+  const rowArea = (gy: number): number => grid.cellArea(gy)
+  const islandPrecip = zonalLandMean(precipitation, onLand, 0, rowArea)
+  const islandAmp = zonalLandMean(seasonalAmplitude, onLand, 0, rowArea)
+  const islandSeason = zonalLandMean(seasonality, onLand, 0, rowArea)
   const months = new Float64Array(12)
   const rain = new Float64Array(12)
   for (let wy = 0; wy < worldHeight; wy++) {
@@ -505,7 +509,7 @@ export function computeBiomesFineFromMonths(monthsT: Float32Array, monthsP: Floa
   const rain = scaledMonths(monthsP, months, precipitation)
   // An island's climate (climateField.zonalLandMean): each month's rain
   // over its row's land.
-  const islandRain = Array.from({ length: months }, (_, m) => zonalLandMean(rain, (i) => rain[m * n + i] >= 0, m * n))
+  const islandRain = Array.from({ length: months }, (_, m) => zonalLandMean(rain, (i) => rain[m * n + i] >= 0, m * n, (gy) => grid.cellArea(gy)))
   const biomes = new Uint8Array(worldWidth * worldHeight)
   const t = new Float64Array(12)
   const p = new Float64Array(12)

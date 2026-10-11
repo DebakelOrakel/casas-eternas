@@ -151,7 +151,7 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
         const ay = (y / height) * Math.PI * 2
         sx += detSin(ax); cx += detCos(ax); sy += detSin(ay); cy += detCos(ay)
       }
-      craton += coarse(input.cratonAge, c) * w
+      craton += Math.max(0, coarse(input.cratonAge, c)) * w
       hard += coarse(input.hardness, c) * w
     }
     let mx = ((detAtan2(sx, cx) / (Math.PI * 2)) + 1) % 1
@@ -203,7 +203,7 @@ export function findSedimentBasins(input: SedimentBasinInputs): SedimentBasinRes
       if (m < 0) continue
       const w = areaOf(c)
       count[m] += w
-      cratonSum[m] += coarse(input.cratonAge, c) * w
+      cratonSum[m] += Math.max(0, coarse(input.cratonAge, c)) * w
       hardSum[m] += coarse(input.hardness, c) * w
     }
     const fed = basins.map(() => ({ cells: 0, craton: 0, hard: 0 }))

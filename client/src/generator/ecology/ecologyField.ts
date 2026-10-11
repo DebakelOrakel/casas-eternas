@@ -11,19 +11,29 @@
 // it. Nothing here counts climate cells. The fields on the climate grid, which
 // the save and the migration read, are the fine ones averaged over each cell's
 // land.
+//
+// On both shapes (DEC-0035, fork 5; step 4f): a reach is a length — a row
+// whose pixels are narrower (DomainGrid.rowScale, cos φ on the sphere)
+// takes as many of its own as span it east-west, and the window steps
+// across a pole as the grid does; a mean weighs a pixel by its area; a
+// deposit's halo is a disc on the globe; the province and deposit noise is
+// the globe's (Domain.noise); the fields' pole rows come out one value, the
+// land's and the sea's apart. On the torus every weight is 1 and every step
+// the old one: its bits are as they were.
 
 import { CLIMATE_RES_X, CLIMATE_RES_Y, zonalLandMean } from '../climate/climateField'
 import { CLIMATE_TUNING } from '../climate/climateTuneParams'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { Biome, reduceTemperatureToSeaLevel } from '../climate/biomes'
 import { clamp01, smoothstep } from '../core/interpolation'
-import type { Domain, DomainGrid } from '../core/domain'
+import { globeFrame, type Domain, type DomainGrid } from '../core/domain'
 import { MAP_WIDTH, METERS_PER_CELL } from '../core/mapConfig'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { ECOLOGY_TUNING, PASTURE_BY_BIOME, TIMBER_BY_BIOME } from './ecologyTuneParams'
 import type { Volcano } from '../tectonics/volcanoes'
 import type { LandBiomeId } from './ecologyTuneParams'
-import { detExp, detHypot, detPow } from '../core/detMath'
+import { detAsin, detExp, detHypot, detPow, detSin } from '../core/detMath'
+import { globeOctave } from '../elevation/globeNoise'
 
 // Ocean sentinel for the output fields (matches the climate fields' convention):
 // a cell the ecology layer doesn't score (open water) reads -1.
@@ -163,21 +173,61 @@ function seaMixing(tempC: number): number {
 // A reach in metres as a radius in pixels (at least one).
 const reachPx = (metres: number, metresPerPx: number): number => Math.max(1, Math.round(metres / metresPerPx))
 
-// The largest value within `r` pixels (a square, wrapped by the grid):
-// "is there water / a rich sea within reach". Two passes, rows then columns;
-// the wrapped taps from the grid's tables.
+// A reach of `r` equator pixels in row y's own pixels: as many as span the
+// length east-west (1 / rowScale of it), up to the whole row but one — a
+// row near a pole is a small circle the reach spans many times. `r` on the
+// torus.
+const rowReach = (grid: DomainGrid, y: number, r: number): number => Math.min((grid.resX - 1) >> 1, Math.round(r / grid.rowScale(y)))
+
+// The rows a window reaches north and south, for the hot loops: for every
+// row y in [-margin, resY + margin), at [y + margin], the start index of
+// the row it lands on and the column shift that goes with it — resX / 2
+// beyond a pole of the sphere (the far meridian), 0 on the torus, where
+// `start` is DomainGrid.rowTable. (The sphere's rowTable refuses a margin:
+// it cannot say the shift.)
+interface RowSteps {
+  start: Int32Array
+  shift: Int32Array
+}
+function rowSteps(grid: DomainGrid, margin: number): RowSteps {
+  const { resX: w, resY: h } = grid
+  const start = new Int32Array(h + 2 * margin)
+  const shift = new Int32Array(h + 2 * margin)
+  for (let k = 0; k < start.length; k++) {
+    const i = grid.index(0, k - margin)
+    const c = i % w
+    start[k] = i - c
+    shift[k] = c
+  }
+  return { start, shift }
+}
+// The cell of column x in the row at [k] of `steps`.
+function stepCell(steps: RowSteps, k: number, x: number, w: number): number {
+  const s = steps.shift[k]
+  if (s === 0) return steps.start[k] + x
+  return steps.start[k] + (x + s < w ? x + s : x + s - w)
+}
+
+// The largest value within `r` pixels (a square of 2r + 1 equator pixels,
+// wrapped by the grid): "is there water / a rich sea within reach". Two
+// passes, rows (each its own reach, rowReach) then columns (across a pole
+// as the grid steps); the wrapped taps from the tables.
 function maxWithin(src: Float32Array, grid: DomainGrid, r: number): Float32Array {
   const { resX: w, resY: h } = grid
-  const cols = grid.colTable(r)
-  const rowAt = grid.rowTable(r)
+  const reach = new Int32Array(h)
+  let widest = 0
+  for (let y = 0; y < h; y++) widest = Math.max(widest, (reach[y] = rowReach(grid, y, r)))
+  const cols = grid.colTable(widest)
+  const steps = rowSteps(grid, r)
   const rows = new Float32Array(src.length)
   for (let y = 0; y < h; y++) {
     const row = y * w
+    const rr = reach[y]
     for (let x = 0; x < w; x++) {
       let m = src[row + x]
-      for (let d = 1; d <= r; d++) {
-        const a = src[row + cols[x - d + r]]
-        const b = src[row + cols[x + d + r]]
+      for (let d = 1; d <= rr; d++) {
+        const a = src[row + cols[x - d + widest]]
+        const b = src[row + cols[x + d + widest]]
         if (a > m) m = a
         if (b > m) m = b
       }
@@ -189,8 +239,8 @@ function maxWithin(src: Float32Array, grid: DomainGrid, r: number): Float32Array
     for (let x = 0; x < w; x++) {
       let m = rows[y * w + x]
       for (let d = 1; d <= r; d++) {
-        const a = rows[rowAt[y - d + r] + x]
-        const b = rows[rowAt[y + d + r] + x]
+        const a = rows[stepCell(steps, y - d + r, x, w)]
+        const b = rows[stepCell(steps, y + d + r, x, w)]
         if (a > m) m = a
         if (b > m) m = b
       }
@@ -200,32 +250,55 @@ function maxWithin(src: Float32Array, grid: DomainGrid, r: number): Float32Array
   return out
 }
 
-// The mean within `r` pixels (a square, wrapped by the grid): "how much of
-// the land around is sea". Running sums, rows then columns; the wrapped taps
-// from the grid's tables.
+// The mean within `r` pixels (a square of 2r + 1 equator pixels, wrapped by
+// the grid): "how much of the land around is sea". Running sums, rows then
+// columns, as maxWithin's windows. The column pass weighs each row's mean
+// by the length its window covers, (2 rr + 1) · rowScale against 2r + 1:
+// the window's rows are then its area's — 1 for every row but those whose
+// whole circle is shorter than the reach (near a pole), and 1 on the torus,
+// where the sums are the plain ones.
 function meanWithin(src: Float32Array, grid: DomainGrid, r: number): Float32Array {
   const { resX: w, resY: h } = grid
-  const m = r + 1
+  const reach = new Int32Array(h)
+  const weight = new Float64Array(h)
+  let widest = 0
+  for (let y = 0; y < h; y++) {
+    widest = Math.max(widest, (reach[y] = rowReach(grid, y, r)))
+    weight[y] = ((2 * reach[y] + 1) * grid.rowScale(y)) / (2 * r + 1)
+  }
+  const m = widest + 1
   const cols = grid.colTable(m)
-  const rowAt = grid.rowTable(m)
-  const span = 2 * r + 1
+  const steps = rowSteps(grid, r + 1)
   const rows = new Float32Array(src.length)
   for (let y = 0; y < h; y++) {
     const row = y * w
+    const rr = reach[y]
+    const span = 2 * rr + 1
     let sum = 0
-    for (let d = -r; d <= r; d++) sum += src[row + cols[d + m]]
+    for (let d = -rr; d <= rr; d++) sum += src[row + cols[d + m]]
     for (let x = 0; x < w; x++) {
       rows[row + x] = sum / span
-      sum += src[row + cols[x + r + 1 + m]] - src[row + cols[x - r + m]]
+      sum += src[row + cols[x + rr + 1 + m]] - src[row + cols[x - rr + m]]
     }
   }
+  // The weight of the row at [k] of `steps` (the row it lands on).
+  const weightAt = new Float64Array(steps.start.length)
+  for (let k = 0; k < weightAt.length; k++) weightAt[k] = weight[steps.start[k] / w]
+  const m2 = r + 1
   const out = new Float32Array(src.length)
   for (let x = 0; x < w; x++) {
     let sum = 0
-    for (let d = -r; d <= r; d++) sum += rows[rowAt[d + m] + x]
+    let total = 0
+    for (let d = -r; d <= r; d++) {
+      sum += rows[stepCell(steps, d + m2, x, w)] * weightAt[d + m2]
+      total += weightAt[d + m2]
+    }
     for (let y = 0; y < h; y++) {
-      out[y * w + x] = sum / span
-      sum += rows[rowAt[y + r + 1 + m] + x] - rows[rowAt[y - r + m] + x]
+      out[y * w + x] = sum / total
+      const kIn = y + r + 1 + m2
+      const kOut = y - r + m2
+      sum += rows[stepCell(steps, kIn, x, w)] * weightAt[kIn] - rows[stepCell(steps, kOut, x, w)] * weightAt[kOut]
+      total += weightAt[kIn] - weightAt[kOut]
     }
   }
   return out
@@ -261,14 +334,12 @@ class ClimatePixel {
     const y0 = Math.floor(gy)
     const fx = gx - x0
     const fy = gy - y0
-    const x0m = climate.wrapCol(x0)
-    const y0m = climate.wrapRow(y0)
-    const x1m = climate.wrapCol(x0m + 1)
-    const y1m = climate.wrapRow(y0m + 1)
-    this.idx[0] = y0m * CLIMATE_RES_X + x0m
-    this.idx[1] = y0m * CLIMATE_RES_X + x1m
-    this.idx[2] = y1m * CLIMATE_RES_X + x0m
-    this.idx[3] = y1m * CLIMATE_RES_X + x1m
+    // The corners through the grid: across a pole the row beyond lies on
+    // the far meridian (the torus: the wrapped row and column).
+    this.idx[0] = climate.index(x0, y0)
+    this.idx[1] = climate.index(x0 + 1, y0)
+    this.idx[2] = climate.index(x0, y0 + 1)
+    this.idx[3] = climate.index(x0 + 1, y0 + 1)
     this.wt[0] = (1 - fx) * (1 - fy)
     this.wt[1] = fx * (1 - fy)
     this.wt[2] = (1 - fx) * fy
@@ -293,7 +364,7 @@ class ClimatePixel {
     let byOffset = byMask.get(mask)
     if (!byOffset) byMask.set(mask, (byOffset = new Map()))
     let means = byOffset.get(offset)
-    if (!means) byOffset.set(offset, (means = zonalLandMean(field, (i) => mask[i] === 1, offset)))
+    if (!means) byOffset.set(offset, (means = zonalLandMean(field, (i) => mask[i] === 1, offset, (gy) => this.climate.cellArea(gy))))
     return means[Math.floor(this.cell / CLIMATE_RES_X)]
   }
   get coarseCell(): number {
@@ -313,6 +384,8 @@ export interface EcologyBase {
   grid: DomainGrid
   climate: DomainGrid
   land: Uint8Array
+  // 1 where `land` is 0: the fish's sea, whose pole rows are averaged apart.
+  sea: Uint8Array
   coarseLand: Uint8Array
   raw: Record<Exclude<EcologyFieldId, 'carryingCapacity' | 'tin' | 'gems'>, Float32Array>
   // Gems' two parts (the copper they weather from is scaled by the slider).
@@ -369,9 +442,10 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
   const { width: w, height: h } = domain
   const grid = domain.grid(w, h)
   const climate = domain.grid(CLIMATE_RES_X, CLIMATE_RES_Y)
-  // A pixel's four neighbours, wrapped (colTable(1), rowTable(1)).
+  // A pixel's four neighbours, wrapped (colTable(1), and the rows across
+  // a pole: rowSteps(1)).
   const cols1 = grid.colTable(1)
-  const rows1 = grid.rowTable(1)
+  const rows1 = rowSteps(grid, 1)
   const T = ECOLOGY_TUNING
   const n = w * h
   const nc = CLIMATE_RES_X * CLIMATE_RES_Y
@@ -489,22 +563,29 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
   for (const o of oases) {
     const cx = Math.floor(o.x)
     const cy = Math.floor(o.y)
-    for (let dy = -waterR; dy <= waterR; dy++) for (let dx = -waterR; dx <= waterR; dx++) oasis[grid.index(cx + dx, cy + dy)] = 1
+    for (let dy = -waterR; dy <= waterR; dy++) {
+      const rr = rowReach(grid, cy + dy, waterR)
+      for (let dx = -rr; dx <= rr; dx++) oasis[grid.neighbour(cx, cy, dx, dy)] = 1
+    }
   }
 
   // How much of the land around differs in biome (game's edges): per pixel
   // the share of its four neighbours of another biome, averaged within reach.
+  // A boundary's length per area: the face to an east or west neighbour is
+  // a pixel high and the pixel rowScale wide, so it counts 1 / rowScale (1
+  // on the torus).
   const differs = new Float32Array(n)
   for (let y = 0; y < h; y++) {
+    const across = 1 / grid.rowScale(y)
     for (let x = 0; x < w; x++) {
       const i = y * w + x
       if (!land[i]) continue
       const b = biomeAt[i]
       let d = 0
-      if (biomeAt[y * w + cols1[x + 2]] !== b) d++
-      if (biomeAt[y * w + cols1[x]] !== b) d++
-      if (biomeAt[rows1[y + 2] + x] !== b) d++
-      if (biomeAt[rows1[y] + x] !== b) d++
+      if (biomeAt[y * w + cols1[x + 2]] !== b) d += across
+      if (biomeAt[y * w + cols1[x]] !== b) d += across
+      if (biomeAt[stepCell(rows1, y + 2, x, w)] !== b) d++
+      if (biomeAt[stepCell(rows1, y, x, w)] !== b) d++
       differs[i] = d / 4
     }
   }
@@ -530,6 +611,8 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
     nppYear: new Float32Array(n), saltCoast: new Float32Array(n), access: new Float32Array(n), freshwater: new Float32Array(n),
   } : null
   for (let y = 0; y < h; y++) {
+    // The east-west neighbours are rowScale apart (1 on the torus).
+    const across = grid.rowScale(y)
     for (let x = 0; x < w; x++) {
       const i = y * w + x
       if (!land[i]) continue
@@ -538,8 +621,8 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
 
       // The pixel's slope, as a rise across a climate cell's length.
       const e = elevation
-      const dx = e[y * w + cols1[x + 2]] - e[y * w + cols1[x]]
-      const dy = e[rows1[y + 2] + x] - e[rows1[y] + x]
+      const dx = (e[y * w + cols1[x + 2]] - e[y * w + cols1[x]]) / across
+      const dy = e[stepCell(rows1, y + 2, x, w)] - e[stepCell(rows1, y, x, w)]
       const flat = 1 / (1 + T.slopeK * detHypot(dx, dy) * 0.5 * pxPerCell)
       flatness[i] = flat
 
@@ -623,12 +706,12 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
   // fluctuates instead of reading as a flat 100%), plus bog iron in wetlands.
   const iron = new Float32Array(n)
   const ironSeed = (warpSeed ^ 0x51ed2701) | 0
-  const ironLattice = domain.grid(T.ironDepositFreqX, T.ironDepositFreqY)
+  const ironNoise = noiseSampler(domain, T.ironDepositFreqX, T.ironDepositFreqY, ironSeed)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x
       if (!land[i]) continue
-      const noise01 = (provinceNoise((x + 0.5) / w, (y + 0.5) / h, ironLattice, ironSeed) + 1) / 2
+      const noise01 = (ironNoise(x, y) + 1) / 2
       const deposit = T.ironDepositFloor + (1 - T.ironDepositFloor) * noise01
       iron[i] = clamp01(Math.max(T.ironCratonW * craton[i] * deposit, T.ironBogW * wetland[i]))
     }
@@ -653,18 +736,20 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
   // a light seeded noise.
   const volcanic = rasterisePointField(volcanoes, T.volcanicProvinceRadiusFrac, grid)
   const provinceDeviation = new Float32Array(n)
-  const provinceLattice = domain.grid(T.provinceNoiseFreqX, T.provinceNoiseFreqY)
+  const provinceNoiseAt = noiseSampler(domain, T.provinceNoiseFreqX, T.provinceNoiseFreqY, warpSeed)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x
       if (!land[i]) continue
-      const noise = provinceNoise((x + 0.5) / w, (y + 0.5) / h, provinceLattice, warpSeed)
+      const noise = provinceNoiseAt(x, y)
       provinceDeviation[i] = T.volcanicWeight * volcanic[i] + T.noiseWeight * noise
     }
   }
 
+  const seaMask = new Uint8Array(n)
+  for (let i = 0; i < n; i++) seaMask[i] = land[i] ? 0 : 1
   return {
-    w, h, grid, climate, land, coarseLand,
+    w, h, grid, climate, land, sea: seaMask, coarseLand,
     raw: { arable, fish, game, pasture, timber, salt, toolStone, copper, iron, gold, silver },
     gemBelt, aridity,
     tinPoints: thinPoints(orogenPoints, T.tinKeep, warpSeed ^ 0x71b2a903),
@@ -710,6 +795,8 @@ export function ecologyMonth(eco: EcologyBase, field: SeasonalEcologyFieldId, mo
     }
     const near = maxWithin(rich, eco.grid, S.coastR)
     for (let i = 0; i < n; i++) if (land[i]) out[i] = weight * (1 - detExp(-(S.access[i] * near[i] + S.freshwater[i])))
+    eco.grid.averagePoleRows(out, land)
+    eco.grid.averagePoleRows(out, eco.sea)
     return out
   }
   const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precipMm / T.saltAridPrecip) * clamp01(tempC / 25)
@@ -729,6 +816,7 @@ export function ecologyMonth(eco: EcologyBase, field: SeasonalEcologyFieldId, mo
       out[i] = weight * v
     }
   }
+  eco.grid.averagePoleRows(out, land)
   return out
 }
 
@@ -764,7 +852,7 @@ export function applyEcology(eco: EcologyBase, params: EcologyParams): EcologyFi
     if (!land[i]) continue
     base[i] = 1 - detExp(-(T.wArable * arable[i] + T.wFish * fish[i] + T.wGame * game[i] + T.wPasture * pasture[i] + T.wSaltCc * salt[i]))
   }
-  const carryingCapacity = concentrationPipeline(base, land, eco.provinceDeviation, params)
+  const carryingCapacity = concentrationPipeline(base, land, eco.provinceDeviation, params, eco.grid)
 
   const timber = scaled(raw.timber, 'timber')
   const toolStone = scaled(raw.toolStone, 'toolStone')
@@ -787,25 +875,37 @@ export function applyEcology(eco: EcologyBase, params: EcologyParams): EcologyFi
     for (let i = 0; i < n; i++) if (!land[i]) f[i] = ECOLOGY_OCEAN
   }
 
+  // A pole row is one value, its land's and (the fish) its sea's apart,
+  // on both grids (fork 5; nothing happens on the torus).
+  for (const id of ECOLOGY_FIELD_IDS) {
+    eco.grid.averagePoleRows(fine[id], land)
+    if (id === 'fish') eco.grid.averagePoleRows(fine[id], eco.sea)
+  }
   const coarse = {} as Record<EcologyFieldId, Float32Array>
-  for (const id of ECOLOGY_FIELD_IDS) coarse[id] = toClimateCells(fine[id], land, coarseLand, w, h)
+  for (const id of ECOLOGY_FIELD_IDS) {
+    coarse[id] = toClimateCells(fine[id], land, coarseLand, eco.grid)
+    eco.climate.averagePoleRows(coarse[id], coarseLand)
+  }
   return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: coarse, fine: { resX: w, resY: h, fields: fine } }
 }
 
-// A fine field averaged over each climate cell's land pixels; ECOLOGY_OCEAN on
-// the cells the climate calls sea, 0 on a land cell without a land pixel.
-function toClimateCells(field: Float32Array, land: Uint8Array, coarseLand: Uint8Array, w: number, h: number): Float32Array {
+// A fine field averaged over each climate cell's land pixels, each by its
+// area (`grid`'s cellArea: 1 on the torus); ECOLOGY_OCEAN on the cells the
+// climate calls sea, 0 on a land cell without a land pixel.
+function toClimateCells(field: Float32Array, land: Uint8Array, coarseLand: Uint8Array, grid: DomainGrid): Float32Array {
+  const { resX: w, resY: h } = grid
   const nc = CLIMATE_RES_X * CLIMATE_RES_Y
   const sum = new Float64Array(nc)
   const count = new Float64Array(nc)
   for (let y = 0; y < h; y++) {
     const gy = Math.min(CLIMATE_RES_Y - 1, Math.floor((y / h) * CLIMATE_RES_Y))
+    const a = grid.cellArea(y)
     for (let x = 0; x < w; x++) {
       const i = y * w + x
       if (!land[i]) continue
       const c = gy * CLIMATE_RES_X + Math.min(CLIMATE_RES_X - 1, Math.floor((x / w) * CLIMATE_RES_X))
-      sum[c] += field[i]
-      count[c]++
+      sum[c] += field[i] * a
+      count[c] += a
     }
   }
   const out = new Float32Array(nc)
@@ -837,10 +937,15 @@ function maskToLand(field: Float32Array, land: Uint8Array): Float32Array {
 
 // --- concentration pipeline (verified in Phase 1) ---------------------------
 
-function landMean(field: Float32Array, land: Uint8Array): number {
+// By area (`grid`'s cellArea: 1 on the torus, where it is the plain mean).
+function landMean(field: Float32Array, land: Uint8Array, grid: DomainGrid): number {
+  const { resX: w, resY: h } = grid
   let sum = 0
   let count = 0
-  for (let i = 0; i < field.length; i++) if (land[i]) { sum += field[i]; count += 1 }
+  for (let y = 0; y < h; y++) {
+    const a = grid.cellArea(y)
+    for (let i = y * w; i < (y + 1) * w; i++) if (land[i]) { sum += field[i] * a; count += a }
+  }
   return count > 0 ? sum / count : 0
 }
 
@@ -852,6 +957,24 @@ function hashLattice(ix: number, iy: number, seed: number): number {
   hsh = (hsh ^ (hsh >>> 13)) * 1274126177
   hsh = hsh ^ (hsh >>> 16)
   return (hsh >>> 0) / 4294967295
+}
+// The noise at world pixel (x, y)'s centre, in [-1, 1], at a lattice of
+// freqX × freqY cells over the world: the periodic chart lattice on the
+// torus (provinceNoise), the globe's 3D lattice on the sphere (Domain.noise
+// — one value at a pole, no seam, as rough east-west as north-south), of
+// the same cell size along the equator.
+function noiseSampler(domain: Domain, freqX: number, freqY: number, seed: number): (x: number, y: number) => number {
+  const space = domain.noise
+  const { width: w, height: h } = domain
+  if (space.kind === 'chart') {
+    const lattice = domain.grid(freqX, freqY)
+    return (x, y) => provinceNoise((x + 0.5) / w, (y + 0.5) / h, lattice, seed)
+  }
+  const frame = globeFrame()
+  return (x, y) => {
+    space.frame(x + 0.5, y + 0.5, frame)
+    return globeOctave(frame, freqX, w, seed) * 2 - 1
+  }
 }
 function provinceNoise(u: number, v: number, lattice: DomainGrid, seed: number): number {
   const gx = u * lattice.resX
@@ -869,11 +992,25 @@ function provinceNoise(u: number, v: number, lattice: DomainGrid, seed: number):
   return (top + (bottom - top) * fy) * 2 - 1
 }
 
+// asin(z) for the halos' arcs: below 0.25 by its series to z⁹ (a halo's
+// reach, 3σ, is under 0.24 rad for every radiusFrac up to 0.05; the first
+// term left out is 2e-8 of the value there), else detAsin — which was a
+// third of a stamp's time on the sphere.
+function asinOfHalfChord(z: number): number {
+  if (z >= 0.25) return detAsin(Math.min(1, z))
+  const z2 = z * z
+  return z * (1 + z2 * (1 / 6 + z2 * (3 / 40 + z2 * (5 / 112 + z2 * (35 / 1152)))))
+}
+
 // Rasterises a soft Gaussian "influence" field (0..1, union-max) around a set of
 // world-space points onto the raster `grid` the points are given in — reused for
 // volcanic-soil provinces, copper (arc volcanoes), tin (sutures), obsidian, etc.
 // Radius as a fraction of the smaller world dimension; stamps within three
-// radii of each point only, so cost is O(points).
+// radii of each point only, so cost is O(points). The torus measures in the
+// chart, whose pixels are square; the sphere on the globe (the distance on
+// it, the cells of the disc's box, DomainGrid.discBox), so a halo is a disc
+// at every latitude and one across a pole. `grid` lies over its domain one
+// pixel per unit.
 function rasterisePointField(points: { x: number; y: number }[], radiusFrac: number, grid: DomainGrid): Float32Array {
   const { resX: w, resY: h } = grid
   const field = new Float32Array(w * h)
@@ -881,6 +1018,62 @@ function rasterisePointField(points: { x: number; y: number }[], radiusFrac: num
   const radius = Math.min(w, h) * radiusFrac
   const reach = Math.ceil(radius * 3)
   const inv2r2 = 1 / (2 * radius * radius)
+  const space = grid.domain.noise
+  if (space.kind === 'globe') {
+    // The distance on the globe from the cells' and the point's positions
+    // (GlobeNoise.frame, R · u): the arc 2R asin(c / 2) of the chord c
+    // between the unit vectors. A cell's position is separable — its row's
+    // sin and cos of the colatitude (the frame at longitude 0) times its
+    // column's direction (the frame's east axis is (−sin λ, cos λ, 0)) —
+    // so the tables are made once per call. Domain.distanceSq, whose point
+    // cache a stamp of 10⁵ cells thrashes, made prepareEcology 6× the
+    // torus's (2026-10-11, 200 volcanoes at 2048 × 1024: 10.0 s against
+    // 1.7); now 2.8 s.
+    const R = space.radius
+    const frame = globeFrame()
+    const st = new Float64Array(h)
+    const ct = new Float64Array(h)
+    for (let y = 0; y < h; y++) {
+      space.frame(0, y + 0.5, frame)
+      st[y] = frame.px / R
+      ct[y] = frame.pz / R
+    }
+    const cl = new Float64Array(w)
+    const sl = new Float64Array(w)
+    for (let x = 0; x < w; x++) {
+      space.frame(x + 0.5, h / 2, frame)
+      cl[x] = frame.ey
+      sl[x] = -frame.ex
+    }
+    const box = { x0: 0, x1: 0, y0: 0, y1: 0 }
+    const chordReach = 2 * detSin(Math.min(Math.PI / 2, reach / (2 * R)))
+    const chordReach2 = chordReach * chordReach
+    for (const v of points) {
+      space.frame(v.x, v.y, frame)
+      const ux = frame.px / R
+      const uy = frame.py / R
+      const uz = frame.pz / R
+      grid.discBox(v.x, v.y, reach, box)
+      for (let gy = box.y0; gy <= box.y1; gy++) {
+        const row = grid.index(0, gy)
+        const shift = row % w
+        const y = (row - shift) / w
+        const dz = ct[y] - uz
+        for (let gx = box.x0; gx <= box.x1; gx++) {
+          const x = grid.wrapCol(gx + shift)
+          const dx = st[y] * cl[x] - ux
+          const dy = st[y] * sl[x] - uy
+          const c2 = dx * dx + dy * dy + dz * dz
+          if (c2 > chordReach2) continue
+          const arc = 2 * R * asinOfHalfChord(Math.sqrt(c2) / 2)
+          const bump = detExp(-(arc * arc) * inv2r2)
+          const i = y * w + x
+          if (bump > field[i]) field[i] = bump
+        }
+      }
+    }
+    return field
+  }
   for (const v of points) {
     const cx = Math.floor(v.x)
     const cy = Math.floor(v.y)
@@ -901,29 +1094,29 @@ function rasterisePointField(points: { x: number; y: number }[], radiusFrac: num
 // Runs the base subsistence aggregate through `normalise → L1 gamma
 // (mean-preserving) → L2 province (mean-1) → gain`, so carrying capacity's gain
 // changes only the level and concentration only the shape. Verified in Phase 1.
-function concentrationPipeline(base: Float32Array, land: Uint8Array, dev: Float32Array, params: EcologyParams): Float32Array {
+function concentrationPipeline(base: Float32Array, land: Uint8Array, dev: Float32Array, params: EcologyParams, grid: DomainGrid): Float32Array {
   const n = base.length
   let maxBase = 0
   for (let i = 0; i < n; i++) if (land[i] && base[i] > maxBase) maxBase = base[i]
   const norm = new Float32Array(n)
   if (maxBase > 0) for (let i = 0; i < n; i++) if (land[i]) norm[i] = base[i] / maxBase
-  const meanNorm = landMean(norm, land)
+  const meanNorm = landMean(norm, land, grid)
 
   const gamma = detPow(2, params.concentration / 100)
   const shaped = new Float32Array(n)
   for (let i = 0; i < n; i++) if (land[i]) shaped[i] = detPow(norm[i], gamma)
-  const meanShaped = landMean(shaped, land)
+  const meanShaped = landMean(shaped, land, grid)
   const l1Scale = meanShaped > 0 ? meanNorm / meanShaped : 1
   for (let i = 0; i < n; i++) if (land[i]) shaped[i] *= l1Scale
 
   const strength = params.provinceStrength
-  const meanDev = landMean(dev, land)
+  const meanDev = landMean(dev, land, grid)
   const provincal = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
     provincal[i] = shaped[i] * Math.max(0.1, 1 + strength * (dev[i] - meanDev))
   }
-  const meanProv = landMean(provincal, land)
+  const meanProv = landMean(provincal, land, grid)
   const l2Scale = meanProv > 0 ? meanNorm / meanProv : 1
 
   const gain = params.carryingCapacity / 100

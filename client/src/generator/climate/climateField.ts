@@ -21,8 +21,12 @@ export const CLIMATE_RES_Y = 128
 //
 // The mean of `field` (from `offset`, one climate grid of it) over the
 // cells `isLand` marks, per climate row; a row without land takes the mean
-// of all land, a world without land 0.
-export function zonalLandMean(field: ArrayLike<number>, isLand: (i: number) => boolean, offset = 0): Float32Array {
+// of all land, a world without land 0. `rowArea`: a cell's area in a row
+// (DomainGrid.cellArea), for that mean of all land — 1 on the torus, cos φ
+// on the sphere, whose polar rows' cells counted whole made the polar land
+// weigh as much as the equator's. A row's own mean needs none: its cells
+// are all one size.
+export function zonalLandMean(field: ArrayLike<number>, isLand: (i: number) => boolean, offset = 0, rowArea?: (gy: number) => number): Float32Array {
   const out = new Float32Array(CLIMATE_RES_Y)
   const rowHas = new Uint8Array(CLIMATE_RES_Y)
   let total = 0
@@ -40,8 +44,9 @@ export function zonalLandMean(field: ArrayLike<number>, isLand: (i: number) => b
       out[gy] = sum / count
       rowHas[gy] = 1
     }
-    total += sum
-    totalCount += count
+    const a = rowArea ? rowArea(gy) : 1
+    total += sum * a
+    totalCount += count * a
   }
   const fallback = totalCount > 0 ? total / totalCount : 0
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) if (!rowHas[gy]) out[gy] = fallback

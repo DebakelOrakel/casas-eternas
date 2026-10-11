@@ -23,7 +23,7 @@ summary.de: Wie Torus und Kugel einen Generator und einen Screen teilen, ohne si
 area: generator
 stage: decided
 createdAt: 2026-10-09
-updatedAt: 2026-10-10
+updatedAt: 2026-10-11
 related: [DES-0017, DEC-0029, DEC-0015, DEC-0024, DES-0025]
 ---
 
@@ -187,11 +187,71 @@ models' usual remedy.
 
 ## Status
 
+2026-10-11: STEP 4 OPEN on the sphere — the ecology step runs on a
+sphere world (step 4f): its resources and the carrying capacity, the
+months of the seasonal ones, painted into the globe's textures as on the
+map (the layer has no point marks; the migration's origins and arrows are
+the migration's, which stays locked with the finishing step). A load's
+catch-up computes it again. A compute that throws in the worker no longer
+leaves the screen waiting (see 4f).
+
+2026-10-11: step 4f BUILT — the ecology runs on the sphere through the
+runtime: ecologyRun and ecologyMonth (`ecology/ecologyField.ts`). THE
+WINDOWS: "within reach" (the sea's share, the shelf, the richest sea, the
+rivers, lakes and wells, the placers, the ecotones) is a square of 2r + 1
+equator pixels — a row takes as many of its own pixels as span it
+east-west (1 / rowScale, the whole row but one at most) and the window
+steps across a pole as the grid does (`rowSteps`: the row and the column
+shift beyond a pole, which the sphere's rowTable cannot say); the mean
+weighs each row by the length its window covers. The oases' gardens the
+same. THE PIXEL: the slope's east-west rise over rowScale; an ecotone's
+east-west face counts 1 / rowScale (a boundary's length per area); the
+climate read bilinearly through the grid's index, across a pole on the
+far meridian. THE DEPOSITS: a halo (copper, tin, silver, obsidian, gold,
+gems, the volcanic soil) is a Gaussian on the globe's distance over the
+cells of the disc's box (`DomainGrid.discBox`), the arc from the chord
+between the cells' and the point's globe positions (`GlobeNoise.frame`,
+in tables per row and column: Domain.distanceSq's point cache thrashed
+at 10⁵ cells a stamp, prepareEcology 10.0 s against the torus's 1.7 at
+2048 × 1024 with 200 volcanoes; now 2.8 s); the torus keeps its chart
+square. THE NOISE: the province and the iron deposits sample the globe's
+3D lattice (`globeOctave`, the branch on `Domain.noise`; the chart
+lattice's odd column counts were also no sphere grid). THE MEANS: the
+concentration's land means and the climate cells' averages by area; every
+field's pole rows one value, the land's and the fish's sea apart, on both
+grids and in a month. The sediment basins' craton age clamps the oldness
+field's −1 'no crust' marker to 0, as the column's sources do (decided
+2026-10-11; golden's `sediment.basins` moved on its three worlds, and
+only it). THE FAILURE: a compute handler that throws (the climate's two
+runs, the hydrology, the ecology and its month, the migration) answers
+`stageFailed` with the stage and the error (`pipeline/runtime.ts`
+`dispatch`; the hydrology's async pass by its catch); the screen logs it
+and releases the stage as a decline, so a load's or a save's chain goes
+on. This was how a sphere save's load hung: the old ecology threw on the
+sphere's rowTable and the screen waited forever. PROOF: `harness:pipeline`
+runs a sphere world's history and climate step, then ecologyRun and two
+months through the runtime: nothing failed, 14 fields finite on both
+grids, 30 fields one value along each pole row (land and sea apart), no
+seam at x = 0 / W, the carrying capacity by |latitude| 0.27 / 0.30 /
+0.29 / 0.08 (0–30–55–70–90°), the game 0.19 → 0.01, the arable 0.13 →
+0.005, the sea's fish 0.12; with the ecology before this step the run
+answers stageFailed with the rowTable's error (the mutation). On the
+module, a world of land at 1024 × 512: a copper halo at 75° is as wide
+east-west as north-south on the globe, 0.97, its half-maximum 12.2 /
+12.5 px against σ√(2 ln 2) = 12.1 (the equator 1.00); drawn in the chart
+(the torus over the same pixels) 0.26, cos 75°. A refinement that throws
+answers stageFailed and the hydrology runs after it. Golden harness
+byte-identical against hashes re-armed with the basins' clamp.
+
 2026-10-11: SPHERE SAVES OPEN — the screen opens `kind: SphereWorld` and
 restores it on the sphere: the save's kind gives the shape (the snapshots
 do not carry it) to the Archean's and the plates' deserializers, and to a
-replay's plan. A loaded sphere world goes on as the saved one does (one
-epoch, the same bytes; pipeline harness). The job worker still replays a
+replay's plan. A loaded sphere world renders the world that was saved
+and goes on (pipeline harness). Not to the saved one's bytes: a restore
+runs its climate on its first epoch, an unbroken run every third — the
+torus's restores behave the same (corrected 2026-10-11; the first check
+compared the bytes and passed only when the next epoch was a climate
+epoch anyway). The job worker still replays a
 torus only — the refinement jobs are not open on the sphere.
 
 2026-10-11: THE WIND'S AND THE CURRENTS' MARKS are placed symbols on both

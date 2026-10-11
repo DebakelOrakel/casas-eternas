@@ -60,7 +60,7 @@ import { applyEcology, ecologyMonth, encodeFineField, isSeasonalEcologyField, pr
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerClimateRefineProgressMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerClimateRefineProgressMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
@@ -369,6 +369,14 @@ function decline(stage: StageId, needs?: StageId): true {
   const message: WorkerStageDeclinedMessage = { type: 'stageDeclined', stage, needs }
   emit(message)
   return true
+}
+
+// A stage's compute threw: said to the screen (WorkerStageFailedMessage),
+// which releases what waits for it, and logged here with its stack.
+function fail(stage: StageId, error: unknown): void {
+  console.error(`[generator] the ${stage} stage failed`, error)
+  const message: WorkerStageFailedMessage = { type: 'stageFailed', stage, error: error instanceof Error ? error.message : String(error) }
+  emit(message)
 }
 
 // Event markers no longer live here — they moved to the main thread as
@@ -1195,7 +1203,7 @@ function handleHydrologyRun(): void {
     transfer.push(hydrologyMessage.coastType, hydrologyMessage.iceThickness, hydrologyMessage.waterTable)
     if (hydrologyMessage.coast) transfer.push(hydrologyMessage.coast.cells)
     emit(hydrologyMessage, transfer)
-  })().finally(() => { hydrologyInFlight = false })
+  })().catch((error: unknown) => fail('hydrology', error)).finally(() => { hydrologyInFlight = false })
 }
 
 function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecologyRun' }>): void {
@@ -1769,6 +1777,22 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
   emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.koppen, preview.biomes])
 }
 
+// The stage whose compute a message runs, where a failure must reach the
+// screen: it waits for the answer (the climate's two runs, the hydrology,
+// the ecology and its month, the migration).
+const COMPUTE_STAGE: Partial<Record<WorkerInboundMessage['type'], StageId>> = {
+  climateRun: 'climate', climateRefine: 'climate', hydrologyRun: 'hydrology', ecologyRun: 'ecology', ecologyMonth: 'ecology', migrationRun: 'migration',
+}
+
 export function dispatch(message: WorkerInboundMessage): void {
-  HANDLERS[message.type](message)
+  const stage = COMPUTE_STAGE[message.type]
+  if (!stage) {
+    HANDLERS[message.type](message)
+    return
+  }
+  try {
+    HANDLERS[message.type](message)
+  } catch (error) {
+    fail(stage, error)
+  }
 }
