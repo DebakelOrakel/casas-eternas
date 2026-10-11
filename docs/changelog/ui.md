@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-11
+- **new** Generator: a saved sphere world can be opened again, and goes on where it was saved. `generator.load`
 - **changed** Overlays: wind streaks and current arrows are placed on the map and the globe and keep their shape toward the poles. `generator.step.climate`
 
 ## 2026-10-10

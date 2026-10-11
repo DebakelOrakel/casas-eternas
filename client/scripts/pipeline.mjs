@@ -660,6 +660,39 @@ test('a sphere world runs its history through the runtime', async () => {
   const mesh = MS.decodeMesh(D.sphereDomain(W, H), { count: z.length, nodes: new Float32Array(saved.mesh.nodes), connectivity: new Uint8Array(saved.mesh.connectivity) })
   const errors = mesh.validate()
   check('the saved mesh is a valid triangulation of the globe (Euler, winding, Delaunay, cells to 4πR²)', errors.length === 0 && allFinite(z), `${mesh.aliveVertices} nodes; ${errors.slice(0, 2).join('; ')}`)
+
+  // The load: the saved sphere world restored in a fresh pipeline, its
+  // shape from the save's kind (the snapshots do not carry it), renders the
+  // world that was saved and goes on as the saved one does — one epoch on
+  // each gives the same bytes. Restored as a torus (the shape left out) it
+  // must not: the check would not see a lost shape otherwise.
+  const savedRender = hash(r.elevation)
+  const restore = (shape) => {
+    const w = structuredClone(saved)
+    return { ...asRestore(saved), ...(shape ? { shape } : {}), mesh: { nodes: w.mesh.nodes, connectivity: w.mesh.connectivity, z: w.mesh.z, column: w.mesh.column } }
+  }
+  const q = await freshPipeline()
+  q.dispatch(restore('sphere'))
+  await until(() => q.count('rendered') >= 1, { label: 'the sphere load render' })
+  await quiet(q)
+  check('a loaded sphere world renders the world that was saved', hash(q.last('rendered').elevation) === savedRender && !q.messages.some((m) => m.type === 'error'))
+  await runOneEpoch(p)
+  await runOneEpoch(q)
+  const goesOn = hash(p.last('rendered').elevation)
+  check('a loaded sphere world goes on as the saved one does (one epoch, same bytes)', hash(q.last('rendered').elevation) === goesOn && !q.messages.some((m) => m.type === 'error'))
+  // (A torus cannot even rebuild the globe's mesh: the restore throws.)
+  let differs = false
+  try {
+    const t2 = await freshPipeline()
+    t2.dispatch(restore(undefined))
+    await until(() => t2.count('rendered') >= 1 || t2.messages.some((m) => m.type === 'error'), { label: 'the shapeless load' })
+    await quiet(t2)
+    if (!t2.messages.some((m) => m.type === 'error')) await runOneEpoch(t2)
+    differs = t2.messages.some((m) => m.type === 'error') || hash(t2.last('rendered').elevation) !== goesOn
+  } catch {
+    differs = true
+  }
+  check('mutation: the same save loaded without its shape does not go on the same way', differs)
 })
 
 // The coupled epoch on the sphere, on the modules at this harness's size:

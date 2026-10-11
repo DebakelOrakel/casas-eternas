@@ -1448,13 +1448,12 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   renderSaltFlat = null
   if (message.archean) {
     sim = null
-    archean = deserializeArchean(message.archean.snapshot, new Float32Array(message.archean.mantle), new Int16Array(message.archean.streak))
+    archean = deserializeArchean(message.archean.snapshot, new Float32Array(message.archean.mantle), new Int16Array(message.archean.streak), message.shape ?? 'torus')
     archeanSeed = message.seed
     archeanWater = archean.seaLevelOffset
     if (message.mantleDiffusion !== undefined) archeanParams = { ...DEFAULT_ARCHEAN_PARAMS, diffusion: message.mantleDiffusion }
     archeanWidth = archean.width
     archeanHeight = archean.height
-    // A save is a torus (the generator restores only FlatWorld, 3c).
     archeanShape = archean.domain.kind
     lastRawElevations = new Float32Array(message.elevation)
     preErosionElevations = lastRawElevations
@@ -1469,7 +1468,10 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   // had just opened with it. It only ever happened after a Genesis run in the
   // same session, which is why it looked intermittent.
   archean = null
-  sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge), message.mantle ? new Float32Array(message.mantle) : undefined)
+  sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge), message.mantle ? new Float32Array(message.mantle) : undefined, message.shape ?? 'torus')
+  // The hand-over's shape too: a genesis reset after a load starts the
+  // world's own shape again.
+  archeanShape = sim.domain.kind
   // Restored after construction rather than through the constructor: the arrays are
   // sized from the lattice the deserializer just built, so a save from a different
   // lattice resolution is ignored instead of corrupting the grid.

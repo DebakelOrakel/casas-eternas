@@ -36,6 +36,8 @@ export interface ReplayPlan {
   seed: string
   width: number
   height: number
+  // The world's shape, from its save's kind. Absent: the torus.
+  shape?: 'torus' | 'sphere'
   genesis: GenesisRun[]
   tectonics: TectonicsRun[]
 }
@@ -67,8 +69,8 @@ export function snapshotOf(sim: PlateSimulation, terrain: CoupledTerrain): Repla
 // The state back, as the runtime restores a loaded world
 // (pipeline/runtime.ts, the worldData handler): the weather cache and the
 // ice are gone, the routing derived.
-export function restoreSnapshot(snapshot: ReplaySnapshot): { sim: PlateSimulation; terrain: CoupledTerrain } {
-  const sim = deserializePlateSimulation(snapshot.state, snapshot.oceanAge.slice(), snapshot.mantle.slice())
+export function restoreSnapshot(snapshot: ReplaySnapshot, shape: 'torus' | 'sphere' = 'torus'): { sim: PlateSimulation; terrain: CoupledTerrain } {
+  const sim = deserializePlateSimulation(snapshot.state, snapshot.oceanAge.slice(), snapshot.mantle.slice(), shape)
   if (snapshot.latticeAccumulated.length === sim.latticeAccumulated.length) {
     sim.latticeAccumulated.set(snapshot.latticeAccumulated)
     sim.latticeLockedEpochs.set(snapshot.latticeLockedEpochs)
@@ -108,12 +110,12 @@ export async function replayRuns(plan: ReplayPlan, options: ReplayOptions): Prom
   let terrain: CoupledTerrain
   let start: ReplayPosition
   if (options.resume) {
-    ;({ sim, terrain } = restoreSnapshot(options.resume.snapshot))
+    ;({ sim, terrain } = restoreSnapshot(options.resume.snapshot, plan.shape))
     start = options.resume.position
   } else {
     // The Archean, run by run, then the hand-over (the screen's
     // genesisInit, genesisStart and commit, as pipeline/runtime.ts does them).
-    const archean = createArcheanSimulation(plan.seed, plan.width, plan.height, plan.genesis[0].seaLevelOffset)
+    const archean = createArcheanSimulation(plan.seed, plan.width, plan.height, plan.genesis[0].seaLevelOffset, plan.shape ?? 'torus')
     let params = DEFAULT_ARCHEAN_PARAMS
     for (const run of plan.genesis) {
       params = { ...params, diffusion: run.diffusion }
@@ -134,7 +136,7 @@ export async function replayRuns(plan: ReplayPlan, options: ReplayOptions): Prom
     const run = plan.tectonics[r]
     let epoch = r === start.run ? start.epoch : 0
     // A run on a world loaded from a save: the load, where it happened.
-    if (run.restored && epoch === 0) ({ sim, terrain } = restoreSnapshot(snapshotOf(sim, terrain)))
+    if (run.restored && epoch === 0) ({ sim, terrain } = restoreSnapshot(snapshotOf(sim, terrain), sim.domain.kind))
     for (; epoch < run.epochs; epoch++) {
       if (options.cancelled?.()) return null
       const weather = run.weather

@@ -1,7 +1,7 @@
 import type { ArcheanSimulation } from './archeanState'
 import type { Raft } from '../crust/raftTypes'
 import { mulberry32 } from '../core/rng'
-import { torusDomain } from '../core/domain'
+import { domainOfKind, type Domain } from '../core/domain'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 
 // Saving a world that is still in the Archean.
@@ -39,11 +39,12 @@ export function serializeArchean(archean: ArcheanSimulation): ArcheanSnapshot {
   }
 }
 
-export function deserializeArchean(snap: ArcheanSnapshot, mantle: Float32Array, streak: Int16Array): ArcheanSimulation {
+// `shape`: the world's, from its save's kind — the snapshot does not carry it.
+export function deserializeArchean(snap: ArcheanSnapshot, mantle: Float32Array, streak: Int16Array, shape: Domain['kind'] = 'torus'): ArcheanSimulation {
   return {
     width: snap.width,
     height: snap.height,
-    domain: torusDomain(snap.width, snap.height),
+    domain: domainOfKind(shape, snap.width, snap.height),
     epoch: snap.epoch,
     warpSeed: snap.warpSeed,
     seaLevelOffset: snap.seaLevelOffset ?? 0,

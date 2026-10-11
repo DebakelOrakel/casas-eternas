@@ -1245,6 +1245,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return i
   }
   const GENESIS_PANEL_INDEX = panelIndexOf('genesis')
+  // Whether a step runs on this world's shape. A sphere runs the planet, the
+  // Archean, the plates' history and the climate step only (DEC-0035, steps
+  // 4d2–4e); the later steps are locked, and nothing may compute them for
+  // it — not the gate alone, a load's catch-up too.
+  const stepRunsOnShape = (index: number): boolean => worldShape !== 'sphere' || index <= panelIndexOf('climate')
 
   // Entering this panel is what commits the Archean — see commitGenesis.
   const TECTONICS_PANEL_INDEX = panelIndexOf('tectonics')
@@ -5153,7 +5158,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (lastRiverData === null) {
         await awaitCompute((r) => { hydrologyResolve = r }, () => { if (!hydrologyInFlight) requestHydrology() })
       }
-      if (!hasEcologyData()) {
+      if (!hasEcologyData() && stepRunsOnShape(ECOLOGY_PANEL_INDEX)) {
         await awaitCompute((r) => { ecologyResolve = r }, () => { if (!ecologyInFlight) requestEcology() })
       }
     } finally {
@@ -5219,6 +5224,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function loadWorldFromZip(file: File, kept?: { where: 'browser' | 'server'; savedAt: string }): Promise<void> {
     let zip: JSZip
     let yaml: string
+    let shape: WorldShape = 'flat'
     let snapshot: PlateSimulationSnapshot | undefined
     let oceanAge: ArrayBuffer
     let elevation: ArrayBuffer
@@ -5251,10 +5257,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }
       }
       yaml = await yamlFile.async('string')
-      // A world of a kind this screen restores: the torus (worldRecord.ts,
-      // worldKindOf). A sphere world has nothing to restore yet; an unknown
-      // kind is not a world.
-      if (worldKindOf(yaml) !== 'FlatWorld') throw new Error('not a flat world')
+      // A world of a kind this screen restores (worldRecord.ts, worldKindOf):
+      // the torus or the sphere. An unknown kind is not a world.
+      const kind = worldKindOf(yaml)
+      if (kind === null) throw new Error('not a world this generator opens')
+      shape = kind === 'SphereWorld' ? 'sphere' : 'flat'
       elevation = await elevFile.async('arraybuffer')
       if (!archeanPayload) {
         if (!stateFile || !oceanFile) throw new Error('missing files')
@@ -5283,7 +5290,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
 
     // Past the point where the archive can turn out not to be a world.
-    setWorldShape('flat')
+    setWorldShape(shape)
     worldCreated = true
     closeWorldChooser()
     // An opened world lands on the mantle, NOT on step 0: that step warns that
@@ -5389,7 +5396,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     markCleanOnNextRender = true
     restoredFromSave = true
     tectonicsRunRestored = !archeanPayload
-    postToWorker({ type: 'restoreWorld', seed, snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
+    // The globe leans with the world's tilt, which the recipe just set.
+    globeView?.setObliquity(Number(obliquityInput.value))
+    postToWorker({ type: 'restoreWorld', seed, shape: shape === 'sphere' ? 'sphere' : 'torus', snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
   }
 
 
@@ -5408,7 +5417,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // from is what a save compares against, so the world made again reads as
   // a change.
   function startReplay(record: WorldRecord): void {
-    const plan = planFromRecipe({ seed: record.spec.seed, width: MAP_WIDTH, height: MAP_HEIGHT, history: record.history })
+    const plan = planFromRecipe({ seed: record.spec.seed, width: MAP_WIDTH, height: MAP_HEIGHT, shape: record.kind === 'SphereWorld' ? 'sphere' : 'torus', history: record.history })
     const total = plan.tectonics.reduce((sum, run) => sum + run.epochs, 0)
     replayedHistory = record.history
     savedRecord = structuredClone(record)
@@ -5925,10 +5934,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // tectonics a world of proto-cratons that are still dissolving.
   const MIN_ARCHEAN_STABILISED = 0.5
   const entryRequirementUnmet = (index: number): string | null => {
-    // A sphere runs the planet, the Archean, the plates' history and the
-    // climate step only (DEC-0035, steps 4d2–4e): the later steps are
-    // locked, and say nothing — there is nothing to do that would open them.
-    if (index > panelIndexOf('climate') && worldShape === 'sphere') return ''
+    // A step the world's shape does not run is locked, and says nothing —
+    // there is nothing to do that would open it.
+    if (!stepRunsOnShape(index)) return ''
     // Nothing exists before step 0 is answered — the steps after it all work on
     // the world it names and seeds.
     if (index > panelIndexOf('world') && !worldCreated) return t('notify.gate.needsWorld')

@@ -207,6 +207,9 @@ export interface MeshPayload {
 export interface WorkerRestoreWorldMessage {
   type: 'restoreWorld'
   seed: string
+  // The world's shape, from the save's kind (world.yaml); the snapshots do
+  // not carry it. Absent: the torus.
+  shape?: 'torus' | 'sphere'
   mesh?: MeshPayload
   snapshot: PlateSimulationSnapshot
   oceanAge: ArrayBuffer

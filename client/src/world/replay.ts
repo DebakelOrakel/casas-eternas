@@ -20,6 +20,8 @@ export interface ReplayRecipe {
   seed: string
   width: number
   height: number
+  // The world's shape, from its save's kind. Absent: the torus.
+  shape?: 'torus' | 'sphere'
   history: WorldHistory
 }
 
@@ -42,6 +44,7 @@ export function planFromRecipe(recipe: ReplayRecipe): ReplayPlan {
     seed: recipe.seed,
     width: recipe.width,
     height: recipe.height,
+    ...(recipe.shape ? { shape: recipe.shape } : {}),
     genesis: recipe.history.genesis.map((run) => ({
       epochs: run.epochs,
       diffusion: mantleDiffusionFromVigour(run.values['genesis.mantleVigour']),

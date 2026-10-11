@@ -187,6 +187,13 @@ models' usual remedy.
 
 ## Status
 
+2026-10-11: SPHERE SAVES OPEN — the screen opens `kind: SphereWorld` and
+restores it on the sphere: the save's kind gives the shape (the snapshots
+do not carry it) to the Archean's and the plates' deserializers, and to a
+replay's plan. A loaded sphere world goes on as the saved one does (one
+epoch, the same bytes; pipeline harness). The job worker still replays a
+torus only — the refinement jobs are not open on the sphere.
+
 2026-10-11: THE WIND'S AND THE CURRENTS' MARKS are placed symbols on both
 shapes (`map/vectorMarks.ts`), no longer painted into the chart texture,
 where on the globe they turned into radial slivers toward the poles. The
