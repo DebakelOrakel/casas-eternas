@@ -106,8 +106,10 @@ export interface WorkerPlanetPreviewDataMessage {
   resY: number
   temperature: ArrayBuffer
   wind: ArrayBuffer
-  // The wind on the climate's field mesh, as WorkerClimateDataMessage's.
+  // The wind and the currents on the climate's field mesh, as
+  // WorkerClimateDataMessage's.
   windMesh?: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
+  currentsMesh?: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
   currents: ArrayBuffer
   currentAnomaly: ArrayBuffer
   precipitation: ArrayBuffer
@@ -505,6 +507,10 @@ export interface WorkerClimateDataMessage {
   // Ocean surface currents, Float32 interleaved [u0,v0,…], normalized to max 1,
   // zero on land. See climate/oceanCurrents.ts.
   currents: ArrayBuffer
+  // The same currents on the climate's field mesh (DEC-0036 phase 4), as
+  // `windMesh` carries the wind; absent on the refinement's climate, whose
+  // currents reach the screen as a raster until phase 5.
+  currentsMesh?: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
   // The SST anomaly the currents make, °C, Float32 resX*resY, 0 on land:
   // positive = warm current, negative = cold (applyOceanSST).
   currentAnomaly: ArrayBuffer

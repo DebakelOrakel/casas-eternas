@@ -162,13 +162,14 @@ export function globeVectorAt(field: Float32Array, resX: number, resY: number, a
 // ([east, south], Domain.delta's), written into `out`: a raster's
 // (rasterVectorReader) or a field mesh's, whose sampler mixes the corners'
 // vectors in 3D (fields/fieldMesh.FieldSampler.sampleVector — the static
-// climate's wind since DEC-0036 phase 3; the screen makes that reader, so
-// this module reads no simulation).
+// climate's wind and currents since DEC-0036 phases 3 and 4; the screen
+// makes that reader, so this module reads no simulation).
 export type VectorReader = (at: ChartPoint, out: [number, number]) => [number, number]
 
 // DEC-0036 transition: removed in phase 5. A sphere's climate-grid raster
-// as a reader (globeVectorAt): the refinement's winds and the currents,
-// until phases 4 and 5 put them on the field mesh.
+// as a reader (globeVectorAt): the refinement's winds and currents, until
+// phase 5 puts them on the field mesh (the static climate's wind and
+// currents come with their mesh since phases 3 and 4).
 export function rasterVectorReader(field: Float32Array, resX: number, resY: number): VectorReader {
   return (at, out) => globeVectorAt(field, resX, resY, at, out)
 }

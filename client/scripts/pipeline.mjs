@@ -895,9 +895,8 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   // on its field mesh, which has no pole row and nothing to average there:
   // its temperature at each pole is one field, read on a ring round it (the
   // first and last raster row's, 0.35° from the pole), varying by no more
-  // than the field does between neighbouring cells. The raster's pole
-  // averaging survives in the currents (phase 4), whose sea surface the
-  // mesh takes back; a star there would show here.
+  // than the field does between neighbouring cells — the sea's surface too,
+  // which the currents make on the same mesh since phase 4.
   const climateDomain = sim.domain.scaledTo(RX, RY)
   const params = WE.defaultWeatherParams()
   const epochWeather = WE.computeWeather(CMx.climateTerrain(sim.domain, coarseZ, RX, RY), params)
@@ -1207,10 +1206,12 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   // pressure and rain are made on the climate's field mesh, which has no
   // pole row: rasterised, a pole row is a ring of points 0.35° round the
   // pole, and a field made from them is no longer one value along it
-  // (the sea's anomaly is the SST, pole-averaged, less the mesh's base).
-  // Those are held to be smooth round the pole instead (ringRoughness).
-  // The rest stay the raster's.
-  const meshFed = new Set(['pressure', 'currentAnomaly', 'precipitation', 'climate.seasonalAmplitude', 'refined.monsoonIndex'])
+  // Since phase 4 the year's cycle (and so the refined seasonal range) and
+  // the ocean (the sea's anomaly, the salt, the sinking, the upwelling)
+  // are made there too. Those are held
+  // to be smooth round the pole instead (ringRoughness). The rest stay the
+  // raster's.
+  const meshFed = new Set(['pressure', 'cycle', 'currentAnomaly', 'salinity', 'deepWater', 'upwelling', 'precipitation', 'climate.seasonalAmplitude', 'refined.seasonalAmplitude', 'refined.monsoonIndex'])
   const spread = Object.entries(scalars).filter(([k]) => !meshFed.has(k)).map(([k, [f, layers]]) => [k, poleSpread(f, layers)]).filter(([, s]) => s > 1e-3)
   check(`the refined fields made on the raster are one value along each pole row, land and sea apart (${Object.keys(scalars).length - meshFed.size} fields)`, spread.length === 0, spread.map(([k, s]) => `${k} ${s.toFixed(4)}`).join(', '))
   const across = [...meshFed].map((k) => {
@@ -1224,10 +1225,10 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   // round each pole — its spread is the ground of the cells round it, a
   // few hundred metres of lapse at a polar range — the largest step
   // between neighbouring pixels under a quarter of the spread or 0.1 °C.
-  // The refined year adds the refinement's raster parts (the currents'
-  // warmth carried inland with the wind, phase 4/5), which vary from
-  // pixel to pixel: held to under 1 °C a step, the bound the old pole-row
-  // check gave the cells' ground.
+  // The refined year adds the refinement's parts (the cycle and the
+  // overturning's warmth carried inland with the wind, on the mesh since
+  // phase 4, rasterised), which vary from pixel to pixel: held to under
+  // 1 °C a step, the bound the old pole-row check gave the cells' ground.
   const ringSteps = (tf) => {
     let worst = 0, stepAt = 0, spreadAt = 0, maxStep = 0
     for (const row of [0, RY - 1]) {
@@ -1290,10 +1291,31 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   const polar = band(ww, 65, 90)
   const westerly = band(ww, 35, 55)
   const trades = band(ww, 5, 25)
+  check(`the wind's bands: polar easterlies (u ${polar.u.toFixed(2)}), westerlies (${westerly.u.toFixed(2)}), trades toward the equator (u ${trades.u.toFixed(2)}, poleward ${trades.vPole.toFixed(2)})`,
+    polar.u < 0 && westerly.u > 0 && trades.u < 0 && trades.vPole < 0)
+  // The polar seas' currents, each pole apart: they flow round the pole,
+  // not into it. A pole under land (both, on some worlds: the seeds c2 and
+  // c6) has no polar sea to ask — that pole is skipped and says so, it is
+  // not a NaN; a pole with sea is held to the bound.
   const cc = f32(cr.currents)
-  const polarSea = band(cc, 75, 90, sea(cc))
-  check(`the wind's bands: polar easterlies (u ${polar.u.toFixed(2)}), westerlies (${westerly.u.toFixed(2)}), trades toward the equator (u ${trades.u.toFixed(2)}, poleward ${trades.vPole.toFixed(2)}); the polar seas' currents flow round the pole, not into it (poleward ${polarSea.vPole.toFixed(3)} of ${polarSea.speed.toFixed(3)})`,
-    polar.u < 0 && westerly.u > 0 && trades.u < 0 && trades.vPole < 0 && Math.abs(polarSea.vPole) < 0.2 * polarSea.speed)
+  const polarSeas = [true, false].map((north) => {
+    let vPole = 0, speed = 0, k = 0
+    for (let y = 0; y < RY; y++) {
+      const lat = 90 - (180 * (y + 0.5)) / RY
+      if ((north ? lat : -lat) < 75) continue
+      for (let x = 0; x < RX; x++) {
+        const i = y * RX + x
+        if (!sea(cc)(i)) continue
+        vPole += north ? -cc[i * 2 + 1] : cc[i * 2 + 1]
+        speed += Math.hypot(cc[i * 2], cc[i * 2 + 1])
+        k++
+      }
+    }
+    return { pole: north ? 'north' : 'south', cells: k, vPole: k ? vPole / k : 0, speed: k ? speed / k : 0 }
+  })
+  const asked = polarSeas.filter((q) => q.cells > 0)
+  check(`the polar seas' currents flow round the pole, not into it (${polarSeas.map((q) => q.cells === 0 ? `${q.pole}: skipped, no sea poleward of 75°` : `${q.pole}: poleward ${q.vPole.toFixed(3)} of ${q.speed.toFixed(3)} over ${q.cells} cells`).join('; ')})`,
+    asked.every((q) => Number.isFinite(q.vPole) && Math.abs(q.vPole) < 0.2 * q.speed))
 
   // The seam: the step across x = 0 / W is a step like any other in its row.
   const seamOf = (field, rx, ry, layers = 1) => {
@@ -1557,63 +1579,48 @@ test('the climate step\'s primitives on the sphere, each against its mutation', 
     check(`mutation: laid out in the chart's plane it is ${t.ratio.toFixed(2)} times as long`, !(Math.abs(t.ratio - 1) < 0.3))
   }
 
-  // (5) The refinement's two solves on the sphere: the year's temperature
-  // cycle and the overturning's inflow, at the tuned iteration counts
-  // against four times as many, on a world with land in the polar rows
-  // (where point Gauss-Seidel would leave a row near its start). The cycle
-  // converges; the inflow's Poisson solve does not on either shape at its
-  // tuned count (found 2026-10-10, left as it is), and on the sphere it
-  // must come no further from its limit than the torus's does.
+  // (5) The ocean's solves on the sphere (DEC-0036 phase 4, on the
+  // climate's field mesh): the year's temperature cycle, the overturning's
+  // inflow and the wind's currents, on a world with land in the polar caps.
+  // Each converges to its tolerance (the solve's report, the residual
+  // recomputed by the solver); a tighter tolerance moves the answer by no
+  // more than that. Until phase 4 the inflow's Gauss-Seidel did not
+  // converge on either shape (found 2026-10-10): its water now rises in
+  // the sea it sank in, so the Neumann problem has an answer.
   {
-    const RXc = CF.CLIMATE_RES_X
-    const RYc = CF.CLIMATE_RES_Y
-    const nc = RXc * RYc
-    const g = sphere.grid(RXc, RYc)
-    const landC = new Uint8Array(nc)
-    const annual = new Float32Array(nc)
-    const wind = new Float32Array(nc * 2)
-    const sink = new Float32Array(nc)
-    for (let y = 0; y < RYc; y++) {
-      for (let x = 0; x < RXc; x++) {
-        const i = y * RXc + x
-        const u = unit((x + 0.5) * (W / RXc), (y + 0.5) * (H / RYc))
-        landC[i] = u[0] * 0.8 + u[2] * 0.6 > 0.55 || Math.abs(u[1]) > 0.97 ? 1 : 0
-        annual[i] = 28 - 50 * (Math.abs(u[2]) ** 1.5)
-        wind[i * 2] = 0.6 * Math.cos(3 * Math.asin(u[2]))
-        sink[i] = !landC[i] && u[2] > 0.85 ? 1 : 0
+    const CMo = await L('/src/generator/climate/climateMesh.ts')
+    const WDo = await L('/src/generator/climate/wind.ts')
+    const results = []
+    for (const domain of [sphere, torus]) {
+      const el = new Float32Array(W * H)
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const u = unit((x + 0.5), (y + 0.5))
+          el[y * W + x] = u[0] * 0.8 + u[2] * 0.6 > 0.55 || Math.abs(u[1]) > 0.97 ? 0.2 : -0.4
+        }
       }
+      const terrain = CMo.climateTerrain(domain, el, W, H)
+      const { cm, land } = terrain
+      const n = cm.mesh.count
+      const annual = new Float64Array(n)
+      const sink = new Float64Array(n)
+      for (let i = 0; i < n; i++) {
+        const lat = (0.5 - cm.yNorm[i]) * 2
+        annual[i] = 28 - 50 * Math.abs(lat) ** 1.5
+        sink[i] = !land[i] && lat > 0.8 ? 1 : 0
+      }
+      const wind = WDo.computeWind(cm, 0, PF.DEFAULT_PLANET_FORCING.rotationHours)
+      const cycle = EB.seasonalCycle(terrain, annual, wind, PF.DEFAULT_PLANET_FORCING, 0, 12)
+      const inflow = OC.computeSinkInflow(terrain, sink)
+      const currents = OC.computeOceanCurrents(terrain, wind, 0)
+      let range = 0
+      for (const v of cycle.cycle) range = Math.max(range, Math.abs(v))
+      results.push({ kind: domain.kind, reports: { cycle1: cycle.solves[0], cycle2: cycle.solves[1], inflow: inflow.solve, currents: currents.solve }, range, finite: allFinite(cycle.cycle) && allFinite(inflow.e) && allFinite(inflow.s) && allFinite(currents.e) && allFinite(currents.s), islands: currents.islands })
     }
-    const iters = { ebm: CT.CLIMATE_TUNING.ebmSolveIters, conveyor: CT.CLIMATE_TUNING.conveyorSolveIters }
-    const cycleA = EB.seasonalCycle(landC, annual, wind, g, PF.DEFAULT_PLANET_FORCING, 0, 12)
-    const inflowA = OC.computeSinkInflow(sink, landC, g)
-    CT.CLIMATE_TUNING.ebmSolveIters = iters.ebm * 4
-    CT.CLIMATE_TUNING.conveyorSolveIters = iters.conveyor * 4
-    let cycleB, inflowB
-    try {
-      cycleB = EB.seasonalCycle(landC, annual, wind, g, PF.DEFAULT_PLANET_FORCING, 0, 12)
-      inflowB = OC.computeSinkInflow(sink, landC, g)
-    } finally {
-      CT.CLIMATE_TUNING.ebmSolveIters = iters.ebm
-      CT.CLIMATE_TUNING.conveyorSolveIters = iters.conveyor
+    for (const r of results) {
+      check(`${r.kind}: the ocean's solves converge — ${Object.entries(r.reports).map(([k, q]) => `${k} ${q.iterations} its to ${q.residual.toExponential(1)}`).join(', ')} (${r.islands} islands; the cycle's swing ${r.range.toFixed(1)} °C)`,
+        r.finite && Object.values(r.reports).every((q) => q.converged && q.residual < 1e-9))
     }
-    let dCycle = 0
-    let range = 0
-    for (let k = 0; k < cycleA.length; k++) { dCycle = Math.max(dCycle, Math.abs(cycleA[k] - cycleB[k])); range = Math.max(range, Math.abs(cycleB[k])) }
-    let dInflow = 0
-    for (let k = 0; k < inflowA.length; k++) dInflow = Math.max(dInflow, Math.abs(inflowA[k] - inflowB[k]))
-    const gt = torus.grid(RXc, RYc)
-    const torusA = OC.computeSinkInflow(sink, landC, gt)
-    CT.CLIMATE_TUNING.conveyorSolveIters = iters.conveyor * 4
-    let torusB
-    try {
-      torusB = OC.computeSinkInflow(sink, landC, gt)
-    } finally {
-      CT.CLIMATE_TUNING.conveyorSolveIters = iters.conveyor
-    }
-    let dTorus = 0
-    for (let k = 0; k < torusA.length; k++) dTorus = Math.max(dTorus, Math.abs(torusA[k] - torusB[k]))
-    check(`the year's cycle converges on the sphere (within ${dCycle.toFixed(4)} °C of a ${range.toFixed(1)} °C swing), the inflow no worse than on the torus (${dInflow.toFixed(3)} against ${dTorus.toFixed(3)})`,
-      allFinite(cycleA) && allFinite(inflowA) && dCycle < 0.01 * range && dInflow <= dTorus)
   }
 
   // (6) The season's wind cells at a pole: the banded wind of the month

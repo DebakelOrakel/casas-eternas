@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-11
+- **changed** Climate: the ocean currents and the warm and cold seas they make are worked out as evenly at the poles as at the equator, so the climate looks somewhat different and a seed makes a different world. `generator.step.climate`
 - **changed** Climate: temperature, wind and rain are worked out as evenly at the poles as at the equator, so the climate looks somewhat different and a seed makes a different world. `generator.step.climate`
 - **changed** Topology: a sphere world is now about as large as a flat one.
 - **changed** Mantle: the mantle moves as evenly at the poles as at the equator, so a seed makes a different world, and worlds saved before today no longer open. `generator.step.genesis`

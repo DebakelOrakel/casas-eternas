@@ -33,6 +33,7 @@ const M = {
   fm: await L('/src/generator/fields/fieldMesh.ts'),
   op: await L('/src/generator/fields/fieldOperators.ts'),
   raster: await L('/src/generator/mesh/meshRaster.ts'),
+  ocean: await L('/src/generator/climate/oceanCurrents.ts'),
 }
 
 let failures = 0
@@ -402,6 +403,124 @@ for (const domain of [sphere, torus]) {
   console.log(`  ${domain.kind} 78 km: implicit diffusion, ${n} steps of ${(tEnd / n / 86400).toFixed(1)} d (${Math.round(tEnd / n / M.op.stableDiffusionStep(fm, KAPPA))}× the explicit limit), ${(its / n).toFixed(0)} iterations a step: against backward Euler's decay ${e(errB)}, against the exact ${e(errE)}`)
   // The difference is the Laplacian's own error (k = (5, 4): 5e-3, [2]).
   check(`${domain.kind}: implicit diffusion is backward Euler's decay, to the Laplacian's error`, errB < 1e-2, e(errB))
+}
+
+// ================================================================ [4b]
+console.log('\n[4b] the currents\' solve: (∇² + β ∂/∂x − α) ψ = f, not symmetric, by BiCGSTAB (DEC-0036 phase 4)')
+// The operator as the currents assemble it (climate/oceanCurrents.ts
+// solveStommel): finite volumes, the β term the flux of β ψ carried due
+// east (fieldOperators.eastWallNormals), β a function of the latitude only
+// (on the torus of y), so div(β ψ ê) = β ∂ψ/∂x. MANUFACTURED: the test
+// fields with their exact ∇² and east derivative give f; the discrete
+// solve must come back to them at second order. α keeps the closed
+// surface's constants out of the null space.
+const betaOf = (fm, i, b0) => {
+  if (fm.globe) { const z = fm.u[3 * i + 2]; return b0 * Math.sqrt(Math.max(0, 1 - z * z)) }
+  return b0 * (1 + 0.5 * Math.cos((2 * Math.PI * fm.y[i]) / fm.domain.height))
+}
+const stommelMatrix = (fm, beta, alpha) => {
+  const we = M.op.eastWallNormals(fm)
+  const rows = []
+  for (let i = 0; i < fm.count; i++) {
+    const row = [[i, alpha * fm.area[i]]]
+    for (let e = fm.nbrStart[i]; e < fm.nbrStart[i + 1]; e++) {
+      const j = fm.nbr[e]
+      const b = 0.5 * (beta[i] + beta[j]) * we[e] * 0.5
+      row.push([i, fm.coupling[e] - b], [j, -(fm.coupling[e] + b)])
+    }
+    rows.push(row)
+  }
+  return M.op.sparseMatrix(rows)
+}
+const stommelRows = []
+for (const domain of [sphere, torus]) {
+  for (const s of SPACINGS) {
+    const fm = meshOf(domain, s)
+    const t = testFields(fm)[2]
+    const L = domain.kind === 'sphere' ? fm.radiusM : fm.domain.width * fm.unitM
+    const alpha = 10 / (L * L)
+    const b0 = 1 / 400e3
+    const beta = new Float64Array(fm.count)
+    for (let i = 0; i < fm.count; i++) beta[i] = betaOf(fm, i, b0)
+    const A = stommelMatrix(fm, beta, alpha)
+    // −A (∇² + β ∂x − α) ψ = −A f.
+    const rhs = new Float64Array(fm.count)
+    for (let i = 0; i < fm.count; i++) rhs[i] = -fm.area[i] * (t.eig * t.v[i] + beta[i] * t.ge[i] - alpha * t.v[i])
+    const run = (pre) => { const x = new Float64Array(fm.count); const t0 = performance.now(); const rep = M.op.solveBiCGSTAB(fm.count, (v, o) => M.op.sparseApply(A, v, o), pre, rhs, x, { tolerance: 1e-10, maxIterations: 5000 }); return { x, rep, ms: performance.now() - t0 } }
+    const jac = run((r, o) => { for (let i = 0; i < fm.count; i++) { let d = 0; for (let k = A.start[i]; k < A.start[i + 1]; k++) if (A.col[k] === i) d = A.val[k]; o[i] = r[i] / d } })
+    const ilu = run(M.op.ilu0(A))
+    const two = run(M.op.twoLevelPreconditioner(A, M.op.aggregate(A, 6)))
+    // The true residual, recomputed.
+    const q = new Float64Array(fm.count)
+    M.op.sparseApply(A, two.x, q)
+    let rn = 0, bn = 0
+    for (let i = 0; i < fm.count; i++) { rn += (rhs[i] - q[i]) ** 2; bn += rhs[i] ** 2 }
+    const twice = run(M.op.twoLevelPreconditioner(A, M.op.aggregate(A, 6)))
+    stommelRows.push({ kind: domain.kind, s, h: meanSpacing(fm), err: relL2(fm, two.x, t.v), errInf: relLinf(two.x, t.v), jac, ilu, two, resid: Math.sqrt(rn / bn), same: hashArrays([two.x]) === hashArrays([twice.x]), agree: relL2(fm, jac.x, two.x) })
+  }
+}
+for (const r of stommelRows) console.log(`  ${r.kind} ${String(r.s / 1e3).padStart(3)} km: iterations Jacobi ${r.jac.rep.iterations} / ILU(0) ${r.ilu.rep.iterations} / two-level ${r.two.rep.iterations} (${r.jac.ms.toFixed(0)} / ${r.ilu.ms.toFixed(0)} / ${r.two.ms.toFixed(0)} ms), residual ${e(r.two.rep.residual)} (recomputed ${e(r.resid)}), error against exact L2 ${e(r.err)} L∞ ${e(r.errInf)}`)
+for (const kind of ['sphere', 'torus']) {
+  const rows = stommelRows.filter((r) => r.kind === kind)
+  const o = order(rows.map((r) => r.err), rows.map((r) => r.h))
+  check(`${kind}: the non-symmetric solve converges to 1e-10 at every spacing, with each preconditioner`, rows.every((r) => [r.jac, r.ilu, r.two].every((x) => x.rep.converged) && r.resid < 1e-9), rows.map((r) => r.two.rep.iterations).join(' ') + ' two-level iterations')
+  check(`${kind}: its error against the manufactured solution falls at second order`, o.every((x) => x > 1.6), `${rows.map((r) => e(r.err)).join(' ')}, order ${o.map(f2).join(' ')}`)
+  check(`${kind}: the preconditioners reach the same answer (Jacobi against two-level, L2 < 1e-8)`, rows.every((r) => r.agree < 1e-8), rows.map((r) => e(r.agree)).join(' '))
+  check(`${kind}: the two-level iterations do not grow with the mesh (39 km within 2 × the 312 km's)`, rows[rows.length - 1].two.rep.iterations <= 2 * Math.max(10, rows[0].two.rep.iterations), rows.map((r) => r.two.rep.iterations).join(' '))
+  check(`${kind}: the solve is the same bytes twice`, rows.every((r) => r.same))
+}
+// STOMMEL'S BASIN (Stommel 1948): a rectangular sea, ψ = 0 on its coast,
+// a curl −C sin(π y' / B) — the analytic ψ = (C / k²)(1 + p e^{r₊x'} +
+// q e^{r₋x'}) sin(k y'), k = π / B, r± = (−β ± √(β² + 4k²)) / 2, with p and q
+// from ψ = 0 at x' = 0 and L: a western boundary layer about 1 / β wide.
+// Through the stage's own solve (oceanCurrents.solveStommel: the land one
+// mass, its ψ the reference 0). The coast is the land cells' centres,
+// up to a cell outside the box's edge: first order at best.
+{
+  const Lm = 6000e3, Bm = 3000e3, b0 = 1 / 300e3
+  const fmOrder = []
+  for (const s of [156e3, 78e3, 39e3]) {
+    const fm = meshOf(torus, s)
+    const x0 = 2000e3, y0 = 2500e3
+    const k = Math.PI / Bm
+    const rp = (-b0 + Math.sqrt(b0 * b0 + 4 * k * k)) / 2, rm = (-b0 - Math.sqrt(b0 * b0 + 4 * k * k)) / 2
+    const p = (-1 + Math.exp(rm * Lm)) / (Math.exp(rp * Lm) - Math.exp(rm * Lm)), q = -1 - p
+    const exact = (xp, yp) => (1 / (k * k)) * (1 + p * Math.exp(rp * xp) + q * Math.exp(rm * xp)) * Math.sin(k * yp)
+    const land = new Uint8Array(fm.count), beta = new Float64Array(fm.count), curl = new Float64Array(fm.count), want = new Float64Array(fm.count)
+    for (let i = 0; i < fm.count; i++) {
+      const xp = fm.x[i] * fm.unitM - x0, yp = fm.y[i] * fm.unitM - y0
+      const inside = xp > 0 && xp < Lm && yp > 0 && yp < Bm
+      land[i] = inside ? 0 : 1
+      beta[i] = b0
+      curl[i] = inside ? -Math.sin(k * yp) : 0
+      want[i] = inside ? exact(xp, yp) : 0
+    }
+    const t0 = performance.now()
+    const sol = M.ocean.solveStommel(fm, land, beta, curl)
+    const ms = performance.now() - t0
+    let num = 0, den = 0, west = 0, east = 0
+    for (let i = 0; i < fm.count; i++) {
+      if (land[i]) continue
+      num += fm.area[i] * (sol.psi[i] - want[i]) ** 2; den += fm.area[i] * want[i] ** 2
+      const xp = fm.x[i] * fm.unitM - x0
+      if (xp < 0.15 * Lm) west += fm.area[i] * Math.abs(sol.psi[i]); else if (xp > 0.85 * Lm) east += fm.area[i] * Math.abs(sol.psi[i])
+    }
+    // Where the gyre's centre (|ψ| max) lies along x, as a share of L.
+    let best = 0, at = 0
+    for (let i = 0; i < fm.count; i++) if (!land[i] && Math.abs(sol.psi[i]) > best) { best = Math.abs(sol.psi[i]); at = (fm.x[i] * fm.unitM - x0) / Lm }
+    // The mutation: β's sign turned, the layer goes east.
+    const flipped = M.ocean.solveStommel(fm, land, beta.map((b) => -b), curl)
+    let bestF = 0, atF = 0
+    for (let i = 0; i < fm.count; i++) if (!land[i] && Math.abs(flipped.psi[i]) > bestF) { bestF = Math.abs(flipped.psi[i]); atF = (fm.x[i] * fm.unitM - x0) / Lm }
+    fmOrder.push({ s, h: meanSpacing(fm), err: Math.sqrt(num / den), at, atF, its: sol.solve.iterations, ms, converged: sol.solve.converged, landmasses: sol.landmasses, islands: sol.islands })
+  }
+  for (const r of fmOrder) console.log(`  torus ${r.s / 1e3} km basin: ${r.its} iterations, ${r.ms.toFixed(0)} ms, error against Stommel's ψ L2 ${e(r.err)}, the gyre's centre at x = ${f2(r.at)} L (β turned: ${f2(r.atF)} L), ${r.landmasses} landmass, ${r.islands} islands`)
+  const o = order(fmOrder.map((r) => r.err), fmOrder.map((r) => r.h))
+  // (The coast's jag of up to a cell about the box's edge does not shrink
+  // evenly with the spacing: the order wanders, 1.05 then 0.23 measured.)
+  check('torus: Stommel\'s basin — converged, the error against the analytic ψ under 5 % from 78 km on, and falling', fmOrder.every((r) => r.converged) && fmOrder.slice(1).every((r) => r.err < 0.05) && fmOrder.every((r, k) => k === 0 || r.err <= fmOrder[k - 1].err), `${fmOrder.map((r) => e(r.err)).join(' ')}, order ${o.map(f2).join(' ')}`)
+  check('torus: the gyre is intensified at the WESTERN boundary (its centre in the western fifth)', fmOrder.every((r) => r.at < 0.2), fmOrder.map((r) => f2(r.at)).join(' '))
+  check('mutation: with β turned the gyre goes to the eastern boundary', fmOrder.every((r) => r.atF > 0.8), fmOrder.map((r) => f2(r.atF)).join(' '))
 }
 
 // ================================================================ [5]

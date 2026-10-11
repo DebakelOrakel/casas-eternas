@@ -317,18 +317,20 @@ export const CLIMATE_TUNING = {
   // error 4.1 → 3.8 and 3.7 → 3.1 °C. The capacity alone widened the swing
   // by 7 °C; the damping holds it.
   ebmRadiation: 8,
-  // Exchange with each of the four neighbours, W/m²K, and the carry by the
-  // wind per unit of wind (8 m/s), W/m²K. The carry measured on Earth
+  // The exchange with the neighbouring air, as a diffusion D ∇²T' (W/K:
+  // W/m²K times m²), and the carry by the wind, a (u · ∇T') per unit of
+  // wind (8 m/s) (W/m²K times m). Stated until DEC-0036 phase 4 per
+  // neighbour of the torus's 62.4 km climate cell — 40 W/m²K each, and 100
+  // W/m²K per unit of wind across one cell — and kept at those lengths:
+  // 40 × 62 400² and 100 × 62 400. The carry measured on Earth
   // (scripts/earthClimate.mjs, 2026-09-29): at 400 the sea's air reached so
   // far inland that the places' years came out 2.8 °C too narrow on average
   // (Winnipeg's January +2 °C, real −16); at 150 0.6 °C, and the land's
   // Köppen groups 29 → 18 points off Beck 2018's rounded shares. At 50 the swings stay right
   // but the D group overgrows (29 % of land, Earth 22). With the damping
   // at 8 (above), 100 (swing −0.5 °C against 150's −1.1).
-  ebmExchange: 40,
-  ebmCarryPerWind: 100,
-  // Gauss-Seidel sweeps per harmonic.
-  ebmSolveIters: 400,
+  ebmDiffusionWPerK: 40 * 62_400 * 62_400,
+  ebmCarryPerWindM: 100 * 62_400,
 
   // --- from phenomena.ts (the climate step's weather phenomena) ---
   // Not measured yet (2026-09-28); orders of magnitude.
@@ -476,10 +478,8 @@ export const CLIMATE_TUNING = {
   deepWaterFullAnomalyPsu: 1,
   deepWaterMinLatDeg: 50,
   // The sinking's surface inflow (oceanCurrents.computeSinkInflow): its
-  // fastest cell as this share of the wind's fastest current, and the
-  // Gauss-Seidel sweeps of its potential.
+  // fastest cell as this share of the wind's fastest current.
   conveyorFlow: 0.3,
-  conveyorSolveIters: 700,
 
   // --- from refinement.ts ---
   // When the equatorial rain belt stands furthest toward the top hemisphere,
@@ -593,19 +593,17 @@ export const CLIMATE_TUNING = {
 
   // --- from oceanCurrents.ts ---
 
-  // Streamfunction solve iterations (Gauss-Seidel, in place — converges roughly
-  // twice as fast as Jacobi). One-shot per climate compute; the gyre structure
-  // doesn't need a fully-converged ψ.
-  currentsSolveIters: 700,
+  // Stommel's boundary width r / β at the equator, metres: β, the
+  // northward growth of the Coriolis parameter, is cos φ over this against
+  // a friction of 1 (oceanCurrents.ts). The western boundary current is
+  // about this wide at the equator and wider toward the poles. Stated until
+  // DEC-0036 phase 4 as β = 0.4 per 62.4 km cell of the torus's climate grid
+  // (2.5 cells), kept at that length: the narrowest that grid could hold.
+  // Where β times a cell's spacing passes 2 the central difference of the
+  // β term loses diagonal dominance (at 78 km 0.5).
+  currentsBoundaryWidthM: 156_000,
 
-  // β, the northward growth of the Coriolis parameter, against a friction of
-  // 1 per cell (Stommel). The western boundary current is about 1/β cells
-  // wide; at 0.4 that is 2.5 cells (150 km) at the equator and more toward the
-  // poles, the narrowest the 62 km grid can hold. Above 2 the central
-  // difference loses diagonal dominance and the solve oscillates.
-  currentsBeta: 0.4,
-
-  // SST transport: how far (grid cells) it advects along the normalized current
+  // SST transport: how far (metres) it advects along the normalized current
   // per iteration, how many iterations, and the per-iteration relaxation back
   // toward the latitudinal base (anchors the SST to latitude so anomalies stay
   // bounded — a few °C, like real boundary currents on this coarse grid).
@@ -613,7 +611,9 @@ export const CLIMATE_TUNING = {
   // the normalisation, the mean speed fell to 0.61 of before, and the
   // anomalies with it (Astrakan: warm 29 → 16 % of the sea, cold 26 → 16 %).
   // At 4 they are back at warm 21 %, cold 24 %, +4.2/−7.5 °C. The cold
-  // eastern coasts belong to upwelling, which is not modelled yet.
+  // eastern coasts belong to upwelling, which is not modelled yet. The step
+  // was 4 cells of the torus's 62.4 km climate grid until DEC-0036 phase 4,
+  // kept at that length.
   // The relaxation measured on Earth (scripts/earthClimate.mjs,
   // 2026-09-29): at 0.15 the anomalies came out at a third of Earth's (off
   // Norway +2.1 °C, some +7; off California −1.7, some −4), the North
@@ -621,7 +621,7 @@ export const CLIMATE_TUNING = {
   // −2.4, Reykjavik's year 3 °C → right, London's 4 → 2 °C too cold, the
   // places' January error 3.9 → 3.7 °C. At 0.05 the anomalies grow on
   // (+3.4, −3.8) and the scores do not.
-  currentsAdvectStep: 4,
+  currentsAdvectStepM: 249_600,
   currentsAdvectIters: 80,
   currentsBaseRelax: 0.1,
 
@@ -629,7 +629,7 @@ export const CLIMATE_TUNING = {
   // milder coast, cold current/upwelling → cooler coast).
   currentsCoastalFactor: 0.9,
   // The anomaly carried onto the land with the wind (oceanCurrents.
-  // carryInland): looked for this many cells upwind, e^(−d / decay) over
+  // carryInland): looked for this far upwind (metres), e^(−d / decay) over
   // land, and the share a coast gets off its own shore where the wind
   // blows out to sea. The overturning's warmth goes the same way
   // (refinement.ts). Measured on Earth
@@ -638,9 +638,10 @@ export const CLIMATE_TUNING = {
   // +4 (a cold coast downwind of nothing now), classes 17 → 18 of 47; at a
   // decay of 6 or 10 cells a little less. The east coasts (Tokyo, New
   // York, Beijing +4..+6 °C) did not move: their warmth is the latitude
-  // profile's, not the currents'.
-  currentsInlandReachCells: 30,
-  currentsInlandDecayCells: 15,
+  // profile's, not the currents'. Stated until DEC-0036 phase 4 as 30 and
+  // 15 cells of the torus's 62.4 km climate grid, kept at those lengths.
+  currentsInlandReachM: 1_872_000,
+  currentsInlandDecayM: 936_000,
   currentsCoastalLeeShare: 0.3,
 
   // --- from biomes.ts ---

@@ -1,6 +1,7 @@
 import type { Domain } from '../core/domain'
 import { fieldFromRasterAreaWeighted, rasteriseField, rasteriseVectorField, sharedFieldMesh, type FieldMesh, type FieldSampler } from '../fields/fieldMesh'
 import { isLandAt } from '../elevation/elevationScale'
+import { MinHeap } from '../core/minHeap'
 
 // THE STATIC CLIMATE'S FIELD MESH (DEC-0036 phase 3, docs/decisions/
 // fields-on-meshes.md): temperature, wind, seasonality, the monsoon, the
@@ -103,6 +104,82 @@ export function zonalMean(cm: ClimateMesh, field: ArrayLike<number>, use?: (i: n
   return out
 }
 
+// The distance from each cell to the nearest sea cell (land 0), metres
+// along the mesh's links — a multi-source Dijkstra, each step its centre
+// distance — and that sea cell (−1 where no sea is reached: a world of land).
+// A path over the hexagons is within 15 % of the straight line. The
+// continentality's (seasonality.ts) and the rivers' mouths (salinity.ts).
+export function distanceToSea(mesh: FieldMesh, land: Uint8Array): { dist: Float64Array; nearest: Int32Array } {
+  const n = mesh.count
+  const dist = new Float64Array(n).fill(Infinity)
+  const nearest = new Int32Array(n).fill(-1)
+  const heap = new MinHeap(n)
+  for (let i = 0; i < n; i++) {
+    if (land[i]) continue
+    dist[i] = 0
+    nearest[i] = i
+    heap.push(0, i)
+  }
+  while (heap.length > 0) {
+    heap.pop()
+    const i = heap.poppedIndex
+    const d = heap.poppedKey
+    if (d > dist[i]) continue
+    for (let e = mesh.nbrStart[i]; e < mesh.nbrStart[i + 1]; e++) {
+      const j = mesh.nbr[e]
+      const next = d + mesh.dist[e]
+      if (next < dist[j]) {
+        dist[j] = next
+        nearest[j] = nearest[i]
+        heap.push(next, j)
+      }
+    }
+  }
+  return { dist, nearest }
+}
+
+// The connected parts of the cells `mask` admits, over the mesh's links:
+// per cell its part's id (−1 outside the mask), and per part its area, m²,
+// and its cells. Ids in the order of each part's lowest cell. The landmasses
+// of the currents' island rule, the seas of the overturning's balance
+// (oceanCurrents.ts).
+export interface MeshComponents {
+  readonly label: Int32Array
+  readonly area: Float64Array
+  readonly cells: Int32Array[]
+}
+
+export function meshComponents(mesh: FieldMesh, mask: Uint8Array): MeshComponents {
+  const label = new Int32Array(mesh.count).fill(-1)
+  const areas: number[] = []
+  const parts: Int32Array[] = []
+  const stack: number[] = []
+  for (let seed = 0; seed < mesh.count; seed++) {
+    if (!mask[seed] || label[seed] >= 0) continue
+    const id = parts.length
+    const cells: number[] = []
+    let area = 0
+    label[seed] = id
+    stack.push(seed)
+    while (stack.length > 0) {
+      const i = stack.pop()!
+      cells.push(i)
+      area += mesh.area[i]
+      for (let e = mesh.nbrStart[i]; e < mesh.nbrStart[i + 1]; e++) {
+        const j = mesh.nbr[e]
+        if (mask[j] && label[j] < 0) {
+          label[j] = id
+          stack.push(j)
+        }
+      }
+    }
+    cells.sort((a, b) => a - b)
+    parts.push(Int32Array.from(cells))
+    areas.push(area)
+  }
+  return { label, area: Float64Array.from(areas), cells: parts }
+}
+
 // THE TERRAIN THE CLIMATE READS (DEC-0036 phase 3): an elevation raster
 // over the domain (the world's 2048 × 1024 in the climate step, the
 // epoch's 256 × 128 rasterisation of the mesh in the history) and its
@@ -181,11 +258,11 @@ export function climateTerrain(domain: Domain, elevation: Float32Array, resX: nu
 // ------------------------------------------------ DEC-0036 transition
 
 // The climate grid's rasters of the mesh's fields, for the readers that
-// keep the 256 × 128 raster until their own phase: the ocean currents and
-// the energy balance (phase 4), the refinement and the phenomena (phase 5),
-// biomes, ecology, hydrology and hydrogeology, the ice, the coast, the
-// column's ledger, the save's layers and the screen's overlays (phase 7 and
-// the save's own step). Each is made once per climate run.
+// keep the 256 × 128 raster until their own phase: the refinement and the
+// phenomena (phase 5), biomes, ecology, hydrology and hydrogeology, the
+// ice, the coast, the column's ledger, the save's layers and the screen's
+// overlays (phase 7 and the save's own step). Each is made once per climate
+// run.
 
 // DEC-0036 transition: removed in phase 7. A scalar field without a
 // sentinel (temperature), cell centres.
@@ -197,6 +274,70 @@ export function climateRaster(cm: ClimateMesh, field: ArrayLike<number>, resX: n
 // vector in its own frame (fields/fieldMesh.rasteriseVectorField).
 export function climateVectorRaster(cm: ClimateMesh, fe: ArrayLike<number>, fs: ArrayLike<number>, resX: number, resY: number): Float32Array {
   return rasteriseVectorField(cm.sampler, fe, fs, resX, resY)
+}
+
+// DEC-0036 transition: removed in phase 5. A vector raster ([east, south]
+// per pixel in the pixel's own frame, the climate grid's convention) onto
+// the mesh: per cell the bilinear mix of the four pixels about its centre,
+// each pixel's vector carried from its centre to the cell's
+// (Domain.transport) before it is weighed — so across a pole, where the
+// pixels' frames turn round, the mix is a vector. The refinement's input
+// wind (refinement.ts), until the refinement is on the mesh.
+export function climateVectorFromRaster(cm: ClimateMesh, raster: Float32Array, resX: number, resY: number): { e: Float64Array; s: Float64Array } {
+  const { mesh } = cm
+  const { domain } = mesh
+  const grid = domain.grid(resX, resY)
+  const e = new Float64Array(mesh.count)
+  const s = new Float64Array(mesh.count)
+  const sx = domain.width / resX
+  const sy = domain.height / resY
+  const v = { x: 0, y: 0 }
+  for (let i = 0; i < mesh.count; i++) {
+    const fx = mesh.x[i] / sx - 0.5
+    const fy = mesh.y[i] / sy - 0.5
+    const x0 = Math.floor(fx)
+    const y0 = Math.floor(fy)
+    const tx = fx - x0
+    const ty = fy - y0
+    let ae = 0
+    let as = 0
+    for (let k = 0; k < 4; k++) {
+      const dx = k & 1
+      const dy = k >> 1
+      const w = (dx ? tx : 1 - tx) * (dy ? ty : 1 - ty)
+      if (w === 0) continue
+      const p = grid.index(x0 + dx, y0 + dy)
+      const px = ((p % resX) + 0.5) * sx
+      const py = (Math.floor(p / resX) + 0.5) * sy
+      domain.transport(raster[2 * p], raster[2 * p + 1], px, py, mesh.x[i], mesh.y[i], v)
+      ae += w * v.x
+      as += w * v.y
+    }
+    e[i] = ae
+    s[i] = as
+  }
+  return { e, s }
+}
+
+// DEC-0036 transition: removed in phase 7. A sea field of the mesh (0 on
+// land) on the climate raster, 0 on the raster's land (`landPixels`,
+// rasterLand) — the currents, their anomaly and the refinement's sea
+// layers, as the readers of the raster have them.
+export function climateSeaRaster(cm: ClimateMesh, field: ArrayLike<number>, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
+  const out = rasteriseField(cm.mesh, field, resX, resY)
+  for (let p = 0; p < out.length; p++) if (landPixels[p]) out[p] = 0
+  return out
+}
+
+// DEC-0036 transition: removed in phase 7. The same for a sea vector field.
+export function climateSeaVectorRaster(cm: ClimateMesh, fe: ArrayLike<number>, fs: ArrayLike<number>, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
+  const out = rasteriseVectorField(cm.sampler, fe, fs, resX, resY)
+  for (let p = 0; p < landPixels.length; p++) {
+    if (!landPixels[p]) continue
+    out[2 * p] = 0
+    out[2 * p + 1] = 0
+  }
+  return out
 }
 
 // The land test of a resX × resY climate raster over the terrain: its

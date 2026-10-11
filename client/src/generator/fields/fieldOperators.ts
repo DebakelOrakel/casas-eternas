@@ -146,15 +146,22 @@ export function gradient(fm: FieldMesh, phi: ArrayLike<number>, outE: Float64Arr
 // n_ij) / A_i, the face's vector the mean of the two cells' (the
 // neighbour's carried into the cell's frame), n_ij the unit direction to
 // the neighbour (the wall's normal on a Voronoi mesh). Per second for a
-// velocity in m / s.
-export function divergence(fm: FieldMesh, ve: ArrayLike<number>, vs: ArrayLike<number>, out: Float64Array): Float64Array {
+// velocity in m / s. With `within` (1 per cell inside), only the walls
+// between two cells inside carry a flux and a cell outside gets 0 — a
+// region with closed walls (the sea, whose coasts nothing crosses).
+export function divergence(fm: FieldMesh, ve: ArrayLike<number>, vs: ArrayLike<number>, out: Float64Array, within?: Uint8Array): Float64Array {
   const { nbrStart, nbr, wall, dist, offE, offS, turnC, turnS, area } = fm
   for (let i = 0; i < fm.count; i++) {
+    if (within && !within[i]) {
+      out[i] = 0
+      continue
+    }
     const ae = ve[i]
     const as = vs[i]
     let s = 0
     for (let e = nbrStart[i]; e < nbrStart[i + 1]; e++) {
       const j = nbr[e]
+      if (within && !within[j]) continue
       const c = turnC[e]
       const sn = turnS[e]
       const be = c * ve[j] - sn * vs[j]
@@ -385,12 +392,10 @@ export interface SolveReport {
 // coupling (K_ij = k_ij, K_ii = −Σ k_ij), positive definite for α > 0 and
 // semi-definite with the constants as null space for α = 0 — then f's mean
 // is removed and the solution returned with an area-weighted mean of 0.
-// Jacobi preconditioning. `phi` holds the first guess and receives the
-// solution. Every sum in a fixed order: the same input gives the same
-// bytes.
+// Jacobi preconditioning (conjugateGradient). `phi` holds the first guess
+// and receives the solution. Every sum in a fixed order: the same input
+// gives the same bytes.
 export function solveHelmholtz(fm: FieldMesh, alpha: number, f: ArrayLike<number>, phi: Float64Array, options: SolveOptions = {}): SolveReport {
-  const tolerance = options.tolerance ?? 1e-10
-  const maxIterations = options.maxIterations ?? 2000
   const n = fm.count
   const { nbrStart, nbr, coupling, area } = fm
   let totalArea = 0
@@ -417,33 +422,46 @@ export function solveHelmholtz(fm: FieldMesh, alpha: number, f: ArrayLike<number
       out[i] = s
     }
   }
+  const report = conjugateGradient(n, apply, diag, b, phi, options)
+  if (alpha === 0) {
+    let m = 0
+    for (let i = 0; i < n; i++) m += area[i] * phi[i]
+    m /= totalArea
+    for (let i = 0; i < n; i++) phi[i] -= m
+  }
+  report.removedMean = removedMean
+  return report
+}
+
+// A symmetric positive (semi-)definite system A x = b by conjugate gradients
+// with a Jacobi preconditioner: `apply` writes A x, `diag` is A's diagonal
+// (a zero entry leaves its unknown alone — a cell outside the system), `x`
+// holds the first guess and receives the solution. To a relative residual
+// |b − Ax| / |b| of `tolerance` (default 1e-10). A semi-definite system
+// converges when b is orthogonal to its null space (the caller's to
+// ensure: a Poisson problem's mean-free right-hand side per connected
+// part). Every sum in a fixed order.
+export function conjugateGradient(n: number, apply: (x: ArrayLike<number>, out: Float64Array) => void, diag: ArrayLike<number>, b: ArrayLike<number>, x: Float64Array, options: SolveOptions = {}): SolveReport {
+  const tolerance = options.tolerance ?? 1e-10
+  const maxIterations = options.maxIterations ?? 2000
   const r = new Float64Array(n)
   const z = new Float64Array(n)
   const p = new Float64Array(n)
   const q = new Float64Array(n)
-  apply(phi, q)
+  apply(x, q)
   let bNorm = 0
   for (let i = 0; i < n; i++) {
     r[i] = b[i] - q[i]
     bNorm += b[i] * b[i]
   }
   bNorm = Math.sqrt(bNorm)
-  const finish = (iterations: number, residual: number, converged: boolean): SolveReport => {
-    if (alpha === 0) {
-      let m = 0
-      for (let i = 0; i < n; i++) m += area[i] * phi[i]
-      m /= totalArea
-      for (let i = 0; i < n; i++) phi[i] -= m
-    }
-    return { iterations, residual, converged, removedMean }
-  }
   if (bNorm === 0) {
-    phi.fill(0)
-    return finish(0, 0, true)
+    x.fill(0)
+    return { iterations: 0, residual: 0, converged: true, removedMean: 0 }
   }
   let rz = 0
   for (let i = 0; i < n; i++) {
-    z[i] = r[i] / diag[i]
+    z[i] = diag[i] !== 0 ? r[i] / diag[i] : 0
     p[i] = z[i]
     rz += r[i] * z[i]
   }
@@ -455,20 +473,348 @@ export function solveHelmholtz(fm: FieldMesh, alpha: number, f: ArrayLike<number
     const a = rz / pq
     let rr = 0
     for (let i = 0; i < n; i++) {
-      phi[i] += a * p[i]
+      x[i] += a * p[i]
       r[i] -= a * q[i]
       rr += r[i] * r[i]
     }
     residual = Math.sqrt(rr) / bNorm
-    if (residual <= tolerance) return finish(it, residual, true)
+    if (residual <= tolerance) return { iterations: it, residual, converged: true, removedMean: 0 }
     let rzNext = 0
     for (let i = 0; i < n; i++) {
-      z[i] = r[i] / diag[i]
+      z[i] = diag[i] !== 0 ? r[i] / diag[i] : 0
       rzNext += r[i] * z[i]
     }
     const beta = rzNext / rz
     rz = rzNext
     for (let i = 0; i < n; i++) p[i] = z[i] + beta * p[i]
   }
-  return finish(maxIterations, residual, false)
+  return { iterations: maxIterations, residual, converged: false, removedMean: 0 }
+}
+
+// A general (non-symmetric) system A x = b by BiCGSTAB (van der Vorst
+// 1992) with a preconditioner: `apply` writes A x, `precondition` writes
+// K⁻¹ r for an approximation K of A (a Jacobi or block-Jacobi inverse),
+// `x` holds the first guess and receives the solution. What the Stommel
+// balance (its β term is a first derivative: the matrix is not symmetric)
+// and the energy balance (an upwind transport and a complex diagonal) are
+// solved by; CG does not apply to either. To a relative residual |b − Ax|
+// / |b| of `tolerance` (default 1e-10), the true residual recomputed at the
+// end. On a breakdown (ρ = 0, the shadow residual orthogonal to r) it
+// restarts from the current x. Every sum in a fixed order.
+export function solveBiCGSTAB(n: number, apply: (x: ArrayLike<number>, out: Float64Array) => void, precondition: (r: ArrayLike<number>, out: Float64Array) => void, b: ArrayLike<number>, x: Float64Array, options: SolveOptions = {}): SolveReport {
+  const tolerance = options.tolerance ?? 1e-10
+  const maxIterations = options.maxIterations ?? 2000
+  const r = new Float64Array(n)
+  const shadow = new Float64Array(n)
+  const p = new Float64Array(n)
+  const v = new Float64Array(n)
+  const y = new Float64Array(n)
+  const s = new Float64Array(n)
+  const zz = new Float64Array(n)
+  const t = new Float64Array(n)
+  let bNorm = 0
+  for (let i = 0; i < n; i++) bNorm += b[i] * b[i]
+  bNorm = Math.sqrt(bNorm)
+  if (bNorm === 0) {
+    x.fill(0)
+    return { iterations: 0, residual: 0, converged: true, removedMean: 0 }
+  }
+  const restart = (): void => {
+    apply(x, v)
+    for (let i = 0; i < n; i++) {
+      r[i] = b[i] - v[i]
+      shadow[i] = r[i]
+      p[i] = 0
+      v[i] = 0
+    }
+  }
+  restart()
+  const norm = (a: Float64Array): number => {
+    let q = 0
+    for (let i = 0; i < n; i++) q += a[i] * a[i]
+    return Math.sqrt(q)
+  }
+  let rho = 1
+  let alpha = 1
+  let omega = 1
+  let residual = norm(r) / bNorm
+  let it = 0
+  while (residual > tolerance && it < maxIterations) {
+    it++
+    let rhoNext = 0
+    for (let i = 0; i < n; i++) rhoNext += shadow[i] * r[i]
+    if (rhoNext === 0 || omega === 0) {
+      restart()
+      rho = 1
+      alpha = 1
+      omega = 1
+      continue
+    }
+    const beta = (rhoNext / rho) * (alpha / omega)
+    rho = rhoNext
+    for (let i = 0; i < n; i++) p[i] = r[i] + beta * (p[i] - omega * v[i])
+    precondition(p, y)
+    apply(y, v)
+    let sv = 0
+    for (let i = 0; i < n; i++) sv += shadow[i] * v[i]
+    alpha = rho / sv
+    for (let i = 0; i < n; i++) s[i] = r[i] - alpha * v[i]
+    if (norm(s) / bNorm <= tolerance) {
+      for (let i = 0; i < n; i++) x[i] += alpha * y[i]
+      residual = norm(s) / bNorm
+      break
+    }
+    precondition(s, zz)
+    apply(zz, t)
+    let ts = 0
+    let tt = 0
+    for (let i = 0; i < n; i++) {
+      ts += t[i] * s[i]
+      tt += t[i] * t[i]
+    }
+    omega = tt > 0 ? ts / tt : 0
+    for (let i = 0; i < n; i++) {
+      x[i] += alpha * y[i] + omega * zz[i]
+      r[i] = s[i] - omega * t[i]
+    }
+    residual = norm(r) / bNorm
+  }
+  // The true residual, not the recurrence's.
+  apply(x, v)
+  for (let i = 0; i < n; i++) r[i] = b[i] - v[i]
+  residual = norm(r) / bNorm
+  return { iterations: it, residual, converged: residual <= tolerance * 10, removedMean: 0 }
+}
+
+// Per directed edge, the wall's length times the east component of its
+// unit normal toward the neighbour, metres: the flux of a field ψ carried
+// due east at unit speed through the wall is wallEast · ψ_face. Taken as
+// the mean of the two cells' views (the normal in cell i's frame and minus
+// the neighbour's in its own), so it is exactly antisymmetric —
+// wallEast[rev[e]] = −wallEast[e] — and a sum of such fluxes over a region
+// telescopes to its boundary (the currents' island rule needs that). On
+// the torus it is wall · dx / dist. Σ_e wallEast over a cell is its area
+// times the divergence of the east unit vector, which is 0 on both shapes
+// (to the discretisation). Cached per mesh.
+export function eastWallNormals(fm: FieldMesh): Float64Array {
+  let out = eastWalls.get(fm)
+  if (out) return out
+  out = new Float64Array(fm.nbr.length)
+  for (let e = 0; e < out.length; e++) out[e] = (fm.wall[e] * (fm.offE[e] - fm.offE[fm.rev[e]])) / (2 * fm.dist[e])
+  eastWalls.set(fm, out)
+  return out
+}
+
+const eastWalls = new WeakMap<FieldMesh, Float64Array>()
+
+// ------------------------------------------------------- sparse matrices
+
+// A square sparse matrix in compressed rows: row r's entries are start[r] ..
+// start[r + 1] − 1, their columns ascending, the diagonal among them. What a
+// stage assembles when its operator is not one of the mesh's own (the
+// currents' island rule, the energy balance's two parts a cell).
+export interface SparseMatrix {
+  readonly n: number
+  readonly start: Int32Array
+  readonly col: Int32Array
+  readonly val: Float64Array
+}
+
+// A matrix from its rows, each a list of [column, value] pairs in any order
+// (a column given twice is summed); every row must hold its diagonal.
+export function sparseMatrix(rows: readonly (readonly [number, number])[][]): SparseMatrix {
+  const n = rows.length
+  const start = new Int32Array(n + 1)
+  const cols: number[] = []
+  const vals: number[] = []
+  for (let r = 0; r < n; r++) {
+    start[r] = cols.length
+    const sorted = [...rows[r]].sort((a, b) => a[0] - b[0])
+    let hasDiagonal = false
+    for (const [c, v] of sorted) {
+      if (c === r) hasDiagonal = true
+      if (cols.length > start[r] && cols[cols.length - 1] === c) vals[vals.length - 1] += v
+      else {
+        cols.push(c)
+        vals.push(v)
+      }
+    }
+    if (!hasDiagonal) throw new Error(`sparseMatrix: row ${r} has no diagonal`)
+  }
+  start[n] = cols.length
+  return { n, start, col: Int32Array.from(cols), val: Float64Array.from(vals) }
+}
+
+// out = A x.
+export function sparseApply(m: SparseMatrix, x: ArrayLike<number>, out: Float64Array): void {
+  const { n, start, col, val } = m
+  for (let r = 0; r < n; r++) {
+    let s = 0
+    for (let k = start[r]; k < start[r + 1]; k++) s += val[k] * x[col[k]]
+    out[r] = s
+  }
+}
+
+// The incomplete LU factorisation with no fill (ILU(0), Saad 2003 §10.3):
+// L and U on A's own pattern, and the preconditioner that applies (LU)⁻¹ —
+// a forward and a back substitution, about one product with A. For the
+// diagonally dominant systems here it cuts BiCGSTAB's iterations several
+// times over Jacobi's. A pivot that comes out 0 is replaced by the row's
+// diagonal (it does not, on a diagonally dominant matrix).
+export function ilu0(m: SparseMatrix): (r: ArrayLike<number>, out: Float64Array) => void {
+  const { n, start, col } = m
+  const lu = Float64Array.from(m.val)
+  const diagAt = new Int32Array(n)
+  for (let r = 0; r < n; r++) {
+    diagAt[r] = -1
+    for (let k = start[r]; k < start[r + 1]; k++) if (col[k] === r) diagAt[r] = k
+  }
+  const where = new Int32Array(n).fill(-1)
+  for (let i = 0; i < n; i++) {
+    for (let k = start[i]; k < start[i + 1]; k++) where[col[k]] = k
+    for (let p = start[i]; p < start[i + 1]; p++) {
+      const kc = col[p]
+      if (kc >= i) break
+      let pivot = lu[diagAt[kc]]
+      if (pivot === 0) pivot = m.val[diagAt[kc]]
+      lu[p] /= pivot
+      const lik = lu[p]
+      for (let q = diagAt[kc] + 1; q < start[kc + 1]; q++) {
+        const w = where[col[q]]
+        if (w >= 0) lu[w] -= lik * lu[q]
+      }
+    }
+    for (let k = start[i]; k < start[i + 1]; k++) where[col[k]] = -1
+    if (lu[diagAt[i]] === 0) lu[diagAt[i]] = m.val[diagAt[i]]
+  }
+  return (r, out) => {
+    for (let i = 0; i < n; i++) {
+      let s = r[i]
+      for (let k = start[i]; k < diagAt[i]; k++) s -= lu[k] * out[col[k]]
+      out[i] = s
+    }
+    for (let i = n - 1; i >= 0; i--) {
+      let s = out[i]
+      for (let k = diagAt[i] + 1; k < start[i + 1]; k++) s -= lu[k] * out[col[k]]
+      out[i] = s / lu[diagAt[i]]
+    }
+  }
+}
+
+// Aggregates of a matrix's unknowns for a coarse correction: each a
+// connected patch of the matrix's graph grown breadth-first `hops` steps
+// from the lowest unknown not yet taken (rows longer than `longRow`
+// entries — an island's, coupled to its whole coast — stand alone, as
+// their own aggregate, and are not walked through). Per unknown its
+// aggregate, and their count.
+export function aggregate(m: SparseMatrix, hops: number, longRow = 16): { of: Int32Array; count: number } {
+  const { n, start, col } = m
+  const of = new Int32Array(n).fill(-1)
+  const long = (r: number): boolean => start[r + 1] - start[r] > longRow
+  let count = 0
+  let frontier: number[] = []
+  for (let seed = 0; seed < n; seed++) {
+    if (of[seed] >= 0) continue
+    const id = count++
+    of[seed] = id
+    if (long(seed)) continue
+    frontier = [seed]
+    for (let h = 0; h < hops && frontier.length > 0; h++) {
+      const next: number[] = []
+      for (const r of frontier) {
+        for (let k = start[r]; k < start[r + 1]; k++) {
+          const c = col[k]
+          if (of[c] >= 0 || long(c)) continue
+          of[c] = id
+          next.push(c)
+        }
+      }
+      frontier = next
+    }
+  }
+  return { of, count }
+}
+
+// A two-level preconditioner: ILU(0) smoothing, then a coarse correction
+// on aggregates (unsmoothed aggregation: the prolongation constant on each
+// aggregate, the coarse matrix PᵀAP the sum of A's entries between two
+// aggregates, solved exactly by a dense LU with partial pivoting). For one
+// residual r: z = (LU)⁻¹ r, then z += P A_c⁻¹ Pᵀ (r − A z). The coarse
+// level carries what ILU(0) relaxes slowly — the long waves, and an
+// island's one value along its whole coast — so the Krylov iterations do
+// not grow with the mesh's size or the islands' count. A post-smoothing
+// pass as well cost more than the iterations it saved (measured on the
+// currents, 2026-10-11). A linear operator: BiCGSTAB may use it.
+export function twoLevelPreconditioner(m: SparseMatrix, agg: { of: Int32Array; count: number }): (r: ArrayLike<number>, out: Float64Array) => void {
+  const { n, start, col, val } = m
+  const nc = agg.count
+  const of = agg.of
+  const coarse = new Float64Array(nc * nc)
+  for (let r = 0; r < n; r++) {
+    const I = of[r] * nc
+    for (let k = start[r]; k < start[r + 1]; k++) coarse[I + of[col[k]]] += val[k]
+  }
+  const pivot = denseLU(coarse, nc)
+  const smooth = ilu0(m)
+  const res = new Float64Array(n)
+  const rc = new Float64Array(nc)
+  return (r, out) => {
+    smooth(r, out)
+    sparseApply(m, out, res)
+    rc.fill(0)
+    for (let i = 0; i < n; i++) rc[of[i]] += r[i] - res[i]
+    denseSolve(coarse, pivot, nc, rc)
+    for (let i = 0; i < n; i++) out[i] += rc[of[i]]
+  }
+}
+
+// In place: the LU factors of a dense row-major n × n matrix with partial
+// pivoting; returns the row permutation.
+function denseLU(a: Float64Array, n: number): Int32Array {
+  const perm = new Int32Array(n)
+  for (let i = 0; i < n; i++) perm[i] = i
+  for (let k = 0; k < n; k++) {
+    let p = k
+    let best = Math.abs(a[k * n + k])
+    for (let i = k + 1; i < n; i++) {
+      const v = Math.abs(a[i * n + k])
+      if (v > best) { best = v; p = i }
+    }
+    if (p !== k) {
+      for (let j = 0; j < n; j++) {
+        const t = a[k * n + j]
+        a[k * n + j] = a[p * n + j]
+        a[p * n + j] = t
+      }
+      const t = perm[k]
+      perm[k] = perm[p]
+      perm[p] = t
+    }
+    const d = a[k * n + k]
+    if (d === 0) continue
+    for (let i = k + 1; i < n; i++) {
+      const f = (a[i * n + k] /= d)
+      if (f === 0) continue
+      for (let j = k + 1; j < n; j++) a[i * n + j] -= f * a[k * n + j]
+    }
+  }
+  return perm
+}
+
+// Solves (PLU) x = b in place in b, from denseLU's factors. A zero pivot
+// (a singular coarse matrix: a closed Neumann problem) leaves its unknown 0.
+function denseSolve(a: Float64Array, perm: Int32Array, n: number, b: Float64Array): void {
+  const y = new Float64Array(n)
+  for (let i = 0; i < n; i++) {
+    let s = b[perm[i]]
+    for (let j = 0; j < i; j++) s -= a[i * n + j] * y[j]
+    y[i] = s
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    let s = y[i]
+    for (let j = i + 1; j < n; j++) s -= a[i * n + j] * y[j]
+    const d = a[i * n + i]
+    y[i] = d !== 0 ? s / d : 0
+  }
+  b.set(y)
 }

@@ -1780,7 +1780,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const WIND_GLOBE_SPACING = 26
   function windMarks(field: Float32Array): VectorMark[] {
     const ref = vectorReferenceSpeed(field)
-    const mesh = meshWindReader(field)
+    const mesh = meshVectorReader(field)
     if (worldShape === 'sphere') {
       return globeVectorMarks(mesh?.atPoint ?? rasterVectorReader(field, climateResX, climateResY), { width: MAP_WIDTH, spacing: WIND_GLOBE_SPACING, length: WIND_LENGTH, minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref })
     }
@@ -2081,18 +2081,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return worldShape === 'sphere' ? Math.max(0, Math.min(climateResY - 1, y)) : wrapValue(y, climateResY)
   }
 
-  // The static climate's wind on its field mesh (DEC-0036 phase 3), per
-  // raster it came with (WorkerClimateDataMessage.windMesh): the marks read
-  // their directions there, through the mesh's sampler, each in its
-  // point's own frame. DEC-0036 transition: removed in phase 5 — the
-  // refinement's winds and the currents have no mesh yet (phases 4 and 5)
-  // and read their raster.
-  const windMeshOf = new WeakMap<Float32Array, { shape: 'torus' | 'sphere'; cells: number; e: Float64Array; s: Float64Array }>()
-  function keepWindMesh(raster: Float32Array, shape: 'torus' | 'sphere', payload: { cells: number; e: ArrayBuffer; s: ArrayBuffer } | undefined): void {
-    if (payload) windMeshOf.set(raster, { shape, cells: payload.cells, e: new Float64Array(payload.e), s: new Float64Array(payload.s) })
+  // The static climate's wind (DEC-0036 phase 3) and currents (phase 4) on
+  // its field mesh, per raster they came with (WorkerClimateDataMessage.
+  // windMesh, .currentsMesh): the marks read their directions there,
+  // through the mesh's sampler, each in its point's own frame. DEC-0036
+  // transition: removed in phase 5 — the refinement's winds and currents
+  // have no mesh yet and read their raster.
+  const vectorMeshOf = new WeakMap<Float32Array, { shape: 'torus' | 'sphere'; cells: number; e: Float64Array; s: Float64Array }>()
+  function keepVectorMesh(raster: Float32Array, shape: 'torus' | 'sphere', payload: { cells: number; e: ArrayBuffer; s: ArrayBuffer } | undefined): void {
+    if (payload) vectorMeshOf.set(raster, { shape, cells: payload.cells, e: new Float64Array(payload.e), s: new Float64Array(payload.s) })
   }
-  function meshWindReader(field: Float32Array): { atPoint: VectorReader; atPixel: (x: number, y: number) => [number, number] } | null {
-    const wind = windMeshOf.get(field)
+  function meshVectorReader(field: Float32Array): { atPoint: VectorReader; atPixel: (x: number, y: number) => [number, number] } | null {
+    const wind = vectorMeshOf.get(field)
     if (!wind) return null
     // Built from the shape on first use, as the worker built it (0.7 s on
     // the sphere, once).
@@ -2185,10 +2185,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const CURRENT_MIN_SPEED = 0.1
   function currentMarks(field: Float32Array): VectorMark[] {
     const ref = vectorReferenceSpeed(field)
+    const mesh = meshVectorReader(field)
     if (worldShape === 'sphere') {
-      return globeVectorMarks(rasterVectorReader(field, climateResX, climateResY), { width: MAP_WIDTH, spacing: CURRENT_GLOBE_SPACING, length: CURRENT_GLOBE_LENGTH, minSpeed: CURRENT_MIN_SPEED, refSpeed: ref })
+      return globeVectorMarks(mesh?.atPoint ?? rasterVectorReader(field, climateResX, climateResY), { width: MAP_WIDTH, spacing: CURRENT_GLOBE_SPACING, length: CURRENT_GLOBE_LENGTH, minSpeed: CURRENT_MIN_SPEED, refSpeed: ref })
     }
-    const lines = traceFlowLines((x, y) => sampleVector(field, x, y), {
+    const lines = traceFlowLines(mesh?.atPixel ?? ((x, y) => sampleVector(field, x, y)), {
       width: MAP_WIDTH, height: MAP_HEIGHT,
       separation: 52, stopRatio: 0.55, step: 4, maxLength: 1800,
       minSpeed: CURRENT_MIN_SPEED, refSpeed: ref,
@@ -3760,8 +3761,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     applyBase()
     lastTemperature = new Float32Array(message.temperature)
     lastWind = new Float32Array(message.wind)
-    keepWindMesh(lastWind, message.shape, message.windMesh)
+    keepVectorMesh(lastWind, message.shape, message.windMesh)
     lastCurrents = new Float32Array(message.currents)
+    keepVectorMesh(lastCurrents, message.shape, message.currentsMesh)
     lastCurrentAnomaly = new Float32Array(message.currentAnomaly)
     lastPrecipitation = new Float32Array(message.precipitation)
     lastSeasonality = new Float32Array(message.seasonalAmplitude)
@@ -3811,8 +3813,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function handleClimateData(message: WorkerClimateDataMessage): void {
     lastTemperature = new Float32Array(message.temperature)
     lastWind = new Float32Array(message.wind)
-    keepWindMesh(lastWind, previewShape(), message.windMesh)
+    keepVectorMesh(lastWind, previewShape(), message.windMesh)
     lastCurrents = new Float32Array(message.currents)
+    keepVectorMesh(lastCurrents, previewShape(), message.currentsMesh)
     lastCurrentAnomaly = new Float32Array(message.currentAnomaly)
     lastPrecipitation = new Float32Array(message.precipitation)
     lastSeasonality = new Float32Array(message.seasonalAmplitude)

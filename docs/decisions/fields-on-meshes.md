@@ -174,7 +174,11 @@ Each phase is agreed before it starts and measured after (sphere and torus,
 6. The flexure.
 7. Biomes, ecology, resources and hydrogeology on the terrain mesh.
 8. Then the calibration — once, in metres: the constants now in cells
-   (DEC-0035, fork 6's list), the plate count and the land fraction.
+   (DEC-0035, fork 6's list), the plate count and the land fraction. It
+   looks at the field mesh's twelve pentagons on purpose: the centroidal
+   grid's ∇² keeps an error of about 1.2 % next to them at every spacing
+   (phase 3); if a field shows it there, a Heikes–Randall correction is the
+   remedy (agreed 2026-10-11).
 
 The tectonics' own calibration (plate count, land fraction, the radii of
 ranges and rifts, the mesh's spacing) does not depend on this and may be
@@ -192,6 +196,156 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-11: phase 4 BUILT — the ocean on the climate's field mesh, both
+shapes, one path (`climate/oceanCurrents.ts`, `energyBalance.ts`,
+`salinity.ts`): the wind-driven currents, the sea surface they make,
+the anomaly carried inland, the Ekman upwelling, the salt and the
+overturning's inflow, and the energy balance's year. The land is the
+terrain's at the cells' centres (ClimateTerrain.land); the landmasses
+and the seas are connected parts of the mesh's graph
+(`climateMesh.meshComponents`), the rivers' mouths a Dijkstra over its
+links (`distanceToSea`, now the continentality's too, byte-identical).
+The cyclic line solver (`cyclicLine.ts`), the row lines, the
+pole-row averaging and the sweep counts are gone.
+
+**The method.** The Stommel balance ∇²ψ + β ∂ψ/∂x = curl τ in finite
+volumes: the Laplacian's flux across each wall, the β term the flux of
+β ψ carried due east (`fieldOperators.eastWallNormals`, the wall times
+the east component of its normal, the mean of the two cells' views, so
+exactly antisymmetric); the curl the divergence of the wind turned by
+90° in each cell's frame; the velocity ψ's gradient turned back. The
+island rule: the largest landmass by area holds ψ = 0, every other one
+that touches the sea one unknown whose row is its cells' rows summed —
+which telescopes to its coast exactly, both fluxes being antisymmetric.
+The energy balance per harmonic: (B + iωkC) T̂ − D ∇²T̂ + a (u · ∇) T̂ =
+(1 − α) Ŝ, the carry first-order upwind over the walls, in its real form
+(two unknowns a cell, interleaved). The overturning's potential ∇²χ = −s
+with no flux into land: its water now rises in the sea it sank in, each
+connected sea its own balance — the reason the old Gauss-Seidel never
+converged (an enclosed sea's Neumann problem had no solution); CG then
+converges. The SST and the salt by the semi-Lagrangian transport
+(linear, monotone, as the bilinear raster sample was), the departures
+along the great circle by the midpoint rule; the anomaly carried
+inland by a march upwind along the great circle in steps of the mesh's
+spacing; the upwelling the masked divergence (`divergence(…, within)`:
+no flux through a coast).
+
+**The solver.** Not symmetric: BiCGSTAB (`fieldOperators.solveBiCGSTAB`),
+to a relative residual of 1e-10, the true residual recomputed. Its
+preconditioner is two-level (`twoLevelPreconditioner`): ILU(0) on the
+matrix's own pattern (`sparseMatrix`, `ilu0`), then a coarse correction
+on aggregates — patches of the graph within 6 links (the energy
+balance's 12 in its interleaved form, real and imaginary apart), each
+island its own — with the coarse matrix PᵀAP factored densely. The
+coarse level carries an island's one value along its coast, which
+ILU(0) relaxes slowly. Restarted GMRES was tried and stagnated (1400–
+3000 products); a post-smoothing pass cost more than it saved. The
+inflow keeps CG with Jacobi (symmetric, singular). Iterations to 1e-10
+(bench worlds, 2048 × 1024; residual reached):
+
+| solve | torus | sphere | HEAD (raster) |
+|---|---|---|---|
+| currents, 22–25 / 10 islands | 45–47 (Jacobi ~1100 on a 5-island test world; ILU(0) alone 200–280 to 1e-8) | 44–47 | 700 Gauss-Seidel sweeps, 0.078 of the field off its 2800-sweep value |
+| energy balance, year / half year | 30–31 / 40–41 | 31 / 37–38 | 400 sweeps (converged, 0.0000 °C) |
+| overturning's inflow (CG) | 784–786 | 688–690 | 700 sweeps, 0.11–0.22 of the field off its 2800-sweep value |
+
+`harness:fields` [4b] holds the solver: a manufactured (∇² + β ∂x − α)ψ
+= f, β by latitude, on both shapes at 312 to 39 km — second order (2.00
+to 2.03), the same answer with Jacobi, ILU(0) and two levels, the
+two-level iterations 17–32 (sphere) and 29–49 (torus), not growing with
+the mesh as Jacobi's (79 → 721) and ILU(0)'s (25 → 206; torus 48 → 419)
+do; and Stommel's analytic basin (a box of 6000 × 3000 km on the torus,
+β = 1 / 300 km) through the stage's own solve: 3.5 / 3.0 % off at 78 / 39
+km (the coast's jag of a cell, first order at best), the gyre's centre at
+0.16–0.17 of the basin from its WESTERN shore; the mutation (β turned)
+puts it at 0.83–0.84.
+
+**Constants converted** (the torus's 62.4 km climate cell, as phase 3):
+
+| Was | Now |
+|---|---|
+| currentsBeta 0.4 per cell | currentsBoundaryWidthM 156 000 (β = cos φ / it) |
+| currentsAdvectStep 4 cells | currentsAdvectStepM 249 600 |
+| currentsInlandReachCells 30, currentsInlandDecayCells 15 | currentsInlandReachM 1 872 000, currentsInlandDecayM 936 000 |
+| ebmExchange 40 W/m²K per neighbour | ebmDiffusionWPerK 40 × 62 400² |
+| ebmCarryPerWind 100 per cell | ebmCarryPerWindM 100 × 62 400 |
+| the upwelling's divergence per cell | × climateGradientLengthM (62 400) |
+| currentsSolveIters 700, ebmSolveIters 400, conveyorSolveIters 700 | gone (a residual of 1e-10) |
+
+**Transition adapters.** Removed: weather.ts's (the wind and the
+temperature rasterised for the currents, the SST change brought back
+at the centres); the screen's currents read their raster (the static
+currents' marks read the mesh through `WorkerClimateDataMessage.
+currentsMesh`, as the wind's). Added, marked: `climateMesh.
+climateVectorFromRaster` (phase 5: the refinement's input wind onto
+the mesh, each pixel's vector carried to the cell before it is
+weighed), `climateSeaRaster` / `climateSeaVectorRaster` (phase 7: a sea
+field rasterised with 0 on the raster's land, the readers' old form),
+and refinement.ts's `eastwardInBasin` / `basinFlank` (phase 5, moved
+there: the equatorial cold tongue's and the ocean highs' rows). The
+refinement runs its ocean and its year on the mesh and takes the rest
+back on the raster (phase 5).
+
+**Save**: the static climate's currents and SST are not saved — they are
+recomputed on load with the climate. The refinement's currents
+(currentU / V), currentAnomaly, upwelling, salinity and deepWater stay
+the save's quantised raster layers (formatVersion 6's refined layers,
+written from the transition rasters); they move with the refinement
+(phase 5) and the save's own step. formatVersion 8 unchanged.
+
+**Measured** (2048 × 1024, seed `bench`, 100 Archean + 12 coupled
+epochs at HISTORY_DEFAULTS, Node, one thread):
+
+| | torus HEAD | torus mesh | sphere HEAD | sphere mesh |
+|---|---|---|---|---|
+| climate per climate epoch (4 of 12) | 409 ms | 402 ms | 404 ms | 298 ms |
+| climateRun on the 2048 raster | 364 ms | 351 ms | 371 ms | 262 ms |
+| of it: currents + SST | 308 ms | 255 ms (currents 204) | 306 ms | 171 ms (currents 116) |
+| the refinement | 5.39 s | 4.53 s | 5.77 s | 4.04 s |
+| of it: energy balance / inflow | 582 / 1415 ms | 552 / 362 ms | 855 / 1598 ms | 438 / 198 ms |
+| whole coupled epoch | 1268 ms | 1260 ms | 1774 ms | 1767 ms |
+
+The gyres (the static currents rasterised, sea only, 15–45°; HEAD →
+mesh): the same sense of rotation, the subtropical gyres clockwise in
+the top hemisphere and anticlockwise in the bottom (mean vorticity
+−4.3e-2 / +4.3e-2 → −3.7e-2 / +3.5e-2 torus, −2.7e-2 / +2.8e-2 →
+−4.1e-2 / +3.9e-2 sphere); the western boundary's meridional speed over
+the eastern's 1.30 → 1.43 (torus), 1.39 → 1.31 (sphere), the refined
+currents' 1.54 → 2.17 and 2.12 → 1.98. Zonal means follow the wind (the
+westerlies' band +0.29…0.33 → +0.23…0.30 torus); on the sphere the
+currents are stronger after the normalisation (mean 0.147 → 0.224), the
+raster's fastest cell having been a pole row's. The SST anomaly over
+the sea, p5 / p95: torus −0.96 / 1.17 → −0.82 / 0.82 °C (min −10.1 →
+−7.4, max 4.6 → 4.2), sphere −1.16 / 2.17 → −1.43 / 2.26 °C (max 9.7 →
+9.3); the refined, torus −1.66 / 2.30 → −1.24 / 2.38, sphere −1.49 /
+4.76 → −1.71 / 5.26 °C. Two runs give the same bytes; save → load →
+continue is bit-identical (pipeline harness).
+
+**Golden**: 0 hard failures, 101 metrics drifted, 117 of 138 stages
+moved (the climate's and everything after it — the history's sea
+surface feeds its erosion; the plates, the mantle, the ocean age, the
+boundary lattice and `climate.wind` unchanged, so the CG's move into
+`conjugateGradient` kept the mantle's bytes), coverage kept (85
+metrics vary). No seed changed. Main shifts: ice volume −4 / +2 % (the
+calibration's, zulu's), lake cells +13 % (alpha), river reaches −2 to
+−4 %, rich fishing grounds +27–29 % (calibration, zulu), zulu's highest
+point 5677 → 5392 m, biome shares within a tenth of a point.
+`golden.json` re-recorded and the byte guard re-armed: 0 / 0 / 0, 46
+stages byte-identical × 3.
+
+**The sphere's seeds** (pipeline harness, `SPHERE_SEED=c2…c6 node
+scripts/pipeline.mjs sphere`; each run's world varies with the Archean's
+timing): the polar seas' current check now asks each pole apart and
+SKIPS a pole with no sea poleward of 75° with the reason in its line
+(c2 and c6 had both poles under land, c3 the north) — no NaN; the
+currents themselves are finite everywhere (the field check). The
+refined seasonal range joins the mesh-fed fields held smooth round a
+pole (its months carry the mesh's cycle). c2, c4 and c6 pass whole; c3
+and c5 fail only the lakes' plausibility (20.5 and 22.0 % of the land
+under lakes, the bound 15 %; phase 3 saw it on c5 and HEAD's c6) —
+found, not fixed. The sphere filter takes 293–308 s a seed (HEAD's c4
+256 s); the whole pipeline harness 688 s (HEAD 525 s).
 
 2026-10-11: phase 3 BUILT — the static climate on the field mesh, both
 shapes, one path (`climate/climateMesh.ts`; temperature, wind,

@@ -78,7 +78,9 @@ fields/     the field mesh (DEC-0036): fieldMesh (a uniform mesh over a Domain a
             geometry, the sampler, the chart rasters in and out, sharedFieldMesh: one mesh
             per domain and spacing, the stages that ask for the same one share it),
             fieldOperators (diffusion, Gaussian smoothing, gradient, divergence,
-            semi-Lagrangian transport, the Helmholtz/Poisson CG solve).
+            semi-Lagrangian transport, the Helmholtz/Poisson CG solve, and since
+            phase 4 the general solvers: conjugateGradient, BiCGSTAB, a sparse
+            matrix, ILU(0) and a two-level aggregation preconditioner).
             `npm run harness:fields` holds each against an analytic answer
 planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
             what depends on the planet and not on the relief; the climate reads it
@@ -111,10 +113,13 @@ surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), e
             (the mesh level's synthesis layers and the level bake's constants)
 climate/    the static climate on the field mesh since DEC-0036 phase 3 (climateMesh: the
             mesh W / 256, shared with the ocean age, the terrain read onto it, the zonal
-            means, the TRANSITION rasters): temperature, wind, seasonality, monsoon,
-            precipitation, pressure. The currents and the energy balance (phase 4), the
-            refinement and phenomena (phase 5), biomes (phase 7) stay on the 256 × 128
-            raster and read the mesh's fields through adapters marked
+            means, the distance to the sea, the landmasses and seas as graph components,
+            the TRANSITION rasters): temperature, wind, seasonality, monsoon,
+            precipitation, pressure; since phase 4 the ocean too (oceanCurrents: the
+            Stommel solve with the island rule, the SST, upwelling, the overturning's
+            inflow; energyBalance: the year's cycle; salinity). The refinement and
+            phenomena (phase 5), biomes (phase 7) stay on the 256 × 128 raster and read
+            the mesh's fields through adapters marked
             `DEC-0036 transition: removed in phase N`
 ecology/ migration/ render/
 ```
@@ -127,8 +132,12 @@ save. Read a field mesh through its `FieldSampler`, never by a grid index;
 write it out with `rasteriseField` (cell centres, the DomainGrid's convention).
 Its vectors are east/south pairs in each cell's own frame — carry a
 neighbour's through `carryFrom` before adding it. Phase 0 (the operators),
-phase 1 (the mantle), phase 2 (the ocean age) and phase 3 (the static
-climate) are built; the other stages move one per phase. A length in a
+phase 1 (the mantle), phase 2 (the ocean age), phase 3 (the static
+climate) and phase 4 (the ocean and the energy balance) are built; the
+other stages move one per phase. A solve runs to a RESIDUAL (its
+SolveReport), never to a sweep count: a non-symmetric operator takes
+`solveBiCGSTAB`, a symmetric one CG, and a singular one (a Neumann
+problem) a right-hand side balanced per connected part. A length in a
 stage on the mesh is in METRES (the mesh's, `domain.metresPerUnit`), never
 in cells; a stage not yet moved reads a moved field through an adapter
 marked `// DEC-0036 transition: removed in phase N` — grep for it before
@@ -145,7 +154,7 @@ answers here.
 | Grid | Size | Holds |
 |---|---|---|
 | World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation, discharge, lakeDepth, biome |
-| Climate | field mesh, spacing W / 256 (the ocean age's): temperature, wind, seasonality, monsoon, precipitation, pressure (DEC-0036 phase 3); 256×128 (~62 km per cell) as their transition raster and for the stages not yet moved | the currents, the refinement, biomes, all ecology |
+| Climate | field mesh, spacing W / 256 (the ocean age's): temperature, wind, seasonality, monsoon, precipitation, pressure (DEC-0036 phase 3), the currents, the SST, upwelling, salt, the year's cycle (phase 4); 256×128 (~62 km per cell) as their transition raster and for the stages not yet moved | the refinement's other parts, biomes, all ecology |
 | Ocean age | field mesh, spacing W / 256: 37 888 cells at 62 km (torus), 24 012 at 78 km (sphere); a 1024×512 raster only inside the render's baseline | oceanAge (epochs) |
 | Mantle | field mesh, spacing W / 128: 9 472 cells at 125 km (torus), 6 252 at 156 km (sphere); 128×64 only as the overlay | mantle buoyancy and flow |
 

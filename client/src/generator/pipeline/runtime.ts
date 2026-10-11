@@ -781,14 +781,14 @@ function computeClimateChain(elevation: Float32Array, domain: Domain, params: Cl
   const biomes = computeBiomes(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
   const biomesFine = computeBiomesFine(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, domain, dryLand)
   const koppen = computeKoppenField(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
-  return { temperature, wind, windMesh: meshWindPayload(weather), currents, currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine, koppen }
+  return { temperature, wind, windMesh: meshVectorPayload(weather, weather.mesh.wind), currents, currentsMesh: meshVectorPayload(weather, weather.mesh.currents), currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine, koppen }
 }
 
-// The wind on the climate's field mesh for the screen's marks (DEC-0036
-// phase 3, WorkerClimateDataMessage.windMesh): copies, transferred.
-function meshWindPayload(weather: Weather): { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer } {
-  const { e, s } = weather.mesh.wind
-  return { cells: e.length, spacingM: weather.terrain.cm.cellM, e: e.slice().buffer as ArrayBuffer, s: s.slice().buffer as ArrayBuffer }
+// A vector field on the climate's field mesh for the screen's marks — the
+// wind (DEC-0036 phase 3) and the currents (phase 4),
+// WorkerClimateDataMessage.windMesh and .currentsMesh: copies, transferred.
+function meshVectorPayload(weather: Weather, field: { e: Float64Array; s: Float64Array }): { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer } {
+  return { cells: field.e.length, spacingM: weather.terrain.cm.cellM, e: field.e.slice().buffer as ArrayBuffer, s: field.s.slice().buffer as ArrayBuffer }
 }
 
 // Cache copies for hydrology/ecology (the message buffers get transferred,
@@ -816,6 +816,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     temperature: chain.temperature.buffer as ArrayBuffer,
     wind: chain.wind.buffer as ArrayBuffer,
     windMesh: chain.windMesh,
+    currentsMesh: chain.currentsMesh,
     currents: chain.currents.buffer as ArrayBuffer,
     currentAnomaly: chain.currentAnomaly.buffer as ArrayBuffer,
     precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
@@ -824,7 +825,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     koppen: chain.koppen.buffer as ArrayBuffer,
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
-  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, chain.windMesh.e, chain.windMesh.s, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
+  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, chain.windMesh.e, chain.windMesh.s, chain.currentsMesh.e, chain.currentsMesh.s, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
   return climate
 }
 
@@ -1800,6 +1801,7 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     temperature: chain.temperature.buffer as ArrayBuffer,
     wind: chain.wind.buffer as ArrayBuffer,
     windMesh: chain.windMesh,
+    currentsMesh: chain.currentsMesh,
     currents: chain.currents.buffer as ArrayBuffer,
     currentAnomaly: chain.currentAnomaly.buffer as ArrayBuffer,
     precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
@@ -1808,7 +1810,7 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     koppen: chain.koppen.buffer as ArrayBuffer,
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
-  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, chain.windMesh.e, chain.windMesh.s, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.koppen, preview.biomes])
+  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, chain.windMesh.e, chain.windMesh.s, chain.currentsMesh.e, chain.currentsMesh.s, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.koppen, preview.biomes])
 }
 
 // The stage whose compute a message runs, where a failure must reach the
