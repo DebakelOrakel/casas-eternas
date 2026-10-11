@@ -905,6 +905,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // later steps locked. A world from a file is flat: the saves are tori.
   let worldShape: WorldShape = 'flat'
   let globeView: GlobeWorldView | null = null
+  // The globe's home view, by step (GlobeWorldView.setHome): side on to the
+  // axis in the planet step, where the obliquity is set; from above the
+  // northern half everywhere else.
+  let globeHome: 'overview' | 'profile' = 'overview'
+  const homeForStep = (index: number): 'overview' | 'profile' => (STEP_IDS[index] === 'world' ? 'profile' : 'overview')
   // The view on screen (map/worldView.ts): the globe for a sphere world,
   // the flat map otherwise. The pointer, the scales and the camera ask it.
   // The layers go to the view whose shape is theirs (layerView, at the
@@ -963,6 +968,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       globeView.setSpinning(globeSpinning)
       globeView.setTilted(globeTilted)
       globeView.setFreeArea(globeFreeArea)
+      globeHome = homeForStep(panelIndex)
+      globeView.setHome(globeHome, true)
       sendWater(globeView)
     } else if (shape !== 'sphere' && globeView) {
       globeView.dispose()
@@ -6256,8 +6263,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (panelEverShown && index !== panelIndex) rememberOverlays()
     panelEverShown = true
     panelIndex = index
-    // In and out of the planet step the globe hides or shows its layers.
+    // In and out of the planet step the globe hides or shows its layers,
+    // and swings to the step's home view.
     syncGlobeLayers()
+    if (globeView && homeForStep(index) !== globeHome) {
+      globeHome = homeForStep(index)
+      globeView.setHome(globeHome)
+      globeView.resetCamera()
+    }
     sidebar.setStep(STEP_IDS[index])
     // An open handbook follows to the new step's page, where it has one.
     if (handbookPanel.isOpen() && handbookPanel.has(stepPage(STEP_IDS[index]))) handbookPanel.open(stepPage(STEP_IDS[index]))

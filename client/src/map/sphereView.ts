@@ -91,6 +91,13 @@ export interface GlobeWorldView extends WorldView {
   // The part of the canvas no bar covers (OrbitSwoopCamera.setFreeArea):
   // the far shot fits the globe into it.
   setFreeArea(area: { left: number; top: number; right: number; bottom: number } | null): void
+  // The view the reset returns to: 'overview', the opening one (from above
+  // the northern half, its pole in view); 'profile', side on to the axis
+  // from the equator's plane, so the lean shows whole, a little farther
+  // out — the planet step's, where the obliquity is set. `now`: there at
+  // once (a globe just made); else only the home changes, and the screen
+  // resets to go there.
+  setHome(view: 'overview' | 'profile', now?: boolean): void
   // The globe's outline on the screen while the camera looks at the
   // globe's centre (globeScaleArc.ts), or null while it looks past it (the
   // tilt on, or easing in or out).
@@ -116,6 +123,11 @@ const RADIUS = 1
 // a smaller patch than at 1 rad — a deeper zoom; lifted to keep the patch
 // (0.40 R), the tilted look (38° down) would pass over the horizon there.
 const GLOBE_FOV = 0.4
+// The profile view's far shot fills this much of the free area (the
+// overview's 0.9): a little farther out, so the leaning axis and the polar
+// circles stand clear of the frame (2026-10-11, the user: "ein wenig weiter,
+// aber nicht zuviel").
+const PROFILE_FILL = 0.78
 // The ocean's blue: the old screen's mid-depth stop (texture.ts,
 // OCEAN_COLOR_STOPS), the sphere having no depths yet.
 const OCEAN = new Color3(0.08, 0.35, 0.75)
@@ -498,6 +510,9 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     },
     setTilted: (tilted) => rig.setTilted(tilted),
     setFreeArea: (area) => rig.setFreeArea(area),
+    setHome(view, now) {
+      rig.setHome(view === 'profile' ? { latitude: 0, fill: PROFILE_FILL } : null, now)
+    },
     silhouette() {
       // The globe's centre is the scene's origin (the pivots turn, they do
       // not move); the camera has no parent.

@@ -115,6 +115,11 @@ export interface OrbitSwoopCamera {
   // and height from its top left; null, all of it. The far shot fits the
   // globe into it, centred in the canvas.
   setFreeArea: (area: { left: number; top: number; right: number; bottom: number } | null) => void
+  // The view reset() goes back to: the latitude of the view's centre
+  // (radians) and how much of the free area the far shot fills; null, the
+  // opening view (φ0, farFill). `now`: there at once, not eased (a globe
+  // just made).
+  setHome: (home: { latitude: number; fill: number } | null, now?: boolean) => void
   dispose: () => void
 }
 
@@ -167,6 +172,10 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
   // altitude, so each notch keeps its 6.2 % and the range has fewer of them
   // (ln(1.27 / 0.15) = 2.14, the flat map's range).
   const closeAltitude = radius * altitudeFactor
+  // The far shot's fill: eased toward the home's, so a new home does not
+  // jump the far shot's distance.
+  let currentFill = farFill
+  let targetFill = farFill
   let freeArea = { left: 0, top: 0, right: 1, bottom: 1 }
   const farAltitudeFor = (fov: number, aspect: number): number => {
     const halfHeight = Math.tan(fov / 2)
@@ -174,7 +183,7 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
     const vertical = halfHeight * 2 * Math.min(0.5 - freeArea.top, freeArea.bottom - 0.5)
     const horizontal = halfHeight * aspect * 2 * Math.min(0.5 - freeArea.left, freeArea.right - 0.5)
     const halfSmaller = Math.max(0.05 * halfHeight, Math.min(vertical, horizontal))
-    const rim = Math.atan(farFill * halfSmaller)
+    const rim = Math.atan(currentFill * halfSmaller)
     return Math.max(closeAltitude * 1.01, radius / Math.sin(rim) - radius)
   }
   let farAltitude = radius * 3
@@ -197,6 +206,8 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
   const basis = globeViewBasis([hoverDirection.x, hoverDirection.y, hoverDirection.z])
   let lambda = 0
   let phi = basis.phi0
+  // Where reset() returns to (setHome): the opening view unless set.
+  let homePhi = basis.phi0
   const applyView = (): void => {
     const [x, y, z, w] = quaternionOfMatrix(viewRotation(basis, lambda, phi))
     viewPivot.rotationQuaternion!.set(x, y, z, w)
@@ -287,6 +298,7 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
   const renderObserver = scene.onBeforeRenderObservable.add(() => {
     const easeFactor = 1 - Math.exp(-zoomEaseRate * (engine.getDeltaTime() / 1000))
     currentZoom = Scalar.Lerp(currentZoom, targetZoom, easeFactor)
+    currentFill = Scalar.Lerp(currentFill, targetFill, easeFactor)
     currentTilt = Scalar.Lerp(currentTilt, targetTilt, easeFactor)
     farAltitude = farAltitudeFor(camera.fov, engine.getAspectRatio(camera))
     zoomLogRange = Math.log(farAltitude / closeAltitude)
@@ -340,10 +352,10 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
       }
     } else if (returning) {
       lambda = wrapAngle(lambda) * (1 - easeFactor)
-      phi += (basis.phi0 - phi) * easeFactor
-      if (Math.abs(lambda) < 1e-6 && Math.abs(phi - basis.phi0) < 1e-6) {
+      phi += (homePhi - phi) * easeFactor
+      if (Math.abs(lambda) < 1e-6 && Math.abs(phi - homePhi) < 1e-6) {
         lambda = 0
-        phi = basis.phi0
+        phi = homePhi
         returning = false
       }
     }
@@ -364,6 +376,21 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
     },
     setFreeArea(area) {
       freeArea = area ?? { left: 0, top: 0, right: 1, bottom: 1 }
+    },
+    setHome(home, now = false) {
+      homePhi = home ? Math.max(-latitudeLimit, Math.min(latitudeLimit, home.latitude)) : basis.phi0
+      targetFill = home ? home.fill : farFill
+      if (now) {
+        lambda = 0
+        phi = homePhi
+        currentFill = targetFill
+        targetZoom = 0
+        currentZoom = 0
+        returning = false
+        momentumLambda = 0
+        momentumPhi = 0
+        applyView()
+      }
     },
     dispose() {
       scene.onPointerObservable.remove(pointerObserver)
