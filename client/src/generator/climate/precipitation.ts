@@ -145,7 +145,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
   const rainedOut = new Float32Array(n)
   // The refinement's sinking air, 0..1 per cell (subsidence), and the share
   // of the moisture it mixes away per iteration over land.
-  const sinking = refined ? subsidence(refined.highHpa, equatorOffset, beltShift) : null
+  const sinking = refined ? subsidence(refined.highHpa, equatorOffset, beltShift, domain.kind) : null
   // The refinement's second tracer: moisture × its source's sea anomaly,
   // carried and depleted with the moisture, so carried / moisture is the
   // anomaly of the sea the air came from.
@@ -194,7 +194,7 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
 
   const precip = new Float32Array(n)
   for (let gy = 0; gy < RY; gy++) {
-    const yNorm = beltYNorm(shiftedYNorm(gy, RY, equatorOffset), beltShift)
+    const yNorm = beltYNorm(shiftedYNorm(gy, RY, equatorOffset), beltShift, domain.kind)
     const band = bandFactor(Math.abs(yNorm - 0.5) * 2)
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx
@@ -213,11 +213,11 @@ export function computePrecipitation(elevation: Float32Array, temperature: Float
 // (`oceanHighFlankHpa`) in its east. Where the air sinks, dry air from
 // above mixes into the moist air below: Arabia and Australia stay dry
 // beside a warm sea.
-function subsidence(highHpa: Float32Array, equatorOffset: number, beltShift: number): Float32Array {
+function subsidence(highHpa: Float32Array, equatorOffset: number, beltShift: number, shape: Domain['kind']): Float32Array {
   const T = CLIMATE_TUNING
   const out = new Float32Array(RX * RY)
   for (let gy = 0; gy < RY; gy++) {
-    const band = bandFactor(Math.abs(beltYNorm(shiftedYNorm(gy, RY, equatorOffset), beltShift) - 0.5) * 2)
+    const band = bandFactor(Math.abs(beltYNorm(shiftedYNorm(gy, RY, equatorOffset), beltShift, shape) - 0.5) * 2)
     const fromBand = Math.min(1, Math.max(0, (T.rainSubsidenceBand - band) / (T.rainSubsidenceBand - T.precipBandFloor)))
     for (let gx = 0; gx < RX; gx++) {
       const i = gy * RX + gx

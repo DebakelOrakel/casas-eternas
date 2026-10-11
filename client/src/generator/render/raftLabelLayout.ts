@@ -13,12 +13,19 @@ import type { Raft } from '../crust/raftTypes'
 // Wrapping is handled by working in a local frame anchored on the largest
 // blob (every other blob expressed as the domain's delta from it), so a
 // continent straddling the map seam still gets a sane center and axis instead
-// of one smeared across the whole width. Reuses ContinentLabelPlacement so
+// of one smeared across the whole width. On the sphere that frame is the
+// anchor's tangent plane (Domain.delta): the extents are true lengths, and
+// the axis is a true direction in the anchor's east and south axes. The
+// centre is then reached from the anchor along the globe (Domain.advance)
+// and the axis carried to it (Domain.transport), so the placement holds at
+// any latitude. On the torus advance is the wrapped sum and transport keeps
+// the angle: the same numbers as before the sphere. Reuses ContinentLabelPlacement so
 // the existing drawContinentLabel renderer works unchanged; `plateIndex`
 // carries the raft id (the renderer ignores it, it's just a stable key).
 export function computeRaftLabelPlacements(rafts: Raft[], domain: Domain): ContinentLabelPlacement[] {
   const placements: ContinentLabelPlacement[] = []
   const offset = { x: 0, y: 0 }
+  const centre = { x: 0, y: 0 }
   for (const raft of rafts) {
     if (!raft.name || raft.blobs.length === 0) continue
     let anchor = raft.blobs[0]
@@ -49,7 +56,7 @@ export function computeRaftLabelPlacements(rafts: Raft[], domain: Domain): Conti
       cyy += p.w * oy * oy
       cxy += p.w * ox * oy
     }
-    const angle = 0.5 * Math.atan2(2 * cxy, cxx - cyy)
+    let angle = 0.5 * Math.atan2(2 * cxy, cxx - cyy)
     const ax = Math.cos(angle)
     const ay = Math.sin(angle)
     let along = 0
@@ -76,9 +83,14 @@ export function computeRaftLabelPlacements(rafts: Raft[], domain: Domain): Conti
       along = anchor.radius
       perp = anchor.radius
     }
-    const centerX = domain.wrapX(anchor.x + localX)
-    const centerY = domain.wrapY(anchor.y + localY)
-    placements.push({ plateIndex: raft.id, name: raft.name, centerX, centerY, angle, alongExtent: along * 2, perpExtent: perp * 2 })
+    domain.advance(anchor.x, anchor.y, localX, localY, centre)
+    // The angle is computed again only when the transport turned the axis:
+    // on the torus it does not, and the angle keeps its bits.
+    if (localX !== 0 || localY !== 0) {
+      domain.transport(ax, ay, anchor.x, anchor.y, centre.x, centre.y, offset)
+      if (offset.x !== ax || offset.y !== ay) angle = Math.atan2(offset.y, offset.x)
+    }
+    placements.push({ plateIndex: raft.id, name: raft.name, centerX: centre.x, centerY: centre.y, angle, alongExtent: along * 2, perpExtent: perp * 2 })
   }
   return placements
 }

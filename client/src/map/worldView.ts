@@ -46,9 +46,12 @@ export interface SymbolPicture {
 // One symbol: a picture of its layer, its centre at a chart point, lying in
 // the surface. Without `angle` it stands upright: its top toward the view's
 // top when the view is turned north up (the flat map's grid bottom, the
-// globe's north pole). With `angle`, its x axis runs along that CHART
-// direction, radians in texels (x across, y down the rows) — the view
-// measures the direction on its own surface. `readable`: a half turn more
+// globe's north pole). With `angle`, its x axis runs along that direction
+// ON THE SURFACE at its point, radians, x along the rows (toward +u) and y
+// down them (toward +v), measured in true lengths — the generator's local
+// frame (Domain.delta). On the flat map that is the chart's texels; on the
+// globe the frame's east and south, not a texel's (cos φ narrower) shape.
+// `readable`: a half turn more
 // where the x axis would point to the left, for text. `alpha` (default 1)
 // fades it.
 export interface WorldSymbol {

@@ -24,7 +24,7 @@ import { buildGlobeRibbons } from './globeRibbons'
 import { RibbonWidthMaterialPlugin } from './ribbonWidthMaterialPlugin'
 import { presenceThreshold, RIVER_RGB } from './riverWidth'
 import { createSymbolLayerSet } from './symbolLayer'
-import { globeChartOfFrame, globeSymbolFrame, globeSymbolVertex } from './symbolPlacement'
+import { GLOBE_SYMBOL_LIFT, globeChartOfFrame, globeSymbolFrame, globeSymbolSegments, globeSymbolVertex } from './symbolPlacement'
 import { WaterField, WaterMaterialPlugin } from './waterMaterialPlugin'
 import type { ChartPoint, WorldView } from './worldView'
 
@@ -58,8 +58,8 @@ import type { ChartPoint, WorldView } from './worldView'
 // The symbols and names (WorldView.symbols) lie on the globe as objects,
 // in the surface at every point — round at the poles as at the equator,
 // where a circle painted into the chart is an ellipse 1 / cos φ tall — a
-// little above it (SYMBOL_LIFT), hidden by the globe on its far side, and
-// under the atmosphere like the rest of the scene.
+// little above it (GLOBE_SYMBOL_LIFT, symbolPlacement.ts), hidden by the
+// globe on its far side, and under the atmosphere like the rest of the scene.
 //
 // THE RIVERS AND THE LAKES (2026-10-10), from the data the flat map takes:
 // - the rivers are ribbons on the sphere (globeRibbons.ts), under the
@@ -103,14 +103,6 @@ const OCEAN = new Color3(0.08, 0.35, 0.75)
 const GLOW_COLOR = new Color3(0.42, 0.62, 0.92)
 const GLOW_INTENSITY = 0.55
 const GLOW_BLUR = 0.012
-// The radius the symbols lie at: over the globe's faces (its vertices are on
-// the unit sphere, its flat faces inside it), which they would otherwise
-// fight for depth, and close enough not to float in the swoop's closest view
-// (0.15 radii up). About 6 km on an Earth-sized world.
-const SYMBOL_LIFT = 1.001
-// The largest angle, radians, a quad of a picture spans: a larger picture is
-// cut finer, so it follows the curve instead of standing off it as a chord.
-const SYMBOL_SEGMENT_ANGLE = 0.02
 // The radius the rivers lie at: over the globe's faces (a face of the
 // 96-segment sphere lies up to 2.6e-4 radii inside the unit sphere,
 // scripts/globeWater.mjs), under the symbols. About 3 km on an Earth-sized
@@ -330,8 +322,8 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   // The symbol layers, in the globe's own frame: they turn and lean with it.
   const symbolSet = createSymbolLayerSet(scene, 'globeSymbols', {
     frame: (symbol) => globeSymbolFrame(symbol.at, symbol.angle, symbol.readable ?? false),
-    vertex: (frame, x, y, out, offset) => globeSymbolVertex(frame, x, y, radiusMetres, SYMBOL_LIFT, out, offset),
-    segments: (picture) => Math.min(32, Math.max(1, Math.ceil(Math.max(picture.width, picture.height) / radiusMetres / SYMBOL_SEGMENT_ANGLE))),
+    vertex: (frame, x, y, out, offset) => globeSymbolVertex(frame, x, y, radiusMetres, GLOBE_SYMBOL_LIFT, out, offset),
+    segments: (length) => globeSymbolSegments(length, radiusMetres),
   }, (mesh) => {
     mesh.parent = tilt
     return []

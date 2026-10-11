@@ -130,7 +130,7 @@ export function computePressureWind(
     const sLat = (shiftedYNorm(gy, RY, equatorOffset) - 0.5) * 2 // −1 top … +1 bottom
     // The bands where the season has moved them; the Coriolis parameter
     // below stays the row's own.
-    const band = bandPressure(Math.abs((beltYNorm(shiftedYNorm(gy, RY, equatorOffset), beltShift) - 0.5) * 2), e1, e2)
+    const band = bandPressure(Math.abs((beltYNorm(shiftedYNorm(gy, RY, equatorOffset), beltShift, domain.kind) - 0.5) * 2), e1, e2)
     for (let gx = 0; gx < RX; gx++) pressure[gy * RX + gx] = band + thermal[gy * RX + gx]
     // Signed so the top hemisphere is the northern one: f > 0 there.
     f[gy] = detSin((-sLat * Math.PI) / 2) * (24 / rotationHours)

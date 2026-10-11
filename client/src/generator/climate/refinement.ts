@@ -117,7 +117,7 @@ export function refineClimate(
     // (climateField.beltYNorm), the sun's latitude lagged by the sea.
     const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * detCos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
     belts[month] = belt
-    const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belt)
+    const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belt, domain.kind)
     const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, domain, bandWind, params.equatorOffset, planet.rotationHours, belt, plateauHeat(month))
     pressure.set(result.pressure, month * n)
     wind.set(result.wind, month * n * 2)
@@ -197,7 +197,7 @@ export function refineClimate(
   for (let i = 0; i < n; i++) oceanHigh[i] = seaShare[i] > CLIMATE_TUNING.oceanHighMinSeaShare ? oceanHigh[i] / seaShare[i] : 0
   for (let month = 0; month < REFINED_MONTHS; month++) {
     const air = monthly.subarray(month * n, (month + 1) * n)
-    const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belts[month])
+    const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belts[month], domain.kind)
     const extra = plateauHeat(month)
     for (let i = 0; i < n; i++) extra[i] += oceanHigh[i]
     const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, domain, bandWind, params.equatorOffset, planet.rotationHours, belts[month], extra)

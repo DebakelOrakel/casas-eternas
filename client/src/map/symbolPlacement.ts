@@ -65,9 +65,9 @@ export function flatSceneOfChart(chart: FlatChart, at: ChartPoint): { x: number;
   return { x: (wrapUnit(at.u) - 0.5) * chart.width, z: (wrapUnit(at.v) - 0.5) * chart.height }
 }
 
-// `angle`: a chart direction in texels (x across, y down the rows), or
-// undefined for upright. Texels are square on the flat map, so the direction
-// is the same on the plane: x to +x, y to +z.
+// `angle`: a direction on the surface (WorldSymbol.angle: x along the rows,
+// y down them), or undefined for upright. Texels are square on the flat map,
+// so it is the chart's direction: x to +x, y to +z.
 export function flatSymbolFrame(chart: FlatChart, at: ChartPoint, lift: number, angle: number | undefined, readable: boolean): SymbolFrame {
   const { x, z } = flatSceneOfChart(chart, at)
   const along: [number, number] | null = angle === undefined ? null : [Math.cos(angle), Math.sin(angle)]
@@ -106,8 +106,10 @@ export function globeFrameOfChart(at: ChartPoint): Vec3 {
 // The view's right and up at a point: up toward the north pole, right the
 // screen's right when north is up — the direction of DEcreasing u, since u
 // runs from +x toward −z, which is the screen's left seen from outside.
-// `angle` is a chart direction in texels; a texel's width on the globe is
-// cos φ of its height, so the direction is measured with that metric.
+// `angle` is a direction on the surface (WorldSymbol.angle): x toward +u,
+// which is the frame's east, y toward +v, its south, both in true lengths —
+// the generator's local frame (Domain.delta). It is NOT a chart direction in
+// texels, so it is not scaled by cos φ here.
 export function globeSymbolFrame(at: ChartPoint, angle: number | undefined, readable: boolean): SymbolFrame {
   const longitude = at.u * 2 * Math.PI
   const latitude = (0.5 - Math.max(0, Math.min(1, at.v))) * Math.PI
@@ -119,8 +121,29 @@ export function globeSymbolFrame(at: ChartPoint, angle: number | undefined, read
   const right: Vec3 = [sinL, 0, cosL]
   const up: Vec3 = [-sinP * cosL, cosP, sinP * sinL]
   // +u is −right, +v (down the rows) is −up.
-  const along: [number, number] | null = angle === undefined ? null : [-Math.cos(angle) * cosP, -Math.sin(angle)]
+  const along: [number, number] | null = angle === undefined ? null : [-Math.cos(angle), -Math.sin(angle)]
   return turnedFrame(centre, right, up, centre, along, readable)
+}
+
+// The radius the symbols lie at: over the globe's faces (its vertices are on
+// the unit sphere, its flat faces inside it), which they would otherwise
+// fight for depth, and close enough not to float in the swoop's closest view
+// (0.15 radii up). About 6 km on an Earth-sized world.
+export const GLOBE_SYMBOL_LIFT = 1.001
+// The largest angle, radians, a quad of a picture spans: a larger picture is
+// cut finer, so it follows the curve instead of standing off it as a chord.
+// A chord between two points at GLOBE_SYMBOL_LIFT sinks under the globe's
+// faces when it spans more than about 0.1 rad, and the globe hides the part
+// of the picture there: a name 32 quads long and 3 rad wide showed as one
+// strip per quad (2026-10-11). The cap only bounds the vertices; at 0.02 rad
+// a side reaches it beyond 2π, longer than any picture.
+const GLOBE_SYMBOL_SEGMENT_ANGLE = 0.02
+const GLOBE_SYMBOL_MAX_SEGMENTS = 320
+
+// How many quads a side of a picture, `length` metres long, is cut into on a
+// globe of `radiusMetres`.
+export function globeSymbolSegments(length: number, radiusMetres: number): number {
+  return Math.min(GLOBE_SYMBOL_MAX_SEGMENTS, Math.max(1, Math.ceil(length / radiusMetres / GLOBE_SYMBOL_SEGMENT_ANGLE)))
 }
 
 // A point of the picture on the sphere: the step (x, y) metres along right

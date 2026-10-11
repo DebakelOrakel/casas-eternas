@@ -1,4 +1,4 @@
-import { type ContinentLabelPlacement, drawContinentLabel } from '../../generator/render/continentLabelRenderer'
+import { type ContinentLabelPlacement, continentLabelSag, drawContinentLabel, fitContinentLabel } from '../../generator/render/continentLabelRenderer'
 import type { SimEvent } from '../../generator/tectonics/plateSimulation'
 import type { SymbolPicture, WorldSymbol } from '../../map/worldView'
 
@@ -179,15 +179,33 @@ export function originSymbols(origins: { x: number; y: number; race: number }[],
 // bottom, and so draws mirrored itself; the picture's canvas is mirrored
 // back, which leaves the name upright. The symbol runs along the name's
 // axis and reads left to right whichever way the axis points.
+//
+// The placement is in the generator's local units (one texel at the
+// equator, true lengths on the sphere), so METERS_PER_CELL each is the
+// name's true size on either shape.
+//
+// The picture holds the name as drawn, not the continent's whole extent:
+// the font is capped (46 units), so on a large continent the extent is many
+// times the name. A picture of the extent was up to a whole globe long, and
+// the globe cut it into quads too long to follow the curve (2026-10-11).
+// The name keeps its place and size; only the empty margin goes.
+const NAME_MARGIN = 6
+const NAME_HALO = 0.25
+
 export function nameSymbols(placements: ContinentLabelPlacement[], chart: ChartSize): { pictures: SymbolPicture[]; symbols: WorldSymbol[] } {
   const pictures: SymbolPicture[] = []
   const symbols: WorldSymbol[] = []
+  const measure = document.createElement('canvas').getContext('2d')!
   for (const placement of placements) {
-    // Room for the largest name the renderer would fit (its font at most
-    // 0.6 of the extent across, and its arc's sag), with a margin for the
-    // halo.
-    const width = placement.alongExtent + 24
-    const height = Math.min(46, placement.perpExtent * 0.6) * 2 + placement.alongExtent * 0.06 + 24
+    const fit = fitContinentLabel(measure, placement)
+    if (!fit) continue
+    // The name's width, its arc's sag to each side of its middle (the
+    // picture's centre is the name's middle, so the sag counts twice), the
+    // font, and a margin for the halo (its stroke and its blur, NAME_HALO of
+    // the font in all) and the glyphs the arc turns.
+    const halo = fit.fontSize * NAME_HALO + NAME_MARGIN
+    const width = fit.textWidth + 2 * halo
+    const height = 2 * continentLabelSag(fit) + fit.fontSize + 2 * halo
     pictures.push(picture(width, height, chart.metresPerTexel, NAME_RESOLUTION, (c) => {
       c.scale(1, -1)
       drawContinentLabel(c, { ...placement, centerX: 0, centerY: 0, angle: 0 })

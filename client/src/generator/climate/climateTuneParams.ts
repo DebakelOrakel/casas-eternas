@@ -252,6 +252,11 @@ export const CLIMATE_TUNING = {
   // subtropical highs some 4–5°.
   precipBeltTaperDeg: 30,
   precipBeltShiftFloor: 0.35,
+  // On the sphere only (climateField.beltYNorm): the shift goes linearly to
+  // 0 over this many degrees before each pole, because a pole is a point and
+  // does not move. 30°: the polar cell's width, so its equatorward edge
+  // moves in full and its end stays at the pole.
+  beltShiftPoleTaperDeg: 30,
 
   // --- from energyBalance.ts (the climate step's year) ---
   // Not measured yet (2026-09-28); physical orders of magnitude, then the

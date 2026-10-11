@@ -14,9 +14,10 @@ export interface SymbolPlacement {
   // A point of the picture, (x, y) metres from its centre along the frame's
   // right and up, into out[offset..offset + 2].
   vertex(frame: SymbolFrame, x: number, y: number, out: Float32Array, offset: number): void
-  // How many quads a picture is cut into along each side: one on a plane,
-  // more on a sphere, so a large picture follows the surface.
-  segments(picture: SymbolPicture): number
+  // How many quads a side of a picture, `length` metres long, is cut into:
+  // one on a plane, more on a sphere, so a large picture follows the surface.
+  // Each side on its own: a long name is cut finer along than across.
+  segments(length: number): number
 }
 
 export interface SymbolLayerSet {
@@ -111,8 +112,7 @@ export function createSymbolLayerSet(scene: Scene, name: string, placement: Symb
     const vertexCount = layer.symbols.reduce((sum, s) => {
       const picture = layer.pictures[s.picture]
       if (!picture) return sum
-      const n = placement.segments(picture)
-      return sum + (n + 1) * (n + 1)
+      return sum + (placement.segments(picture.width) + 1) * (placement.segments(picture.height) + 1)
     }, 0)
     layer.vertexCount = layer.atlas ? vertexCount : 0
     if (layer.vertexCount === 0) {
@@ -129,14 +129,15 @@ export function createSymbolLayerSet(scene: Scene, name: string, placement: Symb
       if (!picture) continue
       const rect = layer.rects[symbol.picture]
       const frame = placement.frame(symbol)
-      const n = placement.segments(picture)
+      const nx = placement.segments(picture.width)
+      const ny = placement.segments(picture.height)
       const alpha = symbol.alpha ?? 1
       const first = vertex
-      for (let j = 0; j <= n; j++) {
+      for (let j = 0; j <= ny; j++) {
         // j runs down the picture (its canvas rows), i across it.
-        const fy = j / n
-        for (let i = 0; i <= n; i++) {
-          const fx = i / n
+        const fy = j / ny
+        for (let i = 0; i <= nx; i++) {
+          const fx = i / nx
           placement.vertex(frame, (fx - 0.5) * picture.width, (0.5 - fy) * picture.height, positions, vertex * 3)
           // The texture is uploaded flipped (DynamicTexture.update(true)): the
           // canvas's top row lies at v = 1.
@@ -149,10 +150,10 @@ export function createSymbolLayerSet(scene: Scene, name: string, placement: Symb
           vertex++
         }
       }
-      for (let j = 0; j < n; j++) {
-        for (let i = 0; i < n; i++) {
-          const a = first + j * (n + 1) + i
-          const b = a + n + 1
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++) {
+          const a = first + j * (nx + 1) + i
+          const b = a + nx + 1
           indices.push(a, b, a + 1, a + 1, b, b + 1)
         }
       }

@@ -3,6 +3,7 @@ import { hadleyEdge } from '../planet/planetForcing'
 import { PLANET_INPUTS } from '../planet/planetInputParams'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { detSin } from '../core/detMath'
+import type { Domain } from '../core/domain'
 
 // Prevailing surface wind as the prescribed three-cell pattern per hemisphere
 // (Hadley / Ferrel / Polar): trade EASTERLIES 0–30°, mid-latitude WESTERLIES
@@ -17,12 +18,13 @@ import { detSin } from '../core/detMath'
 // with the rotation period; the Ferrel cell takes half of what is left.
 // `beltShift`: the season's shift of the cells (climateField.beltYNorm); 0,
 // the year's mean position, for the history and the cheap climate.
-export function computeWind(equatorOffset = 0, rotationHours = PLANET_INPUTS.rotation.default, beltShift = 0): Float32Array {
+// `shape`: the world's (beltYNorm: on the sphere the shift ends at the pole).
+export function computeWind(equatorOffset = 0, rotationHours = PLANET_INPUTS.rotation.default, beltShift = 0, shape: Domain['kind'] = 'torus'): Float32Array {
   const wind = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y * 2)
   const e1 = hadleyEdge(rotationHours)
   const e2 = (1 + e1) / 2
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    const yNorm = beltYNorm(shiftedYNorm(gy, CLIMATE_RES_Y, equatorOffset), beltShift)
+    const yNorm = beltYNorm(shiftedYNorm(gy, CLIMATE_RES_Y, equatorOffset), beltShift, shape)
     const sLat = (yNorm - 0.5) * 2 // signed latitude: −1 north(top) … +1 south(bottom)
     const phi = Math.abs(sLat)
     const hemi = Math.sign(sLat) // −1 north, +1 south, 0 at the equator

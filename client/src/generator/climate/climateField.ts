@@ -3,7 +3,7 @@
 // docs/decisions/climate-biomes.md). Elevation is read from the full-res field
 // where fine detail matters (lapse, and later orographic rain shadow).
 import { isLandAt } from '../elevation/elevationScale'
-import { torusDomain } from '../core/domain'
+import { torusDomain, type Domain } from '../core/domain'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { detCos } from '../core/detMath'
 
@@ -92,10 +92,20 @@ export function shiftedYNorm(gridY: number, resY: number, equatorOffset: number)
 // rain (precipitation.ts), the wind cells (wind.ts) and the pressure bands
 // (pressure.ts) all move by it, so they move together. 0 is the year's mean
 // position, exactly.
-export function beltYNorm(trueNorm: number, beltShift: number): number {
+//
+// `shape`: on the torus the pole is the seam where the top and the bottom
+// meet, and the bands slide across it, as they did. On the sphere the pole
+// is a point and does not move: the shift goes linearly to 0 over the last
+// `beltShiftPoleTaperDeg` before each pole, so the polar cell stretches and
+// shrinks with the season and its end stays at the pole (DEC-0035, fork 5).
+// Without this the cells slid 4.4° past the pole, and the banded wind at
+// the pole row was 0.3–0.55 (2.4–4.4 m/s) in its local frame: a ring of
+// vectors that point all ways around the pole, not one vector.
+export function beltYNorm(trueNorm: number, beltShift: number, shape: Domain['kind'] = 'torus'): number {
   if (beltShift === 0) return trueNorm
   const lat = Math.abs(trueNorm - 0.5) * 2
-  const reach = CLIMATE_TUNING.precipBeltShiftFloor + (1 - CLIMATE_TUNING.precipBeltShiftFloor) * Math.max(0, 1 - (lat * 90) / CLIMATE_TUNING.precipBeltTaperDeg)
+  let reach = CLIMATE_TUNING.precipBeltShiftFloor + (1 - CLIMATE_TUNING.precipBeltShiftFloor) * Math.max(0, 1 - (lat * 90) / CLIMATE_TUNING.precipBeltTaperDeg)
+  if (shape === 'sphere') reach *= Math.min(1, ((1 - lat) * 90) / CLIMATE_TUNING.beltShiftPoleTaperDeg)
   const shifted = trueNorm + beltShift * reach
   return shifted - Math.floor(shifted)
 }

@@ -25,14 +25,26 @@
 //     tall.
 //  4. No picture is mirrored: right, up and the normal turn as the screen's
 //     right, up and the line to the viewer do (left-handed: (r × u) · n < 0).
-//  5. A turned symbol's x axis runs along its chart direction, measured on
-//     the surface; a readable one never points left.
+//  5. A turned symbol's x axis runs along its direction ON THE SURFACE, the
+//     generator's local frame (Domain.delta: east and south in true
+//     lengths, not a texel's cos φ shape); a readable one never points left
+//     (reads left to right, north up).
+//  7. A picture on the globe holds together at any size: every quad's chord
+//     stays over the globe's faces, up to a picture a whole globe long. (A
+//     name 3 rad long in 32 quads sank under the globe between its vertices
+//     and showed as one strip per quad, 2026-10-11.)
+//  8. The name layout (generator/render/raftLabelLayout.ts) on the sphere:
+//     a continent at 70° spread east–west gets its centre on the globe's
+//     centroid, an east–west axis and its true length; on the torus the
+//     wrapped sum it always had.
 import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
 const P = await server.ssrLoadModule('/src/map/symbolPlacement.ts')
+const D = await server.ssrLoadModule('/src/generator/core/domain.ts')
+const RL = await server.ssrLoadModule('/src/generator/render/raftLabelLayout.ts')
 const { CreateGroundVertexData } = await import(`${CLIENT}/node_modules/@babylonjs/core/Meshes/Builders/groundBuilder.pure.js`)
 const { CreateSphereVertexData } = await import(`${CLIENT}/node_modules/@babylonjs/core/Meshes/Builders/sphereBuilder.pure.js`)
 
@@ -157,8 +169,10 @@ console.log('4. orientation (no mirror, upright)')
 }
 
 // --- 5. turned symbols ----------------------------------------------------------
-console.log('5. turned symbols follow their chart direction')
+console.log('5. turned symbols follow their direction on the surface')
 {
+  const sphere = D.sphereDomain(W, H)
+  const local = { x: 0, y: 0 }
   let worstGlobe = 0
   let worstFlat = 0
   let leftward = 0
@@ -170,12 +184,11 @@ console.log('5. turned symbols follow their chart direction')
         const g = P.globeSymbolFrame(at, angle, readable)
         P.globeSymbolVertex(g, eps, 0, RADIUS_METRES, 1, out, 0)
         const c = P.globeChartOfFrame([...out])
-        let du = c.u - at.u
-        if (du > 0.5) du -= 1
-        if (du < -0.5) du += 1
-        const dx = du * W
-        const dy = (c.v - at.v) * H
-        // Parallel to the chart direction (or opposite, when turned readable).
+        // The step in the generator's own frame at the point: east, south.
+        sphere.delta(c.u * W, c.v * H, at.u * W, at.v * H, local)
+        const dx = local.x
+        const dy = local.y
+        // Parallel to the direction (or opposite, when turned readable).
         const sin = (dx * Math.sin(angle) - dy * Math.cos(angle)) / Math.hypot(dx, dy)
         const cos = (dx * Math.cos(angle) + dy * Math.sin(angle)) / Math.hypot(dx, dy)
         worstGlobe = Math.max(worstGlobe, Math.abs(sin), readable ? 0 : Math.max(0, -cos))
@@ -189,7 +202,7 @@ console.log('5. turned symbols follow their chart direction')
       }
     }
   }
-  check('globe: x axis along the chart direction', worstGlobe < 1e-4, `worst sine ${worstGlobe.toExponential(1)}`)
+  check('globe: x axis along the direction in Domain.delta\'s frame', worstGlobe < 1e-4, `worst sine ${worstGlobe.toExponential(1)}`)
   check('flat:  x axis along the chart direction', worstFlat < 1e-9, `worst sine ${worstFlat.toExponential(1)}`)
   check('readable symbols never point left', leftward === 0, `${leftward} leftward`)
 }
@@ -202,6 +215,75 @@ console.log('6. sizes on the flat map')
   P.flatSymbolVertex(f, 9 * MPT, 0, UNITS_PER_METRE, out, 0)
   const texels = (Math.hypot(out[0] - f.centre[0], out[2] - f.centre[2]) / FLAT.width) * W
   check('9 texels of metres are 9 texels on the plane', Math.abs(texels - 9) < 1e-4, `${texels.toFixed(5)} texels`)
+}
+
+// --- 7. large pictures on the globe ---------------------------------------------
+console.log('7. large pictures follow the globe (every chord over the faces)')
+{
+  const out = new Float64Array(3)
+  // A face of the 96-segment globe lies up to 2.6e-4 radii inside the unit
+  // sphere (scripts/globeWater.mjs); the chord's middle must stay outside
+  // the unit sphere itself, the stricter bound.
+  let lowest = Infinity
+  let lowestAt = 0
+  const frame = P.globeSymbolFrame({ u: 0.37, v: 0.85 }, 0.6, true)
+  for (const radians of [0.05, 0.3, 1, 2, 3.2, 4.5, 2 * Math.PI]) {
+    const width = radians * RADIUS_METRES
+    const height = 0.05 * RADIUS_METRES
+    const nx = P.globeSymbolSegments(width, RADIUS_METRES)
+    const ny = P.globeSymbolSegments(height, RADIUS_METRES)
+    const at = (i, j) => { P.globeSymbolVertex(frame, (i / nx - 0.5) * width, (0.5 - j / ny) * height, RADIUS_METRES, P.GLOBE_SYMBOL_LIFT, out, 0); return [out[0], out[1], out[2]] }
+    for (let j = 0; j <= ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const a = at(i, j)
+        const b = at(i + 1, j)
+        const mid = norm([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2])
+        if (mid < lowest) { lowest = mid; lowestAt = radians }
+      }
+    }
+  }
+  check('the lowest chord middle of a picture up to 2π long is over the unit sphere', lowest > 1, `${lowest.toFixed(6)} radii (at ${lowestAt.toFixed(2)} rad)`)
+}
+
+// --- 8. the name layout on the sphere -----------------------------------------
+console.log('8. the name layout measures on the globe')
+{
+  // Seven blobs along the parallel at 70° N, 8° of longitude apart, the
+  // middle one the largest (the anchor) but not the centre: the row runs
+  // further east than west. On the globe the centroid lies ON the 70°
+  // parallel's middle meridian only for a symmetric row, so the expected
+  // centre is the area-weighted mean of the unit vectors.
+  const sphere = D.sphereDomain(W, H)
+  const latitude = 70
+  const y = (0.5 - latitude / 180) * H
+  const longitudes = [-16, -8, 0, 8, 16, 24, 32]
+  const blobs = longitudes.map((l, i) => ({ x: ((100 + l) / 360) * W, y, radius: i === 2 ? 30 : 24 }))
+  const raft = { id: 1, name: 'Testland', blobs, noMergeUntilEpoch: 0 }
+  const [label] = RL.computeRaftLabelPlacements([raft], sphere)
+  const unit = (b) => { const lon = (b.x / W) * 2 * Math.PI; const th = (b.y / H) * Math.PI; return [Math.sin(th) * Math.cos(lon), Math.sin(th) * Math.sin(lon), Math.cos(th)] }
+  const c = [0, 0, 0]
+  for (const b of blobs) { const u = unit(b); const w = b.radius * b.radius; c[0] += u[0] * w; c[1] += u[1] * w; c[2] += u[2] * w }
+  const miss = Math.sqrt(sphere.distanceSq(label.centerX, label.centerY, (Math.atan2(c[1], c[0]) / (2 * Math.PI)) * W, (Math.atan2(Math.hypot(c[0], c[1]), c[2]) / Math.PI) * H))
+  // The log map from the anchor puts the centroid within a fraction of a
+  // blob of the true one; adding the offset to the chart (the old code) put
+  // it 9 units off here (its east offset not stretched by 1 / cos φ).
+  check('centre on the globe\'s centroid of the blobs', miss < 3, `${miss.toFixed(2)} units off`)
+  // The axis: the great circle through the end blobs, carried to the centre.
+  const end = { x: 0, y: 0 }
+  sphere.delta(blobs[6].x, blobs[6].y, label.centerX, label.centerY, end)
+  const start = { x: 0, y: 0 }
+  sphere.delta(blobs[0].x, blobs[0].y, label.centerX, label.centerY, start)
+  const axis = Math.atan2(end.y - start.y, end.x - start.x)
+  const turn = Math.abs(Math.sin(label.angle - axis))
+  check('axis along the row on the globe', turn < 0.05, `sine of the miss ${turn.toFixed(3)} (angle ${((label.angle * 180) / Math.PI).toFixed(1)}°)`)
+  // True length: the row's span on the globe plus the end blobs' radii.
+  const span = Math.sqrt(sphere.distanceSq(blobs[0].x, blobs[0].y, blobs[6].x, blobs[6].y)) + 48
+  check('along extent is the true length', Math.abs(label.alongExtent / span - 1) < 0.05, `${label.alongExtent.toFixed(1)} against ${span.toFixed(1)} units (a chart texel row: ${(((48 / 360) * W) + 48).toFixed(1)})`)
+  // The torus: the wrapped sum, as before the sphere.
+  const torus = D.torusDomain(W, H)
+  const [flat] = RL.computeRaftLabelPlacements([raft], torus)
+  const meanX = blobs.reduce((s, b) => s + b.x * b.radius * b.radius, 0) / blobs.reduce((s, b) => s + b.radius * b.radius, 0)
+  check('torus: centre is the chart\'s weighted mean, angle 0', Math.abs(flat.centerX - meanX) < 1e-9 && Math.abs(flat.centerY - y) < 1e-9 && flat.angle === 0, `x ${flat.centerX} against ${meanX}, y ${flat.centerY}, angle ${flat.angle}`)
 }
 
 await server.close()

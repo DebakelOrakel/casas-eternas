@@ -11,7 +11,7 @@
 //
 // What it says:
 //  1. The rivers lie over the globe's faces and under the symbols: the
-//     96-segment sphere's deepest face against RIVER_LIFT and SYMBOL_LIFT.
+//     96-segment sphere's deepest face against RIVER_LIFT and GLOBE_SYMBOL_LIFT.
 //  2. A ribbon's ends are its chart points: round trip chart → globe →
 //     chart, at the equator, at the seam and next to and on the poles; every
 //     vertex at RIVER_LIFT, its offset direction a unit vector in the surface
@@ -64,7 +64,7 @@ const RADIUS_METRES = (C.METERS_PER_CELL * W) / (2 * Math.PI)
 const sphereSource = readFileSync(`${CLIENT}/src/map/sphereView.ts`, 'utf8')
 const constant = (name) => Number(sphereSource.match(new RegExp(`const ${name} = ([0-9.]+)`))[1])
 const RIVER_LIFT = constant('RIVER_LIFT')
-const SYMBOL_LIFT = constant('SYMBOL_LIFT')
+const SYMBOL_LIFT = P.GLOBE_SYMBOL_LIFT
 const build = (pts, lengths = [pts.length / 3], regimes) =>
   G.buildGlobeRibbons(new Float32Array(pts), new Uint32Array(lengths), regimes && new Uint8Array(regimes), W, H, RADIUS_METRES, RIVER_LIFT)
 const chartOf = (x, y) => P.globeFrameOfChart({ u: x / W, v: y / H })

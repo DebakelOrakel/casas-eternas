@@ -187,6 +187,25 @@ models' usual remedy.
 
 ## Status
 
+2026-10-11: THE SEASON'S BELTS END AT THE POLE on the sphere. The
+refinement shifts the wind cells, the pressure bands and the rain belts
+with the season (`climateField.beltYNorm`), 4.4° at the pole; on the
+torus they slide across the seam, and on the sphere they slid past the
+pole. The banded wind at a pole row was then 0.3–0.55 (2.4–4.4 m/s) the
+same in each cell's frame: a ring of vectors pointing all ways, the step
+across the pole 8–9× the step to the next row. Now the shift goes to 0
+over the last 30° before each pole (`beltShiftPoleTaperDeg`, sphere
+only); the ratio is 0.9–1.0 for every wind and current the climate step
+makes. The other vector fields were sound: no vector component is
+pole-averaged, the curl and the stream function read across a pole as
+they should, the currents at the pole are one vector (seed 687173033 at
+2048×1024: 0.07 at the north pole, its mean in 3D 0.066) with no net flow
+into it, the gyres turn the right way in each hemisphere. PROOF:
+`harness:pipeline` — the climate step's 16 vector fields continuous
+across both poles, the bands plausible; the banded wind at the season's
+largest shift on the sphere's shape 1.01, on the torus's (the mutation)
+8.45. Golden byte-identical.
+
 2026-10-10: STEP 3 OPEN on the sphere — the climate step runs on a sphere
 world: the climate, its refinement and the rivers (step 4e), drawn on
 the globe with its rivers and lakes. The chain a settled run starts, and

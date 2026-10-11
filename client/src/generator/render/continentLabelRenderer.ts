@@ -3,7 +3,11 @@
 // size the text to fit inside the landmass). Pure geometry, no font/canvas —
 // produced by raftLabelLayout.ts (blob-PCA) and drawn by drawContinentLabel
 // below. `plateIndex` is just a stable per-label key (the raft id), not a
-// plate index — kept for name stability across redraws.
+// plate index — kept for name stability across redraws. The angle and the
+// extents are in the domain's local frame at the centre (Domain.delta): x
+// east, y south, in domain units. On the torus that is the chart's texels;
+// on the sphere they are true directions and lengths, one unit the length of
+// a texel at the equator.
 export interface ContinentLabelPlacement {
   plateIndex: number
   name: string
@@ -43,6 +47,44 @@ const LABEL_FILL = '#241a10'
 const LABEL_STROKE = 'rgba(255, 255, 255, 0.95)'
 const STROKE_WIDTH_FACTOR = 0.15
 
+// The size a name is drawn at: its font size and its width along the arc,
+// both in the placement's units, and the arc's radius. Null when even the
+// size floor does not fit the continent (the name is not drawn).
+export interface ContinentLabelFit {
+  fontSize: number
+  textWidth: number
+  arcRadius: number
+}
+
+// Picks the largest font size (within [MIN_FONT_SIZE, MAX_FONT_SIZE]) that
+// still fits the plate's own measured footprint. Sets ctx.font.
+export function fitContinentLabel(ctx: CanvasRenderingContext2D, placement: ContinentLabelPlacement): ContinentLabelFit | null {
+  const { name, alongExtent, perpExtent } = placement
+  const availableWidth = alongExtent * WIDTH_MARGIN_FACTOR
+  const availableHeight = perpExtent * HEIGHT_MARGIN_FACTOR
+
+  let fontSize = Math.min(MAX_FONT_SIZE, availableHeight)
+  if (fontSize < MIN_FONT_SIZE) return null
+  ctx.font = `${fontSize}px ${FONT_FAMILY}`
+  let textWidth = ctx.measureText(name).width
+  if (textWidth > availableWidth) {
+    fontSize *= availableWidth / textWidth
+  }
+  fontSize = Math.floor(fontSize)
+  if (fontSize < MIN_FONT_SIZE) return null
+
+  ctx.font = `${fontSize}px ${FONT_FAMILY}`
+  textWidth = ctx.measureText(name).width
+  return { fontSize, textWidth, arcRadius: Math.max(textWidth, 1) * CURVE_RADIUS_FACTOR }
+}
+
+// How far the arc's ends leave the line through its middle, in the
+// placement's units: the room a picture of the name needs to each side of
+// that line, besides the font.
+export function continentLabelSag(fit: ContinentLabelFit): number {
+  return fit.arcRadius * (1 - Math.cos(fit.textWidth / fit.arcRadius / 2))
+}
+
 // Draws one continent's name along a gentle arc centered on its own
 // principal axis — the classic "text on a path" technique: measure each
 // character, walk them along a circular arc one at a time, rotating each
@@ -51,7 +93,7 @@ const STROKE_WIDTH_FACTOR = 0.15
 // measured footprint; skips the label entirely rather than drawing
 // something illegible or overflowing if even the size floor doesn't fit.
 export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: ContinentLabelPlacement): void {
-  const { name, centerX, centerY, alongExtent, perpExtent } = placement
+  const { name, centerX, centerY } = placement
   // The principal-axis angle from PCA has an arbitrary ± sign, so first reduce it (mod π)
   // into (−π/2, π/2] so the text tilts at most a quarter-turn either way. THEN rotate a
   // further 180°: the map texture is displayed with a net 180° flip (a vertical mirror —
@@ -60,23 +102,9 @@ export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: Con
   // comes out upside down on screen. See docs / the [[project_worldgen_canvas_flip]] note.
   const readable = ((placement.angle + Math.PI / 2) % Math.PI + Math.PI) % Math.PI - Math.PI / 2
   const angle = readable + Math.PI
-  const availableWidth = alongExtent * WIDTH_MARGIN_FACTOR
-  const availableHeight = perpExtent * HEIGHT_MARGIN_FACTOR
-
-  let fontSize = Math.min(MAX_FONT_SIZE, availableHeight)
-  if (fontSize < MIN_FONT_SIZE) return
-  ctx.font = `${fontSize}px ${FONT_FAMILY}`
-  let textWidth = ctx.measureText(name).width
-  if (textWidth > availableWidth) {
-    fontSize *= availableWidth / textWidth
-  }
-  fontSize = Math.floor(fontSize)
-  if (fontSize < MIN_FONT_SIZE) return
-
-  ctx.font = `${fontSize}px ${FONT_FAMILY}`
-  textWidth = ctx.measureText(name).width
-
-  const arcRadius = Math.max(textWidth, 1) * CURVE_RADIUS_FACTOR
+  const fit = fitContinentLabel(ctx, placement)
+  if (!fit) return
+  const { fontSize, textWidth, arcRadius } = fit
   const totalAngleSpan = textWidth / arcRadius
 
   ctx.save()

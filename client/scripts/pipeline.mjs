@@ -308,6 +308,43 @@ test('archeanReset rebuilds the same world from the same seed', async () => {
 const poleRowsConstant = (field, resX, resY) => [0, resY - 1].every((j) => field.subarray(j * resX, (j + 1) * resX).every((v) => v === field[j * resX]))
 const allFinite = (field) => field.every((v) => Number.isFinite(v))
 
+// A VECTOR FIELD AT THE POLES of a sphere's climate grid (DEC-0035, fork
+// 5). `field` is [u, v] per cell in the cell's own frame (u east, v south,
+// the climate's convention). Each cell's vector is turned into 3D; then, at
+// each pole row, the step ACROSS the pole (cell x to cell x + resX / 2, one
+// row apart) is compared with the step to the next row (also one row
+// apart). A field that is continuous at the pole has the two of one size;
+// a ring of vectors that is the same in each cell's frame (radial, or
+// swirling) has a step across the pole of twice its size and almost no
+// step to the next row. Returns the worse pole's ratio of the medians.
+// `use` (optional) leaves out cells (land, for the currents).
+function poleVectorJump(field, resX, resY, use = () => true) {
+  const at = (x, y) => {
+    const i = y * resX + x
+    const lam = (2 * Math.PI * (x + 0.5)) / resX
+    const th = (Math.PI * (y + 0.5)) / resY
+    const u = field[i * 2]
+    const v = field[i * 2 + 1]
+    return [-Math.sin(lam) * u + Math.cos(th) * Math.cos(lam) * v, Math.cos(lam) * u + Math.cos(th) * Math.sin(lam) * v, -Math.sin(th) * v]
+  }
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+  const median = (a) => { const s = [...a].sort((p, q) => p - q); return s[s.length >> 1] }
+  let worst = 0
+  for (const [row, next] of [[0, 1], [resY - 1, resY - 2]]) {
+    const across = []
+    const down = []
+    for (let x = 0; x < resX; x++) {
+      if (!use(row * resX + x)) continue
+      const far = (x + resX / 2) % resX
+      if (use(row * resX + far)) across.push(dist(at(x, row), at(far, row)))
+      if (use(next * resX + x)) down.push(dist(at(x, row), at(x, next)))
+    }
+    if (across.length === 0 || down.length === 0) continue
+    worst = Math.max(worst, median(across) / Math.max(median(down), 1e-9))
+  }
+  return worst
+}
+
 test('a sphere world runs its Archean through the runtime', async () => {
   const p = await freshPipeline()
   p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere' })
@@ -1011,6 +1048,50 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   const tSpread = poleSpread(f32(cr.temperature))
   check('the temperature along a pole row differs only by its cells\' ground (under 1 °C)', tSpread < 1, `${tSpread.toFixed(3)} °C`)
 
+  // The vector fields at the poles: one vector field on the globe, not a
+  // ring in the cells' frames (poleVectorJump). Each wind and each current
+  // the step makes, every month of the refinement's; the currents on the
+  // sea only. Measured 2026-10-11: 0.9–1.0 at the harness's poles; the
+  // season's belts slid past the pole gave 8–9.
+  const sea = (field) => (i) => field[i * 2] !== 0 || field[i * 2 + 1] !== 0
+  const vectors = { 'climate.wind': f32(c0.wind), 'climate.currents': f32(c0.currents), 'refined.wind': f32(cr.wind), 'refined.currents': f32(cr.currents) }
+  for (let m = 0; m < r.months; m++) {
+    vectors[`months.wind[${m}]`] = f32(r.wind).subarray(m * n * 2, (m + 1) * n * 2)
+  }
+  const jumps = Object.entries(vectors).map(([k, f]) => [k, poleVectorJump(f, RX, RY, k.includes('currents') ? sea(f) : undefined)])
+  const worstJump = jumps.reduce((a, b) => (b[1] > a[1] ? b : a))
+  check(`the winds and currents are continuous across the poles as vectors on the globe (${jumps.length} fields, the worst ${worstJump[0]} at ${worstJump[1].toFixed(2)})`, worstJump[1] < 2)
+  // Plausible bands: polar easterlies at both poles, westerlies in the
+  // middle latitudes, trade winds blowing toward the equator; the polar
+  // seas' currents with no net flow into or out of a pole.
+  const band = (field, from, to, use = () => true) => {
+    let u = 0
+    let vPole = 0
+    let speed = 0
+    let k = 0
+    for (let y = 0; y < RY; y++) {
+      const lat = 90 - (180 * (y + 0.5)) / RY
+      if (Math.abs(lat) < from || Math.abs(lat) >= to) continue
+      for (let x = 0; x < RX; x++) {
+        const i = y * RX + x
+        if (!use(i)) continue
+        u += field[i * 2]
+        vPole += lat > 0 ? -field[i * 2 + 1] : field[i * 2 + 1]
+        speed += Math.hypot(field[i * 2], field[i * 2 + 1])
+        k++
+      }
+    }
+    return { u: u / k, vPole: vPole / k, speed: speed / k }
+  }
+  const ww = f32(cr.wind)
+  const polar = band(ww, 65, 90)
+  const westerly = band(ww, 35, 55)
+  const trades = band(ww, 5, 25)
+  const cc = f32(cr.currents)
+  const polarSea = band(cc, 75, 90, sea(cc))
+  check(`the wind's bands: polar easterlies (u ${polar.u.toFixed(2)}), westerlies (${westerly.u.toFixed(2)}), trades toward the equator (u ${trades.u.toFixed(2)}, poleward ${trades.vPole.toFixed(2)}); the polar seas' currents flow round the pole, not into it (poleward ${polarSea.vPole.toFixed(3)} of ${polarSea.speed.toFixed(3)})`,
+    polar.u < 0 && westerly.u > 0 && trades.u < 0 && trades.vPole < 0 && Math.abs(polarSea.vPole) < 0.2 * polarSea.speed)
+
   // The seam: the step across x = 0 / W is a step like any other in its row.
   const seamOf = (field, rx, ry, layers = 1) => {
     let seam = 0
@@ -1330,6 +1411,23 @@ test('the climate step\'s primitives on the sphere, each against its mutation', 
     for (let k = 0; k < torusA.length; k++) dTorus = Math.max(dTorus, Math.abs(torusA[k] - torusB[k]))
     check(`the year's cycle converges on the sphere (within ${dCycle.toFixed(4)} °C of a ${range.toFixed(1)} °C swing), the inflow no worse than on the torus (${dInflow.toFixed(3)} against ${dTorus.toFixed(3)})`,
       allFinite(cycleA) && allFinite(inflowA) && dCycle < 0.01 * range && dInflow <= dTorus)
+  }
+
+  // (6) The season's wind cells at a pole: the banded wind of the month
+  // whose belts are shifted most, on the sphere's climate grid. With the
+  // sphere's shape the shift ends at the pole and the wind there is one
+  // vector field on the globe; the MUTATION is the torus's shape (the
+  // bands slide across the pole, as they do over the torus's seam), which
+  // leaves a ring of 0.5 (4 m/s) in the cells' frames at the pole row.
+  {
+    const WD = await L('/src/generator/climate/wind.ts')
+    const shift = CT.CLIMATE_TUNING.monsoonItczSeasonalShift
+    const RXc = CF.CLIMATE_RES_X
+    const RYc = CF.CLIMATE_RES_Y
+    const jump = (shape) => Math.max(...[shift, -shift].map((b) => poleVectorJump(WD.computeWind(0, PF.DEFAULT_PLANET_FORCING.rotationHours, b, shape), RXc, RYc)))
+    const kept = jump('sphere')
+    const slid = jump('torus')
+    check(`the season's wind cells end at the pole on the sphere: the step across a pole ${kept.toFixed(2)} × the step to the next row (the bands slid across it: ${slid.toFixed(2)})`, kept < 2 && slid > 2)
   }
 })
 
