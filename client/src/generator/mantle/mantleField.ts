@@ -1,8 +1,11 @@
-import type { Domain, DomainGrid } from '../core/domain'
+import type { Domain } from '../core/domain'
 import { MANTLE_TUNING } from './mantleTuneParams'
-import { sampleMembershipField } from '../crust/raftField'
+import type { Raft } from '../crust/raftTypes'
+import { computeMembershipAt } from '../crust/raftField'
+import { createFieldMesh, createFieldSampler, rasteriseField, type FieldMesh, type FieldSampler } from '../fields/fieldMesh'
+import { diffuseExplicit, gradient, solveHelmholtz, stableDiffusionStep } from '../fields/fieldOperators'
 
-// A coarse, evolving mantle buoyancy/temperature field under the whole torus
+// A coarse, evolving mantle buoyancy/temperature field under the whole
 // surface — the CAUSE the plates ride on (Phase M2 of
 // docs/decisions/evolving-euler-poles.md). Hot = upwelling, cold = downwelling.
 // Its surface coupling closes the Wilson cycle: continents INSULATE the mantle
@@ -11,91 +14,130 @@ import { sampleMembershipField } from '../crust/raftField'
 // convergence → continents drift together → assembly). Bounded by diffusion +
 // decay, so the whole thing stays stable — and the plate motions are FIT to the
 // resulting flow (a bounded function of a bounded field), avoiding force-
-// integration runaway. Reuses the ocean-current streamfunction pattern
-// (Gauss-Seidel Poisson).
+// integration runaway.
 //
-// LIVES IN ITS OWN MODULE because BOTH eras run on it: five files in `archean/`
-// and five in `tectonics/` read this field, so filing it under either one made
-// the other import across a boundary for its own substrate. It sat in
-// `tectonics/` for historical reasons only.
+// ON A FIELD MESH (DEC-0036 phase 1, docs/decisions/fields-on-meshes.md):
+// the state is one Float64 value per cell of the mantle's field mesh
+// (fields/fieldMesh.ts — Goldberg cells on the sphere, hexagons on the
+// torus), and every operation on it is a phase-0 operator: finite-volume
+// diffusion, the Poisson solve by conjugate gradients, the least-squares
+// gradient. One code for both shapes, no pole rows, no line solves, no
+// sub-steps. The 128 × 64 chart raster it had until 2026-10-11 survives
+// only as the screen's overlay (rasteriseMantle); the save holds the mesh's
+// own values (SavedMantle).
+// Its readers take a value at a point through the mesh's sampler
+// (mantleAt), the extrema searches walk the mesh's neighbour graph.
+//
+// LIVES IN ITS OWN MODULE because BOTH eras run on it: the Archean and the
+// tectonics read this field, so filing it under either one made the other
+// import across a boundary for its own substrate.
 //
 // The fit itself — `fitMotionsToFlow` — deliberately does NOT live here. It
 // takes plate seeds and returns plate motions, so keeping it would have made
 // the substrate depend on the thing riding on it. It is in
 // `tectonics/plateMotion.ts` with the types it speaks in.
 
+// The chart raster the field is written to (the screen's overlay) and, as
+// a length, the mesh's spacing: the domain's width over MANTLE_RES_X — a cell as wide as the raster's at the equator
+// (156 km on the 20 000 km sphere, 125 km on the torus at 2048 × 1024).
+// Counted on the domain's width as the raster was, so a harness world
+// narrower than 2048 has the same number of cells, each smaller.
 export const MANTLE_RES_X = 128
 export const MANTLE_RES_Y = 64
-const RX = MANTLE_RES_X
-const RY = MANTLE_RES_Y
 
-// THE MANTLE RASTER'S STENCIL, from the domain's grid once per call: the
-// loops below step one cell from a cell, and a table lookup there keeps the
-// sweep plain arithmetic (the wrap was 8 % of an epoch as calls, 2026-10-02).
-//
-// Per cell its four neighbours — west, east, north, south — through the
-// grid's own rule: on the sphere the step north of a north-pole cell is the
-// cell on the opposite meridian (DEC-0035, fork 5). Per row the
-// finite-volume weights of the Laplacian in equator-cell units: across the
-// east and west faces aE = 1 / (rowScale · cellArea), across the north and
-// south faces aN, aS = edgeScale / cellArea (0 at a pole: a pole is a point,
-// no flux crosses it). On the torus every weight is exactly 1, and each
-// formula below is written so that it is then the torus's own arithmetic,
-// operation for operation: the torus keeps its bits.
-interface MantleStencil {
-  west: Int32Array
-  east: Int32Array
-  north: Int32Array
-  south: Int32Array
-  aE: Float64Array
-  aN: Float64Array
-  aS: Float64Array
-  // The east-west gradient's metric, 1 / rowScale; the cell area per row;
-  // their sum over every cell (the cell count on the torus).
-  gradE: Float64Array
-  area: Float64Array
-  totalArea: number
-  grid: DomainGrid
+// The mantle's field mesh on a domain, with its sampler and what the
+// operators below need of its geometry, built once per domain shape and
+// size (the mesh reads only those: the same inputs give the same bytes).
+export interface MantleMesh {
+  readonly mesh: FieldMesh
+  readonly sampler: FieldSampler
+  // The spacing, metres: the raster's cell, which the field's former
+  // units were counted in (a diffusion pass's reach, the flow's scale).
+  readonly cellM: number
+  // The spacing in domain units.
+  readonly cellUnits: number
+  // The total area, m², and the largest explicit diffusion step that
+  // stays a convex combination (stableDiffusionStep at κ = 1), m².
+  readonly totalArea: number
+  readonly stableStep: number
 }
 
-function mantleStencil(domain: Domain): MantleStencil {
-  const grid = domain.grid(RX, RY)
-  const n = RX * RY
-  const west = new Int32Array(n)
-  const east = new Int32Array(n)
-  const north = new Int32Array(n)
-  const south = new Int32Array(n)
-  for (let y = 0; y < RY; y++) {
-    for (let x = 0; x < RX; x++) {
-      const i = y * RX + x
-      west[i] = grid.neighbour(x, y, -1, 0)
-      east[i] = grid.neighbour(x, y, 1, 0)
-      north[i] = grid.neighbour(x, y, 0, -1)
-      south[i] = grid.neighbour(x, y, 0, 1)
-    }
-  }
-  const aE = new Float64Array(RY)
-  const aN = new Float64Array(RY)
-  const aS = new Float64Array(RY)
-  const gradE = new Float64Array(RY)
-  const area = new Float64Array(RY)
+const meshes = new Map<string, MantleMesh>()
+// The last domain asked for, so a reader per point (a baseline per node)
+// pays a comparison, not a key.
+let lastDomain: Domain | null = null
+let lastMesh: MantleMesh | null = null
+
+export function mantleMesh(domain: Domain): MantleMesh {
+  if (domain === lastDomain && lastMesh) return lastMesh
+  const made = mantleMeshOf(domain)
+  lastDomain = domain
+  lastMesh = made
+  return made
+}
+
+function mantleMeshOf(domain: Domain): MantleMesh {
+  const key = `${domain.kind}:${domain.width}:${domain.height}:${domain.metresPerUnit}`
+  const known = meshes.get(key)
+  if (known) return known
+  const cellUnits = domain.width / MANTLE_RES_X
+  const cellM = cellUnits * domain.metresPerUnit
+  const mesh = createFieldMesh(domain, cellM)
   let totalArea = 0
-  for (let y = 0; y < RY; y++) {
-    const a = grid.cellArea(y)
-    aE[y] = 1 / (grid.rowScale(y) * a)
-    aN[y] = grid.edgeScale(y) / a
-    aS[y] = grid.edgeScale(y + 1) / a
-    gradE[y] = 1 / grid.rowScale(y)
-    area[y] = a
-  }
-  for (let i = 0; i < n; i++) totalArea += area[(i / RX) | 0]
-  return { west, east, north, south, aE, aN, aS, gradE, area, totalArea, grid }
+  for (let i = 0; i < mesh.count; i++) totalArea += mesh.area[i]
+  const made: MantleMesh = { mesh, sampler: createFieldSampler(mesh), cellM, cellUnits, totalArea, stableStep: stableDiffusionStep(mesh, 1) }
+  meshes.set(key, made)
+  return made
 }
 
-// A row whose east-west coupling is this many times the equator's is
-// solved as a line in the flow solve (computeMantleFlow) — on the sphere
-// from about 60° on. The torus never reaches it: its coupling is 1.
-const LINE_SOLVE_COUPLING = 2
+// The field at a point: linear in the mesh's triangle under it.
+export function mantleAt(field: ArrayLike<number>, domain: Domain, x: number, y: number): number {
+  return mantleMesh(domain).sampler.sample(field, x, y)
+}
+
+// The field on the chart raster, cell centres (the DomainGrid's
+// convention): the screen's overlay.
+export function rasteriseMantle(field: ArrayLike<number>, domain: Domain): Float32Array {
+  return rasteriseField(mantleMesh(domain).mesh, field, MANTLE_RES_X, MANTLE_RES_Y)
+}
+
+// THE FIELD AS A SAVE HOLDS IT (DEC-0036 phase 1, 2026-10-11): the mesh's
+// own values, Float64 per cell — the session's exact bytes, so a load
+// continues bit for bit — with what identifies the mesh they belong to.
+// The mesh itself is not saved: it is rebuilt from the domain and the
+// spacing, deterministically. No raster of the field is saved (the chart
+// raster is the overlay's, made at runtime).
+export interface SavedMantle {
+  values: Float64Array
+  // The mesh's cell count and spacing (metres) when it was saved.
+  cells: number
+  spacingM: number
+}
+
+export function savedMantle(field: Float64Array, domain: Domain): SavedMantle {
+  const mm = mantleMesh(domain)
+  return { values: field.slice(), cells: mm.mesh.count, spacingM: mm.cellM }
+}
+
+// Whether a saved field's mesh (its cell count and spacing) is this
+// domain's — what a loader asks before it hands the save on.
+export function mantleFits(domain: Domain, cells: number, spacingM: number): boolean {
+  const mm = mantleMesh(domain)
+  return cells === mm.mesh.count && spacingM === mm.cellM
+}
+
+// The field back from a save, or null when there is none (the caller makes
+// a new one). A field of another mesh — another spacing or cell count, a
+// save from another build of the mesh — is refused with an error that says
+// so: values per cell mean nothing on other cells.
+export function restoreMantleField(domain: Domain, saved: SavedMantle | undefined): Float64Array | null {
+  if (!saved) return null
+  const mm = mantleMesh(domain)
+  if (!mantleFits(domain, saved.cells, saved.spacingM) || saved.values.length !== mm.mesh.count) {
+    throw new Error(`the saved mantle is for a mesh of ${saved.cells} cells at ${saved.spacingM} m (${saved.values.length} values); this world's has ${mm.mesh.count} at ${mm.cellM} m`)
+  }
+  return saved.values
+}
 
 // Smoothed random initial field — a few upwelling/downwelling blobs so there's
 // convection (and therefore plate motion) from epoch 0, before surface coupling
@@ -105,7 +147,8 @@ const LINE_SOLVE_COUPLING = 2
 // This was the mantle-vigour knob, on the reasoning that changing the field's
 // initial characteristic scale steers the world while leaving the tuned epoch
 // dynamics alone. Measurement killed it: the per-epoch diffusion below erases the
-// initial smoothing within a few dozen epochs. Field roughness by starting value:
+// initial smoothing within a few dozen epochs. Field roughness by starting value
+// (on the 128 × 64 raster, 2026-08):
 //
 //     passes   epoch 0   epoch 10   epoch 40
 //       10      0.353      0.249      0.167
@@ -122,125 +165,77 @@ const LINE_SOLVE_COUPLING = 2
 // the starting scale, with no claim to steer anything.
 export const DEFAULT_INITIAL_SMOOTHING = 6
 
-export function createMantleField(random: () => number, domain: Domain, smoothingPasses = DEFAULT_INITIAL_SMOOTHING): Float32Array {
-  const st = mantleStencil(domain)
-  let field: Float32Array = new Float32Array(RX * RY)
+export function createMantleField(random: () => number, domain: Domain, smoothingPasses = DEFAULT_INITIAL_SMOOTHING): Float64Array {
+  const mm = mantleMesh(domain)
+  let field: Float64Array = new Float64Array(mm.mesh.count)
   for (let i = 0; i < field.length; i++) field[i] = random() * 2 - 1
-  for (let pass = 0; pass < smoothingPasses; pass++) field = boxBlur(field, 0.5, st)
-  // A pole row is one point (DEC-0035, fork 5); a no-op on the torus.
-  st.grid.averagePoleRows(field)
-  return zeroMean(clampField(field), st)
+  for (let pass = 0; pass < smoothingPasses; pass++) field = diffusionPass(field, 0.5, mm)
+  return zeroMean(clampField(field), mm)
 }
 
-// One pass of diffusion: each cell moves `weight` of the way to its
-// neighbours' mean. On the torus that is the plain box blur. On the sphere
-// the same step in metric distance (the finite-volume weights of the
-// stencil); near a pole its east-west part is far stronger than one
-// explicit step can carry (aE ∝ 1 / cos² φ), so the step takes the share
-// that is stable and the rest follows as east-west sub-steps on the row
-// (fork 5's sub-steps). The torus's share is all of it, so it takes none.
-function boxBlur(field: Float32Array, weight: number, st: MantleStencil): Float32Array {
-  const { west, east, north, south, aE, aN, aS } = st
-  const out = new Float32Array(RX * RY)
-  let rest = false
-  for (let y = 0; y < RY; y++) {
-    // The east-west weight one explicit step can take beside the
-    // north-south one: weight · (aN + aS + 2 · eMain) / 4 at most 1.
-    const eMain = Math.min(aE[y], (4 / weight - aN[y] - aS[y]) / 2)
-    if (eMain < aE[y]) rest = true
-    const wd = (weight * (aN[y] + aS[y] + 2 * eMain)) / 4
-    const nN = aN[y]
-    const nS = aS[y]
-    for (let x = 0; x < RX; x++) {
-      const i = y * RX + x
-      const c = field[i]
-      const n = nN * field[north[i]] + nS * field[south[i]] + eMain * field[west[i]] + eMain * field[east[i]]
-      out[i] = c * (1 - wd) + (n / 4) * weight
-    }
+// One pass of diffusion: what the raster's pass was — each cell moving
+// `weight` of the way to its four neighbours' mean, φ + (weight / 4) h² ∇²φ
+// with h the cell — as the finite-volume step on the mesh, κ dt = weight ·
+// h² / 4 in m². In as many equal explicit steps as keep each a convex
+// combination (one on the torus's hexagons at weight ½, whose bound is
+// h² / 4; the sphere's smallest cells may take two).
+function diffusionPass(field: Float64Array, weight: number, mm: MantleMesh): Float64Array {
+  const kappaDt = (weight * mm.cellM * mm.cellM) / 4
+  const steps = Math.max(1, Math.ceil(kappaDt / mm.stableStep))
+  let a: Float64Array = field
+  let b: Float64Array = new Float64Array(field.length)
+  for (let s = 0; s < steps; s++) {
+    diffuseExplicit(mm.mesh, a, kappaDt / steps, 1, b)
+    const t = a
+    a = b
+    b = t
   }
-  if (rest) diffuseRowsEastWest(out, weight, st)
-  return out
+  return a
 }
 
-// The east-west share boxBlur could not take, per row, in explicit
-// sub-steps of at most half a cell's value each — a pole row takes a few
-// thousand, the cost of a few rows of the equator's.
-function diffuseRowsEastWest(field: Float32Array, weight: number, st: MantleStencil): void {
-  const { aE, aN, aS } = st
-  const row = new Float64Array(RX)
-  for (let y = 0; y < RY; y++) {
-    const eMain = Math.min(aE[y], (4 / weight - aN[y] - aS[y]) / 2)
-    const left = ((aE[y] - eMain) * weight) / 4
-    if (!(left > 0)) continue
-    const steps = Math.ceil(left / 0.25)
-    const k = left / steps
-    const base = y * RX
-    for (let x = 0; x < RX; x++) row[x] = field[base + x]
-    for (let s = 0; s < steps; s++) {
-      let prev = row[RX - 1]
-      const first = row[0]
-      for (let x = 0; x < RX; x++) {
-        const c = row[x]
-        const next = x + 1 < RX ? row[x + 1] : first
-        row[x] = c + k * (prev + next - 2 * c)
-        prev = c
-      }
-    }
-    for (let x = 0; x < RX; x++) field[base + x] = row[x]
-  }
-}
-
-// The area-weighted mean taken out (the plain mean on the torus).
-function zeroMean(field: Float32Array, st: MantleStencil): Float32Array {
+// The area-weighted mean taken out.
+function zeroMean(field: Float64Array, mm: MantleMesh): Float64Array {
+  const { area } = mm.mesh
   let mean = 0
-  for (let y = 0; y < RY; y++) {
-    const a = st.area[y]
-    for (let x = 0; x < RX; x++) mean += field[y * RX + x] * a
-  }
-  mean /= st.totalArea
+  for (let i = 0; i < field.length; i++) mean += field[i] * area[i]
+  mean /= mm.totalArea
   for (let i = 0; i < field.length; i++) field[i] -= mean
   return field
 }
 
-function clampField(field: Float32Array): Float32Array {
+function clampField(field: Float64Array): Float64Array {
   for (let i = 0; i < field.length; i++) field[i] = Math.max(-MANTLE_TUNING.clamp, Math.min(MANTLE_TUNING.clamp, field[i]))
   return field
 }
 
 // One epoch of field evolution: continents heat the mantle beneath (insulation →
 // the doming driver), ocean cools it (downwelling), then diffuse + decay to a
-// zero mean. Mutates + returns the field.
+// zero mean. Returns the new field (the argument may be reused).
+//
+// The continental membership is asked at each cell's centre
+// (crust/raftField.computeMembershipAt), the question the raster asked at
+// its cells' centres.
 export function evolveMantleField(
-  field: Float32Array,
-  membership: Float32Array,
-  membershipResX: number,
-  membershipResY: number,
+  field: Float64Array,
+  rafts: Raft[],
   domain: Domain,
   diffusionPasses: number = MANTLE_TUNING.diffusionPasses,
-): Float32Array {
-  const membershipGrid = domain.grid(membershipResX, membershipResY)
-  for (let gy = 0; gy < RY; gy++) {
-    const wy = ((gy + 0.5) / RY) * domain.height
-    for (let gx = 0; gx < RX; gx++) {
-      const wx = ((gx + 0.5) / RX) * domain.width
-      const i = gy * RX + gx
-      if (sampleMembershipField(membership, membershipGrid, wx, wy) > 0.5) field[i] += MANTLE_TUNING.insulationRate
-      else field[i] -= MANTLE_TUNING.oceanCoolRate
-    }
+): Float64Array {
+  const mm = mantleMesh(domain)
+  const membership = computeMembershipAt(rafts, mm.mesh.x, mm.mesh.y, domain)
+  for (let i = 0; i < field.length; i++) {
+    if (membership[i] > 0.5) field[i] += MANTLE_TUNING.insulationRate
+    else field[i] -= MANTLE_TUNING.oceanCoolRate
   }
   // Fractional passes: whole ones at full weight, then a partial one for the
   // remainder. Integer passes alone would give the Archean's mixing knob three
   // usable positions (0, 1, 2 — it saturates past that), which is not a slider.
-  const st = mantleStencil(domain)
   const wholePasses = Math.floor(diffusionPasses)
-  for (let p = 0; p < wholePasses; p++) field = boxBlur(field, MANTLE_TUNING.diffusionWeight, st)
+  for (let p = 0; p < wholePasses; p++) field = diffusionPass(field, MANTLE_TUNING.diffusionWeight, mm)
   const remainder = diffusionPasses - wholePasses
-  if (remainder > 0) field = boxBlur(field, MANTLE_TUNING.diffusionWeight * remainder, st)
-  // The insulation above was sampled per cell, and a pole row's cells are
-  // one point: made one value (a no-op on the torus).
-  st.grid.averagePoleRows(field)
+  if (remainder > 0) field = diffusionPass(field, MANTLE_TUNING.diffusionWeight * remainder, mm)
   for (let i = 0; i < field.length; i++) field[i] *= MANTLE_TUNING.decayKeep
-  return zeroMean(clampField(field), st)
+  return zeroMean(clampField(field), mm)
 }
 
 // Keeps Archean convection alive by renormalising the field to a target RMS.
@@ -262,19 +257,13 @@ export function evolveMantleField(
 // pattern the field has developed (cells keep their identity, drift and reorganise)
 // while holding its amplitude steady, so a fixed nucleation threshold keeps meaning
 // the same thing at epoch 10 and at epoch 300.
-// The RMS is area-weighted (the plain one on the torus), so that the
-// sphere's narrow polar cells do not count as much as the equator's.
-export function sustainMantleVigour(field: Float32Array, targetRms: number, domain: Domain): Float32Array {
-  const st = mantleStencil(domain)
+// The RMS is area-weighted.
+export function sustainMantleVigour(field: Float64Array, targetRms: number, domain: Domain): Float64Array {
+  const mm = mantleMesh(domain)
+  const { area } = mm.mesh
   let sq = 0
-  for (let y = 0; y < RY; y++) {
-    const a = st.area[y]
-    for (let x = 0; x < RX; x++) {
-      const v = field[y * RX + x]
-      sq += v * v * a
-    }
-  }
-  const rms = Math.sqrt(sq / st.totalArea)
+  for (let i = 0; i < field.length; i++) sq += field[i] * field[i] * area[i]
+  const rms = Math.sqrt(sq / mm.totalArea)
   if (rms < 1e-6) return field
   const scale = targetRms / rms
   for (let i = 0; i < field.length; i++) field[i] = Math.max(-MANTLE_TUNING.clamp, Math.min(MANTLE_TUNING.clamp, field[i] * scale))
@@ -292,138 +281,59 @@ export function sustainMantleVigour(field: Float32Array, targetRms: number, doma
 // that forcing regionally, so the flow (recomputed next epoch) stops pushing the
 // halves apart at that spot and the strobing stops on its own. Mutates the field;
 // the next evolveMantleField re-clamps + re-zero-means it.
-export function coolMantleAt(field: Float32Array, x: number, y: number, domain: Domain, worldRadius: number, amount: number): void {
+export function coolMantleAt(field: Float64Array, x: number, y: number, domain: Domain, worldRadius: number, amount: number): void {
+  const { mesh } = mantleMesh(domain)
   const r2 = worldRadius * worldRadius
-  for (let gy = 0; gy < RY; gy++) {
-    const wy = ((gy + 0.5) / RY) * domain.height
-    for (let gx = 0; gx < RX; gx++) {
-      const wx = ((gx + 0.5) / RX) * domain.width
-      const d2 = domain.distanceSq(wx, wy, x, y)
-      if (d2 > r2) continue
-      const falloff = 1 - Math.sqrt(d2) / worldRadius
-      field[gy * RX + gx] = Math.max(-MANTLE_TUNING.clamp, field[gy * RX + gx] - amount * falloff)
-    }
+  for (let i = 0; i < mesh.count; i++) {
+    const d2 = domain.distanceSq(mesh.x[i], mesh.y[i], x, y)
+    if (d2 > r2) continue
+    const falloff = 1 - Math.sqrt(d2) / worldRadius
+    field[i] = Math.max(-MANTLE_TUNING.clamp, field[i] - amount * falloff)
   }
 }
 
-// Surface flow from the field: solve ∇²φ = (T − mean) (zero-mean source on the
-// torus, Gauss-Seidel), then u = ∇φ. u DIVERGES from hot upwellings and CONVERGES
-// to cold downwellings (φ has a minimum at a hot source, so ∇φ points outward).
-// Returns interleaved [ux, uy] per cell, scaled to world pixels — on the
-// sphere the components along the cell's east and south, in domain units
-// (the frame Domain.advance moves a point in).
+// The surface flow, per cell in its own east/south frame, domain units per
+// epoch (the frame Domain.advance moves a point in).
+export interface MantleFlow {
+  readonly east: Float64Array
+  readonly south: Float64Array
+}
+
+// The relative residual the flow's Poisson solve stops at. The flow fits
+// plate motions; 1e-8 of the right-hand side is far below anything they
+// resolve. Measured 2026-10-11 at 2048 × 1024 after 40 Archean epochs: 190
+// iterations on the torus (9 472 cells, 20 ms), 152 on the sphere (6 252,
+// 11 ms); 1e-10 takes 223 / 191, 1e-6 still 171 / 131 — CG's cost here is
+// its start, not its tail.
+const FLOW_SOLVE_TOLERANCE = 1e-8
+
+// Surface flow from the field: solve ∇²φ = T (zero-mean source on a closed
+// surface, conjugate gradients), then u = ∇φ. u DIVERGES from hot upwellings
+// and CONVERGES to cold downwellings (φ has a minimum at a hot source, so ∇φ
+// points outward). In the units the raster counted in — φ in cell², the
+// gradient per cell, h the cell (cellM) — then scaled by flowSpeedScale to
+// domain units per epoch: ∇φ_cells = ∇φ_metres / h.
 //
-// On the sphere the Laplacian is the stencil's finite-volume one, and a row
-// whose east-west coupling is strong (toward a pole, aE ∝ 1 / cos² φ) is
-// relaxed as a LINE: the row solved at once against its north and south
-// neighbours (a cyclic tridiagonal system). Point Gauss-Seidel would leave
-// such a row's mean almost where it started — it moves by aS / (2 aE) a
-// sweep, 1/3300 at a pole row. The torus relaxes point by point, as it did.
-// The north-south gradient across a pole reads the cell on the opposite
-// meridian, at one cell's distance like any other.
-export function computeMantleFlow(field: Float32Array, domain: Domain): Float32Array {
-  const st = mantleStencil(domain)
-  const { west, east, north, south, aE, aN, aS, gradE } = st
-  const n = RX * RY
-  const phi = new Float32Array(n)
-  // The rows relaxed as lines, each with its system factored once.
-  const lines: (LineSolver | null)[] = []
-  for (let y = 0; y < RY; y++) lines.push(aE[y] > LINE_SOLVE_COUPLING ? new LineSolver(RX, 2 * aE[y] + aN[y] + aS[y], -aE[y]) : null)
-  for (let iter = 0; iter < MANTLE_TUNING.solveIters; iter++) {
-    for (let y = 0; y < RY; y++) {
-      const e = aE[y]
-      const nN = aN[y]
-      const nS = aS[y]
-      const d = 2 * e + nN + nS
-      const line = lines[y]
-      if (line !== null) {
-        const base = y * RX
-        for (let x = 0; x < RX; x++) {
-          const i = base + x
-          line.rhs[x] = nN * phi[north[i]] + nS * phi[south[i]] - field[i]
-        }
-        line.solve()
-        for (let x = 0; x < RX; x++) phi[base + x] = line.x[x]
-        continue
-      }
-      for (let x = 0; x < RX; x++) {
-        const i = y * RX + x
-        const neighbors = e * phi[west[i]] + e * phi[east[i]] + nN * phi[north[i]] + nS * phi[south[i]]
-        phi[i] = (neighbors - field[i]) / d
-      }
-    }
+// The raster's Gauss-Seidel stopped after 260 sweeps, short of convergence
+// at the longest wavelengths (a 128-cell mode about a quarter of the way);
+// the solve here converges, so the broadest flow is the stronger by that.
+export function computeMantleFlow(field: Float64Array, domain: Domain): MantleFlow {
+  const mm = mantleMesh(domain)
+  const { mesh } = mm
+  const phi = new Float64Array(mesh.count)
+  solveHelmholtz(mesh, 0, field, phi, { tolerance: FLOW_SOLVE_TOLERANCE })
+  const east = new Float64Array(mesh.count)
+  const south = new Float64Array(mesh.count)
+  gradient(mesh, phi, east, south)
+  const scale = MANTLE_TUNING.flowSpeedScale / mm.cellM
+  for (let i = 0; i < mesh.count; i++) {
+    east[i] *= scale
+    south[i] *= scale
   }
-  const flow = new Float32Array(n * 2)
-  for (let y = 0; y < RY; y++) {
-    const g = gradE[y]
-    for (let x = 0; x < RX; x++) {
-      const i = y * RX + x
-      const ux = ((phi[east[i]] - phi[west[i]]) / 2) * g
-      const uy = (phi[south[i]] - phi[north[i]]) / 2
-      flow[i * 2] = ux * MANTLE_TUNING.flowSpeedScale
-      flow[i * 2 + 1] = uy * MANTLE_TUNING.flowSpeedScale
-    }
-  }
-  return flow
+  return { east, south }
 }
 
-// A cyclic tridiagonal system with constant coefficients — `diag` on the
-// diagonal, `off` beside it and in the two corners (a row that closes on
-// itself in longitude) — solved by the Thomas algorithm with the
-// Sherman-Morrison correction for the corners: A = B + u vᵀ with B
-// tridiagonal, u = (γ, 0…0, off), v = (1, 0…0, off / γ). Everything that
-// depends on the coefficients alone (B's pivots, B⁻¹u) is factored once per
-// row in the constructor; a solve is then two sweeps of multiplications.
-// The right-hand side goes in `rhs`, the solution comes out in `x`.
-class LineSolver {
-  readonly rhs: Float64Array
-  readonly x: Float64Array
-  private readonly n: number
-  private readonly off: number
-  private readonly ratio: number
-  // B's elimination: cp[i] the multiplier carried to row i, inv[i] 1 / pivot.
-  private readonly cp: Float64Array
-  private readonly inv: Float64Array
-  // B⁻¹u, and 1 + v · B⁻¹u.
-  private readonly z: Float64Array
-  private readonly denom: number
-
-  constructor(n: number, diag: number, off: number) {
-    this.n = n
-    this.off = off
-    this.rhs = new Float64Array(n)
-    this.x = new Float64Array(n)
-    this.cp = new Float64Array(n)
-    this.inv = new Float64Array(n)
-    this.z = new Float64Array(n)
-    const gamma = -diag
-    this.ratio = off / gamma
-    let beta = diag - gamma
-    this.inv[0] = 1 / beta
-    for (let i = 1; i < n; i++) {
-      this.cp[i] = off * this.inv[i - 1]
-      beta = (i === n - 1 ? diag - off * this.ratio : diag) - off * this.cp[i]
-      this.inv[i] = 1 / beta
-    }
-    const u = new Float64Array(n)
-    u[0] = gamma
-    u[n - 1] = off
-    this.sweep(u, this.z)
-    this.denom = 1 + this.z[0] + this.ratio * this.z[n - 1]
-  }
-
-  solve(): void {
-    const { n, x, z } = this
-    this.sweep(this.rhs, x)
-    const factor = (x[0] + this.ratio * x[n - 1]) / this.denom
-    for (let i = 0; i < n; i++) x[i] -= factor * z[i]
-  }
-
-  // B⁻¹b into `out`.
-  private sweep(b: Float64Array, out: Float64Array): void {
-    const { n, cp, inv, off } = this
-    out[0] = b[0] * inv[0]
-    for (let i = 1; i < n; i++) out[i] = (b[i] - off * out[i - 1]) * inv[i]
-    for (let i = n - 2; i >= 0; i--) out[i] -= cp[i + 1] * out[i + 1]
-  }
+// The flow at a point, read in the point's own frame. Into out.x, out.y.
+export function mantleFlowAt(flow: MantleFlow, domain: Domain, x: number, y: number, out: { x: number; y: number }): void {
+  mantleMesh(domain).sampler.sampleVector(flow.east, flow.south, x, y, -1, out)
 }

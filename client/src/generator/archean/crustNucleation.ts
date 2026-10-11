@@ -1,6 +1,6 @@
 import type { Raft, RaftBlob } from '../crust/raftTypes'
 import { raftField } from '../crust/raftField'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { mantleMesh } from '../mantle/mantleField'
 import type { Domain } from '../core/domain'
 import { SHORELINE_FIELD } from '../elevation/elevationScale'
 
@@ -60,44 +60,34 @@ export const DEFAULT_NUCLEATION_PARAMS: NucleationParams = {
 }
 
 // Advances the per-cell upwelling streaks and returns the world positions where
-// crust should nucleate this epoch. Mutates `streak` in place.
+// crust should nucleate this epoch. Mutates `streak` in place. The cells are
+// the mantle's field mesh's (DEC-0036): of one size everywhere, so every cell
+// is a candidate on both shapes (the raster offered one per `1 / rowScale`
+// cells of a row toward a pole).
 export function findNucleationSites(
-  mantle: Float32Array,
+  mantle: Float64Array,
   streak: Int16Array,
   rafts: Raft[],
   params: NucleationParams,
   random: () => number,
   domain: Domain,
 ): { x: number; y: number }[] {
-  const { width, height } = domain
-  const grid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
-  const candidates: { x: number; y: number; streak: number; row: number }[] = []
+  const mm = mantleMesh(domain)
+  const { mesh } = mm
+  const candidates: { cell: number; streak: number }[] = []
 
-  for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
-    const wy = ((gy + 0.5) / MANTLE_RES_Y) * height
-    // One candidate per `stride` cells of the row, so that candidates stand
-    // as densely per AREA everywhere: on the sphere a row toward a pole is
-    // narrower by rowScale, and a pole row of 128 cells is one small cap —
-    // offering all of them would put the per-epoch budget at the pole
-    // (DEC-0035, fork 5). 1 on the torus: every cell, as before. The streak
-    // itself is counted in every cell.
-    const stride = Math.max(1, Math.round(1 / grid.rowScale(gy)))
-    for (let gx = 0; gx < MANTLE_RES_X; gx++) {
-      const i = gy * MANTLE_RES_X + gx
-      if (mantle[i] < params.upwellingThreshold) {
-        streak[i] = 0
-        continue
-      }
-      streak[i] += 1
-      if (streak[i] < params.persistenceEpochs) continue
-      if (gx % stride !== 0) continue
-
-      // The ocean condition. Without it this whole function is a feedback loop.
-      const wx = ((gx + 0.5) / MANTLE_RES_X) * width
-      if (raftField(wx, wy, rafts, domain) > params.occupiedFieldLevel) continue
-
-      candidates.push({ x: wx, y: wy, streak: streak[i], row: gy })
+  for (let i = 0; i < mesh.count; i++) {
+    if (mantle[i] < params.upwellingThreshold) {
+      streak[i] = 0
+      continue
     }
+    streak[i] += 1
+    if (streak[i] < params.persistenceEpochs) continue
+
+    // The ocean condition. Without it this whole function is a feedback loop.
+    if (raftField(mesh.x[i], mesh.y[i], rafts, domain) > params.occupiedFieldLevel) continue
+
+    candidates.push({ cell: i, streak: streak[i] })
   }
 
   // Longest-standing upwellings first — the ones that have had the most time to
@@ -108,23 +98,17 @@ export function findNucleationSites(
   // Reset the streak where crust was actually placed, so the same cell doesn't
   // immediately re-fire next epoch; the new crust will suppress it via the ocean
   // test anyway, but this keeps the streak field honest.
-  for (const c of chosen) {
-    const gx = Math.min(MANTLE_RES_X - 1, Math.floor((c.x / width) * MANTLE_RES_X))
-    const gy = Math.min(MANTLE_RES_Y - 1, Math.floor((c.y / height) * MANTLE_RES_Y))
-    streak[gy * MANTLE_RES_X + gx] = 0
-  }
+  for (const c of chosen) streak[c.cell] = 0
 
-  // Jitter within the cell so nuclei don't sit on a visible 128×64 grid: an
-  // offset of up to half a cell each way, in the cell's own frame — on the
-  // sphere a cell is narrower by rowScale (1 on the torus), and the point is
-  // left unwrapped there as it always was (Domain.displace).
-  const cellW = width / MANTLE_RES_X
-  const cellH = height / MANTLE_RES_Y
+  // Jitter within the cell so nuclei don't sit on the mesh's lattice: an
+  // offset of up to half a cell spacing each way, in the cell's own frame
+  // (the point left unwrapped on the torus, Domain.displace).
+  const cell = mm.cellUnits
   return chosen.map((c) => {
-    const dx = (random() - 0.5) * cellW * grid.rowScale(c.row)
-    const dy = (random() - 0.5) * cellH
+    const dx = (random() - 0.5) * cell
+    const dy = (random() - 0.5) * cell
     const site = { x: 0, y: 0 }
-    domain.displace(c.x, c.y, dx, dy, site)
+    domain.displace(mesh.x[c.cell], mesh.y[c.cell], dx, dy, site)
     return site
   })
 }

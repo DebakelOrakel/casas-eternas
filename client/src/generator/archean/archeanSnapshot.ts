@@ -2,7 +2,7 @@ import type { ArcheanSimulation } from './archeanState'
 import type { Raft } from '../crust/raftTypes'
 import { mulberry32 } from '../core/rng'
 import { domainOfKind, type Domain } from '../core/domain'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { createMantleField, mantleMesh, restoreMantleField, type SavedMantle } from '../mantle/mantleField'
 
 // Saving a world that is still in the Archean.
 //
@@ -15,7 +15,7 @@ import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 // (seed, mantle diffusion, water, epochs) — but an Archean epoch costs enough that a
 // few hundred of them is far too slow to sit through on load. So it is a snapshot.
 //
-// The two rasters travel outside the JSON, like the tectonic snapshot's own: JSON
+// The mantle and its streaks travel outside the JSON, like the tectonic snapshot's: JSON
 // numbers would roughly triple their size and cost precision for nothing.
 export interface ArcheanSnapshot {
   width: number
@@ -40,21 +40,27 @@ export function serializeArchean(archean: ArcheanSimulation): ArcheanSnapshot {
 }
 
 // `shape`: the world's, from its save's kind — the snapshot does not carry it.
-export function deserializeArchean(snap: ArcheanSnapshot, mantle: Float32Array, streak: Int16Array, shape: Domain['kind'] = 'torus'): ArcheanSimulation {
+// `mantle`: the field as the save holds it, the mesh's own values
+// (restoreMantleField refuses another mesh's). `streak` is per mesh cell;
+// one of another length starts the streaks over.
+export function deserializeArchean(snap: ArcheanSnapshot, mantle: SavedMantle | undefined, streak: Int16Array, shape: Domain['kind'] = 'torus'): ArcheanSimulation {
+  const domain = domainOfKind(shape, snap.width, snap.height)
+  const cells = mantleMesh(domain).mesh.count
   return {
     width: snap.width,
     height: snap.height,
-    domain: domainOfKind(shape, snap.width, snap.height),
+    domain,
     epoch: snap.epoch,
     warpSeed: snap.warpSeed,
     seaLevelOffset: snap.seaLevelOffset ?? 0,
     rafts: snap.rafts,
     random: mulberry32(snap.rngState),
-    // Sized from the current resolution rather than trusted from the file: a save from
+    // Sized from the current mesh rather than trusted from the file: a save from
     // a different mantle grid restores its rafts and starts the streaks over, instead
-    // of writing past the end of the array.
-    mantle: mantle.length === MANTLE_RES_X * MANTLE_RES_Y ? mantle : new Float32Array(MANTLE_RES_X * MANTLE_RES_Y),
-    upwellingStreak: streak.length === MANTLE_RES_X * MANTLE_RES_Y ? streak : new Int16Array(MANTLE_RES_X * MANTLE_RES_Y),
+    // of writing past the end of the array. A save with no field at all gets a
+    // fresh one from an RNG of its own, so `random` is not disturbed.
+    mantle: restoreMantleField(domain, mantle) ?? createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0), domain),
+    upwellingStreak: streak.length === cells ? streak : new Int16Array(cells),
     // Per-epoch readouts, not state — they are recomputed on the next step.
     lastRecycled: 0,
     lastSplits: 0,

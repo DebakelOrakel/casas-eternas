@@ -7,7 +7,8 @@ summary.en: The generator's raster stages leave the 2:1 chart. The coarse global
   field mesh, the Goldberg dual of a subdivided icosahedron on the sphere and
   a hexagonal lattice on the torus. The fine land fields (biomes, ecology,
   resources, hydrogeology) go onto the adaptive terrain mesh that already
-  exists. The chart stays as the address, the textures and the save. Both
+  exists. The chart stays as the address and the textures; the save holds
+  the meshes' values, no raster field (old saves are refused). Both
   shapes take the one path; the golden values break per phase, on purpose.
   The calibration of the sphere's raster constants waits for it.
 summary.de: Die Raster-Stufen des Generators verlassen die 2:1-Karte. Die groben, globalen
@@ -15,7 +16,8 @@ summary.de: Die Raster-Stufen des Generators verlassen die 2:1-Karte. Die groben
   gleichmässiges Feldnetz, auf der Kugel das Goldberg-Dual eines unterteilten
   Ikosaeders, auf dem Torus ein Hex-Gitter. Die feinen Landfelder (Biome,
   Ökologie, Ressourcen, Hydrogeologie) kommen auf das adaptive Geländenetz,
-  das es schon gibt. Die Karte bleibt Adresse, Textur und Save. Beide
+  das es schon gibt. Die Karte bleibt Adresse und Textur; der Save hält die
+  Werte der Netze, kein Rasterfeld (alte Saves werden abgelehnt). Beide
   Gestalten nehmen den einen Weg; die Golden-Werte brechen je Phase, gewollt.
   Die Kalibrierung der Raster-Konstanten der Kugel wartet darauf.
 area: generator
@@ -59,7 +61,7 @@ change.
 generator simulates. (c) None (keep fork 5 (a), pole handling).
 
 **Answer: (b).** No simulation runs on the 2:1 raster after this. The chart
-stays what DEC-0035 fork 2 made it: an address, the textures and the save.
+stays an address and the textures; the save leaves it too (fork 5).
 
 **Why.** Half a move keeps both kinds of code, and the fine land fields
 have the same pole problem as the coarse ones. With (b) the calibration is
@@ -121,9 +123,20 @@ apart, which DEC-0035 exists to prevent.
 
 ## Fork 5 — The save format
 
-**Answer: unchanged.** Fields that a save holds (the climate's refinement,
-the ecology layers) are written rasterised into the chart, as today; the
-mesh fields are internal. A reader of the save sees no difference.
+**Answer (revised the same day): no raster field in the save.** A save
+holds the meshes' values — the field mesh's per cell, the terrain mesh's
+per node — and what identifies each mesh (it is rebuilt from the Domain and
+its spacing, deterministically). The chart rasters are made from them at
+load, for the textures and the readouts. No backward compatibility: the
+generator is alpha, an older save is refused with a clear message, not
+migrated (the user's call: "mit der Brechstange"). Each phase moves its own
+field out of the archive; the remaining layers (elevation, ocean age, the
+lattice, the ecology and climate layers) go in a step of their own, with
+everything that reads them (the world id's hash, the artifacts, the bake,
+the sample baker).
+
+(First answered "unchanged — rasterised into the chart as today"; revised
+2026-10-11 before phase 1 was built.)
 
 ## The operators
 
@@ -179,6 +192,61 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-11: phase 1 BUILT — the mantle on the field mesh, both shapes, one
+path (`mantle/mantleField.ts`). Spacing = the domain's width / 128 (the old
+raster's equator cell): 9 472 hexagons at 124.8 km on the torus (the raster
+had 8 192), 6 252 Goldberg cells at 156.3 km on the sphere (12 pentagons).
+A diffusion pass is the raster's (κ dt = weight · h² / 4) as the explicit
+finite-volume step, the flow the CG Poisson solve (1e-8) and the
+least-squares gradient; membership is asked at the cell centres. Plume
+sites, plate seeds (extrema over the Voronoi neighbours), nucleation
+streaks, the plume hill-climb and the motion fit (area-weighted) walk the
+mesh; recycling and the Archean's raft drift read it through the sampler;
+dynamic topography per node through the sampler, the render's through a
+256 × 128 corner raster (≤ 9 m off ±550 m, 14 ms at 2048 × 1024 against 400
+for a locate per pixel). The pole rows, the line solver, the sub-steps and
+the stride of nucleation candidates are gone. The 128 × 64 chart raster
+survives only as the overlay (rasteriseMantle).
+
+**Save** (fork 5 as revised): `mantle.f64` (Float64 per cell) + `mantle.json`
+({ cells, spacingM }), `archean.mantle.f64` / `.json` and
+`archean.streak.i16` per cell; formatVersion 8. A save without them, or of
+another mesh, is refused on open. Save → load → continue is bit-identical
+(pipeline harness: the replay lands on the saved mesh across a load).
+
+**Measured** (2048 × 1024, seed `bench`, 100 Archean + 12 coupled epochs at
+HISTORY_DEFAULTS, Node, one thread; the mantle's own work timed on a clone
+of the state):
+
+| | torus HEAD | torus mesh | sphere HEAD | sphere mesh |
+|---|---|---|---|---|
+| mantle per Archean epoch | 19.6 ms | 20.6 ms | 22.7 ms | 12.0 ms |
+| mantle per coupled epoch (with the fit) | 21.6 ms | 22.7 ms | 30.9 ms | 16.6 ms |
+| tectonics per coupled epoch | 47 ms | 50 ms | 84 ms | 66 ms |
+| whole coupled epoch (different worlds) | 1159 ms | 1209 ms | 1988 ms | 2249 ms |
+| plates at the hand-over / after 12 | 14 / 14 | 13 / 13 | 10 / 10 | 8 / 8 |
+| plumes at the hand-over / after 12 | 4 / 3 | 5 / 3 | 2 / 1 | 3 / 2 |
+| convection cells (extrema), epoch 25 / 100 | 21 / 14 | 22 / 13 | 11 / 10 | 13 / 8 |
+| land at the hand-over / after 12 | 8.4 / 6.0 % | 7.7 / 5.7 % | 17.9 / 13.8 % | 16.2 / 17.3 % |
+| field range at epoch 100 | −1.17…2.06 | −1.44…1.93 | −0.87…2.26 | −1.38…2.03 |
+| length rms / rms ∣∇∣, epoch 25 / 100 | 329 / 432 km | 348 / 464 km | 424 / 548 km | 423 / 555 km |
+| flow RMS, epoch 25 / 100 | 163 / 178 | 187 / 212 | 173 / 187 | 242 / 188 |
+
+The CG solve is 85–90 % of the mantle's time (190 iterations on the torus,
+152 on the sphere); the raster's Gauss-Seidel stopped at 260 sweeps short of
+convergence at the longest wavelengths, so the converged flow is 10–30 %
+stronger. The field's character (range, smoothness, cell and plume counts)
+is the raster's.
+
+**Golden**: every stage but `climate.wind` and `artifact.pipelineVersion`
+moved (132 of 138), the metrics far past their bands as different worlds
+(land 19.2 → 8.0 %, 6.5 → 13.8 %, 9.9 → 4.7 %), and no world kept a suture,
+so tin was 0 on all three and the coverage check failed. The seed `bravo`
+was replaced by `zulu`, of 24 probed seeds one of three with a suture and the
+first tried that yields tin (golden.mjs, SEEDS); `golden.json` re-recorded and the byte
+guard re-armed on the new worlds: 0 hard failures, 0 drifts, 46 stages
+byte-identical × 3.
 
 2026-10-11: decided for phase 2 — the ocean age is transported
 semi-Lagrangian with the clipped Hermite interpolation (fieldOperators.ts

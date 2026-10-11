@@ -16,14 +16,13 @@ export const MANTLE_TUNING = {
   // which is why this stays the default; the Archean passes its own value (see
   // ArcheanParams.diffusion), where it is the mantle-mixing knob.
   diffusionPasses: 1,
-  // How much of a cell's value each pass replaces with its neighbours' mean.
+  // How much of a cell's value each pass replaces with its neighbours' mean
+  // (on the field mesh: κ dt = weight · h² / 4, mantleField.diffusionPass).
   diffusionWeight: 0.5,
   // Decay relaxes toward a zero mean so heat never accumulates unbounded (and
   // the periodic Poisson source stays solvable).
   decayKeep: 0.955,
   clamp: 2.5,
-  // Gauss-Seidel iterations for the Poisson flow solve.
-  solveIters: 260,
   // Scales the raw ∇φ flow to world pixels/epoch — tuned so plate speeds land in a
   // reasonable range (see plateMotion's LINEAR_SPEED_*). Calibrated by harness.
   flowSpeedScale: 110,

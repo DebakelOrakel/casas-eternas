@@ -15,6 +15,7 @@ import { createMeshSurface } from '../../map/meshSurface'
 import { createMeshSampler } from '../../generator/mesh/meshSampler'
 import { decodeMesh } from '../../generator/mesh/meshSerial'
 import { domainOfKind } from '../../generator/core/domain'
+import { mantleFits } from '../../generator/mantle/mantleField'
 import { MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from '../../map/mapSceneSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../generator/core/mapConfig'
@@ -33,7 +34,7 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
-import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload } from '../../generator/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload, MantlePayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import type { ContinentLabelPlacement } from '../../generator/render/continentLabelRenderer'
@@ -56,7 +57,7 @@ import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/e
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ELEVATION_ENCODING, REFINED_LAYERS, decodeLayer } from '../../world/save/worldLayers'
 import { refinedFromLayers } from '../../world/save/refinedLayers'
-import { writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
+import { readMantle, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
 import type { RefinedClimate } from '../../generator/climate/refinement'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
@@ -5436,11 +5437,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     let snapshot: PlateSimulationSnapshot | undefined
     let oceanAge: ArrayBuffer
     let elevation: ArrayBuffer
-    // Optional: saves written before these were persisted have no such entries, and
-    // the worker falls back to regenerating the mantle and starting the lattice empty
-    // — exactly what every load used to do.
-    let archeanPayload: { snapshot: unknown; mantle: ArrayBuffer; streak: ArrayBuffer } | undefined
-    let mantle: ArrayBuffer | undefined
+    // The lattice is optional: saves written before it was persisted have no such
+    // entries, and the worker starts it empty. The mantle is not (formatVersion 8,
+    // its field mesh's values): a save without it is refused as not a world this
+    // build opens.
+    let archeanPayload: { snapshot: unknown; mantle: MantlePayload; streak: ArrayBuffer } | undefined
+    let mantle: MantlePayload | undefined
     let lattice: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer } | undefined
     // The mesh terrain (formatVersion 3); a save without one restores the
     // raster alone, as every save did before.
@@ -5455,12 +5457,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (!yamlFile || !elevFile) throw new Error('missing files')
       if (archeanFile) {
         // Archean save: no plate simulation, no ocean age, no lattice.
-        const mantleF = zip.file('archean.mantle.f32')
         const streakF = zip.file('archean.streak.i16')
-        if (!mantleF || !streakF) throw new Error('missing files')
+        if (!streakF) throw new Error('missing files')
         archeanPayload = {
           snapshot: JSON.parse(await archeanFile.async('string')),
-          mantle: await mantleF.async('arraybuffer'),
+          mantle: await readMantle(zip, 'archean.mantle'),
           streak: await streakF.async('arraybuffer'),
         }
       }
@@ -5475,8 +5476,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         if (!stateFile || !oceanFile) throw new Error('missing files')
         snapshot = JSON.parse(await stateFile.async('string'))
         oceanAge = await oceanFile.async('arraybuffer')
-        const mantleFile = zip.file('mantle.f32')
-        mantle = mantleFile ? await mantleFile.async('arraybuffer') : undefined
+        mantle = await readMantle(zip, 'mantle')
         const accFile = zip.file('lattice.acc.f32')
         const lockFile = zip.file('lattice.lock.i16')
         const clsFile = zip.file('lattice.class.i8')
@@ -5492,6 +5492,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           meshPayload = { count: nodes.byteLength / 8, nodes, connectivity: await connFile.async('arraybuffer'), z: await zFile.async('arraybuffer'), column: columnFile ? await columnFile.async('arraybuffer') : undefined }
         }
       }
+      // The mantle's values belong to one field mesh (its cells, its spacing),
+      // rebuilt here from the world's shape and size: a save of another is
+      // refused like any file that is not a world (mantleField.mantleFits).
+      const saved = archeanPayload?.mantle ?? mantle!
+      const size = (archeanPayload?.snapshot ?? snapshot) as { width: number; height: number }
+      if (!mantleFits(domainOfKind(shape === 'sphere' ? 'sphere' : 'torus', size.width, size.height), saved.cells, saved.spacingM)) throw new Error('another mantle mesh')
     } catch {
       ctx.notifications.show({ message: t('notify.open.invalidFile'), icon: '/icons/folder.png', durationMs: 6000 })
       return

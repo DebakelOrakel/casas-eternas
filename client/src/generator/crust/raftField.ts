@@ -197,6 +197,16 @@ export function computeMembershipField(rafts: Raft[], resX: number, resY: number
   return out
 }
 
+// The same membership at a list of points — a field mesh's cell centres (the
+// mantle's, DEC-0036) — through one blob index: computeMembershipField's
+// value at each point, with no raster between.
+export function computeMembershipAt(rafts: Raft[], xs: ArrayLike<number>, ys: ArrayLike<number>, domain: Domain): Float64Array {
+  const out = new Float64Array(xs.length)
+  const blobs = buildBlobIndex(rafts, domain)
+  for (let i = 0; i < xs.length; i++) out[i] = smoothstepBetween(FIELD_LO, FIELD_HI, raftFieldIndexed(xs[i], ys[i], blobs))
+  return out
+}
+
 // Nearest-cell sample of a membership field at a world point, through its grid, so
 // consumers on their own grids can read it without caring what resolution it was
 // computed at. Nearest rather than bilinear on purpose: every consumer thresholds

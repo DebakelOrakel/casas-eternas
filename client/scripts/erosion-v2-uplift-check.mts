@@ -48,7 +48,7 @@ const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < 50; e++) M.sim.stepEpoch(sim)
 const base = M.field.computeRaftBaseline(sim.rafts, sim.oceanAge, W, H, sim.domain, sim.warpSeed)
 { // dynamic topography (F3), as the pipeline adds it
-  const dyn = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.MANTLE_RES_X, M.mantle.MANTLE_RES_Y, W, H, sim.domain)
+  const dyn = M.dynamic.dynamicTopographyField(sim.mantle, M.mantle.mantleMesh(sim.domain).sampler, W, H)
   for (let i = 0; i < base.length; i++) base[i] += dyn[i]
 }
 const bk = M.field.buildFeatureBuckets(sim.features, sim.domain)

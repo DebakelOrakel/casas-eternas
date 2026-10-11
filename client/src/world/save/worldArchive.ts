@@ -2,7 +2,7 @@ import JSZip from 'jszip'
 import type { ArcheanSnapshot } from '../../generator/archean/archeanSnapshot'
 import type { RefinedClimate } from '../../generator/climate/refinement'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
-import type { MeshPayload } from '../../generator/pipeline/messages'
+import type { MantlePayload, MeshPayload } from '../../generator/pipeline/messages'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
@@ -66,13 +66,13 @@ interface ArchiveCommon {
 // snapshot instead, and no manifest (nothing computed to describe).
 export interface ArcheanArchiveParts extends ArchiveCommon {
   kind: 'archean'
-  archean: { snapshot: ArcheanSnapshot; mantle: ArrayBuffer; streak: ArrayBuffer }
+  archean: { snapshot: ArcheanSnapshot; mantle: MantlePayload; streak: ArrayBuffer }
 }
 
 export interface TectonicArchiveParts extends ArchiveCommon {
   kind: 'tectonic'
   snapshot: PlateSimulationSnapshot
-  mantle: ArrayBuffer
+  mantle: MantlePayload
   latticeAccumulated: ArrayBuffer
   latticeLockedEpochs: ArrayBuffer
   latticeLastClassCode: ArrayBuffer
@@ -91,20 +91,22 @@ export type WorldArchiveParts = ArcheanArchiveParts | TectonicArchiveParts
 // deposition; 6: the layers may carry the climate step's refinement; 7: no
 // ecology layers (docs/decisions/ecology-as-function.md: computed on load),
 // and the generator loads the refinement it finds rather than computing it
-// again.
-export const WORLD_ARCHIVE_FORMAT_VERSION = 7
+// again; 8: the mantle as its field mesh's values (mantle.f64 + mantle.json,
+// DEC-0036 phase 1) in place of the 128 × 64 raster mantle.f32 — a save
+// without them is refused, not converted.
+export const WORLD_ARCHIVE_FORMAT_VERSION = 8
 
 export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8Array<ArrayBuffer>> {
   const zip = new JSZip()
   zip.file('world.yaml', parts.yaml)
   if (parts.kind === 'archean') {
     zip.file('archean.json', JSON.stringify(parts.archean.snapshot))
-    zip.file('archean.mantle.f32', parts.archean.mantle)
+    writeMantle(zip, 'archean.mantle', parts.archean.mantle)
     zip.file('archean.streak.i16', parts.archean.streak)
     zip.file('elevation.f32', parts.elevation)
   } else {
     zip.file('state.json', JSON.stringify(parts.snapshot))
-    zip.file('mantle.f32', parts.mantle)
+    writeMantle(zip, 'mantle', parts.mantle)
     zip.file('lattice.acc.f32', parts.latticeAccumulated)
     zip.file('lattice.lock.i16', parts.latticeLockedEpochs)
     zip.file('lattice.class.i8', parts.latticeLastClassCode)
@@ -116,6 +118,27 @@ export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8
   // A fresh buffer of JSZip's own, never shared memory: typed as such so a
   // Blob takes it.
   return (await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })) as Uint8Array<ArrayBuffer>
+}
+
+// The mantle (formatVersion 8): its values per cell of the mantle's field
+// mesh, Float64 (`<name>.f64`), and the mesh they belong to (`<name>.json`:
+// cell count and spacing in metres), which a load checks — the mesh is
+// rebuilt from the world's shape and size, not saved.
+function writeMantle(zip: JSZip, name: string, mantle: MantlePayload): void {
+  zip.file(`${name}.f64`, mantle.values)
+  zip.file(`${name}.json`, JSON.stringify({ cells: mantle.cells, spacingM: mantle.spacingM }))
+}
+
+// Its reader, for the loader: the two entries back, or an error when either
+// is missing or malformed (a save from before formatVersion 8).
+export async function readMantle(zip: JSZip, name: string): Promise<MantlePayload> {
+  const values = zip.file(`${name}.f64`)
+  const meta = zip.file(`${name}.json`)
+  if (!values || !meta) throw new Error(`no ${name}.f64 / ${name}.json: a save from before formatVersion 8`)
+  const { cells, spacingM } = JSON.parse(await meta.async('string')) as { cells: unknown; spacingM: unknown }
+  const bytes = await values.async('arraybuffer')
+  if (typeof cells !== 'number' || typeof spacingM !== 'number' || bytes.byteLength !== cells * 8) throw new Error(`${name}: ${bytes.byteLength} bytes for ${String(cells)} cells`)
+  return { values: bytes, cells, spacingM }
 }
 
 type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector' | 'table'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }

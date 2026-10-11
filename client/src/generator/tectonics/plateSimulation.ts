@@ -1,5 +1,5 @@
 import { generateDetectionLattice } from './boundaryLattice'
-import { createMantleField } from '../mantle/mantleField'
+import { createMantleField, restoreMantleField, type SavedMantle } from '../mantle/mantleField'
 import { mulberry32 } from '../core/rng'
 import { domainOfKind, type Domain } from '../core/domain'
 import { derivePlateTypes } from '../crust/raftField'
@@ -63,7 +63,9 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
 // `shape` is the world's: a snapshot does not carry it (a save says it in its
 // kind, world/worldRecord.ts), and a sphere's motions are Euler motions that
 // only a sphere domain reads.
-export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array, mantle?: Float32Array, shape: Domain['kind'] = 'torus'): PlateSimulation {
+// `mantle`: the field as the save holds it, the mesh's own values
+// (restoreMantleField refuses another mesh's); absent, a new one.
+export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array, mantle?: SavedMantle, shape: Domain['kind'] = 'torus'): PlateSimulation {
   const domain = domainOfKind(shape, snap.width, snap.height)
   const lattice = generateDetectionLattice(domain, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
   // COPIED out of the snapshot, not adopted from it. serializePlateSimulation
@@ -132,7 +134,7 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     // Saves written before the field was persisted still land here, and still get a
     // regenerated one. The fallback RNG is independent of `random` so it cannot
     // disturb the bit-identical continuation.
-    mantle: mantle ?? createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0), domain),
+    mantle: restoreMantleField(domain, mantle) ?? createMantleField(mulberry32((snap.warpSeed ^ 0x5bd1e995) >>> 0), domain),
     hotspots: owned.hotspots,
     // Old saves predate the suture cache — start empty; sutures re-accumulate as
     // the restored world keeps colliding continents (deep-time record is lost for

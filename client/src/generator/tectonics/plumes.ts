@@ -1,5 +1,5 @@
 import type { Domain } from '../core/domain'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { mantleMesh } from '../mantle/mantleField'
 import { detHypot, sq } from '../core/detMath'
 
 // Mantle plumes, derived from the mantle field rather than scattered at random.
@@ -77,25 +77,23 @@ export interface Plume {
 
 // Ids continue from whatever is already there, so no counter has to be carried in the
 // simulation state (and none has to be serialised).
-export function findPlumeSites(mantle: Float32Array, domain: Domain, epoch = 0, exclude: Plume[] = []): Plume[] {
+//
+// A site is a cell of the mantle's field mesh no neighbour of which is higher
+// (its Voronoi neighbours, DEC-0036), at the cell's centre.
+export function findPlumeSites(mantle: Float64Array, domain: Domain, epoch = 0, exclude: Plume[] = []): Plume[] {
   const { width, height } = domain
-  const grid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
+  const { mesh } = mantleMesh(domain)
   let nextId = exclude.reduce((m, p) => Math.max(m, p.id), -1) + 1
   const candidates: { x: number; y: number; strength: number }[] = []
-  for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
-    for (let gx = 0; gx < MANTLE_RES_X; gx++) {
-      const v = mantle[gy * MANTLE_RES_X + gx]
-      if (v < PLUME_THRESHOLD) continue
-      let isMax = true
-      for (let dy = -1; dy <= 1 && isMax; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue
-          if (mantle[grid.neighbour(gx, gy, dx, dy)] > v) { isMax = false; break }
-        }
-      }
-      if (!isMax) continue
-      candidates.push({ x: ((gx + 0.5) / MANTLE_RES_X) * width, y: ((gy + 0.5) / MANTLE_RES_Y) * height, strength: v })
+  for (let i = 0; i < mesh.count; i++) {
+    const v = mantle[i]
+    if (v < PLUME_THRESHOLD) continue
+    let isMax = true
+    for (let e = mesh.nbrStart[i]; e < mesh.nbrStart[i + 1]; e++) {
+      if (mantle[mesh.nbr[e]] > v) { isMax = false; break }
     }
+    if (!isMax) continue
+    candidates.push({ x: mesh.x[i], y: mesh.y[i], strength: v })
   }
   candidates.sort((a, b) => b.strength - a.strength)
   const minSepSq = sq(PLUME_MIN_SEPARATION_FRAC * Math.min(width, height))
@@ -117,31 +115,30 @@ export function findPlumeSites(mantle: Float32Array, domain: Domain, epoch = 0, 
 //
 // Retired when its upwelling dies; new ones appear where a strong upwelling has none.
 // The count therefore breathes with the convection instead of being a constant.
-export function advancePlumes(plumes: Plume[], mantle: Float32Array, domain: Domain, epoch: number): void {
-  const { width, height } = domain
-  const cellW = width / MANTLE_RES_X
-  const cellH = height / MANTLE_RES_Y
-  const grid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
-  const mantleAt = (x: number, y: number): number => grid.sampleNearestAt(mantle, x, y)
+export function advancePlumes(plumes: Plume[], mantle: Float64Array, domain: Domain, epoch: number): void {
+  const { mesh, sampler } = mantleMesh(domain)
+  const toward = { x: 0, y: 0 }
   for (const plume of plumes) {
-    // Uphill by one step: sample the four neighbours a cell away and move toward the
-    // steepest rise. Hill-climbing rather than gradient descent on a smooth function
-    // because the field is coarse (128x64) and its cells are what the plume follows.
-    const here = mantleAt(plume.x, plume.y)
-    let bestX = 0
-    let bestY = 0
-    let best = here
-    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-      const v = mantleAt(plume.x + dx * cellW, plume.y + dy * cellH)
-      if (v > best) { best = v; bestX = dx; bestY = dy }
+    // Uphill by one step on the mesh's graph: the cell the plume is in
+    // against its neighbours, a step toward the highest of them that is
+    // higher. Hill-climbing over the cells rather than gradient ascent on
+    // the interpolated field, because the field is coarse (a cell is
+    // 125–156 km) and its cells are what the plume follows.
+    const here = sampler.nearestCell(plume.x, plume.y)
+    let best = mantle[here]
+    let target = -1
+    for (let e = mesh.nbrStart[here]; e < mesh.nbrStart[here + 1]; e++) {
+      const v = mantle[mesh.nbr[e]]
+      if (v > best) { best = v; target = mesh.nbr[e] }
     }
-    if (bestX === 0 && bestY === 0) continue
-    const len = detHypot(bestX * cellW, bestY * cellH) || 1
+    if (target < 0) continue
+    domain.delta(mesh.x[target], mesh.y[target], plume.x, plume.y, toward)
+    const len = detHypot(toward.x, toward.y) || 1
     const step = Math.min(PLUME_MAX_STEP_PX, len)
-    domain.advance(plume.x, plume.y, (bestX * cellW / len) * step, (bestY * cellH / len) * step, plume)
+    domain.advance(plume.x, plume.y, (toward.x / len) * step, (toward.y / len) * step, plume)
   }
   for (let i = plumes.length - 1; i >= 0; i--) {
-    if (mantleAt(plumes[i].x, plumes[i].y) < PLUME_RETIRE_THRESHOLD) plumes.splice(i, 1)
+    if (mantle[sampler.nearestCell(plumes[i].x, plumes[i].y)] < PLUME_RETIRE_THRESHOLD) plumes.splice(i, 1)
   }
   plumes.push(...findPlumeSites(mantle, domain, epoch, plumes))
 }

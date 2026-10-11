@@ -7,7 +7,7 @@ import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
 import type { ElevationRenderer } from './elevationRenderPool'
 import { computeOwnerField } from '../crust/raftField'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { MANTLE_RES_X, MANTLE_RES_Y, mantleMesh } from '../mantle/mantleField'
 import { dynamicTopographyField } from '../elevation/dynamicTopography'
 import { applyErosionDetailTexture } from './erosionDetailTexture'
 import { reliefShadeAt } from './reliefShade'
@@ -161,9 +161,10 @@ export interface RenderableWorld {
   oceanAge: Float32Array
   warpSeed: number
   seaLevelOffset: number
-  // The mantle buoyancy field (mantle/mantleField.ts's raster) — the
-  // dynamic-topography term reads it as it stands; both eras have one.
-  mantle: Float32Array
+  // The mantle buoyancy field (mantle/mantleField.ts, per cell of its field
+  // mesh) — the dynamic-topography term reads it as it stands; both eras
+  // have one.
+  mantle: Float64Array
 }
 
 export async function renderSimulationImage(sim: RenderableWorld, pool: ElevationRenderer, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
@@ -198,7 +199,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
     // Dynamic topography (elevation/dynamicTopography.ts): the mantle's
     // anomaly as a height term on the deck, evaluated from the field as it
     // stands now — instantaneous, never crustal.
-    const dynamic = dynamicTopographyField(sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, renderWidth, renderHeight, sim.domain)
+    const dynamic = dynamicTopographyField(sim.mantle, mantleMesh(sim.domain).sampler, renderWidth, renderHeight)
     for (let i = 0; i < blendedBaselines.length; i++) blendedBaselines[i] += dynamic[i]
     const rendered = await pool.renderElevations(renderWidth, renderHeight, width, height, blendedBaselines, sim.features, sim.warpSeed, sim.domain.kind)
     elevations = scale === 1 ? rendered : sim.domain.grid(renderWidth, renderHeight).upscale(rendered, width, height)

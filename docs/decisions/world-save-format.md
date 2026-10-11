@@ -31,7 +31,8 @@ loads are **instant** and survive generator-code changes.
 <name>.zip
 ├── world.yaml            # the recipe (spec) + what only it records (status)
 ├── state.json            # the sim snapshot (PlateSimulationSnapshot)
-├── mantle.f32            # mantle buoyancy field, Float32 128×64
+├── mantle.f64            # mantle buoyancy field, Float64 per cell of its field mesh
+├── mantle.json           # that mesh: { cells, spacingM } (DEC-0036, formatVersion 8)
 ├── lattice.acc.f32       # boundary-detection accumulator, Float32 256×128
 ├── lattice.lock.i16      # epochs each lattice point has held its class, Int16
 ├── lattice.class.i8      # last boundary class per lattice point, Int8
@@ -119,6 +120,14 @@ drifting against a mantle that had never produced them.
 
 Both are optional on load. Saves written before they were persisted still open, and
 still get a regenerated mantle and an empty lattice.
+
+2026-10-11 (formatVersion 8, DEC-0036 phase 1): the mantle is no longer a raster.
+It lives on a field mesh, and the save holds the mesh's values (`mantle.f64`,
+Float64, the session's exact bytes) and what identifies the mesh (`mantle.json`:
+cell count and spacing in metres); the mesh is rebuilt from the world's shape and
+size. A save without the two entries, or with another mesh's, is refused on load
+(no conversion: the format is alpha). An Archean save carries the same pair as
+`archean.mantle.f64` / `.json`, and `archean.streak.i16` per mesh cell.
 
 ### Format choices
 

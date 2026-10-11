@@ -101,8 +101,9 @@ export interface PlateSimulation {
   continentalRiftCooldownUntil: number
   // Coarse evolving mantle buoyancy field the plates ride on (mantleField.ts) —
   // continents insulate it (→ upwelling → breakup), ocean cools it (→ downwelling
-  // → assembly). Plate motions are re-fit to its surface flow each epoch.
-  mantle: Float32Array
+  // → assembly). Plate motions are re-fit to its surface flow each epoch. One
+  // value per cell of its field mesh (DEC-0036), not a raster.
+  mantle: Float64Array
   // Fixed mantle-plume points (world coords), stationary in the deep-mantle frame
   // while plates drift OVER them — each punches a volcano onto the overlying plate
   // every epoch, so the plate carries a chain away (a hotspot trail, Hawaii-style;

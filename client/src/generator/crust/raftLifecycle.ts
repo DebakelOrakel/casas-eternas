@@ -86,36 +86,40 @@ export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMo
 // deliberately stops short of 1.
 export function advanceRaftsOnFlow(
   rafts: Raft[],
-  flow: Float32Array,
-  flowResX: number,
-  flowResY: number,
+  // The mantle's surface flow at a point, in the point's own east/south
+  // frame (mantle/mantleField.mantleFlowAt), into `out`. A function, so the
+  // crust does not depend on the mantle that depends on it.
+  flowAt: (x: number, y: number, out: { x: number; y: number }) => void,
   domain: Domain,
   rigidity: number,
 ): void {
-  const flowGrid = domain.grid(flowResX, flowResY)
-  const flowAt = (x: number, y: number, component: number): number => flow[flowGrid.cellAt(x, y) * 2 + component]
+  const local = { x: 0, y: 0 }
   for (const raft of rafts) {
     if (raft.blobs.length === 0) continue
     // Averaging velocities, not positions — so no seam handling is needed here.
+    // Each blob's flow is read once, in its own frame.
+    const vx = new Float64Array(raft.blobs.length)
+    const vy = new Float64Array(raft.blobs.length)
     let meanX = 0
     let meanY = 0
-    for (const blob of raft.blobs) {
-      meanX += flowAt(blob.x, blob.y, 0)
-      meanY += flowAt(blob.x, blob.y, 1)
+    for (let b = 0; b < raft.blobs.length; b++) {
+      flowAt(raft.blobs[b].x, raft.blobs[b].y, local)
+      vx[b] = local.x
+      vy[b] = local.y
+      meanX += local.x
+      meanY += local.y
     }
     meanX /= raft.blobs.length
     meanY /= raft.blobs.length
-    // The flow is in each cell's own east/south frame (computeMantleFlow),
-    // so the mean of a raft's blobs is a mean of components in nearby
-    // frames: right for a raft that is small against its distance to a pole.
-    // Two moves, the mean and then the blob's own share — on the torus the
-    // sum the code always added, (x + mean) + differential, bit for bit.
+    // The flow is in each blob's own east/south frame, so the mean of a
+    // raft's blobs is a mean of components in nearby frames: right for a
+    // raft that is small against its distance to a pole. Two moves, the
+    // mean and then the blob's own share.
     const differential = 1 - rigidity
-    for (const blob of raft.blobs) {
-      const localX = flowAt(blob.x, blob.y, 0)
-      const localY = flowAt(blob.x, blob.y, 1)
+    for (let b = 0; b < raft.blobs.length; b++) {
+      const blob = raft.blobs[b]
       domain.displace(blob.x, blob.y, meanX, meanY, moved)
-      domain.advance(moved.x, moved.y, differential * (localX - meanX), differential * (localY - meanY), blob)
+      domain.advance(moved.x, moved.y, differential * (vx[b] - meanX), differential * (vy[b] - meanY), blob)
     }
   }
 }
@@ -274,21 +278,19 @@ export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisation
 // measurements that motivated it.
 export function recycleUnstabilisedCrust(
   rafts: Raft[],
-  mantle: Float32Array,
-  mantleResX: number,
-  mantleResY: number,
+  // The mantle field at a point (mantle/mantleField.mantleAt) — a function,
+  // so the crust does not depend on the mantle that depends on it.
+  mantleAt: (x: number, y: number) => number,
   epoch: number,
   stabilisationEpochs: number,
   downwellingThreshold: number,
-  domain: Domain,
 ): number {
-  const mantleGrid = domain.grid(mantleResX, mantleResY)
   let recycled = 0
   for (const raft of rafts) {
     const kept: RaftBlob[] = []
     for (const blob of raft.blobs) {
       const age = epoch - (blob.birthEpoch ?? 0)
-      const overDownwelling = mantleGrid.sampleNearestAt(mantle, blob.x, blob.y) < downwellingThreshold
+      const overDownwelling = mantleAt(blob.x, blob.y) < downwellingThreshold
       if (age < stabilisationEpochs && overDownwelling) { recycled++; continue }
       kept.push(blob)
     }

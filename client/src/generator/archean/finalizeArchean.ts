@@ -8,7 +8,7 @@ import type { Raft } from '../crust/raftTypes'
 import { generateDetectionLattice } from '../tectonics/boundaryLattice'
 import { createOceanAgeField } from '../tectonics/oceanAge'
 import { findPlumeSites } from '../tectonics/plumes'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { mantleMesh } from '../mantle/mantleField'
 import type { Domain } from '../core/domain'
 import { assignRaftNames } from '../crust/raftNames'
 import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
@@ -44,29 +44,26 @@ const MIN_SEED_SEPARATION_FRAC = 0.22
 // Exported so the Genesis panel can PREVIEW the plates a handover would produce
 // while the Archean is paused. It is the same function finalizeArchean uses, so the
 // preview is the answer, not an approximation of it.
-export function convectionCellSeeds(mantle: Float32Array, domain: Domain): PlateSeed[] {
+//
+// An extremum is a cell of the mantle's field mesh above (or below) every one
+// of its Voronoi neighbours (DEC-0036), at the cell's centre.
+export function convectionCellSeeds(mantle: Float64Array, domain: Domain): PlateSeed[] {
   const { width, height } = domain
+  const { mesh } = mantleMesh(domain)
   const candidates: { x: number; y: number; strength: number }[] = []
-  const grid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
-  const at = (gx: number, gy: number): number => mantle[grid.index(gx, gy)]
 
-  for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
-    for (let gx = 0; gx < MANTLE_RES_X; gx++) {
-      const v = at(gx, gy)
-      let isMax = true
-      let isMin = true
-      for (let dy = -1; dy <= 1 && (isMax || isMin); dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue
-          const n = at(gx + dx, gy + dy)
-          if (n >= v) isMax = false
-          if (n <= v) isMin = false
-        }
-      }
-      if (!isMax && !isMin) continue
-      if (Math.abs(v) < EXTREMUM_PROMINENCE) continue
-      candidates.push({ x: ((gx + 0.5) / MANTLE_RES_X) * width, y: ((gy + 0.5) / MANTLE_RES_Y) * height, strength: Math.abs(v) })
+  for (let i = 0; i < mesh.count; i++) {
+    const v = mantle[i]
+    let isMax = true
+    let isMin = true
+    for (let e = mesh.nbrStart[i]; e < mesh.nbrStart[i + 1] && (isMax || isMin); e++) {
+      const n = mantle[mesh.nbr[e]]
+      if (n >= v) isMax = false
+      if (n <= v) isMin = false
     }
+    if (!isMax && !isMin) continue
+    if (Math.abs(v) < EXTREMUM_PROMINENCE) continue
+    candidates.push({ x: mesh.x[i], y: mesh.y[i], strength: Math.abs(v) })
   }
 
   // Strongest extrema win the space; weaker ones inside the exclusion radius are

@@ -1,9 +1,8 @@
 import type { ArcheanSimulation } from './archeanState'
 import type { NucleationParams } from './crustNucleation'
 import { DEFAULT_NUCLEATION_PARAMS, findNucleationSites, nucleateCrust } from './crustNucleation'
-import { computeMembershipField } from '../crust/raftField'
 import { advanceRaftsOnFlow, compactRafts, consolidateRaftBlobs, mergeOverlappingRafts, recycleUnstabilisedCrust, splitDisconnectedRafts } from '../crust/raftLifecycle'
-import { evolveMantleField, computeMantleFlow, sustainMantleVigour, MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { evolveMantleField, computeMantleFlow, sustainMantleVigour, mantleAt, mantleFlowAt } from '../mantle/mantleField'
 import { MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR } from '../crust/crustTuneParams'
 
 export interface ArcheanParams {
@@ -164,8 +163,7 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // 1. Convection. Crust insulates the mantle beneath it exactly as it does in the
   // tectonic phase — which is what eventually turns a craton into the dome that
   // rifts it, and also why nucleation must exclude cells that already hold crust.
-  const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, domain)
-  sim.mantle = evolveMantleField(sim.mantle, membership, MANTLE_RES_X, MANTLE_RES_Y, domain, params.diffusion)
+  sim.mantle = evolveMantleField(sim.mantle, sim.rafts, domain, params.diffusion)
   // Internal heating keeps convection running; without it the field decays to
   // nothing on a planet that has no crust yet. See sustainMantleVigour.
   sim.mantle = sustainMantleVigour(sim.mantle, params.mantleRms, domain)
@@ -174,7 +172,7 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // 2. Crust rides the convection directly. No plates exist yet. Compaction
   // runs with the motion step: drift stretches rafts along the convergence
   // lines, compaction trades that length back into width — see compactRafts.
-  advanceRaftsOnFlow(sim.rafts, flow, MANTLE_RES_X, MANTLE_RES_Y, domain, params.raftRigidity)
+  advanceRaftsOnFlow(sim.rafts, (x, y, out) => mantleFlowAt(flow, domain, x, y, out), domain, params.raftRigidity)
   compactRafts(sim.rafts, params.compaction, domain)
 
   // 3. New crust over persistent upwellings that are still ocean.
@@ -186,8 +184,8 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // 4. Recycling — the same sink the tectonic phase uses, and the reason crust
   // production settles at an equilibrium instead of carpeting the planet.
   sim.lastRecycled = recycleUnstabilisedCrust(
-    sim.rafts, sim.mantle, MANTLE_RES_X, MANTLE_RES_Y, sim.epoch,
-    params.stabilisationEpochs, params.recycleThreshold, domain,
+    sim.rafts, (x, y) => mantleAt(sim.mantle, domain, x, y), sim.epoch,
+    params.stabilisationEpochs, params.recycleThreshold,
   )
 
   // 5. Collisions weld, and crust pulled across two convection cells falls apart

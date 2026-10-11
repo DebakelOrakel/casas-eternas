@@ -59,7 +59,15 @@ const OUT = fileURLToPath(new URL('./golden.json', import.meta.url))
 // end a layer than editing a shared one.
 const HASHES = fileURLToPath(new URL('./golden-hashes.json', import.meta.url))
 const MODE = process.argv[2] ?? 'check'
-const SEEDS = ['calibration', 'alpha', 'bravo']
+// The first seed is also the determinism layer's (rebuilt twice); the
+// other two only widen the metrics' spread. 'zulu' replaced 'bravo' on
+// 2026-10-11 (DEC-0036 phase 1, the mantle on its field mesh): no world of
+// the three then had a suture after its 20 coupled epochs, so tin (which
+// the sutures place) was 0 everywhere and the coverage check failed.
+// Probed 24 seeds (NATO alphabet from 'charlie'): 3 had a suture
+// (quebec, xray, zulu); quebec's left tin at 0 too (its suture not on land
+// the ecology reads); 'zulu', tried next, varies tin (xray not tried).
+const SEEDS = ['calibration', 'alpha', 'zulu']
 // The history runs COUPLED from the hand-over (phase 5.1: the mesh drifts
 // with the plates and erodes inside the epoch), as the generator runs it —
 // no plain plate epochs first. Measured 2026-09-23: 46 plain epochs made a

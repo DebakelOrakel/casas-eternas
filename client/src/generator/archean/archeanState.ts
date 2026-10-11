@@ -3,7 +3,7 @@ import type { SeededRandom } from '../core/rng'
 import type { Domain } from '../core/domain'
 import { domainOfKind } from '../core/domain'
 import { mulberry32, hashSeedString } from '../core/rng'
-import { createMantleField, MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { createMantleField, mantleMesh } from '../mantle/mantleField'
 
 // The Archean world state — see docs/decisions/archean-genesis.md.
 //
@@ -34,7 +34,8 @@ export interface ArcheanSimulation {
   // given seed across the whole pipeline.
   warpSeed: number
   rafts: Raft[]
-  mantle: Float32Array
+  // The mantle field, one value per cell of its field mesh (mantleField.ts).
+  mantle: Float64Array
   // Per mantle cell: how many consecutive epochs it has been above the nucleation
   // threshold. Crust only forms where an upwelling has PERSISTED, which is what
   // stops single hot epochs from speckling the map (see crustNucleation).
@@ -74,7 +75,7 @@ export function createArcheanSimulation(seedString: string, width: number, heigh
     // liquid water at the surface by ~4.4 Ga, well before the Archean begins.
     rafts: [],
     mantle: createMantleField(random, domain),
-    upwellingStreak: new Int16Array(MANTLE_RES_X * MANTLE_RES_Y),
+    upwellingStreak: new Int16Array(mantleMesh(domain).mesh.count),
     lastRecycled: 0,
     lastSplits: 0,
     seaLevelOffset,

@@ -7,7 +7,7 @@ import { dynamicTopographyAt } from '../elevation/dynamicTopography'
 import { raftBaselineAt } from '../elevation/elevationField'
 import { ELEVATION_METERS, marginParameter } from '../elevation/elevationScale'
 import { synthesisSampler } from '../elevation/elevationSampler'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { mantleMesh } from '../mantle/mantleField'
 import { buildMesh, densityTarget, MESH_Z, triangulatePoints } from '../mesh/meshBuild'
 import { MESH_TUNING } from '../mesh/meshDensity'
 import { addColumnField, columnVolumeM3, createColumn, cut, decodeColumn, deposit, encodeColumn, erodibilityOver, MESH_COLUMN, COLUMN_DEPTH, openLayer, permuteColumn, type SedimentColumn } from '../mesh/meshColumn'
@@ -282,7 +282,7 @@ function baselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobInde
 // 2026-10-04 on 2048×1024).
 function solidBaselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobIndex): number {
   return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.domain, sim.warpSeed, sim.seaLevelOffset, blobs)
-    + dynamicTopographyAt(sim.mantle, sim.domain.grid(MANTLE_RES_X, MANTLE_RES_Y), x, y)
+    + dynamicTopographyAt(sim.mantle, mantleMesh(sim.domain).sampler, x, y)
 }
 
 // The terrain at the start of the history: the mesh from the synthesis,

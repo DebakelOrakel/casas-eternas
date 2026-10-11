@@ -1,6 +1,6 @@
 import type { PlateSeed } from './plateSeeds'
 import { globeFrame, type Domain, type GlobeNoise } from '../core/domain'
-import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
+import { mantleMesh, type MantleFlow } from '../mantle/mantleField'
 import { detAcos, detCos, detSin } from '../core/detMath'
 
 // The offset `domain.delta` writes into: one per module, so no call
@@ -217,105 +217,103 @@ export function reversePointByMotion(x: number, y: number, motion: PlateMotion, 
 }
 
 // Fits each plate's rigid motion {drift, spin} to the mantle flow under its
-// footprint (every coarse mantle cell assigned to its nearest plate seed →
-// least-squares rigid fit about that seed). This is the TARGET motion; the caller
-// blends it with the previous motion for inertia. centroid = current seed.
+// footprint (every cell of the mantle's field mesh assigned to its nearest
+// plate seed → least-squares rigid fit about that seed, each cell weighted by
+// its area). This is the TARGET motion; the caller blends it with the previous
+// motion for inertia. centroid = current seed.
 //
 // Lives here rather than beside the field it reads: it speaks PlateSeed in and
 // PlateMotion out, so keeping it in `mantle/` would have made the substrate
-// depend on what rides on it. It iterates the MANTLE grid, hence the import.
+// depend on what rides on it. It iterates the MANTLE's cells, hence the import.
 //
 // On the sphere the rigid fit is ω's: the least-squares ω with ω × r_i
 // closest to the flow u_i (the cell's east/south flow as a 3D tangent
-// vector) over the plate's cells, each weighted by its area (cellArea):
+// vector) over the plate's cells, each weighted by its area:
 // Σ w (|r|² I − r rᵀ) ω = Σ w (r × u), a 3 × 3 system per plate.
-export function fitMotionsToFlow(seeds: PlateSeed[], flow: Float32Array, domain: Domain): PlateMotion[] {
+export function fitMotionsToFlow(seeds: PlateSeed[], flow: MantleFlow, domain: Domain): PlateMotion[] {
   if (domain.noise.kind === 'globe') return fitEulerMotionsToFlow(seeds, flow, domain)
+  const { mesh, totalArea } = mantleMesh(domain)
+  // Areas in units of the mean cell: 1 per cell on the torus's even hexagons,
+  // so a sum below counts cells as the raster's did.
+  const unit = mesh.count / totalArea
   const n = seeds.length
   const sumUx = new Float64Array(n)
   const sumUy = new Float64Array(n)
   const sumCross = new Float64Array(n)
   const sumRsq = new Float64Array(n)
-  const count = new Int32Array(n)
-  for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
-    const wy = ((gy + 0.5) / MANTLE_RES_Y) * domain.height
-    for (let gx = 0; gx < MANTLE_RES_X; gx++) {
-      const wx = ((gx + 0.5) / MANTLE_RES_X) * domain.width
-      let best = 0
-      let bestSq = Infinity
-      for (let p = 0; p < n; p++) {
-        const d = domain.distanceSq(wx, wy, seeds[p].x, seeds[p].y)
-        if (d < bestSq) {
-          bestSq = d
-          best = p
-        }
-      }
-      const i = gy * MANTLE_RES_X + gx
-      const ux = flow[i * 2]
-      const uy = flow[i * 2 + 1]
-      domain.delta(wx, wy, seeds[best].x, seeds[best].y, offset)
-      const rx = offset.x
-      const ry = offset.y
-      sumUx[best] += ux
-      sumUy[best] += uy
-      sumCross[best] += rx * uy - ry * ux
-      sumRsq[best] += rx * rx + ry * ry
-      count[best] += 1
-    }
+  const weight = new Float64Array(n)
+  for (let i = 0; i < mesh.count; i++) {
+    const wx = mesh.x[i]
+    const wy = mesh.y[i]
+    const best = nearestSeed(seeds, wx, wy, domain)
+    const w = mesh.area[i] * unit
+    const ux = flow.east[i]
+    const uy = flow.south[i]
+    domain.delta(wx, wy, seeds[best].x, seeds[best].y, offset)
+    const rx = offset.x
+    const ry = offset.y
+    sumUx[best] += w * ux
+    sumUy[best] += w * uy
+    sumCross[best] += w * (rx * uy - ry * ux)
+    sumRsq[best] += w * (rx * rx + ry * ry)
+    weight[best] += w
   }
   return seeds.map((seed, p) => ({
-    driftX: count[p] ? sumUx[p] / count[p] : 0,
-    driftY: count[p] ? sumUy[p] / count[p] : 0,
+    driftX: weight[p] > 0 ? sumUx[p] / weight[p] : 0,
+    driftY: weight[p] > 0 ? sumUy[p] / weight[p] : 0,
     spin: sumRsq[p] > 1e-6 ? sumCross[p] / sumRsq[p] : 0,
     centroidX: seed.x,
     centroidY: seed.y,
   }))
 }
 
-function fitEulerMotionsToFlow(seeds: PlateSeed[], flow: Float32Array, domain: Domain): EulerMotion[] {
+// The seed nearest (x, y), the first of equals.
+function nearestSeed(seeds: PlateSeed[], x: number, y: number, domain: Domain): number {
+  let best = 0
+  let bestSq = Infinity
+  for (let p = 0; p < seeds.length; p++) {
+    const d = domain.distanceSq(x, y, seeds[p].x, seeds[p].y)
+    if (d < bestSq) {
+      bestSq = d
+      best = p
+    }
+  }
+  return best
+}
+
+function fitEulerMotionsToFlow(seeds: PlateSeed[], flow: MantleFlow, domain: Domain): EulerMotion[] {
   const globe = globeOf(domain)
-  const grid = domain.grid(MANTLE_RES_X, MANTLE_RES_Y)
+  const { mesh } = mantleMesh(domain)
   const n = seeds.length
   // Per plate the six entries of the symmetric matrix (xx, yy, zz, xy, xz,
   // yz) and the right-hand side.
   const m = new Float64Array(n * 6)
   const b = new Float64Array(n * 3)
-  for (let gy = 0; gy < MANTLE_RES_Y; gy++) {
-    const wy = ((gy + 0.5) / MANTLE_RES_Y) * domain.height
-    const w = grid.cellArea(gy)
-    for (let gx = 0; gx < MANTLE_RES_X; gx++) {
-      const wx = ((gx + 0.5) / MANTLE_RES_X) * domain.width
-      let best = 0
-      let bestSq = Infinity
-      for (let p = 0; p < n; p++) {
-        const d = domain.distanceSq(wx, wy, seeds[p].x, seeds[p].y)
-        if (d < bestSq) {
-          bestSq = d
-          best = p
-        }
-      }
-      const i = gy * MANTLE_RES_X + gx
-      const ue = flow[i * 2]
-      const us = flow[i * 2 + 1]
-      globe.frame(wx, wy, frameA)
-      const ux = ue * frameA.ex + us * frameA.sx
-      const uy = ue * frameA.ey + us * frameA.sy
-      const uz = ue * frameA.ez + us * frameA.sz
-      const rx = frameA.px
-      const ry = frameA.py
-      const rz = frameA.pz
-      const rr = rx * rx + ry * ry + rz * rz
-      const o = best * 6
-      m[o] += w * (rr - rx * rx)
-      m[o + 1] += w * (rr - ry * ry)
-      m[o + 2] += w * (rr - rz * rz)
-      m[o + 3] -= w * rx * ry
-      m[o + 4] -= w * rx * rz
-      m[o + 5] -= w * ry * rz
-      b[best * 3] += w * (ry * uz - rz * uy)
-      b[best * 3 + 1] += w * (rz * ux - rx * uz)
-      b[best * 3 + 2] += w * (rx * uy - ry * ux)
-    }
+  for (let i = 0; i < mesh.count; i++) {
+    const wx = mesh.x[i]
+    const wy = mesh.y[i]
+    const w = mesh.area[i]
+    const best = nearestSeed(seeds, wx, wy, domain)
+    const ue = flow.east[i]
+    const us = flow.south[i]
+    globe.frame(wx, wy, frameA)
+    const ux = ue * frameA.ex + us * frameA.sx
+    const uy = ue * frameA.ey + us * frameA.sy
+    const uz = ue * frameA.ez + us * frameA.sz
+    const rx = frameA.px
+    const ry = frameA.py
+    const rz = frameA.pz
+    const rr = rx * rx + ry * ry + rz * rz
+    const o = best * 6
+    m[o] += w * (rr - rx * rx)
+    m[o + 1] += w * (rr - ry * ry)
+    m[o + 2] += w * (rr - rz * rz)
+    m[o + 3] -= w * rx * ry
+    m[o + 4] -= w * rx * rz
+    m[o + 5] -= w * ry * rz
+    b[best * 3] += w * (ry * uz - rz * uy)
+    b[best * 3 + 1] += w * (rz * ux - rx * uz)
+    b[best * 3 + 2] += w * (rx * uy - ry * ux)
   }
   return seeds.map((_, p) => {
     const o = p * 6

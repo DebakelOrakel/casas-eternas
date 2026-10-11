@@ -1,4 +1,5 @@
-import type { Domain, DomainGrid } from '../core/domain'
+import type { FieldSampler } from '../fields/fieldMesh'
+import { rasteriseNodeField } from '../mesh/meshRaster'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 
 // DYNAMIC TOPOGRAPHY (ADAPTIVE_MESH_PLAN.md F3, decision 5 of
@@ -20,24 +21,49 @@ import { ELEVATION_TUNING } from './elevationTuneParams'
 // Erosion sees it because it is height — the raw terrain the engine starts
 // from carries it, so plateaus get cut and sagging basins fill, as they
 // should. The term is added to the raft baseline (the smooth deck the
-// features stack on), sampled bilinearly from the coarse mantle raster,
-// whose cells are wider than any range. `mantleGrid`: the mantle raster's
-// grid over the domain.
-export function dynamicTopographyAt(mantle: Float32Array, mantleGrid: DomainGrid, x: number, y: number): number {
-  return mantleGrid.sampleBilinearAt(mantle, x, y) * ELEVATION_TUNING.dynamicTopographyPerUnit
+// features stack on), read from the mantle's field mesh through its sampler
+// (linear in the mesh's triangle; mantle/mantleField.mantleMesh), whose
+// cells are wider than any range.
+export function dynamicTopographyAt(mantle: ArrayLike<number>, mantleSampler: FieldSampler, x: number, y: number): number {
+  return mantleSampler.sample(mantle, x, y) * ELEVATION_TUNING.dynamicTopographyPerUnit
 }
 
 // The term over a `width`×`height` grid that covers the domain (a render
-// grid may be coarser than the world).
-export function dynamicTopographyField(mantle: Float32Array, resX: number, resY: number, width: number, height: number, domain: Domain): Float32Array {
+// grid may be coarser than the world), at each cell's corner as the render
+// samples (px · W / width). The field is rasterised on the sampler's mesh
+// (linear in its triangles, a scanline walk) at the corners of a grid of at
+// most DYNAMIC_RASTER_X × DYNAMIC_RASTER_Y, plus the row at y = H (the
+// south pole on the sphere, row 0 again on the torus), and read bilinearly
+// from it (a mantle cell, 125–156 km, spans 4–5 of its cells). Measured
+// 2026-10-11 at 2048 × 1024 against dynamicTopographyAt per pixel: at most
+// 6 m (torus) and 9 m (sphere) off a term of ±550 m, for 13–14 ms instead of
+// 340–440 (a locate per pixel). The render only; the coupled epoch's
+// baseline reads dynamicTopographyAt per node.
+const DYNAMIC_RASTER_X = 256
+const DYNAMIC_RASTER_Y = 128
+
+export function dynamicTopographyField(mantle: ArrayLike<number>, mantleSampler: FieldSampler, width: number, height: number): Float32Array {
   const out = new Float32Array(width * height)
   if (ELEVATION_TUNING.dynamicTopographyPerUnit === 0) return out
-  const mantleGrid = domain.grid(resX, resY)
-  const scaleX = domain.width / width
-  const scaleY = domain.height / height
+  const scale = ELEVATION_TUNING.dynamicTopographyPerUnit
+  const { tri, domain } = mantleSampler.mesh
+  const cw = Math.min(width, DYNAMIC_RASTER_X)
+  const ch = Math.min(height, DYNAMIC_RASTER_Y)
+  const coarse = new Float32Array(cw * (ch + 1))
+  rasteriseNodeField(tri, mantle, cw, ch, coarse.subarray(0, cw * ch))
+  for (let i = 0; i < cw; i++) coarse[ch * cw + i] = mantleSampler.sample(mantle, (i * domain.width) / cw, domain.height)
   for (let py = 0; py < height; py++) {
+    const fy = (py * ch) / height
+    const j = Math.floor(fy)
+    const ty = fy - j
     for (let px = 0; px < width; px++) {
-      out[py * width + px] = dynamicTopographyAt(mantle, mantleGrid, px * scaleX, py * scaleY)
+      const fx = (px * cw) / width
+      const i = Math.floor(fx)
+      const tx = fx - i
+      const i1 = i + 1 < cw ? i + 1 : 0
+      const a = coarse[j * cw + i] + (coarse[j * cw + i1] - coarse[j * cw + i]) * tx
+      const b = coarse[(j + 1) * cw + i] + (coarse[(j + 1) * cw + i1] - coarse[(j + 1) * cw + i]) * tx
+      out[py * width + px] = (a + (b - a) * ty) * scale
     }
   }
   return out

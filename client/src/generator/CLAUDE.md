@@ -80,7 +80,9 @@ fields/     the field mesh (DEC-0036): fieldMesh (a uniform mesh over a Domain a
 planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
             what depends on the planet and not on the relief; the climate reads it
 mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
-            on core/ and crust/ and never on tectonics/
+            on core/, crust/ and fields/ and never on tectonics/; on the field mesh
+            since DEC-0036 phase 1 (mantleMesh: the mesh per domain, mantleAt the
+            sampler, rasteriseMantle the overlay; the save holds its cell values)
 archean/    the Archean era; hands over to tectonics via finalizeArchean.ts, which
             is the ONLY archean file that may import from tectonics/
 tectonics/  plate*, boundary*, oceanAge, terrainFeatures, volcanoes,
@@ -112,8 +114,11 @@ on the adaptive terrain mesh; the chart is the address, the textures and the
 save. Read a field mesh through its `FieldSampler`, never by a grid index;
 write it out with `rasteriseField` (cell centres, the DomainGrid's convention).
 Its vectors are east/south pairs in each cell's own frame — carry a
-neighbour's through `carryFrom` before adding it. Phase 0 (the operators) is
-built; the stages move one per phase, so the table below still holds.
+neighbour's through `carryFrom` before adding it. Phase 0 (the operators) and
+phase 1 (the mantle) are built; the other stages move one per phase. A field
+mesh's values are SAVED as values (Float64, with the mesh's cell count and
+spacing), never as a raster: the mesh rebuilds deterministically, and a load
+then continues bit for bit (the mantle's `mantle.f64` + `mantle.json`).
 
 ## Resolutions — check before you sample
 
@@ -125,7 +130,7 @@ answers here.
 | World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation, discharge, lakeDepth, biome |
 | Climate | 256×128 (~62 km per cell) | temperature, precipitation, seasonality, monsoon, all ecology |
 | Ocean age | 256×128 | oceanAge |
-| Mantle | 128×64 | mantle buoyancy and flow |
+| Mantle | field mesh, spacing W / 128: 9 472 cells at 125 km (torus), 6 252 at 156 km (sphere); 128×64 only as the overlay | mantle buoyancy and flow |
 
 In the baked save (`world/save/worldLayers.ts`) only the layers marked `fullRes`
 are on the world raster — today `biome`, `lakeDepth`, `discharge` and `elevation`.

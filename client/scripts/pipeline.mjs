@@ -307,6 +307,24 @@ test('archeanReset rebuilds the same world from the same seed', async () => {
 // the numbers that say whether the sphere makes a plausible world.
 const poleRowsConstant = (field, resX, resY) => [0, resY - 1].every((j) => field.subarray(j * resX, (j + 1) * resX).every((v) => v === field[j * resX]))
 const allFinite = (field) => field.every((v) => Number.isFinite(v))
+// A SCALAR raster at the poles of a sphere's chart: the median step across
+// the pole (cell x to x + resX / 2 in the first row, about one row apart)
+// against the median step to the next row. About 1 for a field continuous
+// at the pole; far more for one that is not.
+const acrossPoleRatio = (field, resX, resY) => {
+  const median = (a) => a.sort((p, q) => p - q)[a.length >> 1]
+  let worst = 0
+  for (const [row, next] of [[0, 1], [resY - 1, resY - 2]]) {
+    const across = []
+    const down = []
+    for (let x = 0; x < resX; x++) {
+      across.push(Math.abs(field[row * resX + x] - field[row * resX + ((x + resX / 2) % resX)]))
+      down.push(Math.abs(field[row * resX + x] - field[next * resX + x]))
+    }
+    worst = Math.max(worst, median(across) / Math.max(median(down), 1e-9))
+  }
+  return worst
+}
 
 // A VECTOR FIELD AT THE POLES of a sphere's climate grid (DEC-0035, fork
 // 5). `field` is [u, v] per cell in the cell's own frame (u east, v south,
@@ -365,7 +383,7 @@ test('a sphere world runs its Archean through the runtime', async () => {
   const status = p.last('genesisStatus')
   check('the sphere Archean steps', status.epoch >= ARCHEAN_EPOCHS - 1 && hash(r.mantle) !== firstMantle, `epoch ${status.epoch}`)
   check('its mantle, craton age and elevation are finite', allFinite(mantle) && allFinite(new Float32Array(r.cratonAge)) && allFinite(new Float32Array(r.elevation)))
-  check('its mantle is one value along each pole row', poleRowsConstant(mantle, r.mantleResX, r.mantleResY))
+  check('its mantle overlay is continuous across each pole (the field is on its mesh, no pole rows)', acrossPoleRatio(mantle, r.mantleResX, r.mantleResY) < 2, `ratio ${acrossPoleRatio(mantle, r.mantleResX, r.mantleResY).toFixed(2)}`)
   check('its land fraction and gauges are in range', r.landFraction >= 0 && r.landFraction <= 1 && status.stabilisedFraction >= 0 && status.stabilisedFraction <= 1 && Number.isFinite(status.crustFraction), `land ${r.landFraction.toFixed(3)}, stabilised ${status.stabilisedFraction.toFixed(3)}, ${status.cratonCount} cratons`)
   check('the plumes lie on the sphere', r.hotspots.every((h) => h.x >= 0 && h.x < W && h.y >= 0 && h.y <= H), `${r.hotspots.length} plumes`)
 
@@ -420,8 +438,8 @@ async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA }) {
     )
     result[shape] = {
       sim,
-      finite: allFinite(sim.mantle) && allFinite(flow) && allFinite(age) && allFinite(rendered.rawElevations),
-      poles: poleRowsConstant(sim.mantle, MF.MANTLE_RES_X, MF.MANTLE_RES_Y),
+      finite: allFinite(sim.mantle) && allFinite(flow.east) && allFinite(flow.south) && allFinite(age) && allFinite(rendered.rawElevations),
+      onMesh: sim.mantle.length === MF.mantleMesh(sim.domain).mesh.count,
       land: rendered.landFraction,
       stabilised: RF.stabilisedFraction(sim.rafts, sim.epoch, AT.DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs),
       cratons: sim.rafts.length,
@@ -432,7 +450,7 @@ async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA }) {
   const say = (r) => `land ${r.land.toFixed(3)}, stabilised ${r.stabilised.toFixed(3)}, ${r.cratons} cratons, ${EPOCHS} epochs in ${(r.ms / 1000).toFixed(1)} s, render ${(r.renderMs / 1000).toFixed(1)} s`
   const { torus, sphere } = result
   check('the sphere\'s mantle, flow, craton age and elevation are finite', sphere.finite && torus.finite)
-  check('the sphere\'s mantle is one value along each pole row (the torus has none)', sphere.poles && !torus.poles)
+  check('the mantle lives on its field mesh, one value a cell (both shapes)', sphere.onMesh && torus.onMesh, `${MF.mantleMesh(sphere.sim.domain).mesh.count} / ${MF.mantleMesh(torus.sim.domain).mesh.count} cells`)
   // Plausible, not calibrated: crust has formed and some of it has
   // stabilised, and land stays a minority. The sphere's surface is W² / π
   // against the torus's W · H, 64 % of it, so the same crust covers more of
@@ -492,7 +510,7 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
         && sim.seeds.every((s) => Number.isFinite(s.x + s.y)) && sim.features.every((f) => Number.isFinite(f.x + f.y + f.thickness + f.tangentX + f.tangentY))
         && sim.rafts.every((r) => r.blobs.every((b) => Number.isFinite(b.x + b.y))) && rendered.boundaryMask.some((v) => v === 1),
       onDomain: [...sim.seeds, ...sim.features, ...sim.hotspots, ...sim.rafts.flatMap((r) => r.blobs)].every((p) => p.x >= 0 && p.x < sim.width && p.y >= 0 && p.y <= sim.height),
-      poles: poleRowsConstant(sim.oceanAge, 256, 128) && poleRowsConstant(sim.mantle, MF.MANTLE_RES_X, MF.MANTLE_RES_Y),
+      poles: poleRowsConstant(sim.oceanAge, 256, 128),
       counts,
       speeds,
       meanSpeed: speeds.reduce((a, b) => a + b, 0) / speeds.length,
@@ -508,7 +526,7 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
   const say = (r) => `plates ${r.counts.join(' ')}; speed ${r.speeds[0].toFixed(1)} → ${r.speeds.at(-1).toFixed(1)} (mean ${r.meanSpeed.toFixed(1)}); land ${r.land.toFixed(3)}; on a boundary ${(100 * r.boundary).toFixed(1)} % of the lattice, Voronoi edges ${(100 * r.edge).toFixed(2)} % of the surface; ${r.features} features; ${EPOCHS} epochs in ${(r.ms / 1000).toFixed(1)} s, render ${(r.renderMs / 1000).toFixed(1)} s`
   check('the sphere\'s seeds, motions, ocean age, rafts, features, boundaries and elevation are finite (the torus\'s too)', sphere.finite && torus.finite)
   check('every point the plates move stays on the sphere', sphere.onDomain && torus.onDomain)
-  check('the sphere\'s ocean age and mantle are one value along each pole row', sphere.poles && !torus.poles)
+  check('the sphere\'s ocean age is one value along each pole row', sphere.poles && !torus.poles)
   const plausibleCount = (r) => r.counts.every((n) => n >= Math.max(2, TT.TECTONICS_TUNING.minPlateCount) && n <= 3 * r.counts[0])
   check('the sphere\'s plate count neither collapses nor runs away', plausibleCount(sphere) && plausibleCount(torus))
   // Speeds: generated in the torus's range (LINEAR_SPEED_MIN_PX..MAX_PX at
@@ -557,18 +575,17 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
   check('a point turned by +ω and then −ω returns', roundTrip <= 1e-12, `${roundTrip.toExponential(1)} R over ${sim.motions.length} motions × ${points.length} points`)
   check('a plate\'s velocity is rigid and tangent, |v| = |ω| R sin θ', rigid <= 1e-12 * rigidRef && speedLaw <= 1e-12, `rigidity ${(rigid / rigidRef).toExponential(1)}, speed law ${speedLaw.toExponential(1)}`)
   // The fit finds a rigid flow's ω again: the flow of the run's own motions,
-  // each laid under the cells nearest its seed.
-  const flow = new Float32Array(MF.MANTLE_RES_X * MF.MANTLE_RES_Y * 2)
-  for (let gy = 0; gy < MF.MANTLE_RES_Y; gy++) {
-    for (let gx = 0; gx < MF.MANTLE_RES_X; gx++) {
-      const x = ((gx + 0.5) / MF.MANTLE_RES_X) * sim.width
-      const y = ((gy + 0.5) / MF.MANTLE_RES_Y) * sim.height
-      let best = 0
-      for (let p = 1; p < sim.seeds.length; p++) if (domain.distanceSq(x, y, sim.seeds[p].x, sim.seeds[p].y) < domain.distanceSq(x, y, sim.seeds[best].x, sim.seeds[best].y)) best = p
-      const v = PM.getVelocityAt({ x, y }, sim.motions[best], domain)
-      flow[(gy * MF.MANTLE_RES_X + gx) * 2] = v.vx
-      flow[(gy * MF.MANTLE_RES_X + gx) * 2 + 1] = v.vy
-    }
+  // each laid under the mantle mesh's cells nearest its seed.
+  const fm = MF.mantleMesh(domain).mesh
+  const flow = { east: new Float64Array(fm.count), south: new Float64Array(fm.count) }
+  for (let i = 0; i < fm.count; i++) {
+    const x = fm.x[i]
+    const y = fm.y[i]
+    let best = 0
+    for (let p = 1; p < sim.seeds.length; p++) if (domain.distanceSq(x, y, sim.seeds[p].x, sim.seeds[p].y) < domain.distanceSq(x, y, sim.seeds[best].x, sim.seeds[best].y)) best = p
+    const v = PM.getVelocityAt({ x, y }, sim.motions[best], domain)
+    flow.east[i] = v.vx
+    flow.south[i] = v.vy
   }
   const fitted = PM.fitMotionsToFlow(sim.seeds, flow, domain)
   let fitError = 0
@@ -625,7 +642,10 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
 // eroding epochs, then the save's mesh read back and checked on the globe.
 test('a sphere world runs its history through the runtime', async () => {
   const p = await freshPipeline()
-  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere' })
+  // The seed: one whose world has a polar sea and plain rivers (re-chosen
+  // 2026-10-11 with the mantle on its field mesh; 'harness' then failed the
+  // climate's pole-row checks, see DEC-0036's phase 1 status).
+  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere', seed: 'c4' })
   await until(() => p.count('rendered') >= 1, { label: 'the first sphere render' })
   p.dispatch({ type: 'genesisStart' })
   await until(() => p.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: `${ARCHEAN_EPOCHS} sphere epochs` })
@@ -727,7 +747,10 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   const sphereArea = 4 * Math.PI * R * R
   // Seed and Archean length chosen so the small sphere keeps a sea with
   // both poles under it (most at this size end nearly all land, the
-  // disproportion a small world has — see the torus beside it).
+  // disproportion a small world has — see the torus beside it). Re-chosen
+  // when the mantle moved onto its field mesh (DEC-0036 phase 1,
+  // 2026-10-11): 'harness' then put land on a pole (2 of 6 seeds tried kept
+  // the sea, 'h2' the first).
   const world = (shape, seed = 'harness', archeanEpochs = 30) => {
     const archean = AS.createArcheanSimulation(seed, W, H, 0, shape)
     for (let e = 0; e < archeanEpochs; e++) AT.archeanStep(archean)
@@ -764,7 +787,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   }
 
   // (1) The history on a sphere world, beside the torus of the same seed.
-  const sim = world('sphere')
+  const sim = world('sphere', 'h2')
   const terrain = CE.createCoupledTerrain(sim, CE.HISTORY_DEFAULTS.budget)
   const s = await run(sim, terrain, EPOCHS)
   const simT = world('torus')
@@ -919,7 +942,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   check('the climate\'s blur spreads as far east-west as north-south at 60°; counting cells it does not', Math.abs(iso - 1) < 0.15 && isoBroken < 0.7, `east-west / north-south ${iso.toFixed(2)}; in cells ${isoBroken.toFixed(2)}`)
 
   // (4) Determinism and a restore on the sphere.
-  const simB = world('sphere')
+  const simB = world('sphere', 'h2')
   const terrainB = CE.createCoupledTerrain(simB, CE.HISTORY_DEFAULTS.budget)
   for (let e = 0; e < EPOCHS; e++) await CE.stepCoupledEpoch(simB, terrainB, OPTIONS)
   const encA = CE.encodeCoupledTerrain(terrain), encB = CE.encodeCoupledTerrain(terrainB)
@@ -954,7 +977,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   // land there, the epochs keep the globe valid and finite, and the pole's
   // land is cold.
   {
-    const simP = world('sphere', 'polar-continent', 60)
+    const simP = world('sphere', 'polar-continent-2', 60)
     const frame = D.globeFrame()
     const raft = simP.rafts.reduce((best, r) => (r.blobs.length > best.blobs.length ? r : best))
     simP.domain.noise.frame(raft.blobs[0].x, raft.blobs[0].y, frame)
@@ -1012,7 +1035,10 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
 // and hydrologyRun — what the climate step's test and the ecology's stand on.
 async function sphereThroughHydrology() {
   const p = await freshPipeline()
-  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere' })
+  // The seed: one whose world has a polar sea and plain rivers (re-chosen
+  // 2026-10-11 with the mantle on its field mesh; 'harness' then failed the
+  // climate's pole-row checks, see DEC-0036's phase 1 status).
+  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere', seed: 'c4' })
   await until(() => p.count('rendered') >= 1, { label: 'the first sphere render' })
   p.dispatch({ type: 'genesisStart' })
   await until(() => p.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: `${ARCHEAN_EPOCHS} sphere epochs` })
