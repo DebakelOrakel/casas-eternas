@@ -381,27 +381,35 @@
 /* A sphere world (map/sphereView.ts) shows its own layers in steps 1 and
    2 (DEC-0035, steps 4d2 and 4d5: --sphere-layers, set by the screen while
    the globe wears them). Elsewhere the legend and the step's layer list would
-   describe the flat sample world, and are hidden. The scale bar and the
-   temperature scale could read the globe (its chartAt), but the orbit
-   camera's swoop does not suit them as they are; left out until their
-   globe form is thought through (2026-10-10). */
+   describe the flat sample world, and are hidden. The temperature scale
+   could read the globe (its chartAt) but is left out until its globe form
+   is thought through (2026-10-10). The scale bar is shown again since the
+   orbit camera's zoom no longer tilts the view (2026-10-11): straight down,
+   it reads the globe as the flat map. */
 .generator-screen--sphere:not(.generator-screen--sphere-layers) .overlay-legend,
 .generator-screen--sphere:not(.generator-screen--sphere-layers) .gen-layers,
-.generator-screen--sphere .scale-bar,
 .generator-screen--sphere .temp-scale {
   display: none;
 }
 
-/* The globe's view reset (sphere worlds only), where the flat map's scale
-   bar stands. */
-.generator-screen .camera-reset {
+/* The globe's camera buttons (sphere worlds only) at the map's lower left:
+   the view reset, the spin and the tilt. A toggle that is on wears the
+   accent, as the pressed options of the column do (.gen-depth__options). */
+.generator-screen .camera-tools {
   position: fixed;
-  right: 1rem;
+  left: calc(1rem + var(--sidebar-width, 0px));
   bottom: calc(1rem + var(--step-bar-height, 0px));
   z-index: 2;
+  display: none;
+  gap: 8px;
+}
+.generator-screen--sphere .camera-tools {
+  display: flex;
+}
+.generator-screen .camera-tool {
   width: 36px;
   height: 36px;
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--dc-line2);
@@ -410,13 +418,15 @@
   color: var(--dc-text2);
   cursor: pointer;
 }
-.generator-screen--sphere .camera-reset {
-  display: flex;
-}
-.generator-screen .camera-reset:hover {
+.generator-screen .camera-tool:hover {
   background: var(--dc-hover);
 }
-.generator-screen .camera-reset:focus-visible {
+.generator-screen .camera-tool[aria-pressed='true'] {
+  border-color: var(--dc-accent);
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+}
+.generator-screen .camera-tool:focus-visible {
   outline: 2px solid var(--dc-accent);
   outline-offset: 2px;
 }

@@ -38,8 +38,10 @@ import type { ChartPoint, WorldView } from './worldView'
 // sun and fill lights, the pivots, the mid-depth ocean blue and the
 // atmosphere as a screen-space band around the silhouette. Its own camera
 // went; the orbit-swoop rig (camera/orbitSwoopCamera.ts) holds this one —
-// drag turns the globe, the wheel swoops from the whole globe to its
-// horizon.
+// drag turns the globe and holds the grabbed point under the cursor with no
+// roll (2026-10-11), the wheel moves straight toward the surface, and a
+// toggle tilts the look toward the horizon (setTilted). Another toggle
+// turns the globe slowly about its axis (setSpinning, 2026-10-11).
 //
 // Its own Scene, not the flat map's: the two share nothing but the canvas,
 // and the screen renders whichever is shown.
@@ -79,6 +81,15 @@ export interface GlobeWorldView extends WorldView {
   // Lay the layers (reliefTexture: the composite without the baked
   // hillshade, the globe being lit) on the globe, or show the bare sea.
   setLayersShown(shown: boolean): void
+  // Turn the globe slowly about its axis (SPIN_SECONDS_PER_TURN), or stop
+  // it where it is. Drag and zoom work while it turns.
+  setSpinning(spinning: boolean): void
+  // Look toward the horizon (true) or straight down (false, the start):
+  // the camera rig's toggle (OrbitSwoopCamera.setTilted).
+  setTilted(tilted: boolean): void
+  // The part of the canvas no bar covers (OrbitSwoopCamera.setFreeArea):
+  // the far shot fits the globe into it.
+  setFreeArea(area: { left: number; top: number; right: number; bottom: number } | null): void
 }
 
 export interface GlobeWorldViewOptions {
@@ -108,6 +119,12 @@ const GLOW_BLUR = 0.012
 // scripts/globeWater.mjs), under the symbols. About 3 km on an Earth-sized
 // world.
 const RIVER_LIFT = 1.0005
+// The spin's period: one turn in three minutes (2° a second), as the sphere
+// screen removed on 2026-09-20 turned — slow enough to stay in the
+// background. Eastward, as the Earth turns: every point of the globe moves
+// toward growing u (the chart's u runs from the frame's +x toward −z, and
+// a growing rotation.y turns +x toward −z).
+const SPIN_SECONDS_PER_TURN = 180
 
 const SHADER = 'sphereAtmosphere'
 Effect.ShadersStore[`${SHADER}FragmentShader`] = `
@@ -151,8 +168,28 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   const scene = new Scene(engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
 
-  const rig = createOrbitSwoopCamera({ scene, canvas, engine, radius: RADIUS })
+  // The axis leans in `tilt`; the globe and its axis line hang below. The
+  // globe turns about the axis in `spin`, the globe's own frame: the chart,
+  // the rivers, the symbols and the atmosphere's mask hang there. The axis
+  // line needs no spin. Made before the rig, which reads both every frame
+  // (globeFrame): a point grabbed by the drag is held in the spin's frame.
+  //
+  // THE LEAN SHOWS (2026-10-11). The rig keeps the pivot's +y, the
+  // unleaned vertical, up on screen with no roll (globeGrab.ts); the axis
+  // leans by the obliquity below it, as before, and the spin turns the
+  // globe about that leaned axis.
+  const tilt = new TransformNode('sphereTilt', scene)
+  const spin = new TransformNode('sphereSpin', scene)
+  spin.parent = tilt
+  const rig = createOrbitSwoopCamera({
+    scene,
+    canvas,
+    engine,
+    radius: RADIUS,
+    globeFrame: () => ({ lean: tilt.rotation.z, turn: spin.rotation.y }),
+  })
   rig.camera.fov = 1.0
+  tilt.parent = rig.viewPivot
 
   // The sun rakes from the upper left; the fill keeps the night side from
   // going black on the white page.
@@ -160,12 +197,8 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   sun.intensity = 1.1
   new HemisphericLight('sphereFill', new Vector3(0.3, 1, 0.2), scene).intensity = 0.3
 
-  // The axis leans here; the globe and its axis line hang below.
-  const tilt = new TransformNode('sphereTilt', scene)
-  tilt.parent = rig.viewPivot
-
   const globe = MeshBuilder.CreateSphere('sphereGlobe', { diameter: RADIUS * 2, segments: 96 }, scene)
-  globe.parent = tilt
+  globe.parent = spin
   const sea = new StandardMaterial('sphereSea', scene)
   sea.diffuseColor = OCEAN
   sea.specularColor = new Color3(0.25, 0.25, 0.25)
@@ -188,7 +221,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   // surface is oblique to the camera (the old screen's first try); the
   // silhouette in screen space does not.
   const maskGlobe = MeshBuilder.CreateSphere('sphereMask', { diameter: RADIUS * 2, segments: 48 }, scene)
-  maskGlobe.parent = tilt
+  maskGlobe.parent = spin
   const maskMaterial = new StandardMaterial('sphereMaskMaterial', scene)
   maskMaterial.diffuseColor = new Color3(0, 0, 0)
   maskMaterial.specularColor = new Color3(0, 0, 0)
@@ -241,10 +274,10 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   const waterPlugin = new WaterMaterialPlugin(layered, 'globe', waterField)
 
   // The chart point of a world direction: into the globe's own frame
-  // (below the tilt and the turn), then longitude and latitude.
+  // (below the tilt, the turn and the spin), then longitude and latitude.
   const toFrame = new Matrix()
   const chartOfWorld = (point: Vector3): ChartPoint => {
-    tilt.computeWorldMatrix(true).invertToRef(toFrame)
+    spin.computeWorldMatrix(true).invertToRef(toFrame)
     const p = Vector3.TransformCoordinates(point, toFrame)
     return globeChartOfFrame([p.x, p.y, p.z])
   }
@@ -287,7 +320,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     () => (riverInk ? presenceThreshold(riverInk, viewFraction()) : 0),
     {
       getEye: () => {
-        tilt.computeWorldMatrix(true).invertToRef(toRiverFrame)
+        spin.computeWorldMatrix(true).invertToRef(toRiverFrame)
         Vector3.TransformCoordinatesToRef(rig.camera.globalPosition, toRiverFrame, riverEye)
         return riverEye
       },
@@ -314,19 +347,39 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     // The shader moves the vertices off their centreline: the bounds from
     // the centreline alone would cull a ribbon at the screen's edge.
     mesh.alwaysSelectAsActiveMesh = true
-    mesh.parent = tilt
+    mesh.parent = spin
     mesh.setEnabled(riversOn)
     riverMesh = mesh
   }
 
-  // The symbol layers, in the globe's own frame: they turn and lean with it.
+  // The symbol layers, in the globe's own frame: they turn, lean and spin
+  // with it.
   const symbolSet = createSymbolLayerSet(scene, 'globeSymbols', {
     frame: (symbol) => globeSymbolFrame(symbol.at, symbol.angle, symbol.readable ?? false),
     vertex: (frame, x, y, out, offset) => globeSymbolVertex(frame, x, y, radiusMetres, GLOBE_SYMBOL_LIFT, out, offset),
     segments: (length) => globeSymbolSegments(length, radiusMetres),
   }, (mesh) => {
-    mesh.parent = tilt
+    mesh.parent = spin
     return []
+  })
+
+  // The spin: the angle grows while spinning. resetCamera brings a globe
+  // that stands still back to its first angle, eased (the shorter way); a
+  // globe that turns keeps turning.
+  const SPIN_RATE = (2 * Math.PI) / SPIN_SECONDS_PER_TURN
+  const SPIN_RETURN_RATE = 6
+  let spinning = false
+  let spinReturning = false
+  const spinObserver = scene.onBeforeRenderObservable.add(() => {
+    const dt = engine.getDeltaTime() / 1000
+    if (spinning) {
+      spin.rotation.y = (spin.rotation.y + SPIN_RATE * dt) % (2 * Math.PI)
+    } else if (spinReturning) {
+      const from = Math.atan2(Math.sin(spin.rotation.y), Math.cos(spin.rotation.y))
+      const next = from * Math.exp(-SPIN_RETURN_RATE * dt)
+      spin.rotation.y = Math.abs(next) < 1e-5 ? 0 : next
+      spinReturning = spin.rotation.y !== 0
+    }
   })
 
   return {
@@ -360,10 +413,15 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
       const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
       return 2 * radiusMetres * Math.asin(Math.min(1, Math.sqrt(h)))
     },
+    // The spin is not in the key: it moves no point's latitude and no
+    // distance on screen, so neither scale changes with it, and a key that
+    // changes every frame would stop both scales for as long as the globe
+    // turns.
     viewKey() {
       const q = rig.viewPivot.rotationQuaternion!
       const at = rig.camera.position
-      return `${q.x.toFixed(4)},${q.y.toFixed(4)},${q.z.toFixed(4)},${q.w.toFixed(4)},${at.x.toFixed(3)},${at.y.toFixed(3)},${at.z.toFixed(3)},${tilt.rotation.z.toFixed(4)}`
+      const to = rig.camera.getTarget()
+      return `${q.x.toFixed(4)},${q.y.toFixed(4)},${q.z.toFixed(4)},${q.w.toFixed(4)},${at.x.toFixed(3)},${at.y.toFixed(3)},${at.z.toFixed(3)},${to.x.toFixed(3)},${to.y.toFixed(3)},${to.z.toFixed(3)},${tilt.rotation.z.toFixed(4)}`
     },
     // The orbit rig has no pan to hold and no deep zoom to earn.
     setPanEnabled: () => {},
@@ -374,9 +432,19 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     setLayersShown(shown) {
       globe.material = shown ? layered : sea
     },
-    resetCamera: () => rig.reset(),
+    setSpinning(on) {
+      spinning = on
+      spinReturning = false
+    },
+    setTilted: (tilted) => rig.setTilted(tilted),
+    setFreeArea: (area) => rig.setFreeArea(area),
+    resetCamera() {
+      rig.reset()
+      spinReturning = !spinning
+    },
     dispose() {
       engine.onResizeObservable.remove(resized)
+      scene.onBeforeRenderObservable.remove(spinObserver)
       symbolSet.dispose()
       riverMesh?.dispose()
       riverMaterial.dispose()

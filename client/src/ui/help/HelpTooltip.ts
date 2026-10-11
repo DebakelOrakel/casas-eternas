@@ -20,11 +20,15 @@ export function createHelpTooltip(root: HTMLElement): HelpTooltip {
   let current: HTMLElement | null = null
 
   // Walk up from the event target to the nearest [data-help] within root.
+  // From any Element, not only an HTMLElement: over an icon the target is
+  // the inline <svg> or one of its paths, which are SVGElements. Before
+  // 2026-10-11 the walk stopped there, so an icon button (the globe's camera
+  // buttons) lost its card as soon as the pointer was on the icon.
   function anchorFor(target: EventTarget | null): { el: HTMLElement; base: string } | null {
-    let el = target instanceof HTMLElement ? target : null
+    let el: Element | null = target instanceof Element ? target : null
     while (el && el !== root) {
-      const base = el.dataset.help
-      if (base) return { el, base }
+      const base = el instanceof HTMLElement ? el.dataset.help : undefined
+      if (base) return { el: el as HTMLElement, base }
       el = el.parentElement
     }
     return null

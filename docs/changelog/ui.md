@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-11
+- **changed** Generator: the globe opens larger, zooms slower and straight toward the surface, keeps the grabbed point under the cursor while dragged, shows the scale bar again, and has buttons at the lower left to reset the view, turn the globe and tilt the view toward the horizon. `generator.camera.reset`
 - **new** Generator: a step whose computation fails says so in a notice instead of waiting forever. `generator.step.climate`
 - **new** Generator: a sphere world runs its fourth step, Ecology — resources and carrying capacity on the globe; the later steps are still locked. `generator.step.ecology`
 - **new** Generator: a saved sphere world can be opened again, and goes on where it was saved. `generator.load`

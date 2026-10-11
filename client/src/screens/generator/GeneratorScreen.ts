@@ -783,7 +783,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // rather than its strings (see i18n/relabel).
       relabel(sidebar.body)
       relabel(sidebar.foot)
-      cameraResetButton.setAttribute('aria-label', t('generator.camera.reset.label'))
+      relabelCameraTools()
       climatePlayer.relabel()
       ecologyPlayer.relabel()
       sidebar.relabel()
@@ -906,22 +906,57 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The layers go to the view whose shape is theirs (layerView, at the
   // compositor below).
   const activeView = (): WorldView => globeView ?? flatView
-  // The view back to where it started (WorldView.resetCamera); shown with
-  // the sphere only, where the flat map's scale bar stands.
-  const cameraResetButton = document.createElement('button')
-  cameraResetButton.type = 'button'
-  cameraResetButton.className = 'camera-reset'
-  cameraResetButton.setAttribute('aria-label', t('generator.camera.reset.label'))
-  cameraResetButton.dataset.help = 'generator.camera.reset'
-  cameraResetButton.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>'
-  cameraResetButton.addEventListener('click', () => activeView().resetCamera())
-  root.appendChild(cameraResetButton)
+  // THE GLOBE'S CAMERA BUTTONS, at the map's lower left (sphere worlds
+  // only; the flat map keeps its own keys): the view back to where it
+  // started (WorldView.resetCamera), the globe turning about its axis, and
+  // the look toward the horizon. The two toggles hold for the session —
+  // a new sphere world takes them over (setWorldShape) — and start off.
+  const cameraTools = document.createElement('div')
+  cameraTools.className = 'camera-tools'
+  const cameraTool = (helpKey: 'generator.camera.reset' | 'generator.camera.spin' | 'generator.camera.tilt', icon: string, onClick: () => void): HTMLButtonElement => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'camera-tool'
+    button.setAttribute('aria-label', t(`${helpKey}.label`))
+    button.dataset.help = helpKey
+    button.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>`
+    button.addEventListener('click', onClick)
+    cameraTools.appendChild(button)
+    return button
+  }
+  let globeSpinning = false
+  let globeTilted = false
+  const cameraResetButton = cameraTool('generator.camera.reset', '<circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>', () => activeView().resetCamera())
+  const cameraSpinButton = cameraTool('generator.camera.spin', '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 3v5h-5"/>', () => {
+    globeSpinning = !globeSpinning
+    cameraSpinButton.setAttribute('aria-pressed', String(globeSpinning))
+    globeView?.setSpinning(globeSpinning)
+  })
+  const cameraTiltButton = cameraTool('generator.camera.tilt', '<path d="M8 8h8l5 11H3z"/><path d="M5.7 13h12.6"/>', () => {
+    globeTilted = !globeTilted
+    cameraTiltButton.setAttribute('aria-pressed', String(globeTilted))
+    globeView?.setTilted(globeTilted)
+  })
+  cameraSpinButton.setAttribute('aria-pressed', 'false')
+  cameraTiltButton.setAttribute('aria-pressed', 'false')
+  const relabelCameraTools = (): void => {
+    cameraResetButton.setAttribute('aria-label', t('generator.camera.reset.label'))
+    cameraSpinButton.setAttribute('aria-label', t('generator.camera.spin.label'))
+    cameraTiltButton.setAttribute('aria-label', t('generator.camera.tilt.label'))
+  }
+  root.appendChild(cameraTools)
+  // The part of the canvas no bar covers (measureFreeArea, below): the
+  // globe's far shot fits into it.
+  let globeFreeArea: { left: number; top: number; right: number; bottom: number } | null = null
   const setWorldShape = (shape: WorldShape): void => {
     worldShape = shape
     root.classList.toggle('generator-screen--sphere', shape === 'sphere')
     if (shape === 'sphere' && !globeView) {
       globeView = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresRound: METERS_PER_CELL * MAP_WIDTH })
       globeView.setObliquity(Number(obliquityInput.value))
+      globeView.setSpinning(globeSpinning)
+      globeView.setTilted(globeTilted)
+      globeView.setFreeArea(globeFreeArea)
       sendWater(globeView)
     } else if (shape !== 'sphere' && globeView) {
       globeView.dispose()
@@ -6267,6 +6302,33 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // now; more controls as they get keys).
   const helpTooltip = createHelpTooltip(root)
 
+  // THE MAP'S FREE AREA: the canvas less the title bar above it, the step
+  // bar below it and the column if it lies over it, as fractions of the
+  // canvas, for the globe's far shot (GlobeWorldView.setFreeArea). Measured
+  // from the elements' rects whenever one of them changes size (a hidden
+  // bar measures zero and covers nothing).
+  const measureFreeArea = (): void => {
+    const canvasRect = ctx.canvas.getBoundingClientRect()
+    if (canvasRect.width <= 0 || canvasRect.height <= 0) return
+    const shown = (el: HTMLElement): DOMRect | null => {
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0 ? r : null
+    }
+    const title = shown(titleBar.element)
+    const steps = shown(stepBar.element)
+    const column = shown(sidebar.element)
+    const clamp = (value: number): number => Math.min(1, Math.max(0, value))
+    globeFreeArea = {
+      left: column ? clamp((column.right - canvasRect.left) / canvasRect.width) : 0,
+      top: title ? clamp((title.bottom - canvasRect.top) / canvasRect.height) : 0,
+      right: 1,
+      bottom: steps ? clamp((steps.top - canvasRect.top) / canvasRect.height) : 1,
+    }
+    globeView?.setFreeArea(globeFreeArea)
+  }
+  const freeAreaObserver = new ResizeObserver(measureFreeArea)
+  for (const el of [ctx.canvas, titleBar.element, stepBar.element, sidebar.element]) freeAreaObserver.observe(el)
+
   showPanel(0)
 
   // Once at startup, so the title bar opens showing the seed and "not saved
@@ -6339,6 +6401,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       worldChooser.dispose()
       titleBar.dispose()
       helpTooltip.dispose()
+      freeAreaObserver.disconnect()
       artifactChooser.dispose()
       jobChooser.dispose()
       stopFinishingWatch()
