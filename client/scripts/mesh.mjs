@@ -94,6 +94,7 @@ const M = {
   tectonicsTune: await L('/src/generator/tectonics/tectonicsTuneParams.ts'),
   biomes: await L('/src/generator/climate/biomes.ts'),
   weather: await L('/src/generator/climate/weather.ts'),
+  climateMesh: await L('/src/generator/climate/climateMesh.ts'),
   planet: await L('/src/generator/planet/planetForcing.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
@@ -1290,7 +1291,7 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
     const sub = M.meshHydro.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
     const coarseZ = M.raster.rasteriseNodeField(terrain.mesh, terrain.z, RX, RY)
     const coarse = M.domain.torusDomain(RX, RY)
-    const weather = M.weather.computeWeather(coarseZ, coarse, M.weather.defaultWeatherParams())
+    const weather = M.weather.computeWeather(M.climateMesh.climateTerrain(terrain.mesh.domain, coarseZ, RX, RY), M.weather.defaultWeatherParams())
     const precip = weather.seasonal.annual
     const discharge = M.hydro.accumulateDischargeOn(sub, terrain.z, precip, RX, RY)
     const lakes = M.hydro.computeLakesOn(sub, discharge, terrain.z, weather.temperature, precip, RX, RY)

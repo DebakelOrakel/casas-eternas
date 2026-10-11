@@ -72,7 +72,7 @@ export function hexLattice(domain: Domain, spacing: number): PeriodicTriangulati
 const TILT = 0.4
 const SPIN = 0.3
 
-export function geodesicLattice(domain: Domain, spacing: number): PeriodicTriangulation {
+function geodesicPoints(domain: Domain, spacing: number): GeodesicPoints {
   const noise = domain.noise
   if (noise.kind !== 'globe') throw new Error('geodesicLattice needs a sphere domain')
   const radius = noise.radius
@@ -176,6 +176,19 @@ export function geodesicLattice(domain: Domain, spacing: number): PeriodicTriang
     }
   }
   if (next !== count) throw new Error(`geodesicLattice: ${next} nodes, expected ${count}`)
+  return { count, px, py, pz, tris: Int32Array.from(tris) }
+}
+
+export function geodesicLattice(domain: Domain, spacing: number): PeriodicTriangulation {
+  return latticeOnGlobe(domain, geodesicPoints(domain, spacing))
+}
+
+// The geodesic points in the chart, triangulated as the lattice's faces
+// say and legalised into the Delaunay triangulation.
+function latticeOnGlobe(domain: Domain, g: GeodesicPoints): PeriodicTriangulation {
+  const noise = domain.noise
+  if (noise.kind !== 'globe') throw new Error('geodesicLattice needs a sphere domain')
+  const { count, px, py, pz } = g
   // In the chart, as the Domain names a point of the globe.
   const xs = new Float64Array(count)
   const ys = new Float64Array(count)
@@ -185,7 +198,153 @@ export function geodesicLattice(domain: Domain, spacing: number): PeriodicTriang
     xs[v] = p.x
     ys[v] = p.y
   }
-  const mesh = buildFromTriangles(domain, xs, ys, count, Int32Array.from(tris))
+  const mesh = buildFromTriangles(domain, xs, ys, count, g.tris)
   mesh.legaliseAll()
   return mesh
 }
+
+interface GeodesicPoints {
+  count: number
+  // Unit vectors.
+  px: Float64Array
+  py: Float64Array
+  pz: Float64Array
+  tris: Int32Array
+}
+
+// THE FIELD MESH'S SPHERE (DEC-0036 phase 3): the geodesic lattice relaxed
+// toward a centroidal Voronoi tessellation (SCVT, Du, Gunzburger & Ju
+// 2003; the MPAS meshes) by Lloyd's iteration — each node moved to the
+// centroid of its Voronoi cell on the globe — over-relaxed by
+// CENTROIDAL_OVERRELAX (the plain iteration's slowest modes need some
+// thousand steps; at 1.8 the areas after 300 are within 3 % of the
+// converged ones). A fixed count, no tolerance: the same lattice in every
+// run and engine. The terrain mesh keeps the plain lattice
+// (bootstrapLattice): its nodes are inserted into and removed at once.
+//
+// What it does (fields harness, 2026-10-11): the plain grid's cell areas
+// vary × 2.04 at 78 km (small about the pentagons, large along the
+// icosahedron's edges), the relaxed × 1.52 (the twelve pentagons at 0.69
+// of the mean, the hexagons 0.85–1.04); the least-squares gradient
+// converges at second order in L2 (1.55–1.84 on the plain grid) and above
+// first in L∞; the elliptic solves, the diffusion and the transport come
+// out slightly more accurate. The one thing it does not mend: the finite-
+// volume Laplacian's POINTWISE truncation error at the hexagons next to a
+// pentagon is of order 1 on a centroidal grid (Peixoto 2016, J. Comput.
+// Phys. 310) — about 1 % of the field's Laplacian there at every spacing —
+// where the plain grid's falls at first order. No stage reads ∇² by
+// itself: it enters through a solve or a diffusion step, whose result
+// converges at second order on either grid (supraconvergence).
+//
+// The cell of node a is cut into kites, one per corner of each triangle
+// at a: (a, the edge midpoint to b, the triangle's circumcentre, the edge
+// midpoint to c), each kite as two planar triangles whose signed areas and
+// centroids sum to the cell's; the centroid is that sum pushed back onto
+// the globe. The midpoint of a and b is (a + b) normalised (the
+// bisecting great circle passes through it). The connectivity is the
+// lattice's throughout (a geodesic grid's stays Delaunay under the
+// relaxation); the triangulation is legalised once at the end. Only
+// +, −, ×, ÷ and √: the same bits in every engine (core/detMath.ts).
+const CENTROIDAL_ITERATIONS = 300
+const CENTROIDAL_OVERRELAX = 1.8
+
+export function centroidalGeodesicLattice(domain: Domain, spacing: number): PeriodicTriangulation {
+  const g = geodesicPoints(domain, spacing)
+  relaxCentroidal(g, CENTROIDAL_ITERATIONS, CENTROIDAL_OVERRELAX)
+  return latticeOnGlobe(domain, g)
+}
+
+// Lloyd's iteration on the globe, in place, each move × `omega`; returns
+// the largest centroid offset of the last iteration (radians).
+function relaxCentroidal(g: { count: number; px: Float64Array; py: Float64Array; pz: Float64Array; tris: Int32Array }, iterations: number, omega = 1): number {
+  const { count, px, py, pz, tris } = g
+  const sx = new Float64Array(count)
+  const sy = new Float64Array(count)
+  const sz = new Float64Array(count)
+  const triCount = tris.length / 3
+  let lastMove = 0
+  // The signed area × centroid of the planar triangle (p, q, r), about
+  // the outward direction n, added to node k's sums.
+  const piece = (k: number, ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number): void => {
+    const ux = bx - ax
+    const uy = by - ay
+    const uz = bz - az
+    const vx = cx - ax
+    const vy = cy - ay
+    const vz = cz - az
+    const nx = uy * vz - uz * vy
+    const ny = uz * vx - ux * vz
+    const nz = ux * vy - uy * vx
+    // Twice the area, signed by the outward normal (the node itself).
+    const area2 = nx * ax + ny * ay + nz * az
+    sx[k] += area2 * (ax + bx + cx)
+    sy[k] += area2 * (ay + by + cy)
+    sz[k] += area2 * (az + bz + cz)
+  }
+  for (let it = 0; it < iterations; it++) {
+    sx.fill(0)
+    sy.fill(0)
+    sz.fill(0)
+    for (let t = 0; t < triCount; t++) {
+      const a = tris[3 * t]
+      // Counter-clockwise about the outward normal, whichever way the
+      // lattice listed it.
+      let b = tris[3 * t + 1]
+      let c = tris[3 * t + 2]
+      {
+        const ux = px[b] - px[a], uy = py[b] - py[a], uz = pz[b] - pz[a]
+        const vx = px[c] - px[a], vy = py[c] - py[a], vz = pz[c] - pz[a]
+        const turn = (uy * vz - uz * vy) * px[a] + (uz * vx - ux * vz) * py[a] + (ux * vy - uy * vx) * pz[a]
+        if (turn < 0) { const k = b; b = c; c = k }
+      }
+      const ax = px[a], ay = py[a], az = pz[a]
+      const bx = px[b], by = py[b], bz = pz[b]
+      const cx = px[c], cy = py[c], cz = pz[c]
+      // The circumcentre on the globe: the normal of the plane through the
+      // three, outward.
+      let ox = (by - ay) * (cz - az) - (bz - az) * (cy - ay)
+      let oy = (bz - az) * (cx - ax) - (bx - ax) * (cz - az)
+      let oz = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+      let ol = Math.sqrt(ox * ox + oy * oy + oz * oz)
+      if (ox * (ax + bx + cx) + oy * (ay + by + cy) + oz * (az + bz + cz) < 0) ol = -ol
+      ox /= ol
+      oy /= ol
+      oz /= ol
+      // The three edge midpoints on the globe.
+      let mx = ax + bx, my = ay + by, mz = az + bz
+      let ml = Math.sqrt(mx * mx + my * my + mz * mz)
+      const abx = mx / ml, aby = my / ml, abz = mz / ml
+      mx = bx + cx; my = by + cy; mz = bz + cz
+      ml = Math.sqrt(mx * mx + my * my + mz * mz)
+      const bcx = mx / ml, bcy = my / ml, bcz = mz / ml
+      mx = cx + ax; my = cy + ay; mz = cz + az
+      ml = Math.sqrt(mx * mx + my * my + mz * mz)
+      const cax = mx / ml, cay = my / ml, caz = mz / ml
+      // Each corner's kite, counter-clockwise about the outward normal.
+      piece(a, ax, ay, az, abx, aby, abz, ox, oy, oz)
+      piece(a, ax, ay, az, ox, oy, oz, cax, cay, caz)
+      piece(b, bx, by, bz, bcx, bcy, bcz, ox, oy, oz)
+      piece(b, bx, by, bz, ox, oy, oz, abx, aby, abz)
+      piece(c, cx, cy, cz, cax, cay, caz, ox, oy, oz)
+      piece(c, cx, cy, cz, ox, oy, oz, bcx, bcy, bcz)
+    }
+    lastMove = 0
+    for (let k = 0; k < count; k++) {
+      const l = Math.sqrt(sx[k] * sx[k] + sy[k] * sy[k] + sz[k] * sz[k])
+      const dx = sx[k] / l - px[k]
+      const dy = sy[k] / l - py[k]
+      const dz = sz[k] / l - pz[k]
+      const move = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      if (move > lastMove) lastMove = move
+      const nx = px[k] + omega * dx
+      const ny = py[k] + omega * dy
+      const nz = pz[k] + omega * dz
+      const nl = Math.sqrt(nx * nx + ny * ny + nz * nz)
+      px[k] = nx / nl
+      py[k] = ny / nl
+      pz[k] = nz / nl
+    }
+  }
+  return lastMove
+}
+

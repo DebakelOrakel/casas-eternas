@@ -2,6 +2,8 @@
 // cache invalidation. The part of the generator neither other harness reaches.
 //
 //   npm run harness:pipeline
+//   node scripts/pipeline.mjs <text>     only the tests whose name holds <text>
+//   SPHERE_SEED=c2 node scripts/pipeline.mjs sphere   the runtime's sphere world of another seed
 //
 // golden.mjs asks "given these params, are the fields the same bytes" and calls
 // the stage modules directly; roundtrip.mjs asks the same of the save format.
@@ -197,6 +199,10 @@ const asRestore = (worldData, seed = 'harness') => {
 
 const TESTS = []
 const test = (name, run) => TESTS.push({ name, run })
+// The runtime's sphere world's seed (see the sphere tests) and the tests to
+// run (all, or those whose name holds the first argument).
+const SPHERE_SEED = process.env.SPHERE_SEED ?? 'c4'
+const ONLY = process.argv[2] ?? ''
 
 // ------------------------------------------------------------- the stage table
 
@@ -322,6 +328,36 @@ const acrossPoleRatio = (field, resX, resY) => {
       down.push(Math.abs(field[row * resX + x] - field[next * resX + x]))
     }
     worst = Math.max(worst, median(across) / Math.max(median(down), 1e-9))
+  }
+  return worst
+}
+
+// A field made on a field mesh at the poles of a sphere's climate grid
+// (DEC-0036 phase 3): the mesh has no pole row, and the raster's pole row
+// is a ring of points 0.35° round the pole, sampled from one smooth field —
+// not one value along it, but no star either: neighbouring pixels of the
+// ring differ by a small part of what the ring spans. The largest step
+// between neighbours of the same `kind` (land with land, sea with sea)
+// over the ring's range of that kind, the worse pole; a star (each pixel
+// its own value) gives about 1. A range under a hundredth of the field's
+// counts as that hundredth (a flat field gives 0).
+const ringRoughness = (field, resX, resY, kind) => {
+  let lo = Infinity, hi = -Infinity
+  for (let i = 0; i < resX * resY; i++) { lo = Math.min(lo, field[i]); hi = Math.max(hi, field[i]) }
+  const floor = Math.max(1e-9, 0.01 * (hi - lo))
+  let worst = 0
+  for (const row of [0, resY - 1]) {
+    for (const k of [0, 1]) {
+      let rlo = Infinity, rhi = -Infinity, step = 0
+      for (let x = 0; x < resX; x++) {
+        const i = row * resX + x
+        if (kind[i] !== k) continue
+        rlo = Math.min(rlo, field[i]); rhi = Math.max(rhi, field[i])
+        const j = row * resX + ((x + 1) % resX)
+        if (kind[j] === k) step = Math.max(step, Math.abs(field[i] - field[j]))
+      }
+      if (rhi >= rlo) worst = Math.max(worst, step / Math.max(rhi - rlo, floor))
+    }
   }
   return worst
 }
@@ -648,7 +684,7 @@ test('a sphere world runs its history through the runtime', async () => {
   // The seed: one whose world has a polar sea and plain rivers (re-chosen
   // 2026-10-11 with the mantle on its field mesh; 'harness' then failed the
   // climate's pole-row checks, see DEC-0036's phase 1 status).
-  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere', seed: 'c4' })
+  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere', seed: SPHERE_SEED })
   await until(() => p.count('rendered') >= 1, { label: 'the first sphere render' })
   p.dispatch({ type: 'genesisStart' })
   await until(() => p.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: `${ARCHEAN_EPOCHS} sphere epochs` })
@@ -737,6 +773,7 @@ test('a sphere world runs its history through the runtime', async () => {
 // catch (the pole handling broken on purpose).
 test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-handled, plausible', async () => {
   const L = (m) => server.ssrLoadModule(m)
+  const CMx = await L('/src/generator/climate/climateMesh.ts')
   const [D, AS, AT, FA, CE, MR, CF, WE, FX, MH, HY, RG, BI, CO, GW, MC, MAP, ES] = await Promise.all([
     L('/src/generator/core/domain.ts'), L('/src/generator/archean/archeanState.ts'), L('/src/generator/archean/archeanStep.ts'),
     L('/src/generator/archean/finalizeArchean.ts'), L('/src/generator/pipeline/coupledEpoch.ts'), L('/src/generator/mesh/meshRaster.ts'),
@@ -854,23 +891,40 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
     const g = domain.grid(rx, ry)
     return new Proxy(g, { get: (target, key) => (key in patch ? (...args) => patch[key](target, ...args) : typeof target[key] === 'function' ? target[key].bind(target) : target[key]) })
   } })
-  // (a) No star at a pole: the sea of each pole row is one value (the SST
-  // after the currents carry it), and the pole rows of a field the stage
-  // smooths (the flexure's deflection) too.
+  // (a) No star at a pole. Since DEC-0036 phase 3 the static climate runs
+  // on its field mesh, which has no pole row and nothing to average there:
+  // its temperature at each pole is one field, read on a ring round it (the
+  // first and last raster row's, 0.35° from the pole), varying by no more
+  // than the field does between neighbouring cells. The raster's pole
+  // averaging survives in the currents (phase 4), whose sea surface the
+  // mesh takes back; a star there would show here.
   const climateDomain = sim.domain.scaledTo(RX, RY)
-  const starAt = (temperature, z) => {
+  const params = WE.defaultWeatherParams()
+  const epochWeather = WE.computeWeather(CMx.climateTerrain(sim.domain, coarseZ, RX, RY), params)
+  const ringSpread = (wx) => {
+    const { cm, land } = wx.terrain
     let spread = 0
-    for (const row of [0, RY - 1]) {
+    let step = 0
+    for (const v of [0.5 / RY, 1 - 0.5 / RY]) {
       let lo = Infinity, hi = -Infinity
-      for (let gx = 0; gx < RX; gx++) if (z[row * RX + gx] <= 0) { lo = Math.min(lo, temperature[row * RX + gx]); hi = Math.max(hi, temperature[row * RX + gx]) }
+      for (let k = 0; k < 64; k++) {
+        const x = (k / 64) * sim.domain.width, y = v * sim.domain.height
+        if (!(land[cm.sampler.nearestCell(x, y)] === 0)) continue
+        const t = cm.sampler.sample(wx.mesh.temperature, x, y)
+        lo = Math.min(lo, t); hi = Math.max(hi, t)
+      }
       if (hi >= lo) spread = Math.max(spread, hi - lo)
     }
-    return spread
+    // The largest step between neighbouring sea cells within 5° of a pole.
+    const { mesh } = cm
+    for (let i = 0; i < mesh.count; i++) {
+      if (land[i] || Math.abs(cm.yNorm[i] - 0.5) < 0.5 - 5 / 180) continue
+      for (let e = mesh.nbrStart[i]; e < mesh.nbrStart[i + 1]; e++) if (!land[mesh.nbr[e]]) step = Math.max(step, Math.abs(wx.mesh.temperature[mesh.nbr[e]] - wx.mesh.temperature[i]))
+    }
+    return { spread, step }
   }
-  const params = WE.defaultWeatherParams()
-  const sea = starAt(WE.computeWeather(coarseZ, climateDomain, params).temperature, coarseZ)
-  const seaBroken = starAt(WE.computeWeather(coarseZ, broken(climateDomain, { averagePoleRows: () => {} }), params).temperature, coarseZ)
-  check('the sea at each pole is one temperature (no star); without the pole averaging it is not', sea === 0 && seaBroken > 0, `spread ${sea} °C; mutated ${seaBroken.toFixed(3)} °C`)
+  const ring = ringSpread(epochWeather)
+  check('the sea at each pole is one temperature field on the mesh: round the pole it varies by no more than between two neighbouring cells', ring.spread <= ring.step + 1e-9, `ring ${ring.spread.toFixed(3)} °C, neighbours up to ${ring.step.toFixed(3)} °C`)
   // (b) A departure along the globe: tapsAt reaches the point its offset's
   // length away, east-west near a pole too, and across it. Checked against
   // the Domain's own distance from the cell centre to the sampled point.
@@ -922,10 +976,11 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   const poleFlat = poleRowsConstant(ratios[2].w, flexX, flexY)
   const spreadRatios = ratios.map((q) => q.ratio)
   check('a load\'s deflection integrates to its compensated weight at the equator, at 70° and at the pole; without the area weights not', spreadRatios.every((q) => Math.abs(q - 1) < 1e-4) && poleFlat && Math.abs(brokenRatio - 1) > 0.1, `∫w dA over the compensated load: ${spreadRatios.map((q) => q.toFixed(6)).join(', ')}; area weights off, a polar load: ${brokenRatio.toFixed(3)}`)
-  // (d) The smoothing in a length: the climate's box blur spreads a point
-  // as far east-west as north-south at 60° (in distance on the globe); in
-  // cells it would be half as far.
-  const PR = await L('/src/generator/climate/pressure.ts')
+  // (d) The smoothing in a length: the refinement's box blur (on the
+  // climate raster until phase 5) spreads a point as far east-west as
+  // north-south at 60° (in distance on the globe); in cells it would be
+  // half as far. The static climate's smoothing on the mesh below.
+  const PR = await L('/src/generator/climate/refinement.ts')
   const spreadOf = (g) => {
     const f = new Float32Array(RX * RY)
     const gy = Math.round(RY / 6 - 0.5)
@@ -942,7 +997,34 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   }
   const iso = spreadOf(sphereGrid)
   const isoBroken = spreadOf(broken(sim.domain, { rowScale: () => 1 }).grid(RX, RY))
-  check('the climate\'s blur spreads as far east-west as north-south at 60°; counting cells it does not', Math.abs(iso - 1) < 0.15 && isoBroken < 0.7, `east-west / north-south ${iso.toFixed(2)}; in cells ${isoBroken.toFixed(2)}`)
+  check('the refinement\'s blur spreads as far east-west as north-south at 60°; counting cells it does not', Math.abs(iso - 1) < 0.15 && isoBroken < 0.7, `east-west / north-south ${iso.toFixed(2)}; in cells ${isoBroken.toFixed(2)}`)
+  // The static climate's smoothing (fields/fieldOperators.smoothGaussian
+  // on the climate's mesh): a point at 60° and one 1° from the pole spread
+  // as far east-west as north-south, the σ asked for.
+  {
+    const FO = await L('/src/generator/fields/fieldOperators.ts')
+    const cm = CMx.climateMesh(sim.domain)
+    const { mesh } = cm
+    const sigma = 3 * cm.cellM
+    const iso2 = [1 / 6, 1 / 180].map((v) => {
+      const at = cm.sampler.nearestCell(100, v * sim.domain.height)
+      const f = new Float64Array(mesh.count)
+      f[at] = 1 / mesh.area[at]
+      FO.smoothGaussian(mesh, f, sigma, f)
+      // Second moments in the source's tangent plane (east, south), true
+      // lengths: the log map of each cell about the source.
+      let ee = 0, ss = 0, m = 0
+      const d = { x: 0, y: 0 }
+      for (let i = 0; i < mesh.count; i++) {
+        const w = f[i] * mesh.area[i]
+        if (w <= 0) continue
+        sim.domain.delta(mesh.x[i], mesh.y[i], mesh.x[at], mesh.y[at], d)
+        ee += w * (d.x * mesh.unitM) ** 2; ss += w * (d.y * mesh.unitM) ** 2; m += w
+      }
+      return { ratio: Math.sqrt(ee / ss), sigma: Math.sqrt((ee + ss) / (2 * m)) / sigma }
+    })
+    check('the static climate\'s smoothing on its mesh spreads as far east-west as north-south, at 60° and 1° from the pole, by the σ asked for', iso2.every((q) => Math.abs(q.ratio - 1) < 0.1 && Math.abs(q.sigma - 1) < 0.1), iso2.map((q) => `east-west / north-south ${q.ratio.toFixed(2)}, σ ${q.sigma.toFixed(2)} of the asked`).join('; '))
+  }
 
   // (4) Determinism and a restore on the sphere.
   const simB = world('sphere', 'h2')
@@ -962,7 +1044,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   {
     const sub = MH.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
     const rz = MR.rasteriseNodeField(terrain.mesh, terrain.z, RX, RY)
-    const wx = WE.computeWeather(rz, climateDomain, params)
+    const wx = WE.computeWeather(CMx.climateTerrain(sim.domain, rz, RX, RY), params)
     const precip = wx.seasonal.annual
     const discharge = HY.accumulateDischargeOn(sub, terrain.z, precip, RX, RY)
     const lakes = HY.computeLakesOn(sub, discharge, terrain.z, wx.temperature, precip, RX, RY)
@@ -1041,7 +1123,7 @@ async function sphereThroughHydrology() {
   // The seed: one whose world has a polar sea and plain rivers (re-chosen
   // 2026-10-11 with the mantle on its field mesh; 'harness' then failed the
   // climate's pole-row checks, see DEC-0036's phase 1 status).
-  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere', seed: 'c4' })
+  p.dispatch({ ...ARCHEAN_INIT, shape: 'sphere', seed: SPHERE_SEED })
   await until(() => p.count('rendered') >= 1, { label: 'the first sphere render' })
   p.dispatch({ type: 'genesisStart' })
   await until(() => p.count('genesisStatus') >= ARCHEAN_EPOCHS, { label: `${ARCHEAN_EPOCHS} sphere epochs` })
@@ -1121,10 +1203,53 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
     cyclone: [f32(r.cyclone), 1], tornado: [f32(r.tornado), 1], blizzard: [f32(r.blizzard), 1], dust: [f32(r.dust), 1], thunder: [f32(r.thunder), 1],
     'climate.seasonalAmplitude': [f32(c0.seasonalAmplitude), 1], 'refined.seasonalAmplitude': [f32(cr.seasonalAmplitude), 1], 'refined.monsoonIndex': [f32(cr.monsoonIndex), 1],
   }
-  const spread = Object.entries(scalars).map(([k, [f, layers]]) => [k, poleSpread(f, layers)]).filter(([, s]) => s > 1e-3)
-  check(`the refined fields are one value along each pole row, land and sea apart (${Object.keys(scalars).length} fields)`, spread.length === 0, spread.map(([k, s]) => `${k} ${s.toFixed(4)}`).join(', '))
-  const tSpread = poleSpread(f32(cr.temperature))
-  check('the temperature along a pole row differs only by its cells\' ground (under 1 °C)', tSpread < 1, `${tSpread.toFixed(3)} °C`)
+  // Since DEC-0036 phase 3 the static climate and the refinement's
+  // pressure and rain are made on the climate's field mesh, which has no
+  // pole row: rasterised, a pole row is a ring of points 0.35° round the
+  // pole, and a field made from them is no longer one value along it
+  // (the sea's anomaly is the SST, pole-averaged, less the mesh's base).
+  // Those are held to be smooth round the pole instead (ringRoughness).
+  // The rest stay the raster's.
+  const meshFed = new Set(['pressure', 'currentAnomaly', 'precipitation', 'climate.seasonalAmplitude', 'refined.monsoonIndex'])
+  const spread = Object.entries(scalars).filter(([k]) => !meshFed.has(k)).map(([k, [f, layers]]) => [k, poleSpread(f, layers)]).filter(([, s]) => s > 1e-3)
+  check(`the refined fields made on the raster are one value along each pole row, land and sea apart (${Object.keys(scalars).length - meshFed.size} fields)`, spread.length === 0, spread.map(([k, s]) => `${k} ${s.toFixed(4)}`).join(', '))
+  const across = [...meshFed].map((k) => {
+    const [f, layers] = scalars[k]
+    let worst = 0
+    for (let m = 0; m < layers; m++) worst = Math.max(worst, ringRoughness(f.slice(m * n, (m + 1) * n), RX, RY, landC))
+    return [k, worst]
+  })
+  check(`the fields made from the mesh's are smooth round each pole, no star, land and sea apart (the largest step between neighbouring pixels of a pole row: ${across.map(([k, r]) => `${k} ${r.toFixed(3)}`).join(', ')} of the ring's range)`, across.every(([, r]) => r < 0.25))
+  // The temperature. The climate's own (the mesh's, rasterised): smooth
+  // round each pole — its spread is the ground of the cells round it, a
+  // few hundred metres of lapse at a polar range — the largest step
+  // between neighbouring pixels under a quarter of the spread or 0.1 °C.
+  // The refined year adds the refinement's raster parts (the currents'
+  // warmth carried inland with the wind, phase 4/5), which vary from
+  // pixel to pixel: held to under 1 °C a step, the bound the old pole-row
+  // check gave the cells' ground.
+  const ringSteps = (tf) => {
+    let worst = 0, stepAt = 0, spreadAt = 0, maxStep = 0
+    for (const row of [0, RY - 1]) {
+      for (const k of [0, 1]) {
+        let lo = Infinity, hi = -Infinity, step = 0
+        for (let x = 0; x < RX; x++) {
+          const i = row * RX + x, j = row * RX + ((x + 1) % RX)
+          if (landC[i] !== k) continue
+          lo = Math.min(lo, tf[i]); hi = Math.max(hi, tf[i])
+          if (landC[j] === k) step = Math.max(step, Math.abs(tf[i] - tf[j]))
+        }
+        if (hi < lo) continue
+        maxStep = Math.max(maxStep, step)
+        const ratio = step / Math.max(0.25 * (hi - lo), 0.1)
+        if (ratio > worst) { worst = ratio; stepAt = step; spreadAt = hi - lo }
+      }
+    }
+    return { worst, stepAt, spreadAt, maxStep }
+  }
+  const own = ringSteps(f32(c0.temperature))
+  const year = ringSteps(f32(cr.temperature))
+  check('the temperature round each pole is smooth, no star, land and sea apart (the climate\'s own; the refined year\'s steps under 1 °C)', own.worst < 1 && year.maxStep < 1, `the climate's worst pole: spread ${own.spreadAt.toFixed(3)} °C, step ${own.stepAt.toFixed(3)} °C; the refined year's largest step ${year.maxStep.toFixed(3)} °C`)
 
   // The vector fields at the poles: one vector field on the globe, not a
   // ring in the cells' frames (poleVectorJump). Each wind and each current
@@ -1498,11 +1623,20 @@ test('the climate step\'s primitives on the sphere, each against its mutation', 
   // bands slide across the pole, as they do over the torus's seam), which
   // leaves a ring of 0.5 (4 m/s) in the cells' frames at the pole row.
   {
+    // On the climate's field mesh since DEC-0036 phase 3, read on the
+    // climate raster (each pixel in its own frame); the mutation reads the
+    // belts as the torus does on the sphere's mesh.
     const WD = await L('/src/generator/climate/wind.ts')
+    const CMw = await L('/src/generator/climate/climateMesh.ts')
     const shift = CT.CLIMATE_TUNING.monsoonItczSeasonalShift
     const RXc = CF.CLIMATE_RES_X
     const RYc = CF.CLIMATE_RES_Y
-    const jump = (shape) => Math.max(...[shift, -shift].map((b) => poleVectorJump(WD.computeWind(0, PF.DEFAULT_PLANET_FORCING.rotationHours, b, shape), RXc, RYc)))
+    const cmS = CMw.climateMesh(D.sphereDomain(W, H))
+    const asTorus = { ...cmS, mesh: { ...cmS.mesh, domain: { ...cmS.mesh.domain, kind: 'torus' } } }
+    const jump = (shape) => Math.max(...[shift, -shift].map((b) => {
+      const w = WD.computeWind(shape === 'sphere' ? cmS : asTorus, 0, PF.DEFAULT_PLANET_FORCING.rotationHours, b)
+      return poleVectorJump(CMw.climateVectorRaster(cmS, w.e, w.s, RXc, RYc), RXc, RYc)
+    }))
     const kept = jump('sphere')
     const slid = jump('torus')
     check(`the season's wind cells end at the pole on the sphere: the step across a pole ${kept.toFixed(2)} × the step to the next row (the bands slid across it: ${slid.toFixed(2)})`, kept < 2 && slid > 2)
@@ -2246,31 +2380,13 @@ test('the Planet preview answers on a sphere sample: finite, pole rows one value
   const fields = { ...scalars, wind: f32(s.wind), currents: f32(s.currents) }
   const notFinite = Object.entries(fields).filter(([, f]) => f.length === 0 || !allFinite(f)).map(([k]) => k)
   check(`every climate field of the sphere preview is whole and finite (${Object.keys(fields).length} fields)`, notFinite.length === 0, notFinite.join(', '))
-  // Pole rows: one value, land and sea apart; the temperature apart from
-  // its cells' ground (as the climate step's sphere test reads them).
+  // The land, by the rain's sentinel.
   const land = new Uint8Array(n)
   for (let i = 0; i < n; i++) land[i] = scalars.precipitation[i] >= 0 ? 1 : 0
-  const poleSpread = (field) => {
-    let worst = 0
-    for (const row of [0, RY - 1]) {
-      for (const kind of [0, 1]) {
-        let lo = Infinity
-        let hi = -Infinity
-        for (let x = 0; x < RX; x++) {
-          const i = row * RX + x
-          if (land[i] !== kind) continue
-          lo = Math.min(lo, field[i])
-          hi = Math.max(hi, field[i])
-        }
-        if (hi > lo) worst = Math.max(worst, hi - lo)
-      }
-    }
-    return worst
-  }
-  const spread = Object.entries(scalars).filter(([k]) => k !== 'temperature').map(([k, f]) => [k, poleSpread(f)]).filter(([, v]) => v > 1e-3)
-  check('the preview\'s fields are one value along each pole row, land and sea apart', spread.length === 0, spread.map(([k, v]) => `${k} ${v.toFixed(4)}`).join(', '))
-  const tSpread = poleSpread(scalars.temperature)
-  check('the preview\'s temperature along a pole row differs only by its cells\' ground (under 1 °C)', tSpread < 1, `${tSpread.toFixed(3)} °C`)
+  // On the climate's field mesh since DEC-0036 phase 3: smooth round each
+  // pole (ringRoughness), not one value along a pole row.
+  const across = Object.entries(scalars).map(([k, f]) => [k, ringRoughness(f, RX, RY, land)])
+  check(`the preview's fields are smooth round each pole, no star, land and sea apart (the largest step between neighbouring pixels of a pole row: ${across.map(([k, r]) => `${k} ${r.toFixed(3)}`).join(', ')} of the ring's range)`, across.every(([, r]) => r < 0.25))
   // No seam: the step from the last column to the first is no larger than
   // the largest step between neighbours inside the chart.
   const seams = Object.entries(scalars).map(([k, f]) => {
@@ -2495,6 +2611,7 @@ test("level 1's replay makes the saved world again, across a load and a checkpoi
 console.log('')
 const started = Date.now()
 for (const { name, run } of TESTS) {
+  if (!name.includes(ONLY)) continue
   console.log(`— ${name}`)
   try {
     await run()
@@ -2504,10 +2621,13 @@ for (const { name, run } of TESTS) {
   }
 }
 
-console.log('— coverage')
-const handled = (await server.ssrLoadModule('/src/generator/pipeline/runtime.ts')).HANDLED_MESSAGE_TYPES
-const untested = handled.filter((t) => !dispatchedTypes.has(t))
-check(`every one of the ${handled.length} message types is exercised somewhere above`, untested.length === 0, untested.join(', '))
+// The coverage holds for the whole run only.
+if (ONLY === '') {
+  console.log('— coverage')
+  const handled = (await server.ssrLoadModule('/src/generator/pipeline/runtime.ts')).HANDLED_MESSAGE_TYPES
+  const untested = handled.filter((t) => !dispatchedTypes.has(t))
+  check(`every one of the ${handled.length} message types is exercised somewhere above`, untested.length === 0, untested.join(', '))
+}
 
 await server.close()
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'} — ${failures} failed, ${Math.round((Date.now() - started) / 1000)}s`)

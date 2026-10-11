@@ -158,10 +158,25 @@ export function globeVectorAt(field: Float32Array, resX: number, resY: number, a
   return out
 }
 
+// A vector field read at a chart point, in that point's own frame
+// ([east, south], Domain.delta's), written into `out`: a raster's
+// (rasterVectorReader) or a field mesh's, whose sampler mixes the corners'
+// vectors in 3D (fields/fieldMesh.FieldSampler.sampleVector — the static
+// climate's wind since DEC-0036 phase 3; the screen makes that reader, so
+// this module reads no simulation).
+export type VectorReader = (at: ChartPoint, out: [number, number]) => [number, number]
+
+// DEC-0036 transition: removed in phase 5. A sphere's climate-grid raster
+// as a reader (globeVectorAt): the refinement's winds and the currents,
+// until phases 4 and 5 put them on the field mesh.
+export function rasterVectorReader(field: Float32Array, resX: number, resY: number): VectorReader {
+  return (at, out) => globeVectorAt(field, resX, resY, at, out)
+}
+
 // One mark per point of globeSamplePoints where the field is faster than
 // `minSpeed`: along the field's direction there, `length` texels long, its
 // speed against `refSpeed`. Open marks (no gyre is traced on the sphere).
-export function globeVectorMarks(field: Float32Array, resX: number, resY: number, options: {
+export function globeVectorMarks(read: VectorReader, options: {
   width: number
   spacing: number
   length: number
@@ -171,7 +186,7 @@ export function globeVectorMarks(field: Float32Array, resX: number, resY: number
   const marks: VectorMark[] = []
   const v: [number, number] = [0, 0]
   for (const at of globeSamplePoints(options.width, options.spacing)) {
-    globeVectorAt(field, resX, resY, at, v)
+    read(at, v)
     const speed = Math.hypot(v[0], v[1])
     if (!(speed >= options.minSpeed) || speed === 0) continue
     marks.push({ at, angle: Math.atan2(v[1], v[0]), length: options.length, speed: speed / options.refSpeed, loop: false, mid: at })

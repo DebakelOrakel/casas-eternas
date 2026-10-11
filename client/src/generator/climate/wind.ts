@@ -1,9 +1,16 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, beltYNorm, shiftedYNorm } from './climateField'
+import { beltYNorm, shiftedNorm } from './climateField'
 import { hadleyEdge } from '../planet/planetForcing'
 import { PLANET_INPUTS } from '../planet/planetInputParams'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { detSin } from '../core/detMath'
-import type { Domain } from '../core/domain'
+import type { ClimateMesh } from './climateMesh'
+
+// A vector field on the climate's field mesh: east and south per cell, in
+// the cell's own frame (DEC-0036 phase 3; climateMesh.ts).
+export interface CellVectors {
+  e: Float64Array
+  s: Float64Array
+}
 
 // Prevailing surface wind as the prescribed three-cell pattern per hemisphere
 // (Hadley / Ferrel / Polar): trade EASTERLIES 0–30°, mid-latitude WESTERLIES
@@ -11,20 +18,22 @@ import type { Domain } from '../core/domain'
 // implies (Hadley + Polar equatorward at the surface, Ferrel poleward).
 // Magnitude tapers to ~0 at every cell edge (the calm doldrums / horse-latitude
 // / subpolar belts), so the bands blend instead of reversing sharply. Purely
-// latitudinal for now (no land/sea modulation). Returned interleaved
-// [u0,v0,u1,v1,…] on the climate grid: u = eastward (+x), v = toward the
-// bottom/"south" (+y). See docs/decisions/climate-biomes.md.
+// latitudinal for now (no land/sea modulation). Per cell of the climate's
+// field mesh: u = eastward (+x), v = toward the bottom/"south" (+y), the
+// cell's frame. See docs/decisions/climate-biomes.md.
 // `rotationHours` (planet/planetForcing.ts): the Hadley cell's edge moves
 // with the rotation period; the Ferrel cell takes half of what is left.
 // `beltShift`: the season's shift of the cells (climateField.beltYNorm); 0,
 // the year's mean position, for the history and the cheap climate.
-// `shape`: the world's (beltYNorm: on the sphere the shift ends at the pole).
-export function computeWind(equatorOffset = 0, rotationHours = PLANET_INPUTS.rotation.default, beltShift = 0, shape: Domain['kind'] = 'torus'): Float32Array {
-  const wind = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y * 2)
+// On the sphere the shift ends at the pole (beltYNorm).
+export function computeWind(cm: ClimateMesh, equatorOffset = 0, rotationHours = PLANET_INPUTS.rotation.default, beltShift = 0): CellVectors {
+  const n = cm.mesh.count
+  const wind: CellVectors = { e: new Float64Array(n), s: new Float64Array(n) }
+  const shape = cm.mesh.domain.kind
   const e1 = hadleyEdge(rotationHours)
   const e2 = (1 + e1) / 2
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    const yNorm = beltYNorm(shiftedYNorm(gy, CLIMATE_RES_Y, equatorOffset), beltShift, shape)
+  for (let i = 0; i < n; i++) {
+    const yNorm = beltYNorm(shiftedNorm(cm.yNorm[i], equatorOffset), beltShift, shape)
     const sLat = (yNorm - 0.5) * 2 // signed latitude: −1 north(top) … +1 south(bottom)
     const phi = Math.abs(sLat)
     const hemi = Math.sign(sLat) // −1 north, +1 south, 0 at the equator
@@ -49,11 +58,8 @@ export function computeWind(equatorOffset = 0, rotationHours = PLANET_INPUTS.rot
     const u = uSign * CLIMATE_TUNING.windZonalStrength * taper
     // equatorward → v = −hemi·|v|; poleward → v = +hemi·|v|
     const v = (poleward ? hemi : -hemi) * CLIMATE_TUNING.windMeridionalStrength * taper
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const idx = (gy * CLIMATE_RES_X + gx) * 2
-      wind[idx] = u
-      wind[idx + 1] = v
-    }
+    wind.e[i] = u
+    wind.s[i] = v
   }
   return wind
 }

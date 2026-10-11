@@ -85,8 +85,19 @@ export function inTopSummerHalf(month: number): boolean {
 // steps run on their own raster). Offset is a fraction of map height; +ve moves the
 // equator toward the bottom.
 export function shiftedYNorm(gridY: number, resY: number, equatorOffset: number): number {
-  const y = (gridY + 0.5) / resY - equatorOffset
+  return shiftedNorm((gridY + 0.5) / resY, equatorOffset)
+}
+
+// The same for a point's row position y / height (0..1) — a field mesh
+// cell's (climateMesh.yNorm), DEC-0036 phase 3.
+export function shiftedNorm(yNorm: number, equatorOffset: number): number {
+  const y = yNorm - equatorOffset
   return y - Math.floor(y)
+}
+
+// Latitude 0..1 (0 the equator, 1 a pole) of a shifted row position.
+export function latitudeOfNorm(shifted: number): number {
+  return Math.abs(shifted - 0.5) * 2
 }
 
 // Where a row sits in the zonal bands when they follow the season: its

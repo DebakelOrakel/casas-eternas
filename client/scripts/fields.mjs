@@ -180,6 +180,9 @@ for (const domain of [sphere, torus]) {
     console.log(`  ${label}: ${fm.count} cells (mean spacing ${(meanSpacing(fm) / 1e3).toFixed(1)} km), ${fm.pentagons} pentagons, max degree ${fm.maxDegree}, areas ${(minA / 1e6).toFixed(0)}–${(maxA / 1e6).toFixed(0)} km² (×${(maxA / minA).toFixed(2)}), min wall ${(minWall / 1e3).toFixed(1)} km, built in ${ms.toFixed(0)} ms`)
     check(`${label}: triangulation valid`, errors.length === 0, errors.slice(0, 2).join('; '))
     check(`${label}: areas sum to ${domain.kind === 'sphere' ? '4πR²' : 'W·H'}`, areaErr < 1e-12, `relative ${e(areaErr)}`)
+    // The sphere's centroidal relaxation (DEC-0036 phase 3): × 2.0 on the
+    // plain geodesic grid.
+    check(`${label}: the areas within × ${domain.kind === 'sphere' ? '1.6' : '1.0001 (float32 positions)'}`, maxA / minA < (domain.kind === 'sphere' ? 1.6 : 1.0001), `× ${(maxA / minA).toPrecision(9)}`)
     check(`${label}: ${domain.kind === 'sphere' ? '12 pentagons, the rest hexagons' : 'every cell a hexagon'}`, domain.kind === 'sphere' ? fm.pentagons === 12 && fm.maxDegree === 6 : fm.pentagons === 0 && fm.maxDegree === 6)
     check(`${label}: neighbours symmetric, coupling and distance symmetric`, back === 0 && asym < 1e-12, `${back} broken, max asymmetry ${e(asym)}`)
     check(`${label}: every wall positive (Delaunay)`, minWall > 0)
@@ -221,18 +224,26 @@ for (const domain of [sphere, torus]) {
     lapErr[domain.kind].set(name, r)
   }
   // The bands: the 78 km error (the climate's spacing) and the L2 order.
-  // On the sphere L∞ converges at first order only — the plain geodesic
-  // grid's cells are irregular along the icosahedron's edges and about
-  // the pentagons (Heikes & Randall 1995); a tweaked or centroidal grid
-  // would make it second order (DEC-0036 Status).
+  // On the sphere's centroidal grid (DEC-0036 phase 3, mesh/lattice.ts
+  // centroidalGeodesicLattice) the pointwise error does not converge at
+  // the hexagons next to a pentagon — about 1 % of the field's ∇² there at
+  // every spacing (Peixoto 2016) — so L∞ is held to a bound and the L2
+  // order to above 1; the solves built on ∇² converge at second order
+  // ([4]). The plain geodesic grid had L∞ at first order and L2 at
+  // 1.7–1.9, with its areas varying × 2.0 (DEC-0036 Status).
   const at78 = SPACINGS.indexOf(78e3)
   const band = domain.kind === 'sphere' ? LAP_BAND.sphere : LAP_BAND.torus
   const worst78 = Math.max(...[...rows.values()].map((r) => r.l2[at78]))
   const minOrder = Math.min(...[...rows.values()].flatMap((r) => order(r.l2, hs)))
   const minOrderInf = Math.min(...[...rows.values()].flatMap((r) => order(r.linf, hs)))
   check(`${domain.kind}: ∇² of the test fields within ${e(band)} (L2) at 78 km`, worst78 < band, e(worst78))
-  check(`${domain.kind}: ∇² converges at second order in L2`, minOrder > (domain.kind === 'sphere' ? 1.5 : 1.9), f2(minOrder))
-  check(`${domain.kind}: ∇² converges in L∞ (${domain.kind === 'sphere' ? 'first order' : 'second order'})`, minOrderInf > (domain.kind === 'sphere' ? 0.7 : 1.6), f2(minOrderInf))
+  check(`${domain.kind}: ∇² converges in L2 (order > ${domain.kind === 'sphere' ? 1.0 : 1.9})`, minOrder > (domain.kind === 'sphere' ? 1.0 : 1.9), f2(minOrder))
+  if (domain.kind === 'sphere') {
+    const worstInf = Math.max(...[...rows.values()].flatMap((r) => r.linf))
+    check('sphere: ∇² in L∞ bounded (within 2e-2 at every spacing, not growing)', worstInf < 2e-2 && minOrderInf > -0.1, `max ${e(worstInf)}, order ≥ ${f2(minOrderInf)}`)
+  } else {
+    check('torus: ∇² converges in L∞ (second order)', minOrderInf > 1.6, f2(minOrderInf))
+  }
 }
 
 // Diffusion: explicit steps at half the stable step to the time the
@@ -313,8 +324,13 @@ for (const domain of [sphere, torus]) {
   check(`${domain.kind}: the divergence within ${e(DIV_BAND[domain.kind])} (L2) at 78 km`, worstDivergence(fm78) < DIV_BAND[domain.kind], e(worstDivergence(fm78)))
   const gOrder = Math.min(...[...g.values()].flatMap((r) => order(r.l2, hs)))
   const dOrder = Math.min(...[...dv.values()].flatMap((r) => order(r.l2, hs)))
-  check(`${domain.kind}: the gradient converges in L2 (order > ${domain.kind === 'sphere' ? 1.4 : 1.9})`, gOrder > (domain.kind === 'sphere' ? 1.4 : 1.9), f2(gOrder))
-  check(`${domain.kind}: the divergence converges at second order in L2`, dOrder > (domain.kind === 'sphere' ? 1.6 : 1.9), f2(dOrder))
+  // The centroidal grid's gradient: second order in L2, above first in L∞
+  // (the plain grid's was 1.55–1.84 and below 1); the divergence of an
+  // exact gradient carries ∇²'s pointwise error next to the pentagons.
+  const gOrderInf = Math.min(...[...g.values()].flatMap((r) => order(r.linf, hs)))
+  check(`${domain.kind}: the gradient converges in L2 (order > ${domain.kind === 'sphere' ? 1.8 : 1.9})`, gOrder > (domain.kind === 'sphere' ? 1.8 : 1.9), f2(gOrder))
+  check(`${domain.kind}: the gradient converges in L∞ (order > 1)`, gOrderInf > 1, f2(gOrderInf))
+  check(`${domain.kind}: the divergence converges in L2 (order > ${domain.kind === 'sphere' ? 1.2 : 1.9})`, dOrder > (domain.kind === 'sphere' ? 1.2 : 1.9), f2(dOrder))
 }
 // sin φ (the latitude's sine, z): its gradient is cos φ / R northward.
 {

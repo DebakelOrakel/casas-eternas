@@ -1,8 +1,10 @@
-import type { Domain, DomainGrid } from '../core/domain'
 import { OCEAN_AMPLITUDE } from './seasonality'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { CLIMATE_RES_X, CLIMATE_RES_Y, shiftedYNorm } from './climateField'
+import { shiftedNorm } from './climateField'
 import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
+import type { ClimateTerrain } from './climateMesh'
+import type { CellVectors } from './wind'
+import { gradient } from '../fields/fieldOperators'
 
 // Seasonal precipitation + monsoons (see docs/decisions/climate-biomes.md). The base
 // precipitation model is an annual mean; here we run it for two opposite seasons and
@@ -17,67 +19,57 @@ import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
 //      (wet), offshore in winter (dry).
 // We model season "N" = northern (top) hemisphere in summer, and "S" = its opposite.
 
-const RX = CLIMATE_RES_X
-const RY = CLIMATE_RES_Y
-
 // Seasonal air temperature = annual mean ± half the seasonal amplitude, signed so the
 // summer hemisphere warms and the winter one cools. Amplitude is large over continental
 // interiors and small over ocean (computeSeasonalAmplitude), so this automatically
 // carries the land-sea thermal contrast that powers monsoons. `warmNorth` picks the
 // season where the top hemisphere is in summer.
-function seasonalTemperature(annual: Float32Array, amplitude: Float32Array, equatorOffset: number, warmNorth: boolean): Float32Array {
-  const out = new Float32Array(annual.length)
-  for (let gy = 0; gy < RY; gy++) {
-    const north = shiftedYNorm(gy, RY, equatorOffset) < 0.5
+function seasonalTemperature(terrain: ClimateTerrain, annual: ArrayLike<number>, amplitude: ArrayLike<number>, equatorOffset: number, warmNorth: boolean): Float64Array {
+  const { cm } = terrain
+  const out = new Float64Array(cm.mesh.count)
+  for (let i = 0; i < out.length; i++) {
+    const north = shiftedNorm(cm.yNorm[i], equatorOffset) < 0.5
     const sign = north === warmNorth ? 0.5 : -0.5 // this hemisphere in summer → warmer
-    for (let gx = 0; gx < RX; gx++) {
-      const i = gy * RX + gx
-      // The ocean carries the OCEAN_AMPLITUDE sentinel, not a swing: read it
-      // as the near-nil swing it stands for (BUG_BOUNTY 2 — it used to enter
-      // as −1 and put a wrong-sign half-degree on every sea cell, which
-      // bent the monsoon's ∇T on every coast).
-      const swing = amplitude[i] === OCEAN_AMPLITUDE ? 0 : amplitude[i]
-      out[i] = annual[i] + sign * swing
-    }
+    // The ocean carries the OCEAN_AMPLITUDE sentinel, not a swing: read it
+    // as the near-nil swing it stands for (BUG_BOUNTY 2 — it used to enter
+    // as −1 and put a wrong-sign half-degree on every sea cell, which
+    // bent the monsoon's ∇T on every coast).
+    const swing = amplitude[i] === OCEAN_AMPLITUDE ? 0 : amplitude[i]
+    out[i] = annual[i] + sign * swing
   }
   return out
 }
 
 // Monsoon surface wind = base zonal wind + k·∇T(seasonal). ∇T points toward the warm
 // anomaly, so near a coast it points from cool ocean to hot summer land (onshore, wet)
-// and reverses in winter (offshore, dry). Interleaved [u, v] like computeWind.
-// `grid`: the climate grid.
+// and reverses in winter (offshore, dry). Per cell, in the cell's frame.
 //
-// The gradient is per LENGTH, over one equator cell each way (step 4d5):
-// east-west a row takes the difference `reach` of its own cells apart, as
-// many as span an equator cell (1 / rowScale, so cos φ on the sphere), and
-// divides by the length they span. Toward a pole a row's cells are a few
-// km wide, and the difference of two neighbours there would read a coast
-// the coarse raster resolves only by chance as a front 80 times as steep
-// — the polar filter of fork 5 of DEC-0035. North-south the grid steps
-// across a pole. On the torus the reach is 1 and the length 1: the
-// difference of the two neighbours over 2, as it was.
-function computeMonsoonWind(base: Float32Array, seasonalTemp: Float32Array, grid: DomainGrid): Float32Array {
-  const out = new Float32Array(base.length)
-  for (let gy = 0; gy < RY; gy++) {
-    const s = grid.rowScale(gy)
-    const reach = Math.min((RX >> 1) - 1, Math.max(1, Math.round(1 / s)))
-    const gradE = 1 / (reach * s)
-    for (let gx = 0; gx < RX; gx++) {
-      const i = gy * RX + gx
-      const dTdx = ((seasonalTemp[grid.index(gx + reach, gy)] - seasonalTemp[grid.index(gx - reach, gy)]) / 2) * gradE
-      const dTdy = (seasonalTemp[grid.index(gx, gy + 1)] - seasonalTemp[grid.index(gx, gy - 1)]) / 2
-      out[i * 2] = base[i * 2] + CLIMATE_TUNING.monsoonWindStrength * dTdx
-      out[i * 2 + 1] = base[i * 2 + 1] + CLIMATE_TUNING.monsoonWindStrength * dTdy
-    }
+// The gradient by least squares over a cell's neighbours in its tangent
+// plane (fields/fieldOperators.gradient, DEC-0036 phase 3), per metre, times
+// `climateGradientLengthM`: the difference over the length the former
+// raster's central difference spanned per cell. No polar filter: the
+// mesh's cells are as wide near a pole as at the equator.
+function computeMonsoonWind(terrain: ClimateTerrain, base: CellVectors, seasonalTemp: Float64Array): CellVectors {
+  const { mesh } = terrain.cm
+  const n = mesh.count
+  const ge = new Float64Array(n)
+  const gs = new Float64Array(n)
+  gradient(mesh, seasonalTemp, ge, gs)
+  const k = CLIMATE_TUNING.monsoonWindStrength * CLIMATE_TUNING.climateGradientLengthM
+  const out: CellVectors = { e: new Float64Array(n), s: new Float64Array(n) }
+  for (let i = 0; i < n; i++) {
+    out.e[i] = base.e[i] + k * ge[i]
+    out.s[i] = base.s[i] + k * gs[i]
   }
   return out
 }
 
+// Per cell of the climate's field mesh (DEC-0036 phase 3); the climate
+// raster's copies are weather.ts's transition rasters.
 export interface SeasonalPrecipitation {
   // Annual mean precip (mm/yr on land, OCEAN_PRECIP on ocean) — the mean of the two
   // seasons, so it stays comparable to the old single-field precipitation.
-  annual: Float32Array
+  annual: Float64Array
   // Monsoon / precipitation-seasonality index, SIGNED:
   //   (precipN − precipS) / (precipN + precipS + monsoonSeasonalityFloor).
   // Its MAGNITUDE is the seasonality — 0 = even year-round, →1 = strongly wet-dry
@@ -89,7 +81,7 @@ export interface SeasonalPrecipitation {
   // so a Mediterranean winter-rain climate was indistinguishable from a monsoon.
   // The floor in the denominator keeps |index| < 1 STRICTLY, which is what leaves
   // the OCEAN_PRECIP (−1) sentinel unreachable by a real value. OCEAN_PRECIP on ocean.
-  index: Float32Array
+  index: Float64Array
 }
 
 // The seasonality field's MAGNITUDE — how uneven the year is, with the ocean
@@ -112,29 +104,25 @@ export function seasonalityMagnitude(index: Float32Array): Float32Array {
 // ITCZ + monsoon-modulated wind) and combines them. Roughly doubles the (heavy)
 // precipitation cost — acceptable for the on-demand climate compute.
 export function computeSeasonalPrecipitation(
-  elevation: Float32Array,
-  annualTemp: Float32Array,
-  amplitude: Float32Array,
-  baseWind: Float32Array,
-  // What the elevation raster covers, one cell per unit.
-  domain: Domain,
+  terrain: ClimateTerrain,
+  annualTemp: ArrayLike<number>,
+  amplitude: ArrayLike<number>,
+  baseWind: CellVectors,
   humidity: number,
   equatorOffset: number,
-  dryLand?: Uint8Array,
 ): SeasonalPrecipitation {
-  const tempN = seasonalTemperature(annualTemp, amplitude, equatorOffset, true) // top hemisphere summer
-  const tempS = seasonalTemperature(annualTemp, amplitude, equatorOffset, false)
-  const grid = domain.grid(RX, RY)
-  const windN = computeMonsoonWind(baseWind, tempN, grid)
-  const windS = computeMonsoonWind(baseWind, tempS, grid)
+  const tempN = seasonalTemperature(terrain, annualTemp, amplitude, equatorOffset, true) // top hemisphere summer
+  const tempS = seasonalTemperature(terrain, annualTemp, amplitude, equatorOffset, false)
+  const windN = computeMonsoonWind(terrain, baseWind, tempN)
+  const windS = computeMonsoonWind(terrain, baseWind, tempS)
   // ITCZ migrates toward the summer hemisphere. +equatorOffset moves the equator toward
   // the bottom, so a top-hemisphere summer (belt shifts up) uses a SMALLER offset.
-  const precipN = computePrecipitation(elevation, tempN, windN, domain, humidity, equatorOffset, dryLand, CLIMATE_TUNING.monsoonItczSeasonalShift)
-  const precipS = computePrecipitation(elevation, tempS, windS, domain, humidity, equatorOffset, dryLand, -CLIMATE_TUNING.monsoonItczSeasonalShift)
+  const precipN = computePrecipitation(terrain, tempN, windN, humidity, equatorOffset, CLIMATE_TUNING.monsoonItczSeasonalShift)
+  const precipS = computePrecipitation(terrain, tempS, windS, humidity, equatorOffset, -CLIMATE_TUNING.monsoonItczSeasonalShift)
 
   const n = precipN.length
-  const annual = new Float32Array(n)
-  const index = new Float32Array(n)
+  const annual = new Float64Array(n)
+  const index = new Float64Array(n)
   for (let i = 0; i < n; i++) {
     if (precipN[i] === OCEAN_PRECIP || precipS[i] === OCEAN_PRECIP) {
       annual[i] = OCEAN_PRECIP

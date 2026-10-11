@@ -17,6 +17,7 @@ import { foldFactorAt } from '../tectonics/folds'
 import { buildFeatureBuckets } from '../elevation/elevationField'
 import { oceanAgeAt } from '../tectonics/oceanAge'
 import { computeWeather, defaultWeatherParams, type Weather, type WeatherParams } from '../climate/weather'
+import { climateTerrain } from '../climate/climateMesh'
 import { computeBiomes } from '../climate/biomes'
 import { coverField, COVER_TUNING } from '../surface/cover'
 import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
@@ -482,7 +483,9 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const paramsKey = JSON.stringify(weatherParams)
   const cached = terrain.weather
   const climateDue = climateDueAt(sim.epoch, cached, paramsKey, climateEvery)
-  const weather = climateDue || !cached ? computeWeather(coarseZ, domain.scaledTo(CLIMATE_RES_X, CLIMATE_RES_Y), weatherParams) : cached.result
+  // On the climate's field mesh (DEC-0036 phase 3): the coarse raster read
+  // at its cells' centres; the readers below take its transition rasters.
+  const weather = climateDue || !cached ? computeWeather(climateTerrain(domain, coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y), weatherParams) : cached.result
   if (climateDue) terrain.weather = { epoch: sim.epoch, params: paramsKey, result: weather }
   const precipitation = weather.seasonal.annual
   const climateCellM = (width / CLIMATE_RES_X) * unitM

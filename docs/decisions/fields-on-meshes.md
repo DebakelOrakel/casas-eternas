@@ -193,6 +193,139 @@ done before or beside it.
 
 ## Status
 
+2026-10-11: phase 3 BUILT — the static climate on the field mesh, both
+shapes, one path (`climate/climateMesh.ts`; temperature, wind,
+seasonality, monsoon, precipitation, pressure). The mesh is the ocean
+age's (W / 256, shared through `fields/fieldMesh.sharedFieldMesh`).
+
+**The grid first.** The sphere's field mesh is the geodesic lattice
+relaxed toward a centroidal tessellation (`mesh/lattice.ts`
+centroidalGeodesicLattice: Lloyd's iteration on the globe, 300 steps
+over-relaxed by 1.8, fixed, only exact operations); the terrain mesh
+keeps the plain lattice. The mantle and the ocean age take it too (one
+construction). Measured (`harness:fields`, plain → relaxed):
+
+| | plain geodesic | centroidal |
+|---|---|---|
+| cell areas, 156 / 78 km | × 1.99 / × 2.04 | × 1.38 / × 1.52 (pentagons 0.69 of the mean, hexagons 0.85–1.04) |
+| min wall at 78 km | 23.3 km | 29.4 km |
+| gradient, L2 order / L∞ order | 1.55–1.94 / 0.79–1.36 | 1.89–2.08 / 1.05–1.32 |
+| Poisson / Helmholtz error at 78 km | 4.72e-4 / 2.58e-4 (226 / 165 its) | 4.48e-4 / 2.45e-4 (211 / 155 its) |
+| diffusion decay, l = 4, at 78 km | 3.90e-4 | 2.61e-4 |
+| ∇² pointwise, L2 order (l = 2..4) | 1.66–1.94 | 1.20–1.89 |
+| ∇² pointwise, L∞ | first order (0.74–1.04) | does not converge: 0.9–1.2 % at every spacing, at the hexagons next to a pentagon |
+| build at 78 km / 156 km | 49 / 34 ms | 706 / 196 ms |
+
+So the relaxation evens the areas and improves everything a stage
+consumes (the gradient, the solves, the diffusion, the transport, 1–6 %
+more accurate), but NOT the L∞ order hoped for: on a centroidal grid the
+finite-volume Laplacian's truncation error next to the pentagons is of
+order 1 (a known property, Peixoto 2016, J. Comput. Phys. 310); its
+solutions still converge at second order (supraconvergence). A
+Heikes–Randall "tweak" (generators moved until each link bisects its
+wall) would give the second order; a quick centring heuristic was tried
+and did not get there (L∞ at 78 km 1.5e-3, like the plain grid). The
+harness's bands follow: ∇² L2 order > 1, L∞ bounded (< 2e-2, not
+growing), areas within × 1.6, the gradient's L2 order > 1.8 and L∞ > 1.
+
+**The method.** Each stage's arithmetic on the mesh, in metres; every
+constant stated in cells is the length it meant on the torus (the
+former 62.4 km climate cell), so the torus's climate changes by the
+method only:
+
+| Was | Now |
+|---|---|
+| tempPlateauRadiusCells 3 (three box passes) | tempPlateauSigmaM 216 000 (Gaussian σ = √(3·4) cells) |
+| pressureSmoothCells 6 | pressureSmoothSigmaM 404 000 (σ = √(6·7) cells) |
+| seasonContinentalityScale 45 cells | seasonContinentalityScaleM 2 808 000 |
+| precipAdvectStep 2 cells per wind unit | precipAdvectStepM 124 800 |
+| precipOrogLeverPx 20 world px | precipOrogLeverM 156 000 |
+| the orography's half cell (implicit) | precipOrogHalfSpanM 31 200 |
+| the monsoon's and the pressure's ∇ per cell, the blocking's next cell | climateGradientLengthM 62 400 |
+
+The smoothing is explicit diffusion to κt = σ² / 2 in convex steps
+(fieldOperators.smoothGaussian); the gradients least squares; the
+moisture's departures along the great circle, linear in the triangle;
+the continentality a Dijkstra over the cells' links (a path within 15 %
+of the straight line, the raster's 4-neighbour steps within 41 %); the
+pressure's row mean a zonal mean over bands as tall as the torus
+lattice's rows (on the torus a band IS a row). Dead and deleted: the
+polar filter of the monsoon's and the pressure's gradients, the pole-row
+averaging of the seasonality, the box blur's cos φ rows (the refinement
+keeps its own copy, phase 5). The terrain is read at each cell's centre
+(the texel under it: the lapse, the land test, the plateau, the coast)
+and area-weighted only for the relief the pressure's wind meets.
+
+**Transition adapters** (`// DEC-0036 transition: removed in phase N`):
+weather.ts — the wind and the temperature rasterised for the currents
+and applyOceanSST, the SST change brought back at the cells' centres
+(phase 4); the climate raster of every field for the readers outside
+(phase 7: the ice, the coast, the ledger, the lakes, the biomes, the
+ecology, the save's layers, the overlays and readouts; land fields keep
+their sentinel, an island under a cell takes its latitude's land mean,
+climateMesh.climateLandRaster); refinement.ts — its pressure, its wind,
+its base temperature and its rain on the mesh, its raster fields brought
+there at the centres, and its box blur (phase 5); map/vectorMarks.ts and
+the screen — the refinement's winds and the currents read as rasters
+(phase 5). The static wind's marks read the mesh through its sampler in
+each point's own frame (worst direction error 0.0016 against 0.014 for
+the raster, scripts/symbolPlacement.mjs); the screen builds the mesh from
+the world's shape (0.7 s once on the sphere).
+
+**Save**: the save holds no static climate state — the climate is
+recomputed on load, the epochs' weather is not saved. Its quantised
+climate layers (temperature, precipitation, seasonalAmplitude,
+monsoonIndex, landMask) stay rasters, written from the transition
+rasters, and move in the save's own step. formatVersion 8 unchanged.
+
+**Measured** (2048 × 1024, seed `bench`, 100 Archean + 12 coupled
+epochs at HISTORY_DEFAULTS, Node, one thread). The relaxed mantle mesh
+makes the sphere a different world; the torus's is the same world:
+
+| | torus HEAD | torus mesh | sphere HEAD | sphere mesh |
+|---|---|---|---|---|
+| climate per climate epoch (4 of 12) | 375 ms | 404 ms | 398 ms | 398 ms |
+| climateRun on the 2048 raster | 351 ms | 367 ms | 411 ms | 402 ms |
+| whole coupled epoch | 1216 ms | 1240 ms | 2308 ms | 1778 ms (87 k nodes, HEAD 152 k) |
+
+Of a climate run on the sphere: the currents' raster 128 ms, the two
+seasons' rain 169, temperature 11, wind 3, the rasters out ~30; the
+climate mesh's first build 0.8 s. Zonal means over land, torus (same
+world), HEAD → mesh: temperature 25.8 → 25.7, 22.9 → 22.9, 13.8 → 13.8,
+2.8 → 2.8, −5.8 → −6.0, −18.2 → −18.3 °C; rain 1518 → 1539, 712 → 710,
+495 → 501, 886 → 872, 256 → 268, 38 → 38 mm (0–15° … 75–90°). The
+sphere's (different worlds, land 7–27 % → 4–15 % by band): temperature
+25.0 → 25.1, 22.4 → 23.3, 13.0 → 13.7, 4.6 → 4.9, −5.6 → −5.6, −14.2 →
+−11.7 °C; rain 1447 → 1520, 654 → 915, 462 → 425, 931 → 878, 278 → 322,
+53 → 61 mm. Two runs give the same bytes; save → load → continue is
+bit-identical (pipeline harness).
+
+**Golden**: 0 hard failures, 121 metrics drifted, 120 of 138 stages
+moved (the climate's and everything after it; the plates, rafts,
+mantle and land fraction unchanged — the torus golden worlds keep their
+geometry). Main shifts: ice volume +4 / −7 / −7 %, lake cells −12 / −14
+/ +18 %, river reaches −2 / +3 / +24 %, highest point 1910 → 2146, 3103 →
+3025 m (zulu unchanged), zulu's hottest cell 45.2 → 36.9 °C, biome shares
+within a few tenths of a point. No seed changed. `golden.json`
+re-recorded and the byte guard re-armed: 0 / 0 / 0, 46 stages
+byte-identical × 3.
+
+**The sphere's pole checks** (pipeline harness): the fields made on the
+mesh have no pole row; rasterised, a pole row is a ring 0.35° round the
+pole, so those are held smooth round it (the largest step between
+neighbouring pixels under a quarter of the ring's range; a star gives
+about 1) instead of one value; the raster's own fields keep the old
+check. The sphere climate test through the runtime for
+the seeds c2–c6 (each run's world varies with the Archean's timing):
+the pole checks — scalars, temperature, winds and currents — pass on all
+five (the climate's own temperature round a pole steps at most 0.02 °C
+from pixel to pixel; the refined year, its raster warmth included, at
+most 0.37 °C; on HEAD c5's pole row spread 1.14 °C). What still fails
+is not the static climate's: c2 and c6 have land on both poles, so the
+polar seas' current check reads no sea (NaN, phase 4's subject); c5 has
+19 % of its land under lakes (HEAD c6 the same, 19 %); c6 one river
+reach rises over a metre (found, not fixed). c3 and c4 pass whole.
+
 2026-10-11: phase 2 BUILT — the ocean age on the field mesh, both shapes,
 one path (`tectonics/oceanAge.ts`). Spacing = the domain's width / 256
 (the old raster's equator cell): 37 888 hexagons at 62.4 km on the torus

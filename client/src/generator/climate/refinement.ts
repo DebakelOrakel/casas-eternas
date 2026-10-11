@@ -1,8 +1,8 @@
 import { CLIMATE_RES_X, CLIMATE_RES_Y, inTopSummerHalf, isLandAtCell, latitudeAt } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { koppenFromMonths, reduceTemperatureToSeaLevel } from './biomes'
-import { blur, computePressureWind, REFINED_MONTHS } from './pressure'
-import { computeWind } from './wind'
+import { computePressureWind, REFINED_MONTHS } from './pressure'
+import { computeWind, type CellVectors } from './wind'
 import { seasonalCycle } from './energyBalance'
 import { applyPhenomena } from './phenomena'
 import { computeReliability, type Reliability } from './reliability'
@@ -15,7 +15,10 @@ import { computeTemperature } from './temperature'
 import type { WeatherParams } from './weather'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
 import { downsampleBox } from '../core/field'
-import type { Domain } from '../core/domain'
+import type { Domain, DomainGrid } from '../core/domain'
+import { climateLandRaster, climateRaster, climateTerrain, climateVectorRaster, rasterLand } from './climateMesh'
+import { fieldFromRasterAtCentres } from '../fields/fieldMesh'
+import { smoothGaussian } from '../fields/fieldOperators'
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import { detCos, detHypot, detSin } from '../core/detMath'
 
@@ -78,6 +81,19 @@ export function refineClimate(
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
     for (let gx = 0; gx < CLIMATE_RES_X; gx++) land[gy * CLIMATE_RES_X + gx] = isLandAtCell(elevation, undefined, gx, gy, width, height) ? 1 : 0
   }
+  // DEC-0036 transition: removed in phase 5. The pressure, its wind, the
+  // base temperature and the rain run on the climate's field mesh
+  // (climateMesh.ts); the rest of the refinement stays on the raster. The
+  // raster's fields go onto the mesh at the cells' centres
+  // (fieldFromRasterAtCentres), the mesh's come back rasterised.
+  const terrain = climateTerrain(domain, elevation, width, height)
+  const { cm } = terrain
+  const toMesh = (raster: Float32Array): Float64Array => fieldFromRasterAtCentres(cm.mesh, raster, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const landPixels = rasterLand(terrain, CLIMATE_RES_X, CLIMATE_RES_Y)
+  // The month's air reduced to sea level, on the mesh.
+  const seaLevelAir = (air: Float32Array): Float64Array => toMesh(reduceTemperatureToSeaLevel(air, elevation, width, height))
+  // Each month's wind on the mesh, for its rain.
+  const meshWinds: CellVectors[] = []
 
   // B: the year's temperature cycle around the annual mean (the banded wind
   // carries it: the pressure wind needs these temperatures first).
@@ -98,11 +114,12 @@ export function refineClimate(
   // sits there.
   const plateauKm = downsampleBox(elevation, width, height, CLIMATE_RES_X, CLIMATE_RES_Y)
   for (let i = 0; i < n; i++) plateauKm[i] = Math.max(0, plateauKm[i] * ELEVATION_METERS / 1000 - CLIMATE_TUNING.pressurePlateauFromKm)
-  const plateauHeat = (month: number): Float32Array => {
+  // On the mesh, smoothed there as the pressure's thermal part is.
+  const plateauHeat = (month: number): Float64Array => {
     const hpa = new Float32Array(n)
     for (let i = 0; i < n; i++) hpa[i] = -CLIMATE_TUNING.pressurePlateauHpaPerKmC * plateauKm[i] * cycle[month * n + i]
-    blur(hpa, CLIMATE_TUNING.pressureSmoothCells, grid)
-    return hpa
+    const onMesh = toMesh(hpa)
+    return smoothGaussian(cm.mesh, onMesh, CLIMATE_TUNING.pressureSmoothSigmaM, onMesh)
   }
 
   // A: pressure and wind for each month, from the month's air reduced to sea
@@ -117,10 +134,10 @@ export function refineClimate(
     // (climateField.beltYNorm), the sun's latitude lagged by the sea.
     const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * detCos(2 * Math.PI * ((month + 0.5) / REFINED_MONTHS - CLIMATE_TUNING.refineItczPeakYear))
     belts[month] = belt
-    const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belt, domain.kind)
-    const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, domain, bandWind, params.equatorOffset, planet.rotationHours, belt, plateauHeat(month))
-    pressure.set(result.pressure, month * n)
-    wind.set(result.wind, month * n * 2)
+    const bandWind = computeWind(cm, params.equatorOffset, planet.rotationHours, belt)
+    const result = computePressureWind(terrain, seaLevelAir(air), bandWind, params.equatorOffset, planet.rotationHours, belt, plateauHeat(month))
+    pressure.set(climateRaster(cm, result.pressure, CLIMATE_RES_X, CLIMATE_RES_Y), month * n)
+    wind.set(climateVectorRaster(cm, result.wind.e, result.wind.s, CLIMATE_RES_X, CLIMATE_RES_Y), month * n * 2)
     onProgress?.(0.15 + 0.35 * (month + 1) / REFINED_MONTHS)
   }
 
@@ -135,7 +152,7 @@ export function refineClimate(
   // The sea-surface anomaly, from the latitudinal base (not from `temperature`,
   // which already carries the history's currents): here on the wind's
   // currents, below on the full ones.
-  const base = computeTemperature(elevation, domain, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, undefined, planet)
+  const base = climateRaster(cm, computeTemperature(terrain, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, planet), CLIMATE_RES_X, CLIMATE_RES_Y)
   const windAnomaly = applyOceanSST(base.slice(), windCurrents, elevation, domain, annualWind)
 
   // Upwelling cools the sea where it comes up. The cold eastern coasts are
@@ -195,14 +212,16 @@ export function refineClimate(
   blur(oceanHigh, CLIMATE_TUNING.oceanHighSmoothCells, grid)
   blur(seaShare, CLIMATE_TUNING.oceanHighSmoothCells, grid)
   for (let i = 0; i < n; i++) oceanHigh[i] = seaShare[i] > CLIMATE_TUNING.oceanHighMinSeaShare ? oceanHigh[i] / seaShare[i] : 0
+  const oceanHighMesh = toMesh(oceanHigh)
   for (let month = 0; month < REFINED_MONTHS; month++) {
     const air = monthly.subarray(month * n, (month + 1) * n)
-    const bandWind = computeWind(params.equatorOffset, planet.rotationHours, belts[month], domain.kind)
+    const bandWind = computeWind(cm, params.equatorOffset, planet.rotationHours, belts[month])
     const extra = plateauHeat(month)
-    for (let i = 0; i < n; i++) extra[i] += oceanHigh[i]
-    const result = computePressureWind(reduceTemperatureToSeaLevel(air, elevation, width, height), land, elevation, domain, bandWind, params.equatorOffset, planet.rotationHours, belts[month], extra)
-    pressure.set(result.pressure, month * n)
-    wind.set(result.wind, month * n * 2)
+    for (let i = 0; i < extra.length; i++) extra[i] += oceanHighMesh[i]
+    const result = computePressureWind(terrain, seaLevelAir(air), bandWind, params.equatorOffset, planet.rotationHours, belts[month], extra)
+    pressure.set(climateRaster(cm, result.pressure, CLIMATE_RES_X, CLIMATE_RES_Y), month * n)
+    wind.set(climateVectorRaster(cm, result.wind.e, result.wind.s, CLIMATE_RES_X, CLIMATE_RES_Y), month * n * 2)
+    meshWinds[month] = result.wind
   }
 
   // B's second half: the month's rain, from that wind and that air, with the
@@ -210,13 +229,17 @@ export function refineClimate(
   // surface: the base, the wind's currents, the upwelling and the month's
   // cycle (the overturning's warmth, which needs the rain for the salt, is
   // left out), and its anomaly goes with the air (computePrecipitation).
+  // (The sea's temperature on every pixel, the land's too, which the rain
+  // never reads there: the mesh's sea cells next to a coast take a mix of
+  // the pixels about them, and a land pixel's 0 would cool them.)
   const precipitation = new Float32Array(REFINED_MONTHS * n)
   const seaTemperature = new Float32Array(n)
+  const seaAnomalyMesh = toMesh(seaAnomaly)
   for (let month = 0; month < REFINED_MONTHS; month++) {
-    for (let i = 0; i < n; i++) if (!land[i]) seaTemperature[i] = base[i] + windAnomaly[i] - upwellingCooling[i] + cycle[month * n + i]
+    for (let i = 0; i < n; i++) seaTemperature[i] = base[i] + windAnomaly[i] - upwellingCooling[i] + cycle[month * n + i]
     const air = monthly.subarray(month * n, (month + 1) * n)
-    const monthWind = wind.subarray(month * n * 2, (month + 1) * n * 2)
-    precipitation.set(computePrecipitation(elevation, air, monthWind, domain, params.humidity, params.equatorOffset, undefined, belts[month], { seaTemperature, seaAnomaly, highHpa: oceanHigh }), month * n)
+    const rain = computePrecipitation(terrain, toMesh(air), meshWinds[month], params.humidity, params.equatorOffset, belts[month], { seaTemperature: toMesh(seaTemperature), seaAnomaly: seaAnomalyMesh, highHpa: oceanHighMesh })
+    precipitation.set(climateLandRaster(terrain, rain, OCEAN_PRECIP, CLIMATE_RES_X, CLIMATE_RES_Y, landPixels), month * n)
     onProgress?.(0.5 + 0.4 * (month + 1) / REFINED_MONTHS)
   }
 
@@ -263,6 +286,50 @@ export function refineClimate(
   // 8: the storms of those months.
   const storms = computeStorms(monthly, precipitation, REFINED_MONTHS, wind, land, elevation, domain, params.equatorOffset)
   return { ...refined, reliability, storms }
+}
+
+// DEC-0036 transition: removed in phase 5. A wrapped box blur on the
+// climate raster (`grid`), in place through a scratch buffer; three passes
+// approach a Gaussian of σ ≈ radius — the refinement's ocean highs; the
+// static climate smooths on its field mesh (fields/fieldOperators.
+// smoothGaussian). Moved here from pressure.ts in phase 3.
+//
+// `radius` is in equator cells, a length. A row whose cells are narrower
+// (the sphere toward a pole, DomainGrid.rowScale = cos φ) takes as many of
+// its own cells as cover that length east-west, up to its whole width but
+// one: a pole row is a small circle the blur's length spans many times.
+// The north-south pass steps across a pole as the grid does, and the pole
+// rows come out one value each (fork 5 of DEC-0035). On the torus every
+// row's radius is `radius` and the pole rows are none: the arithmetic is
+// the torus's, as it was.
+export function blur(field: Float32Array, radius: number, grid: DomainGrid): void {
+  const RX = CLIMATE_RES_X
+  const RY = CLIMATE_RES_Y
+  const tmp = new Float32Array(field.length)
+  const width = 2 * radius + 1
+  const rowRadius = new Int32Array(RY)
+  for (let gy = 0; gy < RY; gy++) rowRadius[gy] = Math.min((RX - 1) >> 1, Math.round(radius / grid.rowScale(gy)))
+  for (let pass = 0; pass < 3; pass++) {
+    for (let gy = 0; gy < RY; gy++) {
+      const r = rowRadius[gy]
+      const rowWidth = 2 * r + 1
+      let sum = 0
+      for (let dx = -r; dx <= r; dx++) sum += field[grid.index(dx, gy)]
+      for (let gx = 0; gx < RX; gx++) {
+        tmp[gy * RX + gx] = sum / rowWidth
+        sum += field[grid.index(gx + r + 1, gy)] - field[grid.index(gx - r, gy)]
+      }
+    }
+    for (let gx = 0; gx < RX; gx++) {
+      let sum = 0
+      for (let dy = -radius; dy <= radius; dy++) sum += tmp[grid.index(gx, dy)]
+      for (let gy = 0; gy < RY; gy++) {
+        field[gy * RX + gx] = sum / width
+        sum += tmp[grid.index(gx, gy + radius + 1)] - tmp[grid.index(gx, gy - radius)]
+      }
+    }
+  }
+  grid.averagePoleRows(field)
 }
 
 // The annual fields of a refinement, in the forms the history's climate

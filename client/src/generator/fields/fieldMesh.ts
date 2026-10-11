@@ -2,7 +2,7 @@ import type { Domain } from '../core/domain'
 import { globeFrame } from '../core/domain'
 import { detAtan2 } from '../core/detMath'
 import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
-import { bootstrapLattice } from '../mesh/lattice'
+import { centroidalGeodesicLattice, hexLattice } from '../mesh/lattice'
 import { hintGrid } from '../mesh/meshSampler'
 
 // THE FIELD MESH (DEC-0036, docs/decisions/fields-on-meshes.md, phase 0):
@@ -10,8 +10,10 @@ import { hintGrid } from '../mesh/meshSampler'
 // global fields (mantle, ocean age, climate, flexure). The values sit on
 // the vertices of the bootstrap lattice's triangulation, and each vertex
 // owns its Voronoi cell: on the sphere the Goldberg dual of the subdivided
-// icosahedron (mesh/lattice.ts geodesicLattice: 12 pentagons, the rest
-// hexagons), on the torus the hexagonal lattice (hexLattice). The
+// icosahedron relaxed into a centroidal tessellation (mesh/lattice.ts
+// centroidalGeodesicLattice, since phase 3: 12 pentagons, the rest
+// hexagons, the areas within × 1.5), on the torus the hexagonal lattice
+// (hexLattice). The
 // triangulation stays for locate and barycentric interpolation; the cells
 // carry the finite volumes (fields/fieldOperators.ts).
 //
@@ -34,7 +36,8 @@ import { hintGrid } from '../mesh/meshSampler'
 // chart's row direction), the frame `delta`, `advance` and `transport`
 // read and write in — so a vector goes into Domain.advance without a sign.
 // North is −south. On the sphere the frame is noise.frame's at the cell's
-// chart point (no lattice node lies at a pole: geodesicLattice's tilt).
+// chart point (no lattice node lies at a pole: geodesicLattice's tilt,
+// which the relaxation moves by less than a spacing).
 //
 // Neighbour order is fixed: counter-clockwise (chart sense) around the
 // cell, starting at the neighbour with the lowest id. The construction is
@@ -82,7 +85,7 @@ export interface FieldMesh {
 
 export function createFieldMesh(domain: Domain, spacingM: number): FieldMesh {
   const unitM = domain.metresPerUnit
-  const tri = bootstrapLattice(domain, spacingM / unitM)
+  const tri = domain.kind === 'sphere' ? centroidalGeodesicLattice(domain, spacingM / unitM) : hexLattice(domain, spacingM / unitM)
   const count = tri.vertexSlots
   if (tri.aliveVertices !== count) throw new Error('createFieldMesh: the lattice has dead vertex slots')
   const globe = tri.globe
@@ -423,6 +426,29 @@ export function createFieldSampler(fm: FieldMesh): FieldSampler {
   }
 }
 
+// One field mesh per domain and spacing, with its sampler, built once and
+// shared by the stages that ask for the same one (the ocean age and the
+// climate: the domain's width / 256). The sphere's relaxation makes a build
+// dear (0.7 s at 78 km), so a stage never builds its own copy of a mesh
+// another holds.
+export interface SharedFieldMesh {
+  readonly mesh: FieldMesh
+  readonly sampler: FieldSampler
+}
+
+const shared = new Map<string, SharedFieldMesh>()
+
+export function sharedFieldMesh(domain: Domain, spacingM: number): SharedFieldMesh {
+  const key = `${domain.kind}:${domain.width}:${domain.height}:${domain.metresPerUnit}:${spacingM}`
+  let made = shared.get(key)
+  if (!made) {
+    const mesh = createFieldMesh(domain, spacingM)
+    made = { mesh, sampler: createFieldSampler(mesh) }
+    shared.set(key, made)
+  }
+  return made
+}
+
 // ------------------------------------------------------- the save's form
 
 // A field as a save holds it (DEC-0036 fork 5): the mesh's own values,
@@ -465,6 +491,31 @@ export function rasteriseField(fm: FieldMesh, field: ArrayLike<number>, resX: nu
       if (px === 0) rowStart = t
       tri.barycentric(t, x, y, bary)
       result[py * resX + px] = bary[0] * field[tri.tris[3 * t]] + bary[1] * field[tri.tris[3 * t + 1]] + bary[2] * field[tri.tris[3 * t + 2]]
+    }
+  }
+  return result
+}
+
+// A vector field (east, south per cell, each in its own frame) on a
+// resX × resY chart raster, cell centres, interleaved [east, south] — each
+// pixel's vector in the PIXEL's own frame (the raster convention of the
+// climate grid, Domain.delta's): the corners' vectors mixed in 3D on the
+// sphere (FieldSampler.sampleVector), so near a pole, where the frames turn
+// round once, the mix is a vector and not a blend of numbers in different
+// frames. On the torus the plain interpolation.
+export function rasteriseVectorField(sampler: FieldSampler, fe: ArrayLike<number>, fs: ArrayLike<number>, resX: number, resY: number, out?: Float32Array): Float32Array {
+  const result = out ?? new Float32Array(resX * resY * 2)
+  const { domain } = sampler.mesh
+  const sx = domain.width / resX
+  const sy = domain.height / resY
+  const v = { x: 0, y: 0 }
+  for (let py = 0; py < resY; py++) {
+    const y = (py + 0.5) * sy
+    for (let px = 0; px < resX; px++) {
+      sampler.sampleVector(fe, fs, (px + 0.5) * sx, y, -1, v)
+      const k = (py * resX + px) * 2
+      result[k] = v.x
+      result[k + 1] = v.y
     }
   }
   return result

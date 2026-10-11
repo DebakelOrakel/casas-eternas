@@ -127,8 +127,8 @@ const M = {
   course: await L('/src/generator/surface/riverCourse.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
   climateField: await L('/src/generator/climate/climateField.ts'),
-  temperature: await L('/src/generator/climate/temperature.ts'),
-  wind: await L('/src/generator/climate/wind.ts'),
+  weather: await L('/src/generator/climate/weather.ts'),
+  climateMesh: await L('/src/generator/climate/climateMesh.ts'),
   currents: await L('/src/generator/climate/oceanCurrents.ts'),
   precip: await L('/src/generator/climate/precipitation.ts'),
   seasonality: await L('/src/generator/climate/seasonality.ts'),
@@ -258,12 +258,16 @@ async function buildWorld(seed) {
   // epochs' forcing evaluates the chain per epoch, on the mesh). The
   // post-erosion climate truth is the terminal-basin refinement below,
   // which runs on the same field exactly as the worker's hydrology handler.
-  let temperature = M.temperature.computeTemperature(el, sim.domain)
-  const wind = M.wind.computeWind()
-  let currents = M.currents.computeOceanCurrents(el, wind, sim.domain)
-  M.currents.applyOceanSST(temperature, currents, el, sim.domain, wind)
-  let seasonal = M.seasonality.computeSeasonalAmplitude(el, sim.domain)
-  let seasonalPrecip = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, sim.domain, 1, 0)
+  // On the climate's field mesh since DEC-0036 phase 3 (climate/weather.
+  // computeWeather, as the worker's computeClimateChain); everything below
+  // reads its transition rasters.
+  const WEATHER = { temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
+  const w1 = M.weather.computeWeather(M.climateMesh.climateTerrain(sim.domain, el, W, H), WEATHER)
+  let temperature = w1.temperature
+  const wind = w1.wind
+  let currents = w1.currents
+  let seasonal = w1.seasonalAmplitude
+  let seasonalPrecip = w1.seasonal
   let precipitation = seasonalPrecip.annual
   let biomes = M.biomes.computeBiomes(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
   // The worker computes BOTH, and only the coarse one was guarded here. The
@@ -297,11 +301,11 @@ async function buildWorld(seed) {
     return { ...M.meshHydro.waterFieldsFromMesh(terrain.mesh, meshLakes.body, meshLakes.bodies, el, W, H), bodies: meshLakes.bodies }
   }
   let lakes = lakesOnMesh(temperature, precipitation)
-  const t2 = M.temperature.computeTemperature(el, sim.domain, 0, 1, 0, lakes.dryBasin)
-  const c2 = M.currents.computeOceanCurrents(el, wind, sim.domain, lakes.dryBasin)
-  M.currents.applyOceanSST(t2, c2, el, sim.domain, wind, lakes.dryBasin)
-  const s2 = M.seasonality.computeSeasonalAmplitude(el, sim.domain, 0, lakes.dryBasin)
-  const sp2 = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, sim.domain, 1, 0, lakes.dryBasin)
+  const w2 = M.weather.computeWeather(M.climateMesh.climateTerrain(sim.domain, el, W, H, lakes.dryBasin), WEATHER)
+  const t2 = w2.temperature
+  const c2 = w2.currents
+  const s2 = w2.seasonalAmplitude
+  const sp2 = w2.seasonal
   precipitation = sp2.annual
   const biomes2 = M.biomes.computeBiomes(t2, precipitation, s2, sp2.index, el, W, H, lakes.dryBasin)
   const biomesFine2 = M.biomes.computeBiomesFine(t2, precipitation, s2, sp2.index, el, sim.domain, lakes.dryBasin)

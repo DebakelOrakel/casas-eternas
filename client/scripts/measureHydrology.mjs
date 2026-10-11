@@ -33,11 +33,8 @@ const M = {
   erosionPassV2: await L('/src/generator/surface/erosionPassV2.ts'),
   routing: await L('/src/generator/surface/flowRouting.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
-  temperature: await L('/src/generator/climate/temperature.ts'),
-  wind: await L('/src/generator/climate/wind.ts'),
-  currents: await L('/src/generator/climate/oceanCurrents.ts'),
-  seasonality: await L('/src/generator/climate/seasonality.ts'),
-  monsoon: await L('/src/generator/climate/monsoon.ts'),
+  weather: await L('/src/generator/climate/weather.ts'),
+  climateMesh: await L('/src/generator/climate/climateMesh.ts'),
   climateField: await L('/src/generator/climate/climateField.ts'),
   precip: await L('/src/generator/climate/precipitation.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
@@ -144,21 +141,18 @@ async function measure(name, controls) {
   log(`erosion solved in ${((Date.now() - t0) / 1000).toFixed(0)}s`)
 
   // Climate v1 on raw (as the worker does), then the refinement on eroded.
-  let temperature = M.temperature.computeTemperature(raw, sim.domain)
-  const wind = M.wind.computeWind()
-  let currents = M.currents.computeOceanCurrents(raw, wind, sim.domain)
-  M.currents.applyOceanSST(temperature, currents, raw, sim.domain, wind)
-  let seasonal = M.seasonality.computeSeasonalAmplitude(raw, sim.domain)
-  let precipitation = M.monsoon.computeSeasonalPrecipitation(raw, temperature, seasonal, wind, sim.domain, 1, 0).annual
+  // The static climate on its field mesh (DEC-0036 phase 3), its rasters.
+  const weatherOf = (z, dry) => M.weather.computeWeather(M.climateMesh.climateTerrain(sim.domain, z, sim.domain.width, sim.domain.height, dry), M.weather.defaultWeatherParams())
+  const w1 = weatherOf(raw)
+  let temperature = w1.temperature
+  let precipitation = w1.seasonal.annual
 
   const routing = await M.routing.fillDepressionsAndRouteFlow(el, sim.domain, 0)
   let discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   let lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, precipitation, CRX, CRY)
-  const t2 = M.temperature.computeTemperature(el, sim.domain, 0, 1, 0, lakes.dryBasin)
-  const c2 = M.currents.computeOceanCurrents(el, wind, sim.domain, lakes.dryBasin)
-  M.currents.applyOceanSST(t2, c2, el, sim.domain, wind, lakes.dryBasin)
-  const s2 = M.seasonality.computeSeasonalAmplitude(el, sim.domain, 0, lakes.dryBasin)
-  precipitation = M.monsoon.computeSeasonalPrecipitation(el, t2, s2, wind, sim.domain, 1, 0, lakes.dryBasin).annual
+  const w2 = weatherOf(el, lakes.dryBasin)
+  const t2 = w2.temperature
+  precipitation = w2.seasonal.annual
   discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
   const maxDis = M.hydro.maxDischargeOverLand(discharge, el)
   lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, precipitation, CRX, CRY)

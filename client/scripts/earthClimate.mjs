@@ -43,6 +43,7 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const L = (p) => server.ssrLoadModule(p)
 const M = {
   weather: await L('/src/generator/climate/weather.ts'),
+  climateMesh: await L('/src/generator/climate/climateMesh.ts'),
   domain: await L('/src/generator/core/domain.ts'),
   refinement: await L('/src/generator/climate/refinement.ts'),
   biomes: await L('/src/generator/climate/biomes.ts'),
@@ -119,7 +120,7 @@ for (let y = 0; y < H; y++) {
 
 const params = M.weather.defaultWeatherParams()
 const domain = M.domain.torusDomain(W, H)
-const cheap = M.weather.computeWeather(elevation, domain, params)
+const cheap = M.weather.computeWeather(M.climateMesh.climateTerrain(domain, elevation, W, H), params)
 const started = performance.now()
 const r = M.refinement.refineClimate(elevation, domain, params, cheap.temperature, cheap.wind)
 const ms = performance.now() - started

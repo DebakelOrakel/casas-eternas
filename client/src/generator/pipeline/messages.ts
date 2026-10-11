@@ -106,6 +106,8 @@ export interface WorkerPlanetPreviewDataMessage {
   resY: number
   temperature: ArrayBuffer
   wind: ArrayBuffer
+  // The wind on the climate's field mesh, as WorkerClimateDataMessage's.
+  windMesh?: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
   currents: ArrayBuffer
   currentAnomaly: ArrayBuffer
   precipitation: ArrayBuffer
@@ -493,6 +495,13 @@ export interface WorkerClimateDataMessage {
   // Prevailing wind, Float32 interleaved [u0,v0,…], resX*resY cells
   // (u = eastward, v = toward the bottom/"south"). See climate/wind.ts.
   wind: ArrayBuffer
+  // The same wind on the climate's field mesh (DEC-0036 phase 3): Float64
+  // east and south per cell, each in its cell's frame, with the mesh's cell
+  // count and spacing (the screen rebuilds the mesh from the world's shape,
+  // climate/climateMesh.climateMesh, and reads the marks' directions
+  // through its sampler). Absent on the refinement's climate (`refined`),
+  // whose wind is still a raster (phase 5).
+  windMesh?: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
   // Ocean surface currents, Float32 interleaved [u0,v0,…], normalized to max 1,
   // zero on land. See climate/oceanCurrents.ts.
   currents: ArrayBuffer

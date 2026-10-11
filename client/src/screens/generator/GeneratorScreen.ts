@@ -111,7 +111,8 @@ import type { WorldSpec } from '../../world/save/worldSpec'
 import { displayValue, type InputParam } from '../../generator/core/inputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
 import { traceFlowLines } from '../../map/flowLines'
-import { flowLineMarks, globeVectorMarks, type VectorMark } from '../../map/vectorMarks'
+import { flowLineMarks, globeVectorMarks, rasterVectorReader, type VectorMark, type VectorReader } from '../../map/vectorMarks'
+import { climateMesh } from '../../generator/climate/climateMesh'
 import { traceIsolines, drawIsolines, type Isoline } from '../../map/isolines'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
@@ -1779,10 +1780,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const WIND_GLOBE_SPACING = 26
   function windMarks(field: Float32Array): VectorMark[] {
     const ref = vectorReferenceSpeed(field)
+    const mesh = meshWindReader(field)
     if (worldShape === 'sphere') {
-      return globeVectorMarks(field, climateResX, climateResY, { width: MAP_WIDTH, spacing: WIND_GLOBE_SPACING, length: WIND_LENGTH, minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref })
+      return globeVectorMarks(mesh?.atPoint ?? rasterVectorReader(field, climateResX, climateResY), { width: MAP_WIDTH, spacing: WIND_GLOBE_SPACING, length: WIND_LENGTH, minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref })
     }
-    const lines = traceFlowLines((x, y) => sampleVector(field, x, y), {
+    const lines = traceFlowLines(mesh?.atPixel ?? ((x, y) => sampleVector(field, x, y)), {
       width: MAP_WIDTH, height: MAP_HEIGHT,
       separation: 16, stopRatio: 0.5, step: 2, maxLength: 600,
       minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref,
@@ -2079,6 +2081,40 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return worldShape === 'sphere' ? Math.max(0, Math.min(climateResY - 1, y)) : wrapValue(y, climateResY)
   }
 
+  // The static climate's wind on its field mesh (DEC-0036 phase 3), per
+  // raster it came with (WorkerClimateDataMessage.windMesh): the marks read
+  // their directions there, through the mesh's sampler, each in its
+  // point's own frame. DEC-0036 transition: removed in phase 5 — the
+  // refinement's winds and the currents have no mesh yet (phases 4 and 5)
+  // and read their raster.
+  const windMeshOf = new WeakMap<Float32Array, { shape: 'torus' | 'sphere'; cells: number; e: Float64Array; s: Float64Array }>()
+  function keepWindMesh(raster: Float32Array, shape: 'torus' | 'sphere', payload: { cells: number; e: ArrayBuffer; s: ArrayBuffer } | undefined): void {
+    if (payload) windMeshOf.set(raster, { shape, cells: payload.cells, e: new Float64Array(payload.e), s: new Float64Array(payload.s) })
+  }
+  function meshWindReader(field: Float32Array): { atPoint: VectorReader; atPixel: (x: number, y: number) => [number, number] } | null {
+    const wind = windMeshOf.get(field)
+    if (!wind) return null
+    // Built from the shape on first use, as the worker built it (0.7 s on
+    // the sphere, once).
+    const domain = domainOfKind(wind.shape, MAP_WIDTH, MAP_HEIGHT)
+    const { sampler, mesh } = climateMesh(domain)
+    if (mesh.count !== wind.cells) return null
+    const v = { x: 0, y: 0 }
+    const read = (x: number, y: number): void => sampler.sampleVector(wind.e, wind.s, domain.wrapX(x), domain.wrapY(y), -1, v)
+    return {
+      atPoint: (at, out) => {
+        read(at.u * MAP_WIDTH, at.v * MAP_HEIGHT)
+        out[0] = v.x
+        out[1] = v.y
+        return out
+      },
+      atPixel: (x, y) => {
+        read(x, y)
+        return [v.x, v.y]
+      },
+    }
+  }
+
   // Bilinear-sampled (u,v) of a climate-grid vector field at a map pixel,
   // wrapped. The currents are zero over land. The TORUS'S flow lines only:
   // on the sphere a cell's (u, v) is in that cell's own east/south frame,
@@ -2150,7 +2186,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function currentMarks(field: Float32Array): VectorMark[] {
     const ref = vectorReferenceSpeed(field)
     if (worldShape === 'sphere') {
-      return globeVectorMarks(field, climateResX, climateResY, { width: MAP_WIDTH, spacing: CURRENT_GLOBE_SPACING, length: CURRENT_GLOBE_LENGTH, minSpeed: CURRENT_MIN_SPEED, refSpeed: ref })
+      return globeVectorMarks(rasterVectorReader(field, climateResX, climateResY), { width: MAP_WIDTH, spacing: CURRENT_GLOBE_SPACING, length: CURRENT_GLOBE_LENGTH, minSpeed: CURRENT_MIN_SPEED, refSpeed: ref })
     }
     const lines = traceFlowLines((x, y) => sampleVector(field, x, y), {
       width: MAP_WIDTH, height: MAP_HEIGHT,
@@ -3724,6 +3760,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     applyBase()
     lastTemperature = new Float32Array(message.temperature)
     lastWind = new Float32Array(message.wind)
+    keepWindMesh(lastWind, message.shape, message.windMesh)
     lastCurrents = new Float32Array(message.currents)
     lastCurrentAnomaly = new Float32Array(message.currentAnomaly)
     lastPrecipitation = new Float32Array(message.precipitation)
@@ -3774,6 +3811,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function handleClimateData(message: WorkerClimateDataMessage): void {
     lastTemperature = new Float32Array(message.temperature)
     lastWind = new Float32Array(message.wind)
+    keepWindMesh(lastWind, previewShape(), message.windMesh)
     lastCurrents = new Float32Array(message.currents)
     lastCurrentAnomaly = new Float32Array(message.currentAnomaly)
     lastPrecipitation = new Float32Array(message.precipitation)

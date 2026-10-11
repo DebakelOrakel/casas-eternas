@@ -43,7 +43,8 @@ import { accumulateDischarge, accumulateDischargeOn, extractRiverPolylines, comp
 import type { LakeFields } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y, mantleMesh, rasteriseMantle, savedMantle } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
-import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
+import { computeWeather, defaultWeatherParams, type Weather, type WeatherParams } from '../climate/weather'
+import { climateTerrain } from '../climate/climateMesh'
 import { computeBiomes, computeBiomesFine, computeBiomesFromMonths, computeBiomesFineFromMonths, computeKoppenField } from '../climate/biomes'
 import { annualFromMonths, refineClimate } from '../climate/refinement'
 import { downsampleMax } from '../core/field'
@@ -769,7 +770,8 @@ function computeClimateChain(elevation: Float32Array, domain: Domain, params: Cl
   // erosion engine's water forcing (the stage-2 coupling), so the panel's
   // overlays and the carved valleys can never disagree about what the
   // climate IS.
-  const { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal } = computeWeather(elevation, domain, params, dryLand)
+  const weather = computeWeather(climateTerrain(domain, elevation, width, height, dryLand), params)
+  const { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal } = weather
   // Classified twice, on purpose, from identical inputs: `biomes` on the climate
   // grid for the ecology step, `biomesFine` on the world raster for everything
   // the user sees or saves (see climate/biomes.computeBiomesFine, and
@@ -779,7 +781,14 @@ function computeClimateChain(elevation: Float32Array, domain: Domain, params: Cl
   const biomes = computeBiomes(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
   const biomesFine = computeBiomesFine(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, domain, dryLand)
   const koppen = computeKoppenField(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
-  return { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine, koppen }
+  return { temperature, wind, windMesh: meshWindPayload(weather), currents, currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine, koppen }
+}
+
+// The wind on the climate's field mesh for the screen's marks (DEC-0036
+// phase 3, WorkerClimateDataMessage.windMesh): copies, transferred.
+function meshWindPayload(weather: Weather): { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer } {
+  const { e, s } = weather.mesh.wind
+  return { cells: e.length, spacingM: weather.terrain.cm.cellM, e: e.slice().buffer as ArrayBuffer, s: s.slice().buffer as ArrayBuffer }
 }
 
 // Cache copies for hydrology/ecology (the message buffers get transferred,
@@ -806,6 +815,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     resY: CLIMATE_RES_Y,
     temperature: chain.temperature.buffer as ArrayBuffer,
     wind: chain.wind.buffer as ArrayBuffer,
+    windMesh: chain.windMesh,
     currents: chain.currents.buffer as ArrayBuffer,
     currentAnomaly: chain.currentAnomaly.buffer as ArrayBuffer,
     precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
@@ -814,7 +824,7 @@ function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, para
     koppen: chain.koppen.buffer as ArrayBuffer,
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
-  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
+  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, chain.windMesh.e, chain.windMesh.s, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
   return climate
 }
 
@@ -1789,6 +1799,7 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     resY: CLIMATE_RES_Y,
     temperature: chain.temperature.buffer as ArrayBuffer,
     wind: chain.wind.buffer as ArrayBuffer,
+    windMesh: chain.windMesh,
     currents: chain.currents.buffer as ArrayBuffer,
     currentAnomaly: chain.currentAnomaly.buffer as ArrayBuffer,
     precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
@@ -1797,7 +1808,7 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     koppen: chain.koppen.buffer as ArrayBuffer,
     biomes: chain.biomesFine.buffer as ArrayBuffer,
   }
-  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.koppen, preview.biomes])
+  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, chain.windMesh.e, chain.windMesh.s, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.koppen, preview.biomes])
 }
 
 // The stage whose compute a message runs, where a failure must reach the

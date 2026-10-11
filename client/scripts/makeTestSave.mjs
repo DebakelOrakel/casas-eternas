@@ -22,11 +22,8 @@ const M = {
   erosionPassV2: await L('/src/generator/surface/erosionPassV2.ts'),
   surfaceInputs: await L('/src/generator/surface/surfaceInputParams.ts'),
   climateField: await L('/src/generator/climate/climateField.ts'),
-  temperature: await L('/src/generator/climate/temperature.ts'),
-  wind: await L('/src/generator/climate/wind.ts'),
-  currents: await L('/src/generator/climate/oceanCurrents.ts'),
-  seasonality: await L('/src/generator/climate/seasonality.ts'),
-  monsoon: await L('/src/generator/climate/monsoon.ts'),
+  weather: await L('/src/generator/climate/weather.ts'),
+  climateMesh: await L('/src/generator/climate/climateMesh.ts'),
   layers: await L('/src/world/save/worldLayers.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
@@ -59,12 +56,11 @@ const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, si
 const ero = await M.erosionPassV2.runErosionPassV2(raw, sim.domain, forcing, { age: CONTROLS.age, params })
 const el = ero.elevations
 
-const temperature = M.temperature.computeTemperature(el, sim.domain)
-const wind = M.wind.computeWind()
-const currents = M.currents.computeOceanCurrents(el, wind, sim.domain)
-M.currents.applyOceanSST(temperature, currents, el, sim.domain, wind)
-const seasonal = M.seasonality.computeSeasonalAmplitude(el, sim.domain)
-const precipitation = M.monsoon.computeSeasonalPrecipitation(el, temperature, seasonal, wind, sim.domain, 1, 0).annual
+// The static climate on its field mesh (DEC-0036 phase 3), its rasters.
+const weather = M.weather.computeWeather(M.climateMesh.climateTerrain(sim.domain, el, sim.domain.width, sim.domain.height), M.weather.defaultWeatherParams())
+const temperature = weather.temperature
+const seasonal = weather.seasonalAmplitude
+const precipitation = weather.seasonal.annual
 const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
 process.stderr.write('ok\n')
 

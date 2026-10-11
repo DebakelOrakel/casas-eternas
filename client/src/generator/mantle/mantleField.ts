@@ -2,7 +2,7 @@ import type { Domain } from '../core/domain'
 import { MANTLE_TUNING } from './mantleTuneParams'
 import type { Raft } from '../crust/raftTypes'
 import { computeMembershipAt } from '../crust/raftField'
-import { createFieldMesh, createFieldSampler, rasteriseField, type FieldMesh, type FieldSampler, type SavedField } from '../fields/fieldMesh'
+import { rasteriseField, sharedFieldMesh, type FieldMesh, type FieldSampler, type SavedField } from '../fields/fieldMesh'
 import { diffuseExplicit, gradient, solveHelmholtz, stableDiffusionStep } from '../fields/fieldOperators'
 
 // A coarse, evolving mantle buoyancy/temperature field under the whole
@@ -82,10 +82,10 @@ function mantleMeshOf(domain: Domain): MantleMesh {
   if (known) return known
   const cellUnits = domain.width / MANTLE_RES_X
   const cellM = cellUnits * domain.metresPerUnit
-  const mesh = createFieldMesh(domain, cellM)
+  const { mesh, sampler } = sharedFieldMesh(domain, cellM)
   let totalArea = 0
   for (let i = 0; i < mesh.count; i++) totalArea += mesh.area[i]
-  const made: MantleMesh = { mesh, sampler: createFieldSampler(mesh), cellM, cellUnits, totalArea, stableStep: stableDiffusionStep(mesh, 1) }
+  const made: MantleMesh = { mesh, sampler, cellM, cellUnits, totalArea, stableStep: stableDiffusionStep(mesh, 1) }
   meshes.set(key, made)
   return made
 }

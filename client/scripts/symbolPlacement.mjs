@@ -398,9 +398,11 @@ console.log('9. vector marks (wind strokes, current arrows)')
   }
 
   // The sphere: a field on the climate grid (256 × 128, east and south in
-  // each cell's frame) from rotations about tilted axes — continuous
-  // everywhere, not zero at the geographic poles — read into marks and
-  // placed. The placed x axis against the field's true direction.
+  // each cell's frame) from rotations about tilted axes, the second's
+  // weight a function of the point in 3D — continuous everywhere, the
+  // poles included (a weight in the longitude was not, which a field
+  // mesh's interpolation across the pole shows), not zero at the
+  // geographic poles — read into marks and placed. The placed x axis against the field's true direction.
   const RX = 256
   const RY = 128
   // 3D in the domain's frame (x, y, z = cos θ); Babylon's is (x, z, −y).
@@ -408,7 +410,7 @@ console.log('9. vector marks (wind strokes, current arrows)')
   const truth = (theta, lambda) => {
     const p = [Math.sin(theta) * Math.cos(lambda), Math.sin(theta) * Math.sin(lambda), Math.cos(theta)]
     const v = [0, 0, 0]
-    axes.forEach((a, k) => { const c = cross(a, p); const w = k === 0 ? 1 : 0.6 * Math.cos(3 * lambda) ; v[0] += c[0] * w; v[1] += c[1] * w; v[2] += c[2] * w })
+    axes.forEach((a, k) => { const c = cross(a, p); const w = k === 0 ? 1 : 0.6 * Math.cos(3 * p[0] + 2 * p[1]); v[0] += c[0] * w; v[1] += c[1] * w; v[2] += c[2] * w })
     return v
   }
   const field = new Float32Array(RX * RY * 2)
@@ -421,7 +423,27 @@ console.log('9. vector marks (wind strokes, current arrows)')
       field[(j * RX + i) * 2 + 1] = Math.cos(th) * Math.cos(la) * v[0] + Math.cos(th) * Math.sin(la) * v[1] - Math.sin(th) * v[2]
     }
   }
-  const marks = VM.globeVectorMarks(field, RX, RY, { width: W, spacing: 26, length: 26, minSpeed: 0.15, refSpeed: 1 })
+  // Read two ways: the climate raster's (map/vectorMarks.rasterVectorReader,
+  // the refinement's winds and the currents) and the climate's field
+  // mesh's (DEC-0036 phase 3: the static wind, through the mesh's sampler,
+  // as the screen reads it) — the same truth in each cell's frame.
+  const CM = await server.ssrLoadModule('/src/generator/climate/climateMesh.ts')
+  const cm = CM.climateMesh(D.sphereDomain(W, H))
+  const me = new Float64Array(cm.mesh.count), ms = new Float64Array(cm.mesh.count)
+  for (let i = 0; i < cm.mesh.count; i++) {
+    const th = (Math.PI * cm.mesh.y[i]) / H
+    const la = (TAU * cm.mesh.x[i]) / W
+    const v = truth(th, la)
+    me[i] = -Math.sin(la) * v[0] + Math.cos(la) * v[1]
+    ms[i] = Math.cos(th) * Math.cos(la) * v[0] + Math.cos(th) * Math.sin(la) * v[1] - Math.sin(th) * v[2]
+  }
+  const pt = { x: 0, y: 0 }
+  const readers = {
+    raster: VM.rasterVectorReader(field, RX, RY),
+    mesh: (at, out) => { cm.sampler.sampleVector(me, ms, at.u * W, at.v * H, -1, pt); out[0] = pt.x; out[1] = pt.y; return out },
+  }
+  for (const [name, read] of Object.entries(readers)) {
+  const marks = VM.globeVectorMarks(read, { width: W, spacing: 26, length: 26, minSpeed: 0.15, refSpeed: 1 })
   const worst = { all: 0, seam: 0, pole: 0 }
   const counts = { all: 0, seam: 0, pole: 0 }
   for (const m of marks) {
@@ -435,9 +457,10 @@ console.log('9. vector marks (wind strokes, current arrows)')
     if (m.at.u < 0.01 || m.at.u > 0.99) { worst.seam = Math.max(worst.seam, s); counts.seam++ }
     if (lat > 85) { worst.pole = Math.max(worst.pole, s); counts.pole++ }
   }
-  check('globe: placed marks point along the field\'s true direction', worst.all < 0.02, `worst sine ${worst.all.toFixed(4)} over ${counts.all} marks`)
-  check('globe: at the seam', counts.seam > 0 && worst.seam < 0.02, `worst sine ${worst.seam.toFixed(4)} over ${counts.seam} marks`)
-  check('globe: beyond 85° (pole marks included)', counts.pole > 0 && worst.pole < 0.02, `worst sine ${worst.pole.toFixed(4)} over ${counts.pole} marks`)
+  check(`globe, ${name}: placed marks point along the field's true direction`, worst.all < 0.02, `worst sine ${worst.all.toFixed(4)} over ${counts.all} marks`)
+  check(`globe, ${name}: at the seam`, counts.seam > 0 && worst.seam < 0.02, `worst sine ${worst.seam.toFixed(4)} over ${counts.seam} marks`)
+  check(`globe, ${name}: beyond 85° (pole marks included)`, counts.pole > 0 && worst.pole < 0.02, `worst sine ${worst.pole.toFixed(4)} over ${counts.pole} marks`)
+  }
 }
 
 await server.close()

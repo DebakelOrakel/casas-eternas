@@ -3,6 +3,7 @@ import type { Domain } from '../core/domain'
 import { computeUpliftField } from '../elevation/upliftField'
 import { computeErodibilityField } from '../elevation/erodibilityField'
 import { computeWeather, defaultWeatherParams } from '../climate/weather'
+import { climateTerrain } from '../climate/climateMesh'
 import type { WeatherParams } from '../climate/weather'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
 import { worldEpoch } from '../core/worldTime'
@@ -72,7 +73,7 @@ export function assembleErosionForcing(
   // than read from the climate stage's cache: the forcing must not depend
   // on whether that stage has run, and both compute the same chain on the
   // same terrain (climate/weather.computeWeather — one function, no drift).
-  const water = computeWeather(rawElevations, domain, weather).seasonal.annual
+  const water = computeWeather(climateTerrain(domain, rawElevations, domain.width, domain.height), weather).seasonal.annual
 
   return assembleFineForcing({
     uplift,

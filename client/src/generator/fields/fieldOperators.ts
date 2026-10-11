@@ -92,6 +92,35 @@ export function diffuseImplicit(fm: FieldMesh, phi: ArrayLike<number>, kappa: nu
   return solveHelmholtz(fm, alpha, rhs, out, options)
 }
 
+// A Gaussian smoothing of standard deviation `sigmaM` per axis (metres):
+// diffusion to κt = σ² / 2 in equal explicit steps, none larger than the
+// convex limit (stableDiffusionStep), so every step is a weighted mean and
+// the whole the binomial approach to the Gaussian — as three box passes
+// approached one on a raster (σ² = r(r + 1) cells² for a box of radius r).
+// The area-weighted mean is kept to rounding. Into out (which may be phi).
+export function smoothGaussian(fm: FieldMesh, phi: ArrayLike<number>, sigmaM: number, out: Float64Array): Float64Array {
+  const kt = (sigmaM * sigmaM) / 2
+  let limit = convexLimits.get(fm)
+  if (limit === undefined) {
+    limit = stableDiffusionStep(fm, 1)
+    convexLimits.set(fm, limit)
+  }
+  const steps = Math.max(1, Math.ceil(kt / limit))
+  let a = Float64Array.from(phi as ArrayLike<number>)
+  let b = new Float64Array(fm.count)
+  for (let k = 0; k < steps; k++) {
+    diffuseExplicit(fm, a, 1, kt / steps, b)
+    const t = a
+    a = b
+    b = t
+  }
+  out.set(a)
+  return out
+}
+
+// stableDiffusionStep at κ = 1 per mesh, for the smoothing.
+const convexLimits = new WeakMap<FieldMesh, number>()
+
 // ------------------------------------------------- gradient, divergence
 
 // The gradient by least squares over each cell's neighbours in its

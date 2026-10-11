@@ -3,7 +3,7 @@ import { reversePointByMotion, type PlateMotion } from './plateMotion'
 import type { Domain } from '../core/domain'
 import { computeMembershipAt } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
-import { createFieldMesh, createFieldSampler, rasteriseField, type FieldMesh, type FieldSampler, type SavedField } from '../fields/fieldMesh'
+import { rasteriseField, sharedFieldMesh, type FieldMesh, type FieldSampler, type SavedField } from '../fields/fieldMesh'
 import { departures, departuresFromPoints, gradient, transportScalar, type Departures } from '../fields/fieldOperators'
 
 // Ocean-floor age as a coarse full-surface field (Phase 3, see
@@ -61,11 +61,12 @@ export function oceanAgeMesh(domain: Domain): OceanAgeMesh {
   if (!made) {
     const cellUnits = domain.width / OCEAN_AGE_RES_X
     const cellM = cellUnits * domain.metresPerUnit
-    const mesh = createFieldMesh(domain, cellM)
+    // Shared with the climate's, which asks for the same spacing.
+    const { mesh, sampler } = sharedFieldMesh(domain, cellM)
     const n = mesh.count
     made = {
       mesh,
-      sampler: createFieldSampler(mesh),
+      sampler,
       cellM,
       cellUnits,
       dep: departures(mesh),

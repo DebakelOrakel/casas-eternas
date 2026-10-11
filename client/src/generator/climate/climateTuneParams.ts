@@ -58,12 +58,14 @@ export const CLIMATE_TUNING = {
   tempEquatorC: 28,
   tempPoleC: -25,
   // The mass elevation effect (temperature.ts): °C per km of the land's
-  // height smoothed over the radius, cells. At 2 the Tibetan plateau's
-  // warmest month 0 → 7 °C (some 8–10 on Earth at 4500 m), the Altiplano's
-  // 7 → 8; at 1 the tropical highlands stay too cold (Brasília, Bogotá,
-  // Mexico City −2..−5 °C); a radius of 6 changed nothing.
+  // height smoothed by a Gaussian of this σ, metres. At 2 the Tibetan
+  // plateau's warmest month 0 → 7 °C (some 8–10 on Earth at 4500 m), the
+  // Altiplano's 7 → 8; at 1 the tropical highlands stay too cold (Brasília,
+  // Bogotá, Mexico City −2..−5 °C); a radius of 6 cells changed nothing.
+  // The σ is the former blur's on the torus's 62.4 km climate grid (three
+  // box passes of radius 3 cells, σ² = 3 · 4 cells², DEC-0036 phase 3).
   tempPlateauCPerKm: 2,
-  tempPlateauRadiusCells: 3,
+  tempPlateauSigmaM: 216_000,
 
   // The environmental lapse rate — °C lost per unit of elevation. Now a derived
   // quantity rather than a tuned one: the real atmosphere loses ~6.5 °C/km, and
@@ -118,10 +120,11 @@ export const CLIMATE_TUNING = {
   // high), a coast/ocean stays low (thermal inertia). Tune by eye.
   seasonMaxAmplitude: 42,
 
-  // Cells this many grid cells from the nearest ocean count as fully
-  // continental; nearer ones interpolate. A big continent's core sits deep
-  // enough to saturate.
-  seasonContinentalityScale: 45,
+  // Land this far from the nearest ocean, metres along the field mesh,
+  // counts as fully continental; nearer interpolates. A big continent's
+  // core sits deep enough to saturate. 45 cells of the torus's former
+  // 62.4 km climate grid (DEC-0036 phase 3).
+  seasonContinentalityScaleM: 2_808_000,
 
   // Coastal land floor (continentality 0): even a coast swings a bit.
   seasonCoastDamp: 0.3,
@@ -138,7 +141,15 @@ export const CLIMATE_TUNING = {
   // gradient (∇T points from cool sea toward hot summer land), added to the prescribed
   // zonal wind. Tuned so it reshapes moisture advection near coasts without swamping the
   // base three-cell circulation (base zonal strength ~1). See computeMonsoonWind.
+  // Per °C of difference over `climateGradientLengthM`.
   monsoonWindStrength: 0.05,
+
+  // The length a gradient in the climate is stated over (the monsoon's
+  // ∇T, the pressure's ∇p): what a strength per °C or per hPa "per cell"
+  // meant on the torus's former 62.4 km climate grid, so the strengths
+  // keep their values (DEC-0036 phase 3). The pressure's blocking also
+  // looks this far downwind for the barrier's top.
+  climateGradientLengthM: 62_400,
 
   // Wetness floor (mm/yr) added to the monsoon-index denominator so ARID cells don't read
   // as monsoonal: a desert with 50 mm wet / 5 mm dry is dry, not seasonal, yet a raw
@@ -149,13 +160,14 @@ export const CLIMATE_TUNING = {
 
   // --- from precipitation.ts ---
 
-  // Iterations of moisture transport, and how far (in grid cells, per unit wind)
+  // Iterations of moisture transport, and how far (metres per unit wind)
   // moisture advects each one. Needs enough to reach a steady state deep inland
   // — the flow is diagonal (zonal + meridional), so the path in is longer than
   // the straight-line distance; too few left continental interiors stuck at
-  // their transient (empty) starting value.
+  // their transient (empty) starting value. The step is 2 cells of the
+  // torus's former 62.4 km climate grid (DEC-0036 phase 3).
   precipIters: 120,
-  precipAdvectStep: 2,
+  precipAdvectStepM: 124_800,
 
   // Moisture is advected mostly ZONALLY (it penetrates inland from the nearest
   // east/west coast). The meridional wind is damped for transport, because at
@@ -197,15 +209,19 @@ export const CLIMATE_TUNING = {
   // stays where it belongs. Net land depletion per step becomes rain·(1 − this).
   precipLandRecycleFrac: 0.5,
 
-  // The along-wind lever, world px at a wind of 1: the slope across a cell
+  // The along-wind lever, metres at a wind of 1: the slope across a cell
   // (read on the fine elevation, not the coarse climate grid — the point of
   // sampling full-res here) counts as the rise over this distance. Measured
   // on Earth (scripts/earthClimate.mjs, 2026-09-29), after the slope moved
-  // into the cell: at 40 (the old sample distance) the places' rain ×2.01
+  // into the cell: at 40 px (the old sample distance) the places' rain ×2.01
   // off, at 20 ×1.98, at 10 ×1.93 and the land with the right group 65 →
   // 66 %; Bogotá 1600 mm (1000), Alice Springs 900 (280). Nairobi and Riyadh
-  // stay wet at any lever: their cells hold real escarpments.
-  precipOrogLeverPx: 20,
+  // stay wet at any lever: their cells hold real escarpments. 20 px of the
+  // torus's 7.8 km world raster (DEC-0036 phase 3).
+  precipOrogLeverM: 156_000,
+  // The slope is read from this far upwind of a cell's centre to this far
+  // downwind: half the torus's former 62.4 km climate cell.
+  precipOrogHalfSpanM: 31_200,
 
   // Raw rainout → mm/yr. Tunes overall wetness; a wet windward mountain lands
   // around a few thousand mm, deserts/rain-shadow near zero.
@@ -526,11 +542,14 @@ export const CLIMATE_TUNING = {
   // winter high is some +20–30 hPa over air 20–30 °C colder than its
   // latitude.
   pressureHpaPerC: 1,
-  // Smoothing radius, cells (62 km): three box passes, σ ≈ 370 km, the scale
-  // of heat lows and cold highs rather than of coasts.
-  pressureSmoothCells: 6,
-  // Wind units (8 m/s) per hPa per cell of gradient before the balance: 20 hPa
-  // over 2000 km at 45° gives some 5 m/s over the sea.
+  // Smoothing, a Gaussian of this σ, metres: the scale of heat lows and
+  // cold highs rather than of coasts. The former blur's on the torus's
+  // 62.4 km climate grid (three box passes of radius 6 cells, σ² = 6 · 7
+  // cells², DEC-0036 phase 3).
+  pressureSmoothSigmaM: 404_000,
+  // Wind units (8 m/s) per hPa of difference over `climateGradientLengthM`
+  // before the balance: 20 hPa over 2000 km at 45° gives some 5 m/s over
+  // the sea.
   pressureWindPerHpa: 0.8,
   // Surface friction against the Coriolis parameter (1 at the pole, 24 h day):
   // the wind crosses the isobars at about 20° over the sea at mid latitudes,
