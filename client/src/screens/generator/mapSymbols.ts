@@ -1,5 +1,6 @@
 import { type ContinentLabelPlacement, continentLabelSag, drawContinentLabel, fitContinentLabel } from '../../generator/render/continentLabelRenderer'
 import type { SimEvent } from '../../generator/tectonics/plateSimulation'
+import type { VectorMark } from '../../map/vectorMarks'
 import type { SymbolPicture, WorldSymbol } from '../../map/worldView'
 
 // THE GENERATOR'S SYMBOLS AND NAMES as the world view places them
@@ -213,4 +214,134 @@ export function nameSymbols(placements: ContinentLabelPlacement[], chart: ChartS
     symbols.push({ at: chartPoint(placement.centerX, placement.centerY, chart.width, chart.height), picture: pictures.length - 1, angle: placement.angle, readable: true })
   }
   return { pictures, symbols }
+}
+
+// --- the wind and the ocean currents ----------------------------------------
+//
+// The marks of a vector field (map/vectorMarks.ts), drawn as the map texture
+// drew them until 2026-10-11 — same colours, widths and lengths in chart
+// texels — but straight: a painted mark followed its flow line's curve, a
+// picture cannot. Each picture points along its x axis, tail at the left,
+// head at the right; the symbol's angle turns it along the field. A small
+// set of pictures, by length and speed (and class for the currents), not
+// one per mark.
+
+// Canvas pixels per chart texel: the strokes are thin, the arrows broad.
+const WIND_RESOLUTION = 4
+const CURRENT_RESOLUTION = 2
+
+// The wind: tapered strokes, a thin faint tail to a bolder head, faster air
+// bolder. A faint dark stroke under each pale one, so it holds on light
+// ground. Bands along the stroke and speed classes as the painting had.
+const WIND_BANDS = 6
+const WIND_SPEEDS = 3
+// Lengths step by this many texels, up to WIND_LENGTH (a flow line's
+// pieces are at most that long, the globe's marks are that long).
+const WIND_LENGTH_STEP = 2
+export const WIND_LENGTH = 26
+export const WIND_GAP = 14
+const WIND_LENGTHS = WIND_LENGTH / WIND_LENGTH_STEP
+const WIND_STROKES: { color: [number, number, number]; maxWidth: number; opacity: number }[] = [
+  { color: [20, 35, 50], maxWidth: 3.2, opacity: 0.55 },
+  { color: [255, 255, 255], maxWidth: 1.8, opacity: 1 },
+]
+
+export function windPictures(chart: ChartSize): SymbolPicture[] {
+  const pictures: SymbolPicture[] = []
+  for (let sl = 0; sl < WIND_SPEEDS; sl++) {
+    const speed = (sl + 1) / WIND_SPEEDS
+    for (let b = 1; b <= WIND_LENGTHS; b++) {
+      const length = b * WIND_LENGTH_STEP
+      pictures.push(picture(length + 4, 6, chart.metresPerTexel, WIND_RESOLUTION, (c) => {
+        c.lineCap = 'round'
+        for (const stroke of WIND_STROKES) {
+          const [r, g, bl] = stroke.color
+          for (let band = 0; band < WIND_BANDS; band++) {
+            const t = (band + 1) / WIND_BANDS
+            c.strokeStyle = `rgba(${r}, ${g}, ${bl}, ${stroke.opacity * (0.12 + 0.78 * t) * (0.4 + 0.6 * speed)})`
+            c.lineWidth = 0.4 + stroke.maxWidth * t * (0.4 + 0.6 * speed)
+            c.beginPath()
+            c.moveTo(-length / 2 + (band / WIND_BANDS) * length, 0)
+            c.lineTo(-length / 2 + ((band + 1) / WIND_BANDS) * length, 0)
+            c.stroke()
+          }
+        }
+      }))
+    }
+  }
+  return pictures
+}
+
+export function windSymbols(marks: VectorMark[]): WorldSymbol[] {
+  return marks.map((m) => {
+    const sl = Math.min(WIND_SPEEDS - 1, Math.floor(m.speed * WIND_SPEEDS))
+    const b = Math.max(1, Math.min(WIND_LENGTHS, Math.round(m.length / WIND_LENGTH_STEP)))
+    return { at: m.at, picture: sl * WIND_LENGTHS + b - 1, angle: m.angle }
+  })
+}
+
+// The currents: broad arrows, a shaft that widens from its tail and a head
+// wider than the shaft, the width by the speed. A piece of a gyre keeps its
+// full width at the tail: the pieces meet head to tail round the circuit.
+// Filled by class — warm, cold, neutral, the screen decides — with a pale
+// outline.
+const CURRENT_CLASSES = 3
+const CURRENT_SPEEDS = 3
+const CURRENT_LENGTH_STEP = 8
+export const CURRENT_LENGTH = 64
+export const CURRENT_GAP = 26
+const CURRENT_LENGTHS = CURRENT_LENGTH / CURRENT_LENGTH_STEP
+const CURRENT_HALF_WIDTH = 4.5
+const CURRENT_FILLS = ['rgba(205, 65, 50, 0.7)', 'rgba(40, 95, 185, 0.7)', 'rgba(120, 130, 140, 0.55)']
+const CURRENT_OUTLINE = 'rgba(255, 255, 255, 0.55)'
+
+const currentIndex = (cls: number, speed: number, loop: boolean, lengthBucket: number): number =>
+  ((cls * CURRENT_SPEEDS + speed) * 2 + (loop ? 1 : 0)) * CURRENT_LENGTHS + lengthBucket - 1
+
+export function currentPictures(chart: ChartSize): SymbolPicture[] {
+  const pictures: SymbolPicture[] = []
+  for (let cls = 0; cls < CURRENT_CLASSES; cls++) {
+    for (let sb = 0; sb < CURRENT_SPEEDS; sb++) {
+      const speed = 0.35 + 0.65 * ((sb + 1) / CURRENT_SPEEDS)
+      for (const loop of [false, true]) {
+        for (let b = 1; b <= CURRENT_LENGTHS; b++) {
+          const length = b * CURRENT_LENGTH_STEP
+          const head = Math.min(CURRENT_HALF_WIDTH * 2.6, 0.8 * length)
+          const width = (t: number): number => CURRENT_HALF_WIDTH * (loop ? 1 : 0.35 + 0.65 * t) * speed
+          const headHalf = width(1) * 2.1
+          pictures[currentIndex(cls, sb, loop, b)] = picture(length + 2, 2 * headHalf + 2, chart.metresPerTexel, CURRENT_RESOLUTION, (c) => {
+            const tail = -length / 2
+            const base = length / 2 - head
+            const steps = 8
+            c.beginPath()
+            // The shaft: its upper edge forward, its lower edge back.
+            for (let i = 0; i <= steps; i++) c.lineTo(tail + (i / steps) * (base - tail), -width(i / steps))
+            for (let i = steps; i >= 0; i--) c.lineTo(tail + (i / steps) * (base - tail), width(i / steps))
+            c.closePath()
+            // The head: a triangle wider than the shaft.
+            c.moveTo(base, -headHalf)
+            c.lineTo(length / 2, 0)
+            c.lineTo(base, headHalf)
+            c.closePath()
+            c.fillStyle = CURRENT_FILLS[cls]
+            c.fill('nonzero')
+            c.lineJoin = 'round'
+            c.lineWidth = 1
+            c.strokeStyle = CURRENT_OUTLINE
+            c.stroke()
+          })
+        }
+      }
+    }
+  }
+  return pictures
+}
+
+// `classify`: a mark's class, 0 warm, 1 cold, 2 neutral.
+export function currentSymbols(marks: VectorMark[], classify: (mark: VectorMark) => number): WorldSymbol[] {
+  return marks.map((m) => {
+    const sb = Math.min(CURRENT_SPEEDS - 1, Math.floor(m.speed * CURRENT_SPEEDS))
+    const b = Math.max(1, Math.min(CURRENT_LENGTHS, Math.round(m.length / CURRENT_LENGTH_STEP)))
+    return { at: m.at, picture: currentIndex(classify(m), sb, m.loop, b), angle: m.angle }
+  })
 }

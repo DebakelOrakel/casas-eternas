@@ -37,6 +37,13 @@
 //     a continent at 70° spread east–west gets its centre on the globe's
 //     centroid, an east–west axis and its true length; on the torus the
 //     wrapped sum it always had.
+//  9. The wind's and the currents' marks (map/vectorMarks.ts): on the torus
+//     the same pieces of the same flow lines as the painted marks (count,
+//     ends, chord direction) — compared with a copy of the painting's
+//     cutting kept here; on the sphere evenly spread in true lengths (the
+//     nearest neighbour about as far at 89° as at the equator, one mark at
+//     most near a pole), and each placed mark pointing along the field's
+//     true direction there, at the seam and next to the poles too.
 import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
@@ -45,6 +52,8 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const P = await server.ssrLoadModule('/src/map/symbolPlacement.ts')
 const D = await server.ssrLoadModule('/src/generator/core/domain.ts')
 const RL = await server.ssrLoadModule('/src/generator/render/raftLabelLayout.ts')
+const FL = await server.ssrLoadModule('/src/map/flowLines.ts')
+const VM = await server.ssrLoadModule('/src/map/vectorMarks.ts')
 const { CreateGroundVertexData } = await import(`${CLIENT}/node_modules/@babylonjs/core/Meshes/Builders/groundBuilder.pure.js`)
 const { CreateSphereVertexData } = await import(`${CLIENT}/node_modules/@babylonjs/core/Meshes/Builders/sphereBuilder.pure.js`)
 
@@ -284,6 +293,150 @@ console.log('8. the name layout measures on the globe')
   const [flat] = RL.computeRaftLabelPlacements([raft], torus)
   const meanX = blobs.reduce((s, b) => s + b.x * b.radius * b.radius, 0) / blobs.reduce((s, b) => s + b.radius * b.radius, 0)
   check('torus: centre is the chart\'s weighted mean, angle 0', Math.abs(flat.centerX - meanX) < 1e-9 && Math.abs(flat.centerY - y) < 1e-9 && flat.angle === 0, `x ${flat.centerX} against ${meanX}, y ${flat.centerY}, angle ${flat.angle}`)
+}
+
+// --- 9. the wind's and the currents' marks --------------------------------------
+console.log('9. vector marks (wind strokes, current arrows)')
+{
+  // The torus: a synthetic field with zonal bands and gyres (a stream
+  // function's cells), traced as the screen traces the wind and the
+  // currents.
+  const TAU = 2 * Math.PI
+  const sampler = (x, y) => {
+    const a = (TAU * 3 * x) / W
+    const b = (TAU * 2 * y) / H
+    // ψ = sin a · sin b: u = ∂ψ/∂y, v = −∂ψ/∂x, plus a zonal band.
+    return [Math.sin(a) * Math.cos(b) * 2 + 0.6 * Math.cos((TAU * y) / H), -Math.cos(a) * Math.sin(b) * 3]
+  }
+  const ref = 3
+  const windLines = FL.traceFlowLines(sampler, { width: W, height: H, separation: 16, stopRatio: 0.5, step: 2, maxLength: 600, minSpeed: ref * 0.1, refSpeed: ref })
+  const currentLines = FL.traceFlowLines(sampler, { width: W, height: H, separation: 52, stopRatio: 0.55, step: 4, maxLength: 1800, minSpeed: 0.1, refSpeed: ref })
+  // The painting's cutting (map/flowLines.ts drawComets, drawArrowRibbons,
+  // until 2026-10-11), copied: the reference the marks must equal.
+  const hash = (i) => { let h = Math.imul(i ^ 0x9e3779b9, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return (h >>> 0) / 4294967296 }
+  const chunks = (points, length, gap, phase) => {
+    const out = []; let current = []; let along = phase % (length + gap)
+    for (let i = 0; i < points.length; i++) {
+      if (i > 0) along += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+      if (along % (length + gap) < length) current.push(points[i])
+      else if (current.length > 0) { out.push(current); current = [] }
+    }
+    if (current.length > 0) out.push(current)
+    return out
+  }
+  const oldComets = []
+  windLines.forEach((line, li) => { for (const piece of chunks(line.points, 26, 14, hash(li) * 40)) if (piece.length >= 3) oldComets.push(piece) })
+  const oldArrows = []
+  currentLines.forEach((line, li) => {
+    const pts = line.loop ? [...line.points, line.points[0], line.points[1]] : line.points
+    const gap = line.loop ? 0 : 26
+    for (const piece of chunks(pts, 64, gap, line.loop ? 0 : hash(li) * (64 + gap))) if (piece.length >= 4) oldArrows.push(piece)
+  })
+  const wrap = (f) => ((f % 1) + 1) % 1
+  const compare = (name, marks, old) => {
+    let worstPlace = 0
+    let worstAngle = 0
+    const n = Math.min(marks.length, old.length)
+    for (let i = 0; i < n; i++) {
+      const a = old[i][0]
+      const b = old[i][old[i].length - 1]
+      worstPlace = Math.max(worstPlace, wrapDiff(marks[i].at.u, wrap((a.x + b.x) / 2 / W)) * W, wrapDiff(marks[i].at.v, wrap((a.y + b.y) / 2 / H)) * H)
+      worstAngle = Math.max(worstAngle, Math.abs(Math.sin(marks[i].angle - Math.atan2(b.y - a.y, b.x - a.x))), Math.abs(marks[i].length - Math.hypot(b.x - a.x, b.y - a.y)))
+    }
+    check(`${name}: as many marks as painted pieces`, marks.length === old.length, `${marks.length} against ${old.length}`)
+    check(`${name}: each mark spans its painted piece (centre, chord direction and length)`, worstPlace < 1e-6 && worstAngle < 1e-9, `worst ${worstPlace.toExponential(1)} texels, ${worstAngle.toExponential(1)}`)
+  }
+  const windMarks = VM.flowLineMarks(windLines, { width: W, height: H, length: 26, gap: 14, closeLoops: false, minPoints: 3, speedCap: Infinity })
+  const currentMarks = VM.flowLineMarks(currentLines, { width: W, height: H, length: 64, gap: 26, closeLoops: true, minPoints: 4, speedCap: 1 })
+  compare('torus wind', windMarks, oldComets)
+  compare('torus currents', currentMarks, oldArrows)
+  // How far a straight mark turns from what the painting drew: the arrow's
+  // head (tip less the last 11.7 texels) and the field at the mark's centre.
+  const heads = []
+  oldArrows.forEach((piece, i) => {
+    let along = 0; let cut = piece.length - 1
+    while (cut > 1 && along < 4.5 * 2.6) { along += Math.hypot(piece[cut].x - piece[cut - 1].x, piece[cut].y - piece[cut - 1].y); cut-- }
+    const tip = piece[piece.length - 1]
+    heads.push(Math.abs(Math.sin(currentMarks[i].angle - Math.atan2(tip.y - piece[cut].y, tip.x - piece[cut].x))))
+  })
+  const fieldSine = (marks) => {
+    const s = marks.map((m) => { const [u, v] = sampler(m.at.u * W, m.at.v * H); return Math.abs(Math.sin(m.angle - Math.atan2(v, u))) }).sort((a, b) => a - b)
+    return `median ${s[s.length >> 1].toFixed(3)}, p95 ${s[Math.floor(s.length * 0.95)].toFixed(3)}`
+  }
+  heads.sort((a, b) => a - b)
+  console.log(`        (a straight arrow against the painted head: sine median ${heads[heads.length >> 1].toFixed(3)}, p95 ${heads[Math.floor(heads.length * 0.95)].toFixed(3)}, worst ${heads[heads.length - 1].toFixed(3)} (tight gyres); against the field at the centre: wind ${fieldSine(windMarks)}, currents ${fieldSine(currentMarks)})`)
+
+  // The sphere: the sample points' spacing in true lengths.
+  const km = (a, b) => {
+    const p = P.globeFrameOfChart(a)
+    const q = P.globeFrameOfChart(b)
+    return (Math.atan2(norm(cross(p, q)), dot(p, q)) * RADIUS_METRES) / 1000
+  }
+  for (const spacing of [26, 80]) {
+    const pts = VM.globeSamplePoints(W, spacing)
+    const bands = new Map()
+    for (const a of pts) {
+      let nearest = Infinity
+      for (const b of pts) if (a !== b) nearest = Math.min(nearest, km(a, b))
+      const lat = Math.abs(90 - a.v * 180)
+      const band = lat >= 89.999 ? 90 : lat >= 85 ? 85 : Math.floor(lat / 15) * 15
+      const e = bands.get(band) ?? { sum: 0, n: 0, min: Infinity, max: 0 }
+      e.sum += nearest; e.n++; e.min = Math.min(e.min, nearest); e.max = Math.max(e.max, nearest)
+      bands.set(band, e)
+    }
+    const nominal = (spacing * MPT) / 1000
+    const means = [...bands.entries()].sort((a, b) => a[0] - b[0]).filter(([band]) => band < 90)
+    const lo = Math.min(...means.map(([, e]) => e.sum / e.n))
+    const hi = Math.max(...means.map(([, e]) => e.sum / e.n))
+    const allMin = Math.min(...means.map(([, e]) => e.min))
+    const allMax = Math.max(...means.map(([, e]) => e.max))
+    const detail = means.map(([band, e]) => `${band}°: ${(e.sum / e.n).toFixed(0)}`).join(', ')
+    check(`globe spacing ${spacing} texels (${nominal.toFixed(0)} km, ${pts.length} points): nearest neighbour by latitude, equator to 89.99°`, hi / lo < 1.15 && allMin > 0.75 * nominal && allMax < 1.35 * nominal, `band means ${detail} km; spread ${(hi / lo).toFixed(3)}×, single ${allMin.toFixed(0)}–${allMax.toFixed(0)} km`)
+    const nearPole = (v) => pts.filter((p) => km(p, { u: 0, v }) < (0.5 * spacing * MPT) / 1000).length
+    check(`globe spacing ${spacing}: at most one mark within ${((0.5 * spacing * MPT) / 1000).toFixed(0)} km of each pole`, nearPole(0) <= 1 && nearPole(1) <= 1, `north ${nearPole(0)}, south ${nearPole(1)}`)
+  }
+
+  // The sphere: a field on the climate grid (256 × 128, east and south in
+  // each cell's frame) from rotations about tilted axes — continuous
+  // everywhere, not zero at the geographic poles — read into marks and
+  // placed. The placed x axis against the field's true direction.
+  const RX = 256
+  const RY = 128
+  // 3D in the domain's frame (x, y, z = cos θ); Babylon's is (x, z, −y).
+  const axes = [[Math.sin(0.5), 0, Math.cos(0.5)], [0.3, -0.8, 0.2]]
+  const truth = (theta, lambda) => {
+    const p = [Math.sin(theta) * Math.cos(lambda), Math.sin(theta) * Math.sin(lambda), Math.cos(theta)]
+    const v = [0, 0, 0]
+    axes.forEach((a, k) => { const c = cross(a, p); const w = k === 0 ? 1 : 0.6 * Math.cos(3 * lambda) ; v[0] += c[0] * w; v[1] += c[1] * w; v[2] += c[2] * w })
+    return v
+  }
+  const field = new Float32Array(RX * RY * 2)
+  for (let j = 0; j < RY; j++) {
+    for (let i = 0; i < RX; i++) {
+      const th = (Math.PI * (j + 0.5)) / RY
+      const la = (TAU * (i + 0.5)) / RX
+      const v = truth(th, la)
+      field[(j * RX + i) * 2] = -Math.sin(la) * v[0] + Math.cos(la) * v[1]
+      field[(j * RX + i) * 2 + 1] = Math.cos(th) * Math.cos(la) * v[0] + Math.cos(th) * Math.sin(la) * v[1] - Math.sin(th) * v[2]
+    }
+  }
+  const marks = VM.globeVectorMarks(field, RX, RY, { width: W, spacing: 26, length: 26, minSpeed: 0.15, refSpeed: 1 })
+  const worst = { all: 0, seam: 0, pole: 0 }
+  const counts = { all: 0, seam: 0, pole: 0 }
+  for (const m of marks) {
+    const v = truth(Math.PI * m.at.v, TAU * m.at.u)
+    const vb = [v[0], v[2], -v[1]]
+    const r = P.globeSymbolFrame(m.at, m.angle, false).right
+    const sine = norm(cross(r, vb)) / norm(vb)
+    const s = dot(r, vb) < 0 ? 1 : sine
+    const lat = Math.abs(90 - m.at.v * 180)
+    worst.all = Math.max(worst.all, s); counts.all++
+    if (m.at.u < 0.01 || m.at.u > 0.99) { worst.seam = Math.max(worst.seam, s); counts.seam++ }
+    if (lat > 85) { worst.pole = Math.max(worst.pole, s); counts.pole++ }
+  }
+  check('globe: placed marks point along the field\'s true direction', worst.all < 0.02, `worst sine ${worst.all.toFixed(4)} over ${counts.all} marks`)
+  check('globe: at the seam', counts.seam > 0 && worst.seam < 0.02, `worst sine ${worst.seam.toFixed(4)} over ${counts.seam} marks`)
+  check('globe: beyond 85° (pole marks included)', counts.pole > 0 && worst.pole < 0.02, `worst sine ${worst.pole.toFixed(4)} over ${counts.pole} marks`)
 }
 
 await server.close()

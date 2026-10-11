@@ -187,6 +187,15 @@ models' usual remedy.
 
 ## Status
 
+2026-10-11: THE WIND'S AND THE CURRENTS' MARKS are placed symbols on both
+shapes (`map/vectorMarks.ts`), no longer painted into the chart texture,
+where on the globe they turned into radial slivers toward the poles. The
+torus keeps its flow lines and their pieces (a straight mark per piece);
+the sphere samples the globe evenly in true lengths, one mark at a pole.
+PROOF: `scripts/symbolPlacement.mjs` part 9 — torus marks equal the
+painted pieces; globe nearest-neighbour spread 1.03× from the equator to
+89.99°; placed directions against the field's worst sine 0.008.
+
 2026-10-11: THE SEASON'S BELTS END AT THE POLE on the sphere. The
 refinement shifts the wind cells, the pressure bands and the rain belts
 with the season (`climateField.beltYNorm`), 4.4° at the pole; on the

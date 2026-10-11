@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-11
+- **changed** Overlays: wind streaks and current arrows are placed on the map and the globe and keep their shape toward the poles. `generator.step.climate`
+
 ## 2026-10-10
 - **new** Generator: a sphere world runs its third step, Climate — the climate, the rivers and the lakes, drawn on the globe; the later steps are still locked. `generator.step.climate`
 - **changed** Overlays: map symbols and continent names are placed on the map and the globe and keep their shape toward the poles, and a sphere world shows its continent names. `generator.step.tectonics`

@@ -60,7 +60,7 @@ import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlay
 const NO_PICK_PREFIX = 'none:'
 const noPickOf = (group: number | 'fields'): string => `${NO_PICK_PREFIX}${group}`
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
-import { type ChartSize, eventPictures, type VolcanoMark, eventSymbol, hotspotSymbols, nameSymbols, originSymbols, volcanoSymbols } from './mapSymbols'
+import { type ChartSize, CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, eventPictures, type VolcanoMark, eventSymbol, hotspotSymbols, nameSymbols, originSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols } from './mapSymbols'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleBar'
@@ -98,7 +98,8 @@ import { planFromRecipe } from '../../world/replay'
 import type { WorldSpec } from '../../world/save/worldSpec'
 import { displayValue, type InputParam } from '../../generator/core/inputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
-import { traceFlowLines, drawComets, drawArrowRibbons, type FlowLine } from '../../map/flowLines'
+import { traceFlowLines } from '../../map/flowLines'
+import { flowLineMarks, globeVectorMarks, type VectorMark } from '../../map/vectorMarks'
 import { traceIsolines, drawIsolines, type Isoline } from '../../map/isolines'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
@@ -1655,21 +1656,23 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   // Prevailing wind (climate) as moving air, after earth.nullschool: dense,
-  // fine streaks that fade in from their tail, pale over the map, on evenly
-  // spaced flow lines (map/flowLines.ts). The calm belts between the wind
-  // bands — doldrums, horse latitudes, the subpolar calms — are left without
-  // streaks and lightened, so the band structure reads at a glance.
-  // Replaced the grid of arrows on 2026-09-28. No-op until climate is computed.
-  let windLines: { field: Float32Array; lines: FlowLine[]; calm: HTMLCanvasElement } | null = null
+  // fine streaks that fade in from their tail, pale over the map. On the
+  // torus they lie on evenly spaced flow lines (map/flowLines.ts), on the
+  // sphere evenly over the globe (map/vectorMarks.ts). The calm belts
+  // between the wind bands — doldrums, horse latitudes, the subpolar calms —
+  // are left without streaks and lightened, so the band structure reads at
+  // a glance. Replaced the grid of arrows on 2026-09-28. Since 2026-10-11
+  // the streaks are symbols the world view places (syncSymbols, windMarks);
+  // the calm wash alone is painted here. No-op until climate is computed.
+  let windCalm: { field: Float32Array; calm: HTMLCanvasElement } | null = null
   // Under this fraction of the reference speed the air counts as calm.
   const WIND_CALM = 0.2
-  function drawWind(c: CanvasRenderingContext2D): void {
-    const shown = displayWind()
-    if (!shown) return
-    // Traced once per field, not per composite: every overlay toggle
-    // composites, and the trace is the expensive half.
-    if (windLines?.field !== shown) {
-      const field = shown
+  function drawWindCalm(c: CanvasRenderingContext2D): void {
+    const field = displayWind()
+    if (!field) return
+    // Made once per field, not per composite: every overlay toggle
+    // composites.
+    if (windCalm?.field !== field) {
       const ref = vectorReferenceSpeed(field)
       // The calm wash on the climate grid, one pixel per cell; drawn scaled
       // up with smoothing, so the belts have soft edges instead of steps.
@@ -1687,23 +1690,31 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         img.data[i * 4 + 3] = Math.round(255 * 0.35 * k)
       }
       cc.putImageData(img, 0, 0)
-      windLines = {
-        field,
-        calm,
-        lines: traceFlowLines((x, y) => sampleVector(field, x, y), {
-          width: MAP_WIDTH, height: MAP_HEIGHT,
-          separation: 16, stopRatio: 0.5, step: 2, maxLength: 600,
-          minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref,
-        }),
-      }
+      windCalm = { field, calm }
     }
     c.save()
     c.imageSmoothingEnabled = true
-    c.drawImage(windLines.calm, 0, 0, MAP_WIDTH, MAP_HEIGHT)
+    c.drawImage(windCalm.calm, 0, 0, MAP_WIDTH, MAP_HEIGHT)
     c.restore()
-    // A faint dark underlay first, so the pale streaks hold on light ground.
-    drawComets(c, windLines.lines, { width: MAP_WIDTH, height: MAP_HEIGHT, color: [20, 35, 50], length: 26, gap: 14, maxWidth: 3.2, opacity: 0.55 })
-    drawComets(c, windLines.lines, { width: MAP_WIDTH, height: MAP_HEIGHT, color: [255, 255, 255], length: 26, gap: 14, maxWidth: 1.8 })
+  }
+  // Where the streaks lie, by the world's shape. The torus: one streak per
+  // piece of the flow lines, as the painted streaks were cut. The sphere:
+  // the globe sampled evenly, WIND_GLOBE_SPACING texels apart (true
+  // lengths), a streak of the full length at each point that is not calm.
+  // A streak and the next along the flow nearly touch there; the flow
+  // lines' pieces stand closer across the flow and further along it.
+  const WIND_GLOBE_SPACING = 26
+  function windMarks(field: Float32Array): VectorMark[] {
+    const ref = vectorReferenceSpeed(field)
+    if (worldShape === 'sphere') {
+      return globeVectorMarks(field, climateResX, climateResY, { width: MAP_WIDTH, spacing: WIND_GLOBE_SPACING, length: WIND_LENGTH, minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref })
+    }
+    const lines = traceFlowLines((x, y) => sampleVector(field, x, y), {
+      width: MAP_WIDTH, height: MAP_HEIGHT,
+      separation: 16, stopRatio: 0.5, step: 2, maxLength: 600,
+      minSpeed: ref * WIND_CALM * 0.5, refSpeed: ref,
+    })
+    return flowLineMarks(lines, { width: MAP_WIDTH, height: MAP_HEIGHT, length: WIND_LENGTH, gap: WIND_GAP, closeLoops: false, minPoints: 3, speedCap: Infinity })
   }
   // Upwelling (the refinement's): a teal wash on the sea, stronger where more
   // cold water comes up. Scaled to the 98th percentile of the rising cells,
@@ -2031,42 +2042,39 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return m[Math.floor(m.length * 0.95)] || 1
   }
 
-  // Ocean currents as broad arrows along evenly spaced flow lines
-  // (map/flowLines.ts): a row of arrows where a current runs open, one closed
-  // circuit of arrows where it comes round on itself — a gyre. Each arrow is
-  // coloured by the SST anomaly under it: red where the current makes the sea
-  // warmer than its latitude, blue where colder, grey where it hardly
-  // matters. Until 2026-09-28 the colour came from the direction (poleward =
-  // warm), which is right on the ocean's western and eastern edges and noise
-  // on every current that runs east–west. Lines end where the current goes
-  // calm, i.e. at land.
-  let currentLines: { field: Float32Array; lines: FlowLine[] } | null = null
-  function drawCurrents(c: CanvasRenderingContext2D): void {
-    const shown = displayCurrents()
-    if (!shown) return
-    if (currentLines?.field !== shown) {
-      const field = shown
-      currentLines = {
-        field,
-        lines: traceFlowLines((x, y) => sampleVector(field, x, y), {
-          width: MAP_WIDTH, height: MAP_HEIGHT,
-          separation: 52, stopRatio: 0.55, step: 4, maxLength: 1800,
-          minSpeed: 0.1, refSpeed: vectorReferenceSpeed(field),
-        }),
-      }
+  // Ocean currents as broad arrows. On the torus along evenly spaced flow
+  // lines (map/flowLines.ts): a row of arrows where a current runs open, one
+  // closed circuit of arrows where it comes round on itself — a gyre. Lines
+  // end where the current goes calm, i.e. at land. On the sphere the globe
+  // is sampled evenly (map/vectorMarks.ts), CURRENT_GLOBE_SPACING texels
+  // apart (true lengths), an open arrow of the full length at each sea
+  // point. Each arrow is coloured by the SST anomaly under it: red where
+  // the current makes the sea warmer than its latitude, blue where colder,
+  // grey where it hardly matters. Until 2026-09-28 the colour came from the
+  // direction (poleward = warm), which is right on the ocean's western and
+  // eastern edges and noise on every current that runs east–west. Since
+  // 2026-10-11 the arrows are symbols the world view places (syncSymbols).
+  const CURRENT_GLOBE_SPACING = 80
+  // Under this speed the sea counts as still (the flow lines end there).
+  const CURRENT_MIN_SPEED = 0.1
+  function currentMarks(field: Float32Array): VectorMark[] {
+    const ref = vectorReferenceSpeed(field)
+    if (worldShape === 'sphere') {
+      return globeVectorMarks(field, climateResX, climateResY, { width: MAP_WIDTH, spacing: CURRENT_GLOBE_SPACING, length: CURRENT_LENGTH, minSpeed: CURRENT_MIN_SPEED, refSpeed: ref })
     }
-    const anomaly = displayCurrentAnomaly()
-    drawArrowRibbons(c, currentLines.lines, {
+    const lines = traceFlowLines((x, y) => sampleVector(field, x, y), {
       width: MAP_WIDTH, height: MAP_HEIGHT,
-      length: 64, gap: 26, maxHalfWidth: 4.5,
-      // Warm (0), cold (1), neutral (2).
-      classify: (p) => {
-        const a = anomaly ? sampleScalar(anomaly, p.x, p.y) : 0
-        return a > CURRENT_NEUTRAL_C ? 0 : a < -CURRENT_NEUTRAL_C ? 1 : 2
-      },
-      fills: ['rgba(205, 65, 50, 0.7)', 'rgba(40, 95, 185, 0.7)', 'rgba(120, 130, 140, 0.55)'],
-      outline: 'rgba(255, 255, 255, 0.55)',
+      separation: 52, stopRatio: 0.55, step: 4, maxLength: 1800,
+      minSpeed: CURRENT_MIN_SPEED, refSpeed: ref,
     })
+    return flowLineMarks(lines, { width: MAP_WIDTH, height: MAP_HEIGHT, length: CURRENT_LENGTH, gap: CURRENT_GAP, closeLoops: true, minPoints: 4, speedCap: 1 })
+  }
+  // A mark's class from the anomaly under its middle: warm (0), cold (1),
+  // neutral (2). The row is held inside the grid: a mark at the south pole
+  // (v = 1) would wrap to the north pole's row.
+  function currentClass(mark: VectorMark, anomaly: Float32Array | null): number {
+    const a = anomaly ? sampleScalar(anomaly, mark.mid.u * MAP_WIDTH, Math.min(mark.mid.v, 1 - 1e-9) * MAP_HEIGHT) : 0
+    return a > CURRENT_NEUTRAL_C ? 0 : a < -CURRENT_NEUTRAL_C ? 1 : 2
   }
 
   // Rivers are NOT a compositor (texture) layer — they're scene-space ribbon
@@ -2297,8 +2305,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     { id: 'salinity', enabled: false, paintPixels: paintSalinity },
     ...WEATHER_IDS.map((id) => ({ id, enabled: false, paintPixels: (data: Uint8ClampedArray) => paintWeather(data, id) })),
     { id: 'pressure', enabled: false, paint: drawPressure },
-    { id: 'wind', enabled: false, paint: drawWind },
-    { id: 'currents', enabled: false, paint: drawCurrents },
+    // The wind's calm wash (paint); its streaks are symbols (syncSymbols).
+    { id: 'wind', enabled: false, paint: drawWindCalm },
+    // Symbols only (syncSymbols).
+    { id: 'currents', enabled: false },
     { id: 'waterBalance', enabled: false, paintPixels: paintWaterBalance },
     { id: 'watersheds', enabled: false, paintPixels: paintWatersheds },
     // Events are always on — a persistent notification-coupled marker layer,
@@ -2320,7 +2330,33 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const symbolChart: ChartSize = { width: MAP_WIDTH, height: MAP_HEIGHT, metresPerTexel: METERS_PER_CELL }
   let labelsShown = false
   type SymbolSource = { id: string; shown: () => boolean; inputs: () => unknown[]; build: () => { pictures: SymbolPicture[]; symbols: WorldSymbol[] } }
+  // The wind's and the currents' pictures do not change with the field:
+  // made once, so a new month sets the symbols alone, not a new atlas.
+  let windPictureSet: SymbolPicture[] | null = null
+  let currentPictureSet: SymbolPicture[] | null = null
   const symbolSources: SymbolSource[] = [
+    // First, so the other symbols and the names lie over the marks.
+    {
+      id: 'wind',
+      shown: () => overlay.isLayerEnabled('wind'),
+      inputs: () => [displayWind(), worldShape],
+      build: () => {
+        const field = displayWind()
+        windPictureSet ??= windPictures(symbolChart)
+        return { pictures: windPictureSet, symbols: field ? windSymbols(windMarks(field)) : [] }
+      },
+    },
+    {
+      id: 'currents',
+      shown: () => overlay.isLayerEnabled('currents'),
+      inputs: () => [displayCurrents(), displayCurrentAnomaly(), worldShape],
+      build: () => {
+        const field = displayCurrents()
+        const anomaly = displayCurrentAnomaly()
+        currentPictureSet ??= currentPictures(symbolChart)
+        return { pictures: currentPictureSet, symbols: field ? currentSymbols(currentMarks(field), (m) => currentClass(m, anomaly)) : [] }
+      },
+    },
     { id: 'volcanoes', shown: () => overlay.isLayerEnabled('volcanoes'), inputs: () => [lastVolcanoes], build: () => volcanoSymbols(lastVolcanoes, symbolChart) },
     { id: 'hotspots', shown: () => overlay.isLayerEnabled('hotspots'), inputs: () => [lastHotspots], build: () => hotspotSymbols(lastHotspots, symbolChart) },
     {
@@ -2331,8 +2367,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     { id: 'names', shown: () => labelsShown, inputs: () => [lastRaftLabels], build: () => nameSymbols(lastRaftLabels, symbolChart) },
   ]
-  // What each view's layer was last handed: the inputs it was built from.
+  // What each view's layer was last handed: the inputs it was built from,
+  // and its pictures (a source that keeps its pictures is not sent them
+  // again: a new atlas per month would be the cost of the month player).
   const symbolsSent = new WeakMap<WorldSymbols, unknown[]>()
+  const picturesSent = new WeakMap<WorldSymbols, SymbolPicture[]>()
   const sameInputs = (a: unknown[] | undefined, b: unknown[]): boolean => a !== undefined && a.length === b.length && a.every((x, i) => x === b[i])
   function syncSymbols(): void {
     const target = layerView()
@@ -2351,7 +2390,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const inputs = source.inputs()
         if (shown && !sameInputs(symbolsSent.get(layer), inputs)) {
           const { pictures, symbols } = source.build()
-          layer.setPictures(pictures)
+          if (picturesSent.get(layer) !== pictures) {
+            // The old symbols away first: they name the old pictures.
+            layer.setSymbols([])
+            layer.setPictures(pictures)
+            picturesSent.set(layer, pictures)
+          }
           layer.setSymbols(symbols)
           symbolsSent.set(layer, inputs)
         }

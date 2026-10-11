@@ -1,7 +1,8 @@
-// Evenly spaced flow lines over a vector field on the torus, and two ways to
-// draw them: wind as tapered strokes ("comets"), ocean currents as broad arrow
-// ribbons. Pure drawing: a sampler in, canvas paths out. It does not know
-// which field it draws.
+// Evenly spaced flow lines over a vector field on the torus, and the pieces
+// they are cut into: one mark per piece (map/vectorMarks.ts) — wind as
+// tapered strokes ("comets"), ocean currents as broad arrows. Pure
+// arithmetic: a sampler in, points out. It does not know which field it
+// traces.
 //
 // Spacing follows Jobard & Lefer (1997): a line grows from a seed, forward and
 // back, until it comes closer than `separation × stopRatio` to a line already
@@ -13,8 +14,8 @@
 // are drawn as one closed ribbon instead of a row of separate arrows.
 //
 // Coordinates are UNWRAPPED along a line (x may run past the map width), so a
-// line crossing the seam stays one path; draw it through the caller's 3×3
-// tile wrap.
+// line crossing the seam stays one path; the caller wraps the points it
+// uses.
 import { wrapValue } from '../generator/core/field'
 
 export type VectorSampler = (x: number, y: number) => [number, number]
@@ -164,168 +165,20 @@ function chunks(points: FlowPoint[], length: number, gap: number, phase: number)
   return out
 }
 
-// The tile offsets a piece must also be drawn at: the canvas does not wrap,
-// and a piece that runs past an edge has to come back in on the far side.
-// Only the pieces that cross an edge pay for it, not every line nine times.
-function wrapOffsets(pts: FlowPoint[], width: number, height: number, pad: number): Array<[number, number]> {
-  let x0 = Infinity
-  let x1 = -Infinity
-  let y0 = Infinity
-  let y1 = -Infinity
-  for (const p of pts) {
-    if (p.x < x0) x0 = p.x
-    if (p.x > x1) x1 = p.x
-    if (p.y < y0) y0 = p.y
-    if (p.y > y1) y1 = p.y
-  }
-  const out: Array<[number, number]> = []
-  for (const oy of [-height, 0, height]) {
-    if (y1 + oy + pad < 0 || y0 + oy - pad > height) continue
-    for (const ox of [-width, 0, width]) {
-      if (x1 + ox + pad < 0 || x0 + ox - pad > width) continue
-      out.push([ox, oy])
-    }
-  }
+// The pieces of every line, each with the index of its line: `length` px
+// with `gap` px between them, the first piece at a phase of its own per line
+// (hash of the line's index), so the pieces of neighbouring lines do not
+// stand in rows. `closeLoops`: a loop (a gyre) is cut as a closed circuit,
+// head to tail with no gap and from its start; otherwise it is cut as an
+// open line. The wind strokes and the current arrows were cut this way
+// when they were painted into the map texture (until 2026-10-11).
+export function flowLinePieces(lines: FlowLine[], length: number, gap: number, closeLoops: boolean): { line: number; points: FlowPoint[] }[] {
+  const out: { line: number; points: FlowPoint[] }[] = []
+  lines.forEach((line, li) => {
+    const closed = closeLoops && line.loop
+    const pts = closed ? [...line.points, line.points[0], line.points[1]] : line.points
+    const g = closed ? 0 : gap
+    for (const points of chunks(pts, length, g, closed ? 0 : hash(li) * (length + g))) out.push({ line: li, points })
+  })
   return out
-}
-
-// Wind: short strokes that taper from a thin, faint tail to a thicker head,
-// many along each line, so the field reads as moving air rather than as a
-// grid of signs. Faster air draws bolder. Batched into a few paths by
-// position along the stroke and by speed — one stroke call per band.
-const COMET_BANDS = 6
-const COMET_SPEEDS = 3
-export function drawComets(c: CanvasRenderingContext2D, lines: FlowLine[], style: {
-  width: number
-  height: number
-  color: [number, number, number]
-  length: number
-  gap: number
-  maxWidth: number
-  // Multiplies every stroke's alpha; 1 when unset.
-  opacity?: number
-}): void {
-  const [r, g, b] = style.color
-  const opacity = style.opacity ?? 1
-  const paths = Array.from({ length: COMET_BANDS * COMET_SPEEDS }, () => new Path2D())
-  lines.forEach((line, li) => {
-    for (const piece of chunks(line.points, style.length, style.gap, hash(li) * (style.length + style.gap))) {
-      if (piece.length < 3) continue
-      let mean = 0
-      for (const p of piece) mean += p.s
-      const sl = Math.min(COMET_SPEEDS - 1, Math.floor((mean / piece.length) * COMET_SPEEDS))
-      const n = piece.length - 1
-      for (const [ox, oy] of wrapOffsets(piece, style.width, style.height, style.maxWidth)) {
-        for (let band = 0; band < COMET_BANDS; band++) {
-          const i0 = Math.floor((band / COMET_BANDS) * n)
-          const i1 = Math.max(i0 + 1, Math.floor(((band + 1) / COMET_BANDS) * n))
-          const path = paths[band * COMET_SPEEDS + sl]
-          path.moveTo(piece[i0].x + ox, piece[i0].y + oy)
-          for (let i = i0 + 1; i <= Math.min(i1, n); i++) path.lineTo(piece[i].x + ox, piece[i].y + oy)
-        }
-      }
-    }
-  })
-  c.lineCap = 'round'
-  c.lineJoin = 'round'
-  for (let band = 0; band < COMET_BANDS; band++) {
-    const t = (band + 1) / COMET_BANDS
-    for (let sl = 0; sl < COMET_SPEEDS; sl++) {
-      const speed = (sl + 1) / COMET_SPEEDS
-      c.strokeStyle = `rgba(${r}, ${g}, ${b}, ${opacity * (0.12 + 0.78 * t) * (0.4 + 0.6 * speed)})`
-      c.lineWidth = 0.4 + style.maxWidth * t * (0.4 + 0.6 * speed)
-      c.stroke(paths[band * COMET_SPEEDS + sl])
-    }
-  }
-}
-
-// Offset a polyline sideways by a per-point half-width: the left edge forward,
-// the right edge back, as one closed outline.
-function ribbonOutline(path: Path2D, pts: FlowPoint[], halfWidth: (i: number) => number, ox: number, oy: number): void {
-  const n = pts.length
-  const normal = (i: number): [number, number] => {
-    const a = pts[Math.max(0, i - 1)]
-    const b = pts[Math.min(n - 1, i + 1)]
-    const dx = b.x - a.x
-    const dy = b.y - a.y
-    const m = Math.hypot(dx, dy) || 1
-    return [-dy / m, dx / m]
-  }
-  for (let i = 0; i < n; i++) {
-    const [nx, ny] = normal(i)
-    const w = halfWidth(i)
-    if (i === 0) path.moveTo(pts[i].x + nx * w + ox, pts[i].y + ny * w + oy)
-    else path.lineTo(pts[i].x + nx * w + ox, pts[i].y + ny * w + oy)
-  }
-  for (let i = n - 1; i >= 0; i--) {
-    const [nx, ny] = normal(i)
-    const w = halfWidth(i)
-    path.lineTo(pts[i].x - nx * w + ox, pts[i].y - ny * w + oy)
-  }
-  path.closePath()
-}
-
-// Currents: broad arrows along the lines — a ribbon that widens from its tail
-// and ends in a head. Width follows the speed. An open line becomes a row of
-// arrows with gaps; a loop becomes arrows head to tail with no gap, so the
-// gyre reads as one continuous circuit. Each arrow takes its class (warm or
-// cold, whatever the caller decides) from its middle point.
-export function drawArrowRibbons(c: CanvasRenderingContext2D, lines: FlowLine[], style: {
-  width: number
-  height: number
-  length: number
-  gap: number
-  maxHalfWidth: number
-  classify: (p: FlowPoint, dx: number, dy: number) => number
-  fills: readonly string[]
-  outline: string
-}): void {
-  const paths = style.fills.map(() => new Path2D())
-  const head = style.maxHalfWidth * 2.6
-  lines.forEach((line, li) => {
-    const pts = line.loop ? [...line.points, line.points[0], line.points[1]] : line.points
-    const gap = line.loop ? 0 : style.gap
-    for (const piece of chunks(pts, style.length, gap, line.loop ? 0 : hash(li) * (style.length + gap))) {
-      if (piece.length < 4) continue
-      // Split off the head: the last `head` px of the piece.
-      let along = 0
-      let cut = piece.length - 1
-      while (cut > 1 && along < head) {
-        along += Math.hypot(piece[cut].x - piece[cut - 1].x, piece[cut].y - piece[cut - 1].y)
-        cut--
-      }
-      if (cut < 1) continue
-      const shaft = piece.slice(0, cut + 1)
-      const tip = piece[piece.length - 1]
-      const base = piece[cut]
-      const mid = piece[Math.floor(piece.length / 2)]
-      const path = paths[style.classify(mid, tip.x - piece[0].x, tip.y - piece[0].y)]
-      const w = (i: number): number => {
-        const t = shaft.length > 1 ? i / (shaft.length - 1) : 1
-        // A loop's pieces meet end to end, so they keep full width at the tail.
-        const taper = line.loop ? 1 : 0.35 + 0.65 * t
-        return style.maxHalfWidth * taper * (0.35 + 0.65 * Math.min(1, shaft[i].s))
-      }
-      const dx = tip.x - base.x
-      const dy = tip.y - base.y
-      const m = Math.hypot(dx, dy) || 1
-      const hw = w(shaft.length - 1) * 2.1
-      for (const [ox, oy] of wrapOffsets(piece, style.width, style.height, head)) {
-        ribbonOutline(path, shaft, w, ox, oy)
-        // The head: a triangle wider than the shaft.
-        path.moveTo(base.x - (dy / m) * hw + ox, base.y + (dx / m) * hw + oy)
-        path.lineTo(tip.x + ox, tip.y + oy)
-        path.lineTo(base.x + (dy / m) * hw + ox, base.y - (dx / m) * hw + oy)
-        path.closePath()
-      }
-    }
-  })
-  c.lineJoin = 'round'
-  c.lineWidth = 1
-  c.strokeStyle = style.outline
-  paths.forEach((p, i) => {
-    c.fillStyle = style.fills[i]
-    c.fill(p, 'nonzero')
-    c.stroke(p)
-  })
 }
