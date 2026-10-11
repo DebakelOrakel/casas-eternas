@@ -1,5 +1,7 @@
 import { generateDetectionLattice } from './boundaryLattice'
-import { createMantleField, restoreMantleField, type SavedMantle } from '../mantle/mantleField'
+import { createMantleField, restoreMantleField } from '../mantle/mantleField'
+import type { SavedField } from '../fields/fieldMesh'
+import { restoreOceanAge } from './oceanAge'
 import { mulberry32 } from '../core/rng'
 import { domainOfKind, type Domain } from '../core/domain'
 import { derivePlateTypes } from '../crust/raftField'
@@ -65,7 +67,8 @@ export function serializePlateSimulation(sim: PlateSimulation): PlateSimulationS
 // only a sphere domain reads.
 // `mantle`: the field as the save holds it, the mesh's own values
 // (restoreMantleField refuses another mesh's); absent, a new one.
-export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: Float32Array, mantle?: SavedMantle, shape: Domain['kind'] = 'torus'): PlateSimulation {
+// `oceanAge`: the same for the ocean age (DEC-0036 phase 2), never absent.
+export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanAge: SavedField, mantle?: SavedField, shape: Domain['kind'] = 'torus'): PlateSimulation {
   const domain = domainOfKind(shape, snap.width, snap.height)
   const lattice = generateDetectionLattice(domain, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
   // COPIED out of the snapshot, not adopted from it. serializePlateSimulation
@@ -121,7 +124,8 @@ export function deserializePlateSimulation(snap: PlateSimulationSnapshot, oceanA
     latticeAccumulated: new Float32Array(lattice.length),
     latticeLockedEpochs: new Int16Array(lattice.length),
     latticeLastClassCode: new Int8Array(lattice.length).fill(-1),
-    oceanAge,
+    // The mesh's values (restoreOceanAge refuses another mesh's).
+    oceanAge: restoreOceanAge(domain, oceanAge),
     supercontinentActive: snap.supercontinentActive,
     continentalRiftCooldownUntil: snap.continentalRiftCooldownUntil,
     // Restored when the save carries one. It used to be regenerated unconditionally,

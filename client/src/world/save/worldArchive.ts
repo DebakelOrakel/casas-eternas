@@ -2,7 +2,7 @@ import JSZip from 'jszip'
 import type { ArcheanSnapshot } from '../../generator/archean/archeanSnapshot'
 import type { RefinedClimate } from '../../generator/climate/refinement'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
-import type { MantlePayload, MeshPayload } from '../../generator/pipeline/messages'
+import type { FieldPayload, MeshPayload } from '../../generator/pipeline/messages'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
@@ -66,17 +66,17 @@ interface ArchiveCommon {
 // snapshot instead, and no manifest (nothing computed to describe).
 export interface ArcheanArchiveParts extends ArchiveCommon {
   kind: 'archean'
-  archean: { snapshot: ArcheanSnapshot; mantle: MantlePayload; streak: ArrayBuffer }
+  archean: { snapshot: ArcheanSnapshot; mantle: FieldPayload; streak: ArrayBuffer }
 }
 
 export interface TectonicArchiveParts extends ArchiveCommon {
   kind: 'tectonic'
   snapshot: PlateSimulationSnapshot
-  mantle: MantlePayload
+  mantle: FieldPayload
   latticeAccumulated: ArrayBuffer
   latticeLockedEpochs: ArrayBuffer
   latticeLastClassCode: ArrayBuffer
-  oceanAge: ArrayBuffer
+  oceanAge: FieldPayload
   // The erosion engine's coarse forcing; null before the sim has one.
   forcing: { uplift: Float32Array; erodibility: Float32Array; resX: number; resY: number } | null
   // The adaptive mesh, the terrain proper; absent before the history ran.
@@ -92,8 +92,12 @@ export type WorldArchiveParts = ArcheanArchiveParts | TectonicArchiveParts
 // ecology layers (docs/decisions/ecology-as-function.md: computed on load),
 // and the generator loads the refinement it finds rather than computing it
 // again; 8: the mantle as its field mesh's values (mantle.f64 + mantle.json,
-// DEC-0036 phase 1) in place of the 128 × 64 raster mantle.f32 — a save
-// without them is refused, not converted.
+// DEC-0036 phase 1) in place of the 128 × 64 raster mantle.f32, and the
+// ocean age as its field mesh's values (oceanAge.f64 + oceanAge.json, phase
+// 2) in place of the 256 × 128 raster oceanAge.f32 — a save without them is
+// refused, not converted. The DEC-0036 phases are one move, so one version:
+// a version-8 save from a build before phase 2 lacks oceanAge.f64 and is
+// refused by its absence.
 export const WORLD_ARCHIVE_FORMAT_VERSION = 8
 
 export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8Array<ArrayBuffer>> {
@@ -101,16 +105,16 @@ export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8
   zip.file('world.yaml', parts.yaml)
   if (parts.kind === 'archean') {
     zip.file('archean.json', JSON.stringify(parts.archean.snapshot))
-    writeMantle(zip, 'archean.mantle', parts.archean.mantle)
+    writeField(zip, 'archean.mantle', parts.archean.mantle)
     zip.file('archean.streak.i16', parts.archean.streak)
     zip.file('elevation.f32', parts.elevation)
   } else {
     zip.file('state.json', JSON.stringify(parts.snapshot))
-    writeMantle(zip, 'mantle', parts.mantle)
+    writeField(zip, 'mantle', parts.mantle)
     zip.file('lattice.acc.f32', parts.latticeAccumulated)
     zip.file('lattice.lock.i16', parts.latticeLockedEpochs)
     zip.file('lattice.class.i8', parts.latticeLastClassCode)
-    zip.file('oceanAge.f32', parts.oceanAge)
+    writeField(zip, 'oceanAge', parts.oceanAge)
     zip.file('elevation.f32', parts.elevation)
     writeQueryLayers(zip, parts)
   }
@@ -120,21 +124,24 @@ export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8
   return (await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })) as Uint8Array<ArrayBuffer>
 }
 
-// The mantle (formatVersion 8): its values per cell of the mantle's field
-// mesh, Float64 (`<name>.f64`), and the mesh they belong to (`<name>.json`:
-// cell count and spacing in metres), which a load checks — the mesh is
-// rebuilt from the world's shape and size, not saved.
-function writeMantle(zip: JSZip, name: string, mantle: MantlePayload): void {
-  zip.file(`${name}.f64`, mantle.values)
-  zip.file(`${name}.json`, JSON.stringify({ cells: mantle.cells, spacingM: mantle.spacingM }))
+// A field-mesh field (formatVersion 8: the mantle, the ocean age): its
+// values per cell of its field mesh, Float64 (`<name>.f64`), and the mesh
+// they belong to (`<name>.json`: cell count and spacing in metres), which a
+// load checks — the mesh is rebuilt from the world's shape and size, not
+// saved.
+function writeField(zip: JSZip, name: string, field: FieldPayload): void {
+  zip.file(`${name}.f64`, field.values)
+  zip.file(`${name}.json`, JSON.stringify({ cells: field.cells, spacingM: field.spacingM }))
 }
 
 // Its reader, for the loader: the two entries back, or an error when either
-// is missing or malformed (a save from before formatVersion 8).
-export async function readMantle(zip: JSZip, name: string): Promise<MantlePayload> {
+// is missing or malformed (a save from before the field moved onto its
+// mesh — before formatVersion 8, or for the ocean age a version-8 save from
+// before DEC-0036 phase 2).
+export async function readField(zip: JSZip, name: string): Promise<FieldPayload> {
   const values = zip.file(`${name}.f64`)
   const meta = zip.file(`${name}.json`)
-  if (!values || !meta) throw new Error(`no ${name}.f64 / ${name}.json: a save from before formatVersion 8`)
+  if (!values || !meta) throw new Error(`no ${name}.f64 / ${name}.json: a save from before the field moved onto its mesh`)
   const { cells, spacingM } = JSON.parse(await meta.async('string')) as { cells: unknown; spacingM: unknown }
   const bytes = await values.async('arraybuffer')
   if (typeof cells !== 'number' || typeof spacingM !== 'number' || bytes.byteLength !== cells * 8) throw new Error(`${name}: ${bytes.byteLength} bytes for ${String(cells)} cells`)

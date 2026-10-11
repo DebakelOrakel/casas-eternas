@@ -4,7 +4,7 @@ import { capsuleWeight } from './capsule'
 import type { Domain, DomainGrid } from '../core/domain'
 import { domainWarpPoint } from './domainWarp'
 import { RIDGE_MEAN } from './ridgedNoise'
-import { oceanAgeGrid, sampleOceanAge } from '../tectonics/oceanAge'
+import { OCEAN_AGE_RES_X, oceanAgeAt, oceanAgeRaster } from '../tectonics/oceanAge'
 import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './elevationScale'
 import { continentalHypsometry, hypsometryRelief, hypsometryWeight } from './hypsometry'
 import { buildBlobIndex, raftField, sampleOwnerField, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
@@ -167,20 +167,24 @@ export function oceanFloorAtAge(age: number): number {
 // itself, exactly as the grid loop did.
 // `blobs`, when given, is an index of these same rafts (crust/raftField
 // buildBlobIndex) — for a sweep over many points; the value is the same.
+// `oceanAge` is the field per cell of its field mesh (tectonics/oceanAge.ts),
+// read here through the mesh's sampler.
 const baselineWarp = { x: 0, y: 0 }
-export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float32Array, domain: Domain, warpSeed: number, seaLevelOffset = 0, blobs?: BlobIndex): number {
+export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float64Array, domain: Domain, warpSeed: number, seaLevelOffset = 0, blobs?: BlobIndex): number {
   domainWarpPoint(worldX, worldY, domain, warpSeed, baselineWarp)
-  return baselineAtWarped(baselineWarp.x, baselineWarp.y, rafts, oceanAge, domain, warpSeed, seaLevelOffset, blobs)
+  const age = oceanAgeAt(oceanAge, domain, baselineWarp.x, baselineWarp.y)
+  return baselineAtWarped(baselineWarp.x, baselineWarp.y, rafts, age, domain, warpSeed, seaLevelOffset, blobs)
 }
 
-// raftBaselineAt after the warp. `relief`, when given, holds
+// raftBaselineAt after the warp, with the ocean age at the warped point
+// (epochs). `relief`, when given, holds
 // hypsometryRelief per cell for the same warped points (NaN = not yet
 // computed), and cell `index` is read from it or written into it.
-function baselineAtWarped(wx: number, wy: number, rafts: Raft[], oceanAge: Float32Array, domain: Domain, warpSeed: number, seaLevelOffset: number, blobs?: BlobIndex, relief?: Float64Array, index = 0): number {
+function baselineAtWarped(wx: number, wy: number, rafts: Raft[], age: number, domain: Domain, warpSeed: number, seaLevelOffset: number, blobs?: BlobIndex, relief?: Float64Array, index = 0): number {
   // Ocean floor deepens with its crustal age; the margin profile then shapes
   // everything from that floor up onto the continent, putting the shoreline
   // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
-  const oceanicBaseline = oceanFloorAtAge(sampleOceanAge(oceanAge, oceanAgeGrid(domain), wx, wy))
+  const oceanicBaseline = oceanFloorAtAge(age)
   const t = marginParameter(blobs ? raftFieldIndexed(wx, wy, blobs) : raftField(wx, wy, rafts, domain))
   // The water knob: the whole solid surface sits lower relative to a sea level
   // that stays at zero. Applied here rather than to the anchors because the two
@@ -214,13 +218,33 @@ function baselineAtWarped(wx: number, wy: number, rafts: Raft[], oceanAge: Float
 // 2026-10-10 at 2048 × 1024, a render after the first: 2.3 s → 0.55 s on
 // the sphere (the warp and the relief on the globe lattice), 0.79 s →
 // 0.28 s on the torus. The first render of a size pays the same as before.
-export function computeRaftBaseline(rafts: Raft[], oceanAge: Float32Array, renderWidth: number, renderHeight: number, domain: Domain, warpSeed: number, seaLevelOffset = 0): Float32Array {
+//
+// The ocean age is read from a chart raster of it (oceanAgeRaster, cell
+// centres, bilinear) rather than through the mesh's sampler: a locate per
+// pixel is too dear for a render. AGE_RASTER_PER_CELL raster cells per
+// field-mesh spacing: 1024 × 512. Measured 2026-10-11 at 2048 × 1024 (seed
+// `bench`, 40 epochs after the hand-over) against the sampler per pixel
+// (480 ms torus, 550 ms sphere): rasterising takes 93 / 115 ms, the age is
+// off by 0.03 epochs on average and by at most 5.8 at a ridge's step from
+// age 0 to old floor (900 m of depth there); at 512 × 256 27 / 32 ms, 0.10
+// and 14 epochs (1.4 km). The coupled history does not come here — it
+// evaluates the baseline per node through the sampler (raftBaselineAt) and
+// renders its own terrain; this is the Archean's render and the scripts'.
+// A null field (the Archean's: none yet) is age 0 everywhere, freshly
+// formed crust.
+const AGE_RASTER_PER_CELL = 4
+export function computeRaftBaseline(rafts: Raft[], oceanAge: Float64Array | null, renderWidth: number, renderHeight: number, domain: Domain, warpSeed: number, seaLevelOffset = 0): Float32Array {
   const result = new Float32Array(renderWidth * renderHeight)
   const blobs = buildBlobIndex(rafts, domain)
   const cache = baselineStaticCache(renderWidth, renderHeight, domain, warpSeed)
   const { warpedX, warpedY, relief } = cache
+  const ageResX = OCEAN_AGE_RES_X * AGE_RASTER_PER_CELL
+  const ageResY = Math.max(1, Math.round((ageResX * domain.height) / domain.width))
+  const ageGrid = domain.grid(ageResX, ageResY)
+  const ages = oceanAge ? oceanAgeRaster(oceanAge, domain, ageResX, ageResY) : null
   for (let i = 0; i < result.length; i++) {
-    result[i] = baselineAtWarped(warpedX[i], warpedY[i], rafts, oceanAge, domain, warpSeed, seaLevelOffset, blobs, relief, i)
+    const age = ages ? ageGrid.sampleBilinearAt(ages, warpedX[i], warpedY[i]) : 0
+    result[i] = baselineAtWarped(warpedX[i], warpedY[i], rafts, age, domain, warpSeed, seaLevelOffset, blobs, relief, i)
   }
   return result
 }

@@ -17,8 +17,9 @@
 // game asks about a PLACE — elevation, biome, lakes, rivers — has to be on the
 // world raster or it cannot answer.
 //
-// `oceanAge` and the mantle field have grids of their own and are NOT here: they
-// are restore rasters for the generator, not queryable layers. Whether oceanAge
+// `oceanAge` and the mantle field live on field meshes of their own (DEC-0036)
+// and are NOT here: the save holds their mesh values for the generator's
+// restore, not queryable layers. Whether oceanAge
 // should become one is an open question in queryable-world-save.md, and this
 // registry is where it would land if it does.
 export type FieldGrid = 'world' | 'climate'

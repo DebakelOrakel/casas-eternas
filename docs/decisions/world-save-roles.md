@@ -31,7 +31,7 @@ It holds three things, written together, read by different consumers:
 | Role | In the zip | Who reads it |
 |---|---|---|
 | Recipe — make the world again | `world.yaml`: `spec` and the `history:` block | a replay (detail-ladder.md, fork 2) |
-| Snapshot — continue the world | `state.json`, `mesh/` (`column.bin` alone is ~23 MB of ~53 MB), `mantle.f64` + `mantle.json`, `lattice.*`, `oceanAge.f32` | the generator, after a load |
+| Snapshot — continue the world | `state.json`, `mesh/` (`column.bin` alone is ~23 MB of ~53 MB), `mantle.f64` + `mantle.json`, `lattice.*`, `oceanAge.f64` + `oceanAge.json` | the generator, after a load |
 | Queryable layers — look a value up | `elevation.f32`, `layers/*` (~70 files), `manifest.json` | the map, the incubator, a game server (queryable-world-save.md) |
 
 The detail ladder changes what each of these is worth. Level 1 replays the

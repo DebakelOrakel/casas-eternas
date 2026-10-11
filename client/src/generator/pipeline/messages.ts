@@ -168,12 +168,13 @@ export interface WorkerEcologyMonthMessage {
   month: number
 }
 
-// The mantle field as a save carries it (DEC-0036 phase 1,
-// mantle/mantleField.SavedMantle): its values per cell of the mantle's field
-// mesh (Float64), and the mesh's cell count and spacing in metres, which the
-// load checks before it trusts the values. The save's mantle.f64 and
-// mantle.json (archean.mantle.f64 / .json in the Archean).
-export interface MantlePayload {
+// A field-mesh field as a save carries it (DEC-0036 fork 5,
+// fields/fieldMesh.SavedField): its values per cell of its field mesh
+// (Float64), and the mesh's cell count and spacing in metres, which the
+// load checks before it trusts the values. The mantle's (mantle.f64 and
+// mantle.json, archean.mantle.f64 / .json in the Archean, phase 1) and the
+// ocean age's (oceanAge.f64 and oceanAge.json, phase 2).
+export interface FieldPayload {
   values: ArrayBuffer
   cells: number
   spacingM: number
@@ -232,14 +233,17 @@ export interface WorkerRestoreWorldMessage {
   shape?: 'torus' | 'sphere'
   mesh?: MeshPayload
   snapshot: PlateSimulationSnapshot
-  oceanAge: ArrayBuffer
+  // The ocean age's field-mesh values (DEC-0036 phase 2); absent only with
+  // `archean` (an Archean save has none), and a tectonic restore without it
+  // fails.
+  oceanAge?: FieldPayload
   elevation: ArrayBuffer
   // Absent, deserializePlateSimulation makes a new field (the screen refuses a
   // save without one since the field moved onto its mesh, formatVersion 8).
-  mantle?: MantlePayload
+  mantle?: FieldPayload
   // Set when the saved world was still in the Archean; `snapshot` is then unused.
   // `streak` per mantle mesh cell (Int16).
-  archean?: { snapshot: ArcheanSnapshot; mantle: MantlePayload; streak: ArrayBuffer }
+  archean?: { snapshot: ArcheanSnapshot; mantle: FieldPayload; streak: ArrayBuffer }
   // The Archean's mantle mixing from the save's recipe, so a loaded Archean
   // world keeps stirring the way it was set (BUG_BOUNTY 63 — the restore
   // used to leave the default in place).
@@ -685,19 +689,21 @@ export interface WorkerWorldDataMessage {
   type: 'worldData'
   // Present instead of `snapshot` when the world is still in the Archean — the phase is
   // a pause, so it has to be savable, and there is no PlateSimulation yet to snapshot.
-  archean?: { snapshot: ArcheanSnapshot; mantle: MantlePayload; streak: ArrayBuffer }
+  archean?: { snapshot: ArcheanSnapshot; mantle: FieldPayload; streak: ArrayBuffer }
   snapshot: PlateSimulationSnapshot
   // The mantle field, saved rather than regenerated: it is what the plate motions
   // were fitted to, and what finalizeArchean read to place the plates in the first
   // place. Restoring a world with a fresh random field left the plates drifting
   // against a mantle that never produced them. The mesh's own values, so a
-  // load continues identically (MantlePayload).
-  mantle: MantlePayload
+  // load continues identically (FieldPayload).
+  mantle: FieldPayload
   // See WorkerRestoreWorldMessage.lattice — the other half of a faithful continuation.
   latticeAccumulated: ArrayBuffer
   latticeLockedEpochs: ArrayBuffer
   latticeLastClassCode: ArrayBuffer
-  oceanAge: ArrayBuffer
+  // The ocean age's field-mesh values (DEC-0036 phase 2; an Archean world's
+  // is all zero and not written).
+  oceanAge: FieldPayload
   elevation: ArrayBuffer
   // The erosion engine's two coarse forcing fields (Float32, forcingResX ×
   // forcingResY — the climate grid), derived from the live sim at save time

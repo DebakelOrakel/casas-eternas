@@ -28,7 +28,8 @@ export interface SynthesisSources {
   domain: Domain
   rafts: PlateSimulation['rafts']
   features: PlateSimulation['features']
-  oceanAge: Float32Array
+  // Per cell of its field mesh (tectonics/oceanAge.ts).
+  oceanAge: Float64Array
   mantle: Float64Array
   warpSeed: number
   seaLevelOffset: number

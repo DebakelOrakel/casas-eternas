@@ -173,47 +173,17 @@ export function raftMembership(x: number, y: number, rafts: Raft[], domain: Doma
   return smoothstepBetween(FIELD_LO, FIELD_HI, raftField(x, y, rafts, domain))
 }
 
-// Continental membership sampled onto a coarse grid, computed ONCE per epoch and
-// shared by every consumer that needs "is there continent here" over the whole
-// surface. raftMembership is a brute-force scan over every blob of every raft, so
-// a full-surface sweep costs cells × blobs — and blob counts grow through a run as
-// margins accrete. mantleField already paid that (128×64 per epoch); adding a
-// second independent sweep for the ocean-age sink would have roughly quintupled it
-// at the 256×128 age resolution. One field, sampled by world coordinate, keeps it
-// at a single sweep regardless of how many consumers there are.
-// Through a blob index (the same bits as the scan, see BlobIndex): on the
-// sphere a distance costs a few times the torus's, and the scan asked every
-// blob at every cell.
-export function computeMembershipField(rafts: Raft[], resX: number, resY: number, domain: Domain): Float32Array {
-  const out = new Float32Array(resX * resY)
-  const blobs = buildBlobIndex(rafts, domain)
-  for (let gy = 0; gy < resY; gy++) {
-    const wy = ((gy + 0.5) / resY) * domain.height
-    for (let gx = 0; gx < resX; gx++) {
-      const wx = ((gx + 0.5) / resX) * domain.width
-      out[gy * resX + gx] = smoothstepBetween(FIELD_LO, FIELD_HI, raftFieldIndexed(wx, wy, blobs))
-    }
-  }
-  return out
-}
-
-// The same membership at a list of points — a field mesh's cell centres (the
-// mantle's, DEC-0036) — through one blob index: computeMembershipField's
-// value at each point, with no raster between.
+// Continental membership (0..1, the raft field through FIELD_LO..FIELD_HI) at a
+// list of points — a field mesh's cell centres (the mantle's and the ocean
+// age's, DEC-0036) — through one blob index (the same bits as the scan, see
+// BlobIndex): on the sphere a distance costs a few times the torus's. It
+// replaced computeMembershipField, the 128 × 64 raster both read until
+// 2026-10-11, and its nearest-cell sampler.
 export function computeMembershipAt(rafts: Raft[], xs: ArrayLike<number>, ys: ArrayLike<number>, domain: Domain): Float64Array {
   const out = new Float64Array(xs.length)
   const blobs = buildBlobIndex(rafts, domain)
   for (let i = 0; i < xs.length; i++) out[i] = smoothstepBetween(FIELD_LO, FIELD_HI, raftFieldIndexed(xs[i], ys[i], blobs))
   return out
-}
-
-// Nearest-cell sample of a membership field at a world point, through its grid, so
-// consumers on their own grids can read it without caring what resolution it was
-// computed at. Nearest rather than bilinear on purpose: every consumer thresholds
-// the result (> 0.5) rather than using its magnitude, so interpolation would only
-// cost time.
-export function sampleMembershipField(field: Float32Array, grid: DomainGrid, x: number, y: number): number {
-  return grid.sampleNearestAt(field, x, y)
 }
 
 // A coarse (resX×resY) field of continental crust "oldness" 0..1 — 1 where the

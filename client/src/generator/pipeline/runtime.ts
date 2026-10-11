@@ -24,7 +24,7 @@ import { encodeMesh } from '../mesh/meshSerial'
 import { meshRouting, meshSubstrate, waterFieldsFromMesh } from '../mesh/meshHydrology'
 import { replayRuns } from './replayRuns'
 import { rasterCellAt } from '../surface/riverGraph'
-import type { MantlePayload, MeshPayload } from './messages'
+import type { FieldPayload, MeshPayload } from './messages'
 import { coarseForcingFields } from './erosionForcing'
 import { fillDepressionsAndRouteFlow } from '../surface/flowRouting'
 import type { ArcheanSimulation } from '../archean/archeanState'
@@ -36,11 +36,12 @@ import { finalizeArchean } from '../archean/finalizeArchean'
 import { findPlumeSites } from '../tectonics/plumes'
 import { stabilisedFraction } from '../crust/raftField'
 import { TECTONIC_MA_PER_EPOCH, worldAgeMa, worldEpoch } from '../core/worldTime'
-import { OCEAN_AGE_RES_X, OCEAN_AGE_RES_Y } from '../tectonics/oceanAge'
+import { createOceanAgeField, savedOceanAge } from '../tectonics/oceanAge'
+import type { SavedField } from '../fields/fieldMesh'
 import type { FlowRouting } from '../surface/flowRouting'
 import { accumulateDischarge, accumulateDischargeOn, extractRiverPolylines, computeLakes, computeLakesOn, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold, waterLevelField, CANONICAL_RIVER_DENSITY, accumulateRegimeInputs, accumulateRegimeInputsOn, SURFACE_ICE } from '../surface/hydrology'
 import type { LakeFields } from '../surface/hydrology'
-import { MANTLE_RES_X, MANTLE_RES_Y, mantleMesh, rasteriseMantle, savedMantle, type SavedMantle } from '../mantle/mantleField'
+import { MANTLE_RES_X, MANTLE_RES_Y, mantleMesh, rasteriseMantle, savedMantle } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
 import { computeBiomes, computeBiomesFine, computeBiomesFromMonths, computeBiomesFineFromMonths, computeKoppenField } from '../climate/biomes'
@@ -118,8 +119,8 @@ let pendingEvents: SimEvent[] = []
 // rather than re-derived: finalizeArchean consumes the Archean's RNG and names the
 // continents as it goes, so calling it twice does not produce the same world.
 let handoverSnapshot: PlateSimulationSnapshot | null = null
-let handoverOceanAge: Float32Array | null = null
-let handoverMantle: SavedMantle | null = null
+let handoverOceanAge: SavedField | null = null
+let handoverMantle: SavedField | null = null
 // The hand-over belongs to the world that was grown here. Whatever REPLACES
 // that world (a fresh Archean, a restored save) drops it, so a later reset
 // cannot rewind a loaded world onto the previous session's continents. The
@@ -524,14 +525,17 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   renderOptions.precomputedElevations = undefined
   renderOptions.elevationScale = elevationScale
   const result = await renderSimulationImage(
-    // No seeds, so no plate Voronoi: the Archean has no plates. A paused
+    // No seeds, so no plate Voronoi: the Archean has no plates. No ocean age
+    // either (nothing creates or destroys seafloor yet): null reads as
+    // freshly formed crust everywhere, the right answer for a world whose
+    // entire seafloor is being recycled continuously. A paused
     // render used to place the seeds finalizeArchean would, as a preview of
     // the plates to come — but the genesis step offers no plate outlines
     // (steps.ts), so nothing showed it, and the Voronoi over the whole map
     // cost ~1.4 s a pause on the sphere (removed 2026-10-10). Seeds only
     // drive the Voronoi mask; the elevation reads rafts, ocean age and
     // features, so this changes no terrain.
-    { width: archean.width, height: archean.height, domain: archean.domain, seeds: [], rafts: archean.rafts, features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset, mantle: archean.mantle },
+    { width: archean.width, height: archean.height, domain: archean.domain, seeds: [], rafts: archean.rafts, features: [], oceanAge: null, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset, mantle: archean.mantle },
     renderPool(),
     renderOptions,
   )
@@ -580,11 +584,6 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   emit(status)
 }
 
-// The Archean has no ocean-age field (nothing creates or destroys seafloor yet), and
-// computeRaftBaseline needs one to sample. A zero field reads as freshly-formed
-// crust everywhere, which is the right answer for a world whose entire seafloor is
-// being recycled continuously.
-const EMPTY_OCEAN_AGE = new Float32Array(OCEAN_AGE_RES_X * OCEAN_AGE_RES_Y)
 
 // Full-res elevation → the climate grid, for WorkerRenderedMessage.elevation.
 // Center samples via the climate modules' own sampleElevationAtCell rather than
@@ -1337,7 +1336,7 @@ function handleRequestElevationField(): void {
 function handleSerializeWorld(): void {
   if (archean && !sim && lastRawElevations) {
     const snapshot = serializeArchean(archean)
-    const mantle = mantlePayload(savedMantle(archean.mantle, archean.domain))
+    const mantle = fieldPayload(savedMantle(archean.mantle, archean.domain))
     const streak = archean.upwellingStreak.slice()
     const elevation = lastRawElevations.slice()
     const message: WorkerWorldDataMessage = {
@@ -1353,7 +1352,7 @@ function handleSerializeWorld(): void {
       latticeAccumulated: new Float32Array(0).buffer as ArrayBuffer,
       latticeLockedEpochs: new Int16Array(0).buffer as ArrayBuffer,
       latticeLastClassCode: new Int8Array(0).buffer as ArrayBuffer,
-      oceanAge: EMPTY_OCEAN_AGE.slice().buffer as ArrayBuffer,
+      oceanAge: fieldPayload(savedOceanAge(createOceanAgeField(0, archean.domain), archean.domain)),
       elevation: elevation.buffer as ArrayBuffer,
       uplift: new Float32Array(0).buffer as ArrayBuffer,
       erodibility: new Float32Array(0).buffer as ArrayBuffer,
@@ -1364,12 +1363,13 @@ function handleSerializeWorld(): void {
     return
   }
   if (!sim || !lastRawElevations) return
-  // .slice() so transferring these buffers doesn't neuter the live sim's
-  // ocean-age / the worker's retained elevation.
-  const oceanAge = sim.oceanAge.slice()
+  // .slice() so transferring these buffers doesn't neuter the worker's
+  // retained elevation.
   const elevation = lastRawElevations.slice()
-  // The mesh's own values (the bit-identical continuation; DEC-0036 phase 1).
-  const mantle = mantlePayload(savedMantle(sim.mantle, sim.domain))
+  // The meshes' own values, copies (the bit-identical continuation; DEC-0036
+  // phases 1 and 2).
+  const mantle = fieldPayload(savedMantle(sim.mantle, sim.domain))
+  const oceanAge = fieldPayload(savedOceanAge(sim.oceanAge, sim.domain))
   const accumulated = sim.latticeAccumulated.slice()
   const locked = sim.latticeLockedEpochs.slice()
   const lastClass = sim.latticeLastClassCode.slice()
@@ -1384,7 +1384,7 @@ function handleSerializeWorld(): void {
     latticeAccumulated: accumulated.buffer as ArrayBuffer,
     latticeLockedEpochs: locked.buffer as ArrayBuffer,
     latticeLastClassCode: lastClass.buffer as ArrayBuffer,
-    oceanAge: oceanAge.buffer as ArrayBuffer,
+    oceanAge,
     elevation: elevation.buffer as ArrayBuffer,
     uplift: uplift.buffer as ArrayBuffer,
     erodibility: hardness.buffer as ArrayBuffer,
@@ -1392,7 +1392,7 @@ function handleSerializeWorld(): void {
     forcingResY: CLIMATE_RES_Y,
     mesh: meshPayload(),
   }
-  const transfers = [worldMessage.mantle.values, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge, worldMessage.elevation, worldMessage.uplift, worldMessage.erodibility]
+  const transfers = [worldMessage.mantle.values, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge.values, worldMessage.elevation, worldMessage.uplift, worldMessage.erodibility]
   if (worldMessage.mesh) transfers.push(worldMessage.mesh.nodes, worldMessage.mesh.connectivity, worldMessage.mesh.z)
   emit(worldMessage, transfers)
 }
@@ -1441,11 +1441,18 @@ async function handleReplayRuns(message: Extract<WorkerInboundMessage, { type: '
   await renderTerrain()
 }
 
-// The mantle between the field's form and the message's (MantlePayload).
-function mantlePayload(saved: SavedMantle): MantlePayload {
+// A field-mesh field between its form and the message's (FieldPayload):
+// the mantle's and the ocean age's.
+function fieldPayload(saved: SavedField): FieldPayload {
   return { values: saved.values.buffer as ArrayBuffer, cells: saved.cells, spacingM: saved.spacingM }
 }
-function savedOf(payload: MantlePayload | undefined): SavedMantle | undefined {
+function requireOceanAge(payload: FieldPayload | undefined): FieldPayload {
+  if (!payload) throw new Error('a tectonic world restored without its ocean age')
+  return payload
+}
+function savedOf(payload: FieldPayload): SavedField
+function savedOf(payload: FieldPayload | undefined): SavedField | undefined
+function savedOf(payload: FieldPayload | undefined): SavedField | undefined {
   return payload ? { values: new Float64Array(payload.values), cells: payload.cells, spacingM: payload.spacingM } : undefined
 }
 
@@ -1484,7 +1491,7 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   // had just opened with it. It only ever happened after a Genesis run in the
   // same session, which is why it looked intermittent.
   archean = null
-  sim = deserializePlateSimulation(message.snapshot, new Float32Array(message.oceanAge), savedOf(message.mantle), message.shape ?? 'torus')
+  sim = deserializePlateSimulation(message.snapshot, savedOf(requireOceanAge(message.oceanAge)), savedOf(message.mantle), message.shape ?? 'torus')
   // The hand-over's shape too: a genesis reset after a load starts the
   // world's own shape again.
   archeanShape = sim.domain.kind
@@ -1604,7 +1611,7 @@ function handleGenesisFinalize(): void {
   // along with the world it was meant to preserve. Measured: after 60 epochs a reset
   // restored epoch 0 but 20 rafts and 386 features instead of the hand-over's 13 and 0.
   handoverSnapshot = structuredClone(serializePlateSimulation(sim))
-  handoverOceanAge = sim.oceanAge.slice()
+  handoverOceanAge = savedOceanAge(sim.oceanAge, sim.domain)
   handoverMantle = savedMantle(sim.mantle, sim.domain)
   archean = null
   // No initial events under the raft model — a continent is a raft spanning
@@ -1626,7 +1633,7 @@ function resetTectonics(): void {
   stopTicking()
   // Fresh copies each time, so a second reset restores the same state as the first
   // rather than whatever the last run left in the buffers.
-  sim = deserializePlateSimulation(handoverSnapshot, handoverOceanAge.slice(), { ...handoverMantle, values: handoverMantle.values.slice() }, archeanShape)
+  sim = deserializePlateSimulation(handoverSnapshot, { ...handoverOceanAge, values: handoverOceanAge.values.slice() }, { ...handoverMantle, values: handoverMantle.values.slice() }, archeanShape)
   sim.epochMa = TECTONIC_MA_PER_EPOCH
   lastRawElevations = null
   preErosionElevations = null
@@ -1763,7 +1770,7 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
   if (!sampleWorld || sampleWorld.width !== width || sampleWorld.height !== height || sampleWorld.shape !== shape) {
     const elevation = previewElevation(domain)
     const rendered = await renderSimulationImage(
-      { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: EMPTY_OCEAN_AGE, warpSeed: 0, seaLevelOffset: 0, mantle: new Float64Array(mantleMesh(domain).mesh.count) },
+      { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: null, warpSeed: 0, seaLevelOffset: 0, mantle: new Float64Array(mantleMesh(domain).mesh.count) },
       renderPool(),
       { precomputedElevations: elevation },
     )

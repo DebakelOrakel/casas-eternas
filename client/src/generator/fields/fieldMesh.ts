@@ -423,6 +423,20 @@ export function createFieldSampler(fm: FieldMesh): FieldSampler {
   }
 }
 
+// ------------------------------------------------------- the save's form
+
+// A field as a save holds it (DEC-0036 fork 5): the mesh's own values,
+// Float64 per cell — the session's exact bytes, so a load continues bit for
+// bit — with what identifies the mesh they belong to, its cell count and
+// spacing in metres. The mesh itself is not saved: it is rebuilt from the
+// domain and the spacing, deterministically. The mantle's and the ocean
+// age's (mantle/mantleField.ts, tectonics/oceanAge.ts).
+export interface SavedField {
+  values: Float64Array
+  cells: number
+  spacingM: number
+}
+
 // ------------------------------------------------------- chart rasters
 
 // A field rasterised onto a resX × resY chart raster in the DomainGrid's

@@ -49,8 +49,9 @@ export interface LayerSpec extends FieldSpec, Encoding {}
 const layer = (name: string, dtype: Dtype, scale: number, offset: number): LayerSpec =>
   ({ ...fieldSpec(name), dtype, scale, offset })
 
-// The coarse (climate-grid) quantised layers. Elevation + oceanAge are carried
-// separately as raw f32 (they double as the restore rasters — see the save doc).
+// The coarse (climate-grid) quantised layers. Elevation is carried separately
+// as raw f32 (it doubles as the restore raster — see the save doc); the ocean
+// age and the mantle as their field meshes' values (oceanAge.f64, mantle.f64).
 export const WORLD_LAYERS: LayerSpec[] = [
   // Ranges are generous so real extremes never clip (greenhouse heat, Siberian
   // seasonality, very wet rainforest, gain/province-boosted ecology).

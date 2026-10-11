@@ -396,10 +396,10 @@ test('a sphere world runs its Archean through the runtime', async () => {
 
 test('a sphere Archean at full size, then its plates: finite, pole-handled, plausible against the torus', async () => {
   const L = (m) => server.ssrLoadModule(m)
-  const [AS, AT, RF, MF, IM, OA] = await Promise.all([
+  const [AS, AT, RF, MF, IM] = await Promise.all([
     L('/src/generator/archean/archeanState.ts'), L('/src/generator/archean/archeanStep.ts'),
     L('/src/generator/crust/raftField.ts'), L('/src/generator/mantle/mantleField.ts'),
-    L('/src/generator/render/elevationMapImage.ts'), L('/src/generator/tectonics/oceanAge.ts'),
+    L('/src/generator/render/elevationMapImage.ts'),
   ])
   // The REAL slice renderer this time (elevationRenderWorker.ts), driven in
   // this process through a stand-in `self`: the sphere's warp and noise are
@@ -408,13 +408,13 @@ test('a sphere Archean at full size, then its plates: finite, pole-handled, plau
   const shim = { postMessage: (m) => { shim.posted = m } }
   globalThis.self = shim
   try {
-    await sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA })
+    await sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM })
   } finally {
     delete globalThis.self
   }
 })
 
-async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA }) {
+async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM }) {
   await L('/src/generator/render/elevationRenderWorker.ts')
   const slices = {
     async renderElevations(rw, rh, ww, wh, base, features, warpSeed, shape) {
@@ -433,7 +433,7 @@ async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA }) {
     const age = RF.computeCratonOldnessField(sim.rafts, sim.epoch, MF.MANTLE_RES_X, MF.MANTLE_RES_Y, sim.domain)
     // The live preview's render, a quarter of the world per axis.
     const rendered = await IM.renderSimulationImage(
-      { width: FW, height: FH, domain: sim.domain, seeds: [], rafts: sim.rafts, features: [], oceanAge: new Float32Array(OA.OCEAN_AGE_RES_X * OA.OCEAN_AGE_RES_Y), warpSeed: sim.warpSeed, seaLevelOffset: 0, mantle: sim.mantle },
+      { width: FW, height: FH, domain: sim.domain, seeds: [], rafts: sim.rafts, features: [], oceanAge: null, warpSeed: sim.warpSeed, seaLevelOffset: 0, mantle: sim.mantle },
       slices, { elevationScale: 4 },
     )
     result[shape] = {
@@ -471,11 +471,12 @@ async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM, OA }) {
 // nor runs away, speeds, land and boundaries of the torus's order. Then the
 // elevation's feature query near a pole against every feature.
 async function spherePlatesAtFullSize(L, slices, IM, archeans) {
-  const [FA, PS, PM, TT, BD, EF, MF, FO] = await Promise.all([
+  const [FA, PS, PM, TT, BD, EF, MF, FO, OA] = await Promise.all([
     L('/src/generator/archean/finalizeArchean.ts'), L('/src/generator/tectonics/plateSimulation.ts'),
     L('/src/generator/tectonics/plateMotion.ts'), L('/src/generator/tectonics/tectonicsTuneParams.ts'),
     L('/src/generator/tectonics/boundaryDetection.ts'), L('/src/generator/elevation/elevationField.ts'),
     L('/src/generator/mantle/mantleField.ts'), L('/src/generator/tectonics/folds.ts'),
+    L('/src/generator/tectonics/oceanAge.ts'),
   ])
   const EPOCHS = 30
   const step = TT.TECTONICS_TUNING.epochAngleStep
@@ -510,7 +511,9 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
         && sim.seeds.every((s) => Number.isFinite(s.x + s.y)) && sim.features.every((f) => Number.isFinite(f.x + f.y + f.thickness + f.tangentX + f.tangentY))
         && sim.rafts.every((r) => r.blobs.every((b) => Number.isFinite(b.x + b.y))) && rendered.boundaryMask.some((v) => v === 1),
       onDomain: [...sim.seeds, ...sim.features, ...sim.hotspots, ...sim.rafts.flatMap((r) => r.blobs)].every((p) => p.x >= 0 && p.x < sim.width && p.y >= 0 && p.y <= sim.height),
-      poles: poleRowsConstant(sim.oceanAge, 256, 128),
+      // The ocean age on its field mesh (DEC-0036 phase 2): one value per cell,
+      // no pole rows; within its bounds, with ridges (age 0) and aged floor.
+      ageBounded: sim.oceanAge.length === OA.oceanAgeMesh(sim.domain).mesh.count && sim.oceanAge.every((v) => v >= 0 && v <= 180) && sim.oceanAge.some((v) => v === 0) && sim.oceanAge.some((v) => v > 1),
       counts,
       speeds,
       meanSpeed: speeds.reduce((a, b) => a + b, 0) / speeds.length,
@@ -526,7 +529,7 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
   const say = (r) => `plates ${r.counts.join(' ')}; speed ${r.speeds[0].toFixed(1)} → ${r.speeds.at(-1).toFixed(1)} (mean ${r.meanSpeed.toFixed(1)}); land ${r.land.toFixed(3)}; on a boundary ${(100 * r.boundary).toFixed(1)} % of the lattice, Voronoi edges ${(100 * r.edge).toFixed(2)} % of the surface; ${r.features} features; ${EPOCHS} epochs in ${(r.ms / 1000).toFixed(1)} s, render ${(r.renderMs / 1000).toFixed(1)} s`
   check('the sphere\'s seeds, motions, ocean age, rafts, features, boundaries and elevation are finite (the torus\'s too)', sphere.finite && torus.finite)
   check('every point the plates move stays on the sphere', sphere.onDomain && torus.onDomain)
-  check('the sphere\'s ocean age is one value along each pole row', sphere.poles && !torus.poles)
+  check('the ocean age stays in [0, 180] on its field mesh, with ridges and aged floor, on both shapes', sphere.ageBounded && torus.ageBounded)
   const plausibleCount = (r) => r.counts.every((n) => n >= Math.max(2, TT.TECTONICS_TUNING.minPlateCount) && n <= 3 * r.counts[0])
   check('the sphere\'s plate count neither collapses nor runs away', plausibleCount(sphere) && plausibleCount(torus))
   // Speeds: generated in the torus's range (LINEAR_SPEED_MIN_PX..MAX_PX at

@@ -2,7 +2,8 @@ import type { ArcheanSimulation } from './archeanState'
 import type { Raft } from '../crust/raftTypes'
 import { mulberry32 } from '../core/rng'
 import { domainOfKind, type Domain } from '../core/domain'
-import { createMantleField, mantleMesh, restoreMantleField, type SavedMantle } from '../mantle/mantleField'
+import { createMantleField, mantleMesh, restoreMantleField } from '../mantle/mantleField'
+import type { SavedField } from '../fields/fieldMesh'
 
 // Saving a world that is still in the Archean.
 //
@@ -43,7 +44,7 @@ export function serializeArchean(archean: ArcheanSimulation): ArcheanSnapshot {
 // `mantle`: the field as the save holds it, the mesh's own values
 // (restoreMantleField refuses another mesh's). `streak` is per mesh cell;
 // one of another length starts the streaks over.
-export function deserializeArchean(snap: ArcheanSnapshot, mantle: SavedMantle | undefined, streak: Int16Array, shape: Domain['kind'] = 'torus'): ArcheanSimulation {
+export function deserializeArchean(snap: ArcheanSnapshot, mantle: SavedField | undefined, streak: Int16Array, shape: Domain['kind'] = 'torus'): ArcheanSimulation {
   const domain = domainOfKind(shape, snap.width, snap.height)
   const cells = mantleMesh(domain).mesh.count
   return {

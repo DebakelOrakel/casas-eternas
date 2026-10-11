@@ -2,7 +2,7 @@ import type { Domain } from '../core/domain'
 import { MANTLE_TUNING } from './mantleTuneParams'
 import type { Raft } from '../crust/raftTypes'
 import { computeMembershipAt } from '../crust/raftField'
-import { createFieldMesh, createFieldSampler, rasteriseField, type FieldMesh, type FieldSampler } from '../fields/fieldMesh'
+import { createFieldMesh, createFieldSampler, rasteriseField, type FieldMesh, type FieldSampler, type SavedField } from '../fields/fieldMesh'
 import { diffuseExplicit, gradient, solveHelmholtz, stableDiffusionStep } from '../fields/fieldOperators'
 
 // A coarse, evolving mantle buoyancy/temperature field under the whole
@@ -24,7 +24,7 @@ import { diffuseExplicit, gradient, solveHelmholtz, stableDiffusionStep } from '
 // gradient. One code for both shapes, no pole rows, no line solves, no
 // sub-steps. The 128 × 64 chart raster it had until 2026-10-11 survives
 // only as the screen's overlay (rasteriseMantle); the save holds the mesh's
-// own values (SavedMantle).
+// own values (SavedField).
 // Its readers take a value at a point through the mesh's sampler
 // (mantleAt), the extrema searches walk the mesh's neighbour graph.
 //
@@ -102,19 +102,10 @@ export function rasteriseMantle(field: ArrayLike<number>, domain: Domain): Float
 }
 
 // THE FIELD AS A SAVE HOLDS IT (DEC-0036 phase 1, 2026-10-11): the mesh's
-// own values, Float64 per cell — the session's exact bytes, so a load
-// continues bit for bit — with what identifies the mesh they belong to.
-// The mesh itself is not saved: it is rebuilt from the domain and the
-// spacing, deterministically. No raster of the field is saved (the chart
-// raster is the overlay's, made at runtime).
-export interface SavedMantle {
-  values: Float64Array
-  // The mesh's cell count and spacing (metres) when it was saved.
-  cells: number
-  spacingM: number
-}
-
-export function savedMantle(field: Float64Array, domain: Domain): SavedMantle {
+// own values with the mesh's identity (fields/fieldMesh.SavedField). No
+// raster of the field is saved (the chart raster is the overlay's, made at
+// runtime).
+export function savedMantle(field: Float64Array, domain: Domain): SavedField {
   const mm = mantleMesh(domain)
   return { values: field.slice(), cells: mm.mesh.count, spacingM: mm.cellM }
 }
@@ -130,7 +121,7 @@ export function mantleFits(domain: Domain, cells: number, spacingM: number): boo
 // a new one). A field of another mesh — another spacing or cell count, a
 // save from another build of the mesh — is refused with an error that says
 // so: values per cell mean nothing on other cells.
-export function restoreMantleField(domain: Domain, saved: SavedMantle | undefined): Float64Array | null {
+export function restoreMantleField(domain: Domain, saved: SavedField | undefined): Float64Array | null {
   if (!saved) return null
   const mm = mantleMesh(domain)
   if (!mantleFits(domain, saved.cells, saved.spacingM) || saved.values.length !== mm.mesh.count) {

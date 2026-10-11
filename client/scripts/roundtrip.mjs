@@ -478,11 +478,13 @@ console.log('\n— zip writer —')
   const meshZ = new Float32Array([0.1, 0.2, 0.3])
   // The mantle's field-mesh values (formatVersion 8): Float64, exact.
   const zipMantle = new Float64Array([0.1, -1 / 3, Math.PI])
+  // The ocean age's the same (DEC-0036 phase 2, still formatVersion 8).
+  const zipAge = new Float64Array([0, 12.5, 1 / 7, 180])
   const yaml = ['kind: FlatWorld', 'spec:', '  seed: "writer-welt"', '  erosion:', '    landscapeAge: 30', '    alluvium: 40', '    rockContrast: 55', 'metadata:', '  uid: 0192abcd-0000-8000-8000-00000000beef', ''].join('\n')
   const written = await writer.writeWorldArchive({
     kind: 'tectonic', width: W, height: H, yaml, generatorVersion: 'roundtrip', preview: null, elevation: zipElev.buffer.slice(0),
     snapshot: { epoch: 3 }, mantle: { values: zipMantle.buffer.slice(0), cells: 3, spacingM: 125000.5 }, latticeAccumulated: new ArrayBuffer(4), latticeLockedEpochs: new ArrayBuffer(2),
-    latticeLastClassCode: new ArrayBuffer(1), oceanAge: new ArrayBuffer(4),
+    latticeLastClassCode: new ArrayBuffer(1), oceanAge: { values: zipAge.buffer.slice(0), cells: 4, spacingM: 62400.25 },
     forcing: { uplift: zipUplift, erodibility: zipHardness, resX: W, resY: H },
     mesh: { count: 3, nodes: new Float32Array([1, 1, 5, 2, 9, 6]).buffer, connectivity: new Uint8Array([7, 8, 9]).buffer, z: meshZ.buffer.slice(0) },
     fields: {
@@ -495,12 +497,19 @@ console.log('\n— zip writer —')
   check('the writer stamps the current format version', manifest.formatVersion === writer.WORLD_ARCHIVE_FORMAT_VERSION)
   {
     const zip = await JSZip.loadAsync(written)
-    const mantle = await writer.readMantle(zip, 'mantle')
+    const mantle = await writer.readField(zip, 'mantle')
     check('the mantle comes back as its mesh values, bit for bit, with its mesh', mantle.cells === 3 && mantle.spacingM === 125000.5 && String(new Float64Array(mantle.values)) === String(zipMantle) && zip.file('mantle.f32') === null)
     zip.remove('mantle.json')
     let refused = false
-    try { await writer.readMantle(zip, 'mantle') } catch { refused = true }
+    try { await writer.readField(zip, 'mantle') } catch { refused = true }
     check('a save without the mantle mesh (before formatVersion 8) is refused', refused)
+    const age = await writer.readField(zip, 'oceanAge')
+    check('the ocean age comes back as its mesh values, bit for bit, with its mesh, and no raster', age.cells === 4 && age.spacingM === 62400.25 && String(new Float64Array(age.values)) === String(zipAge) && zip.file('oceanAge.f32') === null)
+    zip.remove('oceanAge.f64')
+    zip.file('oceanAge.f32', new ArrayBuffer(4))
+    let ageRefused = false
+    try { await writer.readField(zip, 'oceanAge') } catch { ageRefused = true }
+    check('a version-8 save from before the ocean age moved (oceanAge.f32, no .f64) is refused', ageRefused)
   }
   const back = await M.inputs.readWorldInputs(written)
   if (!back) check('the written archive reads back at all', false)

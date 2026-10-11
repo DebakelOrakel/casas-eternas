@@ -193,6 +193,81 @@ done before or beside it.
 
 ## Status
 
+2026-10-11: phase 2 BUILT — the ocean age on the field mesh, both shapes,
+one path (`tectonics/oceanAge.ts`). Spacing = the domain's width / 256
+(the old raster's equator cell): 37 888 hexagons at 62.4 km on the torus
+(the raster had 32 768 cells), 24 012 Goldberg cells at 78.1 km on the
+sphere. Each epoch every cell's departure is its centre turned back
+EXACTLY by its nearest plate's own motion (reversePointByMotion, as the
+raster did; fieldOperators `departuresFromPoints`) — not the midpoint rule
+on a velocity field, which would sample across a plate boundary and mix
+two plates. The value there is the clipped Hermite transport (decided
+above), then +1 epoch, capped at 180, and 0 under continental crust,
+whose membership is asked at the cells' centres before the plates move
+(the 128 × 64 membership raster and its sampler are gone). The ridge and
+breakup resets walk the mesh from the cell holding the boundary point
+(every centre within the radius). Readers per point (the baseline per
+node, the flexure's Te) go through the sampler; the render's baseline
+(the Archean's render and the scripts' — the history renders its own
+terrain) through a 1024 × 512 raster of it, 93–115 ms (the sampler per
+pixel 480–550 ms; mean 0.03 epochs off, at most 5.8 at a ridge's step).
+The Archean has no field (null: age 0).
+
+**Save** (fork 5 as revised, NOT a new formatVersion: the phases are one
+move, version 8 stays): `oceanAge.f64` (Float64 per cell) + `oceanAge.json`
+({ cells, spacingM }) in place of `oceanAge.f32`. A tectonic save without
+them — a version-8 save from a phase-1 build among them — or of another
+mesh is refused on open. The replay snapshot, the job worker's checkpoint
+and the hand-over carry the mesh values (`fields/fieldMesh.SavedField`,
+shared with the mantle). Save → load → continue is bit-identical
+(pipeline harness).
+
+**Measured** (2048 × 1024, seed `bench`, 100 Archean + 12 coupled epochs
+at HISTORY_DEFAULTS, Node, one thread; the ocean-age step with its
+membership timed on the state before each epoch). The ocean age feeds
+nothing back into the plates, so plates and land are the same worlds:
+
+| | torus HEAD | torus mesh | sphere HEAD | sphere mesh |
+|---|---|---|---|---|
+| ocean-age step per epoch | 9.9 ms | 22.4 ms | 26.6 ms | 37.4 ms |
+| whole coupled epoch | 1170 ms | 1222 ms | 2243 ms | 2316 ms |
+| plates at the hand-over / after 12 | 13 / 13 | 13 / 13 | 8 / 8 | 8 / 8 |
+| land after 12 | 5.6 % | 5.6 % | 19.0 % | 19.0 % |
+| highest node | 4452 m | 4680 m | 6011 m | 5880 m |
+| ocean depth mean / p10 / p50 / p90 | 4393 / 2608 / 5068 / 5199 m | 4414 / 2610 / 5084 / 5200 m | 4419 / 2631 / 5128 / 5230 m | 4423 / 2631 / 5132 / 5231 m |
+
+After 12 epochs most floor still holds its initial 40 + 12. The field's
+character after 100 plain epochs more (+ 1 coupled), over the ocean:
+
+| | torus HEAD | torus mesh | sphere HEAD | sphere mesh |
+|---|---|---|---|---|
+| mean age | 47.4 | 50.6 | 31.1 | 32.1 |
+| p50 / p90 age | 31.4 / 127.3 | 30.9 / 141.0 | 15.6 / 104.9 | 16.1 / 120.1 |
+| area aged 0–1 / 80–120 / 120–180 | 15.0 / 12.3 / 12.5 % | 14.4 / 8.3 / 17.9 % | 26.9 / 4.9 / 8.2 % | 26.9 / 3.2 / 10.0 % |
+| young band at ridges, age ≤ 2 / 5 / 10 | 218 / 270 / 367 km | 220 / 281 / 376 km | 264 / 307 / 390 km | 263 / 304 / 388 km |
+| ocean depth mean / p50 / p90 | 3750 / 4225 / 5584 m | 3758 / 4226 / 5626 m | 3127 / 2995 / 5356 m | 3126 / 2992 / 5307 m |
+
+(The band's width is the area aged ≤ k over the ridges' length, the
+length the age-0 area over the reset's diameter, 2 × 94 km on the torus.)
+The young band is set by the reset radius and stays as it was; the old
+floor keeps its age — the bilinear raster smeared the oldest crust into
+its neighbours each epoch, the clipped Hermite does not (p90 +14 epochs).
+The step costs 2.3 × (torus) and 1.4 × (sphere) the raster's: the
+membership at 37 888 centres instead of 8 192 and a locate per departure;
+4 % of an epoch.
+
+**Golden**: 40 of 46 stages moved per world — the ocean age and everything
+downstream of the baseline; the mantle, the boundary lattice's three
+arrays, `climate.wind` and `artifact.pipelineVersion` did not, and the
+plate, raft, feature, suture and volcano counts are unchanged — 107
+metrics drifted, 0 hard failures, coverage kept (85 metrics
+vary). No seed changed. Main shifts: land 8.40 → 8.46 % (calibration),
+13.80 → 13.82 % (alpha), 15.86 → 15.85 % (zulu); plates 13 / 12 / 14
+unchanged; highest point 1973 → 1910, 3184 → 3103, 5321 → 5609 m; deepest
+−5439 → −5480, −5506 → −5506, −5759 → −6497 m. `golden.json`
+re-recorded and the byte guard re-armed: 0 hard failures, 0 drifts, 46
+stages byte-identical × 3.
+
 2026-10-11: phase 1 BUILT — the mantle on the field mesh, both shapes, one
 path (`mantle/mantleField.ts`). Spacing = the domain's width / 128 (the old
 raster's equator cell): 9 472 hexagons at 124.8 km on the torus (the raster

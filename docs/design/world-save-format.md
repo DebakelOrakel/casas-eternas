@@ -34,21 +34,21 @@ Five entries, assembled in `saveWorld` / read back in the load handler:
 | `world.yaml` | Human-readable recipe (`spec`) + how far it was taken (`status`) | No — drives the UI sliders only |
 | `state.json` | The full simulation snapshot (`PlateSimulationSnapshot`) | **Yes** — the sim is rebuilt from this |
 | `elevation.f32` | Full-resolution, post-erosion elevation raster | **Yes** — injected as-is (no re-erosion) |
-| `oceanAge.f32` | Coarse ocean-floor age raster | **Yes** — restored into the sim |
+| `oceanAge.f64` + `oceanAge.json` | The ocean-floor age, its field mesh's values (Float64 per cell) and that mesh's identity (`{ cells, spacingM }`, DEC-0036 phase 2; the 256 × 128 raster `oceanAge.f32` until 2026-10-11) | **Yes** — restored into the sim; another mesh's is refused |
 | `preview.png` | Thumbnail for the file/gallery | No — cosmetic, not read on load |
 | `manifest.json` + `layers/…` | The queryable layers (queryable-world-save.md); since `formatVersion` 2 also `layers/waterBodies.json`, the standing-water list every lake and shore derives from | No — read by consumers, not by restore |
 | `mesh/nodes.f32`, `mesh/connectivity.bin`, `mesh/z.f32` | The adaptive mesh the erosion ran on (ADAPTIVE_MESH_PLAN.md phase 4.3): node positions, neighbours as varint deltas in Hilbert numbering, eroded heights — the terrain proper since 2026-09-23, from which `elevation.f32` is rasterised. Present since `formatVersion` 3 when the world was eroded; the manifest's `mesh` entry names the files and the node count | **Yes** — restored into the worker so a later save carries it on; a save without one restores the raster alone |
 | `layers/waterTable.u16` | The water table's depth below the surface, metres to 1000 (phase 5a, `surface/hydrogeology.ts`): 0 at a channel or a seep, the depth of a well elsewhere; written since 2026-09-23 with the other world-raster layers | No — a readout |
 | `mesh/column.bin` | The sediment column per node (ADAPTIVE_MESH_PLAN.md phase 5.2, `mesh/meshColumn.ts`): the layer count, each layer's epoch, then per node and layer six floats — fine and coarse thickness in metres and the products thickness × craton oldness, × source hardness, × temperature at deposition, × precipitation at deposition (the last two since `formatVersion` 5; a version-4 file has four per layer, read off the byte length). Present since `formatVersion` 4 when the history ran; named by the manifest's `mesh.files.column` | **Yes** — restored with the mesh; a save without one restores an empty column |
 
-The four load-critical files (`world.yaml`, `state.json`, `oceanAge.f32`,
-`elevation.f32`) must all be present or the load is rejected as an invalid world
+The load-critical files (`world.yaml`, `state.json`, `oceanAge.f64` +
+`oceanAge.json`, `mantle.f64` + `mantle.json`, `elevation.f32`) must all be present or the load is rejected as an invalid world
 file; `preview.png` is optional.
 
 Restore is a **rehydrate, not a replay**: `state.json` rebuilds the plate
 simulation, `elevation.f32` is dropped in as the finished (eroded) terrain, the
 mesh files rebuild the triangulation (bit for bit — the codec is the canonical
-form, see `mesh/meshSerial.ts`), and `oceanAge.f32` restores the ocean floor —
+form, see `mesh/meshSerial.ts`), and `oceanAge.f64` restores the ocean floor —
 nothing re-steps or re-erodes. Climate and
 hydrology are *not* stored; they're recomputed on demand from the restored terrain
 when their panels are opened.
@@ -149,8 +149,10 @@ elsewhere):
   `lastRawElevations`: the **pre-redistribution physical** elevation (≈0 sea level,
   land baseline ~0.35, peaks approaching ~1), *after* whatever erosion passes were run.
   Not the cosmetic, display-gamma-curved values. This is what makes restore skip erosion.
-- **`oceanAge.f32`** — `OCEAN_AGE_RES_X × OCEAN_AGE_RES_Y` (256 × 128) floats = the coarse
-  ocean-floor age field, which drives age–depth on oceanic points (`elevationField.ts`).
+- **`oceanAge.f64`** — raw little-endian `Float64Array`, one value per cell of the ocean
+  age's field mesh (`tectonics/oceanAge.ts`, spacing W / 256), the count in
+  `oceanAge.json` = the ocean-floor age in epochs, which drives age–depth on oceanic
+  points (`elevationField.ts`).
 
 ## Compatibility
 

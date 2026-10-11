@@ -158,7 +158,10 @@ export interface RenderableWorld {
   seeds: PlateSimulation['seeds']
   rafts: PlateSimulation['rafts']
   features: PlateSimulation['features']
-  oceanAge: Float32Array
+  // The ocean-floor age per cell of its field mesh (tectonics/oceanAge.ts);
+  // null where there is none yet (the Archean: nothing creates or destroys
+  // seafloor), which reads as freshly formed crust everywhere.
+  oceanAge: Float64Array | null
   warpSeed: number
   seaLevelOffset: number
   // The mantle buoyancy field (mantle/mantleField.ts, per cell of its field

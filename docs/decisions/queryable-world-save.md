@@ -258,7 +258,7 @@ main thread reusing `requestClimate/Hydrology/Ecology` (no worker rewrite).
 
 **Not yet / caveats (follow-ups):**
 - **Not baked yet:** wind + currents (interleaved u,v → add as 2 layers each),
-  raw discharge, oceanAge-as-query-layer (still saved as `oceanAge.f32` for
+  raw discharge, oceanAge-as-query-layer (saved as its field mesh's values, `oceanAge.f64`, for
   restore, just not in the manifest — its resolution/gameplay value TBD).
 - Nearest-sampling only so far (biome wants nearest anyway; smooth fields could
   add bilinear in the sampler later).

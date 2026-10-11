@@ -1,5 +1,5 @@
-import { computeMembershipField } from '../../crust/raftField'
-import { MANTLE_RES_X, MANTLE_RES_Y, computeMantleFlow, evolveMantleField } from '../../mantle/mantleField'
+import { computeMantleFlow, evolveMantleField } from '../../mantle/mantleField'
+import { oceanAgeMembership } from '../oceanAge'
 import { fitMotionsToFlow, relaxMotionToward } from '../plateMotion'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import type { PlateSimulation } from '../plateSimulationTypes'
@@ -8,9 +8,9 @@ import type { PlateSimulation } from '../plateSimulationTypes'
 
 // Phase 0. The mantle drives the plates: evolve the field under the current
 // crust, derive its surface flow, and relax each plate's motion toward the
-// flow-fitted rigid motion. Returns the continental-membership raster the
-// ocean-age sink reads (phase 1 of the epoch).
-export function coupleMantleToPlates(sim: PlateSimulation): Float32Array {
+// flow-fitted rigid motion. Returns the continental membership at the ocean
+// age's cells that its sink reads (phase 1 of the epoch).
+export function coupleMantleToPlates(sim: PlateSimulation): Float64Array {
   // 0. The mantle drives the plates. Evolve the field under the current crust
   // (continents insulate → upwelling; ocean cools → downwelling), derive its
   // surface flow, and relax each plate's motion toward the flow-fitted rigid
@@ -18,13 +18,12 @@ export function coupleMantleToPlates(sim: PlateSimulation): Float32Array {
   // drift to downwellings and assemble, an assembled continent then insulates an
   // upwelling beneath it that pushes its plates apart. See mantleField.ts.
   //
-  // The continental-membership raster is the ocean-age sink's, on the
-  // mantle's former 128 × 64 chart ("is this under a continent" is a broad
-  // question). The mantle itself asks the rafts at its own cells' centres
-  // since it moved onto the field mesh (DEC-0036 phase 1, evolveMantleField):
-  // two sweeps until the ocean age follows it (phase 2), the mantle's of a
-  // few thousand points.
-  const membership = computeMembershipField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, sim.domain)
+  // The continental membership is the ocean-age sink's, asked at the ocean
+  // age's own cells' centres (DEC-0036 phase 2) before the plates move — the
+  // crust as it stood when the epoch began, as the 128 × 64 raster it
+  // replaced was. The mantle asks the rafts at its own cells' centres
+  // (evolveMantleField).
+  const membership = oceanAgeMembership(sim.rafts, sim.domain)
   sim.mantle = evolveMantleField(sim.mantle, sim.rafts, sim.domain)
   const flow = computeMantleFlow(sim.mantle, sim.domain)
   const fitted = fitMotionsToFlow(sim.seeds, flow, sim.domain)

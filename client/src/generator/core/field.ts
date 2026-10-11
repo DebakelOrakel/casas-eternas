@@ -17,9 +17,11 @@
 // What did merge, being character-for-character identical in each pair:
 //  - oceanCurrents' `sampleWrapped` and precipitation's `sampleGridWrapped`
 //    -> sampleBilinearGrid
-//  - rafts' `sampleMembershipField` and worldSave's `sampleAt` -> sampleNearestWorld
+//  - rafts' `sampleMembershipField` (gone 2026-10-11 with its raster, DEC-0036)
+//    and worldSave's `sampleAt` -> sampleNearestWorld
 //  - ecology's and worldSave's `downsampleMax` -> downsampleMax
-// plus oceanAge's own bilinear-in-world-coordinates sampler -> sampleBilinearWorld.
+// plus oceanAge's own bilinear-in-world-coordinates sampler -> sampleBilinearWorld
+// (the ocean age has been on its field mesh since 2026-10-11, DEC-0036).
 
 // Wrap a value into [0, n) for any sign — the torus's one wrap. The torus
 // Domain and its grids (core/domain.ts) are built on it and on the samplers

@@ -1,7 +1,7 @@
 import { derivePlateTypes } from '../../crust/raftField'
 import { advanceRafts, recycleUnstabilisedCrust } from '../../crust/raftLifecycle'
 import { worldEpoch } from '../../core/worldTime'
-import { MANTLE_RES_X, MANTLE_RES_Y, mantleAt } from '../../mantle/mantleField'
+import { mantleAt } from '../../mantle/mantleField'
 import { advectOceanAge } from '../oceanAge'
 import { advancePointByMotion, getVelocityAt } from '../plateMotion'
 import { advancePlumes } from '../plumes'
@@ -47,7 +47,7 @@ const sutureTangent = { x: 0, y: 0 }
 
 // Phase 1. Advance every plate and everything riding on it — rafts, sutures,
 // terrain features, the ocean-age field — along its own rotation.
-export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32Array): void {
+export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64Array): void {
   const { domain } = sim
   // 1. Advance every plate (and whatever terrain is attached to it)
   // along its own rotation.
@@ -89,8 +89,9 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float32A
     s.tangentY = sutureTangent.y
   }
   sim.types = derivePlateTypes(sim.seeds, sim.rafts, domain)
-  // Advect the ocean-age field along with the plates that just moved (Phase 3).
-  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, domain, membership, MANTLE_RES_X, MANTLE_RES_Y)
+  // Carry the ocean-age field along with the plates that just moved (Phase 3;
+  // on its field mesh since DEC-0036 phase 2).
+  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, domain, membership)
   advanceTerrainFeatures(sim.features, sim.motions, TECTONICS_TUNING.epochAngleStep, domain)
   for (const feature of sim.features) {
     feature.thickness *= TECTONICS_TUNING.thicknessDecayPerEpoch

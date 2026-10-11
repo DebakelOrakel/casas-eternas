@@ -177,10 +177,7 @@ export function computeDepartures(fm: FieldMesh, sampler: FieldSampler, ve: Arra
   const scale = dt / fm.unitM
   const p = { x: 0, y: 0 }
   const v = { x: 0, y: 0 }
-  const d = { x: 0, y: 0 }
-  const cornersK = new Int32Array(3)
-  const weightsK = new Float64Array(3)
-  const gf = { px: 0, py: 0, pz: 0, ex: 0, ey: 0, ez: 0, sx: 0, sy: 0, sz: 0 }
+  const tap = departureTapper(fm, sampler, out)
   for (let i = 0; i < fm.count; i++) {
     v.x = ve[i]
     v.y = vs[i]
@@ -189,26 +186,51 @@ export function computeDepartures(fm: FieldMesh, sampler: FieldSampler, ve: Arra
       sampler.sampleVector(ve, vs, p.x, p.y, i, v)
     }
     domain.advance(fm.x[i], fm.y[i], -scale * v.x, -scale * v.y, p)
-    out.x[i] = p.x
-    out.y[i] = p.y
-    sampler.taps(p.x, p.y, cornersK, weightsK)
+    tap(i, p.x, p.y)
+  }
+  return out
+}
+
+// Departures known exactly rather than from a wind: cell i's parcel was at
+// (px[i], py[i]) a step ago — a rigid plate's, turned back by its own
+// motion (tectonics/oceanAge.ts), where a velocity sampled across a plate
+// boundary would mix two plates. The taps and offsets as computeDepartures
+// writes them.
+export function departuresFromPoints(fm: FieldMesh, sampler: FieldSampler, px: ArrayLike<number>, py: ArrayLike<number>, out: Departures): Departures {
+  const tap = departureTapper(fm, sampler, out)
+  for (let i = 0; i < fm.count; i++) tap(i, px[i], py[i])
+  return out
+}
+
+// Cell i's departure at (px, py) into out: the point, its triangle's
+// corners and weights, each corner's offset to it in metres, and on the
+// sphere its unit vector.
+function departureTapper(fm: FieldMesh, sampler: FieldSampler, out: Departures): (i: number, px: number, py: number) => void {
+  const { domain } = fm
+  const d = { x: 0, y: 0 }
+  const cornersK = new Int32Array(3)
+  const weightsK = new Float64Array(3)
+  const gf = { px: 0, py: 0, pz: 0, ex: 0, ey: 0, ez: 0, sx: 0, sy: 0, sz: 0 }
+  return (i, px, py) => {
+    out.x[i] = px
+    out.y[i] = py
+    sampler.taps(px, py, cornersK, weightsK)
     for (let k = 0; k < 3; k++) {
       const c = cornersK[k]
       out.corners[3 * i + k] = c
       out.weights[3 * i + k] = weightsK[k]
-      domain.delta(p.x, p.y, fm.x[c], fm.y[c], d)
+      domain.delta(px, py, fm.x[c], fm.y[c], d)
       out.offE[3 * i + k] = d.x * fm.unitM
       out.offS[3 * i + k] = d.y * fm.unitM
     }
     if (fm.globe && domain.noise.kind === 'globe') {
-      domain.noise.frame(p.x, p.y, gf)
+      domain.noise.frame(px, py, gf)
       const r = domain.noise.radius
       out.unit[3 * i] = gf.px / r
       out.unit[3 * i + 1] = gf.py / r
       out.unit[3 * i + 2] = gf.pz / r
     }
   }
-  return out
 }
 
 // A scalar moved by the departures: each cell takes the value at its

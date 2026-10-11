@@ -16,6 +16,7 @@ import { createMeshSampler } from '../../generator/mesh/meshSampler'
 import { decodeMesh } from '../../generator/mesh/meshSerial'
 import { domainOfKind } from '../../generator/core/domain'
 import { mantleFits } from '../../generator/mantle/mantleField'
+import { oceanAgeFits } from '../../generator/tectonics/oceanAge'
 import { MAP_EXAGGERATION, RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from '../../map/mapSceneSettings'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { MAP_HEIGHT, MAP_WIDTH } from '../../generator/core/mapConfig'
@@ -34,7 +35,7 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
-import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload, MantlePayload } from '../../generator/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload, FieldPayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import type { StageId } from '../../generator/pipeline/stages'
 import type { ContinentLabelPlacement } from '../../generator/render/continentLabelRenderer'
@@ -57,7 +58,7 @@ import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/e
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ELEVATION_ENCODING, REFINED_LAYERS, decodeLayer } from '../../world/save/worldLayers'
 import { refinedFromLayers } from '../../world/save/refinedLayers'
-import { readMantle, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
+import { readField, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
 import type { RefinedClimate } from '../../generator/climate/refinement'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
@@ -4726,7 +4727,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // open a file picker for a saved snapshot (the export format — world_*.json
   // metadata + the .f32 elevation + .oceanage.f32 rasters), parse it, and
   // --- Save / load a world as a .zip (world.yaml recipe+status + state.json
-  // sim snapshot + oceanAge.f32 + elevation.f32 + preview.png). See
+  // sim snapshot + oceanAge.f64 + elevation.f32 + preview.png). See
   // docs/decisions/... (the save/load design). The deterministic parts could be
   // replayed from the recipe, but the snapshot is stored so a 300-epoch world
   // loads instantly and survives generator changes.
@@ -5435,14 +5436,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     let yaml: string
     let shape: WorldShape = 'flat'
     let snapshot: PlateSimulationSnapshot | undefined
-    let oceanAge: ArrayBuffer
+    let oceanAge: FieldPayload | undefined
     let elevation: ArrayBuffer
     // The lattice is optional: saves written before it was persisted have no such
     // entries, and the worker starts it empty. The mantle is not (formatVersion 8,
     // its field mesh's values): a save without it is refused as not a world this
-    // build opens.
-    let archeanPayload: { snapshot: unknown; mantle: MantlePayload; streak: ArrayBuffer } | undefined
-    let mantle: MantlePayload | undefined
+    // build opens. Nor is the ocean age (oceanAge.f64 + .json, DEC-0036 phase 2,
+    // the same version: a version-8 save from before it lacks the entry and is
+    // refused by that).
+    let archeanPayload: { snapshot: unknown; mantle: FieldPayload; streak: ArrayBuffer } | undefined
+    let mantle: FieldPayload | undefined
     let lattice: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer } | undefined
     // The mesh terrain (formatVersion 3); a save without one restores the
     // raster alone, as every save did before.
@@ -5452,7 +5455,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const yamlFile = zip.file('world.yaml')
       const archeanFile = zip.file('archean.json')
       const stateFile = zip.file('state.json')
-      const oceanFile = zip.file('oceanAge.f32')
       const elevFile = zip.file('elevation.f32')
       if (!yamlFile || !elevFile) throw new Error('missing files')
       if (archeanFile) {
@@ -5461,7 +5463,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         if (!streakF) throw new Error('missing files')
         archeanPayload = {
           snapshot: JSON.parse(await archeanFile.async('string')),
-          mantle: await readMantle(zip, 'archean.mantle'),
+          mantle: await readField(zip, 'archean.mantle'),
           streak: await streakF.async('arraybuffer'),
         }
       }
@@ -5473,10 +5475,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       shape = kind === 'SphereWorld' ? 'sphere' : 'flat'
       elevation = await elevFile.async('arraybuffer')
       if (!archeanPayload) {
-        if (!stateFile || !oceanFile) throw new Error('missing files')
+        if (!stateFile) throw new Error('missing files')
         snapshot = JSON.parse(await stateFile.async('string'))
-        oceanAge = await oceanFile.async('arraybuffer')
-        mantle = await readMantle(zip, 'mantle')
+        oceanAge = await readField(zip, 'oceanAge')
+        mantle = await readField(zip, 'mantle')
         const accFile = zip.file('lattice.acc.f32')
         const lockFile = zip.file('lattice.lock.i16')
         const clsFile = zip.file('lattice.class.i8')
@@ -5497,7 +5499,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // refused like any file that is not a world (mantleField.mantleFits).
       const saved = archeanPayload?.mantle ?? mantle!
       const size = (archeanPayload?.snapshot ?? snapshot) as { width: number; height: number }
-      if (!mantleFits(domainOfKind(shape === 'sphere' ? 'sphere' : 'torus', size.width, size.height), saved.cells, saved.spacingM)) throw new Error('another mantle mesh')
+      const domain = domainOfKind(shape === 'sphere' ? 'sphere' : 'torus', size.width, size.height)
+      if (!mantleFits(domain, saved.cells, saved.spacingM)) throw new Error('another mantle mesh')
+      // The ocean age's the same (oceanAge.oceanAgeFits).
+      if (oceanAge && !oceanAgeFits(domain, oceanAge.cells, oceanAge.spacingM)) throw new Error('another ocean-age mesh')
     } catch {
       ctx.notifications.show({ message: t('notify.open.invalidFile'), icon: '/icons/folder.png', durationMs: 6000 })
       return
@@ -5615,7 +5620,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The globe leans with the world's tilt, which the recipe just set.
     globeView?.setObliquity(Number(obliquityInput.value))
     globeView?.setDayLength(Number(rotationInput.value))
-    postToWorker({ type: 'restoreWorld', seed, shape: shape === 'sphere' ? 'sphere' : 'torus', snapshot: snapshot!, oceanAge: oceanAge!, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
+    postToWorker({ type: 'restoreWorld', seed, shape: shape === 'sphere' ? 'sphere' : 'torus', snapshot: snapshot!, oceanAge, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
   }
 
 

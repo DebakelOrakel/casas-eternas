@@ -3,7 +3,9 @@ import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from '../archean/archeanStep'
 import { finalizeArchean } from '../archean/finalizeArchean'
 import type { WeatherParams } from '../climate/weather'
 import { TECTONIC_MA_PER_EPOCH } from '../core/worldTime'
-import { savedMantle, type SavedMantle } from '../mantle/mantleField'
+import type { SavedField } from '../fields/fieldMesh'
+import { savedMantle } from '../mantle/mantleField'
+import { savedOceanAge } from '../tectonics/oceanAge'
 import { meshRouting } from '../mesh/meshHydrology'
 import type { PipelineOptions, WorkerLike } from '../surface/erosionEnginePool'
 import type { ErosionControlsV2 } from '../surface/erosionForcingFields'
@@ -47,9 +49,10 @@ export interface ReplayPlan {
 // (the snapshot half of the save), and a replay's checkpoint.
 export interface ReplaySnapshot {
   state: PlateSimulationSnapshot
-  oceanAge: Float32Array
-  // The mantle's field-mesh values with the mesh's identity (SavedMantle).
-  mantle: SavedMantle
+  // The ocean age's and the mantle's field-mesh values, each with its
+  // mesh's identity (SavedField).
+  oceanAge: SavedField
+  mantle: SavedField
   latticeAccumulated: Float32Array
   latticeLockedEpochs: Int16Array
   latticeLastClassCode: Int8Array
@@ -59,7 +62,7 @@ export interface ReplaySnapshot {
 export function snapshotOf(sim: PlateSimulation, terrain: CoupledTerrain): ReplaySnapshot {
   return {
     state: serializePlateSimulation(sim),
-    oceanAge: sim.oceanAge.slice(),
+    oceanAge: savedOceanAge(sim.oceanAge, sim.domain),
     mantle: savedMantle(sim.mantle, sim.domain),
     latticeAccumulated: sim.latticeAccumulated.slice(),
     latticeLockedEpochs: sim.latticeLockedEpochs.slice(),
@@ -72,7 +75,7 @@ export function snapshotOf(sim: PlateSimulation, terrain: CoupledTerrain): Repla
 // (pipeline/runtime.ts, the worldData handler): the weather cache and the
 // ice are gone, the routing derived.
 export function restoreSnapshot(snapshot: ReplaySnapshot, shape: 'torus' | 'sphere' = 'torus'): { sim: PlateSimulation; terrain: CoupledTerrain } {
-  const sim = deserializePlateSimulation(snapshot.state, snapshot.oceanAge.slice(), { ...snapshot.mantle, values: snapshot.mantle.values.slice() }, shape)
+  const sim = deserializePlateSimulation(snapshot.state, { ...snapshot.oceanAge, values: snapshot.oceanAge.values.slice() }, { ...snapshot.mantle, values: snapshot.mantle.values.slice() }, shape)
   if (snapshot.latticeAccumulated.length === sim.latticeAccumulated.length) {
     sim.latticeAccumulated.set(snapshot.latticeAccumulated)
     sim.latticeLockedEpochs.set(snapshot.latticeLockedEpochs)

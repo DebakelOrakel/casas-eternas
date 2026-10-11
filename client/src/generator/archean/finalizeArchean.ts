@@ -118,7 +118,7 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
   // things that dissolve a few epochs later. A continent gets its name when it
   // becomes a continent, which is now.
   const named = assignRaftNames(archean.rafts, random, measureRaftLandAreas(archean.rafts, domain))
-  const oceanAge = createOceanAgeField(TECTONICS_TUNING.oceanAgeInit)
+  const oceanAge = createOceanAgeField(TECTONICS_TUNING.oceanAgeInit, domain)
   const seaLevelOffset = archean.seaLevelOffset
   const seeds = convectionCellSeeds(archean.mantle, domain)
   const lattice = generateDetectionLattice(domain, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)

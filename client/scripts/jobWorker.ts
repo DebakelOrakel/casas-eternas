@@ -36,6 +36,7 @@ import { meshRouting } from '../src/generator/mesh/meshHydrology'
 import { encodeCoupledTerrain, HISTORY_DEFAULTS } from '../src/generator/pipeline/coupledEpoch'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../src/generator/climate/climateField'
 import { replayHistory, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
+import type { SavedField } from '../src/generator/fields/fieldMesh'
 import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
 import { bakedTileToArtifact, meshTileArtifactInfo, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact, type MeshTileArtifact } from '../src/world/meshTileArtifacts'
 import { bakeMeshTile, type UpstreamTile } from '../src/generator/pipeline/meshTileBake'
@@ -665,16 +666,19 @@ function checkpointPath(root: string, inputs: WorldInputs): string {
   return join(root, `${inputs.worldUid || 'no-uid'}-${inputs.worldId}-${GENERATOR_CODE}`)
 }
 
-const CHECKPOINT_ARRAYS = ['oceanAge', 'latticeAccumulated', 'latticeLockedEpochs', 'latticeLastClassCode'] as const
+const CHECKPOINT_ARRAYS = ['latticeAccumulated', 'latticeLockedEpochs', 'latticeLastClassCode'] as const
 const CHECKPOINT_MESH = ['nodes', 'connectivity', 'z', 'column'] as const
 
 async function writeCheckpoint(dir: string, position: ReplayPosition, done: number, snapshot: ReplaySnapshot): Promise<void> {
   const fresh = `${dir}.${randomUUID()}`
   await mkdir(fresh, { recursive: true })
   const bytes = (a: ArrayBufferView): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
-  // The mantle's values beside the arrays, its mesh's identity in position.json.
-  await writeFile(join(fresh, 'position.json'), JSON.stringify({ position, done, mantle: { cells: snapshot.mantle.cells, spacingM: snapshot.mantle.spacingM } }))
+  // The field meshes' values (the mantle's, the ocean age's) beside the
+  // arrays, each mesh's identity in position.json.
+  const mesh = (f: SavedField): { cells: number; spacingM: number } => ({ cells: f.cells, spacingM: f.spacingM })
+  await writeFile(join(fresh, 'position.json'), JSON.stringify({ position, done, mantle: mesh(snapshot.mantle), oceanAge: mesh(snapshot.oceanAge) }))
   await writeFile(join(fresh, 'mantle.bin'), bytes(snapshot.mantle.values))
+  await writeFile(join(fresh, 'oceanAge.bin'), bytes(snapshot.oceanAge.values))
   await writeFile(join(fresh, 'state.json'), JSON.stringify(snapshot.state))
   for (const name of CHECKPOINT_ARRAYS) await writeFile(join(fresh, `${name}.bin`), bytes(snapshot[name]))
   for (const name of CHECKPOINT_MESH) await writeFile(join(fresh, `mesh.${name}.bin`), bytes(snapshot.mesh[name]))
@@ -684,14 +688,15 @@ async function writeCheckpoint(dir: string, position: ReplayPosition, done: numb
 
 async function readCheckpoint(dir: string): Promise<{ position: ReplayPosition; done: number; snapshot: ReplaySnapshot } | null> {
   try {
-    const { position, done, mantle } = JSON.parse(await readFile(join(dir, 'position.json'), 'utf8')) as { position: ReplayPosition; done: number; mantle: { cells: number; spacingM: number } }
+    type MeshId = { cells: number; spacingM: number }
+    const { position, done, mantle, oceanAge } = JSON.parse(await readFile(join(dir, 'position.json'), 'utf8')) as { position: ReplayPosition; done: number; mantle: MeshId; oceanAge: MeshId }
     const read = async (name: string): Promise<ArrayBuffer> => {
       const b = await readFile(join(dir, name))
       return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
     }
     const snapshot: ReplaySnapshot = {
       state: JSON.parse(await readFile(join(dir, 'state.json'), 'utf8')),
-      oceanAge: new Float32Array(await read('oceanAge.bin')),
+      oceanAge: { values: new Float64Array(await read('oceanAge.bin')), cells: oceanAge.cells, spacingM: oceanAge.spacingM },
       mantle: { values: new Float64Array(await read('mantle.bin')), cells: mantle.cells, spacingM: mantle.spacingM },
       latticeAccumulated: new Float32Array(await read('latticeAccumulated.bin')),
       latticeLockedEpochs: new Int16Array(await read('latticeLockedEpochs.bin')),

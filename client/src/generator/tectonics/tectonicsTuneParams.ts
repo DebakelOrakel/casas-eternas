@@ -286,7 +286,7 @@ export const TECTONICS_TUNING = {
   // formed (resetOceanAgeAround). Two very different situations, two radii:
   //
   // An ordinary spreading ridge makes a narrow strip of new crust per epoch, so
-  // this stays close to one age cell (world/OCEAN_AGE_RES_X = 8 px) — just wide
+  // this stays close to one age cell (the field mesh's spacing, world / OCEAN_AGE_RES_X = 8 px) — just wide
   // enough that a ridge line reads as continuous rather than dotted. It has to be
   // small: this fires for EVERY divergent boundary point every epoch, and an
   // earlier value of 80 (which conflated it with the breakup case below) zeroed

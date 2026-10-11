@@ -15,7 +15,7 @@ import { computeCratonOldnessField } from '../crust/raftField'
 import { deflectionAt, elasticThicknessKm, flexuralResponse } from '../tectonics/flexure'
 import { foldFactorAt } from '../tectonics/folds'
 import { buildFeatureBuckets } from '../elevation/elevationField'
-import { oceanAgeGrid, sampleOceanAge } from '../tectonics/oceanAge'
+import { oceanAgeAt } from '../tectonics/oceanAge'
 import { computeWeather, defaultWeatherParams, type Weather, type WeatherParams } from '../climate/weather'
 import { computeBiomes } from '../climate/biomes'
 import { coverField, COVER_TUNING } from '../surface/cover'
@@ -719,7 +719,6 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const flexCellKm = ((width / flexResX) * unitM) / 1000
   const flexCellM2 = (flexCellKm * 1000) * (flexCellKm * 1000)
   const flexGrid = domain.grid(flexResX, flexResY)
-  const ageGrid = oceanAgeGrid(domain)
   const loadM = new Float32Array(flexResX * flexResY)
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
@@ -739,7 +738,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       const y = ((cy + 0.5) / flexResY) * height
       const continental = raftFieldIndexed(x, y, blobs) > 0.5
       const oldness = upsampleAt(cratonField, climateGrid, x, y)
-      const ageMa = sampleOceanAge(sim.oceanAge, ageGrid, x, y) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
+      const ageMa = oceanAgeAt(sim.oceanAge, domain, x, y) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
       teKm[cy * flexResX + cx] = elasticThicknessKm(continental, oldness, ageMa)
     }
   }

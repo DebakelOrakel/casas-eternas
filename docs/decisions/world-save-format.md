@@ -36,7 +36,8 @@ loads are **instant** and survive generator-code changes.
 ├── lattice.acc.f32       # boundary-detection accumulator, Float32 256×128
 ├── lattice.lock.i16      # epochs each lattice point has held its class, Int16
 ├── lattice.class.i8      # last boundary class per lattice point, Int8
-├── oceanAge.f32          # ocean-age raster, Float32 256×128
+├── oceanAge.f64          # ocean-floor age (epochs), Float64 per cell of its field mesh
+├── oceanAge.json         # that mesh: { cells, spacingM } (DEC-0036 phase 2, formatVersion 8)
 ├── elevation.f32         # current (post-erosion) elevation, Float32 2048×1024
 ├── manifest.json         # layer index for consumers (see queryable-world-save.md)
 ├── layers/…              # baked query layers (climate / ecology / rivers)
@@ -129,9 +130,17 @@ size. A save without the two entries, or with another mesh's, is refused on load
 (no conversion: the format is alpha). An Archean save carries the same pair as
 `archean.mantle.f64` / `.json`, and `archean.streak.i16` per mesh cell.
 
+The same day (DEC-0036 phase 2, still formatVersion 8 — the DEC-0036 phases are
+one move, one version): the ocean age left its 256 × 128 raster `oceanAge.f32`
+the same way, for `oceanAge.f64` (its field mesh's values, Float64) and
+`oceanAge.json` (cells, spacing). A tectonic save without the pair — a
+version-8 save from a build before phase 2 among them — is refused on load. An
+Archean save has none (no ocean age before the hand-over).
+
 ### Format choices
 
-- Elevation & ocean age → **binary Float32** (`.f32`), not png/jpg: they're
+- Elevation → **binary Float32** (`.f32`), the field meshes' values (mantle,
+  ocean age) → **binary Float64** (`.f64`), not png/jpg: they're
   physical float fields; a lossy image codec would corrupt sea-level edges, the
   lapse gradient, etc. The zip's DEFLATE compresses them losslessly.
 - The sim snapshot → **JSON** (structured small data). Features dominate its

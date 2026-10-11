@@ -86,10 +86,11 @@ export interface PlateSimulation {
   latticeAccumulated: Float32Array
   latticeLockedEpochs: Int16Array
   latticeLastClassCode: Int8Array
-  // Coarse ocean-floor age field (oceanAge.ts) driving age-depth in the
-  // baseline — advected with plate motion each epoch, reset to 0 at divergent
-  // boundaries. Continental (raft-covered) points ignore it.
-  oceanAge: Float32Array
+  // Coarse ocean-floor age field (oceanAge.ts), epochs per cell of its field
+  // mesh, driving age-depth in the baseline — transported with plate motion
+  // each epoch, reset to 0 at divergent boundaries. Continental (raft-covered)
+  // points ignore it.
+  oceanAge: Float64Array
   // Hysteresis latch for the supercontinent_formed event: true once all
   // rafts have assembled into one, cleared again only after breakup pushes
   // the count back up, so the milestone fires once per assembly, not every
@@ -122,7 +123,7 @@ export interface PlateSimulation {
 // world feature). Deliberately excludes: `types` (derived from rafts), the
 // detection lattice (regenerated + its accumulators reset on restore — a rift
 // or merge just needs to re-lock over a few epochs, cheap), and `oceanAge`
-// (carried separately as a binary float raster). The RNG's internal state is
+// (carried separately as its field mesh's values, SavedField). The RNG's internal state is
 // stored so continuation is bit-identical.
 export interface ClimateEpochRecord {
   epoch: number
