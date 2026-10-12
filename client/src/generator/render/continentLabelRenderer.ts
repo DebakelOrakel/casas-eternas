@@ -158,7 +158,3 @@ export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: Con
   }
   ctx.restore()
 }
-
-export function drawContinentLabels(ctx: CanvasRenderingContext2D, placements: ContinentLabelPlacement[]): void {
-  for (const placement of placements) drawContinentLabel(ctx, placement)
-}

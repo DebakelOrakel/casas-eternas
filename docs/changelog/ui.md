@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-12
+- **fixed** Generator: a new world no longer shows the shores and lakes of the world before it until its own terrain arrives. `generator.step.world`
+
 ## 2026-10-11
 - **changed** Save/Load: the world list shows one card per world with its shape and how many steps were accepted, opens a panel with more facts and copies between browser and server on a click on the card, and filters by shape. `generator.load`
 - **new** Save/Load: a world kept in the browser and on the server in different versions is marked, and its panel shows both to pick one. `generator.load.diverged`

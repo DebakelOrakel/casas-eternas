@@ -91,4 +91,5 @@ was part of the simulation truth.
 ## Status
 
 decided and built 2026-08-16; calibrated on seed alpha with
-scripts/measureHydrology.mjs and a hypsometry decomposition
+scripts/measureHydrology.mjs (deleted 2026-10-12 with the raster
+hydrology it measured; in the git history) and a hypsometry decomposition

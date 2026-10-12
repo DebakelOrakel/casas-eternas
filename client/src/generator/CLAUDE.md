@@ -232,7 +232,7 @@ not assume; look up which one the field you touched uses.
 cd client && npm run harness:roundtrip       # the save format; 0.2 s
 cd client && npm run harness:mesh            # the adaptive mesh; ~5 s
 cd client && npm run harness:fields          # the field mesh's operators; ~30 s
-cd client && npm run harness:pipeline        # the pipeline's behaviour; ~3 min
+cd client && npm run harness:pipeline        # the pipeline's behaviour; ~13 min
 cd client && npm run harness:golden          # the generator; ~20 min (4 world builds at 2048×1024, 4 coupled epochs each)
 cd client && npm run harness:golden:record   # re-record the metric baseline, on purpose
 cd client && npm run harness:golden:hash     # arm the refactor guard (layer 4)

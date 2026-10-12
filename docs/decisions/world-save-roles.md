@@ -32,7 +32,7 @@ It holds three things, written together, read by different consumers:
 |---|---|---|
 | Recipe — make the world again | `world.yaml`: `spec` and the `history:` block | a replay (detail-ladder.md, fork 2) |
 | Snapshot — continue the world | `state.json`, `mesh/` (`column.bin` alone is ~23 MB of ~53 MB), `mantle.f64` + `mantle.json`, `lattice.*`, `oceanAge.f64` + `oceanAge.json` | the generator, after a load |
-| Queryable layers — look a value up | `elevation.f32`, `layers/*` (~70 files), `manifest.json` | the map, the incubator, a game server (queryable-world-save.md) |
+| Queryable layers — look a value up | `elevation.f32`, `layers/*` (the lakes, the erosion forcing and the tables since DEC-0036 phase 7b; ~70 files before), `climate.json` + `climate/*`, the land fields in `mesh/`, `manifest.json` | the map, the incubator, a game server (queryable-world-save.md) |
 
 The detail ladder changes what each of these is worth. Level 1 replays the
 whole history at budget 1, and levels 1 to 3 are the world; level 0 is the
@@ -102,7 +102,8 @@ screen's side is asked first; 4 when levels 2 and 3 carry layers.
   per cell of the climate's field mesh, and the biome, the Köppen class
   and the water table per node of the saved mesh (`mesh/biome.u8`,
   `mesh/koppen.u8`, `mesh/waterTable.f32`), in place of their raster
-  layers. The generator recomputes them on load; they stay for the
+  layers; since phase 7b the river discharge too (`mesh/discharge.f32`).
+  The generator recomputes them on load; they stay for the
   readers that cannot (the bakes sample the climate at their nodes, a
   game server asks a biome), and `world/query.ts` rasterises them for its
   views. The artifact key's `worldId` hashes the climate's cells in place

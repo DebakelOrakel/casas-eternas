@@ -909,6 +909,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // tectonics run opens a history entry marked `restored` (worldHistory.ts),
   // the point a replay has to restore at.
   let tectonicsRunRestored = false
+  // The entry the last tectonics start opened, or null when that start
+  // continued the entry before it (openRun's same-run rule). A start the
+  // worker declines takes it out again (handleStageDeclined): no epoch ran.
+  let tectonicsRunOpened: WorldRun | null = null
   let genesisTallied = 0
   // Whether this screen holds a world at all: step 0 was answered with "Create
   // world", or a world was opened from a file. Every later step is gated on it
@@ -3931,6 +3935,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         // settled render to wait for. A step that threw ended it already
         // (handleStageFailed), and this is then a no-op.
         endTectonicsRun(false)
+        // The entry that start opened recorded a run that never was.
+        if (tectonicsRunOpened && tectonicsRunOpened.epochs === 0 && history.tectonics[history.tectonics.length - 1] === tectonicsRunOpened) {
+          history.tectonics.pop()
+          if (tectonicsRunOpened.restored) tectonicsRunRestored = true
+        }
+        tectonicsRunOpened = null
         break
       default:
         break
@@ -4607,6 +4617,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     tectonicsRunRestored = false
     genesisTallied = 0
     forgetOverlays()
+    // A new world: the previous world's terrain is not the shores' ground
+    // any more. Off every view until this world's first elevationField
+    // sends its own (the same as the Planet preview's holdWater).
+    lastWaterElevation = null
+    for (const view of waterViews()) holdWater(view)
     // A new world: nothing of it is on the globe yet.
     globePainted = false
     syncGlobeLayers()
@@ -4799,7 +4814,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // stale. The eroded terrain is NOT dropped: the epochs erode it on (phase
     // 5.1), so the count of eroding epochs carries on from where it was.
     invalidateAfter('tectonics')
+    const runsBefore = history.tectonics.length
     openRun(history.tectonics, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION, GENERATOR_CODE, tectonicsRunRestored)
+    tectonicsRunOpened = history.tectonics.length > runsBefore ? history.tectonics[history.tectonics.length - 1] : null
     tectonicsRunRestored = false
     postToWorker({ type: 'tectonicsStart', alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
     sayTectonicsButton(true)

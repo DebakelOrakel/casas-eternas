@@ -124,7 +124,7 @@ reason.
 
 ```
 make lint      # tsc --noEmit, gofmt, go vet
-make test      # go test plus the harnesses (~14 min, nearly all of it golden)
+make test      # go test plus the harnesses (~20 min, most of it pipeline)
 make run       # build baker + client, then start the server locally
 cd client && npm run dev   # the usual loop
 
@@ -132,8 +132,8 @@ cd client && npm run dev   # the usual loop
 cd client && npm run harness:roundtrip   # the save format; 0.2 s, run it freely
 cd client && npm run harness:mesh        # the adaptive mesh; ~5 s
 cd client && npm run harness:fields      # the field mesh's operators (DEC-0036); ~30 s
-cd client && npm run harness:pipeline    # the generator pipeline's behaviour; ~3 min
-cd client && npm run harness:golden      # the generator's fields; ~20 min
+cd client && npm run harness:golden      # the generator's fields; ~4–5 min
+cd client && npm run harness:pipeline    # the generator pipeline's behaviour; ~13 min
 
 ```
 

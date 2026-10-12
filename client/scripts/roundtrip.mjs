@@ -16,7 +16,8 @@
 // The zip ASSEMBLY is covered since 2026-10-01, when the writer left the
 // generator screen for world/save/worldArchive.ts: section 5b writes an
 // archive with it and reads it back. Section 5 keeps a hand-built archive in
-// an older format, for the reader's sake.
+// an older format, for the reader's sake. Section 2d holds the world list's
+// merge rules (ui/worldChooser/worldCards.ts): which copies are one world.
 import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
@@ -217,6 +218,41 @@ console.log('\n— run history —')
   check('and counts on the chain without the aside', JSON.stringify(WP.progressPosition('genesis')) === '{"n":2,"all":6,"done":false}' && WP.progressPosition('finishing').done && WP.progressPosition(null) === null)
   check('a new progress reads as a change, by name', WR.recordDiff(record, { ...record, progress: 'finishing' }).some((d) => d.startsWith('progress:')))
   check('an unknown or missing kind is refused', refused === 3 && WR.worldKindOf(yaml) === 'FlatWorld', `${refused} of 3`)
+}
+
+// --- 2d. the world list's merge ---------------------------------------------
+// ui/worldChooser/worldCards.ts: one card per world, wherever its copies are.
+// Pure, so the rules the list shows are checked here and not by clicking.
+{
+  console.log('\n— world list merge —')
+  const WC = await L('/src/ui/worldChooser/worldCards.ts')
+  const copy = (where, uid, extra = {}) => ({ where, uid, name: uid, seed: 's', kind: 'FlatWorld', progress: null, bytes: 1, savedAt: '2026-10-01T10:00:00Z', generator: 'g', contentHash: 'aa', ...extra })
+  const opensAll = () => true
+  const cards = WC.mergeWorldCopies(
+    [copy('browser', 'same'), copy('browser', 'diverged', { contentHash: 'bb', savedAt: '2026-10-02T10:00:00Z' }), copy('browser', 'nohash', { contentHash: '' }), copy('browser', 'local', { kind: 'SphereWorld' })],
+    [copy('server', 'same'), copy('server', 'diverged', { contentHash: 'cc' }), copy('server', 'nohash', { contentHash: '' }), copy('server', 'remote', { kind: null })],
+  )
+  const card = (uid) => cards.find((c) => c.uid === uid)
+  check('a world in both places is one card', cards.length === 5 && card('same').browser && card('same').server)
+  const same = card('same')
+  check('the same hash in both places: same, no newer, Open loads the browser copy', same.state === 'same' && same.newer === null && WC.cardOpenCopy(same, opensAll)?.where === 'browser')
+  const diverged = card('diverged')
+  check('a different hash: diverged, the later save marked newer and shown, Open disabled', diverged.state === 'diverged' && diverged.newer === 'browser' && diverged.shown === diverged.browser && WC.cardOpenCopy(diverged, opensAll) === null)
+  const serverNewer = WC.mergeWorldCopies([copy('browser', 'x', { contentHash: 'bb' })], [copy('server', 'x', { savedAt: '2026-10-03T10:00:00Z' })])[0]
+  check('and the server\'s copy when it is the later one', serverNewer.newer === 'server' && serverNewer.shown === serverNewer.server)
+  const nohash = card('nohash')
+  check('a missing hash on both sides reads as diverged, never as the same', nohash.state === 'diverged' && WC.cardOpenCopy(nohash, opensAll) === null)
+  const oneHash = WC.mergeWorldCopies([copy('browser', 'x', { contentHash: '' })], [copy('server', 'x')])[0]
+  check('and so does a hash missing on one side', oneHash.state === 'diverged')
+  const local = card('local')
+  check('one copy: single, Open loads it where the screen opens it', local.state === 'single' && WC.cardOpenCopy(local, opensAll) === local.browser && WC.cardOpenCopy(local, (where) => where === 'server') === null)
+  check('the cards come newest first', cards[0].uid === 'diverged')
+  const under = (where, shape) => cards.filter((c) => WC.cardMatches(c, where, shape)).map((c) => c.uid).sort().join(',')
+  check('the shape filter keeps its shape', under('all', 'sphere') === 'local' && under('all', 'flat') === 'diverged,nohash,same', `${under('all', 'sphere')} | ${under('all', 'flat')}`)
+  check('a card of unknown shape shows under both shapes only', under('all', 'anyShape').includes('remote') && !under('all', 'flat').includes('remote') && !under('all', 'sphere').includes('remote'))
+  check('the place filter keeps the cards with a copy there', under('server', 'anyShape') === 'diverged,nohash,remote,same' && under('browser', 'anyShape') === 'diverged,local,nohash,same', `${under('server', 'anyShape')} | ${under('browser', 'anyShape')}`)
+  const mixedKind = WC.mergeWorldCopies([copy('browser', 'x', { kind: null })], [copy('server', 'x', { kind: 'SphereWorld' })])[0]
+  check('the shape comes from whichever copy knows it', mixedKind.kind === 'SphereWorld' && WC.cardMatches(mixedKind, 'all', 'sphere'))
 }
 
 // --- 3. identity -------------------------------------------------------------

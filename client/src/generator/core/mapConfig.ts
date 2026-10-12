@@ -17,7 +17,7 @@ export const MAP_HEIGHT = 1024
 // mountain ranges against it, and the worldgen resolution decisions are
 // argued in terms of it. Anything that converts between a real-world
 // gradient and this grid's rise-over-run needs BOTH this and
-// ELEVATION_METERS; see elevationScale.slopeFromAngle.
+// ELEVATION_METERS.
 export const TORUS_METERS_PER_CELL = 7800
 
 // The sphere: 20 000 km round the equator (R = 3 183 km), so 9 765.625 m per

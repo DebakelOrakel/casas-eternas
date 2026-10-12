@@ -5,6 +5,9 @@
 //   node scripts/pipeline.mjs <text>     only the tests whose name holds <text>
 //   SPHERE_SEED=c2 node scripts/pipeline.mjs sphere   the runtime's sphere world of another seed
 //
+// The run ends with each test's wall time, slowest first: the harness's
+// cost is where it is spent, and a slow test is otherwise invisible.
+//
 // golden.mjs asks "given these params, are the fields the same bytes" and calls
 // the stage modules directly; roundtrip.mjs asks the same of the save format.
 // Neither ever sends a message. Everything between them — which handler clears
@@ -957,6 +960,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
     const { cm, land } = wx.terrain
     let spread = 0
     let step = 0
+    let seaRings = 0
     for (const v of [0.5 / RY, 1 - 0.5 / RY]) {
       let lo = Infinity, hi = -Infinity
       for (let k = 0; k < 64; k++) {
@@ -965,7 +969,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
         const t = cm.sampler.sample(wx.mesh.temperature, x, y)
         lo = Math.min(lo, t); hi = Math.max(hi, t)
       }
-      if (hi >= lo) spread = Math.max(spread, hi - lo)
+      if (hi >= lo) { spread = Math.max(spread, hi - lo); seaRings++ }
     }
     // The largest step between neighbouring sea cells within 5° of a pole.
     const { mesh } = cm
@@ -973,10 +977,12 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
       if (land[i] || Math.abs(cm.yNorm[i] - 0.5) < 0.5 - 5 / 180) continue
       for (let e = mesh.nbrStart[i]; e < mesh.nbrStart[i + 1]; e++) if (!land[mesh.nbr[e]]) step = Math.max(step, Math.abs(wx.mesh.temperature[mesh.nbr[e]] - wx.mesh.temperature[i]))
     }
-    return { spread, step }
+    return { spread, step, seaRings }
   }
+  // A world with no sea round either pole has nothing to ask here: said,
+  // not passed as 0 ≤ 0 (the seed 'h2' keeps sea at both poles).
   const ring = ringSpread(epochWeather)
-  check('the sea at each pole is one temperature field on the mesh: round the pole it varies by no more than between two neighbouring cells', ring.spread <= ring.step + 1e-9, `ring ${ring.spread.toFixed(3)} °C, neighbours up to ${ring.step.toFixed(3)} °C`)
+  check(`the sea at each pole is one temperature field on the mesh: round the pole it varies by no more than between two neighbouring cells${ring.seaRings === 0 ? ' — skipped: no sea round either pole on this world' : ` (${ring.seaRings} of 2 poles with sea)`}`, ring.spread <= ring.step + 1e-9, `ring ${ring.spread.toFixed(3)} °C, neighbours up to ${ring.step.toFixed(3)} °C`)
   // (b) A departure along the globe: tapsAt reaches the point its offset's
   // length away, east-west near a pole too, and across it. Checked against
   // the Domain's own distance from the cell centre to the sampled point.
@@ -1158,7 +1164,17 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
 // A sphere world through the runtime up to the climate step's end: its
 // Archean, the hand-over, eleven eroding epochs, climateRun, the refinement
 // and hydrologyRun — what the climate step's test and the ecology's stand on.
-async function sphereThroughHydrology() {
+// Built once and shared by the two tests that read it (the climate step's
+// and the ecology step's): neither changes the world — the climate test
+// reads the answers and serializes, the ecology test adds its own stage's
+// answers — so the second does not pay the eleven epochs, the climate, the
+// refinement and the hydrology again (~85 s). Run alone, either builds it.
+let sphereFixture = null
+function sphereThroughHydrology() {
+  sphereFixture ??= buildSphereThroughHydrology()
+  return sphereFixture
+}
+async function buildSphereThroughHydrology() {
   const p = await freshPipeline()
   // The seed: one whose world has a polar sea and plain rivers (re-chosen
   // 2026-10-11 with the mantle on its field mesh; 'harness' then failed the
@@ -1175,8 +1191,12 @@ async function sphereThroughHydrology() {
   await quiet(p)
   // Eleven epochs: what this seed was chosen on, when runEpochs counted
   // four pictures (epochs 1, 4, 7, 10) and the stop then came after the
-  // eleventh had begun. At ten, two climate checks fail on this seed
-  // (the polar currents, the monsoon's seam; measured 2026-10-11).
+  // eleventh had begun. At ten, two climate checks once failed on this seed
+  // (the polar currents, the monsoon's seam; 2026-10-11): both asked a
+  // property of the world's land and sea, not of the climate. Since
+  // 2026-10-12 they ask it where it applies (the polar seas' rings, the
+  // seam against the steps beside it) and pass at 9 to 12 epochs and on
+  // the seeds c2, c5 and c6.
   await runEpochs(p, 11)
   p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   await until(() => p.count('climateData') >= 1, { label: 'the sphere climate' })
@@ -1310,41 +1330,72 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   check(`the wind's bands: polar easterlies (u ${polar.u.toFixed(2)}), westerlies (${westerly.u.toFixed(2)}), trades toward the equator (u ${trades.u.toFixed(2)}, poleward ${trades.vPole.toFixed(2)})`,
     polar.u < 0 && westerly.u > 0 && trades.u < 0 && trades.vPole < 0)
   // The polar seas' currents, each pole apart: they flow round the pole,
-  // not into it. A pole under land (both, on some worlds: the seeds c2 and
-  // c6) has no polar sea to ask — that pole is skipped and says so, it is
-  // not a NaN; a pole with sea is held to the bound.
+  // not into it — asked of the rows poleward of 75° that are a RING of sea,
+  // sea all the way round. "Round the pole" means nothing for a basin a
+  // coast closes: there the current turns along the coast, and its mean
+  // over the basin may point poleward on any world. That was the seed
+  // fragility (2026-10-12, SPHERE_SEED=c4): at ten epochs the north had 56
+  // to 107 of 256 pixels sea per row from 75° to 85° and land beyond — a
+  // basin, poleward 0.056 of 0.171, failing; at eleven a ring of sea to the
+  // pole, -0.006 of 0.364. A pole with no ring (under land, or a basin
+  // only: the seeds c2, c5, c6) is skipped and says so.
   const cc = f32(cr.currents)
   const polarSeas = [true, false].map((north) => {
-    let vPole = 0, speed = 0, k = 0
+    let vPole = 0, speed = 0, k = 0, rows = 0, basinRows = 0
     for (let y = 0; y < RY; y++) {
       const lat = 90 - (180 * (y + 0.5)) / RY
       if ((north ? lat : -lat) < 75) continue
+      let seaInRow = 0
+      for (let x = 0; x < RX; x++) if (sea(cc)(y * RX + x)) seaInRow++
+      if (seaInRow < RX) {
+        if (seaInRow > 0) basinRows++
+        continue
+      }
+      rows++
       for (let x = 0; x < RX; x++) {
         const i = y * RX + x
-        if (!sea(cc)(i)) continue
         vPole += north ? -cc[i * 2 + 1] : cc[i * 2 + 1]
         speed += Math.hypot(cc[i * 2], cc[i * 2 + 1])
         k++
       }
     }
-    return { pole: north ? 'north' : 'south', cells: k, vPole: k ? vPole / k : 0, speed: k ? speed / k : 0 }
+    return { pole: north ? 'north' : 'south', cells: k, rows, basinRows, vPole: k ? vPole / k : 0, speed: k ? speed / k : 0 }
   })
   const asked = polarSeas.filter((q) => q.cells > 0)
-  check(`the polar seas' currents flow round the pole, not into it (${polarSeas.map((q) => q.cells === 0 ? `${q.pole}: skipped, no sea poleward of 75°` : `${q.pole}: poleward ${q.vPole.toFixed(3)} of ${q.speed.toFixed(3)} over ${q.cells} cells`).join('; ')})`,
+  check(`the polar seas' currents flow round the pole, not into it (${polarSeas.map((q) => q.cells === 0 ? `${q.pole}: skipped, no ring of sea poleward of 75° (${q.basinRows} rows a basin)` : `${q.pole}: poleward ${q.vPole.toFixed(3)} of ${q.speed.toFixed(3)} over ${q.rows} rings of sea${q.basinRows ? `, ${q.basinRows} basin rows skipped` : ''}`).join('; ')})`,
     asked.every((q) => Number.isFinite(q.vPole) && Math.abs(q.vPole) < 0.2 * q.speed))
 
-  // The seam: the step across x = 0 / W is a step like any other in its row.
+  // The seam: the step across x = 0 / W is a step like the steps beside
+  // it. Per column boundary, the mean step over the rows (and the months),
+  // land beside land and sea beside sea only (the fields jump at a coast);
+  // the seam's against the mean of the three boundaries on either side of
+  // it. A seam is a spike there; a coast or a front that runs near x = 0
+  // raises the boundaries beside it as well. Asked globally — the largest
+  // step across against the largest inside, or the mean across against the
+  // mean inside — it was seed-luck (2026-10-12, SPHERE_SEED=c4): at ten
+  // epochs the largest step of the monsoon index fell on the seam
+  // (2026-10-11), and a coast along x = 0 put the seam's mean salinity
+  // step at 3.5 × the world's mean, while it was 0.8 × the steps beside it.
+  const SEAM_NEIGHBOURS = 3
   const seamOf = (field, rx, ry, layers = 1) => {
-    let seam = 0
-    let inner = 0
+    const sum = new Float64Array(rx)
+    const count = new Float64Array(rx)
     for (let m = 0; m < layers; m++) {
       for (let y = 0; y < ry; y++) {
-        const row = field.subarray(m * rx * ry + y * rx, m * rx * ry + (y + 1) * rx)
-        seam = Math.max(seam, Math.abs(row[0] - row[rx - 1]))
-        for (let x = 1; x < rx; x++) inner = Math.max(inner, Math.abs(row[x] - row[x - 1]))
+        const off = m * rx * ry + y * rx
+        for (let x = 0; x < rx; x++) {
+          const a = y * rx + x
+          const b = y * rx + ((x + 1) % rx)
+          if (landC[a] !== landC[b]) continue
+          sum[x] += Math.abs(field[off + x] - field[off + ((x + 1) % rx)])
+          count[x]++
+        }
       }
     }
-    return { seam, inner }
+    const mean = (x) => sum[x] / Math.max(1, count[x])
+    let beside = 0
+    for (let k = 1; k <= SEAM_NEIGHBOURS; k++) beside += mean(rx - 1 - k) + mean(k - 1)
+    return { seam: mean(rx - 1), inner: beside / (2 * SEAM_NEIGHBOURS) }
   }
   // The fields that vary smoothly; the derived ones (fog, föhn, the storms)
   // jump from cell to cell anywhere, and a seam check reads nothing there.
@@ -1354,8 +1405,20 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   // the coast's fog share 0.36–0.39 on both sides, the föhn 0).
   const smooth = ['pressure', 'precipitation', 'salinity', 'currentAnomaly', 'climate.seasonalAmplitude', 'refined.seasonalAmplitude', 'refined.monsoonIndex']
   const seamed = Object.entries({ ...Object.fromEntries(smooth.map((k) => [k, scalars[k]])), temperature: [f32(r.temperature), r.months] })
-    .map(([k, [f, layers]]) => [k, seamOf(f, RX, RY, layers)]).filter(([, s]) => s.seam > s.inner)
-  check(`no smooth field of the climate step has a seam at x = 0 / W (${smooth.length + 1} fields)`, seamed.length === 0, seamed.map(([k, s]) => `${k} ${s.seam.toFixed(3)} > ${s.inner.toFixed(3)}`).join(', '))
+    .map(([k, [f, layers]]) => [k, seamOf(f, RX, RY, layers)])
+  const seamRatio = ([, s]) => s.seam / Math.max(1e-12, s.inner)
+  const worstSeam = seamed.reduce((a, b) => (seamRatio(b) > seamRatio(a) ? b : a))
+  check(`no smooth field of the climate step has a seam at x = 0 / W (${smooth.length + 1} fields; the mean step across over the mean step beside it, the worst ${worstSeam[0]} ${seamRatio(worstSeam).toFixed(2)})`, seamed.every((e) => seamRatio(e) <= 2), seamed.filter((e) => seamRatio(e) > 2).map(([k, s]) => `${k} ${s.seam.toFixed(3)} > 2 × ${s.inner.toFixed(3)}`).join(', '))
+  // Mutation: a seam put in on purpose — the precipitation plus a ramp
+  // across the chart of a tenth of its range — must show.
+  {
+    const [f, layers] = scalars.precipitation
+    let lo = Infinity, hi = -Infinity
+    for (const v of f) { lo = Math.min(lo, v); hi = Math.max(hi, v) }
+    const ramped = f.map((v, i) => v + (0.1 * (hi - lo) * (i % RX)) / RX)
+    const q = seamOf(ramped, RX, RY, layers)
+    check(`mutation: a ramp of a tenth of the rain's range across the chart is a seam (${(q.seam / q.inner).toFixed(2)} × the mean step beside it)`, q.seam > 2 * q.inner)
+  }
 
   // The rivers: every polyline step short in the chart where the chart
   // stretches it, none across a pole or the seam, one regime per line.
@@ -1741,9 +1804,16 @@ test('a sphere world runs the ecology step through the runtime: finite, pole-han
     }
     return { seam: seam / Math.max(1, seamN), inner: inner / Math.max(1, innerN), seamN }
   }
+  // A world with no land on both sides of the seam has nothing to ask
+  // (the harness's sphere at this size: 0 pairs on every seed tried,
+  // 2026-10-12): skipped, and said so — the constructed sphere below asks
+  // the seam, the pole's land and the latitude where they apply.
   const seams = ['carryingCapacity', 'arable', 'game', 'pasture', 'fish', 'iron'].map((id) => [id, seamOf(fine[id])])
   const seamed = seams.filter(([, s]) => s.seam > 2 * s.inner + 1)
-  check(`no ecology field has a seam at x = 0 / W (${seams.map(([id, s]) => `${id} ${s.seam.toFixed(1)}/${s.inner.toFixed(1)}`).join(', ')} codes, ${seams[0][1].seamN} seam pairs)`, seamed.length === 0)
+  const seamPairs = seams[0][1].seamN
+  check(seamPairs === 0
+    ? 'no ecology field has a seam at x = 0 / W — skipped: no land on both sides of the seam on this world (the constructed sphere test asks it)'
+    : `no ecology field has a seam at x = 0 / W (${seams.map(([id, s]) => `${id} ${s.seam.toFixed(1)}/${s.inner.toFixed(1)}`).join(', ')} codes, ${seamPairs} seam pairs)`, seamed.length === 0)
 
   // By latitude: the carrying capacity and the game fall toward the poles
   // (land area-weighted, per band of |latitude|); every value in its range.
@@ -1773,7 +1843,9 @@ test('a sphere world runs the ecology step through the runtime: finite, pole-han
   const fishSea = [...fine.fish].filter((c, i) => fineSea[i]).map((c) => c * EF.ECOLOGY_FINE_STEP)
   const fishMean = fishSea.reduce((a, b) => a + b, 0) / Math.max(1, fishSea.length)
   const fmt = (f) => f.map((v) => (known(v) ? v.toFixed(3) : '—')).join(' / ')
-  check(`plausible by latitude (bands 0–30–55–70–90°): carrying capacity ${fmt(cc)}, game ${fmt(game)}, arable ${fmt(arable)} — the polar band the lowest; every field in range, the sea's fish ${fishMean.toFixed(3)}`,
+  // The polar band's comparison is skipped where the world has no land
+  // poleward of 70° ('—'); the constructed sphere test asks it.
+  check(`plausible by latitude (bands 0–30–55–70–90°): carrying capacity ${fmt(cc)}, game ${fmt(game)}, arable ${fmt(arable)} — the polar band the lowest${known(cc[3]) ? '' : ' (skipped: no land poleward of 70°)'}; every field in range, the sea's fish ${fishMean.toFixed(3)}`,
     known(cc[0]) && low && inRange && fishSea.length > 0 && fishMean > 0 && fishMean < 1)
 })
 
@@ -1852,6 +1924,134 @@ test('the ecology on the sphere at high latitude: a deposit\'s halo is a disc in
     high.length > 0 && equator.length > 0 && Math.abs(ratio(high) - 1) < 0.15 && Math.abs(mean(high, 'south') / expected - 1) < 0.2 && Math.abs(ratio(equator) - 1) < 0.15)
   check(`mutation: drawn in the chart (the torus over the same chart), the halo at 75° is ${ratio(highTorus).toFixed(2)} as wide east-west as north-south in true lengths (cos 75° = ${Math.cos((75 * Math.PI) / 180).toFixed(2)})`,
     highTorus.length > 0 && ratio(highTorus) < 0.5)
+})
+
+// The ecology's pole, seam and latitude on a CONSTRUCTED sphere, on the
+// modules: the runtime's sphere world at this harness's size has no land
+// on the pole row and none on both sides of x = 0 (every seed tried,
+// 2026-10-12: 0 seam pairs), so those three properties cannot be asked of
+// it. Here the globe is land from pole to pole and across the seam, with a
+// sea band at 25–35°S for the fish; the climate falls smoothly toward the
+// poles and is periodic in longitude, with a wave in it (so the nodes
+// round the pole differ, and the pole row is one value only because the
+// rasterisation reads the pole as one point). Through the same
+// rasterisation the runtime uses (ecologyRasters). The mutation: a rain
+// that ramps with the longitude (a seam in the INPUT) must be seen by the
+// very same seam check.
+test('the ecology on a constructed sphere of land: one value at the pole, no seam, the poles the lowest, against its mutation', async () => {
+  const L = (m) => server.ssrLoadModule(m)
+  const [D, EF, B, LA, CP] = await Promise.all([
+    L('/src/generator/core/domain.ts'), L('/src/generator/ecology/ecologyField.ts'), L('/src/generator/climate/biomes.ts'),
+    L('/src/generator/mesh/lattice.ts'), L('/src/generator/climate/climatePoints.ts'),
+  ])
+  const FX = W
+  const FY = H
+  const domain = D.sphereDomain(FX, FY)
+  const mesh = LA.geodesicLattice(domain, 1)
+  const n = mesh.vertexSlots
+  // Signed latitude in degrees of a chart row position (north up).
+  const latOf = (y) => 90 - (180 * y) / FY
+  const isSeaLat = (lat) => lat <= -25 && lat >= -35
+  const build = (rainAt) => {
+    const land = new Uint8Array(n)
+    const z = new Float32Array(n)
+    const climate = {
+      count: n, seaLevelTemperature: new Float32Array(n), temperature: new Float32Array(n), precipitation: new Float32Array(n),
+      seasonalAmplitude: new Float32Array(n), monsoonIndex: new Float32Array(n), months: null, upwelling: null, rainVariability: null, windE: null, windS: null,
+    }
+    for (let v = 0; v < n; v++) {
+      if (!mesh.vAlive[v]) continue
+      const lat = latOf(mesh.vy[v])
+      const lon = (360 * mesh.vx[v]) / FX
+      const sea = isSeaLat(lat)
+      land[v] = sea ? 0 : 1
+      z[v] = sea ? -0.1 : 0.05
+      const t = 28 - 50 * Math.sin((Math.abs(lat) * Math.PI) / 180) ** 2
+      climate.seaLevelTemperature[v] = t
+      climate.temperature[v] = t
+      climate.precipitation[v] = sea ? -1 : rainAt(lat, lon)
+      climate.seasonalAmplitude[v] = sea ? -1 : 4 + 20 * Math.abs(lat) / 90
+      climate.monsoonIndex[v] = sea ? -1 : 0
+    }
+    const points = { count: n, x: mesh.vx, y: mesh.vy, height: z, land, dry: null, alive: mesh.vAlive }
+    const biomes = B.classifyPoints(climate, points, domain).biome
+    const base = EF.prepareEcology({
+      mesh, z, land, climate, biomes,
+      discharge: null, maxDischarge: 0, lakeDepth: null, saltFlat: null, waterTable: null, oases: [], volcanoes: [], orogenPoints: [],
+      cratonAge: new Float32Array(n).fill(0.5), warpSeed: 12345, domain,
+    })
+    const pixelLand = new Uint8Array(FX * FY)
+    for (let y = 0; y < FY; y++) for (let x = 0; x < FX; x++) pixelLand[y * FX + x] = isSeaLat(latOf(y + 0.5)) ? 0 : 1
+    const fields = EF.applyEcology(base, { carryingCapacity: 100, concentration: 0, provinceStrength: 0.5 }).fields
+    return { eco: EF.ecologyRasters(base, fields, pixelLand, domain.grid(FX, FY)), pixelLand, fields }
+  }
+  // The checks, the same for the world and its mutation.
+  const ask = ({ eco, pixelLand }) => {
+    const fine = eco.fine.fields
+    const ids = Object.keys(fine)
+    const finite = ids.every((id) => allFinite(fine[id]) && allFinite(eco.fields[id]))
+    // The north pole is the fine raster's first row (the corner convention).
+    let poleSpread = 0
+    let poleWorst = ''
+    for (const id of ids) {
+      let lo = Infinity, hi = -Infinity
+      for (let x = 0; x < FX; x++) { lo = Math.min(lo, fine[id][x]); hi = Math.max(hi, fine[id][x]) }
+      let range = 1e-9 // the field's own scale
+      for (const v of fine[id]) if (v !== EF.ECOLOGY_OCEAN) range = Math.max(range, Math.abs(v))
+      if ((hi - lo) / range >= poleSpread) { poleSpread = (hi - lo) / range; poleWorst = id }
+    }
+    // The seam: the mean step across x = 0 / W over the land rows against
+    // the mean step inside the rows, per field.
+    let seamWorst = 0
+    let seamAt = ''
+    let pairs = 0
+    for (const id of ['carryingCapacity', 'arable', 'game', 'pasture', 'fish']) {
+      const f = fine[id]
+      let seam = 0, sn = 0, inner = 0, inN = 0
+      for (let y = 0; y < FY; y++) {
+        for (let x = 0; x < FX; x++) {
+          const a = y * FX + x
+          const b = y * FX + ((x + 1) % FX)
+          if (!pixelLand[a] || !pixelLand[b]) continue
+          const d = Math.abs(f[a] - f[b])
+          if (x === FX - 1) { seam += d; sn++ } else { inner += d; inN++ }
+        }
+      }
+      pairs = sn
+      const ratio = (seam / Math.max(1, sn)) / Math.max(1e-6, inner / Math.max(1, inN))
+      if (ratio > seamWorst) { seamWorst = ratio; seamAt = id }
+    }
+    return { finite, poleSpread, poleWorst, seamWorst, seamAt, pairs }
+  }
+  // The rain: wetter at the equator and at 50–60°, a wave in longitude
+  // (periodic, so no seam), and never below a desert's.
+  const rain = (lat, lon) => 300 + 1200 * Math.exp(-((lat / 15) ** 2)) + 500 * Math.exp(-(((Math.abs(lat) - 55) / 10) ** 2)) + 150 * Math.sin((lon * Math.PI) / 90)
+  const world = build(rain)
+  const a = ask(world)
+  check(`every ecology field is finite on a constructed sphere (${mesh.aliveVertices} nodes)`, a.finite)
+  check(`the fields are one value on the pole row, all of it land (the widest spread ${a.poleSpread.toExponential(1)} of its field's range, ${a.poleWorst})`, a.poleSpread < 1e-6)
+  check(`no seam at x = 0 / W over ${a.pairs} land pairs (the worst field ${a.seamAt}: its mean step across ${a.seamWorst.toFixed(2)} × its mean step inside)`, a.pairs > 0 && a.seamWorst < 2)
+  // By latitude, the coarse cells area-weighted: the polar band the lowest.
+  const RX = world.eco.resX
+  const RY = world.eco.resY
+  const bandOf = (field, from, to) => {
+    let sum = 0, area = 0
+    for (let y = 0; y < RY; y++) {
+      const lat = 90 - (180 * (y + 0.5)) / RY
+      if (Math.abs(lat) < from || Math.abs(lat) >= to) continue
+      const w = Math.cos((lat * Math.PI) / 180)
+      for (let x = 0; x < RX; x++) { const v = field[y * RX + x]; if (v === EF.ECOLOGY_OCEAN) continue; sum += v * w; area += w }
+    }
+    return area > 0 ? sum / area : NaN
+  }
+  const bands = [[0, 30], [30, 55], [55, 70], [70, 90]]
+  const by = Object.fromEntries(['carryingCapacity', 'game', 'arable'].map((id) => [id, bands.map(([f, t]) => bandOf(world.eco.fields[id], f, t))]))
+  const polarLowest = Object.values(by).every((f) => f.every(Number.isFinite) && f[3] < Math.min(f[0], f[1]))
+  check(`plausible by latitude (bands 0–30–55–70–90°, land in each): ${Object.entries(by).map(([id, f]) => `${id} ${f.map((v) => v.toFixed(3)).join(' / ')}`).join('; ')} — the polar band below the two lowest-latitude bands`, polarLowest)
+  // The mutation: the rain ramps with the longitude, 0 → 1500 mm across the
+  // chart — a seam at x = 0 / W.
+  const m = ask(build((lat, lon) => rain(lat, lon) + (1500 * lon) / 360))
+  check(`mutation: a rain that ramps with the longitude shows as a seam (${m.seamAt} ${m.seamWorst.toFixed(2)} × its mean step inside)`, m.seamWorst >= 2)
 })
 
 // A compute that throws in the worker releases what waits for it: the
@@ -2027,17 +2227,14 @@ test('the hand-over is what resetTectonics goes back to', async () => {
   await growWorld(p)
   const handover = hash(p.last('rendered').elevation)
 
-  let base = p.count('rendered')
-  p.dispatch({ type: 'tectonicsStart' })
-  // Four pictures are ten epochs since the loop draws every third one
-  // (HISTORY_DEFAULTS.renderEvery, 2026-09-26) — a few seconds each on this
-  // world, where the uplift field's cost does not shrink with the size.
-  await until(() => p.count('rendered') >= base + 4, { label: 'a few tectonic epochs', timeout: 180000 })
-  p.dispatch({ type: 'tectonicsStop' })
-  await quiet(p)
+  // One epoch is enough to move the world, and to move a snapshot that is
+  // not its own copy (a few seconds each on this world, where the uplift
+  // field's cost does not shrink with the size; it ran four pictures —
+  // ten epochs — each time until 2026-10-12).
+  await runEpochs(p, 1)
   check('tectonics moves the world off the hand-over', hash(p.last('rendered').elevation) !== handover)
 
-  base = p.count('rendered')
+  let base = p.count('rendered')
   p.dispatch({ type: 'resetStage', stage: 'tectonics' })
   await until(() => p.count('rendered') > base, { label: 'the reset render' })
   await quiet(p)
@@ -2045,11 +2242,7 @@ test('the hand-over is what resetTectonics goes back to', async () => {
 
   // The snapshot is deep-copied at hand-over precisely so a SECOND reset lands in
   // the same place — an uncopied one drifts along with the world it preserves.
-  base = p.count('rendered')
-  p.dispatch({ type: 'tectonicsStart' })
-  await until(() => p.count('rendered') >= base + 4, { label: 'more epochs', timeout: 180000 })
-  p.dispatch({ type: 'tectonicsStop' })
-  await quiet(p)
+  await runEpochs(p, 1)
   const second = p.count('rendered')
   p.dispatch({ type: 'resetStage', stage: 'tectonics' })
   await until(() => p.count('rendered') > second, { label: 'the second reset render' })
@@ -2062,11 +2255,9 @@ test('the hand-over is what resetTectonics goes back to', async () => {
 test('a world survives serialize -> restore unchanged', async () => {
   const p = await freshPipeline()
   await growWorld(p)
-  const base = p.count('rendered')
-  p.dispatch({ type: 'tectonicsStart' })
-  await until(() => p.count('rendered') >= base + 4, { label: 'some tectonics', timeout: 180000 })
-  p.dispatch({ type: 'tectonicsStop' })
-  await quiet(p)
+  // Two eroding epochs: a column with layers, a mesh remeshed since the
+  // hand-over (four pictures, ten epochs, until 2026-10-12).
+  await runEpochs(p, 2)
   const saved = hash(p.last('rendered').elevation)
 
   p.dispatch({ type: 'serializeWorld' })
@@ -2874,15 +3065,20 @@ test("level 1's replay makes the saved world again, across a load and a checkpoi
 
 console.log('')
 const started = Date.now()
+// Each test's wall time, for the summary at the end: the harness's cost is
+// where it is spent, and a slow test is otherwise invisible in the total.
+const timings = []
 for (const { name, run } of TESTS) {
   if (!name.includes(ONLY)) continue
   console.log(`— ${name}`)
+  const t0 = Date.now()
   try {
     await run()
   } catch (error) {
     failures++
     console.log(`  FAIL  ${error.message}`)
   }
+  timings.push({ name, s: (Date.now() - t0) / 1000 })
 }
 
 // The coverage holds for the whole run only.
@@ -2894,5 +3090,7 @@ if (ONLY === '') {
 }
 
 await server.close()
+console.log('\n— time per test, slowest first')
+for (const { name, s } of [...timings].sort((a, b) => b.s - a.s)) console.log(`  ${s.toFixed(1).padStart(6)} s  ${name.length > 90 ? `${name.slice(0, 87)}...` : name}`)
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'} — ${failures} failed, ${Math.round((Date.now() - started) / 1000)}s`)
 process.exit(failures === 0 ? 0 : 1)
