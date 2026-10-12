@@ -4,6 +4,8 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-12
+- **fixed** Tectonics: a standing ice sheet presses the land down once, as it grows, instead of again at every epoch, so a seed makes a different world. `generator.step.tectonics`
+- **fixed** Hydrology: a loaded world keeps the sediment of its rivers, so its deltas, coast types, sediment basins and glaciers are those it was saved with, and worlds saved before this change no longer open. `generator.step.climate`
 - **changed** Hydrology: river flow, catchments, coast types and sediment basins are worked out on the terrain's own mesh, so coasts look somewhat different, and worlds saved before this change no longer open. `generator.step.climate`
 - **changed** Ecology: biomes, climate classes, resources and ground water are worked out on the terrain's own mesh, as evenly at the poles as at the equator, so a seed makes a different world, and worlds saved before this change no longer open. `generator.step.ecology`
 - **changed** Tectonics: the land bends under eroded rock, sediment and ice as an elastic plate does, with a low rise beyond each sinking basin, so a seed makes a different world. `generator.step.tectonics`

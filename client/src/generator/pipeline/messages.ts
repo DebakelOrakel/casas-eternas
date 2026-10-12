@@ -230,6 +230,16 @@ export interface MeshPayload {
   // The sediment column (phase 5.2, mesh/meshColumn.ts; `mesh/column.bin`,
   // formatVersion 4). Absent in a save from before it.
   column?: ArrayBuffer
+  // What the last epoch left per node, Float32 in the mesh's numbering
+  // (formatVersion 8; coupledEpoch.decodeCoupledTerrain): the erosion's
+  // sediment flux, m³/yr (`mesh/sedimentFlux.f32`, zeros before the first
+  // epoch), the heights its erosion started from (`mesh/preErosionZ.f32`,
+  // the heights themselves before it) and the ice the plate carries,
+  // metres (`mesh/ice.f32`, absent before the first epoch). The screen
+  // refuses a save with a mesh and without the first two.
+  sedimentFlux?: ArrayBuffer
+  preErosionZ?: ArrayBuffer
+  ice?: ArrayBuffer
 }
 
 export interface WorkerRestoreWorldMessage {

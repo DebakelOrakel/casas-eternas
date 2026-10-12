@@ -1081,6 +1081,34 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('Te grows with craton oldness and with ocean age', M.flexure.elasticThicknessKm(true, 1, 0) > M.flexure.elasticThicknessKm(true, 0, 0) && M.flexure.elasticThicknessKm(false, 0, 100) > M.flexure.elasticThicknessKm(false, 0, 1))
 }
 
+// The ice's load on the plate (pipeline/coupledEpoch.iceLoadChangeM): an
+// ice sheet over the ridge's band, standing an epoch at the same thickness,
+// loads nothing more — the deflection of its first epoch stays in the
+// relief —; one that grew by a fifth deflects by the fifth, one that melted
+// by a fifth springs back by it.
+{
+  const domain = M.domain.torusDomain(128, 64, 0, 62400)
+  const { mesh: fm } = M.flexure.flexureMesh(domain)
+  const rig = new Float64Array(fm.count).fill(M.flexure.flexuralRigidityM4(30))
+  const sheet = (i) => (Math.abs(fm.x[i] - 64) * domain.metresPerUnit < 4 * fm.spacingM ? 2000 : 0)
+  const deflect = (now, before) => {
+    const load = new Float64Array(fm.count)
+    for (let i = 0; i < fm.count; i++) load[i] = M.coupled.iceLoadChangeM(now(i), before(i))
+    const w = new Float64Array(fm.count)
+    M.flexure.flexuralResponse(fm, load, rig, w)
+    return w
+  }
+  const first = deflect(sheet, () => 0)
+  const standing = deflect(sheet, sheet)
+  const grown = deflect((i) => sheet(i) * 1.2, sheet)
+  const melted = deflect((i) => sheet(i) * 0.8, sheet)
+  const extreme = (w) => w.reduce((m, v) => (Math.abs(v) > Math.abs(m) ? v : m), 0)
+  const w0 = extreme(first)
+  check(`a standing ice sheet deflects the plate no further (first epoch ${w0.toFixed(1)} m, the next ${extreme(standing).toFixed(3)} m)`, w0 < 0 && standing.every((v) => v === 0))
+  check(`growth deflects by the change, melt rebounds by it (+20 %: ${extreme(grown).toFixed(1)} m, −20 %: ${extreme(melted).toFixed(1)} m)`,
+    Math.abs(extreme(grown) - 0.2 * w0) <= 1e-3 * Math.abs(w0) && Math.abs(extreme(melted) + 0.2 * w0) <= 1e-3 * Math.abs(w0))
+}
+
 // Folds (phase 5.7): across one range the uplift's multiplier is a train
 // with the buckling wavelength, an anticline on the axis, mean one over a
 // period; along the range it is constant; away from every range it is one.
@@ -1247,6 +1275,10 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   const climateTrace = []
   const coverTrace = []
   let screeTotal = 0, solifluction = 0, folded = 0, iceShare = 0, glacialCut = 0, till = 0, coastCut = 0, coastDep = 0, shore = 0
+  // The ice's load per epoch: its change against the ice the plate carried,
+  // and the weight of all the ice standing (m³ of rock).
+  const iceLoads = []
+  let iceCarried = true
   const t1 = performance.now()
   for (let e = 0; e < EPOCHS; e++) {
     const te = performance.now()
@@ -1258,6 +1290,8 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
     if (stats.reboundMaxM > rebound) rebound = stats.reboundMaxM
     if (stats.subsidenceMaxM > subsidence) subsidence = stats.subsidenceMaxM
     coverTrace.push(stats.meanLandCover)
+    iceLoads.push({ load: stats.iceLoadM3, weight: stats.iceWeightM3 })
+    if (terrain.ice.length !== terrain.mesh.vertexSlots) iceCarried = false
     screeTotal += stats.screeM3
     folded = Math.max(folded, stats.foldedShare)
     iceShare = Math.max(iceShare, stats.iceAreaShare)
@@ -1280,6 +1314,25 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   let landN = 0
   for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && terrain.z[v] > 0) landN++
   check(`land persists through the epochs (${land0} → ${landN} land nodes)`, landN > land0 * 0.5)
+  {
+    // THE ICE IS LOADED BY ITS CHANGE (2026-10-12). The deflection a load
+    // causes stays in the nodes' z, so the flexure loads the change in the
+    // ice since the epoch before, carried with the nodes through the
+    // rebuild and the remesh; until then it loaded the whole ice at every
+    // epoch, and a standing sheet pushed the plate down again and again.
+    // The first epoch finds no ice on the plate and loads it all; a later
+    // one what grew or melted: its load is the weight now less the weight
+    // of the epoch before, up to what the rebuild and the remesh do to the
+    // carried ice (cells change their areas as the nodes drift; measured
+    // 2026-10-12 on this world: 0.05–0.4 % of the weight). The old load was
+    // the whole weight, off by all of the epoch before's.
+    const first = iceLoads[0]
+    const fmt = (m3) => `${(m3 / 1e9).toFixed(1)} km³`
+    const off = iceLoads.slice(1).map((e, i) => Math.abs(e.load - (e.weight - iceLoads[i].weight)) / iceLoads[i].weight)
+    check(`the ice is on the plate after every epoch (${terrain.ice.length} nodes)`, iceCarried)
+    check(`the first epoch loads all the ice (${fmt(first.load)} of ${fmt(first.weight)})`, first.weight > 0 && Math.abs(first.load - first.weight) <= 1e-9 * first.weight)
+    check(`a later epoch loads only the ice's change (load against the change of the weight, off by ${off.map((f) => `${(f * 100).toFixed(2)} %`).join(', ')} of the weight before)`, off.length > 0 && off.every((f) => f <= 0.02), iceLoads.map((e) => `${fmt(e.load)} / ${fmt(e.weight)}`).join(', '))
+  }
   // The sediment column (phase 5.2): the epochs' deposits as layers. The
   // ledger — deposited plus scree minus re-eroded, plus what the ice and the
   // coast put in and took out (since 2026-10-01), summed over the epochs

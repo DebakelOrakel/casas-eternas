@@ -57,7 +57,7 @@ import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ELEVATION_ENCODING, decodeLayer } from '../../world/save/worldLayers'
-import { readField, readRefined, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
+import { readField, readMeshEpochFiles, readRefined, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
 import { refinementFits, type RefinedClimate } from '../../generator/climate/refinement'
 import type { RefinedClimateChart } from '../../generator/climate/climateChart'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
@@ -1447,13 +1447,29 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // it wears this world's layers (syncWaterShown).
   let lastWaterElevation: { data: Float32Array; width: number; height: number } | null = null
   const waterViews = (): WorldView[] => (globeView ? [flatView, globeView] : [flatView])
+  //
+  // Not under the Planet preview (2026-10-12): the map then shows the sample
+  // world, and the world's terrain, levels and rivers would draw its shores
+  // and lakes over it. The preview takes them off (holdWater) and
+  // keeps them here; leaving it sends them again (dropPlanetPreview).
   function sendWater(view: WorldView): void {
+    if (planetPreviewShown) {
+      holdWater(view)
+      return
+    }
     if (lastWaterElevation) view.setWaterElevation(lastWaterElevation.data, lastWaterElevation.width, lastWaterElevation.height)
     if (lastWaterLevel && lastWaterSurface) view.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
     else view.setWaterLevels(null, null)
     if (lastRiverData) view.rivers.setPolylines(lastRiverData.points, lastRiverData.lengths, lastRiverData.regimes)
     else view.rivers.setPolylines(new Float32Array(0), new Uint32Array(0))
     syncWaterShown()
+  }
+  // A view with no water of the world's: no terrain to find shores on, no
+  // levels, no rivers — what the preview's sample world is drawn with.
+  function holdWater(view: WorldView): void {
+    view.setWaterElevation(null, 0, 0)
+    view.setWaterLevels(null, null)
+    view.rivers.setPolylines(new Float32Array(0), new Uint32Array(0))
   }
   function syncWaterShown(): void {
     const show = overlayShown('rivers')
@@ -1466,7 +1482,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // The rivers on the map.
   function drawRivers(): void {
-    if (!lastRiverData) return
+    if (!lastRiverData || planetPreviewShown) return
     for (const view of waterViews()) view.rivers.setPolylines(lastRiverData.points, lastRiverData.lengths, lastRiverData.regimes)
   }
   let lastWatersheds: Uint16Array | null = null
@@ -3724,6 +3740,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function dropPlanetPreview(): void {
     planetPreviewShown = false
     planetPreviewShape = null
+    // The world's water again, on every view (sendWater).
+    for (const view of waterViews()) sendWater(view)
     globePainted = false
     syncGlobeLayers()
   }
@@ -3732,6 +3750,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (message.shape !== previewShape()) return // a world of the other shape opened meanwhile
     if (!planetPreviewShown) {
       planetPreviewShown = true
+      // The world's water off the map while the sample world is on it; kept
+      // in the mirrors (lastWaterElevation, lastWaterLevel, lastRiverData)
+      // for dropPlanetPreview.
+      for (const view of waterViews()) holdWater(view)
       planetPreviewRealBase = lastColoredBase && lastRelief ? { base: lastColoredBase, relief: lastRelief } : null
       planetPreviewRealClimate = lastTemperature === null ? null : {
         temperature: lastTemperature, wind: lastWind, currents: lastCurrents, currentAnomaly: lastCurrentAnomaly,
@@ -3903,6 +3925,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       case 'migration':
         migrationInFlight = false
         break
+      case 'tectonics':
+        // A start the worker declined (no plates: the Archean not handed
+        // over) never ran: the run ends here as a stop ends it, with no
+        // settled render to wait for. A step that threw ended it already
+        // (handleStageFailed), and this is then a no-op.
+        endTectonicsRun(false)
+        break
       default:
         break
     }
@@ -4047,7 +4076,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (message.coastType.byteLength > 0) lastCoastType = new Uint8Array(message.coastType)
     if (message.coast) lastCoast = { reaches: message.coast.reaches, nodes: new Int32Array(message.coast.nodes) }
     if (message.sedimentBasins) lastSedimentBasins = message.sedimentBasins
-    if (lastWaterLevel && lastWaterSurface) for (const view of waterViews()) view.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
+    if (lastWaterLevel && lastWaterSurface && !planetPreviewShown) for (const view of waterViews()) view.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
     if (message.watersheds.byteLength > 0) lastWatersheds = new Uint16Array(message.watersheds)
     if (message.discharge.byteLength > 0) lastDischargeField = new Float32Array(message.discharge)
     if (message.maxDischarge > 0) lastMaxDischarge = message.maxDischarge
@@ -4355,7 +4384,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // The shores are found on the PHYSICAL raster at draw time — the one
       // the hydrology set its levels against, not the display copy.
       lastWaterElevation = { data: new Float32Array(message.raw), width: message.width, height: message.height }
-      for (const view of waterViews()) view.setWaterElevation(lastWaterElevation.data, message.width, message.height)
+      if (!planetPreviewShown) for (const view of waterViews()) view.setWaterElevation(lastWaterElevation.data, message.width, message.height)
       // The surfaces are metre-true now; exaggeration is a view property
       // (see mapSceneSettings). This screen is a map register throughout —
       // and the ribbons must carry the same scale as the ground they drape
@@ -4745,11 +4774,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   // The run is over on this side: the settled render is on its way — after
   // the stop, or after an epoch that threw (the worker ended the loop and
-  // draws it unasked, see handleStageFailed).
-  const endTectonicsRun = (): void => {
+  // draws it unasked, see handleStageFailed). `settles` false: no render
+  // follows, the start was declined (no world handed over, handleStage-
+  // Declined) and no epoch ran.
+  const endTectonicsRun = (settles = true): void => {
     if (!tectonicsRunning) return
     tectonicsRunning = false
-    tectonicsSettling = true
+    tectonicsSettling = settles
     updateOverlays()
     sayTectonicsButton(false)
     updateControlsDisabled()
@@ -5536,7 +5567,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         if (nodesFile && connFile && zFile) {
           const nodes = await nodesFile.async('arraybuffer')
           const columnFile = zip.file('mesh/column.bin')
-          meshPayload = { count: nodes.byteLength / 8, nodes, connectivity: await connFile.async('arraybuffer'), z: await zFile.async('arraybuffer'), column: columnFile ? await columnFile.async('arraybuffer') : undefined }
+          const count = nodes.byteLength / 8
+          // What the last epoch left per node; a save without it is refused
+          // (worldArchive.readMeshEpochFiles).
+          meshPayload = { count, nodes, connectivity: await connFile.async('arraybuffer'), z: await zFile.async('arraybuffer'), column: columnFile ? await columnFile.async('arraybuffer') : undefined, ...await readMeshEpochFiles(zip, count) }
         }
       }
       // The mantle's values belong to one field mesh (its cells, its spacing),

@@ -308,8 +308,11 @@ async function renderTerrain(intermediate = false): Promise<void> {
   meshPayloadCache = null
 }
 // The mesh terrain's bytes for the screen and the save, encoded once per
-// terrain (a second's work on a million nodes) and reused.
-let meshPayloadCache: MeshPayload | null = null
+// terrain (a second's work on a million nodes) and reused — for the heights
+// they were encoded from (`z`): every epoch makes a new array, so a save
+// between two pictures (the history draws every renderEvery-th epoch)
+// encodes the epoch it is at, not the last one drawn (2026-10-12).
+let meshPayloadCache: (MeshPayload & { z0: Float32Array }) | null = null
 
 // Where a stage's result is kept, and nowhere else. Exhaustive over StageId on
 // purpose: adding a stage to the table makes this a compile error, which is the
@@ -595,9 +598,9 @@ function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeig
 // buffers are transferred to the screen, and a transferred buffer is gone.
 function meshPayload(): MeshPayload | undefined {
   if (!meshTerrain) return undefined
-  if (!meshPayloadCache) meshPayloadCache = serializeMeshTerrain(meshTerrain)
+  if (!meshPayloadCache || meshPayloadCache.z0 !== meshTerrain.z) meshPayloadCache = { ...serializeMeshTerrain(meshTerrain), z0: meshTerrain.z }
   const c = meshPayloadCache
-  return { count: c.count, nodes: c.nodes.slice(0), connectivity: c.connectivity.slice(0), z: c.z.slice(0), column: c.column?.slice(0) }
+  return { count: c.count, nodes: c.nodes.slice(0), connectivity: c.connectivity.slice(0), z: c.z.slice(0), column: c.column?.slice(0), sedimentFlux: c.sedimentFlux?.slice(0), preErosionZ: c.preErosionZ?.slice(0), ice: c.ice?.slice(0) }
 }
 
 // The mesh terrain as the save's bytes (mesh/meshSerial.ts). The mesh is
@@ -609,8 +612,18 @@ function serializeMeshTerrain(terrain: MeshTerrain): MeshPayload {
   const z = terrain.z.slice(0, serial.count)
   // The column rides along when the terrain is the coupled one (it always
   // is once an epoch has run — the hydrology's view of it is `terrain`).
-  const column = coupled && coupled.mesh === terrain.mesh ? encodeColumn(coupled.column, serial.count) : undefined
-  return { count: serial.count, nodes: serial.nodes.buffer as ArrayBuffer, connectivity: serial.connectivity.buffer as ArrayBuffer, z: z.buffer as ArrayBuffer, column: column ? column.buffer as ArrayBuffer : undefined }
+  const own = coupled && coupled.mesh === terrain.mesh ? coupled : null
+  const column = own ? encodeColumn(own.column, serial.count) : undefined
+  // What the last epoch left, which the hydrology reads and a load cannot
+  // derive (decodeCoupledTerrain): the flux (zeros before the first epoch,
+  // which the river graph reads as it reads none), the heights its erosion
+  // started from, and the ice the plate carries (none before the first).
+  const perNode = (values: Float32Array | undefined, fallback: () => Float32Array): ArrayBuffer =>
+    (values && values.length >= serial.count ? values.slice(0, serial.count) : fallback()).buffer as ArrayBuffer
+  const sedimentFlux = perNode(terrain.sedimentFlux, () => new Float32Array(serial.count))
+  const preErosionZ = perNode(own?.preErosionZ, () => z.slice())
+  const ice = own && own.ice.length >= serial.count ? own.ice.slice(0, serial.count).buffer as ArrayBuffer : undefined
+  return { count: serial.count, nodes: serial.nodes.buffer as ArrayBuffer, connectivity: serial.connectivity.buffer as ArrayBuffer, z: z.buffer as ArrayBuffer, column: column ? column.buffer as ArrayBuffer : undefined, sedimentFlux, preErosionZ, ice }
 }
 
 
@@ -1308,8 +1321,9 @@ function handleHydrologyRun(): void {
       result.coast = buildCoastGraph({ mesh: mt.mesh, z: mt.z, windE: windy.windE!, windS: windy.windS!, hardness: nodeHardness, graph: result.graph })
       // SEDIMENT BASINS (F1): what the last epoch's erosion deposited, per
       // node against the heights it started from, with the provenance of
-      // the catchments feeding each basin. A loaded save has no start (its
-      // preErosionZ is its z), and gets no basins.
+      // the catchments feeding each basin. A loaded save brings the start
+      // with it (`mesh/preErosionZ.f32`); a world before its first epoch
+      // has none (its preErosionZ is its z) and gets no basins.
       result.sedimentBasins = coupled && coupled.mesh === mt.mesh && coupled.preErosionZ.length === mt.z.length && coupled.preErosionZ !== mt.z
         ? findSedimentBasins({
           mesh: mt.mesh, before: coupled.preErosionZ, after: mt.z, substrate: sub, graph: result.graph,
@@ -1325,9 +1339,9 @@ function handleHydrologyRun(): void {
       dischargeOut = landRaster(land, om.discharge, pixelLand, width, height, 0, true)
       coastTypeOut = coastTypeRaster(mt.mesh, result.coast.type, elevation, sim.domain.grid(width, height))
       // THE ICE: the history's own (phase 6, the last epoch's steady state
-      // on the mesh) when the terrain has been through an epoch; otherwise
-      // the steady state of this climate on the mesh (a restored world
-      // before its next epoch, a world before its first).
+      // on the mesh) when the terrain has been through an epoch, or a save
+      // of one was loaded (`mesh/ice.f32`); otherwise the steady state of
+      // this climate on the mesh (a world before its first epoch).
       const nodeIce = coupled && coupled.mesh === mt.mesh && coupled.ice.length === mt.mesh.vertexSlots
         ? coupled.ice
         : computeIceOnMesh({ mesh: mt.mesh, z: mt.z, seaLevelTemperature: land.climate.seaLevelTemperature, precipitation: land.climate.precipitation, cellM: domain.metresPerUnit }).thickness
@@ -1751,7 +1765,12 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   // save without a mesh restores the raster alone; the first epoch then
   // builds the mesh from the synthesis.
   if (message.mesh) {
-    coupled = decodeCoupledTerrain(sim, { nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity), z: new Float32Array(message.mesh.z), column: message.mesh.column ? new Uint8Array(message.mesh.column) : undefined })
+    const f32 = (buffer: ArrayBuffer | undefined): Float32Array | undefined => buffer ? new Float32Array(buffer) : undefined
+    coupled = decodeCoupledTerrain(sim, {
+      nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity), z: new Float32Array(message.mesh.z),
+      column: message.mesh.column ? new Uint8Array(message.mesh.column) : undefined,
+      ice: f32(message.mesh.ice), sedimentFlux: f32(message.mesh.sedimentFlux), preErosionZ: f32(message.mesh.preErosionZ),
+    })
     coupled.routing = meshRouting(coupled.mesh, coupled.z)
     meshTerrain = asMeshTerrain(coupled)
   } else {

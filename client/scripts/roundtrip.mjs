@@ -464,6 +464,10 @@ console.log('\n— zip writer —')
   const CMw = await L('/src/generator/climate/climateMesh.ts')
   const { OCEAN_PRECIP } = await L('/src/generator/climate/precipitation.ts')
   const meshZ = new Float32Array([0.1, 0.2, 0.3])
+  // What the last epoch left per node (MeshPayload): the flux, the start,
+  // the ice — Float32, exact.
+  const zipFlux = new Float32Array([0, 1234.5, 1 / 3]), zipStart = new Float32Array([0.15, 0.2, 0.25]), zipIce = new Float32Array([0, 812.25, 0])
+  const zipEpoch = () => ({ sedimentFlux: zipFlux.buffer.slice(0), preErosionZ: zipStart.buffer.slice(0), ice: zipIce.buffer.slice(0) })
   // The mantle's field-mesh values (formatVersion 8): Float64, exact.
   const zipMantle = new Float64Array([0.1, -1 / 3, Math.PI])
   // The ocean age's the same (DEC-0036 phase 2, still formatVersion 8).
@@ -489,7 +493,7 @@ console.log('\n— zip writer —')
     snapshot: { epoch: 3 }, mantle: { values: zipMantle.buffer.slice(0), cells: 3, spacingM: 125000.5 }, latticeAccumulated: new ArrayBuffer(4), latticeLockedEpochs: new ArrayBuffer(2),
     latticeLastClassCode: new ArrayBuffer(1), oceanAge: { values: zipAge.buffer.slice(0), cells: 4, spacingM: 62400.25 },
     forcing: { uplift: zipUplift, erodibility: zipHardness, resX: W, resY: H },
-    mesh: { count: 3, nodes: new Float32Array([1, 1, 5, 2, 9, 6]).buffer, connectivity: new Uint8Array([7, 8, 9]).buffer, z: meshZ.buffer.slice(0) },
+    mesh: { count: 3, nodes: new Float32Array([1, 1, 5, 2, 9, 6]).buffer, connectivity: new Uint8Array([7, 8, 9]).buffer, z: meshZ.buffer.slice(0), ...zipEpoch() },
     fields: {
       climate: zipClimate, land: zipLand, lakeDepth: null,
       refined: null, waterBodies: zipBodies, coast: zipCoast, sedimentBasins: null,
@@ -512,6 +516,25 @@ console.log('\n— zip writer —')
     let ageRefused = false
     try { await writer.readField(zip, 'oceanAge') } catch { ageRefused = true }
     check('a version-8 save from before the ocean age moved (oceanAge.f32, no .f64) is refused', ageRefused)
+  }
+  {
+    // The last epoch per node (2026-10-12): bit for bit, named in the
+    // manifest; a save with a mesh and without the flux or the start is
+    // refused, one without the ice (no epoch ran) is not.
+    const zip = await JSZip.loadAsync(written)
+    const sameF = (a, b) => a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
+    const epoch = await writer.readMeshEpochFiles(zip, 3)
+    check('the last epoch\'s flux, start and ice come back per node, bit for bit', sameF(new Float32Array(epoch.sedimentFlux), zipFlux) && sameF(new Float32Array(epoch.preErosionZ), zipStart) && epoch.ice !== undefined && sameF(new Float32Array(epoch.ice), zipIce))
+    check('the manifest names the last epoch\'s files', manifest.mesh?.files?.sedimentFlux === 'mesh/sedimentFlux.f32' && manifest.mesh?.files?.preErosionZ === 'mesh/preErosionZ.f32' && manifest.mesh?.files?.ice === 'mesh/ice.f32')
+    let wrongCount = false
+    try { await writer.readMeshEpochFiles(zip, 4) } catch { wrongCount = true }
+    check('the last epoch\'s files of another mesh are refused', wrongCount)
+    zip.remove('mesh/ice.f32')
+    check('a save without the ice (no epoch ran) reads, without it', (await writer.readMeshEpochFiles(zip, 3)).ice === undefined)
+    zip.remove('mesh/sedimentFlux.f32')
+    let refused = false
+    try { await writer.readMeshEpochFiles(zip, 3) } catch { refused = true }
+    check('a save with a mesh and without the sediment flux (a version-8 save from before it) is refused', refused)
   }
   {
     // The climate and the land fields on their meshes (DEC-0036 phase 7):

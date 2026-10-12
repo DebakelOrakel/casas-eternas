@@ -86,8 +86,16 @@ export class WaterField {
   }
 
   // The terrain the shore is found on: the world raster, cell centres at
-  // (i + 0.5) texels, the same row order as the map's colour texture.
-  setElevation(data: Float32Array, width: number, height: number): void {
+  // (i + 0.5) texels, the same row order as the map's colour texture. Null
+  // takes the texture away (no water drawn, as before the first terrain);
+  // the levels stay for the next terrain of their size.
+  setElevation(data: Float32Array | null, width: number, height: number): void {
+    if (!data) {
+      this.elevation = null
+      this.texture?.dispose()
+      this.texture = null
+      return
+    }
     if (width !== this.width || height !== this.height) {
       this.level = null
       this.surface = null

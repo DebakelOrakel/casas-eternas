@@ -118,8 +118,9 @@ export interface ToroidalMapView {
   setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void
   // Standing water drawn at draw time (waterMaterialPlugin.ts): the terrain
   // the shores are found on, at the colour texture's resolution — re-supply
-  // whenever the terrain changes.
-  setWaterElevation(data: Float32Array, width: number, height: number): void
+  // whenever the terrain changes. Null: no water drawn at all, the colour
+  // texture's own sea stands (a map that shows another world's picture).
+  setWaterElevation(data: Float32Array | null, width: number, height: number): void
   // The per-cell level and surface kind from the hydrology
   // (hydrology.waterLevelField), or null for "the sea everywhere".
   // `coast` is the coast type per cell (surface/coastGraph.ts) for the
@@ -698,7 +699,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
     setHexClassOverlay(texture: RawTexture | null, window?: { col0: number; row0: number; cols: number; rows: number }): void {
       hexGridPlugin?.setClassOverlay(texture, window)
     },
-    setWaterElevation(data: Float32Array, width: number, height: number): void {
+    setWaterElevation(data: Float32Array | null, width: number, height: number): void {
       waterField.setElevation(data, width, height)
     },
     setWaterLevels(level: Float32Array | null, surface: Uint8Array | null, coast: Uint8Array | null = null): void {

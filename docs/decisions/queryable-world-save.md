@@ -335,6 +335,12 @@ count nodes and measure their catchments in km². A save with the former
 layer or the coast over raster cells is refused. Measured on the bench
 world: see DEC-0036's phase 7b status.
 
+Since 2026-10-12 the manifest's `mesh.files` also names what the last
+epoch left per node (`sedimentFlux`, `preErosionZ`, `ice`: Float32 in the
+saved mesh's numbering; world-save-format.md). They are the generator's
+state for a load, not query layers: `world/query.ts` does not acquire
+them.
+
 ## Status
 
 Phase 1 BUILT (2026-07-26) — main-thread bake from caches; see status note at end

@@ -108,8 +108,36 @@ export type WorldArchiveParts = ArcheanArchiveParts | TectonicArchiveParts
 // layers/discharge.u16, and the coast reaches over the mesh's nodes
 // (layers/coast.json `nodes`, its vertex ids) in place of raster cells
 // (`cells`) — a save with either former one is refused
-// (climateFields.refuseFormerHydrology).
+// (climateFields.refuseFormerHydrology). What the last epoch left per node
+// of the mesh (mesh/sedimentFlux.f32, mesh/preErosionZ.f32 and, once an
+// epoch ran, mesh/ice.f32; MESH_EPOCH_FILES) — a save with a mesh and
+// without the first two is refused (readMeshEpochFiles).
 export const WORLD_ARCHIVE_FORMAT_VERSION = 8
+
+// The mesh's per-node files of the last epoch, Float32 in the saved mesh's
+// numbering (generator/pipeline/messages.ts MeshPayload): the erosion's
+// sediment flux, m³/yr (zeros before the first epoch); the heights that
+// epoch's erosion started from (the heights themselves before it); the ice
+// the plate carries, metres (absent before the first epoch: none). The
+// hydrology reads the first two (the reaches' loads, the coast's supply,
+// the river courses' deltas, the sediment basins), the next epoch's flexure
+// the third — none of them can be derived on a load.
+export const MESH_EPOCH_FILES = { sedimentFlux: 'mesh/sedimentFlux.f32', preErosionZ: 'mesh/preErosionZ.f32', ice: 'mesh/ice.f32' } as const
+
+// The last epoch's files of a saved mesh of `count` nodes, as MeshPayload
+// carries them. Throws for a save with a mesh and without them (a version-8
+// save from before they were written) or with files of another size.
+export async function readMeshEpochFiles(zip: JSZip, count: number): Promise<{ sedimentFlux: ArrayBuffer; preErosionZ: ArrayBuffer; ice?: ArrayBuffer }> {
+  const read = async (name: string): Promise<ArrayBuffer | undefined> => {
+    const bytes = await zip.file(name)?.async('arraybuffer')
+    if (bytes && bytes.byteLength !== count * 4) throw new Error(`${name}: ${bytes.byteLength} bytes for ${count} nodes`)
+    return bytes
+  }
+  const sedimentFlux = await read(MESH_EPOCH_FILES.sedimentFlux)
+  const preErosionZ = await read(MESH_EPOCH_FILES.preErosionZ)
+  if (!sedimentFlux || !preErosionZ) throw new Error(`no ${MESH_EPOCH_FILES.sedimentFlux} / ${MESH_EPOCH_FILES.preErosionZ}: a save from before the mesh carried its last epoch`)
+  return { sedimentFlux, preErosionZ, ice: await read(MESH_EPOCH_FILES.ice) }
+}
 
 export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8Array<ArrayBuffer>> {
   const zip = new JSZip()
@@ -247,6 +275,11 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
     zip.file('mesh/connectivity.bin', mesh.connectivity)
     zip.file('mesh/z.f32', mesh.z)
     if (mesh.column) zip.file('mesh/column.bin', mesh.column)
+    // What the last epoch left per node (MeshPayload): the hydrology of a
+    // loaded world reads them as the session's did.
+    if (mesh.sedimentFlux) zip.file(MESH_EPOCH_FILES.sedimentFlux, mesh.sedimentFlux)
+    if (mesh.preErosionZ) zip.file(MESH_EPOCH_FILES.preErosionZ, mesh.preErosionZ)
+    if (mesh.ice) zip.file(MESH_EPOCH_FILES.ice, mesh.ice)
     // The land fields per node, in the mesh's numbering (climateFields.ts).
     const land = fields.land && fields.land.count === mesh.count ? fields.land : null
     if (land) {
@@ -270,6 +303,9 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
       nodes: mesh.count,
       files: {
         nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32', column: mesh.column ? 'mesh/column.bin' : undefined,
+        sedimentFlux: mesh.sedimentFlux ? MESH_EPOCH_FILES.sedimentFlux : undefined,
+        preErosionZ: mesh.preErosionZ ? MESH_EPOCH_FILES.preErosionZ : undefined,
+        ice: mesh.ice ? MESH_EPOCH_FILES.ice : undefined,
         ...(fields.land && fields.land.count === mesh.count ? { biome: LAND_FILES.biome, koppen: LAND_FILES.koppen, waterTable: fields.land.waterTable ? LAND_FILES.waterTable : undefined, discharge: fields.land.discharge ? LAND_FILES.discharge : undefined } : {}),
       },
     } : undefined,

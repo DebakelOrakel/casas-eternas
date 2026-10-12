@@ -2559,9 +2559,15 @@ test('two pipelines given the same messages agree byte for byte', async () => {
 // watersheds, river network and coast walk as the session it was saved
 // from — the mesh and its heights are the save's bit for bit, and its
 // routing is derived from them as the last epoch's erosion left it. And
-// the save's discharge per node is the session's. (The sediment basins and
-// the reaches' loads are not: a load has neither the epoch's start nor its
-// sediment flux.)
+// the save's discharge per node is the session's. And since 2026-10-12 all
+// of it: the save carries what the last epoch left per node (the sediment
+// flux, the heights its erosion started from, the ice — mesh/sedimentFlux.
+// f32, mesh/preErosionZ.f32, mesh/ice.f32), so the reaches' loads, the
+// river courses' deltas, the coast's supply and types, the sediment basins
+// and the glaciers are the session's too. Before, a load had neither the
+// flux nor the start: its reaches carried no sediment, its coasts had
+// other types, it had no basins and its ice was the steady state of the
+// loaded climate.
 test('a loaded world runs the hydrology the session ran', async () => {
   const p = await freshPipeline()
   await growWorld(p)
@@ -2585,15 +2591,51 @@ test('a loaded world runs the hydrology the session ran', async () => {
   const hs = p.last('hydrologyData'), hl = q.last('hydrologyData')
   const reloaded = worldDataOf(q)
   check('the loaded discharge, watersheds and lakes are the session\'s, byte for byte', hash(hs.discharge) === hash(hl.discharge) && hash(hs.watersheds) === hash(hl.watersheds) && hash(hs.lakeDepth) === hash(hl.lakeDepth) && hs.discharge.byteLength > 0)
-  // The reaches' sediment loads are the last epoch's erosion flux, which a
-  // load does not have (as it has no sediment basins): the graph's loads,
-  // and the coast's supply and types that read them, are the session's
-  // only where they do not depend on it.
-  const gs = JSON.parse(hs.riverGraph.json), gl = JSON.parse(hl.riverGraph.json)
-  const shape = (g) => JSON.stringify(g.reaches.map((r) => [r.from, r.to, r.cellStart, r.cellCount, r.dischargeIn, r.dischargeOut, r.regime]))
-  const strip = (reaches) => JSON.stringify(reaches.map(({ supply, type, ...rest }) => rest))
-  check('the loaded river network and the coast\'s walk and exposure are the session\'s', shape(gs) === shape(gl) && hash(hs.riverGraph.cells) === hash(hl.riverGraph.cells) && hash(hs.coast.nodes) === hash(hl.coast.nodes) && strip(hs.coast.reaches) === strip(hl.coast.reaches))
+  const gs = JSON.parse(hs.riverGraph.json)
+  const loaded = gs.reaches.reduce((n, r) => n + (r.sedimentM3 > 0 ? 1 : 0), 0)
+  check(`the loaded river graph is the session's, the reaches' sediment loads included (${loaded} of ${gs.reaches.length} reaches carry sediment)`, hs.riverGraph.json === hl.riverGraph.json && hash(hs.riverGraph.cells) === hash(hl.riverGraph.cells) && loaded > 0)
+  check('the loaded river courses are the session\'s, their deltas included', hash(hs.riverGraph.coursePoints) === hash(hl.riverGraph.coursePoints) && hs.riverGraph.coursePoints.byteLength > 0)
+  const types = new Set(hs.coast.reaches.map((r) => r.type))
+  check(`the loaded coast is the session's, its supply and types included (${hs.coast.reaches.length} reaches, ${types.size} types)`, JSON.stringify(hs.coast.reaches) === JSON.stringify(hl.coast.reaches) && hash(hs.coast.nodes) === hash(hl.coast.nodes) && hash(hs.coastType) === hash(hl.coastType))
+  check(`the loaded sediment basins are the session's (${hs.sedimentBasins.length})`, JSON.stringify(hs.sedimentBasins) === JSON.stringify(hl.sedimentBasins) && hs.sedimentBasins.length > 0)
+  check('the loaded ice is the session\'s', hash(hs.iceThickness) === hash(hl.iceThickness) && hs.iceThickness.byteLength > 0)
   check('the save\'s discharge per node comes back the same from the loaded world', world.land?.discharge != null && reloaded.land?.discharge != null && hash(world.land.discharge) === hash(reloaded.land.discharge))
+})
+
+// A save between two pictures: the history draws every renderEvery-th
+// epoch, and the mesh's bytes for the save were encoded once per picture
+// (runtime.meshPayload), so a save at an epoch that drew none got the
+// mesh of an earlier epoch under the plates of this one — a world that
+// does not continue (2026-10-12). Polled between two epochs while the
+// loop runs: at an epoch that drew no picture, the save's mesh must be the
+// one the stop's own picture of that same epoch encodes afresh.
+test('a save between two pictures carries the epoch\'s own mesh', async () => {
+  const p = await freshPipeline()
+  await growWorld(p)
+  p.dispatch({ type: 'tectonicsStart' })
+  let previous = null
+  let found = null
+  const deadline = Date.now() + 600000
+  while (!found && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5))
+    const w = worldDataOf(p)
+    const drawn = p.last('rendered')?.epoch ?? -1
+    // This epoch drew no picture, and the save before it was of the epoch
+    // before: what it encoded, a stale cache would hand out again.
+    if (previous && w.snapshot.epoch === previous.snapshot.epoch + 1 && drawn < w.snapshot.epoch) found = { w, previous }
+    previous = w
+  }
+  if (!found) throw new Error('no epoch without a picture after a saved one')
+  // Stopped in this macrotask: no epoch in flight, so the settled picture is
+  // of the same epoch, and the save after it encodes the mesh afresh.
+  const settled = p.settledRenders()
+  p.dispatch({ type: 'tectonicsStop' })
+  await until(() => p.settledRenders() > settled, { label: 'the settled render' })
+  await quiet(p)
+  const fresh = worldDataOf(p)
+  const meshHash = (w) => [w.mesh.nodes, w.mesh.connectivity, w.mesh.z, w.mesh.column, w.mesh.sedimentFlux, w.mesh.ice].map((b) => (b ? hash(b) : '-')).join('.')
+  check('the stop settled on the epoch the save was taken at', fresh.snapshot.epoch === found.w.snapshot.epoch, `${fresh.snapshot.epoch} vs ${found.w.snapshot.epoch}`)
+  check(`the save at epoch ${found.w.snapshot.epoch} (no picture) carries that epoch's mesh, not epoch ${found.previous.snapshot.epoch}'s`, meshHash(found.w) === meshHash(fresh) && meshHash(found.w) !== meshHash(found.previous))
 })
 
 // -------------------------------------------------------------------- stopping

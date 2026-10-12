@@ -185,7 +185,8 @@ session keeps the same Float32 values it saves (the refinement: `refined.json`
 fields came from: `climate.json` + `climate/*.f32`). A terrain-mesh field is
 saved per node in the saved mesh's numbering (`mesh/biome.u8`,
 `mesh/koppen.u8`, `mesh/waterTable.f32`, `mesh/discharge.f32`,
-world/save/climateFields.ts); a table that names nodes names them by
+world/save/climateFields.ts; what the last epoch left, `mesh/sedimentFlux.f32`,
+`mesh/preErosionZ.f32`, `mesh/ice.f32`, worldArchive.MESH_EPOCH_FILES); a table that names nodes names them by
 vertex id of the saved mesh (`layers/coast.json`'s `nodes`).
 
 ## Resolutions — check before you sample

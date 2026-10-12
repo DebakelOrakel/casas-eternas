@@ -200,6 +200,8 @@ done before or beside it.
 
 ## Status
 
+2026-10-12: the save carries the last epoch per node (`mesh/sedimentFlux.f32`, `mesh/preErosionZ.f32`, `mesh/ice.f32`, still formatVersion 8; one without the first two is refused), so a loaded world's reaches, deltas, coast types, sediment basins and glaciers are the session's.
+
 2026-10-12: phase 7b BUILT — the hydrology's raster parts on the terrain
 mesh, both shapes, one path. No hydrology runs on the 2:1 raster any more:
 the hydrology stage routes nothing on it (`fillDepressionsAndRouteFlow`

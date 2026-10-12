@@ -56,7 +56,7 @@ export interface ReplaySnapshot {
   latticeAccumulated: Float32Array
   latticeLockedEpochs: Int16Array
   latticeLastClassCode: Int8Array
-  mesh: { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array; column: Uint8Array }
+  mesh: { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array; column: Uint8Array; ice: Float32Array }
 }
 
 export function snapshotOf(sim: PlateSimulation, terrain: CoupledTerrain): ReplaySnapshot {
@@ -72,8 +72,9 @@ export function snapshotOf(sim: PlateSimulation, terrain: CoupledTerrain): Repla
 }
 
 // The state back, as the runtime restores a loaded world
-// (pipeline/runtime.ts, the worldData handler): the weather cache and the
-// ice are gone, the routing derived.
+// (pipeline/runtime.ts, the worldData handler): the weather cache is gone,
+// the ice the plate carries kept (the next epoch's flexure loads its
+// change), the routing derived.
 export function restoreSnapshot(snapshot: ReplaySnapshot, shape: 'torus' | 'sphere' = 'torus'): { sim: PlateSimulation; terrain: CoupledTerrain } {
   const sim = deserializePlateSimulation(snapshot.state, { ...snapshot.oceanAge, values: snapshot.oceanAge.values.slice() }, { ...snapshot.mantle, values: snapshot.mantle.values.slice() }, shape)
   if (snapshot.latticeAccumulated.length === sim.latticeAccumulated.length) {

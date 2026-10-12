@@ -23,7 +23,7 @@ export interface MeshTerrain {
   // (meshHydrology.meshSubstrate).
   routing: MeshRouting
   areas: Float32Array
-  // The last iteration's sediment flux per node, m³; empty after a
-  // restore (not carried by the save).
+  // The last iteration's sediment flux per node, m³; empty before the
+  // first epoch (the save carries it, `mesh/sedimentFlux.f32`).
   sedimentFlux: Float32Array
 }

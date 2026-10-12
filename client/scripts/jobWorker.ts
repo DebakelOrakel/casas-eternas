@@ -669,7 +669,7 @@ function checkpointPath(root: string, inputs: WorldInputs): string {
 }
 
 const CHECKPOINT_ARRAYS = ['latticeAccumulated', 'latticeLockedEpochs', 'latticeLastClassCode'] as const
-const CHECKPOINT_MESH = ['nodes', 'connectivity', 'z', 'column'] as const
+const CHECKPOINT_MESH = ['nodes', 'connectivity', 'z', 'column', 'ice'] as const
 
 async function writeCheckpoint(dir: string, position: ReplayPosition, done: number, snapshot: ReplaySnapshot): Promise<void> {
   const fresh = `${dir}.${randomUUID()}`
@@ -708,6 +708,9 @@ async function readCheckpoint(dir: string): Promise<{ position: ReplayPosition; 
         connectivity: new Uint8Array(await read('mesh.connectivity.bin')),
         z: new Float32Array(await read('mesh.z.bin')),
         column: new Uint8Array(await read('mesh.column.bin')),
+        // Absent in a checkpoint from before the ice was state: the read
+        // throws, and the replay starts afresh.
+        ice: new Float32Array(await read('mesh.ice.bin')),
       },
     }
     process.stderr.write(`resuming level 1 from epoch ${done} (${dir})\n`)

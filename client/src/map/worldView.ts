@@ -82,9 +82,10 @@ export interface WorldView {
   readonly reliefTexture: RawTexture
   setLakesVisible(visible: boolean): void
   // Standing water: the per-cell level and surface kind, and the coast type,
-  // or nulls for "the sea everywhere"; the terrain the shores are found on.
+  // or nulls for "the sea everywhere"; the terrain the shores are found on,
+  // or null for no water drawn (the texture's own sea stands).
   setWaterLevels(level: Float32Array | null, surface: Uint8Array | null, coast?: Uint8Array | null): void
-  setWaterElevation(data: Float32Array, width: number, height: number): void
+  setWaterElevation(data: Float32Array | null, width: number, height: number): void
   // The relief: a coarse and a fine surface, metre-true, or null for none;
   // the vertical exaggeration it is drawn with.
   setRelief(coarse: ElevationSurface | null, fine?: ElevationSurface | null): void

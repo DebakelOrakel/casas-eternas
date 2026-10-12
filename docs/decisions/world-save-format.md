@@ -184,6 +184,20 @@ refuseFormerHydrology`). Left as rasters: `elevation.f32` and the layer
 `lakeDepth` (the mesh lakes drawn on the world raster), and the forcing's
 `uplift` / `erodibility`; `waterBodies.json` is in world units as before.
 
+2026-10-12 (still formatVersion 8): the save carries what the last epoch
+left per node of the saved mesh, Float32 in its numbering —
+`mesh/sedimentFlux.f32` (the erosion's sediment flux, m³/yr; zeros before
+the first epoch), `mesh/preErosionZ.f32` (the heights that epoch's erosion
+started from; the heights themselves before it) and `mesh/ice.f32` (the
+ice the plate carries, metres; absent before the first epoch), named by
+the manifest's `mesh.files` (`worldArchive.MESH_EPOCH_FILES`). A load
+cannot derive them: the reaches' sediment loads, the coast's supply and
+types, the river courses' deltas and the sediment basins read the first
+two, the glaciers and the next epoch's flexure (which loads the CHANGE in
+the ice) the third. Without them a loaded world's hydrology differed from
+the session it was saved from. A save with a mesh and without the first
+two is refused (`worldArchive.readMeshEpochFiles`).
+
 ### Format choices
 
 - Elevation → **binary Float32** (`.f32`), the field meshes' values (mantle,

@@ -26,6 +26,10 @@
 //     chart (chartAt's function) gives for its position; the shore cells of
 //     a pole row are found across the pole half a turn round, not at the
 //     other pole.
+//  6. No terrain, no water: a field given none (the screen's Planet
+//     preview, which shows the sample world, 2026-10-12) has no texture,
+//     on both shapes, so the material draws no shore and no lake of the
+//     world under it; the terrain again, the texture again.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -294,6 +298,27 @@ console.log('5. the water: texels where chartAt says, neighbours across the pole
   check('sphere: the shore round the land, across the pole', farthest < 1.5 && across === 3 && southSphere === 0,
     `${sphere.length} shore cells, farthest ${farthest.toFixed(2)} cell heights, ${across} half a turn round, ${southSphere} on the south pole row`)
   check('torus unchanged: the opposite edge is the neighbour', southTorus === 3 && torus.length === 8, `${torus.length} shore cells, ${southTorus} on the last row`)
+  scene.dispose()
+  engine.dispose()
+}
+
+{
+  console.log('\n— 6. no terrain, no water —')
+  const engine = new B.NullEngine()
+  const scene = new B.Scene(engine)
+  for (const shape of ['torus', 'sphere']) {
+    const field = new WM.WaterField(scene, shape)
+    const w = 8, h = 4
+    const terrain = Float32Array.from({ length: w * h }, (_, i) => (i % w < 4 ? 0.1 : -0.1))
+    field.setElevation(terrain, w, h)
+    const drawn = field.current !== null
+    field.setLevels(new Float32Array(w * h), new Uint8Array(w * h))
+    field.setElevation(null, 0, 0)
+    const held = field.current === null
+    field.setElevation(terrain, w, h)
+    check(`${shape}: a field given no terrain draws no water, given it again draws it`, drawn && held && field.current !== null && field.hasLevels)
+    field.dispose()
+  }
   scene.dispose()
   engine.dispose()
 }
