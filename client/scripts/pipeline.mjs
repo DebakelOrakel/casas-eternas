@@ -341,7 +341,6 @@ test('archeanReset rebuilds the same world from the same seed', async () => {
 // Archean steps, pauses and resets on the sphere. Then the stage modules
 // directly at the world's real size, sphere against torus for one seed:
 // the numbers that say whether the sphere makes a plausible world.
-const poleRowsConstant = (field, resX, resY) => [0, resY - 1].every((j) => field.subarray(j * resX, (j + 1) * resX).every((v) => v === field[j * resX]))
 const allFinite = (field) => field.every((v) => Number.isFinite(v))
 // A SCALAR raster at the poles of a sphere's chart: the median step across
 // the pole (cell x to x + resX / 2 in the first row, about one row apart)
@@ -985,26 +984,30 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   check('an advection departs along the globe, its offset\'s length away, near and across a pole; stepping the chart does not', dep < 1.5 && depBroken > 3, `worst ${dep.toFixed(2)} cells off (to the taps' cell size); chart-stepped ${depBroken.toFixed(1)}`)
   // (c) The flexure answers a load with its weight, wherever it lies: the
   // deflection's integral over the globe is the compensated load's, a load
-  // at the equator, at 70° and at the pole alike (∫ G dA = 1); its pole
-  // rows one value. Without the area weights a polar load's answer grows.
-  const flexX = W / 4, flexY = H / 4
+  // at the equator, at 70° and at the pole alike (DEC-0036 phase 6: the
+  // plate equation on the field mesh, no pole handling). With the chart's
+  // areas in place of the cells' (each cell's area over cos φ, as if the
+  // rows did not narrow) a polar load's answer no longer integrates to its
+  // weight.
   const TT = await L('/src/generator/tectonics/tectonicsTuneParams.ts')
   const compensation = (TT.TECTONICS_TUNING.flexureCrustDensity / TT.TECTONICS_TUNING.flexureMantleDensity) * TT.TECTONICS_TUNING.flexureDeflectionScale
-  const flexGrid = sim.domain.grid(flexX, flexY)
-  const flexIntegral = (domain, row) => {
-    const load = new Float32Array(flexX * flexY)
-    const te = new Float32Array(flexX * flexY).fill(30)
-    load[row * flexX + 5] = 1
-    const w = FX.flexuralResponse(load, te, domain.grid(flexX, flexY), 31.2)
+  const { mesh: flexMesh, sampler: flexSampler } = FX.flexureMesh(sim.domain)
+  const flexIntegral = (fm, yAt) => {
+    const load = new Float64Array(fm.count)
+    const rig = new Float64Array(fm.count).fill(FX.flexuralRigidityM4(30))
+    const c = flexSampler.nearestCell(W * 0.3, yAt)
+    load[c] = 1
+    const w = new Float64Array(fm.count)
+    const rep = FX.flexuralResponse(fm, load, rig, w)
     let integral = 0
-    for (let y = 0; y < flexY; y++) for (let x = 0; x < flexX; x++) integral += w[y * flexX + x] * flexGrid.cellArea(y)
-    return { ratio: -integral / (compensation * flexGrid.cellArea(row)), w }
+    for (let i = 0; i < fm.count; i++) integral += w[i] * flexMesh.area[i]
+    return { ratio: -integral / (compensation * flexMesh.area[c]), converged: rep.converged }
   }
-  const ratios = [flexY >> 1, Math.round(flexY * 0.11), 0].map((row) => flexIntegral(sim.domain, row))
-  const brokenRatio = flexIntegral(broken(sim.domain, { cellArea: () => 1 }), 0).ratio
-  const poleFlat = poleRowsConstant(ratios[2].w, flexX, flexY)
+  const ratios = [H / 2, H * (20 / 180), 0].map((y) => flexIntegral(flexMesh, y))
+  const chartArea = flexMesh.area.map((a, i) => a / Math.max(0.1, Math.cos(Math.PI * (0.5 - flexMesh.y[i] / H))))
+  const brokenRatio = flexIntegral({ ...flexMesh, area: chartArea }, 0).ratio
   const spreadRatios = ratios.map((q) => q.ratio)
-  check('a load\'s deflection integrates to its compensated weight at the equator, at 70° and at the pole; without the area weights not', spreadRatios.every((q) => Math.abs(q - 1) < 1e-4) && poleFlat && Math.abs(brokenRatio - 1) > 0.1, `∫w dA over the compensated load: ${spreadRatios.map((q) => q.toFixed(6)).join(', ')}; area weights off, a polar load: ${brokenRatio.toFixed(3)}`)
+  check('a load\'s deflection integrates to its compensated weight at the equator, at 70° and at the pole; with the chart\'s areas not', ratios.every((q) => q.converged) && spreadRatios.every((q) => Math.abs(q - 1) < 1e-6) && Math.abs(brokenRatio - 1) > 0.05, `∫w dA over the compensated load: ${spreadRatios.map((q) => q.toFixed(8)).join(', ')}; the chart's areas, a polar load: ${brokenRatio.toFixed(3)}`)
   // (d) The smoothing in a length: the climate's smoothing
   // (fields/fieldOperators.smoothGaussian on the climate's mesh — the
   // static climate's and, since DEC-0036 phase 5, the refinement's ocean

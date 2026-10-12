@@ -197,6 +197,94 @@ done before or beside it.
 
 ## Status
 
+2026-10-12: phase 6 BUILT — the flexure on the climate's field mesh, both
+shapes, one path (`tectonics/flexure.ts`, its caller in
+`pipeline/coupledEpoch.ts`). The convolution on a 512 × 256 raster (a
+Gaussian of width α per band of Te, σ / cos φ folded onto the row, the
+north–south weights by row area, the pole rows averaged) is gone, with
+its pole handling and `deflectionAt`.
+
+**The method: the plate equation**, ∇²(D ∇²w) + ρm g w = −ρc g h, the
+finite-volume Laplacian applied twice — multiplied by A / (ρm g), K
+diag(R / A) K w + A w = −(ρc / ρm) A h with R = D / (ρm g) = α⁴ / 4 per
+cell: symmetric positive definite, so CG, matrix-free (two passes of K),
+Jacobi, to 1e-10. Chosen over the Gaussian on the mesh because it is the
+plate (the forebulge, the profile's true width, a varying D without
+bands) and it converges in 40–76 iterations at this spacing. The
+restoring force is the mantle's FULL density: the load is the material
+change itself, so the Airy limit is ρc / ρm — what the raster's
+compensation already was; its kernel width had used ρm − ρc, which made
+α 1.53 × wider than the plate it compensated like. Now α is 18–99 km at
+sea, 50 km (Te 20) to 127 km (Te 70) on land. The twist term of a
+varying D, (1 − ν) ♢⁴(D, w), is left out, as landscape models do. The
+nodes' load goes to the cells by the barycentric weights of the triangle
+under each node (each node's volume kept whole), Te is asked at the
+cells' centres, the deflection is read back at the nodes by the sampler.
+No flexure state: the deflection goes into the nodes' z each epoch, so
+the save holds nothing new (formatVersion 8 unchanged), and save → load →
+continue stays bit-identical through z (pipeline harness).
+
+**The spacing: the climate's mesh, W / 256** (62.4 km torus, 78.1 km
+sphere; shared — no new mesh build), not the old raster's 31 km. At W /
+512 (152 000 cells) the solve took ~1 s an epoch with any preconditioner
+at hand (CG Jacobi 589 iterations to 1e-10, SSOR(1.5) 131 and still
+1.1 s), because the iterations grow as (α / spacing)²; at W / 256 they
+are 61–76 (torus) and 39–46 (sphere), 84–96 ms an epoch. ILU(0) diverges
+on this matrix (positive off-diagonals, not an M-matrix), and the
+two-level preconditioner's constant aggregates misjudge a fourth-order
+operator (2000 BiCGSTAB iterations, not converged). The price: a young
+orogen's α (50 km) is under a cell, so its half wavelength πα spans 2.5
+cells — the answer there is the mesh's, its volume still exact; a
+craton's spans 6. No constant was stated in cells (FLEXURE_CELL was the
+raster's own size), so none converts.
+
+**The analytic check** (`harness:fields` [4c]): a Gaussian strip of load
+(σ 125 km, 1000 m) on a uniform plate of α 250 km against the line load's
+profile q / 2α · e^(−|x|/α) (cos + sin)(|x|/α) convolved with it —
+trough −437.6 m, forebulge +17.26 m at 848 km. The torus at 156 / 78 /
+39 km: L2 2.31e-2 / 5.68e-3 / 1.40e-3, order 2.04 / 2.02, the forebulge
++17.11 m at 863 km (39 km); the sphere's equator 2.26e-2 / 5.50e-3 /
+1.89e-3 (the plane's answer, the globe's curvature (α / R)² ≈ 0.6 % the
+floor), +17.59 m at 847 km. ∫w dA over the compensated load 1 to 3e-11 on
+both. CG iterations 59 / 240 / 984 (torus), 99 / 387 / 1645 (sphere). The
+mutation (the cells' areas wrong) moves the integral by 2.7e-3.
+`harness:mesh` holds the ridge: under it −1138 m (Te 20), beside it a
+foreland basin, beyond it a forebulge of +20.6 m at 406 km (Te 70; πα +
+the ridge's half width 447 km), the compensation 0.81818182. The
+pipeline harness's sphere check: a unit load's integral 1.00000000 at the
+equator, at 70° and at the pole; with the chart's areas 0.882.
+
+**Measured** (2048 × 1024, seed `bench`, 100 Archean + 12 coupled epochs
+at HISTORY_DEFAULTS, Node, one thread, run one after another):
+
+| | torus HEAD | torus mesh | sphere HEAD | sphere mesh |
+|---|---|---|---|---|
+| flexure per epoch, mean | 127.5 ms | 96.3 ms | 137.6 ms | 84.3 ms |
+| CG iterations | — | 61–76 | — | 39–46 |
+| whole coupled epoch, mean | 1669 ms | 1208 ms | 1762 ms | 1680 ms |
+| rebound max / mean of the epochs' maxima | 814 / 291 m | 2456 / 681 m | 868 / 357 m | 1616 / 668 m |
+| subsidence max / mean | 345 / 206 m | 672 / 332 m | 1080 / 333 m | 615 / 374 m |
+| the deposits and ice alone: trough / forebulge | −274 / 0 m | −253 / +11.2 m | −245 / 0 m | −370 / +6.5 m |
+| area lifted > 1 cm by them | 0 % | 8.4 % | 0 % | 10.9 % |
+| ∫w dA / compensated load, the epoch's / a unit load at equator, 70°, pole | 1.00000000 all | 1.00000000 all | 1.00000000 all | 1.00000000 all |
+
+(The torus HEAD's whole epoch includes machine noise: its flexure is 31 ms
+of the 461 ms.) The extremes are larger because the plate is narrower than
+the kernel was: a point load's equivalent area is 2α² for the plate,
+2πσ² for the Gaussian at σ = α_old — about seven times more concentrated
+at Te 20. The load-weighted α of the last epoch is 61 km (torus), 64 km
+(sphere), πα 191 / 200 km; the forebulge crest nearest the deepest trough
+(young sea floor, α 18 km) lies 125 / 81 km from it.
+
+**Golden**: 0 hard failures, 134 metrics drifted, 117 of 138 stages moved
+(the flexure feeds the relief, so everything after the first epoch),
+coverage kept (85 metrics vary). No seed changed. Main shifts: highest
+point 2170 → 3194 m (calibration), 3079 → 3505 (alpha), 5392 → 5178
+(zulu); ice volume −21 / −10 %; sediment volume +18 / −8 %; land 8.51 →
+8.68 % (calibration); biome shares within a tenth of a point.
+`golden.json` re-recorded and the byte guard re-armed: 0 / 0 / 0, 46
+stages byte-identical × 3.
+
 2026-10-12: phase 5 BUILT — the climate refinement and its phenomena on
 the climate's field mesh, both shapes, one path (`climate/refinement.ts`,
 `phenomena.ts`, `reliability.ts`, `storms.ts`): the months' sea-level air,

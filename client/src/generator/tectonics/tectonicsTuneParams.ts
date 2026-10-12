@@ -367,13 +367,11 @@ export const TECTONICS_TUNING = {
   // thickness Te is a FIELD: on a raft between the young-orogen and the
   // craton value by the craton oldness (crust/raftField), in the ocean
   // from the lithosphere's age like its depth (GDH1's isotherm depth,
-  // ~√age). Densities and the plate's elastic constants as on Earth;
-  // measured here is only what the kernel makes of them (the flexural
-  // parameter α, tens to a hundred-odd km). Deflection scale
-  // flexureDeflectionScale is the one calibration knob: 1 is full
-  // compensation of the load spread over α; a kernel narrower than the
-  // real flexural profile over-deepens under the load, so it may end
-  // under one when measured at 2048.
+  // ~√age). Densities and the plate's elastic constants as on Earth; the
+  // plate equation (since DEC-0036 phase 6) makes of them the flexural
+  // parameter α = (4D / (ρm g))^¼: 18–99 km at sea, 50 km (Te 20) to
+  // 127 km (Te 70) on land. Deflection scale flexureDeflectionScale is the
+  // one calibration knob: 1 is full compensation of the load, ρc / ρm.
   flexureTeYoungKm: 20,
   flexureTeCratonKm: 70,
   flexureTeOceanFloorKm: 5,

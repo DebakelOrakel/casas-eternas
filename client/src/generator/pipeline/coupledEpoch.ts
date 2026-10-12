@@ -12,7 +12,7 @@ import { buildMesh, densityTarget, MESH_Z, triangulatePoints } from '../mesh/mes
 import { MESH_TUNING } from '../mesh/meshDensity'
 import { addColumnField, columnVolumeM3, createColumn, cut, decodeColumn, deposit, encodeColumn, erodibilityOver, MESH_COLUMN, COLUMN_DEPTH, openLayer, permuteColumn, type SedimentColumn } from '../mesh/meshColumn'
 import { computeCratonOldnessField } from '../crust/raftField'
-import { deflectionAt, elasticThicknessKm, flexuralResponse } from '../tectonics/flexure'
+import { elasticThicknessKm, flexuralResponse, flexuralRigidityM4, flexureMesh } from '../tectonics/flexure'
 import { foldFactorAt } from '../tectonics/folds'
 import { buildFeatureBuckets } from '../elevation/elevationField'
 import { oceanAgeAt } from '../tectonics/oceanAge'
@@ -189,10 +189,6 @@ export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale:
 // the raft.
 const RAFT_RELIEF_REACH = 1.5
 
-// The flexure raster's cell in macro cells: 4 (31 km at 2048) — the
-// flexural parameter is tens to a hundred-odd km, and the kernel wants a
-// few cells across it.
-const FLEXURE_CELL = 4
 // The climate history kept on the sim: the last this many epochs.
 const CLIMATE_HISTORY_CAP = 512
 // A lake is the same lake next epoch when its seed lies within this many
@@ -711,46 +707,45 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     }
   }
   timing.coast = lap()
-  // FLEXURAL ISOSTASY (phase 5.3, tectonics/flexure.ts): the epoch's
-  // load change — rock cut, sediment laid down — binned by area onto a
-  // coarse raster, the plate's deflection computed there with the
-  // elastic thickness of each cell, and read back at the nodes. Crust
+  // FLEXURAL ISOSTASY (phase 5.3, tectonics/flexure.ts; on the field mesh
+  // since DEC-0036 phase 6): the epoch's load change — rock cut, sediment
+  // laid down, the ice — spread from the nodes onto the flexure's mesh by
+  // their barycentric weights (each node's volume kept whole), the plate
+  // equation solved there with the elastic thickness at each cell's centre,
+  // and the deflection read back at the nodes through the sampler. Crust
   // moves; the column does not (it rides on the crust), and the relief
   // takes the deflection as height over the baseline.
-  const flexResX = Math.max(16, Math.round(width / FLEXURE_CELL))
-  const flexResY = Math.max(8, Math.round(height / FLEXURE_CELL))
-  const flexCellKm = ((width / flexResX) * unitM) / 1000
-  const flexCellM2 = (flexCellKm * 1000) * (flexCellKm * 1000)
-  const flexGrid = domain.grid(flexResX, flexResY)
-  const loadM = new Float32Array(flexResX * flexResY)
+  const { mesh: flexMesh, sampler: flexSampler } = flexureMesh(domain)
+  const flexCells = flexMesh.count
+  const loadM = new Float64Array(flexCells)
+  const flexCorners = new Int32Array(3)
+  const flexWeights = new Float64Array(3)
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
     // The epoch's load change: the walk's deposits and cuts, the ice's
     // cut and till, and the ice itself at its density over the rock's.
     const dv = result.depositM3[v] - result.cutM3[v] + (glacial.tillM[v] - glacial.cutM[v] + coastal.depositM[v] - coastal.cutM[v] + ice.thickness[v] * (917 / TECTONICS_TUNING.flexureCrustDensity)) * areas[v] * cellM2
     if (dv === 0) continue
-    const cx = flexGrid.wrapCol(Math.floor((mesh.vx[v] / width) * flexResX))
-    const cy = flexGrid.wrapRow(Math.floor((mesh.vy[v] / height) * flexResY))
-    // Per the cell's own area (flexGrid.cellArea: 1 on the torus).
-    loadM[cy * flexResX + cx] += dv / (flexCellM2 * flexGrid.cellArea(cy))
+    flexSampler.taps(mesh.vx[v], mesh.vy[v], flexCorners, flexWeights)
+    for (let k = 0; k < 3; k++) loadM[flexCorners[k]] += flexWeights[k] * dv
   }
-  const teKm = new Float32Array(flexResX * flexResY)
-  for (let cy = 0; cy < flexResY; cy++) {
-    for (let cx = 0; cx < flexResX; cx++) {
-      const x = ((cx + 0.5) / flexResX) * width
-      const y = ((cy + 0.5) / flexResY) * height
-      const continental = raftFieldIndexed(x, y, blobs) > 0.5
-      const oldness = upsampleAt(cratonField, climateGrid, x, y)
-      const ageMa = oceanAgeAt(sim.oceanAge, domain, x, y) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
-      teKm[cy * flexResX + cx] = elasticThicknessKm(continental, oldness, ageMa)
-    }
+  const rigidity = new Float64Array(flexCells)
+  for (let c = 0; c < flexCells; c++) {
+    loadM[c] /= flexMesh.area[c]
+    const x = flexMesh.x[c]
+    const y = flexMesh.y[c]
+    const continental = raftFieldIndexed(x, y, blobs) > 0.5
+    const oldness = upsampleAt(cratonField, climateGrid, x, y)
+    const ageMa = oceanAgeAt(sim.oceanAge, domain, x, y) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
+    rigidity[c] = flexuralRigidityM4(elasticThicknessKm(continental, oldness, ageMa))
   }
-  const deflection = flexuralResponse(loadM, teKm, flexGrid, flexCellKm)
+  const deflection = new Float64Array(flexCells)
+  flexuralResponse(flexMesh, loadM, rigidity, deflection)
   let reboundMaxM = 0
   let subsidenceMaxM = 0
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
-    const wM = deflectionAt(deflection, flexGrid, mesh.vx[v], mesh.vy[v])
+    const wM = flexSampler.sample(deflection, mesh.vx[v], mesh.vy[v])
     if (wM > reboundMaxM) reboundMaxM = wM
     if (-wM > subsidenceMaxM) subsidenceMaxM = -wM
     result.z[v] = Math.max(-1, Math.min(1, result.z[v] + wM / ELEVATION_METERS))

@@ -102,7 +102,8 @@ tectonics/  plate*, boundary*, oceanAge (on the field mesh since DEC-0036 phase 
             terrainFeatures, volcanoes,
             tectonicsTuneParams (tuning constants), epoch/ (the per-epoch phases),
             flexure (phase 5.3: Te as a field, the plate's deflection to a load
-            change on a coarse raster, read back at the mesh's nodes), folds (phase
+            change; since DEC-0036 phase 6 the plate equation ∇²(D∇²w) + ρm g w = −ρc g h
+            solved by CG on the climate's field mesh, read back at the nodes), folds (phase
             5.7: the buckling train across a range as a modulation of the uplift)
 crust/      continental crust as rafts — deliberately decoupled from the plates
             (docs/decisions/continental-crust-rafts.md); crustTuneParams holds the
@@ -143,8 +144,8 @@ write it out with `rasteriseField` (cell centres, the DomainGrid's convention).
 Its vectors are east/south pairs in each cell's own frame — carry a
 neighbour's through `carryFrom` before adding it. Phase 0 (the operators),
 phase 1 (the mantle), phase 2 (the ocean age), phase 3 (the static
-climate), phase 4 (the ocean and the energy balance) and phase 5 (the
-refinement and the phenomena) are built; the other stages move one per
+climate), phase 4 (the ocean and the energy balance), phase 5 (the
+refinement and the phenomena) and phase 6 (the flexure) are built; the other stages move one per
 phase. A solve runs to a RESIDUAL (its
 SolveReport), never to a sweep count: a non-symmetric operator takes
 `solveBiCGSTAB`, a symmetric one CG, and a singular one (a Neumann
@@ -170,6 +171,7 @@ answers here.
 | World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation, discharge, lakeDepth, biome |
 | Climate | field mesh, spacing W / 256 (the ocean age's): temperature, wind, seasonality, monsoon, precipitation, pressure (DEC-0036 phase 3), the currents, the SST, upwelling, salt, the year's cycle (phase 4), the whole refinement with its phenomena, reliability and storms (phase 5); 256×128 (~62 km per cell) as their transition raster and for the stages not yet moved | biomes, all ecology |
 | Ocean age | field mesh, spacing W / 256: 37 888 cells at 62 km (torus), 24 012 at 78 km (sphere); a 1024×512 raster only inside the render's baseline | oceanAge (epochs) |
+| Flexure | field mesh, spacing W / 256 (the climate's, shared); no state kept, the deflection goes into the nodes' z each epoch | the epoch's load, Te, the deflection |
 | Mantle | field mesh, spacing W / 128: 9 472 cells at 125 km (torus), 6 252 at 156 km (sphere); 128×64 only as the overlay | mantle buoyancy and flow |
 
 In the baked save (`world/save/worldLayers.ts`) only the layers marked `fullRes`

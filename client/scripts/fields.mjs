@@ -34,6 +34,7 @@ const M = {
   op: await L('/src/generator/fields/fieldOperators.ts'),
   raster: await L('/src/generator/mesh/meshRaster.ts'),
   ocean: await L('/src/generator/climate/oceanCurrents.ts'),
+  flexure: await L('/src/generator/tectonics/flexure.ts'),
 }
 
 let failures = 0
@@ -521,6 +522,83 @@ for (const kind of ['sphere', 'torus']) {
   check('torus: Stommel\'s basin — converged, the error against the analytic ψ under 5 % from 78 km on, and falling', fmOrder.every((r) => r.converged) && fmOrder.slice(1).every((r) => r.err < 0.05) && fmOrder.every((r, k) => k === 0 || r.err <= fmOrder[k - 1].err), `${fmOrder.map((r) => e(r.err)).join(' ')}, order ${o.map(f2).join(' ')}`)
   check('torus: the gyre is intensified at the WESTERN boundary (its centre in the western fifth)', fmOrder.every((r) => r.at < 0.2), fmOrder.map((r) => f2(r.at)).join(' '))
   check('mutation: with β turned the gyre goes to the eastern boundary', fmOrder.every((r) => r.atF > 0.8), fmOrder.map((r) => f2(r.atF)).join(' '))
+}
+
+// ================================================================ [4c]
+console.log('\n[4c] the plate equation: ∇²(D ∇²w) + ρm g w = −ρc g h, a strip load on a uniform plate (DEC-0036 phase 6)')
+// The analytic answer: the line load's profile on an unbroken plate,
+// w(x) = q / (2α) · e^(−|x|/α) (cos(x/α) + sin(|x|/α)) (Turcotte &
+// Schubert, Geodynamics §3.16), convolved with a Gaussian strip of load
+// h(ξ) = H e^(−ξ²/2σ²) by quadrature — a smooth load, so the mesh's
+// answer converges at the operator's order. The torus: a strip along a
+// row (exact: the torus is flat). The sphere: a strip along the equator
+// (the plane's answer up to the globe's curvature, (α / R)² ≈ 0.6 %). Its
+// first zero lies at 3πα/4 from a line load, the forebulge at πα with
+// e^(−π) = 4.3 % of the trough, opposite in sign.
+const PLATE_ALPHA = 250e3, PLATE_SIGMA = 125e3, PLATE_H = 1000
+const plateAnalytic = (() => {
+  const a = PLATE_ALPHA, c = 2700 / 3300
+  const G = (x) => { const u = Math.abs(x) / a; return (Math.exp(-u) * (Math.cos(u) + Math.sin(u))) / (2 * a) }
+  const step = 500, table = new Float64Array(8001)
+  const q = 4000, lim = 8 * PLATE_SIGMA, dq = (2 * lim) / q
+  for (let k = 0; k < table.length; k++) {
+    const x = k * step
+    let s = 0
+    for (let j = 0; j <= q; j++) { const xi = -lim + j * dq; const wgt = j === 0 || j === q ? 1 : j % 2 ? 4 : 2; s += wgt * PLATE_H * Math.exp(-(xi * xi) / (2 * PLATE_SIGMA * PLATE_SIGMA)) * G(x - xi) }
+    table[k] = (-c * s * dq) / 3
+  }
+  return (d) => { const t = Math.abs(d) / step; const k = Math.floor(t); if (k >= table.length - 1) return table[table.length - 1]; return table[k] + (t - k) * (table[k + 1] - table[k]) }
+})()
+// The strip's distance per cell, metres: from the row y = H / 2 on the
+// torus, from the equator along the meridian on the sphere.
+const stripDistance = (fm, i) => fm.globe ? fm.radiusM * Math.PI * (fm.y[i] / fm.domain.height - 0.5) : (fm.y[i] - fm.domain.height / 2) * fm.unitM
+const plateRun = (fm, rigidity = null) => {
+  const load = new Float64Array(fm.count)
+  for (let i = 0; i < fm.count; i++) { const d = stripDistance(fm, i); load[i] = PLATE_H * Math.exp(-(d * d) / (2 * PLATE_SIGMA * PLATE_SIGMA)) }
+  const rig = rigidity ?? new Float64Array(fm.count).fill(PLATE_ALPHA ** 4 / 4)
+  const w = new Float64Array(fm.count)
+  const rep = M.flexure.flexuralResponse(fm, load, rig, w)
+  const want = Float64Array.from({ length: fm.count }, (_, i) => plateAnalytic(stripDistance(fm, i)))
+  let iw = 0, ih = 0
+  for (let i = 0; i < fm.count; i++) { iw += w[i] * fm.area[i]; ih += load[i] * fm.area[i] }
+  // The forebulge: the profile's highest cell beyond the trough's first zero.
+  let bulge = -Infinity, bulgeAt = 0, trough = 0
+  for (let i = 0; i < fm.count; i++) {
+    const d = Math.abs(stripDistance(fm, i))
+    if (d < 1.2 * PLATE_SIGMA) trough = Math.min(trough, w[i])
+    if (d > 2 * PLATE_SIGMA && d < 3000e3 && w[i] > bulge) { bulge = w[i]; bulgeAt = d }
+  }
+  return { rep, w, err: relL2(fm, w, want), isostasy: -iw / ((2700 / 3300) * ih), bulge, bulgeAt, trough, same: hashArrays([w]) }
+}
+{
+  let wantBulge = -Infinity, wantBulgeAt = 0
+  for (let d = 2 * PLATE_SIGMA; d < 3000e3; d += 500) if (plateAnalytic(d) > wantBulge) { wantBulge = plateAnalytic(d); wantBulgeAt = d }
+  console.log(`  analytic: trough ${plateAnalytic(0).toFixed(1)} m, forebulge +${wantBulge.toFixed(2)} m at ${(wantBulgeAt / 1e3).toFixed(0)} km (α ${PLATE_ALPHA / 1e3} km, strip σ ${PLATE_SIGMA / 1e3} km)`)
+  for (const domain of [torus, sphere]) {
+    const kind = domain.kind
+    const rows = SPACINGS.slice(1).map((sp) => { const fm = meshOf(domain, sp); return { sp, h: meanSpacing(fm), ...plateRun(fm) } })
+    for (const r of rows) console.log(`  ${kind} ${(r.sp / 1e3).toFixed(0)} km: ${r.rep.iterations} CG iterations, L2 ${e(r.err)}, trough ${r.trough.toFixed(1)} m, forebulge +${r.bulge.toFixed(2)} m at ${(r.bulgeAt / 1e3).toFixed(0)} km, ∫w dA / compensated load ${r.isostasy.toFixed(10)}`)
+    const o = order(rows.map((r) => r.err), rows.map((r) => r.h))
+    check(`${kind}: the plate's solve converges to 1e-10 at every spacing`, rows.every((r) => r.rep.converged), rows.map((r) => r.rep.iterations).join(' ') + ' iterations')
+    check(`${kind}: ∫w dA is the compensated load (ρc/ρm), to 1e-8`, rows.every((r) => Math.abs(r.isostasy - 1) < 1e-8), rows.map((r) => e(Math.abs(r.isostasy - 1))).join(' '))
+    if (kind === 'torus') check('torus: the profile against the analytic falls at second order, within 1 % at 78 km', o.every((x) => x > 1.7) && rows[1].err < 0.01, `${rows.map((r) => e(r.err)).join(' ')}, order ${o.map(f2).join(' ')}`)
+    else check('sphere: the profile against the plane\'s analytic within 2 % from 78 km on (the curvature\'s (α/R)² is the floor)', rows.slice(1).every((r) => r.err < 0.02) && rows[1].err < rows[0].err, `${rows.map((r) => e(r.err)).join(' ')}, order ${o.map(f2).join(' ')}`)
+    const fine = rows[rows.length - 1]
+    check(`${kind}: the forebulge at πα beyond the trough, its height e^(−π) of it (39 km: within 5 % in height, a spacing in place)`, Math.abs(fine.bulge / wantBulge - 1) < 0.05 && Math.abs(fine.bulgeAt - wantBulgeAt) < 1.2 * fine.h, `+${fine.bulge.toFixed(2)} m at ${(fine.bulgeAt / 1e3).toFixed(0)} km against +${wantBulge.toFixed(2)} at ${(wantBulgeAt / 1e3).toFixed(0)}`)
+    const again = plateRun(meshOf(domain, 78e3))
+    check(`${kind}: the plate's solve is the same bytes twice`, again.same === rows[1].same)
+    // Mutation: the mass term without the areas (a plain w) — the
+    // isostasy breaks wherever the cells' areas differ from 1 m².
+    if (kind === 'sphere') {
+      const fm = meshOf(domain, 78e3)
+      const meanA = fm.area.reduce((s, x) => s + x, 0) / fm.count
+      const uneven = { ...fm, area: fm.area.map((a, i) => (fm.y[i] < fm.domain.height / 2 ? a * 1.3 : a)) }
+      const r = plateRun(uneven)
+      let iw = 0, ih = 0
+      for (let i = 0; i < fm.count; i++) { iw += r.w[i] * fm.area[i]; const d = stripDistance(fm, i); ih += PLATE_H * Math.exp(-(d * d) / (2 * PLATE_SIGMA * PLATE_SIGMA)) * fm.area[i] }
+      check('mutation: with the cells\' areas wrong the compensation leaves its 1e-8', Math.abs(-iw / ((2700 / 3300) * ih) - 1) > 1e-3 && meanA > 0, e(Math.abs(-iw / ((2700 / 3300) * ih) - 1)))
+    }
+  }
 }
 
 // ================================================================ [5]

@@ -231,11 +231,11 @@ export interface DomainGrid {
   // Bilinear sample at fractional GRID coordinates, cell centres at
   // integers (core/field.ts sampleBilinearGrid).
   sampleBilinear(field: Float32Array, gx: number, gy: number): number
-  // The same sample in the form the erosion forcing's and the flexure's
-  // readers were written in (step 4d5): the fraction taken from the
-  // coordinate as given, not from its wrapped copy. On the torus that is a
-  // different rounding from sampleBilinear's (wrapValue's subtraction
-  // costs the fraction its last bits), and those readers keep theirs; on
+  // The same sample in the form the erosion forcing's reader was written
+  // in (step 4d5): the fraction taken from the coordinate as given, not
+  // from its wrapped copy. On the torus that is a different rounding from
+  // sampleBilinear's (wrapValue's subtraction costs the fraction its last
+  // bits), and that reader keeps its own; on
   // the sphere it is sampleBilinear, across the pole as there. The caller
   // keeps (gx, gy) within one period of the grid.
   interpolate(field: Float32Array, gx: number, gy: number): number
@@ -391,8 +391,8 @@ class TorusGrid implements DomainGrid {
     return sampleBilinearGrid(field, this.resX, this.resY, gx, gy)
   }
 
-  // The arithmetic of erosionForcingFields.upsampleAt and
-  // flexure.deflectionAt as they were written, operation for operation.
+  // The arithmetic of erosionForcingFields.upsampleAt as it was written,
+  // operation for operation.
   interpolate(field: Float32Array, gx: number, gy: number): number {
     const resX = this.resX
     const x0 = Math.floor(gx)

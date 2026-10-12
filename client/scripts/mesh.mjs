@@ -994,31 +994,51 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   }
 }
 
-// Flexural isostasy (phase 5.3): the plate's answer to a load on a flat
-// raster — a ridge's weight sinks the plate under AND beside it (the
-// foreland basin, no feature rule), the whole answer compensates the
-// load by ρ_crust/ρ_mantle, and a stiffer plate spreads it wider and
-// shallower.
+// Flexural isostasy (phase 5.3; on the field mesh since DEC-0036 phase 6):
+// the plate's answer to a ridge's load on a flat torus — the plate sinks
+// under AND beside it (the foreland basin, no feature rule) and rises
+// beyond (the forebulge), the whole answer compensates the load by
+// ρ_crust/ρ_mantle, and a stiffer plate spreads it wider and shallower.
+// The analytic profile is harness:fields' check.
 {
-  const RX = 128, RY = 64, cellKm = 31
+  const domain = M.domain.torusDomain(128, 64, 0, 62400)
+  const { mesh: fm } = M.flexure.flexureMesh(domain)
+  const cellKm = fm.spacingM / 1000
+  const x0 = 64
   const ridge = (teKm) => {
-    const load = new Float32Array(RX * RY)
-    const te = new Float32Array(RX * RY).fill(teKm)
-    for (let y = 0; y < RY; y++) for (let x = 62; x <= 65; x++) load[y * RX + x] = 2000
-    return { load, te, w: M.flexure.flexuralResponse(load, te, M.domain.torusDomain(RX, RY).grid(RX, RY), cellKm) }
+    const load = new Float64Array(fm.count), rig = new Float64Array(fm.count).fill(M.flexure.flexuralRigidityM4(teKm))
+    for (let i = 0; i < fm.count; i++) if (Math.abs(fm.x[i] - x0) * domain.metresPerUnit < 1.5 * fm.spacingM) load[i] = 2000
+    const w = new Float64Array(fm.count)
+    const rep = M.flexure.flexuralResponse(fm, load, rig, w)
+    return { load, w, rep }
   }
   const soft = ridge(20), stiff = ridge(70)
-  const row = (r, x) => r.w[32 * RX + x]
-  const sum = (r) => { let s = 0; for (let i = 0; i < r.w.length; i++) s += r.w[i]; return s }
-  const loadSum = (r) => { let s = 0; for (let i = 0; i < r.load.length; i++) s += r.load[i]; return s }
+  // The profile across the ridge, by distance (km) from its axis: the mean
+  // per one-cell bin.
+  const profile = (r) => {
+    const sum = new Map()
+    for (let i = 0; i < fm.count; i++) {
+      const d = Math.round(Math.abs(fm.x[i] - x0) * domain.metresPerUnit / fm.spacingM)
+      const q = sum.get(d) ?? [0, 0]
+      q[0] += r.w[i]; q[1]++
+      sum.set(d, q)
+    }
+    return (k) => { const q = sum.get(k); return q[0] / q[1] }
+  }
+  const ps = profile(soft), pk = profile(stiff)
+  const integral = (r, a) => { let s = 0; for (let i = 0; i < fm.count; i++) s += r[a][i] * fm.area[i]; return s }
   const alpha20 = M.flexure.flexuralAlphaKm(20), alpha70 = M.flexure.flexuralAlphaKm(70)
-  console.log(`       α(Te 20 km) = ${alpha20.toFixed(0)} km, α(Te 70 km) = ${alpha70.toFixed(0)} km`)
-  check('the plate sinks under the ridge', row(soft, 63) < -100, `${row(soft, 63).toFixed(0)} m`)
-  check('and beside it — a foreland basin with no feature rule', row(soft, 68) < -10 && row(soft, 68) > row(soft, 63), `${row(soft, 68).toFixed(0)} m at 5 cells`)
-  check('far away the plate is level', Math.abs(row(soft, 20)) < 1, `${row(soft, 20).toFixed(2)} m`)
-  const ratio = -sum(soft) / loadSum(soft)
-  check('the load is compensated by ρ_crust/ρ_mantle', Math.abs(ratio - 2700 / 3300) < 0.01, ratio.toFixed(3))
-  check('a stiffer plate answers wider and shallower', row(stiff, 63) > row(soft, 63) && row(stiff, 75) < row(soft, 75), `under: ${row(stiff, 63).toFixed(0)} vs ${row(soft, 63).toFixed(0)} m; at 12 cells: ${row(stiff, 75).toFixed(1)} vs ${row(soft, 75).toFixed(1)} m`)
+  console.log(`       α(Te 20 km) = ${alpha20.toFixed(0)} km, α(Te 70 km) = ${alpha70.toFixed(0)} km, the mesh ${cellKm.toFixed(1)} km; ${soft.rep.iterations} / ${stiff.rep.iterations} CG iterations`)
+  check('the solve converges to its residual', soft.rep.converged && stiff.rep.converged, `${soft.rep.residual.toExponential(1)}, ${stiff.rep.residual.toExponential(1)}`)
+  check('the plate sinks under the ridge', ps(0) < -100, `${ps(0).toFixed(0)} m`)
+  check('and beside it — a foreland basin with no feature rule', pk(3) < -10 && pk(3) > pk(0), `${pk(3).toFixed(0)} m at ${(3 * cellKm).toFixed(0)} km (Te 70)`)
+  let bulge = -Infinity, bulgeAt = 0
+  for (let k = 2; k < 20; k++) if (pk(k) > bulge) { bulge = pk(k); bulgeAt = k }
+  check('and rises beyond it — the forebulge, near πα', bulge > 1 && Math.abs(bulgeAt * cellKm - (Math.PI * alpha70 + 1.5 * cellKm)) < 2.5 * cellKm, `+${bulge.toFixed(1)} m at ${(bulgeAt * cellKm).toFixed(0)} km; πα + the ridge's half width ${(Math.PI * alpha70 + 1.5 * cellKm).toFixed(0)} km`)
+  check('far away the plate is level', Math.abs(ps(40)) < 1, `${ps(40).toFixed(2)} m`)
+  const ratio = -integral(soft, 'w') / integral(soft, 'load')
+  check('the load is compensated by ρ_crust/ρ_mantle', Math.abs(ratio - 2700 / 3300) < 1e-6, ratio.toFixed(8))
+  check('a stiffer plate answers wider and shallower', pk(0) > ps(0) && pk(4) < ps(4), `under: ${pk(0).toFixed(0)} vs ${ps(0).toFixed(0)} m; at ${(4 * cellKm).toFixed(0)} km: ${pk(4).toFixed(1)} vs ${ps(4).toFixed(1)} m`)
   check('Te grows with craton oldness and with ocean age', M.flexure.elasticThicknessKm(true, 1, 0) > M.flexure.elasticThicknessKm(true, 0, 0) && M.flexure.elasticThicknessKm(false, 0, 100) > M.flexure.elasticThicknessKm(false, 0, 1))
 }
 
