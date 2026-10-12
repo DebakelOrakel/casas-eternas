@@ -43,9 +43,9 @@ loads are **instant** and survive generator-code changes.
 ├── refined/…             # its values, Float32 per cell of the climate's field mesh, one file a field
 ├── climate.json          # the annual climate's mesh and fields (DEC-0036 phase 7)
 ├── climate/…             # its values, Float32 per cell of the climate's field mesh
-├── mesh/…                # the terrain mesh, its column, its land fields per node (biome, koppen, waterTable)
+├── mesh/…                # the terrain mesh, its column, its land fields per node (biome, koppen, waterTable, discharge)
 ├── manifest.json         # layer index for consumers (see queryable-world-save.md)
-├── layers/…              # baked query layers (lakes, rivers, the erosion forcing)
+├── layers/…              # baked query layers (lakes, the erosion forcing) and tables (water bodies, coast reaches over mesh nodes, sediment basins)
 └── preview.png           # 512×256 thumbnail of the composited map
 ```
 
@@ -169,6 +169,20 @@ layers `biome` (2048 × 1024), `koppen` and `waterTable`; the layer
 node, recomputed). The generator recomputes all of them on load, as before;
 they are for the save's readers (the bakes, `world/query.ts`). A save with
 the old layers and no `climate.json` is refused.
+
+2026-10-12 (DEC-0036 phase 7b, still formatVersion 8): no hydrology
+raster is left but the lakes'. The river discharge is a value per node of
+the saved mesh (`mesh/discharge.f32`, Float32, m³/s, unthresholded) in
+place of the layer `discharge` (u16 at 4 m³/s a step, 2048 × 1024); the
+coast reaches in `layers/coast.json` list their NODES (`nodes`: vertex ids
+of the saved mesh, in reach order; each reach `nodeStart`, `nodeCount`)
+in place of raster cells (`cells`, `cellStart`, `cellCount`); the sediment
+basins in `layers/sedimentBasins.json` count `nodes` and their catchments
+in km² (`catchmentKm2`). A save with the layer `discharge`, or with a
+`coast.json` without `nodes`, is refused (`climateFields.
+refuseFormerHydrology`). Left as rasters: `elevation.f32` and the layer
+`lakeDepth` (the mesh lakes drawn on the world raster), and the forcing's
+`uplift` / `erodibility`; `waterBodies.json` is in world units as before.
 
 ### Format choices
 

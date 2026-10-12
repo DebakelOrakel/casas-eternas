@@ -11,7 +11,7 @@ import { coastalWarpSeed } from '../generator/archean/archeanState'
 import { FINE_DETAIL_SEED_SALT } from '../generator/elevation/ridgedNoise'
 import { erosionLithoSeed } from '../generator/surface/erosionForcingFields'
 import type { ErosionControls, WorldManifest, WorldManifestLayer } from './save/loadWorldInputs'
-import { readClimate, readLandFields, type SavedClimate, type SavedLandFields } from './save/climateFields'
+import { readClimate, readLandFields, refuseFormerHydrology, type SavedClimate, type SavedLandFields } from './save/climateFields'
 import { domainOfKind, type Domain } from '../generator/core/domain'
 import { decodeMesh } from '../generator/mesh/meshSerial'
 import { rasteriseNodePart } from '../generator/mesh/meshRaster'
@@ -180,11 +180,12 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     worldUid: readRecipeValue(yamlText, 'metadata.uid') ?? '',
     history: historyFromYaml(yamlText),
   }
-  // The climate and the land fields on their meshes (DEC-0036 phase 7);
-  // the former raster layers refuse the archive.
+  // The climate and the land fields on their meshes (DEC-0036 phase 7, the
+  // hydrology's 7b); the former raster layers refuse the archive.
   let climate: SavedClimate | null
   try {
     climate = await readClimate(zip)
+    await refuseFormerHydrology(zip)
   } catch {
     return null
   }
@@ -210,9 +211,10 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
   // texel height), the land fields per node on the world raster from the
   // nodes of the triangle under each pixel (the land's pixels from the
   // land's nodes — a biome or a class the heaviest, the water table
-  // linearly; the sea's Ocean, 0, −1).
+  // linearly, the discharge the nearest — a river is a line of nodes, and
+  // a blend would smear it over the valley; the sea's Ocean, 0, −1, 0).
   const CLIMATE_VIEWS = ['landMask', 'temperature', 'precipitation', 'seasonalAmplitude', 'monsoonIndex'] as const
-  const LAND_VIEWS = ['biome', 'koppen', 'waterTable'] as const
+  const LAND_VIEWS = ['biome', 'koppen', 'waterTable', 'discharge'] as const
   let land: SavedLandFields | null | undefined
   const landFields = async (): Promise<SavedLandFields | null> => {
     if (land !== undefined) return land
@@ -245,6 +247,9 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
         const wet = new Uint8Array(mesh.vertexSlots)
         for (let v = 0; v < saved.count; v++) wet[v] = nodeLand[v] && fields.waterTable[v] >= 0 ? 1 : 0
         data = rasteriseNodePart(mesh, fields.waterTable, wet, pixelLand, -1, width, height, false)
+      } else if (name === 'discharge') {
+        if (!fields.discharge) return null
+        data = rasteriseNodePart(mesh, fields.discharge, nodeLand, pixelLand, 0, width, height, true)
       } else {
         data = rasteriseNodePart(mesh, name === 'biome' ? fields.biome : fields.koppen, nodeLand, pixelLand, name === 'biome' ? Biome.Ocean : 0, width, height, true)
       }
@@ -274,7 +279,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     recipe,
     has: (name) => byName.has(name) || tables.has(name)
       || (climate !== null && (CLIMATE_VIEWS as readonly string[]).includes(name))
-      || ((LAND_VIEWS as readonly string[]).includes(name) && zip.file(name === 'waterTable' ? 'mesh/waterTable.f32' : `mesh/${name}.u8`) !== null),
+      || ((LAND_VIEWS as readonly string[]).includes(name) && zip.file(name === 'waterTable' || name === 'discharge' ? `mesh/${name}.f32` : `mesh/${name}.u8`) !== null),
 
     async table(name) {
       const entry = tables.get(name)

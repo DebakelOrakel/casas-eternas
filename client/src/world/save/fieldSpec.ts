@@ -69,6 +69,8 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   // No ecology fields since 2026-09-29: the ecology is a rule evaluated
   // where one looks (docs/decisions/ecology-as-function.md), computed on
   // load, not stored.
+  // The river discharge, m³/s, per node since DEC-0036 phase 7b (the save's
+  // mesh/discharge.f32), each land pixel its nearest node's.
   world('discharge', 'm3/s', false),
   // The erosion engine's coarse forcing (docs/design/erosion-v2.md): uplift
   // is the features' activity-weighted U (normalized to the world's peak,

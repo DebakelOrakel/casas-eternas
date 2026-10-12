@@ -616,7 +616,8 @@ export interface WorkerHydrologyDataMessage {
   type: 'hydrologyData'
   // Connected river polylines for the scene-space ribbon overlay: `riverPoints`
   // is Float32 [x, y, widthPx, …] (texel coords) with all polylines concatenated,
-  // `riverLengths` is Uint32 point-counts per polyline. See extractRiverPolylines.
+  // `riverLengths` is Uint32 point-counts per polyline. See
+  // riverGraph.riverPolylinesFromGraph.
   riverPoints: ArrayBuffer
   riverLengths: ArrayBuffer
   // The flow regime per polyline (Uint8, hydrology.RIVER_REGIME_CODE), one
@@ -625,7 +626,7 @@ export interface WorkerHydrologyDataMessage {
   // Lake water depth per full-res cell (Float32, 0 = dry). Only populated when the
   // hydrology was re-routed (lakes don't depend on the river-density knob); a
   // density-only re-extract sends an empty buffer, meaning "lakes unchanged". See
-  // computeLakes.
+  // meshHydrology.waterFieldsFromMesh.
   lakeDepth: ArrayBuffer
   // Biomes RE-classified with the riparian moisture bonus from rivers/lakes
   // (Uint8, full-res — replaces the climate step's water-free biomes, and shares
@@ -640,9 +641,12 @@ export interface WorkerHydrologyDataMessage {
   // (Float32, full-res, from the nodes, OCEAN_PRECIP on the sea): the water
   // balance's readout. Re-route only, like the biomes.
   precipitationEffective: ArrayBuffer
-  // Watershed labels (Uint16, full-res, 0 = unlabelled) and the raw discharge
-  // field (Float32, full-res) + its land maximum — the watershed overlay and
-  // the map hover's flow readout. Re-route only, like lakeDepth.
+  // Watershed labels (Uint16, full-res, 0 = unlabelled) and the discharge
+  // (Float32, full-res, the hydrology's unit) + its land maximum — the
+  // watershed overlay and the map hover's flow readout: the terrain mesh's
+  // per node (hydrology.watershedsOn, the discharge on its substrate), each
+  // land pixel its triangle's heaviest land corner's. Re-route only, like
+  // lakeDepth.
   watersheds: ArrayBuffer
   discharge: ArrayBuffer
   maxDischarge: number
@@ -658,11 +662,13 @@ export interface WorkerHydrologyDataMessage {
   // derived from — serialised: the JSON document and the reach cells as
   // Int32 bytes. Re-route only; null means "unchanged".
   riverGraph: { json: string; cells: ArrayBuffer; coursePoints: ArrayBuffer } | null
-  // The coast (surface/coastGraph.ts): the type per cell (Uint8, full-res,
-  // COAST_TYPE_CODE, 0 off the coast) the shore drawing reads, and the
-  // reach list with its cells. Re-route only; empty / null mean "unchanged".
+  // The coast (surface/coastGraph.ts): the type per pixel (Uint8, full-res,
+  // COAST_TYPE_CODE, 0 off the drawn coastline — the shore nodes' types on
+  // the raster's shore pixels) the shore drawing reads, and the reach list
+  // with its nodes (Int32, the mesh's vertex ids in its saved numbering).
+  // Re-route only; empty / null mean "unchanged".
   coastType: ArrayBuffer
-  coast: { reaches: CoastReach[]; cells: ArrayBuffer } | null
+  coast: { reaches: CoastReach[]; nodes: ArrayBuffer } | null
   // The erosion pass's deposits as features with provenance
   // (surface/sedimentBasins.ts). Re-route only; null means "unchanged".
   sedimentBasins: SedimentBasin[] | null
@@ -765,12 +771,14 @@ export interface ClimatePayload {
 
 // The land fields per node of the mesh, in its numbering: the biome and the
 // Köppen class (Uint8), the water table's depth (Float32, metres, −1 under
-// water; null before the hydrology ran).
+// water) and the river discharge (Float32, m³/s) — both null before the
+// hydrology ran.
 export interface LandPayload {
   count: number
   biome: ArrayBuffer
   koppen: ArrayBuffer
   waterTable: ArrayBuffer | null
+  discharge: ArrayBuffer | null
 }
 
 // The other direction, which had no union at all: GeneratorScreen listed the twelve

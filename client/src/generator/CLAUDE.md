@@ -115,16 +115,20 @@ crust/      continental crust as rafts — deliberately decoupled from the plate
             raft rules both eras pass in
 elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise,
             globeNoise (the 3D lattice the sphere samples its noise on, Domain.noise)
-surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), erosionPassV2,
-            hydrology (riparianPrecipitationOn: the rivers' wet margin per node), riverGraph
-            (the feature graph), riverCourse, coastGraph, sedimentBasins,
+surface/    flowRouting (the raster engine's routing vocabulary), erosionEngine* (the engine,
+            its state, pool, worker), erosionPassV2, flowSubstrate (what the hydrology
+            reads of the mesh), hydrology (the discharge, the lakes, the channel criterion,
+            the watersheds, riparianPrecipitationOn: the rivers' wet margin per node),
+            riverGraph (the feature graph), riverCourse, coastGraph (the coast reaches on
+            the mesh's shore nodes), sedimentBasins (node sets),
             cover (phase 5.5: the vegetation's hold per biome — one table for the
             erodibility, the critical slope and the river banks), hydrogeology (phase 5a:
             springs, the regime with baseflow, the water table — a classification over the
             column, no process; per node of the mesh), glacial (phase 6: the epoch's ice
             on the mesh at its steady state, the cut it does, the till it leaves; F4's
             raster forerunner iceFlow went in DEC-0036 phase 7), coastal (phase 7: the
-            waves' cut at the shore and the one-line drift along it), amplify
+            waves' cut at the shore and the one-line drift along it; findShore and
+            shoreExposure, which the coast graph shares), amplify
             (the mesh level's synthesis layers and the level bake's constants)
 climate/    the static climate on the field mesh since DEC-0036 phase 3 (climateMesh: the
             mesh W / 256, shared with the ocean age, the terrain read onto it, the zonal
@@ -159,18 +163,18 @@ Its vectors are east/south pairs in each cell's own frame — carry a
 neighbour's through `carryFrom` before adding it. Phase 0 (the operators),
 phase 1 (the mantle), phase 2 (the ocean age), phase 3 (the static
 climate), phase 4 (the ocean and the energy balance), phase 5 (the
-refinement and the phenomena), phase 6 (the flexure) and phase 7 (biomes,
-Köppen, ecology, resources, hydrogeology on the terrain mesh) are built;
-7b (the hydrology's raster routing, discharge, watersheds, coast reaches
-and sediment basins onto the mesh) is proposed. A solve runs to a RESIDUAL (its
+refinement and the phenomena), phase 6 (the flexure), phase 7 (biomes,
+Köppen, ecology, resources, hydrogeology on the terrain mesh) and phase 7b
+(the hydrology's discharge, watersheds, coast reaches and sediment basins
+on the terrain mesh; no routing on the 2:1 raster) are built. A solve runs to a RESIDUAL (its
 SolveReport), never to a sweep count: a non-symmetric operator takes
 `solveBiCGSTAB`, a symmetric one CG, and a singular one (a Neumann
 problem) a right-hand side balanced per connected part. A length in a
 stage on the mesh is in METRES (the mesh's, `domain.metresPerUnit`), never
 in cells; a stage not yet moved reads a moved field through an adapter
 marked `// DEC-0036 transition: removed in phase N` — grep for it before
-touching the phase it names (one is left: the raster routing's rain,
-phase 7b). A stage that needs the climate samples it at its own points
+touching the phase it names (none is left since phase 7b). A stage that
+needs the climate samples it at its own points
 (climate/climatePoints.ts), never on the chart. A field mesh's values are SAVED as values (Float64, with
 the mesh's cell count and spacing — `fields/fieldMesh.SavedField`), never as
 a raster: the mesh rebuilds deterministically, and a load then continues bit
@@ -180,7 +184,9 @@ session keeps the same Float32 values it saves (the refinement: `refined.json`
 + `refined/*.f32`, world/save/refinedFields.ts; the annual climate the land
 fields came from: `climate.json` + `climate/*.f32`). A terrain-mesh field is
 saved per node in the saved mesh's numbering (`mesh/biome.u8`,
-`mesh/koppen.u8`, `mesh/waterTable.f32`, world/save/climateFields.ts).
+`mesh/koppen.u8`, `mesh/waterTable.f32`, `mesh/discharge.f32`,
+world/save/climateFields.ts); a table that names nodes names them by
+vertex id of the saved mesh (`layers/coast.json`'s `nodes`).
 
 ## Resolutions — check before you sample
 
@@ -189,17 +195,18 @@ answers here.
 
 | Grid | Size | Holds |
 |---|---|---|
-| World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation, discharge, lakeDepth (the hydrology's, until 7b); the screen's rasters of the terrain-mesh fields |
-| Terrain mesh | adaptive, 8–31 km on land at the history's budget 4, up to 160 km at sea | biome, Köppen class, ecology and resources, water table, the lakes and the river graph (DEC-0036 phase 7) |
+| World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation and lakeDepth (rasterisations of the mesh's heights and lakes); the screen's rasters of the terrain-mesh fields (the discharge, the watersheds, the coast type among them) |
+| Terrain mesh | adaptive, 8–31 km on land at the history's budget 4, up to 160 km at sea | biome, Köppen class, ecology and resources, water table (DEC-0036 phase 7), the lakes, the discharge, the river graph, the watersheds, the coast reaches and the sediment basins (phase 7b) |
 | Climate | field mesh, spacing W / 256 (the ocean age's): temperature, wind, seasonality, monsoon, precipitation, pressure (DEC-0036 phase 3), the currents, the SST, upwelling, salt, the year's cycle (phase 4), the whole refinement with its phenomena, reliability and storms (phase 5); 256×128 (~62 km per cell) only as its chart, for the screen and a save's readers | — |
 | Ocean age | field mesh, spacing W / 256: 37 888 cells at 62 km (torus), 24 012 at 78 km (sphere); a 1024×512 raster only inside the render's baseline | oceanAge (epochs) |
 | Flexure | field mesh, spacing W / 256 (the climate's, shared); no state kept, the deflection goes into the nodes' z each epoch | the epoch's load, Te, the deflection |
 | Mantle | field mesh, spacing W / 128: 9 472 cells at 125 km (torus), 6 252 at 156 km (sphere); 128×64 only as the overlay | mantle buoyancy and flow |
 
 In the baked save (`world/save/worldLayers.ts`) the raster layers left are
-`elevation`, `lakeDepth` and `discharge` (world raster) and the forcing's
-`uplift` / `erodibility` (256 × 128); the climate and the land fields are mesh
-values (DEC-0036 phase 7), which `world/query.ts` rasterises for its views.
+`elevation` and `lakeDepth` (world raster) and the forcing's `uplift` /
+`erodibility` (256 × 128); the climate, the land fields and the discharge
+are mesh values (DEC-0036 phases 7 and 7b), which `world/query.ts`
+rasterises for its views.
 
 Note what a coarse save layer means for a field that is computed finely: the
 reduction is a *choice*, and `downsampleMax` is the wrong one for anything
@@ -324,10 +331,13 @@ detMath's values confirmed in both engines.
 **Routing differs by step, and conflating them is a recurring mistake.** Erosion
 is hybrid: drainage-area *accumulation* is MFD, stream-power *incision* is
 single-flow. Rivers in `hydrology.ts` are pure single-flow for both — MFD
-smeared the drawn channels into valley-floor bands. The single-flow receiver
-itself is D8-LTD, not plain steepest descent, since 2026-08-15
-(`flowRouting.computeLtdFlowTargets` — plain D8's rounding error accumulates
-into axis-parallel streaks, and worse the finer the grid).
+smeared the drawn channels into valley-floor bands. On the mesh the
+single-flow receiver is the steepest descent over a node's star, per reach
+length; on the raster engine's grid (erosionEngine's FLAG_GRID8) it is
+D8-LTD, not plain steepest descent (2026-08-15 — plain D8's rounding error
+accumulates into axis-parallel streaks, and worse the finer the grid). The
+hydrology's own raster routing (`fillDepressionsAndRouteFlow`) went in
+DEC-0036 phase 7b.
 
 **The overlay canvas is displayed vertically mirrored.** Draw "up" as `+y`; text
 needs a further 180°. It is a vertical mirror, not a 180° rotation — arrow
@@ -368,8 +378,9 @@ not been compacted and expect a reload to match. The erosion step is gone
 
 **The hydrology runs over a flow substrate** (phase 4.3, 2026-09-23).
 `surface/flowSubstrate.ts` is the one interface the discharge, the lakes, the
-channel criterion, the regime and the river graph read; the raster routing and
-the mesh are its instances. Write a new hydrology rule against the substrate
+channel criterion, the regime, the watersheds, the river graph and the
+sediment basins read; the mesh is its one instance since DEC-0036 phase 7b
+(the raster routing's went). Write a new hydrology rule against the substrate
 (`…On(sub, …)`), never against `width`/`height` and cell arithmetic, and read a
 graph node's place from `node.x/y` or `cellX/cellY`, never from `cell` as a
 raster index — a mesh graph's cells are vertex ids.

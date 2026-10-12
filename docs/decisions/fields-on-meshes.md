@@ -173,6 +173,9 @@ Each phase is agreed before it starts and measured after (sphere and torus,
 5. The refinement and the phenomena.
 6. The flexure.
 7. Biomes, ecology, resources and hydrogeology on the terrain mesh.
+   7b. The hydrology's raster parts (the routing, the discharge, the
+   watersheds, the coast graph, the sediment basins) on the terrain mesh
+   (split off phase 7, 2026-10-12).
 8. Then the calibration — once, in metres: the constants now in cells
    (DEC-0035, fork 6's list), the plate count and the land fraction. It
    looks at the field mesh's twelve pentagons on purpose: the centroidal
@@ -196,6 +199,179 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-12: phase 7b BUILT — the hydrology's raster parts on the terrain
+mesh, both shapes, one path. No hydrology runs on the 2:1 raster any more:
+the hydrology stage routes nothing on it (`fillDepressionsAndRouteFlow`
+and the flow substrate's raster instance are gone), and the last
+transition adapter (the raster routing's rain) went with it.
+
+**The inventory** (what still ran on, or read, the raster at the start):
+the raster routing (`flowRouting.fillDepressionsAndRouteFlow`: priority
+flood, D8-LTD receivers, MFD edges at 2048 × 1024) and its rain adapter;
+the raster discharge it accumulated — read by the map's flow readout, the
+save's `discharge` layer, the migration's river corridors (`downsampleMax`
+to the chart) and the cell tracer `extractRiverPolylines` (dead since the
+graph draws the ribbons); `computeWatersheds` (the overlay); the coast
+graph (`coastGraph.ts`: coast cells, an upwind march a cell a step over the
+elevation raster, relief over the D8 window, its reaches walked cell by
+cell; the water shader's coast type per pixel and `coast.json`'s cells);
+the sediment basins (`sedimentBasins.ts`: 8-connected pixel components of
+the rasterised before/after, provenance over the raster routing); the
+raster wrappers of the substrate functions (`computeLakes`,
+`accumulateDischarge`, `accumulateRegimeInputs`, `receiverSlope`,
+`channelReferenceSlope`, `isChannelCell`, `buildChannelMask`) and
+`riverGraph`'s `routing` input. Already on the mesh: the discharge, the
+lakes, the regime, the channel criterion, the river graph and its courses,
+the riparian rain, the hydrogeology. Not readers: the bakes and the job
+worker (the level and the tiles route their own meshes), the incubator
+(level-1 artifacts), the Go server.
+
+**The method.** The discharge is the mesh's (`accumulateDischargeOn` on
+the coupled mesh's substrate), the one discharge there is. The watersheds
+are node labels (`hydrology.watershedsOn`: popOrder forward, a basin kept
+from 12 168 km²). The coast graph runs on the shore nodes
+(`coastal.findShore`, the line the history's coast process works on — now
+shared, with its upwind march `shoreExposure`, bit for bit): the reaches
+walk from shore node to nearest unvisited shore node along the mesh's
+edges, cut at a mouth and every 312 km; the relief is the highest ground
+of the mesh's surface at the node and the eight compass points 7.8 km out;
+a mouth's coast node the nearest within 23.4 km, a delta's coast the shore
+nodes within 15.6 km of it. The sediment basins are connected node sets
+over the mesh's edges, the thickness the node's against the last epoch's
+start (`CoupledTerrain.preErosionZ`), area, volume, centroid (circular
+mean on the torus, the globe's mean on the sphere) and provenance by the
+nodes' Voronoi areas in km², the graph's mouths read as vertex ids.
+
+**Constants converted** (the torus's 7.8 km world cell, no calibration):
+
+| Was | Now |
+|---|---|
+| coastReachCells 40 | coastReachM 312 000 (walked length) |
+| the coast's fetch march: a world cell a step (fetchCap 192) | coastGraphFetchStepM 7 800 |
+| relief: the highest land of the D8 window | coastReliefStepM 7 800 (eight compass points, a diagonal √2 of it) |
+| a mouth's coast cell: the nearest within 3 cells | coastMouthReachM 23 400 |
+| delta: two cells each way (a row's span on the sphere) | coastDeltaReachM 15 600 |
+| sedimentBasinMinCells 4 | sedimentBasinMinAreaKm2 243.36 |
+| computeWatersheds minAreaCells 200 | watershedsOn minAreaKm2 12 168 (a display floor, no tuning constant) |
+
+**The display** (fork 5: the chart is the address and the textures): the
+discharge and the watershed labels on the world raster from the nodes,
+each land pixel its triangle's heaviest land corner's
+(`rasteriseNodePart`, the pixels' triangles cached per mesh as the
+biomes' are); the coast type on the raster's own shore pixels (a land
+pixel with a sea pixel among its eight), the heaviest typed shore corner
+(`runtime.coastTypeRaster`); the migration's river corridors the largest
+node discharge per chart cell (`runtime.chartMaxOfNodes`). The ribbons
+were the graph's already.
+
+**Save** (formatVersion 8 kept): the discharge per node of the saved mesh
+(`mesh/discharge.f32`, Float32, m³/s, unthresholded) in place of the
+layer `discharge` (u16, 4 m³/s a step, 2048 × 1024); `layers/coast.json`
+lists the reaches' `nodes` (vertex ids of the saved mesh; a reach
+`nodeStart`, `nodeCount`) in place of `cells`; `sedimentBasins.json`
+counts `nodes` and `catchmentKm2`. A save with the layer `discharge` or a
+coast over cells is refused (`climateFields.refuseFormerHydrology`, in
+`world/query.openWorld`); `world/query.ts` answers `acquire('discharge')`
+by rasterising the nodes (the nearest). Readers switched: the screen's
+save path (the worker's land payload carries the discharge), query.ts;
+the bakes, the job worker, the incubator and the Go server never read
+them. `layers/lakeDepth` and `waterBodies.json` stay (the lakes' raster
+recovery, the save's own step with the elevation).
+
+**Zulu's largest discharge ×2.7 after phase 7, traced: not a DEC-0036
+bug.** The ×2.7 (1.72e7 → 4.61e7) is one catchment of 60 658 world cells
+(4.4 × phase 6's largest, 13 732) reaching the sea at (1788, 628). Mapped
+onto phase 6's world, 75 % of it drained into an enclosed sub-sea basin
+around (1720–1805, 520–555) and stopped there. On phase 7's relief that
+basin (floor −43 m) stands brim-full at its spill (level = spill = 206 m),
+and the receivers over its flooded surface run from the shore nodes along
+the flood's land nodes to the spill without touching a sub-sea node — so
+`accumulateDischargeOn`'s rule "the first sub-sea element keeps what
+arrives" never fires and the rivers run on over the spill. On phase 6's
+relief its basin was brim-full too (level = spill = 305 m), but one
+shore node's receiver happened to step onto a −7 m node and kept the
+discharge. Not the precipitation sampling: phase 6's nearest-cell rain on
+phase 7's terrain gives 4.60e7. The rule is older than DEC-0036 (the flood
+from the world ocean, 2026-08-06; the mesh routing, phase 4.3): whether a
+terminal sea swallows its rivers depends on which receiver chain the flood
+happens to draw, not on the basin's balance. Phase 7's history only
+changed the relief under it. For a brim-full basin the rivers running on
+is the right answer; a terminal sea below its spill would need the rule
+to read the basin's balance (computeLakesOn's) — found, not fixed.
+
+**Golden**: 0 hard failures; the four hydrology stages moved
+(`hydro.discharge`, `coast.reaches`, `coast.type`, `sediment.basins`), the
+other 42 byte-identical × 3 — the history, the climate, the lakes, the
+river graph and the ecology untouched, the coast process's shared shore
+code included. Drifted: sediment basins +12 / +15 / +20 % (calibration /
+alpha / zulu) and their volume +24 / +14 / +8 %; coast reaches +2 / 0 / +9
+%, cliffs 14 → 18, 37 → 17, 20 → 33, beaches +31 / +24 / +13 %, marshes
+−6 / +2 / −26 %; `hydro.channelCells` became `hydro.channelNodes`.
+`golden.json` re-recorded and the byte guard re-armed: 0 / 0 / 0, 46
+stages byte-identical × 3.
+
+**Measured** (2048 × 1024, seed `bench`, 100 Archean + 12 coupled epochs,
+the climate, its refinement, then the hydrology through the runtime; Node;
+HEAD → 7b on the same terrain, its z's hash equal):
+
+| | torus HEAD | torus 7b | sphere HEAD | sphere 7b |
+|---|---|---|---|---|
+| hydrologyRun | 4.43 s | 1.83 s | 5.89 s | 3.07 s |
+| river reaches, km | 146, 12 150 | the same | 254, 27 240 | the same |
+| lakes, share of the land pixels | 2.18 % | the same | 1.05 % | the same |
+| largest discharge | 3 746 m³/s | the same | 4 650 m³/s | the same |
+| the map's discharge over land, p50 / p90 / p99 (m³/s) | 1.6 / 21 / 275 | 4.8 / 61 / 527 | 1.6 / 23 / 402 | 4.4 / 60 / 835 |
+| per node, p50 / p90 / p99 (m³/s) | — | 4.1 / 58 / 481 | — | 4.2 / 66 / 932 |
+| watersheds, labels / share of the land | 95 / 46.6 % | 113 / 49.6 % | 137 / 59.8 % | 228 / 67.8 % |
+| coast reaches, km, mean | 376, 57 780, 154 | 395, 50 050, 127 | 450, 75 420, 168 | 472, 65 530, 139 |
+| coast types r / c / b / m / d | 258 / 13 / 57 / 46 / 2 | 256 / 29 / 75 / 35 / 0 | 262 / 9 / 89 / 90 / 0 | 245 / 8 / 142 / 77 / 0 |
+| sediment basins, km³ | 796, 380 900 | 990, 446 600 | 1 167, 420 200 | 1 922, 496 700 |
+| the whole save | 19.84 MB | 19.96 MB | 21.55 MB | 21.82 MB |
+| discharge in the save (deflated) | 78 KB u16 raster | 178 KB f32 per node | 128 KB | 353 KB |
+
+The map's discharge reads higher at the low end: a pixel shows its
+nearest node's discharge, and a node gathers its whole Voronoi cell. The
+display rasters (torus / sphere): the watersheds 2.8 / 3.6 ms at the
+nodes and 15 / 14 ms on the raster, the discharge 9 / 10 ms, the coast
+type 33 / 52 ms, each with the pixels' triangles the hydrology's riparian
+raster located already (388 / 449 ms once per mesh); the coast graph
+55 / 160 ms (a uniform wind). The hydrology's time fell by the raster
+routing (the priority flood over two million cells).
+
+**Checks.** `harness:mesh`: the watersheds closed under the receivers,
+the coast graph walks every shore node once along the mesh's edges and is
+deterministic, the basins' volume is their nodes' thickness by area.
+`harness:pipeline`: the sphere's coast invariants on its mesh, the basins'
+centroid on a geodesic lattice (off 0.07–0.15 cells; the torus's circular
+mean misses the polar ones by 39.9 and 1.9), the discharge, the watersheds
+and the coast's nodes byte-identical between two pipelines, and a loaded
+world's discharge, lakes, watersheds, river network and coast walk the
+session's, byte for byte, with the save's discharge per node. Not its
+reaches' sediment loads (and with them the coast's supply and types, the
+courses' deltas): they are the last epoch's erosion flux, which the save
+does not carry — older than 7b, found, not fixed. The raster receiver's check (the fall line at 70°N) went with
+the raster routing. `harness:roundtrip`: the discharge per node and the
+coast's nodes bit for bit, no discharge layer written, the former layer
+and a coast over cells refused.
+
+**What the chart still is.** No hydrology simulation on it. It remains
+the address and the textures: the elevation raster (the terrain's
+rasterisation, the climate's terrain read from it — `climateTerrain`, a
+cell's mean — and the save's `elevation.f32`), the lakes' raster recovery
+(`waterFieldsFromMesh`: the water shader's level and surface, the dry
+floors the climate's land mask reads, the save's `lakeDepth`), the ice
+drawn for the map, every land field's and the hydrology's screen rasters,
+the climate's 256 × 128 chart for the screen and the save's readers, the
+erosion forcing (`uplift` / `erodibility` at 256 × 128, read at the nodes)
+and the craton oldness raster (read at the nodes). Simulation on a 2:1
+raster outside the generator's chain: the migration (its own screen,
+later, on the chart) and the raster erosion engine (`erosionPassV2`, the
+engine's FLAG_GRID8 index), which only harness and measuring scripts run
+(`harness:mesh measure`, `makeTestSave`, `ridgeBands`);
+`scripts/measureHydrology.mjs`, the raster pass's lake census, is deleted
+with the raster hydrology it measured (`calibrateHistory.mjs` is the
+instrument on the history).
 
 2026-10-12: phase 7 BUILT — the biomes, the Köppen classes, the ecology
 with its resources and the hydrogeology on the adaptive terrain mesh

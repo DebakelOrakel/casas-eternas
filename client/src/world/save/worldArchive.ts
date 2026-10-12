@@ -6,7 +6,7 @@ import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import type { PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulation'
-import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from './worldLayers'
+import { FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from './worldLayers'
 import { refinedEntries, refinedFromEntries } from './refinedFields'
 import { climateEntries, LAND_FILES, type SavedClimate, type SavedLandFields } from './climateFields'
 import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
@@ -28,19 +28,19 @@ import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 // does not carry it.
 export interface WorldArchiveFields {
   // The climate per cell of its field mesh and the land fields per node of
-  // the mesh (climateFields.ts; DEC-0036 phase 7), the worker's.
+  // the mesh (climateFields.ts; DEC-0036 phase 7, the discharge 7b), the
+  // worker's.
   climate: SavedClimate | null
   land: SavedLandFields | null
-  // Water depth per world cell (elevation units) — the hydrology's raster
-  // (DEC-0036 phase 7b moves it).
+  // Water depth per world cell (elevation units) — the mesh lakes' raster
+  // recovery (meshHydrology.waterFieldsFromMesh).
   lakeDepth: Float32Array | null
-  // River discharge per world cell, m³/s.
-  dischargeM3s: Float32Array | null
   // The climate step's refinement, its values per cell of the climate's
   // field mesh (refinedFields.ts; DEC-0036 phase 5).
   refined: RefinedClimate | null
   waterBodies: WaterBody[] | null
-  coast: { reaches: CoastReach[]; cells: Int32Array } | null
+  // The coast reaches and their nodes: vertex ids of the saved mesh.
+  coast: { reaches: CoastReach[]; nodes: Int32Array } | null
   sedimentBasins: SedimentBasin[] | null
 }
 
@@ -103,7 +103,12 @@ export type WorldArchiveParts = ArcheanArchiveParts | TectonicArchiveParts
 // the raster layers landMask, temperature, precipitation,
 // precipitationEffective, biome, seasonalAmplitude, monsoonIndex, koppen and
 // waterTable — a save with those layers and without climate.json is
-// refused (readClimate).
+// refused (readClimate). The river discharge per node of the mesh
+// (mesh/discharge.f32, m³/s, phase 7b) in place of the raster layer
+// layers/discharge.u16, and the coast reaches over the mesh's nodes
+// (layers/coast.json `nodes`, its vertex ids) in place of raster cells
+// (`cells`) — a save with either former one is refused
+// (climateFields.refuseFormerHydrology).
 export const WORLD_ARCHIVE_FORMAT_VERSION = 8
 
 export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8Array<ArrayBuffer>> {
@@ -207,25 +212,13 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
     }
   }
 
-  // The hydrology's rasters, once computed (DEC-0036 phase 7b moves them).
+  // The lakes' raster, once computed: the mesh's bodies drawn on the world
+  // raster (the save's own step moves the remaining rasters).
   for (const spec of WORLD_LAYERS) {
     const src = spec.name === 'lakeDepth' ? fields.lakeDepth : null
     if (!src) continue
     zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
     layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: width, resY: height, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
-  }
-  // Rivers are a DISCHARGE RASTER, not polylines: a field answers "how
-  // big is this river" by sampling, as lakeDepth does, where a polyline's
-  // only attribute was a drawing width (109 KB compressed against 303 KB
-  // of JSON).
-  if (fields.dischargeM3s) {
-    zip.file(`layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, bakeLayer(fields.dischargeM3s, DISCHARGE_LAYER))
-    layers.push({
-      name: DISCHARGE_LAYER.name, file: `layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, kind: 'raster',
-      resX: width, resY: height, dtype: DISCHARGE_LAYER.dtype,
-      encoding: { scale: DISCHARGE_LAYER.scale, offset: DISCHARGE_LAYER.offset },
-      unit: DISCHARGE_LAYER.unit, landOnly: DISCHARGE_LAYER.landOnly,
-    })
   }
   // The standing-water list: a table beside the rasters, the truth
   // `lakeDepth` derives from (hydrology.lakeDepthFromBodies), in this
@@ -234,9 +227,11 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
     zip.file('layers/waterBodies.json', JSON.stringify(fields.waterBodies))
     layers.push({ name: 'waterBodies', file: 'layers/waterBodies.json', kind: 'table' })
   }
-  // The coast reaches, the same way: cells as indices into this raster.
-  if (fields.coast) {
-    zip.file('layers/coast.json', JSON.stringify({ reaches: fields.coast.reaches, cells: Array.from(fields.coast.cells) }))
+  // The coast reaches: their nodes as vertex ids of the saved mesh (the
+  // mesh is canonical, so the session's ids are the save's), so only with
+  // the mesh they index.
+  if (fields.coast && mesh) {
+    zip.file('layers/coast.json', JSON.stringify({ reaches: fields.coast.reaches, nodes: Array.from(fields.coast.nodes) }))
     layers.push({ name: 'coast', file: 'layers/coast.json', kind: 'table' })
   }
   // The sediment basins: what this session's erosion deposited, with
@@ -258,6 +253,10 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
       zip.file(LAND_FILES.biome, land.biome.slice().buffer as ArrayBuffer)
       zip.file(LAND_FILES.koppen, land.koppen.slice().buffer as ArrayBuffer)
       if (land.waterTable) zip.file(LAND_FILES.waterTable, land.waterTable.slice().buffer as ArrayBuffer)
+      // Rivers are a DISCHARGE FIELD, not polylines: a field answers "how
+      // big is this river" by sampling, as lakeDepth does, where a
+      // polyline's only attribute was a drawing width.
+      if (land.discharge) zip.file(LAND_FILES.discharge, land.discharge.slice().buffer as ArrayBuffer)
     }
   }
   const manifest = {
@@ -271,7 +270,7 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
       nodes: mesh.count,
       files: {
         nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32', column: mesh.column ? 'mesh/column.bin' : undefined,
-        ...(fields.land && fields.land.count === mesh.count ? { biome: LAND_FILES.biome, koppen: LAND_FILES.koppen, waterTable: fields.land.waterTable ? LAND_FILES.waterTable : undefined } : {}),
+        ...(fields.land && fields.land.count === mesh.count ? { biome: LAND_FILES.biome, koppen: LAND_FILES.koppen, waterTable: fields.land.waterTable ? LAND_FILES.waterTable : undefined, discharge: fields.land.discharge ? LAND_FILES.discharge : undefined } : {}),
       },
     } : undefined,
     climate: fields.climate ? { file: 'climate.json', cells: fields.climate.cells, spacingM: fields.climate.spacingM } : undefined,

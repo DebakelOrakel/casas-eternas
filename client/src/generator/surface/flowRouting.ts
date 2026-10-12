@@ -1,86 +1,20 @@
-import { MinHeap } from '../core/minHeap'
 import type { Domain, DomainGrid } from '../core/domain'
-import { detAtan2, detHypot, detSin } from '../core/detMath'
 
-// Drainage routing on the flat torus: priority-flood depression filling, D8-LTD
-// flow direction, multiple-flow-direction edges. This is the layer that turns
-// a raw elevation raster into a river network for the HYDROLOGY (hydrology.ts,
-// the bake's river re-derivation, the bake plan); the erosion engine keeps its
-// own routing state in active space (erosionEngine.ts) and hands the hydrology
-// a FlowRouting through erosionEngineBridge.ts.
-//
-// The model is Cordonnier et al. 2016 (see
-// docs/decisions/plate-tectonics-simulation.md), on the domain's grid: on the
-// torus it wraps in BOTH axes, y exactly like x, and every cell has identical
-// area and spacing. On the sphere (DEC-0035, step 4e) a row's cells are
-// rowScale wide (cos φ), so a step east or west is that long and a diagonal
-// step hypot(rowScale, 1): `RowMetric` below. On the torus each of its
-// numbers is the constant the code used before (1, 1, √2, π/4), so the
-// arithmetic is the torus's, as it was.
+// The raster's routing vocabulary, as the erosion engine's raster index
+// (erosionEngineState.ts) and its bridge (erosionEngineBridge.ts) still use
+// it: the D8 slot order, the routing's shape, the MFD edges, the world
+// ocean. The raster ROUTING itself — the priority flood, the D8-LTD
+// receivers and the MFD edges over a 2:1 raster, which turned a raw
+// elevation raster into a river network for the hydrology — went in
+// DEC-0036 phase 7b: the hydrology runs on the terrain mesh's flow
+// substrate (flowSubstrate.ts, mesh/meshHydrology.ts). Its algorithm
+// (Cordonnier et al. 2016, docs/decisions/plate-tectonics-simulation.md)
+// lives on in the erosion engine's own routing (erosionEngine.ts), which
+// the mesh's routing is.
 
-// The step lengths of one row, in equator cells: east-west `ew`, north-south
-// 1, diagonal `diag`; and the two facet angles of the LTD rule (the angle of
-// the diagonal from an east-west and from a north-south cardinal).
-interface RowMetric {
-  ew: Float64Array
-  diag: Float64Array
-  fromEw: Float64Array
-  fromNs: Float64Array
-}
-
-function rowMetric(grid: DomainGrid): RowMetric {
-  const rows = grid.resY
-  const ew = new Float64Array(rows)
-  const diag = new Float64Array(rows)
-  const fromEw = new Float64Array(rows)
-  const fromNs = new Float64Array(rows)
-  for (let y = 0; y < rows; y++) {
-    const s = grid.rowScale(y)
-    ew[y] = s
-    // detHypot(1, 1) is Math.SQRT2 and detAtan2(1, 1) is π / 4, bit for bit.
-    diag[y] = detHypot(s, 1)
-    fromEw[y] = detAtan2(1, s)
-    fromNs[y] = detAtan2(s, 1)
-  }
-  return { ew, diag, fromEw, fromNs }
-}
-
-// Called at every progress-reporting checkpoint across this module's
-// long loops (fillDepressions' pop count). When it yields, it awaits
-// a real macrotask boundary (a zero-delay setTimeout), because that is
-// what the generator pipeline's 'erode' handler (pipeline/runtime.ts)
-// needs: postMessage calls made during a long, uninterrupted synchronous
-// stretch get queued for delivery, but browsers commonly don't actually
-// flush that delivery to the main thread until the sending side yields
-// back to its own event loop — without yielding often enough, a ~10+
-// second erosion pass reads as one all-at-once burst of progress
-// messages right before the final render, not a live updating
-// percentage.
-//
-// Throttled by WALL CLOCK, not by call count. The history matters: an
-// early 1-in-8 call throttle wasn't frequent enough to read as live, so
-// it became unconditional — and the unconditional version was then
-// measured (2026-08-16, erosion-v2 P1 spike) to cost 57 % of an entire
-// erosion iteration in Node at 1024², because each yield is a full
-// setTimeout macrotask (~1 ms Node, 1-4 ms browser-clamped) and the
-// count-based checkpoints scale with the raster. A count throttle can
-// never be right here — the right cadence is in units of TIME (how often
-// a human-facing progress bar needs a flush), and 50 ms keeps progress
-// at 20 flushes/s while cutting the macrotask tax to a fixed ~2 % no
-// matter the grid. The non-yielding path returns undefined rather than a
-// resolved Promise: `await undefined` costs a microtask, not a timer.
-const YIELD_INTERVAL_MS = 50
-let lastYieldAt = 0
-function maybeYield(): Promise<void> | undefined {
-  const now = performance.now()
-  if (now - lastYieldAt < YIELD_INTERVAL_MS) return undefined
-  lastYieldAt = now
-  return new Promise((resolve) => setTimeout(resolve, 0))
-}
-
-// Fixed N,NE,E,SE,S,SW,W,NW order — fillDepressionsAndRouteFlow and any
-// future river tracing both walk neighbors in this order, so a stored
-// direction index means the same thing everywhere it's used.
+// Fixed N,NE,E,SE,S,SW,W,NW order — the raster engine walks neighbours in
+// this order, so a stored direction index means the same thing everywhere
+// it's used.
 export const D8_OFFSETS: ReadonlyArray<readonly [dx: number, dy: number]> = [
   [0, -1],
   [1, -1],
@@ -100,18 +34,15 @@ export interface FlowRouting {
   domain: Domain
   grid: DomainGrid
   // Depression-filled elevations — always >= raw everywhere. A cell whose
-  // filled value differs from its raw value is (part of) a lake; this is
-  // also exactly the data a future rivers/lakes pass needs (see the
-  // module comment at the bottom of this file).
+  // filled value differs from its raw value is (part of) a lake.
   filled: Float32Array
-  // Downstream neighbor's cell index (single-flow, chosen by D8-LTD — see
-  // computeLtdFlowTargets), or -1 for an unrouted/terminal cell (only
-  // possible if there were zero ocean seed cells — see below). Used for
-  // river tracing.
+  // Downstream neighbor's cell index (single-flow, chosen by D8-LTD — the
+  // engine's receiver scan), or -1 for an unrouted/terminal cell (only
+  // possible if there were zero ocean seed cells).
   flowTarget: Int32Array
   // Multiple-flow-direction edges, used for drainage-area accumulation
-  // (see computeMfdEdges's own comment for why accumulation and incision
-  // deliberately use different routing).
+  // (accumulation and incision deliberately use different routing — the
+  // generator CLAUDE.md's "Routing differs by step").
   mfd: MfdEdges
   // Cells in the exact order the flood popped them — a valid topological
   // order for the flow graph (a cell is always popped before any
@@ -122,11 +53,9 @@ export interface FlowRouting {
   poppedCount: number
 }
 
-const EPSILON_FLOOD_STEP = 1e-7
-
 // Mask of the largest 4-connected ≤ seaLevel component — the world ocean.
 // Null when there is no water at all. O(n) flood fill; cheap next to the
-// priority flood it feeds.
+// priority flood it seeds (the raster engine's).
 export function largestWaterComponent(raw: Float32Array, grid: DomainGrid, seaLevel: number): Uint8Array | null {
   const width = grid.resX
   const n = width * grid.resY
@@ -164,272 +93,6 @@ export function largestWaterComponent(raw: Float32Array, grid: DomainGrid, seaLe
   return mask
 }
 
-// Priority-flood depression filling + D8 flow-direction assignment,
-// seeded from the ocean (every cell at or below seaLevel) rather than a
-// map edge — this grid wraps in both axes (no edge to drain off of
-// either), so the ocean itself plays the role a map's border plays in
-// the classic (bounded-tile) priority-flood algorithm (Barnes, Lehman &
-// Mulla 2014). Uses the "epsilon-flood" variant (each newly-flooded cell
-// gets max(raw, filled[source]) + a tiny epsilon) so the filled surface
-// has a well-defined downhill gradient *everywhere*, including across a
-// lake, without a separate flat-drainage resolution pass.
-//
-// This pass only produces `filled` and `popOrder`/`poppedCount` — flow
-// *direction* is deliberately NOT assigned here (see the empirical note
-// on computeSteepestDescentFlowTargets below for why an earlier version
-// that did assign it here, as a side effect of which cell's expansion
-// reached a neighbor first, turned out to be a real bug, not just a
-// simplification).
-//
-// If there are zero cells at or below seaLevel (a fully continental
-// world), nothing gets seeded, poppedCount stays 0, and filled stays all
-// zero — a graceful no-routing degradation (computeSteepestDescentFlowTargets
-// then finds no downhill gradient anywhere and leaves every flowTarget at
-// -1) rather than a crash.
-async function fillDepressions(raw: Float32Array, grid: DomainGrid, seaLevel: number, onProgress?: (fraction: number) => void): Promise<{ filled: Float32Array; popOrder: Int32Array; poppedCount: number }> {
-  const width = grid.resX
-  const cellCount = width * grid.resY
-  const filled = new Float32Array(cellCount)
-  const popOrder = new Int32Array(cellCount)
-  const visited = new Uint8Array(cellCount)
-  const heap = new MinHeap(cellCount)
-
-  // Torus mode seeds only the WORLD OCEAN — the largest connected ≤ seaLevel
-  // body (2026-08-06). Seeding every ≤ seaLevel cell made any ENCLOSED
-  // sub-sea-level basin (a landlocked ocean remnant, a deep rift graben) an
-  // unconditional "sea at level 0": always brim-full regardless of climate,
-  // and a base level the flood radiated from. Seeded from the world ocean
-  // alone, an enclosed basin is what it physically is — a depression: the
-  // flood fills it to its spill, computeLakes then classifies it as a
-  // TERMINAL SEA and sets its real water level from inflow vs evaporation
-  // (the Caspian/Chad class).
-  const oceanSeed = largestWaterComponent(raw, grid, seaLevel)
-  const metric = rowMetric(grid)
-  for (let i = 0; i < cellCount; i++) {
-    if (oceanSeed && oceanSeed[i] === 1) {
-      filled[i] = raw[i]
-      visited[i] = 1
-      heap.push(filled[i], i)
-    }
-  }
-
-  let poppedCount = 0
-  // Reporting every pop would itself be a meaningful cost at ~2M pops —
-  // ~200 progress callbacks over the whole run is enough for a UI
-  // progress bar without that overhead.
-  const progressStep = Math.max(1, Math.floor(cellCount / 200))
-  while (heap.length > 0) {
-    heap.pop()
-    const current = heap.poppedIndex
-    popOrder[poppedCount] = current
-    poppedCount++
-    if (poppedCount % progressStep === 0) {
-      onProgress?.(poppedCount / cellCount)
-      await maybeYield()
-    }
-
-    const y = (current / width) | 0
-    const x = current - y * width
-    for (const [dx, dy] of D8_OFFSETS) {
-      const neighbor = grid.neighbour(x, y, dx, dy)
-      if (neighbor < 0 || visited[neighbor]) continue
-      visited[neighbor] = 1
-      // Scaled by step distance (a diagonal hop is really √2 away, not
-      // 1), for consistency with computeSteepestDescentFlowTargets's own
-      // distance normalization — but note this alone does NOT explain a
-      // real, empirically-confirmed cardinal-direction drift under
-      // repeated v1 erosion passes (measured 2026-08: a direction
-      // histogram drifted from ~54% to ~68% cardinal share); re-tested
-      // after adding this and the drift was
-      // unchanged; EPSILON_FLOOD_STEP (1e-7) is simply too small relative
-      // to real per-pass elevation deltas (~1e-3) for its own distance
-      // scaling to matter. Left in as a real (if minor) correctness fix
-      // on its own terms, not as the fix for that drift.
-      const stepDistance = dx !== 0 && dy !== 0 ? metric.diag[y] : dx !== 0 ? metric.ew[y] : 1
-      filled[neighbor] = Math.max(raw[neighbor], filled[current]) + EPSILON_FLOOD_STEP * stepDistance
-      heap.push(filled[neighbor], neighbor)
-    }
-  }
-
-  onProgress?.(1)
-  return { filled, popOrder, poppedCount }
-}
-
-// True per-cell steepest descent over the filled surface — distance-
-// weighted (a diagonal neighbor is really √2 away, not 1), independent
-// for every cell, rather than derived from priority-flood's own
-// expansion order.
-//
-// THE SINGLE-FLOW RECEIVER IS D8-LTD (Orlandini et al. 2003), NOT PLAIN
-// STEEPEST DESCENT — since 2026-08-15, and the change is about MEMORY, not
-// about steepness.
-//
-// Plain D8 quantises flow to 8 directions and forgets that it rounded: on a
-// smooth hillside whose true fall line runs, say, 15° off an axis, every cell
-// makes the SAME rounding error, so the error accumulates instead of
-// averaging out and a hundred neighbouring cells produce a hundred parallel,
-// axis-true courses. Measured on a plane tilted 15°: plain steepest descent
-// holds one direction for 750 cells straight. On baked terrain the defect
-// GROWS with resolution, because finer cells see locally smoother ground —
-// streaks of ≥8 cells covered 3.1 % of routed land at 4K and 12.2 % at 16K.
-//
-// LTD keeps ONE receiver per cell — everything downstream (incision, the
-// topological walk, polyline extraction) is untouched — but chooses it to
-// minimise the ACCUMULATED transverse deviation from the true fall line
-// (Tarboton's facet direction) rather than to maximise the local drop. The
-// running deviation λ is the memory: the rounding error changes sign instead
-// of piling up. Same tilted plane: mean streak 1.9 cells, and the mix of the
-// two bracketing directions reproduces the true angle to a percentage point
-// (27 % diagonal steps against tan 15° = 26.8 %). On real 16K terrain it cuts
-// ≥8-cell streaks from 12.2 % to 4.7 % and, at identical channel length,
-// nearly doubles the confluences — the lateral competition quantisation
-// suppresses.
-//
-// λ is carried along the flow NETWORK, not a single path: at a confluence the
-// downstream cell inherits λ from its largest contributor (the main stem),
-// because that is the course the channel below actually continues. Walking
-// popOrder backwards visits every cell after all of its contributors, so one
-// pass suffices — the same order every consumer of popOrder relies on.
-//
-// (History worth keeping: before the separate routing pass existed at all,
-// receivers were assigned inside fillDepressions's own flood loop, and the
-// flood's 8-connected spanning tree put 99.7 % of all flow on the 4 diagonal
-// directions regardless of terrain. That was the first lesson that the
-// receiver choice is its own concern; LTD is the second.)
-
-// The eight triangular facets, each a (cardinal, adjacent diagonal) pair of
-// D8_OFFSETS indices. `orient` is which way the diagonal lies from the
-// cardinal, and it is what keeps the transverse deviation a signed quantity
-// in ONE global rotational sense — without it, λ would accumulate nonsense
-// the moment a path crosses from one facet into the next.
-const LTD_FACETS: ReadonlyArray<readonly [cardinal: number, diagonal: number, orient: number]> = [
-  [0, 1, +1], // N  → NE
-  [2, 1, -1], // E  → NE
-  [2, 3, +1], // E  → SE
-  [4, 3, -1], // S  → SE
-  [4, 5, +1], // S  → SW
-  [6, 5, -1], // W  → SW
-  [6, 7, +1], // W  → NW
-  [0, 7, -1], // N  → NW
-]
-
-// On the sphere a facet is a rectangle's half (Tarboton's general form): the
-// cardinal `d1` away, the diagonal `d2` beyond it, the angle clamped at
-// atan(d2 / d1) instead of 45°, and each offset from the fall line times
-// its own step's length. The facets across a pole keep the chart's
-// orientation, which is mirrored there: a pole row's fall direction is
-// approximate, its receiver still a downhill neighbour.
-function computeLtdFlowTargets(filled: Float32Array, grid: DomainGrid, popOrder: Int32Array, poppedCount: number): Int32Array {
-  const width = grid.resX
-  const metric = rowMetric(grid)
-  const cellCount = width * grid.resY
-  const flowTarget = new Int32Array(cellCount).fill(-1)
-  // λ, and the main-stem bookkeeping that decides whose λ a confluence
-  // inherits. Contributor counts are exact integers on purpose: Float32
-  // cannot count past 2^24, and a fuzzy comparison here would make the
-  // main-stem choice — and with it the terrain — imprecision-dependent.
-  const lambda = new Float32Array(cellCount)
-  const contrib = new Uint32Array(cellCount)
-  const bestInflow = new Uint32Array(cellCount)
-
-  for (let i = poppedCount - 1; i >= 0; i--) {
-    const cell = popOrder[i]
-    const x = cell % width
-    const y = (cell - x) / width
-    const ownElevation = filled[cell]
-    const ew = metric.ew[y]
-    const diag = metric.diag[y]
-
-    // One scan finds both the steepest facet (the true fall direction) and
-    // the plain steepest neighbour (the fallback for cells whose facets are
-    // cut off by a bounded grid's edge). atan2 is deferred to the winner —
-    // this loop runs once per cell per routing refresh.
-    let bestSlope = 0
-    let bestFacet = -1
-    let bestS1 = 0
-    let bestS2 = 0
-    let bestGradient = 0
-    let fallback = -1
-    for (let f = 0; f < LTD_FACETS.length; f++) {
-      const facet = LTD_FACETS[f]
-      const co = D8_OFFSETS[facet[0]]
-      const dd = D8_OFFSETS[facet[1]]
-      // The cardinal's distance and the diagonal's beyond it: 1 and 1 on
-      // the torus.
-      const d1 = co[0] !== 0 ? ew : 1
-      const d2 = co[0] !== 0 ? 1 : ew
-      const nc = grid.neighbour(x, y, co[0], co[1])
-      if (nc >= 0) {
-        const gradient = (ownElevation - filled[nc]) / d1
-        if (gradient > bestGradient) { bestGradient = gradient; fallback = nc }
-      }
-      const nd = grid.neighbour(x, y, dd[0], dd[1])
-      if (nd >= 0 && f % 2 === 0) {
-        // Each diagonal appears in two facets; checking it once is enough
-        // for the fallback.
-        const gradient = (ownElevation - filled[nd]) / diag
-        if (gradient > bestGradient) { bestGradient = gradient; fallback = nd }
-      }
-      if (nc < 0 || nd < 0) continue
-      // Tarboton's facet slopes, per length — the cardinal neighbour is d1
-      // away and the diagonal d2 further from IT (both 1 on the torus).
-      const s1 = (ownElevation - filled[nc]) / d1
-      const s2 = (filled[nc] - filled[nd]) / d2
-      let slope: number
-      if (s2 <= 0) slope = s1 // direction clamps onto the cardinal
-      else if (s2 * d1 >= s1 * d2) slope = (ownElevation - filled[nd]) / diag // onto the diagonal
-      else slope = detHypot(s1, s2)
-      if (slope > bestSlope) { bestSlope = slope; bestFacet = f; bestS1 = s1; bestS2 = s2 }
-    }
-
-    let target = fallback
-    let delta = 0
-    if (bestFacet >= 0) {
-      const facet = LTD_FACETS[bestFacet]
-      const orient = facet[2]
-      const co = D8_OFFSETS[facet[0]]
-      const dd = D8_OFFSETS[facet[1]]
-      const nc = grid.neighbour(x, y, co[0], co[1])
-      const nd = grid.neighbour(x, y, dd[0], dd[1])
-      const d1 = co[0] !== 0 ? ew : 1
-      const d2 = co[0] !== 0 ? 1 : ew
-      // The facet's widest angle: π / 4 on the torus, to the bit.
-      const alphaMax = co[0] !== 0 ? metric.fromEw[y] : metric.fromNs[y]
-      const alpha = bestS2 <= 0 ? 0 : bestS2 * d1 >= bestS1 * d2 ? alphaMax : detAtan2(bestS2, bestS1)
-      // Perpendicular offset of each candidate from the true fall line: the
-      // cardinal sits d1·sin α off it, the diagonal diag·sin(αmax − α) the
-      // other way (sin α and √2·sin(45° − α) on the torus).
-      const deltaCardinal = -orient * d1 * detSin(alpha)
-      const deltaDiagonal = orient * diag * detSin(alphaMax - alpha)
-      const lam = lambda[cell]
-      const cardinalDown = filled[nc] < ownElevation
-      const diagonalDown = filled[nd] < ownElevation
-      if (cardinalDown && diagonalDown) {
-        // The whole method in one comparison: not "which is steeper" but
-        // "which keeps the path closest to where the water actually goes".
-        if (Math.abs(lam + deltaCardinal) <= Math.abs(lam + deltaDiagonal)) { target = nc; delta = deltaCardinal }
-        else { target = nd; delta = deltaDiagonal }
-      } else if (cardinalDown) { target = nc; delta = deltaCardinal }
-      else if (diagonalDown) { target = nd; delta = deltaDiagonal }
-      // Neither corner strictly down cannot happen for a facet with positive
-      // slope; the fallback already covers the float fringe.
-    }
-
-    flowTarget[cell] = target
-    if (target < 0) continue
-    const area = contrib[cell] + 1
-    contrib[target] += area
-    if (area > bestInflow[target]) {
-      bestInflow[target] = area
-      lambda[target] = lambda[cell] + delta
-    }
-  }
-
-  // Cells the flood never popped (possible only with zero ocean seeds) keep
-  // -1, exactly as before.
-  return flowTarget
-}
-
 export interface MfdEdges {
   // CSR layout: cell i's outgoing (downhill) edges are
   // outEdgeDirections[outEdgeStart[i] .. outEdgeStart[i + 1]), each paired
@@ -441,7 +104,7 @@ export interface MfdEdges {
   // An edge's target as a D8 DIRECTION INDEX into D8_OFFSETS, not as a cell
   // index — a target is always one of the eight neighbors, so it fits in a
   // byte, and the cell index is recovered with the same grid.neighbour call
-  // that built it (see edgeTarget below). Storing absolute Int32 indices
+  // that built it. Storing absolute Int32 indices
   // cost four bytes per edge for information three bits carry; at ~2.9
   // edges per cell that is ~9 bytes per cell of pure overhead, which on the
   // worldmap's amplified grids ran into hundreds of megabytes (measured
@@ -450,114 +113,4 @@ export interface MfdEdges {
   // be stored.
   outEdgeDirections: Uint8Array
   outEdgeWeights: Float32Array
-}
-
-// Decode one CSR edge back to its target cell index.
-export function edgeTarget(mfd: MfdEdges, cell: number, edge: number, grid: DomainGrid): number {
-  const x = cell % grid.resX
-  const y = (cell - x) / grid.resX
-  const [dx, dy] = D8_OFFSETS[mfd.outEdgeDirections[edge]]
-  return grid.neighbour(x, y, dx, dy)
-}
-
-// Multiple-flow-direction routing (Freeman 1991 / Quinn et al. 1991):
-// distributes each cell's outflow across *every* downhill neighbor,
-// weighted by slope, instead of committing 100% of it to a single
-// steepest one — the drainage-area estimate.
-// Incision still follows a single steepest path per cell
-// (FlowRouting.flowTarget) — the standard combination in
-// landscape-evolution models: channel incision genuinely happens along
-// one thalweg, so a single representative slope is physically
-// reasonable there, but upstream drainage *area* is exactly where
-// single-flow-direction's grid-aligned channelization showed up in
-// practice (the empirical history, measured on the v1 pass: a direction
-// histogram over repeated erosion passes
-// drifted from ~54% to ~68% cardinal-direction share, and neither
-// epsilon scaling nor the incision step's own distance weighting turned
-// out to be the cause when tested directly — MFD sidesteps the whole
-// "which single direction wins" question for area instead of chasing
-// that cause further).
-//
-// Linear weighting (weight ∝ slope, not slope^p for some p > 1) rather
-// than the literature-typical Freeman exponent (~1.1) — a starting
-// simplification, not an empirically-tuned choice; a higher exponent
-// would concentrate flow more (closer to single-flow-direction) and a
-// lower one would spread it more evenly. Computes each cell's downhill
-// neighbor set twice (once to size the CSR arrays, once to fill them)
-// rather than caching it between passes — twice through an 8-neighbor
-// scan is still a small, linear cost next to the actual per-pixel
-// elevation query elsewhere in this app's render pipeline.
-function computeMfdEdges(filled: Float32Array, grid: DomainGrid): MfdEdges {
-  const { resX: width, resY: height } = grid
-  const cellCount = width * height
-  const outDegree = new Uint8Array(cellCount)
-  // Reused across every cell rather than allocated fresh each time — at
-  // most 8 entries ever live at once (one per D8 neighbor).
-  const scratchDirections = new Uint8Array(8)
-  const scratchWeights = new Float32Array(8)
-  const metric = rowMetric(grid)
-
-  const collectDownhillNeighbors = (cell: number, x: number, y: number): number => {
-    const ownElevation = filled[cell]
-    let count = 0
-    let weightSum = 0
-    for (let dir = 0; dir < D8_OFFSETS.length; dir++) {
-      const [dx, dy] = D8_OFFSETS[dir]
-      const neighbor = grid.neighbour(x, y, dx, dy)
-      if (neighbor < 0) continue
-      const drop = ownElevation - filled[neighbor]
-      if (drop <= 0) continue
-      const distance = dx !== 0 && dy !== 0 ? metric.diag[y] : dx !== 0 ? metric.ew[y] : 1
-      const weight = drop / distance
-      scratchDirections[count] = dir
-      scratchWeights[count] = weight
-      weightSum += weight
-      count++
-    }
-    for (let i = 0; i < count; i++) scratchWeights[i] /= weightSum
-    return count
-  }
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const cell = y * width + x
-      outDegree[cell] = collectDownhillNeighbors(cell, x, y)
-    }
-  }
-
-  const outEdgeStart = new Int32Array(cellCount + 1)
-  for (let i = 0; i < cellCount; i++) outEdgeStart[i + 1] = outEdgeStart[i] + outDegree[i]
-  const outEdgeDirections = new Uint8Array(outEdgeStart[cellCount])
-  const outEdgeWeights = new Float32Array(outEdgeStart[cellCount])
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const cell = y * width + x
-      const count = collectDownhillNeighbors(cell, x, y)
-      const base = outEdgeStart[cell]
-      for (let i = 0; i < count; i++) {
-        outEdgeDirections[base + i] = scratchDirections[i]
-        outEdgeWeights[base + i] = scratchWeights[i]
-      }
-    }
-  }
-
-  return { outEdgeStart, outEdgeDirections, outEdgeWeights }
-}
-
-// `domain`: what the raster covers, one cell per unit.
-export async function fillDepressionsAndRouteFlow(raw: Float32Array, domain: Domain, seaLevel: number, onProgress?: (fraction: number) => void): Promise<FlowRouting> {
-  const { width, height } = domain
-  const grid = domain.grid(width, height)
-  const { filled, popOrder, poppedCount } = await fillDepressions(raw, grid, seaLevel, onProgress)
-  // popOrder remains a valid topological order for both of these, with
-  // no change needed: both the LTD receiver and every MFD edge only ever
-  // route a cell to a neighbor strictly below its own filled elevation, and
-  // filled is monotonically non-decreasing outward from the ocean by
-  // construction — so a cell's target(s) were always popped no later
-  // than the cell itself, exactly what the discharge accumulation's reverse walk
-  // requires.
-  const flowTarget = computeLtdFlowTargets(filled, grid, popOrder, poppedCount)
-  const mfd = computeMfdEdges(filled, grid)
-  return { width, height, domain, grid, filled, flowTarget, mfd, popOrder, poppedCount }
 }

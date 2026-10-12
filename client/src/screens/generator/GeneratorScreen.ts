@@ -1478,10 +1478,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastWaterBodies: WaterBody[] | null = null
   let lastWaterLevel: Float32Array | null = null
   let lastWaterSurface: Uint8Array | null = null
-  // The coast (surface/coastGraph.ts): the type per cell the shore drawing
-  // reads, and the reach list the save carries.
+  // The coast (surface/coastGraph.ts): the type per pixel the shore drawing
+  // reads, and the reach list with its mesh nodes the save carries.
   let lastCoastType: Uint8Array | null = null
-  let lastCoast: { reaches: CoastReach[]; cells: Int32Array } | null = null
+  let lastCoast: { reaches: CoastReach[]; nodes: Int32Array } | null = null
   // The erosion pass's deposits as features (surface/sedimentBasins.ts).
   let lastSedimentBasins: SedimentBasin[] | null = null
   // Precipitation INCLUDING the riparian bonus — what the biomes were actually
@@ -4045,7 +4045,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (message.waterLevel.byteLength > 0) lastWaterLevel = new Float32Array(message.waterLevel)
     if (message.waterSurface.byteLength > 0) lastWaterSurface = new Uint8Array(message.waterSurface)
     if (message.coastType.byteLength > 0) lastCoastType = new Uint8Array(message.coastType)
-    if (message.coast) lastCoast = { reaches: message.coast.reaches, cells: new Int32Array(message.coast.cells) }
+    if (message.coast) lastCoast = { reaches: message.coast.reaches, nodes: new Int32Array(message.coast.nodes) }
     if (message.sedimentBasins) lastSedimentBasins = message.sedimentBasins
     if (lastWaterLevel && lastWaterSurface) for (const view of waterViews()) view.setWaterLevels(lastWaterLevel, lastWaterSurface, lastCoastType)
     if (message.watersheds.byteLength > 0) lastWatersheds = new Uint16Array(message.watersheds)
@@ -5114,9 +5114,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           land: message.land ? {
             count: message.land.count, biome: new Uint8Array(message.land.biome), koppen: new Uint8Array(message.land.koppen),
             waterTable: message.land.waterTable ? new Float32Array(message.land.waterTable) : null,
+            discharge: message.land.discharge ? new Float32Array(message.land.discharge) : null,
           } : null,
           lakeDepth: lastLakeDepth,
-          dischargeM3s: lastDischargeField ? ((unit) => lastDischargeField.map((q) => q * unit))(dischargeUnitM3s()) : null,
           refined: lastRefinedValues,
           waterBodies: lastWaterBodies,
           coast: lastCoast,

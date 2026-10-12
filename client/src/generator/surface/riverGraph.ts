@@ -1,8 +1,7 @@
 import type { SpringFeature } from './hydrogeology'
-import type { FlowRouting } from './flowRouting'
-import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
+import type { FlowSubstrate } from './flowSubstrate'
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
-import type { Domain, DomainGrid } from '../core/domain'
+import type { Domain } from '../core/domain'
 import { detHypot } from '../core/detMath'
 import { buildChannelMaskOn, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE } from './hydrology'
 import type { RegimeInputs, RiverPolylines, WaterBody } from './hydrology'
@@ -21,9 +20,10 @@ import type { RiverCourse } from './riverCourse'
 // catchment is recorded, which is the divide as data: the cells of the
 // world that drain to that mouth.
 //
-// Derived from a FLOW SUBSTRATE (flowSubstrate.ts) — the raster's routing
-// or the mesh's (phase 4.3) — deterministically. A reach's `cells` are
-// that substrate's element ids (raster cells, or mesh vertex ids), and
+// Derived from a FLOW SUBSTRATE (flowSubstrate.ts) — the mesh's (phase 4.3;
+// the raster's until DEC-0036 phase 7b) — deterministically. A reach's
+// `cells` are that substrate's element ids (mesh vertex ids; a graph read
+// back from an older artifact may still be a raster's), and
 // every consumer that needs a place reads `cellX`/`cellY`, the elements'
 // texel positions carried beside them, never the id as a raster index.
 // The river ribbons the generator draws are DERIVED from it
@@ -121,9 +121,8 @@ export interface RiverGraph {
 }
 
 export interface RiverGraphInputs {
-  // The raster's routing, or any substrate (the mesh's) — one of the two.
-  routing?: FlowRouting
-  substrate?: FlowSubstrate
+  // The flow substrate (the mesh's).
+  substrate: FlowSubstrate
   discharge: Float32Array
   elevation: Float32Array
   // The channel criterion, as the hydrology derives it (channelThreshold).
@@ -137,7 +136,7 @@ export interface RiverGraphInputs {
   sedimentFlux?: Float32Array
   biomes?: Uint8Array
   // The catchment's potential evaporation and dry-season precipitation,
-  // accumulated like the discharge (hydrology.accumulateRegimeInputs).
+  // accumulated like the discharge (hydrology.accumulateRegimeInputsOn).
   regime?: RegimeInputs
   // The channel criterion's catchment, in cells (hydrology.densityToCriticalArea).
   // With `regime`, it admits WADIS: a cell with that much catchment but too
@@ -171,8 +170,7 @@ function riverWidth(discharge: number, maxDischarge: number): number {
 
 export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
   const { discharge, elevation, threshold, maxDischarge, bodies, body, lakeDepth } = input
-  const sub = input.substrate ?? (input.routing ? rasterSubstrate(input.routing) : null)
-  if (!sub) throw new Error('buildRiverGraph: a routing or a substrate is needed')
+  const sub = input.substrate
   const { width, height, flowTarget, popOrder, poppedCount, count: n } = sub
   const cellKm = sub.domain.metresAround / width / 1000
   const channel = buildChannelMaskOn(sub, elevation, discharge, threshold)
@@ -379,9 +377,8 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
   // is put where that step crosses sea level instead: the heights are linear
   // along a mesh edge, so that is the coastline the map draws. The mouth
   // node keeps its water cell (the coast and the sediment basins read the
-  // node and the last land cell). The raster's step is one cell, so it keeps
-  // the cell centre as it always did.
-  if (sub.kind === 'mesh') {
+  // node and the last land node).
+  {
     // Along the step in the land node's frame (Domain.delta, advance): on
     // the torus the minimum image and the wrap, as written by hand before;
     // on the sphere the arc.
@@ -400,14 +397,6 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
     }
   }
   return { width, height, substrate: sub.kind, nodes, reaches, cells, cellX, cellY, bodies: bodies.slice() }
-}
-
-// The raster cell under a texel position — how a raster consumer (the
-// coast, the sediment basins) places a graph node or reach cell, whatever
-// substrate the graph came from. On a raster graph it is the cell itself.
-// `grid`: the raster's grid over the domain, one cell per texel.
-export function rasterCellAt(x: number, y: number, grid: DomainGrid): number {
-  return grid.index(Math.floor(x), Math.floor(y))
 }
 
 // Seam test for consecutive line points: a jump of more than half the

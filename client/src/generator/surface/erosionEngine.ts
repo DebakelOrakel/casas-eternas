@@ -319,9 +319,9 @@ export function shelfBandCells(domain: Domain, width: number, params: ErosionEng
 // ------------------------------------------------------------------- scans
 
 // Per-node receiver scan, active indices [a0, a1). On the raster
-// (FLAG_GRID8) the LTD facet scan (Orlandini 2003, D8-LTD — same method as
-// flowRouting.computeLtdFlowTargets, split scan/walk so the scan runs
-// per-cell parallel): a facet with a frozen member is skipped, the
+// (FLAG_GRID8) the LTD facet scan (Orlandini 2003, D8-LTD — the method the
+// hydrology's raster routing used until DEC-0036 phase 7b, split scan/walk
+// so the scan runs per-cell parallel): a facet with a frozen member is skipped, the
 // steepest-descent fallback still considers every present neighbour. On a
 // mesh, the steepest descent over the star, gradient per reach length —
 // a random star has no eight directions to correct (design/adaptive-mesh.md),

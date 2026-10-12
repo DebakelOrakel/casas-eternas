@@ -1423,19 +1423,29 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   check(`the lakes are plausible on the sphere (${bodies.length} bodies, ${wet} wet cells, ${(100 * wet / Math.max(1, land)).toFixed(1)} % of the land)`,
     badBodies.length === 0 && lakeDepth.every((d) => d >= 0) && wet < 0.15 * land)
 
-  // The coast's invariants on the sphere's grid, the ice on land only.
+  // The coast's invariants on the sphere's terrain mesh (DEC-0036 phase
+  // 7b: its nodes are the saved mesh's vertex ids; the type per node from
+  // the reaches' walk), the ice on land only.
   const CG = await server.ssrLoadModule('/src/generator/surface/coastGraph.ts')
-  const coast = { width: W2, height: H2, reaches: h.coast.reaches, cells: new Int32Array(h.coast.cells), type: new Uint8Array(h.coastType) }
-  const coastBroken = Object.entries(CG.coastGraphInvariants(coast, elevation, world.grid(W2, H2))).filter(([, c]) => c > 0)
-  check(`the coast holds its invariants on the sphere's grid (${coast.reaches.length} reaches)`, coastBroken.length === 0 && coast.reaches.length > 0, coastBroken.map(([k, c]) => `${k}:${c}`).join(' '))
+  const MSerial = await server.ssrLoadModule('/src/generator/mesh/meshSerial.ts')
+  const saved = p.last('worldData').mesh
+  const sphereMesh = MSerial.decodeMesh(world, { count: saved.count, nodes: new Float32Array(saved.nodes), connectivity: new Uint8Array(saved.connectivity) })
+  const coastNodes = new Int32Array(h.coast.nodes)
+  const coastType = new Uint8Array(sphereMesh.vertexSlots)
+  for (const r of h.coast.reaches) for (let k = 0; k < r.nodeCount; k++) coastType[coastNodes[r.nodeStart + k]] = CG.COAST_TYPE_CODE[r.type]
+  const coast = { reaches: h.coast.reaches, nodes: coastNodes, type: coastType }
+  const coastBroken = Object.entries(CG.coastGraphInvariants(coast, sphereMesh, z)).filter(([, c]) => c > 0)
+  const shorePixels = new Uint8Array(h.coastType).reduce((n, t) => n + (t > 0 ? 1 : 0), 0)
+  check(`the coast holds its invariants on the sphere's mesh (${coast.reaches.length} reaches, ${coastNodes.length} nodes, ${shorePixels} typed shore pixels)`, coastBroken.length === 0 && coast.reaches.length > 0 && shorePixels > 0, coastBroken.map(([k, c]) => `${k}:${c}`).join(' '))
   const ice = f32(h.iceThickness)
   check('the ice lies on land only', ice.every((t, i) => t <= 0 || elevation[i] > 0))
 
-  // The basins: finite, their areas the world's (a cell's area between the
-  // pole row's and the equator's), the centroid on the globe.
+  // The basins: finite, their areas the world's (at least the minimum, and
+  // no more than the nodes' share of the globe can hold), the centroid on
+  // the globe.
   const basins = h.sedimentBasins ?? []
-  const cellKm2 = (40000 / W2) ** 2
-  const badBasins = basins.filter((b) => !(Number.isFinite(b.x) && Number.isFinite(b.y) && b.x >= 0 && b.x < W2 && b.y >= 0 && b.y <= H2 && Number.isFinite(b.cratonAge) && b.areaKm2 > 0 && b.areaKm2 <= b.cells * cellKm2 * 1.5))
+  const globeKm2 = 4 * Math.PI * (world.metresPerUnit * W2 / (2 * Math.PI) / 1000) ** 2
+  const badBasins = basins.filter((b) => !(Number.isFinite(b.x) && Number.isFinite(b.y) && b.x >= 0 && b.x < W2 && b.y >= 0 && b.y <= H2 && Number.isFinite(b.cratonAge) && b.areaKm2 >= 243.36 - 1e-6 && b.areaKm2 < globeKm2 && b.volumeKm3 > 0))
   check(`the sediment basins are finite and on the globe (${basins.length} basins)`, badBasins.length === 0, JSON.stringify(badBasins[0] ?? ''))
 })
 
@@ -1444,11 +1454,12 @@ const RIVER_CHART_STEP_HARNESS = 2
 
 test('the climate step\'s primitives on the sphere, each against its mutation', async () => {
   const L = (m) => server.ssrLoadModule(m)
-  const [D, FR, SB, RG, ES, CT, EB, OC, CF, PF, RC, MAP] = await Promise.all([
-    L('/src/generator/core/domain.ts'), L('/src/generator/surface/flowRouting.ts'), L('/src/generator/surface/sedimentBasins.ts'),
+  const [D, LA, SB, RG, ES, CT, EB, OC, CF, PF, RC, MAP, MHY] = await Promise.all([
+    L('/src/generator/core/domain.ts'), L('/src/generator/mesh/lattice.ts'), L('/src/generator/surface/sedimentBasins.ts'),
     L('/src/generator/surface/riverGraph.ts'), L('/src/generator/elevation/elevationScale.ts'), L('/src/generator/climate/climateTuneParams.ts'),
     L('/src/generator/climate/energyBalance.ts'), L('/src/generator/climate/oceanCurrents.ts'), L('/src/generator/climate/climateField.ts'),
     L('/src/generator/planet/planetForcing.ts'), L('/src/generator/surface/riverCourse.ts'), L('/src/generator/core/mapConfig.ts'),
+    L('/src/generator/mesh/meshHydrology.ts'),
   ])
   const sphere = D.sphereDomain(W, H)
   const torus = D.torusDomain(W, H)
@@ -1460,35 +1471,46 @@ test('the climate step\'s primitives on the sphere, each against its mutation', 
 
   // (1) The sediment basins' centroid on the globe: four discs of deposit —
   // a cap on the north pole, one holding the south pole off its centre, one
-  // across the seam, one at mid-latitude. The centroid lies in its basin
-  // and at the disc's centre; the torus's circular mean over the same
-  // cells (the formula before step 4e) misses the polar ones by cells.
+  // across the seam, one at mid-latitude — on the nodes of a geodesic
+  // lattice (the basins are node sets since DEC-0036 phase 7b). The
+  // centroid lies in its basin and at the disc's centre; the torus's
+  // circular mean over a hexagonal lattice of the same chart (the formula
+  // before step 4e) misses the polar ones by cells.
   {
     const discs = [[0, 0, 4.5], [50, H - 3, 6.5], [0.5, 64, 4.5], [180, 40, 3.5]]
-    const before = new Float32Array(W * H).fill(0.05)
-    const after = before.slice()
-    const add = ES.metersToElevation(80)
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        for (const [cx, cy, r] of discs) if (arc(x + 0.5, y + 0.5, cx, cy) <= r) after[y * W + x] += add
+    const basinsOn = (domain, mesh) => {
+      const before = new Float32Array(mesh.vertexSlots).fill(0.05)
+      const after = before.slice()
+      const add = ES.metersToElevation(80)
+      for (let v = 0; v < mesh.vertexSlots; v++) {
+        if (!mesh.vAlive[v]) continue
+        for (const [cx, cy, r] of discs) if (arc(mesh.vx[v], mesh.vy[v], cx, cy) <= r) after[v] += add
       }
+      const substrate = MHY.meshSubstrate(mesh, MHY.meshRouting(mesh, after), MHY.meshAreas(mesh))
+      return { mesh, result: SB.findSedimentBasins({ mesh, before, after, substrate, graph: null }) }
     }
-    const centroids = async (domain) => {
-      const routing = await FR.fillDepressionsAndRouteFlow(after, domain, 0)
-      return SB.findSedimentBasins({ before, after, width: W, height: H, routing, graph: null, cellM: 1000 })
-    }
-    const s = await centroids(sphere)
-    const t = await centroids(torus)
-    const missOf = (result) => discs.map(([cx, cy]) => {
+    const s = basinsOn(sphere, LA.geodesicLattice(sphere, 1))
+    const t = basinsOn(torus, LA.hexLattice(torus, 1))
+    const missOf = ({ result }) => discs.map(([cx, cy]) => {
       const b = result.basins.reduce((best, bb) => (arc(bb.x, bb.y, cx, cy) < arc(best.x, best.y, cx, cy) ? bb : best))
       return arc(b.x, b.y, cx, cy)
     })
-    const inside = s.basins.every((b) => s.label[sphere.grid(W, H).cellAt(b.x, b.y)] === b.id + 1)
+    // In its basin: the node nearest the centroid carries the basin's label.
+    const inside = s.result.basins.every((b) => {
+      let near = -1
+      let best = Infinity
+      for (let v = 0; v < s.mesh.vertexSlots; v++) {
+        if (!s.mesh.vAlive[v]) continue
+        const d = arc(s.mesh.vx[v], s.mesh.vy[v], b.x, b.y)
+        if (d < best) { best = d; near = v }
+      }
+      return s.result.label[near] === b.id + 1
+    })
     const miss = missOf(s)
     const missTorus = missOf(t)
-    check(`the basins' centroids lie in their basins, at the discs' centres on the globe (${s.basins.length} basins, off by ${miss.map((m) => m.toFixed(2)).join(', ')} cells)`,
-      s.basins.length === discs.length && inside && miss.every((m) => m < 0.75))
-    check(`mutation: the torus's circular mean on the same cells misses the polar basins (${missTorus.map((m) => m.toFixed(2)).join(', ')} cells)`, missTorus[0] > 1 && missTorus[1] > 1)
+    check(`the basins' centroids lie in their basins, at the discs' centres on the globe (${s.result.basins.length} basins, off by ${miss.map((m) => m.toFixed(2)).join(', ')} cells)`,
+      s.result.basins.length === discs.length && inside && miss.every((m) => m < 0.75))
+    check(`mutation: the torus's circular mean on the same discs misses the polar basins (${missTorus.map((m) => m.toFixed(2)).join(', ')} cells)`, missTorus[0] > 1 && missTorus[1] > 1)
   }
 
   // (2) The river ribbons near and across a pole: a reach along a meridian
@@ -1531,40 +1553,9 @@ test('the climate step\'s primitives on the sphere, each against its mutation', 
     check(`mutation: drawn without the domain, the pole row's step is one chart line of ${without.longest.toFixed(0)} texels`, without.longest > 30)
   }
 
-  // (3) The single-flow receiver measures in lengths: at 70°N a plane that
-  // falls as steeply east as south, in length (z falls by rowScale per cell
-  // east-west), so the true fall line is 45° from east. The receivers'
-  // mean step, in length, points that way; on the chart's square metric
-  // (the torus grid over the same raster) they turn toward the south, to
-  // atan(1 / cos φ).
-  {
-    const grid = sphere.grid(W, H)
-    const y0 = Math.round(H * (20 / 180))
-    const x0 = W / 2
-    const raw = new Float32Array(W * H).fill(-0.2)
-    for (let y = y0 - 10; y <= y0 + 10; y++) {
-      for (let x = x0 - 40; x <= x0 + 40; x++) raw[y * W + x] = 0.5 + 0.004 * (-(x - x0) * grid.rowScale(y0) - (y - y0))
-    }
-    const angleOf = async (domain) => {
-      const routing = await FR.fillDepressionsAndRouteFlow(raw, domain, 0)
-      let east = 0
-      let south = 0
-      const s = grid.rowScale(y0)
-      for (let y = y0 - 5; y <= y0 + 5; y++) {
-        for (let x = x0 - 25; x <= x0 + 25; x++) {
-          const t = routing.flowTarget[y * W + x]
-          if (t < 0) continue
-          east += ((t % W) - x) * s
-          south += Math.floor(t / W) - y
-        }
-      }
-      return (Math.atan2(south, east) * 180) / Math.PI
-    }
-    const onSphere = await angleOf(sphere)
-    const onChart = await angleOf(torus)
-    check(`the receivers follow the fall line in length at 70° (${onSphere.toFixed(1)}° from east, the plane's 45°)`, Math.abs(onSphere - 45) < 6)
-    check(`mutation: on the chart's square cells they turn to ${onChart.toFixed(1)}°`, onChart > 60)
-  }
+  // (3) went with the raster routing (DEC-0036 phase 7b): the single-flow
+  // receiver on the mesh is the steepest descent over a node's star, per
+  // reach length in metres, on either shape.
 
   // (4) A river's course at 75°N: a meandering reach along the parallel.
   // Its bends are laid out in the plane about the reach on the globe, so
@@ -2560,6 +2551,49 @@ test('two pipelines given the same messages agree byte for byte', async () => {
   check('the ice is byte-identical', hash(new Float32Array(ha.iceThickness)) === hash(new Float32Array(hb.iceThickness)) && ha.iceThickness.byteLength === ha.waterLevel.byteLength, `ice ${ha.iceThickness.byteLength} / ${hb.iceThickness.byteLength} bytes, level ${ha.waterLevel.byteLength}; hashes ${hash(new Float32Array(ha.iceThickness))} ${hash(new Float32Array(hb.iceThickness))}`)
   check('the sediment basins are the same list', JSON.stringify(ha.sedimentBasins) === JSON.stringify(hb.sedimentBasins) && Array.isArray(ha.sedimentBasins) && ha.sedimentBasins.length > 0)
   check('the coast is byte-identical', ha.coast !== null && hb.coast !== null && JSON.stringify(ha.coast.reaches) === JSON.stringify(hb.coast.reaches) && hash(new Uint8Array(ha.coastType)) === hash(new Uint8Array(hb.coastType)) && ha.coastType.byteLength > 0)
+  check('the coast\'s nodes, the discharge and the watersheds are byte-identical', hash(new Int32Array(ha.coast.nodes)) === hash(new Int32Array(hb.coast.nodes)) && hash(new Float32Array(ha.discharge)) === hash(new Float32Array(hb.discharge)) && hash(new Uint16Array(ha.watersheds)) === hash(new Uint16Array(hb.watersheds)) && ha.discharge.byteLength > 0)
+})
+
+// DEC-0036 phase 7b: the hydrology runs on the mesh's nodes, so a world
+// saved and loaded again answers with the same discharge, lakes,
+// watersheds, river network and coast walk as the session it was saved
+// from — the mesh and its heights are the save's bit for bit, and its
+// routing is derived from them as the last epoch's erosion left it. And
+// the save's discharge per node is the session's. (The sediment basins and
+// the reaches' loads are not: a load has neither the epoch's start nor its
+// sediment flux.)
+test('a loaded world runs the hydrology the session ran', async () => {
+  const p = await freshPipeline()
+  await growWorld(p)
+  await runOneEpoch(p)
+  const climate = { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
+  p.dispatch(climate)
+  await until(() => p.count('climateData') >= 1, { label: 'climate' })
+  p.dispatch({ type: 'hydrologyRun' })
+  await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
+  await quiet(p)
+  const world = worldDataOf(p)
+  const q = await freshPipeline()
+  q.dispatch({ ...asRestore(world), mesh: structuredClone(world.mesh) })
+  await until(() => q.count('rendered') >= 1, { label: 'the restore render' })
+  await quiet(q)
+  q.dispatch(climate)
+  await until(() => q.count('climateData') >= 1, { label: 'the loaded climate' })
+  q.dispatch({ type: 'hydrologyRun' })
+  await until(() => q.count('hydrologyData') >= 1, { label: 'the loaded hydrology' })
+  await quiet(q)
+  const hs = p.last('hydrologyData'), hl = q.last('hydrologyData')
+  const reloaded = worldDataOf(q)
+  check('the loaded discharge, watersheds and lakes are the session\'s, byte for byte', hash(hs.discharge) === hash(hl.discharge) && hash(hs.watersheds) === hash(hl.watersheds) && hash(hs.lakeDepth) === hash(hl.lakeDepth) && hs.discharge.byteLength > 0)
+  // The reaches' sediment loads are the last epoch's erosion flux, which a
+  // load does not have (as it has no sediment basins): the graph's loads,
+  // and the coast's supply and types that read them, are the session's
+  // only where they do not depend on it.
+  const gs = JSON.parse(hs.riverGraph.json), gl = JSON.parse(hl.riverGraph.json)
+  const shape = (g) => JSON.stringify(g.reaches.map((r) => [r.from, r.to, r.cellStart, r.cellCount, r.dischargeIn, r.dischargeOut, r.regime]))
+  const strip = (reaches) => JSON.stringify(reaches.map(({ supply, type, ...rest }) => rest))
+  check('the loaded river network and the coast\'s walk and exposure are the session\'s', shape(gs) === shape(gl) && hash(hs.riverGraph.cells) === hash(hl.riverGraph.cells) && hash(hs.coast.nodes) === hash(hl.coast.nodes) && strip(hs.coast.reaches) === strip(hl.coast.reaches))
+  check('the save\'s discharge per node comes back the same from the loaded world', world.land?.discharge != null && reloaded.land?.discharge != null && hash(world.land.discharge) === hash(reloaded.land.discharge))
 })
 
 // -------------------------------------------------------------------- stopping

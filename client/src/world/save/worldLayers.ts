@@ -49,8 +49,10 @@ export interface LayerSpec extends FieldSpec, Encoding {}
 const layer = (name: string, dtype: Dtype, scale: number, offset: number): LayerSpec =>
   ({ ...fieldSpec(name), dtype, scale, offset })
 
-// The quantised raster layers of the hydrology (DEC-0036 phase 7b moves
-// them onto the mesh). Elevation is carried separately as raw f32 (it
+// The quantised raster layer left of the hydrology: the mesh lakes' depth
+// drawn on the world raster (the save's own step moves it with the
+// elevation; the discharge went per node in DEC-0036 phase 7b, below).
+// Elevation is carried separately as raw f32 (it
 // doubles as the restore raster — see the save doc); the ocean age and the
 // mantle as their field meshes' values (oceanAge.f64, mantle.f64), the
 // climate and the land fields as theirs (climate.json + climate/, mesh/
@@ -78,33 +80,13 @@ export const WORLD_LAYERS: LayerSpec[] = [
   layer('lakeDepth', LAKE_DEPTH_ENCODING.dtype, LAKE_DEPTH_ENCODING.scale, LAKE_DEPTH_ENCODING.offset),
 ]
 
-// Flow accumulation. Full-res like lakeDepth, but kept out of WORLD_LAYERS because
-// the writer has to convert its unit first (see below).
-//
-// Rivers are the reason: at 256x128 a cell spans ~62 km, so a discharge field
-// there could not say WHERE a river is, only that the region has one. At map
-// resolution it answers the question a game server actually asks — is there a
-// river at (x, y), and how big — by sampling, with no algorithm and no
-// polylines (docs/decisions/queryable-world-save.md).
-//
-// Stored in CUBIC METRES PER SECOND rather than the hydrology's own unit
-// (mm/yr summed over contributing cells). Converting costs the writer one
-// multiply and saves the reader from having to know the cell area and the
-// runoff coefficient — which is exactly the algorithm knowledge this format
-// exists to avoid. It is the same figure the generator's hover readout shows.
-//
-// Stored UNTHRESHOLDED on purpose. Zeroing everything below our channel
-// criterion would bake this generator's river-density setting into the data;
-// keeping the raw field lets a consumer pick its own threshold, which is the
-// same knob `densityToCriticalArea` turns here. Measured cost: 4 MB raw,
-// 109 KB after the zip's DEFLATE, against 303 KB for the polylines it replaces.
-//
-// Linear u16 is enough because the range that matters is narrow: measured
-// across channel cells it spans 26x (1.4 orders), not the six a naive reading
-// of "river discharge" suggests. At 4 m3/s per step the ceiling is ~262,000 —
-// above the Amazon's ~209,000 — so clipping needs a world unlike any measured,
-// and even then it only flattens the top of the largest river.
-export const DISCHARGE_LAYER: LayerSpec = layer('discharge', 'u16', 4, 0)
+// The river discharge left the rasters in DEC-0036 phase 7b: it is saved
+// per node of the mesh (mesh/discharge.f32, m³/s, climateFields.ts) — still
+// in CUBIC METRES PER SECOND rather than the hydrology's own unit, so a
+// reader needs neither the cell area nor the runoff coefficient, and still
+// UNTHRESHOLDED, so a consumer picks its own channel criterion. The u16
+// layer at 4 m³/s a step it replaces is refused
+// (climateFields.refuseFormerHydrology).
 
 // The erosion engine's coarse forcing fields, written whenever a tectonic
 // world is saved — independent of the climate-gated layers above, because a

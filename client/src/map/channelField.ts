@@ -168,7 +168,7 @@ export function buildChannelField(rivers: ChannelSourceRivers, elevation: Float3
       seed(x * scaleX, y * scaleY, elevationAt(x, y), w)
       if (i === 0) continue
       // The previous point, walked toward this one. Polylines never cross the
-      // seam (extractRiverPolylines ends one that would), so a plain delta is
+      // seam (riverPolylinesFromGraph ends one that would), so a plain delta is
       // right here — a wrapped delta would invent a segment across the world.
       const px = rivers.points[read - 3]
       const py = rivers.points[read - 2]

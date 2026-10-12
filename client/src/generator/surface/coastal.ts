@@ -13,13 +13,14 @@ import { detHypot } from '../core/detMath'
 // THE SHORE is where it always was — a land node with a sea neighbour —
 // and on the mesh that is the iso-line at the mesh's own resolution; its
 // nodes, linked to their shore neighbours, are the one-dimensional line
-// the transport runs on. The coast graph the hydrology stage builds after
-// the stop (surface/coastGraph.ts, F5) stays the classification and the
-// picture; this is the physics under it.
+// the transport runs on (findShore). The coast graph the hydrology stage
+// builds after the stop (surface/coastGraph.ts, F5) on the same line stays
+// the classification and the picture; this is the physics under it.
 //
 // WAVE EROSION: the exposure of a shore node is the wave energy from the
-// wind — speed² times the fetch, the open water upwind on the climate
-// raster, F5's own rule, normalised to the shore's 90th percentile. The
+// wind — speed² times the fetch, the open water upwind over the
+// terrain's surface, F5's own rule (shoreExposure, shared with the coast
+// graph), normalised to the shore's 90th percentile. The
 // sea cuts the shore node down towards the WAVE BASE at a rate that goes
 // with the exposure over the rock's hardness (a soft exposed coast goes
 // fast, a hard sheltered one hardly moves); a node cut under the sea is
@@ -90,23 +91,24 @@ function normaliseToP90(values: Float32Array, members: Int32Array): void {
   for (let i = 0; i < members.length; i++) values[members[i]] = Math.min(1, values[members[i]] / p90)
 }
 
-export function computeCoastal(input: CoastalInputs): CoastalResult {
-  const { mesh, z, areas, windE, windS, cellM, hardness, sedimentFlux, iterations, epochYears } = input
-  const T = SURFACE_TUNING
-  const slots = mesh.vertexSlots
-  const cutM = new Float32Array(slots)
-  const depositM = new Float32Array(slots)
-  const exposure = new Float32Array(slots)
-  const out = new Int32Array(64)
-  const cellM2 = cellM * cellM
-  const empty = { cutM, depositM, exposure, shoreNodes: 0, erodedM3: 0, suppliedM3: 0, depositedM3: 0, exportedM3: 0 }
+// THE SHORE: land nodes with a sea neighbour, and each one's landward
+// normal from its sea neighbours' mean offset — the history's coast
+// process and the coast graph (coastGraph.ts) read the same line.
+// Offsets between neighbours through the Domain (step 4d5; until then the
+// torus's minimum image by hand, the same numbers there): each in v's own
+// frame, the frame its normal and its wind are read in.
+export interface Shore {
+  // The shore nodes in slot order.
+  shore: Int32Array
+  isShore: Uint8Array
+  normalX: Float32Array
+  normalY: Float32Array
+}
 
-  // THE SHORE: land nodes with a sea neighbour; the landward normal from
-  // the sea neighbours' mean offset.
-  // Offsets between neighbours through the Domain (step 4d5; until then the
-  // torus's minimum image by hand, the same numbers there): each in v's own
-  // frame, the frame its normal and its wind are read in.
+export function findShore(mesh: PeriodicTriangulation, z: Float32Array): Shore {
+  const slots = mesh.vertexSlots
   const domain = mesh.domain
+  const out = new Int32Array(64)
   const offset = { x: 0, y: 0 }
   const isShore = new Uint8Array(slots)
   const shoreList: number[] = []
@@ -134,20 +136,20 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
     normalX[v] = nx / len
     normalY[v] = ny / len
   }
-  if (shoreList.length === 0) return empty
-  const shore = Int32Array.from(shoreList)
+  return { shore: Int32Array.from(shoreList), isShore, normalX, normalY }
+}
 
-  // EXPOSURE: the wind at the node, the fetch upwind over the sea (F5's
-  // rule), speed² × fetch, to the p90. The march upwind steps
-  // coastFetchStepM along the wind from the node — the direction carried
-  // along with the point (Domain.transport: on the sphere a great circle
-  // that steps across a pole, on the torus the straight line) — and ends
-  // on the first step whose ground, the terrain's own surface there (the
-  // mesh's triangle under it), stands above the sea. Until DEC-0036 phase 7
-  // it walked the climate raster from the cell's centre, a cell a step:
-  // the step is that cell in metres.
-  const stepUnits = T.coastFetchStepM / cellM
-  const fetchCap = Math.max(1, Math.round((T.coastFetchCapKm * 1000) / T.coastFetchStepM))
+// THE WAVES' ENERGY at each shore node, F5's rule: the wind's speed² times
+// the fetch, the open water upwind as a share of `fetchCap` steps of
+// `stepUnits` (domain units) — not yet normalised; each reader takes its
+// own reference. The march steps along the wind from the node — the
+// direction carried along with the point (Domain.transport: on the sphere
+// a great circle that steps across a pole, on the torus the straight
+// line) — and ends on the first step whose ground, the terrain's own
+// surface there (the mesh's triangle under it), stands above the sea.
+// Written into `exposure` at the shore's slots.
+export function shoreExposure(mesh: PeriodicTriangulation, z: Float32Array, shore: Int32Array, windE: ArrayLike<number>, windS: ArrayLike<number>, stepUnits: number, fetchCap: number, exposure: Float32Array): void {
+  const domain = mesh.domain
   const at = { x: 0, y: 0 }
   const heading = { x: 0, y: 0 }
   const bary = new Float64Array(3)
@@ -158,14 +160,10 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
     mesh.barycentric(t, x, y, bary)
     return bary[0] * z[mesh.tris[3 * t]] + bary[1] * z[mesh.tris[3 * t + 1]] + bary[2] * z[mesh.tris[3 * t + 2]]
   }
-  const windU = new Float32Array(slots)
-  const windV = new Float32Array(slots)
   for (let i = 0; i < shore.length; i++) {
     const v = shore[i]
     const u = windE[v]
     const w = windS[v]
-    windU[v] = u
-    windV[v] = w
     const speed = detHypot(u, w)
     if (speed <= 1e-6) continue
     heading.x = -u / speed
@@ -182,6 +180,35 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
       fetch++
     }
     exposure[v] = speed * speed * (fetch / fetchCap)
+  }
+}
+
+export function computeCoastal(input: CoastalInputs): CoastalResult {
+  const { mesh, z, areas, windE, windS, cellM, hardness, sedimentFlux, iterations, epochYears } = input
+  const T = SURFACE_TUNING
+  const slots = mesh.vertexSlots
+  const cutM = new Float32Array(slots)
+  const depositM = new Float32Array(slots)
+  const exposure = new Float32Array(slots)
+  const out = new Int32Array(64)
+  const cellM2 = cellM * cellM
+  const empty = { cutM, depositM, exposure, shoreNodes: 0, erodedM3: 0, suppliedM3: 0, depositedM3: 0, exportedM3: 0 }
+
+  const domain = mesh.domain
+  const offset = { x: 0, y: 0 }
+  const { shore, isShore, normalX, normalY } = findShore(mesh, z)
+  if (shore.length === 0) return empty
+
+  // EXPOSURE (shoreExposure): the march upwind steps coastFetchStepM, the
+  // 62.4 km climate cell it walked the climate raster in until DEC-0036
+  // phase 7.
+  const fetchCap = Math.max(1, Math.round((T.coastFetchCapKm * 1000) / T.coastFetchStepM))
+  shoreExposure(mesh, z, shore, windE, windS, T.coastFetchStepM / cellM, fetchCap, exposure)
+  const windU = new Float32Array(slots)
+  const windV = new Float32Array(slots)
+  for (let i = 0; i < shore.length; i++) {
+    windU[shore[i]] = windE[shore[i]]
+    windV[shore[i]] = windS[shore[i]]
   }
   normaliseToP90(exposure, shore)
 

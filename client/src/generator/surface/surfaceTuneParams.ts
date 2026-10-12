@@ -155,21 +155,34 @@ export const SURFACE_TUNING = {
   regimeDrySeasonBelow: 0.5,
 
   // COAST TYPE per reach (surface/coastGraph.ts, ADAPTIVE_MESH_PLAN.md F5):
-  // reaches every 40 cells (≈ 310 km at 7.8 km) unless a mouth cuts them;
-  // the fetch that saturates the wave energy (1500 km — beyond that the
-  // sea state is fully developed); how far a mouth's sediment feeds the
-  // coast (300 km — littoral drift carries a big river's sand hundreds of
-  // kilometres along a coast). The type thresholds read RELATIVE exposure
-  // and supply (0..1 against the world's 90th-percentile coast, clamped;
-  // measured 2026-09-22 on golden alpha, half the coasts are lee coasts
-  // with no fetch under a zonal wind) and absolute relief: a
-  // cliff needs 60 m of land within one cell (7.8 km — a real sea cliff is
-  // tens of metres, at this cell size a steep coastal slope) and waves of
-  // a fifth of the maximum on rock no softer than K 1.1; marsh needs calm
-  // water (under 0.15), flat land (under 40 m) and some sediment. Tune by
-  // eye; the coast process of phase 7 replaces the rules with rates.
-  coastReachCells: 40,
+  // reaches every 312 km of coast unless a mouth cuts them; the fetch that
+  // saturates the wave energy (1500 km — beyond that the sea state is
+  // fully developed); how far a mouth's sediment feeds the coast (300 km —
+  // littoral drift carries a big river's sand hundreds of kilometres along
+  // a coast). The type thresholds read RELATIVE exposure and supply (0..1
+  // against the world's 90th-percentile coast, clamped; measured
+  // 2026-09-22 on golden alpha, half the coasts are lee coasts with no
+  // fetch under a zonal wind) and absolute relief: a cliff needs 60 m of
+  // land within one 7.8 km step of the shore (a real sea cliff is tens of
+  // metres, at this step a steep coastal slope) and waves of a fifth of
+  // the maximum on rock no softer than K 1.1; marsh needs calm water
+  // (under 0.15), flat land (under 40 m) and some sediment. Tune by eye;
+  // the coast process of phase 7 replaces the rules with rates.
+  //
+  // On the terrain mesh since DEC-0036 phase 7b; the lengths below were
+  // counts of the 7.8 km world cell it walked until then (the torus's,
+  // not recalibrated): a reach 40 cells (coastReachM), the fetch's march a
+  // cell a step (coastGraphFetchStepM), the relief the highest land of the
+  // eight neighbours (coastReliefStepM: the eight compass points that far
+  // out, a diagonal √2 of it), a mouth's coast cell the nearest within
+  // three cells (coastMouthReachM), a delta's coast two cells each way
+  // around its mouth (coastDeltaReachM).
+  coastReachM: 312_000,
   coastFetchCapKm: 1500,
+  coastGraphFetchStepM: 7_800,
+  coastReliefStepM: 7_800,
+  coastMouthReachM: 23_400,
+  coastDeltaReachM: 15_600,
   // The fetch's march step, metres (surface/coastal.ts, the history's
   // coast): the 62.4 km climate cell it stepped in until DEC-0036 phase 7.
   coastFetchStepM: 62_400,
@@ -199,12 +212,14 @@ export const SURFACE_TUNING = {
   coastBeachSupply: 0.1,
 
   // SEDIMENT BASINS (surface/sedimentBasins.ts, ADAPTIVE_MESH_PLAN.md F1):
-  // a cell counts as a deposit when the erosion pass raised it by this
+  // a node counts as a deposit when the erosion pass raised it by this
   // much (5 m — below it the marine diffusion's smoothing and the plains
-  // micro-relief would make basins of noise), and a basin needs this many
-  // cells (4 — a single raised cell is not a feature).
+  // micro-relief would make basins of noise), and a basin needs this much
+  // area (four 7.8 km world cells, the 4-cell minimum it had on the
+  // raster until DEC-0036 phase 7b — a single raised cell is not a
+  // feature; not recalibrated).
   sedimentBasinMinThicknessM: 5,
-  sedimentBasinMinCells: 4,
+  sedimentBasinMinAreaKm2: 243.36,
 
   // ICE (surface/glacial.ts on the mesh; F4's raster surface/iceFlow.ts
   // until DEC-0036 phase 7, ADAPTIVE_MESH_PLAN.md F4). Snow to ice: a

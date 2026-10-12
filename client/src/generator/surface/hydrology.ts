@@ -1,24 +1,23 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import type { DomainGrid } from '../core/domain'
-import type { FlowRouting } from './flowRouting'
-import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
+import type { FlowSubstrate } from './flowSubstrate'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { detExp, detLog, detPow } from '../core/detMath'
 import { MinHeap } from '../core/minHeap'
 
-// Rivers & lakes on the post-erosion topography. Reuses the erosion module's
-// drainage network (FlowRouting: D8 flowTarget for the channel tree,
-// priority-flood `filled` for basins) and the climate precipitation as the
-// water source. See docs/decisions/climate-biomes.md's pipeline note.
+// Rivers & lakes on the post-erosion topography, over the terrain mesh's
+// flow substrate (flowSubstrate.ts; DEC-0036 phase 7b took the last of the
+// raster's away): the erosion's drainage network (the single-flow receiver
+// for the channel tree, the priority flood's `filled` for basins) and the
+// climate's precipitation at the nodes as the water source. See
+// docs/decisions/climate-biomes.md's pipeline note.
 //
-// Discharge is accumulated along the SINGLE steepest-descent flowTarget (D8), not
+// Discharge is accumulated along the SINGLE steepest-descent flowTarget, not
 // the multiple-flow edges erosion uses for drainage AREA. MFD is right for
 // erosion (smooth area, no striping) but for DRAWN rivers it smears flow across
 // the whole valley floor, so a "river" reads as a filled band rather than a line;
-// single-flow concentrates the water onto one traceable channel. Cells sitting in
-// a filled depression (filled > raw) are excluded — they're lake bed, not
-// channel (the radial fan D8 makes on a flat fill isn't a river).
+// single-flow concentrates the water onto one traceable channel.
 
 // The one density the MODEL runs at: riparian biomes, the bake's extracted
 // rivers and the coast status mask all read the channel set at this density.
@@ -230,21 +229,11 @@ export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Flo
   return depth
 }
 
-export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: ArrayLike<number>, precip: ArrayLike<number>, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
-  const on = computeLakesOn(rasterSubstrate(routing), discharge, elevation, temperature, precip, minBasinReliefM)
-  // The raster's level and body fields carry the rim (waterLevelField), as
-  // they did before the substrate existed.
-  const levels = waterLevelField(on.bodies, elevation, routing.grid)
-  return { depth: on.depth, saltFlat: on.saltFlat, dryBasin: on.dryBasin, frozen: on.frozen, bodies: on.bodies, level: levels.level, body: levels.body }
-}
-
-// The lakes over ANY substrate (flowSubstrate.ts) — the raster's
-// computeLakes above and the mesh's (mesh/meshHydrology.ts) are this one
-// function. Per element: depth, the evaporite band, the dry terminal
-// floor, the frozen surface, and the body an element's water belongs to
-// (-1 for none; the raster wrapper replaces `body`/`level` by the rim-aware
-// raster fields). Areas are the elements' (a cell counts 1), so the
-// balance `inflow < pet × area` reads the same on a mesh. `temperature`
+// The lakes over the flow substrate (flowSubstrate.ts, the terrain mesh's
+// nodes — mesh/meshHydrology.ts). Per element: depth, the evaporite band,
+// the dry terminal floor, the frozen surface, and the body an element's
+// water belongs to (-1 for none). Areas are the elements' (in world cells),
+// so the balance `inflow < pet × area` reads the same at any spacing. `temperature`
 // (°C) and `precip` (mm/yr, OCEAN_PRECIP on the sea) per element.
 export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elevation: Float32Array, temperature: ArrayLike<number>, precip: ArrayLike<number>, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
   const { filled, count: n } = sub
@@ -329,7 +318,7 @@ export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elev
       // Direct precipitation ON the basin is part of its water budget — the
       // Volga is not the Caspian's only source, and without this every deep
       // basin that happens to lack a river inlet came out bone dry (rivers'
-      // discharge never seeds water cells, see accumulateDischarge). Summed
+      // discharge never seeds water cells, see accumulateDischargeOn). Summed
       // over the whole region: rain on the wet surface feeds the balance,
       // rain on the dry floor runs down to it.
       let basinRain = 0
@@ -391,22 +380,17 @@ export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elev
   return { depth, saltFlat, dryBasin, frozen, bodies, level, body }
 }
 
-// Precipitation-weighted discharge (relative water volume) per full-res cell,
-// via SINGLE-flow (D8 flowTarget) reverse-popOrder accumulation: each cell is
-// seeded with its local runoff (sampled precip, land only) and pushes its whole
-// total downstream to one neighbor, so flow concentrates onto the channel tree
-// (see the module comment on why not MFD here). discharge[cell] = its runoff +
+// Precipitation-weighted discharge (relative water volume) per element,
+// via SINGLE-flow (the receiver, flowTarget) reverse-popOrder accumulation:
+// each element is seeded with its local runoff (its precipitation, land
+// only) times its area and pushes its whole total downstream to one
+// neighbour, so flow concentrates onto the channel tree (see the module
+// comment on why not MFD here). discharge[element] = its runoff +
 // everything upstream that drains through it. Units: mm/yr summed over
-// contributing cells (uniform cell area on the torus drops out) — consistent
-// with lake evaporation later. popOrder is upstream-first in reverse, so a cell's
-// upstream contributions are already summed in before it pushes downstream.
-export function accumulateDischarge(routing: FlowRouting, elevation: Float32Array, precip: ArrayLike<number>): Float32Array {
-  return accumulateDischargeOn(rasterSubstrate(routing), elevation, precip)
-}
-
-// Over any substrate: an element's own runoff is its precipitation (per
-// element, mm/yr) times its area in cells, so the unit stays "mm/yr summed
-// over cells".
+// contributing world cells (an element's area in cells) — consistent with
+// lake evaporation later. popOrder is upstream-first in reverse, so an
+// element's upstream contributions are already summed in before it pushes
+// downstream.
 export function accumulateDischargeOn(sub: FlowSubstrate, elevation: Float32Array, precip: ArrayLike<number>): Float32Array {
   const { flowTarget, popOrder, poppedCount, count } = sub
   const discharge = new Float32Array(count)
@@ -458,10 +442,6 @@ export interface ClimateMonths {
   temperature: Float32Array
   precipitation: Float32Array
   count: number
-}
-
-export function accumulateRegimeInputs(routing: FlowRouting, elevation: Float32Array, temperature: ArrayLike<number>, precip: ArrayLike<number>, monsoonIndex: ArrayLike<number> | undefined, months?: ClimateMonths): RegimeInputs {
-  return accumulateRegimeInputsOn(rasterSubstrate(routing), elevation, temperature, precip, monsoonIndex, months)
 }
 
 // The climate per element of `sub` (climate/climatePoints.ts).
@@ -566,11 +546,6 @@ export function channelThreshold(criticalArea: number, meanRunoff: number): numb
 export const RIVER_MIN_WIDTH = 0.4
 export const RIVER_MAX_WIDTH = 4
 
-function riverWidth(dischargeAtCell: number, maxDischarge: number): number {
-  const scale = maxDischarge > 0 ? maxDischarge : 1
-  return Math.min(RIVER_MAX_WIDTH, RIVER_MIN_WIDTH + (RIVER_MAX_WIDTH - RIVER_MIN_WIDTH) * Math.sqrt(dischargeAtCell / scale))
-}
-
 // --- the channel criterion -------------------------------------------------
 //
 // A cell is a channel when its discharge clears a threshold — but discharge
@@ -596,14 +571,9 @@ function riverWidth(dischargeAtCell: number, maxDischarge: number): number {
 // channels come out of the gentle 250-500 m plateau rather than out of nowhere.
 export const CHANNEL_SLOPE_EXPONENT = 0.5
 
-// Slope to the D8 receiver, in elevation units per cell. Diagonal steps are
-// longer, hence the distance divisor — without it every diagonal reads as
-// steeper than it is, which would bias the boost along the diagonals.
-export function receiverSlope(routing: FlowRouting, elevation: Float32Array, cell: number): number {
-  return receiverSlopeOn(rasterSubstrate(routing), elevation, cell)
-}
-
-// Rise over run to the receiver, in elevation units per cell.
+// Rise over run to the receiver, in elevation units per world cell: the
+// drop over the step's true length, so a long step does not read as
+// steeper than it is.
 export function receiverSlopeOn(sub: FlowSubstrate, elevation: Float32Array, cell: number): number {
   const target = sub.flowTarget[cell]
   if (target < 0 || target >= sub.count) return 0
@@ -617,10 +587,6 @@ export function receiverSlopeOn(sub: FlowSubstrate, elevation: Float32Array, cel
 // a redistribution rather than a global loosening — the same world keeps
 // roughly the same number of channels, they simply move to where the water
 // actually concentrates. It also makes exponent 0 exactly today's behaviour.
-export function channelReferenceSlope(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number): number {
-  return channelReferenceSlopeOn(rasterSubstrate(routing), elevation, discharge, threshold)
-}
-
 export function channelReferenceSlopeOn(sub: FlowSubstrate, elevation: Float32Array, discharge: Float32Array, threshold: number): number {
   const slopes: number[] = []
   for (let cell = 0; cell < sub.count; cell++) {
@@ -638,10 +604,6 @@ export function channelReferenceSlopeOn(sub: FlowSubstrate, elevation: Float32Ar
 // Whether this cell carries a channel. ONE definition, used by the polyline
 // extractor and by the riparian biomes — they disagreed silently before, which
 // would have drawn mountain rivers with no green along them.
-export function isChannelCell(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, cell: number, threshold: number, referenceSlope: number): boolean {
-  return isChannelCellOn(rasterSubstrate(routing), elevation, discharge, cell, threshold, referenceSlope)
-}
-
 export function isChannelCellOn(sub: FlowSubstrate, elevation: Float32Array, discharge: Float32Array, cell: number, threshold: number, referenceSlope: number): boolean {
   if (elevation[cell] <= SEA_LEVEL) return false
   const boost = detPow(Math.max(receiverSlopeOn(sub, elevation, cell), 1e-7) / referenceSlope, CHANNEL_SLOPE_EXPONENT)
@@ -660,10 +622,6 @@ export function isChannelCellOn(sub: FlowSubstrate, elevation: Float32Array, dis
 //
 // One pass over popOrder REVERSED (donors before receivers) is enough: each
 // channel cell marks its receiver, and the mark rides the chain to the coast.
-export function buildChannelMask(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number): Uint8Array {
-  return buildChannelMaskOn(rasterSubstrate(routing), elevation, discharge, threshold)
-}
-
 export function buildChannelMaskOn(sub: FlowSubstrate, elevation: Float32Array, discharge: Float32Array, threshold: number): Uint8Array {
   const referenceSlope = channelReferenceSlopeOn(sub, elevation, discharge, threshold)
   const n = sub.count
@@ -681,136 +639,54 @@ export function buildChannelMaskOn(sub: FlowSubstrate, elevation: Float32Array, 
   return channel
 }
 
-// Connected river polylines for smooth rendering. Each channel cell (discharge ≥
-// threshold, land — INCLUDING lake beds and filled dimples since 2026-08-06:
-// excluding depression cells broke every river at every basin it crossed, and
-// once the plains micro-relief landed the lines shattered map-wide; a river now
-// draws as one continuous line through the lakes it feeds, river → lake →
-// river, the way the user reads the map) flows to one D8 neighbour, so channel cells form
-// trees rooted at the sea. We trace each headwater (a channel cell with no
-// channel cell flowing into it) downstream along flowTarget, emitting an ORDERED
-// path of [x, y, widthPx] points until it merges into an already-traced trunk
-// (one connecting point is added so branches visually join) or leaves the
-// channel. Tracing paths instead of loose segments lets the renderer spline-
-// smooth them into curves (no more D8 staircase) and draw continuous ribbons.
-// Returns the concatenated points and a per-polyline point-count table.
-// Polylines never cross the toroidal seam (a wrap step ends the current one).
+// River polylines for the scene-space ribbons (riverGraph.
+// riverPolylinesFromGraph derives them from the feature graph): the points
+// as [x, y, widthPx, …] in texel coordinates, and a per-polyline
+// point-count table.
 export interface RiverPolylines {
   points: Float32Array // [x, y, widthPx, …] in texel coords, all polylines concatenated
   lengths: Uint32Array // number of points in each polyline, in order
   // The flow regime of each polyline (RIVER_REGIME_CODE), in order — a
-  // polyline never spans two regimes. All perennial from the cell tracer;
-  // the graph's polylines carry their reach's.
+  // polyline never spans two regimes: its reach's.
   regimes: Uint8Array
 }
 
 // The regime as the ribbons carry it, one byte per polyline.
 export const RIVER_REGIME_CODE = { perennial: 0, intermittent: 1, ephemeral: 2 } as const
 
-export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, threshold: number, maxDischarge: number): RiverPolylines {
-  const { width, height, flowTarget } = routing
-  const n = width * height
-  const channel = buildChannelMask(routing, elevation, discharge, threshold)
-  const adjacent = (a: number, b: number): boolean => {
-    const ax = a % width
-    const ay = (a - ax) / width
-    const bx = b % width
-    const by = (b - bx) / width
-    return Math.abs(bx - ax) <= 1 && Math.abs(by - ay) <= 1
-  }
-  // In-degree among channel cells → headwaters have none.
-  const inDeg = new Uint8Array(n)
-  for (let cell = 0; cell < n; cell++) {
-    if (!channel[cell]) continue
-    const t = flowTarget[cell]
-    if (t >= 0 && channel[t] && adjacent(cell, t) && inDeg[t] < 255) inDeg[t]++
-  }
-  const visited = new Uint8Array(n)
-  const points: number[] = []
-  const lengths: number[] = []
-  for (let start = 0; start < n; start++) {
-    if (!channel[start] || inDeg[start] !== 0 || visited[start]) continue
-    let cur = start
-    let len = 0
-    for (;;) {
-      const cx = cur % width
-      const cy = (cur - cx) / width
-      points.push(cx + 0.5, cy + 0.5, riverWidth(discharge[cur], maxDischarge))
-      len++
-      visited[cur] = 1
-      const t = flowTarget[cur]
-      if (t < 0 || !channel[t] || !adjacent(cur, t)) {
-        // A river must REACH the water it drains into. The channel mask stops
-        // at the last land cell by construction (buildChannelMask only marks a
-        // receiver above sea level), so without this the line ends one cell
-        // short of the coast — invisible at map zoom, but exactly one cell
-        // wide at every scale: 7.8 km at the macro raster, still ~2 km (about
-        // six 300 m hex tiles) after an 8k bake, which is where it became
-        // obvious (measured 2026-08-14; median gap was 1 cell at every
-        // resolution).
-        //
-        // Only the terminal point is added, and only onto water. The mask
-        // itself is left alone on purpose: the riparian bonus shares it
-        // (riparianPrecipitationOn) and relies on it meaning "channel ON
-        // LAND" (it skips sea cells anyway),
-        // and the two agreeing along the COURSE is what fixed the dashed
-        // rivers of 2026-08-08. A point in the sea is a mouth, not membership.
-        if (t >= 0 && t < n && adjacent(cur, t) && elevation[t] <= SEA_LEVEL) {
-          const tx = t % width
-          const ty = (t - tx) / width
-          points.push(tx + 0.5, ty + 0.5, riverWidth(discharge[cur], maxDischarge))
-          len++
-        }
-        break
-      }
-      if (visited[t]) {
-        // Merge into an existing trunk: add its point so the branch connects, stop.
-        const tx = t % width
-        const ty = (t - tx) / width
-        points.push(tx + 0.5, ty + 0.5, riverWidth(discharge[t], maxDischarge))
-        len++
-        break
-      }
-      cur = t
-    }
-    if (len >= 2) lengths.push(len)
-    else points.length -= len * 3 // drop a lone point
-  }
-  return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths), regimes: new Uint8Array(lengths.length) }
-}
-
-// Watershed labels: every land cell tagged with the id of the river system
-// that drains it — the classic each-catchment-its-own-colour map. Walks
-// popOrder FORWARD (downstream before upstream, the flood's own guarantee),
-// so a cell can inherit its target's label in one pass; a land cell whose
-// target is water (or nothing) is a system's mouth and roots a new basin.
-// Only basins of at least `minAreaCells` keep a label (id 1.., largest
-// first); the coastal fringe of micro-catchments stays 0 — colouring tens of
-// thousands of one-cell "systems" reads as noise, not as a map. Uint16: the
-// filter keeps the id space tiny. The areas are in equator cells (a cell
-// weighs its row's cellArea, 1 on the torus).
-export function computeWatersheds(routing: FlowRouting, elevation: Float32Array, minAreaCells = 200): Uint16Array {
-  const { width, height, flowTarget, popOrder, poppedCount, grid } = routing
-  const n = width * height
+// Watershed labels: every land element tagged with the id of the river
+// system that drains it — the classic each-catchment-its-own-colour map.
+// Walks popOrder FORWARD (downstream before upstream, the flood's own
+// guarantee), so an element inherits its receiver's label in one pass; a
+// land element whose receiver is water (or nothing) is a system's mouth
+// and roots a new basin. Only basins of at least `minAreaKm2` keep a label
+// (id 1.., largest first); the coastal fringe of micro-catchments stays 0
+// — colouring tens of thousands of one-node "systems" reads as noise, not
+// as a map. Uint16 per element: the filter keeps the id space tiny. On the
+// mesh since DEC-0036 phase 7b; the floor is the 200 world cells of 7.8 km
+// it counted on the raster (a display choice, not a world property).
+export function watershedsOn(sub: FlowSubstrate, elevation: Float32Array, minAreaKm2 = 12_168): Uint16Array {
+  const { flowTarget, popOrder, poppedCount, count: n } = sub
+  const km2PerCell = (sub.domain.metresPerUnit / 1000) * (sub.domain.metresPerUnit / 1000)
   const label = new Int32Array(n).fill(-1)
   let nextId = 0
   for (let k = 0; k < poppedCount; k++) {
-    const cell = popOrder[k]
-    if (elevation[cell] <= SEA_LEVEL) continue
-    const t = flowTarget[cell]
-    if (t >= 0 && elevation[t] > SEA_LEVEL && label[t] >= 0) label[cell] = label[t]
-    else label[cell] = nextId++
+    const v = popOrder[k]
+    if (elevation[v] <= SEA_LEVEL) continue
+    const t = flowTarget[v]
+    if (t >= 0 && elevation[t] > SEA_LEVEL && label[t] >= 0) label[v] = label[t]
+    else label[v] = nextId++
   }
   const areas = new Float64Array(nextId)
-  for (let i = 0; i < n; i++) if (label[i] >= 0) areas[label[i]] += grid.cellArea(Math.floor(i / width))
+  for (let v = 0; v < n; v++) if (label[v] >= 0) areas[label[v]] += sub.area(v) * km2PerCell
   const order = Array.from({ length: nextId }, (_, i) => i)
-    .filter((id) => areas[id] >= minAreaCells)
-    .sort((a2, b2) => areas[b2] - areas[a2])
+    .filter((id) => areas[id] >= minAreaKm2)
+    .sort((a, b) => areas[b] - areas[a])
     .slice(0, 65535)
   const remap = new Int32Array(nextId).fill(0)
   order.forEach((id, rank) => { remap[id] = rank + 1 })
   const out = new Uint16Array(n)
-  for (let i = 0; i < n; i++) if (label[i] >= 0) out[i] = remap[label[i]]
+  for (let v = 0; v < n; v++) if (label[v] >= 0) out[v] = remap[label[v]]
   return out
 }
 

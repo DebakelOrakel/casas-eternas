@@ -52,7 +52,7 @@ const check = (name, ok, detail = '') => {
 // layer's whole declared range. A wrong scale shows up as clipping at the ends,
 // which a mid-range spot check would miss entirely.
 console.log('\n— layer quantisation —')
-for (const spec of [...M.layers.WORLD_LAYERS, M.layers.DISCHARGE_LAYER]) {
+for (const spec of M.layers.WORLD_LAYERS) {
   const steps = spec.dtype === 'u8' ? 256 : spec.dtype === 'u16' ? 65536 : 1024
   const top = spec.offset + spec.scale * (steps - 1)
   const n = 512
@@ -336,6 +336,19 @@ else {
   old.file('layers/biome.u8', new Uint8Array(W * H).buffer)
   check('a save with the climate as raster layers (before DEC-0036 phase 7) is refused', (await M.inputs.readWorldInputs(await old.generateAsync({ type: 'arraybuffer' }))) === null)
 }
+// A save whose hydrology is still the raster's (before DEC-0036 phase 7b):
+// a discharge raster layer, or coast reaches over raster cells — refused.
+{
+  const old = await JSZip.loadAsync(await zip.generateAsync({ type: 'arraybuffer' }))
+  old.file('layers/discharge.u16', new Uint16Array(W * H).buffer)
+  check('a save with the discharge as a raster layer (before DEC-0036 phase 7b) is refused', (await M.inputs.readWorldInputs(await old.generateAsync({ type: 'arraybuffer' }))) === null)
+  const cells = await JSZip.loadAsync(await zip.generateAsync({ type: 'arraybuffer' }))
+  cells.file('layers/coast.json', JSON.stringify({ reaches: [], cells: [5, 6] }))
+  check('a save with the coast over raster cells (before DEC-0036 phase 7b) is refused', (await M.inputs.readWorldInputs(await cells.generateAsync({ type: 'arraybuffer' }))) === null)
+  const fine = await JSZip.loadAsync(await zip.generateAsync({ type: 'arraybuffer' }))
+  fine.file('layers/coast.json', JSON.stringify({ reaches: [], nodes: [5, 6] }))
+  check('a save with the coast over the mesh\'s nodes opens', (await M.inputs.readWorldInputs(await fine.generateAsync({ type: 'arraybuffer' }))) !== null)
+}
 
 // The lake layer derives from the list and the terrain: a bowl in a synthetic
 // raster, one body at its spill, and lakeDepthFromBodies must find exactly the
@@ -407,7 +420,7 @@ else {
     snapshot: { epoch: 1 }, mantle: { values: new Float64Array(1).buffer, cells: 1, spacingM: 1 }, latticeAccumulated: new ArrayBuffer(4), latticeLockedEpochs: new ArrayBuffer(2),
     latticeLastClassCode: new ArrayBuffer(1), oceanAge: { values: new Float64Array(1).buffer, cells: 1, spacingM: 1 }, forcing: null, mesh: undefined,
     fields: {
-      climate: null, land: null, lakeDepth: null, dischargeM3s: null, refined, waterBodies: null, coast: null, sedimentBasins: null,
+      climate: null, land: null, lakeDepth: null, refined, waterBodies: null, coast: null, sedimentBasins: null,
     },
   })
   const zip = await JSZip.loadAsync(await write(r))
@@ -467,7 +480,9 @@ console.log('\n— zip writer —')
     seasonalAmplitude: Float32Array.from({ length: nc }, (_, i) => (cellSea(i) ? -1 : 6 + (i % 7))),
     monsoonIndex: Float32Array.from({ length: nc }, (_, i) => (cellSea(i) ? OCEAN_PRECIP : (i % 9) / 10 - 0.4)),
   }
-  const zipLand = { count: 3, biome: new Uint8Array([0, 6, 11]), koppen: new Uint8Array([0, 14, 29]), waterTable: new Float32Array([-1, 12.5, 0]) }
+  const zipLand = { count: 3, biome: new Uint8Array([0, 6, 11]), koppen: new Uint8Array([0, 14, 29]), waterTable: new Float32Array([-1, 12.5, 0]), discharge: new Float32Array([0, 1234.5, 1 / 3]) }
+  // The coast over the mesh's nodes (DEC-0036 phase 7b): vertex ids.
+  const zipCoast = { reaches: [{ id: 0, nodeStart: 0, nodeCount: 2, lengthKm: 12.5, exposure: 0.4, reliefM: 30, hardness: 1, supply: 0, type: 'beach', mouthReach: -1 }], nodes: new Int32Array([1, 2]) }
   const yaml = ['kind: FlatWorld', 'spec:', '  seed: "writer-welt"', '  erosion:', '    landscapeAge: 30', '    alluvium: 40', '    rockContrast: 55', 'metadata:', '  uid: 0192abcd-0000-8000-8000-00000000beef', ''].join('\n')
   const written = await writer.writeWorldArchive({
     kind: 'tectonic', width: W, height: H, yaml, generatorVersion: 'roundtrip', preview: null, elevation: zipElev.buffer.slice(0),
@@ -476,8 +491,8 @@ console.log('\n— zip writer —')
     forcing: { uplift: zipUplift, erodibility: zipHardness, resX: W, resY: H },
     mesh: { count: 3, nodes: new Float32Array([1, 1, 5, 2, 9, 6]).buffer, connectivity: new Uint8Array([7, 8, 9]).buffer, z: meshZ.buffer.slice(0) },
     fields: {
-      climate: zipClimate, land: zipLand, lakeDepth: null, dischargeM3s: null,
-      refined: null, waterBodies: zipBodies, coast: null, sedimentBasins: null,
+      climate: zipClimate, land: zipLand, lakeDepth: null,
+      refined: null, waterBodies: zipBodies, coast: zipCoast, sedimentBasins: null,
     },
   })
   const manifest = JSON.parse(await (await JSZip.loadAsync(written)).file('manifest.json').async('string'))
@@ -508,6 +523,9 @@ console.log('\n— zip writer —')
       && ['seaLevelTemperature', 'precipitation', 'seasonalAmplitude', 'monsoonIndex'].every((k) => sameF(climate[k], zipClimate[k])) && climate.precipitation[1] === OCEAN_PRECIP)
     const land = await writer.readLandFields(zip, 3)
     check('the land fields come back per node, bit for bit', land !== null && String(land.biome) === String(zipLand.biome) && String(land.koppen) === String(zipLand.koppen) && String(land.waterTable) === String(zipLand.waterTable))
+    check('the discharge comes back per node, bit for bit, and no discharge raster is written', land !== null && land.discharge !== null && sameF(land.discharge, zipLand.discharge) && manifest.mesh?.files?.discharge === 'mesh/discharge.f32' && zip.file('layers/discharge.u16') === null && !manifest.layers.some((l) => l.name === 'discharge'))
+    const coastBack = JSON.parse(await zip.file('layers/coast.json').async('string'))
+    check('the coast comes back over the mesh\'s nodes, no raster cells', String(coastBack.nodes) === String(zipCoast.nodes) && coastBack.cells === undefined && JSON.stringify(coastBack.reaches) === JSON.stringify(zipCoast.reaches))
     let wrongCount = false
     try { await writer.readLandFields(zip, 4) } catch { wrongCount = true }
     check('land fields of another mesh are refused', wrongCount)

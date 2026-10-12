@@ -117,7 +117,6 @@ const M = {
   surfaceTune: await L('/src/generator/surface/surfaceTuneParams.ts'),
   cover: await L('/src/generator/surface/cover.ts'),
   meshRaster: await L('/src/generator/mesh/meshRaster.ts'),
-  routing: await L('/src/generator/surface/flowRouting.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   graph: await L('/src/generator/surface/riverGraph.ts'),
   coast: await L('/src/generator/surface/coastGraph.ts'),
@@ -275,7 +274,6 @@ async function buildWorld(seed) {
   const w1 = M.weather.computeWeather(M.climateMesh.climateTerrain(sim.domain, el, W, H), WEATHER)
   const cells1 = CP.climateCellsFromWeather(w1)
   let land = landClimate(cells1)
-  const routing = await M.routing.fillDepressionsAndRouteFlow(el, sim.domain, 0)
   const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
   // The lakes on the MESH (phase 4.3), exactly as the worker's
   // hydrologyOnMesh: the mesh's own routing, discharge and basins under the
@@ -299,11 +297,9 @@ async function buildWorld(seed) {
   lakes = lakesOnMesh(land)
   const pixelLand = new Uint8Array(W * H)
   for (let i = 0; i < pixelLand.length; i++) if (el[i] > SEA || lakes.dryBasin[i]) pixelLand[i] = 1
-  // The raster routing's rain (the worker's 7b transition): the nodes'
-  // precipitation on the world raster.
-  const rasterRain = M.meshRaster.rasteriseNodePart(terrain.mesh, land.climate.precipitation, land.points.land, pixelLand, M.precip.OCEAN_PRECIP, W, H, false)
-  const discharge = M.hydro.accumulateDischarge(routing, el, rasterRain)
-  // The graph's discharge scale is the mesh's, like the worker's.
+  // The discharge per node — the only one since DEC-0036 phase 7b (no
+  // routing on the world raster), and the graph's scale, like the worker's.
+  const discharge = meshDischarge
   const maxDis = M.hydro.maxDischargeOverLand(meshDischarge, terrain.z)
   const meanRunoff = CP.meanLandRunoff(cells2)
   const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), meanRunoff)
@@ -332,21 +328,20 @@ async function buildWorld(seed) {
   // column's materials, the springs, the regime with the baseflow, the
   // water table — kept for the invariants below.
   const hardness = M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness
+  const nodeHardness = M.meshRaster.nearestCellAtNodes(hardness, CRX, CRY, terrain.mesh)
   const ground = M.ground.computeHydrogeology({
     sub: meshSub, elevation: terrain.z, graph, column: coupled.column,
-    hardness: M.meshRaster.nearestCellAtNodes(hardness, CRX, CRY, terrain.mesh),
+    hardness: nodeHardness,
     precipitation: land.climate.precipitation, temperature: land.climate.temperature, monsoonIndex: land.climate.monsoonIndex,
     cover: M.cover.coverField(land.biome, true),
     regime: graphRegime, discharge: meshDischarge, cellM: sim.domain.metresAround / W,
   })
   // The course (phase 3), seeded from the world like the worker does.
   graph.courses = M.course.computeRiverCourses(graph, { cellM: sim.domain.metresAround / W, seed: sim.warpSeed, domain: sim.domain })
-  // The coast (F5), as the worker builds it after the graph.
-  const coast = M.coast.buildCoastGraph({
-    elevation: el, width: W, height: H, domain: sim.domain,
-    windAt: (x, y, out) => cells2.cm.sampler.sampleVector(cells2.windE, cells2.windS, x, y, -1, out),
-    hardness, forcingResX: CRX, forcingResY: CRY, graph, cellM: sim.domain.metresAround / W,
-  })
+  // The coast (F5) on the mesh's shore nodes, as the worker builds it after
+  // the graph: the wind at the nodes.
+  const windy = CP.climateAtPoints(cells2, land.points, { wind: true })
+  const coast = M.coast.buildCoastGraph({ mesh: terrain.mesh, z: terrain.z, windE: windy.windE, windS: windy.windS, hardness: nodeHardness, graph })
 
   const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, sim.domain)
   // The ice: the history's last epoch on the mesh (phase 6), rasterised as
@@ -356,10 +351,11 @@ async function buildWorld(seed) {
   for (let v = 0; v < nodeBiome.length; v++) if (land.points.land[v] && terrain.z[v] > SEA && coupled.ice[v] >= M.surfaceTune.SURFACE_TUNING.iceMinThicknessM) nodeBiome[v] = M.biomes.Biome.Glacier
   // The map's biomes per pixel, from the nodes (the worker's idRaster).
   const biomesFine = Uint8Array.from(M.meshRaster.rasteriseNodePart(terrain.mesh, nodeBiome, land.points.land, pixelLand, M.biomes.Biome.Ocean, W, H, true))
-  // The sediment basins (F1) of the erosion pass, with provenance.
+  // The sediment basins (F1) of the last epoch's erosion on the mesh's
+  // nodes, with provenance, as the worker.
   const basins = M.basins.findSedimentBasins({
-    before: staged.before, after: el, width: W, height: H, routing, graph, cellM: sim.domain.metresAround / W,
-    cratonAge, hardness, coarseResX: CRX, coarseResY: CRY,
+    mesh: terrain.mesh, before: coupled.preErosionZ, after: terrain.z, substrate: meshSub, graph,
+    cratonAge: M.meshRaster.nearestCellAtNodes(cratonAge, CRX, CRY, terrain.mesh), hardness: nodeHardness,
   })
   // Real volcanoes and sutures, and real params — through the very function the
   // worker uses, not a copy of it. This used to pass empty arrays and `{}`,
@@ -406,7 +402,7 @@ async function buildWorld(seed) {
   const biomes = land.biome
   const lakesOut = { ...lakes, depth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen }
 
-  return { sim, raw, before: staged.before, terrain: staged.terrain, graphRegime, ground, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes: lakesOut, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
+  return { sim, raw, before: staged.before, terrain: staged.terrain, graphRegime, ground, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, discharge, maxDis, meanRunoff, threshold, lakes: lakesOut, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
 }
 
 // --- layer 1: invariants ---------------------------------------------------
@@ -455,9 +451,9 @@ function invariants(w) {
   if (w.volcanoes.length === 0) fail('volcanoes', 'none collected — the ecology inputs would be empty')
 
   // Rivers have to exist, or hydrology, ecology and migration are all running
-  // on a world with no fresh water.
+  // on a world with no fresh water. Per node of the mesh (DEC-0036 phase 7b).
   const channels = countWhere(w.discharge, (v) => v >= 2000)
-  if (channels === 0) fail('rivers', 'no channel cells')
+  if (channels === 0) fail('rivers', 'no channel nodes')
 
   // The feature graph's own invariants (phase 2 of the adaptive-mesh plan):
   // acyclic, discharge monotone downstream, every mouth in water, reaches
@@ -491,7 +487,7 @@ function invariants(w) {
   // The coast (F5): every coast cell in exactly one reach, reaches
   // contiguous, types known; and the coast is not empty on a world with sea.
   if (w.coast.reaches.length === 0) fail('coast', 'no reaches')
-  for (const [name, count] of Object.entries(M.coast.coastGraphInvariants(w.coast, w.el))) {
+  for (const [name, count] of Object.entries(M.coast.coastGraphInvariants(w.coast, w.terrain.mesh, w.terrain.z))) {
     if (count > 0) fail(`coast.${name}`, `${count} violations`)
   }
   // The sediment basins (F1): every labelled cell a deposit, counts match,
@@ -501,7 +497,7 @@ function invariants(w) {
   for (const [name, count] of Object.entries(M.ice.iceInvariants(w.ice, w.el))) {
     if (count > 0) fail(`ice.${name}`, `${count} violations`)
   }
-  for (const [name, count] of Object.entries(M.basins.sedimentBasinInvariants(w.basins, w.before, w.el))) {
+  for (const [name, count] of Object.entries(M.basins.sedimentBasinInvariants(w.basins, w.terrain.preErosionZ, w.terrain.z))) {
     if (count > 0) fail(`sedimentBasins.${name}`, `${count} violations`)
   }
   // The course's one statistical law (phase 3): the meander belt widens
@@ -639,7 +635,7 @@ function metrics(w) {
 
   put('hydro.meanRunoff', w.meanRunoff)
   put('hydro.maxDischarge', w.maxDis)
-  put('hydro.channelCells', countWhere(w.discharge, (v) => v >= 2000))
+  put('hydro.channelNodes', countWhere(w.discharge, (v) => v >= 2000))
   put('hydro.lakeCells', countWhere(w.lakes.depth, (v) => v > 0))
   put('hydro.saltFlatCells', countWhere(w.lakes.saltFlat, (v) => v > 0))
   put('hydro.dryBasinCells', countWhere(w.lakes.dryBasin, (v) => v === 1))

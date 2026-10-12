@@ -82,6 +82,8 @@ const M = {
   ground: await L('/src/generator/surface/hydrogeology.ts'),
   glacial: await L('/src/generator/surface/glacial.ts'),
   coastal: await L('/src/generator/surface/coastal.ts'),
+  coast: await L('/src/generator/surface/coastGraph.ts'),
+  basins: await L('/src/generator/surface/sedimentBasins.ts'),
   wind: await L('/src/generator/climate/wind.ts'),
   surfaceTune: await L('/src/generator/surface/surfaceTuneParams.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
@@ -555,6 +557,36 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   check('a mesh graph round-trips through its serialisation with positions', back !== null && back.cellX.length === graph.cellX.length && back.cellX[5] === graph.cellX[5])
   const again = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip)
   check('the lakes are deterministic', JSON.stringify(again.bodies) === JSON.stringify(lakes.bodies))
+
+  // DEC-0036 phase 7b: the watersheds, the coast graph and the sediment
+  // basins on the same nodes. A watershed is closed under the receiver (a
+  // land node and its land receiver share a label); the coast's walk
+  // covers every shore node once along the mesh's edges; a basin's volume
+  // is its nodes' thickness by area.
+  const sheds = M.hydro.watershedsOn(sub, eroded.z, 0)
+  let open = 0, labelled = 0
+  for (const v of aliveVertices(mesh)) {
+    if (eroded.z[v] <= 0) continue
+    if (sheds[v] > 0) labelled++
+    const t = sub.flowTarget[v]
+    if (t >= 0 && eroded.z[t] > 0 && sheds[t] !== sheds[v]) open++
+  }
+  check(`the watersheds are closed under the receivers (${labelled} land nodes labelled)`, open === 0 && labelled > 0, `${open} nodes leave their basin`)
+  const windE = new Float32Array(mesh.vertexSlots).fill(6)
+  const windS = new Float32Array(mesh.vertexSlots).fill(1)
+  const coast = M.coast.buildCoastGraph({ mesh, z: eroded.z, windE, windS, graph })
+  const shore = M.coastal.findShore(mesh, eroded.z)
+  const coastBroken = Object.entries(M.coast.coastGraphInvariants(coast, mesh, eroded.z)).filter(([, n]) => n > 0)
+  check(`the coast graph (${coast.reaches.length} reaches) walks every shore node once along the mesh`, coastBroken.length === 0 && coast.reaches.length > 0 && coast.nodes.length === shore.shore.length, coastBroken.map(([k, n]) => `${k}:${n}`).join(' ') + ` ${coast.nodes.length} of ${shore.shore.length}`)
+  const again2 = M.coast.buildCoastGraph({ mesh, z: eroded.z, windE, windS, graph })
+  check('the coast graph is deterministic', JSON.stringify(again2.reaches) === JSON.stringify(coast.reaches) && String(again2.type) === String(coast.type))
+  const sediment = M.basins.findSedimentBasins({ mesh, before: z0, after: eroded.z, substrate: sub, graph })
+  const basinBroken = Object.entries(M.basins.sedimentBasinInvariants(sediment, z0, eroded.z)).filter(([, n]) => n > 0)
+  const km2 = (domain.metresPerUnit / 1000) ** 2
+  let volume = 0
+  for (const v of aliveVertices(mesh)) if (sediment.label[v] > 0) volume += M.scale.elevationToMeters(eroded.z[v] - z0[v]) * areas[v] * km2 / 1000
+  const listed = sediment.basins.reduce((a, b) => a + b.volumeKm3, 0)
+  check(`the sediment basins (${sediment.basins.length}) hold their invariants and their volume is their nodes' (${listed.toFixed(3)} km³)`, basinBroken.length === 0 && Math.abs(listed - volume) <= 1e-6 * Math.max(1, volume), basinBroken.map(([k, n]) => `${k}:${n}`).join(' ') + ` ${listed} vs ${volume}`)
 }
 
 // Sampling the mesh at a point (phase 4.4): the hint grid finds the right

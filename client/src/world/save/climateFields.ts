@@ -22,11 +22,12 @@
 // mesh's own files under `mesh/`): `mesh/biome.u8` (the biome, climate/
 // biomes.ts ids — the map's, with the hydrology's riparian corridors, salt
 // flats and glaciers), `mesh/koppen.u8` (the Köppen class, 0 on the sea),
-// `mesh/waterTable.f32` (the water table's depth, metres, −1 under water).
-// They replace the raster layers biome (2048 × 1024), koppen and
-// waterTable. The generator recomputes all three on load; they are here
-// for the save's readers (world/query.ts, which rasterises them for its
-// views).
+// `mesh/waterTable.f32` (the water table's depth, metres, −1 under water),
+// `mesh/discharge.f32` (the river discharge, m³/s, DEC-0036 phase 7b).
+// They replace the raster layers biome (2048 × 1024), koppen, waterTable
+// and discharge. The generator recomputes all of them on load; they are
+// here for the save's readers (world/query.ts, which rasterises them for
+// its views).
 
 import type JSZip from 'jszip'
 import type { ClimateCellValues } from '../../generator/climate/climatePoints'
@@ -39,6 +40,8 @@ export interface SavedLandFields {
   biome: Uint8Array
   koppen: Uint8Array
   waterTable: Float32Array | null
+  // m³/s; null before the hydrology ran.
+  discharge: Float32Array | null
 }
 
 const CLIMATE_FIELDS = [
@@ -73,7 +76,7 @@ export async function climateFromEntries(metaText: string, read: (file: string) 
   return { cells, spacingM, ...values }
 }
 
-export const LAND_FILES = { biome: 'mesh/biome.u8', koppen: 'mesh/koppen.u8', waterTable: 'mesh/waterTable.f32' } as const
+export const LAND_FILES = { biome: 'mesh/biome.u8', koppen: 'mesh/koppen.u8', waterTable: 'mesh/waterTable.f32', discharge: 'mesh/discharge.f32' } as const
 
 // The raster layers this replaces: a save that still holds one, and not
 // its replacement, is from before the move and is refused, not converted
@@ -104,6 +107,23 @@ export async function readLandFields(zip: JSZip, count: number): Promise<SavedLa
   const k = new Uint8Array(await koppen.async('arraybuffer'))
   const tableFile = zip.file(LAND_FILES.waterTable)
   const table = tableFile ? new Float32Array(await tableFile.async('arraybuffer')) : null
-  if (b.length !== count || k.length !== count || (table && table.length !== count)) throw new Error(`the land fields hold ${b.length} nodes, the mesh ${count}`)
-  return { count, biome: b, koppen: k, waterTable: table }
+  const dischargeFile = zip.file(LAND_FILES.discharge)
+  const discharge = dischargeFile ? new Float32Array(await dischargeFile.async('arraybuffer')) : null
+  if (b.length !== count || k.length !== count || (table && table.length !== count) || (discharge && discharge.length !== count)) throw new Error(`the land fields hold ${b.length} nodes, the mesh ${count}`)
+  return { count, biome: b, koppen: k, waterTable: table, discharge }
+}
+
+// THE HYDROLOGY'S RASTER PARTS, refused (DEC-0036 phase 7b, fork 5): the
+// discharge as a world-raster layer (`layers/discharge.u16`, now
+// `mesh/discharge.f32`) and the coast reaches with their cells as raster
+// indices (`layers/coast.json` with `cells`, now `nodes`: the saved mesh's
+// vertex ids). An error names what a save from before the move holds; a
+// save without either is fine (saved before its hydrology ran).
+export async function refuseFormerHydrology(zip: JSZip): Promise<void> {
+  if (zip.file('layers/discharge.u16')) throw new Error('a discharge raster: a save from before the hydrology moved onto its mesh')
+  const coast = zip.file('layers/coast.json')
+  if (coast) {
+    const parsed = JSON.parse(await coast.async('string')) as { nodes?: unknown }
+    if (!Array.isArray(parsed.nodes)) throw new Error('coast reaches over raster cells: a save from before the hydrology moved onto its mesh')
+  }
 }
