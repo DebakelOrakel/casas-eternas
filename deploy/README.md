@@ -20,5 +20,9 @@ Ingress with a cert-manager certificate (ClusterIssuer
 `letsencrypt-production`). The reference deployment the guide walks
 through.
 
+`kubernetes.yaml` — the same for plain Kubernetes: the pods set
+`runAsUser`/`fsGroup` themselves, and the Ingress is for ingress-nginx
+instead of an OpenShift Route. Keep it in step with `manifests.yaml`.
+
 `nginx.conf` — **unused.** Left until the one-binary image has been
 running in a cluster for a while; delete it then.
