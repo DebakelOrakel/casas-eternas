@@ -54,15 +54,15 @@ export interface HydrogeologyInputs {
   graph: RiverGraph
   // The mesh's column (null on the raster: bedrock everywhere).
   column: SedimentColumn | null
-  // The crust-history hardness on the climate grid (null: uniform).
-  hardness: Float32Array | null
-  climateResX: number
-  climateResY: number
-  precipitation: Float32Array
-  temperature: Float32Array
-  monsoonIndex?: Float32Array
-  // The vegetation's hold per climate cell (surface/cover.ts).
-  cover: Float32Array
+  // Per element of `sub`: the crust-history hardness (null: uniform), the
+  // climate (climate/climatePoints.ts: mm/yr with OCEAN_PRECIP on the sea,
+  // °C at the element's height, the signed monsoon index) and the
+  // vegetation's hold (surface/cover.ts).
+  hardness: ArrayLike<number> | null
+  precipitation: ArrayLike<number>
+  temperature: ArrayLike<number>
+  monsoonIndex?: ArrayLike<number>
+  cover: ArrayLike<number>
   // The regime's accumulated inputs the graph was built with.
   regime: RegimeInputs
   discharge: Float32Array
@@ -82,12 +82,6 @@ export interface HydrogeologyResult {
 
 const COARSE = 1
 const FINE = 0
-
-function sampleCoarse(field: Float32Array, resX: number, resY: number, x: number, y: number, width: number, height: number): number {
-  const cx = Math.min(resX - 1, Math.max(0, Math.floor((x / width) * resX)))
-  const cy = Math.min(resY - 1, Math.max(0, Math.floor((y / height) * resY)))
-  return field[cy * resX + cx]
-}
 
 // The top material's permeability and the thickness of the permeable top
 // (metres) at a node: the column's top layer when there is one, the
@@ -124,8 +118,8 @@ function topMaterial(column: SedimentColumn | null, v: number, bedrockPermeabili
 }
 
 export function computeHydrogeology(input: HydrogeologyInputs): HydrogeologyResult {
-  const { sub, elevation, graph, column, climateResX: RX, climateResY: RY, precipitation, temperature, monsoonIndex, cover, regime, discharge, cellM } = input
-  const { width, height, flowTarget, popOrder, poppedCount, count: n } = sub
+  const { sub, elevation, graph, column, precipitation, temperature, monsoonIndex, cover, regime, discharge, cellM } = input
+  const { flowTarget, popOrder, poppedCount, count: n } = sub
   const T = SURFACE_TUNING
   const permeability = new Float32Array(n)
   const topThicknessM = new Float32Array(n)
@@ -135,16 +129,14 @@ export function computeHydrogeology(input: HydrogeologyInputs): HydrogeologyResu
   const mat = new Float64Array(4)
   for (let c = 0; c < n; c++) {
     if (elevation[c] <= SEA_LEVEL) continue
-    const x = sub.x(c)
-    const y = sub.y(c)
-    const hard = input.hardness ? sampleCoarse(input.hardness, RX, RY, x, y, width, height) : 1
+    const hard = input.hardness ? input.hardness[c] : 1
     const bedrock = Math.min(T.permeabilityBedrockMax, Math.max(T.permeabilityBedrockMin, T.permeabilityBedrock / Math.max(0.25, hard)))
     topMaterial(column, c, bedrock, mat)
     permeability[c] = mat[0]
     topThicknessM[c] = mat[1]
     topIsCoarse[c] = mat[2]
     belowPermeability[c] = mat[3]
-    const cv = sampleCoarse(cover, RX, RY, x, y, width, height)
+    const cv = cover[c]
     infiltration[c] = Math.min(T.infiltrationMax, mat[0] * (T.infiltrationBare + (1 - T.infiltrationBare) * cv))
   }
 
@@ -156,11 +148,9 @@ export function computeHydrogeology(input: HydrogeologyInputs): HydrogeologyResu
   const dryQuick = new Float32Array(n)
   for (let c = 0; c < n; c++) {
     if (elevation[c] <= SEA_LEVEL) continue
-    const x = sub.x(c)
-    const y = sub.y(c)
-    const p = sampleCoarse(precipitation, RX, RY, x, y, width, height)
+    const p = precipitation[c]
     if (p === OCEAN_PRECIP || p <= 0) continue
-    const s = monsoonIndex ? Math.abs(sampleCoarse(monsoonIndex, RX, RY, x, y, width, height)) : 0
+    const s = monsoonIndex ? Math.abs(monsoonIndex[c]) : 0
     const dry = s < 1 ? p * (1 - s) : 0
     const area = sub.area(c)
     base[c] = p * infiltration[c] * area
@@ -195,8 +185,8 @@ export function computeHydrogeology(input: HydrogeologyInputs): HydrogeologyResu
     if (!outcrops) continue
     const x = sub.x(c)
     const y = sub.y(c)
-    const p = sampleCoarse(precipitation, RX, RY, x, y, width, height)
-    const pet = evaporationPotential(sampleCoarse(temperature, RX, RY, x, y, width, height))
+    const p = precipitation[c]
+    const pet = evaporationPotential(temperature[c])
     const oasis = pet > 0 && p > 0 && p / pet < T.regimeAridBelow
     springs.push({ id: springs.length, cell: c, x, y, elevation: elevation[c], oasis })
   }
@@ -249,9 +239,7 @@ export function computeHydrogeology(input: HydrogeologyInputs): HydrogeologyResu
     }
     distM[c] = distM[t] + sub.step(c, t) * cellM
     headZ[c] = headZ[t]
-    const x = sub.x(c)
-    const y = sub.y(c)
-    const p = Math.max(0, sampleCoarse(precipitation, RX, RY, x, y, width, height))
+    const p = Math.max(0, precipitation[c])
     const recharge = Math.min(T.aquiferRechargeCap, p / T.aquiferRechargeRefMm)
     const rise = T.aquiferRiseBase * (1 - T.aquiferRisePermeableDrop * permeability[c]) * recharge
     const tableZ = headZ[c] + (rise * distM[c]) / ELEVATION_METERS

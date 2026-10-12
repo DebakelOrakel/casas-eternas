@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-12
+- **changed** Ecology: biomes, climate classes, resources and ground water are worked out on the terrain's own mesh, as evenly at the poles as at the equator, so a seed makes a different world, and worlds saved before this change no longer open. `generator.step.ecology`
 - **changed** Tectonics: the land bends under eroded rock, sediment and ice as an elastic plate does, with a low rise beyond each sinking basin, so a seed makes a different world. `generator.step.tectonics`
 - **changed** Climate: the refined climate — its months, fog, föhn, storms and the rain's reliability — is worked out as evenly at the poles as at the equator, and refined worlds saved before this change no longer open. `generator.step.climate`
 

@@ -3,7 +3,7 @@ import type { TileBakeInputs, UpstreamTile } from '../generator/pipeline/meshTil
 import type { TileParent } from '../generator/mesh/meshTile'
 import type { SavedMesh } from '../generator/mesh/meshSerial'
 import type { RiverGraph } from '../generator/surface/riverGraph'
-import { meanLandRunoff } from '../generator/surface/hydrology'
+import { climateCellsFromSaved, meanLandRunoff } from '../generator/climate/climatePoints'
 import { torusDomain } from '../generator/core/domain'
 import type { WorldInputs } from './save/loadWorldInputs'
 
@@ -29,21 +29,14 @@ export function levelBakeInputs(inputs: WorldInputs, mesh: SavedMesh | null = in
     erodibility: inputs.erodibility?.data ?? null,
     forcingResX: inputs.uplift?.resX ?? 0,
     forcingResY: inputs.uplift?.resY ?? 0,
-    precipitation: inputs.climate?.data ?? null,
-    temperature: inputs.temperature?.data ?? null,
-    monsoonIndex: inputs.biomeInputs?.monsoonIndex.data ?? null,
-    climateResX: inputs.climate?.resX ?? 0,
-    climateResY: inputs.climate?.resY ?? 0,
+    climate: inputs.climate,
   }
 }
 
 // One tile on its parent level. The world's mean land water is taken over
-// the SAVE's land (its elevation raster): the discharge a river carries into
-// the tile is in that unit (meshTileBake.ts).
+// the save's climate's land (climatePoints.meanLandRunoff): the discharge a
+// river carries into the tile is in that unit (meshTileBake.ts).
 export function tileBakeInputs(inputs: WorldInputs, parent: TileParent, parentGraph: RiverGraph | null, upstream: UpstreamTile[]): TileBakeInputs {
-  const precipitation = inputs.climate?.data ?? null
-  const climateResX = inputs.climate?.resX ?? 0
-  const climateResY = inputs.climate?.resY ?? 0
   return {
     parent,
     parentGraph,
@@ -57,9 +50,7 @@ export function tileBakeInputs(inputs: WorldInputs, parent: TileParent, parentGr
     erodibility: inputs.erodibility?.data ?? null,
     forcingResX: inputs.uplift?.resX ?? 0,
     forcingResY: inputs.uplift?.resY ?? 0,
-    precipitation,
-    climateResX,
-    climateResY,
-    meanLandWater: precipitation ? meanLandRunoff(precipitation, inputs.elevations, torusDomain(inputs.width, inputs.height), climateResX, climateResY) : 0,
+    climate: inputs.climate,
+    meanLandWater: inputs.climate ? meanLandRunoff(climateCellsFromSaved(torusDomain(inputs.width, inputs.height), inputs.climate)) : 0,
   }
 }

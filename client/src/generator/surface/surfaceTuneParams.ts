@@ -170,6 +170,9 @@ export const SURFACE_TUNING = {
   // eye; the coast process of phase 7 replaces the rules with rates.
   coastReachCells: 40,
   coastFetchCapKm: 1500,
+  // The fetch's march step, metres (surface/coastal.ts, the history's
+  // coast): the 62.4 km climate cell it stepped in until DEC-0036 phase 7.
+  coastFetchStepM: 62_400,
   // THE COAST PROCESS (surface/coastal.ts, phase 7). The wave base: the
   // sea cuts a shore node down to this depth below sea level (the
   // platform). The shore retreats coastRetreatPerYr metres a year at
@@ -203,7 +206,8 @@ export const SURFACE_TUNING = {
   sedimentBasinMinThicknessM: 5,
   sedimentBasinMinCells: 4,
 
-  // ICE (surface/iceFlow.ts, ADAPTIVE_MESH_PLAN.md F4). Snow to ice: a
+  // ICE (surface/glacial.ts on the mesh; F4's raster surface/iceFlow.ts
+  // until DEC-0036 phase 7, ADAPTIVE_MESH_PLAN.md F4). Snow to ice: a
   // metre of precipitation as snow makes this much ice (density 0.35 →
   // 0.9). Melt: metres of ice per year per degree of mean annual
   // temperature above the threshold — a degree-day rate on the annual
@@ -250,11 +254,15 @@ export const SURFACE_TUNING = {
   // — enough to lift a hot desert (P<250) into savanna/forest (the Nile effect).
   maxRiparianMm: 900,
 
-  // How far the moisture bleeds into neighbouring coarse cells, and its per-step
-  // falloff. Coarse cells are large (~60 km), so 1 step already reads as a green
-  // valley band without washing out the whole continent.
-  riparianSpread: 1,
-
+  // How far the moisture bleeds from its water, metres, and its falloff:
+  // riparianDecay per riparianDecayLengthM (hydrology.riparianPrecipitationOn).
+  // On the terrain mesh since DEC-0036 phase 7; until then it bled
+  // riparianSpread 1 coarse cell at 0.45 per cell — the reach and the length
+  // are that 62.4 km cell (the torus's climate cell), not recalibrated. One
+  // cell already reads as a green valley band without washing out the whole
+  // continent.
+  riparianReachM: 62_400,
+  riparianDecayLengthM: 62_400,
   riparianDecay: 0.45,
 
   // --- the river-density curve's endpoints ---------------------------------

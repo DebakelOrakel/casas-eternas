@@ -37,9 +37,10 @@ Five entries, assembled in `saveWorld` / read back in the load handler:
 | `oceanAge.f64` + `oceanAge.json` | The ocean-floor age, its field mesh's values (Float64 per cell) and that mesh's identity (`{ cells, spacingM }`, DEC-0036 phase 2; the 256 × 128 raster `oceanAge.f32` until 2026-10-11) | **Yes** — restored into the sim; another mesh's is refused |
 | `refined.json` + `refined/<field>.f32` | The climate step's refinement as its values per cell of the climate's field mesh (DEC-0036 phase 5; the quantised raster layers `layers/temperature.01` … `layers/thunder` and `layers/enso.json` until 2026-10-11): Float32, a month-stacked field months × cells; the json holds the mesh's cells and spacing, the months, each field's file and unit, the wind's unit and the ENSO see-saw's period and strength (`world/save/refinedFields.ts`). Present when the world was refined | **Yes** — adopted as saved, bit for bit, no recompute; another mesh's, or the old raster layers without it, is refused |
 | `preview.png` | Thumbnail for the file/gallery | No — cosmetic, not read on load |
-| `manifest.json` + `layers/…` | The queryable layers (queryable-world-save.md); since `formatVersion` 2 also `layers/waterBodies.json`, the standing-water list every lake and shore derives from | No — read by consumers, not by restore |
+| `climate.json` + `climate/<field>.f32` | The annual climate the world's land fields came from, its values per cell of the climate's field mesh (DEC-0036 phase 7; the raster layers `landMask`, `temperature`, `precipitation`, `seasonalAmplitude`, `monsoonIndex` at 256 × 128 until 2026-10-12): Float32, the temperature reduced to sea level (a reader takes its own lapse back), the rain, the seasonal range and the signed monsoon index, the sea marked by −1; the json holds the mesh's cells and spacing and each field's file and unit (`world/save/climateFields.ts`). The refinement's year when the world is refined, else the static climate the hydrology settled. Present once the climate ran | No — the generator recomputes the climate on load; the bakes and the save's readers sample it; the old raster layers without it are refused |
+| `manifest.json` + `layers/…` | The queryable layers (queryable-world-save.md); since `formatVersion` 2 also `layers/waterBodies.json`, the standing-water list every lake and shore derives from. Since DEC-0036 phase 7 the raster layers are only `lakeDepth`, `discharge` (world raster) and the forcing's `uplift` / `erodibility` | No — read by consumers, not by restore |
 | `mesh/nodes.f32`, `mesh/connectivity.bin`, `mesh/z.f32` | The adaptive mesh the erosion ran on (ADAPTIVE_MESH_PLAN.md phase 4.3): node positions, neighbours as varint deltas in Hilbert numbering, eroded heights — the terrain proper since 2026-09-23, from which `elevation.f32` is rasterised. Present since `formatVersion` 3 when the world was eroded; the manifest's `mesh` entry names the files and the node count | **Yes** — restored into the worker so a later save carries it on; a save without one restores the raster alone |
-| `layers/waterTable.u16` | The water table's depth below the surface, metres to 1000 (phase 5a, `surface/hydrogeology.ts`): 0 at a channel or a seep, the depth of a well elsewhere; written since 2026-09-23 with the other world-raster layers | No — a readout |
+| `mesh/biome.u8`, `mesh/koppen.u8`, `mesh/waterTable.f32` | The land fields per node of the saved mesh, in its numbering (DEC-0036 phase 7; the raster layers `biome` (2048 × 1024), `koppen` and `waterTable` until 2026-10-12): the map's biome (`climate/biomes.ts` ids — the riparian corridors, the salt flats and the glaciers included), the Köppen class (0 on the sea), the water table's depth in metres (−1 under water, 0 at a channel or a seep, the depth of a well elsewhere). Named by the manifest's `mesh.files` | No — the generator recomputes them on load; the save's readers (`world/query.ts`) rasterise them |
 | `mesh/column.bin` | The sediment column per node (ADAPTIVE_MESH_PLAN.md phase 5.2, `mesh/meshColumn.ts`): the layer count, each layer's epoch, then per node and layer six floats — fine and coarse thickness in metres and the products thickness × craton oldness, × source hardness, × temperature at deposition, × precipitation at deposition (the last two since `formatVersion` 5; a version-4 file has four per layer, read off the byte length). Present since `formatVersion` 4 when the history ran; named by the manifest's `mesh.files.column` | **Yes** — restored with the mesh; a save without one restores an empty column |
 
 The load-critical files (`world.yaml`, `state.json`, `oceanAge.f64` +
@@ -50,9 +51,10 @@ Restore is a **rehydrate, not a replay**: `state.json` rebuilds the plate
 simulation, `elevation.f32` is dropped in as the finished (eroded) terrain, the
 mesh files rebuild the triangulation (bit for bit — the codec is the canonical
 form, see `mesh/meshSerial.ts`), and `oceanAge.f64` restores the ocean floor —
-nothing re-steps or re-erodes. The static climate and the
-hydrology are *not* stored; they're recomputed on demand from the restored
-terrain. The climate step's refinement, when saved, is taken as it was.
+nothing re-steps or re-erodes. The static climate, the
+hydrology, the biomes and the ecology are recomputed on demand from the
+restored terrain (what the save holds of them is for its readers). The
+climate step's refinement, when saved, is taken as it was.
 
 ## `world.yaml`
 
@@ -159,6 +161,12 @@ elsewhere):
   age's mesh), months × cells for a month-stacked field, month-major; vectors as
   east and south components in each cell's own frame. The sea's fields are 0 on the
   mesh's land cells, the rain's sea is OCEAN_PRECIP (−1).
+- **`climate/<field>.f32`** — raw little-endian `Float32Array`, one value per cell of
+  the same mesh (DEC-0036 phase 7): `seaLevelTemperature` (°C at sea level),
+  `precipitation` (mm/yr), `seasonalAmplitude` (°C), `monsoonIndex` (signed); the
+  land fields' sea is −1.
+- **`mesh/biome.u8`, `mesh/koppen.u8`** — one byte per node of the saved mesh, in its
+  numbering; **`mesh/waterTable.f32`** — one Float32 per node, metres.
 
 ## Compatibility
 

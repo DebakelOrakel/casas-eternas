@@ -1,5 +1,5 @@
-import { torusDomain, type DomainGrid } from '../core/domain'
-import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
+import { torusDomain } from '../core/domain'
+import { climateAtPoints, climateCellsFromSaved, meanLandRunoff, meshPoints, type ClimateCellValues } from '../climate/climatePoints'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { meshAreas, meshSubstrate } from '../mesh/meshHydrology'
@@ -10,7 +10,7 @@ import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
 import { BAKE_ENGINE_OVERRIDES } from '../surface/amplify'
 import type { PipelineOptions, WorkerLike } from '../surface/erosionEnginePool'
 import { assembleNodeForcing, type ErosionControlsV2 } from '../surface/erosionForcingFields'
-import { accumulateDischargeOn, accumulateRegimeInputsOn, CANONICAL_RIVER_DENSITY, channelThreshold, computeLakesOn, densityToCriticalArea, maxDischargeOverLand, meanLandRunoff, type RiverPolylines, type WaterBody } from '../surface/hydrology'
+import { accumulateDischargeOn, accumulateRegimeInputsOn, CANONICAL_RIVER_DENSITY, channelThreshold, computeLakesOn, densityToCriticalArea, maxDischargeOverLand, type RiverPolylines, type WaterBody } from '../surface/hydrology'
 import { computeRiverCourses } from '../surface/riverCourse'
 import { buildRiverGraph, riverPolylinesFromGraph, type RiverGraph } from '../surface/riverGraph'
 import type { SavedMesh } from '../mesh/meshSerial'
@@ -45,11 +45,10 @@ export interface MeshBakeInputs {
   erodibility: Float32Array | null
   forcingResX: number
   forcingResY: number
-  precipitation: Float32Array | null
-  temperature: Float32Array | null
-  monsoonIndex: Float32Array | null
-  climateResX: number
-  climateResY: number
+  // The save's climate per cell of its field mesh (world/save/
+  // climateFields.ts), sampled at the level's nodes; null: uniform water
+  // and no hydrology.
+  climate: ClimateCellValues | null
 }
 
 export interface MeshBakeOptions {
@@ -94,10 +93,12 @@ export async function bakeMeshLevel(inputs: MeshBakeInputs, options: MeshBakeOpt
   options.onProgress?.('refine', 1)
   const { mesh } = refined
   const areas = meshAreas(mesh)
+  const cells = inputs.climate ? climateCellsFromSaved(domain, inputs.climate) : null
   const coarse = {
     uplift: inputs.uplift, hardness: inputs.erodibility,
     forcingResX: inputs.forcingResX || 1, forcingResY: inputs.forcingResY || 1,
-    water: inputs.precipitation, waterResX: inputs.climateResX || 1, waterResY: inputs.climateResY || 1,
+    water: null, waterResX: 1, waterResY: 1,
+    waterNodes: cells ? climateAtPoints(cells, meshPoints(mesh, refined.z)).precipitation : null,
     lithoSeed: inputs.lithoSeed,
   }
   const { forcing, params } = assembleNodeForcing(coarse, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, refined.z, areas, domain, inputs.controls)
@@ -114,23 +115,24 @@ export async function bakeMeshLevel(inputs: MeshBakeInputs, options: MeshBakeOpt
   })
   options.onProgress?.('hydrology', 0)
   const z = result.z
-  const water = inputs.precipitation && inputs.temperature
+  const atNodes = cells ? climateAtPoints(cells, meshPoints(mesh, z)) : null
+  const water = cells && atNodes
     ? levelHydrology(mesh, z, result.routing, areas, result.sedimentFlux, {
-      precipitation: inputs.precipitation, temperature: inputs.temperature, monsoonIndex: inputs.monsoonIndex,
-      climateResX: inputs.climateResX || CLIMATE_RES_X, climateResY: inputs.climateResY || CLIMATE_RES_Y,
+      precipitation: atNodes.precipitation, temperature: atNodes.temperature, monsoonIndex: atNodes.monsoonIndex, meanRunoff: meanLandRunoff(cells),
     }, { width, height, budget: options.budget, detailSeed: inputs.detailSeed })
     : { discharge: new Float32Array(mesh.vertexSlots), waterBodies: [], graph: null, rivers: null }
   options.onProgress?.('hydrology', 1)
   return { level: options.level, mesh, z, routing: result.routing, ...water, inserted: refined.inserted }
 }
 
-// The climate a level's waters are derived from, on the climate grid.
+// The climate a level's waters are derived from: per node of the level
+// (climate/climatePoints.climateAtPoints), and the world's mean land rain
+// the channel criterion reads (climatePoints.meanLandRunoff).
 export interface LevelClimate {
-  precipitation: Float32Array
-  temperature: Float32Array
-  monsoonIndex: Float32Array | null
-  climateResX: number
-  climateResY: number
+  precipitation: ArrayLike<number>
+  temperature: ArrayLike<number>
+  monsoonIndex: ArrayLike<number> | null
+  meanRunoff: number
 }
 
 // A level's waters from its terrain: the discharge, the lakes, the channel
@@ -142,35 +144,21 @@ export function levelHydrology(
   mesh: PeriodicTriangulation, z: Float32Array, routing: MeshRouting, areas: Float32Array, sedimentFlux: Float32Array,
   climate: LevelClimate, level: { width: number; height: number; budget: number; detailSeed: number },
 ): { discharge: Float32Array; waterBodies: WaterBody[]; graph: RiverGraph; rivers: RiverPolylines } {
-  const { width, height } = level
-  const { precipitation, temperature, climateResX: CRX, climateResY: CRY } = climate
+  const { width } = level
+  const { precipitation, temperature } = climate
   const sub = meshSubstrate(mesh, routing, areas)
-  const discharge = accumulateDischargeOn(sub, z, precipitation, CRX, CRY)
-  const lakes = computeLakesOn(sub, discharge, z, temperature, precipitation, CRX, CRY)
-  // The channel criterion as the raster bake derives it: the canonical
-  // density over the world's mean runoff.
-  const macroLand = new Float32Array(width * height)
-  const macro = mesh.domain.scaledTo(width, height)
-  const meanRunoff = meanLandRunoff(precipitation, macroLandFrom(mesh, z, macro.grid(width, height), macroLand), macro, CRX, CRY)
-  const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), meanRunoff)
+  const discharge = accumulateDischargeOn(sub, z, precipitation)
+  const lakes = computeLakesOn(sub, discharge, z, temperature, precipitation)
+  // The channel criterion: the canonical density over the world's mean
+  // runoff.
+  const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), climate.meanRunoff)
   const maxDischarge = maxDischargeOverLand(discharge, z)
   const graph = buildRiverGraph({
     substrate: sub, discharge, elevation: z, threshold, maxDischarge,
     bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux,
-    regime: accumulateRegimeInputsOn(sub, z, temperature, precipitation, climate.monsoonIndex ?? undefined, CRX, CRY),
+    regime: accumulateRegimeInputsOn(sub, z, temperature, precipitation, climate.monsoonIndex ?? undefined),
     criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
   })
   graph.courses = computeRiverCourses(graph, { cellM: (mesh.domain.metresAround / width) * level.budget, seed: level.detailSeed, domain: mesh.domain })
   return { discharge, waterBodies: lakes.bodies, graph, rivers: riverPolylinesFromGraph(graph, maxDischarge) }
-}
-
-// The land mask the mean runoff is taken over — the macro grid's cells
-// under land nodes, a rasterisation cheap enough to be exact here. `grid`:
-// the macro grid, one cell per world unit.
-function macroLandFrom(mesh: PeriodicTriangulation, z: Float32Array, grid: DomainGrid, out: Float32Array): Float32Array {
-  for (let v = 0; v < mesh.vertexSlots; v++) {
-    if (!mesh.vAlive[v] || z[v] <= SEA_LEVEL) continue
-    out[grid.index(Math.floor(mesh.vx[v]), Math.floor(mesh.vy[v]))] = 1
-  }
-  return out
 }

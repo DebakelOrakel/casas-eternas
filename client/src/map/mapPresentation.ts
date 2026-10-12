@@ -9,14 +9,13 @@ import { createElevationSurface, downsampleElevation } from './elevationSurface'
 import { createFineElevationSurface } from './fineElevationSurface'
 import type { ChannelField } from './channelField'
 import { RELIEF_DECIMATION, RELIEF_HEIGHT_SCALE } from './mapSceneSettings'
-import { SEA_LEVEL, elevationToMeters } from '../generator/elevation/elevationScale'
-import { Biome, computeBiomesFine, HYDROLOGY_STATE_BIOMES, reduceTemperatureToSeaLevel } from '../generator/climate/biomes'
+import { elevationToMeters } from '../generator/elevation/elevationScale'
+import { Biome } from '../generator/climate/biomes'
 // The hydrology's width vocabulary — a pure value, the read the map→worldgen
 // boundary allows (see the root CLAUDE.md; channelField makes the same one).
 // Shoreline points carry the thinnest pen so the overlay draws them at its
 // cartographic floor.
 import { RIVER_MIN_WIDTH } from '../generator/surface/hydrology'
-import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../generator/climate/climateField'
 import type { ElevationSurface } from './elevationSurface'
 
 // How a world's FIELDS become what a map view eats: the paper texture bytes and
@@ -51,20 +50,17 @@ export interface MapPresentationOptions {
   onSurfaces: (coarse: ElevationSurface, fine: ElevationSurface, detail: ElevationSurface) => void
 }
 
-// The save's own fields. `biomeInputs` is null for a save written before the
-// classification's inputs were stored; the legacy upsample path then stands.
+// The save's own fields: the biome ids on the world raster (world/query's
+// view of the save's per-node biomes, DEC-0036 phase 7). The wash upsamples
+// them; the reclassification against an amplified tier's terrain from the
+// save's climate rasters went with those rasters (phase 7) — a rebuilt
+// world map reclassifies at a level's own nodes.
 export interface MapWorldFields {
   elevations: Float32Array
   width: number
   height: number
   biome: { data: Float32Array; resX: number; resY: number } | null
   detailSeed: number
-  biomeInputs: {
-    temperature: { data: Float32Array; resX: number; resY: number }
-    precipitationEffective: { data: Float32Array; resX: number; resY: number }
-    seasonalAmplitude: { data: Float32Array; resX: number; resY: number }
-    monsoonIndex: { data: Float32Array; resX: number; resY: number }
-  } | null
   // Water depth per world-raster cell (elevation units), 0 where there is no
   // lake. A hydrology state like the salt flats — carried from the macro
   // authority, never re-derived — and null for a save that predates the layer.
@@ -201,32 +197,11 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
   // repaint costs neither again.
   let lastRelief: Uint8Array | null = null
   let biomeIds: Uint8Array | null = null
-  // The save's climate inputs, kept so the biome wash can be RECLASSIFIED
-  // against whatever terrain is current instead of upsampled from the saved
-  // ids — that is what makes an amplified tier's ridges carry a treeline.
-  let biomeInputs: MapWorldFields['biomeInputs'] = null
-  // The MACRO biome ids, nearest-sampled to texture resolution. Two things the
-  // classification cannot re-derive on its own live in here, and the macro
-  // raster is their authority: salt flats (a hydrology state, not a climate)
-  // and dry basin floors (below sea level yet land).
-  let macroBiomeAtTexel: Uint8Array | null = null
   // Lake depth in METRES per texel, nearest-sampled like the biome table and
   // for the same reason: a hydrology state whose authority is the macro
   // raster. Nearest keeps the shore categorical — blending a depth across the
   // shore would invent shallow water on land.
   let lakeDepthAtTexel: Float32Array | null = null
-  // Where the MACRO had a lake at all (wet mask, texel res) — kept apart from
-  // lakeDepthAtTexel because applyTier replaces THAT with the bake's own lakes.
-  // The frozen rule below needs the distinction: a macro lake's frozen state is
-  // macro authority (the Glacier ids), but a FINE-ONLY lake (a basin the bake
-  // reflooded that the macro never had) has no authority to inherit and gets
-  // the rule derived per texel instead.
-  let macroLakeWetAtTexel: Uint8Array | null = null
-  // The saved temperature with its lapse term removed, computed ONCE against
-  // the macro raster the generator's climate actually ran on. It has to be
-  // built here rather than inside the classification, because the terrain
-  // being classified is no longer that raster once a tier lands.
-  let seaLevelTemperature: Float32Array | null = null
   let knowledge: KnowledgeSource | null = null
   let ramp: KnowledgeRamp = { ...DEFAULT_KNOWLEDGE_RAMP }
   let pigment: PigmentTuning = { ...DEFAULT_PIGMENT_TUNING }
@@ -341,69 +316,6 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
     }
   }
 
-  // Biomes re-derived from THIS raster, at texture resolution.
-  //
-  // The wash used to be the saved 2048 ids upsampled through a domain-warped
-  // coordinate — a guess at what lies between two macro cells. Here the
-  // elevation at every texel is already known (it is the field the hillshade
-  // was just built from), and the Whittaker classification is pointwise, so the
-  // answer can simply be computed instead. It re-runs as each amplified tier
-  // lands: the biome boundaries sharpen in step with the terrain, and a
-  // treeline follows the ridges the bake actually carved rather than the 62 km
-  // cell they sit in.
-  //
-  // What does NOT get finer: precipitation, seasonality and monsoon stay
-  // regional (the classification interpolates them, but interpolation is not
-  // information). So this sharpens the elevation-driven boundaries — treeline,
-  // alpine, valley warmth — and leaves rain-driven ones where they were. In
-  // mountains that is the visible half; on a plain nothing changes.
-  function reclassifyBiomes(paperField: Float32Array): void {
-    // Legacy save, or a climate grid this build does not index the same way:
-    // keep whatever setWorld built. computeBiomesFine reads the grid through
-    // the shared constants, so a mismatch would be misindexed rather than
-    // rejected, and the upsample path is a working fallback.
-    if (!biomeInputs || !seaLevelTemperature) return
-    const { temperature, precipitationEffective, seasonalAmplitude, monsoonIndex } = biomeInputs
-
-    // Dry basin floors: below sea level in THIS raster, yet land according to
-    // the macro authority. Rebuilt per call because it depends on the field.
-    let dryLand: Uint8Array | undefined
-    if (macroBiomeAtTexel) {
-      dryLand = new Uint8Array(paperField.length)
-      for (let i = 0; i < paperField.length; i++) {
-        if (paperField[i] <= SEA_LEVEL && macroBiomeAtTexel[i] !== Biome.Ocean) dryLand[i] = 1
-      }
-    }
-    const ids = computeBiomesFine(
-      temperature.data, precipitationEffective.data, seasonalAmplitude.data, monsoonIndex.data,
-      paperField, texture, dryLand, seaLevelTemperature,
-    )
-    // Hydrology-state biomes (HYDROLOGY_STATE_BIOMES — the classification has
-    // no way to reach them) are carried over from the macro authority rather
-    // than re-derived. The SET lives next to the enum so a new state biome
-    // joins this carry-over by declaration, not by someone remembering this
-    // loop exists. None of them needs a lake gating: unlike Ice, a state
-    // biome can only ever MEAN its state.
-    if (macroBiomeAtTexel) {
-      for (let i = 0; i < ids.length; i++) {
-        const macro = macroBiomeAtTexel[i]
-        if (HYDROLOGY_STATE_BIOMES.has(macro)) ids[i] = macro
-      }
-    }
-    // FINE-ONLY lakes (a bake refloods basins the macro raster never had, so
-    // there is no macro frozen/open verdict to carry over): a wet texel whose
-    // climate classifies Ice is a frozen pond — the per-texel form of the
-    // per-basin rule, and at pond size the two agree. Gated OFF wherever the
-    // macro had a lake, so a genuinely open macro lake (the deep Baikal-class
-    // rift in polar ice) keeps its verdict against its own cold shores.
-    if (lakeDepthAtTexel) {
-      for (let i = 0; i < ids.length; i++) {
-        if (lakeDepthAtTexel[i] > 0 && ids[i] === Biome.Ice && !macroLakeWetAtTexel?.[i]) ids[i] = Biome.Glacier
-      }
-    }
-    biomeIds = ids
-  }
-
   // Paint the retained relief bytes into both papers, with the biome wash on
   // top wherever there are ids for it. Split from setElevation so a repaint
   // costs neither the hillshade nor the classification again.
@@ -515,54 +427,14 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
 
   return {
     setWorld(fields: MapWorldFields): void {
-      const { elevations, width, height, biome, detailSeed, biomeInputs: savedBiomeInputs, lakeDepth } = fields
-      biomeInputs = savedBiomeInputs
+      const { biome, detailSeed, lakeDepth } = fields
       // Lake depths at texture resolution, in metres — nearest, like the biome
       // table below and for the same authority reason.
       lakeDepthAtTexel = lakeDepth ? resampleLakeDepth(lakeDepth) : null
-      macroLakeWetAtTexel = null
-      if (lakeDepthAtTexel) {
-        macroLakeWetAtTexel = new Uint8Array(lakeDepthAtTexel.length)
-        for (let i = 0; i < lakeDepthAtTexel.length; i++) if (lakeDepthAtTexel[i] > 0) macroLakeWetAtTexel[i] = 1
-      }
-      // The macro ids at texture resolution, nearest — this is a lookup table
-      // for two facts the classification cannot reach (salt flats, dry basin
-      // floors), so nearest is right: they are categorical and the macro raster
-      // is their authority. Blending them would invent states that exist
-      // nowhere.
-      macroBiomeAtTexel = null
-      if (biome) {
-        const table = new Uint8Array(textureWidth * textureHeight)
-        for (let y = 0; y < textureHeight; y++) {
-          const sy = Math.min(biome.resY - 1, Math.floor((y / textureHeight) * biome.resY))
-          for (let x = 0; x < textureWidth; x++) {
-            const sx = Math.min(biome.resX - 1, Math.floor((x / textureWidth) * biome.resX))
-            table[y * textureWidth + x] = Math.round(biome.data[sy * biome.resX + sx])
-          }
-        }
-        macroBiomeAtTexel = table
-      }
-      // Sea-level temperature, against the MACRO raster and its own dry-basin
-      // floors (below sea level yet land) — the same pair computeTemperature saw.
-      seaLevelTemperature = null
-      if (savedBiomeInputs && savedBiomeInputs.temperature.resX === CLIMATE_RES_X && savedBiomeInputs.temperature.resY === CLIMATE_RES_Y) {
-        let macroDry: Uint8Array | undefined
-        if (biome) {
-          macroDry = new Uint8Array(elevations.length)
-          for (let i = 0; i < elevations.length; i++) {
-            const by = Math.min(biome.resY - 1, Math.floor((Math.floor(i / width) / height) * biome.resY))
-            const bx = Math.min(biome.resX - 1, Math.floor(((i % width) / width) * biome.resX))
-            if (elevations[i] <= SEA_LEVEL && Math.round(biome.data[by * biome.resX + bx]) !== Biome.Ocean) macroDry[i] = 1
-          }
-        }
-        seaLevelTemperature = reduceTemperatureToSeaLevel(savedBiomeInputs.temperature.data, elevations, width, height, macroDry)
-      }
-      // Fallback ids for a save too old to carry the classification's inputs:
-      // dilate the land biomes over the ocean first (so coastal land can't
-      // sample "Ocean" across the grid mismatch), then expand through a warped
-      // coordinate so boundaries are organic rather than blocks. When the
-      // inputs ARE present, the next setElevation replaces this with a real
-      // classification.
+      // The ids at texture resolution: dilate the land biomes over the ocean
+      // first (so coastal land can't sample "Ocean" across the grid
+      // mismatch), then expand through a warped coordinate so boundaries are
+      // organic rather than blocks.
       biomeIds = biome
         ? expandBiomeIds(dilateLandBiomes(biome.data, biome.resX, biome.resY), biome.resX, biome.resY, textureWidth, textureHeight, detailSeed)
         : null
@@ -584,7 +456,6 @@ export function createMapPresentation(options: MapPresentationOptions): MapPrese
         paperField = upscaleBilinearToroidal(field, fieldWidth, fieldHeight, textureWidth, textureHeight)
       }
       lastRelief = computeReliefBytes(paperField, textureGrid)
-      reclassifyBiomes(paperField)
       buildInteriorEdge()
       currentField = { data: field, width: fieldWidth, height: fieldHeight, detailSeed }
       repaintPaper()

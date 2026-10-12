@@ -4,38 +4,39 @@
 // saturating combination of the subsistence fields, run through the two
 // top-level knobs (carrying capacity = level, concentration = spatial structure).
 //
-// A LOCAL RULE, evaluated per pixel of the world raster
-// (docs/decisions/ecology-as-function.md): the coarse climate interpolated to
-// the pixel (its temperature with the pixel's own lapse), the pixel's terrain,
-// the water and the sea within a reach in metres, the tectonic features near
-// it. Nothing here counts climate cells. The fields on the climate grid, which
-// the save and the migration read, are the fine ones averaged over each cell's
-// land.
+// A LOCAL RULE, evaluated per NODE of the adaptive terrain mesh (DEC-0036
+// phase 7, docs/decisions/fields-on-meshes.md fork 2; per pixel of the 2048
+// raster before, docs/decisions/ecology-as-function.md): the climate sampled
+// at the node (climate/climatePoints.ts — its temperature with the node's
+// own lapse, the land fields over the land corners), the node's terrain and
+// its slope, the water and the sea within a reach in metres (mesh/
+// meshNeighbourhood.ts: the cells the reach touches, a mean by the area of
+// each inside it), the tectonic features near it as halos in metres. Both
+// shapes, one path: the distances are the globe's arcs on the sphere, the
+// noise the globe's (Domain.noise); no pole row exists to average.
 //
-// On both shapes (DEC-0035, fork 5; step 4f): a reach is a length — a row
-// whose pixels are narrower (DomainGrid.rowScale, cos φ on the sphere)
-// takes as many of its own as span it east-west, and the window steps
-// across a pole as the grid does; a mean weighs a pixel by its area; a
-// deposit's halo is a disc on the globe; the province and deposit noise is
-// the globe's (Domain.noise); the fields' pole rows come out one value, the
-// land's and the sea's apart. On the torus every weight is 1 and every step
-// the old one: its bits are as they were.
+// The screen's maps and the migration read the fields' rasters
+// (ecologyRasters: the chart, per pixel of the world raster from the nodes
+// of the triangle under it, and per climate cell the mean of its land
+// pixels) — no stage computes on them.
 
-import { CLIMATE_RES_X, CLIMATE_RES_Y, zonalLandMean } from '../climate/climateField'
-import { CLIMATE_TUNING } from '../climate/climateTuneParams'
-import { OCEAN_PRECIP } from '../climate/precipitation'
-import { Biome, reduceTemperatureToSeaLevel } from '../climate/biomes'
+import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
+import type { PointClimate } from '../climate/climatePoints'
+import { Biome } from '../climate/biomes'
 import { clamp01, smoothstep } from '../core/interpolation'
 import { globeFrame, type Domain, type DomainGrid } from '../core/domain'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { ECOLOGY_TUNING, PASTURE_BY_BIOME, TIMBER_BY_BIOME } from './ecologyTuneParams'
 import type { Volcano } from '../tectonics/volcanoes'
 import type { LandBiomeId } from './ecologyTuneParams'
-import { detAsin, detExp, detHypot, detPow, detSin } from '../core/detMath'
+import { detExp, detPow } from '../core/detMath'
 import { globeOctave } from '../elevation/globeNoise'
+import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
+import { boundaryDensity, discsAround, gaussianHalos, maxWithin, meanWithin, meshGeometry, neighbourhoods, slopeOf, type MeshGeometry, type Neighbourhoods } from '../mesh/meshNeighbourhood'
+import { rasteriseNodePart, triangleRaster, type TriangleRaster } from '../mesh/meshRaster'
 
 // Ocean sentinel for the output fields (matches the climate fields' convention):
-// a cell the ecology layer doesn't score (open water) reads -1.
+// a node the ecology layer doesn't score (open water) reads -1.
 export const ECOLOGY_OCEAN = -1
 
 // The field ids the ecology step produces. Grows per sub-step; the worker sends
@@ -86,52 +87,38 @@ export interface EcologyParams {
   tinRarity?: number
 }
 
+// The fields per vertex slot of the terrain mesh (ECOLOGY_OCEAN on the sea,
+// the fish's fishing grounds excepted).
 export interface EcologyFields {
-  // The fields on the climate grid (the fine ones averaged over each cell's
-  // land): what the save and the migration read.
-  resX: number
-  resY: number
   fields: Record<EcologyFieldId, Float32Array>
-  // The fields per pixel of the world raster: what the map shows.
-  fine: { resX: number; resY: number; fields: Record<EcologyFieldId, Float32Array> }
 }
 
-// Everything the ecology step reads. Climate fields are on the coarse grid;
-// elevation/discharge/lakeDepth are full-res (one pixel per unit of `domain`). Hydrology
-// (discharge/lakeDepth) is optional — without it, fish gets its marine component
-// only (freshwater needs rivers/lakes).
+// Everything the ecology step reads, per vertex slot of the terrain mesh.
+// The hydrology (discharge, lakes, water table) is optional — without it,
+// fish gets its marine component only (freshwater needs rivers/lakes).
 export interface EcologyInputs {
-  temperature: Float32Array // climate grid, °C (SST-adjusted on ocean)
-  precipitation: Float32Array // climate grid, mm/yr (OCEAN_PRECIP on water = land mask)
-  biomes: Uint8Array // climate grid
-  // The map's biomes on the world raster (the riparian ones), or null (no
-  // hydrology yet): timber, grazing and game's edges then read the coarse
-  // `biomes`, each pixel its cell's.
-  biomesFine: Uint8Array | null
-  // The climate step's upwelling (refinement.ts, the cold-water part), climate
-  // grid, 0 on land; null for a climate that was not refined (the
-  // history's), where the fish lose that term.
-  upwelling: Float32Array | null
-  // The climate step's months (refinement.ts): temperature °C and rain at
-  // the month's rate, mm/yr, month-major on the climate grid; and the rain's
-  // year-to-year spread (reliability.ts, a coefficient of variation per land
-  // cell). Both null for a climate that was not refined: arable then reads
-  // the annual means and takes no risk.
-  months: { temperature: Float32Array; precipitation: Float32Array; count: number } | null
-  rainVariability: Float32Array | null
-  elevation: Float32Array // full-res
-  discharge: Float32Array | null // full-res river discharge, or null (no hydrology yet)
-  maxDischarge: number // reference max discharge over land
-  lakeDepth: Float32Array | null // full-res lake depth, or null
-  // Full-res: 1 on a terminal basin's dry floor (hydrology's salt flat), or
-  // null (no hydrology yet).
+  mesh: PeriodicTriangulation
+  z: Float32Array
+  // 1 on land (above the sea, or a terminal basin's dry floor — land
+  // though at or below sea level), the points the climate was sampled at.
+  land: Uint8Array
+  // The climate at the nodes (climatePoints.climateAtPoints): the year's
+  // and, for a refined climate, the months (arable's growing year), the
+  // upwelling (the fish's cold water) and the rain's reliability (arable's
+  // risk) — null where the climate was not refined.
+  climate: PointClimate
+  // The biome per node: the map's (the hydrology's riparian ones), or the
+  // climate's own before the hydrology ran.
+  biomes: Uint8Array
+  discharge: Float32Array | null
+  maxDischarge: number
+  // Liquid water per node (a frozen basin feeds no fishery), elevation units.
+  lakeDepth: Float32Array | null
+  // 1 on a terminal basin's salt flat, or null (no hydrology yet).
   saltFlat: Uint8Array | null
-  // Full-res: 1 on every dry floor of a terminal basin, salt flats included
-  // (hydrology's dryBasin), or null. Land, though at or below sea level.
-  dryBasin: Uint8Array | null
-  // Full-res: the water table's depth below the surface, metres, −1 under
-  // water (hydrology's hydrogeology), or null. And its oases: the springs
-  // in an arid climate, world px.
+  // The water table's depth below the surface per node, metres, −1 under
+  // water (the hydrogeology), or null. And its oases: the springs in an
+  // arid climate, world coordinates.
   waterTable: Float32Array | null
   oases: { x: number; y: number }[]
   volcanoes: Volcano[]
@@ -140,11 +127,10 @@ export interface EcologyInputs {
   // with the accumulated (advected) sutures for deep-time belts. Empty if the
   // world has had no continental collisions.
   orogenPoints: { x: number; y: number }[]
-  // Coarse (climate grid) continental-crust oldness 0..1 (1 = ancient craton
-  // core), -1 over ocean — see rafts.computeCratonOldnessField. Feeds iron.
+  // Continental-crust oldness 0..1 per node (1 = ancient craton core), −1
+  // off the crust (crust/raftField.computeCratonOldnessField). Feeds iron.
   cratonAge: Float32Array
   warpSeed: number
-  // What the full-res rasters cover, one pixel per unit.
   domain: Domain
 }
 
@@ -169,250 +155,47 @@ function seaMixing(tempC: number): number {
   return clamp01((T.fishMixWarmC - tempC) / (T.fishMixWarmC - T.fishMixFullC))
 }
 
-// A reach in metres as a radius in pixels (at least one).
-const reachPx = (metres: number, metresPerPx: number): number => Math.max(1, Math.round(metres / metresPerPx))
-
-// A reach of `r` equator pixels in row y's own pixels: as many as span the
-// length east-west (1 / rowScale of it), up to the whole row but one — a
-// row near a pole is a small circle the reach spans many times. `r` on the
-// torus.
-const rowReach = (grid: DomainGrid, y: number, r: number): number => Math.min((grid.resX - 1) >> 1, Math.round(r / grid.rowScale(y)))
-
-// The rows a window reaches north and south, for the hot loops: for every
-// row y in [-margin, resY + margin), at [y + margin], the start index of
-// the row it lands on and the column shift that goes with it — resX / 2
-// beyond a pole of the sphere (the far meridian), 0 on the torus, where
-// `start` is DomainGrid.rowTable. (The sphere's rowTable refuses a margin:
-// it cannot say the shift.)
-interface RowSteps {
-  start: Int32Array
-  shift: Int32Array
-}
-function rowSteps(grid: DomainGrid, margin: number): RowSteps {
-  const { resX: w, resY: h } = grid
-  const start = new Int32Array(h + 2 * margin)
-  const shift = new Int32Array(h + 2 * margin)
-  for (let k = 0; k < start.length; k++) {
-    const i = grid.index(0, k - margin)
-    const c = i % w
-    start[k] = i - c
-    shift[k] = c
-  }
-  return { start, shift }
-}
-// The cell of column x in the row at [k] of `steps`.
-function stepCell(steps: RowSteps, k: number, x: number, w: number): number {
-  const s = steps.shift[k]
-  if (s === 0) return steps.start[k] + x
-  return steps.start[k] + (x + s < w ? x + s : x + s - w)
-}
-
-// The largest value within `r` pixels (a square of 2r + 1 equator pixels,
-// wrapped by the grid): "is there water / a rich sea within reach". Two
-// passes, rows (each its own reach, rowReach) then columns (across a pole
-// as the grid steps); the wrapped taps from the tables.
-function maxWithin(src: Float32Array, grid: DomainGrid, r: number): Float32Array {
-  const { resX: w, resY: h } = grid
-  const reach = new Int32Array(h)
-  let widest = 0
-  for (let y = 0; y < h; y++) widest = Math.max(widest, (reach[y] = rowReach(grid, y, r)))
-  const cols = grid.colTable(widest)
-  const steps = rowSteps(grid, r)
-  const rows = new Float32Array(src.length)
-  for (let y = 0; y < h; y++) {
-    const row = y * w
-    const rr = reach[y]
-    for (let x = 0; x < w; x++) {
-      let m = src[row + x]
-      for (let d = 1; d <= rr; d++) {
-        const a = src[row + cols[x - d + widest]]
-        const b = src[row + cols[x + d + widest]]
-        if (a > m) m = a
-        if (b > m) m = b
-      }
-      rows[row + x] = m
-    }
-  }
-  const out = new Float32Array(src.length)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let m = rows[y * w + x]
-      for (let d = 1; d <= r; d++) {
-        const a = rows[stepCell(steps, y - d + r, x, w)]
-        const b = rows[stepCell(steps, y + d + r, x, w)]
-        if (a > m) m = a
-        if (b > m) m = b
-      }
-      out[y * w + x] = m
-    }
-  }
-  return out
-}
-
-// The mean within `r` pixels (a square of 2r + 1 equator pixels, wrapped by
-// the grid): "how much of the land around is sea". Running sums, rows then
-// columns, as maxWithin's windows. The column pass weighs each row's mean
-// by the length its window covers, (2 rr + 1) · rowScale against 2r + 1:
-// the window's rows are then its area's — 1 for every row but those whose
-// whole circle is shorter than the reach (near a pole), and 1 on the torus,
-// where the sums are the plain ones.
-function meanWithin(src: Float32Array, grid: DomainGrid, r: number): Float32Array {
-  const { resX: w, resY: h } = grid
-  const reach = new Int32Array(h)
-  const weight = new Float64Array(h)
-  let widest = 0
-  for (let y = 0; y < h; y++) {
-    widest = Math.max(widest, (reach[y] = rowReach(grid, y, r)))
-    weight[y] = ((2 * reach[y] + 1) * grid.rowScale(y)) / (2 * r + 1)
-  }
-  const m = widest + 1
-  const cols = grid.colTable(m)
-  const steps = rowSteps(grid, r + 1)
-  const rows = new Float32Array(src.length)
-  for (let y = 0; y < h; y++) {
-    const row = y * w
-    const rr = reach[y]
-    const span = 2 * rr + 1
-    let sum = 0
-    for (let d = -rr; d <= rr; d++) sum += src[row + cols[d + m]]
-    for (let x = 0; x < w; x++) {
-      rows[row + x] = sum / span
-      sum += src[row + cols[x + rr + 1 + m]] - src[row + cols[x - rr + m]]
-    }
-  }
-  // The weight of the row at [k] of `steps` (the row it lands on).
-  const weightAt = new Float64Array(steps.start.length)
-  for (let k = 0; k < weightAt.length; k++) weightAt[k] = weight[steps.start[k] / w]
-  const m2 = r + 1
-  const out = new Float32Array(src.length)
-  for (let x = 0; x < w; x++) {
-    let sum = 0
-    let total = 0
-    for (let d = -r; d <= r; d++) {
-      sum += rows[stepCell(steps, d + m2, x, w)] * weightAt[d + m2]
-      total += weightAt[d + m2]
-    }
-    for (let y = 0; y < h; y++) {
-      out[y * w + x] = sum / total
-      const kIn = y + r + 1 + m2
-      const kOut = y - r + m2
-      sum += rows[stepCell(steps, kIn, x, w)] * weightAt[kIn] - rows[stepCell(steps, kOut, x, w)] * weightAt[kOut]
-      total += weightAt[kIn] - weightAt[kOut]
-    }
-  }
-  return out
-}
-
-// A bilinear read of a climate-grid field at a world pixel's centre, over the
-// corners `use` accepts only (the weights of the rest dropped and the others
-// renormalised; with none, the mean of the accepted cells of the pixel's
-// climate row — an island's climate, climateField.zonalLandMean). A land
-// field's sea corners carry a sentinel, and a sea field's land corners the
-// wrong thing.
-// The corners and weights are set once per pixel (setPixel) and read for
-// every field and month (read).
-class ClimatePixel {
-  // The climate grid over the pixels' domain.
-  private readonly climate: DomainGrid
-  private readonly idx = new Int32Array(4)
-  private readonly wt = new Float64Array(4)
-  private cell = 0
-  // Row means per field, mask and month, made the first time a pixel needs
-  // one.
-  private readonly rowMeans = new Map<Float32Array, Map<Uint8Array, Map<number, Float32Array>>>()
-  constructor(climate: DomainGrid) {
-    this.climate = climate
-  }
-  setPixel(wx: number, wy: number): void {
-    const { climate } = this
-    const worldW = climate.domain.width
-    const worldH = climate.domain.height
-    const gx = ((wx + 0.5) / worldW) * CLIMATE_RES_X - 0.5
-    const gy = ((wy + 0.5) / worldH) * CLIMATE_RES_Y - 0.5
-    const x0 = Math.floor(gx)
-    const y0 = Math.floor(gy)
-    const fx = gx - x0
-    const fy = gy - y0
-    // The corners through the grid: across a pole the row beyond lies on
-    // the far meridian (the torus: the wrapped row and column).
-    this.idx[0] = climate.index(x0, y0)
-    this.idx[1] = climate.index(x0 + 1, y0)
-    this.idx[2] = climate.index(x0, y0 + 1)
-    this.idx[3] = climate.index(x0 + 1, y0 + 1)
-    this.wt[0] = (1 - fx) * (1 - fy)
-    this.wt[1] = fx * (1 - fy)
-    this.wt[2] = (1 - fx) * fy
-    this.wt[3] = fx * fy
-    this.cell = Math.min(CLIMATE_RES_Y - 1, Math.floor((wy / worldH) * CLIMATE_RES_Y)) * CLIMATE_RES_X + Math.min(CLIMATE_RES_X - 1, Math.floor((wx / worldW) * CLIMATE_RES_X))
-  }
-  // `offset` picks a month in a month-major field; `mask[i]` 1 marks the
-  // corners to use (null: all).
-  read(field: Float32Array, mask: Uint8Array | null, offset = 0): number {
-    let sum = 0
-    let weight = 0
-    for (let k = 0; k < 4; k++) {
-      const i = this.idx[k]
-      if (mask && !mask[i]) continue
-      sum += field[offset + i] * this.wt[k]
-      weight += this.wt[k]
-    }
-    if (weight > 0) return sum / weight
-    if (!mask) return field[offset + this.cell]
-    let byMask = this.rowMeans.get(field)
-    if (!byMask) this.rowMeans.set(field, (byMask = new Map()))
-    let byOffset = byMask.get(mask)
-    if (!byOffset) byMask.set(mask, (byOffset = new Map()))
-    let means = byOffset.get(offset)
-    if (!means) byOffset.set(offset, (means = zonalLandMean(field, (i) => mask[i] === 1, offset, (gy) => this.climate.cellArea(gy))))
-    return means[Math.floor(this.cell / CLIMATE_RES_X)]
-  }
-  get coarseCell(): number {
-    return this.cell
-  }
-}
+const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precipMm / ECOLOGY_TUNING.saltAridPrecip) * clamp01(tempC / 25)
 
 // --- the fields ---------------------------------------------------------------
 
 // The physics of the ecology, every field before the step's sliders: the
-// expensive part (some 2 s at 2048×1024), which depends on the world alone.
-// The worker keeps it while only the sliders move (applyEcology).
+// expensive part, which depends on the world alone. The worker keeps it
+// while only the sliders move (applyEcology).
 export interface EcologyBase {
-  w: number
-  h: number
-  // The full-res raster's grid (w × h) and the climate grid, over one domain.
-  grid: DomainGrid
-  climate: DomainGrid
+  mesh: PeriodicTriangulation
+  geo: MeshGeometry
+  domain: Domain
+  slots: number
   land: Uint8Array
-  // 1 where `land` is 0: the fish's sea, whose pole rows are averaged apart.
+  // 1 on the alive nodes that are not land: the fish's sea.
   sea: Uint8Array
-  coarseLand: Uint8Array
   raw: Record<Exclude<EcologyFieldId, 'carryingCapacity' | 'tin' | 'gems'>, Float32Array>
   // Gems' two parts (the copper they weather from is scaled by the slider).
   gemBelt: Float32Array
   aridity: Float32Array
   // Tin's belt points, thinned (its radius is a slider: tinRarity).
   tinPoints: { x: number; y: number }[]
-  // The province layer's deviation per land pixel (volcanic soil + noise),
+  // The province layer's deviation per land node (volcanic soil + noise),
   // before its mean is taken off.
   provinceDeviation: Float32Array
   // What a month's fields need (ecologyMonth); null for a climate without
   // months (not refined).
   seasonal: EcologySeasons | null
+  // The pixels' triangles for the fields' rasters, made on the first
+  // (ecologyFine).
+  raster: TriangleRaster | null
 }
 
 // The fields that change over the year, and what their months are made of:
-// per pixel the parts that do not change with the month, and the climate's
+// per node the parts that do not change with the month, and the climate's
 // months to read the rest from.
 export const SEASONAL_ECOLOGY_FIELDS = ['arable', 'fish', 'game', 'pasture', 'salt'] as const satisfies readonly EcologyFieldId[]
 export type SeasonalEcologyFieldId = (typeof SEASONAL_ECOLOGY_FIELDS)[number]
 export const isSeasonalEcologyField = (id: EcologyFieldId): id is SeasonalEcologyFieldId => (SEASONAL_ECOLOGY_FIELDS as readonly string[]).includes(id)
 
 interface EcologySeasons {
-  elevation: Float32Array
-  months: NonNullable<EcologyInputs['months']>
-  seaLevelMonths: Float32Array
-  coarseLand: Uint8Array
-  coarseSea: Uint8Array
+  months: NonNullable<PointClimate['months']>
   // Arable: flatness × the harvest's reliability, and the water on the fields.
   arableFactor: Float32Array
   fieldWater: Float32Array
@@ -424,12 +207,12 @@ interface EcologySeasons {
   // Salt: the coast's weight and the salt flats.
   saltCoast: Float32Array
   saltFlat: Uint8Array | null
-  // Fish: a sea pixel's richness without its winter mixing, the land's
-  // reach to the sea and its fresh water.
+  // Fish: a sea node's richness without its winter mixing, the land's
+  // reach to the sea and its fresh water, the coast's neighbourhoods.
   seaRichStatic: Float32Array
   access: Float32Array
   freshwater: Float32Array
-  coastR: number
+  coast: Neighbourhoods
 }
 
 export function computeEcology(inputs: EcologyInputs, params: EcologyParams): EcologyFields {
@@ -437,92 +220,54 @@ export function computeEcology(inputs: EcologyInputs, params: EcologyParams): Ec
 }
 
 export function prepareEcology(inputs: EcologyInputs): EcologyBase {
-  const { temperature, precipitation, biomes, biomesFine, upwelling, months, rainVariability, elevation, discharge, maxDischarge, lakeDepth, saltFlat, dryBasin, waterTable, oases, volcanoes, orogenPoints, cratonAge, warpSeed, domain } = inputs
-  const { width: w, height: h } = domain
-  const grid = domain.grid(w, h)
-  const climate = domain.grid(CLIMATE_RES_X, CLIMATE_RES_Y)
-  // A pixel's four neighbours, wrapped (colTable(1), and the rows across
-  // a pole: rowSteps(1)).
-  const cols1 = grid.colTable(1)
-  const rows1 = rowSteps(grid, 1)
+  const { mesh, z, land, climate, biomes, discharge, maxDischarge, lakeDepth, saltFlat, waterTable, oases, volcanoes, orogenPoints, cratonAge, warpSeed, domain } = inputs
   const T = ECOLOGY_TUNING
-  const n = w * h
-  const nc = CLIMATE_RES_X * CLIMATE_RES_Y
-  // Metres per pixel: the world is the shape's metresAround wide whatever
-  // raster it is sampled on (at the equator on the sphere).
-  const mPerPx = domain.metresAround / w
-  // The slope's scale: flatness was measured on the rise across a climate
-  // cell, and a pixel's rise is read against the same length.
-  const pxPerCell = w / CLIMATE_RES_X
-
-  const land = new Uint8Array(n)
-  const sea = new Float32Array(n)
-  // A terminal basin's dry floor is land below sea level: counted as sea,
-  // every salt flat read as ocean and the salt-flat term never applied
-  // (2026-10-01) — the hydrology only finds basins at or below the sea.
-  for (let i = 0; i < n; i++) {
-    if (elevation[i] > SEA_LEVEL || (dryBasin !== null && dryBasin[i] === 1)) land[i] = 1
-    else sea[i] = 1
-  }
-  const coarseLand = new Uint8Array(nc)
-  const coarseSea = new Uint8Array(nc)
-  for (let i = 0; i < nc; i++) {
-    if (precipitation[i] !== OCEAN_PRECIP) coarseLand[i] = 1
-    else coarseSea[i] = 1
-  }
-
-  // The climate reduced to sea level per cell (the lapse of the cell's own
-  // mean height taken off), so each pixel can take its own lapse back.
-  const monthCount = months ? months.count : 1
-  const seaLevelMonths = new Float32Array(monthCount * nc)
-  for (let m = 0; m < monthCount; m++) {
-    const air = months ? months.temperature.subarray(m * nc, (m + 1) * nc) : temperature
-    seaLevelMonths.set(reduceTemperatureToSeaLevel(air, elevation, w, h), m * nc)
-  }
-  const monthRain = months ? months.precipitation : precipitation
-  const seaLevelYear = reduceTemperatureToSeaLevel(temperature, elevation, w, h)
-  const lapse = CLIMATE_TUNING.lapseCPerElevation
-
-  // Every pixel's biome: the fine one, or its climate cell's.
-  const biomeAt = new Uint8Array(n)
-  for (let y = 0; y < h; y++) {
-    const gy = Math.min(CLIMATE_RES_Y - 1, Math.floor((y / h) * CLIMATE_RES_Y))
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      if (!land[i]) { biomeAt[i] = Biome.Ocean; continue }
-      biomeAt[i] = biomesFine ? biomesFine[i] : biomes[gy * CLIMATE_RES_X + Math.min(CLIMATE_RES_X - 1, Math.floor((x / w) * CLIMATE_RES_X))]
+  const n = mesh.vertexSlots
+  const unitM = domain.metresPerUnit
+  const geo = meshGeometry(mesh, unitM)
+  const sea = new Uint8Array(n)
+  const seaF = new Float32Array(n)
+  for (let v = 0; v < n; v++) {
+    if (mesh.vAlive[v] && !land[v]) {
+      sea[v] = 1
+      seaF[v] = 1
     }
   }
+  const months = climate.months
+  const monthCount = months ? months.count : 1
+
+  // Every node's biome (the sea's Ocean).
+  const biomeAt = new Uint8Array(n)
+  for (let v = 0; v < n; v++) biomeAt[v] = land[v] ? biomes[v] : Biome.Ocean
 
   // --- water and sea within reach -------------------------------------------
-  const px = new ClimatePixel(climate)
-  const coastR = reachPx(T.coastReachM, mPerPx)
-  const waterR = reachPx(T.waterReachM, mPerPx)
+  // The neighbourhoods by their reach: the coast's (the sea a coast fishes,
+  // the shelf it counts) about every node, the water's and the placer's
+  // about the land's.
+  const coast = neighbourhoods(geo, T.coastReachM)
+  const water = neighbourhoods(geo, T.waterReachM, land)
+  const placer = neighbourhoods(geo, T.placerReachM, land)
+  const ecotone = neighbourhoods(geo, T.ecotoneReachM, land)
 
-  // The sea's richness per sea pixel: a base, the share of shelf sea
-  // within reach, the upwelling and the winter mixing (see the fish
-  // constants).
+  // The sea's richness per sea node: a base, the share of shelf sea within
+  // reach, the upwelling and the winter mixing (see the fish constants).
   const shelfFloor = SEA_LEVEL - metersToElevation(T.fishShelfDepthM)
   const shallow = new Float32Array(n)
-  for (let i = 0; i < n; i++) if (!land[i] && elevation[i] > shelfFloor) shallow[i] = 1
-  const shelfShare = meanWithin(shallow, grid, coastR)
+  for (let v = 0; v < n; v++) if (sea[v] && z[v] > shelfFloor) shallow[v] = 1
+  const shelfShare = meanWithin(coast, shallow)
   const seaRich = new Float32Array(n)
   const seaRichStatic = new Float32Array(n)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      if (land[i]) continue
-      px.setPixel(x, y)
-      const rising = upwelling ? clamp01(px.read(upwelling, coarseSea) / T.fishUpwellingFull) : 0
-      const cool = seaMixing(px.read(temperature, coarseSea))
-      seaRichStatic[i] = T.fishSeaBase + T.fishShelfW * shelfShare[i] + T.fishUpwellingW * rising
-      seaRich[i] = seaRichStatic[i] + T.fishMixingW * cool
-    }
+  for (let v = 0; v < n; v++) {
+    if (!sea[v]) continue
+    const rising = climate.upwelling ? clamp01(climate.upwelling[v] / T.fishUpwellingFull) : 0
+    const cool = seaMixing(climate.temperature[v])
+    seaRichStatic[v] = T.fishSeaBase + T.fishShelfW * shelfShare[v] + T.fishUpwellingW * rising
+    seaRich[v] = seaRichStatic[v] + T.fishMixingW * cool
   }
-  const richSeaNear = maxWithin(seaRich, grid, coastR)
-  const seaShare = meanWithin(sea, grid, coastR)
+  const richSeaNear = maxWithin(coast, seaRich)
+  const seaShare = meanWithin(coast, seaF)
 
-  // A big river's water per land pixel (√ of the discharge against the
+  // A big river's water per land node (√ of the discharge against the
   // world's largest, doubled, capped), and what lies within reach of it.
   const hasHydrology = !!discharge && maxDischarge > 0
   const river = new Float32Array(n)
@@ -530,67 +275,45 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
   const riverWet = new Float32Array(n)
   const lake = new Float32Array(n)
   if (discharge && maxDischarge > 0) {
-    for (let i = 0; i < n; i++) {
-      if (!land[i]) continue
-      const share = Math.max(0, discharge[i]) / maxDischarge
-      riverRoot[i] = Math.sqrt(share)
+    for (let v = 0; v < n; v++) {
+      if (!land[v]) continue
+      const share = Math.max(0, discharge[v]) / maxDischarge
+      riverRoot[v] = Math.sqrt(share)
       // Below `riverFloor` (√ of the share) a stream is no fishing water
-      // and waters no field: every pixel has some discharge.
-      river[i] = Math.min(1, Math.max(0, riverRoot[i] - T.riverFloor) * 2)
-      riverWet[i] = Math.min(1, share * 4)
+      // and waters no field: every node has some discharge.
+      river[v] = Math.min(1, Math.max(0, riverRoot[v] - T.riverFloor) * 2)
+      riverWet[v] = Math.min(1, share * 4)
     }
   }
-  if (lakeDepth) for (let i = 0; i < n; i++) if (lakeDepth[i] > 0) lake[i] = 1
-  const riverNear = maxWithin(river, grid, waterR)
+  if (lakeDepth) for (let v = 0; v < n; v++) if (lakeDepth[v] > 0) lake[v] = 1
+  const riverNear = maxWithin(water, river)
   // Placer gold lies in a river's gravels and terraces, wider than its bed.
-  const riverRootNear = maxWithin(riverRoot, grid, reachPx(T.placerReachM, mPerPx))
-  const riverWetNear = maxWithin(riverWet, grid, waterR)
-  const lakeNear = maxWithin(lake, grid, waterR)
+  const riverRootNear = maxWithin(placer, riverRoot)
+  const riverWetNear = maxWithin(water, riverWet)
+  const lakeNear = maxWithin(water, lake)
   // A hand-dug well within a herd's reach.
   let wellNear: Float32Array | null = null
   if (waterTable) {
-    const shallow = new Float32Array(n)
-    for (let i = 0; i < n; i++) if (waterTable[i] >= 0 && waterTable[i] <= T.wellDepthM) shallow[i] = 1
-    wellNear = maxWithin(shallow, grid, waterR)
+    const shallowTable = new Float32Array(n)
+    for (let v = 0; v < n; v++) if (waterTable[v] >= 0 && waterTable[v] <= T.wellDepthM) shallowTable[v] = 1
+    wellNear = maxWithin(water, shallowTable)
   }
   // Waterlogged ground: the water table within `wetlandTableM` of the
   // surface (bog iron forms where ground water seeps out).
   const waterlogged = new Float32Array(n)
-  if (waterTable) for (let i = 0; i < n; i++) if (waterTable[i] >= 0 && waterTable[i] <= T.wetlandTableM) waterlogged[i] = 1
+  if (waterTable) for (let v = 0; v < n; v++) if (waterTable[v] >= 0 && waterTable[v] <= T.wetlandTableM) waterlogged[v] = 1
   // The oases' gardens.
-  const oasis = new Float32Array(n)
-  for (const o of oases) {
-    const cx = Math.floor(o.x)
-    const cy = Math.floor(o.y)
-    for (let dy = -waterR; dy <= waterR; dy++) {
-      const rr = rowReach(grid, cy + dy, waterR)
-      for (let dx = -rr; dx <= rr; dx++) oasis[grid.neighbour(cx, cy, dx, dy)] = 1
-    }
-  }
+  const oasis = discsAround(geo, oases, T.waterReachM)
 
-  // How much of the land around differs in biome (game's edges): per pixel
-  // the share of its four neighbours of another biome, averaged within reach.
-  // A boundary's length per area: the face to an east or west neighbour is
-  // a pixel high and the pixel rowScale wide, so it counts 1 / rowScale (1
-  // on the torus).
-  const differs = new Float32Array(n)
-  for (let y = 0; y < h; y++) {
-    const across = 1 / grid.rowScale(y)
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      if (!land[i]) continue
-      const b = biomeAt[i]
-      let d = 0
-      if (biomeAt[y * w + cols1[x + 2]] !== b) d += across
-      if (biomeAt[y * w + cols1[x]] !== b) d += across
-      if (biomeAt[stepCell(rows1, y + 2, x, w)] !== b) d++
-      if (biomeAt[stepCell(rows1, y, x, w)] !== b) d++
-      differs[i] = d / 4
-    }
-  }
-  const edges = meanWithin(differs, grid, reachPx(T.ecotoneReachM, mPerPx))
+  // How much of the land around differs in biome (game's edges): the
+  // boundary's length per area at each land node, averaged within reach.
+  const differs = boundaryDensity(geo, land, (a, b) => land[b] === 1 && biomeAt[a] !== biomeAt[b], T.ecotoneCountedOnM)
+  const edges = meanWithin(ecotone, differs)
 
-  // --- per pixel -------------------------------------------------------------
+  // The slope per node, the rise across `flatnessRunM`.
+  const slope = slopeOf(geo, z)
+
+  // --- per node --------------------------------------------------------------
   const arable = new Float32Array(n)
   const fish = new Float32Array(n)
   const game = new Float32Array(n)
@@ -601,167 +324,141 @@ export function prepareEcology(inputs: EcologyInputs): EcologyBase {
   const wetland = new Float32Array(n)
   const aridity = new Float32Array(n)
   const craton = new Float32Array(n)
-  const cratonMask = new Uint8Array(nc)
-  for (let i = 0; i < nc; i++) cratonMask[i] = cratonAge[i] >= 0 ? 1 : 0
-  const variabilityMask = coarseLand
-  const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precipMm / T.saltAridPrecip) * clamp01(tempC / 25)
   const keep = months ? {
     arableFactor: new Float32Array(n), fieldWater: new Float32Array(n), edgeFactor: new Float32Array(n),
     nppYear: new Float32Array(n), saltCoast: new Float32Array(n), access: new Float32Array(n), freshwater: new Float32Array(n),
   } : null
-  for (let y = 0; y < h; y++) {
-    // The east-west neighbours are rowScale apart (1 on the torus).
-    const across = grid.rowScale(y)
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      if (!land[i]) continue
-      px.setPixel(x, y)
-      const height = Math.max(0, elevation[i] - SEA_LEVEL)
+  for (let v = 0; v < n; v++) {
+    if (!land[v]) continue
+    const flat = 1 / (1 + T.slopeK * slope[v] * T.flatnessRunM)
+    flatness[v] = flat
 
-      // The pixel's slope, as a rise across a climate cell's length.
-      const e = elevation
-      const dx = (e[y * w + cols1[x + 2]] - e[y * w + cols1[x]]) / across
-      const dy = e[stepCell(rows1, y + 2, x, w)] - e[stepCell(rows1, y, x, w)]
-      const flat = 1 / (1 + T.slopeK * detHypot(dx, dy) * 0.5 * pxPerCell)
-      flatness[i] = flat
+    // The fields' water.
+    const fieldWater = Math.max(riverNear[v], T.oasisW * oasis[v])
+    const herdWater = hasHydrology || wellNear ? Math.max(riverNear[v], wellNear ? T.wellW * wellNear[v] : 0) : 1
 
-      // The fields' water.
-      const fieldWater = Math.max(riverNear[i], T.oasisW * oasis[i])
-      const herdWater = hasHydrology || wellNear ? Math.max(riverNear[i], wellNear ? T.wellW * wellNear[i] : 0) : 1
-
-      // The months: arable's growing year, game's productivity, salt's dry
-      // warm season.
-      let growing = 0
-      let npp = 0
-      let arid = 0
-      for (let m = 0; m < monthCount; m++) {
-        const t = px.read(seaLevelMonths, null, m * nc) - lapse * height
-        const p = px.read(monthRain, coarseLand, months ? m * nc : 0)
-        if (t >= T.arableFrostC || !months) growing += productivity(t, p + T.arableIrrigationMm * fieldWater) / monthCount
-        npp += productivity(t, p) / monthCount
-        arid += aridWarm(t, p) / monthCount
-      }
-      const yearT = px.read(seaLevelYear, null) - lapse * height
-      const yearP = px.read(precipitation, coarseLand)
-
-      // Arable (see the constants): the growing year × flatness × the
-      // harvest's reliability, which a watered field does not need.
-      const risk = rainVariability ? T.arableRiskW * px.read(rainVariability, variabilityMask) * (1 - fieldWater) : 0
-      arable[i] = growing * flat * Math.max(0, 1 - risk)
-      const edgeFactor = 1 + T.ecotoneBonus * clamp01(edges[i] / T.ecotoneFullShare)
-      const saltCoast = T.saltInteriorW + (T.saltCoastW - T.saltInteriorW) * Math.min(1, seaShare[i] / T.fishFullSeaShare)
-
-      // Fish: the richest sea within reach, as far as the sea is at hand
-      // (a straight coast in full), plus the rivers and lakes near.
-      const access = Math.min(1, seaShare[i] / T.fishFullSeaShare)
-      const freshwater = Math.min(1, T.fishRiverW * riverNear[i] + T.fishLakeW * lakeNear[i])
-      fish[i] = 1 - detExp(-(access * richSeaNear[i] + freshwater))
-
-      // Game: productivity, more where biomes meet.
-      game[i] = npp * edgeFactor
-
-      // Pasture: the biome's grazing, in dry land only as far as a herd
-      // finds water (without hydrology nothing is known of it: the biome
-      // decides).
-      const b = biomeAt[i] as LandBiomeId
-      const dry = hasHydrology || wellNear ? clamp01((T.pastureDryMm - yearP) / (T.pastureDryMm - T.pastureDryFullMm)) : 0
-      pasture[i] = (PASTURE_BY_BIOME[b] ?? 0.1) * (1 - dry * (1 - herdWater))
-      timber[i] = TIMBER_BY_BIOME[b] ?? 0.05
-
-      // Salt: a salt flat in full; else the dry warm season, strongest on
-      // a coast.
-      const flatSalt = saltFlat && saltFlat[i] ? T.saltFlatW : 0
-      salt[i] = clamp01(Math.max(flatSalt, arid * saltCoast))
-      if (keep) {
-        keep.arableFactor[i] = flat * Math.max(0, 1 - risk)
-        keep.fieldWater[i] = fieldWater
-        keep.edgeFactor[i] = edgeFactor
-        keep.nppYear[i] = npp
-        keep.saltCoast[i] = saltCoast
-        keep.access[i] = access
-        keep.freshwater[i] = freshwater
-      }
-
-      // Wetland (bog iron): flat, wet, water-fed lowland.
-      const water = lakeNear[i] > 0 ? 1 : Math.max(riverWetNear[i], T.wetlandTableW * waterlogged[i])
-      wetland[i] = flat * water * clamp01(yearP / 600)
-      aridity[i] = aridWarm(yearT, yearP)
-      craton[i] = Math.max(0, px.read(cratonAge, cratonMask))
+    // The months: arable's growing year, game's productivity, salt's dry
+    // warm season.
+    let growing = 0
+    let npp = 0
+    let arid = 0
+    for (let m = 0; m < monthCount; m++) {
+      const t = months ? months.temperature[m * n + v] : climate.temperature[v]
+      const p = months ? Math.max(0, months.precipitation[m * n + v]) : Math.max(0, climate.precipitation[v])
+      if (t >= T.arableFrostC || !months) growing += productivity(t, p + T.arableIrrigationMm * fieldWater) / monthCount
+      npp += productivity(t, p) / monthCount
+      arid += aridWarm(t, p) / monthCount
     }
+    const yearT = climate.temperature[v]
+    const yearP = Math.max(0, climate.precipitation[v])
+
+    // Arable (see the constants): the growing year × flatness × the
+    // harvest's reliability, which a watered field does not need.
+    const risk = climate.rainVariability ? T.arableRiskW * climate.rainVariability[v] * (1 - fieldWater) : 0
+    arable[v] = growing * flat * Math.max(0, 1 - risk)
+    const edgeFactor = 1 + T.ecotoneBonus * clamp01(edges[v] / T.ecotoneFullShare)
+    const saltCoast = T.saltInteriorW + (T.saltCoastW - T.saltInteriorW) * Math.min(1, seaShare[v] / T.fishFullSeaShare)
+
+    // Fish: the richest sea within reach, as far as the sea is at hand
+    // (a straight coast in full), plus the rivers and lakes near.
+    const access = Math.min(1, seaShare[v] / T.fishFullSeaShare)
+    const freshwater = Math.min(1, T.fishRiverW * riverNear[v] + T.fishLakeW * lakeNear[v])
+    fish[v] = 1 - detExp(-(access * richSeaNear[v] + freshwater))
+
+    // Game: productivity, more where biomes meet.
+    game[v] = npp * edgeFactor
+
+    // Pasture: the biome's grazing, in dry land only as far as a herd
+    // finds water (without hydrology nothing is known of it: the biome
+    // decides).
+    const b = biomeAt[v] as LandBiomeId
+    const dry = hasHydrology || wellNear ? clamp01((T.pastureDryMm - yearP) / (T.pastureDryMm - T.pastureDryFullMm)) : 0
+    pasture[v] = (PASTURE_BY_BIOME[b] ?? 0.1) * (1 - dry * (1 - herdWater))
+    timber[v] = TIMBER_BY_BIOME[b] ?? 0.05
+
+    // Salt: a salt flat in full; else the dry warm season, strongest on
+    // a coast.
+    const flatSalt = saltFlat && saltFlat[v] ? T.saltFlatW : 0
+    salt[v] = clamp01(Math.max(flatSalt, arid * saltCoast))
+    if (keep) {
+      keep.arableFactor[v] = flat * Math.max(0, 1 - risk)
+      keep.fieldWater[v] = fieldWater
+      keep.edgeFactor[v] = edgeFactor
+      keep.nppYear[v] = npp
+      keep.saltCoast[v] = saltCoast
+      keep.access[v] = access
+      keep.freshwater[v] = freshwater
+    }
+
+    // Wetland (bog iron): flat, wet, water-fed lowland.
+    const wet = lakeNear[v] > 0 ? 1 : Math.max(riverWetNear[v], T.wetlandTableW * waterlogged[v])
+    wetland[v] = flat * wet * clamp01(yearP / 600)
+    aridity[v] = aridWarm(yearT, yearP)
+    craton[v] = Math.max(0, cratonAge[v])
   }
 
   // The fishing grounds: on the sea the fish field is the sea's own
   // richness, what a boat finds there.
-  for (let i = 0; i < n; i++) if (!land[i]) fish[i] = 1 - detExp(-seaRich[i])
+  for (let v = 0; v < n; v++) if (sea[v]) fish[v] = 1 - detExp(-seaRich[v])
 
   // Material and prestige before the sliders. Copper = arc volcanoes; tin =
   // orogen belts (its radius a slider); iron = old cratons + bog iron.
-  const arcVolcanoes = volcanoes.filter((v) => v.kind === 'arc')
-  const obsidian = rasterisePointField(thinPoints(volcanoes, T.obsidianKeep, warpSeed ^ 0x0b51d1a2), T.obsidianRadiusFrac, grid)
+  const arcVolcanoes = volcanoes.filter((p) => p.kind === 'arc')
+  const obsidian = gaussianHalos(geo, thinPoints(volcanoes, T.obsidianKeep, warpSeed ^ 0x0b51d1a2), T.obsidianRadiusM)
   const toolStone = new Float32Array(n)
-  for (let i = 0; i < n; i++) if (land[i]) toolStone[i] = Math.max(obsidian[i], T.flintBase * flatness[i])
-  const copper = maskToLand(rasterisePointField(thinPoints(arcVolcanoes, T.copperKeep, warpSeed ^ 0xc0bbe401), T.copperRadiusFrac, grid), land)
+  for (let v = 0; v < n; v++) if (land[v]) toolStone[v] = Math.max(obsidian[v], T.flintBase * flatness[v])
+  const copper = maskToLand(gaussianHalos(geo, thinPoints(arcVolcanoes, T.copperKeep, warpSeed ^ 0xc0bbe401), T.copperRadiusM), land)
   // Iron: the old-craton signal broken into deposits by a seeded noise (so it
   // fluctuates instead of reading as a flat 100%), plus bog iron in wetlands.
   const iron = new Float32Array(n)
-  const ironSeed = (warpSeed ^ 0x51ed2701) | 0
-  const ironNoise = noiseSampler(domain, T.ironDepositFreqX, T.ironDepositFreqY, ironSeed)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      if (!land[i]) continue
-      const noise01 = (ironNoise(x, y) + 1) / 2
-      const deposit = T.ironDepositFloor + (1 - T.ironDepositFloor) * noise01
-      iron[i] = clamp01(Math.max(T.ironCratonW * craton[i] * deposit, T.ironBogW * wetland[i]))
-    }
+  const ironNoise = noiseSampler(domain, T.ironDepositFreqX, T.ironDepositFreqY, (warpSeed ^ 0x51ed2701) | 0)
+  for (let v = 0; v < n; v++) {
+    if (!land[v]) continue
+    const noise01 = (ironNoise(mesh.vx[v], mesh.vy[v]) + 1) / 2
+    const deposit = T.ironDepositFloor + (1 - T.ironDepositFloor) * noise01
+    iron[v] = clamp01(Math.max(T.ironCratonW * craton[v] * deposit, T.ironBogW * wetland[v]))
   }
   // Prestige (separate channel — no carrying-capacity contribution). Gold:
   // placer (carried down rivers) + lode at orogenic belts. Silver:
   // hydrothermal, near volcanic arcs. Gems: metamorphic/orogenic belts + arid
   // weathering (turquoise near copper, in applyEcology).
-  const lode = rasterisePointField(thinPoints(orogenPoints, T.goldLodeKeep, warpSeed ^ 0x601dfeed), T.goldLodeRadiusFrac, grid)
-  const arc = rasterisePointField(thinPoints(arcVolcanoes, T.silverKeep, warpSeed ^ 0x5117e201), T.silverRadiusFrac, grid)
-  const gemBelt = rasterisePointField(thinPoints(orogenPoints, T.gemKeep, warpSeed ^ 0x9e35c0de), T.gemRadiusFrac, grid)
+  const lode = gaussianHalos(geo, thinPoints(orogenPoints, T.goldLodeKeep, warpSeed ^ 0x601dfeed), T.goldLodeRadiusM)
+  const arc = gaussianHalos(geo, thinPoints(arcVolcanoes, T.silverKeep, warpSeed ^ 0x5117e201), T.silverRadiusM)
+  const gemBelt = gaussianHalos(geo, thinPoints(orogenPoints, T.gemKeep, warpSeed ^ 0x9e35c0de), T.gemRadiusM)
   const gold = new Float32Array(n)
   const silver = new Float32Array(n)
-  for (let i = 0; i < n; i++) {
-    if (!land[i]) continue
-    const placer = Math.min(1, Math.max(0, riverRootNear[i] - T.goldPlacerSqrtFloor) * T.goldPlacerGain)
-    gold[i] = clamp01(T.goldPlacerW * placer + T.goldLodeW * lode[i])
-    silver[i] = clamp01(T.silverW * arc[i])
+  for (let v = 0; v < n; v++) {
+    if (!land[v]) continue
+    const placerGold = Math.min(1, Math.max(0, riverRootNear[v] - T.goldPlacerSqrtFloor) * T.goldPlacerGain)
+    gold[v] = clamp01(T.goldPlacerW * placerGold + T.goldLodeW * lode[v])
+    silver[v] = clamp01(T.silverW * arc[v])
   }
 
   // The province layer (L2 of the concentration pipeline): volcanic soil and
   // a light seeded noise.
-  const volcanic = rasterisePointField(volcanoes, T.volcanicProvinceRadiusFrac, grid)
+  const volcanic = gaussianHalos(geo, volcanoes, T.volcanicProvinceRadiusM)
   const provinceDeviation = new Float32Array(n)
   const provinceNoiseAt = noiseSampler(domain, T.provinceNoiseFreqX, T.provinceNoiseFreqY, warpSeed)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      if (!land[i]) continue
-      const noise = provinceNoiseAt(x, y)
-      provinceDeviation[i] = T.volcanicWeight * volcanic[i] + T.noiseWeight * noise
-    }
+  for (let v = 0; v < n; v++) {
+    if (!land[v]) continue
+    provinceDeviation[v] = T.volcanicWeight * volcanic[v] + T.noiseWeight * provinceNoiseAt(mesh.vx[v], mesh.vy[v])
   }
 
-  const seaMask = new Uint8Array(n)
-  for (let i = 0; i < n; i++) seaMask[i] = land[i] ? 0 : 1
   return {
-    w, h, grid, climate, land, sea: seaMask, coarseLand,
+    mesh, geo, domain, slots: n, land, sea,
     raw: { arable, fish, game, pasture, timber, salt, toolStone, copper, iron, gold, silver },
     gemBelt, aridity,
     tinPoints: thinPoints(orogenPoints, T.tinKeep, warpSeed ^ 0x71b2a903),
     provinceDeviation,
     seasonal: months && keep ? {
-      elevation, months, seaLevelMonths, coarseLand, coarseSea, ...keep,
-      pastureYear: pasture, saltFlat, seaRichStatic, coastR,
+      months, ...keep, pastureYear: pasture, saltFlat, seaRichStatic, coast,
     } : null,
+    raster: null,
   }
 }
 
 // One month of a field that changes over the year (SEASONAL_ECOLOGY_FIELDS),
-// per pixel, `month` 1..12, with the field's abundance slider; null when the
+// per node, `month` 1..12, with the field's abundance slider; null when the
 // climate has no months. Each is what the land gives in that month on the
 // field's own scale, so the twelve months average to its year:
 // - arable: the month's growth (none below the frost) × flatness × reliability;
@@ -774,58 +471,41 @@ export function ecologyMonth(eco: EcologyBase, field: SeasonalEcologyFieldId, mo
   const S = eco.seasonal
   if (!S) return null
   const T = ECOLOGY_TUNING
-  const { w, h, land } = eco
-  const n = w * h
-  const nc = CLIMATE_RES_X * CLIMATE_RES_Y
-  const m = Math.max(0, Math.min(S.months.count - 1, month - 1)) * nc
+  const { slots: n, land, sea } = eco
+  const m = Math.max(0, Math.min(S.months.count - 1, month - 1)) * n
   const out = new Float32Array(n).fill(ECOLOGY_OCEAN)
-  const px = new ClimatePixel(eco.climate)
-  const lapse = CLIMATE_TUNING.lapseCPerElevation
   if (field === 'fish') {
     const rich = new Float32Array(n)
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = y * w + x
-        if (land[i]) continue
-        px.setPixel(x, y)
-        rich[i] = S.seaRichStatic[i] + T.fishMixingW * seaMixing(px.read(S.months.temperature, S.coarseSea, m))
-        out[i] = weight * (1 - detExp(-rich[i]))
-      }
+    for (let v = 0; v < n; v++) {
+      if (!sea[v]) continue
+      rich[v] = S.seaRichStatic[v] + T.fishMixingW * seaMixing(S.months.temperature[m + v])
+      out[v] = weight * (1 - detExp(-rich[v]))
     }
-    const near = maxWithin(rich, eco.grid, S.coastR)
-    for (let i = 0; i < n; i++) if (land[i]) out[i] = weight * (1 - detExp(-(S.access[i] * near[i] + S.freshwater[i])))
-    eco.grid.averagePoleRows(out, land)
-    eco.grid.averagePoleRows(out, eco.sea)
+    const near = maxWithin(S.coast, rich)
+    for (let v = 0; v < n; v++) if (land[v]) out[v] = weight * (1 - detExp(-(S.access[v] * near[v] + S.freshwater[v])))
     return out
   }
-  const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precipMm / T.saltAridPrecip) * clamp01(tempC / 25)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x
-      if (!land[i]) continue
-      if (field === 'salt' && S.saltFlat && S.saltFlat[i]) { out[i] = weight * clamp01(T.saltFlatW); continue }
-      px.setPixel(x, y)
-      const t = px.read(S.seaLevelMonths, null, m) - lapse * Math.max(0, S.elevation[i] - SEA_LEVEL)
-      const p = px.read(S.months.precipitation, S.coarseLand, m)
-      let v: number
-      if (field === 'arable') v = (t >= T.arableFrostC ? productivity(t, p + T.arableIrrigationMm * S.fieldWater[i]) : 0) * S.arableFactor[i]
-      else if (field === 'game') v = productivity(t, p) * S.edgeFactor[i]
-      else if (field === 'pasture') v = S.nppYear[i] > 0 ? S.pastureYear[i] * productivity(t, p) / S.nppYear[i] : 0
-      else v = clamp01(aridWarm(t, p) * S.saltCoast[i])
-      out[i] = weight * v
-    }
+  for (let v = 0; v < n; v++) {
+    if (!land[v]) continue
+    if (field === 'salt' && S.saltFlat && S.saltFlat[v]) { out[v] = weight * clamp01(T.saltFlatW); continue }
+    const t = S.months.temperature[m + v]
+    const p = Math.max(0, S.months.precipitation[m + v])
+    let value: number
+    if (field === 'arable') value = (t >= T.arableFrostC ? productivity(t, p + T.arableIrrigationMm * S.fieldWater[v]) : 0) * S.arableFactor[v]
+    else if (field === 'game') value = productivity(t, p) * S.edgeFactor[v]
+    else if (field === 'pasture') value = S.nppYear[v] > 0 ? S.pastureYear[v] * productivity(t, p) / S.nppYear[v] : 0
+    else value = clamp01(aridWarm(t, p) * S.saltCoast[v])
+    out[v] = weight * value
   }
-  eco.grid.averagePoleRows(out, land)
   return out
 }
 
 // The step's sliders on the physics: the per-field abundance, the carrying
-// capacity's level and concentration, the province strength, tin's rarity;
-// then the fields on the climate grid. Cheap next to prepareEcology.
+// capacity's level and concentration, the province strength, tin's rarity.
+// Cheap next to prepareEcology.
 export function applyEcology(eco: EcologyBase, params: EcologyParams): EcologyFields {
   const T = ECOLOGY_TUNING
-  const { w, h, land, coarseLand, raw } = eco
-  const n = w * h
+  const { slots: n, land, raw, geo } = eco
   // Fold-out nudges: per-field abundance multipliers, on copies so the base
   // stays as it was; they both scale the displayed field and (for
   // subsistence + salt) flow into the carrying-capacity combine below.
@@ -834,7 +514,7 @@ export function applyEcology(eco: EcologyBase, params: EcologyParams): EcologyFi
     const out = arr.slice()
     const m = wmap[id] ?? 1
     // The fish are on the sea too (the fishing grounds).
-    if (m !== 1) for (let i = 0; i < n; i++) if (land[i] || id === 'fish') out[i] *= m
+    if (m !== 1) for (let v = 0; v < n; v++) if (land[v] || (id === 'fish' && eco.sea[v])) out[v] *= m
     return out
   }
   const arable = scaled(raw.arable, 'arable')
@@ -847,51 +527,79 @@ export function applyEcology(eco: EcologyBase, params: EcologyParams): EcologyFi
   // diminishing returns (1 - e^-Σ w·x); salt adds a small preservation bonus (the
   // one sanctioned material→subsistence bleed).
   const base = new Float32Array(n)
-  for (let i = 0; i < n; i++) {
-    if (!land[i]) continue
-    base[i] = 1 - detExp(-(T.wArable * arable[i] + T.wFish * fish[i] + T.wGame * game[i] + T.wPasture * pasture[i] + T.wSaltCc * salt[i]))
+  for (let v = 0; v < n; v++) {
+    if (!land[v]) continue
+    base[v] = 1 - detExp(-(T.wArable * arable[v] + T.wFish * fish[v] + T.wGame * game[v] + T.wPasture * pasture[v] + T.wSaltCc * salt[v]))
   }
-  const carryingCapacity = concentrationPipeline(base, land, eco.provinceDeviation, params, eco.grid)
+  const carryingCapacity = concentrationPipeline(base, land, eco.provinceDeviation, params, geo.areaM2)
 
   const timber = scaled(raw.timber, 'timber')
   const toolStone = scaled(raw.toolStone, 'toolStone')
   const copper = scaled(raw.copper, 'copper')
-  const tinRadius = T.tinRadiusFrac * (1 - 0.6 * Math.max(0, Math.min(1, params.tinRarity ?? 0)))
-  const tin = scaled(maskToLand(rasterisePointField(eco.tinPoints, tinRadius, eco.grid), land), 'tin')
+  const tinRadius = T.tinRadiusM * (1 - 0.6 * Math.max(0, Math.min(1, params.tinRarity ?? 0)))
+  const tin = scaled(maskToLand(gaussianHalos(geo, eco.tinPoints, tinRadius), land), 'tin')
   const iron = scaled(raw.iron, 'iron')
   const gold = scaled(raw.gold, 'gold')
   const silver = scaled(raw.silver, 'silver')
   const gemsRaw = new Float32Array(n)
-  for (let i = 0; i < n; i++) if (land[i]) gemsRaw[i] = clamp01(T.gemOrogenW * eco.gemBelt[i] + T.gemAridW * eco.aridity[i] * copper[i])
+  for (let v = 0; v < n; v++) if (land[v]) gemsRaw[v] = clamp01(T.gemOrogenW * eco.gemBelt[v] + T.gemAridW * eco.aridity[v] * copper[v])
   const gems = scaled(gemsRaw, 'gems')
 
   // Mask every per-resource field to the ocean sentinel so overlays skip
   // water — all but the fish, whose sea is its fishing grounds.
-  const fine: Record<EcologyFieldId, Float32Array> = { carryingCapacity, arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems }
+  const fields: Record<EcologyFieldId, Float32Array> = { carryingCapacity, arable, fish, game, pasture, timber, salt, toolStone, copper, tin, iron, gold, silver, gems }
   for (const id of ECOLOGY_FIELD_IDS) {
-    if (id === 'fish') continue
-    const f = fine[id]
-    for (let i = 0; i < n; i++) if (!land[i]) f[i] = ECOLOGY_OCEAN
+    const f = fields[id]
+    for (let v = 0; v < n; v++) if (!land[v] && !(id === 'fish' && eco.sea[v])) f[v] = ECOLOGY_OCEAN
   }
+  return { fields }
+}
 
-  // A pole row is one value, its land's and (the fish) its sea's apart,
-  // on both grids (fork 5; nothing happens on the torus).
-  for (const id of ECOLOGY_FIELD_IDS) {
-    eco.grid.averagePoleRows(fine[id], land)
-    if (id === 'fish') eco.grid.averagePoleRows(fine[id], eco.sea)
-  }
+// --- the chart -----------------------------------------------------------------
+
+// The fields as the screen and the migration read them: per pixel of the
+// world raster (`width` × `height`, rasteriseNodeField's convention) from
+// the nodes of the triangle under it — a land pixel (`pixelLand`, the
+// raster's own land) from the land nodes, the fish's sea pixels from the
+// sea nodes, linearly with the weights renormalised, never a blend with
+// the ocean mark — and per cell of the climate's chart (CLIMATE_RES_X ×
+// CLIMATE_RES_Y) the area mean of its land pixels: ECOLOGY_OCEAN where the
+// texel under the cell's centre is sea, 0 on a land cell without a land
+// pixel. `grid` is the world raster's (its cells' areas).
+export interface EcologyRasters {
+  resX: number
+  resY: number
+  fields: Record<EcologyFieldId, Float32Array>
+  fine: { resX: number; resY: number; fields: Record<EcologyFieldId, Float32Array> }
+}
+
+export function ecologyRasters(eco: EcologyBase, fields: Partial<Record<EcologyFieldId, Float32Array>>, pixelLand: Uint8Array, grid: DomainGrid): EcologyRasters {
+  const { resX: w, resY: h } = grid
+  const fine = {} as Record<EcologyFieldId, Float32Array>
   const coarse = {} as Record<EcologyFieldId, Float32Array>
   for (const id of ECOLOGY_FIELD_IDS) {
-    coarse[id] = toClimateCells(fine[id], land, coarseLand, eco.grid)
-    eco.climate.averagePoleRows(coarse[id], coarseLand)
+    const f = fields[id]
+    if (!f) continue
+    fine[id] = ecologyFine(eco, f, pixelLand, w, h, id === 'fish')
+    coarse[id] = toClimateCells(fine[id], pixelLand, grid)
   }
   return { resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y, fields: coarse, fine: { resX: w, resY: h, fields: fine } }
 }
 
-// A fine field averaged over each climate cell's land pixels, each by its
-// area (`grid`'s cellArea: 1 on the torus); ECOLOGY_OCEAN on the cells the
-// climate calls sea, 0 on a land cell without a land pixel.
-function toClimateCells(field: Float32Array, land: Uint8Array, coarseLand: Uint8Array, grid: DomainGrid): Float32Array {
+// One field per pixel (see ecologyRasters). The pixels' triangles are found
+// once per base and raster size (meshRaster.triangleRaster) and kept.
+export function ecologyFine(eco: EcologyBase, field: Float32Array, pixelLand: Uint8Array, width: number, height: number, withSea: boolean): Float32Array {
+  if (!eco.raster || eco.raster.width !== width || eco.raster.height !== height) eco.raster = triangleRaster(eco.mesh, width, height)
+  const out = rasteriseNodePart(eco.mesh, field, eco.land, pixelLand, ECOLOGY_OCEAN, width, height, false, undefined, eco.raster)
+  if (!withSea) return out
+  const pixelSea = new Uint8Array(pixelLand.length)
+  for (let p = 0; p < pixelSea.length; p++) pixelSea[p] = pixelLand[p] ? 0 : 1
+  const seaPart = rasteriseNodePart(eco.mesh, field, eco.sea, pixelSea, ECOLOGY_OCEAN, width, height, false, undefined, eco.raster)
+  for (let p = 0; p < out.length; p++) if (pixelSea[p]) out[p] = seaPart[p]
+  return out
+}
+
+function toClimateCells(field: Float32Array, land: Uint8Array, grid: DomainGrid): Float32Array {
   const { resX: w, resY: h } = grid
   const nc = CLIMATE_RES_X * CLIMATE_RES_Y
   const sum = new Float64Array(nc)
@@ -908,7 +616,14 @@ function toClimateCells(field: Float32Array, land: Uint8Array, coarseLand: Uint8
     }
   }
   const out = new Float32Array(nc)
-  for (let c = 0; c < nc; c++) out[c] = !coarseLand[c] ? ECOLOGY_OCEAN : count[c] > 0 ? sum[c] / count[c] : 0
+  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
+    const cy = Math.min(h - 1, Math.floor(((gy + 0.5) / CLIMATE_RES_Y) * h))
+    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
+      const c = gy * CLIMATE_RES_X + gx
+      const centre = cy * w + Math.min(w - 1, Math.floor(((gx + 0.5) / CLIMATE_RES_X) * w))
+      out[c] = !land[centre] ? ECOLOGY_OCEAN : count[c] > 0 ? sum[c] / count[c] : 0
+    }
+  }
   return out
 }
 
@@ -936,16 +651,12 @@ function maskToLand(field: Float32Array, land: Uint8Array): Float32Array {
 
 // --- concentration pipeline (verified in Phase 1) ---------------------------
 
-// By area (`grid`'s cellArea: 1 on the torus, where it is the plain mean).
-function landMean(field: Float32Array, land: Uint8Array, grid: DomainGrid): number {
-  const { resX: w, resY: h } = grid
+// By area (each node its Voronoi cell's, m²).
+function landMean(field: Float32Array, land: Uint8Array, area: Float64Array): number {
   let sum = 0
-  let count = 0
-  for (let y = 0; y < h; y++) {
-    const a = grid.cellArea(y)
-    for (let i = y * w; i < (y + 1) * w; i++) if (land[i]) { sum += field[i] * a; count += a }
-  }
-  return count > 0 ? sum / count : 0
+  let total = 0
+  for (let v = 0; v < field.length; v++) if (land[v]) { sum += field[v] * area[v]; total += area[v] }
+  return total > 0 ? sum / total : 0
 }
 
 // Province noise (see Phase 1): smooth seeded value noise in [-1,1] at a coarse
@@ -957,21 +668,21 @@ function hashLattice(ix: number, iy: number, seed: number): number {
   hsh = hsh ^ (hsh >>> 16)
   return (hsh >>> 0) / 4294967295
 }
-// The noise at world pixel (x, y)'s centre, in [-1, 1], at a lattice of
-// freqX × freqY cells over the world: the periodic chart lattice on the
-// torus (provinceNoise), the globe's 3D lattice on the sphere (Domain.noise
-// — one value at a pole, no seam, as rough east-west as north-south), of
-// the same cell size along the equator.
+// The noise at a world point, in [-1, 1], at a lattice of freqX × freqY
+// cells over the world: the periodic chart lattice on the torus
+// (provinceNoise), the globe's 3D lattice on the sphere (Domain.noise — one
+// value at a pole, no seam, as rough east-west as north-south), of the same
+// cell size along the equator.
 function noiseSampler(domain: Domain, freqX: number, freqY: number, seed: number): (x: number, y: number) => number {
   const space = domain.noise
   const { width: w, height: h } = domain
   if (space.kind === 'chart') {
     const lattice = domain.grid(freqX, freqY)
-    return (x, y) => provinceNoise((x + 0.5) / w, (y + 0.5) / h, lattice, seed)
+    return (x, y) => provinceNoise(x / w, y / h, lattice, seed)
   }
   const frame = globeFrame()
   return (x, y) => {
-    space.frame(x + 0.5, y + 0.5, frame)
+    space.frame(x, y, frame)
     return globeOctave(frame, freqX, w, seed) * 2 - 1
   }
 }
@@ -991,131 +702,32 @@ function provinceNoise(u: number, v: number, lattice: DomainGrid, seed: number):
   return (top + (bottom - top) * fy) * 2 - 1
 }
 
-// asin(z) for the halos' arcs: below 0.25 by its series to z⁹ (a halo's
-// reach, 3σ, is under 0.24 rad for every radiusFrac up to 0.05; the first
-// term left out is 2e-8 of the value there), else detAsin — which was a
-// third of a stamp's time on the sphere.
-function asinOfHalfChord(z: number): number {
-  if (z >= 0.25) return detAsin(Math.min(1, z))
-  const z2 = z * z
-  return z * (1 + z2 * (1 / 6 + z2 * (3 / 40 + z2 * (5 / 112 + z2 * (35 / 1152)))))
-}
-
-// Rasterises a soft Gaussian "influence" field (0..1, union-max) around a set of
-// world-space points onto the raster `grid` the points are given in — reused for
-// volcanic-soil provinces, copper (arc volcanoes), tin (sutures), obsidian, etc.
-// Radius as a fraction of the smaller world dimension; stamps within three
-// radii of each point only, so cost is O(points). The torus measures in the
-// chart, whose pixels are square; the sphere on the globe (the distance on
-// it, the cells of the disc's box, DomainGrid.discBox), so a halo is a disc
-// at every latitude and one across a pole. `grid` lies over its domain one
-// pixel per unit.
-function rasterisePointField(points: { x: number; y: number }[], radiusFrac: number, grid: DomainGrid): Float32Array {
-  const { resX: w, resY: h } = grid
-  const field = new Float32Array(w * h)
-  if (points.length === 0) return field
-  const radius = Math.min(w, h) * radiusFrac
-  const reach = Math.ceil(radius * 3)
-  const inv2r2 = 1 / (2 * radius * radius)
-  const space = grid.domain.noise
-  if (space.kind === 'globe') {
-    // The distance on the globe from the cells' and the point's positions
-    // (GlobeNoise.frame, R · u): the arc 2R asin(c / 2) of the chord c
-    // between the unit vectors. A cell's position is separable — its row's
-    // sin and cos of the colatitude (the frame at longitude 0) times its
-    // column's direction (the frame's east axis is (−sin λ, cos λ, 0)) —
-    // so the tables are made once per call. Domain.distanceSq, whose point
-    // cache a stamp of 10⁵ cells thrashes, made prepareEcology 6× the
-    // torus's (2026-10-11, 200 volcanoes at 2048 × 1024: 10.0 s against
-    // 1.7); now 2.8 s.
-    const R = space.radius
-    const frame = globeFrame()
-    const st = new Float64Array(h)
-    const ct = new Float64Array(h)
-    for (let y = 0; y < h; y++) {
-      space.frame(0, y + 0.5, frame)
-      st[y] = frame.px / R
-      ct[y] = frame.pz / R
-    }
-    const cl = new Float64Array(w)
-    const sl = new Float64Array(w)
-    for (let x = 0; x < w; x++) {
-      space.frame(x + 0.5, h / 2, frame)
-      cl[x] = frame.ey
-      sl[x] = -frame.ex
-    }
-    const box = { x0: 0, x1: 0, y0: 0, y1: 0 }
-    const chordReach = 2 * detSin(Math.min(Math.PI / 2, reach / (2 * R)))
-    const chordReach2 = chordReach * chordReach
-    for (const v of points) {
-      space.frame(v.x, v.y, frame)
-      const ux = frame.px / R
-      const uy = frame.py / R
-      const uz = frame.pz / R
-      grid.discBox(v.x, v.y, reach, box)
-      for (let gy = box.y0; gy <= box.y1; gy++) {
-        const row = grid.index(0, gy)
-        const shift = row % w
-        const y = (row - shift) / w
-        const dz = ct[y] - uz
-        for (let gx = box.x0; gx <= box.x1; gx++) {
-          const x = grid.wrapCol(gx + shift)
-          const dx = st[y] * cl[x] - ux
-          const dy = st[y] * sl[x] - uy
-          const c2 = dx * dx + dy * dy + dz * dz
-          if (c2 > chordReach2) continue
-          const arc = 2 * R * asinOfHalfChord(Math.sqrt(c2) / 2)
-          const bump = detExp(-(arc * arc) * inv2r2)
-          const i = y * w + x
-          if (bump > field[i]) field[i] = bump
-        }
-      }
-    }
-    return field
-  }
-  for (const v of points) {
-    const cx = Math.floor(v.x)
-    const cy = Math.floor(v.y)
-    for (let dy = -reach; dy <= reach; dy++) {
-      const y = grid.wrapRow(cy + dy)
-      const ddy = cy + dy + 0.5 - v.y
-      for (let dx = -reach; dx <= reach; dx++) {
-        const ddx = cx + dx + 0.5 - v.x
-        const bump = detExp(-(ddx * ddx + ddy * ddy) * inv2r2)
-        const i = y * w + grid.wrapCol(cx + dx)
-        if (bump > field[i]) field[i] = bump
-      }
-    }
-  }
-  return field
-}
-
 // Runs the base subsistence aggregate through `normalise → L1 gamma
 // (mean-preserving) → L2 province (mean-1) → gain`, so carrying capacity's gain
 // changes only the level and concentration only the shape. Verified in Phase 1.
-function concentrationPipeline(base: Float32Array, land: Uint8Array, dev: Float32Array, params: EcologyParams, grid: DomainGrid): Float32Array {
+function concentrationPipeline(base: Float32Array, land: Uint8Array, dev: Float32Array, params: EcologyParams, area: Float64Array): Float32Array {
   const n = base.length
   let maxBase = 0
   for (let i = 0; i < n; i++) if (land[i] && base[i] > maxBase) maxBase = base[i]
   const norm = new Float32Array(n)
   if (maxBase > 0) for (let i = 0; i < n; i++) if (land[i]) norm[i] = base[i] / maxBase
-  const meanNorm = landMean(norm, land, grid)
+  const meanNorm = landMean(norm, land, area)
 
   const gamma = detPow(2, params.concentration / 100)
   const shaped = new Float32Array(n)
   for (let i = 0; i < n; i++) if (land[i]) shaped[i] = detPow(norm[i], gamma)
-  const meanShaped = landMean(shaped, land, grid)
+  const meanShaped = landMean(shaped, land, area)
   const l1Scale = meanShaped > 0 ? meanNorm / meanShaped : 1
   for (let i = 0; i < n; i++) if (land[i]) shaped[i] *= l1Scale
 
   const strength = params.provinceStrength
-  const meanDev = landMean(dev, land, grid)
+  const meanDev = landMean(dev, land, area)
   const provincal = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
     provincal[i] = shaped[i] * Math.max(0.1, 1 + strength * (dev[i] - meanDev))
   }
-  const meanProv = landMean(provincal, land, grid)
+  const meanProv = landMean(provincal, land, area)
   const l2Scale = meanProv > 0 ? meanNorm / meanProv : 1
 
   const gain = params.carryingCapacity / 100

@@ -1,8 +1,6 @@
 import type { Dtype } from './worldLayers'
-import { restoreLandOnlySentinel } from './worldLayers'
-import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
-import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
 import { openWorld, type SavedMesh } from '../query'
+import type { SavedClimate } from './climateFields'
 import type { World } from '../query'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { WorldHistory } from './worldHistory'
@@ -80,17 +78,14 @@ export interface WorldInputs {
   // lithology-only rock contrast), a deliberate hard break.
   uplift: GridLayer | null
   erodibility: GridLayer | null
-  // Precipitation drives the discharge in the bake's hydrology re-run AND
-  // the engine's water forcing contrast. Absent for a world saved before
-  // climate was computed; the bake then stops after erosion.
-  climate: GridLayer | null
-  // Temperature on the same climate grid. The bake's hydrology re-run needs it
-  // to re-flood the basins (evaporation decides which stay wet); rivers do
-  // not. Its own field rather than a reach into `biomeInputs`, which describes
-  // what the WHITTAKER classification consumes — the two happen to overlap and
-  // are not the same requirement.
-  temperature: GridLayer | null
-  biome: GridLayer | null
+  // The climate per cell of its field mesh (climateFields.ts, DEC-0036
+  // phase 7): the precipitation drives the discharge in the bake's
+  // hydrology re-run AND the engine's water forcing contrast, the
+  // temperature re-floods the basins (evaporation decides which stay wet),
+  // the monsoon index judges the rivers' regime — each sampled at the
+  // bake's own nodes (climate/climatePoints.ts). Absent for a world saved
+  // before climate was computed; the bake then stops after erosion.
+  climate: SavedClimate | null
   // Water depth per world cell (elevation units), 0 where there is no lake —
   // a hydrology state the worldmap paints and cannot re-derive. Absent for a
   // save that predates the layer. Not part of the worldId: the id hashes its
@@ -101,21 +96,6 @@ export interface WorldInputs {
   // (hydrology.lakeDepthFromBodies, waterLevelField). Null for a save written
   // before the list existed (manifest formatVersion 1).
   waterBodies: WaterBody[] | null
-  // Everything the Whittaker classification consumes, so a consumer can redo it
-  // on ITS OWN terrain instead of upsampling the saved biome ids — which is how
-  // the worldmap gets biomes that follow the amplification bake's ridges (see
-  // climate/biomes.computeBiomesFine). All four or none: a partial set cannot
-  // classify, and older saves predate `precipitationEffective` entirely.
-  //
-  // `precipitationEffective` rather than `climate` is the one that belongs here:
-  // it carries the riparian bonus, so river corridors survive the reclassification
-  // without the consumer owning a drainage network.
-  biomeInputs: {
-    temperature: GridLayer
-    precipitationEffective: GridLayer
-    seasonalAmplitude: GridLayer
-    monsoonIndex: GridLayer
-  } | null
   // The adaptive mesh (phase 4.3), the terrain the mesh bake refines; null
   // for a save without one.
   mesh: SavedMesh | null
@@ -155,38 +135,12 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
   const elevation = await world.acquire('elevation')
   if (!elevation) return null
 
-  // Not sentinel-restored like the three biome inputs below, although it is a
-  // land-only layer too: its consumers — the bake's discharge and the engine's
-  // water forcing — clamp at zero, so an ocean cell decoded as 0 mm/yr is
-  // exactly what they want, where OCEAN_PRECIP (−1) would have to be caught
-  // first. Stated so the asymmetry is not read as an oversight (BUG_BOUNTY 17).
-  const climate = await world.acquire('precipitation')
   const uplift = await world.acquire('uplift')
   const erodibility = await world.acquire('erodibility')
-  const biome = await world.acquire('biome')
   const lakeDepth = await world.acquire('lakeDepth')
-  const temperature = await world.acquire('temperature')
-  const precipitationEffective = await world.acquire('precipitationEffective')
-  const seasonalAmplitude = await world.acquire('seasonalAmplitude')
-  const monsoonIndex = await world.acquire('monsoonIndex')
-  // The three land-only fields get their ocean sentinel back before anyone
-  // classifies with them — see restoreLandOnlySentinel. `temperature` is not one
-  // of them: it is meaningful over water (SST) and has no sentinel to restore.
-  // A save too old to carry landMask is left as it was rather than guessed at.
-  const landMask = await world.acquire('landMask')
   const bodiesRaw = await world.table('waterBodies')
   const waterBodies = Array.isArray(bodiesRaw) && bodiesRaw.every((b) => typeof b === 'object' && b !== null && typeof (b as WaterBody).level === 'number' && typeof (b as WaterBody).spill === 'number')
     ? (bodiesRaw as WaterBody[])
-    : null
-  const restore = (layer: GridLayer, sentinel: number): GridLayer =>
-    landMask ? { ...layer, data: restoreLandOnlySentinel(layer.data, landMask.data, sentinel) } : layer
-  const biomeInputs = temperature && precipitationEffective && seasonalAmplitude && monsoonIndex
-    ? {
-      temperature,
-      precipitationEffective: restore(precipitationEffective, OCEAN_PRECIP),
-      seasonalAmplitude: restore(seasonalAmplitude, OCEAN_AMPLITUDE),
-      monsoonIndex: restore(monsoonIndex, OCEAN_PRECIP),
-    }
     : null
 
   return {
@@ -200,12 +154,9 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     erosionControls: world.recipe.erosionControls,
     uplift,
     erodibility,
-    climate,
-    temperature,
-    biome,
+    climate: await world.climate(),
     lakeDepth,
     waterBodies,
-    biomeInputs,
     mesh: await world.mesh(),
     worldId: await world.worldId(),
     worldUid: world.recipe.worldUid,

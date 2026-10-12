@@ -115,8 +115,10 @@ export interface WorkerPlanetPreviewDataMessage {
   precipitation: ArrayBuffer
   seasonalAmplitude: ArrayBuffer
   monsoonIndex: ArrayBuffer
-  // The Köppen–Geiger class per climate cell (Uint8, climate/koppen.ts ids,
-  // 0 on the sea), from the annual figures' synthesized months.
+  // The Köppen–Geiger class per pixel of the world raster (Uint8, full-res
+  // like `biomes`, climate/koppen.ts ids, 0 on the sea), from the annual
+  // figures' synthesized months at each node (DEC-0036 phase 7; the
+  // preview's at each climate cell).
   koppen: ArrayBuffer
   biomes: ArrayBuffer
 }
@@ -475,8 +477,11 @@ export interface WorkerStageFailedMessage {
   error: string
 }
 
-// The computed climate rasters (coarse grid — see climate/climateField.ts).
-// Grows per phase.
+// The computed climate as the screen paints it: the climate's chart
+// (CLIMATE_RES_X × CLIMATE_RES_Y, climate/climateChart.ts — textures and
+// readouts only; the stages sample the field mesh at their points), the
+// biomes and the Köppen classes per pixel of the world raster from the
+// terrain mesh's nodes. Grows per phase.
 export interface WorkerClimateDataMessage {
   type: 'climateData'
   // Set when this is the hydrology's climate REFINEMENT (v2) rather than a fresh
@@ -524,24 +529,26 @@ export interface WorkerClimateDataMessage {
   // Monsoon / precipitation-seasonality index (Float32, 0..1; OCEAN_PRECIP on ocean).
   // See climate/monsoon.ts.
   monsoonIndex: ArrayBuffer
-  // The Köppen–Geiger class per climate cell (Uint8, climate/koppen.ts ids,
-  // 0 on the sea), from the annual figures' synthesized months.
+  // The Köppen–Geiger class per pixel of the world raster (Uint8, full-res
+  // like `biomes`, climate/koppen.ts ids, 0 on the sea), from the annual
+  // figures' synthesized months at each node (DEC-0036 phase 7; the
+  // preview's at each climate cell).
   koppen: ArrayBuffer
   // Whittaker biome id per cell (Uint8; ocean = Biome.Ocean). See climate/biomes.ts.
   //
-  // The one field here that is NOT on resX/resY: it is FULL-RES (world raster),
-  // like discharge and watersheds below. The classification is pointwise and its
-  // sharpest input — elevation — exists at full res, so evaluating it there costs
-  // one pass and is what gives mountains a treeline instead of an all-or-nothing
-  // 62 km alpine cell. Every field around it stays regional and coarse.
+  // NOT on resX/resY, like `koppen`: FULL-RES (world raster), like discharge
+  // and watersheds below. The classification is pointwise at the terrain
+  // mesh's nodes (DEC-0036 phase 7), each with its own lapse — what gives
+  // mountains a treeline instead of an all-or-nothing 62 km alpine cell —
+  // and a land pixel takes its triangle's heaviest land node's id.
   biomes: ArrayBuffer
 }
 
 // The climate step's refinement: its values per cell of the climate's
 // field mesh (`refined`, DEC-0036 phase 5 — what the screen saves and
-// hands back on a load, and what the marks read), and the same rasterised
-// onto the climate grid once (refinement.refinedRasters, the transition
-// until phase 7): `months` twelve-month stacks, month 0 = January. Build
+// hands back on a load, and what the marks read), and the same on the
+// climate's chart once (climateChart.refinedChart, for the textures and
+// readouts only): `months` twelve-month stacks, month 0 = January. Build
 // step 2 of docs/design/climate-refinement.md; B, Köppen and the rest add
 // their fields here.
 export interface WorkerClimateRefinedMessage {
@@ -554,7 +561,8 @@ export interface WorkerClimateRefinedMessage {
   // (OCEAN_PRECIP on the sea), Float32, months × resX × resY (month-major).
   temperature: ArrayBuffer
   precipitation: ArrayBuffer
-  // The Köppen–Geiger class from these months (Uint8, 0 on the sea).
+  // The Köppen–Geiger class from these months at each node, per pixel of
+  // the world raster (Uint8, full-res, 0 on the sea).
   koppen: ArrayBuffer
   // Weather phenomena, each a share of the year per cell (Float32,
   // climate/phenomena.ts): coastal fog, föhn.
@@ -621,15 +629,16 @@ export interface WorkerHydrologyDataMessage {
   lakeDepth: ArrayBuffer
   // Biomes RE-classified with the riparian moisture bonus from rivers/lakes
   // (Uint8, full-res — replaces the climate step's water-free biomes, and shares
-  // its resolution so the display never switches grids mid-run). Classified at
-  // the CANONICAL channel density, not the draw slider's, so like lakeDepth it
-  // only arrives on a re-route — a density-only pass sends it empty, meaning
-  // "biomes unchanged". See computeRiparianBiomes.
+  // its resolution so the display never switches grids mid-run): the nodes'
+  // (DEC-0036 phase 7, hydrology.riparianPrecipitationOn), each land pixel the
+  // heaviest land corner's. Classified at the CANONICAL channel density, so
+  // like lakeDepth it only arrives on a re-route — a density-only pass sends
+  // it empty, meaning "biomes unchanged".
   biomes: ArrayBuffer
-  // The precipitation those biomes were classified FROM: the climate grid's
-  // annual total plus the riparian bonus (Float32, coarse, OCEAN_PRECIP on
-  // ocean). Saved so a consumer can reproduce the classification at its own
-  // resolution without owning a drainage network — see computeRiparianBiomes.
+  // The precipitation those biomes were classified FROM — the climate's
+  // annual total plus the riparian bonus — per pixel of the world raster
+  // (Float32, full-res, from the nodes, OCEAN_PRECIP on the sea): the water
+  // balance's readout. Re-route only, like the biomes.
   precipitationEffective: ArrayBuffer
   // Watershed labels (Uint16, full-res, 0 = unlabelled) and the raw discharge
   // field (Float32, full-res) + its land maximum — the watershed overlay and
@@ -657,14 +666,12 @@ export interface WorkerHydrologyDataMessage {
   // The erosion pass's deposits as features with provenance
   // (surface/sedimentBasins.ts). Re-route only; null means "unchanged".
   sedimentBasins: SedimentBasin[] | null
-  // Ice thickness in metres (Float32, full-res, surface/iceFlow.ts); the
-  // level/surface fields above already carry the glaciers for the drawing.
-  // Re-route only; empty means "unchanged".
+  // Ice thickness in metres (Float32, full-res, surface/glacial.ts on the
+  // mesh, rasterised); the level/surface fields above already carry the
+  // glaciers for the drawing. Re-route only; empty means "unchanged". (The
+  // water table is the save's, per node — WorkerWorldDataMessage.land; the
+  // springs ride in the river graph's json.)
   iceThickness: ArrayBuffer
-  // The water table's depth below the surface, metres (Float32, full-res,
-  // surface/hydrogeology.ts, phase 5a; −1 under water). Re-route only;
-  // empty means "unchanged". The springs ride in the river graph's json.
-  waterTable: ArrayBuffer
 }
 
 // The computed ecology fields (coarse climate grid), keyed by field id so the
@@ -738,6 +745,32 @@ export interface WorkerWorldDataMessage {
   forcingResX: number
   forcingResY: number
   mesh?: MeshPayload
+  // The climate per cell of its field mesh and the land fields per node of
+  // `mesh` (world/save/climateFields.ts, DEC-0036 phase 7); absent before
+  // the climate ran.
+  climate?: ClimatePayload
+  land?: LandPayload
+}
+
+// The climate's annual cells as the save holds them (climate/
+// climatePoints.ClimateCellValues): Float32 per cell.
+export interface ClimatePayload {
+  cells: number
+  spacingM: number
+  seaLevelTemperature: ArrayBuffer
+  precipitation: ArrayBuffer
+  seasonalAmplitude: ArrayBuffer
+  monsoonIndex: ArrayBuffer
+}
+
+// The land fields per node of the mesh, in its numbering: the biome and the
+// Köppen class (Uint8), the water table's depth (Float32, metres, −1 under
+// water; null before the hydrology ran).
+export interface LandPayload {
+  count: number
+  biome: ArrayBuffer
+  koppen: ArrayBuffer
+  waterTable: ArrayBuffer | null
 }
 
 // The other direction, which had no union at all: GeneratorScreen listed the twelve

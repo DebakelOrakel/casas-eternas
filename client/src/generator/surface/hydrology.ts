@@ -1,11 +1,11 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { SURFACE_TUNING } from './surfaceTuneParams'
-import type { Domain, DomainGrid } from '../core/domain'
+import type { DomainGrid } from '../core/domain'
 import type { FlowRouting } from './flowRouting'
 import { rasterSubstrate, type FlowSubstrate } from './flowSubstrate'
-import { Biome, computeBiomesFine, computeBiomesFineFromMonths } from '../climate/biomes'
 import { OCEAN_PRECIP } from '../climate/precipitation'
-import { detPow } from '../core/detMath'
+import { detExp, detLog, detPow } from '../core/detMath'
+import { MinHeap } from '../core/minHeap'
 
 // Rivers & lakes on the post-erosion topography. Reuses the erosion module's
 // drainage network (FlowRouting: D8 flowTarget for the channel tree,
@@ -28,17 +28,16 @@ import { detPow } from '../core/detMath'
 // slider; densityToCriticalArea maps it.
 export const CANONICAL_RIVER_DENSITY = 55
 
-// Nearest coarse-grid precip (mm/yr) at a full-res land cell. NO floor: an
-// arid cell contributes what actually falls on it, so drainage density is
+// An element's precipitation (mm/yr) as its runoff. NO floor: an arid
+// element contributes what actually falls on it, so drainage density is
 // climate-driven — arid regions genuinely lose rivers. That is a deliberate
 // reversal of the 200 mm/yr runoffFloor (erosion v2, P4): the floor existed so
 // bone-dry land still developed channels from drainage area alone, which is
-// exactly the climate-blindness v2 retires. Called for land cells only, so an
-// ocean-sentinel precip (coarse cell reads as ocean at the coast) clamps to
-// 0 — the cell still passes upstream discharge along, it just adds none.
-// `climate`: the climate grid over the cells' domain.
-function precipRunoffAt(precip: Float32Array, cx: number, cy: number, climate: DomainGrid): number {
-  const p = climate.sampleNearestAt(precip, cx, cy)
+// exactly the climate-blindness v2 retires. Called for land elements only, so
+// an ocean mark (OCEAN_PRECIP) clamps to 0 — the element still passes
+// upstream discharge along, it just adds none. The climate per element is
+// the caller's, sampled at the elements (climate/climatePoints.ts).
+function runoffOf(p: number): number {
   return p > 0 ? p : 0
 }
 
@@ -56,28 +55,6 @@ export function dischargeToM3s(dischargeUnits: number, cellM: number): number {
   return dischargeUnits * ((cellM * cellM * 1e-3) / SECONDS_PER_YEAR) * RUNOFF_COEFFICIENT
 }
 
-// Mean per-cell runoff over land — the reference the critical-area threshold
-// multiplies against (so "A cells of drainage" translates to a discharge value).
-// `domain`: what the elevation raster covers, one cell per unit.
-// By area: a cell weighs its row's cellArea (1 on the torus, cos φ on the
-// sphere).
-export function meanLandRunoff(precip: Float32Array, elevation: Float32Array, domain: Domain, climateResX: number, climateResY: number): number {
-  const worldW = domain.width
-  const climate = domain.grid(climateResX, climateResY)
-  const world = domain.grid(worldW, domain.height)
-  let sum = 0
-  let count = 0
-  for (let cell = 0; cell < elevation.length; cell++) {
-    if (elevation[cell] <= SEA_LEVEL) continue
-    const cx = cell % worldW
-    const cy = (cell - cx) / worldW
-    const area = world.cellArea(cy)
-    sum += precipRunoffAt(precip, cx, cy, climate) * area
-    count += area
-  }
-  return count > 0 ? sum / count : 0
-}
-
 // Potential evaporation from an open water surface (mm/yr), rising with
 // temperature — warm basins lose far more water, which is what makes hot dry
 // basins into shrunken salt lakes (or none) while cold/wet ones brim over. Same
@@ -88,9 +65,6 @@ export function evaporationPotential(tempC: number): number {
   return pet < SURFACE_TUNING.petMinMm ? SURFACE_TUNING.petMinMm : pet > SURFACE_TUNING.petMaxMm ? SURFACE_TUNING.petMaxMm : pet
 }
 
-function tempAtCell(temperature: Float32Array, cx: number, cy: number, climate: DomainGrid): number {
-  return climate.sampleNearestAt(temperature, cx, cy)
-}
 
 // One standing water body — or a basin that failed to hold one — as the
 // hydrology decided it (ADAPTIVE_MESH_PLAN.md phase 1, decision 9 of
@@ -256,8 +230,8 @@ export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Flo
   return depth
 }
 
-export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
-  const on = computeLakesOn(rasterSubstrate(routing), discharge, elevation, temperature, precip, climateResX, climateResY, minBasinReliefM)
+export function computeLakes(routing: FlowRouting, discharge: Float32Array, elevation: Float32Array, temperature: ArrayLike<number>, precip: ArrayLike<number>, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
+  const on = computeLakesOn(rasterSubstrate(routing), discharge, elevation, temperature, precip, minBasinReliefM)
   // The raster's level and body fields carry the rim (waterLevelField), as
   // they did before the substrate existed.
   const levels = waterLevelField(on.bodies, elevation, routing.grid)
@@ -270,10 +244,10 @@ export function computeLakes(routing: FlowRouting, discharge: Float32Array, elev
 // floor, the frozen surface, and the body an element's water belongs to
 // (-1 for none; the raster wrapper replaces `body`/`level` by the rim-aware
 // raster fields). Areas are the elements' (a cell counts 1), so the
-// balance `inflow < pet × area` reads the same on a mesh.
-export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, climateResX: number, climateResY: number, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
+// balance `inflow < pet × area` reads the same on a mesh. `temperature`
+// (°C) and `precip` (mm/yr, OCEAN_PRECIP on the sea) per element.
+export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elevation: Float32Array, temperature: ArrayLike<number>, precip: ArrayLike<number>, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
   const { filled, count: n } = sub
-  const climate = sub.domain.grid(climateResX, climateResY)
   const EPS = 1e-5
   const depth = new Float32Array(n)
   const saltFlat = new Uint8Array(n)
@@ -314,7 +288,7 @@ export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elev
       regionArea += sub.area(c)
       if (filled[c] > spill) spill = filled[c]
       if (discharge[c] > inflow) inflow = discharge[c]
-      tempSum += tempAtCell(temperature, sub.px(c), sub.py(c), climate) * sub.area(c)
+      tempSum += temperature[c] * sub.area(c)
       const k = sub.facetNeighbours(c, nb)
       for (let i = 0; i < k; i++) {
         const o = nb[i]
@@ -359,7 +333,7 @@ export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elev
       // over the whole region: rain on the wet surface feeds the balance,
       // rain on the dry floor runs down to it.
       let basinRain = 0
-      for (const c of region) basinRain += precipRunoffAt(precip, sub.px(c), sub.py(c), climate) * sub.area(c)
+      for (const c of region) basinRain += runoffOf(precip[c]) * sub.area(c)
       inflow += basinRain
       // TERMINAL SEA (the Caspian/Chad class): an enclosed basin whose floor
       // lies below sea level — a landlocked ocean remnant or deep rift graben.
@@ -426,19 +400,19 @@ export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elev
 // contributing cells (uniform cell area on the torus drops out) — consistent
 // with lake evaporation later. popOrder is upstream-first in reverse, so a cell's
 // upstream contributions are already summed in before it pushes downstream.
-export function accumulateDischarge(routing: FlowRouting, elevation: Float32Array, precip: Float32Array, climateResX: number, climateResY: number): Float32Array {
-  return accumulateDischargeOn(rasterSubstrate(routing), elevation, precip, climateResX, climateResY)
+export function accumulateDischarge(routing: FlowRouting, elevation: Float32Array, precip: ArrayLike<number>): Float32Array {
+  return accumulateDischargeOn(rasterSubstrate(routing), elevation, precip)
 }
 
-// Over any substrate: an element's own runoff is its sampled precipitation
-// times its area in cells, so the unit stays "mm/yr summed over cells".
-export function accumulateDischargeOn(sub: FlowSubstrate, elevation: Float32Array, precip: Float32Array, climateResX: number, climateResY: number): Float32Array {
+// Over any substrate: an element's own runoff is its precipitation (per
+// element, mm/yr) times its area in cells, so the unit stays "mm/yr summed
+// over cells".
+export function accumulateDischargeOn(sub: FlowSubstrate, elevation: Float32Array, precip: ArrayLike<number>): Float32Array {
   const { flowTarget, popOrder, poppedCount, count } = sub
-  const climate = sub.domain.grid(climateResX, climateResY)
   const discharge = new Float32Array(count)
   for (let cell = 0; cell < count; cell++) {
     if (elevation[cell] <= SEA_LEVEL) continue // ocean is a sink, no runoff
-    discharge[cell] = precipRunoffAt(precip, sub.px(cell), sub.py(cell), climate) * sub.area(cell)
+    discharge[cell] = runoffOf(precip[cell]) * sub.area(cell)
   }
   for (let i = poppedCount - 1; i >= 0; i--) {
     const cell = popOrder[i]
@@ -465,7 +439,7 @@ export function accumulateDischargeOn(sub: FlowSubstrate, elevation: Float32Arra
 // monsoon.ts's index) — summed the same way. The seasonality is optional:
 // without it the year is even and only aridity can dry a river. The ocean
 // sentinels (OCEAN_PRECIP, and |index| ≥ 1 which no land value reaches)
-// contribute nothing, like precipRunoffAt.
+// contribute nothing, like runoffOf.
 //
 // With the climate step's months (`months`, 2026-09-29) the dry season is
 // read off them instead: the mean of the driest months' water, where a
@@ -478,20 +452,21 @@ export interface RegimeInputs {
   dry: Float32Array
 }
 
-// The climate step's months, month-major on the climate grid: °C and mm/yr
-// rates (OCEAN_PRECIP on the sea).
+// The climate step's months per element, month-major: °C at the element's
+// height and mm/yr rates (OCEAN_PRECIP on the sea).
 export interface ClimateMonths {
   temperature: Float32Array
   precipitation: Float32Array
   count: number
 }
 
-export function accumulateRegimeInputs(routing: FlowRouting, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, monsoonIndex: Float32Array | undefined, climateResX: number, climateResY: number, months?: ClimateMonths): RegimeInputs {
-  return accumulateRegimeInputsOn(rasterSubstrate(routing), elevation, temperature, precip, monsoonIndex, climateResX, climateResY, months)
+export function accumulateRegimeInputs(routing: FlowRouting, elevation: Float32Array, temperature: ArrayLike<number>, precip: ArrayLike<number>, monsoonIndex: ArrayLike<number> | undefined, months?: ClimateMonths): RegimeInputs {
+  return accumulateRegimeInputsOn(rasterSubstrate(routing), elevation, temperature, precip, monsoonIndex, months)
 }
 
-export function accumulateRegimeInputsOn(sub: FlowSubstrate, elevation: Float32Array, temperature: Float32Array, precip: Float32Array, monsoonIndex: Float32Array | undefined, climateResX: number, climateResY: number, months?: ClimateMonths): RegimeInputs {
-  const n = climateResX * climateResY
+// The climate per element of `sub` (climate/climatePoints.ts).
+export function accumulateRegimeInputsOn(sub: FlowSubstrate, elevation: Float32Array, temperature: ArrayLike<number>, precip: ArrayLike<number>, monsoonIndex: ArrayLike<number> | undefined, months?: ClimateMonths): RegimeInputs {
+  const n = sub.count
   const pet = new Float32Array(n)
   const dryPrecip = new Float32Array(n)
   const water = new Float64Array(months?.count ?? 0)
@@ -507,12 +482,12 @@ export function accumulateRegimeInputsOn(sub: FlowSubstrate, elevation: Float32A
     dryPrecip[i] = s < 1 ? p * (1 - s) : 0
   }
   return {
-    loss: accumulateDischargeOn(sub, elevation, pet, climateResX, climateResY),
-    dry: accumulateDischargeOn(sub, elevation, dryPrecip, climateResX, climateResY),
+    loss: accumulateDischargeOn(sub, elevation, pet),
+    dry: accumulateDischargeOn(sub, elevation, dryPrecip),
   }
 }
 
-// The dry season's water of one climate cell from its months, as an annual
+// The dry season's water of one element from its months, as an annual
 // rate (mm/yr): each month's rain above freezing plus its melt, the snow
 // lying from the cold months (a degree-day melt, run over two years so the
 // winter's pack reaches the spring whichever month the year starts in),
@@ -775,8 +750,9 @@ export function extractRiverPolylines(routing: FlowRouting, discharge: Float32Ar
         // resolution).
         //
         // Only the terminal point is added, and only onto water. The mask
-        // itself is left alone on purpose: computeRiparianBiomes shares it and
-        // relies on it meaning "channel ON LAND" (it skips sea cells anyway),
+        // itself is left alone on purpose: the riparian bonus shares it
+        // (riparianPrecipitationOn) and relies on it meaning "channel ON
+        // LAND" (it skips sea cells anyway),
         // and the two agreeing along the COURSE is what fixed the dashed
         // rivers of 2026-08-08. A point in the sea is a mouth, not membership.
         if (t >= 0 && t < n && adjacent(cur, t) && elevation[t] <= SEA_LEVEL) {
@@ -840,132 +816,76 @@ export function computeWatersheds(routing: FlowRouting, elevation: Float32Array,
 
 // --- Phase 3: riparian zones (rivers/lakes moisten nearby land → wetter biomes) ---
 
-// Re-classifies biomes with a riparian moisture bonus: builds a coarse water-
-// strength field (1 at lakes, √(discharge/max) at river channels — big rivers
-// moisten more), bleeds it into neighbours with decay, adds it (× SURFACE_TUNING.maxRiparianMm)
-// to precipitation, and re-runs the Whittaker classification. So a river or lake
-// greens its surroundings — a desert with a big river through it becomes a
-// vegetated corridor. `elevation` is the display terrain (land/ocean + biome
-// substrate); discharge/lakeDepth share its grid.
+// The riparian moisture bonus over a substrate (DEC-0036 phase 7: on the
+// terrain mesh's nodes): a water strength per element — 1 at an open lake,
+// √(discharge / max) at a channel (big rivers moisten more) — carried to
+// the land around it with a decay in metres, the strongest reach kept:
+// strength × riparianDecay^(d / riparianDecayLengthM) within
+// riparianReachM, d the shortest path over the substrate's links (a
+// multi-source Dijkstra on −log strength). Returned as the precipitation
+// it adds to (`precip` per element, mm/yr, OCEAN_PRECIP on the sea), the
+// sea untouched: what the biomes classify by (biomes.classifyPoints), so a
+// river or lake greens its surroundings — a desert with a big river
+// through it becomes a vegetated corridor.
 //
-// Output is at the WORLD raster's resolution, matching the climate step's biomes
-// so the display never switches grids mid-run. The moisture model in between is
-// still regional — see the comment at the classification call.
+// The raster version took the strongest water per 62.4 km climate cell
+// and bled it one cell (riparianSpread 1, riparianDecay 0.45 per cell):
+// the reach and the decay length are that cell in metres (no calibration).
 //
-// `precipEff` comes back alongside the biomes, and that is the more reusable
-// half: it is the whole riparian effect, expressed as a climate-grid
-// precipitation field. Anyone holding it can reproduce this classification at
-// ANY resolution with no hydrology at all — which is exactly what the worldmap's
-// amplification bake needs, since re-deriving routing and discharge there just
-// to learn that a river passes by would cost seconds per load to recompute
-// something regional (see docs/decisions/worldmap-amplification.md).
-// `months`: the climate step's refinement, when the climate is refined — the
-// biomes are then classified from its real months, the riparian bonus
-// scaling each month's rain (biomes.computeBiomesFineFromMonths). The world
-// is the routing's domain.
-export function computeRiparianBiomes(routing: FlowRouting, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, precip: Float32Array, temperature: Float32Array, seasonalAmplitude: Float32Array, monsoonIndex: Float32Array, climateResX: number, climateResY: number, saltFlat?: Uint8Array, dryLand?: Uint8Array, frozen?: Uint8Array,
-  months?: { temperature: Float32Array; precipitation: Float32Array; count: number },
-): { biomes: Uint8Array; precipEff: Float32Array } {
-  const { domain } = routing
-  const { width: worldW, height: worldH } = domain
-  const climate = domain.grid(climateResX, climateResY)
+// A frozen lake moistens nothing — there is no open water to evaporate, no
+// Nile effect off a glacier (its river cells stay: meltwater exists).
+export function riparianPrecipitationOn(sub: FlowSubstrate, elevation: Float32Array, discharge: Float32Array, threshold: number, maxDischarge: number, lakeDepth: Float32Array, frozen: Uint8Array | null, precip: ArrayLike<number>): Float32Array {
+  const n = sub.count
+  const T = SURFACE_TUNING
   const scale = maxDischarge > 0 ? maxDischarge : 1
-  // The same downstream-closed mask the polyline extractor draws — the two
-  // disagreed silently once before, which drew mountain rivers with no green
-  // along them, and a criterion-only mask here would green a corridor with
-  // holes at every flat crossing.
-  const channelMask = buildChannelMask(routing, elevation, discharge, threshold)
-  const strength = new Float32Array(climateResX * climateResY)
-  for (let cell = 0; cell < elevation.length; cell++) {
-    if (elevation[cell] <= SEA_LEVEL) continue
+  // The same downstream-closed mask the river graph draws — the two
+  // disagreed silently once before, which drew mountain rivers with no
+  // green along them, and a criterion-only mask here would green a
+  // corridor with holes at every flat crossing.
+  const channel = buildChannelMaskOn(sub, elevation, discharge, threshold)
+  // The cost of a strength s at distance d: −log s + d · k, k the decay's
+  // log per metre — the strongest reach is the cheapest path.
+  const k = -detLog(T.riparianDecay) / T.riparianDecayLengthM
+  const maxReach = T.riparianReachM * k
+  const cost = new Float64Array(n).fill(Infinity)
+  const reach = new Float64Array(n)
+  const heap = new MinHeap(Math.max(16, n >> 4))
+  for (let c = 0; c < n; c++) {
+    if (elevation[c] <= SEA_LEVEL) continue
     let w = 0
-    // A frozen lake moistens nothing — there is no open water to evaporate,
-    // no Nile effect off a glacier. (Its river cells stay: meltwater exists.)
-    if (lakeDepth[cell] > 0 && !frozen?.[cell]) w = 1
-    else if (channelMask[cell]) w = Math.min(1, Math.sqrt(discharge[cell] / scale))
+    if (lakeDepth[c] > 0 && !(frozen && frozen[c])) w = 1
+    else if (channel[c]) w = Math.min(1, Math.sqrt(discharge[c] / scale))
     if (w <= 0) continue
-    const x = cell % worldW
-    const y = (cell - x) / worldW
-    const gx = Math.min(climateResX - 1, Math.floor((x / worldW) * climateResX))
-    const gy = Math.min(climateResY - 1, Math.floor((y / worldH) * climateResY))
-    const gi = gy * climateResX + gx
-    if (w > strength[gi]) strength[gi] = w
+    cost[c] = -detLog(w)
+    heap.push(cost[c], c)
   }
-  // Decay-bleed into neighbours (through the climate grid), taking the max so
-  // a band forms. A step is one equator cell long: east-west a row reaches
-  // as many of its own cells as span one (1 / rowScale, all but one of the
-  // row at most), each decayed by the length it lies away — so the band is
-  // as wide east-west as north-south near a pole too (step 4e). On the
-  // torus the reach is 1 and its decay riparianDecay: the same four
-  // neighbours (a maximum does not depend on their order).
-  const reachOf = new Int32Array(climateResY)
-  const decayOf: Float64Array[] = []
-  for (let gy = 0; gy < climateResY; gy++) {
-    const s = climate.rowScale(gy)
-    const reach = Math.min((climateResX >> 1) - 1, Math.max(1, Math.round(1 / s)))
-    reachOf[gy] = reach
-    const decay = new Float64Array(reach + 1)
-    for (let k = 1; k <= reach; k++) decay[k] = k * s === 1 ? SURFACE_TUNING.riparianDecay : detPow(SURFACE_TUNING.riparianDecay, k * s)
-    decayOf.push(decay)
-  }
-  let field = strength
-  for (let it = 0; it < SURFACE_TUNING.riparianSpread; it++) {
-    const next = field.slice()
-    for (let gy = 0; gy < climateResY; gy++) {
-      const reach = reachOf[gy]
-      const decay = decayOf[gy]
-      for (let gx = 0; gx < climateResX; gx++) {
-        const gi = gy * climateResX + gx
-        for (let k = 1; k <= reach; k++) {
-          const w = field[climate.neighbour(gx, gy, -k, 0)] * decay[k]
-          if (w > next[gi]) next[gi] = w
-          const e = field[climate.neighbour(gx, gy, k, 0)] * decay[k]
-          if (e > next[gi]) next[gi] = e
-        }
-        const north = field[climate.neighbour(gx, gy, 0, -1)] * SURFACE_TUNING.riparianDecay
-        if (north > next[gi]) next[gi] = north
-        const south = field[climate.neighbour(gx, gy, 0, 1)] * SURFACE_TUNING.riparianDecay
-        if (south > next[gi]) next[gi] = south
-      }
-    }
-    climate.averagePoleRows(next)
-    field = next
-  }
-  const precipEff = precip.slice()
-  for (let i = 0; i < precipEff.length; i++) {
-    if (precipEff[i] === OCEAN_PRECIP) continue
-    precipEff[i] = precipEff[i] + field[i] * SURFACE_TUNING.maxRiparianMm
-  }
-  // The moisture bleed above stays on the climate grid even though the OUTPUT is
-  // full-res: it is a regional wetting, and bleeding it at world resolution
-  // would be a different model rather than a sharper one. Only the
-  // classification moves, which is the part that reads elevation.
-  const biomes = months
-    ? computeBiomesFineFromMonths(months.temperature, months.precipitation, months.count, temperature, precipEff, elevation, domain, dryLand)
-    : computeBiomesFine(temperature, precipEff, seasonalAmplitude, monsoonIndex, elevation, domain, dryLand)
-  // Salt-flat override (see computeLakes' LakeFields.saltFlat): a terminal
-  // basin's exposed floor is a hydrology state, not a climate — it wins over
-  // whatever the Whittaker mapping said.
-  //
-  // The mask is full-res and so is the output, so it applies cell for cell. The
-  // coarse version of this had to vote instead — a 62 km cell flipped only when
-  // most of it was crust — which lost every basin floor smaller than about half
-  // a cell. That is a real gain from going fine, not just a sharper edge.
-  if (saltFlat) {
-    for (let cell = 0; cell < saltFlat.length; cell++) {
-      if (saltFlat[cell]) biomes[cell] = Biome.SaltFlat
+  // `reach` the decay's part of a cost (the distance's), which the reach
+  // bounds.
+  const metresPerUnit = sub.domain.metresPerUnit
+  const nb = new Int32Array(256)
+  while (heap.length > 0) {
+    heap.pop()
+    const c = heap.poppedIndex
+    const here = heap.poppedKey
+    if (here > cost[c]) continue
+    const count = sub.rimNeighbours(c, nb)
+    for (let i = 0; i < count; i++) {
+      const o = nb[i]
+      if (o < 0) continue
+      const step = sub.step(c, o) * metresPerUnit * k
+      if (reach[c] + step > maxReach) continue
+      const next = here + step
+      if (next >= cost[o]) continue
+      cost[o] = next
+      reach[o] = reach[c] + step
+      heap.push(next, o)
     }
   }
-  // Frozen-lake override, the same shape as the salt flat above: a glacier
-  // surface is a hydrology state the classification cannot reach (Whittaker
-  // sees the cell's climate, not that a basin's water froze through), and it
-  // is what lets every map paint ice from the biome layer alone — the save
-  // carries no separate frozen mask. Its OWN biome, not Biome.Ice: Ice is a
-  // climate class on land, a glacier is a water body in a solid state.
-  if (frozen) {
-    for (let cell = 0; cell < frozen.length; cell++) {
-      if (frozen[cell]) biomes[cell] = Biome.Glacier
-    }
+  const out = new Float32Array(n)
+  for (let c = 0; c < n; c++) {
+    const p = precip[c]
+    if (p === OCEAN_PRECIP) { out[c] = p; continue }
+    out[c] = Number.isFinite(cost[c]) ? p + detExp(-cost[c]) * T.maxRiparianMm : p
   }
-  return { biomes, precipEff }
+  return out
 }

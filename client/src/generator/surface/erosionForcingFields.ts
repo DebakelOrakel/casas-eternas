@@ -55,6 +55,10 @@ export interface CoarseForcingInputs {
   water: Float32Array | null
   waterResX: number
   waterResY: number
+  // The water per point of a point set instead (assembleNodeForcing: the
+  // climate's precipitation sampled at the nodes, climate/climatePoints.ts —
+  // DEC-0036 phase 7); when given, `water` is not read.
+  waterNodes?: ArrayLike<number> | null
   // erosionLithoSeed(warpSeed) — the world's own rock, not the caller's.
   lithoSeed: number
 }
@@ -91,7 +95,10 @@ export interface ForcingGrids {
 }
 
 export function forcingGrids(coarse: CoarseForcingInputs, domain: Domain): ForcingGrids {
-  return { forcing: domain.grid(coarse.forcingResX, coarse.forcingResY), water: domain.grid(coarse.waterResX, coarse.waterResY) }
+  const forcing = domain.grid(coarse.forcingResX, coarse.forcingResY)
+  // No water raster (none, or the water per point, `waterNodes`): no grid
+  // of its own to make.
+  return { forcing, water: coarse.water ? domain.grid(coarse.waterResX, coarse.waterResY) : forcing }
 }
 
 // The forcing at ONE point: U upsampled, erodibility as the lithology
@@ -222,11 +229,11 @@ export function assembleNodeForcing(
     uplift[i] = pair[0]
     erodibility[i] = pair[1]
     if (z[i] > 0) coastMask[i] = 1
-    const weight = waterAt(coarse, grids, xs[i], ys[i])
+    const weight = coarse.waterNodes ? Math.max(0, coarse.waterNodes[i]) : waterAt(coarse, grids, xs[i], ys[i])
     accumulationWeights[i] = weight
     if (z[i] > 0) { landSum += weight * areas[i]; landArea += areas[i] }
   }
-  if (coarse.water) {
+  if (coarse.water || coarse.waterNodes) {
     const meanLand = meanLandWater ?? (landArea > 0 && landSum > 0 ? landSum / landArea : 1)
     for (let i = 0; i < count; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand
   }

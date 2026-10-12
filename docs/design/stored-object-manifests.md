@@ -11,7 +11,7 @@ summary.de: Eine Manifest-Konvention (apiVersion/kind/metadata/spec/status) für
 area: platform
 stage: idea
 createdAt: 2026-08-15
-updatedAt: 2026-08-15
+updatedAt: 2026-10-12
 related: [DEC-0009, DEC-0017]
 ---
 
@@ -227,8 +227,9 @@ Classification, not a size cut:
 | Recipe | `world.yaml` | World record (a DB row) |
 | Irreducible history | `state.json`, `mantle.f64` + `mantle.json`, `lattice.{acc.f32,lock.i16,class.i8}`, `oceanAge.f64` + `oceanAge.json` | World record — 300 epochs of replay, not recomputable |
 | Authority | `elevation.f32` | World record — **stays**, see below |
-| Derived, coarse | `layers/` at 256×128 (temperature, precipitation, precipitationEffective, seasonalAmplitude, monsoonIndex, landMask, 13 ecology fields); the climate refinement as its field mesh's values (`refined.json` + `refined/*.f32`, DEC-0036 phase 5) | Save — ~64 KB each, and `precipitation` feeds `deriveWorldId` |
-| Derived, full-res | `layers/biome.u8`, `layers/lakeDepth.u8`, `layers/discharge.u16` | **→ `WorldLayers` artifact** |
+| Derived, coarse | the annual climate as its field mesh's values (`climate.json` + `climate/*.f32`, DEC-0036 phase 7; until 2026-10-12 the `layers/` at 256×128 temperature, precipitation, precipitationEffective, seasonalAmplitude, monsoonIndex, landMask), the climate refinement as its field mesh's values (`refined.json` + `refined/*.f32`, DEC-0036 phase 5); the ecology fields left in formatVersion 7 | Save — the climate's precipitation feeds `deriveWorldId` |
+| Derived, per node | `mesh/biome.u8`, `mesh/koppen.u8`, `mesh/waterTable.f32` (DEC-0036 phase 7; the raster layers `biome` (full-res), `koppen`, `waterTable` until 2026-10-12) | Save — a byte or a float a node |
+| Derived, full-res | `layers/lakeDepth.u8`, `layers/discharge.u16` | **→ `WorldLayers` artifact** |
 | Face | `preview.png` | Save — 50 KB, the server already extracts it for listings |
 
 ≈ 8 MB raw out of the save, the full-res half.
@@ -236,15 +237,16 @@ Classification, not a size cut:
 **Why `elevation.f32` stays**, though it is derivable (2K erosion is today a pure
 function of snapshot + `erosionStrength` + `drainageRefresh`):
 
-1. `deriveWorldId(elevation, precipitation, …)` is the basis of *every* artifact
+1. `deriveWorldId(elevation, precipitation, …)` (the precipitation the climate's
+   cells since DEC-0036 phase 7) is the basis of *every* artifact
    key. As an artifact it could not be named without first being fetched.
 2. `worldgen/CLAUDE.md`: the 2048 raster is the sole authority and the only
    persisted form. An artifact is droppable by definition — a generator change
    would silently alter an old world's terrain, which is exactly what
    "rehydrate, not replay" exists to prevent.
 
-Keeping the coarse climate layers in the save is what makes (1) hold without a
-second key basis.
+Keeping the climate in the save (its cells since DEC-0036 phase 7) is what
+makes (1) hold without a second key basis.
 
 **`manifest.json` stays** and shrinks to the layers still in the archive. The
 three that left are listed with their location instead of a file, so the

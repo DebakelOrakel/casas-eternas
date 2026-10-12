@@ -1,5 +1,5 @@
 import type { Domain } from '../core/domain'
-import { fieldFromRasterAreaWeighted, fieldMaxFromRaster, rasteriseField, rasteriseVectorField, rasterOwners, sharedFieldMesh, type FieldMesh, type FieldSampler } from '../fields/fieldMesh'
+import { fieldFromRasterAreaWeighted, fieldMaxFromRaster, rasterOwners, sharedFieldMesh, type FieldMesh, type FieldSampler } from '../fields/fieldMesh'
 import { isLandAt } from '../elevation/elevationScale'
 import { MinHeap } from '../core/minHeap'
 
@@ -287,7 +287,7 @@ export interface ClimateTerrain {
   // The world's domain the mesh is built on.
   readonly domain: Domain
   // The raster as it came, resX × resY over the domain, and its dry-floor
-  // mask (null: none) — what the transition readers below take.
+  // mask (null: none).
   readonly elevation: Float32Array
   readonly resX: number
   readonly resY: number
@@ -346,116 +346,4 @@ export function climateTerrain(domain: Domain, elevation: Float32Array, resX: nu
     meanElevation: () => (mean ??= fieldFromRasterAreaWeighted(mesh, cm.sampler, elevation, resX, resY, undefined, ownersOf())),
     peakElevation: () => (peak ??= fieldMaxFromRaster(mesh, elevation, resX, resY, ownersOf())),
   }
-}
-
-// ------------------------------------------------ DEC-0036 transition
-
-// The climate grid's rasters of the mesh's fields, for the readers that
-// keep the 256 × 128 raster until their own phase: biomes, ecology,
-// hydrology and hydrogeology, the ice, the coast, the column's ledger, the
-// save's annual layers and the screen's textures and readouts (phase 7 and
-// the save's own step). Each is made once per climate run or refinement.
-
-// DEC-0036 transition: removed in phase 7. A scalar field without a
-// sentinel (temperature), cell centres.
-export function climateRaster(cm: ClimateMesh, field: ArrayLike<number>, resX: number, resY: number): Float32Array {
-  return rasteriseField(cm.mesh, field, resX, resY)
-}
-
-// DEC-0036 transition: removed in phase 7. A vector field, each pixel's
-// vector in its own frame (fields/fieldMesh.rasteriseVectorField).
-export function climateVectorRaster(cm: ClimateMesh, fe: ArrayLike<number>, fs: ArrayLike<number>, resX: number, resY: number): Float32Array {
-  return rasteriseVectorField(cm.sampler, fe, fs, resX, resY)
-}
-
-// DEC-0036 transition: removed in phase 7. A sea field of the mesh (0 on
-// land) on the climate raster, 0 on the raster's land (`landPixels`,
-// rasterLand) — the currents, their anomaly and the refinement's sea
-// layers, as the readers of the raster have them.
-export function climateSeaRaster(cm: ClimateMesh, field: ArrayLike<number>, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
-  const out = rasteriseField(cm.mesh, field, resX, resY)
-  for (let p = 0; p < out.length; p++) if (landPixels[p]) out[p] = 0
-  return out
-}
-
-// DEC-0036 transition: removed in phase 7. The same for a sea vector field.
-export function climateSeaVectorRaster(cm: ClimateMesh, fe: ArrayLike<number>, fs: ArrayLike<number>, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
-  const out = rasteriseVectorField(cm.sampler, fe, fs, resX, resY)
-  for (let p = 0; p < landPixels.length; p++) {
-    if (!landPixels[p]) continue
-    out[2 * p] = 0
-    out[2 * p + 1] = 0
-  }
-  return out
-}
-
-// The land test of a resX × resY climate raster over the terrain: its
-// cell (gx, gy) is land when the texel under its centre is — the former
-// climate grid's own test (climateField.isLandAtCell), so the transition
-// rasters keep the land mask the save and the raster readers had.
-export function rasterLand(terrain: ClimateTerrain, resX: number, resY: number): Uint8Array {
-  const out = new Uint8Array(resX * resY)
-  const { domain } = terrain
-  const kx = terrain.resX / domain.width
-  const ky = terrain.resY / domain.height
-  for (let gy = 0; gy < resY; gy++) {
-    const y = ((gy + 0.5) / resY) * domain.height
-    const ty = Math.min(terrain.resY - 1, Math.floor(y * ky))
-    for (let gx = 0; gx < resX; gx++) {
-      const x = ((gx + 0.5) / resX) * domain.width
-      const t = ty * terrain.resX + Math.min(terrain.resX - 1, Math.floor(x * kx))
-      out[gy * resX + gx] = isLandAt(terrain.elevation[t], terrain.dryLand !== null && terrain.dryLand[t] === 1) ? 1 : 0
-    }
-  }
-  return out
-}
-
-// DEC-0036 transition: removed in phase 7. A LAND field (a sentinel on the
-// sea: OCEAN_PRECIP, OCEAN_AMPLITUDE) on the climate raster: a sea pixel
-// (rasterLand) takes the sentinel; a land pixel the barycentric mix of its
-// triangle's LAND corners, renormalised — never a blend with the sentinel;
-// a land pixel with no land corner (an island smaller than a cell) its
-// latitude's land mean, the island rule of climateField.zonalLandMean.
-export function climateLandRaster(terrain: ClimateTerrain, field: ArrayLike<number>, sentinel: number, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
-  return landRaster(terrain, field, (i) => terrain.land[i] === 1 && field[i] !== sentinel, sentinel, resX, resY, landPixels)
-}
-
-// DEC-0036 transition: removed in phase 7. A land field that is an
-// ordinary 0 on the sea (the refinement's fog, föhn, reliability,
-// tornadoes, blizzards): the same rule over the mesh's land cells, the
-// sea's pixels 0.
-export function climateLandOnlyRaster(terrain: ClimateTerrain, field: ArrayLike<number>, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
-  return landRaster(terrain, field, (i) => terrain.land[i] === 1, 0, resX, resY, landPixels)
-}
-
-function landRaster(terrain: ClimateTerrain, field: ArrayLike<number>, isLand: (i: number) => boolean, seaValue: number, resX: number, resY: number, landPixels: Uint8Array): Float32Array {
-  const { cm, domain } = terrain
-  const { sampler } = cm
-  const out = new Float32Array(resX * resY)
-  const islands = zonalMean(cm, field, isLand)
-  const corners = new Int32Array(3)
-  const weights = new Float64Array(3)
-  const sx = domain.width / resX
-  const sy = domain.height / resY
-  for (let gy = 0; gy < resY; gy++) {
-    const y = (gy + 0.5) * sy
-    for (let gx = 0; gx < resX; gx++) {
-      const p = gy * resX + gx
-      if (!landPixels[p]) {
-        out[p] = seaValue
-        continue
-      }
-      const x = (gx + 0.5) * sx
-      sampler.taps(x, y, corners, weights)
-      let s = 0
-      let w = 0
-      for (let k = 0; k < 3; k++) {
-        if (!isLand(corners[k])) continue
-        s += weights[k] * field[corners[k]]
-        w += weights[k]
-      }
-      out[p] = w > 0 ? s / w : islands[sampler.nearestCell(x, y)]
-    }
-  }
-  return out
 }

@@ -1,57 +1,14 @@
-// Climate is computed on a coarse grid — temperature/precipitation/wind are
-// large-scale and smooth, so a small raster + sampling is plenty (see
-// docs/decisions/climate-biomes.md). Elevation is read from the full-res field
-// where fine detail matters (lapse, and later orographic rain shadow).
-import { isLandAt } from '../elevation/elevationScale'
+// The climate's CHART: the CLIMATE_RES_X × CLIMATE_RES_Y raster the
+// climate's field mesh is drawn on for the screen and a save's readers
+// (climateChart.ts) — no stage computes on it since DEC-0036 (phase 3 the
+// climate, phase 7 its readers) — and the latitude and the calendar, which
+// the field mesh reads per cell.
 import { torusDomain, type Domain } from '../core/domain'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import { detCos } from '../core/detMath'
 
 export const CLIMATE_RES_X = 256
 export const CLIMATE_RES_Y = 128
-
-// AN ISLAND'S CLIMATE. A land pixel whose four nearest climate cells are all
-// sea has no land climate to interpolate: an island under a cell's size
-// (~62 km). It read the ocean sentinel instead — no rain, a desert, salt —
-// so every small tropical island and island arc came out a salt desert
-// (2026-10-01, structure review). It gets the mean of the land cells of its
-// climate row: the latitude's land climate, wet in the tropics and dry in
-// the subtropics. Not the nearest land cell, whose coast can be another
-// climate entirely.
-//
-// The mean of `field` (from `offset`, one climate grid of it) over the
-// cells `isLand` marks, per climate row; a row without land takes the mean
-// of all land, a world without land 0. `rowArea`: a cell's area in a row
-// (DomainGrid.cellArea), for that mean of all land — 1 on the torus, cos φ
-// on the sphere, whose polar rows' cells counted whole made the polar land
-// weigh as much as the equator's. A row's own mean needs none: its cells
-// are all one size.
-export function zonalLandMean(field: ArrayLike<number>, isLand: (i: number) => boolean, offset = 0, rowArea?: (gy: number) => number): Float32Array {
-  const out = new Float32Array(CLIMATE_RES_Y)
-  const rowHas = new Uint8Array(CLIMATE_RES_Y)
-  let total = 0
-  let totalCount = 0
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    let sum = 0
-    let count = 0
-    for (let gx = 0; gx < CLIMATE_RES_X; gx++) {
-      const i = gy * CLIMATE_RES_X + gx
-      if (!isLand(i)) continue
-      sum += field[offset + i]
-      count++
-    }
-    if (count > 0) {
-      out[gy] = sum / count
-      rowHas[gy] = 1
-    }
-    const a = rowArea ? rowArea(gy) : 1
-    total += sum * a
-    totalCount += count * a
-  }
-  const fallback = totalCount > 0 ? total / totalCount : 0
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) if (!rowHas[gy]) out[gy] = fallback
-  return out
-}
 
 // The calendar. The top hemisphere (the rows before the equator, small y)
 // has its summer in January and the bottom one in July: the map is drawn
@@ -139,23 +96,8 @@ export function latitudeAt(gridY: number, equatorOffset = 0): number {
 // Full-res elevation sample at a climate cell's center, for lapse etc. The
 // climate grid maps linearly onto the world; a single center sample is enough
 // for a smooth field like temperature (orographic precip will sample the fine
-// gradient itself in a later phase).
-// Samples the dry-basin land-override mask (see hydrology's LakeFields.dryBasin)
-// at the same full-res point sampleElevationAtCell reads, so the two can never
-// disagree about which pixel represents a coarse cell. Null mask = no override.
-export function sampleDryLandAtCell(
-  dryLand: Uint8Array | null | undefined,
-  gridX: number,
-  gridY: number,
-  worldWidth: number,
-  worldHeight: number,
-): boolean {
-  if (!dryLand) return false
-  const worldX = Math.min(worldWidth - 1, Math.floor(((gridX + 0.5) / CLIMATE_RES_X) * worldWidth))
-  const worldY = Math.min(worldHeight - 1, Math.floor(((gridY + 0.5) / CLIMATE_RES_Y) * worldHeight))
-  return dryLand[worldY * worldWidth + worldX] === 1
-}
-
+// gradient itself in a later phase). Read today by the chart's elevation
+// readout and the migration's land.
 export function sampleElevationAtCell(
   elevation: Float32Array,
   gridX: number,
@@ -166,21 +108,4 @@ export function sampleElevationAtCell(
   const worldX = Math.min(worldWidth - 1, Math.floor(((gridX + 0.5) / CLIMATE_RES_X) * worldWidth))
   const worldY = Math.min(worldHeight - 1, Math.floor(((gridY + 0.5) / CLIMATE_RES_Y) * worldHeight))
   return elevation[worldY * worldWidth + worldX]
-}
-
-// The land test on the CLIMATE grid: sample the full-res elevation and the
-// dry-basin mask at this coarse cell, then apply the one definition. Callers
-// used to inline both samples and the comparison; six copies, two polarities.
-export function isLandAtCell(
-  elevation: Float32Array,
-  dryLand: Uint8Array | null | undefined,
-  gridX: number,
-  gridY: number,
-  worldWidth: number,
-  worldHeight: number,
-): boolean {
-  return isLandAt(
-    sampleElevationAtCell(elevation, gridX, gridY, worldWidth, worldHeight),
-    sampleDryLandAtCell(dryLand, gridX, gridY, worldWidth, worldHeight),
-  )
 }

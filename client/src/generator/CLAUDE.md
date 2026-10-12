@@ -69,7 +69,12 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             triangulated as a small torus — docs/decisions/tile-jobs.md),
             meshColumn (phase 5.2: the sediment column per node as epoch-indexed
             layers with provenance — a stacked MeshState field, cut from the top,
-            the save's mesh/column.bin).
+            the save's mesh/column.bin), meshNeighbourhood (DEC-0036 phase 7: a
+            node's neighbourhood in metres — the cells a reach touches, a mean by
+            the area of each inside it —, halos, discs, the slope, a boundary's
+            length per area: the ecology's windows on the mesh).
+            meshRaster.rasteriseNodePart draws a field a part of the nodes holds
+            (the land's) onto a raster without blending in the other part.
             pipeline/coupledEpoch.ts is phase 5's loop over it: z = baseline + relief
             per node, nodes drift with their plates, the mesh is rebuilt and remeshed
             each epoch (subduction and rifting), erosion runs inside the epoch.
@@ -111,28 +116,37 @@ crust/      continental crust as rafts — deliberately decoupled from the plate
 elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise,
             globeNoise (the 3D lattice the sphere samples its noise on, Domain.noise)
 surface/    flowRouting, erosionEngine* (the engine, its state, pool, worker), erosionPassV2,
-            hydrology, riverGraph (the feature graph), riverCourse, coastGraph, sedimentBasins,
-            iceFlow, cover (phase 5.5: the vegetation's hold per biome — one table for the
+            hydrology (riparianPrecipitationOn: the rivers' wet margin per node), riverGraph
+            (the feature graph), riverCourse, coastGraph, sedimentBasins,
+            cover (phase 5.5: the vegetation's hold per biome — one table for the
             erodibility, the critical slope and the river banks), hydrogeology (phase 5a:
             springs, the regime with baseflow, the water table — a classification over the
-            column, no process), glacial (phase 6: the epoch's ice on the mesh at its
-            steady state, the cut it does, the till it leaves), coastal (phase 7: the
+            column, no process; per node of the mesh), glacial (phase 6: the epoch's ice
+            on the mesh at its steady state, the cut it does, the till it leaves; F4's
+            raster forerunner iceFlow went in DEC-0036 phase 7), coastal (phase 7: the
             waves' cut at the shore and the one-line drift along it), amplify
             (the mesh level's synthesis layers and the level bake's constants)
 climate/    the static climate on the field mesh since DEC-0036 phase 3 (climateMesh: the
             mesh W / 256, shared with the ocean age, the terrain read onto it, the zonal
-            means, the distance to the sea, the landmasses and seas as graph components,
-            the TRANSITION rasters): temperature, wind, seasonality, monsoon,
+            means, the distance to the sea, the landmasses and seas as graph components):
+            temperature, wind, seasonality, monsoon,
             precipitation, pressure; since phase 4 the ocean too (oceanCurrents: the
             Stommel solve with the island rule, the SST, upwelling, the overturning's
             inflow; energyBalance: the year's cycle; salinity); since phase 5 the
             refinement too (refinement: the months, pressure and wind, the ocean highs
             and the cold tongue by basinRows — the seas along the parallels — the rain;
-            phenomena, reliability, storms: tracks along great circles). Biomes and
-            the ecology (phase 7) stay on the 256 × 128 raster and read the mesh's
-            fields through adapters marked `DEC-0036 transition: removed in phase N`
-            (refinement.refinedRasters among them)
-ecology/ migration/ render/
+            phenomena, reliability, storms: tracks along great circles). Since phase 7
+            every reader outside the climate samples it at ITS points (climatePoints:
+            ClimateCells — the temperature reduced to sea level, the land fields with
+            their sea marks, the months — and climateAtPoints, each point its own
+            lapse, the land fields over the land corners); biomes classify per point
+            (biomes.classifyPoints, the Köppen class too); climateChart draws the
+            climate on its 256 × 128 chart for the screen and a save's readers — no
+            stage reads it
+ecology/    the ecology and the resources per node of the terrain mesh (DEC-0036 phase 7):
+            the climate at the nodes, the reaches in metres (mesh/meshNeighbourhood),
+            the screen's rasters from the nodes (ecologyRasters)
+migration/  still on the climate's chart (its own screen, later); render/
 ```
 
 **A new simulated field goes on a mesh, not on the 2:1 raster** (DEC-0036,
@@ -145,21 +159,28 @@ Its vectors are east/south pairs in each cell's own frame — carry a
 neighbour's through `carryFrom` before adding it. Phase 0 (the operators),
 phase 1 (the mantle), phase 2 (the ocean age), phase 3 (the static
 climate), phase 4 (the ocean and the energy balance), phase 5 (the
-refinement and the phenomena) and phase 6 (the flexure) are built; the other stages move one per
-phase. A solve runs to a RESIDUAL (its
+refinement and the phenomena), phase 6 (the flexure) and phase 7 (biomes,
+Köppen, ecology, resources, hydrogeology on the terrain mesh) are built;
+7b (the hydrology's raster routing, discharge, watersheds, coast reaches
+and sediment basins onto the mesh) is proposed. A solve runs to a RESIDUAL (its
 SolveReport), never to a sweep count: a non-symmetric operator takes
 `solveBiCGSTAB`, a symmetric one CG, and a singular one (a Neumann
 problem) a right-hand side balanced per connected part. A length in a
 stage on the mesh is in METRES (the mesh's, `domain.metresPerUnit`), never
 in cells; a stage not yet moved reads a moved field through an adapter
 marked `// DEC-0036 transition: removed in phase N` — grep for it before
-touching the phase it names. A field mesh's values are SAVED as values (Float64, with
+touching the phase it names (one is left: the raster routing's rain,
+phase 7b). A stage that needs the climate samples it at its own points
+(climate/climatePoints.ts), never on the chart. A field mesh's values are SAVED as values (Float64, with
 the mesh's cell count and spacing — `fields/fieldMesh.SavedField`), never as
 a raster: the mesh rebuilds deterministically, and a load then continues bit
 for bit (`mantle.f64` + `mantle.json`, `oceanAge.f64` + `oceanAge.json`).
 A diagnostic field that no simulation continues from may be Float32 when the
 session keeps the same Float32 values it saves (the refinement: `refined.json`
-+ `refined/*.f32`, world/save/refinedFields.ts).
++ `refined/*.f32`, world/save/refinedFields.ts; the annual climate the land
+fields came from: `climate.json` + `climate/*.f32`). A terrain-mesh field is
+saved per node in the saved mesh's numbering (`mesh/biome.u8`,
+`mesh/koppen.u8`, `mesh/waterTable.f32`, world/save/climateFields.ts).
 
 ## Resolutions — check before you sample
 
@@ -168,15 +189,17 @@ answers here.
 
 | Grid | Size | Holds |
 |---|---|---|
-| World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation, discharge, lakeDepth, biome |
-| Climate | field mesh, spacing W / 256 (the ocean age's): temperature, wind, seasonality, monsoon, precipitation, pressure (DEC-0036 phase 3), the currents, the SST, upwelling, salt, the year's cycle (phase 4), the whole refinement with its phenomena, reliability and storms (phase 5); 256×128 (~62 km per cell) as their transition raster and for the stages not yet moved | biomes, all ecology |
+| World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation, discharge, lakeDepth (the hydrology's, until 7b); the screen's rasters of the terrain-mesh fields |
+| Terrain mesh | adaptive, 8–31 km on land at the history's budget 4, up to 160 km at sea | biome, Köppen class, ecology and resources, water table, the lakes and the river graph (DEC-0036 phase 7) |
+| Climate | field mesh, spacing W / 256 (the ocean age's): temperature, wind, seasonality, monsoon, precipitation, pressure (DEC-0036 phase 3), the currents, the SST, upwelling, salt, the year's cycle (phase 4), the whole refinement with its phenomena, reliability and storms (phase 5); 256×128 (~62 km per cell) only as its chart, for the screen and a save's readers | — |
 | Ocean age | field mesh, spacing W / 256: 37 888 cells at 62 km (torus), 24 012 at 78 km (sphere); a 1024×512 raster only inside the render's baseline | oceanAge (epochs) |
 | Flexure | field mesh, spacing W / 256 (the climate's, shared); no state kept, the deflection goes into the nodes' z each epoch | the epoch's load, Te, the deflection |
 | Mantle | field mesh, spacing W / 128: 9 472 cells at 125 km (torus), 6 252 at 156 km (sphere); 128×64 only as the overlay | mantle buoyancy and flow |
 
-In the baked save (`world/save/worldLayers.ts`) only the layers marked `fullRes`
-are on the world raster — today `biome`, `lakeDepth`, `discharge` and `elevation`.
-Everything else is written at climate resolution.
+In the baked save (`world/save/worldLayers.ts`) the raster layers left are
+`elevation`, `lakeDepth` and `discharge` (world raster) and the forcing's
+`uplift` / `erodibility` (256 × 128); the climate and the land fields are mesh
+values (DEC-0036 phase 7), which `world/query.ts` rasterises for its views.
 
 Note what a coarse save layer means for a field that is computed finely: the
 reduction is a *choice*, and `downsampleMax` is the wrong one for anything

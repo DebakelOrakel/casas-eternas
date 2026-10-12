@@ -24,7 +24,8 @@ const M = {
   climateField: await L('/src/generator/climate/climateField.ts'),
   weather: await L('/src/generator/climate/weather.ts'),
   climateMesh: await L('/src/generator/climate/climateMesh.ts'),
-  layers: await L('/src/world/save/worldLayers.ts'),
+  climatePoints: await L('/src/generator/climate/climatePoints.ts'),
+  climateFields: await L('/src/world/save/climateFields.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
   finalize: await L('/src/generator/archean/finalizeArchean.ts'),
@@ -56,22 +57,12 @@ const { forcing, params } = M.erosionForcing.assembleErosionForcing(sim, raw, si
 const ero = await M.erosionPassV2.runErosionPassV2(raw, sim.domain, forcing, { age: CONTROLS.age, params })
 const el = ero.elevations
 
-// The static climate on its field mesh (DEC-0036 phase 3), its rasters.
+// The static climate on its field mesh (DEC-0036 phase 3), its cells as
+// the save holds them (climate.json + climate/, phase 7) — through the
+// save's own writer, so the fixture cannot describe them otherwise.
 const weather = M.weather.computeWeather(M.climateMesh.climateTerrain(sim.domain, el, sim.domain.width, sim.domain.height), M.weather.defaultWeatherParams())
-const temperature = weather.temperature
-const seasonal = weather.seasonalAmplitude
-const precipitation = weather.seasonal.annual
-const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
+const climate = M.climateFields.climateEntries(M.climatePoints.climateCellValues(M.climatePoints.climateCellsFromWeather(weather)))
 process.stderr.write('ok\n')
-
-// Quantised through the save's own writer AND its own canonical spec.
-// Inventing scale/offset here was a real bug in this fixture: `scale: 1`
-// decoded to a 18288 mm maximum with zero ocean sentinels, so the hydrology
-// re-run found no channels and every baked world came out riverless — which
-// looked exactly like a broken baker.
-const PRECIP_SPEC = M.layers.WORLD_LAYERS.find((l) => l.name === 'precipitation')
-if (!PRECIP_SPEC) throw new Error('no precipitation spec in WORLD_LAYERS')
-const precipBytes = M.layers.bakeLayer(precipitation, PRECIP_SPEC)
 
 const zip = new JSZip()
 zip.file('manifest.json', JSON.stringify({
@@ -79,7 +70,6 @@ zip.file('manifest.json', JSON.stringify({
   world: { width: W, height: H },
   layers: [
     { name: 'elevation', file: 'elevation.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 }, unit: 'relative', landOnly: false },
-    { name: 'precipitation', file: 'precipitation.u16', kind: 'raster', resX: CRX, resY: CRY, dtype: PRECIP_SPEC.dtype, encoding: { scale: PRECIP_SPEC.scale, offset: PRECIP_SPEC.offset }, unit: PRECIP_SPEC.unit, landOnly: PRECIP_SPEC.landOnly },
   ],
 }, null, 2))
 zip.file('world.yaml', [
@@ -91,7 +81,8 @@ zip.file('world.yaml', [
   'status:', '  erosionRun: 1', '  revision: 1', '',
 ].join('\n'))
 zip.file('elevation.f32', el.buffer)
-zip.file('precipitation.u16', precipBytes)
+zip.file('climate.json', climate.meta)
+for (const [file, bytes] of climate.files) zip.file(file, bytes)
 writeFileSync(OUT, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }))
 await server.close()
 console.log(`wrote ${OUT}`)

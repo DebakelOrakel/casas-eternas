@@ -34,7 +34,7 @@ import { levelBudget, levelHydrology, type MeshLevel } from '../src/generator/pi
 import { planTiles } from '../src/generator/pipeline/tilePlan'
 import { meshRouting } from '../src/generator/mesh/meshHydrology'
 import { encodeCoupledTerrain, HISTORY_DEFAULTS } from '../src/generator/pipeline/coupledEpoch'
-import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../src/generator/climate/climateField'
+import { climateAtPoints, climateCellsFromWeather, meanLandRunoff, meshPoints } from '../src/generator/climate/climatePoints'
 import { replayHistory, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
 import type { SavedField } from '../src/generator/fields/fieldMesh'
 import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
@@ -635,9 +635,11 @@ async function replayLevel(job: Job, inputs: WorldInputs, onProgress: (phase: st
   onProgress('hydrology', 0)
   const weather = terrain.weather?.result
   if (!terrain.routing || !weather) throw new Error('the replay ended without its last epoch\'s state')
+  // The last epoch's climate at the level's nodes (climate/climatePoints.ts).
+  const cells = climateCellsFromWeather(weather)
+  const atNodes = climateAtPoints(cells, meshPoints(terrain.mesh, terrain.z))
   const water = levelHydrology(terrain.mesh, terrain.z, terrain.routing, terrain.areas, terrain.sedimentFlux, {
-    precipitation: weather.seasonal.annual, temperature: weather.temperature, monsoonIndex: weather.seasonal.index,
-    climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
+    precipitation: atNodes.precipitation, temperature: atNodes.temperature, monsoonIndex: atNodes.monsoonIndex, meanRunoff: meanLandRunoff(cells),
   }, { width: inputs.width, height: inputs.height, budget: levelBudget(1), detailSeed: inputs.detailSeed })
   onProgress('hydrology', 1)
   return { level: 1, mesh: terrain.mesh, z: terrain.z, routing: terrain.routing, ...water, inserted: 0 }

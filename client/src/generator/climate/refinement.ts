@@ -1,6 +1,5 @@
-import { CLIMATE_RES_X, CLIMATE_RES_Y, inTopSummerHalf, latitudeOfNorm, shiftedNorm } from './climateField'
+import { inTopSummerHalf, latitudeOfNorm, shiftedNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
-import { koppenFromMonths } from './biomes'
 import { computePressureWind, REFINED_MONTHS } from './pressure'
 import { computeWind, type CellVectors } from './wind'
 import { seasonalCycle } from './energyBalance'
@@ -15,7 +14,7 @@ import { computeTemperature } from './temperature'
 import type { WeatherParams } from './weather'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
 import type { Domain } from '../core/domain'
-import { basinRows, climateLandOnlyRaster, climateLandRaster, climateMesh, climateRaster, climateSeaRaster, climateSeaVectorRaster, climateTerrain, climateVectorRaster, rasterLand, type ClimateTerrain } from './climateMesh'
+import { basinRows, climateMesh, climateTerrain } from './climateMesh'
 import { smoothGaussian, type SolveReport } from '../fields/fieldOperators'
 import { ELEVATION_METERS, SEA_LEVEL } from '../elevation/elevationScale'
 import { detCos, detHypot, detSin } from '../core/detMath'
@@ -29,9 +28,9 @@ import { detCos, detHypot, detSin } from '../core/detMath'
 // cycle, the pressure and its wind, the ocean, the rain, the phenomena,
 // the reliability and the storms — runs per cell of the one mesh the
 // static climate runs on (climateMesh.ts), both shapes, one path, the
-// lengths in metres. No raster, no pole row. The screen's textures, the
-// biomes and the ecology read it through refinedRasters below until their
-// own phase (7).
+// lengths in metres. No raster, no pole row. What reads it outside the
+// climate samples its cells at its own points (climatePoints.ts, phase 7);
+// the screen's textures are its chart (climateChart.refinedChart).
 
 // The storms' fields, in the order the save writes them.
 export const REFINED_STORMS = ['cyclone', 'tornado', 'blizzard', 'dust', 'thunder'] as const
@@ -373,87 +372,6 @@ export function refinedAnnualWind(r: RefinedClimate): CellVectors {
   return out
 }
 
-// ------------------------------------------------ DEC-0036 transition
-
-// DEC-0036 transition: removed in phase 7. The refinement on the climate
-// raster (CLIMATE_RES_X × CLIMATE_RES_Y), in the forms its readers there
-// take — the biomes, the ecology and the hydrology's climate (runtime.ts
-// handleClimateRefine) and the screen's textures, readouts and month
-// player: the months' fields per pixel (month-major), the vectors
-// interleaved [east, south] in each pixel's own frame, the sea's fields 0
-// on the raster's land (climateMesh.rasterLand), the land's on its sea,
-// the rain's sea OCEAN_PRECIP; the Köppen class per pixel from the
-// rasterised months. Made once per refinement, in the worker.
-export interface RefinedClimateRasters {
-  months: number
-  temperature: Float32Array
-  precipitation: Float32Array
-  pressure: Float32Array
-  wind: Float32Array
-  currents: Float32Array
-  currentAnomaly: Float32Array
-  upwelling: Float32Array
-  koppen: Uint8Array
-  salinity: Float32Array
-  deepWater: Float32Array
-  fog: Float32Array
-  foehn: Float32Array
-  reliability: RefinedReliability
-  storms: RefinedStorms
-}
-
-export function refinedRasters(r: RefinedClimate, terrain: ClimateTerrain): RefinedClimateRasters {
-  const { cm } = terrain
-  const RX = CLIMATE_RES_X
-  const RY = CLIMATE_RES_Y
-  const px = RX * RY
-  const n = r.cells
-  const months = r.months
-  const landPixels = rasterLand(terrain, RX, RY)
-  const temperature = new Float32Array(months * px)
-  const precipitation = new Float32Array(months * px)
-  const pressure = new Float32Array(months * px)
-  const wind = new Float32Array(months * px * 2)
-  for (let m = 0; m < months; m++) {
-    const at = (field: Float32Array): Float32Array => field.subarray(m * n, (m + 1) * n)
-    temperature.set(climateRaster(cm, at(r.temperature), RX, RY), m * px)
-    precipitation.set(climateLandRaster(terrain, at(r.precipitation), OCEAN_PRECIP, RX, RY, landPixels), m * px)
-    pressure.set(climateRaster(cm, at(r.pressure), RX, RY), m * px)
-    wind.set(climateVectorRaster(cm, at(r.windE), at(r.windS), RX, RY), m * px * 2)
-  }
-  const sea = (field: Float32Array): Float32Array => climateSeaRaster(cm, field, RX, RY, landPixels)
-  const landOnly = (field: Float32Array): Float32Array => climateLandOnlyRaster(terrain, field, RX, RY, landPixels)
-  const both = (field: Float32Array): Float32Array => climateRaster(cm, field, RX, RY)
-  return {
-    months,
-    temperature,
-    precipitation,
-    pressure,
-    wind,
-    currents: climateSeaVectorRaster(cm, r.currentE, r.currentS, RX, RY, landPixels),
-    currentAnomaly: sea(r.currentAnomaly),
-    upwelling: sea(r.upwelling),
-    koppen: koppenFromMonths(temperature, precipitation, months),
-    salinity: sea(r.salinity),
-    deepWater: sea(r.deepWater),
-    fog: landOnly(r.fog),
-    foehn: landOnly(r.foehn),
-    reliability: {
-      rainVariability: landOnly(r.reliability.rainVariability),
-      ensoPattern: landOnly(r.reliability.ensoPattern),
-      ensoPeriodYears: r.reliability.ensoPeriodYears,
-      ensoStrength: r.reliability.ensoStrength,
-    },
-    storms: {
-      cyclone: both(r.storms.cyclone),
-      tornado: landOnly(r.storms.tornado),
-      blizzard: landOnly(r.storms.blizzard),
-      dust: both(r.storms.dust),
-      thunder: both(r.storms.thunder),
-    },
-  }
-}
-
 // The annual fields of a refinement, in the forms the history's climate
 // has them (weather.computeWeather), so everything that reads a climate
 // reads this one unchanged: the mean temperature; the mean rain (a mean of
@@ -462,8 +380,7 @@ export function refinedRasters(r: RefinedClimate, terrain: ClimateTerrain): Refi
 // two halves of the year, (P_top − P_bottom) / (P_top + P_bottom + floor)
 // with each half as its own annual rate, + where the rain falls in the top
 // hemisphere's summer half (climateField.inTopSummerHalf), OCEAN_PRECIP on
-// the sea. Per cell of whatever holds the months: `n` cells (the field
-// mesh's, or the climate raster's in the transition).
+// the sea. Per cell of the field mesh: `n` cells.
 export function annualFromMonths(r: { months: number; temperature: ArrayLike<number>; precipitation: ArrayLike<number> }, n: number): { temperature: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array; monsoonIndex: Float32Array } {
   const temperature = new Float32Array(n)
   const precipitation = new Float32Array(n)

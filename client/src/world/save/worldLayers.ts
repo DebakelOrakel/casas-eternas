@@ -49,42 +49,16 @@ export interface LayerSpec extends FieldSpec, Encoding {}
 const layer = (name: string, dtype: Dtype, scale: number, offset: number): LayerSpec =>
   ({ ...fieldSpec(name), dtype, scale, offset })
 
-// The coarse (climate-grid) quantised layers. Elevation is carried separately
-// as raw f32 (it doubles as the restore raster — see the save doc); the ocean
-// age and the mantle as their field meshes' values (oceanAge.f64, mantle.f64).
+// The quantised raster layers of the hydrology (DEC-0036 phase 7b moves
+// them onto the mesh). Elevation is carried separately as raw f32 (it
+// doubles as the restore raster — see the save doc); the ocean age and the
+// mantle as their field meshes' values (oceanAge.f64, mantle.f64), the
+// climate and the land fields as theirs (climate.json + climate/, mesh/
+// biome.u8, mesh/koppen.u8, mesh/waterTable.f32 — climateFields.ts, phase
+// 7: the climate-grid layers landMask, temperature, precipitation,
+// precipitationEffective, seasonalAmplitude, monsoonIndex, koppen and
+// waterTable and the world-grid biome went then).
 export const WORLD_LAYERS: LayerSpec[] = [
-  // Ranges are generous so real extremes never clip (greenhouse heat, Siberian
-  // seasonality, very wet rainforest, gain/province-boosted ecology).
-  layer('landMask', 'u8', 1, 0),
-  layer('temperature', 'u8', 90 / 255, -35),
-  layer('precipitation', 'u16', 8000 / 65535, 0),
-  // The same field plus the riparian bonus — rivers and lakes moistening their
-  // surroundings (see hydrology.computeRiparianBiomes). Stored beside the
-  // climate's own precipitation rather than replacing it, because they answer
-  // different questions: `precipitation` is what falls, this is what the ground
-  // effectively gets, and only the second one classifies biomes.
-  //
-  // It is here so that BIOMES CAN BE RECLASSIFIED WITHOUT A DRAINAGE NETWORK.
-  // The worldmap re-derives biomes on its amplified terrain; deriving the
-  // riparian effect there would mean routing and accumulating flow over an
-  // 8-million-cell raster on every load, to recover a field that is regional
-  // anyway. 64 KB instead.
-  layer('precipitationEffective', 'u16', 8000 / 65535, 0),
-  // Full-res, unlike its climate neighbours: the classification is pointwise and
-  // reads elevation, which exists at world resolution (see climate/biomes.ts's
-  // computeBiomesFine). A 62 km biome cell could not say where a treeline is —
-  // and a game whose unit of place is a ~1.5 km hex asks exactly that. 2 MB raw,
-  // and it is a mostly-flat id field, so DEFLATE takes most of it back.
-  layer('biome', 'u8', 1, 0),
-  layer('seasonalAmplitude', 'u8', 60 / 255, 0),
-  // SIGNED since the index gained its phase (climate/monsoon.ts): the sign says
-  // which half of the year is the wet one, so the layer has to reach −1. The
-  // manifest carries scale/offset per layer, so an older save still decodes with
-  // the range it was written at — it simply has no phase to report. Half the
-  // steps of the old encoding, at 0.0078 per step over a field whose consumers
-  // compare it against thresholds like 0.35.
-  layer('monsoonIndex', 'u8', 2 / 255, -1),
-  layer('koppen', 'u8', 1, 0),
   // Lake depth in elevation units. The range was 20 — off by nearly two orders
   // of magnitude, since a lake's depth is `filled - elevation` and the whole
   // elevation field only spans ±1. Measured over a real run: p50 0.004, p99
@@ -102,11 +76,9 @@ export const WORLD_LAYERS: LayerSpec[] = [
   // resolution we already had, for a field that is zero almost everywhere and
   // therefore nearly free once deflated.
   layer('lakeDepth', LAKE_DEPTH_ENCODING.dtype, LAKE_DEPTH_ENCODING.scale, LAKE_DEPTH_ENCODING.offset),
-  // Metres to 1000, in 1.5 cm steps — a well is never deeper here.
-  layer('waterTable', 'u16', 1000 / 65535, 0),
 ]
 
-// Flow accumulation. Full-res like biome, but kept out of WORLD_LAYERS because
+// Flow accumulation. Full-res like lakeDepth, but kept out of WORLD_LAYERS because
 // the writer has to convert its unit first (see below).
 //
 // Rivers are the reason: at 256x128 a cell spans ~62 km, so a discharge field
@@ -154,7 +126,7 @@ function makeArray(dtype: Dtype, n: number): Uint8Array | Uint16Array | Float32A
 
 // Quantise a source field into its layer's dtype (`value → raw`). Negative
 // sentinels (ocean: OCEAN_PRECIP, OCEAN_AMPLITUDE, ECOLOGY_OCEAN, …) and
-// out-of-range values clamp into range — consumers mask with landMask.
+// out-of-range values clamp into range — consumers mask with the land.
 export function bakeLayer(field: Float32Array | Uint8Array, spec: Encoding): ArrayBuffer {
   const n = field.length
   if (spec.dtype === 'f32') return Float32Array.from(field).buffer as ArrayBuffer
@@ -165,29 +137,6 @@ export function bakeLayer(field: Float32Array | Uint8Array, spec: Encoding): Arr
     out[i] = raw < 0 ? 0 : raw > max ? max : raw
   }
   return out.buffer as ArrayBuffer
-}
-
-// Put a land-only layer's ocean sentinel back, from the landMask layer.
-//
-// This is the other half of the contract bakeLayer states. A field that says −1
-// over water is clamped into range on the way out, so it comes back saying
-// whatever the bottom of its range is — for most layers 0, which is an ordinary
-// value and not obviously wrong. The reader is supposed to mask with landMask;
-// this is that masking, done ONCE here at the save boundary rather than by each
-// consumer, so a field read from a save is the field the generator computed.
-//
-// It matters because one consumer tells land from ocean BY the sentinel:
-// biomes.ts's sampleLandBilinear drops ocean corners by `v >= 0`, and it is the
-// one that reclassifies a restored world. Without this it blended a fabricated 0
-// into every coastal land cell — the same bug the 2026-08-09 interpolation work
-// fixed for the live fields, reintroduced by the round trip.
-//
-// Copies rather than writes through: the decoded layers are cached and shared,
-// and `worldId` hashes one of them.
-export function restoreLandOnlySentinel(field: Float32Array, landMask: Float32Array, sentinel: number): Float32Array {
-  const out = new Float32Array(field.length)
-  for (let i = 0; i < field.length; i++) out[i] = landMask[i] > 0.5 ? field[i] : sentinel
-  return out
 }
 
 // Read a typed layer buffer as its numeric field (raw → value). Used to sample.

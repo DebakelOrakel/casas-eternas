@@ -4,6 +4,7 @@ import { computeUpliftField } from '../elevation/upliftField'
 import { computeErodibilityField } from '../elevation/erodibilityField'
 import { computeWeather, defaultWeatherParams } from '../climate/weather'
 import { climateTerrain } from '../climate/climateMesh'
+import { weatherChart } from '../climate/climateChart'
 import type { WeatherParams } from '../climate/weather'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
 import { worldEpoch } from '../core/worldTime'
@@ -73,7 +74,11 @@ export function assembleErosionForcing(
   // than read from the climate stage's cache: the forcing must not depend
   // on whether that stage has run, and both compute the same chain on the
   // same terrain (climate/weather.computeWeather — one function, no drift).
-  const water = computeWeather(climateTerrain(domain, rawElevations, domain.width, domain.height), weather).seasonal.annual
+  // The raster engine reads its water on the climate's chart
+  // (climateChart.weatherChart) — this assembly is the raster engine's,
+  // which only the measuring scripts still run; the generator's history
+  // samples the climate at its nodes (coupledEpoch, DEC-0036 phase 7).
+  const water = weatherChart(computeWeather(climateTerrain(domain, rawElevations, domain.width, domain.height), weather)).precipitation
 
   return assembleFineForcing({
     uplift,

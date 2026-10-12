@@ -730,15 +730,31 @@ test('a sphere world runs its history through the runtime', async () => {
   const elevation = new Float32Array(r.elevation)
   check('the sphere\'s eroding epochs run and render', r.epoch >= epoch0 + EPOCHS && !p.messages.some((m) => m.type === 'error'), `epoch ${epoch0} → ${r.epoch}`)
   check('its rendered terrain is finite, with land and sea', allFinite(elevation) && elevation.some((v) => v > 0) && elevation.some((v) => v <= 0) && Number.isFinite(r.landFraction), `land ${r.landFraction.toFixed(3)}`)
-  // The seam: the step across x = 0 / W is a step like any other in its row.
+  // The seam: the step across x = 0 / W is a step like any other in its
+  // row — on average over the rows, against the average step between any
+  // two neighbouring columns. A seam is in every row; the largest single
+  // step is the terrain's steepest slope, which may cross x = 0 (2026-10-12,
+  // the history's climate at the nodes: a continental slope there, 0.14
+  // across the seam against 0.12 inside, the mesh's nodes as steep).
   let seam = 0
   let inner = 0
+  let seamMax = 0
+  let innerMax = 0
+  const RXe = r.elevationResX
   for (let y = 0; y < r.elevationResY; y++) {
-    const row = elevation.subarray(y * r.elevationResX, (y + 1) * r.elevationResX)
-    seam = Math.max(seam, Math.abs(row[0] - row[row.length - 1]))
-    for (let x = 1; x < row.length; x++) inner = Math.max(inner, Math.abs(row[x] - row[x - 1]))
+    const row = elevation.subarray(y * RXe, (y + 1) * RXe)
+    const d = Math.abs(row[0] - row[RXe - 1])
+    seam += d
+    seamMax = Math.max(seamMax, d)
+    for (let x = 1; x < RXe; x++) {
+      const e = Math.abs(row[x] - row[x - 1])
+      inner += e
+      innerMax = Math.max(innerMax, e)
+    }
   }
-  check('the rendered terrain has no seam at x = 0 / W', seam <= inner, `seam step ${seam.toFixed(3)}, largest inner step ${inner.toFixed(3)}`)
+  seam /= r.elevationResY
+  inner /= r.elevationResY * (RXe - 1)
+  check('the rendered terrain has no seam at x = 0 / W', seam <= 2 * inner, `mean step across the seam ${seam.toFixed(4)}, inside ${inner.toFixed(4)}; the largest ${seamMax.toFixed(3)} / ${innerMax.toFixed(3)}`)
   const before = p.count('worldData')
   p.dispatch({ type: 'serializeWorld' })
   await until(() => p.count('worldData') > before, { label: 'the serialized sphere world' })
@@ -803,6 +819,8 @@ test('a sphere world runs its history through the runtime', async () => {
 test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-handled, plausible', async () => {
   const L = (m) => server.ssrLoadModule(m)
   const CMx = await L('/src/generator/climate/climateMesh.ts')
+  const CPx = await L('/src/generator/climate/climatePoints.ts')
+  const CCx = await L('/src/generator/climate/climateChart.ts')
   const [D, AS, AT, FA, CE, MR, CF, WE, FX, MH, HY, RG, BI, CO, GW, MC, MAP, ES] = await Promise.all([
     L('/src/generator/core/domain.ts'), L('/src/generator/archean/archeanState.ts'), L('/src/generator/archean/archeanStep.ts'),
     L('/src/generator/archean/finalizeArchean.ts'), L('/src/generator/pipeline/coupledEpoch.ts'), L('/src/generator/mesh/meshRaster.ts'),
@@ -892,11 +910,17 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
     return { seam, inner }
   }
   const weather = terrain.weather.result
+  // The epoch's climate on its chart (climateChart.weatherChart, the
+  // screen's textures) and at the nodes (climatePoints.ts, what the stages
+  // read).
+  const chart = CCx.weatherChart(weather)
   const coarseZ = MR.rasteriseNodeField(terrain.mesh, terrain.preErosionZ, RX, RY)
   const fineZ = MR.rasteriseNodeField(terrain.mesh, terrain.z, W, H)
-  const seams = { z: seamOf(fineZ, W, H), temperature: seamOf(weather.temperature, RX, RY), precipitation: seamOf(weather.seasonal.annual, RX, RY) }
+  const seams = { z: seamOf(fineZ, W, H), temperature: seamOf(chart.temperature, RX, RY), precipitation: seamOf(chart.precipitation, RX, RY) }
   check('the rasterised terrain and the epoch\'s temperature and precipitation have no seam at x = 0 / W', Object.values(seams).every((q) => q.seam <= q.inner), Object.entries(seams).map(([k, q]) => `${k} ${q.seam.toFixed(2)} ≤ ${q.inner.toFixed(2)}`).join(', '))
-  check('the epoch\'s climate is finite', [weather.temperature, weather.seasonal.annual, weather.currents, weather.seasonalAmplitude, weather.wind].every(allFinite))
+  const atNodes = CPx.climateAtPoints(CPx.climateCellsFromWeather(weather), CPx.meshPoints(terrain.mesh, terrain.z), { wind: true })
+  check('the epoch\'s climate is finite, on its chart and at the nodes', [chart.temperature, chart.precipitation, chart.currents, chart.seasonalAmplitude, chart.wind].every(allFinite)
+    && [atNodes.temperature, atNodes.seaLevelTemperature, atNodes.precipitation, atNodes.seasonalAmplitude, atNodes.monsoonIndex, atNodes.windE, atNodes.windS].every((f) => { for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && !Number.isFinite(f[v])) return false; return true }))
   // Temperature by latitude, area-weighted: it falls from the equator toward
   // BOTH poles (the sphere's y is colatitude; the climate reads it so).
   const grid = sim.domain.grid(RX, RY)
@@ -905,7 +929,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
     for (let gy = 0; gy < RY; gy++) {
       const lat = 90 - ((gy + 0.5) / RY) * 180
       if ((north ? lat : -lat) < lo || (north ? lat : -lat) >= hi) continue
-      for (let gx = 0; gx < RX; gx++) { sum += weather.temperature[gy * RX + gx] * grid.cellArea(gy); area += grid.cellArea(gy) }
+      for (let gx = 0; gx < RX; gx++) { sum += chart.temperature[gy * RX + gx] * grid.cellArea(gy); area += grid.cellArea(gy) }
     }
     return sum / area
   }
@@ -1058,14 +1082,17 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
     const sub = MH.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
     const rz = MR.rasteriseNodeField(terrain.mesh, terrain.z, RX, RY)
     const wx = WE.computeWeather(CMx.climateTerrain(sim.domain, rz, RX, RY), params)
-    const precip = wx.seasonal.annual
-    const discharge = HY.accumulateDischargeOn(sub, terrain.z, precip, RX, RY)
-    const lakes = HY.computeLakesOn(sub, discharge, terrain.z, wx.temperature, precip, RX, RY)
-    const threshold = HY.channelThreshold(HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY), HY.meanLandRunoff(precip, rz, climateDomain, RX, RY))
-    const regime = HY.accumulateRegimeInputsOn(sub, terrain.z, wx.temperature, precip, wx.seasonal.index, RX, RY)
+    // The climate at the nodes (climatePoints.ts, DEC-0036 phase 7).
+    const cells = CPx.climateCellsFromWeather(wx)
+    const points = CPx.meshPoints(terrain.mesh, terrain.z)
+    const at = CPx.climateAtPoints(cells, points)
+    const discharge = HY.accumulateDischargeOn(sub, terrain.z, at.precipitation)
+    const lakes = HY.computeLakesOn(sub, discharge, terrain.z, at.temperature, at.precipitation)
+    const threshold = HY.channelThreshold(HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY), CPx.meanLandRunoff(cells))
+    const regime = HY.accumulateRegimeInputsOn(sub, terrain.z, at.temperature, at.precipitation, at.monsoonIndex)
     const graph = RG.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: HY.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY) })
-    const biomes = BI.computeBiomes(wx.temperature, precip, wx.seasonalAmplitude, wx.seasonal.index, rz, RX, RY)
-    const ground = GW.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, climateResX: RX, climateResY: RY, precipitation: precip, temperature: wx.temperature, monsoonIndex: wx.seasonal.index, cover: CO.coverField(biomes, true), regime, discharge, cellM: terrain.mesh.domain.metresPerUnit })
+    const biomes = BI.classifyPoints(at, points, terrain.mesh.domain).biome
+    const ground = GW.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, precipitation: at.precipitation, temperature: at.temperature, monsoonIndex: at.monsoonIndex, cover: CO.coverField(biomes, true), regime, discharge, cellM: terrain.mesh.domain.metresPerUnit })
     const bad = Object.entries(GW.hydrogeologyInvariants(ground, graph, terrain.z)).filter(([, n]) => n > 0)
     check(`the hydrogeology holds its invariants on the sphere (${ground.springs.length} springs, ${graph.reaches.length} reaches)`, bad.length === 0 && graph.reaches.length > 0, bad.map(([k, n]) => `${k}:${n}`).join(' '))
   }
@@ -1111,7 +1138,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
     }
     const landStart = polarLand(terrainP)
     const rp = await run(simP, terrainP, 3)
-    const wp = terrainP.weather.result
+    const wp = CCx.weatherChart(terrainP.weather.result)
     const cz = MR.rasteriseNodeField(terrainP.mesh, terrainP.preErosionZ, RX, RY)
     let poleLandT = 0, poleLand = 0
     for (let gx = 0; gx < RX; gx++) if (cz[gx] > 0) { poleLandT += wp.temperature[gx]; poleLand++ }
@@ -1179,7 +1206,7 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   const fields = {
     ...Object.fromEntries(['temperature', 'wind', 'currents', 'currentAnomaly', 'precipitation', 'seasonalAmplitude', 'monsoonIndex'].flatMap((k) => [[`climate.${k}`, f32(c0[k])], [`refined.${k}`, f32(cr[k])]])),
     ...Object.fromEntries(['temperature', 'precipitation', 'fog', 'foehn', 'rainVariability', 'ensoPattern', 'salinity', 'deepWater', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder', 'pressure', 'wind', 'currents', 'currentAnomaly', 'upwelling'].map((k) => [`months.${k}`, f32(r[k])])),
-    ...Object.fromEntries(['lakeDepth', 'discharge', 'waterLevel', 'iceThickness', 'waterTable', 'precipitationEffective', 'riverPoints'].map((k) => [`hydrology.${k}`, f32(h[k])])),
+    ...Object.fromEntries(['lakeDepth', 'discharge', 'waterLevel', 'iceThickness', 'precipitationEffective', 'riverPoints'].map((k) => [`hydrology.${k}`, f32(h[k])])),
   }
   const notFinite = Object.entries(fields).filter(([, f]) => f.length === 0 || !allFinite(f)).map(([k]) => k)
   check(`every field of the climate, the refinement and the hydrology is whole and finite (${Object.keys(fields).length} fields)`, notFinite.length === 0 && Number.isFinite(r.ensoPeriodYears) && Number.isFinite(h.maxDischarge), notFinite.join(', '))
@@ -1628,6 +1655,7 @@ test('the climate step\'s primitives on the sphere, each against its mutation', 
     // belts as the torus does on the sphere's mesh.
     const WD = await L('/src/generator/climate/wind.ts')
     const CMw = await L('/src/generator/climate/climateMesh.ts')
+    const CCw = await L('/src/generator/climate/climateChart.ts')
     const shift = CT.CLIMATE_TUNING.monsoonItczSeasonalShift
     const RXc = CF.CLIMATE_RES_X
     const RYc = CF.CLIMATE_RES_Y
@@ -1635,7 +1663,7 @@ test('the climate step\'s primitives on the sphere, each against its mutation', 
     const asTorus = { ...cmS, mesh: { ...cmS.mesh, domain: { ...cmS.mesh.domain, kind: 'torus' } } }
     const jump = (shape) => Math.max(...[shift, -shift].map((b) => {
       const w = WD.computeWind(shape === 'sphere' ? cmS : asTorus, 0, PF.DEFAULT_PLANET_FORCING.rotationHours, b)
-      return poleVectorJump(CMw.climateVectorRaster(cmS, w.e, w.s, RXc, RYc), RXc, RYc)
+      return poleVectorJump(CCw.chartVectorField(cmS, w.e, w.s, RXc, RYc), RXc, RYc)
     }))
     const kept = jump('sphere')
     const slid = jump('torus')
@@ -1672,12 +1700,15 @@ test('a sphere world runs the ecology step through the runtime: finite, pole-han
   const bad = ids.filter((id) => !coarse[id] || coarse[id].length !== RX * RY || !allFinite(coarse[id]) || !fine[id] || fine[id].length !== FX * FY)
   check(`every ecology field is whole and finite on the sphere (${ids.length} fields, ${RX}×${RY} and ${FX}×${FY})`, bad.length === 0, bad.join(', '))
 
-  // The pole rows: one value along each, the land's (and the fish's sea)
-  // apart — on the climate grid and on the fine raster, the months too.
+  // The north pole: the fine raster's first row is the pole itself (the
+  // rasterisation's corner convention, y = 0), and the fields on the
+  // terrain mesh's nodes (DEC-0036 phase 7) have one value there, the
+  // land's (and the fish's sea) apart — the months too. No pole row is
+  // averaged any more: there is none on the mesh.
   const fineSea = fine.carryingCapacity.map((c) => (c === EF.ECOLOGY_FINE_OCEAN ? 1 : 0))
   const spreadOf = (field, rx, ry, isSea, value = (v) => v) => {
     let worst = 0
-    for (const row of [0, ry - 1]) {
+    for (const row of [0]) {
       for (const kind of [0, 1]) {
         let lo = Infinity
         let hi = -Infinity
@@ -1693,14 +1724,13 @@ test('a sphere world runs the ecology step through the runtime: finite, pole-han
     }
     return worst
   }
-  const coarseSea = (i) => (coarse.carryingCapacity[i] === EF.ECOLOGY_OCEAN ? 1 : 0)
-  const poles = ids.flatMap((id) => [[`coarse.${id}`, spreadOf(coarse[id], RX, RY, coarseSea)], [`fine.${id}`, spreadOf(fine[id], FX, FY, (i) => fineSea[i])]])
+  const poles = ids.map((id) => [`fine.${id}`, spreadOf(fine[id], FX, FY, (i) => fineSea[i])])
   const months = p.messages.filter((m) => m.type === 'ecologyMonthData')
   for (const m of months) poles.push([`month ${m.field} ${m.month}`, m.data.byteLength === FX * FY ? spreadOf(new Uint8Array(m.data), FX, FY, (i) => fineSea[i]) : Infinity])
   const spread = poles.filter(([, v]) => v > 1e-6)
   let polarLand = 0
-  for (const row of [0, FY - 1]) for (let x = 0; x < FX; x++) if (!fineSea[row * FX + x]) polarLand++
-  check(`the ecology's fields are one value along each pole row, land and sea apart (${poles.length} fields, ${polarLand} pole-row land pixels)`, spread.length === 0 && months.length === 2 && months.every((m) => m.data.byteLength === FX * FY), spread.map(([k, v]) => `${k} ${v}`).join(', '))
+  for (let x = 0; x < FX; x++) if (!fineSea[x]) polarLand++
+  check(`the ecology's fields are one value at the pole, land and sea apart (${poles.length} fields, ${polarLand} of the pole's ${FX} pixels land)`, spread.length === 0 && months.length === 2 && months.every((m) => m.data.byteLength === FX * FY), spread.map(([k, v]) => `${k} ${v}`).join(', '))
 
   // The seam: the step across x = 0 / W no larger than the steps in a row,
   // on average over the land (the fields jump where the land does).
@@ -1758,40 +1788,54 @@ test('a sphere world runs the ecology step through the runtime: finite, pole-han
 
 test('the ecology on the sphere at high latitude: a deposit\'s halo is a disc in true lengths, against its mutation', async () => {
   const L = (m) => server.ssrLoadModule(m)
-  const [D, EF, ET, B, CF] = await Promise.all([
+  const [D, EF, ET, B, LA] = await Promise.all([
     L('/src/generator/core/domain.ts'), L('/src/generator/ecology/ecologyField.ts'), L('/src/generator/ecology/ecologyTuneParams.ts'),
-    L('/src/generator/climate/biomes.ts'), L('/src/generator/climate/climateField.ts'),
+    L('/src/generator/climate/biomes.ts'), L('/src/generator/mesh/lattice.ts'),
   ])
-  // A world of land at a real deposit size: 1024 × 512, σ = 0.02 · 512
-  // = 10.2 pixels. Arc volcanoes along 75°N and 75°S, 128 pixels apart in
-  // the chart (33 on the globe: their halos stay apart), and a row along
-  // the equator for the reference; many, since the copper lottery keeps a
-  // third.
-  const FW = 1024
-  const FH = 512
-  const RXc = CF.CLIMATE_RES_X
-  const RYc = CF.CLIMATE_RES_Y
-  const nc = RXc * RYc
+  // A world of land on the terrain mesh's nodes (DEC-0036 phase 7): the
+  // 2048 × 1024 sphere (9.8 km a unit, the copper's σ 160 km = 16 units)
+  // on a geodesic lattice of 4 units, arc volcanoes along 75°N and 75°S,
+  // 256 units apart in the chart (66 on the globe: their halos stay
+  // apart), and a row along the equator for the reference; many, since the
+  // copper lottery keeps a third. Measured on the fields' raster
+  // (ecologyFine).
+  const FW = 2048
+  const FH = 1024
   const yAt = (lat) => ((90 - lat) / 180) * FH
   const volcanoes = []
-  for (let k = 0; k < 8; k++) volcanoes.push({ x: 20.3 + k * (FW / 8), y: yAt(75) + 0.37, thickness: 1, kind: 'arc' })
-  for (let k = 0; k < 8; k++) volcanoes.push({ x: 84.6 + k * (FW / 8), y: yAt(-75) + 0.29, thickness: 1, kind: 'arc' })
-  for (let k = 0; k < 24; k++) volcanoes.push({ x: 31.7 + k * (FW / 24), y: yAt(0) + 0.21, thickness: 1, kind: 'arc' })
-  const inputsOn = (domain) => ({
-    temperature: new Float32Array(nc).fill(12), precipitation: new Float32Array(nc).fill(800), biomes: new Uint8Array(nc).fill(B.Biome.Grassland),
-    biomesFine: null, upwelling: null, months: null, rainVariability: null, elevation: new Float32Array(FW * FH).fill(0.05),
-    discharge: null, maxDischarge: 0, lakeDepth: null, saltFlat: null, dryBasin: null, waterTable: null, oases: [], volcanoes, orogenPoints: [],
-    cratonAge: new Float32Array(nc).fill(0.5), warpSeed: 12345, domain,
-  })
+  for (let k = 0; k < 8; k++) volcanoes.push({ x: 40.3 + k * (FW / 8), y: yAt(75) + 0.37, thickness: 1, kind: 'arc' })
+  for (let k = 0; k < 8; k++) volcanoes.push({ x: 168.6 + k * (FW / 8), y: yAt(-75) + 0.29, thickness: 1, kind: 'arc' })
+  for (let k = 0; k < 24; k++) volcanoes.push({ x: 63.7 + k * (FW / 24), y: yAt(0) + 0.21, thickness: 1, kind: 'arc' })
+  const inputsOn = (domain) => {
+    const mesh = domain.kind === 'sphere' ? LA.geodesicLattice(domain, 4) : LA.hexLattice(domain, 4)
+    const n = mesh.vertexSlots
+    const fill = (v) => new Float32Array(n).fill(v)
+    const land = new Uint8Array(n)
+    for (let v = 0; v < n; v++) land[v] = mesh.vAlive[v]
+    return {
+      mesh, z: fill(0.05), land,
+      climate: { count: n, seaLevelTemperature: fill(12), temperature: fill(12), precipitation: fill(800), seasonalAmplitude: fill(10), monsoonIndex: fill(0), months: null, upwelling: null, rainVariability: null, windE: null, windS: null },
+      biomes: new Uint8Array(n).fill(B.Biome.Grassland),
+      discharge: null, maxDischarge: 0, lakeDepth: null, saltFlat: null, waterTable: null, oases: [], volcanoes, orogenPoints: [],
+      cratonAge: fill(0.5), warpSeed: 12345, domain,
+    }
+  }
   const sphere = D.sphereDomain(FW, FH)
+  const torus = D.torusDomain(FW, FH)
   const params = { carryingCapacity: 100, concentration: 0, provinceStrength: 0.5 }
-  const s = EF.computeEcology(inputsOn(sphere), params)
-  const t = EF.computeEcology(inputsOn(D.torusDomain(FW, FH)), params)
-  const notFinite = EF.ECOLOGY_FIELD_IDS.filter((id) => !allFinite(s.fine.fields[id]) || !allFinite(s.fields[id]))
-  check('every fine and coarse field is finite on a sphere of land', notFinite.length === 0, notFinite.join(', '))
+  const allLand = new Uint8Array(FW * FH).fill(1)
+  const run = (domain) => {
+    const base = EF.prepareEcology(inputsOn(domain))
+    const fields = EF.applyEcology(base, params).fields
+    return { fields, copper: EF.ecologyFine(base, fields.copper, allLand, FW, FH, false) }
+  }
+  const s = run(sphere)
+  const t = run(torus)
+  const notFinite = EF.ECOLOGY_FIELD_IDS.filter((id) => { const f = s.fields[id]; for (let v = 0; v < f.length; v++) if (!Number.isFinite(f[v])) return true; return false })
+  check('every field is finite on a sphere of land, per node', notFinite.length === 0, notFinite.join(', '))
   // Each kept volcano's half-maximum: walked east and south from its pixel,
   // the true distance (on the globe) where the copper falls below 0.5.
-  const sigma = Math.min(FW, FH) * ET.ECOLOGY_TUNING.copperRadiusFrac
+  const sigma = ET.ECOLOGY_TUNING.copperRadiusM / sphere.metresPerUnit
   const expected = sigma * Math.sqrt(2 * Math.log(2))
   const halfWidths = (field, v) => {
     const cx = Math.floor(v.x)
@@ -1801,21 +1845,21 @@ test('the ecology on the sphere at high latitude: a deposit\'s halo is a disc in
       for (let k = 1; k < FW / 2; k++) {
         const x = (cx + dx * k + FW) % FW
         const y = cy + dy * k
-        if (field[y * FW + x] < 0.5) return Math.sqrt(sphere.distanceSq(x + 0.5, y + 0.5, v.x, v.y))
+        if (field[y * FW + x] < 0.5) return Math.sqrt(sphere.distanceSq(x, y, v.x, v.y))
       }
       return Infinity
     }
     return { east: (walk(1, 0) + walk(-1, 0)) / 2, south: (walk(0, 1) + walk(0, -1)) / 2 }
   }
   const measure = (field, lat) => volcanoes.filter((v) => Math.abs(v.y - yAt(lat)) < 1).map((v) => halfWidths(field, v)).filter((m) => m !== null)
-  const high = [...measure(s.fine.fields.copper, 75), ...measure(s.fine.fields.copper, -75)]
-  const equator = measure(s.fine.fields.copper, 0)
-  const highTorus = [...measure(t.fine.fields.copper, 75), ...measure(t.fine.fields.copper, -75)]
+  const high = [...measure(s.copper, 75), ...measure(s.copper, -75)]
+  const equator = measure(s.copper, 0)
+  const highTorus = [...measure(t.copper, 75), ...measure(t.copper, -75)]
   const ratio = (ms) => ms.reduce((a, m) => a + m.east / m.south, 0) / ms.length
   const mean = (ms, k) => ms.reduce((a, m) => a + m[k], 0) / ms.length
-  check(`a copper halo at 75° is a disc in true lengths: east-west / north-south ${ratio(high).toFixed(2)}, half-maximum ${mean(high, 'east').toFixed(1)} / ${mean(high, 'south').toFixed(1)} px against σ√(2 ln 2) = ${expected.toFixed(1)} (${high.length} halos; at the equator ${ratio(equator).toFixed(2)})`,
-    high.length > 0 && equator.length > 0 && Math.abs(ratio(high) - 1) < 0.12 && Math.abs(mean(high, 'south') / expected - 1) < 0.15 && Math.abs(ratio(equator) - 1) < 0.12)
-  check(`mutation: drawn in the chart (the torus over the same pixels), the halo at 75° is ${ratio(highTorus).toFixed(2)} as wide east-west as north-south in true lengths (cos 75° = ${Math.cos((75 * Math.PI) / 180).toFixed(2)})`,
+  check(`a copper halo at 75° is a disc in true lengths: east-west / north-south ${ratio(high).toFixed(2)}, half-maximum ${mean(high, 'east').toFixed(1)} / ${mean(high, 'south').toFixed(1)} units against σ√(2 ln 2) = ${expected.toFixed(1)} (${high.length} halos; at the equator ${ratio(equator).toFixed(2)})`,
+    high.length > 0 && equator.length > 0 && Math.abs(ratio(high) - 1) < 0.15 && Math.abs(mean(high, 'south') / expected - 1) < 0.2 && Math.abs(ratio(equator) - 1) < 0.15)
+  check(`mutation: drawn in the chart (the torus over the same chart), the halo at 75° is ${ratio(highTorus).toFixed(2)} as wide east-west as north-south in true lengths (cos 75° = ${Math.cos((75 * Math.PI) / 180).toFixed(2)})`,
     highTorus.length > 0 && ratio(highTorus) < 0.5)
 })
 

@@ -47,6 +47,8 @@ const M = {
   domain: await L('/src/generator/core/domain.ts'),
   refinement: await L('/src/generator/climate/refinement.ts'),
   biomes: await L('/src/generator/climate/biomes.ts'),
+  points: await L('/src/generator/climate/climatePoints.ts'),
+  chart: await L('/src/generator/climate/climateChart.ts'),
   koppen: await L('/src/generator/climate/koppen.ts'),
   tune: await L('/src/generator/climate/climateTuneParams.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
@@ -125,16 +127,26 @@ const cheap = M.weather.computeWeather(terrain, params)
 const started = performance.now()
 const refined = M.refinement.refineClimate(elevation, domain, params, cheap.mesh.temperature, cheap.mesh.wind)
 const ms = performance.now() - started
-// Read on the climate raster, as the screen reads it (the refinement on
-// its field mesh rasterised: refinement.refinedRasters, DEC-0036 phase 5).
-const r = M.refinement.refinedRasters(refined, terrain)
+// Read on the climate's chart, as the screen reads it (climateChart.
+// refinedChart), and at points as the stages read it (climatePoints.ts,
+// DEC-0036 phase 7): a place at its chart cell's centre with its own
+// height, the chart's classes at its cells' centres with theirs.
+const r = M.chart.refinedChart(refined, terrain)
+const cells = M.points.climateCellsFromRefined(refined, terrain)
 const RX = 256, RY = 128, n = RX * RY
 const land = (i) => r.precipitation[i] >= 0
-// The months' temperatures at sea level (the lapse of the cell's own sampled
-// height taken off), so a place can be given its own height back.
-const seaLevel = []
-for (let m = 0; m < 12; m++) seaLevel.push(M.biomes.reduceTemperatureToSeaLevel(r.temperature.subarray(m * n, (m + 1) * n), elevation, W, H))
-const lapsePerM = M.tune.CLIMATE_TUNING.lapseCPerElevation / M.scale.ELEVATION_METERS
+const centreX = (i) => ((i % RX) + 0.5) * (W / RX)
+const centreY = (i) => (Math.floor(i / RX) + 0.5) * (H / RY)
+const at = (xs, ys, heights, landMask) => M.points.climateAtPoints(cells, { count: xs.length, x: xs, y: ys, height: heights, land: landMask, dry: null, alive: null })
+const chartPoints = { xs: new Float64Array(n), ys: new Float64Array(n), heights: new Float32Array(n), land: new Uint8Array(n) }
+for (let i = 0; i < n; i++) {
+  chartPoints.xs[i] = centreX(i)
+  chartPoints.ys[i] = centreY(i)
+  chartPoints.heights[i] = elevation[Math.min(H - 1, Math.floor(chartPoints.ys[i])) * W + Math.min(W - 1, Math.floor(chartPoints.xs[i]))]
+  chartPoints.land[i] = land(i) ? 1 : 0
+}
+const chartClimate = at(chartPoints.xs, chartPoints.ys, chartPoints.heights, chartPoints.land)
+const chartKoppen = M.biomes.classifyPoints(chartClimate, { count: n, x: chartPoints.xs, y: chartPoints.ys, height: chartPoints.heights, land: chartPoints.land, dry: null, alive: null }, domain).koppen
 
 // --- the places ---------------------------------------------------------------
 
@@ -188,10 +200,11 @@ for (const [name, lon, lat, height, realClass, realJan, realJul, realRain] of PL
   const i = nearestLand(lon, lat)
   if (i < 0) { rows.push(`${name.padEnd(13)} no land cell`); continue }
   const t = new Float64Array(12), p = new Float64Array(12)
+  const place = at([centreX(i)], [centreY(i)], [M.scale.metersToElevation(height)], new Uint8Array([1]))
   let rain = 0
   for (let m = 0; m < 12; m++) {
-    t[m] = seaLevel[m][i] - lapsePerM * height
-    p[m] = Math.max(0, r.precipitation[m * n + i]) / 12
+    t[m] = place.months.temperature[m]
+    p[m] = Math.max(0, place.months.precipitation[m]) / 12
     rain += p[m]
   }
   const cls = M.koppen.koppenCode(M.koppen.classifyKoppen(t, p)) ?? '—'
@@ -266,7 +279,7 @@ for (let y = 0; y < RY; y++) {
     }
     let real = null, most = 0
     for (const [v, c] of counts) if (c > most) { most = c; real = legend.get(v) }
-    const code = M.koppen.koppenCode(r.koppen[y * RX + x])
+    const code = M.koppen.koppenCode(chartKoppen[y * RX + x])
     if (code) { share[code[0]] += w; area += w }
     if (!real || !code) continue
     both += w

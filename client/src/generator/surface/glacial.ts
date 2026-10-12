@@ -13,13 +13,14 @@ import { detExp, detPow } from '../core/detMath'
 // leaves.
 //
 // THE ICE is F4's balance-flux inversion (surface/iceFlow.ts, the raster
-// forerunner) on the mesh: the mass balance per node from the epoch's
-// coarse climate brought to the node's height by the lapse, routed down
+// forerunner, gone since DEC-0036 phase 7) on the mesh: the mass balance
+// per node from the climate sampled at the node (climate/climatePoints.ts)
+// at the node's own height by the lapse, routed down
 // the steepest descent of the ice SURFACE (rock plus ice) into a flux,
 // the thickness from the flux and the slope by Glen's law, a dozen rounds
 // to the fixed point. Ice equilibrates in millennia and an epoch is a
 // million years, so the steady state IS the epoch's ice. The equilibrium
-// line (ELA) per climate cell is where that balance crosses zero.
+// line (ELA) per node is where that balance crosses zero.
 //
 // THE EROSION goes with the basal sliding, thickness × surface slope
 // (Hallet): a thick glacier in a steep valley cuts, a flat sheet's
@@ -60,27 +61,17 @@ export interface MeshIceResult {
 export interface MeshIceInputs {
   mesh: PeriodicTriangulation
   z: Float32Array
-  // The climate grid's temperature, precipitation and the terrain's mean
-  // height per climate cell (elevation units) — the lapse's reference.
-  temperature: Float32Array
-  precipitation: Float32Array
-  coarseZ: Float32Array
-  climateResX: number
-  climateResY: number
-  width: number
-  height: number
+  // Per slot, the climate sampled at the nodes (climate/climatePoints.ts):
+  // the air temperature reduced to sea level, °C — each node takes its own
+  // lapse — and the precipitation, mm/yr (OCEAN_PRECIP on the sea).
+  seaLevelTemperature: ArrayLike<number>
+  precipitation: ArrayLike<number>
   // Metres per domain unit.
   cellM: number
 }
 
-function cellOf(x: number, y: number, RX: number, RY: number, width: number, height: number): number {
-  const cx = Math.min(RX - 1, Math.max(0, Math.floor((x / width) * RX)))
-  const cy = Math.min(RY - 1, Math.max(0, Math.floor((y / height) * RY)))
-  return cy * RX + cx
-}
-
-// The mass balance at a height, m/yr, from a climate cell's temperature
-// (at its mean height) and precipitation: the snow share of the rain, the
+// The mass balance at a height, m/yr, from a temperature `tc` at the
+// height `zc` and the precipitation: the snow share of the rain, the
 // degree-day melt on the annual mean.
 function balanceAt(zUnits: number, tc: number, zc: number, p: number): number {
   const t = SURFACE_TUNING
@@ -91,38 +82,29 @@ function balanceAt(zUnits: number, tc: number, zc: number, p: number): number {
   return accumulation - melt
 }
 
-// The equilibrium line per climate cell, metres: the height where the
-// balance crosses zero (bisection; the balance falls with warmth, so it
-// rises with height). Above every height: the cell never holds ice;
-// below sea level: always.
-export function equilibriumLines(temperature: Float32Array, precipitation: Float32Array, coarseZ: Float32Array): Float32Array {
-  const ela = new Float32Array(temperature.length)
-  for (let i = 0; i < ela.length; i++) {
-    let p = precipitation[i]
-    if (p === OCEAN_PRECIP || p < 0) p = 0
-    const tc = temperature[i]
-    const zc = coarseZ[i]
-    let lo = 0
-    let hi = 1
-    if (balanceAt(hi, tc, zc, p) <= 0) { ela[i] = ELEVATION_METERS * 2; continue }
-    if (balanceAt(lo, tc, zc, p) >= 0) { ela[i] = 0; continue }
-    for (let k = 0; k < 24; k++) {
-      const mid = 0.5 * (lo + hi)
-      if (balanceAt(mid, tc, zc, p) > 0) hi = mid
-      else lo = mid
-    }
-    ela[i] = 0.5 * (lo + hi) * ELEVATION_METERS
+// The equilibrium line under a sea-level temperature and a precipitation,
+// metres: the height where the balance crosses zero (bisection; the
+// balance falls with warmth, so it rises with height). Above every height:
+// the place never holds ice; below sea level: always.
+function equilibriumLine(seaLevelC: number, p: number): number {
+  let lo = 0
+  let hi = 1
+  if (balanceAt(hi, seaLevelC, SEA_LEVEL, p) <= 0) return ELEVATION_METERS * 2
+  if (balanceAt(lo, seaLevelC, SEA_LEVEL, p) >= 0) return 0
+  for (let k = 0; k < 24; k++) {
+    const mid = 0.5 * (lo + hi)
+    if (balanceAt(mid, seaLevelC, SEA_LEVEL, p) > 0) hi = mid
+    else lo = mid
   }
-  return ela
+  return 0.5 * (lo + hi) * ELEVATION_METERS
 }
 
 export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
-  const { mesh, z, temperature, precipitation, coarseZ, climateResX: RX, climateResY: RY, width, height, cellM } = input
+  const { mesh, z, seaLevelTemperature, precipitation, cellM } = input
   const t = SURFACE_TUNING
   const slots = mesh.vertexSlots
   const balance = new Float32Array(slots)
   const elaM = new Float32Array(slots)
-  const ela = equilibriumLines(temperature, precipitation, coarseZ)
   const thickness = new Float32Array(slots)
   const receiver = new Int32Array(slots).fill(-1)
   const slope = new Float32Array(slots)
@@ -130,13 +112,12 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
   const land: number[] = []
   for (let v = 0; v < slots; v++) {
     if (!mesh.vAlive[v]) continue
-    const c = cellOf(mesh.vx[v], mesh.vy[v], RX, RY, width, height)
-    elaM[v] = ela[c]
+    let p = precipitation[v]
+    if (p === OCEAN_PRECIP || p < 0) p = 0
+    elaM[v] = equilibriumLine(seaLevelTemperature[v], p)
     if (z[v] <= SEA_LEVEL) continue
     land.push(v)
-    let p = precipitation[c]
-    if (p === OCEAN_PRECIP || p < 0) p = 0
-    balance[v] = balanceAt(z[v], temperature[c], coarseZ[c], p)
+    balance[v] = balanceAt(z[v], seaLevelTemperature[v], SEA_LEVEL, p)
     if (balance[v] > 0) iceable++
   }
   const order = Int32Array.from(land)
@@ -391,4 +372,19 @@ function spreadTill(mesh: PeriodicTriangulation, at: number, volumeM3: number, c
   }
   const h = volumeM3 / area
   for (const u of nodes) tillM[u] += h
+}
+
+// The ice on a raster (the history's rasterised, the hydrology stage's
+// map): its invariants, check name → violations. (F4's raster ice,
+// surface/iceFlow.ts, whose result this checked, went with the climate's
+// raster in DEC-0036 phase 7: a world's ice is the mesh's, here.)
+export function iceInvariants(result: { thickness: Float32Array }, elevation: Float32Array): Record<string, number> {
+  const out: Record<string, number> = { nonNegative: 0, finite: 0, onLand: 0 }
+  for (let c = 0; c < result.thickness.length; c++) {
+    const h = result.thickness[c]
+    if (!Number.isFinite(h)) out.finite++
+    if (h < 0) out.nonNegative++
+    if (h > 0 && elevation[c] <= SEA_LEVEL) out.onLand++
+  }
+  return out
 }

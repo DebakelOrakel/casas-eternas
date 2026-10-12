@@ -21,6 +21,10 @@
 // field meshes of their own (DEC-0036) and are NOT here: the save holds
 // their mesh values (oceanAge.f64, mantle.f64, refined/ — see
 // refinedFields.ts) for the generator's restore, not queryable layers.
+// The annual climate and the land fields are here although the save holds
+// them as mesh values too (climateFields.ts, DEC-0036 phase 7): the reader
+// (world/query.ts) rasterises them for its views — the climate's on its
+// chart (`climate`, 256 × 128), the land's per node on the world raster.
 // Whether oceanAge should become one is an open question in
 // queryable-world-save.md, and this registry is where it would land if it
 // does.
@@ -51,13 +55,13 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   climate('landMask', '', false),
   climate('temperature', '°C', false),
   climate('precipitation', 'mm/yr', true),
-  climate('precipitationEffective', 'mm/yr', true),
   world('biome', 'biomeId', false),
   climate('seasonalAmplitude', '°C', true),
   climate('monsoonIndex', '', true),
   // The Köppen–Geiger class id (generator/climate/koppen.ts KOPPEN_CODES),
-  // 0 on the sea; the refinement's when the world has one.
-  climate('koppen', 'koppenId', false),
+  // 0 on the sea; the refinement's when the world has one. Per node since
+  // DEC-0036 phase 7, its own lapse at every node.
+  world('koppen', 'koppenId', false),
   world('lakeDepth', 'depth', true),
   // The water table's depth below the surface, metres (phase 5a); 0 at a
   // channel or a seep, the depth of a well elsewhere.

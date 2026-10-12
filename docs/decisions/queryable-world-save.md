@@ -17,7 +17,7 @@ summary.de: Das Welt-Save wird zu einem selbstbeschreibenden, ABFRAGBAREN Datens
 area: platform
 stage: building
 createdAt: 2026-07-26
-updatedAt: 2026-09-20
+updatedAt: 2026-10-12
 related: [DEC-0005, DEC-0033, DES-0014]
 ---
 
@@ -224,6 +224,8 @@ Round-trip (bake→decode→sample) verified within quantisation error.
 
 **Baked now:** landMask, temperature, precipitation, biome, seasonalAmplitude,
 monsoonIndex, lakeDepth, the 14 ecology fields, elevation (f32), discharge.
+(Since 2026-10-12 only elevation, lakeDepth, discharge and the forcing are
+raster layers — see the last addendum.)
 
 **`precipitationEffective` added 2026-08-09.** The climate's precipitation plus
 the riparian bonus — rivers and lakes moistening their surroundings — i.e. the
@@ -292,6 +294,32 @@ restoration.
 
 An older save that predates the `landMask` layer is left as it is rather than
 guessed at.
+
+## Addendum 2026-10-12 — the climate and the land fields as mesh values
+
+DEC-0036 phase 7 (decisions/fields-on-meshes.md, fork 5 as revised: no
+raster field in the save) took the climate and the land fields out of the
+raster layers. The save holds the annual climate per cell of the climate's
+field mesh (`climate.json` + `climate/*.f32`: the temperature reduced to sea
+level, the rain, the seasonal range, the monsoon index) and the biome, the
+Köppen class and the water table per node of the saved mesh
+(`mesh/biome.u8`, `mesh/koppen.u8`, `mesh/waterTable.f32`); the layers
+`landMask`, `temperature`, `precipitation`, `precipitationEffective`,
+`biome`, `seasonalAmplitude`, `monsoonIndex`, `koppen` and `waterTable` are
+gone, and with them `restoreLandOnlySentinel` (the addendum above) and the
+world map's reclassification from them. Left as raster layers: `elevation`,
+`lakeDepth`, `discharge` (the hydrology's, until its own move) and the
+forcing's `uplift` / `erodibility`.
+
+The reader still answers by name: `world/query.ts` rasterises a mesh-valued
+field when it is acquired — the climate's on its 256 × 128 chart
+(`climate/climateChart.cellsChart`, the sea's mark on the chart's sea, the
+temperature at each pixel's texel height), a land field on the world raster
+from the nodes of the triangle under each pixel (a land pixel the land
+nodes', an id the heaviest). So a consumer of `acquire('biome')` sees a
+2048 × 1024 raster as before; what it needs is the generator's mesh codec
+and field mesh, not its climate or ecology code. The artifact key's
+`worldId` hashes the climate's cells in place of the precipitation raster.
 
 ## Status
 

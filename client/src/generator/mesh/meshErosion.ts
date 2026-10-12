@@ -331,7 +331,7 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
 // are the exact spherical cells (voronoiArea). An exact facet would be a
 // second geometry path here for a change below the engine's own
 // discretisation error.
-function cotAtApex(mesh: PeriodicTriangulation, e: number, f: Float64Array): number {
+export function cotAtApex(mesh: PeriodicTriangulation, e: number, f: Float64Array): number {
   const t = mesh.triangleOf(e)
   const i = e - 3 * t
   mesh.frame(t, f)

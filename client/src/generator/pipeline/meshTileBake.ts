@@ -1,4 +1,5 @@
 import type { Domain } from '../core/domain'
+import { climateAtPoints, climateCellsFromSaved, type ClimateCellValues } from '../climate/climatePoints'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { DEFAULT_ROUTING_EVERY, runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { meshAreas } from '../mesh/meshHydrology'
@@ -33,7 +34,7 @@ import type { RiverGraph } from '../surface/riverGraph'
 //   the tile below.
 //
 // The water weights are normalised by the WORLD's mean land water
-// (`meanLandWater`, hydrology.meanLandRunoff on the macro grid), not by
+// (`meanLandWater`, climatePoints.meanLandRunoff over the climate's land), not by
 // the tile's: the discharge a crossing river carries is in the same unit
 // then — the hydrology's mm/yr over contributing cells divided by that
 // mean is the engine's weighted area exactly.
@@ -51,10 +52,10 @@ export interface TileBakeInputs {
   erodibility: Float32Array | null
   forcingResX: number
   forcingResY: number
-  precipitation: Float32Array | null
-  climateResX: number
-  climateResY: number
-  // The world's mean land water, mm/yr (hydrology.meanLandRunoff).
+  // The save's climate per cell of its field mesh (world/save/
+  // climateFields.ts), sampled at the tile's nodes; null: uniform water.
+  climate: ClimateCellValues | null
+  // The world's mean land water, mm/yr (climatePoints.meanLandRunoff).
   meanLandWater: number
   // The upstream tiles of the same level, with their outflow (empty for
   // none): a crossing from one of these comes from its outflow, not from
@@ -112,10 +113,17 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
     ys[v] = world.wrapY(tile.originY + mesh.vy[v])
   }
   const areas = meshAreas(mesh)
+  // The water at the tile's nodes: the climate's cells sampled there.
+  let waterNodes: Float32Array | null = null
+  if (inputs.climate) {
+    const land = new Uint8Array(slots)
+    for (let v = 0; v < slots; v++) if (mesh.vAlive[v] && tile.z[v] > SEA_LEVEL) land[v] = 1
+    waterNodes = climateAtPoints(climateCellsFromSaved(world, inputs.climate), { count: slots, x: xs, y: ys, height: tile.z, land, dry: null, alive: mesh.vAlive }).precipitation
+  }
   const coarse = {
     uplift: inputs.uplift, hardness: inputs.erodibility,
     forcingResX: inputs.forcingResX || 1, forcingResY: inputs.forcingResY || 1,
-    water: inputs.precipitation, waterResX: inputs.climateResX || 1, waterResY: inputs.climateResY || 1,
+    water: null, waterResX: 1, waterResY: 1, waterNodes,
     lithoSeed: inputs.lithoSeed,
   }
   const { forcing, params } = assembleNodeForcing(coarse, xs, ys, mesh.vAlive, slots, tile.z, areas, world, inputs.controls, inputs.meanLandWater > 0 ? inputs.meanLandWater : undefined)

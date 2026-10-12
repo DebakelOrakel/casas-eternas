@@ -78,12 +78,15 @@ export interface CoastGraphInputs {
   // The world's topology; the raster above is its grid, one cell per
   // world unit, so a cell's (x, y) is a world point.
   domain: Domain
-  // The climate grid's wind, interleaved [u, v] (climate/wind.ts).
-  wind: Float32Array
-  climateResX: number
-  climateResY: number
-  // The erodibility K factor on the climate grid, or absent (neutral).
+  // The wind at a world point, east and south in its own frame
+  // (climate/wind.ts's units), into `out`: the climate's field mesh read
+  // there (climate/climatePoints.ts's cells).
+  windAt: (x: number, y: number, out: { x: number; y: number }) => void
+  // The erodibility K factor on the forcing's raster (forcingResX ×
+  // forcingResY, erosionForcing.coarseForcingFields), or absent (neutral).
   hardness?: Float32Array
+  forcingResX?: number
+  forcingResY?: number
   graph: RiverGraph | null
   cellM: number
 }
@@ -125,7 +128,9 @@ function nearestCoastCell(coast: Uint8Array, cell: number, grid: DomainGrid, rad
 }
 
 export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
-  const { elevation, width, height, domain, wind, climateResX, climateResY, hardness, graph, cellM } = input
+  const { elevation, width, height, domain, windAt, hardness, graph, cellM } = input
+  const fx = input.forcingResX ?? 1
+  const fy = input.forcingResY ?? 1
   const n = width * height
   const cellKm = cellM / 1000
   const isSea = (c: number): boolean => elevation[c] <= SEA_LEVEL
@@ -176,16 +181,15 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
   const fetchCap = Math.max(1, Math.round((SURFACE_TUNING.coastFetchCapKm * 1000) / cellM))
   const march = { x: 0, y: 0 }
   const moved = { x: 0, y: 0 }
+  const windHere = { x: 0, y: 0 }
   let maxExposure = 0
   for (let c = 0; c < n; c++) {
     if (!coast[c]) continue
     const x = c % width
     const y = (c - x) / width
-    const gx = Math.min(climateResX - 1, Math.floor((x / width) * climateResX))
-    const gy = Math.min(climateResY - 1, Math.floor((y / height) * climateResY))
-    const gi = gy * climateResX + gx
-    const u = wind[gi * 2]
-    const v = wind[gi * 2 + 1]
+    windAt(x + 0.5, y + 0.5, windHere)
+    const u = windHere.x
+    const v = windHere.y
     const speed = detHypot(u, v)
     if (speed > 1e-6) {
       // March upwind over the sea, one cell per step: on the sphere along
@@ -214,7 +218,7 @@ export function buildCoastGraph(input: CoastGraphInputs): CoastGraph {
       if (!isSea(nb) && elevation[nb] > top) top = elevation[nb]
     }
     relief[c] = elevationToMeters(top - SEA_LEVEL)
-    hard[c] = hardness ? hardness[gi] : 1
+    hard[c] = hardness ? hardness[Math.min(fy - 1, Math.floor((y / height) * fy)) * fx + Math.min(fx - 1, Math.floor((x / width) * fx))] : 1
   }
   void maxExposure
   normaliseToP90(exposure, coast)

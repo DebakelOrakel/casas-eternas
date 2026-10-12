@@ -147,7 +147,7 @@ export const STAGES: readonly Stage[] = [
     inputs: {},
     // Rewrites `biome` for riparian and salt-flat cells. River polylines and
     // watersheds are drawn but not registered fields.
-    outputs: ['discharge', 'lakeDepth', 'precipitationEffective', 'biome'],
+    outputs: ['discharge', 'lakeDepth', 'biome', 'waterTable'],
   },
   {
     id: 'ecology',

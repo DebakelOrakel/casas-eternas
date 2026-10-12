@@ -197,6 +197,235 @@ done before or beside it.
 
 ## Status
 
+2026-10-12: phase 7 BUILT — the biomes, the Köppen classes, the ecology
+with its resources and the hydrogeology on the adaptive terrain mesh
+(fork 2), both shapes, one path; every reader of the climate outside it
+samples the climate's field mesh at its own points. No stage reads a
+climate raster any more, and no climate, biome or ecology raster is left
+in the save.
+
+**The inventory** (what still computed on, or read, the 2:1 raster at the
+start): the transition adapters — weather.ts's rasters (temperature, wind,
+seasonal range, rain, monsoon, currents, their anomaly), climateMesh's
+`climateRaster`, `climateVectorRaster`, `climateSeaRaster`,
+`climateSeaVectorRaster`, `climateLandRaster`, `climateLandOnlyRaster`
+(with `rasterLand`) and `refinement.refinedRasters`; their readers — the
+biomes (`computeBiomes`, `computeBiomesFine`, the two `…FromMonths`, the
+Köppen fields), the riparian biomes (a bleed over the climate grid), the
+ecology (windows over the 2048 raster, halos, oases, slope, ecotones,
+`ClimatePixel`), the hydrogeology (the nearest climate cell), the lakes,
+the discharge and the regime (the nearest cell), the mean runoff, the
+history's ice (`computeIceOnMesh` with the cell's temperature and the
+coarse heights), F4's raster ice (`computeIceThickness`, the hydrology's
+fallback), the coast (the history's fetch walked over the climate raster,
+the coast graph's wind), the column's ledger (`upsampleAt` of the
+rasters), the history's cover (coarse biomes), its sea level and land
+temperature (raster areas), its water forcing, the bakes (the save's
+climate layers), the world id (the precipitation layer), world/query, the
+incubator and the screen. The hydrology's own raster parts: the raster
+routing and its discharge (the map's and the save's discharge layer, the
+watersheds), the coast graph, the sediment basins and the lakes' raster
+recovery (`waterFieldsFromMesh`, a rasterisation).
+
+**The scope.** In: all of the above but the hydrology's raster parts. Out,
+proposed as **phase 7b**: the raster routing, its discharge layer, the
+watersheds, the coast graph and the sediment basins onto the mesh. They
+are raster simulation (fork 1), but moving them changes what the save's
+`discharge` layer and its `coast.json` cells mean and needs a mesh form of
+each algorithm — a phase of its own. Until then the raster routing reads
+the nodes' rain drawn onto the world raster, the one adapter left (marked
+`removed in phase 7b`).
+
+**The method.** `climate/climatePoints.ts`: the climate as its readers
+need it, per cell (`ClimateCells`, Float32) — the temperature REDUCED TO
+SEA LEVEL by the rule computeTemperature applied (the cell's own lapse
+taken off), the land fields with their sea marks, the refinement's months,
+upwelling and rain reliability, the year's wind — and `climateAtPoints`:
+at a point the triangle's corners, the temperature less the point's OWN
+lapse (so a treeline follows the relief and a summit's cold does not
+bleed into the valley), a land field over the land corners only,
+renormalised, an island under a cell its latitude's land mean (the
+former grid's island rule), the monsoon index as a magnitude with the
+heaviest land corner's sign, a sea field over the sea corners. The
+biomes and the Köppen classes per point (`biomes.classifyPoints`: the
+months when refined, else the annual figures' synthesized months; Alpine
+above the treeline). The riparian bonus per node
+(`hydrology.riparianPrecipitationOn`): a strength per lake and channel
+node, carried to the land by a multi-source Dijkstra over the links with
+riparianDecay per riparianDecayLengthM, the strongest reach kept. The
+ecology per node (`ecology/ecologyField.ts`): a reach is the cells the
+disc of radius r reaches, each taken as the disc of its own area and a
+mean weighing each by the area of the lens the two share
+(`mesh/meshNeighbourhood.ts`) — on a 7.8 km raster a reach of one pixel
+is the old 3 × 3 window; on a coarse land node the 8 km water reach is
+the node itself, the water the mesh resolves —, a deposit's halo a
+Gaussian of the true distance (the globe's arc on the sphere), an oasis
+the cells its reach touches, the slope Green–Gauss over the Voronoi cell,
+the ecotone the share of a cell's walls facing another biome per unit of
+area in the unit a 7.8 km pixel counted it in. The history's epoch reads
+the climate at its nodes too: the ice (the sea-level temperature and the
+rain per node), the column's ledger, the cover, the water forcing
+(`assembleNodeForcing`'s `waterNodes`), the coast's wind, its fetch walked
+over the terrain mesh's own surface; its sea level and mean land
+temperature by the climate mesh's cell areas. A world restored without a
+mesh gets, at its first stage after the history, the mesh its first
+epoch would build (`runtime.landTerrain`; the build is a function of the
+plates, so the epoch then starts from the same mesh).
+
+**The display** (fork 5: the chart is the address and the textures):
+`climate/climateChart.ts` draws the climate's fields on their 256 × 128
+chart for the screen and a save's readers — the former transition
+functions, read by no stage. A land field per node goes onto the world
+raster by `meshRaster.rasteriseNodePart` (a land pixel reads only its
+triangle's land corners — the heaviest for an id —, never a blend with
+the sea); the pixels' triangles are located once per terrain mesh
+(`triangleRaster`, 12 bytes a pixel) and every layer reuses them. The
+screen still reads rasters: the hover readout samples the world raster
+the nodes were drawn on (one pixel, the mesh's value there), not the mesh
+itself.
+
+**Constants converted** (the torus's 7.8 km pixel and 62.4 km climate
+cell, no calibration):
+
+| Was | Now |
+|---|---|
+| copperRadiusFrac 0.02, tinRadiusFrac 0.019, obsidianRadiusFrac 0.015 (× 1024 pixels) | copperRadiusM 159 744, tinRadiusM 151 757, obsidianRadiusM 119 808 |
+| goldLodeRadiusFrac 0.015, silverRadiusFrac 0.018, gemRadiusFrac 0.014 | goldLodeRadiusM 119 808, silverRadiusM 143 770, gemRadiusM 111 821 |
+| volcanicProvinceRadiusFrac 0.05 | volcanicProvinceRadiusM 399 360 |
+| the slope as a pixel's rise × 8 (pxPerCell) | flatnessRunM 62 400 |
+| the ecotone: the share of a pixel's four neighbours | ecotoneCountedOnM 7 800 (the boundary's length per area in that unit) |
+| coastReachM, waterReachM, placerReachM, ecotoneReachM rounded to pixels (4, 1, 4, 2) | the metres themselves |
+| riparianSpread 1 climate cell, riparianDecay 0.45 per cell | riparianReachM 62 400, riparianDecayLengthM 62 400, riparianDecay 0.45 |
+| the coast's fetch: a climate cell a step | coastFetchStepM 62 400 |
+
+**Transition adapters.** Removed: weather.ts's rasters, climateMesh's six
+transition functions and `rasterLand`, `refinement.refinedRasters` (their
+drawing lives on in climateChart, read by no stage). Gone with them: the
+raster biome functions (`computeBiomes`, `computeBiomesFine`,
+`…FromMonths`, `computeKoppenField`, `koppenFromMonths`,
+`reduceTemperatureToSeaLevel`, `sampleLandBilinear`),
+`computeRiparianBiomes`, `ClimatePixel` and the ecology's raster windows
+and pole-row averaging, `meanLandRunoff` on the raster (now over the
+climate's land cells), F4's raster ice (`surface/iceFlow.ts`; its
+invariants moved to glacial.ts), climateField's raster helpers
+(`zonalLandMean`, `isLandAtCell`, `sampleDryLandAtCell`), the save's
+`restoreLandOnlySentinel`, and the world map's reclassification from the
+saved climate layers (map/mapPresentation.ts, waiting for its screen, now
+upsamples the saved biome ids). Left: one, the raster routing's rain
+(phase 7b). Not a DEC-0036 stage and still on the climate's chart: the
+migration (its own screen, later), fed the chart's rain.
+
+**What remains on the raster, and why:** the hydrology's raster parts
+(7b, above); the lakes' raster recovery and the elevation raster (the
+save's own step); the climate's terrain read from a raster
+(`climateTerrain`: the texel under a cell's centre, the cell's mean); the
+erosion forcing (`uplift`, `erodibility` at 256 × 128) and the craton
+oldness raster, crust fields read at the nodes (nearest, bilinear over
+the crust); the screen's textures and readouts.
+
+**Save** (fork 5 as revised, formatVersion 8 kept): the layers
+`landMask`, `temperature`, `precipitation`, `precipitationEffective`,
+`seasonalAmplitude`, `monsoonIndex`, `koppen`, `waterTable` and `biome`
+are gone (the ecology layers went in formatVersion 7). In their place the
+annual climate per cell of the climate's mesh — `climate.json` +
+`climate/{seaLevelTemperature, precipitation, seasonalAmplitude,
+monsoonIndex}.f32`, Float32, the climate the land fields came from: the
+refinement's year when refined, else the static climate the hydrology
+settled — and the land fields per node of the saved mesh: `mesh/biome.u8`,
+`mesh/koppen.u8`, `mesh/waterTable.f32` (world/save/climateFields.ts).
+Stored rather than recomputed for the save's READERS: the generator
+recomputes all of them on load as before (the climate is the restore
+chain's first step, then the hydrology, then the ecology —
+`catchUpAfterRestore`; fast and deterministic), but a bake samples the
+climate at its own nodes and a game server asks a biome without the
+generator's code. A save with the old layers and no `climate.json` is
+refused. Readers switched: world/query (rasterises them for its views:
+the climate on its chart, the land fields on the world raster), the world
+id (hashes the climate's cells in place of the precipitation layer), the
+level bake and the tile bake (sample the saved cells at their nodes;
+`meanLandRunoff` over the climate's land cells), the job worker's replay
+(the last epoch's climate at the level's nodes), the incubator (the
+climate's rain in place of the riparian one). The Go server never read
+them.
+
+**Measured** (2048 × 1024, seed `bench`, 100 Archean + 12 coupled epochs
+at HISTORY_DEFAULTS, then the climate, the refinement, the hydrology and
+the ecology through the runtime; Node, one thread):
+
+| | torus HEAD | torus mesh | sphere HEAD | sphere mesh |
+|---|---|---|---|---|
+| climateRun (the climate, its chart, the biomes at the nodes, their rasters) | 558 ms | 940 ms | 606 ms | 1048 ms |
+| climateRefine | 5.86 s | 5.90 s | 5.69 s | 5.86 s |
+| hydrologyRun | 5.61 s | 5.20 s | 7.38 s | 6.78 s |
+| ecologyRun, first | 1669 ms | 971 ms | 2586 ms | 1996 ms |
+| ecologyRun, a slider moved | 277 ms | 333 ms | 301 ms | 378 ms |
+| ecologyMonth | 395 ms | 70 ms | 396 ms | 77 ms |
+| the whole save | 20.03 MB | 20.02 MB | 21.86 MB | 21.85 MB |
+
+The parts (direct calls on the same chain, torus / sphere): the climate at
+the nodes 47 / 59 ms; the biomes 22 / 25 ms (HEAD's coarse and fine from
+months 82 / 104); the riparian bonus and its biomes 28 / 52 ms (HEAD
+139 / 205); the hydrogeology 14 / 31 ms (HEAD 18 / 31); prepareEcology
+553 / 1009 ms (HEAD 1254 / 1903), applyEcology 10 / 13 ms (HEAD 177 /
+224); the pixels' triangles 446 / 526 ms once per terrain mesh, then a
+layer ~10 ms (the fourteen ecology layers with their climate-cell means
+653 / 810 ms including the triangles); the climate's chart 40 / 51 ms,
+the refinement's 412 / 497 ms. The history's epoch 1411 → 1591 ms
+(torus), 1996 → 2097 ms (sphere): the climate sampled at the nodes twice
+an epoch, the biomes classified there.
+
+The biomes' shares of the land (the map's, the riparian corridors, salt
+flats and glaciers included), HEAD → mesh: torus temperate forest 18.6 →
+17.3 %, glacier 15.7 → 15.6, tropical rainforest 14.8 → 13.5, boreal
+11.3 → 13.7, tundra 9.1 → 6.3, temperate rainforest 6.6 → 6.2, steppe 5.8
+→ 6.5, savanna 5.3 → 6.3, dry forest 5.1 → 5.4, woodland 3.4 → 3.3; sphere
+temperate forest 19.5 → 17.0, tropical rainforest 16.7 → 16.3, woodland
+14.0 → 12.4, steppe 10.9 → 11.8, desert 9.4 → 13.0, cold desert 5.9 → 7.0,
+boreal 5.3 → 5.2, savanna 4.0 → 5.2. Resource means over the scored
+pixels (HEAD → mesh), torus / sphere: carrying capacity 0.441 → 0.467 /
+0.482 → 0.495, arable 0.167 → 0.175 / 0.200 → 0.212, fish 0.113 → 0.114 /
+0.112 → 0.113, game 0.348 → 0.350 / 0.340 → 0.333, pasture 0.279 → 0.290
+/ 0.328 → 0.337, timber 0.549 → 0.552 / 0.529 → 0.484, salt 0.018 → 0.018
+/ 0.074 → 0.074, iron 0.151 → 0.156 / 0.174 → 0.178, gold 0.058 → 0.061 /
+0.054 → 0.058, copper 0.053 → 0.053 / 0.041 → 0.029, silver 0.024 →
+0.024 / 0.026 → 0.017. On Earth's relief (scripts/earthClimate.mjs, each
+place sampled at its own height): Köppen groups the same shares, places
+16/47 classes and 31 → 32/47 groups, January's error 3.6 → 3.4 °C.
+
+**Checks.** `harness:pipeline`'s sphere checks of the ecology now hold the
+pole (the fine raster's first row is the pole itself: one value, land and
+sea apart) in place of the averaged pole rows, and the halo's check runs
+on a geodesic lattice of the 2048 sphere (east-west / north-south 0.98 at
+75°, the equator's 0.98, the half-maximum 19.4 / 19.7 units against
+σ√(2 ln 2) = 19.3; the chart's mutation 0.26 = cos 75°). `harness:
+roundtrip` holds the climate and the land fields bit for bit, the refusal
+of the old layers, the world id over the climate's cells and the query's
+chart. The sphere history's seam check compares the mean step across x =
+0 with the mean step inside (at most twice): the largest single step was
+compared before, and the new world's steepest continental slope crosses
+x = 0 (0.140 against 0.121 inside, the mesh's nodes as steep there).
+Found, not fixed: the mean step across x = 0 is 1.8 × the inner mean on
+HEAD's world too (0.0109 against 0.0062; the mesh world 0.0109 against
+0.0058) — a small systematic step at the sphere's chart seam, older than
+this phase.
+
+**Golden**: 0 hard failures, 153 metrics drifted, 120 of 138 stages moved
+(the history's climate reads at the nodes feed the relief; the plates,
+the mantle, the ocean age and the lattice unchanged), coverage kept (88
+metrics vary; the biome shares are now the map's per pixel, the
+climate's means per cell of its mesh). No seed changed. Main shifts: ice
+volume −13 / −23 / −22 %, lake cells −19 %
+(calibration, zulu), zulu's largest discharge ×2.7 (not traced; its
+placer gold, read against it, −62 %), timber +11 / +25 / +33 % and
+pasture −7 / −12 / −13 % — golden's chain now classifies the ecology's
+biomes with the riparian bonus, as the worker always did (HEAD's golden
+left it out); on the bench world through the runtime timber moved by
++0.5 % (torus) —, the springs +4 / +5 / +10 %, the water table's median
++19 / +35 / +10 %, the land fraction −2.0 / −1.1 / −0.5 %, the climate's
+mean temperature unchanged to 0.01 °C.
+`golden.json` re-recorded and the byte guard re-armed: 0 / 0 / 0, 46
+stages byte-identical × 3.
+
 2026-10-12: phase 6 BUILT — the flexure on the climate's field mesh, both
 shapes, one path (`tectonics/flexure.ts`, its caller in
 `pipeline/coupledEpoch.ts`). The convolution on a 512 × 256 raster (a

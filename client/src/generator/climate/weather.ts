@@ -2,13 +2,11 @@ import { computeTemperature } from './temperature'
 import { DEFAULT_PLANET_FORCING, type PlanetForcing } from '../planet/planetForcing'
 import { computeWind, type CellVectors } from './wind'
 import { applyOceanSST, computeOceanCurrents, type OceanCurrents } from './oceanCurrents'
-import { computeSeasonalAmplitude, OCEAN_AMPLITUDE } from './seasonality'
+import { computeSeasonalAmplitude } from './seasonality'
 import { computeSeasonalPrecipitation } from './monsoon'
 import type { SeasonalPrecipitation } from './monsoon'
 import { CLIMATE_INPUTS } from './climateInputParams'
-import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climateField'
-import { OCEAN_PRECIP } from './precipitation'
-import { climateLandRaster, climateRaster, climateSeaRaster, climateSeaVectorRaster, climateVectorRaster, rasterLand, type ClimateTerrain } from './climateMesh'
+import type { ClimateTerrain } from './climateMesh'
 
 // The METEOROLOGY of one terrain — the load-bearing chain base temperature →
 // wind → ocean currents (SST adjusts temperature) → seasonal amplitude →
@@ -26,8 +24,8 @@ import { climateLandRaster, climateRaster, climateSeaRaster, climateSeaVectorRas
 // the temperature, the wind, the ocean currents and the sea surface they
 // make, the seasonality and the rain are computed per cell of one mesh,
 // both shapes; `mesh` holds them. Everything that reads the climate outside
-// these stages reads the climate raster until its own phase — the
-// TRANSITION adapters below, each marked for the phase that removes it.
+// these stages samples its cells at its own points (climatePoints.ts,
+// DEC-0036 phase 7); the screen's textures are its chart (climateChart.ts).
 
 export interface WeatherParams {
   // °C added to the latitudinal band.
@@ -74,27 +72,11 @@ export interface WeatherMesh {
 export interface Weather {
   terrain: ClimateTerrain
   mesh: WeatherMesh
-  // DEC-0036 transition: the climate raster (CLIMATE_RES_X × CLIMATE_RES_Y)
-  // of the fields above, for the readers that keep it until their phase —
-  // removed in phase 7 (biomes, ecology, hydrology, the ice, the coast, the
-  // ledger, the save's layers, the screen's overlays). Land fields carry
-  // their sentinel on the raster's sea (climateMesh.climateLandRaster), the
-  // sea's fields 0 on the raster's land (rasterLand).
-  temperature: Float32Array
-  wind: Float32Array
-  seasonalAmplitude: Float32Array
-  seasonal: { annual: Float32Array; index: Float32Array }
-  // The currents ([east, south] per pixel in its own frame) and their SST
-  // anomaly (°C), 0 on the raster's land.
-  currents: Float32Array
-  currentAnomaly: Float32Array
 }
 
 export function computeWeather(terrain: ClimateTerrain, params: WeatherParams): Weather {
   const planet = params.planet ?? DEFAULT_PLANET_FORCING
   const { cm } = terrain
-  const RX = CLIMATE_RES_X
-  const RY = CLIMATE_RES_Y
   const temperature = computeTemperature(terrain, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, planet)
   const wind = computeWind(cm, params.equatorOffset, planet.rotationHours)
 
@@ -106,20 +88,5 @@ export function computeWeather(terrain: ClimateTerrain, params: WeatherParams): 
   const seasonalAmplitude = computeSeasonalAmplitude(terrain, params.equatorOffset, planet)
   const seasonal = computeSeasonalPrecipitation(terrain, temperature, seasonalAmplitude, wind, params.humidity, params.equatorOffset)
 
-  // DEC-0036 transition: removed in phase 7 — the rasters the readers
-  // outside the static climate take.
-  const landPixels = rasterLand(terrain, RX, RY)
-  return {
-    terrain,
-    mesh: { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal },
-    temperature: climateRaster(cm, temperature, RX, RY),
-    wind: climateVectorRaster(cm, wind.e, wind.s, RX, RY),
-    seasonalAmplitude: climateLandRaster(terrain, seasonalAmplitude, OCEAN_AMPLITUDE, RX, RY, landPixels),
-    seasonal: {
-      annual: climateLandRaster(terrain, seasonal.annual, OCEAN_PRECIP, RX, RY, landPixels),
-      index: climateLandRaster(terrain, seasonal.index, OCEAN_PRECIP, RX, RY, landPixels),
-    },
-    currents: climateSeaVectorRaster(cm, currents.e, currents.s, RX, RY, landPixels),
-    currentAnomaly: climateSeaRaster(cm, currentAnomaly, RX, RY, landPixels),
-  }
+  return { terrain, mesh: { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal } }
 }

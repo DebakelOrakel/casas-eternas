@@ -122,13 +122,15 @@ const M = {
   graph: await L('/src/generator/surface/riverGraph.ts'),
   coast: await L('/src/generator/surface/coastGraph.ts'),
   basins: await L('/src/generator/surface/sedimentBasins.ts'),
-  ice: await L('/src/generator/surface/iceFlow.ts'),
+  ice: await L('/src/generator/surface/glacial.ts'),
   engine: await L('/src/generator/surface/erosionEngine.ts'),
   course: await L('/src/generator/surface/riverCourse.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
   climateField: await L('/src/generator/climate/climateField.ts'),
   weather: await L('/src/generator/climate/weather.ts'),
   climateMesh: await L('/src/generator/climate/climateMesh.ts'),
+  climatePoints: await L('/src/generator/climate/climatePoints.ts'),
+  climateChart: await L('/src/generator/climate/climateChart.ts'),
   currents: await L('/src/generator/climate/oceanCurrents.ts'),
   precip: await L('/src/generator/climate/precipitation.ts'),
   seasonality: await L('/src/generator/climate/seasonality.ts'),
@@ -258,115 +260,106 @@ async function buildWorld(seed) {
   // epochs' forcing evaluates the chain per epoch, on the mesh). The
   // post-erosion climate truth is the terminal-basin refinement below,
   // which runs on the same field exactly as the worker's hydrology handler.
-  // On the climate's field mesh since DEC-0036 phase 3 (climate/weather.
+  // On the climate's field mesh (DEC-0036 phase 3, climate/weather.
   // computeWeather, as the worker's computeClimateChain); everything below
-  // reads its transition rasters.
+  // reads it at the terrain mesh's nodes (climate/climatePoints.ts, phase
+  // 7), as the worker's landClimateOf.
   const WEATHER = { temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
+  const CP = M.climatePoints
+  const terrain = staged.terrain
+  const landClimate = (cells, dry = null) => {
+    const points = CP.meshPoints(terrain.mesh, terrain.z, dry)
+    const climate = CP.climateAtPoints(cells, points)
+    return { points, climate, ...M.biomes.classifyPoints(climate, points, sim.domain) }
+  }
   const w1 = M.weather.computeWeather(M.climateMesh.climateTerrain(sim.domain, el, W, H), WEATHER)
-  let temperature = w1.temperature
-  const wind = w1.wind
-  let currents = w1.currents
-  let seasonal = w1.seasonalAmplitude
-  let seasonalPrecip = w1.seasonal
-  let precipitation = seasonalPrecip.annual
-  let biomes = M.biomes.computeBiomes(temperature, precipitation, seasonal, seasonalPrecip.index, el, W, H)
-  // The worker computes BOTH, and only the coarse one was guarded here. The
-  // fine one is what the user sees and what the save bakes (worldLayers marks
-  // `biome` fullRes), so leaving it out meant the harness watched the path with
-  // the fewer consequences. Same arguments as above, deliberately — a
-  // divergence between the two calls would be the harness's own bug.
-  let biomesFine = M.biomes.computeBiomesFine(temperature, precipitation, seasonal, seasonalPrecip.index, el, sim.domain)
-
+  const cells1 = CP.climateCellsFromWeather(w1)
+  let land = landClimate(cells1)
   const routing = await M.routing.fillDepressionsAndRouteFlow(el, sim.domain, 0)
   const CRX = M.climateField.CLIMATE_RES_X, CRY = M.climateField.CLIMATE_RES_Y
-  const meanRunoff = M.hydro.meanLandRunoff(precipitation, el, sim.domain, CRX, CRY)
-  let discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
-  let maxDis = M.hydro.maxDischargeOverLand(discharge, el)
+  // The lakes on the MESH (phase 4.3), exactly as the worker's
+  // hydrologyOnMesh: the mesh's own routing, discharge and basins under the
+  // climate at its nodes, and the raster fields the map reads recovered
+  // from the body list. `meshLakes` keeps the per-node fields.
+  const meshSub = M.meshHydro.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
+  let meshDischarge, meshLakes
+  const lakesOnMesh = (lc) => {
+    meshDischarge = M.hydro.accumulateDischargeOn(meshSub, terrain.z, lc.climate.precipitation)
+    meshLakes = M.hydro.computeLakesOn(meshSub, meshDischarge, terrain.z, lc.climate.temperature, lc.climate.precipitation)
+    return { ...M.meshHydro.waterFieldsFromMesh(terrain.mesh, meshLakes.body, meshLakes.bodies, el, W, H), bodies: meshLakes.bodies }
+  }
+  let lakes = lakesOnMesh(land)
   // Climate refinement, mirroring the worker (k=1) — UNCONDITIONAL since the
   // stage reorder: v1 above described the pre-erosion terrain, so this pass
   // on the eroded field (dry basin floors counted as land) is where the
-  // final climate and biome fields come from. The refined biomes replace
-  // the v1 classification for everything downstream, exactly as
-  // cacheAndPostClimate does in the worker.
-  // The lakes on the MESH (phase 4.3), exactly as the worker's
-  // hydrologyOnMesh: the mesh's own routing, discharge and basins, and
-  // the raster fields the cell-walking consumers read recovered from the
-  // body list. `meshLakes` keeps the per-node fields for the graph.
-  const terrain = staged.terrain
-  const meshSub = M.meshHydro.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
-  let meshDischarge, meshLakes
-  const lakesOnMesh = (temp, precip) => {
-    meshDischarge = M.hydro.accumulateDischargeOn(meshSub, terrain.z, precip, CRX, CRY)
-    meshLakes = M.hydro.computeLakesOn(meshSub, meshDischarge, terrain.z, temp, precip, CRX, CRY)
-    return { ...M.meshHydro.waterFieldsFromMesh(terrain.mesh, meshLakes.body, meshLakes.bodies, el, W, H), bodies: meshLakes.bodies }
-  }
-  let lakes = lakesOnMesh(temperature, precipitation)
+  // final climate and biome fields come from.
   const w2 = M.weather.computeWeather(M.climateMesh.climateTerrain(sim.domain, el, W, H, lakes.dryBasin), WEATHER)
-  const t2 = w2.temperature
-  const c2 = w2.currents
-  const s2 = w2.seasonalAmplitude
-  const sp2 = w2.seasonal
-  precipitation = sp2.annual
-  const biomes2 = M.biomes.computeBiomes(t2, precipitation, s2, sp2.index, el, W, H, lakes.dryBasin)
-  const biomesFine2 = M.biomes.computeBiomesFine(t2, precipitation, s2, sp2.index, el, sim.domain, lakes.dryBasin)
-  discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
-  lakes = lakesOnMesh(t2, precipitation)
+  const cells2 = CP.climateCellsFromWeather(w2)
+  land = landClimate(cells2, meshLakes.dryBasin)
+  lakes = lakesOnMesh(land)
+  const pixelLand = new Uint8Array(W * H)
+  for (let i = 0; i < pixelLand.length; i++) if (el[i] > SEA || lakes.dryBasin[i]) pixelLand[i] = 1
+  // The raster routing's rain (the worker's 7b transition): the nodes'
+  // precipitation on the world raster.
+  const rasterRain = M.meshRaster.rasteriseNodePart(terrain.mesh, land.climate.precipitation, land.points.land, pixelLand, M.precip.OCEAN_PRECIP, W, H, false)
+  const discharge = M.hydro.accumulateDischarge(routing, el, rasterRain)
   // The graph's discharge scale is the mesh's, like the worker's.
-  maxDis = M.hydro.maxDischargeOverLand(meshDischarge, terrain.z)
+  const maxDis = M.hydro.maxDischargeOverLand(meshDischarge, terrain.z)
+  const meanRunoff = CP.meanLandRunoff(cells2)
+  const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), meanRunoff)
+  // The riparian biomes on the nodes, the hydrology states over them —
+  // as the worker.
+  const precipEff = M.hydro.riparianPrecipitationOn(meshSub, terrain.z, meshDischarge, threshold, maxDis, meshLakes.depth, meshLakes.frozen, land.climate.precipitation)
+  const nodeBiome = M.biomes.classifyPoints(land.climate, land.points, sim.domain, precipEff).biome
+  for (let v = 0; v < nodeBiome.length; v++) {
+    if (!land.points.land[v]) continue
+    if (meshLakes.saltFlat[v]) nodeBiome[v] = M.biomes.Biome.SaltFlat
+    if (meshLakes.frozen[v]) nodeBiome[v] = M.biomes.Biome.Glacier
+  }
+  const ecologyBiome = nodeBiome.slice()
   // The feature graph (phase 2) on the mesh (phase 4.3), exactly as the
   // worker builds it after the lakes: the model's one channel threshold,
-  // the refined fine biomes sampled at the nodes as bank material, the
-  // erosion's sediment flux per node as load.
-  const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), meanRunoff)
-  const bankAtNode = new Uint8Array(terrain.mesh.vertexSlots)
-  const rasterGrid = sim.domain.grid(W, H)
-  for (let v = 0; v < bankAtNode.length; v++) if (terrain.mesh.vAlive[v]) bankAtNode[v] = biomesFine2[M.graph.rasterCellAt(terrain.mesh.vx[v], terrain.mesh.vy[v], rasterGrid)]
-  // The flow regime (F6) from the refined climate, like the worker — on
-  // the graph's substrate, and kept for the invariant that re-applies it.
-  const graphRegime = M.hydro.accumulateRegimeInputsOn(meshSub, terrain.z, t2, precipitation, sp2.index, CRX, CRY)
+  // the nodes' biomes as bank material, the erosion's sediment flux per
+  // node as load.
+  const graphRegime = M.hydro.accumulateRegimeInputsOn(meshSub, terrain.z, land.climate.temperature, land.climate.precipitation, land.climate.monsoonIndex)
   const graph = M.graph.buildRiverGraph({
     substrate: meshSub, discharge: meshDischarge, elevation: terrain.z, threshold, maxDischarge: maxDis,
-    bodies: meshLakes.bodies, body: meshLakes.body, lakeDepth: meshLakes.depth, sedimentFlux: terrain.sedimentFlux, biomes: bankAtNode,
+    bodies: meshLakes.bodies, body: meshLakes.body, lakeDepth: meshLakes.depth, sedimentFlux: terrain.sedimentFlux, biomes: nodeBiome,
     regime: graphRegime,
     criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY),
   })
   // The hydrogeology (phase 5a), as the worker runs it after the graph: the
   // column's materials, the springs, the regime with the baseflow, the
   // water table — kept for the invariants below.
+  const hardness = M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness
   const ground = M.ground.computeHydrogeology({
     sub: meshSub, elevation: terrain.z, graph, column: coupled.column,
-    hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, climateResX: CRX, climateResY: CRY,
-    precipitation, temperature: t2, monsoonIndex: sp2.index, cover: M.cover.coverField(biomes2, true),
+    hardness: M.meshRaster.nearestCellAtNodes(hardness, CRX, CRY, terrain.mesh),
+    precipitation: land.climate.precipitation, temperature: land.climate.temperature, monsoonIndex: land.climate.monsoonIndex,
+    cover: M.cover.coverField(land.biome, true),
     regime: graphRegime, discharge: meshDischarge, cellM: sim.domain.metresAround / W,
   })
   // The course (phase 3), seeded from the world like the worker does.
   graph.courses = M.course.computeRiverCourses(graph, { cellM: sim.domain.metresAround / W, seed: sim.warpSeed, domain: sim.domain })
   // The coast (F5), as the worker builds it after the graph.
   const coast = M.coast.buildCoastGraph({
-    elevation: el, width: W, height: H, domain: sim.domain, wind, climateResX: CRX, climateResY: CRY,
-    hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, graph, cellM: sim.domain.metresAround / W,
+    elevation: el, width: W, height: H, domain: sim.domain,
+    windAt: (x, y, out) => cells2.cm.sampler.sampleVector(cells2.windE, cells2.windS, x, y, -1, out),
+    hardness, forcingResX: CRX, forcingResY: CRY, graph, cellM: sim.domain.metresAround / W,
   })
 
-  // Downstream reads the REFINED fields, exactly as the worker's
-  // cacheAndPostClimate hands them on: v1 above only fed the refinement.
-  temperature = t2
-  currents = c2
-  seasonal = s2
-  seasonalPrecip = sp2
-  biomes = biomes2
-  biomesFine = biomesFine2
-
   const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, sim.domain)
-  // The ice (F4) on the eroded terrain with the refined climate.
   // The ice: the history's last epoch on the mesh (phase 6), rasterised as
-  // the worker does; the ice body is the Glacier biome.
+  // the worker does; the ice body is the Glacier biome, per node.
   const ice = { thickness: M.meshRaster.rasteriseNodeField(coupled.mesh, coupled.ice, W, H) }
   for (let c = 0; c < ice.thickness.length; c++) if (el[c] <= 0 || ice.thickness[c] < M.surfaceTune.SURFACE_TUNING.iceMinThicknessM) ice.thickness[c] = 0
-  for (let c = 0; c < biomesFine2.length; c++) if (ice.thickness[c] > 0 && el[c] > 0) biomesFine2[c] = M.biomes.Biome.Glacier
+  for (let v = 0; v < nodeBiome.length; v++) if (land.points.land[v] && terrain.z[v] > SEA && coupled.ice[v] >= M.surfaceTune.SURFACE_TUNING.iceMinThicknessM) nodeBiome[v] = M.biomes.Biome.Glacier
+  // The map's biomes per pixel, from the nodes (the worker's idRaster).
+  const biomesFine = Uint8Array.from(M.meshRaster.rasteriseNodePart(terrain.mesh, nodeBiome, land.points.land, pixelLand, M.biomes.Biome.Ocean, W, H, true))
   // The sediment basins (F1) of the erosion pass, with provenance.
   const basins = M.basins.findSedimentBasins({
     before: staged.before, after: el, width: W, height: H, routing, graph, cellM: sim.domain.metresAround / W,
-    cratonAge, hardness: M.erosionForcing.coarseForcingFields(sim, sim.domain).hardness, coarseResX: CRX, coarseResY: CRY,
+    cratonAge, hardness, coarseResX: CRX, coarseResY: CRY,
   })
   // Real volcanoes and sutures, and real params — through the very function the
   // worker uses, not a copy of it. This used to pass empty arrays and `{}`,
@@ -374,32 +367,46 @@ async function buildWorld(seed) {
   // complained; the NaN hashed consistently, so those stages guarded nothing.
   // That is the bug INVARIANTS now catch directly.
   const volcanoes = M.volcanoes.collectVolcanoes(sim.features)
-  const eco = M.ecology.computeEcology({
-    temperature, precipitation, biomes, biomesFine: biomesFine2, upwelling: null, months: null, rainVariability: null, elevation: el,
+  const liquid = meshLakes.depth.map((d, i) => (meshLakes.frozen[i] ? 0 : d))
+  const ecoBase = M.ecology.prepareEcology({
+    mesh: terrain.mesh, z: terrain.z, land: land.points.land, climate: land.climate, biomes: ecologyBiome,
     // Liquid water only, mirroring the worker's liquidLakeDepth: a frozen
     // basin is a glacier and feeds no fishery.
-    discharge, maxDischarge: maxDis, lakeDepth: lakes.depth.map((d, i) => (lakes.frozen[i] ? 0 : d)), saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, waterTable: M.meshRaster.rasteriseNodeField(terrain.mesh, ground.waterTableDepthM, W, H), oases: ground.springs.filter((s) => s.oasis), volcanoes,
+    discharge: meshDischarge, maxDischarge: maxDis, lakeDepth: liquid, saltFlat: meshLakes.saltFlat, waterTable: ground.waterTableDepthM, oases: ground.springs.filter((s) => s.oasis), volcanoes,
     orogenPoints: sim.sutures.map((s) => ({ x: s.x, y: s.y })),
-    cratonAge, warpSeed: sim.warpSeed, domain: sim.domain,
-  }, { carryingCapacity: 100, concentration: 0, provinceStrength: M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.toModel(M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.default) })
+    cratonAge: M.meshRaster.landBilinearAtNodes(cratonAge, sim.domain.grid(CRX, CRY), terrain.mesh), warpSeed: sim.warpSeed, domain: sim.domain,
+  })
+  const ecoNodes = M.ecology.applyEcology(ecoBase, { carryingCapacity: 100, concentration: 0, provinceStrength: M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.toModel(M.ecologyInputs.ECOLOGY_INPUTS.provinceStrength.default) })
+  const eco = M.ecology.ecologyRasters(ecoBase, ecoNodes.fields, pixelLand, sim.domain.grid(W, H))
 
   // The origin has to be picked FROM the world, not fixed by index. It used to
   // be cell CRX*CRY*0.4, and at 3-11% land that cell was ocean on all three
   // seeds — so the spread never ran and three outputs were constants that
-  // hashed identically no matter what happened upstream.
+  // hashed identically no matter what happened upstream. The migration runs
+  // on the climate's chart (the worker's handleMigrationRun).
+  const chartRain = M.climateChart.chartLandField(cells2.cm, cells2.precipitation, (i) => cells2.precipitation[i] !== M.precip.OCEAN_PRECIP, M.precip.OCEAN_PRECIP, M.climateChart.chartLand(w2.terrain))
   let originCell = -1, bestCapacity = -Infinity
   for (let i = 0; i < CRX * CRY; i++) {
-    if (precipitation[i] === M.precip.OCEAN_PRECIP) continue
+    if (chartRain[i] === M.precip.OCEAN_PRECIP) continue
     const cap = eco.fields.carryingCapacity[i]
     if (cap > bestCapacity) { bestCapacity = cap; originCell = i }
   }
   const mig = M.migration.computeMigration(
-    eco.fields.carryingCapacity, precipitation, el, null, 0,
+    eco.fields.carryingCapacity, chartRain, el, null, 0,
     [{ cell: originCell, race: 0 }], sim.domain,
     { spreadBudget: 400, seaCrossing: 0.3 },
   )
+  // What the metrics and the hashes read, per cell of the climate mesh.
+  const temperature = w2.mesh.temperature
+  const precipitation = cells2.precipitation
+  const seasonal = cells2.seasonalAmplitude
+  const seasonalPrecip = { index: cells1.monsoonIndex }
+  const wind = Float64Array.from([...w2.mesh.wind.e, ...w2.mesh.wind.s])
+  const currents = Float64Array.from([...w2.mesh.currents.e, ...w2.mesh.currents.s])
+  const biomes = land.biome
+  const lakesOut = { ...lakes, depth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen }
 
-  return { sim, raw, before: staged.before, terrain: staged.terrain, graphRegime, ground, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
+  return { sim, raw, before: staged.before, terrain: staged.terrain, graphRegime, ground, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, routing, discharge, maxDis, meanRunoff, threshold, lakes: lakesOut, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
 }
 
 // --- layer 1: invariants ---------------------------------------------------
@@ -490,7 +497,7 @@ function invariants(w) {
   // The sediment basins (F1): every labelled cell a deposit, counts match,
   // numbers finite; an eroded world deposits somewhere.
   if (w.basins.basins.length === 0) fail('sedimentBasins', 'no basins')
-  // The ice (F4): finite, non-negative, on land.
+  // The ice (phase 6, rasterised): finite, non-negative, on land.
   for (const [name, count] of Object.entries(M.ice.iceInvariants(w.ice, w.el))) {
     if (count > 0) fail(`ice.${name}`, `${count} violations`)
   }
@@ -620,12 +627,14 @@ function metrics(w) {
   put('climate.tempMinC', temp.min)
   put('climate.tempMaxC', temp.max)
   put('climate.precipMean', stats(w.precipitation).mean)
-  // Biome mix as fractions: a shift here is a climate change with a visible
-  // consequence, which a hash could never express.
+  // Biome mix as fractions of the map (the world raster's pixels, from the
+  // nodes — DEC-0036 phase 7; the climate grid's 256 × 128 cells before): a
+  // shift here is a climate change with a visible consequence, which a hash
+  // could never express.
   const biomeCounts = new Map()
-  for (let i = 0; i < w.biomes.length; i++) biomeCounts.set(w.biomes[i], (biomeCounts.get(w.biomes[i]) ?? 0) + 1)
+  for (let i = 0; i < w.biomesFine.length; i++) biomeCounts.set(w.biomesFine[i], (biomeCounts.get(w.biomesFine[i]) ?? 0) + 1)
   for (const id of [...biomeCounts.keys()].sort((a, b) => a - b)) {
-    put(`biome.${id}`, (biomeCounts.get(id) / w.biomes.length) * 100)
+    put(`biome.${id}`, (biomeCounts.get(id) / w.biomesFine.length) * 100)
   }
 
   put('hydro.meanRunoff', w.meanRunoff)

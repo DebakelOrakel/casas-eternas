@@ -198,15 +198,21 @@ export const ECOLOGY_TUNING = {
   // Arable flatness sensitivity: steeper ground is progressively harder to farm.
   // Scaled by SLOPE_RECALIBRATION (see elevationScale.ts): flatness reads raw
   // elevation differences, which halved, so without this every slope on the map
-  // would suddenly count as farmable. Read per pixel as the rise across a
-  // climate cell's length (the scale it was set on); used for arable,
-  // wetland and flint.
+  // would suddenly count as farmable. Read per node as the rise across
+  // `flatnessRunM` — the climate cell's length the slope was set on (the
+  // torus's 62.4 km, a pixel's rise × 8 on the 2048 raster before DEC-0036
+  // phase 7); used for arable, wetland and flint.
   slopeK: 8 * SLOPE_RECALIBRATION,
+  flatnessRunM: 62_400,
 
   // Ecotone (biome-boundary) game bonus and its cap.
   ecotoneBonus: 0.18,
   // The share of edge at which it counts in full: per pixel, the share of
   // its four neighbours of another biome, averaged within `ecotoneReachM`.
+  // On the terrain mesh (DEC-0036 phase 7) the boundary's length per area
+  // in the unit a raster of `ecotoneCountedOnM` pixels counted it in — the
+  // 7.8 km pixel the share was set on (mesh/meshNeighbourhood.
+  // boundaryDensity) — so the figure does not move with the mesh's spacing.
   // (Before the fields went per pixel: the share of a climate cell's fine
   // neighbour pairs; one straight border through the cell was some 0.06.
   // Per pixel the land's game mean stays 0.21.) Measured on Earth
@@ -217,8 +223,13 @@ export const ECOLOGY_TUNING = {
   // more than 0.1 on 10 and 12 % of the cells, at the biomes' borders (the
   // Congo's rim: timber 0.20 → 0.42, pasture 0.90 → 0.66).
   ecotoneFullShare: 0.1,
+  ecotoneCountedOnM: 7_800,
 
-  // Metal / stone influence radii (world fraction). Tin is tightest → the rare,
+  // Metal / stone influence radii (σ of the halo, metres; until DEC-0036
+  // phase 7 a fraction of the smaller world dimension: × 1024 pixels of
+  // 7.8 km, the torus's — copper 0.02, tin 0.019, obsidian 0.015, gold's
+  // lode 0.015, silver 0.018, gems 0.014, the volcanic province 0.05; not
+  // recalibrated). Tin is tightest → the rare,
   // clustered bottleneck; copper broader (arc belts); obsidian tight (point sources).
   // Halved 2026-08-07: since supercontinent assembly moved into the playable window
   // the feature set carries ~3.5× more volcanoes (192 vs 55 measured), and the old
@@ -227,9 +238,9 @@ export const ECOLOGY_TUNING = {
   // back to isolated deposit clusters (same-seed ≥5%-of-land coverage: copper
   // 55→18%, silver 49→7%, tin 29→6%, gems 24→5%, gold 70→13%, obsidian-driven
   // toolstone ≥20% 53→6%; flint baseline untouched by design).
-  copperRadiusFrac: 0.02,
-  tinRadiusFrac: 0.019,
-  obsidianRadiusFrac: 0.015,
+  copperRadiusM: 159_744,
+  tinRadiusM: 151_757,
+  obsidianRadiusM: 119_808,
   flintBase: 0.15,
 
   // Mineralisation lottery: only this fraction of the candidate points (arc
@@ -277,9 +288,9 @@ export const ECOLOGY_TUNING = {
   // Prestige (rare & clustered — the point). Gold = placer (rivers) + lode (orogens);
   // silver = hydrothermal near volcanic arcs; gems = metamorphic (orogens) + arid
   // weathering (turquoise near copper). None feed carrying capacity.
-  goldLodeRadiusFrac: 0.015,
-  silverRadiusFrac: 0.018,
-  gemRadiusFrac: 0.014,
+  goldLodeRadiusM: 119_808,
+  silverRadiusM: 143_770,
+  gemRadiusM: 111_821,
 
   // Placer gate: √(discharge/max) below this floor carries no gold — only genuinely
   // large rivers concentrate placer. The old ungated √·2 curve lit up every stream
@@ -291,7 +302,7 @@ export const ECOLOGY_TUNING = {
   silverW: 0.9,
   gemOrogenW: 0.85,
   gemAridW: 0.6,
-  volcanicProvinceRadiusFrac: 0.05,
+  volcanicProvinceRadiusM: 399_360,
 
   // Higher frequency → more mottling (broad smooth gradients read as "no variation").
   // Weights are large because smooth value-noise has LOW variance (interpolation

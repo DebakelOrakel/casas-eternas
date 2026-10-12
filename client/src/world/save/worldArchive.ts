@@ -1,7 +1,6 @@
 import JSZip from 'jszip'
 import type { ArcheanSnapshot } from '../../generator/archean/archeanSnapshot'
 import type { RefinedClimate } from '../../generator/climate/refinement'
-import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import type { FieldPayload, MeshPayload } from '../../generator/pipeline/messages'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { WaterBody } from '../../generator/surface/hydrology'
@@ -9,6 +8,7 @@ import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import type { PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulation'
 import { DISCHARGE_LAYER, FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from './worldLayers'
 import { refinedEntries, refinedFromEntries } from './refinedFields'
+import { climateEntries, LAND_FILES, type SavedClimate, type SavedLandFields } from './climateFields'
 import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 
 // THE SAVE'S WRITER: a world's parts in, the .zip's bytes out — its files,
@@ -27,19 +27,13 @@ import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 // out of the archive when null: a world saved before a stage ran simply
 // does not carry it.
 export interface WorldArchiveFields {
-  // The climate grid's size; the climate layers below are on it, except
-  // the ones a layer spec puts on the world grid (biome).
-  climateResX: number
-  climateResY: number
-  temperature: Float32Array | null
-  precipitation: Float32Array | null
-  precipitationEffective: Float32Array | null
-  biome: Uint8Array | null
-  seasonalAmplitude: Float32Array | null
-  monsoonIndex: Float32Array | null
-  koppen: Uint8Array | null
+  // The climate per cell of its field mesh and the land fields per node of
+  // the mesh (climateFields.ts; DEC-0036 phase 7), the worker's.
+  climate: SavedClimate | null
+  land: SavedLandFields | null
+  // Water depth per world cell (elevation units) — the hydrology's raster
+  // (DEC-0036 phase 7b moves it).
   lakeDepth: Float32Array | null
-  waterTable: Float32Array | null
   // River discharge per world cell, m³/s.
   dischargeM3s: Float32Array | null
   // The climate step's refinement, its values per cell of the climate's
@@ -102,7 +96,14 @@ export type WorldArchiveParts = ArcheanArchiveParts | TectonicArchiveParts
 // refused by its absence. The climate step's refinement as its field mesh's
 // values (refined.json + refined/, phase 5) in place of the quantised
 // raster layers (layers/temperature.01 … layers/thunder, layers/enso.json)
-// — a save with those layers and without refined.json is refused.
+// — a save with those layers and without refined.json is refused. The
+// annual climate as its field mesh's values (climate.json + climate/,
+// phase 7) and the biome, the Köppen class and the water table per node of
+// the mesh (mesh/biome.u8, mesh/koppen.u8, mesh/waterTable.f32) in place of
+// the raster layers landMask, temperature, precipitation,
+// precipitationEffective, biome, seasonalAmplitude, monsoonIndex, koppen and
+// waterTable — a save with those layers and without climate.json is
+// refused (readClimate).
 export const WORLD_ARCHIVE_FORMAT_VERSION = 8
 
 export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8Array<ArrayBuffer>> {
@@ -122,6 +123,12 @@ export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8
     writeField(zip, 'oceanAge', parts.oceanAge)
     zip.file('elevation.f32', parts.elevation)
     writeQueryLayers(zip, parts)
+    // The climate on its field mesh (climateFields.ts).
+    if (parts.fields.climate) {
+      const { meta, files } = climateEntries(parts.fields.climate)
+      zip.file('climate.json', meta)
+      for (const [file, bytes] of files) zip.file(file, bytes)
+    }
     // The climate step's refinement: a world saved unrefined loads
     // unrefined.
     if (parts.fields.refined) {
@@ -175,6 +182,8 @@ export async function readRefined(zip: JSZip): Promise<RefinedClimate | null> {
   return refinedFromEntries(await meta.async('string'), async (file) => (await zip.file(file)?.async('arraybuffer')) ?? null)
 }
 
+export { readClimate, readLandFields } from './climateFields'
+
 type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector' | 'table'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }
 
 // Every computed field, quantised per its layer spec, plus the manifest —
@@ -198,49 +207,25 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
     }
   }
 
-  // Climate, hydrology: only once they have been computed.
-  const rx = fields.climateResX
-  const ry = fields.climateResY
-  if (rx > 0 && fields.precipitation) {
-    const precipitation = fields.precipitation
-    const landMask = new Float32Array(rx * ry)
-    for (let i = 0; i < landMask.length; i++) landMask[i] = precipitation[i] !== OCEAN_PRECIP ? 1 : 0
-    const sources: Partial<Record<string, Float32Array | Uint8Array>> = {
-      landMask,
-      temperature: fields.temperature ?? undefined,
-      precipitation,
-      precipitationEffective: fields.precipitationEffective ?? undefined,
-      biome: fields.biome ?? undefined,
-      seasonalAmplitude: fields.seasonalAmplitude ?? undefined,
-      monsoonIndex: fields.monsoonIndex ?? undefined,
-      koppen: fields.koppen ?? undefined,
-      lakeDepth: fields.lakeDepth ?? undefined,
-      waterTable: fields.waterTable ?? undefined,
-    }
-    for (const spec of WORLD_LAYERS) {
-      const src = sources[spec.name]
-      if (!src) continue
-      // Dimensions from the spec, not from the climate grid: biome is
-      // baked on the world raster (see LayerSpec.fullRes). A wrong pair here
-      // would not throw — the buffer's length is whatever the source is, and
-      // only the manifest says how to fold it into rows.
-      const [lx, ly] = spec.grid === 'world' ? [width, height] : [rx, ry]
-      zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
-      layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: lx, resY: ly, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
-    }
-    // Rivers are a DISCHARGE RASTER, not polylines: a field answers "how
-    // big is this river" by sampling, as biome and lakeDepth do, where a
-    // polyline's only attribute was a drawing width (109 KB compressed
-    // against 303 KB of JSON).
-    if (fields.dischargeM3s) {
-      zip.file(`layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, bakeLayer(fields.dischargeM3s, DISCHARGE_LAYER))
-      layers.push({
-        name: DISCHARGE_LAYER.name, file: `layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, kind: 'raster',
-        resX: width, resY: height, dtype: DISCHARGE_LAYER.dtype,
-        encoding: { scale: DISCHARGE_LAYER.scale, offset: DISCHARGE_LAYER.offset },
-        unit: DISCHARGE_LAYER.unit, landOnly: DISCHARGE_LAYER.landOnly,
-      })
-    }
+  // The hydrology's rasters, once computed (DEC-0036 phase 7b moves them).
+  for (const spec of WORLD_LAYERS) {
+    const src = spec.name === 'lakeDepth' ? fields.lakeDepth : null
+    if (!src) continue
+    zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
+    layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: width, resY: height, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
+  }
+  // Rivers are a DISCHARGE RASTER, not polylines: a field answers "how
+  // big is this river" by sampling, as lakeDepth does, where a polyline's
+  // only attribute was a drawing width (109 KB compressed against 303 KB
+  // of JSON).
+  if (fields.dischargeM3s) {
+    zip.file(`layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, bakeLayer(fields.dischargeM3s, DISCHARGE_LAYER))
+    layers.push({
+      name: DISCHARGE_LAYER.name, file: `layers/${DISCHARGE_LAYER.name}.${DISCHARGE_LAYER.dtype}`, kind: 'raster',
+      resX: width, resY: height, dtype: DISCHARGE_LAYER.dtype,
+      encoding: { scale: DISCHARGE_LAYER.scale, offset: DISCHARGE_LAYER.offset },
+      unit: DISCHARGE_LAYER.unit, landOnly: DISCHARGE_LAYER.landOnly,
+    })
   }
   // The standing-water list: a table beside the rasters, the truth
   // `lakeDepth` derives from (hydrology.lakeDepthFromBodies), in this
@@ -267,6 +252,13 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
     zip.file('mesh/connectivity.bin', mesh.connectivity)
     zip.file('mesh/z.f32', mesh.z)
     if (mesh.column) zip.file('mesh/column.bin', mesh.column)
+    // The land fields per node, in the mesh's numbering (climateFields.ts).
+    const land = fields.land && fields.land.count === mesh.count ? fields.land : null
+    if (land) {
+      zip.file(LAND_FILES.biome, land.biome.slice().buffer as ArrayBuffer)
+      zip.file(LAND_FILES.koppen, land.koppen.slice().buffer as ArrayBuffer)
+      if (land.waterTable) zip.file(LAND_FILES.waterTable, land.waterTable.slice().buffer as ArrayBuffer)
+    }
   }
   const manifest = {
     formatVersion: WORLD_ARCHIVE_FORMAT_VERSION,
@@ -275,7 +267,14 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
     // The shape is the record's kind (world.yaml), said once (DEC-0035).
     world: { width, height },
     layers,
-    mesh: mesh ? { nodes: mesh.count, files: { nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32', column: mesh.column ? 'mesh/column.bin' : undefined } } : undefined,
+    mesh: mesh ? {
+      nodes: mesh.count,
+      files: {
+        nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32', column: mesh.column ? 'mesh/column.bin' : undefined,
+        ...(fields.land && fields.land.count === mesh.count ? { biome: LAND_FILES.biome, koppen: LAND_FILES.koppen, waterTable: fields.land.waterTable ? LAND_FILES.waterTable : undefined } : {}),
+      },
+    } : undefined,
+    climate: fields.climate ? { file: 'climate.json', cells: fields.climate.cells, spacingM: fields.climate.spacingM } : undefined,
   }
   zip.file('manifest.json', JSON.stringify(manifest, null, 2))
 }

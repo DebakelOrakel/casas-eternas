@@ -1,12 +1,11 @@
 import { Biome } from '../climate/biomes'
-import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../climate/climateField'
 
 // THE COVER (ADAPTIVE_MESH_PLAN.md phase 5.5): how much of the ground the
-// vegetation holds, in [0, 1] per climate cell from the epoch's coarse
-// biome classification. ONE value with three readers, so the three cannot
-// disagree about what a forest is: the fluvial erodibility falls with it
-// (a rooted slope sheds less), the hillslope's critical slope rises with
-// it (roots hold a steeper face), and the river course reads it as the
+// vegetation holds, in [0, 1] per node of the terrain mesh from the
+// biomes there (DEC-0036 phase 7; per climate cell before). ONE value
+// with three readers, so the three cannot disagree about what a forest is:
+// the fluvial erodibility falls with it (a rooted slope sheds less), the
+// hillslope's critical slope rises with it (roots hold a steeper face), and the river course reads it as the
 // bank strength it always had (phase 3: vegetation holds banks) — the
 // table below IS that table, moved here. Kappa is untouched: the
 // diffusivity is the soil's, not the plants'.
@@ -34,9 +33,9 @@ export const COVER_BY_BIOME: Record<number, number> = {
   [Biome.MediterraneanScrub]: 0.55, [Biome.Steppe]: 0.4, [Biome.TropicalDryForest]: 0.75, [Biome.ColdDesert]: 0.2,
 }
 
-// The cover per climate cell from the biomes; all zero before the plants.
+// The cover per element from its biome; all zero before the plants.
 export function coverField(biomes: Uint8Array, plantsPresent: boolean): Float32Array {
-  const cover = new Float32Array(CLIMATE_RES_X * CLIMATE_RES_Y)
+  const cover = new Float32Array(biomes.length)
   if (!plantsPresent) return cover
   for (let i = 0; i < cover.length; i++) cover[i] = biomes[i] === Biome.Ocean ? 0 : (COVER_BY_BIOME[biomes[i]] ?? 0.5)
   return cover

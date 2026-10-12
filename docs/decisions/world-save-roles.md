@@ -18,7 +18,7 @@ summary.de: Das Welt-Save hält drei Dinge mit drei verschiedenen Lebensdauern �
 area: platform
 stage: building
 createdAt: 2026-10-01
-updatedAt: 2026-10-04
+updatedAt: 2026-10-12
 concepts: [generator.concept.same-world]
 related: [DEC-0005, DEC-0009, DEC-0032]
 ---
@@ -97,6 +97,16 @@ screen's side is asked first; 4 when levels 2 and 3 carry layers.
   from the world's shape and size, to sample them — the generator's
   `climate/climateMesh.ts` and the field mesh's sampler, no climate code
   beyond that. The manifest does not list them.
+- **The annual climate and the land fields stay in the save as mesh
+  values** (DEC-0036 phase 7, 2026-10-12): `climate.json` + `climate/*.f32`
+  per cell of the climate's field mesh, and the biome, the Köppen class
+  and the water table per node of the saved mesh (`mesh/biome.u8`,
+  `mesh/koppen.u8`, `mesh/waterTable.f32`), in place of their raster
+  layers. The generator recomputes them on load; they stay for the
+  readers that cannot (the bakes sample the climate at their nodes, a
+  game server asks a biome), and `world/query.ts` rasterises them for its
+  views. The artifact key's `worldId` hashes the climate's cells in place
+  of the precipitation raster.
 - The zip, `manifest.json` describing each raster (dtype, encoding, unit),
   and the readable `world.yaml` in its `spec`/`status` shape.
 

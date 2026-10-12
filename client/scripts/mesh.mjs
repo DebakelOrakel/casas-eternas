@@ -95,6 +95,8 @@ const M = {
   biomes: await L('/src/generator/climate/biomes.ts'),
   weather: await L('/src/generator/climate/weather.ts'),
   climateMesh: await L('/src/generator/climate/climateMesh.ts'),
+  climatePoints: await L('/src/generator/climate/climatePoints.ts'),
+  climateChart: await L('/src/generator/climate/climateChart.ts'),
   planet: await L('/src/generator/planet/planetForcing.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
   archeanStep: await L('/src/generator/archean/archeanStep.ts'),
@@ -130,6 +132,14 @@ const T = M.density.MESH_TUNING
 const domain = M.domain.torusDomain(W, H)
 // Metres per domain unit, the torus's (DEC-0035 fork 6): the synthetic world's.
 const UNITS_TO_M = domain.metresPerUnit
+// A uniform climate per cell of a domain's climate mesh (climate/
+// climatePoints.ClimateCellValues, the bakes' input): 15 °C at sea level,
+// 1000 mm/yr, land everywhere.
+const uniformClimate = (dom) => {
+  const cm = M.climateMesh.climateMesh(dom)
+  const n = cm.mesh.count
+  return { cells: n, spacingM: cm.cellM, seaLevelTemperature: new Float32Array(n).fill(15), precipitation: new Float32Array(n).fill(1000), seasonalAmplitude: new Float32Array(n).fill(10), monsoonIndex: new Float32Array(n) }
+}
 
 // ---------------------------------------------------------------- helpers
 
@@ -512,15 +522,14 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const eroded = await M.erosion.runMeshErosion(mesh, z0, { uplift, erodibility }, { age: 12, routingEvery: 2 })
   const areas = M.meshHydro.meshAreas(mesh)
   const sub = M.meshHydro.meshSubstrate(mesh, eroded.routing, areas)
-  // A climate: uniform 1000 mm/yr, 15 °C, on a 16×8 climate grid.
-  const CRX = 16, CRY = 8
-  const precip = new Float32Array(CRX * CRY).fill(1000)
-  const temperature = new Float32Array(CRX * CRY).fill(15)
-  const discharge = M.hydro.accumulateDischargeOn(sub, eroded.z, precip, CRX, CRY)
+  // A climate at the nodes: uniform 1000 mm/yr, 15 °C.
+  const precip = new Float32Array(mesh.vertexSlots).fill(1000)
+  const temperature = new Float32Array(mesh.vertexSlots).fill(15)
+  const discharge = M.hydro.accumulateDischargeOn(sub, eroded.z, precip)
   let landArea = 0, maxQ = 0
   for (const v of aliveVertices(mesh)) if (eroded.z[v] > 0) { landArea += areas[v]; maxQ = Math.max(maxQ, discharge[v]) }
   check('the largest discharge is at most the land\'s whole runoff', maxQ <= 1000 * landArea * (1 + 1e-6) && maxQ > 0, `max ${maxQ.toFixed(0)} of ${(1000 * landArea).toFixed(0)}`)
-  const lakes = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip, CRX, CRY)
+  const lakes = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip)
   let badLevel = 0, badSeed = 0
   for (const b of lakes.bodies) {
     if (!(b.level >= b.floor) || !(b.spill >= b.floor)) badLevel++
@@ -544,7 +553,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const serial = M.graph.serializeRiverGraph(graph)
   const back = M.graph.deserializeRiverGraph(serial.json, serial.cells, serial.coursePoints, serial.positions)
   check('a mesh graph round-trips through its serialisation with positions', back !== null && back.cellX.length === graph.cellX.length && back.cellX[5] === graph.cellX[5])
-  const again = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip, CRX, CRY)
+  const again = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip)
   check('the lakes are deterministic', JSON.stringify(again.bodies) === JSON.stringify(lakes.bodies))
 }
 
@@ -612,14 +621,12 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const { mesh: parentMesh, order } = M.serial.compactMesh(built.mesh)
   const parentZ = M.serial.permute(built.state.get('z'), order)
   const parentSerial = M.serial.encodeMesh(parentMesh, Int32Array.from({ length: parentMesh.vertexSlots }, (_, i) => i))
-  const CRX = 16, CRY = 8
-  const precip = new Float32Array(CRX * CRY).fill(1000)
-  const temperature = new Float32Array(CRX * CRY).fill(15)
+  const climate = uniformClimate(domain)
   const inputs = {
     mesh: { count: parentSerial.count, nodes: parentSerial.nodes, connectivity: parentSerial.connectivity, z: parentZ.slice(0, parentSerial.count) },
     width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
     uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
-    precipitation: precip, temperature, monsoonIndex: null, climateResX: CRX, climateResY: CRY,
+    climate,
   }
   const parentSampler = M.sampler.createMeshSampler(parentMesh, parentZ)
   const t0 = performance.now()
@@ -775,8 +782,8 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const tileInputs = {
       parent, parentGraph: level.graph, width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
       uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
-      precipitation: precip, climateResX: CRX, climateResY: CRY,
-      meanLandWater: M.hydro.meanLandRunoff(precip, macro, domain, CRX, CRY),
+      climate,
+      meanLandWater: M.climatePoints.meanLandRunoff(M.climatePoints.climateCellsFromSaved(domain, climate)),
       upstream: [],
     }
     const t2 = performance.now()
@@ -854,8 +861,8 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const inputs2 = {
       parent: parent1, parentGraph: level.graph, width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
       uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
-      precipitation: precip, climateResX: CRX, climateResY: CRY,
-      meanLandWater: M.hydro.meanLandRunoff(precip, macro, domain, CRX, CRY),
+      climate,
+      meanLandWater: M.climatePoints.meanLandRunoff(M.climatePoints.climateCellsFromSaved(domain, climate)),
       upstream: [],
     }
     // A level-3 tile on a level-2 seam with land, and its east neighbour.
@@ -959,8 +966,8 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const base = {
       parent: parent1, parentGraph: level.graph, width: W, height: H, detailSeed: 1234, lithoSeed: 77, controls: {},
       uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0,
-      precipitation: precip, climateResX: CRX, climateResY: CRY,
-      meanLandWater: M.hydro.meanLandRunoff(precip, macro, domain, CRX, CRY), upstream: [],
+      climate,
+      meanLandWater: M.climatePoints.meanLandRunoff(M.climatePoints.climateCellsFromSaved(domain, climate)), upstream: [],
     }
     const ups = []
     for (const u of down.upstream) {
@@ -1084,12 +1091,10 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const offshore = lat.vy[v] - shoreY(lat.vx[v])
     z[v] = land ? (50 + 10 * (shoreY(lat.vx[v]) - lat.vy[v])) / M.scale.ELEVATION_METERS : (offshore < 4 ? -20 : -200) / M.scale.ELEVATION_METERS
   }
-  const RX = M.climateField.CLIMATE_RES_X, RY = M.climateField.CLIMATE_RES_Y
-  const wind = new Float32Array(RX * RY * 2)
   // A steady wind from the west-south-west: along the shore eastward, a
-  // little onshore (the sea lies to the south, +y).
-  for (let i = 0; i < RX * RY; i++) { wind[2 * i] = 8; wind[2 * i + 1] = -4 }
-  const coarseZ = M.raster.rasteriseNodeField(lat, z, RX, RY)
+  // little onshore (the sea lies to the south, +y), at every node.
+  const windE = new Float32Array(lat.vertexSlots).fill(8)
+  const windS = new Float32Array(lat.vertexSlots).fill(-4)
   const areas = new Float32Array(lat.vertexSlots)
   for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v]) areas[v] = lat.voronoiArea(v)
   const hardness = new Float32Array(lat.vertexSlots).fill(1)
@@ -1104,7 +1109,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v] && z[v] > 0) { land0++; if (lee(v)) leeLand0++ }
   let ledgerOk = true, cutTotal = 0, depTotal = 0
   for (let epoch = 0; epoch < 4; epoch++) {
-    const r = M.coastal.computeCoastal({ mesh: lat, z: zNow, areas, wind, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: UNITS_TO_M, hardness, sedimentFlux: flux, iterations: 4, epochYears: 1e6 })
+    const r = M.coastal.computeCoastal({ mesh: lat, z: zNow, areas, windE, windS, cellM: UNITS_TO_M, hardness, sedimentFlux: flux, iterations: 4, epochYears: 1e6 })
     if (Math.abs(r.erodedM3 + r.suppliedM3 - r.depositedM3 - r.exportedM3) > 1e-6 * Math.max(1, r.erodedM3 + r.suppliedM3)) ledgerOk = false
     cutTotal += r.erodedM3; depTotal += r.depositedM3
     for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v]) zNow[v] += (r.depositM[v] - r.cutM[v]) / M.scale.ELEVATION_METERS
@@ -1137,27 +1142,23 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
     // everywhere.
     z[v] = (1300 + Math.min(1500, dx * 400) + 300 * Math.sin((2 * Math.PI * lat.vy[v]) / H)) / M.scale.ELEVATION_METERS
   }
-  const RX = M.climateField.CLIMATE_RES_X, RY = M.climateField.CLIMATE_RES_Y
-  // −4 °C at the cell's mean height puts the equilibrium line near
-  // 2200 m: the walls above it feed a trunk glacier that melts on the
-  // floor — a valley glacier, not an ice sheet over everything (at −12 °C
-  // the whole world was under ice and the cut was uniform: the V stayed).
-  const precipitation = new Float32Array(RX * RY).fill(600)
-  const coarseZ = M.raster.rasteriseNodeField(lat, z, RX, RY)
-  // The climate cells here are finer than the valley (2 km against a
-  // 60 km cell on the world), so the lapse must be in the field itself:
-  // −4 °C at 2300 m, 6.5 °C per km — cold walls, a warm floor.
-  const temperature = new Float32Array(RX * RY)
-  for (let i = 0; i < temperature.length; i++) temperature[i] = -4 - 6.5 * (coarseZ[i] * M.scale.ELEVATION_METERS - 2300) / 1000
-  const ice = M.glacial.computeIceOnMesh({ mesh: lat, z, temperature, precipitation, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: UNITS_TO_M })
+  // −4 °C at 2300 m puts the equilibrium line near 2200 m: the walls
+  // above it feed a trunk glacier that melts on the floor — a valley
+  // glacier, not an ice sheet over everything (at −12 °C the whole world
+  // was under ice and the cut was uniform: the V stayed). Per node, as the
+  // climate reaches the nodes (climatePoints.ts): the temperature at sea
+  // level, each node takes the model's lapse (6.5 °C per km) to its height
+  // — cold walls, a warm floor.
+  const precipitation = new Float32Array(lat.vertexSlots).fill(600)
+  const seaLevelTemperature = new Float32Array(lat.vertexSlots).fill(-4 + 6.5 * 2.3)
+  const ice = M.glacial.computeIceOnMesh({ mesh: lat, z, seaLevelTemperature, precipitation, cellM: UNITS_TO_M })
   let iced = 0, maxH = 0
   for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v] && ice.thickness[v] > 0) { iced++; maxH = Math.max(maxH, ice.thickness[v]) }
   let landNodes = 0
   for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v]) landNodes++
-  let bMin = Infinity, bMax = -Infinity, czMin = Infinity, czMax = -Infinity
+  let bMin = Infinity, bMax = -Infinity
   for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v]) { bMin = Math.min(bMin, ice.balance[v]); bMax = Math.max(bMax, ice.balance[v]) }
-  for (let i = 0; i < coarseZ.length; i++) { czMin = Math.min(czMin, coarseZ[i]); czMax = Math.max(czMax, coarseZ[i]) }
-  check(`a valley glacier forms (${iced} of ${landNodes} nodes iced, up to ${maxH.toFixed(0)} m)`, iced > 0 && iced < landNodes && maxH > 50, `balance ${bMin.toFixed(2)}..${bMax.toFixed(2)} m/yr, coarseZ ${(czMin * M.scale.ELEVATION_METERS).toFixed(0)}..${(czMax * M.scale.ELEVATION_METERS).toFixed(0)} m, ELA ${ice.elaM[order0(lat)].toFixed(0)} m`)
+  check(`a valley glacier forms (${iced} of ${landNodes} nodes iced, up to ${maxH.toFixed(0)} m)`, iced > 0 && iced < landNodes && maxH > 50, `balance ${bMin.toFixed(2)}..${bMax.toFixed(2)} m/yr, ELA ${ice.elaM[order0(lat)].toFixed(0)} m`)
   check(`the ice's mass closes (in ${(ice.massIn / 1e9).toFixed(2)} = melt ${(ice.massMelt / 1e9).toFixed(2)} + out ${(ice.massOut / 1e9).toFixed(2)} km³/yr)`, Math.abs(ice.massIn - ice.massMelt - ice.massOut) <= 1e-6 * ice.massIn)
   // The profile across the valley at mid-length: the floor's width (the
   // span within 100 m of the deepest point) before and after the ice.
@@ -1173,7 +1174,7 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   const zAfter = z.slice()
   let floorCut = 0, floorN = 0, wallCut = 0, wallN = 0, maxCut = 0
   for (let epoch = 0; epoch < 3; epoch++) {
-    const iceNow = M.glacial.computeIceOnMesh({ mesh: lat, z: zAfter, temperature, precipitation, coarseZ, climateResX: RX, climateResY: RY, width: W, height: H, cellM: UNITS_TO_M })
+    const iceNow = M.glacial.computeIceOnMesh({ mesh: lat, z: zAfter, seaLevelTemperature, precipitation, cellM: UNITS_TO_M })
     const g = M.glacial.glacialErosionOnMesh(lat, zAfter, iceNow, 1e6, UNITS_TO_M)
     for (let v = 0; v < lat.vertexSlots; v++) {
       if (!lat.vAlive[v]) continue
@@ -1310,16 +1311,18 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
     const RX = M.climateField.CLIMATE_RES_X, RY = M.climateField.CLIMATE_RES_Y
     const sub = M.meshHydro.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
     const coarseZ = M.raster.rasteriseNodeField(terrain.mesh, terrain.z, RX, RY)
-    const coarse = M.domain.torusDomain(RX, RY)
     const weather = M.weather.computeWeather(M.climateMesh.climateTerrain(terrain.mesh.domain, coarseZ, RX, RY), M.weather.defaultWeatherParams())
-    const precip = weather.seasonal.annual
-    const discharge = M.hydro.accumulateDischargeOn(sub, terrain.z, precip, RX, RY)
-    const lakes = M.hydro.computeLakesOn(sub, discharge, terrain.z, weather.temperature, precip, RX, RY)
-    const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), M.hydro.meanLandRunoff(precip, coarseZ, coarse, RX, RY))
-    const regime = M.hydro.accumulateRegimeInputsOn(sub, terrain.z, weather.temperature, precip, weather.seasonal.index, RX, RY)
+    // The climate at the nodes (climate/climatePoints.ts, DEC-0036 phase 7).
+    const cells = M.climatePoints.climateCellsFromWeather(weather)
+    const points = M.climatePoints.meshPoints(terrain.mesh, terrain.z)
+    const at = M.climatePoints.climateAtPoints(cells, points)
+    const discharge = M.hydro.accumulateDischargeOn(sub, terrain.z, at.precipitation)
+    const lakes = M.hydro.computeLakesOn(sub, discharge, terrain.z, at.temperature, at.precipitation)
+    const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), M.climatePoints.meanLandRunoff(cells))
+    const regime = M.hydro.accumulateRegimeInputsOn(sub, terrain.z, at.temperature, at.precipitation, at.monsoonIndex)
     const graph = M.graph.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: M.hydro.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY) })
-    const biomes = M.biomes.computeBiomes(weather.temperature, precip, weather.seasonalAmplitude, weather.seasonal.index, coarseZ, RX, RY)
-    const ground = M.ground.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, climateResX: RX, climateResY: RY, precipitation: precip, temperature: weather.temperature, monsoonIndex: weather.seasonal.index, cover: M.cover.coverField(biomes, true), regime, discharge, cellM: UNITS_TO_M })
+    const biomes = M.biomes.classifyPoints(at, points, terrain.mesh.domain).biome
+    const ground = M.ground.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, precipitation: at.precipitation, temperature: at.temperature, monsoonIndex: at.monsoonIndex, cover: M.cover.coverField(biomes, true), regime, discharge, cellM: UNITS_TO_M })
     const broken = Object.entries(M.ground.hydrogeologyInvariants(ground, graph, terrain.z)).filter(([, n]) => n > 0)
     check(`the hydrogeology holds its invariants (${ground.springs.length} springs, ${graph.reaches.filter((r) => r.springFed).length} spring-fed of ${graph.reaches.length} reaches)`, broken.length === 0, broken.map(([k, n]) => `${k}:${n}`).join(' '))
     let land = 0, wet = 0, sum = 0
@@ -2119,10 +2122,14 @@ if (MODE === 'measure') {
     console.log('  (no forcing layers in the save — engine comparison skipped)')
   } else {
     const AGE = Number(process.env.MESH_AGE ?? 40)
+    // The raster engine reads its water on the climate's chart; the mesh
+    // its nodes' (climate/climatePoints.ts).
+    const cells = M.climatePoints.climateCellsFromSaved(real, inputs.climate)
+    const chartRain = M.climateChart.chartLandField(cells.cm, cells.precipitation, (i) => cells.precipitation[i] >= 0, -1, M.climateChart.chartLand({ domain: real, elevation: z, resX: real.width, resY: real.height, dryLand: null }))
     const coarse = {
       uplift: inputs.uplift.data, hardness: inputs.erodibility?.data ?? null,
       forcingResX: inputs.uplift.resX, forcingResY: inputs.uplift.resY,
-      water: inputs.climate.data, waterResX: inputs.climate.resX, waterResY: inputs.climate.resY,
+      water: chartRain, waterResX: M.climateField.CLIMATE_RES_X, waterResY: M.climateField.CLIMATE_RES_Y,
       lithoSeed: inputs.lithoSeed,
     }
     const controls = { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast }

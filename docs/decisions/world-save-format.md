@@ -11,7 +11,7 @@ summary.de: Eine gespeicherte Welt ist ein .zip — ein lesbares YAML-Rezept mit
 area: platform
 stage: built
 createdAt: 2026-07-24
-updatedAt: 2026-09-29
+updatedAt: 2026-10-12
 related: [DES-0003, DEC-0009, DEC-0033]
 ---
 
@@ -41,8 +41,11 @@ loads are **instant** and survive generator-code changes.
 ├── elevation.f32         # current (post-erosion) elevation, Float32 2048×1024
 ├── refined.json          # the climate refinement's mesh, months, fields, ENSO (DEC-0036 phase 5)
 ├── refined/…             # its values, Float32 per cell of the climate's field mesh, one file a field
+├── climate.json          # the annual climate's mesh and fields (DEC-0036 phase 7)
+├── climate/…             # its values, Float32 per cell of the climate's field mesh
+├── mesh/…                # the terrain mesh, its column, its land fields per node (biome, koppen, waterTable)
 ├── manifest.json         # layer index for consumers (see queryable-world-save.md)
-├── layers/…              # baked query layers (climate / ecology / rivers)
+├── layers/…              # baked query layers (lakes, rivers, the erosion forcing)
 └── preview.png           # 512×256 thumbnail of the composited map
 ```
 
@@ -151,6 +154,21 @@ session's to the bit and is adopted without computing it again; the layers
 were coarser (u8/u16) and clipped at their ranges. A save without a
 refinement loads unrefined; a save with the old layers and no
 `refined.json`, or with the values of another mesh, is refused.
+
+2026-10-12 (DEC-0036 phase 7, still formatVersion 8): no climate, biome or
+ecology raster is left in the save. The annual climate the land fields came
+from is its field mesh's values, `climate/<field>.f32` (Float32 per cell:
+the temperature reduced to sea level, the rain, the seasonal range, the
+signed monsoon index) with `climate.json` (cells, spacing, the fields and
+their units), in place of the layers `landMask`, `temperature`,
+`precipitation`, `seasonalAmplitude` and `monsoonIndex`; the biome, the
+Köppen class and the water table are values per node of the saved mesh
+(`mesh/biome.u8`, `mesh/koppen.u8`, `mesh/waterTable.f32`), in place of the
+layers `biome` (2048 × 1024), `koppen` and `waterTable`; the layer
+`precipitationEffective` is gone (the riparian rain is the hydrology's, per
+node, recomputed). The generator recomputes all of them on load, as before;
+they are for the save's readers (the bakes, `world/query.ts`). A save with
+the old layers and no `climate.json` is refused.
 
 ### Format choices
 

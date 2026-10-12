@@ -18,7 +18,8 @@ import { buildFeatureBuckets } from '../elevation/elevationField'
 import { oceanAgeAt } from '../tectonics/oceanAge'
 import { computeWeather, defaultWeatherParams, type Weather, type WeatherParams } from '../climate/weather'
 import { climateTerrain } from '../climate/climateMesh'
-import { computeBiomes } from '../climate/biomes'
+import { classifyPoints } from '../climate/biomes'
+import { climateAtPoints, climateCellsFromWeather, meshPoints } from '../climate/climatePoints'
 import { coverField, COVER_TUNING } from '../surface/cover'
 import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
@@ -98,7 +99,7 @@ export interface CoupledTerrain {
   routing: MeshRouting | null
   areas: Float32Array
   sedimentFlux: Float32Array
-  // The last epoch's weather on the coarse raster, kept for the epochs
+  // The last epoch's weather on the climate's field mesh, kept for the epochs
   // between two climate runs (CoupledEpochOptions.climateEvery) — with
   // the epoch it was computed in and the parameters it was computed
   // with, so a moved slider recomputes. Null before the first epoch and
@@ -120,7 +121,8 @@ export interface CoupledTerrain {
 
 export interface CoupledEpochOptions {
   // The climate panel's parameters (phase 5.4): the climate runs per epoch
-  // on the coarse raster of the pre-erosion terrain and forces the water;
+  // on the climate's field mesh over the pre-erosion terrain and forces the
+  // water;
   // absent → the declared defaults.
   weather?: WeatherParams
   iterationsPerEpoch: number
@@ -302,7 +304,6 @@ function meshAreasOf(mesh: PeriodicTriangulation): Float32Array {
 
 // One epoch: tectonics, motion, rebuild and remesh, baseline swap, erosion.
 export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTerrain, options: CoupledEpochOptions): Promise<CoupledEpochStats> {
-  const { width, height } = sim
   const domain: Domain = terrain.mesh.domain
   // Metres per domain unit, the shape's (DEC-0035 fork 6): every length and
   // area below is the mesh's units times this.
@@ -465,11 +466,15 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   timing.baseline += lap()
   // THE CLIMATE OF THE EPOCH (phase 5.4, decision 13): the weather chain
-  // on the coarse raster of the pre-erosion terrain — the same chain the
-  // climate stage runs, at its own resolution, with the panel's parameters
-  // — is the erosion's water forcing this epoch, the ice's balance, the
-  // sea level's, and what a deposit records. The final full-resolution
-  // climate stays the last stage.
+  // on the climate's field mesh over the pre-erosion terrain — the same
+  // chain the climate stage runs, with the panel's parameters — is the
+  // erosion's water forcing this epoch, the ice's balance, the sea level's,
+  // and what a deposit records, each read at the nodes (climate/
+  // climatePoints.ts, DEC-0036 phase 7: the cells sampled at every node,
+  // its temperature with the node's own lapse). The final climate stays
+  // the last stage. The climate reads the terrain from its chart raster
+  // (climateMesh.climateTerrain: the texel under a cell's centre, the
+  // cell's mean).
   const coarseZ = rasteriseNodeField(mesh, zCanon, CLIMATE_RES_X, CLIMATE_RES_Y)
   const weatherParams = options.weather ?? defaultWeatherParams()
   const climateEvery = Math.max(1, options.climateEvery ?? 1)
@@ -479,26 +484,23 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const paramsKey = JSON.stringify(weatherParams)
   const cached = terrain.weather
   const climateDue = climateDueAt(sim.epoch, cached, paramsKey, climateEvery)
-  // On the climate's field mesh (DEC-0036 phase 3): the coarse raster read
-  // at its cells' centres; the readers below take its transition rasters.
   const weather = climateDue || !cached ? computeWeather(climateTerrain(domain, coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y), weatherParams) : cached.result
   if (climateDue) terrain.weather = { epoch: sim.epoch, params: paramsKey, result: weather }
-  const precipitation = weather.seasonal.annual
-  const climateCellM = (width / CLIMATE_RES_X) * unitM
-  const climateCellM2 = climateCellM * ((height / CLIMATE_RES_Y) * unitM)
-  // The ocean's area and the land's mean temperature by AREA: a cell counts
-  // its cellArea (1 on the torus, cos φ on the sphere, whose polar rows are
-  // slivers — counted as whole cells they made the sea level's ocean a
-  // fifth too large and the mean land temperature colder by its poles).
-  let oceanCells = 0
+  const cells = climateCellsFromWeather(weather)
+  const nodes = meshPoints(mesh, zCanon)
+  const atNodes = climateAtPoints(cells, nodes, { wind: true })
+  // The ocean's area and the land's mean temperature by AREA, over the
+  // climate mesh's cells (their own areas, m²; the land the climate's).
+  let oceanAreaM2 = 0
   let oceanDepthSum = 0
   let landTempSum = 0
-  let landClimateCells = 0
-  for (let gy = 0; gy < CLIMATE_RES_Y; gy++) {
-    const a = climateGrid.cellArea(gy)
-    for (let i = gy * CLIMATE_RES_X, end = i + CLIMATE_RES_X; i < end; i++) {
-      if (coarseZ[i] <= 0) { oceanCells += a; oceanDepthSum -= a * coarseZ[i] }
-      else { landTempSum += a * weather.temperature[i]; landClimateCells += a }
+  let landClimateArea = 0
+  {
+    const { cm, land, z: cellZ } = weather.terrain
+    const area = cm.mesh.area
+    for (let i = 0; i < cm.mesh.count; i++) {
+      if (!land[i]) { oceanAreaM2 += area[i]; oceanDepthSum -= area[i] * Math.min(0, cellZ[i]) }
+      else { landTempSum += area[i] * weather.mesh.temperature[i]; landClimateArea += area[i] }
     }
   }
   timing.climate = lap()
@@ -515,7 +517,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // not blend the marker in either.
   const cratonFieldForTill = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, domain)
   for (let i = 0; i < cratonFieldForTill.length; i++) if (cratonFieldForTill[i] < 0) cratonFieldForTill[i] = 0
-  const ice = computeIceOnMesh({ mesh, z: zCanon, temperature: weather.temperature, precipitation, coarseZ, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, width, height, cellM: unitM })
+  const ice = computeIceOnMesh({ mesh, z: zCanon, seaLevelTemperature: atNodes.seaLevelTemperature, precipitation: atNodes.precipitation, cellM: unitM })
   const glacial = glacialErosionOnMesh(mesh, zCanon, ice, (sim.epochMa || TECTONIC_MA_PER_EPOCH) * 1e6, unitM)
   let iceVolumeM3 = 0
   let iceCoastColumnM3 = 0
@@ -537,8 +539,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     }
     const tillM = glacial.tillM[v]
     if (tillM > 0) {
-      const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
-      const precipHere = Math.max(0, upsampleAt(precipitation, climateGrid, mesh.vx[v], mesh.vy[v]))
+      const tempC = atNodes.temperature[v]
+      const precipHere = Math.max(0, atNodes.precipitation[v])
       const cratonHere = upsampleAt(cratonFieldForTill, climateGrid, mesh.vx[v], mesh.vy[v])
       iceCoastColumnM3 += tillM * areaM2
       deposit(column, v, tillM * SURFACE_TUNING.glacialTillCoarse, cratonHere, 1, tempC, precipHere, true)
@@ -558,22 +560,22 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // (found 2026-10-10 on small sphere harness worlds). Real worlds are far
   // from it: on the golden worlds the sea falls at most 28 m, with the
   // ocean at 79 % of the area or more.
-  const oceanMeanDepthM = oceanCells > 0 ? (oceanDepthSum / oceanCells) * ELEVATION_METERS : 0
-  const seaLevelM = oceanCells > 0 ? Math.max(-oceanMeanDepthM, -(iceVolumeM3 * 0.917) / (oceanCells * climateCellM2)) : 0
-  const meanLandTempC = landClimateCells > 0 ? landTempSum / landClimateCells : 0
-  // THE COVER (phase 5.5): the epoch's coarse biomes, as the vegetation
-  // that holds the ground — once the planet's schedule has land plants.
+  const oceanMeanDepthM = oceanAreaM2 > 0 ? (oceanDepthSum / oceanAreaM2) * ELEVATION_METERS : 0
+  const seaLevelM = oceanAreaM2 > 0 ? Math.max(-oceanMeanDepthM, -(iceVolumeM3 * 0.917) / oceanAreaM2) : 0
+  const meanLandTempC = landClimateArea > 0 ? landTempSum / landClimateArea : 0
+  // THE COVER (phase 5.5): the epoch's biomes at the nodes, as the
+  // vegetation that holds the ground — once the planet's schedule has land
+  // plants.
   const plantsFromMa = (weatherParams.planet ?? DEFAULT_PLANET_FORCING).landPlantsFromMa
   const plantsPresent = worldAgeMa(sim.archeanEpochs, sim.epoch) >= plantsFromMa
-  const biomes = computeBiomes(weather.temperature, precipitation, weather.seasonalAmplitude, weather.seasonal.index, coarseZ, CLIMATE_RES_X, CLIMATE_RES_Y)
-  const cover = coverField(biomes, plantsPresent)
+  const cover = coverField(classifyPoints(atNodes, nodes, domain).biome, plantsPresent)
   // Erosion for the epoch, with the tectonics' forcing at the nodes, the
   // epoch's water, and the rates scaled to the step.
   const { uplift, hardness } = coarseForcingFields(sim, domain)
   const areas = meshAreasOf(mesh)
   const { forcing, params } = assembleNodeForcing({
     uplift, hardness, forcingResX: CLIMATE_RES_X, forcingResY: CLIMATE_RES_Y,
-    water: precipitation, waterResX: CLIMATE_RES_X, waterResY: CLIMATE_RES_Y, lithoSeed: erosionLithoSeed(sim.warpSeed),
+    water: null, waterResX: 1, waterResY: 1, waterNodes: atNodes.precipitation, lithoSeed: erosionLithoSeed(sim.warpSeed),
   }, mesh.vx, mesh.vy, mesh.vAlive, mesh.vertexSlots, zCanon, areas, domain, options.controls ?? {})
   // The column's word on the forcing: a node under a fill erodes as
   // sediment, not as its bedrock; and what a cut hands to the walk carries
@@ -598,7 +600,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     rockHard[v] = upsampleAt(hardness, climateGrid, mesh.vx[v], mesh.vy[v])
     // The cover holds the ground: the erodibility falls with it, after the
     // column's word (a fill under forest is soft fill, held).
-    const c = zCanon[v] > 0 ? upsampleAt(cover, climateGrid, mesh.vx[v], mesh.vy[v]) : 0
+    const c = zCanon[v] > 0 ? cover[v] : 0
     if (forcing.uplift[v] > 0) {
       const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], domain)
       if (fold !== 1) { forcing.uplift[v] *= fold; if (zCanon[v] > 0) foldedArea += areas[v] }
@@ -613,7 +615,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // periglacial band, where freeze and thaw move regolith that nothing
     // else would.
     slopeScale[v] = detPow(k, -SURFACE_TUNING.massWastingLithoExponent) * (1 + COVER_TUNING.criticalSlopeRise * c)
-    const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
+    const tempC = atNodes.temperature[v]
     const cold = Math.min(1, Math.max(0, (SURFACE_TUNING.solifluctionBelowC - tempC) / SURFACE_TUNING.solifluctionSpanC))
     diffScale[v] = 1 + (SURFACE_TUNING.solifluctionBoost - 1) * cold
     if (zCanon[v] > 0) { coverSum += c * areas[v]; coverArea += areas[v]; if (cold > 0) solifluctionArea += areas[v] }
@@ -657,8 +659,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       // Tallied apart from the walk's deposits: the scree's supply is the
       // creep's loss, not the cut, and the harness closes both ledgers.
       screeM3 += hill
-      const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
-      const precip = Math.max(0, upsampleAt(precipitation, climateGrid, mesh.vx[v], mesh.vy[v]))
+      const tempC = atNodes.temperature[v]
+      const precip = Math.max(0, atNodes.precipitation[v])
       deposit(column, v, hill / areaM2, cratonAge[v], rockHard[v], tempC, precip, true)
     }
     const depositM3 = result.depositM3[v]
@@ -668,8 +670,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       const hard = result.depositHard[v] / depositM3
       const coarseM3 = result.depositCoarseM3[v]
       // The climate the layer formed under: the epoch's, at the node.
-      const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
-      const precip = Math.max(0, upsampleAt(precipitation, climateGrid, mesh.vx[v], mesh.vy[v]))
+      const tempC = atNodes.temperature[v]
+      const precip = Math.max(0, atNodes.precipitation[v])
       deposit(column, v, (depositM3 - coarseM3) / areaM2, craton, hard, tempC, precip, false)
       deposit(column, v, coarseM3 / areaM2, craton, hard, tempC, precip, true)
     }
@@ -686,7 +688,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // sand layer (coarse) under the epoch's climate. Both move z now, so
   // the plate answers to them below and the lakes see the new shore.
   const coastal = computeCoastal({
-    mesh, z: result.z, areas, wind: weather.wind, coarseZ, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, width, height, cellM: unitM,
+    mesh, z: result.z, areas, windE: atNodes.windE!, windS: atNodes.windS!, cellM: unitM,
     hardness: rockHard, sedimentFlux: result.sedimentFlux, iterations: options.iterationsPerEpoch, epochYears: (sim.epochMa || TECTONIC_MA_PER_EPOCH) * 1e6,
   })
   for (let v = 0; v < mesh.vertexSlots; v++) {
@@ -699,8 +701,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     }
     const depM = coastal.depositM[v]
     if (depM > 0) {
-      const tempC = upsampleAt(weather.temperature, climateGrid, mesh.vx[v], mesh.vy[v])
-      const precipHere = Math.max(0, upsampleAt(precipitation, climateGrid, mesh.vx[v], mesh.vy[v]))
+      const tempC = atNodes.temperature[v]
+      const precipHere = Math.max(0, atNodes.precipitation[v])
       iceCoastColumnM3 += depM * coastAreaM2
       deposit(column, v, depM, cratonAge[v], rockHard[v], tempC, precipHere, true)
       result.z[v] = Math.min(1, result.z[v] + depM / ELEVATION_METERS)
@@ -783,9 +785,12 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // aged by the epoch; a body with no match is new. The hydrology stage
   // recomputes the bodies at full detail after the stop; these carry the
   // history.
+  // The climate at the nodes again, on the terrain as the epoch leaves it
+  // (its land and its heights).
   const sub = meshSubstrate(mesh, routing, areas)
-  const discharge = accumulateDischargeOn(sub, result.z, precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
-  const lakes = computeLakesOn(sub, discharge, result.z, weather.temperature, precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
+  const atNodesAfter = climateAtPoints(cells, meshPoints(mesh, result.z))
+  const discharge = accumulateDischargeOn(sub, result.z, atNodesAfter.precipitation)
+  const lakes = computeLakesOn(sub, discharge, result.z, atNodesAfter.temperature, atNodesAfter.precipitation)
   const epochMaForAges = sim.epochMa || TECTONIC_MA_PER_EPOCH
   const previous = sim.lakeAges
   const ages: LakeAgeRecord[] = []

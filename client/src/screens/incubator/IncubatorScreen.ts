@@ -261,7 +261,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       biome: await gridField(world, 'biome'),
       elevation: await gridField(world, 'elevation'),
       temperature: await gridField(world, 'temperature'),
-      precipitation: await gridField(world, 'precipitationEffective'),
+      // The climate's rain on its chart (world/query's view of the save's
+      // climate cells, DEC-0036 phase 7; the riparian rain left the save).
+      precipitation: await gridField(world, 'precipitation'),
       lakeDepth: await gridField(world, 'lakeDepth'),
       waterLevel: null,
       waterFloor: null,

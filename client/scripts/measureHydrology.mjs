@@ -35,6 +35,7 @@ const M = {
   hydro: await L('/src/generator/surface/hydrology.ts'),
   weather: await L('/src/generator/climate/weather.ts'),
   climateMesh: await L('/src/generator/climate/climateMesh.ts'),
+  chart: await L('/src/generator/climate/climateChart.ts'),
   climateField: await L('/src/generator/climate/climateField.ts'),
   precip: await L('/src/generator/climate/precipitation.ts'),
   archean: await L('/src/generator/archean/archeanState.ts'),
@@ -121,10 +122,7 @@ function precipBandStats(mask, el, precip) {
   const counts = [0, 0, 0, 0], landCounts = [0, 0, 0, 0]
   for (let c = 0; c < W * H; c++) {
     if (el[c] <= SEA) continue
-    const cx = c % W, cy = (c - cx) / W
-    const gx = Math.min(CRX - 1, Math.floor((cx / W) * CRX))
-    const gy = Math.min(CRY - 1, Math.floor((cy / H) * CRY))
-    const p = precip[gy * CRX + gx]
+    const p = precip[c]
     const band = p < edges[0] ? 0 : p < edges[1] ? 1 : p < edges[2] ? 2 : 3
     landCounts[band]++
     if (mask[c]) counts[band]++
@@ -141,21 +139,31 @@ async function measure(name, controls) {
   log(`erosion solved in ${((Date.now() - t0) / 1000).toFixed(0)}s`)
 
   // Climate v1 on raw (as the worker does), then the refinement on eroded.
-  // The static climate on its field mesh (DEC-0036 phase 3), its rasters.
+  // The static climate on its field mesh (DEC-0036 phase 3), on the world
+  // raster through its chart (climateChart.ts: the raster engine's cells
+  // read the land's rain over its land corners) and on the climate's chart
+  // for the census.
   const weatherOf = (z, dry) => M.weather.computeWeather(M.climateMesh.climateTerrain(sim.domain, z, sim.domain.width, sim.domain.height, dry), M.weather.defaultWeatherParams())
-  const w1 = weatherOf(raw)
-  let temperature = w1.temperature
-  let precipitation = w1.seasonal.annual
+  const fieldsOf = (w) => {
+    const cm = w.terrain.cm
+    const rain = w.mesh.seasonal.annual
+    return {
+      coarseT: M.chart.chartField(cm, w.mesh.temperature),
+      precipitation: M.chart.chartLandField(cm, rain, (i) => w.terrain.land[i] === 1 && rain[i] >= 0, M.precip.OCEAN_PRECIP, M.chart.chartLand(w.terrain, W, H), W, H),
+      temperature: M.chart.chartField(cm, w.mesh.temperature, W, H),
+    }
+  }
+  const f1 = fieldsOf(weatherOf(raw))
 
   const routing = await M.routing.fillDepressionsAndRouteFlow(el, sim.domain, 0)
-  let discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
-  let lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, temperature, precipitation, CRX, CRY)
-  const w2 = weatherOf(el, lakes.dryBasin)
-  const t2 = w2.temperature
-  precipitation = w2.seasonal.annual
-  discharge = M.hydro.accumulateDischarge(routing, el, precipitation, CRX, CRY)
+  let discharge = M.hydro.accumulateDischarge(routing, el, f1.precipitation)
+  let lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, f1.temperature, f1.precipitation)
+  const f2 = fieldsOf(weatherOf(el, lakes.dryBasin))
+  const t2 = f2.coarseT
+  const precipitation = f2.precipitation
+  discharge = M.hydro.accumulateDischarge(routing, el, precipitation)
   const maxDis = M.hydro.maxDischargeOverLand(discharge, el)
-  lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, t2, precipitation, CRX, CRY)
+  lakes = M.hydro.computeLakes(routing, discharge, ero.preFillElevations, f2.temperature, precipitation)
 
   // --- terrain shape ---
   let land = 0, over3k = 0, over45 = 0, over6k = 0
@@ -189,8 +197,10 @@ async function measure(name, controls) {
   // --- B. rivers, real vs floored counterfactual ---
   const CANON = M.hydro.CANONICAL_RIVER_DENSITY
   const stats = (precipField) => {
-    const meanRunoff = M.hydro.meanLandRunoff(precipField, el, sim.domain, CRX, CRY)
-    const dis = M.hydro.accumulateDischarge(routing, el, precipField, CRX, CRY)
+    let sum = 0, count = 0
+    for (let i = 0; i < el.length; i++) if (el[i] > SEA) { sum += Math.max(0, precipField[i]); count++ }
+    const meanRunoff = count > 0 ? sum / count : 0
+    const dis = M.hydro.accumulateDischarge(routing, el, precipField)
     const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(CANON), meanRunoff)
     const mask = M.hydro.buildChannelMask(routing, el, dis, threshold)
     let cells = 0

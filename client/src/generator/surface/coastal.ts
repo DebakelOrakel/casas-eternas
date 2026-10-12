@@ -49,14 +49,11 @@ export interface CoastalInputs {
   z: Float32Array
   // Voronoi areas per slot, macro cells.
   areas: Float32Array
-  // The wind on the climate grid ([u, v] interleaved, climate/wind.ts) and
-  // the terrain's rasterisation there, for the fetch.
-  wind: Float32Array
-  coarseZ: Float32Array
-  climateResX: number
-  climateResY: number
-  width: number
-  height: number
+  // The wind per slot, east and south in the node's own frame (wind.ts's
+  // units), sampled from the climate's field mesh at the nodes
+  // (climate/climatePoints.ts).
+  windE: ArrayLike<number>
+  windS: ArrayLike<number>
   // Metres per domain unit.
   cellM: number
   // The rock's hardness per slot (the forcing's K factor, 1 neutral).
@@ -94,7 +91,7 @@ function normaliseToP90(values: Float32Array, members: Int32Array): void {
 }
 
 export function computeCoastal(input: CoastalInputs): CoastalResult {
-  const { mesh, z, areas, wind, coarseZ, climateResX: RX, climateResY: RY, width, height, cellM, hardness, sedimentFlux, iterations, epochYears } = input
+  const { mesh, z, areas, windE, windS, cellM, hardness, sedimentFlux, iterations, epochYears } = input
   const T = SURFACE_TUNING
   const slots = mesh.vertexSlots
   const cutM = new Float32Array(slots)
@@ -140,28 +137,33 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
   if (shoreList.length === 0) return empty
   const shore = Int32Array.from(shoreList)
 
-  // EXPOSURE: the wind at the climate cell, the fetch upwind over the sea
-  // on the climate raster (F5's rule), speed² × fetch, to the p90.
-  // The march upwind is a walk over the climate raster in its own cells
-  // (`cells`, the domain one climate cell per unit): each step one cell's
-  // length along the wind, the direction carried along with the point
-  // (Domain.transport) — on the sphere a great circle that steps across a
-  // pole, on the torus the straight line it was (displace adds as `+=`
-  // did, transport keeps the two numbers).
-  const fetchCap = Math.max(1, Math.round((T.coastFetchCapKm * 1000) / ((width / RX) * cellM)))
-  const climate = domain.grid(RX, RY)
-  const cells = domain.scaledTo(RX, RY)
+  // EXPOSURE: the wind at the node, the fetch upwind over the sea (F5's
+  // rule), speed² × fetch, to the p90. The march upwind steps
+  // coastFetchStepM along the wind from the node — the direction carried
+  // along with the point (Domain.transport: on the sphere a great circle
+  // that steps across a pole, on the torus the straight line) — and ends
+  // on the first step whose ground, the terrain's own surface there (the
+  // mesh's triangle under it), stands above the sea. Until DEC-0036 phase 7
+  // it walked the climate raster from the cell's centre, a cell a step:
+  // the step is that cell in metres.
+  const stepUnits = T.coastFetchStepM / cellM
+  const fetchCap = Math.max(1, Math.round((T.coastFetchCapKm * 1000) / T.coastFetchStepM))
   const at = { x: 0, y: 0 }
   const heading = { x: 0, y: 0 }
+  const bary = new Float64Array(3)
+  let hint = mesh.lastTri
+  const groundAt = (x: number, y: number): number => {
+    const t = mesh.locate(x, y, hint)
+    hint = t
+    mesh.barycentric(t, x, y, bary)
+    return bary[0] * z[mesh.tris[3 * t]] + bary[1] * z[mesh.tris[3 * t + 1]] + bary[2] * z[mesh.tris[3 * t + 2]]
+  }
   const windU = new Float32Array(slots)
   const windV = new Float32Array(slots)
   for (let i = 0; i < shore.length; i++) {
     const v = shore[i]
-    const gx = Math.min(RX - 1, Math.max(0, Math.floor((mesh.vx[v] / width) * RX)))
-    const gy = Math.min(RY - 1, Math.max(0, Math.floor((mesh.vy[v] / height) * RY)))
-    const gi = gy * RX + gx
-    const u = wind[gi * 2]
-    const w = wind[gi * 2 + 1]
+    const u = windE[v]
+    const w = windS[v]
     windU[v] = u
     windV[v] = w
     const speed = detHypot(u, w)
@@ -169,14 +171,14 @@ export function computeCoastal(input: CoastalInputs): CoastalResult {
     heading.x = -u / speed
     heading.y = -w / speed
     let fetch = 0
-    let px = gx + 0.5
-    let py = gy + 0.5
+    let px = mesh.vx[v]
+    let py = mesh.vy[v]
     for (let k = 0; k < fetchCap; k++) {
-      cells.displace(px, py, heading.x, heading.y, at)
-      cells.transport(heading.x, heading.y, px, py, at.x, at.y, heading)
+      domain.advance(px, py, heading.x * stepUnits, heading.y * stepUnits, at)
+      domain.transport(heading.x, heading.y, px, py, at.x, at.y, heading)
       px = at.x
       py = at.y
-      if (coarseZ[climate.index(Math.floor(px), Math.floor(py))] > SEA_LEVEL) break
+      if (groundAt(px, py) > SEA_LEVEL) break
       fetch++
     }
     exposure[v] = speed * speed * (fetch / fetchCap)

@@ -64,8 +64,8 @@ function computeMonsoonWind(terrain: ClimateTerrain, base: CellVectors, seasonal
   return out
 }
 
-// Per cell of the climate's field mesh (DEC-0036 phase 3); the climate
-// raster's copies are weather.ts's transition rasters.
+// Per cell of the climate's field mesh (DEC-0036 phase 3); its readers
+// sample it at their points (climatePoints.ts), the screen its chart.
 export interface SeasonalPrecipitation {
   // Annual mean precip (mm/yr on land, OCEAN_PRECIP on ocean) — the mean of the two
   // seasons, so it stays comparable to the old single-field precipitation.

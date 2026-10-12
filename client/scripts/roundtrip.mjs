@@ -273,8 +273,6 @@ console.log('\n— zip reader —')
 const W = 16, H = 8
 const zipElev = new Float32Array(W * H)
 for (let i = 0; i < zipElev.length; i++) zipElev[i] = Math.cos(i * 0.11) * 0.5
-const precipSpec = M.layers.WORLD_LAYERS.find((s) => s.name === 'precipitation')
-const zipPrecip = new Float32Array(W * H).fill(1200)
 // The engine's forcing layers (erosion-v2 P3): raw f32, written by the save,
 // consumed by the bake. U deliberately carries a negative (rift) value — the
 // layer is signed, and a quantised range would have clipped it.
@@ -285,34 +283,12 @@ for (let i = 0; i < zipUplift.length; i++) {
   zipHardness[i] = 1 + 0.4 * Math.cos(i * 0.21)
 }
 const forcingSpecs = Object.fromEntries(M.layers.FORCING_LAYERS.map((s) => [s.name, s]))
-
-// The land-only climate layers, half ocean. Their -1 ocean sentinel does not
-// survive quantisation (bakeLayer clamps it), so the reader has to put it back
-// from landMask — see restoreLandOnlySentinel. A consumer that tells land from
-// ocean by the sentinel (biomes.ts) otherwise classifies a fabricated 0.
-const specOf = (name) => M.layers.WORLD_LAYERS.find((s) => s.name === name)
 const isOcean = (i) => i % 2 === 1
-const zipLandMask = new Float32Array(W * H)
-const zipTemp = new Float32Array(W * H)
-const zipPrecipEff = new Float32Array(W * H)
-const zipAmplitude = new Float32Array(W * H)
-const zipMonsoon = new Float32Array(W * H)
-for (let i = 0; i < W * H; i++) {
-  zipLandMask[i] = isOcean(i) ? 0 : 1
-  zipTemp[i] = 12 + (i % 7)
-  zipPrecipEff[i] = isOcean(i) ? -1 : 900 + i
-  zipAmplitude[i] = isOcean(i) ? -1 : 8 + (i % 5)
-  zipMonsoon[i] = isOcean(i) ? -1 : (i % 9) / 10 - 0.4 // both signs, since the index is signed
-}
 const zip = new JSZip()
 zip.file('world.yaml', ['kind: FlatWorld', 'spec:', `  seed: "zip-welt"`, '  erosion:', '    landscapeAge: 25', '    alluvium: 60', '    rockContrast: 35', 'metadata:', '  uid: 0192abcd-0000-8000-8000-000000000000', ''].join('\n'))
 zip.file('layers/elevation.f32', zipElev.buffer)
-zip.file('layers/precipitation.u16', M.layers.bakeLayer(zipPrecip, precipSpec))
 zip.file('layers/uplift.f32', M.layers.bakeLayer(zipUplift, forcingSpecs.uplift))
 zip.file('layers/erodibility.f32', M.layers.bakeLayer(zipHardness, forcingSpecs.erodibility))
-for (const [name, field] of [['landMask', zipLandMask], ['temperature', zipTemp], ['precipitationEffective', zipPrecipEff], ['seasonalAmplitude', zipAmplitude], ['monsoonIndex', zipMonsoon]]) {
-  zip.file(`layers/${name}.bin`, M.layers.bakeLayer(field, specOf(name)))
-}
 // The standing-water list (phase 1 of the adaptive-mesh plan): a JSON table
 // beside the rasters, formatVersion 2. One lake and one dry basin, in texel
 // coordinates of this zip's raster.
@@ -321,21 +297,17 @@ const zipBodies = [
   { id: 1, kind: 'dry', level: -0.05, spill: 0.02, floor: -0.05, seedX: 9.5, seedY: 5.5, outletX: 9.5, outletY: 4.5, cells: 2, frozen: false },
 ]
 zip.file('layers/waterBodies.json', JSON.stringify(zipBodies))
-zip.file('manifest.json', JSON.stringify({
+const zipManifest = {
   formatVersion: 2,
   world: { width: W, height: H },
   layers: [
     { name: 'waterBodies', file: 'layers/waterBodies.json', kind: 'table' },
     { name: 'elevation', file: 'layers/elevation.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
-    { name: 'precipitation', file: 'layers/precipitation.u16', kind: 'raster', resX: W, resY: H, dtype: precipSpec.dtype, encoding: { scale: precipSpec.scale, offset: precipSpec.offset } },
     { name: 'uplift', file: 'layers/uplift.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
     { name: 'erodibility', file: 'layers/erodibility.f32', kind: 'raster', resX: W, resY: H, dtype: 'f32', encoding: { scale: 1, offset: 0 } },
-    ...['landMask', 'temperature', 'precipitationEffective', 'seasonalAmplitude', 'monsoonIndex'].map((name) => {
-      const spec = specOf(name)
-      return { name, file: `layers/${name}.bin`, kind: 'raster', resX: W, resY: H, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset } }
-    }),
   ],
-}))
+}
+zip.file('manifest.json', JSON.stringify(zipManifest))
 const loaded = await M.inputs.readWorldInputs(await zip.generateAsync({ type: 'arraybuffer' }))
 if (!loaded) check('the zip reads back at all', false)
 else {
@@ -348,35 +320,21 @@ else {
   // The lithology seed is DERIVED (like detailSeed), so every reader of one
   // seed text must land on one lattice.
   check('the lithology seed is derived from the recipe', Number.isInteger(loaded.lithoSeed) && loaded.lithoSeed >>> 0 === loaded.lithoSeed)
-  // The reader must reach the SAME id as deriving it here by hand — and it must
-  // hash the STORED (dequantised) precipitation, never a raw float array.
+  check('a save without a climate reads as none', loaded.climate === null)
+  // The reader must reach the SAME id as deriving it here by hand.
   const direct = M.key.deriveWorldId({
     kind: 'FlatWorld',
-    elevation: loaded.elevations, precipitation: loaded.climate?.data ?? null, landscapeAge: 25, alluvium: 60, rockContrast: 35,
+    elevation: loaded.elevations, precipitation: null, landscapeAge: 25, alluvium: 60, rockContrast: 35,
   })
   check('reader and direct derivation agree on the worldId', loaded.worldId === direct, `${loaded.worldId} vs ${direct}`)
-
-  // The land-only climate layers carry their ocean sentinel again.
-  const bi = loaded.biomeInputs
-  const oceanCells = (f) => { let n = 0; for (let i = 0; i < f.length; i++) if (isOcean(i) && f[i] === -1) n++; return n }
-  const half = (W * H) / 2
-  check('a land-only layer says -1 over ocean again', bi !== null
-    && oceanCells(bi.precipitationEffective.data) === half
-    && oceanCells(bi.seasonalAmplitude.data) === half
-    && oceanCells(bi.monsoonIndex.data) === half)
-  // Land must be untouched by the restoration, to the layer's own precision.
-  const landOff = (f, want, tol) => { let m = 0; for (let i = 0; i < f.length; i++) if (!isOcean(i)) m = Math.max(m, Math.abs(f[i] - want[i])); return m <= tol }
-  check('the land values are left alone', bi !== null
-    && landOff(bi.precipitationEffective.data, zipPrecipEff, 0.2)
-    && landOff(bi.seasonalAmplitude.data, zipAmplitude, 0.2)
-    && landOff(bi.monsoonIndex.data, zipMonsoon, 0.01))
-  // Temperature is NOT land-only — it means something over water and keeps it.
-  check('temperature is not masked', bi !== null && bi.temperature.data[1] > 0)
-  // The signed monsoon index has to survive the round trip as a sign, which is
-  // what the -1 offset in its encoding is for.
-  check('the monsoon index keeps its sign', bi !== null
-    && [...bi.monsoonIndex.data].some((v, i) => !isOcean(i) && v < -0.05)
-    && [...bi.monsoonIndex.data].some((v, i) => !isOcean(i) && v > 0.05))
+}
+// A save whose climate is still the raster layers (before DEC-0036 phase
+// 7) is refused, not converted.
+{
+  const old = await JSZip.loadAsync(await zip.generateAsync({ type: 'arraybuffer' }))
+  old.file('layers/temperature.u8', new Uint8Array(W * H).buffer)
+  old.file('layers/biome.u8', new Uint8Array(W * H).buffer)
+  check('a save with the climate as raster layers (before DEC-0036 phase 7) is refused', (await M.inputs.readWorldInputs(await old.generateAsync({ type: 'arraybuffer' }))) === null)
 }
 
 // The lake layer derives from the list and the terrain: a bowl in a synthetic
@@ -449,8 +407,7 @@ else {
     snapshot: { epoch: 1 }, mantle: { values: new Float64Array(1).buffer, cells: 1, spacingM: 1 }, latticeAccumulated: new ArrayBuffer(4), latticeLockedEpochs: new ArrayBuffer(2),
     latticeLastClassCode: new ArrayBuffer(1), oceanAge: { values: new Float64Array(1).buffer, cells: 1, spacingM: 1 }, forcing: null, mesh: undefined,
     fields: {
-      climateResX: 0, climateResY: 0, temperature: null, precipitation: null, precipitationEffective: null, biome: null, seasonalAmplitude: null, monsoonIndex: null,
-      koppen: null, lakeDepth: null, waterTable: null, dischargeM3s: null, refined, waterBodies: null, coast: null, sedimentBasins: null,
+      climate: null, land: null, lakeDepth: null, dischargeM3s: null, refined, waterBodies: null, coast: null, sedimentBasins: null,
     },
   })
   const zip = await JSZip.loadAsync(await write(r))
@@ -491,14 +448,26 @@ console.log('\n— zip writer —')
 {
   const writer = await L('/src/world/save/worldArchive.ts')
   const query = await L('/src/world/query.ts')
+  const CMw = await L('/src/generator/climate/climateMesh.ts')
   const { OCEAN_PRECIP } = await L('/src/generator/climate/precipitation.ts')
-  const precipitation = new Float32Array(W * H)
-  for (let i = 0; i < W * H; i++) precipitation[i] = isOcean(i) ? OCEAN_PRECIP : 600 + i
   const meshZ = new Float32Array([0.1, 0.2, 0.3])
   // The mantle's field-mesh values (formatVersion 8): Float64, exact.
   const zipMantle = new Float64Array([0.1, -1 / 3, Math.PI])
   // The ocean age's the same (DEC-0036 phase 2, still formatVersion 8).
   const zipAge = new Float64Array([0, 12.5, 1 / 7, 180])
+  // The climate per cell of this world's climate mesh (DEC-0036 phase 7):
+  // Float32, every second cell sea (the rain's mark).
+  const cm = CMw.climateMesh(M.domain.torusDomain(W, H))
+  const nc = cm.mesh.count
+  const cellSea = (i) => i % 2 === 1
+  const zipClimate = {
+    cells: nc, spacingM: cm.cellM,
+    seaLevelTemperature: Float32Array.from({ length: nc }, (_, i) => 10 + (i % 17) / 3),
+    precipitation: Float32Array.from({ length: nc }, (_, i) => (cellSea(i) ? OCEAN_PRECIP : 500 + (i % 91))),
+    seasonalAmplitude: Float32Array.from({ length: nc }, (_, i) => (cellSea(i) ? -1 : 6 + (i % 7))),
+    monsoonIndex: Float32Array.from({ length: nc }, (_, i) => (cellSea(i) ? OCEAN_PRECIP : (i % 9) / 10 - 0.4)),
+  }
+  const zipLand = { count: 3, biome: new Uint8Array([0, 6, 11]), koppen: new Uint8Array([0, 14, 29]), waterTable: new Float32Array([-1, 12.5, 0]) }
   const yaml = ['kind: FlatWorld', 'spec:', '  seed: "writer-welt"', '  erosion:', '    landscapeAge: 30', '    alluvium: 40', '    rockContrast: 55', 'metadata:', '  uid: 0192abcd-0000-8000-8000-00000000beef', ''].join('\n')
   const written = await writer.writeWorldArchive({
     kind: 'tectonic', width: W, height: H, yaml, generatorVersion: 'roundtrip', preview: null, elevation: zipElev.buffer.slice(0),
@@ -507,8 +476,7 @@ console.log('\n— zip writer —')
     forcing: { uplift: zipUplift, erodibility: zipHardness, resX: W, resY: H },
     mesh: { count: 3, nodes: new Float32Array([1, 1, 5, 2, 9, 6]).buffer, connectivity: new Uint8Array([7, 8, 9]).buffer, z: meshZ.buffer.slice(0) },
     fields: {
-      climateResX: W, climateResY: H, temperature: zipTemp, precipitation, precipitationEffective: zipPrecipEff, biome: null,
-      seasonalAmplitude: zipAmplitude, monsoonIndex: zipMonsoon, koppen: null, lakeDepth: null, waterTable: null, dischargeM3s: null,
+      climate: zipClimate, land: zipLand, lakeDepth: null, dischargeM3s: null,
       refined: null, waterBodies: zipBodies, coast: null, sedimentBasins: null,
     },
   })
@@ -530,6 +498,26 @@ console.log('\n— zip writer —')
     try { await writer.readField(zip, 'oceanAge') } catch { ageRefused = true }
     check('a version-8 save from before the ocean age moved (oceanAge.f32, no .f64) is refused', ageRefused)
   }
+  {
+    // The climate and the land fields on their meshes (DEC-0036 phase 7):
+    // bit for bit, no raster layer of either.
+    const zip = await JSZip.loadAsync(written)
+    const climate = await writer.readClimate(zip)
+    const sameF = (a, b) => a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
+    check('the climate comes back as its mesh values, bit for bit, with its mesh and the sea\'s marks', climate !== null && climate.cells === nc && climate.spacingM === cm.cellM
+      && ['seaLevelTemperature', 'precipitation', 'seasonalAmplitude', 'monsoonIndex'].every((k) => sameF(climate[k], zipClimate[k])) && climate.precipitation[1] === OCEAN_PRECIP)
+    const land = await writer.readLandFields(zip, 3)
+    check('the land fields come back per node, bit for bit', land !== null && String(land.biome) === String(zipLand.biome) && String(land.koppen) === String(zipLand.koppen) && String(land.waterTable) === String(zipLand.waterTable))
+    let wrongCount = false
+    try { await writer.readLandFields(zip, 4) } catch { wrongCount = true }
+    check('land fields of another mesh are refused', wrongCount)
+    check('no climate, biome, Köppen or water-table raster layer is written', !manifest.layers.some((l) => ['landMask', 'temperature', 'precipitation', 'precipitationEffective', 'biome', 'seasonalAmplitude', 'monsoonIndex', 'koppen', 'waterTable'].includes(l.name)) && zip.file(/^layers\/(landMask|temperature|precipitation|biome|seasonal|monsoon|koppen|waterTable)/).length === 0)
+    check('the manifest names the climate and the land files', manifest.climate?.file === 'climate.json' && manifest.mesh?.files?.biome === 'mesh/biome.u8' && manifest.mesh?.files?.waterTable === 'mesh/waterTable.f32')
+    zip.remove('climate/monsoonIndex.f32')
+    let partial = false
+    try { await writer.readClimate(zip) } catch { partial = true }
+    check('a climate with a field missing is refused', partial)
+  }
   const back = await M.inputs.readWorldInputs(written)
   if (!back) check('the written archive reads back at all', false)
   else {
@@ -537,19 +525,23 @@ console.log('\n— zip writer —')
     check('the written recipe is read', back.seedText === 'writer-welt' && back.erosionControls.alluvium === 40 && back.worldUid === '0192abcd-0000-8000-8000-00000000beef')
     check('the written forcing comes back byte-identical', String(back.uplift?.data) === String(zipUplift) && String(back.erodibility?.data) === String(zipHardness))
     check('the written water bodies come back', JSON.stringify(back.waterBodies) === JSON.stringify(zipBodies))
-    // The rain over land within half a step; the land mask the writer
-    // derives from it puts the ocean sentinel back into the land-only
-    // layers (the rain itself carries none — loadWorldInputs).
-    const p = back.climate?.data
-    let landOk = !!p
-    for (let i = 0; p && i < W * H; i++) if (!isOcean(i)) landOk &&= Math.abs(p[i] - precipitation[i]) <= precipSpec.scale / 2 + 1e-6
-    check('the written rain comes back within half a step over land', landOk)
-    const eff = back.biomeInputs?.precipitationEffective.data
-    let oceanOk = !!eff
-    for (let i = 0; eff && i < W * H; i++) oceanOk &&= isOcean(i) ? eff[i] === OCEAN_PRECIP : eff[i] !== OCEAN_PRECIP
-    check('the land mask the writer derives marks the ocean again', oceanOk)
-    const savedMesh = await (await query.openWorld(written)).mesh()
+    check('the bake\'s climate is the saved cells', back.climate !== null && back.climate.cells === nc && back.climate.precipitation[2] === zipClimate.precipitation[2])
+    const direct = M.key.deriveWorldId({
+      kind: 'FlatWorld', elevation: back.elevations, precipitation: zipClimate.precipitation, landscapeAge: 30, alluvium: 40, rockContrast: 55,
+      mesh: { nodes: new Float32Array([1, 1, 5, 2, 9, 6]), z: meshZ },
+    })
+    check('the worldId hashes the climate\'s cells', back.worldId === direct, `${back.worldId} vs ${direct}`)
+    const world = await query.openWorld(written)
+    const savedMesh = await world.mesh()
     check('the written mesh comes back as written', savedMesh !== null && savedMesh.count === 3 && String(savedMesh.z) === String(meshZ) && String(savedMesh.connectivity) === '7,8,9')
+    // The query's views of the climate: its chart, the sea's mark on the
+    // chart's sea (the elevation raster's), the temperature at the texel's
+    // height.
+    const rain = await world.acquire('precipitation')
+    const mask = await world.acquire('landMask')
+    let marked = rain !== null && mask !== null && rain.resX === 256
+    for (let i = 0; marked && i < rain.data.length; i++) if (mask.data[i] === 0 && rain.data[i] !== OCEAN_PRECIP) marked = false
+    check('the query draws the climate\'s chart, the rain marked on its sea', marked && world.has('temperature') && !world.has('precipitationEffective'))
   }
 }
 

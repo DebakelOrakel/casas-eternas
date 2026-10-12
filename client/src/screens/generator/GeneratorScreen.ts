@@ -58,7 +58,8 @@ import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/e
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ELEVATION_ENCODING, decodeLayer } from '../../world/save/worldLayers'
 import { readField, readRefined, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
-import { refinementFits, type RefinedClimate, type RefinedClimateRasters } from '../../generator/climate/refinement'
+import { refinementFits, type RefinedClimate } from '../../generator/climate/refinement'
+import type { RefinedClimateChart } from '../../generator/climate/climateChart'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createOverlayList } from './OverlayList'
@@ -1339,7 +1340,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // months of pressure and wind, month-major. Null until it ran (by itself,
   // once the world stands, or read back from a save), and dropped with every
   // new climate.
-  let lastRefined: RefinedClimateRasters | null = null
+  let lastRefined: (RefinedClimateChart & { koppen: Uint8Array }) | null = null
   // The same refinement as its values per cell of the climate's field mesh
   // (DEC-0036 phase 5): what the save writes and a load hands back, and
   // what the month's wind marks read. Set and dropped with lastRefined.
@@ -1472,8 +1473,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let lastDischargeField: Float32Array | null = null
   let lastMaxDischarge = 0
   let lastLakeDepth: Float32Array | null = null
-  // The water table's depth below the surface (phase 5a), a save layer.
-  let lastWaterTable: Float32Array | null = null
   // The standing-water truth behind lastLakeDepth (hydrology.WaterBody): the
   // save carries the list; the map draws shores against the per-cell level.
   let lastWaterBodies: WaterBody[] | null = null
@@ -1486,8 +1485,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The erosion pass's deposits as features (surface/sedimentBasins.ts).
   let lastSedimentBasins: SedimentBasin[] | null = null
   // Precipitation INCLUDING the riparian bonus — what the biomes were actually
-  // classified from, and the only extra a consumer needs to reclassify them at
-  // its own resolution (see the precipitationEffective layer).
+  // classified from — per pixel of the map (the water balance's readout).
   let lastPrecipitationEffective: Float32Array | null = null
   // Ecology (resource/suitability) panel — its own step after hydrology. Phase 1:
   // the carrying-capacity field only. null until computed / invalidated.
@@ -2062,19 +2060,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // `lastBiomes` shares the map raster (see the worker's climateData message), so
   // this is a straight per-pixel read — no climate-grid sampling, and no 8x8
   // blocks. The other climate overlays around it still sample their coarse grid.
-  // Köppen classes: the climate cell's class on its land pixels (the relief's
-  // land bit keeps the coast the map's, not the 62 km grid's). Classes do not
-  // blend, so the cells stay whole inland.
+  // Köppen classes: per pixel of the map (the nodes' classes, DEC-0036
+  // phase 7, each land pixel its triangle's heaviest land node's) on its
+  // land pixels (the relief's land bit keeps the coast the map's).
   function paintKoppen(data: Uint8ClampedArray): void {
     const field = displayKoppen()
-    if (!field || !lastRelief) return
+    if (!field || !lastRelief || field.length !== MAP_WIDTH * MAP_HEIGHT) return
     const alpha = 0.7
     for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
       for (let x = 0; x < MAP_WIDTH; x++) {
         if (!(lastRelief[y * MAP_WIDTH + x] & 128)) continue
-        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
-        const id = field[gy * climateResX + gx]
+        const id = field[y * MAP_WIDTH + x]
         if (id === 0) continue
         const [r, g, b] = koppenColor(id)
         const p = (y * MAP_WIDTH + x) * 4
@@ -2912,7 +2908,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       probe: null,
       // The name alone: the code is the legend's, beside its swatch.
       highlight: (cell) => {
-        const id = displayKoppen()?.[cell.i] ?? 0
+        const id = displayKoppen()?.[cell.fine] ?? 0
         return id > 0 && cell.land ? t(koppenLabelKey(id) as TKey) : null
       },
     },
@@ -2960,8 +2956,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         { label: t('overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
         { label: t('overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
       ] }),
-      probe: (cell) => lastPrecipitationEffective && lastPrecipitationEffective[cell.i] !== OCEAN_PRECIP
-        ? [{ label: t('readout.row.effectivePrecip'), value: formatValue(String(Math.round(lastPrecipitationEffective[cell.i])), 'common.unit.millimetresPerYear') }]
+      probe: (cell) => lastPrecipitationEffective && lastPrecipitationEffective[cell.fine] !== OCEAN_PRECIP
+        ? [{ label: t('readout.row.effectivePrecip'), value: formatValue(String(Math.round(lastPrecipitationEffective[cell.fine])), 'common.unit.millimetresPerYear') }]
         : [],
     },
     // A basin's colour is its identity, not a value: nothing to read out.
@@ -3654,7 +3650,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   interface ClimateMirrors {
     temperature: Float32Array | null; wind: Float32Array | null; currents: Float32Array | null; currentAnomaly: Float32Array | null
     precipitation: Float32Array | null; seasonality: Float32Array | null; monsoonIndex: Float32Array | null; koppen: Uint8Array | null
-    biomes: Uint8Array | null; resX: number; resY: number; refined: RefinedClimateRasters | null; refinedValues: RefinedClimate | null
+    biomes: Uint8Array | null; resX: number; resY: number; refined: (RefinedClimateChart & { koppen: Uint8Array }) | null; refinedValues: RefinedClimate | null
   }
   let planetPreviewRealClimate: ClimateMirrors | null = null
   let planetPreviewDebounce: ReturnType<typeof setTimeout> | undefined
@@ -4044,7 +4040,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     drawRivers()
     // Lakes only arrive on a re-route (empty buffer = unchanged, keep the last).
     if (message.lakeDepth.byteLength > 0) lastLakeDepth = new Float32Array(message.lakeDepth)
-    if (message.waterTable.byteLength > 0) lastWaterTable = new Float32Array(message.waterTable)
+    if (message.precipitationEffective.byteLength > 0) lastPrecipitationEffective = new Float32Array(message.precipitationEffective)
     if (message.waterBodies) lastWaterBodies = message.waterBodies
     if (message.waterLevel.byteLength > 0) lastWaterLevel = new Float32Array(message.waterLevel)
     if (message.waterSurface.byteLength > 0) lastWaterSurface = new Uint8Array(message.waterSurface)
@@ -4058,7 +4054,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Riparian-refined biomes replace the climate step's water-free ones, and
     // the precipitation they came from rides along for the save.
     if (message.biomes.byteLength > 0) lastBiomes = new Uint8Array(message.biomes)
-    if (message.precipitationEffective.byteLength > 0) lastPrecipitationEffective = new Float32Array(message.precipitationEffective)
     hydrologyInFlight = false
     updateControlsDisabled()
     updateProgress()
@@ -4074,7 +4069,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function clearHydrology(): void {
     lastRiverData = null
     lastLakeDepth = null
-    lastWaterTable = null
     lastWaterBodies = null
     lastWaterLevel = null
     lastWaterSurface = null
@@ -5110,17 +5104,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           : null,
         mesh: message.mesh,
         fields: {
-          climateResX,
-          climateResY,
-          temperature: lastTemperature,
-          precipitation: lastPrecipitation,
-          precipitationEffective: lastPrecipitationEffective,
-          biome: lastBiomes,
-          seasonalAmplitude: lastSeasonality,
-          monsoonIndex: lastMonsoonIndex,
-          koppen: displayKoppen(),
+          // The climate and the land fields on their meshes, the worker's
+          // (DEC-0036 phase 7).
+          climate: message.climate ? {
+            cells: message.climate.cells, spacingM: message.climate.spacingM,
+            seaLevelTemperature: new Float32Array(message.climate.seaLevelTemperature), precipitation: new Float32Array(message.climate.precipitation),
+            seasonalAmplitude: new Float32Array(message.climate.seasonalAmplitude), monsoonIndex: new Float32Array(message.climate.monsoonIndex),
+          } : null,
+          land: message.land ? {
+            count: message.land.count, biome: new Uint8Array(message.land.biome), koppen: new Uint8Array(message.land.koppen),
+            waterTable: message.land.waterTable ? new Float32Array(message.land.waterTable) : null,
+          } : null,
           lakeDepth: lastLakeDepth,
-          waterTable: lastWaterTable,
           dischargeM3s: lastDischargeField ? ((unit) => lastDischargeField.map((q) => q * unit))(dischargeUnitM3s()) : null,
           refined: lastRefinedValues,
           waterBodies: lastWaterBodies,

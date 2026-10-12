@@ -12,19 +12,23 @@ import type { StageId } from './stages'
 import type { MeshTerrain } from './meshErosionStage'
 import { createCoupledTerrain, decodeCoupledTerrain, HISTORY_DEFAULTS, stepCoupledEpoch, type CoupledTerrain } from './coupledEpoch'
 import { encodeColumn } from '../mesh/meshColumn'
-import { rasteriseNodeField } from '../mesh/meshRaster'
-import { Biome } from '../climate/biomes'
+import { landBilinearAtNodes, nearestCellAtNodes, rasteriseNodeField, rasteriseNodePart, triangleRaster, type TriangleRaster } from '../mesh/meshRaster'
+import { Biome, classifyPoints } from '../climate/biomes'
 import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
 import { computeHydrogeology } from '../surface/hydrogeology'
 import { coverField } from '../surface/cover'
 import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
-import { rasterSubstrate } from '../surface/flowSubstrate'
+import { climateAtPoints, climateCellsFromRefined, climateCellsFromWeather, climateCellValues, meanLandRunoff, meshPoints, type ClimateCells, type ClimatePoints, type PointClimate } from '../climate/climatePoints'
+import { chartLand, chartLandField, refinedChart, weatherChart } from '../climate/climateChart'
+import { OCEAN_PRECIP } from '../climate/precipitation'
+import { computeIceOnMesh } from '../surface/glacial'
+import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
 import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
 import { encodeMesh } from '../mesh/meshSerial'
 import { meshRouting, meshSubstrate, waterFieldsFromMesh } from '../mesh/meshHydrology'
 import { replayRuns } from './replayRuns'
-import { rasterCellAt } from '../surface/riverGraph'
-import type { FieldPayload, MeshPayload } from './messages'
+
+import type { ClimatePayload, FieldPayload, LandPayload, MeshPayload } from './messages'
 import { coarseForcingFields } from './erosionForcing'
 import { fillDepressionsAndRouteFlow } from '../surface/flowRouting'
 import type { ArcheanSimulation } from '../archean/archeanState'
@@ -39,14 +43,14 @@ import { TECTONIC_MA_PER_EPOCH, worldAgeMa, worldEpoch } from '../core/worldTime
 import { createOceanAgeField, savedOceanAge } from '../tectonics/oceanAge'
 import type { SavedField } from '../fields/fieldMesh'
 import type { FlowRouting } from '../surface/flowRouting'
-import { accumulateDischarge, accumulateDischargeOn, extractRiverPolylines, computeLakes, computeLakesOn, computeRiparianBiomes, computeWatersheds, maxDischargeOverLand, meanLandRunoff, densityToCriticalArea, channelThreshold, waterLevelField, CANONICAL_RIVER_DENSITY, accumulateRegimeInputs, accumulateRegimeInputsOn, SURFACE_ICE } from '../surface/hydrology'
+import { accumulateDischarge, accumulateDischargeOn, extractRiverPolylines, computeLakesOn, computeWatersheds, maxDischargeOverLand, densityToCriticalArea, channelThreshold, CANONICAL_RIVER_DENSITY, accumulateRegimeInputsOn, riparianPrecipitationOn, SURFACE_ICE } from '../surface/hydrology'
 import type { LakeFields } from '../surface/hydrology'
 import { MANTLE_RES_X, MANTLE_RES_Y, mantleMesh, rasteriseMantle, savedMantle } from '../mantle/mantleField'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeWeather, defaultWeatherParams, type WeatherParams } from '../climate/weather'
-import { climateTerrain } from '../climate/climateMesh'
-import { computeBiomes, computeBiomesFine, computeBiomesFromMonths, computeBiomesFineFromMonths, computeKoppenField } from '../climate/biomes'
-import { annualFromMonths, refineClimate, refinedAnnualWind, refinedRasters, refinementFits, type RefinedClimate } from '../climate/refinement'
+import { climateTerrain, type ClimateTerrain } from '../climate/climateMesh'
+
+import { annualFromMonths, refineClimate, refinedAnnualWind, refinementFits, type RefinedClimate } from '../climate/refinement'
 import type { CellVectors } from '../climate/wind'
 import { downsampleMax } from '../core/field'
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
@@ -55,10 +59,10 @@ import { buildRiverGraph, riverPolylinesFromGraph, serializeRiverGraph } from '.
 import { computeRiverCourses } from '../surface/riverCourse'
 import { buildCoastGraph, type CoastGraph } from '../surface/coastGraph'
 import { findSedimentBasins, type SedimentBasin } from '../surface/sedimentBasins'
-import { computeIceThickness } from '../surface/iceFlow'
+
 import type { RiverGraph } from '../surface/riverGraph'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
-import { applyEcology, ecologyMonth, encodeFineField, isSeasonalEcologyField, prepareEcology, type EcologyBase, type EcologyFieldId, type EcologyParams } from '../ecology/ecologyField'
+import { applyEcology, ecologyFine, ecologyMonth, ecologyRasters, encodeFineField, isSeasonalEcologyField, prepareEcology, type EcologyBase, type EcologyFieldId, type EcologyParams } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
@@ -135,10 +139,6 @@ function dropHandover(): void {
   handoverMantle = null
 }
 let lastRawElevations: Float32Array | null = null
-// The last erosion pass's per-cell sediment flux (ErosionPassV2Result), the
-// river graph's sediment load. Null before any pass; stale after a restore
-// (the pass that made it is gone): a restore clears it.
-let lastSedimentFlux: Float32Array | null = null
 // The DISPLAY-space elevations of the last render (redistributed values the
 // map colors were computed from, with their grid size) — retained for the
 // screen's 'requestElevationField' so its 3D relief displacement matches the
@@ -175,50 +175,55 @@ interface ClimateResult {
   // become a comparison instead of a flag — and so the hydrology's climate
   // refinement can re-run the chain with the same settings it was given.
   params: ClimateParams
-  temperature: Float32Array
-  precipitation: Float32Array
-  seasonalAmplitude: Float32Array
-  monsoonIndex: Float32Array
-  // Water-free biomes for the ecology step (game/pasture read biome type).
-  // Deliberately the COARSE classification, unlike the one displayed and saved:
-  // every ecology field is a climate-grid field, and its own ecotone term reads
-  // the 4-neighbourhood as regional adjacency. Handing it the fine array would
-  // silently redefine "neighbouring biome" from 62 km to 8 km.
-  biomes: Uint8Array
-  // The refinement's upwelling for the ecology step (the fish read it); null
-  // for the history's climate, which has none.
-  upwelling: Float32Array | null
-  // The refinement's rain reliability (reliability.ts) for the ecology step
-  // (arable reads it); null for the history's climate.
-  rainVariability: Float32Array | null
-  // The wind (climate/wind.ts, interleaved) — the coast's exposure reads it.
-  wind: Float32Array
-  // The same climate per cell of its field mesh (DEC-0036): the annual
-  // temperature and wind the step's refinement starts from
-  // (refinement.refineClimate).
+  // The climate per cell of its field mesh as every reader samples it
+  // (climate/climatePoints.ClimateCells, DEC-0036 phase 7): the static
+  // climate's, or the climate step's refinement's (with its months, its
+  // upwelling and its rain's reliability).
+  cells: ClimateCells
+  // The terrain it was computed on (its cells' land; the chart's).
+  terrain: ClimateTerrain
+  // The same climate per cell of its field mesh as the step's refinement
+  // starts from (refinement.refineClimate): the annual temperature and wind.
   mesh: { temperature: Float64Array; wind: CellVectors }
-  // Set when this is the climate step's refinement (handleClimateRefine):
-  // the real months the annual fields above were derived from. The riparian
-  // biomes classify from them, and the hydrology's own climate pass (the
-  // dry-basin v2) leaves such a climate alone.
-  months?: { temperature: Float32Array; precipitation: Float32Array; count: number }
+  // Set when this is the climate step's refinement (handleClimateRefine).
+  // The hydrology's own climate pass (the dry-basin v2) leaves such a
+  // climate alone.
+  refined: boolean
+  // The climate at the terrain mesh's nodes and the biomes and Köppen
+  // classes it gives there before the hydrology (DEC-0036 phase 7, fork 2:
+  // the land fields on the adaptive terrain mesh) — what the hydrology,
+  // the ecology and the save read.
+  land: LandClimate
 }
 let climate: ClimateResult | null = null
+
+// A climate at the nodes of one terrain mesh (the coupled terrain's, the
+// arrays it had then).
+interface LandClimate {
+  mesh: PeriodicTriangulation
+  z: Float32Array
+  points: ClimatePoints
+  climate: PointClimate
+  biome: Uint8Array
+  koppen: Uint8Array
+}
 
 // Rivers and lakes. Routing and discharge are the expensive parts, so a
 // density-only re-request reuses this and just re-thresholds the channels; the
 // object being absent IS "re-route needed", which is what `hydrologyDirty` used
 // to say alongside two null checks that could disagree with it.
 interface HydrologyResult {
+  // The raster routing and its discharge (DEC-0036 phase 7b moves them onto
+  // the mesh): the map's discharge layer, the watersheds, the sediment
+  // basins.
   routing: FlowRouting
   discharge: Float32Array
   lakeDepth: Float32Array
-  // Terminal basins' exposed floor (computeLakes' LakeFields.saltFlat) — the
-  // SaltFlat biome override's source, carried with the lake depths it came with.
+  // Terminal basins' exposed floor (computeLakes' LakeFields.saltFlat) on the
+  // world raster — the terrain render's salt band.
   saltFlat: Uint8Array | null
   dryBasin: Uint8Array | null
-  // Permanently frozen basins (LakeFields.frozen) — the Biome.Ice override's
-  // source, and what excludes a glacier from the freshwater fishery below.
+  // Permanently frozen basins on the world raster.
   frozen: Uint8Array | null
   // The standing-water list and the per-cell level/frozen fields derived
   // from it (LakeFields.bodies/level) — what the save carries and the
@@ -238,21 +243,15 @@ interface HydrologyResult {
   // with provenance from the graph's catchments; empty for a world whose
   // pre-erosion terrain is not known (a loaded save).
   sedimentBasins: SedimentBasin[]
-  // Ice thickness in metres (surface/iceFlow.ts, F4) on this raster —
-  // the sheets and the largest valley glaciers at 7.8 km.
+  // Ice thickness in metres on the world raster — the history's last
+  // epoch's ice, or the steady state the climate gives (phase 6).
   ice: Float32Array | null
-  // The water table's depth below the surface on the world raster, metres
-  // (phase 5a, surface/hydrogeology.ts); −1 under water.
-  waterTable: Float32Array | null
-  // The springs in an arid climate (phase 5a's oases), world px — the
-  // ecology waters their fields.
+  // The springs in an arid climate (phase 5a's oases), world coordinates —
+  // the ecology waters their fields.
   oases: { x: number; y: number }[]
-  // The riparian biomes on the world raster (computeRiparianBiomes), the
-  // map's own: the ecology reads its timber, grazing and edges from them.
-  biomesFine: Uint8Array | null
-  // The mesh's own hydrology when the world has a mesh (phase 4.3); the
-  // raster fields above are then its recovery.
-  onMesh: MeshHydrology | null
+  // The mesh's own hydrology: the discharge and the lakes per node, the
+  // climate at the nodes it ran under, the land fields per node.
+  onMesh: MeshHydrology
 }
 let hydrology: HydrologyResult | null = null
 // Bumped whenever the hydrology result is dropped (an epoch, a reset, a
@@ -269,7 +268,7 @@ interface EcologyResult {
 }
 let ecology: EcologyResult | null = null
 // The ecology's physics (prepareEcology) and what it was computed from.
-let ecologyBase: { key: { climate: unknown; hydrology: unknown; elevation: unknown; sim: unknown; epoch: number }; base: EcologyBase } | null = null
+let ecologyBase: { key: { climate: unknown; hydrology: unknown; elevation: unknown; sim: unknown; epoch: number }; base: EcologyBase; pixelLand: Uint8Array } | null = null
 // The sliders of the last ecology run, which a month's field is scaled by.
 let ecologyParams: EcologyParams | null = null
 
@@ -310,7 +309,6 @@ async function renderTerrain(intermediate = false): Promise<void> {
   await renderAndPost(elevations, intermediate, 1)
   preErosionElevations = null
   lastLakeBasinElevations = elevations.slice()
-  lastSedimentFlux = coupled.sedimentFlux.length > 0 ? rasteriseNodeField(coupled.mesh, coupled.sedimentFlux, sim.width, sim.height) : null
   meshBefore = null
   meshPayloadCache = null
 }
@@ -626,22 +624,89 @@ function serializeMeshTerrain(terrain: MeshTerrain): MeshPayload {
 
 
 // THE HYDROLOGY ON THE MESH (phase 4.3): the lakes and the discharge over
-// the mesh's own routing, and the raster fields the cell-walking consumers
-// (the climate refinement, the riparian biomes, the map) still read,
+// the mesh's own routing under the climate at its nodes (DEC-0036 phase
+// 7), and the raster fields the map and the save's rasters read,
 // rasterised from the nodes' bodies (meshHydrology.waterFieldsFromMesh) —
 // one truth, the bodies, two representations.
 interface MeshHydrology {
   discharge: Float32Array
   lakes: LakeFields
+  // The climate at the nodes it ran under (a terminal basin's dry floor is
+  // land there).
+  land: LandClimate
+  // Per node, once the pass has run: the map's biome (the riparian
+  // corridors, the salt flats, the frozen lakes and the glaciers), the
+  // ecology's (the same without the glaciers' ice: a glacier is the ice
+  // with a thickness, the ground under it keeps its class) and the water
+  // table's depth (metres, −1 under water).
+  biome: Uint8Array | null
+  ecologyBiome: Uint8Array | null
+  waterTable: Float32Array | null
   // The raster recovery of the bodies.
   raster: { depth: Float32Array; saltFlat: Uint8Array; dryBasin: Uint8Array; frozen: Uint8Array; level: Float32Array; body: Int32Array; surface: Uint8Array }
 }
 
-function hydrologyOnMesh(terrain: MeshTerrain, elevationRaster: Float32Array, width: number, height: number, weather: ClimateResult): MeshHydrology {
+function hydrologyOnMesh(terrain: MeshTerrain, elevationRaster: Float32Array, width: number, height: number, land: LandClimate): MeshHydrology {
   const sub = meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
-  const discharge = accumulateDischargeOn(sub, terrain.z, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
-  const lakes = computeLakesOn(sub, discharge, terrain.z, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
-  return { discharge, lakes, raster: waterFieldsFromMesh(terrain.mesh, lakes.body, lakes.bodies, elevationRaster, width, height) }
+  const discharge = accumulateDischargeOn(sub, terrain.z, land.climate.precipitation)
+  const lakes = computeLakesOn(sub, discharge, terrain.z, land.climate.temperature, land.climate.precipitation)
+  return { discharge, lakes, land, biome: null, ecologyBiome: null, waterTable: null, raster: waterFieldsFromMesh(terrain.mesh, lakes.body, lakes.bodies, elevationRaster, width, height) }
+}
+
+// The terrain mesh the land fields sit on (DEC-0036 fork 2): the coupled
+// terrain, routed. A world without one yet — restored from a save made
+// before its first epoch — gets the one that epoch would build from the
+// synthesis (createCoupledTerrain is a function of the plates alone, so
+// the epoch then starts from the same mesh); its routing is derived, which
+// no epoch reads.
+function landTerrain(): MeshTerrain | null {
+  if (!sim) return null
+  if (!coupled) coupled = createCoupledTerrain(sim, HISTORY_DEFAULTS.budget)
+  if (!coupled.routing) {
+    coupled.routing = meshRouting(coupled.mesh, coupled.z)
+    meshPayloadCache = null
+  }
+  meshTerrain = asMeshTerrain(coupled)
+  return meshTerrain
+}
+
+// The climate at a terrain's nodes and its biomes there. `dry`: the
+// terminal basins' dry floors per node (land below the sea), or null.
+function landClimateOf(cells: ClimateCells, terrain: { mesh: PeriodicTriangulation; z: Float32Array }, dry: Uint8Array | null = null): LandClimate {
+  const points = meshPoints(terrain.mesh, terrain.z, dry)
+  const atNodes = climateAtPoints(cells, points)
+  const { biome, koppen } = classifyPoints(atNodes, points, terrain.mesh.domain)
+  return { mesh: terrain.mesh, z: terrain.z, points, climate: atNodes, biome, koppen }
+}
+
+// The world raster's land for the land fields' rasters: above the sea, or
+// a terminal basin's dry floor (null: none).
+function pixelLandOf(elevation: Float32Array, dryBasin: Uint8Array | null): Uint8Array {
+  const out = new Uint8Array(elevation.length)
+  for (let i = 0; i < out.length; i++) if (elevation[i] > SEA_LEVEL || (dryBasin !== null && dryBasin[i] === 1)) out[i] = 1
+  return out
+}
+
+// Where each pixel of the world raster lies on the terrain mesh
+// (meshRaster.triangleRaster), found once per mesh and kept: every land
+// field drawn from the nodes (the biomes, the classes, the riparian rain,
+// the ecology's fourteen) reads it — a locate per pixel is ~0.4 s at 2048.
+let pixelTriangles: TriangleRaster | null = null
+function trianglesOf(mesh: PeriodicTriangulation, width: number, height: number): TriangleRaster {
+  if (!pixelTriangles || pixelTriangles.mesh !== mesh || pixelTriangles.width !== width || pixelTriangles.height !== height) pixelTriangles = triangleRaster(mesh, width, height)
+  return pixelTriangles
+}
+
+// A node field of the land on the world raster (rasteriseNodePart over
+// the land's nodes and pixels).
+function landRaster(land: LandClimate, field: ArrayLike<number>, pixelLand: Uint8Array, width: number, height: number, outside: number, nearest: boolean): Float32Array {
+  return rasteriseNodePart(land.mesh, field, land.points.land, pixelLand, outside, width, height, nearest, undefined, trianglesOf(land.mesh, width, height))
+}
+
+// A biome or a Köppen class per node on the world raster: a land pixel
+// the heaviest land corner's id, the sea Ocean / 0.
+function idRaster(land: LandClimate, ids: Uint8Array, pixelLand: Uint8Array, width: number, height: number, sea: number): Uint8Array {
+  return Uint8Array.from(landRaster(land, ids, pixelLand, width, height, sea, true))
 }
 
 // THE STEP LOOP: one for both eras, the Archean's steps and the
@@ -847,28 +912,26 @@ interface ClimateParams {
 
 // One climate pass, v1 or v2: the full chain in its load-bearing order — base
 // temperature → wind → ocean currents (SST adjusts temperature) → seasonal
-// amplitude → monsoon/precipitation → biomes. `dryLand` is the terminal-basin
-// dry-floor override (LakeFields.dryBasin): those sub-sea cells count as land
-// throughout, with an unclamped downward lapse (see computeTemperature).
-// `domain`: what the elevation raster covers, one cell per unit.
+// amplitude → monsoon/precipitation — on the climate's field mesh
+// (climate/weather.computeWeather, shared with the history's epochs, so the
+// panel's overlays and the carved valleys can never disagree about what
+// the climate IS). `dryLand` is the terminal-basin dry-floor override
+// (LakeFields.dryBasin): those sub-sea cells count as land throughout,
+// with an unclamped downward lapse (see computeTemperature). `domain`:
+// what the elevation raster covers, one cell per unit. The cells every
+// reader samples (climatePoints.climateCellsFromWeather) and the chart the
+// screen paints (climateChart.weatherChart) come with it.
 function computeClimateChain(elevation: Float32Array, domain: Domain, params: ClimateParams, dryLand?: Uint8Array) {
   const { width, height } = domain
-  // The meteorology is climate/weather.computeWeather — shared with the
-  // erosion engine's water forcing (the stage-2 coupling), so the panel's
-  // overlays and the carved valleys can never disagree about what the
-  // climate IS.
   const weather = computeWeather(climateTerrain(domain, elevation, width, height, dryLand), params)
-  const { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal } = weather
-  // Classified twice, on purpose, from identical inputs: `biomes` on the climate
-  // grid for the ecology step, `biomesFine` on the world raster for everything
-  // the user sees or saves (see climate/biomes.computeBiomesFine, and
-  // lastClimateBiomes for why ecology must not take the fine one). The second
-  // pass is a pointwise loop over an existing field — measured well under the
-  // precipitation advection it follows.
-  const biomes = computeBiomes(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
-  const biomesFine = computeBiomesFine(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, domain, dryLand)
-  const koppen = computeKoppenField(temperature, seasonal.annual, seasonalAmplitude, seasonal.index, elevation, width, height, dryLand)
-  return { temperature, wind, windMesh: meshVectorPayload(weather.terrain.cm.cellM, weather.mesh.wind), currents, currentsMesh: meshVectorPayload(weather.terrain.cm.cellM, weather.mesh.currents), currentAnomaly, seasonalAmplitude, seasonal, biomes, biomesFine, koppen, mesh: { temperature: weather.mesh.temperature, wind: weather.mesh.wind } }
+  const { cm } = weather.terrain
+  return {
+    weather,
+    cells: climateCellsFromWeather(weather),
+    chart: weatherChart(weather),
+    windMesh: meshVectorPayload(cm.cellM, weather.mesh.wind),
+    currentsMesh: meshVectorPayload(cm.cellM, weather.mesh.currents),
+  }
 }
 
 // A vector field on the climate's field mesh for the screen's marks — the
@@ -879,43 +942,38 @@ function meshVectorPayload(spacingM: number, field: { e: ArrayLike<number>; s: A
   return { cells: field.e.length, spacingM, e: Float64Array.from(field.e).buffer as ArrayBuffer, s: Float64Array.from(field.s).buffer as ArrayBuffer }
 }
 
-// Cache copies for hydrology/ecology (the message buffers get transferred,
-// which would neuter retained references), then hand the fields to the screen.
-// Returns what it cached: the hydrology's climate refinement needs the new result
-// immediately, and taking it from the return value rather than reading the module
-// variable back is what removes the non-null assertions that used to follow.
-function cacheAndPostClimate(chain: ReturnType<typeof computeClimateChain>, params: ClimateParams, refinement = false): ClimateResult {
-  climate = {
-    params,
-    temperature: chain.temperature.slice(),
-    precipitation: chain.seasonal.annual.slice(),
-    seasonalAmplitude: chain.seasonalAmplitude.slice(),
-    monsoonIndex: chain.seasonal.index.slice(),
-    biomes: chain.biomes.slice(),
-    upwelling: null,
-    rainVariability: null,
-    wind: chain.wind.slice(),
-    mesh: chain.mesh,
-  }
-  const climateMessage: WorkerClimateDataMessage = {
+// The climate the chain made, at the nodes of `land`'s terrain.
+function climateResultOf(chain: ReturnType<typeof computeClimateChain>, params: ClimateParams, land: LandClimate): ClimateResult {
+  return { params, cells: chain.cells, terrain: chain.weather.terrain, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind }, refined: false, land }
+}
+
+// The screen's climate (WorkerClimateDataMessage): the chart's fields, the
+// marks' vectors on the mesh, and the biomes and the Köppen classes per
+// pixel of the world raster from the nodes (`pixelLand`, the raster's
+// land). Fresh arrays, transferred.
+function postClimate(
+  fields: { temperature: Float32Array; wind: Float32Array; currents: Float32Array; currentAnomaly: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array; monsoonIndex: Float32Array },
+  windMesh: WorkerClimateDataMessage['windMesh'], currentsMesh: WorkerClimateDataMessage['currentsMesh'],
+  land: LandClimate, pixelLand: Uint8Array, width: number, height: number, flags: { refinement?: boolean; refined?: boolean },
+): void {
+  const message: WorkerClimateDataMessage = {
     type: 'climateData',
-    refinement,
+    ...flags,
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
-    temperature: chain.temperature.buffer as ArrayBuffer,
-    wind: chain.wind.buffer as ArrayBuffer,
-    windMesh: chain.windMesh,
-    currentsMesh: chain.currentsMesh,
-    currents: chain.currents.buffer as ArrayBuffer,
-    currentAnomaly: chain.currentAnomaly.buffer as ArrayBuffer,
-    precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
-    seasonalAmplitude: chain.seasonalAmplitude.buffer as ArrayBuffer,
-    monsoonIndex: chain.seasonal.index.buffer as ArrayBuffer,
-    koppen: chain.koppen.buffer as ArrayBuffer,
-    biomes: chain.biomesFine.buffer as ArrayBuffer,
+    temperature: fields.temperature.slice().buffer as ArrayBuffer,
+    wind: fields.wind.slice().buffer as ArrayBuffer,
+    windMesh,
+    currentsMesh,
+    currents: fields.currents.slice().buffer as ArrayBuffer,
+    currentAnomaly: fields.currentAnomaly.slice().buffer as ArrayBuffer,
+    precipitation: fields.precipitation.slice().buffer as ArrayBuffer,
+    seasonalAmplitude: fields.seasonalAmplitude.slice().buffer as ArrayBuffer,
+    monsoonIndex: fields.monsoonIndex.slice().buffer as ArrayBuffer,
+    koppen: idRaster(land, land.koppen, pixelLand, width, height, 0).buffer as ArrayBuffer,
+    biomes: idRaster(land, land.biome, pixelLand, width, height, Biome.Ocean).buffer as ArrayBuffer,
   }
-  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, chain.windMesh.e, chain.windMesh.s, chain.currentsMesh.e, chain.currentsMesh.s, climateMessage.currents, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
-  return climate
+  emit(message, [message.temperature, message.wind, windMesh.e, windMesh.s, currentsMesh.e, currentsMesh.s, message.currents, message.currentAnomaly, message.precipitation, message.seasonalAmplitude, message.monsoonIndex, message.koppen, message.biomes])
 }
 
 function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climateRun' }>): void {
@@ -927,7 +985,8 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
   // terminal basins are known, which is where the post-erosion climate
   // truth comes from.
   const elevation = preErosionElevations ?? lastRawElevations
-  if (!sim || !elevation) { decline('climate', 'tectonics'); return }
+  const terrain = landTerrain()
+  if (!sim || !elevation || !terrain) { decline('climate', 'tectonics'); return }
   const params: ClimateParams = {
     temperatureOffset: message.temperatureOffset,
     temperatureContrast: message.temperatureContrast,
@@ -935,19 +994,22 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
     equatorOffset: message.equatorOffset,
     planet: message.planet,
   }
-  cacheAndPostClimate(computeClimateChain(elevation, sim.domain, params), params)
+  const chain = computeClimateChain(elevation, sim.domain, params)
+  climate = climateResultOf(chain, params, landClimateOf(chain.cells, terrain))
+  postClimate(chain.chart, chain.windMesh, chain.currentsMesh, climate.land, pixelLandOf(elevation, null), sim.width, sim.height, {})
   invalidateAfter('climate')
 }
 
 // The climate step's refinement (climate/refinement.ts), on the climate the
 // step shows and the terrain it was computed on. It runs on the climate's
 // field mesh (DEC-0036 phase 5); its values per cell go to the screen,
-// which keeps them for the save, and its rasters (the transition's,
-// refinement.refinedRasters, phase 7) feed the biomes and everything
-// downstream here and the screen's textures.
+// which keeps them for the save, its cells (climatePoints.
+// climateCellsFromRefined) feed the biomes and everything downstream here,
+// and its chart (climateChart.refinedChart) the screen's textures.
 function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'climateRefine' }>): void {
   const elevation = preErosionElevations ?? lastRawElevations
-  if (!sim || !elevation) { decline('climate', 'tectonics'); return }
+  const terrain = landTerrain()
+  if (!sim || !elevation || !terrain) { decline('climate', 'tectonics'); return }
   if (!climate) { decline('climate', 'climate'); return }
   const { width, height, domain } = sim
   // A save's refinement is taken as it is — its values belong to this
@@ -959,32 +1021,29 @@ function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'cli
     const progress: WorkerClimateRefineProgressMessage = { type: 'climateRefineProgress', share: share * 0.85 }
     emit(progress)
   })
-  const rasters = refinedRasters(r, climateTerrain(domain, elevation, width, height))
+  const refinedTerrain = climateTerrain(domain, elevation, width, height)
+  const chart = refinedChart(r, refinedTerrain)
+  const cells = climateCellsFromRefined(r, refinedTerrain)
 
   // The refined climate takes the history's place (build step 5b): its
   // annual fields derived from the months, its biomes classified from them.
   // Everything downstream is then stale — the rivers run on the new rain.
   const n = CLIMATE_RES_X * CLIMATE_RES_Y
-  const annual = annualFromMonths(rasters, n)
-  const biomes = computeBiomesFromMonths(rasters.temperature, rasters.precipitation, rasters.months, annual.precipitation, elevation, width, height)
-  const biomesFine = computeBiomesFineFromMonths(rasters.temperature, rasters.precipitation, rasters.months, annual.temperature, annual.precipitation, elevation, domain)
+  const annual = annualFromMonths(chart, n)
   const annualWind = new Float32Array(n * 2)
-  for (let m = 0; m < rasters.months; m++) for (let i = 0; i < n * 2; i++) annualWind[i] += rasters.wind[m * n * 2 + i] / rasters.months
+  for (let m = 0; m < chart.months; m++) for (let i = 0; i < n * 2; i++) annualWind[i] += chart.wind[m * n * 2 + i] / chart.months
   const meshWind = refinedAnnualWind(r)
   const meshAnnual = annualFromMonths(r, r.cells)
+  const land = landClimateOf(cells, terrain)
   climate = {
     params: climate.params,
-    temperature: annual.temperature,
-    precipitation: annual.precipitation,
-    seasonalAmplitude: annual.seasonalAmplitude,
-    monsoonIndex: annual.monsoonIndex,
-    biomes,
-    upwelling: rasters.upwelling.slice(),
-    rainVariability: rasters.reliability.rainVariability.slice(),
-    wind: annualWind,
+    cells,
+    terrain: refinedTerrain,
     mesh: { temperature: Float64Array.from(meshAnnual.temperature), wind: meshWind },
-    months: { temperature: rasters.temperature, precipitation: rasters.precipitation, count: rasters.months },
+    refined: true,
+    land,
   }
+  const pixelLand = pixelLandOf(elevation, null)
 
   // The values per cell, copied: the screen keeps them (the save's), the
   // worker its own.
@@ -993,51 +1052,38 @@ function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'cli
     type: 'climateRefined',
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
-    months: rasters.months,
+    months: chart.months,
     refined: values,
-    temperature: rasters.temperature.slice().buffer as ArrayBuffer,
-    precipitation: rasters.precipitation.slice().buffer as ArrayBuffer,
-    koppen: rasters.koppen.slice().buffer as ArrayBuffer,
-    fog: rasters.fog.buffer as ArrayBuffer,
-    foehn: rasters.foehn.buffer as ArrayBuffer,
-    rainVariability: rasters.reliability.rainVariability.buffer as ArrayBuffer,
-    ensoPattern: rasters.reliability.ensoPattern.buffer as ArrayBuffer,
-    ensoPeriodYears: rasters.reliability.ensoPeriodYears,
-    ensoStrength: rasters.reliability.ensoStrength,
-    salinity: rasters.salinity.buffer as ArrayBuffer,
-    deepWater: rasters.deepWater.buffer as ArrayBuffer,
-    cyclone: rasters.storms.cyclone.buffer as ArrayBuffer,
-    tornado: rasters.storms.tornado.buffer as ArrayBuffer,
-    blizzard: rasters.storms.blizzard.buffer as ArrayBuffer,
-    dust: rasters.storms.dust.buffer as ArrayBuffer,
-    thunder: rasters.storms.thunder.buffer as ArrayBuffer,
-    pressure: rasters.pressure.buffer as ArrayBuffer,
-    wind: rasters.wind.buffer as ArrayBuffer,
-    currents: rasters.currents.slice().buffer as ArrayBuffer,
-    currentAnomaly: rasters.currentAnomaly.slice().buffer as ArrayBuffer,
-    upwelling: rasters.upwelling.buffer as ArrayBuffer,
+    temperature: chart.temperature.slice().buffer as ArrayBuffer,
+    precipitation: chart.precipitation.slice().buffer as ArrayBuffer,
+    koppen: idRaster(land, land.koppen, pixelLand, width, height, 0).buffer as ArrayBuffer,
+    fog: chart.fog.buffer as ArrayBuffer,
+    foehn: chart.foehn.buffer as ArrayBuffer,
+    rainVariability: chart.reliability.rainVariability.buffer as ArrayBuffer,
+    ensoPattern: chart.reliability.ensoPattern.buffer as ArrayBuffer,
+    ensoPeriodYears: chart.reliability.ensoPeriodYears,
+    ensoStrength: chart.reliability.ensoStrength,
+    salinity: chart.salinity.buffer as ArrayBuffer,
+    deepWater: chart.deepWater.buffer as ArrayBuffer,
+    cyclone: chart.storms.cyclone.buffer as ArrayBuffer,
+    tornado: chart.storms.tornado.buffer as ArrayBuffer,
+    blizzard: chart.storms.blizzard.buffer as ArrayBuffer,
+    dust: chart.storms.dust.buffer as ArrayBuffer,
+    thunder: chart.storms.thunder.buffer as ArrayBuffer,
+    pressure: chart.pressure.buffer as ArrayBuffer,
+    wind: chart.wind.buffer as ArrayBuffer,
+    currents: chart.currents.slice().buffer as ArrayBuffer,
+    currentAnomaly: chart.currentAnomaly.slice().buffer as ArrayBuffer,
+    upwelling: chart.upwelling.buffer as ArrayBuffer,
   }
   emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.fog, reply.foehn, reply.rainVariability, reply.ensoPattern, reply.salinity, reply.deepWater, reply.cyclone, reply.tornado, reply.blizzard, reply.dust, reply.thunder, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling, ...refinedBuffers(values)])
   // The screen's annual fields follow, as a climate of its own kind; the
   // marks read the year's wind and the currents on the mesh.
-  const climateMessage: WorkerClimateDataMessage = {
-    type: 'climateData',
-    refined: true,
-    resX: CLIMATE_RES_X,
-    resY: CLIMATE_RES_Y,
-    temperature: annual.temperature.slice().buffer as ArrayBuffer,
-    wind: annualWind.slice().buffer as ArrayBuffer,
-    windMesh: meshVectorPayload(r.spacingM, meshWind),
-    currents: rasters.currents.slice().buffer as ArrayBuffer,
-    currentsMesh: meshVectorPayload(r.spacingM, { e: r.currentE, s: r.currentS }),
-    currentAnomaly: rasters.currentAnomaly.buffer as ArrayBuffer,
-    precipitation: annual.precipitation.slice().buffer as ArrayBuffer,
-    seasonalAmplitude: annual.seasonalAmplitude.slice().buffer as ArrayBuffer,
-    monsoonIndex: annual.monsoonIndex.slice().buffer as ArrayBuffer,
-    koppen: rasters.koppen.buffer as ArrayBuffer,
-    biomes: biomesFine.buffer as ArrayBuffer,
-  }
-  emit(climateMessage, [climateMessage.temperature, climateMessage.wind, climateMessage.windMesh.e, climateMessage.windMesh.s, climateMessage.currents, climateMessage.currentsMesh.e, climateMessage.currentsMesh.s, climateMessage.currentAnomaly, climateMessage.precipitation, climateMessage.seasonalAmplitude, climateMessage.monsoonIndex, climateMessage.koppen, climateMessage.biomes])
+  postClimate(
+    { temperature: annual.temperature, wind: annualWind, currents: chart.currents, currentAnomaly: chart.currentAnomaly, precipitation: annual.precipitation, seasonalAmplitude: annual.seasonalAmplitude, monsoonIndex: annual.monsoonIndex },
+    meshVectorPayload(r.spacingM, meshWind), meshVectorPayload(r.spacingM, { e: r.currentE, s: r.currentS }),
+    land, pixelLand, width, height, { refined: true },
+  )
   invalidateAfter('climate')
 }
 
@@ -1062,13 +1108,12 @@ function refinedBuffers(r: RefinedClimate): ArrayBuffer[] {
   ].map((f) => f.buffer as ArrayBuffer)
 }
 
-// The lake depths with frozen basins zeroed — what the ecology (fish) and the
-// migration cost field should see as WATER. Computed on demand rather than
-// stored: the full depth layer stays the display/save truth (ice is water).
-function liquidLakeDepth(h: HydrologyResult): Float32Array {
-  if (!h.frozen) return h.lakeDepth
-  const out = h.lakeDepth.slice()
-  for (let i = 0; i < out.length; i++) if (h.frozen[i]) out[i] = 0
+// The lake depths per node with frozen basins zeroed — what the ecology
+// (fish) should see as WATER. Computed on demand rather than stored: the
+// full depth stays the display/save truth (ice is water).
+function liquidLakeDepth(lakes: LakeFields): Float32Array {
+  const out = lakes.depth.slice()
+  for (let i = 0; i < out.length; i++) if (lakes.frozen[i]) out[i] = 0
   return out
 }
 
@@ -1083,7 +1128,8 @@ function handleHydrologyRun(): void {
   const width = sim.width
   const height = sim.height
   const domain = sim.domain
-  const grid = domain.grid(width, height)
+  const mt = landTerrain()
+  if (!mt) { decline('hydrology', 'tectonics'); return }
   // Run hydrology on the basins-intact (pre-fill) terrain when erosion produced
   // it, so lakes have depressions to fill and rivers flow into them; otherwise
   // the final drained terrain (few lakes). Same grid, so river/lake coords still
@@ -1108,64 +1154,62 @@ function handleHydrologyRun(): void {
     let rerouted = false
     let result = hydrology
     if (!result) {
+      // The raster routing (DEC-0036 phase 7b moves it): the map's
+      // discharge layer, the watersheds, the sediment basins.
       const routing = await fillDepressionsAndRouteFlow(elevation, domain, SEA_LEVEL)
       if (stale()) return
-      let discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
-      let maxDischarge = maxDischargeOverLand(discharge, elevation)
-      let meanRunoff = meanLandRunoff(weather.precipitation, elevation, domain, CLIMATE_RES_X, CLIMATE_RES_Y)
-      {
-        // With the mesh, the lakes are the mesh's (hydrologyOnMesh); the
-        // raster routing above still serves the cell-walking consumers.
-        let onMesh = meshTerrain ? hydrologyOnMesh(meshTerrain, elevation, width, height, weather) : null
-        let lakes = onMesh ? { ...onMesh.raster, bodies: onMesh.lakes.bodies } : computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
-        // CLIMATE REFINEMENT (v2, k=1): climate v1 was computed on the
-        // PRE-EROSION terrain with the optimistic mask (every sub-sea cell =
-        // water) — the stage sits before erosion since the stage-2 coupling.
-        // This pass re-runs the chain on the CURRENT (eroded) terrain with
-        // the terminal-basin dry floors counted as land, and is therefore
-        // UNCONDITIONAL since 2026-08-16: it is where the post-erosion
-        // climate and biome truth comes from at all — the first golden run
-        // after the reorder caught v1 biomes calling erosion-grown coast
-        // cells Ocean above sea level. (Before the reorder it ran only when
-        // a dry basin existed; the dry-floor override is now simply one of
-        // its inputs, possibly empty.) Then re-derive the
-        // precipitation-dependent hydrology once: discharge and lakes — the
-        // ROUTING is untouched (the terrain didn't move), so no re-flood.
-        // Deliberately ONE refinement step, mirroring the riparian pattern:
-        // iterate further and this becomes a fixed-point solver for a
-        // second-decimal correction nobody can see.
-        // Not over the step's refinement: it is computed on the step's own
-        // land mask, without the dry-basin override, and recomputing the
-        // cheap chain here would put the history's climate back in its place.
-        if (!weather.months) {
-          const chain = computeClimateChain(terrain, domain, weather.params, lakes.dryBasin)
-          // Update the caches + screen WITHOUT invalidateAfter('climate'):
-          // the very next lines recompute the dependent hydrology themselves,
-          // and dropping the hydrology result here would force a needless full
-          // re-route on the next call.
-          weather = cacheAndPostClimate(chain, weather.params, true)
-          discharge = accumulateDischarge(routing, elevation, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
-          maxDischarge = maxDischargeOverLand(discharge, elevation)
-          meanRunoff = meanLandRunoff(weather.precipitation, elevation, domain, CLIMATE_RES_X, CLIMATE_RES_Y)
-          onMesh = meshTerrain ? hydrologyOnMesh(meshTerrain, elevation, width, height, weather) : null
-          lakes = onMesh ? { ...onMesh.raster, bodies: onMesh.lakes.bodies } : computeLakes(routing, discharge, elevation, weather.temperature, weather.precipitation, CLIMATE_RES_X, CLIMATE_RES_Y)
-        }
+      // The lakes and the discharge on the mesh, under the climate at its
+      // nodes.
+      let land = weather.land.mesh === mt.mesh && weather.land.z === mt.z ? weather.land : landClimateOf(weather.cells, mt)
+      let onMesh = hydrologyOnMesh(mt, elevation, width, height, land)
+      // CLIMATE REFINEMENT (v2, k=1): climate v1 was computed on the
+      // PRE-EROSION terrain with the optimistic mask (every sub-sea cell =
+      // water) — the stage sits before erosion since the stage-2 coupling.
+      // This pass re-runs the chain on the CURRENT (eroded) terrain with
+      // the terminal-basin dry floors counted as land, and is therefore
+      // UNCONDITIONAL since 2026-08-16: it is where the post-erosion
+      // climate and biome truth comes from at all — the first golden run
+      // after the reorder caught v1 biomes calling erosion-grown coast
+      // cells Ocean above sea level. Then re-derive the
+      // precipitation-dependent hydrology once: discharge and lakes — the
+      // ROUTING is untouched (the terrain didn't move), so no re-flood.
+      // Deliberately ONE refinement step, mirroring the riparian pattern:
+      // iterate further and this becomes a fixed-point solver for a
+      // second-decimal correction nobody can see.
+      // Not over the step's refinement: it is computed on the step's own
+      // land mask, without the dry-basin override, and recomputing the
+      // cheap chain here would put the history's climate back in its place.
+      if (!weather.refined) {
+        const chain = computeClimateChain(terrain, domain, weather.params, onMesh.raster.dryBasin)
+        land = landClimateOf(chain.cells, mt, onMesh.lakes.dryBasin)
+        // Update the caches + screen WITHOUT invalidateAfter('climate'):
+        // the very next lines recompute the dependent hydrology themselves,
+        // and dropping the hydrology result here would force a needless full
+        // re-route on the next call.
+        weather = climate = climateResultOf(chain, weather.params, land)
+        postClimate(chain.chart, chain.windMesh, chain.currentsMesh, land, pixelLandOf(terrain, onMesh.raster.dryBasin), width, height, { refinement: true })
+        onMesh = hydrologyOnMesh(mt, elevation, width, height, land)
+      }
+      const lakes = onMesh.raster
+      // DEC-0036 transition: removed in phase 7b. The raster routing's
+      // rain — the nodes' precipitation on the world raster.
+      const rasterRain = landRaster(land, land.climate.precipitation, pixelLandOf(elevation, lakes.dryBasin), width, height, OCEAN_PRECIP, false)
+      const discharge = accumulateDischarge(routing, elevation, rasterRain)
+      // Terrain truth: repaint the map with the dry basin floors as land
+      // (salt band + basin rock, real hillshade). skipInvalidation — this
+      // render shows the hydrology we JUST computed; dropping the result here
+      // would force a pointless full re-route on the next call.
+      renderDryBasin = lakes.dryBasin
+      renderSaltFlat = lakes.saltFlat
+      await renderAndPost(terrain, false, 1, true)
+      if (stale()) return
+      result = {
+        routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
+        bodies: onMesh.lakes.bodies, level: lakes.level, surface: lakes.surface, body: lakes.body,
         // The graph's discharge scale: the substrate it is built on.
-        if (onMesh && meshTerrain) maxDischarge = maxDischargeOverLand(onMesh.discharge, meshTerrain.z)
-        // Terrain truth: repaint the map with the dry basin floors as land
-        // (salt band + basin rock, real hillshade). skipInvalidation — this
-        // render shows the hydrology we JUST computed; dropping the result here
-        // would force a pointless full re-route on the next call.
-        renderDryBasin = lakes.dryBasin
-        renderSaltFlat = lakes.saltFlat
-        await renderAndPost(terrain, false, 1, true)
-        if (stale()) return
-        result = {
-          routing, discharge, lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
-          bodies: lakes.bodies, level: lakes.level, surface: onMesh ? onMesh.raster.surface : waterLevelField(lakes.bodies, elevation, grid).surface, body: lakes.body,
-          maxDischarge, meanRunoff, graph: null, coast: null, sedimentBasins: [], ice: null, waterTable: null, oases: [], biomesFine: null,
-          onMesh,
-        }
+        maxDischarge: maxDischargeOverLand(onMesh.discharge, mt.z), meanRunoff: meanLandRunoff(weather.cells),
+        graph: null, coast: null, sedimentBasins: [], ice: null, oases: [],
+        onMesh,
       }
       hydrology = result
       rerouted = true
@@ -1182,86 +1226,73 @@ function handleHydrologyRun(): void {
     // Watersheds + the raw discharge field: re-route only, same contract.
     const watershedsOut = rerouted ? computeWatersheds(result.routing, elevation) : new Uint16Array(0)
     const dischargeOut = rerouted ? result.discharge.slice() : new Float32Array(0)
-    // Riparian biomes are pinned to the routing like the lakes, so they too
+    // The biomes are pinned to the routing like the lakes, so they too
     // change on a re-route only — a repeat call sends them empty (the screen
-    // keeps its last copy). Uses the display terrain (lastRawElevations) so
-    // land/ocean matches the map.
+    // keeps its last copy).
     let biomesOut: Uint8Array = new Uint8Array(0)
     let precipEffOut: Float32Array = new Float32Array(0)
     if (rerouted) {
-      const riparian = computeRiparianBiomes(result.routing, terrain, result.discharge, threshold, result.maxDischarge, result.lakeDepth, weather.precipitation, weather.temperature, weather.seasonalAmplitude, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y, result.saltFlat ?? undefined, result.dryBasin ?? undefined, result.frozen ?? undefined, weather.months)
-      // The riparian-effective precipitation rides along: it is what lets the
-      // worldmap reclassify at bake resolution without re-running hydrology.
-      biomesOut = riparian.biomes
-      result.biomesFine = riparian.biomes.slice()
-      precipEffOut = riparian.precipEff
-      // THE FEATURE GRAPH (phase 2): the network as data, with the riparian
-      // biomes as bank material and the last erosion pass's sediment flux as
-      // load. The ribbons below derive from it.
+      const om = result.onMesh
+      const land = om.land
+      const sub = meshSubstrate(mt.mesh, mt.routing, mt.areas)
+      const pixelLand = pixelLandOf(terrain, result.dryBasin)
+      // THE RIPARIAN BIOMES on the mesh (DEC-0036 phase 7): the rivers and
+      // lakes moisten the land around them (hydrology.
+      // riparianPrecipitationOn), and the biomes are classified again from
+      // that effective rain; a terminal basin's salt flat and a frozen
+      // basin are hydrology states, not climates — they win.
+      const precipEff = riparianPrecipitationOn(sub, mt.z, om.discharge, threshold, result.maxDischarge, om.lakes.depth, om.lakes.frozen, land.climate.precipitation)
+      const nodeBiome = classifyPoints(land.climate, land.points, domain, precipEff).biome
+      precipEffOut = landRaster(land, precipEff, pixelLand, width, height, OCEAN_PRECIP, false)
+      for (let v = 0; v < nodeBiome.length; v++) {
+        if (!land.points.land[v]) continue
+        if (om.lakes.saltFlat[v]) nodeBiome[v] = Biome.SaltFlat
+        if (om.lakes.frozen[v]) nodeBiome[v] = Biome.Glacier
+      }
+      om.ecologyBiome = nodeBiome.slice()
       // The forcing's hardness: the coast's and the hydrogeology's input.
       const forcingFields = coarseForcingFields(sim, sim.domain)
-      // The cover (phase 5.5) from the coarse biomes, for the infiltration.
+      // The cover (phase 5.5) from the climate's own biomes at the nodes,
+      // for the infiltration.
       const plantsFromMa = (historyControls.weather.planet ?? DEFAULT_PLANET_FORCING).landPlantsFromMa
-      const cover = coverField(weather.biomes, worldAgeMa(sim.archeanEpochs, sim.epoch) >= plantsFromMa)
-      if (result.onMesh && meshTerrain) {
-        // On the mesh (phase 4.3): the graph from the mesh's own routing,
-        // discharge and lakes; the bank material sampled from the raster
-        // riparian biomes at each node.
-        const sub = meshSubstrate(meshTerrain.mesh, meshTerrain.routing, meshTerrain.areas)
-        const bankAtNode = new Uint8Array(meshTerrain.mesh.vertexSlots)
-        for (let v = 0; v < bankAtNode.length; v++) if (meshTerrain.mesh.vAlive[v]) bankAtNode[v] = riparian.biomes[rasterCellAt(meshTerrain.mesh.vx[v], meshTerrain.mesh.vy[v], grid)]
-        const regime = accumulateRegimeInputsOn(sub, meshTerrain.z, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y, weather.months)
-        result.graph = buildRiverGraph({
-          substrate: sub, discharge: result.onMesh.discharge, elevation: meshTerrain.z, threshold, maxDischarge: result.maxDischarge,
-          bodies: result.onMesh.lakes.bodies, body: result.onMesh.lakes.body, lakeDepth: result.onMesh.lakes.depth,
-          sedimentFlux: meshTerrain.sedimentFlux.length === meshTerrain.mesh.vertexSlots ? meshTerrain.sedimentFlux : undefined,
-          biomes: bankAtNode,
-          regime,
-          criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
-        })
-        // THE HYDROGEOLOGY (phase 5a): the column's materials, the springs
-        // on the graph, the regime re-judged with the baseflow, the water
-        // table — on the mesh, then the table rasterised for the layer.
-        const ground = computeHydrogeology({
-          sub, elevation: meshTerrain.z, graph: result.graph,
-          column: coupled && coupled.mesh === meshTerrain.mesh ? coupled.column : null,
-          hardness: forcingFields.hardness, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
-          precipitation: weather.precipitation, temperature: weather.temperature, monsoonIndex: weather.monsoonIndex,
-          cover, regime, discharge: result.onMesh.discharge, cellM: domain.metresAround / width,
-        })
-        const table = rasteriseNodeField(meshTerrain.mesh, ground.waterTableDepthM, width, height)
-        for (let c = 0; c < table.length; c++) if (elevation[c] <= 0 || table[c] < 0) table[c] = -1
-        result.waterTable = table
-        result.oases = ground.springs.filter((s) => s.oasis)
-      } else {
-        const regime = accumulateRegimeInputs(result.routing, elevation, weather.temperature, weather.precipitation, weather.monsoonIndex, CLIMATE_RES_X, CLIMATE_RES_Y, weather.months)
-        result.graph = buildRiverGraph({
-          routing: result.routing, discharge: result.discharge, elevation, threshold, maxDischarge: result.maxDischarge,
-          bodies: result.bodies, body: result.body, lakeDepth: result.lakeDepth,
-          sedimentFlux: lastSedimentFlux && lastSedimentFlux.length === elevation.length ? lastSedimentFlux : undefined,
-          biomes: riparian.biomes,
-          // The flow regime (F6) from the climate the lakes were flooded with.
-          regime,
-          criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
-        })
-        // The hydrogeology on the raster: bedrock everywhere (no column).
-        const ground = computeHydrogeology({
-          sub: rasterSubstrate(result.routing), elevation, graph: result.graph, column: null,
-          hardness: forcingFields.hardness, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
-          precipitation: weather.precipitation, temperature: weather.temperature, monsoonIndex: weather.monsoonIndex,
-          cover, regime, discharge: result.discharge, cellM: domain.metresAround / width,
-        })
-        result.waterTable = ground.waterTableDepthM
-        result.oases = ground.springs.filter((s) => s.oasis)
-      }
+      const cover = coverField(land.biome, worldAgeMa(sim.archeanEpochs, sim.epoch) >= plantsFromMa)
+      // THE FEATURE GRAPH (phase 2) on the mesh (phase 4.3): the network
+      // as data, with the biomes as bank material and the last erosion's
+      // sediment flux as load. The ribbons below derive from it.
+      const regime = accumulateRegimeInputsOn(sub, mt.z, land.climate.temperature, land.climate.precipitation, land.climate.monsoonIndex, land.climate.months ?? undefined)
+      result.graph = buildRiverGraph({
+        substrate: sub, discharge: om.discharge, elevation: mt.z, threshold, maxDischarge: result.maxDischarge,
+        bodies: om.lakes.bodies, body: om.lakes.body, lakeDepth: om.lakes.depth,
+        sedimentFlux: mt.sedimentFlux.length === mt.mesh.vertexSlots ? mt.sedimentFlux : undefined,
+        biomes: nodeBiome,
+        regime,
+        criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
+      })
+      // THE HYDROGEOLOGY (phase 5a): the column's materials, the springs
+      // on the graph, the regime re-judged with the baseflow, the water
+      // table — on the mesh, under the climate at its nodes.
+      const ground = computeHydrogeology({
+        sub, elevation: mt.z, graph: result.graph,
+        column: coupled && coupled.mesh === mt.mesh ? coupled.column : null,
+        hardness: nearestCellAtNodes(forcingFields.hardness, CLIMATE_RES_X, CLIMATE_RES_Y, mt.mesh),
+        precipitation: land.climate.precipitation, temperature: land.climate.temperature, monsoonIndex: land.climate.monsoonIndex,
+        cover, regime, discharge: om.discharge, cellM: domain.metresAround / width,
+      })
+      om.waterTable = ground.waterTableDepthM
+      result.oases = ground.springs.filter((s) => s.oasis)
       // THE RIVER COURSE (phase 3): pattern, meanders, braids and deltas per
       // reach, seeded from the world so a world always gets the same bends.
       result.graph.courses = computeRiverCourses(result.graph, { cellM: domain.metresAround / width, seed: sim.warpSeed, domain })
-      // THE COAST (F5): exposure from the wind, hardness from the erosion
-      // forcing's field, sediment from the graph's mouths — a type per reach.
+      // THE COAST (F5): exposure from the wind (the climate's cells read at
+      // each coast cell), hardness from the erosion forcing's field,
+      // sediment from the graph's mouths — a type per reach.
+      const { cm } = weather.cells
+      const windE = weather.cells.windE
+      const windS = weather.cells.windS
       result.coast = buildCoastGraph({
-        elevation, width, height, domain: sim.domain, wind: weather.wind, climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y,
-        hardness: forcingFields.hardness, graph: result.graph, cellM: domain.metresAround / width,
+        elevation, width, height, domain: sim.domain,
+        windAt: (x, y, out) => cm.sampler.sampleVector(windE, windS, x, y, -1, out),
+        hardness: forcingFields.hardness, forcingResX: CLIMATE_RES_X, forcingResY: CLIMATE_RES_Y, graph: result.graph, cellM: domain.metresAround / width,
       })
       // SEDIMENT BASINS (F1): what the last erosion pass deposited, with the
       // provenance of the catchments feeding each basin. Needs the terrain
@@ -1278,23 +1309,21 @@ function handleHydrologyRun(): void {
         }).basins
         : []
       // THE ICE: the history's own (phase 6, the last epoch's steady state
-      // on the mesh) when the terrain has been through an epoch, rasterised;
-      // otherwise F4's shallow-ice flow once, with the refined climate (a
-      // restored world before its next epoch, a world without a mesh).
-      if (coupled && meshTerrain && coupled.mesh === meshTerrain.mesh && coupled.ice.length === coupled.mesh.vertexSlots) {
-        const ice = rasteriseNodeField(coupled.mesh, coupled.ice, width, height)
-        for (let c = 0; c < ice.length; c++) if (elevation[c] <= 0 || ice[c] < SURFACE_TUNING.iceMinThicknessM) ice[c] = 0
-        result.ice = ice
-      } else {
-        result.ice = computeIceThickness({
-          elevation, width, height, domain, temperature: weather.temperature, precipitation: weather.precipitation,
-          climateResX: CLIMATE_RES_X, climateResY: CLIMATE_RES_Y, cellM: domain.metresAround / width,
-        }).thickness
-      }
+      // on the mesh) when the terrain has been through an epoch; otherwise
+      // the steady state of this climate on the mesh (a restored world
+      // before its next epoch, a world before its first).
+      const nodeIce = coupled && coupled.mesh === mt.mesh && coupled.ice.length === mt.mesh.vertexSlots
+        ? coupled.ice
+        : computeIceOnMesh({ mesh: mt.mesh, z: mt.z, seaLevelTemperature: land.climate.seaLevelTemperature, precipitation: land.climate.precipitation, cellM: domain.metresPerUnit }).thickness
+      const ice = rasteriseNodeField(mt.mesh, nodeIce, width, height)
+      for (let c = 0; c < ice.length; c++) if (elevation[c] <= 0 || ice[c] < SURFACE_TUNING.iceMinThicknessM) ice[c] = 0
+      result.ice = ice
       // THE ICE BODY IS A BIOME (phase 6, decided 2026-09-23: the climate
       // class Ice stays, Glacier is the ice with a thickness): under ice the
-      // cell's biome is Glacier, whatever the climate said.
-      for (let c = 0; c < biomesOut.length; c++) if (result.ice[c] > 0 && elevation[c] > 0) biomesOut[c] = Biome.Glacier
+      // node's biome is Glacier, whatever the climate said.
+      for (let v = 0; v < nodeBiome.length; v++) if (land.points.land[v] && mt.z[v] > SEA_LEVEL && nodeIce[v] >= SURFACE_TUNING.iceMinThicknessM) nodeBiome[v] = Biome.Glacier
+      om.biome = nodeBiome
+      biomesOut = idRaster(land, nodeBiome, pixelLand, width, height, Biome.Ocean)
     }
     const rivers = result.graph
       ? riverPolylinesFromGraph(result.graph, result.maxDischarge, domain)
@@ -1310,7 +1339,6 @@ function handleHydrologyRun(): void {
       }
     }
     const iceOut = rerouted && result.ice ? result.ice.slice() : new Float32Array(0)
-    const waterTableOut = rerouted && result.waterTable ? result.waterTable.slice() : new Float32Array(0)
     const graphOut = rerouted && result.graph ? serializeRiverGraph(result.graph) : null
     const coastOut = rerouted && result.coast ? result.coast : null
     const hydrologyMessage: WorkerHydrologyDataMessage = {
@@ -1332,58 +1360,59 @@ function handleHydrologyRun(): void {
       coast: coastOut ? { reaches: coastOut.reaches, cells: coastOut.cells.slice().buffer as ArrayBuffer } : null,
       sedimentBasins: rerouted ? result.sedimentBasins : null,
       iceThickness: iceOut.buffer as ArrayBuffer,
-      waterTable: waterTableOut.buffer as ArrayBuffer,
     }
     const transfer = [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.riverRegimes, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge, hydrologyMessage.waterLevel, hydrologyMessage.waterSurface]
     if (hydrologyMessage.riverGraph) transfer.push(hydrologyMessage.riverGraph.cells, hydrologyMessage.riverGraph.coursePoints)
-    transfer.push(hydrologyMessage.coastType, hydrologyMessage.iceThickness, hydrologyMessage.waterTable)
+    transfer.push(hydrologyMessage.coastType, hydrologyMessage.iceThickness)
     if (hydrologyMessage.coast) transfer.push(hydrologyMessage.coast.cells)
     emit(hydrologyMessage, transfer)
   })().catch((error: unknown) => fail('hydrology', error)).finally(() => { hydrologyInFlight = false })
 }
 
 function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecologyRun' }>): void {
-  // Needs a computed climate (cached temperature/precipitation/biomes feed
-  // productivity + pasture) plus the current elevation (arable slope) and the
-  // sim's volcanoes (province layer). Noise seeded from warpSeed. Fresh arrays,
-  // so every field buffer transfers.
+  // Needs a computed climate (its cells feed productivity + pasture) plus
+  // the current terrain mesh (the nodes the fields sit on, their slope)
+  // and the sim's volcanoes (province layer). Noise seeded from warpSeed.
+  // Fresh arrays, so every field buffer transfers.
   if (!sim || !lastRawElevations) { decline('ecology', 'tectonics'); return }
   if (!climate) { decline('ecology', 'climate'); return }
+  const mt = landTerrain()
+  if (!mt) { decline('ecology', 'tectonics'); return }
   // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
   // yet, fish falls back to its marine component; the ecology panel re-triggers
   // this once hydrology lands (see GeneratorScreen's chaining).
-  const cratonAge = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.domain)
   // The physics depends on the world alone; while only the sliders move,
-  // the last one stands (prepareEcology is some 2 s at 2048, the sliders a
-  // tenth of that).
+  // the last one stands (prepareEcology is the expensive part, the sliders
+  // a fraction of it).
   const key = { climate, hydrology, elevation: lastRawElevations, sim, epoch: sim.epoch }
   const last = ecologyBase?.key
   if (!ecologyBase || !last || last.climate !== key.climate || last.hydrology !== key.hydrology || last.elevation !== key.elevation || last.sim !== key.sim || last.epoch !== key.epoch) {
-    ecologyBase = { key, base: prepareEcology({
-    temperature: climate.temperature,
-    precipitation: climate.precipitation,
-    biomes: climate.biomes,
-    upwelling: climate.upwelling,
-    months: climate.months ?? null,
-    rainVariability: climate.rainVariability,
-    elevation: lastRawElevations,
-    discharge: hydrology?.discharge ?? null,
-    maxDischarge: hydrology?.maxDischarge ?? 0,
-    // Liquid water only: a frozen basin is a glacier and feeds no fishery.
-    lakeDepth: hydrology ? liquidLakeDepth(hydrology) : null,
-    saltFlat: hydrology?.saltFlat ?? null,
-    dryBasin: hydrology?.dryBasin ?? null,
-    waterTable: hydrology?.waterTable ?? null,
-    oases: hydrology?.oases ?? [],
-    biomesFine: hydrology?.biomesFine ?? null,
-    volcanoes: collectVolcanoes(sim.features),
-    // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
-    // + the accumulated (advected) deep-time sutures.
-    orogenPoints: [...collectOrogens(sim.features), ...sim.sutures],
-    cratonAge,
-    warpSeed: sim.warpSeed,
-    domain: sim.domain,
-  }) }
+    const om = hydrology && hydrology.onMesh.land.mesh === mt.mesh ? hydrology.onMesh : null
+    const land = om ? om.land : climate.land.mesh === mt.mesh && climate.land.z === mt.z ? climate.land : landClimateOf(climate.cells, mt)
+    const cratonField = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.domain)
+    const base = prepareEcology({
+      mesh: mt.mesh,
+      z: mt.z,
+      land: land.points.land,
+      climate: land.climate,
+      biomes: om?.ecologyBiome ?? land.biome,
+      discharge: om?.discharge ?? null,
+      maxDischarge: hydrology?.maxDischarge ?? 0,
+      // Liquid water only: a frozen basin is a glacier and feeds no fishery.
+      lakeDepth: om ? liquidLakeDepth(om.lakes) : null,
+      saltFlat: om?.lakes.saltFlat ?? null,
+      waterTable: om?.waterTable ?? null,
+      oases: hydrology?.oases ?? [],
+      volcanoes: collectVolcanoes(sim.features),
+      // Collision belts for tin/lode-gold/gems: current fold mountains (on-crust)
+      // + the accumulated (advected) deep-time sutures.
+      orogenPoints: [...collectOrogens(sim.features), ...sim.sutures],
+      cratonAge: landBilinearAtNodes(cratonField, sim.domain.grid(CLIMATE_RES_X, CLIMATE_RES_Y), mt.mesh),
+      warpSeed: sim.warpSeed,
+      domain: sim.domain,
+    })
+    base.raster = trianglesOf(mt.mesh, sim.width, sim.height)
+    ecologyBase = { key, base, pixelLand: pixelLandOf(lastRawElevations, hydrology?.dryBasin ?? null) }
   }
   ecologyParams = {
     carryingCapacity: message.carryingCapacity,
@@ -1392,7 +1421,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     tinRarity: message.tinRarity,
     weights: message.weights,
   }
-  const eco = applyEcology(ecologyBase.base, ecologyParams)
+  const eco = ecologyRasters(ecologyBase.base, applyEcology(ecologyBase.base, ecologyParams).fields, ecologyBase.pixelLand, sim.domain.grid(sim.width, sim.height))
   // Cache a copy of carrying capacity BEFORE the buffers below are transferred
   // (transfer neuters them) — the migration step reads it.
   ecology = { carryingCapacity: eco.fields.carryingCapacity.slice() }
@@ -1414,12 +1443,15 @@ function handleEcologyMonth(message: Extract<WorkerInboundMessage, { type: 'ecol
   // send, and the screen keeps showing the year.
   // Always answered, with no data then, so the screen is not left waiting.
   const field = message.field as EcologyFieldId
-  const data = ecologyBase && ecologyParams && isSeasonalEcologyField(field)
+  const nodes = ecologyBase && ecologyParams && isSeasonalEcologyField(field)
     ? ecologyMonth(ecologyBase.base, field, message.month, ecologyParams.weights?.[field] ?? 1)
     : null
+  const width = sim?.width ?? 0
+  const height = sim?.height ?? 0
+  const data = nodes && ecologyBase ? ecologyFine(ecologyBase.base, nodes, ecologyBase.pixelLand, width, height, field === 'fish') : null
   const reply: WorkerEcologyMonthDataMessage = {
     type: 'ecologyMonthData', field, month: message.month,
-    resX: ecologyBase?.base.w ?? 0, resY: ecologyBase?.base.h ?? 0,
+    resX: data ? width : 0, resY: data ? height : 0,
     data: data ? encodeFineField(data).buffer as ArrayBuffer : new ArrayBuffer(0),
   }
   emit(reply, [reply.data])
@@ -1432,7 +1464,11 @@ function handleMigrationRun(message: Extract<WorkerInboundMessage, { type: 'migr
   if (!climate) { decline('migration', 'climate'); return }
   if (!ecology) { decline('migration', 'ecology'); return }
   const coarseDischarge = hydrology ? downsampleMax(hydrology.discharge, sim.width, sim.height, CLIMATE_RES_X, CLIMATE_RES_Y) : null
-  const mig = computeMigration(ecology.carryingCapacity, climate.precipitation, lastRawElevations, coarseDischarge, hydrology?.maxDischarge ?? 0, message.origins, sim.domain, {
+  // The migration runs on the climate's chart (its own screen, later; not
+  // one of DEC-0036 phase 7's stages): the climate's land and rain there.
+  const { cells, terrain } = climate
+  const precipitation = chartLandField(cells.cm, cells.precipitation, (i) => cells.precipitation[i] !== OCEAN_PRECIP, OCEAN_PRECIP, chartLand(terrain))
+  const mig = computeMigration(ecology.carryingCapacity, precipitation, lastRawElevations, coarseDischarge, hydrology?.maxDischarge ?? 0, message.origins, sim.domain, {
     spreadBudget: message.spreadBudget,
     seaCrossing: message.seaCrossing,
   })
@@ -1529,10 +1565,43 @@ function handleSerializeWorld(): void {
     forcingResX: CLIMATE_RES_X,
     forcingResY: CLIMATE_RES_Y,
     mesh: meshPayload(),
+    climate: climate ? climatePayload(climate.cells) : undefined,
+    land: landPayload(),
   }
   const transfers = [worldMessage.mantle.values, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge.values, worldMessage.elevation, worldMessage.uplift, worldMessage.erodibility]
   if (worldMessage.mesh) transfers.push(worldMessage.mesh.nodes, worldMessage.mesh.connectivity, worldMessage.mesh.z)
+  if (worldMessage.climate) transfers.push(worldMessage.climate.seaLevelTemperature, worldMessage.climate.precipitation, worldMessage.climate.seasonalAmplitude, worldMessage.climate.monsoonIndex)
+  if (worldMessage.land) transfers.push(worldMessage.land.biome, worldMessage.land.koppen, ...(worldMessage.land.waterTable ? [worldMessage.land.waterTable] : []))
   emit(worldMessage, transfers)
+}
+
+// The climate's cells as the save holds them (world/save/climateFields.ts),
+// copies.
+function climatePayload(cells: ClimateCells): ClimatePayload {
+  const v = climateCellValues(cells)
+  return {
+    cells: v.cells, spacingM: v.spacingM,
+    seaLevelTemperature: v.seaLevelTemperature.slice().buffer as ArrayBuffer, precipitation: v.precipitation.slice().buffer as ArrayBuffer,
+    seasonalAmplitude: v.seasonalAmplitude.slice().buffer as ArrayBuffer, monsoonIndex: v.monsoonIndex.slice().buffer as ArrayBuffer,
+  }
+}
+
+// The land fields per node of the mesh the save carries, in its numbering
+// (the canonical mesh's slots): the map's biome (the hydrology's when it
+// ran, else the climate's), the Köppen class, the water table. Undefined
+// when no climate describes this mesh.
+function landPayload(): LandPayload | undefined {
+  if (!climate || !meshTerrain) return undefined
+  const om = hydrology && hydrology.onMesh.land.mesh === meshTerrain.mesh ? hydrology.onMesh : null
+  const land = om ? om.land : climate.land
+  if (land.mesh !== meshTerrain.mesh) return undefined
+  const count = meshTerrain.mesh.aliveVertices
+  return {
+    count,
+    biome: (om?.biome ?? land.biome).slice(0, count).buffer as ArrayBuffer,
+    koppen: land.koppen.slice(0, count).buffer as ArrayBuffer,
+    waterTable: om?.waterTable ? om.waterTable.slice(0, count).buffer as ArrayBuffer : null,
+  }
 }
 
 // A world made again from its runs (WorkerReplayRunsMessage), in place of
@@ -1546,7 +1615,6 @@ async function handleReplayRuns(message: Extract<WorkerInboundMessage, { type: '
   const generation = worldGeneration
   dropHandover()
   meshBefore = null
-  lastSedimentFlux = null
   renderDryBasin = null
   renderSaltFlat = null
   archean = null
@@ -1604,7 +1672,6 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   // matched) and its terminal basins (painted on the new world's first
   // render). None of them describes the world being restored (2026-10-01).
   meshBefore = null
-  lastSedimentFlux = null
   renderDryBasin = null
   renderSaltFlat = null
   if (message.archean) {
@@ -1920,6 +1987,15 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
   }
   const params: ClimateParams = message.weather ?? defaultWeatherParams()
   const chain = computeClimateChain(sampleWorld.elevation, domain, params)
+  // The sample world has no terrain mesh: its biomes and classes are the
+  // climate mesh's own cells' (their centres' heights), each pixel the
+  // heaviest land corner's.
+  const { cm, z: cellZ, land: cellLand, dry: cellDry } = chain.weather.terrain
+  const cellPoints: ClimatePoints = { count: cm.mesh.count, x: cm.mesh.x, y: cm.mesh.y, height: cellZ, land: cellLand, dry: cellDry, alive: null }
+  const cellClasses = classifyPoints(climateAtPoints(chain.cells, cellPoints), cellPoints, domain)
+  const pixelLand = pixelLandOf(sampleWorld.elevation, null)
+  const cellTriangles = trianglesOf(cm.mesh.tri, width, height)
+  const cellRaster = (ids: Uint8Array, sea: number): Uint8Array => Uint8Array.from(rasteriseNodePart(cm.mesh.tri, ids, cellLand, pixelLand, sea, width, height, true, undefined, cellTriangles))
   const preview: WorkerPlanetPreviewDataMessage = {
     type: 'planetPreviewData',
     width,
@@ -1929,17 +2005,17 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     relief: sampleWorld.relief.slice().buffer as ArrayBuffer,
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
-    temperature: chain.temperature.buffer as ArrayBuffer,
-    wind: chain.wind.buffer as ArrayBuffer,
+    temperature: chain.chart.temperature.buffer as ArrayBuffer,
+    wind: chain.chart.wind.buffer as ArrayBuffer,
     windMesh: chain.windMesh,
     currentsMesh: chain.currentsMesh,
-    currents: chain.currents.buffer as ArrayBuffer,
-    currentAnomaly: chain.currentAnomaly.buffer as ArrayBuffer,
-    precipitation: chain.seasonal.annual.buffer as ArrayBuffer,
-    seasonalAmplitude: chain.seasonalAmplitude.buffer as ArrayBuffer,
-    monsoonIndex: chain.seasonal.index.buffer as ArrayBuffer,
-    koppen: chain.koppen.buffer as ArrayBuffer,
-    biomes: chain.biomesFine.buffer as ArrayBuffer,
+    currents: chain.chart.currents.buffer as ArrayBuffer,
+    currentAnomaly: chain.chart.currentAnomaly.buffer as ArrayBuffer,
+    precipitation: chain.chart.precipitation.buffer as ArrayBuffer,
+    seasonalAmplitude: chain.chart.seasonalAmplitude.buffer as ArrayBuffer,
+    monsoonIndex: chain.chart.monsoonIndex.buffer as ArrayBuffer,
+    koppen: cellRaster(cellClasses.koppen, 0).buffer as ArrayBuffer,
+    biomes: cellRaster(cellClasses.biome, Biome.Ocean).buffer as ArrayBuffer,
   }
   emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, chain.windMesh.e, chain.windMesh.s, chain.currentsMesh.e, chain.currentsMesh.s, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.koppen, preview.biomes])
 }

@@ -33,8 +33,9 @@ removed, and the world map with them: it is to be rebuilt rather than carried.
 history; do not reconstruct them from memory, read them there.
 
 What the removal left standing, deliberately: `map/` still holds the world map's
-rendering stack, and `world/save/loadWorldInputs`'s `biomeInputs` still assembles
-its classification inputs. Both wait for the screen to be written again.
+rendering stack; it waits for the screen to be written again. (Its classification
+inputs, `loadWorldInputs`'s `biomeInputs`, went with DEC-0036 phase 7: the save
+holds the biomes per mesh node now.)
 
 **Module layering — keep it acyclic.** `generator/` computes (params in, fields
 out), `storage/` moves bytes at paths, `server/` talks HTTP, `map/` draws. Those
