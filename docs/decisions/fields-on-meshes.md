@@ -21,7 +21,7 @@ summary.de: Die Raster-Stufen des Generators verlassen die 2:1-Karte. Die groben
   Gestalten nehmen den einen Weg; die Golden-Werte brechen je Phase, gewollt.
   Die Kalibrierung der Raster-Konstanten der Kugel wartet darauf.
 area: generator
-stage: building
+stage: built
 createdAt: 2026-10-11
 updatedAt: 2026-10-12
 related: [DES-0025, DEC-0035, DES-0017, DEC-0029]
@@ -199,6 +199,102 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-12: **the save step BUILT — no chart raster left in the save**
+(fork 5 as revised, formatVersion 8 kept). With it nothing simulates on
+the 2:1 chart and the save holds no chart raster field, so the DEC's
+stage is `built`; phase 8 (the calibration, in metres) is separate work
+and stays open.
+
+**The inventory** (what the archive still held as chart rasters, and
+what became of each):
+
+| Entry | Was | Now |
+|---|---|---|
+| `elevation.f32` | 2048 × 1024 Float32, the restore raster and the manifest's `elevation` layer — the terrain mesh's rasterisation | removed: the restore and every reader rasterise `mesh/z.f32` (`meshRaster.rasteriseNodeField`, the raster `runtime.renderTerrain` draws after every epoch) |
+| `layers/lakeDepth.u8` | 2048 × 1024, the mesh's lakes drawn on the world raster (`waterFieldsFromMesh`) | removed: the water body per node, `mesh/lakeBody.i32` (Int32, an index into `layers/waterBodies.json`, −1 none), and the reader draws the depth with the session's own `waterFieldsFromMesh` |
+| `layers/uplift.f32`, `layers/erodibility.f32` | 256 × 128 Float32, the erosion's coarse forcing | removed: a pure function of `state.json` (features, rafts, sutures, the epochs — `erosionForcing.coarseForcingFields`); the reader evaluates it as the generator does |
+| `lattice.acc.f32`, `lattice.lock.i16`, `lattice.class.i8` | the boundary detection's accumulated history | kept: not a chart raster — its own point set (`generateDetectionLattice`: 256 × 128 points on the torus, on the sphere each row only the columns its length holds), the plates' simulation state per point, as a mesh's is per node; moving it would be churn |
+| `archean.streak.i16` | per cell of the mantle's field mesh since phase 1 | kept (not a raster) |
+| `preview.png` | a thumbnail picture | kept (not a field) |
+
+An Archean save loses its `elevation.f32` too (the restore renders the
+Archean's state, as it did anyway). Every tectonic save carries its mesh
+now, one saved at the hand-over before any epoch included
+(`runtime.savedMeshPayload`: the coupled terrain the next epoch starts
+from, unrouted). A save holding any of the four removed entries, or a
+tectonic one without `mesh/nodes.f32`, is refused
+(`savedFields.refuseFormerRasters`, in the screen's load and in
+`world/query.openWorld`); the manifest lists tables only.
+
+**The identity.** `deriveWorldId` hashed the elevation raster, the
+climate's precipitation cells, the kind and the erosion controls, plus
+the mesh's nodes, heights and column. It hashes now, in this order: the
+kind, the controls and two presence marks (column, climate) as text, then
+the mesh's nodes, heights and column, the annual climate's four fields
+per cell, the forcing (uplift, erodibility — what a bake erodes with,
+which the raster had stood for), the mantle's and the ocean age's values
+— no raster (world/identity.ts). Every world's id moved once; artifacts
+keyed by an old id are stale and are made again (accepted, alpha). The
+frozen id in `harness:roundtrip` is re-frozen (`5e7492a5133a8979`). A
+legacy save without `metadata.uid` derives its uid from the mantle's
+values in place of the elevation raster.
+
+**Readers switched.** The generator's restore (`runtime.handleRestoreWorld`:
+the mesh decoded, then `renderTerrain`; without a mesh the hand-over's
+`createCoupledTerrain`, the screen refuses such a save; an Archean
+restore renders its state); `world/query.ts` (every raster a view it
+makes: `elevation`, `lakeDepth`, `uplift` / `erodibility`, the climate's
+chart and the land fields from the drawn elevation; `worldId` from the
+meshes); `loadWorldInputs` (the bake's `elevations`, its forcing, no
+`lakeDepth`) and through it the job worker (its land-tile scan reads the
+drawn elevation) and the bakes; the incubator (acquires through
+query.ts, unchanged); `scripts/sampleWorld.mjs` (opens a save .zip or an
+unpacked folder through query.ts and downsamples the mesh's
+rasterisation); `harness:mesh measure` (the elevation and the discharge
+through query.ts). The Go server reads only `world.yaml` and
+`preview.png` (internal/modules/world/save.go); its test's opaque bulk
+entry is renamed `mesh/z.f32`.
+
+**Measured** (2048 × 1024, seed `bench`, 100 Archean + 12 coupled epochs,
+the climate and the hydrology through the runtime with the pipeline
+harness's synthetic pre-mesh renderer, no refinement; Node):
+
+| | torus | sphere |
+|---|---|---|
+| mesh nodes | 71 715 | 125 614 |
+| the save before → after | 13.65 → 6.57 MB | 17.65 → 10.86 MB |
+| removed, deflated: elevation / lakeDepth / uplift / erodibility | 7.01 MB / 6.7 KB / 60 KB / 6.1 KB | 6.70 MB / 6.2 KB / 65 KB / 15 KB |
+| added: `mesh/lakeBody.i32`, deflated | 3.4 KB | 4.8 KB |
+| the reader's elevation = the session's raster | bit for bit | bit for bit |
+| the reader's lakes' depth = the session's | bit for bit (3 520 wet pixels) | bit for bit (4 722) |
+| the reader: open / elevation / lakeDepth / forcing / worldId | 102 / 497 / 489 / 44 / 14 ms | 161 / 639 / 583 / 99 / 19 ms |
+
+**Determinism** (`harness:pipeline`, 256 × 128): a loaded world's raster
+is the session's byte for byte; a save at the hand-over carries its mesh
+and one epoch on the loaded world's mesh is the session's bit for bit;
+the reader's elevation, lakes and forcing are the session's; the world's
+id is the same across save → load → save (the loaded world's climate and
+hydrology run again first, as the screen's save does), the same for two
+pipelines that made the same world, and another one epoch on. Level 1's
+replay across a load lands on the saved mesh bit for bit, as before.
+
+**Golden**: PASS — 0 hard failures, 0 drifted metrics, 0 moved stages,
+46 stages byte-identical × 3. No world changed: golden reaches neither the
+save nor the identity, and no stage's code moved (the runtime's restore
+and serialize are `harness:pipeline`'s). Nothing re-recorded or re-armed.
+
+**What the chart still is.** No simulation on it, and nothing of it in
+the save. It is the address and the textures, and three EVALUATIONS that
+feed the meshes are still made on a chart grid, each a function, not a
+process: the erosion forcing (`uplift`, `erodibility` at 256 × 128,
+interpolated at the nodes — normalised by the world's peak), the craton
+oldness (256 × 128, read at the nodes) and the climate's terrain (read
+from the elevation raster — a cell's mean of its texels). Moving any of
+them onto the nodes changes worlds (the interpolation, the peak), so it
+is not this step's; they are candidates beside phase 8. Outside the
+generator's chain: the migration (its own screen, later) and the raster
+erosion engine, which only harness and measuring scripts run.
 
 2026-10-12: the save carries the last epoch per node (`mesh/sedimentFlux.f32`, `mesh/preErosionZ.f32`, `mesh/ice.f32`, still formatVersion 8; one without the first two is refused), so a loaded world's reaches, deltas, coast types, sediment basins and glaciers are the session's.
 

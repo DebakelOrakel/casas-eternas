@@ -207,7 +207,9 @@ async function runOneEpoch(p) {
 
 // worldData (what serializeWorld emits) -> restoreWorld (what load sends back).
 // Deep-copied per use: the harness detaches transferred buffers, so a fixture
-// handed out twice would arrive empty the second time.
+// handed out twice would arrive empty the second time. The mesh rides along
+// as the screen sends it: a tectonic save always carries it, and it is the
+// only terrain a save holds (DEC-0036, the save step).
 const asRestore = (worldData, seed = 'harness') => {
   const w = structuredClone(worldData)
   return {
@@ -215,11 +217,38 @@ const asRestore = (worldData, seed = 'harness') => {
     seed,
     snapshot: w.snapshot,
     oceanAge: w.oceanAge,
-    elevation: w.elevation,
     mantle: w.mantle,
     archean: w.archean,
+    mesh: w.mesh,
     lattice: { accumulated: w.latticeAccumulated, lockedEpochs: w.latticeLockedEpochs, lastClassCode: w.latticeLastClassCode },
   }
+}
+
+// The archive the screen writes from a worldData (and the hydrology's
+// water bodies, which the screen keeps from hydrologyData), through the
+// real writer — GeneratorScreen.serializeWorld's assembly.
+async function archiveOf(worldData, hydrology = null) {
+  const A = await server.ssrLoadModule('/src/world/save/worldArchive.ts')
+  const w = structuredClone(worldData)
+  const f32 = (b) => (b ? new Float32Array(b) : null)
+  return A.writeWorldArchive({
+    kind: 'tectonic', width: W, height: H, yaml: 'apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: harness\n  uid: 0192abcd-0000-8000-8000-0000000000aa\nspec:\n  seed: harness\n', generatorVersion: 'harness', preview: null,
+    snapshot: w.snapshot, mantle: w.mantle, latticeAccumulated: w.latticeAccumulated, latticeLockedEpochs: w.latticeLockedEpochs, latticeLastClassCode: w.latticeLastClassCode,
+    oceanAge: w.oceanAge, mesh: w.mesh,
+    fields: {
+      climate: w.climate ? { cells: w.climate.cells, spacingM: w.climate.spacingM, seaLevelTemperature: f32(w.climate.seaLevelTemperature), precipitation: f32(w.climate.precipitation), seasonalAmplitude: f32(w.climate.seasonalAmplitude), monsoonIndex: f32(w.climate.monsoonIndex) } : null,
+      land: w.land ? { count: w.land.count, biome: new Uint8Array(w.land.biome), koppen: new Uint8Array(w.land.koppen), waterTable: f32(w.land.waterTable), discharge: f32(w.land.discharge), lakeBody: w.land.lakeBody ? new Int32Array(w.land.lakeBody) : null } : null,
+      refined: null, waterBodies: hydrology ? structuredClone(hydrology.waterBodies) : null, coast: null, sedimentBasins: null,
+    },
+  })
+}
+
+// The physical raster the session holds (requestElevationField's `raw`).
+async function rawElevation(p) {
+  const before = p.count('elevationField')
+  p.dispatch({ type: 'requestElevationField' })
+  await until(() => p.count('elevationField') > before, { label: 'the elevation field' })
+  return p.last('elevationField').raw
 }
 
 // The world as serializeWorld answers it, taken off the message list.
@@ -2270,6 +2299,99 @@ test('a world survives serialize -> restore unchanged', async () => {
   check('the restored world renders the world that was saved', hash(q.last('rendered').elevation) === saved)
 })
 
+// THE SAVE STEP (DEC-0036): the save holds no chart raster. A loaded world
+// draws its raster from the mesh, and it must be the session's, byte for
+// byte; the save's readers (world/query.ts) draw the same raster, the
+// lakes' depth the session drew and the forcing the session derives; the
+// world's id is stable across save → load → save, and two pipelines that
+// made the same world give it one id.
+test('a save holds no raster, and every reader draws the session\'s', async () => {
+  const Q = await server.ssrLoadModule('/src/world/query.ts')
+  const A = await server.ssrLoadModule('/src/world/save/worldArchive.ts')
+  const EF = await server.ssrLoadModule('/src/generator/pipeline/erosionForcing.ts')
+  const D = await server.ssrLoadModule('/src/generator/core/domain.ts')
+  const JSZip = (await import(`${CLIENT}/node_modules/jszip/dist/jszip.min.js`)).default
+  const climate = { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
+  const make = async () => {
+    const p = await freshPipeline()
+    await growWorld(p)
+    await runOneEpoch(p)
+    p.dispatch(climate)
+    await until(() => p.count('climateData') >= 1, { label: 'climate' })
+    p.dispatch({ type: 'hydrologyRun' })
+    await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
+    await quiet(p)
+    return p
+  }
+  const p = await make()
+  const raw = await rawElevation(p)
+  const hyd = p.last('hydrologyData')
+  const world = worldDataOf(p)
+  const bytes = await archiveOf(world, hyd)
+  const zip = await JSZip.loadAsync(bytes)
+  const rasters = Object.keys(zip.files).filter((f) => /\.(f32|u8|u16|i16|i8)$/.test(f) && !f.startsWith('mesh/') && !f.startsWith('climate/') && !f.startsWith('lattice.'))
+  check(`the save holds no chart raster (${Object.keys(zip.files).length} entries)`, rasters.length === 0 && A.FORMER_RASTERS.every((f) => zip.file(f) === null), rasters.join(', '))
+  const opened = await Q.openWorld(bytes)
+  if (!opened) { check('the save opens', false); return }
+  const elevation = await opened.acquire('elevation')
+  check('the reader\'s elevation is the session\'s raster, byte for byte', elevation !== null && hash(elevation.data.buffer) === hash(raw))
+  const lakes = await opened.acquire('lakeDepth')
+  const session = new Float32Array(hyd.lakeDepth)
+  const wet = session.reduce((n, d) => n + (d > 0 ? 1 : 0), 0)
+  check(`the reader's lakes are the session's, byte for byte (${wet} wet pixels)`, lakes !== null && hash(lakes.data.buffer) === hash(hyd.lakeDepth) && wet > 0)
+  const forcing = EF.coarseForcingFields(structuredClone(world.snapshot), D.domainOfKind('torus', W, H))
+  const uplift = await opened.acquire('uplift')
+  const erodibility = await opened.acquire('erodibility')
+  check('the reader\'s forcing is the one the session derives', uplift !== null && erodibility !== null && hash(uplift.data.buffer) === hash(forcing.uplift.buffer) && hash(erodibility.data.buffer) === hash(forcing.hardness.buffer))
+  const id = await opened.worldId()
+
+  const q = await freshPipeline()
+  q.dispatch(asRestore(world))
+  await until(() => q.count('rendered') >= 1, { label: 'the restore render' })
+  await quiet(q)
+  check('the loaded world\'s raster is the session\'s, byte for byte', hash(await rawElevation(q)) === hash(raw))
+  // What the screen's save does on a loaded world: the climate and the
+  // hydrology first (they are not in the restore), then the world.
+  q.dispatch(climate)
+  await until(() => q.count('climateData') >= 1, { label: 'the loaded climate' })
+  q.dispatch({ type: 'hydrologyRun' })
+  await until(() => q.count('hydrologyData') >= 1, { label: 'the loaded hydrology' })
+  await quiet(q)
+  const again = await Q.openWorld(await archiveOf(worldDataOf(q), q.last('hydrologyData')))
+  const idAgain = again ? await again.worldId() : null
+  check(`the world's id is stable across save → load → save (${id})`, idAgain === id, `${id} vs ${idAgain}`)
+
+  const r = await make()
+  const twin = await Q.openWorld(await archiveOf(worldDataOf(r), r.last('hydrologyData')))
+  const idTwin = twin ? await twin.worldId() : null
+  check('two pipelines that made the same world give it one id', idTwin === id, `${id} vs ${idTwin}`)
+  check('a world one epoch on has another id', await (async () => {
+    await runOneEpoch(r)
+    const on = await Q.openWorld(await archiveOf(worldDataOf(r)))
+    return on !== null && (await on.worldId()) !== id
+  })())
+})
+
+// A save at the hand-over, before any epoch: the session has not routed
+// its mesh, and the save carries it all the same (runtime.savedMeshPayload)
+// — a load continues where the session does, bit for bit.
+test('a save at the hand-over carries its mesh, and the load continues as the session', async () => {
+  const p = await freshPipeline()
+  await growWorld(p)
+  const world = worldDataOf(p)
+  check('the hand-over\'s save carries the mesh', world.mesh !== undefined && world.mesh.count > 0)
+  const q = await freshPipeline()
+  q.dispatch(asRestore(world))
+  await until(() => q.count('rendered') >= 1, { label: 'the restore render' })
+  await quiet(q)
+  check('the loaded raster is the session\'s', hash(await rawElevation(q)) === hash(await rawElevation(p)))
+  await runOneEpoch(p)
+  await runOneEpoch(q)
+  const parts = (w) => ['nodes', 'connectivity', 'z', 'column', 'sedimentFlux', 'ice'].map((k) => (w.mesh[k] ? hash(w.mesh[k]) : '-')).join(' ')
+  const a = worldDataOf(p), b = worldDataOf(q)
+  check('one epoch on, the loaded world\'s mesh is the session\'s, bit for bit', a.snapshot.epoch === b.snapshot.epoch && parts(a) === parts(b), `epoch ${a.snapshot.epoch} vs ${b.snapshot.epoch}`)
+})
+
 test('REGRESSION: a loaded world is not replaced by a leftover Archean', async () => {
   // 2026-08-09. Loading a world after a Genesis had been run in the same session
   // lost it: restoreWorld's tectonic branch cleared `sim` but not `archean`, and
@@ -2771,7 +2893,7 @@ test('a loaded world runs the hydrology the session ran', async () => {
   await quiet(p)
   const world = worldDataOf(p)
   const q = await freshPipeline()
-  q.dispatch({ ...asRestore(world), mesh: structuredClone(world.mesh) })
+  q.dispatch(asRestore(world))
   await until(() => q.count('rendered') >= 1, { label: 'the restore render' })
   await quiet(q)
   q.dispatch(climate)
@@ -2950,7 +3072,7 @@ test('a history step that throws stops its loop and says so', async () => {
     const world = structuredClone(worldDataOf(p))
     world.snapshot.seeds = []
     const q = await freshPipeline()
-    q.dispatch({ ...asRestore(world), mesh: world.mesh })
+    q.dispatch(asRestore(world))
     await until(() => q.count('rendered') >= 1, { label: 'the restore render' })
     await quiet(q)
     const settledBefore = q.settledRenders()
@@ -3021,7 +3143,7 @@ test("level 1's replay makes the saved world again, across a load and a checkpoi
   const before = await run(p, 2)
   const saved = await serialize(p)
   const q = await freshPipeline()
-  q.dispatch({ ...asRestore(saved, 'replay'), mesh: structuredClone(saved.mesh) })
+  q.dispatch(asRestore(saved, 'replay'))
   await until(() => q.count('rendered') >= 1, { label: 'the restore render' })
   await quiet(q)
   const after = await run(q, 1)

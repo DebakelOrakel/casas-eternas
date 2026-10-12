@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-12
+- **changed** Saves: a world's file holds its meshes and no raster, about 7 MB smaller; files saved before are refused, and every world's stored levels and tiles are computed again. `generator.load`
+
 ## 2026-10-10
 - **changed** Saves: a world's file says its shape, flat or sphere, and the shape is part of its identity; worlds saved before get a new one, so their stored levels and tiles are computed again, and a file of an unknown kind is refused. `generator.load`
 

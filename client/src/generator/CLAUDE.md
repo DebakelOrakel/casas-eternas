@@ -164,9 +164,11 @@ neighbour's through `carryFrom` before adding it. Phase 0 (the operators),
 phase 1 (the mantle), phase 2 (the ocean age), phase 3 (the static
 climate), phase 4 (the ocean and the energy balance), phase 5 (the
 refinement and the phenomena), phase 6 (the flexure), phase 7 (biomes,
-Köppen, ecology, resources, hydrogeology on the terrain mesh) and phase 7b
+Köppen, ecology, resources, hydrogeology on the terrain mesh), phase 7b
 (the hydrology's discharge, watersheds, coast reaches and sediment basins
-on the terrain mesh; no routing on the 2:1 raster) are built. A solve runs to a RESIDUAL (its
+on the terrain mesh; no routing on the 2:1 raster) and the save step (no
+chart raster in the save: the elevation, the lakes' depth and the erosion
+forcing are made by whoever reads it — world/query.ts) are built. A solve runs to a RESIDUAL (its
 SolveReport), never to a sweep count: a non-symmetric operator takes
 `solveBiCGSTAB`, a symmetric one CG, and a singular one (a Neumann
 problem) a right-hand side balanced per connected part. A length in a
@@ -187,7 +189,12 @@ saved per node in the saved mesh's numbering (`mesh/biome.u8`,
 `mesh/koppen.u8`, `mesh/waterTable.f32`, `mesh/discharge.f32`,
 world/save/climateFields.ts; what the last epoch left, `mesh/sedimentFlux.f32`,
 `mesh/preErosionZ.f32`, `mesh/ice.f32`, worldArchive.MESH_EPOCH_FILES); a table that names nodes names them by
-vertex id of the saved mesh (`layers/coast.json`'s `nodes`).
+vertex id of the saved mesh (`layers/coast.json`'s `nodes`; the water body
+per node, `mesh/lakeBody.i32`, indexes `layers/waterBodies.json`). **The
+save holds no chart raster** (DEC-0036's save step): a field a reader can
+make from what the save holds — a rasterisation, a function of the
+snapshot — is not saved; save what a load cannot derive, per node or per
+cell, and let world/query.ts draw the raster.
 
 ## Resolutions — check before you sample
 
@@ -196,18 +203,21 @@ answers here.
 
 | Grid | Size | Holds |
 |---|---|---|
-| World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation and lakeDepth (rasterisations of the mesh's heights and lakes); the screen's rasters of the terrain-mesh fields (the discharge, the watersheds, the coast type among them) |
+| World / macro raster | 2048×1024, 7800 m per cell (the sphere's 9766 m at the equator: `domain.metresPerUnit`, DEC-0035 fork 6) | elevation and lakeDepth (rasterisations of the mesh's heights and lakes, made again on load — not in the save); the screen's rasters of the terrain-mesh fields (the discharge, the watersheds, the coast type among them) |
 | Terrain mesh | adaptive, 8–31 km on land at the history's budget 4, up to 160 km at sea | biome, Köppen class, ecology and resources, water table (DEC-0036 phase 7), the lakes, the discharge, the river graph, the watersheds, the coast reaches and the sediment basins (phase 7b) |
 | Climate | field mesh, spacing W / 256 (the ocean age's): temperature, wind, seasonality, monsoon, precipitation, pressure (DEC-0036 phase 3), the currents, the SST, upwelling, salt, the year's cycle (phase 4), the whole refinement with its phenomena, reliability and storms (phase 5); 256×128 (~62 km per cell) only as its chart, for the screen and a save's readers | — |
 | Ocean age | field mesh, spacing W / 256: 37 888 cells at 62 km (torus), 24 012 at 78 km (sphere); a 1024×512 raster only inside the render's baseline | oceanAge (epochs) |
 | Flexure | field mesh, spacing W / 256 (the climate's, shared); no state kept, the deflection goes into the nodes' z each epoch | the epoch's load, Te, the deflection |
 | Mantle | field mesh, spacing W / 128: 9 472 cells at 125 km (torus), 6 252 at 156 km (sphere); 128×64 only as the overlay | mantle buoyancy and flow |
 
-In the baked save (`world/save/worldLayers.ts`) the raster layers left are
-`elevation` and `lakeDepth` (world raster) and the forcing's `uplift` /
-`erodibility` (256 × 128); the climate, the land fields and the discharge
-are mesh values (DEC-0036 phases 7 and 7b), which `world/query.ts`
-rasterises for its views.
+The save holds no raster layer (DEC-0036's save step, 2026-10-12): the
+climate, the land fields and the discharge are mesh values (phases 7 and
+7b), the lakes a water body per node, the terrain the mesh, and
+`world/query.ts` makes every raster view on open — the elevation by
+`rasteriseNodeField`, the lakes' depth by `waterFieldsFromMesh`, the
+forcing's `uplift` / `erodibility` (256 × 128) by
+`erosionForcing.coarseForcingFields` from `state.json` — the session's
+own functions, so the views are the session's rasters bit for bit.
 
 Note what a coarse save layer means for a field that is computed finely: the
 reduction is a *choice*, and `downsampleMax` is the wrong one for anything
@@ -308,9 +318,11 @@ the input's schema, so they belong with `xyInputParams`.
 
 **A hash belongs to the consumer, not to the module.** Do not add a canonical
 `hashParams()` anywhere. `world/identity.ts` explains why in detail, and it
-was learned expensively: `deriveWorldId` hashes the output *rasters* (and, since
-phase 5.8, the mesh snapshot's own bytes when the save carries one) rather than
-the recipe, because the recipe cannot distinguish two worlds stopped at different
+was learned expensively: `deriveWorldId` hashes the world's state as the save
+holds it — the terrain mesh's bytes, the climate's cells, the erosion forcing
+and the field meshes' values (no raster since DEC-0036's save step; the
+elevation and precipitation rasters until then) — rather than the recipe,
+because the recipe cannot distinguish two worlds stopped at different
 tectonic epochs; and `riverDensity` is deliberately excluded from the key even
 though the bake reads it, because including it orphaned 17–67 MB of artifact per
 slider position.
@@ -368,8 +380,9 @@ their plates, rebuilds and remeshes it, swaps the tectonic baseline under the
 relief and runs the engine for the epoch's length (`sim.epochMa`, the world
 clock's `TECTONIC_MA_PER_EPOCH`; `HISTORY_DEFAULTS` holds the iterations,
 budget and uplift scale). The runtime rasterises z and sediment flux to 2048
-after every epoch for the hydrology, the climate and the map; `elevation.f32`
-in a save is therefore DERIVED; `mesh/` is the terrain, and a restored mesh
+after every epoch for the hydrology, the climate and the map; the raster is
+therefore DERIVED and the save holds none — a load rasterises `mesh/` again
+(`renderTerrain`, byte for byte the session's); `mesh/` is the terrain, and a restored mesh
 must step to the same bytes as the session's — which is why positions are
 float32 on insert and the mesh is renumbered through the codec after every
 epoch (`mesh/meshSerial.compactMesh`). Do not hand the engine a mesh that has

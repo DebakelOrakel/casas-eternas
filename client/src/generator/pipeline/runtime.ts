@@ -603,9 +603,21 @@ function meshPayload(): MeshPayload | undefined {
   return { count: c.count, nodes: c.nodes.slice(0), connectivity: c.connectivity.slice(0), z: c.z.slice(0), column: c.column?.slice(0), sedimentFlux: c.sedimentFlux?.slice(0), preErosionZ: c.preErosionZ?.slice(0), ice: c.ice?.slice(0) }
 }
 
+// The terrain mesh for the save: the routed terrain's (meshPayload), or —
+// before anything routed it (the hand-over, a reset) — the coupled
+// terrain the next epoch starts from, so every tectonic save carries the
+// terrain its elevation is the rasterisation of (DEC-0036, the save step).
+// Not cached: a save before the first epoch is rare and the encoding a
+// second's work.
+function savedMeshPayload(): MeshPayload | undefined {
+  const routed = meshPayload()
+  if (routed || !coupled) return routed
+  return serializeMeshTerrain(coupled)
+}
+
 // The mesh terrain as the save's bytes (mesh/meshSerial.ts). The mesh is
 // canonical already, so the identity numbering is the Hilbert one.
-function serializeMeshTerrain(terrain: MeshTerrain): MeshPayload {
+function serializeMeshTerrain(terrain: Pick<MeshTerrain, 'mesh' | 'z' | 'sedimentFlux'>): MeshPayload {
   const order = new Int32Array(terrain.mesh.aliveVertices)
   for (let i = 0; i < order.length; i++) order[i] = i
   const serial = encodeMesh(terrain.mesh, order)
@@ -1543,7 +1555,6 @@ function handleSerializeWorld(): void {
     const snapshot = serializeArchean(archean)
     const mantle = fieldPayload(savedMantle(archean.mantle, archean.domain))
     const streak = archean.upwellingStreak.slice()
-    const elevation = lastRawElevations.slice()
     const message: WorkerWorldDataMessage = {
       type: 'worldData',
       archean: { snapshot, mantle, streak: streak.buffer as ArrayBuffer },
@@ -1558,19 +1569,11 @@ function handleSerializeWorld(): void {
       latticeLockedEpochs: new Int16Array(0).buffer as ArrayBuffer,
       latticeLastClassCode: new Int8Array(0).buffer as ArrayBuffer,
       oceanAge: fieldPayload(savedOceanAge(createOceanAgeField(0, archean.domain), archean.domain)),
-      elevation: elevation.buffer as ArrayBuffer,
-      uplift: new Float32Array(0).buffer as ArrayBuffer,
-      erodibility: new Float32Array(0).buffer as ArrayBuffer,
-      forcingResX: 0,
-      forcingResY: 0,
     }
-    emit(message, [message.archean!.mantle.values, message.archean!.streak, message.elevation])
+    emit(message, [message.archean!.mantle.values, message.archean!.streak])
     return
   }
   if (!sim || !lastRawElevations) return
-  // .slice() so transferring these buffers doesn't neuter the worker's
-  // retained elevation.
-  const elevation = lastRawElevations.slice()
   // The meshes' own values, copies (the bit-identical continuation; DEC-0036
   // phases 1 and 2).
   const mantle = fieldPayload(savedMantle(sim.mantle, sim.domain))
@@ -1578,10 +1581,10 @@ function handleSerializeWorld(): void {
   const accumulated = sim.latticeAccumulated.slice()
   const locked = sim.latticeLockedEpochs.slice()
   const lastClass = sim.latticeLastClassCode.slice()
-  // The engine's coarse forcing, derived from the sim being serialized — the
-  // same derivation the erode stage runs (pipeline/erosionForcing.ts), so the
-  // bake erodes with the forcing this world was made with.
-  const { uplift, hardness } = coarseForcingFields(sim, sim.domain)
+  // No raster (DEC-0036, the save step): the elevation is the mesh's
+  // rasterisation and the erosion's coarse forcing a function of the
+  // snapshot (erosionForcing.coarseForcingFields), both made again by
+  // whoever reads the save.
   const worldMessage: WorkerWorldDataMessage = {
     type: 'worldData',
     snapshot: serializePlateSimulation(sim),
@@ -1590,19 +1593,14 @@ function handleSerializeWorld(): void {
     latticeLockedEpochs: locked.buffer as ArrayBuffer,
     latticeLastClassCode: lastClass.buffer as ArrayBuffer,
     oceanAge,
-    elevation: elevation.buffer as ArrayBuffer,
-    uplift: uplift.buffer as ArrayBuffer,
-    erodibility: hardness.buffer as ArrayBuffer,
-    forcingResX: CLIMATE_RES_X,
-    forcingResY: CLIMATE_RES_Y,
-    mesh: meshPayload(),
+    mesh: savedMeshPayload(),
     climate: climate ? climatePayload(climate.cells) : undefined,
     land: landPayload(),
   }
-  const transfers = [worldMessage.mantle.values, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge.values, worldMessage.elevation, worldMessage.uplift, worldMessage.erodibility]
+  const transfers = [worldMessage.mantle.values, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge.values]
   if (worldMessage.mesh) transfers.push(worldMessage.mesh.nodes, worldMessage.mesh.connectivity, worldMessage.mesh.z)
   if (worldMessage.climate) transfers.push(worldMessage.climate.seaLevelTemperature, worldMessage.climate.precipitation, worldMessage.climate.seasonalAmplitude, worldMessage.climate.monsoonIndex)
-  if (worldMessage.land) transfers.push(worldMessage.land.biome, worldMessage.land.koppen, ...(worldMessage.land.waterTable ? [worldMessage.land.waterTable] : []))
+  if (worldMessage.land) transfers.push(worldMessage.land.biome, worldMessage.land.koppen, ...(worldMessage.land.waterTable ? [worldMessage.land.waterTable] : []), ...(worldMessage.land.lakeBody ? [worldMessage.land.lakeBody] : []))
   emit(worldMessage, transfers)
 }
 
@@ -1643,6 +1641,9 @@ function landPayload(): LandPayload | undefined {
     koppen: land.koppen.slice(0, count).buffer as ArrayBuffer,
     waterTable: om?.waterTable ? om.waterTable.slice(0, count).buffer as ArrayBuffer : null,
     discharge,
+    // The lakes per node (the hydrology's bodies, which the screen saves as
+    // waterBodies.json): what a reader draws the lakes' raster from.
+    lakeBody: om ? om.lakes.body.slice(0, count).buffer as ArrayBuffer : null,
   }
 }
 
@@ -1723,8 +1724,10 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
     archeanWidth = archean.width
     archeanHeight = archean.height
     archeanShape = archean.domain.kind
-    lastRawElevations = new Float32Array(message.elevation)
-    preErosionElevations = lastRawElevations
+    // The raster is the Archean's render of its state, as in the session
+    // (the save carries none since DEC-0036's save step).
+    lastRawElevations = null
+    preErosionElevations = null
     void renderArcheanAndPost()
     return
   }
@@ -1754,16 +1757,14 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
     }
   }
   pendingEvents = []
-  lastRawElevations = new Float32Array(message.elevation)
-  // No stored pre-erosion field — a reset-erosion after a load just reverts
-  // to the loaded state.
-  preErosionElevations = lastRawElevations
-  // The mesh the save carries, if it does: the terrain proper, so a save
-  // after a load carries it on. The raster above is its rasterisation.
+  lastRawElevations = null
+  preErosionElevations = null
   // The history's terrain from the save (phase 5.1): the mesh with its
-  // heights, the baseline from the restored sim, the routing derived. A
-  // save without a mesh restores the raster alone; the first epoch then
-  // builds the mesh from the synthesis.
+  // heights, the baseline from the restored sim, the routing derived. The
+  // raster is its rasterisation (renderTerrain), as after every epoch —
+  // the save carries none (DEC-0036, the save step). Without a mesh (the
+  // screen refuses such a save): the mesh the hand-over builds, a
+  // function of the plates, unrouted as the session's is.
   if (message.mesh) {
     const f32 = (buffer: ArrayBuffer | undefined): Float32Array | undefined => buffer ? new Float32Array(buffer) : undefined
     coupled = decodeCoupledTerrain(sim, {
@@ -1774,14 +1775,13 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
     coupled.routing = meshRouting(coupled.mesh, coupled.z)
     meshTerrain = asMeshTerrain(coupled)
   } else {
-    coupled = null
+    coupled = createCoupledTerrain(sim, HISTORY_DEFAULTS.budget)
     meshTerrain = null
   }
   meshPayloadCache = null
   lastLakeBasinElevations = null
-  // Render the injected (stored, post-erosion) elevation directly — no pool
-  // query, no re-erosion.
-  renderAndPost(lastRawElevations, false, 1)
+  // The terrain's rasterisation, rendered — no re-erosion.
+  void renderTerrain()
 }
 
 

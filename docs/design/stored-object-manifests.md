@@ -259,6 +259,19 @@ resolve call rather than to nothing:
   "key": { "kind": "WorldLayers", "worldId": "…", "pipelineVersion": "…", "variant": "macro" } }
 ```
 
+**Overtaken 2026-10-12 (DEC-0036, the save step).** The save holds no raster
+at all now, so most of this section's table moved by another route: the
+terrain mesh (`mesh/`) is the authority, not `elevation.f32` — the raster
+left the save and is the mesh's rasterisation, made by whoever reads it
+(`world/query.ts`); `layers/lakeDepth.u8` left for `mesh/lakeBody.i32` (a
+water body per node; the reader draws the depth); `layers/discharge.u16`
+had left for `mesh/discharge.f32` (phase 7b); the forcing layers are
+derived from `state.json`. `deriveWorldId` hashes the mesh, the climate's
+cells, the forcing and the field meshes (`mantle.f64`, `oceanAge.f64`) —
+all in the save, so reason (1) above still holds without a raster: the
+key basis never needs a fetch. Nothing went to a `WorldLayers` artifact;
+the "derived, full-res" class is a set of views now, not of files.
+
 ## 4. Open
 
 - **`WorldLayers` has no pipeline version.** `derivePipelineVersion` takes its
@@ -268,7 +281,9 @@ resolve call rather than to nothing:
   keyed at all.
 - **`worldId` does not fully determine `WorldLayers`.** It hashes elevation and
   precipitation; `lakeDepth` and `biome` also read *temperature*. Either extend
-  the key basis for this kind or record temperature's inputs in `spec`.
+  the key basis for this kind or record temperature's inputs in `spec`. (Since
+  DEC-0036 phase 7 and its save step it hashes the whole annual climate, the
+  temperature included, and the mesh in place of the elevation.)
 - **Cross-machine determinism of the macro pass is unmeasured.** The amplify
   harness asserts it for the bake; nothing asserts it for the 2K path. Required
   before anything macro is treated as recomputable rather than stored.

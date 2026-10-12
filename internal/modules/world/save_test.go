@@ -124,8 +124,8 @@ func TestInspectSaveReadsMetadataAndPreview(t *testing.T) {
 	preview := []byte("\x89PNG\r\n\x1a\n-pretend-this-is-a-thumbnail")
 	data := buildSave(t, sampleYAML(), preview, map[string][]byte{
 		// The bulk of a real save, which the server must ignore entirely.
-		"elevation.f32": bytes.Repeat([]byte{1, 2, 3, 4}, 1024),
-		"state.json":    []byte(`{"epoch":90}`),
+		"mesh/z.f32": bytes.Repeat([]byte{1, 2, 3, 4}, 1024),
+		"state.json": []byte(`{"epoch":90}`),
 	})
 	info, err := inspectSave(data)
 	if err != nil {
@@ -163,7 +163,7 @@ func TestInspectSaveRejectsUnusableArchives(t *testing.T) {
 	if _, err := inspectSave([]byte("this is not a zip")); err == nil {
 		t.Error("garbage bytes must not parse as a save")
 	}
-	if _, err := inspectSave(buildSave(t, "", nil, map[string][]byte{"elevation.f32": {1}})); err == nil {
+	if _, err := inspectSave(buildSave(t, "", nil, map[string][]byte{"mesh/z.f32": {1}})); err == nil {
 		t.Error("an archive without world.yaml must be refused")
 	}
 }

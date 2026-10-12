@@ -26,7 +26,7 @@ summary.de: Der Server führt zwei Stores mit zwei verschiedenen Schlüsseln —
 area: platform
 stage: built
 createdAt: 2026-08-08
-updatedAt: 2026-08-12
+updatedAt: 2026-10-12
 related: [DES-0006, DES-0014]
 ---
 
@@ -85,7 +85,8 @@ does not.
   WorldMapScreen already does.
 
 **Legacy saves** — written before `uid` existed — derive one, once, from
-the elevation raster they carry, shaped as a version-8 UUID so a uid is
+the elevation raster they carry (since 2026-10-12, when the save stopped
+carrying one: the mantle's values), shaped as a version-8 UUID so a uid is
 one format everywhere. This does not contradict the rule above: the
 content does not *become* the identity, it only *seeds* it, and further
 erosion never moves it afterwards. Rolling a random id instead would
@@ -581,6 +582,21 @@ the levels side by side; an artifact is outdated when another pipeline
 version baked it, or, for the world held, when its terrain id is not the
 one of the world's last save or load (read back from that archive). Still open: deleting a world on the server does not
 sweep its artifacts.
+
+## Addendum 2026-10-12 — the terrain id hashes the meshes, not a raster
+
+DEC-0036's save step took every chart raster out of the save, and
+`deriveWorldId` with it: the id hashes the terrain mesh (node positions,
+heights, the sediment column), the annual climate's cells, the erosion's
+coarse forcing (derived from `state.json`, what a bake erodes with) and the
+field meshes' values (mantle, ocean age), with the kind and the erosion
+controls — in place of the elevation raster and the precipitation. Still
+"what this exact terrain is", still derived by every reader from the save
+alone (`world/query.ts`). Every world's id moved once: artifacts keyed by
+an old id are stale and are made again (accepted, alpha). Measured: the
+id is stable across save → load → save and equal for two pipelines that
+made the same world (`harness:pipeline`); frozen for fixed bytes in
+`harness:roundtrip`.
 
 ## Status
 

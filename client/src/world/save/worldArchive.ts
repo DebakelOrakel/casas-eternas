@@ -6,7 +6,6 @@ import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
 import type { PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulation'
-import { FORCING_LAYERS, WORLD_LAYERS, bakeLayer } from './worldLayers'
 import { refinedEntries, refinedFromEntries } from './refinedFields'
 import { climateEntries, LAND_FILES, type SavedClimate, type SavedLandFields } from './climateFields'
 import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
@@ -32,9 +31,6 @@ export interface WorldArchiveFields {
   // worker's.
   climate: SavedClimate | null
   land: SavedLandFields | null
-  // Water depth per world cell (elevation units) — the mesh lakes' raster
-  // recovery (meshHydrology.waterFieldsFromMesh).
-  lakeDepth: Float32Array | null
   // The climate step's refinement, its values per cell of the climate's
   // field mesh (refinedFields.ts; DEC-0036 phase 5).
   refined: RefinedClimate | null
@@ -51,11 +47,8 @@ interface ArchiveCommon {
   yaml: string
   // The build that wrote the archive (manifest.generatorVersion).
   generatorVersion: string
-  // preview.png, when there is one.
+  // preview.png, when there is one: a thumbnail picture, not a field.
   preview: Blob | Uint8Array | null
-  // The world raster (elevation.f32): the restore raster, and the
-  // elevation layer of the manifest.
-  elevation: ArrayBuffer
 }
 
 // A world saved during the Archean: no plate simulation yet, its own
@@ -73,10 +66,9 @@ export interface TectonicArchiveParts extends ArchiveCommon {
   latticeLockedEpochs: ArrayBuffer
   latticeLastClassCode: ArrayBuffer
   oceanAge: FieldPayload
-  // The erosion engine's coarse forcing; null before the sim has one.
-  forcing: { uplift: Float32Array; erodibility: Float32Array; resX: number; resY: number } | null
-  // The adaptive mesh, the terrain proper; absent before the history ran.
-  mesh: MeshPayload | undefined
+  // The adaptive mesh, the terrain proper — every tectonic world has one
+  // (runtime.savedMeshPayload); the world's elevation is its rasterisation.
+  mesh: MeshPayload
   fields: WorldArchiveFields
 }
 
@@ -111,7 +103,15 @@ export type WorldArchiveParts = ArcheanArchiveParts | TectonicArchiveParts
 // (climateFields.refuseFormerHydrology). What the last epoch left per node
 // of the mesh (mesh/sedimentFlux.f32, mesh/preErosionZ.f32 and, once an
 // epoch ran, mesh/ice.f32; MESH_EPOCH_FILES) — a save with a mesh and
-// without the first two is refused (readMeshEpochFiles).
+// without the first two is refused (readMeshEpochFiles). And no chart
+// raster at all (DEC-0036, the save step): not the elevation (elevation.f32,
+// the restore raster — the mesh's rasterisation, made again on load), not
+// the lakes' depth (layers/lakeDepth.u8 — drawn again from the water body
+// per node, mesh/lakeBody.i32, and layers/waterBodies.json), not the
+// erosion's coarse forcing (layers/uplift.f32, layers/erodibility.f32 — a
+// function of state.json, erosionForcing.coarseForcingFields). A save
+// holding any of them, or a tectonic one without its mesh, is refused
+// (refuseFormerRasters).
 export const WORLD_ARCHIVE_FORMAT_VERSION = 8
 
 // The mesh's per-node files of the last epoch, Float32 in the saved mesh's
@@ -146,7 +146,6 @@ export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8
     zip.file('archean.json', JSON.stringify(parts.archean.snapshot))
     writeField(zip, 'archean.mantle', parts.archean.mantle)
     zip.file('archean.streak.i16', parts.archean.streak)
-    zip.file('elevation.f32', parts.elevation)
   } else {
     zip.file('state.json', JSON.stringify(parts.snapshot))
     writeField(zip, 'mantle', parts.mantle)
@@ -154,7 +153,6 @@ export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8
     zip.file('lattice.lock.i16', parts.latticeLockedEpochs)
     zip.file('lattice.class.i8', parts.latticeLastClassCode)
     writeField(zip, 'oceanAge', parts.oceanAge)
-    zip.file('elevation.f32', parts.elevation)
     writeQueryLayers(zip, parts)
     // The climate on its field mesh (climateFields.ts).
     if (parts.fields.climate) {
@@ -186,20 +184,6 @@ function writeField(zip: JSZip, name: string, field: FieldPayload): void {
   zip.file(`${name}.json`, JSON.stringify({ cells: field.cells, spacingM: field.spacingM }))
 }
 
-// Its reader, for the loader: the two entries back, or an error when either
-// is missing or malformed (a save from before the field moved onto its
-// mesh — before formatVersion 8, or for the ocean age a version-8 save from
-// before DEC-0036 phase 2).
-export async function readField(zip: JSZip, name: string): Promise<FieldPayload> {
-  const values = zip.file(`${name}.f64`)
-  const meta = zip.file(`${name}.json`)
-  if (!values || !meta) throw new Error(`no ${name}.f64 / ${name}.json: a save from before the field moved onto its mesh`)
-  const { cells, spacingM } = JSON.parse(await meta.async('string')) as { cells: unknown; spacingM: unknown }
-  const bytes = await values.async('arraybuffer')
-  if (typeof cells !== 'number' || typeof spacingM !== 'number' || bytes.byteLength !== cells * 8) throw new Error(`${name}: ${bytes.byteLength} bytes for ${String(cells)} cells`)
-  return { values: bytes, cells, spacingM }
-}
-
 // The climate step's refinement back (refinedFields.ts), for the loader:
 // null for a save without one (unrefined); an error for a save whose
 // refinement is incomplete, or still the quantised raster layers of a build
@@ -216,40 +200,21 @@ export async function readRefined(zip: JSZip): Promise<RefinedClimate | null> {
 }
 
 export { readClimate, readLandFields } from './climateFields'
+export { FORMER_RASTERS, readField, refuseFormerRasters } from './savedFields'
 
 type ManifestLayer = { name: string; file: string; kind: 'raster' | 'vector' | 'table'; resX?: number; resY?: number; dtype?: string; encoding?: { scale: number; offset: number }; unit?: string; landOnly?: boolean }
 
-// Every computed field, quantised per its layer spec, plus the manifest —
-// so a game server can look up any world value by sampling, with no
-// generation code.
+// Every computed field on its mesh, the tables beside them, plus the
+// manifest — so a game server can look up any world value with no
+// generation code but the meshes' (world/query.ts rasterises them).
 function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
-  const { width, height, forcing, mesh, fields } = parts
+  const { width, height, mesh, fields } = parts
+  // No raster layer is left (DEC-0036, the save step): the list holds the
+  // tables.
   const layers: ManifestLayer[] = []
-  // Elevation is always present (post-generation); carried raw as elevation.f32
-  // (it doubles as the restore raster).
-  layers.push({ name: 'elevation', file: 'elevation.f32', kind: 'raster', resX: width, resY: height, dtype: 'f32', encoding: { scale: 1, offset: 0 }, unit: 'relative', landOnly: false })
-
-  // The erosion engine's coarse forcing: it exists whenever the sim does,
-  // independent of the climate gate below — a bake erodes before it needs
-  // climate.
-  if (forcing) {
-    for (const spec of FORCING_LAYERS) {
-      const src = spec.name === 'uplift' ? forcing.uplift : forcing.erodibility
-      zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
-      layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: forcing.resX, resY: forcing.resY, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
-    }
-  }
-
-  // The lakes' raster, once computed: the mesh's bodies drawn on the world
-  // raster (the save's own step moves the remaining rasters).
-  for (const spec of WORLD_LAYERS) {
-    const src = spec.name === 'lakeDepth' ? fields.lakeDepth : null
-    if (!src) continue
-    zip.file(`layers/${spec.name}.${spec.dtype}`, bakeLayer(src, spec))
-    layers.push({ name: spec.name, file: `layers/${spec.name}.${spec.dtype}`, kind: 'raster', resX: width, resY: height, dtype: spec.dtype, encoding: { scale: spec.scale, offset: spec.offset }, unit: spec.unit, landOnly: spec.landOnly })
-  }
-  // The standing-water list: a table beside the rasters, the truth
-  // `lakeDepth` derives from (hydrology.lakeDepthFromBodies), in this
+  // The standing-water list: the bodies `mesh/lakeBody.i32` indexes, from
+  // which a reader draws the lakes' depth on the world raster
+  // (meshHydrology.waterFieldsFromMesh); their seed and outlet in that
   // raster's texel coordinates (formatVersion 2).
   if (fields.waterBodies) {
     zip.file('layers/waterBodies.json', JSON.stringify(fields.waterBodies))
@@ -258,7 +223,7 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
   // The coast reaches: their nodes as vertex ids of the saved mesh (the
   // mesh is canonical, so the session's ids are the save's), so only with
   // the mesh they index.
-  if (fields.coast && mesh) {
+  if (fields.coast) {
     zip.file('layers/coast.json', JSON.stringify({ reaches: fields.coast.reaches, nodes: Array.from(fields.coast.nodes) }))
     layers.push({ name: 'coast', file: 'layers/coast.json', kind: 'table' })
   }
@@ -268,29 +233,29 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
     zip.file('layers/sedimentBasins.json', JSON.stringify(fields.sedimentBasins))
     layers.push({ name: 'sedimentBasins', file: 'layers/sedimentBasins.json', kind: 'table' })
   }
-  // The adaptive mesh: the terrain proper, from which `elevation.f32` is
-  // rasterised. Its files under `mesh/`, described by one manifest entry.
-  if (mesh) {
-    zip.file('mesh/nodes.f32', mesh.nodes)
-    zip.file('mesh/connectivity.bin', mesh.connectivity)
-    zip.file('mesh/z.f32', mesh.z)
-    if (mesh.column) zip.file('mesh/column.bin', mesh.column)
-    // What the last epoch left per node (MeshPayload): the hydrology of a
-    // loaded world reads them as the session's did.
-    if (mesh.sedimentFlux) zip.file(MESH_EPOCH_FILES.sedimentFlux, mesh.sedimentFlux)
-    if (mesh.preErosionZ) zip.file(MESH_EPOCH_FILES.preErosionZ, mesh.preErosionZ)
-    if (mesh.ice) zip.file(MESH_EPOCH_FILES.ice, mesh.ice)
-    // The land fields per node, in the mesh's numbering (climateFields.ts).
-    const land = fields.land && fields.land.count === mesh.count ? fields.land : null
-    if (land) {
-      zip.file(LAND_FILES.biome, land.biome.slice().buffer as ArrayBuffer)
-      zip.file(LAND_FILES.koppen, land.koppen.slice().buffer as ArrayBuffer)
-      if (land.waterTable) zip.file(LAND_FILES.waterTable, land.waterTable.slice().buffer as ArrayBuffer)
-      // Rivers are a DISCHARGE FIELD, not polylines: a field answers "how
-      // big is this river" by sampling, as lakeDepth does, where a
-      // polyline's only attribute was a drawing width.
-      if (land.discharge) zip.file(LAND_FILES.discharge, land.discharge.slice().buffer as ArrayBuffer)
-    }
+  // The adaptive mesh: the terrain proper, which a reader rasterises for
+  // the elevation. Its files under `mesh/`, described by one manifest entry.
+  zip.file('mesh/nodes.f32', mesh.nodes)
+  zip.file('mesh/connectivity.bin', mesh.connectivity)
+  zip.file('mesh/z.f32', mesh.z)
+  if (mesh.column) zip.file('mesh/column.bin', mesh.column)
+  // What the last epoch left per node (MeshPayload): the hydrology of a
+  // loaded world reads them as the session's did.
+  if (mesh.sedimentFlux) zip.file(MESH_EPOCH_FILES.sedimentFlux, mesh.sedimentFlux)
+  if (mesh.preErosionZ) zip.file(MESH_EPOCH_FILES.preErosionZ, mesh.preErosionZ)
+  if (mesh.ice) zip.file(MESH_EPOCH_FILES.ice, mesh.ice)
+  // The land fields per node, in the mesh's numbering (climateFields.ts).
+  const land = fields.land && fields.land.count === mesh.count ? fields.land : null
+  if (land) {
+    zip.file(LAND_FILES.biome, land.biome.slice().buffer as ArrayBuffer)
+    zip.file(LAND_FILES.koppen, land.koppen.slice().buffer as ArrayBuffer)
+    if (land.waterTable) zip.file(LAND_FILES.waterTable, land.waterTable.slice().buffer as ArrayBuffer)
+    // Rivers are a DISCHARGE FIELD, not polylines: a field answers "how
+    // big is this river" by sampling, where a polyline's only attribute
+    // was a drawing width.
+    if (land.discharge) zip.file(LAND_FILES.discharge, land.discharge.slice().buffer as ArrayBuffer)
+    // The lakes per node: with the bodies they index only.
+    if (land.lakeBody && fields.waterBodies) zip.file(LAND_FILES.lakeBody, land.lakeBody.slice().buffer as ArrayBuffer)
   }
   const manifest = {
     formatVersion: WORLD_ARCHIVE_FORMAT_VERSION,
@@ -299,16 +264,16 @@ function writeQueryLayers(zip: JSZip, parts: TectonicArchiveParts): void {
     // The shape is the record's kind (world.yaml), said once (DEC-0035).
     world: { width, height },
     layers,
-    mesh: mesh ? {
+    mesh: {
       nodes: mesh.count,
       files: {
         nodes: 'mesh/nodes.f32', connectivity: 'mesh/connectivity.bin', z: 'mesh/z.f32', column: mesh.column ? 'mesh/column.bin' : undefined,
         sedimentFlux: mesh.sedimentFlux ? MESH_EPOCH_FILES.sedimentFlux : undefined,
         preErosionZ: mesh.preErosionZ ? MESH_EPOCH_FILES.preErosionZ : undefined,
         ice: mesh.ice ? MESH_EPOCH_FILES.ice : undefined,
-        ...(fields.land && fields.land.count === mesh.count ? { biome: LAND_FILES.biome, koppen: LAND_FILES.koppen, waterTable: fields.land.waterTable ? LAND_FILES.waterTable : undefined, discharge: fields.land.discharge ? LAND_FILES.discharge : undefined } : {}),
+        ...(fields.land && fields.land.count === mesh.count ? { biome: LAND_FILES.biome, koppen: LAND_FILES.koppen, waterTable: fields.land.waterTable ? LAND_FILES.waterTable : undefined, discharge: fields.land.discharge ? LAND_FILES.discharge : undefined, lakeBody: fields.land.lakeBody && fields.waterBodies ? LAND_FILES.lakeBody : undefined } : {}),
       },
-    } : undefined,
+    },
     climate: fields.climate ? { file: 'climate.json', cells: fields.climate.cells, spacingM: fields.climate.spacingM } : undefined,
   }
   zip.file('manifest.json', JSON.stringify(manifest, null, 2))

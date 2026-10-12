@@ -21,10 +21,11 @@
 // field meshes of their own (DEC-0036) and are NOT here: the save holds
 // their mesh values (oceanAge.f64, mantle.f64, refined/ — see
 // refinedFields.ts) for the generator's restore, not queryable layers.
-// The annual climate and the land fields are here although the save holds
-// them as mesh values too (climateFields.ts, DEC-0036 phase 7): the reader
-// (world/query.ts) rasterises them for its views — the climate's on its
-// chart (`climate`, 256 × 128), the land's per node on the world raster.
+// Every field here is a VIEW since DEC-0036's save step — the save holds no
+// raster: the reader (world/query.ts) makes each from what the save does
+// hold — the elevation and the lakes from the terrain mesh, the climate's
+// on its chart (`climate`, 256 × 128) from its mesh values, the land's per
+// node on the world raster, the forcing from the snapshot.
 // Whether oceanAge should become one is an open question in
 // queryable-world-save.md, and this registry is where it would land if it
 // does.
@@ -76,9 +77,10 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   // is the features' activity-weighted U (normalized to the world's peak,
   // negative in rifts), erodibility the crust-history hardness multiplier
   // BEFORE the seed-procedural lithology noise, which is applied at whatever
-  // grid consumes it. Written so the amplification bake can erode with the
-  // engine without carrying the simulation; meaningful over ocean too
-  // (submarine features uplift, oceanic crust has a hardness).
+  // grid consumes it. Not in the save since DEC-0036's save step: the
+  // reader derives both from state.json (erosionForcing.coarseForcingFields),
+  // as the generator does; meaningful over ocean too (submarine features
+  // uplift, oceanic crust has a hardness).
   climate('uplift', 'relative', false),
   climate('erodibility', '', false),
 ]

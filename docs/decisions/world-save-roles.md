@@ -32,7 +32,7 @@ It holds three things, written together, read by different consumers:
 |---|---|---|
 | Recipe — make the world again | `world.yaml`: `spec` and the `history:` block | a replay (detail-ladder.md, fork 2) |
 | Snapshot — continue the world | `state.json`, `mesh/` (`column.bin` alone is ~23 MB of ~53 MB), `mantle.f64` + `mantle.json`, `lattice.*`, `oceanAge.f64` + `oceanAge.json` | the generator, after a load |
-| Queryable layers — look a value up | `elevation.f32`, `layers/*` (the lakes, the erosion forcing and the tables since DEC-0036 phase 7b; ~70 files before), `climate.json` + `climate/*`, the land fields in `mesh/`, `manifest.json` | the map, the incubator, a game server (queryable-world-save.md) |
+| Queryable layers — look a value up | `elevation.f32`, `layers/*` (the lakes, the erosion forcing and the tables since DEC-0036 phase 7b; ~70 files before), `climate.json` + `climate/*`, the land fields in `mesh/`, `manifest.json` — since DEC-0036's save step (2026-10-12) no raster: the mesh (whose rasterisation is the elevation), `mesh/lakeBody.i32` (the lakes), the snapshot (the forcing), the tables in `layers/` | the map, the incubator, a game server (queryable-world-save.md), through world/query.ts |
 
 The detail ladder changes what each of these is worth. Level 1 replays the
 whole history at budget 1, and levels 1 to 3 are the world; level 0 is the
@@ -46,6 +46,8 @@ preview. So:
   the preview, while the world it is meant to see is in the artifact store.
 - The artifact key's `worldId` hashes the quantised level-0 rasters and the
   mesh (world/identity.ts). A replayed level does not come from those bytes.
+  (Since DEC-0036's save step, 2026-10-12: the mesh, the climate's cells,
+  the forcing and the field meshes — no raster.)
 
 ## The decision
 
@@ -108,8 +110,17 @@ screen's side is asked first; 4 when levels 2 and 3 carry layers.
   game server asks a biome), and `world/query.ts` rasterises them for its
   views. The artifact key's `worldId` hashes the climate's cells in place
   of the precipitation raster.
-- The zip, `manifest.json` describing each raster (dtype, encoding, unit),
-  and the readable `world.yaml` in its `spec`/`status` shape.
+- **No raster at all** (DEC-0036, the save step, 2026-10-12): the
+  elevation, the lakes' depth and the erosion forcing left the save too.
+  Each is a function of what the save holds — the mesh's rasterisation,
+  the mesh's lakes drawn from the water body per node
+  (`mesh/lakeBody.i32` with `layers/waterBodies.json`), the snapshot's
+  forcing — and `world/query.ts` makes it on open, as the generator does.
+  A queryable layer is now a VIEW the reader makes; the save holds the
+  meshes' values. The `worldId` hashes the mesh, the climate's cells, the
+  forcing and the field meshes.
+- The zip, `manifest.json` (its tables and the mesh's files), and the
+  readable `world.yaml` in its `spec`/`status` shape.
 
 ## Not now
 

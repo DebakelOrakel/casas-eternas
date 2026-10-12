@@ -208,20 +208,20 @@ export interface WorkerMigrationRunMessage {
   spreadBudget: number
   seaCrossing: number
 }
-// Requests the full sim snapshot (+ ocean-age + current elevation) for saving —
-// replies with a WorkerWorldDataMessage.
+// Requests the full sim snapshot (+ the field meshes' values + the terrain
+// mesh) for saving — replies with a WorkerWorldDataMessage.
 export interface WorkerSerializeWorldMessage {
   type: 'serializeWorld'
 }
-// Restores a saved world: rebuild the sim from the snapshot + ocean-age raster,
-// inject the stored (post-erosion) elevation, and render it — no replay, no
-// re-erosion. `seed` is the original seed string, carried in the save format
-// (currently unused by the worker on restore, kept for forward compatibility).
+// Restores a saved world: rebuild the sim from the snapshot + the field
+// meshes' values, the terrain from its mesh, and render its rasterisation —
+// no replay, no re-erosion. `seed` is the original seed string, carried in
+// the save format (currently unused by the worker on restore, kept for
+// forward compatibility).
 // The adaptive mesh as the save carries it (mesh/meshSerial.ts): the node
 // positions, the connectivity, the heights — the world's terrain since
-// ADAPTIVE_MESH_PLAN.md phase 4.3. Absent when the world was never eroded
-// on the mesh (a save written before the format carried one, or a world
-// whose erosion has not run).
+// ADAPTIVE_MESH_PLAN.md phase 4.3, in every tectonic save since the save
+// step of DEC-0036.
 export interface MeshPayload {
   count: number
   nodes: ArrayBuffer
@@ -254,7 +254,11 @@ export interface WorkerRestoreWorldMessage {
   // `archean` (an Archean save has none), and a tectonic restore without it
   // fails.
   oceanAge?: FieldPayload
-  elevation: ArrayBuffer
+  // No elevation raster: the restore rasterises `mesh` (a tectonic world)
+  // or renders the Archean's state, as the session did (DEC-0036, the save
+  // step). A tectonic restore without `mesh` builds the mesh the hand-over
+  // builds (coupledEpoch.createCoupledTerrain); the screen refuses such a
+  // save.
   // Absent, deserializePlateSimulation makes a new field (the screen refuses a
   // save without one since the field moved onto its mesh, formatVersion 8).
   mantle?: FieldPayload
@@ -748,18 +752,11 @@ export interface WorkerWorldDataMessage {
   // The ocean age's field-mesh values (DEC-0036 phase 2; an Archean world's
   // is all zero and not written).
   oceanAge: FieldPayload
-  elevation: ArrayBuffer
-  // The erosion engine's two coarse forcing fields (Float32, forcingResX ×
-  // forcingResY — the climate grid), derived from the live sim at save time
-  // and persisted as save layers: the amplification bake erodes with the
-  // engine and needs U and the crust-history hardness, but must not carry
-  // the simulation (docs/design/erosion-v2.md, P3). Empty in the Archean
-  // branch — there is no plate sim to derive them from, and a pre-tectonic
-  // save cannot be baked anyway.
-  uplift: ArrayBuffer
-  erodibility: ArrayBuffer
-  forcingResX: number
-  forcingResY: number
+  // The terrain mesh: always for a tectonic world (the save's terrain — the
+  // elevation raster is its rasterisation, made again on load), absent in
+  // the Archean. No raster rides along (DEC-0036, the save step): the
+  // erosion's coarse forcing is derived from `snapshot` by its reader
+  // (pipeline/erosionForcing.coarseForcingFields).
   mesh?: MeshPayload
   // The climate per cell of its field mesh and the land fields per node of
   // `mesh` (world/save/climateFields.ts, DEC-0036 phase 7); absent before
@@ -789,6 +786,10 @@ export interface LandPayload {
   koppen: ArrayBuffer
   waterTable: ArrayBuffer | null
   discharge: ArrayBuffer | null
+  // The water body each node belongs to (Int32, an index into the
+  // hydrology's bodies, −1 for none); null before the hydrology ran. A
+  // reader draws the lakes' raster from it (meshHydrology.waterFieldsFromMesh).
+  lakeBody: ArrayBuffer | null
 }
 
 // The other direction, which had no union at all: GeneratorScreen listed the twelve

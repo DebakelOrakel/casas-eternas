@@ -2156,9 +2156,13 @@ if (MODE === 'measure') {
   const zip = await JSZip.loadAsync(readFileSync(path))
   const manifest = JSON.parse(await zip.file('manifest.json').async('string'))
   const RW = manifest.world.width, RH = manifest.world.height
-  const z = new Float32Array(await zip.file('elevation.f32').async('arraybuffer'))
-  const qFile = zip.file('layers/discharge.u16')
-  const q = qFile ? M.layers.decodeLayer(await qFile.async('arraybuffer'), M.layers.DISCHARGE_LAYER) : null
+  // The save holds no raster (DEC-0036, the save step): the elevation and
+  // the discharge as world/query.ts draws them from the save's meshes.
+  const Q = await L('/src/world/query.ts')
+  const opened = await Q.openWorld(readFileSync(path))
+  if (!opened) throw new Error(`${path}: not a world this build opens`)
+  const z = (await opened.acquire('elevation')).data
+  const q = (await opened.acquire('discharge'))?.data ?? null
   const real = M.domain.torusDomain(RW, RH)
   // The raster's cell px holds the field at world x = px (the synthesis
   // convention, mesh/meshRaster.ts), so the grid sampler — not the

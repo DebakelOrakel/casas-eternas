@@ -57,7 +57,7 @@ import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ELEVATION_ENCODING, decodeLayer } from '../../world/save/worldLayers'
-import { readField, readMeshEpochFiles, readRefined, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
+import { readField, readMeshEpochFiles, readRefined, refuseFormerRasters, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
 import { refinementFits, type RefinedClimate } from '../../generator/climate/refinement'
 import type { RefinedClimateChart } from '../../generator/climate/climateChart'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
@@ -4838,7 +4838,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // open a file picker for a saved snapshot (the export format — world_*.json
   // metadata + the .f32 elevation + .oceanage.f32 rasters), parse it, and
   // --- Save / load a world as a .zip (world.yaml recipe+status + state.json
-  // sim snapshot + oceanAge.f64 + elevation.f32 + preview.png). See
+  // sim snapshot + the field meshes' values + the terrain mesh + preview.png;
+  // no raster since DEC-0036's save step). See
   // docs/decisions/... (the save/load design). The deterministic parts could be
   // replayed from the recipe, but the snapshot is stored so a 300-epoch world
   // loads instantly and survives generator changes.
@@ -5132,10 +5133,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     // The archive's layout, its layers and its manifest are world/save's
     // (worldArchive.ts); this gathers the parts.
-    const common = { width: MAP_WIDTH, height: MAP_HEIGHT, yaml: buildWorldYaml(), generatorVersion: BUILD_VERSION, elevation: message.elevation }
+    const common = { width: MAP_WIDTH, height: MAP_HEIGHT, yaml: buildWorldYaml(), generatorVersion: BUILD_VERSION }
     // A world saved during the Archean has no plate simulation yet — it carries its own
     // snapshot instead. The phase is a pause, so it has to be savable there; before this
     // the save button posted its request and the worker silently declined.
+    // A tectonic world always has its mesh (runtime.savedMeshPayload); one
+    // without would be a save no reader opens, so none is written.
+    const mesh = message.mesh
+    if (!message.archean && !mesh) {
+      console.warn('[save] a tectonic world without its mesh: not saved')
+      return
+    }
     const parts: WorldArchiveParts = message.archean
       ? { ...common, kind: 'archean', archean: message.archean, preview: await makePreviewBlob() }
       : {
@@ -5147,10 +5155,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         latticeLockedEpochs: message.latticeLockedEpochs,
         latticeLastClassCode: message.latticeLastClassCode,
         oceanAge: message.oceanAge,
-        forcing: message.forcingResX > 0
-          ? { uplift: new Float32Array(message.uplift), erodibility: new Float32Array(message.erodibility), resX: message.forcingResX, resY: message.forcingResY }
-          : null,
-        mesh: message.mesh,
+        mesh: mesh!,
         fields: {
           // The climate and the land fields on their meshes, the worker's
           // (DEC-0036 phase 7).
@@ -5163,8 +5168,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             count: message.land.count, biome: new Uint8Array(message.land.biome), koppen: new Uint8Array(message.land.koppen),
             waterTable: message.land.waterTable ? new Float32Array(message.land.waterTable) : null,
             discharge: message.land.discharge ? new Float32Array(message.land.discharge) : null,
+            lakeBody: message.land.lakeBody ? new Int32Array(message.land.lakeBody) : null,
           } : null,
-          lakeDepth: lastLakeDepth,
           refined: lastRefinedValues,
           waterBodies: lastWaterBodies,
           coast: lastCoast,
@@ -5174,7 +5179,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
     const blob = new Blob([await writeWorldArchive(parts)], { type: 'application/zip' })
     // The terrain id of what was just written, for the artifacts; an Archean
-    // world has none (it hashes the world's layers).
+    // world has none (it hashes the world's terrain mesh).
     if (!message.archean) void noteSavedWorldId(blob)
     const safeName = (worldName || seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
     await deliverArchive(blob, `${safeName}.zip`)
@@ -5526,7 +5531,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     let shape: WorldShape = 'flat'
     let snapshot: PlateSimulationSnapshot | undefined
     let oceanAge: FieldPayload | undefined
-    let elevation: ArrayBuffer
     // The lattice is optional: saves written before it was persisted have no such
     // entries, and the worker starts it empty. The mantle is not (formatVersion 8,
     // its field mesh's values): a save without it is refused as not a world this
@@ -5536,8 +5540,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     let archeanPayload: { snapshot: unknown; mantle: FieldPayload; streak: ArrayBuffer } | undefined
     let mantle: FieldPayload | undefined
     let lattice: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer } | undefined
-    // The mesh terrain (formatVersion 3); a save without one restores the
-    // raster alone, as every save did before.
+    // The mesh terrain (formatVersion 3): a tectonic save's terrain, which
+    // the worker rasterises — a save without it, or still holding a chart
+    // raster (elevation.f32, layers/lakeDepth, layers/uplift, layers/
+    // erodibility), is refused (worldArchive.refuseFormerRasters; DEC-0036,
+    // the save step).
     let meshPayload: MeshPayload | undefined
     // The climate step's refinement as its field mesh's values (DEC-0036
     // phase 5); null for a save without one. A save that holds it as the
@@ -5548,8 +5555,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const yamlFile = zip.file('world.yaml')
       const archeanFile = zip.file('archean.json')
       const stateFile = zip.file('state.json')
-      const elevFile = zip.file('elevation.f32')
-      if (!yamlFile || !elevFile) throw new Error('missing files')
+      if (!yamlFile) throw new Error('missing files')
+      refuseFormerRasters(zip)
       if (archeanFile) {
         // Archean save: no plate simulation, no ocean age, no lattice.
         const streakF = zip.file('archean.streak.i16')
@@ -5566,7 +5573,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const kind = worldKindOf(yaml)
       if (kind === null) throw new Error('not a world this generator opens')
       shape = kind === 'SphereWorld' ? 'sphere' : 'flat'
-      elevation = await elevFile.async('arraybuffer')
       if (!archeanPayload) {
         if (!stateFile) throw new Error('missing files')
         snapshot = JSON.parse(await stateFile.async('string'))
@@ -5635,7 +5641,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const record = recordFromYaml(yaml, {
       archeanEpochs: archeanPayload ? (archeanPayload.snapshot as { epoch: number }).epoch : (snapshot?.archeanEpochs ?? 0),
       epoch: snapshot?.epoch ?? 0,
-    }, () => deriveWorldUid(new Uint8Array(elevation)))
+    }, () => deriveWorldUid(new Uint8Array((archeanPayload?.mantle ?? mantle!).values)))
     const seed = record.spec.seed
     // One read of the recipe instead of a regex per key, with every gap filled by
     // the control's declared default.
@@ -5719,7 +5725,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The globe leans with the world's tilt, which the recipe just set.
     globeView?.setObliquity(Number(obliquityInput.value))
     globeView?.setDayLength(Number(rotationInput.value))
-    postToWorker({ type: 'restoreWorld', seed, shape: shape === 'sphere' ? 'sphere' : 'torus', snapshot: snapshot!, oceanAge, elevation, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
+    postToWorker({ type: 'restoreWorld', seed, shape: shape === 'sphere' ? 'sphere' : 'torus', snapshot: snapshot!, oceanAge, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
   }
 
 

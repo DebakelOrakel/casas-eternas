@@ -341,6 +341,31 @@ saved mesh's numbering; world-save-format.md). They are the generator's
 state for a load, not query layers: `world/query.ts` does not acquire
 them.
 
+## Addendum 2026-10-12 — no raster layer: the reader makes the views
+
+DEC-0036's save step took the last raster layers out: `elevation.f32` (also
+the restore raster), `lakeDepth` and the forcing's `uplift` / `erodibility`.
+The manifest lists tables only (`waterBodies`, `coast`, `sedimentBasins`)
+and names the mesh's files; every field `world/query.ts` answers is a VIEW
+it makes on acquiring it, from what the save holds:
+
+| Field | Made from | How |
+|---|---|---|
+| `elevation` | `mesh/z.f32` on the saved mesh | `meshRaster.rasteriseNodeField`, 2048 × 1024 — the raster the generator draws after every epoch, byte for byte |
+| `lakeDepth` | `mesh/lakeBody.i32` (the water body per node, Int32, −1 none) + `layers/waterBodies.json` + that elevation | `meshHydrology.waterFieldsFromMesh`, the session's own drawing of the mesh's lakes, byte for byte |
+| `uplift`, `erodibility` | `state.json` | `erosionForcing.coarseForcingFields`, 256 × 128, as the generator derives them |
+| the climate's, the land fields' | as in the addenda above | as above |
+
+So a consumer still gets a raster by name, and a reader now needs the
+generator's mesh codec, its mesh rasteriser and the forcing's function —
+no simulation. The data the old layers carried is the same data: measured
+on 2048 × 1024 worlds (100 Archean + 12 coupled epochs, torus and sphere),
+the views equal the session's rasters bit for bit; the elevation raster
+was ~7 MB of a 13.6 MB (torus) / 17.7 MB (sphere) save. The `worldId`
+hashes the mesh, the climate's cells, the forcing and the field meshes'
+values, no raster (world/identity.ts). A save that holds a former raster,
+or a tectonic save without its mesh, is refused.
+
 ## Status
 
 Phase 1 BUILT (2026-07-26) — main-thread bake from caches; see status note at end

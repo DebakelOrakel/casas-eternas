@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
 import type { SavedMesh } from '../generator/mesh/meshSerial'
-import { decodeLayer, sampleAt } from './save/worldLayers'
+import { sampleAt } from './save/worldLayers'
 import { fieldSpec } from './save/fieldSpec'
 import type { FieldSpec } from './save/fieldSpec'
 import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
@@ -10,11 +10,17 @@ import { worldKindOf } from './worldRecord'
 import { coastalWarpSeed } from '../generator/archean/archeanState'
 import { FINE_DETAIL_SEED_SALT } from '../generator/elevation/ridgedNoise'
 import { erosionLithoSeed } from '../generator/surface/erosionForcingFields'
-import type { ErosionControls, WorldManifest, WorldManifestLayer } from './save/loadWorldInputs'
+import type { ErosionControls, WorldManifest } from './save/loadWorldInputs'
 import { readClimate, readLandFields, refuseFormerHydrology, type SavedClimate, type SavedLandFields } from './save/climateFields'
+import { readField, refuseFormerRasters } from './save/savedFields'
 import { domainOfKind, type Domain } from '../generator/core/domain'
 import { decodeMesh } from '../generator/mesh/meshSerial'
-import { rasteriseNodePart } from '../generator/mesh/meshRaster'
+import type { PeriodicTriangulation } from '../generator/mesh/periodicDelaunay'
+import { rasteriseNodeField, rasteriseNodePart } from '../generator/mesh/meshRaster'
+import { waterFieldsFromMesh } from '../generator/mesh/meshHydrology'
+import { coarseForcingFields } from '../generator/pipeline/erosionForcing'
+import type { PlateSimulationSnapshot } from '../generator/tectonics/plateSimulationTypes'
+import type { WaterBody } from '../generator/surface/hydrology'
 import { climateCellsFromSaved } from '../generator/climate/climatePoints'
 import { cellsChart } from '../generator/climate/climateChart'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../generator/climate/climateField'
@@ -101,13 +107,14 @@ export interface World {
   table(name: string): Promise<unknown | null>
   // WHICH TERRAIN this is — the artifact key, hashed from what a bake actually
   // consumes rather than from the recipe (which cannot tell two worlds stopped
-  // at different tectonic epochs apart; see identity.ts). Async because it needs
-  // the elevation and precipitation layers, and derived HERE so every reader of
-  // a save agrees on it instead of each hashing its own idea of the inputs.
+  // at different tectonic epochs apart; see identity.ts). Async because it
+  // reads the mesh, the field meshes and the snapshot, and derived HERE so
+  // every reader of a save agrees on it instead of each hashing its own idea
+  // of the inputs.
   worldId(): Promise<string>
   // The adaptive mesh the save carries (formatVersion 3, `mesh/…`, see
-  // mesh/meshSerial.ts) — the terrain proper since phase 4.3; null for a
-  // save written before it or a world never eroded on one.
+  // mesh/meshSerial.ts) — the terrain proper since phase 4.3, in every
+  // world openWorld opens since DEC-0036's save step.
   mesh(): Promise<SavedMesh | null>
   // The climate per cell of its field mesh and the land fields per node of
   // the mesh (save/climateFields.ts, DEC-0036 phase 7); null for a save
@@ -121,9 +128,26 @@ export interface World {
 // generator's bake reads it with; world/ is the layer above.
 export type { SavedMesh }
 
+// The water-body table as a reader checks it: a list of bodies with a
+// level and a spill, else null.
+export function waterBodiesOf(raw: unknown): WaterBody[] | null {
+  return Array.isArray(raw) && raw.every((b) => typeof b === 'object' && b !== null && typeof (b as WaterBody).level === 'number' && typeof (b as WaterBody).spill === 'number')
+    ? (raw as WaterBody[])
+    : null
+}
+
 // Null when the archive is not a readable world — same contract as
 // readWorldInputs, and for the same reason: the caller reports it in its own
 // idiom (a notification in the browser, an exit code in the baker).
+//
+// Every view is MADE here (DEC-0036, the save step): the save holds the
+// meshes' values and no raster. The elevation is the terrain mesh's
+// rasterisation (meshRaster.rasteriseNodeField, the session's own after
+// every epoch), the lakes' depth the session's drawing of the mesh's lakes
+// (meshHydrology.waterFieldsFromMesh, from the water body per node), the
+// erosion's coarse forcing a function of the snapshot
+// (erosionForcing.coarseForcingFields), the climate its chart, the land
+// fields their nodes on the world raster.
 export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<World | null> {
   let zip: JSZip
   let manifest: WorldManifest
@@ -132,16 +156,18 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     const text = await zip.file('manifest.json')?.async('string')
     if (!text) return null
     manifest = JSON.parse(text) as WorldManifest
+    // A save that still holds a chart raster, or a tectonic one without its
+    // mesh, is from before the save step: refused, not converted.
+    refuseFormerRasters(zip)
   } catch {
     return null
   }
 
-  // Elevation defines the world's raster: it is the one layer carried raw, and
-  // it doubles as the restore raster.
-  const elevationEntry = manifest.layers.find((l) => l.name === 'elevation' && l.kind === 'raster')
-  if (!elevationEntry) return null
-  const width = elevationEntry.resX ?? manifest.world.width
-  const height = elevationEntry.resY ?? manifest.world.height
+  // The world raster the views are drawn on: the chart's size, which the
+  // manifest states (the mesh lives on the Domain of that size).
+  const width = manifest.world?.width
+  const height = manifest.world?.height
+  if (typeof width !== 'number' || typeof height !== 'number') return null
 
   // Recipe values through the shared path-aware reader. Bare-key regexes were
   // wrong here in both directions: `seed` sits INDENTED under `spec:`, so a
@@ -190,62 +216,133 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     return null
   }
   const domain: Domain = domainOfKind(kind === 'SphereWorld' ? 'sphere' : 'torus', width, height)
-  const byName = new Map<string, WorldManifestLayer>()
-  const tables = new Map<string, WorldManifestLayer>()
-  for (const layer of manifest.layers) {
-    if (layer.kind === 'raster') byName.set(layer.name, layer)
-    else if (layer.kind === 'table') tables.set(layer.name, layer)
-  }
+  const tables = new Map<string, string>()
+  for (const layer of manifest.layers) if (layer.kind === 'table') tables.set(layer.name, layer.file)
 
-  // Decoded fields are kept, not re-read: a layer is megabytes and a caller that
-  // acquires elevation for a tooltip and again for an overlay should pay once.
+  // Made views are kept, not made again: a raster is megabytes and a caller
+  // that acquires elevation for a tooltip and again for an overlay should
+  // pay once.
   const cache = new Map<string, FieldView>()
 
   const view = (spec: FieldSpec, source: FieldSource, data: Float32Array, resX: number, resY: number): FieldView => ({
     spec, source, resX, resY, data,
     sample: (x, y) => sampleAt(data, resX, resY, width, height, x, y),
   })
+  const keep = (name: string, data: Float32Array, resX: number, resY: number): FieldView => {
+    const built = view(fieldSpec(name), 'save', data, resX, resY)
+    cache.set(name, built)
+    return built
+  }
 
-  // The views of the fields the save holds as mesh values: the climate's
-  // on its chart (climateChart.cellsChart, the temperature at each pixel's
-  // texel height), the land fields per node on the world raster from the
-  // nodes of the triangle under each pixel (the land's pixels from the
-  // land's nodes — a biome or a class the heaviest, the water table
-  // linearly, the discharge the nearest — a river is a line of nodes, and
-  // a blend would smear it over the valley; the sea's Ocean, 0, −1, 0).
+  // The terrain mesh, read and rebuilt once (the canonical rebuild, the
+  // session's own mesh).
+  let saved: SavedMesh | null | undefined
+  const savedMesh = async (): Promise<SavedMesh | null> => {
+    if (saved !== undefined) return saved
+    const files = (manifest as { mesh?: { nodes: number; files: { nodes: string; connectivity: string; z: string; column?: string } } }).mesh
+    saved = null
+    if (!files) return saved
+    const nodes = await zip.file(files.files.nodes)?.async('arraybuffer')
+    const connectivity = await zip.file(files.files.connectivity)?.async('arraybuffer')
+    const z = await zip.file(files.files.z)?.async('arraybuffer')
+    if (!nodes || !connectivity || !z || nodes.byteLength !== files.nodes * 8 || z.byteLength !== files.nodes * 4) return saved
+    const column = files.files.column ? await zip.file(files.files.column)?.async('arraybuffer') : undefined
+    saved = { count: files.nodes, nodes: new Float32Array(nodes), connectivity: new Uint8Array(connectivity), z: new Float32Array(z), column: column ? new Uint8Array(column) : undefined }
+    return saved
+  }
+  let decoded: PeriodicTriangulation | null = null
+  const meshOf = (m: SavedMesh): PeriodicTriangulation =>
+    (decoded ??= decodeMesh(domain, { count: m.count, nodes: m.nodes, connectivity: m.connectivity }))
+
+  // The snapshot, parsed once: the forcing's source.
+  let snapshot: PlateSimulationSnapshot | null | undefined
+  const snapshotOf = async (): Promise<PlateSimulationSnapshot | null> => {
+    if (snapshot !== undefined) return snapshot
+    const text = await zip.file('state.json')?.async('string')
+    snapshot = text ? (JSON.parse(text) as PlateSimulationSnapshot) : null
+    return snapshot
+  }
+  // The erosion's coarse forcing, as the generator derives it from the
+  // same state (the session's serialize wrote exactly these until the save
+  // step).
+  let forcing: { uplift: Float32Array; hardness: Float32Array } | null | undefined
+  const forcingOf = async (): Promise<{ uplift: Float32Array; hardness: Float32Array } | null> => {
+    if (forcing !== undefined) return forcing
+    const snap = await snapshotOf()
+    forcing = snap ? coarseForcingFields({
+      features: snap.features, rafts: snap.rafts, sutures: snap.sutures ?? [],
+      epoch: snap.epoch, archeanEpochs: snap.archeanEpochs ?? 0, warpSeed: snap.warpSeed,
+    }, domain) : null
+    return forcing
+  }
+
   const CLIMATE_VIEWS = ['landMask', 'temperature', 'precipitation', 'seasonalAmplitude', 'monsoonIndex'] as const
   const LAND_VIEWS = ['biome', 'koppen', 'waterTable', 'discharge'] as const
   let land: SavedLandFields | null | undefined
   const landFields = async (): Promise<SavedLandFields | null> => {
     if (land !== undefined) return land
-    const mesh = await world.mesh()
+    const mesh = await savedMesh()
     land = mesh ? await readLandFields(zip, mesh.count).catch(() => null) : null
     return land
   }
-  async function fromMesh(name: string): Promise<FieldView | null> {
+  const bodiesOf = async (): Promise<WaterBody[] | null> => waterBodiesOf(await world.table('waterBodies'))
+
+  async function made(name: string): Promise<FieldView | null> {
+    const cached = cache.get(name)
+    if (cached) return cached
+    // The elevation: the terrain mesh's rasterisation.
+    if (name === 'elevation') {
+      const m = await savedMesh()
+      if (!m) return null
+      return keep(name, rasteriseNodeField(meshOf(m), m.z, width, height), width, height)
+    }
+    // The lakes' depth: the mesh's lakes drawn on the elevation raster, each
+    // pixel its triangle's nearest node's body.
+    if (name === 'lakeDepth') {
+      const fields = await landFields()
+      const bodies = await bodiesOf()
+      const m = await savedMesh()
+      const elevation = await made('elevation')
+      if (!fields?.lakeBody || !bodies || !m || !elevation) return null
+      return keep(name, waterFieldsFromMesh(meshOf(m), fields.lakeBody, bodies, elevation.data, width, height).depth, width, height)
+    }
+    if (name === 'uplift' || name === 'erodibility') {
+      const f = await forcingOf()
+      if (!f) return null
+      keep('uplift', f.uplift, CLIMATE_RES_X, CLIMATE_RES_Y)
+      keep('erodibility', f.hardness, CLIMATE_RES_X, CLIMATE_RES_Y)
+      return cache.get(name) ?? null
+    }
+    // The views of the fields the save holds as mesh values: the climate's
+    // on its chart (climateChart.cellsChart, the temperature at each pixel's
+    // texel height), the land fields per node on the world raster from the
+    // nodes of the triangle under each pixel (the land's pixels from the
+    // land's nodes — a biome or a class the heaviest, the water table
+    // linearly, the discharge the nearest — a river is a line of nodes, and
+    // a blend would smear it over the valley; the sea's Ocean, 0, −1, 0).
     if ((CLIMATE_VIEWS as readonly string[]).includes(name)) {
       if (!climate) return null
-      const elevation = await fromSave('elevation')
+      const elevation = await made('elevation')
       if (!elevation) return null
       const charts = cellsChart(climateCellsFromSaved(domain, climate), { domain, elevation: elevation.data, resX: width, resY: height, dryLand: null })
-      for (const n of CLIMATE_VIEWS) cache.set(n, view(fieldSpec(n), 'save', charts[n], CLIMATE_RES_X, CLIMATE_RES_Y))
+      for (const n of CLIMATE_VIEWS) keep(n, charts[n], CLIMATE_RES_X, CLIMATE_RES_Y)
       return cache.get(name) ?? null
     }
     if ((LAND_VIEWS as readonly string[]).includes(name)) {
       const fields = await landFields()
-      const saved = await world.mesh()
-      const elevation = await fromSave('elevation')
-      if (!fields || !saved || !elevation) return null
-      const mesh = decodeMesh(domain, { count: saved.count, nodes: saved.nodes, connectivity: saved.connectivity })
+      const m = await savedMesh()
+      const elevation = await made('elevation')
+      if (!fields || !m || !elevation) return null
+      const mesh = meshOf(m)
       const pixelLand = new Uint8Array(width * height)
       for (let i = 0; i < pixelLand.length; i++) pixelLand[i] = elevation.data[i] > SEA_LEVEL ? 1 : 0
       const nodeLand = new Uint8Array(mesh.vertexSlots)
-      for (let v = 0; v < saved.count; v++) nodeLand[v] = fields.biome[v] !== Biome.Ocean ? 1 : 0
+      for (let v = 0; v < m.count; v++) nodeLand[v] = fields.biome[v] !== Biome.Ocean ? 1 : 0
       let data: Float32Array
       if (name === 'waterTable') {
         if (!fields.waterTable) return null
         const wet = new Uint8Array(mesh.vertexSlots)
-        for (let v = 0; v < saved.count; v++) wet[v] = nodeLand[v] && fields.waterTable[v] >= 0 ? 1 : 0
+        for (let v = 0; v < m.count; v++) wet[v] = nodeLand[v] && fields.waterTable[v] >= 0 ? 1 : 0
         data = rasteriseNodePart(mesh, fields.waterTable, wet, pixelLand, -1, width, height, false)
       } else if (name === 'discharge') {
         if (!fields.discharge) return null
@@ -253,38 +350,27 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
       } else {
         data = rasteriseNodePart(mesh, name === 'biome' ? fields.biome : fields.koppen, nodeLand, pixelLand, name === 'biome' ? Biome.Ocean : 0, width, height, true)
       }
-      const built = view(fieldSpec(name), 'save', data, width, height)
-      cache.set(name, built)
-      return built
+      return keep(name, data, width, height)
     }
     return null
   }
 
-  async function fromSave(name: string): Promise<FieldView | null> {
-    const cached = cache.get(name)
-    if (cached) return cached
-    const entry = byName.get(name)
-    if (!entry?.dtype || !entry.encoding || !entry.resX || !entry.resY) return null
-    const buffer = await zip.file(entry.file)?.async('arraybuffer')
-    if (!buffer) return null
-    const decoded = decodeLayer(buffer, { dtype: entry.dtype, scale: entry.encoding.scale, offset: entry.encoding.offset })
-    const built = view(fieldSpec(name), 'save', decoded, entry.resX, entry.resY)
-    cache.set(name, built)
-    return built
-  }
-
+  const hasMesh = zip.file('mesh/nodes.f32') !== null
   const world: World = {
     width,
     height,
     recipe,
-    has: (name) => byName.has(name) || tables.has(name)
-      || (climate !== null && (CLIMATE_VIEWS as readonly string[]).includes(name))
+    has: (name) => tables.has(name)
+      || (hasMesh && name === 'elevation')
+      || (name === 'lakeDepth' && hasMesh && tables.has('waterBodies') && zip.file('mesh/lakeBody.i32') !== null)
+      || ((name === 'uplift' || name === 'erodibility') && zip.file('state.json') !== null)
+      || (climate !== null && hasMesh && (CLIMATE_VIEWS as readonly string[]).includes(name))
       || ((LAND_VIEWS as readonly string[]).includes(name) && zip.file(name === 'waterTable' || name === 'discharge' ? `mesh/${name}.f32` : `mesh/${name}.u8`) !== null),
 
     async table(name) {
-      const entry = tables.get(name)
-      if (!entry) return null
-      const text = await zip.file(entry.file)?.async('string')
+      const file = tables.get(name)
+      if (!file) return null
+      const text = await zip.file(file)?.async('string')
       if (!text) return null
       try {
         return JSON.parse(text) as unknown
@@ -294,39 +380,31 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     },
 
     async worldId() {
-      const elevation = await fromSave('elevation')
-      if (!elevation) throw new Error('a world without elevation has no identity')
-      const mesh = await world.mesh()
+      const mesh = await savedMesh()
+      if (!mesh) throw new Error('a world without its mesh has no identity')
+      const f = await forcingOf()
+      if (!f) throw new Error('a world without its snapshot has no identity')
+      const mantle = await readField(zip, 'mantle')
+      const oceanAge = await readField(zip, 'oceanAge')
       return deriveWorldId({
         kind,
-        elevation: elevation.data,
-        precipitation: climate?.precipitation ?? null,
         landscapeAge: recipe.erosionControls.landscapeAge,
         alluvium: recipe.erosionControls.alluvium,
         rockContrast: recipe.erosionControls.rockContrast,
-        mesh: mesh ? { nodes: mesh.nodes, z: mesh.z, column: mesh.column } : null,
+        mesh: { nodes: mesh.nodes, z: mesh.z, column: mesh.column },
+        climate,
+        forcing: { uplift: f.uplift, erodibility: f.hardness },
+        mantle: new Float64Array(mantle.values),
+        oceanAge: new Float64Array(oceanAge.values),
       })
     },
 
-    async acquire(name) {
-      return (await fromSave(name)) ?? fromMesh(name)
-    },
-
+    acquire: made,
     climate: async () => climate,
     land: landFields,
-
-    async mesh() {
-      const files = (manifest as { mesh?: { nodes: number; files: { nodes: string; connectivity: string; z: string; column?: string } } }).mesh
-      if (!files) return null
-      const nodes = await zip.file(files.files.nodes)?.async('arraybuffer')
-      const connectivity = await zip.file(files.files.connectivity)?.async('arraybuffer')
-      const z = await zip.file(files.files.z)?.async('arraybuffer')
-      if (!nodes || !connectivity || !z || nodes.byteLength !== files.nodes * 8 || z.byteLength !== files.nodes * 4) return null
-      const column = files.files.column ? await zip.file(files.files.column)?.async('arraybuffer') : undefined
-      return { count: files.nodes, nodes: new Float32Array(nodes), connectivity: new Uint8Array(connectivity), z: new Float32Array(z), column: column ? new Uint8Array(column) : undefined }
-    },
+    mesh: savedMesh,
   }
-  // Refuse an archive with no elevation, the same way readWorldInputs did: a
-  // world without it is not a world, and half-reading one is worse than saying so.
-  return (await world.acquire('elevation')) ? world : null
+  // Refuse an archive with no terrain: a world without it is not a world,
+  // and half-reading one is worse than saying so.
+  return (await savedMesh()) ? world : null
 }

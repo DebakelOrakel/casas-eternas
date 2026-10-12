@@ -23,11 +23,14 @@
 // biomes.ts ids — the map's, with the hydrology's riparian corridors, salt
 // flats and glaciers), `mesh/koppen.u8` (the Köppen class, 0 on the sea),
 // `mesh/waterTable.f32` (the water table's depth, metres, −1 under water),
-// `mesh/discharge.f32` (the river discharge, m³/s, DEC-0036 phase 7b).
-// They replace the raster layers biome (2048 × 1024), koppen, waterTable
-// and discharge. The generator recomputes all of them on load; they are
-// here for the save's readers (world/query.ts, which rasterises them for
-// its views).
+// `mesh/discharge.f32` (the river discharge, m³/s, DEC-0036 phase 7b),
+// `mesh/lakeBody.i32` (the water body a node belongs to, an index into
+// layers/waterBodies.json, −1 for none; DEC-0036's save step).
+// They replace the raster layers biome (2048 × 1024), koppen, waterTable,
+// discharge and lakeDepth. The generator recomputes all of them on load;
+// they are here for the save's readers (world/query.ts, which rasterises
+// them for its views — the lakes' depth by meshHydrology.waterFieldsFromMesh,
+// the session's own drawing).
 
 import type JSZip from 'jszip'
 import type { ClimateCellValues } from '../../generator/climate/climatePoints'
@@ -42,6 +45,9 @@ export interface SavedLandFields {
   waterTable: Float32Array | null
   // m³/s; null before the hydrology ran.
   discharge: Float32Array | null
+  // The water body per node (layers/waterBodies.json's index, −1 none);
+  // null before the hydrology ran.
+  lakeBody: Int32Array | null
 }
 
 const CLIMATE_FIELDS = [
@@ -76,7 +82,7 @@ export async function climateFromEntries(metaText: string, read: (file: string) 
   return { cells, spacingM, ...values }
 }
 
-export const LAND_FILES = { biome: 'mesh/biome.u8', koppen: 'mesh/koppen.u8', waterTable: 'mesh/waterTable.f32', discharge: 'mesh/discharge.f32' } as const
+export const LAND_FILES = { biome: 'mesh/biome.u8', koppen: 'mesh/koppen.u8', waterTable: 'mesh/waterTable.f32', discharge: 'mesh/discharge.f32', lakeBody: 'mesh/lakeBody.i32' } as const
 
 // The raster layers this replaces: a save that still holds one, and not
 // its replacement, is from before the move and is refused, not converted
@@ -109,8 +115,12 @@ export async function readLandFields(zip: JSZip, count: number): Promise<SavedLa
   const table = tableFile ? new Float32Array(await tableFile.async('arraybuffer')) : null
   const dischargeFile = zip.file(LAND_FILES.discharge)
   const discharge = dischargeFile ? new Float32Array(await dischargeFile.async('arraybuffer')) : null
+  const lakeFile = zip.file(LAND_FILES.lakeBody)
+  const lakeBytes = lakeFile ? await lakeFile.async('arraybuffer') : null
+  if (lakeBytes && lakeBytes.byteLength !== count * 4) throw new Error(`${LAND_FILES.lakeBody}: ${lakeBytes.byteLength} bytes for ${count} nodes`)
+  const lakeBody = lakeBytes ? new Int32Array(lakeBytes) : null
   if (b.length !== count || k.length !== count || (table && table.length !== count) || (discharge && discharge.length !== count)) throw new Error(`the land fields hold ${b.length} nodes, the mesh ${count}`)
-  return { count, biome: b, koppen: k, waterTable: table, discharge }
+  return { count, biome: b, koppen: k, waterTable: table, discharge, lakeBody }
 }
 
 // THE HYDROLOGY'S RASTER PARTS, refused (DEC-0036 phase 7b, fork 5): the

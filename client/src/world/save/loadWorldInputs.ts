@@ -1,13 +1,13 @@
-import type { Dtype } from './worldLayers'
-import { openWorld, type SavedMesh } from '../query'
+import { openWorld, waterBodiesOf, type SavedMesh } from '../query'
 import type { SavedClimate } from './climateFields'
 import type { World } from '../query'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { WorldHistory } from './worldHistory'
 
 // Reading a saved world through the QUERYABLE side of its .zip — manifest.json
-// plus the baked layers (docs/decisions/queryable-world-save.md), deliberately
-// not through the generator's snapshot.
+// plus the meshes' values and the tables (docs/decisions/queryable-world-save.md),
+// through world/query.ts, which makes the rasters a bake reads (the elevation
+// from the mesh, the forcing from the snapshot; DEC-0036's save step).
 //
 // Extracted from the world map screen when the SERVER learned to bake (that
 // screen was removed 2026-09-20; the reader was always the durable half). That
@@ -21,16 +21,12 @@ import type { WorldHistory } from './worldHistory'
 // between browser and Node, and keeping it that way is what lets the same code
 // run in both.
 
-// The manifest's self-describing layer entry. `dtype`/`encoding` carry the
-// quantisation, so a reader never has to know what a layer "usually" is.
+// The manifest's layer entry: since DEC-0036's save step only tables
+// (kind 'table') — the save holds no raster layer.
 export interface WorldManifestLayer {
   name: string
   file: string
   kind: string
-  resX?: number
-  resY?: number
-  dtype?: Dtype
-  encoding?: { scale: number; offset: number }
 }
 
 export interface WorldManifest {
@@ -58,6 +54,7 @@ export interface ErosionControls {
 }
 
 export interface WorldInputs {
+  // The terrain mesh's rasterisation on the world raster (world/query.ts).
   elevations: Float32Array
   width: number
   height: number
@@ -72,10 +69,11 @@ export interface WorldInputs {
   // derived from the recipe like detailSeed, present for every save.
   lithoSeed: number
   erosionControls: ErosionControls
-  // The erosion engine's coarse forcing, from the save's forcing layers
-  // (docs/design/erosion-v2.md, P3). Null for a save written before the
-  // layers existed — the bake then erodes with neutral forcing (no uplift,
-  // lithology-only rock contrast), a deliberate hard break.
+  // The erosion engine's coarse forcing (docs/design/erosion-v2.md, P3),
+  // derived from the save's snapshot as the generator derives it
+  // (erosionForcing.coarseForcingFields; a save layer until DEC-0036's save
+  // step). Null without a snapshot — the bake then erodes with neutral
+  // forcing (no uplift, lithology-only rock contrast).
   uplift: GridLayer | null
   erodibility: GridLayer | null
   // The climate per cell of its field mesh (climateFields.ts, DEC-0036
@@ -86,15 +84,10 @@ export interface WorldInputs {
   // bake's own nodes (climate/climatePoints.ts). Absent for a world saved
   // before climate was computed; the bake then stops after erosion.
   climate: SavedClimate | null
-  // Water depth per world cell (elevation units), 0 where there is no lake —
-  // a hydrology state the worldmap paints and cannot re-derive. Absent for a
-  // save that predates the layer. Not part of the worldId: the id hashes its
-  // own fixed set of fields, so reading one more layer moves nothing.
-  lakeDepth: GridLayer | null
-  // The basins behind that layer (ADAPTIVE_MESH_PLAN.md phase 1): the save's
-  // standing-water truth, from which lakeDepth and every shore derive
-  // (hydrology.lakeDepthFromBodies, waterLevelField). Null for a save written
-  // before the list existed (manifest formatVersion 1).
+  // The save's standing water (ADAPTIVE_MESH_PLAN.md phase 1): the bodies
+  // the water body per node indexes (mesh/lakeBody.i32), from which
+  // world.acquire('lakeDepth') draws the lakes. Null for a save without
+  // one (before its hydrology ran).
   waterBodies: WaterBody[] | null
   // The adaptive mesh (phase 4.3), the terrain the mesh bake refines; null
   // for a save without one.
@@ -137,11 +130,7 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
 
   const uplift = await world.acquire('uplift')
   const erodibility = await world.acquire('erodibility')
-  const lakeDepth = await world.acquire('lakeDepth')
-  const bodiesRaw = await world.table('waterBodies')
-  const waterBodies = Array.isArray(bodiesRaw) && bodiesRaw.every((b) => typeof b === 'object' && b !== null && typeof (b as WaterBody).level === 'number' && typeof (b as WaterBody).spill === 'number')
-    ? (bodiesRaw as WaterBody[])
-    : null
+  const waterBodies = waterBodiesOf(await world.table('waterBodies'))
 
   return {
     elevations: elevation.data,
@@ -155,7 +144,6 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     uplift,
     erodibility,
     climate: await world.climate(),
-    lakeDepth,
     waterBodies,
     mesh: await world.mesh(),
     worldId: await world.worldId(),

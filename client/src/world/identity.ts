@@ -56,15 +56,20 @@ function hashBytes(view: ArrayBufferView, seedA: number, seedB: number): [number
 
 const hex8 = (value: number): string => (value >>> 0).toString(16).padStart(8, '0')
 
-// Anything scalar that reaches the bake and is not already inside one of the
-// rasters. Order matters (it is hashed as written), so this stays a single
-// literal rather than an object spread from several places.
+// WHAT DEFINES THE WORLD, as the save holds it (DEC-0036, the save step,
+// 2026-10-12): the terrain mesh's own bytes and the field meshes' values —
+// no raster. Until then the id hashed the elevation raster and the
+// precipitation (later the climate's cells), with the mesh's bytes added
+// in phase 5.8; the raster was the mesh's rasterisation, so it said
+// nothing the mesh did not, and it left the save. Every world's id moved
+// once with it (accepted, alpha): its artifacts are made again.
+//
+// Order matters (it is hashed as written), so this stays a single literal
+// rather than an object spread from several places.
 export interface BakeInputs {
   // The world's shape, the save's kind (worldRecord.ts, WorldKind): a torus
   // and a sphere with the same bytes are different terrains.
   kind: string
-  elevation: Float32Array
-  precipitation: Float32Array | null
   // The v2 engine's controls. v1's erosionStrength/drainageRefresh were
   // carried here for backward-stable ids until the P5 teardown removed the
   // dead pass they belonged to — a deliberate id break for every save
@@ -73,17 +78,26 @@ export interface BakeInputs {
   landscapeAge?: number
   alluvium?: number
   rockContrast?: number
-  // THE SNAPSHOT (ADAPTIVE_MESH_PLAN.md phase 5.8): since the coupled
-  // history the mesh IS the terrain and `elevation` its rasterisation, so
-  // the identity hashes the mesh's own bytes when the save carries them —
-  // the node positions, the heights and the sediment column (the
-  // connectivity is a function of the positions through the canonical
-  // rebuild and adds nothing). Two worlds with one rasterisation but
-  // different columns are different worlds to every job that reads the
-  // layers; and a checkpoint's identity must be the checkpoint's, not its
-  // picture's. Absent for a save from before the mesh: the rasters alone,
-  // as before, so those ids stand.
-  mesh?: { nodes: Float32Array; z: Float32Array; column?: Uint8Array } | null
+  // THE TERRAIN (ADAPTIVE_MESH_PLAN.md phase 5.8): the node positions, the
+  // heights and the sediment column — the connectivity is a function of the
+  // positions through the canonical rebuild and adds nothing. Two worlds
+  // with one surface but different columns are different worlds to every
+  // job that reads the layers. Every tectonic save carries it.
+  mesh: { nodes: Float32Array; z: Float32Array; column?: Uint8Array }
+  // The annual climate per cell of its field mesh (save/climateFields.ts):
+  // the bake samples it at its nodes. Null before the climate ran.
+  climate: { seaLevelTemperature: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array; monsoonIndex: Float32Array } | null
+  // The erosion's coarse forcing the bake erodes with, derived from the
+  // snapshot (pipeline/erosionForcing.coarseForcingFields): the plates'
+  // state as far as a bake reads it.
+  forcing: { uplift: Float32Array; erodibility: Float32Array }
+  // The field meshes the simulation continues from (Float64 per cell):
+  // the mantle and the ocean age. No bake reads them; they are here because
+  // the id names the world's state, and they change only with an epoch,
+  // which moves the mesh as well — so they orphan no artifact the terrain
+  // would not (the riverDensity trap below is a value that moves ALONE).
+  mantle: Float64Array
+  oceanAge: Float64Array
 }
 
 // riverDensity is DELIBERATELY absent, and it used to be here — twice removed.
@@ -107,24 +121,19 @@ export interface BakeInputs {
 // readable half now travels as `label` in the artifact's meta.json, and a
 // world WITH a uid is named by the world store anyway.
 export function deriveWorldId(inputs: BakeInputs): string {
-  let [a, b] = hashBytes(inputs.elevation, 0x811c9dc5, 0x9e3779b9)
-  if (inputs.precipitation) {
-    const [pa, pb] = hashBytes(inputs.precipitation, a, b)
-    a = pa
-    b = pb
-  }
-  // The scalars go in through the same mixer, as text, so an absent value
-  // and a zero cannot collapse into each other.
+  // The scalars first, as text, so an absent value and a zero cannot
+  // collapse into each other — nor an absent column or climate and an
+  // empty one.
   const scalars = new TextEncoder().encode(
-    `|k=${inputs.kind}|a=${inputs.landscapeAge ?? 'd'}|al=${inputs.alluvium ?? 'd'}|rc=${inputs.rockContrast ?? 'd'}`,
+    `|k=${inputs.kind}|a=${inputs.landscapeAge ?? 'd'}|al=${inputs.alluvium ?? 'd'}|rc=${inputs.rockContrast ?? 'd'}|col=${inputs.mesh.column ? 1 : 0}|c=${inputs.climate ? 1 : 0}`,
   )
-  let [sa, sb] = hashBytes(scalars, a, b)
-  if (inputs.mesh) {
-    ;[sa, sb] = hashBytes(inputs.mesh.nodes, sa, sb)
-    ;[sa, sb] = hashBytes(inputs.mesh.z, sa, sb)
-    if (inputs.mesh.column) [sa, sb] = hashBytes(inputs.mesh.column, sa, sb)
-  }
-  return `${hex8(sa)}${hex8(sb)}`
+  let [a, b] = hashBytes(scalars, 0x811c9dc5, 0x9e3779b9)
+  const parts: ArrayBufferView[] = [inputs.mesh.nodes, inputs.mesh.z]
+  if (inputs.mesh.column) parts.push(inputs.mesh.column)
+  if (inputs.climate) parts.push(inputs.climate.seaLevelTemperature, inputs.climate.precipitation, inputs.climate.seasonalAmplitude, inputs.climate.monsoonIndex)
+  parts.push(inputs.forcing.uplift, inputs.forcing.erodibility, inputs.mantle, inputs.oceanAge)
+  for (const part of parts) [a, b] = hashBytes(part, a, b)
+  return `${hex8(a)}${hex8(b)}`
 }
 
 // --- the pipeline half ----------------------------------------------------
@@ -254,14 +263,16 @@ export function newWorldUid(): string {
 //
 // Shaped as a UUID (version 8, the "custom" form) so a uid is one format
 // everywhere and nothing downstream has to care where it came from. The
-// elevation raster is the input rather than the zip's bytes because it is the
-// world's substance: re-exporting the same world recompresses differently but
-// does not change its terrain.
-export function deriveWorldUid(elevation: ArrayBufferView): string {
-  const [a, b] = hashBytes(elevation, 0x811c9dc5, 0x9e3779b9)
+// input is the world's substance rather than the zip's bytes: re-exporting
+// the same world recompresses differently but does not change it. It was
+// the elevation raster until the save stopped carrying one (DEC-0036, the
+// save step); the mantle's values now, which every save holds (an Archean
+// one too, `archean.mantle.f64`).
+export function deriveWorldUid(substance: ArrayBufferView): string {
+  const [a, b] = hashBytes(substance, 0x811c9dc5, 0x9e3779b9)
   // A second pass under different seeds, because a UUID needs 128 bits and one
   // pass yields 64. Chaining off the first keeps every input byte in both.
-  const [c, d] = hashBytes(elevation, (a ^ 0x85ebca6b) >>> 0, (b ^ 0xc2b2ae35) >>> 0)
+  const [c, d] = hashBytes(substance, (a ^ 0x85ebca6b) >>> 0, (b ^ 0xc2b2ae35) >>> 0)
   const digits = (hex8(a) + hex8(b) + hex8(c) + hex8(d)).split('')
   digits[12] = '8' // version
   digits[16] = '89ab'[parseInt(digits[16], 16) & 0x3] // RFC 4122 variant

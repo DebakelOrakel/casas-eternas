@@ -3,11 +3,12 @@ id: DEC-0005
 title.en: World Save / Load Format
 title.de: Format zum Speichern und Laden einer Welt
 summary.en: A saved world is a .zip — a human-readable YAML recipe/status + a JSON sim
-  snapshot + the two heavy float rasters + a preview, restorable instantly
-  and offline.
+  snapshot + the meshes' values (the terrain mesh, the field meshes; no
+  raster since 2026-10-12) + a preview, restorable instantly and offline.
 summary.de: Eine gespeicherte Welt ist ein .zip — ein lesbares YAML-Rezept mit Status,
-  ein JSON-Schnappschuss der Simulation, die zwei schweren Float-Raster und
-  eine Vorschau; sofort und offline wiederherstellbar.
+  ein JSON-Schnappschuss der Simulation, die Werte der Netze (das
+  Geländenetz, die Feldnetze; seit 2026-10-12 kein Raster) und eine
+  Vorschau; sofort und offline wiederherstellbar.
 area: platform
 stage: built
 createdAt: 2026-07-24
@@ -33,19 +34,18 @@ loads are **instant** and survive generator-code changes.
 ├── state.json            # the sim snapshot (PlateSimulationSnapshot)
 ├── mantle.f64            # mantle buoyancy field, Float64 per cell of its field mesh
 ├── mantle.json           # that mesh: { cells, spacingM } (DEC-0036, formatVersion 8)
-├── lattice.acc.f32       # boundary-detection accumulator, Float32 256×128
+├── lattice.acc.f32       # boundary-detection accumulator, Float32 per lattice point
 ├── lattice.lock.i16      # epochs each lattice point has held its class, Int16
 ├── lattice.class.i8      # last boundary class per lattice point, Int8
 ├── oceanAge.f64          # ocean-floor age (epochs), Float64 per cell of its field mesh
 ├── oceanAge.json         # that mesh: { cells, spacingM } (DEC-0036 phase 2, formatVersion 8)
-├── elevation.f32         # current (post-erosion) elevation, Float32 2048×1024
 ├── refined.json          # the climate refinement's mesh, months, fields, ENSO (DEC-0036 phase 5)
 ├── refined/…             # its values, Float32 per cell of the climate's field mesh, one file a field
 ├── climate.json          # the annual climate's mesh and fields (DEC-0036 phase 7)
 ├── climate/…             # its values, Float32 per cell of the climate's field mesh
-├── mesh/…                # the terrain mesh, its column, its land fields per node (biome, koppen, waterTable, discharge)
-├── manifest.json         # layer index for consumers (see queryable-world-save.md)
-├── layers/…              # baked query layers (lakes, the erosion forcing) and tables (water bodies, coast reaches over mesh nodes, sediment basins)
+├── mesh/…                # the terrain mesh (the terrain itself), its column, the last epoch, its land fields per node (biome, koppen, waterTable, discharge, lakeBody)
+├── manifest.json         # file index for consumers (see queryable-world-save.md)
+├── layers/…              # tables only (water bodies, coast reaches over mesh nodes, sediment basins); no raster since 2026-10-12
 └── preview.png           # 512×256 thumbnail of the composited map
 ```
 
@@ -100,11 +100,13 @@ Documentation, not replay: nothing re-runs it (see `world/save/worldHistory.ts`)
 - **Stored**: the sim snapshot — plate seeds/motions/ages, rafts (with blob birth
   epochs), terrain features, sutures, hotspots, ocean age, epoch, Archean epochs,
   sea-level offset, warp seed, the flags, and the **RNG internal state** — plus the
-  eroded elevation, the mantle field, and the boundary-detection lattice.
+  terrain mesh (since 2026-10-12 the only form of the terrain), the mantle field,
+  and the boundary-detection lattice.
 - **Regenerated on demand** (cheap, not stored): the derived plate `types`, the
-  lattice *geometry* (only its accumulated history is stored), and all **climate
-  layers** (temperature/wind/precipitation recompute from the elevation +
-  `tempOffset` when the climate panel opens).
+  lattice *geometry* (only its accumulated history is stored), the elevation
+  raster (the mesh's rasterisation), the erosion's coarse forcing (a function of
+  the snapshot), and all **climate layers** (temperature/wind/precipitation
+  recompute from the elevation + `tempOffset` when the climate panel opens).
 
 The mantle field and the lattice accumulators used to be in the second list, on the
 reasoning that both re-evolve toward the current configuration within a few epochs.
@@ -182,7 +184,8 @@ in km² (`catchmentKm2`). A save with the layer `discharge`, or with a
 `coast.json` without `nodes`, is refused (`climateFields.
 refuseFormerHydrology`). Left as rasters: `elevation.f32` and the layer
 `lakeDepth` (the mesh lakes drawn on the world raster), and the forcing's
-`uplift` / `erodibility`; `waterBodies.json` is in world units as before.
+`uplift` / `erodibility` (until the save step, below); `waterBodies.json`
+is in world units as before.
 
 2026-10-12 (still formatVersion 8): the save carries what the last epoch
 left per node of the saved mesh, Float32 in its numbering —
@@ -198,10 +201,35 @@ the ice) the third. Without them a loaded world's hydrology differed from
 the session it was saved from. A save with a mesh and without the first
 two is refused (`worldArchive.readMeshEpochFiles`).
 
+2026-10-12 (DEC-0036, the save step; still formatVersion 8): **no chart
+raster is left in the save.** Gone: `elevation.f32` (the restore raster —
+the terrain mesh's rasterisation, which the restore and every reader make
+again: `meshRaster.rasteriseNodeField`, the raster the session draws after
+every epoch, byte for byte), the layer `lakeDepth` (the mesh's lakes on the
+world raster — drawn again from the water body per node, `mesh/lakeBody.i32`
+(Int32, an index into `layers/waterBodies.json`, −1 for none), by the
+session's own `meshHydrology.waterFieldsFromMesh`) and the forcing's layers
+`uplift` / `erodibility` (256 × 128 — a function of `state.json`,
+`erosionForcing.coarseForcingFields`, which the reader evaluates as the
+generator does). Every tectonic save carries its mesh, one saved at the
+hand-over before any epoch included (`runtime.savedMeshPayload`). An
+Archean save carries no raster either (its elevation is the render of its
+state). A save with any of the four entries, or a tectonic one without
+`mesh/nodes.f32`, is refused (`savedFields.refuseFormerRasters`, in the
+screen's load and in `world/query.openWorld`). Kept, and why: the
+boundary-detection lattice (`lattice.*`) is not a chart raster but its
+own point set — per point of the detection lattice, whose rows on the
+sphere hold only the columns their length can hold
+(`boundaryLattice.generateDetectionLattice`); it is the plates'
+simulation state, saved per point like a mesh's per node. `preview.png` is
+a picture, not a field. A save measured at 2048 × 1024 (seed `bench`, 100
+Archean + 12 coupled epochs): see the DEC-0036 entry of this date.
+
 ### Format choices
 
-- Elevation → **binary Float32** (`.f32`), the field meshes' values (mantle,
-  ocean age) → **binary Float64** (`.f64`), not png/jpg: they're
+- The terrain mesh's values → **binary Float32** (`.f32`), the field
+  meshes' values (mantle, ocean age) → **binary Float64** (`.f64`), not
+  png/jpg: they're
   physical float fields; a lossy image codec would corrupt sea-level edges, the
   lapse gradient, etc. The zip's DEFLATE compresses them losslessly.
 - The sim snapshot → **JSON** (structured small data). Features dominate its
@@ -210,13 +238,15 @@ two is refused (`worldArchive.readMeshEpochFiles`).
 
 ## Flow
 
-- **Save**: worker `serializeWorld` → returns the snapshot + ocean-age +
-  elevation buffers → the screen builds `world.yaml` from the current UI + status
-  and zips everything (JSZip, DEFLATE) → download.
+- **Save**: worker `serializeWorld` → returns the snapshot + the field meshes'
+  values + the terrain mesh → the screen builds `world.yaml` from the current UI +
+  status and zips everything (`world/save/worldArchive.ts`, JSZip, DEFLATE) →
+  download.
 - **Load**: file picker → unzip → set the UI + status from `world.yaml` → worker
-  `restoreWorld` rebuilds the sim from the snapshot + ocean age and injects the
-  stored elevation (no replay, no re-erosion) → the render it posts back displays
-  the world. Climate recomputes on the next climate-panel open.
+  `restoreWorld` rebuilds the sim from the snapshot + the field meshes, the
+  terrain from its mesh, and renders the mesh's rasterisation (no replay, no
+  re-erosion) → the render it posts back displays the world. Climate recomputes
+  on the next climate-panel open.
 
 ## Implementation
 
@@ -230,7 +260,7 @@ two is refused (`worldArchive.readMeshEpochFiles`).
 
 ## Not done / later
 
-- Robustness against generator drift beyond the elevation raster (the replayed-
+- Robustness against generator drift beyond the terrain mesh (the replayed-
   free snapshot already covers it — this is why we store the state, not just the
   recipe).
 - A save browser using `preview.png`; naming beyond the seed; validation of an
