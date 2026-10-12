@@ -173,7 +173,16 @@ SolveReport), never to a sweep count: a non-symmetric operator takes
 `solveBiCGSTAB`, a symmetric one CG, and a singular one (a Neumann
 problem) a right-hand side balanced per connected part. A length in a
 stage on the mesh is in METRES (the mesh's, `domain.metresPerUnit`), never
-in cells; a stage not yet moved reads a moved field through an adapter
+in cells — and so is every physical length a tuning object states (a
+range's cross-section, a craton's radius, a critical catchment in m²;
+DEC-0036 phase 8a, written so the torus's division is exact, 234 000 /
+7 800 = 30). A planetary COUNT is measured against the world's area
+(`domainArea`: the plates' spacing, the mantle mesh's cells), and a noise
+table counted in cells across the map is read on the sphere at the
+torus's metres (`globeOctaveOn`). Still in domain units, on purpose: the
+plates' kinematics and the features' spacing along a boundary (plate
+speeds, MERGE_RADIUS, the segments' half-lengths, splitGap) —
+planet-relative, a decision for the calibration's next step; a stage not yet moved reads a moved field through an adapter
 marked `// DEC-0036 transition: removed in phase N` — grep for it before
 touching the phase it names (none is left since phase 7b). A stage that
 needs the climate samples it at its own points
@@ -208,7 +217,7 @@ answers here.
 | Climate | field mesh, spacing W / 256 (the ocean age's): temperature, wind, seasonality, monsoon, precipitation, pressure (DEC-0036 phase 3), the currents, the SST, upwelling, salt, the year's cycle (phase 4), the whole refinement with its phenomena, reliability and storms (phase 5); 256×128 (~62 km per cell) only as its chart, for the screen and a save's readers | — |
 | Ocean age | field mesh, spacing W / 256: 37 888 cells at 62 km (torus), 24 012 at 78 km (sphere); a 1024×512 raster only inside the render's baseline | oceanAge (epochs) |
 | Flexure | field mesh, spacing W / 256 (the climate's, shared); no state kept, the deflection goes into the nodes' z each epoch | the epoch's load, Te, the deflection |
-| Mantle | field mesh, spacing W / 128: 9 472 cells at 125 km (torus), 6 252 at 156 km (sphere); 128×64 only as the overlay | mantle buoyancy and flow |
+| Mantle | field mesh, spacing by area, √(world area / (128 × 64)) (DEC-0036 phase 8a): 9 472 cells at 125 km (torus), 9 612 at 125 km (sphere); 128×64 only as the overlay | mantle buoyancy and flow |
 
 The save holds no raster layer (DEC-0036's save step, 2026-10-12): the
 climate, the land fields and the discharge are mesh values (phases 7 and
@@ -246,7 +255,16 @@ cd client && npm run harness:pipeline        # the pipeline's behaviour; ~13 min
 cd client && npm run harness:golden          # the generator; ~20 min (4 world builds at 2048×1024, 4 coupled epochs each)
 cd client && npm run harness:golden:record   # re-record the metric baseline, on purpose
 cd client && npm run harness:golden:hash     # arm the refactor guard (layer 4)
+cd client && npm run calibrate               # the calibration's distributions; ~1 h, not a gate
 ```
+
+`npm run calibrate` (scripts/calibrate.mjs, DEC-0036 phase 8a) builds many
+worlds of both shapes at 2048 × 1024 the way the screen does (the Archean
+to its 0.5 gate, 40 coupled epochs, the climate step with its refinement,
+the hydrology) and prints the distributions the calibration is judged on,
+with the planet's and the genesis's sliders swept; `report <run.json>
+[<before.json>]` prints a run against another. Judge a tuning change there,
+not on a harness world (their land is out of proportion).
 
 `golden` has three permanent layers: **invariants** (no baseline, so a failure is always a
 bug), **determinism** (one seed built twice in the same run, hashed against

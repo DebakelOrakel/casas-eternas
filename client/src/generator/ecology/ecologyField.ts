@@ -30,7 +30,7 @@ import { ECOLOGY_TUNING, PASTURE_BY_BIOME, TIMBER_BY_BIOME } from './ecologyTune
 import type { Volcano } from '../tectonics/volcanoes'
 import type { LandBiomeId } from './ecologyTuneParams'
 import { detExp, detPow } from '../core/detMath'
-import { globeOctave } from '../elevation/globeNoise'
+import { globeOctaveOn } from '../elevation/globeNoise'
 import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
 import { boundaryDensity, discsAround, gaussianHalos, maxWithin, meanWithin, meshGeometry, neighbourhoods, slopeOf, type MeshGeometry, type Neighbourhoods } from '../mesh/meshNeighbourhood'
 import { rasteriseNodePart, triangleRaster, type TriangleRaster } from '../mesh/meshRaster'
@@ -683,7 +683,7 @@ function noiseSampler(domain: Domain, freqX: number, freqY: number, seed: number
   const frame = globeFrame()
   return (x, y) => {
     space.frame(x, y, frame)
-    return globeOctave(frame, freqX, w, seed) * 2 - 1
+    return globeOctaveOn(frame, freqX, domain, seed) * 2 - 1
   }
 }
 function provinceNoise(u: number, v: number, lattice: DomainGrid, seed: number): number {

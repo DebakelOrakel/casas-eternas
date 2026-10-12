@@ -9,7 +9,7 @@ import { generateDetectionLattice } from '../tectonics/boundaryLattice'
 import { createOceanAgeField } from '../tectonics/oceanAge'
 import { findPlumeSites } from '../tectonics/plumes'
 import { mantleMesh } from '../mantle/mantleField'
-import type { Domain } from '../core/domain'
+import { domainArea, type Domain } from '../core/domain'
 import { assignRaftNames } from '../crust/raftNames'
 import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
 import { sq } from '../core/detMath'
@@ -38,7 +38,11 @@ import { sq } from '../core/detMath'
 const EXTREMUM_PROMINENCE = 0.35
 // Minimum separation between seeds, as a fraction of the smaller world dimension.
 // Two extrema a couple of cells apart are one convection cell with a noisy centre,
-// not two plates.
+// not two plates. The dimension is the torus's height read off the world's AREA
+// (√(area / 2), on the 2:1 torus its height exactly) since DEC-0036 phase 8a: the
+// sphere's chart is 1024 units high too, but there a unit is 9.8 km and the
+// globe holds 64 % of the torus's units² — the plain min(width, height) spaced
+// its plates 25 % further apart in metres, room for 36 % fewer.
 const MIN_SEED_SEPARATION_FRAC = 0.22
 
 // Exported so the Genesis panel can PREVIEW the plates a handover would produce
@@ -48,7 +52,6 @@ const MIN_SEED_SEPARATION_FRAC = 0.22
 // An extremum is a cell of the mantle's field mesh above (or below) every one
 // of its Voronoi neighbours (DEC-0036), at the cell's centre.
 export function convectionCellSeeds(mantle: Float64Array, domain: Domain): PlateSeed[] {
-  const { width, height } = domain
   const { mesh } = mantleMesh(domain)
   const candidates: { x: number; y: number; strength: number }[] = []
 
@@ -69,7 +72,7 @@ export function convectionCellSeeds(mantle: Float64Array, domain: Domain): Plate
   // Strongest extrema win the space; weaker ones inside the exclusion radius are
   // the same cell seen twice.
   candidates.sort((a, b) => b.strength - a.strength)
-  const minSepSq = sq(MIN_SEED_SEPARATION_FRAC * Math.min(width, height))
+  const minSepSq = sq(MIN_SEED_SEPARATION_FRAC * Math.sqrt(domainArea(domain) / 2))
   const seeds: PlateSeed[] = []
   for (const c of candidates) {
     if (seeds.some((s) => domain.distanceSq(s.x, s.y, c.x, c.y) < minSepSq)) continue

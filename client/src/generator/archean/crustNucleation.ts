@@ -44,8 +44,9 @@ export interface NucleationParams {
   // it — it had to land far enough out to become its own island. Hence a world of many
   // small masses that stopped growing.
   occupiedFieldLevel: number
-  // Radius of a newly nucleated crust blob, in world pixels.
-  blobRadius: number
+  // Radius of a newly nucleated crust blob, metres (DEC-0036 phase 8a: the
+  // torus's 70 cells of 7.8 km).
+  blobRadiusM: number
   // At most this many new blobs per epoch, so a broadly hot mantle produces a
   // steady trickle of nuclei rather than carpeting the ocean in one step.
   maxPerEpoch: number
@@ -55,7 +56,7 @@ export const DEFAULT_NUCLEATION_PARAMS: NucleationParams = {
   upwellingThreshold: 0.70,
   persistenceEpochs: 5,
   occupiedFieldLevel: SHORELINE_FIELD,
-  blobRadius: 70,
+  blobRadiusM: 546_000,
   maxPerEpoch: 4,
 }
 

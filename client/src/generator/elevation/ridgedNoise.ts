@@ -1,7 +1,7 @@
 import { smoothstep } from '../core/interpolation'
 import { wrapValue } from '../core/field'
 import { globeFrame, type Domain } from '../core/domain'
-import { globeOctave } from './globeNoise'
+import { globeOctaveOn } from './globeNoise'
 // Periodic ridged multifractal, used by elevationField.ts to give
 // tectonically-uplifted terrain fine ridge-and-valley structure that the
 // smooth distance-field uplift alone can't produce (docs/vision.md Phase 3
@@ -164,7 +164,7 @@ export function ridgedMultifractalOn(domain: Domain, x: number, y: number, seed:
   let amplitudeSum = 0
   let octaveSeed = seed
   for (const octave of RIDGE_OCTAVES) {
-    const n = globeOctave(frame, octave.cellsX, domain.width, octaveSeed)
+    const n = globeOctaveOn(frame, octave.cellsX, domain, octaveSeed)
     const ridge = 1 - Math.abs(2 * n - 1)
     sum += ridge * ridge * octave.amplitude
     amplitudeSum += octave.amplitude
@@ -227,7 +227,7 @@ export function fineDetailNoiseOn(domain: Domain, x: number, y: number, seed: nu
   let amplitudeSum = 0
   let octaveSeed = seed
   for (const octave of DETAIL_OCTAVES) {
-    sum += (globeOctave(frame, octave.cellsX, domain.width, octaveSeed) - 0.5) * octave.amplitude
+    sum += (globeOctaveOn(frame, octave.cellsX, domain, octaveSeed) - 0.5) * octave.amplitude
     amplitudeSum += octave.amplitude
     octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0
   }

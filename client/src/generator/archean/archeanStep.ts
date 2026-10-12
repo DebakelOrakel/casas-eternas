@@ -4,6 +4,7 @@ import { DEFAULT_NUCLEATION_PARAMS, findNucleationSites, nucleateCrust } from '.
 import { advanceRaftsOnFlow, compactRafts, consolidateRaftBlobs, mergeOverlappingRafts, recycleUnstabilisedCrust, splitDisconnectedRafts } from '../crust/raftLifecycle'
 import { evolveMantleField, computeMantleFlow, sustainMantleVigour, mantleAt, mantleFlowAt } from '../mantle/mantleField'
 import { MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR } from '../crust/crustTuneParams'
+import { sq } from '../core/detMath'
 
 export interface ArcheanParams {
   nucleation: NucleationParams
@@ -12,7 +13,8 @@ export interface ArcheanParams {
   mantleRms: number
   // How far a new nucleus may be from existing crust and still weld onto it rather
   // than starting its own continent. Beyond this it is a separate proto-continent.
-  attachDistSq: number
+  // Metres (DEC-0036 phase 8a; squared in units at the use).
+  attachDistM: number
   // Recycling gates — deliberately NOT the tectonic phase's STABILISATION_EPOCHS
   // and RECYCLE_DOWNWELLING_THRESHOLD.
   //
@@ -62,9 +64,9 @@ export interface ArcheanParams {
   compaction: number
   // Blob consolidation (see consolidateRaftBlobs): near-concentric pairs of
   // STABILISED blobs merge when within this fraction of the smaller radius,
-  // up to consolidateMaxRadius. 0 disables.
+  // up to consolidateMaxRadiusM (metres, DEC-0036 phase 8a). 0 disables.
   consolidateProximity: number
-  consolidateMaxRadius: number
+  consolidateMaxRadiusM: number
 }
 
 export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
@@ -123,8 +125,12 @@ export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
   // count-based stabilised gauge deflated under consolidation — which is why
   // stabilisedFraction is area-weighted now (see its own comment).
   consolidateProximity: 0.4,
-  consolidateMaxRadius: 150,
-  attachDistSq: 190 * 190,
+  // The crust's lengths are metres since DEC-0036 phase 8a — the torus's
+  // 150 and 190 cells of 7.8 km (with the nucleus's radius, crustNucleation):
+  // in cells the sphere's crust was 25 % larger in metres on a globe of 64 %
+  // of the torus's units², and its land fraction the larger for it.
+  consolidateMaxRadiusM: 1_170_000,
+  attachDistM: 1_482_000,
   stabilisationEpochs: 25,
   // -0.60, from -0.45 (2026-08-06): only genuinely cold downwellings recycle.
   // At -0.45 the continents assembled far too late — measured over two seeds
@@ -178,7 +184,7 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // 3. New crust over persistent upwellings that are still ocean.
   const sites = findNucleationSites(sim.mantle, sim.upwellingStreak, sim.rafts, params.nucleation, sim.random, domain)
   for (const site of sites) {
-    nucleateCrust(sim.rafts, site, sim.epoch, params.nucleation.blobRadius, params.attachDistSq, domain)
+    nucleateCrust(sim.rafts, site, sim.epoch, params.nucleation.blobRadiusM / domain.metresPerUnit, sq(params.attachDistM / domain.metresPerUnit), domain)
   }
 
   // 4. Recycling — the same sink the tectonic phase uses, and the reason crust
@@ -198,7 +204,7 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // 6. Consolidation, on the settled geometry: heavily-overlapped stabilised
   // blobs collapse into fewer larger ones — see consolidateRaftBlobs.
   if (params.consolidateProximity > 0) {
-    consolidateRaftBlobs(sim.rafts, sim.epoch, params.stabilisationEpochs, params.consolidateProximity, params.consolidateMaxRadius, domain)
+    consolidateRaftBlobs(sim.rafts, sim.epoch, params.stabilisationEpochs, params.consolidateProximity, params.consolidateMaxRadiusM / domain.metresPerUnit, domain)
   }
 
   sim.epoch += 1

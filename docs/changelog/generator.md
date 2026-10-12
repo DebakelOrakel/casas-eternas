@@ -4,6 +4,8 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-12
+- **fixed** Tectonics: a sphere world forms about as many plates as a flat one, with continents and mountains of the same size, so a sphere seed makes a different world. `generator.step.genesis`
+- **fixed** Hydrology: a basin below sea level that fills to its rim overflows into a river, and a lake counts the water of every river that reaches it, so a seed makes a different world. `generator.step.climate`
 - **fixed** Tectonics: a standing ice sheet presses the land down once, as it grows, instead of again at every epoch, so a seed makes a different world. `generator.step.tectonics`
 - **fixed** Hydrology: a loaded world keeps the sediment of its rivers, so its deltas, coast types, sediment basins and glaciers are those it was saved with, and worlds saved before this change no longer open. `generator.step.climate`
 - **changed** Hydrology: river flow, catchments, coast types and sediment basins are worked out on the terrain's own mesh, so coasts look somewhat different, and worlds saved before this change no longer open. `generator.step.climate`

@@ -282,8 +282,8 @@ async function buildWorld(seed) {
   const meshSub = M.meshHydro.meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
   let meshDischarge, meshLakes
   const lakesOnMesh = (lc) => {
-    meshDischarge = M.hydro.accumulateDischargeOn(meshSub, terrain.z, lc.climate.precipitation)
-    meshLakes = M.hydro.computeLakesOn(meshSub, meshDischarge, terrain.z, lc.climate.temperature, lc.climate.precipitation)
+    meshDischarge = M.hydro.accumulateDischargeOn(meshSub, terrain.z, lc.climate.precipitation, lc.climate.temperature)
+    meshLakes = M.hydro.computeLakesOn(meshSub, meshDischarge, terrain.z, lc.climate.temperature)
     return { ...M.meshHydro.waterFieldsFromMesh(terrain.mesh, meshLakes.body, meshLakes.bodies, el, W, H), bodies: meshLakes.bodies }
   }
   let lakes = lakesOnMesh(land)
@@ -302,7 +302,7 @@ async function buildWorld(seed) {
   const discharge = meshDischarge
   const maxDis = M.hydro.maxDischargeOverLand(meshDischarge, terrain.z)
   const meanRunoff = CP.meanLandRunoff(cells2)
-  const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), meanRunoff)
+  const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY, sim.domain), meanRunoff)
   // The riparian biomes on the nodes, the hydrology states over them —
   // as the worker.
   const precipEff = M.hydro.riparianPrecipitationOn(meshSub, terrain.z, meshDischarge, threshold, maxDis, meshLakes.depth, meshLakes.frozen, land.climate.precipitation)
@@ -322,7 +322,7 @@ async function buildWorld(seed) {
     substrate: meshSub, discharge: meshDischarge, elevation: terrain.z, threshold, maxDischarge: maxDis,
     bodies: meshLakes.bodies, body: meshLakes.body, lakeDepth: meshLakes.depth, sedimentFlux: terrain.sedimentFlux, biomes: nodeBiome,
     regime: graphRegime,
-    criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY),
+    criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY, sim.domain),
   })
   // The hydrogeology (phase 5a), as the worker runs it after the graph: the
   // column's materials, the springs, the regime with the baseflow, the

@@ -19,7 +19,18 @@ import { detAsin, detExp, detPow, detSin } from '../core/detMath'
 // allocates. Read it at once, before the next delta.
 const offset = { x: 0, y: 0 }
 
-const FEATURE_MAX_REACH = Math.max(ELEVATION_TUNING.rangeSegmentHalfLength + ELEVATION_TUNING.rangePerpRadius, ELEVATION_TUNING.trenchSegmentHalfLength + ELEVATION_TUNING.trenchPerpRadius)
+// A range's and a trench's perpendicular radius in domain units: the
+// tuning states them in metres (DEC-0036 phase 8a), the capsule measures
+// in units. On the torus 234 000 / 7 800 is 30 exactly, the old constant.
+export function rangePerpRadius(domain: Domain): number {
+  return ELEVATION_TUNING.rangePerpRadiusM / domain.metresPerUnit
+}
+export function trenchPerpRadius(domain: Domain): number {
+  return ELEVATION_TUNING.trenchPerpRadiusM / domain.metresPerUnit
+}
+export function featureMaxReach(domain: Domain): number {
+  return Math.max(ELEVATION_TUNING.rangeSegmentHalfLength + rangePerpRadius(domain), ELEVATION_TUNING.trenchSegmentHalfLength + trenchPerpRadius(domain))
+}
 
 export interface FeatureBuckets {
   buckets: TerrainFeature[][]
@@ -51,7 +62,7 @@ export interface FeatureBuckets {
 // epoch (a separate, since-reverted change) pushed the per-pixel-scans-
 // all-features version into hanging the main thread for 10+ seconds.
 //
-// Sized to FEATURE_MAX_REACH (a feature's longest semi-axis) rather than a
+// Sized to featureMaxReach (a feature's longest semi-axis) rather than a
 // single isotropic radius, since features are now anisotropic ridge
 // segments — an in-range feature can still be up to its along-tangent
 // reach away in any world direction if it happens to point that way.
@@ -82,9 +93,10 @@ export function buildFeatureBuckets(features: TerrainFeature[], domain: Domain):
   const { width, height } = domain
   const sphere = domain.kind === 'sphere'
   const none = features.length === 0
-  const fitX = Math.max(1, Math.floor(width / FEATURE_MAX_REACH))
+  const reach = featureMaxReach(domain)
+  const fitX = Math.max(1, Math.floor(width / reach))
   const bucketsX = none ? 2 : sphere ? Math.max(2, fitX - (fitX % 2)) : fitX
-  const bucketsY = none ? 1 : Math.max(1, Math.floor(height / FEATURE_MAX_REACH))
+  const bucketsY = none ? 1 : Math.max(1, Math.floor(height / reach))
   const bucketSizeX = width / bucketsX
   const bucketSizeY = height / bucketsY
   const buckets: TerrainFeature[][] = Array.from({ length: bucketsX * bucketsY }, () => [])
@@ -96,7 +108,7 @@ export function buildFeatureBuckets(features: TerrainFeature[], domain: Domain):
   const rowSpan = new Int32Array(bucketsY).fill(1)
   if (sphere) {
     const R = width / (2 * Math.PI)
-    const sinReach = detSin(Math.min(Math.PI / 2, FEATURE_MAX_REACH / R))
+    const sinReach = detSin(Math.min(Math.PI / 2, reach / R))
     for (let r = 0; r < bucketsY; r++) {
       const sinMin = Math.min(detSin((r * bucketSizeY) / R), detSin(Math.min(Math.PI, ((r + 1) * bucketSizeY) / R)))
       if (!(sinMin > sinReach)) {
@@ -340,6 +352,8 @@ export function computeElevation(
 ): number {
   const { buckets, near } = featureBuckets
   const nearCount = nearFeatureBuckets(featureBuckets, wx, wy)
+  const rangePerp = rangePerpRadius(domain)
+  const trenchPerp = trenchPerpRadius(domain)
 
   let upliftSum = 0
   let weightSum = 0
@@ -349,7 +363,7 @@ export function computeElevation(
       // sign doesn't matter — the segment is symmetric about the feature.
       const isTrench = feature.kind === 'trench'
       const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
-      const perpRadius = isTrench ? ELEVATION_TUNING.trenchPerpRadius : ELEVATION_TUNING.rangePerpRadius
+      const perpRadius = isTrench ? trenchPerp : rangePerp
       domain.delta(wx, wy, feature.x, feature.y, offset)
       const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)
       if (weight <= 0) continue

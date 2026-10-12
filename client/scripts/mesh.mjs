@@ -527,11 +527,11 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   // A climate at the nodes: uniform 1000 mm/yr, 15 °C.
   const precip = new Float32Array(mesh.vertexSlots).fill(1000)
   const temperature = new Float32Array(mesh.vertexSlots).fill(15)
-  const discharge = M.hydro.accumulateDischargeOn(sub, eroded.z, precip)
+  const discharge = M.hydro.accumulateDischargeOn(sub, eroded.z, precip, temperature)
   let landArea = 0, maxQ = 0
   for (const v of aliveVertices(mesh)) if (eroded.z[v] > 0) { landArea += areas[v]; maxQ = Math.max(maxQ, discharge[v]) }
   check('the largest discharge is at most the land\'s whole runoff', maxQ <= 1000 * landArea * (1 + 1e-6) && maxQ > 0, `max ${maxQ.toFixed(0)} of ${(1000 * landArea).toFixed(0)}`)
-  const lakes = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip)
+  const lakes = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature)
   let badLevel = 0, badSeed = 0
   for (const b of lakes.bodies) {
     if (!(b.level >= b.floor) || !(b.spill >= b.floor)) badLevel++
@@ -541,7 +541,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   }
   check(`the lakes (${lakes.bodies.length} bodies) have levels between floor and spill and seeds in their basins`, badLevel === 0 && badSeed === 0, `${badLevel} levels, ${badSeed} seeds`)
   const meanRunoff = 1000
-  const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), meanRunoff)
+  const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY, mesh.domain), meanRunoff)
   const maxDischarge = M.hydro.maxDischargeOverLand(discharge, eroded.z)
   const graph = M.graph.buildRiverGraph({ substrate: sub, discharge, elevation: eroded.z, threshold, maxDischarge, bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux: eroded.sedimentFlux })
   const violations = M.graph.riverGraphInvariants(graph, eroded.z)
@@ -555,7 +555,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   const serial = M.graph.serializeRiverGraph(graph)
   const back = M.graph.deserializeRiverGraph(serial.json, serial.cells, serial.coursePoints, serial.positions)
   check('a mesh graph round-trips through its serialisation with positions', back !== null && back.cellX.length === graph.cellX.length && back.cellX[5] === graph.cellX[5])
-  const again = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature, precip)
+  const again = M.hydro.computeLakesOn(sub, discharge, eroded.z, temperature)
   check('the lakes are deterministic', JSON.stringify(again.bodies) === JSON.stringify(lakes.bodies))
 
   // DEC-0036 phase 7b: the watersheds, the coast graph and the sediment
@@ -1401,11 +1401,11 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
     const cells = M.climatePoints.climateCellsFromWeather(weather)
     const points = M.climatePoints.meshPoints(terrain.mesh, terrain.z)
     const at = M.climatePoints.climateAtPoints(cells, points)
-    const discharge = M.hydro.accumulateDischargeOn(sub, terrain.z, at.precipitation)
-    const lakes = M.hydro.computeLakesOn(sub, discharge, terrain.z, at.temperature, at.precipitation)
-    const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY), M.climatePoints.meanLandRunoff(cells))
+    const discharge = M.hydro.accumulateDischargeOn(sub, terrain.z, at.precipitation, at.temperature)
+    const lakes = M.hydro.computeLakesOn(sub, discharge, terrain.z, at.temperature)
+    const threshold = M.hydro.channelThreshold(M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY, terrain.mesh.domain), M.climatePoints.meanLandRunoff(cells))
     const regime = M.hydro.accumulateRegimeInputsOn(sub, terrain.z, at.temperature, at.precipitation, at.monsoonIndex)
-    const graph = M.graph.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: M.hydro.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY) })
+    const graph = M.graph.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: M.hydro.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: M.hydro.densityToCriticalArea(M.hydro.CANONICAL_RIVER_DENSITY, terrain.mesh.domain) })
     const biomes = M.biomes.classifyPoints(at, points, terrain.mesh.domain).biome
     const ground = M.ground.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, precipitation: at.precipitation, temperature: at.temperature, monsoonIndex: at.monsoonIndex, cover: M.cover.coverField(biomes, true), regime, discharge, cellM: UNITS_TO_M })
     const broken = Object.entries(M.ground.hydrogeologyInvariants(ground, graph, terrain.z)).filter(([, n]) => n > 0)

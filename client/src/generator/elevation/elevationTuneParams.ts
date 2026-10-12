@@ -66,11 +66,19 @@ export const ELEVATION_TUNING = {
   // pruning, so it was the shape, not clutter); a capsule can't overshoot past
   // its segment ends. Half-length ~ the feature spacing (terrainFeatures'
   // MERGE_RADIUS) so consecutive segments chain continuously.
-  rangePerpRadius: 30,
+  //
+  // The perpendicular radii are METRES since DEC-0036 phase 8a — the
+  // torus's 30 and 15 cells of 7.8 km, so the sphere's ranges have the
+  // same cross-section (they were 25 % wider there). The half-lengths stay
+  // in domain units: they are tied to the features' spacing along a
+  // boundary (terrainFeatures' MERGE_RADIUS), which the plates count in
+  // units, and a half-length shorter than half that spacing would break a
+  // range into beads.
+  rangePerpRadiusM: 234_000,
 
   rangeSegmentHalfLength: 35,
 
-  trenchPerpRadius: 15,
+  trenchPerpRadiusM: 117_000,
 
   trenchSegmentHalfLength: 25,
 
@@ -266,13 +274,14 @@ export const ELEVATION_TUNING = {
   hypsometryTFull: 0.85,
 
   // --- from domainWarp.ts ---
-  // How far, in pixels, a query point can be displaced — deliberately
-  // modest relative to a feature's reach (rangeSegmentHalfLength 35 +
-  // rangePerpRadius 30 above): this should read as
+  // How far, in metres, a query point can be displaced — deliberately
+  // modest relative to a feature's reach (rangeSegmentHalfLength 35 cells +
+  // rangePerpRadiusM above): this should read as
   // "coastlines and ridgelines are a little ragged," not "the tectonic
   // shapes are dissolved into noise." Tune by eye — this is a visual call,
-  // not something with a formula to derive it from.
-  warpAmplitudePx: 26,
+  // not something with a formula to derive it from. The torus's 26 cells
+  // of 7.8 km (metres since DEC-0036 phase 8a).
+  warpAmplitudeM: 202_800,
 
   // axisSalt values for the two offset axes — arbitrary distinct constants,
   // just need to decorrelate the x-offset and y-offset noise fields from

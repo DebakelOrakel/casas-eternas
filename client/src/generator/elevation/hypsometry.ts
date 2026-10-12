@@ -3,7 +3,7 @@ import { wrapValue } from '../core/field'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { metersToElevation } from './elevationScale'
 import { globeFrame, type Domain } from '../core/domain'
-import { globeOctave } from './globeNoise'
+import { globeOctaveOn } from './globeNoise'
 
 // Relief across the continental interior — the thing the margin profile does not have.
 //
@@ -95,7 +95,7 @@ export function hypsometryRelief(wx: number, wy: number, domain: Domain, seed: n
   for (const [cellsX, cellsY, amplitude] of HYPSOMETRY_OCTAVES) {
     const n = space.kind === 'chart'
       ? periodicValueNoise((wx / worldWidth) * cellsX, (wy / worldHeight) * cellsY, cellsX, cellsY, octaveSeed)
-      : globeOctave(frame, cellsX, worldWidth, octaveSeed)
+      : globeOctaveOn(frame, cellsX, domain, octaveSeed)
     sum += (n - 0.5) * 2 * amplitude
     amplitudeSum += amplitude
     octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0

@@ -1,4 +1,4 @@
-import type { Domain } from '../core/domain'
+import { domainArea, type Domain } from '../core/domain'
 import { MANTLE_TUNING } from './mantleTuneParams'
 import type { Raft } from '../crust/raftTypes'
 import { computeMembershipAt } from '../crust/raftField'
@@ -80,7 +80,15 @@ function mantleMeshOf(domain: Domain): MantleMesh {
   const key = `${domain.kind}:${domain.width}:${domain.height}:${domain.metresPerUnit}`
   const known = meshes.get(key)
   if (known) return known
-  const cellUnits = domain.width / MANTLE_RES_X
+  // The spacing by the world's AREA, MANTLE_RES_X × MANTLE_RES_Y cells'
+  // worth (DEC-0036 phase 8a): on the torus √(W·H / 8192) = W / 128, the
+  // spacing it always had; on the sphere, whose chart width is its
+  // equator, W / 128 was 156 km where the torus's is 125 km, and since the
+  // field's lengths are counted in its cells (the diffusion's reach, the
+  // initial noise, an extremum among its neighbours) the sphere's
+  // convection cells were 25 % wider and 36 % fewer — the plate count
+  // with them (convectionCellSeeds).
+  const cellUnits = Math.sqrt(domainArea(domain) / (MANTLE_RES_X * MANTLE_RES_Y))
   const cellM = cellUnits * domain.metresPerUnit
   const { mesh, sampler } = sharedFieldMesh(domain, cellM)
   let totalArea = 0

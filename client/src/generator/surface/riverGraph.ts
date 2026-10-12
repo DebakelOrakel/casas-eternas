@@ -209,6 +209,13 @@ export function buildRiverGraph(input: RiverGraphInputs): RiverGraph {
       if (t >= 0 && elevation[t] > SEA_LEVEL) channel[t] = 1
     }
   }
+  // A terminal basin (a body whose floor lies below sea level: 'terminal'
+  // or 'dry') is where its rivers END, wet or dry: its nodes gather what
+  // reaches them and push nothing on (hydrology.accumulateDischargeOn,
+  // DEC-0036 phase 8a), so no channel runs inside one — a river meets it
+  // as an inlet (its water) or a mouth (its dry floor), and the river its
+  // surplus feeds over the spill starts at the spill as a source.
+  for (let c = 0; c < n; c++) if (channel[c] && body[c] >= 0 && bodies[body[c]] && bodies[body[c]].kind !== 'lake') channel[c] = 0
   // A wet body cell: under a lake's or a terminal sea's level AND inside the
   // body's recovered extent — a cell wet by an epsilon of fill but outside
   // the extent (the flood's fill sits an epsilon chain above the pour point)

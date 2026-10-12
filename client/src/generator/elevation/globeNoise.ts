@@ -1,5 +1,5 @@
 import { smoothstep } from '../core/interpolation'
-import type { GlobeFrame } from '../core/domain'
+import { CALIBRATION_METRES_AROUND, type Domain, type GlobeFrame } from '../core/domain'
 
 // THE COORDINATE NOISE ON THE SPHERE (DEC-0035, fork 1): the 3D analogue of
 // the periodic 2D value noise in ridgedNoise.ts, domainWarp.ts and
@@ -94,6 +94,16 @@ const [R00, R01, R02, R10, R11, R12, R20, R21, R22] = ROTATION
 // has `cellsX` cells across the chart's `width`, the same cell size in
 // domain units as the 2D lattice's along the equator (its cells are square
 // in the chart: width / cellsX = height / cellsY for every 2:1 table).
+// The octave read at the torus's length in metres (DEC-0036 phase 8a): an
+// octave table counts cells across the map, which on the torus meant
+// CALIBRATION_METRES_AROUND / cellsX metres a cell; the sphere's lattice
+// takes that length, not the count across its own equator (20 000 km,
+// where the count made every noise feature 25 % larger). What every
+// sphere sampler of a cells-across table calls.
+export function globeOctaveOn(frame: GlobeFrame, cellsX: number, domain: Domain, seed: number): number {
+  return globeOctave(frame, cellsX, (domain.width * CALIBRATION_METRES_AROUND) / domain.metresAround, seed)
+}
+
 export function globeOctave(frame: GlobeFrame, cellsX: number, width: number, seed: number): number {
   const scale = cellsX / width
   const x = frame.px * scale

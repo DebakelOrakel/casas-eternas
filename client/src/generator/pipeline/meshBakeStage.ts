@@ -147,17 +147,17 @@ export function levelHydrology(
   const { width } = level
   const { precipitation, temperature } = climate
   const sub = meshSubstrate(mesh, routing, areas)
-  const discharge = accumulateDischargeOn(sub, z, precipitation)
-  const lakes = computeLakesOn(sub, discharge, z, temperature, precipitation)
+  const discharge = accumulateDischargeOn(sub, z, precipitation, temperature)
+  const lakes = computeLakesOn(sub, discharge, z, temperature)
   // The channel criterion: the canonical density over the world's mean
   // runoff.
-  const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), climate.meanRunoff)
+  const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY, mesh.domain), climate.meanRunoff)
   const maxDischarge = maxDischargeOverLand(discharge, z)
   const graph = buildRiverGraph({
     substrate: sub, discharge, elevation: z, threshold, maxDischarge,
     bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, sedimentFlux,
     regime: accumulateRegimeInputsOn(sub, z, temperature, precipitation, climate.monsoonIndex ?? undefined),
-    criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
+    criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY, mesh.domain),
   })
   graph.courses = computeRiverCourses(graph, { cellM: (mesh.domain.metresAround / width) * level.budget, seed: level.detailSeed, domain: mesh.domain })
   return { discharge, waterBodies: lakes.bodies, graph, rivers: riverPolylinesFromGraph(graph, maxDischarge) }

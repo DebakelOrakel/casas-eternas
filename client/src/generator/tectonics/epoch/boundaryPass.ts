@@ -103,7 +103,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     // opening rift) — reset its floor age to 0 so age-depth reads it as young
     // and shallow (Phase 3).
     if (convergence.motionClass === 'divergent') {
-      resetOceanAgeAround(sim.oceanAge, boundary.x, boundary.y, TECTONICS_TUNING.ridgeFreshCrustRadius, domain)
+      resetOceanAgeAround(sim.oceanAge, boundary.x, boundary.y, TECTONICS_TUNING.ridgeFreshCrustRadiusM / domain.metresPerUnit, domain)
     }
 
     const classCode = motionClassCode(convergence.motionClass)
@@ -191,10 +191,15 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
         const inX = offset.x
         const inY = offset.y
         const inLen = Math.sqrt(inX * inX + inY * inY) || 1
-        domain.advance(boundary.x, boundary.y, (inX / inLen) * TECTONICS_TUNING.accretionInset, (inY / inLen) * TECTONICS_TUNING.accretionInset, offset)
+        // The accretion's lengths in domain units (the tuning's metres).
+        const unitM = domain.metresPerUnit
+        const inset = TECTONICS_TUNING.accretionInsetM / unitM
+        const minGap = TECTONICS_TUNING.accretionMinGapM / unitM
+        const maxAttach = TECTONICS_TUNING.accretionMaxAttachM / unitM
+        domain.advance(boundary.x, boundary.y, (inX / inLen) * inset, (inY / inLen) * inset, offset)
         const accreteX = offset.x
         const accreteY = offset.y
-        accreteToNearestRaft(sim.rafts, accreteX, accreteY, TECTONICS_TUNING.accretionBlobRadius, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.accretionMinGapSq, TECTONICS_TUNING.accretionMaxAttachSq, domain)
+        accreteToNearestRaft(sim.rafts, accreteX, accreteY, TECTONICS_TUNING.accretionBlobRadiusM / unitM, worldEpoch(sim.archeanEpochs, sim.epoch), minGap * minGap, maxAttach * maxAttach, domain)
       }
     }
 

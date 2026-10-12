@@ -286,10 +286,14 @@ export const SURFACE_TUNING = {
   // beyond the reach of any grouping and, more to the point, beyond the artifact
   // key: the bake re-extracts rivers on the amplified field, so changing either
   // one changes the baked network under an unchanged key.
-  channelAreaMax: 4000,
+  //
+  // m² since DEC-0036 phase 8a: the torus's 4000 and 150 cells of
+  // (7.8 km)² — 243 360 and 9 126 km². Counted in cells, the sphere's
+  // critical catchment was 57 % larger (its cell is 9.8 km).
+  channelAreaMaxM2: 243_360_000_000,
   // Floored well above 1 cell: on smooth (un-eroded) terrain a too-low threshold
   // draws a channel from nearly every cell, and D8 picks the same steepest
   // direction for whole neighbourhoods → a mess of parallel lines. Keeping even
   // max density at a few hundred cells of support suppresses that noise.
-  channelAreaMin: 150,
+  channelAreaMinM2: 9_126_000_000,
 } as const

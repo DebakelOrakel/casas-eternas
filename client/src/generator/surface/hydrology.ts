@@ -1,6 +1,6 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { SURFACE_TUNING } from './surfaceTuneParams'
-import type { DomainGrid } from '../core/domain'
+import type { Domain, DomainGrid } from '../core/domain'
 import type { FlowSubstrate } from './flowSubstrate'
 import { OCEAN_PRECIP } from '../climate/precipitation'
 import { detExp, detLog, detPow } from '../core/detMath'
@@ -235,9 +235,9 @@ export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Flo
 // water belongs to (-1 for none). Areas are the elements' (in world cells),
 // so the balance `inflow < pet × area` reads the same at any spacing. `temperature`
 // (°C) and `precip` (mm/yr, OCEAN_PRECIP on the sea) per element.
-export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elevation: Float32Array, temperature: ArrayLike<number>, precip: ArrayLike<number>, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
+export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elevation: Float32Array, temperature: ArrayLike<number>, minBasinReliefM = SURFACE_TUNING.minLakeBasinReliefM): LakeFields {
   const { filled, count: n } = sub
-  const EPS = 1e-5
+  const EPS = FLOOD_EPS
   const depth = new Float32Array(n)
   const saltFlat = new Uint8Array(n)
   const dryBasin = new Uint8Array(n)
@@ -315,15 +315,14 @@ export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elev
       }
     }
     if (basinFloor < SEA_LEVEL) {
-      // Direct precipitation ON the basin is part of its water budget — the
-      // Volga is not the Caspian's only source, and without this every deep
-      // basin that happens to lack a river inlet came out bone dry (rivers'
-      // discharge never seeds water cells, see accumulateDischargeOn). Summed
-      // over the whole region: rain on the wet surface feeds the balance,
-      // rain on the dry floor runs down to it.
-      let basinRain = 0
-      for (const c of region) basinRain += runoffOf(precip[c]) * sub.area(c)
-      inflow += basinRain
+      // The inflow is the basin's whole gathering: every river that
+      // arrives and the rain on the basin itself, its sub-sea floor
+      // included — the sum of its nodes' discharge, since a terminal
+      // basin's nodes push nothing on inside it (accumulateDischargeOn).
+      // Until DEC-0036 phase 8a it was the largest single arrival, with
+      // the basin's own rain added here.
+      inflow = 0
+      for (const c of region) inflow += discharge[c]
       // TERMINAL SEA (the Caspian/Chad class): an enclosed basin whose floor
       // lies below sea level — a landlocked ocean remnant or deep rift graben.
       // These are the legitimate river ENDPOINTS without an outflow, so the
@@ -391,27 +390,132 @@ export function computeLakesOn(sub: FlowSubstrate, discharge: Float32Array, elev
 // lake evaporation later. popOrder is upstream-first in reverse, so an
 // element's upstream contributions are already summed in before it pushes
 // downstream.
-export function accumulateDischargeOn(sub: FlowSubstrate, elevation: Float32Array, precip: ArrayLike<number>): Float32Array {
+//
+// THE TERMINAL BASINS BY THEIR WATER BALANCE (DEC-0036 phase 8a). A
+// terminal basin — a region the flood filled whose floor lies below sea
+// level (computeLakesOn) — gathers what reaches it: each of its nodes keeps
+// what arrives there and its own rain (its sub-sea floor is land under a
+// dry floor or a lake, not the sea), and pushes nothing on inside the
+// basin, so a river ends where it meets the basin. The basin's exit — the
+// node whose receiver lies over the spill — passes on what the basin's
+// evaporation leaves of the whole: the sum over the basin less PET × its
+// area (evaporationPotential of its mean temperature; the area its water
+// covers at the spill). An endorheic basin passes nothing on, a brim-full
+// one its surplus. Until then the flow stopped at the first sub-sea node it
+// met: a brim-full basin had no outlet river, and the lakes read the
+// largest single arrival as the basin's inflow, not the sum. The world
+// ocean ends the flow as before; an ordinary land basin (its floor above
+// sea level) is crossed along the filled surface as before. Without
+// `temperature` (the regime's sums of evaporation and dry-season rain over
+// a catchment, which are not water) a terminal basin passes its whole sum
+// on.
+export function accumulateDischargeOn(sub: FlowSubstrate, elevation: Float32Array, precip: ArrayLike<number>, temperature?: ArrayLike<number>): Float32Array {
   const { flowTarget, popOrder, poppedCount, count } = sub
   const discharge = new Float32Array(count)
+  const basins = terminalBasins(sub, elevation)
+  const { region } = basins
   for (let cell = 0; cell < count; cell++) {
-    if (elevation[cell] <= SEA_LEVEL) continue // ocean is a sink, no runoff
+    if (elevation[cell] <= SEA_LEVEL && region[cell] < 0) continue // the sea is a sink, no runoff
     discharge[cell] = runoffOf(precip[cell]) * sub.area(cell)
   }
+  const keep = temperature ? basinEvaporation(sub, basins, temperature) : null
+  const gathered = new Float64Array(basins.count)
   for (let i = poppedCount - 1; i >= 0; i--) {
     const cell = popOrder[i]
-    // A water body swallows what reaches it: rivers END in seas. With the
-    // flood seeded from the world ocean only (2026-08-06), an enclosed
-    // basin's filled surface technically drains onward over its spill — but
-    // a terminal sea has no outflow river, so the discharge must not march
-    // across the spill and draw a phantom river on the far side. The first
-    // sub-sea-level cell keeps the arriving discharge (computeLakes reads
-    // its basin inflow from exactly these shore cells).
-    if (elevation[cell] <= SEA_LEVEL) continue
+    const r = region[cell]
     const target = flowTarget[cell]
+    if (r >= 0) {
+      gathered[r] += discharge[cell]
+      // The exit pushes what the basin leaves over its spill; every other
+      // node of the basin pushes nothing.
+      if (target >= 0 && region[target] !== r) {
+        const total = gathered[r] / basins.exits[r]
+        const kept = keep ? keep[r] / basins.exits[r] : 0
+        if (total > kept) discharge[target] += total - kept
+      }
+      continue
+    }
+    if (elevation[cell] <= SEA_LEVEL) continue // the world ocean
     if (target >= 0) discharge[target] += discharge[cell]
   }
   return discharge
+}
+
+// A filled node's fill above its ground, below which it is not flooded:
+// the flood's epsilon chain, as computeLakesOn reads it.
+const FLOOD_EPS = 1e-5
+
+// The terminal basins (accumulateDischargeOn): computeLakesOn's regions —
+// the connected nodes the flood filled — whose floor lies below sea level.
+// Per node its basin (−1 none); per basin its area, its nodes (for
+// basinEvaporation) and its exits, the nodes
+// whose receiver lies outside it (one as a rule; a basin of several gives
+// each exit an even share of the sum, which reaches it last).
+interface TerminalBasins {
+  count: number
+  region: Int32Array
+  area: Float64Array
+  exits: Int32Array
+  // The nodes of each basin, concatenated, with their start per basin.
+  start: Int32Array
+  nodes: Int32Array
+}
+function terminalBasins(sub: FlowSubstrate, elevation: Float32Array): TerminalBasins {
+  const { filled, flowTarget, count: n } = sub
+  const flooded = new Uint8Array(n)
+  for (let c = 0; c < n; c++) if (filled[c] > elevation[c] + FLOOD_EPS) flooded[c] = 1
+  const seen = new Int32Array(n).fill(-1)
+  const region = new Int32Array(n).fill(-1)
+  const queue = new Int32Array(n)
+  const nb = new Int32Array(256)
+  const area: number[] = []
+  const exits: number[] = []
+  const start: number[] = [0]
+  const nodes: number[] = []
+  let regions = 0
+  for (let s = 0; s < n; s++) {
+    if (!flooded[s] || seen[s] >= 0) continue
+    let head = 0
+    let tail = 0
+    queue[tail++] = s
+    seen[s] = s
+    let floor = Infinity
+    while (head < tail) {
+      const c = queue[head++]
+      if (elevation[c] < floor) floor = elevation[c]
+      const k = sub.facetNeighbours(c, nb)
+      for (let i = 0; i < k; i++) {
+        const o = nb[i]
+        if (flooded[o] && seen[o] < 0) { seen[o] = s; queue[tail++] = o }
+      }
+    }
+    if (!(floor < SEA_LEVEL)) continue
+    const id = regions++
+    let a = 0
+    for (let i = 0; i < tail; i++) { const c = queue[i]; region[c] = id; a += sub.area(c); nodes.push(c) }
+    let e = 0
+    for (let i = 0; i < tail; i++) { const t = flowTarget[queue[i]]; if (t >= 0 && seen[t] !== s) e++ }
+    area.push(a)
+    exits.push(Math.max(1, e))
+    start.push(nodes.length)
+  }
+  return { count: regions, region, area: Float64Array.from(area), exits: Int32Array.from(exits), start: Int32Array.from(start), nodes: Int32Array.from(nodes) }
+}
+
+// What each terminal basin evaporates at its spill: PET of its mean
+// temperature (area-weighted, as computeLakesOn's) × its area — the
+// balance computeLakesOn tests the basin's inflow against.
+function basinEvaporation(sub: FlowSubstrate, basins: TerminalBasins, temperature: ArrayLike<number>): Float64Array {
+  const keep = new Float64Array(basins.count)
+  for (let r = 0; r < basins.count; r++) {
+    let tempSum = 0
+    for (let i = basins.start[r]; i < basins.start[r + 1]; i++) {
+      const c = basins.nodes[i]
+      tempSum += temperature[c] * sub.area(c)
+    }
+    keep[r] = evaporationPotential(tempSum / basins.area[r]) * basins.area[r]
+  }
+  return keep
 }
 
 // THE FLOW REGIME'S CLIMATE INPUTS (F6): what a reach's catchment could
@@ -518,16 +622,19 @@ export function maxDischargeOverLand(discharge: Float32Array, elevation: Float32
   return max
 }
 
-// Density knob (0–100) → the critical DRAINAGE AREA (in cells) a cell needs
+// Density knob (0–100) → the critical DRAINAGE AREA (in domain units²) a cell needs
 // upstream to become a channel — an ABSOLUTE, local criterion (unlike a global
 // discharge quantile, which lets the biggest wet basins swallow the whole quota
 // and starve every other landmass, the concentration the user saw). Geometric so
 // the knob feels even across a wide range: ~4000 cells at density 0 (only the
 // major rivers) down to ~30 at 100 (a fine network) — every catchment gets its
-// own dendritic tree wherever that much area converges.
-export function densityToCriticalArea(density: number): number {
+// own dendritic tree wherever that much area converges. The endpoints are
+// m² (DEC-0036 phase 8a), the answer in the substrate's area unit, the
+// domain's unit² (on the torus 243 360 km² / (7.8 km)² is 4000 exactly).
+export function densityToCriticalArea(density: number, domain: Domain): number {
   const d = Math.min(100, Math.max(0, density)) / 100
-  return SURFACE_TUNING.channelAreaMax * detPow(SURFACE_TUNING.channelAreaMin / SURFACE_TUNING.channelAreaMax, d)
+  const unitM2 = domain.metresPerUnit * domain.metresPerUnit
+  return (SURFACE_TUNING.channelAreaMaxM2 / unitM2) * detPow(SURFACE_TUNING.channelAreaMinM2 / SURFACE_TUNING.channelAreaMaxM2, d)
 }
 
 // The discharge threshold for a given critical area: that many average-runoff

@@ -462,6 +462,22 @@ const TORUS_METRES_AROUND = MAP_WIDTH * TORUS_METERS_PER_CELL
 // The sphere's metres per macro cell at the equator: 9 765.625, exact.
 const SPHERE_METRES_PER_UNIT = SPHERE_EQUATOR_METERS / MAP_WIDTH
 
+// THE CALIBRATION'S REFERENCE (DEC-0036 phase 8a): the torus's extent
+// east-west, metres. A table stated as cells across the map (a noise
+// octave's lattice count) was set on the torus, where it meant this extent
+// divided by the count; the sphere reads the same table at the same length
+// in metres (globeNoise.globeOctaveOn). Every other length is stated in
+// metres and read through `metresPerUnit`.
+export const CALIBRATION_METRES_AROUND = TORUS_METRES_AROUND
+
+// The world's area in domain units²: W · H on the torus, the globe's 4πR²
+// with R = W / 2π (W² / π) on the sphere. What a planetary count (the
+// plates' spacing, a field mesh's cells) is measured against, so the two
+// shapes, of nearly one area in m² (DEC-0035 fork 6), count alike.
+export function domainArea(domain: Domain): number {
+  return domain.kind === 'sphere' ? (domain.width * domain.width) / Math.PI : domain.width * domain.height
+}
+
 // The torus, with the thermal equator slid by `equatorOffset` (fraction of
 // the height, positive toward the bottom) — the climate's one "move the
 // equator" knob, applied once here.

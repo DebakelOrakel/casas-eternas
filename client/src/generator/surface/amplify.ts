@@ -251,8 +251,8 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   // move the output and still left to a human to remember. The other two shape
   // the density curve and were function-local until now.
   channelSlopeExponent: CHANNEL_SLOPE_EXPONENT,
-  channelAreaMax: SURFACE_TUNING.channelAreaMax,
-  channelAreaMin: SURFACE_TUNING.channelAreaMin,
+  channelAreaMaxM2: SURFACE_TUNING.channelAreaMaxM2,
+  channelAreaMinM2: SURFACE_TUNING.channelAreaMinM2,
   // The bake extracts rivers at the model's one canonical density since the
   // slider became a draw filter (P4) — so the density that shaped the baked
   // network is part of what the artifact IS.

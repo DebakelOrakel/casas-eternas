@@ -213,9 +213,10 @@ const RAFT_RELIEF_REACH = 1.5
 // The climate history kept on the sim: the last this many epochs.
 const CLIMATE_HISTORY_CAP = 512
 // A lake is the same lake next epoch when its seed lies within this many
-// macro cells (47 km) and its level within this many metres of last
-// epoch's — the seed drifts with the plate and jumps with the remesh.
-const LAKE_MATCH_CELLS = 6
+// metres (the torus's six macro cells until DEC-0036 phase 8a) and its
+// level within this many metres of last epoch's — the seed drifts with the
+// plate and jumps with the remesh.
+const LAKE_MATCH_M = 46_800
 const LAKE_MATCH_LEVEL_M = 300
 
 export interface CoupledEpochStats {
@@ -818,7 +819,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const routing = meshRouting(mesh, result.z, scaled, result.index)
   // THE LAKES' AGES (phase 5.4, decision B of 5.2): the standing water on
   // the epoch's terrain, each body matched to the nearest of last epoch's
-  // by its seed (within LAKE_MATCH_CELLS macro cells — the seed drifts with
+  // by its seed (within LAKE_MATCH_M — the seed drifts with
   // its plate and the remesh — and a level within LAKE_MATCH_LEVEL_M) and
   // aged by the epoch; a body with no match is new. The hydrology stage
   // recomputes the bodies at full detail after the stop; these carry the
@@ -827,8 +828,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // (its land and its heights).
   const sub = meshSubstrate(mesh, routing, areas)
   const atNodesAfter = climateAtPoints(cells, meshPoints(mesh, result.z))
-  const discharge = accumulateDischargeOn(sub, result.z, atNodesAfter.precipitation)
-  const lakes = computeLakesOn(sub, discharge, result.z, atNodesAfter.temperature, atNodesAfter.precipitation)
+  const discharge = accumulateDischargeOn(sub, result.z, atNodesAfter.precipitation, atNodesAfter.temperature)
+  const lakes = computeLakesOn(sub, discharge, result.z, atNodesAfter.temperature)
   const epochMaForAges = sim.epochMa || TECTONIC_MA_PER_EPOCH
   const previous = sim.lakeAges
   const ages: LakeAgeRecord[] = []
@@ -836,7 +837,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   for (const body of lakes.bodies) {
     if (body.kind === 'dry') continue
     let ageMa = epochMaForAges
-    let bestSq = LAKE_MATCH_CELLS * LAKE_MATCH_CELLS
+    const matchUnits = LAKE_MATCH_M / sim.domain.metresPerUnit
+    let bestSq = matchUnits * matchUnits
     for (const p of previous) {
       if (Math.abs(p.level - body.level) * ELEVATION_METERS > LAKE_MATCH_LEVEL_M) continue
       const dSq = domain.distanceSq(p.x, p.y, body.seedX, body.seedY)

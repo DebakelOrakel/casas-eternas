@@ -699,7 +699,9 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
   // The feature query (the elevation, the folds) near a pole: every feature
   // a point can reach is in the buckets it searches. Points on a ring of
   // colatitudes down to the pole, features laid round them.
-  const reach = 65
+  // What the buckets promise to cover (a feature's longest semi-axis, its
+  // perpendicular radius in metres since DEC-0036 phase 8a).
+  const reach = EF.featureMaxReach(domain)
   const ring = []
   for (const y of [0, 3, 20, 60, 120, 300, 512]) for (let k = 0; k < 24; k++) ring.push({ x: (k / 24) * sim.width + 0.37, y })
   const probe = ring.map((p, i) => ({ x: p.x, y: p.y, thickness: 1, tangentX: 1, tangentY: 0, kind: 'range', subsides: false, plateA: 0, plateB: 1, movesWithPlate: 0, epochsSinceDeposit: 0, id: i }))
@@ -1121,11 +1123,11 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
     const cells = CPx.climateCellsFromWeather(wx)
     const points = CPx.meshPoints(terrain.mesh, terrain.z)
     const at = CPx.climateAtPoints(cells, points)
-    const discharge = HY.accumulateDischargeOn(sub, terrain.z, at.precipitation)
-    const lakes = HY.computeLakesOn(sub, discharge, terrain.z, at.temperature, at.precipitation)
-    const threshold = HY.channelThreshold(HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY), CPx.meanLandRunoff(cells))
+    const discharge = HY.accumulateDischargeOn(sub, terrain.z, at.precipitation, at.temperature)
+    const lakes = HY.computeLakesOn(sub, discharge, terrain.z, at.temperature)
+    const threshold = HY.channelThreshold(HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY, terrain.mesh.domain), CPx.meanLandRunoff(cells))
     const regime = HY.accumulateRegimeInputsOn(sub, terrain.z, at.temperature, at.precipitation, at.monsoonIndex)
-    const graph = RG.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: HY.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY) })
+    const graph = RG.buildRiverGraph({ substrate: sub, discharge, elevation: terrain.z, threshold, maxDischarge: HY.maxDischargeOverLand(discharge, terrain.z), bodies: lakes.bodies, body: lakes.body, lakeDepth: lakes.depth, regime, criticalArea: HY.densityToCriticalArea(HY.CANONICAL_RIVER_DENSITY, terrain.mesh.domain) })
     const biomes = BI.classifyPoints(at, points, terrain.mesh.domain).biome
     const ground = GW.computeHydrogeology({ sub, elevation: terrain.z, graph, column: terrain.column, hardness: null, precipitation: at.precipitation, temperature: at.temperature, monsoonIndex: at.monsoonIndex, cover: CO.coverField(biomes, true), regime, discharge, cellM: terrain.mesh.domain.metresPerUnit })
     const bad = Object.entries(GW.hydrogeologyInvariants(ground, graph, terrain.z)).filter(([, n]) => n > 0)
@@ -1135,9 +1137,12 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   // (6) Land at a pole: the largest raft turned on the globe so its first
   // blob sits on the north pole, then the history. The terrain starts with
   // land there, the epochs keep the globe valid and finite, and the pole's
-  // land is cold.
+  // land is cold. The seed re-chosen with the crust in metres (DEC-0036
+  // phase 8a): 'polar-continent-2' then left a 200 m hollow below sea level
+  // at the pole before the epoch's erosion, which the chart's pole row reads
+  // (-3 and -4 keep land there, -1 drowns the cap).
   {
-    const simP = world('sphere', 'polar-continent-2', 60)
+    const simP = world('sphere', 'polar-continent-3', 60)
     const frame = D.globeFrame()
     const raft = simP.rafts.reduce((best, r) => (r.blobs.length > best.blobs.length ? r : best))
     simP.domain.noise.frame(raft.blobs[0].x, raft.blobs[0].y, frame)
@@ -2213,7 +2218,7 @@ test('the sphere samples its noise on the globe: poles, seam, isotropy, spread',
 
   // (4) The spread: mean and standard deviation over the sphere (area-
   // uniform points) against the torus noise over the torus, many seeds;
-  // the warp as the distance it moves a point. The hypsometry's coarsest
+  // the warp as the distance it moves a point, in kilometres. The hypsometry's coarsest
   // octave has about ten cells over the whole sphere (fifteen on the
   // torus), so its spread per seed varies much and needs the seeds; over
   // 256 seeds its sphere std is 8 % under the torus's (2026-10-10), the
@@ -2235,8 +2240,10 @@ test('the sphere samples its noise on the globe: poles, seam, isotropy, spread',
     fine: [(x, y, k) => RN.fineDetailNoiseOn(torus, x, y, k), (x, y, k) => RN.fineDetailNoiseOn(sphere, x, y, k)],
     hypsometry: [(x, y, k) => HY.continentalHypsometry(x, y, 1, torus, k), (x, y, k) => HY.continentalHypsometry(x, y, 1, sphere, k)],
     warp: [
-      (x, y, k) => { const w = EF.warpedSamplePoint(x, y, torus, k); return Math.sqrt(torus.distanceSq(x, y, w.wx, w.wy)) },
-      (x, y, k) => { const w = EF.warpedSamplePoint(x, y, sphere, k); return Math.sqrt(sphere.distanceSq(x, y, w.wx, w.wy)) },
+      // In kilometres: the warp's amplitude is a length (DEC-0036 phase 8a),
+      // fewer of the sphere's larger units.
+      (x, y, k) => { const w = EF.warpedSamplePoint(x, y, torus, k); return Math.sqrt(torus.distanceSq(x, y, w.wx, w.wy)) * torus.metresPerUnit / 1000 },
+      (x, y, k) => { const w = EF.warpedSamplePoint(x, y, sphere, k); return Math.sqrt(sphere.distanceSq(x, y, w.wx, w.wy)) * sphere.metresPerUnit / 1000 },
     ],
   }
   const spread = {}

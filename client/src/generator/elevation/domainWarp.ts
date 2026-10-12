@@ -2,7 +2,7 @@ import { smoothstep } from '../core/interpolation'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { wrapValue } from '../core/field'
 import { globeFrame, type Domain } from '../core/domain'
-import { globeOctave } from './globeNoise'
+import { globeOctaveOn } from './globeNoise'
 // Every contour the elevation field produces (elevationField.ts) is a sum
 // of smooth radial falloffs — baseline blend, feature uplift — so it's
 // geometrically incapable of looking jagged anywhere, coastlines
@@ -91,9 +91,11 @@ function fbmNoise(x: number, y: number, width: number, height: number, warpSeed:
 // the project's own hottest loop (elevationField.ts's computeElevation),
 // so avoiding a per-pixel object allocation here matters the same way it
 // does for the flood's MinHeap pop (core/minHeap.ts).
-export function domainWarpDelta(x: number, y: number, width: number, height: number, warpSeed: number, axis: 'x' | 'y'): number {
+// The amplitude in domain units: the tuning's metres (DEC-0036 phase 8a);
+// on the torus 202 800 / 7 800 is 26 exactly, the old constant.
+export function domainWarpDelta(x: number, y: number, domain: Domain, warpSeed: number, axis: 'x' | 'y'): number {
   const axisSalt = axis === 'x' ? ELEVATION_TUNING.axisSaltX : ELEVATION_TUNING.axisSaltY
-  return fbmNoise(x, y, width, height, warpSeed, axisSalt) * ELEVATION_TUNING.warpAmplitudePx
+  return fbmNoise(x, y, domain.width, domain.height, warpSeed, axisSalt) * (ELEVATION_TUNING.warpAmplitudeM / domain.metresPerUnit)
 }
 
 // The point (x, y) warped: displaced by the warp before the elevation field
@@ -105,7 +107,7 @@ export function domainWarpDelta(x: number, y: number, width: number, height: num
 // The sphere: a displacement that is a 2D chart offset would not be one
 // field (at a pole the chart's axes turn with x), so the warp is a 3D
 // vector field instead — three fBm noises on the globe lattice, one per
-// axis, each with the torus's amplitude — of which the part tangent to the
+// axis, each with the torus's amplitude in metres — of which the part tangent to the
 // globe moves the point, along the great circle (Domain.advance). Its two
 // tangent components have the torus's two components' spread. Continuous
 // everywhere, the poles included: at a pole the frame turns with x, and the
@@ -114,14 +116,15 @@ const frame = globeFrame()
 export function domainWarpPoint(x: number, y: number, domain: Domain, warpSeed: number, out: { x: number; y: number }): void {
   const space = domain.noise
   if (space.kind === 'chart') {
-    out.x = x + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'x')
-    out.y = y + domainWarpDelta(x, y, domain.width, domain.height, warpSeed, 'y')
+    out.x = x + domainWarpDelta(x, y, domain, warpSeed, 'x')
+    out.y = y + domainWarpDelta(x, y, domain, warpSeed, 'y')
     return
   }
   space.frame(x, y, frame)
-  const vx = globeFbm(domain.width, warpSeed, ELEVATION_TUNING.axisSaltX) * ELEVATION_TUNING.warpAmplitudePx
-  const vy = globeFbm(domain.width, warpSeed, ELEVATION_TUNING.axisSaltY) * ELEVATION_TUNING.warpAmplitudePx
-  const vz = globeFbm(domain.width, warpSeed, ELEVATION_TUNING.axisSaltZ) * ELEVATION_TUNING.warpAmplitudePx
+  const amplitude = ELEVATION_TUNING.warpAmplitudeM / domain.metresPerUnit
+  const vx = globeFbm(domain, warpSeed, ELEVATION_TUNING.axisSaltX) * amplitude
+  const vy = globeFbm(domain, warpSeed, ELEVATION_TUNING.axisSaltY) * amplitude
+  const vz = globeFbm(domain, warpSeed, ELEVATION_TUNING.axisSaltZ) * amplitude
   const east = vx * frame.ex + vy * frame.ey + vz * frame.ez
   const south = vx * frame.sx + vy * frame.sy + vz * frame.sz
   domain.advance(x, y, east, south, out)
@@ -129,12 +132,12 @@ export function domainWarpPoint(x: number, y: number, domain: Domain, warpSeed: 
 
 // fbmNoise on the globe lattice at the point in `frame`: WARP_OCTAVES, the
 // axis's salt folded into the seed (the 3D hash takes one).
-function globeFbm(width: number, warpSeed: number, axisSalt: number): number {
+function globeFbm(domain: Domain, warpSeed: number, axisSalt: number): number {
   const seed = (warpSeed + Math.imul(axisSalt, 0x9e3779b9)) | 0
   let sum = 0
   let amplitudeSum = 0
   for (const octave of WARP_OCTAVES) {
-    sum += (globeOctave(frame, octave.cellsX, width, seed) * 2 - 1) * octave.amplitude
+    sum += (globeOctaveOn(frame, octave.cellsX, domain, seed) * 2 - 1) * octave.amplitude
     amplitudeSum += octave.amplitude
   }
   return sum / amplitudeSum

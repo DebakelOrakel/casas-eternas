@@ -200,6 +200,110 @@ done before or beside it.
 
 ## Status
 
+2026-10-12: **phase 8a BUILT — the calibration's measurement, and the
+fixes that are units, not taste.** Nothing tuned toward a target yet
+(that is 8b).
+
+**The instrument.** `npm run calibrate` (scripts/calibrate.mjs): 12 seeds
+per shape at 2048 × 1024, each world a child process (7 at once), built
+as the screen builds it — the Archean to the screen's gate
+(stabilisedFraction ≥ 0.5, MIN_ARCHEAN_STABILISED; at epoch 58–142), the
+hand-over, 40 coupled epochs at HISTORY_DEFAULTS (the screen asks for 30
+and stops itself at 100), the static climate, its refinement, the
+hydrology on the refined climate, the riparian biomes, the river graph;
+the planet's and the genesis's sliders (obliquity 10/35, rotation 16/36 h,
+greenhouse ∓8, contrast 60/140, humidity 60/160, water 25/75) swept on 3
+seeds. It prints per shape the median, p10, p90, min and max of land,
+plates, rafts, landmasses, the heights and the hypsometry, ice, lakes,
+Köppen groups (against Beck et al.'s map, scripts/fixtures), the zonal
+temperature and land rain per 10° (against rounded ERA5 and GPCC/GPCP
+means), rivers, the sea's depth, the time per stage, and the artefact
+checks below; `report <run> [<before>]` prints a run against another. 96
+worlds take about 50 minutes on ten cores.
+
+**(a) The constants in cells, now metres** (the torus's 7.8 km cell; on
+the torus the division is exact, 234 000 / 7 800 = 30): the ranges' and
+trenches' cross-section (rangePerpRadiusM 234 000, trenchPerpRadiusM
+117 000), the coastline warp (warpAmplitudeM 202 800), the accretion
+(blob 546 000, inset 234 000, gap 663 000, reach 1 170 000), the ridge's
+fresh crust (93 600), the rift's mantle cooling and reset (2 964 000,
+3 120 000), the Archean's crust (nucleus 546 000, consolidation 1 170 000,
+attach 1 482 000), the channel's critical catchment (channelAreaMaxM2 /
+MinM2, 243 360 / 9 126 km² — the wadis' too), the lakes' match across an
+epoch (46 800). Every noise table counted in cells across the map (the
+ridged and plain octaves, the warp, the hypsometry, the lithology, the
+ecology's provinces) is read on the sphere at the torus's length in
+metres (globeNoise.globeOctaveOn, core/domain CALIBRATION_METRES_AROUND).
+MESH_TUNING.maxSpacingM stays 7 800 m: the plain octave it resolves is
+15.6 km on both shapes now. Golden: 45 of 46 stages byte-identical on all
+three worlds; the 46th is the artifact key (AMPLIFY_CONSTANTS names the
+channel areas in m² now). Left in domain units on purpose: the plates'
+kinematics and the features' spacing along a boundary (plate speeds,
+MERGE_RADIUS, the segments' half-lengths, splitGap, trenchOffset) — they
+are planet-relative, and moving them is a decision, not a unit.
+
+**(b) Shape parity.** The cause of ~10 plates on the sphere against ~16
+on the torus was two counts measured against the chart, not the area:
+the mantle's mesh spacing (W / 128 — 156 km on the sphere, 125 km on the
+torus — and the convection's lengths are counted in its cells) and the
+plates' minimum spacing (0.22 × min(W, H) — 25 % longer in metres on the
+sphere, whose globe holds 64 % of the torus's units²). Both are measured
+against the world's area now (core/domain domainArea; on the torus
+exactly the old numbers): the mantle mesh 9 612 cells at 125 km on the
+sphere. The sphere's land (13.7 % against the torus's 7.6 %) came from the
+Archean's crust in units (a nucleus 25 % wider in metres on a world of
+64 % of the units²); in metres since (a). Over 12 seeds: sphere plates
+10.5 → 16.5 (torus 16), land 13.7 → 8.3 % (torus 7.6), rafts 9.5 → 12.5
+(10.5), mean land height 1 017 → 887 m (1 014); the torus unchanged.
+
+**(c) Artefacts — measured, none fixed.** The twelve pentagons: a cell's
+anomaly (its value less its neighbours' mean) against the hexagons'
+anomalies, per field, over the 12 sphere worlds: the pentagons' mean rank
+among the hexagons' |anomaly| is 0.04–0.41 (0.5 would be typical), the
+mean |z| 0.03–0.52, the median of each world's largest |z| 0.24–1.6
+(temperature, rain, pressure, currents, wind, mantle, ocean age); the
+single largest, 9.3 (ocean age) and 4.6 (temperature), are one pentagon
+in one world each, not a pattern. No Heikes–Randall correction. The seam
+x = 0 / W (the jump across it over a column's mean jump): sphere medians
+0.14–0.80, max 3.6, the torus (periodic by construction, the control)
+1.0–1.1, max 2.9. The pole rows: a sphere chart's top and bottom row
+spread 0.31 / 0.22 °C against 1.7 for a row. The zonal mean's largest
+second difference per row 0.86 °C against a median 0.06; before (b) one
+world had 11.7 °C, its pole row at −56 °C against −37 °C next — one
+climate cell over a high polar plateau, relief and not numerics.
+
+**(d) The terminal basins by their water balance** (surface/hydrology
+accumulateDischargeOn). A terminal basin (a filled region whose floor
+lies below sea level) gathers what reaches it, its nodes push nothing on
+inside it, and its exit passes over the spill the inflow less PET × the
+basin's area — nothing from an endorheic basin, the surplus from a
+brim-full one; computeLakesOn reads the inflow as the basin's sum, not
+the largest single arrival plus its rain. The river graph runs no
+channel inside a terminal basin (riverGraph: a river meets it as an inlet
+or a mouth; the overflow's river starts at the spill as a source).
+Torus, 12 worlds: lake share median 4.60 → 4.79 % (per world +0.0 to
++0.4 points), the largest discharge unchanged on every world, reaches
+−11.5 (rivers no longer cross terminal basins), land and plates
+byte-identical. Golden: zulu's dry basin (2 197 cells, its salt flats)
+fills to a lake (lake cells +20 %, its hottest cell 45.9 → 29.4 °C), its
+reaches 883 → 701; 0 hard failures, re-recorded.
+
+**The worlds against the targets** (after the fixes, medians, p10–p90;
+the targets the user's, for 8b): land 7.6 % (5.6–14.1) torus, 8.3 %
+(6.3–10.1) sphere — target 25–35; the highest peak 8.6 / 9.0 km, many
+worlds at the 9 000 m clamp — target 8–9; ice 29.5 % of land on the torus
+(whose latitudes all have one area), 12.7 % (8.5–20.5) on the sphere;
+lakes 4.8 / 3.3 % — target ≤ 8–10; Köppen on the sphere A 25 B 20 C 31
+D 12 E 12 % against Earth's 23 / 27 / 13 / 22 / 15; the sphere's mean
+temperature 16.8 °C, its zonal means 1–2 °C warm in the tropics, 5 °C at
+40–60° and 6–9 °C toward the poles; the land's rain at 40–60° 1 050–1 160
+mm against 550–650. The sliders (sphere, mean of 3 seeds): obliquity
+10 / 35° moves the mean temperature +4.1 / −5.3 °C and Köppen A +18 / −26,
+D −11 / +17 points, the ice share by −0.3 / −1.2 only; the rotation
+16 / 36 h moves no Köppen group by more than 4 points; greenhouse ∓8 °C
+moves the ice +7.6 / −7.1 points; water 25 / 75 (∓300 m) moves the land
++0.9 / −1.4 points.
+
 2026-10-12: **the save step BUILT — no chart raster left in the save**
 (fork 5 as revised, formatVersion 8 kept). With it nothing simulates on
 the 2:1 chart and the save holds no chart raster field, so the DEC's

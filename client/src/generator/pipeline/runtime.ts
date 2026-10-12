@@ -664,8 +664,8 @@ interface MeshHydrology {
 
 function hydrologyOnMesh(terrain: MeshTerrain, elevationRaster: Float32Array, width: number, height: number, land: LandClimate): MeshHydrology {
   const sub = meshSubstrate(terrain.mesh, terrain.routing, terrain.areas)
-  const discharge = accumulateDischargeOn(sub, terrain.z, land.climate.precipitation)
-  const lakes = computeLakesOn(sub, discharge, terrain.z, land.climate.temperature, land.climate.precipitation)
+  const discharge = accumulateDischargeOn(sub, terrain.z, land.climate.precipitation, land.climate.temperature)
+  const lakes = computeLakesOn(sub, discharge, terrain.z, land.climate.temperature)
   return { discharge, lakes, land, biome: null, ecologyBiome: null, waterTable: null, raster: waterFieldsFromMesh(terrain.mesh, lakes.body, lakes.bodies, elevationRaster, width, height) }
 }
 
@@ -1258,7 +1258,7 @@ function handleHydrologyRun(): void {
     // canonical channel set the riparian biomes, the bake and the worldmap
     // read. The density slider that used to threshold the drawing separately
     // died with its panel (erosion-v2 P4/teardown).
-    const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY), result.meanRunoff)
+    const threshold = channelThreshold(densityToCriticalArea(CANONICAL_RIVER_DENSITY, domain), result.meanRunoff)
     // Lakes only change on a re-route; a repeat call sends an empty buffer.
     const lakeOut = rerouted ? result.lakeDepth.slice() : new Float32Array(0)
     const levelOut = rerouted ? result.level.slice() : new Float32Array(0)
@@ -1309,7 +1309,7 @@ function handleHydrologyRun(): void {
         sedimentFlux: mt.sedimentFlux.length === mt.mesh.vertexSlots ? mt.sedimentFlux : undefined,
         biomes: nodeBiome,
         regime,
-        criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY),
+        criticalArea: densityToCriticalArea(CANONICAL_RIVER_DENSITY, domain),
       })
       // THE HYDROGEOLOGY (phase 5a): the column's materials, the springs
       // on the graph, the regime re-judged with the baseflow, the water

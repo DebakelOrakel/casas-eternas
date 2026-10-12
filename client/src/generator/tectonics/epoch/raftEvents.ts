@@ -87,8 +87,9 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
       // physical replacement for the old global cooldown timer — together with the
       // mantle release below (which removes the FORCING that would re-lock them), it
       // stops the broad hot dome under a supercontinent from strobing a breakup every
-      // epoch. See the TECTONICS_TUNING.riftResetRadius const.
-      const rr2 = TECTONICS_TUNING.riftResetRadius * TECTONICS_TUNING.riftResetRadius
+      // epoch. See the TECTONICS_TUNING.riftResetRadiusM const.
+      const riftReset = TECTONICS_TUNING.riftResetRadiusM / domain.metresPerUnit
+      const rr2 = riftReset * riftReset
       for (const b of boundaries) {
         if (domain.distanceSq(b.x, b.y, continentalRift.x, continentalRift.y) <= rr2) {
           // Negative lock = a passive-margin recovery delay: needs
@@ -132,7 +133,7 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
       // Release the thermal doming that drove the breakup — this is what actually
       // retires the global cooldown: it collapses the broad divergent forcing under
       // the (former) supercontinent so neighbouring points stop re-qualifying.
-      coolMantleAt(sim.mantle, continentalRift.x, continentalRift.y, domain, TECTONICS_TUNING.riftCoolRadius, TECTONICS_TUNING.riftCoolAmount)
+      coolMantleAt(sim.mantle, continentalRift.x, continentalRift.y, domain, TECTONICS_TUNING.riftCoolRadiusM / domain.metresPerUnit, TECTONICS_TUNING.riftCoolAmount)
     }
   }
 

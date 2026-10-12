@@ -67,7 +67,10 @@
 // nowhere coarser than that raster on land; the price was +25 % nodes.
 // The constant is a macro cell stated in metres: on the sphere a macro cell
 // is 9.8 km (DEC-0035 fork 6) and the ceiling stays 7.8 km, a mesh finer
-// than its raster there — left to the calibration.
+// than its raster there. Kept so by the calibration (DEC-0036 phase 8a):
+// the micro-relief octave it must resolve is 15.6 km on both shapes now
+// (globeNoise.globeOctaveOn), so the ceiling is the octave's, not the
+// raster's.
 // The golden worlds (35 % land at most) build 1.6–4.2 M nodes.
 export const MESH_TUNING = {
   // Spacing floor and ceiling on land (the shelf and the continental slope

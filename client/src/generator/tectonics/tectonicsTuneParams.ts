@@ -192,11 +192,16 @@ export const TECTONICS_TUNING = {
   // rifting so land/ocean is truly emergent. Each active subduction-arc boundary
   // point adds a small margin blob just inside the continental side, guarded
   // (see accreteToNearestRaft) so the margin advances without exploding the blob
-  // count. Rates/sizes are visual-tuning constants.
-  accretionBlobRadius: 70,
-  accretionInset: 30,
-  accretionMinGapSq: 85 * 85,
-  accretionMaxAttachSq: 150 * 150,
+  // count. Rates/sizes are visual-tuning constants. Metres since DEC-0036
+  // phase 8a (the torus's 70, 30, 85 and 150 cells of 7.8 km — on the
+  // sphere they were 25 % longer): the blob's radius, how far inside the
+  // overriding side it is welded, the gap below which it is not placed and
+  // the reach within which it joins a raft (accreteToNearestRaft's squared
+  // distances, in units² at the use).
+  accretionBlobRadiusM: 546_000,
+  accretionInsetM: 234_000,
+  accretionMinGapM: 663_000,
+  accretionMaxAttachM: 1_170_000,
   // Only accrete every Nth epoch — the direct lever on how fast continents grow
   // (and how many margin blobs pile up, which the raft membership query scans).
   // Raising it slows growth and keeps blob counts lower.
@@ -208,7 +213,7 @@ export const TECTONICS_TUNING = {
   // land coverage went 0.26-0.32 at epoch 0 to 0.64-0.79 by epoch 300, every raft
   // collapsed into a single supercontinent, and on 3 of 5 seeds the plate count
   // collapsed too (no boundaries left, so the simulation stops evolving). The
-  // comment on accretionBlobRadius above claims accretion "balanc[es] the crust
+  // comment on accretionBlobRadiusM above claims accretion "balanc[es] the crust
   // lost to rifting" — it does not; rifting moves crust, it does not destroy any.
   //
   // The physical sink is well documented and specific: most Archean crust was
@@ -286,14 +291,15 @@ export const TECTONICS_TUNING = {
   // formed (resetOceanAgeAround). Two very different situations, two radii:
   //
   // An ordinary spreading ridge makes a narrow strip of new crust per epoch, so
-  // this stays close to one age cell (the field mesh's spacing, world / OCEAN_AGE_RES_X = 8 px) — just wide
+  // this stays close to one age cell (the field mesh's spacing, world / OCEAN_AGE_RES_X = 8 cells) — just wide
   // enough that a ridge line reads as continuous rather than dotted. It has to be
   // small: this fires for EVERY divergent boundary point every epoch, and an
   // earlier value of 80 (which conflated it with the breakup case below) zeroed
   // ~300 age cells per point, which flattened the whole age field — measured median
   // ocean age 0, i.e. half the ocean floor sitting at ridge-crest depth instead of
   // subsided. That is the age-depth law being erased from the other direction.
-  ridgeFreshCrustRadius: 12,
+  // Metres since DEC-0036 phase 8a: the torus's 12 cells of 7.8 km.
+  ridgeFreshCrustRadiusM: 93_600,
   // A continental breakup is the other case: splitRaftAtRift shoves the two halves
   // splitGap apart in a single step, and everything that gap exposes genuinely IS
   // crust the new ridge just made. Fires once per breakup, not per boundary point.
@@ -323,11 +329,13 @@ export const TECTONICS_TUNING = {
   // stops on its own (Option C). Radius covers a good part of a supercontinent-scale
   // dome; amount pushes the peak (~1.1) past zero into cooling-ocean territory.
   // Tuned by harness so cooldown can go to 0 without runaway breakups.
-  riftCoolRadius: 380,
+  // Metres since DEC-0036 phase 8a (the torus's 380 cells).
+  riftCoolRadiusM: 2_964_000,
   riftCoolAmount: 1.8,
   // After a breakup, reset the rift/lock accumulators for every boundary point within
   // this world-radius of the rift — the rifted zone's stress state is relieved.
-  riftResetRadius: 400,
+  // Metres since DEC-0036 phase 8a (the torus's 400 cells).
+  riftResetRadiusM: 3_120_000,
   // A just-rifted margin is tectonically quiet while it cools into a passive margin:
   // the zone's boundary points get their lock counter set NEGATIVE, so they need this
   // many epochs of sustained divergence (on top of contRiftLockEpochs) before they
