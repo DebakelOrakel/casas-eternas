@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-13
+- **changed** Tectonics: rivers now keep pace with rising land and fill the basins it makes, so worlds hold about a third fewer lakes, and a seed makes a different world. `generator.step.tectonics`
 - **changed** Tectonics: mountains are held up by the bending plate instead of a height limit, so narrow ranges can rise to 7–9 km while wide highlands stay lower, and a seed makes a different world. `generator.step.tectonics`
 - **changed** Climate: the poles are colder and the mid-latitudes drier, as on Earth, and axial tilt, day length and contrast now shift ice, deserts and the temperature gradient without warming or cooling the world as a whole, so a seed makes a different world. `generator.step.climate`
 

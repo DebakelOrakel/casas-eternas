@@ -3,7 +3,7 @@ import { ELEVATION_TUNING } from '../elevation/elevationTuneParams'
 import type { Domain } from '../core/domain'
 import { nearFeatureBuckets, rangePerpRadius, type FeatureBuckets } from '../elevation/elevationField'
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
-import { detCos } from '../core/detMath'
+import { detCos, detSin } from '../core/detMath'
 
 // The offset `domain.delta` writes into: one per module, so no call
 // allocates. Read it at once, before the next delta.
@@ -29,7 +29,19 @@ const offset = { x: 0, y: 0 }
 // not, which is one more thing the mesh sees that the raster averaged.
 
 // The uplift's multiplier at a world point, from the range features.
-export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, domain: Domain): number {
+//
+// `spacingUnits`: the width of the cell the factor stands for (a mesh
+// node's, √ of its Voronoi area, domain units); 0 for a point. The train is
+// averaged over that width across the range — the mean of the cosine over
+// a window of width s is sinc(π s / λ) times its value at the centre — so a
+// node as wide as the wavelength or wider takes the train's mean, nearly 1,
+// and not the value at its centre. Sampled at the centre (until DEC-0036
+// phase 8c), the history's nodes (8–31 km on land against λ 15 km) took
+// the train as node-to-node noise of ±amplitude in the uplift: closed
+// basins between neighbours wherever a range rose, measured as 1–2 points
+// of the land under lakes (npm run calibrate, foldAmplitude 0 against
+// 0.5).
+export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, domain: Domain, spacingUnits = 0): number {
   const nearCount = nearFeatureBuckets(buckets, x, y)
   let bestWeight = 0
   let across = 0
@@ -49,5 +61,7 @@ export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, doma
   }
   if (bestWeight <= 0) return 1
   const wavelengthUnits = (TECTONICS_TUNING.foldWavelengthKm * 1000) / domain.metresPerUnit
-  return 1 + TECTONICS_TUNING.foldAmplitude * detCos((2 * Math.PI * across) / wavelengthUnits)
+  const window = (Math.PI * spacingUnits) / wavelengthUnits
+  const mean = window > 0 ? detSin(window) / window : 1
+  return 1 + TECTONICS_TUNING.foldAmplitude * mean * detCos((2 * Math.PI * across) / wavelengthUnits)
 }

@@ -33,7 +33,7 @@ import { meshRouting, meshSubstrate } from '../mesh/meshHydrology'
 import { accumulateDischargeOn, computeLakesOn } from '../surface/hydrology'
 import type { LakeAgeRecord } from '../tectonics/plateSimulationTypes'
 import { worldEpoch } from '../core/worldTime'
-import { DEFAULT_ROUTING_EVERY, runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
+import { runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { compactMesh, decodeMesh, encodeMesh, permute } from '../mesh/meshSerial'
 import { MeshState } from '../mesh/meshState'
 import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
@@ -215,7 +215,20 @@ export interface CoupledEpochOptions {
 // full-density job (5.8b) runs both every epoch — the time is the job's.
 // remeshEvery 3 the same day (the coarsen and refine were 0.22 s of the
 // remaining 1.6; the rebuild stays per epoch).
-export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 4, climateEvery: 3, remeshEvery: 3, renderEvery: 3 } as const
+// routingEvery (DEC-0036 phase 8c, 2026-10-13): the drainage — the flood,
+// the lakes' levels, the receivers — is computed afresh before every
+// iteration of the epoch, not once at its start (mesh/meshErosion.ts
+// DEFAULT_ROUTING_EVERY, 4 = the epoch's four iterations, until then). An
+// iteration is 250 kyr; at forcing 1 the uplift raises the crust by about
+// a kilometre in it since phase 8b-3. On a routing a million years
+// old the rivers did not see the dams the uplift raised (no cut where the
+// receiver stands higher) and the deposits did not see the basins it
+// made (the cap is the flood level of the epoch's start): of the lakes a
+// world ended with, a quarter to a third had formed inside the last
+// epoch's run, unseen by it. Measured with npm run calibrate (12 worlds
+// per shape, the table in docs/decisions/fields-on-meshes.md phase 8c):
+// the routing per iteration costs 0–6 % of the history's time.
+export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 4, climateEvery: 3, remeshEvery: 3, renderEvery: 3, routingEvery: 1 } as const
 
 // How far from a raft blob's centre a node still rides the raft, in blob
 // radii (the membership in stepCoupledEpoch). The blob's field fades out
@@ -738,7 +751,9 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // column's word (a fill under forest is soft fill, held).
     const c = zCanon[v] > 0 ? cover[v] : 0
     if (forcing.uplift[v] > 0) {
-      const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], domain)
+      // The train averaged over the node's own cell (DEC-0036 phase 8c):
+      // the history's nodes are wider than the wavelength.
+      const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], domain, Math.sqrt(areas[v]))
       if (fold !== 1) { forcing.uplift[v] *= fold; if (zCanon[v] > 0) foldedArea += areas[v] }
       forcing.uplift[v] *= collapse(mesh.vx[v], mesh.vy[v])
     }
@@ -769,7 +784,14 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const scaled = scaleEngineParamsForDt({ ...params, epsM: 0 }, dtScale)
   scaled.upliftDt *= options.upliftScale ?? 1
   timing.forcing = lap()
-  const result = await runMeshErosion(mesh, zCanon, forcing, { age: options.iterationsPerEpoch, params: scaled, pool: options.pool, routingEvery: Math.max(1, Math.min(DEFAULT_ROUTING_EVERY, options.iterationsPerEpoch)) })
+  // The routing afresh every HISTORY_DEFAULTS.routingEvery iterations, on
+  // both engines: the pool on the synchronous cadence at that depth
+  // (erosionEnginePool.ts PipelineOptions.synchronous), which gives the
+  // single engine's bytes — the screen's session and the job worker's
+  // replay of the same history must agree.
+  const routingEvery = HISTORY_DEFAULTS.routingEvery
+  const pool = options.pool && { ...options.pool, pipelineDepth: routingEvery, synchronous: true }
+  const result = await runMeshErosion(mesh, zCanon, forcing, { age: options.iterationsPerEpoch, params: scaled, pool, routingEvery })
   // The same floor after the engine (marine diffusion can take a floor
   // node a few metres under it); the relief the next epoch carries is
   // read from this z, so the floor is the terrain's, not a display one.

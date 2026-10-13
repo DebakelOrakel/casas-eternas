@@ -200,6 +200,118 @@ done before or beside it.
 
 ## Status
 
+2026-10-13: **phase 8c BUILT — the lakes: the routing follows the
+epoch, the folds are averaged over the node.** The user's goal: lakes at
+most about 8–10 % of the land. After 8b-3 the lakes (all, the frozen
+included) stood at 16.1 % of the land on the torus and 10.9 % on the
+sphere, the open water at 7.4 and 8.5 % (12 worlds per shape, medians).
+Measured with `npm run calibrate seeds=12 archeanMa=1000 landShare=30
+sweep=0` on HEAD and after; the diagnosis and the variants on 2–3 seeds
+per shape, with the history instrumented in a copy of the code.
+
+**The diagnosis.** The guess of 8b-3 — the flexural moats beside the
+ranges, filled only by later deposits — is not the cause:
+
+- The lake area in a moat (a node the plate lowered by more than 200 m
+  over the history, within 300 km of land above 2000 m) is 0.5–2.5
+  points of the land; three quarters of the lake area lie more than
+  300 km from such land.
+- The epoch's last step does not make them: the lakes on the terrain
+  without the last epoch's deflection — all of it, or its deposit, cut,
+  uplift or other part alone — differ by −2.6 to +2.1 points, in
+  both directions.
+- Sediment is not short: for most open lakes what arrives in an epoch
+  is one to a thousand times their volume.
+- The lakes are made and filled inside every epoch. Late in a history
+  (torus calibration seed, epochs 30–40) the lakes stand at about 12 %
+  of the land when an epoch ends; the motion, the rebuild and the
+  baseline add about 1 point, the ice's cut and till 2, the erosion takes
+  3.5 off, the coast, the flexure and the sea move it by ±1. Of the lakes
+  a world ends with, 60–69 % were flooded when the last epoch's erosion
+  started and 23–34 % formed during it.
+- What forms them during the run: the epoch's four iterations (1 Myr)
+  ran on the routing of its start (`routingEvery` 4). An uplift that
+  rises across a river is a dam the river does not see — the stream power
+  cuts only towards a lower receiver — and a basin it makes is not one
+  the deposits see — their cap is the flood level of the epoch's start.
+  At forcing 1 the uplift raises the crust by about a kilometre per
+  iteration since 8b-3 (upliftScale 0.5 → 4), so the stale routing costs
+  more than before: with upliftScale 0.5 the lakes fall by 2.4–5.4
+  points (and the peaks to 1.3–1.5 km). The folds (tectonics/folds.ts,
+  λ 15 km) add to it: the history's land nodes are 8–31 km wide, the
+  train sampled at their centres is node-to-node noise of ±50 % in the
+  uplift, and every rising range gets closed basins between neighbours —
+  1.3–2.2 points with the folds off.
+- 8b-3's finding 2, the sea-spaced nodes that become land before the next
+  remesh: lake area on nodes larger than 20 000 km² is 0–0.1 points of
+  the land. Not a cause.
+
+**The variants** (2 seeds per shape; all lakes, points of the land
+against HEAD, per world):
+
+| variant | Δ lakes |
+|---|---|
+| sediment under a basin's level settles as in still water, no donor floor in an enclosed basin | +0.5 to −1.8 |
+| the river's base level at a lake's surface, not its bed | 0 to +5.4 |
+| the uplift's flexural answer applied during the run | 0 to −1.2 |
+| the glacial cut off (a diagnosis) | −0.6 to −1.8 |
+| the folds off (a diagnosis) | −1.3 to −2.2 |
+| the routing before every iteration | −1.3 to −3.2 |
+| **the routing before every iteration and the folds averaged over the node (chosen)** | −1.9 to −11.3 (3 seeds) |
+
+**The model** (the code comments have the reasons):
+
+- *The routing per iteration* (pipeline/coupledEpoch.ts
+  `HISTORY_DEFAULTS.routingEvery` 1): the flood, the lake levels and the
+  receivers are computed afresh before each of the epoch's iterations,
+  on both engines — the pool on its synchronous cadence at depth 1, which
+  gives the single engine's bytes (harness:mesh checks it), so the
+  screen's session and the job worker's replay still agree. A rising dam
+  is a basin at the next iteration, its outlet cuts, and the deposits
+  fill it to its level. The history's time grew by 0–6 % (the variants'
+  runs side by side).
+- *The folds averaged over the node* (tectonics/folds.ts `foldFactorAt`,
+  the node's spacing): the train's mean over a window of the node's width
+  across the range, sinc(π s / λ) times its centre value. A node as wide
+  as the wavelength or wider takes about the mean; a tile's nodes, a few
+  kilometres apart, keep the train.
+
+**The worlds** (12 per shape; medians, the extremes in brackets):
+
+| | Earth | torus before | torus after | sphere before | sphere after |
+|---|---|---|---|---|---|
+| lakes, % of the land | ~2–4 | 16.1 (9.3–20.0) | 11.9 (5.9–17.7) | 10.9 (7.4–21.3) | 7.2 (4.8–13.5) |
+| of them open water | — | 7.4 (3.4–10.3) | 4.7 (2.2–8.5) | 8.5 (6.6–17.5) | 5.7 (3.0–13.2) |
+| worlds above 10 %, all / open | — | 11 / 2 | 9 / 0 | 7 / 3 | 3 / 1 |
+| lake bodies | — | 2705 | 1347 | 2063 | 947 |
+| terminal seas | — | 124 | 106 | 70 | 60 |
+| land, % of the surface | — | 30.3 | 30.2 | 25.1 | 25.0 |
+| > 2000 m, % of the land | ~5 | 5.48 | 4.70 | 6.18 | 4.81 |
+| > 3000 m | — | 1.52 | 1.39 | 1.01 | 0.78 |
+| > 4500 m | ~0.4 | 0.17 | 0.15 | 0.20 | 0.18 |
+| > 6000 m | ~0.001 | 0.0085 | 0.0095 | 0.019 | 0.0093 |
+| peak, m | 8849 | 6481 (9454) | 6589 (9372) | 6669 (8319) | 6795 (8628) |
+| largest patch > 4500 m, k km² | — | 36 | 31 | 22 | 21 |
+| mean land height, m | — | 809 | 768 | 751 | 708 |
+| ice, % of the land | ~10 | 37.9 | 38.1 | 13.8 | 13.1 |
+| river reaches | — | 2552 | 1922 | 2145 | 1541 |
+| mean temperature, °C | — | 5.38 | 5.44 | 14.4 | 14.5 |
+| Köppen A / B / C / D / E, % of the land | — | 10.9 / 23.5 / 9.4 / 19.3 / 36.3 | 11.2 / 23.5 / 9.4 / 19.7 / 36.2 | 20.2 / 29.4 / 18.5 / 19.1 / 10.3 | 20.8 / 29.8 / 17.7 / 18.8 / 10.0 |
+
+The open water is now 4.7 and 5.7 % of the land. What is left of the
+torus's 11.9 % is mostly frozen: basins under its ice sheets (the torus
+holds 38 % of its land under ice), 3.7–7.2 points on the seeds measured —
+the beds the ice's cut and load deepen, counted as frozen lakes because
+computeLakesOn does not know the ice. Whether a basin under an ice sheet
+counts as a lake is a question for the metric, not for the physics; not
+changed here. The land's hypsometry moved down a little below the peaks
+(> 2000 m −0.8 and −1.4 points, the mean land −41 and −43 m: the rivers
+now cut through the dams an uplift raises), the peaks and the land above
+4500 m stay within the worlds' spread. The reaches fell by a quarter:
+a lake ends a reach, and half the lakes went. The pentagons of the
+sphere's flexure mesh: max |z| 0.90 (median of 12), mean rank 0.46 — no
+field-mesh operator was touched.
+
 2026-10-13: **phase 8b-3 BUILT — the peaks, by the plate's flexure, no
 hard cap.** The user's goal: Himalaya-class ranges must be possible, with
 no hard cap. Before, the peaks topped out by two caps: the per-point soft

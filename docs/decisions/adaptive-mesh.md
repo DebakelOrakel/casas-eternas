@@ -18,7 +18,7 @@ summary.de: Die offenen Punkte der Richtung zum adaptiven Netz (DES-0018), am 22
 area: generator
 stage: building
 createdAt: 2026-09-22
-updatedAt: 2026-10-04
+updatedAt: 2026-10-13
 concepts: [generator.concept.detail-levels, generator.concept.erosion]
 related: [DES-0018, DES-0019, DES-0020]
 ---
@@ -389,6 +389,16 @@ What is missing is narrower, and step 5 takes it in four pieces:
 
 Rejected: a capacity-based transport-limited model. ξ–q covers both
 limits through the settling length, which is why it was chosen.
+
+Addendum 2026-10-13 (DEC-0036 phase 8c): "the basin routes over its
+outlet" holds only while the routing follows the basin. The history ran
+an epoch's four iterations (1 Myr) on the routing of the epoch's start,
+so a basin the uplift or a deposit made inside the epoch was not seen
+until the next one: the rivers stopped at dams they did not see, and the
+deposits stopped at the old flood level. Since then the history routes
+afresh before every iteration (`HISTORY_DEFAULTS.routingEvery` 1, both
+engines); the lakes under the land fell by a quarter to a third. The
+numbers are in [fields-on-meshes.md](./fields-on-meshes.md), phase 8c.
 
 ## Build order
 

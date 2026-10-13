@@ -468,6 +468,18 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
   let pipedDiffer = 0
   for (let a = 0; a < index.activeCount; a++) if (pipedZ[a] !== single.z[a]) pipedDiffer++
   check('the synchronous pipelined pool gives the single engine\'s bytes', pipedDiffer === 0, `${pipedDiffer} nodes differ`)
+  // And at the history's cadence (coupledEpoch.ts HISTORY_DEFAULTS
+  // .routingEvery: the screen's single engine against the job worker's pool).
+  const HISTORY = (await L('/src/generator/pipeline/coupledEpoch.ts')).HISTORY_DEFAULTS
+  const singleH = M.engine.ErosionEngine.onIndex(index, z0, { uplift, erodibility }, { ...M.engine.DEFAULT_ENGINE_PARAMS, epsM: 0 })
+  singleH.run(AGE, HISTORY.routingEvery)
+  const pipedH = await P.PipelinedErosionEngine.create(0, 0, z0, { uplift, erodibility }, spawn, { stencilWorkers: 2, refreshWorkers: 1, pipelineDepth: HISTORY.routingEvery, synchronous: true }, { ...M.engine.DEFAULT_ENGINE_PARAMS, epsM: 0 }, index)
+  pipedH.run(AGE)
+  const pipedHZ = Float32Array.from(pipedH.activeEngineViews.z)
+  await pipedH.close()
+  let pipedHDiffer = 0
+  for (let a = 0; a < index.activeCount; a++) if (pipedHZ[a] !== singleH.z[a]) pipedHDiffer++
+  check(`at the history's cadence (every ${HISTORY.routingEvery}) the synchronous pool gives the single engine's bytes`, pipedHDiffer === 0, `${pipedHDiffer} nodes differ`)
 }
 
 // The save's form of the mesh (phase 4.3): canonical numbering, the codec,
@@ -2099,13 +2111,15 @@ console.log('\n[2] determinism')
 
 // A history epoch is run single-threaded in the browser and on the engine
 // pool by the job worker (level 1's replay and its check against the
-// save). The two schemes agree bit for bit only while an epoch is no
-// longer than both routing cadences — the single engine's routingEvery and
-// the pool's depth (erosionEnginePool.ts, BAKE_PIPELINE_DEPTH). More
-// iterations per epoch and every refinement on the server fails its check.
-check('a history epoch stays within both engines\' routing cadences',
-  M.coupled.HISTORY_DEFAULTS.iterationsPerEpoch <= Math.min(M.erosion.DEFAULT_ROUTING_EVERY, M.enginePool.BAKE_PIPELINE_DEPTH),
-  `${M.coupled.HISTORY_DEFAULTS.iterationsPerEpoch} iterations, cadences ${M.erosion.DEFAULT_ROUTING_EVERY} and ${M.enginePool.BAKE_PIPELINE_DEPTH}`)
+// save). Both route afresh every HISTORY_DEFAULTS.routingEvery iterations
+// (the pool on the synchronous cadence at that depth, coupledEpoch.ts;
+// DEC-0036 phase 8c), so they agree bit for bit at any iteration count —
+// the synchronous pool's bytes against the single engine's are checked
+// with the engine's pool above. The cadence is a whole number of
+// iterations, one or more.
+check('a history epoch routes on one cadence in both engines',
+  Number.isInteger(M.coupled.HISTORY_DEFAULTS.routingEvery) && M.coupled.HISTORY_DEFAULTS.routingEvery >= 1,
+  `${M.coupled.HISTORY_DEFAULTS.iterationsPerEpoch} iterations, routing every ${M.coupled.HISTORY_DEFAULTS.routingEvery}`)
 
 // The generator's math (core/detMath.ts) is the same bits in every engine:
 // the hash of a fixed set of its values, recorded once and confirmed equal
