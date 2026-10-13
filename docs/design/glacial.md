@@ -146,6 +146,13 @@ appear from the 4K/8K bake at one to two kilometres.
 
 ## Status
 
+2026-10-13: the heights have no ceiling since DEC-0036 phase 8b-3
+(decisions/fields-on-meshes.md, Status): the plate's flexure and the
+plateau's force balance bound them, and the highest summits are 8–9.5 km.
+They stand 2.5–4.6 km over their own ELA (the medians of 12 worlds per
+shape; 0.5–1.1 km before, under the cap). The buzzsaw above is the process
+that planes them; it is the next step for the peaks, not built.
+
 2026-10-04: building — the forerunner and the ice in the coupled history (computeIceOnMesh, per epoch) are built; erosion by ice and till are open.
 
 sketched 2026-09-22 after the adaptive-mesh decision; wanted, not decided.

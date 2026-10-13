@@ -55,6 +55,52 @@ export function flexureMesh(domain: Domain): SharedFieldMesh {
   return sharedFieldMesh(domain, (domain.width / FLEXURE_RES_X) * domain.metresPerUnit)
 }
 
+// A node's load onto the flexure's mesh, its volume kept whole (m³ into
+// `loadM3` per cell; the caller divides by the cells' areas). A node no
+// larger than the cell under it goes onto the three corners of the
+// triangle under it, by their barycentric weights. A larger node — the
+// terrain mesh's sea spacing reaches 160 km, the flexure's cells are 62–78
+// km — goes onto as many cells as its own area covers, outward from the
+// cell that holds it in the mesh's neighbour order, in proportion to
+// their areas: on three corners its volume stood on a ninth of its area or
+// less, and the plate answered a column nine times too high (DEC-0036
+// phase 8b-3, measured on the golden world zulu: a 95 000 km² node that
+// the rivers lowered by 2.2 km rebounded by 19 km, which the ±9000 m
+// clamp had hidden until then).
+export function nodeLoadSpreader(sampler: SharedFieldMesh['sampler']): (x: number, y: number, areaM2: number, volumeM3: number, loadM3: Float64Array) => void {
+  const fm = sampler.mesh
+  const corners = new Int32Array(3)
+  const weights = new Float64Array(3)
+  const stamp = new Int32Array(fm.count)
+  const queue = new Int32Array(fm.count)
+  let smallest = Infinity
+  for (let c = 0; c < fm.count; c++) if (fm.area[c] < smallest) smallest = fm.area[c]
+  let pass = 0
+  return (x, y, areaM2, volumeM3, loadM3) => {
+    const start = areaM2 <= smallest ? -1 : sampler.nearestCell(x, y)
+    if (start < 0 || areaM2 <= fm.area[start]) {
+      sampler.taps(x, y, corners, weights)
+      for (let k = 0; k < 3; k++) loadM3[corners[k]] += weights[k] * volumeM3
+      return
+    }
+    pass++
+    let head = 0
+    let tail = 0
+    let covered = 0
+    queue[tail++] = start
+    stamp[start] = pass
+    while (head < tail && covered < areaM2) {
+      const c = queue[head++]
+      covered += fm.area[c]
+      for (let e = fm.nbrStart[c]; e < fm.nbrStart[c + 1]; e++) {
+        const n = fm.nbr[e]
+        if (stamp[n] !== pass) { stamp[n] = pass; queue[tail++] = n }
+      }
+    }
+    for (let i = 0; i < head; i++) loadM3[queue[i]] += volumeM3 * (fm.area[queue[i]] / covered)
+  }
+}
+
 // The elastic thickness at a point: a raft between the young and the
 // craton value by oldness, the ocean by its lithosphere age.
 export function elasticThicknessKm(continental: boolean, oldness: number, oceanAgeMa: number): number {

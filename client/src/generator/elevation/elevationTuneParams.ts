@@ -110,23 +110,11 @@ export const ELEVATION_TUNING = {
   // units and keep their proportions to each other automatically.
   thicknessToElevationScale: 0.035,
 
-  // The ISOSTATIC SOFT KNEE on the uplift deck (docs/decisions/uplift-soft-knee.md).
-  // Feature thickness is unbounded (long collisions stack it; measured on seed
-  // alpha: p99 ≈ 9600 m of implied uplift, max ≈ 10000), and the capsule
-  // averaging in computeElevation turns that fat tail into DECKS — 12.1% of
-  // land above 6000 m by uplift alone (Earth: ~0.001%), with 800-1400 m deep
-  // closed hollows on top holding brim-full ice-cold lakes. Above the knee the
-  // deck saturates exponentially toward knee+span, linear below, C1 at the
-  // knee: u' = knee + span·(1 − e^−(u−knee)/span). The ridged detail
-  // deliberately keeps riding the RAW uplift (see computeElevation), so crests
-  // still sharpen where the crust is thickest. Measured at 3000/3000: land
-  // >6000 m 2.50% → 0.00%, >4500 m 4.62% → 0.56%, >2000 m 21.4% → 15.7%, land
-  // share 11.4% → 11.0%, highest peak 9000 (the clamp) → 5695 m. Rare true
-  // 7-8 km summits are NOT reachable from this knob — deck and peak overlap in
-  // uplift VALUE, they only separate in the thickness sim itself; that
-  // follow-up is recorded in the decision doc.
-  upliftSoftKnee: metersToElevation(3000),
-  upliftSoftSpan: metersToElevation(3000),
+  // No soft knee on the deck since DEC-0036 phase 8b-3: the plate carries
+  // the deck as a load (pipeline/coupledEpoch.ts createCoupledTerrain), so
+  // a wide deck sinks and a narrow one stands; the per-point knee
+  // (u' = knee + span·(1 − e^−(u−knee)/span), 3000/3000 m) could not tell
+  // the two apart. See docs/decisions/uplift-soft-knee.md.
 
   // How strongly ridged-multifractal detail (ridgedNoise.ts) modulates
   // uplifted terrain, as a fraction of the local uplift itself — the detail

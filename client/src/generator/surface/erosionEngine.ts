@@ -425,20 +425,27 @@ export function kernelMfd(v: EngineViews, a0: number, a1: number): void {
 // ----------------------------------------------------------------- physics
 
 // Uplift — the forcing half of the balance, pinned to the initial coast
-// when the mask flag is set. Active indices [a0, a1).
+// when the mask flag is set. Active indices [a0, a1). The volume it adds
+// goes into the run's ledger (upliftNet, m³): the history loads the plate
+// with it (pipeline/coupledEpoch.ts, the flexure).
 //
-// Capped at z = 1.0: the metre anchor (ELEVATION_METERS) is the world's
-// REPRESENTATIONAL ceiling — the save quantizes to it, every consumer
-// assumes it, and the golden invariants enforce it. In principle erosion
-// bounds height; in practice mountain redistribution hands the engine
-// input peaks already AT the ceiling, and forty iterations of uplift on
-// top breached it by ~700 m on every golden seed (2026-08-17). Uplift
-// saturates there instead — v1's envelope cap played the same role.
+// No ceiling since DEC-0036 phase 8b-3. It was capped at z = 1.0 (the
+// metre anchor, 9000 m) as the world's representational ceiling — the save
+// quantised to it then, and mountain redistribution handed the raster
+// engine peaks already at it (2026-08-17). Neither holds now: the save
+// holds the mesh's z as float32, the redistribution is off, and the height
+// is bounded by the plate (the uplift's load sinks it) and by the erosion,
+// not by a clamp.
 export function kernelUplift(v: EngineViews, a0: number, a1: number, kp: KernelParams): void {
-  const { z, uplift, coastMask, flags } = v
+  const { z, uplift, coastMask, flags, upliftNet, areaRel } = v
   const hasMask = flags[FLAG_HAS_COAST_MASK] !== 0
+  const refM2 = kp.cellM * kp.cellM
   for (let i = a0; i < a1; i++) {
-    if (z[i] > 0 && (!hasMask || coastMask[i])) z[i] = Math.min(1, z[i] + kp.upliftDt * uplift[i])
+    if (z[i] > 0 && (!hasMask || coastMask[i])) {
+      const dz = kp.upliftDt * uplift[i]
+      z[i] += dz
+      upliftNet[i] += dz * areaRel[i] * refM2 * ELEVATION_METERS
+    }
   }
 }
 

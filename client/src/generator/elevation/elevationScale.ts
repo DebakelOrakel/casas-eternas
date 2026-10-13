@@ -47,14 +47,14 @@ export function isLandAt(elevation: number, dryLand = false): boolean {
   return elevation > SEA_LEVEL || dryLand
 }
 
-// Why 9000 m and not, say, 6000: the field is clamped to ±1, so the anchor sets
-// what fits. At 9000 m Everest (8848 m) lands at 0.98 — the clamp is spent
-// almost exactly on the tallest thing that can exist, wasting no range and
-// clipping nothing. At 6000 m every peak above 6 km would flatten into the
-// clamp, which is the failure mode this whole recalibration exists to remove.
-// Trenches are the one thing that still overflows (the Marianas would want
-// -1.22); they're narrow and rare enough that clipping them is an acceptable
-// trade for keeping the far more common land relief exact.
+// Why 9000 m and not, say, 6000: the field was clamped to ±1, so the anchor
+// set what fits. At 9000 m Everest (8848 m) lands at 0.98 — the clamp was
+// spent almost exactly on the tallest thing that can exist. Since DEC-0036
+// phase 8b-3 there is no ceiling: a height above 1 is a height (the save
+// holds the mesh's z as float32), and the plate's flexure and the erosion
+// bound it; the anchor is only the unit. The floor, −1, stays: trenches
+// overflow it (the Marianas would want −1.22), narrow and rare enough
+// that clipping them keeps the far more common land relief exact.
 //
 // The reference heights the rest of the pipeline builds on. Earth values, so
 // they can be checked rather than argued about:

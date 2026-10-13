@@ -2,6 +2,7 @@ import { mantleMesh } from '../mantle/mantleField'
 import type { Domain } from '../core/domain'
 import type { PlateSimulation } from '../tectonics/plateSimulation'
 import { dynamicTopographyAt } from './dynamicTopography'
+import { ELEVATION_METERS } from './elevationScale'
 import { buildFeatureBuckets, computeElevation, raftBaselineAt, warpedSamplePoint } from './elevationField'
 import { FINE_DETAIL_SEED_SALT, fineDetailNoiseOn, ridgedMultifractalOn } from './ridgedNoise'
 
@@ -38,15 +39,20 @@ export interface ElevationSampler {
   heightAt(x: number, y: number): number
 }
 
-export function synthesisSampler(s: SynthesisSources): ElevationSampler {
+// `deflectionM`, when given, is the plate's answer to the uplift deck at a
+// point, metres (+ up): the deck's isostasy (pipeline/coupledEpoch.ts
+// createCoupledTerrain). Added to the baseline; without it (a world with no
+// features) there is no deck to carry.
+export function synthesisSampler(s: SynthesisSources, deflectionM?: (x: number, y: number) => number): ElevationSampler {
   const { domain, warpSeed } = s
   const buckets = buildFeatureBuckets(s.features, domain)
   const mantleSampler = mantleMesh(domain).sampler
   const fineSeed = (warpSeed ^ FINE_DETAIL_SEED_SALT) >>> 0
   return {
     heightAt(x, y) {
-      const baseline = raftBaselineAt(x, y, s.rafts, s.oceanAge, domain, warpSeed)
+      let baseline = raftBaselineAt(x, y, s.rafts, s.oceanAge, domain, warpSeed)
         + dynamicTopographyAt(s.mantle, mantleSampler, x, y)
+      if (deflectionM) baseline += deflectionM(x, y) / ELEVATION_METERS
       const { wx, wy } = warpedSamplePoint(x, y, domain, warpSeed)
       return computeElevation(wx, wy, baseline, buckets, domain,
         ridgedMultifractalOn(domain, wx, wy, warpSeed),

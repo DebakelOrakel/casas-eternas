@@ -47,7 +47,7 @@ const COLOR_STOPS: { elevation: number; color: Rgb }[] = [
   stop(3000, [128, 86, 66]), // dark brown high ranges
   stop(4200, [146, 138, 136]), // bare rock
   stop(5500, [236, 236, 238]), // permanent snow
-  stop(ELEVATION_METERS, [255, 255, 255]), // the scale's ceiling
+  stop(ELEVATION_METERS, [255, 255, 255]), // the metre anchor; a summit above it draws the same white (a colour, not a ceiling)
 ]
 
 function lerpChannel(a: number, b: number, t: number): number {

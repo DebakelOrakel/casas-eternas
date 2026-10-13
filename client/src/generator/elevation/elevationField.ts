@@ -340,15 +340,10 @@ export function warpedSamplePoint(x: number, y: number, domain: Domain, warpSeed
   return { wx: warped.x, wy: warped.y }
 }
 
-export function computeElevation(
-  wx: number,
-  wy: number,
-  blendedBaseline: number,
-  featureBuckets: FeatureBuckets,
-  domain: Domain,
-  ridgeValue: number,
-  fineValue = 0,
-): number {
+// THE UPLIFT DECK at a warped point: the features' crustal thickness as
+// height, averaged over their capsules, before the plate carries it — the
+// load (pipeline/coupledEpoch.ts sinks it by the plate's flexure).
+export function upliftDeckAt(wx: number, wy: number, featureBuckets: FeatureBuckets, domain: Domain): number {
   const { buckets, near } = featureBuckets
   const nearCount = nearFeatureBuckets(featureBuckets, wx, wy)
   const rangePerp = rangePerpRadius(domain)
@@ -382,25 +377,42 @@ export function computeElevation(
   // densely overlap (weightSum >= 1, so no unbounded stacking along a
   // range) while letting sparse/edge coverage (weightSum < 1) actually
   // attenuate by the falloff, so isolated features fade out smoothly.
-  const upliftRaw = weightSum > 0 ? upliftSum / Math.max(1, weightSum) : 0
-  // The isostatic soft knee: above the knee the DECK saturates toward
-  // knee+span instead of climbing to (and plateauing at) the 9000 m clamp —
-  // see ELEVATION_TUNING.upliftSoftKnee for the measurements. The ridged
-  // detail below deliberately reads the RAW uplift, so the crests still
-  // sharpen with the true crustal thickness while the deck under them sinks.
-  const knee = ELEVATION_TUNING.upliftSoftKnee
-  const span = ELEVATION_TUNING.upliftSoftSpan
-  const uplift = upliftRaw > knee ? knee + span * (1 - detExp(-(upliftRaw - knee) / span)) : upliftRaw
+  return weightSum > 0 ? upliftSum / Math.max(1, weightSum) : 0
+}
+
+// The synthesis's height at a warped point: the baseline, the uplift deck
+// and its ridged detail, the plains' micro-relief.
+//
+// The deck is the raw crustal thickness as height. Its isostasy is not
+// here: the plate carries the deck as a load (pipeline/coupledEpoch.ts,
+// createCoupledTerrain, the flexure on the field mesh), and the caller
+// adds the plate's deflection to `blendedBaseline` — a wide deck sinks
+// towards its Airy share, a narrow one stands. A deflection is a regional
+// answer, so no per-point function can give it; the per-point soft knee
+// that stood here until DEC-0036 phase 8b-3 could not tell a plateau from
+// a peak (docs/decisions/uplift-soft-knee.md). A caller with no features
+// has no deck and passes the baseline alone. No ceiling either: the
+// floor (−1, the elevation scale's) stays for the trenches.
+export function computeElevation(
+  wx: number,
+  wy: number,
+  blendedBaseline: number,
+  featureBuckets: FeatureBuckets,
+  domain: Domain,
+  ridgeValue: number,
+  fineValue = 0,
+): number {
+  const uplift = upliftDeckAt(wx, wy, featureBuckets, domain)
   // Ridged-multifractal relief on top of the smooth uplift, modulated by
   // that uplift so only raised terrain gets rugged (ELEVATION_TUNING.ridgeRelativeStrength),
   // centered on RIDGE_MEAN so ridgelines add height and valleys cut down with
   // no net bias, and gated to positive uplift so trenches and rift valleys
   // (negative uplift) stay smooth depressions. ridgeValue is the precomputed
   // ridgedMultifractal sample at this warped point.
-  const detail = upliftRaw > 0 ? (ridgeValue - RIDGE_MEAN) * upliftRaw * ELEVATION_TUNING.ridgeRelativeStrength : 0
+  const detail = uplift > 0 ? (ridgeValue - RIDGE_MEAN) * uplift * ELEVATION_TUNING.ridgeRelativeStrength : 0
   let elevation = blendedBaseline + uplift + detail
   if (fineValue !== 0 && elevation > 0) elevation += fineValue * Math.min(ELEVATION_TUNING.plainDetailMax, elevation * ELEVATION_TUNING.plainDetailHeightFraction)
-  return Math.max(-1, Math.min(1, elevation))
+  return Math.max(-1, elevation)
 }
 
 export function applyMountainRedistribution(

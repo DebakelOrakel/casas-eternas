@@ -13,7 +13,8 @@
 //     archeanMa: run the Archean to this world age as well (the screen's
 //     user stops it at 1000–1500 Ma); 0 = to the gate only. landShare: the
 //     genesis.landShare control for every world (a sweep's value wins).
-//     TECTONICS_TUNING.splitGap=… (any tuning object's key, set in every child)
+//     TECTONICS_TUNING.splitGap=… (any tuning object's key, set in every child;
+//     HISTORY_DEFAULTS.upliftScale=… too)
 //     cache=<dir>: keep each default world's terrain after its history
 //   node scripts/calibrate.mjs climate cache=<dir> [sweep= seeds= shapes= X_TUNING.k=…]
 //     the climate step alone on those terrains (DEC-0036 phase 8b-2): the
@@ -91,7 +92,7 @@ function parseArgs(argv) {
     const at = a.indexOf('=')
     if (at < 0) continue
     const k = a.slice(0, at), v = a.slice(at + 1)
-    if (k.includes('_TUNING.')) tune[k] = Number(v)
+    if (k.includes('_TUNING.') || k.startsWith('HISTORY_DEFAULTS.')) tune[k] = Number(v)
     else if (k in opt) opt[k] = typeof opt[k] === 'number' ? Number(v) : v
     else { console.error(`unknown option ${k}`); process.exit(2) }
   }
@@ -144,12 +145,14 @@ async function loadModules(job) {
     domain: await L('/src/generator/core/domain.ts'),
     meshSerial: await L('/src/generator/mesh/meshSerial.ts'),
     glacial: await L('/src/generator/surface/glacial.ts'),
+    flexure: await L('/src/generator/tectonics/flexure.ts'),
   }
   const TUNING_MODULES = {
     TECTONICS_TUNING: '/src/generator/tectonics/tectonicsTuneParams.ts', CLIMATE_TUNING: '/src/generator/climate/climateTuneParams.ts',
     SURFACE_TUNING: '/src/generator/surface/surfaceTuneParams.ts', ELEVATION_TUNING: '/src/generator/elevation/elevationTuneParams.ts',
     MANTLE_TUNING: '/src/generator/mantle/mantleTuneParams.ts', MESH_TUNING: '/src/generator/mesh/meshDensity.ts',
     COLUMN_TUNING: '/src/generator/mesh/meshColumn.ts', COVER_TUNING: '/src/generator/surface/cover.ts',
+    HISTORY_DEFAULTS: '/src/generator/pipeline/coupledEpoch.ts',
   }
   for (const [key, value] of Object.entries(job.tune ?? {})) {
     const [obj, name] = key.split('.')
@@ -325,10 +328,29 @@ async function buildOne(job) {
     return land / all
   }
   const handoverLand = meshLand()
+  // The high ground on the way (phase 8b-3): the peak, the land's p99 and
+  // its share above 4500 m, at the hand-over and every tenth epoch.
+  const highNow = () => {
+    const pairs = []
+    let landSum = 0, high = 0, top = 0
+    for (let v = 0; v < coupled.mesh.vertexSlots; v++) {
+      if (!coupled.mesh.vAlive[v] || coupled.z[v] <= SEA) continue
+      const a = coupled.mesh.voronoiArea(v), h = (coupled.z[v] - SEA) * METRES
+      pairs.push([h, a]); landSum += a
+      if (h > 4500) high += a
+      if (h > top) top = h
+    }
+    pairs.sort((x, y) => x[0] - y[0])
+    let acc = 0, p99 = 0
+    for (const [h, a] of pairs) { acc += a; if (acc >= 0.99 * landSum) { p99 = h; break } }
+    return { peakM: Math.round(top), p99M: Math.round(p99), above4500: +(high / Math.max(1e-12, landSum)).toFixed(5) }
+  }
+  const highPerEpoch = [highNow()]
   const landPerEpoch = []
   for (let e = 0; e < job.epochs; e++) {
     await M.coupled.stepCoupledEpoch(sim, coupled, { ...M.coupled.HISTORY_DEFAULTS, controls: CONTROLS, weather: weatherParams })
     if (e % 5 === 4 || e === job.epochs - 1) landPerEpoch.push(+meshLand().toFixed(4))
+    if (e % 10 === 9) highPerEpoch.push(highNow())
   }
   lap('history')
   const domain = sim.domain
@@ -436,6 +458,50 @@ async function buildOne(job) {
   }
   sizes.sort((a, b) => b - a)
 
+  // THE HIGH GROUND (phase 8b-3): the land's hypsometry above 2 km, the
+  // top percentiles, the extent of the land above 3000 and 4500 m — its
+  // patches as connected parts over the mesh's facets, the largest's area
+  // and their count above 10 000 km² — and the peaks against the snow
+  // line: the equilibrium line (surface/glacial.ts) of the final climate's
+  // first chain at each node, the land above it and the peak's height
+  // over its own line. Earth: > 2000 m ~5 % of the land, > 4500 m ~0.4 %,
+  // > 6000 m ~0.001 %, 8849 m; Tibet 4.5–5 km over some 2.5 Mkm².
+  const HYPSO = [2000, 3000, 4500, 6000, 7500, 8500]
+  const hypsoA = HYPSO.map(() => 0)
+  for (const [h, a] of landH) for (let k = 0; k < HYPSO.length; k++) if (h > HYPSO[k]) hypsoA[k] += a
+  const patches = (minM) => {
+    const seen = new Uint8Array(mesh.vertexSlots)
+    const out = []
+    for (let s = 0; s < sub.count; s++) {
+      if (seen[s] || !mesh.vAlive[s] || (coupled.z[s] - SEA) * METRES <= minM) continue
+      let area = 0
+      seen[s] = 1
+      stack.push(s)
+      while (stack.length) {
+        const c = stack.pop()
+        area += mesh.voronoiArea(c)
+        const k = sub.facetNeighbours(c, nb)
+        for (let i = 0; i < k; i++) { const o = nb[i]; if (!seen[o] && (coupled.z[o] - SEA) * METRES > minM) { seen[o] = 1; stack.push(o) } }
+      }
+      out.push(km2(area))
+    }
+    out.sort((a, b) => b - a)
+    return { largestKm2: out[0] ?? 0, totalKm2: out.reduce((s, x) => s + x, 0), patches: out.filter((x) => x >= 1e4).length }
+  }
+  const high3000 = patches(3000)
+  const high4500 = patches(4500)
+  const elaNodes = CP.climateAtPoints(CP.climateCellsFromWeather(step.w1), points)
+  const ela = M.glacial.computeIceOnMesh({ mesh, z: coupled.z, seaLevelTemperature: elaNodes.seaLevelTemperature, precipitation: elaNodes.precipitation, seasonalAmplitude: elaNodes.seasonalAmplitude, cellM: domain.metresPerUnit }).elaM
+  let aboveElaA = 0, peakNode = -1, peakOverElaM = -Infinity, maxOverElaM = -Infinity
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v] || coupled.z[v] <= SEA) continue
+    const h = (coupled.z[v] - SEA) * METRES
+    if (h > ela[v]) aboveElaA += mesh.voronoiArea(v)
+    if (h - ela[v] > maxOverElaM) maxOverElaM = h - ela[v]
+    if (peakNode < 0 || h > (coupled.z[peakNode] - SEA) * METRES) peakNode = v
+  }
+  if (peakNode >= 0) peakOverElaM = (coupled.z[peakNode] - SEA) * METRES - ela[peakNode]
+
   const cm = rTerrain.cm
   const annual = M.refinement.annualFromMonths(refined, refined.cells)
 
@@ -488,6 +554,24 @@ async function buildOne(job) {
       wind: pentagonCheck(cm.mesh, cellSpeed(annualOf(refined.windE), annualOf(refined.windS))),
       mantle: pentagonCheck(mm, sim.mantle),
       oceanAge: pentagonCheck(om, sim.oceanAge),
+      flexure: (() => {
+        // The plate's answer (tectonics/flexure.ts) to the final relief
+        // over its baseline as a load, at one elastic thickness (40 km):
+        // the operator's ∇²∇² at the twelve pentagons (phase 8b-3).
+        const { mesh: fm, sampler: fs } = M.flexure.flexureMesh(domain)
+        const load = new Float64Array(fm.count), corners = new Int32Array(3), weights = new Float64Array(3)
+        for (let v = 0; v < mesh.vertexSlots; v++) {
+          if (!mesh.vAlive[v]) continue
+          const h = Math.max(0, coupled.z[v] - coupled.baseline[v]) * METRES * mesh.voronoiArea(v) * m2
+          if (!h) continue
+          fs.taps(mesh.vx[v], mesh.vy[v], corners, weights)
+          for (let k = 0; k < 3; k++) load[corners[k]] += weights[k] * h
+        }
+        for (let c = 0; c < fm.count; c++) load[c] /= fm.area[c]
+        const w = new Float64Array(fm.count)
+        M.flexure.flexuralResponse(fm, load, new Float64Array(fm.count).fill(M.flexure.flexuralRigidityM4(40)), w)
+        return pentagonCheck(fm, w)
+      })(),
     },
   }
   // The seam and the poles on the charts.
@@ -540,11 +624,16 @@ async function buildOne(job) {
     nucleated, archeanLand, archeanLandAt, handoverLand, archeanRafts, stabilised, handoverPlates,
     plates: sim.seeds.length, rafts: sim.rafts.length,
     nodes: mesh.aliveVertices,
-    landFraction: landA / total, continentalFraction: cont / total, landPerEpoch,
+    landFraction: landA / total, continentalFraction: cont / total, landPerEpoch, highPerEpoch,
     landmasses: sizes.filter((s) => s >= 1e4).length, continents: sizes.filter((s) => s >= 1e6).length,
     largestLandmassShare: sizes.length ? sizes[0] / km2(cont) : 0,
     peakM: peak, landP99M: weighted(landH.slice(), 0.99), meanLandM: meanLandH,
     above1km: above[0] / landA, above2km: above[1] / landA, above4km: above[2] / landA, above6km: above[3] / landA,
+    landP999M: weighted(landH.slice(), 0.999),
+    ...Object.fromEntries(HYPSO.map((m, k) => [`above${m}m`, hypsoA[k] / landA])),
+    high3000LargestKm2: high3000.largestKm2, high3000Km2: high3000.totalKm2, high3000Patches: high3000.patches,
+    high4500LargestKm2: high4500.largestKm2, high4500Km2: high4500.totalKm2, high4500Patches: high4500.patches,
+    landAboveElaShare: aboveElaA / landA, peakOverElaM, maxOverElaM,
     lakeShareOfLand: lakeA / cont, liquidLakeShareOfLand: lakeLiquidA / cont,
     lakes: lakeBodies, terminalSeas: terminal, dryBasins: dry,
     maxDischarge: maxDis, p99Discharge: q(discharges, 0.99),
@@ -635,6 +724,21 @@ const ROWS = [
   ['above2km', '%', 100],
   ['above4km', '%', 100],
   ['above6km', '%', 100],
+  ['landP999M', 'm', 1],
+  ['above2000m', '%', 100, [4, 6]],
+  ['above3000m', '%', 100],
+  ['above4500m', '%', 100, [0.2, 0.6]],
+  ['above6000m', '%', 100, [0, 0.01]],
+  ['above7500m', '%', 100],
+  ['above8500m', '%', 100],
+  ['high3000LargestKm2', 'km²', 1e-3, null, 'k km²'],
+  ['high3000Patches', '', 1],
+  ['high4500LargestKm2', 'km²', 1e-3, null, 'k km²'],
+  ['high4500Km2', 'km²', 1e-3, null, 'k km²'],
+  ['high4500Patches', '', 1],
+  ['landAboveElaShare', '%', 100],
+  ['peakOverElaM', 'm', 1],
+  ['maxOverElaM', 'm', 1],
   ['iceVolumeKm3', 'km³', 1e-6, null, 'M km³'],
   ['iceShareOfLand', '%', 100, [8, 12]],
   ['lakeShareOfLand', '%', 100, [0, 10]],

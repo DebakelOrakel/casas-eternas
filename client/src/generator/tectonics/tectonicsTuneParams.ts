@@ -391,6 +391,33 @@ export const TECTONICS_TUNING = {
   flexurePoisson: 0.25,
   flexureDeflectionScale: 1,
 
+  // THE PLATEAU'S FORCE BALANCE (DEC-0036 phase 8b-3, the history's
+  // uplift; pipeline/coupledEpoch.ts collapseFactor). A convergent
+  // boundary thickens the crust only while its push exceeds what the
+  // raised crust exerts back by its weight: the spreading force of a
+  // plateau grows with its MEAN height, and where the two balance the
+  // crust spreads instead of thickening (Molnar & Lyon-Caen 1988, Geol.
+  // Soc. Am. Spec. Pap. 218: Tibet at 5 km, the Altiplano at 4). To first
+  // order in the mean height h̄ the thickening rate falls as 1 − h̄ / H.
+  // h̄ is a REGIONAL mean — the land's height (the sea at 0) on the
+  // flexure's mesh, smoothed by a Gaussian of σ = collapseSmoothingM — so
+  // a plateau stops rising while a narrow range in lowland goes on; a peak
+  // stands above it by the relief the rivers and the ice cut and by the
+  // plate's rebound under that cut. The flexure (above) is linear and so
+  // cannot bound a plateau by itself: the load of a wide uplift sinks by
+  // ρc / ρm whatever its height (measured 2026-10-13: at five times the
+  // uplift the widest plateau stood at 7 km, its peak at 12.6 km).
+  // H is calibrated, not Tibet's 5 km: h̄ takes in a plateau's valleys and
+  // its lower margin, so it reads below the plateau's own level. Measured
+  // 2026-10-13 (npm run calibrate, 3 seeds per shape, upliftScale 4): at
+  // H 5000 m the land above 6000 m was 0.074 % (torus median), 0.10 %
+  // (sphere), the largest patch above 4500 m up to 425 000 km²; at 4000 m
+  // 0.010 % and 0.071 %, the largest patch 190 000 km², the peaks still
+  // 6.0–9.2 km. A σ of 100 km instead of 150 moved less (0.010 / 0.076 %,
+  // the largest patch 509 000 km²).
+  collapseHeightM: 4000,
+  collapseSmoothingM: 150_000,
+
   // FOLDS (tectonics/folds.ts, phase 5.7): the buckling wavelength across
   // a convergent margin and the modulation of the uplift over it (±
   // amplitude around the range's mean). Both to be measured: the

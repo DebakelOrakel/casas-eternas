@@ -1,6 +1,8 @@
 import type { Domain } from '../core/domain'
 import { ITERATION_YEARS } from '../surface/erosionEngine'
 import { TECTONIC_MA_PER_EPOCH } from '../core/worldTime'
+import type { FieldMesh } from '../fields/fieldMesh'
+import { smoothGaussian } from '../fields/fieldOperators'
 import { buildBlobIndex, nearestRaftIndexed, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
 import { nearestPlateIndex } from '../crust/raftLifecycle'
 import { dynamicTopographyAt } from '../elevation/dynamicTopography'
@@ -12,9 +14,9 @@ import { buildMesh, densityTarget, MESH_Z, triangulatePoints } from '../mesh/mes
 import { MESH_TUNING } from '../mesh/meshDensity'
 import { addColumnField, columnVolumeM3, createColumn, cut, decodeColumn, deposit, encodeColumn, erodibilityOver, MESH_COLUMN, COLUMN_DEPTH, openLayer, permuteColumn, type SedimentColumn } from '../mesh/meshColumn'
 import { computeCratonOldnessField } from '../crust/raftField'
-import { elasticThicknessKm, flexuralResponse, flexuralRigidityM4, flexureMesh } from '../tectonics/flexure'
+import { elasticThicknessKm, flexuralResponse, flexuralRigidityM4, flexureMesh, nodeLoadSpreader } from '../tectonics/flexure'
 import { foldFactorAt } from '../tectonics/folds'
-import { buildFeatureBuckets } from '../elevation/elevationField'
+import { buildFeatureBuckets, upliftDeckAt, warpedSamplePoint } from '../elevation/elevationField'
 import { oceanAgeAt } from '../tectonics/oceanAge'
 import { computeWeather, defaultWeatherParams, type Weather, type WeatherParams } from '../climate/weather'
 import { climateTerrain } from '../climate/climateMesh'
@@ -195,6 +197,17 @@ export interface CoupledEpochOptions {
 // ~25 epochs once their boundary goes quiet — not the uplift's half-life
 // (24 instead of 12 epochs changed nothing), but mostly the step between
 // the epochs (motion, rebuild, remesh), measured the same day.
+// Raised to 4 by DEC-0036 phase 8b-3 (2026-10-13), when the plate began to
+// carry the uplift as a load: U is now crustal thickening, of which a wide
+// region keeps only its Airy share at the surface, 1 − ρc / ρm = 0.18
+// (TECTONICS_TUNING's densities), and a narrow range more, as the plate's
+// strength holds it. At 4 a wide uplift rises 0.73 times as fast as at 0.5
+// before, a range narrower than the flexural parameter up to 8 times; the
+// plateau's force balance (collapseFactor) bounds the wide part. Measured
+// with npm run calibrate (3 seeds per shape, 40 epochs; the land above
+// 4500 m as the shapes' medians): at 2.75 the peaks 4.3–7.9 km and
+// 0.10–0.16 %, at 5.5 7.7–13.9 km and 0.9–1.1 % (collapseHeightM 5000 m
+// both); at 4 with collapseHeightM 4000 m 5.1–9.2 km and 0.19–0.25 %.
 // climateEvery and renderEvery (2026-09-26, the second lever of the
 // performance round, profiled on 2048×1024 at budget 4: of ~3 s an epoch
 // the weather chain was 1.0 and the intermediate picture 1.0, the erosion
@@ -202,7 +215,7 @@ export interface CoupledEpochOptions {
 // full-density job (5.8b) runs both every epoch — the time is the job's.
 // remeshEvery 3 the same day (the coarsen and refine were 0.22 s of the
 // remaining 1.6; the rebuild stays per epoch).
-export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 0.5, climateEvery: 3, remeshEvery: 3, renderEvery: 3 } as const
+export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 4, climateEvery: 3, remeshEvery: 3, renderEvery: 3 } as const
 
 // How far from a raft blob's centre a node still rides the raft, in blob
 // radii (the membership in stepCoupledEpoch). The blob's field fades out
@@ -272,6 +285,10 @@ export interface CoupledEpochStats {
   // ice that stands now — equal on the first epoch only.
   iceLoadM3: number
   iceWeightM3: number
+  // The tectonic uplift's part of the load (phase 8b-3), m³ of rock: the
+  // crust the engine raised this epoch less the crust it lowered (a rift,
+  // a trench margin on land).
+  upliftLoadM3: number
   events: SimEvent[]
   nodesBefore: number
   nodesAfter: number
@@ -309,10 +326,42 @@ function solidBaselineAt(sim: PlateSimulation, x: number, y: number, blobs?: Blo
     + dynamicTopographyAt(sim.mantle, mantleMesh(sim.domain).sampler, x, y)
 }
 
+// THE DECK'S ISOSTASY (DEC-0036 phase 8b-3): the plate's deflection under
+// the synthesis's uplift deck, metres (+ up) at a point; null without
+// features (the hand-over has none — the screen's history starts from the
+// Archean's terrain; a world restored from before its history, and the
+// golden harness's plain tectonic epochs, have them). The deck is crust
+// the tectonics thickened, as the history's uplift is (stepCoupledEpoch,
+// the flexure's load): the same plate carries it, on the flexure's mesh,
+// with the same elastic thickness per cell. A wide deck sinks towards its
+// Airy share, 1 − ρc / ρm of its height; a narrow one stands on the
+// plate's strength. Only the thickening loads the plate here: the deck's
+// negative part is a depth the synthesis sets on purpose — a trench the
+// slab holds down, a rift floor capped to stand as a lake
+// (TECTONICS_TUNING.riftBasinFloorThickness) — and a rebound would undo
+// it. The history's uplift is a rate and loads with both signs.
+function deckDeflection(sim: PlateSimulation): ((x: number, y: number) => number) | null {
+  if (sim.features.length === 0) return null
+  const domain = sim.domain
+  const { mesh: fm, sampler } = flexureMesh(domain)
+  const buckets = buildFeatureBuckets(sim.features, domain)
+  const loadM = new Float64Array(fm.count)
+  for (let c = 0; c < fm.count; c++) {
+    const { wx, wy } = warpedSamplePoint(fm.x[c], fm.y[c], domain, sim.warpSeed)
+    loadM[c] = Math.max(0, upliftDeckAt(wx, wy, buckets, domain)) * ELEVATION_METERS
+  }
+  const craton = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), sim.archeanEpochs, CLIMATE_RES_X, CLIMATE_RES_Y, domain)
+  for (let i = 0; i < craton.length; i++) if (craton[i] < 0) craton[i] = 0
+  const rigidity = plateRigidity(sim, fm, buildBlobIndex(sim.rafts, domain), craton)
+  const w = new Float64Array(fm.count)
+  flexuralResponse(fm, loadM, rigidity, w)
+  return (x, y) => sampler.sample(w, x, y)
+}
+
 // The terrain at the start of the history: the mesh from the synthesis,
 // the baseline evaluated at every node, the relief the difference.
 export function createCoupledTerrain(sim: PlateSimulation, budget = 1): CoupledTerrain {
-  const built = buildMesh(sim.domain, synthesisSampler(sim), { seed: sim.warpSeed, budget })
+  const built = buildMesh(sim.domain, synthesisSampler(sim, deckDeflection(sim) ?? undefined), { seed: sim.warpSeed, budget })
   const { mesh, order } = compactMesh(built.mesh)
   const z = permute(built.state.get(MESH_Z), order)
   const baseline = new Float32Array(mesh.vertexSlots)
@@ -325,6 +374,55 @@ function meshAreasOf(mesh: PeriodicTriangulation): Float32Array {
   const areas = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) areas[v] = mesh.voronoiArea(v)
   return areas
+}
+
+// THE PLATEAU'S FORCE BALANCE (DEC-0036 phase 8b-3): the factor on the
+// tectonic thickening at a point, 1 − h̄ / H (TECTONICS_TUNING
+// .collapseHeightM; 0 above it), with h̄ the regional mean height: the
+// land's height above the sea (the sea counts 0) spread from the nodes
+// onto the flexure's mesh by their barycentric weights and areas, then
+// smoothed by a Gaussian of collapseSmoothingM — in metres on the mesh,
+// so the same on both shapes.
+function collapseFactor(mesh: PeriodicTriangulation, z: Float32Array, areas: Float32Array): (x: number, y: number) => number {
+  const { mesh: fm, sampler } = flexureMesh(mesh.domain)
+  const sum = new Float64Array(fm.count)
+  const weight = new Float64Array(fm.count)
+  const corners = new Int32Array(3)
+  const weights = new Float64Array(3)
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v]) continue
+    const hM = Math.max(0, z[v]) * ELEVATION_METERS
+    sampler.taps(mesh.vx[v], mesh.vy[v], corners, weights)
+    for (let k = 0; k < 3; k++) {
+      const w = weights[k] * areas[v]
+      sum[corners[k]] += w * hM
+      weight[corners[k]] += w
+    }
+  }
+  for (let c = 0; c < fm.count; c++) sum[c] = weight[c] > 0 ? sum[c] / weight[c] : 0
+  const mean = smoothGaussian(fm, sum, TECTONICS_TUNING.collapseSmoothingM, new Float64Array(fm.count))
+  const H = TECTONICS_TUNING.collapseHeightM
+  return (x, y) => Math.max(0, 1 - sampler.sample(mean, x, y) / H)
+}
+
+// The plate's rigidity R = D / (ρm g) per cell of the flexure's mesh
+// (tectonics/flexure.ts): the elastic thickness at each cell's centre — a
+// raft between its young and its craton value by oldness, the sea floor by
+// its age. `blobs` indexes sim.rafts as they are now; `cratonField` is the
+// cratons' oldness on the climate's chart, 0 where there is no crust.
+function plateRigidity(sim: PlateSimulation, flexMesh: FieldMesh, blobs: BlobIndex, cratonField: Float32Array): Float64Array {
+  const domain = sim.domain
+  const climateGrid = domain.grid(CLIMATE_RES_X, CLIMATE_RES_Y)
+  const rigidity = new Float64Array(flexMesh.count)
+  for (let c = 0; c < flexMesh.count; c++) {
+    const x = flexMesh.x[c]
+    const y = flexMesh.y[c]
+    const continental = raftFieldIndexed(x, y, blobs) > 0.5
+    const oldness = upsampleAt(cratonField, climateGrid, x, y)
+    const ageMa = oceanAgeAt(sim.oceanAge, domain, x, y) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
+    rigidity[c] = flexuralRigidityM4(elasticThicknessKm(continental, oldness, ageMa))
+  }
+  return rigidity
 }
 
 // One epoch: tectonics, motion, rebuild and remesh, baseline swap, erosion.
@@ -492,11 +590,12 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   for (let v = 0; v < mesh.vertexSlots; v++) {
     solid[v] = solid1[order[v]]
     baseline[v] = solid[v] - sea
-    // The elevation scale's range, as the synthesis clamps it
+    // The elevation scale's floor, as the synthesis keeps it
     // (elevationField.computeElevation): a trench node carries a relief of
     // −3000 m under an abyssal baseline, and a baseline that subsides
-    // under it would take z past the floor the whole pipeline assumes.
-    zCanon[v] = Math.max(-1, Math.min(1, baseline[v] + hCanon[v]))
+    // under it would take z past the floor the whole pipeline assumes. No
+    // ceiling (phase 8b-3): the plate and the erosion bound the height.
+    zCanon[v] = Math.max(-1, baseline[v] + hCanon[v])
   }
   timing.baseline += lap()
   // THE CLIMATE OF THE EPOCH (phase 5.4, decision 13): the weather chain
@@ -579,7 +678,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       iceCoastColumnM3 += tillM * areaM2
       deposit(column, v, tillM * SURFACE_TUNING.glacialTillCoarse, cratonHere, 1, tempC, precipHere, true)
       deposit(column, v, tillM * (1 - SURFACE_TUNING.glacialTillCoarse), cratonHere, 1, tempC, precipHere, false)
-      zCanon[v] = Math.min(1, zCanon[v] + tillM / ELEVATION_METERS)
+      zCanon[v] += tillM / ELEVATION_METERS
     }
   }
   const iceAreaShare = landAreaNow > 0 ? iceArea / landAreaNow : 0
@@ -618,7 +717,10 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const cratonField = cratonFieldForTill
   // THE FOLDS (phase 5.7): the uplift modulated across every range by the
   // buckling train — the same features the uplift field is built from.
+  // Then the plateau's force balance (phase 8b-3): the thickening slows as
+  // the regional mean height under it rises (collapseFactor).
   const featureBuckets = buildFeatureBuckets(sim.features, domain)
+  const collapse = collapseFactor(mesh, zCanon, areas)
   let foldedArea = 0
   const cratonAge = new Float32Array(mesh.vertexSlots)
   const rockHard = new Float32Array(mesh.vertexSlots)
@@ -638,6 +740,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     if (forcing.uplift[v] > 0) {
       const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], domain)
       if (fold !== 1) { forcing.uplift[v] *= fold; if (zCanon[v] > 0) foldedArea += areas[v] }
+      forcing.uplift[v] *= collapse(mesh.vx[v], mesh.vy[v])
     }
     const bedrockK = forcing.erodibility[v]
     const k = erodibilityOver(column.data, v, layers, bedrockK)
@@ -667,10 +770,10 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   scaled.upliftDt *= options.upliftScale ?? 1
   timing.forcing = lap()
   const result = await runMeshErosion(mesh, zCanon, forcing, { age: options.iterationsPerEpoch, params: scaled, pool: options.pool, routingEvery: Math.max(1, Math.min(DEFAULT_ROUTING_EVERY, options.iterationsPerEpoch)) })
-  // The same range after the engine (marine diffusion can take a floor
+  // The same floor after the engine (marine diffusion can take a floor
   // node a few metres under it); the relief the next epoch carries is
-  // read from this z, so the clamp is the terrain's, not a display one.
-  for (let v = 0; v < mesh.vertexSlots; v++) result.z[v] = Math.max(-1, Math.min(1, result.z[v]))
+  // read from this z, so the floor is the terrain's, not a display one.
+  for (let v = 0; v < mesh.vertexSlots; v++) result.z[v] = Math.max(-1, result.z[v])
   // The column's ledger from the run's record: the cut comes off the top
   // of the column first (the remainder was bedrock), the deposit goes into
   // this epoch's layer with the provenance the walk carried to it. The
@@ -739,14 +842,16 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       const precipHere = Math.max(0, atNodes.precipitation[v])
       iceCoastColumnM3 += depM * coastAreaM2
       deposit(column, v, depM, cratonAge[v], rockHard[v], tempC, precipHere, true)
-      result.z[v] = Math.min(1, result.z[v] + depM / ELEVATION_METERS)
+      result.z[v] += depM / ELEVATION_METERS
     }
   }
   timing.coast = lap()
   // FLEXURAL ISOSTASY (phase 5.3, tectonics/flexure.ts; on the field mesh
   // since DEC-0036 phase 6): the epoch's load change — rock cut, sediment
-  // laid down, the ice — spread from the nodes onto the flexure's mesh by
-  // their barycentric weights (each node's volume kept whole), the plate
+  // laid down, the ice, the uplift — spread from the nodes onto the
+  // flexure's mesh (tectonics/flexure.nodeLoadSpreader: by their
+  // barycentric weights, a node larger than a cell over the cells its area
+  // covers; each node's volume kept whole), the plate
   // equation solved there with the elastic thickness at each cell's centre,
   // and the deflection read back at the nodes through the sampler. Crust
   // moves; the column does not (it rides on the crust), and the relief
@@ -754,10 +859,10 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const { mesh: flexMesh, sampler: flexSampler } = flexureMesh(domain)
   const flexCells = flexMesh.count
   const loadM = new Float64Array(flexCells)
-  const flexCorners = new Int32Array(3)
-  const flexWeights = new Float64Array(3)
+  const spreadLoad = nodeLoadSpreader(flexSampler)
   let iceLoadM3 = 0
   let iceWeightM3 = 0
+  let upliftLoadM3 = 0
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
     // The epoch's load change: the walk's deposits and cuts, the ice's
@@ -765,21 +870,24 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     const iceM = iceLoadChangeM(ice.thickness[v], icePrevious[v])
     iceLoadM3 += iceM * areas[v] * cellM2
     iceWeightM3 += iceLoadChangeM(ice.thickness[v], 0) * areas[v] * cellM2
-    const dv = result.depositM3[v] - result.cutM3[v] + (glacial.tillM[v] - glacial.cutM[v] + coastal.depositM[v] - coastal.cutM[v] + iceM) * areas[v] * cellM2
+    // And the crust the tectonics thickened or thinned (phase 8b-3): the
+    // uplift the engine applied is rock added on the plate, and the plate
+    // carries it as it carries a deposit — a wide uplift sinks towards its
+    // Airy share (1 − ρc / ρm), a narrow one stands on the plate's
+    // strength. Both signs: a rift's or a trench margin's lowering is crust
+    // taken off, and the plate rebounds under a wide one as it sinks under
+    // a wide thickening. Without the rebound the negative uplift lowered
+    // the land at the full rate of the scaled forcing: at upliftScale 4,
+    // 5 of the 6 points of land lost in 5 epochs were under a negative U
+    // (measured 2026-10-13, torus calibration).
+    const upliftM3 = result.upliftM3[v]
+    upliftLoadM3 += upliftM3
+    const dv = result.depositM3[v] - result.cutM3[v] + upliftM3 + (glacial.tillM[v] - glacial.cutM[v] + coastal.depositM[v] - coastal.cutM[v] + iceM) * areas[v] * cellM2
     if (dv === 0) continue
-    flexSampler.taps(mesh.vx[v], mesh.vy[v], flexCorners, flexWeights)
-    for (let k = 0; k < 3; k++) loadM[flexCorners[k]] += flexWeights[k] * dv
+    spreadLoad(mesh.vx[v], mesh.vy[v], areas[v] * cellM2, dv, loadM)
   }
-  const rigidity = new Float64Array(flexCells)
-  for (let c = 0; c < flexCells; c++) {
-    loadM[c] /= flexMesh.area[c]
-    const x = flexMesh.x[c]
-    const y = flexMesh.y[c]
-    const continental = raftFieldIndexed(x, y, blobs) > 0.5
-    const oldness = upsampleAt(cratonField, climateGrid, x, y)
-    const ageMa = oceanAgeAt(sim.oceanAge, domain, x, y) * (sim.epochMa || TECTONIC_MA_PER_EPOCH)
-    rigidity[c] = flexuralRigidityM4(elasticThicknessKm(continental, oldness, ageMa))
-  }
+  for (let c = 0; c < flexCells; c++) loadM[c] /= flexMesh.area[c]
+  const rigidity = plateRigidity(sim, flexMesh, blobs, cratonField)
   const deflection = new Float64Array(flexCells)
   flexuralResponse(flexMesh, loadM, rigidity, deflection)
   let reboundMaxM = 0
@@ -789,7 +897,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     const wM = flexSampler.sample(deflection, mesh.vx[v], mesh.vy[v])
     if (wM > reboundMaxM) reboundMaxM = wM
     if (-wM > subsidenceMaxM) subsidenceMaxM = -wM
-    result.z[v] = Math.max(-1, Math.min(1, result.z[v] + wM / ELEVATION_METERS))
+    result.z[v] = Math.max(-1, result.z[v] + wM / ELEVATION_METERS)
   }
   timing.flexure = lap()
   // THE SEA LEVEL'S CHANGE, applied now: the solid surface stands higher
@@ -805,7 +913,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // evaluates directly — the bytes must agree.
     for (let v = 0; v < mesh.vertexSlots; v++) {
       if (!mesh.vAlive[v]) continue
-      result.z[v] = Math.max(-1, Math.min(1, result.z[v] + seaShift))
+      result.z[v] = Math.max(-1, result.z[v] + seaShift)
       baseline[v] = solid[v] - sim.eustaticM / ELEVATION_METERS
     }
   }
@@ -873,7 +981,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   }
   const areaM2 = new Float64Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) areaM2[v] = areas[v] * cellM2
-  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, iceCoastColumnM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, meanLandCover, screeM3, solifluctionShare, foldedShare, iceAreaShare, glacialCutM3: glacial.cutM3, tillM3: glacial.tillM3, elaMeanM, shoreNodes: coastal.shoreNodes, coastCutM3: coastal.erodedM3, coastDepositM3: coastal.depositedM3, coastExportM3: coastal.exportedM3, iceLoadM3, iceWeightM3, timing }
+  return { events, nodesBefore, nodesAfter: mesh.aliveVertices, removed: c.removed, inserted: r.inserted, landCells, landVolume, erodedFluxM3: result.erodedFluxM3, exportedFluxM3: result.exportedFluxM3, depositedM3, reErodedM3, iceCoastColumnM3, columnVolumeM3: columnVolumeM3(column, mesh, areaM2), reboundMaxM, subsidenceMaxM, meanLandTempC, iceVolumeKm3, seaLevelM, lakes: ages.length, oldestLakeMa, meanLandCover, screeM3, solifluctionShare, foldedShare, iceAreaShare, glacialCutM3: glacial.cutM3, tillM3: glacial.tillM3, elaMeanM, shoreNodes: coastal.shoreNodes, coastCutM3: coastal.erodedM3, coastDepositM3: coastal.depositedM3, coastExportM3: coastal.exportedM3, iceLoadM3, iceWeightM3, upliftLoadM3, timing }
 }
 
 // The terrain's bytes for a save or a harness hash.

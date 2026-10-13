@@ -298,6 +298,10 @@ export interface TerrainViews {
   slopeScale: Float32Array
   diffScale: Float32Array
   hillNet: Float32Array
+  // The uplift's run-long ledger (phase 8b-3): the volume the tectonic
+  // uplift added at a node, m³ (negative where a rift lowered it) — the
+  // crust's thickening, which the plate carries as a load (flexure).
+  upliftNet: Float32Array
   // Per-worker reduction slots: residual, eroded volume, exported volume.
   maxStepW: Float64Array
   erodedW: Float64Array
@@ -400,9 +404,9 @@ export function terrainBufferBytes(activeCount: number, edgeCount: number): numb
   // cutVolume, depositVolume, depositCraton, depositHard, fluxCraton,
   // fluxHard, mouthCraton, mouthHard, cratonAge, rockHard, erosionCoarse,
   // fluxCoarse, mouthCoarse, depositCoarse, slopeScale, diffScale, hillNet,
-  // pinnedZ (28a); u8: coastMask, statusMask (2a); i32 flags(16); f64 maxStepW,
+  // upliftNet, pinnedZ (29a); u8: coastMask, statusMask (2a); i32 flags(16); f64 maxStepW,
   // erodedW, exportedW (3 × 64); alignment slack.
-  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 28 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
+  return 4 * (a + 1) + 2 * 4 * e + 4 * 4 * e + 29 * 4 * a + 2 * a + 16 * 4 + 3 * 64 * 8 + 2048
 }
 
 export function routingBufferBytes(activeCount: number, edgeCount: number): number {
@@ -461,6 +465,7 @@ export function createTerrainViews(activeCount: number, edgeCount: number, buffe
     slopeScale: take(Float32Array, a),
     diffScale: take(Float32Array, a),
     hillNet: take(Float32Array, a),
+    upliftNet: take(Float32Array, a),
     pinnedZ: take(Float32Array, a),
     maxStepW: take(Float64Array, 64),
     erodedW: take(Float64Array, 64),
@@ -561,6 +566,7 @@ export function assembleViews(terrain: TerrainViews, routing: RoutingViews, zFro
     slopeScale: terrain.slopeScale,
     diffScale: terrain.diffScale,
     hillNet: terrain.hillNet,
+    upliftNet: terrain.upliftNet,
     maxStepW: terrain.maxStepW,
     erodedW: terrain.erodedW,
     exportedW: terrain.exportedW,

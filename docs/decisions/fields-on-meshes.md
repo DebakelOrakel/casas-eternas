@@ -200,6 +200,108 @@ done before or beside it.
 
 ## Status
 
+2026-10-13: **phase 8b-3 BUILT — the peaks, by the plate's flexure, no
+hard cap.** The user's goal: Himalaya-class ranges must be possible, with
+no hard cap. Before, the peaks topped out by two caps: the per-point soft
+knee on the synthesis's deck ([uplift-soft-knee.md](./uplift-soft-knee.md),
+DEC-0027, 3000/3000 m) and the ±1 = 9000 m clamp (computeElevation, the
+engine's kernelUplift, the epoch's steps). Measured with `npm run calibrate
+seeds=12 archeanMa=1000 landShare=30` (12 worlds per shape, 40 epochs) on
+HEAD and after; the variants on 3 seeds per shape.
+
+**The model** (the code comments have the reasons):
+
+- *The deck's isostasy* (pipeline/coupledEpoch.ts `deckDeflection`): the
+  synthesis's uplift deck is the raw crustal thickness as height, and the
+  plate carries its positive part as a load on the flexure's mesh, with
+  the same elastic thickness per cell as the history; the deflection goes
+  into the baseline. A deck wider than the flexural parameter sinks
+  towards its Airy share, 1 − ρc / ρm = 0.18; a narrow one stands on the
+  plate's strength. The knee is removed. (Only a world with features
+  takes this path — a world restored from before its history; the
+  screen's history starts at the hand-over, which has none.)
+- *The history's uplift is a load* (stepCoupledEpoch, the flexure): the
+  engine's uplift (its ledger `upliftNet`, m³) is crustal thickening, or
+  a rift's thinning, and the plate takes it with the epoch's cuts and
+  deposits — both signs. `HISTORY_DEFAULTS.upliftScale` 0.5 → 4: a wide
+  uplift rises 0.73 times as fast as before, a range narrower than the
+  flexural parameter up to 8 times.
+- *The plateau's force balance* (`collapseFactor`,
+  TECTONICS_TUNING.collapseHeightM 4000 m, collapseSmoothingM 150 km):
+  the thickening rate falls as 1 − h̄ / H with h̄ the land's regional mean
+  height. The flexure is linear and cannot bound a plateau alone.
+- *No ceiling*: the clamp keeps its floor (−1, the trenches) only. The
+  golden invariant is now a runaway check (15 000 m).
+- *A large node's load is spread over its own area*
+  (tectonics/flexure.nodeLoadSpreader): the terrain mesh's sea nodes
+  reach 160 km, the flexure's cells are 62–78 km, and on the three
+  corners of its triangle a 95 000 km² node's cut stood on a ninth of its
+  area. On golden's zulu such a node, lowered 2.2 km by the rivers,
+  rebounded 19 km (to 18.3 km) — the clamp had hidden it. A node no
+  larger than its cell keeps the three corners.
+
+**Two findings on the way.** (1) The negative uplift had to load the
+plate too: with the thickening alone, the land at upliftScale 4 fell by
+6–9 points in 40 epochs on the torus, 3–4 on the sphere, and on the
+torus calibration seed 5 of the 6 points lost in the first 5 epochs were
+under a negative U (a rift, a trench's capsule on a coast), far from any
+range: the scaled lowering with no rebound. (2) The flexure alone
+(collapse off) let the plateaus run: at upliftScale 2.5, zulu stood above
+4500 m over 735 000 km², its peak at 12.6 km.
+
+| 3 seeds per shape, medians (torus / sphere) | peak m | > 4500 m % | > 6000 m % | largest patch > 4500 m, k km² | land % |
+|---|---|---|---|---|---|
+| HEAD (knee, clamp; upliftScale 0.5) | 9000 / 8803 | 0.70 / 0.11 | 0.34 / 0.06 | 281 / 24 | 31.6 / 28.1 |
+| thickening load only, 0.5 | 5026 / 1766 | 0.002 / 0 | 0 / 0 | 1 / 0 | 30.0 / 26.4 |
+| thickening load only, 2.5 | 11 524 / 8727 | 0.48 / 0.15 | 0.34 / 0.08 | 146 / 28 | 25.4 / 25.3 |
+| + collapse H 5000, 4 | 7887 / 8578 | 0.52 / 0.33 | 0.18 / 0.12 | 135 / 29 | 23.0 / 24.1 |
+| both signs, H 5000, 2.75 | 7302 / 6418 | 0.16 / 0.10 | 0.003 / 0.018 | 65 / 19 | 31.0 / 27.2 |
+| both signs, H 5000, 4 | 7966 / 9102 | 0.43 / 0.32 | 0.074 / 0.10 | 143 / 34 | 30.6 / 27.0 |
+| both signs, H 5000, 5.5 | 9025 / 11 569 | 1.07 / 0.91 | 0.30 / 0.35 | 200 / 85 | 30.5 / 26.9 |
+| both signs, H 5000 σ 100 km, 4 | 6525 / 7748 | 0.32 / 0.23 | 0.010 / 0.076 | 123 / 29 | 30.6 / 27.1 |
+| **both signs, H 4000, 4 (chosen)** | 6451 / 7698 | 0.19 / 0.25 | 0.010 / 0.071 | 44 / 26 | 30.5 / 27.2 |
+
+**The worlds against Earth** (12 per shape; medians, the extremes in
+brackets; the land's hypsometry as shares of the land):
+
+| | Earth | torus HEAD | torus after | sphere HEAD | sphere after |
+|---|---|---|---|---|---|
+| > 2000 m | ~5 % | 5.36 | 5.48 | 5.92 | 6.18 |
+| > 3000 m | — | 2.19 | 1.52 | 0.97 | 1.01 |
+| > 4500 m | ~0.4 % | 0.47 (2.14) | 0.17 (0.96) | 0.15 (0.99) | 0.20 (0.62) |
+| > 6000 m | ~0.001 % | 0.032 (1.50) | 0.0085 (0.18) | 0.000 (0.27) | 0.019 (0.13) |
+| land p99, m | — | 3780 | 3385 | 2968 | 2995 |
+| land p99.9, m | — | 5154 | 4784 | 4891 | 4896 |
+| peak, m | 8849 | 6448 (9000) | 6481 (9455) | 5731 (9000) | 6669 (8320) |
+| worlds at the clamp / peak ≥ 7 km / ≥ 8.5 km | — | 2 / 5 / 2 | 0 / 5 / 3 | 1 / 2 / 2 | 0 / 5 / 0 |
+| largest patch > 4500 m, k km² | Tibet ~2500 | 115 (859) | 36 (247) | 36 (200) | 22 (97) |
+| largest patch > 3000 m, k km² | — | 564 (1561) | 213 (1233) | 212 (603) | 98 (536) |
+| peak over its snow line (ELA), m | — | 540 | 4573 | 1084 | 2482 |
+| land above the ELA, % | — | 36.9 | 38.4 | 10.8 | 11.2 |
+| land, % of the surface | — | 31.2 | 30.3 | 26.2 | 25.1 |
+| land and sub-sea basins, % | — | 31.9 | 30.9 | 26.2 | 25.3 |
+| lakes, % of the land (liquid) | — | 12.1 (4.0) | 16.1 (7.4) | 6.2 (4.5) | 10.9 (8.5) |
+| ice, % of the land | ~10 | 37.7 | 37.9 | 12.2 | 13.8 |
+
+The high ground is now a few narrow ranges, not decks: the land above
+4500 m keeps Earth's order, the largest patch above it shrinks three to
+four times, and no world stands at a cap; the highest summits are 8.3–9.5
+km. Above 6000 m the worlds still hold 9 and 19 times Earth's share (0.009
+and 0.019 %): narrow crests a few nodes wide, not plateaus. The peaks
+stand 2.5–4.6 km over their snow line — the glacial buzzsaw, a later
+step, is the process that cuts them. The land moved −1.0 point (torus)
+and −1.0 (sphere) by median, −0.5 to −2.7 per world: the flexural moat
+beside a range on a coast drowns its lowland. The lakes rose by half to
+three quarters: the moats are the foreland basins, and the model fills
+them only with what the next epochs deposit — open for the calibration
+of the deposition. The pentagons of the sphere's flexure mesh: the
+plate's answer to the final relief at one Te, its Laplacian anomaly
+at the twelve pentagons against the hexagons — max |z| 0.89 (median of
+12), mean rank 0.49: no artefact.
+
+Golden: 0 hard failures (before the spreading of a large node's load:
+zulu's runaway, 18.3 km), re-recorded and re-armed, PASS 0 / 0 / 0.
+
 2026-10-13: **phase 8b-2 BUILT — the temperature gradient and the
 planet's levers.** The order agreed: land ✓ → the gradient → the levers →
 peaks → the ocean's depth; this step the second and the third, with two

@@ -438,9 +438,12 @@ function invariants(w) {
   const land = countWhere(w.el, (v) => v > SEA) / (W * H)
   if (!(land > 0.01 && land < 0.6)) fail('land fraction', `${(land * 100).toFixed(2)}% is outside 1–60%`)
 
+  // No ceiling since DEC-0036 phase 8b-3 (the plate and the erosion bound
+  // the height): a peak far above any planet's crust can stand is a
+  // runaway, not a calibration. The floor is the elevation scale's.
   const elev = stats(w.el)
-  if (elev.max * METRES > METRES + 1) fail('elevation', `max ${(elev.max * METRES).toFixed(0)} m exceeds the clamp`)
-  if (elev.min * METRES < -METRES - 1) fail('elevation', `min ${(elev.min * METRES).toFixed(0)} m exceeds the clamp`)
+  if (elev.max * METRES > 15000) fail('elevation', `max ${(elev.max * METRES).toFixed(0)} m — a runaway`)
+  if (elev.min * METRES < -METRES - 1) fail('elevation', `min ${(elev.min * METRES).toFixed(0)} m exceeds the floor`)
 
   // The plate-count floor exists because a simulation that collapses to one
   // plate is kinematically frozen for the rest of the run. The ceiling is the

@@ -14,9 +14,10 @@ summary.de: Die Hebung sättigt über ein isostatisches weiches Knie (linear bis
   ihre randvollen, eiskalten Beckenseen verschwinden, während Grate weiter
   der rohen Krustendicke folgen.
 area: generator
-stage: built
+stage: superseded
 createdAt: 2026-08-16
-updatedAt: 2026-08-16
+updatedAt: 2026-10-13
+supersededBy: DEC-0036
 concepts: [generator.concept.plate-boundaries]
 related: [DES-0016]
 ---
@@ -88,8 +89,40 @@ treatment (lakes below freezing render as ice) handles the remainder.
 `applyMountainRedistribution` (display-only gamma) is untouched — it never
 was part of the simulation truth.
 
+## Addendum 2026-10-13: superseded by the plate's flexure
+
+The user asked for Himalaya-class ranges, with no hard cap. The deferred
+treatment above (narrow the thickness tail) was not needed: the fork it
+named — deck and peak differ only in spatial EXTENT — is exactly what a
+regional isostasy answers, and the field mesh had the solver for it since
+DEC-0036 phase 6 (tectonics/flexure.ts, the plate equation). Built in
+DEC-0036 phase 8b-3 ([fields-on-meshes.md](./fields-on-meshes.md),
+Status, which has the tables):
+
+- **The knee is gone** from `computeElevation`. The synthesis's deck is
+  the raw crustal thickness as height; the plate carries its positive part
+  as a load and the synthesis adds the deflection to the baseline
+  (pipeline/coupledEpoch.ts `deckDeflection`). A deck wider than the
+  flexural parameter (50–127 km on land) sinks towards its Airy share,
+  1 − ρc / ρm = 0.18 of its height; a narrow one stands on the plate's
+  strength.
+- **The history's uplift loads the plate too**, both signs: the engine's
+  uplift is now crustal thickening (or a rift's thinning), and the
+  flexure takes it with the epoch's cuts and deposits.
+  `HISTORY_DEFAULTS.upliftScale` 0.5 → 4 to match.
+- **The plateau's force balance** (TECTONICS_TUNING.collapseHeightM
+  4000 m over a 150 km regional mean): the thickening slows as the
+  region's mean height rises, so a plateau stops while a narrow range goes
+  on. The flexure alone cannot bound a plateau; it is linear.
+- **The ±1 clamp has no ceiling any more** (the engine's uplift, the
+  synthesis, the epoch's steps). The floor, −1 (9000 m below the sea),
+  stays for the trenches.
+
 ## Status
 
 decided and built 2026-08-16; calibrated on seed alpha with
 scripts/measureHydrology.mjs (deleted 2026-10-12 with the raster
-hydrology it measured; in the git history) and a hypsometry decomposition
+hydrology it measured; in the git history) and a hypsometry decomposition.
+Superseded 2026-10-13 by DEC-0036 phase 8b-3: the knee and the ceiling
+are removed, the plate's flexure and the plateau's force balance bound
+the heights (see the addendum).

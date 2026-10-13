@@ -70,6 +70,9 @@ export interface MeshErosionResult {
   // The net volume the hillslope creep handed a node (phase 5.6), m³,
   // negative where it lost — scree is a layer.
   hillNetM3: Float32Array
+  // The volume the tectonic uplift added (phase 8b-3), m³, negative where
+  // a rift lowered the node — the plate's load (pipeline/coupledEpoch.ts).
+  upliftM3: Float32Array
   depositCraton: Float32Array
   depositHard: Float32Array
 }
@@ -387,7 +390,7 @@ export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float
   return collect(engine.views, index, engine.poppedCount, initial, engine.erodedFluxM3, engine.exportedFluxM3)
 }
 
-function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int32Array; accumulation: Float32Array; popOrder: Int32Array; flux: Float32Array; fluxCoarse: Float32Array; cutVolume: Float32Array; depositVolume: Float32Array; depositCoarse: Float32Array; depositCraton: Float32Array; depositHard: Float32Array; hillNet: Float32Array }, index: EngineIndex, popped: number, initial: Float32Array, eroded: number, exported: number): MeshErosionResult {
+function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int32Array; accumulation: Float32Array; popOrder: Int32Array; flux: Float32Array; fluxCoarse: Float32Array; cutVolume: Float32Array; depositVolume: Float32Array; depositCoarse: Float32Array; depositCraton: Float32Array; depositHard: Float32Array; hillNet: Float32Array; upliftNet: Float32Array }, index: EngineIndex, popped: number, initial: Float32Array, eroded: number, exported: number): MeshErosionResult {
   const { active, activeCount } = index
   // Both classes: the consumers read one flux.
   const flux = new Float32Array(activeCount)
@@ -416,6 +419,7 @@ function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int
     depositM3: expandActive(index, views.depositVolume, 0),
     depositCoarseM3: expandActive(index, views.depositCoarse, 0),
     hillNetM3: expandActive(index, views.hillNet, 0),
+    upliftM3: expandActive(index, views.upliftNet, 0),
     depositCraton: expandActive(index, views.depositCraton, 0),
     depositHard: expandActive(index, views.depositHard, 0),
   }
