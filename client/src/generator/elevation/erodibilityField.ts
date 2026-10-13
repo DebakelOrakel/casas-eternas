@@ -1,6 +1,7 @@
 import type { Raft, Suture } from '../crust/raftTypes'
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { computeCratonOldnessField } from '../crust/raftField'
+import { worldEpochMa } from '../core/worldTime'
 import { ELEVATION_TUNING } from './elevationTuneParams'
 import { capsuleWeight } from './capsule'
 import type { Domain } from '../core/domain'
@@ -35,12 +36,12 @@ export interface ErodibilityFieldParams {
   // K multiplier at full craton oldness (1.0 → this, linearly with the
   // 0..1 oldness field).
   cratonHardness: number
-  // K multiplier peak for a suture younger than freshSutureEpochs …
+  // K multiplier peak for a suture younger than freshSutureMa …
   youngSutureSoftness: number
-  freshSutureEpochs: number
-  // … and for one older than oldSutureEpochs (linear crossfade between).
+  freshSutureMa: number
+  // … and for one older than oldSutureMa (linear crossfade between).
   oldSutureHardness: number
-  oldSutureEpochs: number
+  oldSutureMa: number
   // K multiplier under a flood-basalt sheet.
   floodBasaltHardness: number
   // Capsule radius for a suture's belt, world cells. Wider than a range's
@@ -57,9 +58,13 @@ export interface ErodibilityFieldParams {
 export const DEFAULT_ERODIBILITY_FIELD_PARAMS: ErodibilityFieldParams = {
   cratonHardness: 0.45,
   youngSutureSoftness: 1.5,
-  freshSutureEpochs: 80,
+  // A suture's age is a time, in Ma (DEC-0036 phase 8c'). The limits were
+  // 80 and 240 epochs of the tectonic era; at its 1 Ma per epoch
+  // (core/worldTime.TECTONIC_MA_PER_EPOCH) that is 80 and 240 Ma, so a
+  // suture of the tectonic era keeps its old factor.
+  freshSutureMa: 80,
   oldSutureHardness: 0.8,
-  oldSutureEpochs: 240,
+  oldSutureMa: 240,
   floodBasaltHardness: 0.55,
   sutureRadius: 45,
   sutureHalfLength: ELEVATION_TUNING.rangeSegmentHalfLength,
@@ -71,8 +76,9 @@ export const DEFAULT_ERODIBILITY_FIELD_PARAMS: ErodibilityFieldParams = {
 // The smooth K-factor field at `outWidth`×`outHeight` over the world's
 // `domain`. `currentEpoch` is the CONTINUOUS world epoch
 // (core/worldTime.worldEpoch) — the axis birthEpoch and suture stamps use;
-// `archeanEpochs` the Archean's length on it (the cratons' oldness is
-// measured in Ma, computeCratonOldnessField). Neutral is 1.0 everywhere; ocean floor stays
+// `archeanEpochs` the Archean's length on it (the cratons' oldness and
+// the sutures' age are measured in Ma, core/worldTime.worldEpochMa: an
+// Archean epoch is five tectonic ones' worth). Neutral is 1.0 everywhere; ocean floor stays
 // neutral (the engine's marine steps have their own physics).
 export function computeErodibilityField(
   rafts: Raft[],
@@ -103,6 +109,7 @@ export function computeErodibilityField(
   // effects crossfade on the suture's age.
   if (sutures.length > 0) {
     const offset = { x: 0, y: 0 }
+    const nowMa = worldEpochMa(currentEpoch, archeanEpochs)
     for (let py = 0; py < outHeight; py++) {
       const wy = (py + 0.5) * cellH
       for (let px = 0; px < outWidth; px++) {
@@ -120,9 +127,11 @@ export function computeErodibilityField(
             params.sutureRadius,
           )
           if (weight <= 0) continue
-          const age = currentEpoch - suture.epoch
+          // The age in Ma, not in epochs: the stamps lie on the continuous
+          // epoch axis (DEC-0036 phase 8c').
+          const ageMa = nowMa - worldEpochMa(suture.epoch, archeanEpochs)
           const oldFraction = Math.min(1, Math.max(0,
-            (age - params.freshSutureEpochs) / (params.oldSutureEpochs - params.freshSutureEpochs)))
+            (ageMa - params.freshSutureMa) / (params.oldSutureMa - params.freshSutureMa)))
           const target = params.youngSutureSoftness * (1 - oldFraction) + params.oldSutureHardness * oldFraction
           const factor = 1 + (target - 1) * weight
           const deviation = Math.abs(factor - 1)

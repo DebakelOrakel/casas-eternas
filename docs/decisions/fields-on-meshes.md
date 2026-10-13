@@ -200,6 +200,28 @@ done before or beside it.
 
 ## Status
 
+2026-10-13: **phase 8c′ BUILT — a suture's age in Ma.** Found in 8b-2:
+the erodibility field (elevation/erodibilityField.ts) read a suture's
+age as `currentEpoch − suture.epoch`, in epochs of the continuous axis,
+on which an Archean epoch is 5 Ma and a tectonic one 1 Ma — the unit
+mistake 8b-2 removed from the cratons' oldness. The age is now
+`worldEpochMa(now) − worldEpochMa(stamp)`, and the two limits are in
+Ma: `freshSutureMa` 80 and `oldSutureMa` 240, the old 80 and 240 epochs
+of the tectonic era at its 1 Ma per epoch, so a suture of the tectonic
+era keeps its factor. Regression test in harness:pipeline (a stamp 50
+epochs before the end of a 200-epoch Archean, read 20 tectonic epochs
+later: 70 epochs, fresh, before; 270 Ma, old, after).
+
+No world changes today: only the tectonic era makes sutures (the
+Archean discards its merges, finalizeArchean hands over none), so the
+stamp and the clock are both past the hand-over and the two
+differences are equal. The fix makes the field correct for any stamp
+on the axis. Golden's stage hashes and `npm run calibrate seeds=3
+sweep=0 archeanMa=1000 landShare=30` are unchanged. The other readers
+of the stamps: the ecology reads the sutures' positions only; the
+merge immunity (`noMergeUntilEpoch`) is set and read in the tectonic
+era only.
+
 2026-10-13: **phase 8c BUILT — the lakes: the routing follows the
 epoch, the folds are averaged over the node.** The user's goal: lakes at
 most about 8–10 % of the land. After 8b-3 the lakes (all, the frozen

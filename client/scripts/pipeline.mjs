@@ -2296,6 +2296,28 @@ test('REGRESSION: the cratons\' oldness is measured in Ma across both eras', asy
   check('in the Archean: 1 − 50 / 100', Math.abs(at(archean, 64.5, 32.5) - 0.5) < 1e-6, `${at(archean, 64.5, 32.5)}`)
 })
 
+test('REGRESSION: a suture\'s age is measured in Ma across both eras', async () => {
+  // DEC-0036 phase 8c': the erodibility field read a suture's age as
+  // currentEpoch − suture.epoch, in epochs of the continuous axis, on
+  // which an Archean epoch is five tectonic ones' worth of Ma. A stamp
+  // 50 epochs before the end of a 200-epoch Archean, read 20 tectonic
+  // epochs later, was 70 epochs (fresh, K × 1.5) where it is 270 Ma
+  // (old, K × 0.8). A tectonic-era suture keeps its factor (1 Ma per
+  // epoch): 40 Ma fresh, 160 Ma half way, 1.5 + (0.8 − 1.5) / 2 = 1.15.
+  const [D, EF] = await Promise.all([server.ssrLoadModule('/src/generator/core/domain.ts'), server.ssrLoadModule('/src/generator/elevation/erodibilityField.ts')])
+  const dom = D.domainOfKind('torus', 256, 128)
+  const factor = (stamp, now, archeanEpochs) => {
+    const suture = { x: 128.5, y: 64.5, tangentX: 1, tangentY: 0, epoch: stamp }
+    return EF.computeErodibilityField([], [suture], [], now, archeanEpochs, dom, 256, 128)[64 * 256 + 128]
+  }
+  const archeanStamp = factor(150, 220, 200)
+  check('a suture stamped in the Archean, 270 Ma old: the old suture\'s hardness', Math.abs(archeanStamp - 0.8) < 1e-6, `${archeanStamp}`)
+  const fresh = factor(260, 300, 200)
+  check('a tectonic suture 40 Ma old: the fresh suture\'s softness', Math.abs(fresh - 1.5) < 1e-6, `${fresh}`)
+  const half = factor(200, 360, 200)
+  check('a suture of the hand-over 160 Ma old: half way, 1.15', Math.abs(half - 1.15) < 1e-6, `${half}`)
+})
+
 test('REGRESSION: the Archean\'s compaction on the globe pulls every blob toward its raft\'s centre', async () => {
   // DEC-0036 phase 8b-2: compactRafts took a blob's offset from the
   // centroid in the CENTROID's frame and moved the blob by it in its OWN
