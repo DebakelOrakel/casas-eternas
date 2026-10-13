@@ -269,6 +269,9 @@ export interface WorkerRestoreWorldMessage {
   // world keeps stirring the way it was set (BUG_BOUNTY 63 — the restore
   // used to leave the default in place).
   mantleDiffusion?: number
+  // The Archean's land share target from the save's recipe, likewise
+  // (ArcheanParams.landShare, a fraction).
+  landShare?: number
   // The boundary-detection lattice's accumulated history, likewise optional for older
   // saves. Measured: mantle and lattice TOGETHER are exactly what a bit-identical
   // continuation needs — with only one of them restored, a loaded world drifts off
@@ -325,8 +328,9 @@ export interface WorkerGenesisInitMessage {
   // This used to be createMantleField's INITIAL smoothing, which measurement showed
   // washes out long before the phase is stopped. See DEFAULT_INITIAL_SMOOTHING.
   mantleDiffusion?: number
-  // Water offset in elevation units (see elevationScale.WATER_OFFSET_MAX_M).
-  seaLevelOffset?: number
+  // The land share the Archean makes crust toward, a fraction of the
+  // world's area (ArcheanParams.landShare, archean/archeanLand.ts).
+  landShare?: number
 }
 // The Archean's levers as they stand when a run starts (2026-09-29): a run
 // may go on with other ones than the last, as a tectonics run may, and the
@@ -334,7 +338,7 @@ export interface WorkerGenesisInitMessage {
 export interface WorkerGenesisStartMessage {
   type: 'genesisStart'
   mantleDiffusion?: number
-  seaLevelOffset?: number
+  landShare?: number
 }
 // The screen's 3D relief preview asking for the current full-res
 // display-space elevation raster (answered with WorkerElevationFieldMessage).

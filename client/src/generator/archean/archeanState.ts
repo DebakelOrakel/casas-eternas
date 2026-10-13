@@ -45,8 +45,11 @@ export interface ArcheanSimulation {
   // New rafts produced by the last split — the break-up rate, which is what raft
   // rigidity trades against (see ArcheanParams.raftRigidity).
   lastSplits: number
-  // Water offset in elevation units — carried through the handover unchanged.
-  seaLevelOffset: number
+  // Nuclei placed by the last step, for the readout and the calibration.
+  lastNucleated: number
+  // The land share controller's credit: nuclei granted and not yet placed,
+  // fractional (archeanLand.nucleationBudget). State, so it is saved.
+  nucleationCredit: number
 }
 
 // The world's coastline-warp seed, the one salted derivation every reader
@@ -59,7 +62,7 @@ export const coastalWarpSeed = (seedString: string): number => hashSeedString(`$
 
 // `shape`: the world's (DEC-0035) — the torus, or the sphere over the same
 // 2:1 chart. Everything the Archean computes reaches it through the domain.
-export function createArcheanSimulation(seedString: string, width: number, height: number, seaLevelOffset = 0, shape: Domain['kind'] = 'torus'): ArcheanSimulation {
+export function createArcheanSimulation(seedString: string, width: number, height: number, shape: Domain['kind'] = 'torus'): ArcheanSimulation {
   const random = mulberry32(hashSeedString(seedString))
   const domain = domainOfKind(shape, width, height)
   return {
@@ -78,6 +81,7 @@ export function createArcheanSimulation(seedString: string, width: number, heigh
     upwellingStreak: new Int16Array(mantleMesh(domain).mesh.count),
     lastRecycled: 0,
     lastSplits: 0,
-    seaLevelOffset,
+    lastNucleated: 0,
+    nucleationCredit: 0,
   }
 }

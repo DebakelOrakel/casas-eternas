@@ -83,7 +83,7 @@ export const STAGES: readonly Stage[] = [
     id: 'genesis',
     dependsOn: ['planet'],
     kind: 'steppable',
-    inputs: { mantleVigour: ARCHEAN_INPUTS.mantleVigour, water: ARCHEAN_INPUTS.water },
+    inputs: { mantleVigour: ARCHEAN_INPUTS.mantleVigour, landShare: ARCHEAN_INPUTS.landShare },
     // The Archean's real product is the hand-over — the plate simulation the era
     // ends in — which is not a field and so cannot be listed here. It renders an
     // elevation on the way, and that is the field a consumer can ask for.

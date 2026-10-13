@@ -49,6 +49,8 @@ export interface NucleationParams {
   blobRadiusM: number
   // At most this many new blobs per epoch, so a broadly hot mantle produces a
   // steady trickle of nuclei rather than carpeting the ocean in one step.
+  // The land share controller grants fewer (archeanLand.nucleationBudget);
+  // this is its ceiling.
   maxPerEpoch: number
 }
 
@@ -57,11 +59,16 @@ export const DEFAULT_NUCLEATION_PARAMS: NucleationParams = {
   persistenceEpochs: 5,
   occupiedFieldLevel: SHORELINE_FIELD,
   blobRadiusM: 546_000,
-  maxPerEpoch: 4,
+  // 12, from 4 (DEC-0036 phase 8b-1): 4 was the rate itself — 7.6 % land at
+  // the 0.5 gate — and is the controller's ceiling now, which must climb to
+  // a 40 % target's aim, 46.75 %: 45–46 % by 1000 Ma (12 unthrottled: 78 %
+  // by epoch 500).
+  maxPerEpoch: 12,
 }
 
 // Advances the per-cell upwelling streaks and returns the world positions where
-// crust should nucleate this epoch. Mutates `streak` in place. The cells are
+// crust should nucleate this epoch, at most `budget` (the land share
+// controller's grant). Mutates `streak` in place. The cells are
 // the mantle's field mesh's (DEC-0036): of one size everywhere, so every cell
 // is a candidate on both shapes (the raster offered one per `1 / rowScale`
 // cells of a row toward a pole).
@@ -72,6 +79,7 @@ export function findNucleationSites(
   params: NucleationParams,
   random: () => number,
   domain: Domain,
+  budget: number,
 ): { x: number; y: number }[] {
   const mm = mantleMesh(domain)
   const { mesh } = mm
@@ -92,9 +100,9 @@ export function findNucleationSites(
   }
 
   // Longest-standing upwellings first — the ones that have had the most time to
-  // build a plateau — then cut to the per-epoch budget.
+  // build a plateau — then cut to the budget.
   candidates.sort((a, b) => b.streak - a.streak)
-  const chosen = candidates.slice(0, params.maxPerEpoch)
+  const chosen = candidates.slice(0, Math.min(budget, params.maxPerEpoch))
 
   // Reset the streak where crust was actually placed, so the same cell doesn't
   // immediately re-fire next epoch; the new crust will suppress it via the ocean

@@ -4,7 +4,7 @@ import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
 import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
 import { TECTONICS_INPUTS } from '../../generator/tectonics/tectonicsInputParams'
 import { ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS, ECOLOGY_INPUTS } from '../../generator/ecology/ecologyInputParams'
-import { readRecipeNumber } from './recipeYaml'
+import { readRecipeNumber, readRecipeValue } from './recipeYaml'
 
 // The RECIPE half of a world save — `spec:` in world.yaml — as one ordered table
 // that both writes and reads it.
@@ -43,13 +43,14 @@ const abundanceFields: SpecField[] = ECOLOGY_ABUNDANCE_GROUPS.flatMap((group) =>
 export const WORLD_SPEC_FIELDS: readonly SpecField[] = [
   // The Planet stage (2026-09-22, F2) opens the file: `greenhouse` lived
   // under climate as tempOffset and is read back from there for the saves
-  // written before. (`water` visited the planet the same day and went back
-  // to the genesis; the alias reads the few saves written in between.)
+  // written before.
   { path: 'planet.obliquity', input: PLANET_INPUTS.obliquity },
   { path: 'planet.greenhouse', input: PLANET_INPUTS.greenhouse, legacyPaths: ['climate.tempOffset'] },
   { path: 'planet.rotation', input: PLANET_INPUTS.rotation },
   { path: 'genesis.mantleVigour', input: ARCHEAN_INPUTS.mantleVigour },
-  { path: 'genesis.water', input: ARCHEAN_INPUTS.water, legacyPaths: ['planet.water'] },
+  // The land share replaced the water control (DEC-0036 phase 8b-1); a
+  // recipe that still carries `water` is refused (specFromYaml).
+  { path: 'genesis.landShare', input: ARCHEAN_INPUTS.landShare },
   // The coupled history (2026-09-23, phase 5.1): the epoch length is new,
   // the two material controls moved from the erosion pass to the tectonics
   // and are read back from their old paths. `erosion.landscapeAge` is no
@@ -110,6 +111,13 @@ export function valuesToYamlLines(fields: readonly SpecField[], values: Record<s
   return lines
 }
 
+// Controls whose value no generator of today can make a world from: a
+// recipe carrying one is refused, not read with the key ignored — its
+// world was made from it (alpha; such saves are refused by their format
+// since DEC-0036 anyway). The water control (a sea-level offset), replaced
+// by the land share in DEC-0036 phase 8b-1, and its stay on the planet.
+const REFUSED_SPEC_PATHS = ['genesis.water', 'planet.water'] as const
+
 // Reads it back, every gap filled by the control's declared default.
 //
 // A missing key means the save predates that knob, and those worlds were
@@ -119,6 +127,8 @@ export function valuesToYamlLines(fields: readonly SpecField[], values: Record<s
 // default); the split had no stated reason and was resolved in favour of one
 // rule on 2026-08-09.
 export function specFromYaml(yaml: string, seed: string): WorldSpec {
+  const former = REFUSED_SPEC_PATHS.find((path) => readRecipeValue(yaml, `spec.${path}`) !== undefined)
+  if (former) throw new Error(`spec.${former}: a world from before the land share replaced the water control — make it again`)
   const values: Record<string, number> = {}
   for (const field of WORLD_SPEC_FIELDS) {
     let value = readRecipeNumber(yaml, `spec.${field.path}`)

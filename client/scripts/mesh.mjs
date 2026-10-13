@@ -1258,7 +1258,10 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   const CW = 256, CH = 128
   const world = async () => {
     const archean = M.archean.createArcheanSimulation('coupled', CW, CH)
-    for (let e = 0; e < 60; e++) M.archeanStep.archeanStep(archean)
+    // The land share reached in the harness's 60 epochs, not at 1000 Ma
+    // (archean/archeanLand.ts): a world with land to carry the epochs.
+    const params = { ...M.archeanStep.DEFAULT_ARCHEAN_PARAMS, land: { ...M.archeanStep.DEFAULT_ARCHEAN_PARAMS.land, reachEpoch: 60 } }
+    for (let e = 0; e < 60; e++) M.archeanStep.archeanStep(archean, params)
     return M.finalize.finalizeArchean(archean)
   }
   const sim = await world()
@@ -2051,7 +2054,7 @@ console.log('\n[1g] the mesh on the sphere')
   // (createCoupledTerrain), no erosion.
   {
     const ta = performance.now()
-    const archean = M.archean.createArcheanSimulation('mesh-sphere', 256, 128, 0, 'sphere')
+    const archean = M.archean.createArcheanSimulation('mesh-sphere', 256, 128, 'sphere')
     for (let e = 0; e < 40; e++) M.archeanStep.archeanStep(archean)
     const sim = M.finalize.finalizeArchean(archean)
     for (let e = 0; e < 2; e++) M.plates.stepEpoch(sim)

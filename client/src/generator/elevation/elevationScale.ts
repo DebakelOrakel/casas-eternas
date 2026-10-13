@@ -73,41 +73,12 @@ export const SLOPE_FOOT = metersToElevation(-3000) // -0.333  base of the contin
 export const RIDGE_CREST = metersToElevation(-2600) // -0.289  mid-ocean ridge crest
 export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided old basin
 
-// How much water this planet was given, as a shift of the solid surface relative to
-// sea level, in metres.
-//
-// SEA_LEVEL stays 0 — that signed zero is load-bearing, since every land/ocean test
-// is a sign test and several are hardcoded (applyMountainRedistribution's
-// `elevation <= 0`, the renderer's land bit). "More water" and "sea level rises"
-// are the same statement in two coordinate systems; expressed with sea level pinned
-// at zero, more water means the solid surface sits LOWER relative to it. That is
-// also the isostatically honest description: added water loads the basins,
-// continents float relatively lower, and freeboard decreases.
-//
-// **Implemented as one subtraction, not as an offset on the six anchors below.**
-// Those two are identical: the margin profile is built entirely from the anchors,
-// and elevation is baseline + uplift + detail, so shifting every anchor by −Δ and
-// subtracting Δ from the finished baseline produce the same field. The subtraction
-// is a single argument to computeRaftBaseline; the anchor version would mean making
-// six exported constants mutable module state, which every importer would then have
-// to read at call time. Same result, far less to go wrong.
-//
-// ±600 m, down from ±1350 (2026-08-06) — recalibrated to the range the terrain
-// actually RESPONDS in, measured on Archean worlds (two seeds, 600 epochs):
-// raising by +675 m already drowned 100% of the land (crust tops sit below
-// ~650 m), while the entire −675…−1350 m stretch changed land area by under
-// one point (the young ocean floor lies at −2600 m, so lowering exposes only
-// the margin band). At ±1350 three quarters of the slider's travel therefore
-// did nothing visible — the user-reported "the water knob has no effect".
-// ±600 spreads the same visible response across the whole travel instead.
-// (The old "half to one and a half Earth oceans" framing described water
-// VOLUME faithfully but not what a player can see happen.)
-export const WATER_OFFSET_MAX_M = 600
-
-// UI slider 0..100 (50 = Earth-like) → the metre shift.
-export function waterSliderToOffsetM(slider: number): number {
-  return ((slider - 50) / 50) * WATER_OFFSET_MAX_M
-}
+// The sea stands at SEA_LEVEL; only the ice moves it (the coupled epoch's
+// eustasy, PlateSimulation.eustaticM). There was a water control here, a
+// shift of the solid surface against the sea of up to ±600 m; it moved the
+// land by ±1.5 points only (DEC-0036 phase 8a) and went in phase 8b-1 —
+// how much land a world has is the Archean's land share target now
+// (archean/archeanLand.ts).
 
 // The continental margin's shape, as a curve from open ocean (t = 0) to
 // continental interior (t = 1).

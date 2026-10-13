@@ -32,7 +32,6 @@ export interface SynthesisSources {
   oceanAge: Float64Array
   mantle: Float64Array
   warpSeed: number
-  seaLevelOffset: number
 }
 
 export interface ElevationSampler {
@@ -46,7 +45,7 @@ export function synthesisSampler(s: SynthesisSources): ElevationSampler {
   const fineSeed = (warpSeed ^ FINE_DETAIL_SEED_SALT) >>> 0
   return {
     heightAt(x, y) {
-      const baseline = raftBaselineAt(x, y, s.rafts, s.oceanAge, domain, warpSeed, s.seaLevelOffset)
+      const baseline = raftBaselineAt(x, y, s.rafts, s.oceanAge, domain, warpSeed)
         + dynamicTopographyAt(s.mantle, mantleSampler, x, y)
       const { wx, wy } = warpedSamplePoint(x, y, domain, warpSeed)
       return computeElevation(wx, wy, baseline, buckets, domain,

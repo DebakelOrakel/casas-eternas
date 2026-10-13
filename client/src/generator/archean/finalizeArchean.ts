@@ -110,9 +110,8 @@ function measureRaftLandAreas(rafts: Raft[], domain: Domain): number[] {
   return areas
 }
 
-// The Archean's sea-level offset carries over unchanged. (A land-fraction
-// target the offset would be solved for existed as dead code until
-// 2026-09-22 — BUG_BOUNTY 12; wiring one is a decision of its own.)
+// The land the Archean made is the land the plates take over: its target
+// (archeanLand.ts) steered the crust, not the sea.
 export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
   const { width, height, domain, random } = archean
   // Continents are named HERE, not during the Archean. Proto-cratons merge and
@@ -122,7 +121,6 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
   // becomes a continent, which is now.
   const named = assignRaftNames(archean.rafts, random, measureRaftLandAreas(archean.rafts, domain))
   const oceanAge = createOceanAgeField(TECTONICS_TUNING.oceanAgeInit, domain)
-  const seaLevelOffset = archean.seaLevelOffset
   const seeds = convectionCellSeeds(archean.mantle, domain)
   const lattice = generateDetectionLattice(domain, TECTONICS_TUNING.detectionLatticeResolutionX, TECTONICS_TUNING.detectionLatticeResolutionY)
 
@@ -148,7 +146,6 @@ export function finalizeArchean(archean: ArcheanSimulation): PlateSimulation {
     eustaticM: 0,
     climateHistory: [],
     lakeAges: [],
-    seaLevelOffset,
     random,
     warpSeed: archean.warpSeed,
     lattice,

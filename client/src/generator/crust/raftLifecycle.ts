@@ -1,7 +1,7 @@
 import type { PlateSeed } from '../tectonics/plateSeeds'
 import { advancePointByMotion, type PlateMotion } from '../tectonics/plateMotion'
 import type { Raft, RaftBlob, RaftMergeEvent, RaftSplitEvent } from './raftTypes'
-import type { Domain } from '../core/domain'
+import { globeFrame, type Domain } from '../core/domain'
 import { deservesContinentName, pickUnusedRaftName } from './raftNames'
 import { detHypot } from '../core/detMath'
 
@@ -10,6 +10,8 @@ import { detHypot } from '../core/detMath'
 const offset = { x: 0, y: 0 }
 // A point between two moves (Domain.displace), the same way.
 const moved = { x: 0, y: 0 }
+// A blob's frame on the globe (the sphere's rigid raft motion), the same way.
+const blobFrame = globeFrame()
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
 // plates, decoupled from them — see docs/decisions/continental-crust-rafts.md. A
@@ -111,15 +113,95 @@ export function advanceRaftsOnFlow(
     }
     meanX /= raft.blobs.length
     meanY /= raft.blobs.length
-    // The flow is in each blob's own east/south frame, so the mean of a
-    // raft's blobs is a mean of components in nearby frames: right for a
-    // raft that is small against its distance to a pole. Two moves, the
-    // mean and then the blob's own share.
     const differential = 1 - rigidity
+    if (domain.noise.kind === 'globe') {
+      advanceRaftOnGlobe(raft, vx, vy, differential, domain)
+      continue
+    }
+    // The torus: every blob's frame is the chart's, so the mean of the
+    // components is the raft's rigid move. Two moves, the mean and then the
+    // blob's own share.
     for (let b = 0; b < raft.blobs.length; b++) {
       const blob = raft.blobs[b]
       domain.displace(blob.x, blob.y, meanX, meanY, moved)
       domain.advance(moved.x, moved.y, differential * (vx[b] - meanX), differential * (vy[b] - meanY), blob)
+    }
+  }
+}
+
+// The sphere's rigid raft move (DEC-0036 phase 8b-1). The mean of the
+// blobs' east/south components is a mean in frames that differ, and across
+// a pole oppose: a raft over a pole moved its blobs on either side by the
+// same components in their own frames, toward the pole from both sides,
+// and the crust piled onto itself — measured at 2048 × 1024 (seed alpha,
+// the land at 30 %), 29.4 → 13.3 % land in three epochs with no blob
+// recycled, every few hundred Ma. Here the flow is averaged as 3D vectors
+// at the blobs and the raft turned as one body: about the axis through the
+// blobs' mean direction, perpendicular to the mean velocity, by the angle
+// that moves that direction by the mean velocity's length (an Euler
+// rotation without spin, plateMotion.advancePointByMotion). Each blob's
+// own share, its flow less the rotation's velocity there, is taken in its
+// frame before the turn and carried to the turned point (Domain.transport).
+function advanceRaftOnGlobe(raft: Raft, vx: Float64Array, vy: Float64Array, differential: number, domain: Domain): void {
+  const globe = domain.noise
+  if (globe.kind !== 'globe') return
+  const n = raft.blobs.length
+  const R = globe.radius
+  let cx = 0, cy = 0, cz = 0, ux = 0, uy = 0, uz = 0
+  for (let b = 0; b < n; b++) {
+    globe.frame(raft.blobs[b].x, raft.blobs[b].y, blobFrame)
+    cx += blobFrame.px
+    cy += blobFrame.py
+    cz += blobFrame.pz
+    ux += vx[b] * blobFrame.ex + vy[b] * blobFrame.sx
+    uy += vx[b] * blobFrame.ey + vy[b] * blobFrame.sy
+    uz += vx[b] * blobFrame.ez + vy[b] * blobFrame.sz
+  }
+  const cl = Math.sqrt(cx * cx + cy * cy + cz * cz)
+  // The mean velocity, in the tangent plane at the mean direction.
+  ux /= n
+  uy /= n
+  uz /= n
+  let kx = 0, ky = 0, kz = 1, rate = 0
+  if (cl > 0) {
+    cx /= cl
+    cy /= cl
+    cz /= cl
+    const along = ux * cx + uy * cy + uz * cz
+    ux -= along * cx
+    uy -= along * cy
+    uz -= along * cz
+    const speed = Math.sqrt(ux * ux + uy * uy + uz * uz)
+    if (speed > 0) {
+      // k = c × u / |u|: turning c about k moves it along u.
+      kx = (cy * uz - cz * uy) / speed
+      ky = (cz * ux - cx * uz) / speed
+      kz = (cx * uy - cy * ux) / speed
+      rate = speed / R
+    }
+  }
+  const turn = { poleX: kx, poleY: ky, poleZ: kz, rate }
+  for (let b = 0; b < n; b++) {
+    const blob = raft.blobs[b]
+    let dx = 0
+    let dy = 0
+    if (differential !== 0) {
+      // The rotation's velocity at the blob, ω × p with ω = rate · k, in
+      // the blob's frame; the blob's own share is its flow less that.
+      globe.frame(blob.x, blob.y, blobFrame)
+      const wx = rate * (ky * blobFrame.pz - kz * blobFrame.py)
+      const wy = rate * (kz * blobFrame.px - kx * blobFrame.pz)
+      const wz = rate * (kx * blobFrame.py - ky * blobFrame.px)
+      dx = differential * (vx[b] - (wx * blobFrame.ex + wy * blobFrame.ey + wz * blobFrame.ez))
+      dy = differential * (vy[b] - (wx * blobFrame.sx + wy * blobFrame.sy + wz * blobFrame.sz))
+    }
+    const to = advancePointByMotion(blob.x, blob.y, turn, 1, domain)
+    if (differential !== 0) {
+      domain.transport(dx, dy, blob.x, blob.y, to.x, to.y, offset)
+      domain.advance(to.x, to.y, offset.x, offset.y, blob)
+    } else {
+      blob.x = to.x
+      blob.y = to.y
     }
   }
 }
@@ -271,7 +353,10 @@ export function consolidateRaftBlobs(rafts: Raft[], epoch: number, stabilisation
 // blobs[0], and blobArea would divide by nothing).
 //
 // The age gate is the whole mechanism: a blob younger than `stabilisationEpochs`
-// can be destroyed, an older one never can. Production therefore continues
+// can be destroyed, an older one never can. `ageOf` gives a blob's age from
+// its birth stamp, in the gate's epochs: the Archean counts its own epochs,
+// the tectonic phase the time since the birth in its epochs (core/worldTime
+// worldEpochMa), since an Archean epoch is five of its own. Production therefore continues
 // unchanged while the *destructible pool* stays bounded, which is what converts
 // the runaway into an equilibrium rather than just slowing it down. See
 // DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs (archean/archeanStep.ts) for the
@@ -281,7 +366,7 @@ export function recycleUnstabilisedCrust(
   // The mantle field at a point (mantle/mantleField.mantleAt) — a function,
   // so the crust does not depend on the mantle that depends on it.
   mantleAt: (x: number, y: number) => number,
-  epoch: number,
+  ageOf: (birthEpoch: number) => number,
   stabilisationEpochs: number,
   downwellingThreshold: number,
 ): number {
@@ -289,7 +374,7 @@ export function recycleUnstabilisedCrust(
   for (const raft of rafts) {
     const kept: RaftBlob[] = []
     for (const blob of raft.blobs) {
-      const age = epoch - (blob.birthEpoch ?? 0)
+      const age = ageOf(blob.birthEpoch ?? 0)
       const overDownwelling = mantleAt(blob.x, blob.y) < downwellingThreshold
       if (age < stabilisationEpochs && overDownwelling) { recycled++; continue }
       kept.push(blob)

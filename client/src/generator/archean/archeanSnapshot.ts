@@ -13,7 +13,7 @@ import type { SavedField } from '../fields/fieldMesh'
 // save button posted its message and nothing came back. No file, no error.
 //
 // Replaying from the recipe would be tidier still, since the phase is deterministic in
-// (seed, mantle diffusion, water, epochs) — but an Archean epoch costs enough that a
+// (seed, mantle diffusion, land share, epochs) — but an Archean epoch costs enough that a
 // few hundred of them is far too slow to sit through on load. So it is a snapshot.
 //
 // The mantle and its streaks travel outside the JSON, like the tectonic snapshot's: JSON
@@ -23,7 +23,8 @@ export interface ArcheanSnapshot {
   height: number
   epoch: number
   warpSeed: number
-  seaLevelOffset: number
+  // The land share controller's credit (ArcheanSimulation.nucleationCredit).
+  nucleationCredit: number
   rafts: Raft[]
   rngState: number
 }
@@ -34,7 +35,7 @@ export function serializeArchean(archean: ArcheanSimulation): ArcheanSnapshot {
     height: archean.height,
     epoch: archean.epoch,
     warpSeed: archean.warpSeed,
-    seaLevelOffset: archean.seaLevelOffset,
+    nucleationCredit: archean.nucleationCredit,
     rafts: archean.rafts,
     rngState: archean.random.state(),
   }
@@ -53,7 +54,7 @@ export function deserializeArchean(snap: ArcheanSnapshot, mantle: SavedField | u
     domain,
     epoch: snap.epoch,
     warpSeed: snap.warpSeed,
-    seaLevelOffset: snap.seaLevelOffset ?? 0,
+    nucleationCredit: snap.nucleationCredit ?? 0,
     rafts: snap.rafts,
     random: mulberry32(snap.rngState),
     // Sized from the current mesh rather than trusted from the file: a save from
@@ -65,5 +66,6 @@ export function deserializeArchean(snap: ArcheanSnapshot, mantle: SavedField | u
     // Per-epoch readouts, not state — they are recomputed on the next step.
     lastRecycled: 0,
     lastSplits: 0,
+    lastNucleated: 0,
   }
 }

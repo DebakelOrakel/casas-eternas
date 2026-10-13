@@ -200,6 +200,88 @@ done before or beside it.
 
 ## Status
 
+2026-10-12: **phase 8b-1 BUILT — the land share lever.** The fork: 8a
+found the land set by the Archean's crust at the hand-over (7.6 % torus,
+8.3 % sphere at the 0.5 gate), the water control (a sea-level offset of
+±600 m) moving it by ±1.5 points only. Decided (the user): the water goes,
+a **land share target** comes (`genesis.landShare`, 15–40 %, default 30,
+in the spec and so in the world id); the sea stands at 0 and only the ice
+moves it; a recipe with `genesis.water` is refused on open. The Archean's
+NUCLEATION RATE carries it (option B), on the LAND the Archean's render
+tests, not on the raft field.
+
+**The controller** (`archean/archeanLand.ts`, deterministic, its one
+state the credit in the Archean's snapshot). Each step, after the drift:
+the land share — the raft baseline plus the dynamic topography above 0,
+area-weighted over the mantle's field mesh (within 0.2 points of a mesh
+four times as fine; the hand-over's mesh starts on it to 0.1 points; 7 /
+20 ms a step torus / sphere) — and a grant of nuclei, `(aim − land) /
+max(10, reachEpoch − epoch) / nucleus share`: the deficit over the epochs
+left (feed-forward and feedback in one), a tenth of it a step once there
+(the hold), none above the aim; fractional nuclei carry over as credit,
+capped at `maxPerEpoch` (12, from 4). The net land of a nucleus is
+measured, 0.03 Mkm² (a twentieth of a lone one's). The climb ends at 800
+Ma (`reachEpoch` 160), not at 1000: the plates recycle crust younger than
+their 150 Ma, and a climb ending at 1000 Ma handed them its youngest —
+40 epochs in, worlds stopped at 1000 Ma stood 4–5 points under those
+stopped at 1500 Ma; ending at 800 they agree within 1.5. The hold, run
+to 2500 Ma (seven seeds, before the aim): within about ±2 points, single
+dips of 4 recovered within 25 epochs. The aim compensates the
+history (documented, as the brief allowed): the plates' first epochs take
+back nothing at 15 % and about a quarter of the excess above it, so the
+Archean aims at T + 0.27 (T − 15 %) — 34 % for 30 %, 46.75 % for 40 %.
+
+**Two bugs found on the way, fixed** (both on the land's path):
+
+- **The 0.57.** 8a's mesh land at the hand-over at 0.45–0.74 × the crust
+  was not the margin profile or the hypsometry (the Archean's land, its
+  raft coastline and the hand-over's mesh agree within 1–2 points): the
+  first tectonic epoch recycled it. The tectonic crust sink's age gate
+  (150 epochs) counted the continuous epoch axis, on which an Archean
+  epoch is five tectonic ones' worth of Ma — every Archean craton read as
+  young, and all of it over a downwelling went (seed calibration: 8.1 →
+  4.9 % land in epoch 1). The age is in Ma now (`core/worldTime
+  .worldEpochMa`); the same world keeps 8.5 %. Tectonic-born crust is
+  aged as before, bit for bit.
+- **The sphere's rafts over a pole** piled onto themselves: a raft's rigid
+  move was the mean of its blobs' east/south flow applied in each blob's
+  own frame (seed alpha: 29.4 → 13.3 % land in three epochs, no blob
+  recycled). The raft turns as one body on the globe now
+  (`crust/raftLifecycle.advanceRaftOnGlobe`; two-shapes.md); the torus
+  keeps its chart mean.
+
+**Measured** (`npm run calibrate seeds=12 sweep=0 landShare=… archeanMa=…`,
+the Archean to the asked-for age and its gate, the hand-over, 40 coupled
+epochs; median (p10–p90)):
+
+| target | stopped at | Archean land, torus / sphere | after 40 epochs, torus | after 40 epochs, sphere |
+|---|---|---|---|---|
+| 15 % | 1000 Ma | 14.6 / 14.9 | 15.8 (12.8–19.0) | 13.8 (12.2–17.8) |
+| 15 % | 1500 Ma | 15.0 / 15.0 | 17.7 (14.3–20.0) | 14.8 (12.1–17.5) |
+| 30 % | 1000 Ma | 33.4 / 33.0 | 31.0 (26.5–35.4) | 28.0 (24.1–31.7) |
+| 30 % | 1500 Ma | 33.8 / 33.8 | 31.5 (26.7–34.0) | 30.1 (28.3–33.8) |
+| 40 % | 1000 Ma | 45.9 / 45.4 | 37.4 (33.3–47.0) | 37.3 (33.7–41.5) |
+| 40 % | 1500 Ma | 46.3 / 45.2 | 41.8 (38.3–45.2) | 37.7 (32.3–40.4) |
+
+Every median within ±3 points of its target. The p10–p90 band within ±5
+in seven of twelve cells; outside: 30 % at 1000 Ma (torus p90 +5.4,
+sphere p10 −5.9), 40 % at 1000 Ma (both shapes, −6.7 / +7.0 torus), 40 %
+at 1500 Ma on the sphere (p10 −7.7). The spread is the history's: the
+hand-over's land lies within ±1–2 points of the aim. The sphere's history
+takes back 2–3 points more than the torus's at 30–40 % — perhaps its
+plates, which move in domain units, 25 % further in metres than the
+torus's (not measured; the calibration's open item). The aim is reached
+at 760 / 748 Ma (median, 30 %); the 0.5 gate at epoch 80 / 90.
+
+**What else moved** (30 %, 1000 Ma, against 8a): the Archean assembles —
+3 / 4.5 rafts at the hand-over (10.5 / 12.5), 2 continents, the largest
+landmass 81 / 63 % of the land (31 %); plates 14.5 / 13.5 (16 / 16.5);
+the highest peak 5.6 / 4.6 km (8.6 / 9.0), mean land height 791 / 762 m
+(target 700–900; it was 1 014 / 887); lakes 11.0 / 6.4 % of land; the
+ocean's mean depth 3 475 / 3 423 m (4 428); ice 29.8 / 3.9 % of land; a
+history epoch 2.3 × as long (more land, more nodes: 362 / 424 s for 40).
+Golden re-recorded (0 hard failures; land 28–34 % on its three worlds).
+
 2026-10-12: **phase 8a BUILT — the calibration's measurement, and the
 fixes that are units, not taste.** Nothing tuned toward a target yet
 (that is 8b).

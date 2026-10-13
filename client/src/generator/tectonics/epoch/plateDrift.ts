@@ -1,6 +1,6 @@
 import { derivePlateTypes } from '../../crust/raftField'
 import { advanceRafts, recycleUnstabilisedCrust } from '../../crust/raftLifecycle'
-import { worldEpoch } from '../../core/worldTime'
+import { TECTONIC_MA_PER_EPOCH, worldAgeMa, worldEpochMa } from '../../core/worldTime'
 import { mantleAt } from '../../mantle/mantleField'
 import { advectOceanAge } from '../oceanAge'
 import { advancePointByMotion, getVelocityAt } from '../plateMotion'
@@ -67,7 +67,10 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64A
   // derivePlateTypes below reads the result. Blobs accreted last epoch are one
   // epoch old now, so they are candidates — crust has to survive to the next epoch
   // to count, which is the right gate. See TECTONICS_TUNING.stabilisationEpochs.
-  recycleUnstabilisedCrust(sim.rafts, (x, y) => mantleAt(sim.mantle, domain, x, y), worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.stabilisationEpochs, TECTONICS_TUNING.recycleDownwellingThreshold)
+  // The age is the time since the birth in tectonic epochs (an Archean epoch
+  // is five, core/worldTime.worldEpochMa).
+  const nowMa = worldAgeMa(sim.archeanEpochs, sim.epoch)
+  recycleUnstabilisedCrust(sim.rafts, (x, y) => mantleAt(sim.mantle, domain, x, y), (birth) => (nowMa - worldEpochMa(birth, sim.archeanEpochs)) / TECTONIC_MA_PER_EPOCH, TECTONICS_TUNING.stabilisationEpochs, TECTONICS_TUNING.recycleDownwellingThreshold)
   // Sutures are welded into the drifting crust — advect each with the plate it
   // sits on, so a collision belt stays ON its continent instead of being left
   // behind in open ocean as the plates move (which would strand the tin/gem

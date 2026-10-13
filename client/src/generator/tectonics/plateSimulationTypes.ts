@@ -64,9 +64,6 @@ export interface PlateSimulation {
   // different Ma-per-epoch scales — see core/worldTime). 0 in saves written before
   // the Archean existed, when a world was built straight from plate seeds.
   archeanEpochs: number
-  // Water offset in ELEVATION units (metres / ELEVATION_METERS). A world property,
-  // so it is serialised and survives a reload. See elevationScale's WATER_OFFSET_MAX_M.
-  seaLevelOffset: number
   random: SeededRandom
   // Seeds the coastline/contour domain-warp noise (domainWarp.ts) —
   // derived from the same world seed string but kept independent of
@@ -151,8 +148,6 @@ export interface PlateSimulationSnapshot {
   lakeAges?: LakeAgeRecord[]
   // Absent in saves written before the Archean phase existed; treated as 0.
   archeanEpochs?: number
-  // Absent in saves written before the water knob existed; treated as 0.
-  seaLevelOffset?: number
   width: number
   height: number
   initialPlateCount: number

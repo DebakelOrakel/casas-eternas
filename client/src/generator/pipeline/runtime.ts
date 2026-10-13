@@ -102,7 +102,6 @@ let archeanSeed = ''
 // The Archean's tuning, held here because archeanStep needs it every step and a
 // reset has to rebuild the same world. Only `diffusion` is user-facing.
 let archeanParams: ArcheanParams = DEFAULT_ARCHEAN_PARAMS
-let archeanWater = 0
 let archeanWidth = 0
 let archeanHeight = 0
 // The shape the Archean was made on (genesisInit), for a reset to make it
@@ -530,7 +529,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     // cost ~1.4 s a pause on the sphere (removed 2026-10-10). Seeds only
     // drive the Voronoi mask; the elevation reads rafts, ocean age and
     // features, so this changes no terrain.
-    { width: archean.width, height: archean.height, domain: archean.domain, seeds: [], rafts: archean.rafts, features: [], oceanAge: null, warpSeed: archean.warpSeed, seaLevelOffset: archean.seaLevelOffset, mantle: archean.mantle },
+    { width: archean.width, height: archean.height, domain: archean.domain, seeds: [], rafts: archean.rafts, features: [], oceanAge: null, warpSeed: archean.warpSeed, mantle: archean.mantle },
     renderPool(),
     renderOptions,
   )
@@ -1719,8 +1718,11 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
     sim = null
     archean = deserializeArchean(message.archean.snapshot, savedOf(message.archean.mantle), new Int16Array(message.archean.streak), message.shape ?? 'torus')
     archeanSeed = message.seed
-    archeanWater = archean.seaLevelOffset
-    if (message.mantleDiffusion !== undefined) archeanParams = { ...DEFAULT_ARCHEAN_PARAMS, diffusion: message.mantleDiffusion }
+    archeanParams = {
+      ...DEFAULT_ARCHEAN_PARAMS,
+      diffusion: message.mantleDiffusion ?? DEFAULT_ARCHEAN_PARAMS.diffusion,
+      landShare: message.landShare ?? DEFAULT_ARCHEAN_PARAMS.landShare,
+    }
     archeanWidth = archean.width
     archeanHeight = archean.height
     archeanShape = archean.domain.kind
@@ -1796,12 +1798,15 @@ function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genes
   dropHandover()
   sim = null
   archeanSeed = message.seed
-  archeanParams = { ...DEFAULT_ARCHEAN_PARAMS, diffusion: message.mantleDiffusion ?? DEFAULT_ARCHEAN_PARAMS.diffusion }
-  archeanWater = message.seaLevelOffset ?? 0
+  archeanParams = {
+    ...DEFAULT_ARCHEAN_PARAMS,
+    diffusion: message.mantleDiffusion ?? DEFAULT_ARCHEAN_PARAMS.diffusion,
+    landShare: message.landShare ?? DEFAULT_ARCHEAN_PARAMS.landShare,
+  }
   archeanWidth = message.width
   archeanHeight = message.height
   archeanShape = message.shape ?? 'torus'
-  archean = createArcheanSimulation(message.seed, message.width, message.height, archeanWater, archeanShape)
+  archean = createArcheanSimulation(message.seed, message.width, message.height, archeanShape)
   lastRawElevations = null
   preErosionElevations = null
   coupled = null
@@ -1814,10 +1819,7 @@ function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genes
 function handleGenesisStart(message: Extract<WorkerInboundMessage, { type: 'genesisStart' }>): void {
   if (loop) return
   if (message.mantleDiffusion !== undefined) archeanParams = { ...archeanParams, diffusion: message.mantleDiffusion }
-  if (message.seaLevelOffset !== undefined) {
-    archeanWater = message.seaLevelOffset
-    if (archean) archean.seaLevelOffset = message.seaLevelOffset
-  }
+  if (message.landShare !== undefined) archeanParams = { ...archeanParams, landShare: message.landShare }
   // Paced (epochIntervalMs from one step's start to the next's), the first
   // step one interval after the gesture. A step is synchronous up to its
   // render, so a stop always finds it before or inside the render.
@@ -1916,7 +1918,7 @@ function resetGenesis(): void {
   worldGeneration += 1
   dropHandover()
   sim = null
-  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanWater, archeanShape)
+  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanShape)
   lastRawElevations = null
   preErosionElevations = null
   coupled = null
@@ -2024,7 +2026,7 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
   if (!sampleWorld || sampleWorld.width !== width || sampleWorld.height !== height || sampleWorld.shape !== shape) {
     const elevation = previewElevation(domain)
     const rendered = await renderSimulationImage(
-      { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: null, warpSeed: 0, seaLevelOffset: 0, mantle: new Float64Array(mantleMesh(domain).mesh.count) },
+      { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: null, warpSeed: 0, mantle: new Float64Array(mantleMesh(domain).mesh.count) },
       renderPool(),
       { precomputedElevations: elevation },
     )

@@ -305,7 +305,7 @@ function baselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobInde
 // change — re-evaluated, it was a twentieth of a level-1 epoch (profiled
 // 2026-10-04 on 2048×1024).
 function solidBaselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobIndex): number {
-  return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.domain, sim.warpSeed, sim.seaLevelOffset, blobs)
+  return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.domain, sim.warpSeed, blobs)
     + dynamicTopographyAt(sim.mantle, mantleMesh(sim.domain).sampler, x, y)
 }
 

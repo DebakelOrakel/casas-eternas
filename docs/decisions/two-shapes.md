@@ -23,7 +23,7 @@ summary.de: Wie Torus und Kugel einen Generator und einen Screen teilen, ohne si
 area: generator
 stage: decided
 createdAt: 2026-10-09
-updatedAt: 2026-10-11
+updatedAt: 2026-10-12
 related: [DES-0017, DEC-0029, DEC-0015, DEC-0024, DES-0025]
 ---
 
@@ -217,6 +217,22 @@ flat map's scene and fine relief, the tile sampler, the incubator).
 - Whether the flat map gets a camera reset like the globe's.
 
 ## Status
+
+2026-10-12: THE ARCHEAN'S RAFTS TURN AS BODIES on the sphere (found with
+DEC-0036 phase 8b-1, fields-on-meshes.md). A raft's rigid move was the
+mean of its blobs' east/south flow, applied to each blob in its own frame
+— right for a raft small against its distance to a pole, and wrong for
+one over a pole, whose blobs on either side moved toward it from both:
+the crust piled onto itself (seed alpha, 2048 × 1024, land 29.4 → 13.3 %
+in three epochs, no blob recycled, every few hundred Ma once the
+continents assembled). `crust/raftLifecycle.advanceRaftsOnFlow` averages
+the flow as 3D vectors on the globe and turns the raft about one axis
+(an Euler rotation without spin); the blob's own share is carried to the
+turned point. The torus keeps the chart mean, its bits unchanged. With
+it the sphere holds its land target within ±2–4 points from 1000 to
+2500 Ma (four seeds). Not fixed, the same class: `compactRafts` pulls a
+blob along the offset to the centroid taken in the centroid's frame and
+applies it in the blob's.
 
 2026-10-11: fork 6 BUILT — the sphere is 20 000 km round. `Domain` carries
 `metresPerUnit` and `metresAround`; every metre in the generator, the map

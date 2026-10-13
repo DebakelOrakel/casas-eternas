@@ -163,7 +163,6 @@ export interface RenderableWorld {
   // seafloor), which reads as freshly formed crust everywhere.
   oceanAge: Float64Array | null
   warpSeed: number
-  seaLevelOffset: number
   // The mantle buoyancy field (mantle/mantleField.ts, per cell of its field
   // mesh) — the dynamic-topography term reads it as it stands; both eras
   // have one.
@@ -198,7 +197,7 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
     const scale = Math.max(1, Math.floor(options.elevationScale ?? 1))
     const renderWidth = Math.floor(width / scale)
     const renderHeight = Math.floor(height / scale)
-    const blendedBaselines = computeRaftBaseline(sim.rafts, sim.oceanAge, renderWidth, renderHeight, sim.domain, sim.warpSeed, sim.seaLevelOffset)
+    const blendedBaselines = computeRaftBaseline(sim.rafts, sim.oceanAge, renderWidth, renderHeight, sim.domain, sim.warpSeed)
     // Dynamic topography (elevation/dynamicTopography.ts): the mantle's
     // anomaly as a height term on the deck, evaluated from the field as it
     // stands now — instantaneous, never crustal.

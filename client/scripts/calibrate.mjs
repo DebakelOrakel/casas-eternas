@@ -9,15 +9,18 @@
 //   npm run calibrate                          12 seeds per shape, the sweeps on 3
 //   node scripts/calibrate.mjs [key=value …]
 //     seeds=12 shapes=torus,sphere epochs=40 stabilised=0.5 archeanMax=600
-//     jobs=5 sweep=1 sweepSeeds=3 out=<dir> label=<name>
+//     archeanMa=0 landShare=30 jobs=5 sweep=1 sweepSeeds=3 out=<dir> label=<name>
+//     archeanMa: run the Archean to this world age as well (the screen's
+//     user stops it at 1000–1500 Ma); 0 = to the gate only. landShare: the
+//     genesis.landShare control for every world (a sweep's value wins).
 //     TECTONICS_TUNING.splitGap=… (any tuning object's key, set in every child)
 //   node scripts/calibrate.mjs report <run.json> [<before.json>]
 //     the summary of a run, with the deltas against another one
 //
 // THE FLOW (the screen's defaults, GeneratorScreen.ts): the Archean runs
 // until its stabilised crust reaches MIN_ARCHEAN_STABILISED (0.5 — the
-// gate the screen sets before the tectonics may start), capped at
-// `archeanMax` epochs; the hand-over; `epochs` coupled epochs at
+// gate the screen sets before the tectonics may start) and the world is
+// `archeanMa` old, capped at `archeanMax` epochs; the hand-over; `epochs` coupled epochs at
 // HISTORY_DEFAULTS (the screen asks for 30 before the climate step,
 // MIN_TECTONIC_EPOCHS, and stops itself at 100; 40 is the default here — a
 // world a player takes a little past the gate); then the climate step as
@@ -55,11 +58,11 @@ const SWEEPS = {
   'planet.greenhouse': [-8, 8],
   'climate.contrast': [60, 140],
   'climate.humidity': [60, 160],
-  'genesis.water': [25, 75],
+  'genesis.landShare': [15, 40],
 }
 const DEFAULTS = {
   'planet.obliquity': 23.5, 'planet.rotation': 24, 'planet.greenhouse': 0,
-  'climate.contrast': 100, 'climate.humidity': 100, 'genesis.water': 50, 'genesis.mantleVigour': 4,
+  'climate.contrast': 100, 'climate.humidity': 100, 'genesis.landShare': 30, 'genesis.mantleVigour': 4,
 }
 
 // --- Earth's references ------------------------------------------------------
@@ -77,7 +80,7 @@ const EARTH_P_LAND = [1900, 1100, 600, 600, 650, 550, 400, 250, 150]
 // --- the shared reading ------------------------------------------------------
 
 function parseArgs(argv) {
-  const opt = { seeds: 12, shapes: 'torus,sphere', epochs: 40, stabilised: 0.5, archeanMax: 600, jobs: 5, sweep: 1, sweepSeeds: 3, out: process.env.CALIBRATION_OUT || `${os.tmpdir()}/casas-calibration`, label: 'run', only: '' }
+  const opt = { seeds: 12, shapes: 'torus,sphere', epochs: 40, stabilised: 0.5, archeanMax: 600, archeanMa: 0, landShare: 30, jobs: 5, sweep: 1, sweepSeeds: 3, out: process.env.CALIBRATION_OUT || `${os.tmpdir()}/casas-calibration`, label: 'run', only: '' }
   const tune = {}
   for (const a of argv) {
     const at = a.indexOf('=')
@@ -110,6 +113,7 @@ async function buildOne(job) {
   const M = {
     archean: await L('/src/generator/archean/archeanState.ts'),
     archeanStep: await L('/src/generator/archean/archeanStep.ts'),
+    archeanLand: await L('/src/generator/archean/archeanLand.ts'),
     finalize: await L('/src/generator/archean/finalizeArchean.ts'),
     raft: await L('/src/generator/crust/raftField.ts'),
     coupled: await L('/src/generator/pipeline/coupledEpoch.ts'),
@@ -146,24 +150,40 @@ async function buildOne(job) {
     mod[obj][name] = value
   }
   const SEA = M.scale.SEA_LEVEL, METRES = M.scale.ELEVATION_METERS
-  const values = { ...DEFAULTS, ...(job.set ?? {}) }
+  const values = { ...DEFAULTS, 'genesis.landShare': job.landShare ?? DEFAULTS['genesis.landShare'], ...(job.set ?? {}) }
   const value = (path) => values[path]
   const weatherParams = M.runParams.weatherParamsFrom(value)
   const time = {}
   let t0 = performance.now()
   const lap = (name) => { const t = performance.now(); time[name] = (t - t0) / 1000; t0 = t }
 
-  // THE ARCHEAN until the screen's gate.
-  const archean = M.archean.createArcheanSimulation(job.seed, W, H, M.runParams.seaLevelOffsetFromWater(value('genesis.water')), job.shape)
-  const archeanParams = { ...M.archeanStep.DEFAULT_ARCHEAN_PARAMS, diffusion: M.runParams.mantleDiffusionFromVigour(value('genesis.mantleVigour')) }
+  // THE ARCHEAN until the screen's gate and the asked-for age: its land
+  // (archeanLand.archeanLandShare, what its controller steers) per epoch.
+  const archean = M.archean.createArcheanSimulation(job.seed, W, H, job.shape)
+  const target = M.runParams.landShareFromControl(value('genesis.landShare'))
+  const archeanParams = { ...M.archeanStep.DEFAULT_ARCHEAN_PARAMS, diffusion: M.runParams.mantleDiffusionFromVigour(value('genesis.mantleVigour')), landShare: target }
+  const ageEpochs = Math.ceil((job.archeanMa ?? 0) / M.worldTime.ARCHEAN_MA_PER_EPOCH)
   let stabilised = 0
+  let gateEpoch = -1
+  let reachEpoch = -1
+  let nucleated = 0
+  const aim = M.archeanLand.archeanLandAim(target, archeanParams.land)
+  const archeanLandAt = {}
   while (archean.epoch < job.archeanMax) {
     M.archeanStep.archeanStep(archean, archeanParams)
+    nucleated += archean.lastNucleated
     stabilised = M.raft.stabilisedFraction(archean.rafts, archean.epoch, M.archeanStep.DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs)
-    if (stabilised >= job.stabilised) break
+    if (gateEpoch < 0 && stabilised >= job.stabilised) gateEpoch = archean.epoch
+    if (reachEpoch < 0 || archean.epoch % 50 === 0) {
+      const land = M.archeanLand.archeanLandShare(archean)
+      if (reachEpoch < 0 && land >= aim - 0.01) reachEpoch = archean.epoch
+      if (archean.epoch % 50 === 0) archeanLandAt[archean.epoch * M.worldTime.ARCHEAN_MA_PER_EPOCH] = +land.toFixed(4)
+    }
+    if (gateEpoch >= 0 && archean.epoch >= ageEpochs) break
   }
   const archeanEpochs = archean.epoch
   const archeanRafts = archean.rafts.length
+  const archeanLand = M.archeanLand.archeanLandShare(archean)
   lap('archean')
   const sim = M.finalize.finalizeArchean(archean)
   const handoverPlates = sim.seeds.length
@@ -177,19 +197,21 @@ async function buildOne(job) {
   sim.epochMa = M.worldTime.TECTONIC_MA_PER_EPOCH
   const coupled = M.coupled.createCoupledTerrain(sim, M.coupled.HISTORY_DEFAULTS.budget)
   lap('meshBuild')
+  const meshLand = () => {
+    let land = 0, all = 0
+    for (let v = 0; v < coupled.mesh.vertexSlots; v++) {
+      if (!coupled.mesh.vAlive[v]) continue
+      const a = coupled.mesh.voronoiArea(v)
+      all += a
+      if (coupled.z[v] > SEA) land += a
+    }
+    return land / all
+  }
+  const handoverLand = meshLand()
   const landPerEpoch = []
   for (let e = 0; e < job.epochs; e++) {
     await M.coupled.stepCoupledEpoch(sim, coupled, { ...M.coupled.HISTORY_DEFAULTS, controls: CONTROLS, weather: weatherParams })
-    if (e % 5 === 4 || e === job.epochs - 1) {
-      let land = 0, all = 0
-      for (let v = 0; v < coupled.mesh.vertexSlots; v++) {
-        if (!coupled.mesh.vAlive[v]) continue
-        const a = coupled.mesh.voronoiArea(v)
-        all += a
-        if (coupled.z[v] > SEA) land += a
-      }
-      landPerEpoch.push(+(land / all).toFixed(4))
-    }
+    if (e % 5 === 4 || e === job.epochs - 1) landPerEpoch.push(+meshLand().toFixed(4))
   }
   lap('history')
   const domain = sim.domain
@@ -411,7 +433,8 @@ async function buildOne(job) {
 
   const out = {
     seed: job.seed, shape: job.shape, set: job.set ?? {}, tune: job.tune ?? {},
-    archeanEpochs, archeanRafts, stabilised, handoverPlates,
+    landShareTarget: target, landShareAim: aim, archeanEpochs, archeanMa: archeanEpochs * M.worldTime.ARCHEAN_MA_PER_EPOCH, gateEpoch, reachMa: reachEpoch < 0 ? null : reachEpoch * M.worldTime.ARCHEAN_MA_PER_EPOCH,
+    nucleated, archeanLand, archeanLandAt, handoverLand, archeanRafts, stabilised, handoverPlates,
     plates: sim.seeds.length, rafts: sim.rafts.length,
     nodes: mesh.aliveVertices,
     landFraction: landA / total, continentalFraction: cont / total, landPerEpoch,
@@ -428,7 +451,7 @@ async function buildOne(job) {
     bandT: bandT.map((s, i) => (bandTA[i] ? s / bandTA[i] : null)),
     bandPLand: bandP.map((s, i) => (bandPA[i] ? s / bandPA[i] : null)),
     reaches: graph.reaches.length,
-    eustaticM: sim.eustaticM, waterOffsetM: sim.seaLevelOffset * METRES,
+    eustaticM: sim.eustaticM,
     oceanMeanDepthM: oceanMean, oceanMedianDepthM: weighted(ocean.slice(), 0.5), oceanP90DepthM: weighted(ocean.slice(), 0.9),
     oceanMaxDepthM: ocean.reduce((m, [d]) => Math.max(m, d), 0),
     artefacts,
@@ -471,6 +494,12 @@ async function pool(jobs, n, onDone) {
 // (DEC-0036 phase 8a's brief) where there is one.
 const ROWS = [
   ['landFraction', '%', 100, [25, 35]],
+  ['archeanLand', '%', 100],
+  ['handoverLand', '%', 100],
+  ['reachMa', 'Ma', 1],
+  ['archeanRafts', '', 1],
+  ['nucleated', '', 1],
+  ['gateEpoch', '', 1],
   ['continentalFraction', '%', 100],
   ['plates', '', 1],
   ['handoverPlates', '', 1],
@@ -649,7 +678,7 @@ if (mode === 'one') {
   mkdirSync(opt.out, { recursive: true })
   const shapes = opt.shapes.split(',')
   const seeds = SEEDS.slice(0, opt.seeds)
-  const base = { epochs: opt.epochs, stabilised: opt.stabilised, archeanMax: opt.archeanMax, tune }
+  const base = { epochs: opt.epochs, stabilised: opt.stabilised, archeanMax: opt.archeanMax, archeanMa: opt.archeanMa, landShare: opt.landShare, tune }
   const jobs = []
   for (const shape of shapes) for (const seed of seeds) jobs.push({ ...base, seed, shape })
   if (opt.sweep) {

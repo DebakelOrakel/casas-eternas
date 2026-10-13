@@ -1,7 +1,6 @@
 import { ARCHEAN_INPUTS } from '../generator/archean/archeanInputParams'
 import { CLIMATE_INPUTS } from '../generator/climate/climateInputParams'
 import type { WeatherParams } from '../generator/climate/weather'
-import { metersToElevation, waterSliderToOffsetM } from '../generator/elevation/elevationScale'
 import { DEFAULT_PLANET_FORCING } from '../generator/planet/planetForcing'
 
 // A WORLD'S RECORDED VALUES AS ITS RUNS TAKE THEM. The spec and the
@@ -31,9 +30,10 @@ export function mantleDiffusionFromVigour(vigour: number): number {
   return MANTLE_DIFFUSION_MAX * ((ARCHEAN_INPUTS.mantleVigour.max - vigour) / (ARCHEAN_INPUTS.mantleVigour.max - ARCHEAN_INPUTS.mantleVigour.min)) ** MANTLE_DIFFUSION_CURVE
 }
 
-// The water control → the Archean's sea-level offset, elevation units.
-export function seaLevelOffsetFromWater(water: number): number {
-  return metersToElevation(waterSliderToOffsetM(water))
+// The land share control (percent) → the Archean's land target, a fraction
+// of the world's area (ArcheanParams.landShare).
+export function landShareFromControl(percent: number): number {
+  return percent / 100
 }
 
 // The planet and climate controls → the weather a run computes with.

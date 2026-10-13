@@ -260,7 +260,8 @@ cd client && npm run calibrate               # the calibration's distributions; 
 
 `npm run calibrate` (scripts/calibrate.mjs, DEC-0036 phase 8a) builds many
 worlds of both shapes at 2048 × 1024 the way the screen does (the Archean
-to its 0.5 gate, 40 coupled epochs, the climate step with its refinement,
+to its 0.5 gate, or to `archeanMa=` as a player stops it, at `landShare=`;
+40 coupled epochs, the climate step with its refinement,
 the hydrology) and prints the distributions the calibration is judged on,
 with the planet's and the genesis's sliders swept; `report <run.json>
 [<before.json>]` prints a run against another. Judge a tuning change there,

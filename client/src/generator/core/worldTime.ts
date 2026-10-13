@@ -39,6 +39,18 @@ export function worldEpoch(archeanEpochs: number, tectonicEpochs: number): numbe
   return archeanEpochs + tectonicEpochs
 }
 
+// The world age, Ma, at which a stamp on the continuous epoch axis was made
+// — worldAgeMa read at a worldEpoch stamp. A crust's AGE is a time, so an
+// age gate compares this against the clock, never two epoch counts: an
+// Archean epoch is five tectonic ones (DEC-0036 phase 8b-1 — the tectonic
+// crust sink read every Archean craton at the hand-over as younger than
+// its 150 epochs and recycled 26–55 % of the land in the first epoch).
+export function worldEpochMa(stamp: number, archeanEpochs: number): number {
+  return stamp <= archeanEpochs
+    ? stamp * ARCHEAN_MA_PER_EPOCH
+    : archeanEpochs * ARCHEAN_MA_PER_EPOCH + (stamp - archeanEpochs) * TECTONIC_MA_PER_EPOCH
+}
+
 // Formatted for display: always Ma, never Ga (user's call, 2026-08-06) — one
 // unit for the whole readout's life beats a nicer-looking big number that
 // changes units mid-run. Both the Genesis and Tectonics panels show this.

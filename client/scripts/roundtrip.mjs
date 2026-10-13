@@ -85,32 +85,39 @@ check(`${M.spec.WORLD_SPEC_FIELDS.length} fields survive write → read`, mismat
 
 // A key the file does not carry must come back as its control's default — the
 // contract that lets a save written before a knob existed still open.
-const partial = M.spec.specFromYaml('spec:\n  genesis:\n    water: 12\n', 'x')
-const waterField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'genesis.water')
+const partial = M.spec.specFromYaml('spec:\n  genesis:\n    landShare: 22\n', 'x')
 const otherField = M.spec.WORLD_SPEC_FIELDS.find((f) => f.path === 'tectonics.alluvium')
 check('a missing key falls back to its declared default',
-  partial.values['genesis.water'] === 12 && partial.values['tectonics.alluvium'] === otherField.input.default,
-  `water=${partial.values['genesis.water']} alluvium=${partial.values['tectonics.alluvium']} (want ${waterField ? 12 : '?'}/${otherField.input.default})`)
+  partial.values['genesis.landShare'] === 22 && partial.values['tectonics.alluvium'] === otherField.input.default,
+  `landShare=${partial.values['genesis.landShare']} alluvium=${partial.values['tectonics.alluvium']} (want 22/${otherField.input.default})`)
 // A control that moved stage (the temperature offset as the Planet's
-// greenhouse; the water, back with the genesis after a day on the planet)
-// reads its old path when the new one is absent, and the new one wins when
-// both are there.
-const moved = M.spec.specFromYaml('spec:\n  planet:\n    water: 33\n  climate:\n    tempOffset: -4\n', 'x')
-const both = M.spec.specFromYaml('spec:\n  planet:\n    water: 41\n  genesis:\n    water: 33\n', 'x')
-check('a moved control reads its legacy path', moved.values['genesis.water'] === 33 && moved.values['planet.greenhouse'] === -4, `water=${moved.values['genesis.water']} greenhouse=${moved.values['planet.greenhouse']}`)
+// greenhouse) reads its old path when the new one is absent, and the new
+// one wins when both are there.
+const moved = M.spec.specFromYaml('spec:\n  climate:\n    tempOffset: -4\n', 'x')
+const both = M.spec.specFromYaml('spec:\n  climate:\n    tempOffset: -4\n  planet:\n    greenhouse: 3\n', 'x')
+check('a moved control reads its legacy path', moved.values['planet.greenhouse'] === -4, `greenhouse=${moved.values['planet.greenhouse']}`)
 // The erosion's material controls moved to the tectonics with the coupled
 // history (phase 5.1): a save from before reads them from their old place.
 const movedErosion = M.spec.specFromYaml('spec:\n  erosion:\n    alluvium: 70\n    rockContrast: 20\n', 'x')
 check('the erosion controls read their legacy paths', movedErosion.values['tectonics.alluvium'] === 70 && movedErosion.values['tectonics.rockContrast'] === 20, `alluvium=${movedErosion.values['tectonics.alluvium']} rockContrast=${movedErosion.values['tectonics.rockContrast']}`)
-check('the current path wins over the legacy one', both.values['genesis.water'] === 33)
+check('the current path wins over the legacy one', both.values['planet.greenhouse'] === 3)
 
 // A key the file DOES carry but the spec no longer knows must be ignored, not
 // crash or leak: riverDensity left the spec with erosion-v2 P4, and every save
 // written before that carries it.
-const legacy = M.spec.specFromYaml('spec:\n  genesis:\n    water: 12\n  hydrology:\n    riverDensity: 70\n', 'x')
+const legacy = M.spec.specFromYaml('spec:\n  genesis:\n    landShare: 22\n  hydrology:\n    riverDensity: 70\n', 'x')
 check('a retired key in an old save is simply ignored',
-  legacy.values['genesis.water'] === 12 && legacy.values['hydrology.riverDensity'] === undefined,
+  legacy.values['genesis.landShare'] === 22 && legacy.values['hydrology.riverDensity'] === undefined,
   `riverDensity=${legacy.values['hydrology.riverDensity']}`)
+
+// A recipe with the water control (replaced by the land share, DEC-0036
+// phase 8b-1) is refused, under its genesis path and its day on the planet:
+// its world was made from a sea-level offset no generator of today applies.
+let waterRefused = 0
+for (const text of ['spec:\n  genesis:\n    water: 50\n', 'spec:\n  planet:\n    water: 50\n']) {
+  try { M.spec.specFromYaml(text, 'x') } catch { waterRefused++ }
+}
+check('a recipe with the former water control is refused', waterRefused === 2, `${waterRefused} of 2 refused`)
 
 // Layout lock: indentation, nesting depth and field order, on the defaults.
 const defaults = {}

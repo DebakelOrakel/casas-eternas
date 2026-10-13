@@ -13,7 +13,7 @@ summary.de: Die Genesis-Regler werden durch eine kurze, beobachtbare Simulation 
 area: generator
 stage: built
 createdAt: 2026-07-28
-updatedAt: 2026-08-12
+updatedAt: 2026-10-12
 concepts: [generator.concept.craton, generator.concept.young-crust, generator.concept.mantle-convection]
 related: [DEC-0003, DEC-0006]
 ---
@@ -143,6 +143,16 @@ The number of plates therefore falls out of the convection pattern rather than
 being dialled — which is the same reasoning that makes land fraction emergent.
 
 ### 6. Water volume shifts the anchors, **not** sea level
+
+> **Superseded 2026-10-12 (DEC-0036 phase 8b-1,
+> [fields-on-meshes.md](./fields-on-meshes.md)).** The water control is
+> gone: it moved the land by ±1.5 points only, because the land was set by
+> how much crust the Archean had made. Its place is a **land share target**
+> (15–40 %, default 30): the Archean scales its nucleation so that its land
+> climbs to the target by 800 Ma and holds it after — aiming a little
+> above it by what the plates' first epochs take back
+> (`archean/archeanLand.ts`). The sea stays at `SEA_LEVEL = 0`, and nothing
+> but the ice moves it. The reasoning below for a fixed zero still holds.
 
 The elevation scale stays exactly as it is: `-1..1`, `SEA_LEVEL = 0`. That signed
 zero is load-bearing — every land/ocean test is a sign test, and several are
@@ -343,7 +353,8 @@ the mantle-vigour one, which is exactly the confusion `mantleRms` produced.
     unchanged behaviour rather than halfway along a slider.
 
   Land fraction does *not* follow this knob monotonically, which is the point — how
-  much land there is stays the water slider's job. `mantleRms` was measured as the
+  much land there is was the water slider's job, and is the land share's since
+  2026-10-12. `mantleRms` was measured as the
   other candidate and rejected for exactly that reason: it is monotone but it is a
   land dial in disguise (47% land at 0.25, 20% at 0.40, 2% at 0.55).
 - **Does the Archean produce sutures the Ecology layer should see?** Archean
@@ -355,4 +366,5 @@ the mantle-vigour one, which is exactly the confusion `mantleRms` produced.
 
 decided and BUILT 2026-07-28 (Archean core landed the same day); tuned
 repeatedly since — supercontinent timing, water offsets ±600 m, compaction
-and blob consolidation 2026-08-06
+and blob consolidation 2026-08-06. 2026-10-12: the water control replaced by
+the land share target (section 6's note; DEC-0036 phase 8b-1)

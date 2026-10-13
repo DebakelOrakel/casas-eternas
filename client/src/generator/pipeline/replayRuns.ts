@@ -22,9 +22,9 @@ import { climateDueAt, createCoupledTerrain, decodeCoupledTerrain, encodeCoupled
 
 export interface GenesisRun {
   epochs: number
-  // The Archean's mantle diffusion and sea-level offset (runParams).
+  // The Archean's mantle diffusion and land share target (runParams).
   diffusion: number
-  seaLevelOffset: number
+  landShare: number
 }
 
 export interface TectonicsRun {
@@ -121,11 +121,10 @@ export async function replayRuns(plan: ReplayPlan, options: ReplayOptions): Prom
   } else {
     // The Archean, run by run, then the hand-over (the screen's
     // genesisInit, genesisStart and commit, as pipeline/runtime.ts does them).
-    const archean = createArcheanSimulation(plan.seed, plan.width, plan.height, plan.genesis[0].seaLevelOffset, plan.shape ?? 'torus')
+    const archean = createArcheanSimulation(plan.seed, plan.width, plan.height, plan.shape ?? 'torus')
     let params = DEFAULT_ARCHEAN_PARAMS
     for (const run of plan.genesis) {
-      params = { ...params, diffusion: run.diffusion }
-      archean.seaLevelOffset = run.seaLevelOffset
+      params = { ...params, diffusion: run.diffusion, landShare: run.landShare }
       for (let i = 0; i < run.epochs; i++) {
         if (options.cancelled?.()) return null
         archeanStep(archean, params)

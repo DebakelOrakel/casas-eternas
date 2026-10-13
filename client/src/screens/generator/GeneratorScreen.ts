@@ -98,12 +98,12 @@ import { createMonthPlayer } from './monthPlayer'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
 import { MIGRATION_INPUTS } from '../../generator/migration/migrationInputParams'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
-import { mantleDiffusionFromVigour, seaLevelOffsetFromWater, weatherParamsFrom } from '../../world/runParams'
+import { landShareFromControl, mantleDiffusionFromVigour, weatherParamsFrom } from '../../world/runParams'
 import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
 import { wrapValue } from '../../generator/core/field'
 import { TECTONICS_INPUTS } from '../../generator/tectonics/tectonicsInputParams'
 import { ECOLOGY_INPUTS, ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputParams'
-import { WORLD_SPEC_FIELDS } from '../../world/save/worldSpec'
+import { specFromYaml, WORLD_SPEC_FIELDS } from '../../world/save/worldSpec'
 import { recordDiff, recordFromYaml, recordSignature, recordToYaml, worldKindOf, type WorldRecord } from '../../world/worldRecord'
 import { GENESIS_RUN_FIELDS, TECTONICS_RUN_FIELDS, emptyWorldHistory, openRun, runValues, tallyRun, type WorldHistory, type WorldRun } from '../../world/save/worldHistory'
 import { planFromRecipe } from '../../world/replay'
@@ -543,7 +543,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       <section class="gen-params">
         <h2 class="gen-section-title" data-t="generator.params.label" data-help="generator.params"></h2>
         ${paramField(ARCHEAN_INPUTS.mantleVigour, 'mantle-vigour-input', 'mantle-vigour-label')}
-        ${paramField(ARCHEAN_INPUTS.water, 'water-input', 'water-label')}
+        ${paramField(ARCHEAN_INPUTS.landShare, 'land-share-input', 'land-share-label')}
       </section>
       <div class="gen-step__foot">
         <div class="gen-stats">
@@ -691,8 +691,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   worldNameInput.value = worldName
   const mantleVigourInput = root.querySelector<HTMLInputElement>('.mantle-vigour-input')!
   const mantleVigourLabel = root.querySelector<HTMLElement>('[data-value="mantle-vigour-label"]')!
-  const waterInput = root.querySelector<HTMLInputElement>('.water-input')!
-  const waterLabel = root.querySelector<HTMLElement>('[data-value="water-label"]')!
+  const landShareInput = root.querySelector<HTMLInputElement>('.land-share-input')!
+  const landShareLabel = root.querySelector<HTMLElement>('[data-value="land-share-label"]')!
   // The Planet stage's astronomical controls (planet/planetInputParams.ts).
   const obliquityInput = root.querySelector<HTMLInputElement>('.obliquity-input')!
   const obliquityLabel = root.querySelector<HTMLElement>('[data-value="obliquity-label"]')!
@@ -1081,7 +1081,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (const el of [alluviumInput, rockContrastInput]) el.disabled = busy
     // The Archean's levers lock while it runs too, which busy does not
     // count (it is not a compute the other controls must wait for).
-    for (const el of [mantleVigourInput, waterInput]) el.disabled = busy || archeanRunning
+    for (const el of [mantleVigourInput, landShareInput]) el.disabled = busy || archeanRunning
 
     updateNavState() // the step bar locks with it (see its own gating)
   }
@@ -4473,8 +4473,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // so a toggle can re-composite without a worker round-trip, then draw the
     // current layer set.
     // A render arriving while the Planet preview stands (the world being
-    // made or remade under it — the water control regenerates the Archean)
-    // is the truth the preview is keeping aside: it goes into the stash and
+    // made or remade under it) is the truth the preview is keeping aside: it goes into the stash and
     // the sample world stays on the map until the step is left. Everything
     // else the render carries (mantle, ages, counters) is taken as always.
     const underPreview = planetPreviewShown && STEP_IDS[panelIndex] === 'world'
@@ -4609,7 +4608,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // Genesis now starts an ARCHEAN world, not a plate simulation: no plates exist
   // until finalizeArchean hands over. See docs/decisions/archean-genesis.md.
-  const initArchean = (seed: string, vigour: number, water: number): void => {
+  const initArchean = (seed: string, vigour: number, landShare: number): void => {
     lastEpoch = 0
     archeanRunning = false
     // A new world: nothing has run on it yet, and no step has been looked at.
@@ -4633,7 +4632,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       shape: worldShape === 'sphere' ? 'sphere' : 'torus',
       epochIntervalMs: EPOCH_INTERVAL_MS,
       mantleDiffusion: mantleDiffusionFromVigour(vigour),
-      seaLevelOffset: seaLevelOffsetFromWater(water),
+      landShare: landShareFromControl(landShare),
       renderOptions: {},
     })
   }
@@ -4641,7 +4640,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // is lit from the first frame of every session, which is exactly how a warning
   // stops being read.
   markCleanOnNextRender = true
-  initArchean(initialSeed, ARCHEAN_INPUTS.mantleVigour.default, ARCHEAN_INPUTS.water.default)
+  initArchean(initialSeed, ARCHEAN_INPUTS.mantleVigour.default, ARCHEAN_INPUTS.landShare.default)
 
   // --- Archean controls -----------------------------------------------------
   const setArcheanRunning = (running: boolean): void => {
@@ -4677,7 +4676,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     postToWorker({
       type: 'genesisStart',
       mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)),
-      seaLevelOffset: seaLevelOffsetFromWater(Number(waterInput.value)),
+      landShare: landShareFromControl(Number(landShareInput.value)),
     })
     archeanRunChanged(true)
     updateOverlays()
@@ -4995,7 +4994,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // load sets the inputs programmatically (which doesn't fire input events).
   function syncSliderLabels(): void {
     mantleVigourLabel.textContent = mantleVigourInput.value
-    waterLabel.textContent = waterInput.value
+    landShareLabel.textContent = landShareInput.value
     obliquityLabel.textContent = obliquityInput.value
     rotationLabel.textContent = rotationInput.value
     const t = Number(tempBandInput.value)
@@ -5572,6 +5571,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // the torus or the sphere. An unknown kind is not a world.
       const kind = worldKindOf(yaml)
       if (kind === null) throw new Error('not a world this generator opens')
+      // A recipe of a control that is gone (the water, DEC-0036 phase 8b-1)
+      // is refused here, before the open tears the current world down.
+      specFromYaml(yaml, '')
       shape = kind === 'SphereWorld' ? 'sphere' : 'flat'
       if (!archeanPayload) {
         if (!stateFile) throw new Error('missing files')
@@ -5667,7 +5669,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // A world opened keeps the progress it was saved with.
     worldProgress = record.progress
     mantleVigourInput.value = String(spec.values['genesis.mantleVigour'])
-    waterInput.value = String(spec.values['genesis.water'])
+    landShareInput.value = String(spec.values['genesis.landShare'])
     obliquityInput.value = String(spec.values['planet.obliquity'])
     rotationInput.value = String(spec.values['planet.rotation'])
     // How far the Archean got, read from whichever snapshot the file carries — the yaml
@@ -5725,7 +5727,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The globe leans with the world's tilt, which the recipe just set.
     globeView?.setObliquity(Number(obliquityInput.value))
     globeView?.setDayLength(Number(rotationInput.value))
-    postToWorker({ type: 'restoreWorld', seed, shape: shape === 'sphere' ? 'sphere' : 'torus', snapshot: snapshot!, oceanAge, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)) })
+    postToWorker({ type: 'restoreWorld', seed, shape: shape === 'sphere' ? 'sphere' : 'torus', snapshot: snapshot!, oceanAge, mantle, lattice, mesh: meshPayload, archean: archeanPayload as never, mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)), landShare: landShareFromControl(Number(landShareInput.value)) })
   }
 
 
@@ -6124,7 +6126,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     archeanFinalised = false
     hasHandover = false
     markCleanOnNextRender = true
-    initArchean(seedInput.value, Number(mantleVigourInput.value), Number(waterInput.value))
+    initArchean(seedInput.value, Number(mantleVigourInput.value), Number(landShareInput.value))
     updateNavState() // fresh world → re-lock downstream panels
   }
 
@@ -6225,7 +6227,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // history records each run's. They used to rebuild the world on the spot,
   // which silently threw away an Archean that had run. Locked while it runs.
   mantleVigourInput.addEventListener('input', () => { mantleVigourLabel.textContent = mantleVigourInput.value })
-  waterInput.addEventListener('input', () => { waterLabel.textContent = waterInput.value })
+  landShareInput.addEventListener('input', () => { landShareLabel.textContent = landShareInput.value })
   // The astronomical controls act on the climate: label, then the same
   // debounced recompute the climate sliders use (which in turn marks the
   // erosion stale, as its forcing reads the same chain).

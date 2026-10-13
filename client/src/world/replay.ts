@@ -1,7 +1,7 @@
 import type { CoupledTerrain } from '../generator/pipeline/coupledEpoch'
 import { replayRuns, type ReplayOptions, type ReplayPlan } from '../generator/pipeline/replayRuns'
 import type { PlateSimulation } from '../generator/tectonics/plateSimulation'
-import { mantleDiffusionFromVigour, seaLevelOffsetFromWater, weatherParamsFrom } from './runParams'
+import { landShareFromControl, mantleDiffusionFromVigour, weatherParamsFrom } from './runParams'
 import type { WorldHistory } from './save/worldHistory'
 
 // A WORLD MADE AGAIN FROM ITS RECIPE (docs/decisions/detail-ladder.md,
@@ -48,7 +48,7 @@ export function planFromRecipe(recipe: ReplayRecipe): ReplayPlan {
     genesis: recipe.history.genesis.map((run) => ({
       epochs: run.epochs,
       diffusion: mantleDiffusionFromVigour(run.values['genesis.mantleVigour']),
-      seaLevelOffset: seaLevelOffsetFromWater(run.values['genesis.water']),
+      landShare: landShareFromControl(run.values['genesis.landShare']),
     })),
     tectonics: recipe.history.tectonics.map((run) => ({
       epochs: run.epochs,

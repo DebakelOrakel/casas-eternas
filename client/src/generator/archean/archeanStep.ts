@@ -1,6 +1,7 @@
 import type { ArcheanSimulation } from './archeanState'
 import type { NucleationParams } from './crustNucleation'
 import { DEFAULT_NUCLEATION_PARAMS, findNucleationSites, nucleateCrust } from './crustNucleation'
+import { archeanLandAim, archeanLandShare, nucleationBudget, type LandShareParams } from './archeanLand'
 import { advanceRaftsOnFlow, compactRafts, consolidateRaftBlobs, mergeOverlappingRafts, recycleUnstabilisedCrust, splitDisconnectedRafts } from '../crust/raftLifecycle'
 import { evolveMantleField, computeMantleFlow, sustainMantleVigour, mantleAt, mantleFlowAt } from '../mantle/mantleField'
 import { MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR } from '../crust/crustTuneParams'
@@ -8,6 +9,12 @@ import { sq } from '../core/detMath'
 
 export interface ArcheanParams {
   nucleation: NucleationParams
+  // THE LAND SHARE LEVER (DEC-0036 phase 8b-1): the land the Archean steers
+  // its nucleation toward, a fraction of the world's area — the
+  // genesis.landShare control's (world/runParams.landShareFromControl), a
+  // run parameter as `diffusion` is. See archeanLand.ts.
+  landShare: number
+  land: LandShareParams
   // Target RMS amplitude the mantle is held at each epoch. Without it the field
   // decays to nothing on a crustless planet — see sustainMantleVigour.
   mantleRms: number
@@ -49,7 +56,7 @@ export interface ArcheanParams {
   //     3.0 ->  7/ 6 plates,  13-26%                      (saturating)
   //
   // Land fraction does NOT follow it monotonically, which is the point: how much land
-  // there is stays the water slider's job. Saturates past ~3, so that is the range's
+  // there is is the land share's job. Saturates past ~3, so that is the range's
   // top end.
   diffusion: number
   // How rigidly a craton moves: 1 = a rigid plate carried by the mean flow under it,
@@ -71,6 +78,64 @@ export interface ArcheanParams {
 
 export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
   nucleation: DEFAULT_NUCLEATION_PARAMS,
+  // The control's default, 30 %.
+  landShare: 0.3,
+  land: {
+    // 800 Ma: 160 epochs of ARCHEAN_MA_PER_EPOCH. Not the 1000 Ma a
+    // player stops at: the plates recycle crust younger than their
+    // stabilisation age (150 Ma, TECTONICS_TUNING.stabilisationEpochs) over
+    // a downwelling, and a climb that ended at 1000 Ma handed them its
+    // youngest crust — 40 epochs into the history the land of a world
+    // stopped at 1000 Ma stood 4–5 points below one stopped at 1500 Ma
+    // (torus, 12 seeds). Ending at 800 Ma, the two agree within 1.5 points.
+    reachEpoch: 160,
+    // A tenth of the deficit a step once there: the land held within about
+    // ±2 points from 1000 to 2500 Ma (measured below).
+    holdEpochs: 10,
+    // The land a nucleus adds NET: 0.03 Mkm², a twentieth of a lone
+    // nucleus's land (546 km blob, 0.73 % of the torus's 127.6 Mkm² as a
+    // disc, 0.16 % above the sea): most nuclei weld onto crust that is
+    // already land, and young crust over a downwelling is recycled. Swept
+    // 2026-10-12 at 2048 × 1024, the target 30 % and the climb to 1000 Ma,
+    // three or four seeds per shape, land at 500 / 1000 Ma:
+    //
+    //     nucleusLandM2   torus           sphere
+    //     30 000 km²      15–20 / 25–30   13–19 / 28–30   <- chosen
+    //     60 000 km²      10–11 / 26–28   8–11 / 22–29
+    //     120 000 km²     3–6 / 25–27     6–8 / 20–24
+    //
+    // Larger values under-ask early and catch up at the cap just before the
+    // reach epoch; 30 000 makes the climb close to the straight ramp.
+    nucleusLandM2: 30_000e6,
+    // The history's toll, measured 2026-10-12 (12 seeds per shape, 2048 ×
+    // 1024, the hand-over at 1000 Ma, then 40 epochs of the plates alone —
+    // the coupled history's land agreed with it within 0.5 points): the
+    // land after 40 epochs against the land the Archean handed over —
+    //
+    //     handed over    torus    sphere
+    //     15 %           15.4     14.4
+    //     30 %           27.7     25.8
+    //     35 %           32.3     30.2
+    //     40 %           38.1     31.7
+    //     46 %           36.0     37.3
+    //
+    // Nothing at 15 %, about a quarter of the excess above it: an aim of
+    // T + 0.27 (T − 15 %) lands both shapes within ±3 points of T. The
+    // sphere loses more than the torus — perhaps its plates, which move in
+    // domain units and so 25 % further in metres (DEC-0036 phase 8a; not
+    // measured) —; one aim for both, between them. `npm run calibrate`
+    // with the aim, the land after 40 coupled epochs, median (p10–p90):
+    //
+    //     target  stopped at   torus              sphere
+    //     15 %    1000 Ma      15.8 (12.8–19.0)   13.8 (12.2–17.8)
+    //             1500 Ma      17.7 (14.3–20.0)   14.8 (12.1–17.5)
+    //     30 %    1000 Ma      31.0 (26.5–35.4)   28.0 (24.1–31.7)
+    //             1500 Ma      31.5 (26.7–34.0)   30.1 (28.3–33.8)
+    //     40 %    1000 Ma      37.4 (33.3–47.0)   37.3 (33.7–41.5)
+    //             1500 Ma      41.8 (38.3–45.2)   37.7 (32.3–40.4)
+    historyFrom: 0.15,
+    historySlope: 0.27,
+  },
   mantleRms: 0.4,
   // Matches the tectonic phase's MANTLE_TUNING.diffusionPasses, so the default Archean stirs the
   // mantle exactly as hard as the tectonic phase does.
@@ -142,7 +207,7 @@ export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
   // stabilised clock stays closest to its calibrated banner thresholds (the
   // stabilisationEpochs 25->15 alternative assembled equally fast but pushed
   // the gauge to 75-86% by epoch 200, collapsing the advertised archipelago
-  // window). Side effect: more land overall — that is the water knob's job.
+  // window). Side effect: more land overall — the land share controls that now.
   recycleThreshold: -0.6,
 }
 
@@ -181,8 +246,13 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   advanceRaftsOnFlow(sim.rafts, (x, y, out) => mantleFlowAt(flow, domain, x, y, out), domain, params.raftRigidity)
   compactRafts(sim.rafts, params.compaction, domain)
 
-  // 3. New crust over persistent upwellings that are still ocean.
-  const sites = findNucleationSites(sim.mantle, sim.upwellingStreak, sim.rafts, params.nucleation, sim.random, domain)
+  // 3. New crust over persistent upwellings that are still ocean, as many as
+  // the land share controller grants from the land as it stands after the
+  // drift (archeanLand.ts).
+  const budget = nucleationBudget(sim, archeanLandShare(sim), archeanLandAim(params.landShare, params.land), params.land, params.nucleation.maxPerEpoch)
+  const sites = findNucleationSites(sim.mantle, sim.upwellingStreak, sim.rafts, params.nucleation, sim.random, domain, budget)
+  sim.nucleationCredit -= sites.length
+  sim.lastNucleated = sites.length
   for (const site of sites) {
     nucleateCrust(sim.rafts, site, sim.epoch, params.nucleation.blobRadiusM / domain.metresPerUnit, sq(params.attachDistM / domain.metresPerUnit), domain)
   }
@@ -190,7 +260,7 @@ export function archeanStep(sim: ArcheanSimulation, params: ArcheanParams = DEFA
   // 4. Recycling — the same sink the tectonic phase uses, and the reason crust
   // production settles at an equilibrium instead of carpeting the planet.
   sim.lastRecycled = recycleUnstabilisedCrust(
-    sim.rafts, (x, y) => mantleAt(sim.mantle, domain, x, y), sim.epoch,
+    sim.rafts, (x, y) => mantleAt(sim.mantle, domain, x, y), (birth) => sim.epoch - birth,
     params.stabilisationEpochs, params.recycleThreshold,
   )
 

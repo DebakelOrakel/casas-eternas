@@ -50,6 +50,21 @@ const H = 128
 // silently passes on a world that cannot change. Measured at this size: 0% crust
 // at epoch 5, 68% by epoch 41, ~5 ms per epoch.
 const ARCHEAN_EPOCHS = 20
+// The land share controller (archean/archeanLand.ts) climbs to its aim by
+// epoch 160 — 800 Ma, the screen's world — and aims at 34 %; a harness
+// world runs tens of epochs, and its checks were written against the
+// mostly-land world the unthrottled nucleation made of it (97 % at the
+// hand-over: rivers long enough to have courses, coasts with every type).
+// Here the climb ends at epoch 10 with a target of 85 % (an aim past
+// 100 %, archeanLandAim: nucleation near its ceiling, much as the
+// unthrottled rate was; 96 % land at the hand-over of the hydrology's
+// world, its rivers with courses), for every runtime instance and every
+// direct archeanStep alike (they share the module's object).
+{
+  const harnessArchean = (await server.ssrLoadModule('/src/generator/archean/archeanStep.ts')).DEFAULT_ARCHEAN_PARAMS
+  harnessArchean.land.reachEpoch = 10
+  harnessArchean.landShare = 0.85
+}
 
 let failures = 0
 const check = (name, ok, detail = '') => {
@@ -149,7 +164,7 @@ async function quiet(p, ms = 250) {
   }
 }
 
-const ARCHEAN_INIT = { type: 'genesisInit', seed: 'harness', width: W, height: H, renderOptions: {}, epochIntervalMs: 10, mantleDiffusion: 2, seaLevelOffset: 0 }
+const ARCHEAN_INIT = { type: 'genesisInit', seed: 'harness', width: W, height: H, renderOptions: {}, epochIntervalMs: 10, mantleDiffusion: 2 }
 
 // A world the way the program makes one: an Archean run, then the hand-over.
 async function growWorld(p, { epochs = ARCHEAN_EPOCHS } = {}) {
@@ -523,14 +538,14 @@ async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM }) {
   const result = {}
   for (const shape of ['torus', 'sphere']) {
     const started = performance.now()
-    const sim = AS.createArcheanSimulation('harness', FW, FH, 0, shape)
+    const sim = AS.createArcheanSimulation('harness', FW, FH, shape)
     for (let e = 0; e < EPOCHS; e++) AT.archeanStep(sim, AT.DEFAULT_ARCHEAN_PARAMS)
     const stepped = performance.now() - started
     const flow = MF.computeMantleFlow(sim.mantle, sim.domain)
     const age = RF.computeCratonOldnessField(sim.rafts, sim.epoch, MF.MANTLE_RES_X, MF.MANTLE_RES_Y, sim.domain)
     // The live preview's render, a quarter of the world per axis.
     const rendered = await IM.renderSimulationImage(
-      { width: FW, height: FH, domain: sim.domain, seeds: [], rafts: sim.rafts, features: [], oceanAge: null, warpSeed: sim.warpSeed, seaLevelOffset: 0, mantle: sim.mantle },
+      { width: FW, height: FH, domain: sim.domain, seeds: [], rafts: sim.rafts, features: [], oceanAge: null, warpSeed: sim.warpSeed, mantle: sim.mantle },
       slices, { elevationScale: 4 },
     )
     result[shape] = {
@@ -873,7 +888,7 @@ test('the coupled epoch on a sphere: a valid globe every epoch, conserved, pole-
   // 2026-10-11): 'harness' then put land on a pole (2 of 6 seeds tried kept
   // the sea, 'h2' the first).
   const world = (shape, seed = 'harness', archeanEpochs = 30) => {
-    const archean = AS.createArcheanSimulation(seed, W, H, 0, shape)
+    const archean = AS.createArcheanSimulation(seed, W, H, shape)
     for (let e = 0; e < archeanEpochs; e++) AT.archeanStep(archean)
     return FA.finalizeArchean(archean)
   }
@@ -3113,7 +3128,7 @@ test("level 1's replay makes the saved world again, across a load and a checkpoi
   const RE = await server.ssrLoadModule('/src/world/replay.ts')
   const CE = await server.ssrLoadModule('/src/generator/pipeline/coupledEpoch.ts')
   const values = Object.fromEntries(WS.WORLD_SPEC_FIELDS.map((f) => [f.path, f.input.default]))
-  const genesis = { mantleDiffusion: RP.mantleDiffusionFromVigour(values['genesis.mantleVigour']), seaLevelOffset: RP.seaLevelOffsetFromWater(values['genesis.water']) }
+  const genesis = { mantleDiffusion: RP.mantleDiffusionFromVigour(values['genesis.mantleVigour']), landShare: RP.landShareFromControl(values['genesis.landShare']) }
   const start = { type: 'tectonicsStart', alluvium: values['tectonics.alluvium'], rockContrast: values['tectonics.rockContrast'], weather: RP.weatherParamsFrom((path) => values[path]) }
   const run = async (q, n) => {
     const settledBefore = q.settledRenders()

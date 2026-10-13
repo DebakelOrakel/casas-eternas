@@ -4,6 +4,9 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-12
+- **changed** Genesis: the Water control is replaced by Land share, the share of the surface the continents cover, which the Archean grows its crust toward and then holds, and worlds saved before this change no longer open. `generator.step.genesis`
+- **fixed** Tectonics: the continents the Archean made no longer lose a third to half of their land in the first epoch of the plates. `generator.step.tectonics`
+- **fixed** Genesis: on a sphere world a continent drifting over a pole no longer folds onto itself and loses half its land. `generator.step.genesis`
 - **fixed** Tectonics: a sphere world forms about as many plates as a flat one, with continents and mountains of the same size, so a sphere seed makes a different world. `generator.step.genesis`
 - **fixed** Hydrology: a basin below sea level that fills to its rim overflows into a river, and a lake counts the water of every river that reaches it, so a seed makes a different world. `generator.step.climate`
 - **fixed** Tectonics: a standing ice sheet presses the land down once, as it grows, instead of again at every epoch, so a seed makes a different world. `generator.step.tectonics`
