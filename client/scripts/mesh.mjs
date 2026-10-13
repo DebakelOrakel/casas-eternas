@@ -1241,19 +1241,24 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   // The trough's making: the cut is the sliding's, and the sliding is
   // the trunk's — the floor band (within half a unit of the axis) cuts
   // more than the walls two to three units out, 800–1200 m up; the
-  // floor's cut stays under the per-epoch cap (a fjord's rate). On this
+  // floor's sliding cut stays under the per-epoch cap (a fjord's rate),
+  // and the buzzsaw (DEC-0036 phase 8d) adds no more than the node's
+  // height over its line — it planes towards the ELA, never below it. On this
   // world the difference is small (259 vs 221 m): it is an ice cap, 91 %
   // of it iced, the walls under a kilometre of ice too. A full U profile
   // from a V needs a valley-scale test with a realistic accumulation area
   // and is the calibration's (ADAPTIVE_MESH_PLAN.md phase 6), not this
   // gate's.
   const zAfter = z.slice()
-  let floorCut = 0, floorN = 0, wallCut = 0, wallN = 0, maxCut = 0
+  let floorCut = 0, floorN = 0, wallCut = 0, wallN = 0, maxCut = 0, overCap = 0, sawed = 0
   for (let epoch = 0; epoch < 3; epoch++) {
     const iceNow = M.glacial.computeIceOnMesh({ mesh: lat, z: zAfter, seaLevelTemperature, precipitation, seasonalAmplitude, cellM: UNITS_TO_M })
     const g = M.glacial.glacialErosionOnMesh(lat, zAfter, iceNow, 1e6, UNITS_TO_M)
     for (let v = 0; v < lat.vertexSlots; v++) {
       if (!lat.vAlive[v]) continue
+      const overLineM = Math.max(0, zAfter[v] * M.scale.ELEVATION_METERS - iceNow.elaM[v])
+      overCap = Math.max(overCap, g.cutM[v] - M.surfaceTune.SURFACE_TUNING.glacialErosionMaxM - overLineM)
+      if (overLineM > 0 && g.cutM[v] > 0) sawed++
       zAfter[v] -= g.cutM[v] / M.scale.ELEVATION_METERS
       const dx = Math.abs(M.toroidal.wrappedDelta(lat.vx[v], valleyX, W))
       if (dx <= 0.5) { floorCut += g.cutM[v]; floorN++ } else if (dx >= 2 && dx <= 3) { wallCut += g.cutM[v]; wallN++ }
@@ -1263,7 +1268,7 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   }
   const floorMean = floorCut / Math.max(1, floorN), wallMean = wallCut / Math.max(1, wallN)
   check(`the trunk cuts the floor more than the walls (floor ${floorMean.toFixed(0)} m vs walls ${wallMean.toFixed(0)} m an epoch)`, floorMean > wallMean && wallMean >= 0)
-  check(`the cut stays under the cap (${maxCut.toFixed(0)} ≤ ${M.surfaceTune.SURFACE_TUNING.glacialErosionMaxM} m an epoch)`, maxCut <= M.surfaceTune.SURFACE_TUNING.glacialErosionMaxM)
+  check(`the cut stays under the cap plus the height over the line (max cut ${maxCut.toFixed(0)} m, ${Math.max(0, overCap).toFixed(1)} m over the bound; the cap ${M.surfaceTune.SURFACE_TUNING.glacialErosionMaxM} m an epoch; ${sawed} node-epochs over their line cut)`, overCap <= 1e-3)
 }
 
 // The coupled epoch (phase 5.1): a small real world through the handover,

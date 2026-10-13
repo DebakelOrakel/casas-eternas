@@ -64,8 +64,14 @@ thickness times slope. The forms fall out of that rule:
 - **Troughs** where thick ice flows through a river valley — the cross
   section becomes a U because the erosion is largest on the floor.
 - **Overdeepenings** where ice converges.
-- **Cirques** at the ice margin near the ELA, with an extra erosion
-  peak there (the glacial buzzsaw: summits are planed towards the ELA).
+- **Cirques and the buzzsaw**: the land above the ELA is cut down
+  towards it. The glaciers that do it are inside a macro node, so they
+  have a law of their own (since DEC-0036 phase 8d): they carry the
+  node's accumulation `b` down the drop `R` from the node to the ELA as
+  plastic ice, their speed is `b R ρ g / τy`, and the bed erodes with the
+  speed (Hallet). So `R` decays as `e^(−κ b t)`: a wet range is planed
+  fast, a dry or polar one slowly, and a range stands where the cut
+  equals its uplift. A colder world, with a lower ELA, has lower ranges.
 - **Fjords** need no rule: a trough that reaches the coast and goes
   below sea level is one as soon as the eustasy of decision 13 brings
   the sea back.
@@ -145,6 +151,13 @@ appear from the 4K/8K bake at one to two kilometres.
   the coast process shares the eustasy with this one.
 
 ## Status
+
+2026-10-13: the buzzsaw is BUILT (DEC-0036 phase 8d,
+decisions/fields-on-meshes.md, Status): the glaciers inside a node lower
+its height over the ELA as `e^(−κ b t)` (surface/glacial.ts). The peaks
+fell by 0.7–1.3 km (medians of 12 worlds per shape), the land above
+6000 m by 4× and to nil; the alpine peaks stand 1.7–2.2 km over their
+line; a fast range still reaches 8 km. The Gaussian at the ELA is gone.
 
 2026-10-13: the heights have no ceiling since DEC-0036 phase 8b-3
 (decisions/fields-on-meshes.md, Status): the plate's flexure and the

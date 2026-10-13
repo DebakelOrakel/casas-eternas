@@ -27,9 +27,9 @@ import { detExp, detPow } from '../core/detMath'
 // interior does not. Its forms need no rule of their own — the trough's
 // floor takes the most (a U), converging ice overdeepens (a lake when it
 // is gone, a fjord when the sea comes back). The one addition is the
-// BUZZSAW: an extra peak at the ice margin near the ELA, where freeze and
-// thaw quarry the headwalls — cirques, and summits planed towards the
-// line.
+// BUZZSAW (DEC-0036 phase 8d): the glaciers inside a node, which the mesh
+// does not resolve, lower the land above the ELA towards the line —
+// cirques, and summits planed towards it (glacialErosionOnMesh).
 //
 // THE TILL: what the ice cut travels with the flow to the terminus — the
 // node where the ice ends — and is laid down there as a moraine, a layer
@@ -313,9 +313,32 @@ export interface GlacialErosionResult {
 }
 
 // The glacial erosion of one epoch, from the ice of the epoch: the cut by
-// the sliding (thickness × slope), the buzzsaw's peak near the ELA, the
-// till carried down the ice's flow to the terminus. Returns per-node
-// metres; the caller applies them (z and the column).
+// the sliding (thickness × slope), the buzzsaw above the ELA, the till
+// carried down the ice's flow to the terminus. Returns per-node metres;
+// the caller applies them (z and the column).
+//
+// THE BUZZSAW (DEC-0036 phase 8d; Brozović, Burbank & Meigs 1997, Science
+// 276; Mitchell & Montgomery 2006, Quat. Res. 65; Egholm et al. 2009,
+// Nature 460): glaciers cut the land that rises above the snow line down
+// towards it, so ranges stand about 1–1.5 km over their ELA and no more,
+// unless the uplift is faster than the ice. The mesh's nodes are 8–31 km
+// wide, and the glaciers that do it — cirque and valley glaciers a few
+// kilometres long — are inside a node; its ice body (the inversion
+// above) is a smooth cap over them, with a 3 % surface slope, and its
+// sliding cuts 0.1–0.2 mm/yr where the uplift is 0.2–1 mm/yr (measured
+// 2026-10-13 at the peaks of four calibration worlds). So the node's own
+// glaciers, by their law: they carry the node's accumulation b down a
+// drop R = z − ELA to the line, as plastic ice (Nye: the thickness
+// H = τy / (ρ g S), τy ≈ 100 kPa) on a slope S = R / L over a length L.
+// The flux per width is b L, the speed u = b L / H = b R ρ g / τy — the
+// length cancels, the mesh's resolution does not enter — and the bed
+// erodes with the sliding (Hallet: ė = Kg u). So dR/dt = −κ b R, and
+// over the epoch exactly R (1 − e^(−κ b Δt)): never below the line, no
+// limit to the step. A wet range is cut fast, a dry one slowly (the
+// Andes: Montgomery, Balco & Willett 2001, Geology 29), a polar desert
+// hardly at all (as cold-based ice protects there: Thomson et al. 2010,
+// Nature 467); a colder planet's lower line takes its ranges down with
+// it. κ = glacialBuzzsawPerBalance (SURFACE_TUNING).
 export function glacialErosionOnMesh(mesh: PeriodicTriangulation, z: Float32Array, ice: MeshIceResult, epochYears: number, cellM: number): GlacialErosionResult {
   const t = SURFACE_TUNING
   const slots = mesh.vertexSlots
@@ -333,10 +356,11 @@ export function glacialErosionOnMesh(mesh: PeriodicTriangulation, z: Float32Arra
     if (h < t.iceMinThicknessM) continue
     const zM = elevationToMeters(z[v] - SEA_LEVEL)
     const sliding = h * Math.max(t.iceMinSlope, slope[v])
-    const nearLine = (zM - elaM[v]) / t.glacialBuzzsawBandM
-    const buzzsaw = 1 + t.glacialBuzzsawBoost * detExp(-nearLine * nearLine)
-    let cut = t.glacialErosionPerSliding * sliding * epochYears * buzzsaw
+    let cut = t.glacialErosionPerSliding * sliding * epochYears
     if (cut > t.glacialErosionMaxM) cut = t.glacialErosionMaxM
+    // The buzzsaw: the node's own glaciers, R (1 − e^(−κ b Δt)).
+    const aboveLineM = zM - elaM[v]
+    if (aboveLineM > 0 && ice.balance[v] > 0) cut += aboveLineM * (1 - detExp(-t.glacialBuzzsawPerBalance * ice.balance[v] * epochYears))
     cutM[v] = cut
     const area = mesh.voronoiArea(v) * cellM * cellM
     cutM3 += cut * area

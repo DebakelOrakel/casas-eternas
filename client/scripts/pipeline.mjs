@@ -2978,7 +2978,11 @@ test('two pipelines given the same messages agree byte for byte', async () => {
 // loaded climate.
 test('a loaded world runs the hydrology the session ran', async () => {
   const p = await freshPipeline()
-  await growWorld(p)
+  // 22 Archean epochs, not the harness's 20: since DEC-0036 phase 8d
+  // (the cut near the snow line is the buzzsaw's, no longer twice the
+  // sliding's) the 20-epoch world's trunk river runs through a chain of
+  // lakes and leaves no reach long enough for a course.
+  await growWorld(p, { epochs: 22 })
   await runOneEpoch(p)
   // Humidity 160 %: with the colder, drier mid-latitudes of DEC-0036
   // phase 8b-2 no river of this small world is wide enough for a course,

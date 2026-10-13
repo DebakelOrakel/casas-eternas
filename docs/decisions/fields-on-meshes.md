@@ -200,6 +200,141 @@ done before or beside it.
 
 ## Status
 
+2026-10-13: **phase 8d BUILT — the glacial buzzsaw.** The user's goal:
+ranges stand about 1–2 km over their snow line (ELA), as on Earth
+(Brozović, Burbank & Meigs 1997; Mitchell & Montgomery 2006; Egholm et
+al. 2009), the land above 6000 m falls towards Earth's share, rare 7–9 km
+summits stay possible where the uplift outruns the ice, and the planet's
+levers reach the mountains' height through the ELA. Measured with `npm
+run calibrate seeds=12 archeanMa=1000 landShare=30 sweep=1
+sweeps=planet.obliquity,climate.contrast` after (12 worlds per shape, the
+sweep on 3), against 8c's run before (the same 12 worlds; 8c′ changed no
+world) and the same sweep on HEAD; the diagnosis and the variants on 3
+seeds per shape, the history instrumented in a copy of the code.
+
+**The diagnosis** (4 worlds, the land binned by its height over its
+ELA, per epoch):
+
+- The high land is under ice: every node more than 500 m over its line
+  holds 230–640 m of it. The ice body (glacial.ts, the surface carried
+  out at most 3 % over the walls) is a smooth cap over the range, so its
+  sliding (thickness × surface slope) is 5–20 m and the cut 0.1–0.2 mm/yr
+  — at the peaks, where the uplift is 0.2–1 mm/yr and on a fast range
+  2–3 mm/yr. The rivers rest under the ice, so the hillslope and the cap's
+  sliding were all that took the peaks down.
+- The old buzzsaw term (×2 on the sliding cut within 300 m of the ELA)
+  does not reach the land it is for: the peaks stand 2–5 km over the line.
+- The glaciers that plane a range — cirque and valley glaciers a few
+  kilometres long — are inside a node (8–31 km); the mesh cannot resolve
+  them, so they need a law of their own.
+- A wide cut comes back as rebound (the plate returns 82 % of it), and so
+  does a wide uplift: a range stands where the cut equals the uplift.
+- Many of the highest peaks have no snow line to be planed towards: the
+  torus's at the poles (the line at sea level, the snow 100–400 mm/yr),
+  some of the sphere's in a rainless belt (no ice at any height). Both
+  are as on Earth (Antarctica's ranges; the dry Andes) and are left.
+
+**The model** (surface/glacial.ts `glacialErosionOnMesh`, the code
+comments have the derivation): the node's own glaciers carry its
+accumulation `b` down the drop `R = z − ELA` to the line as plastic ice
+(thickness `τy / (ρ g S)`, Nye), so their speed is `u = b R ρ g / τy` —
+the glacier's length cancels and the mesh's resolution does not enter —
+and the bed erodes with the sliding (Hallet: `ė = Kg u`). So `dR/dt = −κ
+b R`, applied over the epoch exactly, `R (1 − e^(−κ b Δt))`: never below
+the line and no limit to the step. `κ` = SURFACE_TUNING
+`glacialBuzzsawPerBalance` 6.7e-7 per metre, 1/13 of Hallet's `Kg =
+1e-4` with `τy = 100 kPa` for a node that is all glacier bed (Kg is known
+to an order of magnitude, Koppes et al. 2015). It replaces the Gaussian
+term (`glacialBuzzsawBoost`, `glacialBuzzsawBandM` are gone). A wet range
+is planed fast, a dry or a polar one slowly, and a lower ELA takes its
+ranges down with it. No height cap; the sliding cut keeps its per-epoch
+cap (`glacialErosionMaxM`, phase 6), which the buzzsaw does not pass
+through. harness:mesh's glacier test checks the bound that holds now: a
+node's cut is at most the cap plus its height over its line.
+harness:pipeline's test of a loaded world's hydrology grows its world for
+22 Archean epochs, not 20: without the Gaussian the 20-epoch world's
+trunk river runs through a chain of lakes and has no reach long enough
+for a course to compare.
+
+**The variants** (3 seeds per shape, medians, torus / sphere):
+
+| variant | peak, m | > 4500 m, % | > 6000 m, % | land p99.9, m | lakes, % |
+|---|---|---|---|---|---|
+| before (8c) | 6859 / 7661 | 0.15 / 0.22 | 0.0096 / 0.054 | 4658 / 5456 | 9.7 / 5.8 |
+| κ 6.7e-7, the Gaussian kept | 5838 / 5871 | 0.060 / 0.21 | 0 / 0 | 4338 / 4868 | 9.3 / 6.5 |
+| **κ 6.7e-7 (chosen)** | 6257 / 5839 | 0.083 / 0.23 | 0.0047 / 0 | 4363 / 4863 | 9.0 / 5.7 |
+| κ 1e-6 | 5697 / 5790 | 0.085 / 0.21 | 0 / 0 | 4425 / 4836 | 12.8 / 5.6 |
+| κ 2e-6 | 5045 / 5652 | 0.067 / 0.17 | 0 / 0 | 4284 / 4660 | 13.2 / 5.6 |
+
+**The worlds** (12 per shape; medians, the extremes in brackets):
+
+| | Earth | torus before | torus after | sphere before | sphere after |
+|---|---|---|---|---|---|
+| peak, m | 8849 | 6589 (3727–9373) | 5930 (3501–8545) | 6795 (4615–8628) | 5524 (4545–8105) |
+| worlds with a peak ≥ 7 km / ≥ 8 km | — | 5 / 2 | 3 / 1 | 6 / 1 | 1 / 1 |
+| peak over its ELA, m | ~1000–1500 | 4600 | 4479 | 2429 | 1685 |
+| alpine peak over its ELA, m (the highest with a line above the sea) | — | 2388 (3 seeds) | 2219 | 4199 (3 seeds) | 1685 |
+| most land over its ELA, m | — | 5345 | 4977 | 3737 | 2700 |
+| land over its ELA, % | — | 38.3 | 38.6 | 11.0 | 11.3 |
+| > 2000 m, % of the land | ~5 | 4.70 | 4.58 | 4.81 | 4.72 |
+| > 3000 m | — | 1.39 | 1.43 | 0.78 | 0.82 |
+| > 4500 m | ~0.4 | 0.152 | 0.077 | 0.179 | 0.124 |
+| > 6000 m | ~0.001 | 0.0095 | 0.0024 | 0.0093 | 0.0000 |
+| land p99.9, m | — | 4686 | 4364 | 4872 | 4662 |
+| largest patch > 4500 m, k km² | Tibet ~2500 | 31 | 18 | 21 | 24 |
+| mean land height, m | — | 768 | 769 | 708 | 706 |
+| land, % of the surface | — | 30.2 | 30.2 | 25.0 | 25.0 |
+| lakes, % of the land (open) | ~2–4 | 11.9 (4.7) | 11.1 (4.2) | 7.2 (5.7) | 7.0 (5.2) |
+| ice, % of the land | ~10 | 38.1 | 38.3 | 13.1 | 13.2 |
+| mean temperature, °C | — | 5.44 | 5.47 | 14.5 | 14.5 |
+| Köppen A / B / C / D / E, % of the land | — | 11.2 / 23.5 / 9.4 / 19.7 / 36.2 | 11.3 / 22.9 / 9.3 / 19.5 / 36.4 | 20.8 / 29.8 / 17.7 / 18.8 / 10.0 | 21.2 / 29.7 / 17.4 / 19.0 / 10.1 |
+
+The buzzsaw takes the top off and leaves the rest: the land above 6000 m
+falls 4× on the torus and to nil (median) on the sphere, the peaks by
+0.7 and 1.3 km, while the land below 3000 m, the mean height, the land,
+the lakes, the ice and the climate stay within the worlds' spread (no
+lake is added in the medians: the lakes fell by 0.2–0.8 points, within
+the noise). Fast ranges still stand high: one world in
+twelve per shape has a peak above 8 km. The torus's highest peak still
+stands 4.5 km over its line: on most torus worlds it is a polar range,
+where the line lies at the sea and the snow is scarce; the alpine peaks
+(a line above the sea) stand 2.2 km over it. The land above 4500 m falls
+below Earth's 0.4 % (it was below before): Earth's lies mostly on Tibet,
+a dry plateau under its snow line, and the generator makes no plateau as
+wide (the largest patch above 4500 m is 18–24 k km²) — the uplift's
+matter, not the ice's. The pentagons of the sphere's flexure mesh: max
+|z| 1.02 (median of 12), mean rank 0.47 — no field-mesh operator was
+touched.
+
+**The levers** (3 seeds per shape; the mean change against the same
+seeds' default worlds; torus / sphere):
+
+| | ice, points | > 4500 m, % of the land | > 6000 m | land p99.9, m | peak, m |
+|---|---|---|---|---|---|
+| tilt 10°, before | +5.7 / +7.9 | −0.077 / +0.002 | −0.008 / −0.012 | −185 / −166 | −164 / +507 |
+| tilt 10°, after | +5.9 / +7.9 | −0.018 / −0.016 | −0.003 / +0.002 | −187 / +28 | −178 / +402 |
+| tilt 35°, before | −11.7 / −7.6 | +0.147 / +0.007 | +0.007 / +0.003 | +297 / −24 | +144 / −174 |
+| tilt 35°, after | −11.0 / −7.5 | +0.007 / +0.025 | −0.003 / −0.001 | +37 / +39 | +16 / −64 |
+| contrast 60 %, before | −8.0 / −6.7 | +0.102 / −0.007 | +0.003 / +0.004 | +181 / −7 | +100 / +381 |
+| contrast 60 %, after | −8.0 / −6.7 | +0.021 / −0.004 | −0.003 / +0.001 | +35 / +1 | −348 / +164 |
+| contrast 140 %, before | +2.2 / +6.3 | −0.109 / −0.003 | −0.003 / −0.004 | −156 / +9 | +153 / −13 |
+| contrast 140 %, after | +2.7 / +6.0 | −0.028 / −0.023 | −0.003 / +0.000 | −309 / +101 | −131 / +258 |
+
+The coupling has the sign the physics gives in seven of the eight
+cases — more ice (a small tilt, a strong contrast) is less high ground,
+less ice more — but it is small against three seeds' noise: 2–3
+hundredths of a point of the land above 4500 m (10–20 % of it), up to
+300 m of the p99.9. On the sphere it is new (HEAD: under a hundredth).
+On the torus HEAD coupled more strongly (±0.08–0.15 points, a third to
+a half of the high land): there the ice took the rivers' cut away and
+put only the cap's slow sliding in its place, so how much high land
+stood depended on where the ice lay; now the buzzsaw holds it near the
+line, and the torus's highest ranges are mostly polar, where the snow is
+scarce and the buzzsaw slow. The tilt and the contrast move the
+ELA most at high latitudes; the ranges at middle latitudes, which the
+buzzsaw holds, see little of it. A colder planet as a whole (the
+greenhouse) lowers the line everywhere; not swept.
+
 2026-10-13: **phase 8c′ BUILT — a suture's age in Ma.** Found in 8b-2:
 the erodibility field (elevation/erodibilityField.ts) read a suture's
 age as `currentEpoch − suture.epoch`, in epochs of the continuous axis,

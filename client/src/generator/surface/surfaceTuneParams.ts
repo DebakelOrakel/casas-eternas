@@ -252,16 +252,30 @@ export const SURFACE_TUNING = {
   // 0.2 mm/yr (180 m an epoch) and its 200 m-thick margins a tenth of
   // that, which is what turns a V into a U; at 1e-4 the whole valley hit
   // the per-epoch cap and lowered as one (the harness's V stayed a V).
-  // The cap is a fjord's rate. The buzzsaw: the extra factor at the ELA
-  // (a Gaussian in height, the band's half-width in metres). Till splits
-  // into coarse and fine at the terminus. All unmeasured.
+  // The cap is a fjord's rate. Till splits into coarse and fine at the
+  // terminus. All unmeasured.
   glacialErosionPerSliding: 2e-5,
   // The steepest an ice surface falls across the ice, m/m: a trunk
   // glacier's surface carried out over the valley walls (surface/glacial.ts).
   iceSurfaceMaxSlope: 0.03,
   glacialErosionMaxM: 800,
-  glacialBuzzsawBoost: 1,
-  glacialBuzzsawBandM: 300,
+  // THE BUZZSAW (surface/glacial.ts glacialErosionOnMesh, DEC-0036 phase
+  // 8d): κ in dR/dt = −κ b R, per metre of ice balance — the height R
+  // over the ELA falls by the share κ b of itself per year. Hallet's
+  // Kg = 1e-4 (1979, J. Glaciol. 23) and Nye's τy = 100 kPa give
+  // κ = Kg ρ g / τy = 8.8e-6 for a node all of whose bed is glacier bed;
+  // the calibration's 6.7e-7 is 1/13 of it — the share of a node's area
+  // its glaciers' beds take, and Kg is known only to an order of
+  // magnitude (Koppes et al. 2015, Nature 526). At b = 0.15 m/yr (the
+  // wet ranges' summits) R falls by a tenth an epoch, and a range stands
+  // where the cut equals its uplift, R = U / (κ b): 1–2 km over its line
+  // at 0.1–0.2 mm/yr (the plate takes the cut and the uplift alike).
+  // Measured 2026-10-13 on 3 + 3 worlds,
+  // 6.7e-7 to 2e-6: the land above 6000 m falls to 0–0.005 % of the land
+  // at all of them, the peaks by 0.6–2 km; 6.7e-7 keeps the rare 8 km
+  // summit of a fast, dry range. It replaces a Gaussian ×2 of the sliding
+  // cut within 300 m of the ELA (phase 6, unmeasured).
+  glacialBuzzsawPerBalance: 6.7e-7,
   glacialTillCoarse: 0.5,
   // The thickest a terminus's till lies, metres: it spreads over the ice-free
   // nodes around the terminus until it is no thicker (surface/glacial.ts).

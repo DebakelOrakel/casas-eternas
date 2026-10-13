@@ -652,7 +652,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   timing.climate = lap()
   // THE ICE (phase 6, surface/glacial.ts): the epoch's climate as ice on
   // the mesh, at its steady state; the erosion it does before the rivers
-  // run (the cut, the buzzsaw at the ELA), the till at the termini. The
+  // run (the cut, the buzzsaw above the ELA), the till at the termini. The
   // ice's volume is what sets the sea level below.
   const areasNow = meshAreasOf(mesh)
   const cellM2Now = unitM * unitM

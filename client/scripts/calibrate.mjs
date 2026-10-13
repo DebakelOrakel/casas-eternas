@@ -9,7 +9,8 @@
 //   npm run calibrate                          12 seeds per shape, the sweeps on 3
 //   node scripts/calibrate.mjs [key=value …]
 //     seeds=12 shapes=torus,sphere epochs=40 stabilised=0.5 archeanMax=600
-//     archeanMa=0 landShare=30 jobs=5 sweep=1 sweepSeeds=3 out=<dir> label=<name>
+//     archeanMa=0 landShare=30 jobs=5 sweep=1 sweepSeeds=3 sweeps=<path,…> out=<dir> label=<name>
+//     sweeps: only these sliders of the sweep (default: all of them)
 //     archeanMa: run the Archean to this world age as well (the screen's
 //     user stops it at 1000–1500 Ma); 0 = to the gate only. landShare: the
 //     genesis.landShare control for every world (a sweep's value wins).
@@ -86,7 +87,7 @@ const EARTH_P_LAND = [1900, 1100, 600, 600, 650, 550, 400, 250, 150]
 // --- the shared reading ------------------------------------------------------
 
 function parseArgs(argv) {
-  const opt = { seeds: 12, shapes: 'torus,sphere', epochs: 40, stabilised: 0.5, archeanMax: 600, archeanMa: 0, landShare: 30, jobs: 5, sweep: 1, sweepSeeds: 3, out: process.env.CALIBRATION_OUT || `${os.tmpdir()}/casas-calibration`, label: 'run', only: '', cache: '' }
+  const opt = { seeds: 12, shapes: 'torus,sphere', epochs: 40, stabilised: 0.5, archeanMax: 600, archeanMa: 0, landShare: 30, jobs: 5, sweep: 1, sweepSeeds: 3, sweeps: '', out: process.env.CALIBRATION_OUT || `${os.tmpdir()}/casas-calibration`, label: 'run', only: '', cache: '' }
   const tune = {}
   for (const a of argv) {
     const at = a.indexOf('=')
@@ -492,15 +493,21 @@ async function buildOne(job) {
   const high4500 = patches(4500)
   const elaNodes = CP.climateAtPoints(CP.climateCellsFromWeather(step.w1), points)
   const ela = M.glacial.computeIceOnMesh({ mesh, z: coupled.z, seaLevelTemperature: elaNodes.seaLevelTemperature, precipitation: elaNodes.precipitation, seasonalAmplitude: elaNodes.seasonalAmplitude, cellM: domain.metresPerUnit }).elaM
-  let aboveElaA = 0, peakNode = -1, peakOverElaM = -Infinity, maxOverElaM = -Infinity
+  // The alpine peak (phase 8d): the highest node whose line lies above the
+  // sea and below its "never" mark — a place with an ablation zone, where
+  // glaciers flow down to a snow line; a polar or a rainless peak has none.
+  let aboveElaA = 0, peakNode = -1, peakOverElaM = -Infinity, maxOverElaM = -Infinity, alpineNode = -1
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v] || coupled.z[v] <= SEA) continue
     const h = (coupled.z[v] - SEA) * METRES
     if (h > ela[v]) aboveElaA += mesh.voronoiArea(v)
     if (h - ela[v] > maxOverElaM) maxOverElaM = h - ela[v]
     if (peakNode < 0 || h > (coupled.z[peakNode] - SEA) * METRES) peakNode = v
+    if (ela[v] > 0 && ela[v] < 2 * METRES && (alpineNode < 0 || h > (coupled.z[alpineNode] - SEA) * METRES)) alpineNode = v
   }
   if (peakNode >= 0) peakOverElaM = (coupled.z[peakNode] - SEA) * METRES - ela[peakNode]
+  const alpinePeakOverElaM = alpineNode >= 0 ? (coupled.z[alpineNode] - SEA) * METRES - ela[alpineNode] : NaN
+  const alpinePeakM = alpineNode >= 0 ? (coupled.z[alpineNode] - SEA) * METRES : NaN
 
   const cm = rTerrain.cm
   const annual = M.refinement.annualFromMonths(refined, refined.cells)
@@ -633,7 +640,7 @@ async function buildOne(job) {
     ...Object.fromEntries(HYPSO.map((m, k) => [`above${m}m`, hypsoA[k] / landA])),
     high3000LargestKm2: high3000.largestKm2, high3000Km2: high3000.totalKm2, high3000Patches: high3000.patches,
     high4500LargestKm2: high4500.largestKm2, high4500Km2: high4500.totalKm2, high4500Patches: high4500.patches,
-    landAboveElaShare: aboveElaA / landA, peakOverElaM, maxOverElaM,
+    landAboveElaShare: aboveElaA / landA, peakOverElaM, maxOverElaM, alpinePeakM, alpinePeakOverElaM,
     lakeShareOfLand: lakeA / cont, liquidLakeShareOfLand: lakeLiquidA / cont,
     lakes: lakeBodies, terminalSeas: terminal, dryBasins: dry,
     maxDischarge: maxDis, p99Discharge: q(discharges, 0.99),
@@ -739,6 +746,8 @@ const ROWS = [
   ['landAboveElaShare', '%', 100],
   ['peakOverElaM', 'm', 1],
   ['maxOverElaM', 'm', 1],
+  ['alpinePeakM', 'm', 1],
+  ['alpinePeakOverElaM', 'm', 1],
   ['iceVolumeKm3', 'km³', 1e-6, null, 'M km³'],
   ['iceShareOfLand', '%', 100, [8, 12]],
   ['lakeShareOfLand', '%', 100, [0, 10]],
@@ -832,7 +841,7 @@ function summarise(worlds) {
       const key = `${path}=${v}`
       sweeps[key] ??= { n: 0, d: {} }
       sweeps[key].n++
-      const metrics = { landFraction: 100, iceShareOfLand: 100, lakeShareOfLand: 100, meanT: 1, peakM: 1, reaches: 1, plates: 1, 'koppen.A': 100, 'koppen.B': 100, 'koppen.C': 100, 'koppen.D': 100, 'koppen.E': 100, 'bandT.0': 1, 'bandT.3': 1, 'bandT.5': 1, 'bandT.8': 1, 'bandAmpLand.6': 1, 'bandPLand.0': 1, 'bandPLand.2': 1, dryBeltLatRain: 1, dryBeltLatB: 1 }
+      const metrics = { landFraction: 100, iceShareOfLand: 100, lakeShareOfLand: 100, meanT: 1, peakM: 1, reaches: 1, plates: 1, 'koppen.A': 100, 'koppen.B': 100, 'koppen.C': 100, 'koppen.D': 100, 'koppen.E': 100, 'bandT.0': 1, 'bandT.3': 1, 'bandT.5': 1, 'bandT.8': 1, 'bandAmpLand.6': 1, 'bandPLand.0': 1, 'bandPLand.2': 1, dryBeltLatRain: 1, dryBeltLatB: 1, above4500m: 100, above6000m: 100, landP999M: 1, peakOverElaM: 1, alpinePeakOverElaM: 1, landAboveElaShare: 100 }
       for (const [m, f] of Object.entries(metrics)) {
         const [a, b] = m.split('.')
         const get = (x) => (b === undefined ? x[a] : x[a]?.[b])
@@ -952,7 +961,7 @@ if (mode === 'one') {
   for (const shape of shapes) for (const seed of seeds) jobs.push({ ...base, seed, shape, cache: opt.cache || undefined })
   if (opt.sweep) {
     for (const shape of shapes) for (const seed of seeds.slice(0, opt.sweepSeeds)) {
-      for (const [path, vals] of Object.entries(SWEEPS)) for (const v of vals) jobs.push({ ...base, seed, shape, set: { [path]: v } })
+      for (const [path, vals] of Object.entries(SWEEPS)) if (!opt.sweeps || opt.sweeps.split(',').includes(path)) for (const v of vals) jobs.push({ ...base, seed, shape, set: { [path]: v } })
     }
   }
   const filtered = opt.only ? jobs.filter((j) => `${j.shape}:${j.seed}:${JSON.stringify(j.set ?? {})}`.includes(opt.only)) : jobs
