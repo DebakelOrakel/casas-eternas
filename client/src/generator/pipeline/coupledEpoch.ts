@@ -549,9 +549,9 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // enters as 0 — taken as −1 it made a layer's craton product negative
   // (found 2026-10-10). Clamped before the upsample, so a coastal node does
   // not blend the marker in either.
-  const cratonFieldForTill = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, domain)
+  const cratonFieldForTill = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), sim.archeanEpochs, CLIMATE_RES_X, CLIMATE_RES_Y, domain)
   for (let i = 0; i < cratonFieldForTill.length; i++) if (cratonFieldForTill[i] < 0) cratonFieldForTill[i] = 0
-  const ice = computeIceOnMesh({ mesh, z: zCanon, seaLevelTemperature: atNodes.seaLevelTemperature, precipitation: atNodes.precipitation, cellM: unitM })
+  const ice = computeIceOnMesh({ mesh, z: zCanon, seaLevelTemperature: atNodes.seaLevelTemperature, precipitation: atNodes.precipitation, seasonalAmplitude: atNodes.seasonalAmplitude, cellM: unitM })
   const glacial = glacialErosionOnMesh(mesh, zCanon, ice, (sim.epochMa || TECTONIC_MA_PER_EPOCH) * 1e6, unitM)
   let iceVolumeM3 = 0
   let iceCoastColumnM3 = 0

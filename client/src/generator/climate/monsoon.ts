@@ -110,6 +110,8 @@ export function computeSeasonalPrecipitation(
   baseWind: CellVectors,
   humidity: number,
   equatorOffset: number,
+  // The Hadley cell's edge the rain's bands follow (precipitation.bandFactor).
+  edge: number,
 ): SeasonalPrecipitation {
   const tempN = seasonalTemperature(terrain, annualTemp, amplitude, equatorOffset, true) // top hemisphere summer
   const tempS = seasonalTemperature(terrain, annualTemp, amplitude, equatorOffset, false)
@@ -117,8 +119,8 @@ export function computeSeasonalPrecipitation(
   const windS = computeMonsoonWind(terrain, baseWind, tempS)
   // ITCZ migrates toward the summer hemisphere. +equatorOffset moves the equator toward
   // the bottom, so a top-hemisphere summer (belt shifts up) uses a SMALLER offset.
-  const precipN = computePrecipitation(terrain, tempN, windN, humidity, equatorOffset, CLIMATE_TUNING.monsoonItczSeasonalShift)
-  const precipS = computePrecipitation(terrain, tempS, windS, humidity, equatorOffset, -CLIMATE_TUNING.monsoonItczSeasonalShift)
+  const precipN = computePrecipitation(terrain, tempN, windN, humidity, equatorOffset, CLIMATE_TUNING.monsoonItczSeasonalShift, undefined, edge)
+  const precipS = computePrecipitation(terrain, tempS, windS, humidity, equatorOffset, -CLIMATE_TUNING.monsoonItczSeasonalShift, undefined, edge)
 
   const n = precipN.length
   const annual = new Float64Array(n)

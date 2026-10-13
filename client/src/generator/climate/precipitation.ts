@@ -4,6 +4,8 @@ import { SEA_LEVEL } from '../elevation/elevationScale'
 import { detCos, detExp, detHypot } from '../core/detMath'
 import type { ClimateTerrain } from './climateMesh'
 import type { CellVectors } from './wind'
+import { hadleyEdge } from '../planet/planetForcing'
+import { PLANET_INPUTS } from '../planet/planetInputParams'
 
 // Ocean cells carry this sentinel instead of a precip value — the overlay and
 // the (later) biome step treat precipitation as a land-only field.
@@ -21,9 +23,34 @@ export function evaporation(tempC: number): number {
 
 // Exported for the sea's rain (salinity.ts): this model rains out over land
 // only, and the sea's salt needs the zonal profile it rains by.
-export function bandFactor(phi: number): number {
-  const f = CLIMATE_TUNING.precipBandBase + CLIMATE_TUNING.precipBandSwing * detCos(3 * Math.PI * phi)
-  return f < CLIMATE_TUNING.precipBandFloor ? CLIMATE_TUNING.precipBandFloor : f
+// `edge` is the Hadley cell's edge (planet/planetForcing.hadleyEdge, a
+// fraction of the equator-to-pole span): the dry subtropics lie at it and
+// the polar front's rain halfway from it to the pole, as the wind's cells
+// do (wind.ts) — DEC-0036 phase 8b-2; the bands stood at 30° and 60°
+// whatever the day's length, so the rotation moved the winds and no
+// desert. At 24 h the edge is ⅓ and the profile cos 3πφ.
+// Poleward of the dry belt the profile rises from the same minimum to
+// `precipBandStormPeak` at the subpolar front, not to the equator's peak.
+export function bandFactor(phi: number, edge: number = EARTH_HADLEY_EDGE): number {
+  const T = CLIMATE_TUNING
+  const psi = bandLatitude(phi, edge)
+  const wave = detCos(3 * Math.PI * psi)
+  const low = T.precipBandBase - T.precipBandSwing
+  const f = psi <= 1 / 3 ? T.precipBandBase + T.precipBandSwing * wave : low + (T.precipBandStormPeak - low) * (1 + wave) / 2
+  return f < T.precipBandFloor ? T.precipBandFloor : f
+}
+
+// The Hadley cell's edge at Earth's day, ⅓ of the span.
+export const EARTH_HADLEY_EDGE = hadleyEdge(PLANET_INPUTS.rotation.default)
+
+// Where a latitude φ (0 equator … 1 pole) sits in the three cells' pattern
+// laid out for Earth: the cell edges e1 and (1 + e1) / 2 map onto ⅓ and ⅔,
+// linearly within each cell.
+export function bandLatitude(phi: number, edge: number): number {
+  const e2 = (1 + edge) / 2
+  if (phi <= edge) return (phi / edge) / 3
+  if (phi <= e2) return 1 / 3 + ((phi - edge) / (e2 - edge)) / 3
+  return 2 / 3 + ((phi - e2) / (1 - e2)) / 3
 }
 
 // Annual precipitation (mm/yr) on the climate's field mesh, land only (ocean
@@ -65,7 +92,8 @@ export interface RefinedRain {
 // Per cell of the climate's field mesh (DEC-0036 phase 3): `temperature`
 // and `wind` per cell; the orography reads the terrain's raster along the
 // wind (ClimateTerrain.elevationAt); `refined`'s fields per cell.
-export function computePrecipitation(terrain: ClimateTerrain, temperature: ArrayLike<number>, wind: CellVectors, humidity = 1, equatorOffset = 0, beltShift = 0, refined?: RefinedRain): Float64Array {
+// `edge`: the Hadley cell's edge the rain's bands follow (bandFactor).
+export function computePrecipitation(terrain: ClimateTerrain, temperature: ArrayLike<number>, wind: CellVectors, humidity = 1, equatorOffset = 0, beltShift = 0, refined?: RefinedRain, edge: number = EARTH_HADLEY_EDGE): Float64Array {
   const { cm, domain, land } = terrain
   const { mesh, sampler } = cm
   const n = mesh.count
@@ -130,7 +158,7 @@ export function computePrecipitation(terrain: ClimateTerrain, temperature: Array
   const rainedOut = new Float64Array(n)
   // The refinement's sinking air, 0..1 per cell (subsidence), and the share
   // of the moisture it mixes away per iteration over land.
-  const sinking = refined ? subsidence(terrain, refined.highHpa, equatorOffset, beltShift) : null
+  const sinking = refined ? subsidence(terrain, refined.highHpa, equatorOffset, beltShift, edge) : null
   // The refinement's second tracer: moisture × its source's sea anomaly,
   // carried and depleted with the moisture, so carried / moisture is the
   // anomaly of the sea the air came from.
@@ -192,7 +220,7 @@ export function computePrecipitation(terrain: ClimateTerrain, temperature: Array
       precip[i] = OCEAN_PRECIP
       continue
     }
-    const band = bandFactor(Math.abs(beltYNorm(shiftedNorm(cm.yNorm[i], equatorOffset), beltShift, shape) - 0.5) * 2)
+    const band = bandFactor(Math.abs(beltYNorm(shiftedNorm(cm.yNorm[i], equatorOffset), beltShift, shape) - 0.5) * 2, edge)
     const factor = refined ? flankRelief(band, refined.highHpa[i]) * sourceStability(sourceAnomaly[i]) : band
     precip[i] = rainedOut[i] * factor * CLIMATE_TUNING.precipScale * humidity
   }
@@ -207,13 +235,13 @@ export function computePrecipitation(terrain: ClimateTerrain, temperature: Array
 // (`oceanHighFlankHpa`) in its east. Where the air sinks, dry air from
 // above mixes into the moist air below: Arabia and Australia stay dry
 // beside a warm sea.
-function subsidence(terrain: ClimateTerrain, highHpa: ArrayLike<number>, equatorOffset: number, beltShift: number): Float64Array {
+function subsidence(terrain: ClimateTerrain, highHpa: ArrayLike<number>, equatorOffset: number, beltShift: number, edge: number): Float64Array {
   const T = CLIMATE_TUNING
   const { cm, domain } = terrain
   const n = cm.mesh.count
   const out = new Float64Array(n)
   for (let i = 0; i < n; i++) {
-    const band = bandFactor(Math.abs(beltYNorm(shiftedNorm(cm.yNorm[i], equatorOffset), beltShift, domain.kind) - 0.5) * 2)
+    const band = bandFactor(Math.abs(beltYNorm(shiftedNorm(cm.yNorm[i], equatorOffset), beltShift, domain.kind) - 0.5) * 2, edge)
     const fromBand = Math.min(1, Math.max(0, (T.rainSubsidenceBand - band) / (T.rainSubsidenceBand - T.precipBandFloor)))
     const h = highHpa[i]
     out[i] = h < 0 ? fromBand * (1 - Math.min(1, -h / T.rainFlankFullHpa)) : Math.max(fromBand, Math.min(1, h / T.oceanHighFlankHpa))

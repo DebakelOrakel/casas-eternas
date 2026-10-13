@@ -53,7 +53,11 @@ const M = {
   tune: await L('/src/generator/climate/climateTuneParams.ts'),
   scale: await L('/src/generator/elevation/elevationScale.ts'),
 }
-for (const a of args.filter((x) => x.includes('='))) {
+// shape=sphere runs Earth on the sphere's domain (the chart is the same
+// equirectangular 2:1 grid; its top row is the south pole here, whose
+// summer the model puts in December, as Earth's); the torus otherwise.
+const SHAPE = args.find((a) => a.startsWith('shape='))?.slice(6) ?? 'torus'
+for (const a of args.filter((x) => x.includes('=') && !x.startsWith('shape='))) {
   const [k, v] = a.split('=')
   if (!(k in M.tune.CLIMATE_TUNING)) { console.error(`no such constant: ${k}`); process.exit(2) }
   M.tune.CLIMATE_TUNING[k] = Number(v)
@@ -121,7 +125,7 @@ for (let y = 0; y < H; y++) {
 // --- the climate ---------------------------------------------------------------
 
 const params = M.weather.defaultWeatherParams()
-const domain = M.domain.torusDomain(W, H)
+const domain = SHAPE === 'sphere' ? M.domain.sphereDomain(W, H) : M.domain.torusDomain(W, H)
 const terrain = M.climateMesh.climateTerrain(domain, elevation, W, H)
 const cheap = M.weather.computeWeather(terrain, params)
 const started = performance.now()
@@ -326,6 +330,25 @@ for (let y = Math.round(RY * 100 / 180); y < Math.round(RY * 160 / 180); y++) {
 }
 const landN = warmest.reduce((a, b) => a + b, 0)
 console.log(`northern land's warmest month, %: ${['Jun', 'Jul', 'Aug', 'Sep'].map((name, k) => `${name} ${Math.round((100 * warmest[k + 5]) / landN)}`).join('  ')}`)
+// The zonal means against Earth's (DEC-0036 phase 8b-2): the refinement's
+// year per 10° of |latitude|, every cell for the temperature, the land
+// for the rain, each cell by its area — rounded ERA5 1991–2020 and
+// GPCC/GPCP land means, as scripts/calibrate.mjs holds them.
+{
+  const EARTH_T = [26.5, 25.5, 21.5, 15.5, 8.5, 1.5, -7, -16, -27]
+  const EARTH_P_LAND = [1900, 1100, 600, 600, 650, 550, 400, 250, 150]
+  const annual = M.refinement.annualFromMonths(refined, refined.cells)
+  const cm = terrain.cm
+  const bt = new Array(9).fill(0), ba = new Array(9).fill(0), bp = new Array(9).fill(0), bpa = new Array(9).fill(0)
+  for (let i = 0; i < cm.mesh.count; i++) {
+    const b = Math.min(8, Math.floor(domain.latitude(cm.yNorm[i]) * 9))
+    const a = cm.mesh.area[i] * (SHAPE === 'sphere' ? 1 : Math.cos(domain.latitude(cm.yNorm[i]) * Math.PI / 2))
+    bt[b] += annual.temperature[i] * a; ba[b] += a
+    if (terrain.land[i] && annual.precipitation[i] >= 0) { bp[b] += annual.precipitation[i] * a; bpa[b] += a }
+  }
+  console.log('\n|lat|    T °C (Earth)   P land mm/yr (Earth)')
+  for (let b = 0; b < 9; b++) console.log(`  ${String(b * 10).padStart(2)}–${String(b * 10 + 10).padStart(2)}°  ${(bt[b] / ba[b]).toFixed(1).padStart(6)} (${EARTH_T[b]})   ${(bp[b] / Math.max(1e-12, bpa[b])).toFixed(0).padStart(5)} (${EARTH_P_LAND[b]})`)
+}
 console.log(`\nrefinement ${Math.round(ms)} ms`)
 console.log(`Köppen groups, % of land (Beck 1991–2020): ${shares}`)
 console.log(`cells: class ${((100 * cellsExact) / both).toFixed(0)} %, group ${((100 * cellsGroup) / both).toFixed(0)} % of the land both have`)

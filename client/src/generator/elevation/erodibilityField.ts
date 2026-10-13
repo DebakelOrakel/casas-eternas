@@ -70,13 +70,16 @@ export const DEFAULT_ERODIBILITY_FIELD_PARAMS: ErodibilityFieldParams = {
 
 // The smooth K-factor field at `outWidth`×`outHeight` over the world's
 // `domain`. `currentEpoch` is the CONTINUOUS world epoch
-// (core/worldTime.worldEpoch) — the axis birthEpoch and suture stamps use. Neutral is 1.0 everywhere; ocean floor stays
+// (core/worldTime.worldEpoch) — the axis birthEpoch and suture stamps use;
+// `archeanEpochs` the Archean's length on it (the cratons' oldness is
+// measured in Ma, computeCratonOldnessField). Neutral is 1.0 everywhere; ocean floor stays
 // neutral (the engine's marine steps have their own physics).
 export function computeErodibilityField(
   rafts: Raft[],
   sutures: Suture[],
   features: TerrainFeature[],
   currentEpoch: number,
+  archeanEpochs: number,
   domain: Domain,
   outWidth: number,
   outHeight: number,
@@ -88,7 +91,7 @@ export function computeErodibilityField(
 
   // Cratons: linear toward cratonHardness with the oldness field (-1 = no
   // crust → neutral).
-  const oldness = computeCratonOldnessField(rafts, currentEpoch, outWidth, outHeight, domain)
+  const oldness = computeCratonOldnessField(rafts, currentEpoch, archeanEpochs, outWidth, outHeight, domain)
   for (let i = 0; i < result.length; i++) {
     if (oldness[i] >= 0) result[i] *= 1 + (params.cratonHardness - 1) * oldness[i]
   }

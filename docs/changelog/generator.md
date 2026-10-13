@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-13
+- **changed** Climate: the poles are colder and the mid-latitudes drier, as on Earth, and axial tilt, day length and contrast now shift ice, deserts and the temperature gradient without warming or cooling the world as a whole, so a seed makes a different world. `generator.step.climate`
+
 ## 2026-10-12
 - **changed** Genesis: the Water control is replaced by Land share, the share of the surface the continents cover, which the Archean grows its crust toward and then holds, and worlds saved before this change no longer open. `generator.step.genesis`
 - **fixed** Tectonics: the continents the Archean made no longer lose a third to half of their land in the first epoch of the plates. `generator.step.tectonics`

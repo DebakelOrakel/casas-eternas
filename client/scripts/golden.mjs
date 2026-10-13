@@ -343,7 +343,9 @@ async function buildWorld(seed) {
   const windy = CP.climateAtPoints(cells2, land.points, { wind: true })
   const coast = M.coast.buildCoastGraph({ mesh: terrain.mesh, z: terrain.z, windE: windy.windE, windS: windy.windS, hardness: nodeHardness, graph })
 
-  const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.epoch, CRX, CRY, sim.domain)
+  // The world's epoch on the continuous axis and the Archean's length, as
+  // the runtime reads it (the tectonic clock alone until 8b-2).
+  const cratonAge = M.rafts.computeCratonOldnessField(sim.rafts, sim.archeanEpochs + sim.epoch, sim.archeanEpochs, CRX, CRY, sim.domain)
   // The ice: the history's last epoch on the mesh (phase 6), rasterised as
   // the worker does; the ice body is the Glacier biome, per node.
   const ice = { thickness: M.meshRaster.rasteriseNodeField(coupled.mesh, coupled.ice, W, H) }

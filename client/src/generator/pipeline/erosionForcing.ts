@@ -53,7 +53,7 @@ export function coarseForcingFields(
   const uplift = computeUpliftField(sources.features, domain, CLIMATE_RES_X, CLIMATE_RES_Y)
   const hardness = computeErodibilityField(
     sources.rafts, sources.sutures, sources.features,
-    worldEpoch(sources.archeanEpochs, sources.epoch),
+    worldEpoch(sources.archeanEpochs, sources.epoch), sources.archeanEpochs,
     domain, CLIMATE_RES_X, CLIMATE_RES_Y)
   return { uplift, hardness }
 }

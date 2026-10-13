@@ -59,7 +59,9 @@ The defaults are Earth's.
 ### Axial tilt {#generator.panel.planet.obliquity}
 
 How far the axis leans, 10° to 40° (Earth: 23.5°). More tilt gives
-stronger seasons and a flatter gradient from the equator to the poles.
+stronger seasons and a flatter gradient from the equator to the poles;
+the world's mean temperature stays. Hotter summers melt more ice, so a
+small tilt grows ice caps and a large one shrinks them.
 The scale stops at 10° because below it the seasons disappear, and the
 monsoon with them; above 40° the climate leaves the range the model is
 tuned for. On a sphere the globe shows the equator and the two polar
@@ -80,7 +82,8 @@ Warms or cools the whole world evenly, −20 °C to +20 °C.
 
 How sharply the temperature falls from the equator to the poles, 30 % to
 170 %. Below 100 % the world is more even; above it the tropics get hotter
-and the poles colder.
+and the poles colder. The world's mean temperature stays; the greenhouse
+moves that.
 
 ### Humidity {#generator.panel.climate.humidity}
 

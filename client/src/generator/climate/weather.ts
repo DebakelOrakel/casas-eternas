@@ -1,5 +1,5 @@
 import { computeTemperature } from './temperature'
-import { DEFAULT_PLANET_FORCING, type PlanetForcing } from '../planet/planetForcing'
+import { DEFAULT_PLANET_FORCING, hadleyEdge, type PlanetForcing } from '../planet/planetForcing'
 import { computeWind, type CellVectors } from './wind'
 import { applyOceanSST, computeOceanCurrents, type OceanCurrents } from './oceanCurrents'
 import { computeSeasonalAmplitude } from './seasonality'
@@ -86,7 +86,7 @@ export function computeWeather(terrain: ClimateTerrain, params: WeatherParams): 
   const currentAnomaly = applyOceanSST(terrain, temperature, currents, wind)
 
   const seasonalAmplitude = computeSeasonalAmplitude(terrain, params.equatorOffset, planet)
-  const seasonal = computeSeasonalPrecipitation(terrain, temperature, seasonalAmplitude, wind, params.humidity, params.equatorOffset)
+  const seasonal = computeSeasonalPrecipitation(terrain, temperature, seasonalAmplitude, wind, params.humidity, params.equatorOffset, hadleyEdge(planet.rotationHours))
 
   return { terrain, mesh: { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal } }
 }

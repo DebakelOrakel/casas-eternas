@@ -18,7 +18,7 @@ summary.de: Ein Eismodell für die gekoppelte Geländegeschichte — Massenbilan
 area: generator
 stage: building
 createdAt: 2026-09-22
-updatedAt: 2026-10-04
+updatedAt: 2026-10-13
 concepts: [generator.concept.erosion, generator.concept.history-climate]
 related: [DES-0018, DEC-0029]
 ---
@@ -36,7 +36,13 @@ Per epoch the coarse climate (decision 13) gives temperature and
 precipitation. From them the equilibrium line altitude (ELA) per node:
 the height above which accumulation exceeds melt. The mass balance per
 node is linear in the height above the ELA, clamped, with precipitation
-as the accumulation factor. Ice ages are nothing separate: when the
+as the accumulation factor. The snow share of the precipitation goes by
+the annual mean, the melt by the summer: degrees of the warmest month
+(the annual mean plus half the seasonal range) above −1 °C (since
+2026-10-13, DEC-0036 phase 8b-2; it was the annual mean above −8 °C,
+which at the range where the ice ends is the same line). A glacier lives
+by its summer, so a coast keeps more ice than an interior of the same
+mean, and the axial tilt, which sets the seasons, sets the ice. Ice ages are nothing separate: when the
 planetary schedule cools the world the ELA drops by hundreds to a
 thousand metres and ice appears where there was none.
 

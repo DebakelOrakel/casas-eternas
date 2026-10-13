@@ -66,19 +66,31 @@ export interface MeshIceInputs {
   // lapse — and the precipitation, mm/yr (OCEAN_PRECIP on the sea).
   seaLevelTemperature: ArrayLike<number>
   precipitation: ArrayLike<number>
+  // The seasonal range, °C (warmest month less coldest; OCEAN_AMPLITUDE,
+  // negative, on the sea): the summer the melt is read at.
+  seasonalAmplitude: ArrayLike<number>
   // Metres per domain unit.
   cellM: number
 }
 
 // The mass balance at a height, m/yr, from a temperature `tc` at the
-// height `zc` and the precipitation: the snow share of the rain, the
-// degree-day melt on the annual mean.
-function balanceAt(zUnits: number, tc: number, zc: number, p: number): number {
+// height `zc`, the precipitation and half the seasonal range: the snow
+// share of the rain on the annual mean, the melt on the SUMMER — degrees
+// of the warmest month (the annual mean plus half the range) above
+// `iceMeltFromWarmestC`, at `iceMeltPerDegC` (DEC-0036 phase 8b-2). A
+// glacier lives or dies by its summer: the same annual mean with a milder
+// summer keeps more of its snow (a maritime glacier), with a hotter one
+// less (a continental one), and the tilt, which sets the seasons, sets the
+// ice (Milankovitch's summer insolation). On the annual mean alone the
+// obliquity moved the ice share by −0.3 / −1.2 points at 10 / 35°
+// (phase 8a).
+function balanceAt(zUnits: number, tc: number, zc: number, p: number, halfRange: number): number {
   const t = SURFACE_TUNING
   const local = tc - CLIMATE_TUNING.lapseCPerElevation * (zUnits - Math.max(SEA_LEVEL, zc))
   const snow = local <= -5 ? 1 : local >= 5 ? 0 : (5 - local) / 10
   const accumulation = (p / 1000) * snow * t.iceSnowToIce
-  const melt = local > t.iceMeltFromC ? (local - t.iceMeltFromC) * t.iceMeltPerDegC : 0
+  const summer = local + halfRange
+  const melt = summer > t.iceMeltFromWarmestC ? (summer - t.iceMeltFromWarmestC) * t.iceMeltPerDegC : 0
   return accumulation - melt
 }
 
@@ -86,21 +98,21 @@ function balanceAt(zUnits: number, tc: number, zc: number, p: number): number {
 // metres: the height where the balance crosses zero (bisection; the
 // balance falls with warmth, so it rises with height). Above every height:
 // the place never holds ice; below sea level: always.
-function equilibriumLine(seaLevelC: number, p: number): number {
+function equilibriumLine(seaLevelC: number, p: number, halfRange: number): number {
   let lo = 0
   let hi = 1
-  if (balanceAt(hi, seaLevelC, SEA_LEVEL, p) <= 0) return ELEVATION_METERS * 2
-  if (balanceAt(lo, seaLevelC, SEA_LEVEL, p) >= 0) return 0
+  if (balanceAt(hi, seaLevelC, SEA_LEVEL, p, halfRange) <= 0) return ELEVATION_METERS * 2
+  if (balanceAt(lo, seaLevelC, SEA_LEVEL, p, halfRange) >= 0) return 0
   for (let k = 0; k < 24; k++) {
     const mid = 0.5 * (lo + hi)
-    if (balanceAt(mid, seaLevelC, SEA_LEVEL, p) > 0) hi = mid
+    if (balanceAt(mid, seaLevelC, SEA_LEVEL, p, halfRange) > 0) hi = mid
     else lo = mid
   }
   return 0.5 * (lo + hi) * ELEVATION_METERS
 }
 
 export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
-  const { mesh, z, seaLevelTemperature, precipitation, cellM } = input
+  const { mesh, z, seaLevelTemperature, precipitation, seasonalAmplitude, cellM } = input
   const t = SURFACE_TUNING
   const slots = mesh.vertexSlots
   const balance = new Float32Array(slots)
@@ -114,10 +126,11 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
     if (!mesh.vAlive[v]) continue
     let p = precipitation[v]
     if (p === OCEAN_PRECIP || p < 0) p = 0
-    elaM[v] = equilibriumLine(seaLevelTemperature[v], p)
+    const halfRange = Math.max(0, seasonalAmplitude[v]) / 2
+    elaM[v] = equilibriumLine(seaLevelTemperature[v], p, halfRange)
     if (z[v] <= SEA_LEVEL) continue
     land.push(v)
-    balance[v] = balanceAt(z[v], seaLevelTemperature[v], SEA_LEVEL, p)
+    balance[v] = balanceAt(z[v], seaLevelTemperature[v], SEA_LEVEL, p, halfRange)
     if (balance[v] > 0) iceable++
   }
   const order = Int32Array.from(land)

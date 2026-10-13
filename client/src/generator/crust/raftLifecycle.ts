@@ -275,6 +275,10 @@ export function compactRafts(rafts: Raft[], rate: number, domain: Domain): void 
     nearest.sort()
     const spacing = Math.min(1.2 * meanRadius, Math.max(0.5 * meanRadius, nearest[n >> 1]))
     const compactRadius = Math.sqrt(n / Math.PI) * spacing
+    if (domain.noise.kind === 'globe') {
+      compactRaftOnGlobe(raft, compactRadius, rate, domain)
+      continue
+    }
     for (const blob of raft.blobs) {
       domain.delta(blob.x, blob.y, cx, cy, offset)
       const dx = offset.x
@@ -285,6 +289,41 @@ export function compactRafts(rafts: Raft[], rate: number, domain: Domain): void 
       const pull = (excess * rate) / dist
       domain.advance(blob.x, blob.y, -dx * pull, -dy * pull, blob)
     }
+  }
+}
+
+// The sphere's compaction (DEC-0036 phase 8b-2). The torus's rule takes
+// each blob's offset from the centroid in the CENTROID's frame and moves
+// the blob by it in the BLOB's own frame; on the globe the two frames
+// differ by the turn of the meridians between them, which near a pole is
+// up to half a turn, so a blob across the pole from the centroid was
+// pushed away from it (the same class as the pole rafts that piled onto
+// themselves, advanceRaftOnGlobe). Here the centroid is the blobs' mean
+// direction in 3D, and each blob is moved along the great circle toward
+// it, the offset taken in the blob's own frame (Domain.delta from the
+// blob): by `rate` of its excess over the compact radius, as on the torus.
+function compactRaftOnGlobe(raft: Raft, compactRadius: number, rate: number, domain: Domain): void {
+  const globe = domain.noise
+  if (globe.kind !== 'globe') return
+  let cx = 0, cy = 0, cz = 0
+  for (const blob of raft.blobs) {
+    globe.frame(blob.x, blob.y, blobFrame)
+    cx += blobFrame.px
+    cy += blobFrame.py
+    cz += blobFrame.pz
+  }
+  // Blobs spread evenly about the globe have no centre to pull toward.
+  if (cx * cx + cy * cy + cz * cz === 0) return
+  globe.locate(cx, cy, cz, moved)
+  const centreX = moved.x
+  const centreY = moved.y
+  for (const blob of raft.blobs) {
+    domain.delta(centreX, centreY, blob.x, blob.y, offset)
+    const dist = detHypot(offset.x, offset.y)
+    const excess = dist - compactRadius
+    if (excess <= 0) continue
+    const pull = (excess * rate) / dist
+    domain.advance(blob.x, blob.y, offset.x * pull, offset.y * pull, blob)
   }
 }
 

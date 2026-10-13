@@ -264,7 +264,10 @@ to its 0.5 gate, or to `archeanMa=` as a player stops it, at `landShare=`;
 40 coupled epochs, the climate step with its refinement,
 the hydrology) and prints the distributions the calibration is judged on,
 with the planet's and the genesis's sliders swept; `report <run.json>
-[<before.json>]` prints a run against another. Judge a tuning change there,
+[<before.json>]` prints a run against another; `cache=<dir>` keeps each
+world's terrain after its history, and `climate cache=<dir>` runs the
+climate step alone on those terrains (20 s a world — a climate constant
+or lever judged without the history). Judge a tuning change there,
 not on a harness world (their land is out of proportion).
 
 `golden` has three permanent layers: **invariants** (no baseline, so a failure is always a

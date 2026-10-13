@@ -14,6 +14,11 @@
 //     user stops it at 1000–1500 Ma); 0 = to the gate only. landShare: the
 //     genesis.landShare control for every world (a sweep's value wins).
 //     TECTONICS_TUNING.splitGap=… (any tuning object's key, set in every child)
+//     cache=<dir>: keep each default world's terrain after its history
+//   node scripts/calibrate.mjs climate cache=<dir> [sweep= seeds= shapes= X_TUNING.k=…]
+//     the climate step alone on those terrains (DEC-0036 phase 8b-2): the
+//     zonal climate, Köppen, the dry belt and the ice at the climate's
+//     steady state, the planet's and the climate's sliders swept
 //   node scripts/calibrate.mjs report <run.json> [<before.json>]
 //     the summary of a run, with the deltas against another one
 //
@@ -38,7 +43,7 @@
 // temporary directory (casas-calibration/): a run is a measurement, not a
 // file of the repository.
 import { spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { inflateSync } from 'node:zlib'
 import os from 'node:os'
@@ -80,7 +85,7 @@ const EARTH_P_LAND = [1900, 1100, 600, 600, 650, 550, 400, 250, 150]
 // --- the shared reading ------------------------------------------------------
 
 function parseArgs(argv) {
-  const opt = { seeds: 12, shapes: 'torus,sphere', epochs: 40, stabilised: 0.5, archeanMax: 600, archeanMa: 0, landShare: 30, jobs: 5, sweep: 1, sweepSeeds: 3, out: process.env.CALIBRATION_OUT || `${os.tmpdir()}/casas-calibration`, label: 'run', only: '' }
+  const opt = { seeds: 12, shapes: 'torus,sphere', epochs: 40, stabilised: 0.5, archeanMax: 600, archeanMa: 0, landShare: 30, jobs: 5, sweep: 1, sweepSeeds: 3, out: process.env.CALIBRATION_OUT || `${os.tmpdir()}/casas-calibration`, label: 'run', only: '', cache: '' }
   const tune = {}
   for (const a of argv) {
     const at = a.indexOf('=')
@@ -106,7 +111,7 @@ function dist(values) {
 
 // --- one world (the child) ----------------------------------------------------
 
-async function buildOne(job) {
+async function loadModules(job) {
   const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
   const server = await createServer({ root: CLIENT, server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom', logLevel: 'error' })
   const L = (p) => server.ssrLoadModule(p)
@@ -136,6 +141,9 @@ async function buildOne(job) {
     mantle: await L('/src/generator/mantle/mantleField.ts'),
     oceanAge: await L('/src/generator/tectonics/oceanAge.ts'),
     runParams: await L('/src/world/runParams.ts'),
+    domain: await L('/src/generator/core/domain.ts'),
+    meshSerial: await L('/src/generator/mesh/meshSerial.ts'),
+    glacial: await L('/src/generator/surface/glacial.ts'),
   }
   const TUNING_MODULES = {
     TECTONICS_TUNING: '/src/generator/tectonics/tectonicsTuneParams.ts', CLIMATE_TUNING: '/src/generator/climate/climateTuneParams.ts',
@@ -149,6 +157,115 @@ async function buildOne(job) {
     if (!(name in mod[obj])) throw new Error(`no ${key}`)
     mod[obj][name] = value
   }
+  return { M, server }
+}
+
+// THE CLIMATE STEP as the screen runs it, on a terrain (the mesh, its
+// heights, their 2048 raster), and what the calibration reads of it alone:
+// the zonal temperature and land rain, Köppen, the dry belt, the
+// seasonal range, the ice the epoch's (cheap) climate holds at its steady
+// state. `historyIce`: the history's own last ice per node, when there is
+// one (the full run); the steady state of this climate otherwise.
+function climateStep(M, domain, mesh, z, el, weatherParams, historyIce) {
+  const CP = M.climatePoints
+  const SEA = M.scale.SEA_LEVEL
+  const w1 = M.weather.computeWeather(M.climateMesh.climateTerrain(domain, el, W, H), weatherParams)
+  const refined = M.refinement.refineClimate(el, domain, weatherParams, w1.mesh.temperature, w1.mesh.wind)
+  const rTerrain = M.climateMesh.climateTerrain(domain, el, W, H)
+  const cells = CP.climateCellsFromRefined(refined, rTerrain)
+  const points = CP.meshPoints(mesh, z, null)
+  const climate = CP.climateAtPoints(cells, points)
+  const land = { points, climate, ...M.biomes.classifyPoints(climate, points, domain) }
+  let ice = historyIce
+  if (!ice) {
+    const atNodes = CP.climateAtPoints(CP.climateCellsFromWeather(w1), points)
+    ice = M.glacial.computeIceOnMesh({ mesh, z, seaLevelTemperature: atNodes.seaLevelTemperature, precipitation: atNodes.precipitation, seasonalAmplitude: atNodes.seasonalAmplitude, cellM: domain.metresPerUnit }).thickness
+  }
+  const ICE_MIN = M.surfaceTune.SURFACE_TUNING.iceMinThicknessM
+  // Per node of land: Köppen's group by 10° of |latitude|, the ice.
+  const koppenA = { A: 0, B: 0, C: 0, D: 0, E: 0 }
+  const koppenBand = Array.from({ length: 9 }, () => ({ A: 0, B: 0, C: 0, D: 0, E: 0 }))
+  const bandLandA = new Array(9).fill(0)
+  const b5 = new Array(18).fill(0), b5A = new Array(18).fill(0)
+  let koppenTotal = 0, landA = 0, iceA = 0, iceV = 0
+  // Every class's share of the land, and below 30° its share and mean height.
+  const koppenClass = {}, koppenLow = {}, lowH = {}
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v] || z[v] <= SEA) continue
+    const a = mesh.voronoiArea(v)
+    landA += a
+    const lat = domain.latitude(mesh.vy[v] / H) * 90
+    const b = Math.min(8, Math.floor(lat / 10))
+    bandLandA[b] += a
+    if ((ice[v] ?? 0) >= ICE_MIN) { iceA += a; iceV += ice[v] * a }
+    const code = M.koppen.koppenCode(land.koppen[v])
+    if (code) {
+      koppenA[code[0]] += a; koppenTotal += a
+      koppenBand[b][code[0]] += a
+      koppenClass[code] = (koppenClass[code] ?? 0) + a
+      if (lat < 30) { koppenLow[code] = (koppenLow[code] ?? 0) + a; lowH[code] = (lowH[code] ?? 0) + a * (z[v] - SEA) * M.scale.ELEVATION_METERS }
+      if (code[0] === 'B') b5[Math.min(17, Math.floor(lat / 5))] += a
+    }
+    b5A[Math.min(17, Math.floor(lat / 5))] += a
+  }
+  // The zonal climate on the climate's mesh: the refinement's year, per
+  // 10° of |latitude| (the Domain's latitude), all cells for the
+  // temperature, land cells for the rain and the seasonal range; the land
+  // rain per 5° too.
+  const cm = rTerrain.cm
+  const annual = M.refinement.annualFromMonths(refined, refined.cells)
+  const bandT = new Array(9).fill(0), bandTA = new Array(9).fill(0), bandP = new Array(9).fill(0), bandPA = new Array(9).fill(0)
+  const bandAmp = new Array(9).fill(0), bandAmpA = new Array(9).fill(0)
+  const p5 = new Array(18).fill(0), p5A = new Array(18).fill(0)
+  let meanT = 0, meanTA = 0
+  for (let i = 0; i < cm.mesh.count; i++) {
+    const lat = domain.latitude(cm.yNorm[i]) * 90
+    const b = Math.min(8, Math.floor(lat / 10))
+    const a = cm.mesh.area[i]
+    bandT[b] += annual.temperature[i] * a; bandTA[b] += a
+    meanT += annual.temperature[i] * a; meanTA += a
+    if (rTerrain.land[i] && annual.precipitation[i] !== M.precip.OCEAN_PRECIP && annual.precipitation[i] >= 0) {
+      bandP[b] += annual.precipitation[i] * a; bandPA[b] += a
+      const k = Math.min(17, Math.floor(lat / 5))
+      p5[k] += annual.precipitation[i] * a; p5A[k] += a
+      bandAmp[b] += annual.seasonalAmplitude[i] * a; bandAmpA[b] += a
+    }
+  }
+  // The subtropical dry belt: the |latitude| (band centre) of the least
+  // land rain per 5° between 10° and 50°, over bands holding at least 2 %
+  // of the land; and the mean |latitude| of the dry (B) land below 50°.
+  let dryRain = NaN, least = Infinity
+  for (let k = 2; k < 10; k++) {
+    if (b5A[k] < 0.02 * landA) continue
+    const r = p5A[k] ? p5[k] / p5A[k] : Infinity
+    if (r < least) { least = r; dryRain = k * 5 + 2.5 }
+  }
+  let bLat = 0, bArea = 0
+  for (let k = 0; k < 10; k++) { bLat += (k * 5 + 2.5) * b5[k]; bArea += b5[k] }
+  const m2 = domain.metresPerUnit ** 2
+  return {
+    w1, refined, rTerrain, cells, points, climate, land, ice,
+    metrics: {
+      koppen: Object.fromEntries(Object.entries(koppenA).map(([k, a]) => [k, a / Math.max(1e-12, koppenTotal)])),
+      koppenClass: Object.fromEntries(Object.entries(koppenClass).map(([k, a]) => [k, a / Math.max(1e-12, koppenTotal)])),
+      koppenLow: Object.fromEntries(Object.entries(koppenLow).map(([k, a]) => [k, { share: a / Math.max(1e-12, koppenTotal), heightM: lowH[k] / a }])),
+      koppenBand: koppenBand.map((o, b) => Object.fromEntries(Object.entries(o).map(([k, a]) => [k, bandLandA[b] ? a / bandLandA[b] : null]))),
+      bandLandShare: bandLandA.map((a) => a / Math.max(1e-12, landA)),
+      meanT: meanT / meanTA,
+      bandT: bandT.map((s, i) => (bandTA[i] ? s / bandTA[i] : null)),
+      bandPLand: bandP.map((s, i) => (bandPA[i] ? s / bandPA[i] : null)),
+      bandAmpLand: bandAmp.map((s, i) => (bandAmpA[i] ? s / bandAmpA[i] : null)),
+      bandP5Land: p5.map((s, i) => (p5A[i] ? s / p5A[i] : null)),
+      dryBeltLatRain: dryRain,
+      dryBeltLatB: bArea ? bLat / bArea : NaN,
+      iceShareOfLand: iceA / Math.max(1e-12, landA),
+      iceVolumeKm3: (iceV * m2) / 1e9,
+    },
+  }
+}
+
+async function buildOne(job) {
+  const { M, server } = await loadModules(job)
   const SEA = M.scale.SEA_LEVEL, METRES = M.scale.ELEVATION_METERS
   const values = { ...DEFAULTS, 'genesis.landShare': job.landShare ?? DEFAULTS['genesis.landShare'], ...(job.set ?? {}) }
   const value = (path) => values[path]
@@ -218,18 +335,21 @@ async function buildOne(job) {
   const mesh = coupled.mesh
   const el = M.meshRaster.rasteriseNodeField(mesh, coupled.z, W, H)
   lap('rasterise')
+  if (job.cache) {
+    // The terrain after the history, for `climate` runs on it.
+    const bytes = M.coupled.encodeCoupledTerrain(coupled)
+    const base = `${job.cache}/${job.shape}-${job.seed}`
+    writeFileSync(`${base}.json`, JSON.stringify({ seed: job.seed, shape: job.shape, count: bytes.z.length, landShare: job.landShare, archeanMa: job.archeanMa }))
+    writeFileSync(`${base}.nodes.f32`, Buffer.from(bytes.nodes.buffer, bytes.nodes.byteOffset, bytes.nodes.byteLength))
+    writeFileSync(`${base}.conn.u8`, Buffer.from(bytes.connectivity.buffer, bytes.connectivity.byteOffset, bytes.connectivity.byteLength))
+    writeFileSync(`${base}.z.f32`, Buffer.from(bytes.z.buffer, bytes.z.byteOffset, bytes.z.byteLength))
+  }
 
   // THE CLIMATE STEP as the screen runs it.
   const CP = M.climatePoints
-  const w1 = M.weather.computeWeather(M.climateMesh.climateTerrain(domain, el, W, H), weatherParams)
+  const step = climateStep(M, domain, mesh, coupled.z, el, weatherParams, coupled.ice)
+  const { refined, rTerrain, cells, points, climate, land } = step
   lap('climate')
-  const refined = M.refinement.refineClimate(el, domain, weatherParams, w1.mesh.temperature, w1.mesh.wind)
-  const rTerrain = M.climateMesh.climateTerrain(domain, el, W, H)
-  const cells = CP.climateCellsFromRefined(refined, rTerrain)
-  lap('refine')
-  const points = CP.meshPoints(mesh, coupled.z, null)
-  const climate = CP.climateAtPoints(cells, points)
-  const land = { points, climate, ...M.biomes.classifyPoints(climate, points, domain) }
   const sub = M.meshHydro.meshSubstrate(mesh, coupled.routing, coupled.areas)
   const discharge = M.hydro.accumulateDischargeOn(sub, coupled.z, climate.precipitation, climate.temperature)
   const lakes = M.hydro.computeLakesOn(sub, discharge, coupled.z, climate.temperature)
@@ -255,8 +375,6 @@ async function buildOne(job) {
   let peak = -Infinity
   const ocean = []
   const landH = []
-  const koppenA = { A: 0, B: 0, C: 0, D: 0, E: 0 }
-  let koppenTotal = 0
   const continental = new Uint8Array(sub.count)
   const ICE_MIN = M.surfaceTune.SURFACE_TUNING.iceMinThicknessM
   for (let v = 0; v < mesh.vertexSlots; v++) {
@@ -278,8 +396,6 @@ async function buildOne(job) {
       if (h > 6000) above[3] += a
       const ice = coupled.ice[v] ?? 0
       if (ice >= ICE_MIN) { iceA += a; iceV += ice * a }
-      const code = M.koppen.koppenCode(land.koppen[v])
-      if (code) { koppenA[code[0]] += a; koppenTotal += a }
     } else if (!inBasin) {
       ocean.push([(SEA - z) * METRES, a])
     }
@@ -320,21 +436,8 @@ async function buildOne(job) {
   }
   sizes.sort((a, b) => b - a)
 
-  // The zonal climate on the climate's mesh: the refinement's year, per
-  // 10° of |latitude| (the Domain's latitude), all cells for the
-  // temperature, land cells for the rain.
   const cm = rTerrain.cm
   const annual = M.refinement.annualFromMonths(refined, refined.cells)
-  const bandT = new Array(9).fill(0), bandTA = new Array(9).fill(0), bandP = new Array(9).fill(0), bandPA = new Array(9).fill(0)
-  let meanT = 0, meanTA = 0
-  for (let i = 0; i < cm.mesh.count; i++) {
-    const lat = domain.latitude(cm.yNorm[i]) * 90
-    const b = Math.min(8, Math.floor(lat / 10))
-    const a = cm.mesh.area[i]
-    bandT[b] += annual.temperature[i] * a; bandTA[b] += a
-    meanT += annual.temperature[i] * a; meanTA += a
-    if (rTerrain.land[i] && annual.precipitation[i] !== M.precip.OCEAN_PRECIP && annual.precipitation[i] >= 0) { bandP[b] += annual.precipitation[i] * a; bandPA[b] += a }
-  }
 
   // THE ARTEFACTS (phase 8 c): the field meshes' twelve pentagons against
   // the hexagons — a cell's anomaly is its value less its neighbours'
@@ -442,14 +545,11 @@ async function buildOne(job) {
     largestLandmassShare: sizes.length ? sizes[0] / km2(cont) : 0,
     peakM: peak, landP99M: weighted(landH.slice(), 0.99), meanLandM: meanLandH,
     above1km: above[0] / landA, above2km: above[1] / landA, above4km: above[2] / landA, above6km: above[3] / landA,
-    iceVolumeKm3: (iceV * m2) / 1e9, iceShareOfLand: iceA / landA,
     lakeShareOfLand: lakeA / cont, liquidLakeShareOfLand: lakeLiquidA / cont,
     lakes: lakeBodies, terminalSeas: terminal, dryBasins: dry,
     maxDischarge: maxDis, p99Discharge: q(discharges, 0.99),
-    koppen: Object.fromEntries(Object.entries(koppenA).map(([k, a]) => [k, a / Math.max(1e-12, koppenTotal)])),
-    meanT: meanT / meanTA,
-    bandT: bandT.map((s, i) => (bandTA[i] ? s / bandTA[i] : null)),
-    bandPLand: bandP.map((s, i) => (bandPA[i] ? s / bandPA[i] : null)),
+    ...step.metrics,
+    iceVolumeKm3: (iceV * m2) / 1e9, iceShareOfLand: iceA / landA,
     reaches: graph.reaches.length,
     eustaticM: sim.eustaticM,
     oceanMeanDepthM: oceanMean, oceanMedianDepthM: weighted(ocean.slice(), 0.5), oceanP90DepthM: weighted(ocean.slice(), 0.9),
@@ -461,11 +561,31 @@ async function buildOne(job) {
   return out
 }
 
+// A cached terrain's climate step alone (`climate` runs): the levers and
+// the climate's tuning judged on the same terrains, in a minute a world.
+async function climateOne(job) {
+  const { M, server } = await loadModules(job)
+  const t0 = performance.now()
+  const values = { ...DEFAULTS, 'genesis.landShare': job.landShare ?? DEFAULTS['genesis.landShare'], ...(job.set ?? {}) }
+  const weatherParams = M.runParams.weatherParamsFrom((path) => values[path])
+  const base = `${job.cache}/${job.shape}-${job.seed}`
+  const meta = JSON.parse(readFileSync(`${base}.json`, 'utf8'))
+  const f32 = (f) => { const b = readFileSync(f); return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)) }
+  const conn = readFileSync(`${base}.conn.u8`)
+  const domain = M.domain.domainOfKind(job.shape, W, H)
+  const mesh = M.meshSerial.decodeMesh(domain, { count: meta.count, nodes: f32(`${base}.nodes.f32`), connectivity: new Uint8Array(conn.buffer.slice(conn.byteOffset, conn.byteOffset + conn.byteLength)) })
+  const z = f32(`${base}.z.f32`)
+  const el = M.meshRaster.rasteriseNodeField(mesh, z, W, H)
+  const step = climateStep(M, domain, mesh, z, el, weatherParams, null)
+  await server.close()
+  return { seed: job.seed, shape: job.shape, set: job.set ?? {}, tune: job.tune ?? {}, ...step.metrics, time: { climate: (performance.now() - t0) / 1000 } }
+}
+
 // --- the orchestration ----------------------------------------------------------
 
 function runChild(job) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ['--max-old-space-size=8192', SELF, 'one', JSON.stringify(job)], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(process.execPath, ['--max-old-space-size=8192', SELF, job.climateOnly ? 'climateOne' : 'one', JSON.stringify(job)], { stdio: ['ignore', 'pipe', 'pipe'] })
     let out = '', err = ''
     child.stdout.on('data', (d) => { out += d })
     child.stderr.on('data', (d) => { err += d })
@@ -584,14 +704,20 @@ function summarise(worlds) {
     s.bandT = Array.from({ length: 9 }, (_, b) => dist(base.map((w) => w.bandT[b] ?? NaN)))
     s.bandPLand = Array.from({ length: 9 }, (_, b) => dist(base.map((w) => w.bandPLand[b] ?? NaN)))
     s.time = Object.fromEntries(Object.keys(base[0]?.time ?? {}).map((k) => [k, dist(base.map((w) => w.time[k]))]))
-    s.pentagons = Object.fromEntries(Object.keys(base[0]?.artefacts.pentagons ?? {}).map((k) => [k, {
+    s.pentagons = Object.fromEntries(Object.keys(base[0]?.artefacts?.pentagons ?? {}).map((k) => [k, {
       maxAbsZ: dist(base.map((w) => w.artefacts.pentagons[k].maxAbsZ)),
       meanAbsZ: dist(base.map((w) => w.artefacts.pentagons[k].meanAbsZ)),
       meanRank: dist(base.map((w) => w.artefacts.pentagons[k].meanRank)),
     }]))
-    s.seam = Object.fromEntries(Object.keys(base[0]?.artefacts.seam ?? {}).map((k) => [k, dist(base.map((w) => w.artefacts.seam[k]))]))
-    s.poleRows = { top: dist(base.map((w) => w.artefacts.poleRows.temperature.top)), bottom: dist(base.map((w) => w.artefacts.poleRows.temperature.bottom)), meanRow: dist(base.map((w) => w.artefacts.poleRows.temperature.meanRow)) }
-    s.zonal = { max: dist(base.map((w) => w.artefacts.zonal.temperature.maxSecondDiff)), median: dist(base.map((w) => w.artefacts.zonal.temperature.medianSecondDiff)) }
+    s.seam = Object.fromEntries(Object.keys(base[0]?.artefacts?.seam ?? {}).map((k) => [k, dist(base.map((w) => w.artefacts.seam[k]))]))
+    s.poleRows = { top: dist(base.map((w) => w.artefacts?.poleRows.temperature.top)), bottom: dist(base.map((w) => w.artefacts?.poleRows.temperature.bottom)), meanRow: dist(base.map((w) => w.artefacts?.poleRows.temperature.meanRow)) }
+    s.zonal = { max: dist(base.map((w) => w.artefacts?.zonal.temperature.maxSecondDiff)), median: dist(base.map((w) => w.artefacts?.zonal.temperature.medianSecondDiff)) }
+    s.bandAmpLand = Array.from({ length: 9 }, (_, b) => dist(base.map((w) => w.bandAmpLand?.[b] ?? NaN)))
+    s.bandP5Land = Array.from({ length: 18 }, (_, b) => dist(base.map((w) => w.bandP5Land?.[b] ?? NaN)))
+    s.koppenBand = Array.from({ length: 9 }, (_, b) => Object.fromEntries(['A', 'B', 'C', 'D', 'E'].map((g) => [g, dist(base.map((w) => w.koppenBand?.[b]?.[g] ?? NaN))])))
+    s.bandLandShare = Array.from({ length: 9 }, (_, b) => dist(base.map((w) => w.bandLandShare?.[b] ?? NaN)))
+    s.dryBeltLatRain = dist(base.map((w) => w.dryBeltLatRain))
+    s.dryBeltLatB = dist(base.map((w) => w.dryBeltLatB))
     // The sweeps: per slider value, the mean change against the same
     // seeds' default worlds.
     const sweeps = {}
@@ -602,10 +728,10 @@ function summarise(worlds) {
       const key = `${path}=${v}`
       sweeps[key] ??= { n: 0, d: {} }
       sweeps[key].n++
-      const metrics = { landFraction: 100, iceShareOfLand: 100, lakeShareOfLand: 100, meanT: 1, peakM: 1, reaches: 1, plates: 1, 'koppen.A': 100, 'koppen.B': 100, 'koppen.C': 100, 'koppen.D': 100, 'koppen.E': 100, 'bandT.0': 1, 'bandT.6': 1, 'bandPLand.0': 1, 'bandPLand.2': 1 }
+      const metrics = { landFraction: 100, iceShareOfLand: 100, lakeShareOfLand: 100, meanT: 1, peakM: 1, reaches: 1, plates: 1, 'koppen.A': 100, 'koppen.B': 100, 'koppen.C': 100, 'koppen.D': 100, 'koppen.E': 100, 'bandT.0': 1, 'bandT.3': 1, 'bandT.5': 1, 'bandT.8': 1, 'bandAmpLand.6': 1, 'bandPLand.0': 1, 'bandPLand.2': 1, dryBeltLatRain: 1, dryBeltLatB: 1 }
       for (const [m, f] of Object.entries(metrics)) {
         const [a, b] = m.split('.')
-        const get = (x) => (b === undefined ? x[a] : x[a][b])
+        const get = (x) => (b === undefined ? x[a] : x[a]?.[b])
         sweeps[key].d[m] = (sweeps[key].d[m] ?? 0) + ((get(w) ?? NaN) - (get(ref) ?? NaN)) * f
       }
     }
@@ -646,6 +772,14 @@ function printSummary(summary, before) {
       const t = s.bandT[b], p = s.bandPLand[b]
       console.log(`  ${String(b * 10).padStart(2)}–${String(b * 10 + 10).padStart(2)}°   ${fmt(t.median, 1, 1).padStart(6)} (${fmt(t.p10, 1, 1)}–${fmt(t.p90, 1, 1)})   ${String(EARTH_T[b]).padStart(6)}    ${fmt(p.median, 1, 0).padStart(6)} (${fmt(p.p10, 1, 0)}–${fmt(p.p90, 1, 0)})   ${EARTH_P_LAND[b]}`)
     }
+    console.log('|lat| band   land share   Köppen A/B/C/D/E % of the band\'s land (median)   seasonal range land °C')
+    for (let b = 0; b < 9; b++) {
+      const k = s.koppenBand?.[b]
+      if (!k) break
+      console.log(`  ${String(b * 10).padStart(2)}–${String(b * 10 + 10).padStart(2)}°   ${fmt(s.bandLandShare[b].median, 100).padStart(6)}     ${['A', 'B', 'C', 'D', 'E'].map((g) => fmt(k[g].median, 100, 0).padStart(4)).join(' ')}     ${fmt(s.bandAmpLand[b].median, 1, 1)}`)
+    }
+    if (s.bandP5Land) console.log('land rain per 5° (median, mm/yr): ' + s.bandP5Land.map((d, b) => `${b * 5}:${fmt(d.median, 1, 0)}`).join(' '))
+    if (s.dryBeltLatRain) console.log(`dry belt: least land rain at ${fmt(s.dryBeltLatRain.median, 1, 1)}° (${fmt(s.dryBeltLatRain.p10, 1, 1)}–${fmt(s.dryBeltLatRain.p90, 1, 1)}), mean |lat| of B land below 50° ${fmt(s.dryBeltLatB.median, 1, 1)}° (${fmt(s.dryBeltLatB.p10, 1, 1)}–${fmt(s.dryBeltLatB.p90, 1, 1)})`)
     console.log('time per stage, s (median, max): ' + Object.entries(s.time).map(([k, d]) => `${k} ${fmt(d.median, 1, 1)}/${fmt(d.max, 1, 1)}`).join(', '))
     console.log('pentagons (anomaly vs hexagons: max |z| median, mean |z| median, mean rank of |anomaly| median):')
     for (const [k, d] of Object.entries(s.pentagons)) console.log(`  ${k.padEnd(14)} max|z| ${fmt(d.maxAbsZ.median, 1, 2)} (max ${fmt(d.maxAbsZ.max, 1, 2)})  mean|z| ${fmt(d.meanAbsZ.median, 1, 2)}  rank ${fmt(d.meanRank.median, 1, 2)}`)
@@ -668,6 +802,36 @@ if (mode === 'one') {
   const out = await buildOne(job)
   process.stdout.write(`${JSON.stringify(out)}\n`)
   process.exit(0)
+} else if (mode === 'climateOne') {
+  const job = JSON.parse(process.argv[3])
+  const out = await climateOne(job)
+  process.stdout.write(`${JSON.stringify(out)}\n`)
+  process.exit(0)
+} else if (mode === 'climate') {
+  // node scripts/calibrate.mjs climate cache=<dir> [sweep=1 sweepSeeds=3 shapes=… label=… jobs=… X_TUNING.k=…]
+  // The climate step alone on the terrains a run with cache=<dir> left.
+  const { opt, tune } = parseArgs(process.argv.slice(3))
+  if (!opt.cache) { console.error('climate needs cache=<dir>'); process.exit(2) }
+  mkdirSync(opt.out, { recursive: true })
+  const shapes = opt.shapes.split(',')
+  const cached = readdirSync(opt.cache).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(`${opt.cache}/${f}`, 'utf8')))
+  const jobs = []
+  for (const shape of shapes) {
+    const worlds = SEEDS.map((seed) => cached.find((c) => c.shape === shape && c.seed === seed)).filter(Boolean).slice(0, opt.seeds)
+    for (const w of worlds) jobs.push({ seed: w.seed, shape, landShare: w.landShare, cache: opt.cache, tune, climateOnly: true })
+    if (opt.sweep) for (const w of worlds.slice(0, opt.sweepSeeds)) {
+      for (const [path, vals] of Object.entries(SWEEPS)) if (path !== 'genesis.landShare') for (const v of vals) jobs.push({ seed: w.seed, shape, landShare: w.landShare, cache: opt.cache, tune, climateOnly: true, set: { [path]: v } })
+    }
+  }
+  const filtered = opt.only ? jobs.filter((j) => `${j.shape}:${j.seed}:${JSON.stringify(j.set ?? {})}`.includes(opt.only)) : jobs
+  const file = `${opt.out}/${opt.label}.json`
+  console.log(`${filtered.length} climates, ${opt.jobs} at once → ${file}`)
+  const started = Date.now()
+  const worlds = await pool(filtered, opt.jobs, (r) => { if (r.error) console.log(`  FAILED ${r.shape} ${r.seed}: ${r.error.split('\n').slice(-6).join(' | ')}`) })
+  const summary = summarise(worlds)
+  writeFileSync(file, JSON.stringify({ options: opt, tune, minutes: (Date.now() - started) / 60000, worlds, summary }, null, 1))
+  printSummary(summary)
+  console.log(`\n${((Date.now() - started) / 60000).toFixed(1)} min; ${file}`)
 } else if (mode === 'report') {
   const run = JSON.parse(readFileSync(process.argv[3], 'utf8'))
   const before = process.argv[4] ? JSON.parse(readFileSync(process.argv[4], 'utf8')).summary : null
@@ -679,8 +843,9 @@ if (mode === 'one') {
   const shapes = opt.shapes.split(',')
   const seeds = SEEDS.slice(0, opt.seeds)
   const base = { epochs: opt.epochs, stabilised: opt.stabilised, archeanMax: opt.archeanMax, archeanMa: opt.archeanMa, landShare: opt.landShare, tune }
+  if (opt.cache) mkdirSync(opt.cache, { recursive: true })
   const jobs = []
-  for (const shape of shapes) for (const seed of seeds) jobs.push({ ...base, seed, shape })
+  for (const shape of shapes) for (const seed of seeds) jobs.push({ ...base, seed, shape, cache: opt.cache || undefined })
   if (opt.sweep) {
     for (const shape of shapes) for (const seed of seeds.slice(0, opt.sweepSeeds)) {
       for (const [path, vals] of Object.entries(SWEEPS)) for (const v of vals) jobs.push({ ...base, seed, shape, set: { [path]: v } })

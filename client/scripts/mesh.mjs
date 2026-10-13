@@ -1211,7 +1211,11 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   // — cold walls, a warm floor.
   const precipitation = new Float32Array(lat.vertexSlots).fill(600)
   const seaLevelTemperature = new Float32Array(lat.vertexSlots).fill(-4 + 6.5 * 2.3)
-  const ice = M.glacial.computeIceOnMesh({ mesh: lat, z, seaLevelTemperature, precipitation, cellM: UNITS_TO_M })
+  // A 14 °C year, the range where the history's ice ends (glacial.ts
+  // melts on the warmest month since DEC-0036 phase 8b-2): the warmest
+  // month at the line near −1 °C, as the annual mean's −8 was.
+  const seasonalAmplitude = new Float32Array(lat.vertexSlots).fill(14)
+  const ice = M.glacial.computeIceOnMesh({ mesh: lat, z, seaLevelTemperature, precipitation, seasonalAmplitude, cellM: UNITS_TO_M })
   let iced = 0, maxH = 0
   for (let v = 0; v < lat.vertexSlots; v++) if (lat.vAlive[v] && ice.thickness[v] > 0) { iced++; maxH = Math.max(maxH, ice.thickness[v]) }
   let landNodes = 0
@@ -1234,7 +1238,7 @@ const order0 = (mesh) => { for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.v
   const zAfter = z.slice()
   let floorCut = 0, floorN = 0, wallCut = 0, wallN = 0, maxCut = 0
   for (let epoch = 0; epoch < 3; epoch++) {
-    const iceNow = M.glacial.computeIceOnMesh({ mesh: lat, z: zAfter, seaLevelTemperature, precipitation, cellM: UNITS_TO_M })
+    const iceNow = M.glacial.computeIceOnMesh({ mesh: lat, z: zAfter, seaLevelTemperature, precipitation, seasonalAmplitude, cellM: UNITS_TO_M })
     const g = M.glacial.glacialErosionOnMesh(lat, zAfter, iceNow, 1e6, UNITS_TO_M)
     for (let v = 0; v < lat.vertexSlots; v++) {
       if (!lat.vAlive[v]) continue
@@ -2054,8 +2058,12 @@ console.log('\n[1g] the mesh on the sphere')
   // (createCoupledTerrain), no erosion.
   {
     const ta = performance.now()
+    // 45 epochs, not 40: since the globe's compaction pulls each blob in
+    // its own frame (DEC-0036 phase 8b-2) the world's one young blob lies
+    // over a downwelling at the hand-over after 40 and the first plate
+    // epoch recycles it — a world without land.
     const archean = M.archean.createArcheanSimulation('mesh-sphere', 256, 128, 'sphere')
-    for (let e = 0; e < 40; e++) M.archeanStep.archeanStep(archean)
+    for (let e = 0; e < 45; e++) M.archeanStep.archeanStep(archean)
     const sim = M.finalize.finalizeArchean(archean)
     for (let e = 0; e < 2; e++) M.plates.stepEpoch(sim)
     const tc = performance.now()

@@ -37,7 +37,8 @@ export interface Salinity {
 // the same zonal profile the model rains by, times the evaporation of the
 // sea there — wet at the equator, dry in the subtropics, moderate at mid
 // latitudes, little at the poles, as Earth's oceans are.
-export function computeSalinity(terrain: ClimateTerrain, seaTemperature: ArrayLike<number>, landRain: ArrayLike<number>, currents: CellVectors, equatorOffset: number, humidity: number): Salinity {
+// `edge`: the Hadley cell's edge the rain's bands follow (precipitation.bandFactor).
+export function computeSalinity(terrain: ClimateTerrain, seaTemperature: ArrayLike<number>, landRain: ArrayLike<number>, currents: CellVectors, equatorOffset: number, humidity: number, edge: number): Salinity {
   const { cm, land } = terrain
   const fm = cm.mesh
   const n = fm.count
@@ -45,7 +46,7 @@ export function computeSalinity(terrain: ClimateTerrain, seaTemperature: ArrayLi
   const lat = new Float64Array(n)
   for (let i = 0; i < n; i++) lat[i] = latitudeOfNorm(shiftedNorm(cm.yNorm[i], equatorOffset))
   const seaRain = new Float64Array(n)
-  for (let i = 0; i < n; i++) if (!land[i]) seaRain[i] = T.salinitySeaRainMm * bandFactor(lat[i]) * evaporation(seaTemperature[i]) * humidity
+  for (let i = 0; i < n; i++) if (!land[i]) seaRain[i] = T.salinitySeaRainMm * bandFactor(lat[i], edge) * evaporation(seaTemperature[i]) * humidity
 
   // The rivers: each land cell's surplus (rain over what evaporates there)
   // reaches the sea at the nearest sea cell along the mesh's links

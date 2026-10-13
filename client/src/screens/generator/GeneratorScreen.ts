@@ -3381,7 +3381,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     temperatureArc.update({
       ...view,
       limbV: (psi) => globe.limbChartAt(psi)?.v ?? null,
-      band: seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet),
+      band: seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, worldShape === 'sphere' ? 'sphere' : 'torus'),
     })
   }
   function renderTemperatureScale(force = false): void {
@@ -3393,7 +3393,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!force && key === tempScaleSeen) return
     tempScaleSeen = key
     const params = weatherParams()
-    const band = seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet)
+    const band = seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, worldShape === 'sphere' ? 'sphere' : 'torus')
     const rect = tempScale.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
     const w = Math.max(1, Math.round(rect.width * dpr))

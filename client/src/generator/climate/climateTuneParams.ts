@@ -55,8 +55,18 @@ export const CLIMATE_TUNING = {
   // the mass elevation effect below. 28 and −25 with it: the annual mean
   // error 2.47 → 2.23 °C, the bias +1.0 → +0.3, January's error 3.8 →
   // 3.5 °C; the groups' shares 6 → 9 points off (A 22 → 21 %, C 15 → 17).
+  // The pole −25 → −33 (DEC-0036 phase 8b-2): judged on the ZONAL MEANS,
+  // which the places cannot show. On twelve sphere worlds (30 % land,
+  // 1000 Ma) the year at 40–50° / 50–60° / 60–70° / 80–90° ran +3.5 /
+  // +4.2 / +5.5 / +8.7 °C over ERA5's, the tropics within 0.5; Earth's own
+  // relief on the sphere +3.1 / +3.6 / +3.8 / +4.0. The profile Earth's
+  // zonal means ask for, less what the terrain and the sea add on those
+  // worlds, fits −34.5 + 62.5 cos φ (the equator at 28); at −33 every 10°
+  // band lies within 1.6 °C of ERA5. The places' annual mean bias +0.1 →
+  // −1.5 °C (the places are coasts and lowlands, where the zonal mean is
+  // a cold interior's and a sea's too).
   tempEquatorC: 28,
-  tempPoleC: -25,
+  tempPoleC: -33,
   // The mass elevation effect (temperature.ts): °C per km of the land's
   // height smoothed by a Gaussian of this σ, metres. At 2 the Tibetan
   // plateau's warmest month 0 → 7 °C (some 8–10 on Earth at 4500 m), the
@@ -262,6 +272,15 @@ export const CLIMATE_TUNING = {
   // keeps those belts the driest zones without erasing all vegetation there (semi-arid
   // grassland/savanna rather than bare desert).
   precipBandFloor: 0.13,
+  // The band multiplier at the subpolar front (φ ≈ 2/3, the storm tracks'
+  // rain), where the equator's is precipBandBase + precipBandSwing = 1.5:
+  // the poleward half of the profile rises from its dry minimum to this
+  // instead (DEC-0036 phase 8b-2). At 1.5 the land at 50–60° got 790 mm a
+  // year on the sphere and 880 on the torus (twelve worlds each, 30 %
+  // land), Earth's land some 550; the 40–50° band was right (680, 650).
+  // At 1.15 (with the colder poles) 50–60° 610 / 690 mm, 40–50° 565 / 520
+  // (sphere / torus); Earth's 550 and 650.
+  precipBandStormPeak: 1.15,
   // The season's shift of the rain bands (computePrecipitation's beltShift)
   // tapers from full at the equator to this share of it from the latitude,
   // degrees, below: the rain belt follows the sun some 10–15°, the
@@ -315,8 +334,15 @@ export const CLIMATE_TUNING = {
   // C/B gave it a lag of some 70°. At 8 and 1·10⁷: July 4720, August 908;
   // the land with the right class 27 → 31 %, the places' January and July
   // error 4.1 → 3.8 and 3.7 → 3.1 °C. The capacity alone widened the swing
-  // by 7 °C; the damping holds it.
-  ebmRadiation: 8,
+  // by 7 °C; the damping holds it. 8 → 6.5 with the colder poles of
+  // DEC-0036 phase 8b-2 (tempPoleC −25 → −33): the annual means came down
+  // 3–4 °C at 40–70° and, the swing unchanged, the summers with them —
+  // Earth's relief on the sphere had 23 % of its land E (Beck 15) and 18 %
+  // D (22), the groups 18 points off. The damping is the land's swing (the
+  // sea's is its capacity's): at 6.5 E 19, D 22, 13 points off, the
+  // places' swing −0.8 → +0.9 °C, July the warmest month on 66 % of the
+  // northern land (53).
+  ebmRadiation: 6.5,
   // The exchange with the neighbouring air, as a diffusion D ∇²T' (W/K:
   // W/m²K times m²), and the carry by the wind, a (u · ∇T') per unit of
   // wind (8 m/s) (W/m²K times m). Stated until DEC-0036 phase 4 per

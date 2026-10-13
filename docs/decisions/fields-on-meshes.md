@@ -23,7 +23,7 @@ summary.de: Die Raster-Stufen des Generators verlassen die 2:1-Karte. Die groben
 area: generator
 stage: built
 createdAt: 2026-10-11
-updatedAt: 2026-10-12
+updatedAt: 2026-10-13
 related: [DES-0025, DEC-0035, DES-0017, DEC-0029]
 ---
 
@@ -199,6 +199,134 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-13: **phase 8b-2 BUILT — the temperature gradient and the
+planet's levers.** The order agreed: land ✓ → the gradient → the levers →
+peaks → the ocean's depth; this step the second and the third, with two
+bugs of 8b-1's report. Measured with `npm run calibrate seeds=12
+archeanMa=1000 landShare=30` (12 worlds per shape, the sweeps on 3; 96
+worlds, about 2 h on ten cores) on HEAD and after; the climate's tuning was
+found on the same terrains by a new mode, `calibrate climate
+cache=<dir>`, which runs the climate step alone on the terrains a run
+left (`cache=`), 20 s a world, and `scripts/earthClimate.mjs shape=sphere`
+(Earth's relief on the sphere, now with its zonal means).
+
+**The re-baseline** (HEAD, 30 % land): the sphere's zonal year against
+ERA5, 0–10° … 80–90°: +0.2, −0.3, +0.5, +2.1, +3.5, +4.2, +5.5, +5.8,
++8.7 °C; its mean 16.1 °C. Earth's own relief on the sphere: +0.6 … +3.1
+(40–50°), +3.6, +3.8, +1.2, +4.0 — the same excess, so the profile, not
+the geography. The annual mean is the cheap model's latitude profile
+(climate/temperature.ts) plus what the terrain and the sea add; the
+energy balance carries only the year's cycle about it, so its diffusion
+and carry are no lever for the gradient.
+
+**Tuned** (CLIMATE_TUNING, the reasons beside each constant):
+
+- `tempPoleC` −25 → −33 °C (the equator stays 28): the profile Earth's
+  zonal means ask for, less what the terrain and the sea add on the
+  sphere worlds, fits −34.5 + 62.5 cos φ; −33 puts every band within
+  1.6 °C.
+- `ebmRadiation` 8 → 6.5 W/m²K: the colder year took the summers with it
+  (on Earth's relief E 15 → 23 % of the land, D 22 → 18); the damping is
+  the land's swing. At 6.5 E 19, D 22, the places' swing −0.8 → +0.9 °C.
+- `precipBandStormPeak` (new) 1.15: the rain's band factor rises poleward
+  of the dry belt to 1.15 at the subpolar front, not to the equator's 1.5
+  — the land at 50–60° got 885 mm on the sphere (Earth some 550).
+
+**The levers** (the model rules: decisions/climate-biomes.md's addendum
+of today, design/glacial.md's forcing):
+
+- *Contrast and tilt* scale the profile's departure from its AREA MEAN
+  (π/4 of cos φ on the sphere, 2/π on the torus), not from cos φ = ½: the
+  world's mean stays (temperature.profilePivot).
+- *The ice* melts on the warmest month (the annual mean plus half the
+  seasonal range) above −1 °C, not on the annual mean above −8 °C — the
+  same line at the range where the ice ended (median 13–16 °C on six
+  torus worlds), so the tilt, which sets the seasons, sets the ice
+  (`SURFACE_TUNING.iceMeltFromWarmestC`; surface/glacial.ts).
+- *The day's length*: the rain's bands follow the Hadley cell's edge
+  (planetForcing.hadleyEdge, 1/Ω, ⅓ of the span at 24 h) — the dry belt
+  at it, the polar front's rain halfway to the pole — and the ocean highs'
+  latitudes with it (precipitation.bandFactor, bandLatitude); before only
+  the wind's cells moved.
+
+| Sphere, mean of 3 seeds against their defaults | HEAD | after |
+|---|---|---|
+| contrast 60 / 140 %: mean T | −6.2 / +6.2 °C | −0.1 / +0.0 |
+| contrast 60 / 140 %: T 0–10°, 80–90° | −10.5, +8.1 / +10.5, −7.9 °C | −5.1, +16.2 / +5.1, −16.2 |
+| contrast 60 / 140 %: ice | −1.1 / +1.0 pts | −6.8 / +6.4 |
+| obliquity 10 / 35°: mean T | +4.0 / −5.2 °C | +0.0 / −0.1 |
+| obliquity 10 / 35°: ice | +0.7 / −1.0 pts | +8.2 / −7.8 |
+| obliquity 10 / 35°: Köppen D, E | −20.7 / +10.3, +9.7 / −2.1 | −18.8 / +8.7, +17.4 / −8.4 |
+| rotation 16 / 36 h: dry land's mean latitude (B below 50°) | −0.9 / +1.9° | −6.9 / +7.3° |
+| rotation 16 / 36 h: least land rain (5° bands) | −3.3 / +11.7° | −5.0 / +15.0° |
+| rotation 16 / 36 h: Köppen D | −1.7 / −5.4 | +1.4 / −9.8 |
+| greenhouse −8 / +8: ice | +6.8 / −2.7 pts | +12.2 / −5.9 |
+
+(The torus: contrast moves its mean by −0.4 / +0.1 °C, obliquity its ice
+by +6.0 / −12.2 points, the rotation its dry belt by −5.5 / +5.3°.) On
+the cached terrains alone (the climate step, the ice at the final
+climate's steady state): obliquity 10 / 35° moves the sphere's ice by
++6.7 / −8.0 points, before +1.1 / −1.5.
+
+**The worlds against Earth** (medians of 12; before → after):
+
+| Sphere | 0–10° | 10–20° | 20–30° | 30–40° | 40–50° | 50–60° | 60–70° | 70–80° | 80–90° |
+|---|---|---|---|---|---|---|---|---|---|
+| T °C, ERA5 | 26.5 | 25.5 | 21.5 | 15.5 | 8.5 | 1.5 | −7 | −16 | −27 |
+| T − ERA5, HEAD | +0.2 | −0.3 | +0.5 | +2.1 | +3.5 | +4.2 | +5.5 | +5.8 | +8.7 |
+| T − ERA5, after | +0.2 | −0.5 | −0.1 | +0.8 | +1.7 | +1.0 | +0.8 | −0.6 | +1.4 |
+| land rain mm, Earth | 1900 | 1100 | 600 | 600 | 650 | 550 | 400 | 250 | 150 |
+| HEAD | 1528 | 1074 | 571 | 398 | 749 | 885 | 358 | 265 | 89 |
+| after | 1219 | 977 | 601 | 388 | 581 | 612 | 243 | 148 | 42 |
+
+The torus's T − ERA5 after: +0.4, −0.5, −0.2, +0.9, +1.8, +0.9, −0.4,
+−2.5, −1.8 (its rows share one area: its mean is 5.4 °C, its ice 38 % of
+the land — its latitudes above 60° hold 38 % of it).
+
+| | mean T | ice % of land | lakes % | A | B | C | D | E |
+|---|---|---|---|---|---|---|---|---|
+| Earth (Beck; E without Antarctica) | 14 | ~10 | — | 23.4 | 26.8 | 12.7 | 22.3 | 14.7 (7.3) |
+| sphere HEAD | 16.1 | 3.9 | 6.4 | 21.1 | 33.0 | 20.7 | 18.5 | 3.8 |
+| sphere after | 14.4 | 12.2 | 6.2 | 17.8 | 33.7 | 18.5 | 19.2 | 10.1 |
+| torus HEAD | 8.2 | 29.8 | 11.0 | 12.1 | 25.7 | 10.7 | 20.9 | 29.8 |
+| torus after | 5.4 | 37.7 | 12.1 | 10.5 | 25.6 | 9.2 | 19.1 | 35.3 |
+
+The Köppen shares follow the land: the sphere's land lies at low
+latitudes (54 % of it within 30°, Earth's some 40 %), so its D and E stay
+short of Earth's and its A, B and C long. C's excess is Cwa — 10 % of all
+land below 30°, at 780 m mean height: the coldest month of a highland
+tropical margin under 18 °C. It moved little with the gradient (a
+warmer equator, 29 °C, took it 10.4 → 10.1 %) and is not the gradient's;
+left for the Köppen pass. On Earth's relief on the sphere: A 19 B 25 C 15
+D 22 E 19 % (Beck 23 / 27 / 13 / 22 / 15), the groups 11 → 13 points
+off; the places' annual mean bias +0.1 → −1.5 °C — the places are coasts
+and lowlands, the zonal mean a cold interior's and a sea's too.
+
+**Two bugs, fixed** (each with a REGRESSION test in harness:pipeline that
+fails on HEAD):
+
+- *The cratons' oldness* (crust/raftField.computeCratonOldnessField)
+  normalised the blobs' birth stamps against the current epoch, both on
+  the continuous axis whose Archean epochs are 5 Ma: a margin born at the
+  hand-over of a 1000 Ma Archean read 0.33 old 100 epochs later, 0.09 in
+  Ma. Measured in Ma now (worldTime.worldEpochMa; `archeanEpochs` passed
+  in, the erodibility's too). The golden harness passed the tectonic
+  clock alone; it reads the runtime's axis now. Iron, which old cratons
+  carry, moved most (calibration seed: mean 0.064 → 0.228).
+- *The globe's compaction* (crust/raftLifecycle.compactRafts) took a
+  blob's offset from its raft's centroid in the centroid's frame and moved
+  the blob by it in its own: a blob across a pole from the centroid was
+  pushed away (3 of 12 in the test). On the globe the centroid is the
+  blobs' mean direction and each blob moves along the great circle toward
+  it in its own frame (compactRaftOnGlobe); the torus is unchanged. The
+  sphere's Archean worlds change with it: land after 40 epochs 28.0 →
+  26.2 %, plates 13.5 → 12, the largest landmass 63 → 72 % of the land
+  (within the history's spread; harness:mesh's sphere world runs 45
+  Archean epochs, not 40, to keep its land).
+
+Golden: 0 hard failures, re-recorded and re-armed, PASS 0 / 0 / 0 on
+46 × 3 stages.
 
 2026-10-12: **phase 8b-1 BUILT — the land share lever.** The fork: 8a
 found the land set by the Archean's crust at the hand-over (7.6 % torus,

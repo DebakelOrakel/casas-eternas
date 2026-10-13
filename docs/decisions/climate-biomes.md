@@ -11,7 +11,7 @@ summary.de: Statisches, breitenabhängiges Klima (Temperatur, Niederschlag, Wind
 area: generator
 stage: built
 createdAt: 2026-07-24
-updatedAt: 2026-09-20
+updatedAt: 2026-10-13
 concepts: [generator.concept.climate-classes, generator.concept.pressure-and-wind, generator.concept.ocean-currents, generator.concept.seasons]
 related: [DES-0021]
 ---
@@ -316,6 +316,36 @@ a label.
 The ocean currents are in the same position and keep no speed for now. Their
 constant would be the second of this family, which is a reason to wait until
 there is a second caller rather than to invent the family now.
+
+## Addendum 2026-10-13 — the planet's levers act on what they say
+
+Measured on twelve sphere worlds per shape (DEC-0036 phase 8a, 8b-2;
+`npm run calibrate`), three of the climate's levers did something other
+than their name, and the zonal mean was too warm poleward of 40°. Changed:
+
+- **The gradient's pivot is area-neutral.** The base profile is the pole's
+  temperature plus the span times cos φ; the contrast and the tilt scale
+  the profile's departure from its AREA MEAN over the world — π/4 on the
+  sphere, 2/π on the torus, whose rows share one area —, not from cos φ =
+  ½. A contrast or a tilt now moves the gradient and keeps the world's
+  mean (contrast 60 / 140 %: −6.2 / +6.2 °C before, within 0.1 after on
+  the sphere).
+- **The pole is −33 °C, not −25** (`tempPoleC`), judged on the zonal means
+  against ERA5; every 10° band on the sphere lies within 1.6 °C of
+  Earth's. The land's seasonal damping went 8 → 6.5 W/m²K with it, so the
+  summers did not come down with the year (`ebmRadiation`).
+- **The rain's bands follow the Hadley cell.** The dry subtropics lie at
+  the cell's edge (`planetForcing.hadleyEdge`, a third of the way to the
+  pole at 24 h) and the polar front's rain halfway from it to the pole, as
+  the wind's cells did already; the ocean highs' latitudes move with them.
+  The day's length moved the winds and no desert before: the subtropical
+  dry land now lies 6.9° nearer the equator at 16 h and 7.3° further at
+  36 h (before 0.9° and 1.9°).
+- **The storm tracks rain less than the equator** (`precipBandStormPeak`
+  1.15, the equator's 1.5): the land at 50–60° got some 1.5 times Earth's.
+
+The ice that goes with the tilt is the glacier's rule, not the climate's
+([glacial.md](../design/glacial.md)): the melt reads the warmest month.
 
 ## Deferred / out of scope
 

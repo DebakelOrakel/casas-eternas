@@ -61,7 +61,9 @@ Die Standardwerte sind die der Erde.
 
 Wie weit die Drehachse kippt, 10° bis 40° (Erde: 23,5°). Mehr Neigung
 bringt stärkere Jahreszeiten und ein flacheres Gefälle vom Äquator zu den
-Polen. Die Skala endet bei 10°, weil darunter die Jahreszeiten und mit
+Polen; die mittlere Temperatur der Welt bleibt. Heissere Sommer schmelzen
+mehr Eis, darum wachsen bei kleiner Neigung Eiskappen, bei grosser
+schrumpfen sie. Die Skala endet bei 10°, weil darunter die Jahreszeiten und mit
 ihnen der Monsun verschwinden; über 40° liegt das Klima ausserhalb dessen,
 wofür das Modell abgestimmt ist. Auf einer Kugel zeigt der Globus den
 Äquator und die beiden Polarkreise als Bänder; die Polarkreise wandern
@@ -82,7 +84,8 @@ Erwärmt oder kühlt die ganze Welt gleichmässig, −20 °C bis +20 °C.
 
 Wie stark die Temperatur vom Äquator zu den Polen abfällt, 30 % bis 170 %.
 Unter 100 % wird die Welt ausgeglichener, darüber werden die Tropen heisser
-und die Pole kälter.
+und die Pole kälter. Die mittlere Temperatur der Welt bleibt; die verschiebt
+das Treibhaus.
 
 ### Feuchtigkeit {#generator.panel.climate.humidity}
 

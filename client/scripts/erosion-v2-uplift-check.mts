@@ -148,7 +148,7 @@ const uStandin = new Float32Array(FW * FH)
 // The continuous world-epoch axis (core/worldTime.worldEpoch) — the axis
 // every crust-age stamp uses since the 2026-08-16 handover fix.
 const hardness = M.erodibility.computeErodibilityField(
-  sim.rafts, sim.sutures, sim.features, sim.epoch + sim.archeanEpochs, sim.domain, FW, FH)
+  sim.rafts, sim.sutures, sim.features, sim.epoch + sim.archeanEpochs, sim.archeanEpochs, sim.domain, FW, FH)
 {
   let min = Infinity
   let max = -Infinity

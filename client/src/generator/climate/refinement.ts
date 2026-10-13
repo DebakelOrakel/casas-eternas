@@ -7,12 +7,12 @@ import { applyPhenomena } from './phenomena'
 import { computeReliability } from './reliability'
 import { computeStorms } from './storms'
 import { computeSalinity } from './salinity'
-import { computePrecipitation, OCEAN_PRECIP } from './precipitation'
+import { computePrecipitation, EARTH_HADLEY_EDGE, OCEAN_PRECIP } from './precipitation'
 import { OCEAN_AMPLITUDE } from './seasonality'
 import { applyOceanSST, carryInland, computeOceanCurrents, computeSinkInflow, computeUpwelling } from './oceanCurrents'
 import { computeTemperature } from './temperature'
 import type { WeatherParams } from './weather'
-import { DEFAULT_PLANET_FORCING } from '../planet/planetForcing'
+import { DEFAULT_PLANET_FORCING, hadleyEdge } from '../planet/planetForcing'
 import type { Domain } from '../core/domain'
 import { basinRows, climateMesh, climateTerrain } from './climateMesh'
 import { smoothGaussian, type SolveReport } from '../fields/fieldOperators'
@@ -119,6 +119,8 @@ export function refineClimate(
   const { cm, land } = terrain
   const n = cm.mesh.count
   const months = REFINED_MONTHS
+  // The Hadley cell's edge the rain's bands and the ocean highs follow.
+  const edge = hadleyEdge(planet.rotationHours)
   const latDeg = new Float64Array(n)
   for (let i = 0; i < n; i++) latDeg[i] = latitudeOfNorm(shiftedNorm(cm.yNorm[i], params.equatorOffset)) * 90
   // The month's air reduced to sea level (the pressure is sea-level
@@ -222,6 +224,11 @@ export function refineClimate(
   // and west of its own), not computed. The months' pressure and wind are
   // computed again with them (the currents keep the first wind); the rain
   // reads them too (computePrecipitation).
+  // The highs' latitudes are the subtropics' at Earth's day; they move with
+  // the Hadley cell's edge as the rain's dry belt does (bandFactor).
+  const highShift = edge / EARTH_HADLEY_EDGE
+  const highFromDeg = CLIMATE_TUNING.oceanHighFromDeg * highShift
+  const highToDeg = CLIMATE_TUNING.oceanHighToDeg * highShift
   const seaAnomaly = new Float64Array(n)
   const oceanHigh = new Float64Array(n)
   const seaShare = new Float64Array(n)
@@ -229,7 +236,7 @@ export function refineClimate(
     if (land[i]) continue
     seaAnomaly[i] = windAnomaly[i] - cooling[i]
     seaShare[i] = 1
-    const t = (latDeg[i] - CLIMATE_TUNING.oceanHighFromDeg) / (CLIMATE_TUNING.oceanHighToDeg - CLIMATE_TUNING.oceanHighFromDeg)
+    const t = (latDeg[i] - highFromDeg) / (highToDeg - highFromDeg)
     if (t <= 0 || t >= 1 || rows.runPoints[i] < 2) continue
     const flank = (2 * rows.eastward[i] - 1) * Math.min(1, rows.runM[i] / CLIMATE_TUNING.oceanHighBasinM)
     oceanHigh[i] = CLIMATE_TUNING.oceanHighFlankHpa * flank * detSin(Math.PI * t)
@@ -264,7 +271,7 @@ export function refineClimate(
   const landRain = new Float64Array(n)
   for (let m = 0; m < months; m++) {
     for (let i = 0; i < n; i++) seaTemperature[i] = base[i] + seaAnomaly[i] + cycle[m * n + i]
-    const rain = computePrecipitation(terrain, monthOf(monthly, m), winds[m], params.humidity, params.equatorOffset, belts[m], { seaTemperature, seaAnomaly, highHpa: oceanHigh })
+    const rain = computePrecipitation(terrain, monthOf(monthly, m), winds[m], params.humidity, params.equatorOffset, belts[m], { seaTemperature, seaAnomaly, highHpa: oceanHigh }, edge)
     precipitation.set(rain, m * n)
     for (let i = 0; i < n; i++) if (land[i]) landRain[i] += rain[i] / months
     onProgress?.(0.5 + 0.4 * (m + 1) / months)
@@ -274,7 +281,7 @@ export function refineClimate(
   // sinking draws after it (computeSinkInflow) added to the wind's currents,
   // then the salt again on those — once round: the inflow moves the salty
   // water that sinks, and one more pass settles where it does.
-  const first = computeSalinity(terrain, annual, landRain, windCurrents, params.equatorOffset, params.humidity)
+  const first = computeSalinity(terrain, annual, landRain, windCurrents, params.equatorOffset, params.humidity, edge)
   const inflow = computeSinkInflow(terrain, first.deepWater)
   const currents: CellVectors = { e: new Float64Array(n), s: new Float64Array(n) }
   let fastest = 0
@@ -291,7 +298,7 @@ export function refineClimate(
       currents.s[i] /= fastest
     }
   }
-  const salt = computeSalinity(terrain, annual, landRain, currents, params.equatorOffset, params.humidity)
+  const salt = computeSalinity(terrain, annual, landRain, currents, params.equatorOffset, params.humidity, edge)
 
   // The anomaly on the full currents; its difference to the wind's alone is
   // the overturning's warmth. The months take it, on the sea and on the

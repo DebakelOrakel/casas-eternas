@@ -3,6 +3,7 @@ import type { PlateType } from '../tectonics/plateTypes'
 import type { Raft } from './raftTypes'
 import type { CellBox, Domain, DomainGrid } from '../core/domain'
 import { smoothstepBetween } from '../core/interpolation'
+import { worldEpochMa } from '../core/worldTime'
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
 // plates, decoupled from them — see docs/decisions/continental-crust-rafts.md. A
@@ -188,8 +189,14 @@ export function computeMembershipAt(rafts: Raft[], xs: ArrayLike<number>, ys: Ar
 
 // A coarse (resX×resY) field of continental crust "oldness" 0..1 — 1 where the
 // crust formed at epoch 0 (the ancient cratonic cores), lower toward margins
-// accreted later (see RaftBlob.birthEpoch). Metaball-weighted mean birth epoch
-// per cell, normalized against the current epoch. Cells over ocean / no crust get
+// accreted later (see RaftBlob.birthEpoch). Metaball-weighted mean birth
+// AGE per cell, normalized against the world's age — both in Ma
+// (core/worldTime.worldEpochMa), because the stamps lie on the continuous
+// epoch axis, on which an Archean epoch is five tectonic ones' worth
+// (DEC-0036 phase 8b-2: counted in epochs, a margin born at the hand-over
+// of a 1000 Ma Archean read 0.33 old after 100 tectonic epochs instead of
+// 0.09). `archeanEpochs`: the Archean's length, the axis's era boundary —
+// in the Archean itself its current epoch. Cells over ocean / no crust get
 // -1. Feeds iron placement (old cratons) in the Ecology layer, and the Archean's
 // craton-age overlay.
 //
@@ -200,7 +207,7 @@ export function computeMembershipAt(rafts: Raft[], xs: ArrayLike<number>, ys: Ar
 // recomputes this every epoch at 180 ms: gathering cost about 5 million kernel
 // evaluations per frame at 256×128 with 156 blobs, scattering costs about 40
 // thousand.
-export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, resX: number, resY: number, domain: Domain): Float32Array {
+export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, archeanEpochs: number, resX: number, resY: number, domain: Domain): Float32Array {
   // Float64 accumulators, not Float32: the gathering version this replaces summed
   // in JS numbers, and rounding each partial sum to float32 instead moved ~10% of
   // cells by up to 9e-8 — enough to shift the Ecology hashes downstream.
@@ -213,7 +220,7 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, r
 
   for (const raft of rafts) {
     for (const blob of raft.blobs) {
-      const birth = blob.birthEpoch ?? 0
+      const birth = worldEpochMa(blob.birthEpoch ?? 0, archeanEpochs)
       // Cell range the blob's radius can reach (DomainGrid.discBox). Left
       // unwrapped here and wrapped per cell below, so a blob straddling the
       // seam covers both sides.
@@ -233,8 +240,9 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, r
   }
 
   const out = new Float32Array(resX * resY)
+  const nowMa = worldEpochMa(currentEpoch, archeanEpochs)
   for (let i = 0; i < out.length; i++) {
-    out[i] = weight[i] === 0 ? -1 : currentEpoch <= 0 ? 1 : Math.max(0, Math.min(1, 1 - ageWeighted[i] / weight[i] / currentEpoch))
+    out[i] = weight[i] === 0 ? -1 : nowMa <= 0 ? 1 : Math.max(0, Math.min(1, 1 - ageWeighted[i] / weight[i] / nowMa))
   }
   return out
 }

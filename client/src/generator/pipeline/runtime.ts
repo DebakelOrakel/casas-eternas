@@ -484,7 +484,7 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     mantle: rasteriseMantle(sim.mantle, sim.domain).buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), MANTLE_RES_X, MANTLE_RES_Y, sim.domain).buffer as ArrayBuffer,
+    cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), sim.archeanEpochs, MANTLE_RES_X, MANTLE_RES_Y, sim.domain).buffer as ArrayBuffer,
     elevation: coarseElevation(result.elevations, sim.width, sim.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
@@ -545,7 +545,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     mantle: rasteriseMantle(archean.mantle, archean.domain).buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    cratonAge: computeCratonOldnessField(archean.rafts, archean.epoch, MANTLE_RES_X, MANTLE_RES_Y, archean.domain).buffer as ArrayBuffer,
+    cratonAge: computeCratonOldnessField(archean.rafts, archean.epoch, archean.epoch, MANTLE_RES_X, MANTLE_RES_Y, archean.domain).buffer as ArrayBuffer,
     elevation: coarseElevation(result.elevations, archean.width, archean.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
@@ -1338,7 +1338,7 @@ function handleHydrologyRun(): void {
       result.sedimentBasins = coupled && coupled.mesh === mt.mesh && coupled.preErosionZ.length === mt.z.length && coupled.preErosionZ !== mt.z
         ? findSedimentBasins({
           mesh: mt.mesh, before: coupled.preErosionZ, after: mt.z, substrate: sub, graph: result.graph,
-          cratonAge: nearestCellAtNodes(computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.domain), CLIMATE_RES_X, CLIMATE_RES_Y, mt.mesh),
+          cratonAge: nearestCellAtNodes(computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), sim.archeanEpochs, CLIMATE_RES_X, CLIMATE_RES_Y, sim.domain), CLIMATE_RES_X, CLIMATE_RES_Y, mt.mesh),
           hardness: nodeHardness,
         }).basins
         : []
@@ -1355,7 +1355,7 @@ function handleHydrologyRun(): void {
       // this climate on the mesh (a world before its first epoch).
       const nodeIce = coupled && coupled.mesh === mt.mesh && coupled.ice.length === mt.mesh.vertexSlots
         ? coupled.ice
-        : computeIceOnMesh({ mesh: mt.mesh, z: mt.z, seaLevelTemperature: land.climate.seaLevelTemperature, precipitation: land.climate.precipitation, cellM: domain.metresPerUnit }).thickness
+        : computeIceOnMesh({ mesh: mt.mesh, z: mt.z, seaLevelTemperature: land.climate.seaLevelTemperature, precipitation: land.climate.precipitation, seasonalAmplitude: land.climate.seasonalAmplitude, cellM: domain.metresPerUnit }).thickness
       const ice = rasteriseNodeField(mt.mesh, nodeIce, width, height)
       for (let c = 0; c < ice.length; c++) if (elevation[c] <= 0 || ice[c] < SURFACE_TUNING.iceMinThicknessM) ice[c] = 0
       result.ice = ice
@@ -1431,7 +1431,7 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
   if (!ecologyBase || !last || last.climate !== key.climate || last.hydrology !== key.hydrology || last.elevation !== key.elevation || last.sim !== key.sim || last.epoch !== key.epoch) {
     const om = hydrology && hydrology.onMesh.land.mesh === mt.mesh ? hydrology.onMesh : null
     const land = om ? om.land : climate.land.mesh === mt.mesh && climate.land.z === mt.z ? climate.land : landClimateOf(climate.cells, mt)
-    const cratonField = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), CLIMATE_RES_X, CLIMATE_RES_Y, sim.domain)
+    const cratonField = computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), sim.archeanEpochs, CLIMATE_RES_X, CLIMATE_RES_Y, sim.domain)
     const base = prepareEcology({
       mesh: mt.mesh,
       z: mt.z,

@@ -224,19 +224,22 @@ export const SURFACE_TUNING = {
   // ICE (surface/glacial.ts on the mesh; F4's raster surface/iceFlow.ts
   // until DEC-0036 phase 7, ADAPTIVE_MESH_PLAN.md F4). Snow to ice: a
   // metre of precipitation as snow makes this much ice (density 0.35 →
-  // 0.9). Melt: metres of ice per year per degree of mean annual
-  // temperature above the threshold — a degree-day rate on the annual
-  // mean; −8 °C is where an ice sheet's interior stops losing mass, so the
-  // ELA sits near the −8 °C mean-annual isotherm, about where it sits on
-  // Earth's ice sheets (the alpine ELA is warmer, at the −4 °C summer
-  // isotherm ≈ −7 °C annual). Flow: Γ = 2A(ρg)³/5 with A = 1e-16 Pa⁻³
+  // 0.9). Melt: metres of ice per year per degree of the WARMEST MONTH
+  // (the annual mean plus half the seasonal range) above the threshold —
+  // a degree-day rate on the summer (DEC-0036 phase 8b-2). It was the
+  // annual mean above −8 °C, where an ice sheet's interior stops losing
+  // mass; at the range the history's climate gives where the ice ends
+  // (median 13–16 °C over six torus worlds at 30 % land, 2026-10-13) that
+  // is a warmest month near −1 °C, the threshold now — the margin stays
+  // where it was at Earth's tilt, a milder summer (a coast, a smaller
+  // tilt) keeps more ice and a hotter one less. Flow: Γ = 2A(ρg)³/5 with A = 1e-16 Pa⁻³
   // yr⁻¹ (temperate ice) and ρg = 8829 Pa/m → 2.8e-5 m⁻³ yr⁻¹; the minimum
   // slope keeps the flat interior of a sheet from going infinitely thick
   // (3 m/km, the slope of a sheet's summit region); the cap is Antarctica.
   // Rounds of the balance-flux fixed point; the minimum thickness drops
   // the film the fixed point leaves on the margins.
   iceSnowToIce: 0.4,
-  iceMeltFromC: -8,
+  iceMeltFromWarmestC: -1,
   iceMeltPerDegC: 0.3,
   iceFlowGamma: 2.8e-5,
   iceMinSlope: 0.003,

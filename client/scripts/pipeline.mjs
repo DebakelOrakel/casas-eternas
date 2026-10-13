@@ -542,7 +542,7 @@ async function sphereAtFullSize(L, shim, { AS, AT, RF, MF, IM }) {
     for (let e = 0; e < EPOCHS; e++) AT.archeanStep(sim, AT.DEFAULT_ARCHEAN_PARAMS)
     const stepped = performance.now() - started
     const flow = MF.computeMantleFlow(sim.mantle, sim.domain)
-    const age = RF.computeCratonOldnessField(sim.rafts, sim.epoch, MF.MANTLE_RES_X, MF.MANTLE_RES_Y, sim.domain)
+    const age = RF.computeCratonOldnessField(sim.rafts, sim.epoch, sim.epoch, MF.MANTLE_RES_X, MF.MANTLE_RES_Y, sim.domain)
     // The live preview's render, a quarter of the world per axis.
     const rendered = await IM.renderSimulationImage(
       { width: FW, height: FH, domain: sim.domain, seeds: [], rafts: sim.rafts, features: [], oceanAge: null, warpSeed: sim.warpSeed, mantle: sim.mantle },
@@ -2273,6 +2273,57 @@ test('the sphere samples its noise on the globe: poles, seam, isotropy, spread',
 
 // ------------------------------------------------------- hand-over and resets
 
+test('REGRESSION: the cratons\' oldness is measured in Ma across both eras', async () => {
+  // DEC-0036 phase 8b-2: the birth stamps lie on the continuous epoch axis,
+  // on which an Archean epoch is five tectonic ones' worth of Ma. Counted
+  // in epochs, a margin born at the hand-over of a 200-epoch (1000 Ma)
+  // Archean read 1 − 200/300 = 0.33 old 100 tectonic epochs later; in Ma
+  // it is 1 − 1000/1100 = 0.09.
+  const [D, RF] = await Promise.all([server.ssrLoadModule('/src/generator/core/domain.ts'), server.ssrLoadModule('/src/generator/crust/raftField.ts')])
+  const dom = D.domainOfKind('torus', 256, 128)
+  const rafts = [
+    { id: 0, name: null, blobs: [{ x: 64.5, y: 32.5, radius: 6, birthEpoch: 200 }] },
+    { id: 1, name: null, blobs: [{ x: 192.5, y: 96.5, radius: 6, birthEpoch: 0 }] },
+    { id: 2, name: null, blobs: [{ x: 64.5, y: 96.5, radius: 6, birthEpoch: 250 }] },
+  ]
+  const at = (field, x, y) => field[Math.floor(y) * 256 + Math.floor(x)]
+  const tectonic = RF.computeCratonOldnessField(rafts, 300, 200, 256, 128, dom)
+  check('a margin born at the hand-over: 1 − 1000 / 1100 Ma', Math.abs(at(tectonic, 64.5, 32.5) - (1 - 1000 / 1100)) < 1e-6, `${at(tectonic, 64.5, 32.5)}`)
+  check('a margin born 50 tectonic epochs later: 1 − 1050 / 1100 Ma', Math.abs(at(tectonic, 64.5, 96.5) - (1 - 1050 / 1100)) < 1e-6, `${at(tectonic, 64.5, 96.5)}`)
+  check('an Archean core: 1', at(tectonic, 192.5, 96.5) === 1)
+  // In the Archean (its epoch the era's end) the two readings agree.
+  const archean = RF.computeCratonOldnessField([{ id: 0, name: null, blobs: [{ x: 64.5, y: 32.5, radius: 6, birthEpoch: 50 }] }], 100, 100, 256, 128, dom)
+  check('in the Archean: 1 − 50 / 100', Math.abs(at(archean, 64.5, 32.5) - 0.5) < 1e-6, `${at(archean, 64.5, 32.5)}`)
+})
+
+test('REGRESSION: the Archean\'s compaction on the globe pulls every blob toward its raft\'s centre', async () => {
+  // DEC-0036 phase 8b-2: compactRafts took a blob's offset from the
+  // centroid in the CENTROID's frame and moved the blob by it in its OWN
+  // frame; near a pole the two differ by up to half a turn, and a blob
+  // across the pole from the centroid was pushed away from it (here 3 of
+  // 12 before the fix). The raft: a ring of blobs about the north pole
+  // with two outliers, on a 256 × 128 sphere.
+  const [D, RL] = await Promise.all([server.ssrLoadModule('/src/generator/core/domain.ts'), server.ssrLoadModule('/src/generator/crust/raftLifecycle.ts')])
+  const dom = D.domainOfKind('sphere', 256, 128)
+  const deg = 128 / 180
+  const blobs = []
+  for (let k = 0; k < 10; k++) blobs.push({ x: (256 * (k * 25)) / 360, y: 10 * deg, radius: 2, birthEpoch: 0 })
+  blobs.push({ x: 128, y: 25 * deg, radius: 2, birthEpoch: 0 }, { x: 140, y: 30 * deg, radius: 2, birthEpoch: 0 })
+  const raft = { id: 0, name: null, blobs }
+  const frame = D.globeFrame()
+  let cx = 0, cy = 0, cz = 0
+  for (const b of blobs) { dom.noise.frame(b.x, b.y, frame); cx += frame.px; cy += frame.py; cz += frame.pz }
+  const centre = { x: 0, y: 0 }
+  dom.noise.locate(cx, cy, cz, centre)
+  const distances = () => blobs.map((b) => Math.sqrt(dom.distanceSq(b.x, b.y, centre.x, centre.y)))
+  const before = distances()
+  RL.compactRafts([raft], 0.3, dom)
+  const after = distances()
+  const away = after.filter((d, i) => d > before[i] + 1e-9).length
+  check('no blob moves away from the centre', away === 0, `${away} of ${blobs.length} moved away`)
+  check('the outliers move toward it', after[10] < before[10] && after[11] < before[11], `${before[10].toFixed(2)} → ${after[10].toFixed(2)}, ${before[11].toFixed(2)} → ${after[11].toFixed(2)}`)
+})
+
 test('the hand-over is what resetTectonics goes back to', async () => {
   const p = await freshPipeline()
   await growWorld(p)
@@ -2907,7 +2958,10 @@ test('a loaded world runs the hydrology the session ran', async () => {
   const p = await freshPipeline()
   await growWorld(p)
   await runOneEpoch(p)
-  const climate = { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
+  // Humidity 160 %: with the colder, drier mid-latitudes of DEC-0036
+  // phase 8b-2 no river of this small world is wide enough for a course,
+  // and the check below needs courses to compare.
+  const climate = { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1.6, equatorOffset: 0 }
   p.dispatch(climate)
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
   p.dispatch({ type: 'hydrologyRun' })
