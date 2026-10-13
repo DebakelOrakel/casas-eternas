@@ -20,7 +20,9 @@ Kratonen: den alten Kernen der späteren Kontinente.
   Superkontinent bildet.
 
 Du startest und stoppst den Lauf selbst. Wann du stoppst, entscheidet,
-wie viel Land und wie viele Kontinente die Welt hat.
+wie viele Kontinente die Welt hat. Wie viel Land sie hat, entscheidet
+der Landanteil; nur ein Stopp vor etwa 800 Millionen Jahren gibt
+weniger.
 
 ## Konzepte {#concepts}
 
@@ -68,14 +70,19 @@ Wie lange das Archaikum schon läuft. Eine Epoche sind 5 Millionen Jahre.
 
 ## Parameter {#parameters}
 
+Beide Regler wirken ab dem nächsten Start des Laufs. Solange er läuft,
+sind sie gesperrt.
+
 ### Mantelaktivität {#generator.panel.genesis.mantleVigour}
 
 Wie kräftig der Mantel umwälzt, 1 bis 10 (Standard 4). Mehr Aktivität
 bewegt die Kruste schneller und reisst sie öfter auseinander.
 
-### Wasser {#generator.panel.genesis.water}
+### Landanteil {#generator.panel.genesis.landShare}
 
-Wie viel Wasser die Welt hat, 0 bis 100 (Standard 50). Es verschiebt den
-Meeresspiegel um bis zu 600 m nach oben oder unten. Die Kruste bleibt
-dieselbe; mit mehr Wasser liegt mehr von ihr unter dem Meer, mit weniger
-Wasser mehr über ihm.
+Wie viel der Oberfläche die Kontinente bedecken, 15 % bis 40 % (Standard
+30 %). Das Archaikum bildet Kruste, bis sein Land diesen Anteil erreicht,
+nach etwa 800 Millionen Jahren, und danach nur noch so viel, dass er
+bleibt. Es zielt etwas höher, weil die ersten Epochen der
+Plattentektonik einen Teil des Landes zurücknehmen. Der Meeresspiegel
+bleibt derselbe; später verschiebt ihn nur das Eis.

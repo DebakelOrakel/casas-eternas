@@ -18,8 +18,9 @@ the continents to come.
   through that time stabilises into a craton.
 - It lets cratons collide and merge until a supercontinent forms.
 
-You start and stop the run yourself. When you stop decides how much land
-the world has and how many continents.
+You start and stop the run yourself. When you stop decides how many
+continents the world has. How much land it has, the land share decides;
+only a stop before about 800 million years gives less.
 
 ## Concepts {#concepts}
 
@@ -65,13 +66,18 @@ How long the Archean has run. One epoch is 5 million years.
 
 ## Parameters {#parameters}
 
+Both sliders act from the next start of the run. While the run goes on,
+they are locked.
+
 ### Mantle vigour {#generator.panel.genesis.mantleVigour}
 
 How strongly the mantle turns over, 1 to 10 (default 4). More activity
 moves the crust faster and tears it apart more often.
 
-### Water {#generator.panel.genesis.water}
+### Land share {#generator.panel.genesis.landShare}
 
-How much water the world has, 0 to 100 (default 50). It moves sea level
-up or down by as much as 600 m. The crust stays the same; with more water
-more of it lies under the sea, with less water more of it above.
+How much of the surface the continents cover, 15 % to 40 % (default
+30 %). The Archean makes crust until its land reaches this share, after
+about 800 million years, and then makes only what keeps it there. It
+aims a little higher, because the first epochs of plate tectonics take
+some land back. The sea level stays the same; later only ice moves it.

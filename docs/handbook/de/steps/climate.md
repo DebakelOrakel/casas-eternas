@@ -20,7 +20,8 @@ Klimaklassen, die Biome und die Flüsse.
 - Er lässt Flüsse, Seen und Biome auf diesem Klima neu entstehen.
 
 Der Schritt hat keine eigenen Regler; er rechnet von selbst, sobald du ihn
-betrittst, und braucht ein paar Sekunden. Wie warm oder feucht die Welt
+betrittst, und braucht ein paar Sekunden. Schlägt das fehl, sagt es
+eine Meldung. Wie warm oder feucht die Welt
 ist, stellst du im Schritt Welt ein.
 
 ## Konzepte {#concepts}

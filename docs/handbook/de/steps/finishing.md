@@ -34,6 +34,9 @@ Hintergrund.
 
 Fehlt etwas davon, sagt der Schritt, was, und der Knopf bleibt aus.
 
+Eine Kugelwelt lässt sich noch nicht verfeinern: Für sie ist dieser
+Schritt gesperrt.
+
 ## Bedienung {#controls}
 
 ### Verfeinern bis {#generator.finishing.depth}

@@ -20,7 +20,7 @@ and the rivers follow from them.
 - It lets rivers, lakes and biomes form again on this climate.
 
 The step has no controls of its own; it computes by itself as soon as you
-enter it and takes a few seconds. How warm or wet the world is, you set
+enter it and takes a few seconds. If it fails, a notice says so. How warm or wet the world is, you set
 in the World step.
 
 ## Concepts {#concepts}

@@ -35,8 +35,9 @@ eine Million Jahre weiter.
 
 ### Stoppen und weitergehen {#stop}
 
-Stoppen ist eine Pause: Ein neuer Start setzt die Geschichte fort. Das
-Klima öffnet sich nach 30 Epochen. Ein Lauf stoppt spätestens nach 100
+Stoppen ist eine Pause: Ein neuer Start setzt die Geschichte fort. Der
+Lauf hält an, sobald die laufende Epoche fertig ist. Schlägt eine Epoche
+fehl, stoppt der Lauf, und eine Meldung sagt, warum. Das Klima öffnet sich nach 30 Epochen. Ein Lauf stoppt spätestens nach 100
 Epochen von selbst; danach kannst du ihn erneut starten.
 Zurücksetzen bringt die Platten an den Anfang dieses Schritts zurück.
 

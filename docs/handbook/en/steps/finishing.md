@@ -32,6 +32,8 @@ to about 125 m. That takes long and runs as a job in the background.
 
 If one of these is missing, the step says which, and the button stays off.
 
+A sphere world cannot be refined yet: for it, this step is locked.
+
 ## Controls {#controls}
 
 ### Refine up to {#generator.finishing.depth}

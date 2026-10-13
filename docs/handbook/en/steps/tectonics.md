@@ -34,7 +34,9 @@ million years on.
 
 ### Stopping and moving on {#stop}
 
-Stop is a pause: a new start continues the history. The climate opens
+Stop is a pause: a new start continues the history. The run halts when
+the epoch in progress is done. If an epoch fails, the run stops and a
+notice says why. The climate opens
 after 30 epochs. A run stops by itself after 100 epochs at most; then you
 can start it again. Reset puts the plates back to the start of this step.
 

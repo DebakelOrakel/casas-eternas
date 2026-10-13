@@ -5,4 +5,5 @@ anchor: generator.concept.history-climate
 
 Erosion needs rain, and rain depends on the relief. So every three epochs
 plate tectonics computes a climate on the world as it is then, with the values
-from the World step. If much ice grows, the sea level falls.
+from the World step. If much ice grows, the sea level falls, and the
+weight of the ice presses the land below it down.

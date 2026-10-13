@@ -6,4 +6,5 @@ anchor: generator.concept.weather-phenomena
 Nebel, Föhn, Wirbelstürme, Tornados, Blizzards, Staub und Gewitter.
 Sie sind Statistik, kein Wetterbericht: Die Karte zeigt, wo und wie oft
 sie auftreten. Dazu gehört auch, wie stark der Regen von Jahr zu Jahr
-schwankt: Dürre- und Flutjahre.
+schwankt: Dürre- und Flutjahre, und die ENSO-Wippe, die sie an die Ufer
+eines Äquatorozeans bringt.
