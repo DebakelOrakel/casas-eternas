@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-14
+- **changed** Tectonics: the ocean floor has trenches up to 10 km deep where a plate sinks under another, so a seed makes a different world. `generator.step.tectonics`
+
 ## 2026-10-13
 - **changed** Tectonics: glaciers plane the land that rises far above the snow line, so only fast-rising ranges reach 7–9 km, and a seed makes a different world. `generator.step.tectonics`
 - **changed** Tectonics: rivers now keep pace with rising land and fill the basins it makes, so worlds hold about a third fewer lakes, and a seed makes a different world. `generator.step.tectonics`

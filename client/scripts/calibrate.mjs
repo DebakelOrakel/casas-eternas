@@ -147,6 +147,8 @@ async function loadModules(job) {
     meshSerial: await L('/src/generator/mesh/meshSerial.ts'),
     glacial: await L('/src/generator/surface/glacial.ts'),
     flexure: await L('/src/generator/tectonics/flexure.ts'),
+    elevationField: await L('/src/generator/elevation/elevationField.ts'),
+    domainWarp: await L('/src/generator/elevation/domainWarp.ts'),
   }
   const TUNING_MODULES = {
     TECTONICS_TUNING: '/src/generator/tectonics/tectonicsTuneParams.ts', CLIMATE_TUNING: '/src/generator/climate/climateTuneParams.ts',
@@ -509,6 +511,120 @@ async function buildOne(job) {
   const alpinePeakOverElaM = alpineNode >= 0 ? (coupled.z[alpineNode] - SEA) * METRES - ela[alpineNode] : NaN
   const alpinePeakM = alpineNode >= 0 ? (coupled.z[alpineNode] - SEA) * METRES : NaN
 
+  // THE OCEAN (phase 8e): the depth's distribution and bands, the shelf
+  // and its width, the ridges, the trenches, and the depth against the
+  // floor's age. Earth (ETOPO1; Eakins & Sharman 2010, Harris et al.
+  // 2014): mean 3682 m; the shelf (0–200 m) ~7–9 % of the ocean; the
+  // hadal floor (> 6 km) under 1 %; ridge crests ~2500 m; GDH1 (Stein &
+  // Stein 1992) d = 2600 + 365 √t to 20 Ma, then 5651 − 2473 e^(−0.0278 t).
+  const oceanMetrics = (() => {
+    const n = mesh.vertexSlots
+    const isOcean = new Uint8Array(n)
+    for (let v = 0; v < n; v++) if (mesh.vAlive[v] && coupled.z[v] <= SEA && lakes.body[v] < 0) isOcean[v] = 1
+    const depth = (v) => (SEA - coupled.z[v]) * METRES
+    const pairs = []
+    const BANDS = [0, 200, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, Infinity]
+    const bandA = BANDS.slice(1).map(() => 0)
+    let oA = 0
+    // The age and the margin at the warped point, as the baseline reads them.
+    const warp = { x: 0, y: 0 }
+    const age = new Float64Array(n), tMargin = new Float64Array(n)
+    const blobsHere = M.raft.buildBlobIndex(sim.rafts, domain)
+    for (let v = 0; v < n; v++) {
+      if (!isOcean[v]) continue
+      const a = mesh.voronoiArea(v), d = depth(v)
+      pairs.push([d, a]); oA += a
+      for (let b = 0; b < bandA.length; b++) if (d >= BANDS[b] && d < BANDS[b + 1]) { bandA[b] += a; break }
+      M.domainWarp.domainWarpPoint(mesh.vx[v], mesh.vy[v], domain, sim.warpSeed, warp)
+      age[v] = M.oceanAge.oceanAgeAt(sim.oceanAge, domain, warp.x, warp.y)
+      tMargin[v] = M.scale.marginParameter(M.raft.raftFieldIndexed(warp.x, warp.y, blobsHere))
+    }
+    const sorted = pairs.slice().sort((x, y) => x[0] - y[0])
+    const pq = (p) => { let acc = 0; for (const [d, a] of sorted) { acc += a; if (acc >= p * oA) return d } return NaN }
+    let mean = 0
+    for (const [d, a] of pairs) mean += d * a
+    mean /= Math.max(1e-12, oA)
+    // Distance to the land over the ocean's nodes (Dijkstra, metres), and
+    // the shelf break: an ocean node deeper than 200 m beside a shallower
+    // one; its distance is the shelf's width there. A margin is ACTIVE when
+    // a convergent feature (a trench, a volcanic arc) fed in the last
+    // twelve epochs lies within 400 km.
+    const dist = new Float64Array(n).fill(Infinity)
+    const heap = []
+    const push = (v, d) => { heap.push([d, v]); let i = heap.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p } }
+    const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m } } return top }
+    const nbv = new Int32Array(64)
+    const unitM = domain.metresPerUnit
+    for (let v = 0; v < n; v++) if (mesh.vAlive[v] && !isOcean[v] && coupled.z[v] > SEA) { dist[v] = 0; push(v, 0) }
+    while (heap.length) {
+      const [d, v] = pop()
+      if (d > dist[v]) continue
+      const k = mesh.neighbours(v, nbv)
+      for (let i = 0; i < k; i++) {
+        const o = nbv[i]
+        if (!isOcean[o]) continue
+        const nd = d + Math.sqrt(domain.distanceSq(mesh.vx[v], mesh.vy[v], mesh.vx[o], mesh.vy[o])) * unitM
+        if (nd < dist[o]) { dist[o] = nd; push(o, nd) }
+      }
+    }
+    const active = sim.features.filter((f) => f.epochsSinceDeposit < 12 && (f.kind === 'trench' || f.volcanic))
+    const activeR = 400_000 / unitM
+    const nearActive = (x, y) => { for (const f of active) if (domain.distanceSq(x, y, f.x, f.y) < activeR * activeR) return true; return false }
+    const widthAll = [], widthActive = [], widthPassive = []
+    for (let v = 0; v < n; v++) {
+      if (!isOcean[v] || depth(v) <= 200 || !Number.isFinite(dist[v]) || dist[v] > 1_000_000) continue
+      const k = mesh.neighbours(v, nbv)
+      let edge = false
+      for (let i = 0; i < k; i++) { const o = nbv[i]; if (isOcean[o] && depth(o) <= 200) { edge = true; break } }
+      if (!edge) continue
+      const w = dist[v] / 1000
+      widthAll.push(w)
+      ;(nearActive(mesh.vx[v], mesh.vy[v]) ? widthActive : widthPassive).push(w)
+    }
+    const med = (xs) => { const s = xs.slice().sort((a, b) => a - b); return s.length ? q(s, 0.5) : NaN }
+    // Depth by the floor's age, over the open ocean (no margin under the
+    // node), against GDH1: the node's depth, and its baseline's.
+    const AGE_BINS = [0, 2, 5, 10, 20, 40, 60, 80, 120, 181]
+    const gdh1 = (t) => (t < 20 ? 2600 + 365 * Math.sqrt(t) : 5651 - 2473 * Math.exp(-0.0278 * t))
+    const byAge = AGE_BINS.slice(1).map(() => ({ d: [], base: [], a: 0, ages: [] }))
+    const ageAll = []
+    const reliefOpen = []
+    let deepA = 0, deep7A = 0, deepest = 0, deepestAge = NaN, deepestNearTrench = false
+    const trenchF = sim.features.filter((f) => f.kind === 'trench')
+    for (let v = 0; v < n; v++) {
+      if (!isOcean[v]) continue
+      const a = mesh.voronoiArea(v), d = depth(v)
+      ageAll.push([age[v], a])
+      if (d > 6000) deepA += a
+      if (d > 7000) deep7A += a
+      if (d > deepest) { deepest = d; deepestAge = age[v]; deepestNearTrench = trenchF.some((f) => domain.distanceSq(mesh.vx[v], mesh.vy[v], f.x, f.y) < (300_000 / unitM) ** 2) }
+      if (tMargin[v] > 0) continue
+      reliefOpen.push([(coupled.z[v] - coupled.baseline[v]) * METRES, a])
+      for (let b = 0; b < byAge.length; b++) if (age[v] >= AGE_BINS[b] && age[v] < AGE_BINS[b + 1]) { byAge[b].d.push(d); byAge[b].base.push((SEA - coupled.baseline[v]) * METRES); byAge[b].ages.push(age[v]); byAge[b].a += a; break }
+    }
+    const ageSorted = ageAll.slice().sort((x, y) => x[0] - y[0])
+    const ageQ = (p) => { let acc = 0; for (const [t, a] of ageSorted) { acc += a; if (acc >= p * oA) return t } return NaN }
+    let ageMean = 0, young10 = 0, young2 = 0
+    for (const [t, a] of ageAll) { ageMean += t * a; if (t < 10) young10 += a; if (t < 2) young2 += a }
+    const relSorted = reliefOpen.slice().sort((x, y) => x[0] - y[0])
+    const relSum = reliefOpen.reduce((s, [, a]) => s + a, 0)
+    const relQ = (p) => { let acc = 0; for (const [h, a] of relSorted) { acc += a; if (acc >= p * relSum) return h } return NaN }
+    return {
+      oceanP10DepthM: pq(0.1), oceanP99DepthM: pq(0.99), oceanP999DepthM: pq(0.999),
+      oceanBands: Object.fromEntries(bandA.map((a, b) => [`${BANDS[b]}-${BANDS[b + 1]}`, a / oA])),
+      shelfShare: bandA[0] / oA,
+      shelfWidthKm: med(widthAll), shelfWidthP10Km: q(widthAll.slice().sort((a, b) => a - b), 0.1), shelfWidthP90Km: q(widthAll.slice().sort((a, b) => a - b), 0.9),
+      shelfWidthActiveKm: med(widthActive), shelfWidthPassiveKm: med(widthPassive), shelfBreaksActiveShare: widthActive.length / Math.max(1, widthAll.length),
+      ridgeCrestDepthM: med(byAge[0].d),
+      deepShare: deepA / oA, deep7Share: deep7A / oA, deepestM: deepest, deepestAge, deepestNearTrench,
+      oceanAgeMean: ageMean / oA, oceanAgeMedian: ageQ(0.5), oceanAgeP90: ageQ(0.9), oceanYoung10Share: young10 / oA, oceanYoung2Share: young2 / oA,
+      openReliefP05M: relQ(0.05), openReliefP50M: relQ(0.5), openReliefP95M: relQ(0.95),
+      depthByAge: byAge.map((b, i) => ({ bin: `${AGE_BINS[i]}-${AGE_BINS[i + 1]}`, share: b.a / oA, depthM: med(b.d), baselineM: med(b.base), gdh1M: b.ages.length ? gdh1(med(b.ages)) : NaN })),
+      trenchFeatures: trenchF.length, activeTrenchFeatures: trenchF.filter((f) => f.epochsSinceDeposit < 12).length,
+      sedimentExportKm3: sim.sedimentExportM3 / 1e9,
+    }
+  })()
+
   const cm = rTerrain.cm
   const annual = M.refinement.annualFromMonths(refined, refined.cells)
 
@@ -650,6 +766,7 @@ async function buildOne(job) {
     eustaticM: sim.eustaticM,
     oceanMeanDepthM: oceanMean, oceanMedianDepthM: weighted(ocean.slice(), 0.5), oceanP90DepthM: weighted(ocean.slice(), 0.9),
     oceanMaxDepthM: ocean.reduce((m, [d]) => Math.max(m, d), 0),
+    ...oceanMetrics,
     artefacts,
     time,
   }
@@ -762,6 +879,19 @@ const ROWS = [
   ['oceanMedianDepthM', 'm', 1],
   ['oceanP90DepthM', 'm', 1],
   ['oceanMaxDepthM', 'm', 1],
+  ['oceanP10DepthM', 'm', 1],
+  ['oceanP99DepthM', 'm', 1],
+  ['shelfShare', '%', 100, [7, 9]],
+  ['shelfWidthKm', 'km', 1, [50, 80]],
+  ['shelfWidthActiveKm', 'km', 1],
+  ['shelfWidthPassiveKm', 'km', 1],
+  ['ridgeCrestDepthM', 'm', 1, [2400, 2800]],
+  ['deepShare', '%', 100],
+  ['deepestM', 'm', 1],
+  ['oceanAgeMean', 'Ma', 1, [55, 70]],
+  ['oceanAgeMedian', 'Ma', 1],
+  ['oceanYoung10Share', '%', 100],
+  ['openReliefP50M', 'm', 1],
 ]
 
 let beckCache = null

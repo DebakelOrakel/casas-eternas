@@ -52,9 +52,10 @@ export function isLandAt(elevation: number, dryLand = false): boolean {
 // spent almost exactly on the tallest thing that can exist. Since DEC-0036
 // phase 8b-3 there is no ceiling: a height above 1 is a height (the save
 // holds the mesh's z as float32), and the plate's flexure and the erosion
-// bound it; the anchor is only the unit. The floor, −1, stays: trenches
-// overflow it (the Marianas would want −1.22), narrow and rare enough
-// that clipping them keeps the far more common land relief exact.
+// bound it; the anchor is only the unit. Since phase 8e there is no floor
+// in the history either: a trench on old floor stands 10–11 km deep
+// (tectonics/trench.ts; the Marianas, 10.9 km, are −1.21). The synthesis
+// (elevationField.computeElevation) keeps −1 under its trench deck.
 //
 // The reference heights the rest of the pipeline builds on. Earth values, so
 // they can be checked rather than argued about:
@@ -126,8 +127,12 @@ export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided 
 // this all exists for — the steepest point of the profile is always at least
 // 70 km offshore and below -1400 m. That is the continental slope, which is
 // supposed to be steep. The coast is not.
+// The margin parameter at the foot of the continental slope — the first
+// stop below; the trench's depression (elevationField.slabDepressionAt)
+// ends here, seaward of the overriding plate's slope.
+export const SLOPE_FOOT_T = 0.15
 const MARGIN_STOPS: readonly (readonly [t: number, elevation: number])[] = [
-  [0.15, SLOPE_FOOT],
+  [SLOPE_FOOT_T, SLOPE_FOOT],
   [0.45, SHELF_BREAK],
   [0.8, COASTAL_PLAIN],
   [1.0, LAND_BASE],

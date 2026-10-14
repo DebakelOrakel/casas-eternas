@@ -182,23 +182,33 @@ export function oceanFloorAtAge(age: number): number {
 // `oceanAge` is the field per cell of its field mesh (tectonics/oceanAge.ts),
 // read here through the mesh's sampler; null (the Archean's: none yet) is
 // age 0 everywhere, freshly formed crust, as computeRaftBaseline reads it.
+// `below`, when given, is a term the tectonics add under the floor — the
+// trench's depression (tectonics/trench.trenchDepression) — from the world
+// point (unwarped: the plates' boundaries are not warped), and the margin
+// parameter and the floor's age (epochs) the baseline read at its warped
+// point.
+export type BaselineTerm = (x: number, y: number, margin: number, age: number) => number
 const baselineWarp = { x: 0, y: 0 }
-export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float64Array | null, domain: Domain, warpSeed: number, blobs?: BlobIndex): number {
+export function raftBaselineAt(worldX: number, worldY: number, rafts: Raft[], oceanAge: Float64Array | null, domain: Domain, warpSeed: number, blobs?: BlobIndex, below?: BaselineTerm): number {
   domainWarpPoint(worldX, worldY, domain, warpSeed, baselineWarp)
   const age = oceanAge ? oceanAgeAt(oceanAge, domain, baselineWarp.x, baselineWarp.y) : 0
-  return baselineAtWarped(baselineWarp.x, baselineWarp.y, rafts, age, domain, warpSeed, blobs)
+  if (!below) return baselineAtWarped(baselineWarp.x, baselineWarp.y, rafts, age, domain, warpSeed, blobs)
+  const t = marginParameter(blobs ? raftFieldIndexed(baselineWarp.x, baselineWarp.y, blobs) : raftField(baselineWarp.x, baselineWarp.y, rafts, domain))
+  return baselineAtWarped(baselineWarp.x, baselineWarp.y, rafts, age, domain, warpSeed, blobs, undefined, 0, t) + below(worldX, worldY, t, age)
 }
 
 // raftBaselineAt after the warp, with the ocean age at the warped point
 // (epochs). `relief`, when given, holds
 // hypsometryRelief per cell for the same warped points (NaN = not yet
 // computed), and cell `index` is read from it or written into it.
-function baselineAtWarped(wx: number, wy: number, rafts: Raft[], age: number, domain: Domain, warpSeed: number, blobs?: BlobIndex, relief?: Float64Array, index = 0): number {
+// `margin`, when given (not NaN), is the margin parameter at the point,
+// already evaluated.
+function baselineAtWarped(wx: number, wy: number, rafts: Raft[], age: number, domain: Domain, warpSeed: number, blobs?: BlobIndex, relief?: Float64Array, index = 0, margin = NaN): number {
   // Ocean floor deepens with its crustal age; the margin profile then shapes
   // everything from that floor up onto the continent, putting the shoreline
   // on a flat shelf instead of mid-slope (see elevationScale.marginProfile).
   const oceanicBaseline = oceanFloorAtAge(age)
-  const t = marginParameter(blobs ? raftFieldIndexed(wx, wy, blobs) : raftField(wx, wy, rafts, domain))
+  const t = margin === margin ? margin : marginParameter(blobs ? raftFieldIndexed(wx, wy, blobs) : raftField(wx, wy, rafts, domain))
   // Interior relief on top of the margin profile — see hypsometry.ts. Without it
   // the inside of a continent is one flat height, and a shift of the sea
   // (the former water control, the ice's eustasy) a switch rather than a
@@ -391,8 +401,11 @@ export function upliftDeckAt(wx: number, wy: number, featureBuckets: FeatureBuck
 // answer, so no per-point function can give it; the per-point soft knee
 // that stood here until DEC-0036 phase 8b-3 could not tell a plateau from
 // a peak (docs/decisions/uplift-soft-knee.md). A caller with no features
-// has no deck and passes the baseline alone. No ceiling either: the
-// floor (−1, the elevation scale's) stays for the trenches.
+// has no deck and passes the baseline alone. No ceiling either. The floor
+// (−1) stays here for the deck's trench features: their thickness is the
+// boundary's convergence summed, past −40, and unbounded it would cut
+// 20 km deep. The history has no floor; its trench is the baseline's
+// (tectonics/trench.ts, DEC-0036 phase 8e).
 export function computeElevation(
   wx: number,
   wy: number,

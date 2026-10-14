@@ -23,7 +23,7 @@ summary.de: Die Raster-Stufen des Generators verlassen die 2:1-Karte. Die groben
 area: generator
 stage: built
 createdAt: 2026-10-11
-updatedAt: 2026-10-13
+updatedAt: 2026-10-14
 related: [DES-0025, DEC-0035, DES-0017, DEC-0029]
 ---
 
@@ -199,6 +199,151 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-14: **phase 8e BUILT — the ocean depth.** Measured with `npm run
+calibrate seeds=12 archeanMa=1000 landShare=30 sweep=0` before and after
+(12 worlds per shape, the same seeds); the ocean's distributions are new
+in the calibration (scripts/calibrate.mjs, `oceanBands`, the shelf, the
+ridges, the trenches, the depth by the floor's age); the diagnosis on 2
+seeds per shape with the plates' epochs alone (no erosion) in a copy of
+the code. Earth: mean depth 3682 m (Eakins & Sharman 2010), median about
+4100 m; the floor by depth, % of the ocean (Charette & Smith 2010):
+0–200 m 7.30, 200–1000 m 4.38, 1–4 km 35.22, 4–6 km 52.08, deeper than
+6 km 1.02 (6–7 km 0.89, 7–8 km 0.09, deeper 0.04); the deepest 10 935 m;
+GDH1 (Stein & Stein 1992) d = 2600 + 365 √t to 20 Ma, 5651 −
+2473 e^(−0.0278 t) after; trenches 50–100 km wide, 3–4 km below the
+floor around them, deeper on older plates (Grellet & Dubois 1982; Hilde
+& Uyeda 1983), some 50 000 km of convergent margins; the mean age of the
+ocean floor about 60–64 Ma, 10 % of it younger than 10 Ma.
+
+**The diagnosis.**
+
+- *The depth law is right.* On the open ocean (no margin under the node)
+  the depth by the floor's age follows GDH1 within 1–3 % in every band
+  (the table below): the floor is as deep as its age says.
+- *The age is wrong — the floor is young.* Mean age 11–13 Ma, median
+  7–8 Ma, 56–59 % younger than 10 Ma (Earth: ~62 Ma, ~10 %). Two causes.
+  (1) The ridges' new crust: a disc of 93.6 km
+  (`ridgeFreshCrustRadiusM`) was reset to age 0 around every divergent
+  boundary point every epoch, whatever the plates opened; 23–27 % of the
+  ocean was younger than 2 Ma (Earth ~2 %). (2) THE PLATES ARE 2–4 ×
+  TOO FAST: measured as the cells' displacement per epoch (the torus's
+  calibration seed), 18 km/Myr at
+  the hand-over, 70–175 km/Myr after 10–20 epochs (the mantle coupling
+  fits the motions to the flow), 86 km/Myr after 40 (Earth: 20–100 mm/yr,
+  a mean near 50). Fast plates make young floor, and young floor is
+  shallow — physically right for the motion, as Earth's Cretaceous
+  ocean was shallower under faster spreading. With the plates' step a
+  third (epochAngleStep 0.0167, a probe, not a change) the speed is
+  48–52 km/Myr and the floor's mean age 41 Ma after 40 epochs, the
+  baseline's mean depth 4450 m. The plates' kinematics are the
+  calibration's next decision (they are in domain units on purpose,
+  see the generator's CLAUDE.md) and move every stage; not changed here.
+- *No trench.* The history's engine applies the tectonic uplift on land
+  only and the deep ocean is frozen, so the trench features' negative
+  thickness never reached the sea floor: the deepest node 5.9 km (torus)
+  and 5.8 km (sphere) at the median, nothing below 6 km. The trench features are a poor
+  line for one anyway: they stand `trenchOffset` (60 units, 468 km)
+  inside the subducting plate, and 840–910 of them were active after 40
+  epochs — as a depression they covered 6–11 % of the ocean below 6 km.
+- *The shelf is narrow and short.* 2.7 % of the ocean (Earth 7.3 %),
+  34–38 km wide at the median (p10 12, p90 80–90 km; Earth 50–80 km
+  typical), active margins a little narrower than passive ones (29–37
+  against 39–41 km). On the raster baseline alone the mean width is
+  38–48 km and the coast 64–66 k km long: the coastline at 8–31 km nodes
+  is far smoother and shorter than Earth's, so even an Earth-wide shelf
+  would hold about half its share. Not changed (the margin profile's
+  stops, elevationScale.MARGIN_STOPS, also place the shoreline and the
+  Archean's land).
+
+**The changes.**
+
+- *The ridges' new crust is the strip the plates open* (tectonics/
+  oceanAge.advectOceanAge with the seeds where the epoch found them): a
+  cell whose departure lands on another plate than its own holds crust
+  that did not exist on its plate an epoch ago, so its age is half an
+  epoch. At a divergent boundary the strip is as wide as the opening; at
+  a convergent or a transform boundary no departure crosses. The disc
+  reset per boundary point is gone (`ridgeFreshCrustRadiusM` removed);
+  the breakup's reset stays. The floor younger than 2 Ma falls from
+  23–27 % to 16–17 %; the floor younger than 10 Ma does not move: the
+  plates' speed sets it.
+- *A trench where an oceanic plate subducts* (tectonics/trench.ts, a term
+  under the history's baseline, elevationField.raftBaselineAt's `below`):
+  on the plate boundary itself — at a point, the bisector of its two
+  nearest seeds, where the two converge as a subduction or an island arc
+  — with a smoothstep cross-section of `trenchHalfWidthM` 50 km either
+  side, and a relief below the floor of `trenchReliefPerSubsidence` 1.6 ×
+  the floor's thermal subsidence there (2.3, 3.7, 4.8 km on 15, 45,
+  150 Ma floor; Earth's Middle America, Peru–Chile and Mariana). In the
+  baseline, not in the relief: the slab holds the floor down, no load,
+  so the trench moves with the boundary and goes the epoch its
+  subduction stops. It fades out at the continental slope's foot
+  (elevationScale.SLOPE_FOOT_T), so the shelf and the land keep their
+  profile and the land's own subsidence at a trench margin stays the
+  engine's. A function of the saved state alone: a restored world
+  evaluates the same term.
+- *No floor in the history.* The −1 (−9000 m) clamp went from the
+  coupled epoch (6 places): a trench on 80 Ma floor reaches 10 km. Every
+  consumer was checked: the save holds the mesh's z as float32; the
+  colour ramp clamps itself at −1 (its deepest stop); the sample world's
+  u16 encoding clamps (the Planet step's picture only); the climate, the
+  hydrology, the erosion's frozen ocean and the sea level read the depth
+  as a depth. golden's floor invariant is a runaway check now (−15 000 m,
+  as the ceiling's +15 000 m). The synthesis (computeElevation) keeps −1
+  under its own trench deck, whose thickness sums the boundary's
+  convergence past −40 and would cut 20 km deep.
+
+**The worlds** (12 per shape; medians; torus / sphere):
+
+| | Earth | before | after |
+|---|---|---|---|
+| ocean depth mean, m | 3682 | 3423 / 3408 | 3503 / 3506 |
+| p10 / p50 / p90 / p99, m | ~ — / 4100 / — / — | 2411 / 3586 / 4565 / 5500 · 2513 / 3564 / 4398 / 5378 | 2625 / 3605 / 4551 / 5530 · 2571 / 3578 / 4357 / 5239 |
+| 0–200 m, % of the ocean | 7.30 | 2.66 / 2.66 | 2.59 / 2.76 |
+| 200–1000 m | 4.38 | 3.09 / 2.91 | 3.07 / 2.90 |
+| 1–4 km | 35.22 | 63.1 / 65.9 | 66.9 / 66.1 |
+| 4–6 km | 52.08 | 30.3 / 27.7 | 28.4 / 25.9 |
+| deeper than 6 km | 1.02 | 0.00 / 0.00 | 0.35 / 0.26 |
+| deeper than 7 km | 0.13 | 0 / 0 | 0.19 / 0.09 |
+| deepest, m (median; the most) | 10 935 | 5915 (6413) / 5761 (6925) | 9815 (10 069) / 8511 (10 041) |
+| shelf width, km (active / passive) | 50–80 | 34 (30 / 39) / 38 (38 / 40) | 34 (29 / 41) / 38 (37 / 39) |
+| floor 0–2 Ma: share, %; depth, m (GDH1 at its age) | ~2; 2600 at the crest | 16.6 / 18.3; 2615 / 2675 (2600) | 8.2 / 9.7; 2910 / 2970 (2974 / 2988) |
+| floor age mean / median, Ma | ~62 / — | 12.8 / 8.1 · 11.1 / 7.3 | 12.7 / 8.4 · 9.9 / 7.2 |
+| floor younger than 10 Ma, % | ~10 | 55.8 / 58.7 | 56.4 / 60.2 |
+| land, % of the surface | — | 30.2 / 25.0 | 30.2 / 25.0 |
+| mean land height, m | — | 769 / 706 | 772 / 709 |
+| land > 2000 / 3000 / 4500 m, % | ~5 / — / ~0.4 | 4.58 / 1.43 / 0.077 · 4.72 / 0.82 / 0.124 | 4.79 / 1.40 / 0.092 · 4.79 / 0.82 / 0.135 |
+| land p99.9, m; peak, m | — | 4364 / 4662; 5930 / 5524 | 4456 / 4635; 6015 / 5553 |
+| lakes, % of the land (open) | ~2–4 | 11.1 (4.2) / 7.0 (5.2) | 11.2 (4.3) / 6.7 (5.1) |
+| ice, % of the land | ~10 | 38.3 / 13.2 | 38.2 / 13.6 |
+| mean temperature, °C | — | 5.47 / 14.46 | 5.49 / 14.50 |
+| Köppen A / B / C / D / E, % | — | 11.3 / 22.9 / 9.3 / 19.5 / 36.4 · 21.2 / 29.7 / 17.4 / 19.0 / 10.1 | 11.4 / 23.2 / 9.1 / 19.3 / 36.6 · 21.0 / 29.6 / 17.7 / 18.9 / 10.0 |
+
+**The depth by the floor's age** (open ocean, median depth / GDH1 at
+the bin's median age, m; after; torus · sphere): 0–2 Ma 2910 / 2974 ·
+2970 / 2988; 2–5 Ma 3254 / 3278 · 3300 / 3265; 5–10 Ma 3580 / 3579 ·
+3609 / 3565; 10–20 Ma 4036 / 4002 · 4100 / 4036; 20–40 Ma 4504 / 4410 ·
+4484 / 4367; 40–60 Ma 5110 / 5026 · 5076 / 5007; 60–80 Ma 5430 / 5352 ·
+5378 / 5326; 80–120 Ma 5497 / 5383 · 5500 / 5383 (before the same
+within 1–3 %; the law's asymptote is ABYSSAL_FLOOR 5700 m against
+GDH1's 5651).
+
+The trench gives the ocean its deep tail — a deepest point of 8.5–10 km
+in the medians, 10.1 km at the most, a third to a quarter of Earth's
+share below 6 km — and the land, its heights, the lakes, the ice, the
+climate and Köppen stay within the worlds' spread: no stage above the
+sea reads the deep floor. The ocean stays 180 m shallower than Earth's
+on the mean and 500 m on the median, and its 4–6 km band half of
+Earth's: the floor is young because the plates are fast. The trench's
+share below 6 km follows the floor's age too (on 10 Ma floor the trench
+reaches 5.6 km). Not checked here: the outer rise, the trenches' sediment
+fill, the island arcs at sea (the engine's uplift is on land only, so an
+arc in open ocean does not rise in the history either). The ocean age's
+pentagons on the sphere: max |z| 1.56 (median of 12; 0.48 before), mean
+rank 0.40 (0.36) — inside the hexagons' spread; no field-mesh operator
+was touched (the transport's departures are the same; a cell's new
+crust is a per-cell mark).
 
 2026-10-13: **phase 8d BUILT — the glacial buzzsaw.** The user's goal:
 ranges stand about 1–2 km over their snow line (ELA), as on Earth

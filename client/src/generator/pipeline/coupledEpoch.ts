@@ -6,7 +6,7 @@ import { smoothGaussian } from '../fields/fieldOperators'
 import { buildBlobIndex, nearestRaftIndexed, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
 import { nearestPlateIndex } from '../crust/raftLifecycle'
 import { dynamicTopographyAt } from '../elevation/dynamicTopography'
-import { raftBaselineAt } from '../elevation/elevationField'
+import { raftBaselineAt, type BaselineTerm } from '../elevation/elevationField'
 import { ELEVATION_METERS, marginParameter } from '../elevation/elevationScale'
 import { synthesisSampler } from '../elevation/elevationSampler'
 import { mantleMesh } from '../mantle/mantleField'
@@ -16,6 +16,7 @@ import { addColumnField, columnVolumeM3, createColumn, cut, decodeColumn, deposi
 import { computeCratonOldnessField } from '../crust/raftField'
 import { elasticThicknessKm, flexuralResponse, flexuralRigidityM4, flexureMesh, nodeLoadSpreader } from '../tectonics/flexure'
 import { foldFactorAt } from '../tectonics/folds'
+import { trenchDepression } from '../tectonics/trench'
 import { buildFeatureBuckets, upliftDeckAt, warpedSamplePoint } from '../elevation/elevationField'
 import { oceanAgeAt } from '../tectonics/oceanAge'
 import { computeWeather, defaultWeatherParams, type Weather, type WeatherParams } from '../climate/weather'
@@ -317,15 +318,18 @@ export interface CoupledEpochStats {
   timing: { membership: number; tectonics: number; rebuild: number; remesh: number; baseline: number; forcing: number; erosion: number; flexure: number; climate: number; lakes: number; ice: number; coast: number }
 }
 
-// The baseline: the raft profile over the ocean floor, the mantle's
+// The baseline: the raft profile over the ocean floor, the trench the
+// slab holds down (tectonics/trench.ts, DEC-0036 phase 8e), the mantle's
 // dynamic topography, and the sea the ice lowered (phase 5.4: sim.eustaticM
 // ≤ 0 is the sea level against the ice-free one, so the solid surface
 // stands that much higher against it).
 //
 // `blobs`: an index of sim.rafts as they are now (buildBlobIndex), built
-// right before a sweep over the nodes — the same value, much faster.
-function baselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobIndex): number {
-  return solidBaselineAt(sim, x, y, blobs) - sim.eustaticM / ELEVATION_METERS
+// right before a sweep over the nodes — the same value, much faster;
+// `trench`: tectonics/trench.trenchDepression(sim) of the sim as it is
+// now, built with it.
+function baselineAt(sim: PlateSimulation, x: number, y: number, blobs: BlobIndex, trench: BaselineTerm | undefined): number {
+  return solidBaselineAt(sim, x, y, blobs, trench) - sim.eustaticM / ELEVATION_METERS
 }
 
 // The baseline before the sea level: what an epoch evaluates once per node
@@ -334,8 +338,8 @@ function baselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobInde
 // stays where it is keeps this value through the remesh and the sea's
 // change — re-evaluated, it was a twentieth of a level-1 epoch (profiled
 // 2026-10-04 on 2048×1024).
-function solidBaselineAt(sim: PlateSimulation, x: number, y: number, blobs?: BlobIndex): number {
-  return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.domain, sim.warpSeed, blobs)
+function solidBaselineAt(sim: PlateSimulation, x: number, y: number, blobs: BlobIndex, trench: BaselineTerm | undefined): number {
+  return raftBaselineAt(x, y, sim.rafts, sim.oceanAge, sim.domain, sim.warpSeed, blobs, trench)
     + dynamicTopographyAt(sim.mantle, mantleMesh(sim.domain).sampler, x, y)
 }
 
@@ -379,7 +383,8 @@ export function createCoupledTerrain(sim: PlateSimulation, budget = 1): CoupledT
   const z = permute(built.state.get(MESH_Z), order)
   const baseline = new Float32Array(mesh.vertexSlots)
   const blobs = buildBlobIndex(sim.rafts, sim.domain)
-  for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
+  const trench = trenchDepression(sim)
+  for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs, trench)
   return { mesh, z, baseline, routing: null, areas: meshAreasOf(mesh), sedimentFlux: new Float32Array(0), preErosionZ: z.slice(), column: createColumn(mesh.vertexSlots), ice: new Float32Array(0), weather: null }
 }
 
@@ -536,13 +541,14 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // The rafts as the step left them, for every sweep below up to the end
   // of the epoch — nothing after the step moves them.
   const blobs = buildBlobIndex(sim.rafts, domain)
+  const trench = trenchDepression(sim)
   const sea = sim.eustaticM / ELEVATION_METERS
   // The solid baseline per slot of the rebuilt mesh, kept for the sweeps
   // below (solidBaselineAt); the refine adds its new nodes' and may grow it.
   let solid1 = new Float64Array(mesh1.vertexSlots)
   for (let v = 0; v < mesh1.vertexSlots; v++) {
     if (!mesh1.vAlive[v]) continue
-    solid1[v] = solidBaselineAt(sim, mesh1.vx[v], mesh1.vy[v], blobs)
+    solid1[v] = solidBaselineAt(sim, mesh1.vx[v], mesh1.vy[v], blobs, trench)
     z[v] = solid1[v] - sea + h[v]
   }
   timing.baseline = lap()
@@ -578,7 +584,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
         grown.set(solid1)
         solid1 = grown
       }
-      solid1[v] = solidBaselineAt(sim, x, y, blobs)
+      solid1[v] = solidBaselineAt(sim, x, y, blobs, trench)
       state.get(MESH_Z)[v] = solid1[v] - sea + hv[v]
     },
   })
@@ -603,12 +609,11 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   for (let v = 0; v < mesh.vertexSlots; v++) {
     solid[v] = solid1[order[v]]
     baseline[v] = solid[v] - sea
-    // The elevation scale's floor, as the synthesis keeps it
-    // (elevationField.computeElevation): a trench node carries a relief of
-    // −3000 m under an abyssal baseline, and a baseline that subsides
-    // under it would take z past the floor the whole pipeline assumes. No
-    // ceiling (phase 8b-3): the plate and the erosion bound the height.
-    zCanon[v] = Math.max(-1, baseline[v] + hCanon[v])
+    // No floor and no ceiling (phases 8b-3 and 8e): the plate and the
+    // erosion bound the height, the trench's law (tectonics/trench.ts) the
+    // depth — a trench on old floor stands 10–11 km deep, as Earth's
+    // deepest, past the −1 (−9000 m) the history clamped to until 8e.
+    zCanon[v] = baseline[v] + hCanon[v]
   }
   timing.baseline += lap()
   // THE CLIMATE OF THE EPOCH (phase 5.4, decision 13): the weather chain
@@ -681,7 +686,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     const cutM = glacial.cutM[v]
     if (cutM > 0) {
       iceCoastColumnM3 -= cut(column, v, cutM) * areaM2
-      zCanon[v] = Math.max(-1, zCanon[v] - cutM / ELEVATION_METERS)
+      zCanon[v] -= cutM / ELEVATION_METERS
     }
     const tillM = glacial.tillM[v]
     if (tillM > 0) {
@@ -792,10 +797,6 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const routingEvery = HISTORY_DEFAULTS.routingEvery
   const pool = options.pool && { ...options.pool, pipelineDepth: routingEvery, synchronous: true }
   const result = await runMeshErosion(mesh, zCanon, forcing, { age: options.iterationsPerEpoch, params: scaled, pool, routingEvery })
-  // The same floor after the engine (marine diffusion can take a floor
-  // node a few metres under it); the relief the next epoch carries is
-  // read from this z, so the floor is the terrain's, not a display one.
-  for (let v = 0; v < mesh.vertexSlots; v++) result.z[v] = Math.max(-1, result.z[v])
   // The column's ledger from the run's record: the cut comes off the top
   // of the column first (the remainder was bedrock), the deposit goes into
   // this epoch's layer with the provenance the walk carried to it. The
@@ -856,7 +857,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     const cutM = coastal.cutM[v]
     if (cutM > 0) {
       iceCoastColumnM3 -= cut(column, v, cutM) * coastAreaM2
-      result.z[v] = Math.max(-1, result.z[v] - cutM / ELEVATION_METERS)
+      result.z[v] -= cutM / ELEVATION_METERS
     }
     const depM = coastal.depositM[v]
     if (depM > 0) {
@@ -919,7 +920,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     const wM = flexSampler.sample(deflection, mesh.vx[v], mesh.vy[v])
     if (wM > reboundMaxM) reboundMaxM = wM
     if (-wM > subsidenceMaxM) subsidenceMaxM = -wM
-    result.z[v] = Math.max(-1, result.z[v] + wM / ELEVATION_METERS)
+    result.z[v] += wM / ELEVATION_METERS
   }
   timing.flexure = lap()
   // THE SEA LEVEL'S CHANGE, applied now: the solid surface stands higher
@@ -935,7 +936,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
     // evaluates directly — the bytes must agree.
     for (let v = 0; v < mesh.vertexSlots; v++) {
       if (!mesh.vAlive[v]) continue
-      result.z[v] = Math.max(-1, result.z[v] + seaShift)
+      result.z[v] += seaShift
       baseline[v] = solid[v] - sim.eustaticM / ELEVATION_METERS
     }
   }
@@ -1038,7 +1039,8 @@ export function decodeCoupledTerrain(sim: PlateSimulation, bytes: { nodes: Float
   const mesh = decodeMesh(sim.domain, { count: bytes.z.length, nodes: bytes.nodes, connectivity: bytes.connectivity })
   const baseline = new Float32Array(mesh.vertexSlots)
   const blobs = buildBlobIndex(sim.rafts, sim.domain)
-  for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs)
+  const trench = trenchDepression(sim)
+  for (let v = 0; v < mesh.vertexSlots; v++) baseline[v] = baselineAt(sim, mesh.vx[v], mesh.vy[v], blobs, trench)
   const column = bytes.column ? decodeColumn(bytes.column, bytes.z.length, mesh.vertexSlots) : createColumn(mesh.vertexSlots)
   // A per-node field in the mesh's numbering (the decoded mesh's slots
   // are its nodes), or null when not given or not of this mesh.

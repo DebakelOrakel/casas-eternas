@@ -185,6 +185,13 @@ export const TECTONICS_TUNING = {
   // slab does.
   trenchOffset: 60,
   trenchDepthFraction: 0.6,
+  // The history's trench (tectonics/trench.ts, DEC-0036 phase 8e): its
+  // half-width across the plate boundary — Earth's trenches are 50–100 km
+  // wide — and its relief below the floor beside it as a multiple of that
+  // floor's thermal subsidence (2.3, 3.7 and 4.8 km on 15, 45 and 150 Ma
+  // floor; Earth's Middle America, Peru–Chile and Mariana trenches).
+  trenchHalfWidthM: 50_000,
+  trenchReliefPerSubsidence: 1.6,
 
   // Continental accretion (Phase 2): at a subduction arc, new continental crust
   // welds onto the overriding plate's continent, growing it toward the trench —
@@ -287,22 +294,15 @@ export const TECTONICS_TUNING = {
   // uniform age so the ocean isn't uniformly shallow at epoch 0, then evolves as
   // ridges reset it to 0 and advection ages crust away from them.
   oceanAgeInit: 40,
-  // World radius around a divergent boundary point whose seafloor counts as newly
-  // formed (resetOceanAgeAround). Two very different situations, two radii:
-  //
-  // An ordinary spreading ridge makes a narrow strip of new crust per epoch, so
-  // this stays close to one age cell (the field mesh's spacing, world / OCEAN_AGE_RES_X = 8 cells) — just wide
-  // enough that a ridge line reads as continuous rather than dotted. It has to be
-  // small: this fires for EVERY divergent boundary point every epoch, and an
-  // earlier value of 80 (which conflated it with the breakup case below) zeroed
-  // ~300 age cells per point, which flattened the whole age field — measured median
-  // ocean age 0, i.e. half the ocean floor sitting at ridge-crest depth instead of
-  // subsided. That is the age-depth law being erased from the other direction.
-  // Metres since DEC-0036 phase 8a: the torus's 12 cells of 7.8 km.
-  ridgeFreshCrustRadiusM: 93_600,
-  // A continental breakup is the other case: splitRaftAtRift shoves the two halves
-  // splitGap apart in a single step, and everything that gap exposes genuinely IS
-  // crust the new ridge just made. Fires once per breakup, not per boundary point.
+  // The seafloor a continental breakup exposes (resetOceanAgeAround):
+  // splitRaftAtRift shoves the two halves splitGap apart in a single step,
+  // and everything that gap exposes genuinely IS crust the new ridge just
+  // made. Fires once per breakup. An ordinary ridge's new crust is the ocean
+  // age's own since DEC-0036 phase 8e — the strip the plates open, found in
+  // its transport (oceanAge.advectOceanAge); the disc of ridgeFreshCrustRadiusM
+  // (93.6 km) it replaced, reset around every divergent boundary point every
+  // epoch, made 2–3 × the young floor the plates' motion opens (measured:
+  // 13–39 % of the ocean under 2 Ma after 40 epochs, 13–24 % without it).
   breakupFreshCrustRadius: splitGap,
 
   // How fast a plate's motion relaxes toward the mantle-flow-fitted target each

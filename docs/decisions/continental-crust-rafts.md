@@ -10,7 +10,7 @@ summary.de: Kontinentale Kruste als dauerhafte „Flösse“, entkoppelt von den
 area: generator
 stage: built
 createdAt: 2026-07-24
-updatedAt: 2026-08-12
+updatedAt: 2026-10-14
 concepts: [generator.concept.craton, generator.concept.young-crust]
 related: [DEC-0011]
 ---
@@ -112,7 +112,12 @@ grow/merge/split are natural blob-set operations.
 Age-depth (ocean floor deepens as it ages away from the ridge) is modeled
 with a **coarse full-surface age field** advected with plate motion each
 epoch, reset to 0 at divergent boundaries (fresh crust). Oceanic baseline
-= `OCEANIC_BASELINE − k·√age`. This is a deliberate, *bounded* exception to
+= `OCEANIC_BASELINE − k·√age`. (Since then: GDH1's age–depth curve
+instead of √age; on a field mesh since DEC-0036 phase 2; since phase 8e
+the new crust is the strip the two plates open in an epoch, found in the
+transport, not a disc around each divergent boundary point, and a trench
+lies under the floor where an oceanic plate subducts —
+[fields-on-meshes.md](./fields-on-meshes.md).) This is a deliberate, *bounded* exception to
 the "no full-surface accumulator" stance: it's only the ocean-age scalar,
 which is inherently smooth and large-scale (coarse resolution is plenty),
 unlike the A1 uplift accumulator that stance rejected. Chosen over a

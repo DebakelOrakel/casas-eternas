@@ -3,7 +3,6 @@ import { detectBoundaries } from '../boundaryDetection'
 import { raftMembership } from '../../crust/raftField'
 import { accreteToNearestRaft } from '../../crust/raftLifecycle'
 import { worldEpoch } from '../../core/worldTime'
-import { resetOceanAgeAround } from '../oceanAge'
 import { classifyBoundaryMotion } from '../plateVelocityDecomposition'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import { findOrCreateFeatureIndex } from '../terrainFeatures'
@@ -99,12 +98,9 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     )
     const classification = classifyBoundary(sim.types[boundary.plateA], sim.ages[boundary.plateA], sim.types[boundary.plateB], sim.ages[boundary.plateB], convergence.motionClass)
 
-    // Fresh oceanic crust forms at a divergent boundary (a mid-ocean ridge or
-    // opening rift) — reset its floor age to 0 so age-depth reads it as young
-    // and shallow (Phase 3).
-    if (convergence.motionClass === 'divergent') {
-      resetOceanAgeAround(sim.oceanAge, boundary.x, boundary.y, TECTONICS_TUNING.ridgeFreshCrustRadiusM / domain.metresPerUnit, domain)
-    }
+    // Fresh oceanic crust at a divergent boundary is the ocean age's own
+    // (tectonics/oceanAge.advectOceanAge, DEC-0036 phase 8e): the strip the
+    // two plates open in the epoch, not a disc around each boundary point.
 
     const classCode = motionClassCode(convergence.motionClass)
     const index = boundary.latticeIndex

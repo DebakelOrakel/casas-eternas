@@ -439,11 +439,13 @@ function invariants(w) {
   if (!(land > 0.01 && land < 0.6)) fail('land fraction', `${(land * 100).toFixed(2)}% is outside 1–60%`)
 
   // No ceiling since DEC-0036 phase 8b-3 (the plate and the erosion bound
-  // the height): a peak far above any planet's crust can stand is a
-  // runaway, not a calibration. The floor is the elevation scale's.
+  // the height) and no floor since 8e (the trench's law bounds the depth,
+  // 10–11 km on the oldest floor): a peak far above any planet's crust can
+  // stand, or a deep far below Earth's 10.9 km, is a runaway, not a
+  // calibration.
   const elev = stats(w.el)
   if (elev.max * METRES > 15000) fail('elevation', `max ${(elev.max * METRES).toFixed(0)} m — a runaway`)
-  if (elev.min * METRES < -METRES - 1) fail('elevation', `min ${(elev.min * METRES).toFixed(0)} m exceeds the floor`)
+  if (elev.min * METRES < -15000) fail('elevation', `min ${(elev.min * METRES).toFixed(0)} m — a runaway`)
 
   // The plate-count floor exists because a simulation that collapses to one
   // plate is kinematically frozen for the rest of the run. The ceiling is the

@@ -49,6 +49,9 @@ const sutureTangent = { x: 0, y: 0 }
 // terrain features, the ocean-age field — along its own rotation.
 export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64Array): void {
   const { domain } = sim
+  // The seeds where the epoch found them: the ocean age's new crust is
+  // where a departure lands on another plate than the cell's (advectOceanAge).
+  const previousSeeds = sim.seeds.map((s) => ({ x: s.x, y: s.y }))
   // 1. Advance every plate (and whatever terrain is attached to it)
   // along its own rotation.
   for (let i = 0; i < sim.seeds.length; i++) {
@@ -94,7 +97,7 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64A
   sim.types = derivePlateTypes(sim.seeds, sim.rafts, domain)
   // Carry the ocean-age field along with the plates that just moved (Phase 3;
   // on its field mesh since DEC-0036 phase 2).
-  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, domain, membership)
+  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, domain, membership, previousSeeds)
   advanceTerrainFeatures(sim.features, sim.motions, TECTONICS_TUNING.epochAngleStep, domain)
   for (const feature of sim.features) {
     feature.thickness *= TECTONICS_TUNING.thicknessDecayPerEpoch

@@ -13,8 +13,9 @@ import { departures, departuresFromPoints, gradient, transportScalar, type Depar
 // entries of ELEVATION_TUNING). This is a
 // deliberate, bounded exception to the "no full-surface accumulator" stance:
 // it's only the ocean-age scalar, which is smooth and large-scale, so a coarse
-// field is plenty. The field is carried with plate motion each epoch and reset
-// to 0 at divergent boundaries (fresh crust at a ridge).
+// field is plenty. The field is carried with plate motion each epoch; the
+// crust the plates open at a divergent boundary starts at half an epoch
+// (advectOceanAge).
 //
 // ON A FIELD MESH (DEC-0036 phase 2, docs/decisions/fields-on-meshes.md):
 // one Float64 value per cell of the ocean age's field mesh (fields/
@@ -160,6 +161,17 @@ const MAX_SEAFLOOR_AGE = 180
 // old crust and renders at full abyssal depth — a brand-new Atlantic born as
 // deep as the oldest Pacific. Continental crust simply isn't seafloor; when a
 // rift exposes what's under it, that floor is new.
+//
+// `previousSeeds`, the plates' seeds where the epoch found them, make the
+// RIDGES' new crust (DEC-0036 phase 8e): a cell whose departure lands on
+// another plate than its own — the departure's nearest seed an epoch ago
+// is not the cell's — holds crust that did not exist on its plate an epoch
+// ago, so the plates opened it in this epoch at their boundary: its age is
+// half an epoch, the mean of the strip. At a divergent boundary that strip
+// is as wide as the two plates' opening in the epoch, the real spreading;
+// at a convergent or a transform boundary no departure crosses. It replaced
+// a disc of 93.6 km reset around every divergent boundary point every
+// epoch, which made 2–3 × the young floor the motion opens.
 export function advectOceanAge(
   age: Float64Array,
   seeds: PlateSeed[],
@@ -167,10 +179,12 @@ export function advectOceanAge(
   angleStep: number,
   domain: Domain,
   membership: Float64Array,
+  previousSeeds: readonly { x: number; y: number }[] | null = null,
 ): Float64Array {
   const om = oceanAgeMesh(domain)
   const { mesh } = om
   const n = mesh.count
+  const fresh = new Uint8Array(n)
   for (let i = 0; i < n; i++) {
     const wx = mesh.x[i]
     const wy = mesh.y[i]
@@ -192,6 +206,18 @@ export function advectOceanAge(
     const prev = reversePointByMotion(wx, wy, motions[nearest], angleStep, domain)
     om.px[i] = prev.x
     om.py[i] = prev.y
+    if (previousSeeds) {
+      let was = 0
+      let wasSq = Infinity
+      for (let s = 0; s < previousSeeds.length; s++) {
+        const d = domain.distanceSq(prev.x, prev.y, previousSeeds[s].x, previousSeeds[s].y)
+        if (d < wasSq) {
+          wasSq = d
+          was = s
+        }
+      }
+      if (was !== nearest) fresh[i] = 1
+    }
   }
   departuresFromPoints(mesh, om.sampler, om.px, om.py, om.dep)
   gradient(mesh, age, om.gradE, om.gradS)
@@ -202,6 +228,10 @@ export function advectOceanAge(
       next[i] = 0
       continue
     }
+    if (fresh[i]) {
+      next[i] = 0.5
+      continue
+    }
     const advected = next[i] + 1
     next[i] = advected > MAX_SEAFLOOR_AGE ? MAX_SEAFLOOR_AGE : advected
   }
@@ -209,8 +239,8 @@ export function advectOceanAge(
 }
 
 // Reset the age to 0 in every cell whose centre lies within `worldRadius` of a
-// world point — fresh oceanic crust formed at a divergent boundary (mid-ocean
-// ridge / opening rift).
+// world point — the fresh oceanic crust a continental breakup exposes
+// (raftEvents; the ridges' crust is advectOceanAge's).
 //
 // A radius rather than the single containing cell this used to zero: at a
 // continental breakup, splitRaftAtRift shoves the two halves a good distance

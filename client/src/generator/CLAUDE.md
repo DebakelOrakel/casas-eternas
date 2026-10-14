@@ -103,8 +103,10 @@ mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends
 archean/    the Archean era; hands over to tectonics via finalizeArchean.ts, which
             is the ONLY archean file that may import from tectonics/
 tectonics/  plate*, boundary*, oceanAge (on the field mesh since DEC-0036 phase 2: oceanAgeMesh,
-            oceanAgeAt the sampler, the transport by the plates' exact departures),
-            terrainFeatures, volcanoes,
+            oceanAgeAt the sampler, the transport by the plates' exact departures,
+            the ridges' new crust where a departure crosses to another plate),
+            trench (phase 8e: the trench under the history's baseline, on the
+            boundary where an oceanic plate subducts), terrainFeatures, volcanoes,
             tectonicsTuneParams (tuning constants), epoch/ (the per-epoch phases),
             flexure (phase 5.3: Te as a field, the plate's deflection to a load
             change; since DEC-0036 phase 6 the plate equation ∇²(D∇²w) + ρm g w = −ρc g h
