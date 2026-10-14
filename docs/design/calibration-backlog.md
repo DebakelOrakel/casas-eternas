@@ -17,8 +17,8 @@ related: [DEC-0036, DEC-0035, DEC-0029, DEC-0003, DEC-0004, DEC-0006, DES-0016, 
 ---
 
 Recorded on the user's request (2026-10-14). The calibration (DEC-0036,
-phase 8) closes after 8f (plate speed) and 8g (mean land height, the
-sphere's land share at 40 %). The points below were measured on the way
+phase 8) closed with 8f (plate speed) and 8g (the uplift's rate, the mean
+land height, the sphere's land share at 40 %), both 2026-10-14. The points below were measured on the way
 and are skipped for now. The numbers are medians of 12 worlds per shape
 (`npm run calibrate`, 2048 × 1024, archeanMa 1000, landShare 30) unless an
 entry says otherwise; the phase's Status entries in
@@ -36,6 +36,12 @@ procedure.
    (1 − h̄/4000 m) caps it. A plateau would also bring back the high summits
    at its rim, which 8d's buzzsaw made rare (≥ 8 km on 1 world in 12).
    Found in 8b-3 and 8d. 4–6 h.
+   *8g: not resolved, further off.* The uplift is a physical rate now, and
+   the plateau's balance went from 4000 to 3000 m to hold the broad 2–3 km
+   highlands that slow boundaries through continents build (entry 24); a
+   plateau as wide and high as Tibet is rarer still. A plateau needs the
+   thickening to spread sideways (the wedge widening, lower-crust flow),
+   which the model does not have.
 2. **No keel drag.** Continental plates move as fast as oceanic ones
    (57 / 58 km/Myr torus, 48 / 53 sphere; Earth 10–30 / 50–100). The plates
    follow the rigid fit of the mantle flow without a force balance. Found
@@ -117,8 +123,47 @@ procedure.
     does not measure deltas. Fix: compare against the pre-erosion height
     plus the sea shift. Found in 8f. 0.5 h.
 
+## Found in 8g
+
+23. **Hotspot piles in the synthesis deck.** A plume deposits
+    `hotspotDepositPerEpoch` (4) every second epoch onto the feature it
+    finds within the merge radius (312 km). At 50 km/Myr the plate carries
+    the feature out of reach in about 6 epochs, so one feature takes 20+
+    thickness units, the largest in the world for the first 15–25 epochs
+    (4 of 4 worlds measured). Until 8g it set the history's uplift scale
+    and stood under the full rate itself (the narrow 11–15 km ranges of
+    8f); since 8g a hotspot forces no uplift in the history, but the
+    synthesis deck (a world restored from before its history) still
+    stands the pile as height. A deposit per km of plate motion, as the
+    boundaries have since 8f, would be the fix. Found in 8g. 1–2 h.
+24. **Too much land at 2–3 km, too little above 4500 m.** After 8g the
+    land above 2000 m is 9.2 / 7.0 % (torus / sphere; Earth ~5) and above
+    4500 m 0.07 / 0.04 % (Earth ~0.4); the mean land height is on target
+    (728 / 735 m). Every slow boundary through a continent now thickens it
+    at the rate it closes (the rafts are decoupled from the plates, so a
+    plate boundary runs through a continent where it falls: on the
+    calibration seed 7–38 % of the land lies under a positive uplift), and
+    broad highlands stand where the erosion is slow. The variants of 8g
+    trade one target against the other (the table in fields-on-meshes.md,
+    phase 8g): a lower plateau balance cuts the 2–3 km band and the high
+    land with it; a higher column balance lifts the high land and lets the
+    odd seed's range pass 12 km. Note that 3 seeds per shape misled here:
+    calibration / alpha / zulu put the sphere's land above 2000 m at 15 %,
+    the 12 seeds at 7. Found in 8g. 3–5 h.
+25. **Plate boundaries diverge under continents at plate speed.** A
+    divergent boundary under a raft is a rift (boundaryClassification), at
+    the plates' 50 km/Myr, where a continental rift on Earth opens at 1–10.
+    At the physical rate (8g) it lowered 15–23 % of the land by 0.4–1.4
+    mm/yr and drowned 3–4 points in 12 epochs; 8g zeroes a rift's rate at
+    its thickness floor (riftBasinFloorThickness), which holds the land,
+    but a rift still lowers 1–11 % of the land by 0.3–0.7 mm/yr on its way
+    there. The breakup is not tied to it. Found in 8g. 2–4 h.
+
 ## Status
 
 2026-10-14: IDEA — the list, recorded when phase 8 was cut short. Take an
 entry up when a world shows it; record its result in the doc of the
 mechanism it changes, and strike it here.
+
+2026-10-14: phase 8 closed with 8g. Entry 1 annotated; entries 23–25
+found in 8g and added.

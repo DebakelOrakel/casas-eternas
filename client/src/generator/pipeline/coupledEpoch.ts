@@ -47,6 +47,7 @@ import { stepEpoch, type PlateSimulation, type SimEvent } from '../tectonics/pla
 import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
 import { coarseForcingFields } from './erosionForcing'
 import { detPow } from '../core/detMath'
+import { meanWithin, meshGeometry, neighbourhoods } from '../mesh/meshNeighbourhood'
 
 // THE COUPLED EPOCH (ADAPTIVE_MESH_PLAN.md phase 5.1; decisions 5, 6, 8 of
 // docs/decisions/adaptive-mesh.md): erosion runs inside every tectonic
@@ -163,7 +164,7 @@ export interface CoupledEpochOptions {
   // the triangulation is rebuilt from the moved nodes every epoch.
   remeshEvery?: number
   // A scale on the tectonics' uplift forcing — the calibration's knob
-  // against the erosion rates, 1 = the engine's calibrated ratio.
+  // against the erosion rates, 1 = the physical rate (phase 8g).
   upliftScale?: number
   controls?: ErosionControlsV2
   pool?: { createWorker: () => WorkerLike } & PipelineOptions
@@ -209,6 +210,11 @@ export interface CoupledEpochOptions {
 // 4500 m as the shapes' medians): at 2.75 the peaks 4.3–7.9 km and
 // 0.10–0.16 %, at 5.5 7.7–13.9 km and 0.9–1.1 % (collapseHeightM 5000 m
 // both); at 4 with collapseHeightM 4000 m 5.1–9.2 km and 0.19–0.25 %.
+// 1 since DEC-0036 phase 8g (2026-10-14): U is the physical rate of
+// crustal thickening now, mm/yr (elevation/upliftField.ts: the boundary's
+// shortening × TECTONICS_TUNING.orogenCrustM / the range's cross-section),
+// not a field normalised per world to a peak of 1, so the scale has no
+// work left; it stays as the calibration's knob.
 // climateEvery and renderEvery (2026-09-26, the second lever of the
 // performance round, profiled on 2048×1024 at budget 4: of ~3 s an epoch
 // the weather chain was 1.0 and the intermediate picture 1.0, the erosion
@@ -229,7 +235,7 @@ export interface CoupledEpochOptions {
 // epoch's run, unseen by it. Measured with npm run calibrate (12 worlds
 // per shape, the table in docs/decisions/fields-on-meshes.md phase 8c):
 // the routing per iteration costs 0–6 % of the history's time.
-export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 4, climateEvery: 3, remeshEvery: 3, renderEvery: 3, routingEvery: 1 } as const
+export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 1, climateEvery: 3, remeshEvery: 3, renderEvery: 3, routingEvery: 1 } as const
 
 // How far from a raft blob's centre a node still rides the raft, in blob
 // radii (the membership in stepCoupledEpoch). The blob's field fades out
@@ -421,6 +427,24 @@ function collapseFactor(mesh: PeriodicTriangulation, z: Float32Array, areas: Flo
   const mean = smoothGaussian(fm, sum, TECTONICS_TUNING.collapseSmoothingM, new Float64Array(fm.count))
   const H = TECTONICS_TUNING.collapseHeightM
   return (x, y) => Math.max(0, 1 - sampler.sample(mean, x, y) / H)
+}
+
+// THE COLUMN'S FORCE BALANCE (DEC-0036 phase 8g): the factor on the
+// tectonic thickening at each node `rising` admits, 1 − h̄ / H
+// (TECTONICS_TUNING.wedgeHeightM; 0 above it), with h̄ the land's mean
+// height (the sea counts 0) within wedgeRadiusM of the node, on the
+// terrain mesh in metres (mesh/meshNeighbourhood) — at 10 km the node's
+// own column. The plateau's balance above reads a regional mean and does
+// not see a narrow range in lowland; this one reads the range itself.
+// 1 where a node is not admitted.
+function wedgeFactor(mesh: PeriodicTriangulation, z: Float32Array, rising: Uint8Array, unitM: number): Float32Array {
+  const heightM = new Float32Array(mesh.vertexSlots)
+  for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) heightM[v] = Math.max(0, z[v]) * ELEVATION_METERS
+  const mean = meanWithin(neighbourhoods(meshGeometry(mesh, unitM), TECTONICS_TUNING.wedgeRadiusM, rising), heightM)
+  const factor = new Float32Array(mesh.vertexSlots)
+  const H = TECTONICS_TUNING.wedgeHeightM
+  for (let v = 0; v < mesh.vertexSlots; v++) factor[v] = rising[v] ? Math.max(0, 1 - mean[v] / H) : 1
+  return factor
 }
 
 // The plate's rigidity R = D / (ρm g) per cell of the flexure's mesh
@@ -739,6 +763,9 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // the regional mean height under it rises (collapseFactor).
   const featureBuckets = buildFeatureBuckets(sim.features, domain)
   const collapse = collapseFactor(mesh, zCanon, areas)
+  const rising = new Uint8Array(mesh.vertexSlots)
+  for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v] && forcing.uplift[v] > 0 && zCanon[v] > 0) rising[v] = 1
+  const wedge = wedgeFactor(mesh, zCanon, rising, unitM)
   let foldedArea = 0
   const cratonAge = new Float32Array(mesh.vertexSlots)
   const rockHard = new Float32Array(mesh.vertexSlots)
@@ -760,7 +787,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       // the history's nodes are wider than the wavelength.
       const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], domain, Math.sqrt(areas[v]))
       if (fold !== 1) { forcing.uplift[v] *= fold; if (zCanon[v] > 0) foldedArea += areas[v] }
-      forcing.uplift[v] *= collapse(mesh.vx[v], mesh.vy[v])
+      forcing.uplift[v] *= collapse(mesh.vx[v], mesh.vy[v]) * wedge[v]
     }
     const bedrockK = forcing.erodibility[v]
     const k = erodibilityOver(column.data, v, layers, bedrockK)

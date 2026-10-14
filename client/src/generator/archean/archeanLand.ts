@@ -59,12 +59,21 @@ export interface LandShareParams {
   // first 40 epochs of the history is the target (archeanLandAim).
   historyFrom: number
   historySlope: number
+  // Above historySteepFrom the toll rises faster (DEC-0036 phase 8g): the
+  // aim gains historySteepSlope × (target − historySteepFrom) more.
+  historySteepFrom: number
+  historySteepSlope: number
+  // The controller's ceiling is at least this many times the straight
+  // ramp its aim needs (the aim's land over the reach epoch, in nuclei per
+  // epoch), never below the nucleation's maxPerEpoch (DEC-0036 phase 8g).
+  ceilingOverRamp: number
 }
 
 // The land share the Archean steers toward for a target (a fraction): the
 // target, raised by what the history will take back (LandShareParams).
 export function archeanLandAim(target: number, params: LandShareParams): number {
-  return target + params.historySlope * Math.max(0, target - params.historyFrom)
+  const steep = target > params.historySteepFrom ? params.historySteepSlope * (target - params.historySteepFrom) : 0
+  return target + params.historySlope * Math.max(0, target - params.historyFrom) + steep
 }
 
 // How many nuclei this epoch may place, from the land as it stands and the
@@ -91,6 +100,14 @@ export function nucleationBudget(sim: ArcheanSimulation, land: number, target: n
   const toGo = Math.max(params.holdEpochs, params.reachEpoch - sim.epoch)
   const worldM2 = domainArea(sim.domain) * sim.domain.metresPerUnit * sim.domain.metresPerUnit
   const rate = (deficit * worldM2) / (toGo * params.nucleusLandM2)
-  sim.nucleationCredit = Math.min(maxPerEpoch, sim.nucleationCredit + rate)
+  // The ceiling: a 40 % target's aim needs 13 nuclei an epoch on the
+  // straight ramp, and at the nucleation's 12 the climb lagged, went on to
+  // 1000 Ma and handed the plates young crust they recycle (measured
+  // 2026-10-14: at the ceiling 51–133 of 200 epochs, 42–46 % at 1000 Ma
+  // against an aim of 46.8). The 30 % aim's ramp is 9.05, so its ceiling
+  // stays 12.
+  const ramp = (target * worldM2) / (params.reachEpoch * params.nucleusLandM2)
+  const ceiling = Math.max(maxPerEpoch, params.ceilingOverRamp * ramp)
+  sim.nucleationCredit = Math.min(ceiling, sim.nucleationCredit + rate)
   return Math.floor(sim.nucleationCredit)
 }

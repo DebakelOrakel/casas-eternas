@@ -249,6 +249,10 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     const feature = sim.features[featureIndex]
     feature.thickness += sum / count
     feature.epochsSinceDeposit = 0
+    // The shortening rate's moving mean gets the epoch's share (plateDrift
+    // decayed the old mean): the deposit back in km of shortening per Ma.
+    const shorteningKeep = detPow(2, -epochMa / TECTONICS_TUNING.shorteningHalfLifeMa)
+    feature.shorteningKmPerMyr = (feature.shorteningKmPerMyr ?? 0) + (1 - shorteningKeep) * (sum / count) / (TECTONICS_TUNING.upliftPerKm * epochMa)
     // Rift-lake floor: a continental rift trough (the only negative-thickness range —
     // trenches are 'trench' kind) is capped so its floor stays just ABOVE sea level
     // instead of running away to the elevation clamp (thickness → ~−50 → elevation −1 →
@@ -258,7 +262,16 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     // actually breaks up — then birthRidgePlate drops the whole area to the oceanic
     // baseline and the lake floods to sea (transient, Red-Sea-style). See the tectonic-
     // rift-lakes work in docs/decisions and TECTONICS_TUNING.riftBasinFloorThickness.
-    if (feature.kind === 'range' && feature.thickness < TECTONICS_TUNING.riftBasinFloorThickness) feature.thickness = TECTONICS_TUNING.riftBasinFloorThickness
+    if (feature.kind === 'range' && feature.thickness < TECTONICS_TUNING.riftBasinFloorThickness) {
+      feature.thickness = TECTONICS_TUNING.riftBasinFloorThickness
+      // At its floor the rift thins the crust no further, so it no longer
+      // lowers the land in the history (DEC-0036 phase 8g): with the rate
+      // kept, a divergent plate boundary under a continent (the rafts
+      // ride decoupled from the plates) lowered 15–23 % of the land by
+      // 0.4–1.4 mm/yr and drowned 3–4 points of it in 12 epochs (measured
+      // 2026-10-14, calibration seed, both shapes).
+      if ((feature.shorteningKmPerMyr ?? 0) < 0) feature.shorteningKmPerMyr = 0
+    }
   }
   return { boundaries, riftEvent, mergeEvent, continentalRift }
 }

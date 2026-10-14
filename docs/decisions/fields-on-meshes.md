@@ -181,7 +181,9 @@ Each phase is agreed before it starts and measured after (sphere and torus,
    looks at the field mesh's twelve pentagons on purpose: the centroidal
    grid's ∇² keeps an error of about 1.2 % next to them at every spacing
    (phase 3); if a field shows it there, a Heikes–Randall correction is the
-   remedy (agreed 2026-10-11).
+   remedy (agreed 2026-10-11). Done 2026-10-14 (phases 8a–8g, the Status
+   below); the points it measured and left are in
+   [calibration-backlog.md](../design/calibration-backlog.md) (DES-0027).
 
 The tectonics' own calibration (plate count, land fraction, the radii of
 ranges and rifts, the mesh's spacing) does not depend on this and may be
@@ -199,6 +201,165 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-14: **phase 8g BUILT — the history's uplift rate from the plates'
+convergence; phase 8 done.** The last calibration step. The stage stays
+built; what phase 8 measured and did not fix is in
+[calibration-backlog.md](../design/calibration-backlog.md) (DES-0027).
+Measured with `npm run calibrate seeds=12 archeanMa=1000 landShare=30
+sweep=1 sweeps=genesis.landShare sweepSeeds=3` against 8f's run (12 worlds
+per shape, the same seeds), the history's highest peak sampled every
+tenth epoch; the diagnosis on 4 worlds per epoch, the variants on 3 seeds
+per shape.
+
+**The diagnosis.** The history's uplift U (elevation/upliftField) was the
+features' thickness weighted by recency (2^(−epochsSinceDeposit / 12)),
+normalised per world to a peak of 1, × `HISTORY_DEFAULTS.upliftScale` 4:
+4 mm/yr at the world's strongest feature, the rest in proportion.
+
+- *The rate did not follow the plates*: a feature's thickness is its
+  accumulated shortening (the decay 0.99 an epoch, an equilibrium after
+  about 100), so a range that its boundary had left, or that closed
+  slowly for long, stood under the same rate as a fast one. After the
+  first 20 epochs the world's normaliser was a range of 30–50 thickness
+  units, often with no deposit in the last 2–6 epochs.
+- *The normaliser was a hotspot* for the first 15–25 epochs on 4 of 4
+  worlds (juliett and calibration on the torus, calibration and bravo on
+  the sphere): a plume deposits 4 every second epoch on the feature
+  within the merge radius (312 km), and at 8f's slower plates the
+  feature stays in reach for 6+ epochs and takes 20+ units. Its own
+  capsule stood under the full rate: the world's highest node lay 31–245
+  km from it at U 0.86–0.99 of the peak (calibration sphere: 14.8–15.0 km
+  at epochs 23–27, 77 km from the plume; juliett 11.0–12.3 km at epochs
+  15–23). These were 8f's narrow 11–15 km ranges, dry or not.
+- *What the boundaries close*, as the deposit per epoch over upliftPerKm
+  (the convergence times the character's rate and the age multiplier):
+  11–53 km/Myr at the median of the active ranges, 21–90 at the p90.
+
+**The law** (the code comments have the derivation):
+
+- *U is the rate of crustal thickening*, mm/yr, by mass across the
+  section: a boundary that shortens at v thickens a crust of thickness Hc
+  over the range's cross-section W at v Hc / W. v is a feature's
+  shortening rate (TerrainFeature.shorteningKmPerMyr, new, in the save's
+  features; an old save's read 0): the boundary's deposit in km/Myr, as a
+  moving mean with a half-life of 2 Ma (TECTONICS_TUNING.shorteningHalfLifeMa;
+  a boundary point deposits on one of its stretch's overlapping features,
+  and which one changes). W is the capsule's integral across, the
+  range's radius 234 km (ELEVATION_TUNING.rangePerpRadiusM: smoothstep's
+  integral over its radius is a half). Hc = TECTONICS_TUNING.orogenCrustM
+  30 km: the continental crust is 35–45 km (Christensen & Mooney 1995: 39
+  on the mean), and a boundary's convergence is not all shortening of
+  the orogen's crust. So 0.128 mm/yr per km/Myr: a collision at 50 km/Myr
+  thickens its crust by 6.4 mm/yr, of which a wide range keeps the Airy
+  share (0.18) at the surface through the flexure of 8b-3, a narrow one
+  more. The per-world normalisation and the recency weight are gone;
+  `HISTORY_DEFAULTS.upliftScale` 4 → 1 (it stays as the calibration's
+  knob). The save's `uplift` view is in mm/yr now.
+- *A hotspot or a flood basalt forces nothing in the history* (no
+  boundary shortens there): their features (plateB −1, −2) neither force
+  nor dilute the average. Their edifices stay the synthesis deck's.
+- *A rift at its thickness floor thins no further*
+  (riftBasinFloorThickness): its rate goes to 0 there. With the rate kept,
+  a divergent plate boundary under a continent (the rafts ride
+  decoupled from the plates) lowered 15–23 % of the land by 0.4–1.4 mm/yr
+  and the land fell by 10 points in 40 epochs (32.5 → 22.3 %, 3 seeds on
+  the torus).
+- *The column's force balance* (coupledEpoch `wedgeFactor`, new): the
+  thickening at a node falls as 1 − h̄ / 7000 m with h̄ the land's mean
+  height within 10 km — on the 8–31 km land nodes the node's own column
+  (TECTONICS_TUNING.wedgeRadiusM, wedgeHeightM). A range is a wedge: at
+  its critical height more shortening widens it instead of raising it
+  (Davis, Suppe & Dahlen 1983). The plateau's balance (8b-3) reads a mean
+  over σ 150 km and did not see a range 20–50 km wide in lowland: with the
+  rate law alone such ranges reached 15–31 km. Not a cap: a peak stands
+  above 7 km by the plate's rebound under the cut around it.
+- *The plateau's balance at 3000 m*, not 4000 (collapseHeightM): every
+  slow boundary through a continent now thickens it, and broad 2–3 km
+  highlands formed.
+- *The land share lever above 30 %* (archean/archeanLand.ts): the aim
+  gains 0.25 × (target − 30 %) more (historySteepFrom / Slope), and the
+  controller's ceiling is at least 1.3 × the straight ramp its aim needs
+  (ceilingOverRamp). The sphere's 40 % fell short for two reasons: the
+  ceiling (12 nuclei an epoch) was under the 40 % aim's ramp (12.4), so
+  the climb ran at it for 51–133 of 200 epochs, went on to 1000 Ma (42–46
+  % at the hand-over against an aim of 46.8) and handed the plates young
+  crust; and the history then takes 5–9 points of a 40 % world on the
+  torus, 8–10 on the sphere, 0–5 of a 30 % one — more than the line of 8b-1
+  gives. Both terms are 0 at and below 30 %: the 15 % and 30 % worlds
+  are the same as with 8b-1's controller (checked: the Archean's land
+  per 200 Ma identical at 30 %).
+
+**The variants** (3 seeds per shape, calibration / alpha / zulu, medians;
+the highest peak of the history over the 3 worlds; torus / sphere):
+
+| variant | land % | mean land m | > 2000 m % | > 4500 m % | highest peak, km |
+|---|---|---|---|---|---|
+| before (8f) | 32.5 / 27.1 | 610 / 769 | 4.7 / 6.6 | 0.56 / 0.53 | 11.0 / 14.6 |
+| rate, Hc 35 km, no column balance, no rift floor | 22.3 / 22.1 (1 world) | 793 / 1254 | 11.1 / 22.3 | 1.57 / 6.0 | 31.1 / 11.1 |
+| + rift floor, column 50 km / 6000 m | 32.8 / 26.6 | 762 / 1021 | 7.9 / 19.1 | 0.36 / 0.78 | 17.5 / 10.6 |
+| column 20 km / 6000 m | 32.7 / 26.6 | 752 / 983 | 7.7 / 18.7 | 0.18 / 0.16 | 11.5 / 7.5 |
+| Hc 25 km | 32.6 / 26.5 | 677 / 853 | 4.7 / 14.1 | 0.04 / 0.00 | 11.6 / 7.2 |
+| Hc 30 km | 32.6 / 26.6 | 716 / 926 | 6.2 / 16.8 | 0.10 / 0.04 | 10.7 / 7.5 |
+| + plateau 3000 m, column 7000 m | 32.6 / 26.7 | 697 / 886 | 5.4 / 15.2 | 0.11 / 0.07 | 12.0 / 7.0 |
+| + column 8000 m | 32.5 / 26.6 | 703 / 903 | 5.7 / 15.5 | 0.20 / 0.22 | 12.4 / 7.0 |
+| + column 6500 m | 32.5 / 26.7 | 696 / 876 | 5.3 / 14.8 | 0.10 / 0.03 | 11.3 / 6.6 |
+| **plateau 3000 m, column 10 km / 7000 m (chosen)** | 32.4 / 26.7 | 697 / 878 | 5.4 / 15.2 | 0.10 / 0.03 | 9.5 / 6.3 |
+
+The three seeds misled on the sphere: they put its land above 2000 m at
+15 %, the twelve at 7 (and the torus's at 5, the twelve at 9).
+
+**The worlds** (12 per shape; medians, torus / sphere):
+
+| | Earth | before (8f) | after |
+|---|---|---|---|
+| land, % (target 30) | — | 32.3 / 27.7 | 32.4 / 28.5 |
+| land at landShare 15 / 40 (3 seeds) | — | 16.6 / 36.4 · 14.3 / 34.6 | 16.9 / 39.0 · 14.1 / 37.1 |
+| mean land height, m (target 700–900) | ~840 | 622 / 635 | 728 / 735 |
+| land > 1000 / 2000 / 3000 m, % | — / ~5 / — | 15.5 / 4.57 / 1.34 · 17.9 / 4.61 / 0.99 | 21.3 / 9.19 / 1.56 · 22.1 / 7.01 / 1.59 |
+| land > 4500 / 6000 m, % | ~0.4 / ~0.001 | 0.163 / 0.0099 · 0.113 / 0 | 0.068 / 0 · 0.036 / 0 |
+| land p99.9, m | — | 4835 / 4583 | 4385 / 4168 |
+| peak at epoch 40, m (max) | 8849 | 6337 (11 829) / 5674 (9788) | 5595 (9486) / 5484 (6108) |
+| highest peak of the history, m: median (max); worlds > 10 / > 12 km | — | 8145 (12 011); 2 / 1 · 9322 (14 589); 4 / 3 | 6145 (10 292); 1 / 0 · 5554 (6318); 0 / 0 |
+| largest patch > 4500 m, k km² | Tibet ~2500 | 20 / 23 | 8 / 8 |
+| largest landmass, % of the land | — | 68 / 63 | 68 / 62 |
+| plate speed, km/Myr | ~50 | 58.2 / 51.8 | 58.2 / 51.8 |
+| ocean depth mean / median, m | 3682 / ~4100 | 3987 / 4131 · 4126 / 4262 | 3969 / 4121 · 4157 / 4266 |
+| lakes, % of the land (liquid) | ~2–4 | 8.8 (3.5) / 6.5 (4.0) | 9.0 (3.0) / 7.1 (5.1) |
+| ice, % of the land | ~10 | 35.3 / 13.8 | 37.3 / 13.7 |
+| Köppen A / B / C / D / E, % | — | 11.9 / 26.0 / 9.9 / 22.3 / 30.8 · 25.0 / 29.4 / 17.5 / 17.3 / 10.7 | 11.4 / 25.5 / 10.1 / 19.2 / 35.0 · 25.1 / 29.5 / 18.7 / 16.7 / 11.0 |
+| a history epoch, s (40 epochs) | — | 9.1 / 10.4 | 12.0 / 14.2 |
+
+The mean land height is on target, the transient peaks are gone (no
+world above 12 km in its history, one above 10: torus golf, 10.3 km at
+epoch 30), the lever holds 15 and 40 within ±3 points on both shapes, and
+the default land moved +0.1 / +0.8. What moved besides: the high ground
+is lower and broader. The land above 2000 m is 1.5–2 × Earth's, above
+4500 m a fifth to a tenth of it, and the sphere's highest summit in 12
+worlds is 6.3 km: the column's balance holds a range near 7 km, and only
+the torus's fastest ranges stand above it (9.5 km at epoch 40). The
+variants trade the two (the table): a higher column balance or a higher
+plateau balance lifts the high land and lets the odd seed's range pass
+12 km. Left for the backlog (DES-0027, entry 24). The lakes, the ice,
+the Köppen groups and the ocean stay within the worlds' spread, the
+torus's E +4 and D −3 points with its higher, colder land. The plates'
+speed is the same (the uplift does not feed back on the plates). The
+history's epoch takes 31–35 % longer; the mesh holds 5–9 % more nodes on
+the rougher land, and the column's balance costs 75 ms an epoch; the
+rest is not measured.
+
+Guards: `make lint`, `harness:roundtrip`, `harness:mesh`, `harness:fields`
+and `harness:pipeline` pass. `harness:golden`: 0 hard failures, coverage ok
+(all 88 metrics vary), 167 of 264 metrics drifted, re-recorded and
+re-armed, then PASS 0 / 0 / 0. The largest drifts are the step's
+purpose: `elevation.maxM` 10 473 → 4964 m on calibration (8f's transient
+range), 8319 → 6708 m on november; the sediment's volume +88 / −3 / +44 %
+and `erosion.crestM` +65 / +6 / +68 % (calibration / alpha / november)
+with the rates that follow the plates; `erosion.deltaCells` −92 % on
+calibration is the sea level's sign (backlog entry 22), not a delta. The
+pentagons of the sphere's meshes (no field-mesh operator was touched):
+max |z| mantle 1.79, ocean age 0.76, flexure 1.17 (median of 12), mean
+rank 0.46 / 0.36 / 0.47.
 
 2026-10-14: **phase 8f BUILT — the plates' speed in km/Myr, and the
 lengths left in cells.** Measured with `npm run calibrate seeds=12

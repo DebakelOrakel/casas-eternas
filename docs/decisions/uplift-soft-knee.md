@@ -16,7 +16,7 @@ summary.de: Die Hebung sättigt über ein isostatisches weiches Knie (linear bis
 area: generator
 stage: superseded
 createdAt: 2026-08-16
-updatedAt: 2026-10-13
+updatedAt: 2026-10-14
 supersededBy: DEC-0036
 concepts: [generator.concept.plate-boundaries]
 related: [DES-0016]
@@ -118,6 +118,27 @@ Status, which has the tables):
   synthesis, the epoch's steps). The floor, −1 (9000 m below the sea),
   stays for the trenches.
 
+## Addendum 2026-10-14: the uplift's rate from the plates
+
+DEC-0036 phase 8g ([fields-on-meshes.md](./fields-on-meshes.md), Status,
+which has the tables) changed what bounds the history's heights again:
+
+- **The uplift is a physical rate.** The history's U was normalised per
+  world to a peak of 1 (× upliftScale 4); its world's normaliser was
+  often a hotspot's pile, and its rate did not follow the plates. Now U
+  is the crust's thickening, v Hc / W (the boundary's shortening rate ×
+  30 km of crust over the range's 234 km cross-section), and
+  `HISTORY_DEFAULTS.upliftScale` is 1.
+- **The column's force balance** (TECTONICS_TUNING.wedgeRadiusM 10 km,
+  wedgeHeightM 7000 m): the thickening at a node falls as 1 − h̄ / H with
+  h̄ the mean height of its own column. The plateau's balance did not
+  see a narrow range in lowland; with the physical rate such ranges rose
+  to 15–31 km.
+- **The plateau's force balance at 3000 m**, not 4000 (collapseHeightM).
+
+The flexure of the addendum above stays as it is; there is still no
+ceiling.
+
 ## Status
 
 decided and built 2026-08-16; calibrated on seed alpha with
@@ -126,3 +147,5 @@ hydrology it measured; in the git history) and a hypsometry decomposition.
 Superseded 2026-10-13 by DEC-0036 phase 8b-3: the knee and the ceiling
 are removed, the plate's flexure and the plateau's force balance bound
 the heights (see the addendum).
+Amended 2026-10-14 by DEC-0036 phase 8g: the uplift's rate from the
+plates' convergence, the column's force balance (the second addendum).

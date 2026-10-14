@@ -89,6 +89,16 @@ export interface TerrainFeature {
   // (plateB = -1) and flood-basalt (plateB = -2) volcanoes. Optional so old
   // deserialized features (which lack it) simply read as non-volcanic.
   volcanic?: boolean
+  // The boundary's shortening rate at this feature, km/Myr, signed like the
+  // thickness (negative: a rift's extension, a trench's share): the
+  // convergence its boundary points closed in the epoch, times the boundary
+  // character's rate and the age multiplier (the deposit before
+  // upliftPerKm), as a moving mean with a half-life of
+  // TECTONICS_TUNING.shorteningHalfLifeMa (DEC-0036 phase 8g). Only the
+  // boundary pass sets it: a hotspot or a flood basalt shortens nothing.
+  // The history's uplift rate is made from it (elevation/upliftField.ts).
+  // Optional so old deserialized features (which lack it) read as 0.
+  shorteningKmPerMyr?: number
 }
 
 // How close an active boundary point needs to be to an existing feature

@@ -64,6 +64,28 @@ export const TECTONICS_TUNING = {
   // 0.01 per unit of convergence velocity at an epoch of 0.05 of its time
   // unit: 0.01 / (0.05 × 7.8 km).
   upliftPerKm: 0.01 / (0.05 * 7.8),
+  // THE HISTORY'S UPLIFT RATE (DEC-0036 phase 8g): the crust a boundary
+  // thickens is its shortening times the crust's thickness, spread over
+  // the range's cross-section — mass conserved in the section, ḣ = v Hc / W
+  // (elevation/upliftField.ts). v is a feature's shortening rate
+  // (TerrainFeature.shorteningKmPerMyr), W the capsule's integral across,
+  // ELEVATION_TUNING.rangePerpRadiusM (234 km). Hc is the thickness of the
+  // crust that the shortening thickens, m: the continental crust is 35–45
+  // km thick (Christensen & Mooney 1995, J. Geophys. Res. 100: 39 km on
+  // the mean). 30 km, a little under it: the boundary's convergence is
+  // not all shortening of the orogen's crust (at a subduction margin most
+  // of it is the slab's; the character's rate takes only a part of that
+  // out). Measured 2026-10-14 (npm run calibrate, 3 seeds per shape): at
+  // 35 km the land's mean height 752 / 983 m (torus / sphere), above 2000 m
+  // 7.7 / 18.7 %; at 25 km 677 / 853 m, 4.8 / 14.1 %; 30 km between.
+  // See docs/decisions/fields-on-meshes.md phase 8g.
+  orogenCrustM: 30_000,
+  // The half-life of a feature's shortening rate as a moving mean, Ma: a
+  // boundary point deposits on one of the overlapping features of its
+  // stretch, and which one changes from epoch to epoch; the mean smooths
+  // that, and a boundary that stops converging stops thickening the crust
+  // within a few Ma.
+  shorteningHalfLifeMa: 2,
 
   // A boundary point needs to stay classified the same way for this many
   // consecutive epochs before it can trigger a rift or merge — stops a
@@ -428,8 +450,31 @@ export const TECTONICS_TUNING = {
   // 0.010 % and 0.071 %, the largest patch 190 000 km², the peaks still
   // 6.0–9.2 km. A σ of 100 km instead of 150 moved less (0.010 / 0.076 %,
   // the largest patch 509 000 km²).
-  collapseHeightM: 4000,
+  // 4000 → 3000 m with the physical uplift rate (DEC-0036 phase 8g,
+  // 2026-10-14; 3 seeds per shape, with the range's balance below): every
+  // slow boundary through a continent now thickens it as fast as it closes,
+  // and broad 2–3 km highlands formed (above 2000 m 6.2 / 16.8 % of the
+  // land, torus / sphere, at 4000 m; 5.4 / 15.2 % at 3000 m, and above
+  // 4500 m 0.10 / 0.04 % against 0.12 / 0.07 %).
+  collapseHeightM: 3000,
   collapseSmoothingM: 150_000,
+  // THE COLUMN'S FORCE BALANCE (DEC-0036 phase 8g, coupledEpoch
+  // wedgeFactor): the thickening falls as 1 − h̄ / H with h̄ the mean height
+  // within wedgeRadiusM of a node — at 10 km, on the land's 8–31 km nodes,
+  // the node's own column: the local crust's thickness, in Airy terms its
+  // height. The same balance as the plateau's (the crust's weight against
+  // the push), read where a narrow range stands: a range is a wedge, and
+  // once it stands at its critical height more shortening widens it
+  // instead of raising it (Davis, Suppe & Dahlen 1983, J. Geophys. Res. 88).
+  // The plateau's balance reads a mean over σ 150 km and does not see a
+  // range 20–50 km wide in lowland. Not a cap: a peak stands above H by
+  // the plate's rebound under the cut around it. Measured 2026-10-14
+  // (3 seeds per shape, collapseHeightM 3000, the history's highest peak
+  // sampled every tenth epoch): radius 20 km, H 7000 m 12.0 km (torus
+  // alpha), 8000 m 12.4 km, 6500 m 11.3 km; radius 10 km, H 7000 m 9.5 km;
+  // without it 15–31 km.
+  wedgeRadiusM: 10_000,
+  wedgeHeightM: 7000,
 
   // FOLDS (tectonics/folds.ts, phase 5.7): the buckling wavelength across
   // a convergent margin and the modulation of the uplift over it (±

@@ -2,7 +2,8 @@ import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import { capsuleWeight } from './capsule'
 import type { Domain } from '../core/domain'
 import { buildFeatureBuckets, nearFeatureBuckets, rangeHalfLength, rangePerpRadius, trenchHalfLength, trenchPerpRadius } from './elevationField'
-import { detExp, detLog } from '../core/detMath'
+import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
+import { ELEVATION_TUNING } from './elevationTuneParams'
 
 // U(x) — the tectonic uplift-rate field, the erosion-v2 engine's forcing
 // (docs/design/erosion-v2.md, "The tectonics interface"). The v1 pass
@@ -10,63 +11,65 @@ import { detExp, detLog } from '../core/detMath'
 // its own forcing); v2 wants the CAUSE instead of the effect: where the
 // tectonics simulation is actively building terrain right now.
 //
-// The features already know. Every range/trench/rift feature carries its
-// accumulated crustal thickness AND `epochsSinceDeposit` — how long since
-// its boundary last built on it. An actively-fed orogen is rising; a
-// feature whose boundary wandered off decays and should force nothing. So
+// The features already know: every range/trench/rift feature carries the
+// shortening rate of its boundary (TerrainFeature.shorteningKmPerMyr — the
+// convergence its boundary points close, times the boundary character's
+// rate and the age multiplier, as a moving mean of a few Ma). A range whose
+// boundary closes is rising; one whose boundary went quiet forces nothing.
 // U is the same capsule footprint the elevation kernel uses, weighted by
-// RECENCY: thickness × exp(-epochsSinceDeposit / activityHalfLifeEpochs·ln2).
+// that rate.
 //
-// Trenches and rifts carry negative thickness and so export negative U —
+// Trenches and rifts carry a negative rate and so export negative U —
 // active subsidence. The engine applies U on land only, which makes
 // submarine trenches inert there by construction; rift valleys on land
 // genuinely deepen, which is what a rift does.
 //
 // The capsule is computeElevation's (elevationField.ts) — the shared
 // capsule.ts since 2026-09-22 — with the same max(1, weightSum) averaging,
-// so U rises exactly where the mountains it feeds actually stand.
+// so U rises exactly where the mountains it feeds actually stand. The
+// averaging also keeps the rate per length of boundary: the features of
+// one stretch overlap, and each holds the mean of its boundary points.
 //
-// Scale: the result is normalized so its largest magnitude is 1.0 — the
-// engine's upliftDt carries the physical rate, and the P2 calibration
-// (equilibrium heights vs the tuned range, golden-gated) owns the mapping.
-// Normalizing per world keeps upliftDt's meaning stable across worlds with
-// one active orogen or ten.
+// Scale (DEC-0036 phase 8g): the RATE of crustal thickening, mm/yr (=
+// km/Myr) of rock added as height, before the plate's flexure takes its
+// share. Mass is conserved across the section: a boundary that shortens at
+// v thickens a crust of thickness Hc over the range's cross-section W at
+// v Hc / W (TECTONICS_TUNING.orogenCrustM; W the capsule's integral across,
+// ELEVATION_TUNING.rangePerpRadiusM — smoothstep's integral over its radius
+// is a half, so both sides together give one radius). So a range rises as
+// fast as its plates close and stops when they stop. One W for every kind:
+// a trench's rate is its share of the arc's (trenchDepthFraction), as the
+// thickness was. A hotspot or a flood basalt has no rate (no boundary
+// shortens there); their edifices are the synthesis's deck, not the
+// history's.
 //
-// `epochsSinceDeposit` is a proxy for a true deposit-rate tracker (a
-// per-feature EMA of thickness added per epoch, maintained in stepEpoch).
-// The proxy reads an old, tall, barely-touched range as fully active the
-// epoch it receives one small deposit; the EMA upgrade sharpens that and
-// belongs to the epoch loop, noted here so the interface's next step is
-// on record.
-
-export interface UpliftFieldParams {
-  // Epochs for a feature's activity to halve once deposits stop. Small
-  // enough that a dead boundary's range stops forcing within tens of
-  // epochs; large enough that the every-other-epoch cadence of deposits
-  // (epochsSinceDeposit increments on the off epochs) reads as fully
-  // active rather than flickering.
-  activityHalfLifeEpochs: number
-}
-
-export const DEFAULT_UPLIFT_FIELD_PARAMS: UpliftFieldParams = {
-  activityHalfLifeEpochs: 12,
-}
+// Until phase 8g the field was the features' thickness weighted by their
+// recency (thickness × 2^(−epochsSinceDeposit / 12)), normalised per world
+// to a peak of 1 (× HISTORY_DEFAULTS.upliftScale 4, so 4 mm/yr at the
+// peak). Its rate did not follow the plates, and the world's normaliser was
+// a hotspot's pile for the first 15–25 epochs (four of four worlds
+// measured): the hotspot's capsule on a continent stood under the full
+// rate — the narrow 11–15 km ranges of phase 8f.
+//
+// The engine reads U × upliftDt (surface/erosionEngine.ts: 19.8 m per
+// 20 kyr iteration at U = 1, 0.99 mm/yr), so U is the engine's uplift
+// pattern in its own unit up to that 1 %.
 
 // Samples U at `outWidth`×`outHeight` (climate resolution is the intended
 // consumer grid — U is smooth by construction) over features living in
-// world coordinates on `domain`. Returns values in [-1, 1] after the
-// per-world peak normalization; all-zero when no feature is active.
+// world coordinates on `domain`. Returns mm/yr of crustal thickening
+// (negative: thinning); all-zero when no feature shortens.
 export function computeUpliftField(
   features: TerrainFeature[],
   domain: Domain,
   outWidth: number,
   outHeight: number,
-  params: UpliftFieldParams = DEFAULT_UPLIFT_FIELD_PARAMS,
 ): Float32Array {
   const result = new Float32Array(outWidth * outHeight)
   if (features.length === 0) return result
   const buckets = buildFeatureBuckets(features, domain)
-  const decayPerEpoch = detLog(2) / params.activityHalfLifeEpochs
+  // mm/yr of thickening per km/Myr of shortening: Hc / W.
+  const thickeningPerShortening = TECTONICS_TUNING.orogenCrustM / ELEVATION_TUNING.rangePerpRadiusM
   const scaleX = domain.width / outWidth
   const scaleY = domain.height / outHeight
   const offset = { x: 0, y: 0 }
@@ -83,27 +86,21 @@ export function computeUpliftField(
       let weightSum = 0
       for (let k = 0; k < nearCount; k++) {
         for (const feature of buckets.buckets[buckets.near[k]]) {
+          // A hotspot's (plateB −1) or a flood basalt's (−2) feature has
+          // no boundary: it neither forces nor dilutes the average.
+          if (feature.plateB < 0) continue
           const isTrench = feature.kind === 'trench'
           const halfLength = isTrench ? trenchHalf : rangeHalf
           const perpRadius = isTrench ? trenchPerp : rangePerp
           domain.delta(wx, wy, feature.x, feature.y, offset)
           const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)
           if (weight <= 0) continue
-          const activity = detExp(-feature.epochsSinceDeposit * decayPerEpoch)
-          upliftSum += feature.thickness * activity * weight
+          upliftSum += (feature.shorteningKmPerMyr ?? 0) * weight
           weightSum += weight
         }
       }
-      result[py * outWidth + px] = weightSum > 0 ? upliftSum / Math.max(1, weightSum) : 0
+      result[py * outWidth + px] = weightSum > 0 ? (upliftSum / Math.max(1, weightSum)) * thickeningPerShortening : 0
     }
-  }
-  let peak = 0
-  for (let i = 0; i < result.length; i++) {
-    const magnitude = Math.abs(result[i])
-    if (magnitude > peak) peak = magnitude
-  }
-  if (peak > 0) {
-    for (let i = 0; i < result.length; i++) result[i] /= peak
   }
   return result
 }

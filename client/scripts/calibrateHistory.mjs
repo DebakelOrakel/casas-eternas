@@ -48,8 +48,8 @@ const sim = M.finalize.finalizeArchean(archean)
 for (let e = 0; e < opt.plain; e++) M.sim.stepEpoch(sim)
 {
   // The uplift forcing's reach: over the land cells of the forcing grid
-  // (raft membership at the cell centre), the mean of U and the share of
-  // cells forced at all / above a half.
+  // (raft membership at the cell centre), the mean of U (mm/yr since
+  // DEC-0036 phase 8g) and the share of cells forced at all / above 0.5 mm/yr.
   const { uplift } = M.forcing.coarseForcingFields(sim, sim.domain)
   const RX = M.climate.CLIMATE_RES_X, RY = M.climate.CLIMATE_RES_Y
   let land = 0, forced = 0, strong = 0, sum = 0
@@ -61,7 +61,7 @@ for (let e = 0; e < opt.plain; e++) M.sim.stepEpoch(sim)
     if (u > 0.05) forced++
     if (u > 0.5) strong++
   }
-  console.log(`uplift forcing over land after ${opt.plain} plain epochs: mean ${(sum / Math.max(1, land)).toFixed(2)}, forced ${(forced / Math.max(1, land) * 100).toFixed(0)} %, above a half ${(strong / Math.max(1, land) * 100).toFixed(0)} %`)
+  console.log(`uplift forcing over land after ${opt.plain} plain epochs: mean ${(sum / Math.max(1, land)).toFixed(2)} mm/yr, forced ${(forced / Math.max(1, land) * 100).toFixed(0)} %, above 0.5 mm/yr ${(strong / Math.max(1, land) * 100).toFixed(0)} %`)
 }
 let t = performance.now()
 // buildBudget: the mesh built at another budget than the epochs run at —

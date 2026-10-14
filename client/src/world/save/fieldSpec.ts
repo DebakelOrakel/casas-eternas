@@ -74,14 +74,15 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   // mesh/discharge.f32), each land pixel its nearest node's.
   world('discharge', 'm3/s', false),
   // The erosion engine's coarse forcing (docs/design/erosion-v2.md): uplift
-  // is the features' activity-weighted U (normalized to the world's peak,
-  // negative in rifts), erodibility the crust-history hardness multiplier
+  // is the features' rate of crustal thickening, mm/yr (DEC-0036 phase 8g;
+  // until then normalized to the world's peak; negative in rifts and
+  // trenches), erodibility the crust-history hardness multiplier
   // BEFORE the seed-procedural lithology noise, which is applied at whatever
   // grid consumes it. Not in the save since DEC-0036's save step: the
   // reader derives both from state.json (erosionForcing.coarseForcingFields),
   // as the generator does; meaningful over ocean too (submarine features
   // uplift, oceanic crust has a hardness).
-  climate('uplift', 'relative', false),
+  climate('uplift', 'mm/yr', false),
   climate('erodibility', '', false),
 ]
 

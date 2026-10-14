@@ -8,7 +8,7 @@ import { advancePlumes } from '../plumes'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import { advanceTerrainFeatures, findOrCreateFeatureIndex } from '../terrainFeatures'
 import type { PlateSimulation } from '../plateSimulationTypes'
-import { detHypot } from '../../core/detMath'
+import { detHypot, detPow } from '../../core/detMath'
 
 
 
@@ -102,7 +102,11 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64A
   // on its field mesh since DEC-0036 phase 2).
   sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, stepMa, domain, membership, previousSeeds)
   advanceTerrainFeatures(sim.features, sim.motions, stepMa, domain)
+  // The shortening rate's moving mean (TerrainFeature.shorteningKmPerMyr):
+  // the old mean decays here, the boundary pass adds the epoch's share.
+  const shorteningKeep = detPow(2, -stepMa / TECTONICS_TUNING.shorteningHalfLifeMa)
   for (const feature of sim.features) {
+    if (feature.shorteningKmPerMyr) feature.shorteningKmPerMyr *= shorteningKeep
     feature.thickness *= TECTONICS_TUNING.thicknessDecayPerEpoch
     // Age-depth subsidence for oceanic features once idle (no longer fed by
     // their boundary, i.e. drifting off-ridge). Gated on epochsSinceDeposit

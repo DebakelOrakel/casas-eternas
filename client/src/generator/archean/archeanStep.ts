@@ -135,6 +135,19 @@ export const DEFAULT_ARCHEAN_PARAMS: ArcheanParams = {
     //             1500 Ma      41.8 (38.3–45.2)   37.7 (32.3–40.4)
     historyFrom: 0.15,
     historySlope: 0.27,
+    // Phase 8g (2026-10-14, npm run calibrate, 3 seeds per shape; the
+    // table in docs/decisions/fields-on-meshes.md): the history's 40
+    // epochs take 5–9 points of a 40 % world on the torus and 8–10 on the
+    // sphere, 0–5 of a 30 % one, so the toll rises faster than the line
+    // above above 30 %. With the steeper aim and the ceiling below, the
+    // Archean hands over 45–49 % (42–46 before) and a 40 % world ends at
+    // 39.0 / 37.1 % (median of 3, torus / sphere; 36.4 / 34.6 before).
+    // Nothing changes at or below 30 %.
+    historySteepFrom: 0.3,
+    historySteepSlope: 0.25,
+    // 1.3 × the 30 % aim's ramp (9.05 nuclei an epoch) is 11.8, under the
+    // nucleation's 12: the 30 % and 15 % worlds keep their ceiling.
+    ceilingOverRamp: 1.3,
   },
   mantleRms: 0.4,
   // Matches the tectonic phase's MANTLE_TUNING.diffusionPasses, so the default Archean stirs the
