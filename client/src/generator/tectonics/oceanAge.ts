@@ -176,7 +176,7 @@ export function advectOceanAge(
   age: Float64Array,
   seeds: PlateSeed[],
   motions: PlateMotion[],
-  angleStep: number,
+  stepMa: number,
   domain: Domain,
   membership: Float64Array,
   previousSeeds: readonly { x: number; y: number }[] | null = null,
@@ -203,7 +203,7 @@ export function advectOceanAge(
         nearest = s
       }
     }
-    const prev = reversePointByMotion(wx, wy, motions[nearest], angleStep, domain)
+    const prev = reversePointByMotion(wx, wy, motions[nearest], stepMa, domain)
     om.px[i] = prev.x
     om.py[i] = prev.y
     if (previousSeeds) {

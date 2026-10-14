@@ -218,6 +218,15 @@ flat map's scene and fine relief, the tile sampler, the incubator).
 
 ## Status
 
+2026-10-14: THE PLATES IN METRES (DEC-0036 phase 8f, fields-on-meshes.md).
+The plates' kinematics and the features' spacing along a boundary were
+the last of fork 6's per-unit constants in the tectonics: a motion is
+per Ma with its speeds in km/Myr, and the merge radius, the capsules'
+half-lengths, the trench's offset, the breakup's gap and reach, the
+suture and flood-basalt radii and the plumes' separation and speed are
+metres (the torus's division exact; a 200-epoch torus run is unchanged).
+The sphere's plates moved 25 % further in metres before.
+
 2026-10-12: THE ARCHEAN'S RAFTS TURN AS BODIES on the sphere (found with
 DEC-0036 phase 8b-1, fields-on-meshes.md). A raft's rigid move was the
 mean of its blobs' east/south flow, applied to each blob in its own frame

@@ -19,8 +19,8 @@ export const ELEVATION_TUNING = {
   // segment: its influence reaches far ALONG its own boundary tangent
   // (feature.tangentX/Y) and only a short distance ACROSS it. Two effects
   // fall out of that anisotropy, both deliberate:
-  //  - Along-axis reach is generous (well past terrainFeatures' MERGE_RADIUS
-  //    of 40) so consecutive features laid down along one boundary overlap
+  //  - Along-axis reach is generous (well past terrainFeatures' MERGE_RADIUS_M
+  //    of 312 km) so consecutive features laid down along one boundary overlap
   //    heavily end-to-end and blend into a single *continuous linear range*,
   //    instead of the row of distinct rounded blobs an isotropic radial
   //    falloff produced (the previous model had to keep widening a single
@@ -47,7 +47,7 @@ export const ELEVATION_TUNING = {
   // needle shows as an isolated ray. On a curved boundary the adjacent needles
   // splay apart, producing a radial starburst fanning out of each plate. A
   // range still reads as long because it's a *chain* of these features along
-  // the boundary (spaced MERGE_RADIUS=40 apart), not one long feature — so the
+  // the boundary (spaced MERGE_RADIUS_M, 312 km, apart), not one long feature — so the
   // along radius only needs to be a few times that spacing for the chain to
   // blend continuously, keeping the per-feature ellipse a modest ~3-4:1 rather
   // than a needle.
@@ -65,22 +65,22 @@ export const ELEVATION_TUNING = {
   // it survived removing trenches, keeping only active features, and aggressive
   // pruning, so it was the shape, not clutter); a capsule can't overshoot past
   // its segment ends. Half-length ~ the feature spacing (terrainFeatures'
-  // MERGE_RADIUS) so consecutive segments chain continuously.
+  // MERGE_RADIUS_M) so consecutive segments chain continuously.
   //
   // The perpendicular radii are METRES since DEC-0036 phase 8a — the
   // torus's 30 and 15 cells of 7.8 km, so the sphere's ranges have the
-  // same cross-section (they were 25 % wider there). The half-lengths stay
-  // in domain units: they are tied to the features' spacing along a
-  // boundary (terrainFeatures' MERGE_RADIUS), which the plates count in
-  // units, and a half-length shorter than half that spacing would break a
-  // range into beads.
+  // same cross-section (they were 25 % wider there). The half-lengths are
+  // metres since phase 8f (the torus's 35 and 25 cells), with the plates'
+  // speeds and the features' spacing along a boundary (terrainFeatures'
+  // MERGE_RADIUS_M): a half-length shorter than half that spacing would
+  // break a range into beads.
   rangePerpRadiusM: 234_000,
 
-  rangeSegmentHalfLength: 35,
+  rangeSegmentHalfLengthM: 273_000,
 
   trenchPerpRadiusM: 117_000,
 
-  trenchSegmentHalfLength: 25,
+  trenchSegmentHalfLengthM: 195_000,
 
   // Converts accumulated crustal thickness into actual elevation — a
   // simple isostasy-style relation (thicker/more compressed crust sits
@@ -263,7 +263,7 @@ export const ELEVATION_TUNING = {
 
   // --- from domainWarp.ts ---
   // How far, in metres, a query point can be displaced — deliberately
-  // modest relative to a feature's reach (rangeSegmentHalfLength 35 cells +
+  // modest relative to a feature's reach (rangeSegmentHalfLengthM 273 km +
   // rangePerpRadiusM above): this should read as
   // "coastlines and ridgelines are a little ragged," not "the tectonic
   // shapes are dissolved into noise." Tune by eye — this is a visual call,

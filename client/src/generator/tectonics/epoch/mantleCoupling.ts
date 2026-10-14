@@ -25,7 +25,9 @@ export function coupleMantleToPlates(sim: PlateSimulation): Float64Array {
   // (evolveMantleField).
   const membership = oceanAgeMembership(sim.rafts, sim.domain)
   sim.mantle = evolveMantleField(sim.mantle, sim.rafts, sim.domain)
-  const flow = computeMantleFlow(sim.mantle, sim.domain)
+  // The flow as the plates' velocity, domain units per Ma: the speed per
+  // unit of the buoyancy's gradient in km/Myr (DEC-0036 phase 8f).
+  const flow = computeMantleFlow(sim.mantle, sim.domain, (TECTONICS_TUNING.mantleFlowSpeedKmPerMyr * 1000) / sim.domain.metresPerUnit)
   const fitted = fitMotionsToFlow(sim.seeds, flow, sim.domain)
   for (let i = 0; i < sim.motions.length; i++) relaxMotionToward(sim.motions[i], fitted[i], TECTONICS_TUNING.mantleCouplingRate)
   return membership

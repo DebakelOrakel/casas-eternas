@@ -1,8 +1,7 @@
 import type { TerrainFeature } from '../tectonics/terrainFeatures'
-import { ELEVATION_TUNING } from './elevationTuneParams'
 import { capsuleWeight } from './capsule'
 import type { Domain } from '../core/domain'
-import { buildFeatureBuckets, nearFeatureBuckets, rangePerpRadius, trenchPerpRadius } from './elevationField'
+import { buildFeatureBuckets, nearFeatureBuckets, rangeHalfLength, rangePerpRadius, trenchHalfLength, trenchPerpRadius } from './elevationField'
 import { detExp, detLog } from '../core/detMath'
 
 // U(x) — the tectonic uplift-rate field, the erosion-v2 engine's forcing
@@ -73,6 +72,8 @@ export function computeUpliftField(
   const offset = { x: 0, y: 0 }
   const rangePerp = rangePerpRadius(domain)
   const trenchPerp = trenchPerpRadius(domain)
+  const rangeHalf = rangeHalfLength(domain)
+  const trenchHalf = trenchHalfLength(domain)
   for (let py = 0; py < outHeight; py++) {
     const wy = py * scaleY
     for (let px = 0; px < outWidth; px++) {
@@ -83,7 +84,7 @@ export function computeUpliftField(
       for (let k = 0; k < nearCount; k++) {
         for (const feature of buckets.buckets[buckets.near[k]]) {
           const isTrench = feature.kind === 'trench'
-          const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
+          const halfLength = isTrench ? trenchHalf : rangeHalf
           const perpRadius = isTrench ? trenchPerp : rangePerp
           domain.delta(wx, wy, feature.x, feature.y, offset)
           const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)

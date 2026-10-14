@@ -67,7 +67,16 @@ const MODE = process.argv[2] ?? 'check'
 // Probed 24 seeds (NATO alphabet from 'charlie'): 3 had a suture
 // (quebec, xray, zulu); quebec's left tin at 0 too (its suture not on land
 // the ecology reads); 'zulu', tried next, varies tin (xray not tried).
-const SEEDS = ['calibration', 'alpha', 'zulu']
+// 'november' replaced 'zulu' on 2026-10-14 (DEC-0036 phase 8f, the plates
+// at 16 km/Myr per unit of the mantle's gradient): at the slower plates no
+// continent of the three collided in the 20 epochs. Probed the 24 seeds
+// from 'bravo' to 'yankee' with plain plate epochs (the sutures do not
+// depend on the erosion): 5 had a suture (bravo, delta, india, november,
+// uniform); in golden's full build only delta and november left tin above
+// 0, and november is the more typical of the two (2 sutures, land 31.6 %,
+// 17 plates, lakes and ice of the other two seeds' order; delta's lakes
+// twice theirs, its ice half).
+const SEEDS = ['calibration', 'alpha', 'november']
 // The history runs COUPLED from the hand-over (phase 5.1: the mesh drifts
 // with the plates and erodes inside the epoch), as the generator runs it —
 // no plain plate epochs first. Measured 2026-09-23: 46 plain epochs made a

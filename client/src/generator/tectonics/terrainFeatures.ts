@@ -41,7 +41,7 @@ export interface TerrainFeature {
   // terrain, so a *different* boundary that happens to share only one of
   // these plates can't merge into and deposit onto this feature. Confirmed
   // empirically without this: an unrelated rift boundary drifted within
-  // MERGE_RADIUS of an established fold-mountain feature (both merely
+  // MERGE_RADIUS_M of an established fold-mountain feature (both merely
   // touching the same plate on their own far sides) and canceled it —
   // thickness went from a steady climb to strongly negative within ~25
   // epochs.
@@ -98,8 +98,9 @@ export interface TerrainFeature {
 // below computeElevation's along-tangent reach (ELEVATION_TUNING's range
 // along-axis radii, elevationTuneParams.ts) so
 // consecutive features along one boundary overlap heavily and blend into
-// a continuous ridge rather than reading as separate lumps.
-const MERGE_RADIUS = 40
+// a continuous ridge rather than reading as separate lumps. Metres since
+// DEC-0036 phase 8f (the torus's 40 cells of 7.8 km).
+const MERGE_RADIUS_M = 312_000
 
 // Weight of the current boundary tangent when refreshing an existing
 // feature's stored tangent (exponential moving average) — low, so a
@@ -141,12 +142,13 @@ export function findOrCreateFeatureIndex(
   subsides: boolean,
   domain: Domain,
 ): number {
-  const mergeRadiusSq = MERGE_RADIUS * MERGE_RADIUS
+  const mergeRadius = MERGE_RADIUS_M / domain.metresPerUnit
+  const mergeRadiusSq = mergeRadius * mergeRadius
   const offset = { x: 0, y: 0 }
   for (let i = 0; i < features.length; i++) {
     const feature = features[i]
     // Kind must also match — a trench and its own arc's range feature
-    // share the same plate pair and can drift within MERGE_RADIUS of each
+    // share the same plate pair and can drift within MERGE_RADIUS_M_M of each
     // other, but must never merge into one feature (they carry opposite-
     // sign thickness and opposite cross-sections).
     if (feature.kind !== kind) continue
@@ -199,7 +201,7 @@ export function findOrCreateFeatureIndex(
 // everywhere and the tangent stays as it was. (Neither follows the plate's
 // own turn about the point — the torus's spin never turned it either.)
 const tangent = { x: 0, y: 0 }
-export function advanceTerrainFeatures(features: TerrainFeature[], motions: PlateMotion[], angleStep: number, domain: Domain): void {
+export function advanceTerrainFeatures(features: TerrainFeature[], motions: PlateMotion[], stepMa: number, domain: Domain): void {
   for (const feature of features) {
     const fromX = feature.x
     const fromY = feature.y
@@ -208,10 +210,10 @@ export function advanceTerrainFeatures(features: TerrainFeature[], motions: Plat
       const velocityB = getVelocityAt(feature, motions[feature.plateB], domain)
       const vx = (velocityA.vx + velocityB.vx) / 2
       const vy = (velocityA.vy + velocityB.vy) / 2
-      domain.advance(feature.x, feature.y, vx * angleStep, vy * angleStep, feature)
+      domain.advance(feature.x, feature.y, vx * stepMa, vy * stepMa, feature)
     } else {
       const motion = motions[feature.movesWithPlate]
-      const rotated = advancePointByMotion(feature.x, feature.y, motion, angleStep, domain)
+      const rotated = advancePointByMotion(feature.x, feature.y, motion, stepMa, domain)
       feature.x = rotated.x
       feature.y = rotated.y
     }

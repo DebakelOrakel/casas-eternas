@@ -40,13 +40,13 @@ export function nearestPlateIndex(x: number, y: number, seeds: PlateSeed[], doma
 // one nearest the raft's first blob), re-resolved every epoch so it stays
 // correct as plate indices shift (rift/merge) without storing a stale
 // host. Splitting a raft across a rift is a later phase.
-export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMotion[], angleStep: number, domain: Domain): void {
+export function advanceRafts(rafts: Raft[], seeds: PlateSeed[], motions: PlateMotion[], stepMa: number, domain: Domain): void {
   for (const raft of rafts) {
     if (raft.blobs.length === 0) continue
     const host = nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, seeds, domain)
     const motion = motions[host]
     for (const blob of raft.blobs) {
-      const rotated = advancePointByMotion(blob.x, blob.y, motion, angleStep, domain)
+      const rotated = advancePointByMotion(blob.x, blob.y, motion, stepMa, domain)
       blob.x = rotated.x
       blob.y = rotated.y
     }

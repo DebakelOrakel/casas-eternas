@@ -274,3 +274,13 @@ stays healthy over ~260 epochs.
 
 M1 + M2 + M3 implemented (mantle field drives plates, Wilson cycle emerges,
 all three volcanism kinds ship); M4 not built
+
+2026-10-14 (DEC-0036 phase 8f, fields-on-meshes.md): the coupling is in
+physical units. A motion is in domain units (radians) per Ma, the
+tectonics reads the flow at `TECTONICS_TUNING.mantleFlowSpeedKmPerMyr`
+(16 km/Myr per unit of the buoyancy's gradient per mantle cell; the
+plates 58 / 52 km/Myr on the mean on torus / sphere over a 40-epoch
+history, 90–135 before), and the fit holds a plate's spin as if one more
+cell at rest stood one mantle spacing from its seed — small plates no
+longer spin up to 1000–8000 km/Myr at their rim. Still no force balance:
+continental plates move as fast as oceanic ones.

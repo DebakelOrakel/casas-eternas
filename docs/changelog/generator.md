@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-14
+- **changed** Tectonics: plates move at Earth's speeds, about 50 km per million years instead of two to four times that, so the ocean floor is older and deeper, and a seed makes a different world. `generator.step.tectonics`
 - **changed** Tectonics: the ocean floor has trenches up to 10 km deep where a plate sinks under another, so a seed makes a different world. `generator.step.tectonics`
 
 ## 2026-10-13

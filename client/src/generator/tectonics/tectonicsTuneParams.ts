@@ -22,9 +22,10 @@
 
 // Private, because two entries below are defined from it and an object literal
 // cannot reference its own siblings. The original file preserved its ordering
-// specifically so `breakupFreshCrustRadius` could follow the gap it comes from;
-// this keeps that link explicit instead of restating 80 twice.
-const splitGap = 80
+// specifically so `breakupFreshCrustRadiusM` could follow the gap it comes from;
+// this keeps that link explicit instead of restating it twice. Metres since
+// DEC-0036 phase 8f (the torus's 80 cells of 7.8 km).
+const splitGapM = 624_000
 
 export const TECTONICS_TUNING = {
   // A fixed grid independent of the 2048x1024 display raster — see
@@ -33,25 +34,36 @@ export const TECTONICS_TUNING = {
   detectionLatticeResolutionX: 256,
   detectionLatticeResolutionY: 128,
 
-  // Angle (radians) each plate rotates about its own center every epoch.
-  // plateMotion.ts calibrates angularSpeed so that a *full* unit of it
-  // produces the target 30-90px speed at the seed (see LINEAR_SPEED_MIN/MAX_PX) —
-  // stepping
-  // by only 0.01 of that unit per epoch (the original value here) meant
-  // actual on-screen displacement was ~0.3-0.9px/epoch, confirmed
-  // empirically (10.41px measured over 18 epochs) — technically moving, far
-  // too little to ever perceive. This is a more moderate increase (~3-4px
-  // average per epoch) — a 15x jump (0.15) was tried first and made plates
-  // sweep through complex enough configurations that the still-unbounded
-  // elevation query (see elevationField.ts's feature bucketing) hung the
-  // main thread for 10+ seconds within a single run.
-  epochAngleStep: 0.05,
-  // Separate scale for how much convergence gets deposited as uplift per
-  // epoch — deliberately decoupled from epochAngleStep above (which only
-  // governs how far plates physically move) so bumping up visible plate
-  // motion doesn't also blow through the mountain-building pacing that was
-  // already tuned against the old, smaller step.
-  upliftEpochScale: 0.01,
+  // THE PLATES' SPEED (DEC-0036 phase 8f). A plate's motion is relaxed
+  // toward the rigid fit of the mantle's surface flow (mantleCoupling),
+  // and the flow is the gradient of the Poisson potential of the mantle's
+  // buoyancy, per mantle cell (mantle/mantleField.computeMantleFlow). This
+  // is the plates' speed, km/Myr (= mm/yr), per unit of that gradient: the
+  // one constant that says how fast the mantle drags a plate. Read through
+  // domain.metresPerUnit, so the sphere's plates move as far in metres as
+  // the torus's.
+  //
+  // Until 8f the motion was in domain units per "unit of spin angle", an
+  // epoch 0.05 of it (epochAngleStep), with the flow at the Archean's
+  // scale (MANTLE_TUNING.flowSpeedScale 110): 110 × 0.05 × 7.8 km = 42.9
+  // km/Myr per unit on the torus, 53.7 on the sphere. That scale was set
+  // when the flow's Poisson solve stopped short of the broadest modes and
+  // the land was a twelfth of the surface; with the converged solve
+  // (DEC-0036 phase 1) and 30 % land (phase 8b-1) the plates ran at
+  // 70–220 km/Myr, area-weighted, after the first 10–20 epochs
+  // (Earth: about 50; 10–30 the continental plates, up to 100 the
+  // Pacific-type ones). At 16 (npm run calibrate, 12 worlds per shape,
+  // 40 epochs; the mean over epochs 10–40): 58 / 52 km/Myr torus /
+  // sphere, the fastest plate 104 / 79; over 600 plain epochs (3 seeds)
+  // 33–43 / 22–26. At 19 the 40 epochs ran at 67 / 60. See
+  // docs/decisions/fields-on-meshes.md, phase 8f.
+  mantleFlowSpeedKmPerMyr: 16,
+  // The crust a convergent boundary thickens per km it closes: a feature's
+  // deposit and the boundary's rift/merge accumulator are the convergence
+  // over the epoch, km, times this (boundaryPass). The torus's old rate,
+  // 0.01 per unit of convergence velocity at an epoch of 0.05 of its time
+  // unit: 0.01 / (0.05 × 7.8 km).
+  upliftPerKm: 0.01 / (0.05 * 7.8),
 
   // A boundary point needs to stay classified the same way for this many
   // consecutive epochs before it can trigger a rift or merge — stops a
@@ -178,12 +190,12 @@ export const TECTONICS_TUNING = {
   // narrow depression that makes a real subduction margin read as
   // asymmetric (trench + arc) rather than a symmetric bump. The trench sits
   // offset from the boundary toward the subducting plate (well past
-  // terrainFeatures' MERGE_RADIUS so it never fuses with the arc's own
+  // terrainFeatures' MERGE_RADIUS_M so it never fuses with the arc's own
   // range feature) and carries a fraction of the arc's per-epoch uplift as
   // negative thickness. Fold-mountain (continent-continent) and divergent
   // boundaries get no trench — only convergence with a downgoing oceanic
-  // slab does.
-  trenchOffset: 60,
+  // slab does. Metres since DEC-0036 phase 8f (the torus's 60 cells).
+  trenchOffsetM: 468_000,
   trenchDepthFraction: 0.6,
   // The history's trench (tectonics/trench.ts, DEC-0036 phase 8e): its
   // half-width across the plate boundary — Earth's trenches are 50–100 km
@@ -244,14 +256,15 @@ export const TECTONICS_TUNING = {
   //
   // Raft split (Phase 2d): a rift only tears a continent if it actually runs
   // through one — a raft blob must be within this distance of the rift point,
-  // else the rift is oceanic and nothing splits.
-  splitMaxDistSq: 160 * 160,
+  // else the rift is oceanic and nothing splits. Metres since DEC-0036
+  // phase 8f (the torus's 160 cells; it was a square in units²).
+  splitMaxDistM: 1_248_000,
   // How far (each side) a rift shoves the two continent halves apart — just
   // enough to open a visible gap. It no longer has to be large enough to stop
   // an immediate re-merge (the merge-immunity window below handles that); a big
   // push over-scattered the halves' blobs and made splitDisconnectedRafts
   // shatter them into many pieces.
-  splitGap,
+  splitGapM,
   // Epochs a freshly-split pair is immune from re-merging (Raft.noMergeUntilEpoch).
   // RETIRED 2026-07-25 (set to 0): this was a band-aid over fixed Euler poles that
   // pulled the halves straight back. Now that the mantle field (mantle/mantleField.ts)
@@ -295,7 +308,7 @@ export const TECTONICS_TUNING = {
   // ridges reset it to 0 and advection ages crust away from them.
   oceanAgeInit: 40,
   // The seafloor a continental breakup exposes (resetOceanAgeAround):
-  // splitRaftAtRift shoves the two halves splitGap apart in a single step,
+  // splitRaftAtRift shoves the two halves splitGapM apart in a single step,
   // and everything that gap exposes genuinely IS crust the new ridge just
   // made. Fires once per breakup. An ordinary ridge's new crust is the ocean
   // age's own since DEC-0036 phase 8e — the strip the plates open, found in
@@ -303,7 +316,7 @@ export const TECTONICS_TUNING = {
   // (93.6 km) it replaced, reset around every divergent boundary point every
   // epoch, made 2–3 × the young floor the plates' motion opens (measured:
   // 13–39 % of the ocean under 2 Ma after 40 epochs, 13–24 % without it).
-  breakupFreshCrustRadius: splitGap,
+  breakupFreshCrustRadiusM: splitGapM,
 
   // How fast a plate's motion relaxes toward the mantle-flow-fitted target each
   // epoch (inertia) — low enough that motion changes smoothly, high enough that the

@@ -28,8 +28,15 @@ export function rangePerpRadius(domain: Domain): number {
 export function trenchPerpRadius(domain: Domain): number {
   return ELEVATION_TUNING.trenchPerpRadiusM / domain.metresPerUnit
 }
+// The capsules' half-lengths along the feature, domain units.
+export function rangeHalfLength(domain: Domain): number {
+  return ELEVATION_TUNING.rangeSegmentHalfLengthM / domain.metresPerUnit
+}
+export function trenchHalfLength(domain: Domain): number {
+  return ELEVATION_TUNING.trenchSegmentHalfLengthM / domain.metresPerUnit
+}
 export function featureMaxReach(domain: Domain): number {
-  return Math.max(ELEVATION_TUNING.rangeSegmentHalfLength + rangePerpRadius(domain), ELEVATION_TUNING.trenchSegmentHalfLength + trenchPerpRadius(domain))
+  return Math.max(rangeHalfLength(domain) + rangePerpRadius(domain), trenchHalfLength(domain) + trenchPerpRadius(domain))
 }
 
 export interface FeatureBuckets {
@@ -358,6 +365,8 @@ export function upliftDeckAt(wx: number, wy: number, featureBuckets: FeatureBuck
   const nearCount = nearFeatureBuckets(featureBuckets, wx, wy)
   const rangePerp = rangePerpRadius(domain)
   const trenchPerp = trenchPerpRadius(domain)
+  const rangeHalf = rangeHalfLength(domain)
+  const trenchHalf = trenchHalfLength(domain)
 
   let upliftSum = 0
   let weightSum = 0
@@ -366,7 +375,7 @@ export function upliftDeckAt(wx: number, wy: number, featureBuckets: FeatureBuck
       // Capsule falloff (capsule.ts): the tangent's arbitrary orientation
       // sign doesn't matter — the segment is symmetric about the feature.
       const isTrench = feature.kind === 'trench'
-      const halfLength = isTrench ? ELEVATION_TUNING.trenchSegmentHalfLength : ELEVATION_TUNING.rangeSegmentHalfLength
+      const halfLength = isTrench ? trenchHalf : rangeHalf
       const perpRadius = isTrench ? trenchPerp : rangePerp
       domain.delta(wx, wy, feature.x, feature.y, offset)
       const weight = capsuleWeight(offset.x, offset.y, feature.tangentX, feature.tangentY, halfLength, perpRadius)

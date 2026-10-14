@@ -23,7 +23,9 @@ export const MANTLE_TUNING = {
   // the periodic Poisson source stays solvable).
   decayKeep: 0.955,
   clamp: 2.5,
-  // Scales the raw ∇φ flow to world pixels/epoch — tuned so plate speeds land in a
-  // reasonable range (see plateMotion's LINEAR_SPEED_*). Calibrated by harness.
+  // Scales the raw ∇φ flow (per mantle cell) to domain units per ARCHEAN
+  // epoch: the Archean's rafts drift on it (archeanStep). The tectonics'
+  // plates read the same gradient at their own scale, in km/Myr
+  // (TECTONICS_TUNING.mantleFlowSpeedKmPerMyr, DEC-0036 phase 8f).
   flowSpeedScale: 110,
 } as const

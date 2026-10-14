@@ -200,6 +200,211 @@ done before or beside it.
 
 ## Status
 
+2026-10-14: **phase 8f BUILT — the plates' speed in km/Myr, and the
+lengths left in cells.** Measured with `npm run calibrate seeds=12
+archeanMa=1000 landShare=30 sweep=1 sweeps=genesis.landShare
+sweepSeeds=3` against 8e's run (12 worlds per shape, the same seeds), the
+plates' speed new in the calibration (`speedPerEpoch`, `plateSpeed*`: the
+velocity at each cell of the ocean age's mesh by its nearest seed's
+plate, area-weighted, the mean over epochs 10–40); the diagnosis with the
+plates' epochs alone (no erosion) to 200 and 600 epochs, 3 seeds per
+shape. Earth: about 50 mm/yr = 50 km/Myr on the mean, 10–30 the
+continental plates, up to about 100 the Pacific-type ones, 150–200 the
+fastest in the past; the supercontinent cycle 400–600 Ma.
+
+**The diagnosis.** Three causes, none a step size alone.
+
+- *The scale lost its calibration twice.* A plate's motion relaxes toward
+  the rigid fit of the mantle's surface flow, the gradient of the
+  Poisson potential of the buoyancy — the flow grows with the
+  wavelength of the buoyancy, so a supercontinent's broad insulation
+  dome drives the fastest plates. The scale (MANTLE_TUNING.flowSpeedScale
+  110, at 0.05 of the motion's time unit an epoch) was set when the
+  flow's solve stopped short of the broadest modes (fixed in phase 1)
+  and the land was a twelfth of the surface (30 % since 8b-1). Measured
+  (no erosion, 2 seeds per shape): 18–29 km/Myr at the hand-over (the
+  fresh motions), the fit's own speed 50–130 there, 90–135 on the mean
+  over epochs 10–40 (175–200 at the peak, epochs 15–25, when the
+  Archean's supercontinent domes), 58–125 over 200 epochs (with the
+  spin held, below).
+- *The sphere moved 25 % further.* The motions were in domain units: the
+  sphere's unit is 9.77 km against the torus's 7.8.
+- *Small plates spun.* A plate over 1–6 mantle cells near its seed has
+  Σ w r² near 0, and its fitted spin was the flow's shear over almost
+  nothing: 40–234 rad per unit of spin angle (torus, seed alpha, epochs
+  84–92), 15 % of it kept each epoch, and the next epoch the plate's
+  Voronoi cell grew back over 2000 cells and its rim ran at 1000–8000
+  km/Myr (the area-weighted mean of the world 550–980). The sphere's
+  3 × 3 fit has the same singularity about the seed's vertical; it
+  stayed under 300 km/Myr in the runs.
+
+There is no force balance in the model (no slab pull, no ridge push, no
+basal drag): the plates follow the flow kinematically, and so the
+speed is the flow's scale, one constant.
+
+**The changes.**
+
+- *The kinematics in physical units* (tectonics/plateMotion.ts): a
+  motion is in domain units (radians) per Ma, an epoch moves it by its
+  Ma (`sim.epochMa`, 1); `epochAngleStep` is gone. The tectonics reads
+  the flow at its own scale, `TECTONICS_TUNING.mantleFlowSpeedKmPerMyr`
+  (km/Myr per unit of the buoyancy's gradient per mantle cell), through
+  `domain.metresPerUnit` — the sphere's plates move as far in metres as
+  the torus's. The Archean keeps flowSpeedScale (its rafts, bit for bit).
+  A fresh plate starts at 11.7–35.1 km/Myr (the torus's old 30–90 units
+  per unit at 0.05). The boundary's deposit and its rift/merge
+  accumulator are the epoch's convergence in km times
+  `upliftPerKm` (the torus's old rate, 0.01 / (0.05 × 7.8 km)).
+- *The spin at the mantle's cell*: the fit holds the spin as if the
+  plate had one more cell, at rest, one spacing from its seed (Σ w r² +
+  w̄ h² on the torus, w̄ h² ŝ ŝᵀ on the sphere): a plate of one cell
+  turns no faster than the flow across one cell; a plate of N cells
+  moves by about h² / (N r̄²).
+- *The scale*: 42.9 km/Myr per unit was the torus's old one (53.7 the
+  sphere's); 16 now. At 19 (12 worlds) the 40 epochs ran at 67 / 60
+  km/Myr; 16 against 19 on 3 seeds changed nothing else beyond the
+  seeds' spread.
+- *Not tuned, decided by measurement*: the deposit per km was kept, not
+  the deposit per epoch. Keeping the deposit per epoch (upliftPerKm ×
+  2.26 at 19, 200 epochs, 3 seeds per shape) let the plate count fall
+  to 3 on four of six worlds and run to 25 on two; per km it stayed
+  7–17. HISTORY_DEFAULTS.upliftScale 5 against 4 (3 seeds) raised the
+  mean land height 40–100 m but the peaks 0.8–0.9 km and the land above
+  2000 m to 9 % on the sphere: not changed.
+
+**The worlds** (12 per shape; medians, torus / sphere; before = 8e):
+
+| | Earth | before | after |
+|---|---|---|---|
+| plate speed, area-weighted mean over epochs 10–40, km/Myr | ~50 | 90–135 (2 seeds, no erosion) | 58 / 52 (p10–p90 41–68 / 43–61) |
+| p90 / fastest plate's mean, km/Myr | — / 100–200 | 120–275 / up to 8000 | 99 / 74; 104 / 79 |
+| continental / oceanic cells, km/Myr | 10–30 / 50–100 | ~equal | 57 / 58 · 48 / 53 |
+| speed at the hand-over, then per 10 epochs (mean) | — | 18–29, 55–105, 125–200, … | 22, 30 / 28, 64 / 56, 65 / 64, 66 / 62 |
+| over 600 plain epochs (3 seeds) | — | 51–99 (at 42.9 with the spin held) | 33–43 / 9–26 |
+| supercontinent assembly (largest continent ≥ 85 % after < 60 %), interval | 400–600 Ma | 75–160 Ma | 15–175 Ma (torus), noisy; see below |
+| plates | — | 14.5 / 12 | 14.5 / 12 |
+| land, % (target 30) | — | 30.2 / 25.0 | 32.3 / 27.7 |
+| land at landShare 15 / 40 (3 seeds) | — | 15.8 / 37.4 · 13.8 / 37.3 (8b-1, 12 seeds) | 16.6 / 36.4 · 14.3 / 34.6 |
+| largest landmass, % of the land | — | 82 / 72 | 68 / 63 |
+| ocean depth mean / median, m | 3682 / ~4100 | 3503 / 3605 · 3506 / 3578 | 3987 / 4131 · 4126 / 4262 |
+| 0–1 km / 1–4 km / 4–6 km / > 6 km, % of the ocean | 11.7 / 35.2 / 52.1 / 1.0 | 5.7 / 66.9 / 28.4 / 0.35 · 5.7 / 66.1 / 25.9 / 0.26 | 8.5 / 34.3 / 51.6 / 1.7 · 8.8 / 30.6 / 55.5 / 2.6 |
+| floor age mean / median, Ma | ~62 / — | 12.7 / 8.4 · 9.9 / 7.2 | 31.5 / 16.6 · 34.6 / 19.6 |
+| floor younger than 10 Ma, % | ~10 | 56.4 / 60.2 | 30.2 / 27.4 |
+| shelf, % of the ocean | 7.3 | 2.6 / 2.8 | 4.1 / 4.5 |
+| mean land height, m (target 700–900) | ~840 | 772 / 709 | 622 / 635 |
+| land > 2000 / 3000 / 4500 m, % | ~5 / — / ~0.4 | 4.79 / 1.40 / 0.092 · 4.79 / 0.82 / 0.135 | 4.57 / 1.34 / 0.16 · 4.61 / 0.99 / 0.11 |
+| land p99.9, m; peak, m | — | 4456 / 4635; 6015 / 5553 | 4835 / 4583; 6337 / 5674 |
+| lakes, % of the land (open) | ~2–4 | 11.2 (4.3) / 6.7 (5.1) | 8.8 (3.5) / 6.5 (4.0) |
+| ice, % of the land | ~10 | 38.2 / 13.6 | 35.3 / 13.8 |
+| Köppen A / B / C / D / E, % | — | 11.4 / 23.2 / 9.1 / 19.3 / 36.6 · 21.0 / 29.6 / 17.7 / 18.9 / 10.0 | 11.9 / 26.0 / 9.9 / 22.3 / 30.8 · 25.0 / 29.4 / 17.5 / 17.3 / 10.7 |
+| a history epoch, s (40 epochs) | — | 10.2 / 11.2 | 9.1 / 10.4 |
+
+The ocean is now Earth's by its depth bands — the 4–6 km floor 52–56 %
+(Earth 52), 1–4 km 31–34 % (35) — and its mean is 300–450 m deeper than
+Earth's, because its shelves and slopes hold 4 % of it, not 7. The floor
+is 2.5–3.5 × as old and still half of Earth's in 40 epochs: it starts at
+`oceanAgeInit` 40 Ma at the hand-over, and the plates make it in the
+window they have; over 600 plain epochs the mean age is 26–62 Ma. The
+land share holds its target at 15 and 30 (±3); at 40 the sphere's three
+seeds stand at 34.6 (median, −5.4; 8b-1 measured 37.3 on 12). The mean
+land height fell 75–150 m below the 700–900 target, the 1–2 km band of
+the land (above 1 km 17 % against 25 on the torus): in 40 Ma the slower
+plates close less, and fewer continents collide (the largest landmass
+68 / 63 % against 82 / 72); the high ground holds at the 40th epoch.
+
+**The transient peaks** (the calibration's peak every tenth epoch, 24
+worlds): above 10 km on 6 worlds after, 3 before; the highest 14.6 km
+(epoch 30) after, 11.6 km (epoch 20) before. Torus juliett ends at 11.8
+km. Not a node spike: the top node's neighbours stand 100–250 m lower,
+and it is a narrow range that climbs about 0.9 km/Ma for 12 epochs, then
+holds at 11.5–12.5 km. Two mechanisms that were there before 8f let such
+a range escape. (1) The force balance reads a REGIONAL mean height (σ
+150 km), so a narrow range in lowland is not held. (2) The buzzsaw cuts
+only where the node has ice: juliett's top node had none in 30 of 40
+epochs (dry). Before 8f the same seed reached 10.6 km at epoch 12, with
+ice at the top in 35 of 40 epochs, and came down to 6.9 km by epoch 40.
+8f amplifies them through the uplift: the history's uplift field is
+normalised per world (elevation/upliftField, its peak is 1), so its rate
+does not follow the plates' speed. A node that drifts through an orogen
+at half the speed stays twice as long under the full rate. Golden's
+calibration world shows it: its top region moves 78 km in 20 epochs at
+16, against 226 km at the old scale (current code at 42.9). Its peak at
+epoch 20 is 10.5 km at 16 and 6.1 km at 42.9 (6.9 km before 8f). Not
+fixed: tying the uplift's rate to the convergence (a deposit rate per
+feature, or the normalisation by a fixed thickness) is a model change.
+It would need upliftScale calibrated again.
+
+**The cycle** (600 plain epochs, 3 seeds per shape): the largest
+continent's share of the continental area flickers as two continents
+touch and part, so the interval between assemblies is noisy: 75–160 Ma
+at the old scale (with the spin held), 15–175 Ma at 16 on the torus; on
+the sphere one assembly in 600 Ma on one seed, none on the other two. Not
+Earth's 400–600 Ma; the cycle is the mantle's (insulation, decay,
+diffusion), and its speed of reorganisation is per epoch, not tied to
+the plates.
+
+**Found, not fixed.** (1) *Continental plates move as fast as oceanic
+ones* (Earth: 2–5 × slower): no keel drag in the model; a speed by the
+plate's continental share would be its first step. (2) *Clustered
+seeds freeze a world*: on the sphere (seed zulu, 600 plain epochs at 16)
+from about epoch 200 eleven seeds of twelve crowd one region, the
+mantle's cells flip between them every epoch, a plate with no cell fits
+no motion and relaxes toward rest, and the plates move at 6–10 km/Myr
+against a fit of 35–50 for 400 epochs (the ocean age frozen with them);
+at the old scale the same seed's floor went young everywhere instead.
+No merge fires: the accumulators need convergence. Past the screen's
+100 epochs, but the fit's nearest-seed footprint is the cause. (3) The
+sphere's 40 % land share (above).
+
+**The lengths left in cells, now metres** (DEC-0035 fork 6's list; the
+torus's division exact, every value / 7 800 the old number of cells —
+a 200-epoch torus run at the old scale prints the same speeds, plates,
+land and ocean age at every fifth epoch): `trenchOffsetM` 468 000 (60),
+`splitGapM` and `breakupFreshCrustRadiusM` 624 000 (80), `splitMaxDistM`
+1 248 000 (160, a square in units² before), terrainFeatures'
+`MERGE_RADIUS_M` 312 000 (40), the capsules' `rangeSegmentHalfLengthM`
+273 000 (35) and `trenchSegmentHalfLengthM` 195 000 (25), the erodibility's
+`sutureRadiusM` 351 000 (45), `sutureHalfLengthM` (the range's), the flood
+basalts' `floodRadiusMinM` / `MaxM` 156 000 / 468 000 (20 / 60) and
+`floodRadiusPerThicknessM` 15 600 (2); the plumes' separation
+`PLUME_MIN_SEPARATION_M` 1 118 208 (0.14 of the chart's height, 1024
+cells; 1400 km on the sphere before) and their speed
+`PLUME_MAX_SPEED_KM_PER_MYR` 23.4 (3 cells an epoch). Already metres or
+Ma: the climate's reaches, the coast's reaches and cliffs, the channel's
+areas, the ecology's reaches. Left, with reasons: amplify's
+`RELIEF_RADIUS_FRACTION` (1/64 of the level raster's width, 250 km on the
+torus) and `RIDGE_OCTAVE_CELLS` (a chart lattice, not read through
+globeOctaveOn) — the level bake's synthesis, keyed by AMPLIFY_CONSTANTS,
+a change of its artifacts; the migration's costs per climate cell (its
+own screen, not in the spec); the mantle's diffusion counted in its cells
+(its mesh is by area, 125 km on both shapes); the per-epoch rates and
+durations (an epoch is 1 Ma, fixed: they are Ma already, and the
+Archean's 5 Ma epochs share MANTLE_TUNING's per-epoch rates by design).
+
+Guards: `make lint`, `harness:roundtrip`, `harness:mesh`, `harness:fields`
+pass; `harness:pipeline` passes with one fixture moved (the loaded
+hydrology's world grows 24 Archean epochs, not 22: at 22 no river is wide
+enough for a course, and the check compares courses). `harness:golden`:
+at the slower plates no world of the three had a suture after its 20
+coupled epochs. `tectonics.sutures`, `eco.tin.mean` and `eco.tin.rich`
+were 0 on all three, and the coverage check failed. So 'november' took
+the place of 'zulu', as in phase 1 (decided by the user). Of the 24
+seeds from 'bravo' to 'yankee', 5 had a suture after 20 plain plate
+epochs, and 2 had tin above 0 in golden's build (delta, november).
+november is the more typical one (2 sutures, land 31.6 %, 17 plates).
+Golden then re-recorded. Its two largest drifts were not bugs.
+`erosion.deltaCells` (+1527 % on calibration) counts every sea cell
+whose height rose over the last epoch. The sea level's change moves
+every sea node (coupledEpoch's seaShift). After 8f, the sea fell 0.7 m
+in calibration's last epoch (it rose 9 m before), so the count took in
+nearly the whole ocean. Among the probed seeds the count is 90–124 k or
+1.35–1.44 M, by that sign. This is a weakness of the metric from before
+8f, reported, not fixed. `elevation.maxM` (6.9 → 10.5 km) is the
+transient peak above.
+The ocean age's and the mantle's pentagons on the sphere: max |z| 0.76 /
+1.79 (median of 12), mean rank 0.36 / 0.46 — no field-mesh operator was
+touched.
+
 2026-10-14: **phase 8e BUILT — the ocean depth.** Measured with `npm run
 calibrate seeds=12 archeanMa=1000 landShare=30 sweep=0` before and after
 (12 worlds per shape, the same seeds); the ocean's distributions are new

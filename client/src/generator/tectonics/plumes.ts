@@ -1,6 +1,7 @@
 import type { Domain } from '../core/domain'
 import { mantleMesh } from '../mantle/mantleField'
 import { detHypot, sq } from '../core/detMath'
+import { TECTONIC_MA_PER_EPOCH } from '../core/worldTime'
 
 // Mantle plumes, derived from the mantle field rather than scattered at random.
 //
@@ -50,14 +51,18 @@ const PLUME_RETIRE_THRESHOLD = 0.55
 // the mantle actually organises itself into — the same way the plate count comes from
 // the convection cells. Capped because vigorous convection can offer a great many.
 const PLUME_MAX_COUNT = 8
-// Two plumes closer than this are one upwelling found twice.
-const PLUME_MIN_SEPARATION_FRAC = 0.14
-// Hard ceiling on how far a plume may travel in one epoch, in world pixels.
+// Two plumes closer than this, metres, are one upwelling found twice. A
+// fraction of the chart's height until DEC-0036 phase 8f (0.14 × 1024
+// cells of the torus's 7.8 km; on the sphere's 10 000 km from pole to pole
+// it was 25 % longer).
+const PLUME_MIN_SEPARATION_M = 1_118_208
+// Hard ceiling on how fast a plume may travel, km/Myr (= mm/yr; the
+// torus's 3 cells an epoch until DEC-0036 phase 8f).
 //
 // The field is slow enough that this rarely binds — it is insurance. A plume that
 // jumps would silently break its chain into unrelated dots, and that is the kind of
 // fault that is noticed only long after it is introduced.
-const PLUME_MAX_STEP_PX = 3
+const PLUME_MAX_SPEED_KM_PER_MYR = 23.4
 
 
 // The strongest upwellings, strongest first, thinned so each is a distinct one.
@@ -81,7 +86,6 @@ export interface Plume {
 // A site is a cell of the mantle's field mesh no neighbour of which is higher
 // (its Voronoi neighbours, DEC-0036), at the cell's centre.
 export function findPlumeSites(mantle: Float64Array, domain: Domain, epoch = 0, exclude: Plume[] = []): Plume[] {
-  const { width, height } = domain
   const { mesh } = mantleMesh(domain)
   let nextId = exclude.reduce((m, p) => Math.max(m, p.id), -1) + 1
   const candidates: { x: number; y: number; strength: number }[] = []
@@ -96,7 +100,7 @@ export function findPlumeSites(mantle: Float64Array, domain: Domain, epoch = 0, 
     candidates.push({ x: mesh.x[i], y: mesh.y[i], strength: v })
   }
   candidates.sort((a, b) => b.strength - a.strength)
-  const minSepSq = sq(PLUME_MIN_SEPARATION_FRAC * Math.min(width, height))
+  const minSepSq = sq(PLUME_MIN_SEPARATION_M / domain.metresPerUnit)
   const chosen: { x: number; y: number }[] = exclude.map((p) => ({ x: p.x, y: p.y }))
   const fresh: Plume[] = []
   for (const c of candidates) {
@@ -118,6 +122,8 @@ export function findPlumeSites(mantle: Float64Array, domain: Domain, epoch = 0, 
 export function advancePlumes(plumes: Plume[], mantle: Float64Array, domain: Domain, epoch: number): void {
   const { mesh, sampler } = mantleMesh(domain)
   const toward = { x: 0, y: 0 }
+  // The ceiling over one epoch, domain units.
+  const maxStep = (PLUME_MAX_SPEED_KM_PER_MYR * 1000 * TECTONIC_MA_PER_EPOCH) / domain.metresPerUnit
   for (const plume of plumes) {
     // Uphill by one step on the mesh's graph: the cell the plume is in
     // against its neighbours, a step toward the highest of them that is
@@ -134,7 +140,7 @@ export function advancePlumes(plumes: Plume[], mantle: Float64Array, domain: Dom
     if (target < 0) continue
     domain.delta(mesh.x[target], mesh.y[target], plume.x, plume.y, toward)
     const len = detHypot(toward.x, toward.y) || 1
-    const step = Math.min(PLUME_MAX_STEP_PX, len)
+    const step = Math.min(maxStep, len)
     domain.advance(plume.x, plume.y, (toward.x / len) * step, (toward.y / len) * step, plume)
   }
   for (let i = plumes.length - 1; i >= 0; i--) {

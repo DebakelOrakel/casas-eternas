@@ -16,7 +16,7 @@ import { TECTONICS_TUNING } from './tectonicsTuneParams'
 //
 // WHERE: on the plate boundary itself — a trench is the subducting plate's
 // leading edge (not the trench features of the synthesis, which stand
-// TECTONICS_TUNING.trenchOffset inside the subducting plate and pile up
+// TECTONICS_TUNING.trenchOffsetM inside the subducting plate and pile up
 // wherever a boundary has been). At a point, the nearest two plates and
 // the point's distance to their bisector, the boundary; the boundary is a
 // trench where the two converge as a subduction or an island arc

@@ -31,12 +31,20 @@ const offset = { x: 0, y: 0 }
 // a sphere world holds only Euler motions, a torus world only rigid ones.
 export type PlateMotion = RigidMotion | EulerMotion
 
+// THE UNITS (DEC-0036 phase 8f): a velocity is in domain units per Ma
+// (the tectonic epoch is TECTONIC_MA_PER_EPOCH Ma), and a turn in radians
+// per Ma. The speeds the tuning states are km/Myr (= mm/yr) and are read
+// through `domain.metresPerUnit`, so a plate moves as far in metres on the
+// sphere as on the torus. Until 8f a velocity was per "unit of spin
+// angle", an abstract time an epoch took 0.05 of, in domain units — 25 %
+// further in metres on the sphere.
 export interface RigidMotion {
-  // Translation per unit spin-angle (the same abstract time unit angularSpeed
-  // used) — the velocity a point AT the centroid has.
+  // Translation, domain units per Ma — the velocity a point AT the
+  // centroid has.
   driftX: number
   driftY: number
-  // Signed angular speed about (centroidX, centroidY): direction (sign) + rate.
+  // Signed angular speed about (centroidX, centroidY), radians per Ma:
+  // direction (sign) + rate.
   spin: number
   // The plate's reference point the spin turns about (its seed at generation).
   // Fixed — velocity is invariant to this choice since drift compensates.
@@ -46,11 +54,10 @@ export interface RigidMotion {
 
 // A plate's motion on the sphere: the rotation about the unit axis
 // (poleX, poleY, poleZ) — the Euler pole, in the globe's frame, where
-// Domain.noise.frame puts a point — at `rate` radians per unit of the
-// torus's spin-angle time (so a velocity ω × r is in domain units per
-// that unit, like the torus's drift, and an epoch is a turn by
-// rate · epochAngleStep). Right-handed about the pole, rate ≥ 0: a motion
-// at rest keeps its last pole and has rate 0.
+// Domain.noise.frame puts a point — at `rate` radians per Ma (so a
+// velocity ω × r is in domain units per Ma, like the torus's drift, and
+// an epoch is a turn by rate · its Ma). Right-handed about the pole,
+// rate ≥ 0: a motion at rest keeps its last pole and has rate 0.
 export interface EulerMotion {
   poleX: number
   poleY: number
@@ -103,8 +110,8 @@ function rotateOnGlobe(x: number, y: number, kx: number, ky: number, kz: number,
 // The Euler pole of a fresh sphere plate: at an arc of 30° to 90° from its
 // seed (sin θ from 0.5 to 1 — Earth's plates turn about poles of that order
 // from their interiors), in a random direction, at the rate that gives the
-// seed the torus's speed range, LINEAR_SPEED_MIN_PX..MAX_PX. The same four
-// draws per plate as the torus.
+// seed the torus's speed range, FRESH_SPEED_MIN..MAX_KM_PER_MYR. The same
+// four draws per plate as the torus.
 const EULER_POLE_ARC_MIN = Math.PI / 6
 const EULER_POLE_ARC_MAX = Math.PI / 2
 
@@ -113,7 +120,7 @@ function generateEulerMotion(seed: PlateSeed, domain: Domain, random: () => numb
   globe.frame(seed.x, seed.y, frameA)
   const arc = EULER_POLE_ARC_MIN + random() * (EULER_POLE_ARC_MAX - EULER_POLE_ARC_MIN)
   const azimuth = random() * Math.PI * 2
-  const targetSpeed = LINEAR_SPEED_MIN_PX + random() * (LINEAR_SPEED_MAX_PX - LINEAR_SPEED_MIN_PX)
+  const targetSpeed = freshSpeed(random(), domain)
   const direction = random() < 0.5 ? 1 : -1
   // The pole: the seed's unit vector turned by `arc` toward the azimuth's
   // tangent direction, cos(azimuth) east + sin(azimuth) south.
@@ -139,13 +146,25 @@ function generateEulerMotion(seed: PlateSeed, domain: Domain, random: () => numb
 const ROTATION_RADIUS_MIN_FACTOR = 0.5
 const ROTATION_RADIUS_MAX_FACTOR = 2.5
 
-// Target linear speed, in world pixels per full unit of angular speed, at the
-// plate's own seed; spin is derived to reproduce it at whatever radius the plate
-// ended up with. The range was originally chosen to make a legible velocity arrow
-// on a debug overlay that no longer exists — it survives as the calibration these
-// numbers were actually fitted to, not as something still checkable on screen.
-const LINEAR_SPEED_MIN_PX = 30
-const LINEAR_SPEED_MAX_PX = 90
+// A fresh plate's speed at its own seed, km/Myr (= mm/yr); its spin is
+// derived to give it at whatever radius the plate ended up with. The
+// hand-over's plates and a plate born in the churn start here; the mantle
+// coupling then relaxes them toward the flow. The range is the torus's
+// old one, 30–90 domain units per unit of spin angle at 0.05 of it an
+// epoch (11.7–35.1 km/Myr; DEC-0036 phase 8f): Earth's plates move at
+// 10–100 mm/yr, the continental ones at the low end.
+const FRESH_SPEED_MIN_KM_PER_MYR = 11.7
+const FRESH_SPEED_MAX_KM_PER_MYR = 35.1
+
+// A fresh speed drawn from u in [0, 1), domain units per Ma.
+function freshSpeed(u: number, domain: Domain): number {
+  return ((FRESH_SPEED_MIN_KM_PER_MYR + u * (FRESH_SPEED_MAX_KM_PER_MYR - FRESH_SPEED_MIN_KM_PER_MYR)) * 1000) / domain.metresPerUnit
+}
+
+// A velocity in domain units per Ma, as km/Myr (= mm/yr).
+export function kmPerMyr(unitsPerMa: number, domain: Domain): number {
+  return (unitsPerMa * domain.metresPerUnit) / 1000
+}
 
 export function generatePlateMotions(seeds: PlateSeed[], domain: Domain, random: () => number): PlateMotion[] {
   if (domain.noise.kind === 'globe') return seeds.map((seed) => generateEulerMotion(seed, domain, random))
@@ -158,7 +177,7 @@ export function generatePlateMotions(seeds: PlateSeed[], domain: Domain, random:
     const angle = random() * Math.PI * 2
     const centerX = seed.x + detCos(angle) * radius
     const centerY = seed.y + detSin(angle) * radius
-    const targetSpeed = LINEAR_SPEED_MIN_PX + random() * (LINEAR_SPEED_MAX_PX - LINEAR_SPEED_MIN_PX)
+    const targetSpeed = freshSpeed(random(), domain)
     const direction = random() < 0.5 ? 1 : -1
     const spin = (direction * targetSpeed) / radius
     // Velocity of the centroid (= seed) under rotation about the offset center:
@@ -193,8 +212,8 @@ export function getVelocityAt(point: PlateSeed, motion: PlateMotion, domain: Dom
   return { vx: motion.driftX - ry * motion.spin, vy: motion.driftY + rx * motion.spin }
 }
 
-// Advances a point by one finite motion step: rotate about the centroid by
-// `spin · step`, then translate by `drift · step` (wrapped). Replaces the old
+// Advances a point by one finite motion step of `step` Ma: rotate about the
+// centroid by `spin · step`, then translate by `drift · step` (wrapped). Replaces the old
 // pure rotation advection (Domain.rotateAround) — a rigid transform (rotation + translation),
 // the drift+spin form of the same per-epoch move.
 // On the sphere the turn about the Euler pole by rate · step.
@@ -230,9 +249,23 @@ export function reversePointByMotion(x: number, y: number, motion: PlateMotion, 
 // closest to the flow u_i (the cell's east/south flow as a 3D tangent
 // vector) over the plate's cells, each weighted by its area:
 // Σ w (|r|² I − r rᵀ) ω = Σ w (r × u), a 3 × 3 system per plate.
+//
+// THE SPIN IS HELD AT THE MANTLE'S CELL (DEC-0036 phase 8f). The flow
+// resolves no turn smaller than one of its cells, and a plate over a few
+// cells close to its seed has Σ w r² near 0: its spin was the flow's
+// shear divided by almost nothing. Measured on the torus (seed alpha,
+// 2048 × 1024): plates of 1–6 mantle cells fitted spins of 40–234 rad
+// per unit of spin angle, the relaxation carried 15 % of that, and when
+// the plate's Voronoi cell grew again the next epoch its rim moved at
+// 1 000–8 000 km/Myr. The fit holds the spin as if the plate had one more
+// cell, at rest, an arm of one spacing h from its seed (Σ w r² + w̄ h² on
+// the torus, w̄ h² ŝ ŝᵀ about the seed's vertical ŝ on the sphere; w̄ the
+// mean cell): a plate of one cell turns no faster than the flow across
+// one cell, a plate of N cells fits as before to about h² / (N r̄²).
 export function fitMotionsToFlow(seeds: PlateSeed[], flow: MantleFlow, domain: Domain): PlateMotion[] {
   if (domain.noise.kind === 'globe') return fitEulerMotionsToFlow(seeds, flow, domain)
-  const { mesh, totalArea } = mantleMesh(domain)
+  const { mesh, totalArea, cellUnits } = mantleMesh(domain)
+  const armSq = cellUnits * cellUnits
   // Areas in units of the mean cell: 1 per cell on the torus's even hexagons,
   // so a sum below counts cells as the raster's did.
   const unit = mesh.count / totalArea
@@ -258,6 +291,8 @@ export function fitMotionsToFlow(seeds: PlateSeed[], flow: MantleFlow, domain: D
     sumRsq[best] += w * (rx * rx + ry * ry)
     weight[best] += w
   }
+  // The one cell at rest (w̄ = 1 in these units).
+  for (let p = 0; p < n; p++) sumRsq[p] += armSq
   return seeds.map((seed, p) => ({
     driftX: weight[p] > 0 ? sumUx[p] / weight[p] : 0,
     driftY: weight[p] > 0 ? sumUy[p] / weight[p] : 0,
@@ -283,7 +318,8 @@ function nearestSeed(seeds: PlateSeed[], x: number, y: number, domain: Domain): 
 
 function fitEulerMotionsToFlow(seeds: PlateSeed[], flow: MantleFlow, domain: Domain): EulerMotion[] {
   const globe = globeOf(domain)
-  const { mesh } = mantleMesh(domain)
+  const { mesh, totalArea, cellUnits } = mantleMesh(domain)
+  const armSq = cellUnits * cellUnits
   const n = seeds.length
   // Per plate the six entries of the symmetric matrix (xx, yy, zz, xy, xz,
   // yz) and the right-hand side.
@@ -314,6 +350,22 @@ function fitEulerMotionsToFlow(seeds: PlateSeed[], flow: MantleFlow, domain: Dom
     b[best * 3] += w * (ry * uz - rz * uy)
     b[best * 3 + 1] += w * (rz * ux - rx * uz)
     b[best * 3 + 2] += w * (rx * uy - ry * ux)
+  }
+  // The one cell at rest: w̄ h² ŝ ŝᵀ, ŝ the seed's vertical.
+  const restArm = (totalArea / mesh.count) * armSq
+  for (let p = 0; p < n; p++) {
+    globe.frame(seeds[p].x, seeds[p].y, frameA)
+    const R = globe.radius
+    const sx = frameA.px / R
+    const sy = frameA.py / R
+    const sz = frameA.pz / R
+    const o = p * 6
+    m[o] += restArm * sx * sx
+    m[o + 1] += restArm * sy * sy
+    m[o + 2] += restArm * sz * sz
+    m[o + 3] += restArm * sx * sy
+    m[o + 4] += restArm * sx * sz
+    m[o + 5] += restArm * sy * sz
   }
   return seeds.map((_, p) => {
     const o = p * 6

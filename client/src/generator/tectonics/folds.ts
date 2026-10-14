@@ -1,7 +1,6 @@
 import { capsuleWeight } from '../elevation/capsule'
-import { ELEVATION_TUNING } from '../elevation/elevationTuneParams'
 import type { Domain } from '../core/domain'
-import { nearFeatureBuckets, rangePerpRadius, type FeatureBuckets } from '../elevation/elevationField'
+import { nearFeatureBuckets, rangeHalfLength, rangePerpRadius, type FeatureBuckets } from '../elevation/elevationField'
 import { TECTONICS_TUNING } from './tectonicsTuneParams'
 import { detCos, detSin } from '../core/detMath'
 
@@ -46,13 +45,14 @@ export function foldFactorAt(buckets: FeatureBuckets, x: number, y: number, doma
   let bestWeight = 0
   let across = 0
   const perpRadius = rangePerpRadius(domain)
+  const halfLength = rangeHalfLength(domain)
   for (let k = 0; k < nearCount; k++) {
     for (const feature of buckets.buckets[buckets.near[k]]) {
       if (feature.kind !== 'range' || feature.thickness <= 0) continue
       domain.delta(x, y, feature.x, feature.y, offset)
       const offX = offset.x
       const offY = offset.y
-      const weight = capsuleWeight(offX, offY, feature.tangentX, feature.tangentY, ELEVATION_TUNING.rangeSegmentHalfLength, perpRadius)
+      const weight = capsuleWeight(offX, offY, feature.tangentX, feature.tangentY, halfLength, perpRadius)
       if (weight <= bestWeight) continue
       bestWeight = weight
       // The signed distance across the range: along its normal.

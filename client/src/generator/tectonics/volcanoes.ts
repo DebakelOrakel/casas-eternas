@@ -15,7 +15,7 @@ export interface Volcano {
 }
 
 // World-cell size for grid-thinning the volcanic-arc markers: a long subduction zone
-// has one range feature every ~MERGE_RADIUS (40px), so hundreds accumulate — one
+// has one range feature every ~MERGE_RADIUS_M (312 km), so hundreds accumulate — one
 // (tallest) cone per this-size cell keeps the arc reading as a dotted chain without
 // flooding the marker layer. Hotspots/flood basalts are few, so they're never thinned.
 const ARC_MARKER_CELL = 60

@@ -8,6 +8,7 @@ import { getVelocityAt, motionMovingAt } from '../plateMotion'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import { MERGE_OVERLAP_FACTOR, RAFT_CONNECT_FACTOR } from '../../crust/crustTuneParams'
 import { findOrCreateFeatureIndex } from '../terrainFeatures'
+import { sq } from '../../core/detMath'
 import type { PlateSimulation } from '../plateSimulationTypes'
 import type { BoundaryPassResult } from './boundaryPass'
 
@@ -76,7 +77,7 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
     const cny = seedOffset.y
     const cnl = Math.sqrt(cnx * cnx + cny * cny) || 1
     const newRaftId = sim.rafts.reduce((max, raft) => Math.max(max, raft.id), -1) + 1
-    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, TECTONICS_TUNING.splitMaxDistSq, TECTONICS_TUNING.splitGap, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.splitMergeImmunityEpochs, domain)
+    raftSplit = splitRaftAtRift(sim.rafts, continentalRift.x, continentalRift.y, cnx / cnl, cny / cnl, newRaftId, sq(TECTONICS_TUNING.splitMaxDistM / domain.metresPerUnit), TECTONICS_TUNING.splitGapM / domain.metresPerUnit, worldEpoch(sim.archeanEpochs, sim.epoch), TECTONICS_TUNING.splitMergeImmunityEpochs, domain)
     // Reset that point's divergence accumulator so it doesn't immediately
     // re-split the fresh halves next epoch.
     if (raftSplit) {
@@ -129,7 +130,7 @@ export function applyRaftEvents(sim: PlateSimulation, pass: BoundaryPassResult):
       // too narrow to cover a breakup's gap on its own, and without this the new
       // basin inherits the age that kept ticking under the continent and renders at
       // full abyssal depth: a newborn Atlantic as deep as the oldest Pacific.
-      resetOceanAgeAround(sim.oceanAge, continentalRift.x, continentalRift.y, TECTONICS_TUNING.breakupFreshCrustRadius, domain)
+      resetOceanAgeAround(sim.oceanAge, continentalRift.x, continentalRift.y, TECTONICS_TUNING.breakupFreshCrustRadiusM / domain.metresPerUnit, domain)
       // Release the thermal doming that drove the breakup — this is what actually
       // retires the global cooldown: it collapses the broad divergent forcing under
       // the (former) supercontinent so neighbouring points stop re-qualifying.

@@ -591,13 +591,14 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
     L('/src/generator/tectonics/oceanAge.ts'),
   ])
   const EPOCHS = 30
-  const step = TT.TECTONICS_TUNING.epochAngleStep
+  // One epoch, Ma: the motions are per Ma (DEC-0036 phase 8f).
+  const step = 1
   const result = {}
   for (const shape of ['torus', 'sphere']) {
     const started = performance.now()
     const sim = FA.finalizeArchean(archeans[shape])
     const { domain } = sim
-    const speed = () => sim.seeds.reduce((sum, s, i) => { const v = PM.getVelocityAt(s, sim.motions[i], domain); return sum + Math.hypot(v.vx, v.vy) }, 0) / sim.seeds.length
+    const speed = () => sim.seeds.reduce((sum, s, i) => { const v = PM.getVelocityAt(s, sim.motions[i], domain); return sum + PM.kmPerMyr(Math.hypot(v.vx, v.vy), domain) }, 0) / sim.seeds.length
     const counts = [sim.seeds.length]
     const speeds = [speed()]
     for (let e = 0; e < EPOCHS; e++) {
@@ -644,9 +645,10 @@ async function spherePlatesAtFullSize(L, slices, IM, archeans) {
   check('the ocean age stays in [0, 180] on its field mesh, with ridges and aged floor, on both shapes', sphere.ageBounded && torus.ageBounded)
   const plausibleCount = (r) => r.counts.every((n) => n >= Math.max(2, TT.TECTONICS_TUNING.minPlateCount) && n <= 3 * r.counts[0])
   check('the sphere\'s plate count neither collapses nor runs away', plausibleCount(sphere) && plausibleCount(torus))
-  // Speeds: generated in the torus's range (LINEAR_SPEED_MIN_PX..MAX_PX at
-  // the seed) and, fitted to the mantle flow from then on, of its order.
-  check('the sphere\'s plates move at the torus\'s speeds', sphere.speeds[0] >= 30 && sphere.speeds[0] <= 90 && sphere.meanSpeed > 0.5 * torus.meanSpeed && sphere.meanSpeed < 2 * torus.meanSpeed)
+  // Speeds, km/Myr: generated in the fresh range at the seed (plateMotion's
+  // FRESH_SPEED_MIN..MAX_KM_PER_MYR, 11.7–35.1) and, fitted to the mantle
+  // flow from then on, of the torus's order.
+  check('the sphere\'s plates move at the torus\'s speeds', sphere.speeds[0] >= 11.7 - 1e-9 && sphere.speeds[0] <= 35.1 + 1e-9 && sphere.meanSpeed > 0.5 * torus.meanSpeed && sphere.meanSpeed < 2 * torus.meanSpeed)
   check('land and boundaries are plausible', [sphere, torus].every((r) => r.land > 0.02 && r.land < 0.6 && r.boundary > 0.03 && r.boundary < 0.6 && r.edge > 0.002 && r.edge < 0.1), say(sphere))
   check('the torus, same seed, for comparison', torus.finite, say(torus))
 
@@ -2978,11 +2980,13 @@ test('two pipelines given the same messages agree byte for byte', async () => {
 // loaded climate.
 test('a loaded world runs the hydrology the session ran', async () => {
   const p = await freshPipeline()
-  // 22 Archean epochs, not the harness's 20: since DEC-0036 phase 8d
+  // 24 Archean epochs, not the harness's 20: since DEC-0036 phase 8d
   // (the cut near the snow line is the buzzsaw's, no longer twice the
   // sliding's) the 20-epoch world's trunk river runs through a chain of
-  // lakes and leaves no reach long enough for a course.
-  await growWorld(p, { epochs: 22 })
+  // lakes and leaves no reach long enough for a course; since phase 8f
+  // (the plates' speed) the 22-epoch world has none either (18, 24 and
+  // 26 have courses, 30 none).
+  await growWorld(p, { epochs: 24 })
   await runOneEpoch(p)
   // Humidity 160 %: with the colder, drier mid-latitudes of DEC-0036
   // phase 8b-2 no river of this small world is wide enough for a course,

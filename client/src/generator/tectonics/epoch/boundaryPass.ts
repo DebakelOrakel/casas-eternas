@@ -2,7 +2,8 @@ import { classifyBoundary } from '../boundaryClassification'
 import { detectBoundaries } from '../boundaryDetection'
 import { raftMembership } from '../../crust/raftField'
 import { accreteToNearestRaft } from '../../crust/raftLifecycle'
-import { worldEpoch } from '../../core/worldTime'
+import { TECTONIC_MA_PER_EPOCH, worldEpoch } from '../../core/worldTime'
+import { kmPerMyr } from '../plateMotion'
 import { classifyBoundaryMotion } from '../plateVelocityDecomposition'
 import { TECTONICS_TUNING } from '../tectonicsTuneParams'
 import { findOrCreateFeatureIndex } from '../terrainFeatures'
@@ -69,6 +70,7 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
   // deposit many times more uplift per epoch than a sparsely-sampled one
   // would for the same actual convergence.
   const featureDeposits = new Map<number, { sum: number; count: number }>()
+  const epochMa = sim.epochMa || TECTONIC_MA_PER_EPOCH
   const addDeposit = (featureIndex: number, amount: number): void => {
     const existing = featureDeposits.get(featureIndex)
     if (existing) {
@@ -110,15 +112,9 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       sim.latticeLockedEpochs[index] = 0
       sim.latticeLastClassCode[index] = classCode
     }
-    // getVelocityAt (inside classifyBoundaryMotion) returns velocity
-    // scaled by the plate's full angularSpeed, i.e. "per unit of the
-    // abstract time getVelocityAt's own unit represents" — deposited
-    // as-is, this would accumulate uplift ~1/TECTONICS_TUNING.upliftEpochScale times
-    // faster than intended (this is what originally blew straight through
-    // the elevation clamp). Uses its own scale rather than
-    // TECTONICS_TUNING.epochAngleStep specifically so plate movement speed and
-    // mountain-building pace can be tuned independently.
-    const epochConvergence = convergence.normal * TECTONICS_TUNING.upliftEpochScale
+    // The convergence over the epoch, km (the velocity is in domain units
+    // per Ma, plateMotion), as the crust it thickens: upliftPerKm.
+    const epochConvergence = kmPerMyr(convergence.normal, domain) * epochMa * TECTONICS_TUNING.upliftPerKm
     sim.latticeAccumulated[index] += epochConvergence * classification.rate
 
     if (classification.elevationSign !== 0) {
@@ -165,9 +161,11 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
         const offsetLen = Math.sqrt(offsetX * offsetX + offsetY * offsetY) || 1
         offsetX /= offsetLen
         offsetY /= offsetLen
+        // The offset in domain units (the tuning's metres).
+        const trenchOffset = TECTONICS_TUNING.trenchOffsetM / domain.metresPerUnit
         // Moved as a point (across a pole on the sphere): advance, which on
         // the torus is the wrapped sum this always was.
-        domain.advance(boundary.x, boundary.y, offsetX * TECTONICS_TUNING.trenchOffset, offsetY * TECTONICS_TUNING.trenchOffset, offset)
+        domain.advance(boundary.x, boundary.y, offsetX * trenchOffset, offsetY * trenchOffset, offset)
         const trenchX = offset.x
         const trenchY = offset.y
         addDeposit(

@@ -49,6 +49,9 @@ const sutureTangent = { x: 0, y: 0 }
 // terrain features, the ocean-age field — along its own rotation.
 export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64Array): void {
   const { domain } = sim
+  // The epoch's length, Ma: the motions are in domain units (and radians)
+  // per Ma (plateMotion, DEC-0036 phase 8f).
+  const stepMa = sim.epochMa || TECTONIC_MA_PER_EPOCH
   // The seeds where the epoch found them: the ocean age's new crust is
   // where a departure lands on another plate than the cell's (advectOceanAge).
   const previousSeeds = sim.seeds.map((s) => ({ x: s.x, y: s.y }))
@@ -56,7 +59,7 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64A
   // along its own rotation.
   for (let i = 0; i < sim.seeds.length; i++) {
     const motion = sim.motions[i]
-    const rotated = advancePointByMotion(sim.seeds[i].x, sim.seeds[i].y, motion, TECTONICS_TUNING.epochAngleStep, domain)
+    const rotated = advancePointByMotion(sim.seeds[i].x, sim.seeds[i].y, motion, stepMa, domain)
     sim.seeds[i].x = rotated.x
     sim.seeds[i].y = rotated.y
     sim.ages[i] += 1
@@ -65,7 +68,7 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64A
   // from the new raft positions so boundary classification below sees the
   // current crust layout. Phase 1: rafts only drift; split/merge/accretion
   // come later.
-  advanceRafts(sim.rafts, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, domain)
+  advanceRafts(sim.rafts, sim.seeds, sim.motions, stepMa, domain)
   // Crust recycling, immediately after the drift that carried it here and before
   // derivePlateTypes below reads the result. Blobs accreted last epoch are one
   // epoch old now, so they are candidates — crust has to survive to the next epoch
@@ -85,7 +88,7 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64A
       const d = domain.distanceSq(s.x, s.y, sim.seeds[p].x, sim.seeds[p].y)
       if (d < bestSq) { bestSq = d; host = p }
     }
-    const rotated = advancePointByMotion(s.x, s.y, sim.motions[host], TECTONICS_TUNING.epochAngleStep, domain)
+    const rotated = advancePointByMotion(s.x, s.y, sim.motions[host], stepMa, domain)
     // Its seam tangent carried with it (the point's frame turns on the
     // sphere; on the torus the same two numbers).
     domain.transport(s.tangentX, s.tangentY, s.x, s.y, rotated.x, rotated.y, sutureTangent)
@@ -97,8 +100,8 @@ export function advancePlatesAndCrust(sim: PlateSimulation, membership: Float64A
   sim.types = derivePlateTypes(sim.seeds, sim.rafts, domain)
   // Carry the ocean-age field along with the plates that just moved (Phase 3;
   // on its field mesh since DEC-0036 phase 2).
-  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, TECTONICS_TUNING.epochAngleStep, domain, membership, previousSeeds)
-  advanceTerrainFeatures(sim.features, sim.motions, TECTONICS_TUNING.epochAngleStep, domain)
+  sim.oceanAge = advectOceanAge(sim.oceanAge, sim.seeds, sim.motions, stepMa, domain, membership, previousSeeds)
+  advanceTerrainFeatures(sim.features, sim.motions, stepMa, domain)
   for (const feature of sim.features) {
     feature.thickness *= TECTONICS_TUNING.thicknessDecayPerEpoch
     // Age-depth subsidence for oceanic features once idle (no longer fed by

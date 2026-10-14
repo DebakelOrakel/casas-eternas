@@ -1,7 +1,7 @@
 // The calibration's measurement (DEC-0036 phase 8): many worlds of both
 // shapes at the real size, 2048 × 1024, built the way the screen builds
 // them, and the distributions the calibration is judged on — land, plates,
-// heights, ice, lakes, Köppen, the zonal climate, rivers, the sea, the
+// their speed, heights, ice, lakes, Köppen, the zonal climate, rivers, the sea, the
 // time per stage — plus the planet's and the genesis's sliders swept on a
 // subset of the seeds. Not a gate: nothing here passes or fails; it prints
 // the tables and writes them as JSON.
@@ -14,7 +14,7 @@
 //     archeanMa: run the Archean to this world age as well (the screen's
 //     user stops it at 1000–1500 Ma); 0 = to the gate only. landShare: the
 //     genesis.landShare control for every world (a sweep's value wins).
-//     TECTONICS_TUNING.splitGap=… (any tuning object's key, set in every child;
+//     TECTONICS_TUNING.splitGapM=… (any tuning object's key, set in every child;
 //     HISTORY_DEFAULTS.upliftScale=… too)
 //     cache=<dir>: keep each default world's terrain after its history
 //   node scripts/calibrate.mjs climate cache=<dir> [sweep= seeds= shapes= X_TUNING.k=…]
@@ -142,6 +142,7 @@ async function loadModules(job) {
     precip: await L('/src/generator/climate/precipitation.ts'),
     mantle: await L('/src/generator/mantle/mantleField.ts'),
     oceanAge: await L('/src/generator/tectonics/oceanAge.ts'),
+    plateMotion: await L('/src/generator/tectonics/plateMotion.ts'),
     runParams: await L('/src/world/runParams.ts'),
     domain: await L('/src/generator/core/domain.ts'),
     meshSerial: await L('/src/generator/mesh/meshSerial.ts'),
@@ -350,10 +351,40 @@ async function buildOne(job) {
   }
   const highPerEpoch = [highNow()]
   const landPerEpoch = []
+  // The plates' speed (DEC-0036 phase 8f), km/Myr: the velocity at each
+  // cell of the ocean age's mesh by its nearest seed's plate, weighted by
+  // the cell's area — the mean, its p90, the fastest plate's mean, and the
+  // means over the continental (raft membership > 0.5) and the oceanic
+  // cells; at the hand-over and every tenth epoch.
+  const speedNow = () => {
+    const d = sim.domain, om = M.oceanAge.oceanAgeMesh(d).mesh
+    const memb = M.oceanAge.oceanAgeMembership(sim.rafts, d)
+    const n = sim.seeds.length, pa = new Float64Array(n), ps = new Float64Array(n)
+    const cells = []
+    let A = 0, S = 0, cA = 0, cS = 0
+    for (let c = 0; c < om.count; c++) {
+      const x = om.x[c], y = om.y[c], w = om.area[c]
+      let k = 0, best = Infinity
+      for (let p = 0; p < n; p++) { const q = d.distanceSq(x, y, sim.seeds[p].x, sim.seeds[p].y); if (q < best) { best = q; k = p } }
+      const v = M.plateMotion.getVelocityAt({ x, y }, sim.motions[k], d)
+      const s = M.plateMotion.kmPerMyr(Math.hypot(v.vx, v.vy), d)
+      pa[k] += w; ps[k] += w * s; A += w; S += w * s
+      if (memb[c] > 0.5) { cA += w; cS += w * s }
+      cells.push([s, w])
+    }
+    cells.sort((u, v) => u[0] - v[0])
+    let acc = 0, p90 = 0
+    for (const [s, w] of cells) { acc += w; if (acc >= 0.9 * A) { p90 = s; break } }
+    let maxPlate = 0
+    for (let p = 0; p < n; p++) if (pa[p] > 0) maxPlate = Math.max(maxPlate, ps[p] / pa[p])
+    const r = (x) => +x.toFixed(1)
+    return { mean: r(S / A), p90: r(p90), maxPlate: r(maxPlate), continental: r(cA ? cS / cA : NaN), oceanic: r(A > cA ? (S - cS) / (A - cA) : NaN) }
+  }
+  const speedPerEpoch = [speedNow()]
   for (let e = 0; e < job.epochs; e++) {
     await M.coupled.stepCoupledEpoch(sim, coupled, { ...M.coupled.HISTORY_DEFAULTS, controls: CONTROLS, weather: weatherParams })
     if (e % 5 === 4 || e === job.epochs - 1) landPerEpoch.push(+meshLand().toFixed(4))
-    if (e % 10 === 9) highPerEpoch.push(highNow())
+    if (e % 10 === 9) { highPerEpoch.push(highNow()); speedPerEpoch.push(speedNow()) }
   }
   lap('history')
   const domain = sim.domain
@@ -747,7 +778,13 @@ async function buildOne(job) {
     nucleated, archeanLand, archeanLandAt, handoverLand, archeanRafts, stabilised, handoverPlates,
     plates: sim.seeds.length, rafts: sim.rafts.length,
     nodes: mesh.aliveVertices,
-    landFraction: landA / total, continentalFraction: cont / total, landPerEpoch, highPerEpoch,
+    landFraction: landA / total, continentalFraction: cont / total, landPerEpoch, highPerEpoch, speedPerEpoch,
+    // The speeds over the history's epochs past the hand-over's ramp (the
+    // tenth on), means of the tenth-epoch readings.
+    ...Object.fromEntries(['mean', 'p90', 'maxPlate', 'continental', 'oceanic'].map((k) => {
+      const xs = speedPerEpoch.slice(1).map((x) => x[k]).filter(Number.isFinite)
+      return [`plateSpeed${k[0].toUpperCase()}${k.slice(1)}`, xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN]
+    })),
     landmasses: sizes.filter((s) => s >= 1e4).length, continents: sizes.filter((s) => s >= 1e6).length,
     largestLandmassShare: sizes.length ? sizes[0] / km2(cont) : 0,
     peakM: peak, landP99M: weighted(landH.slice(), 0.99), meanLandM: meanLandH,
@@ -836,6 +873,11 @@ const ROWS = [
   ['continentalFraction', '%', 100],
   ['plates', '', 1],
   ['handoverPlates', '', 1],
+  ['plateSpeedMean', 'km/Myr', 1, [30, 60]],
+  ['plateSpeedP90', 'km/Myr', 1],
+  ['plateSpeedMaxPlate', 'km/Myr', 1, [0, 150]],
+  ['plateSpeedContinental', 'km/Myr', 1],
+  ['plateSpeedOceanic', 'km/Myr', 1],
   ['rafts', '', 1],
   ['landmasses', '', 1],
   ['continents', '', 1],

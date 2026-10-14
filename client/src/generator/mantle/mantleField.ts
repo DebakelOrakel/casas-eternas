@@ -291,8 +291,11 @@ export function coolMantleAt(field: Float64Array, x: number, y: number, domain: 
   }
 }
 
-// The surface flow, per cell in its own east/south frame, domain units per
-// epoch (the frame Domain.advance moves a point in).
+// The surface flow, per cell in its own east/south frame (the frame
+// Domain.advance moves a point in): domain units per Archean epoch at the
+// default scale, the Archean's rafts' drift; in what the caller's
+// `speedScale` says otherwise (the tectonics' plates: domain units per Ma,
+// mantleCoupling).
 export interface MantleFlow {
   readonly east: Float64Array
   readonly south: Float64Array
@@ -310,13 +313,14 @@ const FLOW_SOLVE_TOLERANCE = 1e-8
 // surface, conjugate gradients), then u = ∇φ. u DIVERGES from hot upwellings
 // and CONVERGES to cold downwellings (φ has a minimum at a hot source, so ∇φ
 // points outward). In the units the raster counted in — φ in cell², the
-// gradient per cell, h the cell (cellM) — then scaled by flowSpeedScale to
-// domain units per epoch: ∇φ_cells = ∇φ_metres / h.
+// gradient per cell, h the cell (cellM) — then scaled by `speedScale`
+// (MANTLE_TUNING.flowSpeedScale: domain units per Archean epoch) per unit
+// of that gradient: ∇φ_cells = ∇φ_metres / h.
 //
 // The raster's Gauss-Seidel stopped after 260 sweeps, short of convergence
 // at the longest wavelengths (a 128-cell mode about a quarter of the way);
 // the solve here converges, so the broadest flow is the stronger by that.
-export function computeMantleFlow(field: Float64Array, domain: Domain): MantleFlow {
+export function computeMantleFlow(field: Float64Array, domain: Domain, speedScale: number = MANTLE_TUNING.flowSpeedScale): MantleFlow {
   const mm = mantleMesh(domain)
   const { mesh } = mm
   const phi = new Float64Array(mesh.count)
@@ -324,7 +328,7 @@ export function computeMantleFlow(field: Float64Array, domain: Domain): MantleFl
   const east = new Float64Array(mesh.count)
   const south = new Float64Array(mesh.count)
   gradient(mesh, phi, east, south)
-  const scale = MANTLE_TUNING.flowSpeedScale / mm.cellM
+  const scale = speedScale / mm.cellM
   for (let i = 0; i < mesh.count; i++) {
     east[i] *= scale
     south[i] *= scale

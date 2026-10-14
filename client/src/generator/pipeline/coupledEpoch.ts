@@ -503,7 +503,7 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const columnData = terrain.column.data
   for (let v = 0; v < mesh0.vertexSlots; v++) {
     if (!mesh0.vAlive[v]) continue
-    const moved = advancePointByMotion(mesh0.vx[v], mesh0.vy[v], motions[host[v]], TECTONICS_TUNING.epochAngleStep, domain)
+    const moved = advancePointByMotion(mesh0.vx[v], mesh0.vy[v], motions[host[v]], sim.epochMa || TECTONIC_MA_PER_EPOCH, domain)
     xs[k] = moved.x
     ys[k] = moved.y
     hMoved[k] = terrain.z[v] - terrain.baseline[v]

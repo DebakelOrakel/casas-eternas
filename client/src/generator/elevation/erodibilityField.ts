@@ -44,15 +44,18 @@ export interface ErodibilityFieldParams {
   oldSutureMa: number
   // K multiplier under a flood-basalt sheet.
   floodBasaltHardness: number
-  // Capsule radius for a suture's belt, world cells. Wider than a range's
-  // crest radius: a collision belt is a province, not a ridge line.
-  sutureRadius: number
-  sutureHalfLength: number
+  // Capsule radius for a suture's belt, metres (DEC-0036 phase 8f; the
+  // torus's 45 cells of 7.8 km). Wider than a range's crest radius: a
+  // collision belt is a province, not a ridge line.
+  sutureRadiusM: number
+  sutureHalfLengthM: number
   // A flood province's radius scales with the feature's thickness (the
   // sheet keeps growing while the plume feeds it), clamped to this range.
-  floodRadiusMin: number
-  floodRadiusMax: number
-  floodRadiusPerThickness: number
+  // Metres, and metres per unit of thickness (phase 8f; the torus's 20 and
+  // 60 cells, 2 cells per unit).
+  floodRadiusMinM: number
+  floodRadiusMaxM: number
+  floodRadiusPerThicknessM: number
 }
 
 export const DEFAULT_ERODIBILITY_FIELD_PARAMS: ErodibilityFieldParams = {
@@ -66,11 +69,11 @@ export const DEFAULT_ERODIBILITY_FIELD_PARAMS: ErodibilityFieldParams = {
   oldSutureHardness: 0.8,
   oldSutureMa: 240,
   floodBasaltHardness: 0.55,
-  sutureRadius: 45,
-  sutureHalfLength: ELEVATION_TUNING.rangeSegmentHalfLength,
-  floodRadiusMin: 20,
-  floodRadiusMax: 60,
-  floodRadiusPerThickness: 2,
+  sutureRadiusM: 351_000,
+  sutureHalfLengthM: ELEVATION_TUNING.rangeSegmentHalfLengthM,
+  floodRadiusMinM: 156_000,
+  floodRadiusMaxM: 468_000,
+  floodRadiusPerThicknessM: 15_600,
 }
 
 // The smooth K-factor field at `outWidth`×`outHeight` over the world's
@@ -109,6 +112,9 @@ export function computeErodibilityField(
   // effects crossfade on the suture's age.
   if (sutures.length > 0) {
     const offset = { x: 0, y: 0 }
+    // The capsule in domain units (the parameters' metres).
+    const sutureHalfLength = params.sutureHalfLengthM / domain.metresPerUnit
+    const sutureRadius = params.sutureRadiusM / domain.metresPerUnit
     const nowMa = worldEpochMa(currentEpoch, archeanEpochs)
     for (let py = 0; py < outHeight; py++) {
       const wy = (py + 0.5) * cellH
@@ -123,8 +129,8 @@ export function computeErodibilityField(
             offset.y,
             suture.tangentX,
             suture.tangentY,
-            params.sutureHalfLength,
-            params.sutureRadius,
+            sutureHalfLength,
+            sutureRadius,
           )
           if (weight <= 0) continue
           // The age in Ma, not in epochs: the stamps lie on the continuous
@@ -146,14 +152,17 @@ export function computeErodibilityField(
   // (same stacking argument as sutures).
   const floods = features.filter((f) => f.plateB === -2)
   if (floods.length > 0) {
+    const floodRadiusMin = params.floodRadiusMinM / domain.metresPerUnit
+    const floodRadiusMax = params.floodRadiusMaxM / domain.metresPerUnit
+    const floodRadiusPerThickness = params.floodRadiusPerThicknessM / domain.metresPerUnit
     for (let py = 0; py < outHeight; py++) {
       const wy = (py + 0.5) * cellH
       for (let px = 0; px < outWidth; px++) {
         const wx = (px + 0.5) * cellW
         let strongestWeight = 0
         for (const flood of floods) {
-          const radius = Math.min(params.floodRadiusMax,
-            Math.max(params.floodRadiusMin, Math.abs(flood.thickness) * params.floodRadiusPerThickness))
+          const radius = Math.min(floodRadiusMax,
+            Math.max(floodRadiusMin, Math.abs(flood.thickness) * floodRadiusPerThickness))
           const distanceSq = domain.distanceSq(wx, wy, flood.x, flood.y)
           if (distanceSq >= radius * radius) continue
           const falloff = 1 - Math.sqrt(distanceSq) / radius

@@ -181,10 +181,11 @@ DEC-0036 phase 8a, written so the torus's division is exact, 234 000 /
 7 800 = 30). A planetary COUNT is measured against the world's area
 (`domainArea`: the plates' spacing, the mantle mesh's cells), and a noise
 table counted in cells across the map is read on the sphere at the
-torus's metres (`globeOctaveOn`). Still in domain units, on purpose: the
-plates' kinematics and the features' spacing along a boundary (plate
-speeds, MERGE_RADIUS, the segments' half-lengths, splitGap) —
-planet-relative, a decision for the calibration's next step; a stage not yet moved reads a moved field through an adapter
+torus's metres (`globeOctaveOn`). The plates' kinematics too since phase
+8f: a motion is in domain units (and radians) per Ma, a speed the tuning
+states in km/Myr (`plateMotion.kmPerMyr`, `mantleFlowSpeedKmPerMyr`), the
+features' spacing along a boundary in metres (`MERGE_RADIUS_M`, the
+segments' half-lengths, `splitGapM`). A stage not yet moved reads a moved field through an adapter
 marked `// DEC-0036 transition: removed in phase N` — grep for it before
 touching the phase it names (none is left since phase 7b). A stage that
 needs the climate samples it at its own points
@@ -327,7 +328,7 @@ is a cross-module contract and moves separately), and `surface/`'s
 `DEFAULT_*_PARAMS` (function arguments with defaults, not module constants).
 
 **A tuning file exports ONE object, and callers read it under its full name** —
-`TECTONICS_TUNING.splitGap`, never a destructured local and never an
+`TECTONICS_TUNING.splitGapM`, never a destructured local and never an
 `as TUNE` import. The object is what makes the constants hashable at all
 (`derivePipelineVersion` takes a `Record<string, number>`); the full name is what
 keeps every use site findable by grep. Both shortcuts were tried and removed the
