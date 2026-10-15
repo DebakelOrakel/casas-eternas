@@ -1,6 +1,8 @@
 {
   "handbook.search.label": "Search the handbook",
   "handbook.search.empty": "No page found.",
+  "handbook.group.overview": "Overview",
+  "handbook.group.overview.short": "OVR",
   "handbook.group.steps": "Steps",
   "handbook.group.steps.short": "STP",
   "handbook.group.concepts": "Concepts",

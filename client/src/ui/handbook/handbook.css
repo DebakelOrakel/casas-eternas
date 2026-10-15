@@ -24,8 +24,8 @@
   display: none;
 }
 
-/* The bookmarks: three small tabs standing out of the column's left edge,
-   over the map — steps, concepts, layers. The chosen one wears the
+/* The bookmarks: four small tabs standing out of the column's left edge,
+   over the map — overview, steps, concepts, layers. The chosen one wears the
    column's own colour, so it reads as part of the page it opens. */
 .handbook__tabs {
   position: absolute;

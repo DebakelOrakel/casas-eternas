@@ -3,7 +3,8 @@
 // `virtual:handbook` plugin in vite.config.ts, so the client carries the
 // handbook and needs no server for it.
 //
-// A page's kind is its directory: `steps/`, `concepts/`, `overlays/`.
+// A page's kind is its directory: `overview/`, `steps/`, `concepts/`,
+// `overlays/`.
 // The Markdown is plain GitHub Markdown with two additions
 // (docs/handbook/README.md):
 // - a heading may end in `{#anchor}`, which becomes its id;
@@ -22,7 +23,7 @@ import rehypeStringify from 'rehype-stringify'
 import type { Handbook, HandbookDoc, HandbookKind, HandbookPage, HandbookSection } from '../src/ui/handbook/handbookTypes'
 import { frontMatter, frontMatterList } from './frontMatter'
 
-const KIND_DIRS: Record<string, HandbookKind> = { steps: 'step', concepts: 'concept', overlays: 'overlay' }
+const KIND_DIRS: Record<string, HandbookKind> = { overview: 'overview', steps: 'step', concepts: 'concept', overlays: 'overlay' }
 
 // Every Markdown file directly in a directory, sorted.
 function markdownIn(dir: string): string[] {

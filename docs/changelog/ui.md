@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-15
+- **new** Handbook: an Overview bookmark explains how a world is made and where your worlds are kept, and a page explains the globe. `handbook.group.overview`
+
 ## 2026-10-12
 - **fixed** Generator: a new world no longer shows the shores and lakes of the world before it until its own terrain arrives. `generator.step.world`
 

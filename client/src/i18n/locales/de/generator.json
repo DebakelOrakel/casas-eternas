@@ -5,7 +5,7 @@
   "generator.load.new.label": "Neue Welt erstellen",
   "generator.load.new.help": "Wählt einen Seed und beginnt beim Erdmantel.",
   "generator.load.upload.label": "Welt hochladen",
-  "generator.load.upload.help": "Öffnet eine .world-Datei aus einem Download.",
+  "generator.load.upload.help": "Öffnet eine Welt, die als .zip heruntergeladen wurde.",
   "generator.load.existing": "Vorhandene Welten",
   "generator.load.count": "{n} von {all}",
   "generator.load.filter.all.label": "Alle",

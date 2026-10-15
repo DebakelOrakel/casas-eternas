@@ -8,8 +8,9 @@ import './handbook.css'
 // Wiki and Hell-Wiki): a column on the right, between the title bar and the
 // step bar, over the map. A search field, the pages, and the page itself.
 //
-// Three kinds of page, one bookmark each on the column's left edge: the
-// steps, the concepts the steps share, the map's layers. The pages are
+// Four kinds of page, one bookmark each on the column's left edge: the
+// overview (the view from above), the steps, the concepts the steps share,
+// the map's layers. The pages are
 // docs/handbook/, bundled at build time (`virtual:handbook`,
 // client/scripts/handbook.ts). A step page holds its concepts as included
 // cards, each leading to the concept's own page.
@@ -64,8 +65,13 @@ export interface HandbookPanel {
 // A page as the panel shows it: a layer's page also carries its icon.
 type Page = HandbookPage & { icon?: string }
 
-const KINDS: readonly HandbookKind[] = ['step', 'concept', 'overlay']
-const GROUP_KEY: Record<HandbookKind, string> = { step: 'handbook.group.steps', concept: 'handbook.group.concepts', overlay: 'handbook.group.overlays' }
+const KINDS: readonly HandbookKind[] = ['overview', 'step', 'concept', 'overlay']
+const GROUP_KEY: Record<HandbookKind, string> = {
+  overview: 'handbook.group.overview',
+  step: 'handbook.group.steps',
+  concept: 'handbook.group.concepts',
+  overlay: 'handbook.group.overlays',
+}
 
 // The canvas's book.
 export const BOOK_ICON = 'M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5zM8 7.5h7M8 11h5'
@@ -97,11 +103,11 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
     return [...written.filter((page) => page.kind !== 'overlay'), ...layers]
   }
 
-  // Steps in their order; concepts and layers by name, which is how one
-  // looks for them.
+  // Steps and the overview in their order; concepts and layers by name,
+  // which is how one looks for them.
   function pagesOf(kind: HandbookKind, pages: Page[]): Page[] {
     const own = pages.filter((page) => page.kind === kind)
-    return kind === 'step' ? own.sort((a, b) => a.order - b.order) : own.sort((a, b) => a.title.localeCompare(b.title, getLocale()))
+    return kind === 'step' || kind === 'overview' ? own.sort((a, b) => a.order - b.order) : own.sort((a, b) => a.title.localeCompare(b.title, getLocale()))
   }
 
   function pageOf(anchor: string): Page | null {

@@ -12,9 +12,11 @@ export interface HandbookSection {
 }
 
 // What a page is about, from the directory it lives in
-// (docs/handbook/<locale>/<kind>s/): a step of the generator, a concept that
-// steps share and include, or a map layer. The panel's bookmarks are these.
-export type HandbookKind = 'step' | 'concept' | 'overlay'
+// (docs/handbook/<locale>/<kind>s/, `overview/` for the overview): the view
+// from above (how a world is made, where the worlds are), a step of the
+// generator, a concept that steps share and include, or a map layer. The
+// panel's bookmarks are these.
+export type HandbookKind = 'overview' | 'step' | 'concept' | 'overlay'
 
 // A design or decision document behind a concept (docs/decisions/,
 // docs/design/, their `concepts` front matter), in the page's language.

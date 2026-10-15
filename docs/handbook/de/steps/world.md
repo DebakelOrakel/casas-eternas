@@ -53,6 +53,8 @@ Schritte blicken von über dem Nordpol auf sie. Eine Kugelwelt rechnet
 die Schritte bis Ökologie; Feinschliff und Migration sind für sie
 gesperrt.
 
+{{concept globe}}
+
 ## Parameter {#parameters}
 
 Die Standardwerte sind die der Erde.

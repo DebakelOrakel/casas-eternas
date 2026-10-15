@@ -9,8 +9,12 @@ addendum (4). Built by `client/scripts/handbook.ts` into the client bundle.
 
 One directory per locale, identical paths = translations of each other. A
 page missing in `de/` falls back to `en/`. Below the locale, one directory
-per KIND of page — the panel's three bookmarks:
+per KIND of page — the panel's four bookmarks:
 
+- `overview/` — the view from above: how a world is made, where the
+  worlds are kept. Anchor `generator.overview.<file>`, sorted by `order`.
+  It explains what the steps share at a high level and leads to them; it
+  does not repeat their concepts.
 - `steps/` — one page per generator step, anchor `generator.step.<id>`.
 - `concepts/` — what the steps share, one page each, anchor
   `generator.concept.<file>` (or the catalog key, where the concept has

@@ -52,6 +52,8 @@ the tilt shows whole; the other steps look down on it from above the
 north pole. A sphere world runs the steps up to Ecology; Finishing and
 Migration are locked for it.
 
+{{concept globe}}
+
 ## Parameters {#parameters}
 
 The defaults are Earth's.

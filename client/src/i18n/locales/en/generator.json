@@ -5,7 +5,7 @@
   "generator.load.new.label": "Create new world",
   "generator.load.new.help": "Picks a seed and starts at the mantle.",
   "generator.load.upload.label": "Upload a world",
-  "generator.load.upload.help": "Opens a .world file from a download.",
+  "generator.load.upload.help": "Opens a world downloaded as a .zip file.",
   "generator.load.existing": "Existing worlds",
   "generator.load.count": "{n} of {all}",
   "generator.load.filter.all.label": "All",
