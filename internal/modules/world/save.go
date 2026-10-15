@@ -14,7 +14,8 @@ import (
 //
 // Exactly two things are read out of an uploaded .zip: world.yaml (its
 // `metadata` block and a few display values), and preview.png. Everything
-// else stays opaque bytes. That is a deliberate constraint rather than
+// else stays opaque bytes. And exactly one thing is ever WRITTEN into one:
+// a copy's new identity in the `metadata` block (copySave, 2026-10-15). That is a deliberate constraint rather than
 // laziness — it is what lets the save format keep evolving (new rasters, new
 // spec groups, a reshuffled snapshot) without the server needing a matching
 // release. See docs/decisions/server-storage.md.
@@ -24,8 +25,18 @@ import (
 // upload path is how a zip bomb gets in.
 const previewLimit = 8 << 20 // 8 MiB
 
-// yamlLine matches "  key: value", the only shape a recipe writes.
-var yamlLine = regexp.MustCompile(`^(\s*)([\w-]+):\s*(.*)$`)
+// yamlLine matches "  key: value", the only shape a recipe writes. A key may
+// hold a "/" — an annotation key is prefixed, `casas-eternas/copied-from` —
+// but never a ".", which is the path separator of readYAMLValue.
+var yamlLine = regexp.MustCompile(`^(\s*)([\w/-]+):\s*(.*)$`)
+
+// CopiedFromAnnotation names the world a copy was made from, by its uid:
+// `metadata.annotations` in world.yaml, Kubernetes style. The prefix is the
+// one the save's own apiVersion carries (casas-eternas/v1alpha1). Written by
+// copySave here and by the client's browser copy (client/src/world/
+// worldCopy.ts) — the same key in both, documentation only: nothing ranks or
+// keys by it. See docs/decisions/template-worlds.md.
+const CopiedFromAnnotation = "casas-eternas/copied-from"
 
 // readYAMLValue reads one dotted path out of world.yaml.
 //
@@ -167,4 +178,122 @@ func readEntryBytes(file *zip.File, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("%s exceeds %d bytes", file.Name, limit)
 	}
 	return raw, nil
+}
+
+// copySave is a save under a new identity: world.yaml's `metadata.uid` set to
+// newUID and the annotation CopiedFromAnnotation set to sourceUID; every other
+// entry of the archive is copied as it is, compressed bytes included. The
+// terrain is therefore the same terrain, and the client derives the same
+// terrain id (worldId) from it.
+//
+// The edit is a text edit of the metadata block, in the shape the client
+// writes (recordToYaml): `metadata:` at the top level, its keys indented by
+// two spaces, annotations by four. The rest of world.yaml is not read.
+func copySave(data []byte, newUID, sourceUID string) ([]byte, error) {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("not a readable zip: %w", err)
+	}
+	var out bytes.Buffer
+	writer := zip.NewWriter(&out)
+	seen := false
+	for _, file := range reader.File {
+		if file.Name != "world.yaml" {
+			if err := writer.Copy(file); err != nil {
+				return nil, fmt.Errorf("copying %s: %w", file.Name, err)
+			}
+			continue
+		}
+		text, err := readEntry(file, 1<<20)
+		if err != nil {
+			return nil, fmt.Errorf("reading world.yaml: %w", err)
+		}
+		rewritten, err := withCopyIdentity(text, newUID, sourceUID)
+		if err != nil {
+			return nil, err
+		}
+		header := file.FileHeader
+		entry, err := writer.CreateHeader(&header)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.WriteString(entry, rewritten); err != nil {
+			return nil, err
+		}
+		seen = true
+	}
+	if !seen {
+		return nil, fmt.Errorf("no world.yaml in the archive")
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// withCopyIdentity edits world.yaml's metadata block: the uid replaced, the
+// copied-from annotation set (any other annotation kept, in its order).
+// A copy of a copy names its direct source.
+func withCopyIdentity(text, newUID, sourceUID string) (string, error) {
+	lines := strings.Split(text, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.TrimRight(line, "\r") == "metadata:" {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return "", fmt.Errorf("world.yaml carries no metadata block")
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		line := strings.TrimRight(lines[i], "\r")
+		if line != "" && !strings.HasPrefix(line, " ") {
+			end = i
+			break
+		}
+	}
+
+	var block []string
+	var annotations [][2]string
+	uidSet := false
+	inAnnotations := false
+	for _, raw := range lines[start+1 : end] {
+		line := strings.TrimRight(raw, "\r")
+		match := yamlLine.FindStringSubmatch(line)
+		if match != nil && len(match[1]) == 4 && inAnnotations {
+			if match[2] != CopiedFromAnnotation {
+				annotations = append(annotations, [2]string{match[2], match[3]})
+			}
+			continue
+		}
+		inAnnotations = false
+		if match != nil && len(match[1]) == 2 && match[2] == "annotations" {
+			inAnnotations = true
+			continue
+		}
+		if match != nil && len(match[1]) == 2 && match[2] == "uid" {
+			block = append(block, "  uid: "+newUID)
+			uidSet = true
+			continue
+		}
+		if line == "" {
+			continue
+		}
+		block = append(block, line)
+	}
+	if !uidSet {
+		block = append(block, "  uid: "+newUID)
+	}
+	annotations = append(annotations, [2]string{CopiedFromAnnotation, sourceUID})
+	block = append(block, "  annotations:")
+	for _, pair := range annotations {
+		block = append(block, "    "+pair[0]+": "+pair[1])
+	}
+
+	result := append([]string{}, lines[:start+1]...)
+	result = append(result, block...)
+	result = append(result, lines[end:]...)
+	return strings.Join(result, "\n"), nil
 }

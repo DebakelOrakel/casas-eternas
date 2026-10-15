@@ -32,7 +32,7 @@ func newGate(t *testing.T, mode config.AuthMode) (func(http.Handler) http.Handle
 	// Literals rather than the modules' constants: the exempt list is a
 	// PARAMETER, and this package deliberately imports no module. What cmd/
 	// actually passes is checked where cmd/ builds it.
-	return Gate(resolver, []string{"/config.json", CapabilitiesPath, "/v1/session"}), tokens
+	return Gate(resolver, []string{"/config.json", CapabilitiesPath, "/v1/session"}, nil), tokens
 }
 
 func request(t *testing.T, gate func(http.Handler) http.Handler, path, token string) (int, bool) {
@@ -170,10 +170,31 @@ func TestGateDoesNotInviteBasicAuth(t *testing.T) {
 // Anonymous. This is the regression that would lock a single-user server out of
 // its own worlds.
 func TestLocalModePassesEverything(t *testing.T) {
-	gate := Gate(identity.NewResolver(config.AuthNone, nil), []string{"/config.json"})
+	gate := Gate(identity.NewResolver(config.AuthNone, nil), []string{"/config.json"}, nil)
 	for _, path := range []string{"/v1/worlds", "/v1/artifacts", "/config.json", "/"} {
 		if code, ran := request(t, gate, path, ""); !ran || code != http.StatusOK {
 			t.Errorf("none mode: %s = %d (reached: %v), want 200", path, code, ran)
 		}
+	}
+}
+
+// The anonymous narrowing: a request the predicate accepts reaches its module
+// without credentials — and only without: credentials that do not verify are
+// refused as everywhere, so a lapsed session is still told so.
+func TestAnonymousReadsReachTheirModuleOnlyWithoutCredentials(t *testing.T) {
+	tokens, err := token.NewTokens([]byte(gateKey))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	reads := func(r *http.Request) bool { return r.Method == http.MethodGet && r.URL.Path == "/v1/worlds" }
+	gate := Gate(identity.NewResolver(config.AuthPassword, tokens), nil, reads)
+	if code, ran := request(t, gate, "/v1/worlds", ""); !ran || code != http.StatusOK {
+		t.Errorf("anonymous read = %d (reached: %v), want it passed through", code, ran)
+	}
+	if code, ran := request(t, gate, "/v1/worlds", "nonsense"); ran || code != http.StatusUnauthorized {
+		t.Errorf("a bad token on an anonymous read = %d (reached: %v), want 401", code, ran)
+	}
+	if code, ran := request(t, gate, "/v1/artifacts", ""); ran || code != http.StatusUnauthorized {
+		t.Errorf("a route the predicate refuses = %d (reached: %v), want 401", code, ran)
 	}
 }

@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-10-15
+- **new** Server: an admin marks a world as a template, readable without an account, and `POST /v1/worlds/{uid}/copy` copies a world on the server under a new uid. `generator.load.template`
 - **changed** Performance: an epoch of the history runs about a tenth faster on the flat world and a quarter faster on the sphere, with the same results.
 
 ## 2026-10-12

@@ -2,8 +2,12 @@ import { relabel } from '../../i18n/relabel'
 import type { WorldShape } from '../../map/worldView'
 import { t, type TKey } from '../../i18n/i18n'
 import { formatBytes, formatWhen } from '../../ui/format'
-import { hasSession } from '../../server/session'
-import { deleteWorld, fetchWorld, fetchWorldPreview, listWorlds, uploadWorld, type WorldSummary } from '../../server/worldClient'
+import { hasSession, needsSignIn } from '../../server/session'
+import {
+  copyWorldOnServer, deleteWorld, fetchWorld, fetchWorldPreview, listWorlds, setWorldTemplate, uploadWorld, type WorldSummary,
+} from '../../server/worldClient'
+import { newWorldUid } from '../../world/identity'
+import { copyArchive } from '../../world/worldCopy'
 import {
   browserWorldIncomplete, browserWorldThumbnail, canKeepWorldsInBrowser, completeBrowserWorld, forgetBrowserWorld,
   keepArchiveInBrowser, listBrowserWorlds, openBrowserWorld, type BrowserWorld,
@@ -12,8 +16,12 @@ import { progressPosition, progressStepOf, type ProgressStep } from '../../world
 import type { NotificationOptions } from '../notifications/NotificationManager'
 import '../../ui/theme/design.css'
 import './worldChooser.css'
+// The rows of the title bar's save menu, for the two places a copy can go.
+import '../titleBar/saveMenu.css'
 import { BROWSER_ICON, FLAT_ICON, SERVER_ICON, SPHERE_ICON, icon } from '../chooserIcons'
-import { cardMatches, cardOpenCopy, mergeWorldCopies, type ShapeFilter, type Where, type WhereFilter, type WorldCard, type WorldCopy } from './worldCards'
+import {
+  cardMatches, cardOpenCopy, foreignTemplate, mergeWorldCopies, type ShapeFilter, type Where, type WhereFilter, type WorldCard, type WorldCopy,
+} from './worldCards'
 
 // The first screen of the generator and of the incubator: which world are we
 // working on?
@@ -38,6 +46,14 @@ import { cardMatches, cardOpenCopy, mergeWorldCopies, type ShapeFilter, type Whe
 // kept in both places is ONE card (worldCards.ts, 2026-10-11); a click on the
 // card opens a small panel with the facts of each copy, and the means to
 // copy a world from one place to the other. Nothing is copied by itself.
+//
+// TEMPLATES (docs/decisions/template-worlds.md, 2026-10-15) are server worlds
+// an admin offers to everyone, signed in or not. They carry a badge, have a
+// value of their own in the place filter, and someone else's template is not
+// opened but copied: "Make a copy" asks where the copy goes, with the save
+// menu's own two rows (titlebar.save.browser / .server). The copy is a new
+// world with a new uid (world/worldCopy.ts). An admin marks a server world as
+// a template, or removes the mark, in its panel.
 
 // The shapes a new world can take (docs/design/two-topologies.md). The
 // sphere since 2026-10-09 with its first step only (map/sphereView.ts).
@@ -98,6 +114,7 @@ function browserCopy(world: BrowserWorld): WorldCopy {
     where: 'browser', uid: world.uid, name: world.name, seed: world.seed,
     kind: world.kind ?? null, progress: world.progress ?? null,
     bytes: world.bytes, savedAt: world.savedAt, generator: world.generator, contentHash: world.contentHash ?? '',
+    template: false, callerLevel: '',
   }
 }
 
@@ -107,6 +124,7 @@ function serverCopy(world: WorldSummary): WorldCopy {
     kind: world.kind === 'FlatWorld' || world.kind === 'SphereWorld' ? world.kind : null,
     progress: progressStepOf(world.progress),
     bytes: world.size, savedAt: world.updatedAt, generator: world.generator ?? '', contentHash: world.contentHash ?? '',
+    template: world.template ?? false, callerLevel: world.callerLevel ?? '',
   }
 }
 
@@ -182,6 +200,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
           <button type="button" data-filter="all" data-help="generator.load.filter.all"></button>
           <button type="button" data-filter="browser" data-help="generator.load.filter.browser"></button>
           <button type="button" data-filter="server" data-help="generator.load.filter.server"></button>
+          <button type="button" data-filter="template" data-help="generator.load.template.filter"></button>
         </div>
       </div>
       <div class="wc-list" data-slot="list"></div>
@@ -221,7 +240,8 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     uploadChoice.querySelector('.wc-choice__label')!.textContent = t('generator.load.upload.label')
     uploadChoice.querySelector('.wc-choice__sub')!.textContent = t('generator.load.upload.help')
     for (const button of filterButtons) {
-      button.textContent = t(`generator.load.filter.${button.dataset.filter as WhereFilter}.label` as TKey)
+      const value = button.dataset.filter as WhereFilter
+      button.textContent = t(value === 'template' ? 'generator.load.template.filter.label' : `generator.load.filter.${value}.label` as TKey)
     }
     // The two shapes say their name with the words the new world's menu uses.
     for (const button of shapeButtons) {
@@ -253,12 +273,19 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
       options.onNewWorld?.(item.dataset.shape as WorldShape)
     })
   }
+  // The one copy menu of a template that is open, if any (copyMenu below):
+  // closed by a click elsewhere and by Escape, like the shapes.
+  let openCopyMenu: HTMLElement | null = null
   root.addEventListener('pointerdown', (event) => {
     if (!shapeMenu.hidden && !(event.target as Element).closest('.wc-new')) closeShapes()
+    if (openCopyMenu && !openCopyMenu.contains(event.target as Node)) closeCopyMenu()
   })
   root.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
-    if (!detailBackdrop.hidden) {
+    if (openCopyMenu) {
+      event.stopPropagation()
+      closeCopyMenu()
+    } else if (!detailBackdrop.hidden) {
       event.stopPropagation()
       closeDetail()
     } else if (!shapeMenu.hidden) {
@@ -320,6 +347,9 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   let serverReachable: boolean | null = null
   // Whether this browser can keep a world: the "copy to browser" needs it.
   let browserKeeps = false
+  // Whether a sign-in stands between this browser and the server: a copy
+  // ON the server needs one, a copy of a template into the browser does not.
+  let signInMissing = false
   // What `options.openable` answered at the last reload.
   let opens: (where: Where, uid: string) => boolean = () => true
   // Counts the reloads, so the answer of an older one, arriving late, does
@@ -344,15 +374,17 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     // Asked together: the server list is a network round trip and the browser
     // list is not, and waiting for the slow one before showing either would
     // make a local-only user pay for a server they do not use.
-    const [browser, server, openable, keeps] = await Promise.all([
+    const [browser, server, openable, keeps, signIn] = await Promise.all([
       listBrowserWorlds(),
       listWorlds(),
       options.openable?.load() ?? null,
       canKeepWorldsInBrowser(),
+      needsSignIn(),
     ])
     if (run !== generation) return
     serverReachable = server !== null
     browserKeeps = keeps
+    signInMissing = signIn
     opens = openable ?? (() => true)
     browserCopies = browser.map(browserCopy)
     serverCopies = (server ?? []).map(serverCopy)
@@ -527,6 +559,112 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     return node
   }
 
+  // --- templates ------------------------------------------------------------
+
+  // A copy of a server world, kept where the user chose, with the save's own
+  // notifications — a copy is a save of a new world to there. In the browser
+  // it is made here from the fetched archive; on the server the server makes
+  // it and nothing travels.
+  async function copyInto(target: Where, source: WorldCopy): Promise<void> {
+    if (target === 'browser') {
+      const archive = await fetchWorld(source.uid)
+      if (!archive) {
+        options.notifications.show({ message: t('generator.load.unavailable'), icon: '/icons/warning.png', durationMs: 6000 })
+        return
+      }
+      const copy = await copyArchive(archive, newWorldUid(), source.uid)
+      const kept = copy !== null && (await keepArchiveInBrowser(copy, new Date().toISOString()))
+      options.notifications.show(kept
+        ? { message: t('notify.save.browser.stored'), icon: '/icons/ok.png', durationMs: 4000 }
+        : { message: t('notify.save.browser.failed'), icon: '/icons/warning.png', durationMs: 8000 })
+    } else {
+      const made = await copyWorldOnServer(source.uid)
+      options.notifications.show(made
+        ? { message: t('notify.save.server.stored'), icon: '/icons/ok.png', durationMs: 4000 }
+        : { message: t('notify.save.server.failed'), icon: '/icons/warning.png', durationMs: 8000 })
+    }
+    await reload()
+  }
+
+  function closeCopyMenu(): void {
+    if (!openCopyMenu) return
+    openCopyMenu.querySelector<HTMLElement>('.save-menu__list')!.hidden = true
+    openCopyMenu.querySelector('.wc-copy__button')!.setAttribute('aria-expanded', 'false')
+    openCopyMenu = null
+  }
+
+  // "Make a copy", and under it the places a copy can go: the save menu's
+  // rows, with its words (titlebar.save.*) and its marks. A place this
+  // browser or this deployment does not have is not offered; the server
+  // without a sign-in is offered, readable and not usable, and says why.
+  function copyMenu(source: WorldCopy, className: string): HTMLElement {
+    const host = el('div', 'wc-copy')
+    const trigger = button(`${className} wc-copy__button`, t('generator.load.template.copy.label'))
+    trigger.dataset.help = 'generator.load.template.copy'
+    trigger.setAttribute('aria-haspopup', 'menu')
+    trigger.setAttribute('aria-expanded', 'false')
+    const list = el('div', 'save-menu__list')
+    list.setAttribute('role', 'menu')
+    list.hidden = true
+    const places: { where: Where; shown: boolean; mark: string }[] = [
+      { where: 'browser', shown: browserKeeps, mark: BROWSER_ICON },
+      { where: 'server', shown: serverReachable === true, mark: SERVER_ICON },
+    ]
+    for (const place of places) {
+      if (!place.shown) continue
+      const blocked = place.where === 'server' && signInMissing
+      const item = button('save-menu__item', '')
+      item.setAttribute('role', 'menuitem')
+      item.dataset.help = `titlebar.save.${place.where}`
+      if (blocked) item.setAttribute('aria-disabled', 'true')
+      const mark = el('span', 'save-menu__mark')
+      mark.append(icon(place.mark))
+      const text = el('span', 'save-menu__text')
+      text.append(
+        el('span', 'save-menu__label', t(`titlebar.save.${place.where}.label`)),
+        el('span', 'save-menu__sub', t(place.where === 'browser' ? 'titlebar.save.browser.sub' : blocked ? 'titlebar.save.server.sub.out' : 'titlebar.save.server.sub.in')),
+      )
+      item.append(mark, text)
+      item.addEventListener('click', () => {
+        if (blocked) return
+        closeCopyMenu()
+        trigger.disabled = true
+        void copyInto(place.where, source).finally(() => { trigger.disabled = false })
+      })
+      list.append(item)
+    }
+    trigger.addEventListener('click', () => {
+      const opening = list.hidden
+      closeCopyMenu()
+      if (!opening) return
+      list.hidden = false
+      trigger.setAttribute('aria-expanded', 'true')
+      openCopyMenu = host
+    })
+    host.append(trigger, list)
+    return host
+  }
+
+  // An admin's mark on a server world, or its removal. The world's content
+  // does not change.
+  function templateButton(copy: WorldCopy): HTMLButtonElement {
+    const base = copy.template ? 'generator.load.template.unmark' : 'generator.load.template.mark'
+    const node = button('wc-action', t(`${base}.label`))
+    node.dataset.help = base
+    node.addEventListener('click', () => {
+      node.disabled = true
+      void setWorldTemplate(copy.uid, !copy.template).then(async (done) => {
+        if (!done) {
+          closeDetail()
+          setNote(t('generator.load.unavailable'))
+          return
+        }
+        await reload()
+      }).finally(() => { node.disabled = false })
+    })
+    return node
+  }
+
   function removeButton(copy: WorldCopy): HTMLButtonElement {
     const node = armedButton('wc-action wc-action--remove', 'generator.load.remove.label', 'generator.load.remove.confirm', () => removeCopy(copy))
     node.dataset.help = 'generator.load.remove'
@@ -559,6 +697,11 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     const row = el('span', 'wc-badges')
     const shape = shapeBadge(card)
     if (shape) row.append(shape)
+    if (card.template) {
+      const template = el('span', 'wc-badge', t('generator.load.template.badge.label'))
+      template.dataset.help = 'generator.load.template.badge'
+      row.append(template)
+    }
     if (card.state === 'diverged') row.append(divergedBadge())
     return row
   }
@@ -627,7 +770,12 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
 
     // Of two different versions, neither opens from here: which one is the
     // user's choice, in the panel. The button says why.
+    // Someone else's template is copied, not opened.
     const target = cardOpenCopy(card, opens)
+    if (!target && foreignTemplate(card.server)) {
+      node.append(info, copyMenu(card.server!, 'wc-open'))
+      return node
+    }
     const open = openButton(target, 'wc-open')
     if (card.state === 'diverged') open.dataset.help = 'generator.load.diverged'
     node.append(info, open)
@@ -696,9 +844,16 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
 
   function actions(card: WorldCard, copy: WorldCopy): HTMLElement {
     const row = el('div', 'wc-actions')
+    // Someone else's template: a copy is all there is to do with it.
+    if (foreignTemplate(copy)) {
+      row.append(copyMenu(copy, 'wc-action wc-action--open'))
+      return row
+    }
     row.append(openButton(opens(copy.where, copy.uid) ? copy : null, 'wc-action wc-action--open'))
     const copyNode = copyButton(card, copy)
     if (copyNode) row.append(copyNode)
+    if (copy.template) row.append(copyMenu(copy, 'wc-action'))
+    if (copy.where === 'server' && copy.callerLevel === 'admin') row.append(templateButton(copy))
     row.append(removeButton(copy))
     return row
   }
@@ -753,6 +908,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
 
   function close(): void {
     root.hidden = true
+    closeCopyMenu()
     closeDetail()
     releaseUrls()
   }

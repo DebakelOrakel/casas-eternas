@@ -24,7 +24,15 @@ const apiPrefix = APIPrefix + "/"
 // identity.Local, which is not Anonymous, so the gate lets everyone through
 // without a special case — the mode is expressed once, in the resolver, and
 // nowhere else.
-func Gate(caller *identity.Resolver, exempt []string) func(http.Handler) http.Handler {
+//
+// `anonymous` is the one narrowing of the rule (2026-10-15, template worlds,
+// docs/decisions/template-worlds.md): a request it accepts that carries NO
+// credentials at all goes through to its module, which ranks the anonymous
+// caller itself — the world module serves templates to everyone. A request
+// with credentials that do not verify is still refused here, so a client
+// whose session ran out learns it on every route, these included. Nil for
+// none. Like `exempt`, a parameter: cmd/ composes it from the modules.
+func Gate(caller *identity.Resolver, exempt []string, anonymous func(*http.Request) bool) func(http.Handler) http.Handler {
 	public := make(map[string]bool, len(exempt))
 	for _, path := range exempt {
 		public[path] = true
@@ -36,6 +44,10 @@ func Gate(caller *identity.Resolver, exempt []string) func(http.Handler) http.Ha
 				return
 			}
 			if caller.Caller(r) == identity.Anonymous {
+				if anonymous != nil && r.Header.Get("Authorization") == "" && anonymous(r) {
+					next.ServeHTTP(w, r)
+					return
+				}
 				// No WWW-Authenticate: this server's answer to "log in" is its
 				// own form posting to the session endpoint, and that header
 				// would summon the browser's native dialog instead — one with

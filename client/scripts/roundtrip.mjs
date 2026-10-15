@@ -183,7 +183,8 @@ console.log('\n— run history —')
   const run = (fields, epochs, extra = {}) => ({ epochs, generator: 'abc1234', code: 'deadbeefdeadbeef', values: WH.runValues(fields, values), ...extra })
   const record = {
     kind: 'FlatWorld',
-    uid: '0f8e5c1a-7b2d-4c3e-9a1f-123456789abc', name: 'Calvessor', revision: 7,
+    uid: '0f8e5c1a-7b2d-4c3e-9a1f-123456789abc', name: 'Calvessor',
+    annotations: { 'casas-eternas/copied-from': '11111111-2222-4333-8444-555555555555' }, revision: 7,
     spec: { seed: '983721401', values },
     history: { genesis: [run(WH.GENESIS_RUN_FIELDS, 41)], tectonics: [run(WH.TECTONICS_RUN_FIELDS, 30), run(WH.TECTONICS_RUN_FIELDS, 12, { restored: true })] },
     archeanEpochs: 41, epoch: 42, erosionRun: 42, progress: 'climate',
@@ -224,6 +225,40 @@ console.log('\n— run history —')
   check('and counts on the chain without the aside', JSON.stringify(WP.progressPosition('genesis')) === '{"n":2,"all":6,"done":false}' && WP.progressPosition('finishing').done && WP.progressPosition(null) === null)
   check('a new progress reads as a change, by name', WR.recordDiff(record, { ...record, progress: 'finishing' }).some((d) => d.startsWith('progress:')))
   check('an unknown or missing kind is refused', refused === 3 && WR.worldKindOf(yaml) === 'FlatWorld', `${refused} of 3`)
+  // The annotations (template worlds: where a copy came from) survive a
+  // load and a save, are absent while there is none, and are no change.
+  const plain = WR.recordFromYaml(WR.recordToYaml({ ...record, annotations: {} }, 'x'), { archeanEpochs: 41, epoch: 42 }, () => 'unused')
+  check('the annotations survive world.yaml, and none writes no block', back.annotations['casas-eternas/copied-from'] === record.annotations['casas-eternas/copied-from'] && Object.keys(plain.annotations).length === 0 && !WR.recordToYaml({ ...record, annotations: {} }, 'x').includes('annotations:'))
+  check('and are no change', WR.recordSignature(plain) === WR.recordSignature(record))
+}
+
+// --- 2c'. a copy's world.yaml -----------------------------------------------
+// world/worldCopy.ts: a copy is the same world under a new uid, with the
+// source named as an annotation — the same text the server writes
+// (internal/modules/world/save.go, withCopyIdentity; its test holds the same
+// expected file as this one).
+{
+  console.log('\n— a copy of a world —')
+  const WCopy = await L('/src/world/worldCopy.ts')
+  const WR = await L('/src/world/worldRecord.ts')
+  const key = WCopy.COPIED_FROM_ANNOTATION
+  const yaml = `apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: old\n  annotations:\n    example/note: kept\n    ${key}: older\nspec:\n  seed: s\n`
+  const want = `apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: new\n  annotations:\n    example/note: kept\n    ${key}: old\nspec:\n  seed: s\n`
+  check('the copy\'s identity is written as the server writes it', WCopy.withCopyIdentity(yaml, 'new', 'old') === want, JSON.stringify(WCopy.withCopyIdentity(yaml, 'new', 'old')))
+  check('a file without metadata is no world to copy', WCopy.withCopyIdentity('spec:\n  seed: s\n', 'new', 'old') === null)
+  // From the record the generator writes: the uid moves, the spec does not,
+  // and the record reads the source back.
+  const record = { kind: 'FlatWorld', uid: 'src-uid', name: 'N', annotations: {}, revision: 2, spec: { seed: '9', values: Object.fromEntries(M.spec.WORLD_SPEC_FIELDS.map((f) => [f.path, f.input.default])) }, history: { genesis: [], tectonics: [] }, archeanEpochs: 0, epoch: 0, erosionRun: 0, progress: null }
+  const written = WR.recordToYaml(record, 'b')
+  const copied = WR.recordFromYaml(WCopy.withCopyIdentity(written, 'copy-uid', 'src-uid'), { archeanEpochs: 0, epoch: 0 }, () => 'x')
+  check('a copied record has the new uid, the source as annotation, the same recipe', copied.uid === 'copy-uid' && copied.annotations[key] === 'src-uid' && WR.recordSignature(copied) === WR.recordSignature(record))
+  // The archive: world.yaml rewritten, every other entry the same bytes.
+  const zip = new JSZip()
+  zip.file('world.yaml', written)
+  zip.file('state.json', '{"epoch":3}')
+  const archive = new Blob([await zip.generateAsync({ type: 'uint8array' })])
+  const back = await JSZip.loadAsync(await (await WCopy.copyArchive(archive, 'copy-uid', 'src-uid')).arrayBuffer())
+  check('a copied archive keeps every other entry', (await back.file('state.json').async('string')) === '{"epoch":3}' && (await back.file('world.yaml').async('string')).includes(`    ${key}: src-uid`))
 }
 
 // --- 2d. the world list's merge ---------------------------------------------
@@ -232,7 +267,7 @@ console.log('\n— run history —')
 {
   console.log('\n— world list merge —')
   const WC = await L('/src/ui/worldChooser/worldCards.ts')
-  const copy = (where, uid, extra = {}) => ({ where, uid, name: uid, seed: 's', kind: 'FlatWorld', progress: null, bytes: 1, savedAt: '2026-10-01T10:00:00Z', generator: 'g', contentHash: 'aa', ...extra })
+  const copy = (where, uid, extra = {}) => ({ where, uid, name: uid, seed: 's', kind: 'FlatWorld', progress: null, bytes: 1, savedAt: '2026-10-01T10:00:00Z', generator: 'g', contentHash: 'aa', template: false, callerLevel: where === 'server' ? 'owner' : '', ...extra })
   const opensAll = () => true
   const cards = WC.mergeWorldCopies(
     [copy('browser', 'same'), copy('browser', 'diverged', { contentHash: 'bb', savedAt: '2026-10-02T10:00:00Z' }), copy('browser', 'nohash', { contentHash: '' }), copy('browser', 'local', { kind: 'SphereWorld' })],
@@ -259,6 +294,14 @@ console.log('\n— run history —')
   check('the place filter keeps the cards with a copy there', under('server', 'anyShape') === 'diverged,nohash,remote,same' && under('browser', 'anyShape') === 'diverged,local,nohash,same', `${under('server', 'anyShape')} | ${under('browser', 'anyShape')}`)
   const mixedKind = WC.mergeWorldCopies([copy('browser', 'x', { kind: null })], [copy('server', 'x', { kind: 'SphereWorld' })])[0]
   check('the shape comes from whichever copy knows it', mixedKind.kind === 'SphereWorld' && WC.cardMatches(mixedKind, 'all', 'sphere'))
+  // Templates (docs/decisions/template-worlds.md): the server copy's mark
+  // makes the card one; someone else's template is not opened but copied,
+  // the owner's and the admin's open as usual.
+  const templates = WC.mergeWorldCopies([copy('browser', 'mine')], [copy('server', 'theirs', { template: true, callerLevel: 'viewer' }), copy('server', 'owned', { template: true }), copy('server', 'ruled', { template: true, callerLevel: 'admin' }), copy('server', 'plain')])
+  const tcard = (uid) => templates.find((c) => c.uid === uid)
+  const tunder = (where) => templates.filter((c) => WC.cardMatches(c, where, 'anyShape')).map((c) => c.uid).sort().join(',')
+  check('the template filter keeps the templates, All keeps everything', tunder('template') === 'owned,ruled,theirs' && tunder('all') === 'mine,owned,plain,ruled,theirs', `${tunder('template')} | ${tunder('all')}`)
+  check('someone else\'s template does not open, the owner\'s and the admin\'s do', WC.cardOpenCopy(tcard('theirs'), opensAll) === null && WC.foreignTemplate(tcard('theirs').server) && WC.cardOpenCopy(tcard('owned'), opensAll)?.uid === 'owned' && WC.cardOpenCopy(tcard('ruled'), opensAll)?.uid === 'ruled')
 }
 
 // --- 3. identity -------------------------------------------------------------

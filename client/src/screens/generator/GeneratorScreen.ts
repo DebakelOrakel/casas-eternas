@@ -345,6 +345,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the world was saved or loaded.
   let savedWorldId: string | null = null
   let worldRevision = 0
+  // world.yaml's `metadata.annotations` (world/worldRecord.ts): read back on
+  // load and written again on save, so a copy keeps where it came from
+  // (world/worldCopy.ts). None for a new world.
+  let worldAnnotations: Record<string, string> = {}
   // The last step the user accepted by moving forward (world/worldProgress.ts):
   // written to world.yaml's status, read back on load, none for a new world.
   let worldProgress: ProgressStep | null = null
@@ -4898,7 +4902,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function currentRecord(): WorldRecord {
     return {
       kind: worldShape === 'sphere' ? 'SphereWorld' : 'FlatWorld',
-      uid: worldUid, name: worldName, revision: worldRevision, spec: readSpec(), history: structuredClone(history),
+      uid: worldUid, name: worldName, annotations: { ...worldAnnotations }, revision: worldRevision, spec: readSpec(), history: structuredClone(history),
       archeanEpochs: lastArcheanEpochs, epoch: lastEpoch, erosionRun: erosionRunCount,
       progress: worldProgress,
     }
@@ -5665,6 +5669,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // file opened on two machines a SINGLE world in the store — see
     // identity.deriveWorldUid.
     worldUid = record.uid
+    worldAnnotations = record.annotations
     worldRevision = record.revision
     // A world opened keeps the progress it was saved with.
     worldProgress = record.progress
@@ -6118,6 +6123,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Note this is regenerate() only: running more tectonics or resetting
     // erosion also zero erosionRunCount, but those are the SAME world evolving.
     worldUid = ''
+    worldAnnotations = {}
     forgetSavedWorldId()
     replaying = null
     replayedHistory = null

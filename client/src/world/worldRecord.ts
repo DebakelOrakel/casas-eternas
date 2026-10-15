@@ -1,4 +1,4 @@
-import { readRecipeValue } from './save/recipeYaml'
+import { readRecipeMap, readRecipeValue } from './save/recipeYaml'
 import { historyFromYaml, historyToYamlLines, type WorldHistory } from './save/worldHistory'
 import { specFromYaml, specToYamlLines, WORLD_SPEC_FIELDS, type WorldSpec } from './save/worldSpec'
 import { progressStepOf, type ProgressStep } from './worldProgress'
@@ -35,6 +35,11 @@ export interface WorldRecord {
   uid: string
   // Its name — not part of the spec: renaming does not make another world.
   name: string
+  // `metadata.annotations`: notes on the world that are not the world, by a
+  // prefixed key — today only where a copy came from (worldCopy.ts). Kept
+  // through a load and a save, never compared by recordSignature, and part
+  // of no id.
+  annotations: Record<string, string>
   // How many times it has been written (the server's optimistic lock).
   revision: number
   // The recipe: the seed and one value per control.
@@ -66,6 +71,8 @@ export function recordToYaml(record: WorldRecord, generator: string): string {
     // from the TERRAIN's identity (identity.deriveWorldId), which moves
     // whenever the terrain does.
     `  uid: ${record.uid}`,
+    // Absent while there is none.
+    ...annotationLines(record.annotations),
     'spec:',
     ...specToYamlLines(record.spec),
     'status:',
@@ -83,6 +90,11 @@ export function recordToYaml(record: WorldRecord, generator: string): string {
   ].join('\n')
 }
 
+function annotationLines(annotations: Record<string, string>): string[] {
+  const keys = Object.keys(annotations)
+  return keys.length === 0 ? [] : ['  annotations:', ...keys.map((key) => `    ${key}: ${annotations[key]}`)]
+}
+
 // A record from world.yaml and the snapshot's epochs. `fallbackUid` names a
 // save written before `metadata.uid` existed (identity.deriveWorldUid).
 //
@@ -97,6 +109,7 @@ export function recordFromYaml(yaml: string, epochs: { archeanEpochs: number; ep
     uid: readRecipeValue(yaml, 'metadata.uid') || fallbackUid(),
     // A world saved before step 0 existed was named after its seed.
     name: readRecipeValue(yaml, 'metadata.name') ?? seed,
+    annotations: readRecipeMap(yaml, 'metadata.annotations'),
     revision: Number(readRecipeValue(yaml, 'status.revision') ?? 0),
     spec: specFromYaml(yaml, seed),
     history: historyFromYaml(yaml),

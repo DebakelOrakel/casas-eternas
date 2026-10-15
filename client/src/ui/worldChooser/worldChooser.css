@@ -549,6 +549,37 @@
   color: var(--dc-on-accent);
 }
 
+/* A template's "Make a copy" and the two places under it. The rows are the
+   save menu's (titlebar/saveMenu.css); only where the list hangs is this
+   screen's: under the card's button at its right edge, under the panel's
+   button at its left. */
+.wc-copy {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.wc-actions .wc-copy .save-menu__list {
+  right: auto;
+  left: 0;
+}
+
+.wc-copy .save-menu__mark svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* The server without a sign-in: readable, not usable, and its line says why. */
+.wc-copy .save-menu__item[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.wc-copy .save-menu__item[aria-disabled='true']:hover {
+  background: transparent;
+}
+
 /* --- the panel ------------------------------------------------------------- */
 
 /* The modal vocabulary of the confirm window: the same card, over the list. */

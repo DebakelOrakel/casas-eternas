@@ -108,3 +108,27 @@ func TestLevelsAreTotallyOrdered(t *testing.T) {
 		}
 	}
 }
+
+// A template opens READING to everyone, the anonymous caller (empty id)
+// included, and nothing more; setting the mark is the admin's alone — the
+// owner of the world may not.
+func TestTemplateMakesEveryCallerAViewer(t *testing.T) {
+	grants := Grants{Owner: "own", Template: true}
+	for _, caller := range []string{"", "stranger"} {
+		if !Can(caller, false, ActionRead, grants) {
+			t.Errorf("caller %q refused reading a template", caller)
+		}
+		if Can(caller, false, ActionWrite, grants) {
+			t.Errorf("caller %q may write a template", caller)
+		}
+	}
+	if Can("", false, ActionRead, Grants{Owner: "own", Public: true}) {
+		t.Error("a public world opened to the anonymous caller")
+	}
+	if Can("own", false, ActionTemplate, grants) {
+		t.Error("the owner may set the template mark")
+	}
+	if !Can("operator", true, ActionTemplate, grants) {
+		t.Error("the admin may not set the template mark")
+	}
+}

@@ -247,6 +247,12 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	// is already known — the server package deliberately knows about none of
 	// them, and the alternative of repeating three string literals is how a path
 	// stops being exempt without anyone deciding that it should.
+	// The reads the world module ranks for a caller without credentials
+	// (templates, world.AnonymousReads); none where it does not run here.
+	var anonymousReads func(*http.Request) bool
+	if worldModule != nil {
+		anonymousReads = world.AnonymousReads
+	}
 	wired = true
 	return modules, server.Gate(caller, []string{
 		client.ConfigPath,       // where the API is and how to log in
@@ -255,7 +261,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		auth.TokenPath,          // a service account trading its secret for a bus token
 		auth.RedeemPath,         // spending an invite or reset code, which signs in
 		auth.RefreshPath,        // renewing a session whose access token has run out
-	}), nil
+	}, anonymousReads), nil
 }
 
 // bakeConfig wires the bake module's two sides — where its worlds come from,

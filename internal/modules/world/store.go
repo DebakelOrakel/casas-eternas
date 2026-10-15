@@ -48,6 +48,12 @@ var ErrRevisionMismatch = errors.New("revision mismatch")
 // ErrExists is returned when a create-only write finds a world already there.
 var ErrExists = errors.New("world already exists")
 
+// ErrNoGrants is returned when a change to a world's grants finds no grants
+// document to change — a world from before grants existed. Its owner is a
+// question for the migration rule, which a template mark must not answer
+// by the way.
+var ErrNoGrants = errors.New("world has no grants")
+
 // safeUID is what may become a directory name. Deliberately strict — the uid
 // is a UUID from our own client, so anything else is either a bug or an
 // attempt at path traversal, and there is no reason to be liberal about it.
@@ -79,6 +85,11 @@ type Meta struct {
 	// world.yaml. Empty until a world is uploaded again.
 	Kind     string `json:"kind"`
 	Progress string `json:"progress"`
+	// Whether the world is a template (access.Grants.Template), mirrored from
+	// grants.json like the owner — a DISPLAY MIRROR: the rank is read from
+	// the grants, never from here (2026-10-15, docs/decisions/
+	// template-worlds.md).
+	Template bool `json:"template"`
 }
 
 // RevisionMeta is {dir}/{uid}/rev/{n}/meta.json.
@@ -184,6 +195,11 @@ func (s *Store) ReadGrants(ctx context.Context, uid string) (access.Grants, bool
 // WriteGrants replaces a world's ACL — the transfer/share path. Under the
 // world's lock like Put, so a share and an upload cannot interleave their
 // reads of the document.
+//
+// The template mark is NOT the share path's to change: whatever grants.Template
+// says, the mark stays as it is on disk. SetTemplate, the admin's, is its one
+// writer — so a share API built on this cannot let an owner offer a world to
+// every visitor of the server.
 func (s *Store) WriteGrants(ctx context.Context, uid string, grants access.Grants) error {
 	if grants.Owner == "" {
 		return fmt.Errorf("grants must name an owner — a world with nobody at the top can never be shared or deleted again")
@@ -196,24 +212,68 @@ func (s *Store) WriteGrants(ctx context.Context, uid string, grants access.Grant
 	mu := s.lock(uid)
 	mu.Lock()
 	defer mu.Unlock()
-	if _, err := s.readMeta(uid); err != nil {
-		return err
-	}
-	if err := writeJSONAtomic(s.grantsPath(uid), grants); err != nil {
-		return err
-	}
-	// Keep the display mirror honest immediately, not at the next upload.
 	meta, err := s.readMeta(uid)
 	if err != nil {
 		return err
 	}
-	if meta.Owner != grants.Owner {
-		meta.Owner = grants.Owner
-		if err := writeJSONAtomic(filepath.Join(s.worldDir(uid), "meta.json"), meta); err != nil {
-			return err
+	held, _, err := s.readGrants(uid)
+	if err != nil {
+		return err
+	}
+	grants.Template = held.Template
+	if err := writeJSONAtomic(s.grantsPath(uid), grants); err != nil {
+		return err
+	}
+	// Keep the display mirror honest immediately, not at the next upload.
+	return s.mirrorGrants(uid, meta, grants)
+}
+
+// SetTemplate sets or removes a world's template mark — the admin's
+// (access.ActionTemplate), and the mark's one writer. The world's CONTENT is
+// not touched, so neither its revision nor its terrain id moves.
+//
+// A world without grants.json is refused with ErrNoGrants: the mark lives in
+// the grants, and minting them here would decide the world's owner by the way.
+func (s *Store) SetTemplate(ctx context.Context, uid string, on bool) (Meta, error) {
+	if !ValidUID(uid) {
+		return Meta{}, ErrNotFound
+	}
+	mu := s.lock(uid)
+	mu.Lock()
+	defer mu.Unlock()
+	meta, err := s.readMeta(uid)
+	if err != nil {
+		return Meta{}, err
+	}
+	grants, found, err := s.readGrants(uid)
+	if err != nil {
+		return Meta{}, err
+	}
+	if !found {
+		return Meta{}, ErrNoGrants
+	}
+	if grants.Template != on {
+		grants.Template = on
+		if err := writeJSONAtomic(s.grantsPath(uid), grants); err != nil {
+			return Meta{}, err
 		}
 	}
-	return nil
+	if err := s.mirrorGrants(uid, meta, grants); err != nil {
+		return Meta{}, err
+	}
+	return s.readMeta(uid)
+}
+
+// mirrorGrants writes the owner and the template mark into the display
+// mirror in meta.json where they differ from the grants. Under the world's
+// lock, held by the caller.
+func (s *Store) mirrorGrants(uid string, meta Meta, grants access.Grants) error {
+	if meta.Owner == grants.Owner && meta.Template == grants.Template {
+		return nil
+	}
+	meta.Owner = grants.Owner
+	meta.Template = grants.Template
+	return writeJSONAtomic(filepath.Join(s.worldDir(uid), "meta.json"), meta)
 }
 
 // ValidUID reports whether a uid may be used as a path segment.
@@ -357,14 +417,14 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 	// explicit transfer — never by writing a revision. Meta.Owner is a
 	// DISPLAY MIRROR of it from here on; re-stamping it per upload was the
 	// standing bug where a shared world's first editor save stole the world.
-	displayOwner := current.Owner
+	displayOwner, template := current.Owner, false
 	if creating {
 		if err := writeJSONAtomic(s.grantsPath(uid), access.Grants{Owner: owner}); err != nil {
 			return Meta{}, err
 		}
 		displayOwner = owner
 	} else if grants, found, grantsErr := s.readGrants(uid); grantsErr == nil && found {
-		displayOwner = grants.Owner
+		displayOwner, template = grants.Owner, grants.Template
 	}
 	// A world from before grants existed has neither: its meta keeps the
 	// owner it already recorded (NOT the current caller), and no grants are
@@ -386,6 +446,7 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 		ContentHash: contentHash,
 		Kind:        info.Kind,
 		Progress:    info.Progress,
+		Template:    template,
 	}
 	if meta.CreatedAt.IsZero() {
 		meta.CreatedAt = now

@@ -281,11 +281,14 @@ export function createHandbookPanel(host: HTMLElement, options: HandbookPanelOpt
     const anchors = page.kind === 'step' ? options.stepOverlays?.(page.anchor) ?? [] : []
     const layers = anchors.map((anchor) => (options.overlays?.() ?? []).find((layer) => layer.anchor === anchor)).filter((layer): layer is HandbookOverlay => !!layer)
     listSection('handbook.overlays', layers.map((layer) => ({ label: layer.label, help: layer.help, icon: layer.icon, page: layer.anchor })))
-    if (page.kind !== 'concept') return
+    if (page.kind !== 'concept' && page.kind !== 'overview') return
     // On a concept's own page, below what the steps include: the steps that
-    // include it, and the documents behind it on the doc site.
-    const steps = pagesOf('step', pagesNow()).filter((step) => step.uses?.includes(page.anchor))
-    cardSection('handbook.usedIn', steps.map((step) => ({ title: step.title, page: step.anchor })))
+    // include it. On a concept's and an overview page: the documents behind
+    // it on the doc site.
+    if (page.kind === 'concept') {
+      const steps = pagesOf('step', pagesNow()).filter((step) => step.uses?.includes(page.anchor))
+      cardSection('handbook.usedIn', steps.map((step) => ({ title: step.title, page: step.anchor })))
+    }
     if (options.docsAvailable?.()) {
       cardSection('handbook.background', (page.background ?? []).map((doc) => ({ title: `${doc.id} · ${doc.title}`, text: doc.summary, href: `/docs/${doc.route}` })))
     }

@@ -172,14 +172,15 @@ export function buildHandbook(dir: string): Handbook {
     if (locale === 'en') {
       english = concepts
       // A document naming a concept the handbook does not have is a link
-      // into nothing: refused, as a concept included twice is.
-      const known = new Set([...concepts.values()].map((page) => page.anchor))
+      // into nothing: refused, as a concept included twice is. An overview
+      // page may stand behind a document as a concept does.
+      const known = new Set([...concepts.values(), ...pages.filter((page) => page.kind === 'overview')].map((page) => page.anchor))
       for (const doc of docs) {
         for (const anchor of doc.concepts) if (!known.has(anchor)) throw new Error(`handbook: ${doc.id} names concept ${anchor}, which the handbook does not have`)
       }
     }
     for (const page of pages) {
-      if (page.kind !== 'concept') continue
+      if (page.kind !== 'concept' && page.kind !== 'overview') continue
       const background: HandbookDoc[] = docs.filter((doc) => doc.concepts.includes(page.anchor)).map((doc) => ({
         id: doc.id,
         title: doc.title[locale] ?? doc.title.en,

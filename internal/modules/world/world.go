@@ -11,12 +11,14 @@ package world
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
@@ -84,7 +86,38 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("GET /v1/worlds/{uid}/preview.png", m.handlePreview)
 	mux.HandleFunc("PUT /v1/worlds/{uid}", m.handlePut)
 	mux.HandleFunc("DELETE /v1/worlds/{uid}", m.handleDelete)
+	mux.HandleFunc("POST /v1/worlds/{uid}/copy", m.handleCopy)
+	mux.HandleFunc("PUT /v1/worlds/{uid}/template", m.handleTemplate)
+	mux.HandleFunc("DELETE /v1/worlds/{uid}/template", m.handleTemplate)
 	return nil
+}
+
+// AnonymousReads names the requests this module ranks for a caller WITHOUT
+// credentials, rather than the gate refusing them: the reads of a world —
+// the list, the archive, its meta and its preview — because a template is
+// readable by everyone (access.Grants.Template, docs/decisions/
+// template-worlds.md). cmd/ hands it to server.Gate. The module then answers
+// such a caller only with templates: the list holds nothing else, and every
+// other world answers 401, as the gate would have.
+//
+// A pure function of the request, so the gate needs to know no module.
+func AnonymousReads(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	path := r.URL.Path
+	if path == "/v1/worlds" {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, "/v1/worlds/")
+	if !ok {
+		return false
+	}
+	uid, tail, _ := strings.Cut(rest, "/")
+	if !ValidUID(uid) {
+		return false
+	}
+	return tail == "" || tail == "meta" || tail == "preview.png"
 }
 
 // Close releases the store. Nothing is held open.
@@ -154,6 +187,13 @@ func (m *Module) gate(w http.ResponseWriter, r *http.Request, uid string, action
 			level = access.Viewer
 		}
 	}
+	if level < access.Viewer && caller == identity.Anonymous {
+		// No credentials, on a route the gate let through for templates
+		// (AnonymousReads): every other world answers what the gate answers,
+		// so this says nothing about whether the world exists.
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return false
+	}
 	if !exists || level < access.Viewer {
 		httpjson.ClientError(w, http.StatusNotFound, "no such world")
 		return false
@@ -171,17 +211,27 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 		httpjson.ServerError(w, "listing worlds", err)
 		return
 	}
-	// The listing IS the visibility rule: own + granted + public, nothing
-	// else. One grants read per world — N is small, and the design doc
-	// blesses exactly this until it is not.
+	// The listing IS the visibility rule: own + granted + public + templates,
+	// nothing else — for the anonymous caller templates alone. One grants
+	// read per world — N is small, and the design doc blesses exactly this
+	// until it is not. Each entry says the caller's level on it, the same
+	// value the meta endpoint states: the client offers "open" or "copy" on
+	// a template, and the template mark only to an admin, by it.
 	caller, admin := m.callerOf(r)
-	visible := make([]Meta, 0, len(metas))
+	visible := make([]listedWorld, 0, len(metas))
 	for _, meta := range metas {
 		if _, level := m.AccessFor(r.Context(), meta.UID, caller, admin); level >= access.Viewer {
-			visible = append(visible, meta)
+			visible = append(visible, listedWorld{Meta: meta, CallerLevel: level.String()})
 		}
 	}
 	httpjson.Write(w, http.StatusOK, visible)
+}
+
+// listedWorld is one entry of the list: the world's record and the caller's
+// level on it.
+type listedWorld struct {
+	Meta
+	CallerLevel string `json:"callerLevel"`
 }
 
 func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +371,77 @@ func (m *Module) handleDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleCopy makes a new world of an existing one: a new uid, the caller as
+// its owner, the same content — world.yaml's metadata says the new uid and,
+// as the annotation CopiedFromAnnotation, the source's. Done here rather than
+// by a download and an upload, so tens of MB do not travel twice.
+//
+// Any world the caller may READ may be copied, not templates only: a viewer
+// can download the archive and upload it under a new uid anyway, so a
+// narrower rule would refuse nothing a caller cannot already do. A world the
+// caller may not read is the stranger's 404, as everywhere. The anonymous
+// caller never gets here — the gate refuses it — because a copy on the
+// server needs an owner.
+func (m *Module) handleCopy(w http.ResponseWriter, r *http.Request) {
+	source := r.PathValue("uid")
+	if !m.gate(w, r, source, access.ActionRead) {
+		return
+	}
+	data, _, err := m.store.ReadCurrent(r.Context(), source)
+	if err != nil {
+		respondStoreError(w, err)
+		return
+	}
+	uid := newUID()
+	copied, err := copySave(data, uid, source)
+	if err != nil {
+		// The stored save is the server's own; failing to read it back is
+		// the store's fault, not the caller's.
+		httpjson.ServerError(w, "copying world", err)
+		return
+	}
+	info, err := inspectSave(copied)
+	if err != nil {
+		httpjson.ServerError(w, "copying world", err)
+		return
+	}
+	meta, err := m.store.Put(r.Context(), uid, copied, info, m.cfg.Identity.Caller(r), 0)
+	if err != nil {
+		respondStoreError(w, err)
+		return
+	}
+	slog.Info("world copied", "uid", uid, "from", source, "bytes", meta.Size)
+	w.Header().Set("ETag", etag(meta.Revision))
+	httpjson.Write(w, http.StatusCreated, meta)
+}
+
+// handleTemplate sets (PUT) or removes (DELETE) the template mark — the
+// admin's (access.ActionTemplate). Answers the world's record with the mark
+// as it now stands; both are idempotent.
+func (m *Module) handleTemplate(w http.ResponseWriter, r *http.Request) {
+	uid := r.PathValue("uid")
+	if !m.gate(w, r, uid, access.ActionTemplate) {
+		return
+	}
+	meta, err := m.store.SetTemplate(r.Context(), uid, r.Method == http.MethodPut)
+	if err != nil {
+		respondStoreError(w, err)
+		return
+	}
+	slog.Info("world template mark", "uid", uid, "template", meta.Template)
+	httpjson.Write(w, http.StatusOK, meta)
+}
+
+// newUID is a random (version 4) UUID, the shape the client mints
+// (client/src/world/identity.ts, newWorldUid) and ValidUID accepts.
+func newUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:]) // crypto/rand.Read never fails (Go 1.24+)
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
 // parseIfMatch reads the header as the revision the caller believes is
 // current. Absent means "create; fail if it already exists", which is why the
 // zero value is meaningful rather than merely a default.
@@ -355,6 +476,8 @@ func respondStoreError(w http.ResponseWriter, err error) {
 		// 409, not 412: nothing was asked to be matched. The caller said
 		// "create" and something is already there.
 		httpjson.ClientError(w, http.StatusConflict, "world already exists; send If-Match with its revision to update it")
+	case errors.Is(err, ErrNoGrants):
+		httpjson.ClientError(w, http.StatusConflict, "world has no grants yet (it predates them); give it an owner first")
 	case errors.Is(err, ErrRevisionMismatch):
 		// 412 is what RFC 9110 specifies for a failed If-Match. The plan
 		// originally said 409; that is the code for the case above.

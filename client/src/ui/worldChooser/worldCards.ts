@@ -25,7 +25,23 @@ export interface WorldCopy {
   generator: string
   // SHA-256 of the archive bytes, lowercase hex; empty when not known.
   contentHash: string
+  // Whether the copy is a template (docs/decisions/template-worlds.md):
+  // a server world offered to everyone to copy. Never true in the browser —
+  // the mark is the server's.
+  template: boolean
+  // The caller's level on the copy as the server states it (`viewer` …
+  // `admin`); empty for a browser copy, which is the browser's own.
+  callerLevel: string
 }
+
+// Whether the caller holds the copy as its own: a browser copy, or a server
+// copy the caller owns or administers. The rest are worlds of others.
+export const ownsCopy = (copy: WorldCopy): boolean =>
+  copy.where === 'browser' || copy.callerLevel === 'owner' || copy.callerLevel === 'admin'
+
+// A template that is someone else's: offered to copy, not to open — opening
+// it would offer saves that the server refuses.
+export const foreignTemplate = (copy: WorldCopy | null): boolean => copy !== null && copy.template && !ownsCopy(copy)
 
 // `single`: one place holds the world. `same`: both hold byte-identical
 // archives. `diverged`: both hold it and the bytes differ — or one side's
@@ -46,6 +62,8 @@ export interface WorldCard {
   shown: WorldCopy
   // The shape, from whichever copy knows it.
   kind: WorldKind | null
+  // Whether the world is a template — the server copy's mark.
+  template: boolean
 }
 
 export function mergeWorldCopies(browser: readonly WorldCopy[], server: readonly WorldCopy[]): WorldCard[] {
@@ -60,7 +78,7 @@ export function mergeWorldCopies(browser: readonly WorldCopy[], server: readonly
   for (const [uid, { browser: b, server: s }] of byUid) {
     if (!b || !s) {
       const only = (b ?? s)!
-      cards.push({ uid, browser: b, server: s, state: 'single', newer: null, shown: only, kind: only.kind })
+      cards.push({ uid, browser: b, server: s, state: 'single', newer: null, shown: only, kind: only.kind, template: s?.template ?? false })
       continue
     }
     const same = b.contentHash !== '' && b.contentHash === s.contentHash
@@ -74,6 +92,7 @@ export function mergeWorldCopies(browser: readonly WorldCopy[], server: readonly
       newer,
       shown: newer === 'server' ? s : b,
       kind: b.kind ?? s.kind,
+      template: s.template,
     })
   }
   // Newest first, by the copy each card shows.
@@ -84,22 +103,27 @@ export function mergeWorldCopies(browser: readonly WorldCopy[], server: readonly
 // there is; of two same copies the browser's, which is the faster read of
 // the same bytes; of two diverged copies none — the user picks one in the
 // card's panel. `opens` is the screen's own rule (the incubator opens only
-// server worlds with a level).
+// server worlds with a level). Someone else's template is never opened: its
+// card offers a copy instead.
 export function cardOpenCopy(card: WorldCard, opens: (where: Where, uid: string) => boolean): WorldCopy | null {
   if (card.state === 'diverged') return null
   for (const copy of [card.browser, card.server]) {
-    if (copy && opens(copy.where, copy.uid)) return copy
+    if (copy && !foreignTemplate(copy) && opens(copy.where, copy.uid)) return copy
   }
   return null
 }
 
-export type WhereFilter = 'all' | Where
+// The place filter, with templates as a value of its own beside the two
+// places (docs/decisions/template-worlds.md, fork 4): a template is always a
+// server world, so a separate toggle would only add a combination — browser
+// and templates — that is empty by construction.
+export type WhereFilter = 'all' | Where | 'template'
 export type ShapeFilter = 'anyShape' | 'flat' | 'sphere'
 
 // Whether a card shows under the two filters. A card whose shape no copy
 // knows shows under "both shapes" only: guessing one would file it wrongly.
 export function cardMatches(card: WorldCard, where: WhereFilter, shape: ShapeFilter): boolean {
-  if (where !== 'all' && !card[where]) return false
+  if (where === 'template' ? !card.template : where !== 'all' && !card[where]) return false
   if (shape === 'anyShape') return true
   return card.kind === (shape === 'sphere' ? 'SphereWorld' : 'FlatWorld')
 }

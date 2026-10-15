@@ -15,7 +15,7 @@ world is kept is a property of the world, not a place you go to.
 - **Upload a world** opens a world you downloaded as a .zip file.
 - **Existing worlds** lists every world, with its shape, its name and how
   far it got (the last step accepted, or "Finished"). The filters narrow
-  the list by place (all, in browser, on server) and by shape.
+  the list by place (all, in browser, on server, templates) and by shape.
 
 A world kept in both places is one card. A click on it shows the facts
 of each copy: where it is kept, when it was last saved, the build that
@@ -23,7 +23,21 @@ made it, its size and its progress. From there you can copy it from one
 place to the other, open it, or remove it for good. If the two copies are
 not the same, the card says "Differs" and marks the newer one.
 
-Without an account you see only the worlds of this browser.
+Without an account you see only the worlds of this browser and the
+templates of the server.
+
+## Templates {#templates}
+
+A template is a world the server offers to everyone as a start, also
+without an account. Its card says "Template". You do not work on the
+template itself: **Make a copy** makes a new world of your own from it,
+with the same terrain, and asks where it goes — kept in this browser, or
+stored on the server if you are signed in. The copy has the template's
+name, and the template stays as it is. The levels and tiles computed for
+the template are not copied; the copy computes its own.
+
+An admin marks a server world as a template, or removes the mark, in the
+world's panel.
 
 ## Saving {#save}
 

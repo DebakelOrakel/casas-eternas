@@ -38,6 +38,14 @@ export interface WorldSummary {
   // them.
   kind?: string
   progress?: string
+  // Whether the world is a template — offered to every visitor of the
+  // server, signed in or not, to copy (docs/decisions/template-worlds.md).
+  // Absent from a server older than 2026-10-15.
+  template?: boolean
+  // The caller's level on the world, as the list states it: `viewer`,
+  // `editor`, `owner` or `admin` (internal/access). Absent from a server
+  // older than 2026-10-15, and from the answer of a copy or a mark.
+  callerLevel?: string
 }
 
 // Why an upload failed, in terms a caller can act on rather than a status code.
@@ -238,4 +246,37 @@ export async function uploadWorld(uid: string, archive: Blob): Promise<UploadOut
     // A non-JSON error body is not worth failing over; the status stands.
   }
   return { ok: false, reason: 'rejected', message }
+}
+
+// Makes a copy of a world ON the server: a new world with a new uid, owned by
+// the caller, the same content, and world.yaml naming the source
+// (world/worldCopy.ts says what a copy is). Nothing travels through this
+// browser. The copy's record, or null when the server refused or could not
+// be reached. Its revision is remembered, so the next save of the copy is an
+// update and not a 409.
+export async function copyWorldOnServer(uid: string): Promise<WorldSummary | null> {
+  const base = await apiBase()
+  if (!base) return null
+  try {
+    const response = await authFetch(`${base}/worlds/${encodeURIComponent(uid)}/copy`, { method: 'POST' })
+    if (!response.ok) return null
+    const meta = (await response.json()) as WorldSummary
+    rememberRevision(meta.uid, meta.revision)
+    return meta
+  } catch {
+    return null
+  }
+}
+
+// Sets or removes a world's template mark — an admin's move; the server
+// refuses everyone else. False when it was not done.
+export async function setWorldTemplate(uid: string, on: boolean): Promise<boolean> {
+  const base = await apiBase()
+  if (!base) return false
+  try {
+    const response = await authFetch(`${base}/worlds/${encodeURIComponent(uid)}/template`, { method: on ? 'PUT' : 'DELETE' })
+    return response.ok
+  } catch {
+    return false
+  }
 }

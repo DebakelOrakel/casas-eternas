@@ -19,8 +19,8 @@ summary.de: Autorisierung für den Mehrspieler-Server — Rollen je Welt
 area: platform
 stage: building
 createdAt: 2026-08-12
-updatedAt: 2026-08-13
-related: [DEC-0022, DEC-0019]
+updatedAt: 2026-10-15
+related: [DEC-0022, DEC-0019, DEC-0037]
 ---
 
 The finished game is not single-player: worlds must be shareable, so every
@@ -131,6 +131,7 @@ still no first-user magic.
 | `world.bake` — commission 4K/8K | | ✓ | ✓ | ✓ |
 | `world.share` — grants, public flag, ownership transfer | | | ✓ | ✓ |
 | `world.delete` | | | ✓ | ✓ |
+| `world.template` — set or remove the template mark (2026-10-15) | | | | ✓ |
 
 Two cells were argued: editors MAY bake (it costs server resources, but a
 shared world nobody may bake cannot be played together at 4K), and viewers
@@ -138,7 +139,7 @@ MAY download artifacts (`read` includes them — artifacts ARE world data,
 which is also why artifact GETs are not "informational").
 
 **Visibility:** private by default; the world list shows own + granted +
-public. The only unauthenticated/unscoped routes remain the three that
+public + templates. The only unauthenticated/unscoped routes remain the three that
 exist today: `/config.json`, `GET /v1/capabilities`, and the login endpoint
 (`POST /v1/auth/session` since 2026-08-13; the client discovers it via
 `config.json`, so the move was free).
@@ -148,6 +149,29 @@ exist today: `/config.json`, `GET /v1/capabilities`, and the login endpoint
 ```json
 { "owner": "<userId>", "public": false, "users": { "<userId>": "editor" } }
 ```
+
+## Templates: readable by every caller (2026-10-15)
+
+A world can carry a template mark, `"template": true` in its grants.json
+([decisions/template-worlds.md](../decisions/template-worlds.md)). On a
+template EVERY caller is a viewer — the anonymous one too, which is the one
+thing the mark adds over `public`. The rule is one line of
+`access.Grants.LevelOf`, not a case in the handlers: the empty caller id
+ranks as a viewer there, and nothing else changes for it.
+
+Only an admin sets or removes the mark (`world.template`). The owner's share
+path (`Store.WriteGrants`, and the grants API of step 5 when it is built)
+keeps the mark as it is: a template is offered to every visitor of the
+server, a decision about the server and not about one world.
+
+The anonymous caller reaches the world module at all because the gate takes
+a second, narrow exception beside its exempt paths: a request WITHOUT
+credentials that the module's predicate `world.AnonymousReads` accepts (the
+list, the archive, the meta, the preview) goes through, and the module
+ranks it — templates only; every other world answers 401, as the gate would
+have. A request whose credentials do not verify is still refused at the
+gate. The unauthenticated surface is therefore the three paths named below
+plus the template reads.
 
 A separate, server-owned file beside the world's meta — NOT a field in
 meta.json, which is rebuilt from the uploaded save on every Put. That

@@ -80,6 +80,11 @@ const (
 	ActionBake   Action = "world.bake"
 	ActionShare  Action = "world.share"
 	ActionDelete Action = "world.delete"
+	// ActionTemplate sets or removes a world's template mark (Grants.Template).
+	// The operator's, not the owner's: a template is offered to EVERY visitor
+	// of the server, signed in or not, which is a decision about the server
+	// and not about one world (docs/decisions/template-worlds.md).
+	ActionTemplate Action = "world.template"
 )
 
 // Required is the matrix from the design doc, folded through the total
@@ -93,6 +98,8 @@ func Required(action Action) Level {
 		return Editor
 	case ActionShare, ActionDelete:
 		return Owner
+	case ActionTemplate:
+		return Admin
 	default:
 		return Admin
 	}
@@ -107,6 +114,12 @@ type Grants struct {
 	Owner string `json:"owner"`
 	// Public makes every authenticated caller a viewer.
 	Public bool `json:"public"`
+	// Template makes EVERY caller a viewer, the anonymous one included: a
+	// template is a world the server offers as a start to anyone, to copy
+	// (docs/decisions/template-worlds.md). Wider than Public by exactly that
+	// caller. Set only by an admin (ActionTemplate) — the owner's share path
+	// keeps it as it is (world.Store.WriteGrants).
+	Template bool `json:"template,omitempty"`
 	// Users grants named collaborators a role, BY NAME (see Level).
 	Users map[string]string `json:"users,omitempty"`
 }
@@ -117,8 +130,14 @@ type Grants struct {
 // does not take anything away either: the caller then ranks as any other
 // authenticated user does, Viewer on a public world. A typo in the file
 // must not leave a named collaborator seeing less than a stranger.
+//
+// The empty caller id is the anonymous one: on a template it is a viewer,
+// everywhere else it has no rank.
 func (g Grants) LevelOf(callerID string) Level {
 	if callerID == "" {
+		if g.Template {
+			return Viewer
+		}
 		return None
 	}
 	if callerID == g.Owner {
@@ -129,7 +148,7 @@ func (g Grants) LevelOf(callerID string) Level {
 			return level
 		}
 	}
-	if g.Public {
+	if g.Public || g.Template {
 		return Viewer
 	}
 	return None

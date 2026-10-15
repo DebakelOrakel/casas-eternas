@@ -55,8 +55,9 @@ Intro: two or three sentences.
   design and decision docs whose `concepts` front matter names its anchor
   (docs/README.md), with their number, title and summary in the page's
   language and a link to the doc site. Background shows only where the
-  server's docs module runs. A doc naming an anchor the handbook does not
-  have fails the build.
+  server's docs module runs. An overview page shows Background too (it has
+  no Used in). A doc naming an anchor the handbook does not have — neither
+  a concept nor an overview page — fails the build.
 
 ## Anchors
 

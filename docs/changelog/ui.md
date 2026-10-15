@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-15
+- **new** Save/Load: the server offers template worlds to everyone, also without an account, and "Make a copy" turns one into a world of your own in the browser or on the server. `generator.load.template`
 - **new** Handbook: an Overview bookmark explains how a world is made and where your worlds are kept, and a page explains the globe. `handbook.group.overview`
 
 ## 2026-10-12
