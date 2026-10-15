@@ -242,7 +242,9 @@ Built 2026-07-24, all verified via a headless render harness:
 - **Boundary classification still reads a DERIVED plate type**
   (`derivePlateTypes` — continental if a raft covers the seed), a Phase-1
   bridge, not the direct "is there a raft on side A/B?" the design
-  describes. Fine in practice; cleanup deferred.
+  describes. Fine in practice; cleanup deferred. (The relief reads the
+  crust since 2026-10-14 — the addendum below; the events still read the
+  bridge.)
 - **Raft motion is rigid** (whole raft on one host plate), not per-blob.
 - **Island-arc proto-continent birth** not built yet.
 - The derived `plate.type` and the per-plate `continentNames` still exist
@@ -301,13 +303,54 @@ Built 2026-07-24, after Phase 5:
   `assignContinentNames`, and its rift/merge bookkeeping) be **deleted
   entirely** — nothing read it once labels/events moved to rafts.
 
+## Addendum 2026-10-14: the relief reads the crust (DEC-0036 phase 8g-2)
+
+The bridge above (a plate's type from the crust under its SEED) put the
+history's mountains in the wrong places once the uplift became a physical
+rate (DEC-0036 phase 8g). A plate boundary runs through a continent where
+the Voronoi cells of the seeds fall; a raft is rigid and rides one host
+plate, and so do the terrain's nodes on it. Measured on 4 worlds
+(epochs 1–40): the boundary points with one raft on both sides — where
+nothing converges, because one plate carries both sides — put an uplift
+under 11–37 % of the land at the highest mean rate; ridges and island arcs
+stood under rafts whose seeds lay at sea. And 72–84 % of the edges where
+the crust's carrier changes next to a raft (calibration seed, epochs 10
+and 20) lay on no Voronoi boundary point: a raft that reaches into another
+plate's cell meets that plate's ocean at its own edge, not at the seeds'
+boundary. Built in boundaryPass (DEC-0036 phase 8g-2; the Status of
+[fields-on-meshes.md](./fields-on-meshes.md) has the tables):
+
+- **The relief's character from the crust on each side** of a boundary
+  point, read 156 km into each plate (`TECTONICS_TUNING.crustSideM`) —
+  this doc's "is there a raft on side A / side B?".
+- **The carrier of the crust** (`crust/raftLifecycle.carrierPlateAt`, the
+  rule the terrain's nodes move by): a plate boundary with continental
+  crust beside it builds relief only where one plate carries both sides,
+  and only where it converges, at `intraplateShortening` (0.3) of the
+  plates' rate — the push a continent's interior takes up far from its
+  margins. Where two plates carry the two sides, the carriers' margin is
+  the boundary.
+- **The carriers' margins** (`depositCarrierMargins`): every edge of the
+  detection lattice across which the carrier changes next to a raft lays
+  down its relief, from the carriers' own motions; the edge lies where
+  the raft's reach ends, at sea, and the range is laid at the overriding
+  side's coast (searched within `coastSearchM`). A margin that parts a
+  raft from the ocean lays down nothing: the gap is new sea floor.
+
+The events (plate merge, the oceanic plate's consumption, the accretion at
+a subduction arc, the continental rift) and the history's trench
+(tectonics/trench.ts) still read the derived plate type: the bridge is
+retired for the relief only.
+
 ## Remaining
 
 - **Phase 2 optionals:** island-arc births; boundary classification from
-  direct raft geometry — retires the derived `plate.type` bridge, the last
-  vestige of the plate=crust-type model.
+  direct raft geometry for the events and the history's trench — the
+  relief reads it since DEC-0036 phase 8g-2 (the addendum above); the
+  derived `plate.type` bridge stays for the rest.
 - Revisit later whether further design decisions warrant their own docs.
 
 ## Status
 
-decided; Phases 1–5 implemented
+decided; Phases 1–5 implemented. 2026-10-14: the relief's boundary
+classification reads the crust on each side (the addendum above).

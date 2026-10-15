@@ -181,7 +181,7 @@ Each phase is agreed before it starts and measured after (sphere and torus,
    looks at the field mesh's twelve pentagons on purpose: the centroidal
    grid's ∇² keeps an error of about 1.2 % next to them at every spacing
    (phase 3); if a field shows it there, a Heikes–Randall correction is the
-   remedy (agreed 2026-10-11). Done 2026-10-14 (phases 8a–8g, the Status
+   remedy (agreed 2026-10-11). Done 2026-10-14 (phases 8a–8g and 8g-2, the Status
    below); the points it measured and left are in
    [calibration-backlog.md](../design/calibration-backlog.md) (DES-0027).
 
@@ -201,6 +201,195 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-14: **phase 8g-2 BUILT — the uplift where the crust converges;
+the history's time.** Phase 8 stays done; this is a correction of 8g on
+the user's request. 8g's land stood too broadly at 2–3 km (above 2000 m
+9.2 / 7.0 %, torus / sphere; Earth ~5) and too rarely above 4500 m (0.068
+/ 0.036 %; Earth ~0.4), and the sphere had no summit above 6.3 km.
+Measured with `npm run calibrate seeds=12 archeanMa=1000 landShare=30
+sweep=1 sweeps=genesis.landShare sweepSeeds=3` against 8g's run (12 worlds
+per shape, the same seeds); the variants on 6 seeds per shape (8g found
+that 3 seeds misled); the highest peak sampled every tenth epoch by the
+calibration, and every second epoch over 60 epochs on the two worlds
+with the highest summits.
+
+**The diagnosis** (4 worlds, the boundary points classed by the crust 150
+km either side of them and by the plate that carries that crust; the
+raft's host plate on a raft, crust/raftLifecycle.carrierPlateAt):
+
+- *Most of the land's uplift came from boundaries that deform nothing.*
+  The plates are the Voronoi cells of their seeds, decoupled from the
+  rafts (DEC-0003), and a raft rides one host plate as a rigid body — and
+  so do the terrain's nodes on it. A plate boundary through a raft has the
+  same carrier on both sides: nothing converges there. These boundaries
+  put an uplift under 11–37 % of the land at the highest mean rate
+  (0.4–1.8 mm/yr), the margins of a raft with another plate's crust under
+  2–16 % (0.2–1.1 mm/yr); no boundary had two rafts on its sides (rafts
+  merge on contact).
+- *The boundary's character came from the plates' seeds*
+  (derivePlateTypes, DEC-0003's bridge): ridges and island arcs stood
+  under rafts whose seeds lay at sea, and up to 17 % of the deposit
+  weight were boundaries with ocean on both sides classed as a subduction arc or
+  a fold belt.
+- *The Voronoi boundary misses the real margins.* A raft that reaches
+  into another plate's cell meets that plate's crust at its own edge: of
+  the lattice's edges where the carrier changes next to a raft and the
+  crust converges, 72–84 % lay on no Voronoi boundary point (calibration
+  seed, epochs 10 and 20). With the interior boundaries switched off and
+  nothing else (6 seeds) the land's mean height fell to 451 / 411 m and
+  no summit passed 5.2 km.
+- *The carriers' margin lies at sea*: the ocean floor within 1.5 blob
+  radii of a raft rides with it, so the plates meet 500 km or more off a
+  lone blob's coast, beyond the reach of a range's capsule (234 km).
+- *The column's balance overshot*: 8g took its factor 1 − h₀ / H at the
+  epoch's start for the whole epoch; at the fast margins (U to 10 mm/yr,
+  10 km of thickening in an epoch of 1 Ma, more than H) a node beside a
+  range rose by up to 5 km in one epoch, to 12.5 km (torus alpha, epoch
+  38) — between the calibration's samples.
+- *Why the sphere differs*: its plate boundaries close at the torus's
+  rate (|v_n| p50 20–37 against 24–43 km/Myr, p90 54–88 against 70–98, 6
+  seeds, the plates alone), but its raft margins at about half of it (p50
+  14–27 against 28–52, p90 42–74 against 77–91; 3 worlds); and 56 % of
+  its land lies within 30° (31 % on the torus). The land nodes' spacing
+  is the same (p50 7–14 km on both). Not resolved (DES-0027, entry 26).
+
+**The law** (tectonics/epoch/boundaryPass.ts; the code comments have the
+detail and the measurements):
+
+- *The relief reads the crust.* A boundary's character for its relief is
+  classified from the crust on its two sides, 156 km into each plate
+  (TECTONICS_TUNING.crustSideM) — DEC-0003's "is there a raft on side A /
+  side B?". The events (merge, consumption, accretion, the continental
+  rift) and the history's trench still read the plates' derived types
+  (DES-0027, entry 27).
+- *A plate boundary with continental crust beside it* builds relief only
+  where one plate carries both sides, and only where it converges, at
+  `intraplateShortening` 0.3 of the plates' rate: the push a continent's
+  interior takes up far from its margins (the Tian Shan, the Laramide).
+  Shortening only: the stress in continental interiors is mostly
+  compressive (Zoback 1992, J. Geophys. Res. 97, the World Stress Map);
+  a continent breaks at the breakup event, and a share for both signs
+  lowered the land (the mean height 594 → 508 m, torus, 6 seeds).
+- *The carriers' margins* (depositCarrierMargins): every edge of the
+  detection lattice (one step east and one south of each point) across
+  which the carrier changes next to a raft lays down its relief from the
+  two carriers' own motions. Each side is searched along the normal for
+  the coast (a raft's field above one half, within coastSearchM 936 km);
+  the range is laid at the overriding side's coast, the trench towards the
+  subducting side; two coasts make a collision at the edge. A margin that
+  parts a raft from the ocean lays down nothing: the gap is new sea floor
+  (the ocean age's). Pure ocean stays the Voronoi boundary's.
+- *Hc 40 km* (orogenCrustM, the mean continental crust; 8g took 30 km
+  when every boundary through a continent thickened it) and *the
+  plateau's balance back at 4000 m* (collapseHeightM; 3000 m held 8g's
+  broad highlands, which are gone).
+- *The column's balance integrated over the epoch* (coupledEpoch
+  columnFactor): dh/dt = U (1 − h / H) gives h = H − (H − h₀) e^(−D / H)
+  over an epoch's thickening D, so the epoch's mean factor is (H − h₀)(1 −
+  e^(−D / H)) / D. H 7000 → 9500 m (wedgeHeightM): the exact integral
+  holds the summits further below H as the erosion works on them.
+
+**The variants** (6 seeds per shape, calibration … delta, medians; the
+highest peak of the history sampled every tenth epoch over the 6 worlds;
+torus / sphere):
+
+| variant | land % | mean land m | > 2000 m % | > 4500 m % | highest peak, km |
+|---|---|---|---|---|---|
+| before (8g) | 31.5 / 29.1 | 721 / 772 | 6.6 / 9.9 | 0.076 / 0.107 | 9.5 / 6.3 |
+| no relief where one plate carries both sides | 31.8 / 29.0 | 451 / 411 | 0.10 / 0.04 | 0 / 0 | 4.9 / 5.2 |
+| + the relief from the crust beside it | 31.8 / 29.1 | 453 / 407 | 0.08 / 0.10 | 0 / 0 | 5.2 / 4.3 |
+| + the carriers' margins | 31.7 / 29.1 | 471 / 417 | 0.28 / 0.25 | 0 / 0 | 5.1 / 4.2 |
+| + the range at the coast | 31.9 / 29.3 | 584 / 529 | 2.4 / 2.6 | 0.062 / 0.033 | 8.3 / 5.6 |
+| + plateau 4000 m | 31.9 / 29.3 | 594 / 535 | 2.6 / 2.8 | 0.12 / 0.07 | 7.6 / 6.4 |
+| + intraplate share 0.2, both signs (torus) | 31.2 | 508 | 2.3 | 0.072 | 6.4 |
+| plateau 4000 m, Hc 40 km | 31.9 / 29.3 | 639 / 584 | 3.5 / 4.3 | 0.30 / 0.23 | 8.7 / 10.3 |
+| + column 8500 m | 31.9 / 29.4 | 654 / 595 | 3.8 / 4.5 | 0.53 / 0.44 | 10.6 / 12.1 |
+| + intraplate shortening 0.2 | 32.2 / 29.5 | 714 / 594 | 4.7 / 4.0 | 0.22 / 0.23 | 9.8 / 11.1 |
+| + intraplate shortening 0.4 | 32.2 / 29.5 | 772 / 634 | 6.5 / 4.8 | 0.35 / 0.25 | 10.3 / 11.5 |
+| shortening 0.3 (12 seeds) | 33.0 / 28.9 | 744 / 639 | 5.6 / 5.1 | 0.27 / 0.21 | 11.3 / 10.8 |
+| + the column integrated, H 9000 m | 32.2 / 29.5 | 741 / 615 | 5.4 / 4.5 | 0.43 / 0.29 | 7.1 / 7.1 |
+| + H 11 000 m (torus) | 32.2 | 758 | 5.7 | 0.68 | 9.2 |
+| **H 9500 m (chosen; 12 seeds)** | 33.0 / 28.9 | 745 / 640 | 5.3 / 5.2 | 0.46 / 0.28 | 7.8 / 7.1 |
+
+Shortening 0.3 with the explicit column: every second epoch, torus
+alpha reached 12.5 km (epoch 38) and 12.7 km (46), sphere zulu 12.0 km
+(52), where the tenth-epoch samples read 11.3 and 10.8. Integrated at H
+7000 m the two stood at 5.9 / 6.5 km, at 9500 m 8.4 / 9.2 km, at 10 000 m
+9.1 / 9.3 km (60 epochs). 8g's torus alpha reached 10.3 km (epoch 46).
+
+**The worlds** (12 per shape; medians, torus / sphere):
+
+| | Earth | before (8g) | after |
+|---|---|---|---|
+| land, % (target 30) | — | 32.4 / 28.5 | 33.0 / 28.9 |
+| land at landShare 15 / 40 (3 seeds) | — | 16.9 / 39.0 · 14.1 / 37.1 | 16.5 / 41.2 · 14.3 / 37.7 |
+| mean land height, m (target 700–900) | ~840 | 728 / 735 | 745 / 640 |
+| land > 1000 / 2000 / 3000 m, % | — / ~5 / — | 21.3 / 9.19 / 1.56 · 22.1 / 7.01 / 1.59 | 16.4 / 5.34 / 2.44 · 12.0 / 5.20 / 1.47 |
+| land > 4500 / 6000 m, % | ~0.4 / ~0.001 | 0.068 / 0 · 0.036 / 0 | 0.46 / 0.007 · 0.28 / 0.002 |
+| land p99.9, m | — | 4385 / 4168 | 5246 / 5075 |
+| peak at epoch 40, m: median (max) | 8849 | 5595 (9486) / 5484 (6108) | 6325 (7837) / 5968 (7033) |
+| highest peak of the history (every tenth epoch), m: median (max); worlds ≥ 7 / ≥ 8 / ≥ 10 / ≥ 12 km | — | 6145 (10 292); 4 / 3 / 1 / 0 · 5554 (6318); 0 / 0 / 0 / 0 | 6499 (7837); 3 / 0 / 0 / 0 · 6293 (7071); 2 / 0 / 0 / 0 |
+| largest patch > 4500 m, k km² | Tibet ~2500 | 8 / 8 | 53 / 53 |
+| largest landmass, % of the land | — | 68 / 62 | 67 / 62 |
+| plate speed, km/Myr | ~50 | 58.2 / 51.8 | 58.2 / 51.8 |
+| ocean depth mean / median, m | 3682 / ~4100 | 3969 / 4121 · 4157 / 4266 | 3994 / 4114 · 4171 / 4261 |
+| lakes, % of the land (liquid) | ~2–4 | 9.0 (3.0) / 7.1 (5.1) | 8.9 (3.4) / 6.3 (4.3) |
+| ice, % of the land | ~10 | 37.3 / 13.7 | 36.1 / 13.8 |
+| Köppen A / B / C / D / E, % | — | 11.4 / 25.5 / 10.1 / 19.2 / 35.0 · 25.1 / 29.5 / 18.7 / 16.7 / 11.0 | 11.2 / 25.5 / 9.7 / 20.2 / 32.5 · 24.5 / 31.7 / 16.5 / 17.4 / 10.2 |
+| a history epoch, s (npm run calibrate, 5 worlds at once) | — | 12.0 / 14.2 | 10.9 / 11.5 |
+| a history epoch, s (calibration seed, alone; 8f 4.72 / 4.99) | — | 4.95 / 5.59 | 5.21 / 5.18 |
+
+The torus's land is Earth's shape now: above 2000 m 5.3 %, above 4500 m
+0.46 %, above 6000 m 0.007 %; the sphere's 5.2, 0.28 and 0.002 %. The
+largest high patch is six times 8g's, still far from a Tibet (entry 1).
+Summits of 7–8 km stand on both shapes (3 and 2 worlds of 12 in the
+tenth-epoch samples; 8.4 / 9.2 km every second epoch on the two highest);
+none reaches 10 km. Torus alpha's 10.3 km of 8g is 7.8 now. The sphere's
+mean land height falls to 640 m, under the target, where the torus's
+holds (745): its margins close slower and its land lies in the wet low
+latitudes (above); a larger intraplate share lifts it a little and the
+torus's high land past Earth's (DES-0027, entry 26). The lever holds 15
+and 40 within ±3 points on both shapes, the default land moves +0.6 /
++0.4. The lakes, the ice, the Köppen groups and the ocean stay within the
+worlds' spread; the plates' speed is the same (the relief does not feed
+back on the plates).
+
+**The history's time** (part 2). `npm run calibrate` runs 5 worlds at
+once, and its history times move by ±15 % between runs of the same code
+(this phase's two 12-world runs with intraplate 0.3: 388 and 439 s on
+the torus); 8g's 31–35 % came mostly from that. On the calibration seed
+alone (40 epochs, the coupled epoch's own stage timing), 8f 4.72 / 4.99
+s, 8g 4.95 / 5.59 s: +5 / +12 %. All of it is in the forcing stage, +275 /
++495 ms an epoch, and 8g's 75 ms understated it: the column's balance
+built the terrain's full geometry (mesh/meshNeighbourhood.meshGeometry:
+the edges' lengths and Voronoi walls, 220 / 319 ms) to read its stars and
+areas, and its neighbourhoods took 66 / 70 ms. Fixed bit for bit:
+`meshStar` builds the cells and stars alone, `meshGeometry` adds the edges
+to it, and the column reads the star (the arrays and the neighbourhoods
+compared equal on both shapes; the terrain after 8 epochs hashed the
+same). 8g-2's own carriers' margins add 60–140 ms to the tectonics
+stage (the raft test runs before the carrier test, the same result). An
+epoch now takes 5.21 / 5.18 s alone (+10 / +4 % against 8f; the forcing
+stage 0.61 / 0.66 s against 8f's 0.37 / 0.47, the torus's mesh 2 % more
+nodes). The rest of the epoch, per stage, is 8f's: the rebuild 0.65 s,
+the baseline 0.57 / 0.83 s, the erosion 0.75 / 0.68 s, the ice 0.80 /
+0.53 s, the lakes 0.41 s, the membership 0.15 / 0.40 s, the remesh 0.37 /
+0.34 s.
+
+Guards: `make lint`, `harness:roundtrip`, `harness:mesh`, `harness:fields`
+and `harness:pipeline` pass. `harness:pipeline`'s loaded-hydrology test
+grows its world for 28 Archean epochs, not 24: at 18–24 no river of the
+small world was wide enough for a course (26–30 have courses), as in 8d
+and 8f; the check now prints the courses' bytes. `harness:golden`: 0 hard
+failures, coverage ok (all 88 metrics vary), 172 of 263 metrics drifted,
+re-recorded and re-armed, then PASS 0 / 0 / 0. The largest drifts are the
+step's purpose: `elevation.maxM` 4964 → 5570 m on calibration, 5161 →
+7096 m on alpha, 6708 → 6993 m on november; `erosion.deltaCells` +1018 %
+on calibration is the sea level's sign (backlog entry 22), not a delta.
+The pentagons of the sphere's meshes (no field-mesh operator was
+touched): max |z| mantle 1.79, ocean age 0.76, flexure 1.01 (median of
+12), mean rank 0.46 / 0.36 / 0.46.
 
 2026-10-14: **phase 8g BUILT — the history's uplift rate from the plates'
 convergence; phase 8 done.** The last calibration step. The stage stays

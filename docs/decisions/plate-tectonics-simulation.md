@@ -9,7 +9,7 @@ summary.de: Wie die Tektonik-Simulation das Gelände tatsächlich erzeugt, vor a
 area: generator
 stage: built
 createdAt: 2026-07-20
-updatedAt: 2026-08-12
+updatedAt: 2026-10-14
 concepts: [generator.concept.plate-boundaries]
 related: [DEC-0001, DEC-0006]
 ---
@@ -192,6 +192,12 @@ from the code.
 
 Crust type feeding all of the above is no longer a plate property — see
 [continental-crust-rafts.md](./continental-crust-rafts.md).
+
+Since 2026-10-14 (DEC-0036 phase 8g-2) the relief at a boundary reads
+the crust on each side of it and the plate that carries that crust, not
+the plates' derived types: a continent's own margins with another plate
+build the ranges, a plate boundary through one raft only a share of its
+convergence — see continental-crust-rafts.md's addendum of that date.
 
 ## Status
 

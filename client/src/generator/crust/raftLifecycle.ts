@@ -4,6 +4,7 @@ import type { Raft, RaftBlob, RaftMergeEvent, RaftSplitEvent } from './raftTypes
 import { globeFrame, type Domain } from '../core/domain'
 import { deservesContinentName, pickUnusedRaftName } from './raftNames'
 import { detHypot } from '../core/detMath'
+import { nearestRaftIndexed, type BlobIndex } from './raftField'
 
 // The offset `domain.delta` writes into: one per module, so no call
 // allocates. Read it at once, before the next delta.
@@ -33,6 +34,29 @@ export function nearestPlateIndex(x: number, y: number, seeds: PlateSeed[], doma
     }
   }
   return best
+}
+
+// How far from a raft blob's centre a point still rides the raft, in blob
+// radii. The blob's field fades out past its radius; half a radius more
+// keeps a range on a raft's edge with the raft. The terrain's nodes
+// (pipeline/coupledEpoch.ts) and the boundary pass's crust (DEC-0036 phase
+// 8g-2) read the same rule.
+export const RAFT_CARRY_REACH = 1.5
+
+// The host plate of each raft: the plate nearest its first blob, as
+// advanceRafts moves it; −1 for a raft with no blobs.
+export function raftHostPlates(rafts: Raft[], seeds: PlateSeed[], domain: Domain): number[] {
+  return rafts.map((raft) => raft.blobs.length > 0 ? nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, seeds, domain) : -1)
+}
+
+// The plate that carries the crust at a point: a point on a raft (within
+// RAFT_CARRY_REACH of its nearest blob) rides the raft's host plate, any
+// other point the plate of the nearest seed. `blobs` is an index of the
+// rafts built with RAFT_CARRY_REACH (raftField.buildBlobIndex), `hosts`
+// their raftHostPlates.
+export function carrierPlateAt(x: number, y: number, blobs: BlobIndex, hosts: number[], seeds: PlateSeed[], domain: Domain): number {
+  const onRaft = nearestRaftIndexed(x, y, blobs, RAFT_CARRY_REACH)
+  return onRaft >= 0 && hosts[onRaft] >= 0 ? hosts[onRaft] : nearestPlateIndex(x, y, seeds, domain)
 }
 
 // Advances every raft with the plate it rides on — Phase 1 keeps this

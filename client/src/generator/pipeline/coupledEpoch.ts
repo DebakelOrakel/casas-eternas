@@ -3,8 +3,8 @@ import { ITERATION_YEARS } from '../surface/erosionEngine'
 import { TECTONIC_MA_PER_EPOCH } from '../core/worldTime'
 import type { FieldMesh } from '../fields/fieldMesh'
 import { smoothGaussian } from '../fields/fieldOperators'
-import { buildBlobIndex, nearestRaftIndexed, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
-import { nearestPlateIndex } from '../crust/raftLifecycle'
+import { buildBlobIndex, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
+import { carrierPlateAt, RAFT_CARRY_REACH, raftHostPlates } from '../crust/raftLifecycle'
 import { dynamicTopographyAt } from '../elevation/dynamicTopography'
 import { raftBaselineAt, type BaselineTerm } from '../elevation/elevationField'
 import { ELEVATION_METERS, marginParameter } from '../elevation/elevationScale'
@@ -46,8 +46,8 @@ import { advancePointByMotion } from '../tectonics/plateMotion'
 import { stepEpoch, type PlateSimulation, type SimEvent } from '../tectonics/plateSimulation'
 import { TECTONICS_TUNING } from '../tectonics/tectonicsTuneParams'
 import { coarseForcingFields } from './erosionForcing'
-import { detPow } from '../core/detMath'
-import { meanWithin, meshGeometry, neighbourhoods } from '../mesh/meshNeighbourhood'
+import { detExp, detPow } from '../core/detMath'
+import { meanWithin, meshStar, neighbourhoods } from '../mesh/meshNeighbourhood'
 
 // THE COUPLED EPOCH (ADAPTIVE_MESH_PLAN.md phase 5.1; decisions 5, 6, 8 of
 // docs/decisions/adaptive-mesh.md): erosion runs inside every tectonic
@@ -237,12 +237,6 @@ export interface CoupledEpochOptions {
 // the routing per iteration costs 0–6 % of the history's time.
 export const HISTORY_DEFAULTS = { iterationsPerEpoch: 4, budget: 4, upliftScale: 1, climateEvery: 3, remeshEvery: 3, renderEvery: 3, routingEvery: 1 } as const
 
-// How far from a raft blob's centre a node still rides the raft, in blob
-// radii (the membership in stepCoupledEpoch). The blob's field fades out
-// past its radius; half a radius more keeps a range on a raft's edge with
-// the raft.
-const RAFT_RELIEF_REACH = 1.5
-
 // The climate history kept on the sim: the last this many epochs.
 const CLIMATE_HISTORY_CAP = 512
 // A lake is the same lake next epoch when its seed lies within this many
@@ -429,22 +423,37 @@ function collapseFactor(mesh: PeriodicTriangulation, z: Float32Array, areas: Flo
   return (x, y) => Math.max(0, 1 - sampler.sample(mean, x, y) / H)
 }
 
-// THE COLUMN'S FORCE BALANCE (DEC-0036 phase 8g): the factor on the
-// tectonic thickening at each node `rising` admits, 1 − h̄ / H
-// (TECTONICS_TUNING.wedgeHeightM; 0 above it), with h̄ the land's mean
-// height (the sea counts 0) within wedgeRadiusM of the node, on the
-// terrain mesh in metres (mesh/meshNeighbourhood) — at 10 km the node's
-// own column. The plateau's balance above reads a regional mean and does
-// not see a narrow range in lowland; this one reads the range itself.
-// 1 where a node is not admitted.
-function wedgeFactor(mesh: PeriodicTriangulation, z: Float32Array, rising: Uint8Array, unitM: number): Float32Array {
+// THE COLUMN'S FORCE BALANCE (DEC-0036 phase 8g): the thickening at each
+// node `rising` admits falls as 1 − h / H (TECTONICS_TUNING.wedgeHeightM;
+// 0 above it), with h the land's mean height (the sea counts 0) within
+// wedgeRadiusM of the node, on the terrain mesh in metres
+// (mesh/meshNeighbourhood) — at 10 km the node's own column. The plateau's
+// balance above reads a regional mean and does not see a narrow range in
+// lowland; this one reads the range itself.
+//
+// The law is a rate, dh/dt = U (1 − h / H), and an epoch is long against
+// it: integrated over the epoch it gives h = H − (H − h₀) e^(−D / H), with
+// D the epoch's thickening at the full rate, so the epoch's mean factor is
+// (H − h₀)(1 − e^(−D / H)) / D (phase 8g-2). 8g took the factor at the
+// epoch's start, 1 − h₀ / H, for the whole epoch: where the margins closed
+// at 60–80 km/Myr (U to 10 mm/yr, D 10 km in an epoch of 1 Ma), a node
+// beside a range rose by up to 5 km in one epoch and stood 12.5 km high
+// (torus alpha, epoch 38, measured 2026-10-14).
+// Returns h per node (metres; 0 where a node is not admitted).
+function columnMeanHeight(mesh: PeriodicTriangulation, z: Float32Array, rising: Uint8Array, unitM: number): Float32Array {
   const heightM = new Float32Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) heightM[v] = Math.max(0, z[v]) * ELEVATION_METERS
-  const mean = meanWithin(neighbourhoods(meshGeometry(mesh, unitM), TECTONICS_TUNING.wedgeRadiusM, rising), heightM)
-  const factor = new Float32Array(mesh.vertexSlots)
+  return meanWithin(neighbourhoods(meshStar(mesh, unitM), TECTONICS_TUNING.wedgeRadiusM, rising), heightM)
+}
+
+// The column's factor on a node's thickening over the epoch, for its mean
+// height h₀ (m) and the epoch's thickening at the full rate D (m).
+function columnFactor(h0: number, d: number): number {
   const H = TECTONICS_TUNING.wedgeHeightM
-  for (let v = 0; v < mesh.vertexSlots; v++) factor[v] = rising[v] ? Math.max(0, 1 - mean[v] / H) : 1
-  return factor
+  if (h0 >= H) return 0
+  // The limit of the integral for a vanishing D.
+  if (d <= 1e-6 * H) return 1 - h0 / H
+  return ((H - h0) * (1 - detExp(-d / H))) / d
 }
 
 // The plate's rigidity R = D / (ρm g) per cell of the flexure's mesh
@@ -492,15 +501,12 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   // after the ranges' boundaries went quiet, land p99 held at 4.1 km
   // instead of falling to 2.6, the top 5 % at 3.5 instead of 2.3, the land
   // fraction unchanged (15.8 against 15.6 %).
-  const raftHosts = sim.rafts.map((raft) => raft.blobs.length > 0 ? nearestPlateIndex(raft.blobs[0].x, raft.blobs[0].y, sim.seeds, domain) : -1)
+  const raftHosts = raftHostPlates(sim.rafts, sim.seeds, domain)
   const host = new Int32Array(mesh0.vertexSlots).fill(-1)
-  const hostBlobs = buildBlobIndex(sim.rafts, domain, RAFT_RELIEF_REACH)
+  const hostBlobs = buildBlobIndex(sim.rafts, domain, RAFT_CARRY_REACH)
   for (let v = 0; v < mesh0.vertexSlots; v++) {
     if (!mesh0.vAlive[v]) continue
-    const x = mesh0.vx[v]
-    const y = mesh0.vy[v]
-    const onRaft = nearestRaftIndexed(x, y, hostBlobs, RAFT_RELIEF_REACH)
-    host[v] = onRaft >= 0 && raftHosts[onRaft] >= 0 ? raftHosts[onRaft] : nearestPlateIndex(x, y, sim.seeds, domain)
+    host[v] = carrierPlateAt(mesh0.vx[v], mesh0.vy[v], hostBlobs, raftHosts, sim.seeds, domain)
   }
   timing.membership = lap()
   // The plates' motions by the index `host` was taken with. The step
@@ -765,7 +771,17 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   const collapse = collapseFactor(mesh, zCanon, areas)
   const rising = new Uint8Array(mesh.vertexSlots)
   for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v] && forcing.uplift[v] > 0 && zCanon[v] > 0) rising[v] = 1
-  const wedge = wedgeFactor(mesh, zCanon, rising, unitM)
+  const columnMean = columnMeanHeight(mesh, zCanon, rising, unitM)
+  // The engine's step, which the column's balance integrates over (the
+  // epoch's thickening at the full rate, below).
+  const epochMa = sim.epochMa || TECTONIC_MA_PER_EPOCH
+  const dtScale = (epochMa * 1e6 / options.iterationsPerEpoch) / ITERATION_YEARS
+  const scaled = scaleEngineParamsForDt({ ...params, epsM: 0 }, dtScale)
+  scaled.upliftDt *= options.upliftScale ?? 1
+  // Metres of thickening over the epoch per unit of U: the engine's uplift
+  // in every iteration (surface/erosionEngine.ts: upliftDt × U, in units
+  // of ELEVATION_METERS).
+  const epochUpliftM = scaled.upliftDt * options.iterationsPerEpoch * ELEVATION_METERS
   let foldedArea = 0
   const cratonAge = new Float32Array(mesh.vertexSlots)
   const rockHard = new Float32Array(mesh.vertexSlots)
@@ -787,7 +803,8 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
       // the history's nodes are wider than the wavelength.
       const fold = foldFactorAt(featureBuckets, mesh.vx[v], mesh.vy[v], domain, Math.sqrt(areas[v]))
       if (fold !== 1) { forcing.uplift[v] *= fold; if (zCanon[v] > 0) foldedArea += areas[v] }
-      forcing.uplift[v] *= collapse(mesh.vx[v], mesh.vy[v]) * wedge[v]
+      forcing.uplift[v] *= collapse(mesh.vx[v], mesh.vy[v])
+      if (rising[v]) forcing.uplift[v] *= columnFactor(columnMean[v], forcing.uplift[v] * epochUpliftM)
     }
     const bedrockK = forcing.erodibility[v]
     const k = erodibilityOver(column.data, v, layers, bedrockK)
@@ -811,10 +828,6 @@ export async function stepCoupledEpoch(sim: PlateSimulation, terrain: CoupledTer
   forcing.rockHard = rockHard
   forcing.slopeScale = slopeScale
   forcing.diffScale = diffScale
-  const epochMa = sim.epochMa || TECTONIC_MA_PER_EPOCH
-  const dtScale = (epochMa * 1e6 / options.iterationsPerEpoch) / ITERATION_YEARS
-  const scaled = scaleEngineParamsForDt({ ...params, epsM: 0 }, dtScale)
-  scaled.upliftDt *= options.upliftScale ?? 1
   timing.forcing = lap()
   // The routing afresh every HISTORY_DEFAULTS.routingEvery iterations, on
   // both engines: the pool on the synchronous cadence at that depth

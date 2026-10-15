@@ -139,6 +139,23 @@ which has the tables) changed what bounds the history's heights again:
 The flexure of the addendum above stays as it is; there is still no
 ceiling.
 
+## Addendum 2026-10-14: where the uplift acts
+
+DEC-0036 phase 8g-2 ([fields-on-meshes.md](./fields-on-meshes.md),
+Status, which has the tables) moved the uplift to where the crust
+converges: a continent's margins with another plate (an ocean's or
+another continent's), laid at the overriding side's coast, and a plate
+boundary through one continent at 0.3 of its rate (boundaryPass, and
+[continental-crust-rafts.md](./continental-crust-rafts.md)'s addendum of
+the same date). With the broad interior uplift gone:
+
+- **Hc 30 → 40 km** (TECTONICS_TUNING.orogenCrustM), the mean continental
+  crust.
+- **The plateau's force balance back at 4000 m** (collapseHeightM): the
+  broad highlands that 3000 m held went with the interior uplift.
+
+The column's force balance (7000 m) and the flexure stay as they are.
+
 ## Status
 
 decided and built 2026-08-16; calibrated on seed alpha with
@@ -148,4 +165,5 @@ Superseded 2026-10-13 by DEC-0036 phase 8b-3: the knee and the ceiling
 are removed, the plate's flexure and the plateau's force balance bound
 the heights (see the addendum).
 Amended 2026-10-14 by DEC-0036 phase 8g: the uplift's rate from the
-plates' convergence, the column's force balance (the second addendum).
+plates' convergence, the column's force balance (the second addendum);
+and by phase 8g-2: the uplift at the crust's margins (the third).

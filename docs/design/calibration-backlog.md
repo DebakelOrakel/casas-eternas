@@ -13,6 +13,7 @@ summary.de: Die Punkte, die die Kalibrierung von DEC-0036 (Phase 8) gemessen,
 area: generator
 stage: idea
 createdAt: 2026-10-14
+updatedAt: 2026-10-14
 related: [DEC-0036, DEC-0035, DEC-0029, DEC-0003, DEC-0004, DEC-0006, DES-0016, DES-0019, DES-0020]
 ---
 
@@ -42,6 +43,11 @@ procedure.
    plateau as wide and high as Tibet is rarer still. A plateau needs the
    thickening to spread sideways (the wedge widening, lower-crust flow),
    which the model does not have.
+   *8g-2: closer, not resolved.* The uplift acts at the continents'
+   margins now (entry 24): the largest patch above 4500 m is 53 / 53
+   thousand km² (torus / sphere; 8g: 8 / 8), the land above 4500 m 0.46 /
+   0.28 % (Earth ~0.4). A Tibet needs a collision that goes on after the
+   suture (entry 28).
 2. **No keel drag.** Continental plates move as fast as oceanic ones
    (57 / 58 km/Myr torus, 48 / 53 sphere; Earth 10–30 / 50–100). The plates
    follow the rigid fit of the mantle flow without a force balance. Found
@@ -136,7 +142,8 @@ procedure.
     synthesis deck (a world restored from before its history) still
     stands the pile as height. A deposit per km of plate motion, as the
     boundaries have since 8f, would be the fix. Found in 8g. 1–2 h.
-24. **Too much land at 2–3 km, too little above 4500 m.** After 8g the
+    *8g-2: not touched.*
+24. ~~**Too much land at 2–3 km, too little above 4500 m.**~~ After 8g the
     land above 2000 m is 9.2 / 7.0 % (torus / sphere; Earth ~5) and above
     4500 m 0.07 / 0.04 % (Earth ~0.4); the mean land height is on target
     (728 / 735 m). Every slow boundary through a continent now thickens it
@@ -150,6 +157,14 @@ procedure.
     odd seed's range pass 12 km. Note that 3 seeds per shape misled here:
     calibration / alpha / zulu put the sphere's land above 2000 m at 15 %,
     the 12 seeds at 7. Found in 8g. 3–5 h.
+    *Resolved in 8g-2* (fields-on-meshes.md, phase 8g-2): the relief
+    reads the crust on each side of a boundary and the plate that carries
+    it. A plate boundary through one raft converges at nothing (one plate
+    carries both sides) and builds at 0.3 of its rate; the ranges stand at
+    the continents' own margins with another plate, which the Voronoi
+    boundary missed (72–84 % of them). The land above 2000 m 5.3 / 5.2 %
+    (torus / sphere), above 4500 m 0.46 / 0.28 %, above 6000 m 0.007 /
+    0.002 %; the mean land height 745 / 640 m (the sphere's: entry 26).
 25. **Plate boundaries diverge under continents at plate speed.** A
     divergent boundary under a raft is a rift (boundaryClassification), at
     the plates' 50 km/Myr, where a continental rift on Earth opens at 1–10.
@@ -158,6 +173,56 @@ procedure.
     its thickness floor (riftBasinFloorThickness), which holds the land,
     but a rift still lowers 1–11 % of the land by 0.3–0.7 mm/yr on its way
     there. The breakup is not tied to it. Found in 8g. 2–4 h.
+    *8g-2: resolved for the relief.* A divergent plate boundary through
+    one raft lays down nothing (the raft is rigid; the stress in a
+    continent's interior is mostly compressive), and a raft that parts
+    from the ocean opens new sea floor, not a rift; a rift is where two
+    rafts on two plates part. Left: the continental breakup event
+    (boundaryPass `continentalRift`) still fires on the plates' Voronoi
+    divergence under a raft at the plates' speed.
+
+## Found in 8g-2
+
+26. **The sphere's land stands lower than the torus's.** Mean land height
+    640 m (target 700–900; the torus 745 m), the land above 1000 m 12.0
+    against 16.4 %. The sphere's continental margins close at about half
+    the torus's rate (the edges where the crust's carrier changes next to
+    a raft: p50 14–27 against 28–52 km/Myr, p90 42–74 against 77–91; 3
+    worlds per shape, epochs 10–30), while its plate boundaries close at
+    the same rate (p50 20–37 against 24–43 km/Myr, 6 seeds per shape). And
+    56 % of the sphere's land lies within 30° of the equator (31 % on the
+    torus), where the rain is heaviest. Why the margins are slower is not
+    measured. A larger intraplate share would lift the sphere and push the
+    torus's land above 2000 m past Earth's (0.4: 772 / 634 m, 6.5 / 4.8 %,
+    6 seeds). Found in 8g-2. 2–4 h.
+27. **The events still read the plates' derived type.** The plate merge,
+    the oceanic plate's consumption, the accretion at a subduction arc and
+    the history's trench (tectonics/trench.ts) take a plate's type from
+    the crust under its seed (DEC-0003's bridge); only the relief reads the
+    crust beside the boundary since 8g-2. Measured 2026-10-14 (4 worlds,
+    epochs 1–40): up to 17 % of the boundary points' deposit weight were
+    boundaries with ocean on both sides classed as a subduction arc or a
+    fold belt, so an accretion blob or a merge can fire where no
+    continent is. Found in 8g-2. 2–3 h.
+28. **A collision stops at the suture.** Rafts merge as soon as their
+    coasts touch (mergeOverlappingRafts) and the merged raft rides one
+    host plate, so the land across the suture converges no more; 0–1
+    sutures formed per world in 40 epochs (3 worlds). The Himalaya-class
+    relief comes only from fast ocean–continent margins (the highest
+    summits 7–9 km, sampled every second epoch). India has pushed into
+    Asia for 50 Ma after the suture; that would need a merged raft to keep
+    two carriers for a while. Found in 8g-2; relates to entry 1. 3–5 h.
+29. **The carriers' margins have no lock state.** Their age multiplier is
+    1 (the Voronoi boundary's lattice counter does not follow them), and
+    a margin's trench lies `trenchOffsetM` from the range at the coast,
+    not from the plates' meeting line. Found in 8g-2. 1 h.
+30. **The history's highest node moves fast between the samples.** The
+    calibration samples the peak every tenth epoch; every second epoch on
+    torus alpha and sphere zulu it reached 8.4 / 9.2 km where the samples
+    read 7.8 / 7.0. Before 8g-2's integrated column balance a node beside a
+    fast margin jumped by up to 5 km in an epoch (12.5 km). A per-epoch
+    maximum in `npm run calibrate` would make the sampling exact. Found
+    in 8g-2. 0.5 h.
 
 ## Status
 
@@ -167,3 +232,6 @@ mechanism it changes, and strike it here.
 
 2026-10-14: phase 8 closed with 8g. Entry 1 annotated; entries 23–25
 found in 8g and added.
+
+2026-10-14: phase 8g-2. Entry 24 resolved, entry 25 resolved for the
+relief, entries 1 and 23 annotated; entries 26–30 found and added.

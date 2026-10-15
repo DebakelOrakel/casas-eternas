@@ -1,7 +1,8 @@
-import { classifyBoundary } from '../boundaryClassification'
+import { classifyBoundary, type BoundaryClassification } from '../boundaryClassification'
 import { detectBoundaries } from '../boundaryDetection'
-import { raftMembership } from '../../crust/raftField'
-import { accreteToNearestRaft } from '../../crust/raftLifecycle'
+import { buildBlobIndex, nearestRaftIndexed, raftFieldIndexed, raftMembership, type BlobIndex } from '../../crust/raftField'
+import type { PlateType } from '../plateTypes'
+import { accreteToNearestRaft, carrierPlateAt, RAFT_CARRY_REACH, raftHostPlates } from '../../crust/raftLifecycle'
 import { TECTONIC_MA_PER_EPOCH, worldEpoch } from '../../core/worldTime'
 import { kmPerMyr } from '../plateMotion'
 import { classifyBoundaryMotion } from '../plateVelocityDecomposition'
@@ -13,8 +14,114 @@ import { detPow } from '../../core/detMath'
 // The offset `domain.delta` writes into: one per module, so no call
 // allocates. Read it at once, before the next delta.
 const offset = { x: 0, y: 0 }
+// A point beside a boundary point (its crust's carrier), the same way.
+const sidePoint = { x: 0, y: 0 }
 
 
+
+// The crust either side of a boundary point (runBoundaryPass's crustBeside):
+// A's side along the normal, B's against it.
+interface CrustBeside {
+  crustA: PlateType
+  crustB: PlateType
+  carrierA: number
+  carrierB: number
+}
+
+// Points of an edge of the detection lattice, the same way as `offset`.
+const edgeFar = { x: 0, y: 0 }
+const edgeMid = { x: 0, y: 0 }
+const coastPoint = { x: 0, y: 0 }
+
+// The carriers' margins (runBoundaryPass, DEC-0036 phase 8g-2): every edge
+// of the detection lattice, one step east and one south of each point,
+// across which the plate that carries the crust changes and on which a raft
+// lies (within RAFT_CARRY_REACH of either end), lays down its relief — the
+// carriers' relative motion at the edge's midpoint, the boundary's
+// character from the crust either side. The far end's carrier is A.
+//
+// The edge lies where the raft's reach ends, out at sea: the ocean floor
+// next to a continent rides with it (the terrain's nodes as the rafts,
+// RAFT_CARRY_REACH), so the plates meet beyond the coast, as a trench lies
+// off its margin. The range stands at the margin itself: each side is
+// searched along the normal for the coast (a raft's field above one half)
+// within coastSearchM, a side with a coast is continental, and the range is
+// laid at the overriding side's coast — at the edge's midpoint when both
+// sides are continental (a collision). An edge with no coast beside it is
+// the ocean's, which the Voronoi boundary lays down; one that parts a raft
+// from the ocean opens new sea floor (the ocean age's), not a rift, and
+// lays down nothing.
+function depositCarrierMargins(
+  sim: PlateSimulation,
+  layRelief: (x: number, y: number, plateA: number, plateB: number, relief: BoundaryClassification, amount: number, nx: number, ny: number, trenchDirX: number, trenchDirY: number) => void,
+  epochMa: number,
+  blobs: BlobIndex,
+  hosts: number[],
+): void {
+  const { domain } = sim
+  // One lattice step, domain units: the lattice's column spacing at the
+  // equator (a row narrows on the sphere; the step stays a length).
+  const step = domain.width / TECTONICS_TUNING.detectionLatticeResolutionX
+  // The coast's search, in half steps.
+  const searchSteps = Math.ceil(TECTONICS_TUNING.coastSearchM / domain.metresPerUnit / (step / 2))
+  // The distance to the coast from (x, y) along (dx, dy), domain units, or
+  // −1 within the search.
+  const coastAlong = (x: number, y: number, dx: number, dy: number): number => {
+    for (let k = 0; k <= searchSteps; k++) {
+      const d = k * (step / 2)
+      domain.advance(x, y, dx * d, dy * d, coastPoint)
+      if (raftFieldIndexed(coastPoint.x, coastPoint.y, blobs) > 0.5) return d
+    }
+    return -1
+  }
+  for (const point of sim.lattice) {
+    // Whether a raft is in reach comes first: it is the cheap test, and
+    // most edges fail it.
+    const nearOnRaft = nearestRaftIndexed(point.x, point.y, blobs, RAFT_CARRY_REACH) >= 0
+    let near = -1
+    for (let d = 0; d < 2; d++) {
+      const dx = d === 0 ? step : 0
+      const dy = d === 0 ? 0 : step
+      domain.advance(point.x, point.y, dx, dy, edgeFar)
+      if (!nearOnRaft && nearestRaftIndexed(edgeFar.x, edgeFar.y, blobs, RAFT_CARRY_REACH) < 0) continue
+      if (near < 0) near = carrierPlateAt(point.x, point.y, blobs, hosts, sim.seeds, domain)
+      const far = carrierPlateAt(edgeFar.x, edgeFar.y, blobs, hosts, sim.seeds, domain)
+      if (far === near) continue
+      domain.advance(point.x, point.y, dx / 2, dy / 2, edgeMid)
+      const mid = { x: edgeMid.x, y: edgeMid.y }
+      const farEnd = { x: edgeFar.x, y: edgeFar.y }
+      // The unit normal into the far side, in the midpoint's frame.
+      domain.delta(farEnd.x, farEnd.y, mid.x, mid.y, offset)
+      const len = Math.sqrt(offset.x * offset.x + offset.y * offset.y) || 1
+      const nx = offset.x / len
+      const ny = offset.y / len
+      const coastA = coastAlong(mid.x, mid.y, nx, ny)
+      const coastB = coastAlong(mid.x, mid.y, -nx, -ny)
+      if (coastA < 0 && coastB < 0) continue
+      const crustA: PlateType = coastA >= 0 ? 'continental' : 'oceanic'
+      const crustB: PlateType = coastB >= 0 ? 'continental' : 'oceanic'
+      const convergence = classifyBoundaryMotion(mid, farEnd, sim.motions[far], point, sim.motions[near], domain)
+      if (convergence.motionClass === 'transform') continue
+      if (convergence.motionClass === 'divergent' && (crustA === 'oceanic' || crustB === 'oceanic')) continue
+      const relief = classifyBoundary(crustA, sim.ages[far], crustB, sim.ages[near], convergence.motionClass)
+      if (relief.elevationSign === 0) continue
+      const amount = Math.abs(kmPerMyr(convergence.normal, domain) * epochMa * TECTONICS_TUNING.upliftPerKm) * relief.rate * relief.elevationSign
+      // The range at the overriding side's coast; the trench lies on the
+      // subducting side.
+      let x = mid.x
+      let y = mid.y
+      if (relief.upliftSide !== 'both') {
+        const toA = relief.upliftSide === 'a'
+        const along = toA ? coastA : coastB
+        domain.advance(mid.x, mid.y, (toA ? nx : -nx) * along, (toA ? ny : -ny) * along, coastPoint)
+        x = coastPoint.x
+        y = coastPoint.y
+      }
+      const towards = relief.upliftSide === 'a' ? -1 : 1
+      layRelief(x, y, far, near, relief, amount, nx, ny, towards * nx, towards * ny)
+    }
+  }
+}
 
 function motionClassCode(motionClass: 'convergent' | 'divergent' | 'transform'): number {
   return motionClass === 'convergent' ? 0 : motionClass === 'divergent' ? 1 : 2
@@ -70,6 +177,67 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
   // deposit many times more uplift per epoch than a sparsely-sampled one
   // would for the same actual convergence.
   const featureDeposits = new Map<number, { sum: number; count: number }>()
+  // The crust beside each boundary point and the plate that carries it
+  // (DEC-0036 phase 8g-2), by the terrain's own rule (a raft rides its host
+  // plate), crustSideM into each plate.
+  const carrierBlobs = buildBlobIndex(sim.rafts, domain, RAFT_CARRY_REACH)
+  const raftHosts = raftHostPlates(sim.rafts, sim.seeds, domain)
+  const crustSide = TECTONICS_TUNING.crustSideM / domain.metresPerUnit
+  // The crust beside a point on each side of a boundary through it, the
+  // unit normal (nx, ny) pointing into A's side: crustSideM into each, the
+  // crust's type (a raft's field above one half) and the plate that
+  // carries it.
+  const crustBeside = (x: number, y: number, nx: number, ny: number): CrustBeside => {
+    domain.advance(x, y, nx * crustSide, ny * crustSide, sidePoint)
+    const crustA: PlateType = raftFieldIndexed(sidePoint.x, sidePoint.y, carrierBlobs) > 0.5 ? 'continental' : 'oceanic'
+    const carrierA = carrierPlateAt(sidePoint.x, sidePoint.y, carrierBlobs, raftHosts, sim.seeds, domain)
+    domain.advance(x, y, -nx * crustSide, -ny * crustSide, sidePoint)
+    const crustB: PlateType = raftFieldIndexed(sidePoint.x, sidePoint.y, carrierBlobs) > 0.5 ? 'continental' : 'oceanic'
+    const carrierB = carrierPlateAt(sidePoint.x, sidePoint.y, carrierBlobs, raftHosts, sim.seeds, domain)
+    return { crustA, crustB, carrierA, carrierB }
+  }
+  // Lays down a boundary's relief at (x, y) between plates A and B: the
+  // range feature (an arc's flagged volcanic) and, at an arc, the paired
+  // trench towards the subducting side (trenchDirX/Y, a unit vector).
+  // (nx, ny) is the unit normal into A's side; the feature's tangent, the
+  // ridge's own long axis, is perpendicular to it, so a feature can be laid
+  // down as an oriented ridge segment rather than an isotropic blob (see
+  // TerrainFeature.tangentX / computeElevation's anisotropic falloff).
+  const layRelief = (x: number, y: number, plateA: number, plateB: number, relief: BoundaryClassification, amount: number, nx: number, ny: number, trenchDirX: number, trenchDirY: number): void => {
+    const tangentX = -ny
+    const tangentY = nx
+    // 'both' deposits onto a single shared feature (see
+    // findOrCreateFeatureIndex/advanceTerrainFeatures) rather than one
+    // per side — a real collision range is one ridge straddling the
+    // boundary, not two independent ones.
+    const movesWithPlate = relief.upliftSide === 'both' ? 'both' : relief.upliftSide === 'a' ? plateA : plateB
+    // Oceanic-crust ranges (island arcs, mid-ocean ridges) subside as they
+    // drift off their boundary; continental ones (fold mountains, subduction
+    // arcs) persist — see TerrainFeature.subsides.
+    const featureSubsides = relief.character === 'islandArc' || relief.character === 'midOceanRidge'
+    const rangeIdx = findOrCreateFeatureIndex(sim.features, x, y, plateA, plateB, movesWithPlate, tangentX, tangentY, 'range', featureSubsides, domain)
+    // Subduction/island arcs are volcanic (a chain of volcanoes); flag them so the
+    // screen can mark them (see TerrainFeature.volcanic). Only ever set true — a
+    // shared feature reused across epochs stays flagged once it's been an arc.
+    if (relief.character === 'subductionArc' || relief.character === 'islandArc') sim.features[rangeIdx].volcanic = true
+    addDeposit(rangeIdx, amount)
+    // Paired trench on the subducting side of a subduction/island arc —
+    // the side that is NOT the uplift side (continental crust never
+    // subducts; the older oceanic plate goes under at an island arc).
+    if (relief.character === 'subductionArc' || relief.character === 'islandArc') {
+      const subductingPlate = relief.upliftSide === 'a' ? plateB : plateA
+      // The offset in domain units (the tuning's metres).
+      const trenchOffset = TECTONICS_TUNING.trenchOffsetM / domain.metresPerUnit
+      // Moved as a point (across a pole on the sphere): advance, which on
+      // the torus is the wrapped sum this always was.
+      domain.advance(x, y, trenchDirX * trenchOffset, trenchDirY * trenchOffset, offset)
+      addDeposit(
+        // Trenches are always oceanic (the subducting slab), so they subside.
+        findOrCreateFeatureIndex(sim.features, offset.x, offset.y, plateA, plateB, subductingPlate, tangentX, tangentY, 'trench', true, domain),
+        -Math.abs(amount) * TECTONICS_TUNING.trenchDepthFraction,
+      )
+    }
+  }
   const epochMa = sim.epochMa || TECTONIC_MA_PER_EPOCH
   const addDeposit = (featureIndex: number, amount: number): void => {
     const existing = featureDeposits.get(featureIndex)
@@ -118,61 +286,33 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
     sim.latticeAccumulated[index] += epochConvergence * classification.rate
 
     if (classification.elevationSign !== 0) {
-      const ageMultiplier = TECTONICS_TUNING.ageMultiplierFloor + TECTONICS_TUNING.ageMultiplierRange * detPow(2, -sim.latticeLockedEpochs[index] / TECTONICS_TUNING.ageMultiplierHalfLifeEpochs)
-      const amount = Math.abs(epochConvergence) * classification.rate * ageMultiplier * classification.elevationSign
-      // Boundary tangent (the ridge's own long axis): perpendicular to the
-      // seed-to-seed normal, so a feature can be laid down as an oriented
-      // ridge segment rather than an isotropic blob (see
-      // TerrainFeature.tangentX / computeElevation's anisotropic falloff).
-      // Found at B's seed and carried to the boundary point, where the
-      // feature lies (on the torus the same two numbers).
+      // The seed-to-seed normal, found at B's seed and carried to the
+      // boundary point (on the torus the same two numbers): it points from
+      // B's seed towards A's (Domain.delta), so A's side is +n.
       domain.delta(seedA.x, seedA.y, seedB.x, seedB.y, offset)
       domain.transport(offset.x, offset.y, seedB.x, seedB.y, boundary.x, boundary.y, offset)
-      const ndx = offset.x
-      const ndy = offset.y
-      const nlen = Math.sqrt(ndx * ndx + ndy * ndy) || 1
-      const tangentX = -ndy / nlen
-      const tangentY = ndx / nlen
-      // 'both' deposits onto a single shared feature (see
-      // findOrCreateFeatureIndex/advanceTerrainFeatures) rather than one
-      // per side — a real collision range is one ridge straddling the
-      // boundary, not two independent ones.
-      const movesWithPlate = classification.upliftSide === 'both' ? 'both' : classification.upliftSide === 'a' ? boundary.plateA : boundary.plateB
-      // Oceanic-crust ranges (island arcs, mid-ocean ridges) subside as they
-      // drift off their boundary; continental ones (fold mountains, subduction
-      // arcs) persist — see TerrainFeature.subsides.
-      const featureSubsides = classification.character === 'islandArc' || classification.character === 'midOceanRidge'
-      const rangeIdx = findOrCreateFeatureIndex(sim.features, boundary.x, boundary.y, boundary.plateA, boundary.plateB, movesWithPlate, tangentX, tangentY, 'range', featureSubsides, domain)
-      // Subduction/island arcs are volcanic (a chain of volcanoes); flag them so the
-      // screen can mark them (see TerrainFeature.volcanic). Only ever set true — a
-      // shared feature reused across epochs stays flagged once it's been an arc.
-      if (classification.character === 'subductionArc' || classification.character === 'islandArc') sim.features[rangeIdx].volcanic = true
-      addDeposit(rangeIdx, amount)
-
-      // Paired trench on the subducting side of a subduction/island arc —
-      // the side that is NOT the uplift side (continental crust never
-      // subducts; the older oceanic plate goes under at an island arc).
-      if (classification.character === 'subductionArc' || classification.character === 'islandArc') {
-        const subductingPlate = classification.upliftSide === 'a' ? boundary.plateB : boundary.plateA
-        const subductingSeed = sim.seeds[subductingPlate]
+      const nlen = Math.sqrt(offset.x * offset.x + offset.y * offset.y) || 1
+      const nx = offset.x / nlen
+      const ny = offset.y / nlen
+      const side = crustBeside(boundary.x, boundary.y, nx, ny)
+      // A boundary with continental crust beside it builds relief only
+      // where the same plate carries both sides, and only where it
+      // converges — at intraplateShortening of the plates' rate; where two
+      // plates carry them, the carriers' margin is the boundary and
+      // depositCarrierMargins below lays it down. In the ocean the plates
+      // are the carriers.
+      const continental = side.crustA === 'continental' || side.crustB === 'continental'
+      const intraplate = convergence.motionClass === 'convergent' ? TECTONICS_TUNING.intraplateShortening : 0
+      const deformation = side.carrierA === side.carrierB ? (continental ? intraplate : 0) : continental ? 0 : 1
+      if (deformation > 0) {
+        const relief = classifyBoundary(side.crustA, sim.ages[boundary.plateA], side.crustB, sim.ages[boundary.plateB], convergence.motionClass)
+        const ageMultiplier = TECTONICS_TUNING.ageMultiplierFloor + TECTONICS_TUNING.ageMultiplierRange * detPow(2, -sim.latticeLockedEpochs[index] / TECTONICS_TUNING.ageMultiplierHalfLifeEpochs)
+        const amount = Math.abs(epochConvergence) * relief.rate * ageMultiplier * relief.elevationSign * deformation
+        // The trench lies towards the subducting plate's seed.
+        const subductingSeed = relief.upliftSide === 'a' ? seedB : seedA
         domain.delta(subductingSeed.x, subductingSeed.y, boundary.x, boundary.y, offset)
-        let offsetX = offset.x
-        let offsetY = offset.y
-        const offsetLen = Math.sqrt(offsetX * offsetX + offsetY * offsetY) || 1
-        offsetX /= offsetLen
-        offsetY /= offsetLen
-        // The offset in domain units (the tuning's metres).
-        const trenchOffset = TECTONICS_TUNING.trenchOffsetM / domain.metresPerUnit
-        // Moved as a point (across a pole on the sphere): advance, which on
-        // the torus is the wrapped sum this always was.
-        domain.advance(boundary.x, boundary.y, offsetX * trenchOffset, offsetY * trenchOffset, offset)
-        const trenchX = offset.x
-        const trenchY = offset.y
-        addDeposit(
-          // Trenches are always oceanic (the subducting slab), so they subside.
-          findOrCreateFeatureIndex(sim.features, trenchX, trenchY, boundary.plateA, boundary.plateB, subductingPlate, tangentX, tangentY, 'trench', true, domain),
-          -Math.abs(amount) * TECTONICS_TUNING.trenchDepthFraction,
-        )
+        const tlen = Math.sqrt(offset.x * offset.x + offset.y * offset.y) || 1
+        layRelief(boundary.x, boundary.y, boundary.plateA, boundary.plateB, relief, amount, nx, ny, offset.x / tlen, offset.y / tlen)
       }
 
       // Continental accretion at a subduction arc: weld a margin blob just
@@ -238,6 +378,21 @@ export function runBoundaryPass(sim: PlateSimulation): BoundaryPassResult {
       }
     }
   }
+
+  // THE CARRIERS' MARGINS (DEC-0036 phase 8g-2): where the plate that
+  // carries the crust changes next to a raft. A raft rides its host plate
+  // as a whole, so its margins are where the host meets another plate's
+  // crust — at the raft's own edge wherever the raft reaches into another
+  // plate's cell, not on the Voronoi boundary of the seeds. Measured
+  // 2026-10-14 (calibration seed, epochs 10 and 20): 72–84 % of the
+  // converging edges of the carriers next to a raft lay on no Voronoi
+  // boundary point. Each lattice point is compared with the point one
+  // lattice step east and one south of it; an edge between two carriers
+  // that touches a raft lays down its relief at its midpoint, from the
+  // carriers' own motions and the crust crustSideM to either side. The
+  // Voronoi boundary's lock state does not follow these edges, so their
+  // age multiplier is 1.
+  depositCarrierMargins(sim, layRelief, epochMa, carrierBlobs, raftHosts)
 
   // Apply this epoch's deposits once per feature, averaged rather than
   // summed — see featureDeposits' own comment above. No floor at zero:

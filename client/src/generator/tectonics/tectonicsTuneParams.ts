@@ -72,20 +72,52 @@ export const TECTONICS_TUNING = {
   // ELEVATION_TUNING.rangePerpRadiusM (234 km). Hc is the thickness of the
   // crust that the shortening thickens, m: the continental crust is 35–45
   // km thick (Christensen & Mooney 1995, J. Geophys. Res. 100: 39 km on
-  // the mean). 30 km, a little under it: the boundary's convergence is
-  // not all shortening of the orogen's crust (at a subduction margin most
-  // of it is the slab's; the character's rate takes only a part of that
-  // out). Measured 2026-10-14 (npm run calibrate, 3 seeds per shape): at
-  // 35 km the land's mean height 752 / 983 m (torus / sphere), above 2000 m
-  // 7.7 / 18.7 %; at 25 km 677 / 853 m, 4.8 / 14.1 %; 30 km between.
-  // See docs/decisions/fields-on-meshes.md phase 8g.
-  orogenCrustM: 30_000,
+  // the mean): 40 km, the mean crust (the character's rate takes out the
+  // part of a margin's convergence that is the slab's). 8g took 30 km,
+  // when every plate boundary through a continent thickened it: at 35 km
+  // the land above 2000 m was 7.7 / 18.7 % (torus / sphere, 3 seeds).
+  // Since 8g-2 only the margins and a share of the intraplate push build
+  // (boundaryPass): at 30 km the land's mean height was 594 / 535 m and
+  // above 4500 m 0.12 / 0.07 %, at 40 km 639 / 584 m and 0.30 / 0.23 %
+  // (2026-10-14, npm run calibrate, 6 seeds per shape, without the
+  // intraplate share). See docs/decisions/fields-on-meshes.md, phases 8g
+  // and 8g-2.
+  orogenCrustM: 40_000,
   // The half-life of a feature's shortening rate as a moving mean, Ma: a
   // boundary point deposits on one of the overlapping features of its
   // stretch, and which one changes from epoch to epoch; the mean smooths
   // that, and a boundary that stops converging stops thickening the crust
   // within a few Ma.
   shorteningHalfLifeMa: 2,
+  // WHERE THE CRUST DEFORMS (DEC-0036 phase 8g-2, boundaryPass): how far
+  // into each plate a boundary point reads the plate that carries the
+  // crust (a raft rides its host plate, crust/raftLifecycle.carrierPlateAt),
+  // m: 156 km, beyond the boundary's own zone and inside the range's
+  // cross-section (234 km); 20 cells on the torus.
+  crustSideM: 156_000,
+  // INTRAPLATE DEFORMATION (boundaryPass): the share of the plates'
+  // convergence a boundary deposits where the same plate carries the crust
+  // on both sides — a boundary through one rigid raft. The raft model has
+  // no strain inside a raft, but a continent's interior takes up some of
+  // the push at its margins (the Tian Shan, the Laramide ranges, slow and
+  // far from the collision that drives them). Shortening only: the stress
+  // in continental interiors is mostly compressive (Zoback 1992, J.
+  // Geophys. Res. 97, the World Stress Map), and a continent breaks at the
+  // breakup event (splitRaftAtRift), not by a slow stretch at every
+  // divergent plate boundary under it (a rift's thinning at the plates'
+  // rate lowered the land: at a share of 0.2 for both signs the land's
+  // mean height fell from 594 to 508 m, torus, 6 seeds). Measured
+  // 2026-10-14 (npm run calibrate, 6 seeds per shape, orogenCrustM 40 km,
+  // collapseHeightM 4000 m; torus / sphere): at 0 the land's mean height
+  // 639 / 584 m, above 2000 m 3.5 / 4.3 %; at 0.2 714 / 594 m, 4.7 /
+  // 4.0 %; at 0.4 772 / 634 m, 6.5 / 4.8 %. 0.3 between.
+  intraplateShortening: 0.3,
+  // How far from a carriers' margin (boundaryPass depositCarrierMargins)
+  // the coast is searched on either side, m. The margin lies where a raft's
+  // reach ends (1.5 blob radii, the blobs 546 km): a lone blob's coast
+  // stands about 0.54 of its radius from its centre, so 1.5 − 0.54 radii,
+  // 524 km, and more where blobs overlap; 120 cells on the torus.
+  coastSearchM: 936_000,
 
   // A boundary point needs to stay classified the same way for this many
   // consecutive epochs before it can trigger a rift or merge — stops a
@@ -456,7 +488,13 @@ export const TECTONICS_TUNING = {
   // and broad 2–3 km highlands formed (above 2000 m 6.2 / 16.8 % of the
   // land, torus / sphere, at 4000 m; 5.4 / 15.2 % at 3000 m, and above
   // 4500 m 0.10 / 0.04 % against 0.12 / 0.07 %).
-  collapseHeightM: 3000,
+  // 3000 → 4000 m again in phase 8g-2 (2026-10-14), when the plate
+  // boundaries through a continent stopped thickening it at the plates'
+  // rate (boundaryPass): the broad highlands it held went with them. At
+  // 3000 m the land above 4500 m was 0.062 / 0.033 % (torus / sphere, 6
+  // seeds), at 4000 m 0.12 / 0.07 %; above 2000 m 2.4 / 2.6 % and 2.6 /
+  // 2.8 %.
+  collapseHeightM: 4000,
   collapseSmoothingM: 150_000,
   // THE COLUMN'S FORCE BALANCE (DEC-0036 phase 8g, coupledEpoch
   // wedgeFactor): the thickening falls as 1 − h̄ / H with h̄ the mean height
@@ -473,8 +511,19 @@ export const TECTONICS_TUNING = {
   // sampled every tenth epoch): radius 20 km, H 7000 m 12.0 km (torus
   // alpha), 8000 m 12.4 km, 6500 m 11.3 km; radius 10 km, H 7000 m 9.5 km;
   // without it 15–31 km.
+  // 7000 → 9500 m in phase 8g-2 (2026-10-14), when coupledEpoch began to
+  // integrate the balance over the epoch (columnFactor) instead of taking
+  // its factor at the epoch's start: the explicit step let a node at the
+  // fast margins pass H within one epoch (to 12.5 km, torus alpha, epoch
+  // 38), and the exact integral holds the summits further below H, as
+  // the erosion works on them. Measured (npm run calibrate, 6 seeds per
+  // shape; torus / sphere): at H 7000 m the highest node of torus alpha
+  // and sphere zulu stood at 5.9 / 6.5 km over 60 epochs (sampled every
+  // second epoch), at 10 000 m 9.1 / 9.3 km; at 9000 m the land above
+  // 4500 m 0.43 / 0.29 %, above 6000 m 0.003 / 0 %, at 11 000 m (torus)
+  // 0.68 % and 0.053 %.
   wedgeRadiusM: 10_000,
-  wedgeHeightM: 7000,
+  wedgeHeightM: 9500,
 
   // FOLDS (tectonics/folds.ts, phase 5.7): the buckling wavelength across
   // a convergent margin and the modulation of the uplift over it (±

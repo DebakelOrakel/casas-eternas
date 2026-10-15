@@ -21,25 +21,34 @@ import type { PeriodicTriangulation } from './periodicDelaunay'
 // mesh resolves. The cells are gathered by a walk over the triangulation
 // from the node, through the cells that touch the reach.
 
-export interface MeshGeometry {
+// The mesh's cells and stars in metres: what a neighbourhood walks.
+export interface MeshStar {
   readonly mesh: PeriodicTriangulation
   // Metres per domain unit.
   readonly unitM: number
   // Per slot: the Voronoi area, m², and the radius of a disc of that area, m.
   readonly areaM2: Float64Array
   readonly rho: Float64Array
-  // The Delaunay star per slot as a CSR table: the neighbour, the edge's
-  // length (m) and its Voronoi wall (m).
+  // The Delaunay star per slot as a CSR table: the neighbour.
   readonly starStart: Int32Array
   readonly star: Int32Array
-  readonly lengthM: Float64Array
-  readonly wallM: Float64Array
   // The distance between two slots, and from a slot to a point, metres.
   distanceM(a: number, b: number): number
   distanceToPointM(v: number, x: number, y: number): number
 }
 
-export function meshGeometry(mesh: PeriodicTriangulation, unitM: number): MeshGeometry {
+// The star with its edges measured: per entry of the star, the edge's
+// length (m) and its Voronoi wall (m).
+export interface MeshGeometry extends MeshStar {
+  readonly lengthM: Float64Array
+  readonly wallM: Float64Array
+}
+
+// The cells and stars alone, without the edges' lengths and walls: what
+// the neighbourhoods need (the column's balance in pipeline/coupledEpoch
+// reads it every epoch; the walls were 2/3 of its time, DEC-0036 phase
+// 8g-2).
+export function meshStar(mesh: PeriodicTriangulation, unitM: number): MeshStar {
   const slots = mesh.vertexSlots
   const { domain } = mesh
   const areaM2 = new Float64Array(slots)
@@ -58,20 +67,11 @@ export function meshGeometry(mesh: PeriodicTriangulation, unitM: number): MeshGe
   }
   starStart[slots] = edges
   const star = new Int32Array(edges)
-  const lengthM = new Float64Array(edges)
-  const wallM = new Float64Array(edges)
-  const f = new Float64Array(6)
   for (let v = 0; v < slots; v++) {
     if (!mesh.vAlive[v]) continue
     const n = mesh.outgoing(v, out)
     const base = starStart[v]
-    for (let k = 0; k < n; k++) {
-      const e = out[k]
-      const len = mesh.edgeLength(e)
-      star[base + k] = mesh.to(e)
-      lengthM[base + k] = len * unitM
-      wallM[base + k] = len * unitM * Math.max(0, (cotAtApex(mesh, e, f) + cotAtApex(mesh, mesh.twin[e], f)) / 2)
-    }
+    for (let k = 0; k < n; k++) star[base + k] = mesh.to(out[k])
   }
   // The distance: on the sphere the arc between the unit vectors, R · 2
   // asin(chord / 2) (the triangulation's own cache, PeriodicTriangulation.vu);
@@ -82,7 +82,7 @@ export function meshGeometry(mesh: PeriodicTriangulation, unitM: number): MeshGe
   const frame: GlobeFrame = globeFrame()
   const arcOf = (dx: number, dy: number, dz: number): number => radiusM * 2 * detAsin(Math.min(1, Math.sqrt(dx * dx + dy * dy + dz * dz) / 2))
   return {
-    mesh, unitM, areaM2, rho, starStart, star, lengthM, wallM,
+    mesh, unitM, areaM2, rho, starStart, star,
     distanceM: globe
       ? (a, b) => arcOf(vu[3 * a] - vu[3 * b], vu[3 * a + 1] - vu[3 * b + 1], vu[3 * a + 2] - vu[3 * b + 2])
       : (a, b) => Math.sqrt(domain.distanceSq(mesh.vx[a], mesh.vy[a], mesh.vx[b], mesh.vy[b])) * unitM,
@@ -96,6 +96,28 @@ export function meshGeometry(mesh: PeriodicTriangulation, unitM: number): MeshGe
       }
       : (v, x, y) => Math.sqrt(domain.distanceSq(mesh.vx[v], mesh.vy[v], x, y)) * unitM,
   }
+}
+
+export function meshGeometry(mesh: PeriodicTriangulation, unitM: number): MeshGeometry {
+  const cells = meshStar(mesh, unitM)
+  const { starStart } = cells
+  const edges = starStart[mesh.vertexSlots]
+  const out = new Int32Array(256)
+  const lengthM = new Float64Array(edges)
+  const wallM = new Float64Array(edges)
+  const f = new Float64Array(6)
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v]) continue
+    const n = mesh.outgoing(v, out)
+    const base = starStart[v]
+    for (let k = 0; k < n; k++) {
+      const e = out[k]
+      const len = mesh.edgeLength(e)
+      lengthM[base + k] = len * unitM
+      wallM[base + k] = len * unitM * Math.max(0, (cotAtApex(mesh, e, f) + cotAtApex(mesh, mesh.twin[e], f)) / 2)
+    }
+  }
+  return { ...cells, lengthM, wallM }
 }
 
 // The area of the lens two discs of radii r and R share at distance d.
@@ -121,7 +143,7 @@ export interface Neighbourhoods {
   readonly weight: Float32Array
 }
 
-export function neighbourhoods(geo: MeshGeometry, radiusM: number, centre: Uint8Array | null = null): Neighbourhoods {
+export function neighbourhoods(geo: MeshStar, radiusM: number, centre: Uint8Array | null = null): Neighbourhoods {
   const { mesh, rho, starStart, star } = geo
   const slots = mesh.vertexSlots
   const start = new Int32Array(slots + 1)
@@ -208,7 +230,7 @@ export function nodeAt(mesh: PeriodicTriangulation, x: number, y: number, scratc
 // The nodes whose cells a disc of `reachM` about a point reaches, each with
 // its distance to the point (metres), from the node under the point
 // outward over the triangulation: `visit(v, d)`.
-export function aroundPoint(geo: MeshGeometry, x: number, y: number, reachM: number, visit: (v: number, distanceM: number) => void, stamp: Int32Array, mark: number): void {
+export function aroundPoint(geo: MeshStar, x: number, y: number, reachM: number, visit: (v: number, distanceM: number) => void, stamp: Int32Array, mark: number): void {
   const { mesh, rho, starStart, star } = geo
   const first = nodeAt(mesh, x, y)
   const queue = [first]
