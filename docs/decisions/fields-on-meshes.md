@@ -1851,7 +1851,7 @@ and the craton oldness raster (read at the nodes). Simulation on a 2:1
 raster outside the generator's chain: the migration (its own screen,
 later, on the chart) and the raster erosion engine (`erosionPassV2`, the
 engine's FLAG_GRID8 index), which only harness and measuring scripts run
-(`harness:mesh measure`, `makeTestSave`, `ridgeBands`);
+(`harness:mesh measure`, `makeTestSave` (deleted 2026-10-15), `ridgeBands`);
 `scripts/measureHydrology.mjs`, the raster pass's lake census, is deleted
 with the raster hydrology it measured (`calibrateHistory.mjs` is the
 instrument on the history).

@@ -250,9 +250,14 @@ async function buildWorld(seed) {
   }
   sim.epochMa = M.worldTime.TECTONIC_MA_PER_EPOCH
   const coupled = M.coupled.createCoupledTerrain(sim, M.coupled.HISTORY_DEFAULTS.budget)
+  // The sea level before the last epoch: that epoch moves every node by its
+  // change (coupledEpoch's `seaShift`), which the delta metric below takes out.
+  let eustaticBeforeM = sim.eustaticM
   for (let e = 0; e < COUPLED_EPOCHS; e++) {
+    eustaticBeforeM = sim.eustaticM
     await M.coupled.stepCoupledEpoch(sim, coupled, { ...M.coupled.HISTORY_DEFAULTS, controls: CONTROLS })
   }
+  const seaShift = -(sim.eustaticM - eustaticBeforeM) / METRES
   process.stderr.write(`(${coupled.mesh.aliveVertices} mesh nodes) `)
   const raw = M.meshRaster.rasteriseNodeField(coupled.mesh, coupled.preErosionZ, W, H)
   const el = M.meshRaster.rasteriseNodeField(coupled.mesh, coupled.z, W, H)
@@ -413,7 +418,7 @@ async function buildWorld(seed) {
   const biomes = land.biome
   const lakesOut = { ...lakes, depth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen }
 
-  return { sim, raw, before: staged.before, terrain: staged.terrain, graphRegime, ground, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, discharge, maxDis, meanRunoff, threshold, lakes: lakesOut, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
+  return { sim, raw, before: staged.before, seaShift, terrain: staged.terrain, graphRegime, ground, ero, el, temperature, wind, currents, seasonal, seasonalPrecip, precipitation, biomes, biomesFine, discharge, maxDis, meanRunoff, threshold, lakes: lakesOut, graph, coast, basins, ice, volcanoes, eco, mig, originCell, CRX, CRY }
 }
 
 // --- layer 1: invariants ---------------------------------------------------
@@ -615,12 +620,23 @@ function metrics(w) {
   const crest = crestMetrics(w.el)
   put('erosion.peaks', crest.peaks)
   put('erosion.crestM', crest.sharpness)
-  // Cells the pass raised from below sea level — the delta signal, and the one
-  // the delta-gate rescaling moved.
+  // Sea cells the last epoch built up: the delta signal. The epoch moves
+  // every node by the sea level's change after the erosion (coupledEpoch's
+  // `seaShift`), so a plain "rose over the epoch" counted nearly the whole
+  // ocean whenever the sea fell (1.15 M of 2.1 M cells on calibration,
+  // against 0.10–0.14 M where it rose; DES-0027 entry 22). The shift is
+  // taken out, and the remaining rise must exceed DELTA_MIN_RISE_M: the
+  // flexure moves the sea floor too, by less than a metre on most of it
+  // (measured 2026-10-15 on the three seeds: 0.38–0.92 M sea cells rose by
+  // more than 0, 0.13–0.27 M by more than 0.1 m, 0.08–0.19 M by more than
+  // 1 m). Both rasters come from the same mesh (`before` is its pre-erosion
+  // z), so the difference is the epoch's change at each cell.
+  const DELTA_MIN_RISE_M = 1
   let deltaCells = 0
-  // Deposition in the sea, against the mesh's own rasterised start — the
-  // synthesis raster is metres off it between deep-ocean nodes.
-  for (let i = 0; i < w.el.length; i++) if (w.before[i] <= SEA && w.el[i] > w.before[i] + 1e-6) deltaCells++
+  for (let i = 0; i < w.el.length; i++) {
+    if (w.before[i] > SEA) continue
+    if ((w.el[i] - w.before[i] - w.seaShift) * METRES > DELTA_MIN_RISE_M) deltaCells++
+  }
   put('erosion.deltaCells', deltaCells)
   // The hydrogeology (phase 5a): how many springs, how many of them oases,
   // the spring-fed share of the reaches, and the table's land median.

@@ -1,8 +1,8 @@
 // The first run of the REAL P2 configuration: raw tectonic terrain as the
 // initial condition, the exported U(x) (elevation/upliftField.ts) as the
 // forcing — against the P0 stand-in (smoothed standing relief ^1.5) on the
-// same world. Builds a real world headless through the same path
-// makeTestSave.mjs uses, then runs the v2 engine twice at 512 and reports
+// same world. Builds a real world headless (archean, hand-over, tectonic
+// epochs), then runs the v2 engine twice at 512 and reports
 // where the two forcings agree, and what each does to the landscape.
 //
 //   npx tsx scripts/erosion-v2-uplift-check.mts <outDir>

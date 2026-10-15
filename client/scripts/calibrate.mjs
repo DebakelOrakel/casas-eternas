@@ -350,6 +350,16 @@ async function buildOne(job) {
     return { peakM: Math.round(top), p99M: Math.round(p99), above4500: +(high / Math.max(1e-12, landSum)).toFixed(5) }
   }
   const highPerEpoch = [highNow()]
+  // The history's highest node, read after EVERY epoch (DES-0027 entry 30):
+  // the samples above come every tenth epoch only, and a node beside a fast
+  // margin can rise and fall again between two of them. One pass over the
+  // nodes per epoch; it only reads the terrain.
+  const peakNow = () => {
+    let top = 0
+    for (let v = 0; v < coupled.mesh.vertexSlots; v++) if (coupled.mesh.vAlive[v] && coupled.z[v] > top) top = coupled.z[v]
+    return Math.round((top - SEA) * METRES)
+  }
+  const peakPerEpoch = [peakNow()]
   const landPerEpoch = []
   // The plates' speed (DEC-0036 phase 8f), km/Myr: the velocity at each
   // cell of the ocean age's mesh by its nearest seed's plate, weighted by
@@ -385,6 +395,7 @@ async function buildOne(job) {
     await M.coupled.stepCoupledEpoch(sim, coupled, { ...M.coupled.HISTORY_DEFAULTS, controls: CONTROLS, weather: weatherParams })
     if (e % 5 === 4 || e === job.epochs - 1) landPerEpoch.push(+meshLand().toFixed(4))
     if (e % 10 === 9) { highPerEpoch.push(highNow()); speedPerEpoch.push(speedNow()) }
+    peakPerEpoch.push(peakNow())
   }
   lap('history')
   const domain = sim.domain
@@ -529,6 +540,7 @@ async function buildOne(job) {
   // The alpine peak (phase 8d): the highest node whose line lies above the
   // sea and below its "never" mark — a place with an ablation zone, where
   // glaciers flow down to a snow line; a polar or a rainless peak has none.
+  const NEVER_M = 2 * METRES // glacial.ts equilibriumLine's "never" mark
   let aboveElaA = 0, peakNode = -1, peakOverElaM = -Infinity, maxOverElaM = -Infinity, alpineNode = -1
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v] || coupled.z[v] <= SEA) continue
@@ -536,9 +548,14 @@ async function buildOne(job) {
     if (h > ela[v]) aboveElaA += mesh.voronoiArea(v)
     if (h - ela[v] > maxOverElaM) maxOverElaM = h - ela[v]
     if (peakNode < 0 || h > (coupled.z[peakNode] - SEA) * METRES) peakNode = v
-    if (ela[v] > 0 && ela[v] < 2 * METRES && (alpineNode < 0 || h > (coupled.z[alpineNode] - SEA) * METRES)) alpineNode = v
+    if (ela[v] > 0 && ela[v] < NEVER_M && (alpineNode < 0 || h > (coupled.z[alpineNode] - SEA) * METRES)) alpineNode = v
   }
-  if (peakNode >= 0) peakOverElaM = (coupled.z[peakNode] - SEA) * METRES - ela[peakNode]
+  // A peak whose line is the "never" mark (2 × ELEVATION_METERS: no height
+  // holds ice there) has no height over its line; its −11 km entered the
+  // median before (DES-0027 entry 16). Such a world records NaN, which the
+  // summary leaves out, and the flag counts it.
+  const peakNeverIce = peakNode >= 0 && ela[peakNode] >= NEVER_M ? 1 : 0
+  if (peakNode >= 0) peakOverElaM = peakNeverIce ? NaN : (coupled.z[peakNode] - SEA) * METRES - ela[peakNode]
   const alpinePeakOverElaM = alpineNode >= 0 ? (coupled.z[alpineNode] - SEA) * METRES - ela[alpineNode] : NaN
   const alpinePeakM = alpineNode >= 0 ? (coupled.z[alpineNode] - SEA) * METRES : NaN
 
@@ -778,7 +795,10 @@ async function buildOne(job) {
     nucleated, archeanLand, archeanLandAt, handoverLand, archeanRafts, stabilised, handoverPlates,
     plates: sim.seeds.length, rafts: sim.rafts.length,
     nodes: mesh.aliveVertices,
-    landFraction: landA / total, continentalFraction: cont / total, landPerEpoch, highPerEpoch, speedPerEpoch,
+    landFraction: landA / total, continentalFraction: cont / total, landPerEpoch, highPerEpoch, speedPerEpoch, peakPerEpoch,
+    // The highest node over the whole history, every epoch read (the
+    // hand-over included), and the epoch it stood in (0 = the hand-over).
+    historyPeakM: Math.max(...peakPerEpoch), historyPeakEpoch: peakPerEpoch.indexOf(Math.max(...peakPerEpoch)),
     // The speeds over the history's epochs past the hand-over's ramp (the
     // tenth on), means of the tenth-epoch readings.
     ...Object.fromEntries(['mean', 'p90', 'maxPlate', 'continental', 'oceanic'].map((k) => {
@@ -793,7 +813,7 @@ async function buildOne(job) {
     ...Object.fromEntries(HYPSO.map((m, k) => [`above${m}m`, hypsoA[k] / landA])),
     high3000LargestKm2: high3000.largestKm2, high3000Km2: high3000.totalKm2, high3000Patches: high3000.patches,
     high4500LargestKm2: high4500.largestKm2, high4500Km2: high4500.totalKm2, high4500Patches: high4500.patches,
-    landAboveElaShare: aboveElaA / landA, peakOverElaM, maxOverElaM, alpinePeakM, alpinePeakOverElaM,
+    landAboveElaShare: aboveElaA / landA, peakOverElaM, peakNeverIce, maxOverElaM, alpinePeakM, alpinePeakOverElaM,
     lakeShareOfLand: lakeA / cont, liquidLakeShareOfLand: lakeLiquidA / cont,
     lakes: lakeBodies, terminalSeas: terminal, dryBasins: dry,
     maxDischarge: maxDis, p99Discharge: q(discharges, 0.99),
@@ -884,6 +904,8 @@ const ROWS = [
   ['largestLandmassShare', '%', 100],
   ['archeanEpochs', '', 1],
   ['peakM', 'm', 1, [8000, 9000]],
+  ['historyPeakM', 'm', 1],
+  ['historyPeakEpoch', '', 1],
   ['landP99M', 'm', 1],
   ['meanLandM', 'm', 1, [700, 900]],
   ['above1km', '%', 100],
@@ -1011,18 +1033,26 @@ function summarise(worlds) {
       const ref = base.find((b) => b.seed === w.seed)
       if (!ref) continue
       const key = `${path}=${v}`
-      sweeps[key] ??= { n: 0, d: {} }
+      sweeps[key] ??= { n: 0, d: {}, c: {} }
       sweeps[key].n++
       const metrics = { landFraction: 100, iceShareOfLand: 100, lakeShareOfLand: 100, meanT: 1, peakM: 1, reaches: 1, plates: 1, 'koppen.A': 100, 'koppen.B': 100, 'koppen.C': 100, 'koppen.D': 100, 'koppen.E': 100, 'bandT.0': 1, 'bandT.3': 1, 'bandT.5': 1, 'bandT.8': 1, 'bandAmpLand.6': 1, 'bandPLand.0': 1, 'bandPLand.2': 1, dryBeltLatRain: 1, dryBeltLatB: 1, above4500m: 100, above6000m: 100, landP999M: 1, peakOverElaM: 1, alpinePeakOverElaM: 1, landAboveElaShare: 100 }
       for (const [m, f] of Object.entries(metrics)) {
         const [a, b] = m.split('.')
         const get = (x) => (b === undefined ? x[a] : x[a]?.[b])
-        sweeps[key].d[m] = (sweeps[key].d[m] ?? 0) + ((get(w) ?? NaN) - (get(ref) ?? NaN)) * f
+        // A pair with no value (peakOverElaM on a peak that never holds
+        // ice) is left out of that metric's mean, not made NaN.
+        const delta = ((get(w) ?? NaN) - (get(ref) ?? NaN)) * f
+        sweeps[key].d[m] ??= 0
+        sweeps[key].c[m] ??= 0
+        if (Number.isFinite(delta)) { sweeps[key].d[m] += delta; sweeps[key].c[m]++ }
       }
     }
-    for (const k of Object.keys(sweeps)) for (const m of Object.keys(sweeps[k].d)) sweeps[k].d[m] /= sweeps[k].n
+    for (const k of Object.keys(sweeps)) for (const m of Object.keys(sweeps[k].d)) sweeps[k].d[m] = sweeps[k].c[m] ? sweeps[k].d[m] / sweeps[k].c[m] : NaN
     s.sweeps = sweeps
     s.worlds = base.length
+    // The worlds whose peak never holds ice (DES-0027 entry 16): their
+    // peakOverElaM is NaN, so its row is the median over the rest.
+    s.peakNeverIce = { worlds: base.filter((w) => w.peakNeverIce === 1).length, of: base.filter((w) => w.peakNeverIce !== undefined).length }
     summary[shape] = s
   }
   return summary
@@ -1047,6 +1077,7 @@ function printSummary(summary, before) {
       const delta = b ? `   ${fmt(d.median - b.median, f)}` : ''
       console.log(`${`${key} ${label ?? unit}`.padEnd(24)} ${fmt(d.median, f).padStart(8)} ${fmt(d.p10, f).padStart(8)} ${fmt(d.p90, f).padStart(8)} ${fmt(d.min, f).padStart(8)} ${fmt(d.max, f).padStart(8)}  ${target ? `${target[0]}–${target[1]}` : ''}${delta}`)
     }
+    if (s.peakNeverIce?.of) console.log(`peak never holds ice: ${s.peakNeverIce.worlds} of ${s.peakNeverIce.of} worlds (peakOverElaM is the median over the rest)`)
     console.log('Köppen group, % of land (median p10–p90)   Earth: Beck 1991–2020 all land / without Antarctica')
     for (const g of ['A', 'B', 'C', 'D', 'E']) {
       const d = s.koppen[g]

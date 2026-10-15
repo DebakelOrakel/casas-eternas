@@ -13,7 +13,7 @@ summary.de: Die Punkte, die die Kalibrierung von DEC-0036 (Phase 8) gemessen,
 area: generator
 stage: idea
 createdAt: 2026-10-14
-updatedAt: 2026-10-14
+updatedAt: 2026-10-15
 related: [DEC-0036, DEC-0035, DEC-0029, DEC-0003, DEC-0004, DEC-0006, DES-0016, DES-0019, DES-0020]
 ---
 
@@ -106,9 +106,12 @@ procedure.
     not know the ice; on the torus 3.7–7.2 points of land are frozen basins
     under ice sheets. A decision for the user, then a small change to the
     metric. Found in 8c. 1 h.
-16. **`peakOverElaM` reads −11 km** on worlds whose peak never holds ice
+16. ~~**`peakOverElaM` reads −11 km**~~ on worlds whose peak never holds ice
     (the "never" value enters the median); the alpine metric of 8d works
     around it. 0.5 h.
+    Done 2026-10-15: such a world records `peakOverElaM` as NaN and
+    `peakNeverIce` 1; the summary prints the median over the rest and the
+    count of such worlds.
 17. **The ice's sliding cut keeps its 800 m per epoch cap**, which also
     bounds troughs and fjords. Found in 8d. 1–2 h.
 18. **Lake floors cut inside an epoch**: the engine cuts lake-floor nodes
@@ -122,12 +125,15 @@ procedure.
     no artifact key. 0.5 h.
 21. **The sample world's u16 encoding** clips summits above 9 km in a baked
     preview. 0.5 h.
-22. **Golden's `erosion.deltaCells` counts the sea-level change**: it counts
+22. ~~**Golden's `erosion.deltaCells` counts the sea-level change**~~: it counts
     sea cells that rose over the last epoch, so a sea that falls by 0.7 m
     puts nearly the whole ocean in (90–124 k against 1.35–1.44 M cells,
     by the sign of `seaShift`). Deterministic, so the baseline holds, but it
     does not measure deltas. Fix: compare against the pre-erosion height
     plus the sea shift. Found in 8f. 0.5 h.
+    Done 2026-10-15: the metric takes out the last epoch's sea shift and
+    counts a sea cell that rose more than 1 m (76 k / 108 k / 191 k cells
+    on the three golden seeds, was 1 152 k / 99 k / 144 k).
 
 ## Found in 8g
 
@@ -216,13 +222,16 @@ procedure.
     1 (the Voronoi boundary's lattice counter does not follow them), and
     a margin's trench lies `trenchOffsetM` from the range at the coast,
     not from the plates' meeting line. Found in 8g-2. 1 h.
-30. **The history's highest node moves fast between the samples.** The
+30. ~~**The history's highest node moves fast between the samples.**~~ The
     calibration samples the peak every tenth epoch; every second epoch on
     torus alpha and sphere zulu it reached 8.4 / 9.2 km where the samples
     read 7.8 / 7.0. Before 8g-2's integrated column balance a node beside a
     fast margin jumped by up to 5 km in an epoch (12.5 km). A per-epoch
     maximum in `npm run calibrate` would make the sampling exact. Found
     in 8g-2. 0.5 h.
+    Done 2026-10-15: `calibrate` reads the peak after every epoch
+    (`peakPerEpoch`, `historyPeakM`, `historyPeakEpoch`); torus alpha's
+    history peak is 8571 m (epoch 39), its final peak 7837 m.
 
 ## Status
 
@@ -235,3 +244,6 @@ found in 8g and added.
 
 2026-10-14: phase 8g-2. Entry 24 resolved, entry 25 resolved for the
 relief, entries 1 and 23 annotated; entries 26–30 found and added.
+
+2026-10-15: entries 16, 22 and 30 done (tooling only, no change to the
+worlds).
