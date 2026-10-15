@@ -566,8 +566,22 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   const whereText = (card: WorldCard): string =>
     card.browser && card.server ? t('generator.load.where.both') : t(`generator.load.filter.${card.shown.where}.label` as TKey)
 
+  // The card says where the world is kept by its icons alone; the words are
+  // the icons' names (for a screen reader and as a tooltip) and stand in the
+  // detail panel.
   function whereIcons(card: WorldCard): SVGElement[] {
-    return [card.browser ? icon(BROWSER_ICON) : null, card.server ? icon(SERVER_ICON) : null].filter((x): x is SVGElement => x !== null)
+    const named = (path: string, where: Where): SVGElement => {
+      const svg = icon(path)
+      const label = t(`generator.load.filter.${where}.label` as TKey)
+      svg.removeAttribute('aria-hidden')
+      svg.setAttribute('role', 'img')
+      svg.setAttribute('aria-label', label)
+      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title')
+      title.textContent = label
+      svg.prepend(title)
+      return svg
+    }
+    return [card.browser ? named(BROWSER_ICON, 'browser') : null, card.server ? named(SERVER_ICON, 'server') : null].filter((x): x is SVGElement => x !== null)
   }
 
   // Whether any copy of the world may be opened here.
@@ -606,7 +620,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     progress.append(dot, el('span', '', !openable && options.openable ? t(options.openable.reasonKey) : progressText(shown.progress)))
 
     const meta = el('span', 'wc-meta')
-    meta.append(...whereIcons(card), el('span', '', [whereText(card), formatBytes(shown.bytes), formatWhen(shown.savedAt)].filter(Boolean).join(' · ')))
+    meta.append(...whereIcons(card), el('span', '', [formatBytes(shown.bytes), formatWhen(shown.savedAt)].filter(Boolean).join(' · ')))
 
     main.append(heading, badges(card), progress, meta)
     info.append(frame, main)
