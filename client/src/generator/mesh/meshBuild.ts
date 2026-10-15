@@ -92,6 +92,28 @@ export function densityTarget(state: MeshState, budget = 1): TargetSpacing {
   }
 }
 
+// The bootstrap lattice per domain and spacing, built once and copied for
+// each rebuild (PeriodicTriangulation.clone: the same state, so the
+// insertions into the copy are those into a new lattice). The history
+// rebuilds every epoch on the same lattice; building it was 2–3 % of an
+// epoch (profiled 2026-10-15). It holds one lattice per domain, some
+// 20 MB at the 40 km ocean spacing on 2048 × 1024.
+const lattices = new WeakMap<Domain, Map<number, PeriodicTriangulation>>()
+
+function latticeCopy(domain: Domain, spacing: number): PeriodicTriangulation {
+  let bySpacing = lattices.get(domain)
+  if (!bySpacing) {
+    bySpacing = new Map()
+    lattices.set(domain, bySpacing)
+  }
+  let lattice = bySpacing.get(spacing)
+  if (!lattice) {
+    lattice = bootstrapLattice(domain, spacing)
+    bySpacing.set(spacing, lattice)
+  }
+  return lattice.clone()
+}
+
 // A triangulation of a given point set — the coupled loop's rebuild after
 // the nodes moved with their plates (pipeline/coupledEpoch.ts): the same
 // nodes, in the given order, so vertex i of the result is point i (a
@@ -102,7 +124,7 @@ export function densityTarget(state: MeshState, budget = 1): TargetSpacing {
 // exactly on a lattice node collapses onto it, and would go with it; it is
 // inserted again once the lattice is gone, as meshTile's builds do.
 export function triangulatePoints(domain: Domain, xs: ArrayLike<number>, ys: ArrayLike<number>, count: number, latticeSpacing: number): { mesh: PeriodicTriangulation; mapping: Int32Array } {
-  const mesh = bootstrapLattice(domain, latticeSpacing)
+  const mesh = latticeCopy(domain, latticeSpacing)
   const latticeCount = mesh.vertexSlots
   const mapping = new Int32Array(count)
   const again: number[] = []

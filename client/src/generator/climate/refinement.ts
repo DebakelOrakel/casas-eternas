@@ -166,6 +166,10 @@ export function refineClimate(
   // A: pressure and wind for each month, from the month's air reduced to sea
   // level. This first pass gives the year's mean wind the currents follow.
   const belts = new Float64Array(months)
+  // Each month's plateau heat, kept for the second pass below (the same
+  // values; a smoothing per month and pass was 6–12 % of the refinement,
+  // profiled 2026-10-15).
+  const heats: Float64Array[] = []
   const annualWind: CellVectors = { e: new Float64Array(n), s: new Float64Array(n) }
   for (let m = 0; m < months; m++) {
     // The season's shift of the bands, + in the top hemisphere's summer:
@@ -174,7 +178,8 @@ export function refineClimate(
     const belt = CLIMATE_TUNING.monsoonItczSeasonalShift * detCos(2 * Math.PI * ((m + 0.5) / months - CLIMATE_TUNING.refineItczPeakYear))
     belts[m] = belt
     const bandWind = computeWind(cm, params.equatorOffset, planet.rotationHours, belt)
-    const result = computePressureWind(terrain, seaLevelAir(monthOf(monthly, m)), bandWind, params.equatorOffset, planet.rotationHours, belt, plateauHeat(m))
+    heats[m] = plateauHeat(m)
+    const result = computePressureWind(terrain, seaLevelAir(monthOf(monthly, m)), bandWind, params.equatorOffset, planet.rotationHours, belt, heats[m])
     for (let i = 0; i < n; i++) {
       annualWind.e[i] += result.wind.e[i] / months
       annualWind.s[i] += result.wind.s[i] / months
@@ -253,7 +258,7 @@ export function refineClimate(
   const winds: CellVectors[] = []
   for (let m = 0; m < months; m++) {
     const bandWind = computeWind(cm, params.equatorOffset, planet.rotationHours, belts[m])
-    const extra = plateauHeat(m)
+    const extra = heats[m]
     for (let i = 0; i < n; i++) extra[i] += oceanHigh[i]
     const result = computePressureWind(terrain, seaLevelAir(monthOf(monthly, m)), bandWind, params.equatorOffset, planet.rotationHours, belts[m], extra)
     pressure.set(result.pressure, m * n)

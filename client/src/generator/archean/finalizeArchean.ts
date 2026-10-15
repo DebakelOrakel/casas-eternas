@@ -2,7 +2,7 @@ import type { ArcheanSimulation } from './archeanState'
 import type { PlateSimulation } from '../tectonics/plateSimulationTypes'
 import type { PlateSeed } from '../tectonics/plateSeeds'
 import { generatePlateMotions } from '../tectonics/plateMotion'
-import { derivePlateTypes, raftField } from '../crust/raftField'
+import { buildBlobIndex, derivePlateTypes, raftFieldsIndexed } from '../crust/raftField'
 import { marginParameter, marginProfile, ABYSSAL_FLOOR } from '../elevation/elevationScale'
 import type { Raft } from '../crust/raftTypes'
 import { generateDetectionLattice } from '../tectonics/boundaryLattice'
@@ -91,17 +91,22 @@ export function convectionCellSeeds(mantle: Float64Array, domain: Domain): Plate
 const LAND_MEASURE_RES_X = 512
 const LAND_MEASURE_RES_Y = 256
 
+// Through a blob index (raftFieldsIndexed: the same fields as the scans
+// over every blob and every raft's, which were a second of the sphere's
+// hand-over, 2026-10-15).
 function measureRaftLandAreas(rafts: Raft[], domain: Domain): number[] {
   const areas = new Array<number>(rafts.length).fill(0)
+  const blobs = buildBlobIndex(rafts, domain)
+  const perRaft = new Float64Array(rafts.length)
   for (let gy = 0; gy < LAND_MEASURE_RES_Y; gy++) {
     const wy = ((gy + 0.5) / LAND_MEASURE_RES_Y) * domain.height
     for (let gx = 0; gx < LAND_MEASURE_RES_X; gx++) {
       const wx = ((gx + 0.5) / LAND_MEASURE_RES_X) * domain.width
-      if (marginProfile(marginParameter(raftField(wx, wy, rafts, domain)), ABYSSAL_FLOOR) <= 0) continue
+      if (marginProfile(marginParameter(raftFieldsIndexed(wx, wy, blobs, perRaft)), ABYSSAL_FLOOR) <= 0) continue
       let best = -1
       let bestField = 0
       for (let i = 0; i < rafts.length; i++) {
-        const f = raftField(wx, wy, [rafts[i]], domain)
+        const f = perRaft[i]
         if (f > bestField) { bestField = f; best = i }
       }
       if (best >= 0) areas[best] += 1

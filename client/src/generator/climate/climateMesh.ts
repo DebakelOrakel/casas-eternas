@@ -308,6 +308,28 @@ export interface ClimateTerrain {
   peakElevation(): Float64Array
 }
 
+// The raster's owners per climate mesh and raster size (fields/fieldMesh
+// rasterOwners: which cell each texel's centre lies in), made once: a
+// function of the mesh alone, and on the sphere a nearest-cell descent
+// per texel of the 2048 elevation, half a second of each climate step
+// (profiled 2026-10-15). 8 MB at 2048 × 1024; read, never written.
+const ownersByMesh = new WeakMap<FieldSampler, Map<string, Int32Array>>()
+
+function ownersFor(sampler: FieldSampler, resX: number, resY: number): Int32Array {
+  let bySize = ownersByMesh.get(sampler)
+  if (!bySize) {
+    bySize = new Map()
+    ownersByMesh.set(sampler, bySize)
+  }
+  const key = `${resX}x${resY}`
+  let owners = bySize.get(key)
+  if (!owners) {
+    owners = rasterOwners(sampler, resX, resY)
+    bySize.set(key, owners)
+  }
+  return owners
+}
+
 export function climateTerrain(domain: Domain, elevation: Float32Array, resX: number, resY: number, dryLand?: Uint8Array | null): ClimateTerrain {
   const cm = climateMesh(domain)
   const { mesh } = cm
@@ -329,8 +351,7 @@ export function climateTerrain(domain: Domain, elevation: Float32Array, resX: nu
   }
   let mean: Float64Array | null = null
   let peak: Float64Array | null = null
-  let owners: Int32Array | null = null
-  const ownersOf = (): Int32Array => (owners ??= rasterOwners(cm.sampler, resX, resY))
+  const ownersOf = (): Int32Array => ownersFor(cm.sampler, resX, resY)
   return {
     cm,
     domain,

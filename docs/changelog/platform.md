@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-15
+- **changed** Performance: an epoch of the history runs about a tenth faster on the flat world and a quarter faster on the sphere, with the same results.
+
 ## 2026-10-12
 - **changed** Saves: a world's file holds its meshes and no raster, about 7 MB smaller; files saved before are refused, and every world's stored levels and tiles are computed again. `generator.load`
 

@@ -5,6 +5,7 @@ import {
   type ErosionForcing,
 } from '../surface/erosionEngine'
 import { expandActive, type EngineIndex } from '../surface/erosionEngineState'
+import { MinHeap } from '../core/minHeap'
 import { PipelinedErosionEngine, type PipelineOptions, type WorkerLike } from '../surface/erosionEnginePool'
 import type { PeriodicTriangulation } from './periodicDelaunay'
 
@@ -141,50 +142,18 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
   if (oceanId >= 0) {
     const bandUnits = (params.shelfBandKm * 1000) / refM
     const dist = new Float64Array(slots).fill(Infinity)
-    const heap: number[] = []
-    const keys: number[] = []
-    const push = (key: number, v: number): void => {
-      let i = heap.length
-      heap.push(v)
-      keys.push(key)
-      while (i > 0) {
-        const p = (i - 1) >> 1
-        if (keys[p] <= keys[i]) break
-        ;[keys[p], keys[i]] = [keys[i], keys[p]]
-        ;[heap[p], heap[i]] = [heap[i], heap[p]]
-        i = p
-      }
-    }
-    const pop = (): number => {
-      const top = heap[0]
-      const lastV = heap.pop() as number
-      const lastK = keys.pop() as number
-      if (heap.length > 0) {
-        heap[0] = lastV
-        keys[0] = lastK
-        let i = 0
-        for (;;) {
-          const l = 2 * i + 1
-          const r = l + 1
-          let m = i
-          if (l < heap.length && keys[l] < keys[m]) m = l
-          if (r < heap.length && keys[r] < keys[m]) m = r
-          if (m === i) break
-          ;[keys[m], keys[i]] = [keys[i], keys[m]]
-          ;[heap[m], heap[i]] = [heap[i], heap[m]]
-          i = m
-        }
-      }
-      return top
-    }
+    // The shared binary heap (core/minHeap.ts): the same comparisons and
+    // placements as the arrays this kept itself, without their swaps.
+    const heap = new MinHeap(slots)
     for (let v = 0; v < slots; v++) {
       if (!mesh.vAlive[v] || label[v] === oceanId) continue
       dist[v] = 0
-      push(0, v)
+      heap.push(0, v)
     }
     while (heap.length > 0) {
-      const key = keys[0]
-      const v = pop()
+      heap.pop()
+      const key = heap.poppedKey
+      const v = heap.poppedIndex
       if (key > dist[v]) continue
       if (key >= bandUnits) continue
       const start = mesh.vEdge[v]
@@ -194,7 +163,7 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
         const d = key + mesh.edgeLength(e)
         if (d < dist[u]) {
           dist[u] = d
-          push(d, u)
+          heap.push(d, u)
         }
         e = mesh.rotateCcw(e)
       } while (e !== start)
@@ -267,16 +236,8 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
   const slotEdge = new Int32Array(edgeCount)
   const slotOfEdge = new Int32Array(mesh.twin.length).fill(-1)
   // cot at each halfedge's apex, once: an edge's two slots both need both.
-  const cotOf = new Float64Array(mesh.twin.length).fill(NaN)
-  const f = new Float64Array(6)
-  const cotAt = (e: number): number => {
-    let c = cotOf[e]
-    if (Number.isNaN(c)) {
-      c = cotAtApex(mesh, e, f)
-      cotOf[e] = c
-    }
-    return c
-  }
+  // Kept with the mesh while its geometry is unchanged (apexCotangents).
+  const cotAt = apexCotangent(mesh)
   for (let k = 0; k < activeCount; k++) {
     const v = active[k]
     const n = mesh.outgoing(v, outgoing)
@@ -318,6 +279,40 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
   return { kind: 'mesh', width: 0, height: 0, cellCount: slots, activeCount, active, activeOf, frozenCount, nbrStart, nbr, edgeCount, edgeRev, lenRel, diffFactor, mfdFactor, areaRel, refM }
 }
 
+// The cotangents at the halfedges' apexes as far as computed (NaN: not
+// yet), kept per mesh for as long as its geometryVersion stands: the
+// epoch's routing builds its index on the mesh the erosion's index was
+// built on, a frozen set apart, and its cotangents were half of that
+// second build on the sphere (profiled 2026-10-15). A kept value is the
+// bits cotAtApex gives again.
+const apexCotCache = new WeakMap<PeriodicTriangulation, { version: number; cot: Float64Array }>()
+
+function apexCotangents(mesh: PeriodicTriangulation): Float64Array {
+  const kept = apexCotCache.get(mesh)
+  if (kept && kept.version === mesh.geometryVersion && kept.cot.length === mesh.twin.length) return kept.cot
+  const cot = new Float64Array(mesh.twin.length).fill(NaN)
+  apexCotCache.set(mesh, { version: mesh.geometryVersion, cot })
+  return cot
+}
+
+// cotAtApex through that cache, for a sweep over the mesh while it does not
+// change: a triangle's three at once, from one frame (the frame was most
+// of the engine index's time on the sphere, three per triangle).
+export function apexCotangent(mesh: PeriodicTriangulation): (e: number) => number {
+  const cotOf = apexCotangents(mesh)
+  const f = new Float64Array(6)
+  return (e) => {
+    let c = cotOf[e]
+    if (Number.isNaN(c)) {
+      const t = mesh.triangleOf(e)
+      mesh.frame(t, f)
+      for (let i = 0; i < 3; i++) cotOf[3 * t + i] = cotInFrame(f, i)
+      c = cotOf[e]
+    }
+    return c
+  }
+}
+
 // Cotangent of the angle at the apex of halfedge e's triangle (the corner
 // opposite e).
 //
@@ -336,8 +331,12 @@ export function buildMeshEngineIndex(mesh: PeriodicTriangulation, z: Float32Arra
 // discretisation error.
 export function cotAtApex(mesh: PeriodicTriangulation, e: number, f: Float64Array): number {
   const t = mesh.triangleOf(e)
-  const i = e - 3 * t
   mesh.frame(t, f)
+  return cotInFrame(f, e - 3 * t)
+}
+
+// cotAtApex for the halfedge i (0..2) of a triangle whose frame `f` holds.
+function cotInFrame(f: Float64Array, i: number): number {
   const ax = f[(2 * i) % 6]
   const ay = f[(2 * i + 1) % 6]
   const bx = f[(2 * i + 2) % 6]

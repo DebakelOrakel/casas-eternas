@@ -1,6 +1,6 @@
 import { globeFrame, type GlobeFrame } from '../core/domain'
 import { detAsin, detExp } from '../core/detMath'
-import { cotAtApex } from './meshErosion'
+import { apexCotangent } from './meshErosion'
 import type { PeriodicTriangulation } from './periodicDelaunay'
 
 // NEIGHBOURHOODS IN METRES ON A TERRAIN MESH (DEC-0036 phase 7, docs/
@@ -105,7 +105,7 @@ export function meshGeometry(mesh: PeriodicTriangulation, unitM: number): MeshGe
   const out = new Int32Array(256)
   const lengthM = new Float64Array(edges)
   const wallM = new Float64Array(edges)
-  const f = new Float64Array(6)
+  const cotAt = apexCotangent(mesh)
   for (let v = 0; v < mesh.vertexSlots; v++) {
     if (!mesh.vAlive[v]) continue
     const n = mesh.outgoing(v, out)
@@ -114,7 +114,7 @@ export function meshGeometry(mesh: PeriodicTriangulation, unitM: number): MeshGe
       const e = out[k]
       const len = mesh.edgeLength(e)
       lengthM[base + k] = len * unitM
-      wallM[base + k] = len * unitM * Math.max(0, (cotAtApex(mesh, e, f) + cotAtApex(mesh, mesh.twin[e], f)) / 2)
+      wallM[base + k] = len * unitM * Math.max(0, (cotAt(e) + cotAt(mesh.twin[e])) / 2)
     }
   }
   return { ...cells, lengthM, wallM }

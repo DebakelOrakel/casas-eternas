@@ -1,7 +1,7 @@
 import type { PlateSeed } from '../tectonics/plateSeeds'
 import type { PlateType } from '../tectonics/plateTypes'
 import type { Raft } from './raftTypes'
-import type { CellBox, Domain, DomainGrid } from '../core/domain'
+import { globeFrame, type CellBox, type Domain, type DomainGrid } from '../core/domain'
 import { smoothstepBetween } from '../core/interpolation'
 import { worldEpochMa } from '../core/worldTime'
 
@@ -75,7 +75,20 @@ export interface BlobIndex {
   by: Float64Array
   br: Float64Array
   braft: Int32Array
+  // On the sphere, each blob's place on the globe (Domain.noise.frame's
+  // position, domain units) for the chord test below; null on the torus.
+  bp: Float64Array | null
 }
+
+// THE CHORD TEST (the sphere): a great-circle distance is never shorter
+// than the chord between its two points, so a blob whose chord from the
+// point is at least its reach adds an exact 0 (raftFieldIndexed) or cannot
+// be the nearest (nearestRaftIndexed) — skipped without the distance,
+// whose arc (an atan2 per blob) was a tenth of a sphere epoch (profiled
+// 2026-10-15). The margin keeps the test far outside the rounding of
+// either length: a blob near the boundary is measured as before, so the
+// sums and the nearest are the scans' bits.
+const CHORD_MARGIN = 1 + 1e-9
 
 const INDEX_NX = 32
 const INDEX_NY = 16
@@ -97,6 +110,17 @@ export function buildBlobIndex(rafts: Raft[], domain: Domain, reach = 1): BlobIn
       br[g] = blob.radius
       braft[g] = r
       g++
+    }
+  }
+  let bp: Float64Array | null = null
+  if (domain.noise.kind === 'globe') {
+    bp = new Float64Array(total * 3)
+    const frame = globeFrame()
+    for (let k = 0; k < total; k++) {
+      domain.noise.frame(bx[k], by[k], frame)
+      bp[3 * k] = frame.px
+      bp[3 * k + 1] = frame.py
+      bp[3 * k + 2] = frame.pz
     }
   }
   const nx = INDEX_NX
@@ -127,18 +151,58 @@ export function buildBlobIndex(rafts: Raft[], domain: Domain, reach = 1): BlobIn
   for (let b = 0; b < nx * ny; b++) start[b + 1] = start[b] + buckets[b].length
   const items = new Int32Array(start[nx * ny])
   for (let b = 0; b < nx * ny; b++) items.set(buckets[b], start[b])
-  return { rafts, domain, grid, start, items, bx, by, br, braft }
+  return { rafts, domain, grid, start, items, bx, by, br, braft, bp }
+}
+
+const queryFrame = globeFrame()
+
+// The squared chord from the point last given to queryFrame to blob g.
+function chordSq(bp: Float64Array, g: number): number {
+  const dx = bp[3 * g] - queryFrame.px
+  const dy = bp[3 * g + 1] - queryFrame.py
+  const dz = bp[3 * g + 2] - queryFrame.pz
+  return dx * dx + dy * dy + dz * dz
 }
 
 // raftField through the index: the same value, bit for bit.
 export function raftFieldIndexed(x: number, y: number, index: BlobIndex): number {
   if (!(Math.abs(x) < Infinity && Math.abs(y) < Infinity)) return raftField(x, y, index.rafts, index.domain)
   const b = index.grid.cellAt(x, y)
-  const { items, bx, by, br, domain } = index
+  const { items, bx, by, br, bp, domain } = index
   let field = 0
+  if (bp && domain.noise.kind === 'globe') {
+    domain.noise.frame(x, y, queryFrame)
+    for (let k = index.start[b]; k < index.start[b + 1]; k++) {
+      const g = items[k]
+      if (chordSq(bp, g) >= br[g] * br[g] * CHORD_MARGIN) continue
+      field += blobKernel(domain.distanceSq(x, y, bx[g], by[g]), br[g])
+    }
+    return field
+  }
   for (let k = index.start[b]; k < index.start[b + 1]; k++) {
     const g = items[k]
     field += blobKernel(domain.distanceSq(x, y, bx[g], by[g]), br[g])
+  }
+  return field
+}
+
+// raftFieldIndexed, and each raft's own field (raftField over that raft
+// alone) into `perRaft` (one entry per raft, written whole): both the
+// scans' bits, since a raft's blobs keep their order within a bucket and
+// a blob left out adds an exact 0. A finite point only.
+export function raftFieldsIndexed(x: number, y: number, index: BlobIndex, perRaft: Float64Array): number {
+  perRaft.fill(0)
+  const b = index.grid.cellAt(x, y)
+  const { items, bx, by, br, bp, braft, domain } = index
+  const globe = bp !== null && domain.noise.kind === 'globe'
+  if (globe && domain.noise.kind === 'globe') domain.noise.frame(x, y, queryFrame)
+  let field = 0
+  for (let k = index.start[b]; k < index.start[b + 1]; k++) {
+    const g = items[k]
+    if (globe && bp && chordSq(bp, g) >= br[g] * br[g] * CHORD_MARGIN) continue
+    const kernel = blobKernel(domain.distanceSq(x, y, bx[g], by[g]), br[g])
+    field += kernel
+    perRaft[braft[g]] += kernel
   }
   return field
 }
@@ -158,6 +222,18 @@ export function nearestRaftIndexed(x: number, y: number, index: BlobIndex, reach
     return onRaft
   }
   const b = index.grid.cellAt(x, y)
+  const bp = index.bp
+  if (bp && domain.noise.kind === 'globe') {
+    domain.noise.frame(x, y, queryFrame)
+    for (let k = index.start[b]; k < index.start[b + 1]; k++) {
+      const g = items[k]
+      const reachG = nearest * br[g]
+      if (chordSq(bp, g) >= reachG * reachG * CHORD_MARGIN) continue
+      const d = Math.sqrt(domain.distanceSq(x, y, bx[g], by[g])) / br[g]
+      if (d < nearest) { nearest = d; onRaft = braft[g] }
+    }
+    return onRaft
+  }
   for (let k = index.start[b]; k < index.start[b + 1]; k++) {
     const g = items[k]
     const d = Math.sqrt(domain.distanceSq(x, y, bx[g], by[g])) / br[g]

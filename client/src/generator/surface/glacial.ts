@@ -246,16 +246,18 @@ export function computeIceOnMesh(input: MeshIceInputs): MeshIceResult {
     // carried out over its neighbours (highest surface first): a wall
     // node under that surface holds the ice between it and the rock. The
     // flux ledger is untouched — this is the body the flux implies.
+    // Over the stars kept above (the same neighbours in the same order,
+    // the same lengths): reading them from the mesh was a fifth of this
+    // function's time (profiled 2026-10-15).
     for (let i = 0; i < order.length; i++) {
       const v = order[i]
       if (thickness[v] <= 0) continue
       const sv = elevationToMeters(z[v] - SEA_LEVEL) + thickness[v]
-      const n = mesh.outgoing(v, out)
-      for (let k = 0; k < n; k++) {
-        const e = out[k]
-        const u = mesh.to(e)
+      const j = landIndex[v]
+      for (let k = starStart[j]; k < starStart[j + 1]; k++) {
+        const u = starTo[k]
         if (z[u] <= SEA_LEVEL) continue
-        const sMin = sv - t.iceSurfaceMaxSlope * mesh.edgeLength(e) * cellM
+        const sMin = sv - t.iceSurfaceMaxSlope * starLength[k] * cellM
         const zu = elevationToMeters(z[u] - SEA_LEVEL)
         const hu = sMin - zu
         if (hu > thickness[u]) thickness[u] = Math.min(t.iceMaxThicknessM, hu)

@@ -202,6 +202,69 @@ done before or beside it.
 
 ## Status
 
+2026-10-15: **a performance pass, the generator frozen.** Every change
+keeps the results byte-identical (golden's 46 stages × 3 seeds against
+the hashes of the commit before, and a hash of 50 stages per shape on
+both shapes — the history, the refinement, the hydrology, the ecology,
+the load). Measured on one world per shape (seed `calibration`, the
+Archean to its 0.5 gate, 30 epochs at HISTORY_DEFAULTS, 121 k / 137 k
+nodes on average), alone on the machine, the generator bundled by
+esbuild as the job worker is. Under Vite's SSR loader (golden,
+calibrate) the same code runs 1.4–1.75 × slower: a time from those
+harnesses is not the browser's or the worker's. Mean per epoch, ms:
+
+| Stage | Torus before | Torus after | Sphere before | Sphere after |
+|---|---|---|---|---|
+| membership | 6 | 7 | 100 | 51 |
+| tectonics | 52 | 54 | 207 | 171 |
+| rebuild | 170 | 158 | 284 | 178 |
+| remesh | 99 | 92 | 170 | 156 |
+| baseline | 147 | 132 | 381 | 325 |
+| forcing | 154 | 136 | 388 | 329 |
+| erosion | 272 | 253 | 432 | 342 |
+| flexure | 131 | 130 | 123 | 103 |
+| climate | 121 | 120 | 165 | 136 |
+| lakes | 117 | 96 | 275 | 136 |
+| ice | 212 | 138 | 255 | 170 |
+| coast | 20 | 20 | 57 | 54 |
+| **epoch** | **1504** | **1338 (−11 %)** | **2843** | **2154 (−24 %)** |
+
+A second pair of runs gave −14 % and −24 %: the torus's gain is
+11–14 %, inside the noise of one run.
+
+Once per world: the hand-over on the sphere 1.0 → 0.03 s, the
+refinement 3.4 → 3.2 s (torus) and 3.7 → 3.4 s (sphere), the sphere's
+rasters of the climate step and the hydrology about a third faster, the
+ecology 2.0 → 1.7 s (sphere). What changed, each in a comment beside
+it: the Voronoi areas and the engine index's cotangents are kept with
+the mesh while its geometry does not change (`PeriodicTriangulation
+.geometryVersion`); the bootstrap lattice of the rebuild is built once
+and copied; the ice's body rule reads the stars it already keeps; the
+sphere's query points find their unit vectors in a shared table, its
+blob index skips by the chord a blob that cannot reach, and a removal
+measures only the link pairs near the margin; the binary heap moves a
+hole instead of swapping; the Hilbert order sorts packed numbers; the
+refinement keeps each month's plateau heat for its second pass; the
+climate mesh's raster owners are made once per raster size. The
+memory: what the session holds between two epochs (after a collection)
+grows by 47 MB on the sphere (145 → 192 MB) and 38 MB on the torus
+(161 → 199 MB) — the lattice, the current mesh's areas and cotangents,
+the owners (8 MB), on the sphere the query table (10 MB). The process's
+peak varied by ±300 MB between runs of the same code, with no change
+of its own to be seen in it.
+
+Not taken, because each changes the result: a warm start or a stronger
+preconditioner for the flexure's CG and the mantle's Helmholtz solve
+(the solve runs to a residual, so a new start gives other bits), the
+incremental rebuild ADAPTIVE_MESH_PLAN.md phase 5.8 proposes (cocircular
+ties), and the ice's equilibrium
+line computed for the land only (its value on the sea is returned,
+though not read today). Not taken, because it is a decision of its own:
+the erosion in the engine pool during the live history — the pool's
+synchronous cadence gives the single engine's bytes, but the runtime
+does not give the history a pool today, and that changes the screen's
+workers; to be measured in the browser first.
+
 2026-10-14: **phase 8g-2 BUILT — the uplift where the crust converges;
 the history's time.** Phase 8 stays done; this is a correction of 8g on
 the user's request. 8g's land stood too broadly at 2–3 km (above 2000 m

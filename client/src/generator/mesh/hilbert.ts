@@ -99,10 +99,25 @@ export function hilbertKey(x: number, y: number, width: number, height: number):
 
 // Indices 0..count-1 sorted by the Hilbert key of (xs[i], ys[i]); ties by
 // index, so the order is total.
+//
+// Up to 2^21 (PACK) points the key and the index are packed into one integer,
+// key · 2^21 + index (below 2^53, exact in a double), and sorted as plain
+// numbers: the same total order, without a comparator call per comparison
+// (the comparator sort was most of the history's compaction, profiled
+// 2026-10-15).
+const PACK = 2097152
+
 export function hilbertOrder(xs: ArrayLike<number>, ys: ArrayLike<number>, count: number, width: number, height: number): Int32Array {
+  const order = new Int32Array(count)
+  if (count <= PACK && 2 * HILBERT_ORDER + 21 <= 53) {
+    const packed = new Float64Array(count)
+    for (let i = 0; i < count; i++) packed[i] = hilbertKey(xs[i], ys[i], width, height) * PACK + i
+    packed.sort()
+    for (let i = 0; i < count; i++) order[i] = packed[i] % PACK
+    return order
+  }
   const keys = new Float64Array(count)
   for (let i = 0; i < count; i++) keys[i] = hilbertKey(xs[i], ys[i], width, height)
-  const order = new Int32Array(count)
   for (let i = 0; i < count; i++) order[i] = i
   order.sort((a, b) => keys[a] - keys[b] || a - b)
   return order

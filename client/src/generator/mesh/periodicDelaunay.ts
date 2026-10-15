@@ -125,6 +125,32 @@ function halfChordAsin(x: number): number {
 const next = (e: number): number => (e % 3 === 2 ? e - 2 : e + 1)
 const prev = (e: number): number => (e % 3 === 0 ? e + 2 : e - 1)
 
+// THE QUERY POINTS' UNIT VECTORS on the globe, one direct-mapped table
+// per chart (its radians per unit along and across), shared by every
+// triangulation of it: 2^18 slots, 10 MB, indexed by a multiplicative hash
+// of the coordinates (the domain's own trig cache uses the same). Sized
+// for an epoch's nodes, ~140 k at the history's budget on 2048 × 1024, so
+// the next sweep over them finds most of them.
+interface QueryUnits {
+  x: Float64Array
+  y: Float64Array
+  u: Float64Array
+}
+const QUERY_BITS = 18
+const QUERY_SHIFT = 32 - QUERY_BITS
+const queryUnitTables = new Map<string, QueryUnits>()
+
+function queryUnitsFor(toLon: number, toColat: number): QueryUnits {
+  const key = `${toLon}:${toColat}`
+  let units = queryUnitTables.get(key)
+  if (!units) {
+    const size = 1 << QUERY_BITS
+    units = { x: new Float64Array(size).fill(Number.NaN), y: new Float64Array(size).fill(Number.NaN), u: new Float64Array(3 * size) }
+    queryUnitTables.set(key, units)
+  }
+  return units
+}
+
 export class PeriodicTriangulation {
   readonly domain: Domain
   // Vertices. `vx`/`vy` in domain coordinates, wrapped. `vEdge` is one
@@ -165,6 +191,17 @@ export class PeriodicTriangulation {
   // Walks on the globe that gave up and scanned every triangle instead —
   // the harness reads it; 0 is expected.
   walkFallbacks = 0
+  // The geometry's version: it goes up with every change of a triangle,
+  // a twin, a vertex's edge or a vertex (setTriangle, pair, freeTriangle,
+  // newVertex, remove). A value derived from the mesh and stamped with it
+  // is still the mesh's while the version is the same — the Voronoi areas
+  // below, the engine index's cotangents (mesh/meshErosion.ts). Code that
+  // writes the arrays directly (buildFromTriangles) does so before anything
+  // is derived.
+  private version = 0
+  get geometryVersion(): number {
+    return this.version
+  }
 
   constructor(domain: Domain, vertexCapacity = 1024) {
     this.domain = domain
@@ -182,6 +219,37 @@ export class PeriodicTriangulation {
     this.tris = new Int32Array(tc * 3).fill(-1)
     this.twin = new Int32Array(tc * 3).fill(-1)
     this.tAlive = new Uint8Array(tc)
+  }
+
+  // An independent copy in the same state: the same slots, free lists,
+  // capacities, walk start and counters, so every later operation on the
+  // copy does what it would have done on the original. What
+  // meshBuild.triangulatePoints starts each epoch from (the lattice built
+  // once). The derived caches start empty.
+  clone(): PeriodicTriangulation {
+    const copy = new PeriodicTriangulation(this.domain, 4)
+    copy.vx = this.vx.slice()
+    copy.vy = this.vy.slice()
+    copy.vEdge = this.vEdge.slice()
+    copy.vAlive = this.vAlive.slice()
+    copy.vertexSlots = this.vertexSlots
+    copy.aliveVertices = this.aliveVertices
+    copy.freeVertices = this.freeVertices.slice()
+    copy.tris = this.tris.slice()
+    copy.twin = this.twin.slice()
+    copy.tAlive = this.tAlive.slice()
+    copy.triSlots = this.triSlots
+    copy.aliveTriangles = this.aliveTriangles
+    copy.freeTris = this.freeTris.slice()
+    copy.lastTri = this.lastTri
+    copy.walkSteps = this.walkSteps
+    copy.flips = this.flips
+    copy.stack = this.stack.slice()
+    copy.vu = this.vu.slice()
+    copy.walkFallbacks = this.walkFallbacks
+    copy.onEdge = this.onEdge
+    copy.atVertex = this.atVertex
+    return copy
   }
 
   // ---------------------------------------------------------------- frames
@@ -311,8 +379,44 @@ export class PeriodicTriangulation {
   // in the frame of v. Sums to the domain's area over all vertices.
   private readonly cc = new Float64Array(2)
 
+  // Each slot's area as last computed, and the version it was computed at
+  // (NaN: never), on a mesh that keeps them (keepAreas: the meshes
+  // buildFromTriangles makes — the history's compacted mesh, a decoded
+  // one, the lattices). An epoch of the history asks a node's area five
+  // times (its areas twice, the ice, the column's balance, the engine's
+  // index twice) on a mesh that does not change between them; the area
+  // sums the star from vEdge[v], which every change that moves it also
+  // versions, so a kept area is the bits a new computation gives (profiled
+  // 2026-10-15: 5 % of a torus epoch). A mesh being built by insertion and
+  // removal changes between most of its area queries and keeps none: the
+  // tables would only be garbage.
+  private keepsAreas = false
+  private areaVersion = new Float64Array(0)
+  private areaValue = new Float64Array(0)
+
+  keepAreas(): void {
+    this.keepsAreas = true
+  }
+
   voronoiArea(v: number): number {
-    if (this.globe) return this.voronoiAreaOnGlobe(v)
+    if (!this.keepsAreas) return this.globe ? this.voronoiAreaOnGlobe(v) : this.voronoiAreaPlanar(v)
+    if (v < this.areaVersion.length && this.areaVersion[v] === this.version) return this.areaValue[v]
+    const area = this.globe ? this.voronoiAreaOnGlobe(v) : this.voronoiAreaPlanar(v)
+    if (v >= this.areaVersion.length) {
+      const size = Math.max(v + 1, this.vx.length)
+      const version = new Float64Array(size).fill(Number.NaN)
+      version.set(this.areaVersion)
+      const value = new Float64Array(size)
+      value.set(this.areaValue)
+      this.areaVersion = version
+      this.areaValue = value
+    }
+    this.areaVersion[v] = this.version
+    this.areaValue[v] = area
+    return area
+  }
+
+  private voronoiAreaPlanar(v: number): number {
     const vx = this.vx[v]
     const vy = this.vy[v]
     const d = this.d
@@ -402,6 +506,29 @@ export class PeriodicTriangulation {
     out[o] = st * detCos(l)
     out[o + 1] = st * detSin(l)
     out[o + 2] = detCos(t)
+  }
+
+  // unitOf for a query point (locateOnGlobe, barycentricOnGlobe), through
+  // a table of the answers shared by every triangulation of the chart
+  // (QueryUnits): a sampler locates a point and then weighs it in its
+  // triangle, and an epoch of the history asks the same nodes' positions
+  // of the climate's, the flexure's, the mantle's and the ocean age's
+  // meshes, some of them twice; the trig was a tenth of a sphere epoch
+  // (profiled 2026-10-15). A hit copies the bits a miss computes.
+  private queryUnits: QueryUnits | null = null
+
+  private queryUnitOf(x: number, y: number, out: Float64Array): void {
+    const units = (this.queryUnits ??= queryUnitsFor(this.toLon, this.toColat))
+    const k = (Math.imul((x * 1024) | 0, 0x9e3779b1) ^ Math.imul((y * 1024) | 0, 0x85ebca77)) >>> QUERY_SHIFT
+    // Zero is compared by its sign too: detSin(−0) is −0.
+    if (!(units.x[k] === x && units.y[k] === y && Object.is(units.x[k], x) && Object.is(units.y[k], y))) {
+      this.unitOf(x, y, units.u, 3 * k)
+      units.x[k] = x
+      units.y[k] = y
+    }
+    out[0] = units.u[3 * k]
+    out[1] = units.u[3 * k + 1]
+    out[2] = units.u[3 * k + 2]
   }
 
   // The chart point a vertex is stored at, from any (x, y): the point
@@ -560,7 +687,7 @@ export class PeriodicTriangulation {
 
   private barycentricOnGlobe(t: number, x: number, y: number, out: Float64Array): void {
     const q = this.bq
-    this.unitOf(x, y, q, 0)
+    this.queryUnitOf(x, y, q)
     const u = this.vu
     const a = 3 * this.tris[3 * t]
     const b = 3 * this.tris[3 * t + 1]
@@ -593,7 +720,7 @@ export class PeriodicTriangulation {
   private locateOnGlobe(x: number, y: number, hint: number): number {
     let t = this.tAlive[hint] ? hint : this.anyAliveTriangle()
     const q = this.q
-    this.unitOf(x, y, q, 0)
+    this.queryUnitOf(x, y, q)
     const u = this.vu
     const maxSteps = this.triSlots * 2 + 16
     let steps = 0
@@ -857,6 +984,7 @@ export class PeriodicTriangulation {
     }
     this.vAlive[v] = 1
     this.aliveVertices++
+    this.version++
     return v
   }
 
@@ -873,6 +1001,7 @@ export class PeriodicTriangulation {
   }
 
   private freeTriangle(t: number): void {
+    this.version++
     this.tAlive[t] = 0
     this.aliveTriangles--
     this.tris[3 * t] = this.tris[3 * t + 1] = this.tris[3 * t + 2] = -1
@@ -881,6 +1010,7 @@ export class PeriodicTriangulation {
   }
 
   private setTriangle(t: number, a: number, b: number, c: number): void {
+    this.version++
     const base = 3 * t
     this.tris[base] = a
     this.tris[base + 1] = b
@@ -891,6 +1021,7 @@ export class PeriodicTriangulation {
   }
 
   private pair(e1: number, e2: number): void {
+    this.version++
     this.twin[e1] = e2
     this.twin[e2] = e1
   }
@@ -1078,10 +1209,16 @@ export class PeriodicTriangulation {
     // Refuse when any two link vertices are further apart than the margin:
     // every edge the hole's triangulation can contain joins two of them.
     let n = this.outgoing(v, this.star)
+    // On the globe a pair whose chord bounds its arc well inside the margin
+    // (arc ≤ R · chord · π / 2) is not measured: the arc's atan2 per pair
+    // was a twentieth of a sphere epoch (profiled 2026-10-15). A pair near
+    // the margin is measured as before, so the answer is the same.
+    const chordBelow = this.globe ? maxLenSq / (sq(this.radius * Math.PI / 2) * (1 + 1e-9)) : -1
     for (let i = 0; i < n; i++) {
       const a = this.to(this.star[i])
       for (let j = i + 1; j < n; j++) {
         const b = this.to(this.star[j])
+        if (this.globe && this.chordSq(a, b) < chordBelow) continue
         if (this.domain.distanceSq(this.vx[a], this.vy[a], this.vx[b], this.vy[b]) > maxLenSq) return false
       }
     }
@@ -1138,6 +1275,7 @@ export class PeriodicTriangulation {
     this.pair(3 * t0 + 2, t20)
     this.vAlive[v] = 0
     this.vEdge[v] = -1
+    this.version++
     this.aliveVertices--
     this.freeVertices.push(v)
     this.stack.push(3 * t0, 3 * t0 + 1, 3 * t0 + 2)
@@ -1398,5 +1536,6 @@ export function buildFromTriangles(domain: Domain, xs: ArrayLike<number>, ys: Ar
     mesh.twin[e] = w
   }
   mesh.lastTri = 0
+  mesh.keepAreas()
   return mesh
 }
