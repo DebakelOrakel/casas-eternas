@@ -27,7 +27,7 @@ func newTestModule(t *testing.T, ttl time.Duration) (*Module, *token.Tokens) {
 	if _, err := registry.Create("ada", "Geheim-2026"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	m, err := New(Config{Tokens: tokens, TTL: ttl, SessionTTL: 24 * time.Hour, Registry: registry, StorageDir: t.TempDir()})
+	m, err := New(Config{Tokens: tokens, TTL: ttl, SessionTTL: 24 * time.Hour, Registry: registry, StateDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

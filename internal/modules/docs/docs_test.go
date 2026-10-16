@@ -16,7 +16,7 @@ func TestServesTheSiteUnderItsPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	var tree config.Config
-	tree.Docs.Storage.Dir = &config.DirStorage{Path: dir}
+	tree.Docs.ContentDir = dir
 	m, err := New(Config{All: tree})
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestWithoutADirectoryNothingIsServed(t *testing.T) {
 
 func TestANamedButMissingDirectoryRefuses(t *testing.T) {
 	var tree config.Config
-	tree.Docs.Storage.Dir = &config.DirStorage{Path: "/definitely/not/there"}
+	tree.Docs.ContentDir = "/definitely/not/there"
 	m, err := New(Config{All: tree})
 	if err != nil {
 		t.Fatal(err)

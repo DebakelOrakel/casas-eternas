@@ -121,7 +121,7 @@ const (
 	// present and there is nothing to protect anyone from.
 	AuthNone AuthMode = "none"
 	// AuthPassword: this server holds the user database (auth.db, under
-	// auth.storage), and logging in exchanges credentials for a token it
+	// auth.state-dir), and logging in exchanges credentials for a token it
 	// issues itself.
 	AuthPassword AuthMode = "password"
 	// AuthOIDC: a foreign identity provider holds the users. It is a second

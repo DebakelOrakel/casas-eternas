@@ -51,7 +51,7 @@ process of a split deployment, so the role travels only in `-t` or
   identity owns everything, no login exists. Right for a machine you
   trust, wrong for anything reachable by others.
 - **`password`** — this server holds the users, in its own store
-  (`auth.storage`), administered over the admin socket with
+  (`auth.state-dir`), administered over the admin socket with
   `casas-eternas auth user …` and `auth role …` (see the [CLI](cli.md)
   reference). Logging in exchanges name and password for a token; every
   other request carries the token.
@@ -61,7 +61,11 @@ process of a split deployment, so the role travels only in `-t` or
 ## Where state lives
 
 Each store module owns one directory — worlds (`world.storage.dir.path`),
-artifacts (`artifacts.storage.dir.path`), users (`auth.storage.dir.path`).
+artifacts (`artifacts.storage.dir.path`), users (`auth.state-dir`), jobs
+(`jobs.state-dir`), the relay's messages (`relay.state-dir`). Worlds and
+artifacts choose a backend with `world.storage.type` and
+`artifacts.storage.type`; `dir` is the only one implemented. The others
+need a filesystem, so they take a plain directory.
 **One process per store directory** is a hard rule; the user store
 enforces it with a file lock, the others rely on you. Scaling means
 splitting *targets* across processes, never pointing two processes at one

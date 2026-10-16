@@ -116,7 +116,7 @@ docs:
 # (make reads a bare --config as its own option).
 run: worker client docs
 	go build -ldflags="$(LDFLAGS)" -o casas-eternas .
-	./casas-eternas start --target all --client.storage.dir.path client/dist --docs.storage.dir.path client/docs-dist $(ARGS)
+	./casas-eternas start --target all --client.content-dir client/dist --docs.content-dir client/docs-dist $(ARGS)
 
 build:
 	docker build --platform linux/amd64 --build-arg CASAS_VERSION=$(VERSION) -f deploy/Dockerfile -t $(IMAGE):$(TAG) .

@@ -25,7 +25,7 @@ summary.de: Wie der Server konfiguriert wird, entschieden, als die Zahl der Flag
 area: platform
 stage: built
 createdAt: 2026-08-12
-updatedAt: 2026-08-13
+updatedAt: 2026-10-16
 related: [DES-0013]
 ---
 
@@ -134,6 +134,19 @@ nothing else — enforced by review, not the compiler. The one temporary
 exception is bake, which still needs the world and artifacts paths; those
 reads sit at the composition root in `cmd/start.go` with a comment, so the
 coupling stays visible until the bake decoupling removes it.
+
+## Addendum 2026-10-16 — the union only where objects live
+
+[object-storage.md](./object-storage.md) (DEC-0038, fork 2) revises the
+storage union above. Only `world.storage` and `artifacts.storage` keep it,
+and their `type` is REQUIRED: a flag with the default `dir`, never
+inferred from a block. An `s3` block beside `type: dir` is refused, and so
+is a `dir` block beside `type: s3` (the flag default of `dir.path` is not a
+block). The modules that need a filesystem take a plain directory
+(`jobs.state-dir`, `auth.state-dir`, `relay.state-dir`), the static ones a
+content directory (`client.content-dir`, `docs.content-dir`). The old keys
+are refused at start with the new key named — a hard break, as the rename
+of 2026-08-12 was.
 
 ## What was rejected
 

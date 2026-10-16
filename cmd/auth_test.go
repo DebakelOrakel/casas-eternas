@@ -52,7 +52,7 @@ func authModuleFixture(t *testing.T) *auth.Module {
 	if err != nil {
 		t.Fatal(err)
 	}
-	module, err := auth.New(auth.Config{Tokens: tokens, TTL: time.Hour, SessionTTL: 24 * time.Hour, Registry: registry, StorageDir: t.TempDir()})
+	module, err := auth.New(auth.Config{Tokens: tokens, TTL: time.Hour, SessionTTL: 24 * time.Hour, Registry: registry, StateDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

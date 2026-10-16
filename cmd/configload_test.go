@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,4 +137,140 @@ func TestLoadConfigWithoutFileUsesFlagDefaults(t *testing.T) {
 	if cfg.World.KeepRevisions != 3 {
 		t.Errorf("keep-revisions = %d, want the flag default", cfg.World.KeepRevisions)
 	}
+}
+
+// The HARD BREAK of DEC-0038: every renamed key is refused in the file and
+// as a CASAS_* variable, and the message names the key that replaced it.
+func TestLoadConfigRefusesRenamedKeys(t *testing.T) {
+	initConfig()
+	for old, renamed := range renamedKeys {
+		t.Run("file "+old, func(t *testing.T) {
+			parts := strings.Split(old, ".")
+			yaml := ""
+			for depth, part := range parts {
+				yaml += strings.Repeat("  ", depth) + part + ":"
+				if depth == len(parts)-1 {
+					yaml += " /somewhere"
+				}
+				yaml += "\n"
+			}
+			configFile(t, yaml)
+			_, err := loadConfig()
+			if err == nil || !strings.Contains(err.Error(), old) || !strings.Contains(err.Error(), renamed) {
+				t.Errorf("want %s refused naming %s, got %v", old, renamed, err)
+			}
+		})
+		t.Run("env "+old, func(t *testing.T) {
+			viper.Set(flagConfig, "")
+			variable := "CASAS_" + strings.ToUpper(envKey.Replace(old))
+			t.Setenv(variable, "/somewhere")
+			_, err := loadConfig()
+			want := "CASAS_" + strings.ToUpper(envKey.Replace(renamed))
+			if err == nil || !strings.Contains(err.Error(), variable) || !strings.Contains(err.Error(), want) {
+				t.Errorf("want %s refused naming %s, got %v", variable, want, err)
+			}
+		})
+	}
+}
+
+// An old flag is an unknown flag, and the error says which flag replaced it.
+func TestRenamedFlagNamesTheNewFlag(t *testing.T) {
+	// Cobra applies the flag error function in Execute, after ParseFlags.
+	err := StartCmd.ParseFlags([]string{"--jobs.storage.dir.path", "/x"})
+	if err != nil {
+		err = StartCmd.FlagErrorFunc()(StartCmd, err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "--jobs.state-dir") {
+		t.Errorf("want the new flag named, got %v", err)
+	}
+}
+
+// The new plain directories and the link lifetimes reach the tree.
+func TestLoadConfigReadsDirsAndLinkSettings(t *testing.T) {
+	initConfig()
+	t.Setenv("CASAS_AUTH_STATE_DIR", "/env/auth")
+	configFile(t, `
+jobs:
+  state-dir: /data/jobs
+relay:
+  state-dir: /data/relay
+client:
+  content-dir: /app/dist
+docs:
+  content-dir: /app/docs
+artifacts:
+  write-link-ttl: 2h
+`)
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{cfg.Jobs.StateDir, cfg.Relay.StateDir, cfg.Client.ContentDir, cfg.Docs.ContentDir, cfg.Auth.StateDir}
+	want := []string{"/data/jobs", "/data/relay", "/app/dist", "/app/docs", "/env/auth"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("dir %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if cfg.Artifacts.WriteLinkTTL != 2*time.Hour || cfg.Artifacts.ReadLinkTTL != 15*time.Minute {
+		t.Errorf("link ttls = %v / %v, want 2h from the file and the 15m default", cfg.Artifacts.WriteLinkTTL, cfg.Artifacts.ReadLinkTTL)
+	}
+}
+
+// `type` is required for s3 and never inferred: the flag default is dir, an
+// s3 block beside it is refused, and the dir.path flag default does not
+// count as a dir block beside type s3 — a SET path does.
+func TestLoadConfigObjectStorageType(t *testing.T) {
+	initConfig()
+	validate := func(t *testing.T) error {
+		t.Helper()
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		return cfg.World.Storage.Validate("world")
+	}
+	const s3Block = `
+world:
+  storage:
+%s    s3:
+      flavour: ceph
+      endpoint: https://objects.example
+      bucket: worlds
+`
+	cases := []struct {
+		name, file, wantErr string
+	}{
+		{"defaults are dir", "", ""},
+		{"s3 block without type", fmt.Sprintf(s3Block, ""), "set world.storage.type: s3"},
+		{"s3 with type, default path ignored", fmt.Sprintf(s3Block, "    type: s3\n"), "not implemented yet"},
+		{"s3 with type and a set path", fmt.Sprintf(s3Block, "    type: s3\n    dir:\n      path: /data/worlds\n"), "world.storage.dir is set beside"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			configFile(t, c.file+"\n")
+			err := validate(t)
+			if c.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Fatalf("want error containing %q, got %v", c.wantErr, err)
+			}
+		})
+	}
+
+	// The s3 block's keys reach the tree as CASAS_* variables too.
+	t.Run("s3 from the environment", func(t *testing.T) {
+		viper.Set(flagConfig, "")
+		t.Setenv("CASAS_WORLD_STORAGE_TYPE", "s3")
+		t.Setenv("CASAS_WORLD_STORAGE_S3_FLAVOUR", "aws")
+		t.Setenv("CASAS_WORLD_STORAGE_S3_REGION", "eu-central-2")
+		t.Setenv("CASAS_WORLD_STORAGE_S3_BUCKET", "worlds")
+		if err := validate(t); err == nil || !strings.Contains(err.Error(), "not implemented yet") {
+			t.Fatalf("want the valid block to reach the backend check, got %v", err)
+		}
+	})
 }

@@ -24,7 +24,7 @@ func passwordConfig(t *testing.T) config.Config {
 	cfg.Global.Auth.Mode = string(config.AuthPassword)
 	cfg.Global.Auth.TokenTTL = time.Hour
 	cfg.Global.Auth.SessionTTL = 24 * time.Hour
-	cfg.Auth.Storage = config.Storage{Dir: &config.DirStorage{Path: t.TempDir()}}
+	cfg.Auth.StateDir = t.TempDir()
 	return cfg
 }
 
@@ -46,7 +46,7 @@ func moduleNames(modules []server.Module) []string {
 }
 
 // Login is the auth TARGET's job: the module appears exactly when the target
-// is selected, and a process without it runs WITHOUT auth.storage — that is
+// is selected, and a process without it runs WITHOUT auth.state-dir — that is
 // the property that makes password mode splittable at all
 // (docs/decisions/server-user-admin.md, step 3).
 func TestLoginFollowsTheAuthTarget(t *testing.T) {
@@ -54,7 +54,7 @@ func TestLoginFollowsTheAuthTarget(t *testing.T) {
 	// same door the admin surface uses — so the start is not the bootstrap
 	// state.
 	cfg := passwordConfig(t)
-	seed, err := user.NewRegistry(cfg.Auth.Storage.DirPath())
+	seed, err := user.NewRegistry(cfg.Auth.StateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,11 +73,11 @@ func TestLoginFollowsTheAuthTarget(t *testing.T) {
 	}
 	closeAll(t, modules)
 
-	// A world-only process needs neither credentials nor auth.storage — it
+	// A world-only process needs neither credentials nor auth.state-dir — it
 	// verifies tokens locally and never opens the store.
 	worldOnly := passwordConfig(t)
-	worldOnly.Auth.Storage = config.Storage{}
-	worldOnly.World.Storage = config.Storage{Dir: &config.DirStorage{Path: t.TempDir()}}
+	worldOnly.Auth.StateDir = ""
+	worldOnly.World.Storage = config.ObjectStorage{Type: "dir", Dir: &config.DirStorage{Path: t.TempDir()}}
 	modules, _, err = buildModules(config.Targets{config.TargetWorld: true}, worldOnly)
 	if err != nil {
 		t.Fatalf("world-only process: %v", err)
@@ -136,7 +136,7 @@ func TestServerBaseURLUsesTheListenPort(t *testing.T) {
 // the gate, the trade was refused for want of the very token it buys.
 func TestServiceTokenRouteIsPublic(t *testing.T) {
 	cfg := passwordConfig(t)
-	seed, err := user.NewRegistry(cfg.Auth.Storage.DirPath())
+	seed, err := user.NewRegistry(cfg.Auth.StateDir)
 	if err != nil {
 		t.Fatal(err)
 	}

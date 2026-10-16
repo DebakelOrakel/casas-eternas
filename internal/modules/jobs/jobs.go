@@ -116,8 +116,8 @@ type Config struct {
 	// Where the local workers reach the relay (a NATS URL): the co-resident
 	// relay's port, or global.services.relay.
 	RelayURL string
-	// The coordinator's state directory (jobs.storage), for jobs.db.
-	StorageDir string
+	// The coordinator's state directory (jobs.state-dir), for jobs.db.
+	StateDir string
 	// ArtifactPresent answers, per key, whether that artifact is whole in the
 	// store: what lets the coordinator mark a refine plan's tiles that are
 	// already there done instead of handing each to a worker to find out
@@ -171,8 +171,8 @@ func New(cfg Config) (*Module, error) {
 	if cfg.Relay == nil {
 		return nil, fmt.Errorf("jobs run over the relay: run -t relay in this process or set global.services.relay")
 	}
-	if cfg.StorageDir == "" {
-		return nil, fmt.Errorf("jobs.storage: the coordinator needs a directory for jobs.db")
+	if cfg.StateDir == "" {
+		return nil, fmt.Errorf("jobs.state-dir: the coordinator needs a directory for jobs.db")
 	}
 	var workerPath string
 	var err error
@@ -219,7 +219,7 @@ func New(cfg Config) (*Module, error) {
 			return cfg.Tokens.IssueJob(jobID, worldUID, jobTokenTTL)
 		}
 	}
-	m.coord, err = newCoordinator(cfg.StorageDir, cfg.Relay, m.jobs, m.buildSpec, token, cfg.ArtifactPresent)
+	m.coord, err = newCoordinator(cfg.StateDir, cfg.Relay, m.jobs, m.buildSpec, token, cfg.ArtifactPresent)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -239,7 +239,7 @@ func New(cfg Config) (*Module, error) {
 		m.scaler = scaler
 		go scaler.run(ctx)
 	}
-	slog.Info("jobs ready", "coordinator", cfg.StorageDir, "workers", workers, "checks identity", cfg.Identity.ChecksIdentity())
+	slog.Info("jobs ready", "coordinator", cfg.StateDir, "workers", workers, "checks identity", cfg.Identity.ChecksIdentity())
 	return m, nil
 }
 
@@ -491,10 +491,10 @@ func (m *Module) buildSpec(ctx context.Context, id string, request Request) (Spe
 		spec.AuthToken = token
 	}
 	// The local workers share this machine's disk: a long task keeps its
-	// checkpoints under the module's storage, where the worker that takes
+	// checkpoints under the module's state-dir, where the worker that takes
 	// it over after a crash finds them.
-	if m.cfg.StorageDir != "" && !m.clusterMode {
-		dir, err := filepath.Abs(filepath.Join(m.cfg.StorageDir, "checkpoints"))
+	if m.cfg.StateDir != "" && !m.clusterMode {
+		dir, err := filepath.Abs(filepath.Join(m.cfg.StateDir, "checkpoints"))
 		if err != nil {
 			return Spec{}, err
 		}

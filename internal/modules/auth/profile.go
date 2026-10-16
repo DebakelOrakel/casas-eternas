@@ -148,7 +148,7 @@ func (m *Module) serveChangePassword(w http.ResponseWriter, r *http.Request) {
 // --- avatars ----------------------------------------------------------------
 
 func (m *Module) avatarFile(id string) string {
-	return filepath.Join(m.cfg.StorageDir, "avatars", id)
+	return filepath.Join(m.cfg.StateDir, "avatars", id)
 }
 
 func (m *Module) servePutAvatar(w http.ResponseWriter, r *http.Request) {

@@ -30,21 +30,21 @@ global:
 
 world:
   storage:
+    type: dir
     dir:
       path: ./data/worlds
   keep-revisions: 3
 
 artifacts:
   storage:
+    type: dir
     dir:
       path: ./data/artifacts
   # Empty: no cap. A size such as "20GB" evicts the least recently used.
   cap: ""
 
 auth:
-  storage:
-    dir:
-      path: ./data/auth
+  state-dir: ./data/auth
 
 jobs:
   # Empty: the job-worker.mjs beside the binary (make worker).
@@ -52,11 +52,7 @@ jobs:
   max-concurrent: 1
 
 client:
-  storage:
-    dir:
-      path: ./client/dist
+  content-dir: ./client/dist
 
 docs:
-  storage:
-    dir:
-      path: ./client/docs-dist
+  content-dir: ./client/docs-dist

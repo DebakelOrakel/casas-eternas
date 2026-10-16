@@ -45,18 +45,18 @@ func (m *Module) Name() string { return "docs" }
 // Dir is the built site's directory — empty when none is configured, which
 // is the legitimate dev shape (vite proxies /docs to a server that has one,
 // or the link 404s and nothing else suffers).
-func (m *Module) Dir() string { return m.cfg.All.Docs.Storage.DirPath() }
+func (m *Module) Dir() string { return m.cfg.All.Docs.ContentDir }
 
 // Mount claims the site's routes. Like the client module: no directory means
 // serve nothing, but a directory that was NAMED and is missing fails — a
 // default is a guess, a given value is an instruction.
 func (m *Module) Mount(mux *http.ServeMux) error {
 	if m.Dir() == "" {
-		slog.Info("docs module serving nothing", "reason", "docs.storage not set")
+		slog.Info("docs module serving nothing", "reason", "docs.content-dir not set")
 		return nil
 	}
 	if _, err := os.Stat(m.Dir()); err != nil {
-		return fmt.Errorf("docs.storage.dir.path %q: %w", m.Dir(), err)
+		return fmt.Errorf("docs.content-dir %q: %w", m.Dir(), err)
 	}
 	files := http.StripPrefix(Prefix, http.FileServer(http.Dir(m.Dir())))
 	mux.Handle("GET "+Prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

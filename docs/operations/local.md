@@ -21,8 +21,8 @@ everything on `:8080`. From a bare binary, the equivalent is:
 
 ```
 casas-eternas start --target all \
-  --client.storage.dir.path client/dist \
-  --docs.storage.dir.path client/docs-dist
+  --client.content-dir client/dist \
+  --docs.content-dir client/docs-dist
 ```
 
 Leaving the two static paths empty is also fine — the server then serves

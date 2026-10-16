@@ -191,26 +191,49 @@
           "env": "CASAS_ARTIFACTS_CAP"
         },
         {
+          "name": "artifacts.link-key",
+          "usage": "Path to the key (at least 32 random bytes) the dir backend signs its artifact links with. Without it a key is generated at startup, so links do not survive a restart. Not used yet.",
+          "env": "CASAS_ARTIFACTS_LINK_KEY"
+        },
+        {
+          "name": "artifacts.read-link-ttl",
+          "default": "15m0s",
+          "usage": "How long a link to read an artifact is valid. Not used yet.",
+          "env": "CASAS_ARTIFACTS_READ_LINK_TTL"
+        },
+        {
           "name": "artifacts.storage.dir.path",
           "default": "./data/artifacts",
-          "usage": "The directory of the artifact store.",
+          "usage": "The directory of the artifact store (backend dir).",
           "env": "CASAS_ARTIFACTS_STORAGE_DIR_PATH"
         },
         {
-          "name": "auth.storage.dir.path",
+          "name": "artifacts.storage.type",
+          "default": "dir",
+          "usage": "The artifact store's backend: dir (implemented) or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.",
+          "env": "CASAS_ARTIFACTS_STORAGE_TYPE"
+        },
+        {
+          "name": "artifacts.write-link-ttl",
+          "default": "1h0m0s",
+          "usage": "How long a link to write an artifact is valid; a job task carries one per artifact it writes. Not used yet.",
+          "env": "CASAS_ARTIFACTS_WRITE_LINK_TTL"
+        },
+        {
+          "name": "auth.state-dir",
           "default": "./data/auth",
-          "usage": "The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.",
-          "env": "CASAS_AUTH_STORAGE_DIR_PATH"
+          "usage": "The directory the auth subsystem's state lives in — auth.db, holding users and their credentials, and the avatars. A users.json left by an older server is imported once when the database is founded.",
+          "env": "CASAS_AUTH_STATE_DIR"
         },
         {
-          "name": "client.storage.dir.path",
+          "name": "client.content-dir",
           "usage": "The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside \"npm run dev\" wants.",
-          "env": "CASAS_CLIENT_STORAGE_DIR_PATH"
+          "env": "CASAS_CLIENT_CONTENT_DIR"
         },
         {
-          "name": "docs.storage.dir.path",
+          "name": "docs.content-dir",
           "usage": "The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.",
-          "env": "CASAS_DOCS_STORAGE_DIR_PATH"
+          "env": "CASAS_DOCS_CONTENT_DIR"
         },
         {
           "name": "global.auth.mode",
@@ -257,10 +280,10 @@
           "env": "CASAS_JOBS_MAX_CONCURRENT"
         },
         {
-          "name": "jobs.storage.dir.path",
+          "name": "jobs.state-dir",
           "default": "./data/jobs",
           "usage": "The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.",
-          "env": "CASAS_JOBS_STORAGE_DIR_PATH"
+          "env": "CASAS_JOBS_STATE_DIR"
         },
         {
           "name": "jobs.worker",
@@ -274,10 +297,10 @@
           "env": "CASAS_RELAY_LISTEN"
         },
         {
-          "name": "relay.storage.dir.path",
+          "name": "relay.state-dir",
           "default": "./data/relay",
           "usage": "The directory of the relay's message store (JetStream).",
-          "env": "CASAS_RELAY_STORAGE_DIR_PATH"
+          "env": "CASAS_RELAY_STATE_DIR"
         },
         {
           "name": "target",
@@ -295,8 +318,14 @@
         {
           "name": "world.storage.dir.path",
           "default": "./data/worlds",
-          "usage": "The directory the saved worlds live in.",
+          "usage": "The directory the saved worlds live in (backend dir).",
           "env": "CASAS_WORLD_STORAGE_DIR_PATH"
+        },
+        {
+          "name": "world.storage.type",
+          "default": "dir",
+          "usage": "The world store's backend: dir (implemented) or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.",
+          "env": "CASAS_WORLD_STORAGE_TYPE"
         }
       ]
     },
@@ -315,46 +344,85 @@
       "command": "casas-eternas start"
     },
     {
+      "key": "artifacts.link-key",
+      "env": "CASAS_ARTIFACTS_LINK_KEY",
+      "usage": "Path to the key (at least 32 random bytes) the dir backend signs its artifact links with. Without it a key is generated at startup, so links do not survive a restart. Not used yet.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "artifacts.read-link-ttl",
+      "env": "CASAS_ARTIFACTS_READ_LINK_TTL",
+      "default": "15m0s",
+      "usage": "How long a link to read an artifact is valid. Not used yet.",
+      "command": "casas-eternas start"
+    },
+    {
       "key": "artifacts.storage.dir.path",
       "env": "CASAS_ARTIFACTS_STORAGE_DIR_PATH",
       "default": "./data/artifacts",
-      "usage": "The directory of the artifact store.",
+      "usage": "The directory of the artifact store (backend dir).",
       "command": "casas-eternas start"
+    },
+    {
+      "key": "artifacts.storage.s3.access-key-file",
+      "env": "CASAS_ARTIFACTS_STORAGE_S3_ACCESS_KEY_FILE"
+    },
+    {
+      "key": "artifacts.storage.s3.bucket",
+      "env": "CASAS_ARTIFACTS_STORAGE_S3_BUCKET"
+    },
+    {
+      "key": "artifacts.storage.s3.endpoint",
+      "env": "CASAS_ARTIFACTS_STORAGE_S3_ENDPOINT"
+    },
+    {
+      "key": "artifacts.storage.s3.flavour",
+      "env": "CASAS_ARTIFACTS_STORAGE_S3_FLAVOUR"
+    },
+    {
+      "key": "artifacts.storage.s3.prefix",
+      "env": "CASAS_ARTIFACTS_STORAGE_S3_PREFIX"
+    },
+    {
+      "key": "artifacts.storage.s3.region",
+      "env": "CASAS_ARTIFACTS_STORAGE_S3_REGION"
+    },
+    {
+      "key": "artifacts.storage.s3.secret-key-file",
+      "env": "CASAS_ARTIFACTS_STORAGE_S3_SECRET_KEY_FILE"
     },
     {
       "key": "artifacts.storage.type",
-      "env": "CASAS_ARTIFACTS_STORAGE_TYPE"
-    },
-    {
-      "key": "auth.storage.dir.path",
-      "env": "CASAS_AUTH_STORAGE_DIR_PATH",
-      "default": "./data/auth",
-      "usage": "The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.",
+      "env": "CASAS_ARTIFACTS_STORAGE_TYPE",
+      "default": "dir",
+      "usage": "The artifact store's backend: dir (implemented) or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.",
       "command": "casas-eternas start"
     },
     {
-      "key": "auth.storage.type",
-      "env": "CASAS_AUTH_STORAGE_TYPE"
+      "key": "artifacts.write-link-ttl",
+      "env": "CASAS_ARTIFACTS_WRITE_LINK_TTL",
+      "default": "1h0m0s",
+      "usage": "How long a link to write an artifact is valid; a job task carries one per artifact it writes. Not used yet.",
+      "command": "casas-eternas start"
     },
     {
-      "key": "client.storage.dir.path",
-      "env": "CASAS_CLIENT_STORAGE_DIR_PATH",
+      "key": "auth.state-dir",
+      "env": "CASAS_AUTH_STATE_DIR",
+      "default": "./data/auth",
+      "usage": "The directory the auth subsystem's state lives in — auth.db, holding users and their credentials, and the avatars. A users.json left by an older server is imported once when the database is founded.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "client.content-dir",
+      "env": "CASAS_CLIENT_CONTENT_DIR",
       "usage": "The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside \"npm run dev\" wants.",
       "command": "casas-eternas start"
     },
     {
-      "key": "client.storage.type",
-      "env": "CASAS_CLIENT_STORAGE_TYPE"
-    },
-    {
-      "key": "docs.storage.dir.path",
-      "env": "CASAS_DOCS_STORAGE_DIR_PATH",
+      "key": "docs.content-dir",
+      "env": "CASAS_DOCS_CONTENT_DIR",
       "usage": "The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.",
       "command": "casas-eternas start"
-    },
-    {
-      "key": "docs.storage.type",
-      "env": "CASAS_DOCS_STORAGE_TYPE"
     },
     {
       "key": "global.admin.socket",
@@ -440,15 +508,11 @@
       "command": "casas-eternas start"
     },
     {
-      "key": "jobs.storage.dir.path",
-      "env": "CASAS_JOBS_STORAGE_DIR_PATH",
+      "key": "jobs.state-dir",
+      "env": "CASAS_JOBS_STATE_DIR",
       "default": "./data/jobs",
       "usage": "The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.",
       "command": "casas-eternas start"
-    },
-    {
-      "key": "jobs.storage.type",
-      "env": "CASAS_JOBS_STORAGE_TYPE"
     },
     {
       "key": "jobs.worker",
@@ -464,15 +528,11 @@
       "command": "casas-eternas start"
     },
     {
-      "key": "relay.storage.dir.path",
-      "env": "CASAS_RELAY_STORAGE_DIR_PATH",
+      "key": "relay.state-dir",
+      "env": "CASAS_RELAY_STATE_DIR",
       "default": "./data/relay",
       "usage": "The directory of the relay's message store (JetStream).",
       "command": "casas-eternas start"
-    },
-    {
-      "key": "relay.storage.type",
-      "env": "CASAS_RELAY_STORAGE_TYPE"
     },
     {
       "key": "world.keep-revisions",
@@ -485,12 +545,43 @@
       "key": "world.storage.dir.path",
       "env": "CASAS_WORLD_STORAGE_DIR_PATH",
       "default": "./data/worlds",
-      "usage": "The directory the saved worlds live in.",
+      "usage": "The directory the saved worlds live in (backend dir).",
       "command": "casas-eternas start"
     },
     {
+      "key": "world.storage.s3.access-key-file",
+      "env": "CASAS_WORLD_STORAGE_S3_ACCESS_KEY_FILE"
+    },
+    {
+      "key": "world.storage.s3.bucket",
+      "env": "CASAS_WORLD_STORAGE_S3_BUCKET"
+    },
+    {
+      "key": "world.storage.s3.endpoint",
+      "env": "CASAS_WORLD_STORAGE_S3_ENDPOINT"
+    },
+    {
+      "key": "world.storage.s3.flavour",
+      "env": "CASAS_WORLD_STORAGE_S3_FLAVOUR"
+    },
+    {
+      "key": "world.storage.s3.prefix",
+      "env": "CASAS_WORLD_STORAGE_S3_PREFIX"
+    },
+    {
+      "key": "world.storage.s3.region",
+      "env": "CASAS_WORLD_STORAGE_S3_REGION"
+    },
+    {
+      "key": "world.storage.s3.secret-key-file",
+      "env": "CASAS_WORLD_STORAGE_S3_SECRET_KEY_FILE"
+    },
+    {
       "key": "world.storage.type",
-      "env": "CASAS_WORLD_STORAGE_TYPE"
+      "env": "CASAS_WORLD_STORAGE_TYPE",
+      "default": "dir",
+      "usage": "The world store's backend: dir (implemented) or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.",
+      "command": "casas-eternas start"
     }
   ]
 }

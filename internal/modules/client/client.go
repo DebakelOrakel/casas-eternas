@@ -8,7 +8,7 @@
 // page knows where the storage is, and says so in /config.json.
 // See docs/decisions/server-storage.md.
 //
-// It also serves the built client itself (client.storage), which is what makes
+// It also serves the built client itself (client.content-dir), which is what makes
 // local play one command and one origin. `apiBase` is still the only sensible
 // value; `authMode` now comes from the server's own resolved config, so what
 // the browser is told and what the server enforces cannot differ.
@@ -99,11 +99,11 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	// A directory that was NAMED and is missing is a different thing entirely,
 	// and fails below: a default is a guess, a given value is an instruction.
 	if m.Dir() == "" {
-		slog.Info("client module serving /config.json only", "reason", "client.storage not set")
+		slog.Info("client module serving /config.json only", "reason", "client.content-dir not set")
 		return nil
 	}
 	if _, err := os.Stat(m.Dir()); err != nil {
-		return fmt.Errorf("client.storage.dir.path %q: %w", m.Dir(), err)
+		return fmt.Errorf("client.content-dir %q: %w", m.Dir(), err)
 	}
 	mux.Handle("GET /", m.spaHandler())
 	return nil
@@ -111,7 +111,7 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 
 // Dir is the resolved client directory — empty when no storage is configured,
 // which is the legitimate dev-run shape (serve /config.json only).
-func (m *Module) Dir() string { return m.cfg.All.Client.Storage.DirPath() }
+func (m *Module) Dir() string { return m.cfg.All.Client.ContentDir }
 
 // spaHandler serves the built client, falling back to index.html.
 //

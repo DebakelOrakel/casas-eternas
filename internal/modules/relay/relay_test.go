@@ -17,7 +17,7 @@ import (
 
 func relayConfig(dir, listen string) Config {
 	var tree config.Config
-	tree.Relay.Storage.Dir = &config.DirStorage{Path: dir}
+	tree.Relay.StateDir = dir
 	tree.Relay.Listen = listen
 	return Config{All: tree}
 }

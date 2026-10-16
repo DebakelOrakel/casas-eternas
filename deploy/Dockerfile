@@ -88,4 +88,4 @@ VOLUME ["/data"]
 # Every module by default. A deployment that wants only storage, or only the
 # frontend, overrides the arguments — see internal/config's target list.
 ENTRYPOINT ["/app/casas-eternas"]
-CMD ["start", "--target", "all", "--client.storage.dir.path", "/app/dist", "--docs.storage.dir.path", "/app/docs-dist", "--world.storage.dir.path", "/data/worlds", "--artifacts.storage.dir.path", "/data/artifacts", "--auth.storage.dir.path", "/data/auth", "--relay.storage.dir.path", "/data/relay", "--jobs.storage.dir.path", "/data/jobs"]
+CMD ["start", "--target", "all", "--client.content-dir", "/app/dist", "--docs.content-dir", "/app/docs-dist", "--world.storage.dir.path", "/data/worlds", "--artifacts.storage.dir.path", "/data/artifacts", "--auth.state-dir", "/data/auth", "--relay.state-dir", "/data/relay", "--jobs.state-dir", "/data/jobs"]

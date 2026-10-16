@@ -2,26 +2,29 @@
 id: DES-0029
 title.en: Object storage for the server's stores
 title.de: Object Storage für die Speicher des Servers
-summary.en: Idea sketch, not decided. Give the artifact store and then the
-  world store an S3 backend beside `dir`, through a small blob leaf package
+summary.en: Decided in DEC-0038 (2026-10-16); the provider is still
+  open. Give the artifact store and then the world store an S3 backend beside `dir`, through a small blob leaf package
   with a table of what the providers disagree about (Ceph RGW, as cloudscale
   runs it, and Amazon S3). Artifacts keyed by content (DES-0028) become
   write-once objects; the server checks the right and answers with a
-  presigned URL, so the bytes do not pass through it. The provider is open.
-summary.de: Ideenskizze, nicht entschieden. Der Artefaktspeicher und danach
-  der Weltenspeicher bekommen neben `dir` ein S3-Backend, über ein kleines
+  presigned URL, so the bytes do not pass through it.
+summary.de: Entschieden in DEC-0038 (2026-10-16); der Anbieter ist
+  noch offen. Der Artefaktspeicher und danach der Weltenspeicher bekommen neben `dir` ein S3-Backend, über ein kleines
   Blob-Leaf-Paket mit einer Tabelle dessen, worin sich die Anbieter
   unterscheiden (Ceph RGW, wie cloudscale es betreibt, und Amazon S3).
   Artefakte nach Inhalt (DES-0028) werden einmal geschriebene Objekte; der
   Server prüft das Recht und antwortet mit einer presigned URL, so dass die
-  Bytes nicht durch ihn laufen. Der Anbieter ist offen.
+  Bytes nicht durch ihn laufen.
 area: platform
-stage: idea
+stage: building
 createdAt: 2026-10-15
+updatedAt: 2026-10-16
 related: [DES-0028, DEC-0017, DES-0011]
 ---
 
-Records a conversation (2026-10-15). Nothing here is decided. It builds on
+Records a conversation (2026-10-15). Its forks are decided in
+[decisions/object-storage.md](../decisions/object-storage.md) (DEC-0038,
+2026-10-16); the provider is still open. It builds on
 [rights-and-artifacts.md](./rights-and-artifacts.md) (DES-0028): artifacts
 keyed by content only.
 
@@ -187,12 +190,12 @@ for a link before every upload would add a round trip per tile. So:
 
 ## Configuration
 
-Agreed with the user on 2026-10-16 (to be written into the decision when
-this is built):
+Agreed with the user on 2026-10-16, recorded in DEC-0038 (fork 2 to 4):
 
 **Only the object stores keep a `storage` union.** `world.storage` and
 `artifacts.storage` choose `dir` or `s3`. **`type` is required** as soon as
-an `s3` block is there (`type: s3`); no backend is inferred from a block,
+an `s3` block is there (`type: s3`); `type` is also a flag
+(`--world.storage.type`, default `dir`); no backend is inferred from a block,
 so a `dir.path` that comes only from its flag default can never be
 mistaken for a choice, and a `dir` block beside `type: s3` is refused.
 
@@ -214,11 +217,18 @@ public surface; agreed with the user, 2026-10-16). **A hard break:** the
 old keys are refused at start with a message that names the new key; there
 is no transition release in which both are read.
 
-**The `s3` block** (proposed names; they become flags and variables, one
+**The `s3` block** (approved names; file keys and CASAS_* variables, one
 vocabulary): `flavour` (`ceph` | `aws`), `region`, `endpoint` (ceph only;
 refused for aws), `bucket`, `prefix` (for a shared bucket), `access-key-file`,
-`secret-key-file` (paths, never values in the file), and for artifacts
-`presign-read` and `presign-write` (the expiries above).
+`secret-key-file` (paths, never values in the file).
+
+**The link lifetimes are module settings, not part of the `s3` block,**
+because the `dir` backend signs its own links too (see "Without an
+external S3"): `artifacts.read-link-ttl` (default 15m),
+`artifacts.write-link-ttl` (default 1h), and `artifacts.link-key` (path to
+a file with at least 32 random bytes; read only by `dir`; when missing, an
+ephemeral key is made and the links die at restart). `world` may get the
+same keys later.
 
 ## Without an external S3
 
@@ -273,3 +283,7 @@ change.
 ## Status
 
 2026-10-15: IDEA — recorded on the user's request; the provider is open.
+
+2026-10-16: BUILDING — the forks are decided in
+[decisions/object-storage.md](../decisions/object-storage.md) (DEC-0038);
+step 1 there (the configuration) is built. The provider is still open.

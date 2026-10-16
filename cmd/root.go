@@ -38,19 +38,45 @@ const (
 	keySvcArts     = "global.services.artifacts"
 	keySvcRelay    = "global.services.relay"
 
-	keyWorldPath  = "world.storage.dir.path"
-	keyKeepRevs   = "world.keep-revisions"
-	keyArtsPath   = "artifacts.storage.dir.path"
-	keyArtsCap    = "artifacts.cap"
-	keyClientPath = "client.storage.dir.path"
-	keyAuthStore  = "auth.storage.dir.path"
-	keyDocsPath   = "docs.storage.dir.path"
-	keyWorker     = "jobs.worker"
-	keyJobsMax    = "jobs.max-concurrent"
-	keyJobsPath   = "jobs.storage.dir.path"
-	keyRelayPath  = "relay.storage.dir.path"
-	keyRelayAddr  = "relay.listen"
+	keyWorldType    = "world.storage.type"
+	keyWorldPath    = "world.storage.dir.path"
+	keyKeepRevs     = "world.keep-revisions"
+	keyArtsType     = "artifacts.storage.type"
+	keyArtsPath     = "artifacts.storage.dir.path"
+	keyArtsCap      = "artifacts.cap"
+	keyArtsReadTTL  = "artifacts.read-link-ttl"
+	keyArtsWriteTTL = "artifacts.write-link-ttl"
+	keyArtsLinkKey  = "artifacts.link-key"
+	keyClientDir    = "client.content-dir"
+	keyAuthDir      = "auth.state-dir"
+	keyDocsDir      = "docs.content-dir"
+	keyWorker       = "jobs.worker"
+	keyJobsMax      = "jobs.max-concurrent"
+	keyJobsDir      = "jobs.state-dir"
+	keyRelayDir     = "relay.state-dir"
+	keyRelayAddr    = "relay.listen"
 )
+
+// The s3 blocks' keys (DEC-0038, fork 3): file keys and CASAS_* variables,
+// no flags. Bound to the environment without a default, so a block exists
+// only where one of its keys was set (configload.go relies on that).
+var s3Keys = []string{"flavour", "region", "endpoint", "bucket", "prefix", "access-key-file", "secret-key-file"}
+
+// renamedKeys are the keys DEC-0038 replaced, in a HARD BREAK: an old key in
+// the file or as a CASAS_* variable refuses to start, an old flag is unknown,
+// and each message names the new key. No release reads both.
+var renamedKeys = map[string]string{
+	"jobs.storage.dir.path":   keyJobsDir,
+	"jobs.storage.type":       keyJobsDir,
+	"auth.storage.dir.path":   keyAuthDir,
+	"auth.storage.type":       keyAuthDir,
+	"relay.storage.dir.path":  keyRelayDir,
+	"relay.storage.type":      keyRelayDir,
+	"client.storage.dir.path": keyClientDir,
+	"client.storage.type":     keyClientDir,
+	"docs.storage.dir.path":   keyDocsDir,
+	"docs.storage.type":       keyDocsDir,
+}
 
 // The two enum texts are composed, not written: the value lists live in
 // internal/config beside the parsers that enforce them, so the help, the
@@ -75,18 +101,23 @@ const (
 	textSvcArts     = `URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.`
 	textSvcRelay    = `NATS URL of the relay (the message bus), when it is not co-resident, e.g. nats://relay:4222. Empty expects it in this process.`
 
-	textWorldPath  = `The directory the saved worlds live in.`
-	textKeepRevs   = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
-	textArtsPath   = `The directory of the artifact store.`
-	textArtsCap    = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
-	textClientPath = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
-	textAuthStore  = `The directory the auth subsystem's state lives in — auth.db, holding users and their credentials. A users.json left by an older server is imported once when the database is founded.`
-	textDocsPath   = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
-	textWorker     = `Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.`
-	textJobsMax    = `How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.`
-	textJobsPath   = `The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.`
-	textRelayPath  = `The directory of the relay's message store (JetStream).`
-	textRelayAddr  = `Address the relay accepts worker connections on, as host:port. The default keeps it on this machine. Where global.auth.mode checks identity, the relay admits only this server's own tokens, so it may listen beyond the machine; in mode none it checks nobody.`
+	textWorldType    = `The world store's backend: dir (implemented) or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.`
+	textWorldPath    = `The directory the saved worlds live in (backend dir).`
+	textKeepRevs     = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
+	textArtsType     = `The artifact store's backend: dir (implemented) or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.`
+	textArtsPath     = `The directory of the artifact store (backend dir).`
+	textArtsCap      = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
+	textArtsReadTTL  = `How long a link to read an artifact is valid. Not used yet.`
+	textArtsWriteTTL = `How long a link to write an artifact is valid; a job task carries one per artifact it writes. Not used yet.`
+	textArtsLinkKey  = `Path to the key (at least 32 random bytes) the dir backend signs its artifact links with. Without it a key is generated at startup, so links do not survive a restart. Not used yet.`
+	textClientDir    = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
+	textAuthDir      = `The directory the auth subsystem's state lives in — auth.db, holding users and their credentials, and the avatars. A users.json left by an older server is imported once when the database is founded.`
+	textDocsDir      = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
+	textWorker       = `Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.`
+	textJobsMax      = `How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.`
+	textJobsDir      = `The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.`
+	textRelayDir     = `The directory of the relay's message store (JetStream).`
+	textRelayAddr    = `Address the relay accepts worker connections on, as host:port. The default keeps it on this machine. Where global.auth.mode checks identity, the relay admits only this server's own tokens, so it may listen beyond the machine; in mode none it checks nobody.`
 )
 
 // RootCmd represents the base command when called without any subcommands
@@ -150,17 +181,22 @@ func init() {
 	StartCmd.Flags().String(keySvcWorlds, "", textSvcWorlds)
 	StartCmd.Flags().String(keySvcArts, "", textSvcArts)
 	StartCmd.Flags().String(keySvcRelay, "", textSvcRelay)
+	StartCmd.Flags().String(keyWorldType, "dir", textWorldType)
 	StartCmd.Flags().String(keyWorldPath, "./data/worlds", textWorldPath)
 	StartCmd.Flags().Int(keyKeepRevs, 3, textKeepRevs)
+	StartCmd.Flags().String(keyArtsType, "dir", textArtsType)
 	StartCmd.Flags().String(keyArtsPath, "./data/artifacts", textArtsPath)
 	StartCmd.Flags().String(keyArtsCap, "", textArtsCap)
-	StartCmd.Flags().String(keyClientPath, "", textClientPath)
-	StartCmd.Flags().String(keyAuthStore, "./data/auth", textAuthStore)
-	StartCmd.Flags().String(keyDocsPath, "", textDocsPath)
+	StartCmd.Flags().Duration(keyArtsReadTTL, 15*time.Minute, textArtsReadTTL)
+	StartCmd.Flags().Duration(keyArtsWriteTTL, time.Hour, textArtsWriteTTL)
+	StartCmd.Flags().String(keyArtsLinkKey, "", textArtsLinkKey)
+	StartCmd.Flags().String(keyClientDir, "", textClientDir)
+	StartCmd.Flags().String(keyAuthDir, "./data/auth", textAuthDir)
+	StartCmd.Flags().String(keyDocsDir, "", textDocsDir)
 	StartCmd.Flags().String(keyWorker, "", textWorker)
 	StartCmd.Flags().Int(keyJobsMax, 1, textJobsMax)
-	StartCmd.Flags().String(keyJobsPath, "./data/jobs", textJobsPath)
-	StartCmd.Flags().String(keyRelayPath, "./data/relay", textRelayPath)
+	StartCmd.Flags().String(keyJobsDir, "./data/jobs", textJobsDir)
+	StartCmd.Flags().String(keyRelayDir, "./data/relay", textRelayDir)
 	StartCmd.Flags().String(keyRelayAddr, "127.0.0.1:4222", textRelayAddr)
 
 	bindings := map[string]*cobra.Command{
@@ -169,10 +205,12 @@ func init() {
 		keyAdminSock: RootCmd,
 		flagTarget:   StartCmd, keyAuthMode: StartCmd, keyAuthKey: StartCmd,
 		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd,
-		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthStore: StartCmd,
-		keyWorldPath: StartCmd, keyKeepRevs: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
-		keyClientPath: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsPath: StartCmd,
-		keySvcRelay: StartCmd, keyRelayPath: StartCmd, keyRelayAddr: StartCmd, keyJobsPath: StartCmd,
+		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthDir: StartCmd,
+		keyWorldType: StartCmd, keyWorldPath: StartCmd, keyKeepRevs: StartCmd,
+		keyArtsType: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
+		keyArtsReadTTL: StartCmd, keyArtsWriteTTL: StartCmd, keyArtsLinkKey: StartCmd,
+		keyClientDir: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsDir: StartCmd,
+		keySvcRelay: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyJobsDir: StartCmd,
 	}
 	for key, cmd := range bindings {
 		flags := cmd.Flags()
@@ -185,12 +223,28 @@ func init() {
 		}
 	}
 
-	// Keys that exist in the tree but have no flag (the storage union's type
-	// selectors). SetDefault makes them known to viper, which is what lets a
-	// file or CASAS_* variable reach them through Unmarshal.
-	for _, key := range []string{"world.storage.type", "artifacts.storage.type", "client.storage.type", "auth.storage.type", "docs.storage.type", "relay.storage.type", "jobs.storage.type"} {
-		viper.SetDefault(key, "")
+	// Keys that exist in the tree but have no flag (the s3 blocks). BindEnv
+	// makes them known to viper, which is what lets a CASAS_* variable reach
+	// them through Unmarshal; without a default, so that an s3 block exists
+	// only where a key of it was set.
+	for _, section := range []string{"world", "artifacts"} {
+		for _, name := range s3Keys {
+			if err := viper.BindEnv(section + ".storage.s3." + name); err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+		}
 	}
+
+	// An old flag is an unknown flag; say which flag replaced it.
+	StartCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		for old, renamed := range renamedKeys {
+			if strings.Contains(err.Error(), "--"+old) {
+				return fmt.Errorf("%w (renamed: use --%s, docs/decisions/object-storage.md)", err, renamed)
+			}
+		}
+		return err
+	})
 
 	// Shell completion for the two enum flags, from the same lists the
 	// parsers enforce. Cobra generates the completion machinery itself
@@ -213,6 +267,9 @@ func init() {
 	RootCmd.AddCommand(StartCmd)
 }
 
+// envKey turns a dotted key into the tail of its CASAS_* variable.
+var envKey = strings.NewReplacer(".", "_", "-", "_")
+
 // initConfig wires the environment side of the vocabulary.
 func initConfig() {
 	// Prefixed, so the bound keys claim CASAS_TARGET / CASAS_WORLD_STORAGE_DIR_PATH
@@ -220,7 +277,7 @@ func initConfig() {
 	// sidecar would eventually collide with them. Dots and dashes both become
 	// underscores: `global.auth.session-key` → CASAS_GLOBAL_AUTH_SESSION_KEY.
 	viper.SetEnvPrefix("CASAS")
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+	viper.SetEnvKeyReplacer(envKey)
 	viper.AutomaticEnv() // read in environment variables that match
 }
 

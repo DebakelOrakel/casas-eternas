@@ -71,7 +71,7 @@ const readyTimeout = 10 * time.Second
 // modules wired after it connect to it while they are built.
 func New(cfg Config) (*Module, error) {
 	section := cfg.All.Relay
-	if err := section.Storage.Validate("relay"); err != nil {
+	if err := config.RequireDir("relay.state-dir", section.StateDir); err != nil {
 		return nil, err
 	}
 	host, portText, err := net.SplitHostPort(section.Listen)
@@ -102,7 +102,7 @@ func New(cfg Config) (*Module, error) {
 		Host:       host,
 		Port:       port,
 		JetStream:  true,
-		StoreDir:   section.Storage.DirPath(),
+		StoreDir:   section.StateDir,
 		MaxPayload: maxPayload,
 		// The process owns signals and logging; the server says what goes
 		// wrong through its errors and its readiness, nothing on its own.
@@ -121,7 +121,7 @@ func New(cfg Config) (*Module, error) {
 		server.Shutdown()
 		return nil, errors.New("relay: the server did not accept connections in time")
 	}
-	slog.Info("relay ready", "listen", server.ClientURL(), "store", section.Storage.DirPath(), "checks tokens", cfg.Tokens != nil)
+	slog.Info("relay ready", "listen", server.ClientURL(), "store", section.StateDir, "checks tokens", cfg.Tokens != nil)
 	return &Module{server: server, listen: server.ClientURL()}, nil
 }
 

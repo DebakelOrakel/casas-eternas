@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -43,6 +45,10 @@ func loadConfig() (config.Config, error) {
 		}
 	}
 
+	if err := refuseRenamedKeys(); err != nil {
+		return config.Config{}, err
+	}
+
 	settings := viper.AllSettings()
 	// The two bound keys that are deliberately not part of the tree: the role
 	// selection and the path this very file was read from.
@@ -73,5 +79,41 @@ func loadConfig() (config.Config, error) {
 	if err := decoder.Decode(settings); err != nil {
 		return config.Config{}, fmt.Errorf("configuration: %w", err)
 	}
+	dropDefaultDir(&cfg.World.Storage, keyWorldPath)
+	dropDefaultDir(&cfg.Artifacts.Storage, keyArtsPath)
 	return cfg, cfg.Validate()
+}
+
+// dropDefaultDir keeps the flag default of dir.path from counting as a dir
+// block beside `type: s3`. A path that was SET (file, variable, flag) stays
+// and is refused there as a foreign block; viper's IsSet does not count a
+// flag default. With any other type the default is the path, as before.
+func dropDefaultDir(storage *config.ObjectStorage, pathKey string) {
+	if storage.Type == "s3" && !viper.IsSet(pathKey) {
+		storage.Dir = nil
+	}
+}
+
+// refuseRenamedKeys is the HARD BREAK of DEC-0038: a key it replaced, in the
+// file or as a CASAS_* variable, refuses to start with the new key named.
+// Checked before decoding, because the generic "invalid keys" message would
+// not say what to write instead — and a variable with an old name would not
+// be seen at all, since viper reads only variables of keys it knows.
+func refuseRenamedKeys() error {
+	olds := make([]string, 0, len(renamedKeys))
+	for old := range renamedKeys {
+		olds = append(olds, old)
+	}
+	sort.Strings(olds) // one stable message when several are set
+	for _, old := range olds {
+		renamed := renamedKeys[old]
+		if viper.InConfig(old) {
+			return fmt.Errorf("%s is renamed: use %s (docs/decisions/object-storage.md)", old, renamed)
+		}
+		variable := "CASAS_" + strings.ToUpper(envKey.Replace(old))
+		if _, set := os.LookupEnv(variable); set {
+			return fmt.Errorf("%s is renamed: use CASAS_%s (docs/decisions/object-storage.md)", variable, strings.ToUpper(envKey.Replace(renamed)))
+		}
+	}
+	return nil
 }

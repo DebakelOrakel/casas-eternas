@@ -120,7 +120,7 @@ type Registry struct {
 	now func() time.Time
 }
 
-// NewRegistry opens (or founds) auth.db in dir, eagerly: a bad auth.storage
+// NewRegistry opens (or founds) auth.db in dir, eagerly: a bad auth.state-dir
 // fails at startup, naming the setting, not at the first login. Founding a
 // fresh database imports a users.json left by the pre-bbolt registry, ids
 // preserved verbatim.

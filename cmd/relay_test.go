@@ -28,7 +28,7 @@ func TestWorkerGrantCoversAServingWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	var tree config.Config
-	tree.Relay.Storage.Dir = &config.DirStorage{Path: t.TempDir()}
+	tree.Relay.StateDir = t.TempDir()
 	tree.Relay.Listen = "127.0.0.1:-1"
 	bus, err := relaymodule.New(relaymodule.Config{All: tree, Tokens: tokens, Grants: map[string]relay.Grant{token.SubjectWorker: jobs.WorkerGrant()}})
 	if err != nil {

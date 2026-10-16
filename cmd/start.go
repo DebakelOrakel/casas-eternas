@@ -137,7 +137,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 			TTL:        cfg.Global.Auth.TokenTTL,
 			SessionTTL: cfg.Global.Auth.SessionTTL,
 			Registry:   registry,
-			StorageDir: cfg.Auth.Storage.DirPath(),
+			StateDir:   cfg.Auth.StateDir,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -145,7 +145,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		modules = append(modules, login)
 		loginPath = auth.Path
 		slog.Info("authentication ready", "mode", authMode,
-			"registry", cfg.Auth.Storage.DirPath(), "token ttl", cfg.Global.Auth.TokenTTL)
+			"registry", cfg.Auth.StateDir, "token ttl", cfg.Global.Auth.TokenTTL)
 	}
 
 	if targets.Has(config.TargetClient) {
@@ -227,10 +227,10 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 				bcfg.RelayURL = relayModule.URL()
 			}
 		}
-		if err := cfg.Jobs.Storage.Validate("jobs"); err != nil {
+		if err := config.RequireDir(keyJobsDir, cfg.Jobs.StateDir); err != nil {
 			return nil, nil, err
 		}
-		bcfg.StorageDir = cfg.Jobs.Storage.DirPath()
+		bcfg.StateDir = cfg.Jobs.StateDir
 		bcfg.Relay, err = relay.Connect("jobs", server, cfg.Global.Services.Relay, relayToken(tokens, "jobs"))
 		if err != nil {
 			return nil, nil, fmt.Errorf("jobs: %w (run -t relay in this process or set global.services.relay)", err)
@@ -490,7 +490,7 @@ func workerPath(configured string) string {
 // resolver that answers "who is asking", and the token issuer/verifier over
 // the shared key. It opens no store — that is openCredentials' job, on the
 // auth target alone, which is what lets world/artifacts/bake targets run
-// without auth.storage.
+// without auth.state-dir.
 //
 // A mode that CHECKS identity and cannot verify a token would attribute every
 // request to nobody, which looks exactly like a permission bug from the
@@ -520,15 +520,15 @@ func buildIdentity(mode config.AuthMode, cfg config.Config) (*identity.Resolver,
 
 // openCredentials opens (or founds) the auth target's user store — the one
 // store that both verifies logins and records who exists. It lives under
-// auth.storage, not global: only the login-serving process reads or writes
+// auth.state-dir, not global: only the login-serving process reads or writes
 // it. Opened eagerly so a bad path refuses to start, like every other store.
 func openCredentials(cfg config.Config) (*user.Registry, error) {
-	if err := cfg.Auth.Storage.Validate("auth"); err != nil {
+	if err := config.RequireDir(keyAuthDir, cfg.Auth.StateDir); err != nil {
 		return nil, err
 	}
-	registry, err := user.NewRegistry(cfg.Auth.Storage.DirPath())
+	registry, err := user.NewRegistry(cfg.Auth.StateDir)
 	if err != nil {
-		return nil, fmt.Errorf("auth.storage: %w", err)
+		return nil, fmt.Errorf("%s: %w", keyAuthDir, err)
 	}
 	// Every later failure must release auth.db — its lock is the one-process
 	// rule, and a refused start must not leave it held until process exit.
@@ -545,7 +545,7 @@ func openCredentials(cfg config.Config) (*user.Registry, error) {
 	// clothes, refused here where the message can say what to configure.
 	if !registry.HasCredentials() {
 		if cfg.Global.Admin.Socket == "" {
-			return fail(fmt.Errorf("no credentials in %s and no %s to bootstrap over — nobody could ever log in", cfg.Auth.Storage.DirPath(), keyAdminSock))
+			return fail(fmt.Errorf("no credentials in %s and no %s to bootstrap over — nobody could ever log in", cfg.Auth.StateDir, keyAdminSock))
 		}
 		slog.Warn("the credential store is empty — nobody can log in until a user exists",
 			"bootstrap", "casas-eternas auth user add <name> (over the admin socket)", "socket", cfg.Global.Admin.Socket)

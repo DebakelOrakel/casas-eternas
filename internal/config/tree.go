@@ -91,64 +91,142 @@ type Services struct {
 	Relay string `mapstructure:"relay"`
 }
 
-// Storage is a TAGGED UNION, Kubernetes-volume-source style: `type` names
-// the one backend block that must be present, and FOREIGN blocks must be
-// absent — `type: dir` beside a configured s3 block is almost always a
-// copy-paste accident and refuses to start. `dir` is the only implemented
-// backend; the shape reserves room for s3 (which, honestly, will not be a
-// mere backend swap: the artifact store's mtime index and both stores'
-// rename atomicity are filesystem semantics).
-type Storage struct {
+// ObjectStorage is the TAGGED UNION of the two stores that hold objects,
+// world and artifacts (docs/decisions/object-storage.md, DEC-0038): `type`
+// names the one backend block that must be present, and a FOREIGN block
+// refuses to start. `type` is REQUIRED — no backend is inferred from a
+// block. It is a flag with the default `dir`, so an s3 block without
+// `type: s3` meets `type: dir` and is refused with a message that says so.
+// The flag default of `dir.path` is not a block: cmd/ keeps Dir only where
+// the path was set, or where the type is dir.
+//
+// `dir` is the only implemented backend in this step; the s3 block is
+// declared and checked so that a configuration written for it gets its
+// mistakes named now and a clear "not implemented yet" after them.
+type ObjectStorage struct {
 	Type string      `mapstructure:"type"`
 	Dir  *DirStorage `mapstructure:"dir"`
+	S3   *S3Storage  `mapstructure:"s3"`
 }
 
 type DirStorage struct {
 	Path string `mapstructure:"path"`
 }
 
+// S3Storage is the s3 backend's block (DEC-0038, fork 3). The key pair is
+// given as paths to files, never as values in the configuration file.
+type S3Storage struct {
+	// Flavour selects the provider's row of the capability table.
+	Flavour  string `mapstructure:"flavour"`
+	Region   string `mapstructure:"region"`
+	Endpoint string `mapstructure:"endpoint"`
+	Bucket   string `mapstructure:"bucket"`
+	Prefix   string `mapstructure:"prefix"`
+	// The files that hold the access key id and the secret key.
+	AccessKeyFile string `mapstructure:"access-key-file"`
+	SecretKeyFile string `mapstructure:"secret-key-file"`
+}
+
+// The S3 flavours, one per row of the capability table.
+const (
+	FlavourAWS  = "aws"
+	FlavourCeph = "ceph"
+)
+
 // Validate checks the union rules. `section` names the owner for messages.
-func (s Storage) Validate(section string) error {
-	kind := s.Type
-	if kind == "" {
-		// Type may be omitted when exactly one backend block says it all.
-		if s.Dir != nil {
-			kind = "dir"
-		}
-	}
-	switch kind {
+func (s ObjectStorage) Validate(section string) error {
+	key := section + ".storage"
+	switch s.Type {
 	case "":
-		return fmt.Errorf("%s.storage: no backend configured (set %s.storage.dir.path)", section, section)
+		return fmt.Errorf("%s.type is required (dir or s3)", key)
 	case "dir":
+		if s.S3 != nil {
+			return fmt.Errorf("%s.s3 is set, but %s.type is dir — set %s.type: s3 (the backend is never inferred from a block)", key, key, key)
+		}
 		if s.Dir == nil || s.Dir.Path == "" {
-			return fmt.Errorf("%s.storage: type dir needs %s.storage.dir.path", section, section)
+			return fmt.Errorf("%s: type dir needs %s.dir.path", key, key)
 		}
 		return nil
+	case "s3":
+		if s.Dir != nil {
+			return fmt.Errorf("%s.dir is set beside %s.type s3 — remove one of them", key, key)
+		}
+		if s.S3 == nil {
+			return fmt.Errorf("%s: type s3 needs the %s.s3 block", key, key)
+		}
+		if err := s.S3.validate(key + ".s3"); err != nil {
+			return err
+		}
+		return fmt.Errorf("%s.type: the s3 backend is not implemented yet (implemented: dir)", key)
 	default:
-		return fmt.Errorf("%s.storage.type: unknown backend %q (implemented: dir)", section, kind)
+		return fmt.Errorf("%s.type: unknown backend %q (dir or s3)", key, s.Type)
 	}
+}
+
+func (s S3Storage) validate(key string) error {
+	switch s.Flavour {
+	case FlavourAWS:
+		if s.Endpoint != "" {
+			return fmt.Errorf("%s.endpoint: not for flavour aws (the endpoint comes from %s.region)", key, key)
+		}
+		if s.Region == "" {
+			return fmt.Errorf("%s.region: flavour aws needs the bucket's region", key)
+		}
+	case FlavourCeph:
+		if s.Endpoint == "" {
+			return fmt.Errorf("%s.endpoint: flavour ceph needs the provider's endpoint", key)
+		}
+	case "":
+		return fmt.Errorf("%s.flavour is required (%s or %s)", key, FlavourAWS, FlavourCeph)
+	default:
+		return fmt.Errorf("%s.flavour: unknown flavour %q (%s or %s)", key, s.Flavour, FlavourAWS, FlavourCeph)
+	}
+	if s.Bucket == "" {
+		return fmt.Errorf("%s.bucket is required", key)
+	}
+	if (s.AccessKeyFile == "") != (s.SecretKeyFile == "") {
+		return fmt.Errorf("%s: set access-key-file and secret-key-file together", key)
+	}
+	return nil
 }
 
 // DirPath returns the directory path of a dir-backed storage. Call after
 // Validate — an unvalidated union answers with an empty string.
-func (s Storage) DirPath() string {
+func (s ObjectStorage) DirPath() string {
 	if s.Dir == nil {
 		return ""
 	}
 	return s.Dir.Path
 }
 
+// RequireDir checks a plain directory setting (a state-dir): the modules that
+// need a filesystem have no union, because their shape must not suggest
+// that s3 is possible (DEC-0038, fork 1). `key` is the full dotted key.
+func RequireDir(key, path string) error {
+	if path == "" {
+		return fmt.Errorf("%s: a directory is required", key)
+	}
+	return nil
+}
+
 type WorldConfig struct {
-	Storage       Storage `mapstructure:"storage"`
-	KeepRevisions int     `mapstructure:"keep-revisions"`
+	Storage       ObjectStorage `mapstructure:"storage"`
+	KeepRevisions int           `mapstructure:"keep-revisions"`
 }
 
 type ArtifactsConfig struct {
-	Storage Storage `mapstructure:"storage"`
+	Storage ObjectStorage `mapstructure:"storage"`
 	// Cap is the human form ("50GB"); parse with ParseByteSize. Kept as the
 	// string so the value in `casas-eternas start --help`, the file and the
 	// error messages all read the same.
 	Cap string `mapstructure:"cap"`
+	// The lifetimes of the links the module gives for a read and for a
+	// write, and the file with the key the dir backend signs its own links
+	// with (DEC-0038, fork 4; module settings, because they hold for both
+	// backends). Nothing reads them yet: step 3 of DEC-0038 does.
+	ReadLinkTTL  time.Duration `mapstructure:"read-link-ttl"`
+	WriteLinkTTL time.Duration `mapstructure:"write-link-ttl"`
+	LinkKey      string        `mapstructure:"link-key"`
 }
 
 type JobsConfig struct {
@@ -156,33 +234,35 @@ type JobsConfig struct {
 	MaxConcurrent int    `mapstructure:"max-concurrent"`
 	// The coordinator's state: jobs, their tasks and where each stands
 	// (bbolt, jobs.db; docs/decisions/detail-ladder.md).
-	Storage Storage `mapstructure:"storage"`
+	StateDir string `mapstructure:"state-dir"`
 }
 
+// ClientConfig is the client module's section: the built bundle it serves.
+// Empty serves only /config.json (the dev run beside vite).
 type ClientConfig struct {
-	Storage Storage `mapstructure:"storage"`
+	ContentDir string `mapstructure:"content-dir"`
 }
 
 // DocsConfig is the documentation site's section: the built static site
-// (npm run build:docs) the docs module serves under /docs/.
+// (npm run build:docs) the docs module serves under /docs/. Empty serves
+// nothing.
 type DocsConfig struct {
-	Storage Storage `mapstructure:"storage"`
+	ContentDir string `mapstructure:"content-dir"`
 }
 
 // RelayConfig is the message bus's section (docs/decisions/detail-ladder.md,
 // fork 8): JetStream's store and the port the workers connect to.
 type RelayConfig struct {
-	Storage Storage `mapstructure:"storage"`
-	Listen  string  `mapstructure:"listen"`
+	StateDir string `mapstructure:"state-dir"`
+	Listen   string `mapstructure:"listen"`
 }
 
 // AuthConfig is the auth SUBSYSTEM's own section — state only the process
-// running login touches, today the credential registry (bbolt, auth.db). Shaped like
-// every other target section (storage union) because that is what auth is on
-// its way to becoming — docs/design/access-control.md, "an auth target".
-// Distinct from Global.Auth, which every process reads.
+// running login touches, today the credential registry (bbolt, auth.db) and
+// the avatars beside it. Distinct from Global.Auth, which every process
+// reads.
 type AuthConfig struct {
-	Storage Storage `mapstructure:"storage"`
+	StateDir string `mapstructure:"state-dir"`
 }
 
 // Server projects the process-wide transport settings into the shape
@@ -204,6 +284,12 @@ func (c Config) Validate() error {
 	}
 	if _, err := ParseByteSize(c.Artifacts.Cap); err != nil {
 		return fmt.Errorf("artifacts.cap: %w", err)
+	}
+	if c.Artifacts.ReadLinkTTL < 0 {
+		return fmt.Errorf("artifacts.read-link-ttl: %v is negative", c.Artifacts.ReadLinkTTL)
+	}
+	if c.Artifacts.WriteLinkTTL < 0 {
+		return fmt.Errorf("artifacts.write-link-ttl: %v is negative", c.Artifacts.WriteLinkTTL)
 	}
 	return nil
 }

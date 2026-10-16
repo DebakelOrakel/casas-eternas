@@ -47,9 +47,9 @@ type Config struct {
 	// not a config list, since 2026-08-13. The module OWNS the registry's
 	// lifetime: Close releases auth.db and its file lock.
 	Registry *user.Registry
-	// StorageDir is auth.storage, where auth.db lives: the avatars are files
+	// StateDir is auth.state-dir, where auth.db lives: the avatars are files
 	// beside it (profile.go), kept by the same one process.
-	StorageDir string
+	StateDir string
 }
 
 // Module serves the login endpoint.
@@ -73,7 +73,7 @@ func New(cfg Config) (*Module, error) {
 	if cfg.Registry == nil {
 		return nil, fmt.Errorf("auth: no user registry")
 	}
-	if cfg.StorageDir == "" {
+	if cfg.StateDir == "" {
 		return nil, fmt.Errorf("auth: no storage directory for the avatars")
 	}
 	return &Module{cfg: cfg}, nil

@@ -162,7 +162,7 @@ func newTestModuleWith(t *testing.T, caller *identity.Resolver) (*Module, *heldW
 			Identity:      caller,
 			MaxConcurrent: 1,
 			Relay:         conn,
-			StorageDir:    t.TempDir(),
+			StateDir:      t.TempDir(),
 		},
 		jobs:     newRegistry(jobHistory),
 		shutdown: ctx,
@@ -170,7 +170,7 @@ func newTestModuleWith(t *testing.T, caller *identity.Resolver) (*Module, *heldW
 		slots:    1,
 	}
 	var err error
-	m.coord, err = newCoordinator(m.cfg.StorageDir, conn, m.jobs, m.buildSpec, nil, nil)
+	m.coord, err = newCoordinator(m.cfg.StateDir, conn, m.jobs, m.buildSpec, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

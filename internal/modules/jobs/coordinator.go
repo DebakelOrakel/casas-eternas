@@ -162,11 +162,11 @@ type coordinator struct {
 // starts reading the workers' reports.
 func newCoordinator(dir string, conn *relay.Conn, reg *registry, spec specFor, token tokenFor, present presentFor) (*coordinator, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("jobs.storage: %w", err)
+		return nil, fmt.Errorf("jobs.state-dir: %w", err)
 	}
 	db, err := bolt.Open(filepath.Join(dir, "jobs.db"), 0o600, &bolt.Options{Timeout: time.Second})
 	if err != nil {
-		return nil, fmt.Errorf("jobs.storage: %w (is another process holding jobs.db?)", err)
+		return nil, fmt.Errorf("jobs.state-dir: %w (is another process holding jobs.db?)", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &coordinator{db: db, conn: conn, registry: reg, spec: spec, token: token, present: present, tasks: map[string]*Task{}, byJob: map[string][]string{}, presence: newPresence(), ctx: ctx, cancel: cancel}
