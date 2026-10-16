@@ -292,10 +292,23 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 		anonymousReads = world.AnonymousReads
 	}
 	// The requests that carry their own right: the dir backend's signed
-	// artifact links (DEC-0038, fork 5).
-	var signedRequests func(*http.Request) bool
+	// links of each module that runs here (DEC-0038, fork 5). Each module
+	// checks only its own base, so the union is the one predicate the gate
+	// takes.
+	var signers []func(*http.Request) bool
+	if worldModule != nil {
+		signers = append(signers, worldModule.SignedRequest)
+	}
 	if artifactsModule != nil {
-		signedRequests = artifactsModule.SignedRequest
+		signers = append(signers, artifactsModule.SignedRequest)
+	}
+	signedRequests := func(r *http.Request) bool {
+		for _, signed := range signers {
+			if signed(r) {
+				return true
+			}
+		}
+		return false
 	}
 	wired = true
 	return modules, server.Gate(caller, []string{

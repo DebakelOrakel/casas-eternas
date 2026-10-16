@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob/blobtest"
@@ -31,7 +32,9 @@ func TestAFailedJobsWiringClosesTheInternalListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	caller := identity.NewResolver(config.AuthNone, nil)
-	worldModule, err := world.New(context.Background(), world.Config{Bucket: bucket, Identity: caller})
+	var all config.Config
+	all.World.ReadLinkTTL = 15 * time.Minute
+	worldModule, err := world.New(context.Background(), world.Config{All: all, Bucket: bucket, Identity: caller})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +121,7 @@ func TestAFailedWiringClosesTheModulesItMade(t *testing.T) {
 	cfg.Global.Listen = "127.0.0.1:8080"
 	cfg.Global.Auth.Mode = string(config.AuthNone)
 	cfg.World.Storage = config.ObjectStorage{Type: "dir", Dir: &config.DirStorage{Path: t.TempDir()}}
+	cfg.World.ReadLinkTTL = 15 * time.Minute
 	targets := config.Targets{config.TargetWorld: true, config.TargetJobs: true}
 	build := func() {
 		modules, _, _, err := buildModules(context.Background(), targets, cfg)

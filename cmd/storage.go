@@ -63,11 +63,20 @@ func openArtifactBucket(ctx context.Context, cfg config.Config) (blob.Bucket, er
 	return openObjectStorage(ctx, "artifacts", cfg.Artifacts.Storage, signer, artifacts.BucketOptions())
 }
 
-// openWorldBucket opens the world store's bucket: on s3 with versioning
-// (world.BucketOptions). No link signer: the world store gives no links,
-// its zips and previews are served through the server.
+// openWorldBucket opens the world store's bucket: on s3 with versioning and
+// the CORS rule of the read links (world.BucketOptions). As for artifacts,
+// only the dir backend reads world.link-key: on s3 the provider signs the
+// links of the zip and preview reads.
 func openWorldBucket(ctx context.Context, cfg config.Config) (blob.Bucket, error) {
-	return openObjectStorage(ctx, "world", cfg.World.Storage, nil, world.BucketOptions())
+	var signer *blob.LinkSigner
+	if cfg.World.Storage.Type == "dir" {
+		var err error
+		signer, err = world.NewLinkSigner(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return openObjectStorage(ctx, "world", cfg.World.Storage, signer, world.BucketOptions())
 }
 
 // internalListenAddr is where the internal listener binds: the IPv4

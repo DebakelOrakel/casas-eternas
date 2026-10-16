@@ -131,12 +131,21 @@ export async function deleteWorld(uid: string): Promise<boolean> {
   }
 }
 
-// The worlds fetched, kept in the browser's cache storage by URL so that
-// the next open of the same world asks the server with If-None-Match and
-// takes its 304 — a world is tens of MB, and the incubator opens it on
-// every visit (2026-10-03). The server's own ETag is the revision, so a
-// saved-over world misses the cache by itself. Cache storage is absent in
-// an insecure context; then every fetch is a full one, as before.
+// The worlds fetched, kept in the browser's cache storage by URL, each with
+// the revision it holds — a world is tens of MB, and the incubator opens it
+// on every visit (2026-10-03). Cache storage is absent in an insecure
+// context; then every fetch is a full one, as before.
+//
+// THE REVISION COMES FROM THE META (2026-10-16). The zip is read by link:
+// the server answers 302 to a presigned GET on its bucket (s3) or to its own
+// signed link (dir), and fetch follows it. The revision is the ETag of the
+// 302, which a browser's fetch does not show, and the ETag of the answer it
+// does show is the bucket's (an MD5 on S3). So the meta is asked first: a
+// cached copy of that revision is used without the zip, and a fetched zip
+// is filed under that revision. The zip read after it holds that revision
+// or a newer one (a save in between), never an older one; so the revision
+// filed is never newer than the bytes: at worst the next save meets a 409
+// or 412 and the next open fetches again, never an overwrite.
 const WORLD_CACHE = 'casas-worlds'
 
 export async function fetchWorld(uid: string): Promise<Blob | null> {
@@ -151,28 +160,36 @@ export async function fetchWorld(uid: string): Promise<Blob | null> {
   } catch {
     cache = null
   }
+  const revisionOf = (etag: string | null | undefined): number => {
+    const value = etag ? Number(etag.replace(/"/g, '')) : 0
+    return Number.isInteger(value) && value > 0 ? value : 0
+  }
   try {
-    const cachedEtag = cached?.headers.get('ETag')
-    const response = await authFetch(url, { cache: 'no-store', headers: cachedEtag ? { 'If-None-Match': cachedEtag } : {} })
-    if (response.status === 304 && cached) {
-      const revision = Number((cachedEtag ?? '').replace(/"/g, ''))
-      if (Number.isInteger(revision) && revision > 0) rememberRevision(uid, revision)
+    const meta = await authFetch(`${url}/meta`, { cache: 'no-store' })
+    if (!meta.ok) return null
+    const { revision } = (await meta.json()) as { revision?: number }
+    const current = typeof revision === 'number' && Number.isInteger(revision) && revision > 0 ? revision : 0
+    if (cached && current > 0 && revisionOf(cached.headers.get('ETag')) === current) {
+      rememberRevision(uid, current)
       return await cached.blob()
     }
+    const response = await authFetch(url, { cache: 'no-store' })
     if (!response.ok) return null
-    // The ETag is the server's revision: learning it here means a world opened
-    // from the server can be saved straight back without a 409 detour.
-    const etag = response.headers.get('ETag')
-    const revision = etag ? Number(etag.replace(/"/g, '')) : 0
-    if (Number.isInteger(revision) && revision > 0) rememberRevision(uid, revision)
-    if (cache && etag) {
+    // The answer's own ETag only without a redirect (a server from before
+    // the links): after one it is the bucket's.
+    const read = (response.redirected ? 0 : revisionOf(response.headers.get('ETag'))) || current
+    // Learning the revision here means a world opened from the server can
+    // be saved straight back without a 409 detour.
+    if (read > 0) rememberRevision(uid, read)
+    const archive = await response.blob()
+    if (cache && read > 0) {
       try {
-        await cache.put(url, response.clone())
+        await cache.put(url, new Response(archive, { headers: { 'Content-Type': 'application/zip', ETag: `"${read}"` } }))
       } catch {
         // Full storage, or a private window: the world still opens.
       }
     }
-    return await response.blob()
+    return archive
   } catch {
     return null
   }
@@ -186,6 +203,12 @@ export async function fetchWorld(uid: string): Promise<Blob | null> {
  * carries no Authorization header, so every thumbnail 401'd and the rows showed
  * empty squares. Nothing said why — the image element's error event is silent by
  * design.
+ *
+ * The server answers the read with a 302 to a link (its bucket's presigned GET
+ * on s3, its own signed link on dir, 2026-10-16), and fetch follows it: a
+ * CORS-mode request, so the page's Cross-Origin-Embedder-Policy (require-corp)
+ * does not stop it, as it would an `<img src>` on the bucket without CORP; the
+ * image element gets a blob: URL of this document.
  *
  * Null when there is none, or when it could not be fetched; a missing thumbnail
  * must never cost the row, since the world is the point and the picture is a

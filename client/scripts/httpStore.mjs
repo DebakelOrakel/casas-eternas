@@ -17,7 +17,8 @@
 // "no such world", other failures give the task back. And a reservation
 // the server forgot at a restart: a 404 on a write by link resolves again
 // once and uploads the artifact again from its first file; a second 404
-// throws.
+// throws. And the world read by link (2026-10-16): the 302's ETag is the
+// revision, the link is read without the job token, the 304 still comes.
 import { createServer } from 'node:http'
 import { registerHooks } from 'node:module'
 import { resolve } from './tsResolve.mjs'
@@ -412,6 +413,68 @@ console.log('\n— the job worker reads its world: only 404 is absent —')
     check(`${name} → unavailable`, worldUnavailable(o), String(o.error ?? JSON.stringify(o.value)))
   }
   check('a missing file → null', (await outcome(() => readWorld({ worldZip: '/nonexistent/world.zip' }, plainFetch))).value === null)
+}
+
+console.log('\n— the job worker reads its world by link: the 302, its ETag, the 304 —')
+{
+  // A world server (the API) and a bucket on another origin. The API answers
+  // 304 for the held revision, else 302 to the link with the revision as
+  // the ETag of the 302 (internal/modules/world, handleGet); the bucket
+  // answers the bytes with an ETag of its own, as S3 does (an MD5).
+  const seen = { api: [], bucket: [] }
+  const world = { revision: 2, link: 200, absolute: true }
+  const bucket = createServer((req, res) => {
+    seen.bucket.push({ path: req.url, authorization: req.headers.authorization, ifNoneMatch: req.headers['if-none-match'] })
+    if (world.link !== 200) return res.writeHead(world.link).end()
+    res.writeHead(200, { ETag: '"0cc175b9c0f1b6a831c399e269772661"' }).end('zip-bytes')
+  })
+  await new Promise((done) => bucket.listen(0, '127.0.0.1', done))
+  const bucketBase = `http://127.0.0.1:${bucket.address().port}`
+  const api = createServer((req, res) => {
+    seen.api.push({ path: req.url, authorization: req.headers.authorization, ifNoneMatch: req.headers['if-none-match'] })
+    const etag = `"${world.revision}"`
+    if (req.url === '/v1/worlds/w1') {
+      if (req.headers['if-none-match'] === etag) return res.writeHead(304, { ETag: etag }).end()
+      const link = `/link/w1/rev/${world.revision}/world.zip?sig=s`
+      return res.writeHead(302, { ETag: etag, Location: world.absolute ? bucketBase + link : link, 'Cache-Control': 'no-store' }).end()
+    }
+    if (req.url.startsWith('/link/')) {
+      // The dir backend's own link, on the API's origin.
+      seen.bucket.push({ path: req.url, authorization: req.headers.authorization, ifNoneMatch: req.headers['if-none-match'] })
+      return res.writeHead(world.link, {}).end(world.link === 200 ? 'zip-bytes' : '')
+    }
+    res.writeHead(404).end()
+  })
+  await new Promise((done) => api.listen(0, '127.0.0.1', done))
+  const job = { worldUrl: `http://127.0.0.1:${api.address().port}/v1/worlds/w1`, authToken: 'job-token' }
+  // As jobWorker.ts's authorizedFetch: the job token on every request it sends.
+  const authorized = (input, init = {}) => fetch(input, { ...init, headers: { ...init.headers, Authorization: `Bearer ${job.authToken}` } })
+  const reset = () => { seen.api.length = 0; seen.bucket.length = 0 }
+
+  for (const absolute of [true, false]) {
+    const where = absolute ? 's3 (another origin)' : 'dir (the same origin)'
+    Object.assign(world, { revision: 2, link: 200, absolute })
+    reset()
+    const first = await outcome(() => readWorld(job, authorized))
+    check(`${where}: 302 → the link → the archive`, first.value?.archive && new TextDecoder().decode(first.value.archive) === 'zip-bytes', String(first.error ?? JSON.stringify(first.value)))
+    check(`${where}: the etag is the 302's revision, not the bucket's`, first.value?.etag === '"2"', String(first.value?.etag))
+    check(`${where}: the link is read without the job token and without If-None-Match`, seen.bucket.length === 1 && !seen.bucket[0].authorization && !seen.bucket[0].ifNoneMatch, JSON.stringify(seen.bucket))
+    check(`${where}: the API got the job token`, seen.api[0]?.authorization === 'Bearer job-token', JSON.stringify(seen.api))
+    reset()
+    const again = await outcome(() => readWorld(job, authorized, first.value?.etag))
+    check(`${where}: the held revision → 304 → unchanged, no link read`, again.value === 'unchanged' && seen.bucket.length === 0, JSON.stringify({ again, seen }))
+    world.revision = 3
+    reset()
+    const newer = await outcome(() => readWorld(job, authorized, '"2"'))
+    check(`${where}: a newer revision → 302 → the archive with its etag`, newer.value?.etag === '"3"' && seen.bucket.length === 1, String(newer.error ?? JSON.stringify(newer.value)))
+    for (const status of [404, 403, 410, 500]) {
+      world.link = status
+      const failed = await outcome(() => readWorld(job, authorized))
+      check(`${where}: the link answers ${status} → unavailable (the task is given back)`, failed.error instanceof WorldUnavailableError, String(failed.error ?? JSON.stringify(failed.value)))
+    }
+  }
+  api.close()
+  bucket.close()
 }
 
 server.close()

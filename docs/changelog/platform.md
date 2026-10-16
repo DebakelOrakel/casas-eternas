@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-10-16
+- **changed** Server: a read of a world or of its preview answers with a short-lived link to it (`world.read-link-ttl`), so the bytes come from the bucket and not through the server.
 - **new** Server: operators can store worlds in a versioned S3 bucket (`world.storage.type: s3`).
 - **changed** Server: a job worker uploads its artifacts straight to the bucket by a short-lived link (`artifacts.write-link-ttl`), and no longer through the server. `artifacts`
 - **changed** Server: an `artifacts.storage.s3.endpoint` that is not `https://` refuses to start, and a relay that listens beyond loopback warns at start that its traffic is not encrypted.

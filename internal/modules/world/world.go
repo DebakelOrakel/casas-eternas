@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
@@ -32,6 +33,17 @@ import (
 // request from exhausting memory, since the archive must be read whole to be
 // inspected. A candidate for a flag once a real deployment has an opinion.
 const uploadLimit = 512 << 20 // 512 MiB
+
+// LinkBase is the base of the dir backend's own links (DEC-0038, fork 5):
+// a link is LinkBase + the object's key, so the zip of revision 3 is
+// `GET /v1/worlds/{uid}/rev/3/world.zip?exp=…&sig=…`. In this module's
+// namespace and below the uid, so the route cannot collide with the
+// `{uid}` routes (a `/v1/worlds/blob/{key...}` would: the mux finds it and
+// `/v1/worlds/{uid}/meta` both matching `/v1/worlds/blob/meta`, with
+// neither more specific, and refuses to register them). The link is the
+// authorization, so the gate lets a request with a valid one through
+// without credentials (SignedRequest).
+const LinkBase = "/v1/worlds/"
 
 // Config carries the full configuration tree (every module holds it whole —
 // decided 2026-08-12) plus the module's wiring. No viper here by design; the
@@ -58,6 +70,29 @@ type Config struct {
 type Module struct {
 	cfg   Config
 	store *Store
+	// signer checks the dir backend's links; nil on s3, whose links the
+	// provider checks.
+	signer *blob.LinkSigner
+	// readTTL is the lifetime of a read link (world.read-link-ttl).
+	readTTL time.Duration
+}
+
+// signing is what a Dir that makes its own links offers.
+type signing interface{ Signer() *blob.LinkSigner }
+
+// NewLinkSigner makes the signer of the dir backend's links from
+// world.link-key (DEC-0038, fork 4). Without a key file the key is
+// ephemeral and the links die at restart, which is logged. The signer
+// makes GET links only; its upload limit is the module's, unused.
+func NewLinkSigner(cfg config.Config) (*blob.LinkSigner, error) {
+	key, ephemeral, err := blob.ReadLinkKey(cfg.World.LinkKey)
+	if err != nil {
+		return nil, fmt.Errorf("world.link-key: %w", err)
+	}
+	if ephemeral {
+		slog.Warn("world.link-key is not set: the world links use an ephemeral key and stop working at restart")
+	}
+	return blob.NewLinkSigner(LinkBase, uploadLimit, key)
 }
 
 // New prepares the store and builds its index from the bucket, so a bad
@@ -67,11 +102,19 @@ func New(ctx context.Context, cfg Config) (*Module, error) {
 	if cfg.Bucket == nil {
 		return nil, fmt.Errorf("world needs its bucket; that is cmd/'s job")
 	}
+	readTTL := cfg.All.World.ReadLinkTTL
+	if readTTL <= 0 || readTTL > blob.MaxLinkTTL {
+		return nil, fmt.Errorf("world.read-link-ttl: %v must be in (0, %v]", readTTL, blob.MaxLinkTTL)
+	}
 	store, err := NewStore(ctx, cfg.Bucket, cfg.All.World.KeepRevisions)
 	if err != nil {
 		return nil, fmt.Errorf("world.storage: %w", err)
 	}
-	return &Module{cfg: cfg, store: store}, nil
+	m := &Module{cfg: cfg, store: store, readTTL: readTTL}
+	if d, ok := cfg.Bucket.(signing); ok {
+		m.signer = d.Signer()
+	}
+	return m, nil
 }
 
 // Name identifies the module in logs and errors.
@@ -96,7 +139,23 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST /v1/worlds/{uid}/copy", m.handleCopy)
 	mux.HandleFunc("PUT /v1/worlds/{uid}/template", m.handleTemplate)
 	mux.HandleFunc("DELETE /v1/worlds/{uid}/template", m.handleTemplate)
+	// The dir backend's own links (LinkBase). Not mounted on s3: the
+	// provider serves its links.
+	if m.signer != nil {
+		mux.HandleFunc("GET /v1/worlds/{uid}/rev/{revision}/{name}", m.handleLink)
+	}
 	return nil
+}
+
+// SignedRequest answers whether a request is a GET (or HEAD) with a link
+// this module signed (blob.LinkSigner.Signed). cmd/ hands it to
+// server.Gate, which lets such a request through WITHOUT credentials: the
+// link is the authorization. False on s3, whose links the provider checks.
+func (m *Module) SignedRequest(r *http.Request) bool {
+	if m.signer == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return false
+	}
+	return m.signer.Signed(r)
 }
 
 // AnonymousReads names the requests this module ranks for a caller WITHOUT
@@ -253,7 +312,8 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 	// A reader that holds this revision already (a job worker baking tile
 	// after tile of one world) asks with If-None-Match and gets 304 without
-	// the archive — tens of MB per task otherwise.
+	// the archive — tens of MB per task otherwise. Answered BEFORE the
+	// redirect: the link's answer (the bucket's) knows nothing of revisions.
 	if match := r.Header.Get("If-None-Match"); match != "" {
 		if meta, err := m.store.Get(r.Context(), uid); err == nil && match == etag(meta.Revision) {
 			w.Header().Set("ETag", etag(meta.Revision))
@@ -261,17 +321,29 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data, meta, err := m.store.ReadCurrent(r.Context(), uid)
+	// The right is checked; the bytes (35–70 MB) come from a link: a
+	// presigned GET on s3, so they do not pass through this server, or this
+	// module's own signed link on dir.
+	link, meta, err := m.store.ZipLink(r.Context(), uid, m.readTTL)
 	if err != nil {
 		respondStoreError(w, err)
 		return
 	}
 	// The revision IS the ETag: it is exactly the token a client passes back
 	// in If-Match, so deriving a second one would only invite the two to drift.
+	// It is on the 302, because the answer of the link is the bucket's, whose
+	// ETag is its own (an MD5 on S3): a reader that keeps the revision reads
+	// it here (the job worker, client/scripts/readWorld.ts, follows the
+	// redirect itself; the browser asks the meta first, worldClient.ts).
 	w.Header().Set("ETag", etag(meta.Revision))
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	_, _ = w.Write(data)
+	redirect(w, r, link)
+}
+
+// redirect answers 302 to a read link. A link is valid for minutes; a
+// redirect cached past that would send the client to a dead link.
+func redirect(w http.ResponseWriter, r *http.Request, link blob.Link) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, link.URL, http.StatusFound)
 }
 
 // handleMeta answers a world's record without its bytes — what a peer
@@ -301,14 +373,56 @@ func (m *Module) handlePreview(w http.ResponseWriter, r *http.Request) {
 	if !m.gate(w, r, r.PathValue("uid"), access.ActionRead) {
 		return
 	}
-	raw, err := m.store.ReadPreview(r.Context(), r.PathValue("uid"))
+	// By link, as the zip: the browser fetches the thumbnail (fetch, not
+	// <img src>, worldClient.ts fetchWorldPreview) and follows the 302.
+	link, err := m.store.PreviewLink(r.Context(), r.PathValue("uid"), m.readTTL)
 	if err != nil {
 		respondStoreError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
-	_, _ = w.Write(raw)
+	redirect(w, r, link)
+}
+
+// handleLink serves a dir link: a zip or a preview of a revision. No
+// caller is needed: the gate let the request through for its signature
+// (SignedRequest), and it is checked again here, where its result decides.
+// The key is LinkBase's remainder, built from the path's segments and
+// checked by the key rule and the signature (a changed or escaped path
+// does not verify). The answers say no more than the link holder knows:
+// 403 for a link that does not verify, 410 for one of ours that has
+// expired, 404 for a signed key whose object has gone (a pruned revision).
+func (m *Module) handleLink(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("uid") + "/rev/" + r.PathValue("revision") + "/" + r.PathValue("name")
+	if _, err := m.signer.Verify(http.MethodGet, key, r.URL.Query()); err != nil {
+		if errors.Is(err, blob.ErrLinkExpired) {
+			httpjson.ClientError(w, http.StatusGone, "the link has expired")
+			return
+		}
+		httpjson.ClientError(w, http.StatusForbidden, "the link is not valid")
+		return
+	}
+	body, info, err := m.store.bucket.Get(r.Context(), key)
+	if err != nil {
+		if errors.Is(err, blob.ErrNotFound) {
+			httpjson.ClientError(w, http.StatusNotFound, "no such world")
+			return
+		}
+		httpjson.ServerError(w, "world store", err)
+		return
+	}
+	defer func() { _ = body.Close() }()
+	// No validators here: the revision is the 302's ETag, and a revision's
+	// objects do not change under their key.
+	contentType := "application/octet-stream"
+	switch r.PathValue("name") {
+	case zipName:
+		contentType = "application/zip"
+	case previewName:
+		contentType = "image/png"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	_, _ = io.Copy(w, body)
 }
 
 func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {

@@ -52,7 +52,7 @@ func newTemplateFixture(t *testing.T) *templateFixture {
 		return raw
 	}
 	resolver := identity.NewResolver(config.AuthPassword, tokens)
-	m := &Module{cfg: Config{Identity: resolver}, store: newTestStore(t)}
+	m := moduleOn(Config{Identity: resolver}, newTestStore(t))
 	mux := http.NewServeMux()
 	if err := m.Mount(mux); err != nil {
 		t.Fatal(err)
@@ -174,8 +174,8 @@ func TestATemplateIsReadableByEveryone(t *testing.T) {
 	}
 	for _, bearer := range []string{"", f.grace} {
 		for _, path := range readRoutes {
-			if got := f.as(http.MethodGet, path, bearer, nil).Code; got != http.StatusOK {
-				t.Errorf("GET %s as %q = %d, want 200", path, bearer, got)
+			if got, want := f.as(http.MethodGet, path, bearer, nil).Code, readAnswer(path); got != want {
+				t.Errorf("GET %s as %q = %d, want %d", path, bearer, got, want)
 			}
 		}
 		listed := f.list(bearer)

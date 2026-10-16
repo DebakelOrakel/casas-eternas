@@ -100,29 +100,11 @@ func NewLinkSigner(cfg config.Config) (*blob.LinkSigner, error) {
 	return blob.NewLinkSigner(LinkBase, UploadLimit, key)
 }
 
-// BucketOptions are what the store asks of an s3 bucket. CORS, because the
-// browser follows the 302 of a read to the bucket's origin. The allowed
-// origin is "*", with no credentials: a presigned GET is a capability URL
-// (the right was checked when it was issued, DEC-0038, fork 5), and anyone
-// who holds it can use it outside a browser, so a narrower origin protects
-// nothing. "*" also covers the `Origin: null` a browser sends after a
-// redirect from a third origin (the API on another host than the page), and
-// it needs no setting.
-//
-// Every request header is allowed: the browser sends the read with the
-// session's Authorization header, and on the redirect to the bucket it
-// drops the header but still asks for it in the preflight (measured in
-// Safari 26.6, 2026-10-16: OPTIONS with Access-Control-Request-Headers:
-// authorization, then a GET without it). A rule that does not allow it
-// fails the read.
+// BucketOptions are what the store asks of an s3 bucket: CORS, because the
+// browser follows the 302 of a read to the bucket's origin
+// (blob.ReadLinkCORS, which says why the rule is what it is).
 func BucketOptions() blob.OpenOptions {
-	return blob.OpenOptions{CORS: []blob.CORSRule{{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{http.MethodGet, http.MethodHead},
-		AllowedHeaders: []string{"*"},
-		ExposeHeaders:  []string{"ETag", "Content-Length"},
-		MaxAge:         time.Hour,
-	}}}
+	return blob.OpenOptions{CORS: blob.ReadLinkCORS()}
 }
 
 // New prepares the store and builds its index from the bucket, so a bucket
@@ -197,32 +179,12 @@ func (m *Module) Close() error {
 }
 
 // SignedRequest answers whether a request carries a link this module
-// signed: a GET (or HEAD) or a PUT under LinkBase whose signature verifies
-// for that method. cmd/
-// hands it to server.Gate, which lets such a request through WITHOUT
-// credentials, whatever its Authorization header holds: the link is the
-// authorization. An expired link of ours passes too, so that the route
-// answers 410 and not the gate 401 — a 401 would end the browser's
-// session. A forged or changed link does not pass: the gate treats it as
-// any other request.
+// signed (blob.LinkSigner.Signed): a GET (or HEAD) or a PUT under LinkBase.
+// cmd/ hands it to server.Gate, which lets such a request through WITHOUT
+// credentials: the link is the authorization. False on s3, whose links the
+// provider checks.
 func (m *Module) SignedRequest(r *http.Request) bool {
-	if m.signer == nil {
-		return false
-	}
-	method := r.Method
-	switch method {
-	case http.MethodGet, http.MethodHead:
-		method = http.MethodGet
-	case http.MethodPut:
-	default:
-		return false
-	}
-	key, ok := strings.CutPrefix(r.URL.Path, LinkBase)
-	if !ok {
-		return false
-	}
-	_, err := m.signer.Verify(method, key, r.URL.Query())
-	return err == nil || errors.Is(err, blob.ErrLinkExpired)
+	return m.signer != nil && m.signer.Signed(r)
 }
 
 // operator answers "may this request do anything here": the admin claim, or

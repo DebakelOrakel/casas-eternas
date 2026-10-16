@@ -44,7 +44,7 @@ func testBackends() map[string]func(t *testing.T) blob.Bucket {
 }
 
 func adminModule(store *Store) (*Module, *http.ServeMux) {
-	m := &Module{cfg: Config{Identity: identity.NewResolver(config.AuthNone, nil)}, store: store}
+	m := moduleOn(Config{Identity: identity.NewResolver(config.AuthNone, nil)}, store)
 	mux := http.NewServeMux()
 	_ = m.Mount(mux)
 	return m, mux
@@ -83,12 +83,17 @@ func TestTheStoreBehavesTheSameOnEveryBackend(t *testing.T) {
 				t.Error("retention did not keep exactly revisions 2 and 3")
 			}
 
-			get := do(mux, http.MethodGet, "/v1/worlds/"+sampleUID, nil, nil)
-			if get.Code != http.StatusOK || !bytes.Equal(get.Body.Bytes(), data) {
-				t.Errorf("read back = %d, %d bytes", get.Code, get.Body.Len())
+			// By link: a 302 to the provider's presigned GET or the dir's
+			// own link, then the bytes.
+			if code, body := follow(t, mux, bucket, "/v1/worlds/"+sampleUID); code != http.StatusOK || !bytes.Equal(body, data) {
+				t.Errorf("read back = %d, %d bytes", code, len(body))
 			}
-			if got := do(mux, http.MethodGet, "/v1/worlds/"+sampleUID+"/preview.png", nil, nil); got.Code != http.StatusOK || got.Body.String() != "PNG" {
-				t.Errorf("preview = %d %q", got.Code, got.Body)
+			if code, body := follow(t, mux, bucket, "/v1/worlds/"+sampleUID+"/preview.png"); code != http.StatusOK || string(body) != "PNG" {
+				t.Errorf("preview = %d %q", code, body)
+			}
+			// The meta is small and stays a direct answer.
+			if got := do(mux, http.MethodGet, "/v1/worlds/"+sampleUID+"/meta", nil, nil).Code; got != http.StatusOK {
+				t.Errorf("meta = %d, want 200", got)
 			}
 			if got := do(mux, http.MethodPut, "/v1/worlds/"+sampleUID+"/template", nil, nil).Code; got != http.StatusOK {
 				t.Errorf("template mark = %d", got)
@@ -441,5 +446,38 @@ func openFakeBucket(t *testing.T, srv *httptest.Server, flavour string) *blob.S3
 	if err != nil {
 		t.Fatalf("OpenS3 %s: %v", flavour, err)
 	}
+	fakeClients.Store(b, cfg.HTTPClient)
+	t.Cleanup(func() { fakeClients.Delete(b) })
 	return b
+}
+
+// fakeClients holds the client that reaches a fake bucket's presigned
+// links (its virtual host or endpoint goes to the fake), for follow.
+var fakeClients sync.Map
+
+// follow reads `path` as a client does: the module answers 302 (no-store),
+// and the client follows the link — the dir's own one on the mux, without
+// credentials, a presigned GET with the fake's client.
+func follow(t *testing.T, mux *http.ServeMux, bucket blob.Bucket, path string) (int, []byte) {
+	t.Helper()
+	redirect := do(mux, http.MethodGet, path, nil, nil)
+	location := redirect.Header().Get("Location")
+	if redirect.Code != http.StatusFound || location == "" || redirect.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("GET %s = %d to %q (Cache-Control %q), want a 302 no-store", path, redirect.Code, location, redirect.Header().Get("Cache-Control"))
+	}
+	if strings.HasPrefix(location, "/") {
+		linked := do(mux, http.MethodGet, location, nil, nil)
+		return linked.Code, linked.Body.Bytes()
+	}
+	client := http.DefaultClient // a real provider (the wire tests)
+	if fake, ok := fakeClients.Load(bucket); ok {
+		client = fake.(*http.Client)
+	}
+	response, err := client.Get(location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	raw, _ := io.ReadAll(response.Body)
+	return response.StatusCode, raw
 }

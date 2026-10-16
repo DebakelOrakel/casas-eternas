@@ -134,6 +134,8 @@ world:
       access-key-file: /run/secrets/aws-access-key
       secret-key-file: /run/secrets/aws-secret-key
   keep-revisions: 3
+  read-link-ttl: 15m      # how long a read link of a zip or preview holds
+  # link-key: /run/secrets/world-link-key   # dir only
 ```
 
 The same block as for the artifacts, with a bucket of its own. The keys
@@ -155,10 +157,24 @@ next start.
   bug or with a stolen key — reversible. Plan the space for it: each
   upload of a world stays in the bucket as versions after
   `keep-revisions` prunes it.
-- **No CORS rule.** The browser reads world zips and previews through the
-  server, not by links to the bucket, so the worlds bucket needs none.
+- **Reads by link.** A read of a world's zip or preview answers `302` to a
+  short-lived link (`world.read-link-ttl`), after the same access check as
+  before: on `s3` a presigned GET, so the 35–70 MB of a zip come from the
+  bucket and not through the server; on `dir` a link the server signs and
+  serves itself under `/v1/worlds/{uid}/rev/{n}/`, with the key in
+  `world.link-key` (a file with at least 32 random bytes; without it the
+  links stop working at restart). The `302` carries the revision as its
+  `ETag`, and a reader that holds the current revision still gets `304`
+  without a link. The meta (`/v1/worlds/{uid}/meta`) and the list stay
+  direct answers.
+- **The CORS rule.** At start the server sets the same CORS rule on the
+  worlds bucket as on the artifacts bucket (every origin, GET and HEAD,
+  every request header, `ETag` and `Content-Length` exposed), because the
+  browser follows the `302` to the bucket.
 - **A local job worker reads the world over the server's API** on `s3`
-  (as a worker in a cluster always does); on `dir` it reads the file.
+  (as a worker in a cluster always does), and follows the `302` to the
+  bucket, so it must reach the bucket's endpoint over HTTPS; on `dir` it
+  reads the file.
 - On `aws` a new revision and a new world are written with
   `If-None-Match: *`, so a second server against the same bucket by
   mistake gets `412` instead of overwriting a revision. On `ceph` the

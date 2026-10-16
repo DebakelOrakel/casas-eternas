@@ -22,10 +22,7 @@ import (
 
 func newTestModule(t *testing.T) (*Module, *http.ServeMux) {
 	t.Helper()
-	m := &Module{
-		cfg:   Config{Identity: identity.NewResolver(config.AuthNone, nil)},
-		store: newTestStore(t),
-	}
+	m := moduleOn(Config{Identity: identity.NewResolver(config.AuthNone, nil)}, newTestStore(t))
 	mux := http.NewServeMux()
 	if err := m.Mount(mux); err != nil {
 		t.Fatal(err)
@@ -132,19 +129,37 @@ func TestMetaAnswersWithoutTheBytes(t *testing.T) {
 	}
 }
 
+// readAnswer is what a granted read of `path` answers: the zip and the
+// preview a 302 to their link, the list and the meta 200 with the JSON.
+func readAnswer(path string) int {
+	if path == "/v1/worlds" || strings.HasSuffix(path, "/meta") {
+		return http.StatusOK
+	}
+	return http.StatusFound
+}
+
+// The zip is read by link (DEC-0038, 2026-10-16): a 302 that carries the
+// revision as its ETag and no-store, then the link with the bytes.
 func TestGetServesTheZipWithItsRevisionAsETag(t *testing.T) {
 	_, mux := newTestModule(t)
 	upload(t, mux, sampleUID, "")
 
 	response := do(mux, http.MethodGet, "/v1/worlds/"+sampleUID, nil, nil)
-	if response.Code != http.StatusOK {
-		t.Fatalf("get = %d", response.Code)
-	}
-	if got := response.Header().Get("Content-Type"); got != "application/zip" {
-		t.Errorf("content type = %q", got)
+	if response.Code != http.StatusFound {
+		t.Fatalf("get = %d, want 302", response.Code)
 	}
 	if got := response.Header().Get("ETag"); got != `"1"` {
 		t.Errorf("ETag = %q", got)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	linked := do(mux, http.MethodGet, response.Header().Get("Location"), nil, nil)
+	if linked.Code != http.StatusOK || linked.Body.Len() == 0 {
+		t.Fatalf("link = %d, %d bytes", linked.Code, linked.Body.Len())
+	}
+	if got := linked.Header().Get("Content-Type"); got != "application/zip" {
+		t.Errorf("content type = %q", got)
 	}
 
 	if got := do(mux, http.MethodGet, "/v1/worlds/11111111-2222-4333-8444-555555555555", nil, nil).Code; got != http.StatusNotFound {
@@ -162,9 +177,13 @@ func TestGetAnswersNotModifiedForTheCurrentRevision(t *testing.T) {
 	if same.Code != http.StatusNotModified || same.Body.Len() != 0 || same.Header().Get("ETag") != `"1"` {
 		t.Errorf("current revision = %d, %d bytes, ETag %q; want 304, none, \"1\"", same.Code, same.Body.Len(), same.Header().Get("ETag"))
 	}
+	// The 304 comes before any link: no Location on it.
+	if same.Header().Get("Location") != "" {
+		t.Errorf("304 carries a Location %q", same.Header().Get("Location"))
+	}
 	older := do(mux, http.MethodGet, "/v1/worlds/"+sampleUID, nil, map[string]string{"If-None-Match": `"0"`})
-	if older.Code != http.StatusOK || older.Body.Len() == 0 {
-		t.Errorf("older revision = %d, %d bytes; want 200 with the archive", older.Code, older.Body.Len())
+	if older.Code != http.StatusFound || older.Header().Get("ETag") != `"1"` || older.Header().Get("Location") == "" {
+		t.Errorf("older revision = %d, ETag %q; want 302 to the link with the current revision", older.Code, older.Header().Get("ETag"))
 	}
 }
 
@@ -177,10 +196,7 @@ func TestBakeJobReadsExactlyItsWorld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &Module{
-		cfg:   Config{Identity: identity.NewResolver(config.AuthPassword, tokens)},
-		store: newTestStore(t),
-	}
+	m := moduleOn(Config{Identity: identity.NewResolver(config.AuthPassword, tokens)}, newTestStore(t))
 	mux := http.NewServeMux()
 	if err := m.Mount(mux); err != nil {
 		t.Fatal(err)
@@ -219,8 +235,8 @@ func TestBakeJobReadsExactlyItsWorld(t *testing.T) {
 		"/v1/worlds/" + sampleUID,
 		"/v1/worlds/" + sampleUID + "/meta",
 	} {
-		if got := as(http.MethodGet, path, job).Code; got != http.StatusOK {
-			t.Errorf("job GET %s = %d, want 200", path, got)
+		if got, want := as(http.MethodGet, path, job).Code, readAnswer(path); got != want {
+			t.Errorf("job GET %s = %d, want %d", path, got, want)
 		}
 		// A job for a DIFFERENT world is a stranger here — including the
 		// 404 that must not confirm existence.
@@ -263,10 +279,7 @@ func TestPrivateWorldsAreInvisibleAndGrantsOpenThem(t *testing.T) {
 	}
 	ada, grace, eve, root := issue("ada-id", false), issue("grace-id", false), issue("eve-id", false), issue("root-id", true)
 
-	m := &Module{
-		cfg:   Config{Identity: identity.NewResolver(config.AuthPassword, tokens)},
-		store: newTestStore(t),
-	}
+	m := moduleOn(Config{Identity: identity.NewResolver(config.AuthPassword, tokens)}, newTestStore(t))
 	mux := http.NewServeMux()
 	if err := m.Mount(mux); err != nil {
 		t.Fatal(err)
@@ -308,8 +321,8 @@ func TestPrivateWorldsAreInvisibleAndGrantsOpenThem(t *testing.T) {
 		access.Grants{Owner: "ada-id", Users: map[string]string{"grace-id": "viewer"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := as(http.MethodGet, "/v1/worlds/"+sampleUID, grace, nil).Code; got != http.StatusOK {
-		t.Errorf("viewer GET = %d, want 200", got)
+	if got := as(http.MethodGet, "/v1/worlds/"+sampleUID, grace, nil).Code; got != http.StatusFound {
+		t.Errorf("viewer GET = %d, want 302", got)
 	}
 	update := buildSave(t, sampleYAML(), []byte("PNG"), map[string][]byte{"payload": []byte("v2")})
 	request := httptest.NewRequest(http.MethodPut, "/v1/worlds/"+sampleUID, strings.NewReader(string(update)))
@@ -348,8 +361,8 @@ func TestPrivateWorldsAreInvisibleAndGrantsOpenThem(t *testing.T) {
 	}
 
 	// The admin claim outranks the grants; the owner may delete their world.
-	if got := as(http.MethodGet, "/v1/worlds/"+sampleUID, root, nil).Code; got != http.StatusOK {
-		t.Errorf("admin GET = %d, want 200", got)
+	if got := as(http.MethodGet, "/v1/worlds/"+sampleUID, root, nil).Code; got != http.StatusFound {
+		t.Errorf("admin GET = %d, want 302", got)
 	}
 	if got := as(http.MethodDelete, "/v1/worlds/"+sampleUID, ada, nil).Code; got != http.StatusNoContent {
 		t.Errorf("owner DELETE = %d, want 204", got)
@@ -360,17 +373,14 @@ func TestPrivateWorldsAreInvisibleAndGrantsOpenThem(t *testing.T) {
 // recorded owner NAME opens it only for the registry user that name maps
 // to; everyone else — including the un-mapped — finds it admin-only.
 func TestLegacyWorldsFollowTheMigrationRule(t *testing.T) {
-	m := &Module{
-		cfg: Config{
-			LegacyOwner: func(name string) (string, bool) {
-				if name == "ada" {
-					return "ada-id", true
-				}
-				return "", false
-			},
+	m := moduleOn(Config{
+		LegacyOwner: func(name string) (string, bool) {
+			if name == "ada" {
+				return "ada-id", true
+			}
+			return "", false
 		},
-		store: newTestStore(t),
-	}
+	}, newTestStore(t))
 	if _, err := putAs(t, m.store, sampleUID, "first", "ada", 0); err != nil {
 		t.Fatal(err)
 	}

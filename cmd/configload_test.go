@@ -235,7 +235,10 @@ docs:
   content-dir: /app/docs
 artifacts:
   write-link-ttl: 2h
+world:
+  read-link-ttl: 30m
 `)
+	t.Setenv("CASAS_WORLD_LINK_KEY", "/env/world-link-key")
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -249,6 +252,9 @@ artifacts:
 	}
 	if cfg.Artifacts.WriteLinkTTL != 2*time.Hour || cfg.Artifacts.ReadLinkTTL != 15*time.Minute {
 		t.Errorf("link ttls = %v / %v, want 2h from the file and the 15m default", cfg.Artifacts.WriteLinkTTL, cfg.Artifacts.ReadLinkTTL)
+	}
+	if cfg.World.ReadLinkTTL != 30*time.Minute || cfg.World.LinkKey != "/env/world-link-key" {
+		t.Errorf("world links = %v, %q; want 30m from the file and the key from the environment", cfg.World.ReadLinkTTL, cfg.World.LinkKey)
 	}
 }
 

@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -34,34 +36,11 @@ import (
 //
 // It never prints a key or a link.
 func TestAWSWireWorlds(t *testing.T) {
-	if os.Getenv("CASAS_TEST_S3_AWS") != "1" {
-		t.Skip("set CASAS_TEST_S3_AWS=1 to run against AWS")
-	}
-	env := func(name, fallback string) string {
-		if v := os.Getenv(name); v != "" {
-			return v
-		}
-		return fallback
-	}
-	const region, bucketName = "eu-central-2", "casas-eternas-dev-worlds"
-	accessFile := env("CASAS_TEST_S3_AWS_ACCESS_KEY_FILE", "../../../dev/secrets/aws-access-key")
-	secretFile := env("CASAS_TEST_S3_AWS_SECRET_KEY_FILE", "../../../dev/secrets/aws-secret-key")
-	var r [6]byte
-	_, _ = rand.Read(r[:])
-	prefix := "test/" + hex.EncodeToString(r[:])
 	ctx := context.Background()
-	bucket, err := blob.OpenS3(ctx, blob.S3Config{
-		Flavour: blob.FlavourAWS, Region: region, Bucket: bucketName, Prefix: prefix,
-		AccessKeyFile: accessFile, SecretKeyFile: secretFile,
-	}, BucketOptions())
-	if err != nil {
-		t.Fatalf("OpenS3: %v", err)
-	}
-	raw := rawClient(t, region, accessFile, secretFile)
+	bucket, raw, bucketName := openAWSWorlds(t)
 	if v, err := raw.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{Bucket: aws.String(bucketName)}); err != nil || v.Status != "Enabled" {
 		t.Fatalf("versioning = %v, %v; want Enabled", v, err)
 	}
-	t.Cleanup(func() { reportVersions(t, raw, bucketName, prefix+"/") })
 
 	a := newTestStoreOn(t, bucket, 3)
 	_, muxA := adminModule(a)
@@ -88,10 +67,10 @@ func TestAWSWireWorlds(t *testing.T) {
 		t.Fatalf("after a restart: %+v, %v", list, err)
 	}
 	_, muxC := adminModule(c)
-	got := do(muxC, http.MethodGet, "/v1/worlds/"+sampleUID, nil, nil)
+	code, body := follow(t, muxC, bucket, "/v1/worlds/"+sampleUID)
 	want := buildSave(t, sampleYAML(), []byte("PNG"), map[string][]byte{"payload": []byte("body-1")})
-	if got.Code != http.StatusOK || !bytes.Equal(got.Body.Bytes(), want) {
-		t.Errorf("read back = %d, %d bytes, equal %v", got.Code, got.Body.Len(), bytes.Equal(got.Body.Bytes(), want))
+	if code != http.StatusOK || !bytes.Equal(body, want) {
+		t.Errorf("read back = %d, %d bytes, equal %v", code, len(body), bytes.Equal(body, want))
 	}
 
 	// Delete, then create the same uid again: the conditional writes meet
@@ -110,6 +89,101 @@ func TestAWSWireWorlds(t *testing.T) {
 		if err == nil {
 			t.Errorf("current object left: %s", info.Key)
 		}
+	}
+}
+
+// openAWSWorlds opens the dev worlds bucket under a fresh test/<random>
+// prefix, with the store's BucketOptions, or skips. The cleanup logs what
+// the test leaves (reportVersions).
+func openAWSWorlds(t *testing.T) (*blob.S3, *s3.Client, string) {
+	t.Helper()
+	if os.Getenv("CASAS_TEST_S3_AWS") != "1" {
+		t.Skip("set CASAS_TEST_S3_AWS=1 to run against AWS")
+	}
+	env := func(name, fallback string) string {
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+		return fallback
+	}
+	const region, bucketName = "eu-central-2", "casas-eternas-dev-worlds"
+	accessFile := env("CASAS_TEST_S3_AWS_ACCESS_KEY_FILE", "../../../dev/secrets/aws-access-key")
+	secretFile := env("CASAS_TEST_S3_AWS_SECRET_KEY_FILE", "../../../dev/secrets/aws-secret-key")
+	var r [6]byte
+	_, _ = rand.Read(r[:])
+	prefix := "test/" + hex.EncodeToString(r[:])
+	bucket, err := blob.OpenS3(context.Background(), blob.S3Config{
+		Flavour: blob.FlavourAWS, Region: region, Bucket: bucketName, Prefix: prefix,
+		AccessKeyFile: accessFile, SecretKeyFile: secretFile,
+	}, BucketOptions())
+	if err != nil {
+		t.Fatalf("OpenS3: %v", err)
+	}
+	raw := rawClient(t, region, accessFile, secretFile)
+	t.Cleanup(func() { reportVersions(t, raw, bucketName, prefix+"/") })
+	return bucket, raw, bucketName
+}
+
+// The reads by link against AWS, with ONE upload (each write leaves a
+// version on this bucket): the zip and the preview answer 302 to a
+// presigned GET; Go's client follows it from a real server and drops the
+// caller's Authorization on the cross-origin redirect (else AWS answers
+// 400); the bucket answers a GET with an Origin with
+// `Access-Control-Allow-Origin: *`; the 304 comes before any redirect.
+// Run alone: go test -run TestAWSWireWorldLinks ./internal/modules/world
+// with CASAS_TEST_S3_AWS=1.
+func TestAWSWireWorldLinks(t *testing.T) {
+	ctx := context.Background()
+	bucket, raw, bucketName := openAWSWorlds(t)
+	if cors, err := raw.GetBucketCors(ctx, &s3.GetBucketCorsInput{Bucket: aws.String(bucketName)}); err != nil || len(cors.CORSRules) != 1 || cors.CORSRules[0].AllowedOrigins[0] != "*" {
+		t.Errorf("the bucket's CORS rule = %+v, %v; want the read-link rule", cors, err)
+	}
+	store := newTestStoreOn(t, bucket, 3)
+	_, mux := adminModule(store)
+	save := buildSave(t, sampleYAML(), []byte("PNG"), nil)
+	if got := do(mux, http.MethodPut, "/v1/worlds/"+sampleUID, save, nil); got.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", got.Code, got.Body)
+	}
+	t.Cleanup(func() { _ = store.Delete(ctx, sampleUID) })
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	read := func(path string, header http.Header) (*http.Response, []byte) {
+		t.Helper()
+		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+path, nil)
+		request.Header = header
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = response.Body.Close() }()
+		body, _ := io.ReadAll(response.Body)
+		return response, body
+	}
+	// A caller's Authorization and an Origin, as a browser or a worker
+	// sends them: Go keeps the Origin and drops the Authorization on the
+	// redirect to another host.
+	header := http.Header{"Authorization": {"Bearer not-for-the-bucket"}, "Origin": {"https://casas.example"}}
+	response, body := read("/v1/worlds/"+sampleUID, header)
+	if response.StatusCode != http.StatusOK || !bytes.Equal(body, save) {
+		t.Errorf("zip by link = %d, %d bytes, equal %v", response.StatusCode, len(body), bytes.Equal(body, save))
+	}
+	if !strings.HasSuffix(response.Request.URL.Host, ".amazonaws.com") {
+		t.Errorf("the zip came from %s, want the bucket", response.Request.URL.Host)
+	}
+	if got := response.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want *", got)
+	}
+	if got := response.Header.Get("Content-Type"); got != "application/zip" {
+		t.Errorf("Content-Type = %q", got)
+	}
+	response, body = read("/v1/worlds/"+sampleUID+"/preview.png", header)
+	if response.StatusCode != http.StatusOK || string(body) != "PNG" {
+		t.Errorf("preview by link = %d %q", response.StatusCode, body)
+	}
+	response, _ = read("/v1/worlds/"+sampleUID, http.Header{"If-None-Match": {`"1"`}})
+	if response.StatusCode != http.StatusNotModified || response.Request.URL.Host != strings.TrimPrefix(srv.URL, "http://") {
+		t.Errorf("If-None-Match of the revision = %d from %s, want 304 from the server", response.StatusCode, response.Request.URL.Host)
 	}
 }
 

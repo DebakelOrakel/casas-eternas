@@ -129,7 +129,9 @@ configuration file can be read without the secret. The proposed
 `artifacts.write-link-ttl` (default 1h), `artifacts.link-key` (path to a
 file with at least 32 random bytes; read only by the `dir` backend; when
 missing, an ephemeral key is made and the links die at restart). `world`
-may get the same keys later.
+may get the same keys later. It did on 2026-10-16: `world.read-link-ttl`
+(default 15m) and `world.link-key`, with the same meaning, for the reads
+of zips and previews (see the status).
 
 **Why:** the `dir` backend signs its own links (fork 5), so a link lifetime
 is a property of the module's API, not of the provider. In the `s3` block
@@ -517,6 +519,71 @@ what its keys leave under `{uid}/` (`.DS_Store`, temp files, other invalid
 names) with `blob.Dir.RemoveTree`, as the store before the leaf did; a
 failed start closes the internal listener and the modules it made; the
 tests share one fake S3 (`internal/blob/blobtest`, test-only).
+
+2026-10-16: world zips and previews are read by link, with the keys of
+fork 4 for `world` (approved the same day: `world.read-link-ttl`, default
+15m, and `world.link-key`, dir only). What changed:
+
+- **Routes.** `GET /v1/worlds/{uid}` and `GET /v1/worlds/{uid}/preview.png`
+  check the right as before (private → 404, a template readable without an
+  account, DEC-0037) and answer `302` (`Cache-Control: no-store`) to a link
+  with `world.read-link-ttl`: a presigned GET on `s3`, the module's own
+  signed link on `dir`. The meta and the list stay direct answers (some
+  hundred bytes). The `dir` link is the object's key under the module's
+  namespace, `GET /v1/worlds/{uid}/rev/{n}/world.zip?exp&sig` (and
+  `preview.png`): `/v1/worlds/blob/{key...}`, as for artifacts, cannot be
+  registered beside `/v1/worlds/{uid}/meta` (Go's mux finds both matching
+  `/v1/worlds/blob/meta`, neither more specific, and refuses). 403 for a
+  link that does not verify, 410 for an expired one of ours, 404 for an
+  object that went (a pruned revision).
+- **The 304 comes first.** A reader that sends `If-None-Match` with the
+  current revision gets `304` from the server, with no link. Otherwise
+  the `302` carries the revision as its `ETag`: the link's answer is the
+  bucket's, whose ETag is its own (an MD5 on S3, measured), so a reader
+  that keeps the revision must take it from the `302` or from the meta.
+  The job worker (client/scripts/readWorld.ts) asks with `redirect:
+  'manual'`, takes the ETag of the `302` and reads the link itself with no
+  header of the task (no job token, no `If-None-Match`); a link that fails
+  gives the task back. The browser's fetch cannot see the `302`, so
+  `fetchWorld` asks the meta first: a cached copy of that revision is used
+  without the zip, and a fetched zip is filed under that revision. The zip
+  read after the meta is of that revision or a newer one, so the revision
+  filed is never newer than the bytes (at worst a 409/412 on the next save,
+  never an overwrite).
+- **One implementation of the gate's predicate.** `blob.LinkSigner.Signed`
+  (from artifacts' SignedRequest) checks a request against the signer's
+  base; both modules use it, and cmd/ joins the two modules' predicates
+  for the gate. The CORS rule of the read links is `blob.ReadLinkCORS`,
+  used by both buckets. The link routes stay in each module (a few lines
+  each): their answers name the module's objects.
+- **The worlds bucket gets the CORS rule** (`world.BucketOptions`), the
+  same as the artifacts bucket. A local worker on `dir` still reads the
+  file (`blob.Dir.LocalPath`).
+- **COEP and the previews.** The page is cross-origin isolated
+  (`require-corp`). The previews are fetched (worldClient.ts,
+  fetchWorldPreview) and shown by a `blob:` URL, and a fetch in CORS mode
+  is not limited by COEP, so nothing changes there. Measured in Safari
+  (WebDriver, a probe page served by the client module, crossOriginIsolated
+  true): against the dev bucket the preview fetch follows the `302` to the
+  bucket and the image decodes; the zip arrives byte-equal (SHA-256), and
+  its ETag is the bucket's; an `<img src>` straight at the route fails
+  (no CORP on the bucket's answer), which the app does not do. On `dir`
+  both are same-origin and work.
+- **Measured against AWS** (eu-central-2, `casas-eternas-dev-worlds`,
+  TestAWSWireWorldLinks, one upload, and a local server on `type: s3`,
+  one upload): the `302` goes to a presigned GET with `X-Amz-Expires=900`;
+  Go's client follows it from a real server and drops the caller's
+  `Authorization`; with an `Origin` the bucket answers
+  `Access-Control-Allow-Origin: *`, and the preflight for `authorization`
+  is allowed; `If-None-Match` of the revision answers `304` from the
+  server. The worker's read (readWorld.ts, Node) of the local server:
+  302, the bucket, the bytes equal, then `unchanged` with the ETag. The
+  same on `dir` with a clone of the dev store (the world `b39d5739`, 36
+  MB, SHA-256 equal, the preview equal, 304). What stays: 5 versions
+  (1 127 bytes) and 5 delete markers under the wire test's `test/<random>/`,
+  5 versions (3 374 bytes) and 5 markers under `test/ziplinks-8f1823b8/`;
+  the lifecycle rule for `test/` removes them. The CORS rule on the dev
+  worlds bucket stays set (the server sets it at each start).
 
 Open: **the relay is plain NATS over TCP**, not encrypted. The plan for
 external workers, and later the browser: NATS's WebSocket listener behind

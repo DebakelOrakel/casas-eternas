@@ -311,6 +311,17 @@
           "env": "CASAS_WORLD_KEEP_REVISIONS"
         },
         {
+          "name": "world.link-key",
+          "usage": "Path to the key (at least 32 random bytes) the dir backend signs its world links with. Without it a key is generated at startup, so links do not survive a restart.",
+          "env": "CASAS_WORLD_LINK_KEY"
+        },
+        {
+          "name": "world.read-link-ttl",
+          "default": "15m0s",
+          "usage": "How long a link to read a world's save or preview is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.",
+          "env": "CASAS_WORLD_READ_LINK_TTL"
+        },
+        {
           "name": "world.storage.dir.path",
           "default": "./data/worlds",
           "usage": "The directory the saved worlds live in (backend dir).",
@@ -528,6 +539,19 @@
       "env": "CASAS_WORLD_KEEP_REVISIONS",
       "default": "3",
       "usage": "How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "world.link-key",
+      "env": "CASAS_WORLD_LINK_KEY",
+      "usage": "Path to the key (at least 32 random bytes) the dir backend signs its world links with. Without it a key is generated at startup, so links do not survive a restart.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "world.read-link-ttl",
+      "env": "CASAS_WORLD_READ_LINK_TTL",
+      "default": "15m0s",
+      "usage": "How long a link to read a world's save or preview is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.",
       "command": "casas-eternas start"
     },
     {

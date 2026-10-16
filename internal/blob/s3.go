@@ -144,6 +144,31 @@ type CORSRule struct {
 	MaxAge         time.Duration
 }
 
+// ReadLinkCORS is the CORS rule of a bucket whose presigned GETs a browser
+// follows (the 302 of a read, DEC-0038 step 3; the artifacts bucket and,
+// since 2026-10-16, the worlds bucket). The allowed origin is "*", with no
+// credentials: a presigned GET is a capability URL (the right was checked
+// when it was issued, DEC-0038, fork 5), and anyone who holds it can use it
+// outside a browser, so a narrower origin protects nothing. "*" also covers
+// the `Origin: null` a browser sends after a redirect from a third origin
+// (the API on another host than the page), and it needs no setting.
+//
+// Every request header is allowed: the browser sends the read with the
+// session's Authorization header, and on the redirect to the bucket it
+// drops the header but still asks for it in the preflight (measured in
+// Safari 26.6, 2026-10-16: OPTIONS with Access-Control-Request-Headers:
+// authorization, then a GET without it). A rule that does not allow it
+// fails the read.
+func ReadLinkCORS() []CORSRule {
+	return []CORSRule{{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{http.MethodGet, http.MethodHead},
+		AllowedHeaders: []string{"*"},
+		ExposeHeaders:  []string{"ETag", "Content-Length"},
+		MaxAge:         time.Hour,
+	}}
+}
+
 // S3 is the backend for one bucket.
 type S3 struct {
 	client  *s3.Client

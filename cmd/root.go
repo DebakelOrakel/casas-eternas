@@ -40,6 +40,8 @@ const (
 	keyWorldType    = "world.storage.type"
 	keyWorldPath    = "world.storage.dir.path"
 	keyKeepRevs     = "world.keep-revisions"
+	keyWorldReadTTL = "world.read-link-ttl"
+	keyWorldLinkKey = "world.link-key"
 	keyArtsType     = "artifacts.storage.type"
 	keyArtsPath     = "artifacts.storage.dir.path"
 	keyArtsCap      = "artifacts.cap"
@@ -111,6 +113,8 @@ const (
 	textWorldType    = `The world store's backend: dir or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.`
 	textWorldPath    = `The directory the saved worlds live in (backend dir).`
 	textKeepRevs     = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
+	textWorldReadTTL = `How long a link to read a world's save or preview is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.`
+	textWorldLinkKey = `Path to the key (at least 32 random bytes) the dir backend signs its world links with. Without it a key is generated at startup, so links do not survive a restart.`
 	textArtsType     = `The artifact store's backend: dir or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.`
 	textArtsPath     = `The directory of the artifact store (backend dir).`
 	textArtsCap      = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
@@ -190,6 +194,8 @@ func init() {
 	StartCmd.Flags().String(keyWorldType, "dir", textWorldType)
 	StartCmd.Flags().String(keyWorldPath, "./data/worlds", textWorldPath)
 	StartCmd.Flags().Int(keyKeepRevs, 3, textKeepRevs)
+	StartCmd.Flags().Duration(keyWorldReadTTL, 15*time.Minute, textWorldReadTTL)
+	StartCmd.Flags().String(keyWorldLinkKey, "", textWorldLinkKey)
 	StartCmd.Flags().String(keyArtsType, "dir", textArtsType)
 	StartCmd.Flags().String(keyArtsPath, "./data/artifacts", textArtsPath)
 	StartCmd.Flags().String(keyArtsCap, "", textArtsCap)
@@ -213,6 +219,7 @@ func init() {
 		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd,
 		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthDir: StartCmd,
 		keyWorldType: StartCmd, keyWorldPath: StartCmd, keyKeepRevs: StartCmd,
+		keyWorldReadTTL: StartCmd, keyWorldLinkKey: StartCmd,
 		keyArtsType: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
 		keyArtsReadTTL: StartCmd, keyArtsWriteTTL: StartCmd, keyArtsLinkKey: StartCmd,
 		keyClientDir: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsDir: StartCmd,

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -194,4 +195,34 @@ func linkMAC(key []byte, method, objectKey, exp, length string) []byte {
 	m := hmac.New(sha256.New, key)
 	m.Write([]byte("casas-blob-link-v1\n" + method + "\n" + objectKey + "\n" + exp + "\n" + length))
 	return m.Sum(nil)
+}
+
+// Signed answers whether a request carries a link this signer made: a GET
+// (or HEAD, checked as a GET) or a PUT under the base whose signature
+// verifies for that method and for the path after the base. An expired link
+// of ours answers true too, so that the module's route can answer 410 and
+// not the gate 401 (a 401 would end the browser's session). A forged or
+// changed link answers false. The modules hand this to server.Gate, which
+// lets such a request through without credentials: the link is the
+// authorization. One implementation for every module that serves links
+// (artifacts, world).
+func (s *LinkSigner) Signed(r *http.Request) bool {
+	method := r.Method
+	switch method {
+	case http.MethodGet, http.MethodHead:
+		method = http.MethodGet
+	case http.MethodPut:
+	default:
+		return false
+	}
+	key, ok := strings.CutPrefix(r.URL.Path, s.base)
+	if !ok {
+		return false
+	}
+	q := r.URL.Query()
+	if _, has := q["sig"]; !has {
+		return false
+	}
+	_, err := s.Verify(method, key, q)
+	return err == nil || errors.Is(err, ErrLinkExpired)
 }

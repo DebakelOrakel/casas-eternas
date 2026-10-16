@@ -17,15 +17,36 @@ func newTestStore(t *testing.T) *Store {
 	return newTestStoreOn(t, testDir(t, t.TempDir()), 0)
 }
 
-// testDir opens a Dir at root, closed at the end of the test.
+// testDir opens a Dir at root that signs its links, as cmd/ opens it,
+// closed at the end of the test.
 func testDir(t *testing.T, root string) *blob.Dir {
 	t.Helper()
-	d, err := blob.OpenDir(root, nil)
+	d, err := blob.OpenDir(root, testSigner(t))
 	if err != nil {
 		t.Fatalf("OpenDir: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d
+}
+
+// testSigner signs the dir links with a fixed key.
+func testSigner(t *testing.T) *blob.LinkSigner {
+	t.Helper()
+	signer, err := blob.NewLinkSigner(LinkBase, uploadLimit, []byte("world-test-link-key-of-32-bytes!"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signer
+}
+
+// moduleOn is a module on `store` as New makes it: the read lifetime of
+// 15m and, on a Dir, its signer.
+func moduleOn(cfg Config, store *Store) *Module {
+	m := &Module{cfg: cfg, store: store, readTTL: 15 * time.Minute}
+	if d, ok := store.bucket.(signing); ok {
+		m.signer = d.Signer()
+	}
+	return m
 }
 
 // newTestStoreOn is a store on `bucket`. keepRevisions 0 (retain all) for

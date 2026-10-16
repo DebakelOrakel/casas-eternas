@@ -184,14 +184,16 @@ const documentLimit = 1 << 20
 // each is one GET.
 const indexParallelism = 16
 
-// BucketOptions are what the store asks of an s3 bucket: VERSIONING, because
+// BucketOptions are what the store asks of an s3 bucket. VERSIONING, because
 // the worlds are the only copy of what a user made. A delete or an overwrite
 // leaves the earlier version, and the identity may not delete a version
 // (deploy/aws/storage.yaml), so neither a bug nor a stolen key can destroy
-// a world for good. No CORS rule: the browser reads the zips and the
-// previews through this server, not by presigned links (DEC-0038, step 5).
+// a world for good. And CORS, because the browser follows the 302 of a zip
+// or preview read to the bucket's origin (blob.ReadLinkCORS, the same rule
+// as the artifacts bucket; since 2026-10-16, before that the server sent
+// the bytes itself).
 func BucketOptions() blob.OpenOptions {
-	return blob.OpenOptions{Versioning: true}
+	return blob.OpenOptions{Versioning: true, CORS: blob.ReadLinkCORS()}
 }
 
 // NewStore opens the store on `bucket` and builds the index, so a bucket
@@ -900,6 +902,38 @@ func (s *Store) ReadPreview(ctx context.Context, uid string) ([]byte, error) {
 		return nil, err
 	}
 	return raw, nil
+}
+
+// ZipLink returns a link to read the current revision's save, with `ttl`
+// to live, and the meta it was made from (its revision is the ETag of the
+// 302). A presigned GET on s3, the module's own signed link on dir
+// (blob.Dir.PresignGet). The right is the caller's to check first.
+func (s *Store) ZipLink(ctx context.Context, uid string, ttl time.Duration) (blob.Link, Meta, error) {
+	meta, err := s.Get(ctx, uid)
+	if err != nil {
+		return blob.Link{}, Meta{}, err
+	}
+	if meta.Revision < 1 {
+		return blob.Link{}, Meta{}, ErrNotFound
+	}
+	link, err := s.bucket.PresignGet(ctx, revKey(uid, meta.Revision, zipName), ttl)
+	if err != nil {
+		return blob.Link{}, Meta{}, err
+	}
+	return link, meta, nil
+}
+
+// PreviewLink returns a link to read the current revision's thumbnail, as
+// ZipLink. ErrNotFound when the revision has none.
+func (s *Store) PreviewLink(ctx context.Context, uid string, ttl time.Duration) (blob.Link, error) {
+	meta, err := s.Get(ctx, uid)
+	if err != nil {
+		return blob.Link{}, err
+	}
+	if !meta.HasPreview || meta.Revision < 1 {
+		return blob.Link{}, ErrNotFound
+	}
+	return s.bucket.PresignGet(ctx, revKey(uid, meta.Revision, previewName), ttl)
 }
 
 // treeRemover is the dir backend's path for what stays under {uid}/ after

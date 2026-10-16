@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -79,6 +81,7 @@ func TestLoginFollowsTheAuthTarget(t *testing.T) {
 	worldOnly := passwordConfig(t)
 	worldOnly.Auth.StateDir = ""
 	worldOnly.World.Storage = config.ObjectStorage{Type: "dir", Dir: &config.DirStorage{Path: t.TempDir()}}
+	worldOnly.World.ReadLinkTTL = 15 * time.Minute
 	modules, _, _, err = buildModules(context.Background(), config.Targets{config.TargetWorld: true}, worldOnly)
 	if err != nil {
 		t.Fatalf("world-only process: %v", err)
@@ -181,5 +184,94 @@ func TestServiceTokenRouteIsPublic(t *testing.T) {
 	gate(mux).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Errorf("the token route behind the gate = %d, want 200: %s", recorder.Code, recorder.Body)
+	}
+}
+
+// The gate lets the dir links of the world module through without
+// credentials, and only those (DEC-0038, fork 5; the world's since
+// 2026-10-16): a GET of the zip as ada answers 302 to a link under the
+// world's namespace, the link answers the bytes to no one in particular,
+// and a changed link meets the gate's 401. The artifact links keep passing
+// beside them (one predicate per module, joined in buildModules).
+func TestTheGateLetsTheWorldLinksThrough(t *testing.T) {
+	cfg := passwordConfig(t)
+	seed, err := user.NewRegistry(cfg.Auth.StateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Create("ada", "Pw12345-geheim"); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.World.Storage.Type = "dir"
+	cfg.World.Storage.Dir = &config.DirStorage{Path: t.TempDir()}
+	cfg.World.ReadLinkTTL = 15 * time.Minute
+	cfg.World.KeepRevisions = 3
+	modules, gate, _, err := buildModules(context.Background(), config.Targets{config.TargetAuth: true, config.TargetWorld: true}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeAll(t, modules)
+	mux := http.NewServeMux()
+	for _, m := range modules {
+		if err := m.Mount(mux); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := gate(mux)
+	serve := func(method, target, bearer string, body []byte) *httptest.ResponseRecorder {
+		var request *http.Request
+		if body != nil {
+			request = httptest.NewRequest(method, target, bytes.NewReader(body))
+		} else {
+			request = httptest.NewRequest(method, target, nil)
+		}
+		if bearer != "" {
+			request.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+	login := httptest.NewRequest(http.MethodPost, auth.Path, nil)
+	login.SetBasicAuth("ada", "Pw12345-geheim")
+	session := httptest.NewRecorder()
+	handler.ServeHTTP(session, login)
+	var token struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(session.Body.Bytes(), &token); err != nil || token.Token == "" {
+		t.Fatalf("login = %d %s", session.Code, session.Body)
+	}
+
+	const uid = "9f2c1b4e-7a30-4d55-8c11-2b6e5d0a1f83"
+	var save bytes.Buffer
+	zw := zip.NewWriter(&save)
+	f, _ := zw.Create("world.yaml")
+	_, _ = f.Write([]byte("apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: alpha\n  uid: " + uid + "\n"))
+	_ = zw.Close()
+	if got := serve(http.MethodPut, "/v1/worlds/"+uid, token.Token, save.Bytes()); got.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", got.Code, got.Body)
+	}
+	redirect := serve(http.MethodGet, "/v1/worlds/"+uid, token.Token, nil)
+	link := redirect.Header().Get("Location")
+	if redirect.Code != http.StatusFound || !strings.HasPrefix(link, "/v1/worlds/"+uid+"/rev/1/world.zip?") {
+		t.Fatalf("read = %d to %q, want 302 to the world's own link", redirect.Code, link)
+	}
+	if got := serve(http.MethodGet, link, "", nil); got.Code != http.StatusOK || !bytes.Equal(got.Body.Bytes(), save.Bytes()) {
+		t.Errorf("the link without credentials = %d, %d bytes; want 200 with the save", got.Code, got.Body.Len())
+	}
+	// With the session's header too, as a browser sends it on a same-origin
+	// redirect: the link decides, not the header.
+	if got := serve(http.MethodGet, link, token.Token, nil); got.Code != http.StatusOK {
+		t.Errorf("the link with credentials = %d, want 200", got.Code)
+	}
+	if got := serve(http.MethodGet, strings.Replace(link, "sig=", "sig=x", 1), "", nil); got.Code != http.StatusUnauthorized {
+		t.Errorf("a changed link without credentials = %d, want the gate's 401", got.Code)
+	}
+	if got := serve(http.MethodGet, "/v1/worlds/"+uid, "", nil); got.Code != http.StatusUnauthorized {
+		t.Errorf("the zip without credentials = %d, want 401", got.Code)
 	}
 }

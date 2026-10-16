@@ -225,6 +225,11 @@ func RequireDir(key, path string) error {
 type WorldConfig struct {
 	Storage       ObjectStorage `mapstructure:"storage"`
 	KeepRevisions int           `mapstructure:"keep-revisions"`
+	// The lifetime of the link a read of a zip or a preview is redirected
+	// to, and the file with the key the dir backend signs that link with
+	// (DEC-0038, fork 4: the same keys as artifacts', since 2026-10-16).
+	ReadLinkTTL time.Duration `mapstructure:"read-link-ttl"`
+	LinkKey     string        `mapstructure:"link-key"`
 }
 
 type ArtifactsConfig struct {
@@ -298,6 +303,9 @@ func (c Config) Validate() error {
 	}
 	if _, err := ParseByteSize(c.Artifacts.Cap); err != nil {
 		return fmt.Errorf("artifacts.cap: %w", err)
+	}
+	if c.World.ReadLinkTTL < 0 {
+		return fmt.Errorf("world.read-link-ttl: %v is negative", c.World.ReadLinkTTL)
 	}
 	if c.Artifacts.ReadLinkTTL < 0 {
 		return fmt.Errorf("artifacts.read-link-ttl: %v is negative", c.Artifacts.ReadLinkTTL)
