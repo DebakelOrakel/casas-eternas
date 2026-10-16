@@ -287,3 +287,10 @@ change.
 2026-10-16: BUILDING — the forks are decided in
 [decisions/object-storage.md](../decisions/object-storage.md) (DEC-0038);
 step 1 there (the configuration) is built. The provider is still open.
+
+2026-10-16: the blob leaf is built (DEC-0038, step 2; `internal/blob`),
+not used by a store yet. What was measured on AWS is in DEC-0038's
+status and next to the `aws` row in internal/blob/s3.go. One correction
+to the table above: in eu-central-2 a wrong region answers 400, not 301;
+the `x-amz-bucket-region` header is there either way, and the probe reads
+it.

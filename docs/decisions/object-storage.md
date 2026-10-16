@@ -215,3 +215,23 @@ on the others, the old keys refused, and the link keys of fork 4 read into
 the configuration (nothing uses them yet). The `s3` block is declared and
 checked; `type: s3` refuses to start as not implemented yet. Steps 2–4
 are open.
+
+2026-10-16: step 2, the blob leaf, is built (`internal/blob`), tested and
+not used yet: no store opens a bucket, and `type: s3` still refuses to
+start. The artifact store's `s3` backend with presigned GET moves to step
+3. The leaf has `Get`, `Put` (atomic, exact length), `Head`, `List`
+(paged, as an iterator), `Delete`, `PresignGet`, `PresignPut` and a
+conditional `Put` (`IfAbsent`: a hard link on `dir`, `If-None-Match: *` on
+a flavour that claims it). One key rule for both backends, checked before
+anything is signed or sent. The `dir` links are an HMAC-SHA256 over the
+method, the key, the expiry and (PUT) the length, checked against a list
+of keys. Measured against AWS (eu-central-2, the dev identity of
+deploy/aws/storage.yaml): the SDK's default checksums (CRC32) are
+accepted; `If-None-Match: *` answers 412; a request signed for another
+region answers 400 (not the documented 301, probably because eu-central-2
+is an opt-in region), and `x-amz-bucket-region` names the region in both
+cases; presigned PUT links carry no checksum, sign `Content-Length` and
+refuse another length (403); an expired link answers 403; the CORS rule
+and versioning are set as asked; new buckets block public access. The
+`ceph` row claims nothing yet: no cloudscale bucket exists, its wire test
+is skipped.
