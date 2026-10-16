@@ -1,0 +1,17 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-old-world-versions",
+      "Filter": { "Prefix": "" },
+      "Status": "Enabled",
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 30 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+    },
+    {
+      "ID": "remove-expired-delete-markers",
+      "Filter": { "Prefix": "" },
+      "Status": "Enabled",
+      "Expiration": { "ExpiredObjectDeleteMarker": true }
+    }
+  ]
+}

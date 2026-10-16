@@ -47,27 +47,43 @@ is taken, deploy with `BucketPrefix=casas-eternas-<something of yours>`.
 Presigned URLs signed with this user's long-term key may live up to
 7 days; the server keeps them to minutes (DES-0029).
 
-## Cleaning up after the wire tests (dev only)
+## Lifecycle rules for the worlds bucket
 
-The gated wire tests (`CASAS_TEST_S3_AWS=1`) write under the key prefix
-`test/`. On the worlds bucket the server's user may not delete an object
-version (by design), so every test object leaves noncurrent versions and
-delete markers. `test-lifecycle.json` lets S3 remove them: objects,
-noncurrent versions and unfinished uploads under `test/` after one day,
-then the delete markers that no version is left behind. It touches nothing outside `test/`.
+The worlds bucket is versioned, and the server's user may not delete an
+object version (by design): a pruned revision or a deleted world stays as a
+noncurrent version, and a delete leaves a delete marker. Without a rule
+they stay forever and take space. One rule set per installation:
 
-It needs an administrator (the server's user may not set a lifecycle rule
-on the worlds bucket, and should not):
+- `worlds-lifecycle.json` (the public installation): noncurrent versions
+  expire 30 days after they became noncurrent, so a pruned revision or a
+  deleted world can be recovered for 30 days; delete markers with no
+  version left are removed; unfinished multipart uploads go after 7 days.
+- `dev-worlds-lifecycle.json` (dev): the same, plus everything under
+  `test/` (where the gated wire tests write) after one day.
+
+A put REPLACES the bucket's whole lifecycle configuration, so each bucket
+gets exactly one of the two files. Where rules overlap (`test/` on dev),
+S3 applies the shorter expiry.
+
+The bucket must exist first (the server creates it at its first start with
+`world.storage.type: s3`). It needs an administrator: the server's user may
+not set a lifecycle rule on the worlds bucket, and should not.
 
 ```sh
+# public
+aws s3api put-bucket-lifecycle-configuration --profile sfe-admin \
+  --region eu-central-2 --bucket casas-eternas-public-worlds \
+  --lifecycle-configuration file://deploy/aws/worlds-lifecycle.json
+
+# dev
 aws s3api put-bucket-lifecycle-configuration --profile sfe-admin \
   --region eu-central-2 --bucket casas-eternas-dev-worlds \
-  --lifecycle-configuration file://deploy/aws/test-lifecycle.json
+  --lifecycle-configuration file://deploy/aws/dev-worlds-lifecycle.json
+
+# check
 aws s3api get-bucket-lifecycle-configuration --profile sfe-admin \
-  --region eu-central-2 --bucket casas-eternas-dev-worlds
+  --region eu-central-2 --bucket <bucket>
 ```
 
-Lifecycle rules run about once a day, so leftovers can stay up to two days.
-Never put this rule on the public installation's worlds bucket: real worlds
-there must not expire (they live outside `test/`, but the rule has no
-reason to be there).
+Lifecycle rules run about once a day, so an expiry can take a day longer
+than its number of days.
