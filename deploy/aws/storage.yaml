@@ -1,0 +1,117 @@
+# The object storage identities of ONE casas-eternas installation on AWS
+# (docs/design/object-storage.md, DES-0029).
+#
+# One IAM user for the installation, with ONE policy whose rights are
+# split per bucket: the worlds bucket and the artifacts bucket each get
+# what their store needs. A second user only pays once the targets run in
+# separate processes (then the artifacts process holds no key for the
+# worlds); while one process runs both, it would hold both keys anyway.
+#
+# The template does NOT create the buckets. Each user may create its OWN
+# bucket (s3:CreateBucket on those two names), so the server can make them
+# at startup when they are missing. Nothing here may delete a bucket, and
+# no object version may be deleted on the worlds bucket: with versioning
+# on, a delete leaves a delete marker and the world stays recoverable.
+#
+# The user lives under the IAM path /casas-eternas/ and gets no access key
+# here: a key made by CloudFormation would sit in the stack's outputs. Make
+# the key afterwards with the CLI (see deploy/aws/README.md).
+#
+#   aws cloudformation deploy \
+#     --template-file deploy/aws/storage.yaml \
+#     --stack-name casas-eternas-public-storage \
+#     --parameter-overrides Installation=public \
+#     --capabilities CAPABILITY_NAMED_IAM \
+#     --region eu-central-2
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: casas-eternas object storage identity for one installation
+
+Parameters:
+  Installation:
+    Type: String
+    Description: The installation's name, part of every bucket and user name (e.g. public, dev).
+    AllowedPattern: '[a-z0-9-]{1,20}'
+  BucketPrefix:
+    Type: String
+    Default: casas-eternas
+    Description: >-
+      The first part of the bucket names. Bucket names are global across all
+      of AWS; if casas-eternas-<installation>-worlds is taken, add something
+      of your own (e.g. casas-eternas-<account id>).
+    AllowedPattern: '[a-z0-9-]{3,30}'
+
+Resources:
+  StoragePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub casas-eternas-${Installation}-storage
+      Path: /casas-eternas/
+      Description: !Sub The world and artifact stores of ${Installation}, each on its own bucket.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: WorldsBucket
+            Effect: Allow
+            Action:
+              - s3:CreateBucket
+              - s3:ListBucket
+              - s3:ListBucketVersions
+              - s3:GetBucketLocation
+              - s3:GetBucketVersioning
+              - s3:PutBucketVersioning
+              - s3:GetBucketPublicAccessBlock
+              - s3:PutBucketPublicAccessBlock
+              - s3:GetEncryptionConfiguration
+              - s3:GetBucketCORS
+              - s3:PutBucketCORS
+            Resource: !Sub arn:aws:s3:::${BucketPrefix}-${Installation}-worlds
+          - Sid: WorldsObjects
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:AbortMultipartUpload
+              - s3:ListMultipartUploadParts
+            Resource: !Sub arn:aws:s3:::${BucketPrefix}-${Installation}-worlds/*
+          - Sid: ArtifactsBucket
+            Effect: Allow
+            Action:
+              - s3:CreateBucket
+              - s3:ListBucket
+              - s3:GetBucketLocation
+              - s3:GetBucketPublicAccessBlock
+              - s3:PutBucketPublicAccessBlock
+              - s3:GetEncryptionConfiguration
+              - s3:GetBucketCORS
+              - s3:PutBucketCORS
+              - s3:GetLifecycleConfiguration
+              - s3:PutLifecycleConfiguration
+            Resource: !Sub arn:aws:s3:::${BucketPrefix}-${Installation}-artifacts
+          - Sid: ArtifactsObjects
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:AbortMultipartUpload
+              - s3:ListMultipartUploadParts
+            Resource: !Sub arn:aws:s3:::${BucketPrefix}-${Installation}-artifacts/*
+
+  User:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub casas-eternas-${Installation}
+      Path: /casas-eternas/
+      ManagedPolicyArns:
+        - !Ref StoragePolicy
+
+Outputs:
+  WorldsBucket:
+    Value: !Sub ${BucketPrefix}-${Installation}-worlds
+  ArtifactsBucket:
+    Value: !Sub ${BucketPrefix}-${Installation}-artifacts
+  User:
+    Value: !Ref User

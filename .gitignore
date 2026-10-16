@@ -60,3 +60,7 @@ client/scripts/.docsite.mjs
 # The job worker bundled for Node. Built by `make worker` (and by the
 # Dockerfile itself), so a tracked copy is only ever stale.
 job-worker.mjs
+
+# Local credentials for development (e.g. the dev object storage key pair).
+# Read from files by path, never committed.
+dev/secrets/

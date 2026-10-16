@@ -68,8 +68,16 @@ a bucket and moves objects in and out: `Get`, `Put`, `Head`, `List(prefix)`,
 provider has it. Each store keeps its layout private and talks to the leaf;
 the `dir` backend gets the same interface, so a store has one code path.
 
-What the leaf does not do: create buckets, set policies or lifecycle rules.
-That is the operator's work (deployment manifests, the provider's console).
+**Its own bucket, made when missing.** At startup `Open` creates the
+module's bucket if it is not there, with the settings that store needs
+(versioning for worlds; CORS for presigned GETs). The identity may create
+exactly that one bucket name and nothing else, may not delete a bucket,
+and the worlds identity may not delete an object version (so a delete
+leaves a recoverable marker). What the leaf does not do: write IAM users,
+policies or keys. That is the operator's work (deploy/aws/storage.yaml for
+AWS: one user per installation under the IAM path `/casas-eternas/`,
+its rights split per bucket; a user per store once the targets run in
+separate processes).
 
 **The providers' differences as a table, not as two implementations.**
 Every difference is one field of a capability row per provider; adding a
@@ -179,11 +187,65 @@ for a link before every upload would add a round trip per tile. So:
 
 ## Configuration
 
-An `s3` block in the union, beside `dir`: `bucket`, `prefix`, `flavour`
-(`ceph` | `aws`), `region`, `endpoint` (ceph only), and an expiry for
-presigned links. These are new flags (`--artifacts.storage.s3.bucket`, …)
-and are proposed to the user before they are written (the CLI is a public
-surface). One vocabulary: key = flag = CASAS_* variable.
+Agreed with the user on 2026-10-16 (to be written into the decision when
+this is built):
+
+**Only the object stores keep a `storage` union.** `world.storage` and
+`artifacts.storage` choose `dir` or `s3`. **`type` is required** as soon as
+an `s3` block is there (`type: s3`); no backend is inferred from a block,
+so a `dir.path` that comes only from its flag default can never be
+mistaken for a choice, and a `dir` block beside `type: s3` is refused.
+
+**The modules that need a filesystem get a plain directory, `state-dir`,**
+not a `storage` union: their shape must not suggest that S3 is possible.
+
+| section | today | becomes | why |
+|---|---|---|---|
+| world | `world.storage.dir.path` | `world.storage` (`dir` \| `s3`, `type` required) | files and objects |
+| artifacts | `artifacts.storage.dir.path` | `artifacts.storage` (`dir` \| `s3`, `type` required) | files and objects |
+| jobs | `jobs.storage.dir.path` | `jobs.state-dir` | jobs.db (bbolt): file locks, mmap |
+| auth | `auth.storage.dir.path` | `auth.state-dir` | auth.db (bbolt) |
+| relay | `relay.storage.dir.path` | `relay.state-dir` | the JetStream store |
+| client | `client.storage.dir.path` | `client.content-dir` | static files (the bundle); with a CDN served outside the server anyway |
+| docs | `docs.storage.dir.path` | `docs.content-dir` | static files (the doc site) |
+
+The renames change the CLI, the CASAS_* variables and the manifests (a
+public surface; agreed with the user, 2026-10-16). **A hard break:** the
+old keys are refused at start with a message that names the new key; there
+is no transition release in which both are read.
+
+**The `s3` block** (proposed names; they become flags and variables, one
+vocabulary): `flavour` (`ceph` | `aws`), `region`, `endpoint` (ceph only;
+refused for aws), `bucket`, `prefix` (for a shared bucket), `access-key-file`,
+`secret-key-file` (paths, never values in the file), and for artifacts
+`presign-read` and `presign-write` (the expiries above).
+
+## Without an external S3
+
+S3 is not a requirement. An embedded S3 server in the binary was weighed
+and refused: it would offer the S3 protocol to the outside — Signature V4
+verification (canonical requests, presigned query parameters, streaming
+chunk signatures), multipart, listing semantics, ETags, ranges, the XML
+errors the SDKs expect, a key administration of its own — a second attack
+surface of thousands of lines, for something the clients do not need.
+
+What the clients and workers need is only links. So:
+
+- **`dir` stays a full backend** behind the same blob interface as `s3`.
+- **Presign for `dir` too:** the server signs its own links (e.g.
+  `/v1/artifacts/blob/<key>?exp=…&sig=…`), an HMAC over the method, the key,
+  the expiry (and for a PUT the length), and serves them itself. To a client
+  or a worker it looks the same as S3: a short-lived link for a GET or a PUT;
+  the rule for expired links holds unchanged.
+- **The checks:** a signing key of its own (rotatable: two keys valid for a
+  change-over), a constant-time compare, method and key bound into the
+  signature, the expiry, keys checked against our key format (no `..`, no
+  path traversal), a size limit on uploads; the right is checked when the
+  link is issued, as with S3. Some 200–400 lines and their tests.
+- **The operator chooses:** `dir` locally and for a small installation (one
+  binary, no external service, one process per directory); `s3` for the
+  public installation (the bytes pass by the server, several replicas
+  become possible).
 
 ## The provider (open)
 
