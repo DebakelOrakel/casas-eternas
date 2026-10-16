@@ -56,26 +56,28 @@ export interface StorageUsage {
 }
 
 // The logical identity of one bake — what `resolve` translates into storage.
-// TWO world components on purpose, one per identity (world/identity.ts):
-// `worldUid` is the stable "which world do you own" key, `worldId` the
-// content hash of the exact terrain that actually determines the bytes.
+// The CONTENT only (docs/decisions/artifacts-by-content.md, DEC-0039):
+// `worldId` is the hash of the exact terrain (world/identity.ts), and with
+// the pipeline version and the stage it determines the bytes. So one
+// artifact serves every world with that terrain — a copy of a template
+// finds the template's at once. Which world a reader reads through is the
+// server's question (the worlds' terrain ids), not part of the key.
 export interface ArtifactKey {
-  worldUid: string
   worldId: string
   pipelineVersion: string
   stage: string
 }
 
-// Sentinel uid for worlds that have none — never saved, or a save too old to
-// carry one where the reader deliberately does not derive it (see
-// loadWorldInputs). Such artifacts never map to a deletable world; re-saving
-// the world heals the split.
-export const NO_UID = 'no-uid'
+// The one place a key is built, so every caller builds it the same way.
+export function artifactKey(worldId: string, pipelineVersion: string, stage: string): ArtifactKey {
+  return { worldId, pipelineVersion, stage }
+}
 
-// The one place the sentinel is applied, so every caller builds keys the
-// same way.
-export function artifactKey(worldUid: string, worldId: string, pipelineVersion: string, stage: string): ArtifactKey {
-  return { worldUid: worldUid || NO_UID, worldId, pipelineVersion, stage }
+// Whether a meta.json's key is of the format before DEC-0039, which named
+// the world's uid too: such an entry is not read (the local stores drop it,
+// the server takes it for junk).
+export function isOldKey(key: unknown): boolean {
+  return typeof key === 'object' && key !== null && 'worldUid' in key
 }
 
 // What `resolve` hands back: where the artifact lives (per tier — the tiered
@@ -118,7 +120,6 @@ export interface ArtifactStore {
 export interface StoredArtifact {
   artifactUid: string
   bytes: number
-  worldUid: string
   worldId: string
   pipelineVersion: string
   stage: string

@@ -15,9 +15,10 @@ import type { ArtifactHandle, ArtifactKey, ArtifactStore } from './ArtifactStore
 //            union view a reader needs: what it can get from HERE, wherever
 //            each byte happens to live.
 //   READ     local, then remote, and a remote hit is written back locally.
-//   WRITE    local first and awaited, remote afterwards and NOT awaited. A
-//            bake that finished must be on this machine before the user does
-//            anything else; pushing it onward is courtesy to the next reader.
+//   WRITE    local only. The browser does not upload (DEC-0039, fork 2):
+//            on the server, only a job worker writes, as the server keys an
+//            artifact by its content and must trust that the bytes are the
+//            key's. A server answers a browser's write with 403.
 //   MISS     is never an error. Every failure here has the same consequence,
 //            which is to compute it again. That includes a remote tier that
 //            does not answer: the HTTP store throws for it
@@ -59,7 +60,9 @@ export function createTieredArtifactStore(local: ArtifactStore, remote: Artifact
   return {
     async resolve(key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null> {
       const localHandle = await local.resolve(key, create)
-      const remoteHandle = (await useRemote()) ? await remoteOr('resolve', null, () => remote.resolve(key, create)) : null
+      // The remote is read-only here (WRITE): it is asked whether the key is
+      // there, never to mint it.
+      const remoteHandle = (await useRemote()) ? await remoteOr('resolve', null, () => remote.resolve(key, false)) : null
       if (!localHandle && !remoteHandle) return null
       const files = [...new Set([...(localHandle?.files ?? []), ...(remoteHandle?.files ?? [])])].sort()
       return { key, local: localHandle?.local, remote: remoteHandle?.remote, files }
@@ -88,14 +91,8 @@ export function createTieredArtifactStore(local: ArtifactStore, remote: Artifact
     },
 
     async write(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
-      const stored = handle.local ? await local.write(handle, name, bytes) : false
-      if (handle.remote && (await useRemote())) {
-        // Not awaited: a 17 MB upload must not sit between the user and the
-        // world they just baked. Failing is fine — the next machine bakes it,
-        // which is exactly what would have happened without a server.
-        void remoteOr('write', false, () => remote.write(handle, name, bytes))
-      }
-      return stored
+      if (!handle.local) handle.local = (await local.resolve(handle.key, true))?.local
+      return handle.local ? local.write(handle, name, bytes) : false
     },
   }
 }

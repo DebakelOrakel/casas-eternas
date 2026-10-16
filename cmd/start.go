@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -251,7 +252,14 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		m, err := artifacts.New(ctx, artifacts.Config{All: cfg, Bucket: bucket, Identity: caller, WorldAccess: rankWorld})
+		lookup, err := artifactWorlds(caller, worldModule, authMode, cfg.Global.Services.Worlds)
+		if err != nil {
+			if c, ok := bucket.(io.Closer); ok {
+				_ = c.Close()
+			}
+			return nil, nil, nil, err
+		}
+		m, err := artifacts.New(ctx, artifacts.Config{All: cfg, Bucket: bucket, Identity: caller, WorldAccess: lookup.world, TerrainAccess: lookup.terrain, AddTerrain: lookup.addTerrain})
 		if err != nil {
 			if c, ok := bucket.(io.Closer); ok {
 				_ = c.Close()
@@ -300,9 +308,22 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	// stops being exempt without anyone deciding that it should.
 	// The reads the world module ranks for a caller without credentials
 	// (templates, world.AnonymousReads); none where it does not run here.
-	var anonymousReads func(*http.Request) bool
+	// The artifacts module's too: the artifacts of a template are readable
+	// by everyone (DEC-0039, artifacts.AnonymousReads).
+	var readers []func(*http.Request) bool
 	if worldModule != nil {
-		anonymousReads = world.AnonymousReads
+		readers = append(readers, world.AnonymousReads)
+	}
+	if artifactsModule != nil {
+		readers = append(readers, artifacts.AnonymousReads)
+	}
+	anonymousReads := func(r *http.Request) bool {
+		for _, reads := range readers {
+			if reads(r) {
+				return true
+			}
+		}
+		return false
 	}
 	// The requests that carry their own right: the dir backend's signed
 	// links of each module that runs here (DEC-0038, fork 5). Each module
@@ -459,7 +480,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		bcfg.ArtifactPresent = func(ctx context.Context, keys []jobs.ArtifactKey) []bool {
 			lookup := make([]artifacts.Key, len(keys))
 			for i, key := range keys {
-				lookup[i] = artifacts.Key{WorldUID: key.WorldUID, WorldID: key.WorldID, PipelineVersion: key.PipelineVersion, Stage: key.Stage}
+				lookup[i] = artifacts.Key{WorldID: key.WorldID, PipelineVersion: key.PipelineVersion, Stage: key.Stage}
 			}
 			whole, err := store.Whole(ctx, lookup)
 			if err != nil {
@@ -536,6 +557,126 @@ func worldRanking(resolver *identity.Resolver, worldModule *world.Module, mode c
 		return func(context.Context, string, string) (bool, access.Level) { return true, access.Admin }, nil
 	}
 	return nil, fmt.Errorf("a checking server needs a world source to rank callers: select the world target too, or set global.services.worlds")
+}
+
+// worldLookup is what the artifacts module asks of the world module
+// (artifacts.Config, DEC-0039): a world's rank and terrain ids, a
+// terrain's rank, and a job's report of a terrain.
+type worldLookup struct {
+	world      func(ctx context.Context, uid, bearer string) (bool, access.Level, []string)
+	terrain    func(ctx context.Context, worldID, bearer string) (access.Level, bool)
+	addTerrain func(ctx context.Context, uid, worldID, bearer string) error
+}
+
+// artifactWorlds builds the artifacts module's worldLookup the way
+// worldRanking builds the ranking: closures over the co-resident world
+// module, HTTP calls to global.services.worlds (whose capability
+// worldRanking has checked already, as the artifacts target builds it
+// too), or the local-mode short circuit, which ranks Admin and records
+// nothing.
+func artifactWorlds(resolver *identity.Resolver, worldModule *world.Module, mode config.AuthMode, servicesWorlds string) (worldLookup, error) {
+	if worldModule != nil {
+		m := worldModule
+		callerOf := func(bearer string) (string, bool) {
+			callerID, admin := resolver.ResolveBearer(bearer)
+			if !resolver.ChecksIdentity() {
+				admin = true
+			}
+			return callerID, admin
+		}
+		return worldLookup{
+			world: func(ctx context.Context, uid, bearer string) (bool, access.Level, []string) {
+				callerID, admin := callerOf(bearer)
+				exists, level := m.AccessFor(ctx, uid, callerID, admin)
+				return exists, level, m.Terrains(ctx, uid)
+			},
+			terrain: func(ctx context.Context, worldID, bearer string) (access.Level, bool) {
+				callerID, admin := callerOf(bearer)
+				return m.TerrainAccess(ctx, worldID, callerID, admin)
+			},
+			// The artifacts module checked the job token; the world module is
+			// in this process, so nothing is asked again.
+			addTerrain: func(ctx context.Context, uid, worldID, _ string) error {
+				return m.AddTerrain(ctx, uid, worldID)
+			},
+		}, nil
+	}
+	if servicesWorlds != "" {
+		base := strings.TrimRight(servicesWorlds, "/") + server.APIPrefix + "/worlds"
+		client := &http.Client{Timeout: 10 * time.Second}
+		// call sends one request with the caller's own Authorization and
+		// decodes a 200 into `into`; the status otherwise, 0 when the peer
+		// did not answer (logged: it must not read as a missing world).
+		call := func(ctx context.Context, method, url, bearer string, body any, into any) int {
+			var reader io.Reader
+			if body != nil {
+				raw, err := json.Marshal(body)
+				if err != nil {
+					return 0
+				}
+				reader = bytes.NewReader(raw)
+			}
+			request, err := http.NewRequestWithContext(ctx, method, url, reader)
+			if err != nil {
+				return 0
+			}
+			if bearer != "" {
+				request.Header.Set("Authorization", bearer)
+			}
+			if body != nil {
+				request.Header.Set("Content-Type", "application/json")
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				slog.Warn("world service unreachable", "base", base, "err", err)
+				return 0
+			}
+			defer response.Body.Close()
+			if response.StatusCode == http.StatusOK && into != nil {
+				if json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(into) != nil {
+					return 0
+				}
+			}
+			return response.StatusCode
+		}
+		return worldLookup{
+			world: func(ctx context.Context, uid, bearer string) (bool, access.Level, []string) {
+				var meta struct {
+					CallerLevel string   `json:"callerLevel"`
+					Terrains    []string `json:"terrains"`
+				}
+				if call(ctx, http.MethodGet, base+"/"+url.PathEscape(uid)+"/meta", bearer, nil, &meta) != http.StatusOK {
+					return false, access.None, nil
+				}
+				return true, access.LevelFromString(meta.CallerLevel), meta.Terrains
+			},
+			terrain: func(ctx context.Context, worldID, bearer string) (access.Level, bool) {
+				var answer struct {
+					CallerLevel string `json:"callerLevel"`
+					Shared      bool   `json:"shared"`
+				}
+				if call(ctx, http.MethodGet, base+"/terrain-access?worldId="+url.QueryEscape(worldID), bearer, nil, &answer) != http.StatusOK {
+					return access.None, false
+				}
+				return access.LevelFromString(answer.CallerLevel), answer.Shared
+			},
+			addTerrain: func(ctx context.Context, uid, worldID, bearer string) error {
+				status := call(ctx, http.MethodPost, base+"/"+url.PathEscape(uid)+"/terrains", bearer, map[string]string{"worldId": worldID}, nil)
+				if status != http.StatusNoContent {
+					return fmt.Errorf("the world service answered %d", status)
+				}
+				return nil
+			},
+		}, nil
+	}
+	if !mode.ChecksIdentity() {
+		return worldLookup{
+			world:      func(context.Context, string, string) (bool, access.Level, []string) { return true, access.Admin, nil },
+			terrain:    func(context.Context, string, string) (access.Level, bool) { return access.Admin, false },
+			addTerrain: func(context.Context, string, string, string) error { return nil },
+		}, nil
+	}
+	return worldLookup{}, fmt.Errorf("a checking server needs a world source to rank callers: select the world target too, or set global.services.worlds")
 }
 
 // requireCapability refuses to start against a peer that does not run the

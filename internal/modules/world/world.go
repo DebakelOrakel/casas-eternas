@@ -12,6 +12,7 @@ package world
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -149,6 +150,10 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST /v1/worlds/{uid}/copy", m.handleCopy)
 	mux.HandleFunc("PUT /v1/worlds/{uid}/template", m.handleTemplate)
 	mux.HandleFunc("DELETE /v1/worlds/{uid}/template", m.handleTemplate)
+	// The two routes a world-less artifacts target asks (DEC-0039): the
+	// caller's level on a terrain, and a job worker's report of one.
+	mux.HandleFunc("GET /v1/worlds/terrain-access", m.handleTerrainAccess)
+	mux.HandleFunc("POST /v1/worlds/{uid}/terrains", m.handleAddTerrain)
 	// The dir backend's own links (LinkBase). Not mounted on s3: the
 	// provider serves its links.
 	if m.signer != nil {
@@ -182,7 +187,10 @@ func AnonymousReads(r *http.Request) bool {
 		return false
 	}
 	path := r.URL.Path
-	if path == "/v1/worlds" {
+	// The terrain's level: an anonymous caller reads the artifacts of a
+	// template (DEC-0039, fork 4), and a world-less artifacts target asks
+	// here for it.
+	if path == "/v1/worlds" || path == "/v1/worlds/terrain-access" {
 		return true
 	}
 	rest, ok := strings.CutPrefix(path, "/v1/worlds/")
@@ -237,6 +245,39 @@ func (m *Module) AccessFor(ctx context.Context, uid, callerID string, admin bool
 		return true, access.None
 	}
 	return true, grants.LevelOf(callerID)
+}
+
+// TerrainAccess answers the caller's highest level over the worlds whose
+// terrain ids hold `worldID` (Meta.Terrains), and whether more than one
+// world holds it — what the artifacts module needs to rank a read or a
+// removal of an artifact (DEC-0039, forks 4 and 6). A terrain no world
+// holds ranks nobody, the admin included: its artifacts are reachable
+// only as the operator's (the artifacts module checks that first).
+func (m *Module) TerrainAccess(ctx context.Context, worldID, callerID string, admin bool) (level access.Level, shared bool) {
+	uids := m.store.WithTerrain(worldID)
+	for _, uid := range uids {
+		if _, l := m.AccessFor(ctx, uid, callerID, admin); l > level {
+			level = l
+		}
+	}
+	return level, len(uids) > 1
+}
+
+// Terrains answers a world's terrain ids (Meta.Terrains); nil for a world
+// that is not there.
+func (m *Module) Terrains(ctx context.Context, uid string) []string {
+	meta, err := m.store.Get(ctx, uid)
+	if err != nil {
+		return nil
+	}
+	return meta.Terrains
+}
+
+// AddTerrain records a terrain id a job worker reports for its world
+// (Store.AddTerrains). The caller (cmd/'s closure, or handleAddTerrain)
+// has checked that the report comes from a job of that world.
+func (m *Module) AddTerrain(ctx context.Context, uid, worldID string) error {
+	return m.store.AddTerrains(ctx, uid, worldID)
 }
 
 // callerOf resolves the request once for the checks: in the local mode the
@@ -546,7 +587,7 @@ func (m *Module) handleCopy(w http.ResponseWriter, r *http.Request) {
 	if m.refuseJob(w, r) || !m.gate(w, r, source, access.ActionRead) {
 		return
 	}
-	data, _, err := m.store.ReadCurrent(r.Context(), source)
+	data, sourceMeta, err := m.store.ReadCurrent(r.Context(), source)
 	if err != nil {
 		respondStoreError(w, err)
 		return
@@ -569,9 +610,68 @@ func (m *Module) handleCopy(w http.ResponseWriter, r *http.Request) {
 		respondStoreError(w, err)
 		return
 	}
+	// The same terrain by construction, so the copy reads the source's
+	// artifacts at once (DEC-0039, fork 3).
+	if len(sourceMeta.Terrains) > 0 {
+		if err := m.store.AddTerrains(r.Context(), uid, sourceMeta.Terrains...); err != nil {
+			slog.Warn("world copied without its terrain ids; its first job records them", "uid", uid, "err", err)
+		} else if meta, err = m.store.Get(r.Context(), uid); err != nil {
+			respondStoreError(w, err)
+			return
+		}
+	}
 	slog.Info("world copied", "uid", uid, "from", source, "bytes", meta.Size)
 	w.Header().Set("ETag", etag(meta.Revision))
 	httpjson.Write(w, http.StatusCreated, meta)
+}
+
+// handleTerrainAccess answers TerrainAccess for the caller:
+// `?worldId=` → {callerLevel, shared}. A terrain the caller cannot read
+// answers "none", not 404: the answer is a rank, as the meta's callerLevel
+// is. `shared` says one bit about worlds the caller may not see (that
+// another world holds the terrain); it is what a removal must know.
+func (m *Module) handleTerrainAccess(w http.ResponseWriter, r *http.Request) {
+	worldID := r.URL.Query().Get("worldId")
+	if !ValidTerrain(worldID) {
+		httpjson.ClientError(w, http.StatusBadRequest, "worldId must be a terrain id")
+		return
+	}
+	caller, admin := m.callerOf(r)
+	level, shared := m.TerrainAccess(r.Context(), worldID, caller, admin)
+	if level < access.Viewer {
+		shared = false
+	}
+	httpjson.Write(w, http.StatusOK, struct {
+		CallerLevel string `json:"callerLevel"`
+		Shared      bool   `json:"shared"`
+	}{level.String(), shared})
+}
+
+// handleAddTerrain records a terrain id of a world: `{worldId}`. Only a job
+// token for that world (or the operator) may: the worker derived the id
+// from the world's stored save, which is what makes the record
+// trustworthy (DEC-0039, fork 3). Anyone else gets 403; the answer does
+// not look at the world, so it says nothing about whether one exists.
+func (m *Module) handleAddTerrain(w http.ResponseWriter, r *http.Request) {
+	uid := r.PathValue("uid")
+	_, jobWorld, job := m.cfg.Identity.JobToken(r)
+	_, admin := m.callerOf(r)
+	if !admin && (!job || jobWorld != uid) {
+		httpjson.ClientError(w, http.StatusForbidden, "only a job of this world reports its terrain")
+		return
+	}
+	var request struct {
+		WorldID string `json:"worldId"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&request); err != nil || !ValidTerrain(request.WorldID) {
+		httpjson.ClientError(w, http.StatusBadRequest, "expected {worldId}")
+		return
+	}
+	if err := m.store.AddTerrains(r.Context(), uid, request.WorldID); err != nil {
+		respondStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleTemplate sets (PUT) or removes (DELETE) the template mark — the
@@ -637,6 +737,8 @@ func respondStoreError(w http.ResponseWriter, err error) {
 		httpjson.ClientError(w, http.StatusConflict, "world already exists; send If-Match with its revision to update it")
 	case errors.Is(err, ErrNoGrants):
 		httpjson.ClientError(w, http.StatusConflict, "world has no grants yet (it predates them); give it an owner first")
+	case errors.Is(err, ErrTooManyTerrains):
+		httpjson.ClientError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrRevisionMismatch):
 		// 412 is what RFC 9110 specifies for a failed If-Match. The plan
 		// originally said 409; that is the code for the case above.

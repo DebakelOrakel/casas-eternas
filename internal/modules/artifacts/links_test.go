@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob/blobtest"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
@@ -25,8 +24,7 @@ import (
 // returns the link a read of it is redirected to.
 func linkedArtifact(t *testing.T) (*Module, *http.ServeMux, string) {
 	t.Helper()
-	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil),
-		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	uid, _ := resolve(t, mux, true)
 	if got := do(mux, http.MethodPut, "/v1/artifacts/"+uid+"/elevation.f32", "raster-bytes").Code; got != http.StatusNoContent {
 		t.Fatalf("put = %d", got)
@@ -191,13 +189,12 @@ func TestS3ReadRedirectsToAPresignedGet(t *testing.T) {
 	if fake.CORS("artifacts") == "" {
 		t.Error("the bucket's CORS rule was not set")
 	}
-	m, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil),
-		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	m, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	if m.signer != nil {
 		t.Error("an s3 module signs links of its own")
 	}
 
-	body := `{"worldUid":"` + key.WorldUID + `","worldId":"` + key.WorldID + `","pipelineVersion":"` + key.PipelineVersion + `","stage":"` + key.Stage + `"}`
+	body := `{"worldId":"` + key.WorldID + `","pipelineVersion":"` + key.PipelineVersion + `","stage":"` + key.Stage + `"}`
 	if response := do(mux, http.MethodPost, "/v1/artifacts/resolve", body); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), uid) {
 		t.Fatalf("resolve from the listing = %d %s", response.Code, response.Body)
 	}

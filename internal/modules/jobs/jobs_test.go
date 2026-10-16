@@ -237,9 +237,10 @@ func TestEnqueueAfterCloseAnswers503(t *testing.T) {
 	}
 }
 
-// The rule the whole check exists for: editor and up commission bakes, and
-// the refusal SHAPE follows the visibility rule — below viewer the world is
-// invisible (404), only a readable world distinguishes 403.
+// The rule the whole check exists for: every signed-in caller who may read
+// the world orders bakes (DEC-0039, fork 5), and the refusal SHAPE follows
+// the visibility rule — below viewer the world is invisible (404). A job
+// token orders nothing (403, before it is ranked).
 func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
@@ -260,24 +261,24 @@ func TestLevelsAreEnforcedWhenIdentityIsChecked(t *testing.T) {
 	worlds.set(testUID, "Bearer "+editor, access.Editor)
 	worlds.set(testUID, "Bearer "+viewer, access.Viewer)
 
-	// Below viewer the world does not exist for you — including a bake
-	// token, which is what keeps a leaked job token from ordering more
-	// bakes: it ranks as nobody.
+	// Below viewer the world does not exist for you.
 	for _, c := range []struct{ name, token string }{
 		{"no credentials", ""},
 		{"nonsense", "not-a-valid-token"},
 		{"a stranger's session", issue("eve", token.AudienceSession)},
-		{"a bake token", issue("ada", token.JobAudience("v4-abc"))},
 	} {
 		if got := post(m, testUID, `{"stage":1}`, c.token).Code; got != http.StatusNotFound {
 			t.Errorf("%s = %d, want 404", c.name, got)
 		}
 	}
+	// A bake token: what keeps a leaked job token from ordering more bakes.
+	if got := post(m, testUID, `{"stage":1}`, issue("ada", token.JobAudience("v4-abc"))).Code; got != http.StatusForbidden {
+		t.Errorf("a bake token = %d, want 403", got)
+	}
 
-	// A viewer SEES the world, so the refusal may honestly say "not yours
-	// to bake".
-	if got := post(m, testUID, `{"stage":1}`, viewer).Code; got != http.StatusForbidden {
-		t.Errorf("viewer = %d, want 403", got)
+	// A viewer orders: the bytes are the same whoever orders them.
+	if got := post(m, testUID, `{"stage":1}`, viewer).Code; got != http.StatusAccepted {
+		t.Errorf("viewer = %d, want 202", got)
 	}
 	// And an editor bakes — the case that proves the refusals above refuse
 	// for the right reason.
@@ -576,6 +577,14 @@ func TestJobsShowAndCancelByWorldAccess(t *testing.T) {
 	}
 	if got := do(http.MethodDelete, "/v1/jobs/"+queued, viewer).Code; got != http.StatusForbidden {
 		t.Errorf("a viewer's cancel = %d, want 403", got)
+	}
+	// A viewer cancels the job they ordered (DEC-0039, fork 5).
+	mine := idOf(post(m, testUID, `{"stage":1}`, viewer))
+	if body := do(http.MethodGet, "/v1/jobs/"+mine, viewer).Body.String(); !strings.Contains(body, `"mayCancel":true`) {
+		t.Errorf("the viewer's own job = %s, want mayCancel", body)
+	}
+	if got := do(http.MethodDelete, "/v1/jobs/"+mine, viewer).Code; got != http.StatusNoContent {
+		t.Errorf("a viewer's cancel of their own job = %d, want 204", got)
 	}
 	if got := do(http.MethodDelete, "/v1/jobs/"+queued, editor).Code; got != http.StatusNoContent {
 		t.Errorf("cancelling the queued job = %d, want 204", got)

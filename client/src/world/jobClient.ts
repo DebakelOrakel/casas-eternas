@@ -50,8 +50,11 @@ export interface BakeJob {
   queuedAt?: string
   startedAt?: string
   // The caller's level on the job's world ("viewer", "editor", "owner", or
-  // "admin" for the operator). Cancelling takes an editor.
+  // "admin" for the operator), and whether they may cancel the job: an
+  // editor of its world, or the caller who ordered it (DEC-0039). Absent
+  // from a server older than 2026-10-16.
   callerLevel?: string
+  mayCancel?: boolean
   // Its tasks per level, when the coordinator runs it
   // (internal/modules/jobs, LevelProgress): a plan's level 1 and tiles.
   levels?: JobLevel[]

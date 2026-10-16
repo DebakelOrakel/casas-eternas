@@ -92,12 +92,11 @@ type Result struct {
 	DurationMs      int64  `json:"durationMs"`
 }
 
-// ArtifactKey names an artifact as the store does (worlds' uid, the
-// terrain's id, the pipeline version, the stage). Its own type here: the
+// ArtifactKey names an artifact as the store does (the terrain's id, the
+// pipeline version, the stage: the content, DEC-0039). Its own type here: the
 // artifacts module's layout and types are its own, and the lookup is a
 // function cmd/ composes (Config.ArtifactPresent).
 type ArtifactKey struct {
-	WorldUID        string
 	WorldID         string
 	PipelineVersion string
 	Stage           string
@@ -120,6 +119,10 @@ type Job struct {
 	// Its tasks per level, for a job the coordinator runs (coordinator.go,
 	// levelsOf): a plan's level 1 and its tile levels, each counted.
 	Levels []LevelProgress `json:"levels,omitempty"`
+	// The caller who ordered the job (their user id): they may cancel it,
+	// as an editor of its world may (DEC-0039, fork 5). Empty for a job
+	// from before 2026-10-16 and in the local mode.
+	OrderedBy string `json:"orderedBy,omitempty"`
 }
 
 // LevelProgress is one level of a job: its tasks by state, the phase of a

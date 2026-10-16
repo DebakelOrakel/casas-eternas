@@ -1082,7 +1082,7 @@ if (isMainThread) {
     let landCells = 0
     for (let i = 0; i < n; i++) if (v.z[i] > 0) landCells++
     writeFileSync(join(outDir, 'meta.json'), JSON.stringify({
-      key: { worldUid: 'p1', worldId: meta.key.worldId, pipelineVersion: 'v2-p1', stage: `${W}` },
+      key: { worldId: meta.key.worldId, pipelineVersion: 'v2-p1', stage: `${W}` },
       width: W, height: H, engine: 'erosion-v2-p1-spike', workers: NW,
       params: P, iters: iterDone, residualM: residual, landFraction: landCells / n,
     }))

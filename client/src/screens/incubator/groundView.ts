@@ -101,7 +101,7 @@ export interface GroundView {
   // Hand the ground its world: level 1, the tiles the store holds (stage
   // → pipeline version) and the save's fields. Resolves when the worker
   // holds it.
-  setWorld(input: { worldUid: string; worldId: string; width: number; height: number; level: MeshLevelArtifact; versions: Map<string, string>; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterFloor' | 'waterDam' | 'waterSurface', GridField | null> }): Promise<void>
+  setWorld(input: { worldId: string; width: number; height: number; level: MeshLevelArtifact; versions: Map<string, string>; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterFloor' | 'waterDam' | 'waterSurface', GridField | null> }): Promise<void>
   // Per frame: the focus, the world units a pixel spans there, whether
   // the shadows are wanted, and the air: the camera's height over the
   // ground (world units; 0 for the map's orthographic view, which has no
@@ -325,7 +325,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       for (const ring of list) rings.rebuild(ring)
     }, REBUILD_SETTLE_MS)
   }
-  let key: { worldUid: string; worldId: string; versions: Map<string, string> } | null = null
+  let key: { worldId: string; versions: Map<string, string> } | null = null
   let disposed = false
 
   const rings: GroundRings = createGroundRings({
@@ -511,7 +511,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
     while (tileReads < TILE_READS_AT_ONCE && tileQueue.length > 0 && !disposed && key) {
       const job = tileQueue.shift()!
       tileReads++
-      void readMeshTileArtifact(store, artifactKey(key.worldUid, key.worldId, job.version, job.stage)).then((read) => {
+      void readMeshTileArtifact(store, artifactKey(key.worldId, job.version, job.stage)).then((read) => {
         tileReads--
         if (disposed) return
         const a = read?.artifact ?? null
@@ -598,7 +598,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
 
   return {
     async setWorld(input) {
-      key = { worldUid: input.worldUid, worldId: input.worldId, versions: input.versions }
+      key = { worldId: input.worldId, versions: input.versions }
       worldWidthCells = input.width
       worldHeightCells = input.height
       const done = new Promise<void>((resolve) => {

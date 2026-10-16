@@ -505,14 +505,15 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
   }
 
   // Cancel, armed first as a delete is. Greyed out where the viewer may
-  // not (below editor), and gone once the job has ended.
+  // not (no editor of the world, and not who ordered the job), and gone
+  // once the job has ended.
   function cancelCell(job: BakeJob): HTMLElement {
     const cell = document.createElement('span')
     if (job.state !== 'queued' && job.state !== 'running') return cell
     const cancel = document.createElement('button')
     cancel.type = 'button'
     cancel.className = 'wc-remove'
-    const allowed = job.callerLevel === 'editor' || job.callerLevel === 'owner' || job.callerLevel === 'admin'
+    const allowed = job.mayCancel ?? (job.callerLevel === 'editor' || job.callerLevel === 'owner' || job.callerLevel === 'admin')
     cancel.disabled = !allowed
     const isArmed = armed.has(job.id)
     cancel.textContent = t(isArmed ? 'generator.jobs.cancel.confirm' : 'generator.jobs.cancel.label')

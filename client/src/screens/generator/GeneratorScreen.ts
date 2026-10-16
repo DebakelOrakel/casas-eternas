@@ -5338,7 +5338,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       jobs = (listed ?? []).filter((j) => j.request?.worldUid === worldUid)
         .sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))
       for (const a of artifacts?.artifacts ?? []) {
-        if (a.worldUid === worldUid && savedWorldId !== null && isCurrentArtifact(a, savedWorldId)) stored.add(a.stage)
+        // By content (DEC-0039): the current terrain's, whichever world's job
+        // baked it — a copy of a template finds the template's.
+        if (savedWorldId !== null && isCurrentArtifact(a, savedWorldId)) stored.add(a.stage)
       }
     }
     finishingNeeds = needs

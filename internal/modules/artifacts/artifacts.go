@@ -9,11 +9,27 @@
 // with deliberately different delete affordances in the UI.
 //
 // Addressing (2026-08-12): an artifact is a minted uuid; the LOGICAL key —
-// worldUid, worldId, pipelineVersion, stage — appears in exactly one request,
+// worldId, pipelineVersion, stage — appears in exactly one request,
 // `resolve`, which translates it to the uid every other route uses. The
 // mapping is carried by each entry's own meta.json, so the disk layout says
 // nothing a schema change could break. See the store's header for the whole
 // argument.
+//
+// BY CONTENT since 2026-10-16 (docs/decisions/artifacts-by-content.md,
+// DEC-0039): the key names the terrain, not the world, so every world with
+// that terrain finds the artifact — a copy of a template at once. Two rules
+// make that safe:
+//
+//   - ONLY A JOB WORKER WRITES (fork 2). Its token is bound to one world,
+//     and it computes the bytes from that world's stored save, so the
+//     content is a function of the key by construction. Any other caller
+//     gets 403 on a write; the browser does not upload. (The local mode,
+//     where every check answers yes, writes as before.)
+//   - A CALLER READS THROUGH A WORLD (fork 4): they may read an artifact
+//     when they may read a world whose terrain ids hold its worldId. The
+//     world module keeps those ids; a job worker reports each one when it
+//     resolves (fork 3, Config.AddTerrain), as the server cannot derive a
+//     worldId from a save.
 package artifacts
 
 import (
@@ -25,9 +41,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
@@ -62,13 +80,24 @@ type Config struct {
 	// Identity answers who a request comes from — the one resolver cmd/
 	// builds and every module shares.
 	Identity *identity.Resolver
-	// WorldAccess ranks a caller (by their forwarded Authorization header)
-	// against a world — artifacts INHERIT their world's visibility, which is
-	// why reading one is not "informational". Injected by cmd/: a closure
-	// over the co-resident world module, or an HTTP lookup of the world
-	// service's meta endpoint, whose answer carries the level. In the local
-	// mode the closure answers Admin, which is the none-mode short circuit.
-	WorldAccess func(ctx context.Context, worldUID, bearer string) (exists bool, level access.Level)
+	// The three questions this module asks of the world module (DEC-0039),
+	// each injected by cmd/: a closure over the co-resident world module, or
+	// an HTTP call to the world service (global.services.worlds), which gets
+	// the caller's own Authorization header. In the local mode they answer
+	// Admin and record nothing, which is the none-mode short circuit.
+	//
+	// WorldAccess ranks a caller against a world and answers its terrain ids
+	// — the sweep before a world is deleted, and a job token's check.
+	WorldAccess func(ctx context.Context, worldUID, bearer string) (exists bool, level access.Level, terrains []string)
+	// TerrainAccess ranks a caller against a terrain: their highest level
+	// over the worlds that hold it, and whether more than one world holds
+	// it. Artifacts INHERIT the visibility of those worlds, which is why
+	// reading one is not "informational".
+	TerrainAccess func(ctx context.Context, worldID, bearer string) (level access.Level, shared bool)
+	// AddTerrain records that a job of world `worldUID` resolved terrain
+	// `worldID`; `bearer` is the job's token, which a world service checks
+	// again.
+	AddTerrain func(ctx context.Context, worldUID, worldID, bearer string) error
 }
 
 // Module serves the artifact store.
@@ -82,6 +111,14 @@ type Module struct {
 	readTTL time.Duration
 	// writeTTL is the lifetime of a write link (artifacts.write-link-ttl).
 	writeTTL time.Duration
+
+	// bound remembers the terrains this process recorded for a job's world
+	// (AddTerrain), so that the job's later requests — a write link and a
+	// commit per file, a read per file — need no call to the world module.
+	// A miss asks it (WorldAccess); losing the set at a restart costs one
+	// call per world.
+	boundMu sync.Mutex
+	bound   map[string]map[string]bool // world uid → terrain ids
 }
 
 // signing is what a Dir that makes its own links offers.
@@ -121,8 +158,8 @@ func BucketOptions() blob.OpenOptions {
 // New prepares the store and builds its index from the bucket, so a bucket
 // that cannot be read fails at startup rather than on first request.
 func New(ctx context.Context, cfg Config) (*Module, error) {
-	if cfg.Identity == nil || cfg.WorldAccess == nil || cfg.Bucket == nil {
-		return nil, fmt.Errorf("artifacts needs its bucket, identity and world-access wiring; that is cmd/'s job")
+	if cfg.Identity == nil || cfg.WorldAccess == nil || cfg.TerrainAccess == nil || cfg.AddTerrain == nil || cfg.Bucket == nil {
+		return nil, fmt.Errorf("artifacts needs its bucket, identity and world wiring; that is cmd/'s job")
 	}
 	capBytes, err := config.ParseByteSize(cfg.All.Artifacts.Cap)
 	if err != nil {
@@ -140,7 +177,7 @@ func New(ctx context.Context, cfg Config) (*Module, error) {
 	if err != nil {
 		return nil, fmt.Errorf("artifacts.storage: %w", err)
 	}
-	m := &Module{cfg: cfg, store: store, readTTL: readTTL, writeTTL: writeTTL}
+	m := &Module{cfg: cfg, store: store, readTTL: readTTL, writeTTL: writeTTL, bound: map[string]map[string]bool{}}
 	if d, ok := cfg.Bucket.(signing); ok {
 		m.signer = d.Signer()
 	}
@@ -166,8 +203,9 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	// needs no new route; every segment is validated in the store, which is
 	// what keeps the flexibility from becoming a path traversal.
 	mux.HandleFunc("GET /v1/artifacts/{artifactUID}/{name...}", m.handleGet)
-	// The server's own upload, for the browser's tiered store; a job worker
-	// writes by link (the two routes below, DEC-0038, fork 7).
+	// The server's own upload. Since DEC-0039 only a job token or the local
+	// mode writes (writing), and a job worker writes by link (the two
+	// routes below, DEC-0038, fork 7); this route stays for the local mode.
 	mux.HandleFunc("PUT /v1/artifacts/{artifactUID}/{name...}", m.handlePut)
 	mux.HandleFunc("POST /v1/artifacts/{artifactUID}/write-link", m.handleWriteLink)
 	mux.HandleFunc("POST /v1/artifacts/{artifactUID}/commit", m.handleCommit)
@@ -198,6 +236,28 @@ func (m *Module) SignedRequest(r *http.Request) bool {
 	return m.signer != nil && m.signer.Signed(r)
 }
 
+// AnonymousReads names the requests this module ranks for a caller WITHOUT
+// credentials, rather than the gate refusing them: a resolve and the read
+// of a file, because the artifacts of a template are readable by everyone
+// (DEC-0039, fork 4). The module ranks such a caller by the terrain
+// (allowed): a resolve with create, and every terrain no template holds,
+// is refused there. cmd/ hands it to server.Gate with the world module's.
+// A pure function of the request, so the gate needs to know no module.
+func AnonymousReads(r *http.Request) bool {
+	if r.Method == http.MethodPost {
+		return r.URL.Path == "/v1/artifacts/resolve"
+	}
+	if r.Method != http.MethodGet {
+		return false
+	}
+	rest, ok := strings.CutPrefix(r.URL.Path, "/v1/artifacts/")
+	if !ok {
+		return false
+	}
+	uid, name, _ := strings.Cut(rest, "/")
+	return uid != "" && name != "" && !strings.HasPrefix(r.URL.Path, LinkBase)
+}
+
 // operator answers "may this request do anything here": the admin claim, or
 // the local mode, where every check answers yes by design.
 func (m *Module) operator(r *http.Request) bool {
@@ -208,39 +268,124 @@ func (m *Module) operator(r *http.Request) bool {
 	return admin
 }
 
-// allowed ranks a request against an artifact's world — artifacts INHERIT
-// the world's ACL, with the same visibility shape: a world the caller may
-// not read hides its artifacts behind 404, and only readable ones
-// distinguish 403.
+// An operation on an artifact, for the check (allowed).
+type operation int
+
+const (
+	reading operation = iota
+	// writing: resolve with create, a write link, a commit, the server's
+	// PUT — a job worker's only (DEC-0039, fork 2).
+	writing
+	// removing: one artifact or one level — an editor's of a terrain no
+	// other world holds, else the operator's (DEC-0039, fork 6).
+	removing
+)
+
+// allowed ranks a request against an artifact's terrain. Artifacts INHERIT
+// the visibility of the worlds that hold the terrain, with the same shape:
+// a terrain the caller may not read hides its artifacts behind 404, and
+// only readable ones distinguish 403.
 //
 // Two bypasses, both deliberate: the operator (admin claim / local mode) —
-// which is also what keeps ORPHANS reachable, artifacts whose world is
-// already gone and can rank nobody; and a bake job whose token's world
-// claim MATCHES this artifact's world — the writer this system itself sent
-// out, narrowed to exactly the world it was sent for (step 4 of the access
-// plan, 2026-08-12). A job token without the claim, or for another world,
-// ranks as nobody like any other stranger.
-func (m *Module) allowed(w http.ResponseWriter, r *http.Request, worldUID string, need access.Level, what string) bool {
+// which is also what keeps ORPHANS reachable, artifacts of a terrain no
+// world holds any more; and a job token whose world holds the terrain —
+// the writer this system itself sent out, narrowed to the world it was
+// sent for (step 4 of the access plan, 2026-08-12). A job does not remove.
+func (m *Module) allowed(w http.ResponseWriter, r *http.Request, worldID string, op operation) bool {
 	if m.operator(r) {
+		if op == writing && m.cfg.Identity.ChecksIdentity() {
+			// The admin is no job: content comes from a worker's bake.
+			httpjson.ClientError(w, http.StatusForbidden, "only a job worker writes artifacts")
+			return false
+		}
 		return true
 	}
-	if _, jobWorld, ok := m.cfg.Identity.JobToken(r); ok && jobWorld != "" && jobWorld == worldUID {
+	if _, jobWorld, ok := m.cfg.Identity.JobToken(r); ok && jobWorld != "" && worldID != "" && op != removing && m.holds(r, jobWorld, worldID) {
 		return true
 	}
-	if worldUID == "" {
-		// No world to rank against (junk entry): operator territory only.
+	if worldID == "" {
+		// No terrain to rank against (junk entry): operator territory only.
 		httpjson.ClientError(w, http.StatusNotFound, "no such artifact")
 		return false
 	}
-	exists, level := m.cfg.WorldAccess(r.Context(), worldUID, r.Header.Get("Authorization"))
-	if !exists || level < access.Viewer {
+	level, shared := m.cfg.TerrainAccess(r.Context(), worldID, r.Header.Get("Authorization"))
+	if level < access.Viewer {
 		httpjson.ClientError(w, http.StatusNotFound, "no such artifact")
 		return false
 	}
-	if level < need {
-		httpjson.ClientError(w, http.StatusForbidden, what+" needs "+need.String()+" access to its world")
+	switch op {
+	case writing:
+		httpjson.ClientError(w, http.StatusForbidden, "only a job worker writes artifacts")
+		return false
+	case removing:
+		if level < access.Editor {
+			httpjson.ClientError(w, http.StatusForbidden, "removing artifacts needs editor access to their world")
+			return false
+		}
+		if shared {
+			httpjson.ClientError(w, http.StatusForbidden, "these artifacts serve other worlds too; only an admin removes them")
+			return false
+		}
+	}
+	return true
+}
+
+// holds answers whether a job's world holds a terrain: from what this
+// process recorded (bind), else from the world module.
+func (m *Module) holds(r *http.Request, worldUID, worldID string) bool {
+	m.boundMu.Lock()
+	held := m.bound[worldUID][worldID]
+	m.boundMu.Unlock()
+	if held {
+		return true
+	}
+	exists, _, terrains := m.cfg.WorldAccess(r.Context(), worldUID, r.Header.Get("Authorization"))
+	if !exists || !slices.Contains(terrains, worldID) {
 		return false
 	}
+	m.remember(worldUID, worldID)
+	return true
+}
+
+func (m *Module) remember(worldUID, worldID string) {
+	m.boundMu.Lock()
+	defer m.boundMu.Unlock()
+	set := m.bound[worldUID]
+	if set == nil {
+		set = map[string]bool{}
+		m.bound[worldUID] = set
+	}
+	set[worldID] = true
+}
+
+// bind records the terrain of a job's resolve for the job's world
+// (DEC-0039, fork 3): the worker derived the worldId from the world's
+// stored save. On a read too — a job that finds what another world's job
+// baked binds it, and computes nothing again. In the local mode no token
+// names the world; the request's `world` does (resolveRequest.World).
+// False when it answered.
+func (m *Module) bind(w http.ResponseWriter, r *http.Request, worldID, world string) bool {
+	_, jobWorld, ok := m.cfg.Identity.JobToken(r)
+	if !m.cfg.Identity.ChecksIdentity() {
+		jobWorld, ok = world, world != ""
+	}
+	if !ok || jobWorld == "" {
+		return true
+	}
+	m.boundMu.Lock()
+	held := m.bound[jobWorld][worldID]
+	m.boundMu.Unlock()
+	if held {
+		return true
+	}
+	if err := m.cfg.AddTerrain(r.Context(), jobWorld, worldID, r.Header.Get("Authorization")); err != nil {
+		// The job's world is gone, or the world module did not answer: the
+		// job cannot go on either way.
+		slog.Warn("terrain of a job not recorded", "uid", jobWorld, "world", worldID, "err", err)
+		httpjson.ClientError(w, http.StatusServiceUnavailable, "the terrain of the job's world could not be recorded")
+		return false
+	}
+	m.remember(jobWorld, worldID)
 	return true
 }
 
@@ -249,6 +394,11 @@ type resolveRequest struct {
 	// With create, an absent key mints an artifact and returns its fresh uid —
 	// the writer's path. Without it, absent is 404 — the reader's.
 	Create bool `json:"create"`
+	// World is the world uid the writer works for — NOT part of the key.
+	// Read in the local mode only, where no job token names the world: the
+	// terrain is recorded for it there (bind). A checking server reads the
+	// world from the job's token and ignores this.
+	World string `json:"world"`
 }
 
 type resolveResponse struct {
@@ -261,14 +411,18 @@ type resolveResponse struct {
 func (m *Module) handleResolve(w http.ResponseWriter, r *http.Request) {
 	var request resolveRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
-		httpjson.ClientError(w, http.StatusBadRequest, "expected {worldUid, worldId, pipelineVersion, stage, create?}")
+		httpjson.ClientError(w, http.StatusBadRequest, "expected {worldId, pipelineVersion, stage, create?}")
 		return
 	}
-	need, what := access.Viewer, "reading artifacts"
-	if request.Create {
-		need, what = access.Editor, "writing artifacts"
+	if !request.Key.Valid() {
+		httpjson.ClientError(w, http.StatusBadRequest, "invalid artifact key")
+		return
 	}
-	if !m.allowed(w, r, request.WorldUID, need, what) {
+	op := reading
+	if request.Create {
+		op = writing
+	}
+	if !m.bind(w, r, request.WorldID, request.World) || !m.allowed(w, r, request.WorldID, op) {
 		return
 	}
 	uid, files, err := m.store.Resolve(r.Context(), request.Key, request.Create)
@@ -277,14 +431,14 @@ func (m *Module) handleResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if request.Create {
-		slog.Info("artifact resolved for writing", "artifact", uid, "uid", request.WorldUID, "world", request.WorldID, "version", request.PipelineVersion, "stage", request.Stage)
+		slog.Info("artifact resolved for writing", "artifact", uid, "world", request.WorldID, "version", request.PipelineVersion, "stage", request.Stage)
 	}
 	httpjson.Write(w, http.StatusOK, resolveResponse{ArtifactUID: uid, Files: files})
 }
 
 func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
-	worldUID, _ := m.store.WorldOf(r.Context(), r.PathValue("artifactUID"))
-	if !m.allowed(w, r, worldUID, access.Viewer, "reading artifacts") {
+	worldID, _ := m.store.TerrainOf(r.Context(), r.PathValue("artifactUID"))
+	if !m.allowed(w, r, worldID, reading) {
 		return
 	}
 	// The right is checked; the bytes come from a link that carries it
@@ -421,8 +575,8 @@ type writeLinkResponse struct {
 // handleWriteLink gives a writer a link to upload one file of an artifact
 // straight to the bucket (DEC-0038, fork 7), with the file's length signed
 // in and artifacts.write-link-ttl to live. The right is the right to write
-// the artifact, as for handlePut: a job token for the artifact's world, an
-// editor of it, or the operator. The same route gives a fresh link when the
+// the artifact, as for handlePut: a job token whose world holds the
+// artifact's terrain, or the local mode. The same route gives a fresh link when the
 // one in hand has expired or was refused.
 func (m *Module) handleWriteLink(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("artifactUID")
@@ -431,8 +585,8 @@ func (m *Module) handleWriteLink(w http.ResponseWriter, r *http.Request) {
 		httpjson.ClientError(w, http.StatusBadRequest, "expected {name, size}")
 		return
 	}
-	worldUID, _ := m.store.WorldOf(r.Context(), uid)
-	if !m.allowed(w, r, worldUID, access.Editor, "writing artifacts") {
+	worldID, _ := m.store.TerrainOf(r.Context(), uid)
+	if !m.allowed(w, r, worldID, writing) {
 		return
 	}
 	link, err := m.store.WriteLink(r.Context(), uid, request.Name, request.Size, m.writeTTL)
@@ -484,8 +638,8 @@ func (m *Module) handleCommit(w http.ResponseWriter, r *http.Request) {
 		httpjson.ClientError(w, http.StatusBadRequest, "expected {files: [{name, size}]}")
 		return
 	}
-	worldUID, _ := m.store.WorldOf(r.Context(), uid)
-	if !m.allowed(w, r, worldUID, access.Editor, "writing artifacts") {
+	worldID, _ := m.store.TerrainOf(r.Context(), uid)
+	if !m.allowed(w, r, worldID, writing) {
 		return
 	}
 	if err := m.store.Commit(r.Context(), uid, request.Files); err != nil {
@@ -507,8 +661,8 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("artifactUID")
 	// Ranked via the RESERVATION's key when the meta has not landed yet —
 	// which on the write path it by definition has not.
-	worldUID, _ := m.store.WorldOf(r.Context(), uid)
-	if !m.allowed(w, r, worldUID, access.Editor, "writing artifacts") {
+	worldID, _ := m.store.TerrainOf(r.Context(), uid)
+	if !m.allowed(w, r, worldID, writing) {
 		return
 	}
 	if r.ContentLength > UploadLimit {
@@ -573,12 +727,13 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 // visible is what the caller may see of the store, and its size.
 //
 // The listing inherits the worlds' visibility: an artifact shows to
-// whoever may read its world. Meta-less entries (junk, mid-write) show
-// only to the operator — they can rank nobody. One WorldAccess per
-// DISTINCT world, not per artifact. Each entry says what the caller may
-// do with it (callerLevel: its world's level, "admin" for the operator),
-// so a client greys out what it may not delete rather than letting the
-// request fail.
+// whoever may read a world that holds its terrain. Meta-less entries
+// (junk, mid-write) show only to the operator — they can rank nobody. One
+// TerrainAccess per DISTINCT terrain, not per artifact. Each entry says
+// what the caller may do with it (callerLevel: the caller's highest level
+// over those worlds, "admin" for the operator; shared: other worlds hold
+// the terrain too, so only an admin removes it), so a client greys out what
+// it may not delete rather than letting the request fail.
 func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 	artifacts, err := m.store.List(r.Context())
 	if err != nil {
@@ -588,7 +743,7 @@ func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 	var bytes int64
 	if m.operator(r) {
 		for _, artifact := range artifacts {
-			visible = append(visible, callerArtifact{artifact, access.Admin.String()})
+			visible = append(visible, callerArtifact{artifact, access.Admin.String(), false})
 		}
 		// The operator sees the whole store, so the gauge is the whole store —
 		// the cache-size figure the eviction reasons about.
@@ -598,18 +753,22 @@ func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 	// Anyone else sees what they may see, and its size: the store's whole
 	// usage would tell them about worlds they cannot see.
 	bearer := r.Header.Get("Authorization")
-	levels := map[string]access.Level{}
+	type rank struct {
+		level  access.Level
+		shared bool
+	}
+	ranks := map[string]rank{}
 	for _, artifact := range artifacts {
-		if artifact.WorldUID == "" {
+		if artifact.WorldID == "" {
 			continue
 		}
-		level, ranked := levels[artifact.WorldUID]
+		got, ranked := ranks[artifact.WorldID]
 		if !ranked {
-			_, level = m.cfg.WorldAccess(r.Context(), artifact.WorldUID, bearer)
-			levels[artifact.WorldUID] = level
+			got.level, got.shared = m.cfg.TerrainAccess(r.Context(), artifact.WorldID, bearer)
+			ranks[artifact.WorldID] = got
 		}
-		if level >= access.Viewer {
-			visible = append(visible, callerArtifact{artifact, level.String()})
+		if got.level >= access.Viewer {
+			visible = append(visible, callerArtifact{artifact, got.level.String(), got.shared})
 			bytes += artifact.Bytes
 		}
 	}
@@ -621,7 +780,6 @@ func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 // what the artifact window shows as a row, instead of an entry per tile
 // (a world refined to level 3 is ten thousand of them, 2026-10-02).
 type LevelSummary struct {
-	WorldUID        string `json:"worldUid"`
 	WorldID         string `json:"worldId"`
 	PipelineVersion string `json:"pipelineVersion"`
 	Level           int    `json:"level"`
@@ -631,9 +789,10 @@ type LevelSummary struct {
 	Label           string `json:"label"`
 	BakeMs          int64  `json:"bakeMs"`
 	CallerLevel     string `json:"callerLevel"`
+	Shared          bool   `json:"shared"`
 }
 
-// handleLevels lists what the caller may see, summed per world, terrain,
+// handleLevels lists what the caller may see, summed per terrain,
 // pipeline version and level. Entries whose stage is no level (junk, other
 // kinds) are left out; the flat listing still shows them.
 func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
@@ -643,9 +802,9 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type groupKey struct {
-		world, terrain, pipeline string
-		level                    int
-		tiles                    bool
+		terrain, pipeline string
+		level             int
+		tiles             bool
 	}
 	groups := map[groupKey]*LevelSummary{}
 	var order []groupKey
@@ -654,10 +813,10 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		k := groupKey{a.WorldUID, a.WorldID, a.PipelineVersion, level, tile}
+		k := groupKey{a.WorldID, a.PipelineVersion, level, tile}
 		g := groups[k]
 		if g == nil {
-			g = &LevelSummary{WorldUID: a.WorldUID, WorldID: a.WorldID, PipelineVersion: a.PipelineVersion, Level: level, Tiles: tile, Label: a.Label, CallerLevel: a.CallerLevel}
+			g = &LevelSummary{WorldID: a.WorldID, PipelineVersion: a.PipelineVersion, Level: level, Tiles: tile, Label: a.Label, CallerLevel: a.CallerLevel, Shared: a.Shared}
 			groups[k] = g
 			order = append(order, k)
 		}
@@ -667,14 +826,11 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(order, func(i, j int) bool {
 		a, b := order[i], order[j]
-		if a.world != b.world {
-			return a.world < b.world
+		if a.terrain != b.terrain {
+			return a.terrain < b.terrain
 		}
 		if a.level != b.level {
 			return a.level < b.level
-		}
-		if a.terrain != b.terrain {
-			return a.terrain < b.terrain
 		}
 		return a.pipeline < b.pipeline
 	})
@@ -685,17 +841,20 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusOK, map[string]any{"levels": out, "bytes": bytes})
 }
 
-// A listed artifact with the caller's level on its world.
+// A listed artifact with the caller's level on its terrain, and whether
+// other worlds hold the terrain too (see visible).
 type callerArtifact struct {
 	ListedArtifact
 	CallerLevel string `json:"callerLevel"`
+	Shared      bool   `json:"shared"`
 }
 
 func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {
-	// Editor suffices: an artifact is recomputable by anyone who may bake,
-	// so dropping one destroys nothing an editor could not remake.
-	worldUID, _ := m.store.WorldOf(r.Context(), r.PathValue("artifactUID"))
-	if !m.allowed(w, r, worldUID, access.Editor, "removing an artifact") {
+	// Editor suffices for a terrain only their world holds: an artifact is
+	// recomputable by anyone who may bake, so dropping one destroys nothing
+	// an editor could not remake. A shared one serves other people's worlds.
+	worldID, _ := m.store.TerrainOf(r.Context(), r.PathValue("artifactUID"))
+	if !m.allowed(w, r, worldID, removing) {
 		return
 	}
 	if err := m.store.RemoveArtifact(r.Context(), r.PathValue("artifactUID")); err != nil {
@@ -706,45 +865,38 @@ func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleClear clears everything, or — with ?world={uid} — every artifact the
-// meta files attribute to one world, or — with ?world={uid}&level={n} — one
-// level of it, its tiles included, narrowed by &worldId= and &pipeline= to
-// one terrain or version (the artifact window's "delete this level").
+// handleClear clears everything, or — with ?world={uid} — the artifacts of
+// the world's terrains that no other world holds (the sweep before a world
+// is deleted), or — with ?worldId={id}&level={n} — one level of a terrain,
+// its tiles included, narrowed by &pipeline= to one version (the artifact
+// window's "delete this level").
 func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	if world, levelText := query.Get("world"), query.Get("level"); world != "" && levelText != "" {
+	if levelText := query.Get("level"); levelText != "" {
 		level, err := strconv.Atoi(levelText)
 		if err != nil || level < 0 {
 			httpjson.ClientError(w, http.StatusBadRequest, "level must be a level's number")
 			return
 		}
-		// Editor, as for one artifact: a level is recomputable by anyone
-		// who may refine the world.
-		if !m.allowed(w, r, world, access.Editor, "removing a level's artifacts") {
+		worldID := query.Get("worldId")
+		if worldID == "" {
+			httpjson.ClientError(w, http.StatusBadRequest, "a level is removed for one terrain: worldId is missing")
 			return
 		}
-		removed, err := m.store.RemoveLevel(r.Context(), world, level, query.Get("worldId"), query.Get("pipeline"))
+		if !m.allowed(w, r, worldID, removing) {
+			return
+		}
+		removed, err := m.store.RemoveLevel(r.Context(), worldID, level, query.Get("pipeline"))
 		if err != nil {
 			respondStoreError(w, err)
 			return
 		}
-		slog.Info("artifacts dropped", "uid", world, "level", level, "count", removed)
+		slog.Info("artifacts dropped", "world", worldID, "level", level, "count", removed)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if world := query.Get("world"); world != "" {
-		// The sweep rides on world.delete's level: it exists so deleting a
-		// world can take its artifacts with it. (Sweep BEFORE the world is
-		// deleted — an orphaned world ranks nobody and falls to the operator.)
-		if !m.allowed(w, r, world, access.Owner, "sweeping a world's artifacts") {
-			return
-		}
-		if err := m.store.RemoveWorld(r.Context(), world); err != nil {
-			respondStoreError(w, err)
-			return
-		}
-		slog.Info("artifacts dropped", "uid", world)
-		w.WriteHeader(http.StatusNoContent)
+		m.sweepWorld(w, r, world)
 		return
 	}
 	// Clearing EVERYTHING is store administration, not a per-world right.
@@ -757,6 +909,43 @@ func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("artifact store cleared")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// sweepWorld removes what a world takes with it when it is deleted: the
+// artifacts of each of its terrains that no other world holds (DEC-0039,
+// fork 6). A shared terrain stays, as it serves the other worlds. It rides
+// on world.delete's level, and runs BEFORE the world is deleted: a world
+// that is gone holds no terrain, and its artifacts are then the
+// operator's (and the cap's).
+func (m *Module) sweepWorld(w http.ResponseWriter, r *http.Request, world string) {
+	bearer := r.Header.Get("Authorization")
+	exists, level, terrains := m.cfg.WorldAccess(r.Context(), world, bearer)
+	if !m.operator(r) {
+		if !exists || level < access.Viewer {
+			httpjson.ClientError(w, http.StatusNotFound, "no such world")
+			return
+		}
+		if level < access.Owner {
+			httpjson.ClientError(w, http.StatusForbidden, "sweeping a world's artifacts needs owner access to it")
+			return
+		}
+	}
+	removed := 0
+	for _, worldID := range terrains {
+		// Asked as the operator would be: whether ANY other world holds the
+		// terrain, the caller's rights on it aside.
+		if _, shared := m.cfg.TerrainAccess(r.Context(), worldID, bearer); shared {
+			continue
+		}
+		n, err := m.store.RemoveTerrain(r.Context(), worldID)
+		if err != nil {
+			respondStoreError(w, err)
+			return
+		}
+		removed += n
+	}
+	slog.Info("artifacts dropped", "uid", world, "count", removed)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -85,13 +85,13 @@ func tick(s *Store) {
 }
 
 func testKey() Key {
-	return Key{WorldUID: "2bfe969c-1c67-4b8e-9dc6-3f6d2fddc001", WorldID: "e609be7190af0d7f", PipelineVersion: "v6-1a2b3c4d5e6f7081", Stage: "2"}
+	return Key{WorldID: "e609be7190af0d7f", PipelineVersion: "v6-1a2b3c4d5e6f7081", Stage: "2"}
 }
 
 // metaFor renders the client's meta.json for a key — the one file that makes
 // an entry resolvable.
 func metaFor(key Key, label string) string {
-	return `{"key":{"worldUid":"` + key.WorldUID + `","worldId":"` + key.WorldID + `","pipelineVersion":"` + key.PipelineVersion + `","stage":"` + key.Stage + `"},"label":"` + label + `","width":4096,"height":2048,"bakeMs":9000}`
+	return `{"key":{"worldId":"` + key.WorldID + `","pipelineVersion":"` + key.PipelineVersion + `","stage":"` + key.Stage + `"},"label":"` + label + `","width":4096,"height":2048,"bakeMs":9000}`
 }
 
 // bake writes a complete artifact the way the client does: resolve with
@@ -224,7 +224,7 @@ func TestListReportsMetasAndStrays(t *testing.T) {
 	}
 	s := newStoreAt(t, dir, 0)
 	keyA := testKey()
-	keyB := Key{WorldUID: "uid-bravo", WorldID: "2222222222222222", PipelineVersion: "v6-bbbb", Stage: "4"}
+	keyB := Key{WorldID: "2222222222222222", PipelineVersion: "v6-bbbb", Stage: "4"}
 	bake(t, s, keyA, "Ätna", strings.Repeat("a", 100))
 	bake(t, s, keyB, "Bravo", strings.Repeat("b", 400))
 
@@ -236,7 +236,7 @@ func TestListReportsMetasAndStrays(t *testing.T) {
 		t.Fatalf("List returned %d entries, want 3", len(artifacts))
 	}
 	// Largest first.
-	if artifacts[0].Label != "Bravo" || artifacts[0].WorldUID != "uid-bravo" || artifacts[0].Stage != "4" {
+	if artifacts[0].Label != "Bravo" || artifacts[0].WorldID != "2222222222222222" || artifacts[0].Stage != "4" {
 		t.Errorf("first entry = %+v", artifacts[0])
 	}
 	var strayEntry *ListedArtifact
@@ -247,7 +247,7 @@ func TestListReportsMetasAndStrays(t *testing.T) {
 			strayEntry = &artifacts[i]
 		}
 	}
-	if strayEntry == nil || strayEntry.WorldUID != "" || strayEntry.Bytes != 60 {
+	if strayEntry == nil || strayEntry.WorldID != "" || strayEntry.Bytes != 60 {
 		t.Fatalf("stray entry = %+v", strayEntry)
 	}
 	// The listing and the usage figure must agree — the invariant whose
@@ -258,11 +258,11 @@ func TestListReportsMetasAndStrays(t *testing.T) {
 	}
 }
 
-func TestRemoveArtifactWorldAndClear(t *testing.T) {
+func TestRemoveArtifactTerrainAndClear(t *testing.T) {
 	s := newTestStore(t)
-	keyA1 := Key{WorldUID: "uid-alpha", WorldID: "1111111111111111", PipelineVersion: "v6-aaaa", Stage: "2"}
-	keyA2 := Key{WorldUID: "uid-alpha", WorldID: "3333333333333333", PipelineVersion: "v6-aaaa", Stage: "2"}
-	keyB := Key{WorldUID: "uid-bravo", WorldID: "2222222222222222", PipelineVersion: "v6-aaaa", Stage: "2"}
+	keyA1 := Key{WorldID: "1111111111111111", PipelineVersion: "v6-aaaa", Stage: "2"}
+	keyA2 := Key{WorldID: "1111111111111111", PipelineVersion: "v6-aaaa", Stage: "3"}
+	keyB := Key{WorldID: "2222222222222222", PipelineVersion: "v6-aaaa", Stage: "2"}
 	uidA1 := bake(t, s, keyA1, "Alpha", "a1")
 	bake(t, s, keyA2, "Alpha", "a2")
 	uidB := bake(t, s, keyB, "Bravo", "b")
@@ -274,18 +274,19 @@ func TestRemoveArtifactWorldAndClear(t *testing.T) {
 		t.Errorf("removed artifact still resolves: %v", err)
 	}
 
-	// The world sweep works off the metas: every entry naming uid-alpha goes.
-	if err := s.RemoveWorld(context.Background(), "uid-alpha"); err != nil {
-		t.Fatalf("RemoveWorld: %v", err)
+	// The terrain sweep works off the metas: every entry naming the
+	// terrain goes.
+	if n, err := s.RemoveTerrain(context.Background(), keyA1.WorldID); err != nil || n != 1 {
+		t.Fatalf("RemoveTerrain = %d, %v; want 1", n, err)
 	}
 	if _, _, err := s.Resolve(context.Background(), keyA2, false); !errors.Is(err, ErrNotFound) {
-		t.Errorf("swept world still resolves: %v", err)
+		t.Errorf("swept terrain still resolves: %v", err)
 	}
 	if _, _, err := s.Resolve(context.Background(), keyB, false); err != nil {
-		t.Errorf("the other world was affected: %v", err)
+		t.Errorf("the other terrain was affected: %v", err)
 	}
-	if err := s.RemoveWorld(context.Background(), "uid-alpha"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("second sweep = %v, want ErrNotFound", err)
+	if n, err := s.RemoveTerrain(context.Background(), keyA1.WorldID); err != nil || n != 0 {
+		t.Errorf("second sweep = %d, %v; want 0", n, err)
 	}
 
 	if err := s.Clear(context.Background()); err != nil {
@@ -334,8 +335,8 @@ func TestCapEvictsLeastRecentlyUsed(t *testing.T) {
 	// holds two of them, so exactly one eviction is needed once three exist.
 	store := newStoreAt(t, t.TempDir(), 600)
 	tick(store)
-	oldKey := Key{WorldUID: "uid-a", WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}
-	hotKey := Key{WorldUID: "uid-a", WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}
+	oldKey := Key{WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}
+	hotKey := Key{WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}
 	bake(t, store, oldKey, "Old", strings.Repeat("o", 90))
 	bake(t, store, hotKey, "Hot", strings.Repeat("h", 90))
 	// Touch the second entry so the first is the least recently used.
@@ -345,7 +346,7 @@ func TestCapEvictsLeastRecentlyUsed(t *testing.T) {
 
 	// This write pushes the total past 250 bytes; the sweep must reclaim the
 	// stale entry, keep the touched one, and never eat the newcomer.
-	newKey := Key{WorldUID: "uid-b", WorldID: "3333333333333333", PipelineVersion: "v6-a", Stage: "2"}
+	newKey := Key{WorldID: "3333333333333333", PipelineVersion: "v6-a", Stage: "2"}
 	newUID := bake(t, store, newKey, "New", strings.Repeat("n", 90))
 
 	if _, _, err := store.Resolve(context.Background(), oldKey, false); !errors.Is(err, ErrNotFound) {
@@ -374,8 +375,8 @@ func TestCapSparesFreshMetalessEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newStoreAt(t, dir, 250)
-	keyA := Key{WorldUID: "uid-a", WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}
-	keyB := Key{WorldUID: "uid-b", WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}
+	keyA := Key{WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}
+	keyB := Key{WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}
 	bake(t, store, keyA, "A", strings.Repeat("a", 90))
 	bake(t, store, keyB, "B", strings.Repeat("b", 90))
 
@@ -394,7 +395,7 @@ func TestCapSparesFreshMetalessEntries(t *testing.T) {
 		e.modified = time.Now().Add(-2 * evictionGrace)
 	}
 	store.mu.Unlock()
-	keyC := Key{WorldUID: "uid-c", WorldID: "4444444444444444", PipelineVersion: "v6-a", Stage: "2"}
+	keyC := Key{WorldID: "4444444444444444", PipelineVersion: "v6-a", Stage: "2"}
 	bake(t, store, keyC, "C", strings.Repeat("c", 90))
 	if _, err := os.Stat(filepath.Join(freshStray, "elevation.u16")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("an aged meta-less entry must be the first victim: %v", err)
@@ -452,7 +453,7 @@ func writeTree(t *testing.T, dir string, files map[string]string) {
 // fixture holds every shape that layout left behind.
 func TestOldLayoutOpensAsItIs(t *testing.T) {
 	dir := t.TempDir()
-	level := Key{WorldUID: "2bfe969c-1c67-4b8e-9dc6-3f6d2fddc001", WorldID: "e609be7190af0d7f", PipelineVersion: "v6-1a2b", Stage: "L1"}
+	level := Key{WorldID: "e609be7190af0d7f", PipelineVersion: "v6-1a2b", Stage: "L1"}
 	tile := level
 	tile.Stage = "L2:3,4"
 	const levelUID = "0001f5f4-4b3b-4f3d-861f-852b97080def"
@@ -515,7 +516,7 @@ func TestOldLayoutOpensAsItIs(t *testing.T) {
 	if a := byUID[tileUID]; a.Stage != "L2:3,4" || a.Bytes != int64(len(metaFor(tile, "Tile"))+2+1) {
 		t.Errorf("tile entry = %+v", a)
 	}
-	if a := byUID["5f0e1c4a-0000-4000-8000-000000000002"]; a.WorldUID != "" || a.Bytes != 3 {
+	if a := byUID["5f0e1c4a-0000-4000-8000-000000000002"]; a.WorldID != "" || a.Bytes != 3 {
 		t.Errorf("junk entry = %+v", a)
 	}
 
@@ -544,8 +545,8 @@ func TestEvictionUsesRecordedAccessThenCreatedAt(t *testing.T) {
 	store := newStoreAt(t, dir, 0)
 	tick(store)
 	keys := []Key{
-		{WorldUID: "uid-a", WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"},
-		{WorldUID: "uid-a", WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"},
+		{WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"},
+		{WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"},
 	}
 	// The first is baked EARLIER by the meta's clock (createdAt).
 	created := []int64{1_000_000, 2_000_000}
@@ -681,9 +682,9 @@ func TestSweepRemovesJunkWithInvalidNames(t *testing.T) {
 		e.modified = time.Now().Add(-2 * evictionGrace)
 	}
 	store.mu.Unlock()
-	keyA := Key{WorldUID: "uid-a", WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}
-	keyB := Key{WorldUID: "uid-b", WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}
-	keyC := Key{WorldUID: "uid-c", WorldID: "3333333333333333", PipelineVersion: "v6-a", Stage: "2"}
+	keyA := Key{WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}
+	keyB := Key{WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}
+	keyC := Key{WorldID: "3333333333333333", PipelineVersion: "v6-a", Stage: "2"}
 	uidA := bake(t, store, keyA, "A", strings.Repeat("a", 90))
 	bake(t, store, keyB, "B", strings.Repeat("b", 90))
 	bake(t, store, keyC, "C", strings.Repeat("c", 90))

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -33,8 +34,9 @@ import (
 // objects in a bucket (S3). One code path for both.
 //
 // The artifact uid is a minted uuid and means nothing; meta.json is the ONLY
-// truth about what an entry is. The logical key — worldUid, worldId,
-// pipelineVersion, stage — lives inside it, and `resolve` maps key → uid
+// truth about what an entry is. The logical key — worldId, pipelineVersion,
+// stage, the CONTENT only (docs/decisions/artifacts-by-content.md, DEC-0039)
+// — lives inside it, and `resolve` maps key → uid
 // through an index built from the metas. That is the robustness lesson the
 // path-encoded layouts kept teaching: every schema change made walkers blind
 // and left ghost bytes nothing could list. Here a schema change edits meta
@@ -98,8 +100,13 @@ func safeSegment(segment string) bool {
 
 // Key is the LOGICAL identity of one bake — what `resolve` translates into a
 // storage uid. The uid never carries meaning; this does.
+//
+// The CONTENT only, since DEC-0039 (fork 1): the terrain (the client's
+// worldId), the pipeline version and the stage determine the bytes, so one
+// artifact serves every world with that terrain — a copy of a template and
+// the template alike. The world's uid left the key; which worlds may read
+// an artifact is the world module's answer (its terrain ids).
 type Key struct {
-	WorldUID        string `json:"worldUid"`
 	WorldID         string `json:"worldId"`
 	PipelineVersion string `json:"pipelineVersion"`
 	Stage           string `json:"stage"`
@@ -108,11 +115,11 @@ type Key struct {
 // Valid reports whether the key is filled. Segments are not path components
 // anymore, so the only requirement is that they are present and sane.
 func (k Key) Valid() bool {
-	return safeSegment(k.WorldUID) && safeSegment(k.WorldID) && safeSegment(k.PipelineVersion) && safeSegment(k.Stage)
+	return safeSegment(k.WorldID) && safeSegment(k.PipelineVersion) && safeSegment(k.Stage)
 }
 
 func (k Key) String() string {
-	return k.WorldUID + "\x00" + k.WorldID + "\x00" + k.PipelineVersion + "\x00" + k.Stage
+	return k.WorldID + "\x00" + k.PipelineVersion + "\x00" + k.Stage
 }
 
 // entryMeta is the slice of the client's meta.json the server reads — the key
@@ -153,7 +160,7 @@ type entry struct {
 	meta   *entryMeta // nil: no readable meta.json (mid-write, or junk)
 	// key remembers what a RESERVATION was minted for, before its meta.json
 	// lands — it is what lets a write into a fresh artifact be ranked
-	// against its world (the meta is exactly what has not been written yet).
+	// against its terrain (the meta is exactly what has not been written yet).
 	key *Key
 	// modified is the newest write: the newest LastModified of its objects
 	// when the index was built, then the time of each write. The eviction
@@ -169,11 +176,11 @@ type entry struct {
 	lastAccess time.Time
 }
 
-// world answers which world an entry belongs to — the landed meta first,
+// terrain answers the terrain an entry belongs to — the landed meta first,
 // the reservation's key before that, "" for junk that has neither.
-func (e *entry) world() string {
+func (e *entry) terrain() string {
 	if k := e.keyOf(); k != nil {
-		return k.WorldUID
+		return k.WorldID
 	}
 	return ""
 }
@@ -261,7 +268,6 @@ type ListedArtifact struct {
 	Bytes       int64  `json:"bytes"`
 	// Meta fields, flattened; zero values when the entry has no readable
 	// meta.json and is only bytes with a name.
-	WorldUID        string `json:"worldUid"`
 	WorldID         string `json:"worldId"`
 	PipelineVersion string `json:"pipelineVersion"`
 	Stage           string `json:"stage"`
@@ -356,6 +362,7 @@ func (s *Store) load(ctx context.Context) error {
 	work := make(chan int)
 	errs := make([]error, len(withMeta))
 	world := make([]bool, len(withMeta))
+	var old atomic.Int64
 	var wg sync.WaitGroup
 	for range min(parallelism, len(withMeta)) {
 		wg.Add(1)
@@ -364,7 +371,7 @@ func (s *Store) load(ctx context.Context) error {
 			for i := range work {
 				// Each goroutine writes only the entries it takes.
 				e := withMeta[i]
-				e.meta, world[i], errs[i] = s.loadMeta(ctx, e.uid)
+				e.meta, world[i], errs[i] = s.loadMeta(ctx, e.uid, &old)
 			}
 		}()
 	}
@@ -391,6 +398,9 @@ func (s *Store) load(ctx context.Context) error {
 		kept = append(kept, e)
 	}
 	withMeta = kept
+	if n := old.Load(); n > 0 {
+		slog.Warn("artifact store: entries in the format before DEC-0039 (a world uid in the key) are junk; clear the store once (DELETE /v1/artifacts as an admin)", "count", n)
+	}
 	if len(s.foreign) > 0 {
 		slog.Warn("artifact store: entries shaped like worlds are not indexed and never deleted; is the world store in the same storage?", "count", len(s.foreign))
 	}
@@ -490,8 +500,9 @@ var metaRetryDelay = 250 * time.Millisecond
 // loadMeta reads one entry's meta.json at start: the meta (nil: junk),
 // whether it is a world's meta (worldMeta), or the error that stayed after
 // metaReadAttempts. A meta that went between the List and the read is no
-// meta, as for an entry without one.
-func (s *Store) loadMeta(ctx context.Context, uid string) (*entryMeta, bool, error) {
+// meta, as for an entry without one. A meta of the format before DEC-0039
+// counts into `old`.
+func (s *Store) loadMeta(ctx context.Context, uid string, old *atomic.Int64) (*entryMeta, bool, error) {
 	var last error
 	for attempt := range metaReadAttempts {
 		if attempt > 0 {
@@ -506,6 +517,9 @@ func (s *Store) loadMeta(ctx context.Context, uid string) (*entryMeta, bool, err
 		case err == nil:
 			if meta := parseMeta(raw); meta != nil {
 				return meta, false, nil
+			}
+			if oldFormat(raw) {
+				old.Add(1)
 			}
 			return nil, worldMeta(raw), nil
 		case errors.Is(err, blob.ErrNotFound):
@@ -531,12 +545,28 @@ func worldMeta(raw []byte) bool {
 // bytes; a larger file is not a meta this store can use.
 const metaLimit = 1 << 20
 
+// parseMeta reads a meta.json. A meta of the format before DEC-0039, whose
+// key names a world uid, is no meta (nil): its entry is junk, which the
+// cap's sweep takes first and a clear removes. Such an entry may come from
+// a browser's upload, which the store no longer trusts (DEC-0039, forks 2
+// and 7), so it is not read as content.
 func parseMeta(raw []byte) *entryMeta {
 	var meta entryMeta
-	if json.Unmarshal(raw, &meta) != nil || !meta.Key.Valid() {
+	if json.Unmarshal(raw, &meta) != nil || !meta.Key.Valid() || oldFormat(raw) {
 		return nil
 	}
 	return &meta
+}
+
+// oldFormat reports whether a meta.json's key names a world uid — the
+// format before DEC-0039.
+func oldFormat(raw []byte) bool {
+	var old struct {
+		Key struct {
+			WorldUID string `json:"worldUid"`
+		} `json:"key"`
+	}
+	return json.Unmarshal(raw, &old) == nil && old.Key.WorldUID != ""
 }
 
 // claimKey maps the entry's meta key to it. First writer wins on a
@@ -646,20 +676,20 @@ func (s *Store) Whole(ctx context.Context, keys []Key) ([]bool, error) {
 	return whole, nil
 }
 
-// WorldOf answers which world an artifact belongs to — the checks' join
-// key. From the meta when one has landed, from the reservation's key before
-// that; false only for an entry that has neither (junk, or a hand-copied
-// entry with no readable meta), which callers treat as admin-territory:
-// fail closed, junk has no readers to serve.
-func (s *Store) WorldOf(ctx context.Context, uid string) (string, bool) {
+// TerrainOf answers which terrain an artifact belongs to — the checks'
+// join key. From the meta when one has landed, from the reservation's key
+// before that; false only for an entry that has neither (junk, or a
+// hand-copied entry with no readable meta), which callers treat as
+// admin-territory: fail closed, junk has no readers to serve.
+func (s *Store) TerrainOf(ctx context.Context, uid string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[uid]
 	if !ok {
 		return "", false
 	}
-	world := e.world()
-	return world, world != ""
+	terrain := e.terrain()
+	return terrain, terrain != ""
 }
 
 // fileNames lists an entry's files, sorted. Called under s.mu.
@@ -1403,7 +1433,6 @@ func (s *Store) List(ctx context.Context) ([]ListedArtifact, error) {
 		item := ListedArtifact{ArtifactUID: e.uid, Bytes: e.bytes}
 		switch {
 		case e.meta != nil:
-			item.WorldUID = e.meta.Key.WorldUID
 			item.WorldID = e.meta.Key.WorldID
 			item.PipelineVersion = e.meta.Key.PipelineVersion
 			item.Stage = e.meta.Key.Stage
@@ -1415,7 +1444,6 @@ func (s *Store) List(ctx context.Context) ([]ListedArtifact, error) {
 			// A reservation being written: identified by what it was minted
 			// for, so the listing (and its visibility filter) can attribute
 			// the bytes before the meta lands.
-			item.WorldUID = e.key.WorldUID
 			item.WorldID = e.key.WorldID
 			item.PipelineVersion = e.key.PipelineVersion
 			item.Stage = e.key.Stage
@@ -1467,16 +1495,16 @@ func (s *Store) removeWhere(ctx context.Context, match func(*entry) bool) (int, 
 	return removed, s.deleteObjects(ctx, keys)
 }
 
-// RemoveLevel drops one level of a world — the whole level and every tile
-// of it — and, when `worldID` or `pipeline` is set, only that terrain's or
-// that version's. Returns how many artifacts went.
-func (s *Store) RemoveLevel(ctx context.Context, worldUID string, level int, worldID, pipeline string) (int, error) {
-	if !safeSegment(worldUID) {
+// RemoveLevel drops one level of a terrain — the whole level and every
+// tile of it — and, when `pipeline` is set, only that version's. Returns
+// how many artifacts went.
+func (s *Store) RemoveLevel(ctx context.Context, worldID string, level int, pipeline string) (int, error) {
+	if !safeSegment(worldID) {
 		return 0, ErrBadPath
 	}
 	removed, err := s.removeWhere(ctx, func(e *entry) bool {
 		key := e.keyOf()
-		if key == nil || key.WorldUID != worldUID || (worldID != "" && key.WorldID != worldID) || (pipeline != "" && key.PipelineVersion != pipeline) {
+		if key == nil || key.WorldID != worldID || (pipeline != "" && key.PipelineVersion != pipeline) {
 			return false
 		}
 		n, _, ok := StageLevel(key.Stage)
@@ -1491,20 +1519,14 @@ func (s *Store) RemoveLevel(ctx context.Context, worldUID string, level int, wor
 	return removed, nil
 }
 
-// RemoveWorld drops every entry whose meta names the world — the sweep
-// "delete a world, its artifacts go too" works in this unit.
-func (s *Store) RemoveWorld(ctx context.Context, worldUID string) error {
-	if !safeSegment(worldUID) {
-		return ErrBadPath
+// RemoveTerrain drops every entry of one terrain — the unit of the sweep
+// "delete a world, its artifacts go too", for each terrain that no other
+// world holds (the module decides which). Returns how many went.
+func (s *Store) RemoveTerrain(ctx context.Context, worldID string) (int, error) {
+	if !safeSegment(worldID) {
+		return 0, ErrBadPath
 	}
-	removed, err := s.removeWhere(ctx, func(e *entry) bool { return e.world() == worldUID })
-	if err != nil {
-		return err
-	}
-	if removed == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.removeWhere(ctx, func(e *entry) bool { return e.terrain() == worldID })
 }
 
 // Clear drops everything. Safe by construction — every byte in here is a

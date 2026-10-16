@@ -451,7 +451,7 @@ func (c *coordinator) storedTiles(report taskDoneReport) map[[3]int]bool {
 			continue
 		}
 		tiles = append(tiles, [3]int{p.Level, p.X, p.Y})
-		keys = append(keys, ArtifactKey{WorldUID: job.Request.WorldUID, WorldID: report.Result.WorldID, PipelineVersion: version, Stage: stage})
+		keys = append(keys, ArtifactKey{WorldID: report.Result.WorldID, PipelineVersion: version, Stage: stage})
 	}
 	if len(keys) == 0 {
 		return nil

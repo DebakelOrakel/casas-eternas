@@ -1,4 +1,4 @@
-import type { ArtifactHandle, ArtifactKey, LocalArtifactStore, StorageUsage, StoredArtifact } from './ArtifactStore'
+import { isOldKey, type ArtifactHandle, type ArtifactKey, type LocalArtifactStore, type StorageUsage, type StoredArtifact } from './ArtifactStore'
 
 // LocalArtifactStore backed by the Origin Private File System — a real,
 // on-disk, origin-scoped filesystem the browser hands the page, which
@@ -47,7 +47,7 @@ interface ParsedMeta {
   bakeMs?: number
 }
 
-const keyString = (key: ArtifactKey): string => `${key.worldUid}\0${key.worldId}\0${key.pipelineVersion}\0${key.stage}`
+const keyString = (key: ArtifactKey): string => `${key.worldId}\0${key.pipelineVersion}\0${key.stage}`
 
 // OPFS lives behind a secure context and a reasonably current browser. The
 // factory probes rather than assuming, and returns null when unavailable so
@@ -125,14 +125,22 @@ export async function createOpfsArtifactStore(): Promise<LocalArtifactStore | nu
     index = new Map()
     const root = await rootDir(false)
     if (!root) return index
+    const old: string[] = []
     for await (const [uid, child] of root.entries()) {
       if (child.kind !== 'directory') continue
       const meta = await readMeta(uid)
       const key = meta?.key
-      if (key?.worldUid && key.worldId && key.pipelineVersion && key.stage) {
+      if (isOldKey(key)) {
+        old.push(uid)
+        continue
+      }
+      if (key?.worldId && key.pipelineVersion && key.stage) {
         index.set(keyString(key as ArtifactKey), uid)
       }
     }
+    // Entries of the format before DEC-0039 (a world uid in the key) go:
+    // nothing reads them, and they are recomputable.
+    for (const uid of old) await removeEntry(uid)
     return index
   }
 
@@ -261,7 +269,6 @@ export async function createOpfsArtifactStore(): Promise<LocalArtifactStore | nu
         out.push({
           artifactUid: uid,
           bytes,
-          worldUid: meta?.key?.worldUid ?? '',
           worldId: meta?.key?.worldId ?? '',
           pipelineVersion: meta?.key?.pipelineVersion ?? '',
           stage: meta?.key?.stage ?? '',

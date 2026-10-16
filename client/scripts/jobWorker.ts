@@ -48,7 +48,7 @@ import { createMeshSampler, type MeshSampler } from '../src/generator/mesh/meshS
 import { tileBakeInputs } from '../src/world/bakeInputs'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
 import { readWorld, WorldUnavailableError } from './readWorld'
-import { artifactKey, ArtifactStoreUnavailableError } from '../src/storage/ArtifactStore'
+import { artifactKey, ArtifactStoreUnavailableError, isOldKey } from '../src/storage/ArtifactStore'
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../src/storage/ArtifactStore'
 
 // Where the baker reads and writes. Two shapes, because the same bake runs in
@@ -149,7 +149,7 @@ function createFsArtifactStore(root: string): ArtifactStore {
   // has gone (evicted) is dropped and looked up again.
   const index = storeIndexes.get(root) ?? { byKey: new Map<string, string>(), seen: new Set<string>() }
   storeIndexes.set(root, index)
-  const keyOf = (key: ArtifactKey): string => `${key.worldUid}/${key.worldId}/${key.pipelineVersion}/${key.stage}`
+  const keyOf = (key: ArtifactKey): string => `${key.worldId}/${key.pipelineVersion}/${key.stage}`
   async function findByKey(key: ArtifactKey): Promise<string | null> {
     const id = keyOf(key)
     const held = index.byKey.get(id)
@@ -176,7 +176,9 @@ function createFsArtifactStore(root: string): ArtifactStore {
         // Not seen until its meta is there: an entry still being written
         // is read again on the next miss.
         index.seen.add(child)
-        if (meta.key && !index.byKey.has(keyOf(meta.key))) index.byKey.set(keyOf(meta.key), child)
+        // A meta of the format before DEC-0039 (a world uid in the key) is
+        // not read: its entry is junk to every store.
+        if (meta.key && !isOldKey(meta.key) && !index.byKey.has(keyOf(meta.key))) index.byKey.set(keyOf(meta.key), child)
       } catch {
         continue
       }
@@ -266,13 +268,14 @@ function authorizedFetch(job: Job): (input: string, init?: RequestInit) => Promi
 // The one line that decides where a bake's output lands. Everything above it
 // is identical in both deployments, which is the property worth protecting:
 // the artifacts must be byte-identical wherever the bake ran.
-function artifactStoreFor(job: Job): ArtifactStore | null {
+function artifactStoreFor(job: Job, world: string): ArtifactStore | null {
   if (job.artifactsDir) return createFsArtifactStore(job.artifactsDir)
   if (job.artifactsUrl) {
     const base = job.artifactsUrl
     // By write link and commit: the bytes go to the bucket, not through
-    // the server (DEC-0038, fork 7).
-    return createHttpArtifactStore({ resolveBase: async () => base, fetch: authorizedFetch(job), uploads: 'links' })
+    // the server (DEC-0038, fork 7). The world goes with each resolve: a
+    // server in the local mode records the terrain for it (DEC-0039).
+    return createHttpArtifactStore({ resolveBase: async () => base, fetch: authorizedFetch(job), uploads: 'links', world })
   }
   return null
 }
@@ -517,18 +520,18 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
       if (worldKey && cache && (job.worldZip || read.etag)) remember(cache.worlds, worldKey, { inputs, etag: read.etag }, CACHED_WORLDS)
     }
   }
-  const store = artifactStoreFor(job)
+  const store = artifactStoreFor(job, inputs.worldUid)
   if (!store) throw new Error('neither artifactsDir nor artifactsUrl was given')
   if (job.stage !== 1 && TILE_SPECS[job.stage]) return bakeTile(job, inputs, store, onProgress, cache)
   if (job.stage !== 1) throw new Error(`stage ${job.stage}: no such level`)
   const started = Date.now()
   const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
-  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshLevelStage(1))
+  const key = artifactKey(inputs.worldId, pipelineVersion, meshLevelStage(1))
   if (job.reuse) {
     onProgress('read', 0)
     const stored = await readMeshLevelArtifact(store, key)
     if (stored) {
-      if (cache) remember(cache.levels, `${key.worldUid}/${key.worldId}/${key.pipelineVersion}`, { artifact: stored.artifact }, CACHED_LEVELS)
+      if (cache) remember(cache.levels, `${key.worldId}/${key.pipelineVersion}`, { artifact: stored.artifact }, CACHED_LEVELS)
       onProgress('plan', 0)
       return {
         result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.artifact.count, durationMs: stored.bakeMs },
@@ -542,7 +545,7 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   onProgress('store', 0)
   const artifact = meshLevelToArtifact(level)
   if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
-  if (cache) remember(cache.levels, `${key.worldUid}/${key.worldId}/${key.pipelineVersion}`, { artifact }, CACHED_LEVELS)
+  if (cache) remember(cache.levels, `${key.worldId}/${key.pipelineVersion}`, { artifact }, CACHED_LEVELS)
   if (job.checkpointDir) await rm(checkpointPath(job.checkpointDir, inputs), { recursive: true, force: true })
   // The plan's phase stays on show until the tile levels' rows appear: it
   // covers the coordinator's check of the stored tiles too.
@@ -753,14 +756,14 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   const tile = { level: spec.level, x: job.tile.x, y: job.tile.y }
   const started = Date.now()
   const pipelineVersion = meshTilePipelineVersion(spec.level, job.erosionRounds)
-  const key = artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(tile))
+  const key = artifactKey(inputs.worldId, pipelineVersion, meshTileStage(tile))
   if (job.reuse) {
     const stored = await meshTileArtifactInfo(store, key)
     if (stored) return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.nodes, durationMs: stored.bakeMs } }
   }
   onProgress('parent', 0)
-  const parentKey = artifactKey(inputs.worldUid, inputs.worldId, meshPipelineVersion(1, job.erosionRounds), meshLevelStage(1))
-  const levelKey = `${parentKey.worldUid}/${parentKey.worldId}/${parentKey.pipelineVersion}`
+  const parentKey = artifactKey(inputs.worldId, meshPipelineVersion(1, job.erosionRounds), meshLevelStage(1))
+  const levelKey = `${parentKey.worldId}/${parentKey.pipelineVersion}`
   let level1 = cache ? recall(cache.levels, levelKey) : undefined
   if (!level1) {
     const read = await readMeshLevelArtifact(store, parentKey)
@@ -782,7 +785,7 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     const above = tileSpec(spec.level - 1)
     const pieces: TilePiece[] = []
     for (const piece of parentTilesOf(tile, above, level1.mesh.domain)) {
-      const read = await readTile(store, artifactKey(inputs.worldUid, inputs.worldId, meshTilePipelineVersion(above.level, job.erosionRounds), meshTileStage(piece)), cache)
+      const read = await readTile(store, artifactKey(inputs.worldId, meshTilePipelineVersion(above.level, job.erosionRounds), meshTileStage(piece)), cache)
       if (!read) throw new Error(`tile ${meshTileStage(piece)} of this world is not in the artifact store — the level above comes first`)
       pieces.push({ tile: piece, count: read.count, nodes: read.nodes, z: read.z })
     }
@@ -793,7 +796,7 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   const upstream: UpstreamTile[] = []
   for (const at of job.upstream ?? []) {
     const up = { level: spec.level, x: at.x, y: at.y }
-    const read = await readTile(store, artifactKey(inputs.worldUid, inputs.worldId, pipelineVersion, meshTileStage(up)), cache)
+    const read = await readTile(store, artifactKey(inputs.worldId, pipelineVersion, meshTileStage(up)), cache)
     if (!read) throw new Error(`tile ${meshTileStage(up)} upstream of this one is not in the artifact store`)
     upstream.push({ tile: up, count: read.count, nodes: read.nodes, outflow: read.outflow })
   }
@@ -807,7 +810,7 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
 
 // A tile artifact, through the worker's cache when it has one.
 async function readTile(store: ArtifactStore, key: ArtifactKey, cache?: JobCache): Promise<MeshTileArtifact | null> {
-  const id = `${key.worldUid}/${key.worldId}/${key.pipelineVersion}/${key.stage}`
+  const id = `${key.worldId}/${key.pipelineVersion}/${key.stage}`
   const held = cache ? recall(cache.tiles, id) : undefined
   if (held) return held
   const read = await readMeshTileArtifact(store, key)

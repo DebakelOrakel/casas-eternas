@@ -6,7 +6,7 @@ import { relabel } from '../../i18n/relabel'
 import { createScaleBar, planeMeasure } from '../../map/ScaleBar'
 import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import { listServerArtifacts, type ServerArtifact } from '../../server/artifactsClient'
-import { fetchWorld } from '../../server/worldClient'
+import { fetchWorld, listWorlds } from '../../server/worldClient'
 import { artifactKey } from '../../storage/ArtifactStore'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
@@ -78,20 +78,24 @@ function tiltForViewWidth(viewWidth: number): number {
 // shadows: ~190 km, where a mountain's shadow is pixels wide.
 const SHADOWS_BELOW_VIEW_WIDTH = 190_000 * UNITS_PER_METER
 
-// The server's current level-1 artifacts, by world uid. Any revision of a
-// world counts: the world list does not say which terrain a world holds now,
-// so the level can belong to an older one. Not in world/meshArtifacts
-// beside meshPipelineVersion, because the job worker bundles that module and
-// must not carry the server client.
+// The server's current level-1 artifacts, by world uid: an artifact is
+// keyed by its terrain (DEC-0039), and each server world names the terrains
+// its jobs found or baked (WorldSummary.terrains). Any of them counts: the
+// level can belong to an older terrain of the world. Not in
+// world/meshArtifacts beside meshPipelineVersion, because the job worker
+// bundles that module and must not carry the server client.
 async function levelArtifacts(): Promise<Map<string, ServerArtifact[]>> {
-  const listed = await listServerArtifacts()
+  const [listed, worlds] = await Promise.all([listServerArtifacts(), listWorlds()])
   const stage = meshLevelStage(LEVEL)
-  const byWorld = new Map<string, ServerArtifact[]>()
+  const byTerrain = new Map<string, ServerArtifact[]>()
   for (const a of listed?.artifacts ?? []) {
-    if (a.stage !== stage || !isCurrentArtifact(a) || a.worldUid === '') continue
-    const list = byWorld.get(a.worldUid) ?? []
-    list.push(a)
-    byWorld.set(a.worldUid, list)
+    if (a.stage !== stage || !isCurrentArtifact(a) || a.worldId === '') continue
+    byTerrain.set(a.worldId, [...(byTerrain.get(a.worldId) ?? []), a])
+  }
+  const byWorld = new Map<string, ServerArtifact[]>()
+  for (const world of worlds ?? []) {
+    const list = (world.terrains ?? []).flatMap((terrain) => byTerrain.get(terrain) ?? [])
+    if (list.length > 0) byWorld.set(world.uid, list)
   }
   return byWorld
 }
@@ -242,7 +246,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (chosen.worldId !== worldId) console.warn(`[incubator] level ${LEVEL} of an older terrain (${chosen.worldId}, the save is ${worldId})`)
     step('save read')
     const store = await getArtifactStore()
-    const read = await readMeshLevelArtifact(store, artifactKey(uid, chosen.worldId, chosen.pipelineVersion, chosen.stage))
+    const read = await readMeshLevelArtifact(store, artifactKey(chosen.worldId, chosen.pipelineVersion, chosen.stage))
     if (!read) {
       console.warn(`[incubator] level ${LEVEL} of ${uid} could not be read`)
       return false
@@ -251,7 +255,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The tiles of levels 2 and 3 the server holds for this terrain.
     const versions = new Map<string, string>()
     for (const a of (await listServerArtifacts())?.artifacts ?? []) {
-      if (a.worldUid === uid && a.worldId === chosen.worldId && parseStage(a.stage)?.tile) versions.set(a.stage, a.pipelineVersion)
+      if (a.worldId === chosen.worldId && parseStage(a.stage)?.tile) versions.set(a.stage, a.pipelineVersion)
     }
     step(`${versions.size} tiles listed`)
     // The save's climate fields; the terrain and the water the ground
@@ -278,7 +282,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       debug.water = levels
       debug.elevation = levels.elevation
     })
-    await ground.setWorld({ worldUid: uid, worldId: chosen.worldId, width: world.width, height: world.height, level: read.artifact, versions, fields })
+    await ground.setWorld({ worldId: chosen.worldId, width: world.width, height: world.height, level: read.artifact, versions, fields })
     step('ground ready')
     if (disposed) return false
     shown = true

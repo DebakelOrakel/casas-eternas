@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
@@ -54,8 +53,7 @@ func commit(mux *http.ServeMux, uid, token string, files ...Upload) *httptest.Re
 
 // The whole path on dir: link, upload, commit, read.
 func TestDirWriteByLinkAndCommit(t *testing.T) {
-	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil),
-		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	uid, _ := resolve(t, mux, true)
 	payload := "raster-bytes"
 	response, link := writeLink(t, mux, uid, "elevation.f32", len(payload), "")
@@ -83,7 +81,7 @@ func TestDirWriteByLinkAndCommit(t *testing.T) {
 		t.Errorf("read before the commit = %d, want 404", code)
 	}
 
-	meta := metaFor(Key{WorldUID: "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001", WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}, "linked")
+	meta := metaFor(Key{WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}, "linked")
 	_, metaLink := writeLink(t, mux, uid, "meta.json", len(meta), "")
 	if code := putTo(mux, metaLink.URL, meta); code != http.StatusOK {
 		t.Fatalf("meta upload = %d", code)
@@ -94,7 +92,7 @@ func TestDirWriteByLinkAndCommit(t *testing.T) {
 	if _, files := resolve(t, mux, false); strings.Join(files, ",") != "elevation.f32,meta.json" {
 		t.Errorf("files after the commit = %v", files)
 	}
-	whole, _ := m.store.Whole(context.Background(), []Key{{WorldUID: "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001", WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}})
+	whole, _ := m.store.Whole(context.Background(), []Key{{WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}})
 	if !whole[0] {
 		t.Error("the commit with the meta did not make the artifact whole")
 	}
@@ -109,8 +107,7 @@ func TestDirWriteByLinkAndCommit(t *testing.T) {
 
 // A write link allows exactly its key, its length and its lifetime.
 func TestDirWriteLinkRefusals(t *testing.T) {
-	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil),
-		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	uid, _ := resolve(t, mux, true)
 	_, link := writeLink(t, mux, uid, "a.f32", 5, "")
 	u, _ := url.Parse(link.URL)
@@ -207,8 +204,7 @@ func TestDirWriteLinkRefusals(t *testing.T) {
 // The commit enters only what is in the bucket as said, and only what was
 // signed.
 func TestCommitChecksTheBucket(t *testing.T) {
-	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil),
-		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	uid, _ := resolve(t, mux, true)
 	_, link := writeLink(t, mux, uid, "a.f32", 3, "")
 	cases := []struct {
@@ -260,8 +256,7 @@ func TestWriteLinksNeedTheJobsWorld(t *testing.T) {
 		t.Fatal(err)
 	}
 	const worldUID = "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001"
-	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthPassword, tokens),
-		func(context.Context, string, string) (bool, access.Level) { return false, access.None })
+	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthPassword, tokens), noWorlds())
 	rightJob, _, _ := tokens.IssueJob("job-1", worldUID, time.Hour)
 	wrongJob, _, _ := tokens.IssueJob("job-2", "00000000-1111-4222-8333-444444444444", time.Hour)
 	created := doAs(mux, http.MethodPost, "/v1/artifacts/resolve", strings.TrimSuffix(resolveBody, "}")+`,"create":true}`, rightJob)
@@ -321,7 +316,7 @@ func TestPendingUploadsAreRemovedAndSpared(t *testing.T) {
 	// least recently used.
 	capped := newStoreAt(t, t.TempDir(), 400)
 	tick(capped)
-	uploading, _, _ := capped.Resolve(ctx, Key{WorldUID: "uid-a", WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}, true)
+	uploading, _, _ := capped.Resolve(ctx, Key{WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}, true)
 	if err := write(capped, uploading, "old.f32", strings.Repeat("o", 150)); err != nil {
 		t.Fatal(err)
 	}
@@ -329,8 +324,8 @@ func TestPendingUploadsAreRemovedAndSpared(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Two more artifacts push the store over its cap.
-	bake(t, capped, Key{WorldUID: "uid-b", WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}, "B", strings.Repeat("b", 90))
-	bake(t, capped, Key{WorldUID: "uid-c", WorldID: "3333333333333333", PipelineVersion: "v6-a", Stage: "2"}, "C", strings.Repeat("c", 90))
+	bake(t, capped, Key{WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}, "B", strings.Repeat("b", 90))
+	bake(t, capped, Key{WorldID: "3333333333333333", PipelineVersion: "v6-a", Stage: "2"}, "C", strings.Repeat("c", 90))
 	capped.mu.Lock()
 	_, kept := capped.entries[uploading]
 	capped.mu.Unlock()
@@ -345,8 +340,7 @@ func TestPendingUploadsAreRemovedAndSpared(t *testing.T) {
 // refuses is measured in TestAWSWireArtifacts.)
 func TestS3WriteByPresignedPut(t *testing.T) {
 	fake, srv, bucket := openFakeS3(t, map[string][]byte{})
-	_, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil),
-		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	_, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	uid, _ := resolve(t, mux, true)
 	response, link := writeLink(t, mux, uid, "elevation.u16", 12, "")
 	if response.Code != http.StatusOK {
@@ -391,8 +385,7 @@ func TestS3WriteByPresignedPut(t *testing.T) {
 // "committed" in the body; too many uncommitted files carries none. The
 // worker treats the first as "already written" and the second as a refusal.
 func TestWriteLinkConflictsCarryACode(t *testing.T) {
-	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil),
-		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	codeOf := func(r *httptest.ResponseRecorder) string {
 		var body struct {
 			Code string `json:"code"`
@@ -401,7 +394,7 @@ func TestWriteLinkConflictsCarryACode(t *testing.T) {
 		return body.Code
 	}
 	uid, _ := resolve(t, mux, true)
-	meta := metaFor(Key{WorldUID: "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001", WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}, "whole")
+	meta := metaFor(Key{WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}, "whole")
 	_, metaLink := writeLink(t, mux, uid, metaName, len(meta), "")
 	for i := range maxPendingFiles - 1 {
 		if got, _ := writeLink(t, mux, uid, "f"+strconv.Itoa(i), 1, ""); got.Code != http.StatusOK {

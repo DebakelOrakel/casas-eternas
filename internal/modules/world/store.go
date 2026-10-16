@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,6 +100,15 @@ type Meta struct {
 	// the grants, never from here (2026-10-15, docs/decisions/
 	// template-worlds.md).
 	Template bool `json:"template"`
+	// The terrain ids (the client's worldId, client/src/world/identity.ts)
+	// of this world: the ids under which a job worker found or baked
+	// artifacts for it (docs/decisions/artifacts-by-content.md, DEC-0039,
+	// fork 3). Server-owned like the grants: the server cannot derive a
+	// worldId, so the worker reports it (AddTerrains), and every Put
+	// carries the set across. A caller reads an artifact through a world
+	// whose set holds its worldId. Never pruned: an old revision's terrain
+	// stays readable through the world that had it.
+	Terrains []string `json:"terrains,omitempty"`
 }
 
 // RevisionMeta is {uid}/rev/{n}/meta.json.
@@ -615,6 +625,94 @@ func (s *Store) writeMeta(ctx context.Context, uid string, meta Meta, create boo
 	return nil
 }
 
+// maxTerrains bounds a world's terrain ids. A world gets a new one when its
+// terrain changes and a job bakes it, a few in its life; the bound keeps a
+// leaked job token from growing a meta.json without end.
+const maxTerrains = 256
+
+// ErrTooManyTerrains is returned when a world holds maxTerrains terrain ids.
+var ErrTooManyTerrains = errors.New("world holds too many terrain ids")
+
+// ValidTerrain reports whether a terrain id may be recorded: present, not
+// longer than 128 bytes, and only letters, digits, '-' and '_'. The
+// client's ids are hex hashes (client/src/world/identity.ts).
+func ValidTerrain(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// AddTerrains records terrain ids of a world (Meta.Terrains). Ids the
+// world holds already change nothing, and no object is written then: a job
+// worker reports the id at every resolve, thousands per job. Under the
+// world's lock otherwise, like every write of the meta.
+func (s *Store) AddTerrains(ctx context.Context, uid string, ids ...string) error {
+	if !ValidUID(uid) {
+		return ErrNotFound
+	}
+	for _, id := range ids {
+		if !ValidTerrain(id) {
+			return fmt.Errorf("invalid terrain id %q", id)
+		}
+	}
+	held := func(meta Meta) bool {
+		for _, id := range ids {
+			if !slices.Contains(meta.Terrains, id) {
+				return false
+			}
+		}
+		return true
+	}
+	if meta, err := s.readMeta(uid); err != nil {
+		return err
+	} else if held(meta) {
+		return nil
+	}
+	ctx, cancel := detach(ctx)
+	defer cancel()
+	defer s.lock(uid)()
+	meta, err := s.readMeta(uid)
+	if err != nil {
+		return err
+	}
+	// A copy: the index holds the slice the meta came with.
+	terrains := slices.Clone(meta.Terrains)
+	for _, id := range ids {
+		if !slices.Contains(terrains, id) {
+			terrains = append(terrains, id)
+		}
+	}
+	if len(terrains) == len(meta.Terrains) {
+		return nil
+	}
+	if len(terrains) > maxTerrains {
+		return ErrTooManyTerrains
+	}
+	meta.Terrains = terrains
+	return s.writeMeta(ctx, uid, meta, false)
+}
+
+// WithTerrain answers the uids of the worlds whose terrain ids hold `id`,
+// from the index.
+func (s *Store) WithTerrain(id string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var uids []string
+	for uid, e := range s.worlds {
+		if e.metaErr == nil && slices.Contains(e.meta.Terrains, id) {
+			uids = append(uids, uid)
+		}
+	}
+	sort.Strings(uids)
+	return uids
+}
+
 // ValidUID reports whether a uid may be used as a key segment.
 func ValidUID(uid string) bool { return safeUID.MatchString(uid) }
 
@@ -769,6 +867,9 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 		Kind:        info.Kind,
 		Progress:    info.Progress,
 		Template:    template,
+		// Server-owned, so carried across like the owner: the meta is
+		// rebuilt from the upload (the trap DEC-0037, fork 1, names).
+		Terrains: current.Terrains,
 	}
 	if meta.CreatedAt.IsZero() {
 		meta.CreatedAt = now

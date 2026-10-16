@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
@@ -73,7 +72,7 @@ func (r *heldReader) Read(p []byte) (int, error) {
 }
 
 func keyN(n string) Key {
-	return Key{WorldUID: "uid-" + n, WorldID: strings.Repeat(n, 16), PipelineVersion: "v6-a", Stage: "2"}
+	return Key{WorldID: strings.Repeat(n, 16), PipelineVersion: "v6-a", Stage: "2"}
 }
 
 func present(s *Store, uid string) bool {
@@ -221,7 +220,7 @@ func TestAForgottenReservationAnswers404AndBecomesJunk(t *testing.T) {
 	}
 	const worldUID = "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001"
 	resolver := identity.NewResolver(config.AuthPassword, tokens)
-	nobody := func(context.Context, string, string) (bool, access.Level) { return false, access.None }
+	nobody := noWorlds()
 	job, _, _ := tokens.IssueJob("job-1", worldUID, time.Hour)
 	body := strings.TrimSuffix(resolveBody, "}") + `,"create":true}`
 	resolveAs := func(mux *http.ServeMux) string {

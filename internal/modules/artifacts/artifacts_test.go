@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,22 +24,95 @@ import (
 // client's artifactsClient.ts parses.
 
 // newTestModule builds the module in the LOCAL shape: a none-mode resolver
-// and the everything-ranks-admin closure cmd/ composes there. The checking
-// shape, with a real ranking, is built by newCheckedModule below.
+// and the everything-ranks-admin closures cmd/ composes there. The checking
+// shape, with a real ranking, is built with a testWorlds that grants.
 func newTestModule(t *testing.T) *http.ServeMux {
 	t.Helper()
-	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil),
-		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	return mux
 }
 
+// testWorlds stands in for the world module (Config.WorldAccess,
+// TerrainAccess, AddTerrain): per world a level per Authorization header
+// and its terrain ids.
+type testWorlds struct {
+	mu sync.Mutex
+	// everyone is every caller's level on every world: Admin in the local
+	// shape, None where only grants rank.
+	everyone access.Level
+	levels   map[string]map[string]access.Level // world uid → Authorization → level
+	terrains map[string][]string                // world uid → terrain ids
+}
+
+func newWorlds(everyone access.Level) *testWorlds {
+	return &testWorlds{everyone: everyone, levels: map[string]map[string]access.Level{}, terrains: map[string][]string{}}
+}
+
+func adminWorlds() *testWorlds { return newWorlds(access.Admin) }
+func noWorlds() *testWorlds    { return newWorlds(access.None) }
+
+// grant gives the caller with `bearer` (a whole Authorization header) a
+// level on a world.
+func (w *testWorlds) grant(uid, bearer string, level access.Level) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.levels[uid] == nil {
+		w.levels[uid] = map[string]access.Level{}
+	}
+	w.levels[uid][bearer] = level
+}
+
+// hold records terrain ids of a world, as a job's resolve does.
+func (w *testWorlds) hold(uid string, terrains ...string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, id := range terrains {
+		if !slices.Contains(w.terrains[uid], id) {
+			w.terrains[uid] = append(w.terrains[uid], id)
+		}
+	}
+}
+
+func (w *testWorlds) levelLocked(uid, bearer string) access.Level {
+	return max(w.everyone, w.levels[uid][bearer])
+}
+
+func (w *testWorlds) world(_ context.Context, uid, bearer string) (bool, access.Level, []string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, granted := w.levels[uid]
+	_, held := w.terrains[uid]
+	if !granted && !held && w.everyone == access.None {
+		return false, access.None, nil
+	}
+	return true, w.levelLocked(uid, bearer), slices.Clone(w.terrains[uid])
+}
+
+func (w *testWorlds) terrain(_ context.Context, worldID, bearer string) (access.Level, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	level, holders := access.None, 0
+	for uid, ids := range w.terrains {
+		if slices.Contains(ids, worldID) {
+			holders++
+			level = max(level, w.levelLocked(uid, bearer))
+		}
+	}
+	return level, holders > 1
+}
+
+func (w *testWorlds) addTerrain(_ context.Context, uid, worldID, _ string) error {
+	w.hold(uid, worldID)
+	return nil
+}
+
 // newModule builds the module through New, on `bucket`, and mounts it.
-func newModule(t *testing.T, bucket blob.Bucket, resolver *identity.Resolver, rank func(context.Context, string, string) (bool, access.Level)) (*Module, *http.ServeMux) {
+func newModule(t *testing.T, bucket blob.Bucket, resolver *identity.Resolver, worlds *testWorlds) (*Module, *http.ServeMux) {
 	t.Helper()
 	var all config.Config
 	all.Artifacts.ReadLinkTTL = 15 * time.Minute
 	all.Artifacts.WriteLinkTTL = time.Hour
-	m, err := New(context.Background(), Config{All: all, Bucket: bucket, Identity: resolver, WorldAccess: rank})
+	m, err := New(context.Background(), Config{All: all, Bucket: bucket, Identity: resolver, WorldAccess: worlds.world, TerrainAccess: worlds.terrain, AddTerrain: worlds.addTerrain})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +149,9 @@ func do(mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorde
 	return recorder
 }
 
-const resolveBody = `{"worldUid":"a754f0db-ff5c-4b45-9f2c-1b4e7a30d001","worldId":"ba90bda173d581ef","pipelineVersion":"v6","stage":"2"}`
+// The world names what a resolve works for (resolveRequest.World): read in
+// the local mode only, where it records the terrain for the world.
+const resolveBody = `{"worldId":"ba90bda173d581ef","pipelineVersion":"v6","stage":"2","world":"a754f0db-ff5c-4b45-9f2c-1b4e7a30d001"}`
 
 func resolve(t *testing.T, mux *http.ServeMux, create bool) (string, []string) {
 	t.Helper()
@@ -158,11 +235,12 @@ func doAs(mux *http.ServeMux, method, path, body, token string) *httptest.Respon
 	return recorder
 }
 
-// Artifacts inherit their world's ACL — the whole matrix, through real
-// tokens: strangers see 404 (a hidden world hides its artifacts), viewers
-// read but neither write nor remove, editors do both, the store-wide clear
-// is the operator's, and a bake job's own token writes without any grant
-// (the bypass step 4 will narrow).
+// Artifacts inherit the ACL of the worlds that hold their terrain — the
+// whole matrix of DEC-0039, through real tokens: only the job of a world
+// writes (it binds the terrain to its world as it resolves), strangers see
+// 404, viewers and the anonymous caller of a template read, a copy that
+// holds the same terrain reads at once, a shared terrain is removed by an
+// admin only, and the owner's sweep takes what no other world holds.
 func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
@@ -176,45 +254,61 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 		}
 		return token
 	}
-	owner, editor, viewer, stranger, admin := issue("own", false), issue("ed", false), issue("view", false), issue("str", false), issue("root", true)
-	const worldUID = "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001"
-	levels := map[string]access.Level{
-		"Bearer " + owner:  access.Owner,
-		"Bearer " + editor: access.Editor,
-		"Bearer " + viewer: access.Viewer,
+	owner, editor, viewer, stranger, admin, copier := issue("own", false), issue("ed", false), issue("view", false), issue("str", false), issue("root", true), issue("copier", false)
+	const (
+		worldUID = "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001"
+		copyUID  = "b754f0db-ff5c-4b45-9f2c-1b4e7a30d002"
+		terrain  = "ba90bda173d581ef"
+	)
+	worlds := noWorlds()
+	worlds.grant(worldUID, "Bearer "+owner, access.Owner)
+	worlds.grant(worldUID, "Bearer "+editor, access.Editor)
+	worlds.grant(worldUID, "Bearer "+viewer, access.Viewer)
+	worlds.grant(copyUID, "Bearer "+copier, access.Owner)
+	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthPassword, tokens), worlds)
+
+	rightJob, _, err := tokens.IssueJob("job-1", worldUID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongJob, _, err := tokens.IssueJob("job-2", "00000000-1111-4222-8333-444444444444", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clueless, _, err := tokens.Issue(token.SubjectJob, token.JobAudience("job-3"), time.Hour)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthPassword, tokens),
-		func(_ context.Context, uid, bearer string) (bool, access.Level) {
-			if uid != worldUID {
-				return false, access.None
-			}
-			return true, levels[bearer]
-		})
+	// Before any job, no world holds the terrain: nobody reads it.
+	if got := doAs(mux, http.MethodPost, "/v1/artifacts/resolve", resolveBody, viewer).Code; got != http.StatusNotFound {
+		t.Errorf("viewer resolve before a job = %d, want 404", got)
+	}
 
-	// The editor mints and writes; that is the working path everything else
-	// is measured against.
+	// The job of the world mints and writes; that is the working path
+	// everything else is measured against. Its resolve binds the terrain.
 	createBody := strings.TrimSuffix(resolveBody, "}") + `,"create":true}`
-	created := doAs(mux, http.MethodPost, "/v1/artifacts/resolve", createBody, editor)
+	created := doAs(mux, http.MethodPost, "/v1/artifacts/resolve", createBody, rightJob)
 	if created.Code != http.StatusOK {
-		t.Fatalf("editor create = %d: %s", created.Code, created.Body)
+		t.Fatalf("job create = %d: %s", created.Code, created.Body)
+	}
+	if _, _, held := worlds.world(context.Background(), worldUID, ""); !slices.Contains(held, terrain) {
+		t.Fatalf("the job's resolve did not bind the terrain: %v", held)
 	}
 	var minted struct {
 		ArtifactUID string `json:"artifactUid"`
 	}
 	_ = json.Unmarshal(created.Body.Bytes(), &minted)
-	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/elevation.f32", "bytes", editor).Code; got != http.StatusNoContent {
-		t.Fatalf("editor write = %d", got)
+	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/elevation.f32", "bytes", rightJob).Code; got != http.StatusNoContent {
+		t.Fatalf("job write = %d", got)
+	}
+	meta := `{"key":{"worldId":"` + terrain + `","pipelineVersion":"v6","stage":"2"},"label":"test","createdAt":1}`
+	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/meta.json", meta, rightJob).Code; got != http.StatusNoContent {
+		t.Fatalf("job meta = %d", got)
 	}
 
 	// The listing says what each caller may do with an entry, and counts only
 	// what the caller sees (2026-09-29).
-	// The meta names the key the artifact was resolved for (a meta that
-	// names another key is refused, ErrKeyMismatch).
-	meta := `{"key":{"worldUid":"` + worldUID + `","worldId":"ba90bda173d581ef","pipelineVersion":"v6","stage":"2"},"label":"test","createdAt":1}`
-	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/meta.json", meta, editor).Code; got != http.StatusNoContent {
-		t.Fatalf("editor meta = %d", got)
-	}
 	for _, c := range []struct {
 		who, token, level string
 	}{{"viewer", viewer, `"callerLevel":"viewer"`}, {"owner", owner, `"callerLevel":"owner"`}, {"operator", admin, `"callerLevel":"admin"`}} {
@@ -227,6 +321,7 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 		t.Errorf("a stranger's listing = %s, want nothing and no bytes", body)
 	}
 
+	read := "/v1/artifacts/" + minted.ArtifactUID + "/elevation.f32"
 	cases := []struct {
 		name   string
 		method string
@@ -236,14 +331,21 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 		want   int
 	}{
 		{"stranger resolve", http.MethodPost, "/v1/artifacts/resolve", resolveBody, stranger, http.StatusNotFound},
-		{"stranger read", http.MethodGet, "/v1/artifacts/" + minted.ArtifactUID + "/elevation.f32", "", stranger, http.StatusNotFound},
+		{"stranger read", http.MethodGet, read, "", stranger, http.StatusNotFound},
+		{"anonymous read of a world that is no template", http.MethodGet, read, "", "", http.StatusNotFound},
 		{"viewer resolve", http.MethodPost, "/v1/artifacts/resolve", resolveBody, viewer, http.StatusOK},
-		{"viewer read", http.MethodGet, "/v1/artifacts/" + minted.ArtifactUID + "/elevation.f32", "", viewer, http.StatusOK},
+		{"viewer read", http.MethodGet, read, "", viewer, http.StatusOK},
 		{"viewer create", http.MethodPost, "/v1/artifacts/resolve", createBody, viewer, http.StatusForbidden},
-		{"viewer write", http.MethodPut, "/v1/artifacts/" + minted.ArtifactUID + "/f2", "x", viewer, http.StatusForbidden},
+		{"editor create", http.MethodPost, "/v1/artifacts/resolve", createBody, editor, http.StatusForbidden},
+		{"admin create", http.MethodPost, "/v1/artifacts/resolve", createBody, admin, http.StatusForbidden},
+		{"editor write", http.MethodPut, "/v1/artifacts/" + minted.ArtifactUID + "/f2", "x", editor, http.StatusForbidden},
+		{"editor write link", http.MethodPost, "/v1/artifacts/" + minted.ArtifactUID + "/write-link", `{"name":"f3","size":1}`, editor, http.StatusForbidden},
 		{"viewer remove", http.MethodDelete, "/v1/artifacts/" + minted.ArtifactUID, "", viewer, http.StatusForbidden},
 		{"editor sweep needs owner", http.MethodDelete, "/v1/artifacts?world=" + worldUID, "", editor, http.StatusForbidden},
 		{"viewer clear-all", http.MethodDelete, "/v1/artifacts", "", viewer, http.StatusForbidden},
+		{"job of another world writes", http.MethodPut, "/v1/artifacts/" + minted.ArtifactUID + "/job2.f32", "x", wrongJob, http.StatusNotFound},
+		{"claim-less job token writes", http.MethodPut, "/v1/artifacts/" + minted.ArtifactUID + "/job3.f32", "x", clueless, http.StatusNotFound},
+		{"copy's owner reads before the copy holds the terrain", http.MethodGet, read, "", copier, http.StatusNotFound},
 	}
 	for _, c := range cases {
 		response := doAs(mux, c.method, c.path, c.body, c.token)
@@ -260,50 +362,42 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 		}
 	}
 
-	// The listing inherits visibility: the viewer sees the artifact, the
-	// stranger sees an empty store.
-	for token, want := range map[string]int{viewer: 1, stranger: 0} {
-		var listing struct {
-			Artifacts []ListedArtifact `json:"artifacts"`
-		}
-		response := doAs(mux, http.MethodGet, "/v1/artifacts", "", token)
-		if err := json.Unmarshal(response.Body.Bytes(), &listing); err != nil {
-			t.Fatal(err)
-		}
-		if len(listing.Artifacts) != want {
-			t.Errorf("listing length = %d, want %d", len(listing.Artifacts), want)
-		}
+	// A template: the anonymous caller ranks a viewer, and reads.
+	worlds.grant(worldUID, "", access.Viewer)
+	if got := follow(t, mux, read, "").Code; got != http.StatusOK {
+		t.Errorf("anonymous read of a template = %d, want 200", got)
 	}
 
-	// A bake job's token writes exactly where its world claim points — the
-	// system's own writer, narrowed to the one world it was sent for. For
-	// any other world, or without the claim (a pre-claim token), it is a
-	// stranger like every other.
-	rightJob, _, err := tokens.IssueJob("job-1", worldUID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
+	// A copy holds the same terrain (the server's copy carries the ids):
+	// its owner reads at once, and the terrain is shared now — removed by
+	// an admin only, and left by a sweep.
+	worlds.hold(copyUID, terrain)
+	if got := follow(t, mux, read, copier).Code; got != http.StatusOK {
+		t.Errorf("the copy's owner reads = %d, want 200", got)
 	}
-	wrongJob, _, err := tokens.IssueJob("job-2", "00000000-1111-4222-8333-444444444444", time.Hour)
-	if err != nil {
-		t.Fatal(err)
+	if got := doAs(mux, http.MethodDelete, "/v1/artifacts/"+minted.ArtifactUID, "", editor).Code; got != http.StatusForbidden {
+		t.Errorf("editor removes a shared artifact = %d, want 403", got)
 	}
-	clueless, _, err := tokens.Issue(token.SubjectJob, token.JobAudience("job-3"), time.Hour)
-	if err != nil {
-		t.Fatal(err)
+	if got := doAs(mux, http.MethodDelete, "/v1/artifacts?worldId="+terrain+"&level=0", "", copier).Code; got != http.StatusForbidden {
+		t.Errorf("the copy's owner drops a shared level = %d, want 403", got)
 	}
-	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/job.f32", "x", rightJob).Code; got != http.StatusNoContent {
-		t.Errorf("bake job write for its own world = %d, want 204", got)
+	if got := doAs(mux, http.MethodDelete, "/v1/artifacts?world="+copyUID, "", copier).Code; got != http.StatusNoContent {
+		t.Errorf("the copy's owner sweeps = %d, want 204", got)
 	}
-	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/job2.f32", "x", wrongJob).Code; got != http.StatusNotFound {
-		t.Errorf("bake job write for ANOTHER world = %d, want 404", got)
-	}
-	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/job3.f32", "x", clueless).Code; got != http.StatusNotFound {
-		t.Errorf("claim-less job token write = %d, want 404", got)
+	if got := follow(t, mux, read, viewer).Code; got != http.StatusOK {
+		t.Errorf("after the copy's sweep the template's viewer reads = %d, want 200 (shared terrain stays)", got)
 	}
 
-	// Owner sweeps their world; the operator clears the store.
+	// The copy is gone; the terrain is the world's alone, and its owner's
+	// sweep takes it.
+	worlds.mu.Lock()
+	delete(worlds.terrains, copyUID)
+	worlds.mu.Unlock()
 	if got := doAs(mux, http.MethodDelete, "/v1/artifacts?world="+worldUID, "", owner).Code; got != http.StatusNoContent {
 		t.Errorf("owner sweep = %d, want 204", got)
+	}
+	if _, ok := m.store.TerrainOf(context.Background(), minted.ArtifactUID); ok {
+		t.Error("the owner's sweep left the artifact of a terrain no other world holds")
 	}
 	if got := doAs(mux, http.MethodDelete, "/v1/artifacts", "", admin).Code; got != http.StatusNoContent {
 		t.Errorf("admin clear = %d, want 204", got)
@@ -364,7 +458,7 @@ func TestListShapesAreNeverNull(t *testing.T) {
 // state production only reaches when a writer crashed mid-bake.
 func writeMeta(t *testing.T, mux *http.ServeMux, uid string) {
 	t.Helper()
-	meta := `{"key":{"worldUid":"a754f0db-ff5c-4b45-9f2c-1b4e7a30d001","worldId":"ba90bda173d581ef","pipelineVersion":"v6","stage":"2"},"label":"test","createdAt":1}`
+	meta := `{"key":{"worldId":"ba90bda173d581ef","pipelineVersion":"v6","stage":"2"},"label":"test","createdAt":1}`
 	if got := do(mux, http.MethodPut, "/v1/artifacts/"+uid+"/meta.json", meta).Code; got != http.StatusNoContent {
 		t.Fatalf("writing meta = %d", got)
 	}
@@ -398,10 +492,9 @@ func TestRemovalByArtifactAndByWorld(t *testing.T) {
 // a level is removed whole, tiles included, and only of the version asked.
 func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
 	mux := newTestModule(t)
-	const world = "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001"
 	mint := func(stage, version string) {
 		t.Helper()
-		key := `{"worldUid":"` + world + `","worldId":"ba90bda173d581ef","pipelineVersion":"` + version + `","stage":"` + stage + `"`
+		key := `{"worldId":"ba90bda173d581ef","pipelineVersion":"` + version + `","stage":"` + stage + `"`
 		response := do(mux, http.MethodPost, "/v1/artifacts/resolve", key+`,"create":true}`)
 		var decoded struct {
 			ArtifactUID string `json:"artifactUid"`
@@ -442,7 +535,7 @@ func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("levels %v, want %v", got, want)
 	}
-	if code := do(mux, http.MethodDelete, "/v1/artifacts?world="+world+"&level=3&pipeline=v6", "").Code; code != http.StatusNoContent {
+	if code := do(mux, http.MethodDelete, "/v1/artifacts?worldId=ba90bda173d581ef&level=3&pipeline=v6", "").Code; code != http.StatusNoContent {
 		t.Fatalf("delete level = %d", code)
 	}
 	got = levels()
@@ -450,7 +543,34 @@ func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("after delete %v, want %v", got, want)
 	}
-	if code := do(mux, http.MethodDelete, "/v1/artifacts?world="+world+"&level=x", "").Code; code != http.StatusBadRequest {
+	if code := do(mux, http.MethodDelete, "/v1/artifacts?worldId=ba90bda173d581ef&level=x", "").Code; code != http.StatusBadRequest {
 		t.Errorf("a level that is no number = %d, want 400", code)
+	}
+	if code := do(mux, http.MethodDelete, "/v1/artifacts?level=1", "").Code; code != http.StatusBadRequest {
+		t.Errorf("a level of no terrain = %d, want 400", code)
+	}
+}
+
+// The gate lets a request without credentials through to a resolve and the
+// read of a file — the module ranks it by the terrain — and to nothing else
+// of this module (DEC-0039, fork 4).
+func TestAnonymousReadsAreAResolveAndAFileRead(t *testing.T) {
+	for _, c := range []struct {
+		method, path string
+		want         bool
+	}{
+		{http.MethodPost, "/v1/artifacts/resolve", true},
+		{http.MethodGet, "/v1/artifacts/5f0e1c4a-0000-4000-8000-000000000001/meta.json", true},
+		{http.MethodGet, "/v1/artifacts/5f0e1c4a-0000-4000-8000-000000000001/family-1/elevation.u16", true},
+		{http.MethodGet, "/v1/artifacts", false},
+		{http.MethodGet, "/v1/artifacts/levels", false},
+		{http.MethodPut, "/v1/artifacts/5f0e1c4a-0000-4000-8000-000000000001/meta.json", false},
+		{http.MethodPost, "/v1/artifacts/5f0e1c4a-0000-4000-8000-000000000001/write-link", false},
+		{http.MethodDelete, "/v1/artifacts/5f0e1c4a-0000-4000-8000-000000000001", false},
+		{http.MethodGet, LinkBase + "5f0e1c4a-0000-4000-8000-000000000001/meta.json", false},
+	} {
+		if got := AnonymousReads(httptest.NewRequest(c.method, c.path, nil)); got != c.want {
+			t.Errorf("%s %s = %v, want %v", c.method, c.path, got, c.want)
+		}
 	}
 }

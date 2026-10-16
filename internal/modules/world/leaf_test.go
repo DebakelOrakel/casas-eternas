@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,7 +113,7 @@ func TestTheStoreBehavesTheSameOnEveryBackend(t *testing.T) {
 				t.Fatalf("after a restart: %d worlds (before %d), err %v", len(after), len(before), err)
 			}
 			for i := range after {
-				if after[i] != before[i] {
+				if !reflect.DeepEqual(after[i], before[i]) {
 					t.Errorf("world %d after a restart = %+v, before %+v", i, after[i], before[i])
 				}
 			}

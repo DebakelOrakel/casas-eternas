@@ -116,7 +116,7 @@ const tls = `https://127.0.0.1:${port}/v1`
 // Nobody listens there: the connection is refused.
 const refused = `http://127.0.0.1:1/v1`
 
-const key = artifactKey('uid', 'world', 'v1', '1')
+const key = artifactKey('world', 'v1', '1')
 const handle = { key, remote: 'u1', files: ['meta.json'] }
 const store = (base) => createHttpArtifactStore({ resolveBase: async () => base })
 const bytes = new Uint8Array([1, 2, 3])
@@ -263,9 +263,9 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
 {
   // A server that keeps its reservations in memory, as the artifact store
   // does, and forgets them when it "restarts". Its bucket survives.
-  const fake = { minted: 0, byKey: new Map(), known: new Set(), bucket: new Map(), resolves: 0, commits: [], uploads: [], putGone: false, restartOn: null }
+  const fake = { minted: 0, byKey: new Map(), known: new Set(), bucket: new Map(), resolves: 0, resolveBodies: [], commits: [], uploads: [], putGone: false, restartOn: null }
   const restart = () => { fake.byKey.clear(); fake.known.clear() }
-  const reset = () => Object.assign(fake, { minted: 0, byKey: new Map(), known: new Set(), bucket: new Map(), resolves: 0, commits: [], uploads: [], putGone: false, restartOn: null })
+  const reset = () => Object.assign(fake, { minted: 0, byKey: new Map(), known: new Set(), bucket: new Map(), resolves: 0, resolveBodies: [], commits: [], uploads: [], putGone: false, restartOn: null })
   // restartOn: a predicate over the request ('link', 'upload', 'commit' and
   // the file); true restarts the server before it answers.
   const maybeRestart = (what, name) => {
@@ -280,7 +280,8 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
       if (url.pathname === '/v1/artifacts/resolve') {
         fake.resolves++
         const k = JSON.parse(body.toString())
-        const id = `${k.worldUid}/${k.worldId}/${k.pipelineVersion}/${k.stage}`
+        fake.resolveBodies.push(k)
+        const id = `${k.worldId}/${k.pipelineVersion}/${k.stage}`
         let uid = fake.byKey.get(id)
         if (!uid && !k.create) return res.writeHead(404).end()
         if (!uid) {
@@ -344,8 +345,21 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
   }
 
   reset()
+  {
+    // The key is the content only (DEC-0039); the world the store works
+    // for goes with the resolve beside it, for a server in the local mode.
+    const forWorld = createHttpArtifactStore({ resolveBase: async () => base, uploads: 'links', world: 'world-uid' })
+    await forWorld.resolve(artifactKey('w0', 'v1', '1'), true)
+    await s.resolve(artifactKey('w0', 'v1', '1'), false)
+    const [withWorld, without] = fake.resolveBodies
+    check('a resolve sends the key and the store\'s world, no world uid in the key',
+      withWorld?.world === 'world-uid' && withWorld.worldId === 'w0' && !('worldUid' in withWorld) && without && !('world' in without),
+      JSON.stringify(fake.resolveBodies))
+  }
+
+  reset()
   fake.restartOn = (what, name) => what === 'link' && name === 'b.f32' && fake.minted === 1
-  const k1 = artifactKey('uid', 'w1', 'v1', '1')
+  const k1 = artifactKey('w1', 'v1', '1')
   const lost = await outcome(() => writeAll(s, k1))
   check('a restart between two files → resolved again, the artifact again from its first file, committed whole under the fresh uid',
     lost.value?.done.every(Boolean) && fake.resolves === 2 && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole,
@@ -357,7 +371,7 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
   reset()
   s = linked()
   fake.restartOn = (what) => what === 'commit' && fake.minted === 1
-  const atCommit = await outcome(() => writeAll(s, artifactKey('uid', 'w2', 'v1', '1')))
+  const atCommit = await outcome(() => writeAll(s, artifactKey('w2', 'v1', '1')))
   check('a restart before the commit → the commit answers 404 → every file again, then the commit',
     atCommit.value?.done.every(Boolean) && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole && fake.uploads.filter((u) => u.startsWith('r2/')).length === 3,
     JSON.stringify({ atCommit, commits: fake.commits, uploads: fake.uploads }))
@@ -366,7 +380,7 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
   s = linked()
   fake.putGone = true
   fake.restartOn = (what, name) => what === 'upload' && name === 'b.f32' && fake.minted === 1
-  const atUpload = await outcome(() => writeAll(s, artifactKey('uid', 'w3', 'v1', '1')))
+  const atUpload = await outcome(() => writeAll(s, artifactKey('w3', 'v1', '1')))
   check('an upload answered 404 → the same, under a fresh uid',
     atUpload.value?.done.every(Boolean) && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole,
     JSON.stringify({ atUpload, commits: fake.commits, uploads: fake.uploads }))
@@ -375,11 +389,11 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
   s = linked()
   // Restarts again while the artifact is uploaded again.
   fake.restartOn = (what, name) => what === 'link' && name === 'b.f32'
-  const twice = await outcome(() => writeAll(s, artifactKey('uid', 'w4', 'v1', '1')))
+  const twice = await outcome(() => writeAll(s, artifactKey('w4', 'v1', '1')))
   check('a 404 again under the fresh uid → unavailable (the task is given back)', unavailable(twice) && twice.error.status === 404 && fake.resolves === 2, String(twice.error ?? JSON.stringify(twice.value)))
   fake.restartOn = null
   fake.commits = []
-  const after = await outcome(() => writeAll(s, artifactKey('uid', 'w5', 'v1', '1')))
+  const after = await outcome(() => writeAll(s, artifactKey('w5', 'v1', '1')))
   check('the next artifact commits its own files only (the broken-off upload is let go)',
     after.value?.done.every(Boolean) && fake.commits.length === 1 && names(fake.commits[0]) === whole,
     JSON.stringify({ after, commits: fake.commits }))
@@ -415,12 +429,8 @@ console.log('\n— the tiered store (the browser): unavailable is a miss —')
   process.on('unhandledRejection', onRejection)
   const warn = console.warn
   const warnings = []
-  // The hook: a warning that names the background write settles `written`,
-  // so the case waits for the failure itself, not for a time.
-  let written = () => {}
   console.warn = (...args) => {
     warnings.push(args)
-    if (String(args[0]).includes("server's write failed")) written()
   }
   try {
     for (const [name, base] of [['500', plain], ['TLS', tls], ['refused', refused]]) {
@@ -438,24 +448,21 @@ console.log('\n— the tiered store (the browser): unavailable is a miss —')
       check(`${name}: read → the local bytes`, back.value?.byteLength === 3, String(back.error))
       const remoteOnly = await outcome(() => tiered.read({ key, remote: 'u1', files: [] }, 'meta.json'))
       check(`${name}: read of a remote-only handle → null`, remoteOnly.value === null && !remoteOnly.error, String(remoteOnly.error))
-      // The remote write is not awaited: wait for its warning.
-      const failed = new Promise((done) => { written = done })
-      await tiered.write({ ...h, remote: 'u1' }, 'meta.json', bytes)
-      // A guard only, so that a write that never fails ends the run: 5 s.
-      let guard
-      const timedOut = await Promise.race([failed.then(() => false), new Promise((done) => { guard = setTimeout(done, 5000, true) })])
-      clearTimeout(guard)
-      check(`${name}: the background write fails and says so`, !timedOut)
+      // The browser does not upload (DEC-0039): a write to a handle the
+      // server knows stays local, and asks the server nothing.
+      const before = warnings.length
+      const kept = await outcome(() => tiered.write({ ...h, remote: 'u1' }, 'meta.json', bytes))
+      check(`${name}: a write with a remote handle → local only`, kept.value === true && warnings.length === before, String(kept.error))
     }
   } finally {
     console.warn = warn
     process.off('unhandledRejection', onRejection)
   }
-  check('no unhandled rejection from the background upload', rejections.length === 0, String(rejections[0]))
+  check('no unhandled rejection', rejections.length === 0, String(rejections[0]))
   // Per store: the resolve (said once, though called twice), the read of
-  // the remote-only handle, the background write.
+  // the remote-only handle.
   const said = warnings.map((args) => String(args[0]).match(/server's (\w+) failed/)?.[1]).join(',')
-  check('each failure is said on the console, once per call kind and store', said === Array(3).fill('resolve,read,write').join(','), said)
+  check('each failure is said on the console, once per call kind and store', said === Array(3).fill('resolve,read').join(','), said)
 }
 
 console.log('\n— the job worker reads its world: only 404 is absent —')

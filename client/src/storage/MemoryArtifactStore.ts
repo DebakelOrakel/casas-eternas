@@ -6,7 +6,7 @@ import type { ArtifactHandle, ArtifactKey, LocalArtifactStore, StorageUsage, Sto
 // two Maps; entries live for the session, which for a cache over
 // recomputable data is a perfectly good floor.
 
-const keyString = (key: ArtifactKey): string => `${key.worldUid}\0${key.worldId}\0${key.pipelineVersion}\0${key.stage}`
+const keyString = (key: ArtifactKey): string => `${key.worldId}\0${key.pipelineVersion}\0${key.stage}`
 
 export function createMemoryArtifactStore(): LocalArtifactStore {
   const files = new Map<string, Map<string, ArrayBuffer>>() // uid → name → bytes
@@ -65,7 +65,6 @@ export function createMemoryArtifactStore(): LocalArtifactStore {
         out.push({
           artifactUid: uid,
           bytes,
-          worldUid: meta?.key?.worldUid ?? '',
           worldId: meta?.key?.worldId ?? '',
           pipelineVersion: meta?.key?.pipelineVersion ?? '',
           stage: meta?.key?.stage ?? '',

@@ -83,13 +83,19 @@ export interface HttpArtifactStoreOptions {
   // passes one that adds its fixed token.
   fetch?: (input: string, init?: RequestInit) => Promise<Response>
   // How a write reaches the bucket: through the server ('server', the
-  // default) or by write link and commit ('links', the job worker).
+  // default) or by write link and commit ('links', the job worker). Since
+  // DEC-0039 a checking server takes a write from a job worker only.
   uploads?: 'server' | 'links'
   // The fetch for the upload to a link, defaulting to the global one. It
   // must NOT add the caller's credentials: a presigned PUT that carries an
   // Authorization header too is refused (two kinds of authorization), and
   // the job's token has no business at the provider.
   uploadFetch?: (input: string, init?: RequestInit) => Promise<Response>
+  // The world uid this store works for, sent with every resolve — NOT part
+  // of the key. A server in the local mode records the terrain for this
+  // world from it; a checking server takes the world from the job's token
+  // and ignores it. The job worker sets it; the browser does not.
+  world?: string
 }
 
 // The time a write link must still have before an upload starts.
@@ -152,7 +158,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
     const response = await request('resolve', `${base}/artifacts/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...key, create }),
+      body: JSON.stringify({ ...key, create, ...(options.world ? { world: options.world } : {}) }),
     })
     if (response.status === 404) return null
     if (!response.ok) throw failed('resolve', response)

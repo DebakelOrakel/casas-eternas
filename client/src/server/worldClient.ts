@@ -46,6 +46,11 @@ export interface WorldSummary {
   // `editor`, `owner` or `admin` (internal/access). Absent from a server
   // older than 2026-10-15, and from the answer of a copy or a mark.
   callerLevel?: string
+  // The terrain ids (world/identity.ts worldId) under which the server's
+  // jobs found or baked artifacts for this world (DEC-0039): what the
+  // artifact window attributes a terrain's artifacts by. Absent until a
+  // job ran, and from a server older than 2026-10-16.
+  terrains?: string[]
 }
 
 // Why an upload failed, in terms a caller can act on rather than a status code.

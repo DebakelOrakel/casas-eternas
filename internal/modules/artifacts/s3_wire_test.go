@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
@@ -74,8 +73,7 @@ func TestAWSWireArtifacts(t *testing.T) {
 			}
 		}
 	})
-	rank := func(context.Context, string, string) (bool, access.Level) { return true, access.Admin }
-	m, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil), rank)
+	m, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -258,12 +256,12 @@ func TestAWSWireArtifacts(t *testing.T) {
 	t.Logf("a presigned GET with an Authorization header too answers %d", keptRes.StatusCode)
 
 	// Removal deletes the objects in the bucket.
-	if err := restarted.RemoveWorld(ctx, key.WorldUID); err != nil {
+	if _, err := restarted.RemoveTerrain(ctx, key.WorldID); err != nil {
 		t.Fatal(err)
 	}
 	for info, err := range bucket.List(ctx, "") {
 		if err == nil {
-			t.Errorf("left after RemoveWorld: %s", info.Key)
+			t.Errorf("left after RemoveTerrain: %s", info.Key)
 		}
 	}
 }

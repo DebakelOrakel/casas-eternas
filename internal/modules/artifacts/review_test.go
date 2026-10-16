@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
@@ -162,17 +161,15 @@ func TestAnExpiredUploadIsJunk(t *testing.T) {
 }
 
 // M3: a meta.json whose key is not the artifact's is refused (409), at the
-// server's PUT and at a commit — or a writer with the right to one world
-// files its bytes under another world's key.
+// server's PUT and at a commit — or a writer with the right to one terrain
+// files its bytes under another terrain's key.
 func TestAMetaThatNamesAnotherKeyIsRefused(t *testing.T) {
 	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	const worldA = "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001"
-	const worldB = "b754f0db-ff5c-4b45-9f2c-1b4e7a30d002"
-	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthPassword, tokens),
-		func(context.Context, string, string) (bool, access.Level) { return false, access.None })
+	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthPassword, tokens), noWorlds())
 	jobA, _, _ := tokens.IssueJob("job-a", worldA, time.Hour)
 	reserve := func() string {
 		t.Helper()
@@ -186,13 +183,13 @@ func TestAMetaThatNamesAnotherKeyIsRefused(t *testing.T) {
 		}
 		return minted.ArtifactUID
 	}
-	own := Key{WorldUID: worldA, WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}
-	foreign := Key{WorldUID: worldB, WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}
+	own := Key{WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}
+	foreign := Key{WorldID: "ffffffffffffffff", PipelineVersion: "v6", Stage: "2"}
 
 	// The server's PUT.
 	uid := reserve()
 	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+uid+"/meta.json", metaFor(foreign, "evil"), jobA).Code; got != http.StatusConflict {
-		t.Errorf("PUT of a meta naming world B = %d, want 409", got)
+		t.Errorf("PUT of a meta naming terrain B = %d, want 409", got)
 	}
 	if _, err := readFile(t, m.store, uid, metaName); !errors.Is(err, blob.ErrNotFound) {
 		t.Errorf("the refused meta was written: %v", err)
@@ -207,13 +204,13 @@ func TestAMetaThatNamesAnotherKeyIsRefused(t *testing.T) {
 		t.Fatal(err) // the provider's link would have taken it (s3)
 	}
 	if got := commit(mux, uid, jobA, Upload{metaName, int64(len(meta))}).Code; got != http.StatusConflict {
-		t.Errorf("commit of a meta naming world B = %d, want 409", got)
+		t.Errorf("commit of a meta naming terrain B = %d, want 409", got)
 	}
-	if world, _ := m.store.WorldOf(context.Background(), uid); world != worldA {
-		t.Errorf("the artifact belongs to %q after the refusal, want world A", world)
+	if terrain, _ := m.store.TerrainOf(context.Background(), uid); terrain != own.WorldID {
+		t.Errorf("the artifact belongs to %q after the refusal, want terrain A", terrain)
 	}
 	if _, _, err := m.store.Resolve(context.Background(), foreign, false); !errors.Is(err, ErrNotFound) {
-		t.Errorf("world B's key resolves after the refusal: %v", err)
+		t.Errorf("terrain B's key resolves after the refusal: %v", err)
 	}
 	if _, err := readFile(t, m.store, uid, metaName); !errors.Is(err, blob.ErrNotFound) {
 		t.Errorf("the refused meta stayed in the bucket: %v", err)
@@ -290,10 +287,9 @@ func TestAClearDoesNotDeleteWhatItDidNotDrop(t *testing.T) {
 // and leaves the artifact as it was; a second commit makes it whole.
 func TestACommitWhoseMetaCannotBeReadFails(t *testing.T) {
 	bucket := &hookBucket{Bucket: openTestDir(t, t.TempDir())}
-	_, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil),
-		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	_, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil), adminWorlds())
 	uid, _ := resolve(t, mux, true)
-	meta := metaFor(Key{WorldUID: "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001", WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}, "m")
+	meta := metaFor(Key{WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}, "m")
 	_, link := writeLink(t, mux, uid, metaName, len(meta), "")
 	if code := putTo(mux, link.URL, meta); code != http.StatusOK {
 		t.Fatalf("upload = %d", code)

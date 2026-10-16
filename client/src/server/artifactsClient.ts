@@ -24,7 +24,6 @@ import { authFetch } from './session'
 export interface ServerArtifact {
   artifactUid: string
   bytes: number
-  worldUid: string
   worldId: string
   pipelineVersion: string
   stage: string
@@ -32,10 +31,13 @@ export interface ServerArtifact {
   width: number
   height: number
   bakeMs: number
-  // The caller's level on the artifact's world ("viewer", "editor", "owner",
-  // or "admin" for the operator): what the caller may do with it. Deleting
-  // takes an editor.
+  // The caller's highest level over the worlds that hold the artifact's
+  // terrain ("viewer", "editor", "owner", or "admin" for the operator), and
+  // whether other worlds hold it too: what the caller may do with it.
+  // Deleting takes an editor of a terrain no other world holds, or an
+  // admin (DEC-0039).
   callerLevel?: string
+  shared?: boolean
 }
 
 export interface ServerArtifacts {
@@ -58,7 +60,9 @@ export async function listServerArtifacts(): Promise<ServerArtifacts | null> {
   }
 }
 
-// Drops everything one world has earned — every artifact whose meta names it.
+// Drops what one world takes with it when it is deleted: the artifacts of
+// its terrains that no other world holds (DEC-0039). Called before the
+// world is deleted.
 export async function removeServerWorldArtifacts(worldUid: string): Promise<boolean> {
   const base = await apiBase()
   if (!base) return false
@@ -88,7 +92,6 @@ export async function removeServerArtifact(artifactUid: string): Promise<boolean
 // artifact window shows as a row — a world refined to level 3 is ten
 // thousand entries in the flat listing.
 export interface ServerArtifactLevel {
-  worldUid: string
   worldId: string
   pipelineVersion: string
   level: number
@@ -98,6 +101,7 @@ export interface ServerArtifactLevel {
   label: string
   bakeMs: number
   callerLevel?: string
+  shared?: boolean
 }
 
 export interface ServerArtifactLevels {
@@ -119,12 +123,12 @@ export async function listServerArtifactLevels(): Promise<ServerArtifactLevels |
   }
 }
 
-// Drops one level of a world — the whole level and every tile of it — of
-// one terrain and pipeline version.
-export async function removeServerLevel(worldUid: string, level: number, worldId: string, pipelineVersion: string): Promise<boolean> {
+// Drops one level of a terrain — the whole level and every tile of it — of
+// one pipeline version.
+export async function removeServerLevel(level: number, worldId: string, pipelineVersion: string): Promise<boolean> {
   const base = await apiBase()
   if (!base) return false
-  const query = new URLSearchParams({ world: worldUid, level: String(level), worldId, pipeline: pipelineVersion })
+  const query = new URLSearchParams({ level: String(level), worldId, pipeline: pipelineVersion })
   try {
     const response = await authFetch(`${base}/artifacts?${query}`, { method: 'DELETE' })
     return response.ok

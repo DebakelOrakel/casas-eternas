@@ -477,7 +477,7 @@ func TestCoordinatorSkipsStoredTiles(t *testing.T) {
 		t.Fatalf("asked the store %d times, want once per planned tile: %+v", len(asked), asked)
 	}
 	for _, key := range asked {
-		if key.WorldUID != "w" || key.WorldID != "terrain" || (key.Stage[:2] == "L2" && key.PipelineVersion != "v2") || (key.Stage[:2] == "L3" && key.PipelineVersion != "v3") {
+		if key.WorldID != "terrain" || (key.Stage[:2] == "L2" && key.PipelineVersion != "v2") || (key.Stage[:2] == "L3" && key.PipelineVersion != "v3") {
 			t.Errorf("asked for %+v", key)
 		}
 	}

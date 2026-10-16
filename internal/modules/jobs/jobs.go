@@ -306,20 +306,24 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		httpjson.ClientError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// A job token orders nothing: that is what keeps a leaked one from
+	// ordering more bakes. Refused before it is ranked (it ranks as a
+	// viewer on a template or a public world).
+	if _, _, ok := m.cfg.Identity.JobToken(r); ok {
+		httpjson.ClientError(w, http.StatusForbidden, "a job token does not order jobs")
+		return
+	}
 	// Ranked before queueing, so a request that cannot succeed fails now
 	// rather than at the far end of a queue that may be minutes long. The
 	// visibility shape matches the world module's: a world the caller may
-	// not read answers 404 — private means invisible — and only a readable
-	// one distinguishes 403. A bake is minutes of a machine, so the level is
-	// editor and up, never merely viewer; and a bake-job token ranks as
-	// None, which is what keeps a leaked job token from ordering more bakes.
+	// not read answers 404 — private means invisible. Every signed-in
+	// caller who may read the world may order (DEC-0039, fork 5): the bytes
+	// are the same whoever orders them, and they serve every world with the
+	// terrain, so ordering is a cost, not a right over the world. The
+	// anonymous caller never gets here; the gate refuses it.
 	exists, level := m.cfg.WorldAccess(r.Context(), request.WorldUID, r.Header.Get("Authorization"))
 	if !exists || level < access.Viewer {
 		httpjson.ClientError(w, http.StatusNotFound, "no such world, or it has no stored revision")
-		return
-	}
-	if level < access.Editor {
-		httpjson.ClientError(w, http.StatusForbidden, "world.bake needs editor access to this world")
 		return
 	}
 
@@ -331,7 +335,7 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job := m.jobs.add(Job{ID: newID(), Request: request, State: StateQueued, QueuedAt: time.Now()})
+	job := m.jobs.add(Job{ID: newID(), Request: request, State: StateQueued, QueuedAt: time.Now(), OrderedBy: m.orderer(r)})
 	if err := m.coord.submit(job); err != nil {
 		httpjson.ClientError(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -343,12 +347,36 @@ func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusAccepted, job)
 }
 
+// orderer is the caller as a job records it (Job.OrderedBy): a user id in
+// a checking server, empty in the local mode.
+func (m *Module) orderer(r *http.Request) string {
+	if !m.cfg.Identity.ChecksIdentity() {
+		return ""
+	}
+	caller, _ := m.cfg.Identity.ResolveBearer(r.Header.Get("Authorization"))
+	if caller == identity.Anonymous {
+		return ""
+	}
+	return caller
+}
+
+// mayCancel answers whether a caller with `level` on a job's world may
+// cancel it: an editor of the world, or the caller who ordered it.
+func (m *Module) mayCancel(r *http.Request, job Job, level access.Level) bool {
+	if level >= access.Editor {
+		return true
+	}
+	caller := m.orderer(r)
+	return caller != "" && caller == job.OrderedBy
+}
+
 // A job with the caller's level on its world ("viewer", "editor", "owner",
-// or "admin" for the operator): what the caller may do with it. Cancelling
-// takes an editor, as ordering one does.
+// or "admin" for the operator), and whether they may cancel it (an editor
+// of the world, or the caller who ordered it).
 type listedJob struct {
 	Job
 	CallerLevel string `json:"callerLevel"`
+	MayCancel   bool   `json:"mayCancel"`
 }
 
 // operator answers "may this request see and do anything here": the admin
@@ -386,7 +414,7 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 		httpjson.ClientError(w, http.StatusNotFound, "no such job")
 		return
 	}
-	httpjson.Write(w, http.StatusOK, listedJob{job, level.String()})
+	httpjson.Write(w, http.StatusOK, listedJob{job, level.String(), m.mayCancel(r, job, level)})
 }
 
 // handleCancel stops a job: its queued tasks are withdrawn, and a worker
@@ -403,8 +431,8 @@ func (m *Module) handleCancel(w http.ResponseWriter, r *http.Request) {
 		httpjson.ClientError(w, http.StatusNotFound, "no such job")
 		return
 	}
-	if level < access.Editor {
-		httpjson.ClientError(w, http.StatusForbidden, "cancelling a bake needs editor access to its world")
+	if !m.mayCancel(r, job, level) {
+		httpjson.ClientError(w, http.StatusForbidden, "cancelling a bake needs editor access to its world, or to have ordered it")
 		return
 	}
 	if !m.coord.cancelJob(id) {
@@ -426,7 +454,7 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 			levels[job.Request.WorldUID] = level
 		}
 		if level >= access.Viewer {
-			visible = append(visible, listedJob{job, level.String()})
+			visible = append(visible, listedJob{job, level.String(), m.mayCancel(r, job, level)})
 		}
 	}
 	httpjson.Write(w, http.StatusOK, visible)
@@ -546,7 +574,7 @@ func (m *Module) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if level < access.Viewer {
 				continue
 			}
-			raw, err := json.Marshal(listedJob{job, level.String()})
+			raw, err := json.Marshal(listedJob{job, level.String(), m.mayCancel(r, job, level)})
 			if err != nil {
 				continue
 			}

@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-10-16
+- **changed** Server: artifacts are stored by their terrain, so a copy of a template reads the template's levels and tiles at once, and every signed-in reader of a world may order a bake; only a job writes artifacts, and the artifacts stored before are not read any more. `artifacts`
 - **changed** Server: worlds and artifacts in one storage refuse to start.
 - **new** Server: `world.link-key-previous` and `artifacts.link-key-previous` keep the old links valid while a link key changes.
 - **changed** Server: uploads that a job worker has not committed count against `artifacts.cap`. `artifacts`
