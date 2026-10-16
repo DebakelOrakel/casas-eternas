@@ -9,7 +9,8 @@ summary.en: The world store and the artifact store get an object-storage
   link lifetimes are module settings and hold for both backends: `dir`
   signs its own links, no S3 server is embedded. One blob leaf with a
   capability table per provider (aws, ceph) on aws-sdk-go-v2; workers
-  upload with one presigned PUT per key; one bucket per store, one IAM
+  upload with one presigned PUT per file, asked for when the file is
+  written, with its length, and commit; one bucket per store, one IAM
   user per installation.
 summary.de: Der Weltenspeicher und der Artefaktspeicher bekommen eine
   Object-Storage-Union (`dir` | `s3`) mit Pflichtfeld `type`; die Module,
@@ -19,7 +20,8 @@ summary.de: Der Weltenspeicher und der Artefaktspeicher bekommen eine
   eine Moduleinstellung und gilt für beide Backends: `dir` signiert seine
   eigenen Links, kein S3-Server wird eingebettet. Ein Blob-Leaf mit einer
   Fähigkeitstabelle je Anbieter (aws, ceph) auf aws-sdk-go-v2; Worker laden
-  mit einem presigned PUT je Schlüssel hoch; ein Bucket je Speicher, ein
+  mit einem presigned PUT je Datei hoch, beim Schreiben mit der Länge
+  angefragt, und bestätigen danach; ein Bucket je Speicher, ein
   IAM-Benutzer je Installation.
 area: platform
 stage: building
@@ -188,6 +190,12 @@ links cost only bytes in the message. A long-lived link was refused: a
 queue or a restart outlasts any lifetime, and a long link is useful to
 anyone who picks it up.
 
+**Revised at step 4 (2026-10-16):** the links are not in the task message,
+because neither the key nor the length is known when the task is handed
+out. The worker asks for one link per file when it writes the file, with
+the length; the rule for expired links and the check with `HEAD` are as
+above. See the status.
+
 ## Fork 8 — Buckets and identities
 
 **Answer:** one bucket per store (worlds, artifacts); one IAM user per
@@ -340,7 +348,78 @@ world store still refuses it. What changed:
   it is for a trusted network only (e.g. a cluster network). Nothing else
   changes.
 
-Open: presigned PUTs for workers (fork 7) and the world store.
+2026-10-16: step 4, uploads from workers (fork 7), is built. A job
+worker's bytes go straight to the bucket; the browser still uploads
+through the server. What changed against the answer of fork 7, and why:
+
+- **No links in the task message.** The DES assumed that the keys are
+  known before the task runs. They are not: an object key is
+  `{artifactUid}/{file}`, and the uid comes from `resolve`, which needs the
+  logical key — the worker computes the world id and the pipeline version
+  from the save and its own code; the coordinator knows neither for level
+  1. And the length of each file follows from the result (the node count),
+  so it is known only after the computation. A link without a signed
+  length was refused: a presigned PUT has no size limit (only a POST
+  policy has one), so it would let its holder write up to 5 GB, and a
+  link for another length would no longer be refused.
+- **So the worker asks per file, at write time, with the length:**
+  `POST /v1/artifacts/{uid}/write-link` `{name, size}` answers `{method,
+  url, header, expires}` with `artifacts.write-link-ttl` to live: a
+  presigned PUT on `s3`, the module's own signed link on `dir`
+  (`PUT /v1/artifacts/blob/<key>?exp&len&sig`, beside the GET route of
+  step 3). The right is the right to write the artifact, as for the PUT
+  through the server: a job token whose world is the artifact's world, an
+  editor of that world, or the operator. The server does not know a
+  task's keys, so a link is scoped to the uid (and so to the world) and
+  to the one file and length. One request more per file than before;
+  against a tile's seconds, nothing.
+- **The rule for expired links** is kept as decided: before the upload
+  the worker checks that 5 minutes are left of the link; if not, or if
+  the upload is refused (403, 410), it asks once for a fresh link and
+  uploads again. With links asked for at write time the margin check
+  rarely triggers (a write-link-ttl under 5 minutes, clock skew); the
+  refusal path is the one that matters. A second refusal is a failed
+  write; a 5xx or no answer is the store being unavailable (the task is
+  given back).
+- **Completion: a commit, not the task report.** The worker uploads its
+  files, meta.json last, and with meta.json it sends
+  `POST /v1/artifacts/{uid}/commit` `{files: [{name, size}]}`. The server
+  checks that each file was signed for this artifact, `HEAD`s each object
+  (there, and of that size), reads meta.json back, and only then enters
+  the files into its index; all or none. 409 when a file is not in the
+  bucket as said or was never signed. Not in the coordinator's report
+  (`jobs.done`), because the index belongs to the artifacts module and the
+  coordinator may run in another process: the worker already talks to
+  the artifacts API, so no new edge between the modules is needed. The
+  commit comes before `jobs.done`, so a task that waits on this one finds
+  the artifact whole. No checksum: a presigned PUT carries none (step 2),
+  so the server could only compare the worker's word with the worker's
+  word; the length is signed and checked twice.
+- **Pending uploads.** A file a link was given for and that no commit
+  confirmed is kept in memory with the link's expiry: removing the
+  artifact deletes its object too, and the cap's sweep spares the
+  artifact while a link is valid. A worker that dies after the upload
+  leaves objects that the index does not list until the next start (then
+  as an entry with or without meta, as any other).
+- **The server's PUT route stays**, for the browser's tiered store: it
+  uploads in the background, and the bucket's CORS rule allows no PUT.
+- **Measured against AWS** (eu-central-2, `casas-eternas-dev-artifacts`,
+  TestAWSWireArtifacts, a prefix of its own, deleted after): a worker
+  upload by presigned PUT, then the commit, then a read by 302 gives the
+  bytes; key A's link used for key B answers 403 and writes nothing; a
+  body of another length answers 403; an expired link answers 403. The
+  client's store in Node (`uploads: 'links'`) against a server on `s3`:
+  1 MiB and a meta, uploaded straight to the bucket, resolvable whole
+  after the commit only, read back equal.
+- **No real job ran end to end:** the only world (`b39d5739`) does not
+  replay with today's code. The path is covered at the store and route
+  level (Go, `npm run test:http-store`).
+- **Also fixed:** the worker's read of its world returned "absent" for any
+  failure, so a world server that was away failed the task. Now only a
+  404 is absent; other failures give the task back, as for the artifact
+  store.
+
+Open: the world store.
 
 Open: **the relay is plain NATS over TCP**, not encrypted. The plan for
 external workers, and later the browser: NATS's WebSocket listener behind

@@ -18,6 +18,20 @@ import { ArtifactStoreUnavailableError, type ArtifactHandle, type ArtifactKey, t
 // (TieredArtifactStore.ts); the worker gives its task back (jobWorker.ts).
 // A write that the server refuses (4xx: rights, size, an unminted uid) is
 // false, as before; only a server that does not answer throws.
+//
+// WRITES BY LINK (2026-10-16, DEC-0038 fork 7), for the job worker: the
+// bytes go straight to the bucket, not through the server. Per file the
+// store asks for a write link with the file's length (`write-link`), PUTs
+// the bytes to it without the caller's credentials (the link is the
+// right), and with meta.json — the file every writer writes last — it
+// commits the artifact's files (`commit`); the server checks each with a
+// Head and only then lists them. Until the commit the artifact is not
+// whole and a read of its files is a miss. THE RULE FOR EXPIRED LINKS:
+// before an upload the store checks that LINK_MARGIN_MS is left of the
+// link; if not, or if the upload is refused (403, 410), it asks for a
+// fresh link once and uploads again. The browser keeps the server's own
+// upload (`uploads: 'server'`): the bucket's CORS rule allows no PUT, and
+// its tiered store writes in the background.
 
 export interface HttpArtifactStoreOptions {
   // Where the API lives. Defaults nowhere on purpose: this used to import the
@@ -31,11 +45,32 @@ export interface HttpArtifactStoreOptions {
   // passes the session's fetch (which ends the session on a 401), a bake Job
   // passes one that adds its fixed token.
   fetch?: (input: string, init?: RequestInit) => Promise<Response>
+  // How a write reaches the bucket: through the server ('server', the
+  // default) or by write link and commit ('links', the job worker).
+  uploads?: 'server' | 'links'
+  // The fetch for the upload to a link, defaulting to the global one. It
+  // must NOT add the caller's credentials: a presigned PUT that carries an
+  // Authorization header too is refused (two kinds of authorization), and
+  // the job's token has no business at the provider.
+  uploadFetch?: (input: string, init?: RequestInit) => Promise<Response>
+}
+
+// The time a write link must still have before an upload starts.
+export const LINK_MARGIN_MS = 5 * 60_000
+
+interface WriteLink {
+  method: string
+  url: string
+  header: Record<string, string>
+  expires: string
 }
 
 export function createHttpArtifactStore(options: HttpArtifactStoreOptions): ArtifactStore {
   const resolveBase = options.resolveBase
   const send = options.fetch ?? ((input: string, init?: RequestInit) => fetch(input, init))
+  const upload = options.uploadFetch ?? ((input: string, init?: RequestInit) => fetch(input, init))
+  // The files uploaded by link per artifact, not yet committed.
+  const uploaded = new Map<string, { name: string; size: number }[]>()
 
   const fileUrl = async (handle: ArtifactHandle, name: string): Promise<string | null> => {
     const base = await resolveBase()
@@ -45,9 +80,9 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
 
   // One request; a failure to get an answer at all is the store being
   // unavailable, whatever the cause (refused, reset, TLS, DNS).
-  const request = async (what: string, input: string, init?: RequestInit): Promise<Response> => {
+  const request = async (what: string, input: string, init?: RequestInit, using = send): Promise<Response> => {
     try {
-      return await send(input, init)
+      return await using(input, init)
     } catch (error) {
       const reason = error instanceof Error ? (error.cause instanceof Error ? `${error.message}: ${error.cause.message}` : error.message) : String(error)
       throw new ArtifactStoreUnavailableError(`artifact store: ${what}: no answer (${reason.trim()})`, undefined, { cause: error })
@@ -94,6 +129,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
     async write(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
       const target = await fileUrl(handle, name)
       if (!target) return false
+      if (options.uploads === 'links') return writeByLink(handle.remote!, name, bytes)
       // Passed through as-is, cast because the DOM types insist a view be
       // backed by an ArrayBuffer rather than an ArrayBufferLike; a
       // SharedArrayBuffer cannot reach here, and copying to satisfy the
@@ -106,5 +142,77 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       if (response.status >= 500) throw unavailable(`write ${name}`, response)
       return response.ok
     },
+  }
+
+  // A write link for one file of the length given; null when the server
+  // refuses (4xx).
+  async function writeLink(uid: string, name: string, size: number): Promise<WriteLink | null> {
+    const base = await resolveBase()
+    if (!base) return null
+    const route = `${base}/artifacts/${encodeURIComponent(uid)}/write-link`
+    const response = await request(`write-link ${name}`, route, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, size }),
+    })
+    if (response.status >= 500) throw unavailable(`write-link ${name}`, response)
+    if (!response.ok) return null
+    let link: WriteLink
+    try {
+      link = (await response.json()) as WriteLink
+    } catch (error) {
+      throw new ArtifactStoreUnavailableError(`artifact store: write-link ${name}: an answer that is not JSON`, response.status, { cause: error })
+    }
+    // A dir link is a path on the server: relative to the route.
+    return { ...link, url: new URL(link.url, route).href }
+  }
+
+  async function writeByLink(uid: string, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
+    const size = bytes.byteLength
+    let link = await writeLink(uid, name, size)
+    if (!link) return false
+    let refreshed = false
+    const fresh = async (): Promise<boolean> => {
+      refreshed = true
+      link = await writeLink(uid, name, size)
+      return link !== null
+    }
+    // Too little left of the link: a fresh one first (asked once; a server
+    // whose links live shorter than the margin gets the upload anyway).
+    if (Date.parse(link.expires) - Date.now() < LINK_MARGIN_MS && !(await fresh())) return false
+    for (;;) {
+      const response = await request(`upload ${name}`, link!.url, {
+        method: link!.method,
+        headers: link!.header,
+        body: bytes as BodyInit,
+      }, upload)
+      // Read to the end, so the connection can be reused.
+      await response.arrayBuffer().catch(() => undefined)
+      if (response.ok) break
+      // Refused all the same (expired on the provider's clock, a slow
+      // upload, a signature it does not take): once more with a fresh link.
+      if ((response.status === 403 || response.status === 410) && !refreshed) {
+        if (!(await fresh())) return false
+        continue
+      }
+      if (response.status >= 500) throw unavailable(`upload ${name}`, response)
+      return false
+    }
+    const files = uploaded.get(uid) ?? []
+    uploaded.set(uid, [...files.filter((f) => f.name !== name), { name, size }])
+    // meta.json is the last file of every writer: the artifact is whole.
+    if (name !== 'meta.json') return true
+    const committing = uploaded.get(uid)!
+    uploaded.delete(uid)
+    const base = await resolveBase()
+    if (!base) return false
+    const route = `${base}/artifacts/${encodeURIComponent(uid)}/commit`
+    const response = await request('commit', route, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: committing }),
+    })
+    if (response.status >= 500) throw unavailable('commit', response)
+    return response.ok
   }
 }

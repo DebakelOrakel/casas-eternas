@@ -6,12 +6,15 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
@@ -72,7 +75,7 @@ func TestAWSWireArtifacts(t *testing.T) {
 		}
 	})
 	rank := func(context.Context, string, string) (bool, access.Level) { return true, access.Admin }
-	_, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil), rank)
+	m, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil), rank)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -110,12 +113,104 @@ func TestAWSWireArtifacts(t *testing.T) {
 	put("elevation.u16", payload)
 	put("meta.json", []byte(metaFor(key, "wire")))
 
+	// A worker's write (DEC-0038, step 4): a write link from the module, a
+	// presigned PUT straight to the bucket without the caller's
+	// credentials, then the commit, which makes it readable by the 302.
+	workerBytes := bytes.Repeat([]byte("worker-bytes-"), 20_000) // ~254 KiB
+	linkFor := func(name string, size int) writeLinkResponse {
+		t.Helper()
+		res, err := http.Post(srv.URL+"/v1/artifacts/"+minted.ArtifactUID+"/write-link", "application/json",
+			strings.NewReader(`{"name":"`+name+`","size":`+strconv.Itoa(size)+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = res.Body.Close() }()
+		var link writeLinkResponse
+		if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&link) != nil {
+			t.Fatalf("write-link %s = %d", name, res.StatusCode)
+		}
+		return link
+	}
+	upload := func(link writeLinkResponse, target string, body []byte) int {
+		t.Helper()
+		req, _ := http.NewRequest(link.Method, target, bytes.NewReader(body))
+		for name, value := range link.Header {
+			req.Header.Set(name, value)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+		return res.StatusCode
+	}
+	link := linkFor("worker.bin", len(workerBytes))
+	if !strings.Contains(link.URL, ".amazonaws.com/") {
+		t.Fatal("the write link does not go to the bucket")
+	}
+	// Trust: the link writes exactly its key with exactly its length.
+	other := strings.Replace(link.URL, "/worker.bin?", "/other.bin?", 1)
+	code := upload(link, other, workerBytes)
+	t.Logf("measured: key A's presigned PUT used for key B answers %d", code)
+	if code != http.StatusForbidden {
+		t.Errorf("key A's link for key B = %d, want 403", code)
+	}
+	code = upload(link, link.URL, workerBytes[:len(workerBytes)-1])
+	t.Logf("measured: a presigned PUT with another length answers %d", code)
+	if code != http.StatusForbidden {
+		t.Errorf("another length = %d, want 403", code)
+	}
+	if _, err := bucket.Head(ctx, minted.ArtifactUID+"/other.bin"); !errors.Is(err, blob.ErrNotFound) {
+		t.Errorf("key B was written: %v", err)
+	}
+	// Expired: the refusal the worker answers with a fresh link.
+	short, err := m.store.WriteLink(ctx, minted.ArtifactUID, "worker.bin", int64(len(workerBytes)), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Until(short.Expires) + 1500*time.Millisecond)
+	code = upload(writeLinkResponse{Method: short.Method, URL: short.URL}, short.URL, workerBytes)
+	t.Logf("measured: an expired presigned PUT answers %d", code)
+	if code != http.StatusForbidden {
+		t.Errorf("expired write link = %d, want 403", code)
+	}
+	if code := upload(link, link.URL, workerBytes); code != http.StatusOK {
+		t.Fatalf("upload by link = %d", code)
+	}
+	beforeCommit, err := noRedirect().Get(srv.URL + "/v1/artifacts/" + minted.ArtifactUID + "/worker.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = beforeCommit.Body.Close()
+	if beforeCommit.StatusCode != http.StatusNotFound {
+		t.Errorf("read before the commit = %d, want 404", beforeCommit.StatusCode)
+	}
+	commitBody := `{"files":[{"name":"worker.bin","size":` + strconv.Itoa(len(workerBytes)) + `}]}`
+	committed, err := http.Post(srv.URL+"/v1/artifacts/"+minted.ArtifactUID+"/commit", "application/json", strings.NewReader(commitBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = committed.Body.Close()
+	if committed.StatusCode != http.StatusNoContent {
+		t.Fatalf("commit = %d", committed.StatusCode)
+	}
+	readBack, err := http.Get(srv.URL + "/v1/artifacts/" + minted.ArtifactUID + "/worker.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotWorker, _ := io.ReadAll(readBack.Body)
+	_ = readBack.Body.Close()
+	if readBack.StatusCode != http.StatusOK || !bytes.Equal(gotWorker, workerBytes) || !strings.HasSuffix(readBack.Request.URL.Host, ".amazonaws.com") {
+		t.Errorf("read after the commit = %d, %d bytes from %s", readBack.StatusCode, len(gotWorker), readBack.Request.URL.Host)
+	}
+
 	// A restart: the index comes from the bucket's listing and the metas.
 	restarted, err := NewStore(ctx, bucket, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uid, files, err := restarted.Resolve(ctx, key, false); err != nil || uid != minted.ArtifactUID || len(files) != 2 {
+	if uid, files, err := restarted.Resolve(ctx, key, false); err != nil || uid != minted.ArtifactUID || len(files) != 3 {
 		t.Fatalf("after restart: %q %v %v", uid, files, err)
 	}
 
@@ -146,8 +241,7 @@ func TestAWSWireArtifacts(t *testing.T) {
 	// What a client that KEPT the Authorization header on the redirect
 	// would get: measured, not asserted (the Fetch standard drops it on a
 	// cross-origin redirect; Go and Node do).
-	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	first, err := noFollow.Get(srv.URL + "/v1/artifacts/" + minted.ArtifactUID + "/elevation.u16")
+	first, err := noRedirect().Get(srv.URL + "/v1/artifacts/" + minted.ArtifactUID + "/elevation.u16")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,4 +264,9 @@ func TestAWSWireArtifacts(t *testing.T) {
 			t.Errorf("left after RemoveWorld: %s", info.Key)
 		}
 	}
+}
+
+// noRedirect is a client that answers the redirect itself.
+func noRedirect() *http.Client {
+	return &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }

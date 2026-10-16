@@ -48,9 +48,12 @@ import (
 // it. Until 2026-10-16 the index was validated by directory mtime on each
 // access, which let a baker write straight into the directory; S3 has no
 // directory mtime, so the co-resident job worker writes over HTTP now, as
-// a cluster worker always did (cmd/start.go). A consequence: an entry that
-// is copied into the directory by hand is seen after a restart, not on the
-// next request.
+// a cluster worker always did (cmd/start.go). Since step 4 a worker writes
+// its bytes straight to the bucket by a write link the store signed, and
+// the index learns of them when the worker commits them (WriteLink,
+// Commit); the store stays the one that decides what the index holds. A
+// consequence: an entry that is copied into the directory by hand is seen
+// after a restart, not on the next request.
 //
 // Everything else about this store keeps the artifact contract
 // (docs/decisions/server-storage.md): idempotent writes (resolve hands the
@@ -131,8 +134,15 @@ type entry struct {
 	uid string
 	// files maps each file name (the key below the uid) to its size.
 	files map[string]int64
-	bytes int64
-	meta  *entryMeta // nil: no readable meta.json (mid-write, or junk)
+	// pending maps each file name that a write link was given for, and
+	// that no commit has confirmed yet, to the link's expiry (DEC-0038,
+	// fork 7). Its object may be in the bucket already; the index does not
+	// count it until the commit. Removal deletes it too, and the sweep
+	// spares the entry while a link is valid. In memory only, as the
+	// reservation is.
+	pending map[string]time.Time
+	bytes   int64
+	meta    *entryMeta // nil: no readable meta.json (mid-write, or junk)
 	// key remembers what a RESERVATION was minted for, before its meta.json
 	// lands — it is what lets a write into a fresh artifact be ranked
 	// against its world (the meta is exactly what has not been written yet).
@@ -172,6 +182,17 @@ func (e *entry) keyOf() *Key {
 func (e *entry) setFile(name string, size int64) {
 	e.bytes += size - e.files[name]
 	e.files[name] = size
+}
+
+// uploading reports whether a write link for the entry is still valid: a
+// writer may be uploading to the bucket now.
+func (e *entry) uploading(now time.Time) bool {
+	for _, expires := range e.pending {
+		if now.Before(expires) {
+			return true
+		}
+	}
+	return false
 }
 
 // StageLevel reads a stage's level and whether it names a tile: `L<n>` a
@@ -561,23 +582,209 @@ func (s *Store) Write(ctx context.Context, uid, name string, body io.Reader, siz
 		_ = s.bucket.Delete(context.WithoutCancel(ctx), key)
 		return ErrNotFound
 	}
-	e.setFile(name, info.Size)
-	e.modified = s.now()
-	e.lastAccess = s.now()
-	if name == metaName {
-		if previous := e.meta; previous != nil && s.byKey[previous.Key.String()] == uid && (meta == nil || previous.Key != meta.Key) {
-			delete(s.byKey, previous.Key.String())
-		}
-		e.meta = meta
-		if meta != nil {
-			s.claimKey(e)
-		}
-	}
+	s.recordLocked(e, name, info.Size, meta)
 	victims := s.sweepLocked(uid)
 	s.mu.Unlock()
 	// The cap is enforced HERE and only here: writes are the one operation
 	// that grows the store, so the write path is the whole trigger — no
 	// timer, no background sweeper.
+	s.deleteObjects(context.WithoutCancel(ctx), victims)
+	return nil
+}
+
+// recordLocked enters one stored file into the index: its size, the time,
+// and for meta.json its parsed content (nil: not a meta this store can
+// use), which maps the entry's key. Called under s.mu.
+func (s *Store) recordLocked(e *entry, name string, size int64, meta *entryMeta) {
+	e.setFile(name, size)
+	delete(e.pending, name)
+	e.modified = s.now()
+	e.lastAccess = s.now()
+	if name != metaName {
+		return
+	}
+	if previous := e.meta; previous != nil && s.byKey[previous.Key.String()] == e.uid && (meta == nil || previous.Key != meta.Key) {
+		delete(s.byKey, previous.Key.String())
+	}
+	e.meta = meta
+	if meta != nil {
+		s.claimKey(e)
+	}
+}
+
+// WRITES BY LINK (DEC-0038, fork 7). A writer that is not this server's
+// request handler (a job worker) uploads straight to the bucket: it asks
+// for a write link per file, with the file's length (WriteLink), PUTs the
+// bytes to the link, and then tells the store what it wrote (Commit). The
+// index learns of the files only at the commit, after a Head of each, so
+// it holds only what is in the bucket with the size that was signed.
+//
+// The length is signed into the link: the provider (s3) or the module's
+// own route (dir) refuses another length, so a link lets its holder write
+// exactly one key with exactly that many bytes until it expires.
+
+// ErrNotSigned: a commit names a file that no write link was given for.
+var ErrNotSigned = errors.New("no write link was given for this artifact file")
+
+// ErrNotUploaded: a committed file is not in the bucket, or has another
+// size than the commit says.
+var ErrNotUploaded = errors.New("artifact file is not in the bucket as committed")
+
+// errBadSize: a write link for a negative length.
+var errBadSize = errors.New("artifact file length is not valid")
+
+// WriteLink returns a link that writes one file of an EXISTING artifact
+// (the uid comes from Resolve) with exactly `size` bytes until `ttl` has
+// passed: a presigned PUT on S3, the server's own signed link on Dir. The
+// caller has checked the right. The file is recorded as pending, so that a
+// removal deletes it and a commit may name it.
+func (s *Store) WriteLink(ctx context.Context, uid, name string, size int64, ttl time.Duration) (blob.Link, error) {
+	key, err := objectKey(uid, name)
+	if err != nil {
+		return blob.Link{}, err
+	}
+	switch {
+	case size < 0:
+		return blob.Link{}, fmt.Errorf("%w: %d", errBadSize, size)
+	case size > UploadLimit, name == metaName && size > metaLimit:
+		return blob.Link{}, fmt.Errorf("%w: %d bytes", errTooLarge, size)
+	}
+	s.mu.Lock()
+	_, ok := s.entries[uid]
+	s.mu.Unlock()
+	if !ok {
+		return blob.Link{}, ErrNotFound
+	}
+	link, err := s.bucket.PresignPut(ctx, key, ttl, size)
+	if err != nil {
+		if errors.Is(err, blob.ErrBadKey) {
+			return blob.Link{}, ErrBadPath
+		}
+		return blob.Link{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[uid]
+	if !ok {
+		// Removed while the link was signed: a commit would find no entry.
+		return blob.Link{}, ErrNotFound
+	}
+	if e.pending == nil {
+		e.pending = map[string]time.Time{}
+	}
+	if link.Expires.After(e.pending[name]) {
+		e.pending[name] = link.Expires
+	}
+	e.lastAccess = s.now()
+	return link, nil
+}
+
+// Upload is one file a writer says it uploaded by link, with its length.
+type Upload struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// Commit enters files that a writer uploaded by link into the index. Each
+// must be a file a write link was given for (or one the entry has
+// already); a Head checks that its object is in the bucket with the size
+// the writer says. A meta.json is read back, as Write reads it, so the
+// commit that holds it makes the entry whole and resolvable. Either every
+// file is entered or none.
+func (s *Store) Commit(ctx context.Context, uid string, files []Upload) error {
+	if len(files) == 0 {
+		return ErrBadPath
+	}
+	keys := make([]string, len(files))
+	for i, f := range files {
+		key, err := objectKey(uid, f.Name)
+		if err != nil {
+			return err
+		}
+		keys[i] = key
+	}
+	s.mu.Lock()
+	e, ok := s.entries[uid]
+	var unsigned string
+	if ok {
+		for _, f := range files {
+			_, signed := e.pending[f.Name]
+			_, held := e.files[f.Name]
+			if !signed && !held {
+				unsigned = f.Name
+				break
+			}
+		}
+	}
+	s.mu.Unlock()
+	if !ok {
+		return ErrNotFound
+	}
+	if unsigned != "" {
+		return fmt.Errorf("%w: %q", ErrNotSigned, unsigned)
+	}
+
+	// The Heads, in parallel: on S3 each is a round trip.
+	sizes := make([]int64, len(files))
+	errs := make([]error, len(files))
+	work := make(chan int)
+	var wg sync.WaitGroup
+	for range min(parallelism, len(files)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range work {
+				info, err := s.bucket.Head(ctx, keys[i])
+				sizes[i], errs[i] = info.Size, err
+			}
+		}()
+	}
+	for i := range files {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+	var meta *entryMeta
+	hasMeta := false
+	for i, f := range files {
+		switch {
+		case errors.Is(errs[i], blob.ErrNotFound):
+			return fmt.Errorf("%w: %q is not there", ErrNotUploaded, f.Name)
+		case errs[i] != nil:
+			return errs[i]
+		case sizes[i] != f.Size:
+			return fmt.Errorf("%w: %q has %d bytes, not %d", ErrNotUploaded, f.Name, sizes[i], f.Size)
+		}
+		if f.Name == metaName {
+			hasMeta = true
+		}
+	}
+	if hasMeta {
+		meta = s.readMeta(ctx, uid)
+	}
+
+	s.mu.Lock()
+	e, ok = s.entries[uid]
+	if !ok {
+		// Removed while the writer uploaded: the remover deleted the pending
+		// objects it knew; these go now, or they would be orphans.
+		s.mu.Unlock()
+		_ = s.deleteObjects(context.WithoutCancel(ctx), keys)
+		return ErrNotFound
+	}
+	for i, f := range files {
+		if f.Name != metaName {
+			s.recordLocked(e, f.Name, sizes[i], nil)
+		}
+	}
+	// The meta last, as a writer writes it.
+	for i, f := range files {
+		if f.Name == metaName {
+			s.recordLocked(e, f.Name, sizes[i], meta)
+		}
+	}
+	victims := s.sweepLocked(uid)
+	s.mu.Unlock()
 	s.deleteObjects(context.WithoutCancel(ctx), victims)
 	return nil
 }
@@ -646,6 +853,9 @@ func (s *Store) sweepLocked(justWritten string) []string {
 		if e.meta == nil && e.lastAccess.IsZero() && now.Sub(e.modified) < evictionGrace {
 			continue // possibly another writer mid-bake — spared until stale
 		}
+		if e.uploading(now) {
+			continue // a writer holds a valid write link: it uploads now
+		}
 		candidates = append(candidates, e)
 	}
 	recency := func(e *entry) time.Time {
@@ -691,9 +901,16 @@ func (s *Store) dropLocked(uid string) []string {
 	if !ok {
 		return nil
 	}
-	keys := make([]string, 0, len(e.files))
+	keys := make([]string, 0, len(e.files)+len(e.pending))
 	for name := range e.files {
 		keys = append(keys, uid+"/"+name)
+	}
+	// Uploaded by link and not committed: in the bucket, perhaps, but not
+	// in the index. Deleting an absent object is no error.
+	for name := range e.pending {
+		if _, held := e.files[name]; !held {
+			keys = append(keys, uid+"/"+name)
+		}
 	}
 	delete(s.entries, uid)
 	s.dropKeys(uid)

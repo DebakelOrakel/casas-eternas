@@ -134,7 +134,9 @@ for a link before every upload would add a round trip per tile. So:
   coordinator's task message carries one presigned PUT per key it will
   write, all with one standard expiry (e.g. 1 h). Signing is a local HMAC
   (no call to the provider), so a task of many tiles costs microseconds to
-  sign.
+  sign. (Not so today, found at step 4: neither the keys nor the lengths
+  are known before the task runs; the worker asks per file. See the
+  status.)
 - **Ask again only when needed — the error case must be covered.** A link
   carries its own expiry (`X-Amz-Date` + `X-Amz-Expires`). Before an
   upload the worker checks that a margin is left (e.g. 5 min); if not, or
@@ -276,8 +278,9 @@ change.
 1. Decide DES-0028 (artifacts by content).
 2. The blob leaf with both rows, the `httptest` fake and the gated wire
    tests; `s3` for the artifact store with presigned GET.
-3. Uploads from workers: one presigned PUT per key in the task message,
-   a fresh link only after a refusal.
+3. Uploads from workers: one presigned PUT per file, asked for at write
+   time with its length (not in the task message, see the status), a
+   fresh link after a refusal.
 4. The world store.
 
 ## Status
@@ -300,3 +303,13 @@ answers a read with a 302 to a link (DEC-0038's status has what was built
 and measured). The index is built from one listing at start and kept in
 memory; the last access stays in memory, as DEC-0017 had it, so no
 lifecycle rule is used. Uploads still go through the server.
+
+2026-10-16: uploads from workers are built (DEC-0038, step 4), with one
+correction to the section above: the keys are NOT known before the task
+runs (the artifact uid comes from `resolve`, and the coordinator does not
+know the logical key of level 1), and neither are the lengths (they follow
+from the result). So the right to upload does not travel with the task:
+the worker asks for a link per file when it writes it, with the length,
+which keeps the length signed. The rule for expired links stays as
+written. Completion is a commit to the artifact store with each file's
+size, checked with `HEAD`; DEC-0038's status has the details.

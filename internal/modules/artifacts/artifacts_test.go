@@ -36,6 +36,7 @@ func newModule(t *testing.T, bucket blob.Bucket, resolver *identity.Resolver, ra
 	t.Helper()
 	var all config.Config
 	all.Artifacts.ReadLinkTTL = 15 * time.Minute
+	all.Artifacts.WriteLinkTTL = time.Hour
 	m, err := New(context.Background(), Config{All: all, Bucket: bucket, Identity: resolver, WorldAccess: rank})
 	if err != nil {
 		t.Fatal(err)

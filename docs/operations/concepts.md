@@ -86,6 +86,7 @@ artifacts:
       access-key-file: /run/secrets/aws-access-key
       secret-key-file: /run/secrets/aws-secret-key
   read-link-ttl: 15m      # how long a read link holds
+  write-link-ttl: 1h      # how long a worker's write link holds
 ```
 
 For `ceph`, set `endpoint` (e.g. `https://objects.lpg.cloudscale.ch`) and
@@ -108,5 +109,14 @@ at least 32 random bytes; without it the links stop working at restart).
 The bucket's CORS rule allows every origin, for GET and HEAD, without
 credentials: a link is the right to read one object for minutes, and
 whoever holds it can use it outside a browser, so a narrower origin would
-protect nothing. Uploads still go through the server.
+protect nothing.
+
+A job worker uploads by link too: per file it asks the server for a write
+link with the file's length (`artifacts.write-link-ttl`), PUTs the bytes
+to it — on `s3` straight to the bucket, on `dir` to the server's
+`/v1/artifacts/blob/` — and then commits the artifact's files; the server
+checks each with a HEAD before it lists them (log line `artifact files
+committed`). So **a worker must reach the bucket's endpoint over HTTPS**,
+not only the server; a worker in a cluster with restricted egress needs
+the bucket's host allowed. The browser still uploads through the server.
 

@@ -36,7 +36,9 @@ type Spec struct {
 	// Exactly one of the pair.
 	WorldZip string `json:"worldZip,omitempty"`
 	WorldURL string `json:"worldUrl,omitempty"`
-	// The artifact store's /v1 base. The worker also takes an
+	// The artifact store's /v1 base: the worker resolves there, asks for a
+	// write link per file and commits; the bytes go to the links (DEC-0038,
+	// fork 7). The worker also takes an
 	// `artifactsDir` instead, for a manual run without a server
 	// (client/scripts/jobWorker.ts); this module never sends one.
 	ArtifactsURL string `json:"artifactsUrl,omitempty"`

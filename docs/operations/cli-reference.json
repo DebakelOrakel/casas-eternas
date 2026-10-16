@@ -211,7 +211,7 @@
         {
           "name": "artifacts.write-link-ttl",
           "default": "1h0m0s",
-          "usage": "How long a link to write an artifact is valid; a job task carries one per artifact it writes. Not used yet.",
+          "usage": "How long a link to write an artifact file is valid. A job worker asks for one per file it writes, with the file's length, and uploads to it straight to the bucket; it asks again when the link has less than 5 minutes left or is refused.",
           "env": "CASAS_ARTIFACTS_WRITE_LINK_TTL"
         },
         {
@@ -397,7 +397,7 @@
       "key": "artifacts.write-link-ttl",
       "env": "CASAS_ARTIFACTS_WRITE_LINK_TTL",
       "default": "1h0m0s",
-      "usage": "How long a link to write an artifact is valid; a job task carries one per artifact it writes. Not used yet.",
+      "usage": "How long a link to write an artifact file is valid. A job worker asks for one per file it writes, with the file's length, and uploads to it straight to the bucket; it asks again when the link has less than 5 minutes left or is refused.",
       "command": "casas-eternas start"
     },
     {

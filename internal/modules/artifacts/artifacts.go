@@ -79,6 +79,8 @@ type Module struct {
 	signer *blob.LinkSigner
 	// readTTL is the lifetime of a read link (artifacts.read-link-ttl).
 	readTTL time.Duration
+	// writeTTL is the lifetime of a write link (artifacts.write-link-ttl).
+	writeTTL time.Duration
 }
 
 // signing is what a Dir that makes its own links offers.
@@ -137,11 +139,15 @@ func New(ctx context.Context, cfg Config) (*Module, error) {
 	if readTTL <= 0 || readTTL > blob.MaxLinkTTL {
 		return nil, fmt.Errorf("artifacts.read-link-ttl: %v must be in (0, %v]", readTTL, blob.MaxLinkTTL)
 	}
+	writeTTL := cfg.All.Artifacts.WriteLinkTTL
+	if writeTTL <= 0 || writeTTL > blob.MaxLinkTTL {
+		return nil, fmt.Errorf("artifacts.write-link-ttl: %v must be in (0, %v]", writeTTL, blob.MaxLinkTTL)
+	}
 	store, err := NewStore(ctx, cfg.Bucket, capBytes)
 	if err != nil {
 		return nil, fmt.Errorf("artifacts.storage: %w", err)
 	}
-	m := &Module{cfg: cfg, store: store, readTTL: readTTL}
+	m := &Module{cfg: cfg, store: store, readTTL: readTTL, writeTTL: writeTTL}
 	if d, ok := cfg.Bucket.(signing); ok {
 		m.signer = d.Signer()
 	}
@@ -167,12 +173,17 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	// needs no new route; every segment is validated in the store, which is
 	// what keeps the flexibility from becoming a path traversal.
 	mux.HandleFunc("GET /v1/artifacts/{artifactUID}/{name...}", m.handleGet)
+	// The server's own upload, for the browser's tiered store; a job worker
+	// writes by link (the two routes below, DEC-0038, fork 7).
 	mux.HandleFunc("PUT /v1/artifacts/{artifactUID}/{name...}", m.handlePut)
-	// The dir backend's own links. More specific than the route above, so
+	mux.HandleFunc("POST /v1/artifacts/{artifactUID}/write-link", m.handleWriteLink)
+	mux.HandleFunc("POST /v1/artifacts/{artifactUID}/commit", m.handleCommit)
+	// The dir backend's own links. More specific than the routes above, so
 	// the mux sends /v1/artifacts/blob/… here (no uid is "blob": uids are
 	// minted uuids). Not mounted on s3: the provider serves its links.
 	if m.signer != nil {
 		mux.HandleFunc("GET "+LinkBase+"{key...}", m.handleLink)
+		mux.HandleFunc("PUT "+LinkBase+"{key...}", m.handleLinkPut)
 	}
 	return nil
 }
@@ -186,7 +197,8 @@ func (m *Module) Close() error {
 }
 
 // SignedRequest answers whether a request carries a link this module
-// signed: a GET (or HEAD) under LinkBase whose signature verifies. cmd/
+// signed: a GET (or HEAD) or a PUT under LinkBase whose signature verifies
+// for that method. cmd/
 // hands it to server.Gate, which lets such a request through WITHOUT
 // credentials, whatever its Authorization header holds: the link is the
 // authorization. An expired link of ours passes too, so that the route
@@ -194,14 +206,22 @@ func (m *Module) Close() error {
 // session. A forged or changed link does not pass: the gate treats it as
 // any other request.
 func (m *Module) SignedRequest(r *http.Request) bool {
-	if m.signer == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+	if m.signer == nil {
+		return false
+	}
+	method := r.Method
+	switch method {
+	case http.MethodGet, http.MethodHead:
+		method = http.MethodGet
+	case http.MethodPut:
+	default:
 		return false
 	}
 	key, ok := strings.CutPrefix(r.URL.Path, LinkBase)
 	if !ok {
 		return false
 	}
-	_, err := m.signer.Verify(http.MethodGet, key, r.URL.Query())
+	_, err := m.signer.Verify(method, key, r.URL.Query())
 	return err == nil || errors.Is(err, blob.ErrLinkExpired)
 }
 
@@ -340,6 +360,134 @@ func (m *Module) handleLink(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
 	_, _ = io.Copy(w, body)
+}
+
+// handleLinkPut serves a dir write link: the bytes of one object, with
+// exactly the signed length. As handleLink, no caller is needed. The
+// answers are the ones a provider gives a presigned PUT (measured on AWS,
+// DEC-0038 step 2): 403 for a link that does not verify and for a body of
+// another length (the length is signed), 410 for one of ours that has
+// expired. The index does not learn of the object here; the writer's
+// commit tells it (handleCommit).
+func (m *Module) handleLinkPut(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	length, err := m.signer.Verify(http.MethodPut, key, r.URL.Query())
+	if err != nil {
+		if errors.Is(err, blob.ErrLinkExpired) {
+			httpjson.ClientError(w, http.StatusGone, "the link has expired")
+			return
+		}
+		httpjson.ClientError(w, http.StatusForbidden, "the link is not valid")
+		return
+	}
+	// A chunked body (-1) has no length to compare: refused as well.
+	if r.ContentLength != length {
+		httpjson.ClientError(w, http.StatusForbidden, "the link is for another length")
+		return
+	}
+	body := &bodyReader{r: http.MaxBytesReader(w, r.Body, length)}
+	if _, err := m.cfg.Bucket.Put(r.Context(), key, body, length, blob.PutOptions{ContentType: "application/octet-stream"}); err != nil {
+		if body.failed || errors.Is(err, blob.ErrSize) {
+			httpjson.ClientError(w, http.StatusBadRequest, "the body ended before its length")
+			return
+		}
+		httpjson.ServerError(w, "storing an artifact", err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+type writeLinkRequest struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// writeLinkResponse is a write link as a worker sends it: the method and
+// URL, the headers to send with it (signed in on s3), and when it expires.
+// The URL of a dir link is a path on this server, relative to the request.
+// Content-Length is not among the headers: the client sends the body's own,
+// and the link refuses another one.
+type writeLinkResponse struct {
+	Method  string            `json:"method"`
+	URL     string            `json:"url"`
+	Header  map[string]string `json:"header"`
+	Expires time.Time         `json:"expires"`
+}
+
+// handleWriteLink gives a writer a link to upload one file of an artifact
+// straight to the bucket (DEC-0038, fork 7), with the file's length signed
+// in and artifacts.write-link-ttl to live. The right is the right to write
+// the artifact, as for handlePut: a job token for the artifact's world, an
+// editor of it, or the operator. The same route gives a fresh link when the
+// one in hand has expired or was refused.
+func (m *Module) handleWriteLink(w http.ResponseWriter, r *http.Request) {
+	uid := r.PathValue("artifactUID")
+	var request writeLinkRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&request); err != nil || request.Name == "" {
+		httpjson.ClientError(w, http.StatusBadRequest, "expected {name, size}")
+		return
+	}
+	worldUID, _ := m.store.WorldOf(r.Context(), uid)
+	if !m.allowed(w, r, worldUID, access.Editor, "writing artifacts") {
+		return
+	}
+	link, err := m.store.WriteLink(r.Context(), uid, request.Name, request.Size, m.writeTTL)
+	if err != nil {
+		switch {
+		case errors.Is(err, errTooLarge):
+			httpjson.ClientError(w, http.StatusRequestEntityTooLarge, "artifact file too large")
+		case errors.Is(err, errBadSize):
+			httpjson.ClientError(w, http.StatusBadRequest, "size must be the file's length in bytes")
+		case errors.Is(err, ErrNotFound):
+			httpjson.ClientError(w, http.StatusNotFound, "no such artifact — resolve with create first")
+		default:
+			respondStoreError(w, err)
+		}
+		return
+	}
+	header := map[string]string{}
+	for name, values := range link.Header {
+		if strings.EqualFold(name, "Content-Length") || strings.EqualFold(name, "Host") {
+			continue
+		}
+		header[name] = strings.Join(values, ",")
+	}
+	httpjson.Write(w, http.StatusOK, writeLinkResponse{Method: link.Method, URL: link.URL, Header: header, Expires: link.Expires.UTC()})
+}
+
+type commitRequest struct {
+	Files []Upload `json:"files"`
+}
+
+// handleCommit takes a writer's word that it uploaded files by link, checks
+// each with a Head (there, and of the size it says) and enters them into
+// the index. A writer commits once per artifact, with its meta.json, which
+// it writes last; the commit makes the artifact whole. 409 when a file is
+// not in the bucket as said, or was never signed.
+func (m *Module) handleCommit(w http.ResponseWriter, r *http.Request) {
+	uid := r.PathValue("artifactUID")
+	var request commitRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil || len(request.Files) == 0 {
+		httpjson.ClientError(w, http.StatusBadRequest, "expected {files: [{name, size}]}")
+		return
+	}
+	worldUID, _ := m.store.WorldOf(r.Context(), uid)
+	if !m.allowed(w, r, worldUID, access.Editor, "writing artifacts") {
+		return
+	}
+	if err := m.store.Commit(r.Context(), uid, request.Files); err != nil {
+		switch {
+		case errors.Is(err, ErrNotSigned), errors.Is(err, ErrNotUploaded):
+			httpjson.ClientError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, ErrNotFound):
+			httpjson.ClientError(w, http.StatusNotFound, "no such artifact — resolve with create first")
+		default:
+			respondStoreError(w, err)
+		}
+		return
+	}
+	slog.Info("artifact files committed", "artifact", uid, "files", len(request.Files))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {

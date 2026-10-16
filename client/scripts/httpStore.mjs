@@ -8,6 +8,13 @@
 // browser's tiered store catches the same error and goes on as on a miss,
 // as it did before. Both halves are checked here against a real HTTP
 // server on loopback, in about a second; no Vite, no world.
+//
+// Also (DEC-0038, fork 7): the job worker's writes by link — a write link
+// per file, the upload without the job's credentials, the commit with
+// meta.json — and the rule for expired links: a link with less than the
+// margin left is asked for again before the upload, a refused upload (403,
+// 410) once after it. And the worker's read of the world: only a 404 is
+// "no such world", other failures give the task back.
 import { createServer } from 'node:http'
 import { registerHooks } from 'node:module'
 import { resolve } from './tsResolve.mjs'
@@ -17,6 +24,7 @@ const { createHttpArtifactStore } = await import('../src/storage/HttpArtifactSto
 const { createTieredArtifactStore } = await import('../src/storage/TieredArtifactStore.ts')
 const { createMemoryArtifactStore } = await import('../src/storage/MemoryArtifactStore.ts')
 const { ArtifactStoreUnavailableError, artifactKey } = await import('../src/storage/ArtifactStore.ts')
+const { readWorld, WorldUnavailableError } = await import('./readWorld.ts')
 
 let failures = 0
 const check = (name, ok, detail = '') => {
@@ -35,10 +43,39 @@ const unavailable = (o) => o.error instanceof ArtifactStoreUnavailableError
 
 // The server's answer per route, set by each case.
 const answers = { resolve: 200, file: 200, put: 204 }
+// The writes by link: what the server answers, and what it was sent.
+const links = { linkStatus: [], linkTtlMs: [], upload: [], commit: 204, relative: false, asked: 0, uploads: [], commits: [] }
+const resetLinks = (change = {}) => Object.assign(links, { linkStatus: [], linkTtlMs: [], upload: [], commit: 204, relative: false, asked: 0, uploads: [], commits: [] }, change)
 const server = createServer((req, res) => {
-  req.resume()
+  const chunks = []
+  req.on('data', (chunk) => chunks.push(chunk))
   req.on('end', () => {
     const url = new URL(req.url, 'http://x')
+    const body = Buffer.concat(chunks)
+    const write = url.pathname.match(/^\/v1\/artifacts\/u1\/write-link$/)
+    if (write && req.method === 'POST') {
+      const n = ++links.asked
+      const status = links.linkStatus.shift() ?? 200
+      if (status !== 200) return res.writeHead(status).end('{"error":"x"}')
+      const { name, size } = JSON.parse(body.toString())
+      const ttl = links.linkTtlMs.shift() ?? 3_600_000
+      const path = `/bucket/u1/${name}?len=${size}&n=${n}`
+      return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+        method: 'PUT',
+        url: links.relative ? path : `http://127.0.0.1:${port}${path}`,
+        header: { 'X-Signed': `link-${n}` },
+        expires: new Date(Date.now() + ttl).toISOString(),
+      }))
+    }
+    if (url.pathname.startsWith('/bucket/') && req.method === 'PUT') {
+      links.uploads.push({ path: url.pathname, n: url.searchParams.get('n'), signed: req.headers['x-signed'], authorization: req.headers.authorization, length: body.length })
+      const status = links.upload.shift() ?? 200
+      return res.writeHead(status).end()
+    }
+    if (url.pathname === '/v1/artifacts/u1/commit' && req.method === 'POST') {
+      links.commits.push({ body: JSON.parse(body.toString()), authorization: req.headers.authorization })
+      return res.writeHead(links.commit).end()
+    }
     if (url.pathname === '/v1/artifacts/resolve') {
       if (answers.resolve !== 200) return res.writeHead(answers.resolve).end('{"error":"x"}')
       return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ artifactUid: 'u1', files: ['meta.json'] }))
@@ -112,6 +149,60 @@ console.log('\n— the HTTP store: only 404 is absent —')
   check('write 500 → unavailable', unavailable(await outcome(() => s.write(handle, 'meta.json', bytes))))
 }
 
+console.log('\n— the HTTP store: writes by link (the job worker) —')
+{
+  // The worker's store: its fetch adds the job's token, the upload's does not.
+  const s = createHttpArtifactStore({
+    resolveBase: async () => plain,
+    fetch: (input, init = {}) => fetch(input, { ...init, headers: { ...init.headers, Authorization: 'Bearer job-token' } }),
+    uploads: 'links',
+  })
+  const data = new Uint8Array(1000)
+  const meta = new TextEncoder().encode('{"key":{}}')
+
+  resetLinks()
+  const a = await outcome(() => s.write(handle, 'a.f32', data))
+  check('a file → a link with its length, an upload to it, no commit yet', a.value === true && links.asked === 1 && links.uploads.length === 1 && links.uploads[0].length === 1000 && links.commits.length === 0, JSON.stringify({ a, links }))
+  check('the upload carries the link\'s headers', links.uploads[0].signed === 'link-1', JSON.stringify(links.uploads[0]))
+  check('the upload carries no Authorization (the link is the right)', links.uploads[0].authorization === undefined, String(links.uploads[0].authorization))
+  const m = await outcome(() => s.write(handle, 'meta.json', meta))
+  const committed = links.commits[0]?.body.files ?? []
+  check('meta.json → uploaded, then one commit of both files with their sizes', m.value === true && links.commits.length === 1 && JSON.stringify(committed) === JSON.stringify([{ name: 'a.f32', size: 1000 }, { name: 'meta.json', size: meta.byteLength }]), JSON.stringify({ m, commits: links.commits }))
+  check('the commit carries the job\'s token', links.commits[0]?.authorization === 'Bearer job-token', String(links.commits[0]?.authorization))
+
+  resetLinks({ relative: true })
+  const relative = await outcome(() => s.write(handle, 'b.f32', data))
+  check('a dir link (a path) is resolved against the server', relative.value === true && links.uploads.length === 1, JSON.stringify(relative))
+
+  // The rule for expired links.
+  resetLinks({ linkTtlMs: [60_000] })
+  const expiring = await outcome(() => s.write(handle, 'c.f32', data))
+  check('a link with less than the margin left → a fresh one first, one upload with it', expiring.value === true && links.asked === 2 && links.uploads.length === 1 && links.uploads[0].n === '2', JSON.stringify({ expiring, asked: links.asked, uploads: links.uploads }))
+  for (const status of [403, 410]) {
+    resetLinks({ upload: [status] })
+    const refused = await outcome(() => s.write(handle, 'd.f32', data))
+    check(`an upload refused with ${status} → a fresh link, uploaded again`, refused.value === true && links.asked === 2 && links.uploads.length === 2 && links.uploads[1].n === '2', JSON.stringify({ refused, asked: links.asked, uploads: links.uploads }))
+  }
+  resetLinks({ upload: [403, 403] })
+  const twice = await outcome(() => s.write(handle, 'e.f32', data))
+  check('refused again with the fresh link → false, no third try', twice.value === false && links.uploads.length === 2, JSON.stringify({ twice, uploads: links.uploads.length }))
+  resetLinks({ linkTtlMs: [60_000], upload: [403] })
+  const both = await outcome(() => s.write(handle, 'f.f32', data))
+  check('fresh after the margin check, then refused → false (asked once only)', both.value === false && links.asked === 2 && links.uploads.length === 1, JSON.stringify({ both, asked: links.asked }))
+
+  // Failures: a refusal is false, a server that does not answer throws.
+  resetLinks({ upload: [500] })
+  check('an upload answered 500 → unavailable', unavailable(await outcome(() => s.write(handle, 'g.f32', data))))
+  resetLinks({ linkStatus: [403] })
+  check('write-link refused (403) → false', (await outcome(() => s.write(handle, 'h.f32', data))).value === false)
+  resetLinks({ linkStatus: [500] })
+  check('write-link 500 → unavailable', unavailable(await outcome(() => s.write(handle, 'h.f32', data))))
+  resetLinks({ commit: 409 })
+  check('commit refused (409) → false', (await outcome(() => s.write(handle, 'meta.json', meta))).value === false)
+  resetLinks({ commit: 503 })
+  check('commit 503 → unavailable', unavailable(await outcome(() => s.write(handle, 'meta.json', meta))))
+}
+
 console.log('\n— the HTTP store: no answer at all —')
 for (const [name, base] of [['a TLS handshake that fails', tls], ['a refused connection', refused]]) {
   const s = store(base)
@@ -161,6 +252,29 @@ console.log('\n— the tiered store (the browser): unavailable is a miss —')
   }
   check('no unhandled rejection from the background upload', rejections.length === 0, String(rejections[0]))
   check('each failure is said on the console, once per call kind and store', warnings.length > 0 && warnings.length <= 9, `${warnings.length} warnings`)
+}
+
+console.log('\n— the job worker reads its world: only 404 is absent —')
+{
+  const world = (base) => ({ worldUrl: `${base}/artifacts/u1/world.zip` })
+  const plainFetch = (input, init) => fetch(input, init)
+  answers.file = 200
+  const read = await outcome(() => readWorld(world(plain), plainFetch))
+  check('200 → the archive', read.value?.archive?.byteLength === 11, String(read.error))
+  answers.file = 404
+  const absent = await outcome(() => readWorld(world(plain), plainFetch))
+  check('404 → null (no such world: the task fails)', absent.value === null, String(absent.error))
+  const worldUnavailable = (o) => o.error instanceof WorldUnavailableError
+  for (const status of [500, 503, 401]) {
+    answers.file = status
+    const o = await outcome(() => readWorld(world(plain), plainFetch))
+    check(`${status} → unavailable (the task is given back)`, worldUnavailable(o), String(o.error ?? JSON.stringify(o.value)))
+  }
+  for (const [name, base] of [['a TLS handshake that fails', tls], ['a refused connection', refused]]) {
+    const o = await outcome(() => readWorld(world(base), plainFetch))
+    check(`${name} → unavailable`, worldUnavailable(o), String(o.error ?? JSON.stringify(o.value)))
+  }
+  check('a missing file → null', (await outcome(() => readWorld({ worldZip: '/nonexistent/world.zip' }, plainFetch))).value === null)
 }
 
 server.close()

@@ -243,20 +243,14 @@ func (f *fakeBucketS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// On s3 the module answers a read with a 302 to a presigned GET on the
-// provider, so the bytes do not pass through it; the index is built from
-// the provider's listing; there is no link route of its own.
-func TestS3ReadRedirectsToAPresignedGet(t *testing.T) {
-	key := testKey()
-	const uid = "0001f5f4-4b3b-4f3d-861f-852b97080def"
-	fake := &fakeBucketS3{bucket: "artifacts", objects: map[string][]byte{
-		// An artifact already in the bucket, under the prefix.
-		"run/" + uid + "/meta.json":     []byte(metaFor(key, "Ätna")),
-		"run/" + uid + "/elevation.u16": []byte("raster-bytes"),
-	}}
-	// TLS, as every real provider: over plain HTTP the SDK must hash the
-	// payload and so needs a seekable body, which an upload is not; over
-	// HTTPS it sends it unsigned (aws-sdk-go-v2, v4.ComputePayloadSHA256).
+// openFakeS3 serves `objects` from a fake provider over TLS and opens the
+// bucket "artifacts" with the prefix "run" on it. TLS, as every real
+// provider: over plain HTTP the SDK must hash the payload and so needs a
+// seekable body, which an upload is not; over HTTPS it sends it unsigned
+// (aws-sdk-go-v2, v4.ComputePayloadSHA256).
+func openFakeS3(t *testing.T, objects map[string][]byte) (*fakeBucketS3, *httptest.Server, blob.Bucket) {
+	t.Helper()
+	fake := &fakeBucketS3{bucket: "artifacts", objects: objects}
 	srv := httptest.NewTLSServer(fake)
 	t.Cleanup(srv.Close)
 	keys := t.TempDir()
@@ -274,6 +268,20 @@ func TestS3ReadRedirectsToAPresignedGet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return fake, srv, bucket
+}
+
+// On s3 the module answers a read with a 302 to a presigned GET on the
+// provider, so the bytes do not pass through it; the index is built from
+// the provider's listing; there is no link route of its own.
+func TestS3ReadRedirectsToAPresignedGet(t *testing.T) {
+	key := testKey()
+	const uid = "0001f5f4-4b3b-4f3d-861f-852b97080def"
+	fake, srv, bucket := openFakeS3(t, map[string][]byte{
+		// An artifact already in the bucket, under the prefix.
+		"run/" + uid + "/meta.json":     []byte(metaFor(key, "Ätna")),
+		"run/" + uid + "/elevation.u16": []byte("raster-bytes"),
+	})
 	if !fake.cors {
 		t.Error("the bucket's CORS rule was not set")
 	}

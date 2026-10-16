@@ -47,6 +47,7 @@ import { AckPolicy, jetstream, jetstreamManager, type JsMsg } from '@nats-io/jet
 import { createMeshSampler, type MeshSampler } from '../src/generator/mesh/meshSampler'
 import { tileBakeInputs } from '../src/world/bakeInputs'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
+import { readWorld, WorldUnavailableError } from './readWorld'
 import { artifactKey, ArtifactStoreUnavailableError } from '../src/storage/ArtifactStore'
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../src/storage/ArtifactStore'
 
@@ -83,8 +84,9 @@ interface Job {
   // server (see `pool` below; the Go server never sends it since
   // 2026-10-16, DEC-0038)…
   artifactsDir?: string
-  // …or the API base (e.g. "http://server:8080/v1") to PUT them to: what
-  // the server sends every worker.
+  // …or the API base (e.g. "http://server:8080/v1"): what the server sends
+  // every worker. The worker resolves there, asks for a write link per
+  // file and commits; the bytes go to the link (HttpArtifactStore.ts).
   artifactsUrl?: string
   // Bearer token for that API, naming this one job.
   authToken?: string
@@ -248,25 +250,6 @@ function createFsArtifactStore(root: string): ArtifactStore {
   }
 }
 
-// `held` is the revision (the server's ETag) of a copy this worker keeps:
-// the server answers 304 when it is still the current one, and the
-// archive — tens of MB — is not sent again (`unchanged`).
-async function readWorld(job: Job, held?: string): Promise<{ archive: Uint8Array; etag: string | null } | 'unchanged' | null> {
-  if (job.worldZip) {
-    const archive = await readFile(job.worldZip).catch(() => null)
-    return archive ? { archive, etag: null } : null
-  }
-  if (!job.worldUrl) return null
-  try {
-    const response = await authorizedFetch(job)(job.worldUrl, held ? { headers: { 'If-None-Match': held } } : {})
-    if (response.status === 304 && held) return 'unchanged'
-    if (!response.ok) return null
-    return { archive: new Uint8Array(await response.arrayBuffer()), etag: response.headers.get('ETag') }
-  } catch {
-    return null
-  }
-}
-
 // This job's credentials, attached to every request it makes.
 //
 // Read at every request, not once: a worker serving the relay replaces the
@@ -287,7 +270,9 @@ function artifactStoreFor(job: Job): ArtifactStore | null {
   if (job.artifactsDir) return createFsArtifactStore(job.artifactsDir)
   if (job.artifactsUrl) {
     const base = job.artifactsUrl
-    return createHttpArtifactStore({ resolveBase: async () => base, fetch: authorizedFetch(job) })
+    // By write link and commit: the bytes go to the bucket, not through
+    // the server (DEC-0038, fork 7).
+    return createHttpArtifactStore({ resolveBase: async () => base, fetch: authorizedFetch(job), uploads: 'links' })
   }
   return null
 }
@@ -521,7 +506,7 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   let inputs: WorldInputs | undefined = held && job.worldZip ? held.inputs : undefined
   if (!inputs) {
     if (job.stage === 1) onProgress('read', 0)
-    const read = await readWorld(job, held?.etag ?? undefined)
+    const read = await readWorld(job, authorizedFetch(job), held?.etag ?? undefined)
     if (read === 'unchanged') inputs = held!.inputs
     else {
       if (!read) throw new Error(`cannot read the world (${job.worldZip ?? job.worldUrl ?? 'no source given'})`)
@@ -1016,13 +1001,14 @@ async function serve(config: ServeConfig): Promise<void> {
         process.stderr.write(`task ${taskId}: ${message}; ending the worker\n`)
         process.exit(1)
       }
-      // An artifact store that did not answer is not the task's fault
-      // either, and not a miss (HttpArtifactStore.ts): the task goes back to
+      // An artifact store or a world server that did not answer is not the
+      // task's fault either, and not a miss (HttpArtifactStore.ts,
+      // readWorld): the task goes back to
       // the relay, as for a worker that crashed, and is handed out again —
       // to this worker or another — after a pause. Its last delivery
       // reports the failure, so that a store that stays away fails the job
       // instead of leaving it waiting.
-      if (error instanceof ArtifactStoreUnavailableError && msg.info.deliveryCount < TASK_MAX_DELIVER) {
+      if ((error instanceof ArtifactStoreUnavailableError || error instanceof WorldUnavailableError) && msg.info.deliveryCount < TASK_MAX_DELIVER) {
         process.stderr.write(`task ${taskId}: ${message}; giving it back (delivery ${msg.info.deliveryCount} of ${TASK_MAX_DELIVER})\n`)
         msg.nak(TASK_RETRY_DELAY_MS)
         continue
