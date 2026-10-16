@@ -7,6 +7,7 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -52,13 +53,13 @@ func Start(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	modules, gate, err := buildModules(cmd.Context(), targets, cfg)
+	modules, gate, internal, err := buildModules(cmd.Context(), targets, cfg)
 	if err != nil {
 		return err
 	}
 
 	slog.Info("starting", "targets", targets.Names())
-	return server.Run(cmd.Context(), cfg.Global.Server(), buildVersion, modules, gate)
+	return server.Run(cmd.Context(), cfg.Global.Server(), buildVersion, modules, gate, internal)
 }
 
 // buildModules constructs exactly the selected modules, in a fixed order so
@@ -67,7 +68,10 @@ func Start(cmd *cobra.Command, args []string) error {
 // Target-scoped validation happens here, for SELECTED targets only: a
 // world-only deployment does not have to configure artifact storage it will
 // never touch.
-func buildModules(ctx context.Context, targets config.Targets, cfg config.Config) ([]server.Module, func(http.Handler) http.Handler, error) {
+//
+// The listener it returns, when not nil, is the internal listener for the
+// local job workers (localWorkerAPI), for server.Run to serve.
+func buildModules(ctx context.Context, targets config.Targets, cfg config.Config) ([]server.Module, func(http.Handler) http.Handler, net.Listener, error) {
 	var modules []server.Module
 
 	// Resolved ONCE and handed to every module that needs it. Three modules
@@ -75,7 +79,7 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	// is told drifts from the value the server enforces.
 	authMode, err := config.ParseAuthMode(cfg.Global.Auth.Mode)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Login is the auth TARGET's job (2026-08-13, server-user-admin.md): only
 	// the process running it opens the credential store; every process still
@@ -86,7 +90,7 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	if targets.Has(config.TargetAuth) && authMode.ChecksIdentity() {
 		registry, err = openCredentials(cfg)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	} else if targets.Has(config.TargetAuth) {
 		slog.Info("auth target selected, but nothing to log in to", "mode", authMode)
@@ -100,7 +104,13 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	// connect to it, and stopped again (store and port released) when the
 	// wiring fails after it.
 	var relayModule *relaymodule.Module
+	// The internal listener, when the jobs wiring opens one: closed again
+	// when the wiring fails after it, as the relay is.
+	var internal net.Listener
 	defer func() {
+		if !wired && internal != nil {
+			internal.Close()
+		}
 		if !wired && registry != nil {
 			registry.Close()
 		}
@@ -110,7 +120,7 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	}()
 	caller, tokens, err := buildIdentity(authMode, cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// After the identity: in a mode that checks it, the bus admits only this
@@ -122,7 +132,7 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 			Grants: map[string]relay.Grant{token.SubjectWorker: jobs.WorkerGrant()},
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		modules = append(modules, relayModule)
 	}
@@ -140,7 +150,7 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 			StateDir:   cfg.Auth.StateDir,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		modules = append(modules, login)
 		loginPath = auth.Path
@@ -151,14 +161,14 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	if targets.Has(config.TargetClient) {
 		m, err := client.New(client.Config{All: cfg, LoginPath: loginPath})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		modules = append(modules, m)
 	}
 	if targets.Has(config.TargetDocs) {
 		m, err := docs.New(docs.Config{All: cfg})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		modules = append(modules, m)
 	}
@@ -170,7 +180,7 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	var artifactsModule *artifacts.Module
 	if targets.Has(config.TargetWorld) {
 		if err := cfg.World.Storage.Validate("world"); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		// The migration rule for pre-registry worlds needs name→id; without a
 		// registry (local mode) legacy worlds are admin-only, which the nil
@@ -184,7 +194,7 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 		}
 		m, err := world.New(world.Config{All: cfg, Identity: caller, LegacyOwner: legacyOwner})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		worldModule = m
 		modules = append(modules, m)
@@ -197,31 +207,32 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	if targets.Has(config.TargetArtifacts) || targets.Has(config.TargetJobs) {
 		rankWorld, err = worldRanking(caller, worldModule, authMode, cfg.Global.Services.Worlds)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 	if targets.Has(config.TargetArtifacts) {
 		if err := cfg.Artifacts.Storage.Validate("artifacts"); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		bucket, err := openArtifactBucket(ctx, cfg)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		m, err := artifacts.New(ctx, artifacts.Config{All: cfg, Bucket: bucket, Identity: caller, WorldAccess: rankWorld})
 		if err != nil {
 			if c, ok := bucket.(io.Closer); ok {
 				_ = c.Close()
 			}
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		modules = append(modules, m)
 		artifactsModule = m
 	}
 	if targets.Has(config.TargetJobs) {
-		bcfg, err := bakeConfig(targets, cfg, worldModule, artifactsModule, rankWorld, caller, tokens)
+		var bcfg jobs.Config
+		bcfg, internal, err = bakeConfig(targets, cfg, worldModule, artifactsModule, rankWorld, caller, tokens)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		// The bus the coordinator and its workers talk over: the relay in
 		// this process, or the one global.services.relay names. A jobs target
@@ -235,17 +246,17 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 			}
 		}
 		if err := config.RequireDir(keyJobsDir, cfg.Jobs.StateDir); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		bcfg.StateDir = cfg.Jobs.StateDir
 		bcfg.Relay, err = relay.Connect("jobs", server, cfg.Global.Services.Relay, relayToken(tokens, "jobs"))
 		if err != nil {
-			return nil, nil, fmt.Errorf("jobs: %w (run -t relay in this process or set global.services.relay)", err)
+			return nil, nil, nil, fmt.Errorf("jobs: %w (run -t relay in this process or set global.services.relay)", err)
 		}
 		m, err := jobs.New(bcfg)
 		if err != nil {
 			bcfg.Relay.Close()
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		modules = append(modules, m)
 	}
@@ -274,7 +285,7 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 		auth.TokenPath,          // a service account trading its secret for a bus token
 		auth.RedeemPath,         // spending an invite or reset code, which signs in
 		auth.RefreshPath,        // renewing a session whose access token has run out
-	}, anonymousReads, signedRequests), nil
+	}, anonymousReads, signedRequests), internal, nil
 }
 
 // bakeConfig wires the bake module's two sides — where its worlds come from,
@@ -301,12 +312,13 @@ func relayToken(tokens *token.Tokens, module string) func() string {
 	}
 }
 
-func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, artifactsModule *artifacts.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *token.Tokens) (jobs.Config, error) {
+func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Module, artifactsModule *artifacts.Module, rankWorld func(context.Context, string, string) (bool, access.Level), caller *identity.Resolver, tokens *token.Tokens) (jobs.Config, net.Listener, error) {
 	inCluster := jobs.InCluster()
 	selfURL := serverBaseURL(cfg.Global.Listen)
 	if inCluster && selfURL == "" {
-		return jobs.Config{}, fmt.Errorf("CASAS_POD_IP is not set: a job worker reaches this server by its pod IP (deploy/manifests.yaml wires it)")
+		return jobs.Config{}, nil, fmt.Errorf("CASAS_POD_IP is not set: a job worker reaches this server by its pod IP (deploy/manifests.yaml wires it)")
 	}
+	var internal net.Listener
 	bcfg := jobs.Config{
 		WorkerPath:    workerPath(cfg.Jobs.Worker),
 		Identity:      caller,
@@ -332,7 +344,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 	case cfg.Global.Services.Worlds != "":
 		bcfg.WorldsURL = strings.TrimRight(cfg.Global.Services.Worlds, "/") + server.APIPrefix
 	default:
-		return jobs.Config{}, fmt.Errorf("jobs need a world source: select the world target too, or set global.services.worlds")
+		return jobs.Config{}, nil, fmt.Errorf("jobs need a world source: select the world target too, or set global.services.worlds")
 	}
 
 	switch {
@@ -341,23 +353,26 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		// store's index is in this process and sees only what passes
 		// through it, and on s3 there is no directory to write into. Until
 		// then a local worker wrote into the directory itself.
+		// A local worker over the public listener, or over the internal
+		// one where the public listener speaks TLS (localWorkerAPI).
 		if inCluster {
 			bcfg.ArtifactsURL = selfURL
 		} else {
-			local, err := loopbackURL(cfg.Global)
+			local, listener, err := localWorkerAPI(cfg.Global)
 			if err != nil {
-				return jobs.Config{}, err
+				return jobs.Config{}, nil, err
 			}
 			bcfg.ArtifactsURL = local
+			internal = listener
 		}
 	case cfg.Global.Services.Artifacts != "":
 		base := strings.TrimRight(cfg.Global.Services.Artifacts, "/")
 		if err := requireCapability(keySvcArts, base, "artifacts"); err != nil {
-			return jobs.Config{}, err
+			return jobs.Config{}, nil, err
 		}
 		bcfg.ArtifactsURL = base + server.APIPrefix
 	default:
-		return jobs.Config{}, fmt.Errorf("jobs need an artifact sink: select the artifacts target too, or set global.services.artifacts")
+		return jobs.Config{}, nil, fmt.Errorf("jobs need an artifact sink: select the artifacts target too, or set global.services.artifacts")
 	}
 	// Which planned tiles are already stored, asked of the co-resident store
 	// whatever the workers use: the coordinator runs here. Whole means its
@@ -379,7 +394,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 			return whole
 		}
 	}
-	return bcfg, nil
+	return bcfg, internal, nil
 }
 
 // worldRanking builds the ONE closure artifacts and bake rank worlds with.

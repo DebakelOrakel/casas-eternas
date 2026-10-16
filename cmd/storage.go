@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 
@@ -63,36 +62,50 @@ func openArtifactBucket(ctx context.Context, cfg config.Config) (blob.Bucket, er
 	return openObjectStorage(ctx, "artifacts", cfg.Artifacts.Storage, signer, artifacts.BucketOptions())
 }
 
-// loopbackURL is this server's own API as a job worker on the same machine
-// reaches it. Since DEC-0038 step 3 a local worker writes its artifacts
-// over HTTP, as a cluster worker always did: the store's index lives in
-// this process (one process per store) and sees only what passes through
-// it. A wildcard host becomes the loopback address.
+// internalListenAddr is where the internal listener binds: the IPv4
+// loopback address, a free port. Exactly 127.0.0.1, never a wildcard: the
+// listener speaks plain HTTP. No flag: the port is known only to this
+// process and the workers it starts.
+const internalListenAddr = "127.0.0.1:0"
+
+// localWorkerAPI is this server's own API as a job worker on the same
+// machine reaches it. Since DEC-0038 step 3 a local worker writes its
+// artifacts over HTTP, as a cluster worker always did: the store's index
+// lives in this process (one process per store) and sees only what passes
+// through it.
 //
-// With global.tls.cert the scheme is https and a wildcard host becomes
-// "localhost", the name a certificate for a local run carries. With
-// global.tls.ca (a client certificate required) the worker cannot connect
-// at all, so that refuses to start instead of failing every job.
+// Without TLS that is the public listener (loopbackURL). With
+// global.tls.cert it is not: the certificate names the public host, and a
+// worker that asks for localhost cannot verify it (nor one signed by a
+// private authority it does not trust). So an INTERNAL LISTENER is opened
+// on 127.0.0.1, plain HTTP, and server.Run serves the same handler on it,
+// gate included — a worker still needs its job token. Only the local
+// workers learn its address. The listener is returned for server.Run; nil
+// without TLS.
+func localWorkerAPI(g config.Global) (string, net.Listener, error) {
+	if !g.Server().TLSEnabled() {
+		url, err := loopbackURL(g)
+		return url, nil, err
+	}
+	listener, err := net.Listen("tcp", internalListenAddr)
+	if err != nil {
+		return "", nil, fmt.Errorf("the internal listener for the local job workers: %w", err)
+	}
+	return "http://" + listener.Addr().String() + server.APIPrefix, listener, nil
+}
+
+// loopbackURL is the plain-HTTP public listener as a process on the same
+// machine reaches it: a wildcard host becomes the loopback address.
 func loopbackURL(g config.Global) (string, error) {
 	host, port, err := net.SplitHostPort(g.Listen)
 	if err != nil {
 		return "", fmt.Errorf("global.listen %q: %w", g.Listen, err)
 	}
-	scheme := "http"
-	if g.TLS.Cert != "" {
-		if g.TLS.CA != "" {
-			return "", errors.New("jobs beside artifacts outside a cluster: a local worker writes over this server's API, and global.tls.ca requires a client certificate it does not have")
-		}
-		scheme = "https"
-	}
-	switch {
-	case host != "" && host != "0.0.0.0" && host != "::":
-	case scheme == "https":
-		host = "localhost"
-	case host == "::":
-		host = "::1"
-	default:
+	switch host {
+	case "", "0.0.0.0":
 		host = "127.0.0.1"
+	case "::":
+		host = "::1"
 	}
-	return scheme + "://" + net.JoinHostPort(host, port) + server.APIPrefix, nil
+	return "http://" + net.JoinHostPort(host, port) + server.APIPrefix, nil
 }

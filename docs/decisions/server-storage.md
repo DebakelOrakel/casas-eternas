@@ -26,7 +26,7 @@ summary.de: Der Server führt zwei Stores mit zwei verschiedenen Schlüsseln —
 area: platform
 stage: built
 createdAt: 2026-08-08
-updatedAt: 2026-10-12
+updatedAt: 2026-10-16
 related: [DES-0006, DES-0014]
 ---
 
@@ -614,6 +614,18 @@ instead of into the directory; the last access stays in memory, as it
 was, with the meta's `createdAt` as the order after a restart. A read
 answers `302` to a link (a presigned GET, or the module's own signed link
 on `dir`) after the same access check.
+
+## Addendum 2026-10-16 — `--tls-ca` removed
+
+The client-certificate authority this document introduced (`--tls-ca`,
+since 2026-08-12 `global.tls.ca`) is removed. Nothing used it, and the
+workers authenticate with tokens, as every other client does: mTLS was
+declined for them in [detail-ladder.md](./detail-ladder.md). It was also
+in the way: a local job worker writes over the server's own API and has no
+client certificate. The key, its variable and its flag refuse to start
+with the reason (a hard break, as for the keys DEC-0038 renamed). Server
+TLS (`global.tls.cert`, `global.tls.key`) stays, for a machine with no
+proxy in front.
 
 ## Status
 

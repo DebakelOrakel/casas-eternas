@@ -274,8 +274,16 @@ world store still refuses it. What changed:
 - **Workers.** A job worker beside the artifact store writes over this
   server's API now (`http://127.0.0.1:<port>/v1`, from `global.listen`),
   as a cluster worker always did: the in-memory index sees only what
-  passes through the server, and on `s3` there is no directory. With
-  `global.tls.ca` that cannot connect, so it refuses to start.
+  passes through the server, and on `s3` there is no directory.
+  With `global.tls.cert` the worker does not use the public listener: the
+  certificate names the public host and cannot be verified for
+  `localhost`, and a private authority's certificate is not trusted by
+  Node at all (both measured 2026-10-16: `ERR_TLS_CERT_ALTNAME_INVALID`,
+  `DEPTH_ZERO_SELF_SIGNED_CERT`). The server opens an INTERNAL LISTENER
+  for its local workers instead: `127.0.0.1`, a free port, plain HTTP, the
+  same handler and gate (the job token is still required), no flag. Only
+  the local workers get its address; it closes with the server. Mutual TLS
+  (`global.tls.ca`) was removed the same day.
 - **Measured against AWS** (eu-central-2, `casas-eternas-dev-artifacts`,
   TestAWSWireArtifacts): an upload through the server with a body that
   cannot seek (about 1 MiB, the SDK's trailing checksum over HTTPS) is

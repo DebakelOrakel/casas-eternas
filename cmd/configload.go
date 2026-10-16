@@ -45,7 +45,7 @@ func loadConfig() (config.Config, error) {
 		}
 	}
 
-	if err := refuseRenamedKeys(); err != nil {
+	if err := refuseOldKeys(); err != nil {
 		return config.Config{}, err
 	}
 
@@ -94,26 +94,41 @@ func dropDefaultDir(storage *config.ObjectStorage, pathKey string) {
 	}
 }
 
-// refuseRenamedKeys is the HARD BREAK of DEC-0038: a key it replaced, in the
-// file or as a CASAS_* variable, refuses to start with the new key named.
+// refuseOldKeys is the HARD BREAK of DEC-0038 and of the keys removed
+// after it: a key it renamed or removed, in the file or as a CASAS_*
+// variable, refuses to start, with the new key named or the reason given.
 // Checked before decoding, because the generic "invalid keys" message would
-// not say what to write instead — and a variable with an old name would not
-// be seen at all, since viper reads only variables of keys it knows.
-func refuseRenamedKeys() error {
-	olds := make([]string, 0, len(renamedKeys))
-	for old := range renamedKeys {
-		olds = append(olds, old)
-	}
-	sort.Strings(olds) // one stable message when several are set
-	for _, old := range olds {
+// not say what to do instead — and a variable with an old name would not be
+// seen at all, since viper reads only variables of keys it knows.
+func refuseOldKeys() error {
+	variable := func(key string) string { return "CASAS_" + strings.ToUpper(envKey.Replace(key)) }
+	for _, old := range sortedKeys(renamedKeys) {
 		renamed := renamedKeys[old]
 		if viper.InConfig(old) {
 			return fmt.Errorf("%s is renamed: use %s (docs/decisions/object-storage.md)", old, renamed)
 		}
-		variable := "CASAS_" + strings.ToUpper(envKey.Replace(old))
-		if _, set := os.LookupEnv(variable); set {
-			return fmt.Errorf("%s is renamed: use CASAS_%s (docs/decisions/object-storage.md)", variable, strings.ToUpper(envKey.Replace(renamed)))
+		if _, set := os.LookupEnv(variable(old)); set {
+			return fmt.Errorf("%s is renamed: use %s (docs/decisions/object-storage.md)", variable(old), variable(renamed))
+		}
+	}
+	for _, old := range sortedKeys(removedKeys) {
+		reason := removedKeys[old]
+		if viper.InConfig(old) {
+			return fmt.Errorf("%s is removed: %s", old, reason)
+		}
+		if _, set := os.LookupEnv(variable(old)); set {
+			return fmt.Errorf("%s is removed: %s", variable(old), reason)
 		}
 	}
 	return nil
+}
+
+// sortedKeys gives one stable message when several old keys are set.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

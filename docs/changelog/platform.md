@@ -6,6 +6,7 @@ the format.
 ## 2026-10-16
 - **new** Server: operators can store artifacts in an S3 bucket (`artifacts.storage.type: s3`), and a read of an artifact answers with a short-lived link to it. `artifacts`
 - **changed** Server: the jobs, auth, relay, client and docs directories are now `*.state-dir` and `*.content-dir`, and the old `*.storage.dir.path` keys refuse to start, so operators must rename them.
+- **dropped** Server: mutual TLS (`global.tls.ca`) is gone, because tokens authenticate every client, and the key now refuses to start.
 
 ## 2026-10-15
 - **new** Server: an admin marks a world as a template, readable without an account, and `POST /v1/worlds/{uid}/copy` copies a world on the server under a new uid. `generator.load.template`

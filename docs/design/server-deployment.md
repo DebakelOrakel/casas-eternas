@@ -39,7 +39,7 @@ belongs to exactly one module's storage.
 | `casas.yaml` | config | once, at start, by `cmd/` | operator only | **ConfigMap**, every Deployment |
 | session key (`global.auth.session-key`) | secret | once, at start | operator only (rotation = rollout) | **Secret**, every API-serving Deployment |
 | `auth.db` | state | per login (a read transaction) | process (admin socket), transactional | **PVC** (`auth.storage`), auth Deployment only, replicas 1 |
-| TLS cert/key/ca (`global.tls.*`) | secret | once, at start | operator only | **not used** — the Route/Ingress terminates |
+| TLS cert/key (`global.tls.*`) | secret | once, at start | operator only | **not used** — the Route/Ingress terminates |
 | bake-job token | credential in flight | the Job, as bearer | minted per job | no mount — travels in the Job spec |
 
 ## Per file

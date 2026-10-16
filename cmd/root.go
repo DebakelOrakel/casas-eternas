@@ -28,7 +28,6 @@ const (
 	keyListen      = "global.listen"
 	keyTLSCert     = "global.tls.cert"
 	keyTLSKey      = "global.tls.key"
-	keyTLSCA       = "global.tls.ca"
 	keyAuthMode    = "global.auth.mode"
 	keyAuthKey     = "global.auth.session-key"
 	keyAuthTknTTL  = "global.auth.token-ttl"
@@ -78,6 +77,15 @@ var renamedKeys = map[string]string{
 	"docs.storage.type":       keyDocsDir,
 }
 
+// removedKeys are keys that went without a replacement, in the same HARD
+// BREAK: the file key and the CASAS_* variable refuse to start, the flag is
+// unknown, and each message says why the key went.
+var removedKeys = map[string]string{
+	// Removed 2026-10-16: nothing used it, and workers authenticate with
+	// tokens (docs/decisions/server-storage.md, addendum 2026-10-16).
+	"global.tls.ca": "mutual TLS is no longer supported, tokens authenticate clients (docs/decisions/server-storage.md)",
+}
+
 // The two enum texts are composed, not written: the value lists live in
 // internal/config beside the parsers that enforce them, so the help, the
 // error message and the shell completion cannot drift apart.
@@ -92,7 +100,6 @@ const (
 	textListen      = `Address to listen on, as host:port. ":8080" binds every interface, "127.0.0.1:8080" keeps a local instance off the network.`
 	textTLSCert     = `Path to the server certificate. Enables HTTPS together with global.tls.key.`
 	textTLSKey      = `Path to the server private key. Enables HTTPS together with global.tls.cert.`
-	textTLSCA       = `Path to the CA that CLIENT certificates are verified against. Setting it turns on mutual TLS.`
 	textAuthKey     = `Path to the key that session tokens are signed with, at least 32 bytes. Without it a key is generated at startup, which means sessions do not survive a restart and several replicas do not agree.`
 	textAuthTknTTL  = `How long an access token is valid. Short, because nothing is consulted when one is used: a session that is ended (a password changed or reset) stops working when its access token runs out.`
 	textAuthSessTTL = `How long a login lasts before a password is needed again: the life of the refresh token that renews the access token.`
@@ -168,7 +175,6 @@ func init() {
 	RootCmd.PersistentFlags().String(keyListen, ":8080", textListen)
 	RootCmd.PersistentFlags().String(keyTLSCert, "", textTLSCert)
 	RootCmd.PersistentFlags().String(keyTLSKey, "", textTLSKey)
-	RootCmd.PersistentFlags().String(keyTLSCA, "", textTLSCA)
 	RootCmd.PersistentFlags().String(keyAdminSock, "", textAdminSock)
 
 	// Selection and configuration stay separate on purpose; see the vocabulary
@@ -201,7 +207,7 @@ func init() {
 
 	bindings := map[string]*cobra.Command{
 		flagConfig: RootCmd,
-		keyListen:  RootCmd, keyTLSCert: RootCmd, keyTLSKey: RootCmd, keyTLSCA: RootCmd,
+		keyListen:  RootCmd, keyTLSCert: RootCmd, keyTLSKey: RootCmd,
 		keyAdminSock: RootCmd,
 		flagTarget:   StartCmd, keyAuthMode: StartCmd, keyAuthKey: StartCmd,
 		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd,
@@ -236,11 +242,18 @@ func init() {
 		}
 	}
 
-	// An old flag is an unknown flag; say which flag replaced it.
-	StartCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+	// An old flag is an unknown flag; say which flag replaced it, or why it
+	// went. On the root command, because a removed persistent flag reaches
+	// every subcommand, and a subcommand inherits this function.
+	RootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		for old, renamed := range renamedKeys {
 			if strings.Contains(err.Error(), "--"+old) {
 				return fmt.Errorf("%w (renamed: use --%s, docs/decisions/object-storage.md)", err, renamed)
+			}
+		}
+		for old, reason := range removedKeys {
+			if strings.Contains(err.Error(), "--"+old) {
+				return fmt.Errorf("%w — removed: %s", err, reason)
 			}
 		}
 		return err

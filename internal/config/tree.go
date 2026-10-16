@@ -63,7 +63,6 @@ type AdminSettings struct {
 type TLSConfig struct {
 	Cert string `mapstructure:"cert"`
 	Key  string `mapstructure:"key"`
-	CA   string `mapstructure:"ca"`
 }
 
 // AuthSettings is the file/flag shape of authentication; `Mode` is parsed
@@ -277,7 +276,7 @@ type AuthConfig struct {
 // Server projects the process-wide transport settings into the shape
 // server.Run consumes.
 func (g Global) Server() Server {
-	return Server{Listen: g.Listen, TLSCert: g.TLS.Cert, TLSKey: g.TLS.Key, TLSCA: g.TLS.CA, AdminSocket: g.Admin.Socket}
+	return Server{Listen: g.Listen, TLSCert: g.TLS.Cert, TLSKey: g.TLS.Key, AdminSocket: g.Admin.Socket}
 }
 
 // Validate checks everything that does not depend on which targets run;

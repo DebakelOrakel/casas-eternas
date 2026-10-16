@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
@@ -182,6 +183,40 @@ func TestRenamedFlagNamesTheNewFlag(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "--jobs.state-dir") {
 		t.Errorf("want the new flag named, got %v", err)
+	}
+}
+
+// The HARD BREAK for a key removed without replacement (global.tls.ca,
+// mutual TLS): refused in the file, as a CASAS_* variable and as a flag,
+// on every command, and each message says that mutual TLS went.
+func TestRemovedKeysAreRefusedWithTheReason(t *testing.T) {
+	initConfig()
+	const reason = "mutual TLS is no longer supported"
+	t.Run("file", func(t *testing.T) {
+		configFile(t, "global:\n  tls:\n    ca: /ca.pem\n")
+		_, err := loadConfig()
+		if err == nil || !strings.Contains(err.Error(), "global.tls.ca is removed") || !strings.Contains(err.Error(), reason) {
+			t.Errorf("want global.tls.ca refused with the reason, got %v", err)
+		}
+	})
+	t.Run("env", func(t *testing.T) {
+		viper.Set(flagConfig, "")
+		t.Setenv("CASAS_GLOBAL_TLS_CA", "/ca.pem")
+		_, err := loadConfig()
+		if err == nil || !strings.Contains(err.Error(), "CASAS_GLOBAL_TLS_CA is removed") || !strings.Contains(err.Error(), reason) {
+			t.Errorf("want CASAS_GLOBAL_TLS_CA refused with the reason, got %v", err)
+		}
+	})
+	for _, cmd := range []*cobra.Command{StartCmd, RootCmd} {
+		t.Run("flag on "+cmd.Name(), func(t *testing.T) {
+			err := cmd.ParseFlags([]string{"--global.tls.ca", "/ca.pem"})
+			if err != nil {
+				err = cmd.FlagErrorFunc()(cmd, err)
+			}
+			if err == nil || !strings.Contains(err.Error(), "--global.tls.ca") || !strings.Contains(err.Error(), reason) {
+				t.Errorf("want --global.tls.ca refused with the reason, got %v", err)
+			}
+		})
 	}
 }
 

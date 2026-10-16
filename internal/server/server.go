@@ -1,5 +1,5 @@
-// Package server owns the HTTP lifecycle: one listener, one mux, and whichever
-// modules were selected mounted onto it.
+// Package server owns the HTTP lifecycle: one public listener, one mux, and
+// whichever modules were selected mounted onto it.
 //
 // Note what the modules do NOT do: they never import this package. Go satisfies
 // interfaces structurally, so a module only has to have the three methods below
@@ -11,11 +11,11 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -106,7 +106,22 @@ func mount(m Module, mux *http.ServeMux) (err error) {
 // /v1/capabilities is where a client can read it. Holding it as state of this
 // package would make the HTTP lifecycle the owner of a fact about the program
 // — and would need a second place for the linker to write to.
-func Run(ctx context.Context, cfg config.Server, build string, modules []Module, gate func(http.Handler) http.Handler) (err error) {
+//
+// `internal`, when not nil, is a second listener that serves the SAME
+// handler, gate included, over plain HTTP: the address of the job workers
+// this process starts itself, when the public listener speaks TLS with a
+// certificate for a public name they cannot verify on localhost. It must be
+// on a loopback address; cmd/ opens it (it has to know the address before
+// the modules are built), Run serves it and closes it.
+func Run(ctx context.Context, cfg config.Server, build string, modules []Module, gate func(http.Handler) http.Handler, internal net.Listener) (err error) {
+	if internal != nil {
+		// Closed on every way out; after a Shutdown it is closed already,
+		// and the second Close only reports that.
+		defer internal.Close()
+		if loopbackErr := requireLoopback(internal); loopbackErr != nil {
+			return loopbackErr
+		}
+	}
 	if validateErr := cfg.Validate(); validateErr != nil {
 		return validateErr
 	}
@@ -161,10 +176,7 @@ func Run(ctx context.Context, cfg config.Server, build string, modules []Module,
 		_ = json.NewEncoder(w).Encode(body)
 	})
 
-	tlsConfig, err := buildTLS(cfg)
-	if err != nil {
-		return err
-	}
+	tlsConfig := buildTLS(cfg)
 
 	// Wrapped AFTER every module has mounted, so the gate covers routes it was
 	// never told about — including any added later.
@@ -187,9 +199,10 @@ func Run(ctx context.Context, cfg config.Server, build string, modules []Module,
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Buffered for BOTH servers, so neither goroutine can block on a channel
-	// nobody reads after the other has already decided the outcome.
-	serveErr := make(chan error, 2)
+	// Buffered for EVERY server (public, internal, admin), so no goroutine
+	// can block on a channel nobody reads after another has already decided
+	// the outcome.
+	serveErr := make(chan error, 3)
 
 	adminShutdown, err := serveAdmin(cfg, modules, names, serveErr)
 	if err != nil {
@@ -216,6 +229,16 @@ func Run(ctx context.Context, cfg config.Server, build string, modules []Module,
 		serveErr <- srv.ListenAndServe()
 	}()
 
+	// The internal listener: the same handler, no TLS, no other settings.
+	var internalSrv *http.Server
+	if internal != nil {
+		internalSrv = &http.Server{Handler: handler, ReadHeaderTimeout: srv.ReadHeaderTimeout}
+		go func() {
+			slog.Info("internal listener for the local job workers", "addr", internal.Addr().String(), "tls", false)
+			serveErr <- internalSrv.Serve(internal)
+		}()
+	}
+
 	select {
 	case err := <-serveErr:
 		// ErrServerClosed only appears after a Shutdown we did not ask for
@@ -228,30 +251,31 @@ func Run(ctx context.Context, cfg config.Server, build string, modules []Module,
 		slog.Info("shutting down", "grace", shutdownGrace)
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		if internalSrv != nil {
+			shutdownErr = errors.Join(shutdownErr, internalSrv.Shutdown(shutdownCtx))
+		}
+		return shutdownErr
 	}
 }
 
 // buildTLS returns nil when TLS is off — http.Server treats that as plain HTTP.
-// A CA turns on MUTUAL TLS: it is the authority client certificates are checked
-// against, not the server's own chain.
-func buildTLS(cfg config.Server) (*tls.Config, error) {
+// Clients are not asked for a certificate: tokens authenticate them (mutual
+// TLS was removed 2026-10-16, docs/decisions/server-storage.md).
+func buildTLS(cfg config.Server) *tls.Config {
 	if !cfg.TLSEnabled() {
-		return nil, nil
+		return nil
 	}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
-	if cfg.TLSCA == "" {
-		return tlsConfig, nil
+	return &tls.Config{MinVersion: tls.VersionTLS12}
+}
+
+// requireLoopback refuses an internal listener that is not on a loopback
+// address. cmd/ opens it on 127.0.0.1; this is the guard that a plain-HTTP
+// listener never reaches the network by a composition mistake.
+func requireLoopback(listener net.Listener) error {
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || !addr.IP.IsLoopback() {
+		return fmt.Errorf("the internal listener must be on a loopback address, not %s", listener.Addr())
 	}
-	pem, err := os.ReadFile(cfg.TLSCA)
-	if err != nil {
-		return nil, fmt.Errorf("reading global.tls.ca: %w", err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("global.tls.ca %q contains no usable certificate", cfg.TLSCA)
-	}
-	tlsConfig.ClientCAs = pool
-	tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-	return tlsConfig, nil
+	return nil
 }

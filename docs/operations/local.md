@@ -1,7 +1,7 @@
 ---
 summary: Running the server on your own machine — the zero-config local mode, the on-disk defaults, and how to try password mode locally.
 date: 2026-08-13
-updated: 2026-08-14
+updated: 2026-10-16
 group: installation
 order: 20
 ---
@@ -65,6 +65,26 @@ model, which is why it is a unix socket and not a port. Without
 `global.auth.session-key` (a file with ≥32 random bytes) the server
 generates an ephemeral signing key and warns: sessions then end at every
 restart. Fine for an experiment, wrong for anything persistent.
+
+## HTTPS without a proxy
+
+A machine with no proxy in front serves HTTPS itself: `global.tls.cert`
+and `global.tls.key` (both, or neither) name the certificate and its key.
+Clients are not asked for a certificate — tokens authenticate them, as in
+every mode. (The key `global.tls.ca`, mutual TLS, was removed on
+2026-10-16 and refuses to start.)
+
+With jobs and artifacts in this one process, the local job workers do not
+use that listener: the certificate names the public host, and a worker on
+the same machine would have to verify it for `localhost`. So the server
+opens an **internal listener** for them: `127.0.0.1` only, a free port
+chosen at each start, plain HTTP. It serves the same API with the same
+gate — a worker sends its job token there, a request without a token is
+refused. The log line `internal listener for the local job workers`
+shows its address. Nothing configures it, and nothing outside the machine
+can reach it; other users on the same machine can, which is why the gate
+stays. Without TLS there is no internal listener; the workers use
+`global.listen`.
 
 ## Verifying
 

@@ -212,11 +212,6 @@ type Server struct {
 	TLSCert string
 	TLSKey  string
 
-	// TLSCA is the certificate authority used to verify CLIENT certificates.
-	// Setting it turns on mutual TLS; serving plain HTTPS needs only the pair
-	// above.
-	TLSCA string
-
 	// AdminSocket is the unix-socket path of the local admin channel; empty
 	// serves none. Plain HTTP, no TLS, no gate: reaching the socket IS the
 	// authorization (docs/decisions/server-user-admin.md).
@@ -234,9 +229,6 @@ func (s Server) Validate() error {
 	}
 	if (s.TLSCert == "") != (s.TLSKey == "") {
 		return fmt.Errorf("global.tls.cert and global.tls.key must be given together")
-	}
-	if s.TLSCA != "" && !s.TLSEnabled() {
-		return fmt.Errorf("global.tls.ca requires global.tls.cert and global.tls.key")
 	}
 	return nil
 }
