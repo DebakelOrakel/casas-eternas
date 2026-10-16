@@ -174,3 +174,9 @@ test, on the existing `grants.json`.
 
 2026-10-15: IDEA — recorded on the user's request; the user thinks it
 over before anything is decided or built.
+
+2026-10-16: forks 1 and 2 decided in
+[artifacts-by-content.md](../decisions/artifacts-by-content.md) (DEC-0039),
+with two changes: only job workers write artifacts (the browser does not
+bake and does not upload), and every signed-in caller who may read a world
+may order a bake, the owner of a copy included. Forks 3–8 stay ideas.

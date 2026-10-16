@@ -660,3 +660,7 @@ and a resolve endpoint, and EVICTION is built (2026-08-12):
 `--artifacts-cap` on the server, a 4 GB constant in the OPFS cache — LRU
 after writes, meta-less junk first. Nothing of the original plan remains
 unbuilt.
+
+2026-10-16: the artifact key loses the world uid —
+[artifacts-by-content.md](./artifacts-by-content.md) (DEC-0039, decided,
+not built).

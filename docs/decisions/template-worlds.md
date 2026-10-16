@@ -189,3 +189,8 @@ whether the world exists. Before, a job token could create or copy a
 world, and its owner was then `job` (`token.SubjectJob`): every job token
 owned it. Found in the review of DEC-0038; test
 `TestAJobTokenWritesNoWorld`.
+
+2026-10-16: fork 5 is replaced by
+[artifacts-by-content.md](./artifacts-by-content.md) (DEC-0039, decided, not
+built): artifacts are keyed by content, so a copy finds the template's
+artifacts, and the anonymous caller reads a template's artifacts too.
