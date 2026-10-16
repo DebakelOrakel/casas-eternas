@@ -1,35 +1,44 @@
 package world
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
+	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 )
 
-// The world store on disk.
+// The world store's keys in its bucket (DEC-0038 step 5: a blob.Bucket, a
+// directory or an S3 bucket, one code path).
 //
-//	{dir}/{uid}/meta.json                 the world: name, owner, current revision
-//	{dir}/{uid}/rev/{n}/world.zip         the save exactly as uploaded
-//	{dir}/{uid}/rev/{n}/preview.png       extracted at upload
-//	{dir}/{uid}/rev/{n}/meta.json         size, erosionRun, when
+//	{uid}/meta.json                 the world: name, owner, current revision
+//	{uid}/grants.json               the ACL, server-owned
+//	{uid}/rev/{n}/world.zip         the save exactly as uploaded
+//	{uid}/rev/{n}/preview.png       extracted at upload
+//	{uid}/rev/{n}/meta.json         size, erosionRun, when
 //
-// Two properties this layout is chosen for. A world is a DIRECTORY, so
-// dropping one is a single removal and inspecting the store needs no tooling.
-// And revisions are separate directories rather than one overwritten file, so
-// an upload never destroys the copy it replaces — which matters because this
-// is the half of the system holding data that cannot be recomputed.
+// The layout is the one the store had on disk before the leaf (a Dir's key
+// is the file's path under its root), so an existing ./data/worlds opens as
+// it is, with no migration. Two properties it is chosen for. Everything of
+// a world is under the prefix {uid}/, so dropping one is one listing and
+// its deletes, and inspecting the store needs no tooling. And revisions are
+// separate keys rather than one overwritten object, so an upload never
+// destroys the copy it replaces — which matters because this is the half of
+// the system holding data that cannot be recomputed.
 //
 // Revisions are a SAFETY MARGIN, not a history feature (decided 2026-08-11):
 // nothing serves an old revision over the API, so keeping every one forever
@@ -41,7 +50,7 @@ import (
 var ErrNotFound = errors.New("world not found")
 
 // ErrRevisionMismatch is returned when the caller's expected revision is not
-// the one on disk — someone else wrote in between. Deliberately distinct from
+// the one stored — someone else wrote in between. Deliberately distinct from
 // a generic failure, because the handler must turn it into 412 rather than 500.
 var ErrRevisionMismatch = errors.New("revision mismatch")
 
@@ -54,12 +63,12 @@ var ErrExists = errors.New("world already exists")
 // by the way.
 var ErrNoGrants = errors.New("world has no grants")
 
-// safeUID is what may become a directory name. Deliberately strict — the uid
+// safeUID is what may become a key segment. Deliberately strict — the uid
 // is a UUID from our own client, so anything else is either a bug or an
 // attempt at path traversal, and there is no reason to be liberal about it.
 var safeUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// Meta is {dir}/{uid}/meta.json — the world itself.
+// Meta is {uid}/meta.json — the world itself.
 type Meta struct {
 	UID   string `json:"uid"`
 	Name  string `json:"name"`
@@ -69,8 +78,8 @@ type Meta struct {
 	Revision  int       `json:"revision"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
-	// Mirrored from the newest revision so a listing needs one file per
-	// world rather than a walk into every revision directory.
+	// Mirrored from the newest revision so a listing needs one object per
+	// world rather than a walk into every revision.
 	Size       int64 `json:"size"`
 	ErosionRun int   `json:"erosionRun"`
 	HasPreview bool  `json:"hasPreview"`
@@ -92,7 +101,7 @@ type Meta struct {
 	Template bool `json:"template"`
 }
 
-// RevisionMeta is {dir}/{uid}/rev/{n}/meta.json.
+// RevisionMeta is {uid}/rev/{n}/meta.json.
 type RevisionMeta struct {
 	Revision   int       `json:"revision"`
 	Size       int64     `json:"size"`
@@ -106,14 +115,21 @@ type RevisionMeta struct {
 	ContentHash string `json:"contentHash"`
 }
 
-// Store is the filesystem-backed world store.
+// Store is the world store on a blob.Bucket.
 //
-// Its methods take a context (2026-08-12) even though the dir backend cannot
-// honour cancellation — file I/O has no ctx. The parameter is the seam the
-// storage union's future backends (S3) need; handlers already pass their
-// request's, so growing a cancellable backend changes no caller.
+// THE INDEX. Each world's meta.json and grants.json are read once, at start,
+// from one List of the bucket and a Get of each (16 at a time), and then
+// kept in memory: Get, List and the ranking (ReadGrants, once per request
+// and once per world in a listing) read no object. That holds because this
+// process is the ONE WRITER of its bucket (one process per store, CLAUDE.md):
+// every write passes through this store and updates the index after the
+// bucket accepted it. An object changed in the bucket by hand is seen at the
+// next start.
+//
+// Its methods take a context; the Dir backend cannot cancel file I/O, the S3
+// backend can.
 type Store struct {
-	dir string
+	bucket blob.Bucket
 	// How many revisions to retain per world; older ones are pruned on
 	// upload. 0 keeps every revision (the pre-2026-08-11 behaviour).
 	keepRevisions int
@@ -122,28 +138,237 @@ type Store struct {
 	// enough: without this, two requests could both read revision 3 and both
 	// decide they may write 4.
 	//
-	// In-process only. A second server process against one directory would
-	// still race — out of scope while the deployment is one process, and the
-	// reason to note it here rather than to discover it later.
+	// In-process only: the lock IS the concurrency model (one writer). A
+	// second process against one bucket is out of the model. What the
+	// bucket adds against it is the conditional write (put, ifAbsent) on the
+	// keys that are created once — a revision's save and a new world's
+	// meta.json — where the provider has it.
 	locks sync.Map // uid -> *sync.Mutex
+
+	mu     sync.RWMutex
+	worlds map[string]worldEntry // uid -> the world's meta and grants
+	// taken is the highest revision number with objects in the bucket, per
+	// uid — a world's or one without meta.json (claimRevision).
+	taken map[string]int
+
+	// noConditional is set when the bucket refused a conditional write
+	// (blob.ErrUnsupported: a flavour whose row does not claim it, ceph
+	// today). From then on create-only keys are plain writes, protected by
+	// the lock alone.
+	noConditional atomic.Bool
 
 	// now is injected so tests can be deterministic about timestamps.
 	now func() time.Time
 }
 
-// NewStore prepares the store, creating the root if it is absent.
-// keepRevisions bounds how many revisions each world retains (0 = all).
-func NewStore(dir string, keepRevisions int) (*Store, error) {
-	if dir == "" {
-		return nil, fmt.Errorf("worlds directory must not be empty")
+// worldEntry is a world in the index: a uid whose meta.json exists.
+type worldEntry struct {
+	meta Meta
+	// metaErr: meta.json exists but does not parse. Get answers the error,
+	// List skips the world.
+	metaErr error
+	grants  access.Grants
+	// hasGrants: grants.json exists. False is the legacy state (a world
+	// from before grants), not an error.
+	hasGrants bool
+	// grantsErr: grants.json exists but does not parse — corrupt is NOT
+	// absent (readGrants).
+	grantsErr error
+}
+
+// documentLimit bounds the bytes read of one meta.json or grants.json: they
+// are some hundred bytes; a larger object is not one this store wrote.
+const documentLimit = 1 << 20
+
+// indexParallelism is how many documents the start reads at once: on S3
+// each is one GET.
+const indexParallelism = 16
+
+// BucketOptions are what the store asks of an s3 bucket: VERSIONING, because
+// the worlds are the only copy of what a user made. A delete or an overwrite
+// leaves the earlier version, and the identity may not delete a version
+// (deploy/aws/storage.yaml), so neither a bug nor a stolen key can destroy
+// a world for good. No CORS rule: the browser reads the zips and the
+// previews through this server, not by presigned links (DEC-0038, step 5).
+func BucketOptions() blob.OpenOptions {
+	return blob.OpenOptions{Versioning: true}
+}
+
+// NewStore opens the store on `bucket` and builds the index, so a bucket
+// that cannot be read fails at start. keepRevisions bounds how many
+// revisions each world retains (0 = all).
+func NewStore(ctx context.Context, bucket blob.Bucket, keepRevisions int) (*Store, error) {
+	if bucket == nil {
+		return nil, fmt.Errorf("world store needs a bucket")
 	}
 	if keepRevisions < 0 {
 		return nil, fmt.Errorf("keep-revisions must be 0 (keep all) or positive, got %d", keepRevisions)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("preparing %q: %w", dir, err)
+	s := &Store{bucket: bucket, keepRevisions: keepRevisions, worlds: map[string]worldEntry{}, taken: map[string]int{}, now: time.Now}
+	if err := s.load(ctx); err != nil {
+		return nil, fmt.Errorf("indexing the world store: %w", err)
 	}
-	return &Store{dir: dir, keepRevisions: keepRevisions, now: time.Now}, nil
+	return s, nil
+}
+
+// load builds the index from one List and a read of each world's documents.
+// Keys that are not under a valid uid are ignored (a stray file, an editor's
+// .DS_Store), as stray directories always were.
+func (s *Store) load(ctx context.Context) error {
+	started := time.Now()
+	type found struct{ meta, grants bool }
+	seen := map[string]*found{}
+	taken := map[string]int{}
+	for info, err := range s.bucket.List(ctx, "") {
+		if err != nil {
+			return err
+		}
+		uid, rest, ok := strings.Cut(info.Key, "/")
+		if !ok || !ValidUID(uid) {
+			continue
+		}
+		f := seen[uid]
+		if f == nil {
+			f = &found{}
+			seen[uid] = f
+		}
+		switch rest {
+		case metaName:
+			f.meta = true
+		case grantsName:
+			f.grants = true
+		}
+		if n, ok := revisionOf(rest); ok {
+			taken[uid] = max(taken[uid], n)
+		}
+	}
+	// A uid without meta.json is not a world: an upload that ended before
+	// its meta, or a delete that ended after it. Its objects stay (they cost
+	// little and may be a user's only copy); claimRevision steps over their
+	// revisions.
+	var uids []string
+	for uid, f := range seen {
+		if f.meta {
+			uids = append(uids, uid)
+		}
+	}
+	entries := make([]worldEntry, len(uids))
+	work := make(chan int)
+	var wg sync.WaitGroup
+	for range min(indexParallelism, len(uids)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range work {
+				// Each goroutine writes only the entries it takes.
+				entries[i] = s.readEntry(ctx, uids[i], seen[uids[i]].grants)
+			}
+		}()
+	}
+	for i := range uids {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	worlds := make(map[string]worldEntry, len(uids))
+	for i, uid := range uids {
+		worlds[uid] = entries[i]
+	}
+	s.mu.Lock()
+	s.worlds, s.taken = worlds, taken
+	s.mu.Unlock()
+	slog.Info("world store indexed", "worlds", len(worlds), "took", time.Since(started).Round(time.Millisecond))
+	return nil
+}
+
+// readEntry reads one world's documents from the bucket. A read that fails
+// (other than a document that went in between) is recorded as the
+// document's error, as a parse error is: the world then answers that error
+// rather than look absent.
+func (s *Store) readEntry(ctx context.Context, uid string, hasGrants bool) worldEntry {
+	var e worldEntry
+	raw, err := s.read(ctx, metaKey(uid), documentLimit)
+	switch {
+	case err != nil:
+		e.metaErr = fmt.Errorf("world %s: reading its metadata: %w", uid, err)
+	default:
+		if err := json.Unmarshal(raw, &e.meta); err != nil {
+			// A meta.json that will not parse is a corrupt entry, not a
+			// missing one; saying so is what keeps a bug from looking like an
+			// empty store.
+			e.metaErr = fmt.Errorf("world %s has unreadable metadata: %w", uid, err)
+		}
+	}
+	if !hasGrants {
+		return e
+	}
+	raw, err = s.read(ctx, grantsKey(uid), documentLimit)
+	switch {
+	case errors.Is(err, blob.ErrNotFound):
+	case err != nil:
+		e.hasGrants, e.grantsErr = true, fmt.Errorf("world %s: reading its grants: %w", uid, err)
+	default:
+		e.hasGrants = true
+		if err := json.Unmarshal(raw, &e.grants); err != nil {
+			// Corrupt is NOT absent: absent means legacy rules, and a parse
+			// error promoted to "no grants" would silently reopen a shared
+			// world.
+			e.grantsErr = fmt.Errorf("world %s has unreadable grants: %w", uid, err)
+		}
+	}
+	return e
+}
+
+// read returns an object's bytes; limit > 0 refuses a larger object.
+func (s *Store) read(ctx context.Context, key string, limit int64) ([]byte, error) {
+	body, info, err := s.bucket.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = body.Close() }()
+	if limit > 0 && info.Size > limit {
+		return nil, fmt.Errorf("%s: %d bytes, more than %d", key, info.Size, limit)
+	}
+	return io.ReadAll(body)
+}
+
+// put writes one object, durably (blob.PutOptions.Sync). With ifAbsent it
+// is a conditional write that fails with blob.ErrExists when the key is
+// taken — on a backend that has one. On a backend without (blob.
+// ErrUnsupported, the ceph row today) it is a plain write, and the world's
+// lock alone keeps two writes apart: this process is the one writer.
+func (s *Store) put(ctx context.Context, key string, data []byte, contentType string, ifAbsent bool) error {
+	opts := blob.PutOptions{Sync: true, ContentType: contentType}
+	if ifAbsent && !s.noConditional.Load() {
+		opts.IfAbsent = true
+		_, err := s.bucket.Put(ctx, key, bytes.NewReader(data), int64(len(data)), opts)
+		if !errors.Is(err, blob.ErrUnsupported) {
+			return err
+		}
+		if !s.noConditional.Swap(true) {
+			slog.Info("world store: the bucket has no conditional write; create-only keys rely on the in-process lock")
+		}
+		opts.IfAbsent = false
+	}
+	_, err := s.bucket.Put(ctx, key, bytes.NewReader(data), int64(len(data)), opts)
+	return err
+}
+
+// putJSON writes a document. The overwritten ones (a world's meta.json after
+// its creation, grants.json) are plain writes: with one writer the world's
+// lock is enough. SEVERAL REPLICAS against one bucket would need each
+// overwrite to be conditional on the ETag that was read (If-Match), or two
+// writers could each replace the other's meta; that is not built — the
+// leaf has no If-Match, and the store is one process.
+func (s *Store) putJSON(ctx context.Context, key string, value any, ifAbsent bool) error {
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.put(ctx, key, append(raw, '\n'), "application/json", ifAbsent)
 }
 
 func (s *Store) lock(uid string) *sync.Mutex {
@@ -151,36 +376,70 @@ func (s *Store) lock(uid string) *sync.Mutex {
 	return value.(*sync.Mutex)
 }
 
-func (s *Store) worldDir(uid string) string { return filepath.Join(s.dir, uid) }
-func (s *Store) revDir(uid string, revision int) string {
-	return filepath.Join(s.worldDir(uid), "rev", strconv.Itoa(revision))
+const (
+	metaName    = "meta.json"
+	grantsName  = "grants.json"
+	zipName     = "world.zip"
+	previewName = "preview.png"
+)
+
+func metaKey(uid string) string   { return uid + "/" + metaName }
+func grantsKey(uid string) string { return uid + "/" + grantsName }
+
+// revPrefix is the prefix of every key of one revision; the trailing "/"
+// keeps revision 1 from matching revision 10.
+func revPrefix(uid string, revision int) string {
+	return uid + "/rev/" + strconv.Itoa(revision) + "/"
+}
+func revKey(uid string, revision int, name string) string { return revPrefix(uid, revision) + name }
+
+// revisionOf reads the revision number of a key's rest after "{uid}/":
+// "rev/{n}/…".
+func revisionOf(rest string) (int, bool) {
+	tail, ok := strings.CutPrefix(rest, "rev/")
+	if !ok {
+		return 0, false
+	}
+	number, _, ok := strings.Cut(tail, "/")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(number)
+	return n, err == nil && n > 0
 }
 
-// grantsPath is {uid}/grants.json — SERVER-owned, beside the meta: never
-// part of the uploaded save, never rebuilt from one. Deleting the world's
-// directory removes it with everything else.
-func (s *Store) grantsPath(uid string) string {
-	return filepath.Join(s.worldDir(uid), "grants.json")
+// entry returns a world's index entry.
+func (s *Store) entry(uid string) (worldEntry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.worlds[uid]
+	return e, ok
+}
+
+// update changes a world's index entry; called after the bucket accepted
+// the write, under the world's lock.
+func (s *Store) update(uid string, change func(e *worldEntry)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.worlds[uid]
+	change(&e)
+	s.worlds[uid] = e
 }
 
 // readGrants is the lockless half of ReadGrants, for callers already
 // holding the world's lock. found=false is the LEGITIMATE legacy state — a
-// world from before grants existed — not an error.
+// world from before grants existed — not an error. grants.json is
+// SERVER-owned, beside the meta: never part of the uploaded save, never
+// rebuilt from one. Deleting the world removes it with everything else.
 func (s *Store) readGrants(uid string) (access.Grants, bool, error) {
-	raw, err := os.ReadFile(s.grantsPath(uid))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return access.Grants{}, false, nil
-		}
-		return access.Grants{}, false, err
+	e, ok := s.entry(uid)
+	if !ok || !e.hasGrants {
+		return access.Grants{}, false, nil
 	}
-	var grants access.Grants
-	if err := json.Unmarshal(raw, &grants); err != nil {
-		// Corrupt is NOT absent: absent means legacy rules, and a parse error
-		// promoted to "no grants" would silently reopen a shared world.
-		return access.Grants{}, false, fmt.Errorf("world %s has unreadable grants: %w", uid, err)
+	if e.grantsErr != nil {
+		return access.Grants{}, false, e.grantsErr
 	}
-	return grants, true, nil
+	return e.grants, true, nil
 }
 
 // ReadGrants answers a world's ACL. The world must exist; found reports
@@ -197,7 +456,7 @@ func (s *Store) ReadGrants(ctx context.Context, uid string) (access.Grants, bool
 // reads of the document.
 //
 // The template mark is NOT the share path's to change: whatever grants.Template
-// says, the mark stays as it is on disk. SetTemplate, the admin's, is its one
+// says, the mark stays as it is stored. SetTemplate, the admin's, is its one
 // writer — so a share API built on this cannot let an owner offer a world to
 // every visitor of the server.
 func (s *Store) WriteGrants(ctx context.Context, uid string, grants access.Grants) error {
@@ -221,11 +480,21 @@ func (s *Store) WriteGrants(ctx context.Context, uid string, grants access.Grant
 		return err
 	}
 	grants.Template = held.Template
-	if err := writeJSONAtomic(s.grantsPath(uid), grants); err != nil {
+	if err := s.writeGrants(ctx, uid, grants); err != nil {
 		return err
 	}
 	// Keep the display mirror honest immediately, not at the next upload.
-	return s.mirrorGrants(uid, meta, grants)
+	return s.mirrorGrants(ctx, uid, meta, grants)
+}
+
+// writeGrants stores a world's grants and enters them into the index.
+// Under the world's lock, held by the caller.
+func (s *Store) writeGrants(ctx context.Context, uid string, grants access.Grants) error {
+	if err := s.putJSON(ctx, grantsKey(uid), grants, false); err != nil {
+		return err
+	}
+	s.update(uid, func(e *worldEntry) { e.grants, e.hasGrants, e.grantsErr = grants, true, nil })
+	return nil
 }
 
 // SetTemplate sets or removes a world's template mark — the admin's
@@ -254,11 +523,11 @@ func (s *Store) SetTemplate(ctx context.Context, uid string, on bool) (Meta, err
 	}
 	if grants.Template != on {
 		grants.Template = on
-		if err := writeJSONAtomic(s.grantsPath(uid), grants); err != nil {
+		if err := s.writeGrants(ctx, uid, grants); err != nil {
 			return Meta{}, err
 		}
 	}
-	if err := s.mirrorGrants(uid, meta, grants); err != nil {
+	if err := s.mirrorGrants(ctx, uid, meta, grants); err != nil {
 		return Meta{}, err
 	}
 	return s.readMeta(uid)
@@ -267,16 +536,27 @@ func (s *Store) SetTemplate(ctx context.Context, uid string, on bool) (Meta, err
 // mirrorGrants writes the owner and the template mark into the display
 // mirror in meta.json where they differ from the grants. Under the world's
 // lock, held by the caller.
-func (s *Store) mirrorGrants(uid string, meta Meta, grants access.Grants) error {
+func (s *Store) mirrorGrants(ctx context.Context, uid string, meta Meta, grants access.Grants) error {
 	if meta.Owner == grants.Owner && meta.Template == grants.Template {
 		return nil
 	}
 	meta.Owner = grants.Owner
 	meta.Template = grants.Template
-	return writeJSONAtomic(filepath.Join(s.worldDir(uid), "meta.json"), meta)
+	return s.writeMeta(ctx, uid, meta, false)
 }
 
-// ValidUID reports whether a uid may be used as a path segment.
+// writeMeta stores a world's meta.json and enters it into the index. With
+// create, the write is conditional (the world must not exist yet). Under
+// the world's lock, held by the caller.
+func (s *Store) writeMeta(ctx context.Context, uid string, meta Meta, create bool) error {
+	if err := s.putJSON(ctx, metaKey(uid), meta, create); err != nil {
+		return err
+	}
+	s.update(uid, func(e *worldEntry) { e.meta, e.metaErr = meta, nil })
+	return nil
+}
+
+// ValidUID reports whether a uid may be used as a key segment.
 func ValidUID(uid string) bool { return safeUID.MatchString(uid) }
 
 // Get returns a world's metadata.
@@ -288,47 +568,28 @@ func (s *Store) Get(ctx context.Context, uid string) (Meta, error) {
 }
 
 func (s *Store) readMeta(uid string) (Meta, error) {
-	raw, err := os.ReadFile(filepath.Join(s.worldDir(uid), "meta.json"))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Meta{}, ErrNotFound
-		}
-		return Meta{}, err
+	e, ok := s.entry(uid)
+	if !ok {
+		return Meta{}, ErrNotFound
 	}
-	var meta Meta
-	if err := json.Unmarshal(raw, &meta); err != nil {
-		// A meta.json that will not parse is a corrupt entry, not a missing
-		// one; saying so is what keeps a bug from looking like an empty store.
-		return Meta{}, fmt.Errorf("world %s has unreadable metadata: %w", uid, err)
+	if e.metaErr != nil {
+		return Meta{}, e.metaErr
 	}
-	return meta, nil
+	return e.meta, nil
 }
 
-// List returns every world, newest first.
-//
-// Reads one meta.json per world and never descends into the revisions — which
-// is what keeps a listing cheap enough that no index is needed yet. An entry
-// that will not parse is SKIPPED rather than failing the whole listing: one
+// List returns every world, newest first, from the index. An entry whose
+// meta did not parse is SKIPPED rather than failing the whole listing: one
 // broken world should not make the panel unusable.
 func (s *Store) List(ctx context.Context) ([]Meta, error) {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+	s.mu.RLock()
+	metas := make([]Meta, 0, len(s.worlds))
+	for _, e := range s.worlds {
+		if e.metaErr == nil {
+			metas = append(metas, e.meta)
 		}
-		return nil, err
 	}
-	metas := make([]Meta, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() || !ValidUID(entry.Name()) {
-			continue
-		}
-		meta, err := s.readMeta(entry.Name())
-		if err != nil {
-			continue
-		}
-		metas = append(metas, meta)
-	}
+	s.mu.RUnlock()
 	sort.Slice(metas, func(i, j int) bool { return metas[i].UpdatedAt.After(metas[j].UpdatedAt) })
 	return metas, nil
 }
@@ -370,30 +631,27 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 
 	// Dedupe: a byte-identical re-upload of the current revision changes
 	// nothing and mints nothing — the caller gets the current state back, the
-	// same answer a new revision would have encoded, minus the copy on disk.
+	// same answer a new revision would have encoded, minus the copy stored.
 	// Compared only against the CURRENT revision (that is the one being
 	// replaced); an older identical revision has been superseded in between,
 	// so re-uploading it is a real change of current state.
 	if current.Revision > 0 {
-		if rev, err := s.readRevisionMeta(uid, current.Revision); err == nil && rev.ContentHash != "" && rev.ContentHash == contentHash {
+		if rev, err := s.readRevisionMeta(ctx, uid, current.Revision); err == nil && rev.ContentHash != "" && rev.ContentHash == contentHash {
 			return current, nil
 		}
-	}
-
-	revision := current.Revision + 1
-	revDir := s.revDir(uid, revision)
-	if err := os.MkdirAll(revDir, 0o755); err != nil {
-		return Meta{}, err
 	}
 
 	// Payload first, metadata last — the same ordering the client's artifact
 	// writer uses, and for the same reason: an interrupted upload must read as
 	// ABSENT rather than as a complete entry pointing at half a file.
-	if err := writeFileAtomic(filepath.Join(revDir, "world.zip"), data); err != nil {
+	revision, err := s.claimRevision(ctx, uid, current.Revision, creating, data)
+	if err != nil {
 		return Meta{}, err
 	}
+	// The rest of the revision is this upload's once the save is claimed:
+	// plain writes, which also replace what an interrupted upload left.
 	if len(info.Preview) > 0 {
-		if err := writeFileAtomic(filepath.Join(revDir, "preview.png"), info.Preview); err != nil {
+		if err := s.put(ctx, revKey(uid, revision, previewName), info.Preview, "image/png", false); err != nil {
 			return Meta{}, err
 		}
 	}
@@ -407,7 +665,7 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 		CreatedAt:   now,
 		ContentHash: contentHash,
 	}
-	if err := writeJSONAtomic(filepath.Join(revDir, "meta.json"), revMeta); err != nil {
+	if err := s.putJSON(ctx, revKey(uid, revision, metaName), revMeta, false); err != nil {
 		return Meta{}, err
 	}
 
@@ -418,8 +676,13 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 	// DISPLAY MIRROR of it from here on; re-stamping it per upload was the
 	// standing bug where a shared world's first editor save stole the world.
 	displayOwner, template := current.Owner, false
+	var created access.Grants
 	if creating {
-		if err := writeJSONAtomic(s.grantsPath(uid), access.Grants{Owner: owner}); err != nil {
+		// A plain write: grants.json without a meta.json is what an
+		// interrupted creation leaves, and this one replaces it. The
+		// world's meta.json below is the conditional write of a creation.
+		created = access.Grants{Owner: owner}
+		if err := s.putJSON(ctx, grantsKey(uid), created, false); err != nil {
 			return Meta{}, err
 		}
 		displayOwner = owner
@@ -454,18 +717,67 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 	// The world's own meta.json goes last of all: until it names the new
 	// revision, the store still resolves to the previous one, so a crash
 	// anywhere above leaves the old world intact rather than half-replaced.
-	if err := writeJSONAtomic(filepath.Join(s.worldDir(uid), "meta.json"), meta); err != nil {
+	// At a creation it is conditional: another writer that created the world
+	// in between makes this ErrExists, not an overwrite.
+	if err := s.putJSON(ctx, metaKey(uid), meta, creating); err != nil {
+		if creating && errors.Is(err, blob.ErrExists) {
+			return Meta{}, ErrExists
+		}
 		return Meta{}, err
 	}
+	s.update(uid, func(e *worldEntry) {
+		e.meta, e.metaErr = meta, nil
+		if creating {
+			e.grants, e.hasGrants, e.grantsErr = created, true, nil
+		}
+	})
 	// Retention, after the new revision is fully in force. Best-effort: a
 	// prune that fails leaves extra safety copies, which is the harmless
 	// direction, and must not fail an upload that already succeeded.
-	s.pruneRevisions(uid, revision)
+	s.pruneRevisions(ctx, uid, revision)
 	return meta, nil
 }
 
-func (s *Store) readRevisionMeta(uid string, revision int) (RevisionMeta, error) {
-	raw, err := os.ReadFile(filepath.Join(s.revDir(uid, revision), "meta.json"))
+// claimRevision writes the save of the next free revision with a
+// conditional write and answers the revision it took.
+//
+// The next free revision is one above the current one AND above every
+// revision that has objects in the bucket (s.taken): an upload that ended
+// before its meta.json (a crash, a lost connection to the bucket) leaves a
+// revision the meta never named. Its number is stepped over — the meta
+// names revisions, it does not count them, and a gap is something
+// pruneRevisions expects — and the orphan goes with the next prunes. The
+// index knows every such revision: those of a crash from the List at start,
+// those of a failure in this process from here (the number is recorded
+// once the save is claimed).
+//
+// So a save that exists at the chosen number was written by ANOTHER WRITER
+// against the same bucket, outside the model: the answer is
+// ErrRevisionMismatch (ErrExists at a creation), never an overwrite of the
+// other writer's save. On a bucket without the conditional write (ceph) the
+// save is a plain write, and the world's lock alone keeps two uploads apart.
+func (s *Store) claimRevision(ctx context.Context, uid string, current int, creating bool, data []byte) (int, error) {
+	s.mu.RLock()
+	revision := max(current, s.taken[uid]) + 1
+	s.mu.RUnlock()
+	if err := s.put(ctx, revKey(uid, revision, zipName), data, "application/zip", true); err != nil {
+		if errors.Is(err, blob.ErrExists) {
+			slog.Warn("world store: another writer took the revision", "uid", uid, "revision", revision)
+			if creating {
+				return 0, ErrExists
+			}
+			return 0, ErrRevisionMismatch
+		}
+		return 0, err
+	}
+	s.mu.Lock()
+	s.taken[uid] = max(s.taken[uid], revision)
+	s.mu.Unlock()
+	return revision, nil
+}
+
+func (s *Store) readRevisionMeta(ctx context.Context, uid string, revision int) (RevisionMeta, error) {
+	raw, err := s.read(ctx, revKey(uid, revision, metaName), documentLimit)
 	if err != nil {
 		return RevisionMeta{}, err
 	}
@@ -477,27 +789,44 @@ func (s *Store) readRevisionMeta(uid string, revision int) (RevisionMeta, error)
 }
 
 // pruneRevisions drops every revision older than the newest keepRevisions.
-// 0 keeps all. Walks the rev directory rather than counting down from the
-// current number, so a gap (a previously pruned or failed revision) does not
+// 0 keeps all. Lists the world's revisions rather than counting down from
+// the current number, so a gap (a pruned or stepped-over revision) does not
 // end the sweep early.
-func (s *Store) pruneRevisions(uid string, current int) {
+func (s *Store) pruneRevisions(ctx context.Context, uid string, current int) {
 	if s.keepRevisions <= 0 {
 		return
 	}
 	oldest := current - s.keepRevisions + 1
-	entries, err := os.ReadDir(filepath.Join(s.worldDir(uid), "rev"))
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		n, err := strconv.Atoi(entry.Name())
+	var doomed []string
+	for info, err := range s.bucket.List(ctx, uid+"/rev/") {
 		if err != nil {
-			continue
+			slog.Warn("world store: listing revisions to prune", "uid", uid, "err", err)
+			return
 		}
-		if n < oldest {
-			_ = os.RemoveAll(s.revDir(uid, n))
+		if n, ok := revisionOf(strings.TrimPrefix(info.Key, uid+"/")); ok && n < oldest {
+			doomed = append(doomed, info.Key)
 		}
 	}
+	_ = s.deleteKeys(ctx, uid, doomed)
+}
+
+// deleteKeys deletes the keys in order and answers the first error. A key
+// that breaks the leaf's key rule (a file copied in by hand, e.g. Finder's
+// .DS_Store in a Dir) cannot be deleted through the leaf; it is logged and
+// left, so that one stray file does not fail the delete of a world.
+func (s *Store) deleteKeys(ctx context.Context, uid string, keys []string) error {
+	var first error
+	for _, key := range keys {
+		err := s.bucket.Delete(ctx, key)
+		switch {
+		case err == nil:
+		case errors.Is(err, blob.ErrBadKey):
+			slog.Warn("world store: leaving an object whose key the leaf refuses", "uid", uid, "key", key)
+		case first == nil:
+			first = err
+		}
+	}
+	return first
 }
 
 // ReadCurrent returns the bytes of a world's current revision.
@@ -506,9 +835,9 @@ func (s *Store) ReadCurrent(ctx context.Context, uid string) ([]byte, Meta, erro
 	if err != nil {
 		return nil, Meta{}, err
 	}
-	raw, err := os.ReadFile(filepath.Join(s.revDir(uid, meta.Revision), "world.zip"))
+	raw, err := s.read(ctx, revKey(uid, meta.Revision, zipName), 0)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, blob.ErrNotFound) {
 			return nil, Meta{}, ErrNotFound
 		}
 		return nil, Meta{}, err
@@ -516,11 +845,29 @@ func (s *Store) ReadCurrent(ctx context.Context, uid string) ([]byte, Meta, erro
 	return raw, meta, nil
 }
 
+// localFiles is a bucket whose objects are files on this machine (blob.Dir).
+type localFiles interface {
+	LocalPath(key string) (string, error)
+}
+
+// LocalFiles reports whether CurrentZipPath can answer: the bucket is a
+// directory on this machine. cmd/ asks it to choose how a local job worker
+// reads its world.
+func (s *Store) LocalFiles() bool {
+	_, ok := s.bucket.(localFiles)
+	return ok
+}
+
 // CurrentZipPath returns where the current revision's save lives, verifying
 // that it exists. For a co-resident consumer (the bake runner) that streams
 // the file itself instead of pulling tens of megabytes through this process —
 // the path is handed out, the LAYOUT around it stays this store's business.
+// Only on a bucket with LocalFiles; else an error.
 func (s *Store) CurrentZipPath(ctx context.Context, uid string) (string, error) {
+	files, ok := s.bucket.(localFiles)
+	if !ok {
+		return "", fmt.Errorf("the world store's bucket has no local files")
+	}
 	meta, err := s.Get(ctx, uid)
 	if err != nil {
 		return "", err
@@ -528,8 +875,8 @@ func (s *Store) CurrentZipPath(ctx context.Context, uid string) (string, error) 
 	if meta.Revision < 1 {
 		return "", ErrNotFound
 	}
-	path := filepath.Join(s.revDir(uid, meta.Revision), "world.zip")
-	if _, err := os.Stat(path); err != nil {
+	path, err := files.LocalPath(revKey(uid, meta.Revision, zipName))
+	if err != nil {
 		return "", ErrNotFound
 	}
 	return path, nil
@@ -544,9 +891,9 @@ func (s *Store) ReadPreview(ctx context.Context, uid string) ([]byte, error) {
 	if !meta.HasPreview {
 		return nil, ErrNotFound
 	}
-	raw, err := os.ReadFile(filepath.Join(s.revDir(uid, meta.Revision), "preview.png"))
+	raw, err := s.read(ctx, revKey(uid, meta.Revision, previewName), 0)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, blob.ErrNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -554,7 +901,10 @@ func (s *Store) ReadPreview(ctx context.Context, uid string) ([]byte, error) {
 	return raw, nil
 }
 
-// Delete removes a world and every revision of it.
+// Delete removes a world and every revision of it: every key under {uid}/.
+// On a versioned bucket (s3, BucketOptions) each delete leaves a delete
+// marker and the earlier versions, which the identity cannot remove: a
+// deleted world can be restored by an operator.
 func (s *Store) Delete(ctx context.Context, uid string) error {
 	if !ValidUID(uid) {
 		return ErrNotFound
@@ -573,67 +923,27 @@ func (s *Store) Delete(ctx context.Context, uid string) error {
 	}
 	// meta.json goes FIRST here — the mirror of the write order. Removing it
 	// makes the world absent immediately, so an interrupted delete leaves
-	// orphaned revision files rather than a world that still lists but has no
-	// contents behind it.
-	if err := os.Remove(filepath.Join(s.worldDir(uid), "meta.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+	// orphaned revision objects rather than a world that still lists but has
+	// no contents behind it.
+	if err := s.bucket.Delete(ctx, metaKey(uid)); err != nil {
 		return err
 	}
-	return os.RemoveAll(s.worldDir(uid))
-}
-
-// writeFileAtomic writes via a temporary file in the SAME directory and
-// renames it into place. Rename is atomic within one filesystem, so a reader
-// sees either the old contents or the new ones and never a partial write —
-// which a plain os.WriteFile cannot promise.
-//
-// The file is fsynced before the rename and the directory after it. That costs
-// real milliseconds and is skipped for artifacts, where losing an entry costs
-// a re-bake; here it is the difference between a power cut costing a save and
-// costing nothing.
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
+	s.mu.Lock()
+	delete(s.worlds, uid)
+	s.mu.Unlock()
+	var keys []string
+	for info, err := range s.bucket.List(ctx, uid+"/") {
+		if err != nil {
+			return err
+		}
+		keys = append(keys, info.Key)
+	}
+	if err := s.deleteKeys(ctx, uid, keys); err != nil {
+		// What is left keeps its revision numbers taken.
 		return err
 	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeded
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
-	}
-	return syncDir(dir)
-}
-
-func writeJSONAtomic(path string, value any) error {
-	raw, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeFileAtomic(path, append(raw, '\n'))
-}
-
-// syncDir flushes the directory entry itself, so the rename survives a crash
-// and not just the file's contents. Failures are tolerated because some
-// filesystems refuse to sync a directory handle at all, and a store that
-// cannot be written is a worse outcome than one that is slightly less durable.
-func syncDir(dir string) error {
-	handle, err := os.Open(dir)
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = handle.Close() }()
-	_ = handle.Sync()
+	s.mu.Lock()
+	delete(s.taken, uid)
+	s.mu.Unlock()
 	return nil
 }

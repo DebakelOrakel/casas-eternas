@@ -205,7 +205,7 @@
         {
           "name": "artifacts.storage.type",
           "default": "dir",
-          "usage": "The artifact store's backend: dir (implemented) or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.",
+          "usage": "The artifact store's backend: dir or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.",
           "env": "CASAS_ARTIFACTS_STORAGE_TYPE"
         },
         {
@@ -319,7 +319,7 @@
         {
           "name": "world.storage.type",
           "default": "dir",
-          "usage": "The world store's backend: dir (implemented) or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.",
+          "usage": "The world store's backend: dir or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.",
           "env": "CASAS_WORLD_STORAGE_TYPE"
         }
       ]
@@ -390,7 +390,7 @@
       "key": "artifacts.storage.type",
       "env": "CASAS_ARTIFACTS_STORAGE_TYPE",
       "default": "dir",
-      "usage": "The artifact store's backend: dir (implemented) or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.",
+      "usage": "The artifact store's backend: dir or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.",
       "command": "casas-eternas start"
     },
     {
@@ -569,7 +569,7 @@
       "key": "world.storage.type",
       "env": "CASAS_WORLD_STORAGE_TYPE",
       "default": "dir",
-      "usage": "The world store's backend: dir (implemented) or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.",
+      "usage": "The world store's backend: dir or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.",
       "command": "casas-eternas start"
     }
   ]

@@ -100,10 +100,8 @@ type Services struct {
 // The flag default of `dir.path` is not a block: cmd/ keeps Dir only where
 // the path was set, or where the type is dir.
 //
-// The s3 backend is built for the sections in s3Built (artifacts since
-// DEC-0038 step 3); for the others the s3 block is declared and checked, so
-// that a configuration written for it gets its mistakes named now and a
-// clear "not implemented yet" after them.
+// Both stores run on both backends (artifacts since DEC-0038 step 3, the
+// world store since step 5).
 type ObjectStorage struct {
 	Type string      `mapstructure:"type"`
 	Dir  *DirStorage `mapstructure:"dir"`
@@ -155,21 +153,11 @@ func (s ObjectStorage) Validate(section string) error {
 		if s.S3 == nil {
 			return fmt.Errorf("%s: type s3 needs the %s.s3 block", key, key)
 		}
-		if err := s.S3.validate(key + ".s3"); err != nil {
-			return err
-		}
-		if !s3Built[section] {
-			return fmt.Errorf("%s.type: the s3 backend is not implemented yet (implemented: dir)", key)
-		}
-		return nil
+		return s.S3.validate(key + ".s3")
 	default:
 		return fmt.Errorf("%s.type: unknown backend %q (dir or s3)", key, s.Type)
 	}
 }
-
-// s3Built names the sections whose store runs on the s3 backend. The world
-// store follows in DEC-0038's next step.
-var s3Built = map[string]bool{"artifacts": true}
 
 func (s S3Storage) validate(key string) error {
 	switch s.Flavour {

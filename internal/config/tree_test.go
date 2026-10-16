@@ -35,10 +35,9 @@ func TestObjectStorageValidate(t *testing.T) {
 		{"ceph endpoint without scheme", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourCeph, Endpoint: "objects.example", Bucket: "b"}}, "must be an https:// URL"},
 		{"ceph endpoint without host", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourCeph, Endpoint: "https://", Bucket: "b"}}, "must be an https:// URL"},
 		{"half a key pair", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourCeph, Endpoint: "https://x", Bucket: "b", AccessKeyFile: "/k"}}, "together"},
-		// A correct s3 block passes every check and then meets the backend
-		// that is not there yet — the last message, not the first.
-		{"valid aws, not built", ObjectStorage{Type: "s3", S3: aws}, "not implemented yet"},
-		{"valid ceph, not built", ObjectStorage{Type: "s3", S3: ceph}, "not implemented yet"},
+		// The world store runs on s3 since DEC-0038 step 5.
+		{"valid aws", ObjectStorage{Type: "s3", S3: aws}, ""},
+		{"valid ceph", ObjectStorage{Type: "s3", S3: ceph}, ""},
 		{"unknown backend", ObjectStorage{Type: "gcs"}, "unknown backend"},
 	}
 	for _, c := range cases {
@@ -60,7 +59,7 @@ func TestObjectStorageValidate(t *testing.T) {
 			}
 		})
 	}
-	// The artifact store runs on s3 (DEC-0038, step 3): the same valid
+	// The artifact store runs on s3 too (DEC-0038, step 3): the same valid
 	// blocks pass there.
 	for _, block := range []*S3Storage{aws, ceph} {
 		if err := (ObjectStorage{Type: "s3", S3: block}).Validate("artifacts"); err != nil {

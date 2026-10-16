@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -300,9 +299,7 @@ func TestTheMarkNeedsGrants(t *testing.T) {
 	if _, err := putAs(t, s, sampleUID, "first", "ada", 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(s.grantsPath(sampleUID)); err != nil {
-		t.Fatal(err)
-	}
+	removeObject(t, s, grantsKey(sampleUID))
 	if _, err := s.SetTemplate(context.Background(), sampleUID, true); err != ErrNoGrants {
 		t.Errorf("mark on a legacy world = %v, want ErrNoGrants", err)
 	}

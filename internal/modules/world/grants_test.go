@@ -3,7 +3,6 @@ package world
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
@@ -67,9 +66,7 @@ func TestLegacyWorldIsNeitherRestampedNorSilentlyMigrated(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate the pre-grants store: the document simply is not there.
-	if err := os.Remove(s.grantsPath(sampleUID)); err != nil {
-		t.Fatal(err)
-	}
+	removeObject(t, s, grantsKey(sampleUID))
 
 	meta, err := putAs(t, s, sampleUID, "second", "eve-id", 1)
 	if err != nil {
@@ -129,9 +126,7 @@ func TestCorruptGrantsAreAnErrorNotAnAbsence(t *testing.T) {
 	if _, err := putAs(t, s, sampleUID, "first", "ada-id", 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.grantsPath(sampleUID), []byte("not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeObject(t, s, grantsKey(sampleUID), []byte("not json"))
 	if _, _, err := s.ReadGrants(context.Background(), sampleUID); err == nil {
 		t.Error("corrupt grants read as fine")
 	}

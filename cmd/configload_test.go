@@ -278,7 +278,7 @@ world:
 	}{
 		{"defaults are dir", "", ""},
 		{"s3 block without type", fmt.Sprintf(s3Block, ""), "set world.storage.type: s3"},
-		{"s3 with type, default path ignored", fmt.Sprintf(s3Block, "    type: s3\n"), "not implemented yet"},
+		{"s3 with type, default path ignored", fmt.Sprintf(s3Block, "    type: s3\n"), ""},
 		{"s3 with type and a set path", fmt.Sprintf(s3Block, "    type: s3\n    dir:\n      path: /data/worlds\n"), "world.storage.dir is set beside"},
 	}
 	for _, c := range cases {
@@ -304,8 +304,8 @@ world:
 		t.Setenv("CASAS_WORLD_STORAGE_S3_FLAVOUR", "aws")
 		t.Setenv("CASAS_WORLD_STORAGE_S3_REGION", "eu-central-2")
 		t.Setenv("CASAS_WORLD_STORAGE_S3_BUCKET", "worlds")
-		if err := validate(t); err == nil || !strings.Contains(err.Error(), "not implemented yet") {
-			t.Fatalf("want the valid block to reach the backend check, got %v", err)
+		if err := validate(t); err != nil {
+			t.Fatalf("want the valid block from the environment accepted, got %v", err)
 		}
 	})
 }

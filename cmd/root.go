@@ -108,10 +108,10 @@ const (
 	textSvcArts     = `URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.`
 	textSvcRelay    = `NATS URL of the relay (the message bus), when it is not co-resident, e.g. nats://relay:4222. Empty expects it in this process.`
 
-	textWorldType    = `The world store's backend: dir (implemented) or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.`
+	textWorldType    = `The world store's backend: dir or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.`
 	textWorldPath    = `The directory the saved worlds live in (backend dir).`
 	textKeepRevs     = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
-	textArtsType     = `The artifact store's backend: dir (implemented) or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.`
+	textArtsType     = `The artifact store's backend: dir or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.`
 	textArtsPath     = `The directory of the artifact store (backend dir).`
 	textArtsCap      = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
 	textArtsReadTTL  = `How long a link to read an artifact file is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.`

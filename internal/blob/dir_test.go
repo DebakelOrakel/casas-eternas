@@ -710,3 +710,35 @@ func TestDirRemoveJunk(t *testing.T) {
 		t.Errorf("a file outside the root went: %v", err)
 	}
 }
+
+// A durable Put (Sync) and an IfAbsent one write as any other; LocalPath
+// names the object's file and nothing else.
+func TestDirSyncAndLocalPath(t *testing.T) {
+	d, root := openDir(t, nil)
+	ctx := context.Background()
+	for _, opts := range []PutOptions{{Sync: true}, {Sync: true, IfAbsent: true}} {
+		key := "w/rev/1/a"
+		if opts.IfAbsent {
+			key = "w/rev/1/b"
+		}
+		if _, err := d.Put(ctx, key, strings.NewReader("data"), 4, opts); err != nil {
+			t.Fatalf("Put %+v: %v", opts, err)
+		}
+		path, err := d.LocalPath(key)
+		if err != nil || path != filepath.Join(root, "w", "rev", "1", filepath.Base(key)) {
+			t.Fatalf("LocalPath = %q, %v", path, err)
+		}
+		if raw, err := os.ReadFile(path); err != nil || string(raw) != "data" {
+			t.Errorf("the file at the path = %q, %v", raw, err)
+		}
+	}
+	if _, err := d.LocalPath("w/rev/1/none"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("LocalPath of a missing object = %v", err)
+	}
+	if _, err := d.LocalPath("w/rev/1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("LocalPath of a directory = %v", err)
+	}
+	if _, err := d.LocalPath("../x"); !errors.Is(err, ErrBadKey) {
+		t.Errorf("LocalPath of a bad key = %v", err)
+	}
+}

@@ -61,11 +61,11 @@ process of a split deployment, so the role travels only in `-t` or
 ## Where state lives
 
 Each store module owns one directory or bucket — worlds
-(`world.storage.dir.path`), artifacts (`artifacts.storage.dir.path`, or a
-bucket, below), users (`auth.state-dir`), jobs (`jobs.state-dir`), the
-relay's messages (`relay.state-dir`). Worlds and artifacts choose a
-backend with `world.storage.type` and `artifacts.storage.type`: `dir`, or
-`s3` for the artifacts (the world store refuses `s3` until it is built).
+(`world.storage.dir.path`, or a bucket, below), artifacts
+(`artifacts.storage.dir.path`, or a bucket, below), users
+(`auth.state-dir`), jobs (`jobs.state-dir`), the relay's messages
+(`relay.state-dir`). Worlds and artifacts choose a backend with
+`world.storage.type` and `artifacts.storage.type`: `dir` or `s3`.
 The others need a filesystem, so they take a plain directory.
 **One process per store directory** is a hard rule; the user store
 enforces it with a file lock, the others rely on you. Scaling means
@@ -119,4 +119,54 @@ checks each with a HEAD before it lists them (log line `artifact files
 committed`). So **a worker must reach the bucket's endpoint over HTTPS**,
 not only the server; a worker in a cluster with restricted egress needs
 the bucket's host allowed. The browser still uploads through the server.
+
+### Worlds in S3
+
+```yaml
+world:
+  storage:
+    type: s3
+    s3:
+      flavour: aws
+      region: eu-central-2
+      bucket: casas-eternas-worlds
+      prefix: ""
+      access-key-file: /run/secrets/aws-access-key
+      secret-key-file: /run/secrets/aws-secret-key
+  keep-revisions: 3
+```
+
+The same block as for the artifacts, with a bucket of its own. The keys
+are the ones a `dir` store has on disk (`{uid}/meta.json`,
+`{uid}/grants.json`, `{uid}/rev/{n}/…`), so a directory can be copied
+into a bucket as it is. At start the server lists the bucket once and
+reads each world's `meta.json` and `grants.json`; from then on it keeps
+them in memory, so a change made in the bucket by hand is seen at the
+next start.
+
+- **Versioning is on.** At start the server turns versioning on for the
+  worlds bucket (it makes the bucket when it is missing). The worlds are
+  the only copy of what a user made: a delete or an overwrite leaves the
+  earlier version.
+- **The identity may not delete a version** (deploy/aws/storage.yaml grants
+  no `s3:DeleteObjectVersion` on the worlds bucket). So a deleted world
+  leaves delete markers and noncurrent versions that only an administrator
+  (or a lifecycle rule) can remove; that is what makes a deletion — by a
+  bug or with a stolen key — reversible. Plan the space for it: each
+  upload of a world stays in the bucket as versions after
+  `keep-revisions` prunes it.
+- **No CORS rule.** The browser reads world zips and previews through the
+  server, not by links to the bucket, so the worlds bucket needs none.
+- **A local job worker reads the world over the server's API** on `s3`
+  (as a worker in a cluster always does); on `dir` it reads the file.
+- On `aws` a new revision and a new world are written with
+  `If-None-Match: *`, so a second server against the same bucket by
+  mistake gets `412` instead of overwriting a revision. On `ceph` the
+  provider row claims no conditional write yet, and only the rule of one
+  process per store protects the worlds. Either way: **one server per
+  worlds bucket.**
+
+Leftovers of the gated wire tests (under `test/` of the dev buckets) stay
+as versions and delete markers; deploy/aws/README.md has the lifecycle
+rule that removes them.
 

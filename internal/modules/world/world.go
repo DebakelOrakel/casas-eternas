@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
+	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
@@ -37,6 +38,9 @@ const uploadLimit = 512 << 20 // 512 MiB
 // module reads Global and its OWN section (`world.*`), nothing else.
 type Config struct {
 	All config.Config
+	// Bucket is the store's bucket, opened by cmd/ from world.storage
+	// (DEC-0038 step 5: dir or s3, with BucketOptions). The module closes it.
+	Bucket blob.Bucket
 	// Identity answers who a request comes from. The one resolver cmd/ builds is
 	// shared with every module, so who a caller IS has one answer in the
 	// process — this module holds the answerer, not the auth mode it was
@@ -56,11 +60,14 @@ type Module struct {
 	store *Store
 }
 
-// New prepares the store. The directory is created eagerly so a bad
+// New prepares the store and builds its index from the bucket, so a bad
 // world.storage fails at startup, naming the setting, rather than on the
 // first upload hours later.
-func New(cfg Config) (*Module, error) {
-	store, err := NewStore(cfg.All.World.Storage.DirPath(), cfg.All.World.KeepRevisions)
+func New(ctx context.Context, cfg Config) (*Module, error) {
+	if cfg.Bucket == nil {
+		return nil, fmt.Errorf("world needs its bucket; that is cmd/'s job")
+	}
+	store, err := NewStore(ctx, cfg.Bucket, cfg.All.World.KeepRevisions)
 	if err != nil {
 		return nil, fmt.Errorf("world.storage: %w", err)
 	}
@@ -120,8 +127,13 @@ func AnonymousReads(r *http.Request) bool {
 	return tail == "" || tail == "meta" || tail == "preview.png"
 }
 
-// Close releases the store. Nothing is held open.
-func (m *Module) Close() error { return nil }
+// Close releases the bucket when it holds something open (a Dir's root).
+func (m *Module) Close() error {
+	if c, ok := m.cfg.Bucket.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
 
 // AccessFor answers whether a world exists and the caller's level on it —
 // the ONE ranking in the process: this module's handlers use it directly,
@@ -314,7 +326,8 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	// as owner. Writing into an EXISTING world needs editor access, with the
 	// same visibility shape as everywhere: unreadable means 404.
 	caller, admin := m.callerOf(r)
-	if exists, level := m.AccessFor(r.Context(), uid, caller, admin); exists {
+	exists, level := m.AccessFor(r.Context(), uid, caller, admin)
+	if exists {
 		if level < access.Viewer {
 			httpjson.ClientError(w, http.StatusNotFound, "no such world")
 			return
@@ -351,8 +364,11 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("world stored", "uid", uid, "revision", meta.Revision, "bytes", meta.Size)
 	w.Header().Set("ETag", etag(meta.Revision))
+	// Created when the world did not exist: its first revision is not
+	// always 1 (a revision an interrupted upload left is stepped over,
+	// claimRevision).
 	status := http.StatusOK
-	if meta.Revision == 1 {
+	if !exists {
 		status = http.StatusCreated
 	}
 	httpjson.Write(w, status, meta)

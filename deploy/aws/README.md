@@ -54,7 +54,7 @@ The gated wire tests (`CASAS_TEST_S3_AWS=1`) write under the key prefix
 version (by design), so every test object leaves noncurrent versions and
 delete markers. `test-lifecycle.json` lets S3 remove them: objects,
 noncurrent versions and unfinished uploads under `test/` after one day,
-and delete markers left alone. It touches nothing outside `test/`.
+then the delete markers that no version is left behind. It touches nothing outside `test/`.
 
 It needs an administrator (the server's user may not set a lifecycle rule
 on the worlds bucket, and should not):

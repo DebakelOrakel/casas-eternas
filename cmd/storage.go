@@ -8,6 +8,7 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/modules/artifacts"
+	"github.com/DebakelOrakel/casas-eternas/internal/modules/world"
 	"github.com/DebakelOrakel/casas-eternas/internal/server"
 )
 
@@ -15,8 +16,8 @@ import (
 // (DEC-0038): `dir` to a blob.Dir at dir.path that signs its links with
 // `signer` (nil: no links), `s3` to a blob.S3 opened with `opts`. Here and
 // not in internal/config, because the leaf does not import the
-// configuration and the configuration does not know the leaf; the world
-// store will use the same function when it moves onto the leaf.
+// configuration and the configuration does not know the leaf. Both stores
+// use it (the world store since DEC-0038 step 5).
 func openObjectStorage(ctx context.Context, section string, storage config.ObjectStorage, signer *blob.LinkSigner, opts blob.OpenOptions) (blob.Bucket, error) {
 	switch storage.Type {
 	case "dir":
@@ -60,6 +61,13 @@ func openArtifactBucket(ctx context.Context, cfg config.Config) (blob.Bucket, er
 		}
 	}
 	return openObjectStorage(ctx, "artifacts", cfg.Artifacts.Storage, signer, artifacts.BucketOptions())
+}
+
+// openWorldBucket opens the world store's bucket: on s3 with versioning
+// (world.BucketOptions). No link signer: the world store gives no links,
+// its zips and previews are served through the server.
+func openWorldBucket(ctx context.Context, cfg config.Config) (blob.Bucket, error) {
+	return openObjectStorage(ctx, "world", cfg.World.Storage, nil, world.BucketOptions())
 }
 
 // internalListenAddr is where the internal listener binds: the IPv4

@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-10-16
+- **new** Server: operators can store worlds in a versioned S3 bucket (`world.storage.type: s3`).
 - **changed** Server: a job worker uploads its artifacts straight to the bucket by a short-lived link (`artifacts.write-link-ttl`), and no longer through the server. `artifacts`
 - **changed** Server: an `artifacts.storage.s3.endpoint` that is not `https://` refuses to start, and a relay that listens beyond loopback warns at start that its traffic is not encrypted.
 - **new** Server: operators can store artifacts in an S3 bucket (`artifacts.storage.type: s3`), and a read of an artifact answers with a short-lived link to it. `artifacts`

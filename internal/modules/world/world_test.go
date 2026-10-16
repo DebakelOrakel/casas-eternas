@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -376,9 +375,7 @@ func TestLegacyWorldsFollowTheMigrationRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Strip the grants the create wrote — this world predates them.
-	if err := os.Remove(m.store.grantsPath(sampleUID)); err != nil {
-		t.Fatal(err)
-	}
+	removeObject(t, m.store, grantsKey(sampleUID))
 
 	if exists, level := m.AccessFor(context.Background(), sampleUID, "ada-id", false); !exists || level != access.Owner {
 		t.Errorf("mapped legacy owner ranks %v (exists %v), want owner", level, exists)

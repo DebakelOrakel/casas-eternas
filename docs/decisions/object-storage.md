@@ -464,7 +464,53 @@ through the server. What changed against the answer of fork 7, and why:
   (a fake server that forgets its reservations before a write link, an
   upload or the commit, and twice).
 
-Open: the world store.
+2026-10-16: step 5, the world store on the blob leaf, is built; `type:
+s3` starts for `world` too, and the "not implemented" refusal is gone.
+What changed:
+
+- **Store.** Every read and write goes through `blob.Bucket`, one code
+  path for `dir` and `s3`. The layout is DEC-0017's, so an existing
+  `./data/worlds` opens as it is (checked on an APFS clone of the dev
+  store: the world `b39d5739`, 2 revisions, 68 MB, listed, read back
+  byte-equal, copied, updated; and on a fixture in the old layout with a
+  `.DS_Store` and a temp file in it). The index (each world's meta.json
+  and grants.json) is built at start from one `List` and a read of each
+  (16 at a time), then kept in memory; Get, the list and the ranking read
+  no object. Writes are the leaf's atomic `Put`; on `dir` with an fsync
+  of the file and the directory, as the store had before
+  (`blob.PutOptions.Sync`). A world's delete deletes every key under
+  `{uid}/`; a key the leaf refuses (a `.DS_Store`) is logged and left.
+- **Create-only writes.** A revision's `world.zip` and a new world's
+  `meta.json` are conditional (`IfAbsent`): a hard link on `dir`,
+  `If-None-Match: *` on aws. So a second writer against the same bucket,
+  outside the model, gets 412 instead of overwriting a revision. The next
+  revision is one above the current one AND above every revision with
+  objects in the bucket (from the start's `List`, and from this process's
+  own claims), so a revision that an interrupted upload left is stepped
+  over instead of blocking the world; revision numbers can have gaps, and
+  a create answers 201 also when its first revision is not 1. On ceph the
+  row claims no conditional write: the store falls back to plain writes,
+  logs it once, and relies on the per-world lock (one writer).
+- **Overwritten documents** (meta.json after its creation, grants.json):
+  plain writes under the per-world lock. Several replicas would need
+  `If-Match` on the ETag that was read; not built (the leaf has none).
+- **Versioning.** `world.BucketOptions` asks for versioning; no CORS rule,
+  because zips and previews are served through the server. No read links
+  for zips in this step: the route answers the bytes as before.
+- **Local job workers.** On `dir` a worker reads the save's file, as
+  before (`blob.Dir.LocalPath`); on `s3` it reads the world over the
+  server's API (the internal listener under TLS), as a cluster worker does.
+- **Measured against AWS** (eu-central-2, `casas-eternas-dev-worlds`,
+  TestAWSWireWorlds and a local server on `type: s3`): versioning is
+  enabled; a stale second writer's revision answers 412 and stores
+  nothing; a restart indexes the world from the listing; `If-None-Match:
+  *` SUCCEEDS over a delete marker, so a world deleted and uploaded again
+  under its uid starts at revision 1 again. What stays: the wire test
+  leaves 14 versions (3 694 bytes) and 13 delete markers under its
+  `test/<random>/`, the local run 16 versions (4 383 bytes) and 13
+  markers; the identity cannot remove them (no `s3:DeleteObjectVersion`,
+  as decided), an administrator or the lifecycle rule for `test/` does
+  (deploy/aws/README.md).
 
 Open: **the relay is plain NATS over TCP**, not encrypted. The plan for
 external workers, and later the browser: NATS's WebSocket listener behind

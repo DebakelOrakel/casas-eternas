@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -92,8 +93,9 @@ func (d *Dir) Head(_ context.Context, key string) (Info, error) {
 
 // Put writes into a temp file in the key's own directory and renames it
 // into place (or, with IfAbsent, links it, which fails when the name
-// exists). No fsync, as in the stores today: atomic against a reader, and
-// a power cut costs a write that can be made again.
+// exists). Without opts.Sync there is no fsync: atomic against a reader,
+// and a power cut costs a write that can be made again. With it, the file
+// is synced before the rename and the directory after it.
 func (d *Dir) Put(ctx context.Context, key string, body io.Reader, size int64, opts PutOptions) (Info, error) {
 	if err := CheckKey(key); err != nil {
 		return Info{}, err
@@ -123,6 +125,9 @@ func (d *Dir) Put(ctx context.Context, key string, body io.Reader, size int64, o
 	} else if errors.Is(err, io.EOF) {
 		err = fmt.Errorf("%w: %d of %d bytes", ErrSize, n, size)
 	}
+	if err == nil && opts.Sync {
+		err = f.Sync()
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -142,7 +147,36 @@ func (d *Dir) Put(ctx context.Context, key string, body io.Reader, size int64, o
 	} else if err := d.root.Rename(tmp, key); err != nil {
 		return Info{}, err
 	}
+	if opts.Sync {
+		d.syncDir(dir)
+	}
 	return d.Head(ctx, key)
+}
+
+// syncDir flushes the directory entry, so that the rename survives a crash
+// and not only the file's content. Failures are ignored: some filesystems
+// refuse to sync a directory handle, and a store that cannot be written is
+// a worse result than one that is a little less durable.
+func (d *Dir) syncDir(dir string) {
+	h, err := d.root.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = h.Sync()
+	_ = h.Close()
+}
+
+// LocalPath returns the path of the object's file, for a process on the
+// same machine that reads the file itself (a local job worker reads a world
+// save of tens of megabytes so, not through the server). Only Dir has it:
+// an S3 object has no path. The key goes through the key rule, and the
+// object must be a regular file under the root now; a missing one is
+// ErrNotFound. The path starts with the root as OpenDir was given it.
+func (d *Dir) LocalPath(key string) (string, error) {
+	if _, err := d.Head(context.Background(), key); err != nil {
+		return "", err
+	}
+	return filepath.Join(d.root.Name(), filepath.FromSlash(key)), nil
 }
 
 // putAttempts bounds how often Put makes the key's directory again when a

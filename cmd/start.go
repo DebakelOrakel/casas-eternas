@@ -192,8 +192,15 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 				return entry.ID, ok
 			}
 		}
-		m, err := world.New(world.Config{All: cfg, Identity: caller, LegacyOwner: legacyOwner})
+		bucket, err := openWorldBucket(ctx, cfg)
 		if err != nil {
+			return nil, nil, nil, err
+		}
+		m, err := world.New(ctx, world.Config{All: cfg, Bucket: bucket, Identity: caller, LegacyOwner: legacyOwner})
+		if err != nil {
+			if c, ok := bucket.(io.Closer); ok {
+				_ = c.Close()
+			}
 			return nil, nil, nil, err
 		}
 		worldModule = m
@@ -318,7 +325,21 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 	if inCluster && selfURL == "" {
 		return jobs.Config{}, nil, fmt.Errorf("CASAS_POD_IP is not set: a job worker reaches this server by its pod IP (deploy/manifests.yaml wires it)")
 	}
+	// The local workers' way to this server's API (localWorkerAPI), opened
+	// once for both stores that may need it.
 	var internal net.Listener
+	var localURL string
+	localAPI := func() (string, error) {
+		if localURL != "" {
+			return localURL, nil
+		}
+		url, listener, err := localWorkerAPI(cfg.Global)
+		if err != nil {
+			return "", err
+		}
+		localURL, internal = url, listener
+		return url, nil
+	}
 	bcfg := jobs.Config{
 		WorkerPath:    workerPath(cfg.Jobs.Worker),
 		Identity:      caller,
@@ -331,15 +352,24 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 	bcfg.WorldAccess = rankWorld
 	switch {
 	case worldModule != nil:
-		if inCluster {
+		store := worldModule.Store()
+		switch {
+		case inCluster:
 			// The workers run in pods of their own and reach this server by IP.
 			bcfg.WorldsURL = selfURL
-		} else {
-			store := worldModule.Store()
+		case store.LocalFiles():
 			bcfg.WorldZip = func(ctx context.Context, uid string) (string, bool) {
 				path, err := store.CurrentZipPath(ctx, uid)
 				return path, err == nil
 			}
+		default:
+			// On s3 a save has no path: a local worker reads it over this
+			// server's API, as a cluster worker does (DEC-0038 step 5).
+			url, err := localAPI()
+			if err != nil {
+				return jobs.Config{}, nil, err
+			}
+			bcfg.WorldsURL = url
 		}
 	case cfg.Global.Services.Worlds != "":
 		bcfg.WorldsURL = strings.TrimRight(cfg.Global.Services.Worlds, "/") + server.APIPrefix
@@ -358,12 +388,11 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		if inCluster {
 			bcfg.ArtifactsURL = selfURL
 		} else {
-			local, listener, err := localWorkerAPI(cfg.Global)
+			local, err := localAPI()
 			if err != nil {
 				return jobs.Config{}, nil, err
 			}
 			bcfg.ArtifactsURL = local
-			internal = listener
 		}
 	case cfg.Global.Services.Artifacts != "":
 		base := strings.TrimRight(cfg.Global.Services.Artifacts, "/")

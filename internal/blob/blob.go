@@ -17,9 +17,8 @@
 // sends anything; so a bad key never reaches the provider and Dir never
 // leaves its root.
 //
-// Status 2026-10-16 (DEC-0038): the artifact store runs on it (cmd/
-// opens the Bucket from artifacts.storage, cmd/storage.go); the world store
-// follows. The mapping from internal/config's storage blocks to S3Config is
+// Status 2026-10-16 (DEC-0038): the artifact store and the world store run
+// on it (cmd/ opens each Bucket from its section's storage, cmd/storage.go). The mapping from internal/config's storage blocks to S3Config is
 // cmd/'s work, so this leaf does not import internal/config.
 package blob
 
@@ -82,6 +81,12 @@ type PutOptions struct {
 	IfAbsent bool
 	// ContentType is stored with the object on S3. Dir ignores it.
 	ContentType string
+	// Sync makes the write durable before Put returns. Dir: an fsync of the
+	// file before the rename (or link) and of its directory after it. S3
+	// ignores it: a provider answers 200 only for a stored object. For a
+	// store whose data cannot be made again (the worlds); the artifacts do
+	// without, as a lost write there costs a recomputation.
+	Sync bool
 }
 
 // Link is a presigned request. The holder sends Method to URL with every

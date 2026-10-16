@@ -615,6 +615,26 @@ was, with the meta's `createdAt` as the order after a restart. A read
 answers `302` to a link (a presigned GET, or the module's own signed link
 on `dir`) after the same access check.
 
+## Addendum 2026-10-16 — the world store on the blob leaf
+
+The world store does all its I/O through the blob leaf too (DEC-0038, step
+5), so `world.storage.type: s3` starts. The layout and the rules of this
+document stand: `{uid}/meta.json`, `{uid}/grants.json`,
+`{uid}/rev/{n}/world.zip|preview.png|meta.json`, the optimistic lock
+(`If-Match`, 412), last-N revisions with content-hash dedupe, the owner
+pinned at creation, the template mark; an existing `./data/worlds` opens
+as it is. What is replaced: the rename is the leaf's atomic `Put` (with
+an fsync on `dir`, as before); a world's directory removal is a `List` of
+`{uid}/` and a delete of each key; the per-request reads of meta.json and
+grants.json are an index built from one `List` at start and then kept in
+memory (one process per store). The per-world locks stay. A revision's
+save and a new world's meta.json are conditional writes where the
+provider has them (`If-None-Match: *` on aws), so a second writer cannot
+overwrite a revision; a revision that an interrupted upload left is
+stepped over, so a world's revision numbers can have gaps. The worlds
+bucket is versioned, and its identity may not delete a version. A local
+job worker reads a world on `s3` over the server's API.
+
 ## Addendum 2026-10-16 — `--tls-ca` removed
 
 The client-certificate authority this document introduced (`--tls-ca`,

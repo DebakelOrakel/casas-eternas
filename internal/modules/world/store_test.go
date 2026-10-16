@@ -4,18 +4,36 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 )
 
+// newTestStore is a store on a Dir in a temporary directory.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	// keepRevisions 0 (retain all): the retention sweep has its own tests, and
-	// everything else here asserts on revision directories it expects to stay.
-	store, err := NewStore(t.TempDir(), 0)
+	return newTestStoreOn(t, testDir(t, t.TempDir()), 0)
+}
+
+// testDir opens a Dir at root, closed at the end of the test.
+func testDir(t *testing.T, root string) *blob.Dir {
+	t.Helper()
+	d, err := blob.OpenDir(root, nil)
+	if err != nil {
+		t.Fatalf("OpenDir: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// newTestStoreOn is a store on `bucket`. keepRevisions 0 (retain all) for
+// most tests: the retention sweep has its own tests, and everything else
+// here asserts on revisions it expects to stay.
+func newTestStoreOn(t *testing.T, bucket blob.Bucket, keepRevisions int) *Store {
+	t.Helper()
+	store, err := NewStore(context.Background(), bucket, keepRevisions)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -27,6 +45,56 @@ func newTestStore(t *testing.T) *Store {
 		return tick
 	}
 	return store
+}
+
+// removeObject and writeObject change the bucket behind the store's back,
+// as an operator's hand would, and then build the index again: the store
+// sees such a change at its next start (it is the one writer).
+func removeObject(t *testing.T, s *Store, key string) {
+	t.Helper()
+	if err := s.bucket.Delete(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+	reindex(t, s)
+}
+
+func writeObject(t *testing.T, s *Store, key string, data []byte) {
+	t.Helper()
+	if _, err := s.bucket.Put(context.Background(), key, bytes.NewReader(data), int64(len(data)), blob.PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	reindex(t, s)
+}
+
+// reindex builds the index from the bucket again, as a restart does.
+func reindex(t *testing.T, s *Store) {
+	t.Helper()
+	if err := s.load(context.Background()); err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+}
+
+// stored reports whether the bucket holds the key.
+func stored(t *testing.T, s *Store, key string) bool {
+	t.Helper()
+	_, err := s.bucket.Head(context.Background(), key)
+	if err != nil && !errors.Is(err, blob.ErrNotFound) {
+		t.Fatal(err)
+	}
+	return err == nil
+}
+
+// storedUnder counts the keys under a prefix.
+func storedUnder(t *testing.T, s *Store, prefix string) int {
+	t.Helper()
+	n := 0
+	for _, err := range s.bucket.List(context.Background(), prefix) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	return n
 }
 
 // putSave uploads a save and also hands back the exact bytes it sent, so a
@@ -135,9 +203,9 @@ func TestPutKeepsPreviousRevisions(t *testing.T) {
 	if _, _, err := putSave(t, s, sampleUID, "v2", 1); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(s.revDir(sampleUID, 1), "world.zip"))
+	raw, err := s.read(context.Background(), revKey(sampleUID, 1, zipName), 0)
 	if err != nil {
-		t.Fatalf("revision 1 should still be on disk: %v", err)
+		t.Fatalf("revision 1 should still be stored: %v", err)
 	}
 	if !bytes.Equal(raw, firstBytes) {
 		t.Error("revision 1 no longer holds its own bytes")
@@ -151,9 +219,7 @@ func TestWorldWithoutMetaReadsAsAbsent(t *testing.T) {
 	if _, _, err := putSave(t, s, sampleUID, "v1", 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(s.worldDir(sampleUID), "meta.json")); err != nil {
-		t.Fatal(err)
-	}
+	removeObject(t, s, metaKey(sampleUID))
 	if _, err := s.Get(context.Background(), sampleUID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get = %v, want ErrNotFound", err)
 	}
@@ -180,12 +246,11 @@ func TestListIsNewestFirstAndSkipsBrokenEntries(t *testing.T) {
 	}
 	// A corrupt entry must not take the listing down with it — one broken
 	// world should not make the panel unusable.
-	if err := os.WriteFile(filepath.Join(s.worldDir(uids[1]), "meta.json"), []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// So must a stray directory that is not a world at all.
-	if err := os.MkdirAll(filepath.Join(s.dir, "not-a-world"), 0o755); err != nil {
-		t.Fatal(err)
+	// So must a stray object that is not a world at all.
+	writeObject(t, s, "not-a-world/x", []byte("x"))
+	writeObject(t, s, metaKey(uids[1]), []byte("{not json"))
+	if _, err := s.Get(context.Background(), uids[1]); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("Get of a corrupt world = %v, want a parse error", err)
 	}
 
 	list, err := s.List(context.Background())
@@ -211,8 +276,8 @@ func TestDeleteRemovesEveryRevision(t *testing.T) {
 	if err := s.Delete(context.Background(), sampleUID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := os.Stat(s.worldDir(sampleUID)); !os.IsNotExist(err) {
-		t.Error("world directory survived the delete")
+	if n := storedUnder(t, s, sampleUID+"/"); n != 0 {
+		t.Errorf("%d objects of the world survived the delete", n)
 	}
 	if err := s.Delete(context.Background(), sampleUID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("second delete = %v, want ErrNotFound", err)
@@ -321,8 +386,8 @@ func TestPutDedupesIdenticalUpload(t *testing.T) {
 	if again.Revision != first.Revision {
 		t.Errorf("revision moved on identical bytes: %d -> %d", first.Revision, again.Revision)
 	}
-	if _, err := os.Stat(s.revDir(sampleUID, first.Revision+1)); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("an identical upload left a new revision directory behind")
+	if n := storedUnder(t, s, revPrefix(sampleUID, first.Revision+1)); n != 0 {
+		t.Errorf("an identical upload left a new revision behind")
 	}
 	// Different bytes at the same expected revision still advance as ever.
 	if next, _, err := putSave(t, s, sampleUID, "v2", first.Revision); err != nil || next.Revision != first.Revision+1 {
@@ -333,26 +398,18 @@ func TestPutDedupesIdenticalUpload(t *testing.T) {
 // Retention: with keepRevisions = 2, the third upload prunes revision 1 while
 // the current and its predecessor stay readable.
 func TestPruneKeepsNewestN(t *testing.T) {
-	store, err := NewStore(t.TempDir(), 2)
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	tick := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
-	store.now = func() time.Time {
-		tick = tick.Add(time.Second)
-		return tick
-	}
+	store := newTestStoreOn(t, testDir(t, t.TempDir()), 2)
 	for i, body := range []string{"v1", "v2", "v3"} {
 		if _, _, err := putSave(t, store, sampleUID, body, i); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := os.Stat(store.revDir(sampleUID, 1)); !errors.Is(err, os.ErrNotExist) {
+	if n := storedUnder(t, store, revPrefix(sampleUID, 1)); n != 0 {
 		t.Errorf("revision 1 should have been pruned")
 	}
 	for _, n := range []int{2, 3} {
-		if _, err := os.Stat(filepath.Join(store.revDir(sampleUID, n), "world.zip")); err != nil {
-			t.Errorf("revision %d should be retained: %v", n, err)
+		if !stored(t, store, revKey(sampleUID, n, zipName)) {
+			t.Errorf("revision %d should be retained", n)
 		}
 	}
 	// The current revision still reads, and the meta still names it.
