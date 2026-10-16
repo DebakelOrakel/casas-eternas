@@ -385,3 +385,42 @@ func TestS3WriteByPresignedPut(t *testing.T) {
 		t.Errorf("commit of an object that is not there = %d, want 409", got.Code)
 	}
 }
+
+// The two 409s of write-link can be told apart: a whole artifact (another
+// writer committed first, the bytes are there) carries the code
+// "committed" in the body; too many uncommitted files carries none. The
+// worker treats the first as "already written" and the second as a refusal.
+func TestWriteLinkConflictsCarryACode(t *testing.T) {
+	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil),
+		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	codeOf := func(r *httptest.ResponseRecorder) string {
+		var body struct {
+			Code string `json:"code"`
+		}
+		_ = json.Unmarshal(r.Body.Bytes(), &body)
+		return body.Code
+	}
+	uid, _ := resolve(t, mux, true)
+	meta := metaFor(Key{WorldUID: "a754f0db-ff5c-4b45-9f2c-1b4e7a30d001", WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}, "whole")
+	_, metaLink := writeLink(t, mux, uid, metaName, len(meta), "")
+	for i := range maxPendingFiles - 1 {
+		if got, _ := writeLink(t, mux, uid, "f"+strconv.Itoa(i), 1, ""); got.Code != http.StatusOK {
+			t.Fatalf("link %d = %d", i, got.Code)
+		}
+	}
+	full, _ := writeLink(t, mux, uid, "one-more", 1, "")
+	if full.Code != http.StatusConflict || codeOf(full) == WriteLinkCommitted {
+		t.Errorf("too many pending = %d %s, want 409 without the code %q", full.Code, full.Body, WriteLinkCommitted)
+	}
+
+	if code := putTo(mux, metaLink.URL, meta); code != http.StatusOK {
+		t.Fatalf("meta upload = %d", code)
+	}
+	if got := commit(mux, uid, "", Upload{metaName, int64(len(meta))}); got.Code != http.StatusNoContent {
+		t.Fatalf("commit = %d %s", got.Code, got.Body)
+	}
+	whole, _ := writeLink(t, mux, uid, "f0", 1, "")
+	if whole.Code != http.StatusConflict || codeOf(whole) != WriteLinkCommitted {
+		t.Errorf("write-link for a whole artifact = %d %s, want 409 with the code %q", whole.Code, whole.Body, WriteLinkCommitted)
+	}
+}

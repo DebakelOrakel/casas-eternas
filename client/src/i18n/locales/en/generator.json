@@ -56,6 +56,7 @@
   "generator.load.template.mark.help": "Offers this world to every visitor of the server, also without an account, to copy. Its content does not change.",
   "generator.load.template.unmark.label": "Remove template mark",
   "generator.load.template.unmark.help": "This world is no longer offered as a template. Copies made from it stay.",
+  "generator.load.template.failed": "The template mark could not be changed.",
   "generator.load.template.filter.label": "Templates",
   "generator.load.template.filter.help": "Only the worlds the server offers as a start, to copy.",
   "generator.artifacts.title": "Artifacts",

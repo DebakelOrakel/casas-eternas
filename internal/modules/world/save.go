@@ -27,8 +27,11 @@ const previewLimit = 8 << 20 // 8 MiB
 
 // yamlLine matches "  key: value", the only shape a recipe writes. A key may
 // hold a "/" — an annotation key is prefixed, `casas-eternas/copied-from` —
-// but never a ".", which is the path separator of readYAMLValue.
-var yamlLine = regexp.MustCompile(`^(\s*)([\w/-]+):\s*(.*)$`)
+// and a ".", as a prefix that is a domain does (`example.com/x`). A "." is
+// also the path separator of readYAMLValue, so a path cannot name such a
+// key; the server reads no annotation. The same keys as the client's reader
+// (client/src/world/save/recipeYaml.ts).
+var yamlLine = regexp.MustCompile(`^(\s*)([\w./-]+):\s*(.*)$`)
 
 // CopiedFromAnnotation names the world a copy was made from, by its uid:
 // `metadata.annotations` in world.yaml, Kubernetes style. The prefix is the
@@ -188,7 +191,8 @@ func readEntryBytes(file *zip.File, limit int64) ([]byte, error) {
 //
 // The edit is a text edit of the metadata block, in the shape the client
 // writes (recordToYaml): `metadata:` at the top level, its keys indented by
-// two spaces, annotations by four. The rest of world.yaml is not read.
+// two spaces, annotations deeper (withCopyIdentity). The rest of world.yaml
+// is not read.
 func copySave(data []byte, newUID, sourceUID string) ([]byte, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -231,9 +235,30 @@ func copySave(data []byte, newUID, sourceUID string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// metadataKey and annotationKey find the key of a metadata line (two
+// spaces) and of an annotation line (any indent). A key may hold a "." and
+// a "/" (`example.com/x`).
+var (
+	metadataKey   = regexp.MustCompile(`^ {2}([\w./-]+):`)
+	annotationKey = regexp.MustCompile(`^ *([\w./-]+):`)
+)
+
 // withCopyIdentity edits world.yaml's metadata block: the uid replaced, the
 // copied-from annotation set (any other annotation kept, in its order).
 // A copy of a copy names its direct source.
+//
+// THE ANNOTATIONS BLOCK is every line under `  annotations:` that is
+// indented deeper than it, up to the next line that is not. Its lines are
+// kept as they are (keys may hold a "." and a "/", values their quotes);
+// only the copied-from entry and the lines deeper than it are dropped, and
+// the new copied-from entry is written last with the indent of the block's
+// first entry (four spaces when there is none). The lines of the block end
+// as the `metadata:` line does (CRLF stays CRLF). Until 2026-10-16 a key
+// with a "." ended the block, and the lines after it were copied out of it
+// (invalid YAML).
+//
+// The mirror of the browser's rewrite (client/src/world/worldCopy.ts):
+// both pass the cases of testdata/copy-identity.json.
 func withCopyIdentity(text, newUID, sourceUID string) (string, error) {
 	lines := strings.Split(text, "\n")
 	start := -1
@@ -246,6 +271,10 @@ func withCopyIdentity(text, newUID, sourceUID string) (string, error) {
 	if start < 0 {
 		return "", fmt.Errorf("world.yaml carries no metadata block")
 	}
+	eol := ""
+	if strings.HasSuffix(lines[start], "\r") {
+		eol = "\r"
+	}
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
 		line := strings.TrimRight(lines[i], "\r")
@@ -255,30 +284,43 @@ func withCopyIdentity(text, newUID, sourceUID string) (string, error) {
 		}
 	}
 
-	var block []string
-	var annotations [][2]string
+	var block, annotations []string
 	uidSet := false
 	inAnnotations := false
+	entryIndent := -1
+	skipping := false
 	for _, raw := range lines[start+1 : end] {
-		line := strings.TrimRight(raw, "\r")
-		match := yamlLine.FindStringSubmatch(line)
-		if match != nil && len(match[1]) == 4 && inAnnotations {
-			if match[2] != CopiedFromAnnotation {
-				annotations = append(annotations, [2]string{match[2], match[3]})
+		line := strings.TrimSuffix(raw, "\r")
+		if line == "" {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if inAnnotations && indent > 2 {
+			if entryIndent < 0 {
+				entryIndent = indent
+			}
+			// An entry (or a line no deeper than one): it starts or ends a skip.
+			if indent <= entryIndent {
+				match := annotationKey.FindStringSubmatch(line)
+				skipping = match != nil && match[1] == CopiedFromAnnotation
+			}
+			if !skipping {
+				annotations = append(annotations, line)
 			}
 			continue
 		}
 		inAnnotations = false
-		if match != nil && len(match[1]) == 2 && match[2] == "annotations" {
+		key := ""
+		if match := metadataKey.FindStringSubmatch(line); match != nil {
+			key = match[1]
+		}
+		if key == "annotations" {
 			inAnnotations = true
 			continue
 		}
-		if match != nil && len(match[1]) == 2 && match[2] == "uid" {
+		if key == "uid" {
 			block = append(block, "  uid: "+newUID)
 			uidSet = true
-			continue
-		}
-		if line == "" {
 			continue
 		}
 		block = append(block, line)
@@ -286,14 +328,17 @@ func withCopyIdentity(text, newUID, sourceUID string) (string, error) {
 	if !uidSet {
 		block = append(block, "  uid: "+newUID)
 	}
-	annotations = append(annotations, [2]string{CopiedFromAnnotation, sourceUID})
-	block = append(block, "  annotations:")
-	for _, pair := range annotations {
-		block = append(block, "    "+pair[0]+": "+pair[1])
+	if entryIndent < 0 {
+		entryIndent = 4
 	}
+	block = append(block, "  annotations:")
+	block = append(block, annotations...)
+	block = append(block, strings.Repeat(" ", entryIndent)+CopiedFromAnnotation+": "+sourceUID)
 
 	result := append([]string{}, lines[:start+1]...)
-	result = append(result, block...)
+	for _, line := range block {
+		result = append(result, line+eol)
+	}
 	result = append(result, lines[end:]...)
 	return strings.Join(result, "\n"), nil
 }

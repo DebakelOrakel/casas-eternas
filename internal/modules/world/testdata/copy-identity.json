@@ -1,0 +1,42 @@
+{
+  "_comment": "world.yaml under a copy's identity (uid \"new\", source \"old\"): the cases both rewrites must pass, the server's (internal/modules/world/save.go, withCopyIdentity; save_test.go) and the browser's (client/src/world/worldCopy.ts; npm run harness:roundtrip). want null: refused.",
+  "uid": "new",
+  "source": "old",
+  "cases": [
+    {
+      "name": "the uid replaced, other annotations kept, the source replaced",
+      "in": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: old\n  annotations:\n    example/note: kept\n    casas-eternas/copied-from: older\nspec:\n  seed: s\n",
+      "want": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: new\n  annotations:\n    example/note: kept\n    casas-eternas/copied-from: old\nspec:\n  seed: s\n"
+    },
+    {
+      "name": "a key with a dot stays in the block",
+      "in": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: old\n  annotations:\n    example.com/x: one\n    casas-eternas/copied-from: older\n    example.com/y: two\nspec:\n  seed: s\n",
+      "want": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: new\n  annotations:\n    example.com/x: one\n    example.com/y: two\n    casas-eternas/copied-from: old\nspec:\n  seed: s\n"
+    },
+    {
+      "name": "CRLF line ends are kept",
+      "in": "apiVersion: casas-eternas/v1alpha1\r\nkind: FlatWorld\r\nmetadata:\r\n  name: a\r\n  uid: old\r\n  annotations:\r\n    example.com/x: one\r\n    casas-eternas/copied-from: older\r\nspec:\r\n  seed: s\r\n",
+      "want": "apiVersion: casas-eternas/v1alpha1\r\nkind: FlatWorld\r\nmetadata:\r\n  name: a\r\n  uid: new\r\n  annotations:\r\n    example.com/x: one\r\n    casas-eternas/copied-from: old\r\nspec:\r\n  seed: s\r\n"
+    },
+    {
+      "name": "annotations indented by six spaces",
+      "in": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: old\n  annotations:\n      example.com/x: one\n      casas-eternas/copied-from: older\n      example/z: three\nspec:\n  seed: s\n",
+      "want": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: new\n  annotations:\n      example.com/x: one\n      example/z: three\n      casas-eternas/copied-from: old\nspec:\n  seed: s\n"
+    },
+    {
+      "name": "no annotations: the block is added",
+      "in": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: old\nspec:\n  seed: s\n",
+      "want": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: new\n  annotations:\n    casas-eternas/copied-from: old\nspec:\n  seed: s\n"
+    },
+    {
+      "name": "no uid, a quoted value, a key after the annotations",
+      "in": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  annotations:\n    example/note: \"a: b\"\n  generation: 3\nspec:\n  seed: s\n",
+      "want": "apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  generation: 3\n  uid: new\n  annotations:\n    example/note: \"a: b\"\n    casas-eternas/copied-from: old\nspec:\n  seed: s\n"
+    },
+    {
+      "name": "no metadata block: no world to copy",
+      "in": "spec:\n  seed: s\n",
+      "want": null
+    }
+  ]
+}

@@ -230,6 +230,9 @@ type WorldConfig struct {
 	// (DEC-0038, fork 4: the same keys as artifacts', since 2026-10-16).
 	ReadLinkTTL time.Duration `mapstructure:"read-link-ttl"`
 	LinkKey     string        `mapstructure:"link-key"`
+	// The previous key file of a key change-over: links signed with it are
+	// still accepted; new ones are signed with LinkKey (2026-10-16).
+	LinkKeyPrevious string `mapstructure:"link-key-previous"`
 }
 
 type ArtifactsConfig struct {
@@ -246,6 +249,8 @@ type ArtifactsConfig struct {
 	ReadLinkTTL  time.Duration `mapstructure:"read-link-ttl"`
 	WriteLinkTTL time.Duration `mapstructure:"write-link-ttl"`
 	LinkKey      string        `mapstructure:"link-key"`
+	// The previous key file of a key change-over, as for world.
+	LinkKeyPrevious string `mapstructure:"link-key-previous"`
 }
 
 type JobsConfig struct {

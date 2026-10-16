@@ -17,6 +17,7 @@
 package artifacts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -88,7 +89,9 @@ type signing interface{ Signer() *blob.LinkSigner }
 
 // NewLinkSigner makes the signer of the dir backend's links from
 // artifacts.link-key (DEC-0038, fork 4). Without a key file the key is
-// ephemeral and the links die at restart, which is logged.
+// ephemeral and the links die at restart, which is logged. With
+// artifacts.link-key-previous the signer also accepts the links of the
+// key before (a change-over, 2026-10-16); it signs with artifacts.link-key.
 func NewLinkSigner(cfg config.Config) (*blob.LinkSigner, error) {
 	key, ephemeral, err := blob.ReadLinkKey(cfg.Artifacts.LinkKey)
 	if err != nil {
@@ -97,7 +100,15 @@ func NewLinkSigner(cfg config.Config) (*blob.LinkSigner, error) {
 	if ephemeral {
 		slog.Warn("artifacts.link-key is not set: the artifact links use an ephemeral key and stop working at restart")
 	}
-	return blob.NewLinkSigner(LinkBase, UploadLimit, key)
+	previous, err := blob.ReadPreviousLinkKey(cfg.Artifacts.LinkKeyPrevious)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts.link-key-previous: %w", err)
+	}
+	keys := [][]byte{key}
+	if previous != nil {
+		keys = append(keys, previous)
+	}
+	return blob.NewLinkSigner(LinkBase, UploadLimit, keys...)
 }
 
 // BucketOptions are what the store asks of an s3 bucket: CORS, because the
@@ -348,7 +359,31 @@ func (m *Module) handleLinkPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := &bodyReader{r: http.MaxBytesReader(w, r.Body, length)}
-	if _, err := m.cfg.Bucket.Put(r.Context(), key, body, length, blob.PutOptions{ContentType: "application/octet-stream"}); err != nil {
+	// The artifact decides too: a link given before its commit is no longer
+	// valid, nor one whose file is not pending (given before a restart),
+	// and a meta.json must name the artifact's key (Store.AcceptUpload).
+	// Answered as a provider answers a link it does not take: 403; a meta
+	// that names another key 409, as at a commit.
+	uid, name, _ := strings.Cut(key, "/")
+	var meta []byte
+	var payload io.Reader = body
+	if name == metaName {
+		raw, err := readExactly(body, length, metaLimit)
+		if err != nil {
+			httpjson.ClientError(w, http.StatusBadRequest, "the body ended before its length")
+			return
+		}
+		meta, payload = raw, bytes.NewReader(raw)
+	}
+	if err := m.store.AcceptUpload(uid, name, meta); err != nil {
+		if errors.Is(err, ErrKeyMismatch) {
+			httpjson.ClientError(w, http.StatusConflict, err.Error())
+			return
+		}
+		httpjson.ClientError(w, http.StatusForbidden, "the link is not valid any more")
+		return
+	}
+	if _, err := m.cfg.Bucket.Put(r.Context(), key, payload, length, blob.PutOptions{ContentType: "application/octet-stream"}); err != nil {
 		if body.failed || errors.Is(err, blob.ErrSize) {
 			httpjson.ClientError(w, http.StatusBadRequest, "the body ended before its length")
 			return
@@ -358,6 +393,13 @@ func (m *Module) handleLinkPut(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 }
+
+// WriteLinkCommitted is the code in the body of the 409 that write-link
+// answers for a whole artifact: another writer committed it first, and its
+// bytes are there. The client takes it as "already written"
+// (HttpArtifactStore.ts). The other 409 of the route (too many uncommitted
+// files) carries no code: it is a refusal.
+const WriteLinkCommitted = "committed"
 
 type writeLinkRequest struct {
 	Name string `json:"name"`
@@ -400,6 +442,15 @@ func (m *Module) handleWriteLink(w http.ResponseWriter, r *http.Request) {
 			httpjson.ClientError(w, http.StatusRequestEntityTooLarge, "artifact file too large")
 		case errors.Is(err, errBadSize):
 			httpjson.ClientError(w, http.StatusBadRequest, "size must be the file's length in bytes")
+		case errors.Is(err, errCommitted):
+			httpjson.ClientErrorCode(w, http.StatusConflict, WriteLinkCommitted, err.Error())
+		case errors.Is(err, errTooManyPending):
+			httpjson.ClientError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, errStoreFull):
+			// A 5xx: the store is full for now, not the request wrong; the
+			// worker gives its task back, and the sweep or a commit makes
+			// room.
+			httpjson.ClientError(w, http.StatusInsufficientStorage, err.Error())
 		case errors.Is(err, ErrNotFound):
 			httpjson.ClientError(w, http.StatusNotFound, "no such artifact — resolve with create first")
 		default:
@@ -439,7 +490,7 @@ func (m *Module) handleCommit(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := m.store.Commit(r.Context(), uid, request.Files); err != nil {
 		switch {
-		case errors.Is(err, ErrNotSigned), errors.Is(err, ErrNotUploaded):
+		case errors.Is(err, ErrNotSigned), errors.Is(err, ErrNotUploaded), errors.Is(err, ErrKeyMismatch):
 			httpjson.ClientError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, ErrNotFound):
 			httpjson.ClientError(w, http.StatusNotFound, "no such artifact — resolve with create first")
@@ -470,6 +521,8 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrBadPath):
 			httpjson.ClientError(w, http.StatusBadRequest, "invalid artifact path")
+		case errors.Is(err, ErrKeyMismatch):
+			httpjson.ClientError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, ErrNotFound):
 			// Writing into an unminted uid: resolve with create first. Loud on
 			// purpose — accepting the write would mint entries out of thin air.

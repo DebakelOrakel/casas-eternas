@@ -1,12 +1,49 @@
 package cmd
 
 import (
+	"context"
 	"net"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 )
+
+// H3 (review of 2026-10-16): when the world and the artifacts targets run
+// in one process, a start whose two storage roots are one or nested is
+// refused before any bucket opens, naming both keys. Before, it started,
+// and the artifact store's sweep deleted the worlds as junk.
+func TestAStartRefusesWorldsInTheArtifactStorage(t *testing.T) {
+	root := t.TempDir()
+	var cfg config.Config
+	cfg.Global.Listen = "127.0.0.1:8080"
+	cfg.Global.Auth.Mode = string(config.AuthNone)
+	cfg.World.ReadLinkTTL = 15 * time.Minute
+	cfg.Artifacts.ReadLinkTTL = 15 * time.Minute
+	cfg.Artifacts.WriteLinkTTL = time.Hour
+	cfg.World.Storage = config.ObjectStorage{Type: "dir", Dir: &config.DirStorage{Path: root}}
+	both := config.Targets{config.TargetWorld: true, config.TargetArtifacts: true}
+	for _, artifactsPath := range []string{root, filepath.Join(root, "artifacts")} {
+		cfg.Artifacts.Storage = config.ObjectStorage{Type: "dir", Dir: &config.DirStorage{Path: artifactsPath}}
+		modules, _, _, err := buildModules(context.Background(), both, cfg)
+		if err == nil {
+			closeAll(t, modules)
+		}
+		if err == nil || !strings.Contains(err.Error(), "world.storage") || !strings.Contains(err.Error(), "artifacts.storage") {
+			t.Errorf("artifacts at %s: %v, want a refusal that names both keys", artifactsPath, err)
+		}
+	}
+	// Apart, they start.
+	cfg.World.Storage.Dir.Path = filepath.Join(root, "worlds")
+	cfg.Artifacts.Storage.Dir.Path = filepath.Join(root, "artifacts")
+	modules, _, _, err := buildModules(context.Background(), both, cfg)
+	if err != nil {
+		t.Fatalf("two directories: %v", err)
+	}
+	closeAll(t, modules)
+}
 
 // Without TLS a local worker reaches this server over the public listener
 // (DEC-0038, step 3).

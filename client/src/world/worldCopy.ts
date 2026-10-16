@@ -24,12 +24,27 @@ export const COPIED_FROM_ANNOTATION = 'casas-eternas/copied-from'
 // metadata block.
 //
 // A text edit of the metadata block, in the shape worldRecord.recordToYaml
-// writes — two spaces for its keys, four for annotations. The rest of the file
-// is not read, so a save of a newer build is copied as it is.
+// writes — two spaces for its keys. The rest of the file is not read, so a
+// save of a newer build is copied as it is. THE ANNOTATIONS BLOCK is every
+// line under `  annotations:` that is indented deeper than it, up to the next
+// line that is not; its lines are kept as they are (keys may hold a "." and a
+// "/", values their quotes), only the copied-from entry and the lines deeper
+// than it are dropped, and the new copied-from entry is written last with
+// the indent of the block's first entry (four spaces when there is none).
+// The line end of `metadata:` is used for the lines of the block (CRLF
+// stays CRLF). Until 2026-10-16 a key with a "." ended the block, and the
+// lines after it were copied out of it (invalid YAML).
+//
+// The server's rewrite does the same (save.go, withCopyIdentity); both pass
+// the cases of internal/modules/world/testdata/copy-identity.json.
+const METADATA_KEY = /^ {2}([\w./-]+):/
+const ANNOTATION_KEY = /^ *([\w./-]+):/
+
 export function withCopyIdentity(yaml: string, uid: string, sourceUid: string): string | null {
   const lines = yaml.split('\n')
   const start = lines.findIndex((line) => line.replace(/\r$/, '') === 'metadata:')
   if (start < 0) return null
+  const eol = lines[start].endsWith('\r') ? '\r' : ''
   let end = lines.length
   for (let i = start + 1; i < lines.length; i++) {
     const line = lines[i].replace(/\r$/, '')
@@ -39,34 +54,38 @@ export function withCopyIdentity(yaml: string, uid: string, sourceUid: string): 
     }
   }
   const block: string[] = []
-  const annotations: [string, string][] = []
+  const annotations: string[] = []
   let uidSet = false
   let inAnnotations = false
+  let entryIndent = -1
+  let skipping = false
   for (const raw of lines.slice(start + 1, end)) {
     const line = raw.replace(/\r$/, '')
-    const match = line.match(/^(\s*)([\w/-]+):\s*(.*)$/)
-    const indent = match ? match[1].length : -1
-    if (match && indent === 4 && inAnnotations) {
-      if (match[2] !== COPIED_FROM_ANNOTATION) annotations.push([match[2], match[3]])
+    if (line === '') continue
+    const indent = line.length - line.replace(/^ +/, '').length
+    if (inAnnotations && indent > 2) {
+      if (entryIndent < 0) entryIndent = indent
+      // An entry (or a line no deeper than one): it starts or ends a skip.
+      if (indent <= entryIndent) skipping = line.match(ANNOTATION_KEY)?.[1] === COPIED_FROM_ANNOTATION
+      if (!skipping) annotations.push(line)
       continue
     }
     inAnnotations = false
-    if (match && indent === 2 && match[2] === 'annotations') {
+    const key = line.match(METADATA_KEY)?.[1]
+    if (key === 'annotations') {
       inAnnotations = true
       continue
     }
-    if (match && indent === 2 && match[2] === 'uid') {
+    if (key === 'uid') {
       block.push(`  uid: ${uid}`)
       uidSet = true
       continue
     }
-    if (line === '') continue
     block.push(line)
   }
   if (!uidSet) block.push(`  uid: ${uid}`)
-  annotations.push([COPIED_FROM_ANNOTATION, sourceUid])
-  block.push('  annotations:', ...annotations.map(([key, value]) => `    ${key}: ${value}`))
-  return [...lines.slice(0, start + 1), ...block, ...lines.slice(end)].join('\n')
+  block.push('  annotations:', ...annotations, `${' '.repeat(entryIndent < 0 ? 4 : entryIndent)}${COPIED_FROM_ANNOTATION}: ${sourceUid}`)
+  return [...lines.slice(0, start + 1), ...block.map((line) => line + eol), ...lines.slice(end)].join('\n')
 }
 
 // The archive under a copy's identity: world.yaml rewritten, every other

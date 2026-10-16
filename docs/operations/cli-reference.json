@@ -191,6 +191,11 @@
           "env": "CASAS_ARTIFACTS_LINK_KEY"
         },
         {
+          "name": "artifacts.link-key-previous",
+          "usage": "Path to the previous artifact link key, during a key change-over (backend dir): links signed with it are still accepted, new links are signed with artifacts.link-key. Set it to the old key file when artifacts.link-key gets a new one, and remove it when the old links have expired (the longer of artifacts.read-link-ttl and artifacts.write-link-ttl). Empty: no previous key.",
+          "env": "CASAS_ARTIFACTS_LINK_KEY_PREVIOUS"
+        },
+        {
           "name": "artifacts.read-link-ttl",
           "default": "15m0s",
           "usage": "How long a link to read an artifact file is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.",
@@ -316,6 +321,11 @@
           "env": "CASAS_WORLD_LINK_KEY"
         },
         {
+          "name": "world.link-key-previous",
+          "usage": "Path to the previous world link key, during a key change-over (backend dir): links signed with it are still accepted, new links are signed with world.link-key. Set it to the old key file when world.link-key gets a new one, and remove it when the old links have expired (world.read-link-ttl). Empty: no previous key.",
+          "env": "CASAS_WORLD_LINK_KEY_PREVIOUS"
+        },
+        {
           "name": "world.read-link-ttl",
           "default": "15m0s",
           "usage": "How long a link to read a world's save or preview is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.",
@@ -353,6 +363,12 @@
       "key": "artifacts.link-key",
       "env": "CASAS_ARTIFACTS_LINK_KEY",
       "usage": "Path to the key (at least 32 random bytes) the dir backend signs its artifact links (to read and to write) with. Without it a key is generated at startup, so links do not survive a restart.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "artifacts.link-key-previous",
+      "env": "CASAS_ARTIFACTS_LINK_KEY_PREVIOUS",
+      "usage": "Path to the previous artifact link key, during a key change-over (backend dir): links signed with it are still accepted, new links are signed with artifacts.link-key. Set it to the old key file when artifacts.link-key gets a new one, and remove it when the old links have expired (the longer of artifacts.read-link-ttl and artifacts.write-link-ttl). Empty: no previous key.",
       "command": "casas-eternas start"
     },
     {
@@ -545,6 +561,12 @@
       "key": "world.link-key",
       "env": "CASAS_WORLD_LINK_KEY",
       "usage": "Path to the key (at least 32 random bytes) the dir backend signs its world links with. Without it a key is generated at startup, so links do not survive a restart.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "world.link-key-previous",
+      "env": "CASAS_WORLD_LINK_KEY_PREVIOUS",
+      "usage": "Path to the previous world link key, during a key change-over (backend dir): links signed with it are still accepted, new links are signed with world.link-key. Set it to the old key file when world.link-key gets a new one, and remove it when the old links have expired (world.read-link-ttl). Empty: no previous key.",
       "command": "casas-eternas start"
     },
     {

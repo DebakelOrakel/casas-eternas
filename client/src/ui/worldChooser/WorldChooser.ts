@@ -569,7 +569,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     if (target === 'browser') {
       const archive = await fetchWorld(source.uid)
       if (!archive) {
-        options.notifications.show({ message: t('generator.load.unavailable'), icon: '/icons/warning.png', durationMs: 6000 })
+        options.notifications.show({ message: t('notify.copy.fetchFailed'), icon: '/icons/warning.png', durationMs: 6000 })
         return
       }
       const copy = await copyArchive(archive, newWorldUid(), source.uid)
@@ -656,7 +656,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
       void setWorldTemplate(copy.uid, !copy.template).then(async (done) => {
         if (!done) {
           closeDetail()
-          setNote(t('generator.load.unavailable'))
+          setNote(t('generator.load.template.failed'))
           return
         }
         await reload()

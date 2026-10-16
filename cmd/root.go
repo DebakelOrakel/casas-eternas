@@ -42,12 +42,14 @@ const (
 	keyKeepRevs     = "world.keep-revisions"
 	keyWorldReadTTL = "world.read-link-ttl"
 	keyWorldLinkKey = "world.link-key"
+	keyWorldLinkOld = "world.link-key-previous"
 	keyArtsType     = "artifacts.storage.type"
 	keyArtsPath     = "artifacts.storage.dir.path"
 	keyArtsCap      = "artifacts.cap"
 	keyArtsReadTTL  = "artifacts.read-link-ttl"
 	keyArtsWriteTTL = "artifacts.write-link-ttl"
 	keyArtsLinkKey  = "artifacts.link-key"
+	keyArtsLinkOld  = "artifacts.link-key-previous"
 	keyClientDir    = "client.content-dir"
 	keyAuthDir      = "auth.state-dir"
 	keyDocsDir      = "docs.content-dir"
@@ -115,12 +117,14 @@ const (
 	textKeepRevs     = `How many revisions of each world to retain; older ones are pruned on upload. 0 keeps every revision.`
 	textWorldReadTTL = `How long a link to read a world's save or preview is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.`
 	textWorldLinkKey = `Path to the key (at least 32 random bytes) the dir backend signs its world links with. Without it a key is generated at startup, so links do not survive a restart.`
+	textWorldLinkOld = `Path to the previous world link key, during a key change-over (backend dir): links signed with it are still accepted, new links are signed with world.link-key. Set it to the old key file when world.link-key gets a new one, and remove it when the old links have expired (world.read-link-ttl). Empty: no previous key.`
 	textArtsType     = `The artifact store's backend: dir or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.`
 	textArtsPath     = `The directory of the artifact store (backend dir).`
 	textArtsCap      = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
 	textArtsReadTTL  = `How long a link to read an artifact file is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.`
 	textArtsWriteTTL = `How long a link to write an artifact file is valid. A job worker asks for one per file it writes, with the file's length, and uploads to it straight to the bucket; it asks again when the link has less than 5 minutes left or is refused.`
 	textArtsLinkKey  = `Path to the key (at least 32 random bytes) the dir backend signs its artifact links (to read and to write) with. Without it a key is generated at startup, so links do not survive a restart.`
+	textArtsLinkOld  = `Path to the previous artifact link key, during a key change-over (backend dir): links signed with it are still accepted, new links are signed with artifacts.link-key. Set it to the old key file when artifacts.link-key gets a new one, and remove it when the old links have expired (the longer of artifacts.read-link-ttl and artifacts.write-link-ttl). Empty: no previous key.`
 	textClientDir    = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
 	textAuthDir      = `The directory the auth subsystem's state lives in — auth.db, holding users and their credentials, and the avatars. A users.json left by an older server is imported once when the database is founded.`
 	textDocsDir      = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
@@ -196,12 +200,14 @@ func init() {
 	StartCmd.Flags().Int(keyKeepRevs, 3, textKeepRevs)
 	StartCmd.Flags().Duration(keyWorldReadTTL, 15*time.Minute, textWorldReadTTL)
 	StartCmd.Flags().String(keyWorldLinkKey, "", textWorldLinkKey)
+	StartCmd.Flags().String(keyWorldLinkOld, "", textWorldLinkOld)
 	StartCmd.Flags().String(keyArtsType, "dir", textArtsType)
 	StartCmd.Flags().String(keyArtsPath, "./data/artifacts", textArtsPath)
 	StartCmd.Flags().String(keyArtsCap, "", textArtsCap)
 	StartCmd.Flags().Duration(keyArtsReadTTL, 15*time.Minute, textArtsReadTTL)
 	StartCmd.Flags().Duration(keyArtsWriteTTL, time.Hour, textArtsWriteTTL)
 	StartCmd.Flags().String(keyArtsLinkKey, "", textArtsLinkKey)
+	StartCmd.Flags().String(keyArtsLinkOld, "", textArtsLinkOld)
 	StartCmd.Flags().String(keyClientDir, "", textClientDir)
 	StartCmd.Flags().String(keyAuthDir, "./data/auth", textAuthDir)
 	StartCmd.Flags().String(keyDocsDir, "", textDocsDir)
@@ -219,9 +225,9 @@ func init() {
 		keyAuthTknTTL: StartCmd, keyAuthSessTTL: StartCmd,
 		keySvcWorlds: StartCmd, keySvcArts: StartCmd, keyAuthDir: StartCmd,
 		keyWorldType: StartCmd, keyWorldPath: StartCmd, keyKeepRevs: StartCmd,
-		keyWorldReadTTL: StartCmd, keyWorldLinkKey: StartCmd,
+		keyWorldReadTTL: StartCmd, keyWorldLinkKey: StartCmd, keyWorldLinkOld: StartCmd,
 		keyArtsType: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
-		keyArtsReadTTL: StartCmd, keyArtsWriteTTL: StartCmd, keyArtsLinkKey: StartCmd,
+		keyArtsReadTTL: StartCmd, keyArtsWriteTTL: StartCmd, keyArtsLinkKey: StartCmd, keyArtsLinkOld: StartCmd,
 		keyClientDir: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsDir: StartCmd,
 		keySvcRelay: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyJobsDir: StartCmd,
 	}

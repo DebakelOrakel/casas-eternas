@@ -585,6 +585,159 @@ fork 4 for `world` (approved the same day: `world.read-link-ttl`, default
   the lifecycle rule for `test/` removes them. The CORS rule on the dev
   worlds bucket stays set (the server sets it at each start).
 
+2026-10-16: fixes after the review of `5be7f6e^..55583ed` (all approved
+the same day). Each has a test that failed before the fix (`-race`).
+
+- **A write the bucket stored but answered with an error.** A lost answer,
+  a cut request or the SDK's retry that meets its own `If-None-Match`
+  (`412`) can store an object and still fail the Put. The world store now
+  takes the revision number of a save whose claim failed in any way, so
+  the next update steps over it (before: every update chose it again and
+  answered `412` until a restart). A meta.json Put that failed is read
+  back: are the bytes ours, the write is done; at a creation with another
+  meta.json there, the index enters the stored world and the answer is
+  `409` — Get, a retry and an update then agree (before: Get `404`, retry
+  `409`, update `412`).
+- **A write is not cut half-way by its request.** The world store's write
+  sequences (a revision: save, preview, two metas; a delete; grants; the
+  template mark) run under the request's values without its cancel, with
+  a timeout of 10 minutes, so a closed browser tab does not leave a world
+  without its meta.
+- **The lock of a deleted world.** The per-world locks are counted: an
+  entry stays while a writer holds it or waits on it. Before, Delete
+  dropped it while a writer waited, and the next writer got a fresh mutex:
+  two writers of one world ran at once (on ceph, without the conditional
+  write, nothing else kept them apart).
+- **Retention counts whole revisions.** `world.keep-revisions` keeps the
+  newest revisions that have a revision meta.json; an orphan (a save whose
+  upload ended before its meta) takes no slot and is pruned. The current
+  revision is never pruned. Before, orphans took slots, and the last good
+  revision before the current one could go.
+- **A job token writes no world** (DEC-0037, Status): create, copy, delete
+  and the template mark answer `403` to it.
+- **Uncommitted uploads count against the cap.** THE RULE: the signed
+  length of every write link counts against `artifacts.cap` from the link
+  on, also after the link expires, until the artifact is committed or
+  goes; a write link is refused (`507`, the worker gives its task back)
+  when the uncommitted uploads of the whole store would pass the cap with
+  it. The sweep counts them as well, and an artifact whose links expired
+  uncommitted no longer is spared: it is junk after the grace, and the
+  sweep deletes the objects the links may have put there. An artifact
+  holds at most 64 uncommitted files (6 to 12 today); a fresh link for the
+  same file takes no second place (`409` above it). Why "also after the
+  link expires" rather than dropping an expired entry: the object may be
+  in the bucket, and an entry that forgot it would let a writer fill the
+  bucket one link lifetime at a time.
+- **A meta.json names its own artifact's key.** A meta whose key is not
+  the reservation's (or the landed meta's) is refused with `409`, at the
+  server's PUT before anything is written and at a commit, where nothing
+  is entered and the uploaded meta.json is deleted (a whole artifact whose
+  meta was replaced so goes as a whole: it is recomputable). Before, a
+  writer with the right to world A could file bytes under world B's key.
+  After the commit of its meta.json an artifact is whole and takes no more
+  uploads by link: the write-link route answers `409`, and the `dir` link
+  route refuses (`403`) a link given before the commit, a link whose file
+  is not pending (one given before a restart), and a meta.json with
+  another key (`409`). On `s3` the provider takes an upload by a valid
+  link without asking: until `artifacts.write-link-ttl` has passed, a
+  holder can still write into a committed artifact's objects. THE LOAD
+  RULE: the start has only the bucket, so it believes what it finds — a
+  meta.json written so is indexed at the next start as it stands. The
+  window is the link's lifetime; closing it would need a record of the
+  committed key outside the holder's reach. Not built.
+- **A clear lists first.** Clear lists the bucket, then resets the index,
+  then deletes what it listed. Before, it reset first, and an artifact
+  written between the reset and the List was in the index with its
+  objects deleted.
+- **A meta.json that cannot be read is not "no meta".** At a commit a
+  failed read (a `503`) fails the commit (`500`, the worker gives its task
+  back); before, the commit answered success for an artifact that stayed
+  meta-less. At start, THE CHOICE: a meta.json is read up to 4 times
+  (0.25 s, 0.5 s, 0.75 s apart), then the start fails with the object's
+  key. Not "skip it without marking it junk": an entry with no meta is
+  junk to the sweep by definition, so a skipped entry needs a third state
+  that every rule must know; and an artifact store that evicts on a flaky
+  start, or starts with entries it cannot rank, is worse than one that
+  does not start and says why.
+- **World and artifact storage are never shared.** When one process runs
+  both targets, the start refuses `world.storage` and `artifacts.storage`
+  that are one directory or nested (after `filepath.Abs` and the symbolic
+  links of the part that exists), or one bucket of one provider (flavour,
+  endpoint, bucket) with equal or nested prefixes, `""` holding every
+  other; the message names both keys. Reproduced before on `dir`: the
+  artifact sweep deleted the worlds as junk. DEFENCE IN DEPTH for two
+  processes: the artifact store does not index an entry shaped like a
+  world (`grants.json`, `rev/…`, a meta.json with `uid` and `revision`
+  and no `key`), logs it at start, and a clear leaves it; an artifact file
+  may not be named `grants.json` or under `rev/`.
+- **Links.** The gate's predicate refuses a request whose path has
+  escapes (`RawPath`): the router matches the escaped path, where
+  `blob%2F<uid>` or `<uid>%2Frev%2F1%2Fworld.zip` is one segment of
+  another route. The MAC text holds the signer's base path (format
+  `casas-blob-link-v2`), so a link opens only the module that signed it,
+  also with one key file for both; links live minutes, so v1 links stop
+  at the update. Key change-over with the new keys `world.link-key-previous`
+  and `artifacts.link-key-previous` (approved 2026-10-16): a path to the
+  previous key file, accepted to verify, never used to sign; a path that
+  is set but cannot be read, or a key under 32 bytes, refuses the start
+  (cli-reference.json regenerated).
+- **Shutdown.** The public and the internal listener shut down at the
+  same time, each with the whole grace. Before, the internal one waited
+  for the public one: it took new requests meanwhile, and a local
+  worker's uploads had only what was left of the grace.
+
+2026-10-16: the client and worker side of the same review (approved the
+same day). Each has a test that failed before the fix.
+
+- **Another writer committed first.** Two workers can write the same
+  artifact under one uid; after the first commit, write-link answers `409`
+  and the second worker failed its task ("could not write the artifact")
+  although the artifact was there. The `409` of write-link has two causes,
+  told apart by a code in the body: `{"error": …, "code": "committed"}`
+  for a whole artifact (`artifacts.WriteLinkCommitted`,
+  `httpjson.ClientErrorCode`), no code for too many uncommitted files. THE
+  RULE (client, `uploads: 'links'`): "committed" is "already written" — the
+  write is true, the artifact's other files are skipped up to its
+  meta.json, no commit. On `dir` the link route refuses the upload first
+  (`403`); the fresh link then answers the `409`. Other answers stay: a
+  write-link `409` without the code and a commit `409` (another key) are a
+  refusal (false), `507` and a commit's `5xx` give the task back. Tests:
+  Go (`TestWriteLinkConflictsCarryACode`), `npm run test:http-store`.
+- **A refusal is final.** A resolve or a read that the API answers with a
+  4xx other than 404 (`400`, `401`, `403`) throws `ArtifactStoreRefusedError`,
+  and the worker's read of its world `WorldRefusedError`: the task fails at
+  once (`ok: false`). Before, both threw "unavailable" and the task was
+  given back 4 times, 15 s apart, for the same answer. Still unavailable:
+  no answer, a 5xx, a `410` (a read link that expired on the way), a `403`
+  from the link a read was sent to (not from the API).
+- **A creation that was stored.** A create can store a world and still
+  fail (a lost answer, a `500` for a meta it could not confirm); the next
+  save, again a create, got `409` and said "conflict" for the user's own
+  world. THE RULE (`worldClient.ts`, `uploadWorldTo`): a `409` to a create
+  reads the world's meta; when its `contentHash` is the SHA-256 of this
+  archive and the caller is an editor or above, the save is stored and its
+  revision remembered. Else the conflict, as before. Checked against a
+  throwaway server on `dir`: a create sent raw (answer ignored), then the
+  client's save of the same archive → stored with revision 1; of another
+  archive → conflict.
+- **The copy's rewrite of world.yaml.** An annotation key with a `.`
+  (`example.com/x`) ended the annotations block, and the lines after it
+  were copied out of it (invalid YAML). Now every line under
+  `  annotations:` that is indented deeper belongs to it and is kept as it
+  is; the new copied-from entry takes the indent of the block's first
+  entry; CRLF stays CRLF. Go (`save.go`) and the browser (`worldCopy.ts`)
+  pass one table of cases (`internal/modules/world/testdata/
+  copy-identity.json`), read by `go test` and `npm run harness:roundtrip`.
+- **Annotation values keep their meaning.** The browser wrote annotation
+  values as they were, so `a: b` made world.yaml invalid. They are
+  double-quoted when YAML needs it (`recipeYaml.ts`, `yamlScalar`: empty,
+  `: `, `#`, a space at either end, a leading indicator, a control
+  character, a value YAML reads as another type), and read back with their
+  escapes. The server writes only the copied-from value, a uid, and keeps
+  the other lines as they are.
+- **The template mark.** A failed mark or unmark said "The server list
+  cannot be reached"; it says `generator.load.template.failed` now.
+
 Open: **the relay is plain NATS over TCP**, not encrypted. The plan for
 external workers, and later the browser: NATS's WebSocket listener behind
 the Ingress/Route, with TLS from the router (or, standalone, the WebSocket

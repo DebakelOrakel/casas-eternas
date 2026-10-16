@@ -251,11 +251,19 @@ func Run(ctx context.Context, cfg config.Server, build string, modules []Module,
 		slog.Info("shutting down", "grace", shutdownGrace)
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
 		defer cancel()
-		shutdownErr := srv.Shutdown(shutdownCtx)
+		// Both listeners at the same time, each with the whole grace: one
+		// after the other, the internal listener took new requests while the
+		// public one drained, and its own requests in flight (a local
+		// worker's uploads) had only what was left of the grace (until
+		// 2026-10-16).
+		internalErr := make(chan error, 1)
 		if internalSrv != nil {
-			shutdownErr = errors.Join(shutdownErr, internalSrv.Shutdown(shutdownCtx))
+			go func() { internalErr <- internalSrv.Shutdown(shutdownCtx) }()
+		} else {
+			internalErr <- nil
 		}
-		return shutdownErr
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		return errors.Join(shutdownErr, <-internalErr)
 	}
 }
 

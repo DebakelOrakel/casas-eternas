@@ -1015,7 +1015,10 @@ async function serve(config: ServeConfig): Promise<void> {
       }
       process.stderr.write(`task ${taskId} failed: ${message}\n`)
       // A computation's error is the task's answer: it would fail the same
-      // way on any worker, so it is reported and not delivered again.
+      // way on any worker, so it is reported and not delivered again. So is
+      // a refusal of the store or the world server (a 4xx other than 404:
+      // ArtifactStoreRefusedError, WorldRefusedError): asking again gets the
+      // same answer.
       await js.publish(`jobs.done.${taskId}`, JSON.stringify({ taskId, ok: false, error: message }))
       msg.term()
     } finally {

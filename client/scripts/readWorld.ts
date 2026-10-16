@@ -14,6 +14,11 @@ export interface WorldSource {
 // artifact store that did not answer (HttpArtifactStore.ts).
 export class WorldUnavailableError extends Error {}
 
+// A world server that answered and refused for good: a 4xx other than 404
+// from the API (no right, a token that is not valid). Asking again does not
+// change the answer, so the task fails at once; not given back.
+export class WorldRefusedError extends Error {}
+
 // `held` is the revision (the server's ETag) of a copy this worker keeps:
 // the server answers 304 when it is still the current one, and the
 // archive — tens of MB — is not sent again (`unchanged`).
@@ -33,6 +38,9 @@ export class WorldUnavailableError extends Error {}
 // a moment failed the task with "cannot read the world" and ended it. A
 // link that fails (its object went, it expired on the way) is unavailable
 // too: the world was there a moment ago, and the next delivery asks again.
+// A 4xx other than 404 from the API (400, 401, 403) is WorldRefusedError:
+// final, the task fails at once (2026-10-16; before, it was given back 4
+// times, 15 s apart, for the same answer).
 export async function readWorld(
   job: WorldSource,
   send: (input: string, init?: RequestInit) => Promise<Response>,
@@ -63,6 +71,9 @@ export async function readWorld(
       throw new WorldUnavailableError(`world: the link did not answer (${error instanceof Error ? error.message : String(error)})`, { cause: error })
     }
     if (!response.ok) throw new WorldUnavailableError(`world: the link answered ${response.status} ${response.statusText}`.trimEnd())
+  } else if (response.status >= 400 && response.status < 500) {
+    // The API refused (a 404 is "absent", above): final.
+    throw new WorldRefusedError(`world: ${response.status} ${response.statusText}`.trimEnd())
   } else if (!response.ok) {
     throw new WorldUnavailableError(`world: ${response.status} ${response.statusText}`.trimEnd())
   }

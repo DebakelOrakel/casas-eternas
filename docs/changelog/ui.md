@@ -3,6 +3,10 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-16
+- **fixed** Save/Load: a template mark that cannot be changed says so, instead of saying that the server list cannot be reached. `generator.load.template`
+- **fixed** Save/Load: a save to the server that was stored although its answer was lost no longer reports a conflict with itself when it is saved again. `generator.load`
+
 ## 2026-10-15
 - **new** Save/Load: the server offers template worlds to everyone, also without an account, and "Make a copy" turns one into a world of your own in the browser or on the server. `generator.load.template`
 - **new** Handbook: an Overview bookmark explains how a world is made and where your worlds are kept, and a page explains the globe. `handbook.group.overview`

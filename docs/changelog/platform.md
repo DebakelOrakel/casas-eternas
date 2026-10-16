@@ -4,6 +4,9 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-10-16
+- **changed** Server: worlds and artifacts in one storage refuse to start.
+- **new** Server: `world.link-key-previous` and `artifacts.link-key-previous` keep the old links valid while a link key changes.
+- **changed** Server: uploads that a job worker has not committed count against `artifacts.cap`. `artifacts`
 - **changed** Server: a read of a world or of its preview answers with a short-lived link to it (`world.read-link-ttl`), so the bytes come from the bucket and not through the server.
 - **new** Server: operators can store worlds in a versioned S3 bucket (`world.storage.type: s3`).
 - **changed** Server: a job worker uploads its artifacts straight to the bucket by a short-lived link (`artifacts.write-link-ttl`), and no longer through the server. `artifacts`

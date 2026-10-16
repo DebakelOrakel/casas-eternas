@@ -21,8 +21,10 @@ import (
 //
 //	<base><key>?exp=<unix seconds>[&len=<bytes>]&sig=<base64url HMAC>
 //
-// where the HMAC-SHA256 is over the method, the key, the expiry and, for a
-// PUT, the length. This file builds and checks the query; the route that
+// where the HMAC-SHA256 is over the base, the method, the key, the expiry
+// and, for a PUT, the length. The base is in it since 2026-10-16 (format
+// v2): a link opens only the module that signed it, also when two modules
+// are given the same key file. This file builds and checks the query; the route that
 // serves `<base><key>` is the module's (internal/modules/artifacts,
 // handleLink), so the base path is a parameter.
 
@@ -77,6 +79,19 @@ func NewLinkSigner(base string, maxPut int64, keys ...[]byte) (*LinkSigner, erro
 	return &LinkSigner{base: base, keys: own, maxPut: maxPut, now: time.Now}, nil
 }
 
+// ReadPreviousLinkKey reads the PREVIOUS key of a key change-over
+// (<module>.link-key-previous): accepted to verify, never used to sign.
+// An empty path is no previous key (nil), not an ephemeral one; a path
+// that is set is read as ReadLinkKey reads one, and a file that cannot be
+// read or is too short is an error.
+func ReadPreviousLinkKey(path string) ([]byte, error) {
+	if path == "" {
+		return nil, nil
+	}
+	key, _, err := ReadLinkKey(path)
+	return key, err
+}
+
 // ReadLinkKey reads a link key from a file and trims white space at both
 // ends (a file written by an editor or `echo` ends in a newline). An empty
 // path makes an EPHEMERAL random key: links made with it die when the
@@ -127,7 +142,7 @@ func (s *LinkSigner) Sign(method, key string, ttl time.Duration, length int64) (
 	exp := s.now().Add(ttl).Truncate(time.Second)
 	expText := strconv.FormatInt(exp.Unix(), 10)
 	q.Set("exp", expText)
-	q.Set("sig", base64.RawURLEncoding.EncodeToString(linkMAC(s.keys[0], method, key, expText, q.Get("len"))))
+	q.Set("sig", base64.RawURLEncoding.EncodeToString(linkMAC(s.keys[0], s.base, method, key, expText, q.Get("len"))))
 	return Link{Method: method, URL: s.base + key + "?" + q.Encode(), Header: http.Header{}, Expires: exp}, nil
 }
 
@@ -171,7 +186,7 @@ func (s *LinkSigner) Verify(method, key string, q url.Values) (int64, error) {
 	matched := false
 	for _, k := range s.keys {
 		// No early exit: each key is tried, so the time does not say which.
-		if linkEqual(sig, linkMAC(k, method, key, expText, lenText)) {
+		if linkEqual(sig, linkMAC(k, s.base, method, key, expText, lenText)) {
 			matched = true
 		}
 	}
@@ -188,12 +203,14 @@ func (s *LinkSigner) Verify(method, key string, q url.Values) (int64, error) {
 }
 
 // linkMAC is the HMAC over the signed fields. The fields are joined by
-// newlines; no field can hold one (the key rule, a fixed method, decimal
-// numbers), so the joint text is not ambiguous. The version tag lets a
-// later format refuse links of this one.
-func linkMAC(key []byte, method, objectKey, exp, length string) []byte {
+// newlines; no field can hold one (a base is a path of ours, the key rule,
+// a fixed method, decimal numbers), so the joint text is not ambiguous.
+// The version tag lets a format refuse links of another: v2 (2026-10-16)
+// added the base, so a v1 link does not verify any more — links live
+// minutes, so the switch is hard.
+func linkMAC(key []byte, base, method, objectKey, exp, length string) []byte {
 	m := hmac.New(sha256.New, key)
-	m.Write([]byte("casas-blob-link-v1\n" + method + "\n" + objectKey + "\n" + exp + "\n" + length))
+	m.Write([]byte("casas-blob-link-v2\n" + base + "\n" + method + "\n" + objectKey + "\n" + exp + "\n" + length))
 	return m.Sum(nil)
 }
 
@@ -202,7 +219,12 @@ func linkMAC(key []byte, method, objectKey, exp, length string) []byte {
 // verifies for that method and for the path after the base. An expired link
 // of ours answers true too, so that the module's route can answer 410 and
 // not the gate 401 (a 401 would end the browser's session). A forged or
-// changed link answers false. The modules hand this to server.Gate, which
+// changed link answers false. So does a path with escapes (RawPath set):
+// the router matches the ESCAPED path, where `blob%2F<uid>` or
+// `<uid>%2Frev%2F1%2Fworld.zip` is one segment of another route, while the
+// decoded path looks like a link — the gate would let a request through
+// to a route that is not the link's. A key under the key rule never needs
+// an escape. The modules hand this to server.Gate, which
 // lets such a request through without credentials: the link is the
 // authorization. One implementation for every module that serves links
 // (artifacts, world).
@@ -213,6 +235,9 @@ func (s *LinkSigner) Signed(r *http.Request) bool {
 		method = http.MethodGet
 	case http.MethodPut:
 	default:
+		return false
+	}
+	if r.URL.RawPath != "" {
 		return false
 	}
 	key, ok := strings.CutPrefix(r.URL.Path, s.base)

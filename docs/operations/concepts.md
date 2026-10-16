@@ -72,6 +72,29 @@ enforces it with a file lock, the others rely on you. Scaling means
 splitting *targets* across processes, never pointing two processes at one
 directory.
 
+**Worlds and artifacts never share storage.** The artifact store owns its
+root: its cap's sweep and a clear delete every entry that is not an
+artifact, and a world is not one. So when one process runs both targets,
+the server refuses to start when `world.storage` and `artifacts.storage`
+are one directory or one inside the other (after symbolic links), or one
+bucket of one provider with equal or nested prefixes (an empty prefix
+holds every other); the message names both keys. For two processes it
+cannot check this; the artifact store then refuses to index or delete an
+entry shaped like a world (`grants.json`, `rev/…`, a world's `meta.json`)
+and logs it at start.
+
+**Changing a link key** (`dir` only): the links of `world.link-key` and
+`artifacts.link-key` are signed with the key file and live minutes. To
+change a key without breaking the links in use, put the old file in
+`world.link-key-previous` (or `artifacts.link-key-previous`) and the new
+one in `*.link-key`, and restart: new links are signed with the new key,
+the old links still verify. Remove `*.link-key-previous` when the old
+links have expired (`world.read-link-ttl`; for artifacts the longer of
+`artifacts.read-link-ttl` and `artifacts.write-link-ttl`). A previous key
+that is set but cannot be read, or has fewer than 32 bytes, refuses the
+start. A link holds only for the module that signed it, also when the two
+modules have the same key file.
+
 ### Artifacts in S3
 
 ```yaml
@@ -119,6 +142,14 @@ checks each with a HEAD before it lists them (log line `artifact files
 committed`). So **a worker must reach the bucket's endpoint over HTTPS**,
 not only the server; a worker in a cluster with restricted egress needs
 the bucket's host allowed. The browser still uploads through the server.
+
+**The cap counts uploads that are not committed yet.** The length of each
+write link counts against `artifacts.cap` from the moment it is given,
+also after the link expires, until the artifact is committed or goes. A
+write link is refused (`507`) when the uncommitted uploads of all
+artifacts would pass the cap — so `artifacts.cap` must be larger than the
+artifacts that are written at the same time. An artifact holds at most 64
+uncommitted files, and after its commit it takes no more uploads by link.
 
 ### Worlds in S3
 

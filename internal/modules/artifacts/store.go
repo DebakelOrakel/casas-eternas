@@ -135,12 +135,15 @@ type entry struct {
 	// files maps each file name (the key below the uid) to its size.
 	files map[string]int64
 	// pending maps each file name that a write link was given for, and
-	// that no commit has confirmed yet, to the link's expiry (DEC-0038,
-	// fork 7). Its object may be in the bucket already; the index does not
-	// count it until the commit. Removal deletes it too, and the sweep
-	// spares the entry while a link is valid. In memory only, as the
+	// that no commit has confirmed yet, to the link's length and expiry
+	// (DEC-0038, fork 7). Its object may be in the bucket already; the
+	// listing does not show it until the commit. Removal deletes it too, and
+	// the sweep spares the entry while a link is valid. The signed length
+	// counts against the cap from the link on (uncommitted), and after the
+	// link expires too: an expired upload no longer spares its entry, but
+	// its object may be there until the entry goes. In memory only, as the
 	// reservation is.
-	pending map[string]time.Time
+	pending map[string]pendingFile
 	// writes counts the writes into the entry that are in progress in this
 	// process: a server PUT (Write) between its check and its record, a
 	// Commit between its check and its record. The sweep spares the entry
@@ -184,6 +187,24 @@ func (e *entry) keyOf() *Key {
 	return e.key
 }
 
+// pendingFile is one upload by link that no commit has confirmed: the
+// signed length and the link's expiry.
+type pendingFile struct {
+	size    int64
+	expires time.Time
+}
+
+// uncommitted is the bytes the entry's pending uploads may have put into
+// the bucket beyond what the index counts: each signed length, less the
+// size of a committed file of the same name. Called under s.mu.
+func (e *entry) uncommitted() int64 {
+	var n int64
+	for name, p := range e.pending {
+		n += max(0, p.size-e.files[name])
+	}
+	return n
+}
+
 func (e *entry) setFile(name string, size int64) {
 	e.bytes += size - e.files[name]
 	e.files[name] = size
@@ -192,8 +213,8 @@ func (e *entry) setFile(name string, size int64) {
 // uploading reports whether a write link for the entry is still valid: a
 // writer may be uploading to the bucket now.
 func (e *entry) uploading(now time.Time) bool {
-	for _, expires := range e.pending {
-		if now.Before(expires) {
+	for _, p := range e.pending {
+		if now.Before(p.expires) {
 			return true
 		}
 	}
@@ -273,6 +294,9 @@ type Store struct {
 	mu      sync.Mutex
 	entries map[string]*entry // uid → entry
 	byKey   map[string]string // Key.String() → uid
+	// foreign holds the top-level names that load found shaped like a world
+	// (worldShaped): not indexed, never junk, never deleted by a clear.
+	foreign map[string]bool
 	// now is the clock; tests move it.
 	now func() time.Time
 }
@@ -288,7 +312,7 @@ func NewStore(ctx context.Context, bucket blob.Bucket, capBytes int64) (*Store, 
 	if capBytes < 0 {
 		return nil, fmt.Errorf("artifacts cap must be 0 (unlimited) or positive, got %d", capBytes)
 	}
-	s := &Store{bucket: bucket, cap: capBytes, entries: map[string]*entry{}, byKey: map[string]string{}, now: time.Now}
+	s := &Store{bucket: bucket, cap: capBytes, entries: map[string]*entry{}, byKey: map[string]string{}, foreign: map[string]bool{}, now: time.Now}
 	if err := s.load(ctx); err != nil {
 		return nil, fmt.Errorf("indexing the artifact store: %w", err)
 	}
@@ -317,6 +341,11 @@ func (s *Store) load(ctx context.Context) error {
 			e.modified = info.LastModified
 		}
 	}
+	for uid, e := range s.entries {
+		if worldShaped(e.fileNames()) {
+			s.foreignLocked(uid)
+		}
+	}
 	// The metas, read in parallel: on S3 one GET each.
 	var withMeta []*entry
 	for _, e := range s.entries {
@@ -324,25 +353,46 @@ func (s *Store) load(ctx context.Context) error {
 			withMeta = append(withMeta, e)
 		}
 	}
-	work := make(chan *entry)
+	work := make(chan int)
+	errs := make([]error, len(withMeta))
+	world := make([]bool, len(withMeta))
 	var wg sync.WaitGroup
 	for range min(parallelism, len(withMeta)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for e := range work {
+			for i := range work {
 				// Each goroutine writes only the entries it takes.
-				e.meta = s.readMeta(ctx, e.uid)
+				e := withMeta[i]
+				e.meta, world[i], errs[i] = s.loadMeta(ctx, e.uid)
 			}
 		}()
 	}
-	for _, e := range withMeta {
-		work <- e
+	for i := range withMeta {
+		work <- i
 	}
 	close(work)
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if err := errors.Join(errs...); err != nil {
+		// An artifact store that indexed an unreadable meta as junk would
+		// evict a whole artifact on a flaky start; failing the start names
+		// the object, and the next start reads it again.
+		return err
+	}
+	kept := withMeta[:0]
+	for i, e := range withMeta {
+		if world[i] {
+			s.foreignLocked(e.uid)
+			continue
+		}
+		kept = append(kept, e)
+	}
+	withMeta = kept
+	if len(s.foreign) > 0 {
+		slog.Warn("artifact store: entries shaped like worlds are not indexed and never deleted; is the world store in the same storage?", "count", len(s.foreign))
 	}
 	// In a fixed order, so that "first writer wins" on a duplicate key
 	// does not depend on map order: the older entry keeps the key.
@@ -363,23 +413,118 @@ func (s *Store) load(ctx context.Context) error {
 	return nil
 }
 
-// readMeta reads and parses one entry's meta.json; nil when it is missing,
-// unreadable or names no valid key (the entry is then junk).
-func (s *Store) readMeta(ctx context.Context, uid string) *entryMeta {
+// foreignLocked takes a top-level name out of the index as a world's
+// (worldShaped). Called under s.mu, or before the store is shared.
+func (s *Store) foreignLocked(uid string) {
+	s.foreign[uid] = true
+	delete(s.entries, uid)
+	s.dropKeys(uid)
+}
+
+// worldShaped reports whether an entry's file names are a world store's
+// ({uid}/grants.json, {uid}/rev/{n}/…, internal/modules/world). DEFENCE IN
+// DEPTH: cmd/ refuses a world store in the same storage as this one when
+// both run in one process, but two processes can be configured so; and to
+// this store a world is junk (its meta.json names no artifact key), which
+// the sweep and a clear delete. So such an entry is never indexed, never
+// junk and never deleted, and the start says so. The names are kept apart
+// on the write side too (writableName).
+func worldShaped(names []string) bool {
+	for _, name := range names {
+		if name == worldGrantsName || strings.HasPrefix(name, worldRevisionsPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// The world store's names that no artifact file may have.
+const (
+	worldGrantsName      = "grants.json"
+	worldRevisionsPrefix = "rev/"
+)
+
+// writableName refuses a file name that would make an artifact look like a
+// world (worldShaped): such an entry would never be swept again.
+func writableName(name string) error {
+	if worldShaped([]string{name}) {
+		return ErrBadPath
+	}
+	return nil
+}
+
+// readMeta reads and parses one entry's meta.json. A meta that does not
+// parse or names no valid key is (nil, nil): the entry is then junk. A
+// meta that is not there is (nil, blob.ErrNotFound); any other error of
+// the bucket (a 503, a lost connection) is that error — it is NOT "no
+// meta", which would turn a whole artifact into junk.
+func (s *Store) readMeta(ctx context.Context, uid string) (*entryMeta, error) {
+	raw, err := s.readMetaRaw(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	return parseMeta(raw), nil
+}
+
+func (s *Store) readMetaRaw(ctx context.Context, uid string) ([]byte, error) {
 	key, err := objectKey(uid, metaName)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	body, _, err := s.bucket.Get(ctx, key)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer func() { _ = body.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(body, metaLimit))
-	if err != nil {
-		return nil
+	return io.ReadAll(io.LimitReader(body, metaLimit))
+}
+
+// metaReadAttempts and metaRetryDelay are how load reads a meta.json that
+// the bucket does not give at the first try: a few times, a little longer
+// each time, then the start fails with the object's key. A variable so
+// that a test need not wait.
+const metaReadAttempts = 4
+
+var metaRetryDelay = 250 * time.Millisecond
+
+// loadMeta reads one entry's meta.json at start: the meta (nil: junk),
+// whether it is a world's meta (worldMeta), or the error that stayed after
+// metaReadAttempts. A meta that went between the List and the read is no
+// meta, as for an entry without one.
+func (s *Store) loadMeta(ctx context.Context, uid string) (*entryMeta, bool, error) {
+	var last error
+	for attempt := range metaReadAttempts {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, false, ctx.Err()
+			case <-time.After(time.Duration(attempt) * metaRetryDelay):
+			}
+		}
+		raw, err := s.readMetaRaw(ctx, uid)
+		switch {
+		case err == nil:
+			if meta := parseMeta(raw); meta != nil {
+				return meta, false, nil
+			}
+			return nil, worldMeta(raw), nil
+		case errors.Is(err, blob.ErrNotFound):
+			return nil, false, nil
+		}
+		last = err
 	}
-	return parseMeta(raw)
+	return nil, false, fmt.Errorf("reading %s/%s, %d tries: %w", uid, metaName, metaReadAttempts, last)
+}
+
+// worldMeta reports whether a meta.json that names no artifact key is a
+// world's ({uid, revision}, internal/modules/world): see worldShaped.
+func worldMeta(raw []byte) bool {
+	var world struct {
+		UID      string          `json:"uid"`
+		Revision *int            `json:"revision"`
+		Key      json.RawMessage `json:"key"`
+	}
+	return json.Unmarshal(raw, &world) == nil && world.UID != "" && world.Revision != nil && world.Key == nil
 }
 
 // metaLimit bounds the bytes read of one meta.json: a meta is a few hundred
@@ -563,9 +708,26 @@ func (s *Store) Write(ctx context.Context, uid, name string, body io.Reader, siz
 	if err != nil {
 		return err
 	}
+	if err := writableName(name); err != nil {
+		return err
+	}
+	var meta *entryMeta
+	if name == metaName {
+		// Small, and the index needs its content: read it whole.
+		raw, err := readExactly(body, size, metaLimit)
+		if err != nil {
+			return err
+		}
+		meta = parseMeta(raw)
+		body, size = bytes.NewReader(raw), int64(len(raw))
+	}
 	s.mu.Lock()
 	e, ok := s.entries[uid]
 	if ok {
+		if err := e.checkKey(meta); err != nil {
+			s.mu.Unlock()
+			return err
+		}
 		e.writes++ // in flight: the sweep spares it until the record
 	}
 	s.mu.Unlock()
@@ -581,16 +743,7 @@ func (s *Store) Write(ctx context.Context, uid, name string, body io.Reader, siz
 		}
 	}()
 
-	var meta *entryMeta
-	if name == metaName {
-		// Small, and the index needs its content: read it whole.
-		raw, err := readExactly(body, size, metaLimit)
-		if err != nil {
-			return err
-		}
-		meta = parseMeta(raw)
-		body, size = bytes.NewReader(raw), int64(len(raw))
-	} else if size < 0 {
+	if name != metaName && size < 0 {
 		spool, n, err := spoolToFile(body)
 		if err != nil {
 			return err
@@ -628,6 +781,26 @@ func (s *Store) Write(ctx context.Context, uid, name string, body io.Reader, siz
 	// that grows the store, so the write path is the whole trigger — no
 	// timer, no background sweeper.
 	s.deleteObjects(context.WithoutCancel(ctx), victims)
+	return nil
+}
+
+// ErrKeyMismatch: a meta.json names another key than the artifact's — the
+// key its reservation was minted for, or its landed meta's. Accepting it
+// would move the artifact to that key, and so to another world: a writer
+// with the right to world A would file bytes under world B's key.
+var ErrKeyMismatch = errors.New("the meta.json names another key than the artifact's")
+
+// checkKey refuses a meta whose key is not the entry's (ErrKeyMismatch). A
+// meta that does not parse (nil) and an entry with no key yet (junk, or a
+// reservation lost at a restart: only the operator writes there) pass.
+// Called under s.mu.
+func (e *entry) checkKey(meta *entryMeta) error {
+	if meta == nil {
+		return nil
+	}
+	if k := e.keyOf(); k != nil && *k != meta.Key {
+		return ErrKeyMismatch
+	}
 	return nil
 }
 
@@ -672,6 +845,29 @@ var ErrNotUploaded = errors.New("artifact file is not in the bucket as committed
 // errBadSize: a write link for a negative length.
 var errBadSize = errors.New("artifact file length is not valid")
 
+// errCommitted: a write link, or an upload by one, for an artifact whose
+// meta.json is committed. The artifact is whole: its writer is done, and
+// a link given before the commit must not let its holder change it (on
+// dir the module's route refuses such an upload; on s3 the provider takes
+// it until the link expires — artifacts.write-link-ttl bounds that).
+var errCommitted = errors.New("the artifact is whole; it takes no more uploads by link")
+
+// errTooManyPending: an artifact has maxPendingFiles uploads by link that
+// no commit confirmed.
+var errTooManyPending = errors.New("too many uncommitted uploads for this artifact")
+
+// errStoreFull: the uncommitted uploads of all artifacts with this one
+// would pass artifacts.cap.
+var errStoreFull = errors.New("the uncommitted uploads would pass the store's cap")
+
+// maxPendingFiles bounds the uploads by link per artifact that no commit
+// confirmed: a write link names one file, and a writer that never commits
+// would else get links for files without end. An artifact has 6 (a tile)
+// to 12 (a level) files today (client/src/world/meshArtifacts.ts,
+// meshTileArtifacts.ts); 64 is headroom for new files and for a fresh
+// link per file after a refusal, which takes no second place.
+const maxPendingFiles = 64
+
 // WriteLink returns a link that writes one file of an EXISTING artifact
 // (the uid comes from Resolve) with exactly `size` bytes until `ttl` has
 // passed: a presigned PUT on S3, the server's own signed link on Dir. The
@@ -688,11 +884,20 @@ func (s *Store) WriteLink(ctx context.Context, uid, name string, size int64, ttl
 	case size > UploadLimit, name == metaName && size > metaLimit:
 		return blob.Link{}, fmt.Errorf("%w: %d bytes", errTooLarge, size)
 	}
+	if err := writableName(name); err != nil {
+		return blob.Link{}, err
+	}
 	s.mu.Lock()
-	_, ok := s.entries[uid]
+	e, ok := s.entries[uid]
+	if ok {
+		err = s.admitLocked(e, name, size)
+	}
 	s.mu.Unlock()
 	if !ok {
 		return blob.Link{}, ErrNotFound
+	}
+	if err != nil {
+		return blob.Link{}, err
 	}
 	link, err := s.bucket.PresignPut(ctx, key, ttl, size)
 	if err != nil {
@@ -702,20 +907,92 @@ func (s *Store) WriteLink(ctx context.Context, uid, name string, size int64, ttl
 		return blob.Link{}, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, ok := s.entries[uid]
+	e, ok = s.entries[uid]
 	if !ok {
+		s.mu.Unlock()
 		// Removed while the link was signed: a commit would find no entry.
 		return blob.Link{}, ErrNotFound
 	}
+	// Again under the lock that records it: another link may have been
+	// given meanwhile.
+	if err := s.admitLocked(e, name, size); err != nil {
+		s.mu.Unlock()
+		return blob.Link{}, err
+	}
 	if e.pending == nil {
-		e.pending = map[string]time.Time{}
+		e.pending = map[string]pendingFile{}
 	}
-	if link.Expires.After(e.pending[name]) {
-		e.pending[name] = link.Expires
+	p := e.pending[name]
+	p.size = max(p.size, size)
+	if link.Expires.After(p.expires) {
+		p.expires = link.Expires
 	}
+	e.pending[name] = p
 	e.lastAccess = s.now()
+	// A link grows the store as a write does: the cap's sweep runs here too.
+	victims := s.sweepLocked(uid)
+	s.mu.Unlock()
+	s.deleteObjects(context.WithoutCancel(ctx), victims)
 	return link, nil
+}
+
+// admitLocked decides whether the entry may get a write link for `name`
+// of `size` bytes: not when it is whole (errCommitted), when it has
+// maxPendingFiles other uploads that no commit confirmed
+// (errTooManyPending), or when the uncommitted uploads of the whole store
+// would pass the cap with this one (errStoreFull). The last rule is what
+// keeps a holder of write rights from filling the bucket with uploads the
+// index does not list: the sweep can evict only what is committed, and
+// spares what is still uploading. Called under s.mu.
+func (s *Store) admitLocked(e *entry, name string, size int64) error {
+	if e.meta != nil {
+		return errCommitted
+	}
+	held, again := e.pending[name]
+	if !again && len(e.pending) >= maxPendingFiles {
+		return fmt.Errorf("%w: %d", errTooManyPending, len(e.pending))
+	}
+	if s.cap <= 0 {
+		return nil
+	}
+	var total int64
+	for _, other := range s.entries {
+		total += other.uncommitted()
+	}
+	add := max(0, size-max(held.size, e.files[name]))
+	if total+add > s.cap {
+		return fmt.Errorf("%w: %d + %d bytes > %d", errStoreFull, total, add, s.cap)
+	}
+	return nil
+}
+
+// AcceptUpload decides whether an upload by a dir write link (the
+// module's own route, handleLinkPut) may be stored: the link verifies, so
+// this is about the artifact. Not when the artifact is gone or unknown
+// (ErrNotFound), when it is whole (errCommitted: a link given before the
+// commit is no longer valid), when no link for the file is pending
+// (ErrNotSigned: e.g. one given before a restart), or for a meta.json
+// whose key is not the artifact's (ErrKeyMismatch; `meta` is its bytes,
+// nil for another file). On s3 the provider takes the upload without
+// asking; the commit's checks are what holds there.
+func (s *Store) AcceptUpload(uid, name string, meta []byte) error {
+	var parsed *entryMeta
+	if name == metaName {
+		parsed = parseMeta(meta)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[uid]
+	switch {
+	case !ok:
+		return ErrNotFound
+	case e.meta != nil:
+		return errCommitted
+	}
+	if _, signed := e.pending[name]; !signed {
+		return ErrNotSigned
+	}
+	return e.checkKey(parsed)
 }
 
 // Upload is one file a writer says it uploaded by link, with its length.
@@ -808,7 +1085,18 @@ func (s *Store) Commit(ctx context.Context, uid string, files []Upload) error {
 		}
 	}
 	if hasMeta {
-		meta = s.readMeta(ctx, uid)
+		var err error
+		meta, err = s.readMeta(ctx, uid)
+		switch {
+		case errors.Is(err, blob.ErrNotFound):
+			return fmt.Errorf("%w: %q is not there", ErrNotUploaded, metaName)
+		case err != nil:
+			// The bucket did not give it (a 503, a lost connection): the
+			// commit fails as a whole, and its writer tries again. Taken as
+			// "no meta" until 2026-10-16, it answered success for an
+			// artifact that stayed meta-less.
+			return fmt.Errorf("reading the committed %s: %w", metaName, err)
+		}
 	}
 
 	s.mu.Lock()
@@ -821,6 +1109,23 @@ func (s *Store) Commit(ctx context.Context, uid string, files []Upload) error {
 		_ = s.deleteObjects(context.WithoutCancel(ctx), keys)
 		return ErrNotFound
 	}
+	if err := e.checkKey(meta); err != nil {
+		// Nothing is entered (all or none). The meta.json in the bucket goes:
+		// a start would believe it (load has only the bucket). A whole entry
+		// whose meta was replaced so (on s3 a link given before its commit
+		// can still write) goes as a whole: its meta.json is not its own any
+		// more, and it is recomputable.
+		var doomed []string
+		if e.meta != nil {
+			doomed = s.dropLocked(uid)
+		} else {
+			doomed = []string{uid + "/" + metaName}
+		}
+		s.mu.Unlock()
+		slog.Warn("artifact commit refused: its meta.json names another key", "artifact", uid)
+		_ = s.deleteObjects(context.WithoutCancel(ctx), doomed)
+		return err
+	}
 	for i, f := range files {
 		if f.Name != metaName {
 			s.recordLocked(e, f.Name, sizes[i], nil)
@@ -832,9 +1137,20 @@ func (s *Store) Commit(ctx context.Context, uid string, files []Upload) error {
 			s.recordLocked(e, f.Name, sizes[i], meta)
 		}
 	}
+	var stale []string
+	if e.meta != nil {
+		// Whole: its write links are no longer valid (admitLocked,
+		// AcceptUpload), and an upload that no commit named is junk.
+		for name := range e.pending {
+			if _, held := e.files[name]; !held {
+				stale = append(stale, uid+"/"+name)
+			}
+		}
+		e.pending = nil
+	}
 	victims := s.sweepLocked(uid)
 	s.mu.Unlock()
-	s.deleteObjects(context.WithoutCancel(ctx), victims)
+	s.deleteObjects(context.WithoutCancel(ctx), append(stale, victims...))
 	return nil
 }
 
@@ -902,7 +1218,7 @@ func (s *Store) sweepLocked(justWritten string) []string {
 	if s.cap <= 0 {
 		return nil
 	}
-	total := s.totalLocked()
+	total := s.capUsageLocked()
 	if total <= s.cap {
 		return nil
 	}
@@ -939,10 +1255,21 @@ func (s *Store) sweepLocked(justWritten string) []string {
 		if total <= s.cap {
 			break
 		}
-		total -= victim.bytes
+		total -= victim.bytes + victim.uncommitted()
 		keys = append(keys, s.dropLocked(victim.uid)...)
 	}
 	return keys
+}
+
+// capUsageLocked is what the cap is compared with: the indexed bytes and
+// the uncommitted uploads by link (entry.uncommitted), which may be in the
+// bucket although the listing does not show them. Called under s.mu.
+func (s *Store) capUsageLocked() int64 {
+	var total int64
+	for _, e := range s.entries {
+		total += e.bytes + e.uncommitted()
+	}
+	return total
 }
 
 func (s *Store) totalLocked() int64 {
@@ -1184,20 +1511,40 @@ func (s *Store) RemoveWorld(ctx context.Context, worldUID string) error {
 // deterministic function of a world and a pipeline version, so the worst case
 // is that the next reader bakes again. It lists the bucket rather than
 // trusting the index, so objects the index does not know (a top-level
-// stray, a key the index could not hold) go too.
+// stray, a key the index could not hold) go too — except what is shaped
+// like a world (worldShaped, foreign), which is not this store's.
+//
+// The List comes FIRST, then the index is reset, and only the listed keys
+// are deleted. So an artifact that is written while the clear lists is
+// either dropped with the rest (in the index before the reset) or not
+// touched (a fresh uid after the reset, which no listed key has; a write
+// into a dropped entry deletes its own object, Write and Commit). Until 2026-10-16 the reset came first, and an artifact
+// written between the reset and the List was in the index with its
+// objects deleted.
 func (s *Store) Clear(ctx context.Context) error {
-	s.mu.Lock()
-	s.entries = map[string]*entry{}
-	s.byKey = map[string]string{}
-	s.mu.Unlock()
+	names := map[string][]string{}
 	var keys []string
 	for info, err := range s.bucket.List(ctx, "") {
 		if err != nil {
 			return err
 		}
 		keys = append(keys, info.Key)
+		uid, name, _ := strings.Cut(info.Key, "/")
+		names[uid] = append(names[uid], name)
 	}
-	return s.deleteObjects(ctx, keys)
+	s.mu.Lock()
+	s.entries = map[string]*entry{}
+	s.byKey = map[string]string{}
+	doomed := keys[:0:0]
+	for _, key := range keys {
+		uid, _, _ := strings.Cut(key, "/")
+		if s.foreign[uid] || worldShaped(names[uid]) {
+			continue
+		}
+		doomed = append(doomed, key)
+	}
+	s.mu.Unlock()
+	return s.deleteObjects(ctx, doomed)
 }
 
 // Usage reports the total bytes held, for the storage panel's readout: the

@@ -180,3 +180,12 @@ of fork 5.
 finds the template's artifacts; visibility as grants to pseudo-principals in
 place of the `public` and `template` bits; the template mark as a purpose
 that grants nothing. Not decided.
+
+2026-10-16: **a job token never writes a world.** A bake job's token reads
+the world it was made for and writes artifacts; the routes that write a
+world — create (`PUT` of a new uid), copy, delete and the template mark —
+answer `403` to it before they rank it, so the answer says nothing about
+whether the world exists. Before, a job token could create or copy a
+world, and its owner was then `job` (`token.SubjectJob`): every job token
+owned it. Found in the review of DEC-0038; test
+`TestAJobTokenWritesNoWorld`.

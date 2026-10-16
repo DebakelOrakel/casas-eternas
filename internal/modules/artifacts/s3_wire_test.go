@@ -111,7 +111,6 @@ func TestAWSWireArtifacts(t *testing.T) {
 		}
 	}
 	put("elevation.u16", payload)
-	put("meta.json", []byte(metaFor(key, "wire")))
 
 	// A worker's write (DEC-0038, step 4): a write link from the module, a
 	// presigned PUT straight to the bucket without the caller's
@@ -204,6 +203,9 @@ func TestAWSWireArtifacts(t *testing.T) {
 	if readBack.StatusCode != http.StatusOK || !bytes.Equal(gotWorker, workerBytes) || !strings.HasSuffix(readBack.Request.URL.Host, ".amazonaws.com") {
 		t.Errorf("read after the commit = %d, %d bytes from %s", readBack.StatusCode, len(gotWorker), readBack.Request.URL.Host)
 	}
+	// The meta last, as a writer writes it: after it the artifact is whole
+	// and takes no more uploads by link.
+	put("meta.json", []byte(metaFor(key, "wire")))
 
 	// A restart: the index comes from the bucket's listing and the metas.
 	restarted, err := NewStore(ctx, bucket, 0)

@@ -27,6 +27,14 @@ func ClientError(w http.ResponseWriter, status int, message string) {
 	Write(w, status, map[string]string{"error": message})
 }
 
+// ClientErrorCode is ClientError with a code beside the message, for an
+// answer the client must tell apart from another one with the same status.
+// The message is for a person; the code is for a program and does not
+// change.
+func ClientErrorCode(w http.ResponseWriter, status int, code, message string) {
+	Write(w, status, map[string]string{"error": message, "code": code})
+}
+
 // ServerError logs the detail and returns a generic message: the cause
 // belongs in the operator's log, not in a response body.
 func ServerError(w http.ResponseWriter, context string, err error) {

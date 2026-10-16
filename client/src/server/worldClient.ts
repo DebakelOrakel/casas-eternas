@@ -229,7 +229,28 @@ export async function fetchWorldPreview(uid: string): Promise<string | null> {
 export async function uploadWorld(uid: string, archive: Blob): Promise<UploadOutcome> {
   const base = await apiBase()
   if (!base) return { ok: false, reason: 'offline' }
+  return uploadWorldTo(base, uid, archive, authFetch)
+}
 
+// The upload against a given API root and fetch — uploadWorld without the
+// app's server status and session, so that a test can point it at a server
+// of its own (npm run test:http-store).
+//
+// A CREATION THAT WAS STORED (2026-10-16). A create can store the world and
+// still fail: the answer is lost, or the server could not confirm its
+// meta.json and answered 500 (DEC-0038, Status). The next save sends a
+// create again and gets 409, although the world is this one. THE RULE: a
+// 409 to a create asks the world's meta; when its content hash is the
+// SHA-256 of this archive and the caller may write the world (editor or
+// above), the world IS this save: its revision is remembered and the
+// outcome is "stored". Else it is the conflict it was. Without
+// crypto.subtle (an insecure context) nothing can be compared: a conflict.
+export async function uploadWorldTo(
+  base: string,
+  uid: string,
+  archive: Blob,
+  send: (input: string, init?: RequestInit) => Promise<Response>,
+): Promise<UploadOutcome> {
   const expected = rememberedRevision(uid)
   const headers: Record<string, string> = { 'Content-Type': 'application/zip' }
   // Absent If-Match means "create, and fail if it already exists" — which is
@@ -237,9 +258,10 @@ export async function uploadWorld(uid: string, archive: Blob): Promise<UploadOut
   // as a conflict instead of quietly overwriting something.
   if (expected > 0) headers['If-Match'] = `"${expected}"`
 
+  const route = `${base}/worlds/${encodeURIComponent(uid)}`
   let response: Response
   try {
-    response = await authFetch(`${base}/worlds/${encodeURIComponent(uid)}`, { method: 'PUT', headers, body: archive })
+    response = await send(route, { method: 'PUT', headers, body: archive })
   } catch {
     return { ok: false, reason: 'offline' }
   }
@@ -253,10 +275,20 @@ export async function uploadWorld(uid: string, archive: Blob): Promise<UploadOut
   // 409 (exists, we said create) and 412 (our revision is stale) are the same
   // situation from the user's side: the server holds something we did not
   // expect. Both are reported with what the server actually has, so the answer
-  // is a decision rather than a guess.
+  // is a decision rather than a guess — unless the world it holds is this
+  // save (A CREATION THAT WAS STORED).
   if (response.status === 409 || response.status === 412) {
-    const worlds = await listWorlds()
-    const held = worlds?.find((world) => world.uid === uid)
+    let held: WorldSummary | undefined
+    try {
+      const meta = await send(`${route}/meta`, { cache: 'no-store' })
+      if (meta.ok) held = (await meta.json()) as WorldSummary
+    } catch {
+      // No meta: the conflict is said without the server's revision.
+    }
+    if (held && response.status === 409 && expected === 0 && (await isThisArchive(held, archive))) {
+      rememberRevision(uid, held.revision)
+      return { ok: true, revision: held.revision, created: true }
+    }
     if (held) rememberRevision(uid, held.revision)
     return { ok: false, reason: 'conflict', serverRevision: held?.revision, serverUpdatedAt: held?.updatedAt }
   }
@@ -269,6 +301,20 @@ export async function uploadWorld(uid: string, archive: Blob): Promise<UploadOut
     // A non-JSON error body is not worth failing over; the status stands.
   }
   return { ok: false, reason: 'rejected', message }
+}
+
+// Whether the world the server holds is this archive, and the caller's to
+// write: its content hash (the server's SHA-256 of the bytes, store.go) is
+// this archive's, and the caller is an editor or above.
+async function isThisArchive(held: WorldSummary, archive: Blob): Promise<boolean> {
+  if (!held.contentHash || !['editor', 'owner', 'admin'].includes(held.callerLevel ?? '')) return false
+  if (typeof crypto === 'undefined' || !crypto.subtle) return false
+  try {
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await archive.arrayBuffer()))
+    return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('') === held.contentHash
+  } catch {
+    return false
+  }
 }
 
 // Makes a copy of a world ON the server: a new world with a new uid, owned by

@@ -235,10 +235,12 @@ docs:
   content-dir: /app/docs
 artifacts:
   write-link-ttl: 2h
+  link-key-previous: /keys/artifacts-old
 world:
   read-link-ttl: 30m
 `)
 	t.Setenv("CASAS_WORLD_LINK_KEY", "/env/world-link-key")
+	t.Setenv("CASAS_WORLD_LINK_KEY_PREVIOUS", "/env/world-link-key-old")
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -255,6 +257,9 @@ world:
 	}
 	if cfg.World.ReadLinkTTL != 30*time.Minute || cfg.World.LinkKey != "/env/world-link-key" {
 		t.Errorf("world links = %v, %q; want 30m from the file and the key from the environment", cfg.World.ReadLinkTTL, cfg.World.LinkKey)
+	}
+	if cfg.World.LinkKeyPrevious != "/env/world-link-key-old" || cfg.Artifacts.LinkKeyPrevious != "/keys/artifacts-old" {
+		t.Errorf("previous link keys = %q, %q; want them from the environment and the file", cfg.World.LinkKeyPrevious, cfg.Artifacts.LinkKeyPrevious)
 	}
 }
 

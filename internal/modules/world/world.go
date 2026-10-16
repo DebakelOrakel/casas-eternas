@@ -82,8 +82,10 @@ type signing interface{ Signer() *blob.LinkSigner }
 
 // NewLinkSigner makes the signer of the dir backend's links from
 // world.link-key (DEC-0038, fork 4). Without a key file the key is
-// ephemeral and the links die at restart, which is logged. The signer
-// makes GET links only; its upload limit is the module's, unused.
+// ephemeral and the links die at restart, which is logged. With
+// world.link-key-previous the signer also accepts the links of the key
+// before (a change-over, 2026-10-16); it signs with world.link-key. The
+// signer makes GET links only; its upload limit is the module's, unused.
 func NewLinkSigner(cfg config.Config) (*blob.LinkSigner, error) {
 	key, ephemeral, err := blob.ReadLinkKey(cfg.World.LinkKey)
 	if err != nil {
@@ -92,7 +94,15 @@ func NewLinkSigner(cfg config.Config) (*blob.LinkSigner, error) {
 	if ephemeral {
 		slog.Warn("world.link-key is not set: the world links use an ephemeral key and stop working at restart")
 	}
-	return blob.NewLinkSigner(LinkBase, uploadLimit, key)
+	previous, err := blob.ReadPreviousLinkKey(cfg.World.LinkKeyPrevious)
+	if err != nil {
+		return nil, fmt.Errorf("world.link-key-previous: %w", err)
+	}
+	keys := [][]byte{key}
+	if previous != nil {
+		keys = append(keys, previous)
+	}
+	return blob.NewLinkSigner(LinkBase, uploadLimit, keys...)
 }
 
 // New prepares the store and builds its index from the bucket, so a bad
@@ -250,7 +260,8 @@ func (m *Module) gate(w http.ResponseWriter, r *http.Request, uid string, action
 	// A bake Job READS the world it was created to bake — the same one-claim
 	// narrowing the artifact store applies to the job's writes, mirrored here
 	// for its one read. Read ONLY: a job writes artifacts, never worlds, so
-	// no other action is elevated. Found missing 2026-08-13, the first time
+	// no other action is elevated (and the routes that write a world refuse
+	// a job before they rank it, refuseJob). Found missing 2026-08-13, the first time
 	// a checking server met a cluster bake — the job's GET got the
 	// stranger's 404 and the bake died in three seconds.
 	if exists && level < access.Viewer && action == access.ActionRead {
@@ -273,6 +284,21 @@ func (m *Module) gate(w http.ResponseWriter, r *http.Request, uid string, action
 		httpjson.ClientError(w, http.StatusForbidden, fmt.Sprintf("%s needs %s access to this world", action, access.Required(action)))
 		return false
 	}
+	return true
+}
+
+// refuseJob answers 403 to a bake job's token on a route that writes a
+// world: create, copy, delete, the template mark. A job READS the world it
+// was made for (gate) and writes artifacts; it never writes a world.
+// Before 2026-10-16 a job token could create or copy one, and the world's
+// owner was then "job" (token.SubjectJob) — owned by every job token. The
+// refusal does not look at the world, so it says nothing about whether one
+// exists. True when it answered.
+func (m *Module) refuseJob(w http.ResponseWriter, r *http.Request) bool {
+	if _, _, ok := m.cfg.Identity.JobToken(r); !ok {
+		return false
+	}
+	httpjson.ClientError(w, http.StatusForbidden, "a job token reads its world; it does not write worlds")
 	return true
 }
 
@@ -431,6 +457,9 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 		httpjson.ClientError(w, http.StatusBadRequest, "not a valid world uid")
 		return
 	}
+	if m.refuseJob(w, r) {
+		return
+	}
 	expected, ok := parseIfMatch(r.Header.Get("If-Match"))
 	if !ok {
 		httpjson.ClientError(w, http.StatusBadRequest, `If-Match must be a revision like "3", or absent to create`)
@@ -490,7 +519,7 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 
 func (m *Module) handleDelete(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
-	if !m.gate(w, r, uid, access.ActionDelete) {
+	if m.refuseJob(w, r) || !m.gate(w, r, uid, access.ActionDelete) {
 		return
 	}
 	if err := m.store.Delete(r.Context(), uid); err != nil {
@@ -514,7 +543,7 @@ func (m *Module) handleDelete(w http.ResponseWriter, r *http.Request) {
 // server needs an owner.
 func (m *Module) handleCopy(w http.ResponseWriter, r *http.Request) {
 	source := r.PathValue("uid")
-	if !m.gate(w, r, source, access.ActionRead) {
+	if m.refuseJob(w, r) || !m.gate(w, r, source, access.ActionRead) {
 		return
 	}
 	data, _, err := m.store.ReadCurrent(r.Context(), source)
@@ -550,7 +579,7 @@ func (m *Module) handleCopy(w http.ResponseWriter, r *http.Request) {
 // as it now stands; both are idempotent.
 func (m *Module) handleTemplate(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("uid")
-	if !m.gate(w, r, uid, access.ActionTemplate) {
+	if m.refuseJob(w, r) || !m.gate(w, r, uid, access.ActionTemplate) {
 		return
 	}
 	meta, err := m.store.SetTemplate(r.Context(), uid, r.Method == http.MethodPut)

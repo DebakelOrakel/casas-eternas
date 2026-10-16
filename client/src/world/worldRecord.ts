@@ -1,4 +1,4 @@
-import { readRecipeMap, readRecipeValue } from './save/recipeYaml'
+import { readRecipeMap, readRecipeValue, yamlScalar } from './save/recipeYaml'
 import { historyFromYaml, historyToYamlLines, type WorldHistory } from './save/worldHistory'
 import { specFromYaml, specToYamlLines, WORLD_SPEC_FIELDS, type WorldSpec } from './save/worldSpec'
 import { progressStepOf, type ProgressStep } from './worldProgress'
@@ -90,9 +90,11 @@ export function recordToYaml(record: WorldRecord, generator: string): string {
   ].join('\n')
 }
 
+// The values quoted where YAML needs it (yamlScalar); readRecipeMap reads
+// them back as they were.
 function annotationLines(annotations: Record<string, string>): string[] {
   const keys = Object.keys(annotations)
-  return keys.length === 0 ? [] : ['  annotations:', ...keys.map((key) => `    ${key}: ${annotations[key]}`)]
+  return keys.length === 0 ? [] : ['  annotations:', ...keys.map((key) => `    ${key}: ${yamlScalar(annotations[key])}`)]
 }
 
 // A record from world.yaml and the snapshot's epochs. `fallbackUid` names a

@@ -38,7 +38,7 @@ belongs to exactly one module's storage.
 |---|---|---|---|---|
 | `casas.yaml` | config | once, at start, by `cmd/` | operator only | **ConfigMap**, every Deployment |
 | session key (`global.auth.session-key`) | secret | once, at start | operator only (rotation = rollout) | **Secret**, every API-serving Deployment |
-| `auth.db` | state | per login (a read transaction) | process (admin socket), transactional | **PVC** (`auth.storage`), auth Deployment only, replicas 1 |
+| `auth.db` | state | per login (a read transaction) | process (admin socket), transactional | **PVC** (`auth.state-dir`), auth Deployment only, replicas 1 |
 | TLS cert/key (`global.tls.*`) | secret | once, at start | operator only | **not used** — the Route/Ingress terminates |
 | bake-job token | credential in flight | the Job, as bearer | minted per job | no mount — travels in the Job spec |
 
@@ -57,20 +57,20 @@ restart after an edit.
 **Session key — a Secret in every API-serving pod.** Read once at start,
 held in memory; it is what lets every target verify tokens locally and
 therefore run alone. Issuing is narrower than verifying: session (login) and
-bake (job tokens) mint, everyone verifies. The asymmetry that matters:
+jobs (job tokens) mint, everyone verifies. The asymmetry that matters:
 **bake Jobs never see the key** — they carry one finished, world-scoped,
 short-lived token in the Job spec. A compromised job can spend its token,
 not mint identities. Rotation is a rollout, identically on both platforms.
 
 **auth.db — state, and the deliberate odd one out.** Lives under
-`auth.storage` on a volume, written by the process through the admin socket,
+`auth.state-dir` on a volume, written by the process through the admin socket,
 one process per store directory (with bbolt, kernel-enforced). Never a
 ConfigMap, never a Secret — those are operator→process channels, and this
 file goes the other way. On the cluster: a PVC on the auth Deployment,
 replicas 1. On a plain machine: a directory. Decided 2026-10-04
 ([client-accounts.md](../decisions/client-accounts.md), DEC-0034): the
 invite codes are records in auth.db, and the avatars are files beside it
-under `auth.storage` — the same volume, the same one process (built the
+under `auth.state-dir` — the same volume, the same one process (built the
 same day). Identical code path on both,
 which is the property the whole user-admin decision buys. (Its predecessor —
 an htpasswd file in the Secret — was the one row whose write path differed
@@ -85,7 +85,7 @@ exists for the plain-machine shape, where there is no router in front.
 
 ```
 ConfigMap  casas-config ────────► every Deployment   (env CASAS_TARGET differs)
-Secret     casas-session-key ───► world, artifacts, bake, auth
+Secret     casas-session-key ───► world, artifacts, jobs, auth
 PVC        auth-storage ────────► auth only,      replicas 1  (auth.db)
 PVC        world-storage ───────► world only,     replicas 1
 PVC        artifacts-storage ───► artifacts only, replicas 1
@@ -145,7 +145,7 @@ were ever tempted to be "just config".
 ## Status
 
 2026-10-04: DEC-0034 adds invite codes to auth.db and avatar files beside it
-under auth.storage; built.
+under `auth.state-dir`; built.
 
 agreed, built and made true in one day (2026-08-13,
 decisions/server-user-admin.md): auth target, admin socket and `auth user`

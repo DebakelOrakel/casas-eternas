@@ -191,6 +191,19 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 			_ = worldModule.Close()
 		}
 	}()
+	if targets.Has(config.TargetWorld) && targets.Has(config.TargetArtifacts) {
+		// Before either bucket opens: the artifact store would take the
+		// worlds in a shared root as junk (config.SeparateStorage).
+		if err := cfg.World.Storage.Validate("world"); err != nil {
+			return nil, nil, nil, err
+		}
+		if err := cfg.Artifacts.Storage.Validate("artifacts"); err != nil {
+			return nil, nil, nil, err
+		}
+		if err := config.SeparateStorage(cfg.World.Storage, cfg.Artifacts.Storage); err != nil {
+			return nil, nil, nil, err
+		}
+	}
 	if targets.Has(config.TargetWorld) {
 		if err := cfg.World.Storage.Validate("world"); err != nil {
 			return nil, nil, nil, err

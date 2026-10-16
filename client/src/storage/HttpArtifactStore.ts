@@ -1,4 +1,4 @@
-import { ArtifactStoreUnavailableError, type ArtifactHandle, type ArtifactKey, type ArtifactStore } from './ArtifactStore'
+import { ArtifactStoreRefusedError, ArtifactStoreUnavailableError, type ArtifactHandle, type ArtifactKey, type ArtifactStore } from './ArtifactStore'
 
 // The server's artifact store, behind the same resolve/read/write interface
 // as the local one. `resolve` is the server's own endpoint — the one request
@@ -18,6 +18,15 @@ import { ArtifactStoreUnavailableError, type ArtifactHandle, type ArtifactKey, t
 // (TieredArtifactStore.ts); the worker gives its task back (jobWorker.ts).
 // A write that the server refuses (4xx: rights, size, an unminted uid) is
 // false, as before; only a server that does not answer throws.
+//
+// A REFUSAL IS FINAL (2026-10-16). A resolve or a read that the API answers
+// with a 4xx other than 404 (400, 401, 403, …) throws
+// ArtifactStoreRefusedError, not ArtifactStoreUnavailableError: asking
+// again gets the same answer, so the worker fails the task at once instead
+// of giving it back four times, 15 s apart. Two answers stay "unavailable",
+// because a fresh request can succeed: a 410 (a read link that expired on
+// the way) and a 403 from the link a read was redirected to (a link that
+// does not verify, e.g. a key change-over), not from the API.
 //
 // WRITES BY LINK (2026-10-16, DEC-0038 fork 7), for the job worker: the
 // bytes go straight to the bucket, not through the server. Per file the
@@ -47,6 +56,19 @@ import { ArtifactStoreUnavailableError, type ArtifactHandle, type ArtifactKey, t
 // let go at the commit, at a refusal (false) and at a throw. The files
 // under the old uid are not this store's business: the server's sweep
 // takes them as junk (store.go, sweepLocked). A read's 404 stays "absent".
+//
+// ANOTHER WRITER WAS FIRST (2026-10-16). Two workers can compute the same
+// artifact under the same uid; the first commit makes it whole, and the
+// server then answers 409 with the code "committed" to a write link for it
+// (artifacts.go, WriteLinkCommitted). THE RULE: that answer is "already
+// written" — the write is true, the remaining files of the artifact are
+// skipped (true, no request) up to and including its meta.json, and there
+// is no commit. The bytes the server holds are the other writer's; the key
+// is the same, so they are the same artifact. On dir the module's link
+// route refuses an upload into a whole artifact (403) first; the fresh
+// link then answers the 409. Any other 409 of write-link (too many
+// uncommitted files) is a refusal (false), and a 409 of the commit (a
+// meta.json that names another key) is too.
 
 export interface HttpArtifactStoreOptions {
   // Where the API lives. Defaults nowhere on purpose: this used to import the
@@ -91,6 +113,9 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
   const moved = new Map<string, string>()
   // The fresh uids, until their commit: a 404 under one of them throws.
   const retried = new Set<string>()
+  // The uids another writer committed first, until this writer's meta.json:
+  // their remaining files are skipped (ANOTHER WRITER WAS FIRST).
+  const wholeElsewhere = new Set<string>()
   const current = (uid: string): string => moved.get(uid) ?? uid
 
   const fileUrl = async (handle: ArtifactHandle, name: string): Promise<string | null> => {
@@ -111,6 +136,15 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
   }
   const unavailable = (what: string, response: Response): ArtifactStoreUnavailableError =>
     new ArtifactStoreUnavailableError(`artifact store: ${what}: ${response.status} ${response.statusText}`.trimEnd(), response.status)
+  // A failed answer to a resolve or a read (see A REFUSAL IS FINAL above).
+  const failed = (what: string, response: Response): Error => {
+    const status = response.status
+    const fromLink = response.redirected && status === 403
+    if (status >= 400 && status < 500 && status !== 410 && !fromLink) {
+      return new ArtifactStoreRefusedError(`artifact store: ${what}: ${status} ${response.statusText}`.trimEnd(), status)
+    }
+    return unavailable(what, response)
+  }
 
   const resolveKey = async (key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null> => {
     const base = await resolveBase()
@@ -121,7 +155,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       body: JSON.stringify({ ...key, create }),
     })
     if (response.status === 404) return null
-    if (!response.ok) throw unavailable('resolve', response)
+    if (!response.ok) throw failed('resolve', response)
     let body: { artifactUid?: string; files?: string[] }
     try {
       body = (await response.json()) as { artifactUid?: string; files?: string[] }
@@ -140,7 +174,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       if (!target) return null
       const response = await request(`read ${name}`, target, { cache: 'no-store' })
       if (response.status === 404) return null
-      if (!response.ok) throw unavailable(`read ${name}`, response)
+      if (!response.ok) throw failed(`read ${name}`, response)
       try {
         return await response.arrayBuffer()
       } catch (error) {
@@ -168,8 +202,9 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
   }
 
   // A write link for one file of the length given; null when the server
-  // refuses (4xx), 'gone' when it does not know the artifact (404).
-  async function writeLink(uid: string, name: string, size: number): Promise<WriteLink | null | 'gone'> {
+  // refuses (4xx), 'gone' when it does not know the artifact (404), 'whole'
+  // when another writer committed it first (409 "committed").
+  async function writeLink(uid: string, name: string, size: number): Promise<WriteLink | null | 'gone' | 'whole'> {
     const base = await resolveBase()
     if (!base) return null
     const route = `${base}/artifacts/${encodeURIComponent(uid)}/write-link`
@@ -180,6 +215,10 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
     })
     if (response.status >= 500) throw unavailable(`write-link ${name}`, response)
     if (response.status === 404) return 'gone'
+    if (response.status === 409) {
+      const body = (await response.json().catch(() => null)) as { code?: unknown } | null
+      return body?.code === 'committed' ? 'whole' : null
+    }
     if (!response.ok) return null
     let link: WriteLink
     try {
@@ -193,16 +232,17 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
 
   // One file by link: the link, the upload (the rule for expired links),
   // and with meta.json the commit. 'gone' when the server does not know
-  // the artifact (404).
-  async function uploadByLink(uid: string, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean | 'gone'> {
+  // the artifact (404), 'whole' when another writer committed it first.
+  async function uploadByLink(uid: string, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean | 'gone' | 'whole'> {
     const size = bytes.byteLength
     let link = await writeLink(uid, name, size)
-    if (link === null || link === 'gone') return link === 'gone' ? 'gone' : false
+    if (link === null) return false
+    if (link === 'gone' || link === 'whole') return link
     let refreshed = false
-    const fresh = async (): Promise<boolean | 'gone'> => {
+    const fresh = async (): Promise<boolean | 'gone' | 'whole'> => {
       refreshed = true
       link = await writeLink(uid, name, size)
-      return link === 'gone' ? 'gone' : link !== null
+      return link === 'gone' || link === 'whole' ? link : link !== null
     }
     // Too little left of the link: a fresh one first (asked once; a server
     // whose links live shorter than the margin gets the upload anyway).
@@ -252,10 +292,22 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
     return response.ok
   }
 
+  // Another writer committed the artifact: already written (see ANOTHER
+  // WRITER WAS FIRST). Its meta.json ends the skip.
+  function whole(uid: string, name: string): true {
+    uploaded.delete(uid)
+    retried.delete(uid)
+    if (name === 'meta.json') wholeElsewhere.delete(uid)
+    else wholeElsewhere.add(uid)
+    return true
+  }
+
   async function writeByLink(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
     let uid = current(handle.remote!)
+    if (wholeElsewhere.has(uid)) return whole(uid, name)
     try {
       const wrote = await uploadByLink(uid, name, bytes)
+      if (wrote === 'whole') return whole(uid, name)
       if (wrote !== 'gone') {
         if (!wrote) uploaded.delete(uid)
         return wrote
@@ -274,6 +326,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       retried.add(uid)
       for (const file of [...earlier, { name, bytes }]) {
         const again = await uploadByLink(uid, file.name, file.bytes)
+        if (again === 'whole') return whole(uid, name)
         if (again === 'gone') throw new ArtifactStoreUnavailableError(`artifact store: write ${file.name}: the artifact is unknown to the server again after a fresh resolve`, 404)
         if (!again) {
           uploaded.delete(uid)

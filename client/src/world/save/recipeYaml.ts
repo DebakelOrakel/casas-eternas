@@ -14,9 +14,12 @@
 // default, giving them all the same label and the same detail seed.
 //
 // A key may hold a "/" — an annotation key is prefixed, `casas-eternas/
-// copied-from` (world/worldCopy.ts) — but never a ".", the path separator.
-// The server's reader (internal/modules/world/save.go) takes the same keys.
-const RECIPE_LINE = /^(\s*)([\w/-]+):\s*(.*)$/
+// copied-from` (world/worldCopy.ts) — and a ".", as a prefix that is a
+// domain does (`example.com/x`, 2026-10-16). A "." is also the separator of
+// a path, so a path cannot name such a key; readRecipeMap reads it as a key
+// of its map. The server's reader (internal/modules/world/save.go) takes
+// the same keys.
+const RECIPE_LINE = /^(\s*)([\w./-]+):\s*(.*)$/
 
 export function readRecipeValue(text: string, path: string): string | undefined {
   const stack: { indent: number; key: string }[] = []
@@ -45,7 +48,8 @@ export function readRecipeNumber(text: string, path: string): number | undefined
 
 // Every key directly under a dotted path, with its value, in the file's order
 // — a map such as `metadata.annotations`. Keys whose value is a block of
-// their own are left out. Empty when the path is absent.
+// their own are left out. Empty when the path is absent. A quoted value is
+// read as yamlScalar writes it: "…" with its escapes, '…' with '' for '.
 export function readRecipeMap(text: string, path: string): Record<string, string> {
   const entries: Record<string, string> = {}
   const stack: { indent: number; key: string }[] = []
@@ -56,9 +60,41 @@ export function readRecipeMap(text: string, path: string): Record<string, string
     const indent = indentText.length
     while (stack.length > 0 && stack[stack.length - 1].indent >= indent) stack.pop()
     if (rawValue !== '' && stack.map((entry) => entry.key).join('.') === path) {
-      entries[key] = rawValue.replace(/^["']|["']$/g, '')
+      entries[key] = unquoted(rawValue)
     }
     stack.push({ indent, key })
   }
   return entries
+}
+
+// A value for a `key: value` line: as it is when YAML reads it back as the
+// same string, else double-quoted (JSON's escapes, which are YAML's: `"`,
+// `\`, control characters). Quoted: the empty string, a value with ": " or
+// " #" or "#" in it, one that ends with ":", one with a space or a tab at
+// either end, one that starts with an indicator (- ? : , [ ] { } # & * ! | >
+// ' " % @ `), one with a control character, and one that YAML would read
+// as another type (true, null, a number). Until 2026-10-16 annotation
+// values were written as they were, so `a: b` made the file invalid.
+export function yamlScalar(value: string): string {
+  const needsQuotes =
+    value === '' ||
+    /: |#|:$|^[\s]|[\s]$|^[-?:,[\]{}&*!|>'"%@`]|[\u0000-\u001f\u007f]/.test(value) ||
+    /^(true|false|yes|no|on|off|y|n|null|~)$/i.test(value) ||
+    /^[-+]?(\.?\d|\.(inf|nan)$)/i.test(value)
+  return needsQuotes ? JSON.stringify(value) : value
+}
+
+// A value as YAML reads it back from yamlScalar (and the plain ones as they
+// are). A double-quoted value that JSON cannot read (YAML escapes beyond
+// JSON's) loses its quotes only, as before.
+function unquoted(raw: string): string {
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    try {
+      return JSON.parse(raw) as string
+    } catch {
+      return raw.slice(1, -1)
+    }
+  }
+  if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1).replace(/''/g, "'")
+  return raw
 }

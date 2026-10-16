@@ -19,6 +19,7 @@
 // once and uploads the artifact again from its first file; a second 404
 // throws. And the world read by link (2026-10-16): the 302's ETag is the
 // revision, the link is read without the job token, the 304 still comes.
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { registerHooks } from 'node:module'
 import { resolve } from './tsResolve.mjs'
@@ -27,8 +28,9 @@ registerHooks({ resolve })
 const { createHttpArtifactStore } = await import('../src/storage/HttpArtifactStore.ts')
 const { createTieredArtifactStore } = await import('../src/storage/TieredArtifactStore.ts')
 const { createMemoryArtifactStore } = await import('../src/storage/MemoryArtifactStore.ts')
-const { ArtifactStoreUnavailableError, artifactKey } = await import('../src/storage/ArtifactStore.ts')
-const { readWorld, WorldUnavailableError } = await import('./readWorld.ts')
+const { ArtifactStoreUnavailableError, ArtifactStoreRefusedError, artifactKey } = await import('../src/storage/ArtifactStore.ts')
+const { readWorld, WorldUnavailableError, WorldRefusedError } = await import('./readWorld.ts')
+const { uploadWorldTo } = await import('../src/server/worldClient.ts')
 
 let failures = 0
 const check = (name, ok, detail = '') => {
@@ -44,6 +46,8 @@ const outcome = async (call) => {
   }
 }
 const unavailable = (o) => o.error instanceof ArtifactStoreUnavailableError
+// A final refusal (4xx other than 404): the task fails at once, no nak.
+const refusedFinally = (o) => o.error instanceof ArtifactStoreRefusedError && !(o.error instanceof ArtifactStoreUnavailableError)
 
 // The server's answer per route, set by each case.
 const answers = { resolve: 200, file: 200, put: 204 }
@@ -59,8 +63,9 @@ const server = createServer((req, res) => {
     const write = url.pathname.match(/^\/v1\/artifacts\/u1\/write-link$/)
     if (write && req.method === 'POST') {
       const n = ++links.asked
-      const status = links.linkStatus.shift() ?? 200
-      if (status !== 200) return res.writeHead(status).end('{"error":"x"}')
+      const answer = links.linkStatus.shift() ?? 200
+      const [status, error] = typeof answer === 'number' ? [answer, '{"error":"x"}'] : [answer.status, answer.body]
+      if (status !== 200) return res.writeHead(status, { 'Content-Type': 'application/json' }).end(error)
       const { name, size } = JSON.parse(body.toString())
       const ttl = links.linkTtlMs.shift() ?? 3_600_000
       const path = `/bucket/u1/${name}?len=${size}&n=${n}`
@@ -84,6 +89,10 @@ const server = createServer((req, res) => {
       if (answers.resolve !== 200) return res.writeHead(answers.resolve).end('{"error":"x"}')
       return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ artifactUid: 'u1', files: ['meta.json'] }))
     }
+    if (url.pathname === '/v1/artifacts/blob/u1/forbidden') {
+      // A link that does not verify: the link's 403, not the API's.
+      return res.writeHead(403).end()
+    }
     if (url.pathname === '/v1/artifacts/blob/u1/meta.json') {
       // The link a read is redirected to (the dir backend's own links).
       if (answers.file === 'gone') return res.writeHead(404).end()
@@ -92,6 +101,7 @@ const server = createServer((req, res) => {
     if (url.pathname.startsWith('/v1/artifacts/u1/')) {
       if (req.method === 'PUT') return res.writeHead(answers.put).end()
       if (answers.file === 'redirect' || answers.file === 'gone') return res.writeHead(302, { Location: '/v1/artifacts/blob/u1/meta.json' }).end()
+      if (answers.file === 'linkForbidden') return res.writeHead(302, { Location: '/v1/artifacts/blob/u1/forbidden' }).end()
       if (answers.file !== 200) return res.writeHead(answers.file).end()
       return res.writeHead(200).end('{"ok":true}')
     }
@@ -124,8 +134,12 @@ console.log('\n— the HTTP store: only 404 is absent —')
   check('resolve 500 → unavailable', unavailable(await outcome(() => s.resolve(key, false))))
   answers.resolve = 503
   check('resolve 503 → unavailable', unavailable(await outcome(() => s.resolve(key, true))))
-  answers.resolve = 401
-  check('resolve 401 → unavailable, not absent', unavailable(await outcome(() => s.resolve(key, false))))
+  for (const status of [400, 401, 403]) {
+    answers.resolve = status
+    const o = await outcome(() => s.resolve(key, false))
+    check(`resolve ${status} → refused (final), not unavailable, not absent`, refusedFinally(o) && o.error.status === status, String(o.error ?? JSON.stringify(o.value)))
+  }
+  answers.resolve = 200
 
   const read = await outcome(() => s.read(handle, 'meta.json'))
   check('read 200 → bytes', read.value && new TextDecoder().decode(read.value) === '{"ok":true}', String(read.error))
@@ -143,6 +157,14 @@ console.log('\n— the HTTP store: only 404 is absent —')
   check('read 500 → unavailable', unavailable(broken) && broken.error.status === 500, String(broken.error))
   answers.file = 410
   check('read 410 (an expired link) → unavailable', unavailable(await outcome(() => s.read(handle, 'meta.json'))))
+  answers.file = 'linkForbidden'
+  check('read 302 → link 403 (a link that does not verify) → unavailable', unavailable(await outcome(() => s.read(handle, 'meta.json'))))
+  for (const status of [400, 401, 403]) {
+    answers.file = status
+    const o = await outcome(() => s.read(handle, 'meta.json'))
+    check(`read ${status} from the API → refused (final)`, refusedFinally(o) && o.error.status === status, String(o.error ?? JSON.stringify(o.value)))
+  }
+  answers.file = 200
 
   const wrote = await outcome(() => s.write(handle, 'meta.json', bytes))
   check('write 204 → true', wrote.value === true, String(wrote.error))
@@ -203,6 +225,36 @@ console.log('\n— the HTTP store: writes by link (the job worker) —')
   check('write-link 500 → unavailable', unavailable(await outcome(() => s.write(handle, 'h.f32', data))))
   resetLinks({ commit: 409 })
   check('commit refused (409) → false', (await outcome(() => s.write(handle, 'meta.json', meta))).value === false)
+  resetLinks({ linkStatus: [507] })
+  check('write-link 507 (the store is full) → unavailable', unavailable(await outcome(() => s.write(handle, 'h.f32', data))))
+
+  // A whole artifact: another writer committed it first (409, code
+  // "committed"). Already written: true, the rest of its files skipped,
+  // no commit.
+  const committedFirst = { status: 409, body: '{"error":"the artifact is whole","code":"committed"}' }
+  resetLinks({ linkStatus: [committedFirst] })
+  const first = await outcome(() => s.write(handle, 'a.f32', data))
+  check('write-link 409 "committed" → true, nothing uploaded', first.value === true && links.asked === 1 && links.uploads.length === 0, JSON.stringify({ first, links }))
+  const rest = await outcome(() => s.write(handle, 'b.f32', data))
+  const last = await outcome(() => s.write(handle, 'meta.json', meta))
+  check('the rest of that artifact → true, no link asked, no commit', rest.value === true && last.value === true && links.asked === 1 && links.uploads.length === 0 && links.commits.length === 0, JSON.stringify({ rest, last, links }))
+  resetLinks()
+  const next = await outcome(() => s.write(handle, 'a.f32', data))
+  check('after its meta.json the uid is written as usual again', next.value === true && links.asked === 1 && links.uploads.length === 1, JSON.stringify({ next, links }))
+  resetLinks()
+  await s.write(handle, 'a.f32', data)
+  links.linkStatus.push(committedFirst)
+  const midway = await outcome(() => s.write(handle, 'b.f32', data))
+  const midMeta = await outcome(() => s.write(handle, 'meta.json', meta))
+  check('committed by another writer half-way → true, no commit of our files', midway.value === true && midMeta.value === true && links.commits.length === 0, JSON.stringify({ midway, midMeta, links }))
+  // On dir the module's link route refuses a link of a whole artifact (403);
+  // the fresh link then answers 409 "committed".
+  resetLinks({ upload: [403], linkStatus: [200, committedFirst] })
+  const refusedThenWhole = await outcome(() => s.write(handle, 'c.f32', data))
+  check('upload 403, then write-link 409 "committed" → true', refusedThenWhole.value === true && links.asked === 2 && links.uploads.length === 1, JSON.stringify({ refusedThenWhole, links }))
+  await s.write(handle, 'meta.json', meta)
+  resetLinks({ linkStatus: [409] })
+  check('write-link 409 without the code (too many files) → false', (await outcome(() => s.write(handle, 'h.f32', data))).value === false)
   resetLinks({ commit: 503 })
   check('commit 503 → unavailable', unavailable(await outcome(() => s.write(handle, 'meta.json', meta))))
 }
@@ -363,7 +415,13 @@ console.log('\n— the tiered store (the browser): unavailable is a miss —')
   process.on('unhandledRejection', onRejection)
   const warn = console.warn
   const warnings = []
-  console.warn = (...args) => warnings.push(args)
+  // The hook: a warning that names the background write settles `written`,
+  // so the case waits for the failure itself, not for a time.
+  let written = () => {}
+  console.warn = (...args) => {
+    warnings.push(args)
+    if (String(args[0]).includes("server's write failed")) written()
+  }
   try {
     for (const [name, base] of [['500', plain], ['TLS', tls], ['refused', refused]]) {
       Object.assign(answers, { resolve: 500, file: 500, put: 500 })
@@ -380,16 +438,24 @@ console.log('\n— the tiered store (the browser): unavailable is a miss —')
       check(`${name}: read → the local bytes`, back.value?.byteLength === 3, String(back.error))
       const remoteOnly = await outcome(() => tiered.read({ key, remote: 'u1', files: [] }, 'meta.json'))
       check(`${name}: read of a remote-only handle → null`, remoteOnly.value === null && !remoteOnly.error, String(remoteOnly.error))
-      // The remote write is not awaited; give it its moment to fail.
+      // The remote write is not awaited: wait for its warning.
+      const failed = new Promise((done) => { written = done })
       await tiered.write({ ...h, remote: 'u1' }, 'meta.json', bytes)
-      await new Promise((done) => setTimeout(done, 200))
+      // A guard only, so that a write that never fails ends the run: 5 s.
+      let guard
+      const timedOut = await Promise.race([failed.then(() => false), new Promise((done) => { guard = setTimeout(done, 5000, true) })])
+      clearTimeout(guard)
+      check(`${name}: the background write fails and says so`, !timedOut)
     }
   } finally {
     console.warn = warn
     process.off('unhandledRejection', onRejection)
   }
   check('no unhandled rejection from the background upload', rejections.length === 0, String(rejections[0]))
-  check('each failure is said on the console, once per call kind and store', warnings.length > 0 && warnings.length <= 9, `${warnings.length} warnings`)
+  // Per store: the resolve (said once, though called twice), the read of
+  // the remote-only handle, the background write.
+  const said = warnings.map((args) => String(args[0]).match(/server's (\w+) failed/)?.[1]).join(',')
+  check('each failure is said on the console, once per call kind and store', said === Array(3).fill('resolve,read,write').join(','), said)
 }
 
 console.log('\n— the job worker reads its world: only 404 is absent —')
@@ -403,10 +469,15 @@ console.log('\n— the job worker reads its world: only 404 is absent —')
   const absent = await outcome(() => readWorld(world(plain), plainFetch))
   check('404 → null (no such world: the task fails)', absent.value === null, String(absent.error))
   const worldUnavailable = (o) => o.error instanceof WorldUnavailableError
-  for (const status of [500, 503, 401]) {
+  for (const status of [500, 503]) {
     answers.file = status
     const o = await outcome(() => readWorld(world(plain), plainFetch))
     check(`${status} → unavailable (the task is given back)`, worldUnavailable(o), String(o.error ?? JSON.stringify(o.value)))
+  }
+  for (const status of [400, 401, 403]) {
+    answers.file = status
+    const o = await outcome(() => readWorld(world(plain), plainFetch))
+    check(`${status} → refused (the task fails at once)`, o.error instanceof WorldRefusedError && !worldUnavailable(o), String(o.error ?? JSON.stringify(o.value)))
   }
   for (const [name, base] of [['a TLS handshake that fails', tls], ['a refused connection', refused]]) {
     const o = await outcome(() => readWorld(world(base), plainFetch))
@@ -475,6 +546,59 @@ console.log('\n— the job worker reads its world by link: the 302, its ETag, th
   }
   api.close()
   bucket.close()
+}
+
+console.log('\n— the browser creates a world: a 409 for a world that is this save —')
+{
+  // A world server whose creation may have stored the world without the
+  // client knowing (a lost answer, a 500 for a meta it could not confirm):
+  // the next create answers 409. Its meta says what it holds.
+  const bytesOfSave = 'zip-bytes of this save'
+  const archive = new Blob([new TextEncoder().encode(bytesOfSave)])
+  const ours = createHash('sha256').update(bytesOfSave).digest('hex')
+  const fake = { putStatus: [], put: [], held: null, level: 'owner' }
+  const worlds = createServer((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      const m = req.url.match(/^\/v1\/worlds\/([^/]+)(\/meta)?$/)
+      if (m && !m[2] && req.method === 'PUT') {
+        fake.put.push(req.headers['if-match'] ?? null)
+        return res.writeHead(fake.putStatus.shift() ?? 409, { 'Content-Type': 'application/json' }).end('{"error":"x"}')
+      }
+      if (m && m[2] && fake.held) {
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ...fake.held, uid: m[1], callerLevel: fake.level }))
+      }
+      res.writeHead(404).end()
+    })
+  })
+  await new Promise((done) => worlds.listen(0, '127.0.0.1', done))
+  const base = `http://127.0.0.1:${worlds.address().port}/v1`
+  const send = (input, init) => fetch(input, init)
+  // The browser's localStorage, where the revision is remembered.
+  const remembered = new Map()
+  globalThis.localStorage = { getItem: (k) => remembered.get(k) ?? null, setItem: (k, v) => remembered.set(k, String(v)), removeItem: (k) => remembered.delete(k) }
+  const held = (contentHash) => ({ revision: 3, updatedAt: '2026-10-16T12:00:00Z', contentHash })
+
+  Object.assign(fake, { putStatus: [500, 409], put: [], held: held(ours), level: 'owner' })
+  const first = await outcome(() => uploadWorldTo(base, 'w1', archive, send))
+  check('a create answered 500 → rejected, as before', first.value?.ok === false && first.value.reason === 'rejected', JSON.stringify(first))
+  const again = await outcome(() => uploadWorldTo(base, 'w1', archive, send))
+  check('the retry (a create) answered 409, the meta holds this archive → stored, with its revision', again.value?.ok === true && again.value.revision === 3 && fake.put.length === 2 && fake.put.every((h) => h === null), JSON.stringify({ again, put: fake.put }))
+  check('and the revision is remembered: the next save is an update', remembered.get('casas.serverRevision.w1') === '3', JSON.stringify([...remembered]))
+  const cases = [['another content', { held: held('0'.repeat(64)) }], ['a viewer only', { level: 'viewer' }], ['no content hash', { held: held('') }], ['no meta', { held: null }]]
+  for (const [i, [name, change]] of cases.entries()) {
+    Object.assign(fake, { putStatus: [409], put: [], held: held(ours), level: 'owner' }, change)
+    const o = await outcome(() => uploadWorldTo(base, `c${i}`, archive, send))
+    const revision = fake.held ? 3 : undefined
+    check(`409, ${name} → the conflict, as before`, o.value?.ok === false && o.value.reason === 'conflict' && o.value.serverRevision === revision, JSON.stringify(o))
+  }
+  // A stale update (412) stays a conflict, even for the same bytes: the
+  // server dedupes an identical update itself.
+  Object.assign(fake, { putStatus: [412], put: [], held: held(ours), level: 'owner' })
+  const stale = await outcome(() => uploadWorldTo(base, 'w1', archive, send))
+  check('412 on an update → the conflict, not "stored"', stale.value?.ok === false && stale.value.reason === 'conflict' && fake.put[0] === '"3"', JSON.stringify({ stale, put: fake.put }))
+  delete globalThis.localStorage
+  worlds.close()
 }
 
 server.close()

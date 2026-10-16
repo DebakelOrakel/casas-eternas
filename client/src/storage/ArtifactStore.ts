@@ -35,6 +35,21 @@ export class ArtifactStoreUnavailableError extends Error {
   }
 }
 
+// The store answered, and refused for good: a 4xx other than 404 (no right,
+// a token that is not valid, a request it cannot take) on a resolve or a
+// read. Asking again does not change the answer, so the job worker reports
+// the task as failed at once instead of giving it back (jobWorker.ts).
+// Thrown by the HTTP store only; the browser's tiered store takes it as a
+// miss, as every other failure. A write that the server refuses stays false.
+export class ArtifactStoreRefusedError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ArtifactStoreRefusedError'
+    this.status = status
+  }
+}
+
 export interface StorageUsage {
   usedBytes: number
   quotaBytes: number
@@ -83,7 +98,8 @@ export interface ArtifactHandle {
 export interface ArtifactStore {
   // Null when the key is absent (create false) or could not be resolved.
   // The HTTP store throws ArtifactStoreUnavailableError when its server does
-  // not answer (see above).
+  // not answer (see above), ArtifactStoreRefusedError when it refuses (a 4xx
+  // other than 404).
   resolve(key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null>
   // Null when the file holds nothing (or could not be read — see above).
   // The HTTP store: null only for a 404, else it throws as resolve does.

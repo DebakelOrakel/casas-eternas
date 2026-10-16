@@ -3,6 +3,8 @@ package world
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -194,5 +196,38 @@ func TestInspectSaveLeavesMissingKindAndProgressEmpty(t *testing.T) {
 	}
 	if info.Kind != "" || info.Progress != "" {
 		t.Errorf("kind/progress = %q/%q, want both empty", info.Kind, info.Progress)
+	}
+}
+
+// The copy's rewrite of world.yaml against the table that the browser's
+// rewrite passes too (client/src/world/worldCopy.ts, harness:roundtrip):
+// the two write the same text.
+func TestWithCopyIdentityTable(t *testing.T) {
+	raw, err := os.ReadFile("testdata/copy-identity.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table struct {
+		UID    string `json:"uid"`
+		Source string `json:"source"`
+		Cases  []struct {
+			Name string  `json:"name"`
+			In   string  `json:"in"`
+			Want *string `json:"want"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &table); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range table.Cases {
+		got, err := withCopyIdentity(c.In, table.UID, table.Source)
+		switch {
+		case c.Want == nil && err == nil:
+			t.Errorf("%s: rewritten, want refused:\n%q", c.Name, got)
+		case c.Want != nil && err != nil:
+			t.Errorf("%s: %v", c.Name, err)
+		case c.Want != nil && got != *c.Want:
+			t.Errorf("%s:\ngot  %q\nwant %q", c.Name, got, *c.Want)
+		}
 	}
 }

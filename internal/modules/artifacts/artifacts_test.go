@@ -209,7 +209,9 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 
 	// The listing says what each caller may do with an entry, and counts only
 	// what the caller sees (2026-09-29).
-	meta := `{"key":{"worldUid":"` + worldUID + `","worldId":"w","pipelineVersion":"v","stage":"L1"},"label":"test","createdAt":1}`
+	// The meta names the key the artifact was resolved for (a meta that
+	// names another key is refused, ErrKeyMismatch).
+	meta := `{"key":{"worldUid":"` + worldUID + `","worldId":"ba90bda173d581ef","pipelineVersion":"v6","stage":"2"},"label":"test","createdAt":1}`
 	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/meta.json", meta, editor).Code; got != http.StatusNoContent {
 		t.Fatalf("editor meta = %d", got)
 	}

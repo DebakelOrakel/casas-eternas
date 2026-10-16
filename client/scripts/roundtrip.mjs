@@ -20,6 +20,7 @@
 // rasters from it. Section 5 also refuses what older saves hold. Section 2d
 // holds the world list's merge rules (ui/worldChooser/worldCards.ts): which
 // copies are one world.
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
@@ -230,6 +231,21 @@ console.log('\n— run history —')
   const plain = WR.recordFromYaml(WR.recordToYaml({ ...record, annotations: {} }, 'x'), { archeanEpochs: 41, epoch: 42 }, () => 'unused')
   check('the annotations survive world.yaml, and none writes no block', back.annotations['casas-eternas/copied-from'] === record.annotations['casas-eternas/copied-from'] && Object.keys(plain.annotations).length === 0 && !WR.recordToYaml({ ...record, annotations: {} }, 'x').includes('annotations:'))
   check('and are no change', WR.recordSignature(plain) === WR.recordSignature(record))
+  // Values that YAML would read otherwise are quoted on write, and read back
+  // as they were; plain ones stay plain. Keys may hold a "." (2026-10-16).
+  const awkward = {
+    'example.com/colon': 'a: b', 'example/quote': '"hi" \\ back', 'example/inner': 'say "hi" \\ back', 'example/empty': '', 'example/lead': ' lead',
+    'example/trail': 'trail ', 'example/hash': 'x #y', 'example/start-hash': '#x', 'example/dash': '- item', 'example/brace': '{a}',
+    'example/star': '*ref', 'example/single': "'q'", 'example/plain': 'plain value', 'example/url': 'https://example.com/x',
+  }
+  const awkwardYaml = WR.recordToYaml({ ...record, annotations: awkward }, 'x')
+  const awkwardBack = WR.recordFromYaml(awkwardYaml, { archeanEpochs: 41, epoch: 42 }, () => 'unused')
+  check('annotation values survive world.yaml as they were', JSON.stringify(awkwardBack.annotations) === JSON.stringify(awkward), JSON.stringify(awkwardBack.annotations))
+  const line = (k) => awkwardYaml.split('\n').find((l) => l.startsWith(`    ${k}:`))
+  check('and are quoted only when needed', line('example.com/colon') === '    example.com/colon: "a: b"' && line('example/quote') === '    example/quote: "\\"hi\\" \\\\ back"' && line('example/inner') === '    example/inner: say "hi" \\ back' && line('example/empty') === '    example/empty: ""' && line('example/plain') === '    example/plain: plain value' && line('example/url') === '    example/url: https://example.com/x', [line('example.com/colon'), line('example/quote'), line('example/empty'), line('example/plain')].join(' | '))
+  const WCopy = await L('/src/world/worldCopy.ts')
+  const copiedBack = WR.recordFromYaml(WCopy.withCopyIdentity(awkwardYaml, 'c', 's'), { archeanEpochs: 41, epoch: 42 }, () => 'unused')
+  check('and survive a copy', JSON.stringify(copiedBack.annotations) === JSON.stringify({ ...awkward, [WCopy.COPIED_FROM_ANNOTATION]: 's' }), JSON.stringify(copiedBack.annotations))
 }
 
 // --- 2c'. a copy's world.yaml -----------------------------------------------
@@ -246,6 +262,12 @@ console.log('\n— run history —')
   const want = `apiVersion: casas-eternas/v1alpha1\nkind: FlatWorld\nmetadata:\n  name: a\n  uid: new\n  annotations:\n    example/note: kept\n    ${key}: old\nspec:\n  seed: s\n`
   check('the copy\'s identity is written as the server writes it', WCopy.withCopyIdentity(yaml, 'new', 'old') === want, JSON.stringify(WCopy.withCopyIdentity(yaml, 'new', 'old')))
   check('a file without metadata is no world to copy', WCopy.withCopyIdentity('spec:\n  seed: s\n', 'new', 'old') === null)
+  // The table the server's rewrite passes too (save_test.go): the same text.
+  const table = JSON.parse(readFileSync(`${CLIENT}/../internal/modules/world/testdata/copy-identity.json`, 'utf8'))
+  for (const c of table.cases) {
+    const got = WCopy.withCopyIdentity(c.in, table.uid, table.source)
+    check(`copy table: ${c.name}`, got === c.want, JSON.stringify(got))
+  }
   // From the record the generator writes: the uid moves, the spec does not,
   // and the record reads the source back.
   const record = { kind: 'FlatWorld', uid: 'src-uid', name: 'N', annotations: {}, revision: 2, spec: { seed: '9', values: Object.fromEntries(M.spec.WORLD_SPEC_FIELDS.map((f) => [f.path, f.input.default])) }, history: { genesis: [], tectonics: [] }, archeanEpochs: 0, epoch: 0, erosionRun: 0, progress: null }

@@ -143,7 +143,15 @@ type Store struct {
 	// bucket adds against it is the conditional write (put, ifAbsent) on the
 	// keys that are created once — a revision's save and a new world's
 	// meta.json — where the provider has it.
-	locks sync.Map // uid -> *sync.Mutex
+	//
+	// Counted (worldLock.refs): an entry stays in the map while a writer
+	// holds it or waits on it, and goes when the last one is done. So the
+	// map holds only the worlds being written, and a writer that comes while
+	// another waits gets the SAME mutex. Until 2026-10-16 Delete dropped the
+	// entry while a writer waited on it, and the next writer got a fresh
+	// mutex: two writers of one world ran at once.
+	locksMu sync.Mutex
+	locks   map[string]*worldLock
 
 	mu     sync.RWMutex
 	worlds map[string]worldEntry // uid -> the world's meta and grants
@@ -206,7 +214,7 @@ func NewStore(ctx context.Context, bucket blob.Bucket, keepRevisions int) (*Stor
 	if keepRevisions < 0 {
 		return nil, fmt.Errorf("keep-revisions must be 0 (keep all) or positive, got %d", keepRevisions)
 	}
-	s := &Store{bucket: bucket, keepRevisions: keepRevisions, worlds: map[string]worldEntry{}, taken: map[string]int{}, now: time.Now}
+	s := &Store{bucket: bucket, keepRevisions: keepRevisions, worlds: map[string]worldEntry{}, taken: map[string]int{}, locks: map[string]*worldLock{}, now: time.Now}
 	if err := s.load(ctx); err != nil {
 		return nil, fmt.Errorf("indexing the world store: %w", err)
 	}
@@ -359,6 +367,15 @@ func (s *Store) put(ctx context.Context, key string, data []byte, contentType st
 	return err
 }
 
+// encodeJSON is a document's bytes as the store writes them.
+func encodeJSON(value any) ([]byte, error) {
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(raw, '\n'), nil
+}
+
 // putJSON writes a document. The overwritten ones (a world's meta.json after
 // its creation, grants.json) are plain writes: with one writer the world's
 // lock is enough. SEVERAL REPLICAS against one bucket would need each
@@ -366,16 +383,56 @@ func (s *Store) put(ctx context.Context, key string, data []byte, contentType st
 // writers could each replace the other's meta; that is not built — the
 // leaf has no If-Match, and the store is one process.
 func (s *Store) putJSON(ctx context.Context, key string, value any, ifAbsent bool) error {
-	raw, err := json.MarshalIndent(value, "", "  ")
+	raw, err := encodeJSON(value)
 	if err != nil {
 		return err
 	}
-	return s.put(ctx, key, append(raw, '\n'), "application/json", ifAbsent)
+	return s.put(ctx, key, raw, "application/json", ifAbsent)
 }
 
-func (s *Store) lock(uid string) *sync.Mutex {
-	value, _ := s.locks.LoadOrStore(uid, &sync.Mutex{})
-	return value.(*sync.Mutex)
+// worldLock is one world's mutex and the number of writers that hold it or
+// wait on it.
+type worldLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lock takes the world's mutex and answers the function that releases it.
+func (s *Store) lock(uid string) (unlock func()) {
+	s.locksMu.Lock()
+	l := s.locks[uid]
+	if l == nil {
+		l = &worldLock{}
+		s.locks[uid] = l
+	}
+	l.refs++
+	s.locksMu.Unlock()
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		s.locksMu.Lock()
+		l.refs--
+		if l.refs == 0 {
+			delete(s.locks, uid)
+		}
+		s.locksMu.Unlock()
+	}
+}
+
+// writeTimeout bounds a write sequence that no longer ends with its
+// request (detach). Long enough for a save of the upload limit (512 MiB)
+// on a slow link to the bucket; a write that takes longer has a problem
+// that waiting does not solve.
+const writeTimeout = 10 * time.Minute
+
+// detach is the context of a sequence of writes that must not stop
+// half-way when its request ends (a closed browser tab, a client
+// timeout): the request's values without its cancel, and writeTimeout.
+// The store writes several objects for one change (a revision is a save,
+// a preview, two metas), and a cancel between them leaves a revision that
+// the meta does not name, or a world without its meta.
+func detach(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 }
 
 const (
@@ -470,9 +527,9 @@ func (s *Store) WriteGrants(ctx context.Context, uid string, grants access.Grant
 			return fmt.Errorf("grant for %s: %w", id, err)
 		}
 	}
-	mu := s.lock(uid)
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := detach(ctx)
+	defer cancel()
+	defer s.lock(uid)()
 	meta, err := s.readMeta(uid)
 	if err != nil {
 		return err
@@ -509,9 +566,9 @@ func (s *Store) SetTemplate(ctx context.Context, uid string, on bool) (Meta, err
 	if !ValidUID(uid) {
 		return Meta{}, ErrNotFound
 	}
-	mu := s.lock(uid)
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := detach(ctx)
+	defer cancel()
+	defer s.lock(uid)()
 	meta, err := s.readMeta(uid)
 	if err != nil {
 		return Meta{}, err
@@ -606,9 +663,9 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 	if !ValidUID(uid) {
 		return Meta{}, fmt.Errorf("invalid world uid")
 	}
-	mu := s.lock(uid)
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := detach(ctx)
+	defer cancel()
+	defer s.lock(uid)()
 
 	current, err := s.readMeta(uid)
 	creating := false
@@ -721,11 +778,14 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 	// anywhere above leaves the old world intact rather than half-replaced.
 	// At a creation it is conditional: another writer that created the world
 	// in between makes this ErrExists, not an overwrite.
-	if err := s.putJSON(ctx, metaKey(uid), meta, creating); err != nil {
-		if creating && errors.Is(err, blob.ErrExists) {
-			return Meta{}, ErrExists
-		}
+	raw, err := encodeJSON(meta)
+	if err != nil {
 		return Meta{}, err
+	}
+	if err := s.put(ctx, metaKey(uid), raw, "application/json", creating); err != nil {
+		if err := s.settleMeta(ctx, uid, raw, creating, err); err != nil {
+			return Meta{}, err
+		}
 	}
 	s.update(uid, func(e *worldEntry) {
 		e.meta, e.metaErr = meta, nil
@@ -738,6 +798,41 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 	// direction, and must not fail an upload that already succeeded.
 	s.pruneRevisions(ctx, uid, revision)
 	return meta, nil
+}
+
+// settleMeta decides what a meta.json Put that answered `putErr` did. The
+// object may be stored all the same: the answer was lost, the request was
+// cut, or the SDK's retry of a conditional write met the object of its own
+// first try (412, ErrExists). So the store reads meta.json back:
+//
+//   - the bytes are the ones it wrote: the write is done, nil;
+//   - at a creation, another meta.json is there: the world exists, made by
+//     another writer or by an earlier try whose answer was lost. The index
+//     enters what the bucket holds (meta and grants), so Get, a retry and
+//     an update all see that world; ErrExists (409);
+//   - else putErr (ErrExists at a creation).
+//
+// Until 2026-10-16 an error here left the index without a world whose
+// meta.json was stored: Get answered 404, a retry 409, an update 412, until
+// a restart.
+func (s *Store) settleMeta(ctx context.Context, uid string, ours []byte, creating bool, putErr error) error {
+	held, readErr := s.read(ctx, metaKey(uid), documentLimit)
+	switch {
+	case readErr == nil && bytes.Equal(held, ours):
+		slog.Warn("world store: the meta write answered an error, but the meta is stored", "uid", uid, "err", putErr)
+		return nil
+	case creating && readErr == nil:
+		entry := s.readEntry(ctx, uid, true)
+		if entry.metaErr == nil {
+			s.mu.Lock()
+			s.worlds[uid] = entry
+			s.mu.Unlock()
+		}
+		return ErrExists
+	case creating && errors.Is(putErr, blob.ErrExists):
+		return ErrExists
+	}
+	return putErr
 }
 
 // claimRevision writes the save of the next free revision with a
@@ -758,11 +853,20 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 // ErrRevisionMismatch (ErrExists at a creation), never an overwrite of the
 // other writer's save. On a bucket without the conditional write (ceph) the
 // save is a plain write, and the world's lock alone keeps two uploads apart.
+//
+// A claim that answers an error takes its number all the same: the save
+// may be stored although the Put failed (a lost answer, a cut request, or
+// the SDK's retry that meets its own first try and answers 412). Until
+// 2026-10-16 the number stayed free, and every later update chose it again
+// and answered 412 until a restart.
 func (s *Store) claimRevision(ctx context.Context, uid string, current int, creating bool, data []byte) (int, error) {
 	s.mu.RLock()
 	revision := max(current, s.taken[uid]) + 1
 	s.mu.RUnlock()
 	if err := s.put(ctx, revKey(uid, revision, zipName), data, "application/zip", true); err != nil {
+		s.mu.Lock()
+		s.taken[uid] = max(s.taken[uid], revision)
+		s.mu.Unlock()
 		if errors.Is(err, blob.ErrExists) {
 			slog.Warn("world store: another writer took the revision", "uid", uid, "revision", revision)
 			if creating {
@@ -790,24 +894,52 @@ func (s *Store) readRevisionMeta(ctx context.Context, uid string, revision int) 
 	return meta, nil
 }
 
-// pruneRevisions drops every revision older than the newest keepRevisions.
-// 0 keeps all. Lists the world's revisions rather than counting down from
-// the current number, so a gap (a pruned or stepped-over revision) does not
-// end the sweep early.
+// pruneRevisions keeps the newest keepRevisions WHOLE revisions — those with
+// a revision meta.json — and drops the rest that are older than the current
+// one. 0 keeps all. An orphan (a save whose upload ended before its
+// revision meta, claimRevision) uses up no slot and is dropped. The current
+// revision is never dropped, and a revision above it is not touched (it is
+// not this store's to judge). Lists the world's revisions rather than
+// counting down from the current number, so a gap does not end the sweep
+// early.
+//
+// Until 2026-10-16 the sweep counted numbers: orphans took slots, and the
+// last good revision before the current one could go while an orphan
+// stayed.
 func (s *Store) pruneRevisions(ctx context.Context, uid string, current int) {
 	if s.keepRevisions <= 0 {
 		return
 	}
-	oldest := current - s.keepRevisions + 1
-	var doomed []string
+	keys := map[int][]string{}
+	whole := map[int]bool{}
 	for info, err := range s.bucket.List(ctx, uid+"/rev/") {
 		if err != nil {
 			slog.Warn("world store: listing revisions to prune", "uid", uid, "err", err)
 			return
 		}
-		if n, ok := revisionOf(strings.TrimPrefix(info.Key, uid+"/")); ok && n < oldest {
-			doomed = append(doomed, info.Key)
+		rest := strings.TrimPrefix(info.Key, uid+"/")
+		n, ok := revisionOf(rest)
+		if !ok || n >= current {
+			continue
 		}
+		keys[n] = append(keys[n], info.Key)
+		if rest == "rev/"+strconv.Itoa(n)+"/"+metaName {
+			whole[n] = true
+		}
+	}
+	older := make([]int, 0, len(keys))
+	for n := range keys {
+		older = append(older, n)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(older)))
+	kept := 1 // the current revision
+	var doomed []string
+	for _, n := range older {
+		if whole[n] && kept < s.keepRevisions {
+			kept++
+			continue
+		}
+		doomed = append(doomed, keys[n]...)
 	}
 	_ = s.deleteKeys(ctx, uid, doomed)
 }
@@ -955,14 +1087,12 @@ func (s *Store) Delete(ctx context.Context, uid string) error {
 	if !ValidUID(uid) {
 		return ErrNotFound
 	}
-	mu := s.lock(uid)
-	mu.Lock()
-	defer mu.Unlock()
-	// The mutex leaves with the world, or the map grows by one entry per
-	// world ever touched. Dropped while still held: a writer already waiting
-	// on it proceeds after us and finds the world gone; a writer arriving
-	// after the drop gets a fresh mutex for what is by then a new world.
-	defer s.locks.Delete(uid)
+	ctx, cancel := detach(ctx)
+	defer cancel()
+	// The lock's entry goes when its last writer is done (lock), not here: a
+	// writer waiting on it proceeds after us and finds the world gone, and a
+	// writer arriving meanwhile waits on the same mutex.
+	defer s.lock(uid)()
 
 	if _, err := s.readMeta(uid); err != nil {
 		return err

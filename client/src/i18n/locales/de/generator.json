@@ -56,6 +56,7 @@
   "generator.load.template.mark.help": "Bietet diese Welt allen Besuchern des Servers zum Kopieren an, auch ohne Konto. Ihr Inhalt ändert sich nicht.",
   "generator.load.template.unmark.label": "Vorlagen-Markierung entfernen",
   "generator.load.template.unmark.help": "Diese Welt wird nicht mehr als Vorlage angeboten. Bereits erstellte Kopien bleiben.",
+  "generator.load.template.failed": "Die Vorlagen-Markierung konnte nicht geändert werden.",
   "generator.load.template.filter.label": "Vorlagen",
   "generator.load.template.filter.help": "Nur die Welten, die der Server als Anfang zum Kopieren anbietet.",
   "generator.artifacts.title": "Artefakte",
