@@ -14,7 +14,10 @@
 // meta.json — and the rule for expired links: a link with less than the
 // margin left is asked for again before the upload, a refused upload (403,
 // 410) once after it. And the worker's read of the world: only a 404 is
-// "no such world", other failures give the task back.
+// "no such world", other failures give the task back. And a reservation
+// the server forgot at a restart: a 404 on a write by link resolves again
+// once and uploads the artifact again from its first file; a second 404
+// throws.
 import { createServer } from 'node:http'
 import { registerHooks } from 'node:module'
 import { resolve } from './tsResolve.mjs'
@@ -201,6 +204,140 @@ console.log('\n— the HTTP store: writes by link (the job worker) —')
   check('commit refused (409) → false', (await outcome(() => s.write(handle, 'meta.json', meta))).value === false)
   resetLinks({ commit: 503 })
   check('commit 503 → unavailable', unavailable(await outcome(() => s.write(handle, 'meta.json', meta))))
+}
+
+console.log('\n— the HTTP store: a reservation the server forgot (a restart) —')
+{
+  // A server that keeps its reservations in memory, as the artifact store
+  // does, and forgets them when it "restarts". Its bucket survives.
+  const fake = { minted: 0, byKey: new Map(), known: new Set(), bucket: new Map(), resolves: 0, commits: [], uploads: [], putGone: false, restartOn: null }
+  const restart = () => { fake.byKey.clear(); fake.known.clear() }
+  const reset = () => Object.assign(fake, { minted: 0, byKey: new Map(), known: new Set(), bucket: new Map(), resolves: 0, commits: [], uploads: [], putGone: false, restartOn: null })
+  // restartOn: a predicate over the request ('link', 'upload', 'commit' and
+  // the file); true restarts the server before it answers.
+  const maybeRestart = (what, name) => {
+    if (fake.restartOn && fake.restartOn(what, name)) restart()
+  }
+  const restartable = createServer((req, res) => {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => {
+      const url = new URL(req.url, 'http://x')
+      const body = Buffer.concat(chunks)
+      if (url.pathname === '/v1/artifacts/resolve') {
+        fake.resolves++
+        const k = JSON.parse(body.toString())
+        const id = `${k.worldUid}/${k.worldId}/${k.pipelineVersion}/${k.stage}`
+        let uid = fake.byKey.get(id)
+        if (!uid && !k.create) return res.writeHead(404).end()
+        if (!uid) {
+          uid = `r${++fake.minted}`
+          fake.byKey.set(id, uid)
+          fake.known.add(uid)
+        }
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ artifactUid: uid, files: [] }))
+      }
+      let m = url.pathname.match(/^\/v1\/artifacts\/([^/]+)\/write-link$/)
+      if (m && req.method === 'POST') {
+        const { name, size } = JSON.parse(body.toString())
+        maybeRestart('link', name)
+        if (!fake.known.has(m[1])) return res.writeHead(404).end('{"error":"no such artifact"}')
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+          method: 'PUT', url: `/bucket/${m[1]}/${name}?len=${size}`, header: {}, expires: new Date(Date.now() + 3_600_000).toISOString(),
+        }))
+      }
+      m = url.pathname.match(/^\/bucket\/([^/]+)\/(.+)$/)
+      if (m && req.method === 'PUT') {
+        maybeRestart('upload', m[2])
+        fake.uploads.push(`${m[1]}/${m[2]}`)
+        // A provider stores what a valid link sends, known uid or not; the
+        // fake can also answer 404 (putGone).
+        if (fake.putGone && !fake.known.has(m[1])) return res.writeHead(404).end()
+        fake.bucket.set(`${m[1]}/${m[2]}`, body)
+        return res.writeHead(200).end()
+      }
+      m = url.pathname.match(/^\/v1\/artifacts\/([^/]+)\/commit$/)
+      if (m && req.method === 'POST') {
+        maybeRestart('commit', '')
+        if (!fake.known.has(m[1])) return res.writeHead(404).end('{"error":"no such artifact"}')
+        fake.commits.push({ uid: m[1], files: JSON.parse(body.toString()).files })
+        return res.writeHead(204).end()
+      }
+      m = url.pathname.match(/^\/v1\/artifacts\/([^/]+)\/(.+)$/)
+      if (m && req.method === 'GET') {
+        const committed = fake.commits.some((c) => c.uid === m[1] && c.files.some((f) => f.name === m[2]))
+        if (!committed) return res.writeHead(404).end()
+        return res.writeHead(200).end(fake.bucket.get(`${m[1]}/${m[2]}`))
+      }
+      res.writeHead(404).end()
+    })
+  })
+  await new Promise((done) => restartable.listen(0, '127.0.0.1', done))
+  const base = `http://127.0.0.1:${restartable.address().port}/v1`
+  // A store per case: the fake's uids start again at r1 with each reset.
+  const linked = () => createHttpArtifactStore({ resolveBase: async () => base, uploads: 'links' })
+  let s = linked()
+  const a = new Uint8Array(100).fill(1)
+  const b = new Uint8Array(200).fill(2)
+  const meta = new TextEncoder().encode('{"key":{}}')
+  const names = (commit) => (commit?.files ?? []).map((f) => `${f.name}:${f.size}`).join(',')
+  const whole = `a.f32:100,b.f32:200,meta.json:${meta.byteLength}`
+  // The worker's write of one artifact: resolve with create, files, meta last.
+  const writeAll = async (store, k) => {
+    const h = await store.resolve(k, true)
+    const done = []
+    for (const [name, bytes] of [['a.f32', a], ['b.f32', b], ['meta.json', meta]]) done.push(await store.write(h, name, bytes))
+    return { h, done }
+  }
+
+  reset()
+  fake.restartOn = (what, name) => what === 'link' && name === 'b.f32' && fake.minted === 1
+  const k1 = artifactKey('uid', 'w1', 'v1', '1')
+  const lost = await outcome(() => writeAll(s, k1))
+  check('a restart between two files → resolved again, the artifact again from its first file, committed whole under the fresh uid',
+    lost.value?.done.every(Boolean) && fake.resolves === 2 && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole,
+    JSON.stringify({ lost, resolves: fake.resolves, commits: fake.commits }))
+  check('the upload again starts at the first file', JSON.stringify(fake.uploads) === JSON.stringify(['r1/a.f32', 'r2/a.f32', 'r2/b.f32', 'r2/meta.json']), JSON.stringify(fake.uploads))
+  const back = await outcome(() => s.read(lost.value.h, 'meta.json'))
+  check('a read with the old handle goes to the fresh uid', back.value?.byteLength === meta.byteLength, String(back.error ?? back.value))
+
+  reset()
+  s = linked()
+  fake.restartOn = (what) => what === 'commit' && fake.minted === 1
+  const atCommit = await outcome(() => writeAll(s, artifactKey('uid', 'w2', 'v1', '1')))
+  check('a restart before the commit → the commit answers 404 → every file again, then the commit',
+    atCommit.value?.done.every(Boolean) && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole && fake.uploads.filter((u) => u.startsWith('r2/')).length === 3,
+    JSON.stringify({ atCommit, commits: fake.commits, uploads: fake.uploads }))
+
+  reset()
+  s = linked()
+  fake.putGone = true
+  fake.restartOn = (what, name) => what === 'upload' && name === 'b.f32' && fake.minted === 1
+  const atUpload = await outcome(() => writeAll(s, artifactKey('uid', 'w3', 'v1', '1')))
+  check('an upload answered 404 → the same, under a fresh uid',
+    atUpload.value?.done.every(Boolean) && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole,
+    JSON.stringify({ atUpload, commits: fake.commits, uploads: fake.uploads }))
+
+  reset()
+  s = linked()
+  // Restarts again while the artifact is uploaded again.
+  fake.restartOn = (what, name) => what === 'link' && name === 'b.f32'
+  const twice = await outcome(() => writeAll(s, artifactKey('uid', 'w4', 'v1', '1')))
+  check('a 404 again under the fresh uid → unavailable (the task is given back)', unavailable(twice) && twice.error.status === 404 && fake.resolves === 2, String(twice.error ?? JSON.stringify(twice.value)))
+  fake.restartOn = null
+  fake.commits = []
+  const after = await outcome(() => writeAll(s, artifactKey('uid', 'w5', 'v1', '1')))
+  check('the next artifact commits its own files only (the broken-off upload is let go)',
+    after.value?.done.every(Boolean) && fake.commits.length === 1 && names(fake.commits[0]) === whole,
+    JSON.stringify({ after, commits: fake.commits }))
+
+  reset()
+  s = linked()
+  const resolvesBefore = fake.resolves
+  const read = await outcome(() => s.read({ key: k1, remote: 'r9', files: [] }, 'meta.json'))
+  check('a read\'s 404 stays absent: null, no resolve again', read.value === null && fake.resolves === resolvesBefore, String(read.error ?? read.value))
+
+  restartable.close()
 }
 
 console.log('\n— the HTTP store: no answer at all —')

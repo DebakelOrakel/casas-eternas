@@ -141,8 +141,13 @@ type entry struct {
 	// spares the entry while a link is valid. In memory only, as the
 	// reservation is.
 	pending map[string]time.Time
-	bytes   int64
-	meta    *entryMeta // nil: no readable meta.json (mid-write, or junk)
+	// writes counts the writes into the entry that are in progress in this
+	// process: a server PUT (Write) between its check and its record, a
+	// Commit between its check and its record. The sweep spares the entry
+	// while it is not 0 (sweepLocked).
+	writes int
+	bytes  int64
+	meta   *entryMeta // nil: no readable meta.json (mid-write, or junk)
 	// key remembers what a RESERVATION was minted for, before its meta.json
 	// lands — it is what lets a write into a fresh artifact be ranked
 	// against its world (the meta is exactly what has not been written yet).
@@ -195,6 +200,25 @@ func (e *entry) uploading(now time.Time) bool {
 	return false
 }
 
+// spared reports whether the sweep must not take the entry now, because a
+// writer may still be writing it (sweepLocked has the rule). Called under
+// s.mu.
+func (e *entry) spared(now time.Time) bool {
+	if e.writes > 0 || e.uploading(now) {
+		return true // a write is in flight
+	}
+	if e.meta != nil {
+		return false // whole: the writer is done
+	}
+	// No meta yet: a reservation or a write in progress until it has sat
+	// untouched for the grace; junk after that.
+	touched := e.modified
+	if e.lastAccess.After(touched) {
+		touched = e.lastAccess
+	}
+	return now.Sub(touched) < evictionGrace
+}
+
 // StageLevel reads a stage's level and whether it names a tile: `L<n>` a
 // whole level, `L<n>:<x>,<y>` one tile of it (the client's world/levels.ts
 // parseStage). ok is false for any other stage.
@@ -227,9 +251,12 @@ type ListedArtifact struct {
 }
 
 // evictionGrace shields a meta-less entry from the sweep while it may simply
-// be mid-write: a bake takes minutes and its meta lands last, so an entry
-// with no meta AND no in-process access time is only junk once it has sat
-// unclaimed well past any bake's duration.
+// be mid-write: its meta lands last, so an entry with no meta is only junk
+// once nothing has touched it (a resolve, a write link, a write, a commit,
+// or, after a restart, the newest object's LastModified) for well past the
+// time between two writes of one artifact. The worker resolves with create
+// right before it writes (world/meshArtifacts.ts), so the gaps are an
+// upload's length, not a bake's.
 const evictionGrace = time.Hour
 
 // parallelism bounds the requests the store sends at the same time when it
@@ -537,11 +564,22 @@ func (s *Store) Write(ctx context.Context, uid, name string, body io.Reader, siz
 		return err
 	}
 	s.mu.Lock()
-	_, ok := s.entries[uid]
+	e, ok := s.entries[uid]
+	if ok {
+		e.writes++ // in flight: the sweep spares it until the record
+	}
 	s.mu.Unlock()
 	if !ok {
 		return ErrNotFound
 	}
+	inFlight := true
+	defer func() {
+		if inFlight {
+			s.mu.Lock()
+			e.writes--
+			s.mu.Unlock()
+		}
+	}()
 
 	var meta *entryMeta
 	if name == metaName {
@@ -573,8 +611,9 @@ func (s *Store) Write(ctx context.Context, uid, name string, body io.Reader, siz
 	}
 
 	s.mu.Lock()
-	e, ok := s.entries[uid]
-	if !ok {
+	e.writes--
+	inFlight = false
+	if s.entries[uid] != e {
 		// Removed while the bytes were on their way: the remover did not
 		// know this object, so it goes now, or it would be an orphan the
 		// index never lists.
@@ -707,6 +746,7 @@ func (s *Store) Commit(ctx context.Context, uid string, files []Upload) error {
 	e, ok := s.entries[uid]
 	var unsigned string
 	if ok {
+		e.writes++ // in flight: the sweep spares it until the record
 		for _, f := range files {
 			_, signed := e.pending[f.Name]
 			_, held := e.files[f.Name]
@@ -720,6 +760,14 @@ func (s *Store) Commit(ctx context.Context, uid string, files []Upload) error {
 	if !ok {
 		return ErrNotFound
 	}
+	inFlight := true
+	defer func() {
+		if inFlight {
+			s.mu.Lock()
+			e.writes--
+			s.mu.Unlock()
+		}
+	}()
 	if unsigned != "" {
 		return fmt.Errorf("%w: %q", ErrNotSigned, unsigned)
 	}
@@ -764,8 +812,9 @@ func (s *Store) Commit(ctx context.Context, uid string, files []Upload) error {
 	}
 
 	s.mu.Lock()
-	e, ok = s.entries[uid]
-	if !ok {
+	e.writes--
+	inFlight = false
+	if s.entries[uid] != e {
 		// Removed while the writer uploaded: the remover deleted the pending
 		// objects it knew; these go now, or they would be orphans.
 		s.mu.Unlock()
@@ -830,12 +879,25 @@ func spoolToFile(body io.Reader) (*os.File, int64, error) {
 }
 
 // sweepLocked picks whole artifacts to evict until the store fits its cap,
-// never the one just written, and drops them from the index. Order:
-// meta-less entries past the grace first (strays and abandoned writes —
-// junk clears itself under pressure), then least recently used, with the
-// meta's own createdAt (then the newest write) standing in for entries this
-// process has not touched. Returns the object keys to delete, which the
-// caller deletes after it has released s.mu. Called under s.mu.
+// never the one just written, and drops them from the index.
+//
+// NEVER AN ENTRY THAT IS STILL BEING WRITTEN (entry.spared): one with a
+// write in flight in this process (a server PUT or a commit between its
+// check and its record, or a write link that is still valid), whole or
+// not; and one with no meta that something touched less than
+// evictionGrace ago — a reservation from resolve with create, a write
+// between two files. Until 2026-10-16 the grace covered only entries this
+// process had never touched, so a reservation it had just minted was a
+// candidate, and its writer's next PUT answered 404. A meta-less entry
+// becomes junk when no write is in flight AND the grace has passed since
+// it was last touched — the files a writer left under a reservation the
+// server forgot at a restart, among them.
+//
+// Order among the rest: meta-less entries first (strays and abandoned
+// writes — junk clears itself under pressure), then least recently used,
+// with the meta's own createdAt (then the newest write) standing in for
+// entries this process has not touched. Returns the object keys to delete,
+// which the caller deletes after it has released s.mu. Called under s.mu.
 func (s *Store) sweepLocked(justWritten string) []string {
 	if s.cap <= 0 {
 		return nil
@@ -850,11 +912,8 @@ func (s *Store) sweepLocked(justWritten string) []string {
 		if e.uid == justWritten {
 			continue
 		}
-		if e.meta == nil && e.lastAccess.IsZero() && now.Sub(e.modified) < evictionGrace {
-			continue // possibly another writer mid-bake — spared until stale
-		}
-		if e.uploading(now) {
-			continue // a writer holds a valid write link: it uploads now
+		if e.spared(now) {
+			continue // a writer may still be writing it
 		}
 		candidates = append(candidates, e)
 	}

@@ -32,6 +32,21 @@ import { ArtifactStoreUnavailableError, type ArtifactHandle, type ArtifactKey, t
 // fresh link once and uploads again. The browser keeps the server's own
 // upload (`uploads: 'server'`): the bucket's CORS rule allows no PUT, and
 // its tiered store writes in the background.
+//
+// A RESERVATION THE SERVER FORGOT (2026-10-16). The server holds the uid
+// that `resolve` with create minted in memory only, until the commit makes
+// the artifact whole; after a restart it does not know the uid, and the
+// write-link, the upload or the commit answers 404. THE RULE: on a 404 for
+// an artifact this store is writing by link, it resolves the key with
+// create once more (a fresh uid) and uploads the artifact again from its
+// first file, then the file in hand; every later call for the old uid goes
+// to the new one. A second 404 under the fresh uid throws
+// ArtifactStoreUnavailableError, and the worker gives its task back. To
+// upload again, the store keeps the bytes of the files it uploaded until
+// the commit — references to the caller's buffers, not copies; they are
+// let go at the commit, at a refusal (false) and at a throw. The files
+// under the old uid are not this store's business: the server's sweep
+// takes them as junk (store.go, sweepLocked). A read's 404 stays "absent".
 
 export interface HttpArtifactStoreOptions {
   // Where the API lives. Defaults nowhere on purpose: this used to import the
@@ -69,13 +84,19 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
   const resolveBase = options.resolveBase
   const send = options.fetch ?? ((input: string, init?: RequestInit) => fetch(input, init))
   const upload = options.uploadFetch ?? ((input: string, init?: RequestInit) => fetch(input, init))
-  // The files uploaded by link per artifact, not yet committed.
-  const uploaded = new Map<string, { name: string; size: number }[]>()
+  // The files uploaded by link per artifact, not yet committed, with their
+  // bytes for an upload again (see above).
+  const uploaded = new Map<string, { name: string; size: number; bytes: ArrayBuffer | ArrayBufferView }[]>()
+  // A uid the server forgot → the uid of the fresh reservation.
+  const moved = new Map<string, string>()
+  // The fresh uids, until their commit: a 404 under one of them throws.
+  const retried = new Set<string>()
+  const current = (uid: string): string => moved.get(uid) ?? uid
 
   const fileUrl = async (handle: ArtifactHandle, name: string): Promise<string | null> => {
     const base = await resolveBase()
     if (!base || !handle.remote) return null
-    return `${base}/artifacts/${encodeURIComponent(handle.remote)}/${name.split('/').map(encodeURIComponent).join('/')}`
+    return `${base}/artifacts/${encodeURIComponent(current(handle.remote))}/${name.split('/').map(encodeURIComponent).join('/')}`
   }
 
   // One request; a failure to get an answer at all is the store being
@@ -91,26 +112,28 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
   const unavailable = (what: string, response: Response): ArtifactStoreUnavailableError =>
     new ArtifactStoreUnavailableError(`artifact store: ${what}: ${response.status} ${response.statusText}`.trimEnd(), response.status)
 
+  const resolveKey = async (key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null> => {
+    const base = await resolveBase()
+    if (!base) return null
+    const response = await request('resolve', `${base}/artifacts/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...key, create }),
+    })
+    if (response.status === 404) return null
+    if (!response.ok) throw unavailable('resolve', response)
+    let body: { artifactUid?: string; files?: string[] }
+    try {
+      body = (await response.json()) as { artifactUid?: string; files?: string[] }
+    } catch (error) {
+      throw new ArtifactStoreUnavailableError('artifact store: resolve: an answer that is not JSON', response.status, { cause: error })
+    }
+    if (!body.artifactUid) throw new ArtifactStoreUnavailableError('artifact store: resolve: an answer with no artifactUid', response.status)
+    return { key, remote: body.artifactUid, files: body.files ?? [] }
+  }
+
   return {
-    async resolve(key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null> {
-      const base = await resolveBase()
-      if (!base) return null
-      const response = await request('resolve', `${base}/artifacts/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...key, create }),
-      })
-      if (response.status === 404) return null
-      if (!response.ok) throw unavailable('resolve', response)
-      let body: { artifactUid?: string; files?: string[] }
-      try {
-        body = (await response.json()) as { artifactUid?: string; files?: string[] }
-      } catch (error) {
-        throw new ArtifactStoreUnavailableError('artifact store: resolve: an answer that is not JSON', response.status, { cause: error })
-      }
-      if (!body.artifactUid) throw new ArtifactStoreUnavailableError('artifact store: resolve: an answer with no artifactUid', response.status)
-      return { key, remote: body.artifactUid, files: body.files ?? [] }
-    },
+    resolve: resolveKey,
 
     async read(handle: ArtifactHandle, name: string): Promise<ArrayBuffer | null> {
       const target = await fileUrl(handle, name)
@@ -129,7 +152,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
     async write(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
       const target = await fileUrl(handle, name)
       if (!target) return false
-      if (options.uploads === 'links') return writeByLink(handle.remote!, name, bytes)
+      if (options.uploads === 'links') return writeByLink(handle, name, bytes)
       // Passed through as-is, cast because the DOM types insist a view be
       // backed by an ArrayBuffer rather than an ArrayBufferLike; a
       // SharedArrayBuffer cannot reach here, and copying to satisfy the
@@ -145,8 +168,8 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
   }
 
   // A write link for one file of the length given; null when the server
-  // refuses (4xx).
-  async function writeLink(uid: string, name: string, size: number): Promise<WriteLink | null> {
+  // refuses (4xx), 'gone' when it does not know the artifact (404).
+  async function writeLink(uid: string, name: string, size: number): Promise<WriteLink | null | 'gone'> {
     const base = await resolveBase()
     if (!base) return null
     const route = `${base}/artifacts/${encodeURIComponent(uid)}/write-link`
@@ -156,6 +179,7 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       body: JSON.stringify({ name, size }),
     })
     if (response.status >= 500) throw unavailable(`write-link ${name}`, response)
+    if (response.status === 404) return 'gone'
     if (!response.ok) return null
     let link: WriteLink
     try {
@@ -167,23 +191,30 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
     return { ...link, url: new URL(link.url, route).href }
   }
 
-  async function writeByLink(uid: string, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
+  // One file by link: the link, the upload (the rule for expired links),
+  // and with meta.json the commit. 'gone' when the server does not know
+  // the artifact (404).
+  async function uploadByLink(uid: string, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean | 'gone'> {
     const size = bytes.byteLength
     let link = await writeLink(uid, name, size)
-    if (!link) return false
+    if (link === null || link === 'gone') return link === 'gone' ? 'gone' : false
     let refreshed = false
-    const fresh = async (): Promise<boolean> => {
+    const fresh = async (): Promise<boolean | 'gone'> => {
       refreshed = true
       link = await writeLink(uid, name, size)
-      return link !== null
+      return link === 'gone' ? 'gone' : link !== null
     }
     // Too little left of the link: a fresh one first (asked once; a server
     // whose links live shorter than the margin gets the upload anyway).
-    if (Date.parse(link.expires) - Date.now() < LINK_MARGIN_MS && !(await fresh())) return false
+    if (Date.parse(link.expires) - Date.now() < LINK_MARGIN_MS) {
+      const got = await fresh()
+      if (got !== true) return got
+    }
     for (;;) {
-      const response = await request(`upload ${name}`, link!.url, {
-        method: link!.method,
-        headers: link!.header,
+      const target = link as WriteLink
+      const response = await request(`upload ${name}`, target.url, {
+        method: target.method,
+        headers: target.header,
         body: bytes as BodyInit,
       }, upload)
       // Read to the end, so the connection can be reused.
@@ -192,27 +223,70 @@ export function createHttpArtifactStore(options: HttpArtifactStoreOptions): Arti
       // Refused all the same (expired on the provider's clock, a slow
       // upload, a signature it does not take): once more with a fresh link.
       if ((response.status === 403 || response.status === 410) && !refreshed) {
-        if (!(await fresh())) return false
+        const got = await fresh()
+        if (got !== true) return got
         continue
       }
       if (response.status >= 500) throw unavailable(`upload ${name}`, response)
+      if (response.status === 404) return 'gone'
       return false
     }
     const files = uploaded.get(uid) ?? []
-    uploaded.set(uid, [...files.filter((f) => f.name !== name), { name, size }])
+    uploaded.set(uid, [...files.filter((f) => f.name !== name), { name, size, bytes }])
     // meta.json is the last file of every writer: the artifact is whole.
     if (name !== 'meta.json') return true
-    const committing = uploaded.get(uid)!
-    uploaded.delete(uid)
     const base = await resolveBase()
     if (!base) return false
     const route = `${base}/artifacts/${encodeURIComponent(uid)}/commit`
     const response = await request('commit', route, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ files: committing }),
+      body: JSON.stringify({ files: uploaded.get(uid)!.map(({ name, size }) => ({ name, size })) }),
     })
     if (response.status >= 500) throw unavailable('commit', response)
+    if (response.status === 404) return 'gone'
+    if (response.ok) {
+      uploaded.delete(uid)
+      retried.delete(uid)
+    }
     return response.ok
+  }
+
+  async function writeByLink(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean> {
+    let uid = current(handle.remote!)
+    try {
+      const wrote = await uploadByLink(uid, name, bytes)
+      if (wrote !== 'gone') {
+        if (!wrote) uploaded.delete(uid)
+        return wrote
+      }
+      // The server does not know the artifact: it forgot the reservation
+      // (a restart). Once: a fresh reservation, and the artifact again from
+      // its first file.
+      if (retried.has(uid)) throw new ArtifactStoreUnavailableError(`artifact store: write ${name}: the artifact is unknown to the server again after a fresh resolve`, 404)
+      const earlier = (uploaded.get(uid) ?? []).filter((f) => f.name !== name)
+      uploaded.delete(uid)
+      const fresh = await resolveKey(handle.key, true)
+      if (!fresh?.remote) throw new ArtifactStoreUnavailableError(`artifact store: write ${name}: the artifact is unknown to the server, and resolve with create found none`, 404)
+      moved.set(handle.remote!, fresh.remote)
+      if (uid !== handle.remote) moved.set(uid, fresh.remote)
+      uid = fresh.remote
+      retried.add(uid)
+      for (const file of [...earlier, { name, bytes }]) {
+        const again = await uploadByLink(uid, file.name, file.bytes)
+        if (again === 'gone') throw new ArtifactStoreUnavailableError(`artifact store: write ${file.name}: the artifact is unknown to the server again after a fresh resolve`, 404)
+        if (!again) {
+          uploaded.delete(uid)
+          retried.delete(uid)
+          return false
+        }
+      }
+      return true
+    } catch (error) {
+      // The upload is broken off: its bytes are let go.
+      uploaded.delete(uid)
+      retried.delete(uid)
+      throw error
+    }
   }
 }

@@ -187,13 +187,13 @@
         },
         {
           "name": "artifacts.link-key",
-          "usage": "Path to the key (at least 32 random bytes) the dir backend signs its artifact links with. Without it a key is generated at startup, so links do not survive a restart. Not used yet.",
+          "usage": "Path to the key (at least 32 random bytes) the dir backend signs its artifact links (to read and to write) with. Without it a key is generated at startup, so links do not survive a restart.",
           "env": "CASAS_ARTIFACTS_LINK_KEY"
         },
         {
           "name": "artifacts.read-link-ttl",
           "default": "15m0s",
-          "usage": "How long a link to read an artifact is valid. Not used yet.",
+          "usage": "How long a link to read an artifact file is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.",
           "env": "CASAS_ARTIFACTS_READ_LINK_TTL"
         },
         {
@@ -341,14 +341,14 @@
     {
       "key": "artifacts.link-key",
       "env": "CASAS_ARTIFACTS_LINK_KEY",
-      "usage": "Path to the key (at least 32 random bytes) the dir backend signs its artifact links with. Without it a key is generated at startup, so links do not survive a restart. Not used yet.",
+      "usage": "Path to the key (at least 32 random bytes) the dir backend signs its artifact links (to read and to write) with. Without it a key is generated at startup, so links do not survive a restart.",
       "command": "casas-eternas start"
     },
     {
       "key": "artifacts.read-link-ttl",
       "env": "CASAS_ARTIFACTS_READ_LINK_TTL",
       "default": "15m0s",
-      "usage": "How long a link to read an artifact is valid. Not used yet.",
+      "usage": "How long a link to read an artifact file is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.",
       "command": "casas-eternas start"
     },
     {

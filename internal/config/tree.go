@@ -249,7 +249,7 @@ type ArtifactsConfig struct {
 	// write, and the file with the key the dir backend signs its own links
 	// with (DEC-0038, fork 4; module settings, because they hold for both
 	// backends). The read lifetime and the key are used since DEC-0038 step
-	// 3; the write lifetime waits for the presigned uploads of step 4.
+	// 3, the write lifetime since step 4.
 	ReadLinkTTL  time.Duration `mapstructure:"read-link-ttl"`
 	WriteLinkTTL time.Duration `mapstructure:"write-link-ttl"`
 	LinkKey      string        `mapstructure:"link-key"`

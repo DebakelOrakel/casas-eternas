@@ -114,9 +114,9 @@ const (
 	textArtsType     = `The artifact store's backend: dir (implemented) or s3. Required as soon as artifacts.storage.s3 is set; the backend is never inferred from a block.`
 	textArtsPath     = `The directory of the artifact store (backend dir).`
 	textArtsCap      = `Size the artifact store may grow to before least-recently-used artifacts are evicted, e.g. "50GB". 0 or empty keeps it unlimited.`
-	textArtsReadTTL  = `How long a link to read an artifact is valid. Not used yet.`
+	textArtsReadTTL  = `How long a link to read an artifact file is valid. A read is redirected to such a link: a presigned GET on s3, the server's own signed link on dir.`
 	textArtsWriteTTL = `How long a link to write an artifact file is valid. A job worker asks for one per file it writes, with the file's length, and uploads to it straight to the bucket; it asks again when the link has less than 5 minutes left or is refused.`
-	textArtsLinkKey  = `Path to the key (at least 32 random bytes) the dir backend signs its artifact links with. Without it a key is generated at startup, so links do not survive a restart. Not used yet.`
+	textArtsLinkKey  = `Path to the key (at least 32 random bytes) the dir backend signs its artifact links (to read and to write) with. Without it a key is generated at startup, so links do not survive a restart.`
 	textClientDir    = `The directory the built client is served from. Empty serves only /config.json, which is what a dev run alongside "npm run dev" wants.`
 	textAuthDir      = `The directory the auth subsystem's state lives in — auth.db, holding users and their credentials, and the avatars. A users.json left by an older server is imported once when the database is founded.`
 	textDocsDir      = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`

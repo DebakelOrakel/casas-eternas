@@ -419,6 +419,51 @@ through the server. What changed against the answer of fork 7, and why:
   404 is absent; other failures give the task back, as for the artifact
   store.
 
+2026-10-16: fixes after the review of step 4.
+
+- **Help texts.** `artifacts.read-link-ttl` and `artifacts.link-key` said
+  "Not used yet"; both are used since step 3. The texts say what they do
+  now (cli-reference.json regenerated).
+- **The sweep does not take an entry that is still being written.** The
+  grace covered only meta-less entries this process had never touched, so
+  a reservation that `resolve` with create had just minted, or an entry
+  between two writes, was the sweep's first victim, and the writer's next
+  PUT answered 404. THE RULE: the sweep never takes an entry with a write
+  in flight in this process — a server PUT or a commit between its check
+  and its record (a counter on the entry), or a write link that is still
+  valid — whole or not. A meta-less entry is spared also while less than
+  the grace (1 h) has passed since something last touched it: a resolve, a
+  write link, a write, a commit, or, after a restart, the newest object's
+  LastModified. It becomes junk only when no write is in flight AND the
+  grace has passed. The grace is not shorter because a write in progress
+  needs no grace (the counter and the links cover it); it covers the gaps
+  between the requests of one writer, and junk loses nothing by waiting.
+  Junk first, then LRU, as before. Tests (`-race`): a reservation with no
+  file; a server PUT held in the bucket's Put while the clock passes the
+  grace; a commit held in its Head after its link expired.
+- **A reservation lost at a restart gives the task back.** The server
+  holds a reservation in memory only; after a restart the write-link, the
+  upload or the commit for its uid answers 404 (the uid is unknown, or
+  known only as a meta-less entry with no key, which ranks nobody; the
+  operator and the local mode write on into that entry, which works), and
+  the worker failed the task. THE RULE (client, `uploads: 'links'`): on a 404
+  for an artifact it is writing, the store resolves the key with create
+  once more, which mints a fresh uid, and uploads the artifact again from
+  its first file, then the file in hand; later calls for the old uid go to
+  the new one. A second 404 under the fresh uid throws
+  `ArtifactStoreUnavailableError`, and the worker gives the task back. For
+  that, the store keeps the bytes of the files it uploaded until the commit
+  — references to the caller's buffers, no copies — and lets them go at the
+  commit, a refusal or a throw. A read's 404 stays "absent". The server
+  does not change: the files under the old uid are indexed at the start as
+  a meta-less entry with no key, spared for the grace from their newest
+  write, then junk that the sweep takes first. A file that a link written
+  before the restart puts into the bucket after it is not in the index
+  until the next start (as before, step 4). Tests: Go (the 404s after a
+  restart, the old files spared and then taken), `npm run test:http-store`
+  (a fake server that forgets its reservations before a write link, an
+  upload or the commit, and twice).
+
 Open: the world store.
 
 Open: **the relay is plain NATS over TCP**, not encrypted. The plan for
