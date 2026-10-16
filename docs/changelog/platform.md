@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-10-16
+- **changed** Server: an `artifacts.storage.s3.endpoint` that is not `https://` refuses to start, and a relay that listens beyond loopback warns at start that its traffic is not encrypted.
 - **new** Server: operators can store artifacts in an S3 bucket (`artifacts.storage.type: s3`), and a read of an artifact answers with a short-lived link to it. `artifacts`
 - **changed** Server: the jobs, auth, relay, client and docs directories are now `*.state-dir` and `*.content-dir`, and the old `*.storage.dir.path` keys refuse to start, so operators must rename them.
 - **dropped** Server: mutual TLS (`global.tls.ca`) is gone, because tokens authenticate every client, and the key now refuses to start.

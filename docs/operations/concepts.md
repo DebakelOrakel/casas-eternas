@@ -90,6 +90,9 @@ artifacts:
 
 For `ceph`, set `endpoint` (e.g. `https://objects.lpg.cloudscale.ch`) and
 leave `region` empty or set the signing scope; `aws` refuses an endpoint.
+The endpoint must be `https://`: over plain HTTP the S3 client cannot
+upload a streamed body, so the server refuses to start with an `http://`
+endpoint.
 The key pair is two files, never values in the configuration file; for
 local tests against the dev identity they are `dev/secrets/aws-access-key`
 and `dev/secrets/aws-secret-key` (deploy/aws/storage.yaml makes the

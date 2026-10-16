@@ -650,3 +650,61 @@ func (r *onFirstRead) Read(p []byte) (int, error) {
 	}
 	return r.Reader.Read(p)
 }
+
+// Junk whose top-level name breaks the key rule (copied in by hand, with a
+// space or a non-ASCII letter) cannot be deleted through the leaf's Delete;
+// the sweep removes it through the dir backend's junk path, so that it does
+// not come back at the next start. The evicted valid entry leaves no empty
+// directory either.
+func TestSweepRemovesJunkWithInvalidNames(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{"copy of entry", "Ärger"}
+	for _, name := range names {
+		if err := os.MkdirAll(filepath.Join(dir, name, "family 1"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name, "elevation.u16"), []byte(strings.Repeat("j", 120)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name, "family 1", "ä.u16"), []byte("j"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := newStoreAt(t, dir, 250)
+	store.mu.Lock()
+	for _, name := range names {
+		e, ok := store.entries[name]
+		if !ok {
+			store.mu.Unlock()
+			t.Fatalf("%q was not indexed as junk", name)
+		}
+		e.modified = time.Now().Add(-2 * evictionGrace)
+	}
+	store.mu.Unlock()
+	keyA := Key{WorldUID: "uid-a", WorldID: "1111111111111111", PipelineVersion: "v6-a", Stage: "2"}
+	keyB := Key{WorldUID: "uid-b", WorldID: "2222222222222222", PipelineVersion: "v6-a", Stage: "2"}
+	keyC := Key{WorldUID: "uid-c", WorldID: "3333333333333333", PipelineVersion: "v6-a", Stage: "2"}
+	uidA := bake(t, store, keyA, "A", strings.Repeat("a", 90))
+	bake(t, store, keyB, "B", strings.Repeat("b", 90))
+	bake(t, store, keyC, "C", strings.Repeat("c", 90))
+	for _, name := range names {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("junk %q is still on disk: %v", name, err)
+		}
+	}
+	if _, _, err := store.Resolve(context.Background(), keyA, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("the oldest entry should have been evicted after the junk: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, uidA)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the evicted entry left its directory: %v", err)
+	}
+	// A restart does not find the junk again.
+	again := newStoreAt(t, dir, 250)
+	again.mu.Lock()
+	defer again.mu.Unlock()
+	for _, name := range names {
+		if _, ok := again.entries[name]; ok {
+			t.Errorf("junk %q came back at the next start", name)
+		}
+	}
+}

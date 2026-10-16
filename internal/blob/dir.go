@@ -23,8 +23,9 @@ import (
 // root, in addition to the key rule.
 //
 // Limits the S3 backend does not have: a key cannot be both an object and
-// the directory of another ("a" and "a/b"); such a Put fails. Delete does
-// not remove directories that become empty.
+// the directory of another ("a" and "a/b"); such a Put fails. Delete
+// removes the directories that it makes empty, up to (not including) the
+// root, as S3 has no directories that stay behind.
 type Dir struct {
 	root   *os.Root
 	signer *LinkSigner
@@ -101,19 +102,16 @@ func (d *Dir) Put(ctx context.Context, key string, body io.Reader, size int64, o
 		return Info{}, fmt.Errorf("%w: size %d is negative", ErrSize, size)
 	}
 	dir := path.Dir(key)
-	if dir != "." {
-		if err := d.root.MkdirAll(dir, 0o755); err != nil {
-			return Info{}, err
-		}
-	}
-	var rnd [8]byte
-	_, _ = rand.Read(rnd[:])
-	tmp := path.Join(dir, tmpPrefix+hex.EncodeToString(rnd[:]))
-	f, err := d.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	tmp, f, err := d.createTemp(dir)
 	if err != nil {
 		return Info{}, err
 	}
-	defer func() { _ = d.root.Remove(tmp) }() // no-op once renamed
+	defer func() {
+		// A no-op once renamed. A failed Put leaves no empty directory.
+		if d.root.Remove(tmp) == nil {
+			d.removeEmptyParents(dir)
+		}
+	}()
 
 	n, err := io.CopyN(f, body, size)
 	if err == nil {
@@ -147,6 +145,52 @@ func (d *Dir) Put(ctx context.Context, key string, body io.Reader, size int64, o
 	return d.Head(ctx, key)
 }
 
+// putAttempts bounds how often Put makes the key's directory again when a
+// Delete removed it (an empty parent) between MkdirAll and the temp file.
+const putAttempts = 8
+
+// createTemp makes the key's directory and a new temp file in it. A
+// concurrent Delete can remove the directory when it is empty (see
+// removeEmptyParents), that is, before the temp file is in it; then the
+// open answers ENOENT and the directory is made again. Once the temp file
+// is in the directory, the directory is not empty and stays until the
+// rename has put the object there.
+func (d *Dir) createTemp(dir string) (string, *os.File, error) {
+	var lastErr error
+	for range putAttempts {
+		if dir != "." {
+			if err := d.root.MkdirAll(dir, 0o755); err != nil {
+				if !errors.Is(err, fs.ErrNotExist) && d.dirExists(path.Dir(dir)) {
+					return "", nil, err
+				}
+				// A parent removed while MkdirAll made its child.
+				lastErr = err
+				continue
+			}
+		}
+		var rnd [8]byte
+		_, _ = rand.Read(rnd[:])
+		tmp := path.Join(dir, tmpPrefix+hex.EncodeToString(rnd[:]))
+		f, err := d.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			return tmp, f, nil
+		}
+		// ENOENT, or on macOS EINVAL when the directory went while the
+		// open was inside it: the test is whether it is still there.
+		if !errors.Is(err, fs.ErrNotExist) && d.dirExists(dir) {
+			return "", nil, err
+		}
+		lastErr = err
+	}
+	return "", nil, lastErr
+}
+
+// dirExists reports whether `dir` is a directory under the root now.
+func (d *Dir) dirExists(dir string) bool {
+	st, err := d.root.Lstat(dir)
+	return err == nil && st.IsDir()
+}
+
 func (d *Dir) Delete(_ context.Context, key string) error {
 	if err := CheckKey(key); err != nil {
 		return err
@@ -163,6 +207,52 @@ func (d *Dir) Delete(_ context.Context, key string) error {
 		return nil
 	}
 	if err := d.root.Remove(key); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	d.removeEmptyParents(path.Dir(key))
+	return nil
+}
+
+// removeEmptyParents removes `dir` and its parents while they are empty, up
+// to (not including) the root. Remove on a directory is rmdir: it removes
+// only an empty one, so a directory that a concurrent Put has put a temp
+// file or an object into stays (ENOTEMPTY or EEXIST), and one that another
+// Delete has removed already is gone (ENOENT). Either ends the walk without
+// an error: the object is deleted, and a directory left behind costs
+// nothing. Put makes a directory again when it is removed under it
+// (createTemp).
+func (d *Dir) removeEmptyParents(dir string) {
+	for dir != "." && dir != "/" && dir != "" {
+		// A real directory only: a symlink to a directory is not removed.
+		if st, err := d.root.Lstat(dir); err != nil || !st.IsDir() {
+			return
+		}
+		if err := d.root.Remove(dir); err != nil {
+			return
+		}
+		dir = path.Dir(dir)
+	}
+}
+
+// RemoveJunk removes `name`, a file or a directory with all it holds,
+// directly under the root, when `name` is NOT a valid key: a name copied
+// in by hand (a space, a non-ASCII character) that List reports but that
+// Delete refuses, so that the store that indexed it as junk cannot remove
+// it. A narrow path on purpose: one segment, never a valid key (those go
+// through Delete), never "." or "..", never a temp file, and through the
+// os.Root like every other access, so it cannot leave the root. A missing
+// name is not an error.
+//
+// Only Dir has it: in an S3 bucket only this server writes, and every key
+// it writes passes CheckKey.
+func (d *Dir) RemoveJunk(_ context.Context, name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00") || strings.HasPrefix(name, tmpPrefix) {
+		return keyError(name, "not a top-level junk name")
+	}
+	if CheckKey(name) == nil {
+		return keyError(name, "a valid key; use Delete")
+	}
+	if err := d.root.RemoveAll(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil

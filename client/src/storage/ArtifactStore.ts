@@ -16,6 +16,24 @@
 // has no correctness story to protect: a miss, a denied quota, an evicted
 // entry and a corrupt read all have the same consequence — compute it again.
 // Hence null/false returns rather than throws.
+//
+// ONE EXCEPTION, the HTTP store (2026-10-16): a server that does not answer
+// (network, TLS, 5xx) is not a miss. It throws ArtifactStoreUnavailableError
+// instead, and each caller decides: the browser's tiered store goes on as on
+// a miss (local, then compute), the job worker gives its task back to the
+// relay, because a level or a tile that IS in the store must not be
+// computed again for hours, and one that a tile needs is not "absent".
+
+// The store could not answer — not "absent". Thrown by the HTTP store only
+// (see above); `status` is the HTTP status when there was one.
+export class ArtifactStoreUnavailableError extends Error {
+  readonly status?: number
+  constructor(message: string, status?: number, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'ArtifactStoreUnavailableError'
+    this.status = status
+  }
+}
 
 export interface StorageUsage {
   usedBytes: number
@@ -64,11 +82,16 @@ export interface ArtifactHandle {
 
 export interface ArtifactStore {
   // Null when the key is absent (create false) or could not be resolved.
+  // The HTTP store throws ArtifactStoreUnavailableError when its server does
+  // not answer (see above).
   resolve(key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null>
   // Null when the file holds nothing (or could not be read — see above).
+  // The HTTP store: null only for a 404, else it throws as resolve does.
   read(handle: ArtifactHandle, name: string): Promise<ArrayBuffer | null>
   // False when the bytes were not stored, for any reason. Never throws for
-  // an expected condition; callers must carry on regardless.
+  // an expected condition; callers must carry on regardless. The HTTP store
+  // throws as resolve does when its server does not answer; a refusal
+  // (4xx) is false.
   write(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean>
 }
 

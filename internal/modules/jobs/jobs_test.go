@@ -158,7 +158,7 @@ func newTestModuleWith(t *testing.T, caller *identity.Resolver) (*Module, *heldW
 		cfg: Config{
 			WorldAccess:   worlds.rank,
 			WorldZip:      worlds.zip,
-			ArtifactsDir:  t.TempDir(),
+			ArtifactsURL:  "http://127.0.0.1:1/v1",
 			Identity:      caller,
 			MaxConcurrent: 1,
 			Relay:         conn,
@@ -378,7 +378,6 @@ func TestRemoteJobCarriesAScopedToken(t *testing.T) {
 	// The cluster shape, as cmd/ composes it: URLs everywhere, no file paths.
 	m.cfg.WorldZip = nil
 	m.cfg.WorldsURL = "http://server:8080/v1"
-	m.cfg.ArtifactsDir = ""
 	m.cfg.ArtifactsURL = "http://server:8080/v1"
 	writeWorld(t, worlds, testUID)
 
@@ -408,55 +407,38 @@ func TestRemoteJobCarriesAScopedToken(t *testing.T) {
 	}
 }
 
-// A local worker reads files directly, so a token would be a credential handed
-// out for nothing.
-func TestLocalJobCarriesNoToken(t *testing.T) {
+// A local worker reads the world as a file but writes the artifacts over
+// HTTP (DEC-0038, step 3), so it needs a token like any other: without
+// one, its first upload is a 401.
+func TestLocalJobCarriesAToken(t *testing.T) {
 	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
 	if err != nil {
 		t.Fatalf("NewTokens: %v", err)
 	}
 	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil))
 	m.cfg.Tokens = tokens
-	writeWorld(t, worlds, testUID)
-
-	if code := post(m, testUID, `{"stage":1}`, "").Code; code != http.StatusAccepted {
-		t.Fatalf("bake request = %d, want 202", code)
-	}
-	if spec := runner.awaitSpec(t); spec.AuthToken != "" {
-		t.Error("a local job was given a token it has no use for")
-	}
-}
-
-// The half-and-half composition A3 exists for: a local worker beside the
-// artifact store whose worlds live in another process. The spec must mix a
-// world URL with an artifacts directory and carry a token for the remote
-// read.
-func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
-	tokens, err := token.NewTokens([]byte("a signing key long enough to be accepted"))
-	if err != nil {
-		t.Fatalf("NewTokens: %v", err)
-	}
-	m, runner, worlds := newTestModuleWith(t, identity.NewResolver(config.AuthNone, nil))
-	m.cfg.Tokens = tokens
-	m.cfg.WorldZip = nil
-	m.cfg.WorldsURL = "http://worlds:8080/v1"
 	writeWorld(t, worlds, testUID)
 
 	if code := post(m, testUID, `{"stage":1}`, "").Code; code != http.StatusAccepted {
 		t.Fatalf("bake request = %d, want 202", code)
 	}
 	spec := runner.awaitSpec(t)
-	if spec.WorldURL != "http://worlds:8080/v1/worlds/"+testUID {
-		t.Errorf("worldUrl = %q", spec.WorldURL)
+	if spec.WorldZip == "" || spec.WorldURL != "" {
+		t.Errorf("a local job reads its world as a file: zip=%q url=%q", spec.WorldZip, spec.WorldURL)
 	}
-	if spec.WorldZip != "" {
-		t.Errorf("a remote-worlds spec must not carry a zip path, got %q", spec.WorldZip)
-	}
-	if spec.ArtifactsDir == "" || spec.ArtifactsURL != "" {
-		t.Errorf("artifacts should stay local: dir=%q url=%q", spec.ArtifactsDir, spec.ArtifactsURL)
+	if spec.ArtifactsURL != m.cfg.ArtifactsURL {
+		t.Errorf("artifactsUrl = %q, want %q", spec.ArtifactsURL, m.cfg.ArtifactsURL)
 	}
 	if spec.AuthToken == "" {
-		t.Error("reading a remote world needs a credential, none was issued")
+		t.Error("a local job writes over HTTP and was given no token")
+	}
+}
+
+// The artifact sink is a URL; a module composed without one is refused.
+func TestNewNeedsAnArtifactsURL(t *testing.T) {
+	_, err := New(Config{WorldAccess: (&fakeWorlds{}).rank, WorldZip: (&fakeWorlds{}).zip})
+	if err == nil || !strings.Contains(err.Error(), "ArtifactsURL") {
+		t.Errorf("New without ArtifactsURL = %v, want a refusal naming it", err)
 	}
 }
 
@@ -465,18 +447,20 @@ func TestRemoteWorldsMixWithLocalArtifacts(t *testing.T) {
 // would otherwise surface as a task that reads nothing and writes nowhere —
 // with no error, because the worker's own fields would simply be undefined.
 func TestSpecWireFormatMatchesTheBaker(t *testing.T) {
-	local, err := json.Marshal(Spec{Stage: 1, ErosionRounds: 2, WorldZip: "/w.zip", ArtifactsDir: "/art"})
+	local, err := json.Marshal(Spec{Stage: 1, ErosionRounds: 2, WorldZip: "/w.zip", ArtifactsURL: "http://127.0.0.1:9/v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"stage":1`, `"erosionRounds":2`, `"worldZip":"/w.zip"`, `"artifactsDir":"/art"`} {
+	for _, key := range []string{`"stage":1`, `"erosionRounds":2`, `"worldZip":"/w.zip"`, `"artifactsUrl":"http://127.0.0.1:9/v1"`} {
 		if !strings.Contains(string(local), key) {
 			t.Errorf("local spec is missing %s: %s", key, local)
 		}
 	}
-	// The path form must not carry empty URL fields: the worker picks its store
-	// by which one is present, so an empty string would be an ambiguous job.
-	for _, key := range []string{"worldUrl", "artifactsUrl", "authToken", "jobId"} {
+	// The path form must not carry empty fields: the worker picks its world
+	// source and its store by which one is present, so an empty string would
+	// be an ambiguous job. The module never sends `artifactsDir` (a manual
+	// run's field, jobWorker.ts).
+	for _, key := range []string{"worldUrl", "artifactsDir", "authToken", "jobId"} {
 		if strings.Contains(string(local), key) {
 			t.Errorf("local spec should omit %s: %s", key, local)
 		}

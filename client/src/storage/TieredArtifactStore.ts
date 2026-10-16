@@ -19,7 +19,13 @@ import type { ArtifactHandle, ArtifactKey, ArtifactStore } from './ArtifactStore
 //            bake that finished must be on this machine before the user does
 //            anything else; pushing it onward is courtesy to the next reader.
 //   MISS     is never an error. Every failure here has the same consequence,
-//            which is to compute it again.
+//            which is to compute it again. That includes a remote tier that
+//            does not answer: the HTTP store throws for it
+//            (ArtifactStoreUnavailableError, so that the job worker can tell
+//            it from a miss), and this store catches it and goes on as on a
+//            miss — a page offline, or a server restarting, bakes as it would
+//            without a server, as before 2026-10-16. Logged once per kind of
+//            call, so a server that is away does not fill the console.
 
 export interface TieredOptions {
   // Whether the remote tier should be consulted at all. Resolved per call
@@ -36,11 +42,24 @@ export function createTieredArtifactStore(local: ArtifactStore, remote: Artifact
       return false
     }
   }
+  // A remote call whose failure is a miss (see MISS above).
+  const warned = new Set<string>()
+  const remoteOr = async <T>(what: string, fallback: T, call: () => Promise<T>): Promise<T> => {
+    try {
+      return await call()
+    } catch (error) {
+      if (!warned.has(what)) {
+        warned.add(what)
+        console.warn(`artifact store: the server's ${what} failed; going on without it`, error)
+      }
+      return fallback
+    }
+  }
 
   return {
     async resolve(key: ArtifactKey, create: boolean): Promise<ArtifactHandle | null> {
       const localHandle = await local.resolve(key, create)
-      const remoteHandle = (await useRemote()) ? await remote.resolve(key, create) : null
+      const remoteHandle = (await useRemote()) ? await remoteOr('resolve', null, () => remote.resolve(key, create)) : null
       if (!localHandle && !remoteHandle) return null
       const files = [...new Set([...(localHandle?.files ?? []), ...(remoteHandle?.files ?? [])])].sort()
       return { key, local: localHandle?.local, remote: remoteHandle?.remote, files }
@@ -52,7 +71,7 @@ export function createTieredArtifactStore(local: ArtifactStore, remote: Artifact
         if (hit) return hit
       }
       if (!handle.remote || !(await useRemote())) return null
-      const fetched = await remote.read(handle, name)
+      const fetched = await remoteOr('read', null, () => remote.read(handle, name))
       if (!fetched) return null
       // Backfill, deliberately awaited: the caller is about to use these bytes
       // and the write is to local storage, so it is milliseconds. Doing it in
@@ -74,7 +93,7 @@ export function createTieredArtifactStore(local: ArtifactStore, remote: Artifact
         // Not awaited: a 17 MB upload must not sit between the user and the
         // world they just baked. Failing is fine — the next machine bakes it,
         // which is exactly what would have happened without a server.
-        void remote.write(handle, name, bytes)
+        void remoteOr('write', false, () => remote.write(handle, name, bytes))
       }
       return stored
     },

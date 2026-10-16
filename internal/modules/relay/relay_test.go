@@ -1,7 +1,9 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net"
 	"strings"
 	"testing"
@@ -207,5 +209,55 @@ func TestRelayChecksTokens(t *testing.T) {
 	case subject := <-got:
 		t.Errorf("the module heard %q, which the worker may not publish", subject)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// captureLog sends the default logger's records to a buffer for the test.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &buf
+}
+
+// The bus speaks plain NATS: beyond loopback it says so, once, at start.
+func TestRelayWarnsWhenNotOnLoopback(t *testing.T) {
+	for _, c := range []struct {
+		listen string
+		warn   bool
+	}{
+		{"0.0.0.0:4222", true},
+		{":4222", true},
+		{"[::]:4222", true},
+		{"10.1.2.3:4222", true},
+		{"relay.example:4222", true},
+		{"127.0.0.1:4222", false},
+		{"[::1]:4222", false},
+		{"localhost:4222", false},
+	} {
+		buf := captureLog(t)
+		warnIfExposed(c.listen)
+		got := strings.Count(buf.String(), "not encrypted")
+		if c.warn && got != 1 {
+			t.Errorf("listen %s: %d warnings, want 1: %s", c.listen, got, buf)
+		}
+		if !c.warn && got != 0 {
+			t.Errorf("listen %s: warned on loopback: %s", c.listen, buf)
+		}
+	}
+}
+
+// New on loopback starts without the warning (the wiring of the check).
+func TestRelayOnLoopbackStartsWithoutWarning(t *testing.T) {
+	buf := captureLog(t)
+	m, err := New(relayConfig(t.TempDir(), "127.0.0.1:-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = m.Close() }()
+	if strings.Contains(buf.String(), "not encrypted") {
+		t.Errorf("a loopback relay warned: %s", buf)
 	}
 }

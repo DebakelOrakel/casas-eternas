@@ -554,3 +554,159 @@ func TestDirPresign(t *testing.T) {
 		t.Errorf("PresignGet of a bad key = %v, want ErrBadKey", err)
 	}
 }
+
+// Delete removes the directories it makes empty, up to the root, and
+// keeps a directory that still holds something.
+func TestDirDeleteRemovesEmptyParents(t *testing.T) {
+	d, root := openDir(t, nil)
+	ctx := context.Background()
+	put(t, d, "a/b/c/one", "1")
+	put(t, d, "a/two", "2")
+	if err := d.Delete(ctx, "a/b/c/one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "a", "b")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a/b still exists after its last object went: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "a")); err != nil {
+		t.Errorf("a holds a/two and must stay: %v", err)
+	}
+	if err := d.Delete(ctx, "a/two"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "a")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a still exists after its last object went: %v", err)
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Errorf("the root must stay: %v", err)
+	}
+	// A Put after that makes the directories again.
+	put(t, d, "a/b/c/one", "again")
+	if got := get(t, d, "a/b/c/one"); got != "again" {
+		t.Errorf("Get after a re-Put = %q", got)
+	}
+}
+
+// A symlink to a directory inside the root is not removed by the walk.
+func TestDirDeleteKeepsASymlinkedParent(t *testing.T) {
+	d, root := openDir(t, nil)
+	ctx := context.Background()
+	put(t, d, "real/x", "1")
+	if err := os.Symlink("real", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Delete(ctx, "link/x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "link")); err != nil {
+		t.Errorf("the symlink was removed: %v", err)
+	}
+}
+
+// A Put and a Delete in the same directory at the same time: the Delete
+// may remove the directory that the Put has just made, and the Put must
+// still succeed.
+func TestDirConcurrentPutDelete(t *testing.T) {
+	d, root := openDir(t, nil)
+	ctx := context.Background()
+	const rounds = 300
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*rounds)
+	for i := range rounds {
+		key := "e/" + strings.Repeat("x", i%7+1) + "/f" + string(rune('a'+i%26))
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, err := d.Put(ctx, key, strings.NewReader("p"), 1, PutOptions{}); err != nil {
+				errs <- err
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := d.Delete(ctx, "e/"+strings.Repeat("x", (i+3)%7+1)+"/g"); err != nil {
+				errs <- err
+			}
+		}()
+		// A Delete of a key whose object exists, so that the walk runs.
+		other := "e/" + strings.Repeat("x", (i+1)%7+1) + "/h"
+		put(t, d, other, "h")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := d.Delete(ctx, other); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent Put/Delete: %v", err)
+	}
+	// No temp file is left, and every key List names can be read.
+	for _, key := range listKeys(t, d, "") {
+		get(t, d, key)
+	}
+	_ = filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
+		if err == nil && strings.HasPrefix(e.Name(), tmpPrefix) {
+			t.Errorf("a temp file is left: %s", p)
+		}
+		return nil
+	})
+}
+
+// RemoveJunk removes a top-level name that is not a valid key, with what
+// it holds, and refuses everything else.
+func TestDirRemoveJunk(t *testing.T) {
+	d, root := openDir(t, nil)
+	ctx := context.Background()
+	for _, name := range []string{"copy of entry", "Ärger", "tab\there"} {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Join(dir, "inner dir"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "inner dir", "ä.bin"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Delete(ctx, name+"/meta.json"); !errors.Is(err, ErrBadKey) {
+			t.Fatalf("Delete(%q) = %v, want ErrBadKey (the reason this exists)", name, err)
+		}
+		if err := d.RemoveJunk(ctx, name); err != nil {
+			t.Errorf("RemoveJunk(%q) = %v", name, err)
+		}
+		if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%q is still there: %v", name, err)
+		}
+		if err := d.RemoveJunk(ctx, name); err != nil {
+			t.Errorf("RemoveJunk(%q) a second time = %v, want nil", name, err)
+		}
+	}
+	put(t, d, "valid/x", "1")
+	refused := []string{"", ".", "..", "valid", "a b/c", "../outside", "a\\b", ".tmp-1234", "a\x00b"}
+	for _, name := range refused {
+		if err := d.RemoveJunk(ctx, name); !errors.Is(err, ErrBadKey) {
+			t.Errorf("RemoveJunk(%q) = %v, want ErrBadKey", name, err)
+		}
+	}
+	if got := get(t, d, "valid/x"); got != "1" {
+		t.Errorf("a valid key changed: %q", got)
+	}
+	// A symlink with a junk name pointing out of the root: the link goes,
+	// the target stays.
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("k"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "bad link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RemoveJunk(ctx, "bad link"); err != nil {
+		t.Errorf("RemoveJunk(symlink) = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Errorf("a file outside the root went: %v", err)
+	}
+}

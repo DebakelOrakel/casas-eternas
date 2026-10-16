@@ -33,13 +33,15 @@ type Spec struct {
 	// the worker.
 	StageName string `json:"-"`
 
-	// Exactly one of each pair.
-	WorldZip     string `json:"worldZip,omitempty"`
-	WorldURL     string `json:"worldUrl,omitempty"`
-	ArtifactsDir string `json:"artifactsDir,omitempty"`
+	// Exactly one of the pair.
+	WorldZip string `json:"worldZip,omitempty"`
+	WorldURL string `json:"worldUrl,omitempty"`
+	// The artifact store's /v1 base. The worker also takes an
+	// `artifactsDir` instead, for a manual run without a server
+	// (client/scripts/jobWorker.ts); this module never sends one.
 	ArtifactsURL string `json:"artifactsUrl,omitempty"`
 
-	// Bearer token for the URL form, naming this one job.
+	// Bearer token for the URLs, naming this one job.
 	AuthToken string `json:"authToken,omitempty"`
 
 	// The task's id, when the coordinator handed it out (coordinator.go):

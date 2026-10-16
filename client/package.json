@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "harness:roundtrip": "node scripts/roundtrip.mjs",
+    "test:http-store": "node scripts/httpStore.mjs",
     "harness:pipeline": "node scripts/pipeline.mjs",
     "harness:mesh": "node scripts/mesh.mjs",
     "harness:fields": "node scripts/fields.mjs",

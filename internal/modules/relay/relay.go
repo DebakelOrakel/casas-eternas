@@ -122,7 +122,31 @@ func New(cfg Config) (*Module, error) {
 		return nil, errors.New("relay: the server did not accept connections in time")
 	}
 	slog.Info("relay ready", "listen", server.ClientURL(), "store", section.StateDir, "checks tokens", cfg.Tokens != nil)
+	warnIfExposed(section.Listen)
 	return &Module{server: server, listen: server.ClientURL()}, nil
+}
+
+// warnIfExposed warns, once at start, when the bus listens on more than
+// the loopback interface: it speaks plain NATS over TCP, so its traffic
+// (tokens included) is not encrypted. Nothing else changes; a cluster
+// network is a trusted network of that kind. The plan for clients from
+// outside is in DEC-0038, "Open".
+func warnIfExposed(listen string) {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil || isLoopback(host) {
+		return
+	}
+	slog.Warn("relay: the bus listens beyond loopback and its traffic is not encrypted; use it only on a trusted network (e.g. a cluster network)", "listen", listen)
+}
+
+// isLoopback reports whether `host` names only the loopback interface: a
+// loopback IP or "localhost". An empty host is every interface.
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // tokenAuth admits a client by the token it presents (see the package

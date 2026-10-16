@@ -700,19 +700,61 @@ func (s *Store) dropLocked(uid string) []string {
 	return keys
 }
 
+// junkRemover is the dir backend's narrow cleanup path (blob.Dir.RemoveJunk):
+// it removes a top-level name that is not a valid key. S3 has none, as only
+// this server writes into its bucket, and every key it writes is valid.
+type junkRemover interface {
+	RemoveJunk(ctx context.Context, name string) error
+}
+
 // deleteObjects deletes the objects of entries already dropped from the
 // index, `parallelism` at a time and outside s.mu: on S3 a world's tiles
 // are tens of thousands of round trips, and the lock must not wait for
 // them. An object that does not go is logged; it is an orphan until the
 // next start indexes it as junk.
+//
+// An entry whose uid breaks the key rule (a directory copied in by hand,
+// e.g. "copy of x" or a non-ASCII name) cannot be deleted object by
+// object; on a bucket that has the junk path, the whole top-level name is
+// removed after the objects. Such an entry is always junk: its meta.json
+// cannot be read either. A file with a bad name under a VALID uid stays
+// (logged): the junk path is for top-level names only.
 func (s *Store) deleteObjects(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
+	}
+	junk, canRemoveJunk := s.bucket.(junkRemover)
+	var badUIDs []string
+	if canRemoveJunk {
+		seen := map[string]bool{}
+		kept := keys[:0:0]
+		for _, key := range keys {
+			uid, _, _ := strings.Cut(key, "/")
+			if blob.CheckKey(uid) != nil {
+				if !seen[uid] {
+					seen[uid] = true
+					badUIDs = append(badUIDs, uid)
+				}
+				continue
+			}
+			kept = append(kept, key)
+		}
+		keys = kept
 	}
 	work := make(chan string)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var first error
+	for _, uid := range badUIDs {
+		if err := junk.RemoveJunk(ctx, uid); err != nil {
+			slog.Warn("artifact junk not removed", "name", uid, "err", err)
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		slog.Info("artifact junk removed: its name breaks the key rule", "name", uid)
+	}
 	for range min(parallelism, len(keys)) {
 		wg.Add(1)
 		go func() {

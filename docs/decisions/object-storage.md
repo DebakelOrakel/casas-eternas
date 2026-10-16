@@ -296,4 +296,59 @@ world store still refuses it. What changed:
   needs a seekable body to hash, so an `http://` endpoint refuses uploads;
   every real provider is HTTPS.
 
+2026-10-16: fixes after the review of step 3.
+
+- **A worker's read error is not "absent".** The client's HTTP artifact
+  store returns null only for a 404 (resolve without create for an unknown
+  key, a file the artifact does not hold, a link whose object has gone).
+  No answer (network, TLS), a 5xx or an answer it cannot read throws
+  `ArtifactStoreUnavailableError`; a write the server refuses (4xx) is
+  still false. Before, every failure read as a miss: a worker whose server
+  was away computed a stored level again, or failed a tile late with "not
+  in the artifact store". The job worker gives such a task back to the
+  relay (`nak`, 15 s), as for a worker that crashed, and reports the
+  failure on the task's last delivery (5), so that a store that stays away
+  fails the job. The coordinator does not change. The browser's tiered
+  store catches the error and goes on as on a miss (local, then compute),
+  as before, with one console warning per kind of call. Test:
+  `npm run test:http-store` (404 / 500 / a failed TLS handshake / a
+  refused connection, and the tiered store over each).
+- **Junk with invalid names.** An entry whose top-level name breaks the
+  key rule (copied in by hand: a space, a non-ASCII letter) was indexed as
+  junk but could not be deleted through the leaf, so each start found it
+  again. `blob.Dir.RemoveJunk` removes such a name, with what it holds,
+  through the `os.Root` (one segment, never a valid key, never a temp
+  file); the store's sweep and removals use it. S3 has no such path: only
+  this server writes into its bucket, and every key it writes is valid. A
+  file with a bad name under a valid uid still stays (logged).
+- **Empty directories.** `Dir.Delete` removes the directories it makes
+  empty, up to (not including) the root. A concurrent `Put` into the same
+  directory does not fail: `Put` makes the directory again when it goes
+  between `MkdirAll` and the temp file (ENOENT, on macOS also EINVAL), and
+  once the temp file is in it, the directory is not empty. A failed `Put`
+  leaves no empty directory either.
+- **`http://` endpoints are refused.** `s3.endpoint` must be an `https://`
+  URL with a host; the server refuses to start otherwise, because over
+  plain HTTP the S3 client cannot upload a streamed body (see above).
+- **Dead configuration.** `jobs.Config.ArtifactsDir` and the spec's
+  `artifactsDir` are gone from the Go side: cmd/ gives every worker the
+  artifacts URL, so every task carries a job token where tokens are
+  checked. The worker keeps its filesystem store for a manual run without
+  a server (jobWorker.ts, `pool`).
+- **The relay warns.** At start, when `relay.listen` is not a loopback
+  address, the relay logs once that its traffic is not encrypted and that
+  it is for a trusted network only (e.g. a cluster network). Nothing else
+  changes.
+
 Open: presigned PUTs for workers (fork 7) and the world store.
+
+Open: **the relay is plain NATS over TCP**, not encrypted. The plan for
+external workers, and later the browser: NATS's WebSocket listener behind
+the Ingress/Route, with TLS from the router (or, standalone, the WebSocket
+listener's own TLS with `global.tls.cert`/`global.tls.key`); TCP only
+inside the cluster. A known limit of the same kind: the artifacts URL in a
+task message is the server's internal one (`127.0.0.1` for a local
+worker, the pod IP in a cluster), so a worker on another host would get an
+address it cannot reach. Both belong to "a worker outside the cluster"
+([detail-ladder.md](detail-ladder.md), the open part on workers outside
+the cluster). Not built.

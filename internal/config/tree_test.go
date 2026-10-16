@@ -31,6 +31,9 @@ func TestObjectStorageValidate(t *testing.T) {
 		{"aws without region", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourAWS, Bucket: "b"}}, "region"},
 		{"ceph without endpoint", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourCeph, Bucket: "b"}}, "endpoint"},
 		{"s3 without bucket", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourCeph, Endpoint: "https://x"}}, "bucket is required"},
+		{"ceph over plain http", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourCeph, Endpoint: "http://objects.example", Bucket: "b"}}, "must be an https:// URL"},
+		{"ceph endpoint without scheme", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourCeph, Endpoint: "objects.example", Bucket: "b"}}, "must be an https:// URL"},
+		{"ceph endpoint without host", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourCeph, Endpoint: "https://", Bucket: "b"}}, "must be an https:// URL"},
 		{"half a key pair", ObjectStorage{Type: "s3", S3: &S3Storage{Flavour: FlavourCeph, Endpoint: "https://x", Bucket: "b", AccessKeyFile: "/k"}}, "together"},
 		// A correct s3 block passes every check and then meets the backend
 		// that is not there yet — the last message, not the first.

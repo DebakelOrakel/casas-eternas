@@ -47,7 +47,7 @@ import { AckPolicy, jetstream, jetstreamManager, type JsMsg } from '@nats-io/jet
 import { createMeshSampler, type MeshSampler } from '../src/generator/mesh/meshSampler'
 import { tileBakeInputs } from '../src/world/bakeInputs'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
-import { artifactKey } from '../src/storage/ArtifactStore'
+import { artifactKey, ArtifactStoreUnavailableError } from '../src/storage/ArtifactStore'
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../src/storage/ArtifactStore'
 
 // Where the baker reads and writes. Two shapes, because the same bake runs in
@@ -79,9 +79,12 @@ interface Job {
   // reads (the refine plan's flow edges, Spec.Upstream).
   upstream?: { x: number; y: number }[]
   erosionRounds: number
-  // Root of the artifact store as a directory…
+  // Root of the artifact store as a directory, for a MANUAL run without a
+  // server (see `pool` below; the Go server never sends it since
+  // 2026-10-16, DEC-0038)…
   artifactsDir?: string
-  // …or the API base (e.g. "http://server:8080/v1") to PUT them to.
+  // …or the API base (e.g. "http://server:8080/v1") to PUT them to: what
+  // the server sends every worker.
   artifactsUrl?: string
   // Bearer token for that API, naming this one job.
   authToken?: string
@@ -904,6 +907,10 @@ const TASK_CONSUMER = 'workers'
 const TASK_ACK_WAIT_MS = 5 * 60_000
 const TASK_HEARTBEAT_MS = 30_000
 const TASK_MAX_DELIVER = 5
+// How long a task given back for an artifact store that did not answer
+// waits before the relay hands it out again: long enough for a server
+// restart, short against a task's minutes.
+const TASK_RETRY_DELAY_MS = 15_000
 // How often a worker says it is there (internal/modules/jobs/presence.go,
 // presenceEvery): who it is, and what it computes.
 const PRESENCE_EVERY_MS = 15_000
@@ -1008,6 +1015,17 @@ async function serve(config: ServeConfig): Promise<void> {
       if (error instanceof EngineStalledError) {
         process.stderr.write(`task ${taskId}: ${message}; ending the worker\n`)
         process.exit(1)
+      }
+      // An artifact store that did not answer is not the task's fault
+      // either, and not a miss (HttpArtifactStore.ts): the task goes back to
+      // the relay, as for a worker that crashed, and is handed out again —
+      // to this worker or another — after a pause. Its last delivery
+      // reports the failure, so that a store that stays away fails the job
+      // instead of leaving it waiting.
+      if (error instanceof ArtifactStoreUnavailableError && msg.info.deliveryCount < TASK_MAX_DELIVER) {
+        process.stderr.write(`task ${taskId}: ${message}; giving it back (delivery ${msg.info.deliveryCount} of ${TASK_MAX_DELIVER})\n`)
+        msg.nak(TASK_RETRY_DELAY_MS)
+        continue
       }
       process.stderr.write(`task ${taskId} failed: ${message}\n`)
       // A computation's error is the task's answer: it would fail the same

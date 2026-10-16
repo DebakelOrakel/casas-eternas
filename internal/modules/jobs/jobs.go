@@ -86,11 +86,12 @@ type Config struct {
 	// any worker whose world module lives in another process.
 	WorldZip  func(ctx context.Context, uid string) (path string, ok bool)
 	WorldsURL string
-	// The artifact sink — exactly one of the two is set. ArtifactsDir is the
-	// directory the co-resident artifacts module serves (safe to share:
-	// that store is idempotent by construction); ArtifactsURL is its /v1 base
-	// in another process.
-	ArtifactsDir string
+	// The artifact sink: the artifacts module's /v1 base. Always a URL
+	// (DEC-0038, step 3): the store's index lives in the artifacts
+	// module's process and sees only what passes through its API, and on
+	// s3 there is no directory to write into. cmd/ gives a local worker
+	// the server's own listener (or its internal one, where the public
+	// one speaks TLS), a cluster worker the pod IP.
 	ArtifactsURL string
 	// The Node bundle, from `make worker` (npm run build:worker).
 	WorkerPath string
@@ -160,8 +161,8 @@ func New(cfg Config) (*Module, error) {
 	if (cfg.WorldZip == nil) == (cfg.WorldsURL == "") {
 		return nil, fmt.Errorf("bake needs exactly one world source (WorldZip or WorldsURL); that is cmd/'s job")
 	}
-	if (cfg.ArtifactsDir == "") == (cfg.ArtifactsURL == "") {
-		return nil, fmt.Errorf("bake needs exactly one artifact sink (ArtifactsDir or ArtifactsURL); that is cmd/'s job")
+	if cfg.ArtifactsURL == "" {
+		return nil, fmt.Errorf("bake needs its artifact sink (ArtifactsURL); that is cmd/'s job")
 	}
 	// Where the work runs is decided by DETECTING the cluster and by nothing
 	// else, deliberately without a flag: in a cluster it runs in the worker
@@ -180,8 +181,8 @@ func New(cfg Config) (*Module, error) {
 		// A worker in another pod has only URLs — a file path in this pod
 		// means the composition is wrong, and finding out here beats a task
 		// going out with an empty fetch address.
-		if cfg.WorldsURL == "" || cfg.ArtifactsURL == "" {
-			return nil, fmt.Errorf("jobs in a cluster need WorldsURL and ArtifactsURL; is CASAS_POD_IP set? (deploy/manifests.yaml wires it)")
+		if cfg.WorldsURL == "" {
+			return nil, fmt.Errorf("jobs in a cluster need WorldsURL; is CASAS_POD_IP set? (deploy/manifests.yaml wires it)")
 		}
 	} else {
 		workerPath, err = workerBundle(cfg.WorkerPath)
@@ -446,11 +447,11 @@ const jobTokenTTL = time.Hour
 // buildSpec resolves a request into what a worker needs, a task at a time
 // (the coordinator's specFor).
 //
-// Files where the composition put a store beside this process, URLs where it
-// did not — each half decided on its own, so a local worker beside the
-// artifacts can still fetch its world from a peer service. Both shapes
-// produce byte-identical artifacts under the identical key (measured), so
-// nothing downstream can tell which ran.
+// The world as a file where the composition put the world store beside
+// this process, as a URL where it did not; the artifacts always by URL
+// (Config.ArtifactsURL). Both world shapes produce byte-identical artifacts
+// under the identical key (measured), so nothing downstream can tell which
+// ran.
 func (m *Module) buildSpec(ctx context.Context, id string, request Request) (Spec, error) {
 	spec := Spec{
 		Stage:         request.Stage,
@@ -471,16 +472,13 @@ func (m *Module) buildSpec(ctx context.Context, id string, request Request) (Spe
 	} else {
 		spec.WorldURL = fmt.Sprintf("%s/worlds/%s", m.cfg.WorldsURL, request.WorldUID)
 	}
-	if m.cfg.ArtifactsDir != "" {
-		spec.ArtifactsDir = m.cfg.ArtifactsDir
-	} else {
-		spec.ArtifactsURL = m.cfg.ArtifactsURL
-	}
-	// A worker that reaches ANY store over HTTP talks to a server that may
-	// check identity, and without credentials it gets a 401 reading the world
-	// it was created to bake. Scoped to this one job by audience, so it is not
-	// a login: the gate refuses it everywhere a session is expected.
-	if m.cfg.Tokens != nil && (spec.WorldURL != "" || spec.ArtifactsURL != "") {
+	spec.ArtifactsURL = m.cfg.ArtifactsURL
+	// Every worker reaches the artifact store over HTTP, so it talks to a
+	// server that may check identity, and without credentials it gets a 401
+	// writing what it was created to bake. Scoped to this one job by
+	// audience, so it is not a login: the gate refuses it everywhere a
+	// session is expected.
+	if m.cfg.Tokens != nil {
 		token, _, err := m.cfg.Tokens.IssueJob(id, request.WorldUID, jobTokenTTL)
 		if err != nil {
 			// Failing here rather than sending the worker out without one: it

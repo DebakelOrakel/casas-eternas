@@ -91,6 +91,7 @@ cli-reference:
 test:
 	go test ./internal/...
 	cd client && npm run harness:roundtrip
+	cd client && npm run test:http-store
 	cd client && npm run harness:pipeline
 	cd client && npm run harness:mesh
 	cd client && npm run harness:fields

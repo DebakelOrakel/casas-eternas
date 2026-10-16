@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"time"
 )
 
@@ -183,6 +184,9 @@ func (s S3Storage) validate(key string) error {
 		if s.Endpoint == "" {
 			return fmt.Errorf("%s.endpoint: flavour ceph needs the provider's endpoint", key)
 		}
+		if err := checkS3Endpoint(key, s.Endpoint); err != nil {
+			return err
+		}
 	case "":
 		return fmt.Errorf("%s.flavour is required (%s or %s)", key, FlavourAWS, FlavourCeph)
 	default:
@@ -193,6 +197,20 @@ func (s S3Storage) validate(key string) error {
 	}
 	if (s.AccessKeyFile == "") != (s.SecretKeyFile == "") {
 		return fmt.Errorf("%s: set access-key-file and secret-key-file together", key)
+	}
+	return nil
+}
+
+// checkS3Endpoint refuses an endpoint that is not an https:// URL with a
+// host. Over plain HTTP the S3 client must hash the whole body before it
+// sends it, and it cannot do that with a body that does not seek (an
+// upload that goes through the server): such an endpoint would start and
+// then refuse every upload (measured 2026-10-16, DEC-0038). Every real
+// provider speaks HTTPS.
+func checkS3Endpoint(key, endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("%s.endpoint %q: must be an https:// URL — over plain http the S3 client cannot upload a streamed body", key, endpoint)
 	}
 	return nil
 }
