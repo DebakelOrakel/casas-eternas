@@ -1,0 +1,18 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-test-objects",
+      "Filter": { "Prefix": "test/" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 1 },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    },
+    {
+      "ID": "remove-test-delete-markers",
+      "Filter": { "Prefix": "test/" },
+      "Status": "Enabled",
+      "Expiration": { "ExpiredObjectDeleteMarker": true }
+    }
+  ]
+}

@@ -46,3 +46,28 @@ is taken, deploy with `BucketPrefix=casas-eternas-<something of yours>`.
 
 Presigned URLs signed with this user's long-term key may live up to
 7 days; the server keeps them to minutes (DES-0029).
+
+## Cleaning up after the wire tests (dev only)
+
+The gated wire tests (`CASAS_TEST_S3_AWS=1`) write under the key prefix
+`test/`. On the worlds bucket the server's user may not delete an object
+version (by design), so every test object leaves noncurrent versions and
+delete markers. `test-lifecycle.json` lets S3 remove them: objects,
+noncurrent versions and unfinished uploads under `test/` after one day,
+and delete markers left alone. It touches nothing outside `test/`.
+
+It needs an administrator (the server's user may not set a lifecycle rule
+on the worlds bucket, and should not):
+
+```sh
+aws s3api put-bucket-lifecycle-configuration --profile sfe-admin \
+  --region eu-central-2 --bucket casas-eternas-dev-worlds \
+  --lifecycle-configuration file://deploy/aws/test-lifecycle.json
+aws s3api get-bucket-lifecycle-configuration --profile sfe-admin \
+  --region eu-central-2 --bucket casas-eternas-dev-worlds
+```
+
+Lifecycle rules run about once a day, so leftovers can stay up to two days.
+Never put this rule on the public installation's worlds bucket: real worlds
+there must not expire (they live outside `test/`, but the rule has no
+reason to be there).
