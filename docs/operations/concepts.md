@@ -60,14 +60,50 @@ process of a split deployment, so the role travels only in `-t` or
 
 ## Where state lives
 
-Each store module owns one directory — worlds (`world.storage.dir.path`),
-artifacts (`artifacts.storage.dir.path`), users (`auth.state-dir`), jobs
-(`jobs.state-dir`), the relay's messages (`relay.state-dir`). Worlds and
-artifacts choose a backend with `world.storage.type` and
-`artifacts.storage.type`; `dir` is the only one implemented. The others
-need a filesystem, so they take a plain directory.
+Each store module owns one directory or bucket — worlds
+(`world.storage.dir.path`), artifacts (`artifacts.storage.dir.path`, or a
+bucket, below), users (`auth.state-dir`), jobs (`jobs.state-dir`), the
+relay's messages (`relay.state-dir`). Worlds and artifacts choose a
+backend with `world.storage.type` and `artifacts.storage.type`: `dir`, or
+`s3` for the artifacts (the world store refuses `s3` until it is built).
+The others need a filesystem, so they take a plain directory.
 **One process per store directory** is a hard rule; the user store
 enforces it with a file lock, the others rely on you. Scaling means
 splitting *targets* across processes, never pointing two processes at one
 directory.
+
+### Artifacts in S3
+
+```yaml
+artifacts:
+  storage:
+    type: s3              # required as soon as the s3 block is there
+    s3:
+      flavour: aws        # aws or ceph: the provider's row of the capability table
+      region: eu-central-2
+      bucket: casas-eternas-artifacts
+      prefix: ""          # a key prefix, for a bucket shared with other data
+      access-key-file: /run/secrets/aws-access-key
+      secret-key-file: /run/secrets/aws-secret-key
+  read-link-ttl: 15m      # how long a read link holds
+```
+
+For `ceph`, set `endpoint` (e.g. `https://objects.lpg.cloudscale.ch`) and
+leave `region` empty or set the signing scope; `aws` refuses an endpoint.
+The key pair is two files, never values in the configuration file; for
+local tests against the dev identity they are `dev/secrets/aws-access-key`
+and `dev/secrets/aws-secret-key` (deploy/aws/storage.yaml makes the
+identity). Each key is also a flag and a `CASAS_ARTIFACTS_STORAGE_S3_*`
+variable. At start the server checks the bucket, makes it when it is
+missing, and sets its CORS rule.
+
+A read of an artifact answers `302` to a short-lived link: on `s3` a
+presigned GET, so the bytes come from the bucket and not through the
+server; on `dir` a link the server signs and serves itself under
+`/v1/artifacts/blob/`, with the key in `artifacts.link-key` (a file with
+at least 32 random bytes; without it the links stop working at restart).
+The bucket's CORS rule allows every origin, for GET and HEAD, without
+credentials: a link is the right to read one object for minutes, and
+whoever holds it can use it outside a browser, so a narrower origin would
+protect nothing. Uploads still go through the server.
 

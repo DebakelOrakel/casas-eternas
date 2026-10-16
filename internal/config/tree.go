@@ -100,9 +100,10 @@ type Services struct {
 // The flag default of `dir.path` is not a block: cmd/ keeps Dir only where
 // the path was set, or where the type is dir.
 //
-// `dir` is the only implemented backend in this step; the s3 block is
-// declared and checked so that a configuration written for it gets its
-// mistakes named now and a clear "not implemented yet" after them.
+// The s3 backend is built for the sections in s3Built (artifacts since
+// DEC-0038 step 3); for the others the s3 block is declared and checked, so
+// that a configuration written for it gets its mistakes named now and a
+// clear "not implemented yet" after them.
 type ObjectStorage struct {
 	Type string      `mapstructure:"type"`
 	Dir  *DirStorage `mapstructure:"dir"`
@@ -157,11 +158,18 @@ func (s ObjectStorage) Validate(section string) error {
 		if err := s.S3.validate(key + ".s3"); err != nil {
 			return err
 		}
-		return fmt.Errorf("%s.type: the s3 backend is not implemented yet (implemented: dir)", key)
+		if !s3Built[section] {
+			return fmt.Errorf("%s.type: the s3 backend is not implemented yet (implemented: dir)", key)
+		}
+		return nil
 	default:
 		return fmt.Errorf("%s.type: unknown backend %q (dir or s3)", key, s.Type)
 	}
 }
+
+// s3Built names the sections whose store runs on the s3 backend. The world
+// store follows in DEC-0038's next step.
+var s3Built = map[string]bool{"artifacts": true}
 
 func (s S3Storage) validate(key string) error {
 	switch s.Flavour {
@@ -223,7 +231,8 @@ type ArtifactsConfig struct {
 	// The lifetimes of the links the module gives for a read and for a
 	// write, and the file with the key the dir backend signs its own links
 	// with (DEC-0038, fork 4; module settings, because they hold for both
-	// backends). Nothing reads them yet: step 3 of DEC-0038 does.
+	// backends). The read lifetime and the key are used since DEC-0038 step
+	// 3; the write lifetime waits for the presigned uploads of step 4.
 	ReadLinkTTL  time.Duration `mapstructure:"read-link-ttl"`
 	WriteLinkTTL time.Duration `mapstructure:"write-link-ttl"`
 	LinkKey      string        `mapstructure:"link-key"`

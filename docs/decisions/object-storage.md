@@ -235,3 +235,57 @@ refuse another length (403); an expired link answers 403; the CORS rule
 and versioning are set as asked; new buckets block public access. The
 `ceph` row claims nothing yet: no cloudscale bucket exists, its wire test
 is skipped.
+
+2026-10-16: the artifact store runs on the blob leaf (`dir` and `s3`, one
+code path), with reads by link; `type: s3` starts for `artifacts`, the
+world store still refuses it. What changed:
+
+- **Store.** Every read and write goes through `blob.Bucket`; the layout
+  (`{artifactUid}/meta.json` and the files) is DEC-0017's, so an existing
+  `./data/artifacts` opens as it is. The index is built at start from one
+  `List` and a read of each meta.json (16 in parallel), then kept in
+  memory: this process is the one writer. Measured on a clone of a real
+  store (11 363 artifacts, 68 184 files, 14.6 GB, dir): 2.5 s at start.
+  Writes are the leaf's atomic `Put` with the request's length (a chunked
+  upload is spooled to a temporary file first); the 512 MiB limit stays.
+- **LRU.** The last access is recorded in the index (resolve, a link given,
+  a write), in memory only, as before: S3 has no atime, and a write per
+  read is not worth a cache's recency. After a restart the meta's
+  `createdAt`, then the newest write, orders the sweep. Eviction and
+  removal drop entries from the index under the lock and delete the
+  objects after it, 16 at a time.
+- **Reads by link.** `GET /v1/artifacts/{uid}/{name}` checks the right as
+  before and answers `302` (`Cache-Control: no-store`) to a link with
+  `artifacts.read-link-ttl`: a presigned GET on `s3`, the module's own
+  signed link on `dir` (`GET /v1/artifacts/blob/<key>?exp&sig`, key from
+  `artifacts.link-key`). The gate lets a request through without
+  credentials when its link is one we signed, also an expired one, so that
+  the route answers 410 and the gate no 401; anything else on that path
+  meets the gate as usual. The route answers 403 for a link that does not
+  verify, 410 for an expired one, 404 for a signed key whose object went.
+- **CORS origin: `*`, no new key.** A presigned GET is a capability URL:
+  the right was checked when it was issued, and a holder can use it
+  outside a browser, so a narrower origin protects nothing. `*` also
+  covers the `Origin: null` a browser sends after a redirect from a third
+  origin. Methods GET and HEAD, every request header allowed, `ETag` and
+  `Content-Length` exposed. The headers, because a browser drops the
+  session's `Authorization` on the redirect to the bucket but still asks
+  for it in the preflight (measured in Safari 26.6).
+- **Workers.** A job worker beside the artifact store writes over this
+  server's API now (`http://127.0.0.1:<port>/v1`, from `global.listen`),
+  as a cluster worker always did: the in-memory index sees only what
+  passes through the server, and on `s3` there is no directory. With
+  `global.tls.ca` that cannot connect, so it refuses to start.
+- **Measured against AWS** (eu-central-2, `casas-eternas-dev-artifacts`,
+  TestAWSWireArtifacts): an upload through the server with a body that
+  cannot seek (about 1 MiB, the SDK's trailing checksum over HTTPS) is
+  stored; a restart indexes it from the listing; Go's client follows the
+  302 to the bucket and drops the caller's `Authorization` on the way; the
+  bucket answers `Access-Control-Allow-Origin: *`; a presigned GET that
+  still carries an `Authorization` header answers 400 (two kinds of
+  authorization), so a client must drop the header on a cross-origin
+  redirect, as the Fetch standard, Go and Node do. Over plain HTTP the SDK
+  needs a seekable body to hash, so an `http://` endpoint refuses uploads;
+  every real provider is HTTPS.
+
+Open: presigned PUTs for workers (fork 7) and the world store.

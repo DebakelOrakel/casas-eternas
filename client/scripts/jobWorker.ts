@@ -114,9 +114,11 @@ interface Job {
 }
 
 // The artifact store's resolve/read/write interface, backed by the
-// filesystem — the server's own directory, which the Go store re-indexes by
-// mtime, so an entry this subprocess writes is visible to the server on its
-// next request without any handshake.
+// filesystem — for a MANUAL run (`artifactsDir` in the job, see `pool`
+// above). The server sends its workers an `artifactsUrl` only since
+// 2026-10-16 (DEC-0038): its index is built at start and kept in memory,
+// so an entry written here is seen by a server that opens this directory
+// afterwards, not by one that runs on it.
 //
 // Implemented here rather than reusing the encoder's own writer because that
 // is exactly the point of the interface: `writeMeshLevelArtifact` does the

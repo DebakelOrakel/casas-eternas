@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
+	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
@@ -25,22 +26,44 @@ import (
 // shape, with a real ranking, is built by newCheckedModule below.
 func newTestModule(t *testing.T) *http.ServeMux {
 	t.Helper()
-	store, err := NewStore(t.TempDir(), 0)
+	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil),
+		func(context.Context, string, string) (bool, access.Level) { return true, access.Admin })
+	return mux
+}
+
+// newModule builds the module through New, on `bucket`, and mounts it.
+func newModule(t *testing.T, bucket blob.Bucket, resolver *identity.Resolver, rank func(context.Context, string, string) (bool, access.Level)) (*Module, *http.ServeMux) {
+	t.Helper()
+	var all config.Config
+	all.Artifacts.ReadLinkTTL = 15 * time.Minute
+	m, err := New(context.Background(), Config{All: all, Bucket: bucket, Identity: resolver, WorldAccess: rank})
 	if err != nil {
 		t.Fatal(err)
-	}
-	m := &Module{
-		cfg: Config{
-			Identity:    identity.NewResolver(config.AuthNone, nil),
-			WorldAccess: func(context.Context, string, string) (bool, access.Level) { return true, access.Admin },
-		},
-		store: store,
 	}
 	mux := http.NewServeMux()
 	if err := m.Mount(mux); err != nil {
 		t.Fatal(err)
 	}
-	return mux
+	return m, mux
+}
+
+// follow answers a read the way a client does: the module redirects to a
+// link, and a same-origin link is asked of the same mux, with the same
+// header (a client keeps it on a same-origin redirect).
+func follow(t *testing.T, mux *http.ServeMux, path, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	first := doAs(mux, http.MethodGet, path, "", token)
+	if first.Code != http.StatusFound {
+		return first
+	}
+	if got := first.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("redirect Cache-Control = %q, want no-store", got)
+	}
+	location := first.Header().Get("Location")
+	if !strings.HasPrefix(location, LinkBase) {
+		t.Fatalf("redirect to %q, want a link under %s", location, LinkBase)
+	}
+	return doAs(mux, http.MethodGet, location, "", token)
 }
 
 func do(mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorder {
@@ -104,8 +127,8 @@ func TestResolveIsTheOnlyDoorToAKey(t *testing.T) {
 		t.Errorf("files after write = %v", files)
 	}
 
-	read := do(mux, http.MethodGet, "/v1/artifacts/"+uid+"/elevation.f32", "")
-	if read.Code != http.StatusOK || read.Body.String() != "raster-bytes" {
+	read := follow(t, mux, "/v1/artifacts/"+uid+"/elevation.f32", "")
+	if read.Code != http.StatusOK || read.Body.String() != "raster-bytes" || read.Header().Get("Content-Length") != "12" {
 		t.Errorf("read = %d %q", read.Code, read.Body.String())
 	}
 }
@@ -160,26 +183,13 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 		"Bearer " + viewer: access.Viewer,
 	}
 
-	store, err := NewStore(t.TempDir(), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := &Module{
-		cfg: Config{
-			Identity: identity.NewResolver(config.AuthPassword, tokens),
-			WorldAccess: func(_ context.Context, uid, bearer string) (bool, access.Level) {
-				if uid != worldUID {
-					return false, access.None
-				}
-				return true, levels[bearer]
-			},
-		},
-		store: store,
-	}
-	mux := http.NewServeMux()
-	if err := m.Mount(mux); err != nil {
-		t.Fatal(err)
-	}
+	_, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthPassword, tokens),
+		func(_ context.Context, uid, bearer string) (bool, access.Level) {
+			if uid != worldUID {
+				return false, access.None
+			}
+			return true, levels[bearer]
+		})
 
 	// The editor mints and writes; that is the working path everything else
 	// is measured against.
@@ -233,8 +243,17 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 		{"viewer clear-all", http.MethodDelete, "/v1/artifacts", "", viewer, http.StatusForbidden},
 	}
 	for _, c := range cases {
-		if got := doAs(mux, c.method, c.path, c.body, c.token).Code; got != c.want {
+		response := doAs(mux, c.method, c.path, c.body, c.token)
+		got := response.Code
+		if c.method == http.MethodGet && got == http.StatusFound {
+			got = follow(t, mux, c.path, c.token).Code
+		}
+		if got != c.want {
 			t.Errorf("%s = %d, want %d", c.name, got, c.want)
+		}
+		// The check comes before the link: a refused read hands out none.
+		if c.want != http.StatusOK && response.Header().Get("Location") != "" {
+			t.Errorf("%s handed out a link: %s", c.name, response.Header().Get("Location"))
 		}
 	}
 

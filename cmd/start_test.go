@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -64,7 +65,7 @@ func TestLoginFollowsTheAuthTarget(t *testing.T) {
 	if err := seed.Close(); err != nil {
 		t.Fatal(err)
 	}
-	modules, _, err := buildModules(config.Targets{config.TargetAuth: true}, cfg)
+	modules, _, err := buildModules(context.Background(), config.Targets{config.TargetAuth: true}, cfg)
 	if err != nil {
 		t.Fatalf("auth-only process: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestLoginFollowsTheAuthTarget(t *testing.T) {
 	worldOnly := passwordConfig(t)
 	worldOnly.Auth.StateDir = ""
 	worldOnly.World.Storage = config.ObjectStorage{Type: "dir", Dir: &config.DirStorage{Path: t.TempDir()}}
-	modules, _, err = buildModules(config.Targets{config.TargetWorld: true}, worldOnly)
+	modules, _, err = buildModules(context.Background(), config.Targets{config.TargetWorld: true}, worldOnly)
 	if err != nil {
 		t.Fatalf("world-only process: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestLoginFollowsTheAuthTarget(t *testing.T) {
 // must stop the start, the first must not.
 func TestEmptyCredentialStoreNeedsABootstrapPath(t *testing.T) {
 	cfg := passwordConfig(t)
-	_, _, err := buildModules(config.Targets{config.TargetAuth: true}, cfg)
+	_, _, err := buildModules(context.Background(), config.Targets{config.TargetAuth: true}, cfg)
 	if err == nil {
 		t.Fatal("a password server nobody could ever log in to started anyway")
 	}
@@ -105,7 +106,7 @@ func TestEmptyCredentialStoreNeedsABootstrapPath(t *testing.T) {
 
 	withSocket := passwordConfig(t)
 	withSocket.Global.Admin.Socket = filepath.Join(t.TempDir(), "admin.sock")
-	modules, _, err := buildModules(config.Targets{config.TargetAuth: true}, withSocket)
+	modules, _, err := buildModules(context.Background(), config.Targets{config.TargetAuth: true}, withSocket)
 	if err != nil {
 		t.Fatalf("an empty store with an admin socket refused to start: %v", err)
 	}
@@ -149,7 +150,7 @@ func TestServiceTokenRouteIsPublic(t *testing.T) {
 	if err := seed.Close(); err != nil {
 		t.Fatal(err)
 	}
-	modules, gate, err := buildModules(config.Targets{config.TargetAuth: true}, cfg)
+	modules, gate, err := buildModules(context.Background(), config.Targets{config.TargetAuth: true}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

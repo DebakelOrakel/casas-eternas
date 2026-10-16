@@ -57,6 +57,13 @@ func TestObjectStorageValidate(t *testing.T) {
 			}
 		})
 	}
+	// The artifact store runs on s3 (DEC-0038, step 3): the same valid
+	// blocks pass there.
+	for _, block := range []*S3Storage{aws, ceph} {
+		if err := (ObjectStorage{Type: "s3", S3: block}).Validate("artifacts"); err != nil {
+			t.Errorf("artifacts on s3 (%s): %v", block.Flavour, err)
+		}
+	}
 }
 
 // A state-dir is a plain directory; its message names the full key.

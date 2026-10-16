@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-10-16
+- **new** Server: operators can store artifacts in an S3 bucket (`artifacts.storage.type: s3`), and a read of an artifact answers with a short-lived link to it. `artifacts`
 - **changed** Server: the jobs, auth, relay, client and docs directories are now `*.state-dir` and `*.content-dir`, and the old `*.storage.dir.path` keys refuse to start, so operators must rename them.
 
 ## 2026-10-15

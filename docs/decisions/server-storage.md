@@ -598,6 +598,23 @@ id is stable across save → load → save and equal for two pipelines that
 made the same world (`harness:pipeline`); frozen for fixed bytes in
 `harness:roundtrip`.
 
+## Addendum 2026-10-16 — the artifact store on the blob leaf
+
+The artifact store does all its I/O through the blob leaf
+([object-storage.md](./object-storage.md), DEC-0038, `internal/blob`), so
+it runs on a directory or on an S3 bucket with one code path. The layout
+and the rules of this document stand: flat `{artifactUid}/`, meta.json the
+only truth, `resolve`, the cap with LRU after writes and junk first, an
+existing `./data/artifacts` opens as it is. Three filesystem semantics are
+replaced: the rename becomes the leaf's atomic `Put`; the mtime-validated
+index becomes an index built from one `List` at start and then kept in
+memory (one process per store), so an entry copied in by hand is seen at
+the next start, and a local job worker writes over the server's API
+instead of into the directory; the last access stays in memory, as it
+was, with the meta's `createdAt` as the order after a restart. A read
+answers `302` to a link (a presigned GET, or the module's own signed link
+on `dir`) after the same access check.
+
 ## Status
 
 decided — architecture and the forks below. BUILT 2026-08-08: the CLI

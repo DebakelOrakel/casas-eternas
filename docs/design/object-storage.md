@@ -294,3 +294,9 @@ status and next to the `aws` row in internal/blob/s3.go. One correction
 to the table above: in eu-central-2 a wrong region answers 400, not 301;
 the `x-amz-bucket-region` header is there either way, and the probe reads
 it.
+
+2026-10-16: the artifact store runs on the leaf, `dir` and `s3`, and
+answers a read with a 302 to a link (DEC-0038's status has what was built
+and measured). The index is built from one listing at start and kept in
+memory; the last access stays in memory, as DEC-0017 had it, so no
+lifecycle rule is used. Uploads still go through the server.

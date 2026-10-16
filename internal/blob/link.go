@@ -22,8 +22,8 @@ import (
 //
 // where the HMAC-SHA256 is over the method, the key, the expiry and, for a
 // PUT, the length. This file builds and checks the query; the route that
-// serves `<base><key>` is the module's (step 3), so the base path is a
-// parameter.
+// serves `<base><key>` is the module's (internal/modules/artifacts,
+// handleLink), so the base path is a parameter.
 
 // MinLinkKeyLength is the shortest signing key accepted, in bytes.
 const MinLinkKeyLength = 32

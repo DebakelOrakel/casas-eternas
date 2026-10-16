@@ -32,7 +32,7 @@ func newGate(t *testing.T, mode config.AuthMode) (func(http.Handler) http.Handle
 	// Literals rather than the modules' constants: the exempt list is a
 	// PARAMETER, and this package deliberately imports no module. What cmd/
 	// actually passes is checked where cmd/ builds it.
-	return Gate(resolver, []string{"/config.json", CapabilitiesPath, "/v1/session"}, nil), tokens
+	return Gate(resolver, []string{"/config.json", CapabilitiesPath, "/v1/session"}, nil, nil), tokens
 }
 
 func request(t *testing.T, gate func(http.Handler) http.Handler, path, token string) (int, bool) {
@@ -170,7 +170,7 @@ func TestGateDoesNotInviteBasicAuth(t *testing.T) {
 // Anonymous. This is the regression that would lock a single-user server out of
 // its own worlds.
 func TestLocalModePassesEverything(t *testing.T) {
-	gate := Gate(identity.NewResolver(config.AuthNone, nil), []string{"/config.json"}, nil)
+	gate := Gate(identity.NewResolver(config.AuthNone, nil), []string{"/config.json"}, nil, nil)
 	for _, path := range []string{"/v1/worlds", "/v1/artifacts", "/config.json", "/"} {
 		if code, ran := request(t, gate, path, ""); !ran || code != http.StatusOK {
 			t.Errorf("none mode: %s = %d (reached: %v), want 200", path, code, ran)
@@ -187,7 +187,7 @@ func TestAnonymousReadsReachTheirModuleOnlyWithoutCredentials(t *testing.T) {
 		t.Fatalf("NewTokens: %v", err)
 	}
 	reads := func(r *http.Request) bool { return r.Method == http.MethodGet && r.URL.Path == "/v1/worlds" }
-	gate := Gate(identity.NewResolver(config.AuthPassword, tokens), nil, reads)
+	gate := Gate(identity.NewResolver(config.AuthPassword, tokens), nil, reads, nil)
 	if code, ran := request(t, gate, "/v1/worlds", ""); !ran || code != http.StatusOK {
 		t.Errorf("anonymous read = %d (reached: %v), want it passed through", code, ran)
 	}
@@ -196,5 +196,25 @@ func TestAnonymousReadsReachTheirModuleOnlyWithoutCredentials(t *testing.T) {
 	}
 	if code, ran := request(t, gate, "/v1/artifacts", ""); ran || code != http.StatusUnauthorized {
 		t.Errorf("a route the predicate refuses = %d (reached: %v), want 401", code, ran)
+	}
+}
+
+// The signed narrowing: a request the predicate accepts (a link that
+// verifies) reaches its module with no credentials AND with credentials
+// that do not verify; one it refuses meets the rule like any other.
+func TestSignedRequestsPassWhateverTheirHeader(t *testing.T) {
+	tokens, err := token.NewTokens([]byte(gateKey))
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	signed := func(r *http.Request) bool { return r.URL.Path == "/v1/artifacts/blob/good" }
+	gate := Gate(identity.NewResolver(config.AuthPassword, tokens), nil, nil, signed)
+	for _, header := range []string{"", "nonsense"} {
+		if code, ran := request(t, gate, "/v1/artifacts/blob/good", header); !ran || code != http.StatusOK {
+			t.Errorf("signed request (header %q) = %d (reached: %v), want it passed through", header, code, ran)
+		}
+		if code, ran := request(t, gate, "/v1/artifacts/blob/forged", header); ran || code != http.StatusUnauthorized {
+			t.Errorf("unsigned request (header %q) = %d (reached: %v), want 401", header, code, ran)
+		}
 	}
 }

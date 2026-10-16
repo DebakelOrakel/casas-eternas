@@ -32,7 +32,14 @@ const apiPrefix = APIPrefix + "/"
 // with credentials that do not verify is still refused here, so a client
 // whose session ran out learns it on every route, these included. Nil for
 // none. Like `exempt`, a parameter: cmd/ composes it from the modules.
-func Gate(caller *identity.Resolver, exempt []string, anonymous func(*http.Request) bool) func(http.Handler) http.Handler {
+//
+// `signed` is the other one (2026-10-16, DEC-0038 step 3): a request that
+// carries its OWN authorization, a signed link, goes through when the
+// predicate verifies it, whatever its Authorization header holds — the
+// link is the right, so a stale session must not refuse it, and a client
+// that follows a same-origin redirect keeps its header. A request it does
+// not accept meets the rule above like any other. Nil for none.
+func Gate(caller *identity.Resolver, exempt []string, anonymous, signed func(*http.Request) bool) func(http.Handler) http.Handler {
 	public := make(map[string]bool, len(exempt))
 	for _, path := range exempt {
 		public[path] = true
@@ -40,6 +47,10 @@ func Gate(caller *identity.Resolver, exempt []string, anonymous func(*http.Reque
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !strings.HasPrefix(r.URL.Path, apiPrefix) || public[r.URL.Path] {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if signed != nil && signed(r) {
 				next.ServeHTTP(w, r)
 				return
 			}

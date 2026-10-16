@@ -26,24 +26,38 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
+	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
 
-// uploadLimit caps one artifact file. An amplified elevation raster is ~17 MB
+// UploadLimit caps one artifact file. An amplified elevation raster is ~17 MB
 // at 4096 and ~67 MB at 8192; this leaves room for the resolutions above that
 // without letting a single request run away. A candidate for a flag once a
-// deployment has an opinion — as is the size cap that eviction will need.
-const uploadLimit = 512 << 20 // 512 MiB
+// deployment has an opinion. Exported because it also bounds the dir
+// backend's PUT links (NewLinkSigner).
+const UploadLimit = 512 << 20 // 512 MiB
+
+// LinkBase is the path under which the dir backend serves its own links
+// (DEC-0038, fork 5): `GET /v1/artifacts/blob/<key>?exp=…&sig=…`. In this
+// module's namespace; the link is the authorization, so the gate lets a
+// request with a valid one through without credentials (SignedRequest).
+const LinkBase = "/v1/artifacts/blob/"
 
 // Config carries the full configuration tree (every module holds it whole —
 // decided 2026-08-12). No viper here by design; the module reads Global and
 // its OWN section (`artifacts.*`), nothing else.
 type Config struct {
 	All config.Config
+	// Bucket is where the bytes are: a blob.Dir or a blob.S3, opened by
+	// cmd/ from artifacts.storage (cmd/storage.go). A Dir that signs links
+	// (blob.OpenDir with NewLinkSigner) makes this module serve them.
+	Bucket blob.Bucket
 	// Identity answers who a request comes from — the one resolver cmd/
 	// builds and every module shares.
 	Identity *identity.Resolver
@@ -60,23 +74,78 @@ type Config struct {
 type Module struct {
 	cfg   Config
 	store *Store
+	// signer checks the dir backend's links; nil on s3, whose links the
+	// provider checks.
+	signer *blob.LinkSigner
+	// readTTL is the lifetime of a read link (artifacts.read-link-ttl).
+	readTTL time.Duration
 }
 
-// New prepares the store, creating the directory so a bad artifacts.storage
-// fails at startup rather than on first write.
-func New(cfg Config) (*Module, error) {
-	if cfg.Identity == nil || cfg.WorldAccess == nil {
-		return nil, fmt.Errorf("artifacts needs its identity and world-access wiring; that is cmd/'s job")
+// signing is what a Dir that makes its own links offers.
+type signing interface{ Signer() *blob.LinkSigner }
+
+// NewLinkSigner makes the signer of the dir backend's links from
+// artifacts.link-key (DEC-0038, fork 4). Without a key file the key is
+// ephemeral and the links die at restart, which is logged.
+func NewLinkSigner(cfg config.Config) (*blob.LinkSigner, error) {
+	key, ephemeral, err := blob.ReadLinkKey(cfg.Artifacts.LinkKey)
+	if err != nil {
+		return nil, fmt.Errorf("artifacts.link-key: %w", err)
+	}
+	if ephemeral {
+		slog.Warn("artifacts.link-key is not set: the artifact links use an ephemeral key and stop working at restart")
+	}
+	return blob.NewLinkSigner(LinkBase, UploadLimit, key)
+}
+
+// BucketOptions are what the store asks of an s3 bucket. CORS, because the
+// browser follows the 302 of a read to the bucket's origin. The allowed
+// origin is "*", with no credentials: a presigned GET is a capability URL
+// (the right was checked when it was issued, DEC-0038, fork 5), and anyone
+// who holds it can use it outside a browser, so a narrower origin protects
+// nothing. "*" also covers the `Origin: null` a browser sends after a
+// redirect from a third origin (the API on another host than the page), and
+// it needs no setting.
+//
+// Every request header is allowed: the browser sends the read with the
+// session's Authorization header, and on the redirect to the bucket it
+// drops the header but still asks for it in the preflight (measured in
+// Safari 26.6, 2026-10-16: OPTIONS with Access-Control-Request-Headers:
+// authorization, then a GET without it). A rule that does not allow it
+// fails the read.
+func BucketOptions() blob.OpenOptions {
+	return blob.OpenOptions{CORS: []blob.CORSRule{{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{http.MethodGet, http.MethodHead},
+		AllowedHeaders: []string{"*"},
+		ExposeHeaders:  []string{"ETag", "Content-Length"},
+		MaxAge:         time.Hour,
+	}}}
+}
+
+// New prepares the store and builds its index from the bucket, so a bucket
+// that cannot be read fails at startup rather than on first request.
+func New(ctx context.Context, cfg Config) (*Module, error) {
+	if cfg.Identity == nil || cfg.WorldAccess == nil || cfg.Bucket == nil {
+		return nil, fmt.Errorf("artifacts needs its bucket, identity and world-access wiring; that is cmd/'s job")
 	}
 	capBytes, err := config.ParseByteSize(cfg.All.Artifacts.Cap)
 	if err != nil {
 		return nil, fmt.Errorf("artifacts.cap: %w", err)
 	}
-	store, err := NewStore(cfg.All.Artifacts.Storage.DirPath(), capBytes)
+	readTTL := cfg.All.Artifacts.ReadLinkTTL
+	if readTTL <= 0 || readTTL > blob.MaxLinkTTL {
+		return nil, fmt.Errorf("artifacts.read-link-ttl: %v must be in (0, %v]", readTTL, blob.MaxLinkTTL)
+	}
+	store, err := NewStore(ctx, cfg.Bucket, capBytes)
 	if err != nil {
 		return nil, fmt.Errorf("artifacts.storage: %w", err)
 	}
-	return &Module{cfg: cfg, store: store}, nil
+	m := &Module{cfg: cfg, store: store, readTTL: readTTL}
+	if d, ok := cfg.Bucket.(signing); ok {
+		m.signer = d.Signer()
+	}
+	return m, nil
 }
 
 // Name identifies the module in logs and errors.
@@ -99,11 +168,42 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	// what keeps the flexibility from becoming a path traversal.
 	mux.HandleFunc("GET /v1/artifacts/{artifactUID}/{name...}", m.handleGet)
 	mux.HandleFunc("PUT /v1/artifacts/{artifactUID}/{name...}", m.handlePut)
+	// The dir backend's own links. More specific than the route above, so
+	// the mux sends /v1/artifacts/blob/… here (no uid is "blob": uids are
+	// minted uuids). Not mounted on s3: the provider serves its links.
+	if m.signer != nil {
+		mux.HandleFunc("GET "+LinkBase+"{key...}", m.handleLink)
+	}
 	return nil
 }
 
-// Close releases the store. Nothing is held open.
-func (m *Module) Close() error { return nil }
+// Close releases the bucket when it holds something open (a Dir's root).
+func (m *Module) Close() error {
+	if c, ok := m.cfg.Bucket.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
+// SignedRequest answers whether a request carries a link this module
+// signed: a GET (or HEAD) under LinkBase whose signature verifies. cmd/
+// hands it to server.Gate, which lets such a request through WITHOUT
+// credentials, whatever its Authorization header holds: the link is the
+// authorization. An expired link of ours passes too, so that the route
+// answers 410 and not the gate 401 — a 401 would end the browser's
+// session. A forged or changed link does not pass: the gate treats it as
+// any other request.
+func (m *Module) SignedRequest(r *http.Request) bool {
+	if m.signer == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return false
+	}
+	key, ok := strings.CutPrefix(r.URL.Path, LinkBase)
+	if !ok {
+		return false
+	}
+	_, err := m.signer.Verify(http.MethodGet, key, r.URL.Query())
+	return err == nil || errors.Is(err, blob.ErrLinkExpired)
+}
 
 // operator answers "may this request do anything here": the admin claim, or
 // the local mode, where every check answers yes by design.
@@ -194,17 +294,52 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 	if !m.allowed(w, r, worldUID, access.Viewer, "reading artifacts") {
 		return
 	}
-	raw, err := m.store.Read(r.Context(), r.PathValue("artifactUID"), r.PathValue("name"))
+	// The right is checked; the bytes come from a link that carries it
+	// (DEC-0038, step 3): a presigned GET on s3, so they do not pass through
+	// this server, or this module's own signed link on dir.
+	link, err := m.store.Link(r.Context(), r.PathValue("artifactUID"), r.PathValue("name"), m.readTTL)
 	if err != nil {
 		respondStoreError(w, err)
 		return
 	}
+	// A link is valid for minutes; a redirect cached past that would send
+	// the client to a dead link.
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, link.URL, http.StatusFound)
+}
+
+// handleLink serves a dir link. No caller is needed: the gate let the
+// request through for its signature (SignedRequest), and it is checked
+// again here, where its result decides. The answers say no more than the
+// link holder knows: 403 for a link that does not verify (whatever is
+// wrong with it), 410 for one of ours that has expired, 404 for a signed
+// key whose object has gone.
+func (m *Module) handleLink(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	if _, err := m.signer.Verify(http.MethodGet, key, r.URL.Query()); err != nil {
+		if errors.Is(err, blob.ErrLinkExpired) {
+			httpjson.ClientError(w, http.StatusGone, "the link has expired")
+			return
+		}
+		httpjson.ClientError(w, http.StatusForbidden, "the link is not valid")
+		return
+	}
+	body, info, err := m.cfg.Bucket.Get(r.Context(), key)
+	if err != nil {
+		if errors.Is(err, blob.ErrNotFound) {
+			httpjson.ClientError(w, http.StatusNotFound, "no such artifact")
+			return
+		}
+		httpjson.ServerError(w, "artifact store", err)
+		return
+	}
+	defer func() { _ = body.Close() }()
 	// No conditional-request handling and no cache validators: an artifact is
 	// immutable under its key, so a client that has it never asks again — and
 	// one that asks does not have it.
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
-	_, _ = w.Write(raw)
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	_, _ = io.Copy(w, body)
 }
 
 func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
@@ -215,8 +350,13 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	if !m.allowed(w, r, worldUID, access.Editor, "writing artifacts") {
 		return
 	}
-	body := http.MaxBytesReader(w, r.Body, uploadLimit)
-	if err := m.store.Write(r.Context(), uid, r.PathValue("name"), body); err != nil {
+	if r.ContentLength > UploadLimit {
+		httpjson.ClientError(w, http.StatusRequestEntityTooLarge, "artifact upload too large or truncated")
+		return
+	}
+	body := &bodyReader{r: http.MaxBytesReader(w, r.Body, UploadLimit)}
+	// r.ContentLength is -1 for a chunked upload; the store spools it.
+	if err := m.store.Write(r.Context(), uid, r.PathValue("name"), body, r.ContentLength); err != nil {
 		switch {
 		case errors.Is(err, ErrBadPath):
 			httpjson.ClientError(w, http.StatusBadRequest, "invalid artifact path")
@@ -224,10 +364,15 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 			// Writing into an unminted uid: resolve with create first. Loud on
 			// purpose — accepting the write would mint entries out of thin air.
 			httpjson.ClientError(w, http.StatusNotFound, "no such artifact — resolve with create first")
-		default:
-			// A body that exceeded the cap surfaces from the copy, not from the
-			// path check, so it is reported here rather than as a store fault.
+		case body.failed || errors.Is(err, blob.ErrSize) || errors.Is(err, errTooLarge):
+			// A body that exceeded the cap, or ended before its length,
+			// surfaces from the copy, not from the path check, so it is
+			// reported here rather than as a store fault.
 			httpjson.ClientError(w, http.StatusRequestEntityTooLarge, "artifact upload too large or truncated")
+		default:
+			// The bucket refused or could not be reached: the server's
+			// fault, not the upload's (on s3 a network error lands here).
+			httpjson.ServerError(w, "storing an artifact", err)
 		}
 		return
 	}
@@ -235,6 +380,22 @@ func (m *Module) handlePut(w http.ResponseWriter, r *http.Request) {
 	// 204 rather than 201: a repeated upload of the same key is a no-op by
 	// construction, so "created" would be a claim this store cannot make.
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// bodyReader records whether reading the request body failed, so that a
+// failed write can be told apart: the upload's fault (413) or the bucket's
+// (500).
+type bodyReader struct {
+	r      io.Reader
+	failed bool
+}
+
+func (b *bodyReader) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		b.failed = true
+	}
+	return n, err
 }
 
 func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {

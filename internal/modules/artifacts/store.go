@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -8,21 +9,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/DebakelOrakel/casas-eternas/internal/blob"
 )
 
-// The artifact store on disk — FLAT since 2026-08-12:
+// The artifact store — FLAT since 2026-08-12, on the blob leaf since
+// 2026-10-16 (docs/decisions/object-storage.md, DEC-0038, step 3):
 //
-//	{dir}/{artifactUid}/meta.json
-//	                   /<the stage's files, named by the client — world/artifacts.ts>
-//	                   /<one directory level of them, e.g. family-1/elevation.u16>
+//	{artifactUid}/meta.json
+//	{artifactUid}/<the stage's files, named by the client — world/artifacts.ts>
+//	{artifactUid}/<one directory level of them, e.g. family-1/elevation.u16>
+//
+// These are object keys in a blob.Bucket: files under a directory (Dir, the
+// same layout as before, so an existing ./data/artifacts opens as it is) or
+// objects in a bucket (S3). One code path for both.
 //
 // The artifact uid is a minted uuid and means nothing; meta.json is the ONLY
 // truth about what an entry is. The logical key — worldUid, worldId,
@@ -30,15 +38,19 @@ import (
 // through an index built from the metas. That is the robustness lesson the
 // path-encoded layouts kept teaching: every schema change made walkers blind
 // and left ghost bytes nothing could list. Here a schema change edits meta
-// fields, a manually copied directory (any name) is indexed as soon as its
-// meta is readable, and a directory with no readable meta is reported with
-// its bytes rather than haunting the usage total.
+// fields, a manually copied entry (any name the key rule allows) is indexed
+// as soon as its meta is readable, and an entry with no readable meta is
+// reported with its bytes rather than haunting the usage total.
 //
-// The index is validated by MTIME, not rebuilt per call and not only at
-// startup: each access stats the root, re-reads only new or changed child
-// directories (writing meta.json into one bumps its mtime), and drops the
-// vanished. A baker writing straight into the directory, or a human copying
-// an entry in, is visible on the next request — no restart, no watcher.
+// THE INDEX is built from one List of the bucket when the store opens (and
+// a read of each meta.json), then kept in memory: this process is the one
+// writer (one process per store, CLAUDE.md), so every change goes through
+// it. Until 2026-10-16 the index was validated by directory mtime on each
+// access, which let a baker write straight into the directory; S3 has no
+// directory mtime, so the co-resident job worker writes over HTTP now, as
+// a cluster worker always did (cmd/start.go). A consequence: an entry that
+// is copied into the directory by hand is seen after a restart, not on the
+// next request.
 //
 // Everything else about this store keeps the artifact contract
 // (docs/decisions/server-storage.md): idempotent writes (resolve hands the
@@ -48,17 +60,21 @@ import (
 // ErrNotFound is returned for an artifact that is not there.
 var ErrNotFound = errors.New("artifact not found")
 
-// ErrBadPath is returned for a name that cannot become a filesystem path.
+// ErrBadPath is returned for a name that cannot become an object key.
 var ErrBadPath = errors.New("invalid artifact path")
+
+// metaName is the file that makes an entry what it is.
+const metaName = "meta.json"
 
 // maxSegment bounds one path component. Every segment is machine-minted today
 // (uuid, fixed file names); 128 is headroom, not a promise.
 const maxSegment = 128
 
-// safeSegment rejects anything that could escape the store or confuse a
-// filesystem. Deliberately NOT an allow-list of ASCII: manually copied
-// directories arrive with arbitrary names, and the rule is about SEPARATORS
-// and control characters, not about alphabet.
+// safeSegment rejects a logical key's segment that is empty, too long or
+// holds a separator or control character. The key segments live in
+// meta.json, not in object keys, so this is about sanity, not about
+// alphabet. Object keys (uid and file names) pass blob.CheckKey in
+// addition (objectKey).
 func safeSegment(segment string) bool {
 	if segment == "" || len(segment) > maxSegment {
 		return false
@@ -97,7 +113,8 @@ func (k Key) String() string {
 }
 
 // entryMeta is the slice of the client's meta.json the server reads — the key
-// plus what a listing displays. Unknown fields pass through untouched on disk.
+// plus what a listing displays. Unknown fields pass through untouched in the
+// stored object.
 type entryMeta struct {
 	Key    Key    `json:"key"`
 	Label  string `json:"label"`
@@ -109,31 +126,36 @@ type entryMeta struct {
 	CreatedAt int64 `json:"createdAt"`
 }
 
-// entry is one artifact directory as the index knows it.
+// entry is one artifact as the index knows it.
 type entry struct {
-	uid   string
+	uid string
+	// files maps each file name (the key below the uid) to its size.
+	files map[string]int64
 	bytes int64
 	meta  *entryMeta // nil: no readable meta.json (mid-write, or junk)
 	// key remembers what a RESERVATION was minted for, before its meta.json
 	// lands — it is what lets a write into a fresh artifact be ranked
 	// against its world (the meta is exactly what has not been written yet).
-	key   *Key
-	mtime time.Time
-	// Last time this process touched the entry (resolve hit, read, write).
-	// IN-MEMORY ONLY, deliberately: persisting per-read access would mean a
-	// write per read, and losing recency across a restart costs at worst one
-	// re-fetch of something the cache would have kept — cache stakes.
+	key *Key
+	// modified is the newest write: the newest LastModified of its objects
+	// when the index was built, then the time of each write. The eviction
+	// grace and the last fallback of the recency read it.
+	modified time.Time
+	// Last time this process touched the entry (resolve hit, link, write).
+	// IN-MEMORY ONLY, deliberately (DEC-0017, kept for S3 by DEC-0038):
+	// S3 has no atime, and persisting access per read would mean a write
+	// per read; losing recency across a restart costs at worst one re-fetch
+	// of something the cache would have kept — cache stakes. After a
+	// restart the order falls back to the meta's createdAt, then to
+	// `modified`.
 	lastAccess time.Time
 }
 
 // world answers which world an entry belongs to — the landed meta first,
 // the reservation's key before that, "" for junk that has neither.
 func (e *entry) world() string {
-	if e.meta != nil {
-		return e.meta.Key.WorldUID
-	}
-	if e.key != nil {
-		return e.key.WorldUID
+	if k := e.keyOf(); k != nil {
+		return k.WorldUID
 	}
 	return ""
 }
@@ -145,6 +167,11 @@ func (e *entry) keyOf() *Key {
 		return &e.meta.Key
 	}
 	return e.key
+}
+
+func (e *entry) setFile(name string, size int64) {
+	e.bytes += size - e.files[name]
+	e.files[name] = size
 }
 
 // StageLevel reads a stage's level and whether it names a tile: `L<n>` a
@@ -162,46 +189,12 @@ func StageLevel(stage string) (level int, tile bool, ok bool) {
 	return n, tile, true
 }
 
-// RemoveLevel drops one level of a world — the whole level and every tile
-// of it — and, when `worldID` or `pipeline` is set, only that terrain's or
-// that version's. Returns how many artifacts went.
-func (s *Store) RemoveLevel(ctx context.Context, worldUID string, level int, worldID, pipeline string) (int, error) {
-	if !safeSegment(worldUID) {
-		return 0, ErrBadPath
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.refresh(); err != nil {
-		return 0, err
-	}
-	removed := 0
-	for uid, e := range s.entries {
-		key := e.keyOf()
-		if key == nil || key.WorldUID != worldUID || (worldID != "" && key.WorldID != worldID) || (pipeline != "" && key.PipelineVersion != pipeline) {
-			continue
-		}
-		if n, _, ok := StageLevel(key.Stage); !ok || n != level {
-			continue
-		}
-		if err := os.RemoveAll(s.artifactDir(uid)); err != nil {
-			return removed, err
-		}
-		delete(s.entries, uid)
-		s.dropKeys(uid)
-		removed++
-	}
-	if removed == 0 {
-		return 0, ErrNotFound
-	}
-	return removed, nil
-}
-
 // ListedArtifact is one entry of the listing — flat, the client groups.
 type ListedArtifact struct {
 	ArtifactUID string `json:"artifactUid"`
 	Bytes       int64  `json:"bytes"`
 	// Meta fields, flattened; zero values when the entry has no readable
-	// meta.json and is only bytes with a directory name.
+	// meta.json and is only bytes with a name.
 	WorldUID        string `json:"worldUid"`
 	WorldID         string `json:"worldId"`
 	PipelineVersion string `json:"pipelineVersion"`
@@ -218,114 +211,177 @@ type ListedArtifact struct {
 // unclaimed well past any bake's duration.
 const evictionGrace = time.Hour
 
-// Store is the filesystem-backed artifact store plus its mtime-validated
-// index.
+// parallelism bounds the requests the store sends at the same time when it
+// reads the metas at open and when it deletes many objects: on S3 each is
+// a round trip, and one after the other is minutes for a large store.
+const parallelism = 16
+
+// Store is the artifact store on a blob.Bucket plus its in-memory index.
 type Store struct {
-	dir string
+	bucket blob.Bucket
 	// Byte cap the sweep enforces after writes; 0 = unlimited.
 	cap int64
 
 	mu      sync.Mutex
 	entries map[string]*entry // uid → entry
 	byKey   map[string]string // Key.String() → uid
+	// now is the clock; tests move it.
+	now func() time.Time
 }
 
-// NewStore prepares the store, creating the root if it is absent. The first
-// refresh happens lazily on first use — startup does not pay for a large
-// store it may never read. capBytes bounds the store (0 = unlimited); the
-// sweep runs after writes, which are the only operations that grow it.
-func NewStore(dir string, capBytes int64) (*Store, error) {
-	if dir == "" {
-		return nil, fmt.Errorf("artifacts directory must not be empty")
+// NewStore opens the store on `bucket` and builds the index from one List
+// and a read of each meta.json, so a bucket that cannot be read fails at
+// start. capBytes bounds the store (0 = unlimited); the sweep runs after
+// writes, which are the only operations that grow it.
+func NewStore(ctx context.Context, bucket blob.Bucket, capBytes int64) (*Store, error) {
+	if bucket == nil {
+		return nil, fmt.Errorf("artifacts store needs a bucket")
 	}
 	if capBytes < 0 {
 		return nil, fmt.Errorf("artifacts cap must be 0 (unlimited) or positive, got %d", capBytes)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("preparing %q: %w", dir, err)
+	s := &Store{bucket: bucket, cap: capBytes, entries: map[string]*entry{}, byKey: map[string]string{}, now: time.Now}
+	if err := s.load(ctx); err != nil {
+		return nil, fmt.Errorf("indexing the artifact store: %w", err)
 	}
-	return &Store{dir: dir, cap: capBytes, entries: map[string]*entry{}, byKey: map[string]string{}}, nil
+	return s, nil
 }
 
-// The public methods take a context (2026-08-12) even though the dir backend
-// cannot honour cancellation — file I/O has no ctx. The parameter is the seam
-// the storage union's future backends (S3) need; handlers already pass their
-// request's, so growing a cancellable backend changes no caller.
-
-func (s *Store) artifactDir(uid string) string { return filepath.Join(s.dir, uid) }
-
-// refresh reconciles the index with the directory. Called under s.mu.
-//
-// One ReadDir of the root, then a stat per child: a child whose mtime is
-// unchanged keeps its index entry untouched; a new or changed one gets its
-// meta.json re-read and its bytes re-walked. Writing any file into an
-// artifact directory bumps that directory's mtime, so a bake completing (the
-// meta lands last) or a hand-copied entry is picked up on the next call.
-func (s *Store) refresh() error {
-	children, err := os.ReadDir(s.dir)
-	if err != nil {
+// load builds the index. Objects at the top level (no uid) are ignored, as
+// stray files at the root of the directory always were.
+func (s *Store) load(ctx context.Context) error {
+	started := time.Now()
+	for info, err := range s.bucket.List(ctx, "") {
+		if err != nil {
+			return err
+		}
+		uid, name, ok := strings.Cut(info.Key, "/")
+		if !ok || uid == "" || name == "" {
+			continue
+		}
+		e := s.entries[uid]
+		if e == nil {
+			e = &entry{uid: uid, files: map[string]int64{}}
+			s.entries[uid] = e
+		}
+		e.setFile(name, info.Size)
+		if info.LastModified.After(e.modified) {
+			e.modified = info.LastModified
+		}
+	}
+	// The metas, read in parallel: on S3 one GET each.
+	var withMeta []*entry
+	for _, e := range s.entries {
+		if _, ok := e.files[metaName]; ok {
+			withMeta = append(withMeta, e)
+		}
+	}
+	work := make(chan *entry)
+	var wg sync.WaitGroup
+	for range min(parallelism, len(withMeta)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for e := range work {
+				// Each goroutine writes only the entries it takes.
+				e.meta = s.readMeta(ctx, e.uid)
+			}
+		}()
+	}
+	for _, e := range withMeta {
+		work <- e
+	}
+	close(work)
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	seen := make(map[string]bool, len(children))
-	for _, child := range children {
-		if !child.IsDir() {
-			continue // stray files at the root are ignored entirely
+	// In a fixed order, so that "first writer wins" on a duplicate key
+	// does not depend on map order: the older entry keeps the key.
+	sort.Slice(withMeta, func(i, j int) bool {
+		if !withMeta[i].modified.Equal(withMeta[j].modified) {
+			return withMeta[i].modified.Before(withMeta[j].modified)
 		}
-		uid := child.Name()
-		seen[uid] = true
-		info, err := child.Info()
-		if err != nil {
-			continue
-		}
-		// An entry WITHOUT a meta is re-read unconditionally: it is the one
-		// state a coarse filesystem timestamp could freeze (meta written in
-		// the same tick the scan ran), it is rare, and retrying costs one
-		// ReadFile against a file that is usually still absent.
-		if known, ok := s.entries[uid]; ok && known.meta != nil && known.mtime.Equal(info.ModTime()) {
-			continue
-		}
-		s.index(uid, info.ModTime())
-	}
-	for uid := range s.entries {
-		if !seen[uid] {
-			delete(s.entries, uid)
-			s.dropKeys(uid)
+		return withMeta[i].uid < withMeta[j].uid
+	})
+	metas := 0
+	for _, e := range withMeta {
+		if e.meta != nil {
+			s.claimKey(e)
+			metas++
 		}
 	}
+	slog.Info("artifact store indexed", "artifacts", len(s.entries), "metas", metas, "took", time.Since(started).Round(time.Millisecond))
 	return nil
 }
 
-// index (re)reads one artifact directory into the index. Called under s.mu.
-func (s *Store) index(uid string, mtime time.Time) {
-	previous := s.entries[uid]
-	next := &entry{uid: uid, mtime: mtime, bytes: dirBytes(s.artifactDir(uid))}
-	if previous != nil {
-		next.lastAccess = previous.lastAccess
-		// The reservation's key survives every re-index until the meta lands
-		// (below, where it takes over as the authority) — losing it between
-		// resolve and the first write would leave the write unrankable.
-		next.key = previous.key
+// readMeta reads and parses one entry's meta.json; nil when it is missing,
+// unreadable or names no valid key (the entry is then junk).
+func (s *Store) readMeta(ctx context.Context, uid string) *entryMeta {
+	key, err := objectKey(uid, metaName)
+	if err != nil {
+		return nil
 	}
-	if raw, err := os.ReadFile(filepath.Join(s.artifactDir(uid), "meta.json")); err == nil {
-		var meta entryMeta
-		if json.Unmarshal(raw, &meta) == nil && meta.Key.Valid() {
-			next.meta = &meta
+	body, _, err := s.bucket.Get(ctx, key)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(body, metaLimit))
+	if err != nil {
+		return nil
+	}
+	return parseMeta(raw)
+}
+
+// metaLimit bounds the bytes read of one meta.json: a meta is a few hundred
+// bytes; a larger file is not a meta this store can use.
+const metaLimit = 1 << 20
+
+func parseMeta(raw []byte) *entryMeta {
+	var meta entryMeta
+	if json.Unmarshal(raw, &meta) != nil || !meta.Key.Valid() {
+		return nil
+	}
+	return &meta
+}
+
+// claimKey maps the entry's meta key to it. First writer wins on a
+// duplicate key (two racing bakes of one key): both hold identical bytes,
+// one of them resolves, the other stays listed and deletable. Called under
+// s.mu (or before the store is shared).
+func (s *Store) claimKey(e *entry) {
+	if e.meta == nil {
+		return
+	}
+	k := e.meta.Key.String()
+	if owner, taken := s.byKey[k]; !taken || owner == e.uid {
+		s.byKey[k] = e.uid
+	}
+}
+
+// objectKey is the bucket key of one artifact file. `name` may contain
+// slashes so a tile layout (`tiles/12_7`) needs no new route — every
+// segment is checked, by safeSegment and by the leaf's key rule, which is
+// what keeps that flexibility from becoming a traversal.
+func objectKey(uid, name string) (string, error) {
+	if !safeSegment(uid) {
+		return "", ErrBadPath
+	}
+	segments := strings.Split(name, "/")
+	if len(segments) == 0 || len(segments) > 4 {
+		return "", ErrBadPath
+	}
+	for _, segment := range segments {
+		if !safeSegment(segment) {
+			return "", ErrBadPath
 		}
 	}
-	s.entries[uid] = next
-	if previous != nil && previous.meta != nil && (next.meta == nil || previous.meta.Key != next.meta.Key) {
-		if s.byKey[previous.meta.Key.String()] == uid {
-			delete(s.byKey, previous.meta.Key.String())
-		}
+	key := uid + "/" + name
+	if blob.CheckKey(key) != nil {
+		return "", ErrBadPath
 	}
-	if next.meta != nil {
-		// First writer wins on a duplicate key (two racing bakes of one key on
-		// two machines): both directories hold identical bytes, one of them
-		// resolves, the other stays listed and deletable.
-		if _, taken := s.byKey[next.meta.Key.String()]; !taken || s.byKey[next.meta.Key.String()] == uid {
-			s.byKey[next.meta.Key.String()] = uid
-		}
-	}
+	return key, nil
 }
 
 // mintUID returns a fresh uuid-shaped identifier.
@@ -341,9 +397,11 @@ func mintUID() (string, error) {
 }
 
 // Resolve maps a logical key to its artifact uid. With create, a missing key
-// mints a directory and reserves the mapping, so every concurrent writer of
-// one key lands in the same place — the idempotency the path grammar used to
-// provide by construction.
+// mints a uid and reserves the mapping, so every concurrent writer of one
+// key lands in the same place — the idempotency the path grammar used to
+// provide by construction. The reservation is held in memory only: no
+// object exists until the first write, so a writer that never writes
+// leaves nothing behind.
 //
 // The returned names are the files currently present, which is the batch
 // existence answer (`present` used to be its own endpoint).
@@ -353,9 +411,6 @@ func (s *Store) Resolve(ctx context.Context, key Key, create bool) (string, []st
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.refresh(); err != nil {
-		return "", nil, err
-	}
 	uid, ok := s.byKey[key.String()]
 	if !ok {
 		if !create {
@@ -365,36 +420,25 @@ func (s *Store) Resolve(ctx context.Context, key Key, create bool) (string, []st
 		if err != nil {
 			return "", nil, err
 		}
-		if err := os.MkdirAll(s.artifactDir(minted), 0o755); err != nil {
-			return "", nil, err
-		}
-		// Reserved in the index before any meta exists, so a second resolve
-		// of the same key reuses it. A crash before the meta lands leaves an
-		// empty directory the listing reports as unresolved bytes.
-		s.entries[minted] = &entry{uid: minted, key: &key, mtime: time.Now()}
+		k := key
+		s.entries[minted] = &entry{uid: minted, files: map[string]int64{}, key: &k, modified: s.now()}
 		s.byKey[key.String()] = minted
 		uid = minted
 	}
-	if e, ok := s.entries[uid]; ok {
-		e.lastAccess = time.Now()
-	}
-	return uid, s.fileNames(uid), nil
+	e := s.entries[uid]
+	e.lastAccess = s.now()
+	return uid, e.fileNames(), nil
 }
 
 // Whole answers, per key, whether that artifact is in the store with its
-// meta.json — the writer's last file, so a whole one. One index refresh for
-// the lot: a Resolve per key scans the store directory each time, which for
-// a refine plan's tiles against 11k artifacts cost 21 ms a key and held the
-// jobs coordinator for minutes (2026-10-04). A whole artifact counts as
-// used now, once: under artifacts.cap, a tile found here hours before the
-// tile that reads it may be evicted in between, and that read then fails
-// its job. No cap is set on the cluster (2026-10-04).
+// meta.json — the writer's last file, so a whole one. One lock for the lot:
+// a refine plan asks for thousands of tiles at once (2026-10-04). A whole
+// artifact counts as used now, once: under artifacts.cap, a tile found here
+// hours before the tile that reads it may be evicted in between, and that
+// read then fails its job. No cap is set on the cluster (2026-10-04).
 func (s *Store) Whole(ctx context.Context, keys []Key) ([]bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.refresh(); err != nil {
-		return nil, err
-	}
 	whole := make([]bool, len(keys))
 	for i, key := range keys {
 		uid, ok := s.byKey[key.String()]
@@ -403,7 +447,7 @@ func (s *Store) Whole(ctx context.Context, keys []Key) ([]bool, error) {
 		}
 		if e, ok := s.entries[uid]; ok && e.meta != nil {
 			whole[i] = true
-			e.lastAccess = time.Now()
+			e.lastAccess = s.now()
 		}
 	}
 	return whole, nil
@@ -411,15 +455,12 @@ func (s *Store) Whole(ctx context.Context, keys []Key) ([]bool, error) {
 
 // WorldOf answers which world an artifact belongs to — the checks' join
 // key. From the meta when one has landed, from the reservation's key before
-// that; false only for an entry that has neither (junk from before this
-// field, or a hand-copied directory not yet re-indexed), which callers
-// treat as admin-territory: fail closed, junk has no readers to serve.
+// that; false only for an entry that has neither (junk, or a hand-copied
+// entry with no readable meta), which callers treat as admin-territory:
+// fail closed, junk has no readers to serve.
 func (s *Store) WorldOf(ctx context.Context, uid string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.refresh(); err != nil {
-		return "", false
-	}
 	e, ok := s.entries[uid]
 	if !ok {
 		return "", false
@@ -428,156 +469,181 @@ func (s *Store) WorldOf(ctx context.Context, uid string) (string, bool) {
 	return world, world != ""
 }
 
-// touch records an access for the eviction sweep's recency ordering.
-func (s *Store) touch(uid string) {
-	s.mu.Lock()
-	if e, ok := s.entries[uid]; ok {
-		e.lastAccess = time.Now()
-	}
-	s.mu.Unlock()
-}
-
-// fileNames lists an artifact's files (top level plus one nested level, the
-// shape tiles will use). Called under s.mu.
-func (s *Store) fileNames(uid string) []string {
-	names := []string{}
-	root := s.artifactDir(uid)
-	children, err := os.ReadDir(root)
-	if err != nil {
-		return names
-	}
-	for _, child := range children {
-		if strings.HasPrefix(child.Name(), ".tmp-") {
-			continue
-		}
-		if !child.IsDir() {
-			names = append(names, child.Name())
-			continue
-		}
-		nested, err := os.ReadDir(filepath.Join(root, child.Name()))
-		if err != nil {
-			continue
-		}
-		for _, inner := range nested {
-			if !inner.IsDir() && !strings.HasPrefix(inner.Name(), ".tmp-") {
-				names = append(names, child.Name()+"/"+inner.Name())
-			}
-		}
+// fileNames lists an entry's files, sorted. Called under s.mu.
+func (e *entry) fileNames() []string {
+	names := make([]string, 0, len(e.files))
+	for name := range e.files {
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
 }
 
-// filePath resolves one file inside an artifact. `name` may contain slashes
-// so a future tile layout (`tiles/12_7`) needs no new route — every segment
-// is checked, which is what keeps that flexibility from becoming a traversal.
-func (s *Store) filePath(uid, name string) (string, error) {
-	if !safeSegment(uid) {
-		return "", ErrBadPath
-	}
-	segments := strings.Split(name, "/")
-	if len(segments) == 0 || len(segments) > 4 {
-		return "", ErrBadPath
-	}
-	for _, segment := range segments {
-		if !safeSegment(segment) {
-			return "", ErrBadPath
-		}
-	}
-	return filepath.Join(append([]string{s.artifactDir(uid)}, segments...)...), nil
-}
-
-// Read returns one artifact file.
-func (s *Store) Read(ctx context.Context, uid, name string) ([]byte, error) {
-	path, err := s.filePath(uid, name)
+// Link returns a link that reads one artifact file without credentials
+// until `ttl` has passed: a presigned GET on S3, the server's own signed
+// link on Dir. The caller has checked the right; the link carries it from
+// here (DEC-0038, fork 5). A file the index does not have is ErrNotFound,
+// so a miss is answered here and not by the provider.
+func (s *Store) Link(ctx context.Context, uid, name string, ttl time.Duration) (blob.Link, error) {
+	key, err := objectKey(uid, name)
 	if err != nil {
-		return nil, err
+		return blob.Link{}, err
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, ErrNotFound
-		}
-		return nil, err
+	s.mu.Lock()
+	e, ok := s.entries[uid]
+	if ok {
+		_, ok = e.files[name]
 	}
-	s.touch(uid)
-	return raw, nil
+	if ok {
+		e.lastAccess = s.now()
+	}
+	s.mu.Unlock()
+	if !ok {
+		return blob.Link{}, ErrNotFound
+	}
+	return s.bucket.PresignGet(ctx, key, ttl)
 }
 
 // Write stores one artifact file into an EXISTING artifact — the uid comes
 // from Resolve, which is what keeps junk from minting entries. Writing
-// meta.json is what makes an entry resolvable; the index picks it up through
-// the directory's changed mtime on the next access.
-func (s *Store) Write(ctx context.Context, uid, name string, body io.Reader) error {
-	path, err := s.filePath(uid, name)
+// meta.json is what makes an entry resolvable. `size` is the body's exact
+// length, or -1 when it is not known (a chunked upload): the body is then
+// spooled to a temporary file first, because the leaf's Put needs the
+// length (an S3 PUT sends it).
+func (s *Store) Write(ctx context.Context, uid, name string, body io.Reader, size int64) error {
+	key, err := objectKey(uid, name)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(s.artifactDir(uid)); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ErrNotFound
+	s.mu.Lock()
+	_, ok := s.entries[uid]
+	s.mu.Unlock()
+	if !ok {
+		return ErrNotFound
+	}
+
+	var meta *entryMeta
+	if name == metaName {
+		// Small, and the index needs its content: read it whole.
+		raw, err := readExactly(body, size, metaLimit)
+		if err != nil {
+			return err
+		}
+		meta = parseMeta(raw)
+		body, size = bytes.NewReader(raw), int64(len(raw))
+	} else if size < 0 {
+		spool, n, err := spoolToFile(body)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = spool.Close()
+			_ = os.Remove(spool.Name())
+		}()
+		body, size = spool, n
+	}
+
+	info, err := s.bucket.Put(ctx, key, body, size, blob.PutOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		if errors.Is(err, blob.ErrBadKey) {
+			return ErrBadPath
 		}
 		return err
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeded
 
-	if _, err := io.Copy(tmp, body); err != nil {
-		_ = tmp.Close()
-		return err
+	s.mu.Lock()
+	e, ok := s.entries[uid]
+	if !ok {
+		// Removed while the bytes were on their way: the remover did not
+		// know this object, so it goes now, or it would be an orphan the
+		// index never lists.
+		s.mu.Unlock()
+		_ = s.bucket.Delete(context.WithoutCancel(ctx), key)
+		return ErrNotFound
 	}
-	if err := tmp.Close(); err != nil {
-		return err
+	e.setFile(name, info.Size)
+	e.modified = s.now()
+	e.lastAccess = s.now()
+	if name == metaName {
+		if previous := e.meta; previous != nil && s.byKey[previous.Key.String()] == uid && (meta == nil || previous.Key != meta.Key) {
+			delete(s.byKey, previous.Key.String())
+		}
+		e.meta = meta
+		if meta != nil {
+			s.claimKey(e)
+		}
 	}
-	// Rename without an fsync: atomic against a reader either way, and a power
-	// cut costing one re-bake is cheaper than syncing every artifact write.
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
-	}
-	s.touch(uid)
+	victims := s.sweepLocked(uid)
+	s.mu.Unlock()
 	// The cap is enforced HERE and only here: writes are the one operation
 	// that grows the store, so the write path is the whole trigger — no
 	// timer, no background sweeper.
-	s.enforceCap(uid)
+	s.deleteObjects(context.WithoutCancel(ctx), victims)
 	return nil
 }
 
-// enforceCap evicts whole artifacts until the store fits its cap, never the
-// one just written. Order: meta-less entries past the grace first (strays and
-// abandoned writes — junk clears itself under pressure), then least recently
-// used, with the meta's own createdAt (then the directory mtime) standing in
-// for entries this process has not touched.
-func (s *Store) enforceCap(justWritten string) {
+// readExactly reads a body of `size` bytes (-1: unknown) of at most `limit`.
+func readExactly(body io.Reader, size, limit int64) ([]byte, error) {
+	if size > limit {
+		return nil, fmt.Errorf("%w: %d bytes", errTooLarge, size)
+	}
+	raw, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("%w: more than %d bytes", errTooLarge, limit)
+	}
+	if size >= 0 && int64(len(raw)) != size {
+		return nil, fmt.Errorf("%w: %d of %d bytes", blob.ErrSize, len(raw), size)
+	}
+	return raw, nil
+}
+
+// errTooLarge: a meta.json larger than metaLimit.
+var errTooLarge = errors.New("artifact file too large")
+
+// spoolToFile copies a body of unknown length to a temporary file and
+// rewinds it.
+func spoolToFile(body io.Reader) (*os.File, int64, error) {
+	f, err := os.CreateTemp("", "casas-artifact-*")
+	if err != nil {
+		return nil, 0, err
+	}
+	n, err := io.Copy(f, body)
+	if err == nil {
+		_, err = f.Seek(0, io.SeekStart)
+	}
+	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return nil, 0, err
+	}
+	return f, n, nil
+}
+
+// sweepLocked picks whole artifacts to evict until the store fits its cap,
+// never the one just written, and drops them from the index. Order:
+// meta-less entries past the grace first (strays and abandoned writes —
+// junk clears itself under pressure), then least recently used, with the
+// meta's own createdAt (then the newest write) standing in for entries this
+// process has not touched. Returns the object keys to delete, which the
+// caller deletes after it has released s.mu. Called under s.mu.
+func (s *Store) sweepLocked(justWritten string) []string {
 	if s.cap <= 0 {
-		return
+		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.refresh(); err != nil {
-		return
-	}
-	var total int64
-	for _, e := range s.entries {
-		total += e.bytes
-	}
+	total := s.totalLocked()
 	if total <= s.cap {
-		return
+		return nil
 	}
 	candidates := make([]*entry, 0, len(s.entries))
-	now := time.Now()
+	now := s.now()
 	for _, e := range s.entries {
 		if e.uid == justWritten {
 			continue
 		}
-		if e.meta == nil && e.lastAccess.IsZero() && now.Sub(e.mtime) < evictionGrace {
+		if e.meta == nil && e.lastAccess.IsZero() && now.Sub(e.modified) < evictionGrace {
 			continue // possibly another writer mid-bake — spared until stale
 		}
 		candidates = append(candidates, e)
@@ -589,7 +655,7 @@ func (s *Store) enforceCap(justWritten string) {
 		if e.meta != nil && e.meta.CreatedAt > 0 {
 			return time.UnixMilli(e.meta.CreatedAt)
 		}
-		return e.mtime
+		return e.modified
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		iStray := candidates[i].meta == nil
@@ -599,19 +665,84 @@ func (s *Store) enforceCap(justWritten string) {
 		}
 		return recency(candidates[i]).Before(recency(candidates[j]))
 	})
+	var keys []string
 	for _, victim := range candidates {
 		if total <= s.cap {
 			break
 		}
-		if err := os.RemoveAll(s.artifactDir(victim.uid)); err != nil {
-			continue
-		}
 		total -= victim.bytes
-		delete(s.entries, victim.uid)
-		if victim.meta != nil && s.byKey[victim.meta.Key.String()] == victim.uid {
-			delete(s.byKey, victim.meta.Key.String())
-		}
+		keys = append(keys, s.dropLocked(victim.uid)...)
 	}
+	return keys
+}
+
+func (s *Store) totalLocked() int64 {
+	var total int64
+	for _, e := range s.entries {
+		total += e.bytes
+	}
+	return total
+}
+
+// dropLocked removes an entry from the index and returns its object keys.
+// Called under s.mu.
+func (s *Store) dropLocked(uid string) []string {
+	e, ok := s.entries[uid]
+	if !ok {
+		return nil
+	}
+	keys := make([]string, 0, len(e.files))
+	for name := range e.files {
+		keys = append(keys, uid+"/"+name)
+	}
+	delete(s.entries, uid)
+	s.dropKeys(uid)
+	return keys
+}
+
+// deleteObjects deletes the objects of entries already dropped from the
+// index, `parallelism` at a time and outside s.mu: on S3 a world's tiles
+// are tens of thousands of round trips, and the lock must not wait for
+// them. An object that does not go is logged; it is an orphan until the
+// next start indexes it as junk.
+func (s *Store) deleteObjects(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	work := make(chan string)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var first error
+	for range min(parallelism, len(keys)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for key := range work {
+				err := s.bucket.Delete(ctx, key)
+				if errors.Is(err, blob.ErrBadKey) {
+					// A file the key rule refuses (copied in by hand, e.g.
+					// a name with a space): the leaf cannot reach it, so it
+					// stays. Not an error of the removal.
+					slog.Warn("artifact object left: its name breaks the key rule", "key", key)
+					continue
+				}
+				if err != nil {
+					slog.Warn("artifact object not deleted", "key", key, "err", err)
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, key := range keys {
+		work <- key
+	}
+	close(work)
+	wg.Wait()
+	return first
 }
 
 // List reports every entry, largest first — flat; grouping is the reader's
@@ -619,13 +750,10 @@ func (s *Store) enforceCap(justWritten string) {
 func (s *Store) List(ctx context.Context) ([]ListedArtifact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.refresh(); err != nil {
-		return nil, err
-	}
 	out := make([]ListedArtifact, 0, len(s.entries))
 	for _, e := range s.entries {
 		if e.bytes == 0 && e.meta == nil {
-			continue // a freshly minted, still-empty directory
+			continue // a freshly minted, still-empty reservation
 		}
 		item := ListedArtifact{ArtifactUID: e.uid, Bytes: e.bytes}
 		switch {
@@ -654,14 +782,11 @@ func (s *Store) List(ctx context.Context) ([]ListedArtifact, error) {
 }
 
 // dropKeys removes every key mapping that points at uid. A reverse sweep on
-// purpose: removal must NOT depend on the entry's in-memory meta, because two
-// legitimate states have none — a resolve reservation whose writer has not
-// finished (exactly what eviction's junk-first pass deletes), and an entry
-// whose meta.json landed after the last refresh read it. Hanging the cleanup
-// on the meta leaked the mapping in both, and the key then resolved to a
-// dropped uid whose PUTs answered 404 (found 2026-08-12 by
-// TestRemovalByArtifactAndByWorld). byKey holds one entry per artifact, so
-// the sweep is as cheap as the removal it rides on.
+// purpose: removal must NOT depend on the entry's meta, because a
+// reservation whose writer has not finished (exactly what eviction's
+// junk-first pass deletes) has none. Hanging the cleanup on the meta leaked
+// the mapping, and the key then resolved to a dropped uid whose PUTs
+// answered 404 (found 2026-08-12 by TestRemovalByArtifactAndByWorld).
 func (s *Store) dropKeys(uid string) {
 	for key, owner := range s.byKey {
 		if owner == uid {
@@ -676,13 +801,49 @@ func (s *Store) RemoveArtifact(ctx context.Context, uid string) error {
 		return ErrBadPath
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := os.RemoveAll(s.artifactDir(uid)); err != nil {
-		return err
+	keys := s.dropLocked(uid)
+	s.mu.Unlock()
+	return s.deleteObjects(ctx, keys)
+}
+
+// removeWhere drops every entry `match` accepts; false when none did.
+func (s *Store) removeWhere(ctx context.Context, match func(*entry) bool) (int, error) {
+	s.mu.Lock()
+	var keys []string
+	removed := 0
+	for uid, e := range s.entries {
+		if !match(e) {
+			continue
+		}
+		keys = append(keys, s.dropLocked(uid)...)
+		removed++
 	}
-	delete(s.entries, uid)
-	s.dropKeys(uid)
-	return nil
+	s.mu.Unlock()
+	return removed, s.deleteObjects(ctx, keys)
+}
+
+// RemoveLevel drops one level of a world — the whole level and every tile
+// of it — and, when `worldID` or `pipeline` is set, only that terrain's or
+// that version's. Returns how many artifacts went.
+func (s *Store) RemoveLevel(ctx context.Context, worldUID string, level int, worldID, pipeline string) (int, error) {
+	if !safeSegment(worldUID) {
+		return 0, ErrBadPath
+	}
+	removed, err := s.removeWhere(ctx, func(e *entry) bool {
+		key := e.keyOf()
+		if key == nil || key.WorldUID != worldUID || (worldID != "" && key.WorldID != worldID) || (pipeline != "" && key.PipelineVersion != pipeline) {
+			return false
+		}
+		n, _, ok := StageLevel(key.Stage)
+		return ok && n == level
+	})
+	if err != nil {
+		return removed, err
+	}
+	if removed == 0 {
+		return 0, ErrNotFound
+	}
+	return removed, nil
 }
 
 // RemoveWorld drops every entry whose meta names the world — the sweep
@@ -691,24 +852,11 @@ func (s *Store) RemoveWorld(ctx context.Context, worldUID string) error {
 	if !safeSegment(worldUID) {
 		return ErrBadPath
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.refresh(); err != nil {
+	removed, err := s.removeWhere(ctx, func(e *entry) bool { return e.world() == worldUID })
+	if err != nil {
 		return err
 	}
-	found := false
-	for uid, e := range s.entries {
-		if e.world() != worldUID {
-			continue
-		}
-		found = true
-		if err := os.RemoveAll(s.artifactDir(uid)); err != nil {
-			return err
-		}
-		delete(s.entries, uid)
-		s.dropKeys(uid)
-	}
-	if !found {
+	if removed == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -716,58 +864,28 @@ func (s *Store) RemoveWorld(ctx context.Context, worldUID string) error {
 
 // Clear drops everything. Safe by construction — every byte in here is a
 // deterministic function of a world and a pipeline version, so the worst case
-// is that the next reader bakes again.
+// is that the next reader bakes again. It lists the bucket rather than
+// trusting the index, so objects the index does not know (a top-level
+// stray, a key the index could not hold) go too.
 func (s *Store) Clear(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	children, err := os.ReadDir(s.dir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	for _, child := range children {
-		if err := os.RemoveAll(filepath.Join(s.dir, child.Name())); err != nil {
-			return err
-		}
-	}
 	s.entries = map[string]*entry{}
 	s.byKey = map[string]string{}
-	return nil
-}
-
-// Usage reports the total bytes held, for the storage panel's readout.
-func (s *Store) Usage(ctx context.Context) (int64, error) {
-	var total int64
-	err := filepath.WalkDir(s.dir, func(_ string, entry os.DirEntry, err error) error {
+	s.mu.Unlock()
+	var keys []string
+	for info, err := range s.bucket.List(ctx, "") {
 		if err != nil {
-			return nil // an unreadable corner is not worth failing the whole figure
+			return err
 		}
-		if entry.IsDir() {
-			return nil
-		}
-		if info, err := entry.Info(); err == nil {
-			total += info.Size()
-		}
-		return nil
-	})
-	return total, err
+		keys = append(keys, info.Key)
+	}
+	return s.deleteObjects(ctx, keys)
 }
 
-// dirBytes totals every file under a directory. Unreadable corners are skipped
-// rather than failing the figure — a listing that refuses to render because one
-// entry is odd is worse than one that is slightly low.
-func dirBytes(dir string) int64 {
-	var total int64
-	_ = filepath.WalkDir(dir, func(_ string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return nil
-		}
-		if info, err := entry.Info(); err == nil {
-			total += info.Size()
-		}
-		return nil
-	})
-	return total
+// Usage reports the total bytes held, for the storage panel's readout: the
+// index's sum, which is the listing's sum by construction.
+func (s *Store) Usage(ctx context.Context) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.totalLocked(), nil
 }

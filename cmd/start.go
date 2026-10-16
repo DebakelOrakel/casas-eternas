@@ -52,7 +52,7 @@ func Start(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	modules, gate, err := buildModules(targets, cfg)
+	modules, gate, err := buildModules(cmd.Context(), targets, cfg)
 	if err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func Start(cmd *cobra.Command, args []string) error {
 // Target-scoped validation happens here, for SELECTED targets only: a
 // world-only deployment does not have to configure artifact storage it will
 // never touch.
-func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, func(http.Handler) http.Handler, error) {
+func buildModules(ctx context.Context, targets config.Targets, cfg config.Config) ([]server.Module, func(http.Handler) http.Handler, error) {
 	var modules []server.Module
 
 	// Resolved ONCE and handed to every module that needs it. Three modules
@@ -204,8 +204,15 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		if err := cfg.Artifacts.Storage.Validate("artifacts"); err != nil {
 			return nil, nil, err
 		}
-		m, err := artifacts.New(artifacts.Config{All: cfg, Identity: caller, WorldAccess: rankWorld})
+		bucket, err := openArtifactBucket(ctx, cfg)
 		if err != nil {
+			return nil, nil, err
+		}
+		m, err := artifacts.New(ctx, artifacts.Config{All: cfg, Bucket: bucket, Identity: caller, WorldAccess: rankWorld})
+		if err != nil {
+			if c, ok := bucket.(io.Closer); ok {
+				_ = c.Close()
+			}
 			return nil, nil, err
 		}
 		modules = append(modules, m)
@@ -253,6 +260,12 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 	if worldModule != nil {
 		anonymousReads = world.AnonymousReads
 	}
+	// The requests that carry their own right: the dir backend's signed
+	// artifact links (DEC-0038, fork 5).
+	var signedRequests func(*http.Request) bool
+	if artifactsModule != nil {
+		signedRequests = artifactsModule.SignedRequest
+	}
 	wired = true
 	return modules, server.Gate(caller, []string{
 		client.ConfigPath,       // where the API is and how to log in
@@ -261,7 +274,7 @@ func buildModules(targets config.Targets, cfg config.Config) ([]server.Module, f
 		auth.TokenPath,          // a service account trading its secret for a bus token
 		auth.RedeemPath,         // spending an invite or reset code, which signs in
 		auth.RefreshPath,        // renewing a session whose access token has run out
-	}, anonymousReads), nil
+	}, anonymousReads, signedRequests), nil
 }
 
 // bakeConfig wires the bake module's two sides — where its worlds come from,
@@ -324,11 +337,18 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 
 	switch {
 	case targets.Has(config.TargetArtifacts):
-		// Already validated in the artifacts block above.
+		// Over this server's API in both cases (DEC-0038, step 3): the
+		// store's index is in this process and sees only what passes
+		// through it, and on s3 there is no directory to write into. Until
+		// then a local worker wrote into the directory itself.
 		if inCluster {
 			bcfg.ArtifactsURL = selfURL
 		} else {
-			bcfg.ArtifactsDir = cfg.Artifacts.Storage.DirPath()
+			local, err := loopbackURL(cfg.Global)
+			if err != nil {
+				return jobs.Config{}, err
+			}
+			bcfg.ArtifactsURL = local
 		}
 	case cfg.Global.Services.Artifacts != "":
 		base := strings.TrimRight(cfg.Global.Services.Artifacts, "/")

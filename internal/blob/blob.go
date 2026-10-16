@@ -17,11 +17,10 @@
 // sends anything; so a bad key never reaches the provider and Dir never
 // leaves its root.
 //
-// Status 2026-10-16 (DEC-0038, step 2): built and tested, NOT used yet. No
-// store opens a Bucket; the artifact store is wired in step 3, the world
-// store in step 4. The mapping from internal/config's storage blocks to
-// S3Config is the store's (or cmd/'s) work, so this leaf does not import
-// internal/config.
+// Status 2026-10-16 (DEC-0038): the artifact store runs on it (cmd/
+// opens the Bucket from artifacts.storage, cmd/storage.go); the world store
+// follows. The mapping from internal/config's storage blocks to S3Config is
+// cmd/'s work, so this leaf does not import internal/config.
 package blob
 
 import (

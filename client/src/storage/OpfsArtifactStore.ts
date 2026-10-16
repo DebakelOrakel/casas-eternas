@@ -11,8 +11,8 @@ import type { ArtifactHandle, ArtifactKey, LocalArtifactStore, StorageUsage, Sto
 // a different uid there, and identity lives in the meta's key.
 //
 // The key→uid index is built by reading every entry's meta.json once per
-// page and maintained on writes and removals. No mtime dance like the Go
-// store: within one page this store is the only writer, and a second tab's
+// page and maintained on writes and removals, as the Go store does since
+// 2026-10-16: within one page this store is the only writer, and a second tab's
 // writes costing a re-read after reload is a cache being a cache.
 //
 // Three properties of the platform worth knowing, all of them harmless here
