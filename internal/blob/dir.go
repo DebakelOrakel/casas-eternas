@@ -286,6 +286,34 @@ func (d *Dir) RemoveJunk(_ context.Context, name string) error {
 	if CheckKey(name) == nil {
 		return keyError(name, "a valid key; use Delete")
 	}
+	return d.removeTopLevel(name)
+}
+
+// RemoveTree removes the directory `name` directly under the root with all
+// it holds, after a store deleted every object under the prefix name+"/":
+// what stays there is what Delete cannot remove, the names that break the
+// key rule (an editor's .DS_Store, a temp file of an interrupted Put, a
+// file copied in by hand). The narrow path of RemoveJunk, for the other
+// half of the names: `name` must be ONE valid key segment (no "/", so never
+// the root and never a path into a subtree), it goes through the os.Root,
+// and a symlink in the tree is removed, not followed. A missing name is not
+// an error.
+//
+// Only Dir has it: an S3 bucket has no names besides its keys, so deleting
+// the listed objects leaves nothing.
+func (d *Dir) RemoveTree(_ context.Context, name string) error {
+	if strings.Contains(name, "/") {
+		return keyError(name, "not a single segment")
+	}
+	if err := CheckKey(name); err != nil {
+		return err
+	}
+	return d.removeTopLevel(name)
+}
+
+// removeTopLevel removes a name directly under the root, with all it holds.
+// The callers check the name.
+func (d *Dir) removeTopLevel(name string) error {
 	if err := d.root.RemoveAll(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}

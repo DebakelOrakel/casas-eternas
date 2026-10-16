@@ -711,6 +711,70 @@ func TestDirRemoveJunk(t *testing.T) {
 	}
 }
 
+// RemoveTree removes one top-level directory named by a valid segment, with
+// the names in it that Delete refuses; it refuses every other name, and a
+// symlink in the tree (or as the tree) goes without its target.
+func TestDirRemoveTree(t *testing.T) {
+	d, root := openDir(t, nil)
+	ctx := context.Background()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("k"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	put(t, d, "w/rev/1/a", "1")
+	put(t, d, "other/x", "2")
+	tree := filepath.Join(root, "w")
+	for name, data := range map[string]string{
+		".DS_Store":         "finder",
+		"rev/1/.tmp-123456": "half",
+		"rev/copy of x/ä b": "by hand",
+	} {
+		path := filepath.Join(tree, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(tree, "rev", "out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RemoveTree(ctx, "w"); err != nil {
+		t.Fatalf("RemoveTree = %v", err)
+	}
+	if _, err := os.Lstat(tree); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the tree is still there: %v", err)
+	}
+	if err := d.RemoveTree(ctx, "w"); err != nil {
+		t.Errorf("RemoveTree a second time = %v, want nil", err)
+	}
+
+	// The tree itself a symlink out of the root: the link goes.
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RemoveTree(ctx, "linked"); err != nil {
+		t.Errorf("RemoveTree(symlink) = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "linked")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the link is still there: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Errorf("a file outside the root went: %v", err)
+	}
+
+	refused := []string{"", ".", "..", "other/x", "other/", "/other", "../outside", "a b", ".DS_Store", ".tmp-1234", "a\\b", "a\x00b"}
+	for _, name := range refused {
+		if err := d.RemoveTree(ctx, name); !errors.Is(err, ErrBadKey) {
+			t.Errorf("RemoveTree(%q) = %v, want ErrBadKey", name, err)
+		}
+	}
+	if got := get(t, d, "other/x"); got != "2" {
+		t.Errorf("another tree changed: %q", got)
+	}
+}
+
 // A durable Put (Sync) and an IfAbsent one write as any other; LocalPath
 // names the object's file and nothing else.
 func TestDirSyncAndLocalPath(t *testing.T) {

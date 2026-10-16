@@ -813,7 +813,8 @@ func (s *Store) pruneRevisions(ctx context.Context, uid string, current int) {
 // deleteKeys deletes the keys in order and answers the first error. A key
 // that breaks the leaf's key rule (a file copied in by hand, e.g. Finder's
 // .DS_Store in a Dir) cannot be deleted through the leaf; it is logged and
-// left, so that one stray file does not fail the delete of a world.
+// left, so that one stray file does not fail the delete of a world (Delete
+// removes it after, with the world's tree).
 func (s *Store) deleteKeys(ctx context.Context, uid string, keys []string) error {
 	var first error
 	for _, key := range keys {
@@ -821,7 +822,7 @@ func (s *Store) deleteKeys(ctx context.Context, uid string, keys []string) error
 		switch {
 		case err == nil:
 		case errors.Is(err, blob.ErrBadKey):
-			slog.Warn("world store: leaving an object whose key the leaf refuses", "uid", uid, "key", key)
+			slog.Warn("world store: an object whose key the leaf refuses is not deleted by its key", "uid", uid, "key", key)
 		case first == nil:
 			first = err
 		}
@@ -901,7 +902,18 @@ func (s *Store) ReadPreview(ctx context.Context, uid string) ([]byte, error) {
 	return raw, nil
 }
 
-// Delete removes a world and every revision of it: every key under {uid}/.
+// treeRemover is the dir backend's path for what stays under {uid}/ after
+// its keys are deleted (blob.Dir.RemoveTree): the names the leaf refuses,
+// an editor's .DS_Store, a temp file of an interrupted write. S3 has none,
+// as only this server writes into its bucket, and every key it writes is
+// valid.
+type treeRemover interface {
+	RemoveTree(ctx context.Context, name string) error
+}
+
+// Delete removes a world and every revision of it: every key under {uid}/,
+// and on a directory also the names there that are not keys, with their
+// directories (as the store did before the leaf).
 // On a versioned bucket (s3, BucketOptions) each delete leaves a delete
 // marker and the earlier versions, which the identity cannot remove: a
 // deleted world can be restored by an operator.
@@ -941,6 +953,12 @@ func (s *Store) Delete(ctx context.Context, uid string) error {
 	if err := s.deleteKeys(ctx, uid, keys); err != nil {
 		// What is left keeps its revision numbers taken.
 		return err
+	}
+	if tree, ok := s.bucket.(treeRemover); ok {
+		// Under the world's lock, so no write of this world is in it.
+		if err := tree.RemoveTree(ctx, uid); err != nil {
+			return err
+		}
 	}
 	s.mu.Lock()
 	delete(s.taken, uid)

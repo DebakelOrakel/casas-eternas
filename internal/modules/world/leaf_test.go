@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
+	"github.com/DebakelOrakel/casas-eternas/internal/blob/blobtest"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
@@ -31,11 +33,11 @@ func testBackends() map[string]func(t *testing.T) blob.Bucket {
 	return map[string]func(t *testing.T) blob.Bucket{
 		"dir": func(t *testing.T) blob.Bucket { return testDir(t, t.TempDir()) },
 		"aws": func(t *testing.T) blob.Bucket {
-			_, srv := newFakeS3(t)
+			_, srv := blobtest.NewS3(t, blobtest.Options{KeyID: "AKIDFAKE"})
 			return openFakeBucket(t, srv, blob.FlavourAWS)
 		},
 		"ceph": func(t *testing.T) blob.Bucket {
-			_, srv := newFakeS3(t)
+			_, srv := blobtest.NewS3(t, blobtest.Options{KeyID: "AKIDFAKE"})
 			return openFakeBucket(t, srv, blob.FlavourCeph)
 		},
 	}
@@ -130,7 +132,7 @@ func TestTheStoreBehavesTheSameOnEveryBackend(t *testing.T) {
 // made with rename, before the leaf): no migration, and every read and
 // write works on it. The fixture is the old layout exactly, with what a
 // directory gathers besides: an editor's .DS_Store, a temp file of an
-// interrupted write, a stray file at the top.
+// interrupted write, a directory copied in by hand, a stray file at the top.
 func TestTheStoreOpensTheOldLayout(t *testing.T) {
 	root := t.TempDir()
 	world := filepath.Join(root, sampleUID)
@@ -162,6 +164,7 @@ func TestTheStoreOpensTheOldLayout(t *testing.T) {
 		"rev/2/meta.json":      []byte(`{"revision":2,"size":1,"erosionRun":3,"hasPreview":true,"createdAt":"2026-08-13T10:00:00Z","contentHash":"abc"}`),
 		".DS_Store":            []byte("finder"),
 		"rev/2/.tmp-123456789": []byte("half"),
+		"rev/copy of 2/ä b":    []byte("by hand"),
 	}
 	for name, data := range files {
 		path := filepath.Join(world, filepath.FromSlash(name))
@@ -203,9 +206,11 @@ func TestTheStoreOpensTheOldLayout(t *testing.T) {
 	if raw, err := os.ReadFile(filepath.Join(world, "rev", "3", "world.zip")); err != nil || len(raw) != int(meta.Size) {
 		t.Errorf("revision 3 is not where the old layout puts it: %v", err)
 	}
-	// The world is deleted although the leaf refuses .DS_Store's key and
-	// does not list the temp file: those two files stay (with the
-	// directories that hold them), everything the store wrote goes.
+	// The world is deleted with all its directory holds, also what the leaf
+	// refuses to delete by key (.DS_Store, the hand-copied directory) or
+	// does not list (the temp file): nothing of it stays, as with the
+	// RemoveAll of the store before the leaf. The stray file at the top is
+	// not the world's and stays.
 	if err := s.Delete(context.Background(), sampleUID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -214,14 +219,17 @@ func TestTheStoreOpensTheOldLayout(t *testing.T) {
 	}
 	var left []string
 	_ = filepath.WalkDir(world, func(path string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
+		if err == nil {
 			rel, _ := filepath.Rel(world, path)
 			left = append(left, filepath.ToSlash(rel))
 		}
 		return nil
 	})
-	if strings.Join(left, ",") != ".DS_Store,rev/2/.tmp-123456789" {
+	if _, err := os.Lstat(world); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("left after the delete: %v", left)
+	}
+	if raw, err := os.ReadFile(filepath.Join(root, "notes.txt")); err != nil || string(raw) != "x" {
+		t.Errorf("the stray file at the top = %q, %v", raw, err)
 	}
 	reindex(t, s)
 	if list, _ := s.List(context.Background()); len(list) != 0 {
@@ -360,9 +368,9 @@ func TestAnInterruptedUploadIsSteppedOver(t *testing.T) {
 func TestTheS3BucketIsVersionedAndWritesConditionally(t *testing.T) {
 	for _, flavour := range []string{blob.FlavourAWS, blob.FlavourCeph} {
 		t.Run(flavour, func(t *testing.T) {
-			f, srv := newFakeS3(t)
+			f, srv := blobtest.NewS3(t, blobtest.Options{KeyID: "AKIDFAKE"})
 			s := newTestStoreOn(t, openFakeBucket(t, srv, flavour), 0)
-			if !f.versioning["worlds"] {
+			if f.Versioning("worlds") != "Enabled" {
 				t.Error("versioning is not on")
 			}
 			if s.LocalFiles() {
@@ -377,10 +385,8 @@ func TestTheS3BucketIsVersionedAndWritesConditionally(t *testing.T) {
 			if _, _, err := putSave(t, s, sampleUID, "v2", 1); err != nil {
 				t.Fatal(err)
 			}
-			f.mu.Lock()
-			conditional := f.conditional
-			_, prefixed := f.objects["worlds/test/run/"+metaKey(sampleUID)]
-			f.mu.Unlock()
+			conditional, _ := f.Conditional()
+			_, prefixed := f.Object("worlds", "test/run/"+metaKey(sampleUID))
 			// aws: the save of each revision and the meta at the creation.
 			want := map[string]int{blob.FlavourAWS: 3, blob.FlavourCeph: 0}[flavour]
 			if conditional != want {
@@ -411,4 +417,29 @@ func TestTheIndexFollowsTheGrants(t *testing.T) {
 	if err != nil || g.Owner != "grace-id" || !g.Template || meta.Owner != "grace-id" || !meta.Template {
 		t.Errorf("after a restart: grants %+v, meta owner %q template %v, err %v", g, meta.Owner, meta.Template, err)
 	}
+}
+
+// openFakeBucket opens a blob.S3 of `flavour` on the shared fake
+// (internal/blob/blobtest) with the store's BucketOptions, as cmd/ does.
+// The aws row sends to its own virtual host, the ceph row to a path-style
+// endpoint; blobtest.Transport sends both to the fake.
+func openFakeBucket(t *testing.T, srv *httptest.Server, flavour string) *blob.S3 {
+	t.Helper()
+	access, secret := blobtest.KeyFiles(t, "AKIDFAKE")
+	cfg := blob.S3Config{
+		Flavour: flavour, Bucket: "worlds", Prefix: "test/run",
+		AccessKeyFile: access, SecretKeyFile: secret,
+		HTTPClient: &http.Client{Transport: blobtest.Transport(srv)},
+	}
+	switch flavour {
+	case blob.FlavourAWS:
+		cfg.Region = "eu-central-2"
+	case blob.FlavourCeph:
+		cfg.Endpoint = "https://objects.example"
+	}
+	b, err := blob.OpenS3(context.Background(), cfg, BucketOptions())
+	if err != nil {
+		t.Fatalf("OpenS3 %s: %v", flavour, err)
+	}
+	return b
 }

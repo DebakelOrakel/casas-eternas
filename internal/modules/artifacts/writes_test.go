@@ -380,9 +380,7 @@ func TestS3WriteByPresignedPut(t *testing.T) {
 	if _, files := resolve(t, mux, false); len(files) != 1 {
 		t.Errorf("files = %v", files)
 	}
-	fake.mu.Lock()
-	delete(fake.objects, "run/"+uid+"/elevation.u16")
-	fake.mu.Unlock()
+	fake.DeleteObject("artifacts", "run/"+uid+"/elevation.u16")
 	if got := commit(mux, uid, "", Upload{"elevation.u16", 12}); got.Code != http.StatusConflict {
 		t.Errorf("commit of an object that is not there = %d, want 409", got.Code)
 	}

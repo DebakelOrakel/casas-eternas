@@ -512,6 +512,12 @@ What changed:
   as decided), an administrator or the lifecycle rule for `test/` does
   (deploy/aws/README.md).
 
+2026-10-16: cleanups after step 5. On `dir`, a world's delete also removes
+what its keys leave under `{uid}/` (`.DS_Store`, temp files, other invalid
+names) with `blob.Dir.RemoveTree`, as the store before the leaf did; a
+failed start closes the internal listener and the modules it made; the
+tests share one fake S3 (`internal/blob/blobtest`, test-only).
+
 Open: **the relay is plain NATS over TCP**, not encrypted. The plan for
 external workers, and later the browser: NATS's WebSocket listener behind
 the Ingress/Route, with TLS from the router (or, standalone, the WebSocket

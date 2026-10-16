@@ -76,6 +76,10 @@ func openWorldBucket(ctx context.Context, cfg config.Config) (blob.Bucket, error
 // process and the workers it starts.
 const internalListenAddr = "127.0.0.1:0"
 
+// listenInternal opens the internal listener. A variable, so that a test
+// can hold the listener that a failed wiring must close again.
+var listenInternal = func() (net.Listener, error) { return net.Listen("tcp", internalListenAddr) }
+
 // localWorkerAPI is this server's own API as a job worker on the same
 // machine reaches it. Since DEC-0038 step 3 a local worker writes its
 // artifacts over HTTP, as a cluster worker always did: the store's index
@@ -95,7 +99,7 @@ func localWorkerAPI(g config.Global) (string, net.Listener, error) {
 		url, err := loopbackURL(g)
 		return url, nil, err
 	}
-	listener, err := net.Listen("tcp", internalListenAddr)
+	listener, err := listenInternal()
 	if err != nil {
 		return "", nil, fmt.Errorf("the internal listener for the local job workers: %w", err)
 	}

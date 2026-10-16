@@ -178,6 +178,19 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	// the process.
 	var worldModule *world.Module
 	var artifactsModule *artifacts.Module
+	// Their buckets (a Dir's open root) are released again when a later
+	// step fails, as the relay and the internal listener are.
+	defer func() {
+		if wired {
+			return
+		}
+		if artifactsModule != nil {
+			_ = artifactsModule.Close()
+		}
+		if worldModule != nil {
+			_ = worldModule.Close()
+		}
+	}()
 	if targets.Has(config.TargetWorld) {
 		if err := cfg.World.Storage.Validate("world"); err != nil {
 			return nil, nil, nil, err
@@ -326,8 +339,15 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		return jobs.Config{}, nil, fmt.Errorf("CASAS_POD_IP is not set: a job worker reaches this server by its pod IP (deploy/manifests.yaml wires it)")
 	}
 	// The local workers' way to this server's API (localWorkerAPI), opened
-	// once for both stores that may need it.
+	// once for both stores that may need it. Closed again when a later step
+	// fails: the caller gets no listener to close then.
 	var internal net.Listener
+	wired := false
+	defer func() {
+		if !wired && internal != nil {
+			_ = internal.Close()
+		}
+	}()
 	var localURL string
 	localAPI := func() (string, error) {
 		if localURL != "" {
@@ -423,6 +443,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 			return whole
 		}
 	}
+	wired = true
 	return bcfg, internal, nil
 }
 

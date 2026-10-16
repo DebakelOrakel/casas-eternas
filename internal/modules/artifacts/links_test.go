@@ -2,22 +2,18 @@ package artifacts
 
 import (
 	"context"
-	"encoding/xml"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
 	"github.com/DebakelOrakel/casas-eternas/internal/blob"
+	"github.com/DebakelOrakel/casas-eternas/internal/blob/blobtest"
 	"github.com/DebakelOrakel/casas-eternas/internal/config"
 	"github.com/DebakelOrakel/casas-eternas/internal/identity"
 )
@@ -157,110 +153,20 @@ func TestDirLinkToARemovedFile(t *testing.T) {
 	}
 }
 
-// fakeBucketS3 stands in for an S3 provider (path style, as the ceph row
-// sends): HeadBucket, PutBucketCors, ListObjectsV2 in one page, and
-// PUT/GET/HEAD/DELETE of objects. It checks no signature; the presigned GET
-// it receives is followed as a browser would.
-type fakeBucketS3 struct {
-	mu      sync.Mutex
-	bucket  string
-	objects map[string][]byte
-	cors    bool
-}
-
-func (f *fakeBucketS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	bucket, key, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
-	if bucket != f.bucket {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	body, _ := io.ReadAll(r.Body)
-	if key == "" {
-		switch {
-		case r.Method == http.MethodHead:
-		case r.Method == http.MethodPut && r.URL.Query().Has("cors"):
-			f.cors = true
-		case r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2":
-			type content struct {
-				Key          string
-				Size         int64
-				ETag         string
-				LastModified string
-			}
-			type result struct {
-				XMLName     xml.Name `xml:"ListBucketResult"`
-				Name        string
-				Prefix      string
-				KeyCount    int
-				IsTruncated bool
-				Contents    []content
-			}
-			out := result{Name: f.bucket, Prefix: r.URL.Query().Get("prefix")}
-			keys := make([]string, 0, len(f.objects))
-			for k := range f.objects {
-				if strings.HasPrefix(k, out.Prefix) {
-					keys = append(keys, k)
-				}
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				out.Contents = append(out.Contents, content{Key: k, Size: int64(len(f.objects[k])), ETag: `"e"`, LastModified: time.Now().UTC().Format(time.RFC3339)})
-			}
-			out.KeyCount = len(out.Contents)
-			w.Header().Set("Content-Type", "application/xml")
-			_ = xml.NewEncoder(w).Encode(out)
-		default:
-			w.WriteHeader(http.StatusNotImplemented)
-		}
-		return
-	}
-	switch r.Method {
-	case http.MethodPut:
-		if cl := r.Header.Get("Content-Length"); cl != strconv.Itoa(len(body)) {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		f.objects[key] = body
-		w.Header().Set("ETag", `"e"`)
-	case http.MethodGet, http.MethodHead:
-		obj, ok := f.objects[key]
-		if !ok {
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = io.WriteString(w, `<Error><Code>NoSuchKey</Code></Error>`)
-			return
-		}
-		w.Header().Set("Content-Length", strconv.Itoa(len(obj)))
-		w.Header().Set("ETag", `"e"`)
-		if r.Method == http.MethodGet {
-			_, _ = w.Write(obj)
-		}
-	case http.MethodDelete:
-		delete(f.objects, key)
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-// openFakeS3 serves `objects` from a fake provider over TLS and opens the
-// bucket "artifacts" with the prefix "run" on it. TLS, as every real
-// provider: over plain HTTP the SDK must hash the payload and so needs a
-// seekable body, which an upload is not; over HTTPS it sends it unsigned
-// (aws-sdk-go-v2, v4.ComputePayloadSHA256).
-func openFakeS3(t *testing.T, objects map[string][]byte) (*fakeBucketS3, *httptest.Server, blob.Bucket) {
+// openFakeS3 serves `objects` from the shared fake provider
+// (internal/blob/blobtest) over TLS and opens the bucket "artifacts" with
+// the prefix "run" on it. TLS, as every real provider: over plain HTTP the
+// SDK must hash the payload and so needs a seekable body, which an upload
+// is not; over HTTPS it sends it unsigned (aws-sdk-go-v2,
+// v4.ComputePayloadSHA256).
+func openFakeS3(t *testing.T, objects map[string][]byte) (*blobtest.S3, *httptest.Server, blob.Bucket) {
 	t.Helper()
-	fake := &fakeBucketS3{bucket: "artifacts", objects: objects}
-	srv := httptest.NewTLSServer(fake)
-	t.Cleanup(srv.Close)
-	keys := t.TempDir()
-	access1, secret := filepath.Join(keys, "access"), filepath.Join(keys, "secret")
-	if err := os.WriteFile(access1, []byte("AKIDFAKE\n"), 0o600); err != nil {
-		t.Fatal(err)
+	fake, srv := blobtest.NewS3(t, blobtest.Options{KeyID: "AKIDFAKE", TLS: true})
+	fake.CreateBucket("artifacts")
+	for key, data := range objects {
+		fake.PutObject("artifacts", key, data)
 	}
-	if err := os.WriteFile(secret, []byte("fake-secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	access1, secret := blobtest.KeyFiles(t, "AKIDFAKE")
 	bucket, err := blob.OpenS3(context.Background(), blob.S3Config{
 		Flavour: blob.FlavourCeph, Endpoint: srv.URL, Bucket: "artifacts", Prefix: "run",
 		AccessKeyFile: access1, SecretKeyFile: secret, HTTPClient: srv.Client(),
@@ -282,7 +188,7 @@ func TestS3ReadRedirectsToAPresignedGet(t *testing.T) {
 		"run/" + uid + "/meta.json":     []byte(metaFor(key, "Ätna")),
 		"run/" + uid + "/elevation.u16": []byte("raster-bytes"),
 	})
-	if !fake.cors {
+	if fake.CORS("artifacts") == "" {
 		t.Error("the bucket's CORS rule was not set")
 	}
 	m, mux := newModule(t, bucket, identity.NewResolver(config.AuthNone, nil),
@@ -320,10 +226,7 @@ func TestS3ReadRedirectsToAPresignedGet(t *testing.T) {
 	if code := do(mux, http.MethodPut, "/v1/artifacts/"+uid+"/rivers.f32", "rr").Code; code != http.StatusNoContent {
 		t.Fatalf("put = %d", code)
 	}
-	fake.mu.Lock()
-	stored := string(fake.objects["run/"+uid+"/rivers.f32"])
-	fake.mu.Unlock()
-	if stored != "rr" {
+	if stored, _ := fake.Object("artifacts", "run/"+uid+"/rivers.f32"); string(stored) != "rr" {
 		t.Errorf("stored object = %q", stored)
 	}
 	// No link route on s3.
