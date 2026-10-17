@@ -513,7 +513,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     const cancel = document.createElement('button')
     cancel.type = 'button'
     cancel.className = 'wc-remove'
-    const allowed = job.mayCancel ?? (job.callerLevel === 'editor' || job.callerLevel === 'owner' || job.callerLevel === 'admin')
+    const allowed = job.actions?.includes('job.cancel') ?? false
     cancel.disabled = !allowed
     const isArmed = armed.has(job.id)
     cancel.textContent = t(isArmed ? 'generator.jobs.cancel.confirm' : 'generator.jobs.cancel.label')

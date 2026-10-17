@@ -188,7 +188,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     const next: LevelRow[] = (server?.levels ?? []).map((l) => ({
       worldId: l.worldId, pipelineVersion: l.pipelineVersion, level: l.level,
       tiles: l.tiles ? l.count : 0, where: 'server', bytes: l.bytes, label: l.label,
-      deletable: l.callerLevel === 'admin' || (!l.shared && (l.callerLevel === 'editor' || l.callerLevel === 'owner')),
+      deletable: l.actions?.includes('artifact.remove') ?? false,
       stale: null, localUids: [],
     }))
     // The browser's entries, summed as the server sums its own.

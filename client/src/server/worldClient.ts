@@ -38,14 +38,21 @@ export interface WorldSummary {
   // them.
   kind?: string
   progress?: string
-  // Whether the world is a template — offered to every visitor of the
-  // server, signed in or not, to copy (docs/decisions/template-worlds.md).
-  // Absent from a server older than 2026-10-15.
+  // Whether the world is a template — offered as a start to copy
+  // (docs/decisions/template-worlds.md). A purpose, not a right: who reads
+  // it is its visibility (DEC-0040). Absent from a server older than
+  // 2026-10-15.
   template?: boolean
-  // The caller's level on the world, as the list states it: `viewer`,
-  // `editor`, `owner` or `admin` (internal/access). Absent from a server
-  // older than 2026-10-15, and from the answer of a copy or a mark.
-  callerLevel?: string
+  // Who reads the world: `private`, `signedIn` or `public` (DEC-0040).
+  // Absent from a server older than 2026-10-17.
+  visibility?: string
+  // The actions the caller may perform on the world, as the server states
+  // them (`world.read`, `world.write`, `world.share`, `world.delete`,
+  // `world.publish`, `world.template`; internal/access). The client renders
+  // by them and derives no rule of its own (DEC-0040, fork 7). Absent from
+  // a server older than 2026-10-17, and from the answer of a copy or a
+  // mark.
+  actions?: string[]
   // The terrain ids (world/identity.ts worldId) under which the server's
   // jobs found or baked artifacts for this world (DEC-0039): what the
   // artifact window attributes a terrain's artifacts by. Absent until a
@@ -310,9 +317,9 @@ export async function uploadWorldTo(
 
 // Whether the world the server holds is this archive, and the caller's to
 // write: its content hash (the server's SHA-256 of the bytes, store.go) is
-// this archive's, and the caller is an editor or above.
+// this archive's, and the caller may write it.
 async function isThisArchive(held: WorldSummary, archive: Blob): Promise<boolean> {
-  if (!held.contentHash || !['editor', 'owner', 'admin'].includes(held.callerLevel ?? '')) return false
+  if (!held.contentHash || !held.actions?.includes('world.write')) return false
   if (typeof crypto === 'undefined' || !crypto.subtle) return false
   try {
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await archive.arrayBuffer()))
@@ -339,6 +346,27 @@ export async function copyWorldOnServer(uid: string): Promise<WorldSummary | nul
     return meta
   } catch {
     return null
+  }
+}
+
+// The visibilities a world can have on the server (DEC-0040).
+export const WORLD_VISIBILITIES = ['private', 'signedIn', 'public'] as const
+export type WorldVisibility = (typeof WORLD_VISIBILITIES)[number]
+
+// Sets who reads a world: the owner's up to `signedIn`, an admin's for
+// `public`; the server refuses everyone else. False when it was not done.
+export async function setWorldVisibility(uid: string, visibility: WorldVisibility): Promise<boolean> {
+  const base = await apiBase()
+  if (!base) return false
+  try {
+    const response = await authFetch(`${base}/worlds/${encodeURIComponent(uid)}/visibility`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visibility }),
+    })
+    return response.ok
+  } catch {
+    return false
   }
 }
 

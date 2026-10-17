@@ -38,7 +38,7 @@ func TestOwnerIsPinnedAtCreationAndSurvivesOtherWriters(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("grants after create: found=%v err=%v", found, err)
 	}
-	if grants.Owner != "ada-id" || grants.Public {
+	if grants.Owner != "ada-id" || grants.Visibility() != access.VisibilityPrivate {
 		t.Errorf("fresh grants = %+v, want private, owned by the creator", grants)
 	}
 
@@ -86,7 +86,7 @@ func TestWriteGrantsTransfersAndMirrorsImmediately(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	next := access.Grants{Owner: "grace-id", Public: true, Users: map[string]string{"eve-id": "editor"}}
+	next := access.Grants{Owner: "grace-id", Authenticated: "viewer", Users: map[string]string{"eve-id": "editor"}}
 	if err := s.WriteGrants(context.Background(), sampleUID, next); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestWriteGrantsTransfersAndMirrorsImmediately(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("read back: found=%v err=%v", found, err)
 	}
-	if grants.Owner != "grace-id" || !grants.Public || grants.Users["eve-id"] != "editor" {
+	if grants.Owner != "grace-id" || grants.Authenticated != "viewer" || grants.Users["eve-id"] != "editor" {
 		t.Errorf("grants did not round-trip: %+v", grants)
 	}
 	// The display mirror updates with the transfer, not at the next upload.

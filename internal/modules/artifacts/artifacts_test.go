@@ -310,11 +310,11 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 	// The listing says what each caller may do with an entry, and counts only
 	// what the caller sees (2026-09-29).
 	for _, c := range []struct {
-		who, token, level string
-	}{{"viewer", viewer, `"callerLevel":"viewer"`}, {"owner", owner, `"callerLevel":"owner"`}, {"operator", admin, `"callerLevel":"admin"`}} {
+		who, token, actions string
+	}{{"viewer", viewer, `"actions":[]`}, {"owner", owner, `"actions":["artifact.remove"]`}, {"operator", admin, `"actions":["artifact.remove"]`}} {
 		body := doAs(mux, http.MethodGet, "/v1/artifacts", "", c.token).Body.String()
-		if !strings.Contains(body, c.level) {
-			t.Errorf("%s listing = %s, want %s", c.who, body, c.level)
+		if !strings.Contains(body, c.actions) {
+			t.Errorf("%s listing = %s, want %s", c.who, body, c.actions)
 		}
 	}
 	if body := doAs(mux, http.MethodGet, "/v1/artifacts", "", stranger).Body.String(); !strings.Contains(body, `"artifacts":[]`) || !strings.Contains(body, `"bytes":0`) {

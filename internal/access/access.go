@@ -1,7 +1,8 @@
 // Package access answers "may this caller do that to this world" — the
-// per-world ACL docs/design/access-control.md decided: a (user → role) list
-// plus a public bit, levels totally ordered so the check is one rank
-// comparison. Authorization here is DATA, not code — the matrix is a table,
+// per-world ACL docs/design/access-control.md decided: a (principal → role)
+// list, where a principal is a user or one of two pseudo-principals
+// (docs/decisions/roles-and-visibility.md, DEC-0040), levels totally
+// ordered so the check is one rank comparison. Authorization here is DATA, not code — the matrix is a table,
 // the grants are a JSON file, Can is a lookup — which is exactly the form a
 // later engine migration would start from, should groups or a second
 // resource type ever earn one.
@@ -13,7 +14,10 @@
 // Zanzibar costs without the Zanzibar benefits.
 package access
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Level is a rank in the total order none < viewer < editor < owner < admin.
 //
@@ -30,10 +34,10 @@ const (
 	// Artifacts ARE world data, which is why reading them is not
 	// "informational".
 	Viewer
-	// Editor also writes revisions and commissions bakes — a shared world
-	// nobody may bake cannot be played together at 4K.
+	// Editor also writes revisions. (Every reader orders bakes since
+	// DEC-0039, fork 5; the jobs module checks that.)
 	Editor
-	// Owner also shares (grants, the public flag, transfer) and deletes.
+	// Owner also shares (grants, the visibility, transfer) and deletes.
 	Owner
 	// Admin is the operator: global, never stored in grants.json — it
 	// arrives as the session token's claim.
@@ -75,11 +79,16 @@ func (l Level) String() string {
 type Action string
 
 const (
-	ActionRead   Action = "world.read"
-	ActionWrite  Action = "world.write"
-	ActionBake   Action = "world.bake"
+	ActionRead  Action = "world.read"
+	ActionWrite Action = "world.write"
+	// ActionShare changes the grants: collaborators, and the visibility up
+	// to signed in.
 	ActionShare  Action = "world.share"
 	ActionDelete Action = "world.delete"
+	// ActionPublish makes a world readable by every caller, the anonymous
+	// one included (VisibilityPublic). The operator's: anonymous reads load
+	// the server with nobody to answer for them (DEC-0040, fork 4).
+	ActionPublish Action = "world.publish"
 	// ActionTemplate sets or removes a world's template mark (Grants.Template).
 	// The operator's, not the owner's: a template is offered to EVERY visitor
 	// of the server, signed in or not, which is a decision about the server
@@ -94,16 +103,43 @@ func Required(action Action) Level {
 	switch action {
 	case ActionRead:
 		return Viewer
-	case ActionWrite, ActionBake:
+	case ActionWrite:
 		return Editor
 	case ActionShare, ActionDelete:
 		return Owner
-	case ActionTemplate:
+	case ActionTemplate, ActionPublish:
 		return Admin
 	default:
 		return Admin
 	}
 }
+
+// worldActions is every world action, in the order Actions answers them.
+var worldActions = []Action{ActionRead, ActionWrite, ActionShare, ActionDelete, ActionPublish, ActionTemplate}
+
+// Actions answers the world actions a caller of `level` may perform — what
+// the API gives the client in place of a level, so that the client derives
+// no rule of its own (DEC-0040, fork 7). Empty below Viewer.
+func Actions(level Level) []Action {
+	allowed := []Action{}
+	for _, action := range worldActions {
+		if level >= Required(action) {
+			allowed = append(allowed, action)
+		}
+	}
+	return allowed
+}
+
+// The visibility of a world: which pseudo-principal holds the viewer role
+// on it (DEC-0040, fork 4). The wire and storage names.
+const (
+	// VisibilityPrivate: the owner and the named users only.
+	VisibilityPrivate = "private"
+	// VisibilitySignedIn: every signed-in caller is a viewer.
+	VisibilitySignedIn = "signedIn"
+	// VisibilityPublic: every caller is a viewer, the anonymous one too.
+	VisibilityPublic = "public"
+)
 
 // Grants is {uid}/grants.json — a world's ACL, beside its meta and OWNED BY
 // THE SERVER: never part of the uploaded save, never rebuilt from one,
@@ -112,46 +148,106 @@ type Grants struct {
 	// Owner is the user ID pinned at creation; it moves only through an
 	// explicit transfer (world.share), never by writing a revision.
 	Owner string `json:"owner"`
-	// Public makes every authenticated caller a viewer.
-	Public bool `json:"public"`
-	// Template makes EVERY caller a viewer, the anonymous one included: a
-	// template is a world the server offers as a start to anyone, to copy
-	// (docs/decisions/template-worlds.md). Wider than Public by exactly that
-	// caller. Set only by an admin (ActionTemplate) — the owner's share path
-	// keeps it as it is (world.Store.WriteGrants).
+	// Authenticated is the role of every signed-in caller (the
+	// pseudo-principal "authenticated"); empty for none. Only "viewer" is
+	// granted to it (SetVisibility).
+	Authenticated string `json:"authenticated,omitempty"`
+	// Anyone is the role of every caller, the anonymous one included (the
+	// pseudo-principal "anyone"); empty for none. Only "viewer", and only by
+	// an admin (ActionPublish).
+	Anyone string `json:"anyone,omitempty"`
+	// Template marks a world the server offers as a start to copy
+	// (docs/decisions/template-worlds.md). A PURPOSE, not a right: it
+	// grants nothing (DEC-0040, fork 5); who reads the world is its
+	// visibility. Set only by an admin (ActionTemplate) — the owner's share
+	// path keeps it as it is (world.Store.WriteGrants).
 	Template bool `json:"template,omitempty"`
 	// Users grants named collaborators a role, BY NAME (see Level).
 	Users map[string]string `json:"users,omitempty"`
 }
 
-// LevelOf ranks a caller against these grants. An unknown role name in the
-// file grants nothing — ParseLevel's loud path belongs to the grants API
-// that writes the file, not to every read on the request path — but it
-// does not take anything away either: the caller then ranks as any other
-// authenticated user does, Viewer on a public world. A typo in the file
-// must not leave a named collaborator seeing less than a stranger.
-//
-// The empty caller id is the anonymous one: on a template it is a viewer,
-// everywhere else it has no rank.
-func (g Grants) LevelOf(callerID string) Level {
-	if callerID == "" {
-		if g.Template {
-			return Viewer
-		}
-		return None
+// UnmarshalJSON reads the current form and the form before DEC-0040. The
+// old form always holds "public" (it had no omitempty), and the new one
+// never does, so the key tells them apart: there `public` made every
+// signed-in caller a viewer, and `template` made every caller one. The
+// next write stores the new form.
+func (g *Grants) UnmarshalJSON(data []byte) error {
+	type plain Grants
+	var read struct {
+		plain
+		Public *bool `json:"public"`
 	}
+	if err := json.Unmarshal(data, &read); err != nil {
+		return err
+	}
+	*g = Grants(read.plain)
+	if read.Public != nil {
+		if *read.Public {
+			g.Authenticated = "viewer"
+		}
+		if g.Template {
+			g.Anyone = "viewer"
+		}
+	}
+	return nil
+}
+
+// Visibility names the widest pseudo-principal grant.
+func (g Grants) Visibility() string {
+	switch {
+	case g.Anyone != "":
+		return VisibilityPublic
+	case g.Authenticated != "":
+		return VisibilitySignedIn
+	default:
+		return VisibilityPrivate
+	}
+}
+
+// WithVisibility answers the grants with the pseudo-principals set to the
+// visibility `v`. False for an unknown name.
+func (g Grants) WithVisibility(v string) (Grants, bool) {
+	switch v {
+	case VisibilityPrivate:
+		g.Authenticated, g.Anyone = "", ""
+	case VisibilitySignedIn:
+		g.Authenticated, g.Anyone = "viewer", ""
+	case VisibilityPublic:
+		g.Authenticated, g.Anyone = "viewer", "viewer"
+	default:
+		return g, false
+	}
+	return g, true
+}
+
+// LevelOf ranks a caller against these grants: the highest role of the
+// caller's own grant and the pseudo-principals' that apply. An unknown role
+// name in the file grants nothing — ParseLevel's loud path belongs to the
+// grants API that writes the file, not to every read on the request path —
+// but it does not take anything away either: the caller then ranks as any
+// other signed-in caller does. A typo in the file must not leave a named
+// collaborator seeing less than a stranger.
+//
+// The empty caller id is the anonymous one: only "anyone" applies to it.
+func (g Grants) LevelOf(callerID string) Level {
+	level := roleLevel(g.Anyone)
+	if callerID == "" {
+		return level
+	}
+	level = max(level, roleLevel(g.Authenticated))
 	if callerID == g.Owner {
 		return Owner
 	}
-	if name, ok := g.Users[callerID]; ok {
-		if level, err := ParseLevel(name); err == nil {
-			return level
-		}
+	return max(level, roleLevel(g.Users[callerID]))
+}
+
+// roleLevel is a stored role name's level; None for an empty or unknown one.
+func roleLevel(name string) Level {
+	level, err := ParseLevel(name)
+	if err != nil {
+		return None
 	}
-	if g.Public || g.Template {
-		return Viewer
-	}
-	return None
+	return level
 }
 
 // Can is the whole check: one rank comparison. `admin` comes from the

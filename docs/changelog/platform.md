@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-17
+- **changed** Server: a world is private, for signed-in users or public, and a template is readable without an account only when an admin makes it public; templates marked before stay public. `generator.load.visibility`
+
 ## 2026-10-16
 - **changed** Server: artifacts are stored by their terrain, so a copy of a template reads the template's levels and tiles at once, and every signed-in reader of a world may order a bake; only a job writes artifacts, and the artifacts stored before are not read any more. `artifacts`
 - **changed** Server: worlds and artifacts in one storage refuse to start.

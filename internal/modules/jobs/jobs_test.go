@@ -565,8 +565,11 @@ func TestJobsShowAndCancelByWorldAccess(t *testing.T) {
 	if body := do(http.MethodGet, "/v1/jobs", stranger).Body.String(); strings.TrimSpace(body) != "[]" {
 		t.Errorf("a stranger's list = %s, want []", body)
 	}
-	if body := do(http.MethodGet, "/v1/jobs", viewer).Body.String(); strings.Count(body, `"callerLevel":"viewer"`) != 2 {
-		t.Errorf("the viewer's list = %s, want both jobs as viewer", body)
+	if body := do(http.MethodGet, "/v1/jobs", viewer).Body.String(); strings.Count(body, `"actions":[]`) != 2 {
+		t.Errorf("the viewer's list = %s, want both jobs, with no action", body)
+	}
+	if body := do(http.MethodGet, "/v1/jobs", editor).Body.String(); strings.Count(body, `"actions":["job.cancel"]`) != 2 {
+		t.Errorf("the editor's list = %s, want both jobs to cancel", body)
 	}
 	if got := do(http.MethodGet, "/v1/jobs/"+running, stranger).Code; got != http.StatusNotFound {
 		t.Errorf("a stranger's get = %d, want 404", got)
@@ -580,8 +583,8 @@ func TestJobsShowAndCancelByWorldAccess(t *testing.T) {
 	}
 	// A viewer cancels the job they ordered (DEC-0039, fork 5).
 	mine := idOf(post(m, testUID, `{"stage":1}`, viewer))
-	if body := do(http.MethodGet, "/v1/jobs/"+mine, viewer).Body.String(); !strings.Contains(body, `"mayCancel":true`) {
-		t.Errorf("the viewer's own job = %s, want mayCancel", body)
+	if body := do(http.MethodGet, "/v1/jobs/"+mine, viewer).Body.String(); !strings.Contains(body, `"actions":["job.cancel"]`) {
+		t.Errorf("the viewer's own job = %s, want job.cancel", body)
 	}
 	if got := do(http.MethodDelete, "/v1/jobs/"+mine, viewer).Code; got != http.StatusNoContent {
 		t.Errorf("a viewer's cancel of their own job = %d, want 204", got)

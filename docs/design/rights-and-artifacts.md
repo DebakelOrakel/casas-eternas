@@ -180,3 +180,9 @@ over before anything is decided or built.
 with two changes: only job workers write artifacts (the browser does not
 bake and does not upload), and every signed-in caller who may read a world
 may order a bake, the owner of a copy included. Forks 3–8 stay ideas.
+
+2026-10-17: forks 3–8 decided in
+[roles-and-visibility.md](../decisions/roles-and-visibility.md) (DEC-0040):
+the visibility as pseudo-principals, the template as a purpose and the
+actions in the API are built; the roles stay ranked levels and the guards
+wait for their first condition; hand-made.

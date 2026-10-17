@@ -64,6 +64,10 @@ var ErrExists = errors.New("world already exists")
 // by the way.
 var ErrNoGrants = errors.New("world has no grants")
 
+// ErrBadVisibility is returned for a visibility name that is not one of
+// access.VisibilityPrivate, VisibilitySignedIn, VisibilityPublic.
+var ErrBadVisibility = errors.New("unknown visibility (private, signedIn, public)")
+
 // safeUID is what may become a key segment. Deliberately strict — the uid
 // is a UUID from our own client, so anything else is either a bug or an
 // attempt at path traversal, and there is no reason to be liberal about it.
@@ -100,6 +104,9 @@ type Meta struct {
 	// the grants, never from here (2026-10-15, docs/decisions/
 	// template-worlds.md).
 	Template bool `json:"template"`
+	// The world's visibility (access.Grants.Visibility: private, signedIn,
+	// public), mirrored from grants.json the same way (DEC-0040).
+	Visibility string `json:"visibility,omitempty"`
 	// The terrain ids (the client's worldId, client/src/world/identity.ts)
 	// of this world: the ids under which a job worker found or baked
 	// artifacts for it (docs/decisions/artifacts-by-content.md, DEC-0039,
@@ -337,6 +344,11 @@ func (s *Store) readEntry(ctx context.Context, uid string, hasGrants bool) world
 			// error promoted to "no grants" would silently reopen a shared
 			// world.
 			e.grantsErr = fmt.Errorf("world %s has unreadable grants: %w", uid, err)
+		} else if e.metaErr == nil {
+			// The visibility mirror of a meta.json written before DEC-0040
+			// (or before an old grants.json was read in the new form): taken
+			// from the grants in memory, written at the next change.
+			e.meta.Visibility = e.grants.Visibility()
 		}
 	}
 	return e
@@ -524,10 +536,11 @@ func (s *Store) ReadGrants(ctx context.Context, uid string) (access.Grants, bool
 // world's lock like Put, so a share and an upload cannot interleave their
 // reads of the document.
 //
-// The template mark is NOT the share path's to change: whatever grants.Template
-// says, the mark stays as it is stored. SetTemplate, the admin's, is its one
-// writer — so a share API built on this cannot let an owner offer a world to
-// every visitor of the server.
+// The template mark and the "anyone" grant are NOT the share path's to
+// change: whatever the argument says, they stay as they are stored.
+// SetTemplate and SetVisibility write them, behind the admin's checks — so a
+// share API built on this cannot let an owner offer a world to every
+// visitor of the server.
 func (s *Store) WriteGrants(ctx context.Context, uid string, grants access.Grants) error {
 	if grants.Owner == "" {
 		return fmt.Errorf("grants must name an owner — a world with nobody at the top can never be shared or deleted again")
@@ -548,7 +561,7 @@ func (s *Store) WriteGrants(ctx context.Context, uid string, grants access.Grant
 	if err != nil {
 		return err
 	}
-	grants.Template = held.Template
+	grants.Template, grants.Anyone = held.Template, held.Anyone
 	if err := s.writeGrants(ctx, uid, grants); err != nil {
 		return err
 	}
@@ -602,15 +615,54 @@ func (s *Store) SetTemplate(ctx context.Context, uid string, on bool) (Meta, err
 	return s.readMeta(uid)
 }
 
-// mirrorGrants writes the owner and the template mark into the display
-// mirror in meta.json where they differ from the grants. Under the world's
-// lock, held by the caller.
+// SetVisibility sets which pseudo-principal reads a world (access.Grants.
+// WithVisibility). The caller has checked the right: the owner's up to
+// signed in, the admin's for public (DEC-0040, fork 4). Refused with
+// ErrNoGrants for a world without grants.json, as SetTemplate is, and with
+// ErrBadVisibility for an unknown name.
+func (s *Store) SetVisibility(ctx context.Context, uid, visibility string) (Meta, error) {
+	if !ValidUID(uid) {
+		return Meta{}, ErrNotFound
+	}
+	ctx, cancel := detach(ctx)
+	defer cancel()
+	defer s.lock(uid)()
+	meta, err := s.readMeta(uid)
+	if err != nil {
+		return Meta{}, err
+	}
+	grants, found, err := s.readGrants(uid)
+	if err != nil {
+		return Meta{}, err
+	}
+	if !found {
+		return Meta{}, ErrNoGrants
+	}
+	changed, ok := grants.WithVisibility(visibility)
+	if !ok {
+		return Meta{}, ErrBadVisibility
+	}
+	if changed.Visibility() != grants.Visibility() {
+		if err := s.writeGrants(ctx, uid, changed); err != nil {
+			return Meta{}, err
+		}
+	}
+	if err := s.mirrorGrants(ctx, uid, meta, changed); err != nil {
+		return Meta{}, err
+	}
+	return s.readMeta(uid)
+}
+
+// mirrorGrants writes the owner, the template mark and the visibility into
+// the display mirror in meta.json where they differ from the grants. Under
+// the world's lock, held by the caller.
 func (s *Store) mirrorGrants(ctx context.Context, uid string, meta Meta, grants access.Grants) error {
-	if meta.Owner == grants.Owner && meta.Template == grants.Template {
+	if meta.Owner == grants.Owner && meta.Template == grants.Template && meta.Visibility == grants.Visibility() {
 		return nil
 	}
 	meta.Owner = grants.Owner
 	meta.Template = grants.Template
+	meta.Visibility = grants.Visibility()
 	return s.writeMeta(ctx, uid, meta, false)
 }
 
@@ -832,7 +884,7 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 	// explicit transfer — never by writing a revision. Meta.Owner is a
 	// DISPLAY MIRROR of it from here on; re-stamping it per upload was the
 	// standing bug where a shared world's first editor save stole the world.
-	displayOwner, template := current.Owner, false
+	displayOwner, template, visibility := current.Owner, false, ""
 	var created access.Grants
 	if creating {
 		// A plain write: grants.json without a meta.json is what an
@@ -842,9 +894,9 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 		if err := s.putJSON(ctx, grantsKey(uid), created, false); err != nil {
 			return Meta{}, err
 		}
-		displayOwner = owner
+		displayOwner, visibility = owner, created.Visibility()
 	} else if grants, found, grantsErr := s.readGrants(uid); grantsErr == nil && found {
-		displayOwner, template = grants.Owner, grants.Template
+		displayOwner, template, visibility = grants.Owner, grants.Template, grants.Visibility()
 	}
 	// A world from before grants existed has neither: its meta keeps the
 	// owner it already recorded (NOT the current caller), and no grants are
@@ -867,6 +919,7 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 		Kind:        info.Kind,
 		Progress:    info.Progress,
 		Template:    template,
+		Visibility:  visibility,
 		// Server-owned, so carried across like the owner: the meta is
 		// rebuilt from the upload (the trap DEC-0037, fork 1, names).
 		Terrains: current.Terrains,

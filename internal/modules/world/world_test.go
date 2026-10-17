@@ -338,7 +338,7 @@ func TestPrivateWorldsAreInvisibleAndGrantsOpenThem(t *testing.T) {
 	}
 
 	// The public flag makes every authenticated caller a viewer.
-	if err := m.store.WriteGrants(context.Background(), sampleUID, access.Grants{Owner: "ada-id", Public: true}); err != nil {
+	if err := m.store.WriteGrants(context.Background(), sampleUID, access.Grants{Owner: "ada-id", Authenticated: "viewer"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := as(http.MethodGet, "/v1/worlds/"+sampleUID+"/meta", eve, nil).Code; got != http.StatusOK {

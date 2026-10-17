@@ -573,7 +573,7 @@ console.log('\n— the browser creates a world: a 409 for a world that is this s
         return res.writeHead(fake.putStatus.shift() ?? 409, { 'Content-Type': 'application/json' }).end('{"error":"x"}')
       }
       if (m && m[2] && fake.held) {
-        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ...fake.held, uid: m[1], callerLevel: fake.level }))
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ...fake.held, uid: m[1], actions: fake.level === 'viewer' ? ['world.read'] : ['world.read', 'world.write'] }))
       }
       res.writeHead(404).end()
     })

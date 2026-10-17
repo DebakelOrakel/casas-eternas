@@ -31,13 +31,9 @@ export interface ServerArtifact {
   width: number
   height: number
   bakeMs: number
-  // The caller's highest level over the worlds that hold the artifact's
-  // terrain ("viewer", "editor", "owner", or "admin" for the operator), and
-  // whether other worlds hold it too: what the caller may do with it.
-  // Deleting takes an editor of a terrain no other world holds, or an
-  // admin (DEC-0039).
-  callerLevel?: string
-  shared?: boolean
+  // What the caller may do with the artifact, as the server states it:
+  // `artifact.remove` or nothing (DEC-0039, fork 6; DEC-0040, fork 7).
+  actions?: string[]
 }
 
 export interface ServerArtifacts {
@@ -100,8 +96,8 @@ export interface ServerArtifactLevel {
   bytes: number
   label: string
   bakeMs: number
-  callerLevel?: string
-  shared?: boolean
+  // As ServerArtifact's.
+  actions?: string[]
 }
 
 export interface ServerArtifactLevels {

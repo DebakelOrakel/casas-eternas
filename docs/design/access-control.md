@@ -379,3 +379,8 @@ operator/eviction — noted, accepted. 2026-08-13 — the auth target gained its
 concrete shape in decisions/server-user-admin.md (auth.db in bbolt,
 unix-socket admin channel, `auth user` CLI) and design/server-deployment.md
 records why the split REQUIRES it (buildAuth is per-process today)
+
+2026-10-17: the `public` bit is replaced by grants to two pseudo-principals
+(`authenticated`, `anyone`), and the API answers the allowed actions in
+place of a level for the client —
+[roles-and-visibility.md](../decisions/roles-and-visibility.md) (DEC-0040).

@@ -194,3 +194,8 @@ owned it. Found in the review of DEC-0038; test
 [artifacts-by-content.md](./artifacts-by-content.md) (DEC-0039, decided, not
 built): artifacts are keyed by content, so a copy finds the template's
 artifacts, and the anonymous caller reads a template's artifacts too.
+
+2026-10-17: forks 1 and 2 are revised by
+[roles-and-visibility.md](./roles-and-visibility.md) (DEC-0040): the mark
+grants nothing; the anonymous caller reads a world whose visibility is
+`public` (`anyone → viewer`). Templates marked before read as public.

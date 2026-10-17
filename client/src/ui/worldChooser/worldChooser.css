@@ -294,6 +294,25 @@
   color: var(--dc-on-accent);
 }
 
+.wc-filter button:disabled:not([aria-pressed='true']) {
+  background: var(--dc-line);
+  color: var(--dc-faint);
+  cursor: default;
+}
+
+/* Who reads a server world, in its panel: a label and three buttons. */
+.wc-visibility {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.wc-visibility__label {
+  color: var(--dc-muted);
+  font-size: 12.5px;
+}
+
 /* --- the cards ------------------------------------------------------------ */
 
 .wc-list {

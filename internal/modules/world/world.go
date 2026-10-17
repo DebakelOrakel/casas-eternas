@@ -150,6 +150,7 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("POST /v1/worlds/{uid}/copy", m.handleCopy)
 	mux.HandleFunc("PUT /v1/worlds/{uid}/template", m.handleTemplate)
 	mux.HandleFunc("DELETE /v1/worlds/{uid}/template", m.handleTemplate)
+	mux.HandleFunc("PUT /v1/worlds/{uid}/visibility", m.handleVisibility)
 	// The two routes a world-less artifacts target asks (DEC-0039): the
 	// caller's level on a terrain, and a job worker's report of one.
 	mux.HandleFunc("GET /v1/worlds/terrain-access", m.handleTerrainAccess)
@@ -176,9 +177,9 @@ func (m *Module) SignedRequest(r *http.Request) bool {
 // AnonymousReads names the requests this module ranks for a caller WITHOUT
 // credentials, rather than the gate refusing them: the reads of a world —
 // the list, the archive, its meta and its preview — because a template is
-// readable by everyone (access.Grants.Template, docs/decisions/
-// template-worlds.md). cmd/ hands it to server.Gate. The module then answers
-// such a caller only with templates: the list holds nothing else, and every
+// readable by everyone (the "anyone" grant, access.VisibilityPublic,
+// DEC-0040). cmd/ hands it to server.Gate. The module then answers such a
+// caller only with public worlds: the list holds nothing else, and every
 // other world answers 401, as the gate would have.
 //
 // A pure function of the request, so the gate needs to know no module.
@@ -349,27 +350,30 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 		httpjson.ServerError(w, "listing worlds", err)
 		return
 	}
-	// The listing IS the visibility rule: own + granted + public + templates,
-	// nothing else — for the anonymous caller templates alone. One grants
-	// read per world — N is small, and the design doc blesses exactly this
-	// until it is not. Each entry says the caller's level on it, the same
-	// value the meta endpoint states: the client offers "open" or "copy" on
-	// a template, and the template mark only to an admin, by it.
+	// The listing IS the visibility rule: own + granted + signed in +
+	// public, nothing else — for the anonymous caller public alone. One
+	// grants read per world — N is small, and the design doc blesses exactly
+	// this until it is not. Each entry says the caller's level on it (for
+	// peers, as the meta endpoint) and the actions that level allows: the
+	// client offers "open" or "copy" on a template, the template mark and
+	// the visibility by them (DEC-0040, fork 7).
 	caller, admin := m.callerOf(r)
 	visible := make([]listedWorld, 0, len(metas))
 	for _, meta := range metas {
 		if _, level := m.AccessFor(r.Context(), meta.UID, caller, admin); level >= access.Viewer {
-			visible = append(visible, listedWorld{Meta: meta, CallerLevel: level.String()})
+			visible = append(visible, listedWorld{Meta: meta, CallerLevel: level.String(), Actions: access.Actions(level)})
 		}
 	}
 	httpjson.Write(w, http.StatusOK, visible)
 }
 
-// listedWorld is one entry of the list: the world's record and the caller's
-// level on it.
+// listedWorld is one entry of the list, and of the meta endpoint: the
+// world's record, the caller's level on it, and the actions the caller may
+// perform on it.
 type listedWorld struct {
 	Meta
-	CallerLevel string `json:"callerLevel"`
+	CallerLevel string          `json:"callerLevel"`
+	Actions     []access.Action `json:"actions"`
 }
 
 func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -430,10 +434,7 @@ func (m *Module) handleMeta(w http.ResponseWriter, r *http.Request) {
 	}
 	caller, admin := m.callerOf(r)
 	_, level := m.AccessFor(r.Context(), uid, caller, admin)
-	httpjson.Write(w, http.StatusOK, struct {
-		Meta
-		CallerLevel string `json:"callerLevel"`
-	}{Meta: meta, CallerLevel: level.String()})
+	httpjson.Write(w, http.StatusOK, listedWorld{Meta: meta, CallerLevel: level.String(), Actions: access.Actions(level)})
 }
 
 func (m *Module) handlePreview(w http.ResponseWriter, r *http.Request) {
@@ -691,6 +692,36 @@ func (m *Module) handleTemplate(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusOK, meta)
 }
 
+// handleVisibility sets which pseudo-principal reads a world, body
+// {"visibility": "private" | "signedIn" | "public"} (DEC-0040, fork 4).
+// The owner's (access.ActionShare) up to signed in; making a world public
+// takes the admin (access.ActionPublish). The owner may narrow a public
+// world: who reads their world is theirs to restrict. Answers the world's
+// record; idempotent.
+func (m *Module) handleVisibility(w http.ResponseWriter, r *http.Request) {
+	uid := r.PathValue("uid")
+	if m.refuseJob(w, r) || !m.gate(w, r, uid, access.ActionShare) {
+		return
+	}
+	var request struct {
+		Visibility string `json:"visibility"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&request); err != nil {
+		httpjson.ClientError(w, http.StatusBadRequest, "body must be {\"visibility\": \"private\" | \"signedIn\" | \"public\"}")
+		return
+	}
+	if request.Visibility == access.VisibilityPublic && !m.gate(w, r, uid, access.ActionPublish) {
+		return
+	}
+	meta, err := m.store.SetVisibility(r.Context(), uid, request.Visibility)
+	if err != nil {
+		respondStoreError(w, err)
+		return
+	}
+	slog.Info("world visibility", "uid", uid, "visibility", meta.Visibility)
+	httpjson.Write(w, http.StatusOK, meta)
+}
+
 // newUID is a random (version 4) UUID, the shape the client mints
 // (client/src/world/identity.ts, newWorldUid) and ValidUID accepts.
 func newUID() string {
@@ -739,6 +770,8 @@ func respondStoreError(w http.ResponseWriter, err error) {
 		httpjson.ClientError(w, http.StatusConflict, "world has no grants yet (it predates them); give it an owner first")
 	case errors.Is(err, ErrTooManyTerrains):
 		httpjson.ClientError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrBadVisibility):
+		httpjson.ClientError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrRevisionMismatch):
 		// 412 is what RFC 9110 specifies for a failed If-Match. The plan
 		// originally said 409; that is the code for the case above.

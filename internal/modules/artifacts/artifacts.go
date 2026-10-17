@@ -318,16 +318,39 @@ func (m *Module) allowed(w http.ResponseWriter, r *http.Request, worldID string,
 		httpjson.ClientError(w, http.StatusForbidden, "only a job worker writes artifacts")
 		return false
 	case removing:
+		if mayRemove(level, shared) {
+			break
+		}
 		if level < access.Editor {
 			httpjson.ClientError(w, http.StatusForbidden, "removing artifacts needs editor access to their world")
 			return false
 		}
-		if shared {
-			httpjson.ClientError(w, http.StatusForbidden, "these artifacts serve other worlds too; only an admin removes them")
-			return false
-		}
+		httpjson.ClientError(w, http.StatusForbidden, "these artifacts serve other worlds too; only an admin removes them")
+		return false
 	}
 	return true
+}
+
+// mayRemove is the rule for removing the artifacts of a terrain, given the
+// caller's highest level over the worlds that hold it and whether more than
+// one world holds it: an editor's when only their world holds it, else the
+// operator's (DEC-0039, fork 6).
+func mayRemove(level access.Level, shared bool) bool {
+	return level >= access.Admin || (level >= access.Editor && !shared)
+}
+
+// ActionRemove is the one action a caller may have on an artifact or a
+// level (mayRemove).
+const ActionRemove = "artifact.remove"
+
+// actionsFor answers the actions of a caller of `level` on a terrain that
+// `shared` says other worlds hold too — what the listings give the client
+// in place of a level (DEC-0040, fork 7).
+func actionsFor(level access.Level, shared bool) []string {
+	if mayRemove(level, shared) {
+		return []string{ActionRemove}
+	}
+	return []string{}
 }
 
 // holds answers whether a job's world holds a terrain: from what this
@@ -730,10 +753,8 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 // whoever may read a world that holds its terrain. Meta-less entries
 // (junk, mid-write) show only to the operator — they can rank nobody. One
 // TerrainAccess per DISTINCT terrain, not per artifact. Each entry says
-// what the caller may do with it (callerLevel: the caller's highest level
-// over those worlds, "admin" for the operator; shared: other worlds hold
-// the terrain too, so only an admin removes it), so a client greys out what
-// it may not delete rather than letting the request fail.
+// what the caller may do with it (actions, actionsFor), so a client greys
+// out what it may not delete rather than letting the request fail.
 func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 	artifacts, err := m.store.List(r.Context())
 	if err != nil {
@@ -743,7 +764,7 @@ func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 	var bytes int64
 	if m.operator(r) {
 		for _, artifact := range artifacts {
-			visible = append(visible, callerArtifact{artifact, access.Admin.String(), false})
+			visible = append(visible, callerArtifact{artifact, actionsFor(access.Admin, false)})
 		}
 		// The operator sees the whole store, so the gauge is the whole store —
 		// the cache-size figure the eviction reasons about.
@@ -768,7 +789,7 @@ func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 			ranks[artifact.WorldID] = got
 		}
 		if got.level >= access.Viewer {
-			visible = append(visible, callerArtifact{artifact, got.level.String(), got.shared})
+			visible = append(visible, callerArtifact{artifact, actionsFor(got.level, got.shared)})
 			bytes += artifact.Bytes
 		}
 	}
@@ -780,16 +801,15 @@ func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 // what the artifact window shows as a row, instead of an entry per tile
 // (a world refined to level 3 is ten thousand of them, 2026-10-02).
 type LevelSummary struct {
-	WorldID         string `json:"worldId"`
-	PipelineVersion string `json:"pipelineVersion"`
-	Level           int    `json:"level"`
-	Tiles           bool   `json:"tiles"`
-	Count           int    `json:"count"`
-	Bytes           int64  `json:"bytes"`
-	Label           string `json:"label"`
-	BakeMs          int64  `json:"bakeMs"`
-	CallerLevel     string `json:"callerLevel"`
-	Shared          bool   `json:"shared"`
+	WorldID         string   `json:"worldId"`
+	PipelineVersion string   `json:"pipelineVersion"`
+	Level           int      `json:"level"`
+	Tiles           bool     `json:"tiles"`
+	Count           int      `json:"count"`
+	Bytes           int64    `json:"bytes"`
+	Label           string   `json:"label"`
+	BakeMs          int64    `json:"bakeMs"`
+	Actions         []string `json:"actions"`
 }
 
 // handleLevels lists what the caller may see, summed per terrain,
@@ -816,7 +836,7 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 		k := groupKey{a.WorldID, a.PipelineVersion, level, tile}
 		g := groups[k]
 		if g == nil {
-			g = &LevelSummary{WorldID: a.WorldID, PipelineVersion: a.PipelineVersion, Level: level, Tiles: tile, Label: a.Label, CallerLevel: a.CallerLevel, Shared: a.Shared}
+			g = &LevelSummary{WorldID: a.WorldID, PipelineVersion: a.PipelineVersion, Level: level, Tiles: tile, Label: a.Label, Actions: a.Actions}
 			groups[k] = g
 			order = append(order, k)
 		}
@@ -841,12 +861,11 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusOK, map[string]any{"levels": out, "bytes": bytes})
 }
 
-// A listed artifact with the caller's level on its terrain, and whether
-// other worlds hold the terrain too (see visible).
+// A listed artifact with the actions the caller may perform on it (see
+// visible).
 type callerArtifact struct {
 	ListedArtifact
-	CallerLevel string `json:"callerLevel"`
-	Shared      bool   `json:"shared"`
+	Actions []string `json:"actions"`
 }
 
 func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {

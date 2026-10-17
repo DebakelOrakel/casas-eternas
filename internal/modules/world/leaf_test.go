@@ -405,7 +405,9 @@ func TestTheS3BucketIsVersionedAndWritesConditionally(t *testing.T) {
 	}
 }
 
-// Grants in the index follow every writer: a transfer, the template mark.
+// Grants in the index follow every writer: a transfer, the template mark,
+// the visibility. A grants.json of the form before DEC-0040 is read in the
+// new one, and the meta's visibility mirror follows it.
 func TestTheIndexFollowsTheGrants(t *testing.T) {
 	s := newTestStore(t)
 	if _, err := putAs(t, s, sampleUID, "first", "ada-id", 0); err != nil {
@@ -417,11 +419,24 @@ func TestTheIndexFollowsTheGrants(t *testing.T) {
 	if _, err := s.SetTemplate(context.Background(), sampleUID, true); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.SetVisibility(context.Background(), sampleUID, access.VisibilitySignedIn); err != nil {
+		t.Fatal(err)
+	}
 	reindex(t, s)
 	g, _, err := s.ReadGrants(context.Background(), sampleUID)
 	meta, _ := s.Get(context.Background(), sampleUID)
-	if err != nil || g.Owner != "grace-id" || !g.Template || meta.Owner != "grace-id" || !meta.Template {
-		t.Errorf("after a restart: grants %+v, meta owner %q template %v, err %v", g, meta.Owner, meta.Template, err)
+	if err != nil || g.Owner != "grace-id" || !g.Template || g.Authenticated != "viewer" || meta.Owner != "grace-id" || !meta.Template || meta.Visibility != access.VisibilitySignedIn {
+		t.Errorf("after a restart: grants %+v, meta %+v, err %v", g, meta, err)
+	}
+
+	if err := s.putJSON(context.Background(), grantsKey(sampleUID), map[string]any{"owner": "grace-id", "public": false, "template": true}, false); err != nil {
+		t.Fatal(err)
+	}
+	reindex(t, s)
+	g, _, _ = s.ReadGrants(context.Background(), sampleUID)
+	meta, _ = s.Get(context.Background(), sampleUID)
+	if g.Anyone != "viewer" || !g.Template || meta.Visibility != access.VisibilityPublic {
+		t.Errorf("an old template's grants = %+v, meta visibility %q, want public", g, meta.Visibility)
 	}
 }
 

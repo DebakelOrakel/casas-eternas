@@ -370,13 +370,24 @@ func (m *Module) mayCancel(r *http.Request, job Job, level access.Level) bool {
 	return caller != "" && caller == job.OrderedBy
 }
 
-// A job with the caller's level on its world ("viewer", "editor", "owner",
-// or "admin" for the operator), and whether they may cancel it (an editor
-// of the world, or the caller who ordered it).
+// ActionCancel is the one action a caller may have on a job: an editor of
+// its world, or the caller who ordered it (mayCancel).
+const ActionCancel = "job.cancel"
+
+// A job with the actions the caller may perform on it — what the client
+// renders by, deriving no rule of its own (DEC-0040, fork 7).
 type listedJob struct {
 	Job
-	CallerLevel string `json:"callerLevel"`
-	MayCancel   bool   `json:"mayCancel"`
+	Actions []string `json:"actions"`
+}
+
+// listed answers a job as the caller sees it.
+func (m *Module) listed(r *http.Request, job Job, level access.Level) listedJob {
+	actions := []string{}
+	if m.mayCancel(r, job, level) {
+		actions = append(actions, ActionCancel)
+	}
+	return listedJob{job, actions}
 }
 
 // operator answers "may this request see and do anything here": the admin
@@ -414,7 +425,7 @@ func (m *Module) handleGet(w http.ResponseWriter, r *http.Request) {
 		httpjson.ClientError(w, http.StatusNotFound, "no such job")
 		return
 	}
-	httpjson.Write(w, http.StatusOK, listedJob{job, level.String(), m.mayCancel(r, job, level)})
+	httpjson.Write(w, http.StatusOK, m.listed(r, job, level))
 }
 
 // handleCancel stops a job: its queued tasks are withdrawn, and a worker
@@ -454,7 +465,7 @@ func (m *Module) handleList(w http.ResponseWriter, r *http.Request) {
 			levels[job.Request.WorldUID] = level
 		}
 		if level >= access.Viewer {
-			visible = append(visible, listedJob{job, level.String(), m.mayCancel(r, job, level)})
+			visible = append(visible, m.listed(r, job, level))
 		}
 	}
 	httpjson.Write(w, http.StatusOK, visible)
@@ -574,7 +585,7 @@ func (m *Module) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if level < access.Viewer {
 				continue
 			}
-			raw, err := json.Marshal(listedJob{job, level.String(), m.mayCancel(r, job, level)})
+			raw, err := json.Marshal(m.listed(r, job, level))
 			if err != nil {
 				continue
 			}

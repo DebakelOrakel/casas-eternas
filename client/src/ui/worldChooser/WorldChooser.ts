@@ -4,7 +4,8 @@ import { t, type TKey } from '../../i18n/i18n'
 import { formatBytes, formatWhen } from '../../ui/format'
 import { hasSession, needsSignIn } from '../../server/session'
 import {
-  copyWorldOnServer, deleteWorld, fetchWorld, fetchWorldPreview, listWorlds, setWorldTemplate, uploadWorld, type WorldSummary,
+  copyWorldOnServer, deleteWorld, fetchWorld, fetchWorldPreview, listWorlds, setWorldTemplate, setWorldVisibility, uploadWorld,
+  WORLD_VISIBILITIES, type WorldSummary,
 } from '../../server/worldClient'
 import { newWorldUid } from '../../world/identity'
 import { copyArchive } from '../../world/worldCopy'
@@ -114,7 +115,7 @@ function browserCopy(world: BrowserWorld): WorldCopy {
     where: 'browser', uid: world.uid, name: world.name, seed: world.seed,
     kind: world.kind ?? null, progress: world.progress ?? null,
     bytes: world.bytes, savedAt: world.savedAt, generator: world.generator, contentHash: world.contentHash ?? '',
-    template: false, callerLevel: '',
+    template: false, actions: [], visibility: '',
   }
 }
 
@@ -124,7 +125,7 @@ function serverCopy(world: WorldSummary): WorldCopy {
     kind: world.kind === 'FlatWorld' || world.kind === 'SphereWorld' ? world.kind : null,
     progress: progressStepOf(world.progress),
     bytes: world.size, savedAt: world.updatedAt, generator: world.generator ?? '', contentHash: world.contentHash ?? '',
-    template: world.template ?? false, callerLevel: world.callerLevel ?? '',
+    template: world.template ?? false, actions: world.actions ?? [], visibility: world.visibility ?? '',
   }
 }
 
@@ -665,6 +666,40 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     return node
   }
 
+  // Who reads a server copy: three buttons, shown to whoever may share the
+  // world (world.share). Public is the admin's (world.publish), greyed out
+  // for the owner, so the help card can say what the choice is.
+  function visibilityControl(copy: WorldCopy): HTMLElement | null {
+    if (copy.where !== 'server' || !copy.actions.includes('world.share')) return null
+    const block = el('div', 'wc-visibility')
+    const label = el('span', 'wc-visibility__label', t('generator.load.visibility.label'))
+    label.dataset.help = 'generator.load.visibility'
+    const group = el('div', 'wc-filter')
+    group.setAttribute('role', 'group')
+    group.setAttribute('aria-label', t('generator.load.visibility.label'))
+    for (const value of WORLD_VISIBILITIES) {
+      const node = button('', t(`generator.load.visibility.${value}.label`))
+      node.dataset.help = 'generator.load.visibility'
+      node.setAttribute('aria-pressed', String(copy.visibility === value))
+      node.disabled = value === 'public' && !copy.actions.includes('world.publish')
+      node.addEventListener('click', () => {
+        if (copy.visibility === value) return
+        for (const other of group.querySelectorAll('button')) other.disabled = true
+        void setWorldVisibility(copy.uid, value).then(async (done) => {
+          if (!done) {
+            closeDetail()
+            setNote(t('generator.load.visibility.failed'))
+            return
+          }
+          await reload()
+        })
+      })
+      group.append(node)
+    }
+    block.append(label, group)
+    return block
+  }
+
   function removeButton(copy: WorldCopy): HTMLButtonElement {
     const node = armedButton('wc-action wc-action--remove', 'generator.load.remove.label', 'generator.load.remove.confirm', () => removeCopy(copy))
     node.dataset.help = 'generator.load.remove'
@@ -853,7 +888,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     const copyNode = copyButton(card, copy)
     if (copyNode) row.append(copyNode)
     if (copy.template) row.append(copyMenu(copy, 'wc-action'))
-    if (copy.where === 'server' && copy.callerLevel === 'admin') row.append(templateButton(copy))
+    if (copy.actions.includes('world.template')) row.append(templateButton(copy))
     row.append(removeButton(copy))
     return row
   }
@@ -888,7 +923,10 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
 
     const parts: HTMLElement[] = [head]
     if (!card.browser || !card.server) {
-      parts.push(facts([...common, ...copyFacts(shown)]), actions(card, shown))
+      parts.push(facts([...common, ...copyFacts(shown)]))
+      const visibility = visibilityControl(shown)
+      if (visibility) parts.push(visibility)
+      parts.push(actions(card, shown))
     } else {
       // Both places: the two copies side by side, each with its own facts and
       // its own buttons — of two different versions, the user picks one.
@@ -898,7 +936,10 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
         const column = el('section', 'wc-version')
         const heading = el('h3', 'wc-version__title', t(copy.where === 'browser' ? 'generator.load.version.browser' : 'generator.load.version.server'))
         if (card.newer === copy.where) heading.append(el('span', 'wc-version__newer', t('generator.load.version.newer')))
-        column.append(heading, facts(copyFacts(copy)), actions(card, copy))
+        column.append(heading, facts(copyFacts(copy)))
+        const visibility = visibilityControl(copy)
+        if (visibility) column.append(visibility)
+        column.append(actions(card, copy))
         versions.append(column)
       }
       parts.push(versions)

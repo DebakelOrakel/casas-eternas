@@ -122,10 +122,13 @@ func TestTerrainsAreRecordedByTheJobAndCarried(t *testing.T) {
 		t.Error("the gate does not let an anonymous terrain-access through")
 	}
 
-	// A template, and a copy of it: the copy takes the set, so the terrain
+	// A public template, and a copy of it: the copy takes the set, so the terrain
 	// is shared, and its owner ranks on it at once.
 	if got := send(http.MethodPut, "/v1/worlds/"+sampleUID+"/template", root, nil, nil).Code; got != http.StatusOK {
 		t.Fatalf("template = %d", got)
+	}
+	if got := send(http.MethodPut, "/v1/worlds/"+sampleUID+"/visibility", root, []byte(`{"visibility":"public"}`), nil).Code; got != http.StatusOK {
+		t.Fatalf("public = %d", got)
 	}
 	if level, _ := rank("", "t1"); level != "viewer" {
 		t.Errorf("the anonymous rank on a template's terrain = %s, want viewer", level)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,10 +19,12 @@ import (
 	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
-// Template worlds (docs/decisions/template-worlds.md), end to end through real
-// tokens and real grants: a template is readable by every caller, the
-// anonymous one included; the mark is the admin's; a copy is a new world of
-// the caller's with the source named in world.yaml.
+// Template worlds (docs/decisions/template-worlds.md) and the visibility
+// (DEC-0040), end to end through real tokens and real grants: a public
+// world is readable by every caller, the anonymous one included; the mark
+// and the public visibility are the admin's, and the mark grants nothing;
+// a copy is a new world of the caller's with the source named in
+// world.yaml.
 //
 // The gate in front is server.Gate's rule restated (nothing imports
 // internal/server): a request without a caller is refused unless it carries
@@ -151,12 +154,51 @@ func TestOnlyAnAdminSetsTheTemplateMark(t *testing.T) {
 	}
 }
 
-func TestATemplateIsReadableByEveryone(t *testing.T) {
+// visibility sets a world's visibility through the route, as `bearer`.
+func (f *templateFixture) visibility(bearer, v string) int {
+	return f.as(http.MethodPut, "/v1/worlds/"+sampleUID+"/visibility", bearer, []byte(`{"visibility":"`+v+`"}`)).Code
+}
+
+func TestOnlyAnAdminMakesAWorldPublic(t *testing.T) {
+	f := newTemplateFixture(t)
+	for _, c := range []struct {
+		who, bearer, visibility string
+		want                    int
+	}{
+		{"the stranger", f.grace, access.VisibilitySignedIn, http.StatusNotFound},
+		{"nobody", "", access.VisibilitySignedIn, http.StatusUnauthorized},
+		{"the owner", f.ada, access.VisibilityPublic, http.StatusForbidden},
+		{"the owner", f.ada, "everyone", http.StatusBadRequest},
+		{"the owner", f.ada, access.VisibilitySignedIn, http.StatusOK},
+		{"the admin", f.root, access.VisibilityPublic, http.StatusOK},
+		// Who reads a world is its owner's to restrict.
+		{"the owner", f.ada, access.VisibilityPrivate, http.StatusOK},
+	} {
+		if got := f.visibility(c.bearer, c.visibility); got != c.want {
+			t.Errorf("%s sets %s = %d, want %d", c.who, c.visibility, got, c.want)
+		}
+	}
+	if meta, _ := f.m.store.Get(context.Background(), sampleUID); meta.Visibility != access.VisibilityPrivate {
+		t.Errorf("visibility = %q, want private", meta.Visibility)
+	}
+	// The owner's share path cannot make a world public (nor take it back).
+	if err := f.m.store.WriteGrants(context.Background(), sampleUID, access.Grants{Owner: "ada-id", Anyone: "viewer"}); err != nil {
+		t.Fatal(err)
+	}
+	if grants, _, _ := f.m.store.ReadGrants(context.Background(), sampleUID); grants.Anyone != "" {
+		t.Error("WriteGrants granted the anonymous caller")
+	}
+}
+
+func TestAPublicWorldIsReadableByEveryone(t *testing.T) {
 	f := newTemplateFixture(t)
 
-	// Before the mark: private means invisible to the stranger (404), and
-	// without credentials the answer is the gate's (401) — on the routes
-	// the gate now lets through, too.
+	// Private: invisible to the stranger (404), and without credentials the
+	// answer is the gate's (401) — on the routes the gate lets through, too.
+	// The template mark changes nothing about that (DEC-0040, fork 5).
+	if _, err := f.m.store.SetTemplate(context.Background(), sampleUID, true); err != nil {
+		t.Fatal(err)
+	}
 	for _, path := range readRoutes {
 		if got := f.as(http.MethodGet, path, f.grace, nil).Code; got != http.StatusNotFound {
 			t.Errorf("stranger GET %s = %d, want 404", path, got)
@@ -166,11 +208,22 @@ func TestATemplateIsReadableByEveryone(t *testing.T) {
 		}
 	}
 	if listed := f.list(""); len(listed) != 0 {
-		t.Errorf("anonymous list before the mark = %d entries, want 0", len(listed))
+		t.Errorf("anonymous list of a private template = %d entries, want 0", len(listed))
 	}
 
-	if _, err := f.m.store.SetTemplate(context.Background(), sampleUID, true); err != nil {
-		t.Fatal(err)
+	// Signed in: the stranger reads, the anonymous caller does not.
+	if got := f.visibility(f.ada, access.VisibilitySignedIn); got != http.StatusOK {
+		t.Fatalf("signed in = %d", got)
+	}
+	if got := f.as(http.MethodGet, readRoutes[1], f.grace, nil).Code; got != http.StatusOK {
+		t.Errorf("stranger GET of a signed-in world = %d, want 200", got)
+	}
+	if got := f.as(http.MethodGet, readRoutes[1], "", nil).Code; got != http.StatusUnauthorized {
+		t.Errorf("anonymous GET of a signed-in world = %d, want 401", got)
+	}
+
+	if got := f.visibility(f.root, access.VisibilityPublic); got != http.StatusOK {
+		t.Fatalf("public = %d", got)
 	}
 	for _, bearer := range []string{"", f.grace} {
 		for _, path := range readRoutes {
@@ -179,25 +232,25 @@ func TestATemplateIsReadableByEveryone(t *testing.T) {
 			}
 		}
 		listed := f.list(bearer)
-		if len(listed) != 1 || !listed[0].Template || listed[0].CallerLevel != "viewer" {
-			t.Errorf("list as %q = %+v, want the template, at viewer", bearer, listed)
+		if len(listed) != 1 || !listed[0].Template || listed[0].Visibility != access.VisibilityPublic || listed[0].CallerLevel != "viewer" || !slices.Equal(listed[0].Actions, []access.Action{access.ActionRead}) {
+			t.Errorf("list as %q = %+v, want the template, public, at viewer, to read", bearer, listed)
 		}
 	}
 	// Reading, nothing more.
 	if got := f.as(http.MethodDelete, "/v1/worlds/"+sampleUID, f.grace, nil).Code; got != http.StatusForbidden {
-		t.Errorf("stranger DELETE of a template = %d, want 403", got)
+		t.Errorf("stranger DELETE of a public world = %d, want 403", got)
 	}
 	if got := f.as(http.MethodDelete, "/v1/worlds/"+sampleUID, "", nil).Code; got != http.StatusUnauthorized {
-		t.Errorf("anonymous DELETE of a template = %d, want 401", got)
+		t.Errorf("anonymous DELETE of a public world = %d, want 401", got)
 	}
-	// The owner and the admin keep their own levels on it.
-	for bearer, want := range map[string]string{f.ada: "owner", f.root: "admin"} {
-		if listed := f.list(bearer); len(listed) != 1 || listed[0].CallerLevel != want {
-			t.Errorf("list = %+v, want callerLevel %s", listed, want)
+	// The owner and the admin keep their own levels and actions on it.
+	for bearer, want := range map[string]access.Level{f.ada: access.Owner, f.root: access.Admin} {
+		if listed := f.list(bearer); len(listed) != 1 || listed[0].CallerLevel != want.String() || !slices.Equal(listed[0].Actions, access.Actions(want)) {
+			t.Errorf("list = %+v, want %s", listed, want)
 		}
 	}
 	// Credentials that do not verify are refused even here: a lapsed
-	// session must learn it, not see the templates only.
+	// session must learn it, not see the public worlds only.
 	if got := f.as(http.MethodGet, "/v1/worlds", "nonsense", nil).Code; got != http.StatusUnauthorized {
 		t.Errorf("a bad token on the list = %d, want 401", got)
 	}
@@ -213,6 +266,9 @@ func TestACopyIsANewWorldOfTheCaller(t *testing.T) {
 		t.Errorf("stranger copy of a private world = %d, want 404", got)
 	}
 	if _, err := f.m.store.SetTemplate(context.Background(), sampleUID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.m.store.SetVisibility(context.Background(), sampleUID, access.VisibilityPublic); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.as(http.MethodPost, path, "", nil).Code; got != http.StatusUnauthorized {
@@ -234,7 +290,7 @@ func TestACopyIsANewWorldOfTheCaller(t *testing.T) {
 		t.Errorf("copy meta = %+v, want grace's, revision 1, no template, the same name and a preview", meta)
 	}
 	grants, _, _ := f.m.store.ReadGrants(context.Background(), meta.UID)
-	if grants.Owner != "grace-id" || grants.Template || grants.Public {
+	if grants.Owner != "grace-id" || grants.Template || grants.Visibility() != access.VisibilityPrivate {
 		t.Errorf("copy grants = %+v, want private and grace's", grants)
 	}
 
@@ -302,6 +358,9 @@ func TestTheMarkNeedsGrants(t *testing.T) {
 	removeObject(t, s, grantsKey(sampleUID))
 	if _, err := s.SetTemplate(context.Background(), sampleUID, true); err != ErrNoGrants {
 		t.Errorf("mark on a legacy world = %v, want ErrNoGrants", err)
+	}
+	if _, err := s.SetVisibility(context.Background(), sampleUID, access.VisibilitySignedIn); err != ErrNoGrants {
+		t.Errorf("visibility of a legacy world = %v, want ErrNoGrants", err)
 	}
 }
 

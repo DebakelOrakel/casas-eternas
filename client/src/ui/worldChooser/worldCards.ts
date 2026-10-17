@@ -26,22 +26,26 @@ export interface WorldCopy {
   // SHA-256 of the archive bytes, lowercase hex; empty when not known.
   contentHash: string
   // Whether the copy is a template (docs/decisions/template-worlds.md):
-  // a server world offered to everyone to copy. Never true in the browser —
+  // a server world offered as a start to copy. Never true in the browser —
   // the mark is the server's.
   template: boolean
-  // The caller's level on the copy as the server states it (`viewer` …
-  // `admin`); empty for a browser copy, which is the browser's own.
-  callerLevel: string
+  // The actions the caller may perform on a server copy, as the server
+  // states them (`world.write`, `world.template`, …; DEC-0040, fork 7);
+  // empty for a browser copy, which is the browser's own.
+  actions: readonly string[]
+  // Who reads a server copy (`private`, `signedIn`, `public`; DEC-0040);
+  // empty for a browser copy, and from a server that does not say.
+  visibility: string
 }
 
-// Whether the caller holds the copy as its own: a browser copy, or a server
-// copy the caller owns or administers. The rest are worlds of others.
-export const ownsCopy = (copy: WorldCopy): boolean =>
-  copy.where === 'browser' || copy.callerLevel === 'owner' || copy.callerLevel === 'admin'
+// Whether the caller may write the copy: a browser copy, or a server copy
+// the server says the caller may write.
+export const writesCopy = (copy: WorldCopy): boolean =>
+  copy.where === 'browser' || copy.actions.includes('world.write')
 
-// A template that is someone else's: offered to copy, not to open — opening
-// it would offer saves that the server refuses.
-export const foreignTemplate = (copy: WorldCopy | null): boolean => copy !== null && copy.template && !ownsCopy(copy)
+// A template the caller may not write: offered to copy, not to open —
+// opening it would offer saves that the server refuses.
+export const foreignTemplate = (copy: WorldCopy | null): boolean => copy !== null && copy.template && !writesCopy(copy)
 
 // `single`: one place holds the world. `same`: both hold byte-identical
 // archives. `diverged`: both hold it and the bytes differ — or one side's

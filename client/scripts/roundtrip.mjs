@@ -289,7 +289,7 @@ console.log('\n— run history —')
 {
   console.log('\n— world list merge —')
   const WC = await L('/src/ui/worldChooser/worldCards.ts')
-  const copy = (where, uid, extra = {}) => ({ where, uid, name: uid, seed: 's', kind: 'FlatWorld', progress: null, bytes: 1, savedAt: '2026-10-01T10:00:00Z', generator: 'g', contentHash: 'aa', template: false, callerLevel: where === 'server' ? 'owner' : '', ...extra })
+  const copy = (where, uid, extra = {}) => ({ where, uid, name: uid, seed: 's', kind: 'FlatWorld', progress: null, bytes: 1, savedAt: '2026-10-01T10:00:00Z', generator: 'g', contentHash: 'aa', template: false, visibility: where === 'server' ? 'private' : '', actions: where === 'server' ? ['world.read', 'world.write', 'world.share', 'world.delete'] : [], ...extra })
   const opensAll = () => true
   const cards = WC.mergeWorldCopies(
     [copy('browser', 'same'), copy('browser', 'diverged', { contentHash: 'bb', savedAt: '2026-10-02T10:00:00Z' }), copy('browser', 'nohash', { contentHash: '' }), copy('browser', 'local', { kind: 'SphereWorld' })],
@@ -317,9 +317,10 @@ console.log('\n— run history —')
   const mixedKind = WC.mergeWorldCopies([copy('browser', 'x', { kind: null })], [copy('server', 'x', { kind: 'SphereWorld' })])[0]
   check('the shape comes from whichever copy knows it', mixedKind.kind === 'SphereWorld' && WC.cardMatches(mixedKind, 'all', 'sphere'))
   // Templates (docs/decisions/template-worlds.md): the server copy's mark
-  // makes the card one; someone else's template is not opened but copied,
-  // the owner's and the admin's open as usual.
-  const templates = WC.mergeWorldCopies([copy('browser', 'mine')], [copy('server', 'theirs', { template: true, callerLevel: 'viewer' }), copy('server', 'owned', { template: true }), copy('server', 'ruled', { template: true, callerLevel: 'admin' }), copy('server', 'plain')])
+  // makes the card one; a template the caller may not write is not opened
+  // but copied, the owner's and the admin's open as usual (by the actions
+  // the server states, DEC-0040).
+  const templates = WC.mergeWorldCopies([copy('browser', 'mine')], [copy('server', 'theirs', { template: true, actions: ['world.read'] }), copy('server', 'owned', { template: true }), copy('server', 'ruled', { template: true, actions: ['world.read', 'world.write', 'world.share', 'world.delete', 'world.publish', 'world.template'] }), copy('server', 'plain')])
   const tcard = (uid) => templates.find((c) => c.uid === uid)
   const tunder = (where) => templates.filter((c) => WC.cardMatches(c, where, 'anyShape')).map((c) => c.uid).sort().join(',')
   check('the template filter keeps the templates, All keeps everything', tunder('template') === 'owned,ruled,theirs' && tunder('all') === 'mine,owned,plain,ruled,theirs', `${tunder('template')} | ${tunder('all')}`)
