@@ -568,7 +568,13 @@ interface PlannedTask {
   after: [number, number, number][]
   upstream: { x: number; y: number }[]
 }
+// The world's shape as the generator's Domain names it.
+const shapeOf = (inputs: WorldInputs): 'torus' | 'sphere' => (inputs.kind === 'SphereWorld' ? 'sphere' : 'torus')
+
 function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[] {
+  // The sphere's tiles are the cube atlas's (docs/decisions/sphere-tiles.md,
+  // DEC-0041), not built into the plan yet: level 1 alone.
+  if (shapeOf(inputs) === 'sphere') return []
   const mesh = meshLevelMesh(artifact, inputs.width, inputs.height)
   const routing = meshRouting(mesh, artifact.z)
   const plan = planTiles({
@@ -595,7 +601,7 @@ async function replayLevel(job: Job, inputs: WorldInputs, onProgress: (phase: st
   const refusal = replayRefusal(inputs.history, GENERATOR_CODE)
   if (refusal) throw new Error(refusal)
   if (!inputs.mesh) throw new Error('the world carries no mesh — make it again to refine it')
-  const recipe = { seed: inputs.seedText, width: inputs.width, height: inputs.height, history: inputs.history }
+  const recipe = { seed: inputs.seedText, width: inputs.width, height: inputs.height, shape: shapeOf(inputs), history: inputs.history }
   const pool = job.pool === false ? undefined : enginePool()
   const dir = job.checkpointDir ? checkpointPath(job.checkpointDir, inputs) : null
   const resume = dir ? await readCheckpoint(dir) : null
@@ -745,6 +751,7 @@ function landTiles(inputs: WorldInputs, spec: TileSpec): [number, number][] {
 // read by every tile: its river graph brings the inflow, its surface the
 // synthesis' relief.
 async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onProgress: (phase: string, fraction: number) => void, cache?: JobCache): Promise<JobOutcome> {
+  if (shapeOf(inputs) === 'sphere') throw new Error('tiles on the sphere are not built yet (docs/decisions/sphere-tiles.md)')
   const spec = tileSpec(job.stage)
   const { cols, rows } = tileGrid(inputs.width, inputs.height, spec)
   if (!job.tile || !Number.isInteger(job.tile.x) || !Number.isInteger(job.tile.y) || job.tile.x < 0 || job.tile.y < 0 || job.tile.x >= cols || job.tile.y >= rows) {

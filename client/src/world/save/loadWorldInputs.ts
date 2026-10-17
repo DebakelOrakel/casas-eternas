@@ -1,4 +1,5 @@
 import { openWorld, waterBodiesOf, type SavedMesh } from '../query'
+import type { WorldKind } from '../worldRecord'
 import type { SavedClimate } from './climateFields'
 import type { World } from '../query'
 import type { WaterBody } from '../../generator/surface/hydrology'
@@ -56,6 +57,8 @@ export interface ErosionControls {
 export interface WorldInputs {
   // The terrain mesh's rasterisation on the world raster (world/query.ts).
   elevations: Float32Array
+  // The world's shape (world.yaml's kind).
+  kind: WorldKind
   width: number
   height: number
   seedText: string
@@ -134,6 +137,7 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
 
   return {
     elevations: elevation.data,
+    kind: world.kind,
     width: world.width,
     height: world.height,
     seedText: world.recipe.seedText,

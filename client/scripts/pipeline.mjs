@@ -3290,6 +3290,41 @@ test("level 1's replay makes the saved world again, across a load and a checkpoi
   check('and lands on the same bytes', parts((await serialize(g)).mesh) === savedParts)
 })
 
+test("level 1 of a sphere world: the replay at level 1's budget, its waters, the artifact read back on the sphere", async () => {
+  // The first step of the sphere's tiles (docs/decisions/sphere-tiles.md,
+  // DEC-0041, order of building 1): what the job worker does for level 1 —
+  // replay at the level's budget, derive the waters, store the level —,
+  // and the stored level decodes on the sphere again.
+  const WS = await server.ssrLoadModule('/src/world/save/worldSpec.ts')
+  const WH = await server.ssrLoadModule('/src/world/save/worldHistory.ts')
+  const RE = await server.ssrLoadModule('/src/world/replay.ts')
+  const BAKE = await server.ssrLoadModule('/src/generator/pipeline/meshBakeStage.ts')
+  const CP = await server.ssrLoadModule('/src/generator/climate/climatePoints.ts')
+  const MA = await server.ssrLoadModule('/src/world/meshArtifacts.ts')
+  const MEM = await server.ssrLoadModule('/src/storage/MemoryArtifactStore.ts')
+  const values = Object.fromEntries(WS.WORLD_SPEC_FIELDS.map((f) => [f.path, f.input.default]))
+  const runOf = (epochs, fields) => ({ epochs, generator: '', code: '', values: WH.runValues(fields, values) })
+  const SW = 256, SH = 128
+  const recipe = { seed: 'sphere-level', width: SW, height: SH, shape: 'sphere', history: { genesis: [runOf(40, WH.GENESIS_RUN_FIELDS)], tectonics: [runOf(6, WH.TECTONICS_RUN_FIELDS)] } }
+  const { terrain } = await RE.replayHistory(recipe, { budget: BAKE.levelBudget(1) })
+  let land = 0
+  for (let v = 0; v < terrain.mesh.vertexSlots; v++) if (terrain.mesh.vAlive[v] && terrain.z[v] > 0) land++
+  check('the replay runs on the sphere at level 1\'s budget, with land', terrain.mesh.domain.kind === 'sphere' && land > 0, `${terrain.mesh.aliveVertices} nodes, ${land} on land`)
+  const cells = CP.climateCellsFromWeather(terrain.weather.result)
+  const at = CP.climateAtPoints(cells, CP.meshPoints(terrain.mesh, terrain.z))
+  const water = BAKE.levelHydrology(terrain.mesh, terrain.z, terrain.routing, terrain.areas, terrain.sedimentFlux, {
+    precipitation: at.precipitation, temperature: at.temperature, monsoonIndex: at.monsoonIndex, meanRunoff: CP.meanLandRunoff(cells),
+  }, { width: SW, height: SH, budget: BAKE.levelBudget(1), detailSeed: 1 })
+  check('its waters derive on the sphere', water.graph !== null && Array.isArray(water.waterBodies))
+  const artifact = MA.meshLevelToArtifact({ level: 1, mesh: terrain.mesh, z: terrain.z, routing: terrain.routing, ...water, inserted: 0 })
+  const store = MEM.createMemoryArtifactStore()
+  const key = { worldId: '0123456789abcdef', pipelineVersion: 'v-sphere', stage: 'L1' }
+  const written = await MA.writeMeshLevelArtifact(store, key, artifact, 1, 'sphere-level', 12)
+  const back = await MA.readMeshLevelArtifact(store, key)
+  const mesh = back ? MA.meshLevelMesh(back.artifact, SW, SH, 'sphere') : null
+  check('the level artifact reads back and decodes on the sphere', written && mesh !== null && mesh.domain.kind === 'sphere' && mesh.aliveVertices === terrain.mesh.aliveVertices, `${mesh?.aliveVertices} nodes`)
+})
+
 // ------------------------------------------------------------------------- run
 
 console.log('')

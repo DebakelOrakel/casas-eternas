@@ -6,7 +6,7 @@ import type { FieldSpec } from './save/fieldSpec'
 import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
 import { historyFromYaml, type WorldHistory } from './save/worldHistory'
 import { deriveWorldId } from './identity'
-import { worldKindOf } from './worldRecord'
+import { worldKindOf, type WorldKind } from './worldRecord'
 import { coastalWarpSeed } from '../generator/archean/archeanState'
 import { FINE_DETAIL_SEED_SALT } from '../generator/elevation/ridgedNoise'
 import { erosionLithoSeed } from '../generator/surface/erosionForcingFields'
@@ -93,6 +93,8 @@ export interface WorldRecipe {
 }
 
 export interface World {
+  // The world's shape (world.yaml's kind): the torus or the sphere.
+  readonly kind: WorldKind
   readonly width: number
   readonly height: number
   readonly recipe: WorldRecipe
@@ -357,6 +359,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
 
   const hasMesh = zip.file('mesh/nodes.f32') !== null
   const world: World = {
+    kind,
     width,
     height,
     recipe,

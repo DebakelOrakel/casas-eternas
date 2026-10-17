@@ -119,6 +119,7 @@ const M = {
   inputs: await L('/src/world/save/loadWorldInputs.ts'),
   detMath: await L('/src/generator/core/detMath.ts'),
   enginePool: await L('/src/generator/surface/erosionEnginePool.ts'),
+  cube: await L('/src/generator/mesh/cubeAtlas.ts'),
 }
 
 let failures = 0
@@ -2095,6 +2096,123 @@ console.log('\n[1g] the mesh on the sphere')
   }
   const ms = performance.now() - t0
   check(`sphere mesh: the section is quick (${(ms / 1000).toFixed(1)} s)`, ms < 20000)
+}
+
+// ------------------------------------------------------------ cube atlas
+
+// The fine levels' tiles on the sphere (docs/decisions/sphere-tiles.md,
+// DEC-0041): geometry only. The corners and the sides must be the same
+// bits from every tile that has them, the tiles must cover the sphere once,
+// a side must be straight in the plane of both tiles that share it.
+console.log('\n[1c] the cube atlas')
+{
+  const C = M.cube
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+  const bits = (v) => v.map((x) => x.toString()).join(',')
+  for (const [label, rotation] of [['plain', C.IDENTITY], ['turned', C.rotationAbout(0.48, 0.6, 0.64, 0.7)]]) {
+    const atlas = new C.CubeAtlas(6, rotation)
+    // Corners: one point per place, the same bits from every tile.
+    const byPlace = new Map()
+    for (let k = 0; k < atlas.tileCount; k++) {
+      const tile = atlas.tileOfIndex(k)
+      for (const p of atlas.corners(tile)) {
+        const place = p.map((x) => x.toFixed(9)).join(',')
+        const seen = byPlace.get(place) ?? new Set()
+        seen.add(bits(p))
+        byPlace.set(place, seen)
+      }
+    }
+    const corners = byPlace.size
+    const exact = [...byPlace.values()].every((set) => set.size === 1)
+    // A cube of n × n tiles a face has 6n² + 2 corners (Euler: V − E + F = 2).
+    check(`cube atlas (${label}): ${corners} corners, each the same bits from every tile that has it`, exact && corners === 6 * 36 + 2, `${corners}`)
+    // Neighbours: the relation is symmetric, also across face edges.
+    let symmetric = true
+    let cornerTiles = 0
+    for (let k = 0; k < atlas.tileCount; k++) {
+      const tile = atlas.tileOfIndex(k)
+      for (let s = 0; s < 4; s++) {
+        const { tile: other, side } = atlas.neighbour(tile, s)
+        const back = atlas.neighbour(other, side)
+        if (atlas.indexOf(back.tile) !== k || back.side !== s) symmetric = false
+      }
+      if (atlas.cornerNeighbours(tile).length === 3) cornerTiles++
+    }
+    check(`cube atlas (${label}): neighbours across every side are mutual, and 24 tiles meet a cube corner with three`, symmetric && cornerTiles === 24, `${cornerTiles}`)
+    // Coverage: a direction lies in the tile tileAt names, and in no other's
+    // inside by more than a rounding error.
+    let next = 12345
+    const uniform = () => { next = (Math.imul(next, 1103515245) + 12345) >>> 0; return next / 4294967296 }
+    let covered = 0
+    let twice = 0
+    const samples = 4000
+    for (let n = 0; n < samples; n++) {
+      const z = 2 * uniform() - 1
+      const a = 2 * Math.PI * uniform()
+      const r = Math.sqrt(1 - z * z)
+      const p = [r * Math.cos(a), r * Math.sin(a), z]
+      const tile = atlas.tileAt(p)
+      if (atlas.inside(tile, p)) covered++
+      for (let s = 0; s < 4; s++) {
+        const other = atlas.neighbour(tile, s).tile
+        if (atlas.sideNormals(other).every((nrm) => dot(p, nrm) > 1e-12)) twice++
+      }
+    }
+    check(`cube atlas (${label}): every direction lies in the tile tileAt names, and inside no neighbour`, covered === samples && twice === 0, `${covered}/${samples}, ${twice} twice`)
+    // A side is the same points from both tiles (canonical ends), and
+    // straight in the plane of each.
+    let same = true
+    let worst = 0
+    for (let k = 0; k < atlas.tileCount; k++) {
+      const tile = atlas.tileOfIndex(k)
+      const frame = atlas.frame(tile, 1)
+      for (let s = 0; s < 4; s++) {
+        const mine = C.sideEnds(atlas, tile, s)
+        const { tile: other, side } = atlas.neighbour(tile, s)
+        const theirs = C.sideEnds(atlas, other, side)
+        for (const f of [0.25, 0.5, 0.8125]) {
+          if (bits(C.sidePoint(atlas, mine.a, mine.b, f)) !== bits(C.sidePoint(atlas, theirs.a, theirs.b, f))) same = false
+        }
+        // Straight: the side's points on the line between its ends, in
+        // this tile's plane.
+        const at = (f) => { const o = { x: 0, y: 0 }; C.project(frame, C.sidePoint(atlas, mine.a, mine.b, f), o); return o }
+        const a = at(0)
+        const b = at(1)
+        const len = Math.hypot(b.x - a.x, b.y - a.y)
+        for (const f of [0.1, 0.5, 0.9]) {
+          const m = at(f)
+          worst = Math.max(worst, Math.abs((b.x - a.x) * (m.y - a.y) - (b.y - a.y) * (m.x - a.x)) / len / len)
+        }
+      }
+    }
+    check(`cube atlas (${label}): a side is the same points from both its tiles, and straight in each tile's plane`, same && worst < 1e-12, `off the line ${worst.toExponential(1)} of a side`)
+  }
+  // The equiangular grid's spread of tile areas (fork 2: about 1.3), and
+  // the tile size the levels ask for on a sphere of 20 000 km (fork 9).
+  {
+    const atlas = new C.CubeAtlas(40)
+    const angle = (a, b, c) => {
+      // The angle at b of the spherical triangle a, b, c.
+      const n1 = [b[1] * a[2] - b[2] * a[1], b[2] * a[0] - b[0] * a[2], b[0] * a[1] - b[1] * a[0]]
+      const n2 = [b[1] * c[2] - b[2] * c[1], b[2] * c[0] - b[0] * c[2], b[0] * c[1] - b[1] * c[0]]
+      return Math.acos(dot(n1, n2) / Math.sqrt(dot(n1, n1) * dot(n2, n2)))
+    }
+    let lo = Infinity
+    let hi = 0
+    let total = 0
+    for (let k = 0; k < atlas.tileCount; k++) {
+      const q = atlas.corners(atlas.tileOfIndex(k))
+      const area = angle(q[3], q[0], q[1]) + angle(q[0], q[1], q[2]) + angle(q[1], q[2], q[3]) + angle(q[2], q[3], q[0]) - 2 * Math.PI
+      lo = Math.min(lo, area)
+      hi = Math.max(hi, area)
+      total += area
+    }
+    const radiusKm = 20000 / (2 * Math.PI)
+    const mid = atlas.corners({ face: 0, i: 20, j: 20 })
+    const sideKm = Math.acos(dot(mid[0], mid[1])) * radiusKm
+    check(`cube atlas: n = 40 covers the sphere (${(total / (4 * Math.PI)).toFixed(6)}), areas spread ${(hi / lo).toFixed(3)}, a centre tile ${sideKm.toFixed(1)} km on 20 000 km`,
+      Math.abs(total - 4 * Math.PI) < 1e-9 && hi / lo < 1.45 && Math.abs(sideKm - 125) < 1)
+  }
 }
 
 // ------------------------------------------------------------ determinism

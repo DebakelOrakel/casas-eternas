@@ -5,7 +5,7 @@ import { encodeMesh, decodeMesh, type SerializedMesh } from '../generator/mesh/m
 import { deserializeRiverGraph, serializeRiverGraph, type RiverGraph } from '../generator/surface/riverGraph'
 import type { RiverPolylines, WaterBody } from '../generator/surface/hydrology'
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
-import { torusDomain } from '../generator/core/domain'
+import { domainOfKind, type Domain } from '../generator/core/domain'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
 import { levelBudget } from '../generator/pipeline/meshBakeStage'
@@ -214,8 +214,9 @@ export async function readMeshLevelArtifact(store: ArtifactStore, key: ArtifactK
   }
 }
 
-// The level's triangulation from its artifact.
-export function meshLevelMesh(artifact: MeshLevelArtifact, width: number, height: number): ReturnType<typeof decodeMesh> {
+// The level's triangulation from its artifact, on the world's shape (the
+// torus unless said).
+export function meshLevelMesh(artifact: MeshLevelArtifact, width: number, height: number, shape: Domain['kind'] = 'torus'): ReturnType<typeof decodeMesh> {
   const serial: SerializedMesh = { count: artifact.count, nodes: artifact.nodes, connectivity: artifact.connectivity }
-  return decodeMesh(torusDomain(width, height), serial)
+  return decodeMesh(domainOfKind(shape, width, height), serial)
 }

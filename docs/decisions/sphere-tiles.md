@@ -58,7 +58,7 @@ history and do not change the simulation.
 | tile shape | quad | triangle | curved quad | quad, triangles at the poles |
 | fits a square frame and raster | yes | no: about half of the frame is outside the tile | partly | yes |
 | special points | 8 corners, 3 tiles meet | 12 corners, 5 tiles meet | 8 | 2 poles |
-| area spread | about 1.3 (equiangular) | smallest | none (equal area) | unbounded at the poles |
+| area spread | about 1.4 (equiangular) | smallest | none (equal area) | unbounded at the poles |
 | torus code that carries over | nearly all | frame, sampler and edges new | much new | much, but the poles new |
 
 **Answer: the cube.** Its tiles are quads with four children and
@@ -75,8 +75,8 @@ layer above the mesh and do not need the same tiles.
 
 **Answer: equiangular.** A face point is two angles (ξ, η), each in
 [−π/4, π/4], and the grid is uniform in the angles. The tile areas then
-spread by about 1.3 (corner tile against centre tile), against 5.2 (3√3)
-for a grid uniform on the plain gnomonic face. On both grids each grid
+spread by 1.39 (largest tile against smallest, measured at n = 40),
+against 5.2 (3√3) for a grid uniform on the plain gnomonic face. On both grids each grid
 line is a great circle (a plane through the centre of the sphere), so a
 tile side is a great-circle arc.
 
@@ -195,4 +195,28 @@ hash check it.
 
 ## Status
 
-2026-10-17: decided with the user. Nothing built.
+2026-10-17: decided with the user.
+
+2026-10-17: the cube atlas's geometry BUILT, not yet used
+(`client/src/generator/mesh/cubeAtlas.ts`): the faces, the equiangular
+grid with exact corners (the TANS table), the level's rotation, the tile
+at a direction, the inside test, the neighbours across sides and corners,
+the tile's gnomonic plane, the canonical side points. `harness:mesh` [1c]
+checks it: every corner the same bits from every tile, 6n² + 2 corners,
+mutual neighbours, 24 tiles at the cube's corners, every direction in one
+tile, a side the same points from both tiles and straight in both planes
+(1e-15), and at n = 40 on 20 000 km a centre tile of 125.0 km, the areas
+spread 1.39.
+
+2026-10-17: order of building, step 1 BUILT — level 1 on the sphere. The
+replay, the level's waters and the artifact ran on the sphere already;
+three places assumed the torus: the worker's recipe had no shape (a
+sphere world was replayed as a torus), the level's mesh decoded on a
+torus (`meshLevelMesh` takes the shape now), and `WorldInputs` did not
+say the world's kind (`kind`, from `World.kind`). The worker plans no
+tiles for a sphere world and refuses a sphere tile until step 3.
+`harness:pipeline` ("level 1 of a sphere world"): a 256 × 128 sphere
+replayed at level 1's budget (101 k nodes, 20 s), its waters, the
+artifact read back and decoded on the sphere. Not yet run on a world a
+player made: the screen's finishing step stays locked for a sphere world
+(step 4).
