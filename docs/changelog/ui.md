@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-17
+- **fixed** Save/Load: a copy to the server of a world that the server no longer holds is stored again, instead of reporting a newer version on the server. `generator.load`
+
 ## 2026-10-16
 - **fixed** Save/Load: a template mark that cannot be changed says so, instead of saying that the server list cannot be reached. `generator.load.template`
 - **fixed** Save/Load: a save to the server that was stored although its answer was lost no longer reports a conflict with itself when it is saved again. `generator.load`

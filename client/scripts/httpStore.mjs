@@ -604,6 +604,17 @@ console.log('\n— the browser creates a world: a 409 for a world that is this s
   Object.assign(fake, { putStatus: [412], put: [], held: held(ours), level: 'owner' })
   const stale = await outcome(() => uploadWorldTo(base, 'w1', archive, send))
   check('412 on an update → the conflict, not "stored"', stale.value?.ok === false && stale.value.reason === 'conflict' && fake.put[0] === '"3"', JSON.stringify({ stale, put: fake.put }))
+  // The world is gone (the store was cleared): 412, and the meta 404. The
+  // save goes again as a create.
+  remembered.set('casas.serverRevision.gone', '5')
+  Object.assign(fake, { putStatus: [412, 201], put: [], held: null, level: 'owner' })
+  const gone = await outcome(() => uploadWorldTo(base, 'gone', archive, send))
+  check('412 for a world that is gone (meta 404) → created again, without If-Match', gone.error === undefined && fake.put.length === 2 && fake.put[0] === '"5"' && fake.put[1] === null, JSON.stringify({ gone, put: fake.put }))
+  // A world the caller cannot see is also 404: the create answers 409, the conflict.
+  remembered.set('casas.serverRevision.hidden', '5')
+  Object.assign(fake, { putStatus: [412, 409], put: [], held: null, level: 'owner' })
+  const hidden = await outcome(() => uploadWorldTo(base, 'hidden', archive, send))
+  check('412, meta 404, the create 409 → the conflict, nothing overwritten', hidden.value?.ok === false && hidden.value.reason === 'conflict' && fake.put.length === 2 && fake.put[1] === null, JSON.stringify({ hidden, put: fake.put }))
   delete globalThis.localStorage
   worlds.close()
 }

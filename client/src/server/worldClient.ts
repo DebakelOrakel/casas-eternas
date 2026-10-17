@@ -291,11 +291,23 @@ export async function uploadWorldTo(
   // save (A CREATION THAT WAS STORED).
   if (response.status === 409 || response.status === 412) {
     let held: WorldSummary | undefined
+    let metaStatus = 0
     try {
       const meta = await send(`${route}/meta`, { cache: 'no-store' })
+      metaStatus = meta.status
       if (meta.ok) held = (await meta.json()) as WorldSummary
     } catch {
       // No meta: the conflict is said without the server's revision.
+    }
+    // A REMEMBERED REVISION OF A WORLD THAT IS GONE (2026-10-17). The
+    // server lost the world (deleted, or its store was cleared), but this
+    // browser still sends If-Match: 412, and the meta answers 404. Nothing
+    // is there to protect: the revision is forgotten and the save goes
+    // again as a create. A create never overwrites, so a world that the
+    // caller only cannot see (also 404) still answers 409, the conflict.
+    if (response.status === 412 && metaStatus === 404) {
+      forgetRevision(uid)
+      return uploadWorldTo(base, uid, archive, send)
     }
     if (held && response.status === 409 && expected === 0 && (await isThisArchive(held, archive))) {
       rememberRevision(uid, held.revision)
