@@ -258,5 +258,13 @@ player made: the screen's finishing step stays locked for a sphere world
 - Run on a sphere world a player made (Brannoch, 2048 × 1024), through a
   real worker: level 1 in 32 min, then 2359 level-2 tiles of 6144 (land
   and shelf) in 9 min on one worker, none failed — 31.5 M nodes, 424 s of
-  bake in all, a median tile 1462 nodes in 87 ms, the largest 64 k nodes
-  in about 0.5 s.
+  bake in all, the largest tile 69 k nodes in about 0.5 s. (A median of
+  1462 nodes was given here first; the metas give 5282.)
+- The same world through level 3 (2026-10-17, three workers, level 2
+  partly reused from a cancelled run): 7083 level-3 tiles in 2 h 23 min,
+  none failed — 432 M nodes, 17.7 GB, a median tile 21 k nodes in 3.3 s,
+  the largest 272 k nodes in 11 s. Every shared row on both levels, read
+  back from the artifacts, is complete (257 and 513 nodes), the same in
+  both tiles bit for bit, and connected in both triangulations: 4330
+  sides on level 2, 13 353 on level 3, across the faces of both cubes.
+  No height and no node is NaN.
