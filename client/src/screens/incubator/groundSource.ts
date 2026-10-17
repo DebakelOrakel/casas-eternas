@@ -1,10 +1,9 @@
 import type { MeshSampler } from '../../generator/mesh/meshSampler'
-import { tileCorner, tileSpec, type TileId } from '../../generator/mesh/meshTile'
-import { tileAt } from '../../generator/pipeline/tilePlan'
-import { torusDomain } from '../../generator/core/domain'
+import type { TileId } from '../../generator/mesh/meshTile'
 import type { GroundSource } from '../../map/groundPaint'
 import { meshTileStage } from '../../world/meshTileArtifacts'
-import { LEVEL1_GRID_LEVEL, level1Stage, rasterAt, type Raster } from './groundRaster'
+import { level1Stage, rasterAt, type Raster } from './groundRaster'
+import { LEVEL1_GRID_LEVEL, type GroundTiles } from './groundTiles'
 
 // THE GROUND AT THE FINEST LEVEL THERE IS, as the painter reads it
 // (map/groundPaint.ts): the rasters of level 3's tiles, else of level
@@ -27,6 +26,8 @@ export interface GridField {
 export interface GroundSourceOptions {
   width: number
   height: number
+  // The world's tiles and where their rasters lie (groundTiles.ts).
+  tiles: GroundTiles
   metersPerCell: number
   elevationMeters: number
   // Level 1's mesh, where this source holds it.
@@ -84,8 +85,11 @@ const LAPSE_C_PER_M = 6.5 / 1000
 const wrap = (v: number, n: number): number => ((v % n) + n) % n
 
 export function createGroundSource(options: GroundSourceOptions): RasterGroundSource {
-  const { width, height, base, stages } = options
-  const world = torusDomain(width, height)
+  const { width, height, base, stages, tiles } = options
+  // The fields' rows wrap on the torus; on the sphere they end at the
+  // poles.
+  const torus = tiles.world.kind === 'torus'
+  const row = (v: number, n: number): number => (torus ? wrap(v, n) : Math.min(n - 1, Math.max(0, v)))
   const fields = { ...options.fields }
   const rasters = new Map<string, Raster | 'loading' | 'missing'>()
   const wanted = new Set<string>()
@@ -95,7 +99,7 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
   const nearest = (field: GridField | null, x: number, y: number, fallback: number): number => {
     if (!field) return fallback
     const gx = Math.min(field.resX - 1, Math.floor((wrap(x, width) / width) * field.resX))
-    const gy = Math.min(field.resY - 1, Math.floor((wrap(y, height) / height) * field.resY))
+    const gy = Math.min(field.resY - 1, Math.floor(((torus ? wrap(y, height) : Math.max(0, y)) / height) * field.resY))
     return field.data[gy * field.resX + gx]
   }
   // Bilinear, cell centres at (i + ½) of the field's grid, wrapped: for
@@ -104,15 +108,15 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
   const bilinear = (field: GridField | null, x: number, y: number, fallback: number): number => {
     if (!field) return fallback
     const gx = (wrap(x, width) / width) * field.resX - 0.5
-    const gy = (wrap(y, height) / height) * field.resY - 0.5
+    const gy = ((torus ? wrap(y, height) : y) / height) * field.resY - 0.5
     const x0 = Math.floor(gx)
     const y0 = Math.floor(gy)
     const fx = gx - x0
     const fy = gy - y0
     const xa = wrap(x0, field.resX)
     const xb = wrap(x0 + 1, field.resX)
-    const ya = wrap(y0, field.resY) * field.resX
-    const yb = wrap(y0 + 1, field.resY) * field.resX
+    const ya = row(y0, field.resY) * field.resX
+    const yb = row(y0 + 1, field.resY) * field.resX
     const top = field.data[ya + xa] * (1 - fx) + field.data[ya + xb] * fx
     const bottom = field.data[yb + xa] * (1 - fx) + field.data[yb + xb] * fx
     return top * (1 - fy) + bottom * fy
@@ -162,10 +166,14 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
   // The painter reads the surface as a normal (out[1..3], y up) and takes
   // dh/dx = −out[1]/out[2]; the rasters carry the slope, so it goes out
   // negated with out[2] = 1.
+  //
+  // The point in the raster's frame is `at`, which the lookup sets
+  // (GroundTiles.inFrame) before it reads.
   const sample = new Float64Array(3)
   const normal = new Float64Array(3)
-  const fromRaster = (raster: Raster, x: number, y: number, level: number, out: Float64Array | null): number => {
-    rasterAt(raster, wrap(x - raster.cornerX, width), wrap(y - raster.cornerY, height), sample)
+  const at = { x: 0, y: 0 }
+  const fromRaster = (raster: Raster, level: number, out: Float64Array | null): number => {
+    rasterAt(raster, at.x, at.y, sample)
     if (out) {
       out[0] = sample[0]
       out[1] = -sample[1]
@@ -197,33 +205,32 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
   // the same tile, and a tile's stage as a string per texel was a third
   // of a ring's paint (2026-10-03).
   const last: (Raster | null)[] = [null, null, null, null]
-  const inLast = (lv: number, x: number, y: number): Raster | null => {
+  const inLast = (lv: number): Raster | null => {
     const r = last[lv]
-    if (!r) return null
-    const lx = wrap(x - r.cornerX, width)
-    const ly = wrap(y - r.cornerY, height)
-    return lx <= r.cells && ly <= r.cells ? r : null
+    return r && tiles.inFrame(r, at) ? r : null
   }
   // The finest raster under a point, else level 1's mesh.
   const lookup = (x: number, y: number, maxLevel: number, out: Float64Array | null): number => {
     if (maxLevel <= 0) return fromLevel0(x, y, out)
+    tiles.at(x, y)
     for (let lv = Math.min(3, maxLevel); lv >= 2; lv--) {
-      let raster = inLast(lv, x, y)
+      let raster = inLast(lv)
       if (!raster) {
-        const tile = tileAt(lv, x, y, world)
+        const tile = tiles.tileAt(lv)
         const stage = meshTileStage(tile)
         raster = rasterOf(stage, tile, stages.has(stage))
         if (!raster) continue
         last[lv] = raster
         used.add(stage)
+        tiles.inFrame(raster, at)
       }
       answered[lv]++
-      return fromRaster(raster, x, y, lv, out)
+      return fromRaster(raster, lv, out)
     }
     answered[1]++
-    let raster = inLast(1, x, y)
+    let raster = inLast(1)
     if (!raster) {
-      const tile = tileAt(LEVEL1_GRID_LEVEL, x, y, world)
+      const tile = tiles.tileAt(LEVEL1_GRID_LEVEL)
       const stage = level1Stage(tile.x, tile.y)
       const id = { level: 1, x: tile.x, y: tile.y }
       if (options.makeLevel1 && !rasters.has(stage)) {
@@ -234,9 +241,10 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
       if (raster) {
         last[1] = raster
         used.add(stage)
+        tiles.inFrame(raster, at)
       }
     }
-    if (raster) return fromRaster(raster, x, y, 1, out)
+    if (raster) return fromRaster(raster, 1, out)
     if (!base) return fromLevel0(x, y, out)
     const h = base.heightAt(x, y)
     if (out) {
@@ -305,12 +313,4 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
       return out
     },
   }
-}
-
-// A tile's raster frame: its corner and side on the world grid (a
-// level-1 raster's on level 2's grid).
-export function tileFrame(tile: TileId): { cornerX: number; cornerY: number; cells: number } {
-  const spec = tileSpec(tile.level === 1 ? LEVEL1_GRID_LEVEL : tile.level)
-  const corner = tileCorner({ level: spec.level, x: tile.x, y: tile.y }, spec)
-  return { cornerX: corner.x, cornerY: corner.y, cells: spec.cells }
 }

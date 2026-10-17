@@ -14,10 +14,9 @@ import { detHypot } from '../core/detMath'
 // instead of as facets, which with the map's exaggeration every triangle
 // was (the incubator's mid views, 2026-10-03). Metre-true: the
 // horizontal in metres per cell, the height in metres per elevation unit.
-// The cell is the TORUS's: a tile is cut from a flat world (meshTile.ts
-// triangulates it as a small torus, docs/decisions/tile-jobs.md) and the
-// artifact carries no domain; tiles of a sphere world would have to carry
-// their scale (DEC-0035 fork 6).
+// The cell is the torus's unless the caller says otherwise: a sphere
+// tile, read in its own plane, counts in the sphere's units
+// (screens/incubator/groundTiles.ts).
 //
 // A node on the tile's edge has only its inside triangles here, so its
 // normal is half a star, and the tile beside it has the other half: the
@@ -42,15 +41,15 @@ const BUCKETS = 64
 
 // The area-weighted normal sums per node (3 each, y up, metres): every
 // triangle's normal, its length twice the area, added at its corners.
-export function tileNormalSums(nodes: Float32Array, triangles: Uint32Array, z: Float32Array): Float64Array {
+export function tileNormalSums(nodes: Float32Array, triangles: Uint32Array, z: Float32Array, metresPerCell: number = TORUS_METERS_PER_CELL): Float64Array {
   const sums = new Float64Array((nodes.length / 2) * 3)
   for (let t = 0; t < triangles.length; t += 3) {
     const a = triangles[t], b = triangles[t + 1], c = triangles[t + 2]
-    const abx = (nodes[2 * b] - nodes[2 * a]) * TORUS_METERS_PER_CELL
-    const abz = (nodes[2 * b + 1] - nodes[2 * a + 1]) * TORUS_METERS_PER_CELL
+    const abx = (nodes[2 * b] - nodes[2 * a]) * metresPerCell
+    const abz = (nodes[2 * b + 1] - nodes[2 * a + 1]) * metresPerCell
     const aby = (z[b] - z[a]) * ELEVATION_METERS
-    const acx = (nodes[2 * c] - nodes[2 * a]) * TORUS_METERS_PER_CELL
-    const acz = (nodes[2 * c + 1] - nodes[2 * a + 1]) * TORUS_METERS_PER_CELL
+    const acx = (nodes[2 * c] - nodes[2 * a]) * metresPerCell
+    const acz = (nodes[2 * c + 1] - nodes[2 * a + 1]) * metresPerCell
     const acy = (z[c] - z[a]) * ELEVATION_METERS
     let nx = aby * acz - abz * acy
     let ny = abz * acx - abx * acz
@@ -71,12 +70,12 @@ export function tileNormalSums(nodes: Float32Array, triangles: Uint32Array, z: F
 
 // `adjust` sees the normal sums (tileNormalSums) before they are
 // normalised, and may change them.
-export function createTileSampler(nodes: Float32Array, triangles: Uint32Array, z: Float32Array, cells: number, adjust?: (sums: Float64Array) => void): TileSurfaceSampler {
+export function createTileSampler(nodes: Float32Array, triangles: Uint32Array, z: Float32Array, cells: number, adjust?: (sums: Float64Array) => void, metresPerCell: number = TORUS_METERS_PER_CELL): TileSurfaceSampler {
   const size = cells / BUCKETS
   const buckets: number[][] = Array.from({ length: BUCKETS * BUCKETS }, () => [])
   const clamp = (v: number): number => Math.max(0, Math.min(BUCKETS - 1, Math.floor(v / size)))
   const count = nodes.length / 2
-  const normals = tileNormalSums(nodes, triangles, z)
+  const normals = tileNormalSums(nodes, triangles, z, metresPerCell)
   adjust?.(normals)
   const spacing = new Float32Array(triangles.length / 3)
   for (let t = 0; t < triangles.length; t += 3) {

@@ -1,4 +1,5 @@
-import { tileGrid, tileSpec, TILE_ROLE_EDGE, type TileId } from '../../generator/mesh/meshTile'
+import { TILE_ROLE_EDGE, type TileId } from '../../generator/mesh/meshTile'
+import type { GroundTiles } from './groundTiles'
 
 // THE SEAMS BETWEEN TILES OF ONE LEVEL. A tile's edge node has only the
 // tile's inside triangles, so the normal the tile sampler gives it is half
@@ -17,7 +18,8 @@ import { tileGrid, tileSpec, TILE_ROLE_EDGE, type TileId } from '../../generator
 
 export interface TileRim {
   tile: TileId
-  // x, y per edge node, cells from the tile's own corner.
+  // x, y per edge node, as the tile's artifact holds them: cells from the
+  // tile's own corner on the torus, the world point on the sphere.
   positions: Float32Array
   // The node's normal sum, three per node.
   sums: Float64Array
@@ -39,55 +41,28 @@ export function tileRim(tile: TileId, nodes: Float32Array, role: Uint8Array, sum
   return { tile, positions, sums: out }
 }
 
-// The eight tiles around one, on the level's grid (which wraps). Fewer
-// where the grid is narrower than three tiles, so none is listed twice.
-export function neighbourTiles(tile: TileId, width: number, height: number): TileId[] {
-  const { cols, rows } = tileGrid(width, height, tileSpec(tile.level))
-  const seen = new Set<string>([`${tile.x},${tile.y}`])
-  const out: TileId[] = []
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const x = (((tile.x + dx) % cols) + cols) % cols
-      const y = (((tile.y + dy) % rows) + rows) % rows
-      if (seen.has(`${x},${y}`)) continue
-      seen.add(`${x},${y}`)
-      out.push({ level: tile.level, x, y })
-    }
-  }
-  return out
-}
-
-// A neighbour's offset from a tile in tiles (-1, 0, 1 each), across the wrap.
-export function tileOffset(from: TileId, to: TileId, width: number, height: number): { dx: number; dy: number } {
-  const { cols, rows } = tileGrid(width, height, tileSpec(from.level))
-  const near = (d: number, n: number): number => {
-    const m = ((d % n) + n) % n
-    return m > n / 2 ? m - n : m
-  }
-  return { dx: near(to.x - from.x, cols), dy: near(to.y - from.y, rows) }
-}
-
 // Adds the neighbours' halves to a tile's edge nodes, in `sums` (the
 // tile's own, from tileNormalSums). Every node's contributions are added
 // in the order of the tiles' ids, the tile's own among them, so each tile
-// that holds the node sums the same numbers in the same order.
-export function addRims(tile: TileId, nodes: Float32Array, role: Uint8Array, sums: Float64Array, rims: Iterable<TileRim>, width: number, height: number): void {
-  const cells = tileSpec(tile.level).cells
+// that holds the node sums the same numbers in the same order. A node is
+// found by its key in the tile frame's terms (groundTiles.ts rimKey).
+export function addRims(tile: TileId, nodes: Float32Array, role: Uint8Array, sums: Float64Array, rims: Iterable<TileRim>, tiles: GroundTiles): void {
   // Per edge node of this tile: its contributions by tile order.
+  const own = tiles.rimKey(tile, tile)!
   const index = new Map<string, number>()
-  for (let v = 0; v < role.length; v++) if (role[v] === TILE_ROLE_EDGE) index.set(`${nodes[2 * v]},${nodes[2 * v + 1]}`, v)
+  for (let v = 0; v < role.length; v++) if (role[v] === TILE_ROLE_EDGE) index.set(own(nodes[2 * v], nodes[2 * v + 1]), v)
   const parts = new Map<number, { order: number; s: [number, number, number] }[]>()
   const order = (t: TileId): number => t.y * 1e6 + t.x
   for (const [, v] of index) parts.set(v, [{ order: order(tile), s: [sums[3 * v], sums[3 * v + 1], sums[3 * v + 2]] }])
   for (const rim of rims) {
-    const { dx, dy } = tileOffset(tile, rim.tile, width, height)
-    if (dx === 0 && dy === 0) continue
+    const key = tiles.rimKey(tile, rim.tile)
+    if (!key) continue
     for (let i = 0; i < rim.positions.length / 2; i++) {
-      // The neighbour's position in this tile's frame: exact, both being
-      // on the level's quantum and the shift a whole tile.
-      const v = index.get(`${rim.positions[2 * i] + dx * cells},${rim.positions[2 * i + 1] + dy * cells}`)
+      const v = index.get(key(rim.positions[2 * i], rim.positions[2 * i + 1]))
       if (v === undefined) continue
-      parts.get(v)!.push({ order: order(rim.tile), s: [rim.sums[3 * i], rim.sums[3 * i + 1], rim.sums[3 * i + 2]] })
+      const s: [number, number, number] = [0, 0, 0]
+      tiles.rimSum(tile, rim, i, s)
+      parts.get(v)!.push({ order: order(rim.tile), s })
     }
   }
   for (const [v, list] of parts) {

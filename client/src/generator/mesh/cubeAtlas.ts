@@ -254,6 +254,13 @@ export class CubeAtlas {
     return turn(this.rotation, normalise([c[0] + s * u[0] + t * v[0], c[1] + s * u[1] + t * v[1], c[2] + s * u[2] + t * v[2]]))
   }
 
+  // The world direction at a face's gnomonic coordinates (tan ξ, tan η):
+  // faceTangents' inverse.
+  faceDirection(face: number, s: number, t: number): Vec3 {
+    const { c, u, v } = FACES[face]
+    return turn(this.rotation, normalise([c[0] + s * u[0] + t * v[0], c[1] + s * u[1] + t * v[1], c[2] + s * u[2] + t * v[2]]))
+  }
+
   // A cube-frame direction's gnomonic coordinates on a face (tan ξ, tan η),
   // or null where it is not in front of that face's plane.
   faceTangents(face: number, q: Vec3): [number, number] | null {

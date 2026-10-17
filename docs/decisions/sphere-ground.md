@@ -121,17 +121,32 @@ the turn is below what can be seen.
 
 ## Fork 5 — The tile's raster frame
 
-| | the raster on the chart | the raster in the tile's own plane |
-|---|---|---|
-| shape of a tile | not square, a strip near the poles | the square of DEC-0041 fork 3 |
-| what exists | nothing | `cubeFrameOf`, the tile's gnomonic plane |
+| | on the chart | square in the tile's own plane | the tile's rectangle on its cube face |
+|---|---|---|---|
+| shape of a tile | not square, a strip near the poles | a quad at a slant in the square | the rectangle itself |
+| the raster's edge rows | — | cut the sides at a slant | lie on the sides |
+| two tiles at a shared side | — | sample it at different points | sample it at the same points |
 
-**Answer: in the tile's own plane.** A sphere tile's raster is sampled
-on a regular grid in its gnomonic plane, where its sides are straight
-(DEC-0041 fork 3). The source finds the tile of a world point with
-`tileAtOn` and reads the raster at the point's frame coordinates. The
-level-1 rasters lie on level 2's cube tiles, from the level's mesh
-sampler, as they lie on level 2's square tiles on the torus.
+**Answer: the tile's rectangle on its cube face**, in the face's gnomonic
+coordinates (tan ξ, tan η). A tile of the equiangular grid is a
+rectangle there, and a side is one segment of the cube for both tiles
+that share it (DEC-0041 fork 5), so the raster's first and last rows lie
+on the sides, as on the torus. The tile's surface is still read in its
+own plane, where it was triangulated (`cubeFrameOf`). The source finds
+the tile of a world point with the atlas and reads the raster at the
+point's face coordinates. The level-1 rasters lie on level 2's cube
+tiles, from the level's mesh sampler, as they lie on level 2's square
+tiles on the torus.
+
+First built square in the tile's own plane; on Brannoch's level 2 the
+two tiles' reads at a side then differed by 1.5 m (median, p99 29 m) and
+by 1.4° in the normal (p99). On the face rectangle: 0.04 m (p99 0.5 m)
+and 0.03° (p99) (2026-10-17).
+
+The slope a sphere raster holds is the ground's against the local
+vertical, along the tile's axes laid into the local tangent plane. In
+the tile's plane the vertical is the tangent point's, which at a corner
+of a level-2 tile leans 1.4° from the ground's own.
 
 ## Fork 6 — The seams' normals
 
@@ -139,7 +154,8 @@ On the sphere a tile's nodes are world points (DEC-0041), so two tiles
 match their edge nodes by the point, not by a shift. A tile's normal
 sums are in its own plane; before they are added, a neighbour's sums are
 turned into the tile's plane through 3D. The order of the sums stays the
-order of the tiles' ids, so both tiles get the same bits.
+order of the tiles' ids; the two tiles then agree on the normal to the
+rounding of the turn, not to the bit.
 
 ## Fork 7 — The material fields
 
@@ -184,3 +200,22 @@ its rasters and its paints are checked against today's, by data.
 ## Status
 
 2026-10-17: decided with the user.
+
+2026-10-17: order of building, steps 1 and 2 BUILT. The tile frame
+(`screens/incubator/groundTiles.ts`) carries the ground source, the
+worker and the seams on both shapes. The torus is byte-identical: a
+64 × 32 torus with 40 tiles, its tile rasters with their seams, its
+level-1 rasters and six painted rings hash the same before and after.
+The ground frame of fork 8 is left for step 3, where it first does
+something. On Brannoch (level 1, 2 and 3 from the artifacts): a raster
+read through the source against the tile's own surface, 0.03 m (level
+2) and 0.11 m (level 3) median, p99 2.7 m; across seams 0.04–0.11 m
+median, p99 0.6 m, the normal p99 0.1°; level 1's rasters against the
+mesh 0.00 m median, p99 19 m, poles included.
+
+Found on the way, not fixed: 206 of Brannoch's 2359 level-2 tiles hold
+triangles that span the tile (1195 of them; level 3 none). They are the
+tile's periodic triangulation wrapping across its frame
+(`meshTileCube.cubeSite`), where the square around the quad holds no
+node. A raster of such a tile reads the wrong triangle in places (up to
+1.2 km off).

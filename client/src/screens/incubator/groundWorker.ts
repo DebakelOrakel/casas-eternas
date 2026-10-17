@@ -1,18 +1,16 @@
-import { TORUS_METERS_PER_CELL } from '../../generator/core/mapConfig'
-// The incubator's worlds are tori (groundSource.ts: torusDomain), so its metres
-// are the torus's (DEC-0035 fork 6).
+import { domainOfKind, type Domain } from '../../generator/core/domain'
 import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
 import { createMeshSampler, type MeshSampler } from '../../generator/mesh/meshSampler'
 import type { TileId } from '../../generator/mesh/meshTile'
-import { tileSpec } from '../../generator/mesh/meshTile'
 import { createTileSampler } from '../../generator/mesh/tileSampler'
-import { addRims, seamReach, tileOffset, tileRim, type TileRim } from './groundSeams'
+import { addRims, tileRim, type TileRim } from './groundSeams'
 import { makeGroundDetail } from '../../map/groundDetail'
 import { enlargeRgba, paintRing, type RingPaintRequest } from '../../map/groundPaint'
 import { meshLevelMesh, type MeshLevelArtifact } from '../../world/meshArtifacts'
 import type { MeshTileArtifact } from '../../world/meshTileArtifacts'
-import { rasterBuffer, rasterSamples, rasteriseLevel, rasteriseTile, type Raster } from './groundRaster'
-import { createGroundSource, tileFrame, type GridField, type RasterGroundSource } from './groundSource'
+import { rasterBuffer, rasterSamples, rasteriseTile, type Raster } from './groundRaster'
+import { createGroundSource, type GridField, type RasterGroundSource } from './groundSource'
+import { groundTilesOf, type GroundTiles, type RasterFrame } from './groundTiles'
 import { rasteriseNodeField } from '../../generator/mesh/meshRaster'
 import { waterLevelsFromBodies } from './waterLevels'
 
@@ -31,6 +29,8 @@ import { waterLevelsFromBodies } from './waterLevels'
 export type GroundWorkerInbound =
   | {
       type: 'world'
+      // The world's shape and its raster's size.
+      kind: Domain['kind']
       width: number
       height: number
       // Level 1's mesh: given to the workers that answer level 1 from it
@@ -81,19 +81,23 @@ const post = (message: GroundWorkerOutbound, transfer: Transferable[] = []): voi
 
 let source: RasterGroundSource | null = null
 let base: MeshSampler | null = null
-let worldWidth = 0
-let worldHeight = 0
+let tiles: GroundTiles | null = null
 
 // The tiles this worker rastered, kept while their raster is held: what a
 // seam patch makes the samples along one side from again.
+// `nodes` as the artifact holds them, `framed` as its sampler reads them
+// (GroundTiles.samplerNodes), in a square of `cells`.
 interface Kept {
   tile: TileId
+  frame: RasterFrame
   nodes: Float32Array
+  framed: Float32Array
+  cells: number
   triangles: Uint32Array
   z: Float32Array
   role: Uint8Array
   rims: Map<string, TileRim>
-  reach: [number, number, number, number]
+  reseam: ReturnType<GroundTiles['reseamArea']>
   n: number
   data: Float32Array
 }
@@ -101,20 +105,16 @@ const kept = new Map<string, Kept>()
 
 // A tile's sampler with its neighbours' halves added to its edge normals.
 const seamedSampler = (k: Kept): ReturnType<typeof createTileSampler> =>
-  createTileSampler(k.nodes, k.triangles, k.z, tileSpec(k.tile.level).cells, (sums) => addRims(k.tile, k.nodes, k.role, sums, k.rims.values(), worldWidth, worldHeight))
+  createTileSampler(k.framed, k.triangles, k.z, k.cells, (sums) => addRims(k.tile, k.nodes, k.role, sums, k.rims.values(), tiles!), tiles!.metresPerCell)
 
-const rasterFrom = (tile: TileId, n: number, data: Float32Array): Raster => {
-  const frame = tileFrame(tile)
-  return { level: tile.level, n, cells: frame.cells, cornerX: frame.cornerX, cornerY: frame.cornerY, data }
-}
+const rasterFrom = (tile: TileId, n: number, data: Float32Array): Raster => ({ ...tiles!.frameOf(tile), level: tile.level, n, data })
 
 worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
   const message = event.data
   if (message.type === 'world') {
-    worldWidth = message.width
-    worldHeight = message.height
+    tiles = groundTilesOf(domainOfKind(message.kind, message.width, message.height))
     kept.clear()
-    const mesh = message.level ? meshLevelMesh(message.level, message.width, message.height) : null
+    const mesh = message.level ? meshLevelMesh(message.level, message.width, message.height, message.kind) : null
     base = mesh && message.level ? createMeshSampler(mesh, message.level.z) : null
     const fields = { ...message.fields }
     let levels: (GroundWorkerOutbound & { type: 'levels' }) | null = null
@@ -131,10 +131,12 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
       fields.waterSurface = { data: Float32Array.from(water.surface), resX: message.width, resY: message.height }
       levels = { type: 'levels', elevation, level: water.level, floor: water.floor, dam: water.dam, body: water.body, surface: water.surface, lakes: water.lakes, ms: Math.round(performance.now() - started) }
     }
+    const world = tiles
     source = createGroundSource({
       width: message.width,
       height: message.height,
-      metersPerCell: TORUS_METERS_PER_CELL,
+      tiles: world,
+      metersPerCell: world.metresPerCell,
       elevationMeters: ELEVATION_METERS,
       base,
       stages: new Set(message.stages),
@@ -142,10 +144,10 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
       makeLevel1: base
         ? (stage, tile) => {
             const started = performance.now()
-            const frame = tileFrame(tile)
-            const n = rasterSamples(1, frame.cells, TORUS_METERS_PER_CELL)
+            const frame = world.frameOf(tile)
+            const n = rasterSamples(1, frame.cells, world.metresPerCell)
             const data = rasterBuffer(n)
-            rasteriseLevel(base!, frame.cornerX, frame.cornerY, frame.cells, n, data)
+            world.rasteriseLevel1(base!, frame, n, data)
             post({ type: 'rastered', stage, tile, n, data, ms: Math.round(performance.now() - started), rim: null }, data.buffer instanceof ArrayBuffer ? [data.buffer] : [])
             return rasterFrom(tile, n, data)
           }
@@ -160,29 +162,30 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
     }
     return
   }
-  if (!source) return
+  if (!source || !tiles) return
   if (message.type === 'rasterise') {
     const started = performance.now()
-    const frame = tileFrame(message.tile)
-    const n = rasterSamples(message.tile.level, frame.cells, TORUS_METERS_PER_CELL)
+    const world = tiles
+    const frame = world.frameOf(message.tile)
+    const n = rasterSamples(message.tile.level, frame.cells, world.metresPerCell)
     const data = rasterBuffer(n)
     let rim: TileRim | null = null
     if (message.artifact) {
       const a = message.artifact
-      const cells = tileSpec(message.tile.level).cells
+      const { nodes: framed, cells } = world.samplerNodes(frame, a.nodes)
       const k: Kept = {
-        tile: message.tile, nodes: a.nodes, triangles: a.triangles, z: a.z, role: a.role,
+        tile: message.tile, frame, nodes: a.nodes, framed, cells, triangles: a.triangles, z: a.z, role: a.role,
         rims: new Map(message.rims.map((r) => [`${r.tile.x},${r.tile.y}`, r])),
-        reach: seamReach(a.nodes, a.triangles, a.role, cells), n, data,
+        reseam: world.reseamArea(frame, a.nodes, a.triangles, a.role, n), n, data,
       }
-      const sampler = createTileSampler(a.nodes, a.triangles, a.z, cells, (sums) => {
+      const sampler = createTileSampler(framed, a.triangles, a.z, cells, (sums) => {
         rim = tileRim(message.tile, a.nodes, a.role, sums)
-        addRims(k.tile, k.nodes, k.role, sums, k.rims.values(), worldWidth, worldHeight)
-      })
-      rasteriseTile(sampler, message.tile.level, n, data)
+        addRims(k.tile, k.nodes, k.role, sums, k.rims.values(), world)
+      }, world.metresPerCell)
+      rasteriseTile(world.rasterSampler(frame, sampler), frame.cells, n, data)
       kept.set(message.stage, k)
     } else if (base) {
-      rasteriseLevel(base, frame.cornerX, frame.cornerY, frame.cells, n, data)
+      world.rasteriseLevel1(base, frame, n, data)
     } else return
     source.setRaster(message.stage, rasterFrom(message.tile, n, data))
     // A shared buffer is not transferable (nor need be); a plain one is —
@@ -199,15 +202,8 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
     if (k.rims.has(id)) return
     k.rims.set(id, message.rim)
     // The samples a change of this side's (or corner's) edge normals can
-    // reach: within the side's reach, plus a sample.
-    const cells = tileSpec(k.tile.level).cells
-    const step = cells / (k.n - 1)
-    const { dx, dy } = tileOffset(k.tile, message.rim.tile, worldWidth, worldHeight)
-    const [left, right, bottom, top] = k.reach
-    const only = (x: number, y: number): boolean =>
-      (dx === 0 || (dx < 0 ? x <= left + step : cells - x <= right + step)) &&
-      (dy === 0 || (dy < 0 ? y <= bottom + step : cells - y <= top + step))
-    rasteriseTile(seamedSampler(k), k.tile.level, k.n, k.data, only)
+    // reach (GroundTiles.reseamArea).
+    rasteriseTile(tiles.rasterSampler(k.frame, seamedSampler(k)), k.frame.cells, k.n, k.data, k.reseam(k.tile, message.rim))
     post({ type: 'reseamed', stage: message.stage })
     return
   }

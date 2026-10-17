@@ -1,6 +1,5 @@
-import type { MeshSampler } from '../../generator/mesh/meshSampler'
-import { tileSpec } from '../../generator/mesh/meshTile'
 import type { TileSurfaceSampler } from '../../generator/mesh/tileSampler'
+import type { RasterFrame } from './groundTiles'
 
 // A TILE AS A RASTER: the ground of one tile square sampled on a regular
 // grid, once, so the painter (map/groundPaint.ts) reads it bilinearly
@@ -20,15 +19,13 @@ import type { TileSurfaceSampler } from '../../generator/mesh/tileSampler'
 // would make it worth storing (the painted textures) changes too often
 // to store at all (decided 2026-10-03).
 
-export interface Raster {
+// Where it lies is its frame (groundTiles.ts): on the torus the tile's
+// side and its corner on the world grid, on the sphere the tile's plane.
+export interface Raster extends RasterFrame {
   level: number
   // Samples a side; sample i lies at corner + i · cells / (n − 1), so the
-  // first and the last sit on the tile's edges.
+  // first and the last sit on the frame's edges.
   n: number
-  // The tile's side, cells, and its corner on the world grid.
-  cells: number
-  cornerX: number
-  cornerY: number
   // 3 floats a sample: height, dh/dx, dh/dz.
   data: Float32Array
 }
@@ -46,8 +43,8 @@ export const rasterSamples = (level: number, cells: number, metersPerCell: numbe
 
 export const rasterBytes = (n: number): number => 3 * n * n * 4
 
-// The level-1 rasters share level 2's tile grid.
-export const LEVEL1_GRID_LEVEL = 2
+// The level-1 rasters share level 2's tile grid (groundTiles.ts
+// LEVEL1_GRID_LEVEL).
 export const level1Stage = (x: number, y: number): string => `L1:${x},${y}`
 
 // A buffer the workers can share where the page allows it.
@@ -61,10 +58,10 @@ export function rasterBuffer(n: number): Float32Array {
 // a point exactly on the edge can fall through both tiles' tolerance.
 const EDGE_NUDGE = 1e-4
 
-// A tile's raster from its sampler (positions in cells from the corner).
-// With `only`, just the samples it accepts (a seam patched, groundSeams.ts).
-export function rasteriseTile(sampler: TileSurfaceSampler, level: number, n: number, out: Float32Array, only?: (x: number, y: number) => boolean): void {
-  const cells = tileSpec(level).cells
+// A tile's raster from its sampler (positions in the frame, `cells` a
+// side). With `only`, just the samples it accepts (a seam patched,
+// groundSeams.ts).
+export function rasteriseTile(sampler: TileSurfaceSampler, cells: number, n: number, out: Float32Array, only?: (x: number, y: number) => boolean): void {
   const step = cells / (n - 1)
   const s = new Float64Array(5)
   for (let j = 0; j < n; j++) {
@@ -84,24 +81,6 @@ export function rasteriseTile(sampler: TileSurfaceSampler, level: number, n: num
         out[p + 1] = 0
         out[p + 2] = 0
       }
-    }
-  }
-}
-
-// A level-1 raster over a square of `cells` from (cornerX, cornerY) on
-// the world grid, from the level's mesh sampler (which wraps).
-export function rasteriseLevel(sampler: MeshSampler, cornerX: number, cornerY: number, cells: number, n: number, out: Float32Array): void {
-  const step = cells / (n - 1)
-  const normal = new Float64Array(3)
-  for (let j = 0; j < n; j++) {
-    const y = cornerY + j * step
-    for (let i = 0; i < n; i++) {
-      const x = cornerX + i * step
-      const p = (j * n + i) * 3
-      out[p] = sampler.heightAt(x, y)
-      sampler.normalAt(x, y, normal)
-      out[p + 1] = normal[1] > 1e-6 ? -normal[0] / normal[1] : 0
-      out[p + 2] = normal[1] > 1e-6 ? -normal[2] / normal[1] : 0
     }
   }
 }

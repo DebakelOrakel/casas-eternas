@@ -285,7 +285,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       debug.water = levels
       debug.elevation = levels.elevation
     })
-    await ground.setWorld({ worldId: chosen.worldId, width: world.width, height: world.height, level: read.artifact, versions, fields })
+    await ground.setWorld({ worldId: chosen.worldId, kind: world.kind === 'SphereWorld' ? 'sphere' : 'torus', width: world.width, height: world.height, level: read.artifact, versions, fields })
     step('ground ready')
     if (disposed) return false
     shown = true

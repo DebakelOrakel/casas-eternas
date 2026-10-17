@@ -9,13 +9,13 @@ import { MAP_EXAGGERATION, MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_HEIGHT_SCAL
 import { artifactKey, type ArtifactStore } from '../../storage/ArtifactStore'
 import type { MeshLevelArtifact } from '../../world/meshArtifacts'
 import { meshTileStage, readMeshTileArtifact } from '../../world/meshTileArtifacts'
-import { tileAt } from '../../generator/pipeline/tilePlan'
-import { torusDomain } from '../../generator/core/domain'
+import { domainOfKind, type Domain } from '../../generator/core/domain'
 import type { TileId } from '../../generator/mesh/meshTile'
-import { LEVEL1_GRID_LEVEL, level1Stage, rasterBytes } from './groundRaster'
+import { level1Stage, rasterBytes } from './groundRaster'
 import type { GridField } from './groundSource'
 import type { GroundWorkerInbound, GroundWorkerOutbound } from './groundWorker'
-import { neighbourTiles, type TileRim } from './groundSeams'
+import type { TileRim } from './groundSeams'
+import { groundTilesOf, LEVEL1_GRID_LEVEL, type GroundTiles } from './groundTiles'
 
 // THE INCUBATOR'S GROUND: the rings (map/groundRings.ts) over a worker
 // that paints them (groundWorker.ts), the light that shows them and the
@@ -101,7 +101,7 @@ export interface GroundView {
   // Hand the ground its world: level 1, the tiles the store holds (stage
   // → pipeline version) and the save's fields. Resolves when the worker
   // holds it.
-  setWorld(input: { worldId: string; width: number; height: number; level: MeshLevelArtifact; versions: Map<string, string>; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterFloor' | 'waterDam' | 'waterSurface', GridField | null> }): Promise<void>
+  setWorld(input: { worldId: string; kind: Domain['kind']; width: number; height: number; level: MeshLevelArtifact; versions: Map<string, string>; fields: Record<'biome' | 'elevation' | 'temperature' | 'precipitation' | 'lakeDepth' | 'waterLevel' | 'waterFloor' | 'waterDam' | 'waterSurface', GridField | null> }): Promise<void>
   // Per frame: the focus, the world units a pixel spans there, whether
   // the shadows are wanted, and the air: the camera's height over the
   // ground (world units; 0 for the map's orthographic view, which has no
@@ -176,10 +176,10 @@ export function createGroundView(options: GroundViewOptions): GroundView {
     const half = (message.quads / 2) * message.spacing
     const out = new Set<string>()
     const step = 16 // level 2's tile side, cells
-    const world = torusDomain(worldWidthCells, worldHeightCells)
     for (let y = message.centerY - half; y <= message.centerY + half + step; y += step) {
       for (let x = message.centerX - half; x <= message.centerX + half + step; x += step) {
-        const t = tileAt(LEVEL1_GRID_LEVEL, x, y, world)
+        tiles.at(x, y)
+        const t = tiles.tileAt(LEVEL1_GRID_LEVEL)
         out.add(level1Stage(t.x, t.y))
       }
     }
@@ -272,7 +272,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
     keeper.set(stage, worker)
     const mine = seamed.get(stage) ?? new Set<string>()
     seamed.set(stage, mine)
-    for (const n of neighbourTiles(tile, worldWidthCells, worldHeightCells)) {
+    for (const n of tiles.neighbours(tile)) {
       const other = meshTileStage(n)
       const theirs = rims.get(other)
       if (theirs && !mine.has(other)) {
@@ -375,6 +375,8 @@ export function createGroundView(options: GroundViewOptions): GroundView {
   const started = performance.now()
   let worldWidthCells = 1
   let worldHeightCells = 1
+  // The world's tiles (groundTiles.ts), as the workers hold them.
+  let tiles: GroundTiles = groundTilesOf(domainOfKind('torus', 2, 1))
 
   let readyCount = 0
   let worldSent = 0
@@ -530,7 +532,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
           const w = Math.min(i, workers.length - 1)
           held.add(job.stage)
           // The neighbours' edges known now; the rest follow as they come.
-          const known = neighbourTiles(job.tile, worldWidthCells, worldHeightCells).map(meshTileStage).filter((s) => rims.has(s))
+          const known = tiles.neighbours(job.tile).map(meshTileStage).filter((s) => rims.has(s))
           seamed.set(job.stage, new Set(known))
           workers[w].postMessage({ type: 'rasterise', stage: job.stage, tile: job.tile, artifact: a, rims: known.map((s) => rims.get(s)!) } satisfies GroundWorkerInbound, [a.nodes.buffer, a.triangles.buffer, a.z.buffer, a.role.buffer, a.outflow.buffer])
         }
@@ -601,6 +603,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       key = { worldId: input.worldId, versions: input.versions }
       worldWidthCells = input.width
       worldHeightCells = input.height
+      tiles = groundTilesOf(domainOfKind(input.kind, input.width, input.height))
       const done = new Promise<void>((resolve) => {
         ready = resolve
       })
@@ -613,7 +616,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       tileAsked.clear()
       held.clear()
       workers.forEach((worker, i) => {
-        const message: GroundWorkerInbound = { type: 'world', width: input.width, height: input.height, level: i < MESH_HOLDERS ? level : null, stages: [...input.versions.keys()], fields: input.fields, detail: i === 0 ? DETAIL_TEXTURE_SIZE : 0 }
+        const message: GroundWorkerInbound = { type: 'world', kind: input.kind, width: input.width, height: input.height, level: i < MESH_HOLDERS ? level : null, stages: [...input.versions.keys()], fields: input.fields, detail: i === 0 ? DETAIL_TEXTURE_SIZE : 0 }
         worker.postMessage(message)
       })
       worldSent = performance.now()
