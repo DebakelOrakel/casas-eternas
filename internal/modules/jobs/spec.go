@@ -51,9 +51,9 @@ type Spec struct {
 	TaskID string `json:"taskId,omitempty"`
 
 	// Whether the worker may report an artifact already in the store as
-	// the task's result instead of computing it again: set for the tasks of
-	// a plan. The artifact key names the inputs and the pipeline version, so
-	// one there is the one the task would write.
+	// the task's result instead of computing it again: the coordinator sets
+	// it for every task. The artifact key names the inputs and the pipeline
+	// version, so one there is the one the task would write.
 	Reuse bool `json:"reuse,omitempty"`
 
 	// For a tile: the upstream tiles of its level, whose outflow it reads

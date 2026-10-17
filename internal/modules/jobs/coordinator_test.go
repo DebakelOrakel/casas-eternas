@@ -216,8 +216,8 @@ func TestCoordinatorRunsARefinePlan(t *testing.T) {
 	}
 }
 
-// A plan stops at the level it refines up to, and its tasks may reuse what is
-// already there; a single order may not.
+// A plan stops at the level it refines up to. Every task may reuse what is
+// already there, a single order's too.
 func TestCoordinatorStopsAPlanAtItsStage(t *testing.T) {
 	server, conn := coordinatorRelay(t)
 	reg := newRegistry(jobHistory)
@@ -235,8 +235,8 @@ func TestCoordinatorStopsAPlanAtItsStage(t *testing.T) {
 	}
 	single := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
 	waitForJob(t, reg, single.ID, StateDone)
-	if computed.Load() != 2 || reused.Load() != 1 {
-		t.Errorf("single order: computed %d, reused %d, want 2 and 1", computed.Load(), reused.Load())
+	if computed.Load() != 2 || reused.Load() != 2 {
+		t.Errorf("single order: tasks %d, reused %d, want 2 and 2", computed.Load(), reused.Load())
 	}
 }
 

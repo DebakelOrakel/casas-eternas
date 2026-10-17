@@ -4,6 +4,7 @@ Build, worker pool, deploy, performance, and code structure. See [README](./READ
 the format.
 
 ## 2026-10-17
+- **changed** Jobs: a bake whose level or tile is already stored uses it and does not compute it again. `jobs`
 - **changed** Server: a world is private, for signed-in users or public, and a template is readable without an account only when an admin makes it public; templates marked before stay public. `generator.load.visibility`
 
 ## 2026-10-16

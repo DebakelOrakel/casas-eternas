@@ -102,7 +102,7 @@ interface Job {
   // Spec.CheckpointDir); none without it.
   checkpointDir?: string
   // Whether an artifact already in the store may stand for the result
-  // (set by the coordinator for a plan's tasks): its key names the inputs and
+  // (the coordinator sets it for every task): its key names the inputs and
   // the pipeline version, so it is the one this job would write.
   reuse?: boolean
   // False forces the single-threaded engine — ONE state buffer instead of the

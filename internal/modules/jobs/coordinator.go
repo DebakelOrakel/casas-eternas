@@ -357,10 +357,12 @@ func (c *coordinator) publish(tasks []*Task) error {
 			spec.TaskID = task.ID
 			spec.JobID = task.JobID
 			spec.Upstream = task.Upstream
-			// A plan keeps what is already there; a single order computes again.
-			if job, ok := c.registry.get(task.JobID); ok && job.Request.Plan != "" {
-				spec.Reuse = true
-			}
+			// Every task keeps what is already there (2026-10-17): the key
+			// names the inputs and the pipeline version, so a stored artifact
+			// is the one the task would compute (DEC-0039). A single order
+			// computed again until then: a copy made before its template's
+			// bake paid a full bake to bind the level the template had.
+			spec.Reuse = true
 			raw, err := json.Marshal(spec)
 			if err != nil {
 				return err

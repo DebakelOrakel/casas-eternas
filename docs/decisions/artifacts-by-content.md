@@ -169,3 +169,10 @@ worker sends its world with each resolve. Tests: the matrix in
 Known: a leaked job token can record a foreign terrain for its world until
 it expires (an hour); the readers of that world then read that terrain's
 artifacts. The bound on a world's terrain ids is 256.
+
+2026-10-17: every task of a job may reuse a stored artifact
+(`Spec.Reuse`, set by the coordinator for each task); until then only a
+plan's tasks did, and a single order computed again. The e2e showed the
+cost: a copy made before its template's bake had no terrain, and its first
+job replayed the history (18 min) to find the level that the template's job
+had stored. Now that job reads the level, records the terrain and ends.
