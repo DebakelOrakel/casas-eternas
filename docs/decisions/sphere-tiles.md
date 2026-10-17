@@ -255,4 +255,8 @@ player made: the screen's finishing step stays locked for a sphere world
   on their patchworks of level 2 meet; an upstream tile's outflow is the
   tile's inflow (38.93 out, 38.93 in); the plan is acyclic and whole.
   Level 1's rivers enter cube tiles (a 512 × 256 sphere, one-off).
-- Not run yet: a sphere world a player made, through a real worker.
+- Run on a sphere world a player made (Brannoch, 2048 × 1024), through a
+  real worker: level 1 in 32 min, then 2359 level-2 tiles of 6144 (land
+  and shelf) in 9 min on one worker, none failed — 31.5 M nodes, 424 s of
+  bake in all, a median tile 1462 nodes in 87 ms, the largest 64 k nodes
+  in about 0.5 s.
