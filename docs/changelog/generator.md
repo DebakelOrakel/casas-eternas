@@ -5,6 +5,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 
 ## 2026-10-17
 - **fixed** Refinement: refined tiles no longer hold stray points at sea level in open sea and, on a sphere world, at their edges; levels 2 and 3 are refined again. `generator.finishing.refine`
+- **fixed** Refinement: a flat world no longer stops at a level-3 tile with "the link polygon has no ear". `generator.finishing.refine`
 
 ## 2026-10-14
 - **changed** Tectonics: mountains rise at the continents' margins and only slowly inside a continent, so worlds have fewer broad highlands and more narrow high ranges, and a seed makes a different world. `generator.step.tectonics`

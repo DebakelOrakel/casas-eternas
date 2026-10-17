@@ -285,3 +285,13 @@ tiles of Brannoch built again: no lattice node left on the sphere, the
 longest edge 2.2 cells (the coarsest placement step). Both tile versions
 moved (`cubeFrameFill`, `tileLatticeNodes`): the levels 2 and 3 bake
 again, on the torus too.
+
+2026-10-17: the same family on the torus. A level-3 tile of a flat world
+failed twice with "the link polygon has no ear": an edge node of a
+level-2 piece lay a hair from a node of the patchwork's lattice and
+rounded onto it, and the triangulation, which finds a point where it is
+passed and stores it as float32, made a second node at the same place.
+The tiles' points are now rounded to float32 before they are inserted
+(`tileParentFromTiles`, `buildTileMeshOn`); `harness:mesh` changes only
+the patchwork's hash (`patchTile` and the tiles stay byte-identical).
+The triangulation itself, the engine's, is unchanged.
