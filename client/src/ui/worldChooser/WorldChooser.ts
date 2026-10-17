@@ -2,6 +2,7 @@ import { relabel } from '../../i18n/relabel'
 import type { WorldShape } from '../../map/worldView'
 import { t, type TKey } from '../../i18n/i18n'
 import { formatBytes, formatWhen } from '../../ui/format'
+import { downloadBlob } from '../../ui/download'
 import { hasSession, needsSignIn } from '../../server/session'
 import {
   copyWorldOnServer, deleteWorld, fetchWorld, fetchWorldPreview, listWorlds, setWorldTemplate, setWorldVisibility, uploadWorld,
@@ -13,7 +14,7 @@ import {
   browserWorldIncomplete, browserWorldThumbnail, canKeepWorldsInBrowser, completeBrowserWorld, forgetBrowserWorld,
   keepArchiveInBrowser, listBrowserWorlds, openBrowserWorld, type BrowserWorld,
 } from '../../world/browserWorlds'
-import { progressPosition, progressStepOf, type ProgressStep } from '../../world/worldProgress'
+import { PROGRESS_STEPS, progressPosition, progressStepOf, type ProgressStep } from '../../world/worldProgress'
 import type { NotificationOptions } from '../notifications/NotificationManager'
 import '../../ui/theme/design.css'
 import './worldChooser.css'
@@ -45,8 +46,11 @@ import {
 // because "where is it kept" is a property of a world, not a place to navigate
 // to. The filter narrows that; it does not switch between two lists. A world
 // kept in both places is ONE card (worldCards.ts, 2026-10-11); a click on the
-// card opens a small panel with the facts of each copy, and the means to
-// copy a world from one place to the other. Nothing is copied by itself.
+// card opens its panel (design canvas, Welt-Laden.dc.html, 2026-10-17): the
+// two copies in one table, the means to copy a world from one place to the
+// other, one choice of the copy to load and one button that loads it, the
+// server's settings, and the download and the removals at the foot. Nothing
+// is copied by itself.
 //
 // TEMPLATES (docs/decisions/template-worlds.md, 2026-10-15) are server worlds
 // an admin offers to everyone, signed in or not. They carry a badge, have a
@@ -522,8 +526,8 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     return node
   }
 
-  function openButton(copy: WorldCopy | null, className: string): HTMLButtonElement {
-    const node = button(className, t('generator.load.open.label'))
+  function openButton(copy: WorldCopy | null, className: string, labelKey: TKey = 'generator.load.open.label'): HTMLButtonElement {
+    const node = button(className, t(labelKey))
     const help = options.openHelpKey === undefined ? 'generator.load.open' : options.openHelpKey
     if (!copy) {
       // Readable, not usable — and not `disabled`, which would also silence
@@ -536,24 +540,45 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     return node
   }
 
-  // The copy-to-the-other-place button, or null where it does not apply: the
-  // other place cannot take it (no server, a browser that keeps no worlds),
-  // or already holds the same bytes. Over a different version it confirms
-  // first, since that version is then gone.
-  function copyButton(card: WorldCard, copy: WorldCopy): HTMLButtonElement | null {
-    const target = otherPlace(copy.where)
-    if (target === 'server' ? serverReachable !== true : !browserKeeps) return null
-    if (card.state === 'same') return null
+  // The copy-to-the-other-place button, drawn like a "Load from" choice: the
+  // direction, and under it what the copy would do. Greyed out where it does
+  // not apply: no copy to copy, the other place cannot take it (no server,
+  // no sign-in, a browser that keeps no worlds), someone else's template, or
+  // the other place already holds the same bytes. Over a different version
+  // it confirms in place first, since that version is then gone: the line
+  // under the direction asks.
+  function copyButton(card: WorldCard, from: Where): HTMLButtonElement {
+    const copy = from === 'browser' ? card.browser : card.server
+    const target = otherPlace(from)
     const base = target === 'server' ? 'generator.load.copy.toServer' : 'generator.load.copy.toBrowser'
-    const label = `${base}.label` as TKey
-    if (card.state === 'diverged') {
-      const node = armedButton('wc-action', label, 'generator.load.copy.overwrite.confirm', () => copyToOther(copy))
-      node.dataset.help = base
+    const subText = !copy ? ''
+      : card.state === 'single' ? t(`${base}.only.sub` as TKey, { size: formatBytes(copy.bytes) })
+      : card.state === 'same' ? t(`${base}.same` as TKey)
+      : t(`${base}.${card.newer === from ? 'newer' : card.newer === target ? 'older' : 'replace'}` as TKey)
+    const node = button('wc-from__item wc-copy-dir', '')
+    const sub = el('span', 'wc-from__sub', subText)
+    node.append(el('span', 'wc-from__label', t(`${base}.direction` as TKey)), sub)
+    const takes = target === 'server' ? serverReachable === true && !signInMissing : browserKeeps
+    if (!copy || !takes || foreignTemplate(copy) || card.state === 'same') {
+      node.setAttribute('aria-disabled', 'true')
       return node
     }
-    const node = button('wc-action', t(label))
     node.dataset.help = base
+    let armed: ReturnType<typeof setTimeout> | undefined
+    const disarm = (): void => {
+      clearTimeout(armed)
+      armed = undefined
+      sub.textContent = subText
+      node.classList.remove('wc-armed')
+    }
     node.addEventListener('click', () => {
+      if (card.state === 'diverged' && armed === undefined) {
+        sub.textContent = t('generator.load.copy.overwrite.confirm')
+        node.classList.add('wc-armed')
+        armed = setTimeout(disarm, 4000)
+        return
+      }
+      disarm()
       node.disabled = true
       void copyToOther(copy).finally(() => { node.disabled = false })
     })
@@ -646,44 +671,47 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     return host
   }
 
-  // An admin's mark on a server world, or its removal. The world's content
-  // does not change.
-  function templateButton(copy: WorldCopy): HTMLButtonElement {
-    const base = copy.template ? 'generator.load.template.unmark' : 'generator.load.template.mark'
-    const node = button('wc-action', t(`${base}.label`))
-    node.dataset.help = base
-    node.addEventListener('click', () => {
-      node.disabled = true
-      void setWorldTemplate(copy.uid, !copy.template).then(async (done) => {
+  // An admin's mark on a server world, as a switch (world.template). The
+  // world's content does not change. Without a copy it is drawn, not usable.
+  function templateSwitch(copy: WorldCopy | null): HTMLElement {
+    const label = el('label', 'wc-switch')
+    const input = el('input', 'wc-switch__input')
+    input.type = 'checkbox'
+    input.checked = copy?.template ?? false
+    input.disabled = !copy?.actions.includes('world.template')
+    label.dataset.help = copy?.template ? 'generator.load.template.unmark' : 'generator.load.template.mark'
+    input.addEventListener('change', () => {
+      if (!copy) return
+      input.disabled = true
+      void setWorldTemplate(copy.uid, input.checked).then(async (done) => {
         if (!done) {
           closeDetail()
           setNote(t('generator.load.template.failed'))
           return
         }
         await reload()
-      }).finally(() => { node.disabled = false })
+      })
     })
-    return node
+    label.append(input, el('span', '', t('generator.load.template.badge.label')))
+    return label
   }
 
-  // Who reads a server copy: three buttons, shown to whoever may share the
+  // Who reads a server copy: three buttons, usable by whoever may share the
   // world (world.share). Public is the admin's (world.publish), greyed out
-  // for the owner, so the help card can say what the choice is.
-  function visibilityControl(copy: WorldCopy): HTMLElement | null {
-    if (copy.where !== 'server' || !copy.actions.includes('world.share')) return null
-    const block = el('div', 'wc-visibility')
-    const label = el('span', 'wc-visibility__label', t('generator.load.visibility.label'))
-    label.dataset.help = 'generator.load.visibility'
+  // for the owner, so the help card can say what the choice is. Without a
+  // copy it is drawn, not usable.
+  function visibilityControl(copy: WorldCopy | null): HTMLElement {
     const group = el('div', 'wc-filter')
     group.setAttribute('role', 'group')
     group.setAttribute('aria-label', t('generator.load.visibility.label'))
+    const shares = copy?.actions.includes('world.share') ?? false
     for (const value of WORLD_VISIBILITIES) {
       const node = button('', t(`generator.load.visibility.${value}.label`))
       node.dataset.help = 'generator.load.visibility'
-      node.setAttribute('aria-pressed', String(copy.visibility === value))
-      node.disabled = value === 'public' && !copy.actions.includes('world.publish')
+      node.setAttribute('aria-pressed', String((copy?.visibility || 'private') === value))
+      node.disabled = !shares || (value === 'public' && !copy!.actions.includes('world.publish'))
       node.addEventListener('click', () => {
-        if (copy.visibility === value) return
+        if (!copy || copy.visibility === value) return
         for (const other of group.querySelectorAll('button')) other.disabled = true
         void setWorldVisibility(copy.uid, value).then(async (done) => {
           if (!done) {
@@ -696,13 +724,37 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
       })
       group.append(node)
     }
-    block.append(label, group)
-    return block
+    return group
   }
 
-  function removeButton(copy: WorldCopy): HTMLButtonElement {
-    const node = armedButton('wc-action wc-action--remove', 'generator.load.remove.label', 'generator.load.remove.confirm', () => removeCopy(copy))
+  // Removing the copy of one place, confirmed in place. Drawn, not usable,
+  // where that place holds none or the caller may not delete it.
+  function removeLink(where: Where, copy: WorldCopy | null): HTMLButtonElement {
+    const labelKey = where === 'browser' ? 'generator.load.remove.browser.label' : 'generator.load.remove.server.label'
+    const className = `wc-link${where === 'server' ? ' wc-link--danger' : ''}`
+    const allowed = copy !== null && (where === 'browser' || copy.actions.includes('world.delete'))
+    if (!allowed) {
+      const node = button(className, t(labelKey))
+      node.setAttribute('aria-disabled', 'true')
+      return node
+    }
+    const node = armedButton(className, labelKey, 'generator.load.remove.confirm', () => removeCopy(copy))
     node.dataset.help = 'generator.load.remove'
+    return node
+  }
+
+  function downloadLink(copy: WorldCopy): HTMLButtonElement {
+    const node = button('wc-link', t('generator.load.download.label'))
+    node.addEventListener('click', () => {
+      node.disabled = true
+      void readArchive(copy).then((archive) => {
+        if (!archive) {
+          options.notifications.show({ message: t('generator.load.unavailable'), icon: '/icons/warning.png', durationMs: 6000 })
+          return
+        }
+        downloadBlob(archive, `${(copy.name || copy.seed || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`)
+      }).finally(() => { node.disabled = false })
+    })
     return node
   }
 
@@ -740,9 +792,6 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     if (card.state === 'diverged') row.append(divergedBadge())
     return row
   }
-
-  const whereText = (card: WorldCard): string =>
-    card.browser && card.server ? t('generator.load.where.both') : t(`generator.load.filter.${card.shown.where}.label` as TKey)
 
   // The card says where the world is kept by its icons alone; the words are
   // the icons' names (for a screen reader and as a tooltip) and stand in the
@@ -842,9 +891,13 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   // The world whose panel is open, by uid: the panel is painted again from the
   // cards at every merge, so a copy or a removal shows at once.
   let detailUid: string | null = null
+  // The copy the panel loads (its "Load from"), null for the default: the
+  // newer of two, the browser's of two same copies.
+  let loadFrom: Where | null = null
 
   function openDetail(uid: string): void {
     detailUid = uid
+    loadFrom = null
     paintDetail()
     detailBackdrop.hidden = false
     detail.querySelector<HTMLButtonElement>('.wc-detail__close')?.focus()
@@ -859,38 +912,115 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     if (event.target === detailBackdrop) closeDetail()
   })
 
-  // One fact: a term and its value; none for an empty value.
-  function facts(rows: [TKey, string][]): HTMLElement {
-    const dl = el('dl', 'wc-facts')
-    for (const [key, value] of rows) {
-      if (!value) continue
-      dl.append(el('dt', '', t(key)), el('dd', '', value))
-    }
-    return dl
+  // A copy the panel may load: there, not someone else's template (that one
+  // is copied), and opened by this screen.
+  const loadable = (copy: WorldCopy | null): copy is WorldCopy =>
+    copy !== null && !foreignTemplate(copy) && opens(copy.where, copy.uid)
+
+  const copyOf = (card: WorldCard, where: Where): WorldCopy | null => (where === 'browser' ? card.browser : card.server)
+
+  function section(labelKey: TKey | null, ...body: HTMLElement[]): HTMLElement {
+    const node = el('div', 'wc-section')
+    if (labelKey) node.append(el('span', 'wc-section__label mono', t(labelKey)))
+    node.append(...body)
+    return node
   }
 
-  // What is true of one copy: when, by which build, how big, how far.
-  const copyFacts = (copy: WorldCopy): [TKey, string][] => [
-    ['generator.load.detail.progress', progressText(copy.progress)],
-    ['generator.load.detail.savedAt', formatWhen(copy.savedAt)],
-    ['generator.load.detail.build', copy.generator],
-    ['generator.load.detail.size', formatBytes(copy.bytes)],
-  ]
-
-  function actions(card: WorldCard, copy: WorldCopy): HTMLElement {
-    const row = el('div', 'wc-actions')
-    // Someone else's template: a copy is all there is to do with it.
-    if (foreignTemplate(copy)) {
-      row.append(copyMenu(copy, 'wc-action wc-action--open'))
-      return row
-    }
-    row.append(openButton(opens(copy.where, copy.uid) ? copy : null, 'wc-action wc-action--open'))
-    const copyNode = copyButton(card, copy)
-    if (copyNode) row.append(copyNode)
-    if (copy.template) row.append(copyMenu(copy, 'wc-action'))
-    if (copy.actions.includes('world.template')) row.append(templateButton(copy))
-    row.append(removeButton(copy))
+  // The steps as a row of marks, the design's progress bar in small.
+  function stepMarks(progress: ProgressStep | null): HTMLElement {
+    const row = el('span', 'wc-steps')
+    row.setAttribute('aria-hidden', 'true')
+    const position = progressPosition(progress)
+    const all = PROGRESS_STEPS.length - 1
+    const reached = position ? (position.done ? all : position.n) : 0
+    for (let i = 0; i < all; i++) row.append(el('span', i < reached ? 'wc-steps__on' : ''))
     return row
+  }
+
+  function panelHead(card: WorldCard): HTMLElement {
+    const shown = card.shown
+    const head = el('div', 'wc-detail__head')
+    const frame = el('span', 'wc-thumb wc-thumb--large')
+    thumbnailInto(frame, shown)
+    const title = el('div', 'wc-detail__title')
+    title.append(el('h2', 'wc-detail__name', shown.name || shown.uid), badges(card))
+    if (shown.seed) title.append(el('span', 'wc-seed mono', `${t('titlebar.seed')} ${shown.seed}`))
+    const progress = el('span', 'wc-detail__progress')
+    progress.append(stepMarks(shown.progress), el('span', '', progressText(shown.progress)))
+    title.append(progress)
+    const close = button('wc-detail__close', '')
+    close.setAttribute('aria-label', t('common.action.close.label'))
+    close.append(icon('<path d="M6 6l12 12M18 6 6 18"/>'))
+    close.addEventListener('click', closeDetail)
+    head.append(frame, title, close)
+    return head
+  }
+
+  // The two copies side by side: what is true of each, a dash where a place
+  // holds none.
+  function copiesTable(card: WorldCard): HTMLElement {
+    const table = el('table', 'wc-copies')
+    const head = el('tr', '')
+    head.append(el('th', 'mono', t('generator.load.copies')))
+    for (const where of ['browser', 'server'] as const) {
+      const cell = el('th', '')
+      cell.scope = 'col'
+      cell.append(icon(where === 'browser' ? BROWSER_ICON : SERVER_ICON), el('span', '', t(`generator.load.version.${where}`)))
+      head.append(cell)
+    }
+    const rows: [TKey, (copy: WorldCopy) => string][] = [
+      ['generator.load.detail.progress', (copy) => progressText(copy.progress)],
+      ['generator.load.detail.savedAt', (copy) => formatWhen(copy.savedAt)],
+      ['generator.load.detail.build', (copy) => copy.generator],
+      ['generator.load.detail.size', (copy) => formatBytes(copy.bytes)],
+    ]
+    const body = el('tbody', '')
+    for (const [key, value] of rows) {
+      const row = el('tr', '')
+      const term = el('th', '', t(key))
+      term.scope = 'row'
+      row.append(term)
+      for (const copy of [card.browser, card.server]) row.append(el('td', 'mono', (copy && value(copy)) || '—'))
+      body.append(row)
+    }
+    const thead = el('thead', '')
+    thead.append(head)
+    table.append(thead, body)
+    return table
+  }
+
+  // "Load from": one choice per place, a place without a loadable copy
+  // drawn, not usable.
+  function loadFromChoice(card: WorldCard, chosen: Where | null): HTMLElement {
+    const row = el('div', 'wc-from')
+    for (const where of ['browser', 'server'] as const) {
+      const copy = copyOf(card, where)
+      const node = button('wc-from__item', '')
+      node.setAttribute('aria-pressed', String(chosen === where))
+      node.append(el('span', 'wc-from__label', t(`generator.load.version.${where}`)), el('span', 'wc-from__sub mono', copy ? formatWhen(copy.savedAt) : '—'))
+      if (!loadable(copy)) {
+        node.setAttribute('aria-disabled', 'true')
+      } else {
+        node.addEventListener('click', () => {
+          if (loadFrom === where) return
+          loadFrom = where
+          paintDetail()
+        })
+      }
+      row.append(node)
+    }
+    return row
+  }
+
+  // The server's settings of the world: who reads it, and the template
+  // mark. Drawn, not usable, for a world the server does not hold.
+  function serverSettings(card: WorldCard): HTMLElement | null {
+    const copy = card.server
+    if (copy ? !copy.actions.some((a) => a === 'world.share' || a === 'world.template') : serverReachable !== true) return null
+    const row = el('div', 'wc-server')
+    if (!copy) row.classList.add('wc-server--absent')
+    row.append(visibilityControl(copy), templateSwitch(copy))
+    return section('generator.load.server.section', row)
   }
 
   function paintDetail(): void {
@@ -900,50 +1030,57 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
       closeDetail()
       return
     }
-    const shown = card.shown
-    detail.setAttribute('aria-label', shown.name || shown.uid)
+    detail.setAttribute('aria-label', card.shown.name || card.shown.uid)
+    const parts: HTMLElement[] = [panelHead(card)]
 
-    const head = el('div', 'wc-detail__head')
-    const frame = el('span', 'wc-thumb wc-thumb--large')
-    thumbnailInto(frame, shown)
-    const title = el('div', 'wc-detail__title')
-    title.append(el('h2', 'wc-detail__name', shown.name || shown.uid), badges(card))
-    const close = button('wc-detail__close', '')
-    close.setAttribute('aria-label', t('common.action.close.label'))
-    close.append(icon('<path d="M6 6l12 12M18 6 6 18"/>'))
-    close.addEventListener('click', closeDetail)
-    head.append(frame, title, close)
-
-    const shape = card.kind ? t(`generator.world.topology.${card.kind === 'SphereWorld' ? 'sphere' : 'flat'}.label`) : ''
-    const common: [TKey, string][] = [
-      ['titlebar.seed', shown.seed],
-      ['generator.load.detail.shape', shape],
-      ['generator.load.detail.where', whereText(card)],
-    ]
-
-    const parts: HTMLElement[] = [head]
-    if (!card.browser || !card.server) {
-      parts.push(facts([...common, ...copyFacts(shown)]))
-      const visibility = visibilityControl(shown)
-      if (visibility) parts.push(visibility)
-      parts.push(actions(card, shown))
-    } else {
-      // Both places: the two copies side by side, each with its own facts and
-      // its own buttons — of two different versions, the user picks one.
-      parts.push(facts(common))
-      const versions = el('div', 'wc-versions')
-      for (const copy of [card.browser, card.server]) {
-        const column = el('section', 'wc-version')
-        const heading = el('h3', 'wc-version__title', t(copy.where === 'browser' ? 'generator.load.version.browser' : 'generator.load.version.server'))
-        if (card.newer === copy.where) heading.append(el('span', 'wc-version__newer', t('generator.load.version.newer')))
-        column.append(heading, facts(copyFacts(copy)))
-        const visibility = visibilityControl(copy)
-        if (visibility) column.append(visibility)
-        column.append(actions(card, copy))
-        versions.append(column)
-      }
-      parts.push(versions)
+    if (card.state === 'diverged') {
+      const note = el('p', 'wc-detail__note')
+      const mark = el('img', 'wc-badge__icon')
+      mark.src = '/icons/warning.png'
+      mark.alt = ''
+      const key: TKey = card.newer === 'server' ? 'generator.load.diverged.serverNewer' : card.newer === 'browser' ? 'generator.load.diverged.browserNewer' : 'generator.load.diverged.help'
+      note.append(mark, el('span', '', t(key)))
+      parts.push(note)
     }
+
+    parts.push(copiesTable(card))
+
+    // Copying between the two places, and a template's copy as a new world.
+    const copying = el('div', 'wc-from')
+    copying.append(copyButton(card, 'browser'), copyButton(card, 'server'))
+    const foreign = foreignTemplate(card.server)
+    const copyBody: HTMLElement[] = [copying]
+    if (card.server?.template && !foreign) {
+      const row = el('div', 'wc-actions')
+      row.append(copyMenu(card.server, 'wc-action'))
+      copyBody.push(row)
+    }
+    parts.push(section('generator.load.copy.section', ...copyBody))
+
+    // Which copy loads, and the one button that loads it.
+    const fallback: Where | null = loadable(copyOf(card, card.newer ?? 'browser'))
+      ? card.newer ?? 'browser'
+      : loadable(copyOf(card, card.newer === 'server' ? 'browser' : 'server')) ? (card.newer === 'server' ? 'browser' : 'server') : null
+    const chosen = loadFrom && loadable(copyOf(card, loadFrom)) ? loadFrom : fallback
+    if (chosen === null && foreign) {
+      const main = copyMenu(card.server!, 'wc-action wc-action--open wc-detail__main')
+      parts.push(main)
+    } else {
+      parts.push(section('generator.load.from.label', loadFromChoice(card, chosen)))
+      const labelKey: TKey = card.state !== 'diverged' ? 'generator.load.open.label'
+        : chosen === 'server' ? 'generator.load.open.fromServer.label' : 'generator.load.open.fromBrowser.label'
+      const main = openButton(chosen ? copyOf(card, chosen) : null, 'wc-action wc-action--open wc-detail__main', labelKey)
+      parts.push(main)
+    }
+
+    const settings = serverSettings(card)
+    if (settings) parts.push(settings)
+
+    const foot = el('div', 'wc-detail__foot')
+    foot.append(downloadLink(chosen ? copyOf(card, chosen)! : card.shown), el('span', 'wc-grow'), removeLink('browser', card.browser))
+    if (card.server || serverReachable === true) foot.append(removeLink('server', card.server))
+    parts.push(foot)
+
     detail.replaceChildren(...parts)
   }
 

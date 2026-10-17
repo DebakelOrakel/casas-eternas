@@ -223,7 +223,7 @@ console.log('\n— run history —')
   for (const [from, to] of moves) walked.push(progress = WP.advanceProgress(progress, order, from, to))
   check('progress follows the forward moves only', walked.join(',') === 'world,world,genesis,climate,climate,climate,finishing', walked.join(','))
   check('a reset withdraws its step and the steps after it, not those before', WP.withdrawProgress('ecology', 'tectonics') === 'genesis' && WP.withdrawProgress('ecology', 'ecology') === 'climate' && WP.withdrawProgress('genesis', 'world') === null && WP.withdrawProgress('genesis', 'ecology') === 'genesis' && WP.withdrawProgress('climate', 'migration') === 'climate' && WP.withdrawProgress(null, 'genesis') === null)
-  check('and counts on the chain without the aside', JSON.stringify(WP.progressPosition('genesis')) === '{"n":2,"all":6,"done":false}' && WP.progressPosition('finishing').done && WP.progressPosition(null) === null)
+  check('and counts on the chain without the aside', JSON.stringify(WP.progressPosition('genesis')) === '{"n":1,"all":5,"done":false}' && WP.progressPosition('finishing').done && WP.progressPosition(null) === null)
   check('a new progress reads as a change, by name', WR.recordDiff(record, { ...record, progress: 'finishing' }).some((d) => d.startsWith('progress:')))
   check('an unknown or missing kind is refused', refused === 3 && WR.worldKindOf(yaml) === 'FlatWorld', `${refused} of 3`)
   // The annotations (template worlds: where a copy came from) survive a

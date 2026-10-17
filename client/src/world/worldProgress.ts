@@ -46,11 +46,12 @@ export function withdrawProgress(current: ProgressStep | null, step: string): Pr
   return at === 0 ? null : PROGRESS_STEPS[at - 1]
 }
 
-// What the world list says: the accepted step's position on the chain
-// (1-based) of all its steps, and whether that was the last one. Null for a
-// world that has accepted no step.
+// What the world list says: the accepted step's number, of all numbered
+// steps, and whether that was the last one. Null for a world that has
+// accepted no step. The first step ('world') is step 0, as in the step bar:
+// it sets the world up, and the count is of the steps after it (2026-10-17).
 export function progressPosition(progress: ProgressStep | null): { n: number; all: number; done: boolean } | null {
   if (progress === null) return null
-  const n = PROGRESS_STEPS.indexOf(progress) + 1
-  return { n, all: PROGRESS_STEPS.length, done: n === PROGRESS_STEPS.length }
+  const n = PROGRESS_STEPS.indexOf(progress)
+  return { n, all: PROGRESS_STEPS.length - 1, done: n === PROGRESS_STEPS.length - 1 }
 }
