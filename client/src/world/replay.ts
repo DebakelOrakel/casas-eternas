@@ -3,6 +3,7 @@ import { replayRuns, type ReplayOptions, type ReplayPlan } from '../generator/pi
 import type { PlateSimulation } from '../generator/tectonics/plateSimulation'
 import { landShareFromControl, mantleDiffusionFromVigour, weatherParamsFrom } from './runParams'
 import type { WorldHistory } from './save/worldHistory'
+import { WORLD_PIPELINE } from './worldPipeline'
 
 // A WORLD MADE AGAIN FROM ITS RECIPE (docs/decisions/detail-ladder.md,
 // fork 2): the seed and the `history:` block's runs, turned into run
@@ -12,9 +13,9 @@ import type { WorldHistory } from './save/worldHistory'
 // level 0 bit for bit (measured 2026-10-01); at budget 1 it is level 1, a
 // sibling of the save with its outlines and its own valleys.
 //
-// Only the code that made the world can make it again: every run's code
-// hash must be this code's (replayRefusal), else the replay refuses rather
-// than bake a third world (confirmed 2026-10-01: no fallback).
+// Only the pipeline that made the world can make it again: the world's
+// recorded pipeline must be this one's (replayRefusal, worldPipeline.ts),
+// else the replay refuses rather than bake a third world.
 
 export interface ReplayRecipe {
   seed: string
@@ -25,13 +26,12 @@ export interface ReplayRecipe {
   history: WorldHistory
 }
 
-// Why a recipe cannot be replayed by `code`, or null when it can.
-export function replayRefusal(history: WorldHistory, code: string): string | null {
+// Why a world cannot be replayed by this pipeline (worldPipeline.ts), or
+// null when it can. `pipeline`: the one the world records.
+export function replayRefusal(history: WorldHistory, pipeline: string): string | null {
   if (history.genesis.length === 0 || history.tectonics.length === 0) return 'the world records no history — make it again to refine it'
-  for (const run of [...history.genesis, ...history.tectonics]) {
-    if (run.code === '') return 'the world was made before its code was recorded — make it again to refine it'
-    if (run.code !== code) return `the world was made by other code (${run.code}, this is ${code}) — make it again to refine it`
-  }
+  if (pipeline === '') return 'no one pipeline made the world — make it again to refine it'
+  if (pipeline !== WORLD_PIPELINE) return `the world was made by another pipeline (${pipeline}, this is ${WORLD_PIPELINE}) — make it again to refine it`
   return null
 }
 

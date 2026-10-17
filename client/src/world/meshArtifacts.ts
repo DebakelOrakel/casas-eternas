@@ -1,4 +1,5 @@
 import { AMPLIFY_CONSTANTS } from '../generator/surface/amplify'
+import { worldTuning } from './worldTuning'
 import { MESH_TUNING } from '../generator/mesh/meshDensity'
 import type { MeshLevel } from '../generator/pipeline/meshBakeStage'
 import { encodeMesh, decodeMesh, type SerializedMesh } from '../generator/mesh/meshSerial'
@@ -64,6 +65,9 @@ export const MESH_BAKE_CONSTANTS: Record<string, number> = {
   routingEvery: DEFAULT_ROUTING_EVERY,
   riverCourseModel: RIVER_COURSE_MODEL_VERSION,
   ...Object.fromEntries(Object.entries(COVER_BY_BIOME).map(([biome, cover]) => [`cover${biome}`, cover])),
+  // The tuning the history reads: level 1 is the history replayed, and
+  // the tiles are refined from it (worldTuning.ts).
+  ...worldTuning(),
 }
 
 // The constants a level's version is derived from — and what its meta

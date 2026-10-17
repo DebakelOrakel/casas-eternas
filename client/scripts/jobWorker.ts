@@ -33,14 +33,17 @@ import { BAKE_PIPELINE_DEPTH, EngineStalledError, reusableWorkers, type Pipeline
 import { levelBudget, levelHydrology, type MeshLevel } from '../src/generator/pipeline/meshBakeStage'
 import { planTiles } from '../src/generator/pipeline/tilePlan'
 import { meshRouting } from '../src/generator/mesh/meshHydrology'
-import { encodeCoupledTerrain, HISTORY_DEFAULTS } from '../src/generator/pipeline/coupledEpoch'
 import { climateAtPoints, climateCellsFromWeather, meanLandRunoff, meshPoints } from '../src/generator/climate/climatePoints'
+import { WORLD_PIPELINE } from '../src/world/worldPipeline'
 import { replayHistory, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
 import type { SavedField } from '../src/generator/fields/fieldMesh'
 import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
 import { bakedTileToArtifact, meshTileArtifactInfo, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact, type MeshTileArtifact } from '../src/world/meshTileArtifacts'
 import { bakeMeshTile, type UpstreamTile } from '../src/generator/pipeline/meshTileBake'
-import { parentTilesOf, TILE_SPECS, tileCorner, tileGrid, tileParentFromTiles, tileSpec, type TileParent, type TilePiece, type TileSpec } from '../src/generator/mesh/meshTile'
+import { TILE_SPECS, tileCorner, tileGrid, tileSpec, type TileParent, type TilePiece, type TileSpec } from '../src/generator/mesh/meshTile'
+import { domainOfKind, type Domain } from '../src/generator/core/domain'
+import { cubeTileSamples } from '../src/generator/mesh/meshTileCube'
+import { parentTilesOn, tileGridOn, tileParentOn } from '../src/generator/mesh/tileLayout'
 import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
 import { connect, tokenAuthenticator } from '@nats-io/transport-node'
 import { AckPolicy, jetstream, jetstreamManager, type JsMsg } from '@nats-io/jetstream'
@@ -337,11 +340,6 @@ function fail(message: string): never {
 // throughput knobs, never part of the result — the engine is byte-identical
 // across any worker count, which is what lets a job land on whatever
 // machine has cores to spare.
-// The generator code this bundle was built from (scripts/buildWorker.mjs
-// defines it): what a world's history must record for level 1's replay.
-// Empty where the source runs unbundled — every replay is then refused.
-declare const __GENERATOR_CODE__: string
-const GENERATOR_CODE: string = typeof __GENERATOR_CODE__ === 'string' ? __GENERATOR_CODE__ : ''
 
 // ALWAYS a pool, on a small machine one of one stencil and one refresh
 // thread: the pooled engine is a scheme of its own, and a tile baked
@@ -401,7 +399,7 @@ async function main(): Promise<void> {
   // them. That happened once. This makes an image's pipeline version something
   // you can read off it in a second rather than infer from a missing cache hit.
   if (raw === '--version') {
-    process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1), tilePipelineVersions: Object.fromEntries(Object.keys(TILE_SPECS).map((level) => [level, meshTilePipelineVersion(Number(level))])), code: GENERATOR_CODE })}\n`)
+    process.stdout.write(`${JSON.stringify({ pipelineVersion: meshPipelineVersion(1), tilePipelineVersions: Object.fromEntries(Object.keys(TILE_SPECS).map((level) => [level, meshTilePipelineVersion(Number(level))])) })}\n`)
     return
   }
   if (raw === '--serve') {
@@ -572,15 +570,12 @@ interface PlannedTask {
 const shapeOf = (inputs: WorldInputs): 'torus' | 'sphere' => (inputs.kind === 'SphereWorld' ? 'sphere' : 'torus')
 
 function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[] {
-  // The sphere's tiles are the cube atlas's (docs/decisions/sphere-tiles.md,
-  // DEC-0041), not built into the plan yet: level 1 alone.
-  if (shapeOf(inputs) === 'sphere') return []
-  const mesh = meshLevelMesh(artifact, inputs.width, inputs.height)
+  const mesh = meshLevelMesh(artifact, inputs.width, inputs.height, shapeOf(inputs))
   const routing = meshRouting(mesh, artifact.z)
   const plan = planTiles({
     mesh, z: artifact.z, routing, width: inputs.width, height: inputs.height,
     levels: Object.keys(TILE_SPECS).map(Number).sort((a, b) => a - b),
-    landTiles: (level) => landTiles(inputs, tileSpec(level)).map(([x, y]) => ({ level, x, y })),
+    landTiles: (level) => (shapeOf(inputs) === 'sphere' ? cubeLandTiles(inputs, mesh.domain, tileSpec(level)) : landTiles(inputs, tileSpec(level))).map(([x, y]) => ({ level, x, y })),
   })
   return plan.map((p) => ({
     level: p.tile.level, x: p.tile.x, y: p.tile.y,
@@ -591,27 +586,22 @@ function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[]
 
 // LEVEL 1 BY REPLAY (docs/decisions/detail-ladder.md, fork 2): the world's
 // history made again at level 1's budget, its waters derived on the
-// result. Three phases:
-//   verify   — the history at its own budget must land on the save's mesh
-//              bit for bit, or this code cannot make this world again;
+// result. Two phases:
 //   history  — the replay at level 1's budget, with checkpoints;
 //   hydrology — the level's waters from its last epoch's climate.
-// Refused, not approximated, where the world's code is not this bundle's.
+// Refused, not approximated, where the world's pipeline is not this
+// bundle's (world/worldPipeline.ts). Until 2026-10-17 a first phase
+// replayed the history at its own budget and compared it with the save,
+// because the world recorded a hash of the source files, which said
+// nothing about the simulation; the pipeline says it.
 async function replayLevel(job: Job, inputs: WorldInputs, onProgress: (phase: string, fraction: number) => void): Promise<MeshLevel> {
-  const refusal = replayRefusal(inputs.history, GENERATOR_CODE)
+  const refusal = replayRefusal(inputs.history, inputs.pipeline)
   if (refusal) throw new Error(refusal)
   if (!inputs.mesh) throw new Error('the world carries no mesh — make it again to refine it')
   const recipe = { seed: inputs.seedText, width: inputs.width, height: inputs.height, shape: shapeOf(inputs), history: inputs.history }
   const pool = job.pool === false ? undefined : enginePool()
   const dir = job.checkpointDir ? checkpointPath(job.checkpointDir, inputs) : null
   const resume = dir ? await readCheckpoint(dir) : null
-  // A checkpoint is past the check: the run that wrote it passed it.
-  if (!resume) {
-    onProgress('verify', 0)
-    const check = await replayHistory(recipe, { budget: HISTORY_DEFAULTS.budget, pool, onEpoch: (done, total) => onProgress('verify', done / total) })
-    const parted = meshParts(encodeCoupledTerrain(check.terrain), inputs.mesh)
-    if (parted) throw new Error(`the replay does not make this world again (its ${parted} differs from the save's) — this code cannot refine it`)
-  }
   onProgress('history', 0)
   let lastCheckpoint = resume?.done ?? 0
   let done = lastCheckpoint
@@ -644,17 +634,6 @@ async function replayLevel(job: Job, inputs: WorldInputs, onProgress: (phase: st
   return { level: 1, mesh: terrain.mesh, z: terrain.z, routing: terrain.routing, ...water, inserted: 0 }
 }
 
-// Which part of a replayed mesh differs from the save's, or null.
-function meshParts(mine: { nodes: Float32Array; connectivity: Uint8Array; z: Float32Array; column: Uint8Array }, saved: NonNullable<WorldInputs['mesh']>): string | null {
-  const same = (a: ArrayBufferView, b: ArrayBufferView): boolean =>
-    a.byteLength === b.byteLength && Buffer.compare(Buffer.from(a.buffer, a.byteOffset, a.byteLength), Buffer.from(b.buffer, b.byteOffset, b.byteLength)) === 0
-  if (!same(mine.nodes, saved.nodes)) return 'node positions'
-  if (!same(mine.connectivity, saved.connectivity)) return 'triangulation'
-  if (!same(mine.z, saved.z)) return 'heights'
-  if (saved.column && !same(mine.column, saved.column)) return 'sediment column'
-  return null
-}
-
 // CHECKPOINTS of level 1's replay: hours of one task, so a worker that dies
 // leaves the state of an epoch for the one that takes the task over. Kept
 // per world revision and code; written whole into a fresh directory, then
@@ -664,7 +643,7 @@ function meshParts(mine: { nodes: Float32Array; connectivity: Uint8Array; z: Flo
 const CHECKPOINT_EVERY_EPOCHS = 10
 
 function checkpointPath(root: string, inputs: WorldInputs): string {
-  return join(root, `${inputs.worldUid || 'no-uid'}-${inputs.worldId}-${GENERATOR_CODE}`)
+  return join(root, `${inputs.worldUid || 'no-uid'}-${inputs.worldId}-${WORLD_PIPELINE}`)
 }
 
 const CHECKPOINT_ARRAYS = ['latticeAccumulated', 'latticeLockedEpochs', 'latticeLastClassCode'] as const
@@ -745,15 +724,33 @@ function landTiles(inputs: WorldInputs, spec: TileSpec): [number, number][] {
   return out
 }
 
+// The sphere's land tiles (landTiles' rule on the cube atlas): every tile
+// with a sample of the save's raster above the shelf break, the samples a
+// grid of cells × cells over the tile.
+function cubeLandTiles(inputs: WorldInputs, world: Domain, spec: TileSpec): [number, number][] {
+  const { width, height } = inputs
+  const out: [number, number][] = []
+  cubeTileSamples(world, spec.level, spec.cells, (tile, xs, ys) => {
+    for (let k = 0; k < xs.length; k++) {
+      const x = Math.min(width - 1, Math.floor(xs[k]))
+      const y = Math.min(height - 1, Math.max(0, Math.floor(ys[k])))
+      if (inputs.elevations[y * width + x] > SHELF_BREAK) {
+        out.push([tile.x, tile.y])
+        return
+      }
+    }
+  })
+  return out
+}
+
 // A stage past level 1: one tile of that level, built on its parent — level
 // 1 for a level-2 tile, the level-2 tiles it overlaps for a level-3 tile —
 // read from the same artifact store the tile is written to. Level 1 is
 // read by every tile: its river graph brings the inflow, its surface the
 // synthesis' relief.
 async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onProgress: (phase: string, fraction: number) => void, cache?: JobCache): Promise<JobOutcome> {
-  if (shapeOf(inputs) === 'sphere') throw new Error('tiles on the sphere are not built yet (docs/decisions/sphere-tiles.md)')
   const spec = tileSpec(job.stage)
-  const { cols, rows } = tileGrid(inputs.width, inputs.height, spec)
+  const { cols, rows } = tileGridOn(domainOfKind(shapeOf(inputs), inputs.width, inputs.height), spec.level)
   if (!job.tile || !Number.isInteger(job.tile.x) || !Number.isInteger(job.tile.y) || job.tile.x < 0 || job.tile.y < 0 || job.tile.x >= cols || job.tile.y >= rows) {
     throw new Error(`stage ${job.stage} needs a tile inside the ${cols} × ${rows} grid`)
   }
@@ -779,7 +776,7 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     if (cache) remember(cache.levels, levelKey, level1, CACHED_LEVELS)
   }
   // Decoded and indexed once per worker, not once per tile.
-  level1.mesh ??= meshLevelMesh(level1.artifact, inputs.width, inputs.height)
+  level1.mesh ??= meshLevelMesh(level1.artifact, inputs.width, inputs.height, shapeOf(inputs))
   level1.sampler ??= createMeshSampler(level1.mesh, level1.artifact.z)
   const macro = level1.sampler
   let parent: TileParent
@@ -791,12 +788,12 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     // orders them first.
     const above = tileSpec(spec.level - 1)
     const pieces: TilePiece[] = []
-    for (const piece of parentTilesOf(tile, above, level1.mesh.domain)) {
+    for (const piece of parentTilesOn(tile, above, level1.mesh.domain)) {
       const read = await readTile(store, artifactKey(inputs.worldId, meshTilePipelineVersion(above.level, job.erosionRounds), meshTileStage(piece)), cache)
       if (!read) throw new Error(`tile ${meshTileStage(piece)} of this world is not in the artifact store — the level above comes first`)
       pieces.push({ tile: piece, count: read.count, nodes: read.nodes, z: read.z })
     }
-    const patch = tileParentFromTiles(pieces, inputs.width, inputs.height)
+    const patch = tileParentOn(pieces, level1.mesh.domain)
     parent = { mesh: patch.mesh, z: patch.z, discharge: null, sampler: createMeshSampler(patch.mesh, patch.z, patch.region), macro }
   }
   // The upstream tiles' outflow; each was computed first (it is a dep).
@@ -942,7 +939,7 @@ async function serve(config: ServeConfig): Promise<void> {
   let current: { msg: JsMsg; jobId: string } | null = null
 
   // PRESENCE: that this worker is there, and the task in hand.
-  const self = { id: randomUUID(), account: await accountName(), host: hostname(), cores: availableParallelism(), pools: config.pools, build: GENERATOR_CODE, startedAt: new Date().toISOString() }
+  const self = { id: randomUUID(), account: await accountName(), host: hostname(), cores: availableParallelism(), pools: config.pools, build: WORLD_PIPELINE, startedAt: new Date().toISOString() }
   let doing: { jobId: string; taskId: string; stage: string; phase: string; percent: number } | null = null
   const announce = (leaving = false): void => {
     if (nc.isClosed()) return

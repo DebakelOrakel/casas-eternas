@@ -4,7 +4,7 @@ import type { TileParent } from '../generator/mesh/meshTile'
 import type { SavedMesh } from '../generator/mesh/meshSerial'
 import type { RiverGraph } from '../generator/surface/riverGraph'
 import { climateCellsFromSaved, meanLandRunoff } from '../generator/climate/climatePoints'
-import { torusDomain } from '../generator/core/domain'
+import { domainOfKind } from '../generator/core/domain'
 import type { WorldInputs } from './save/loadWorldInputs'
 
 // A SAVE'S INPUTS AS A BAKE TAKES THEM — one mapping for the level bake and
@@ -51,6 +51,6 @@ export function tileBakeInputs(inputs: WorldInputs, parent: TileParent, parentGr
     forcingResX: inputs.uplift?.resX ?? 0,
     forcingResY: inputs.uplift?.resY ?? 0,
     climate: inputs.climate,
-    meanLandWater: inputs.climate ? meanLandRunoff(climateCellsFromSaved(torusDomain(inputs.width, inputs.height), inputs.climate)) : 0,
+    meanLandWater: inputs.climate ? meanLandRunoff(climateCellsFromSaved(domainOfKind(inputs.kind === 'SphereWorld' ? 'sphere' : 'torus', inputs.width, inputs.height), inputs.climate)) : 0,
   }
 }

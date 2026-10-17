@@ -1,7 +1,8 @@
 import type { Domain } from '../core/domain'
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import type { MeshRouting } from '../mesh/meshErosion'
-import { parentTilesOf, tileGrid, tileSpec, type TileId } from '../mesh/meshTile'
+import { tileSpec, type TileId } from '../mesh/meshTile'
+import { parentTilesOn, tileAtOn } from '../mesh/tileLayout'
 import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
 
 // THE TILE LEVELS' GRAPH (docs/decisions/detail-ladder.md, step 5): which
@@ -45,14 +46,9 @@ export interface TilePlanInput {
 const keyOf = (t: TileId): string => `${t.level}:${t.x},${t.y}`
 
 // The tile of `level` that holds a world point (`world`: one macro cell per
-// unit).
+// unit), on either shape (mesh/tileLayout.ts).
 export function tileAt(level: number, x: number, y: number, world: Domain): TileId {
-  const spec = tileSpec(level)
-  const { cols, rows } = tileGrid(world.width, world.height, spec)
-  const tiles = world.grid(cols, rows)
-  const tx = tiles.wrapCol(Math.floor(world.wrapX(x - spec.offset) / spec.cells))
-  const ty = tiles.wrapRow(Math.floor(world.wrapY(y - spec.offset) / spec.cells))
-  return { level, x: tx, y: ty }
+  return tileAtOn(level, x, y, world)
 }
 
 export function planTiles(input: TilePlanInput): PlannedTile[] {
@@ -67,7 +63,7 @@ export function planTiles(input: TilePlanInput): PlannedTile[] {
     const set = new Map<string, TileId>()
     for (const t of input.landTiles(level)) set.set(keyOf(t), t)
     const finer = sets.get(levels[i + 1])
-    if (finer) for (const t of finer.values()) for (const p of parentTilesOf(t, tileSpec(level), world)) set.set(keyOf(p), p)
+    if (finer) for (const t of finer.values()) for (const p of parentTilesOn(t, tileSpec(level), world)) set.set(keyOf(p), p)
     sets.set(level, set)
   }
   const out: PlannedTile[] = []
@@ -80,7 +76,7 @@ export function planTiles(input: TilePlanInput): PlannedTile[] {
     for (const tile of tiles) {
       out.push({
         tile,
-        parents: above ? parentTilesOf(tile, above, world) : [],
+        parents: above ? parentTilesOn(tile, above, world) : [],
         upstream: (upstream.get(keyOf(tile)) ?? []).map((k) => set.get(k)!),
       })
     }

@@ -1,6 +1,6 @@
 import { PointerEventTypes } from '@babylonjs/core'
 import { BUILD_VERSION } from '../../app/buildVersion'
-import { GENERATOR_CODE } from '../../app/generatorCode'
+import { WORLD_PIPELINE } from '../../world/worldPipeline'
 import { createFlatWorldView } from '../../map/flatWorldView'
 import { createGlobeWorldView, type GlobeWorldView } from '../../map/sphereView'
 import type { SymbolPicture, WorldSymbol, WorldSymbols, WorldView } from '../../map/worldView'
@@ -910,6 +910,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the count has reached — its own variable, because lastArcheanEpochs also
   // gates the step bar and is not reset on every path that replaces the world.
   let history = emptyWorldHistory()
+  // The pipeline that made the world (world/worldPipeline.ts): this one's
+  // for a new world; a loaded world's own; none ('') once a run of this
+  // pipeline goes on with a world of another — no pipeline makes it again.
+  let worldPipeline = WORLD_PIPELINE
+  const runStarts = (): void => {
+    if (history.genesis.length + history.tectonics.length === 0) worldPipeline = WORLD_PIPELINE
+    else if (worldPipeline !== WORLD_PIPELINE) worldPipeline = ''
+  }
   // A tectonic world was loaded and no run has gone on with it yet: the next
   // tectonics run opens a history entry marked `restored` (worldHistory.ts),
   // the point a replay has to restore at.
@@ -1322,12 +1330,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return i
   }
   const GENESIS_PANEL_INDEX = panelIndexOf('genesis')
-  // Whether a step runs on this world's shape. A sphere runs the planet, the
-  // Archean, the plates' history, the climate step and the ecology only
-  // (DEC-0035, steps 4d2–4f); the later steps (the finishing and the
-  // migration) are locked, and nothing may compute them for it — not the
-  // gate alone, a load's catch-up too.
-  const stepRunsOnShape = (index: number): boolean => worldShape !== 'sphere' || index <= panelIndexOf('ecology')
+  // Whether a step runs on this world's shape. A sphere runs every step up
+  // to the finishing (DEC-0035, steps 4d2–4f; the finishing's tiles since
+  // 2026-10-17, docs/decisions/sphere-tiles.md); the migration is locked,
+  // and nothing may compute it for it — not the gate alone, a load's
+  // catch-up too.
+  const stepRunsOnShape = (index: number): boolean => worldShape !== 'sphere' || index <= panelIndexOf('finishing')
 
   // Entering this panel is what commits the Archean — see commitGenesis.
   const TECTONICS_PANEL_INDEX = panelIndexOf('tectonics')
@@ -4516,7 +4524,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // save — and every later stop one epoch short (2026-10-01).
     if ((tectonicsRunning || tectonicsSettling) && message.epoch > lastEpoch) {
       erosionRunCount += 1
-      tallyRun(history.tectonics, message.epoch - lastEpoch, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION, GENERATOR_CODE)
+      runStarts()
+      tallyRun(history.tectonics, message.epoch - lastEpoch, runValues(TECTONICS_RUN_FIELDS, readSpec().values))
     }
     lastEpoch = message.epoch
     lastPlateCount = message.plateCount
@@ -4604,6 +4613,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     archeanRunning = false
     // A new world: nothing has run on it yet, and no step has been looked at.
     history = emptyWorldHistory()
+    worldPipeline = WORLD_PIPELINE
     tectonicsRunRestored = false
     genesisTallied = 0
     forgetOverlays()
@@ -4663,7 +4673,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       updateProgress()
       return
     }
-    openRun(history.genesis, runValues(GENESIS_RUN_FIELDS, readSpec().values), BUILD_VERSION, GENERATOR_CODE)
+    runStarts()
+    openRun(history.genesis, runValues(GENESIS_RUN_FIELDS, readSpec().values))
     postToWorker({
       type: 'genesisStart',
       mantleDiffusion: mantleDiffusionFromVigour(Number(mantleVigourInput.value)),
@@ -4680,6 +4691,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     archeanRunChanged(false)
     lastArcheanEpochs = 0
     history = emptyWorldHistory()
+    worldPipeline = WORLD_PIPELINE
     tectonicsRunRestored = false
     genesisTallied = 0
     archeanFinalised = false
@@ -4745,7 +4757,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   function handleGenesisStatus(message: WorkerGenesisStatusMessage): void {
-    tallyRun(history.genesis, message.epoch - genesisTallied, runValues(GENESIS_RUN_FIELDS, readSpec().values), BUILD_VERSION, GENERATOR_CODE)
+    runStarts()
+    tallyRun(history.genesis, message.epoch - genesisTallied, runValues(GENESIS_RUN_FIELDS, readSpec().values))
     genesisTallied = message.epoch
     lastArcheanEpochs = message.epoch
     updateSaveIndicator()
@@ -4805,7 +4818,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // 5.1), so the count of eroding epochs carries on from where it was.
     invalidateAfter('tectonics')
     const runsBefore = history.tectonics.length
-    openRun(history.tectonics, runValues(TECTONICS_RUN_FIELDS, readSpec().values), BUILD_VERSION, GENERATOR_CODE, tectonicsRunRestored)
+    runStarts()
+    openRun(history.tectonics, runValues(TECTONICS_RUN_FIELDS, readSpec().values), tectonicsRunRestored)
     tectonicsRunOpened = history.tectonics.length > runsBefore ? history.tectonics[history.tectonics.length - 1] : null
     tectonicsRunRestored = false
     postToWorker({ type: 'tectonicsStart', alluvium: Number(alluviumInput.value), rockContrast: Number(rockContrastInput.value), weather: weatherParams() })
@@ -4889,7 +4903,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function currentRecord(): WorldRecord {
     return {
       kind: worldShape === 'sphere' ? 'SphereWorld' : 'FlatWorld',
-      uid: worldUid, name: worldName, annotations: { ...worldAnnotations }, revision: worldRevision, spec: readSpec(), history: structuredClone(history),
+      uid: worldUid, name: worldName, annotations: { ...worldAnnotations }, revision: worldRevision, pipeline: worldPipeline, spec: readSpec(), history: structuredClone(history),
       archeanEpochs: lastArcheanEpochs, epoch: lastEpoch, erosionRun: erosionRunCount,
       progress: worldProgress,
     }
@@ -5698,6 +5712,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The runs behind the file, carried on from here; a file from before the
     // block starts with none and the next run opens its first entry.
     history = record.history
+    worldPipeline = record.pipeline
     genesisTallied = lastArcheanEpochs
     // lastEpoch is set from the restore render's reported epoch (status
     // .tectonicsRun == the snapshot's epoch), so no need to set it here.
@@ -5727,11 +5742,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // --- making a world again (world/replay.ts) -----------------------------
 
-  // A loaded world whose runs were made by other code, but whose history
-  // says enough to make it again: the Archean and the tectonics both ran.
+  // A loaded world made by another pipeline (world/worldPipeline.ts), or
+  // by none, whose history says enough to make it again: the Archean and
+  // the tectonics both ran.
   function replayable(record: WorldRecord): boolean {
-    const runs = [...record.history.genesis, ...record.history.tectonics]
-    return record.history.genesis.length > 0 && record.history.tectonics.length > 0 && runs.some((run) => run.code !== GENERATOR_CODE)
+    return record.history.genesis.length > 0 && record.history.tectonics.length > 0 && record.pipeline !== WORLD_PIPELINE
   }
 
 
@@ -5759,14 +5774,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     updateProgress()
   }
 
-  // The world made again: its history the same runs, made by this code; how
+  // The world made again: its history the same runs, made by this pipeline; how
   // far it was taken from the worker. The render that follows settles it as
   // the end of a run does, so the climate and the rivers follow.
   function handleReplayDone(message: WorkerReplayDoneMessage): void {
     replaying = null
     if (replayedHistory) {
-      const remade = (run: WorldRun): WorldRun => ({ ...run, code: GENERATOR_CODE, generator: BUILD_VERSION })
-      history = { genesis: replayedHistory.genesis.map(remade), tectonics: replayedHistory.tectonics.map(remade) }
+      history = structuredClone(replayedHistory)
+      worldPipeline = WORLD_PIPELINE
       replayedHistory = null
     }
     lastArcheanEpochs = message.archeanEpochs

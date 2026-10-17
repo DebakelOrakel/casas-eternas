@@ -217,6 +217,25 @@ export function fineDetailNoise(x: number, y: number, width: number, height: num
   return sum / amplitudeSum
 }
 
+// fineDetailNoise on the globe with every octave's cells across the world
+// multiplied by `scale`: what a cascade of finer copies of the table reads
+// at a sphere point (a fine level's synthesis on the sphere, mesh/
+// meshRefine.levelSynthesis). The sphere's only.
+export function fineDetailNoiseScaledOn(domain: Domain, x: number, y: number, scale: number, seed: number): number {
+  const space = domain.noise
+  if (space.kind !== 'globe') throw new Error('fineDetailNoiseScaledOn samples the globe')
+  space.frame(x, y, frame)
+  let sum = 0
+  let amplitudeSum = 0
+  let octaveSeed = seed
+  for (const octave of DETAIL_OCTAVES) {
+    sum += (globeOctaveOn(frame, octave.cellsX * scale, domain, octaveSeed) - 0.5) * octave.amplitude
+    amplitudeSum += octave.amplitude
+    octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0
+  }
+  return sum / amplitudeSum
+}
+
 // fineDetailNoise at domain point (x, y), sampled where the Domain says —
 // see ridgedMultifractalOn.
 export function fineDetailNoiseOn(domain: Domain, x: number, y: number, seed: number): number {

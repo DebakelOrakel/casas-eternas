@@ -1,6 +1,7 @@
 import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
 import { periodicValueNoise2D } from '../elevation/ridgedNoise'
-import type { DomainGrid } from '../core/domain'
+import { globeOctaveOn } from '../elevation/globeNoise'
+import { globeFrame, type Domain, type DomainGrid } from '../core/domain'
 import { CANONICAL_RIVER_DENSITY, CHANNEL_SLOPE_EXPONENT } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { DEFAULT_ENGINE_PARAMS, STATUS_CLAMP_M } from './erosionEngine'
@@ -290,6 +291,31 @@ export function ridgedAt(x: number, y: number, width: number, height: number, se
   }
   return sum / norm
 }
+
+// ridgedAt on the globe (a fine level's synthesis on the sphere, mesh/
+// meshRefine.levelSynthesis): the same octave table, each octave read on
+// the 3D lattice at the point's place, so a ridge neither stretches toward
+// a pole nor turns about it. Its mean is ridgedAt's: the 3D lattice's
+// ridged mean differs, and the difference (RIDGE_GLOBE_OFFSET) is taken off.
+const ridgeFrame = globeFrame()
+export function ridgedAtOn(domain: Domain, x: number, y: number, seed: number): number {
+  const space = domain.noise
+  if (space.kind !== 'globe') throw new Error('ridgedAtOn samples the globe')
+  space.frame(x, y, ridgeFrame)
+  let sum = 0
+  let norm = 0
+  for (let i = 0; i < RIDGE_OCTAVE_CELLS.length; i++) {
+    const noise = globeOctaveOn(ridgeFrame, RIDGE_OCTAVE_CELLS[i], domain, (seed + i * 0x9e3779b9) >>> 0)
+    const ridge = 1 - Math.abs(2 * noise - 1)
+    sum += ridge * ridge * RIDGE_OCTAVE_AMPLITUDES[i]
+    norm += RIDGE_OCTAVE_AMPLITUDES[i]
+  }
+  return sum / norm - RIDGE_GLOBE_OFFSET
+}
+// The globe's ridged mean minus the chart's, for ridgedAtOn's table
+// (2026-10-17: 0.4799 against 0.4702 over 300 000 area-uniform points and
+// six seeds each, at 2048 × 1024).
+export const RIDGE_GLOBE_OFFSET = 0.0097
 
 // How far each cell stands above the floor of its neighbourhood — the
 // stand-in for the generator's `uplift`, computable from a raster alone.

@@ -141,27 +141,22 @@ console.log('\n— run history —')
   const genesisValues = H.runValues(H.GENESIS_RUN_FIELDS, values)
   const tectonicsValues = H.runValues(H.TECTONICS_RUN_FIELDS, values)
   const history = H.emptyWorldHistory()
-  H.openRun(history.genesis, genesisValues, 'build-a')
-  H.tallyRun(history.genesis, 120, genesisValues, 'build-a')
-  H.openRun(history.tectonics, tectonicsValues, 'build-a')
-  H.tallyRun(history.tectonics, 45, tectonicsValues, 'build-a')
+  H.openRun(history.genesis, genesisValues)
+  H.tallyRun(history.genesis, 120, genesisValues)
+  H.openRun(history.tectonics, tectonicsValues)
+  H.tallyRun(history.tectonics, 45, tectonicsValues)
   // The same values again extend the run; changed values open the next one.
-  H.openRun(history.tectonics, tectonicsValues, 'build-a')
-  H.tallyRun(history.tectonics, 5, tectonicsValues, 'build-a')
+  H.openRun(history.tectonics, tectonicsValues)
+  H.tallyRun(history.tectonics, 5, tectonicsValues)
   const changed = { ...tectonicsValues, 'tectonics.alluvium': tectonicsValues['tectonics.alluvium'] + 1 }
-  H.openRun(history.tectonics, changed, 'build-a')
-  H.tallyRun(history.tectonics, 12, changed, 'build-a')
+  H.openRun(history.tectonics, changed)
+  H.tallyRun(history.tectonics, 12, changed)
   check('a run with the same values extends the entry', history.tectonics.length === 2 && history.tectonics[0].epochs === 50, JSON.stringify(history.tectonics.map((r) => r.epochs)))
-  // A new build opens a run too — the seam between two generators is data.
-  H.openRun(history.tectonics, changed, 'build-b')
-  check('a new build opens a run of its own', history.tectonics.length === 3 && history.tectonics[2].generator === 'build-b')
-  // The code hash is the replay's key: another code opens a run, and a run
-  // on a loaded world opens one marked `restored` even with nothing changed.
-  H.openRun(history.tectonics, changed, 'build-b', 'code-2')
-  H.tallyRun(history.tectonics, 4, changed, 'build-b', 'code-2')
-  H.openRun(history.tectonics, changed, 'build-b', 'code-2', true)
-  H.tallyRun(history.tectonics, 2, changed, 'build-b', 'code-2')
-  check('another code opens a run, a load opens a marked one', history.tectonics.length === 5 && history.tectonics[3].code === 'code-2' && !history.tectonics[3].restored && history.tectonics[4].restored === true)
+  // A run on a loaded world opens one marked `restored` even with nothing
+  // changed.
+  H.openRun(history.tectonics, changed, true)
+  H.tallyRun(history.tectonics, 2, changed)
+  check('a load opens a marked run', history.tectonics.length === 3 && history.tectonics[2].restored === true)
   const yaml = ['spec:', ...M.spec.specToYamlLines({ seed: 's', values }), 'status:', '  erosionRun: 1', ...H.historyToYamlLines(history)].join('\n')
   const back = H.historyFromYaml(yaml)
   const same = JSON.stringify(back) === JSON.stringify(history)
@@ -181,11 +176,11 @@ console.log('\n— run history —')
   const WR = await L('/src/world/worldRecord.ts')
   const WH = await L('/src/world/save/worldHistory.ts')
   const values = Object.fromEntries(M.spec.WORLD_SPEC_FIELDS.map((f, i) => [f.path, f.input.min + ((i * 7) % 5) * ((f.input.max - f.input.min) / 5)]))
-  const run = (fields, epochs, extra = {}) => ({ epochs, generator: 'abc1234', code: 'deadbeefdeadbeef', values: WH.runValues(fields, values), ...extra })
+  const run = (fields, epochs, extra = {}) => ({ epochs, values: WH.runValues(fields, values), ...extra })
   const record = {
     kind: 'FlatWorld',
     uid: '0f8e5c1a-7b2d-4c3e-9a1f-123456789abc', name: 'Calvessor',
-    annotations: { 'casas-eternas/copied-from': '11111111-2222-4333-8444-555555555555' }, revision: 7,
+    annotations: { 'casas-eternas/copied-from': '11111111-2222-4333-8444-555555555555' }, revision: 7, pipeline: 'v11-0123456789abcdef',
     spec: { seed: '983721401', values },
     history: { genesis: [run(WH.GENESIS_RUN_FIELDS, 41)], tectonics: [run(WH.TECTONICS_RUN_FIELDS, 30), run(WH.TECTONICS_RUN_FIELDS, 12, { restored: true })] },
     archeanEpochs: 41, epoch: 42, erosionRun: 42, progress: 'climate',
@@ -194,6 +189,15 @@ console.log('\n— run history —')
   const back = WR.recordFromYaml(yaml, { archeanEpochs: 41, epoch: 42 }, () => 'unused')
   check('a world record survives world.yaml unchanged', JSON.stringify(back) === JSON.stringify(record), WR.recordDiff(record, back).join('; '))
   check('and compares as unchanged', WR.recordSignature(back) === WR.recordSignature(record))
+  // The pipeline that made a world (worldPipeline.ts): `status.pipeline`;
+  // for a world before it, the frozen engine's file hash in every run
+  // names this pipeline, any other code or a mix none.
+  const PL = await L('/src/world/worldPipeline.ts')
+  const legacyYaml = (codes) => ['status:', '  revision: 1', 'history:', '  genesis:', ...codes.flatMap((code, i) => [`    ${i}:`, '      epochs: 3', '      generator: bb6a054-dirty', `      code: ${code}`])].join('\n')
+  check('a world records its pipeline, and one from before the field is the frozen engine\'s by its code',
+    PL.recordedPipeline(yaml) === 'v11-0123456789abcdef' && PL.recordedPipeline(legacyYaml(['54ee802771966159', '54ee802771966159'])) === PL.WORLD_PIPELINE
+      && PL.recordedPipeline(legacyYaml(['54ee802771966159', 'abcdefabcdefabcd'])) === '' && PL.recordedPipeline(legacyYaml(['abcdefabcdefabcd'])) === '',
+    PL.WORLD_PIPELINE)
   const renamed = { ...record, name: 'Other' }
   check('a rename reads as a change, by name', WR.recordDiff(record, renamed).length === 1 && WR.recordDiff(record, renamed)[0].startsWith('name:'))
   const legacy = WR.recordFromYaml(yaml.replace(/  uid: .*\n/, '').replace(/  name: .*\n/, ''), { archeanEpochs: 0, epoch: 0 }, () => 'derived-uid')
@@ -270,7 +274,7 @@ console.log('\n— run history —')
   }
   // From the record the generator writes: the uid moves, the spec does not,
   // and the record reads the source back.
-  const record = { kind: 'FlatWorld', uid: 'src-uid', name: 'N', annotations: {}, revision: 2, spec: { seed: '9', values: Object.fromEntries(M.spec.WORLD_SPEC_FIELDS.map((f) => [f.path, f.input.default])) }, history: { genesis: [], tectonics: [] }, archeanEpochs: 0, epoch: 0, erosionRun: 0, progress: null }
+  const record = { kind: 'FlatWorld', uid: 'src-uid', name: 'N', annotations: {}, revision: 2, pipeline: '', spec: { seed: '9', values: Object.fromEntries(M.spec.WORLD_SPEC_FIELDS.map((f) => [f.path, f.input.default])) }, history: { genesis: [], tectonics: [] }, archeanEpochs: 0, epoch: 0, erosionRun: 0, progress: null }
   const written = WR.recordToYaml(record, 'b')
   const copied = WR.recordFromYaml(WCopy.withCopyIdentity(written, 'copy-uid', 'src-uid'), { archeanEpochs: 0, epoch: 0 }, () => 'x')
   check('a copied record has the new uid, the source as annotation, the same recipe', copied.uid === 'copy-uid' && copied.annotations[key] === 'src-uid' && WR.recordSignature(copied) === WR.recordSignature(record))

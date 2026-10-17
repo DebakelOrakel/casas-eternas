@@ -62,8 +62,10 @@ export interface WorldInputs {
   width: number
   height: number
   seedText: string
-  // The runs that made the world (worldHistory.ts), for level 1's replay.
+  // The runs that made the world (worldHistory.ts), for level 1's replay,
+  // and the pipeline that made them (worldPipeline.ts; '' for none).
   history: WorldHistory
+  pipeline: string
   // Seed for the deterministic near-field detail and for the bake's seed
   // roughness. It IS the generator's warpSeed (salted), derived from the
   // recipe's seed rather than stored — see world/query.openWorld.
@@ -142,6 +144,7 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     height: world.height,
     seedText: world.recipe.seedText,
     history: world.recipe.history,
+    pipeline: world.recipe.pipeline,
     detailSeed: world.recipe.detailSeed,
     lithoSeed: world.recipe.lithoSeed,
     erosionControls: world.recipe.erosionControls,

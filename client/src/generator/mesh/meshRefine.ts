@@ -1,6 +1,7 @@
 import { hashSeedString } from '../core/rng'
-import { fineDetailNoise } from '../elevation/ridgedNoise'
-import { CASCADE_FALLOFF, localRelief, RIDGE_FIELD_MEAN, RIDGE_STRENGTH, ridgedAt, seedCascadeScales, seedRoughnessAmplitude } from '../surface/amplify'
+import type { Domain } from '../core/domain'
+import { fineDetailNoise, fineDetailNoiseScaledOn } from '../elevation/ridgedNoise'
+import { CASCADE_FALLOFF, localRelief, RIDGE_FIELD_MEAN, RIDGE_STRENGTH, ridgedAt, ridgedAtOn, seedCascadeScales, seedRoughnessAmplitude } from '../surface/amplify'
 import { densityTarget, MESH_Z } from './meshBuild'
 import { rasteriseNodeField } from './meshRaster'
 import { createMeshSampler } from './meshSampler'
@@ -99,7 +100,10 @@ export function levelSeed(options: { seed: number; level: number }): number {
 // macro grid (amplify.localRelief), sampled at the point. A function of
 // position alone, so the tiles of the top level (meshTile.ts) put the same
 // heights on the nodes two neighbours share.
-export function levelSynthesis(options: { seed: number; level: number; budget: number; width: number; height: number }, reliefAt: (x: number, y: number) => number): (x: number, y: number, base: number) => number {
+// `sphere`: a sphere world's domain, whose synthesis is read on the globe
+// (the same tables, each octave on the 3D lattice at the point's place:
+// no stretch toward a pole, no star about it); absent on the torus.
+export function levelSynthesis(options: { seed: number; level: number; budget: number; width: number; height: number; sphere?: Domain }, reliefAt: (x: number, y: number) => number): (x: number, y: number, base: number) => number {
   const { budget, width, height } = options
   // The synthesis at the level's cell scale: the level's nominal grid is
   // the macro grid over the budget, and the cascade's octaves are the
@@ -111,6 +115,17 @@ export function levelSynthesis(options: { seed: number; level: number; budget: n
   const norm = amplitudes.reduce((a, b) => a + b, 0)
   const seed = levelSeed(options)
   const ridgeSeed = (seed ^ 0x5f356495) >>> 0
+  const sphere = options.sphere
+  if (sphere) {
+    return (x, y, base) => {
+      const amplitude = seedRoughnessAmplitude(base)
+      if (amplitude === 0) return base
+      let noise = 0
+      for (let i = 0; i < scales.length; i++) noise += fineDetailNoiseScaledOn(sphere, x, y, scales[i], (seed + i * 0x9e3779b9) >>> 0) * amplitudes[i]
+      const ridge = (ridgedAtOn(sphere, x, y, ridgeSeed) - RIDGE_FIELD_MEAN) * reliefAt(x, y) * RIDGE_STRENGTH
+      return base + (noise / norm) * amplitude + ridge
+    }
+  }
   return (x, y, base) => {
     const amplitude = seedRoughnessAmplitude(base)
     if (amplitude === 0) return base

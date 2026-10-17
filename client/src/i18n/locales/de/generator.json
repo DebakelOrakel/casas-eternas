@@ -329,7 +329,6 @@
   "generator.jobs.level.workersStarting": "Worker starten: {connected} von {wanted} verbunden",
   "generator.jobs.level.tiles": "{done} / {total} Kacheln · {running} laufen",
   "generator.jobs.level.failed": "{failed} fehlgeschlagen",
-  "generator.jobs.phase.verify": "Prüfung",
   "generator.jobs.phase.history": "Geschichte",
   "generator.jobs.phase.hydrology": "Gewässer",
   "generator.jobs.phase.read": "Lesen",

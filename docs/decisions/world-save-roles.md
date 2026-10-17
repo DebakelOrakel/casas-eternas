@@ -138,3 +138,9 @@ weather layers stay in the save. 1 and 3 built 2026-10-01 with level 1's
 replay; 2 and 4 open. Extends decisions/world-save-format.md and
 decisions/queryable-world-save.md; follows from decisions/detail-ladder.md
 (fork 2).
+
+2026-10-17: 1 and 2 key on the world's pipeline, not on a code hash: the
+runs record no build and no code any more, world.yaml records
+`status.pipeline` (level 1's pipeline version, world/worldPipeline.ts),
+and a load of a world of another pipeline makes it again
+(decisions/detail-ladder.md, Status 2026-10-17).

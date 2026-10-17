@@ -329,7 +329,6 @@
   "generator.jobs.level.workersStarting": "Workers starting: {connected} of {wanted} connected",
   "generator.jobs.level.tiles": "{done} / {total} tiles · {running} running",
   "generator.jobs.level.failed": "{failed} failed",
-  "generator.jobs.phase.verify": "Check",
   "generator.jobs.phase.history": "History",
   "generator.jobs.phase.hydrology": "Waters",
   "generator.jobs.phase.read": "Reading",

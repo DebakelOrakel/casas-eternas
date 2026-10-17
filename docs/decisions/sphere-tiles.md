@@ -152,18 +152,21 @@ rule stays the one of `meshDensity.ts`, evaluated at the 3D point.
 
 A torus tile is `(level, x, y)`. A sphere tile is `(level, face, i, j)`.
 
-**Answer: the id gains a face**, absent (face 0) on the torus, so torus
-ids, stage names and artifact keys stay as they are. The coordinator's
-`TileRef` and planned tasks carry the face; the flow edges across a face
-edge come from the atlas's neighbour table, with the turn of the
-neighbour's grid against this one.
+**Answer: the face folds into the column** (changed while building,
+2026-10-17): a sphere tile is `(level, x, y)` with x = face · n + i and
+y = j. Ids, stage names (`L2:x,y`), artifact keys and the coordinator's
+`TileRef` stay as they are, on both shapes; the Go side changed nothing.
+The flow edges across a face edge come from the atlas's neighbour table.
 
 ## Fork 9 — Tile size
 
-**Answer: n per face from metres.** A face edge is a quarter of the
-circumference. For tiles of about 125 km (L2) and 62 km (L3), the torus's
-sizes, a sphere of 20 000 km gives n = 40 and n = 80. n is computed from
-`Domain.metresAround`, so a sphere of another size keeps the tile size.
+**Answer: n per face from macro cells** (changed while building,
+2026-10-17): a face edge is a quarter of the chart's width, and a tile
+spans `TileSpec.cells` units at a face's centre, as a torus tile spans
+that many cells. At 2048 × 1024 that is n = 32 (L2) and n = 64 (L3), tiles
+of 156 km and 78 km on a sphere of 20 000 km. In units, the placement
+steps, the edge steps and the halo stay the torus's numbers; the density
+rule places the nodes in metres either way.
 
 ## Fork 10 — One interface
 
@@ -220,3 +223,36 @@ replayed at level 1's budget (101 k nodes, 20 s), its waters, the
 artifact read back and decoded on the sphere. Not yet run on a world a
 player made: the screen's finishing step stays locked for a sphere world
 (step 4).
+
+2026-10-17: order of building, steps 2–4 BUILT.
+- **The site** (`meshTile.ts`): a tile is built on a `TileSite` — its
+  frame, its edge row, its parents, its placement — by one builder
+  (`buildTileMeshOn`); `torusSite` is the torus's code as it was, and
+  `harness:mesh` [3] holds the torus's tiles, bakes, patchwork, plan and
+  upstream inflow byte for byte. `tileLayout.ts` picks the shape.
+- **The sphere's site** (`meshTileCube.ts`): forks 3–7 as decided; the
+  halo is the quad grown by `halo`, not the frame's square (a turned quad
+  left it half empty: 33 k halo nodes against 27 k new ones, now 8 k).
+  The patchwork of level 3 is triangulated on the sphere; a sphere tile's
+  artifact stores its nodes as world points (float32), so a node two
+  tiles share has one name.
+- **The synthesis on the globe**: a sphere tile's synthesis reads the same
+  tables on the 3D lattice (meshRefine.levelSynthesis, `sphere`), so it
+  neither stretches toward a pole nor turns about it; the ridged table's
+  globe mean is 0.0097 above the chart's (measured, RIDGE_GLOBE_OFFSET).
+- **One tile version a level for both shapes**: the cube's constants are
+  in it (meshTileArtifacts.ts), so changing one makes the torus's tiles
+  again too — against a version per shape every reader of a stage would
+  have to ask the world's shape for.
+- **The worker** plans and bakes a sphere world's tiles; the finishing step
+  is unlocked for a sphere world (the migration stays locked); the
+  incubator leaves sphere worlds out.
+- `harness:mesh` [1t] on [1g]'s sphere world: a tile at a cube corner meets
+  its four neighbours on three faces (the shared row bit for bit, every
+  step an edge of both triangulations); a tile with a pole at its corner
+  likewise; a wider halo changes nothing inside; the bake pins the edge,
+  erodes and drains the inside; the artifact reads back; level 3's tiles
+  on their patchworks of level 2 meet; an upstream tile's outflow is the
+  tile's inflow (38.93 out, 38.93 in); the plan is acyclic and whole.
+  Level 1's rivers enter cube tiles (a 512 × 256 sphere, one-off).
+- Not run yet: a sphere world a player made, through a real worker.

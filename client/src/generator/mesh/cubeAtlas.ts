@@ -241,6 +241,28 @@ export class CubeAtlas {
     return [...out.values()]
   }
 
+  // A direction in the cube's frame (the level's rotation undone).
+  toCube(p: Vec3): Vec3 {
+    return turnBack(this.rotation, p)
+  }
+
+  // The world direction at face angles (ξ, η).
+  facePoint(face: number, xi: number, eta: number): Vec3 {
+    const { c, u, v } = FACES[face]
+    const s = detTan(xi)
+    const t = detTan(eta)
+    return turn(this.rotation, normalise([c[0] + s * u[0] + t * v[0], c[1] + s * u[1] + t * v[1], c[2] + s * u[2] + t * v[2]]))
+  }
+
+  // A cube-frame direction's gnomonic coordinates on a face (tan ξ, tan η),
+  // or null where it is not in front of that face's plane.
+  faceTangents(face: number, q: Vec3): [number, number] | null {
+    const { c, u, v } = FACES[face]
+    const along = dot(q, c)
+    if (along <= 0) return null
+    return [dot(q, u) / along, dot(q, v) / along]
+  }
+
   // The tile's plane (fork 3).
   frame(tile: CubeTileId, radius: number): TileFrame {
     const centre = this.centre(tile)
@@ -286,8 +308,11 @@ export function unproject(frame: TileFrame, x: number, y: number): Vec3 {
 // cube corner B, at fraction f along the CUBE segment between them, as a
 // world direction. Whichever tile asks, it passes the two corners in the
 // same order (sideEnds), so the point is the same bits from both.
+// At f = 0 and f = 1 it is the corner itself: a + 1 · (b − a) is not b in
+// floating point, and a corner is shared by two sides of each tile.
 export function sidePoint(atlas: CubeAtlas, a: Vec3, b: Vec3, f: number): Vec3 {
-  return turn(atlas.rotation, normalise([a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1]), a[2] + f * (b[2] - a[2])]))
+  const q: Vec3 = f === 0 ? a : f === 1 ? b : [a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1]), a[2] + f * (b[2] - a[2])]
+  return turn(atlas.rotation, normalise(q))
 }
 
 // A side's two cube corners in the canonical order: lexicographic on the

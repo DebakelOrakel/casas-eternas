@@ -1,7 +1,6 @@
 import { defineConfig, type Plugin } from 'vite'
 import { execSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
-import { GENERATOR_CODE_ROOTS, generatorCodeHash } from './scripts/generatorCode.mjs'
 import { buildHandbook } from './scripts/handbook'
 
 // Where the Go server lives during development. Overridable so a dev client can
@@ -48,36 +47,6 @@ const alwaysFullResponses = (): Plugin => ({
   },
 })
 
-// THE GENERATOR'S CODE as a hash (`virtual:generator-code`, read by
-// src/app/generatorCode.ts; the hash itself is scripts/generatorCode.mjs,
-// shared with the job worker's bundle). Computed when the module is asked
-// for and again after a change under its roots, so a dev session's edits
-// are in it; `git describe` is fixed when the server starts.
-const generatorCode = (): Plugin => {
-  const id = 'virtual:generator-code'
-  const resolved = `\0${id}`
-  let root = process.cwd()
-  return {
-    name: 'casas-generator-code',
-    configResolved(config) {
-      root = config.root
-    },
-    resolveId(source) {
-      return source === id ? resolved : null
-    },
-    load(source) {
-      return source === resolved ? `export default ${JSON.stringify(generatorCodeHash(root))}` : null
-    },
-    configureServer(server) {
-      server.watcher.on('change', (file) => {
-        if (!GENERATOR_CODE_ROOTS.some((entry) => file.startsWith(join(root, entry)))) return
-        const module = server.moduleGraph.getModuleById(resolved)
-        if (module) server.moduleGraph.invalidateModule(module)
-      })
-    },
-  }
-}
-
 // THE HANDBOOK (`virtual:handbook`, read by src/ui/handbook): docs/handbook/
 // rendered when the module is asked for (scripts/handbook.ts), and again
 // after a change under it, so an edit to a page shows on the next reload.
@@ -121,7 +90,7 @@ const handbook = (): Plugin => {
 // silent drift into a loud "port already in use", which is the failure mode
 // one can actually debug.
 export default defineConfig({
-  plugins: [alwaysFullResponses(), generatorCode(), handbook()],
+  plugins: [alwaysFullResponses(), handbook()],
   define: {
     __CASAS_BUILD__: JSON.stringify(BUILD),
   },

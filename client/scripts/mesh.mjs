@@ -120,6 +120,8 @@ const M = {
   detMath: await L('/src/generator/core/detMath.ts'),
   enginePool: await L('/src/generator/surface/erosionEnginePool.ts'),
   cube: await L('/src/generator/mesh/cubeAtlas.ts'),
+  tileCube: await L('/src/generator/mesh/meshTileCube.ts'),
+  tileLayout: await L('/src/generator/mesh/tileLayout.ts'),
 }
 
 let failures = 0
@@ -162,6 +164,12 @@ const meshHash = (mesh) => createHash('sha256')
   .update(Buffer.from(mesh.tris.buffer, 0, mesh.triSlots * 12))
   .update(Buffer.from(mesh.twin.buffer, 0, mesh.triSlots * 12))
   .digest('hex').slice(0, 16)
+// The bytes of a typed array, hashed.
+const bytesHash = (a) => createHash('sha256').update(Buffer.from(a.buffer, a.byteOffset, a.byteLength)).digest('hex').slice(0, 16)
+// The fine levels' tiles, hashed for the refactor guard ([3]): the torus
+// tiles must not move while the sphere's are built beside them
+// (docs/decisions/sphere-tiles.md).
+const tileHashes = {}
 const targetsOf = (mesh, state) => {
   const targets = new Float64Array(mesh.vx.length)
   M.build.densityTarget(state)(mesh, targets)
@@ -744,6 +752,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const A = T.buildTileMesh(parent, best, opts)
     const tileMs = performance.now() - t1
     const B = T.buildTileMesh(parent, { level: tileLevel, x: (best.x + 1) % cols, y: best.y }, opts)
+    tileHashes[`tile${tileLevel}`] = `${meshHash(A.mesh)} ${bytesHash(A.z)} ${bytesHash(A.role)} ${A.originX},${A.originY}`
     const count = (t, role) => { let n = 0; for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === role) n++; return n }
     check(`a tile is a valid triangulation (${A.mesh.aliveVertices} nodes: ${count(A, T.TILE_ROLE_NEW)} new, ${count(A, T.TILE_ROLE_PARENT)} parents, ${count(A, T.TILE_ROLE_EDGE)} edge; ${tileMs.toFixed(0)} ms)`, A.mesh.validate().length === 0 && B.mesh.validate().length === 0)
     // Edge nodes by world position.
@@ -834,6 +843,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const t2 = performance.now()
     const baked = await M.tileBake.bakeMeshTile(tileInputs, best, { rounds: 4 })
     const bakeMs = performance.now() - t2
+    tileHashes[`bake${tileLevel}`] = `${bytesHash(baked.z)} ${bytesHash(baked.outflow)} ${baked.inflows}`
     const bt = baked.tile
     let edgeMoved = 0, moved = 0, nan = 0, maxCutM = 0
     for (let v = 0; v < bt.mesh.vertexSlots; v++) {
@@ -926,6 +936,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       pieces.push({ tile: p, count: art.count, nodes: art.nodes, z: art.z })
     }
     const patch = T.tileParentFromTiles(pieces, W, H)
+    tileHashes.patch = `${meshHash(patch.mesh)} ${bytesHash(patch.z)}`
     const patchSampler = M.sampler.createMeshSampler(patch.mesh, patch.z)
     let total = 0, off = 0
     for (const piece of pieces) {
@@ -955,6 +966,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     for (const [k, v] of eA) { if (Number(k.split(',')[0]) !== sharedX) continue; shared++; const u = eB.get(k); if (u === undefined || A.z[v] !== B.z[u]) bad++ }
     check('level-3 tiles on the patchwork are valid and meet on their shared edge', A.mesh.validate().length === 0 && B.mesh.validate().length === 0 && shared === s3.edgeSteps + 1 && bad === 0, `${shared} shared, ${bad} differ; tile ${pick.x},${pick.y} over ${T.parentTilesOf(pick, s2, domain).length} level-2 tiles`)
     const baked3 = await M.tileBake.bakeMeshTile({ ...inputs2, parent: parent3 }, pair[0], { rounds: 2 })
+    tileHashes.patchTile = `${meshHash(A.mesh)} ${bytesHash(A.z)} ${bytesHash(baked3.z)}`
     let stuck = 0, drained = 0
     const target = baked3.routing.flowTarget, bt = baked3.tile
     for (let v = 0; v < bt.mesh.vertexSlots; v++) {
@@ -988,6 +1000,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
     const t0 = performance.now()
     const plan = P.planTiles({ mesh: level.mesh, z: level.z, routing, width: W, height: H, levels: [2, 3], landTiles: landOf })
     const planMs = performance.now() - t0
+    tileHashes.plan = createHash('sha256').update(JSON.stringify(plan)).digest('hex').slice(0, 16)
     const key = (t) => `${t.level}:${t.x},${t.y}`
     const planned = new Map(plan.map((p) => [key(p.tile), p]))
     let missing = 0, edges = 0
@@ -1020,6 +1033,7 @@ const built = M.build.buildMesh(domain, synthetic, { seed: 42 })
       ups.push({ tile: u, count: art.count, nodes: art.nodes, outflow: art.outflow })
     }
     const fed = await M.tileBake.bakeMeshTile({ ...base, upstream: ups }, down.tile, { rounds: 2 })
+    tileHashes.fed = `${bytesHash(fed.z)} ${fed.upstreamInflow}`
     // What the upstream tiles let out on the edges they share with it.
     const spec = T.tileSpec(2)
     const own = new Set()
@@ -1656,6 +1670,8 @@ console.log('\n[1s] the sphere domain')
 // computations (plain Math on unit vectors), not against the predicates
 // the triangulation itself uses: a Delaunay check that shares the
 // in-circle test with the legalisation would pass a sign error.
+// The sphere world [1g] builds, for the cube tiles' checks ([1t]).
+let sphereTerrain = null
 console.log('\n[1g] the mesh on the sphere')
 {
   const t0 = performance.now()
@@ -2093,6 +2109,7 @@ console.log('\n[1g] the mesh on the sphere')
     const ta2 = audit(terrain.mesh)
     check(`sphere: a real sphere world's coupled terrain starts as a valid mesh (${terrain.mesh.aliveVertices} nodes in ${terrainMs.toFixed(0)} ms, the world ${(tc - ta).toFixed(0)} ms; land ${(100 * land / (4 * Math.PI * (256 / (2 * Math.PI)) ** 2)).toFixed(1)} %)`,
       sound(terrain.mesh, ta2) && finite && land > 0, sayAudit(ta2))
+    sphereTerrain = terrain
   }
   const ms = performance.now() - t0
   check(`sphere mesh: the section is quick (${(ms / 1000).toFixed(1)} s)`, ms < 20000)
@@ -2215,6 +2232,218 @@ console.log('\n[1c] the cube atlas')
   }
 }
 
+// ------------------------------------------------------------ cube tiles
+
+// The fine levels' tiles on the sphere (docs/decisions/sphere-tiles.md):
+// the torus's seam rule on the cube atlas — two tiles on two faces share
+// their edge row bit for bit, every step of it an edge of both
+// triangulations, the inside a function of its own points; a tile bakes
+// with its edge pinned; level 3's tiles (another cube's) on their
+// patchwork of level 2's meet as level 2's do; the plan is whole.
+console.log('\n[1t] the cube tiles')
+if (sphereTerrain) {
+  const t0 = performance.now()
+  const T = M.tile
+  const TC = M.tileCube
+  const TL = M.tileLayout
+  const mesh = sphereTerrain.mesh
+  const z = sphereTerrain.z
+  const S = mesh.domain
+  const SW = S.width, SH = S.height
+  const sampler = M.sampler.createMeshSampler(mesh, z)
+  const parent = { mesh, z, discharge: null, sampler, macro: sampler }
+  const opts = { seed: 1234, width: SW, height: SH }
+  const roleCount = (t, role) => { let n = 0; for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === role) n++; return n }
+  const edgeMap = (t) => { const m = new Map(); for (let v = 0; v < t.mesh.vertexSlots; v++) if (t.mesh.vAlive[v] && t.role[v] === T.TILE_ROLE_EDGE) m.set(`${t.worldX[v]},${t.worldY[v]}`, v); return m }
+  const linked = (t, a, b) => { const star = new Int32Array(256); const n = t.mesh.neighbours(a, star); for (let k = 0; k < n; k++) if (star[k] === b) return true; return false }
+  // Two tiles' shared row: its nodes in both, its heights, and every step
+  // an edge of each (the row ordered along its line in each tile's frame).
+  const seam = (A, B) => {
+    const eA = edgeMap(A), eB = edgeMap(B)
+    const keys = [...eA.keys()].filter((k) => eB.has(k))
+    let differ = 0
+    for (const k of keys) if (A.z[eA.get(k)] !== B.z[eB.get(k)]) differ++
+    let lost = 0
+    for (const [t, map] of [[A, eA], [B, eB]]) {
+      const row = keys.map((k) => map.get(k)).map((v) => ({ v, x: t.mesh.vx[v], y: t.mesh.vy[v] }))
+      if (row.length < 2) continue
+      let far = row[1]
+      for (const r of row) if (Math.hypot(r.x - row[0].x, r.y - row[0].y) > Math.hypot(far.x - row[0].x, far.y - row[0].y)) far = r
+      const dx = far.x - row[0].x, dy = far.y - row[0].y
+      row.sort((a, b) => (a.x - row[0].x) * dx + (a.y - row[0].y) * dy - ((b.x - row[0].x) * dx + (b.y - row[0].y) * dy))
+      for (let i = 1; i < row.length; i++) if (!linked(t, row[i - 1].v, row[i].v)) lost++
+    }
+    return { shared: keys.length, differ, lost }
+  }
+  const landIn = (level) => {
+    const out = new Map()
+    TC.cubeTileSamples(S, level, 6, (tile, xs, ys) => {
+      let n = 0
+      for (let k = 0; k < xs.length; k++) if (sampler.heightAt(xs[k], ys[k]) > 0) n++
+      if (n > 0) out.set(`${tile.x},${tile.y}`, { tile, land: n })
+    })
+    return out
+  }
+  const land2 = landIn(2)
+  const atlas2 = TC.cubeAtlasOf(S, 2)
+  const idOf = (atlas, level, c) => ({ level, x: c.face * atlas.n + c.i, y: c.j })
+  // A tile at a cube corner (i = j = n − 1), so its sides meet three faces'
+  // tiles, with the most land among the eight corners' tiles.
+  let corner = null
+  for (let face = 0; face < 6; face++) for (const [i, j] of [[0, 0], [atlas2.n - 1, 0], [0, atlas2.n - 1], [atlas2.n - 1, atlas2.n - 1]]) {
+    const id = idOf(atlas2, 2, { face, i, j })
+    const land = land2.get(`${id.x},${id.y}`)?.land ?? 0
+    if (!corner || land > corner.land) corner = { id, land }
+  }
+  const A = T.buildTileMeshOn(TC.cubeSite(parent, corner.id, opts), parent, opts)
+  let sides = 0, worst = { shared: 0, differ: 0, lost: 0 }, allValid = A.mesh.validate().length === 0
+  for (let side = 0; side < 4; side++) {
+    const across = atlas2.neighbour(TC.cubeTileOf(atlas2, corner.id), side).tile
+    const B = T.buildTileMeshOn(TC.cubeSite(parent, idOf(atlas2, 2, across), opts), parent, opts)
+    allValid &&= B.mesh.validate().length === 0
+    const r = seam(A, B)
+    if (r.shared === T.tileSpec(2).edgeSteps + 1 && r.differ === 0 && r.lost === 0) sides++
+    else worst = r
+  }
+  check(`a cube tile at a cube corner meets its four neighbours on three faces: the shared row bit for bit, every step an edge of both (${A.mesh.aliveVertices} nodes: ${roleCount(A, T.TILE_ROLE_NEW)} new, ${roleCount(A, T.TILE_ROLE_PARENT)} parents, ${roleCount(A, T.TILE_ROLE_EDGE)} edge, ${roleCount(A, T.TILE_ROLE_HALO)} halo)`,
+    allValid && sides === 4, sides === 4 ? '' : `${sides}/4 sides; ${JSON.stringify(worst)}`)
+  // At a pole: level 2's cube is not turned, so the poles are face
+  // centres and, n being even, a corner of four tiles — an edge node where
+  // the chart's longitude means nothing.
+  for (const [name, dir] of [['north', [1e-9, 2e-9, 1]], ['south', [1e-9, 2e-9, -1]]]) {
+    const id = idOf(atlas2, 2, atlas2.tileAt(dir))
+    const P = T.buildTileMeshOn(TC.cubeSite(parent, id, opts), parent, opts)
+    let ok = P.mesh.validate().length === 0, met = 0, detail = ''
+    for (let side = 0; side < 4; side++) {
+      const B = T.buildTileMeshOn(TC.cubeSite(parent, idOf(atlas2, 2, atlas2.neighbour(TC.cubeTileOf(atlas2, id), side).tile), opts), parent, opts)
+      const r = seam(P, B)
+      if (B.mesh.validate().length === 0 && r.shared === T.tileSpec(2).edgeSteps + 1 && r.differ === 0 && r.lost === 0) met++
+      else detail = JSON.stringify(r)
+    }
+    const pole = [...edgeMap(P).keys()].filter((k) => k.endsWith(name === 'north' ? ',0' : `,${SH}`)).length
+    check(`a cube tile with the ${name} pole at its corner meets its four neighbours (the pole an edge node: ${pole})`, ok && met === 4 && pole === 1, met === 4 ? '' : `${met}/4 ${detail}`)
+  }
+
+  // The inside as a function of its own points: a wider halo changes no
+  // triangle and no height in it.
+  const wide = T.buildTileMeshOn(TC.cubeSite(parent, corner.id, { ...opts, halo: 3 }), parent, { ...opts, halo: 3 })
+  const insideTris = (t) => {
+    const set = new Set()
+    for (let k = 0; k < t.mesh.triSlots; k++) {
+      if (!t.mesh.tAlive[k]) continue
+      const vs = [0, 1, 2].map((c) => t.mesh.tris[3 * k + c])
+      if (vs.some((v) => t.role[v] === T.TILE_ROLE_HALO)) continue
+      set.add(vs.map((v) => `${t.role[v]}@${t.worldX[v]},${t.worldY[v]}:${t.z[v]}`).sort().join('|'))
+    }
+    return set
+  }
+  const inA = insideTris(A), inWide = insideTris(wide)
+  let differ = 0
+  for (const k of inA) if (!inWide.has(k)) differ++
+  check('a wider halo changes no triangle and no height inside a cube tile', differ === 0 && inA.size === inWide.size, `${inA.size} vs ${inWide.size}, ${differ} differ`)
+  const again = T.buildTileMeshOn(TC.cubeSite(parent, corner.id, opts), parent, opts)
+  check('the same parent builds the same cube tile', meshHash(again.mesh) === meshHash(A.mesh) && again.z.every((v, i) => v === A.z[i]))
+  // The bake: the edge pinned, the inside eroded, every land node drained.
+  const climate = uniformClimate(S)
+  const bakeInputs = {
+    parent, parentGraph: null, width: SW, height: SH, detailSeed: 1234, lithoSeed: 77, controls: {},
+    uplift: null, erodibility: null, forcingResX: 0, forcingResY: 0, climate,
+    meanLandWater: M.climatePoints.meanLandRunoff(M.climatePoints.climateCellsFromSaved(S, climate)), upstream: [],
+  }
+  const baked = await M.tileBake.bakeMeshTile(bakeInputs, corner.id, { rounds: 2 })
+  const bt = baked.tile
+  let edgeMoved = 0, moved = 0, nan = 0, stuck = 0
+  for (let v = 0; v < bt.mesh.vertexSlots; v++) {
+    if (!bt.mesh.vAlive[v]) continue
+    if (!Number.isFinite(baked.z[v])) nan++
+    if (bt.role[v] === T.TILE_ROLE_EDGE) { if (baked.z[v] !== bt.z[v]) edgeMoved++ }
+    else if (bt.role[v] !== T.TILE_ROLE_HALO && baked.z[v] !== bt.z[v]) moved++
+  }
+  const target = baked.routing.flowTarget
+  for (let v = 0; v < bt.mesh.vertexSlots; v++) {
+    if (!bt.mesh.vAlive[v] || bt.role[v] === T.TILE_ROLE_EDGE || bt.role[v] === T.TILE_ROLE_HALO || baked.z[v] <= 0) continue
+    let u = v, steps = 0
+    while (steps++ < 1e6 && baked.z[u] > 0 && bt.role[u] !== T.TILE_ROLE_EDGE && target[u] >= 0) u = target[u]
+    if (bt.role[u] !== T.TILE_ROLE_EDGE && baked.z[u] > 0) stuck++
+  }
+  check('a cube tile bakes: its edge row keeps the parent surface to the bit, the inside erodes and drains', nan === 0 && edgeMoved === 0 && moved > 0 && stuck === 0, `${moved} moved, ${edgeMoved} edge moved, ${stuck} stuck, ${nan} NaN`)
+  // The artifact: world points, read back.
+  const art = M.tileArtifacts.bakedTileToArtifact(baked)
+  const store = M.memory.createMemoryArtifactStore()
+  const key = M.store.artifactKey('sphere', M.tileArtifacts.meshTilePipelineVersion(2, 2), M.tileArtifacts.meshTileStage(corner.id))
+  const wrote = await M.tileArtifacts.writeMeshTileArtifact(store, key, art, 1, 'sphere', 2)
+  const read = await M.tileArtifacts.readMeshTileArtifact(store, key)
+  let off = 0
+  for (let v = 0, i = 0; v < bt.mesh.vertexSlots; v++) {
+    if (!bt.mesh.vAlive[v] || bt.role[v] === T.TILE_ROLE_HALO) continue
+    if (read.artifact.nodes[2 * i] !== Math.fround(bt.worldX[v]) || read.artifact.nodes[2 * i + 1] !== Math.fround(bt.worldY[v])) off++
+    i++
+  }
+  check('a cube tile\'s artifact holds its nodes as world points and reads back', wrote && read !== null && read.artifact.count === art.count && off === 0, `${off} off`)
+  // Level 3 (its own cube, turned): two neighbours, each on its OWN
+  // patchwork of the level-2 tiles it overlaps, meet on their edge.
+  const atlas3 = TC.cubeAtlasOf(S, 3)
+  const land3 = landIn(3)
+  let pick = null
+  for (const { tile } of land3.values()) {
+    const across = atlas3.neighbour(TC.cubeTileOf(atlas3, tile), 2).tile
+    const other = idOf(atlas3, 3, across)
+    if (land3.has(`${other.x},${other.y}`) && TL.parentTilesOn(tile, T.tileSpec(2), S).length >= 2) { pick = [tile, other]; break }
+  }
+  const pieces = new Map()
+  const pieceOf = async (p) => {
+    const k = `${p.x},${p.y}`
+    if (!pieces.has(k)) {
+      const a = M.tileArtifacts.bakedTileToArtifact(await M.tileBake.bakeMeshTile(bakeInputs, p, { rounds: 2 }))
+      pieces.set(k, { tile: p, count: a.count, nodes: a.nodes, z: a.z })
+    }
+    return pieces.get(k)
+  }
+  const own = async (t) => {
+    const mine = []
+    for (const p of TL.parentTilesOn(t, T.tileSpec(2), S)) mine.push(await pieceOf(p))
+    const joined = TL.tileParentOn(mine, S)
+    return { parent: { mesh: joined.mesh, z: joined.z, discharge: null, sampler: M.sampler.createMeshSampler(joined.mesh, joined.z, joined.region), macro: sampler }, joined, count: mine.reduce((n, p) => n + p.count, 0) }
+  }
+  const pa = await own(pick[0]), pb = await own(pick[1])
+  const A3 = T.buildTileMeshOn(TC.cubeSite(pa.parent, pick[0], opts), pa.parent, opts)
+  const B3 = T.buildTileMeshOn(TC.cubeSite(pb.parent, pick[1], opts), pb.parent, opts)
+  const r3 = seam(A3, B3)
+  check(`level-3 cube tiles on their patchworks of level 2 meet on their shared edge (${pieces.size} level-2 tiles; patchwork ${pa.count} → ${pa.joined.mesh.aliveVertices} nodes)`,
+    pa.joined.mesh.validate().length === 0 && A3.mesh.validate().length === 0 && B3.mesh.validate().length === 0 && r3.shared === T.tileSpec(3).edgeSteps + 1 && r3.differ === 0 && r3.lost === 0, JSON.stringify(r3))
+  // The plan on the sphere: whole and acyclic.
+  const routing = M.meshHydro.meshRouting(mesh, z)
+  const plan = M.tilePlan.planTiles({ mesh, z, routing, width: SW, height: SH, levels: [2, 3], landTiles: (level) => [...landIn(level).values()].map((e) => e.tile) })
+  const keyOf = (t) => `${t.level}:${t.x},${t.y}`
+  const planned = new Set(plan.map((p) => keyOf(p.tile)))
+  const waiting = new Map(plan.map((p) => [keyOf(p.tile), p.parents.length + p.upstream.length]))
+  const after = new Map()
+  let missing = 0
+  for (const p of plan) for (const d of [...p.parents, ...p.upstream]) { if (!planned.has(keyOf(d))) missing++; const k = keyOf(d); if (!after.has(k)) after.set(k, []); after.get(k).push(keyOf(p.tile)) }
+  const ready = [...waiting].filter(([, n]) => n === 0).map(([k]) => k)
+  let placed = 0
+  while (ready.length) { const k = ready.pop(); placed++; for (const n of after.get(k) ?? []) { waiting.set(n, waiting.get(n) - 1); if (waiting.get(n) === 0) ready.push(n) } }
+  const flow = plan.reduce((n, p) => n + p.upstream.length, 0)
+  check(`the tile plan on the sphere is acyclic and whole (${plan.filter((p) => p.tile.level === 2).length} + ${plan.filter((p) => p.tile.level === 3).length} tiles, ${flow} flow edges)`, missing === 0 && placed === plan.length && plan.length > 0, `${missing} unplanned, ${placed}/${plan.length}`)
+  // An upstream tile's outflow over the shared edge is the tile's inflow,
+  // across faces as inside one.
+  const down = plan.find((p) => p.tile.level === 2 && p.upstream.length > 0)
+  const ups = []
+  for (const u of down.upstream) {
+    const a = M.tileArtifacts.bakedTileToArtifact(await M.tileBake.bakeMeshTile(bakeInputs, u, { rounds: 2 }))
+    ups.push({ tile: u, count: a.count, nodes: a.nodes, outflow: a.outflow })
+  }
+  const fed = await M.tileBake.bakeMeshTile({ ...bakeInputs, upstream: ups }, down.tile, { rounds: 2 })
+  const ownEdge = new Set()
+  for (let v = 0; v < fed.tile.mesh.vertexSlots; v++) if (fed.tile.mesh.vAlive[v] && fed.tile.role[v] === T.TILE_ROLE_EDGE) ownEdge.add(`${Math.fround(fed.tile.worldX[v])},${Math.fround(fed.tile.worldY[v])}`)
+  let sent = 0
+  for (const u of ups) for (let i = 0; i < u.count; i++) if (u.outflow[i] > 0 && ownEdge.has(`${u.nodes[2 * i]},${u.nodes[2 * i + 1]}`)) sent += u.outflow[i]
+  check('an upstream cube tile\'s outflow over the shared edge is the tile\'s inflow', sent > 0 && Math.abs(fed.upstreamInflow - sent) <= 1e-6 * sent, `${sent.toFixed(2)} out, ${fed.upstreamInflow.toFixed(2)} in over ${fed.upstreamNodes} edge nodes`)
+  console.log(`  (the cube tiles' section: ${((performance.now() - t0) / 1000).toFixed(1)} s)`)
+} else {
+  check('the cube tiles need [1g]\'s sphere world', false)
+}
+
 // ------------------------------------------------------------ determinism
 
 console.log('\n[2] determinism')
@@ -2277,7 +2506,7 @@ check('a history epoch routes on one cadence in both engines',
 
 // ------------------------------------------------------------ byte hashes
 
-const current = { build: meshHash(built.mesh) }
+const current = { build: meshHash(built.mesh), ...tileHashes }
 if (MODE === 'hash-record') {
   writeFileSync(HASHES, JSON.stringify(current, null, 2) + '\n')
   console.log(`\n[3] byte hashes recorded to ${HASHES}`)

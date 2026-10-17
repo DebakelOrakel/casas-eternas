@@ -101,17 +101,17 @@ export function tileSpec(level: number): TileSpec {
 
 // A level's node is accepted where step · ACCEPT ≥ target: the finest
 // accepted step then lies between 0.8 and 1.6 targets.
-const ACCEPT = 1.25
+export const ACCEPT = 1.25
 // A node's jitter within its cell, as a fraction of the step either way.
 // ±0.25 keeps two nodes of one level at least half a step apart.
-const JITTER = 0.25
+export const JITTER = 0.25
 // No node but the edge row within this fraction of the edge step of an
 // edge line: over half the longest step, so every diametral circle of the
 // row is empty.
 // A step of the jittered row is up to 1 + 2 · EDGE_JITTER steps long, so
 // its diametral circle reaches 0.75 of a step from the line.
-const EDGE_JITTER = 0.25
-const CLEAR_FRACTION = 0.8
+export const EDGE_JITTER = 0.25
+export const CLEAR_FRACTION = 0.8
 
 // Node positions are float32 in the mesh (periodicDelaunay rounds on
 // insert), in the TILE'S frame — so a node would round differently in two
@@ -123,11 +123,11 @@ const CLEAR_FRACTION = 0.8
 const maxSide = (spec: TileSpec): number => 16_777_216 * spec.quantum
 const quantise = (v: number, spec: TileSpec): number => Math.round(v / spec.quantum) * spec.quantum
 // Hash salts of the edge row's offsets, apart from the placement levels'.
-const EDGE_SALT_ROW = 101
-const EDGE_SALT_COL = 102
+export const EDGE_SALT_ROW = 101
+export const EDGE_SALT_COL = 102
 // The placement hashes' salt per level, so two levels' grids that meet
 // at one step do not place the same nodes.
-const LEVEL_SALT = 64
+export const LEVEL_SALT = 64
 
 // Every number that shapes a level's tile, for the tile artifact's
 // pipeline version (world/meshTileArtifacts.ts): a change to any of them
@@ -335,9 +335,10 @@ export interface TileOptions {
 
 export interface TileMesh {
   tile: TileId
-  // The local frame: node (x, y) of `mesh` is world point
+  // The local frame of a torus tile: node (x, y) of `mesh` is world point
   // (originX + x, originY + y), wrapped. The mesh's domain is the tile
-  // plus its halo on either side, as a torus of its own.
+  // plus its halo on either side, as a torus of its own. NaN on the
+  // sphere, whose frame is the tile's plane (meshTileCube.ts).
   originX: number
   originY: number
   halo: number
@@ -346,9 +347,49 @@ export interface TileMesh {
   z: Float32Array
   // TILE_ROLE_* per node.
   role: Uint8Array
+  // Each node's world point (the chart, one macro cell per unit).
+  worldX: Float64Array
+  worldY: Float64Array
+  // How the tile lies on the world.
+  site: TileSite
 }
 
-export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOptions): TileMesh {
+// WHERE A TILE LIES (docs/decisions/sphere-tiles.md, fork 10): its local
+// frame and the rules that place its nodes, for one shape. The torus's is
+// below (torusSite); the sphere's is meshTileCube.ts. buildTileMeshOn is
+// the one builder over either.
+export interface TileSite {
+  readonly kind: 'torus' | 'cube'
+  readonly tile: TileId
+  readonly spec: TileSpec
+  readonly halo: number
+  // The frame's side: the local mesh is a torus of side × side, the tile
+  // and its halo inside it.
+  readonly side: number
+  // The triangulation's own domain over the frame.
+  localDomain(): Domain
+  // Inside the tile (not its edge line, not its halo).
+  inside(x: number, y: number): boolean
+  // Within the clear strip of an edge line.
+  inClear(x: number, y: number): boolean
+  // The edge line's nodes: local point and world point, each corner once.
+  edgeRow(emit: (x: number, y: number, wx: number, wy: number) => void): void
+  // The parent's nodes in the frame, the clear strip left out.
+  parentNodes(parent: TileParent, emit: (x: number, y: number, v: number) => void): void
+  // A placement level's candidates in the frame (its grid of step `s`,
+  // jittered), the clear strip left out: local point and world point.
+  placement(level: number, s: number, emit: (x: number, y: number, wx: number, wy: number) => void): void
+  // A node's world point after the triangulation: from its local point as
+  // the mesh holds it, or the world point it was placed at.
+  worldPoint(x: number, y: number, placedX: number, placedY: number, out: { x: number; y: number }): void
+  // The origin of a torus tile's frame (NaN on the sphere).
+  readonly originX: number
+  readonly originY: number
+}
+
+// The torus's site: a square of the macro grid, its grid shifted by the
+// spec's offset, the frame the square plus its halo.
+export function torusSite(parent: TileParent, tile: TileId, options: TileOptions): TileSite {
   const { width, height, seed } = options
   // The world the parent lies on, one macro cell per unit.
   const world = parent.mesh.domain
@@ -369,44 +410,102 @@ export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOpt
   const inside = (x: number, y: number): boolean => x > lo && x < hi && y > lo && y < hi
   const toWorldX = (x: number): number => world.wrapX(originX + x)
   const toWorldY = (y: number): number => world.wrapY(originY + y)
+  return {
+    kind: 'torus', tile, spec, halo, side, originX, originY,
+    localDomain: () => torusDomain(side, side),
+    inside,
+    inClear,
+    edgeRow(emit) {
+      // The edge line: the four sides, each corner once. A node's offset
+      // along its line comes from the line (its column or row of tiles,
+      // wrapped) and its step counted from the world's origin — what the
+      // tile across the line counts too.
+      const { cols, rows } = tileGrid(width, height, spec)
+      const steps = spec.edgeSteps
+      // The tiles over the world, and the edge steps along their lines.
+      const tiles = world.grid(cols, rows)
+      const edgeSteps = world.grid(cols * steps, rows * steps)
+      const alongRow = (i: number): number => edgeSteps.wrapCol(i)
+      const alongCol = (j: number): number => edgeSteps.wrapRow(j)
+      const along = (line: number, first: number, k: number, salt: number, wrapStep: (i: number) => number): number => {
+        const global = wrapStep(first * steps + k)
+        const offset = global % steps === 0 ? 0 : EDGE_JITTER * (2 * hash01(line, global, salt + LEVEL_SALT * spec.level, seed) - 1)
+        return q((k + offset) * step)
+      }
+      const rowLine = (ty: number): number => tiles.wrapRow(ty)
+      const colLine = (tx: number): number => tiles.wrapCol(tx)
+      const addEdge = (x: number, y: number): void => emit(x, y, toWorldX(x), toWorldY(y))
+      for (let k = 0; k < steps; k++) {
+        addEdge(lo + along(rowLine(tile.y), tile.x, k, EDGE_SALT_ROW, alongRow), lo)
+        addEdge(hi, lo + along(colLine(tile.x + 1), tile.y, k, EDGE_SALT_COL, alongCol))
+        addEdge(lo + along(rowLine(tile.y + 1), tile.x, k + 1, EDGE_SALT_ROW, alongRow), hi)
+        addEdge(lo, lo + along(colLine(tile.x), tile.y, k + 1, EDGE_SALT_COL, alongCol))
+      }
+    },
+    parentNodes(parent, emit) {
+      for (let v = 0; v < parent.mesh.vertexSlots; v++) {
+        if (!parent.mesh.vAlive[v]) continue
+        const x = world.wrapX(q(parent.mesh.vx[v]) - originX)
+        const y = world.wrapY(q(parent.mesh.vy[v]) - originY)
+        if (x >= side || y >= side || inClear(x, y)) continue
+        emit(x, y, v)
+      }
+    },
+    placement(level, s, emit) {
+      const cols = Math.round(width / s)
+      const rows = Math.round(height / s)
+      const lattice = world.grid(cols, rows)
+      const i0 = Math.floor(originX / s)
+      const j0 = Math.floor(originY / s)
+      const i1 = Math.ceil((originX + side) / s)
+      const j1 = Math.ceil((originY + side) / s)
+      for (let j = j0; j < j1; j++) {
+        const jw = lattice.wrapRow(j)
+        for (let i = i0; i < i1; i++) {
+          const iw = lattice.wrapCol(i)
+          // The world position from the WRAPPED cell, so a node is the
+          // same number whichever side of the world's seam a frame reaches
+          // it from; then into the frame.
+          const salt = 2 * level + LEVEL_SALT * spec.level
+          const x = world.wrapX(q((iw + 0.5 + JITTER * (2 * hash01(iw, jw, salt, seed) - 1)) * s) - originX)
+          const y = world.wrapY(q((jw + 0.5 + JITTER * (2 * hash01(iw, jw, salt + 1, seed) - 1)) * s) - originY)
+          if (x < 0 || y < 0 || x >= side || y >= side || inClear(x, y)) continue
+          emit(x, y, toWorldX(x), toWorldY(y))
+        }
+      }
+    },
+    worldPoint(x, y, _placedX, _placedY, out) {
+      out.x = world.wrapX(originX + x)
+      out.y = world.wrapY(originY + y)
+    },
+  }
+}
 
+export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOptions): TileMesh {
+  return buildTileMeshOn(torusSite(parent, tile, options), parent, options)
+}
+
+// A tile's mesh on its site: the edge row, the parents, the new nodes level
+// by level, triangulated over the frame.
+export function buildTileMeshOn(site: TileSite, parent: TileParent, options: TileOptions): TileMesh {
+  const { tile, spec, side } = site
   const surface = parentSurface(parent, options, spec)
   const xs: number[] = []
   const ys: number[] = []
   const zs: number[] = []
   const roles: number[] = []
-  const add = (x: number, y: number, z: number, role: number): void => {
+  const wxs: number[] = []
+  const wys: number[] = []
+  const add = (x: number, y: number, z: number, role: number, wx: number, wy: number): void => {
     xs.push(x)
     ys.push(y)
     zs.push(z)
     roles.push(role)
+    wxs.push(wx)
+    wys.push(wy)
   }
 
-  // The edge line: the four sides, each corner once. A node's offset along
-  // its line comes from the line (its column or row of tiles, wrapped) and
-  // its step counted from the world's origin — what the tile across the
-  // line counts too.
-  const { cols, rows } = tileGrid(width, height, spec)
-  const steps = spec.edgeSteps
-  // The tiles over the world, and the edge steps along their lines.
-  const tiles = world.grid(cols, rows)
-  const edgeSteps = world.grid(cols * steps, rows * steps)
-  const alongRow = (i: number): number => edgeSteps.wrapCol(i)
-  const alongCol = (j: number): number => edgeSteps.wrapRow(j)
-  const along = (line: number, first: number, k: number, salt: number, wrapStep: (i: number) => number): number => {
-    const global = wrapStep(first * steps + k)
-    const offset = global % steps === 0 ? 0 : EDGE_JITTER * (2 * hash01(line, global, salt + LEVEL_SALT * spec.level, seed) - 1)
-    return q((k + offset) * step)
-  }
-  const rowLine = (ty: number): number => tiles.wrapRow(ty)
-  const colLine = (tx: number): number => tiles.wrapCol(tx)
-  const addEdge = (x: number, y: number): void => add(x, y, surface.synthesisedAt(toWorldX(x), toWorldY(y)), TILE_ROLE_EDGE)
-  for (let k = 0; k < steps; k++) {
-    addEdge(lo + along(rowLine(tile.y), tile.x, k, EDGE_SALT_ROW, alongRow), lo)
-    addEdge(hi, lo + along(colLine(tile.x + 1), tile.y, k, EDGE_SALT_COL, alongCol))
-    addEdge(lo + along(rowLine(tile.y + 1), tile.x, k + 1, EDGE_SALT_ROW, alongRow), hi)
-    addEdge(lo, lo + along(colLine(tile.x), tile.y, k + 1, EDGE_SALT_COL, alongCol))
-  }
+  site.edgeRow((x, y, wx, wy) => add(x, y, surface.synthesisedAt(wx, wy), TILE_ROLE_EDGE, wx, wy))
 
   // The occupancy grid the placement tests against: the parents first,
   // then each level's accepted nodes after the level (a level is tested
@@ -415,51 +514,27 @@ export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOpt
   const grid = new PointGrid(side, levels.length > 0 ? stepOf(levels[levels.length - 1], spec) * 2 : 1)
 
   // The parent nodes in the window.
-  for (let v = 0; v < parent.mesh.vertexSlots; v++) {
-    if (!parent.mesh.vAlive[v]) continue
-    const x = world.wrapX(q(parent.mesh.vx[v]) - originX)
-    const y = world.wrapY(q(parent.mesh.vy[v]) - originY)
-    if (x >= side || y >= side || inClear(x, y)) continue
-    add(x, y, parent.z[v], inside(x, y) ? TILE_ROLE_PARENT : TILE_ROLE_HALO)
+  site.parentNodes(parent, (x, y, v) => {
+    add(x, y, parent.z[v], site.inside(x, y) ? TILE_ROLE_PARENT : TILE_ROLE_HALO, parent.mesh.vx[v], parent.mesh.vy[v])
     grid.add(x, y)
-  }
+  })
 
   // The new nodes, level by level.
   for (const level of levels) {
     const s = stepOf(level, spec)
-    const cols = Math.round(width / s)
-    const rows = Math.round(height / s)
-    const lattice = world.grid(cols, rows)
-    const i0 = Math.floor(originX / s)
-    const j0 = Math.floor(originY / s)
-    const i1 = Math.ceil((originX + side) / s)
-    const j1 = Math.ceil((originY + side) / s)
     const accepted: number[] = []
-    for (let j = j0; j < j1; j++) {
-      const jw = lattice.wrapRow(j)
-      for (let i = i0; i < i1; i++) {
-        const iw = lattice.wrapCol(i)
-        // The world position from the WRAPPED cell, so a node is the
-        // same number whichever side of the world's seam a frame reaches
-        // it from; then into the frame.
-        const salt = 2 * level + LEVEL_SALT * spec.level
-        const x = world.wrapX(q((iw + 0.5 + JITTER * (2 * hash01(iw, jw, salt, seed) - 1)) * s) - originX)
-        const y = world.wrapY(q((jw + 0.5 + JITTER * (2 * hash01(iw, jw, salt + 1, seed) - 1)) * s) - originY)
-        if (x < 0 || y < 0 || x >= side || y >= side || inClear(x, y)) continue
-        const wx = toWorldX(x)
-        const wy = toWorldY(y)
-        if (s * ACCEPT < surface.targetAt(wx, wy)) continue
-        if (grid.near(x, y, s / 2)) continue
-        add(x, y, surface.synthesisedAt(wx, wy), inside(x, y) ? TILE_ROLE_NEW : TILE_ROLE_HALO)
-        accepted.push(x, y)
-      }
-    }
+    site.placement(level, s, (x, y, wx, wy) => {
+      if (s * ACCEPT < surface.targetAt(wx, wy)) return
+      if (grid.near(x, y, s / 2)) return
+      add(x, y, surface.synthesisedAt(wx, wy), site.inside(x, y) ? TILE_ROLE_NEW : TILE_ROLE_HALO, wx, wy)
+      accepted.push(x, y)
+    })
     for (let a = 0; a < accepted.length; a += 2) grid.add(accepted[a], accepted[a + 1])
   }
 
   // The triangulation, the points inserted in Hilbert order.
   const count = xs.length
-  const domain = torusDomain(side, side)
+  const domain = site.localDomain()
   const order = hilbertOrder(xs, ys, count, side, side)
   const ox = new Float64Array(count)
   const oy = new Float64Array(count)
@@ -484,14 +559,36 @@ export function buildTileMesh(parent: TileParent, tile: TileId, options: TileOpt
   for (const n of again) mapping[n] = built.insert(ox[n], oy[n])
   const slotZ = new Float32Array(built.vertexSlots)
   const slotRole = new Float32Array(built.vertexSlots)
+  const slotWX = new Float64Array(built.vertexSlots)
+  const slotWY = new Float64Array(built.vertexSlots)
   for (let n = 0; n < count; n++) {
     slotZ[mapping[n]] = zs[order[n]]
     slotRole[mapping[n]] = roles[order[n]]
+    slotWX[mapping[n]] = wxs[order[n]]
+    slotWY[mapping[n]] = wys[order[n]]
   }
   const { mesh, order: canonical } = compactMesh(built)
   const z = permute(slotZ, canonical)
   const role = Uint8Array.from(permute(slotRole, canonical))
-  return { tile, originX, originY, halo, mesh, z, role }
+  const placedX = permute64(slotWX, canonical)
+  const placedY = permute64(slotWY, canonical)
+  const worldX = new Float64Array(mesh.vertexSlots)
+  const worldY = new Float64Array(mesh.vertexSlots)
+  const at = { x: 0, y: 0 }
+  for (let v = 0; v < mesh.vertexSlots; v++) {
+    if (!mesh.vAlive[v]) continue
+    site.worldPoint(mesh.vx[v], mesh.vy[v], placedX[v], placedY[v], at)
+    worldX[v] = at.x
+    worldY[v] = at.y
+  }
+  return { tile, originX: site.originX, originY: site.originY, halo: site.halo, mesh, z, role, worldX, worldY, site }
+}
+
+// meshSerial.permute for Float64 values.
+function permute64(values: Float64Array, order: Int32Array): Float64Array {
+  const out = new Float64Array(order.length)
+  for (let i = 0; i < order.length; i++) out[i] = values[order[i]]
+  return out
 }
 
 // A tile's node as a world point (`world`: one macro cell per unit).
@@ -502,7 +599,7 @@ export function tileWorldY(tile: TileMesh, y: number, world: Domain): number {
   return world.wrapY(tile.originY + y)
 }
 
-function stepOf(level: number, spec: TileSpec): number {
+export function stepOf(level: number, spec: TileSpec): number {
   return spec.cells / (1 << level)
 }
 
@@ -510,7 +607,7 @@ function stepOf(level: number, spec: TileSpec): number {
 // synthesis, and the density rule's target spacing (in cells) from the
 // parent nodes' relief and discharge. Both are memoised where they are
 // costly — the relief per macro cell, the target per parent node.
-function parentSurface(parent: TileParent, options: TileOptions, spec: TileSpec): { synthesisedAt(x: number, y: number): number; targetAt(x: number, y: number): number } {
+export function parentSurface(parent: TileParent, options: TileOptions, spec: TileSpec): { synthesisedAt(x: number, y: number): number; targetAt(x: number, y: number): number } {
   const { width, height } = options
   const { mesh, z, discharge, sampler } = parent
   const macroGrid = mesh.domain.grid(width, height)
@@ -547,7 +644,7 @@ function parentSurface(parent: TileParent, options: TileOptions, spec: TileSpec)
     const bottom = reliefOfCell(x0, y1) * (1 - tx) + reliefOfCell(x1, y1) * tx
     return top * (1 - ty) + bottom * ty
   }
-  const synthesise = levelSynthesis({ seed: options.seed, level: spec.level, budget: spec.budget, width, height }, reliefPoint)
+  const synthesise = levelSynthesis({ seed: options.seed, level: spec.level, budget: spec.budget, width, height, ...(mesh.domain.kind === 'sphere' ? { sphere: mesh.domain } : {}) }, reliefPoint)
 
   const targets = new Map<number, number>()
   const relief = new Float64Array(2)
@@ -573,7 +670,7 @@ function parentSurface(parent: TileParent, options: TileOptions, spec: TileSpec)
 }
 
 // A position hash in [0, 1): the global cell (i, j), a salt and the seed.
-function hash01(i: number, j: number, salt: number, seed: number): number {
+export function hash01(i: number, j: number, salt: number, seed: number): number {
   let h = (seed ^ Math.imul(i, 0x27d4eb2d) ^ Math.imul(j, 0x165667b1) ^ Math.imul(salt, 0x9e3779b1)) | 0
   h = Math.imul(h ^ (h >>> 15), 0x85ebca6b)
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35)

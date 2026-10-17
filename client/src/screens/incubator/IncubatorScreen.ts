@@ -94,6 +94,9 @@ async function levelArtifacts(): Promise<Map<string, ServerArtifact[]>> {
   }
   const byWorld = new Map<string, ServerArtifact[]>()
   for (const world of worlds ?? []) {
+    // The ground reads a torus's level; a sphere's (docs/decisions/
+    // sphere-tiles.md) it does not draw yet.
+    if (world.kind === 'SphereWorld') continue
     const list = (world.terrains ?? []).flatMap((terrain) => byTerrain.get(terrain) ?? [])
     if (list.length > 0) byWorld.set(world.uid, list)
   }

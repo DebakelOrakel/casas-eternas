@@ -61,7 +61,9 @@ The pipeline version is the one worth reading: artifacts are addressed by it,
 so a bake bundle from a different commit than the client expecting its output
 produces artifacts nobody ever looks for — a failure that is otherwise silent.
 It is read from the job worker bundle itself (jobs.worker), so it says what this
-installation would actually run.
+installation would actually run. A world records the same version as the one
+that made it, and this installation makes level 1 only of a world that records
+this one.
 
 A running server reports the same build string at GET /v1/capabilities.`,
 	Args: cobra.NoArgs,

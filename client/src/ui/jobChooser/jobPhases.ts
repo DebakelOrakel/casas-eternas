@@ -5,7 +5,6 @@ import type { TKey } from '../../i18n/i18n'
 // have no names of their own; their percent says enough.
 export const JOB_PHASE_KEYS: Record<string, TKey> = {
   read: 'generator.jobs.phase.read',
-  verify: 'generator.jobs.phase.verify',
   history: 'generator.jobs.phase.history',
   hydrology: 'generator.jobs.phase.hydrology',
   store: 'generator.jobs.phase.store',

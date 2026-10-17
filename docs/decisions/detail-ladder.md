@@ -670,6 +670,26 @@ cmd/ already did. `bakeRunner` in `/v1/capabilities` always answers
 
 ## Status
 
+2026-10-17: A WORLD RECORDS ITS PIPELINE (supersedes the code hash of
+option 2, "The same build"). Each run recorded a hash of every source file
+under src/generator; a comment, a performance change or a file the replay
+never runs moved it, and every world became "made by other code" (the cube
+atlas did, 2026-10-17). Now world.yaml records `status.pipeline`: level 1's
+pipeline version (`meshPipelineVersion(1)`, world/worldPipeline.ts), the
+one `casas-eternas version` reports. Level 1's version holds every tuning
+object and default the history reads (world/worldTuning.ts, in
+`MESH_BAKE_CONSTANTS`) — before, only HISTORY_DEFAULTS, so a change to the
+tectonics' or the climate's tuning left level 1's key as it was; a change
+to the algorithm bumps AMPLIFICATION_ALGO_VERSION. The job worker replays a
+world whose pipeline is its own and refuses the others; the generator makes
+again on load a world of another pipeline (or of none: runs of two). The
+check before the replay (the history at budget 4, compared with the save's
+mesh) is gone: the pipeline says what it tested, and a level-1 job replays
+the history once. Worlds from before record the frozen engine's file hash
+(`54ee802771966159`, and `9ac556ec02db1fff` with the cube atlas) and are
+read as made by today's pipeline (`v11-1b1f7f4a8b14250e`). The runs no
+longer record `generator` and `code`.
+
 2026-10-04: a refine plan's tiles already in the store are marked done by
 the coordinator as it wires the plan, asked of the co-resident artifact
 store with the keys level 1's report carries (worldId and the tile levels'

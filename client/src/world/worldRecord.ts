@@ -1,4 +1,5 @@
 import { readRecipeMap, readRecipeValue, yamlScalar } from './save/recipeYaml'
+import { recordedPipeline } from './worldPipeline'
 import { historyFromYaml, historyToYamlLines, type WorldHistory } from './save/worldHistory'
 import { specFromYaml, specToYamlLines, WORLD_SPEC_FIELDS, type WorldSpec } from './save/worldSpec'
 import { progressStepOf, type ProgressStep } from './worldProgress'
@@ -42,6 +43,10 @@ export interface WorldRecord {
   annotations: Record<string, string>
   // How many times it has been written (the server's optimistic lock).
   revision: number
+  // The pipeline that made it (worldPipeline.ts), `status.pipeline`; ''
+  // for none (runs of two pipelines, or of one no longer known): no
+  // pipeline makes it again.
+  pipeline: string
   // The recipe: the seed and one value per control.
   spec: WorldSpec
   // The runs that made it (save/worldHistory.ts).
@@ -81,6 +86,8 @@ export function recordToYaml(record: WorldRecord, generator: string): string {
     `  revision: ${record.revision}`,
     // PROVENANCE (app/buildVersion.ts): which build wrote this stand.
     `  generator: ${generator}`,
+    // The pipeline that made it, absent for none.
+    ...(record.pipeline ? [`  pipeline: ${record.pipeline}`] : []),
     // How far the user took it (worldProgress.ts), absent while no step is
     // accepted.
     ...(record.progress ? [`  progress: ${record.progress}`] : []),
@@ -113,6 +120,7 @@ export function recordFromYaml(yaml: string, epochs: { archeanEpochs: number; ep
     name: readRecipeValue(yaml, 'metadata.name') ?? seed,
     annotations: readRecipeMap(yaml, 'metadata.annotations'),
     revision: Number(readRecipeValue(yaml, 'status.revision') ?? 0),
+    pipeline: recordedPipeline(yaml),
     spec: specFromYaml(yaml, seed),
     history: historyFromYaml(yaml),
     archeanEpochs: epochs.archeanEpochs,
@@ -150,7 +158,7 @@ function signatureParts(record: WorldRecord): Record<string, unknown> {
     epoch: record.epoch,
     erosionRun: record.erosionRun,
     progress: record.progress,
-    code: [...record.history.genesis, ...record.history.tectonics].map((run) => run.code),
+    pipeline: record.pipeline,
   }
   for (const field of WORLD_SPEC_FIELDS) parts[field.path] = record.spec.values[field.path]
   return parts

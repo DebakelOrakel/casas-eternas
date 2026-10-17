@@ -3,7 +3,9 @@ import { climateAtPoints, climateCellsFromSaved, type ClimateCellValues } from '
 import { SEA_LEVEL } from '../elevation/elevationScale'
 import { DEFAULT_ROUTING_EVERY, runMeshErosion, type MeshRouting } from '../mesh/meshErosion'
 import { meshAreas } from '../mesh/meshHydrology'
-import { buildTileMesh, tileCorner, TILE_ROLE_EDGE, TILE_ROLE_HALO, tileSpec, type TileId, type TileMesh, type TileParent } from '../mesh/meshTile'
+import { tileCorner, TILE_ROLE_EDGE, TILE_ROLE_HALO, tileSpec, type TileId, type TileMesh, type TileParent } from '../mesh/meshTile'
+import { cubeFrameOf, cubeToFrame } from '../mesh/meshTileCube'
+import { buildTileMeshOnWorld } from '../mesh/tileLayout'
 import { tileAt } from './tilePlan'
 import { BAKE_ENGINE_OVERRIDES } from '../surface/amplify'
 import type { PipelineOptions, WorkerLike } from '../surface/erosionEnginePool'
@@ -63,8 +65,9 @@ export interface TileBakeInputs {
   upstream: UpstreamTile[]
 }
 
-// An upstream tile as the bake reads it: its inside nodes in cells from
-// its corner and the outflow at each (world/meshTileArtifacts.ts).
+// An upstream tile as the bake reads it: its inside nodes — in cells from
+// its corner on the torus, world points on the sphere — and the outflow at
+// each (world/meshTileArtifacts.ts).
 export interface UpstreamTile {
   tile: TileId
   count: number
@@ -102,16 +105,13 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
   // The world the parent lies on, one macro cell per unit.
   const world = parent.mesh.domain
   options.onProgress?.('mesh', 0)
-  const tile = buildTileMesh(parent, id, { seed: inputs.detailSeed, width, height })
+  const tile = buildTileMeshOnWorld(parent, id, { seed: inputs.detailSeed, width, height })
   options.onProgress?.('mesh', 1)
   const { mesh } = tile
   const slots = mesh.vertexSlots
-  const xs = new Float64Array(slots)
-  const ys = new Float64Array(slots)
-  for (let v = 0; v < slots; v++) {
-    xs[v] = world.wrapX(tile.originX + mesh.vx[v])
-    ys[v] = world.wrapY(tile.originY + mesh.vy[v])
-  }
+  // Each node's world point, as the tile placed it.
+  const xs = tile.worldX
+  const ys = tile.worldY
   const areas = meshAreas(mesh)
   // The water at the tile's nodes: the climate's cells sampled there.
   let waterNodes: Float32Array | null = null
@@ -120,10 +120,13 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
     for (let v = 0; v < slots; v++) if (mesh.vAlive[v] && tile.z[v] > SEA_LEVEL) land[v] = 1
     waterNodes = climateAtPoints(climateCellsFromSaved(world, inputs.climate), { count: slots, x: xs, y: ys, height: tile.z, land, dry: null, alive: mesh.vAlive }).precipitation
   }
+  // Without a forcing field its grid is a placeholder: one cell on the
+  // torus, two on the sphere, whose grids need an even column count.
+  const none = world.kind === 'sphere' ? 2 : 1
   const coarse = {
     uplift: inputs.uplift, hardness: inputs.erodibility,
-    forcingResX: inputs.forcingResX || 1, forcingResY: inputs.forcingResY || 1,
-    water: null, waterResX: 1, waterResY: 1, waterNodes,
+    forcingResX: inputs.forcingResX || none, forcingResY: inputs.forcingResY || none,
+    water: null, waterResX: none, waterResY: none, waterNodes,
     lithoSeed: inputs.lithoSeed,
   }
   const { forcing, params } = assembleNodeForcing(coarse, xs, ys, mesh.vAlive, slots, tile.z, areas, world, inputs.controls, inputs.meanLandWater > 0 ? inputs.meanLandWater : undefined)
@@ -147,13 +150,17 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
   if (forcing.accumulationWeights && inputs.upstream.length > 0) {
     const weights = forcing.accumulationWeights
     const spec = tileSpec(id.level)
+    // On the sphere an upstream tile's nodes are its world points as
+    // float32 (meshTileArtifacts.ts); the shared edge node is the same
+    // world point in both tiles, so float32 names it in both.
+    const sphere = tile.site.kind === 'cube'
     const edgeAt = new Map<string, number>()
-    for (let v = 0; v < slots; v++) if (mesh.vAlive[v] && tile.role[v] === TILE_ROLE_EDGE) edgeAt.set(`${xs[v]},${ys[v]}`, v)
+    for (let v = 0; v < slots; v++) if (mesh.vAlive[v] && tile.role[v] === TILE_ROLE_EDGE) edgeAt.set(sphere ? `${Math.fround(xs[v])},${Math.fround(ys[v])}` : `${xs[v]},${ys[v]}`, v)
     for (const up of inputs.upstream) {
-      const corner = tileCorner(up.tile, spec)
+      const corner = sphere ? { x: 0, y: 0 } : tileCorner(up.tile, spec)
       for (let i = 0; i < up.count; i++) {
         if (!(up.outflow[i] > 0)) continue
-        const e = edgeAt.get(`${world.wrapX(corner.x + up.nodes[2 * i])},${world.wrapY(corner.y + up.nodes[2 * i + 1])}`)
+        const e = edgeAt.get(sphere ? `${up.nodes[2 * i]},${up.nodes[2 * i + 1]}` : `${world.wrapX(corner.x + up.nodes[2 * i])},${world.wrapY(corner.y + up.nodes[2 * i + 1])}`)
         if (e === undefined) continue
         const v = insideNodeNear(tile, e)
         if (v < 0 || areas[v] <= 0) continue
@@ -168,7 +175,7 @@ export async function bakeMeshTile(inputs: TileBakeInputs, id: TileId, options: 
   let inflowDischarge = 0
   if (inputs.parentGraph && forcing.accumulationWeights && inputs.meanLandWater > 0) {
     const weights = forcing.accumulationWeights
-    for (const crossing of inflowCrossings(inputs.parentGraph, tile, world)) {
+    for (const crossing of tile.site.kind === 'cube' ? cubeInflowCrossings(inputs.parentGraph, tile, world) : inflowCrossings(inputs.parentGraph, tile, world)) {
       const from = tileAt(id.level, crossing.fromX, crossing.fromY, world)
       if (upstreamKeys.has(`${from.x},${from.y}`)) continue
       const v = firstInsideNode(tile, crossing.x, crossing.y)
@@ -225,6 +232,36 @@ function inflowCrossings(graph: RiverGraph, tile: TileMesh, world: Domain): { x:
       }
       px = qx
       py = qy
+    }
+  }
+  return out
+}
+
+// The crossings of a sphere tile (inflowCrossings' rule): each river
+// cell carried into the tile's frame, the first one inside after one
+// outside it.
+function cubeInflowCrossings(graph: RiverGraph, tile: TileMesh, world: Domain): { x: number; y: number; fromX: number; fromY: number; discharge: number }[] {
+  const out: { x: number; y: number; fromX: number; fromY: number; discharge: number }[] = []
+  const geometry = cubeFrameOf(world, tile.tile, tile.halo)
+  const at = { x: 0, y: 0 }
+  const local = (x: number, y: number): { x: number; y: number; inside: boolean } => {
+    const on = cubeToFrame(world, geometry, x, y, at)
+    return { x: at.x, y: at.y, inside: on && tile.site.inside(at.x, at.y) }
+  }
+  for (const reach of graph.reaches) {
+    if (reach.kind !== 'river' || reach.cellCount < 2) continue
+    let p = local(graph.cellX[reach.cellStart], graph.cellY[reach.cellStart])
+    for (let i = 1; i < reach.cellCount; i++) {
+      const q = local(graph.cellX[reach.cellStart + i], graph.cellY[reach.cellStart + i])
+      if (!p.inside && q.inside) {
+        const t = i / (reach.cellCount - 1)
+        out.push({
+          x: q.x, y: q.y,
+          fromX: graph.cellX[reach.cellStart + i - 1], fromY: graph.cellY[reach.cellStart + i - 1],
+          discharge: reach.dischargeIn + (reach.dischargeOut - reach.dischargeIn) * t,
+        })
+      }
+      p = q
     }
   }
   return out

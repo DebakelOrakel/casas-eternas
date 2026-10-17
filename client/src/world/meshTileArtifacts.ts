@@ -1,5 +1,6 @@
 import { MESH_BAKE_CONSTANTS } from './meshArtifacts'
 import { tileConstants, tileSpec, TILE_ROLE_HALO, type TileId } from '../generator/mesh/meshTile'
+import { cubeConstants } from '../generator/mesh/meshTileCube'
 import { levelBudget } from '../generator/pipeline/meshBakeStage'
 import type { BakedTile } from '../generator/pipeline/meshTileBake'
 import type { ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
@@ -13,9 +14,12 @@ import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
 // mesh codec (meshSerial.ts): a tile is a square with a boundary, so the
 // triangles are stored as they are, three node indices each.
 //
-// Positions are in cells from the tile's own corner (0..cells), so
-// world x = tileCorner(tile).x + x. They are float32 and exact: the tile
-// put every node on its level's quantum (meshTile.ts).
+// Positions on the torus are in cells from the tile's own corner
+// (0..cells), so world x = tileCorner(tile).x + x. They are float32 and
+// exact: the tile put every node on its level's quantum (meshTile.ts). On
+// the sphere they are the nodes' world points as float32
+// (docs/decisions/sphere-tiles.md): a sphere tile's frame is its own plane,
+// and a node two tiles share is the same world point in both.
 //
 // The pipeline version carries what the mesh levels carry (the tile is
 // built on its parent and baked with the same rounds), the parent's
@@ -38,8 +42,14 @@ export function meshTilePipelineVersion(level: number, rounds: number = AMPLIFY_
   return derivePipelineVersion(tilePipelineConstants(level, rounds))
 }
 
+// One version a level for both shapes: the sphere's cube constants are in
+// it on the torus too (2026-10-17, docs/decisions/sphere-tiles.md). A
+// torus tile does not read them; the price is that changing one makes the
+// torus's tiles again, against a version per shape every reader of a
+// stage would have to ask the world's shape for.
 function tilePipelineConstants(level: number, rounds: number): Record<string, number> {
   return {
+    ...cubeConstants(level),
     ...MESH_BAKE_CONSTANTS,
     parentBudget: levelBudget(level - 1),
     ...tileConstants(tileSpec(level)),
@@ -54,7 +64,8 @@ function tilePipelineConstants(level: number, rounds: number): Record<string, nu
 export interface MeshTileArtifact {
   tile: TileId
   count: number
-  // x, y per node, cells from the tile's corner.
+  // x, y per node: cells from the tile's corner on the torus, world
+  // points on the sphere.
   nodes: Float32Array
   // Three node indices per triangle.
   triangles: Uint32Array
@@ -81,7 +92,8 @@ interface MeshTileMeta {
 // The inside of a baked tile: every node but the halo's, in the mesh's
 // (Hilbert) order, and every triangle with no corner in the halo.
 export function bakedTileToArtifact(baked: BakedTile): MeshTileArtifact {
-  const { mesh, role, halo } = baked.tile
+  const { mesh, role, halo, site, worldX, worldY } = baked.tile
+  const sphere = site.kind === 'cube'
   const index = new Int32Array(mesh.vertexSlots).fill(-1)
   let count = 0
   for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v] && role[v] !== TILE_ROLE_HALO) index[v] = count++
@@ -92,8 +104,8 @@ export function bakedTileToArtifact(baked: BakedTile): MeshTileArtifact {
   for (let v = 0; v < mesh.vertexSlots; v++) {
     const i = index[v]
     if (i < 0) continue
-    nodes[2 * i] = mesh.vx[v] - halo
-    nodes[2 * i + 1] = mesh.vy[v] - halo
+    nodes[2 * i] = sphere ? worldX[v] : mesh.vx[v] - halo
+    nodes[2 * i + 1] = sphere ? worldY[v] : mesh.vy[v] - halo
     z[i] = baked.z[v]
     roles[i] = role[v]
     outflow[i] = baked.outflow[v]

@@ -7,6 +7,7 @@ import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
 import { historyFromYaml, type WorldHistory } from './save/worldHistory'
 import { deriveWorldId } from './identity'
 import { worldKindOf, type WorldKind } from './worldRecord'
+import { recordedPipeline } from './worldPipeline'
 import { coastalWarpSeed } from '../generator/archean/archeanState'
 import { FINE_DETAIL_SEED_SALT } from '../generator/elevation/ridgedNoise'
 import { erosionLithoSeed } from '../generator/surface/erosionForcingFields'
@@ -90,6 +91,8 @@ export interface WorldRecipe {
   // How the world came about, run by run (save/worldHistory.ts) — what a
   // replay of level 1 makes it again from (world/replay.ts).
   history: WorldHistory
+  // The pipeline that made it (worldPipeline.ts); '' for none.
+  pipeline: string
 }
 
 export interface World {
@@ -207,6 +210,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     },
     worldUid: readRecipeValue(yamlText, 'metadata.uid') ?? '',
     history: historyFromYaml(yamlText),
+    pipeline: recordedPipeline(yamlText),
   }
   // The climate and the land fields on their meshes (DEC-0036 phase 7, the
   // hydrology's 7b); the former raster layers refuse the archive.

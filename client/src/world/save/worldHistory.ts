@@ -1,4 +1,4 @@
-import { readRecipeNumber, readRecipeValue } from './recipeYaml'
+import { readRecipeNumber } from './recipeYaml'
 import { WORLD_SPEC_FIELDS, valuesToYamlLines } from './worldSpec'
 import type { SpecField } from './worldSpec'
 
@@ -6,14 +6,14 @@ import type { SpecField } from './worldSpec'
 // not hold. `spec` is the sliders as they stand at the save; a world whose
 // sliders were moved between two runs was made by values the spec no
 // longer shows. This block keeps them: one entry per run of the Archean
-// and of the tectonics, with the values it ran on, how many epochs, and
-// which build ran it (a world continued on a newer build is two worlds'
-// worth of code, and this is what says where the seam is).
+// and of the tectonics, with the values it ran on and how many epochs.
+// Which pipeline made the world is the world's, not a run's
+// (`status.pipeline`, world/worldPipeline.ts).
 //
 // A run is cut where its values reach the worker — the start gesture; the
 // sliders do not reach a running simulation (tectonics reads them at
 // start, the Archean regenerates on a change), so the count per entry is
-// exact. Same values and build as the last entry → the run extends it
+// exact. Same values as the last entry → the run extends it
 // rather than opening a new one; the list says what changed, not how
 // often the button was pressed.
 //
@@ -21,8 +21,10 @@ import type { SpecField } from './worldSpec'
 // of level 1 is built on (docs/decisions/detail-ladder.md, fork 2). A
 // replay of it reproduces level 0 bit for bit (measured 2026-10-01); a
 // tectonics run on a loaded world is marked `restored`, the one place a
-// load shows in the bytes. The generator string is a build id, not an
-// algorithm version. The lists follow the
+// load shows in the bytes. Until 2026-10-17 each run also recorded the
+// build and a hash of the generator's files (`generator`, `code`); they
+// are read no more, but for the pipeline of a world from before
+// (worldPipeline.recordedPipeline). The lists follow the
 // world's own resets: a tectonics reset empties the tectonics list (the
 // hand-over is where it starts again), a fresh Archean empties both.
 //
@@ -31,12 +33,7 @@ import type { SpecField } from './worldSpec'
 // `history.tectonics.0.epochs`.
 export interface WorldRun {
   epochs: number
-  generator: string
   values: Record<string, number>
-  // The generator's code as a hash (app/generatorCode.ts), the key a replay
-  // compares; `generator` is provenance only. Empty in a save from before
-  // 2026-10-01.
-  code: string
   // The run continued a world loaded from a save (tectonics only). A
   // restored world starts its first epoch without the history's cached
   // weather and computes the climate anew, which shifts the climateEvery
@@ -65,8 +62,7 @@ export function runValues(fields: readonly SpecField[], values: Record<string, n
   return out
 }
 
-function sameRun(run: WorldRun, values: Record<string, number>, generator: string, code: string): boolean {
-  if (run.generator !== generator || run.code !== code) return false
+function sameRun(run: WorldRun, values: Record<string, number>): boolean {
   for (const key of Object.keys(values)) if (run.values[key] !== values[key]) return false
   return true
 }
@@ -74,17 +70,17 @@ function sameRun(run: WorldRun, values: Record<string, number>, generator: strin
 // A run begins: extends the last entry when nothing changed, opens one
 // otherwise. A run on a world just loaded always opens one, marked: the
 // load is a point in the history a replay has to find.
-export function openRun(runs: WorldRun[], values: Record<string, number>, generator: string, code = '', restored = false): void {
+export function openRun(runs: WorldRun[], values: Record<string, number>, restored = false): void {
   const last = runs[runs.length - 1]
-  if (!restored && last && sameRun(last, values, generator, code)) return
-  runs.push(restored ? { epochs: 0, generator, code, values: { ...values }, restored: true } : { epochs: 0, generator, code, values: { ...values } })
+  if (!restored && last && sameRun(last, values)) return
+  runs.push(restored ? { epochs: 0, values: { ...values }, restored: true } : { epochs: 0, values: { ...values } })
 }
 
 // Epochs ran: counted on the last entry. A list with no entry (a save from
 // before this block, continued) gets one with the values the run reads now.
-export function tallyRun(runs: WorldRun[], epochs: number, values: Record<string, number>, generator: string, code = ''): void {
+export function tallyRun(runs: WorldRun[], epochs: number, values: Record<string, number>): void {
   if (epochs <= 0) return
-  if (runs.length === 0) openRun(runs, values, generator, code)
+  if (runs.length === 0) openRun(runs, values)
   runs[runs.length - 1].epochs += epochs
 }
 
@@ -98,8 +94,6 @@ export function historyToYamlLines(history: WorldHistory): string[] {
     runs.forEach((run, index) => {
       lines.push(`    ${index}:`)
       lines.push(`      epochs: ${run.epochs}`)
-      lines.push(`      generator: ${run.generator}`)
-      if (run.code) lines.push(`      code: ${run.code}`)
       if (run.restored) lines.push('      restored: 1')
       lines.push('      values:')
       lines.push(...valuesToYamlLines(fields, run.values, 4))
@@ -122,7 +116,7 @@ export function historyFromYaml(yaml: string): WorldHistory {
       if (epochs === undefined) break
       const values: Record<string, number> = {}
       for (const field of fields) values[field.path] = readRecipeNumber(yaml, `${base}.values.${field.path}`) ?? field.input.default
-      const run: WorldRun = { epochs, generator: readRecipeValue(yaml, `${base}.generator`) ?? '', code: readRecipeValue(yaml, `${base}.code`) ?? '', values }
+      const run: WorldRun = { epochs, values }
       if (readRecipeNumber(yaml, `${base}.restored`) === 1) run.restored = true
       runs.push(run)
     }
