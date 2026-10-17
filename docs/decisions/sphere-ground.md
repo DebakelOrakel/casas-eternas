@@ -213,9 +213,8 @@ read through the source against the tile's own surface, 0.03 m (level
 median, p99 0.6 m, the normal p99 0.1°; level 1's rasters against the
 mesh 0.00 m median, p99 19 m, poles included.
 
-Found on the way, not fixed: 206 of Brannoch's 2359 level-2 tiles hold
-triangles that span the tile (1195 of them; level 3 none). They are the
-tile's periodic triangulation wrapping across its frame
-(`meshTileCube.cubeSite`), where the square around the quad holds no
-node. A raster of such a tile reads the wrong triangle in places (up to
-1.2 km off).
+Found on the way: 206 of Brannoch's 2359 level-2 tiles held triangles
+that span the tile (1195 of them; level 3 none). A raster of such a
+tile read the wrong triangle in places (up to 1.2 km off). They were
+bootstrap lattice nodes left in the tile's mesh; fixed in the tiles the
+same day (sphere-tiles.md, Status).

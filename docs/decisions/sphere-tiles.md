@@ -268,3 +268,20 @@ player made: the screen's finishing step stays locked for a sphere world
   both tiles bit for bit, and connected in both triangulations: 4330
   sides on level 2, 13 353 on level 3, across the faces of both cubes.
   No height and no node is NaN.
+
+2026-10-17: a fault in the tiles found and fixed. The triangulation
+starts from a bootstrap lattice and removes it after the points are in;
+a lattice node whose link is too long (no point near it) is refused. On
+the sphere the square frame around a tile's quad was empty outside the
+quad and its halo, and 206 of Brannoch's 2359 level-2 tiles kept lattice
+nodes there — with the role of a new node, a height of 0 and no world
+point (1195 triangles from them spanned the tile in the artifacts; level
+3 none). The torus kept some too, in a sparse sea, at the sea's level.
+Now the frame's empty part is filled with frozen nodes (`cubeSite.fill`,
+at level 1's height), and a lattice node that is still left is a node
+like any other: its world point from its local point, the parent
+surface's height, inside or halo (`buildTileMeshOn`). All 2359 level-2
+tiles of Brannoch built again: no lattice node left on the sphere, the
+longest edge 2.2 cells (the coarsest placement step). Both tile versions
+moved (`cubeFrameFill`, `tileLatticeNodes`): the levels 2 and 3 bake
+again, on the torus too.

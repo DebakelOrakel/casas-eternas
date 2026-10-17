@@ -154,6 +154,12 @@ export function tileConstants(spec: TileSpec): Record<string, number> {
     // The inflow at every edge node from upstream tiles (detail-ladder.md
     // step 5): 1. A change to how water crosses is a different tile.
     tileInflowModel: 1,
+    // A bootstrap lattice node left in the mesh is a node with its height,
+    // role and world point (buildTileMeshOn), since 2026-10-17.
+    tileLatticeNodes: 1,
+    // The patchwork's points rounded to float32 before they are inserted
+    // (tileParentFromTiles), since 2026-10-17.
+    tilePatchRounded: 1,
   }
 }
 
@@ -240,8 +246,13 @@ export function tileParentFromTiles(pieces: TilePiece[], width: number, height: 
   for (const piece of pieces) {
     const corner = tileCorner(piece.tile, tileSpec(piece.tile.level))
     for (let i = 0; i < piece.count; i++) {
-      const x = world.wrapX(corner.x + piece.nodes[2 * i])
-      const y = world.wrapY(corner.y + piece.nodes[2 * i + 1])
+      // Where the triangulation will store it (float32): a point is found
+      // where it is passed, and one passed a hair from a lattice node that
+      // rounds onto it became a second node at the same place, which no
+      // removal next to it survives (2026-10-17, a level-3 tile of a flat
+      // world: "the link polygon has no ear").
+      const x = Math.fround(world.wrapX(corner.x + piece.nodes[2 * i]))
+      const y = Math.fround(world.wrapY(corner.y + piece.nodes[2 * i + 1]))
       const key = `${x},${y}`
       if (seen.has(key)) continue
       seen.set(key, xs.length)
@@ -379,8 +390,13 @@ export interface TileSite {
   // A placement level's candidates in the frame (its grid of step `s`,
   // jittered), the clear strip left out: local point and world point.
   placement(level: number, s: number, emit: (x: number, y: number, wx: number, wy: number) => void): void
+  // Frozen nodes for the part of the frame the tile and its halo leave
+  // empty (local point and world point), or none: without them the
+  // bootstrap lattice cannot be removed there (buildTileMeshOn).
+  fill?(emit: (x: number, y: number, wx: number, wy: number) => void): void
   // A node's world point after the triangulation: from its local point as
-  // the mesh holds it, or the world point it was placed at.
+  // the mesh holds it, or the world point it was placed at (NaN for a
+  // node that was not placed: a lattice node left in the mesh).
   worldPoint(x: number, y: number, placedX: number, placedY: number, out: { x: number; y: number }): void
   // The origin of a torus tile's frame (NaN on the sphere).
   readonly originX: number
@@ -532,15 +548,20 @@ export function buildTileMeshOn(site: TileSite, parent: TileParent, options: Til
     for (let a = 0; a < accepted.length; a += 2) grid.add(accepted[a], accepted[a + 1])
   }
 
+  // The empty part of the frame, frozen at level 1's height.
+  site.fill?.((x, y, wx, wy) => add(x, y, parent.macro.heightAt(wx, wy), TILE_ROLE_HALO, wx, wy))
+
   // The triangulation, the points inserted in Hilbert order.
   const count = xs.length
   const domain = site.localDomain()
   const order = hilbertOrder(xs, ys, count, side, side)
   const ox = new Float64Array(count)
   const oy = new Float64Array(count)
+  // Where the triangulation will store them (float32), so a point that
+  // rounds onto a lattice node is found on it (tileParentFromTiles).
   for (let n = 0; n < count; n++) {
-    ox[n] = xs[order[n]]
-    oy[n] = ys[order[n]]
+    ox[n] = Math.fround(xs[order[n]])
+    oy[n] = Math.fround(ys[order[n]])
   }
   // Inserted into the bootstrap lattice, the lattice removed after — as
   // meshBuild.triangulatePoints does, but a point that lands exactly on a
@@ -556,11 +577,26 @@ export function buildTileMeshOn(site: TileSite, parent: TileParent, options: Til
     if (mapping[n] < latticeCount) again.push(n)
   }
   for (let v = 0; v < latticeCount; v++) if (built.vAlive[v]) built.remove(v)
+  // A lattice node the triangulation refuses to remove (its link too
+  // long: no point near it, in a sparse sea or, on the sphere before the
+  // frame was filled, in the frame's empty part) stays a node. Until
+  // 2026-10-17 it kept no height (0, the sea's level, in a deep sea), the
+  // role of a new node and on the sphere no world point; now it is one of
+  // the tile's nodes like any other: its world point from its local
+  // point, the parent surface's height there, inside or halo.
+  const survivors: number[] = []
+  for (let v = 0; v < latticeCount; v++) if (built.vAlive[v]) survivors.push(v)
   for (const n of again) mapping[n] = built.insert(ox[n], oy[n])
   const slotZ = new Float32Array(built.vertexSlots)
   const slotRole = new Float32Array(built.vertexSlots)
   const slotWX = new Float64Array(built.vertexSlots)
   const slotWY = new Float64Array(built.vertexSlots)
+  const slotLattice = new Float32Array(built.vertexSlots)
+  for (const v of survivors) {
+    slotLattice[v] = 1
+    slotWX[v] = Number.NaN
+    slotWY[v] = Number.NaN
+  }
   for (let n = 0; n < count; n++) {
     slotZ[mapping[n]] = zs[order[n]]
     slotRole[mapping[n]] = roles[order[n]]
@@ -572,6 +608,7 @@ export function buildTileMeshOn(site: TileSite, parent: TileParent, options: Til
   const role = Uint8Array.from(permute(slotRole, canonical))
   const placedX = permute64(slotWX, canonical)
   const placedY = permute64(slotWY, canonical)
+  const lattice = survivors.length > 0 ? permute(slotLattice, canonical) : null
   const worldX = new Float64Array(mesh.vertexSlots)
   const worldY = new Float64Array(mesh.vertexSlots)
   const at = { x: 0, y: 0 }
@@ -580,6 +617,10 @@ export function buildTileMeshOn(site: TileSite, parent: TileParent, options: Til
     site.worldPoint(mesh.vx[v], mesh.vy[v], placedX[v], placedY[v], at)
     worldX[v] = at.x
     worldY[v] = at.y
+    if (lattice && lattice[v]) {
+      z[v] = surface.synthesisedAt(at.x, at.y)
+      role[v] = site.inside(mesh.vx[v], mesh.vy[v]) ? TILE_ROLE_NEW : TILE_ROLE_HALO
+    }
   }
   return { tile, originX: site.originX, originY: site.originY, halo: site.halo, mesh, z, role, worldX, worldY, site }
 }

@@ -5,7 +5,7 @@ import { CubeAtlas, IDENTITY, project, rotationAbout, sideEnds, sidePoint, unpro
 import { hilbertOrder } from './hilbert'
 import { bootstrapLattice } from './lattice'
 import {
-  CLEAR_FRACTION, EDGE_JITTER, EDGE_SALT_ROW, hash01, JITTER, LEVEL_SALT, tileSpec,
+  CLEAR_FRACTION, EDGE_JITTER, EDGE_SALT_ROW, hash01, JITTER, LEVEL_SALT, stepOf, tileSpec,
   type TileId, type TileOptions, type TileParent, type TilePiece, type TileSite, type TileSpec,
 } from './meshTile'
 import type { DenseRegion } from './meshSampler'
@@ -52,7 +52,9 @@ export function cubeConstants(level: number): Record<string, number> {
   const r = LEVEL_ROTATIONS[level]
   // The synthesis on the globe (meshRefine.levelSynthesis): its model and
   // its ridge mean's correction.
-  return { cubeAxisX: r.axis[0], cubeAxisY: r.axis[1], cubeAxisZ: r.axis[2], cubeAngle: r.angle, cubeFaceSalt: FACE_SALT, cubeEdgeModel: 1, cubeGlobeSynthesis: 1, cubeRidgeGlobeOffset: RIDGE_GLOBE_OFFSET }
+  // cubeFrameFill: the frame's empty part filled (cubeSite.fill), since
+  // 2026-10-17.
+  return { cubeAxisX: r.axis[0], cubeAxisY: r.axis[1], cubeAxisZ: r.axis[2], cubeAngle: r.angle, cubeFaceSalt: FACE_SALT, cubeEdgeModel: 1, cubeGlobeSynthesis: 1, cubeRidgeGlobeOffset: RIDGE_GLOBE_OFFSET, cubeFrameFill: 1 }
 }
 
 function levelRotation(level: number): Mat3 {
@@ -286,7 +288,24 @@ export function cubeSite(parent: TileParent, tile: TileId, options: TileOptions)
         }
       }
     },
-    worldPoint(_x, _y, placedX, placedY, out) {
+    // The frame's square outside the quad grown by the halo, on a grid of
+    // the coarsest placement step, half a step in.
+    fill(emit) {
+      const s = stepOf(spec.placementLevels[0], spec)
+      const point = { x: 0, y: 0 }
+      for (let y = s / 2; y < side; y += s) {
+        for (let x = s / 2; x < side; x += s) {
+          if (nearTile(x, y)) continue
+          worldPointOf(world, unproject(frame, x - half, y - half), point)
+          emit(x, y, point.x, point.y)
+        }
+      }
+    },
+    worldPoint(x, y, placedX, placedY, out) {
+      if (Number.isNaN(placedX)) {
+        worldPointOf(world, unproject(frame, x - half, y - half), out)
+        return
+      }
       out.x = placedX
       out.y = placedY
     },
