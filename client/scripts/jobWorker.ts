@@ -26,7 +26,7 @@
 import { readFile, mkdir, writeFile, rename, readdir, rm, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
-import { Worker as NodeWorker, isMainThread } from 'node:worker_threads'
+import { Worker as NodeWorker, isMainThread, parentPort, workerData } from 'node:worker_threads'
 import { availableParallelism, hostname } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import { BAKE_PIPELINE_DEPTH, EngineStalledError, reusableWorkers, type PipelineOptions, type ReusableWorkers, type WorkerLike } from '../src/generator/surface/erosionEnginePool'
@@ -298,7 +298,7 @@ function artifactStoreFor(job: Job, world: string): ArtifactStore | null {
 // stopped the asking for good. Answers the stop.
 type Relay = Awaited<ReturnType<typeof connect>>
 const TOKEN_RETRY_MS = 60_000
-async function keepJobToken(nc: Relay, job: Job, taskId: string): Promise<() => void> {
+async function keepJobToken(nc: Relay, job: Job, taskId: string, onFresh?: (token: string) => void): Promise<() => void> {
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
   const again = (ms: number): void => {
@@ -310,6 +310,7 @@ async function keepJobToken(nc: Relay, job: Job, taskId: string): Promise<() => 
       const answer = JSON.parse(reply.string()) as { token?: string; expiresAt?: string; error?: string }
       if (answer.token) {
         job.authToken = answer.token
+        onFresh?.(answer.token)
         again(Math.max(TOKEN_RETRY_MS, (Date.parse(answer.expiresAt ?? '') - Date.now()) / 2))
         return
       }
@@ -421,7 +422,7 @@ async function main(): Promise<void> {
   }
 
   try {
-    const outcome = await runJob(job, stderrProgress())
+    const outcome = await computeThread().run(job, stderrProgress(), false)
     process.stdout.write(`${JSON.stringify(outcome.result)}\n`)
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error))
@@ -938,6 +939,101 @@ async function accountName(): Promise<string> {
   return credential.slice(0, Math.max(0, credential.indexOf(':')))
 }
 
+// THE COMPUTE THREAD: runJob runs in a worker thread of its own, and the
+// main thread keeps only the bus — the task's heartbeat, the presence, the
+// progress, the tokens. A computation holds its thread for long stretches
+// without a pause: measured 2026-10-18 on a 23 MB world, 31.5 s at the start
+// of a level-1 replay (the Archean and the level's terrain) and 9–20 s in
+// each epoch, more on a slower core. On the main thread that silenced the
+// presence (gone after 45 s), the pongs (the relay closes a connection after
+// two pings of 30 s) and the heartbeat (after 5 min the relay gives the task
+// to a second worker). The thread changes where the computation runs, not
+// what it computes: the same runJob, the same engine pool, started from the
+// thread. One thread for the process; it keeps the cache between tasks.
+const COMPUTE_THREAD = 'casas-compute'
+
+type ComputeRequest = { type: 'job'; job: Job; cached: boolean } | { type: 'token'; token: string }
+type ComputeReply =
+  | { type: 'progress'; phase: string; fraction: number }
+  | { type: 'done'; outcome: JobOutcome }
+  | { type: 'failed'; kind: ComputeFailure['kind']; message: string }
+
+// A task's failure as the serve loop decides on it: `stalled`, a dead
+// engine thread (the worker ends); `unavailable`, a store or world server
+// that did not answer (the task goes back); `final`, the task's answer.
+class ComputeFailure extends Error {
+  readonly kind: 'stalled' | 'unavailable' | 'final'
+  constructor(kind: ComputeFailure['kind'], message: string) {
+    super(message)
+    this.name = 'ComputeFailure'
+    this.kind = kind
+  }
+}
+
+function failureKind(error: unknown): ComputeFailure['kind'] {
+  if (error instanceof EngineStalledError) return 'stalled'
+  if (error instanceof ArtifactStoreUnavailableError || error instanceof WorldUnavailableError) return 'unavailable'
+  return 'final'
+}
+
+// The compute thread's side: one task at a time, as the main thread sends
+// them.
+function serveComputation(): void {
+  const port = parentPort!
+  const cache: JobCache = { worlds: new Map(), levels: new Map(), tiles: new Map() }
+  let job: Job | null = null
+  port.on('message', (request: ComputeRequest) => {
+    if (request.type === 'token') {
+      if (job) job.authToken = request.token
+      return
+    }
+    const current = request.job
+    job = current
+    const reply = (message: ComputeReply): void => port.postMessage(message)
+    runJob(current, (phase, fraction) => reply({ type: 'progress', phase, fraction }), request.cached ? cache : undefined)
+      .then((outcome) => reply({ type: 'done', outcome }))
+      .catch((error: unknown) => reply({ type: 'failed', kind: failureKind(error), message: error instanceof Error ? error.message : String(error) }))
+      .finally(() => {
+        if (job === current) job = null
+      })
+  })
+}
+
+// The main thread's side. A thread that dies ends the worker, as a dead
+// engine thread does: the pool or the Deployment starts a fresh one, and the
+// relay hands the task on once its heartbeat stops. Unreferenced while idle,
+// so that it keeps no one-shot run alive.
+let computeWorker: { run: (job: Job, onProgress: (phase: string, fraction: number) => void, cached: boolean) => Promise<JobOutcome>; token: (token: string) => void } | null = null
+function computeThread(): NonNullable<typeof computeWorker> {
+  if (computeWorker) return computeWorker
+  const thread = new NodeWorker(new URL(import.meta.url), { workerData: COMPUTE_THREAD })
+  thread.unref()
+  thread.on('error', (error) => fail(`the compute thread failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`))
+  thread.on('exit', (code) => fail(`the compute thread ended (${code})`))
+  let pending: { resolve: (outcome: JobOutcome) => void; reject: (error: Error) => void; onProgress: (phase: string, fraction: number) => void } | null = null
+  thread.on('message', (reply: ComputeReply) => {
+    if (!pending) return
+    if (reply.type === 'progress') {
+      pending.onProgress(reply.phase, reply.fraction)
+      return
+    }
+    const { resolve, reject } = pending
+    pending = null
+    thread.unref()
+    if (reply.type === 'done') resolve(reply.outcome)
+    else reject(new ComputeFailure(reply.kind, reply.message))
+  })
+  computeWorker = {
+    run: (job, onProgress, cached) => new Promise<JobOutcome>((resolve, reject) => {
+      pending = { resolve, reject, onProgress }
+      thread.ref()
+      thread.postMessage({ type: 'job', job, cached } satisfies ComputeRequest)
+    }),
+    token: (token) => thread.postMessage({ type: 'token', token } satisfies ComputeRequest),
+  }
+  return computeWorker
+}
+
 async function serve(config: ServeConfig): Promise<void> {
   const token = await busToken(config)
   // Over a WebSocket where the relay is named by one (a worker outside the
@@ -960,7 +1056,6 @@ async function serve(config: ServeConfig): Promise<void> {
   }
   const js = jetstream(nc)
   const consumer = await js.consumers.get(TASK_STREAM, TASK_CONSUMER)
-  const cache: JobCache = { worlds: new Map(), levels: new Map(), tiles: new Map() }
   let current: { msg: JsMsg; jobId: string } | null = null
 
   // PRESENCE: that this worker is there, and the task in hand.
@@ -1015,7 +1110,8 @@ async function serve(config: ServeConfig): Promise<void> {
     announce()
     const heartbeat = setInterval(() => msg.working(), TASK_HEARTBEAT_MS)
     // A task that reaches its stores over HTTP carries a token; keep it fresh.
-    const stopToken = job.authToken && taskId ? await keepJobToken(nc, job, taskId) : null
+    const compute = computeThread()
+    const stopToken = job.authToken && taskId ? await keepJobToken(nc, job, taskId, compute.token) : null
     let last = ''
     const onProgress = (phase: string, fraction: number): void => {
       const percent = Math.floor(fraction * 100)
@@ -1025,7 +1121,7 @@ async function serve(config: ServeConfig): Promise<void> {
       nc.publish(`jobs.event.${job.jobId}`, JSON.stringify({ taskId, phase, percent }))
     }
     try {
-      const outcome = await runJob(job, onProgress, cache)
+      const outcome = await compute.run(job, onProgress, true)
       await js.publish(`jobs.done.${taskId}`, JSON.stringify({ taskId, ok: true, result: outcome.result, tasks: outcome.tasks, tileVersions: outcome.tileVersions }))
       msg.ack()
     } catch (error) {
@@ -1033,7 +1129,7 @@ async function serve(config: ServeConfig): Promise<void> {
       // A dead engine thread is this worker's fault, not the task's: the
       // worker ends without an answer, the pool starts a fresh one and the
       // relay hands the task on once its heartbeat stops.
-      if (error instanceof EngineStalledError) {
+      if (error instanceof ComputeFailure && error.kind === 'stalled') {
         process.stderr.write(`task ${taskId}: ${message}; ending the worker\n`)
         process.exit(1)
       }
@@ -1044,7 +1140,7 @@ async function serve(config: ServeConfig): Promise<void> {
       // to this worker or another — after a pause. Its last delivery
       // reports the failure, so that a store that stays away fails the job
       // instead of leaving it waiting.
-      if ((error instanceof ArtifactStoreUnavailableError || error instanceof WorldUnavailableError) && msg.info.deliveryCount < TASK_MAX_DELIVER) {
+      if (error instanceof ComputeFailure && error.kind === 'unavailable' && msg.info.deliveryCount < TASK_MAX_DELIVER) {
         process.stderr.write(`task ${taskId}: ${message}; giving it back (delivery ${msg.info.deliveryCount} of ${TASK_MAX_DELIVER})\n`)
         msg.nak(TASK_RETRY_DELAY_MS)
         continue
@@ -1067,12 +1163,15 @@ async function serve(config: ServeConfig): Promise<void> {
   }
 }
 
-// A worker thread loading this bundle is an ENGINE WORKER, not a baker:
+// A worker thread loading this bundle is the COMPUTE THREAD when started
+// with COMPUTE_THREAD as its data (computeThread), else an ENGINE WORKER:
 // importing the worker module registers its parentPort handshake and the
-// pool drives it over SharedArrayBuffers from there. The main thread runs
-// the bake.
+// pool drives it over SharedArrayBuffers from there. The main thread keeps
+// the bus.
 if (isMainThread) {
   void main().catch((error: unknown) => fail(String(error)))
+} else if (workerData === COMPUTE_THREAD) {
+  serveComputation()
 } else {
   void import('../src/generator/surface/erosionEngineWorker')
 }

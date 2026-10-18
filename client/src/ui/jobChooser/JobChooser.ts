@@ -2,7 +2,6 @@ import { t, type TKey } from '../../i18n/i18n'
 import { JOB_PHASE_KEYS } from './jobPhases'
 import { formatClock, formatDuration, formatWhen } from '../../ui/format'
 import { bakeFraction, cancelBake, jobStageName, listBakes, watchJobs, workerCount, type BakeJob, type JobLevel } from '../../world/jobClient'
-import { getServerStatus } from '../../server/serverStatus'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { icon } from '../../ui/chooserIcons'
@@ -123,6 +122,9 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
 
   let jobs: BakeJob[] | null = []
   let worldNames = new Map<string, string>()
+  // The workers connected now (the server's presence list), asked again
+  // at every repaint: a worker that joins or leaves shows without a reload.
+  // Until 2026-10-18 the configured count (jobWorkers), read once on open.
   let workers = 0
   // Workers the server wants but not yet connected — a cluster scaling up;
   // null when every wanted worker is there, or the server cannot say.
@@ -135,9 +137,8 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
   const armed = new Map<string, ReturnType<typeof setTimeout>>()
 
   async function loadNames(): Promise<void> {
-    const [browserWorlds, serverWorlds, status] = await Promise.all([listBrowserWorlds(), listWorlds(), getServerStatus()])
+    const [browserWorlds, serverWorlds] = await Promise.all([listBrowserWorlds(), listWorlds()])
     worldNames = new Map([...browserWorlds.map((w) => [w.uid, w.name] as const), ...(serverWorlds ?? []).map((w) => [w.uid, w.name] as const)])
-    workers = status.jobWorkers
   }
 
   // Each reload is numbered; an answer lands only if no later reload was
@@ -157,6 +158,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
   // job says until a worker takes a task.
   async function refreshWorkers(): Promise<void> {
     const count = await workerCount()
+    workers = count?.connected ?? 0
     starting = count && count.wanted !== undefined && count.connected < count.wanted ? { connected: count.connected, wanted: count.wanted } : null
   }
 

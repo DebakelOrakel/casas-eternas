@@ -169,10 +169,12 @@ workers:
   # The Node heap ceiling, MB. Keep it equal to the jobs module's
   # nodeHeapMB (internal/modules/jobs/jobs.go; a test compares them).
   heapMB: 6144
-  # A level-1 replay held 6.2 GB on one worker (detail-ladder.md).
+  # A level-1 replay held 6.2 GB on one worker (detail-ladder.md). No CPU
+  # limit, on purpose: a limit throttles a worker on an idle node, and the
+  # request alone shares the CPU fairly where the node is busy.
   resources:
     requests: { cpu: "1", memory: 6Gi }
-    limits: { cpu: "6", memory: 10Gi }
+    limits: { memory: 10Gi }
   # One worker per node where the nodes allow it (soft).
   topologySpread: true
   # The same hooks as a component.
