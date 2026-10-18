@@ -738,8 +738,17 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       if (frame.kind === 'torus') return null
       if (Math.hypot(focusX, focusZ) > REANCHOR_M * UNITS_PER_METER) {
         const moved = reanchor(world, frame, focusX, focusZ)
+        // The old plane in the new: about the sphere's centre, the turn
+        // that takes the focus to the top, then the turn about the
+        // vertical by which the plane's axes differ there (x toward z by
+        // α). The rings stay drawn by it until they are built again.
+        const radius = frame.radius
+        const d = Math.hypot(focusX, focusZ)
+        const toTop = new Matrix()
+        Quaternion.RotationAxis(new Vector3(-focusZ / d, 0, focusX / d), d / radius).toRotationMatrix(toTop)
+        const carried = Matrix.Translation(0, radius, 0).multiply(toTop).multiply(Matrix.RotationY(-moved.alpha)).multiply(Matrix.Translation(0, -radius, 0))
         frame = sphereFrame(world, moved.anchorX, moved.anchorY)
-        rings.reset()
+        rings.carry(carried)
         followX = 0
         followZ = 0
         groundNode.position.setAll(0)

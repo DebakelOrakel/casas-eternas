@@ -96,6 +96,10 @@ type SaveInfo struct {
 	// predate them.
 	Seed      string
 	Generator string
+	// The pipeline that made the world (status.pipeline, the client's
+	// world/worldPipeline.ts): display data like the rest. Empty for a save
+	// that predates it or whose runs no single pipeline made.
+	Pipeline string
 	// The world's shape (the top-level `kind`: FlatWorld or SphereWorld) and
 	// the last step its user accepted (status.progress, a step id). Both are
 	// display data, as above: the server does not check them. Empty for saves
@@ -154,6 +158,7 @@ func inspectSave(data []byte) (SaveInfo, error) {
 	}
 	info.Seed, _ = readYAMLValue(yamlText, "spec.seed")
 	info.Generator, _ = readYAMLValue(yamlText, "status.generator")
+	info.Pipeline, _ = readYAMLValue(yamlText, "status.pipeline")
 	info.Kind, _ = readYAMLValue(yamlText, "kind")
 	info.Progress, _ = readYAMLValue(yamlText, "status.progress")
 	return info, nil

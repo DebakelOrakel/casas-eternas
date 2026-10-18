@@ -94,6 +94,11 @@ type Meta struct {
 	Seed        string `json:"seed"`
 	Generator   string `json:"generator"`
 	ContentHash string `json:"contentHash"`
+	// The pipeline that made the save (status.pipeline), mirrored the same
+	// way (2026-10-18, for the world list): what tells whether a world's
+	// artifacts can be baked again by this server. Empty until a world is
+	// uploaded again.
+	Pipeline string `json:"pipeline"`
 	// The save's shape and its accepted progress, mirrored the same way
 	// (2026-10-11, for the world list): `kind` and `status.progress` of
 	// world.yaml. Empty until a world is uploaded again.
@@ -199,6 +204,9 @@ type worldEntry struct {
 	// grantsErr: grants.json exists but does not parse — corrupt is NOT
 	// absent (readGrants).
 	grantsErr error
+	// noPipeline: meta.json was written before it mirrored the pipeline
+	// (2026-10-18); mirrorPipelines reads it from the save once.
+	noPipeline bool
 }
 
 // documentLimit bounds the bytes read of one meta.json or grants.json: they
@@ -235,7 +243,61 @@ func NewStore(ctx context.Context, bucket blob.Bucket, keepRevisions int) (*Stor
 	if err := s.load(ctx); err != nil {
 		return nil, fmt.Errorf("indexing the world store: %w", err)
 	}
+	s.mirrorPipelines(ctx)
 	return s, nil
+}
+
+// mirrorPipelines fills the pipeline into each meta.json written before it
+// was mirrored: read from the current revision's world.yaml and written
+// back, so each world costs one read of its save, once. Unlike the other
+// display fields (empty until a world is uploaded again) the pipeline is
+// what the world list compares, and every save since the field exists
+// carries it. A world that fails is left as it is and said; the start goes
+// on.
+func (s *Store) mirrorPipelines(ctx context.Context) {
+	var uids []string
+	s.mu.Lock()
+	for uid, e := range s.worlds {
+		if e.noPipeline && e.metaErr == nil {
+			uids = append(uids, uid)
+		}
+	}
+	s.mu.Unlock()
+	filled := 0
+	for _, uid := range uids {
+		if err := s.mirrorPipeline(ctx, uid); err != nil {
+			slog.Warn("world pipeline not mirrored", "uid", uid, "err", err)
+			continue
+		}
+		filled++
+	}
+	if len(uids) > 0 {
+		slog.Info("world pipelines mirrored", "worlds", filled, "of", len(uids))
+	}
+}
+
+func (s *Store) mirrorPipeline(ctx context.Context, uid string) error {
+	ctx, cancel := detach(ctx)
+	defer cancel()
+	defer s.lock(uid)()
+	meta, err := s.readMeta(uid)
+	if err != nil {
+		return err
+	}
+	raw, err := s.read(ctx, revKey(uid, meta.Revision, zipName), 0)
+	if err != nil {
+		return err
+	}
+	info, err := inspectSave(raw)
+	if err != nil {
+		return err
+	}
+	meta.Pipeline = info.Pipeline
+	if err := s.writeMeta(ctx, uid, meta, false); err != nil {
+		return err
+	}
+	s.update(uid, func(e *worldEntry) { e.noPipeline = false })
+	return nil
 }
 
 // load builds the index from one List and a read of each world's documents.
@@ -327,6 +389,11 @@ func (s *Store) readEntry(ctx context.Context, uid string, hasGrants bool) world
 			// missing one; saying so is what keeps a bug from looking like an
 			// empty store.
 			e.metaErr = fmt.Errorf("world %s has unreadable metadata: %w", uid, err)
+		} else {
+			var mirrored struct {
+				Pipeline *string `json:"pipeline"`
+			}
+			e.noPipeline = json.Unmarshal(raw, &mirrored) == nil && mirrored.Pipeline == nil
 		}
 	}
 	if !hasGrants {
@@ -916,6 +983,7 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 		Seed:        info.Seed,
 		Generator:   info.Generator,
 		ContentHash: contentHash,
+		Pipeline:    info.Pipeline,
 		Kind:        info.Kind,
 		Progress:    info.Progress,
 		Template:    template,

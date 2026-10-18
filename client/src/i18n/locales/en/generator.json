@@ -30,7 +30,7 @@
   "generator.load.progress.done": "Finished",
   "generator.load.progress.none": "No step accepted yet",
   "generator.load.detail.savedAt": "Last saved",
-  "generator.load.detail.build": "Build",
+  "generator.load.detail.pipeline": "Pipeline",
   "generator.load.detail.size": "Size",
   "generator.load.detail.progress": "Progress",
   "generator.load.copies": "Copies",

@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-18
+- **changed** Save/Load: a world's panel shows the pipeline that made each copy instead of the build. `generator.load.detail.pipeline`
+
 ## 2026-10-17
 - **fixed** Save/Load: a world's progress counts the five steps after the world's setup, as the step bar does. `generator.load.progress`
 - **changed** Save/Load: a world's panel compares its browser and server copies in one table, loads the copy you choose, and downloads the world as a .zip. `generator.load`

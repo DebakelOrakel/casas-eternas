@@ -3,7 +3,9 @@ package world
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -123,7 +125,7 @@ func storedUnder(t *testing.T, s *Store, prefix string) int {
 // DEFLATE-compressed, so its payload does not appear literally in the file.
 func putSave(t *testing.T, s *Store, uid string, body string, expected int) (Meta, []byte, error) {
 	t.Helper()
-	yaml := "kind: SphereWorld\nmetadata:\n  name: alpha\n  uid: " + uid + "\nspec:\n  seed: alpha-seed\nstatus:\n  erosionRun: 2\n  revision: 1\n  generator: test-build\n  progress: climate\n"
+	yaml := "kind: SphereWorld\nmetadata:\n  name: alpha\n  uid: " + uid + "\nspec:\n  seed: alpha-seed\nstatus:\n  erosionRun: 2\n  revision: 1\n  generator: test-build\n  pipeline: v11-test\n  progress: climate\n"
 	data := buildSave(t, yaml, []byte("PNG-"+body), map[string][]byte{"payload": []byte(body)})
 	info, err := inspectSave(data)
 	if err != nil {
@@ -147,8 +149,8 @@ func TestPutThenReadRoundTrips(t *testing.T) {
 	}
 	// The listing's display data, read out of the yaml and mirrored into the
 	// world meta so the load/save panels need no unzip.
-	if meta.Seed != "alpha-seed" || meta.Generator != "test-build" || len(meta.ContentHash) != 64 {
-		t.Errorf("display meta = seed %q, generator %q, hash %q", meta.Seed, meta.Generator, meta.ContentHash)
+	if meta.Seed != "alpha-seed" || meta.Generator != "test-build" || meta.Pipeline != "v11-test" || len(meta.ContentHash) != 64 {
+		t.Errorf("display meta = seed %q, generator %q, pipeline %q, hash %q", meta.Seed, meta.Generator, meta.Pipeline, meta.ContentHash)
 	}
 	// The shape and the progress, mirrored the same way (2026-10-11), and
 	// kept in meta.json: the listing reads them back from disk.
@@ -178,6 +180,37 @@ func TestPutThenReadRoundTrips(t *testing.T) {
 
 // The optimistic lock, which is the whole reason a world is not just a file:
 // last-writer-wins would silently destroy the other machine's save.
+// A meta.json from before the pipeline was mirrored takes it from the
+// save at the next start, and keeps it.
+func TestStartMirrorsAMissingPipeline(t *testing.T) {
+	s := newTestStore(t)
+	if _, _, err := putSave(t, s, sampleUID, "first", 0); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	raw, _, err := s.bucket.Get(context.Background(), metaKey(sampleUID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old map[string]any
+	body, _ := io.ReadAll(raw)
+	_ = raw.Close()
+	if err := json.Unmarshal(body, &old); err != nil {
+		t.Fatal(err)
+	}
+	delete(old, "pipeline")
+	before, _ := json.Marshal(old)
+	writeObject(t, s, metaKey(sampleUID), before)
+	again := newTestStoreOn(t, s.bucket, 0)
+	meta, err := again.Get(context.Background(), sampleUID)
+	if err != nil || meta.Pipeline != "v11-test" {
+		t.Fatalf("pipeline after start = %q, err %v", meta.Pipeline, err)
+	}
+	third := newTestStoreOn(t, s.bucket, 0)
+	if e, _ := third.entry(sampleUID); e.noPipeline || e.meta.Pipeline != "v11-test" {
+		t.Errorf("pipeline not written back: %+v", e.meta)
+	}
+}
+
 func TestPutEnforcesTheExpectedRevision(t *testing.T) {
 	s := newTestStore(t)
 	if _, _, err := putSave(t, s, sampleUID, "v1", 0); err != nil {

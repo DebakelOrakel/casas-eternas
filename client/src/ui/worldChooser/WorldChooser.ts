@@ -118,7 +118,7 @@ function browserCopy(world: BrowserWorld): WorldCopy {
   return {
     where: 'browser', uid: world.uid, name: world.name, seed: world.seed,
     kind: world.kind ?? null, progress: world.progress ?? null,
-    bytes: world.bytes, savedAt: world.savedAt, generator: world.generator, contentHash: world.contentHash ?? '',
+    bytes: world.bytes, savedAt: world.savedAt, pipeline: world.pipeline ?? '', contentHash: world.contentHash ?? '',
     template: false, actions: [], visibility: '',
   }
 }
@@ -128,7 +128,7 @@ function serverCopy(world: WorldSummary): WorldCopy {
     where: 'server', uid: world.uid, name: world.name, seed: world.seed ?? '',
     kind: world.kind === 'FlatWorld' || world.kind === 'SphereWorld' ? world.kind : null,
     progress: progressStepOf(world.progress),
-    bytes: world.size, savedAt: world.updatedAt, generator: world.generator ?? '', contentHash: world.contentHash ?? '',
+    bytes: world.size, savedAt: world.updatedAt, pipeline: world.pipeline ?? '', contentHash: world.contentHash ?? '',
     template: world.template ?? false, actions: world.actions ?? [], visibility: world.visibility ?? '',
   }
 }
@@ -971,7 +971,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     const rows: [TKey, (copy: WorldCopy) => string][] = [
       ['generator.load.detail.progress', (copy) => progressText(copy.progress)],
       ['generator.load.detail.savedAt', (copy) => formatWhen(copy.savedAt)],
-      ['generator.load.detail.build', (copy) => copy.generator],
+      ['generator.load.detail.pipeline', (copy) => copy.pipeline],
       ['generator.load.detail.size', (copy) => formatBytes(copy.bytes)],
     ]
     const body = el('tbody', '')

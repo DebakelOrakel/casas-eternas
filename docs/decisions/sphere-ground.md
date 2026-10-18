@@ -244,7 +244,17 @@ things the forks did not say:
 
 The anchor moves at 1 500 km (fork 3 said about 500): with the ground
 turned, only the plane's scale across the bearing is left, 0.97 there,
-and every move builds every ring again.
+and every move builds every ring again. Until a ring's new build
+arrives it stays drawn where it stood, CARRIED into the new plane
+(`groundRings` `carry`): the turn about the sphere's centre that takes
+the focus to the top, then the turn about the vertical by the angle
+between the two planes' axes there. At the farthest zoom a pan crosses
+1 500 km many times a second; when each move dropped the rings, the
+ground was blank in 212 of 301 frames of a 4 s pan (2026-10-18). Carried,
+in none; an old point lands on the new cap within 1e-5 cells. A ring
+and the ring outside it from different planes are not drawn together
+(the outer one has no hole for the inner one): the older plane gives
+way.
 
 Checked on Brannoch: the cap's turn takes the normal at the focus to the
 scene's up, and a point near the focus lands where the plane puts it,

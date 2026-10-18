@@ -31,6 +31,10 @@ export interface WorldSummary {
   seed: string
   generator: string
   contentHash: string
+  // The pipeline that made the save (`status.pipeline`), mirrored the same
+  // way since 2026-10-18: empty for worlds not re-uploaded since, absent
+  // from a server older than that.
+  pipeline?: string
   // The save's kind (`FlatWorld`/`SphereWorld`) and its accepted progress
   // (a step id), mirrored the same way since 2026-10-11 — empty for worlds
   // not re-uploaded since, and absent from a server older than that. Kept

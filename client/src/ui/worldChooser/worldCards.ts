@@ -22,7 +22,8 @@ export interface WorldCopy {
   bytes: number
   // ISO 8601.
   savedAt: string
-  generator: string
+  // The pipeline that made it (`status.pipeline`); empty when not known.
+  pipeline: string
   // SHA-256 of the archive bytes, lowercase hex; empty when not known.
   contentHash: string
   // Whether the copy is a template (docs/decisions/template-worlds.md):

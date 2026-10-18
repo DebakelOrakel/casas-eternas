@@ -1,4 +1,4 @@
-import { Color3, Mesh, RawTexture, StandardMaterial, Texture, VertexData, type BaseTexture, type Matrix, type Scene, type TransformNode } from '@babylonjs/core'
+import { Color3, Matrix, Mesh, Quaternion, RawTexture, StandardMaterial, Texture, Vector3, VertexData, type BaseTexture, type Scene, type TransformNode } from '@babylonjs/core'
 import { GroundNormalPlugin } from './groundNormalPlugin'
 
 // THE GROUND AS RINGS, at every zoom (docs/decisions/near-ground-clipmap.md,
@@ -111,6 +111,12 @@ export interface GroundRings {
   // Every ring forgotten, its builds in flight dropped: the plane moved
   // under them (the sphere's anchor).
   reset(): void
+  // The plane moved under the rings by a known transform (the sphere's
+  // anchor: a turn about the sphere's centre): each ring is built again,
+  // and until its build arrives it stays drawn where it stood, carried by
+  // the transform (scene units, Babylon's row-vector order), so the ground
+  // does not go blank.
+  carry(transform: Matrix): void
   // Build ring k again where it stands: the ground it read changed.
   rebuild(k: number): void
   setEnabled(enabled: boolean): void
@@ -154,6 +160,11 @@ interface Ring {
   wanted: Place | null
   // Whether the ring is wanted again where it stands (rebuild).
   stale: boolean
+  // The epoch its build was asked in: from an earlier one, the ring is
+  // CARRIED (its place and heights are of the plane before), drawn by
+  // `carried` until its new build arrives.
+  epoch: number
+  carried: Matrix
   // Where the inner ring stood when this ring's hole was last cut; NaN
   // for no hole.
   holeX: number
@@ -178,6 +189,8 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
   let shape: GroundShape | null = null
   // Builds asked for before the last reset are dropped when they arrive.
   let epoch = 0
+  // The turn of the node the rings hang from (setTurn).
+  const nodeTurn = Matrix.Identity()
 
   // The ladder: rings until one spans the world.
   let count = 1
@@ -239,7 +252,7 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     normalPlugin.setTexture(normalMap)
     normalPlugin.setMaterials(materialMap)
     mesh.material = material
-    rings.push({ k, spacing, half: (quads / 2) * spacing, texels, mesh, material, albedo, normals: normalMap, materials: materialMap, normalPlugin, previewed: false, built: null, heights: null, pending: null, wanted: null, stale: false, holeX: NaN, holeZ: NaN })
+    rings.push({ k, spacing, half: (quads / 2) * spacing, texels, mesh, material, albedo, normals: normalMap, materials: materialMap, normalPlugin, previewed: false, built: null, heights: null, pending: null, wanted: null, stale: false, epoch: 0, carried: Matrix.Identity(), holeX: NaN, holeZ: NaN })
   }
 
   // The ring's triangles: every quad but those inside the inner ring's
@@ -279,6 +292,22 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
 
   // The hole ring k should have now: the ring inside it, where it stands,
   // when that ring is drawn.
+  function isCarried(ring: Ring): boolean {
+    return ring.built !== null && ring.epoch !== epoch
+  }
+
+  // Whether a built ring may be drawn: not over the ring outside it when
+  // the two stand on different planes (one carried, one not, or carried
+  // from different anchors), since then the outer one has no hole for
+  // it. The older plane gives way: a carried ring under a new outer one,
+  // a new ring over a carried outer one until that is new too (the outer
+  // rings are asked for first).
+  function shown(ring: Ring): boolean {
+    if (!ring.built) return false
+    const outer = rings[ring.k + 1]
+    return !(ring.k < outermost() && outer.built && outer.epoch !== ring.epoch)
+  }
+
   function holeFor(k: number): Place | null {
     if (k <= innermostActive) return null
     const inner = rings[k - 1]
@@ -388,6 +417,12 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     ring.previewed = result.preview
     if (shape) ring.mesh.position.set(0, 0, 0)
     else ring.mesh.position.set(place.x, 0, place.z)
+    ring.epoch = epoch
+    if (ring.mesh.rotationQuaternion) {
+      ring.mesh.rotationQuaternion = null
+      ring.carried = Matrix.Identity()
+      ring.normalPlugin.setTurn(nodeTurn)
+    }
     ring.mesh.refreshBoundingInfo()
     // The ring outside takes its hole from the new place.
     if (ring.k + 1 < count) cutHole(rings[ring.k + 1])
@@ -431,9 +466,9 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     if (result) apply(ring, place, result)
     const wanted = ring.wanted
     ring.wanted = null
-    if (wanted && (!ring.built || wanted.x !== ring.built.x || wanted.z !== ring.built.z)) request(ring, wanted)
+    if (wanted && (!ring.built || isCarried(ring) || wanted.x !== ring.built.x || wanted.z !== ring.built.z)) request(ring, wanted)
     else if (preview && result && result.complete) request(ring, place, false)
-    else if (ring.stale && ring.built) request(ring, ring.built, false)
+    else if (ring.stale && ring.built && !isCarried(ring)) request(ring, ring.built, false)
   }
 
   function wantAt(ring: Ring, place: Place): void {
@@ -441,7 +476,7 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       if (ring.pending.x !== place.x || ring.pending.z !== place.z) ring.wanted = place
       return
     }
-    if (ring.built && ring.built.x === place.x && ring.built.z === place.z) {
+    if (ring.built && !isCarried(ring) && ring.built.x === place.x && ring.built.z === place.z) {
       if (ring.stale) request(ring, place)
       return
     }
@@ -476,7 +511,7 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
         }
         const grid = 2 * ring.spacing
         wantAt(ring, { x: Math.round(focusX / grid) * grid, z: Math.round(focusZ / grid) * grid })
-        ring.mesh.setEnabled(enabled && ring.built !== null)
+        ring.mesh.setEnabled(enabled && shown(ring))
       }
       // The holes follow what is drawn inside.
       for (let k = a; k < count; k++) if (rings[k].built) cutHole(rings[k])
@@ -486,7 +521,7 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     heightAt(x, z) {
       for (let k = innermostActive; k < count; k++) {
         const ring = rings[k]
-        if (!ring.built || !ring.heights) continue
+        if (!ring.built || !ring.heights || isCarried(ring)) continue
         const lx = x - ring.built.x + ring.half
         const lz = z - ring.built.z + ring.half
         if (lx < 0 || lz < 0 || lx > 2 * ring.half || lz > 2 * ring.half) continue
@@ -508,11 +543,11 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       // asked for has nothing to build again. Always the full build.
       if (!ring.built && !ring.pending) return
       ring.stale = true
-      if (!ring.pending && ring.built) request(ring, ring.built, false)
+      if (!ring.pending && ring.built && !isCarried(ring)) request(ring, ring.built, false)
     },
     setEnabled(next) {
       enabled = next
-      for (const ring of rings) ring.mesh.setEnabled(next && ring.built !== null && ring.k >= innermostActive)
+      for (const ring of rings) ring.mesh.setEnabled(next && shown(ring) && ring.k >= innermostActive)
     },
     setHeightScale(scale) {
       if (scale === heightScale) return
@@ -547,6 +582,25 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
         ring.holeX = NaN
         ring.holeZ = NaN
         ring.mesh.setEnabled(false)
+        if (ring.mesh.rotationQuaternion) {
+          ring.mesh.rotationQuaternion = null
+          ring.carried = Matrix.Identity()
+          ring.normalPlugin.setTurn(nodeTurn)
+        }
+      }
+    },
+    carry(transform) {
+      if (!shape) throw new Error('groundRings.carry: the flat plane does not move')
+      epoch++
+      const scale = new Vector3()
+      for (const ring of rings) {
+        ring.wanted = null
+        ring.stale = false
+        if (!ring.built) continue
+        ring.carried = ring.carried.multiply(transform)
+        ring.mesh.rotationQuaternion ??= new Quaternion()
+        ring.carried.decompose(scale, ring.mesh.rotationQuaternion, ring.mesh.position)
+        ring.normalPlugin.setTurn(ring.carried.multiply(nodeTurn))
       }
     },
     setDetailTextures(albedo, normals) {
@@ -559,7 +613,8 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       for (const ring of rings) ring.normalPlugin.setRelief(gain)
     },
     setTurn(matrix) {
-      for (const ring of rings) ring.normalPlugin.setTurn(matrix)
+      nodeTurn.copyFrom(matrix)
+      for (const ring of rings) ring.normalPlugin.setTurn(ring.mesh.rotationQuaternion ? ring.carried.multiply(nodeTurn) : nodeTurn)
     },
     setTinted(on) {
       for (const ring of rings) {

@@ -5070,6 +5070,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         erosionRun: erosionRunCount,
         savedAt: new Date().toISOString(),
         generator: BUILD_VERSION,
+        pipeline: worldPipeline,
         kind: worldShape === 'sphere' ? 'SphereWorld' : 'FlatWorld',
         progress: worldProgress,
       }, await makePreviewBlob())
