@@ -11,6 +11,7 @@ import type { MeshTileArtifact } from '../../world/meshTileArtifacts'
 import { rasterBuffer, rasterSamples, rasteriseTile, type Raster } from './groundRaster'
 import { createGroundSource, type GridField, type RasterGroundSource } from './groundSource'
 import { groundTilesOf, type GroundTiles, type RasterFrame } from './groundTiles'
+import { capTurnNormals } from './groundFrame'
 import { rasteriseNodeField } from '../../generator/mesh/meshRaster'
 import { waterLevelsFromBodies } from './waterLevels'
 
@@ -29,8 +30,10 @@ import { waterLevelsFromBodies } from './waterLevels'
 export type GroundWorkerInbound =
   | {
       type: 'world'
-      // The world's shape and its raster's size.
+      // The world's shape and its raster's size; on the sphere the ground
+      // frame's anchor (groundFrame.ts), null on the torus.
       kind: Domain['kind']
+      anchor: { x: number; y: number } | null
       width: number
       height: number
       // Level 1's mesh: given to the workers that answer level 1 from it
@@ -41,7 +44,9 @@ export type GroundWorkerInbound =
       // The detail textures' side, from the one worker asked; 0 for none.
       detail: number
     }
-  | ({ type: 'paint'; id: number; started: number; preview: boolean } & RingPaintRequest)
+  // A ring: its centre and spacing in plane cells about `anchor` (the
+  // sphere's ground frame; null on the torus).
+  | ({ type: 'paint'; id: number; started: number; preview: boolean; anchor: { x: number; y: number } | null } & RingPaintRequest)
   // Make a raster: a tile's from its artifact, level 1's (artifact null)
   // from the mesh. `rims`: the edges of the tile's neighbours already
   // known, whose halves its edge normals take (groundSeams.ts).
@@ -123,7 +128,7 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
       // painter reads as level 0 and colours the water by.
       const started = performance.now()
       const elevation = rasteriseNodeField(mesh, message.level.z, message.width, message.height)
-      const water = waterLevelsFromBodies(message.level.waterBodies, elevation, message.width, message.height)
+      const water = waterLevelsFromBodies(message.level.waterBodies, elevation, message.width, message.height, message.kind === 'torus')
       fields.elevation = { data: elevation, resX: message.width, resY: message.height }
       fields.waterLevel = { data: water.level, resX: message.width, resY: message.height }
       fields.waterFloor = { data: water.floor, resX: message.width, resY: message.height }
@@ -136,6 +141,7 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
       width: message.width,
       height: message.height,
       tiles: world,
+      anchor: message.anchor,
       metersPerCell: world.metresPerCell,
       elevationMeters: ELEVATION_METERS,
       base,
@@ -227,7 +233,14 @@ worker.onmessage = (event: MessageEvent<GroundWorkerInbound>): void => {
   if (message.type === 'paint') {
     source.takeWanted()
     source.takeUsed()
-    const out = paintRing(source, message)
+    source.setAnchor(message.anchor)
+    // On the sphere no sea plane lies over the rings: the sea is painted.
+    const out = paintRing(source, message.anchor ? { ...message, paintSea: true } : message)
+    // On the sphere the ring lies on the cap: its normals turned there.
+    if (message.anchor) {
+      const half = (message.quads / 2) * message.spacing
+      capTurnNormals(out.normals, out.texels, message.centerX - half, message.centerY - half, (2 * half) / out.texels, message.anchor.x, message.anchor.y, tiles.world.width / (2 * Math.PI))
+    }
     // A preview is painted at a quarter side and enlarged here, so the
     // main thread uploads it as it is.
     const full = message.preview ? message.texels * 4 : message.texels

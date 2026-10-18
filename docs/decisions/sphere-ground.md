@@ -218,3 +218,48 @@ that span the tile (1195 of them; level 3 none). A raster of such a
 tile read the wrong triangle in places (up to 1.2 km off). They were
 bootstrap lattice nodes left in the tile's mesh; fixed in the tiles the
 same day (sphere-tiles.md, Status).
+
+2026-10-17: order of building, step 3 BUILT — the incubator opens sphere
+worlds. The ground frame (`screens/incubator/groundFrame.ts`): the
+anchor's azimuthal-equidistant plane, the cap (`capPoint`, `capTurn`),
+the anchor's move (`reanchor`). The rings take a shape
+(`map/groundRings.ts` `setShape`): their vertices on the cap, the
+exaggeration in the vertices, the ring that first reaches 90° the
+outermost drawn. The source reads plane cells about the anchor and turns
+every slope into the plane's axes (the anchor's east and south carried
+to the point); the worker turns the painted normals onto the cap. Two
+things the forks did not say:
+
+- THE GROUND TURNS UNDER THE FOCUS. The rings hang from one node that
+  turns the cap so the ground under the focus lies flat, its point at
+  the focus. Without it the horizon leaned by the focus's distance from
+  the anchor in arc — 9° at 500 km. The normal map is painted in the
+  anchor's frame, so the shader takes the node's turn
+  (`groundNormalPlugin` `setTurn`); the detail tiles stay on the scene's
+  x and z, which near the focus are the ground's.
+- THE SEA IS PAINTED. The sea's plane (`groundWater.ts`) is the
+  torus's; on the sphere the rings lie at the sea's level over the sea
+  anyway, and the painter marks the sea as water as it marks a lake
+  (`paintSea`), so the shader gives it the water's look.
+
+The anchor moves at 1 500 km (fork 3 said about 500): with the ground
+turned, only the plane's scale across the bearing is left, 0.97 there,
+and every move builds every ring again.
+
+Checked on Brannoch: the cap's turn takes the normal at the focus to the
+scene's up, and a point near the focus lands where the plane puts it,
+less the cap's drop. A slope read through a level-1 raster (the tile's
+axes) and through the mesh (east and south) comes out the same in the
+plane's axes (median 0, p90 9 %, no turn between them). No ring paints a
+NaN. The torus is byte-identical (the 64 × 32 check). In Safari (driven
+by script; the window was hidden, so frames by hand): the globe at the
+farthest zoom, a curved horizon tilted, a re-anchor with the camera put
+at the new origin, no error.
+
+Seen and left: the incubator lists a world's tiles whatever their
+pipeline version (`IncubatorScreen.ts`), so Brannoch's tiles from before
+the lattice fix show (a lattice node at the sea's level in a deep sea
+paints a shallow square). The camera keeps the torus's zoom range, so at
+the farthest zoom the globe is a disc in the middle of the view. Level
+1's facets show as creases in the hillshade on both shapes.
+

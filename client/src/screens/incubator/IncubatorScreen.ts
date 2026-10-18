@@ -94,9 +94,6 @@ async function levelArtifacts(): Promise<Map<string, ServerArtifact[]>> {
   }
   const byWorld = new Map<string, ServerArtifact[]>()
   for (const world of worlds ?? []) {
-    // The ground reads a torus's level; a sphere's (docs/decisions/
-    // sphere-tiles.md) it does not draw yet.
-    if (world.kind === 'SphereWorld') continue
     const list = (world.terrains ?? []).flatMap((terrain) => byTerrain.get(terrain) ?? [])
     if (list.length > 0) byWorld.set(world.uid, list)
   }
@@ -171,13 +168,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   titleBar.setWorld(null)
 
   // The scale bar at the lower right, as in the generator. Measured every
-  // frame; it does nothing while the view has not changed. The incubator's
-  // worlds are tori (groundSource.ts: torusDomain), so the torus's metres.
+  // frame; it does nothing while the view has not changed. A scene unit is
+  // UNITS_PER_METER of a metre on both shapes (groundFrame.ts).
   const scaleBar = createScaleBar(root, { measure: planeMeasure(scene, MAP_WORLD_WIDTH, MAP_WORLD_HEIGHT, (TORUS_METERS_PER_CELL * MAP_WIDTH) / MAP_WORLD_WIDTH) })
   scaleBar.element.hidden = true
   scene.onBeforeRenderObservable.add(() => {
     if (!shown || !ground) return
     const focus = camera.getFocus()
+    // On a sphere the ground follows the focus, and its anchor moves when
+    // the focus went too far (groundView.follow): the camera then stands
+    // at the origin of the new plane, turned with the ground.
+    const turned = ground.follow(focus.x, focus.z)
+    if (turned !== null) {
+      camera.setView({ x: 0, z: 0, zoom: camera.getZoom(), yaw: camera.getYaw() - turned, tilt: camera.getTilt() })
+      return
+    }
     const viewWidth = camera.getViewWidth()
     // WHERE THE RINGS CENTRE. On the map the focus: the pixel is the same
     // size everywhere. Tilted, the nearest ground is at the frame's

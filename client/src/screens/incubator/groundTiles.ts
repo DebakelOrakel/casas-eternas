@@ -71,6 +71,11 @@ export interface GroundTiles {
   inFrame(frame: RasterFrame, out: { x: number; y: number }): boolean
   // A tile's raster frame (level 1's: of the level-2 tile with its x, y).
   frameOf(tile: TileId): RasterFrame
+  // The axes a slope at the point is along, unit 3D vectors: a raster's
+  // (the sphere: its tile's axes laid into the tangent plane), or with no
+  // frame the point's east and south (the level's mesh sampler). On the
+  // torus the world's x and z.
+  slopeAxes(frame: RasterFrame | null, t1: number[], t2: number[]): void
   // A tile artifact's nodes as its sampler (tileSampler.ts) reads them,
   // and the side of the square they lie in.
   samplerNodes(frame: RasterFrame, nodes: Float32Array): { nodes: Float32Array; cells: number }
@@ -138,6 +143,14 @@ function torusTiles(world: Domain): GroundTiles {
       return { cells: spec.cells, cornerX: corner.x, cornerY: corner.y, plane: null }
     },
     samplerNodes: (frame, nodes) => ({ nodes, cells: frame.cells }),
+    slopeAxes(_frame, t1, t2) {
+      t1[0] = 1
+      t1[1] = 0
+      t1[2] = 0
+      t2[0] = 0
+      t2[1] = 0
+      t2[2] = 1
+    },
     rasterSampler: (_frame, sampler) => sampler,
     rasteriseLevel1(base, frame, n, out) {
       const { cells, cornerX, cornerY } = frame
@@ -233,8 +246,10 @@ function sphereTiles(world: Domain): GroundTiles {
   const globe = world.noise
   const radius = globe.radius
   const g: GlobeFrame = { px: 0, py: 0, pz: 0, ex: 0, ey: 0, ez: 0, sx: 0, sy: 0, sz: 0 }
-  // The point, as a unit direction.
+  // The point, as a unit direction, and its east and south.
   const p: Vec3 = [0, 0, 1]
+  const east = [1, 0, 0]
+  const south = [0, 0, 1]
   const at2 = { x: 0, y: 0 }
   const frames = new Map<string, RasterFrame>()
   const idOf = (level: number, atlas: CubeAtlas, face: number, i: number, j: number): TileId => ({ level, x: face * atlas.n + i, y: j })
@@ -299,6 +314,12 @@ function sphereTiles(world: Domain): GroundTiles {
       p[0] = g.px / l
       p[1] = g.py / l
       p[2] = g.pz / l
+      east[0] = g.ex
+      east[1] = g.ey
+      east[2] = g.ez
+      south[0] = g.sx
+      south[1] = g.sy
+      south[2] = g.sz
     },
     tileAt(level) {
       const atlas = cubeAtlasOf(world, level)
@@ -307,6 +328,18 @@ function sphereTiles(world: Domain): GroundTiles {
     },
     inFrame: (frame, out) => place(frame, p, out),
     frameOf,
+    slopeAxes(frame, a, b) {
+      if (frame) {
+        localAxes(frame.plane!.frame, p, a, b)
+        return
+      }
+      a[0] = east[0]
+      a[1] = east[1]
+      a[2] = east[2]
+      b[0] = south[0]
+      b[1] = south[1]
+      b[2] = south[2]
+    },
     // In the tile's own plane, where it was triangulated.
     samplerNodes(frame, nodes) {
       const pl = frame.plane!

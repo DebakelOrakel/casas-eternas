@@ -63,7 +63,10 @@ export interface WaterLevels {
   lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[]
 }
 
-export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: Float32Array, width: number, height: number): WaterLevels {
+// `torus`: the rows wrap; on the sphere (false) they end at the poles,
+// where a neighbour past the last row is the cell's own row.
+export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: Float32Array, width: number, height: number, torus = true): WaterLevels {
+  const wrapRow = (y: number): number => (torus ? wrapValue(y, height) : Math.min(height - 1, Math.max(0, y)))
   const n = width * height
   const level = new Float32Array(n)
   const floor = new Float32Array(n).fill(-Infinity)
@@ -94,7 +97,7 @@ export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: F
       const cx = c % width
       const cy = (c - cx) / width
       for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-        const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
+        const nb = wrapRow(cy + dy) * width + wrapValue(cx + dx, width)
         if (ocean[nb] || !(elevation[nb] <= 0)) continue
         ocean[nb] = 1
         stack.push(nb)
@@ -103,7 +106,7 @@ export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: F
   }
   for (const b of bodies) {
     if (b.kind === 'dry' || b.frozen) continue
-    const seed = wrapValue(Math.floor(b.seedY), height) * width + wrapValue(Math.floor(b.seedX), width)
+    const seed = wrapRow(Math.floor(b.seedY)) * width + wrapValue(Math.floor(b.seedX), width)
     if (!(elevation[seed] < b.level) || ocean[seed]) continue
     const id = lakes.length
     lakes.push({ x0: width, y0: height, x1: -1, y1: -1, level: b.level })
@@ -128,7 +131,7 @@ export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: F
     if (!terminal) {
       const ox = Math.floor(b.outletX)
       const oy = Math.floor(b.outletY)
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) dam[wrapValue(oy + dy, height) * width + wrapValue(ox + dx, width)] = DAM_MARGIN
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) dam[wrapRow(oy + dy) * width + wrapValue(ox + dx, width)] = DAM_MARGIN
     }
     body[seed] = id
     level[seed] = b.level
@@ -182,7 +185,7 @@ export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: F
     const cx = c % width
     const cy = (c - cx) / width
     for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-      const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
+      const nb = wrapRow(cy + dy) * width + wrapValue(cx + dx, width)
       if (body[nb] !== -1 || ocean[nb] || !(elevation[nb] < reachTo[id] - dam[nb]) || elevation[nb] < floorOf[id]) continue
       if (elevation[nb] <= 0 && !subSea[id]) continue
       push(elevation[nb], nb, id)
@@ -215,7 +218,7 @@ export function waterLevelsFromBodies(bodies: readonly WaterBody[], elevation: F
       const cx = c % width
       const cy = (c - cx) / width
       for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-        const nb = wrapValue(cy + dy, height) * width + wrapValue(cx + dx, width)
+        const nb = wrapRow(cy + dy) * width + wrapValue(cx + dx, width)
         const id = body[nb]
         if (id < 0) continue
         // The rim stands at the flood's own edge: a lake's level, a

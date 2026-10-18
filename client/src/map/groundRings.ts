@@ -1,4 +1,4 @@
-import { Color3, Mesh, RawTexture, StandardMaterial, Texture, VertexData, type BaseTexture, type Scene } from '@babylonjs/core'
+import { Color3, Mesh, RawTexture, StandardMaterial, Texture, VertexData, type BaseTexture, type Matrix, type Scene, type TransformNode } from '@babylonjs/core'
 import { GroundNormalPlugin } from './groundNormalPlugin'
 
 // THE GROUND AS RINGS, at every zoom (docs/decisions/near-ground-clipmap.md,
@@ -73,6 +73,22 @@ export interface GroundRingsOptions {
   // Build a ring: null when the build was dropped (a newer one superseded
   // it, or the builder is gone).
   build(request: RingBuildRequest): Promise<RingBuildResult | null>
+  // The node the rings hang from (the sphere's ground frame turns it);
+  // none: the scene.
+  parent?: TransformNode
+}
+
+// THE CAP (docs/decisions/sphere-ground.md, fork 1): on a sphere the
+// rings' vertices are put on the sphere over their plane — `place` maps a
+// plane point (x, z) and a height (exaggeration in) to the vertex, `turn`
+// a vector of the plane's frame to the vertex's. `reach` is the plane
+// distance the rings must cover: the ring that first reaches it is the
+// outermost drawn. Without a shape the plane is flat and the ladder runs
+// to `worldSpan`.
+export interface GroundShape {
+  place(x: number, z: number, h: number, out: Float32Array, at: number): void
+  turn(x: number, z: number, v: Float32Array, at: number): void
+  reach: number
 }
 
 export interface GroundRings {
@@ -89,6 +105,12 @@ export interface GroundRings {
   // The drawn ground's height (world Y units, before the exaggeration) at
   // a point: the finest ring drawn there; 0 where none is built yet.
   heightAt(x: number, z: number): number
+  // The plane's shape (the cap on a sphere), or null for the flat plane;
+  // a ring built before is built again.
+  setShape(shape: GroundShape | null): void
+  // Every ring forgotten, its builds in flight dropped: the plane moved
+  // under them (the sphere's anchor).
+  reset(): void
   // Build ring k again where it stands: the ground it read changed.
   rebuild(k: number): void
   setEnabled(enabled: boolean): void
@@ -99,6 +121,8 @@ export interface GroundRings {
   setDetail(micro: number, macro: number, strength: number, reach: number): void
   // The lighting's relief gain (groundNormalPlugin.setRelief).
   setRelief(gain: number): void
+  // The turn of the node the rings hang from (groundNormalPlugin.setTurn).
+  setTurn(matrix: Matrix): void
   // DEBUG: a tint per ring over the albedo, so the rings can be told apart.
   setTinted(on: boolean): void
   dispose(): void
@@ -151,6 +175,9 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
   let heightScale = 1
   let enabled = true
   let innermostActive = 0
+  let shape: GroundShape | null = null
+  // Builds asked for before the last reset are dropped when they arrive.
+  let epoch = 0
 
   // The ladder: rings until one spans the world.
   let count = 1
@@ -190,6 +217,7 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     const spacing = spacing0 * 2 ** k
     const texels = options.texelsFor(k)
     const mesh = new Mesh(`groundRing${k}`, scene)
+    if (options.parent) mesh.parent = options.parent
     mesh.isPickable = true
     mesh.scaling.y = heightScale
     mesh.setEnabled(false)
@@ -267,19 +295,12 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     ring.holeZ = hz
   }
 
-  // The build arrived: the geometry and the textures in one step.
-  function apply(ring: Ring, place: Place, result: RingBuildResult): void {
-    let positions = positionsOf.get(ring)
-    let normals = normalsOf.get(ring)
-    if (!positions || !normals) {
-      positions = new Float32Array(vertexCount * 3)
-      normals = new Float32Array(vertexCount * 3)
-      positionsOf.set(ring, positions)
-      normalsOf.set(ring, normals)
-    }
+  // The ring's vertices for its heights at a place: on the flat plane
+  // relative to its centre (the mesh stands there and its y scale is the
+  // exaggeration); on a shape absolute, the exaggeration in, on the cap.
+  function writeGeometry(ring: Ring, place: Place, heights: Float32Array, positions: Float32Array, normals: Float32Array): void {
     const s = ring.spacing
     const half = ring.half
-    const heights = result.heights
     for (let j = 0; j < n; j++) {
       const lz = j * s - half
       for (let i = 0; i < n; i++) {
@@ -319,6 +340,27 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
       normals[at + 1] = normals[top * 3 + 1]
       normals[at + 2] = normals[top * 3 + 2]
     }
+    if (!shape) return
+    for (let v = 0; v < vertexCount; v++) {
+      const x = place.x + positions[v * 3]
+      const z = place.z + positions[v * 3 + 2]
+      shape.place(x, z, positions[v * 3 + 1] * heightScale, positions, v * 3)
+      shape.turn(x, z, normals, v * 3)
+    }
+  }
+
+  // The build arrived: the geometry and the textures in one step.
+  function apply(ring: Ring, place: Place, result: RingBuildResult): void {
+    let positions = positionsOf.get(ring)
+    let normals = normalsOf.get(ring)
+    if (!positions || !normals) {
+      positions = new Float32Array(vertexCount * 3)
+      normals = new Float32Array(vertexCount * 3)
+      positionsOf.set(ring, positions)
+      normalsOf.set(ring, normals)
+    }
+    const heights = result.heights
+    writeGeometry(ring, place, heights, positions, normals)
     const wasBuilt = ring.built !== null
     ring.built = place
     ring.heights = heights
@@ -344,7 +386,8 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     ring.normals.update(result.normals)
     ring.materials.update(result.materials)
     ring.previewed = result.preview
-    ring.mesh.position.set(place.x, 0, place.z)
+    if (shape) ring.mesh.position.set(0, 0, 0)
+    else ring.mesh.position.set(place.x, 0, place.z)
     ring.mesh.refreshBoundingInfo()
     // The ring outside takes its hole from the new place.
     if (ring.k + 1 < count) cutHole(rings[ring.k + 1])
@@ -357,25 +400,34 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
   // quarter side) first. A ring that stands already keeps what it shows
   // until its full build arrives — a preview in between threw a sharp
   // ring away for a blur at every step of a pan (2026-10-03).
+  // The outermost ring drawn: the last of the ladder, or on a shape the
+  // first that reaches its reach.
+  function outermost(): number {
+    if (!shape) return count - 1
+    for (let k = 0; k < count; k++) if (rings[k].half >= shape.reach) return k
+    return count - 1
+  }
   function request(ring: Ring, place: Place, preview = ring.k >= PREVIEW_FROM && !ring.built): void {
     ring.pending = place
     ring.stale = false
+    const asked = epoch
     void options
-      .build({ k: ring.k, centerX: place.x, centerZ: place.z, spacing: ring.spacing, quads, texels: preview ? ring.texels / PREVIEW_DIVISOR : ring.texels, outermost: ring.k === count - 1, preview })
+      .build({ k: ring.k, centerX: place.x, centerZ: place.z, spacing: ring.spacing, quads, texels: preview ? ring.texels / PREVIEW_DIVISOR : ring.texels, outermost: ring.k === outermost(), preview })
       .then((result) => {
         if (disposed) return
         // Applied on a frame of its own (see `update`): four workers
         // delivering at once put four uploads in one frame (300 ms,
         // 2026-10-03).
-        arrivals.push({ ring, place, result, preview })
+        arrivals.push({ ring, place, result, preview, epoch: asked })
       })
   }
-  const arrivals: { ring: Ring; place: Place; result: RingBuildResult | null; preview: boolean }[] = []
+  const arrivals: { ring: Ring; place: Place; result: RingBuildResult | null; preview: boolean; epoch: number }[] = []
   function applyOne(): void {
     const next = arrivals.shift()
     if (!next) return
     const { ring, place, result, preview } = next
     ring.pending = null
+    if (next.epoch !== epoch) return
     if (result) apply(ring, place, result)
     const wanted = ring.wanted
     ring.wanted = null
@@ -413,10 +465,12 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
         }
       }
       innermostActive = a
+      const last = outermost()
+      if (a > last) a = innermostActive = last
       // Outermost first: the coarse ground arrives before the fine one.
       for (let k = count - 1; k >= 0; k--) {
         const ring = rings[k]
-        if (k < a) {
+        if (k < a || k > last) {
           ring.mesh.setEnabled(false)
           continue
         }
@@ -463,7 +517,37 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     setHeightScale(scale) {
       if (scale === heightScale) return
       heightScale = scale
-      for (const ring of rings) ring.mesh.scaling.y = scale
+      if (!shape) {
+        for (const ring of rings) ring.mesh.scaling.y = scale
+        return
+      }
+      // On a shape the exaggeration is in the vertices.
+      for (const ring of rings) {
+        const positions = positionsOf.get(ring)
+        const normals = normalsOf.get(ring)
+        if (!ring.built || !ring.heights || !positions || !normals) continue
+        writeGeometry(ring, ring.built, ring.heights, positions, normals)
+        ring.mesh.updateVerticesData('position', positions)
+        ring.mesh.updateVerticesData('normal', normals)
+        ring.mesh.refreshBoundingInfo()
+      }
+    },
+    setShape(next) {
+      shape = next
+      for (const ring of rings) ring.mesh.scaling.y = shape ? 1 : heightScale
+      this.reset()
+    },
+    reset() {
+      epoch++
+      for (const ring of rings) {
+        ring.built = null
+        ring.heights = null
+        ring.wanted = null
+        ring.stale = false
+        ring.holeX = NaN
+        ring.holeZ = NaN
+        ring.mesh.setEnabled(false)
+      }
     },
     setDetailTextures(albedo, normals) {
       for (const ring of rings) ring.normalPlugin.setDetailTextures(albedo, normals)
@@ -473,6 +557,9 @@ export function createGroundRings(options: GroundRingsOptions): GroundRings {
     },
     setRelief(gain) {
       for (const ring of rings) ring.normalPlugin.setRelief(gain)
+    },
+    setTurn(matrix) {
+      for (const ring of rings) ring.normalPlugin.setTurn(matrix)
     },
     setTinted(on) {
       for (const ring of rings) {

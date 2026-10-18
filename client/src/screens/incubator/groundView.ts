@@ -1,8 +1,5 @@
-import { Color3, Color4, DirectionalLight, DynamicTexture, HemisphericLight, Mesh, MeshBuilder, RawTexture2DArray, Scene, ShadowGenerator, StandardMaterial, Texture, Vector3 } from '@babylonjs/core'
+import { Color3, Color4, DirectionalLight, DynamicTexture, HemisphericLight, Matrix, Mesh, MeshBuilder, Quaternion, RawTexture2DArray, Scene, ShadowGenerator, StandardMaterial, Texture, TransformNode, Vector3 } from '@babylonjs/core'
 import { GROUND_MATERIALS } from '../../map/groundDetail'
-import { TORUS_METERS_PER_CELL } from '../../generator/core/mapConfig'
-// The incubator's worlds are tori (groundSource.ts: torusDomain), so its metres
-// are the torus's (DEC-0035 fork 6).
 import { createGroundRings, type GroundRings, type RingBuildRequest, type RingBuildResult } from '../../map/groundRings'
 import { createGroundWater } from '../../map/groundWater'
 import { MAP_EXAGGERATION, MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_HEIGHT_SCALE, UNITS_PER_METER } from '../../map/mapSceneSettings'
@@ -16,6 +13,7 @@ import type { GridField } from './groundSource'
 import type { GroundWorkerInbound, GroundWorkerOutbound } from './groundWorker'
 import type { TileRim } from './groundSeams'
 import { groundTilesOf, LEVEL1_GRID_LEVEL, type GroundTiles } from './groundTiles'
+import { capPoint, capTurn, planeToWorld, reanchor, sphereFrame, torusFrame, type GroundFrame } from './groundFrame'
 
 // THE INCUBATOR'S GROUND: the rings (map/groundRings.ts) over a worker
 // that paints them (groundWorker.ts), the light that shows them and the
@@ -91,6 +89,11 @@ const MESH_HOLDERS = 1
 // The rasters kept, bytes: ~36 level-3 tiles or ~100 of level 2 (level
 // 1's are small), least recently painted from out.
 const RASTER_BUDGET_BYTES = 300 * 1024 * 1024
+// How far the focus may go from the sphere's anchor before the anchor
+// moves (docs/decisions/sphere-ground.md, fork 3), metres: the plane's
+// scale across the bearing is 0.97 there, and every ring is built again
+// when it moves.
+const REANCHOR_M = 1_500_000
 
 export interface GroundViewOptions {
   scene: Scene
@@ -112,6 +115,12 @@ export interface GroundView {
   onLevels(listener: (levels: { elevation: Float32Array; level: Float32Array; body: Int32Array; surface: Uint8Array; lakes: { x0: number; y0: number; x1: number; y1: number; level: number }[] }) => void): void
   // The DRAWN ground's world Y at a point, exaggeration included.
   drawnHeightAt(x: number, z: number): number
+  // Per frame, before update: the camera's focus. On a sphere the ground
+  // turns so the ground under it lies flat, and the anchor moves when the
+  // focus is too far from it — then the answer is the angle (radians,
+  // from x toward z) the ground turned by in the scene, and the caller
+  // puts its focus at the origin and turns its yaw by minus it; else null.
+  follow(focusX: number, focusZ: number): number | null
   // For the console and the screenshot ladder: what is being built.
   stats(): { queued: number; inflight: number; innermost: number; paints: { k: number; ms: number; counts: unknown; wanted: number }[]; ready: number; worldSent: number; levelsMs: number; rasters: { count: number; mb: number; made: number; madeMs: number }; arrivals: number; waiting: number }
   // DEBUG: tint each ring by its index, to see where the rings meet; the
@@ -176,9 +185,13 @@ export function createGroundView(options: GroundViewOptions): GroundView {
     const half = (message.quads / 2) * message.spacing
     const out = new Set<string>()
     const step = 16 // level 2's tile side, cells
+    const at = { x: 0, y: 0 }
     for (let y = message.centerY - half; y <= message.centerY + half + step; y += step) {
       for (let x = message.centerX - half; x <= message.centerX + half + step; x += step) {
-        tiles.at(x, y)
+        if (message.anchor) {
+          planeToWorld(world, message.anchor, x, y, at)
+          tiles.at(at.x, at.y)
+        } else tiles.at(x, y)
         const t = tiles.tileAt(LEVEL1_GRID_LEVEL)
         out.add(level1Stage(t.x, t.y))
       }
@@ -328,8 +341,18 @@ export function createGroundView(options: GroundViewOptions): GroundView {
   let key: { worldId: string; versions: Map<string, string> } | null = null
   let disposed = false
 
+  // THE GROUND FRAME (groundFrame.ts): the torus's chart, or the
+  // sphere's plane about an anchor; the rings hang from a node that, on a
+  // sphere, turns the cap so the ground under the focus lies flat.
+  let frame: GroundFrame = torusFrame(domainOfKind('torus', 2, 1))
+  let world: Domain = domainOfKind('torus', 2, 1)
+  const groundNode = new TransformNode('groundFrame', scene)
+  groundNode.rotationQuaternion = Quaternion.Identity()
+  let followX = 0
+  let followZ = 0
   const rings: GroundRings = createGroundRings({
     scene,
+    parent: groundNode,
     quads: RING_QUADS,
     spacing0: RING_MIN_SPACING_M * UNITS_PER_METER,
     // Past the world's longer side, so the outermost ring covers the view
@@ -343,14 +366,14 @@ export function createGroundView(options: GroundViewOptions): GroundView {
           return
         }
         const id = nextId++
-        // World units → cells: texel px of the map shows world x = px, so
-        // the plane's centre u = ½ is cell (width/2 − ½).
-        const centerX = (request.centerX / MAP_WORLD_WIDTH + 0.5) * worldWidthCells - 0.5
-        const centerY = (request.centerZ / MAP_WORLD_HEIGHT + 0.5) * worldHeightCells - 0.5
-        const spacing = request.spacing / UNITS_PER_METER / TORUS_METERS_PER_CELL
+        // World units → plane cells (groundFrame.ts).
+        const centerX = frame.cellX(request.centerX)
+        const centerY = frame.cellY(request.centerZ)
+        const spacing = frame.cells(request.spacing)
         const message: GroundWorkerInbound = {
           type: 'paint',
           id,
+          anchor: frame.anchor,
           preview: request.preview,
           centerX,
           centerY,
@@ -461,7 +484,9 @@ export function createGroundView(options: GroundViewOptions): GroundView {
         if (i !== index) worker.postMessage({ type: 'fields', fields } satisfies GroundWorkerInbound)
       })
       water.setLevels(message.body, worldWidthCells, worldHeightCells)
-      water.setEnabled(true)
+      // The sea's plane is the torus's alone so far: on a sphere the sea
+      // is its painted floor.
+      water.setEnabled(frame.kind === 'torus')
       levelsMs = message.ms
       onLevels?.({ elevation: message.elevation, level: message.level, body: message.body, surface: message.surface, lakes: message.lakes })
     } else if (message.type === 'rastered') {
@@ -603,7 +628,22 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       key = { worldId: input.worldId, versions: input.versions }
       worldWidthCells = input.width
       worldHeightCells = input.height
-      tiles = groundTilesOf(domainOfKind(input.kind, input.width, input.height))
+      world = domainOfKind(input.kind, input.width, input.height)
+      tiles = groundTilesOf(world)
+      // The sphere's first anchor: the chart point the torus's scene
+      // origin shows.
+      frame = input.kind === 'sphere' ? sphereFrame(world, input.width / 2 - 0.5, input.height / 2 - 0.5) : torusFrame(world)
+      const radius = frame.radius
+      rings.setShape(input.kind === 'sphere'
+        ? {
+            place: (x, z, h, out, at) => capPoint(x, z, h, radius, out, at),
+            turn: (x, z, v, at) => capTurn(x, z, radius, v, at),
+            reach: (radius * Math.PI) / 2,
+          }
+        : null)
+      groundNode.position.setAll(0)
+      groundNode.rotationQuaternion = Quaternion.Identity()
+      rings.setTurn(Matrix.Identity())
       const done = new Promise<void>((resolve) => {
         ready = resolve
       })
@@ -616,7 +656,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
       tileAsked.clear()
       held.clear()
       workers.forEach((worker, i) => {
-        const message: GroundWorkerInbound = { type: 'world', kind: input.kind, width: input.width, height: input.height, level: i < MESH_HOLDERS ? level : null, stages: [...input.versions.keys()], fields: input.fields, detail: i === 0 ? DETAIL_TEXTURE_SIZE : 0 }
+        const message: GroundWorkerInbound = { type: 'world', kind: input.kind, anchor: frame.anchor, width: input.width, height: input.height, level: i < MESH_HOLDERS ? level : null, stages: [...input.versions.keys()], fields: input.fields, detail: i === 0 ? DETAIL_TEXTURE_SIZE : 0 }
         worker.postMessage(message)
       })
       worldSent = performance.now()
@@ -687,7 +727,43 @@ export function createGroundView(options: GroundViewOptions): GroundView {
     onLevels(listener) {
       onLevels = listener
     },
-    drawnHeightAt: (x, z) => rings.heightAt(x, z) * MAP_EXAGGERATION,
+    // On a sphere the ground falls away from the focus by the cap's drop.
+    drawnHeightAt: (x, z) => {
+      const h = rings.heightAt(x, z) * MAP_EXAGGERATION
+      if (frame.kind === 'torus') return h
+      const d2 = (x - followX) ** 2 + (z - followZ) ** 2
+      return h - d2 / (2 * frame.radius)
+    },
+    follow(focusX, focusZ) {
+      if (frame.kind === 'torus') return null
+      if (Math.hypot(focusX, focusZ) > REANCHOR_M * UNITS_PER_METER) {
+        const moved = reanchor(world, frame, focusX, focusZ)
+        frame = sphereFrame(world, moved.anchorX, moved.anchorY)
+        rings.reset()
+        followX = 0
+        followZ = 0
+        groundNode.position.setAll(0)
+        groundNode.rotationQuaternion = Quaternion.Identity()
+        rings.setTurn(Matrix.Identity())
+        return moved.alpha
+      }
+      // The turn that takes the cap's normal at the focus to the scene's
+      // up, about the axis across the bearing, and the shift that puts the
+      // cap's point there at the focus.
+      followX = focusX
+      followZ = focusZ
+      const d = Math.hypot(focusX, focusZ)
+      const q = d < 1e-12 ? Quaternion.Identity() : Quaternion.RotationAxis(new Vector3(-focusZ / d, 0, focusX / d), d / frame.radius)
+      const c = new Float32Array(3)
+      capPoint(focusX, focusZ, 0, frame.radius, c, 0)
+      const turn = new Matrix()
+      q.toRotationMatrix(turn)
+      const turned = Vector3.TransformCoordinates(new Vector3(c[0], c[1], c[2]), turn)
+      groundNode.rotationQuaternion = q
+      groundNode.position.set(focusX - turned.x, -turned.y, focusZ - turned.z)
+      rings.setTurn(turn)
+      return null
+    },
     stats: () => ({ queued: queued.length, inflight: inflight.size > 0 ? [...inflight.values()][0].k : -1, innermost: rings.innermost(), paints: paints.slice(-20), ready: readyCount, worldSent, levelsMs, rasters: { count: rasters.size, mb: Math.round(rasterBytesHeld / 1048576), made: rastersMade, madeMs: rastersMadeMs }, arrivals: rings.pendingArrivals(), waiting: ringWaits.size + tileQueue.length + tileReads + level1Queue.length + stale.size }),
     setTinted: (on) => rings.setTinted(on),
     setDetailStrength: (v) => {

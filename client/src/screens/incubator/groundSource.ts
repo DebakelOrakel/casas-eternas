@@ -4,6 +4,8 @@ import type { GroundSource } from '../../map/groundPaint'
 import { meshTileStage } from '../../world/meshTileArtifacts'
 import { level1Stage, rasterAt, type Raster } from './groundRaster'
 import { LEVEL1_GRID_LEVEL, type GroundTiles } from './groundTiles'
+import { planeAxesAt, planeToWorld } from './groundFrame'
+import { TORUS_METERS_PER_CELL } from '../../generator/core/mapConfig'
 
 // THE GROUND AT THE FINEST LEVEL THERE IS, as the painter reads it
 // (map/groundPaint.ts): the rasters of level 3's tiles, else of level
@@ -28,6 +30,10 @@ export interface GroundSourceOptions {
   height: number
   // The world's tiles and where their rasters lie (groundTiles.ts).
   tiles: GroundTiles
+  // The ground frame's anchor on the sphere (groundFrame.ts): the points
+  // the painter asks for are plane cells about it. Null on the torus,
+  // where they are the world's cells.
+  anchor?: { x: number; y: number } | null
   metersPerCell: number
   elevationMeters: number
   // Level 1's mesh, where this source holds it.
@@ -62,6 +68,8 @@ export interface GroundSourceOptions {
 }
 
 export interface RasterGroundSource extends GroundSource {
+  // The ground frame's anchor moved (the sphere).
+  setAnchor(anchor: { x: number; y: number } | null): void
   // Replace some of the material fields (the level's own raster and
   // water, once the mesh holder has made them).
   setFields(next: Partial<GroundSourceOptions['fields']>): void
@@ -86,6 +94,14 @@ const wrap = (v: number, n: number): number => ((v % n) + n) % n
 
 export function createGroundSource(options: GroundSourceOptions): RasterGroundSource {
   const { width, height, base, stages, tiles } = options
+  const world = tiles.world
+  let anchor = options.anchor ?? null
+  // A plane point as a world point (the sphere), into `w`.
+  const w = { x: 0, y: 0 }
+  const toWorld = (x: number, y: number): void => planeToWorld(world, anchor!, x, y, w)
+  // The level's node spacing in plane cells: the table's is in the
+  // torus's cells.
+  const spacingCells = (level: number): number => NODE_SPACING_CELLS[level] * (TORUS_METERS_PER_CELL / options.metersPerCell)
   // The fields' rows wrap on the torus; on the sphere they end at the
   // poles.
   const torus = tiles.world.kind === 'torus'
@@ -172,6 +188,28 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
   const sample = new Float64Array(3)
   const normal = new Float64Array(3)
   const at = { x: 0, y: 0 }
+  // On the sphere a raster's slope is along its tile's local axes (t1,
+  // t2), and the painter wants it along the plane's (a1, a2) at the point:
+  // the gradient g = s1 · t1 + s2 · t2, read along each.
+  const t1 = [0, 0, 0]
+  const t2 = [0, 0, 0]
+  const a1 = [0, 0, 0]
+  const a2 = [0, 0, 0]
+  let axesFor = -1
+  let lookups = 0
+  const planeAxes = (): void => {
+    if (axesFor === lookups) return
+    planeAxesAt(world, anchor!, w.x, w.y, a1, a2)
+    axesFor = lookups
+  }
+  const toPlane = (s1: number, s2: number, out: Float64Array): void => {
+    planeAxes()
+    const gx = s1 * t1[0] + s2 * t2[0]
+    const gy = s1 * t1[1] + s2 * t2[1]
+    const gz = s1 * t1[2] + s2 * t2[2]
+    out[1] = -(gx * a1[0] + gy * a1[1] + gz * a1[2])
+    out[3] = -(gx * a2[0] + gy * a2[1] + gz * a2[2])
+  }
   const fromRaster = (raster: Raster, level: number, out: Float64Array | null): number => {
     rasterAt(raster, at.x, at.y, sample)
     if (out) {
@@ -180,6 +218,11 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
       out[2] = 1
       out[3] = -sample[2]
       out[4] = NODE_SPACING_CELLS[level]
+      if (anchor) {
+        tiles.slopeAxes(raster, t1, t2)
+        toPlane(sample[1], sample[2], out)
+        out[4] = spacingCells(level)
+      }
     }
     return sample[0]
   }
@@ -188,16 +231,22 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
   // than any level's nodes — the outermost rings, whose level-1 rasters
   // would be the whole world's 8 192 (2026-10-03). The slope by central
   // differences.
+  // On the sphere the differences are taken in the plane, each point read
+  // at its world point.
+  const level0At = (x: number, y: number): number => {
+    if (!anchor) return bilinear(fields.elevation, x, y, 0)
+    toWorld(x, y)
+    return bilinear(fields.elevation, w.x, w.y, 0)
+  }
   const fromLevel0 = (x: number, y: number, out: Float64Array | null): number => {
-    const level0 = fields.elevation
-    const h = bilinear(level0, x, y, 0)
+    const h = level0At(x, y)
     if (out) {
       out[0] = h
       const step = 0.5
-      out[1] = -((bilinear(level0, x + step, y, 0) - bilinear(level0, x - step, y, 0)) / (2 * step)) * (options.elevationMeters / options.metersPerCell)
+      out[1] = -((level0At(x + step, y) - level0At(x - step, y)) / (2 * step)) * (options.elevationMeters / options.metersPerCell)
       out[2] = 1
-      out[3] = -((bilinear(level0, x, y + step, 0) - bilinear(level0, x, y - step, 0)) / (2 * step)) * (options.elevationMeters / options.metersPerCell)
-      out[4] = 1
+      out[3] = -((level0At(x, y + step) - level0At(x, y - step)) / (2 * step)) * (options.elevationMeters / options.metersPerCell)
+      out[4] = anchor ? spacingCells(0) : 1
     }
     return h
   }
@@ -210,8 +259,16 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
     return r && tiles.inFrame(r, at) ? r : null
   }
   // The finest raster under a point, else level 1's mesh.
-  const lookup = (x: number, y: number, maxLevel: number, out: Float64Array | null): number => {
-    if (maxLevel <= 0) return fromLevel0(x, y, out)
+  const lookup = (px: number, py: number, maxLevel: number, out: Float64Array | null): number => {
+    if (maxLevel <= 0) return fromLevel0(px, py, out)
+    let x = px
+    let y = py
+    if (anchor) {
+      lookups++
+      toWorld(px, py)
+      x = w.x
+      y = w.y
+    }
     tiles.at(x, y)
     for (let lv = Math.min(3, maxLevel); lv >= 2; lv--) {
       let raster = inLast(lv)
@@ -245,7 +302,7 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
       }
     }
     if (raster) return fromRaster(raster, 1, out)
-    if (!base) return fromLevel0(x, y, out)
+    if (!base) return fromLevel0(px, py, out)
     const h = base.heightAt(x, y)
     if (out) {
       out[0] = h
@@ -254,8 +311,21 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
       out[2] = normal[1]
       out[3] = normal[2]
       out[4] = NODE_SPACING_CELLS[1]
+      if (anchor && normal[1] > 1e-6) {
+        // The mesh's normal is along the point's east and south.
+        tiles.slopeAxes(null, t1, t2)
+        toPlane(-normal[0] / normal[1], -normal[2] / normal[1], out)
+        out[2] = 1
+        out[4] = spacingCells(1)
+      }
     }
     return h
+  }
+  // A field read at a plane point's world point.
+  const field = (read: (x: number, y: number) => number) => (x: number, y: number): number => {
+    if (!anchor) return read(x, y)
+    toWorld(x, y)
+    return read(w.x, w.y)
   }
 
   return {
@@ -263,19 +333,23 @@ export function createGroundSource(options: GroundSourceOptions): RasterGroundSo
     height,
     metersPerCell: options.metersPerCell,
     elevationMeters: options.elevationMeters,
+    setAnchor(next) {
+      anchor = next
+      axesFor = -1
+    },
     setFields(next) {
       Object.assign(fields, next)
     },
     elevationAt: (x, y, maxLevel) => lookup(x, y, maxLevel, null),
     surfaceAt: (x, y, maxLevel, out) => lookup(x, y, maxLevel, out),
-    biomeAt: (x, y) => nearest(fields.biome, x, y, 4),
-    seaTemperatureAt: (x, y) => bilinear(seaTemperature, x, y, 12),
-    precipitationAt: (x, y) => bilinear(fields.precipitation, x, y, 600),
-    lakeDepthAt: (x, y) => Math.max(0, bilinear(fields.lakeDepth, x, y, 0)),
-    waterLevelAt: (x, y) => nearest(fields.waterLevel, x, y, 0),
-    waterFloorAt: (x, y) => nearest(fields.waterFloor, x, y, -Infinity),
-    waterDamAt: (x, y) => nearest(fields.waterDam, x, y, 0),
-    waterSurfaceAt: (x, y) => nearest(fields.waterSurface, x, y, 0),
+    biomeAt: field((x, y) => nearest(fields.biome, x, y, 4)),
+    seaTemperatureAt: field((x, y) => bilinear(seaTemperature, x, y, 12)),
+    precipitationAt: field((x, y) => bilinear(fields.precipitation, x, y, 600)),
+    lakeDepthAt: field((x, y) => Math.max(0, bilinear(fields.lakeDepth, x, y, 0))),
+    waterLevelAt: field((x, y) => nearest(fields.waterLevel, x, y, 0)),
+    waterFloorAt: field((x, y) => nearest(fields.waterFloor, x, y, -Infinity)),
+    waterDamAt: field((x, y) => nearest(fields.waterDam, x, y, 0)),
+    waterSurfaceAt: field((x, y) => nearest(fields.waterSurface, x, y, 0)),
     setRaster(stage, raster) {
       rasters.set(stage, raster)
     },

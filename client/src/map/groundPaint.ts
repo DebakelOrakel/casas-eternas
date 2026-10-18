@@ -71,6 +71,11 @@ export interface RingPaintRequest {
   // Drawn metres per true metre: the vertical exaggeration, which the
   // normals and the slope material see as the eye does.
   verticalScale: number
+  // The sea painted as water too (its normal flat, the water flag set),
+  // for a ground with no sea plane over it (the sphere's cap,
+  // docs/decisions/sphere-ground.md). Off: the sea is its floor, under
+  // groundWater's plane.
+  paintSea?: boolean
 }
 
 export interface RingPaint {
@@ -644,7 +649,8 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       // sea's floor (the field's own level there would be a dry basin's,
       // and its floor under the sea's level is land).
       const waterLevel = lake ? wetLevel[c] : source.waterSurfaceAt(x, y) === 0 ? 0 : -Infinity
-      if (lake) {
+      const water = lake || (request.paintSea === true && h <= waterLevel)
+      if (water) {
         nx = 0
         ny = 1
         nz = 0
@@ -652,7 +658,7 @@ export function paintRing(source: GroundSource, request: RingPaintRequest): Ring
       normals[p] = Math.round((nx * 0.5 + 0.5) * 255)
       normals[p + 1] = Math.round((ny * 0.5 + 0.5) * 255)
       normals[p + 2] = Math.round((nz * 0.5 + 0.5) * 255)
-      normals[p + 3] = lake ? 0 : 255
+      normals[p + 3] = water ? 0 : 255
       if (h <= waterLevel) {
         const depth = waterLevel - h
         if (surface === 0) {

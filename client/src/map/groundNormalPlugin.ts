@@ -1,4 +1,4 @@
-import { MaterialPluginBase } from '@babylonjs/core'
+import { MaterialPluginBase, Matrix } from '@babylonjs/core'
 import type { BaseTexture, Material, MaterialDefines, Scene, SubMesh, UniformBuffer } from '@babylonjs/core'
 import { GROUND_MATERIALS, GROUND_MATERIAL_SCALE } from './groundDetail'
 
@@ -35,6 +35,7 @@ export class GroundNormalPlugin extends MaterialPluginBase {
   private detailStrength = 1
   private detailReach = 1
   private relief = 1
+  private turn = Matrix.Identity()
 
   constructor(material: Material) {
     super(material, 'GroundNormal', 210, { GROUNDNORMAL: false, GROUNDDETAIL: false })
@@ -82,6 +83,14 @@ export class GroundNormalPlugin extends MaterialPluginBase {
     this.relief = gain
   }
 
+  // THE TURN of the frame the normal map is painted in, into the scene's
+  // (column-major 4 × 4, its rotation read): on a sphere the rings hang
+  // from a node that turns the cap so the ground under the focus lies flat
+  // (docs/decisions/sphere-ground.md); on the torus the identity.
+  setTurn(matrix: Matrix): void {
+    this.turn.copyFrom(matrix)
+  }
+
   override getClassName(): string {
     return 'GroundNormalPlugin'
   }
@@ -100,12 +109,14 @@ export class GroundNormalPlugin extends MaterialPluginBase {
       ubo: [
         { name: 'groundDetail', size: 4, type: 'vec4' },
         { name: 'groundRelief', size: 1, type: 'float' },
+        { name: 'groundTurn', size: 16, type: 'mat4' },
       ],
       fragment: `#ifdef GROUNDDETAIL
         uniform vec4 groundDetail;
         #endif
         #ifdef GROUNDNORMAL
         uniform float groundRelief;
+        uniform mat4 groundTurn;
         #endif`,
     }
   }
@@ -117,6 +128,7 @@ export class GroundNormalPlugin extends MaterialPluginBase {
     if (this.detailNormals) uniformBuffer.setTexture('groundDetailNormals', this.detailNormals)
     uniformBuffer.updateFloat4('groundDetail', this.microWavelength, this.macroWavelength, this.detailStrength, this.detailReach)
     uniformBuffer.updateFloat('groundRelief', this.relief)
+    uniformBuffer.updateMatrix('groundTurn', this.turn)
   }
 
   override getCustomCode(shaderType: string): { [pointName: string]: string } | null {
@@ -240,6 +252,7 @@ export class GroundNormalPlugin extends MaterialPluginBase {
           float r = sin(rp.x * 1.7 + rp.y * 0.9) * 0.5 + sin(rp.x * 0.4 - rp.y * 1.3) * 0.5;
           normalW = normalize(vec3(r * 0.02, 1.0, -r * 0.02));
         }
+        normalW = normalize(mat3(groundTurn) * normalW);
         #endif
         #if defined(GROUNDDETAIL) && defined(DIFFUSE)
         {
