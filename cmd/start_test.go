@@ -275,3 +275,65 @@ func TestTheGateLetsTheWorldLinksThrough(t *testing.T) {
 		t.Errorf("the zip without credentials = %d, want 401", got.Code)
 	}
 }
+
+// A peer that answers without the module refuses the start; one that does
+// not answer yet does not, and is asked again until it does: the processes
+// of a split start together, and two that waited for each other would never
+// start (docs/decisions/helm-chart.md).
+func TestCheckPeerStartsBeforeAPeerAnswers(t *testing.T) {
+	peer := func(modules string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"modules":` + modules + `}`))
+		}))
+	}
+	right := peer(`["world"]`)
+	defer right.Close()
+	if err := checkPeer(keySvcWorlds, right.URL, "world"); err != nil {
+		t.Errorf("a peer with the module: %v", err)
+	}
+	wrong := peer(`["docs"]`)
+	defer wrong.Close()
+	if err := checkPeer(keySvcWorlds, wrong.URL, "world"); err == nil || !strings.Contains(err.Error(), keySvcWorlds) {
+		t.Errorf("a peer without the module: err = %v, want the start refused naming the setting", err)
+	}
+	// A port nothing listens on: free one, then close it.
+	silent := httptest.NewServer(http.NotFoundHandler())
+	address := silent.URL
+	silent.Close()
+	peerRetryFirst, peerRetryMost = 10*time.Millisecond, 10*time.Millisecond
+	if err := checkPeer(keySvcWorlds, address, "world"); err != nil {
+		t.Errorf("a peer not answering yet: %v, want the start to go on", err)
+	}
+}
+
+// A client in a process without the auth target still names the login in
+// password mode: in a split the ingress sends /v1/auth to the process that
+// runs it, on the client's own origin (docs/decisions/helm-chart.md).
+func TestASplitClientNamesTheLogin(t *testing.T) {
+	cfg := passwordConfig(t)
+	cfg.Auth.StateDir = ""
+	modules, _, _, err := buildModules(context.Background(), config.Targets{config.TargetClient: true}, cfg)
+	if err != nil {
+		t.Fatalf("client-only process: %v", err)
+	}
+	defer closeAll(t, modules)
+	mux := http.NewServeMux()
+	for _, m := range modules {
+		if err := m.Mount(mux); err != nil {
+			t.Fatal(err)
+		}
+	}
+	answer := httptest.NewRecorder()
+	mux.ServeHTTP(answer, httptest.NewRequest(http.MethodGet, "/config.json", nil))
+	var body struct {
+		Login *struct {
+			Path string `json:"path"`
+		} `json:"login"`
+	}
+	if err := json.Unmarshal(answer.Body.Bytes(), &body); err != nil {
+		t.Fatalf("config.json: %v (%s)", err, answer.Body)
+	}
+	if body.Login == nil || body.Login.Path != auth.Path {
+		t.Errorf("config.json login = %+v, want %s", body.Login, auth.Path)
+	}
+}

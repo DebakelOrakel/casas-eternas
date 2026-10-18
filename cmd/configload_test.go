@@ -343,3 +343,22 @@ world:
 		}
 	})
 }
+
+// A list from the environment is one comma-separated string, as the chart
+// sets global.peers; a peer that is no http(s) URL refuses the start.
+func TestLoadConfigReadsThePeers(t *testing.T) {
+	initConfig()
+	viper.Set(flagConfig, "")
+	t.Setenv("CASAS_GLOBAL_PEERS", "http://casas-relay:8080,http://casas-artifacts:8080")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Global.Peers) != 2 || cfg.Global.Peers[1] != "http://casas-artifacts:8080" {
+		t.Errorf("peers = %q, want the two", cfg.Global.Peers)
+	}
+	t.Setenv("CASAS_GLOBAL_PEERS", "casas-relay:8080")
+	if _, err := loadConfig(); err == nil {
+		t.Error("a peer without a scheme was accepted")
+	}
+}

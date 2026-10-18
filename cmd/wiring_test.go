@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"runtime"
 	"strings"
@@ -43,14 +45,21 @@ func TestAFailedJobsWiringClosesTheInternalListener(t *testing.T) {
 		t.Fatal("the s3 world store claims local files")
 	}
 
+	// A peer that answers without the artifacts module: a wiring that fails.
+	// (One that does not answer yet no longer does: checkPeer starts and asks
+	// again.)
+	wrongPeer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"modules":["docs"]}`))
+	}))
+	defer wrongPeer.Close()
 	cases := map[string]struct {
 		targets   config.Targets
 		artifacts string // global.services.artifacts
 		want      string // "" for a wiring that succeeds
 	}{
-		"no artifact sink":           {want: "artifact sink"},
-		"an artifact peer not there": {artifacts: "http://127.0.0.1:1", want: "artifacts"},
-		"the artifacts co-resident":  {targets: config.Targets{config.TargetArtifacts: true}},
+		"no artifact sink":                    {want: "artifact sink"},
+		"an artifact peer without the module": {artifacts: wrongPeer.URL, want: "artifacts"},
+		"the artifacts co-resident":           {targets: config.Targets{config.TargetArtifacts: true}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -1,16 +1,19 @@
-# Two components, the most today's server allows a browser to use. The
-# browser reads /v1/capabilities and the login path from the component with
-# the client, which reports only its own modules, so client, auth, world,
-# jobs and docs stay together (DEC-0043, Status). And artifacts stays with
-# world: every process checks its peers at start, artifacts needs world and
-# jobs needs artifacts, so apart they would wait for each other forever.
-# What can go apart is the relay, with its JetStream on a volume of its own.
+# Three components (docs/decisions/helm-chart.md, fork 1): the edge is
+# stateless and scales; the stores hold the only data that cannot be made
+# again; compute is the coordinator and its bus, which talk all the time.
+# The edge is what the browser asks: it names the login (in password mode)
+# and reports the other components' modules under /v1/capabilities
+# (global.peers, which the chart sets). The components start in any order:
+# a process whose peer does not answer yet starts and asks again.
 components:
   # Helm merges maps: the default component goes only when set to null.
   server: null
-  front:
-    targets: [client, docs, auth, world, artifacts, jobs]
+  edge:
+    targets: [client, docs]
+    replicas: 2
+  stores:
+    targets: [world, artifacts, auth]
     persistence: { size: 20Gi }
-  relay:
-    targets: [relay]
-    persistence: { size: 2Gi }
+  compute:
+    targets: [jobs, relay]
+    persistence: { size: 5Gi }

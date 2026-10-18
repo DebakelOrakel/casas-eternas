@@ -74,7 +74,7 @@ components:
     persistence: { size: 5Gi }
 ```
 
-A split as the target shape (once the server allows it, see Status):
+A split (`examples/split.yaml`):
 
 ```yaml
 components:
@@ -87,9 +87,7 @@ components:
 The natural cuts are by what a target is, not by reading and writing
 (`jobs` writes artifacts): the edge is stateless and scales; the stores
 hold the only data that cannot be made again; compute is the coordinator
-and its bus, which talk all the time, and JetStream wants a disk. What
-today's server allows is less (Status); `examples/split.yaml` is
-that.
+and its bus, which talk all the time, and JetStream wants a disk.
 
 Honestly: the server targets are light, and the load is the workers',
 which are apart anyway. A split buys a scalable edge, stores that a
@@ -122,15 +120,9 @@ know, and refuses at `helm install` (`fail`) what cannot run:
 - **The admin socket** is pod-local; NOTES.txt names the component that
   runs `auth` for `kubectl exec`.
 
-- **A start that never comes** is refused too: every process checks at
-  start that the peers it names in `global.services` answer
-  (`requireCapability`); `artifacts` needs `world` and `jobs` needs
-  `artifacts`, so `world` and `jobs` in one component and `artifacts` in
-  another wait for each other forever (measured, Status).
-
-Not checked, by decision (2026-10-18): that `client` shares its component
-with `auth`. The server is to lift that limit (Status), and the chart does
-not encode it meanwhile.
+- **The component the browser asks** (the one with `client`, which the
+  Ingress sends `/` and `/v1/capabilities` to) gets `global.peers`: the
+  other components, whose modules it reports as its own (Status).
 
 ## Fork 3 — The workers: on, off, or alone
 
@@ -335,3 +327,34 @@ removed. Two hand-kept copies of the same deployment drifted with every
 change (the relay's WebSocket, the scaler's switch); the chart is the one
 deployment now, and docs/operations/kubernetes.md describes it, with the
 one-time move from the manifests' object names.
+
+2026-10-18: the server's two limits lifted, and the start cycle with
+them; the chart's cycle check is gone and the split example is the shape
+of fork 1.
+
+- **No start waits for a peer.** A peer named in `global.services` that
+  does not answer yet no longer refuses the start: the process starts,
+  warns, and asks again in the background, doubling from 5 s to a minute
+  (`checkPeer`, cmd/start.go). A peer that answers without the module
+  still refuses it. The shape that never started (world and jobs in one
+  component, artifacts in another) comes up at the first start.
+- **The client names the login in password mode**, whichever process runs
+  `auth`: `/v1/auth/session` is a path on its own origin, and the Ingress
+  sends `/v1/auth` to the auth component.
+- **`global.peers`** (agreed 2026-10-18; flag `--global.peers`, variable
+  `CASAS_GLOBAL_PEERS`, comma-separated): the base URLs of the other
+  processes. `/v1/capabilities` adds their modules and the values their
+  modules describe (this process's own win), asked when it is asked and
+  kept 10 s, each peer with 2 s; a peer that does not answer is left out.
+  A peer is asked with `?local`, for its own only, so peers that name each
+  other do not ask round in a circle. The chart sets it on the component
+  the Ingress sends `/` to, with every other component.
+
+Checked: the split edge (client, docs; 2 replicas) / stores (world,
+artifacts, auth) / compute (jobs, relay), rendered and started with the
+server binary: all three up at the first start; the edge's
+`/v1/capabilities` reports all seven modules and `jobWorkers`, its
+`/config.json` the login path. Tests: checkPeer (a peer with, without the
+module, and silent), a split client's login, the peers' capabilities
+(merged, cached, own values first, `?local`), `CASAS_GLOBAL_PEERS` and a
+peer without a scheme.

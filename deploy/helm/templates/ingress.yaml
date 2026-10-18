@@ -1,7 +1,6 @@
 {{- if and .Values.ingress.enabled .Values.components }}
 {{- $root := . }}
-{{- $front := include "casas-eternas.componentOf" (dict "root" . "module" "client") }}
-{{- if not $front }}{{- $front = keys .Values.components | sortAlpha | first }}{{- end }}
+{{- $front := include "casas-eternas.front" . }}
 {{- /* Each module's path, to the component that runs it (fork 5). */}}
 {{- $paths := list (dict "module" "world" "path" "/v1/worlds") (dict "module" "artifacts" "path" "/v1/artifacts") (dict "module" "jobs" "path" "/v1/jobs") (dict "module" "auth" "path" "/v1/auth") (dict "module" "docs" "path" "/docs") }}
 {{- $annotations := dict }}

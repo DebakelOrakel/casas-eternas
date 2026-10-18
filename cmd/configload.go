@@ -61,6 +61,9 @@ func loadConfig() (config.Config, error) {
 		ErrorUnused: true,
 		DecodeHook: mapstructure.ComposeDecodeHookFunc(
 			mapstructure.StringToTimeDurationHookFunc(),
+			// A list from the environment is one comma-separated string
+			// (CASAS_GLOBAL_PEERS=http://a:8080,http://b:8080).
+			mapstructure.StringToSliceHookFunc(","),
 			// Environment values arrive as STRINGS whatever the key's type —
 			// CASAS_JOBS_MAX_CONCURRENT=3 must land in an int field, and
 			// CASAS_JOBS_SCALE_WORKERS=false in a bool one. Exact parsing

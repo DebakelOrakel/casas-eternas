@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -161,20 +162,7 @@ func Run(ctx context.Context, cfg config.Server, build string, modules []Module,
 			}
 		}
 	}
-	mux.HandleFunc("GET "+CapabilitiesPath, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		// `version` alongside `modules` because both answer "what am I talking
-		// to". It is provenance and not a contract: a client may show it or log
-		// it, it may never branch on it — what a server can DO is the module
-		// list and the described capabilities right below, which say so
-		// directly instead of asking anyone to know which build gained what.
-		body := map[string]any{"modules": names, "version": build}
-		for key, value := range described {
-			body[key] = value
-		}
-		_ = json.NewEncoder(w).Encode(body)
-	})
+	mux.HandleFunc("GET "+CapabilitiesPath, capabilitiesHandler(names, described, build, newPeerCache(cfg.Peers)))
 
 	tlsConfig := buildTLS(cfg)
 
@@ -286,4 +274,40 @@ func requireLoopback(listener net.Listener) error {
 		return fmt.Errorf("the internal listener must be on a loopback address, not %s", listener.Addr())
 	}
 	return nil
+}
+
+// capabilitiesHandler answers /v1/capabilities: this process's modules and
+// what they describe, and with peers (global.peers, peers.go) theirs too,
+// unless the asker wants this process's own only (?local, what a peer asks).
+func capabilitiesHandler(names []string, described map[string]any, build string, peers *peerCache) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		modules := names
+		body := map[string]any{}
+		if !r.URL.Query().Has(localQuery) {
+			theirs := peers.get(r.Context())
+			modules = slices.Clone(names)
+			for _, module := range theirs.Modules {
+				if !slices.Contains(modules, module) {
+					modules = append(modules, module)
+				}
+			}
+			for key, value := range theirs.Described {
+				body[key] = value
+			}
+		}
+		// This process's own values win over a peer's of the same key.
+		for key, value := range described {
+			body[key] = value
+		}
+		// `version` alongside `modules` because both answer "what am I talking
+		// to". It is provenance and not a contract: a client may show it or log
+		// it, it may never branch on it — what a server can DO is the module
+		// list and the described capabilities beside it, which say so
+		// directly instead of asking anyone to know which build gained what.
+		body["modules"] = modules
+		body["version"] = build
+		_ = json.NewEncoder(w).Encode(body)
+	}
 }

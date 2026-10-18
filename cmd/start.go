@@ -138,10 +138,16 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 		modules = append(modules, relayModule)
 	}
 
-	// The client is told where to log in only when something is listening
-	// there; a split client-only process leaves it empty until the services
-	// wiring (frontend-surfaces) teaches it the auth service's address.
+	// Where the client logs in: in password mode the auth service's route,
+	// whichever process runs it. It is a path on the client's own origin,
+	// and in a split the ingress sends /v1/auth to the process with the auth
+	// target (deploy/helm), so a client in another process names it too
+	// (docs/decisions/helm-chart.md). Until 2026-10-18 only a process that
+	// ran auth itself named it, and a split client offered no login.
 	loginPath := ""
+	if authMode == config.AuthPassword {
+		loginPath = auth.Path
+	}
 	if registry != nil {
 		login, err := auth.New(auth.Config{
 			Tokens:     tokens,
@@ -154,7 +160,6 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 			return nil, nil, nil, err
 		}
 		modules = append(modules, login)
-		loginPath = auth.Path
 		slog.Info("authentication ready", "mode", authMode,
 			"registry", cfg.Auth.StateDir, "token ttl", cfg.Global.Auth.TokenTTL)
 	}
@@ -464,7 +469,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		}
 	case cfg.Global.Services.Artifacts != "":
 		base := strings.TrimRight(cfg.Global.Services.Artifacts, "/")
-		if err := requireCapability(keySvcArts, base, "artifacts"); err != nil {
+		if err := checkPeer(keySvcArts, base, "artifacts"); err != nil {
 			return jobs.Config{}, nil, err
 		}
 		bcfg.ArtifactsURL = base + server.APIPrefix
@@ -522,7 +527,7 @@ func worldRanking(resolver *identity.Resolver, worldModule *world.Module, mode c
 	}
 	if servicesWorlds != "" {
 		base := strings.TrimRight(servicesWorlds, "/")
-		if err := requireCapability(keySvcWorlds, base, "world"); err != nil {
+		if err := checkPeer(keySvcWorlds, base, "world"); err != nil {
 			return nil, err
 		}
 		client := &http.Client{Timeout: 10 * time.Second}
@@ -680,29 +685,68 @@ func artifactWorlds(resolver *identity.Resolver, worldModule *world.Module, mode
 	return worldLookup{}, fmt.Errorf("a checking server needs a world source to rank callers: select the world target too, or set global.services.worlds")
 }
 
-// requireCapability refuses to start against a peer that does not run the
-// module this process depends on. Addresses are configuration, capabilities
-// are self-description — this is the handshake between the two, and failing
-// NOW names the misconfiguration instead of letting every later request 404.
-// `key` is the config key the address came from, so the message names exactly
-// the setting to fix.
-func requireCapability(key, base, module string) error {
+// checkPeer is the handshake between an address and a capability: the peer
+// at `base` (the setting `key`) must run `module`. Addresses are
+// configuration, capabilities are self-description.
+//
+// A peer that answers without the module is a misconfiguration, and the
+// start is refused with the setting named. A peer that does not answer
+// YET is not: in a split deployment the processes start together, and two
+// that each waited for the other would never start (artifacts needs world,
+// jobs needs artifacts; measured 2026-10-18, docs/decisions/helm-chart.md).
+// So the process starts, says so, and asks again in the background until
+// the peer answers; a request that needs the peer meanwhile meets the
+// peer's own error.
+func checkPeer(key, base, module string) error {
+	reached, err := askPeer(key, base, module)
+	if reached {
+		return err
+	}
+	slog.Warn("peer not answering yet: starting, and asking again", "setting", key, "peer", base, "err", err)
+	go func() {
+		wait := peerRetryFirst
+		for {
+			time.Sleep(wait)
+			reached, err := askPeer(key, base, module)
+			if reached {
+				if err != nil {
+					slog.Error("peer answers, but not as configured", "setting", key, "err", err)
+				} else {
+					slog.Info("peer answers", "setting", key, "peer", base)
+				}
+				return
+			}
+			wait = min(2*wait, peerRetryMost)
+		}
+	}()
+	return nil
+}
+
+// How long checkPeer waits before it asks a silent peer again, doubling up
+// to the most.
+var (
+	peerRetryFirst = 5 * time.Second
+	peerRetryMost  = time.Minute
+)
+
+// askPeer asks the peer once: `reached` false when it did not answer.
+func askPeer(key, base, module string) (reached bool, err error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	response, err := client.Get(base + server.CapabilitiesPath)
 	if err != nil {
-		return fmt.Errorf("%s: %s is unreachable: %w", key, base, err)
+		return false, fmt.Errorf("%s: %s is unreachable: %w", key, base, err)
 	}
 	defer response.Body.Close()
 	var capabilities struct {
 		Modules []string `json:"modules"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&capabilities); err != nil {
-		return fmt.Errorf("%s: %s answered, but not with capabilities: %w", key, base, err)
+		return true, fmt.Errorf("%s: %s answered, but not with capabilities: %w", key, base, err)
 	}
 	if !slices.Contains(capabilities.Modules, module) {
-		return fmt.Errorf("%s: %s runs %v, not the %s module", key, base, capabilities.Modules, module)
+		return true, fmt.Errorf("%s: %s runs %v, not the %s module", key, base, capabilities.Modules, module)
 	}
-	return nil
+	return true, nil
 }
 
 // serverBaseURL is the address a bake Job on another node uses to reach this

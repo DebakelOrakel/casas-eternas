@@ -259,6 +259,12 @@
           "env": "CASAS_GLOBAL_AUTH_TOKEN_TTL"
         },
         {
+          "name": "global.peers",
+          "default": "[]",
+          "usage": "Base URLs of the other processes of a split deployment, comma-separated, e.g. http://casas-eternas-relay:8080. /v1/capabilities reports their modules beside this process's own, so the process the browser asks speaks for the whole deployment. Empty in one process.",
+          "env": "CASAS_GLOBAL_PEERS"
+        },
+        {
           "name": "global.services.artifacts",
           "usage": "URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.",
           "env": "CASAS_GLOBAL_SERVICES_ARTIFACTS"
@@ -496,6 +502,13 @@
       "default": ":8080",
       "usage": "Address to listen on, as host:port. \":8080\" binds every interface, \"127.0.0.1:8080\" keeps a local instance off the network.",
       "command": "casas-eternas"
+    },
+    {
+      "key": "global.peers",
+      "env": "CASAS_GLOBAL_PEERS",
+      "default": "[]",
+      "usage": "Base URLs of the other processes of a split deployment, comma-separated, e.g. http://casas-eternas-relay:8080. /v1/capabilities reports their modules beside this process's own, so the process the browser asks speaks for the whole deployment. Empty in one process.",
+      "command": "casas-eternas start"
     },
     {
       "key": "global.services.artifacts",

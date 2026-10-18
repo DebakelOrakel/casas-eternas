@@ -69,6 +69,16 @@ Call with (dict "root" $ "module" "world").
 {{- end -}}
 {{- end }}
 
+{{/*
+The component the Ingress sends `/` and /v1/capabilities to: the one with
+the client, or else the first by name.
+*/}}
+{{- define "casas-eternas.front" -}}
+{{- $front := include "casas-eternas.componentOf" (dict "root" . "module" "client") -}}
+{{- if and (not $front) .Values.components -}}{{- $front = keys .Values.components | sortAlpha | first -}}{{- end -}}
+{{- $front -}}
+{{- end }}
+
 {{/* A component's resource name: <fullname>-<component>. */}}
 {{- define "casas-eternas.componentName" -}}
 {{- printf "%s-%s" (include "casas-eternas.fullname" .root) .name | trunc 63 | trimSuffix "-" -}}
@@ -151,17 +161,6 @@ component runs jobs.
 {{- if not (hasKey $seen $module) -}}
 {{- fail (printf "the target %s is in no component: add it to one (or use `all`)" $module) -}}
 {{- end -}}
-{{- end -}}
-{{- end -}}
-{{- /*
-A start that never comes: every process checks at start that the peers it
-names in global.services answer (cmd/start.go, requireCapability). artifacts
-needs world, and jobs needs artifacts; with world and jobs in one component
-and artifacts in another, each waits for the other.
-*/ -}}
-{{- if and (hasKey $seen "jobs") (hasKey $seen "artifacts") (hasKey $seen "world") -}}
-{{- if and (eq (get $seen "world") (get $seen "jobs")) (ne (get $seen "artifacts") (get $seen "world")) -}}
-{{- fail (printf "components %s and %s would wait for each other at start: artifacts (in %s) needs world and jobs needs artifacts, and every process checks its peers before it serves. Put artifacts with world, or jobs apart from world" (get $seen "world") (get $seen "artifacts") (get $seen "artifacts")) -}}
 {{- end -}}
 {{- end -}}
 {{- if and .Values.workers.enabled (not (hasKey $seen "jobs")) -}}

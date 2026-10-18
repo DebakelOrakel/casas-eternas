@@ -52,8 +52,9 @@ helm install casas-eternas deploy/helm --namespace casas \
   targets run and sets the config key to the file.
 - **`components`**: other shapes are in `deploy/helm/examples/`. Helm
   merges maps, so a values file with components of its own sets
-  `components.server: null`. What today's server lets a browser use is
-  limited (decisions/helm-chart.md, Status).
+  `components.server: null`. The component with the client speaks for the
+  others to the browser (its login, and their modules under
+  `/v1/capabilities`, through `global.peers`, which the chart sets).
 - **`workers`** are scaled by the server up to `config.jobs.max-concurrent`.
 - **`ingress`**: one host. The certificate is the controller's business
   (above: cert-manager, ClusterIssuer `letsencrypt-production`, into the

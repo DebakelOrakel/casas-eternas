@@ -33,6 +33,7 @@ const (
 	keyAuthTknTTL  = "global.auth.token-ttl"
 	keyAuthSessTTL = "global.auth.session-ttl"
 	keyAdminSock   = "global.admin.socket"
+	keyPeers       = "global.peers"
 	keySvcWorlds   = "global.services.worlds"
 	keySvcArts     = "global.services.artifacts"
 	keySvcRelay    = "global.services.relay"
@@ -113,6 +114,7 @@ const (
 	textSvcWorlds   = `URL of the service running the world module, when it is not co-resident. Empty expects it in this process.`
 	textSvcArts     = `URL of the service running the artifacts module, when it is not co-resident. Empty expects it in this process.`
 	textSvcRelay    = `NATS URL of the relay (the message bus), when it is not co-resident, e.g. nats://relay:4222. Empty expects it in this process.`
+	textPeers       = `Base URLs of the other processes of a split deployment, comma-separated, e.g. http://casas-eternas-relay:8080. /v1/capabilities reports their modules beside this process's own, so the process the browser asks speaks for the whole deployment. Empty in one process.`
 
 	textWorldType    = `The world store's backend: dir or s3. Required as soon as world.storage.s3 is set; the backend is never inferred from a block.`
 	textWorldPath    = `The directory the saved worlds live in (backend dir).`
@@ -199,6 +201,7 @@ func init() {
 	StartCmd.Flags().String(keySvcWorlds, "", textSvcWorlds)
 	StartCmd.Flags().String(keySvcArts, "", textSvcArts)
 	StartCmd.Flags().String(keySvcRelay, "", textSvcRelay)
+	StartCmd.Flags().StringSlice(keyPeers, []string{}, textPeers)
 	StartCmd.Flags().String(keyWorldType, "dir", textWorldType)
 	StartCmd.Flags().String(keyWorldPath, "./data/worlds", textWorldPath)
 	StartCmd.Flags().Int(keyKeepRevs, 3, textKeepRevs)
@@ -235,7 +238,7 @@ func init() {
 		keyArtsType: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
 		keyArtsReadTTL: StartCmd, keyArtsWriteTTL: StartCmd, keyArtsLinkKey: StartCmd, keyArtsLinkOld: StartCmd,
 		keyClientDir: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsDir: StartCmd,
-		keySvcRelay: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyRelayWS: StartCmd, keyJobsDir: StartCmd, keyJobsScale: StartCmd,
+		keySvcRelay: StartCmd, keyPeers: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyRelayWS: StartCmd, keyJobsDir: StartCmd, keyJobsScale: StartCmd,
 	}
 	for key, cmd := range bindings {
 		flags := cmd.Flags()

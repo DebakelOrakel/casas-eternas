@@ -48,6 +48,11 @@ type Global struct {
 	Auth     AuthSettings  `mapstructure:"auth"`
 	Admin    AdminSettings `mapstructure:"admin"`
 	Services Services      `mapstructure:"services"`
+	// Peers are the base URLs of the other processes of a split
+	// deployment, whose modules this process reports as well under
+	// /v1/capabilities: the process the browser asks speaks for the
+	// deployment (docs/decisions/helm-chart.md). Empty in one process.
+	Peers []string `mapstructure:"peers"`
 }
 
 // AdminSettings is the process's local administration channel. GLOBAL, not a
@@ -300,7 +305,7 @@ type AuthConfig struct {
 // Server projects the process-wide transport settings into the shape
 // server.Run consumes.
 func (g Global) Server() Server {
-	return Server{Listen: g.Listen, TLSCert: g.TLS.Cert, TLSKey: g.TLS.Key, AdminSocket: g.Admin.Socket}
+	return Server{Listen: g.Listen, TLSCert: g.TLS.Cert, TLSKey: g.TLS.Key, AdminSocket: g.Admin.Socket, Peers: g.Peers}
 }
 
 // Validate checks everything that does not depend on which targets run;

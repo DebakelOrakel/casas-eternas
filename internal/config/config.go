@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"slices"
 	"sort"
 	"strconv"
@@ -216,6 +217,10 @@ type Server struct {
 	// serves none. Plain HTTP, no TLS, no gate: reaching the socket IS the
 	// authorization (docs/decisions/server-user-admin.md).
 	AdminSocket string
+
+	// Peers are the other processes of a split deployment (global.peers),
+	// whose modules /v1/capabilities reports beside this process's own.
+	Peers []string
 }
 
 // TLSEnabled reports whether the server should serve HTTPS.
@@ -229,6 +234,12 @@ func (s Server) Validate() error {
 	}
 	if (s.TLSCert == "") != (s.TLSKey == "") {
 		return fmt.Errorf("global.tls.cert and global.tls.key must be given together")
+	}
+	for _, peer := range s.Peers {
+		u, err := url.Parse(peer)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("global.peers: %q is not an http(s) base URL", peer)
+		}
 	}
 	return nil
 }

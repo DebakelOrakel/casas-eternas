@@ -2,6 +2,7 @@
 {{- $root := . }}
 {{- $platform := include "casas-eternas.platform" . }}
 {{- $scales := include "casas-eternas.scalesWorkers" . }}
+{{- $front := include "casas-eternas.front" . }}
 {{- range $name, $component := .Values.components }}
 {{- $modules := splitList "," (include "casas-eternas.modulesOf" (dict "root" $root "component" $component)) }}
 {{- $full := include "casas-eternas.componentName" (dict "root" $root "name" $name) }}
@@ -218,6 +219,17 @@ spec:
             {{- if and $jobs (not (has "relay" $modules)) }}
             - name: CASAS_GLOBAL_SERVICES_RELAY
               value: nats://{{ include "casas-eternas.componentName" (dict "root" $root "name" (include "casas-eternas.componentOf" (dict "root" $root "module" "relay"))) }}:4222
+            {{- end }}
+            {{- if and (eq $name $front) (gt (len $root.Values.components) 1) }}
+            {{- $peers := list }}
+            {{- range $other, $_ := $root.Values.components }}
+            {{- if ne $other $name }}{{- $peers = append $peers (printf "http://%s:8080" (include "casas-eternas.componentName" (dict "root" $root "name" $other))) }}{{- end }}
+            {{- end }}
+            # The browser asks this component what the server can do
+            # (/v1/capabilities): it reports the other components' modules
+            # too, so the answer is the deployment's.
+            - name: CASAS_GLOBAL_PEERS
+              value: {{ join "," $peers | quote }}
             {{- end }}
             {{- /* The secrets' files (fork 4). */}}
             {{- if $secrets.sessionKey.name }}
