@@ -303,6 +303,11 @@
           "env": "CASAS_RELAY_STATE_DIR"
         },
         {
+          "name": "relay.websocket",
+          "usage": "Address the relay accepts WebSocket connections on, as host:port, for workers outside the cluster; empty turns it off. Meant behind the ingress, which ends TLS: the relay speaks TLS on it itself only where global.tls is set. The same tokens as relay.listen.",
+          "env": "CASAS_RELAY_WEBSOCKET"
+        },
+        {
           "name": "target",
           "shorthand": "t",
           "default": "[]",
@@ -548,6 +553,12 @@
       "env": "CASAS_RELAY_STATE_DIR",
       "default": "./data/relay",
       "usage": "The directory of the relay's message store (JetStream).",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "relay.websocket",
+      "env": "CASAS_RELAY_WEBSOCKET",
+      "usage": "Address the relay accepts WebSocket connections on, as host:port, for workers outside the cluster; empty turns it off. Meant behind the ingress, which ends TLS: the relay speaks TLS on it itself only where global.tls is set. The same tokens as relay.listen.",
       "command": "casas-eternas start"
     },
     {

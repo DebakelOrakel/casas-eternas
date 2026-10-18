@@ -33,6 +33,7 @@
   "dependencies": {
     "@babylonjs/core": "^9.17.0",
     "@nats-io/jetstream": "^3.4.0",
+    "@nats-io/nats-core": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
     "honeycomb-grid": "^4.1.5",
     "jszip": "^3.10.1"

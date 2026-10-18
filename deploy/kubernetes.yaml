@@ -189,12 +189,22 @@ spec:
             # nobody.
             - name: CASAS_RELAY_LISTEN
               value: 0.0.0.0:4222
+            # The relay's WebSocket listener, for workers outside the
+            # cluster: behind the Ingress at /relay, which ends TLS. The
+            # same tokens as the TCP port (a service account's, traded at
+            # /v1/auth/token). The relay pings every 30 s, so the
+            # Ingress's default timeouts hold without an annotation.
+            - name: CASAS_RELAY_WEBSOCKET
+              value: 0.0.0.0:4223
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
             - name: relay
               containerPort: 4222
+              protocol: TCP
+            - name: relay-ws
+              containerPort: 4223
               protocol: TCP
           # /v1/capabilities rather than "/": it answers only once the modules
           # are mounted, so readiness means "can actually serve", not "has a
@@ -404,11 +414,17 @@ spec:
       targetPort: http
       protocol: TCP
     # The relay, for the job workers: nats://casas-eternas:4222 inside the
-    # namespace. Not on the Ingress — workers are in the cluster, nobody else
-    # speaks NATS to this server.
+    # namespace. Not on the Ingress: workers outside the cluster take the
+    # WebSocket below.
     - name: relay
       port: 4222
       targetPort: relay
+      protocol: TCP
+    # The relay's WebSocket, for workers outside the cluster: the Ingress
+    # sends /relay here (wss://<host>/relay).
+    - name: relay-ws
+      port: 4223
+      targetPort: relay-ws
       protocol: TCP
 ---
 # The way in from outside: the HTTP API, the client and the docs site.
@@ -417,8 +433,9 @@ spec:
 # `letsencrypt-production` ClusterIssuer, into the Secret
 # `casas-eternas-tls` it creates and renews.
 #
-# The relay (NATS) is not here: workers reach it inside the cluster, on the
-# Service's `relay` port.
+# The relay is here only as its WebSocket, at /relay, for workers outside
+# the cluster (wss://<host>/relay); workers inside reach its TCP port on the
+# Service. NATS takes a WebSocket on any path, so nothing is rewritten.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -440,6 +457,13 @@ spec:
     - host: casas-eternas.local
       http:
         paths:
+          - path: /relay
+            pathType: Prefix
+            backend:
+              service:
+                name: casas-eternas
+                port:
+                  name: relay-ws
           - path: /
             pathType: Prefix
             backend:

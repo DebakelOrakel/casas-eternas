@@ -46,6 +46,7 @@ import { cubeTileSamples } from '../src/generator/mesh/meshTileCube'
 import { parentTilesOn, tileGridOn, tileParentOn } from '../src/generator/mesh/tileLayout'
 import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
 import { connect, tokenAuthenticator } from '@nats-io/transport-node'
+import { wsconnect } from '@nats-io/nats-core'
 import { AckPolicy, jetstream, jetstreamManager, type JsMsg } from '@nats-io/jetstream'
 import { createMeshSampler, type MeshSampler } from '../src/generator/mesh/meshSampler'
 import { tileBakeInputs } from '../src/world/bakeInputs'
@@ -833,11 +834,29 @@ async function readTile(store: ArtifactStore, key: ArtifactKey, cache?: JobCache
 // jobs.done.<taskId> before the task is acknowledged — a worker that dies in
 // between leaves the task to another, which is harmless, a task being pure.
 interface ServeConfig {
+  // The relay: `nats://host:port` inside the cluster, or
+  // `wss://host/relay` for a worker outside it (the relay's WebSocket
+  // listener, relay.websocket, behind the ingress).
   relay: string
   pools: string[]
   // The server's base URL, where a worker with a service account trades it
   // for a bus token (`/v1/auth/token`). Needed only with RELAY_CREDENTIALS.
   auth?: string
+  // The server's base URL as this worker reaches it, for a worker outside
+  // the cluster: a task names the world and the artifact store by the
+  // server's address inside it (its pod IP), and the scheme and host of
+  // both are replaced by this one's. Absent for a worker inside.
+  api?: string
+}
+
+// A task's URL at the server's address as this worker reaches it
+// (ServeConfig.api): its scheme and host replaced, its path kept.
+function overApi(url: string, api: string): string {
+  const out = new URL(url)
+  const base = new URL(api)
+  out.protocol = base.protocol
+  out.host = base.host
+  return out.href
 }
 
 // The bus credential (internal/modules/relay checks it where the server
@@ -918,7 +937,10 @@ async function accountName(): Promise<string> {
 
 async function serve(config: ServeConfig): Promise<void> {
   const token = await busToken(config)
-  const nc = await connect({ servers: config.relay, name: 'casas-job-worker', maxReconnectAttempts: -1, authenticator: token ? tokenAuthenticator(token) : undefined })
+  // Over a WebSocket where the relay is named by one (a worker outside the
+  // cluster, through the ingress), else over TCP.
+  const options = { servers: config.relay, name: 'casas-job-worker', maxReconnectAttempts: -1, authenticator: token ? tokenAuthenticator(token) : undefined }
+  const nc = /^wss?:\/\//i.test(config.relay) ? await wsconnect(options) : await connect(options)
   const consumerConfig = {
     durable_name: TASK_CONSUMER,
     ack_policy: AckPolicy.Explicit,
@@ -979,6 +1001,10 @@ async function serve(config: ServeConfig): Promise<void> {
     } catch {
       msg.term()
       continue
+    }
+    if (config.api) {
+      if (job.worldUrl) job.worldUrl = overApi(job.worldUrl, config.api)
+      if (job.artifactsUrl) job.artifactsUrl = overApi(job.artifactsUrl, config.api)
     }
     const taskId = job.taskId ?? ''
     current = { msg, jobId: job.jobId ?? '' }

@@ -651,6 +651,25 @@ joining the bus later would be locked out. Tokens work for the Go server,
 the Node worker and a browser on `nats.ws` alike; a browser would be one
 more grant beside the worker's.
 
+**A worker outside the cluster, BUILT 2026-10-18.** The four things, as
+they came out: the worker token was there already (a service account,
+`auth service add`, traded at `/v1/auth/token`). The relay takes
+WebSockets on `relay.websocket` (port 4223 in the manifests), behind the
+Ingress at `/relay` on the server's own host, so the router's TLS covers
+it and no second host is needed; NATS takes a WebSocket on any path, so
+the Ingress rewrites nothing. The relay pings every 30 s instead of NATS's
+2 min, so an idle worker stays under the routers' default timeout (60 s
+for ingress-nginx) without an annotation, which would hold for every path
+of the one Ingress. The task specs keep the server's address inside the
+cluster; a worker outside sets `api` in its serving configuration, and
+replaces the scheme and host of the world's and the artifact store's URL
+with it: only the worker knows how it reaches the server, and the cluster's
+own workers keep the short way. The worker connects with `wsconnect` where
+its relay URL is `ws://` or `wss://`. Checked with a local server: a
+service account's worker over `ws://…/relay` with `api` set ran a level-1
+task. The guide: docs/operations/kubernetes.md, "Workers outside the
+cluster".
+
 **Step 4, BUILT the same day**: the Kubernetes Job runner is gone — its
 runner, `job.yaml`, the Job calls of the cluster client, the
 `POST /v1/jobs/{id}/progress` route a Job reported through, the spec's

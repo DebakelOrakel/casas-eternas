@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-18
+- **new** Jobs: a worker outside the cluster joins over a WebSocket at `/relay` on the server's own host. `relay.websocket`
+
 ## 2026-10-17
 - **new** Sphere worlds: the finishing step refines a sphere world into level 1 and its tiles, on a cube's faces. `generator.finishing`
 - **changed** Worlds: a world records the pipeline that made it, and is made again only when the pipeline changed, not on every code change; a refine of level 1 replays the history once. `generator.finishing`

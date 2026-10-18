@@ -85,9 +85,9 @@ never fewer than are running; when every job is through, zero. It needs
 `list` on Deployments and `get`/`update` on `deployments/scale` in the
 namespace (the Role in the manifests).
 
-The workers reach the server inside the namespace only: the relay (NATS) on
-the Service's `relay` port 4222, not on the Ingress, and the server's HTTP
-API for their tasks. They prove themselves with a **service account** of
+The workers in the cluster reach the server inside the namespace: the
+relay (NATS) on the Service's `relay` port 4222, and the server's HTTP API
+for their tasks. They prove themselves with a **service account** of
 the server's auth system, which they trade for a bus token valid for an
 hour. Create it once, after the first start:
 
@@ -101,6 +101,28 @@ The credential is shown once. To replace it: `auth service rotate
 cluster-workers`, then the Secret; the workers read the file again at
 every trade and need no restart. `auth service delete` ends an account; the
 tokens it bought run out within the hour.
+
+## Workers outside the cluster
+
+A worker on another machine reaches the relay through the Ingress: the
+server's relay listens for WebSockets on port 4223 (`relay.websocket`), and
+the Ingress sends `/relay` there, with the TLS of the server's own host. The
+relay pings every 30 s, so the Ingress's default timeouts hold without an
+annotation. Give the worker a service account of its own (`auth service
+add <name>`, as above), so it can be told apart and ended alone, and start
+the worker bundle with its address and the server's:
+
+```
+RELAY_CREDENTIALS=./credentials node job-worker.mjs --serve \
+  '{"relay":"wss://casas-eternas.ahoi.sh/relay","pools":["level","tile"],"auth":"https://casas-eternas.ahoi.sh","api":"https://casas-eternas.ahoi.sh"}'
+```
+
+`auth` is where it trades its credential for a bus token; `api` is the
+server as this worker reaches it. A task names the world and the artifact
+store at the server's address inside the cluster (its pod IP); the worker
+replaces the scheme and host of both with `api`'s. Its artifacts go to the
+bucket the server signs links for, so the bucket's endpoint must be one the
+worker can reach.
 
 ## Updating
 

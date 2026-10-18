@@ -261,3 +261,52 @@ func TestRelayOnLoopbackStartsWithoutWarning(t *testing.T) {
 		t.Errorf("a loopback relay warned: %s", buf)
 	}
 }
+
+// The WebSocket listener (relay.websocket) admits a worker by the same token
+// as the TCP port, on any path (the ingress forwards /relay unchanged), and
+// refuses a client without one.
+func TestRelayTakesWorkersOverWebSocket(t *testing.T) {
+	tokens, err := token.NewTokens([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := free.Addr().String()
+	free.Close()
+	cfg := relayConfig(t.TempDir(), "127.0.0.1:-1")
+	cfg.All.Relay.WebSocket = address
+	cfg.Tokens = tokens
+	cfg.Grants = map[string]busrelay.Grant{token.SubjectWorker: {Publish: []string{"jobs.done.>"}, Subscribe: []string{"_INBOX.>"}}}
+	m, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	worker, _, err := tokens.IssueRelay(token.WorkerSubject("a1"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := nats.Connect("ws://"+address+"/relay", nats.Token(worker))
+	if err != nil {
+		t.Fatalf("a worker over the WebSocket: %v", err)
+	}
+	if err := conn.Publish("jobs.done.x", []byte("ok")); err != nil {
+		t.Errorf("publish: %v", err)
+	}
+	conn.Close()
+	if conn, err := nats.Connect("ws://"+address+"/relay", nats.MaxReconnects(0)); err == nil {
+		conn.Close()
+		t.Error("no token: connected")
+	}
+}
+
+func TestRelayRefusesABadWebSocketAddress(t *testing.T) {
+	cfg := relayConfig(t.TempDir(), "127.0.0.1:-1")
+	cfg.All.Relay.WebSocket = "nowhere"
+	if _, err := New(cfg); err == nil || !strings.Contains(err.Error(), "relay.websocket") {
+		t.Errorf("err = %v", err)
+	}
+}

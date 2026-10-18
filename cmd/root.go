@@ -58,6 +58,7 @@ const (
 	keyJobsDir      = "jobs.state-dir"
 	keyRelayDir     = "relay.state-dir"
 	keyRelayAddr    = "relay.listen"
+	keyRelayWS      = "relay.websocket"
 )
 
 // The s3 blocks' keys (DEC-0038, fork 3): file keys and CASAS_* variables,
@@ -133,6 +134,7 @@ const (
 	textJobsDir      = `The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.`
 	textRelayDir     = `The directory of the relay's message store (JetStream).`
 	textRelayAddr    = `Address the relay accepts worker connections on, as host:port. The default keeps it on this machine. Where global.auth.mode checks identity, the relay admits only this server's own tokens, so it may listen beyond the machine; in mode none it checks nobody.`
+	textRelayWS      = `Address the relay accepts WebSocket connections on, as host:port, for workers outside the cluster; empty turns it off. Meant behind the ingress, which ends TLS: the relay speaks TLS on it itself only where global.tls is set. The same tokens as relay.listen.`
 )
 
 // RootCmd represents the base command when called without any subcommands
@@ -216,6 +218,7 @@ func init() {
 	StartCmd.Flags().String(keyJobsDir, "./data/jobs", textJobsDir)
 	StartCmd.Flags().String(keyRelayDir, "./data/relay", textRelayDir)
 	StartCmd.Flags().String(keyRelayAddr, "127.0.0.1:4222", textRelayAddr)
+	StartCmd.Flags().String(keyRelayWS, "", textRelayWS)
 
 	bindings := map[string]*cobra.Command{
 		flagConfig: RootCmd,
@@ -229,7 +232,7 @@ func init() {
 		keyArtsType: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
 		keyArtsReadTTL: StartCmd, keyArtsWriteTTL: StartCmd, keyArtsLinkKey: StartCmd, keyArtsLinkOld: StartCmd,
 		keyClientDir: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsDir: StartCmd,
-		keySvcRelay: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyJobsDir: StartCmd,
+		keySvcRelay: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyRelayWS: StartCmd, keyJobsDir: StartCmd,
 	}
 	for key, cmd := range bindings {
 		flags := cmd.Flags()

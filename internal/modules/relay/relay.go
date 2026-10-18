@@ -97,6 +97,12 @@ func New(cfg Config) (*Module, error) {
 	// (2026-10-01). 8 MB is NATS's own recommended ceiling; bulk bytes
 	// (worlds, artifacts) stay HTTP.
 	const maxPayload = 8 << 20
+	// The server pings every client this often. A WebSocket client passes
+	// a router (ingress-nginx, OpenShift's HAProxy) that cuts a connection
+	// silent for 60 s by default; NATS's own default of 2 min would let an
+	// idle worker be cut, so the traffic in both directions stays under it
+	// without an annotation that would hold for every path of the ingress.
+	const pingInterval = 30 * time.Second
 	opts := &natsserver.Options{
 		ServerName: "casas-relay",
 		Host:       host,
@@ -106,8 +112,16 @@ func New(cfg Config) (*Module, error) {
 		MaxPayload: maxPayload,
 		// The process owns signals and logging; the server says what goes
 		// wrong through its errors and its readiness, nothing on its own.
-		NoSigs: true,
-		NoLog:  true,
+		NoSigs:       true,
+		NoLog:        true,
+		PingInterval: pingInterval,
+	}
+	if section.WebSocket != "" {
+		ws, err := websocketOptions(section.WebSocket, cfg.All.Global.TLS.Cert, cfg.All.Global.TLS.Key)
+		if err != nil {
+			return nil, err
+		}
+		opts.Websocket = ws
 	}
 	if cfg.Tokens != nil {
 		opts.CustomClientAuthentication = tokenAuth{tokens: cfg.Tokens, grants: cfg.Grants}
@@ -121,9 +135,43 @@ func New(cfg Config) (*Module, error) {
 		server.Shutdown()
 		return nil, errors.New("relay: the server did not accept connections in time")
 	}
-	slog.Info("relay ready", "listen", server.ClientURL(), "store", section.StateDir, "checks tokens", cfg.Tokens != nil)
+	slog.Info("relay ready", "listen", server.ClientURL(), "websocket", section.WebSocket, "store", section.StateDir, "checks tokens", cfg.Tokens != nil)
 	warnIfExposed(section.Listen)
 	return &Module{server: server, listen: server.ClientURL()}, nil
+}
+
+// websocketOptions is the WebSocket listener at `listen` (relay.websocket),
+// for workers outside the cluster (docs/decisions/detail-ladder.md, "a
+// worker outside the cluster"). It sits behind the ingress on a path of
+// the server's own host (`/relay`): NATS takes a WebSocket on any path, so
+// the ingress rewrites nothing. TLS ends at the ingress, so the listener is
+// plain — unless global.tls is set (a server without an ingress), then it
+// speaks TLS with the same certificate. The clients prove themselves with
+// the same tokens as on relay.listen (tokenAuth).
+func websocketOptions(listen, certFile, keyFile string) (natsserver.WebsocketOpts, error) {
+	host, portText, err := net.SplitHostPort(listen)
+	if err != nil {
+		return natsserver.WebsocketOpts{}, fmt.Errorf("relay.websocket %q: %w", listen, err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port <= 0 {
+		return natsserver.WebsocketOpts{}, fmt.Errorf("relay.websocket %q: port must be a number above 0", listen)
+	}
+	probe, err := net.Listen("tcp", listen)
+	if err != nil {
+		return natsserver.WebsocketOpts{}, fmt.Errorf("relay.websocket %q: %w", listen, err)
+	}
+	probe.Close()
+	ws := natsserver.WebsocketOpts{Host: host, Port: port, NoTLS: true}
+	if certFile != "" && keyFile != "" {
+		tlsConfig, err := natsserver.GenTLSConfig(&natsserver.TLSConfigOpts{CertFile: certFile, KeyFile: keyFile})
+		if err != nil {
+			return natsserver.WebsocketOpts{}, fmt.Errorf("relay.websocket: global.tls: %w", err)
+		}
+		ws.TLSConfig = tlsConfig
+		ws.NoTLS = false
+	}
+	return ws, nil
 }
 
 // warnIfExposed warns, once at start, when the bus listens on more than

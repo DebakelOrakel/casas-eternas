@@ -279,6 +279,9 @@ type DocsConfig struct {
 type RelayConfig struct {
 	StateDir string `mapstructure:"state-dir"`
 	Listen   string `mapstructure:"listen"`
+	// WebSocket is the address of the WebSocket listener, for workers
+	// outside the cluster (behind the ingress); empty for none.
+	WebSocket string `mapstructure:"websocket"`
 }
 
 // AuthConfig is the auth SUBSYSTEM's own section — state only the process

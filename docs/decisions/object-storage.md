@@ -747,4 +747,5 @@ task message is the server's internal one (`127.0.0.1` for a local
 worker, the pod IP in a cluster), so a worker on another host would get an
 address it cannot reach. Both belong to "a worker outside the cluster"
 ([detail-ladder.md](detail-ladder.md), the open part on workers outside
-the cluster). Not built.
+the cluster). Built 2026-10-18 behind the Ingress at `/relay`, TLS from
+the router (detail-ladder.md, "A worker outside the cluster").
