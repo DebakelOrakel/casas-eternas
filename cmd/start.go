@@ -383,7 +383,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 	inCluster := jobs.InCluster()
 	selfURL := serverBaseURL(cfg.Global.Listen)
 	if inCluster && selfURL == "" {
-		return jobs.Config{}, nil, fmt.Errorf("CASAS_POD_IP is not set: a job worker reaches this server by its pod IP (deploy/manifests.yaml wires it)")
+		return jobs.Config{}, nil, fmt.Errorf("CASAS_POD_IP is not set: a job worker reaches this server by its pod IP (the chart, deploy/helm, wires it)")
 	}
 	// The local workers' way to this server's API (localWorkerAPI), opened
 	// once for both stores that may need it. Closed again when a later step

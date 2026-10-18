@@ -24,8 +24,8 @@ related: [DEC-0021, DEC-0023]
 ---
 
 The server runs on three shapes: a plain machine (one binary, files beside
-it), Kubernetes all-in-one (today's [deploy/manifests.yaml](../../deploy/manifests.yaml),
-OpenShift), and the split-target deployment the module system was built for.
+it), Kubernetes all-in-one (the Helm chart's default, [deploy/helm](../../deploy/helm),
+OpenShift or plain Kubernetes), and the split-target deployment the module system was built for.
 This doc maps every small file the server touches onto those shapes. The
 sorting question for each file is not "where is it convenient" but **what
 genre is it** — configuration flows operator → process one way; secrets are
@@ -150,4 +150,6 @@ under `auth.state-dir`; built.
 agreed, built and made true in one day (2026-08-13,
 decisions/server-user-admin.md): auth target, admin socket and `auth user`
 CLI exist, htpasswd is gone, and every row of the map behaves identically on
-a plain machine and on the cluster. deploy/manifests.yaml matches.
+a plain machine and on the cluster. deploy/manifests.yaml matched; since
+2026-10-18 the deployment is the Helm chart (decisions/helm-chart.md),
+which derives the split's wiring from its components.

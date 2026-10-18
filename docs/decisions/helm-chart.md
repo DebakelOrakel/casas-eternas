@@ -329,3 +329,9 @@ Not checked in a cluster yet; the monolith default renders the objects
 of `deploy/manifests.yaml`, with the chart's names and labels (the worker
 Deployment keeps `casas-eternas/component: worker`, which the scaler finds
 it by, so one release per namespace).
+
+2026-10-18: `deploy/manifests.yaml` and `deploy/kubernetes.yaml` are
+removed. Two hand-kept copies of the same deployment drifted with every
+change (the relay's WebSocket, the scaler's switch); the chart is the one
+deployment now, and docs/operations/kubernetes.md describes it, with the
+one-time move from the manifests' object names.

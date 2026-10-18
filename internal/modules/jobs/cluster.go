@@ -176,7 +176,7 @@ func apiError(action string, status int, raw []byte) error {
 	return fmt.Errorf("%s: HTTP %d", action, status)
 }
 
-// The worker Deployment (deploy/manifests.yaml): found by its label, scaled
+// The worker Deployment (deploy/helm, templates/workers.yaml): found by its label, scaled
 // through its scale subresource. Three more verbs on one more resource —
 // still well inside what a hand-rolled client is for (see the top of this
 // file).

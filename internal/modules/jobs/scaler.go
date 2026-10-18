@@ -9,7 +9,7 @@ import (
 
 // THE WORKER SCALER (docs/decisions/detail-ladder.md, addendum 2026-10-03):
 // in a cluster the coordinator's workers are a Deployment
-// (deploy/manifests.yaml, `casas-eternas/component: worker`), and this
+// (deploy/helm, `casas-eternas/component: worker`), and this
 // module sets its replicas — not KEDA, because the coordinator knows the
 // plan, not only a queue, and the jobs target stays able to run alone.
 //

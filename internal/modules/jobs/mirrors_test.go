@@ -9,8 +9,8 @@ import (
 
 // Two numbers in this package are copies of numbers that live elsewhere and
 // cannot be imported: the erosion rounds mirror a TypeScript constant, the
-// Node heap ceiling is repeated on the worker Deployment's command line
-// (deploy/manifests.yaml) and in the chart's values (deploy/helm). Their
+// Node heap ceiling is repeated in the chart's values (deploy/helm), which
+// put it on the worker Deployment's command line. Their
 // comments say "change the two together"; this test is what makes that
 // true rather than hoped for.
 
@@ -38,13 +38,6 @@ func TestErosionRoundsMirrorTheClient(t *testing.T) {
 }
 
 func TestNodeHeapMirrorsTheWorkerDeployment(t *testing.T) {
-	manifests, err := os.ReadFile("../../../deploy/manifests.yaml")
-	if err != nil {
-		t.Skipf("the manifests not beside the server: %v", err)
-	}
-	if got := mirrored(t, string(manifests), `--max-old-space-size=(\d+)`); got != nodeHeapMB {
-		t.Errorf("deploy/manifests.yaml --max-old-space-size=%d, nodeHeapMB = %d", got, nodeHeapMB)
-	}
 	values, err := os.ReadFile("../../../deploy/helm/values.yaml")
 	if err != nil {
 		t.Skipf("the chart not beside the server: %v", err)

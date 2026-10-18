@@ -42,7 +42,7 @@ const defaultErosionRounds = 12
 // nodeHeapMB is what the baker's Node process is allowed. Sized for the 8192²
 // measurement (~2.6 GB) with headroom, since running out mid-bake wastes the
 // minutes already spent. The worker Deployment pins the same number by hand
-// on its command line (deploy/manifests.yaml) — change the two together;
+// in the chart (deploy/helm/values.yaml, workers.heapMB) — change the two together;
 // mirrors_test.go fails when they differ.
 //
 // IT DOES NOT BOUND THIS WORKLOAD, and that is worth knowing before anyone
@@ -185,7 +185,7 @@ func New(cfg Config) (*Module, error) {
 		// means the composition is wrong, and finding out here beats a task
 		// going out with an empty fetch address.
 		if cfg.WorldsURL == "" {
-			return nil, fmt.Errorf("jobs in a cluster need WorldsURL; is CASAS_POD_IP set? (deploy/manifests.yaml wires it)")
+			return nil, fmt.Errorf("jobs in a cluster need WorldsURL; is CASAS_POD_IP set? (the chart, deploy/helm, wires it)")
 		}
 	} else {
 		workerPath, err = workerBundle(cfg.WorkerPath)

@@ -1,9 +1,9 @@
 # deploy/
 
 **The operating documentation lives in [docs/operations/](../docs/operations/)**
-(rendered on the doc site under Operations): what the manifests set up,
-the Secret, bootstrapping users over the admin socket, bakes as Jobs and
-the run-once deadline trap are all in
+(rendered on the doc site under Operations): what the chart sets up,
+the Secrets, bootstrapping users over the admin socket and the job
+workers are all in
 [kubernetes.md](../docs/operations/kubernetes.md); the container without a
 cluster is [docker.md](../docs/operations/docker.md). This file only says
 what the files here are.
@@ -14,19 +14,10 @@ login. It carries Node because the bake pipeline is the browser's own
 TypeScript; see the file's own header for why that is one image and not
 two.
 
-`manifests.yaml` — ServiceAccount + RBAC (the worker scale),
-PVC, Secret, the server's and the workers' Deployments, Service, and an
-Ingress with a cert-manager certificate (ClusterIssuer
-`letsencrypt-production`). The reference deployment the guide walks
-through.
-
-`kubernetes.yaml` — the same for plain Kubernetes: the pods set
-`runAsUser`/`fsGroup` themselves, and the Ingress is for ingress-nginx
-instead of an OpenShift Route. Keep it in step with `manifests.yaml`.
-
-`helm/` — the Helm chart: the same deployment as components of targets
-(the monolith by default) and the workers beside them, for OpenShift or
-plain Kubernetes; `helm/examples/` holds other shapes. Why it is built as
+`helm/` — the Helm chart, the cluster deployment: components of targets
+(the monolith by default) and the job workers beside them, for OpenShift
+or plain Kubernetes; `helm/examples/` holds other shapes. It replaced the
+hand-kept `manifests.yaml` and `kubernetes.yaml` (2026-10-18). Why it is built as
 it is: [decisions/helm-chart.md](../docs/decisions/helm-chart.md).
 
 `nginx.conf` — **unused.** Left until the one-binary image has been

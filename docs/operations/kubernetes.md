@@ -1,68 +1,65 @@
 ---
-summary: The cluster deployment (OpenShift) — what the manifests set up, the one Secret, bootstrapping users over pod exec, the job workers the server scales and their service account, and the ingress.
+summary: The cluster deployment with the Helm chart — what it sets up, the Secrets, bootstrapping users over pod exec, the job workers the server scales and their service account, workers outside the cluster, and the ingress.
 date: 2026-08-13
-updated: 2026-10-03
+updated: 2026-10-18
 group: installation
 order: 40
 ---
 
 # Kubernetes
 
-`deploy/manifests.yaml` is the reference deployment, written for
-OpenShift and applied with `kubectl`. The pods set no `runAsUser` and no
-`fsGroup`: OpenShift's `restricted-v2` policy gives each pod a UID from the
-namespace's range and makes the volumes writable for it, and the image is
-built for an arbitrary UID. On plain Kubernetes that is not done for you —
-a fresh volume stays root's (`mkdir /data/auth: permission denied`) until
-the pods get a `securityContext` with `runAsUser` and `fsGroup`. It creates:
+`deploy/helm` is the deployment, a Helm chart for OpenShift and plain
+Kubernetes ([decisions/helm-chart.md](../decisions/helm-chart.md)). By
+default it runs everything in one pod (the component `server`, target
+`all`) and the job workers beside it. It creates:
 
-- a **ServiceAccount + Role/RoleBinding** — the server scales its job
-  workers beside itself, so it needs `list` on Deployments and
-  `get`/`update` on `deployments/scale` in its own namespace and nothing
-  anywhere else,
-- a **PersistentVolumeClaim** (`/data`) — worlds, artifacts and the user
-  store share it while everything runs in one pod,
-- a **Secret** (`casas-eternas-auth`) — applied empty; holds the one
-  value that must not be in git (below),
-- the **Deployment** (replicas 1 — the stores' concurrency model is one
-  process per directory), the job workers' Deployment, the **Service** and
-  an **Ingress**.
+- a **ServiceAccount + Role/RoleBinding** for the component that runs the
+  jobs: the server scales its workers beside itself, so it needs `list` on
+  Deployments and `get`/`update` on `deployments/scale` in its own
+  namespace and nothing anywhere else;
+- a **PersistentVolumeClaim** (`/data`) per component that keeps state:
+  the user store, the jobs, the relay's queue, and the worlds and artifacts
+  while they are on the `dir` backend;
+- per component a **Deployment** (replicas 1 where it keeps state: the
+  stores' concurrency model is one process per directory) and a
+  **Service**; the workers' Deployment; one **ConfigMap** (`casas.yaml`)
+  and one **Ingress**.
 
-OpenShift turns the Ingress into a Route by itself; its
-`route.openshift.io/*` annotations make that Route end TLS at the router
-and redirect HTTP to HTTPS. The certificate is Let's Encrypt, issued and
-renewed by cert-manager through the ClusterIssuer `letsencrypt-production`
-(Secret `casas-eternas-tls`); pods speak HTTP. **Set the host** in the
-Ingress (twice: the rule and the TLS entry) before the first apply.
-Uploads are worlds of tens of megabytes — on another controller, one with a
-body limit must allow them (ingress-nginx:
-`nginx.ingress.kubernetes.io/proxy-body-size: "0"`).
-
-## With Helm
-
-`deploy/helm` deploys the same, from one values file
-([decisions/helm-chart.md](../decisions/helm-chart.md)):
+It does not create the Secrets (below), unless told to.
 
 ```
-helm install casas deploy/helm --namespace casas \
-  --set platform=openshift --set ingress.host=casas-eternas.ahoi.sh \
-  --set ingress.tls.secretName=casas-eternas-tls
+helm install casas-eternas deploy/helm --namespace casas \
+  --set platform=openshift \
+  --set ingress.host=casas-eternas.ahoi.sh \
+  --set ingress.tls.secretName=casas-eternas-tls \
+  --set ingress.annotations.cert-manager\.io/cluster-issuer=letsencrypt-production
 ```
 
-- **`platform`** is `auto` by default, and asks the cluster; set it where
-  the chart is rendered without one (`helm template`, a GitOps tool). On
-  `kubernetes` the pods get UID, GID and `fsGroup` 1001.
-- **`config`** is the `casas.yaml`, in the server's own vocabulary. The
-  chart sets the directories, the relay's listeners, the peers' addresses
-  and the secrets' files itself.
-- **`secrets`** names the Secrets by role (session key, s3 keys, link
-  keys, the workers' credential); the chart mounts each where its targets
-  run. Make them as below; the chart does not, unless told to.
-- **`components`** is one `server` with `all` by default; other shapes are
-  in `deploy/helm/examples/`. Helm merges maps, so a values file with
-  components of its own sets `components.server: null`.
-- **`workers`** are scaled by the server up to `config.jobs.max-concurrent`;
-  `workers.enabled: false` leaves only workers from outside.
+- **`platform`**: `auto` asks the cluster for OpenShift's Route API; set
+  it where the chart is rendered without a cluster (`helm template`, a
+  GitOps tool). On `openshift` the pods set no UID (the `restricted-v2`
+  policy gives each pod one from the namespace's range, and the image is
+  built for an arbitrary UID), and the Ingress gets the annotations that
+  make OpenShift's Route end TLS at the router and redirect HTTP to HTTPS.
+  On `kubernetes` the pods run as UID, GID and `fsGroup` 1001, or a fresh
+  volume stays root's (`mkdir /data/auth: permission denied`).
+- **`config`** is the `casas.yaml`, in the server's own vocabulary (a key
+  is the flag name is the `CASAS_*` variable). Its `global.auth.mode:
+  password` is what makes the server an authenticated one; the compiled
+  default is `none`, an open server. The chart sets the directories, the
+  relay's listeners, the peers' addresses and the secrets' files itself.
+- **`secrets`** names the Secrets by role; the chart mounts each where its
+  targets run and sets the config key to the file.
+- **`components`**: other shapes are in `deploy/helm/examples/`. Helm
+  merges maps, so a values file with components of its own sets
+  `components.server: null`. What today's server lets a browser use is
+  limited (decisions/helm-chart.md, Status).
+- **`workers`** are scaled by the server up to `config.jobs.max-concurrent`.
+- **`ingress`**: one host. The certificate is the controller's business
+  (above: cert-manager, ClusterIssuer `letsencrypt-production`, into the
+  Secret `casas-eternas-tls`); pods speak HTTP. Uploads are worlds of tens
+  of megabytes: a controller with a body limit must allow them
+  (ingress-nginx: `nginx.ingress.kubernetes.io/proxy-body-size: "0"`).
 
 The scaler finds the worker Deployment by its label in the namespace: one
 release per namespace.
@@ -70,58 +67,51 @@ release per namespace.
 ## First run
 
 ```
-kubectl apply -f deploy/manifests.yaml
-
 # the key session tokens are signed with — generated once and KEPT:
 # without it every restart ends every session
 kubectl create secret generic casas-eternas-auth \
-  --from-literal=session.key="$(openssl rand -base64 48)" \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
+  --from-literal=session.key="$(openssl rand -base64 48)"
 
-The Deployment sets `CASAS_GLOBAL_AUTH_MODE=password` explicitly. The
-compiled default is `none` (the local mode) — that env line is what makes
-this an authenticated server; guard it like the Secret.
+helm install casas-eternas deploy/helm --namespace casas …
+```
 
 Users are **state, not configuration**: they live in `auth.db` on the
-data volume and are administered over the pod's admin socket
-(`CASAS_GLOBAL_ADMIN_SOCKET=/tmp/admin.sock` in the Deployment). Reaching
-the socket requires `pods/exec` — that RBAC is the whole authorization:
+data volume and are administered over the admin socket of the component
+that runs `auth` (`global.admin.socket: /tmp/admin.sock`). Reaching the
+socket requires `pods/exec` — that RBAC is the whole authorization:
 
 ```
-echo -n 'the-password' | kubectl exec -i deploy/casas-eternas -- \
+echo -n 'the-password' | kubectl exec -i deploy/casas-eternas-server -- \
   /app/casas-eternas auth user add ada --password-stdin
-kubectl exec deploy/casas-eternas -- /app/casas-eternas auth role bind ada admin
+kubectl exec deploy/casas-eternas-server -- /app/casas-eternas auth role bind ada admin
 ```
 
 No flags needed: the exec session inherits the pod's environment, and the
 socket path is absolute. `auth user list|passwd|delete` and
 `auth role bind|list` manage everything from there — effective
 immediately, except the admin role, which lands in the token at the
-member's next login.
+member's next login. The chart's notes after an install name the
+Deployment to exec into.
 
 ## Job workers
 
-The refinement's workers are their own Deployment, `casas-eternas-worker`,
-shipped at `replicas: 0`: the jobs server scales it up when tasks wait and
+The refinement's workers are their own Deployment,
+`casas-eternas-worker`: the jobs server scales it up when tasks wait and
 back to zero when every job is through, finding it by the label
-`casas-eternas/component: worker`. Do not set its replicas by hand; an
-`kubectl apply` of the manifests puts it back to 0, which stops a running
-refinement's workers until the server scales them up again (the tasks are
-handed out again, so only time is lost). While any job is open the server
-keeps as many workers as there are tasks, up to `jobs.max-concurrent`, and
-never fewer than are running; when every job is through, zero. It needs
-`list` on Deployments and `get`/`update` on `deployments/scale` in the
-namespace (the Role in the manifests).
+`casas-eternas/component: worker`. Do not set its replicas by hand. The
+chart leaves `replicas` out of it, so an upgrade keeps the scaler's number;
+on the first install one worker starts until the scaler sets it to zero.
+While any job is open the server keeps as many workers as there are tasks,
+up to `jobs.max-concurrent`, and never fewer than are running.
 
 The workers in the cluster reach the server inside the namespace: the
-relay (NATS) on the Service's `relay` port 4222, and the server's HTTP API
-for their tasks. They prove themselves with a **service account** of
-the server's auth system, which they trade for a bus token valid for an
-hour. Create it once, after the first start:
+relay (NATS) on its Service's port 4222, and the server's HTTP API for
+their tasks. They prove themselves with a **service account** of the
+server's auth system, which they trade for a bus token valid for an hour.
+Create it once, after the first start:
 
 ```
-kubectl exec deploy/casas-eternas -- /app/casas-eternas auth service add cluster-workers > credentials
+kubectl exec deploy/casas-eternas-server -- /app/casas-eternas auth service add cluster-workers > credentials
 kubectl create secret generic casas-eternas-worker --from-file=credentials
 rm credentials
 ```
@@ -154,26 +144,35 @@ bucket the server signs links for, so the bucket's endpoint must be one the
 worker can reach.
 
 A server whose workers all join from outside has no worker Deployment:
-set `jobs.scale-workers: false` (`CASAS_JOBS_SCALE_WORKERS=false`), and
-it starts no scaler and needs no Role on Deployments.
+`workers.enabled: false`. The chart then sets `jobs.scale-workers: false`,
+so the server starts no scaler, and grants no Role on Deployments.
 
 ## Updating
 
-**Once, for a server deployed before the worker Deployment (2026-10-03):**
-the server's pods are labelled `casas-eternas/component: server` now, and
-a Deployment's selector cannot change in place. `kubectl delete deploy/casas-eternas`
-before the apply; the data volume and the Secrets stay.
+Push the image, then `helm upgrade` — chart and image travel together,
+because the env vocabulary and the binary must agree (an old binary
+silently ignores env names it does not know).
 
-Push the image, then `kubectl apply -f deploy/manifests.yaml` and a rollout —
-manifests and image travel together, because the env vocabulary and the
-binary must agree (an old binary silently ignores env names it does not
-know).
+**Once, from the manifests that were here until 2026-10-18**
+(`deploy/manifests.yaml`): the chart names its objects after the release
+and its components. Keep the data volume and the Secrets, remove the rest,
+and point the chart at the old claim:
+
+```
+kubectl delete deploy/casas-eternas deploy/casas-eternas-worker \
+  service/casas-eternas ingress/casas-eternas \
+  role/casas-eternas-jobs rolebinding/casas-eternas-jobs serviceaccount/casas-eternas
+helm install casas-eternas deploy/helm --namespace casas … \
+  --set components.server.persistence.existingClaim=casas-eternas-data
+```
+
+The Secrets `casas-eternas-auth` and `casas-eternas-worker` are the
+chart's default names and stay as they are.
 
 ## Splitting targets
 
-Every target runs alone; a split deployment is several Deployments of the
-same image with different `CASAS_TARGET`, one store directory each, the
-shared session-key Secret everywhere, and the auth target as the one
-process holding login and the user store. The reference manifests
-deliberately stay all-in-one; the map of what goes where is
+Every target runs alone; with the chart a split is a set of components,
+each one Deployment of the same image running its targets
+(`deploy/helm/examples/split.yaml`). The chart derives the wiring between
+them and refuses what cannot run; the map of what goes where is
 [design/server-deployment.md](../design/server-deployment.md).

@@ -5,6 +5,7 @@ the format.
 
 ## 2026-10-18
 - **new** Deploy: a Helm chart deploys the server as one or several components and its workers, on OpenShift or plain Kubernetes. `deploy/helm`
+- **changed** Deploy: the Helm chart is the only cluster deployment; the hand-kept manifests are gone. `deploy/helm`
 - **new** Jobs: a worker outside the cluster joins over a WebSocket at `/relay` on the server's own host. `relay.websocket`
 - **new** Jobs: a server in a cluster can leave its workers unscaled, for workers that all join from outside. `jobs.scale-workers`
 
