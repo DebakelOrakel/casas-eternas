@@ -58,7 +58,7 @@ import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ELEVATION_ENCODING, decodeLayer } from '../../world/save/worldLayers'
-import { readField, readMeshEpochFiles, readRefined, refuseFormerRasters, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
+import { readField, readMeshEpochFiles, readRefined, refuseFormerRasters, withWorldYaml, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
 import { refinementFits, type RefinedClimate } from '../../generator/climate/refinement'
 import type { RefinedClimateChart } from '../../generator/climate/climateChart'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
@@ -4991,8 +4991,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   root.addEventListener('input', () => updateSaveIndicator())
 
   // world.yaml, from the world as a record (world/worldRecord.ts).
-  function buildWorldYaml(): string {
-    return recordToYaml(currentRecord(), BUILD_VERSION)
+  function buildWorldYaml(terrain = ''): string {
+    return recordToYaml(currentRecord(), BUILD_VERSION, terrain)
   }
 
   // Refresh every slider's readout label from its input value — used after a
@@ -5051,14 +5051,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     savedWorldIdGeneration++
     savedWorldId = null
   }
-  async function noteSavedWorldId(archive: Blob): Promise<void> {
+  // The terrain id of an archive just written, through the reader; null when
+  // it cannot be read. Noted as the saved one unless a world was opened or
+  // regenerated meanwhile.
+  async function noteSavedWorldId(archive: ArrayBuffer | Uint8Array): Promise<string | null> {
     const generation = ++savedWorldIdGeneration
-    const world = await openWorld(await archive.arrayBuffer())
-    const id = world ? await world.worldId() : null
-    if (generation !== savedWorldIdGeneration) return
+    const world = await openWorld(archive)
+    const id = world ? await world.worldId().catch(() => null) : null
+    if (generation !== savedWorldIdGeneration) return id
     savedWorldId = id
     // The finishing step judged the levels without it.
     if (STEP_IDS[panelIndex] === 'finishing') void refreshFinishing()
+    return id
   }
 
   async function deliverArchive(blob: Blob, filename: string): Promise<void> {
@@ -5071,6 +5075,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         savedAt: new Date().toISOString(),
         generator: BUILD_VERSION,
         pipeline: worldPipeline,
+        terrain: savedWorldId ?? '',
         kind: worldShape === 'sphere' ? 'SphereWorld' : 'FlatWorld',
         progress: worldProgress,
       }, await makePreviewBlob())
@@ -5182,10 +5187,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         },
         preview: await makePreviewBlob(),
       }
-    const blob = new Blob([await writeWorldArchive(parts)], { type: 'application/zip' })
-    // The terrain id of what was just written, for the artifacts; an Archean
-    // world has none (it hashes the world's terrain mesh).
-    if (!message.archean) void noteSavedWorldId(blob)
+    let written = await writeWorldArchive(parts)
+    // The terrain id of what was just written, for the artifacts, and into
+    // its world.yaml (status.terrain), so the world list finds its levels
+    // on the server. Read back through the reader, so it is the key a bake
+    // of this save files its artifacts under; world.yaml is not hashed, so
+    // writing it in does not move the id. An Archean world has none (it
+    // hashes the world's terrain mesh).
+    if (!message.archean) {
+      const terrain = await noteSavedWorldId(written)
+      if (terrain) written = await withWorldYaml(written, buildWorldYaml(terrain))
+    }
+    const blob = new Blob([written], { type: 'application/zip' })
     const safeName = (worldName || seedInput.value || 'world').replace(/[^a-zA-Z0-9_-]/g, '_')
     await deliverArchive(blob, `${safeName}.zip`)
   }
@@ -5644,7 +5657,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // A replay still running for the previous world stops in the worker.
     replaying = null
     replayedHistory = null
-    void noteSavedWorldId(file)
+    void file.arrayBuffer().then(noteSavedWorldId)
 
     // The world's record from the file (world/worldRecord.ts); the
     // tectonics' epoch arrives with the restore render (lastEpoch).

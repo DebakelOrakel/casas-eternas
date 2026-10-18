@@ -125,7 +125,7 @@ func storedUnder(t *testing.T, s *Store, prefix string) int {
 // DEFLATE-compressed, so its payload does not appear literally in the file.
 func putSave(t *testing.T, s *Store, uid string, body string, expected int) (Meta, []byte, error) {
 	t.Helper()
-	yaml := "kind: SphereWorld\nmetadata:\n  name: alpha\n  uid: " + uid + "\nspec:\n  seed: alpha-seed\nstatus:\n  erosionRun: 2\n  revision: 1\n  generator: test-build\n  pipeline: v11-test\n  progress: climate\n"
+	yaml := "kind: SphereWorld\nmetadata:\n  name: alpha\n  uid: " + uid + "\nspec:\n  seed: alpha-seed\nstatus:\n  erosionRun: 2\n  revision: 1\n  generator: test-build\n  pipeline: v11-test\n  terrain: 0123456789abcdef\n  progress: climate\n"
 	data := buildSave(t, yaml, []byte("PNG-"+body), map[string][]byte{"payload": []byte(body)})
 	info, err := inspectSave(data)
 	if err != nil {
@@ -149,8 +149,8 @@ func TestPutThenReadRoundTrips(t *testing.T) {
 	}
 	// The listing's display data, read out of the yaml and mirrored into the
 	// world meta so the load/save panels need no unzip.
-	if meta.Seed != "alpha-seed" || meta.Generator != "test-build" || meta.Pipeline != "v11-test" || len(meta.ContentHash) != 64 {
-		t.Errorf("display meta = seed %q, generator %q, pipeline %q, hash %q", meta.Seed, meta.Generator, meta.Pipeline, meta.ContentHash)
+	if meta.Seed != "alpha-seed" || meta.Generator != "test-build" || meta.Pipeline != "v11-test" || meta.Terrain != "0123456789abcdef" || len(meta.ContentHash) != 64 {
+		t.Errorf("display meta = seed %q, generator %q, pipeline %q, terrain %q, hash %q", meta.Seed, meta.Generator, meta.Pipeline, meta.Terrain, meta.ContentHash)
 	}
 	// The shape and the progress, mirrored the same way (2026-10-11), and
 	// kept in meta.json: the listing reads them back from disk.

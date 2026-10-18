@@ -5,6 +5,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 
 ## 2026-10-18
 - **changed** Save/Load: a world's panel shows the pipeline that made each copy instead of the build. `generator.load.detail.pipeline`
+- **changed** Save/Load: a world card shows its four steps and the levels its terrain has on the server as badges. `generator.load`
 
 ## 2026-10-17
 - **fixed** Save/Load: a world's progress counts the five steps after the world's setup, as the step bar does. `generator.load.progress`

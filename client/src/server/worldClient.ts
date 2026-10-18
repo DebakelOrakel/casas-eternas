@@ -35,6 +35,10 @@ export interface WorldSummary {
   // way since 2026-10-18: empty for worlds not re-uploaded since, absent
   // from a server older than that.
   pipeline?: string
+  // The current revision's terrain id (`status.terrain`), mirrored the same
+  // way: the world list finds its levels on the server by it. Absent for a
+  // save that predates it.
+  terrain?: string
   // The save's kind (`FlatWorld`/`SphereWorld`) and its accepted progress
   // (a step id), mirrored the same way since 2026-10-11 — empty for worlds
   // not re-uploaded since, and absent from a server older than that. Kept

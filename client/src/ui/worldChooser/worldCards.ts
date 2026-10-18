@@ -24,6 +24,9 @@ export interface WorldCopy {
   savedAt: string
   // The pipeline that made it (`status.pipeline`); empty when not known.
   pipeline: string
+  // Its terrain id (`status.terrain`), by which its levels are found on the
+  // server; empty when not known.
+  terrain: string
   // SHA-256 of the archive bytes, lowercase hex; empty when not known.
   contentHash: string
   // Whether the copy is a template (docs/decisions/template-worlds.md):

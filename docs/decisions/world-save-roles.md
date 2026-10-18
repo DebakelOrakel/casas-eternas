@@ -144,3 +144,13 @@ runs record no build and no code any more, world.yaml records
 `status.pipeline` (level 1's pipeline version, world/worldPipeline.ts),
 and a load of a world of another pipeline makes it again
 (decisions/detail-ladder.md, Status 2026-10-17).
+
+2026-10-18: world.yaml also records `status.terrain`, the save's terrain id
+(world/identity.ts, deriveWorldId over the save's own bytes; world.yaml is
+not one of them, so writing it in does not move the id). The generator
+reads the id back from the written archive and puts it into world.yaml
+before the archive leaves. Display data: the server mirrors it as the
+world's `terrain`, and the world list finds the world's levels on the
+server by it (`GET /v1/artifacts/levels`, read live, so a deleted or
+evicted level no longer shows). The rights on a terrain stay with the
+terrain ids that jobs report (decisions/artifacts-by-content.md).

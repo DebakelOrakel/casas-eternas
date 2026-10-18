@@ -14,7 +14,9 @@ import {
   browserWorldIncomplete, browserWorldThumbnail, canKeepWorldsInBrowser, completeBrowserWorld, forgetBrowserWorld,
   keepArchiveInBrowser, listBrowserWorlds, openBrowserWorld, type BrowserWorld,
 } from '../../world/browserWorlds'
-import { PROGRESS_STEPS, progressPosition, progressStepOf, type ProgressStep } from '../../world/worldProgress'
+import { COUNTED_STEPS, PROGRESS_STEPS, progressPosition, progressStepOf, type ProgressStep } from '../../world/worldProgress'
+import { levelPipelineVersion } from '../../world/levels'
+import { listServerArtifactLevels, type ServerArtifactLevel } from '../../server/artifactsClient'
 import type { NotificationOptions } from '../notifications/NotificationManager'
 import '../../ui/theme/design.css'
 import './worldChooser.css'
@@ -118,7 +120,7 @@ function browserCopy(world: BrowserWorld): WorldCopy {
   return {
     where: 'browser', uid: world.uid, name: world.name, seed: world.seed,
     kind: world.kind ?? null, progress: world.progress ?? null,
-    bytes: world.bytes, savedAt: world.savedAt, pipeline: world.pipeline ?? '', contentHash: world.contentHash ?? '',
+    bytes: world.bytes, savedAt: world.savedAt, pipeline: world.pipeline ?? '', terrain: world.terrain ?? '', contentHash: world.contentHash ?? '',
     template: false, actions: [], visibility: '',
   }
 }
@@ -128,7 +130,7 @@ function serverCopy(world: WorldSummary): WorldCopy {
     where: 'server', uid: world.uid, name: world.name, seed: world.seed ?? '',
     kind: world.kind === 'FlatWorld' || world.kind === 'SphereWorld' ? world.kind : null,
     progress: progressStepOf(world.progress),
-    bytes: world.size, savedAt: world.updatedAt, pipeline: world.pipeline ?? '', contentHash: world.contentHash ?? '',
+    bytes: world.size, savedAt: world.updatedAt, pipeline: world.pipeline ?? '', terrain: world.terrain ?? '', contentHash: world.contentHash ?? '',
     template: world.template ?? false, actions: world.actions ?? [], visibility: world.visibility ?? '',
   }
 }
@@ -156,10 +158,24 @@ function progressText(progress: ProgressStep | null): string {
   return t('generator.load.progress', { n: position.n, all: position.all, step: t(`generator.step.${progress}.label` as TKey) })
 }
 
-function progressState(progress: ProgressStep | null): 'done' | 'started' | 'none' {
-  const position = progressPosition(progress)
-  return !position ? 'none' : position.done ? 'done' : 'started'
+// The levels on the server per terrain, as far as they are current for
+// this client (world/levels.ts): a level counts when it has its whole level
+// or at least one tile under the version this client reads it with. Read
+// live at every list, so what was deleted or evicted meanwhile no longer
+// shows.
+function currentLevels(levels: ServerArtifactLevel[]): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>()
+  for (const level of levels) {
+    if (level.pipelineVersion !== levelPipelineVersion(level.level, level.tiles)) continue
+    let set = out.get(level.worldId)
+    if (!set) out.set(level.worldId, (set = new Set()))
+    set.add(level.level)
+  }
+  return out
 }
+
+// The levels the badges name.
+const SHOWN_LEVELS = [1, 2, 3]
 
 export function createWorldChooser(host: HTMLElement, options: WorldChooserOptions): WorldChooser {
   const root = document.createElement('div')
@@ -350,6 +366,8 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   // between "not asked yet" and "cannot be reached", which the list has to
   // word differently.
   let serverReachable: boolean | null = null
+  // The current levels per terrain (currentLevels), from the last list.
+  let levelsByTerrain = new Map<string, Set<number>>()
   // Whether this browser can keep a world: the "copy to browser" needs it.
   let browserKeeps = false
   // Whether a sign-in stands between this browser and the server: a copy
@@ -379,14 +397,16 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     // Asked together: the server list is a network round trip and the browser
     // list is not, and waiting for the slow one before showing either would
     // make a local-only user pay for a server they do not use.
-    const [browser, server, openable, keeps, signIn] = await Promise.all([
+    const [browser, server, openable, keeps, signIn, levels] = await Promise.all([
       listBrowserWorlds(),
       listWorlds(),
       options.openable?.load() ?? null,
       canKeepWorldsInBrowser(),
       needsSignIn(),
+      listServerArtifactLevels(),
     ])
     if (run !== generation) return
+    levelsByTerrain = currentLevels(levels?.levels ?? [])
     serverReachable = server !== null
     browserKeeps = keeps
     signInMissing = signIn
@@ -815,6 +835,24 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   const anyOpens = (card: WorldCard): boolean =>
     [card.browser, card.server].some((copy) => copy !== null && opens(copy.where, copy.uid))
 
+  // The card's badges for how far it was taken: the counted steps as their
+  // numbers, on when accepted (the save's), and the levels its terrain has
+  // on the server (the artifact store's, read live).
+  function stageMarks(card: WorldCard): HTMLElement {
+    const row = el('span', 'wc-stages')
+    const position = progressPosition(card.shown.progress)
+    const reached = position ? position.n : 0
+    for (let n = 1; n <= COUNTED_STEPS; n++) {
+      const mark = el('span', n <= reached ? 'wc-stage wc-stage--on' : 'wc-stage', String(n))
+      mark.dataset.help = `generator.step.${PROGRESS_STEPS[n]}`
+      row.append(mark)
+    }
+    const terrain = card.shown.terrain || card.server?.terrain || card.browser?.terrain || ''
+    const held = levelsByTerrain.get(terrain)
+    for (const level of SHOWN_LEVELS) row.append(el('span', held?.has(level) ? 'wc-stage wc-stage--level wc-stage--on' : 'wc-stage wc-stage--level', `L${level}`))
+    return row
+  }
+
   function renderCard(card: WorldCard): HTMLElement {
     const shown = card.shown
     const node = el('div', 'wc-card')
@@ -842,9 +880,13 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     // How far its user took it (world/worldProgress.ts) — or, for a world
     // this screen cannot open, why not.
     const progress = el('span', 'wc-progress')
-    const dot = el('span', 'wc-dot')
-    dot.dataset.state = !openable ? 'closed' : progressState(shown.progress)
-    progress.append(dot, el('span', '', !openable && options.openable ? t(options.openable.reasonKey) : progressText(shown.progress)))
+    if (!openable && options.openable) {
+      const dot = el('span', 'wc-dot')
+      dot.dataset.state = 'closed'
+      progress.append(dot, el('span', '', t(options.openable.reasonKey)))
+    } else {
+      progress.append(stageMarks(card))
+    }
 
     const meta = el('span', 'wc-meta')
     meta.append(...whereIcons(card), el('span', '', [formatBytes(shown.bytes), formatWhen(shown.savedAt)].filter(Boolean).join(' · ')))
@@ -926,17 +968,6 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     return node
   }
 
-  // The steps as a row of marks, the design's progress bar in small.
-  function stepMarks(progress: ProgressStep | null): HTMLElement {
-    const row = el('span', 'wc-steps')
-    row.setAttribute('aria-hidden', 'true')
-    const position = progressPosition(progress)
-    const all = PROGRESS_STEPS.length - 1
-    const reached = position ? (position.done ? all : position.n) : 0
-    for (let i = 0; i < all; i++) row.append(el('span', i < reached ? 'wc-steps__on' : ''))
-    return row
-  }
-
   function panelHead(card: WorldCard): HTMLElement {
     const shown = card.shown
     const head = el('div', 'wc-detail__head')
@@ -946,7 +977,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     title.append(el('h2', 'wc-detail__name', shown.name || shown.uid), badges(card))
     if (shown.seed) title.append(el('span', 'wc-seed mono', `${t('titlebar.seed')} ${shown.seed}`))
     const progress = el('span', 'wc-detail__progress')
-    progress.append(stepMarks(shown.progress), el('span', '', progressText(shown.progress)))
+    progress.append(stageMarks(card), el('span', '', progressText(shown.progress)))
     title.append(progress)
     const close = button('wc-detail__close', '')
     close.setAttribute('aria-label', t('common.action.close.label'))

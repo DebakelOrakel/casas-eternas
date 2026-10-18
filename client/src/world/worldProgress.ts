@@ -46,12 +46,17 @@ export function withdrawProgress(current: ProgressStep | null, step: string): Pr
   return at === 0 ? null : PROGRESS_STEPS[at - 1]
 }
 
-// What the world list says: the accepted step's number, of all numbered
+// The steps the world list counts: the ones after the setup ('world', step
+// 0 in the step bar) up to the ecology. The finishing is not counted: it is
+// never left forward, so it is never accepted, and what it makes are levels
+// on the server, which the list shows as levels (2026-10-18).
+export const COUNTED_STEPS = PROGRESS_STEPS.indexOf('ecology')
+
+// What the world list says: the accepted step's number, of the counted
 // steps, and whether that was the last one. Null for a world that has
-// accepted no step. The first step ('world') is step 0, as in the step bar:
-// it sets the world up, and the count is of the steps after it (2026-10-17).
+// accepted no step.
 export function progressPosition(progress: ProgressStep | null): { n: number; all: number; done: boolean } | null {
   if (progress === null) return null
-  const n = PROGRESS_STEPS.indexOf(progress)
-  return { n, all: PROGRESS_STEPS.length - 1, done: n === PROGRESS_STEPS.length - 1 }
+  const n = Math.min(PROGRESS_STEPS.indexOf(progress), COUNTED_STEPS)
+  return { n, all: COUNTED_STEPS, done: n === COUNTED_STEPS }
 }

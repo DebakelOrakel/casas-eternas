@@ -99,6 +99,11 @@ type Meta struct {
 	// artifacts can be baked again by this server. Empty until a world is
 	// uploaded again.
 	Pipeline string `json:"pipeline"`
+	// The current revision's terrain id (status.terrain), mirrored the same
+	// way (2026-10-18): the world list looks its levels up by it. Display
+	// data, as the save states it; Terrains below is what ranks a caller.
+	// Empty for a save that predates it.
+	Terrain string `json:"terrain,omitempty"`
 	// The save's shape and its accepted progress, mirrored the same way
 	// (2026-10-11, for the world list): `kind` and `status.progress` of
 	// world.yaml. Empty until a world is uploaded again.
@@ -293,6 +298,7 @@ func (s *Store) mirrorPipeline(ctx context.Context, uid string) error {
 		return err
 	}
 	meta.Pipeline = info.Pipeline
+	meta.Terrain = info.Terrain
 	if err := s.writeMeta(ctx, uid, meta, false); err != nil {
 		return err
 	}
@@ -984,6 +990,7 @@ func (s *Store) Put(ctx context.Context, uid string, data []byte, info SaveInfo,
 		Generator:   info.Generator,
 		ContentHash: contentHash,
 		Pipeline:    info.Pipeline,
+		Terrain:     info.Terrain,
 		Kind:        info.Kind,
 		Progress:    info.Progress,
 		Template:    template,

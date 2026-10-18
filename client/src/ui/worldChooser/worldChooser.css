@@ -454,22 +454,6 @@
   border-radius: 4px;
 }
 
-/* Teal for a finished world, accent for one on its way, and an empty ring
-   for one with no step accepted — the step list's colours for computed and
-   outstanding. */
-.wc-dot[data-state='done'] {
-  background: var(--dc-teal);
-}
-
-.wc-dot[data-state='started'] {
-  background: var(--dc-accent);
-}
-
-.wc-dot[data-state='none'] {
-  border: 1px solid var(--dc-muted);
-  box-sizing: border-box;
-}
-
 .wc-dot[data-state='closed'] {
   border: 1px dashed var(--dc-muted);
   box-sizing: border-box;
@@ -689,20 +673,43 @@
   color: var(--dc-muted);
 }
 
-.wc-steps {
+/* How far a world was taken: the counted steps by number, then the levels
+   on the server. Accent for an accepted step, teal for a level the server
+   holds — the step list's colours for on its way and computed; an outline
+   for what is still open. */
+.wc-stages {
   display: flex;
+  align-items: center;
   gap: 3px;
 }
 
-.wc-steps span {
-  width: 14px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--dc-line2);
+.wc-stage {
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 4px;
+  box-sizing: border-box;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  color: var(--dc-muted);
 }
 
-.wc-steps .wc-steps__on {
+.wc-stage--on {
+  border-color: var(--dc-accent);
   background: var(--dc-accent);
+  color: var(--dc-on-accent);
+}
+
+/* A gap between the steps and the levels: two kinds of thing. */
+.wc-stage:not(.wc-stage--level) + .wc-stage--level {
+  margin-left: 6px;
+}
+
+.wc-stage--level.wc-stage--on {
+  border-color: var(--dc-teal);
+  background: var(--dc-teal);
+  color: var(--dc-on-teal);
 }
 
 .wc-detail__note {

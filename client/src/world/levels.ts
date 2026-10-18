@@ -30,9 +30,13 @@ export function parseStage(stage: string): ParsedStage | null {
 // on every other.
 export function currentPipelineVersion(stage: string): string | null {
   const parsed = parseStage(stage)
-  if (!parsed) return null
-  if (parsed.tile) return TILE_SPECS[parsed.level] ? meshTilePipelineVersion(parsed.level) : null
-  return meshPipelineVersion(parsed.level)
+  return parsed ? levelPipelineVersion(parsed.level, parsed.tile !== null) : null
+}
+
+// The same for a level: its tiles' version, or the whole level's.
+export function levelPipelineVersion(level: number, tiles: boolean): string | null {
+  if (tiles) return TILE_SPECS[level] ? meshTilePipelineVersion(level) : null
+  return meshPipelineVersion(level)
 }
 
 // Whether an artifact is current for this client: made under the pipeline

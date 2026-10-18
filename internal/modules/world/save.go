@@ -100,6 +100,11 @@ type SaveInfo struct {
 	// world/worldPipeline.ts): display data like the rest. Empty for a save
 	// that predates it or whose runs no single pipeline made.
 	Pipeline string
+	// The save's terrain id (status.terrain, the client's
+	// identity.deriveWorldId over the save's bytes): display data, said by
+	// the client and not checked — the rights on a terrain are Meta.Terrains,
+	// which jobs report. Empty for a save that predates it.
+	Terrain string
 	// The world's shape (the top-level `kind`: FlatWorld or SphereWorld) and
 	// the last step its user accepted (status.progress, a step id). Both are
 	// display data, as above: the server does not check them. Empty for saves
@@ -159,6 +164,7 @@ func inspectSave(data []byte) (SaveInfo, error) {
 	info.Seed, _ = readYAMLValue(yamlText, "spec.seed")
 	info.Generator, _ = readYAMLValue(yamlText, "status.generator")
 	info.Pipeline, _ = readYAMLValue(yamlText, "status.pipeline")
+	info.Terrain, _ = readYAMLValue(yamlText, "status.terrain")
 	info.Kind, _ = readYAMLValue(yamlText, "kind")
 	info.Progress, _ = readYAMLValue(yamlText, "status.progress")
 	return info, nil

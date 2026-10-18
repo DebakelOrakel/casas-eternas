@@ -174,6 +174,15 @@ export async function writeWorldArchive(parts: WorldArchiveParts): Promise<Uint8
   return (await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })) as Uint8Array<ArrayBuffer>
 }
 
+// The archive with its world.yaml replaced, every other entry as it was
+// (JSZip keeps their compressed bytes): for a yaml that says something of
+// the written archive, as its terrain id.
+export async function withWorldYaml(archive: Uint8Array<ArrayBuffer>, yaml: string): Promise<Uint8Array<ArrayBuffer>> {
+  const zip = await JSZip.loadAsync(archive)
+  zip.file('world.yaml', yaml)
+  return (await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })) as Uint8Array<ArrayBuffer>
+}
+
 // A field-mesh field (formatVersion 8: the mantle, the ocean age): its
 // values per cell of its field mesh, Float64 (`<name>.f64`), and the mesh
 // they belong to (`<name>.json`: cell count and spacing in metres), which a

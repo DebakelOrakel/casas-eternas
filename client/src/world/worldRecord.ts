@@ -64,8 +64,11 @@ export interface WorldRecord {
 }
 
 // world.yaml. `generator` is the build that writes it — provenance, never
-// compared.
-export function recordToYaml(record: WorldRecord, generator: string): string {
+// compared. `terrain` is the terrain id of the save it goes into
+// (identity.deriveWorldId over the save's own bytes, which world.yaml is not
+// one of): display data, so the world list can find the save's levels on
+// the server. Absent where it is not known (an Archean save has none).
+export function recordToYaml(record: WorldRecord, generator: string, terrain = ''): string {
   return [
     'apiVersion: casas-eternas/v1alpha1',
     `kind: ${record.kind}`,
@@ -88,6 +91,7 @@ export function recordToYaml(record: WorldRecord, generator: string): string {
     `  generator: ${generator}`,
     // The pipeline that made it, absent for none.
     ...(record.pipeline ? [`  pipeline: ${record.pipeline}`] : []),
+    ...(terrain ? [`  terrain: ${terrain}`] : []),
     // How far the user took it (worldProgress.ts), absent while no step is
     // accepted.
     ...(record.progress ? [`  progress: ${record.progress}`] : []),

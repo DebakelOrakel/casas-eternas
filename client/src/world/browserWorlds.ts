@@ -42,6 +42,8 @@ export interface BrowserWorldMeta {
   // Since 2026-10-18; an older entry has none until completeBrowserWorld
   // fills it in.
   pipeline?: string
+  // Its terrain id, the save's `status.terrain` ('' for none), the same way.
+  terrain?: string
   // The save's kind, its shape (worldRecord.ts), so the list can say it
   // without opening the archive. Since 2026-10-11; an older entry has none
   // until completeBrowserWorld fills it in.
@@ -137,6 +139,7 @@ export async function keepArchiveInBrowser(archive: Blob, savedAt: string): Prom
     savedAt,
     generator: readRecipeValue(facts.yaml, 'status.generator') ?? '',
     pipeline: readRecipeValue(facts.yaml, 'status.pipeline') ?? '',
+    terrain: readRecipeValue(facts.yaml, 'status.terrain') ?? '',
     kind: worldKindOf(facts.yaml) ?? undefined,
     progress: progressStepOf(readRecipeValue(facts.yaml, 'status.progress')),
   }, facts.preview)
@@ -144,7 +147,7 @@ export async function keepArchiveInBrowser(archive: Blob, savedAt: string): Prom
 
 // Whether an entry was kept before its meta carried the kind and the hash.
 export function browserWorldIncomplete(world: BrowserWorld): boolean {
-  return world.kind === undefined || world.contentHash === undefined || world.pipeline === undefined
+  return world.kind === undefined || world.contentHash === undefined || world.pipeline === undefined || world.terrain === undefined
 }
 
 // Fills in what an older entry's meta lacks — the kind and the progress from
@@ -158,13 +161,14 @@ export async function completeBrowserWorld(uid: string): Promise<BrowserWorld | 
   const archive = entry ? await opfs.get(uid) : null
   if (!entry || !archive) return null
   const meta: BrowserWorldMeta = { ...entry.meta }
-  if (meta.kind === undefined || meta.progress === undefined || meta.pipeline === undefined) {
+  if (meta.kind === undefined || meta.progress === undefined || meta.pipeline === undefined || meta.terrain === undefined) {
     const facts = await readArchiveFacts(archive)
     // A world.yaml with a kind this client does not know stays without one;
     // it is asked again next time, which costs a read and says nothing wrong.
     meta.kind ??= facts ? worldKindOf(facts.yaml) ?? undefined : undefined
     if (meta.progress === undefined && facts) meta.progress = progressStepOf(readRecipeValue(facts.yaml, 'status.progress'))
     if (meta.pipeline === undefined && facts) meta.pipeline = readRecipeValue(facts.yaml, 'status.pipeline') ?? ''
+    if (meta.terrain === undefined && facts) meta.terrain = readRecipeValue(facts.yaml, 'status.terrain') ?? ''
   }
   meta.contentHash ??= await archiveContentHash(archive)
   await opfs.putMeta(uid, meta)
