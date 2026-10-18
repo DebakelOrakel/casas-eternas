@@ -1,6 +1,10 @@
 # Workers alone, for a server elsewhere (e.g. another cluster with spare
 # nodes). That server cannot scale them: a fixed count. Their service
-# account comes from that server (`auth service add <name>`).
+# account comes from that server (Admin → Worker, or `auth service add
+# <name>`), and goes into this namespace as secrets.workerCredentials:
+#   kubectl create secret generic casas-eternas-worker --from-file=credentials
+# The session key stays with the server: a worker trades its credential for
+# a bus token there and never signs or checks one.
 components:
   # Helm merges maps: the default component goes only when set to null.
   server: null

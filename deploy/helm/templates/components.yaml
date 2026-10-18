@@ -12,10 +12,13 @@
 {{- range $module := $modules }}{{- if not (has $module (list "client" "docs")) }}{{- $stateless = false }}{{- end }}{{- end }}
 {{- $jobs := has "jobs" $modules }}
 {{- $secrets := $root.Values.secrets }}
-{{- if and $jobs $scales }}
+{{- if $jobs }}
 ---
 # The identity the jobs module scales the workers as (internal/modules/jobs,
-# scaler.go). Only this component's: no other needs the API.
+# scaler.go). Only this component's: no other needs the API. Also without
+# workers here, with no rights then: the module knows it is in a cluster
+# only by this token (jobs.InCluster), and off a cluster it starts its own
+# workers in this pod.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -23,6 +26,7 @@ metadata:
   labels:
     {{- include "casas-eternas.labels" $root | nindent 4 }}
     app.kubernetes.io/component: {{ $name }}
+{{- if $scales }}
 ---
 # Namespaced, never cluster-wide: the worker Deployment, found by its label
 # and scaled through the scale subresource. Nothing else.
@@ -55,6 +59,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ $full }}
+{{- end }}
 {{- end }}
 {{- if and $volume (not $persistence.existingClaim) }}
 ---
@@ -114,7 +119,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      {{- if and $jobs $scales }}
+      {{- if $jobs }}
       serviceAccountName: {{ $full }}
       {{- else }}
       automountServiceAccountToken: false
@@ -170,6 +175,12 @@ spec:
             {{- if has "auth" $modules }}
             - name: CASAS_AUTH_STATE_DIR
               value: /data/auth
+            {{- with $root.Values.config.global.admin.socket }}
+            # Also as a variable: `kubectl exec … auth user …` gets the
+            # container's environment, but reads ./casas.yaml, not the file.
+            - name: CASAS_GLOBAL_ADMIN_SOCKET
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- if and (has "world" $modules) (include "casas-eternas.storeOnDir" (dict "Values" $root.Values "store" "world")) }}
             - name: CASAS_WORLD_STORAGE_DIR_PATH

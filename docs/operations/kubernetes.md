@@ -16,7 +16,10 @@ default it runs everything in one pod (the component `server`, target
 - a **ServiceAccount + Role/RoleBinding** for the component that runs the
   jobs: the server scales its workers beside itself, so it needs `list` on
   Deployments and `get`/`update` on `deployments/scale` in its own
-  namespace and nothing anywhere else;
+  namespace and nothing anywhere else. Without workers in the chart
+  (`workers.enabled: false`) only the ServiceAccount, with no rights: its
+  token is how the server knows it is in a cluster, and off a cluster it
+  starts workers in its own pod;
 - a **PersistentVolumeClaim** (`/data`) per component that keeps state:
   the user store, the jobs, the relay's queue, and the worlds and artifacts
   while they are on the `dir` backend;

@@ -358,3 +358,14 @@ server binary: all three up at the first start; the edge's
 module, and silent), a split client's login, the peers' capabilities
 (merged, cached, own values first, `?local`), `CASAS_GLOBAL_PEERS` and a
 peer without a scheme.
+
+2026-10-18, found in the first install (a split without workers of its
+own): the compute pod ran six workers of its own. With
+`workers.enabled: false` the chart mounted no service account token, so
+`jobs.InCluster` was false and the module started its local pool, of
+`jobs.max-concurrent`. The component that runs jobs now always gets its
+ServiceAccount and token; the Role and RoleBinding only where it scales
+the workers. The same install showed that `kubectl exec … auth user …`
+did not find the admin socket (the command reads `./casas.yaml`, not the
+mounted file): the component that runs auth sets
+`CASAS_GLOBAL_ADMIN_SOCKET` too, as the old manifests did.
