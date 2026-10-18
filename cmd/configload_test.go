@@ -138,6 +138,29 @@ func TestLoadConfigWithoutFileUsesFlagDefaults(t *testing.T) {
 	if cfg.World.KeepRevisions != 3 {
 		t.Errorf("keep-revisions = %d, want the flag default", cfg.World.KeepRevisions)
 	}
+	// On unless a server says its workers all come from outside.
+	if !cfg.Jobs.ScaleWorkers {
+		t.Error("scale-workers off, want the flag default on")
+	}
+}
+
+// A boolean from the environment, as the chart sets it for a server
+// without workers of its own.
+func TestLoadConfigTurnsTheScalerOff(t *testing.T) {
+	initConfig()
+	viper.Set(flagConfig, "")
+	t.Setenv("CASAS_JOBS_SCALE_WORKERS", "false")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Jobs.ScaleWorkers {
+		t.Error("scale-workers on, want CASAS_JOBS_SCALE_WORKERS=false to turn it off")
+	}
+	t.Setenv("CASAS_JOBS_SCALE_WORKERS", "nope")
+	if _, err := loadConfig(); err == nil {
+		t.Error("a non-boolean value decoded without complaint")
+	}
 }
 
 // The HARD BREAK of DEC-0038: every renamed key is refused in the file and

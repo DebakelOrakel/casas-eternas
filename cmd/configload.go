@@ -62,14 +62,21 @@ func loadConfig() (config.Config, error) {
 		DecodeHook: mapstructure.ComposeDecodeHookFunc(
 			mapstructure.StringToTimeDurationHookFunc(),
 			// Environment values arrive as STRINGS whatever the key's type —
-			// CASAS_JOBS_MAX_CONCURRENT=3 must land in an int field. Exact
-			// parsing only, so "abc" stays a loud start error rather than a
+			// CASAS_JOBS_MAX_CONCURRENT=3 must land in an int field, and
+			// CASAS_JOBS_SCALE_WORKERS=false in a bool one. Exact parsing
+			// only, so "abc" stays a loud start error rather than a
 			// weakly-typed guess.
 			func(from reflect.Kind, to reflect.Kind, value any) (any, error) {
-				if from != reflect.String || to != reflect.Int {
+				if from != reflect.String {
 					return value, nil
 				}
-				return strconv.Atoi(strings.TrimSpace(value.(string)))
+				switch to {
+				case reflect.Int:
+					return strconv.Atoi(strings.TrimSpace(value.(string)))
+				case reflect.Bool:
+					return strconv.ParseBool(strings.TrimSpace(value.(string)))
+				}
+				return value, nil
 			},
 		),
 	})

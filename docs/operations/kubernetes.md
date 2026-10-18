@@ -124,6 +124,10 @@ replaces the scheme and host of both with `api`'s. Its artifacts go to the
 bucket the server signs links for, so the bucket's endpoint must be one the
 worker can reach.
 
+A server whose workers all join from outside has no worker Deployment:
+set `jobs.scale-workers: false` (`CASAS_JOBS_SCALE_WORKERS=false`), and
+it starts no scaler and needs no Role on Deployments.
+
 ## Updating
 
 **Once, for a server deployed before the worker Deployment (2026-10-03):**

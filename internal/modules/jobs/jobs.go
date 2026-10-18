@@ -109,6 +109,9 @@ type Config struct {
 	// memory instead; setting this above what the cluster can hold only
 	// produces Pending pods.
 	MaxConcurrent int
+	// ScaleWorkers: in a cluster, scale the worker Deployment (scaler.go).
+	// False for a server whose workers all come from outside.
+	ScaleWorkers bool
 	// The module's connection to the relay (internal/relay), made by cmd/
 	// in the process or to global.services.relay. The module owns it from
 	// here and closes it. With it, off a cluster, the jobs run through the
@@ -228,7 +231,7 @@ func New(cfg Config) (*Module, error) {
 	if workerPath != "" && cfg.RelayURL != "" {
 		m.pool = startWorkerPool(workerPath, cfg.RelayURL, workers, nodeHeapMB, cfg.Tokens)
 	}
-	if InCluster() {
+	if InCluster() && cfg.ScaleWorkers {
 		api, err := newClusterAPI()
 		if err != nil {
 			m.coord.close()

@@ -107,7 +107,8 @@ func (p *presence) list() []WorkerPresence {
 // `wanted` to anyone who may see jobs: the jobs window says "2 of 6
 // workers connected" while a cluster scales up, which is otherwise a
 // silent wait. `wanted` is the replicas the scaler last set, or this
-// process's own workers; absent before the scaler has looked. The list
+// process's own workers; absent before the scaler has looked, and in a
+// cluster that does not scale its workers. The list
 // itself — hosts, accounts — to an admin only: the operator's business.
 type workersAnswer struct {
 	Connected int              `json:"connected"`
@@ -119,8 +120,13 @@ func (m *Module) handleWorkers(w http.ResponseWriter, r *http.Request) {
 	listed := m.coord.presence.list()
 	answer := workersAnswer{Connected: len(listed)}
 	wanted := m.slots
-	if m.scaler != nil {
+	switch {
+	case m.scaler != nil:
 		wanted = int(m.scaler.wanted.Load())
+	case m.clusterMode:
+		// A cluster without the scaler (jobs.scale-workers off): the
+		// workers come from outside, and no number is wanted of them.
+		wanted = -1
 	}
 	if wanted >= 0 {
 		answer.Wanted = &wanted

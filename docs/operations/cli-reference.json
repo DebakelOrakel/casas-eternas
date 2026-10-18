@@ -280,6 +280,12 @@
           "env": "CASAS_JOBS_MAX_CONCURRENT"
         },
         {
+          "name": "jobs.scale-workers",
+          "default": "true",
+          "usage": "In a cluster, whether the server scales the worker Deployment (casas-eternas/component: worker) to the tasks waiting, up to jobs.max-concurrent. Off for a server whose workers all join from outside: it then needs no rights on Deployments. Off a cluster it changes nothing.",
+          "env": "CASAS_JOBS_SCALE_WORKERS"
+        },
+        {
           "name": "jobs.state-dir",
           "default": "./data/jobs",
           "usage": "The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.",
@@ -526,6 +532,13 @@
       "env": "CASAS_JOBS_MAX_CONCURRENT",
       "default": "1",
       "usage": "How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.",
+      "command": "casas-eternas start"
+    },
+    {
+      "key": "jobs.scale-workers",
+      "env": "CASAS_JOBS_SCALE_WORKERS",
+      "default": "true",
+      "usage": "In a cluster, whether the server scales the worker Deployment (casas-eternas/component: worker) to the tasks waiting, up to jobs.max-concurrent. Off for a server whose workers all join from outside: it then needs no rights on Deployments. Off a cluster it changes nothing.",
       "command": "casas-eternas start"
     },
     {

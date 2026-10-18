@@ -412,6 +412,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		Identity:      caller,
 		Tokens:        tokens,
 		MaxConcurrent: cfg.Jobs.MaxConcurrent,
+		ScaleWorkers:  cfg.Jobs.ScaleWorkers,
 	}
 
 	// The ranking is the shared closure built in buildModules; what remains

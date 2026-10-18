@@ -56,6 +56,7 @@ const (
 	keyWorker       = "jobs.worker"
 	keyJobsMax      = "jobs.max-concurrent"
 	keyJobsDir      = "jobs.state-dir"
+	keyJobsScale    = "jobs.scale-workers"
 	keyRelayDir     = "relay.state-dir"
 	keyRelayAddr    = "relay.listen"
 	keyRelayWS      = "relay.websocket"
@@ -131,6 +132,7 @@ const (
 	textDocsDir      = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
 	textWorker       = `Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.`
 	textJobsMax      = `How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.`
+	textJobsScale    = `In a cluster, whether the server scales the worker Deployment (casas-eternas/component: worker) to the tasks waiting, up to jobs.max-concurrent. Off for a server whose workers all join from outside: it then needs no rights on Deployments. Off a cluster it changes nothing.`
 	textJobsDir      = `The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.`
 	textRelayDir     = `The directory of the relay's message store (JetStream).`
 	textRelayAddr    = `Address the relay accepts worker connections on, as host:port. The default keeps it on this machine. Where global.auth.mode checks identity, the relay admits only this server's own tokens, so it may listen beyond the machine; in mode none it checks nobody.`
@@ -216,6 +218,7 @@ func init() {
 	StartCmd.Flags().String(keyWorker, "", textWorker)
 	StartCmd.Flags().Int(keyJobsMax, 1, textJobsMax)
 	StartCmd.Flags().String(keyJobsDir, "./data/jobs", textJobsDir)
+	StartCmd.Flags().Bool(keyJobsScale, true, textJobsScale)
 	StartCmd.Flags().String(keyRelayDir, "./data/relay", textRelayDir)
 	StartCmd.Flags().String(keyRelayAddr, "127.0.0.1:4222", textRelayAddr)
 	StartCmd.Flags().String(keyRelayWS, "", textRelayWS)
@@ -232,7 +235,7 @@ func init() {
 		keyArtsType: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
 		keyArtsReadTTL: StartCmd, keyArtsWriteTTL: StartCmd, keyArtsLinkKey: StartCmd, keyArtsLinkOld: StartCmd,
 		keyClientDir: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsDir: StartCmd,
-		keySvcRelay: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyRelayWS: StartCmd, keyJobsDir: StartCmd,
+		keySvcRelay: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyRelayWS: StartCmd, keyJobsDir: StartCmd, keyJobsScale: StartCmd,
 	}
 	for key, cmd := range bindings {
 		flags := cmd.Flags()

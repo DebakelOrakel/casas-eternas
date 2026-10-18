@@ -259,6 +259,11 @@ type JobsConfig struct {
 	// The coordinator's state: jobs, their tasks and where each stands
 	// (bbolt, jobs.db; docs/decisions/detail-ladder.md).
 	StateDir string `mapstructure:"state-dir"`
+	// Whether, in a cluster, the module scales the worker Deployment
+	// (jobs/scaler.go). Off for a server whose workers all come from
+	// outside: it then starts no scaler and needs no rights on Deployments
+	// (docs/decisions/helm-chart.md, fork 3).
+	ScaleWorkers bool `mapstructure:"scale-workers"`
 }
 
 // ClientConfig is the client module's section: the built bundle it serves.
