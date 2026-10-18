@@ -844,18 +844,21 @@ interface ServeConfig {
   auth?: string
   // The server's base URL as this worker reaches it, for a worker outside
   // the cluster: a task names the world and the artifact store by the
-  // server's address inside it (its pod IP), and the scheme and host of
+  // server's address inside it (its pod IP), and the scheme, host and port of
   // both are replaced by this one's. Absent for a worker inside.
   api?: string
 }
 
 // A task's URL at the server's address as this worker reaches it
-// (ServeConfig.api): its scheme and host replaced, its path kept.
+// (ServeConfig.api): its scheme, host and port replaced, its path kept.
+// The port is set on its own: the `host` setter keeps the old port when the
+// new host has none, and a task names the pod's :8080.
 function overApi(url: string, api: string): string {
   const out = new URL(url)
   const base = new URL(api)
   out.protocol = base.protocol
-  out.host = base.host
+  out.hostname = base.hostname
+  out.port = base.port
   return out.href
 }
 

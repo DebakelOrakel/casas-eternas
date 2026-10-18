@@ -662,7 +662,7 @@ the Ingress rewrites nothing. The relay pings every 30 s instead of NATS's
 for ingress-nginx) without an annotation, which would hold for every path
 of the one Ingress. The task specs keep the server's address inside the
 cluster; a worker outside sets `api` in its serving configuration, and
-replaces the scheme and host of the world's and the artifact store's URL
+replaces the scheme, host and port of the world's and the artifact store's URL
 with it: only the worker knows how it reaches the server, and the cluster's
 own workers keep the short way. The worker connects with `wsconnect` where
 its relay URL is `ws://` or `wss://`. Checked with a local server: a

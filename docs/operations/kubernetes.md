@@ -143,7 +143,7 @@ RELAY_CREDENTIALS=./credentials node job-worker.mjs --serve \
 `auth` is where it trades its credential for a bus token; `api` is the
 server as this worker reaches it. A task names the world and the artifact
 store at the server's address inside the cluster (its pod IP); the worker
-replaces the scheme and host of both with `api`'s. Its artifacts go to the
+replaces the scheme, host and port of both with `api`'s. Its artifacts go to the
 bucket the server signs links for, so the bucket's endpoint must be one the
 worker can reach.
 
