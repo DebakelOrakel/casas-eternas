@@ -9,6 +9,7 @@ the format.
 - **changed** Server: the processes of a split start in any order, and the one the browser asks names the login and the others' modules. `global.peers`
 - **new** Jobs: a worker outside the cluster joins over a WebSocket at `/relay` on the server's own host. `relay.websocket`
 - **new** Jobs: a server in a cluster can leave its workers unscaled, for workers that all join from outside. `jobs.scale-workers`
+- **fixed** Jobs: a long level-1 replay no longer runs its worker out of memory. `jobs`
 
 ## 2026-10-17
 - **new** Sphere worlds: the finishing step refines a sphere world into level 1 and its tiles, on a cube's faces. `generator.finishing`

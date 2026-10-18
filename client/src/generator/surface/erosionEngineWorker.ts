@@ -176,6 +176,23 @@ function runRefreshCoordinator(
 // a browser dedicated worker has postMessage on its global scope.
 declare const self: { onmessage: ((e: { data: WorkerInit }) => void) | null; postMessage: (m: unknown) => void } | undefined
 
+// A KEPT worker (reusableWorkers) must collect after each engine. Its
+// heap hardly grows, so V8 never starts a collection here, and the views
+// of every engine it served keep that engine's SharedArrayBuffers alive.
+// The pool allocates them new for every epoch. Measured 2026-10-18 on a
+// level-1 replay (a world of 35.6 MB, 3.67 M nodes at epoch 12): the
+// process's ArrayBuffers 11.2 GB against 4.0 GB that were live; in a pod
+// with a 10 GiB limit the worker was killed at 14 % of the history. A
+// collection changes no result. Node only: a browser has no way to ask
+// for one, and the generator's history runs at a smaller budget.
+async function garbageCollector(): Promise<() => void> {
+  const v8 = await import('node:v8')
+  const vm = await import('node:vm')
+  v8.setFlagsFromString('--expose-gc')
+  const gc = vm.runInNewContext('gc') as (() => void) | undefined
+  return gc ?? (() => {})
+}
+
 async function boot(): Promise<void> {
   if (typeof self !== 'undefined' && typeof self.postMessage === 'function') {
     const scope = self
@@ -186,8 +203,11 @@ async function boot(): Promise<void> {
   }
   const { parentPort } = await import('node:worker_threads')
   if (!parentPort) throw new Error('erosionEngineWorker: no worker substrate')
+  const collect = await garbageCollector()
   parentPort.on('message', (init: WorkerInit) => {
     runLoop(init, () => parentPort.postMessage('ready'))
+    // Once the handler has returned, the engine's buffers are unreachable here.
+    setImmediate(collect)
   })
 }
 
