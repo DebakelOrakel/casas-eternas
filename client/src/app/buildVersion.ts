@@ -8,3 +8,8 @@
 // is the identity that needs no discipline.
 declare const __CASAS_BUILD__: string | undefined
 export const BUILD_VERSION: string = typeof __CASAS_BUILD__ === 'undefined' ? 'dev' : __CASAS_BUILD__
+
+// The day of the build's commit, YYYY-MM-DD (vite.config.ts); '' where there
+// is none. Provenance as well, shown in the title bar's menu.
+declare const __CASAS_BUILD_DATE__: string | undefined
+export const BUILD_DATE: string = typeof __CASAS_BUILD_DATE__ === 'undefined' ? '' : __CASAS_BUILD_DATE__

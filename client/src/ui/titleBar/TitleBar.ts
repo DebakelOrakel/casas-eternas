@@ -1,5 +1,6 @@
 import { getLocale, setLocale, t, type Locale, type TKey } from '../../i18n/i18n'
-import { formatWhen, initialsOf } from '../format'
+import { formatDay, formatWhen, initialsOf } from '../format'
+import { BUILD_DATE, BUILD_VERSION } from '../../app/buildVersion'
 import { hasSession, onSessionChange, signedInUser, signOut } from '../../server/session'
 import { getServerStatus } from '../../server/serverStatus'
 import { currentAvatarUrl, currentProfile, onProfileChange } from '../../server/profileClient'
@@ -177,6 +178,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
           </div>
           <div class="title-menu__group title-menu__group--apart" data-slot="account"></div>
           <div class="title-menu__group title-menu__group--apart" data-slot="home"></div>
+          <div class="title-menu__build" data-slot="build"></div>
         </div>
       </div>
     </div>
@@ -195,6 +197,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   const languageLabel = bar.querySelector<HTMLElement>('[data-slot="language-label"]')!
   const accountSlot = bar.querySelector<HTMLElement>('[data-slot="account"]')!
   const homeSlot = bar.querySelector<HTMLElement>('[data-slot="home"]')!
+  const buildSlot = bar.querySelector<HTMLElement>('[data-slot="build"]')!
 
   // A row of the list: an icon, a label, and what a click does. The menu
   // closes first, so a row that opens a window does not leave the list over it.
@@ -256,8 +259,12 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   // why the menu is painted twice: once on the answer we already have, once
   // when it lands.
   let canSignIn: boolean | undefined
+  // The server's build, for the menu's last lines; '' until the probe
+  // answers, and where there is no server or it does not say.
+  let serverBuild = ''
   void getServerStatus().then((status) => {
     canSignIn = status.loginPath !== ''
+    serverBuild = status.version
     paintMenu()
   })
 
@@ -345,12 +352,31 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
     homeSlot.appendChild(menuRow(HOME_ICON, t('titlebar.home.label'), 'titlebar.home', () => home()))
   }
 
+  // Which build this is, at the foot of the list: the day of the client's
+  // commit, then the client's and the server's build strings. Provenance for
+  // a bug report, not a control. A line with nothing to say is left out.
+  function paintBuild(): void {
+    buildSlot.replaceChildren()
+    const lines = [
+      BUILD_DATE ? t('titlebar.build', { date: formatDay(BUILD_DATE) }) : '',
+      t('titlebar.client', { version: BUILD_VERSION }),
+      serverBuild ? t('titlebar.server', { version: serverBuild }) : '',
+    ]
+    for (const text of lines) {
+      if (!text) continue
+      const line = document.createElement('span')
+      line.textContent = text
+      buildSlot.appendChild(line)
+    }
+  }
+
   function paintMenu(): void {
     paintButton()
     if (menuList.hidden) return
     paintItems()
     paintAccount()
     paintHome()
+    paintBuild()
   }
 
   function closeMenu(): void {

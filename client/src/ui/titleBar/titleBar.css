@@ -273,6 +273,19 @@ button.title-bar__mark:hover {
   border-top: 1px solid var(--dc-line);
 }
 
+.title-menu__build {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 8px 10px 4px;
+  border-top: 1px solid var(--dc-line);
+  color: var(--dc-faint);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  user-select: text;
+}
+
 .title-menu__row {
   display: flex;
   align-items: center;

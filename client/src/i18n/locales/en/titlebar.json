@@ -47,5 +47,8 @@
   "titlebar.profile.label": "Profile",
   "titlebar.profile.help": "Your display name, picture and password.",
   "titlebar.admin.label": "Admin settings",
-  "titlebar.admin.help": "Users, invite codes and workers."
+  "titlebar.admin.help": "Users, invite codes and workers.",
+  "titlebar.build": "Build {date}",
+  "titlebar.client": "Client {version}",
+  "titlebar.server": "Server {version}"
 }

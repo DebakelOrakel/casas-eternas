@@ -48,6 +48,9 @@ export interface ServerStatus {
   // How many jobs the server runs at once (its local workers); 0 when it
   // does not say (a cluster, an older server, no server).
   jobWorkers: number
+  // The server's build string, from /v1/capabilities. Provenance only: shown,
+  // never branched on. '' when there is no server or it does not say.
+  version: string
 }
 
 interface RuntimeConfig {
@@ -60,9 +63,10 @@ interface Capabilities {
   modules?: string[]
   bakeRunner?: string
   jobWorkers?: number
+  version?: string
 }
 
-const OFFLINE: ServerStatus = { state: 'none', apiBase: '', authMode: 'none', loginPath: '', modules: [], bakeRunner: '', jobWorkers: 0 }
+const OFFLINE: ServerStatus = { state: 'none', apiBase: '', authMode: 'none', loginPath: '', modules: [], bakeRunner: '', jobWorkers: 0, version: '' }
 
 // How long a probe may take before the server counts as unreachable. Short on
 // purpose: this gates the indicator on every screen, and a user staring at a
@@ -95,7 +99,7 @@ async function probe(): Promise<ServerStatus> {
   const authMode = config.authMode ?? 'none'
   const loginPath = config.login?.path ?? ''
   const capabilities = await fetchJSON<Capabilities>(`${apiBase}/capabilities`, PROBE_TIMEOUT_MS)
-  if (!capabilities) return { state: 'unreachable', apiBase, authMode, loginPath, modules: [], bakeRunner: '', jobWorkers: 0 }
+  if (!capabilities) return { state: 'unreachable', apiBase, authMode, loginPath, modules: [], bakeRunner: '', jobWorkers: 0, version: '' }
 
   // Answering is not enough — the WORLD module has to be there.
   //
@@ -111,7 +115,8 @@ async function probe(): Promise<ServerStatus> {
   const modules = capabilities.modules ?? []
   const bakeRunner = capabilities.bakeRunner ?? ''
   const jobWorkers = capabilities.jobWorkers ?? 0
-  if (!modules.includes('world')) return { state: 'unreachable', apiBase, authMode, loginPath, modules, bakeRunner, jobWorkers }
+  const version = capabilities.version ?? ''
+  if (!modules.includes('world')) return { state: 'unreachable', apiBase, authMode, loginPath, modules, bakeRunner, jobWorkers, version }
 
   // LOCAL vs SHARED comes from authMode, not from the hostname.
   //
@@ -125,7 +130,7 @@ async function probe(): Promise<ServerStatus> {
   // everything, so nobody else can be present. Anything else means real
   // identities, which means other people.
   const state: ServerState = authMode === 'none' ? 'local' : 'remote'
-  return { state, apiBase, authMode, loginPath, modules, bakeRunner, jobWorkers }
+  return { state, apiBase, authMode, loginPath, modules, bakeRunner, jobWorkers, version }
 }
 
 // Resolved once per page load and shared. A screen that mounts later gets the

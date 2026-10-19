@@ -21,6 +21,17 @@ const BUILD = (() => {
   }
 })()
 
+// The day of that commit (YYYY-MM-DD): the build's age at a glance, which the
+// hash does not say. Committer date, so it stays put across a rebase only when
+// the commit does.
+const BUILD_DATE = (() => {
+  try {
+    return execSync('git log -1 --format=%cs', { encoding: 'utf8' }).trim()
+  } catch {
+    return ''
+  }
+})()
+
 // WebKit loses a response's Cross-Origin-Embedder-Policy when it answers from
 // its own cache: the check runs against the 304, which carries no such header,
 // so the module is refused with "Refused to load ... because of
@@ -93,6 +104,7 @@ export default defineConfig({
   plugins: [alwaysFullResponses(), handbook()],
   define: {
     __CASAS_BUILD__: JSON.stringify(BUILD),
+    __CASAS_BUILD_DATE__: JSON.stringify(BUILD_DATE),
   },
   server: {
     port: 5173,

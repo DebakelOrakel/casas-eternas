@@ -831,7 +831,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // is chrome and knows no world — so the menu is built here and its four
   // moves are this screen's own.
   const saveMenu = createSaveMenu({
-    currentWorld: () => ({ uid: worldUid, revision: worldRevision }),
+    currentWorld: () => ({ uid: worldUid, revision: worldRevision, pipeline: worldPipeline }),
     onSave: (target) => { void saveTo(target) },
     onOpenWorld: () => { void leaveWorld(() => openWorldChooser()) },
     onSignIn: () => serverIndicator.openSignIn(),

@@ -29,7 +29,9 @@ export interface SaveMenuOptions {
   // The world about to be written. Read on open rather than passed in once,
   // since a load or a regenerate replaces it while the menu exists. `uid` is
   // empty before the first save; `revision` is the LOCAL save counter.
-  currentWorld(): { uid: string; revision: number }
+  // `pipeline`: the one that made the world (world/worldPipeline.ts), '' for
+  // none.
+  currentWorld(): { uid: string; revision: number; pipeline: string }
   onSave(target: SaveTarget): void
   // "Open world …" — the screen decides what that means (the generator opens
   // its load window, or the file picker when no server is there).
@@ -200,7 +202,7 @@ export function createSaveMenu(options: SaveMenuOptions): SaveMenu {
       [t('common.world.uid'), current.uid ? current.uid.slice(0, 8) : '', current.uid],
       [t('common.world.revision'), current.revision > 0 ? String(current.revision) : '', undefined],
       [t('common.world.checksum'), held?.contentHash ? held.contentHash.slice(0, 8) : '', held?.contentHash],
-      [t('common.world.build'), held?.generator ?? '', undefined],
+      [t('common.world.pipeline'), current.pipeline.slice(0, 12), current.pipeline],
     ]
     for (const [label, value, full] of lines) {
       if (!value) continue

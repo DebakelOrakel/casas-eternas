@@ -63,6 +63,15 @@ export function formatBytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1e3))} kB`
 }
 
+// A day, in the reader's locale. A bare YYYY-MM-DD is that day where the
+// reader is: `new Date` would read it as UTC midnight, which is the day
+// before west of Greenwich.
+export function formatDay(at: string): string {
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(at) ? `${at}T00:00` : at)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString(getLocale(), { dateStyle: 'medium' })
+}
+
 // A month and its year — since when an account exists.
 export function formatMonth(at: Date | string): string {
   const date = typeof at === 'string' ? new Date(at) : at

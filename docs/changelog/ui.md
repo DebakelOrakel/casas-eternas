@@ -3,6 +3,11 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-19
+- **changed** Layout: the menu has the same entries on every screen and over the list of worlds, and the title screen's name leads home too. `titlebar`
+- **new** Layout: the menu names the build's day and the client's and server's builds. `titlebar.build`
+- **changed** Save/Load: the save menu shows the pipeline that made the world instead of the build. `common.world.pipeline`
+
 ## 2026-10-18
 - **changed** Save/Load: a world's panel shows the pipeline that made each copy instead of the build. `generator.load.detail.pipeline`
 - **changed** Save/Load: a world card shows its four steps and the levels its terrain has on the server as badges. `generator.load`
