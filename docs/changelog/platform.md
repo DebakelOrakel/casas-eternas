@@ -3,6 +3,10 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-19
+- **changed** Build: `make build` builds the binary for macOS, Linux and Windows, and `make image` builds the container image.
+- **new** Build: `make release` packs the binary, the job worker, the client and the docs into one archive per platform.
+
 ## 2026-10-18
 - **new** Deploy: a Helm chart deploys the server as one or several components and its workers, on OpenShift or plain Kubernetes. `deploy/helm`
 - **changed** Deploy: the Helm chart is the only cluster deployment; the hand-kept manifests are gone. `deploy/helm`

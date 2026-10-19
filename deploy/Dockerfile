@@ -47,7 +47,7 @@ FROM golang:1.26-alpine AS server
 WORKDIR /src
 # What `casas-eternas version` reports. Passed IN rather than derived here:
 # .dockerignore keeps .git out of the build context on purpose, so nothing in
-# this stage could run `git describe`. `make build` supplies it; a bare
+# this stage could run `git describe`. `make image` supplies it; a bare
 # `docker build` leaves the honest default.
 ARG CASAS_VERSION=dev
 COPY go.mod go.sum ./

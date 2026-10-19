@@ -6,16 +6,20 @@
 #   make test    the Go tests plus the worldgen regression harness
 #   make worker  bundle the job worker for Node (./job-worker.mjs)
 #   make run     build everything and start a local server on :8080
-#   make build   build the container image (deploy/Dockerfile, context = repo
+#   make build   build the binary for macOS, Linux and Windows into bin/,
+#                with the job worker beside it
+#   make release worker + client + docs + build, one archive per platform in
+#                bin/release/
+#   make image   build the container image (deploy/Dockerfile, context = repo
 #                root — it needs client/, docs/changelog/, cmd/, internal/)
-#   make push    lint + build, then push to the registry
+#   make push    lint + image, then push to the registry
 #
 # The container is ONE binary that serves the client, stores worlds and
 # artifacts, and bakes — see deploy/Dockerfile for why it also carries Node.
 #
 # Override the image/tag per invocation, e.g.:
 #   make push TAG=v0.3.0
-#   make build IMAGE=ghcr.io/someone-else/casas-eternas
+#   make image IMAGE=ghcr.io/someone-else/casas-eternas
 #
 # Pushing to ghcr.io needs a prior `docker login ghcr.io` with a token that
 # has the `write:packages` scope.
@@ -33,7 +37,11 @@ TAG   ?= latest
 VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/DebakelOrakel/casas-eternas/cmd.buildVersion=$(VERSION)
 
-.PHONY: lint test worker client run build push cli-reference
+.PHONY: lint test worker client docs run build release image push cli-reference
+
+# The platforms `make build` makes the binary for, as GOOS/GOARCH. The server
+# is pure Go (CGO_ENABLED=0), so one machine builds them all.
+PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64
 
 lint:
 	cd client && npx tsc --noEmit
@@ -119,8 +127,49 @@ run: worker client docs
 	go build -ldflags="$(LDFLAGS)" -o casas-eternas .
 	./casas-eternas start --target all --client.content-dir client/dist --docs.content-dir client/docs-dist $(ARGS)
 
-build:
+# One binary per platform, bin/casas-eternas-<os>-<arch> (.exe on Windows),
+# and the job worker beside them: jobs.worker looks next to the executable,
+# and the bundle is the same on every platform. The client and the docs are
+# directories passed by flag (client.content-dir, docs.content-dir), built
+# by the targets above.
+build: worker
+	@mkdir -p bin
+	@cp job-worker.mjs bin/
+	@for platform in $(PLATFORMS); do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		ext=$$([ $$os = windows ] && echo .exe); \
+		echo "bin/casas-eternas-$$os-$$arch$$ext"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags="$(LDFLAGS)" \
+			-o bin/casas-eternas-$$os-$$arch$$ext . || exit 1; \
+	done
+
+# One archive per platform with everything `start` serves, laid out as the
+# container image is: the binary, job-worker.mjs beside it (where jobs.worker
+# looks by default), dist/ and docs-dist/. A .zip for Windows, a .tar.gz for
+# the others. Run from the unpacked directory:
+#   ./casas-eternas start --target all --client.content-dir dist --docs.content-dir docs-dist
+# The job worker needs Node on the machine, as in the image.
+release: worker client docs build
+	@rm -rf bin/release && mkdir -p bin/release
+	@for platform in $(PLATFORMS); do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		ext=$$([ $$os = windows ] && echo .exe); \
+		name=casas-eternas-$(VERSION)-$$os-$$arch; dir=bin/release/$$name; \
+		mkdir -p $$dir; \
+		cp bin/casas-eternas-$$os-$$arch$$ext $$dir/casas-eternas$$ext; \
+		cp bin/job-worker.mjs $$dir/; \
+		cp -R client/dist $$dir/dist; \
+		cp -R client/docs-dist $$dir/docs-dist; \
+		if [ $$os = windows ]; then \
+			(cd bin/release && zip -qr $$name.zip $$name); echo "bin/release/$$name.zip"; \
+		else \
+			tar -czf bin/release/$$name.tar.gz -C bin/release $$name; echo "bin/release/$$name.tar.gz"; \
+		fi; \
+		rm -rf $$dir; \
+	done
+
+image:
 	docker build --platform linux/amd64 --build-arg CASAS_VERSION=$(VERSION) -f deploy/Dockerfile -t $(IMAGE):$(TAG) .
 
-push: lint build
+push: lint image
 	docker push $(IMAGE):$(TAG)
