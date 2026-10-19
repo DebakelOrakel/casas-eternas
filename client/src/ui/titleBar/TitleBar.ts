@@ -89,6 +89,10 @@ export interface TitleBarOptions {
   // world beside it is not a way out — it says which world is open, and a
   // screen that gives no handler here keeps the mark as plain text.
   onHomeClick?(): void
+  // This screen IS the title screen. The wordmark still leads there, so the
+  // mark is the same control on every screen; the menu leaves its row "to the
+  // title" out, because here that row would go nowhere.
+  atHome?: boolean
   // Called after the locale changed and the bar re-rendered itself. A screen
   // that can afford to rebuild says so here; one holding unsaved work (the
   // generator) leaves it out and stays in the old language until re-entered,
@@ -336,7 +340,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   // has somewhere to go up to.
   function paintHome(): void {
     homeSlot.replaceChildren()
-    if (!options.onHomeClick) return
+    if (!options.onHomeClick || options.atHome) return
     const home = options.onHomeClick.bind(options)
     homeSlot.appendChild(menuRow(HOME_ICON, t('titlebar.home.label'), 'titlebar.home', () => home()))
   }

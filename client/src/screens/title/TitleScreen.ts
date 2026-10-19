@@ -6,6 +6,8 @@ import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createTitleBar } from '../../ui/titleBar/TitleBar'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
+import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
+import { peekServerStatus } from '../../server/serverStatus'
 import '../../ui/theme/design.css'
 import './title.css'
 
@@ -66,8 +68,15 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     currentWorld: () => null,
     onClose: () => jobChooser.close(),
   })
+  // The handbook, as on the other screens. No step and no layers here, so it
+  // opens on its overview.
+  const handbookPanel = createHandbookPanel(root, {
+    docsAvailable: () => peekServerStatus()?.modules.includes('docs') ?? false,
+    current: () => null,
+  })
   const openWindow = (window: typeof artifactChooser | typeof jobChooser): void => {
     if (window.isOpen()) return
+    handbookPanel.close()
     ;(window === artifactChooser ? jobChooser : artifactChooser).close()
     window.open()
   }
@@ -75,7 +84,12 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
   const titleBar = createTitleBar(root, {
     onSignIn: () => serverIndicator.openSignIn(),
     notifications: ctx.notifications,
+    // The mark leads here on every screen, this one included (TitleBar atHome).
+    onHomeClick: () => ctx.goTo('title'),
+    atHome: true,
+    // The same entries as on the other screens.
     menuItems: [
+      { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open() },
       { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openWindow(jobChooser) },
       { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openWindow(artifactChooser) },
     ],
@@ -96,6 +110,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
       titleBar.dispose()
       artifactChooser.dispose()
       jobChooser.dispose()
+      handbookPanel.dispose()
       helpTooltip.dispose()
       serverIndicator.dispose()
       scene.dispose()

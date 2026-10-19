@@ -795,12 +795,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     notifications: ctx.notifications,
     onHomeClick: () => { void leaveWorld(() => ctx.goTo('title')) },
     // The doors to the jobs (the fine simulation on the server) and to the
-    // artifacts, each a window over the generator. Not while the world list
-    // is up: it covers the screen the window would open over.
+    // artifacts, each a window over the generator — and over the world list,
+    // so the menu has the same entries on every screen.
     menuItems: [
-      { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open(), visible: () => !chooserOpen },
-      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openJobs(), visible: () => !chooserOpen },
-      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openArtifacts(), visible: () => !chooserOpen },
+      { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open() },
+      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openJobs() },
+      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openArtifacts() },
     ],
     onLocaleChange: () => {
       // One call for the whole column: every step block in it carries its keys
@@ -5267,7 +5267,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The artifact window steps the generator's furniture aside as the world
   // list does.
   function openArtifacts(): void {
-    if (artifactChooser.isOpen() || chooserOpen) return
+    if (artifactChooser.isOpen()) return
     handbookPanel.close()
     closeJobs()
     stepBar.setVisible(false)
@@ -5276,7 +5276,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   // The jobs window, the same way; one of the two at a time.
   function openJobs(): void {
-    if (jobChooser.isOpen() || chooserOpen) return
+    if (jobChooser.isOpen()) return
     handbookPanel.close()
     closeArtifacts()
     stepBar.setVisible(false)
@@ -5286,6 +5286,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function closeJobs(): void {
     if (!jobChooser.isOpen()) return
     jobChooser.close()
+    // Over the world list, the list stays and the furniture stays away.
+    if (chooserOpen) return
     stepBar.setVisible(true)
     sidebar.setVisible(true)
   }
@@ -5438,6 +5440,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function closeArtifacts(): void {
     if (!artifactChooser.isOpen()) return
     artifactChooser.close()
+    if (chooserOpen) return
     stepBar.setVisible(true)
     sidebar.setVisible(true)
   }

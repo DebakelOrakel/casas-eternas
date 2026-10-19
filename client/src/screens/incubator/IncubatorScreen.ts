@@ -7,6 +7,7 @@ import { createScaleBar, planeMeasure } from '../../map/ScaleBar'
 import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, UNITS_PER_METER } from '../../map/mapSceneSettings'
 import { listServerArtifacts, type ServerArtifact } from '../../server/artifactsClient'
 import { fetchWorld, listWorlds } from '../../server/worldClient'
+import { peekServerStatus } from '../../server/serverStatus'
 import { artifactKey } from '../../storage/ArtifactStore'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
@@ -19,6 +20,7 @@ import { createTitleBar } from '../../ui/titleBar/TitleBar'
 import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
+import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
 import { createGroundView } from './groundView'
 import type { GridField } from './groundSource'
 import '../../ui/theme/design.css'
@@ -151,11 +153,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     notifications: ctx.notifications,
     // Nothing here is lost by leaving: the world stays where it is kept.
     onHomeClick: () => ctx.goTo('title'),
-    // The jobs and the artifacts on every screen, not only in the generator;
-    // not while the world list covers the screen, as there.
+    // The same entries on every screen, the world list included.
     menuItems: [
-      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openWindow(jobChooser), visible: () => !worldChooser.isOpen() },
-      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openWindow(artifactChooser), visible: () => !worldChooser.isOpen() },
+      { key: 'titlebar.handbook', icon: BOOK_ICON, onSelect: () => handbookPanel.open() },
+      { key: 'titlebar.jobs', icon: JOBS_ICON, onSelect: () => openWindow(jobChooser) },
+      { key: 'common.action.storage', icon: ARTIFACTS_ICON, onSelect: () => openWindow(artifactChooser) },
     ],
     onLocaleChange: () => {
       sidebar.relabel()
@@ -163,6 +165,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       worldChooser.relabel()
       artifactChooser.relabel()
       jobChooser.relabel()
+      handbookPanel.relabel()
     },
   })
   titleBar.setWorld(null)
@@ -330,13 +333,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // The jobs and the artifacts, full screen over the ground as in the
   // generator; one at a time, the column out of the way while one is up.
-  // "This world" is the world shown. They open only while the world list is
-  // closed, which is when the column stands, so closing one stands it again.
+  // "This world" is the world shown. Over the world list they cover the list,
+  // and closing one leaves the list as it was.
   let held: { uid: string; name: string; seed: string; worldId: string | null } | null = null
   const closeWindow = (window: { isOpen(): boolean; close(): void }): void => {
     if (!window.isOpen()) return
     window.close()
-    sidebar.setVisible(true)
+    // Over the world list, the list stays and the column stays away.
+    if (!worldChooser.isOpen()) sidebar.setVisible(true)
   }
   const artifactChooser = createArtifactChooser(root, {
     currentWorld: () => held,
@@ -347,8 +351,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     currentWorld: () => held,
     onClose: () => closeWindow(jobChooser),
   })
+  // The handbook, as in the generator. No step and no layers here, so it
+  // opens on its overview.
+  const handbookPanel = createHandbookPanel(root, {
+    docsAvailable: () => peekServerStatus()?.modules.includes('docs') ?? false,
+    current: () => null,
+  })
   function openWindow(window: typeof artifactChooser | typeof jobChooser): void {
     if (window.isOpen()) return
+    handbookPanel.close()
     const other = window === artifactChooser ? jobChooser : artifactChooser
     if (other.isOpen()) closeWindow(other)
     sidebar.setVisible(false)
@@ -417,6 +428,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       worldChooser.dispose()
       artifactChooser.dispose()
       jobChooser.dispose()
+      handbookPanel.dispose()
       sidebar.dispose()
       titleBar.dispose()
       helpTooltip.dispose()

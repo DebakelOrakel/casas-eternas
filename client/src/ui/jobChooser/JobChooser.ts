@@ -556,6 +556,9 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       paint()
     },
     open() {
+      // Last in its host, so it covers the world list, which shares its layer
+      // and may stay open below it.
+      host.appendChild(root)
       root.hidden = false
       closeButton.focus()
       void Promise.all([loadNames(), refreshWorkers()]).then(reload)
