@@ -473,6 +473,21 @@ BUILDING since 2026-10-20:
   The graph's serialised form stays in TypeScript, as the world layer's.
   `bakeMeshLevel` has no progress callback yet; the boundary to
   TypeScript adds it.
+- The tiles of levels 2 and 3: the cube atlas (`mesh/cubeAtlas`), a
+  tile's mesh on the torus and on the sphere (`mesh/meshTile`,
+  `mesh/meshTileCube`, `mesh/tileLayout`), the tile plan with its cut
+  flow edges (`pipeline/tilePlan`) and the tile bake with its inflow from
+  upstream tiles and from level 1's rivers (`pipeline/meshTileBake`, on
+  the pool too), bit-equal on both shapes: 3 s against 13 s. One part is
+  not copied: `PeriodicTriangulation.remove` in TypeScript keeps a node's
+  star in 64 places, and the patchwork parent of a level-3 tile removes
+  lattice nodes of degree up to 600; past 64 TypeScript reads `undefined`,
+  skips the long-edge refusal for those neighbours and picks its ears
+  among the first 64. The Rust triangulation reads the whole star. In the
+  test the triangles a tile reads come out the same and the level-3
+  tiles are bit-equal; the patchwork's slots and its far lattice nodes
+  differ. Not ported: `mesh/tileSampler` (the incubator's reader of a
+  tile artifact) and `bakedTileToArtifact` (the world layer's).
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

@@ -171,18 +171,23 @@ pub fn ridged_at_on(domain: &Domain, x: f64, y: f64, seed: u32) -> f64 {
 /// How far each cell stands above the land around it, over the macro grid.
 pub fn local_relief(field: &[f32], grid: &DomainGrid) -> Vec<f32> {
     let width = grid.res_x;
-    let at = |x: f64, y: f64| field[y as usize * width + x as usize] as f64;
+    let mut at = |x: f64, y: f64| field[y as usize * width + x as usize] as f64;
     let mut out = vec![0f32; field.len()];
     for y in 0..grid.res_y {
         for x in 0..width {
-            out[y * width + x] = local_relief_at(&at, x as f64, y as f64, grid) as f32;
+            out[y * width + x] = local_relief_at(&mut at, x as f64, y as f64, grid) as f32;
         }
     }
     out
 }
 
 /// One cell of `local_relief` over any source of the macro grid's heights.
-pub fn local_relief_at(at: &dyn Fn(f64, f64) -> f64, x: f64, y: f64, grid: &DomainGrid) -> f64 {
+pub fn local_relief_at(
+    at: &mut dyn FnMut(f64, f64) -> f64,
+    x: f64,
+    y: f64,
+    grid: &DomainGrid,
+) -> f64 {
     let radius = js::max(1.0, js::round(grid.res_x as f64 * RELIEF_RADIUS_FRACTION));
     let mut lowest = f64::INFINITY;
     let mut dy = -radius;

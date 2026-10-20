@@ -139,7 +139,7 @@ fn sampler_and_synthesis(name: &str, domain: Domain) {
     // The level synthesis, both forms.
     let mut r = Lcg(3);
     let mut h = Hash::new();
-    for sphere in [None, domain.is_sphere().then_some(&domain)] {
+    for sphere in [None, domain.is_sphere().then(|| domain.clone())] {
         let synth = level_synthesis(SynthesisLevel {
             seed: 4242,
             level: 1,

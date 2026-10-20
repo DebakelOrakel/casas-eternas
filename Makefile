@@ -128,6 +128,7 @@ test: engine
 	node engine/scripts/coupledFixture.mjs --check
 	node engine/scripts/replayFixture.mjs --check
 	node engine/scripts/bakeFixture.mjs --check
+	node engine/scripts/tilesFixture.mjs --check
 	cd engine && cargo test --workspace --release
 	cd engine && cargo test -p casas-engine --release
 	node engine/scripts/smoke.mjs

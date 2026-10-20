@@ -47,21 +47,21 @@ pub fn level_seed(seed: u32, level: u32) -> u32 {
 }
 
 /// What a level synthesis reads.
-#[derive(Clone, Copy, Debug)]
-pub struct SynthesisLevel<'a> {
+#[derive(Clone, Debug)]
+pub struct SynthesisLevel {
     pub seed: u32,
     pub level: u32,
     pub budget: f64,
     pub width: usize,
     pub height: usize,
     /// A sphere world's domain, whose synthesis is read on the globe.
-    pub sphere: Option<&'a Domain>,
+    pub sphere: Option<Domain>,
 }
 
 /// The synthesis a level puts on a new node at (x, y) over the parent's
 /// height `base`; `relief` the parent's local relief there.
-pub struct LevelSynthesis<'a> {
-    l: SynthesisLevel<'a>,
+pub struct LevelSynthesis {
+    l: SynthesisLevel,
     level_width: f64,
     level_height: f64,
     scales: Vec<f64>,
@@ -71,7 +71,7 @@ pub struct LevelSynthesis<'a> {
     ridge_seed: u32,
 }
 
-pub fn level_synthesis<'a>(l: SynthesisLevel<'a>) -> LevelSynthesis<'a> {
+pub fn level_synthesis(l: SynthesisLevel) -> LevelSynthesis {
     let level_width = js::round(l.width as f64 / l.budget);
     let level_height = js::round(l.height as f64 / l.budget);
     let scales = seed_cascade_scales(level_width);
@@ -92,7 +92,7 @@ pub fn level_synthesis<'a>(l: SynthesisLevel<'a>) -> LevelSynthesis<'a> {
     }
 }
 
-impl LevelSynthesis<'_> {
+impl LevelSynthesis {
     fn octave_seed(&self, i: usize) -> f64 {
         js::to_uint32(self.seed as f64 + i as f64 * 0x9e37_79b9u32 as f64) as f64
     }
@@ -103,7 +103,7 @@ impl LevelSynthesis<'_> {
             return base;
         }
         let mut noise = 0.0;
-        if let Some(sphere) = self.l.sphere {
+        if let Some(sphere) = &self.l.sphere {
             for i in 0..self.scales.len() {
                 noise +=
                     fine_detail_noise_scaled_on(sphere, x, y, self.scales[i], self.octave_seed(i))
