@@ -1,8 +1,11 @@
 //! The engine's state as the TypeScript types the world layer writes and
 //! the screen reads (`PlateSimulationSnapshot`, `SimEvent`, `SavedField`,
-//! the mesh payload), as value trees. Keys and shapes are the TypeScript
+//! the mesh payload, the climate's messages and `RefinedClimate`), as
+//! value trees. Keys and shapes are the TypeScript
 //! types'; their order is the TypeScript serializer's.
 
+use casas_engine::climate::climate_chart::RefinedClimateChart;
+use casas_engine::climate::refinement::RefinedClimate;
 use casas_engine::crust::raft_types::{Raft, Suture};
 use casas_engine::fields::field_mesh::SavedField;
 use casas_engine::mesh::mesh_column::encode_column;
@@ -256,5 +259,127 @@ pub fn mesh_payload(t: &CoupledTerrain) -> Value {
             "ice",
             (t.ice.len() >= count).then(|| Value::F32s(t.ice[..count].to_vec())),
         )
+        .build()
+}
+
+/// A vector field on the climate's field mesh for the screen's marks
+/// (`meshVectorPayload`): `{ cells, spacingM, e, s }`, Float64.
+pub fn mesh_vectors(spacing_m: f64, e: &[f64], s: &[f64]) -> Value {
+    ObjBuilder::new()
+        .num("cells", e.len() as f64)
+        .num("spacingM", spacing_m)
+        .put("e", Value::F64s(e.to_vec()))
+        .put("s", Value::F64s(s.to_vec()))
+        .build()
+}
+
+/// The chart's fields of a climate for the screen
+/// (`WorkerClimateDataMessage` less its type, flags and resolution).
+pub struct ClimateData<'a> {
+    pub temperature: &'a [f32],
+    pub wind: &'a [f32],
+    pub currents: &'a [f32],
+    pub current_anomaly: &'a [f32],
+    pub precipitation: &'a [f32],
+    pub seasonal_amplitude: &'a [f32],
+    pub monsoon_index: &'a [f32],
+}
+
+pub fn climate_data(
+    c: &ClimateData,
+    wind_mesh: Value,
+    currents_mesh: Value,
+    koppen: Vec<u8>,
+    biomes: Vec<u8>,
+) -> Value {
+    ObjBuilder::new()
+        .put("temperature", Value::F32s(c.temperature.to_vec()))
+        .put("wind", Value::F32s(c.wind.to_vec()))
+        .put("windMesh", wind_mesh)
+        .put("currentsMesh", currents_mesh)
+        .put("currents", Value::F32s(c.currents.to_vec()))
+        .put("currentAnomaly", Value::F32s(c.current_anomaly.to_vec()))
+        .put("precipitation", Value::F32s(c.precipitation.to_vec()))
+        .put(
+            "seasonalAmplitude",
+            Value::F32s(c.seasonal_amplitude.to_vec()),
+        )
+        .put("monsoonIndex", Value::F32s(c.monsoon_index.to_vec()))
+        .put("koppen", Value::U8s(koppen))
+        .put("biomes", Value::U8s(biomes))
+        .build()
+}
+
+/// `RefinedClimate` without its solves (the runtime's `structuredCopy`).
+pub fn refined_climate(r: &RefinedClimate) -> Value {
+    let f = |a: &[f32]| Value::F32s(a.to_vec());
+    ObjBuilder::new()
+        .num("months", r.months as f64)
+        .num("cells", r.cells as f64)
+        .num("spacingM", r.spacing_m)
+        .put("temperature", f(&r.temperature))
+        .put("precipitation", f(&r.precipitation))
+        .put("pressure", f(&r.pressure))
+        .put("windE", f(&r.wind_e))
+        .put("windS", f(&r.wind_s))
+        .put("currentE", f(&r.current_e))
+        .put("currentS", f(&r.current_s))
+        .put("currentAnomaly", f(&r.current_anomaly))
+        .put("upwelling", f(&r.upwelling))
+        .put("salinity", f(&r.salinity))
+        .put("deepWater", f(&r.deep_water))
+        .put("fog", f(&r.fog))
+        .put("foehn", f(&r.foehn))
+        .put(
+            "reliability",
+            ObjBuilder::new()
+                .put("rainVariability", f(&r.reliability.rain_variability))
+                .put("ensoPattern", f(&r.reliability.enso_pattern))
+                .num("ensoPeriodYears", r.reliability.enso_period_years)
+                .num("ensoStrength", r.reliability.enso_strength)
+                .build(),
+        )
+        .put(
+            "storms",
+            ObjBuilder::new()
+                .put("cyclone", f(&r.storms.cyclone))
+                .put("tornado", f(&r.storms.tornado))
+                .put("blizzard", f(&r.storms.blizzard))
+                .put("dust", f(&r.storms.dust))
+                .put("thunder", f(&r.storms.thunder))
+                .build(),
+        )
+        .build()
+}
+
+/// The refinement for the screen (`WorkerClimateRefinedMessage` less its
+/// type and resolution): the chart's months and fields, the values, the
+/// Köppen classes per pixel.
+pub fn climate_refined(chart: &RefinedClimateChart, r: &RefinedClimate, koppen: Vec<u8>) -> Value {
+    let f = |a: &[f32]| Value::F32s(a.to_vec());
+    ObjBuilder::new()
+        .num("months", chart.months as f64)
+        .put("refined", refined_climate(r))
+        .put("temperature", f(&chart.temperature))
+        .put("precipitation", f(&chart.precipitation))
+        .put("koppen", Value::U8s(koppen))
+        .put("fog", f(&chart.fog))
+        .put("foehn", f(&chart.foehn))
+        .put("rainVariability", f(&chart.reliability.rain_variability))
+        .put("ensoPattern", f(&chart.reliability.enso_pattern))
+        .num("ensoPeriodYears", chart.reliability.enso_period_years)
+        .num("ensoStrength", chart.reliability.enso_strength)
+        .put("salinity", f(&chart.salinity))
+        .put("deepWater", f(&chart.deep_water))
+        .put("cyclone", f(&chart.storms.cyclone))
+        .put("tornado", f(&chart.storms.tornado))
+        .put("blizzard", f(&chart.storms.blizzard))
+        .put("dust", f(&chart.storms.dust))
+        .put("thunder", f(&chart.storms.thunder))
+        .put("pressure", f(&chart.pressure))
+        .put("wind", f(&chart.wind))
+        .put("currents", f(&chart.currents))
+        .put("currentAnomaly", f(&chart.current_anomaly))
+        .put("upwelling", f(&chart.upwelling))
         .build()
 }

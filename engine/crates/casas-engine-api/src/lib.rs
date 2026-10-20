@@ -8,13 +8,13 @@
 
 pub mod forms;
 pub mod read;
+mod stages;
 pub mod value;
 
 use casas_engine::archean::archean_snapshot::{deserialize_archean, serialize_archean};
 use casas_engine::archean::archean_state::{ArcheanSimulation, create_archean_simulation};
 use casas_engine::archean::archean_step::{ArcheanParams, archean_step, default_archean_params};
 use casas_engine::archean::finalize_archean::finalize_archean;
-use casas_engine::climate::weather::WeatherParams;
 use casas_engine::core::domain::Domain;
 use casas_engine::core::world_time::TECTONIC_MA_PER_EPOCH;
 use casas_engine::elevation::elevation_raster::{RasterSources, elevation_raster};
@@ -90,20 +90,12 @@ fn domain_of(shape: Shape, width: f64, height: f64) -> Domain {
 /// temperatureContrast, humidity, equatorOffset, planet? } }`.
 fn epoch_options(controls: &Value) -> Result<CoupledEpochOptions, EraError> {
     let c = read::Fields::of(controls, "the controls")?;
-    let w = read::Fields::of(
+    let weather = read::weather(
         c.get("weather")
             .ok_or_else(|| wrong("the controls have no weather"))?,
-        "the weather",
     )?;
-    let planet = w.get("planet").map(read::planet).transpose()?;
     Ok(CoupledEpochOptions {
-        weather: Some(WeatherParams {
-            temperature_offset: w.num("temperatureOffset")?,
-            temperature_contrast: w.num("temperatureContrast")?,
-            humidity: w.num("humidity")?,
-            equator_offset: w.num("equatorOffset")?,
-            planet,
-        }),
+        weather: Some(weather),
         iterations_per_epoch: HISTORY_DEFAULTS.iterations_per_epoch,
         budget: Some(HISTORY_DEFAULTS.budget),
         climate_every: Some(HISTORY_DEFAULTS.climate_every),
@@ -121,6 +113,7 @@ fn epoch_options(controls: &Value) -> Result<CoupledEpochOptions, EraError> {
 pub struct World {
     era: Era,
     archean_params: ArcheanParams,
+    stages: stages::Stages,
 }
 
 impl World {
@@ -144,6 +137,7 @@ impl World {
         World {
             era: Era::Archean(Box::new(create_archean_simulation(seed, domain))),
             archean_params,
+            stages: Default::default(),
         }
     }
 
@@ -206,6 +200,8 @@ impl World {
         sim.epoch_ma = TECTONIC_MA_PER_EPOCH;
         let coupled = Box::new(create_coupled_terrain(&mut sim, HISTORY_DEFAULTS.budget));
         self.era = Era::Plates { sim, coupled };
+        self.stages.pixel_triangles = None;
+        self.stages.handed_over();
         Ok(())
     }
 
@@ -215,6 +211,7 @@ impl World {
         let options = epoch_options(controls)?;
         let (sim, coupled) = self.plates()?;
         let stats = step_coupled_epoch(sim, coupled, &options);
+        self.stages.pixel_triangles = None;
         Ok(Value::List(stats.events.iter().map(forms::event).collect()))
     }
 
@@ -277,6 +274,7 @@ impl World {
             }
             Era::Moving => return Err(wrong("the world is between its eras")),
         };
+        self.stages.rendered(elevations.clone());
         Ok(value::ObjBuilder::new()
             .put("elevations", Value::F32s(elevations))
             .put("mantle", Value::F32s(mantle))
@@ -332,6 +330,7 @@ impl World {
                 land_share,
                 ..default_archean_params()
             },
+            stages: Default::default(),
         })
     }
 
@@ -415,6 +414,7 @@ impl World {
                 coupled: Box::new(coupled),
             },
             archean_params: default_archean_params(),
+            stages: Default::default(),
         })
     }
 }

@@ -643,6 +643,16 @@ BUILDING since 2026-10-20:
   renders during the Archean (preview and full), at the hand-over and
   between epochs, and the rasters and everything after them are equal to
   TypeScript's.
+- The climate step through the boundary: the climate v1 on the last
+  render's raster and the step's refinement, computed or a save's taken
+  as it is. The world keeps what the runtime keeps between the calls (the
+  last raster, the pixels' triangles on the terrain mesh, the climate),
+  and each call gives the body of the message the runtime posts
+  (`climateData`; `climateRefined` and the annual `climateData`). The
+  smoke test runs both after the epochs, and in the restored worlds with
+  the saved refinement, on both shapes: equal to TypeScript's in both
+  builds, and the next epoch too. The refinement's progress does not
+  cross yet.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

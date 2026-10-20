@@ -2,10 +2,12 @@
 // as each other and as the TypeScript engine through the engine's surface
 // (docs/decisions/rust-engine.md, fork 6), on both shapes: the version; an
 // Archean grown, rendered, saved and restored; the hand-over; coupled
-// epochs (one shape under another planet) and their renders; the tectonic
-// save; a world restored from it that goes on for an epoch. A save goes through JSON and back, as it does
-// through a file. Run by `make test` after `make engine`; about three
-// minutes.
+// epochs (one shape under another planet) and their renders; the climate
+// step and its refinement; the tectonic save; a world restored from it,
+// its climate with the saved refinement, and its next epoch. A save goes
+// through JSON and back, as it does through a file. Run by `make test`
+// after `make engine`; about five minutes, most of it the refinement in
+// TypeScript.
 import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -33,7 +35,10 @@ const { DEFAULT_PLANET_FORCING } = await L('/src/generator/planet/planetForcing.
 const { TECTONICS_INPUTS } = await L('/src/generator/tectonics/tectonicsInputParams.ts')
 const { renderSimulationImage } = await L('/src/generator/render/elevationMapImage.ts')
 const { rasteriseMantle } = await L('/src/generator/mantle/mantleField.ts')
-const { rasteriseNodeField } = await L('/src/generator/mesh/meshRaster.ts')
+const { rasteriseNodeField, triangleRaster } = await L('/src/generator/mesh/meshRaster.ts')
+const WS = await L('/src/generator/pipeline/worldStages.ts')
+const { meshRouting } = await L('/src/generator/mesh/meshHydrology.ts')
+const { Biome } = await L('/src/generator/climate/biomes.ts')
 // The render pool's worker, in this process through a stand-in `self` (as
 // client/scripts/pipeline.mjs does), one band over the whole raster; the
 // worker posts through it, so it stays.
@@ -111,6 +116,56 @@ const renderPlates = (sim, coupled) => {
   return { elevations, mantle: rasteriseMantle(sim.mantle, sim.domain) }
 }
 
+// The climate step as the runtime's handlers make it (handleClimateRun,
+// handleClimateRefine) on a TypeScript world `t` = { sim, coupled,
+// elevation (the last render's), plan (the pixels' triangles), climate }:
+// the bodies of the messages they post.
+const vectors = (spacingM, f) => ({ cells: f.e.length, spacingM, e: Float64Array.from(f.e), s: Float64Array.from(f.s) })
+const terrainOf = (coupled) => {
+  if (!coupled.routing) coupled.routing = meshRouting(coupled.mesh, coupled.z)
+  return { mesh: coupled.mesh, z: coupled.z }
+}
+const idRasterOf = (t, land, ids, pixelLand, sea) => {
+  const { width, height } = t.sim
+  if (!t.plan || t.plan.mesh !== land.mesh) t.plan = triangleRaster(land.mesh, width, height)
+  return WS.idRaster(land, ids, pixelLand, width, height, sea, t.plan)
+}
+const climateData = (t, f, windMesh, currentsMesh, land, pixelLand) => ({
+  temperature: f.temperature, wind: f.wind, windMesh, currentsMesh, currents: f.currents, currentAnomaly: f.currentAnomaly,
+  precipitation: f.precipitation, seasonalAmplitude: f.seasonalAmplitude, monsoonIndex: f.monsoonIndex,
+  koppen: idRasterOf(t, land, land.koppen, pixelLand, 0), biomes: idRasterOf(t, land, land.biome, pixelLand, Biome.Ocean),
+})
+const tsClimate = (t, params) => {
+  const terrain = terrainOf(t.coupled)
+  const chain = WS.climateChain(t.elevation, t.sim.domain, params)
+  const land = WS.landClimateOf(chain.cells, terrain)
+  const pixelLand = WS.pixelLandOf(t.elevation, null)
+  const { cellM } = chain.weather.terrain.cm
+  t.climate = { params, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind } }
+  return climateData(t, chain.chart, vectors(cellM, chain.weather.mesh.wind), vectors(cellM, chain.weather.mesh.currents), land, pixelLand)
+}
+const tsRefine = (t, restored) => {
+  const terrain = terrainOf(t.coupled)
+  const step = WS.refinedClimateOf(t.elevation, t.sim.domain, t.climate.params, t.climate.mesh, restored, () => {})
+  const { refined: r, chart } = step
+  const land = WS.landClimateOf(step.cells, terrain)
+  const pixelLand = WS.pixelLandOf(t.elevation, null)
+  t.climate = { params: t.climate.params, mesh: { temperature: step.meshTemperature, wind: step.meshWind } }
+  const { solves, ...values } = r
+  const refined = {
+    months: chart.months, refined: values, temperature: chart.temperature, precipitation: chart.precipitation,
+    koppen: idRasterOf(t, land, land.koppen, pixelLand, 0), fog: chart.fog, foehn: chart.foehn,
+    rainVariability: chart.reliability.rainVariability, ensoPattern: chart.reliability.ensoPattern,
+    ensoPeriodYears: chart.reliability.ensoPeriodYears, ensoStrength: chart.reliability.ensoStrength,
+    salinity: chart.salinity, deepWater: chart.deepWater, ...chart.storms, pressure: chart.pressure, wind: chart.wind,
+    currents: chart.currents, currentAnomaly: chart.currentAnomaly, upwelling: chart.upwelling,
+  }
+  const a = step.annual
+  const annual = climateData(t, { ...a, wind: step.annualWind, currents: chart.currents, currentAnomaly: chart.currentAnomaly },
+    vectors(r.spacingM, step.meshWind), vectors(r.spacingM, { e: r.currentE, s: r.currentS }), land, pixelLand)
+  return { refined, annual }
+}
+
 const STEPS = 60
 const EPOCHS = 6
 for (const shape of ['torus', 'sphere']) {
@@ -151,16 +206,27 @@ for (const shape of ['torus', 'sphere']) {
   sim.epochMa = TECTONIC_MA_PER_EPOCH
   const coupled = CE.createCoupledTerrain(sim, D.budget)
   each(worlds, (w) => w.finalize())
-  agree(`${shape}: the hand-over's render`, renderPlates(sim, coupled), worlds, (w) => w.render(1))
   const weather = shape === 'torus' ? { ...defaultWeatherParams(), planet: { ...DEFAULT_PLANET_FORCING, obliquityDeg: 31, rotationHours: 30 } } : defaultWeatherParams()
   const controls = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, weather }
+  const t = { sim, coupled, elevation: null, plan: null, climate: null }
+  const renderT = () => {
+    const r = renderPlates(sim, coupled)
+    t.elevation = r.elevations
+    return r
+  }
+  agree(`${shape}: the hand-over's render`, renderT(), worlds, (w) => w.render(1))
   let eventCount = 0
   for (let e = 0; e < EPOCHS; e++) {
     const stats = await CE.stepCoupledEpoch(sim, coupled, optionsOf(controls))
     eventCount += stats.events.length
     agree(`${shape}: epoch ${e + 1}'s events`, stats.events, worlds, (w) => w.epoch(controls))
-    if (e % 2 === 1) agree(`${shape}: epoch ${e + 1}'s render`, renderPlates(sim, coupled), worlds, (w) => w.render(1))
+    if (e % 2 === 1) agree(`${shape}: epoch ${e + 1}'s render`, renderT(), worlds, (w) => w.render(1))
   }
+
+  // The climate step and its refinement.
+  agree(`${shape}: the climate`, tsClimate(t, weather), worlds, (w) => w.climate(weather))
+  const refinement = tsRefine(t, undefined)
+  agree(`${shape}: the refinement`, refinement, worlds, (w) => w.refineClimate(null))
 
   // The tectonic save.
   const snapshot = serializePlateSimulation(sim)
@@ -184,6 +250,12 @@ for (const shape of ['torus', 'sphere']) {
     wasm: wasm.World.restorePlates(shape, back, oceanAge, mantle, lattice, mesh),
   }
   agree(`${shape}: the restored world`, snapshot, restored, (w) => w.snapshot())
+  // Rendered, its climate again and the saved refinement taken as it is.
+  agree(`${shape}: the restored world's render`, renderT(), restored, (w) => w.render(1))
+  each(worlds, (w) => w.render(1))
+  const all = { ...worlds, ...Object.fromEntries(Object.entries(restored).map(([k, w]) => [`restored ${k}`, w])) }
+  agree(`${shape}: the restored world's climate`, tsClimate(t, weather), all, (w) => w.climate(weather))
+  agree(`${shape}: the saved refinement`, tsRefine(t, refinement.refined.refined), all, (w) => w.refineClimate(refinement.refined.refined))
   await CE.stepCoupledEpoch(sim, coupled, optionsOf(controls))
   each(restored, (w) => w.epoch(controls))
   each(worlds, (w) => w.epoch(controls))

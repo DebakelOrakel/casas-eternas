@@ -149,6 +149,19 @@ impl World {
     pub fn render(&mut self, scale: u32) -> Result<JsValue, JsError> {
         self.0.render(scale).map(to_js).map_err(era)
     }
+
+    pub fn climate(&mut self, params: &JsValue) -> Result<JsValue, JsError> {
+        self.0.climate(&from_js(params)?).map(to_js).map_err(era)
+    }
+
+    #[wasm_bindgen(js_name = refineClimate)]
+    pub fn refine_climate(&mut self, restored: &JsValue) -> Result<JsValue, JsError> {
+        let restored = from_js(restored)?;
+        self.0
+            .refine_climate(given(&restored))
+            .map(to_js)
+            .map_err(era)
+    }
 }
 
 fn shape_of(shape: &str) -> Result<casas_engine_api::Shape, JsError> {

@@ -1,10 +1,12 @@
 //! Value trees from TypeScript read back into the engine's types: a save's
 //! state (`PlateSimulationSnapshot`, `ArcheanSnapshot`, `SavedField`, the
-//! mesh payload) and a call's controls. The inverse of `forms`; a key a
+//! mesh payload, `RefinedClimate`) and a call's controls. The inverse of `forms`; a key a
 //! save written before a field existed leaves out reads as the
 //! TypeScript reader reads it (absent, or its default).
 
 use casas_engine::archean::archean_snapshot::ArcheanSnapshot;
+use casas_engine::climate::refinement::{RefinedClimate, RefinedReliability, RefinedStorms};
+use casas_engine::climate::weather::WeatherParams;
 use casas_engine::crust::raft_types::{Raft, RaftBlob, Suture};
 use casas_engine::fields::field_mesh::SavedField;
 use casas_engine::planet::planet_forcing::PlanetForcing;
@@ -321,5 +323,64 @@ pub fn planet(v: &Value) -> ReadResult<PlanetForcing> {
         solar_constant: f.num("solarConstant")?,
         rotation_hours: f.num("rotationHours")?,
         land_plants_from_ma: f.num("landPlantsFromMa")?,
+    })
+}
+
+/// `ClimateParams` (`WeatherParams`): the climate's levers and the planet.
+pub fn weather(v: &Value) -> ReadResult<WeatherParams> {
+    let f = Fields::of(v, "the weather")?;
+    Ok(WeatherParams {
+        temperature_offset: f.num("temperatureOffset")?,
+        temperature_contrast: f.num("temperatureContrast")?,
+        humidity: f.num("humidity")?,
+        equator_offset: f.num("equatorOffset")?,
+        planet: f.get("planet").map(planet).transpose()?,
+    })
+}
+
+/// `RefinedClimate` as a save reads it back: no solves.
+pub fn refined_climate(v: &Value) -> ReadResult<RefinedClimate> {
+    let f = Fields::of(v, "the refinement")?;
+    let a = |key: &str| -> ReadResult<Vec<f32>> {
+        Ok(f32s(f.need(key)?, "a refinement's field")?.to_vec())
+    };
+    let r = Fields::of(f.need("reliability")?, "the refinement's reliability")?;
+    let ra = |key: &str| -> ReadResult<Vec<f32>> {
+        Ok(f32s(r.need(key)?, "a reliability field")?.to_vec())
+    };
+    let st = Fields::of(f.need("storms")?, "the refinement's storms")?;
+    let sa =
+        |key: &str| -> ReadResult<Vec<f32>> { Ok(f32s(st.need(key)?, "a storm field")?.to_vec()) };
+    Ok(RefinedClimate {
+        months: f.num("months")? as usize,
+        cells: f.num("cells")? as usize,
+        spacing_m: f.num("spacingM")?,
+        temperature: a("temperature")?,
+        precipitation: a("precipitation")?,
+        pressure: a("pressure")?,
+        wind_e: a("windE")?,
+        wind_s: a("windS")?,
+        current_e: a("currentE")?,
+        current_s: a("currentS")?,
+        current_anomaly: a("currentAnomaly")?,
+        upwelling: a("upwelling")?,
+        salinity: a("salinity")?,
+        deep_water: a("deepWater")?,
+        fog: a("fog")?,
+        foehn: a("foehn")?,
+        reliability: RefinedReliability {
+            rain_variability: ra("rainVariability")?,
+            enso_pattern: ra("ensoPattern")?,
+            enso_period_years: r.num("ensoPeriodYears")?,
+            enso_strength: r.num("ensoStrength")?,
+        },
+        storms: RefinedStorms {
+            cyclone: sa("cyclone")?,
+            tornado: sa("tornado")?,
+            blizzard: sa("blizzard")?,
+            dust: sa("dust")?,
+            thunder: sa("thunder")?,
+        },
+        solves: None,
     })
 }

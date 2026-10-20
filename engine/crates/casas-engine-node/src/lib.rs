@@ -163,6 +163,19 @@ impl World {
     pub fn render(&mut self, scale: u32) -> napi::Result<Tree> {
         self.0.render(scale).map(Tree).map_err(era)
     }
+
+    #[napi(ts_args_type = "params: unknown")]
+    pub fn climate(&mut self, params: Tree) -> napi::Result<Tree> {
+        self.0.climate(&params.0).map(Tree).map_err(era)
+    }
+
+    #[napi(ts_args_type = "restored?: unknown")]
+    pub fn refine_climate(&mut self, restored: Tree) -> napi::Result<Tree> {
+        self.0
+            .refine_climate(given(&restored.0))
+            .map(Tree)
+            .map_err(era)
+    }
 }
 
 fn shape_of(shape: &str) -> napi::Result<casas_engine_api::Shape> {

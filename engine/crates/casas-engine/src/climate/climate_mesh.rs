@@ -380,6 +380,28 @@ impl<'a> ClimateTerrain<'a> {
         ClimateTerrain::from_cow(sh, Cow::Owned(elevation), res_x, res_y, None)
     }
 
+    /// The same terrain with its rasters copied, for a caller that keeps
+    /// it past the rasters it was made from.
+    pub fn into_owned(self) -> ClimateTerrain<'static> {
+        ClimateTerrain {
+            cm: self.cm,
+            domain: self.domain,
+            elevation: Cow::Owned(self.elevation.into_owned()),
+            dry_land: self.dry_land.map(|d| Cow::Owned(d.into_owned())),
+            res_x: self.res_x,
+            res_y: self.res_y,
+            raster_domain: self.raster_domain,
+            z: self.z,
+            land: self.land,
+            dry: self.dry,
+            kx: self.kx,
+            ky: self.ky,
+            owners: self.owners,
+            mean: self.mean,
+            peak: self.peak,
+        }
+    }
+
     fn from_cow(
         sh: &SharedFieldMesh,
         elevation: Cow<'a, [f32]>,
