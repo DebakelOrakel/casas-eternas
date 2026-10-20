@@ -4,10 +4,7 @@
 //! (centres, areas, walls, offsets, turns, gradient weights), its sampler,
 //! and its rasters. The reasoning is in the TypeScript file.
 //!
-//! Not yet ported: the three readers of a raster onto the mesh
-//! (`fieldFromRasterAtCentres`, `fieldFromRasterAreaWeighted`,
-//! `fieldMaxFromRaster`), which sample through the domain's grid; they come
-//! with it. Nor the per-domain cache of shared meshes, which changes the
+//! Not ported: the per-domain cache of shared meshes, which changes the
 //! time and nothing else.
 //!
 //! The sampler and the rasters locate through the triangulation, and a walk
@@ -549,4 +546,84 @@ pub fn raster_owners(
         }
     }
     owners
+}
+
+/// A chart raster (cell centres at +0.5) onto the field mesh, sampled
+/// bilinearly at each cell's centre: for a smooth field about as coarse as
+/// the mesh or coarser.
+pub fn field_from_raster_at_centres(
+    fm: &FieldMesh,
+    raster: &[f32],
+    res_x: usize,
+    res_y: usize,
+) -> Vec<f64> {
+    let grid = fm.domain.grid(res_x, res_y);
+    (0..fm.count)
+        .map(|i| grid.sample_bilinear_at(raster, fm.x[i], fm.y[i]))
+        .collect()
+}
+
+/// A chart raster onto the field mesh as the area-weighted mean of the
+/// raster cells whose centres lie in each Voronoi cell; a mesh cell no
+/// raster centre falls in takes the centre sample. `owners`: raster_owners
+/// of the same raster size, when the caller has them.
+pub fn field_from_raster_area_weighted(
+    fm: &mut FieldMesh,
+    sampler: &FieldSampler,
+    raster: &[f32],
+    res_x: usize,
+    res_y: usize,
+    owners: Option<&[u32]>,
+) -> Vec<f64> {
+    let mut weight = vec![0.0; fm.count];
+    let mut sum = vec![0.0; fm.count];
+    let grid = fm.domain.grid(res_x, res_y);
+    let sx = fm.domain.width / res_x as f64;
+    let sy = fm.domain.height / res_y as f64;
+    for py in 0..res_y {
+        let w = grid.cell_area(py as f64);
+        let y = (py as f64 + 0.5) * sy;
+        for px in 0..res_x {
+            let i = match owners {
+                Some(o) => o[py * res_x + px] as usize,
+                None => sampler.nearest_cell(fm, (px as f64 + 0.5) * sx, y),
+            };
+            sum[i] += w * raster[py * res_x + px] as f64;
+            weight[i] += w;
+        }
+    }
+    (0..fm.count)
+        .map(|i| {
+            if weight[i] > 0.0 {
+                sum[i] / weight[i]
+            } else {
+                grid.sample_bilinear_at(raster, fm.x[i], fm.y[i])
+            }
+        })
+        .collect()
+}
+
+/// The maximum of the raster cells whose centres lie in each Voronoi cell;
+/// a mesh cell no raster centre falls in takes the centre sample.
+pub fn field_max_from_raster(
+    fm: &FieldMesh,
+    raster: &[f32],
+    res_x: usize,
+    res_y: usize,
+    owners: &[u32],
+) -> Vec<f64> {
+    let mut result = vec![f64::NEG_INFINITY; fm.count];
+    for (p, &o) in owners.iter().enumerate() {
+        let i = o as usize;
+        if raster[p] as f64 > result[i] {
+            result[i] = raster[p] as f64;
+        }
+    }
+    let grid = fm.domain.grid(res_x, res_y);
+    for i in 0..fm.count {
+        if result[i] == f64::NEG_INFINITY {
+            result[i] = grid.sample_bilinear_at(raster, fm.x[i], fm.y[i]);
+        }
+    }
+    result
 }
