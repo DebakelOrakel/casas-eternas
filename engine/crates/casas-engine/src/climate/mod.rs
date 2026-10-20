@@ -1,6 +1,7 @@
 //! `client/src/generator/climate/`.
 
 pub mod biomes;
+pub mod climate_chart;
 pub mod climate_field;
 pub mod climate_mesh;
 pub mod climate_points;

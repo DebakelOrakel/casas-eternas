@@ -30,6 +30,7 @@ const EB = await L('/src/generator/climate/energyBalance.ts')
 const CP = await L('/src/generator/climate/climatePoints.ts')
 const B = await L('/src/generator/climate/biomes.ts')
 const PF = await L('/src/generator/planet/planetForcing.ts')
+const CC = await L('/src/generator/climate/climateChart.ts')
 await server.close()
 
 const f = new Float64Array(1)
@@ -74,6 +75,7 @@ const next = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0)
 const uniform = (lo, hi) => lo + (hi - lo) * (next() / 4294967296)
 
 for (const [name, d] of [['torus', D.torusDomain(W, H)], ['sphere', D.sphereDomain(W, H)]]) {
+  let last = null
   for (const [variant, params] of [
     ['default', WE.defaultWeatherParams()],
     ['moved', { temperatureOffset: -2, temperatureContrast: 0.9, humidity: 1.3, equatorOffset: 0, planet: { ...PF.DEFAULT_PLANET_FORCING, obliquityDeg: 28, rotationHours: 20, eccentricity: 0.04, precessionDeg: 200 } }],
@@ -121,7 +123,25 @@ for (const [name, d] of [['torus', D.torusDomain(W, H)], ['sphere', D.sphereDoma
     addAll(b.biome)
     addAll(b.koppen)
     line(`${name}_points_${variant}`)
+    last = { terrain, wm, r, cells }
   }
+
+  // The charts of the last variant (climate/climateChart.ts).
+  const { terrain, wm, r, cells } = last
+  h = 0x811c9dc5
+  const wc = CC.weatherChart({ terrain, mesh: wm })
+  for (const k of ['temperature', 'wind', 'seasonalAmplitude', 'precipitation', 'monsoonIndex', 'currents', 'currentAnomaly']) addAll(wc[k])
+  const rc = CC.refinedChart(r, terrain)
+  for (const k of ['temperature', 'precipitation', 'pressure', 'wind', 'currents', 'currentAnomaly', 'upwelling', 'salinity', 'deepWater', 'fog', 'foehn']) addAll(rc[k])
+  addAll(rc.reliability.rainVariability)
+  addAll(rc.reliability.ensoPattern)
+  for (const k of R.REFINED_STORMS) addAll(rc.storms[k])
+  const chartTerrain = { domain: d, elevation, resX: W, resY: H, dryLand: null }
+  for (const [rx, ry] of [[256, 128], [512, 256]]) {
+    const cc = CC.cellsChart(cells, chartTerrain, rx, ry)
+    for (const k of ['temperature', 'precipitation', 'seasonalAmplitude', 'monsoonIndex', 'landMask']) addAll(cc[k])
+  }
+  line(`${name}_chart`)
 }
 
 const text = lines.join('\n') + '\n'

@@ -6,6 +6,9 @@
 //! script's, step for step.
 
 use casas_engine::climate::biomes::classify_points;
+use casas_engine::climate::climate_chart::{
+    ChartTerrain, cells_chart, refined_chart, weather_chart,
+};
 use casas_engine::climate::climate_mesh::{ClimateTerrain, climate_cell_m};
 use casas_engine::climate::climate_points::{
     ClimatePoints, climate_at_points, climate_cells_from_refined,
@@ -115,6 +118,7 @@ fn run(name: &str, d: Domain) {
             ..DEFAULT_PLANET_FORCING
         }),
     };
+    let mut last = None;
     for (variant, params) in [("default", default_weather_params()), ("moved", moved)] {
         let terrain = ClimateTerrain::new(&sh, &elevation, W, H, None);
         let wm = compute_weather(&mut sh, &terrain, &params);
@@ -213,7 +217,66 @@ fn run(name: &str, d: Domain) {
         h.add_all(&b.biome);
         h.add_all(&b.koppen);
         h.check(&format!("{name}_points_{variant}"));
+        last = Some((terrain, wm, r, cells));
     }
+
+    let (terrain, wm, r, cells) = last.unwrap();
+    let mut h = Hash::new();
+    let wc = weather_chart(&mut sh, &terrain, &wm);
+    for a in [
+        &wc.temperature,
+        &wc.wind,
+        &wc.seasonal_amplitude,
+        &wc.precipitation,
+        &wc.monsoon_index,
+        &wc.currents,
+        &wc.current_anomaly,
+    ] {
+        h.add_all(a);
+    }
+    let rc = refined_chart(&mut sh, &r, &terrain);
+    for a in [
+        &rc.temperature,
+        &rc.precipitation,
+        &rc.pressure,
+        &rc.wind,
+        &rc.currents,
+        &rc.current_anomaly,
+        &rc.upwelling,
+        &rc.salinity,
+        &rc.deep_water,
+        &rc.fog,
+        &rc.foehn,
+        &rc.reliability.rain_variability,
+        &rc.reliability.enso_pattern,
+        &rc.storms.cyclone,
+        &rc.storms.tornado,
+        &rc.storms.blizzard,
+        &rc.storms.dust,
+        &rc.storms.thunder,
+    ] {
+        h.add_all(a);
+    }
+    let chart_terrain = ChartTerrain {
+        domain: &d,
+        elevation: &elevation,
+        res_x: W,
+        res_y: H,
+        dry_land: None,
+    };
+    for (rx, ry) in [(256, 128), (512, 256)] {
+        let cc = cells_chart(&mut sh, &cells, &chart_terrain, rx, ry);
+        for a in [
+            &cc.temperature,
+            &cc.precipitation,
+            &cc.seasonal_amplitude,
+            &cc.monsoon_index,
+            &cc.land_mask,
+        ] {
+            h.add_all(a);
+        }
+    }
+    h.check(&format!("{name}_chart"));
 }
 
 #[test]

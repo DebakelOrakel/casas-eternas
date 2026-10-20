@@ -5,7 +5,9 @@ torus_refined_default 1e0ae5b9
 torus_points_default 3a94cc7c
 torus_refined_moved 4c1d4246
 torus_points_moved 84c090f5
+torus_chart 67d05972
 sphere_refined_default 901c669c
 sphere_points_default 57bbf334
 sphere_refined_moved 71e19e10
 sphere_points_moved ab7b3c2c
+sphere_chart f53bf02d

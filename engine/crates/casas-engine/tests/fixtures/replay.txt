@@ -1,0 +1,10 @@
+# Hashes of client/src/generator/pipeline/replayRuns.ts, for crates/casas-engine/tests/replay.rs.
+# Written by engine/scripts/replayFixture.mjs; do not edit.
+torus checkpoint 0 3 56fe87b7
+torus checkpoint 1 0 bf7a459c
+torus full f0a3717c 33a94738
+torus resumed 1 0 f0a3717c 33a94738
+sphere checkpoint 0 3 12b92cf2
+sphere checkpoint 1 0 a421685a
+sphere full 9f9a39f4 5e16cfbc
+sphere resumed 1 0 9f9a39f4 5e16cfbc

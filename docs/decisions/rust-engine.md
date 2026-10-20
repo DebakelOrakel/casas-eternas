@@ -444,6 +444,17 @@ BUILDING since 2026-10-20:
   reads them after it, so a node moves by its plate's motion as the
   mantle's coupling left it; the Rust step reports those motions
   (`step_epoch_coupled`).
+- The climate's chart (`climate/climateChart`: the static climate, the
+  annual cells and the refinement as the screen's textures), bit-equal on
+  the refinement's terrain. And the replay (`pipeline/replayRuns`: a
+  plan's Archean runs, the hand-over and its tectonics runs, a restored
+  one among them, the checkpoints, a resume from one), bit-equal on both
+  shapes: 14 s against 62 s. The world's field meshes go from a restored
+  state to the restoring one, as TypeScript keeps them per domain. A
+  TypeScript snapshot (`snapshotOf`) shares the live simulation's objects;
+  the job worker writes it to disk before the replay goes on, so its
+  checkpoints are exact, but a snapshot kept in memory past the next epoch
+  changes with the world. The Rust snapshot is a copy.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and
