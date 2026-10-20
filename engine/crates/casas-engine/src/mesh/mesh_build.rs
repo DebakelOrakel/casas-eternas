@@ -157,15 +157,21 @@ pub fn build_mesh(
     if sampler.has_discharge() {
         state.add(MESH_DISCHARGE, FieldKind::Intensive, 1);
     }
-    let mut sample =
-        |state: &mut MeshState, v: usize, x: f64, y: f64, _a: usize, _b: usize, _c: usize| {
-            state.get_mut(MESH_Z)[v] = sampler.height_at(x, y) as f32;
-            if let Some(q) = sampler.discharge_at(x, y) {
-                state.get_mut(MESH_DISCHARGE)[v] = q as f32;
-            }
-        };
+    let mut sample = |state: &mut MeshState,
+                      _: &PeriodicTriangulation,
+                      v: usize,
+                      x: f64,
+                      y: f64,
+                      _a: usize,
+                      _b: usize,
+                      _c: usize| {
+        state.get_mut(MESH_Z)[v] = sampler.height_at(x, y) as f32;
+        if let Some(q) = sampler.discharge_at(x, y) {
+            state.get_mut(MESH_DISCHARGE)[v] = q as f32;
+        }
+    };
     for v in 0..mesh.vertex_slots() {
-        sample(&mut state, v, mesh.vx[v], mesh.vy[v], 0, 0, 0);
+        sample(&mut state, &mesh, v, mesh.vx[v], mesh.vy[v], 0, 0, 0);
     }
     let mut target = DensityTarget { budget };
     let mut options = RefineOptions::seeded(seed);

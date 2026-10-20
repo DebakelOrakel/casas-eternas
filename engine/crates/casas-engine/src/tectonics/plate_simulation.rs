@@ -10,6 +10,7 @@ use crate::fields::field_mesh::SavedField;
 use crate::mantle::mantle_field::{
     DEFAULT_INITIAL_SMOOTHING, create_mantle_field, restore_mantle_field,
 };
+use crate::tectonics::plate_motion::PlateMotion;
 
 use super::boundary_lattice::generate_detection_lattice;
 use super::epoch::boundary_pass::run_boundary_pass;
@@ -119,12 +120,22 @@ pub fn deserialize_plate_simulation(
 
 /// One epoch: the six phases in their order.
 pub fn step_epoch(sim: &mut PlateSimulation) -> Vec<SimEvent> {
+    step_epoch_coupled(sim).0
+}
+
+/// `step_epoch`, and the plates' motions as the mantle's coupling left
+/// them, by the index the plates had before the step. TypeScript's coupled
+/// epoch keeps the motion objects of before the step (a shallow copy) and
+/// reads them after it: the coupling changes them in place, the churn only
+/// appends and removes.
+pub fn step_epoch_coupled(sim: &mut PlateSimulation) -> (Vec<SimEvent>, Vec<PlateMotion>) {
     let membership = couple_mantle_to_plates(sim);
+    let coupled = sim.motions.clone();
     advance_plates_and_crust(sim, &membership);
     let pass = run_boundary_pass(sim);
     let rafts = apply_raft_events(sim, &pass);
     let events = collect_events_and_apply_plate_churn(sim, &pass, &rafts);
     prune_spent_features(sim);
     sim.epoch += 1.0;
-    events
+    (events, coupled)
 }

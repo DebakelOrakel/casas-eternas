@@ -28,8 +28,10 @@ pub trait TargetSpacing {
 }
 
 /// Sets the sampled fields of every inserted vertex after its state was
-/// interpolated: vertex, its position, the corners it came from.
-pub type Sample<'a> = &'a mut dyn FnMut(&mut MeshState, usize, f64, f64, usize, usize, usize);
+/// interpolated: the mesh as it stands, the vertex, its position, the
+/// corners it came from.
+pub type Sample<'a> =
+    &'a mut dyn FnMut(&mut MeshState, &PeriodicTriangulation, usize, f64, f64, usize, usize, usize);
 
 pub struct RefineOptions<'a> {
     pub seed: u32,
@@ -164,7 +166,7 @@ pub fn refine(
             state.inherit_insert(v, ta, tb, tc, bary[0], bary[1], bary[2]);
             targets[v] = js::min(js::min(targets[ta], targets[tb]), targets[tc]);
             if let Some(sample) = options.sample.as_mut() {
-                sample(state, v, mesh.vx[v], mesh.vy[v], ta, tb, tc);
+                sample(state, mesh, v, mesh.vx[v], mesh.vy[v], ta, tb, tc);
             }
             this_round.push(v as u32);
         }

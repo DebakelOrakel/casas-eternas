@@ -427,6 +427,23 @@ BUILDING since 2026-10-20:
   and the mesh's codec and canonical form (`mesh/meshSerial`). Bit-equal
   on a built mesh of each shape, lakes, terminal and dry basins among the
   bodies.
+- The coupled epoch (`pipeline/coupledEpoch`), with the synthesis at a
+  point (`elevation/elevationSampler`): the terrain from the synthesis and
+  the deck's isostasy, then per epoch the membership, the step, the
+  motion, the rebuild and the remesh, the baseline, the climate, the ice,
+  the cover, the forcing with the folds and both force balances, the
+  erosion and the column, the coast, the flexure, the sea level, the
+  routing and the lakes' ages; the terrain's bytes there and back. From
+  the synthetic simulation after 12 tectonic epochs, the terrain and 4
+  coupled epochs at the history's settings (a remesh among them) give the
+  TypeScript terrain, simulation and ledger after every epoch on both
+  shapes: 7 s against some 30 s. With this, level 0 runs in Rust from the
+  seed string to the history's terrain; the stage's driver
+  (`pipeline/runtime.ts`), the climate's chart and the save remain.
+  TypeScript copies the plates' motions shallowly before the step and
+  reads them after it, so a node moves by its plate's motion as the
+  mantle's coupling left it; the Rust step reports those motions
+  (`step_epoch_coupled`).
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

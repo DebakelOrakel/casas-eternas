@@ -253,7 +253,14 @@ fn build_remesh(name: &str, domain: Domain) {
         c[v * COLUMN_DEPTH] = (40.0 * (1.0 + det_sin(x * 0.02 + y * 0.01))) as f32;
         c[v * COLUMN_DEPTH + 7] = (12.0 * (1.0 + det_cos(y * 0.05))) as f32;
     }
-    let mut sample = |s: &mut MeshState, v: usize, x: f64, y: f64, _: usize, _: usize, _: usize| {
+    let mut sample = |s: &mut MeshState,
+                      _: &PeriodicTriangulation,
+                      v: usize,
+                      x: f64,
+                      y: f64,
+                      _: usize,
+                      _: usize,
+                      _: usize| {
         s.get_mut(MESH_Z)[v] = (height_at(x, y) * 1.4) as f32;
     };
     let mut options = RefineOptions::seeded(11);

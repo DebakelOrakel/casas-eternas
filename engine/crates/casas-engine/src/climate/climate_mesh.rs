@@ -9,6 +9,7 @@
 //! Not ported, because it changes the time and nothing else: the cache of
 //! the raster's owners across terrains (a terrain keeps its own).
 
+use std::borrow::Cow;
 use std::cell::OnceCell;
 
 use crate::core::domain::Domain;
@@ -319,7 +320,7 @@ pub fn basin_rows(sh: &mut SharedFieldMesh, terrain: &ClimateTerrain) -> BasinRo
 pub struct ClimateTerrain<'a> {
     pub cm: ClimateMesh,
     pub domain: Domain,
-    pub elevation: &'a [f32],
+    pub elevation: Cow<'a, [f32]>,
     pub res_x: usize,
     pub res_y: usize,
     pub dry_land: Option<&'a [u8]>,
@@ -338,6 +339,26 @@ impl<'a> ClimateTerrain<'a> {
     pub fn new(
         sh: &SharedFieldMesh,
         elevation: &'a [f32],
+        res_x: usize,
+        res_y: usize,
+        dry_land: Option<&'a [u8]>,
+    ) -> Self {
+        Self::from_cow(sh, Cow::Borrowed(elevation), res_x, res_y, dry_land)
+    }
+
+    /// The terrain over a raster it keeps.
+    pub fn owned(
+        sh: &SharedFieldMesh,
+        elevation: Vec<f32>,
+        res_x: usize,
+        res_y: usize,
+    ) -> ClimateTerrain<'static> {
+        ClimateTerrain::from_cow(sh, Cow::Owned(elevation), res_x, res_y, None)
+    }
+
+    fn from_cow(
+        sh: &SharedFieldMesh,
+        elevation: Cow<'a, [f32]>,
         res_x: usize,
         res_y: usize,
         dry_land: Option<&'a [u8]>,
@@ -373,7 +394,7 @@ impl<'a> ClimateTerrain<'a> {
         };
         for i in 0..fm.count {
             let t = terrain.texel(fm.x[i], fm.y[i]);
-            z[i] = elevation[t] as f64;
+            z[i] = terrain.elevation[t] as f64;
             dry[i] = u8::from(dry_land.is_some_and(|d| d[t] == 1));
             land[i] = u8::from(is_land_at(z[i], dry[i] == 1));
         }
@@ -406,7 +427,7 @@ impl<'a> ClimateTerrain<'a> {
             let mean = field_from_raster_area_weighted(
                 &mut sh.mesh,
                 &sh.sampler,
-                self.elevation,
+                &self.elevation,
                 self.res_x,
                 self.res_y,
                 Some(&owners),
@@ -421,7 +442,7 @@ impl<'a> ClimateTerrain<'a> {
         if self.peak.get().is_none() {
             let owners = self.owners(sh).to_vec();
             let peak =
-                field_max_from_raster(&sh.mesh, self.elevation, self.res_x, self.res_y, &owners);
+                field_max_from_raster(&sh.mesh, &self.elevation, self.res_x, self.res_y, &owners);
             let _ = self.peak.set(peak);
         }
         self.peak.get().unwrap()
