@@ -387,10 +387,17 @@ pub struct HydrologyClimate<'a> {
     pub land: Option<LandClimate>,
 }
 
+/// What the route calls with the climate v2: the mesh, the chain, its land
+/// and the dry floors' raster.
+pub type OnClimate<'c, 'a> =
+    dyn FnMut(&mut PeriodicTriangulation, &ClimateChain<'a>, &LandClimate, &[u8]) + 'c;
+
 /// The hydrology's route: the lakes and the discharge on the mesh, and
 /// unless the climate is the refinement the climate v2 on the current
-/// terrain with the hydrology once more under it. Returns the v2 chain
-/// when it ran.
+/// terrain with the hydrology once more under it. `on_climate` gets the v2
+/// chain, its land and the dry floors' raster where TypeScript's callback
+/// does, before the second hydrology (it may move the mesh's walk).
+/// Returns the v2 chain when it ran.
 #[allow(clippy::too_many_arguments)]
 pub fn route_hydrology<'a>(
     sh: &mut SharedFieldMesh,
@@ -401,6 +408,7 @@ pub fn route_hydrology<'a>(
     width: usize,
     height: usize,
     weather: HydrologyClimate<'_>,
+    on_climate: &mut OnClimate<'_, 'a>,
 ) -> (MeshHydrology, Option<(ClimateChain<'a>, Vec<u8>)>) {
     let land = match weather.land {
         Some(l) => l,
@@ -413,6 +421,7 @@ pub fn route_hydrology<'a>(
     let dry_raster = on_mesh.raster.dry_basin.clone();
     let chain = climate_chain(sh, terrain, weather.params, Some(dry_raster.clone()));
     let land = land_climate_of(sh, &chain.cells, mesh, t.z, Some(&on_mesh.lakes.dry_basin));
+    on_climate(mesh, &chain, &land, &dry_raster);
     let on_mesh = hydrology_on_mesh(mesh, t, elevation, width, height, land);
     (on_mesh, Some((chain, dry_raster)))
 }

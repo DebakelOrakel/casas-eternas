@@ -7,7 +7,7 @@ use std::ptr;
 use casas_engine_api::Value;
 use napi::bindgen_prelude::{
     Float32Array, Float64Array, FromNapiValue, Int8Array, Int16Array, Int32Array, Null,
-    ToNapiValue, Uint8Array,
+    ToNapiValue, Uint8Array, Uint16Array, Uint32Array,
 };
 use napi::{check_status, sys};
 
@@ -59,6 +59,8 @@ unsafe fn to_js(env: sys::napi_env, v: Value) -> napi::Result<sys::napi_value> {
             Value::I32s(a) => Int32Array::to_napi_value(env, Int32Array::new(a)),
             Value::I16s(a) => Int16Array::to_napi_value(env, Int16Array::new(a)),
             Value::I8s(a) => Int8Array::to_napi_value(env, Int8Array::new(a)),
+            Value::U32s(a) => Uint32Array::to_napi_value(env, Uint32Array::new(a)),
+            Value::U16s(a) => Uint16Array::to_napi_value(env, Uint16Array::new(a)),
             Value::U8s(a) => Uint8Array::to_napi_value(env, Uint8Array::new(a)),
         }
     }
@@ -161,6 +163,8 @@ unsafe fn typed_array(env: sys::napi_env, value: sys::napi_value) -> napi::Resul
             sys::TypedarrayType::int32_array => Value::I32s(view(data, length)),
             sys::TypedarrayType::int16_array => Value::I16s(view(data, length)),
             sys::TypedarrayType::int8_array => Value::I8s(view(data, length)),
+            sys::TypedarrayType::uint32_array => Value::U32s(view(data, length)),
+            sys::TypedarrayType::uint16_array => Value::U16s(view(data, length)),
             sys::TypedarrayType::uint8_array => Value::U8s(view(data, length)),
             _ => {
                 return Err(napi::Error::from_reason(

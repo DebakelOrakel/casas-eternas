@@ -653,6 +653,19 @@ BUILDING since 2026-10-20:
   the saved refinement, on both shapes: equal to TypeScript's in both
   builds, and the next epoch too. The refinement's progress does not
   cross yet.
+- The hydrology step through the boundary: the route with the climate
+  v2, the render after it (of the engine's part, the mantle's raster),
+  the features, and a pass after that reuses the route. The call gives
+  the body of `hydrologyData` with the river graph as the `RiverGraph`
+  the world layer serializes, the v2's `climateData` and the render's
+  masks. The route calls back with the v2 where TypeScript's does,
+  before the second hydrology, as the pixels' triangles it may make move
+  the mesh's walk. The smoke test runs it on the climate v1, on the
+  refinement, once more from the route and in the restored worlds, and
+  compares the save's JSON in TypeScript's key order too (the river
+  graph, the water bodies, the coast reaches, the sediment basins). Its
+  worlds have no river course and no dry floor: those keys and the v2's
+  dry path are compared nowhere yet.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

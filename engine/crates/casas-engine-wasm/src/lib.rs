@@ -154,6 +154,11 @@ impl World {
         self.0.climate(&from_js(params)?).map(to_js).map_err(era)
     }
 
+    pub fn hydrology(&mut self, planet: &JsValue) -> Result<JsValue, JsError> {
+        let planet = from_js(planet)?;
+        self.0.hydrology(given(&planet)).map(to_js).map_err(era)
+    }
+
     #[wasm_bindgen(js_name = refineClimate)]
     pub fn refine_climate(&mut self, restored: &JsValue) -> Result<JsValue, JsError> {
         let restored = from_js(restored)?;

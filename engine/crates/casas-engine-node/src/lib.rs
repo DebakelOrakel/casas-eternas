@@ -169,6 +169,11 @@ impl World {
         self.0.climate(&params.0).map(Tree).map_err(era)
     }
 
+    #[napi(ts_args_type = "planet?: unknown")]
+    pub fn hydrology(&mut self, planet: Tree) -> napi::Result<Tree> {
+        self.0.hydrology(given(&planet.0)).map(Tree).map_err(era)
+    }
+
     #[napi(ts_args_type = "restored?: unknown")]
     pub fn refine_climate(&mut self, restored: Tree) -> napi::Result<Tree> {
         self.0

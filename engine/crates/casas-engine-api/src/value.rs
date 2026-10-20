@@ -23,6 +23,8 @@ pub enum Value {
     I32s(Vec<i32>),
     I16s(Vec<i16>),
     I8s(Vec<i8>),
+    U32s(Vec<u32>),
+    U16s(Vec<u16>),
     U8s(Vec<u8>),
 }
 

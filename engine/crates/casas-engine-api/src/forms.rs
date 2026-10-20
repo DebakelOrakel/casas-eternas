@@ -1,7 +1,7 @@
 //! The engine's state as the TypeScript types the world layer writes and
 //! the screen reads (`PlateSimulationSnapshot`, `SimEvent`, `SavedField`,
-//! the mesh payload, the climate's messages and `RefinedClimate`), as
-//! value trees. Keys and shapes are the TypeScript
+//! the mesh payload, the climate's and the hydrology's messages,
+//! `RefinedClimate`, `RiverGraph`), as value trees. Keys and shapes are the TypeScript
 //! types'; their order is the TypeScript serializer's.
 
 use casas_engine::climate::climate_chart::RefinedClimateChart;
@@ -11,6 +11,14 @@ use casas_engine::fields::field_mesh::SavedField;
 use casas_engine::mesh::mesh_column::encode_column;
 use casas_engine::mesh::mesh_serial::encode_mesh;
 use casas_engine::pipeline::coupled_epoch::CoupledTerrain;
+use casas_engine::surface::coast_graph::{CoastReach, CoastType};
+use casas_engine::surface::hydrogeology::SpringFeature;
+use casas_engine::surface::hydrology::{WaterBody, WaterKind};
+use casas_engine::surface::river_course::{RiverCourse, RiverPattern};
+use casas_engine::surface::river_graph::{
+    RiverGraph, RiverNode, RiverNodeKind, RiverReach, RiverReachKind, RiverRegime,
+};
+use casas_engine::surface::sediment_basins::{BasinKind, SedimentBasin};
 use casas_engine::tectonics::plate_motion::PlateMotion;
 use casas_engine::tectonics::plate_simulation_types::{
     PlateSimulationSnapshot, SimEvent, SimEventType,
@@ -381,5 +389,207 @@ pub fn climate_refined(chart: &RefinedClimateChart, r: &RefinedClimate, koppen: 
         .put("currents", f(&chart.currents))
         .put("currentAnomaly", f(&chart.current_anomaly))
         .put("upwelling", f(&chart.upwelling))
+        .build()
+}
+
+/// `WaterBody`, in the key order `computeLakesOn` writes.
+pub fn water_body(b: &WaterBody) -> Value {
+    let kind = match b.kind {
+        WaterKind::Lake => "lake",
+        WaterKind::Terminal => "terminal",
+        WaterKind::Dry => "dry",
+    };
+    ObjBuilder::new()
+        .num("id", b.id as f64)
+        .put("kind", Value::Str(kind.into()))
+        .num("level", b.level)
+        .num("spill", b.spill)
+        .num("floor", b.floor)
+        .num("seedX", b.seed_x)
+        .num("seedY", b.seed_y)
+        .num("outletX", b.outlet_x)
+        .num("outletY", b.outlet_y)
+        .num("cells", b.cells)
+        .put("frozen", Value::Bool(b.frozen))
+        .build()
+}
+
+fn river_node(n: &RiverNode) -> Value {
+    let kind = match n.kind {
+        RiverNodeKind::Source => "source",
+        RiverNodeKind::Junction => "junction",
+        RiverNodeKind::Mouth => "mouth",
+        RiverNodeKind::Inlet => "inlet",
+        RiverNodeKind::Outlet => "outlet",
+    };
+    ObjBuilder::new()
+        .num("id", n.id as f64)
+        .put("kind", Value::Str(kind.into()))
+        .num("cell", n.cell as f64)
+        .num("x", n.x)
+        .num("y", n.y)
+        .num("body", n.body)
+        .num("catchmentCells", n.catchment_cells)
+        .build()
+}
+
+fn river_reach(r: &RiverReach) -> Value {
+    let kind = match r.kind {
+        RiverReachKind::River => "river",
+        RiverReachKind::Lake => "lake",
+    };
+    let regime = match r.regime {
+        RiverRegime::Perennial => "perennial",
+        RiverRegime::Intermittent => "intermittent",
+        RiverRegime::Ephemeral => "ephemeral",
+    };
+    ObjBuilder::new()
+        .num("id", r.id as f64)
+        .put("kind", Value::Str(kind.into()))
+        .num("from", r.from as f64)
+        .num("to", r.to as f64)
+        .num("cellStart", r.cell_start as f64)
+        .num("cellCount", r.cell_count as f64)
+        .num("dischargeIn", r.discharge_in)
+        .num("dischargeOut", r.discharge_out)
+        .num("widthPx", r.width_px)
+        .num("lengthKm", r.length_km)
+        .num("dropM", r.drop_m)
+        .num("slope", r.slope)
+        .num("sedimentM3", r.sediment_m3)
+        .num("bank", r.bank)
+        .num("order", r.order)
+        .put("regime", Value::Str(regime.into()))
+        .num("runoffOut", r.runoff_out)
+        .put("springFed", Value::Bool(r.spring_fed))
+        .build()
+}
+
+/// `SpringFeature`.
+pub fn spring(s: &SpringFeature) -> Value {
+    ObjBuilder::new()
+        .num("id", s.id as f64)
+        .num("cell", s.cell as f64)
+        .num("x", s.x)
+        .num("y", s.y)
+        .num("elevation", s.elevation)
+        .put("oasis", Value::Bool(s.oasis))
+        .build()
+}
+
+fn course(c: &RiverCourse) -> Value {
+    let pattern = match c.pattern {
+        RiverPattern::Straight => "straight",
+        RiverPattern::Meandering => "meandering",
+        RiverPattern::Braided => "braided",
+        RiverPattern::Anastomosing => "anastomosing",
+    };
+    let lines = |l: &[Vec<f32>]| Value::List(l.iter().map(|x| Value::F32s(x.clone())).collect());
+    ObjBuilder::new()
+        .num("reach", c.reach as f64)
+        .put("pattern", Value::Str(pattern.into()))
+        .num("dischargeM3s", c.discharge_m3s)
+        .num("widthM", c.width_m)
+        .num("depthM", c.depth_m)
+        .num("slope", c.slope)
+        .num("bankStrength", c.bank_strength)
+        .put("lines", lines(&c.lines))
+        .put("lineWidth", Value::nums(&c.line_width))
+        .num("sinuosity", c.sinuosity)
+        .num("beltWidthM", c.belt_width_m)
+        .put("oxbows", lines(&c.oxbows))
+        .put("lobeAges", Value::nums(&c.lobe_ages))
+        .build()
+}
+
+/// `RiverGraph` on the mesh, in the key order `buildRiverGraph` writes,
+/// the springs and the courses after as the features add them: the world
+/// layer's `serializeRiverGraph` makes the save's JSON of it.
+pub fn river_graph(g: &RiverGraph) -> Value {
+    ObjBuilder::new()
+        .num("width", g.width)
+        .num("height", g.height)
+        .put("substrate", Value::Str("mesh".into()))
+        .put(
+            "nodes",
+            Value::List(g.nodes.iter().map(river_node).collect()),
+        )
+        .put(
+            "reaches",
+            Value::List(g.reaches.iter().map(river_reach).collect()),
+        )
+        .put("cells", Value::I32s(g.cells.clone()))
+        .put("cellX", Value::F32s(g.cell_x.clone()))
+        .put("cellY", Value::F32s(g.cell_y.clone()))
+        .put(
+            "bodies",
+            Value::List(g.bodies.iter().map(water_body).collect()),
+        )
+        .opt(
+            "springs",
+            g.springs
+                .as_ref()
+                .map(|s| Value::List(s.iter().map(spring).collect())),
+        )
+        .opt(
+            "courses",
+            g.courses
+                .as_ref()
+                .map(|c| Value::List(c.iter().map(course).collect())),
+        )
+        .build()
+}
+
+/// `CoastReach`.
+pub fn coast_reach(r: &CoastReach) -> Value {
+    let kind = match r.coast_type {
+        CoastType::Rocky => "rocky",
+        CoastType::Cliff => "cliff",
+        CoastType::Beach => "beach",
+        CoastType::Marsh => "marsh",
+        CoastType::Delta => "delta",
+    };
+    ObjBuilder::new()
+        .num("id", r.id as f64)
+        .num("nodeStart", r.node_start as f64)
+        .num("nodeCount", r.node_count as f64)
+        .num("lengthKm", r.length_km)
+        .num("exposure", r.exposure)
+        .num("reliefM", r.relief_m)
+        .num("hardness", r.hardness)
+        .num("supply", r.supply)
+        .put("type", Value::Str(kind.into()))
+        .num("mouthReach", r.mouth_reach)
+        .build()
+}
+
+/// `SedimentBasin`.
+pub fn sediment_basin(b: &SedimentBasin) -> Value {
+    let kind = match b.kind {
+        BasinKind::Alluvial => "alluvial",
+        BasinKind::Marine => "marine",
+    };
+    ObjBuilder::new()
+        .num("id", b.id as f64)
+        .put("kind", Value::Str(kind.into()))
+        .num("nodes", b.nodes as f64)
+        .num("areaKm2", b.area_km2)
+        .num("volumeKm3", b.volume_km3)
+        .num("meanThicknessM", b.mean_thickness_m)
+        .num("maxThicknessM", b.max_thickness_m)
+        .num("x", b.x)
+        .num("y", b.y)
+        .put(
+            "mouthReaches",
+            Value::List(
+                b.mouth_reaches
+                    .iter()
+                    .map(|&m| Value::num(m as f64))
+                    .collect(),
+            ),
+        )
+        .num("catchmentKm2", b.catchment_km2)
+        .num("cratonAge", b.craton_age)
+        .num("hardness", b.hardness)
         .build()
 }

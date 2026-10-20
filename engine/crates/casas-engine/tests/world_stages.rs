@@ -240,6 +240,7 @@ fn run(name: &str, d: Domain, seed: u32) {
                 refined: false,
                 land: Some(land.clone()),
             },
+            &mut |_, _, _, _| {},
         )
     };
     let (v2_chain, v2_dry) = v2.unwrap();
@@ -372,6 +373,7 @@ fn run(name: &str, d: Domain, seed: u32) {
                 refined: true,
                 land: Some(land2),
             },
+            &mut |_, _, _, _| {},
         )
     };
     assert!(none.is_none(), "no v2 over a refinement");

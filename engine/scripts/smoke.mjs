@@ -3,8 +3,9 @@
 // (docs/decisions/rust-engine.md, fork 6), on both shapes: the version; an
 // Archean grown, rendered, saved and restored; the hand-over; coupled
 // epochs (one shape under another planet) and their renders; the climate
-// step and its refinement; the tectonic save; a world restored from it,
-// its climate with the saved refinement, and its next epoch. A save goes
+// step, the hydrology with the climate v2, the refinement and the
+// hydrology on it; the tectonic save; a world restored from it, its
+// climate with the saved refinement, its hydrology and its next epoch. A save goes
 // through JSON and back, as it does through a file. Run by `make test`
 // after `make engine`; about five minutes, most of it the refinement in
 // TypeScript.
@@ -39,6 +40,10 @@ const { rasteriseNodeField, triangleRaster } = await L('/src/generator/mesh/mesh
 const WS = await L('/src/generator/pipeline/worldStages.ts')
 const { meshRouting } = await L('/src/generator/mesh/meshHydrology.ts')
 const { Biome } = await L('/src/generator/climate/biomes.ts')
+const { maxDischargeOverLand, SURFACE_ICE } = await L('/src/generator/surface/hydrology.ts')
+const { meanLandRunoff } = await L('/src/generator/climate/climatePoints.ts')
+const { riverPolylinesFromGraph, serializeRiverGraph } = await L('/src/generator/surface/riverGraph.ts')
+const { metersToElevation } = await L('/src/generator/elevation/elevationScale.ts')
 // The render pool's worker, in this process through a stand-in `self` (as
 // client/scripts/pipeline.mjs does), one band over the whole raster; the
 // worker posts through it, so it stays.
@@ -123,7 +128,7 @@ const renderPlates = (sim, coupled) => {
 const vectors = (spacingM, f) => ({ cells: f.e.length, spacingM, e: Float64Array.from(f.e), s: Float64Array.from(f.s) })
 const terrainOf = (coupled) => {
   if (!coupled.routing) coupled.routing = meshRouting(coupled.mesh, coupled.z)
-  return { mesh: coupled.mesh, z: coupled.z }
+  return { mesh: coupled.mesh, z: coupled.z, routing: coupled.routing, areas: coupled.areas, sedimentFlux: coupled.sedimentFlux }
 }
 const idRasterOf = (t, land, ids, pixelLand, sea) => {
   const { width, height } = t.sim
@@ -141,7 +146,8 @@ const tsClimate = (t, params) => {
   const land = WS.landClimateOf(chain.cells, terrain)
   const pixelLand = WS.pixelLandOf(t.elevation, null)
   const { cellM } = chain.weather.terrain.cm
-  t.climate = { params, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind } }
+  t.climate = { params, cells: chain.cells, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind }, refined: false, land }
+  t.hydrology = null
   return climateData(t, chain.chart, vectors(cellM, chain.weather.mesh.wind), vectors(cellM, chain.weather.mesh.currents), land, pixelLand)
 }
 const tsRefine = (t, restored) => {
@@ -150,7 +156,8 @@ const tsRefine = (t, restored) => {
   const { refined: r, chart } = step
   const land = WS.landClimateOf(step.cells, terrain)
   const pixelLand = WS.pixelLandOf(t.elevation, null)
-  t.climate = { params: t.climate.params, mesh: { temperature: step.meshTemperature, wind: step.meshWind } }
+  t.climate = { params: t.climate.params, cells: step.cells, mesh: { temperature: step.meshTemperature, wind: step.meshWind }, refined: true, land }
+  t.hydrology = null
   const { solves, ...values } = r
   const refined = {
     months: chart.months, refined: values, temperature: chart.temperature, precipitation: chart.precipitation,
@@ -164,6 +171,72 @@ const tsRefine = (t, restored) => {
   const annual = climateData(t, { ...a, wind: step.annualWind, currents: chart.currents, currentAnomaly: chart.currentAnomaly },
     vectors(r.spacingM, step.meshWind), vectors(r.spacingM, { e: r.currentE, s: r.currentS }), land, pixelLand)
   return { refined, annual }
+}
+// The hydrology step as the runtime's handleHydrologyRun makes it, with
+// the river graph as the RiverGraph it serializes, the v2's climateData
+// and the render after the route (of it, what the engine gives).
+const tsHydrology = (t, planet) => {
+  const { sim } = t
+  const { width, height, domain } = sim
+  const mt = terrainOf(t.coupled)
+  const terrain = t.elevation
+  let weather = t.climate
+  let result = t.hydrology
+  let climate = null
+  let render = null
+  const rerouted = !result
+  if (rerouted) {
+    const onMesh = WS.routeHydrology(mt, terrain, terrain, domain, width, height, weather, (chain, land, dryBasin) => {
+      const { cellM } = chain.weather.terrain.cm
+      climate = climateData(t, chain.chart, vectors(cellM, chain.weather.mesh.wind), vectors(cellM, chain.weather.mesh.currents), land, WS.pixelLandOf(terrain, dryBasin))
+      weather = t.climate = { params: weather.params, cells: chain.cells, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind }, refined: false, land }
+    })
+    const lakes = onMesh.raster
+    render = { mantle: rasteriseMantle(sim.mantle, sim.domain), dryBasin: lakes.dryBasin, saltFlat: lakes.saltFlat }
+    result = t.hydrology = { onMesh, maxDischarge: maxDischargeOverLand(onMesh.discharge, mt.z), meanRunoff: meanLandRunoff(weather.cells), graph: null, coast: null, sedimentBasins: [], ice: null }
+  }
+  const threshold = WS.hydrologyThreshold(domain, result.meanRunoff)
+  const lakes = result.onMesh.raster
+  const levelOut = rerouted ? lakes.level.slice() : new Float32Array(0)
+  const surfaceOut = rerouted ? lakes.surface.slice() : new Uint8Array(0)
+  let out = { biomes: new Uint8Array(0), precipitationEffective: new Float32Array(0), watersheds: new Uint16Array(0), discharge: new Float32Array(0), coastType: new Uint8Array(0) }
+  if (rerouted) {
+    const plan = () => {
+      if (!t.plan || t.plan.mesh !== mt.mesh) t.plan = triangleRaster(mt.mesh, width, height)
+      return t.plan
+    }
+    const f = WS.hydrologyFeatures({ sim, coupled: t.coupled, planet }, mt, result.onMesh, result.maxDischarge, threshold, terrain, terrain, lakes.dryBasin, weather.cells, width, height, plan)
+    Object.assign(result, { graph: f.graph, coast: f.coast, sedimentBasins: f.sedimentBasins, ice: f.ice })
+    out = { biomes: f.biomes, precipitationEffective: f.precipitationEffective, watersheds: f.watersheds, discharge: f.discharge, coastType: f.coastType }
+  }
+  const rivers = result.graph ? riverPolylinesFromGraph(result.graph, result.maxDischarge, domain) : { points: new Float32Array(0), lengths: new Uint32Array(0), regimes: new Uint8Array(0) }
+  if (rerouted && result.ice) {
+    for (let c = 0; c < levelOut.length; c++) {
+      if (result.ice[c] <= 0) continue
+      levelOut[c] = Math.max(levelOut[c], terrain[c] + metersToElevation(result.ice[c]))
+      surfaceOut[c] = SURFACE_ICE
+    }
+  }
+  return {
+    ...out, riverPoints: rivers.points, riverLengths: rivers.lengths, riverRegimes: rivers.regimes,
+    lakeDepth: rerouted ? lakes.depth : new Float32Array(0), maxDischarge: result.maxDischarge,
+    waterBodies: rerouted ? result.onMesh.lakes.bodies : null, waterLevel: levelOut, waterSurface: surfaceOut,
+    riverGraph: rerouted ? result.graph : null, coast: rerouted ? { reaches: result.coast.reaches, nodes: result.coast.nodes } : null,
+    sedimentBasins: rerouted ? result.sedimentBasins : null, iceThickness: rerouted && result.ice ? result.ice : new Float32Array(0),
+    climate, render,
+  }
+}
+// The hydrology in both builds against TypeScript's, and what the world
+// layer writes of it in TypeScript's key order: the river graph's JSON,
+// the water bodies, the coast reaches, the sediment basins.
+const agreeHydrology = (label, ts, worlds, planet) => {
+  const json = (h) => h.riverGraph ? [serializeRiverGraph(h.riverGraph).json, JSON.stringify([h.waterBodies, h.coast.reaches, h.sedimentBasins])] : null
+  const want = JSON.stringify(json(ts))
+  agree(label, ts, worlds, (w) => {
+    const h = w.hydrology(planet)
+    if (JSON.stringify(json(h)) !== want) fail(`${label}: the save's JSON differs`)
+    return h
+  })
 }
 
 const STEPS = 60
@@ -212,6 +285,8 @@ for (const shape of ['torus', 'sphere']) {
   const renderT = () => {
     const r = renderPlates(sim, coupled)
     t.elevation = r.elevations
+    t.climate = null
+    t.hydrology = null
     return r
   }
   agree(`${shape}: the hand-over's render`, renderT(), worlds, (w) => w.render(1))
@@ -225,8 +300,16 @@ for (const shape of ['torus', 'sphere']) {
 
   // The climate step and its refinement.
   agree(`${shape}: the climate`, tsClimate(t, weather), worlds, (w) => w.climate(weather))
+  // The hydrology on it, with the climate v2.
+  const planet = weather.planet ?? null
+  const hydrology = tsHydrology(t, planet ?? undefined)
+  agreeHydrology(`${shape}: the hydrology with the v2`, hydrology, worlds, planet)
+  const water = `${hydrology.riverGraph.reaches.length} reaches, ${hydrology.waterBodies.length} water bodies, ${hydrology.coast.reaches.length} coast reaches, ${hydrology.sedimentBasins.length} sediment basins, ${hydrology.riverGraph.courses?.length ?? 0} courses, ${hydrology.riverGraph.springs?.length ?? 0} springs, ${hydrology.render.dryBasin.reduce((a, b) => a + b, 0)} dry-floor pixels`
   const refinement = tsRefine(t, undefined)
   agree(`${shape}: the refinement`, refinement, worlds, (w) => w.refineClimate(null))
+  // The hydrology on the refinement, routed, then once more from its route.
+  agreeHydrology(`${shape}: the hydrology`, tsHydrology(t, planet ?? undefined), worlds, planet)
+  agreeHydrology(`${shape}: the hydrology again`, tsHydrology(t, planet ?? undefined), worlds, planet)
 
   // The tectonic save.
   const snapshot = serializePlateSimulation(sim)
@@ -256,6 +339,7 @@ for (const shape of ['torus', 'sphere']) {
   const all = { ...worlds, ...Object.fromEntries(Object.entries(restored).map(([k, w]) => [`restored ${k}`, w])) }
   agree(`${shape}: the restored world's climate`, tsClimate(t, weather), all, (w) => w.climate(weather))
   agree(`${shape}: the saved refinement`, tsRefine(t, refinement.refined.refined), all, (w) => w.refineClimate(refinement.refined.refined))
+  agreeHydrology(`${shape}: the restored world's hydrology`, tsHydrology(t, planet ?? undefined), all, planet)
   await CE.stepCoupledEpoch(sim, coupled, optionsOf(controls))
   each(restored, (w) => w.epoch(controls))
   each(worlds, (w) => w.epoch(controls))
@@ -263,7 +347,7 @@ for (const shape of ['torus', 'sphere']) {
   agree(`${shape}: the restored world's next epoch`, [serializePlateSimulation(sim), meshPayloadOf(coupled)], restored, (w) => [w.snapshot(), w.meshPayload()])
   restored.wasm.free()
   worlds.wasm.free()
-  console.log(`engine: ${shape} — ${STEPS} Archean steps (${ts.rafts.length} rafts) saved and restored; the hand-over, ${EPOCHS} epochs (${eventCount} events, ${mesh.count} nodes) saved and restored: native, wasm and TypeScript agree`)
+  console.log(`engine: ${shape} — ${STEPS} Archean steps (${ts.rafts.length} rafts) saved and restored; the hand-over, ${EPOCHS} epochs (${eventCount} events, ${mesh.count} nodes) saved and restored; the climate, the hydrology (${water}): native, wasm and TypeScript agree`)
 }
 if (failed) process.exit(1)
 console.log(`engine: native and wasm ${wasm.version()}`)

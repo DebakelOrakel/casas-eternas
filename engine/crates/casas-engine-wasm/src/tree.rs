@@ -5,7 +5,7 @@
 use casas_engine_api::Value;
 use js_sys::{
     Array, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Object, Reflect,
-    Uint8Array,
+    Uint8Array, Uint16Array, Uint32Array,
 };
 use wasm_bindgen::JsValue;
 
@@ -35,6 +35,8 @@ pub fn to_js(v: Value) -> JsValue {
         Value::I32s(a) => Int32Array::from(&a[..]).into(),
         Value::I16s(a) => Int16Array::from(&a[..]).into(),
         Value::I8s(a) => Int8Array::from(&a[..]).into(),
+        Value::U32s(a) => Uint32Array::from(&a[..]).into(),
+        Value::U16s(a) => Uint16Array::from(&a[..]).into(),
         Value::U8s(a) => Uint8Array::from(&a[..]).into(),
     }
 }
@@ -69,6 +71,12 @@ pub fn from_js(v: &JsValue) -> Result<Value, wasm_bindgen::JsError> {
     }
     if let Some(a) = v.dyn_ref::<Int8Array>() {
         return Ok(Value::I8s(a.to_vec()));
+    }
+    if let Some(a) = v.dyn_ref::<Uint32Array>() {
+        return Ok(Value::U32s(a.to_vec()));
+    }
+    if let Some(a) = v.dyn_ref::<Uint16Array>() {
+        return Ok(Value::U16s(a.to_vec()));
     }
     if let Some(a) = v.dyn_ref::<Uint8Array>() {
         return Ok(Value::U8s(a.to_vec()));
