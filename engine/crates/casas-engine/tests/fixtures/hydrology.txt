@@ -1,0 +1,10 @@
+# Hashes of client/src/generator/surface/hydrology.ts over mesh/meshHydrology.ts, and of mesh/meshRaster.ts and mesh/meshSerial.ts, for crates/casas-engine/tests/hydrology.rs.
+# Written by engine/scripts/hydrologyFixture.mjs; do not edit.
+torus_lakes 2e5a99cb
+torus_rivers ba71c1d6
+torus_raster 5eac187b
+torus_serial 7829d000
+sphere_lakes 080a97b1
+sphere_rivers 6ec7b6dc
+sphere_raster fe24e968
+sphere_serial 0505ef3e

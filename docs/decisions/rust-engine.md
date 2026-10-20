@@ -417,6 +417,16 @@ BUILDING since 2026-10-20:
   waves' exposure, the cut, the drift along the shore with its rings).
   Bit-equal on a built mesh of each shape with a synthetic climate that
   holds ice at the poles and a drift that deposits and exports.
+- The surface stages, second part: the hydrology over the flow
+  substrate (`surface/hydrology`: the discharge with the terminal basins'
+  water balance, the lakes, terminal seas and dry basins, the regime's
+  inputs with and without months, the channel criterion, the watersheds,
+  the riparian moisture; the water bodies on a raster), the mesh as the
+  substrate with its routing and its water on a raster
+  (`mesh/meshHydrology`), the node fields on rasters (`mesh/meshRaster`)
+  and the mesh's codec and canonical form (`mesh/meshSerial`). Bit-equal
+  on a built mesh of each shape, lakes, terminal and dry basins among the
+  bodies.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

@@ -232,7 +232,11 @@ pub fn decode_column(bytes: &[u8], count: usize, slots: usize) -> Result<Sedimen
     }
     let body = bytes.len() - 4 - 4 * layers;
     let per = 4 * count * layers;
-    let per_layer = if body.is_multiple_of(per) { body / per } else { 0 };
+    let per_layer = if body.is_multiple_of(per) {
+        body / per
+    } else {
+        0
+    };
     if per_layer != 4 && per_layer != COLUMN_VALUES {
         return Err("column: byte length does not match the node count".into());
     }
