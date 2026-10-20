@@ -517,6 +517,11 @@ BUILDING since 2026-10-20:
   switch its handlers call the engine where they call `worldStages` now.
   The test's worlds form no dry floor below the sea, so that path of the
   v2 is not compared yet.
+- WASM and native give the same bits (fork 4), checked: every module
+  test of the engine, built for `wasm32-wasip1` without `parallel` and
+  run under Node's WASI (`engine/scripts/wasiRunner.mjs`), passes
+  against the same TypeScript fixtures as the native build — 24 test
+  files, about five minutes single-threaded. `make test` runs it.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

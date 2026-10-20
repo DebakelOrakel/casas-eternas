@@ -133,6 +133,11 @@ test: engine
 	node engine/scripts/worldStagesFixture.mjs --check
 	cd engine && cargo test --workspace --release
 	cd engine && cargo test -p casas-engine --release
+	# WASM gives the native bits (DEC-0044, fork 4): the same tests built for
+	# wasm32-wasip1 and run under Node's WASI, without `parallel`, as the
+	# browser build is. About five minutes.
+	cd engine && CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings $(CURDIR)/engine/scripts/wasiRunner.mjs" \
+		cargo test -p casas-engine --release --target wasm32-wasip1
 	node engine/scripts/smoke.mjs
 	cd client && npm run harness:roundtrip
 	cd client && npm run test:http-store
