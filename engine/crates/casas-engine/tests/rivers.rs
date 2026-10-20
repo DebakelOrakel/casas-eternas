@@ -9,6 +9,9 @@ use casas_engine::core::domain::Domain;
 use casas_engine::mesh::mesh_build::{FieldSampler, MESH_Z, build_mesh};
 use casas_engine::mesh::mesh_column::{COLUMN_DEPTH, COLUMN_VALUES, SedimentColumn};
 use casas_engine::mesh::mesh_hydrology::{MeshSubstrate, mesh_areas, mesh_routing};
+use casas_engine::surface::coast_graph::{
+    CoastGraphInputs, build_coast_graph, coast_graph_invariants,
+};
 use casas_engine::surface::erosion_engine::DEFAULT_SOLVER_PARAMS;
 use casas_engine::surface::hydrogeology::{
     HydrogeologyInputs, compute_hydrogeology, hydrogeology_invariants,
@@ -24,6 +27,9 @@ use casas_engine::surface::river_course::{
 use casas_engine::surface::river_graph::{
     RiverGraph, RiverGraphInputs, RiverNodeKind, RiverPolylines, RiverReachKind, build_river_graph,
     river_graph_invariants, river_polylines_from_graph,
+};
+use casas_engine::surface::sediment_basins::{
+    BasinKind, SedimentBasinInputs, find_sediment_basins, sediment_basin_invariants,
 };
 use casas_engine::surface::surface_tune_params::SURFACE_TUNING;
 
@@ -380,6 +386,90 @@ fn run(name: &str, domain: Domain) {
     h.polylines(&river_polylines_from_graph(&bare, max_q, Some(&domain)));
     h.polylines(&river_polylines_from_graph(&bare, 0.0, None));
     h.check(&format!("{name}_ribbons"));
+
+    // The sediment basins.
+    let mut h = Hash::new();
+    let after: Vec<f32> = (0..slots)
+        .map(|v| {
+            (z[v] as f64 + 0.004 * (det_sin(mesh.vx[v] * 0.01) * det_cos(mesh.vy[v] * 0.013))
+                - 0.0005) as f32
+        })
+        .collect();
+    let craton: Vec<f32> = hardness.iter().map(|&k| (k as f64 - 0.6) as f32).collect();
+    for (g, c, k) in [
+        (Some(&graph), Some(&craton[..]), Some(&hardness[..])),
+        (None, None, None),
+    ] {
+        let r = find_sediment_basins(&SedimentBasinInputs {
+            mesh: &mesh,
+            before: &z,
+            after: &after,
+            substrate: &sub,
+            graph: g,
+            craton_age: c,
+            hardness: k,
+        });
+        h.add_all(&r.label);
+        for b in &r.basins {
+            h.add(b.id as f64);
+            h.flag(b.kind == BasinKind::Marine);
+            h.add(b.nodes as f64);
+            for v in [
+                b.area_km2,
+                b.volume_km3,
+                b.mean_thickness_m,
+                b.max_thickness_m,
+                b.x,
+                b.y,
+            ] {
+                h.add(v);
+            }
+            for &m in &b.mouth_reaches {
+                h.add(m as f64);
+            }
+            h.add(b.catchment_km2);
+            h.add(b.craton_age);
+            h.add(b.hardness);
+        }
+        h.invariants(&sediment_basin_invariants(&r, &z, &after));
+    }
+    h.check(&format!("{name}_basins"));
+
+    // The coast graph.
+    let mut h = Hash::new();
+    let wind_e: Vec<f32> = (0..slots)
+        .map(|v| (8.0 * det_cos(mesh.vy[v] * 0.004) + 2.0 * det_sin(mesh.vx[v] * 0.003)) as f32)
+        .collect();
+    let wind_s: Vec<f32> = (0..slots)
+        .map(|v| (3.0 * det_sin(mesh.vx[v] * 0.005)) as f32)
+        .collect();
+    for (g, k) in [(Some(&graph), Some(&hardness[..])), (None, None)] {
+        let c = build_coast_graph(
+            &mut mesh,
+            &CoastGraphInputs {
+                z: &z,
+                wind_e: &wind_e,
+                wind_s: &wind_s,
+                hardness: k,
+                graph: g,
+            },
+        );
+        h.add_all(&c.nodes);
+        h.add_all(&c.coast_type);
+        for r in &c.reaches {
+            for v in [r.id as f64, r.node_start as f64, r.node_count as f64] {
+                h.add(v);
+            }
+            for v in [r.length_km, r.exposure, r.relief_m, r.hardness, r.supply] {
+                h.add(v);
+            }
+            h.add(r.coast_type.code() as f64);
+            h.add(r.mouth_reach as f64);
+        }
+        h.invariants(&coast_graph_invariants(&c, &mesh, &z));
+    }
+    h.add(mesh.last_tri as f64);
+    h.check(&format!("{name}_coast"));
 }
 
 #[test]

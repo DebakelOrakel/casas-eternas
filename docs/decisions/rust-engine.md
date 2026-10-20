@@ -488,6 +488,11 @@ BUILDING since 2026-10-20:
   tiles are bit-equal; the patchwork's slots and its far lattice nodes
   differ. Not ported: `mesh/tileSampler` (the incubator's reader of a
   tile artifact) and `bakedTileToArtifact` (the world layer's).
+- The coast graph (`surface/coastGraph`: exposure, relief, supply, the
+  five coast types, the reaches) and the sediment basins
+  (`surface/sedimentBasins`: the components, their kind, centroid and
+  provenance from the graph's catchments), bit-equal on both shapes in
+  the rivers' test.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

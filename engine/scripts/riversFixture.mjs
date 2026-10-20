@@ -29,6 +29,8 @@ const H = await L('/src/generator/surface/hydrology.ts')
 const RG = await L('/src/generator/surface/riverGraph.ts')
 const GW = await L('/src/generator/surface/hydrogeology.ts')
 const RC = await L('/src/generator/surface/riverCourse.ts')
+const CG = await L('/src/generator/surface/coastGraph.ts')
+const SB = await L('/src/generator/surface/sedimentBasins.ts')
 await server.close()
 
 const f = new Float64Array(1)
@@ -194,6 +196,48 @@ for (const [name, domain] of [['torus', torusDomain(2048, 1024)], ['sphere', sph
   polyHash(RG.riverPolylinesFromGraph(bare, maxQ, domain))
   polyHash(RG.riverPolylinesFromGraph(bare, 0))
   line(`${name}_ribbons`)
+
+  // The sediment basins: a deposit over part of the world, with the
+  // graph's catchments and on their own.
+  h = 0x811c9dc5
+  const after = new Float32Array(slots)
+  for (let v = 0; v < slots; v++) after[v] = z[v] + 0.004 * (detSin(mesh.vx[v] * 0.01) * detCos(mesh.vy[v] * 0.013)) - 0.0005
+  const craton = hardness.map((k) => k - 0.6)
+  for (const [g, c, k] of [[graph, craton, hardness], [null, undefined, undefined]]) {
+    const r = SB.findSedimentBasins({ mesh, before: z, after, substrate: sub, graph: g, cratonAge: c, hardness: k })
+    addAll(r.label)
+    for (const b of r.basins) {
+      add(b.id); add(b.kind === 'marine'); add(b.nodes); add(b.areaKm2); add(b.volumeKm3); add(b.meanThicknessM); add(b.maxThicknessM)
+      add(b.x); add(b.y); addAll(b.mouthReaches); add(b.catchmentKm2); add(b.cratonAge); add(b.hardness)
+    }
+    invariantsHash(SB.sedimentBasinInvariants(r, z, after))
+    console.log(name, 'basins', r.basins.length, 'marine', r.basins.filter((b) => b.kind === 'marine').length, 'fed', r.basins.filter((b) => b.mouthReaches.length > 0).length)
+  }
+  line(`${name}_basins`)
+
+  // The coast graph, with the rivers and the hardness and without.
+  h = 0x811c9dc5
+  const windE = new Float32Array(slots)
+  const windS = new Float32Array(slots)
+  for (let v = 0; v < slots; v++) {
+    windE[v] = 8 * detCos(mesh.vy[v] * 0.004) + 2 * detSin(mesh.vx[v] * 0.003)
+    windS[v] = 3 * detSin(mesh.vx[v] * 0.005)
+  }
+  const TYPES = { rocky: 1, cliff: 2, beach: 3, marsh: 4, delta: 5 }
+  for (const [g, k] of [[graph, hardness], [null, undefined]]) {
+    const c = CG.buildCoastGraph({ mesh, z, windE, windS, hardness: k, graph: g })
+    addAll(c.nodes)
+    addAll(c.type)
+    for (const r of c.reaches) {
+      add(r.id); add(r.nodeStart); add(r.nodeCount); add(r.lengthKm); add(r.exposure); add(r.reliefM); add(r.hardness); add(r.supply); add(TYPES[r.type]); add(r.mouthReach)
+    }
+    invariantsHash(CG.coastGraphInvariants(c, mesh, z))
+    const types = [0, 0, 0, 0, 0, 0]
+    for (let v = 0; v < slots; v++) types[c.type[v]]++
+    console.log(name, 'coast reaches', c.reaches.length, 'types', types.slice(1))
+  }
+  add(mesh.lastTri)
+  line(`${name}_coast`)
 }
 
 const text = lines.join('\n') + '\n'

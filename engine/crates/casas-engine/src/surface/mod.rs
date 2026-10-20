@@ -1,6 +1,7 @@
 //! `client/src/generator/surface/`.
 
 pub mod amplify;
+pub mod coast_graph;
 pub mod coastal;
 pub mod cover;
 pub mod erosion_engine;
@@ -13,4 +14,5 @@ pub mod hydrogeology;
 pub mod hydrology;
 pub mod river_course;
 pub mod river_graph;
+pub mod sediment_basins;
 pub mod surface_tune_params;

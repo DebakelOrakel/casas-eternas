@@ -4,7 +4,11 @@ torus_graph 831d39ad
 torus_ground 9453d93a
 torus_courses dd4e5e85
 torus_ribbons c2fe204d
+torus_basins 8b94d55b
+torus_coast 384a31ad
 sphere_graph ea448d6d
 sphere_ground 8570c7f5
 sphere_courses 2da7b6ef
 sphere_ribbons 8f5a5bac
+sphere_basins fb7e2f3a
+sphere_coast d344986e
