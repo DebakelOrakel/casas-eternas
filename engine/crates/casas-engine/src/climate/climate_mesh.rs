@@ -70,10 +70,10 @@ impl ClimateMesh {
 
 /// A field's area-weighted mean along each zonal band over the cells `use_`
 /// admits, read back per cell, linear between the bands' centres.
-pub fn zonal_mean(
+pub fn zonal_mean<T: Copy + Into<f64>>(
     cm: &ClimateMesh,
     fm: &FieldMesh,
-    field: &[f64],
+    field: &[T],
     use_: Option<&dyn Fn(usize) -> bool>,
 ) -> Vec<f64> {
     let bands = cm.bands;
@@ -86,7 +86,7 @@ pub fn zonal_mean(
             continue;
         }
         let b = cm.band[i] as usize;
-        sum[b] += fm.area[i] * field[i];
+        sum[b] += fm.area[i] * Into::<f64>::into(field[i]);
         area[b] += fm.area[i];
     }
     let mut mean = vec![0.0; bands];

@@ -31,6 +31,9 @@ const M = await L('/src/generator/climate/monsoon.ts')
 const OC = await L('/src/generator/climate/oceanCurrents.ts')
 const WE = await L('/src/generator/climate/weather.ts')
 const PF = await L('/src/generator/planet/planetForcing.ts')
+const CP = await L('/src/generator/climate/climatePoints.ts')
+const K = await L('/src/generator/climate/koppen.ts')
+const B = await L('/src/generator/climate/biomes.ts')
 await server.close()
 
 const f = new Float64Array(1)
@@ -81,6 +84,33 @@ for (let k = 0; k <= 200; k++) {
 }
 addAll(T.seaLevelTemperatureBand(2, 0.8, PF.DEFAULT_PLANET_FORCING, 'sphere'))
 line('functions')
+
+// Köppen over random months, the synthesized months, the biome of every
+// class.
+let state = 5
+const next = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0)
+const uniform = (lo, hi) => lo + (hi - lo) * (next() / 4294967296)
+h = 0x811c9dc5
+{
+  const t = new Float64Array(12)
+  const p = new Float64Array(12)
+  for (let k = 0; k < 20000; k++) {
+    const mean = uniform(-30, 32)
+    const range = uniform(0, 45)
+    const wet = uniform(0, 300)
+    for (let m = 0; m < 12; m++) {
+      t[m] = mean + range * detCos(m * 0.52 + k)
+      p[m] = Math.max(0, wet * (1 + detSin(m * 0.7 + k * 0.3)) * uniform(0, 1.2))
+    }
+    add(K.classifyKoppen(t, p))
+    K.synthesizeMonths(mean, range, wet * 12, uniform(-0.9, 0.9), k % 2 === 0, 500, t, p)
+    addAll(t)
+    addAll(p)
+    add(K.classifyKoppen(t, p))
+  }
+  for (let id = 0; id < 32; id++) for (const map of [100, 300, 700, 1450, 2000]) add(B.biomeFromKoppen(id, map, uniform(5, 30), uniform(0, 0.8)))
+}
+line('koppen')
 
 // The analytic terrain, 512 × 256 over the world: continents and seas, a
 // few dry floors below sea level.
@@ -168,6 +198,59 @@ for (const [name, d] of [['torus', D.torusDomain(2048, 1024)], ['sphere', D.sphe
     addAll(P.computePrecipitation(terrain, wm.temperature, wm.wind, 1.1, params.equatorOffset, 0.03, refined, 0.3))
     addAll(M.seasonalityMagnitude(Float32Array.from(wm.seasonal.index)))
     line(`${name}_refined_${variant}`)
+
+    // The climate at points: random points (land, dry and dead among them,
+    // land on sea cells for the island rule), the static cells and cells
+    // with months, upwelling and the rain's variability.
+    const cells = CP.climateCellsFromWeather({ terrain, mesh: wm })
+    state = 11
+    const count = 6000
+    const xs = new Float64Array(count)
+    const ys = new Float64Array(count)
+    const height = new Float32Array(count)
+    const pland = new Uint8Array(count)
+    const pdry = new Uint8Array(count)
+    const alive = new Uint8Array(count)
+    for (let i = 0; i < count; i++) {
+      xs[i] = uniform(0, d.width)
+      ys[i] = uniform(0, d.height)
+      height[i] = uniform(-0.1, 0.6)
+      pland[i] = i % 5 === 0 ? 1 : height[i] > 0 ? 1 : 0
+      pdry[i] = i % 17 === 0 ? 1 : 0
+      alive[i] = i % 23 === 0 ? 0 : 1
+    }
+    const points = { count, x: xs, y: ys, height, land: pland, dry: pdry, alive }
+    const nc = cm.mesh.count
+    const monthsT = new Float32Array(12 * nc)
+    const monthsP = new Float32Array(12 * nc)
+    for (let m = 0; m < 12; m++) {
+      for (let i = 0; i < nc; i++) {
+        monthsT[m * nc + i] = cells.seaLevelTemperature[i] + 8 * detCos(m * 0.523 + cm.yNorm[i] * 3)
+        monthsP[m * nc + i] = cells.precipitation[i] === -1 ? -1 : cells.precipitation[i] * (1 + 0.95 * detSin(m * 0.523 + i * 0.001))
+      }
+    }
+    const up = new Float32Array(nc)
+    const rv = new Float32Array(nc)
+    for (let i = 0; i < nc; i++) {
+      up[i] = terrain.land[i] ? 0 : detSin(i * 0.1)
+      rv[i] = terrain.land[i] ? 0.3 + 0.2 * detCos(i * 0.07) : 0
+    }
+    const full = { ...cells, months: { count: 12, seaLevelTemperature: monthsT, precipitation: monthsP }, upwelling: up, rainVariability: rv }
+    const override = new Float32Array(count)
+    for (let i = 0; i < count; i++) override[i] = uniform(-10, 3000)
+    h = 0x811c9dc5
+    add(CP.meanLandRunoff(cells))
+    for (const [c, wind] of [[cells, true], [full, false]]) {
+      const at = CP.climateAtPoints(c, points, { wind })
+      for (const k of ['seaLevelTemperature', 'temperature', 'precipitation', 'seasonalAmplitude', 'monsoonIndex', 'upwelling', 'rainVariability', 'windE', 'windS']) if (at[k]) addAll(at[k])
+      if (at.months) { addAll(at.months.temperature); addAll(at.months.precipitation) }
+      for (const o of [undefined, override]) {
+        const b = B.classifyPoints(at, points, d, o)
+        addAll(b.biome)
+        addAll(b.koppen)
+      }
+    }
+    line(`${name}_points_${variant}`)
   }
 }
 

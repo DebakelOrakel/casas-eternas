@@ -389,6 +389,16 @@ BUILDING since 2026-10-20:
   with dry floors on both shapes, at the default controls and at moved
   ones and a moved planet: `computeWeather` takes 127 ms on the torus and
   90 ms on the sphere on one core, against 350 and 261 ms.
+- The static climate, second part: the climate at points
+  (`climate/climatePoints`: the cells, their saved values, the climate at
+  any point set with the island rule and the monsoon's sign), the
+  Köppen–Geiger classes and the biomes (`koppen`, `biomes`; their colours
+  and label keys are presentation and stay in TypeScript). Bit-equal on
+  6 000 random points per shape, land on sea cells among them, with the
+  static cells and with cells that carry months, upwelling and the rain's
+  variability, the biomes with and without a rain override, and 20 000
+  random years for the classes. `climateCellsFromRefined` comes with the
+  refinement.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

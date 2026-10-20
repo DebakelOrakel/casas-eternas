@@ -4,10 +4,16 @@
 //! is written by `engine/scripts/climateFixture.mjs`; the scenarios below
 //! are that script's, step for step.
 
+use casas_engine::climate::biomes::{biome_from_koppen, classify_points};
 use casas_engine::climate::climate_field::{belt_y_norm, in_top_summer_half, top_summer_cos};
 use casas_engine::climate::climate_mesh::{
     ClimateTerrain, basin_rows, climate_cell_m, distance_to_sea, mesh_components, zonal_mean,
 };
+use casas_engine::climate::climate_points::{
+    ClimateMonthCells, ClimatePoints, climate_at_points, climate_cells_from_weather,
+    mean_land_runoff,
+};
+use casas_engine::climate::koppen::{classify_koppen, synthesize_months};
 use casas_engine::climate::monsoon::seasonality_magnitude;
 use casas_engine::climate::ocean_currents::{compute_sink_inflow, compute_upwelling};
 use casas_engine::climate::precipitation::{
@@ -103,6 +109,59 @@ fn the_planet_and_the_bands_give_the_typescript_values() {
         true,
     ));
     h.check("functions");
+}
+
+struct Gen(u32);
+
+impl Gen {
+    fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_mul(1664525).wrapping_add(1013904223);
+        self.0
+    }
+    fn uniform(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + (hi - lo) * (self.next() as f64 / 4294967296.0)
+    }
+}
+
+#[test]
+fn the_koppen_classes_and_the_biomes_give_the_typescript_values() {
+    let mut g = Gen(5);
+    let mut h = Hash::new();
+    let mut t = [0.0; 12];
+    let mut p = [0.0; 12];
+    for k in 0..20000 {
+        let mean = g.uniform(-30.0, 32.0);
+        let range = g.uniform(0.0, 45.0);
+        let wet = g.uniform(0.0, 300.0);
+        for m in 0..12 {
+            t[m] = mean + range * det_cos(m as f64 * 0.52 + k as f64);
+            p[m] = (wet * (1.0 + det_sin(m as f64 * 0.7 + k as f64 * 0.3)) * g.uniform(0.0, 1.2))
+                .max(0.0);
+        }
+        h.add(classify_koppen(&t, &p) as f64);
+        let index = g.uniform(-0.9, 0.9);
+        synthesize_months(
+            mean,
+            range,
+            wet * 12.0,
+            index,
+            k % 2 == 0,
+            500.0,
+            &mut t,
+            &mut p,
+        );
+        h.add_all(&t);
+        h.add_all(&p);
+        h.add(classify_koppen(&t, &p) as f64);
+    }
+    for id in 0..32u8 {
+        for map in [100.0, 300.0, 700.0, 1450.0, 2000.0] {
+            let amp = g.uniform(5.0, 30.0);
+            let season = g.uniform(0.0, 0.8);
+            h.add(biome_from_koppen(id, map, amp, season) as f64);
+        }
+    }
+    h.check("koppen");
 }
 
 fn height_at(x: f64, y: f64) -> f64 {
@@ -245,6 +304,107 @@ fn run(name: &str, d: Domain) {
         let index: Vec<f32> = wm.seasonal.index.iter().map(|&v| v as f32).collect();
         h.add_all(&seasonality_magnitude(&index));
         h.check(&format!("{name}_refined_{variant}"));
+
+        let cells = climate_cells_from_weather(&terrain, &wm);
+        let mut g = Gen(11);
+        let count = 6000;
+        let (mut xs, mut ys, mut height) = (vec![0.0; count], vec![0.0; count], vec![0f32; count]);
+        let (mut pland, mut pdry, mut alive) =
+            (vec![0u8; count], vec![0u8; count], vec![0u8; count]);
+        for i in 0..count {
+            xs[i] = g.uniform(0.0, d.width);
+            ys[i] = g.uniform(0.0, d.height);
+            height[i] = g.uniform(-0.1, 0.6) as f32;
+            pland[i] = u8::from(i % 5 == 0 || height[i] > 0.0);
+            pdry[i] = u8::from(i % 17 == 0);
+            alive[i] = u8::from(i % 23 != 0);
+        }
+        let points = ClimatePoints {
+            count,
+            x: &xs,
+            y: &ys,
+            height: &height,
+            land: pland,
+            dry: Some(&pdry),
+            alive: Some(&alive),
+        };
+        let nc = n;
+        let mut months_t = vec![0f32; 12 * nc];
+        let mut months_p = vec![0f32; 12 * nc];
+        for m in 0..12 {
+            for i in 0..nc {
+                months_t[m * nc + i] = (cells.sea_level_temperature[i] as f64
+                    + 8.0 * det_cos(m as f64 * 0.523 + cm.y_norm[i] * 3.0))
+                    as f32;
+                months_p[m * nc + i] = if cells.precipitation[i] == -1.0 {
+                    -1.0
+                } else {
+                    (cells.precipitation[i] as f64
+                        * (1.0 + 0.95 * det_sin(m as f64 * 0.523 + i as f64 * 0.001)))
+                        as f32
+                };
+            }
+        }
+        let up: Vec<f32> = (0..nc)
+            .map(|i| {
+                if terrain.land[i] != 0 {
+                    0.0
+                } else {
+                    det_sin(i as f64 * 0.1) as f32
+                }
+            })
+            .collect();
+        let rv: Vec<f32> = (0..nc)
+            .map(|i| {
+                if terrain.land[i] != 0 {
+                    (0.3 + 0.2 * det_cos(i as f64 * 0.07)) as f32
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let mut full = cells.clone();
+        full.months = Some(ClimateMonthCells {
+            count: 12,
+            sea_level_temperature: months_t,
+            precipitation: months_p,
+        });
+        full.upwelling = Some(up);
+        full.rain_variability = Some(rv);
+        let over: Vec<f32> = (0..count)
+            .map(|_| g.uniform(-10.0, 3000.0) as f32)
+            .collect();
+        let mut h = Hash::new();
+        h.add(mean_land_runoff(&sh, &cells));
+        for (c, wind) in [(&cells, true), (&full, false)] {
+            let at = climate_at_points(&mut sh, c, &points, wind);
+            for a in [
+                Some(&at.sea_level_temperature),
+                Some(&at.temperature),
+                Some(&at.precipitation),
+                Some(&at.seasonal_amplitude),
+                Some(&at.monsoon_index),
+                at.upwelling.as_ref(),
+                at.rain_variability.as_ref(),
+                at.wind_e.as_ref(),
+                at.wind_s.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                h.add_all(a);
+            }
+            if let Some(m) = &at.months {
+                h.add_all(&m.temperature);
+                h.add_all(&m.precipitation);
+            }
+            for o in [None, Some(&over[..])] {
+                let b = classify_points(&at, &points, &d, o);
+                h.add_all(&b.biome);
+                h.add_all(&b.koppen);
+            }
+        }
+        h.check(&format!("{name}_points_{variant}"));
     }
 }
 
