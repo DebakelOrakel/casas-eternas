@@ -26,6 +26,10 @@ casas-eternas
 # make build's binaries
 bin/
 
+# The Rust engine's build output (make engine)
+engine/target/
+engine/dist/
+
 # The server's own stores (world.storage.dir.path / artifacts.storage.dir.path):
 # a world is irreplaceable but belongs to whoever ran the server, and an
 # artifact is recomputable — neither belongs in the repository.

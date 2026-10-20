@@ -5,6 +5,8 @@
 #                "verify with tsc", so this is the honest gate)
 #   make test    the Go tests plus the worldgen regression harness
 #   make worker  bundle the job worker for Node (./job-worker.mjs)
+#   make engine  build the Rust engine, native and WASM, into engine/dist/
+#                (docs/decisions/rust-engine.md; nothing uses it yet)
 #   make run     build everything and start a local server on :8080
 #   make build   build the binary for macOS, Linux and Windows into bin/,
 #                with the job worker beside it
@@ -37,7 +39,7 @@ TAG   ?= latest
 VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/DebakelOrakel/casas-eternas/cmd.buildVersion=$(VERSION)
 
-.PHONY: lint test worker client docs run build release image push cli-reference
+.PHONY: lint test engine worker client docs run build release image push cli-reference
 
 # The platforms `make build` makes the binary for, as GOOS/GOARCH. The server
 # is pure Go (CGO_ENABLED=0), so one machine builds them all.
@@ -90,20 +92,37 @@ lint:
 	# hand-maintained list (docs/decisions/documentation-architecture.md).
 	@go run ./tools/clidump | diff -q docs/operations/cli-reference.json - > /dev/null \
 		|| (echo "docs/operations/cli-reference.json is stale — run 'make cli-reference'" >&2; exit 1)
+	cd engine && cargo fmt --check
+	cd engine && cargo clippy --workspace --all-targets -- -D warnings
 
 # Regenerate the CLI/config reference the docs site renders. Run after
 # changing commands, flags or their help texts; lint fails until you do.
 cli-reference:
 	go run ./tools/clidump > docs/operations/cli-reference.json
 
-test:
+test: engine
 	go test ./internal/...
+	cd engine && cargo test --workspace
+	node engine/scripts/smoke.mjs
 	cd client && npm run harness:roundtrip
 	cd client && npm run test:http-store
 	cd client && npm run harness:pipeline
 	cd client && npm run harness:mesh
 	cd client && npm run harness:fields
 	cd client && npm run harness:golden
+
+# The Rust engine (docs/decisions/rust-engine.md), for this machine only: the
+# native build is a Node addon and cannot be cross-compiled like the server.
+# The WASM build needs the wasm32-unknown-unknown target, which rustup
+# installs from engine/rust-toolchain.toml.
+ENGINE_NODE_LIB := libcasas_engine_node.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
+
+engine:
+	cd engine && cargo build --release -p casas-engine-node
+	cd engine && cargo build --release -p casas-engine-wasm --target wasm32-unknown-unknown
+	mkdir -p engine/dist
+	cp engine/target/release/$(ENGINE_NODE_LIB) engine/dist/casas-engine.node
+	cp engine/target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm engine/dist/casas-engine.wasm
 
 # The job worker, bundled for Node. Lands beside the binary because that is
 # where jobs.worker looks by default.

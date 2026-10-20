@@ -20,6 +20,8 @@ saves
 # copy from the host would be the exact drift the single-image design avoids.
 job-worker.mjs
 casas-eternas
+engine/target
+engine/dist
 
 docs
 *.md
