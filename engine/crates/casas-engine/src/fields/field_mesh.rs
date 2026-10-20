@@ -627,3 +627,12 @@ pub fn field_max_from_raster(
     }
     result
 }
+
+/// A field as a save holds it: the mesh's own values, with the cell count
+/// and spacing that identify the mesh they belong to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedField {
+    pub values: Vec<f64>,
+    pub cells: usize,
+    pub spacing_m: f64,
+}

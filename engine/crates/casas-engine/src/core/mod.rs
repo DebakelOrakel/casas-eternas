@@ -4,7 +4,9 @@
 pub mod det_math;
 pub mod domain;
 pub mod field;
+pub mod interpolation;
 pub mod js;
 pub mod min_heap;
 pub mod rng;
 pub mod toroidal;
+pub mod world_time;

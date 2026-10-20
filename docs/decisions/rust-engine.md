@@ -314,6 +314,10 @@ BUILDING since 2026-10-20:
   samplers, `core/field.ts`, `core/toroidal.ts`) and with it the field
   mesh's raster readers. Bit-equal over random points and every grid method
   on four domains, odd and even grids among them.
+- The mantle (`mantle/`) and the raft field it reads (`crust/raftField`:
+  the metaball field, its blob index, the craton age, the owner field),
+  with `core/interpolation` and `core/worldTime`. Bit-equal over ten
+  epochs of the field, its flow and its samples on both shapes.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

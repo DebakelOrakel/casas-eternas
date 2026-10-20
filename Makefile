@@ -98,6 +98,7 @@ lint:
 	node engine/scripts/meshFixture.mjs --check
 	node engine/scripts/fieldsFixture.mjs --check
 	node engine/scripts/domainFixture.mjs --check
+	node engine/scripts/mantleFixture.mjs --check
 	# The workspace builds the engine with `parallel` (the native crate turns
 	# it on); the engine alone builds it without, as the WASM build does.
 	cd engine && cargo clippy --workspace --all-targets -- -D warnings

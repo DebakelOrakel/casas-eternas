@@ -14,7 +14,10 @@
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod core;
+pub mod crust;
 pub mod elevation;
 pub mod fields;
+pub mod mantle;
 pub mod mesh;
 pub mod surface;
+pub mod tectonics;
