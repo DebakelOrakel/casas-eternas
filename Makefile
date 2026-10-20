@@ -93,6 +93,7 @@ lint:
 	@go run ./tools/clidump | diff -q docs/operations/cli-reference.json - > /dev/null \
 		|| (echo "docs/operations/cli-reference.json is stale — run 'make cli-reference'" >&2; exit 1)
 	cd engine && cargo fmt --check
+	node engine/scripts/detMathFixture.mjs --check
 	cd engine && cargo clippy --workspace --all-targets -- -D warnings
 
 # Regenerate the CLI/config reference the docs site renders. Run after

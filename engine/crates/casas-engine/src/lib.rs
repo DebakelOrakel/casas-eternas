@@ -6,3 +6,5 @@
 /// The version of this crate. It is not the pipeline version: that is the
 /// engine plus its constants, and it comes with the first stage.
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub mod det_math;

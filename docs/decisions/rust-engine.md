@@ -16,8 +16,9 @@ summary.de: Der Generator bekommt eine zweite Engine in Rust, nur wegen der
   läuft im Browser als WASM, Level 1–3 nativ im Worker; beide Builds
   geben dieselben Bits.
 area: generator
-stage: decided
+stage: building
 createdAt: 2026-10-19
+updatedAt: 2026-10-20
 related: [DES-0001, DES-0006, DEC-0039, DEC-0032, DEC-0043]
 ---
 
@@ -268,8 +269,20 @@ comes.
 
 ## Status
 
-DECIDED 2026-10-19: the port is worth it. Nothing is built; the spikes are
-outside the repository. The next step is phase 1, the frame. Open: the
+DECIDED 2026-10-19: the port is worth it. The spikes are outside the
+repository.
+
+BUILDING since 2026-10-20:
+
+- Phase 1, the frame (`engine/`, `make engine`): the native build loads in
+  Node. The WASM build waits for a toolchain with the wasm32 target
+  (rustup reads `engine/rust-toolchain.toml`).
+- Phase 2, `det_math`: bit-equal to `core/detMath.ts` in 1 101 special
+  cases and in 23 sample sets of 100 000 arguments each, and it gives the
+  hash `harness:mesh` holds (`dadf96b6`). `engine/clippy.toml` refuses the
+  std functions it replaces; `make lint` refuses a stale fixture.
+
+Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and
 Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;
 changing that is a behaviour change and not part of the port.
