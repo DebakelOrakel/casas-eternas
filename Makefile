@@ -113,6 +113,8 @@ cli-reference:
 
 test: engine
 	go test ./internal/...
+	# The epoch fixture takes a minute to make: checked here, not in lint.
+	node engine/scripts/epochFixture.mjs --check
 	cd engine && cargo test --workspace --release
 	cd engine && cargo test -p casas-engine --release
 	node engine/scripts/smoke.mjs

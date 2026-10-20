@@ -335,6 +335,17 @@ BUILDING since 2026-10-20:
   hashes sum in doubles before the cut to 32 bits, as JavaScript does; an
   exact integer hash gives other bits, and the test sees it. Bit-equal on
   both shapes.
+- The tectonic epoch, whole: the plate simulation and its six phases
+  (`tectonics/epoch/`: the mantle's coupling, the drift, the boundary pass
+  with the carriers' margins, the raft events, the plate churn, the
+  pruning), with the raft lifecycle and the names (`crust/`). The field
+  meshes a world's stages share are one `WorldMeshes` the caller holds
+  and hands from phase to phase, as the TypeScript caches are one per
+  domain. From one synthetic snapshot, 120 epochs on each shape give the
+  TypeScript state after every epoch, every event type but the
+  supercontinent's among them: 15 s against 52 s, on one core. The
+  fixture takes a minute to make, so `make test` checks it, not
+  `make lint`.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and
