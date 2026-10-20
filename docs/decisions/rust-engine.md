@@ -675,6 +675,16 @@ BUILDING since 2026-10-20:
   of sliders and four months, and in the restored worlds: equal to
   TypeScript's in both builds. The migration does not cross: it is to
   leave the generator.
+- Level 1 by replay through the boundary, native only (fork 3): a
+  `Replay` object runs the plan at the level's budget one epoch at a
+  time, says where a checkpoint is due and gives its snapshot, starts
+  from one, and on its end gives the level's waters as the artifact
+  holds them (`MeshLevelArtifact`). The job worker keeps the progress,
+  the checkpoint files and the stop. `replay_runs` is now the loop over
+  that object; the replay test is bit-equal as before. The smoke test
+  replays a plan with a restored run on both shapes and finds the
+  checkpoints, the level (its river courses' JSON with it) and the level
+  resumed from a checkpoint equal to TypeScript's.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

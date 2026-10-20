@@ -8,6 +8,7 @@
 
 pub mod forms;
 pub mod read;
+pub mod replay;
 mod stages;
 pub mod value;
 

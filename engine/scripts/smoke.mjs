@@ -6,10 +6,11 @@
 // step, the hydrology with the climate v2, the refinement and the
 // hydrology on it, the ecology on both, with its months; the tectonic
 // save; a world restored from it, its climate with the saved refinement,
-// its hydrology, its ecology and its next epoch. A save goes
+// its hydrology, its ecology and its next epoch; then level 1 by replay,
+// native only, with its checkpoints and resumed from one. A save goes
 // through JSON and back, as it does through a file. Run by `make test`
-// after `make engine`; about five minutes, most of it the refinement in
-// TypeScript.
+// after `make engine`; about ten minutes, most of it TypeScript's
+// refinement and its level-1 replay.
 import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -42,10 +43,13 @@ const WS = await L('/src/generator/pipeline/worldStages.ts')
 const { meshRouting } = await L('/src/generator/mesh/meshHydrology.ts')
 const { Biome } = await L('/src/generator/climate/biomes.ts')
 const { maxDischargeOverLand, SURFACE_ICE } = await L('/src/generator/surface/hydrology.ts')
-const { meanLandRunoff } = await L('/src/generator/climate/climatePoints.ts')
+const { climateAtPoints, climateCellsFromWeather, meanLandRunoff, meshPoints } = await L('/src/generator/climate/climatePoints.ts')
 const { riverPolylinesFromGraph, serializeRiverGraph } = await L('/src/generator/surface/riverGraph.ts')
 const { metersToElevation } = await L('/src/generator/elevation/elevationScale.ts')
 const E = await L('/src/generator/ecology/ecologyField.ts')
+const RR = await L('/src/generator/pipeline/replayRuns.ts')
+const { levelBudget, levelHydrology } = await L('/src/generator/pipeline/meshBakeStage.ts')
+const { meshLevelToArtifact } = await L('/src/world/meshArtifacts.ts')
 // The render pool's worker, in this process through a stand-in `self` (as
 // client/scripts/pipeline.mjs does), one band over the whole raster; the
 // worker posts through it, so it stays.
@@ -402,6 +406,50 @@ for (const shape of ['torus', 'sphere']) {
   worlds.wasm.free()
   console.log(`engine: ${shape} — ${STEPS} Archean steps (${ts.rafts.length} rafts) saved and restored; the hand-over, ${EPOCHS} epochs (${eventCount} events, ${mesh.count} nodes) saved and restored; the climate, the hydrology (${water}), the ecology (${months} of 4 months given): native, wasm and TypeScript agree`)
 }
+// LEVEL 1 BY REPLAY, native only (fork 3): the plan replayed at level 1's
+// budget one epoch at a time with its checkpoints, the level's waters on
+// its end as the artifact holds them, and the replay resumed from a
+// checkpoint, against TypeScript's replayRuns and the job worker's
+// replayLevel.
+for (const shape of ['torus', 'sphere']) {
+  const [width, height, detailSeed] = [512, 256, 12345]
+  const weather = defaultWeatherParams()
+  const controls = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default }
+  const plan = {
+    seed: 'replay', width, height, shape,
+    genesis: [{ epochs: 40, diffusion: 2, landShare: 0.4 }],
+    tectonics: [{ epochs: 4, controls, weather }, { epochs: 3, controls, weather: { ...weather, temperatureOffset: -2 }, restored: true }],
+  }
+  const checkpoints = []
+  const { terrain } = await RR.replayRuns(plan, { budget: levelBudget(1), onCheckpoint: (position, take) => { checkpoints.push({ position, snapshot: structuredClone(take()) }) } })
+  const cells = climateCellsFromWeather(terrain.weather.result)
+  const atNodes = climateAtPoints(cells, meshPoints(terrain.mesh, terrain.z))
+  const water = levelHydrology(terrain.mesh, terrain.z, terrain.routing, terrain.areas, terrain.sedimentFlux, {
+    precipitation: atNodes.precipitation, temperature: atNodes.temperature, monsoonIndex: atNodes.monsoonIndex, meanRunoff: meanLandRunoff(cells),
+  }, { width, height, budget: levelBudget(1), detailSeed })
+  const artifact = meshLevelToArtifact({ level: 1, mesh: terrain.mesh, z: terrain.z, routing: terrain.routing, ...water, inserted: 0 })
+  const json = (a) => JSON.stringify([a.graph && serializeRiverGraph(a.graph).json, a.waterBodies])
+
+  const replay = native.Replay.start(plan, 1, null, 4)
+  const due = []
+  for (;;) {
+    const position = replay.checkpointDue()
+    if (position) due.push({ position, snapshot: replay.snapshot() })
+    if (!replay.step()) break
+  }
+  if (canonical(due) !== canonical(checkpoints)) fail(`${shape}: level 1's checkpoints differ from TypeScript`)
+  const level = replay.level(width, detailSeed)
+  if (canonical(level) !== canonical(artifact)) fail(`${shape}: level 1 differs from TypeScript`)
+  if (json(level) !== json(artifact)) fail(`${shape}: level 1's JSON differs from TypeScript`)
+  // Resumed from the last checkpoint, its state through JSON as a
+  // checkpoint's state.json goes.
+  const at = checkpoints[checkpoints.length - 1]
+  const resumed = native.Replay.start(plan, 1, { position: at.position, snapshot: { ...at.snapshot, state: viaJson(at.snapshot.state) } }, null)
+  while (resumed.step());
+  if (canonical(resumed.level(width, detailSeed)) !== canonical(artifact)) fail(`${shape}: level 1 resumed differs from TypeScript`)
+  console.log(`engine: ${shape} — level 1 replayed (${artifact.count} nodes, ${artifact.graph.reaches.length} reaches, ${artifact.graph.courses.length} courses), ${checkpoints.length} checkpoints, resumed: native and TypeScript agree`)
+}
+
 if (failed) process.exit(1)
 console.log(`engine: native and wasm ${wasm.version()}`)
 process.exit(0)

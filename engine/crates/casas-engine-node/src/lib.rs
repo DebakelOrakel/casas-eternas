@@ -200,3 +200,53 @@ fn shape_of(shape: &str) -> napi::Result<casas_engine_api::Shape> {
         _ => Err(napi::Error::from_reason(format!("no world shape {shape}"))),
     }
 }
+
+/// A world's runs made again at a level's budget (the job worker's level
+/// 1), one epoch at a time. Native only: levels 1–3 run here (fork 3).
+#[napi]
+pub struct Replay(casas_engine_api::replay::Replay);
+
+#[napi]
+impl Replay {
+    /// `plan` a `ReplayPlan`, `resume` `{ position, snapshot }` or null,
+    /// `leafWorkers` the engine pool's threads or null.
+    #[napi(
+        factory,
+        ts_args_type = "plan: unknown, level: number, resume?: unknown, leafWorkers?: number | null"
+    )]
+    pub fn start(
+        plan: Tree,
+        level: u32,
+        resume: Tree,
+        leaf_workers: Option<u32>,
+    ) -> napi::Result<Replay> {
+        casas_engine_api::replay::Replay::start(&plan.0, level, given(&resume.0), leaf_workers)
+            .map(Replay)
+            .map_err(era)
+    }
+
+    #[napi]
+    pub fn progress(&mut self) -> napi::Result<Tree> {
+        self.0.progress().map(Tree).map_err(era)
+    }
+
+    #[napi]
+    pub fn checkpoint_due(&mut self) -> napi::Result<Tree> {
+        self.0.checkpoint_due().map(Tree).map_err(era)
+    }
+
+    #[napi]
+    pub fn snapshot(&mut self) -> napi::Result<Tree> {
+        self.0.snapshot().map(Tree).map_err(era)
+    }
+
+    #[napi]
+    pub fn step(&mut self) -> napi::Result<bool> {
+        self.0.step().map_err(era)
+    }
+
+    #[napi]
+    pub fn level(&mut self, width: u32, detail_seed: u32) -> napi::Result<Tree> {
+        self.0.level(width, detail_seed).map(Tree).map_err(era)
+    }
+}

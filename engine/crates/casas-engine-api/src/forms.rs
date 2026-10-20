@@ -10,13 +10,14 @@ use casas_engine::crust::raft_types::{Raft, Suture};
 use casas_engine::fields::field_mesh::SavedField;
 use casas_engine::mesh::mesh_column::encode_column;
 use casas_engine::mesh::mesh_serial::encode_mesh;
+use casas_engine::mesh::periodic_delaunay::PeriodicTriangulation;
 use casas_engine::pipeline::coupled_epoch::CoupledTerrain;
 use casas_engine::surface::coast_graph::{CoastReach, CoastType};
 use casas_engine::surface::hydrogeology::SpringFeature;
 use casas_engine::surface::hydrology::{WaterBody, WaterKind};
 use casas_engine::surface::river_course::{RiverCourse, RiverPattern};
 use casas_engine::surface::river_graph::{
-    RiverGraph, RiverNode, RiverNodeKind, RiverReach, RiverReachKind, RiverRegime,
+    RiverGraph, RiverNode, RiverNodeKind, RiverPolylines, RiverReach, RiverReachKind, RiverRegime,
 };
 use casas_engine::surface::sediment_basins::{BasinKind, SedimentBasin};
 use casas_engine::tectonics::plate_motion::PlateMotion;
@@ -591,5 +592,41 @@ pub fn sediment_basin(b: &SedimentBasin) -> Value {
         .num("catchmentKm2", b.catchment_km2)
         .num("cratonAge", b.craton_age)
         .num("hardness", b.hardness)
+        .build()
+}
+
+/// `RiverPolylines`.
+pub fn river_polylines(r: &RiverPolylines) -> Value {
+    ObjBuilder::new()
+        .put("points", Value::F32s(r.points.clone()))
+        .put("lengths", Value::U32s(r.lengths.clone()))
+        .put("regimes", Value::U8s(r.regimes.clone()))
+        .build()
+}
+
+/// A mesh level as its artifact holds it (`meshLevelToArtifact`): the
+/// mesh's codec in its own numbering, the heights, the waters.
+pub fn mesh_level_artifact(
+    level: u32,
+    mesh: &PeriodicTriangulation,
+    z: &[f32],
+    bodies: &[WaterBody],
+    graph: Option<&RiverGraph>,
+    rivers: Option<&RiverPolylines>,
+) -> Value {
+    let order: Vec<i32> = (0..mesh.alive_vertices as i32).collect();
+    let serial = encode_mesh(mesh, &order);
+    ObjBuilder::new()
+        .num("level", level)
+        .num("count", serial.count as f64)
+        .put("nodes", Value::F32s(serial.nodes))
+        .put("connectivity", Value::U8s(serial.connectivity))
+        .put("z", Value::F32s(z[..serial.count].to_vec()))
+        .put(
+            "waterBodies",
+            Value::List(bodies.iter().map(water_body).collect()),
+        )
+        .put("graph", graph.map_or(Value::Null, river_graph))
+        .put("rivers", rivers.map_or(Value::Null, river_polylines))
         .build()
 }

@@ -153,79 +153,200 @@ fn domain_of(plan: &ReplayPlan) -> Domain {
     }
 }
 
+/// A replay one epoch at a time, for a caller that reports, checkpoints
+/// or stops between two (the job worker through the boundary):
+/// `replay_runs` is its loop.
+pub struct Replay {
+    plan: ReplayPlan,
+    domain: Domain,
+    budget: f64,
+    leaf_workers: Option<usize>,
+    /// The world; None only inside a restored run's start.
+    world: Option<(PlateSimulation, CoupledTerrain)>,
+    position: ReplayPosition,
+    /// Whether the run at `position` has had its start (a restored run's
+    /// restore).
+    entered: bool,
+    done: u32,
+    total: u32,
+}
+
+impl Replay {
+    /// The Archean, the hand-over and the history's terrain, or the state
+    /// a checkpoint holds.
+    pub fn start(
+        plan: ReplayPlan,
+        budget: f64,
+        leaf_workers: Option<usize>,
+        resume: Option<(ReplayPosition, &ReplaySnapshot)>,
+    ) -> Result<Replay, String> {
+        let domain = domain_of(&plan);
+        let (sim, terrain, position) = match resume {
+            Some((position, snapshot)) => {
+                let (sim, terrain) =
+                    restore_snapshot(snapshot, domain.clone(), world_meshes(&domain))?;
+                (sim, terrain, position)
+            }
+            None => {
+                let mut archean = create_archean_simulation(&plan.seed, domain.clone());
+                let mut params = default_archean_params();
+                for run in &plan.genesis {
+                    params.diffusion = run.diffusion;
+                    params.land_share = run.land_share;
+                    for _ in 0..run.epochs {
+                        archean_step(&mut archean, &params);
+                    }
+                }
+                let mut sim = finalize_archean(archean);
+                sim.epoch_ma = TECTONIC_MA_PER_EPOCH;
+                let terrain = create_coupled_terrain(&mut sim, budget);
+                (sim, terrain, ReplayPosition { run: 0, epoch: 0 })
+            }
+        };
+        let total: u32 = plan.tectonics.iter().map(|r| r.epochs).sum();
+        let done = plan.tectonics[..position.run]
+            .iter()
+            .map(|r| r.epochs)
+            .sum::<u32>()
+            + position.epoch;
+        Ok(Replay {
+            plan,
+            domain,
+            budget,
+            leaf_workers,
+            world: Some((sim, terrain)),
+            position,
+            entered: false,
+            done,
+            total,
+        })
+    }
+
+    /// The epochs done and their total.
+    pub fn done(&self) -> u32 {
+        self.done
+    }
+
+    pub fn total(&self) -> u32 {
+        self.total
+    }
+
+    /// Moves to the next epoch to run, starting each run on the way: the
+    /// run's index, or None past the last.
+    fn ready(&mut self) -> Result<Option<usize>, String> {
+        loop {
+            let r = self.position.run;
+            let Some(run) = self.plan.tectonics.get(r) else {
+                return Ok(None);
+            };
+            if !self.entered {
+                self.entered = true;
+                if run.restored && self.position.epoch == 0 {
+                    let (sim, terrain) = self.world.take().expect("the replay's world");
+                    let snapshot = snapshot_of(&sim, &terrain);
+                    self.world = Some(restore_snapshot(
+                        &snapshot,
+                        self.domain.clone(),
+                        sim.meshes,
+                    )?);
+                }
+            }
+            if self.position.epoch < run.epochs {
+                return Ok(Some(r));
+            }
+            self.position = ReplayPosition {
+                run: r + 1,
+                epoch: 0,
+            };
+            self.entered = false;
+        }
+    }
+
+    /// Where a checkpoint taken now restores to the same bytes: before an
+    /// epoch that computes its climate anyway, after the first. None
+    /// elsewhere and past the last epoch.
+    pub fn checkpoint_due(&mut self) -> Result<Option<ReplayPosition>, String> {
+        let Some(r) = self.ready()? else {
+            return Ok(None);
+        };
+        let weather = self.plan.tectonics[r].weather;
+        let (sim, terrain) = self.world();
+        let fresh = climate_due_at(
+            sim.epoch + 1.0,
+            terrain.weather.as_ref(),
+            &weather,
+            HISTORY_DEFAULTS.climate_every,
+        );
+        Ok((fresh && self.done > 0).then_some(self.position))
+    }
+
+    /// The state now, as a checkpoint holds it.
+    pub fn snapshot(&mut self) -> ReplaySnapshot {
+        let (sim, terrain) = self.world();
+        snapshot_of(sim, terrain)
+    }
+
+    fn world(&mut self) -> (&mut PlateSimulation, &mut CoupledTerrain) {
+        let (sim, terrain) = self.world.as_mut().expect("the replay's world");
+        (sim, terrain)
+    }
+
+    /// The next epoch; false past the last.
+    pub fn step(&mut self) -> Result<bool, String> {
+        let Some(r) = self.ready()? else {
+            return Ok(false);
+        };
+        let run = self.plan.tectonics[r];
+        let (budget, leaf_workers) = (self.budget, self.leaf_workers);
+        let (sim, terrain) = self.world();
+        step_coupled_epoch(
+            sim,
+            terrain,
+            &CoupledEpochOptions {
+                weather: Some(run.weather),
+                iterations_per_epoch: HISTORY_DEFAULTS.iterations_per_epoch,
+                budget: Some(budget),
+                climate_every: Some(HISTORY_DEFAULTS.climate_every),
+                remesh_every: Some(HISTORY_DEFAULTS.remesh_every),
+                uplift_scale: Some(HISTORY_DEFAULTS.uplift_scale),
+                controls: run.controls,
+                leaf_workers,
+            },
+        );
+        self.done += 1;
+        self.position.epoch += 1;
+        Ok(true)
+    }
+
+    /// The world the replay made.
+    pub fn into_world(self) -> (PlateSimulation, CoupledTerrain) {
+        self.world.expect("the replay's world")
+    }
+}
+
 pub fn replay_runs(
     plan: &ReplayPlan,
     options: &mut ReplayOptions,
 ) -> Result<(PlateSimulation, CoupledTerrain), String> {
-    let domain = domain_of(plan);
-    let (mut sim, mut terrain, start) = match options.resume {
-        Some((position, snapshot)) => {
-            let (sim, terrain) = restore_snapshot(snapshot, domain.clone(), world_meshes(&domain))?;
-            (sim, terrain, position)
+    let mut replay = Replay::start(
+        plan.clone(),
+        options.budget,
+        options.leaf_workers,
+        options.resume,
+    )?;
+    loop {
+        if let Some(position) = replay.checkpoint_due()?
+            && let Some(cb) = options.on_checkpoint.as_mut()
+        {
+            let (sim, terrain) = replay.world();
+            cb(position, sim, terrain);
         }
-        None => {
-            let mut archean = create_archean_simulation(&plan.seed, domain.clone());
-            let mut params = default_archean_params();
-            for run in &plan.genesis {
-                params.diffusion = run.diffusion;
-                params.land_share = run.land_share;
-                for _ in 0..run.epochs {
-                    archean_step(&mut archean, &params);
-                }
-            }
-            let mut sim = finalize_archean(archean);
-            sim.epoch_ma = TECTONIC_MA_PER_EPOCH;
-            let terrain = create_coupled_terrain(&mut sim, options.budget);
-            (sim, terrain, ReplayPosition { run: 0, epoch: 0 })
+        if !replay.step()? {
+            break;
         }
-    };
-    let total: u32 = plan.tectonics.iter().map(|r| r.epochs).sum();
-    let mut done: u32 = plan.tectonics[..start.run]
-        .iter()
-        .map(|r| r.epochs)
-        .sum::<u32>()
-        + start.epoch;
-    for r in start.run..plan.tectonics.len() {
-        let run = &plan.tectonics[r];
-        let mut epoch = if r == start.run { start.epoch } else { 0 };
-        if run.restored && epoch == 0 {
-            let snapshot = snapshot_of(&sim, &terrain);
-            let meshes = sim.meshes;
-            (sim, terrain) = restore_snapshot(&snapshot, domain.clone(), meshes)?;
-        }
-        while epoch < run.epochs {
-            let fresh = climate_due_at(
-                sim.epoch + 1.0,
-                terrain.weather.as_ref(),
-                &run.weather,
-                HISTORY_DEFAULTS.climate_every,
-            );
-            if fresh
-                && done > 0
-                && let Some(cb) = options.on_checkpoint.as_mut()
-            {
-                cb(ReplayPosition { run: r, epoch }, &sim, &terrain);
-            }
-            step_coupled_epoch(
-                &mut sim,
-                &mut terrain,
-                &CoupledEpochOptions {
-                    weather: Some(run.weather),
-                    iterations_per_epoch: HISTORY_DEFAULTS.iterations_per_epoch,
-                    budget: Some(options.budget),
-                    climate_every: Some(HISTORY_DEFAULTS.climate_every),
-                    remesh_every: Some(HISTORY_DEFAULTS.remesh_every),
-                    uplift_scale: Some(HISTORY_DEFAULTS.uplift_scale),
-                    controls: run.controls,
-                    leaf_workers: options.leaf_workers,
-                },
-            );
-            done += 1;
-            if let Some(cb) = options.on_epoch.as_mut() {
-                cb(done, total);
-            }
-            epoch += 1;
+        if let Some(cb) = options.on_epoch.as_mut() {
+            cb(replay.done, replay.total);
         }
     }
-    Ok((sim, terrain))
+    Ok(replay.into_world())
 }
