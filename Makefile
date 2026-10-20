@@ -95,6 +95,7 @@ lint:
 	cd engine && cargo fmt --check
 	node engine/scripts/detMathFixture.mjs --check
 	node engine/scripts/delaunayFixture.mjs --check
+	node engine/scripts/meshFixture.mjs --check
 	cd engine && cargo clippy --workspace --all-targets -- -D warnings
 
 # Regenerate the CLI/config reference the docs site renders. Run after

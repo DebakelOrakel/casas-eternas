@@ -4,8 +4,8 @@
 //! the chart's arithmetic.
 //!
 //! This port holds what the mesh needs so far; the rest of `domain.ts`
-//! (latitude, advance, transport, the grids, the noise space) comes with the
-//! modules that read it. The sphere's trig cache is not ported: a hit gives
+//! (latitude, the grids, the noise space's frame) comes with the modules
+//! that read it. The sphere's trig cache is not ported: a hit gives
 //! the bits a miss computes, so it changes the time and nothing else.
 
 use super::det_math::{det_atan2, det_cos, det_sin};
@@ -29,6 +29,9 @@ pub struct Domain {
     pub kind: Kind,
     pub width: f64,
     pub height: f64,
+    /// Metres per domain unit: the torus's macro cell, or the sphere's arc
+    /// of one unit at the equator (DEC-0035 fork 6).
+    pub metres_per_unit: f64,
     /// The sphere's radius, W / 2π (0 on the torus).
     radius: f64,
     to_lon: f64,
@@ -69,12 +72,20 @@ pub fn wrapped_delta(a: f64, b: f64, period: f64) -> f64 {
     delta - period * js::round(delta / period)
 }
 
+/// `core/mapConfig.ts`: the torus's metres per macro cell.
+pub const TORUS_METERS_PER_CELL: f64 = 7800.0;
+/// `core/mapConfig.ts`: the sphere's equator, and the map's width in cells.
+pub const SPHERE_EQUATOR_METERS: f64 = 20_000_000.0;
+pub const MAP_WIDTH: f64 = 2048.0;
+
 impl Domain {
+    /// The torus at the default scale, `torusDomain(width, height)`.
     pub fn torus(width: f64, height: f64) -> Self {
         Domain {
             kind: Kind::Torus,
             width,
             height,
+            metres_per_unit: TORUS_METERS_PER_CELL,
             radius: 0.0,
             to_lon: 0.0,
             to_colat: 0.0,
@@ -93,10 +104,22 @@ impl Domain {
             kind: Kind::Sphere,
             width,
             height,
+            metres_per_unit: SPHERE_EQUATOR_METERS / MAP_WIDTH,
             radius: width / (2.0 * std::f64::consts::PI),
             to_lon: (2.0 * std::f64::consts::PI) / width,
             to_colat: std::f64::consts::PI / height,
         }
+    }
+
+    /// The same domain at another scale.
+    pub fn with_metres_per_unit(mut self, metres_per_unit: f64) -> Self {
+        self.metres_per_unit = metres_per_unit;
+        self
+    }
+
+    /// The globe's radius in domain units, W / 2π (0 on the torus).
+    pub fn radius(&self) -> f64 {
+        self.radius
     }
 
     pub fn is_sphere(&self) -> bool {
@@ -147,6 +170,119 @@ impl Domain {
                     y: ps * scale,
                 }
             }
+        }
+    }
+
+    /// The point reached from (x, y) by the offset (dx, dy) in its frame,
+    /// wrapped: on the sphere the exp map along the great circle.
+    pub fn advance(&self, x: f64, y: f64, dx: f64, dy: f64) -> Vec2 {
+        match self.kind {
+            Kind::Torus => Vec2 {
+                x: wrap_value(x + dx, self.width),
+                y: wrap_value(y + dy, self.height),
+            },
+            Kind::Sphere => {
+                let d = (dx * dx + dy * dy).sqrt();
+                if d == 0.0 {
+                    return self.wrap_point(x, y);
+                }
+                let t = y * self.to_colat;
+                let l = x * self.to_lon;
+                let st = det_sin(t);
+                let ct = det_cos(t);
+                let sl = det_sin(l);
+                let cl = det_cos(l);
+                let ue = dx / d;
+                let us = dy / d;
+                let tx = -sl * ue + ct * cl * us;
+                let ty = cl * ue + ct * sl * us;
+                let tz = -st * us;
+                let a = d / self.radius;
+                let ca = det_cos(a);
+                let sa = det_sin(a);
+                let qx = st * cl * ca + tx * sa;
+                let qy = st * sl * ca + ty * sa;
+                let qz = ct * ca + tz * sa;
+                self.wrap_point(
+                    det_atan2(qy, qx) / self.to_lon,
+                    det_atan2((qx * qx + qy * qy).sqrt(), qz) / self.to_colat,
+                )
+            }
+        }
+    }
+
+    /// As [`Domain::advance`], but unwrapped on the torus (the point in the
+    /// frame of the start).
+    pub fn displace(&self, x: f64, y: f64, dx: f64, dy: f64) -> Vec2 {
+        match self.kind {
+            Kind::Torus => Vec2 {
+                x: x + dx,
+                y: y + dy,
+            },
+            Kind::Sphere => self.advance(x, y, dx, dy),
+        }
+    }
+
+    /// The vector (vx, vy) in the east/south frame of `from`, carried along
+    /// the great circle to `to` and read in its frame. The identity on the
+    /// torus.
+    #[allow(clippy::too_many_arguments)]
+    pub fn transport(
+        &self,
+        vx: f64,
+        vy: f64,
+        from_x: f64,
+        from_y: f64,
+        to_x: f64,
+        to_y: f64,
+    ) -> Vec2 {
+        if self.kind == Kind::Torus {
+            return Vec2 { x: vx, y: vy };
+        }
+        let ta = from_y * self.to_colat;
+        let la = from_x * self.to_lon;
+        let sta = det_sin(ta);
+        let cta = det_cos(ta);
+        let sla = det_sin(la);
+        let cla = det_cos(la);
+        let tb = to_y * self.to_colat;
+        let lb = to_x * self.to_lon;
+        let stb = det_sin(tb);
+        let ctb = det_cos(tb);
+        let slb = det_sin(lb);
+        let clb = det_cos(lb);
+        let tx = -sla * vx + cta * cla * vy;
+        let ty = cla * vx + cta * sla * vy;
+        let tz = -sta * vy;
+        let ax = sta * cla;
+        let ay = sta * sla;
+        let az = cta;
+        let bx = stb * clb;
+        let by = stb * slb;
+        let bz = ctb;
+        let c = ax * bx + ay * by + az * bz;
+        let (mut rx, mut ry, mut rz) = (tx, ty, tz);
+        if c > -1.0 + 1e-12 {
+            let wx = ay * bz - az * by;
+            let wy = az * bx - ax * bz;
+            let wz = ax * by - ay * bx;
+            let k = (wx * tx + wy * ty + wz * tz) / (1.0 + c);
+            rx = c * tx + (wy * tz - wz * ty) + wx * k;
+            ry = c * ty + (wz * tx - wx * tz) + wy * k;
+            rz = c * tz + (wx * ty - wy * tx) + wz * k;
+        }
+        Vec2 {
+            x: -slb * rx + clb * ry,
+            y: ctb * clb * rx + ctb * slb * ry - stb * rz,
+        }
+    }
+
+    /// The chart point of a point (px, py, pz) of the globe, in any length
+    /// (`noise.locate` of the sphere domain).
+    pub fn globe_locate(&self, px: f64, py: f64, pz: f64) -> Vec2 {
+        Vec2 {
+            x: wrap_value(det_atan2(py, px) / self.to_lon, self.width),
+            y: det_atan2((px * px + py * py).sqrt(), pz) / self.to_colat,
         }
     }
 

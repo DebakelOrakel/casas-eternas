@@ -10,4 +10,5 @@
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod core;
+pub mod elevation;
 pub mod mesh;

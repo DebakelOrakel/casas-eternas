@@ -289,6 +289,13 @@ BUILDING since 2026-10-20:
   triangles, twins and unit vectors, in 1.2 s against 2.3 s. The
   tolerances of the predicates are not reached by the scenarios' random
   points; a change of them goes unseen by the test.
+- Phase 3, the mesh building: `hilbert`, `lattice` (hex, geodesic,
+  centroidal), `mesh_density`, `mesh_state`, `mesh_relief`, `remesh`,
+  `mesh_build`, with `rng` (mulberry32) and the domain's advance, displace
+  and transport. Bit-equal to TypeScript in a build of ~42 k nodes on each
+  shape, its rebuild from moved points, and a remesh with an intensive, an
+  extensive and a stacked field. Open in phase 3: `meshNeighbourhood`,
+  which reads the erosion's cotangents, so it comes with phase 4.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

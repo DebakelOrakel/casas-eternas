@@ -4,3 +4,4 @@
 pub mod det_math;
 pub mod domain;
 pub mod js;
+pub mod rng;
