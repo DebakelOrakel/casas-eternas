@@ -152,12 +152,19 @@ test: engine
 # installs from engine/rust-toolchain.toml.
 ENGINE_NODE_LIB := libcasas_engine_node.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
+WASM_BINDGEN := 0.2.129
+
 engine:
 	cd engine && cargo build --release -p casas-engine-node
 	cd engine && cargo build --release -p casas-engine-wasm --target wasm32-unknown-unknown
+	# The CLI must be the crate's version (casas-engine-wasm/Cargo.toml):
+	# cargo install wasm-bindgen-cli --version $(WASM_BINDGEN) --locked
+	@wasm-bindgen --version | grep -qx 'wasm-bindgen $(WASM_BINDGEN)' \
+		|| (echo "engine: needs wasm-bindgen $(WASM_BINDGEN) — cargo install wasm-bindgen-cli --version $(WASM_BINDGEN) --locked" >&2; exit 1)
 	mkdir -p engine/dist
 	cp engine/target/release/$(ENGINE_NODE_LIB) engine/dist/casas-engine.node
-	cp engine/target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm engine/dist/casas-engine.wasm
+	wasm-bindgen --target web --out-dir engine/dist/wasm --out-name casas-engine \
+		engine/target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
 
 # The job worker, bundled for Node. Lands beside the binary because that is
 # where jobs.worker looks by default.

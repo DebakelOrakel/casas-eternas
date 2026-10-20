@@ -244,6 +244,86 @@ that spread.
 7. The generator and the worker change to the new engine; the TypeScript
    engine goes.
 
+## Fork 6 — The boundary to TypeScript
+
+Decided 2026-10-20, after the port (see the status). The callers today:
+
+- **The generator worker** (`pipeline/runtime.ts`, level 0, the browser):
+  the Archean's steps and its hand-over, the coupled epochs, the world
+  stages (`pipeline/worldStages.ts`), the replay, a save's state out and
+  back in. The elevation raster of the Archean and of the hand-over comes
+  from the render pool (`render/`), which evaluates the elevation per
+  pixel in nested TypeScript workers.
+- **The job worker** (`scripts/jobWorker.ts`, levels 1–3, Node): the
+  replay of level 1, `levelHydrology`, the tile plan, the tile bake.
+- **The world layer** (`world/`, both): a save read back (`meshSerial`,
+  `meshHydrology`, `meshRaster`, `climatePoints`, `refinement`), the
+  queries and the level-1 replay (`world/replay.ts`). And `map/`, which
+  reads units, vocabulary and pure field functions.
+
+Some 190 imports of `generator/`, in 40 files, come from outside it. Phase 7 removes
+the TypeScript engine, so each of them goes to the engine or stays in
+TypeScript on purpose (units, vocabulary, the input declarations, the
+colours).
+
+**6a — Where the state is.**
+
+- **The engine holds it**: a world is an object in the engine (the plate
+  simulation, the Archean, the coupled terrain, the field meshes and
+  their walks, the stages' results); TypeScript holds a handle and calls
+  its methods. Only what TypeScript shows, saves or posts crosses, as
+  copies of typed arrays.
+- **TypeScript holds it**: every call takes its state and gives it back.
+  An epoch then copies the whole simulation twice.
+
+**Answer: the engine holds it.** The walks of the meshes are part of the
+state (fork 5's tests compare `lastTri`); a state copied out and in on
+every call must carry them too, or the bits change.
+
+**6b — The glue for WASM.**
+
+- **Plain exports over linear memory**, as now: no dependency, every
+  method written twice (Rust and the JavaScript that calls it), the
+  memory managed by hand.
+- **`wasm-bindgen`**: generated JavaScript classes and typed-array
+  copies, the same shape as napi's classes. One dependency and a build
+  step (`wasm-bindgen-cli`, its version pinned to the crate's).
+
+**Answer: `wasm-bindgen`.** The API is some tens of methods with
+structures; napi and `wasm-bindgen` then generate both sides from one
+Rust surface (a crate `casas-engine-api` that both binding crates wrap),
+and the TypeScript adapter sees the same classes in the browser and in
+Node.
+
+**6c — The save's forms.** The save holds the state as TypeScript writes
+it today (`state.json`, `mesh/*.bin`, the field values). The engine can
+give the parts as data (typed arrays and plain records) for the world
+layer to write as now, or write the bytes itself. JSON is the issue:
+`JSON.stringify` writes a number in the shortest form that reads back
+exactly, and a Rust writer gives other text for some numbers (exponents,
+−0).
+
+**Answer: the engine gives data, the world layer writes the files as
+now.** The archive, the identity and the format stay one module's
+(`world/save/`), and an old save loads into the new engine through the
+same reader.
+
+**6d — Threads in the browser.** WASM threads need `SharedArrayBuffer`
+and the page cross-origin isolated (COOP/COEP headers), and `rayon` on
+them a pool of web workers (`wasm-bindgen-rayon`).
+
+**Answer: one thread first.** Level 0 at 2.3–2.8× on one core is the
+measured gain; threads are a measured step after the switch, with the
+headers checked against what the page loads.
+
+**What follows from these.** The calls are the runtime's: one per stage
+step (an Archean step, an epoch, a world stage, a render's raster), not
+one per module function. The render pool's elevation goes to the engine
+as one raster call. The TypeScript adapter is a module of its own beside
+the runtime, and the runtime calls it where it calls `worldStages` and
+the epoch now. The faithful mode (fork 5) is the engine's default until
+the full comparison.
+
 ## Not decided — versioned pipelines
 
 With its own engine, a pipeline can be a release of its own. The direction
@@ -522,8 +602,14 @@ BUILDING since 2026-10-20:
   run under Node's WASI (`engine/scripts/wasiRunner.mjs`), passes
   against the same TypeScript fixtures as the native build — 24 test
   files, about five minutes single-threaded. `make test` runs it.
+- The boundary's frame (fork 6): `casas-engine-api` holds the world as
+  an object; `casas-engine-node` (napi) and `casas-engine-wasm`
+  (`wasm-bindgen` 0.2.129, the CLI pinned to it in `make engine`) wrap it
+  one for one. Its first methods are the Archean's (a world in its
+  genesis, a step, the mantle, the rafts); `engine/scripts/smoke.mjs`
+  grows an Archean on both shapes through both builds and the TypeScript
+  engine and finds the mantle bit-equal in all three.
 
-Open: the
-crates and the boundary to TypeScript, the Rust toolchain in make, CI and
-Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;
+Open: the boundary to TypeScript as fork 6 decides it, the Rust
+toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;
 changing that is a behaviour change and not part of the port.

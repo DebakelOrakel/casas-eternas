@@ -1,8 +1,9 @@
 # The Rust engine (docs/decisions/rust-engine.md, DEC-0044).
 #
 #   casas-engine        the engine itself; no I/O, no binding
+#   casas-engine-api    its surface to TypeScript: a world as an object (fork 6)
 #   casas-engine-node   the native build for the Node job worker (napi)
-#   casas-engine-wasm   the WASM build for the browser
+#   casas-engine-wasm   the WASM build for the browser (wasm-bindgen)
 #
 # Both builds must give the same bits (fork 4). Rust has no fast-math flag
 # and does not contract a * b + c into a fused multiply-add by itself, so the

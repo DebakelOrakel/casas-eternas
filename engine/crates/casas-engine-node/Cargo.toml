@@ -9,7 +9,7 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-casas-engine = { path = "../casas-engine", features = ["parallel"] }
+casas-engine-api = { path = "../casas-engine-api", features = ["parallel"] }
 napi = { version = "3", default-features = false, features = ["napi4"] }
 napi-derive = "3"
 
