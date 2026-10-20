@@ -130,6 +130,7 @@ test: engine
 	node engine/scripts/replayFixture.mjs --check
 	node engine/scripts/bakeFixture.mjs --check
 	node engine/scripts/tilesFixture.mjs --check
+	node engine/scripts/worldStagesFixture.mjs --check
 	cd engine && cargo test --workspace --release
 	cd engine && cargo test -p casas-engine --release
 	node engine/scripts/smoke.mjs

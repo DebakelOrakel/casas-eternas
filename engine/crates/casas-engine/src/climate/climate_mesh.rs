@@ -321,9 +321,10 @@ pub struct ClimateTerrain<'a> {
     pub cm: ClimateMesh,
     pub domain: Domain,
     pub elevation: Cow<'a, [f32]>,
+    /// The dry floors counted as land, a raster like the elevation.
+    pub dry_land: Option<Cow<'a, [u8]>>,
     pub res_x: usize,
     pub res_y: usize,
-    pub dry_land: Option<&'a [u8]>,
     pub raster_domain: Domain,
     pub z: Vec<f64>,
     pub land: Vec<u8>,
@@ -343,7 +344,30 @@ impl<'a> ClimateTerrain<'a> {
         res_y: usize,
         dry_land: Option<&'a [u8]>,
     ) -> Self {
-        Self::from_cow(sh, Cow::Borrowed(elevation), res_x, res_y, dry_land)
+        Self::from_cow(
+            sh,
+            Cow::Borrowed(elevation),
+            res_x,
+            res_y,
+            dry_land.map(Cow::Borrowed),
+        )
+    }
+
+    /// The terrain with dry floors it keeps.
+    pub fn with_dry_land(
+        sh: &SharedFieldMesh,
+        elevation: &'a [f32],
+        res_x: usize,
+        res_y: usize,
+        dry_land: Option<Vec<u8>>,
+    ) -> Self {
+        Self::from_cow(
+            sh,
+            Cow::Borrowed(elevation),
+            res_x,
+            res_y,
+            dry_land.map(Cow::Owned),
+        )
     }
 
     /// The terrain over a raster it keeps.
@@ -361,7 +385,7 @@ impl<'a> ClimateTerrain<'a> {
         elevation: Cow<'a, [f32]>,
         res_x: usize,
         res_y: usize,
-        dry_land: Option<&'a [u8]>,
+        dry_land: Option<Cow<'a, [u8]>>,
     ) -> Self {
         let fm = &sh.mesh;
         let domain = fm.domain.clone();
@@ -395,7 +419,7 @@ impl<'a> ClimateTerrain<'a> {
         for i in 0..fm.count {
             let t = terrain.texel(fm.x[i], fm.y[i]);
             z[i] = terrain.elevation[t] as f64;
-            dry[i] = u8::from(dry_land.is_some_and(|d| d[t] == 1));
+            dry[i] = u8::from(terrain.dry_land.as_ref().is_some_and(|d| d[t] == 1));
             land[i] = u8::from(is_land_at(z[i], dry[i] == 1));
         }
         terrain.z = z;

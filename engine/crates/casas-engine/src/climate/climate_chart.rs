@@ -57,7 +57,7 @@ impl<'a> ChartTerrain<'a> {
             elevation: &t.elevation,
             res_x: t.res_x,
             res_y: t.res_y,
-            dry_land: t.dry_land,
+            dry_land: t.dry_land.as_deref(),
         }
     }
 

@@ -500,6 +500,23 @@ BUILDING since 2026-10-20:
   against 2 s. The province noise's lattice hash multiplies in doubles
   past 2^53, as JavaScript does, so the port does the same before it
   truncates.
+- The world stages. `pipeline/runtime.ts` is the generator worker — its
+  state, messages, loops and renders — with the stages' computations
+  inside its handlers. Those were taken out unchanged into
+  `pipeline/worldStages.ts` (2026-10-20): the climate chain, the climate
+  at the terrain's nodes, the climate step's refinement, the hydrology's
+  route with the climate v2, its features (the riparian biomes, the
+  graph, the hydrogeology, the courses, the coast, the sediment basins,
+  the ice, their rasters) and the ecology's inputs. The order of every
+  call that moves a mesh's walk is kept (the pixels' triangles are made
+  where a raster is first drawn, the v2 climate is posted from a
+  callback where it was), and a run of the worker on both shapes emits
+  the same bytes as before, message for message. The Rust port
+  (`pipeline/world_stages`) is bit-equal on both shapes in the runtime's
+  order: 20 s against 93 s. The worker's shell stays TypeScript; at the
+  switch its handlers call the engine where they call `worldStages` now.
+  The test's worlds form no dry floor below the sea, so that path of the
+  v2 is not compared yet.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

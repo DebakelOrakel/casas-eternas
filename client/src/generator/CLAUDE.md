@@ -47,7 +47,9 @@ settled picture.
 Where this is going: [docs/design/generator-pipeline.md](../../../docs/design/generator-pipeline.md).
 
 ```
-pipeline/   messages (the worker contract), runtime (stage state + handlers)
+pipeline/   messages (the worker contract), runtime (stage state + handlers), worldStages
+            (what a stage computes, as functions of its inputs: the runtime's
+            handlers call them, the Rust engine ports them — DEC-0044)
 core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, interpolation,
             domain (the topology: periodicity, distance and latitude on the torus),
             detMath (exp, log, sin, cos … the same bits in every JS engine)
