@@ -300,7 +300,11 @@ BUILDING since 2026-10-20:
   cotangent facets) with `min_heap`. Bit-equal in the same scenarios. On the
   dumped epoch 12 of `b39d5739`, the column mean height (202 M members over
   3.7 M slots) gives the TypeScript values for every slot, in 10.1 s on one
-  core against 30.0 s.
+  core against 30.0 s, and in 2.0 s on 10 cores.
+- Parallel stages run on rayon behind the cargo feature `parallel`, which
+  the native build turns on and the WASM build leaves off. The work is cut
+  into fixed blocks and put together in their order, so both give the same
+  bits; `make test` and `make lint` run the engine in both.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

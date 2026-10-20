@@ -11,8 +11,6 @@
 //! the sphere domain's trig cache. A walk that does not terminate or a
 //! broken link polygon panics where the TypeScript code throws.
 
-use std::cell::Cell;
-
 use crate::core::det_math::{det_asin, det_atan2, det_cos, det_sin, sq};
 use crate::core::domain::Domain;
 use crate::core::js;
@@ -150,7 +148,7 @@ pub struct PeriodicTriangulation {
     /// The planar Voronoi area's circumcentre scratch. A degenerate
     /// triangle leaves it as the last circumcentre wrote it, and the
     /// TypeScript engine reads it all the same; so does this port.
-    last_cc: Cell<(f64, f64)>,
+    last_cc: (f64, f64),
 }
 
 const NEVER: u64 = u64::MAX;
@@ -188,7 +186,7 @@ impl Clone for PeriodicTriangulation {
             keeps_areas: false,
             area_version: Vec::new(),
             area_value: Vec::new(),
-            last_cc: Cell::new((0.0, 0.0)),
+            last_cc: (0.0, 0.0),
         }
     }
 }
@@ -228,7 +226,7 @@ impl PeriodicTriangulation {
             keeps_areas: false,
             area_version: Vec::new(),
             area_value: Vec::new(),
-            last_cc: Cell::new((0.0, 0.0)),
+            last_cc: (0.0, 0.0),
         }
     }
 
@@ -397,7 +395,7 @@ impl PeriodicTriangulation {
         area
     }
 
-    fn voronoi_area_uncached(&self, v: usize) -> f64 {
+    fn voronoi_area_uncached(&mut self, v: usize) -> f64 {
         if self.globe {
             self.voronoi_area_on_globe(v)
         } else {
@@ -405,7 +403,7 @@ impl PeriodicTriangulation {
         }
     }
 
-    fn voronoi_area_planar(&self, v: usize) -> f64 {
+    fn voronoi_area_planar(&mut self, v: usize) -> f64 {
         let vx = self.vx[v];
         let vy = self.vy[v];
         let start = self.v_edge[v] as usize;
@@ -420,9 +418,9 @@ impl PeriodicTriangulation {
             let t = tri_of(e);
             let a = self.t(3 * t);
             if let Some(c) = self.circumcentre(t) {
-                self.last_cc.set(c);
+                self.last_cc = c;
             }
-            let (ccx, ccy) = self.last_cc.get();
+            let (ccx, ccy) = self.last_cc;
             let d = self.domain.delta(self.vx[a], self.vy[a], vx, vy);
             let ax = vx + d.x;
             let ay = vy + d.y;

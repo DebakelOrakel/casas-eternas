@@ -207,19 +207,86 @@ pub fn neighbourhoods(
     centre: Option<&[u8]>,
 ) -> Neighbourhoods {
     let slots = mesh.vertex_slots();
-    let mut start = vec![0u32; slots + 1];
-    let mut member: Vec<u32> = Vec::with_capacity((slots * 8).max(16));
-    let mut weight: Vec<f32> = Vec::with_capacity((slots * 8).max(16));
-    let mut stamp = vec![-1i64; slots];
-    let mut queue: Vec<usize> = Vec::new();
-    for i in 0..slots {
-        start[i] = member.len() as u32;
+    let blocks: Vec<std::ops::Range<usize>> = (0..slots)
+        .step_by(NEIGHBOURHOOD_BLOCK)
+        .map(|b| b..(b + NEIGHBOURHOOD_BLOCK).min(slots))
+        .collect();
+    let new_scratch = || (vec![u32::MAX; slots], Vec::new());
+    #[cfg(feature = "parallel")]
+    let parts: Vec<Block> = {
+        use rayon::prelude::*;
+        blocks
+            .into_par_iter()
+            .map_init(new_scratch, |(stamp, queue), range| {
+                neighbourhood_block(geo, mesh, radius_m, centre, range, stamp, queue)
+            })
+            .collect()
+    };
+    #[cfg(not(feature = "parallel"))]
+    let parts: Vec<Block> = {
+        let (mut stamp, mut queue) = new_scratch();
+        blocks
+            .into_iter()
+            .map(|range| {
+                neighbourhood_block(geo, mesh, radius_m, centre, range, &mut stamp, &mut queue)
+            })
+            .collect()
+    };
+    // The blocks in their order: the table one pass over the slots makes.
+    let total: usize = parts.iter().map(|p| p.member.len()).sum();
+    let mut start = Vec::with_capacity(slots + 1);
+    let mut member = Vec::with_capacity(total);
+    let mut weight = Vec::with_capacity(total);
+    for p in parts {
+        let base = member.len() as u32;
+        start.extend(p.start.iter().map(|&s| base + s));
+        member.extend_from_slice(&p.member);
+        weight.extend_from_slice(&p.weight);
+    }
+    start.push(member.len() as u32);
+    Neighbourhoods {
+        start,
+        member,
+        weight,
+    }
+}
+
+/// Slots per block of the neighbourhoods: the unit of the work, fixed, so
+/// the table does not depend on the number of threads.
+const NEIGHBOURHOOD_BLOCK: usize = 4096;
+
+/// One block of the table, its `start` relative to the block.
+struct Block {
+    start: Vec<u32>,
+    member: Vec<u32>,
+    weight: Vec<f32>,
+}
+
+/// The neighbourhoods of the centres in `range`. `stamp` holds, per slot,
+/// the last centre that reached it (`u32::MAX`: none); a scratch the
+/// blocks of one thread share, as the centres are distinct.
+fn neighbourhood_block(
+    geo: &MeshStar,
+    mesh: &PeriodicTriangulation,
+    radius_m: f64,
+    centre: Option<&[u8]>,
+    range: std::ops::Range<usize>,
+    stamp: &mut [u32],
+    queue: &mut Vec<usize>,
+) -> Block {
+    let mut block = Block {
+        start: Vec::with_capacity(range.len()),
+        member: Vec::with_capacity(range.len() * 8),
+        weight: Vec::with_capacity(range.len() * 8),
+    };
+    for i in range {
+        block.start.push(block.member.len() as u32);
         if mesh.v_alive[i] == 0 || centre.is_some_and(|c| c[i] == 0) {
             continue;
         }
         queue.clear();
         queue.push(i);
-        stamp[i] = i as i64;
+        stamp[i] = i as u32;
         let mut q = 0;
         while q < queue.len() {
             let j = queue[q];
@@ -233,24 +300,19 @@ pub fn neighbourhoods(
             if w <= 0.0 && j != i {
                 continue;
             }
-            member.push(j as u32);
-            weight.push(w as f32);
+            block.member.push(j as u32);
+            block.weight.push(w as f32);
             for &k in &geo.star[geo.star_start[j] as usize..geo.star_start[j + 1] as usize] {
                 let k = k as usize;
-                if stamp[k] == i as i64 {
+                if stamp[k] == i as u32 {
                     continue;
                 }
-                stamp[k] = i as i64;
+                stamp[k] = i as u32;
                 queue.push(k);
             }
         }
     }
-    start[slots] = member.len() as u32;
-    Neighbourhoods {
-        start,
-        member,
-        weight,
-    }
+    block
 }
 
 /// The largest value over each neighbourhood; 0 where a slot has none.

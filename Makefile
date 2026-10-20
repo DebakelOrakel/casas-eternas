@@ -96,7 +96,10 @@ lint:
 	node engine/scripts/detMathFixture.mjs --check
 	node engine/scripts/delaunayFixture.mjs --check
 	node engine/scripts/meshFixture.mjs --check
+	# The workspace builds the engine with `parallel` (the native crate turns
+	# it on); the engine alone builds it without, as the WASM build does.
 	cd engine && cargo clippy --workspace --all-targets -- -D warnings
+	cd engine && cargo clippy -p casas-engine --all-targets -- -D warnings
 
 # Regenerate the CLI/config reference the docs site renders. Run after
 # changing commands, flags or their help texts; lint fails until you do.
@@ -105,7 +108,8 @@ cli-reference:
 
 test: engine
 	go test ./internal/...
-	cd engine && cargo test --workspace
+	cd engine && cargo test --workspace --release
+	cd engine && cargo test -p casas-engine --release
 	node engine/scripts/smoke.mjs
 	cd client && npm run harness:roundtrip
 	cd client && npm run test:http-store
