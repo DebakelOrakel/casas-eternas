@@ -1,0 +1,12 @@
+# Hashes of client/src/generator/fields/, for crates/casas-engine/tests/fields.rs.
+# Written by engine/scripts/fieldsFixture.mjs; do not edit.
+torus_mesh 4ed7f57c
+torus_sampler fefbd2c7
+torus_operators 8b9d9a1f
+torus_transport 453c9503
+torus_solvers 2e0b08cc
+sphere_mesh 5c6fc534
+sphere_sampler 13895024
+sphere_operators a5dbb733
+sphere_transport abfa38a6
+sphere_solvers 7abec5fa

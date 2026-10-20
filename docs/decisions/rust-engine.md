@@ -305,6 +305,12 @@ BUILDING since 2026-10-20:
   the native build turns on and the WASM build leaves off. The work is cut
   into fixed blocks and put together in their order, so both give the same
   bits; `make test` and `make lint` run the engine in both.
+- Phase 4 begun with `fields`: the field mesh (geometry, sampler, rasters)
+  and every operator (diffusion, gradient, divergence, semi-Lagrangian
+  transport, CG, BiCGSTAB, ILU(0), the two-level preconditioner).
+  Bit-equal on both shapes at 150 km, the solvers' iterations and residuals
+  included. Not yet: the three readers of a raster onto the mesh, which
+  need the domain's grid.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and
