@@ -462,6 +462,17 @@ BUILDING since 2026-10-20:
   walk's length included. `refineMeshLevel` copies the parent through the
   codec in slot order, so its parent must have no dead slots; a level
   bake's parent comes from the save and is compact.
+- The rest of the level-1 bake: the river graph (`surface/riverGraph`:
+  nodes, reaches, Strahler order, the ribbons, the invariants), the
+  hydrogeology (`surface/hydrogeology`: permeability, springs and oases,
+  the regime with the baseflow, the water table), the river courses
+  (`surface/riverCourse`: every pattern, the meanders with their cutoffs,
+  the deltas), and the bake itself (`pipeline/meshBakeStage`:
+  `bakeMeshLevel`, `levelHydrology`), bit-equal on both shapes; the
+  fixture's two bakes of a 104 000-node level take 1.6 s against 7 s.
+  The graph's serialised form stays in TypeScript, as the world layer's.
+  `bakeMeshLevel` has no progress callback yet; the boundary to
+  TypeScript adds it.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

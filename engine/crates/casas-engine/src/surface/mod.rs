@@ -9,5 +9,8 @@ pub mod erosion_forcing_fields;
 pub mod flow_routing;
 pub mod flow_substrate;
 pub mod glacial;
+pub mod hydrogeology;
 pub mod hydrology;
+pub mod river_course;
+pub mod river_graph;
 pub mod surface_tune_params;
