@@ -378,6 +378,17 @@ BUILDING since 2026-10-20:
   measuring scripts run it). Bit-equal on both shapes after 30 epochs of
   the synthetic simulation, with flood basalts added; the epoch and the
   forcing tests build that simulation from one module on each side.
+- The static climate, first part (`climate/`: the tuning, the chart's
+  latitude and calendar, the climate's mesh with its bands, the distance
+  to the sea, the graph's parts and the seas along the parallels, the
+  terrain it reads; the temperature, the wind, the seasonality, the rain
+  with the refinement's inputs, the monsoon, the ocean with the Stommel
+  solve, the upwelling and the overturning's inflow; `computeWeather`),
+  with `planet/planetForcing`. The climate's mesh is the world's
+  `SharedFieldMesh`, as in TypeScript. Bit-equal on an analytic terrain
+  with dry floors on both shapes, at the default controls and at moved
+  ones and a moved planet: `computeWeather` takes 127 ms on the torus and
+  90 ms on the sphere on one core, against 350 and 261 ms.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

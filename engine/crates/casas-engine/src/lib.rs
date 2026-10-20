@@ -22,5 +22,6 @@ pub mod fields;
 pub mod mantle;
 pub mod mesh;
 pub mod pipeline;
+pub mod planet;
 pub mod surface;
 pub mod tectonics;
