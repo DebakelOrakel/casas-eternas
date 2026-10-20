@@ -399,6 +399,17 @@ BUILDING since 2026-10-20:
   variability, the biomes with and without a rain override, and 20 000
   random years for the classes. `climateCellsFromRefined` comes with the
   refinement.
+- The climate's refinement (`climate/refinement` with `pressure`,
+  `energyBalance`, `phenomena`, `reliability`, `storms`, `salinity`), and
+  `climateCellsFromRefined`: with it the climate is ported whole but for
+  its chart and its colours. Bit-equal on an analytic 2048 × 1024 terrain
+  on both shapes, at the default levers and at moved ones with a moved
+  planet, every field, every solve's report, and the climate at points
+  and the biomes it gives: `refineClimate` takes 1.9 s on the torus and
+  1.6 s on the sphere on one core, against 4.3 and 3.7 s. Rust works out
+  the raster's owners per terrain again where TypeScript keeps them per
+  mesh; the months are independent of each other and not yet run in
+  parallel.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

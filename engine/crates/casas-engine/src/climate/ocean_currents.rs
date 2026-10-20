@@ -461,13 +461,14 @@ pub fn apply_ocean_sst(
     sh: &mut SharedFieldMesh,
     terrain: &ClimateTerrain,
     temperature: &mut [f64],
-    currents: &OceanCurrents,
+    currents_e: &[f64],
+    currents_s: &[f64],
     wind: &CellVectors,
 ) -> Vec<f64> {
     let t = &CLIMATE_TUNING;
     let land = &terrain.land;
     let n = sh.mesh.count;
-    let dep = current_departures(sh, &currents.e, &currents.s);
+    let dep = current_departures(sh, currents_e, currents_s);
     let base = temperature.to_vec();
     let mut sst = temperature.to_vec();
     let mut next = vec![0.0; n];

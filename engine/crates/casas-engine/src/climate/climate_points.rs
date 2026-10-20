@@ -3,8 +3,7 @@
 //! fields with their sea marks, the months, the wind), and their values at
 //! any point set, linearly in the climate mesh's triangle, a land field over
 //! the land corners only. The TypeScript file explains the island rule and
-//! the monsoon's sign. Not ported yet: `climateCellsFromRefined`, which
-//! comes with the refinement.
+//! the monsoon's sign.
 
 use crate::core::js;
 use crate::elevation::elevation_scale::SEA_LEVEL;
@@ -15,6 +14,7 @@ use super::climate_mesh::ClimateTerrain;
 use super::climate_mesh::{ClimateMesh, zonal_mean};
 use super::climate_tune_params::CLIMATE_TUNING;
 use super::precipitation::OCEAN_PRECIP;
+use super::refinement::{RefinedClimate, annual_from_months, refined_annual_wind};
 use super::seasonality::OCEAN_AMPLITUDE;
 use super::weather::WeatherMesh;
 
@@ -91,6 +91,43 @@ pub fn climate_cells_from_weather(terrain: &ClimateTerrain, mesh: &WeatherMesh) 
         rain_variability: None,
         wind_e: mesh.wind.e.iter().map(|&v| v as f32).collect(),
         wind_s: mesh.wind.s.iter().map(|&v| v as f32).collect(),
+    }
+}
+
+/// The refinement's cells, on the terrain it was computed on: the annual
+/// fields from its months, the months, its upwelling, its rain's
+/// reliability, its year's wind.
+pub fn climate_cells_from_refined(r: &RefinedClimate, terrain: &ClimateTerrain) -> ClimateCells {
+    let n = r.cells;
+    let annual = annual_from_months(r.months, &r.temperature, &r.precipitation, n);
+    let lapse: Vec<f32> = (0..n)
+        .map(|i| lapse_at(terrain.z[i], terrain.dry[i] == 1) as f32)
+        .collect();
+    let sea_level_temperature = (0..n)
+        .map(|i| (annual.temperature[i] as f64 + lapse[i] as f64) as f32)
+        .collect();
+    let mut months_t = vec![0f32; r.months * n];
+    for m in 0..r.months {
+        for i in 0..n {
+            months_t[m * n + i] = (r.temperature[m * n + i] as f64 + lapse[i] as f64) as f32;
+        }
+    }
+    let wind = refined_annual_wind(r);
+    ClimateCells {
+        cm: terrain.cm.clone(),
+        sea_level_temperature,
+        precipitation: annual.precipitation,
+        seasonal_amplitude: annual.seasonal_amplitude,
+        monsoon_index: annual.monsoon_index,
+        months: Some(ClimateMonthCells {
+            count: r.months,
+            sea_level_temperature: months_t,
+            precipitation: r.precipitation.clone(),
+        }),
+        upwelling: Some(r.upwelling.clone()),
+        rain_variability: Some(r.reliability.rain_variability.clone()),
+        wind_e: wind.e.iter().map(|&v| v as f32).collect(),
+        wind_s: wind.s.iter().map(|&v| v as f32).collect(),
     }
 }
 

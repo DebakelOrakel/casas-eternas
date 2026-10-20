@@ -72,7 +72,14 @@ pub fn compute_weather(
         0.0,
     );
     let currents = compute_ocean_currents(sh, terrain, &wind, params.equator_offset);
-    let current_anomaly = apply_ocean_sst(sh, terrain, &mut temperature, &currents, &wind);
+    let current_anomaly = apply_ocean_sst(
+        sh,
+        terrain,
+        &mut temperature,
+        &currents.e,
+        &currents.s,
+        &wind,
+    );
     let seasonal_amplitude =
         compute_seasonal_amplitude(&sh.mesh, terrain, params.equator_offset, &planet);
     let seasonal = compute_seasonal_precipitation(

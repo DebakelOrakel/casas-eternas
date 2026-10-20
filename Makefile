@@ -115,11 +115,12 @@ cli-reference:
 
 test: engine
 	go test ./internal/...
-	# The epoch, Archean and forcing fixtures take up to a minute to make:
-	# checked here, not in lint.
+	# The epoch, Archean, forcing and refinement fixtures take up to a
+	# minute to make: checked here, not in lint.
 	node engine/scripts/epochFixture.mjs --check
 	node engine/scripts/archeanFixture.mjs --check
 	node engine/scripts/forcingFixture.mjs --check
+	node engine/scripts/refinementFixture.mjs --check
 	cd engine && cargo test --workspace --release
 	cd engine && cargo test -p casas-engine --release
 	node engine/scripts/smoke.mjs
