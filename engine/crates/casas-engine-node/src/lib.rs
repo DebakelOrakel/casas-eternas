@@ -4,7 +4,7 @@
 
 mod tree;
 
-use casas_engine_api::{EpochControls, EraError};
+use casas_engine_api::{EraError, Value};
 use napi::bindgen_prelude::Float64Array;
 use napi_derive::napi;
 use tree::Tree;
@@ -19,15 +19,9 @@ fn era(e: EraError) -> napi::Error {
     napi::Error::from_reason(e.0)
 }
 
-/// The history's controls for an epoch.
-#[napi(object)]
-pub struct Controls {
-    pub alluvium: f64,
-    pub rock_contrast: f64,
-    pub temperature_offset: f64,
-    pub temperature_contrast: f64,
-    pub humidity: f64,
-    pub equator_offset: f64,
+/// A value given as null or undefined as none.
+fn given(v: &Value) -> Option<&Value> {
+    (!matches!(v, Value::Null)).then_some(v)
 }
 
 /// A world in the engine.
@@ -81,18 +75,71 @@ impl World {
         self.0.finalize().map_err(era)
     }
 
-    /// One coupled epoch; its events.
+    /// One coupled epoch under the history's controls; its events.
+    #[napi(ts_args_type = "controls: unknown")]
+    pub fn epoch(&mut self, controls: Tree) -> napi::Result<Tree> {
+        self.0.epoch(&controls.0).map(Tree).map_err(era)
+    }
+
+    /// The Archean as the save holds it: { snapshot, mantle, streak }.
     #[napi]
-    pub fn epoch(&mut self, controls: Controls) -> napi::Result<Tree> {
-        let c = EpochControls {
-            alluvium: controls.alluvium,
-            rock_contrast: controls.rock_contrast,
-            temperature_offset: controls.temperature_offset,
-            temperature_contrast: controls.temperature_contrast,
-            humidity: controls.humidity,
-            equator_offset: controls.equator_offset,
+    pub fn archean_save(&self) -> napi::Result<Tree> {
+        self.0.archean_save().map(Tree).map_err(era)
+    }
+
+    /// A world restored in its Archean.
+    #[napi(
+        factory,
+        ts_args_type = "shape: string, snapshot: unknown, mantle: unknown, streak: Int16Array, diffusion: number, landShare: number"
+    )]
+    pub fn restore_archean(
+        shape: String,
+        snapshot: Tree,
+        mantle: Tree,
+        streak: Tree,
+        diffusion: f64,
+        land_share: f64,
+    ) -> napi::Result<World> {
+        let Value::I16s(streak) = streak.0 else {
+            return Err(napi::Error::from_reason("the streak is not an Int16Array"));
         };
-        self.0.epoch(&c).map(Tree).map_err(era)
+        casas_engine_api::World::restore_archean(
+            shape_of(&shape)?,
+            &snapshot.0,
+            given(&mantle.0),
+            &streak,
+            diffusion,
+            land_share,
+        )
+        .map(World)
+        .map_err(era)
+    }
+
+    /// A world restored with its plates; `lattice` { accumulated,
+    /// lockedEpochs, lastClassCode } and `mesh` the mesh payload, either
+    /// null.
+    #[napi(
+        factory,
+        ts_args_type = "shape: string, snapshot: unknown, oceanAge: unknown, mantle: unknown, lattice: unknown, mesh: unknown"
+    )]
+    pub fn restore_plates(
+        shape: String,
+        snapshot: Tree,
+        ocean_age: Tree,
+        mantle: Tree,
+        lattice: Tree,
+        mesh: Tree,
+    ) -> napi::Result<World> {
+        casas_engine_api::World::restore_plates(
+            shape_of(&shape)?,
+            &snapshot.0,
+            &ocean_age.0,
+            given(&mantle.0),
+            given(&lattice.0),
+            given(&mesh.0),
+        )
+        .map(World)
+        .map_err(era)
     }
 
     #[napi]

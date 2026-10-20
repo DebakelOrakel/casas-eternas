@@ -618,6 +618,21 @@ BUILDING since 2026-10-20:
   6 epochs on both shapes and finds all of it equal to TypeScript's in
   both builds (about two minutes). The epoch takes the climate's levers;
   the Planet stage's forcing does not cross yet (Earth's).
+- The restore through the boundary: the Archean from its save (the
+  snapshot, the mantle, the upwelling streak) and the tectonic world from
+  its save (the snapshot, the ocean age, the mantle, the lattice's state,
+  the mesh payload); the epoch takes the Planet stage's forcing too. The
+  smoke test saves both eras, sends the save through JSON, restores it
+  and steps on: the restored world's next epoch is the uninterrupted
+  one's, on both shapes, in both builds and in TypeScript. On the way the
+  test found a port error at the sphere's seventh epoch: TypeScript's
+  points for the cover hold `zCanon` itself, so the biomes read the
+  heights after the ice's cut and till; the port read them before. The
+  coupled test's worlds had no node at the treeline where the ice moved
+  it. A TypeScript world restored in a fresh process continues
+  differently from the session that made it on the sphere: the field
+  meshes' walks are module state the save does not hold. The engine's
+  world holds its own.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

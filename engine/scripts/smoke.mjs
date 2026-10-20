@@ -1,8 +1,11 @@
 // Loads both builds from engine/dist/ and checks that they answer the same
-// as each other and as the TypeScript engine: the version, and an Archean
-// grown through the engine's surface (docs/decisions/rust-engine.md,
-// fork 6) on both shapes — its mantle bit for bit, its raft count.
-// Run by `make test` after `make engine`.
+// as each other and as the TypeScript engine through the engine's surface
+// (docs/decisions/rust-engine.md, fork 6), on both shapes: the version; an
+// Archean grown, saved and restored; the hand-over; coupled epochs (one
+// shape under another planet); the tectonic save; a world restored from it
+// that goes on for an epoch. A save goes through JSON and back, as it does
+// through a file. Run by `make test` after `make engine`; about three
+// minutes.
 import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +21,7 @@ const server = await createServer({ root: CLIENT, server: { middlewareMode: true
 const L = (p) => server.ssrLoadModule(p)
 const { createArcheanSimulation } = await L('/src/generator/archean/archeanState.ts')
 const { archeanStep, DEFAULT_ARCHEAN_PARAMS } = await L('/src/generator/archean/archeanStep.ts')
+const { serializeArchean } = await L('/src/generator/archean/archeanSnapshot.ts')
 const { finalizeArchean } = await L('/src/generator/archean/finalizeArchean.ts')
 const { serializePlateSimulation } = await L('/src/generator/tectonics/plateSimulation.ts')
 const { savedOceanAge } = await L('/src/generator/tectonics/oceanAge.ts')
@@ -25,9 +29,19 @@ const { savedMantle } = await L('/src/generator/mantle/mantleField.ts')
 const { TECTONIC_MA_PER_EPOCH } = await L('/src/generator/core/worldTime.ts')
 const CE = await L('/src/generator/pipeline/coupledEpoch.ts')
 const { defaultWeatherParams } = await L('/src/generator/climate/weather.ts')
+const { DEFAULT_PLANET_FORCING } = await L('/src/generator/planet/planetForcing.ts')
 const { TECTONICS_INPUTS } = await L('/src/generator/tectonics/tectonicsInputParams.ts')
 await server.close()
-
+// The Archean's restore in TypeScript in a module graph of its own: the
+// field meshes and their walks are module state per domain there, and a
+// second world in this graph would move the walks the first one reads.
+async function freshArchean() {
+  const fresh = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
+  const F = (p) => fresh.ssrLoadModule(p)
+  const m = { ...(await F('/src/generator/archean/archeanSnapshot.ts')), ...(await F('/src/generator/archean/archeanStep.ts')) }
+  await fresh.close()
+  return m
+}
 let failed = false
 const fail = (message) => {
   console.error(`engine: ${message}`)
@@ -44,66 +58,105 @@ const canonical = (v) => {
   if (v && typeof v === 'object') return `{${Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`
   return JSON.stringify(v)
 }
-const same = (a, b) => a.length === b.length && Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(Buffer.from(b.buffer, b.byteOffset, b.byteLength))
-const STEPS = 60
-const EPOCHS = 6
-for (const shape of ['torus', 'sphere']) {
-  const [seed, width, height, diffusion, landShare] = ['smoke', 512, 256, 2, 0.4]
-  const ts = createArcheanSimulation(seed, width, height, shape)
-  const params = { ...DEFAULT_ARCHEAN_PARAMS, diffusion, landShare }
-  const n = native.World.genesis(seed, width, height, shape, diffusion, landShare)
-  const w = wasm.World.genesis(seed, width, height, shape, diffusion, landShare)
-  for (let i = 0; i < STEPS; i++) {
-    archeanStep(ts, params)
-    n.archeanStep()
-    w.archeanStep()
-  }
-  const tsMantle = Float64Array.from(ts.mantle)
-  if (!same(n.mantle(), tsMantle)) fail(`${shape}: the native mantle differs from TypeScript's`)
-  if (!same(w.mantle(), tsMantle)) fail(`${shape}: the wasm mantle differs from TypeScript's`)
-  if (n.raftCount !== ts.rafts.length || w.raftCount !== ts.rafts.length) fail(`${shape}: rafts native ${n.raftCount}, wasm ${w.raftCount}, TypeScript ${ts.rafts.length}`)
-  if (n.archeanEpoch !== ts.epoch || w.archeanEpoch !== ts.epoch) fail(`${shape}: the epoch differs`)
-  console.log(`engine: ${shape} Archean, ${STEPS} steps, ${ts.rafts.length} rafts — native, wasm and TypeScript agree`)
+const viaJson = (v) => JSON.parse(JSON.stringify(v))
+// Both builds' worlds against the TypeScript value.
+const agree = (label, ts, worlds, read) => {
+  const want = canonical(ts)
+  for (const [name, w] of Object.entries(worlds)) if (canonical(read(w)) !== want) fail(`${label}: ${name} differs from TypeScript`)
+}
+const each = (worlds, f) => Object.values(worlds).forEach(f)
 
-  // The hand-over and two coupled epochs.
-  const sim = finalizeArchean(ts)
-  sim.epochMa = TECTONIC_MA_PER_EPOCH
-  const coupled = CE.createCoupledTerrain(sim, CE.HISTORY_DEFAULTS.budget)
-  n.finalize()
-  w.finalize()
-  const weather = defaultWeatherParams()
-  const controls = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, ...weather }
-  let eventCount = 0
-  for (let e = 0; e < EPOCHS; e++) {
-    const D = CE.HISTORY_DEFAULTS
-    const stats = await CE.stepCoupledEpoch(sim, coupled, {
-      iterationsPerEpoch: D.iterationsPerEpoch, budget: D.budget, climateEvery: D.climateEvery, remeshEvery: D.remeshEvery, upliftScale: D.upliftScale,
-      controls: { alluvium: controls.alluvium, rockContrast: controls.rockContrast }, weather,
-    })
-    eventCount += stats.events.length
-    const events = canonical(stats.events)
-    if (canonical(n.epoch(controls)) !== events) fail(`${shape}: epoch ${e + 1}'s native events differ`)
-    if (canonical(w.epoch(controls)) !== events) fail(`${shape}: epoch ${e + 1}'s wasm events differ`)
-  }
-  const snapshot = canonical(serializePlateSimulation(sim))
-  if (canonical(n.snapshot()) !== snapshot) fail(`${shape}: the native snapshot differs`)
-  if (canonical(w.snapshot()) !== snapshot) fail(`${shape}: the wasm snapshot differs`)
-  if (Object.keys(n.snapshot()).join() !== Object.keys(serializePlateSimulation(sim)).join()) fail(`${shape}: the snapshot's keys come in another order`)
-  const fields = canonical([savedMantle(sim.mantle, sim.domain), savedOceanAge(sim.oceanAge, sim.domain)])
-  if (canonical(n.savedFields()) !== fields) fail(`${shape}: the native saved fields differ`)
-  if (canonical(w.savedFields()) !== fields) fail(`${shape}: the wasm saved fields differ`)
+// The epoch's options (the runtime's tectonics loop) from the history's
+// controls (its historyControls).
+const D = CE.HISTORY_DEFAULTS
+const optionsOf = (c) => ({ iterationsPerEpoch: D.iterationsPerEpoch, budget: D.budget, climateEvery: D.climateEvery, remeshEvery: D.remeshEvery, upliftScale: D.upliftScale, controls: { alluvium: c.alluvium, rockContrast: c.rockContrast }, weather: c.weather })
+// The coupled terrain as the save's mesh payload (the runtime's
+// serializeMeshTerrain over it).
+const meshPayloadOf = (coupled) => {
   const bytes = CE.encodeCoupledTerrain(coupled)
   const count = bytes.z.length
-  const mesh = canonical({
+  return {
     count, nodes: bytes.nodes, connectivity: bytes.connectivity, z: bytes.z, column: bytes.column,
     sedimentFlux: coupled.sedimentFlux.length >= count ? coupled.sedimentFlux.slice(0, count) : new Float32Array(count),
     preErosionZ: coupled.preErosionZ.length >= count ? coupled.preErosionZ.slice(0, count) : bytes.z.slice(),
     ice: coupled.ice.length >= count ? coupled.ice.slice(0, count) : undefined,
-  })
-  if (canonical(n.meshPayload()) !== mesh) fail(`${shape}: the native mesh payload differs`)
-  if (canonical(w.meshPayload()) !== mesh) fail(`${shape}: the wasm mesh payload differs`)
-  w.free()
-  console.log(`engine: ${shape} hand-over and ${EPOCHS} epochs, ${sim.rafts.length} rafts, ${count} nodes, ${eventCount} events — snapshot, events, fields and mesh agree`)
+  }
+}
+
+const STEPS = 60
+const EPOCHS = 6
+for (const shape of ['torus', 'sphere']) {
+  const [seed, width, height, diffusion, landShare] = ['smoke', 512, 256, 2, 0.4]
+  const params = { ...DEFAULT_ARCHEAN_PARAMS, diffusion, landShare }
+  const ts = createArcheanSimulation(seed, width, height, shape)
+  const worlds = { native: native.World.genesis(seed, width, height, shape, diffusion, landShare), wasm: wasm.World.genesis(seed, width, height, shape, diffusion, landShare) }
+  for (let i = 0; i < STEPS; i++) {
+    archeanStep(ts, params)
+    each(worlds, (w) => w.archeanStep())
+  }
+  agree(`${shape}: the Archean`, [Float64Array.from(ts.mantle), ts.epoch, ts.rafts.length], worlds, (w) => [w.mantle(), w.archeanEpoch, w.raftCount])
+
+  // The Archean saved, restored from the save and grown on.
+  const archeanSave = { snapshot: serializeArchean(ts), mantle: savedMantle(ts.mantle, ts.domain), streak: ts.upwellingStreak }
+  agree(`${shape}: the Archean's save`, archeanSave, worlds, (w) => w.archeanSave())
+  const saved = { snapshot: viaJson(archeanSave.snapshot), mantle: archeanSave.mantle, streak: Int16Array.from(archeanSave.streak) }
+  const A = await freshArchean()
+  const tsAgain = A.deserializeArchean(saved.snapshot, saved.mantle, saved.streak.slice(), shape)
+  const again = {
+    native: native.World.restoreArchean(shape, saved.snapshot, saved.mantle, saved.streak, diffusion, landShare),
+    wasm: wasm.World.restoreArchean(shape, saved.snapshot, saved.mantle, saved.streak, diffusion, landShare),
+  }
+  for (let i = 0; i < 5; i++) {
+    A.archeanStep(tsAgain, { ...A.DEFAULT_ARCHEAN_PARAMS, diffusion, landShare })
+    each(again, (w) => w.archeanStep())
+  }
+  agree(`${shape}: the restored Archean`, Float64Array.from(tsAgain.mantle), again, (w) => w.mantle())
+  again.wasm.free()
+
+  // The hand-over and the coupled epochs; the torus under another planet.
+  const sim = finalizeArchean(ts)
+  sim.epochMa = TECTONIC_MA_PER_EPOCH
+  const coupled = CE.createCoupledTerrain(sim, D.budget)
+  each(worlds, (w) => w.finalize())
+  const weather = shape === 'torus' ? { ...defaultWeatherParams(), planet: { ...DEFAULT_PLANET_FORCING, obliquityDeg: 31, rotationHours: 30 } } : defaultWeatherParams()
+  const controls = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, weather }
+  let eventCount = 0
+  for (let e = 0; e < EPOCHS; e++) {
+    const stats = await CE.stepCoupledEpoch(sim, coupled, optionsOf(controls))
+    eventCount += stats.events.length
+    agree(`${shape}: epoch ${e + 1}'s events`, stats.events, worlds, (w) => w.epoch(controls))
+  }
+
+  // The tectonic save.
+  const snapshot = serializePlateSimulation(sim)
+  agree(`${shape}: the snapshot`, snapshot, worlds, (w) => w.snapshot())
+  if (Object.keys(worlds.native.snapshot()).join() !== Object.keys(snapshot).join()) fail(`${shape}: the snapshot's keys come in another order`)
+  const mantle = savedMantle(sim.mantle, sim.domain)
+  const oceanAge = savedOceanAge(sim.oceanAge, sim.domain)
+  agree(`${shape}: the saved fields`, [mantle, oceanAge], worlds, (w) => w.savedFields())
+  const mesh = meshPayloadOf(coupled)
+  agree(`${shape}: the mesh payload`, mesh, worlds, (w) => w.meshPayload())
+
+  // The world restored from its save goes on as the world it was saved
+  // from: its next epoch is the uninterrupted one's. (A TypeScript world
+  // restored in a fresh process does not on the sphere: its field meshes'
+  // walks are module state the save does not hold. The engine's world
+  // holds its own, and a restore starts them as the hand-over did.)
+  const lattice = { accumulated: sim.latticeAccumulated.slice(), lockedEpochs: sim.latticeLockedEpochs.slice(), lastClassCode: sim.latticeLastClassCode.slice() }
+  const back = viaJson(snapshot)
+  const restored = {
+    native: native.World.restorePlates(shape, back, oceanAge, mantle, lattice, mesh),
+    wasm: wasm.World.restorePlates(shape, back, oceanAge, mantle, lattice, mesh),
+  }
+  agree(`${shape}: the restored world`, snapshot, restored, (w) => w.snapshot())
+  await CE.stepCoupledEpoch(sim, coupled, optionsOf(controls))
+  each(restored, (w) => w.epoch(controls))
+  each(worlds, (w) => w.epoch(controls))
+  agree(`${shape}: the uninterrupted world's next epoch`, [serializePlateSimulation(sim), meshPayloadOf(coupled)], worlds, (w) => [w.snapshot(), w.meshPayload()])
+  agree(`${shape}: the restored world's next epoch`, [serializePlateSimulation(sim), meshPayloadOf(coupled)], restored, (w) => [w.snapshot(), w.meshPayload()])
+  restored.wasm.free()
+  worlds.wasm.free()
+  console.log(`engine: ${shape} — ${STEPS} Archean steps (${ts.rafts.length} rafts) saved and restored; the hand-over, ${EPOCHS} epochs (${eventCount} events, ${mesh.count} nodes) saved and restored: native, wasm and TypeScript agree`)
 }
 if (failed) process.exit(1)
 console.log(`engine: native and wasm ${wasm.version()}`)

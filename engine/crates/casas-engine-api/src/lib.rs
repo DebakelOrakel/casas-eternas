@@ -7,8 +7,10 @@
 //! (wasm-bindgen) wrap these methods one for one.
 
 pub mod forms;
+pub mod read;
 pub mod value;
 
+use casas_engine::archean::archean_snapshot::{deserialize_archean, serialize_archean};
 use casas_engine::archean::archean_state::{ArcheanSimulation, create_archean_simulation};
 use casas_engine::archean::archean_step::{ArcheanParams, archean_step, default_archean_params};
 use casas_engine::archean::finalize_archean::finalize_archean;
@@ -16,14 +18,18 @@ use casas_engine::climate::weather::WeatherParams;
 use casas_engine::core::domain::Domain;
 use casas_engine::core::world_time::TECTONIC_MA_PER_EPOCH;
 use casas_engine::mantle::mantle_field::saved_mantle;
+use casas_engine::mesh::mesh_hydrology::mesh_routing;
 use casas_engine::pipeline::coupled_epoch::{
-    CoupledEpochOptions, CoupledTerrain, HISTORY_DEFAULTS, create_coupled_terrain,
-    step_coupled_epoch,
+    CoupledEpochOptions, CoupledTerrain, HISTORY_DEFAULTS, SavedTerrain, create_coupled_terrain,
+    decode_coupled_terrain, step_coupled_epoch,
 };
+use casas_engine::surface::erosion_engine::DEFAULT_SOLVER_PARAMS;
 use casas_engine::surface::erosion_forcing_fields::ErosionControls;
 use casas_engine::tectonics::ocean_age::saved_ocean_age;
-use casas_engine::tectonics::plate_simulation::serialize_plate_simulation;
-use casas_engine::tectonics::plate_simulation_types::PlateSimulation;
+use casas_engine::tectonics::plate_simulation::{
+    deserialize_plate_simulation, serialize_plate_simulation,
+};
+use casas_engine::tectonics::plate_simulation_types::{PlateSimulation, world_meshes};
 
 pub use value::Value;
 
@@ -39,14 +45,25 @@ pub enum Shape {
     Sphere,
 }
 
-/// What a call asked of a world in the wrong era.
+/// What a call could not do: asked of a world in the wrong era, or given
+/// data its reader could not read.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EraError(pub &'static str);
+pub struct EraError(pub String);
 
 impl std::fmt::Display for EraError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
+        f.write_str(&self.0)
     }
+}
+
+impl From<String> for EraError {
+    fn from(s: String) -> Self {
+        EraError(s)
+    }
+}
+
+fn wrong(what: &str) -> EraError {
+    EraError(what.to_string())
 }
 
 enum Era {
@@ -59,17 +76,43 @@ enum Era {
     Moving,
 }
 
-/// The history's controls for an epoch (the tectonics panel's and the
-/// climate's): the erosion's materials and the weather's levers. The
-/// planet is Earth's (the Planet stage's forcing does not cross yet).
-#[derive(Clone, Copy, Debug)]
-pub struct EpochControls {
-    pub alluvium: f64,
-    pub rock_contrast: f64,
-    pub temperature_offset: f64,
-    pub temperature_contrast: f64,
-    pub humidity: f64,
-    pub equator_offset: f64,
+fn domain_of(shape: Shape, width: f64, height: f64) -> Domain {
+    match shape {
+        Shape::Torus => Domain::torus(width, height),
+        Shape::Sphere => Domain::sphere(width, height),
+    }
+}
+
+/// The history's controls (the runtime's `historyControls`):
+/// `{ alluvium, rockContrast, weather: { temperatureOffset,
+/// temperatureContrast, humidity, equatorOffset, planet? } }`.
+fn epoch_options(controls: &Value) -> Result<CoupledEpochOptions, EraError> {
+    let c = read::Fields::of(controls, "the controls")?;
+    let w = read::Fields::of(
+        c.get("weather")
+            .ok_or_else(|| wrong("the controls have no weather"))?,
+        "the weather",
+    )?;
+    let planet = w.get("planet").map(read::planet).transpose()?;
+    Ok(CoupledEpochOptions {
+        weather: Some(WeatherParams {
+            temperature_offset: w.num("temperatureOffset")?,
+            temperature_contrast: w.num("temperatureContrast")?,
+            humidity: w.num("humidity")?,
+            equator_offset: w.num("equatorOffset")?,
+            planet,
+        }),
+        iterations_per_epoch: HISTORY_DEFAULTS.iterations_per_epoch,
+        budget: Some(HISTORY_DEFAULTS.budget),
+        climate_every: Some(HISTORY_DEFAULTS.climate_every),
+        remesh_every: Some(HISTORY_DEFAULTS.remesh_every),
+        uplift_scale: Some(HISTORY_DEFAULTS.uplift_scale),
+        controls: ErosionControls {
+            alluvium: Some(c.num("alluvium")?),
+            rock_contrast: Some(c.num("rockContrast")?),
+        },
+        leaf_workers: None,
+    })
 }
 
 /// A world in the engine.
@@ -90,10 +133,7 @@ impl World {
         diffusion: f64,
         land_share: f64,
     ) -> World {
-        let domain = match shape {
-            Shape::Torus => Domain::torus(width as f64, height as f64),
-            Shape::Sphere => Domain::sphere(width as f64, height as f64),
-        };
+        let domain = domain_of(shape, width as f64, height as f64);
         let archean_params = ArcheanParams {
             diffusion,
             land_share,
@@ -108,14 +148,14 @@ impl World {
     fn archean(&self) -> Result<&ArcheanSimulation, EraError> {
         match &self.era {
             Era::Archean(a) => Ok(a),
-            _ => Err(EraError("the world is past its Archean")),
+            _ => Err(wrong("the world is past its Archean")),
         }
     }
 
     fn plates(&mut self) -> Result<(&mut PlateSimulation, &mut CoupledTerrain), EraError> {
         match &mut self.era {
             Era::Plates { sim, coupled } => Ok((sim, coupled)),
-            _ => Err(EraError("the world has no plates yet")),
+            _ => Err(wrong("the world has no plates yet")),
         }
     }
 
@@ -126,7 +166,7 @@ impl World {
                 archean_step(a, &self.archean_params);
                 Ok(())
             }
-            _ => Err(EraError("the world is past its Archean")),
+            _ => Err(wrong("the world is past its Archean")),
         }
     }
 
@@ -158,7 +198,7 @@ impl World {
     /// from the synthesis at the hand-over.
     pub fn finalize(&mut self) -> Result<(), EraError> {
         let Era::Archean(a) = std::mem::replace(&mut self.era, Era::Moving) else {
-            return Err(EraError("the world is past its Archean"));
+            return Err(wrong("the world is past its Archean"));
         };
         let mut sim = Box::new(finalize_archean(*a));
         sim.epoch_ma = TECTONIC_MA_PER_EPOCH;
@@ -168,28 +208,10 @@ impl World {
     }
 
     /// One coupled epoch at the history's settings (the runtime's
-    /// tectonics loop); its events, as `SimEvent`s.
-    pub fn epoch(&mut self, c: &EpochControls) -> Result<Value, EraError> {
+    /// tectonics loop) under its controls; its events, as `SimEvent`s.
+    pub fn epoch(&mut self, controls: &Value) -> Result<Value, EraError> {
+        let options = epoch_options(controls)?;
         let (sim, coupled) = self.plates()?;
-        let options = CoupledEpochOptions {
-            weather: Some(WeatherParams {
-                temperature_offset: c.temperature_offset,
-                temperature_contrast: c.temperature_contrast,
-                humidity: c.humidity,
-                equator_offset: c.equator_offset,
-                planet: None,
-            }),
-            iterations_per_epoch: HISTORY_DEFAULTS.iterations_per_epoch,
-            budget: Some(HISTORY_DEFAULTS.budget),
-            climate_every: Some(HISTORY_DEFAULTS.climate_every),
-            remesh_every: Some(HISTORY_DEFAULTS.remesh_every),
-            uplift_scale: Some(HISTORY_DEFAULTS.uplift_scale),
-            controls: ErosionControls {
-                alluvium: Some(c.alluvium),
-                rock_contrast: Some(c.rock_contrast),
-            },
-            leaf_workers: None,
-        };
         let stats = step_coupled_epoch(sim, coupled, &options);
         Ok(Value::List(stats.events.iter().map(forms::event).collect()))
     }
@@ -214,5 +236,140 @@ impl World {
     pub fn mesh_payload(&mut self) -> Result<Value, EraError> {
         let (_, coupled) = self.plates()?;
         Ok(forms::mesh_payload(coupled))
+    }
+
+    /// The Archean as the save holds it: `{ snapshot, mantle, streak }`
+    /// (the runtime's `serializeWorld` in the Archean).
+    pub fn archean_save(&self) -> Result<Value, EraError> {
+        let a = self.archean()?;
+        let snap = serialize_archean(a);
+        let snapshot = value::ObjBuilder::new()
+            .num("width", snap.width)
+            .num("height", snap.height)
+            .num("epoch", snap.epoch)
+            .num("warpSeed", snap.warp_seed)
+            .opt_num("nucleationCredit", snap.nucleation_credit)
+            .put(
+                "rafts",
+                Value::List(snap.rafts.iter().map(forms::raft).collect()),
+            )
+            .num("rngState", snap.rng_state)
+            .build();
+        Ok(value::ObjBuilder::new()
+            .put("snapshot", snapshot)
+            .put(
+                "mantle",
+                forms::saved_field(&saved_mantle(&a.meshes.mantle, &a.mantle)),
+            )
+            .put("streak", Value::I16s(a.upwelling_streak.clone()))
+            .build())
+    }
+
+    /// A world restored in its Archean (the runtime's `restoreWorld` of an
+    /// Archean save), with the Archean's controls.
+    pub fn restore_archean(
+        shape: Shape,
+        snapshot: &Value,
+        mantle: Option<&Value>,
+        streak: &[i16],
+        diffusion: f64,
+        land_share: f64,
+    ) -> Result<World, EraError> {
+        let snap = read::archean_snapshot(snapshot)?;
+        let domain = domain_of(shape, snap.width, snap.height);
+        let mantle = mantle.map(read::saved_field).transpose()?;
+        let meshes = world_meshes(&domain);
+        let a = deserialize_archean(&snap, mantle.as_ref(), streak.to_vec(), domain, meshes)?;
+        Ok(World {
+            era: Era::Archean(Box::new(a)),
+            archean_params: ArcheanParams {
+                diffusion,
+                land_share,
+                ..default_archean_params()
+            },
+        })
+    }
+
+    /// A world restored with its plates (the runtime's `restoreWorld` of a
+    /// tectonic save): the simulation, the detection lattice's state where
+    /// its size fits, and the history's terrain from the mesh payload —
+    /// routed — or, without one, from the synthesis.
+    pub fn restore_plates(
+        shape: Shape,
+        snapshot: &Value,
+        ocean_age: &Value,
+        mantle: Option<&Value>,
+        lattice: Option<&Value>,
+        mesh: Option<&Value>,
+    ) -> Result<World, EraError> {
+        let snap = read::snapshot(snapshot)?;
+        let domain = domain_of(shape, snap.width, snap.height);
+        let ocean_age = read::saved_field(ocean_age)?;
+        let mantle = mantle.map(read::saved_field).transpose()?;
+        let meshes = world_meshes(&domain);
+        let mut sim = Box::new(deserialize_plate_simulation(
+            &snap,
+            &ocean_age,
+            mantle.as_ref(),
+            domain,
+            meshes,
+        )?);
+        if let Some(l) = lattice {
+            let l = read::Fields::of(l, "the lattice")?;
+            let get = |k: &str| l.get(k).ok_or_else(|| format!("the lattice has no {k}"));
+            if let (Value::F32s(acc), Value::I16s(lock), Value::I8s(cls)) = (
+                get("accumulated")?,
+                get("lockedEpochs")?,
+                get("lastClassCode")?,
+            ) {
+                if acc.len() == sim.lattice_accumulated.len() {
+                    sim.lattice_accumulated.copy_from_slice(acc);
+                    sim.lattice_locked_epochs.copy_from_slice(lock);
+                    sim.lattice_last_class_code.copy_from_slice(cls);
+                }
+            } else {
+                return Err(wrong(
+                    "the lattice's arrays are not Float32, Int16 and Int8",
+                ));
+            }
+        }
+        let coupled = match mesh {
+            Some(m) => {
+                let f = read::Fields::of(m, "the mesh")?;
+                let opt = |k: &str| f.get(k).map(|v| read::f32s(v, k)).transpose();
+                let bytes = SavedTerrain {
+                    nodes: read::f32s(
+                        f.get("nodes")
+                            .ok_or_else(|| wrong("the mesh has no nodes"))?,
+                        "nodes",
+                    )?,
+                    connectivity: read::u8s(
+                        f.get("connectivity")
+                            .ok_or_else(|| wrong("the mesh has no connectivity"))?,
+                        "connectivity",
+                    )?,
+                    z: read::f32s(f.get("z").ok_or_else(|| wrong("the mesh has no z"))?, "z")?,
+                    column: f
+                        .get("column")
+                        .map(|v| read::u8s(v, "column"))
+                        .transpose()?,
+                    ice: opt("ice")?,
+                    sediment_flux: opt("sedimentFlux")?,
+                    pre_erosion_z: opt("preErosionZ")?,
+                };
+                let mut coupled = decode_coupled_terrain(&mut sim, &bytes)?;
+                let routing = mesh_routing(&mut coupled.mesh, &coupled.z, &DEFAULT_SOLVER_PARAMS);
+                coupled.routing = Some(routing);
+                coupled
+            }
+            None => create_coupled_terrain(&mut sim, HISTORY_DEFAULTS.budget),
+        };
+        Ok(World {
+            era: Era::Plates {
+                sim,
+                coupled: Box::new(coupled),
+            },
+            archean_params: default_archean_params(),
+        })
     }
 }

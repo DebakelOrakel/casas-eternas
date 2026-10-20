@@ -25,7 +25,7 @@ pub fn to_js(v: Value) -> JsValue {
         Value::Obj(entries) => {
             let object = Object::new();
             for (key, item) in entries {
-                Reflect::set(&object, &JsValue::from_str(key), &to_js(item))
+                Reflect::set(&object, &JsValue::from_str(&key), &to_js(item))
                     .expect("a plain object takes a key");
             }
             object.into()
@@ -37,4 +37,62 @@ pub fn to_js(v: Value) -> JsValue {
         Value::I8s(a) => Int8Array::from(&a[..]).into(),
         Value::U8s(a) => Uint8Array::from(&a[..]).into(),
     }
+}
+
+/// A JavaScript value as a tree: an object's own enumerable keys in their
+/// order, `undefined` as null; typed arrays copied into the module.
+pub fn from_js(v: &JsValue) -> Result<Value, wasm_bindgen::JsError> {
+    use wasm_bindgen::JsCast;
+    if v.is_null() || v.is_undefined() {
+        return Ok(Value::Null);
+    }
+    if let Some(b) = v.as_bool() {
+        return Ok(Value::Bool(b));
+    }
+    if let Some(n) = v.as_f64() {
+        return Ok(Value::Num(n));
+    }
+    if let Some(s) = v.as_string() {
+        return Ok(Value::Str(s));
+    }
+    if let Some(a) = v.dyn_ref::<Float64Array>() {
+        return Ok(Value::F64s(a.to_vec()));
+    }
+    if let Some(a) = v.dyn_ref::<Float32Array>() {
+        return Ok(Value::F32s(a.to_vec()));
+    }
+    if let Some(a) = v.dyn_ref::<Int32Array>() {
+        return Ok(Value::I32s(a.to_vec()));
+    }
+    if let Some(a) = v.dyn_ref::<Int16Array>() {
+        return Ok(Value::I16s(a.to_vec()));
+    }
+    if let Some(a) = v.dyn_ref::<Int8Array>() {
+        return Ok(Value::I8s(a.to_vec()));
+    }
+    if let Some(a) = v.dyn_ref::<Uint8Array>() {
+        return Ok(Value::U8s(a.to_vec()));
+    }
+    if Array::is_array(v) {
+        let a: &Array = v.unchecked_ref();
+        return a
+            .iter()
+            .map(|x| from_js(&x))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::List);
+    }
+    if v.is_object() {
+        let object: &Object = v.unchecked_ref();
+        let mut entries = Vec::new();
+        for key in Object::keys(object).iter() {
+            let name = key.as_string().unwrap_or_default();
+            let item = Reflect::get(object, &key)
+                .map_err(|_| wasm_bindgen::JsError::new("a key the engine cannot read"))?;
+            entries.push((std::borrow::Cow::Owned(name), from_js(&item)?));
+        }
+        return Ok(Value::Obj(entries));
+    }
+    Err(wasm_bindgen::JsError::new(
+        "a value the engine does not read",
+    ))
 }

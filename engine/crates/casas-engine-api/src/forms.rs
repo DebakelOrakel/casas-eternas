@@ -35,7 +35,7 @@ fn motion(m: &PlateMotion) -> Value {
     }
 }
 
-fn raft(r: &Raft) -> Value {
+pub fn raft(r: &Raft) -> Value {
     let blobs = r
         .blobs
         .iter()

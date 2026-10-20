@@ -15,7 +15,9 @@
 use crate::climate::biomes::classify_points;
 use crate::climate::climate_field::{CLIMATE_RES_X, CLIMATE_RES_Y};
 use crate::climate::climate_mesh::ClimateTerrain;
-use crate::climate::climate_points::{climate_at_points, climate_cells_from_weather, mesh_points};
+use crate::climate::climate_points::{
+    ClimatePoints, climate_at_points, climate_cells_from_weather, mesh_points,
+};
 use crate::climate::weather::{
     WeatherMesh, WeatherParams, compute_weather, default_weather_params,
 };
@@ -694,8 +696,8 @@ pub fn step_coupled_epoch(
             }
         }
     }
-    let cover_biomes = classify_points(&at_nodes, &nodes, &domain, None).biome;
-    drop(nodes);
+    // The land as the climate saw it, kept for the cover below.
+    let land_at_climate = nodes.land;
 
     // The ice.
     let areas_now = mesh_areas_of(&mut mesh);
@@ -803,6 +805,16 @@ pub fn step_coupled_epoch(
         .unwrap_or(DEFAULT_PLANET_FORCING)
         .land_plants_from_ma;
     let plants_present = world_age_ma(sim.archean_epochs, sim.epoch) >= plants_from_ma;
+    // The biomes on the land the climate saw, at the heights the ice left:
+    // TypeScript's points hold zCanon itself, which the ice's cut and till
+    // moved since, and the treeline reads the height.
+    let cover_biomes = {
+        let points = ClimatePoints {
+            land: land_at_climate,
+            ..mesh_points(&mesh, &z_canon, None)
+        };
+        classify_points(&at_nodes, &points, &domain, None).biome
+    };
     let cover = cover_field(&cover_biomes, plants_present);
 
     // The forcing.

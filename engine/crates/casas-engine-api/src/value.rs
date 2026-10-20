@@ -2,7 +2,11 @@
 //! turn into JavaScript values one for one — objects with their keys in
 //! the order given, arrays, numbers, strings, typed arrays. A shape here
 //! is the TypeScript type's it stands for (docs/decisions/rust-engine.md,
-//! fork 6c: the engine gives data, the world layer writes the files).
+//! fork 6c: the engine gives data, the world layer writes the files). The
+//! same tree comes back from TypeScript for a save restored or a control
+//! set (`read`).
+
+use std::borrow::Cow;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -13,7 +17,7 @@ pub enum Value {
     List(Vec<Value>),
     /// An object, its keys in this order; a key whose value TypeScript
     /// leaves out (an optional field) is not in the list.
-    Obj(Vec<(&'static str, Value)>),
+    Obj(Vec<(Cow<'static, str>, Value)>),
     F64s(Vec<f64>),
     F32s(Vec<f32>),
     I32s(Vec<i32>),
@@ -39,7 +43,7 @@ impl Value {
 
 /// An object built key by key, optional keys left out when None.
 #[derive(Default)]
-pub struct ObjBuilder(Vec<(&'static str, Value)>);
+pub struct ObjBuilder(Vec<(Cow<'static, str>, Value)>);
 
 impl ObjBuilder {
     pub fn new() -> Self {
@@ -47,7 +51,7 @@ impl ObjBuilder {
     }
 
     pub fn put(mut self, key: &'static str, value: Value) -> Self {
-        self.0.push((key, value));
+        self.0.push((Cow::Borrowed(key), value));
         self
     }
 

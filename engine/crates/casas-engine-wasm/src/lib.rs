@@ -4,8 +4,8 @@
 
 mod tree;
 
-use casas_engine_api::{EpochControls, EraError};
-use tree::to_js;
+use casas_engine_api::{EraError, Value};
+use tree::{from_js, to_js};
 use wasm_bindgen::prelude::*;
 
 /// The engine's crate version.
@@ -15,14 +15,12 @@ pub fn version() -> String {
 }
 
 fn era(e: EraError) -> JsError {
-    JsError::new(e.0)
+    JsError::new(&e.0)
 }
 
-fn number(object: &JsValue, key: &str) -> Result<f64, JsError> {
-    js_sys::Reflect::get(object, &JsValue::from_str(key))
-        .ok()
-        .and_then(|v| v.as_f64())
-        .ok_or_else(|| JsError::new(&format!("the controls have no number {key}")))
+/// A value given as null or undefined as none.
+fn given(v: &Value) -> Option<&Value> {
+    (!matches!(v, Value::Null)).then_some(v)
 }
 
 /// A world in the engine.
@@ -73,19 +71,63 @@ impl World {
         self.0.finalize().map_err(era)
     }
 
-    /// One coupled epoch; its events. `controls`: { alluvium,
-    /// rockContrast, temperatureOffset, temperatureContrast, humidity,
-    /// equatorOffset }.
+    /// One coupled epoch under the history's controls; its events.
     pub fn epoch(&mut self, controls: &JsValue) -> Result<JsValue, JsError> {
-        let c = EpochControls {
-            alluvium: number(controls, "alluvium")?,
-            rock_contrast: number(controls, "rockContrast")?,
-            temperature_offset: number(controls, "temperatureOffset")?,
-            temperature_contrast: number(controls, "temperatureContrast")?,
-            humidity: number(controls, "humidity")?,
-            equator_offset: number(controls, "equatorOffset")?,
-        };
-        self.0.epoch(&c).map(to_js).map_err(era)
+        self.0.epoch(&from_js(controls)?).map(to_js).map_err(era)
+    }
+
+    /// The Archean as the save holds it: { snapshot, mantle, streak }.
+    #[wasm_bindgen(js_name = archeanSave)]
+    pub fn archean_save(&self) -> Result<JsValue, JsError> {
+        self.0.archean_save().map(to_js).map_err(era)
+    }
+
+    /// A world restored in its Archean.
+    #[wasm_bindgen(js_name = restoreArchean)]
+    pub fn restore_archean(
+        shape: &str,
+        snapshot: &JsValue,
+        mantle: &JsValue,
+        streak: &[i16],
+        diffusion: f64,
+        land_share: f64,
+    ) -> Result<World, JsError> {
+        let mantle = from_js(mantle)?;
+        casas_engine_api::World::restore_archean(
+            shape_of(shape)?,
+            &from_js(snapshot)?,
+            given(&mantle),
+            streak,
+            diffusion,
+            land_share,
+        )
+        .map(World)
+        .map_err(era)
+    }
+
+    /// A world restored with its plates; `lattice` { accumulated,
+    /// lockedEpochs, lastClassCode } and `mesh` the mesh payload, either
+    /// null.
+    #[wasm_bindgen(js_name = restorePlates)]
+    pub fn restore_plates(
+        shape: &str,
+        snapshot: &JsValue,
+        ocean_age: &JsValue,
+        mantle: &JsValue,
+        lattice: &JsValue,
+        mesh: &JsValue,
+    ) -> Result<World, JsError> {
+        let (mantle, lattice, mesh) = (from_js(mantle)?, from_js(lattice)?, from_js(mesh)?);
+        casas_engine_api::World::restore_plates(
+            shape_of(shape)?,
+            &from_js(snapshot)?,
+            &from_js(ocean_age)?,
+            given(&mantle),
+            given(&lattice),
+            given(&mesh),
+        )
+        .map(World)
+        .map_err(era)
     }
 
     pub fn snapshot(&mut self) -> Result<JsValue, JsError> {
