@@ -633,6 +633,16 @@ BUILDING since 2026-10-20:
   differently from the session that made it on the sphere: the field
   meshes' walks are module state the save does not hold. The engine's
   world holds its own.
+- A render's rasters through the boundary: the raw elevation — in the
+  Archean the synthesis per pixel as the render pool's worker makes it
+  (`elevation/elevation_raster`, with the dynamic topography's raster and
+  the live preview's coarser grid), after the hand-over the terrain
+  mesh's heights — and the mantle's chart raster. The colours, the shade
+  and the redistribution stay TypeScript. A render moves the meshes'
+  walks, so the engine renders where the runtime does; the smoke test
+  renders during the Archean (preview and full), at the hand-over and
+  between epochs, and the rasters and everything after them are equal to
+  TypeScript's.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

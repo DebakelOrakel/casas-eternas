@@ -17,8 +17,10 @@ use casas_engine::archean::finalize_archean::finalize_archean;
 use casas_engine::climate::weather::WeatherParams;
 use casas_engine::core::domain::Domain;
 use casas_engine::core::world_time::TECTONIC_MA_PER_EPOCH;
-use casas_engine::mantle::mantle_field::saved_mantle;
+use casas_engine::elevation::elevation_raster::{RasterSources, elevation_raster};
+use casas_engine::mantle::mantle_field::{rasterise_mantle, saved_mantle};
 use casas_engine::mesh::mesh_hydrology::mesh_routing;
+use casas_engine::mesh::mesh_raster::rasterise_node_field;
 use casas_engine::pipeline::coupled_epoch::{
     CoupledEpochOptions, CoupledTerrain, HISTORY_DEFAULTS, SavedTerrain, create_coupled_terrain,
     decode_coupled_terrain, step_coupled_epoch,
@@ -236,6 +238,49 @@ impl World {
     pub fn mesh_payload(&mut self) -> Result<Value, EraError> {
         let (_, coupled) = self.plates()?;
         Ok(forms::mesh_payload(coupled))
+    }
+
+    /// A render's rasters (the runtime's `renderArcheanAndPost` and
+    /// `renderTerrain`), `{ elevations, mantle }`: the raw elevation on the
+    /// world raster — the synthesis in the Archean, on a grid `scale`
+    /// times coarser for the live preview; the terrain mesh's heights
+    /// after the hand-over — then the mantle on its chart raster. Both
+    /// move the meshes' walks, so the order is the render's.
+    pub fn render(&mut self, scale: u32) -> Result<Value, EraError> {
+        let (elevations, mantle) = match &mut self.era {
+            Era::Archean(a) => {
+                let sources = RasterSources {
+                    domain: &a.domain,
+                    rafts: &a.rafts,
+                    features: &[],
+                    mantle: &a.mantle,
+                    warp_seed: a.warp_seed,
+                };
+                let elevations =
+                    elevation_raster(&sources, None, &mut a.meshes.mantle, scale as usize);
+                (
+                    elevations,
+                    rasterise_mantle(&mut a.meshes.mantle, &a.mantle),
+                )
+            }
+            Era::Plates { sim, coupled } => {
+                let elevations = rasterise_node_field(
+                    &mut coupled.mesh,
+                    &coupled.z,
+                    sim.width as usize,
+                    sim.height as usize,
+                );
+                (
+                    elevations,
+                    rasterise_mantle(&mut sim.meshes.mantle, &sim.mantle),
+                )
+            }
+            Era::Moving => return Err(wrong("the world is between its eras")),
+        };
+        Ok(value::ObjBuilder::new()
+            .put("elevations", Value::F32s(elevations))
+            .put("mantle", Value::F32s(mantle))
+            .build())
     }
 
     /// The Archean as the save holds it: `{ snapshot, mantle, streak }`

@@ -1,9 +1,9 @@
 // Loads both builds from engine/dist/ and checks that they answer the same
 // as each other and as the TypeScript engine through the engine's surface
 // (docs/decisions/rust-engine.md, fork 6), on both shapes: the version; an
-// Archean grown, saved and restored; the hand-over; coupled epochs (one
-// shape under another planet); the tectonic save; a world restored from it
-// that goes on for an epoch. A save goes through JSON and back, as it does
+// Archean grown, rendered, saved and restored; the hand-over; coupled
+// epochs (one shape under another planet) and their renders; the tectonic
+// save; a world restored from it that goes on for an epoch. A save goes through JSON and back, as it does
 // through a file. Run by `make test` after `make engine`; about three
 // minutes.
 import { createRequire } from 'node:module'
@@ -31,6 +31,21 @@ const CE = await L('/src/generator/pipeline/coupledEpoch.ts')
 const { defaultWeatherParams } = await L('/src/generator/climate/weather.ts')
 const { DEFAULT_PLANET_FORCING } = await L('/src/generator/planet/planetForcing.ts')
 const { TECTONICS_INPUTS } = await L('/src/generator/tectonics/tectonicsInputParams.ts')
+const { renderSimulationImage } = await L('/src/generator/render/elevationMapImage.ts')
+const { rasteriseMantle } = await L('/src/generator/mantle/mantleField.ts')
+const { rasteriseNodeField } = await L('/src/generator/mesh/meshRaster.ts')
+// The render pool's worker, in this process through a stand-in `self` (as
+// client/scripts/pipeline.mjs does), one band over the whole raster; the
+// worker posts through it, so it stays.
+const shim = { postMessage: (m) => { shim.posted = m } }
+globalThis.self = shim
+await L('/src/generator/render/elevationRenderWorker.ts')
+const pool = {
+  async renderElevations(rw, rh, ww, wh, base, features, warpSeed, shape) {
+    shim.onmessage({ data: { type: 'renderSlice', requestId: 0, startY: 0, endY: rh, renderWidth: rw, renderHeight: rh, worldWidth: ww, worldHeight: wh, blendedBaselineSlice: base.slice().buffer, features, warpSeed, shape } })
+    return new Float32Array(shim.posted.elevations)
+  },
+}
 await server.close()
 // The Archean's restore in TypeScript in a module graph of its own: the
 // field meshes and their walks are module state per domain there, and a
@@ -83,6 +98,19 @@ const meshPayloadOf = (coupled) => {
   }
 }
 
+// A render as the runtime makes it: the raw elevation, then the mantle's
+// raster — in the Archean from the synthesis (renderArcheanAndPost), after
+// the hand-over from the terrain mesh (renderTerrain).
+const renderArchean = async (a, scale) => {
+  const world = { width: a.width, height: a.height, domain: a.domain, seeds: [], rafts: a.rafts, features: [], oceanAge: null, warpSeed: a.warpSeed, mantle: a.mantle }
+  const result = await renderSimulationImage(world, pool, { elevationScale: scale })
+  return { elevations: result.rawElevations, mantle: rasteriseMantle(a.mantle, a.domain) }
+}
+const renderPlates = (sim, coupled) => {
+  const elevations = rasteriseNodeField(coupled.mesh, coupled.z, sim.width, sim.height)
+  return { elevations, mantle: rasteriseMantle(sim.mantle, sim.domain) }
+}
+
 const STEPS = 60
 const EPOCHS = 6
 for (const shape of ['torus', 'sphere']) {
@@ -93,6 +121,11 @@ for (const shape of ['torus', 'sphere']) {
   for (let i = 0; i < STEPS; i++) {
     archeanStep(ts, params)
     each(worlds, (w) => w.archeanStep())
+    // The live preview's render while the Archean runs, the settled one.
+    if (i === 19 || i === 39) {
+      const scale = i === 19 ? 2 : 1
+      agree(`${shape}: the Archean's render at step ${i + 1}`, await renderArchean(ts, scale), worlds, (w) => w.render(scale))
+    }
   }
   agree(`${shape}: the Archean`, [Float64Array.from(ts.mantle), ts.epoch, ts.rafts.length], worlds, (w) => [w.mantle(), w.archeanEpoch, w.raftCount])
 
@@ -118,6 +151,7 @@ for (const shape of ['torus', 'sphere']) {
   sim.epochMa = TECTONIC_MA_PER_EPOCH
   const coupled = CE.createCoupledTerrain(sim, D.budget)
   each(worlds, (w) => w.finalize())
+  agree(`${shape}: the hand-over's render`, renderPlates(sim, coupled), worlds, (w) => w.render(1))
   const weather = shape === 'torus' ? { ...defaultWeatherParams(), planet: { ...DEFAULT_PLANET_FORCING, obliquityDeg: 31, rotationHours: 30 } } : defaultWeatherParams()
   const controls = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, weather }
   let eventCount = 0
@@ -125,6 +159,7 @@ for (const shape of ['torus', 'sphere']) {
     const stats = await CE.stepCoupledEpoch(sim, coupled, optionsOf(controls))
     eventCount += stats.events.length
     agree(`${shape}: epoch ${e + 1}'s events`, stats.events, worlds, (w) => w.epoch(controls))
+    if (e % 2 === 1) agree(`${shape}: epoch ${e + 1}'s render`, renderPlates(sim, coupled), worlds, (w) => w.render(1))
   }
 
   // The tectonic save.

@@ -4,6 +4,7 @@ pub mod capsule;
 pub mod domain_warp;
 pub mod dynamic_topography;
 pub mod elevation_field;
+pub mod elevation_raster;
 pub mod elevation_sampler;
 pub mod elevation_scale;
 pub mod elevation_tune_params;

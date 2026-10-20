@@ -158,6 +158,11 @@ impl World {
     pub fn mesh_payload(&mut self) -> napi::Result<Tree> {
         self.0.mesh_payload().map(Tree).map_err(era)
     }
+
+    #[napi]
+    pub fn render(&mut self, scale: u32) -> napi::Result<Tree> {
+        self.0.render(scale).map(Tree).map_err(era)
+    }
 }
 
 fn shape_of(shape: &str) -> napi::Result<casas_engine_api::Shape> {
