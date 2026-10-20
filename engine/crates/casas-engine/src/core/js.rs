@@ -20,6 +20,18 @@ pub fn to_int32(x: f64) -> i32 {
     t as u32 as i32
 }
 
+/// JavaScript's ToUint32 (`x >>> 0`): ToInt32's bits, unsigned.
+#[inline]
+pub fn to_uint32(x: f64) -> u32 {
+    to_int32(x) as u32
+}
+
+/// `Math.imul`: the low 32 bits of the product of two ToInt32 values.
+#[inline]
+pub fn imul(a: f64, b: f64) -> i32 {
+    (to_int32(a) as u32).wrapping_mul(to_int32(b) as u32) as i32
+}
+
 /// `Math.round`.
 #[inline]
 pub fn round(x: f64) -> f64 {

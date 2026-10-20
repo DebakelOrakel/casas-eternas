@@ -328,6 +328,13 @@ BUILDING since 2026-10-20:
   the load spreader) and the plumes. The ocean age, the flexure and the
   climate share one field mesh, as in TypeScript; the caller holds it
   (`SharedFieldMesh`). Bit-equal on both shapes.
+- The elevation (`elevation/`: the scale and the margin profile, the
+  capsule, the ridged and the fine noise, the globe's noise, the warp, the
+  hypsometry, the elevation field with its feature buckets, the baseline
+  and the uplift deck), with the trench and the folds. The noises' lattice
+  hashes sum in doubles before the cut to 32 bits, as JavaScript does; an
+  exact integer hash gives other bits, and the test sees it. Bit-equal on
+  both shapes.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and
