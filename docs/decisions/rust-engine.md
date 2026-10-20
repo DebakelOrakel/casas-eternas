@@ -346,6 +346,14 @@ BUILDING since 2026-10-20:
   supercontinent's among them: 15 s against 52 s, on one core. The
   fixture takes a minute to make, so `make test` checks it, not
   `make lint`.
+- The Archean (`archean/`: the world from its seed string, the nucleation
+  and the land share lever, the step, the snapshot, the hand-over to the
+  plates), with the dynamic topography's point query. From the seed
+  string, 200 Archean epochs (saved and restored at the 100th), the
+  hand-over and 20 tectonic epochs give the TypeScript state after every
+  step on both shapes: 7 s against 24 s. With this, a world is made from
+  its seed to the tectonics in Rust; what is left of level 0 is the
+  coupled history (surface, climate, the pipeline).
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

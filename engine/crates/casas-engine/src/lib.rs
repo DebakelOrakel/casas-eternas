@@ -13,6 +13,7 @@
 /// engine plus its constants, and it comes with the first stage.
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod archean;
 pub mod core;
 pub mod crust;
 pub mod elevation;
