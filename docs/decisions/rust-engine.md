@@ -294,8 +294,13 @@ BUILDING since 2026-10-20:
   `mesh_build`, with `rng` (mulberry32) and the domain's advance, displace
   and transport. Bit-equal to TypeScript in a build of ~42 k nodes on each
   shape, its rebuild from moved points, and a remesh with an intensive, an
-  extensive and a stacked field. Open in phase 3: `meshNeighbourhood`,
-  which reads the erosion's cotangents, so it comes with phase 4.
+  extensive and a stacked field.
+- Phase 3 complete with `mesh_neighbourhood`, and of phase 4 the erosion's
+  graph index (`mesh_erosion`: the frozen ocean, the shelf band, the
+  cotangent facets) with `min_heap`. Bit-equal in the same scenarios. On the
+  dumped epoch 12 of `b39d5739`, the column mean height (202 M members over
+  3.7 M slots) gives the TypeScript values for every slot, in 10.1 s on one
+  core against 30.0 s.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

@@ -18,6 +18,20 @@ pub struct Vec2 {
     pub y: f64,
 }
 
+/// A point of the globe and its east and south axes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlobeFrame {
+    pub px: f64,
+    pub py: f64,
+    pub pz: f64,
+    pub ex: f64,
+    pub ey: f64,
+    pub ez: f64,
+    pub sx: f64,
+    pub sy: f64,
+    pub sz: f64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Torus,
@@ -274,6 +288,28 @@ impl Domain {
         Vec2 {
             x: -slb * rx + clb * ry,
             y: ctb * clb * rx + ctb * slb * ry - stb * rz,
+        }
+    }
+
+    /// The point of chart point (x, y) on the globe of radius R, with its
+    /// east and south axes (`noise.frame` of the sphere domain).
+    pub fn globe_frame(&self, x: f64, y: f64) -> GlobeFrame {
+        let t = y * self.to_colat;
+        let l = x * self.to_lon;
+        let st = det_sin(t);
+        let ct = det_cos(t);
+        let sl = det_sin(l);
+        let cl = det_cos(l);
+        GlobeFrame {
+            px: self.radius * st * cl,
+            py: self.radius * st * sl,
+            pz: self.radius * ct,
+            ex: -sl,
+            ey: cl,
+            ez: 0.0,
+            sx: ct * cl,
+            sy: ct * sl,
+            sz: -st,
         }
     }
 

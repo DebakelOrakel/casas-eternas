@@ -10,6 +10,14 @@ centroidal_lattice 02705192
 torus_build b68bfba6
 torus_triangulate ef6457ba
 torus_remesh e492892c
+torus_geometry f3284bb9
+torus_neighbourhoods 1cefeab3
+torus_around 6b9ea5ea
+torus_engine_index 0034c0c3
 sphere_build 966cdb24
 sphere_triangulate e0a4b937
 sphere_remesh a1861432
+sphere_geometry fb5d151a
+sphere_neighbourhoods 22271cec
+sphere_around 3dda32f6
+sphere_engine_index aedf3d19

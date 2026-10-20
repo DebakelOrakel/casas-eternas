@@ -29,6 +29,8 @@ const { MeshState } = await L('/src/generator/mesh/meshState.ts')
 const { buildMesh, densityTarget, triangulatePoints, MESH_Z, MESH_DISCHARGE } = await L('/src/generator/mesh/meshBuild.ts')
 const { remesh } = await L('/src/generator/mesh/remesh.ts')
 const { MESH_COLUMN, COLUMN_DEPTH } = await L('/src/generator/mesh/meshColumn.ts')
+const NB = await L('/src/generator/mesh/meshNeighbourhood.ts')
+const { buildMeshEngineIndex } = await L('/src/generator/mesh/meshErosion.ts')
 await server.close()
 
 let state = 0
@@ -185,6 +187,70 @@ for (const [name, domain] of [['torus', torusDomain(2048, 1024)], ['sphere', sph
   line(`${name}_remesh`)
   const errors = mesh.validate()
   if (errors.length > 0) throw new Error(`${name}: invalid after the remesh: ${errors.slice(0, 3).join('; ')}`)
+
+  // The neighbourhoods in metres and the engine index on the remeshed mesh.
+  const unitM = domain.metresPerUnit
+  const z = s.get(MESH_Z)
+  const geo = NB.meshGeometry(mesh, unitM)
+  h = 0x811c9dc5
+  addAll(geo.areaM2)
+  addAll(geo.rho)
+  addAll(geo.starStart)
+  addAll(geo.star)
+  addAll(geo.lengthM)
+  addAll(geo.wallM)
+  line(`${name}_geometry`)
+  state = 4
+  const centre = new Uint8Array(mesh.vertexSlots)
+  for (let v = 0; v < centre.length; v++) centre[v] = next() & 1
+  h = 0x811c9dc5
+  for (const [radius, admit] of [[30000, null], [10000, centre], [120000, centre]]) {
+    const nb = NB.neighbourhoods(geo, radius, admit)
+    addAll(nb.start)
+    addAll(nb.member)
+    addAll(nb.weight)
+    addAll(NB.maxWithin(nb, z))
+    addAll(NB.meanWithin(nb, z))
+  }
+  line(`${name}_neighbourhoods`)
+  h = 0x811c9dc5
+  for (let i = 0; i < 2000; i++) add(NB.nodeAt(mesh, uniform(0, domain.width), uniform(0, domain.height)))
+  const stamp = new Int32Array(mesh.vertexSlots).fill(-1)
+  for (let p = 0; p < 200; p++) {
+    NB.aroundPoint(geo, uniform(0, domain.width), uniform(0, domain.height), 50000, (v, d) => { add(v); add(d) }, stamp, p)
+  }
+  const points = []
+  for (let p = 0; p < 50; p++) points.push({ x: uniform(0, domain.width), y: uniform(0, domain.height) })
+  addAll(NB.gaussianHalos(geo, points, 20000))
+  addAll(NB.discsAround(geo, points, 15000))
+  addAll(NB.slopeOf(geo, z))
+  const use = new Uint8Array(mesh.vertexSlots)
+  for (let v = 0; v < use.length; v++) use[v] = mesh.vAlive[v]
+  addAll(NB.boundaryDensity(geo, use, (a, b) => (z[a] > 0) !== (z[b] > 0), 7800))
+  add(mesh.lastTri)
+  add(mesh.walkSteps)
+  line(`${name}_around`)
+  const extra = new Uint8Array(mesh.vertexSlots)
+  for (let v = 0; v < extra.length; v++) extra[v] = next() % 7 === 0 ? 1 : 0
+  h = 0x811c9dc5
+  for (const frozen of [undefined, extra]) {
+    const ix = buildMeshEngineIndex(mesh, z, undefined, undefined, frozen)
+    add(ix.cellCount)
+    add(ix.activeCount)
+    add(ix.frozenCount)
+    add(ix.edgeCount)
+    add(ix.refM)
+    addAll(ix.active)
+    addAll(ix.activeOf)
+    addAll(ix.nbrStart)
+    addAll(ix.nbr)
+    addAll(ix.edgeRev)
+    addAll(ix.lenRel)
+    addAll(ix.diffFactor)
+    addAll(ix.mfdFactor)
+    addAll(ix.areaRel)
+  }
+  line(`${name}_engine_index`)
 }
 
 const text = lines.join('\n') + '\n'

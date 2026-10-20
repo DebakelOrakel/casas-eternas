@@ -4,4 +4,5 @@
 pub mod det_math;
 pub mod domain;
 pub mod js;
+pub mod min_heap;
 pub mod rng;

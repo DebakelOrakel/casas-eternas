@@ -5,6 +5,10 @@
 //! modules follow the TypeScript engine's directories
 //! (`client/src/generator/`).
 
+// A port keeps the TypeScript engine's index loops, so that a loop reads
+// like its source and visits in its order.
+#![allow(clippy::needless_range_loop)]
+
 /// The version of this crate. It is not the pipeline version: that is the
 /// engine plus its constants, and it comes with the first stage.
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -12,3 +16,4 @@ pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod core;
 pub mod elevation;
 pub mod mesh;
+pub mod surface;
