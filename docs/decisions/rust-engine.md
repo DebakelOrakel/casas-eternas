@@ -281,6 +281,14 @@ BUILDING since 2026-10-20:
   cases and in 23 sample sets of 100 000 arguments each, and it gives the
   hash `harness:mesh` holds (`dadf96b6`). `engine/clippy.toml` refuses the
   std functions it replaces; `make lint` refuses a stale fixture.
+- Phase 3, the mesh, begun: `periodic_delaunay` with the part of `domain`
+  it reads, on the torus and the sphere. A scenario of each (inserts,
+  removals, duplicates, edge midpoints, a clone, queries, the Voronoi
+  areas) gives the TypeScript state, bit for bit, after every step. On the
+  dumped rebuild of `b39d5739`'s epoch 12, 3.78 M inserts give the same
+  triangles, twins and unit vectors, in 1.2 s against 2.3 s. The
+  tolerances of the predicates are not reached by the scenarios' random
+  points; a change of them goes unseen by the test.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

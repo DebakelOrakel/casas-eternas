@@ -3,7 +3,8 @@
 //! fork 5). The fixture is written by `engine/scripts/detMathFixture.mjs`;
 //! the argument generator below is that script's, line for line.
 
-use casas_engine::det_math::*;
+use casas_engine::core::det_math::*;
+use casas_engine::core::js::to_int32;
 
 const FIXTURE: &str = include_str!("fixtures/det_math.txt");
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;

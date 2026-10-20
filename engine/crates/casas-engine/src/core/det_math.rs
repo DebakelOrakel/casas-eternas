@@ -13,25 +13,15 @@
 //! `libm` crate; their last bit differs between platforms. `sqrt`, `abs`,
 //! `floor`, `round`, `min`, `max` and the casts are exact and stay.
 //!
-//! Where the TypeScript code writes `x | 0`, the port calls [`to_int32`],
-//! which wraps as JavaScript does; a Rust `as i32` saturates instead.
+//! Where the TypeScript code writes `x | 0`, the port calls
+//! [`to_int32`](super::js::to_int32), which wraps as JavaScript does.
 
 // The constants are fdlibm's, written as fdlibm writes them, with more
 // digits than a double holds and with names of their own where a std
 // constant has the same value: the port reads like its source.
 #![allow(clippy::excessive_precision, clippy::approx_constant)]
 
-/// JavaScript's ToInt32: truncate, then wrap modulo 2^32. NaN and the
-/// infinities give 0.
-#[inline]
-pub fn to_int32(x: f64) -> i32 {
-    if !x.is_finite() {
-        return 0;
-    }
-    let t = x.trunc() % 4294967296.0;
-    let t = if t < 0.0 { t + 4294967296.0 } else { t };
-    t as u32 as i32
-}
+use super::js::to_int32;
 
 #[inline]
 fn high(x: f64) -> i32 {
