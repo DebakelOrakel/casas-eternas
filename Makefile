@@ -107,6 +107,7 @@ lint:
 	node engine/scripts/hydrologyFixture.mjs --check
 	node engine/scripts/levelFixture.mjs --check
 	node engine/scripts/riversFixture.mjs --check
+	node engine/scripts/ecologyFixture.mjs --check
 	# The workspace builds the engine with `parallel` (the native crate turns
 	# it on); the engine alone builds it without, as the WASM build does.
 	cd engine && cargo clippy --workspace --all-targets -- -D warnings

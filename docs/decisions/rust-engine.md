@@ -493,6 +493,13 @@ BUILDING since 2026-10-20:
   (`surface/sedimentBasins`: the components, their kind, centroid and
   provenance from the graph's catchments), bit-equal on both shapes in
   the rivers' test.
+- The ecology (`ecology/ecologyField`, `ecology/ecologyTuneParams`: the
+  base fields per node, the sliders and the concentration pipeline, a
+  field's months, the fields' rasters and their byte codec), bit-equal on
+  both shapes with a refined climate and hydrology and without: 0.3 s
+  against 2 s. The province noise's lattice hash multiplies in doubles
+  past 2^53, as JavaScript does, so the port does the same before it
+  truncates.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

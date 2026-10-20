@@ -17,6 +17,7 @@ pub mod archean;
 pub mod climate;
 pub mod core;
 pub mod crust;
+pub mod ecology;
 pub mod elevation;
 pub mod fields;
 pub mod mantle;
