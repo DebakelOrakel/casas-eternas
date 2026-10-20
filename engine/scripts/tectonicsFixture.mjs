@@ -29,6 +29,9 @@ const BC = await L('/src/generator/tectonics/boundaryClassification.ts')
 const TF = await L('/src/generator/tectonics/terrainFeatures.ts')
 const V = await L('/src/generator/tectonics/volcanoes.ts')
 const { TECTONICS_TUNING } = await L('/src/generator/tectonics/tectonicsTuneParams.ts')
+const OA = await L('/src/generator/tectonics/oceanAge.ts')
+const FX = await L('/src/generator/tectonics/flexure.ts')
+const PL = await L('/src/generator/tectonics/plumes.ts')
 await server.close()
 
 let state = 0
@@ -163,6 +166,92 @@ for (const [name, d, seed] of [['torus', D.torusDomain(2048, 1024), 1], ['sphere
     add(KINDS.indexOf(v.kind))
   }
   line(`${name}_features`)
+}
+
+// The ocean age, the flexure and the plumes, on the shared mesh.
+for (const [name, d, seed] of [['torus', D.torusDomain(2048, 1024), 21], ['sphere', D.sphereDomain(2048, 1024), 22]]) {
+  state = seed
+  let seeds = []
+  for (let i = 0; i < 30; i++) seeds.push({ x: uniform(0, d.width), y: uniform(0, d.height) })
+  const motions = PM.generatePlateMotions(seeds, d, mulberry32(seed))
+  const rafts = []
+  for (let r = 0; r < 20; r++) {
+    const cx = uniform(0, d.width)
+    const cy = uniform(0, d.height)
+    const blobs = []
+    for (let b = 0; b < 4; b++) blobs.push({ x: d.wrapX(cx + uniform(-60, 60)), y: Math.min(d.height, Math.max(0, cy + uniform(-40, 40))), radius: uniform(20, 90), birthEpoch: int(0, 100) })
+    rafts.push({ id: r, name: null, blobs })
+  }
+  h = 0x811c9dc5
+  let age = OA.createOceanAgeField(TECTONICS_TUNING.oceanAgeInit, d)
+  const membership = OA.oceanAgeMembership(rafts, d)
+  addAll(membership)
+  for (let e = 0; e < 8; e++) {
+    const previous = e === 0 ? null : seeds.map((p) => ({ x: p.x, y: p.y }))
+    seeds = seeds.map((p, k) => PM.advancePointByMotion(p.x, p.y, motions[k], 1, d))
+    age = OA.advectOceanAge(age, seeds, motions, 1, d, membership, previous)
+    addAll(age)
+  }
+  for (let k = 0; k < 5; k++) OA.resetOceanAgeAround(age, uniform(0, d.width), uniform(0, d.height), uniform(5, 60), d)
+  addAll(age)
+  for (let k = 0; k < 2000; k++) add(OA.oceanAgeAt(age, d, uniform(0, d.width), uniform(0, d.height)))
+  addAll(OA.oceanAgeRaster(age, d, 256, 128))
+  const saved = OA.savedOceanAge(age, d)
+  add(saved.cells)
+  add(saved.spacingM)
+  add(OA.oceanAgeFits(d, saved.cells, saved.spacingM) ? 1 : 0)
+  line(`${name}_ocean_age`)
+
+  h = 0x811c9dc5
+  const shared = FX.flexureMesh(d)
+  const fm = shared.mesh
+  for (let k = 0; k < 500; k++) {
+    add(FX.elasticThicknessKm(k % 2 === 0, uniform(-0.5, 1.5), uniform(-10, 200)))
+    const te = uniform(3, 80)
+    add(FX.flexuralRigidityM4(te))
+    add(FX.flexuralAlphaKm(te))
+  }
+  const spread = FX.nodeLoadSpreader(shared.sampler)
+  const loadM3 = new Float64Array(fm.count)
+  for (let k = 0; k < 3000; k++) {
+    const area = k % 4 === 0 ? uniform(1e10, 6e10) : uniform(1e7, 2e9)
+    spread(uniform(0, d.width), uniform(0, d.height), area, uniform(-3, 3) * area, loadM3)
+  }
+  addAll(loadM3)
+  const loadM = new Float64Array(fm.count)
+  const rigidity = new Float64Array(fm.count)
+  for (let i = 0; i < fm.count; i++) {
+    loadM[i] = loadM3[i] / fm.area[i]
+    rigidity[i] = FX.flexuralRigidityM4(FX.elasticThicknessKm(age[i] === 0, 0.5, age[i]))
+  }
+  const deflection = new Float64Array(fm.count)
+  const r = FX.flexuralResponse(fm, loadM, rigidity, deflection)
+  add(r.iterations)
+  add(r.residual)
+  add(r.converged ? 1 : 0)
+  addAll(deflection)
+  add(fm.tri.lastTri)
+  add(fm.tri.walkSteps)
+  line(`${name}_flexure`)
+
+  h = 0x811c9dc5
+  let field = M.createMantleField(mulberry32(seed + 100), d)
+  for (let e = 0; e < 4; e++) field = M.evolveMantleField(field, rafts, d)
+  M.sustainMantleVigour(field, 0.6, d)
+  const plumes = PL.findPlumeSites(field, d, 0)
+  for (let e = 1; e <= 12; e++) {
+    field = M.evolveMantleField(field, rafts, d)
+    M.sustainMantleVigour(field, 0.6, d)
+    PL.advancePlumes(plumes, field, d, e)
+    add(plumes.length)
+    for (const p of plumes) {
+      add(p.x)
+      add(p.y)
+      add(p.id)
+      add(p.birthEpoch)
+    }
+  }
+  line(`${name}_plumes`)
 }
 
 const text = lines.join('\n') + '\n'

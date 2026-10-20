@@ -323,6 +323,11 @@ BUILDING since 2026-10-20:
   relaxation), the velocity decomposition, the detection lattice, the
   boundary detection and classification, the terrain features and the
   volcanoes. Bit-equal on both shapes.
+- The tectonics, second part: the ocean age (the exact departure, the
+  ridges' new crust, the resets), the flexure (the plate equation by CG,
+  the load spreader) and the plumes. The ocean age, the flexure and the
+  climate share one field mesh, as in TypeScript; the caller holds it
+  (`SharedFieldMesh`). Bit-equal on both shapes.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

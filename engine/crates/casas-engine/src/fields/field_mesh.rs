@@ -636,3 +636,19 @@ pub struct SavedField {
     pub cells: usize,
     pub spacing_m: f64,
 }
+
+/// One field mesh with its sampler, shared by the stages that ask for the
+/// same spacing (the ocean age, the climate and the flexure: the domain's
+/// width / 256). The TypeScript engine shares it through a cache; here the
+/// caller holds it and hands it to each, so the triangulation's walk state
+/// is the one all of them move, as there.
+pub struct SharedFieldMesh {
+    pub mesh: FieldMesh,
+    pub sampler: FieldSampler,
+}
+
+pub fn shared_field_mesh(domain: &Domain, spacing_m: f64) -> SharedFieldMesh {
+    let mut mesh = create_field_mesh(domain, spacing_m);
+    let sampler = create_field_sampler(&mut mesh);
+    SharedFieldMesh { mesh, sampler }
+}

@@ -8,6 +8,9 @@
 
 use casas_engine::core::domain::Domain;
 use casas_engine::core::rng::Mulberry32;
+use casas_engine::crust::raft_types::{Raft, RaftBlob};
+use casas_engine::fields::field_mesh::shared_field_mesh;
+use casas_engine::fields::field_operators::SolveOptions;
 use casas_engine::mantle::mantle_field as m;
 use casas_engine::mantle::mantle_tune_params::MANTLE_TUNING;
 use casas_engine::tectonics::boundary_classification::{
@@ -15,12 +18,15 @@ use casas_engine::tectonics::boundary_classification::{
 };
 use casas_engine::tectonics::boundary_detection::detect_boundaries;
 use casas_engine::tectonics::boundary_lattice::generate_detection_lattice;
+use casas_engine::tectonics::flexure as fx;
+use casas_engine::tectonics::ocean_age as oa;
 use casas_engine::tectonics::plate_motion::{self as pm, PlateMotion};
 use casas_engine::tectonics::plate_seeds::PlateSeed;
 use casas_engine::tectonics::plate_types::PlateType;
 use casas_engine::tectonics::plate_velocity_decomposition::{
     BoundaryMotionClass, classify_boundary_motion,
 };
+use casas_engine::tectonics::plumes as pl;
 use casas_engine::tectonics::tectonics_tune_params::TECTONICS_TUNING as T;
 use casas_engine::tectonics::terrain_features::{
     FeatureKind, MovesWith, TerrainFeature, advance_terrain_features, find_or_create_feature_index,
@@ -395,4 +401,192 @@ fn the_torus_tectonics_give_the_typescript_values() {
 #[test]
 fn the_sphere_tectonics_give_the_typescript_values() {
     scenario("sphere", Domain::sphere(2048.0, 1024.0), 2);
+}
+
+fn stage_two(name: &str, d: Domain, seed: u32) {
+    let mut g = Gen(seed);
+    let mut seeds: Vec<PlateSeed> = (0..30)
+        .map(|_| {
+            let x = g.uniform(0.0, d.width);
+            PlateSeed {
+                x,
+                y: g.uniform(0.0, d.height),
+            }
+        })
+        .collect();
+    let mut rng = Mulberry32::new(seed);
+    let motions = pm::generate_plate_motions(&seeds, &d, &mut || rng.next());
+    let mut rafts = Vec::new();
+    for r in 0..20 {
+        let cx = g.uniform(0.0, d.width);
+        let cy = g.uniform(0.0, d.height);
+        let mut blobs = Vec::new();
+        for _ in 0..4 {
+            let x = d.wrap_x(cx + g.uniform(-60.0, 60.0));
+            let y = d.height.min(0f64.max(cy + g.uniform(-40.0, 40.0)));
+            let radius = g.uniform(20.0, 90.0);
+            let birth = g.int(0.0, 100.0) as f64;
+            blobs.push(RaftBlob {
+                x,
+                y,
+                radius,
+                birth_epoch: Some(birth),
+            });
+        }
+        rafts.push(Raft {
+            id: r,
+            name: None,
+            blobs,
+            no_merge_until_epoch: None,
+        });
+    }
+    let mut sm = shared_field_mesh(&d, oa::ocean_age_spacing_m(&d));
+    let mut o = oa::ocean_age(&sm);
+    let mut h = Hash::new();
+    let mut age = oa::create_ocean_age_field(T.ocean_age_init, &sm);
+    let membership = oa::ocean_age_membership(&sm, &rafts);
+    for &v in &membership {
+        h.add(v);
+    }
+    for e in 0..8 {
+        let previous = if e == 0 { None } else { Some(seeds.clone()) };
+        seeds = seeds
+            .iter()
+            .enumerate()
+            .map(|(k, p)| {
+                let q = pm::advance_point_by_motion(p.x, p.y, &motions[k], 1.0, &d);
+                PlateSeed { x: q.x, y: q.y }
+            })
+            .collect();
+        age = oa::advect_ocean_age(
+            &mut o,
+            &mut sm,
+            &age,
+            &seeds,
+            &motions,
+            1.0,
+            &membership,
+            previous.as_deref(),
+        );
+        for &v in &age {
+            h.add(v);
+        }
+    }
+    for _ in 0..5 {
+        let (x, y, r) = (
+            g.uniform(0.0, d.width),
+            g.uniform(0.0, d.height),
+            g.uniform(5.0, 60.0),
+        );
+        oa::reset_ocean_age_around(&mut o, &mut sm, &mut age, x, y, r);
+    }
+    for &v in &age {
+        h.add(v);
+    }
+    for _ in 0..2000 {
+        let (x, y) = (g.uniform(0.0, d.width), g.uniform(0.0, d.height));
+        h.add(oa::ocean_age_at(&mut sm, &age, x, y));
+    }
+    for v in oa::ocean_age_raster(&mut sm, &age, 256, 128) {
+        h.add(v as f64);
+    }
+    let saved = oa::saved_ocean_age(&o, &sm, &age);
+    h.add(saved.cells as f64);
+    h.add(saved.spacing_m);
+    h.add(
+        if oa::ocean_age_fits(&o, &sm, saved.cells, saved.spacing_m) {
+            1.0
+        } else {
+            0.0
+        },
+    );
+    assert_eq!(
+        h.line(&format!("{name}_ocean_age")),
+        expected(&format!("{name}_ocean_age"))
+    );
+
+    let mut h = Hash::new();
+    for k in 0..500 {
+        let (old, oage) = (g.uniform(-0.5, 1.5), g.uniform(-10.0, 200.0));
+        h.add(fx::elastic_thickness_km(k % 2 == 0, old, oage));
+        let te = g.uniform(3.0, 80.0);
+        h.add(fx::flexural_rigidity_m4(te));
+        h.add(fx::flexural_alpha_km(te));
+    }
+    let mut spread = fx::node_load_spreader(&sm);
+    let n = sm.mesh.count;
+    let mut load_m3 = vec![0.0; n];
+    for k in 0..3000 {
+        let area = if k % 4 == 0 {
+            g.uniform(1e10, 6e10)
+        } else {
+            g.uniform(1e7, 2e9)
+        };
+        let (x, y) = (g.uniform(0.0, d.width), g.uniform(0.0, d.height));
+        let volume = g.uniform(-3.0, 3.0) * area;
+        spread.spread(&mut sm, x, y, area, volume, &mut load_m3);
+    }
+    for &v in &load_m3 {
+        h.add(v);
+    }
+    let load_m: Vec<f64> = (0..n).map(|i| load_m3[i] / sm.mesh.area[i]).collect();
+    let rigidity: Vec<f64> = (0..n)
+        .map(|i| fx::flexural_rigidity_m4(fx::elastic_thickness_km(age[i] == 0.0, 0.5, age[i])))
+        .collect();
+    let mut deflection = vec![0.0; n];
+    let r = fx::flexural_response(
+        &sm.mesh,
+        &load_m,
+        &rigidity,
+        &mut deflection,
+        SolveOptions::default(),
+    );
+    h.add(r.iterations as f64);
+    h.add(r.residual);
+    h.add(if r.converged { 1.0 } else { 0.0 });
+    for &v in &deflection {
+        h.add(v);
+    }
+    h.add(sm.mesh.tri.last_tri as f64);
+    h.add(sm.mesh.tri.walk_steps as f64);
+    assert_eq!(
+        h.line(&format!("{name}_flexure")),
+        expected(&format!("{name}_flexure"))
+    );
+
+    let mut h = Hash::new();
+    let mut mm = m::mantle_mesh(&d);
+    let mut mrng = Mulberry32::new(seed + 100);
+    let mut field = m::create_mantle_field(&mut || mrng.next(), &mm, m::DEFAULT_INITIAL_SMOOTHING);
+    for _ in 0..4 {
+        field = m::evolve_mantle_field(field, &rafts, &mm, MANTLE_TUNING.diffusion_passes);
+    }
+    m::sustain_mantle_vigour(&mut field, 0.6, &mm);
+    let mut plumes = pl::find_plume_sites(&field, &mm, &d, 0.0, &[]);
+    for e in 1..=12 {
+        field = m::evolve_mantle_field(field, &rafts, &mm, MANTLE_TUNING.diffusion_passes);
+        m::sustain_mantle_vigour(&mut field, 0.6, &mm);
+        pl::advance_plumes(&mut plumes, &field, &mut mm, &d, e as f64);
+        h.add(plumes.len() as f64);
+        for p in &plumes {
+            h.add(p.x);
+            h.add(p.y);
+            h.add(p.id as f64);
+            h.add(p.birth_epoch);
+        }
+    }
+    assert_eq!(
+        h.line(&format!("{name}_plumes")),
+        expected(&format!("{name}_plumes"))
+    );
+}
+
+#[test]
+fn the_torus_ocean_age_flexure_and_plumes_give_the_typescript_values() {
+    stage_two("torus", Domain::torus(2048.0, 1024.0), 21);
+}
+
+#[test]
+fn the_sphere_ocean_age_flexure_and_plumes_give_the_typescript_values() {
+    stage_two("sphere", Domain::sphere(2048.0, 1024.0), 22);
 }
