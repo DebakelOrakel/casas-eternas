@@ -318,6 +318,11 @@ BUILDING since 2026-10-20:
   the metaball field, its blob index, the craton age, the owner field),
   with `core/interpolation` and `core/worldTime`. Bit-equal over ten
   epochs of the field, its flow and its samples on both shapes.
+- The tectonics, first part: the tuning, `plate_motion` (generation, the
+  velocity, a point moved and back, the fit to the mantle flow, the
+  relaxation), the velocity decomposition, the detection lattice, the
+  boundary detection and classification, the terrain features and the
+  volcanoes. Bit-equal on both shapes.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

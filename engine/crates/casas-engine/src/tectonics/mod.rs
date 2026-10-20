@@ -1,5 +1,12 @@
-//! `client/src/generator/tectonics/`. This port holds the vocabulary the
-//! crust reads so far.
+//! `client/src/generator/tectonics/`.
 
+pub mod boundary_classification;
+pub mod boundary_detection;
+pub mod boundary_lattice;
+pub mod plate_motion;
 pub mod plate_seeds;
 pub mod plate_types;
+pub mod plate_velocity_decomposition;
+pub mod tectonics_tune_params;
+pub mod terrain_features;
+pub mod volcanoes;
