@@ -354,6 +354,21 @@ BUILDING since 2026-10-20:
   step on both shapes: 7 s against 24 s. With this, a world is made from
   its seed to the tectonics in Rust; what is left of level 0 is the
   coupled history (surface, climate, the pipeline).
+- The erosion solver (`surface/erosionEngine*`: the routing, the
+  walks, the kernels, the single scheme and the pool's pipelined one with
+  its synchronous variant) and the run on the mesh (`runMeshErosion`).
+  Bit-equal on a 256 × 128 raster of each shape (the full forcing, the
+  status rule with pinned heights, an early stop) and on a mesh of each
+  shape (the single scheme, extra frozen nodes, both pool schemes run by
+  TypeScript on worker threads). The per-node kernels and the leaf
+  segments of the walks run in parallel blocks. On a 2048 × 1024 torus
+  (483 k active cells), 8 iterations take 0.66 s on one core and 0.37 s
+  on 10, against 1.34 s for the single TypeScript solver. The flood
+  stays serial: its pop order is the result. The run's two tallies are
+  summed over the TypeScript pool's worker ranges (`leaf_workers`),
+  because TypeScript's sums are grouped by them: the exported volume, in
+  the snapshot as `sedimentExportM3`, depends on how many workers the
+  TypeScript pool has.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and

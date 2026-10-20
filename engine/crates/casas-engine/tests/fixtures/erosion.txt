@@ -1,0 +1,16 @@
+# Hashes of client/src/generator/surface/erosionEngine*.ts runs, for crates/casas-engine/tests/erosion.rs.
+# Written by engine/scripts/erosionFixture.mjs; do not edit.
+raster_torus_full 4851b205
+raster_torus_status 8a4de450
+raster_torus_calm 0f84e2c2
+raster_sphere_full de830580
+raster_sphere_status 7776ae47
+raster_sphere_calm a40450b2
+mesh_torus_single 8c0ab1cf
+mesh_torus_frozen 114cd09a
+mesh_torus_overlapped 9322fc9b
+mesh_torus_synchronous c2b46b29
+mesh_sphere_single 30ffb68a
+mesh_sphere_frozen 0db468f0
+mesh_sphere_overlapped 42c461c5
+mesh_sphere_synchronous 3178dd9f

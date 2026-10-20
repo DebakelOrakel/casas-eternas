@@ -11,7 +11,13 @@
 
 use crate::core::js;
 use crate::core::min_heap::MinHeap;
-use crate::surface::erosion_engine_state::{EngineIndex, IndexKind};
+use crate::surface::erosion_engine::{
+    DEFAULT_SOLVER_PARAMS, ErosionForcing, ErosionSolver, ErosionSolverParams,
+    PipelinedErosionSolver, Tallies,
+};
+use crate::surface::erosion_engine_state::{
+    EngineIndex, IndexKind, Routing, Terrain, expand_active, expand_active_with,
+};
 
 use super::periodic_delaunay::PeriodicTriangulation;
 
@@ -272,4 +278,166 @@ fn cot_in_frame(f: &[f64; 6], i: usize) -> f64 {
         return 0.0;
     }
     (ux * wx + uy * wy) / cross.abs()
+}
+
+/// The drainage of a run per vertex slot (`MeshRouting` in TypeScript).
+#[derive(Clone, Debug)]
+pub struct MeshRouting {
+    pub flow_target: Vec<i32>,
+    pub filled: Vec<f32>,
+    pub accumulation: Vec<f32>,
+    /// Vertex ids in the flood's pop order, `popped_count` of them.
+    pub pop_order: Vec<i32>,
+    pub popped_count: usize,
+}
+
+/// What a run gives back per vertex slot (`MeshErosionResult` in
+/// TypeScript, which explains each field).
+#[derive(Clone, Debug)]
+pub struct MeshErosionResult {
+    pub z: Vec<f32>,
+    pub routing: MeshRouting,
+    pub sediment_flux: Vec<f32>,
+    pub eroded_flux_m3: f64,
+    pub exported_flux_m3: f64,
+    pub index: EngineIndex,
+    pub cut_m3: Vec<f32>,
+    pub deposit_m3: Vec<f32>,
+    pub deposit_coarse_m3: Vec<f32>,
+    pub hill_net_m3: Vec<f32>,
+    pub uplift_m3: Vec<f32>,
+    pub deposit_craton: Vec<f32>,
+    pub deposit_hard: Vec<f32>,
+}
+
+/// The pool's scheme for a run (`PipelineOptions` in TypeScript): the
+/// cadence, whether each boundary refreshes from its own terrain, and the
+/// stencil worker count the tallies are summed over.
+#[derive(Clone, Copy, Debug)]
+pub struct MeshPipeline {
+    pub pipeline_depth: u32,
+    pub synchronous: bool,
+    pub stencil_workers: usize,
+}
+
+/// A run's options (`MeshErosionOptions` in TypeScript, less the
+/// callbacks).
+#[derive(Clone, Copy, Debug)]
+pub struct MeshErosionOptions<'a> {
+    pub age: u32,
+    pub routing_every: Option<u32>,
+    pub params: Option<ErosionSolverParams>,
+    pub pool: Option<MeshPipeline>,
+    pub frozen: Option<&'a [u8]>,
+}
+
+/// The progress chunks a run is taken in: the calm streak starts again at
+/// each, as in TypeScript.
+const PROGRESS_CHUNKS: u32 = 8;
+
+/// Erodes the mesh's terrain: `initial` and the forcing per vertex slot.
+/// On the pool's scheme when `pool` is set, the single solver's otherwise.
+pub fn run_mesh_erosion(
+    mesh: &mut PeriodicTriangulation,
+    initial: &[f32],
+    forcing: &ErosionForcing,
+    options: &MeshErosionOptions,
+) -> MeshErosionResult {
+    let params = options.params.unwrap_or(DEFAULT_SOLVER_PARAMS);
+    let ref_m = mesh.domain.metres_per_unit;
+    let index = build_mesh_engine_index(mesh, initial, params.shelf_band_km, ref_m, options.frozen);
+    let chunk_size = options.age.div_ceil(PROGRESS_CHUNKS).max(1);
+    let chunks = |run: &mut dyn FnMut(u32)| {
+        let mut done = 0;
+        while done < options.age {
+            let step = chunk_size.min(options.age - done);
+            run(step);
+            done += step;
+        }
+    };
+    if let Some(pool) = options.pool {
+        let mut engine = PipelinedErosionSolver::new(
+            index,
+            initial,
+            forcing,
+            params,
+            pool.pipeline_depth,
+            pool.synchronous,
+            pool.stencil_workers,
+        );
+        chunks(&mut |step| {
+            engine.run(step, |_, _| {});
+        });
+        let popped = engine.finalize_routing();
+        let tallies = engine.tallies;
+        let routing = engine.active_routing();
+        return collect(
+            &engine.index,
+            &engine.terrain,
+            routing,
+            popped,
+            initial,
+            tallies,
+        );
+    }
+    let mut engine = ErosionSolver::on_index(index, initial, forcing, params);
+    let routing_every = options.routing_every.unwrap_or(DEFAULT_ROUTING_EVERY);
+    chunks(&mut |step| {
+        engine.run(step, routing_every, |_, _| {});
+    });
+    engine.refresh_routing();
+    collect(
+        &engine.index,
+        &engine.terrain,
+        &engine.routing,
+        engine.popped_count,
+        initial,
+        engine.tallies,
+    )
+}
+
+fn collect(
+    index: &EngineIndex,
+    t: &Terrain,
+    r: &Routing,
+    popped: usize,
+    initial: &[f32],
+    tallies: Tallies,
+) -> MeshErosionResult {
+    let active = &index.active;
+    // Both classes: the consumers read one flux.
+    let flux: Vec<f32> = (0..index.active_count as usize)
+        .map(|a| (t.flux[a] as f64 + t.flux_coarse[a] as f64) as f32)
+        .collect();
+    let mut flow_target = vec![-1i32; index.cell_count as usize];
+    for (a, &target) in r.flow_target.iter().enumerate() {
+        if target >= 0 {
+            flow_target[active[a] as usize] = active[target as usize];
+        }
+    }
+    let pop_order: Vec<i32> = r.pop_order[..popped]
+        .iter()
+        .map(|&a| active[a as usize])
+        .collect();
+    MeshErosionResult {
+        z: expand_active(index, &t.z, initial),
+        routing: MeshRouting {
+            flow_target,
+            filled: expand_active(index, &r.filled, initial),
+            accumulation: expand_active_with(index, &r.accumulation, 0.0),
+            pop_order,
+            popped_count: popped,
+        },
+        sediment_flux: expand_active_with(index, &flux, 0.0),
+        eroded_flux_m3: tallies.eroded,
+        exported_flux_m3: tallies.exported,
+        cut_m3: expand_active_with(index, &t.cut_volume, 0.0),
+        deposit_m3: expand_active_with(index, &t.deposit_volume, 0.0),
+        deposit_coarse_m3: expand_active_with(index, &t.deposit_coarse, 0.0),
+        hill_net_m3: expand_active_with(index, &t.hill_net, 0.0),
+        uplift_m3: expand_active_with(index, &t.uplift_net, 0.0),
+        deposit_craton: expand_active_with(index, &t.deposit_craton, 0.0),
+        deposit_hard: expand_active_with(index, &t.deposit_hard, 0.0),
+        index: index.clone(),
+    }
 }

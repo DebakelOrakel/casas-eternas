@@ -8,5 +8,6 @@ pub mod interpolation;
 pub mod js;
 pub mod min_heap;
 pub mod rng;
+pub mod shared;
 pub mod toroidal;
 pub mod world_time;
