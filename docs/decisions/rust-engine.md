@@ -369,6 +369,15 @@ BUILDING since 2026-10-20:
   because TypeScript's sums are grouped by them: the exported volume, in
   the snapshot as `sedimentExportM3`, depends on how many workers the
   TypeScript pool has.
+- The erosion forcing: U (`elevation/upliftField`), the crust's K factors
+  (`elevation/erodibilityField`), the grid half of the assembly per node
+  and per raster cell with the controls' parameters
+  (`surface/erosionForcingFields`), and the coarse fields from the plate
+  simulation (`pipeline/erosionForcing.coarseForcingFields`; the raster
+  solver's assembly with the climate as water is not ported, only the
+  measuring scripts run it). Bit-equal on both shapes after 30 epochs of
+  the synthetic simulation, with flood basalts added; the epoch and the
+  forcing tests build that simulation from one module on each side.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and
