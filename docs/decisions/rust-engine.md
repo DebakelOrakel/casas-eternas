@@ -609,6 +609,15 @@ BUILDING since 2026-10-20:
   genesis, a step, the mantle, the rafts); `engine/scripts/smoke.mjs`
   grows an Archean on both shapes through both builds and the TypeScript
   engine and finds the mantle bit-equal in all three.
+- The hand-over, the coupled epoch and the tectonic state for the save
+  through the boundary: what crosses is a value tree (`Value`) in the
+  TypeScript types' shapes (`forms`: the snapshot with its keys in
+  `serializePlateSimulation`'s order, the events, the saved fields, the
+  mesh payload), which each binding turns into JavaScript objects and
+  typed arrays. The smoke test runs 60 Archean steps, the hand-over and
+  6 epochs on both shapes and finds all of it equal to TypeScript's in
+  both builds (about two minutes). The epoch takes the climate's levers;
+  the Planet stage's forcing does not cross yet (Earth's).
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

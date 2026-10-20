@@ -13,3 +13,5 @@ casas-engine-api = { path = "../casas-engine-api" }
 # Pinned exactly: the wasm-bindgen CLI that `make engine` runs must be the
 # same version (cargo install wasm-bindgen-cli --version 0.2.129 --locked).
 wasm-bindgen = "=0.2.129"
+# The JavaScript types the value trees become; the release made with it.
+js-sys = "=0.3.106"

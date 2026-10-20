@@ -43,6 +43,7 @@ name = "casas-engine-wasm"
 version = "0.1.0"
 dependencies = [
  "casas-engine-api",
+ "js-sys",
  "wasm-bindgen",
 ]
 
@@ -184,6 +185,17 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "js-sys"
+version = "0.3.106"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7883d941dae510fb2d978fc3fe018c71c9e2892fd38854de3e8b92c2e5ad9cc5"
+dependencies = [
+ "cfg-if",
+ "futures-util",
+ "wasm-bindgen",
 ]
 
 [[package]]
