@@ -9,6 +9,7 @@ pub mod mesh_erosion;
 pub mod mesh_hydrology;
 pub mod mesh_neighbourhood;
 pub mod mesh_raster;
+pub mod mesh_refine;
 pub mod mesh_relief;
 pub mod mesh_sampler;
 pub mod mesh_serial;

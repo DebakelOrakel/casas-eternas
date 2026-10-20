@@ -1,5 +1,6 @@
 //! `client/src/generator/surface/`.
 
+pub mod amplify;
 pub mod coastal;
 pub mod cover;
 pub mod erosion_engine;

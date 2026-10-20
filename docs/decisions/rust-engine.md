@@ -455,6 +455,13 @@ BUILDING since 2026-10-20:
   the job worker writes it to disk before the replay goes on, so its
   checkpoints are exact, but a snapshot kept in memory past the next epoch
   changes with the world. The Rust snapshot is a copy.
+- The first part of the level-1 bake: the mesh sampler with its dense
+  region (`mesh/meshSampler`), the amplification's functions
+  (`surface/amplify`) and a level's refinement (`mesh/meshRefine`: the
+  synthesis on both shapes, one rung from budget 4 to 2), bit-equal, the
+  walk's length included. `refineMeshLevel` copies the parent through the
+  codec in slot order, so its parent must have no dead slots; a level
+  bake's parent comes from the save and is compact.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and
