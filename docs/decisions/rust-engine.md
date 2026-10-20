@@ -410,6 +410,13 @@ BUILDING since 2026-10-20:
   the raster's owners per terrain again where TypeScript keeps them per
   mesh; the months are independent of each other and not yet run in
   parallel.
+- The surface stages, first part: the sediment column's layers
+  (`mesh/meshColumn`: open, deposit, cut, the bytes), the cover, the
+  surface's tuning, the ice on the mesh with its glacial cut and till
+  (`surface/glacial`) and the coast (`surface/coastal`: the shore, the
+  waves' exposure, the cut, the drift along the shore with its rings).
+  Bit-equal on a built mesh of each shape with a synthetic climate that
+  holds ice at the poles and a drift that deposits and exports.
 
 Open: the
 crates and the boundary to TypeScript, the Rust toolchain in make, CI and
