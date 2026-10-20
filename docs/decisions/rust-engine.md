@@ -666,6 +666,15 @@ BUILDING since 2026-10-20:
   graph, the water bodies, the coast reaches, the sediment basins). Its
   worlds have no river course and no dry floor: those keys and the v2's
   dry path are compared nowhere yet.
+- The ecology step through the boundary: the physics kept while only the
+  sliders move and dropped where the runtime's key changes (a render, a
+  climate, a hydrology's route, an epoch), the fields per climate cell
+  and per pixel, and a seasonal field's month. The base reads the pixels'
+  triangles from the stages' one cache, as the runtime's does. The smoke
+  test runs it on the annual climate and on the refinement with two sets
+  of sliders and four months, and in the restored worlds: equal to
+  TypeScript's in both builds. The migration does not cross: it is to
+  leave the generator.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

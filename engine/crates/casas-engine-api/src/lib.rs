@@ -200,7 +200,6 @@ impl World {
         sim.epoch_ma = TECTONIC_MA_PER_EPOCH;
         let coupled = Box::new(create_coupled_terrain(&mut sim, HISTORY_DEFAULTS.budget));
         self.era = Era::Plates { sim, coupled };
-        self.stages.pixel_triangles = None;
         self.stages.handed_over();
         Ok(())
     }
@@ -211,7 +210,7 @@ impl World {
         let options = epoch_options(controls)?;
         let (sim, coupled) = self.plates()?;
         let stats = step_coupled_epoch(sim, coupled, &options);
-        self.stages.pixel_triangles = None;
+        self.stages.epoched();
         Ok(Value::List(stats.events.iter().map(forms::event).collect()))
     }
 

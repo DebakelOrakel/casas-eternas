@@ -4,11 +4,14 @@
 //! call gives the body of the message the runtime posts.
 
 use casas_engine::climate::biomes::biome;
-use casas_engine::climate::climate_mesh::ClimateTerrain;
 use casas_engine::climate::climate_points::{ClimateCells, mean_land_runoff};
 use casas_engine::climate::refinement::refinement_fits;
 use casas_engine::climate::weather::WeatherParams;
 use casas_engine::climate::wind::CellVectors;
+use casas_engine::ecology::ecology_field::{
+    ECOLOGY_FIELDS, EcologyBase, EcologyField, EcologyParams, apply_ecology, ecology_fine,
+    ecology_month, ecology_rasters, encode_fine_field, is_seasonal_ecology_field, prepare_ecology,
+};
 use casas_engine::elevation::elevation_scale::meters_to_elevation;
 use casas_engine::mantle::mantle_field::rasterise_mantle;
 use casas_engine::mesh::mesh_hydrology::mesh_routing;
@@ -17,8 +20,8 @@ use casas_engine::mesh::periodic_delaunay::PeriodicTriangulation;
 use casas_engine::pipeline::coupled_epoch::CoupledTerrain;
 use casas_engine::pipeline::world_stages::{
     ClimateChain, HydrologyClimate, LandClimate, MeshHydrology, MeshTerrainRef, climate_chain,
-    hydrology_features, hydrology_threshold, id_raster, land_climate_of, pixel_land_of,
-    refined_climate_of, route_hydrology, triangles_of,
+    ecology_inputs_of, hydrology_features, hydrology_threshold, id_raster, land_climate_of,
+    pixel_land_of, refined_climate_of, route_hydrology, triangles_of,
 };
 use casas_engine::surface::coast_graph::CoastGraph;
 use casas_engine::surface::erosion_engine::DEFAULT_SOLVER_PARAMS;
@@ -33,7 +36,8 @@ use crate::value::ObjBuilder;
 use crate::{Era, EraError, Value, World, read, wrong};
 
 /// What the stages keep (the runtime's `lastRawElevations`,
-/// `pixelTriangles`, `climate` and `hydrology`).
+/// `pixelTriangles`, `climate`, `hydrology`, `ecologyBase` and
+/// `ecologyParams`).
 #[derive(Default)]
 pub(crate) struct Stages {
     /// The last render's raw elevation on the world raster.
@@ -43,6 +47,7 @@ pub(crate) struct Stages {
     pub(crate) pixel_triangles: Option<TriangleRaster>,
     climate: Option<Climate>,
     hydrology: Option<Hydrology>,
+    ecology: Option<Ecology>,
 }
 
 impl Stages {
@@ -52,23 +57,31 @@ impl Stages {
         self.elevation = Some(elevation);
         self.climate = None;
         self.hydrology = None;
+        self.ecology = None;
     }
 
     /// The hand-over: the climate was never the plates'; the last render
     /// stays until the next.
     pub(crate) fn handed_over(&mut self) {
+        self.pixel_triangles = None;
         self.climate = None;
         self.hydrology = None;
+        self.ecology = None;
+    }
+
+    /// An epoch: a new terrain mesh, and the ecology's key holds the
+    /// epoch.
+    pub(crate) fn epoched(&mut self) {
+        self.pixel_triangles = None;
+        self.ecology = None;
     }
 }
 
-/// The climate the step shows (the runtime's `ClimateResult`). The
-/// ecology reads the rest when it crosses.
-#[allow(dead_code)]
+/// The climate the step shows (the runtime's `ClimateResult`; its
+/// terrain only the migration reads, which does not cross).
 struct Climate {
     params: WeatherParams,
     cells: ClimateCells,
-    terrain: ClimateTerrain<'static>,
     mesh_temperature: Vec<f64>,
     mesh_wind: CellVectors,
     refined: bool,
@@ -85,8 +98,60 @@ struct Hydrology {
     coast: Option<CoastGraph>,
     sediment_basins: Vec<SedimentBasin>,
     ice: Option<Vec<f32>>,
-    #[allow(dead_code)]
     oases: Vec<SpringFeature>,
+}
+
+/// The ecology's physics and what it was computed on (the runtime's
+/// `ecologyBase`), with the sliders of the last run (`ecologyParams`).
+struct Ecology {
+    base: EcologyBase,
+    pixel_land: Vec<u8>,
+    params: Option<EcologyParams>,
+}
+
+/// The fields' ids (`ECOLOGY_FIELD_IDS`), in `ECOLOGY_FIELDS` order.
+const ECOLOGY_FIELD_IDS: [&str; 14] = [
+    "carryingCapacity",
+    "arable",
+    "fish",
+    "game",
+    "pasture",
+    "timber",
+    "salt",
+    "toolStone",
+    "copper",
+    "tin",
+    "iron",
+    "gold",
+    "silver",
+    "gems",
+];
+
+fn field_of(id: &str) -> Option<EcologyField> {
+    ECOLOGY_FIELD_IDS
+        .iter()
+        .position(|&f| f == id)
+        .map(|k| ECOLOGY_FIELDS[k])
+}
+
+/// `EcologyParams`: `{ carryingCapacity, concentration, provinceStrength,
+/// tinRarity?, weights? }`.
+fn ecology_params(v: &Value) -> Result<EcologyParams, EraError> {
+    let f = read::Fields::of(v, "the ecology's sliders")?;
+    let mut weights = [None; 14];
+    if let Some(w) = f.get("weights") {
+        let w = read::Fields::of(w, "the ecology's weights")?;
+        for (k, id) in ECOLOGY_FIELD_IDS.iter().enumerate() {
+            weights[k] = w.opt_num(id)?;
+        }
+    }
+    Ok(EcologyParams {
+        carrying_capacity: f.num("carryingCapacity")?,
+        concentration: f.num("concentration")?,
+        province_strength: f.num("provinceStrength")?,
+        weights,
+        tin_rarity: f.opt_num("tinRarity")?,
+    })
 }
 
 /// A biome or a Köppen class per node on the world raster, through the
@@ -165,7 +230,6 @@ fn climate_of(chain: ClimateChain, params: WeatherParams, land: LandClimate) -> 
         cells: chain.cells,
         mesh_temperature: chain.weather.temperature,
         mesh_wind: chain.weather.wind,
-        terrain: chain.terrain.into_owned(),
         refined: false,
         land,
     }
@@ -213,6 +277,7 @@ impl World {
         let data = chain_data(tri, &mut coupled.mesh, &chain, &land, &pixel_land, size);
         stages.climate = Some(climate_of(chain, params, land));
         stages.hydrology = None;
+        stages.ecology = None;
         Ok(data)
     }
 
@@ -281,13 +346,13 @@ impl World {
         stages.climate = Some(Climate {
             params: climate.params,
             cells: step.cells,
-            terrain: step.terrain.into_owned(),
             mesh_temperature: step.mesh_temperature,
             mesh_wind: step.mesh_wind,
             refined: true,
             land,
         });
         stages.hydrology = None;
+        stages.ecology = None;
         Ok(ObjBuilder::new()
             .put("refined", refined)
             .put("annual", annual)
@@ -311,6 +376,7 @@ impl World {
             pixel_triangles: tri,
             climate,
             hydrology,
+            ecology,
         } = stages;
         let terrain = elevation
             .as_deref()
@@ -375,6 +441,9 @@ impl World {
                 .put("saltFlat", Value::U8s(lakes.salt_flat.clone()))
                 .build();
             let cells = &climate.as_ref().unwrap().cells;
+            // The render gave the runtime a new raster and the climate
+            // may be the v2's: the ecology's key no longer holds.
+            *ecology = None;
             *hydrology = Some(Hydrology {
                 max_discharge: max_discharge_over_land(&on_mesh.discharge, &coupled.z),
                 mean_runoff: mean_land_runoff(&sim.meshes.shared, cells),
@@ -522,5 +591,144 @@ impl World {
             .put("render", render)
             .build();
         Ok(body)
+    }
+
+    /// The ecology step (the runtime's `handleEcologyRun`) under its
+    /// sliders (`EcologyParams`): the physics on the climate and the
+    /// hydrology when it ran, kept while only the sliders move; the body
+    /// of its `ecologyData`.
+    pub fn ecology(&mut self, params: &Value) -> Result<Value, EraError> {
+        let params = ecology_params(params)?;
+        let (sim, coupled, stages) = self.staged()?;
+        let Stages {
+            elevation,
+            pixel_triangles: tri,
+            climate,
+            hydrology,
+            ecology,
+        } = stages;
+        let raster = elevation
+            .as_deref()
+            .ok_or_else(|| wrong("the world has no render yet"))?;
+        let climate = climate
+            .as_ref()
+            .ok_or_else(|| wrong("the world has no climate yet"))?;
+        let (width, height) = (sim.width as usize, sim.height as usize);
+        routed(coupled);
+        if ecology.is_none() {
+            let om = hydrology.as_ref().map(|h| &h.on_mesh);
+            let land = om.map_or(&climate.land, |o| &o.land);
+            let world = ecology_inputs_of(
+                sim,
+                &coupled.mesh,
+                om,
+                hydrology.as_ref().map(|h| (h.max_discharge, &h.oases[..])),
+            );
+            let mut base = prepare_ecology(&mut coupled.mesh, &world.inputs(&coupled.z, land, om));
+            triangles_of(tri, &mut coupled.mesh, width, height);
+            base.raster = tri.take();
+            let dry = hydrology.as_ref().map(|h| &h.on_mesh.raster.dry_basin[..]);
+            *ecology = Some(Ecology {
+                base,
+                pixel_land: pixel_land_of(raster, dry),
+                params: None,
+            });
+        }
+        let eco = ecology.as_mut().unwrap();
+        let fields = apply_ecology(&eco.base, &mut coupled.mesh, &params);
+        let given: Vec<Option<&[f32]>> = fields.iter().map(|f| Some(&f[..])).collect();
+        let grid = sim.domain.grid(width, height);
+        if eco.base.raster.is_none() {
+            eco.base.raster = tri.take();
+        }
+        let rasters = ecology_rasters(
+            &mut eco.base,
+            &mut coupled.mesh,
+            &given,
+            &eco.pixel_land,
+            &grid,
+        );
+        // The pixels' triangles are the runtime's one cache, the base's
+        // and the stages' alike.
+        *tri = eco.base.raster.take();
+        eco.params = Some(params);
+        let list = |fields: Vec<Option<Vec<f32>>>, fine: bool| {
+            Value::List(
+                fields
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(k, f)| f.map(|f| (k, f)))
+                    .map(|(k, f)| {
+                        let data = if fine {
+                            Value::U8s(encode_fine_field(&f))
+                        } else {
+                            Value::F32s(f)
+                        };
+                        ObjBuilder::new()
+                            .put("id", Value::Str(ECOLOGY_FIELD_IDS[k].into()))
+                            .put("data", data)
+                            .build()
+                    })
+                    .collect(),
+            )
+        };
+        Ok(ObjBuilder::new()
+            .num("resX", rasters.res_x as f64)
+            .num("resY", rasters.res_y as f64)
+            .put("fields", list(rasters.fields, false))
+            .put(
+                "fine",
+                ObjBuilder::new()
+                    .num("resX", rasters.fine_res_x as f64)
+                    .num("resY", rasters.fine_res_y as f64)
+                    .put("fields", list(rasters.fine, true))
+                    .build(),
+            )
+            .build())
+    }
+
+    /// One month of a seasonal field on the last ecology run's physics and
+    /// sliders (the runtime's `handleEcologyMonth`): the body of its
+    /// `ecologyMonthData`, empty data when there is no such month.
+    pub fn ecology_month(&mut self, field: &str, month: u32) -> Result<Value, EraError> {
+        let id = field_of(field).ok_or_else(|| wrong("no such ecology field"))?;
+        let (sim, coupled, stages) = self.staged()?;
+        let (width, height) = (sim.width as usize, sim.height as usize);
+        let tri = &mut stages.pixel_triangles;
+        let data = match stages.ecology.as_mut() {
+            Some(eco) if eco.params.is_some() && is_seasonal_ecology_field(id) => {
+                let weight = eco.params.as_ref().unwrap().weights[id.index()].unwrap_or(1.0);
+                ecology_month(&eco.base, id, month as usize, weight).map(|nodes| {
+                    eco.base.raster = tri.take();
+                    let fine = ecology_fine(
+                        &mut eco.base,
+                        &mut coupled.mesh,
+                        &nodes,
+                        &eco.pixel_land,
+                        width,
+                        height,
+                        id == EcologyField::Fish,
+                    );
+                    *tri = eco.base.raster.take();
+                    fine
+                })
+            }
+            _ => None,
+        };
+        let (res_x, res_y) = if data.is_some() {
+            (width, height)
+        } else {
+            (0, 0)
+        };
+        Ok(ObjBuilder::new()
+            .put("field", Value::Str(field.into()))
+            .num("month", month)
+            .num("resX", res_x as f64)
+            .num("resY", res_y as f64)
+            .put(
+                "data",
+                Value::U8s(data.map_or_else(Vec::new, |d| encode_fine_field(&d))),
+            )
+            .build())
     }
 }

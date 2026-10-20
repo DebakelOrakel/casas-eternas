@@ -159,6 +159,15 @@ impl World {
         self.0.hydrology(given(&planet)).map(to_js).map_err(era)
     }
 
+    pub fn ecology(&mut self, params: &JsValue) -> Result<JsValue, JsError> {
+        self.0.ecology(&from_js(params)?).map(to_js).map_err(era)
+    }
+
+    #[wasm_bindgen(js_name = ecologyMonth)]
+    pub fn ecology_month(&mut self, field: &str, month: u32) -> Result<JsValue, JsError> {
+        self.0.ecology_month(field, month).map(to_js).map_err(era)
+    }
+
     #[wasm_bindgen(js_name = refineClimate)]
     pub fn refine_climate(&mut self, restored: &JsValue) -> Result<JsValue, JsError> {
         let restored = from_js(restored)?;
