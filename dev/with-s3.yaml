@@ -1,0 +1,56 @@
+# Local server with the worlds and the artifacts in S3 (the dev buckets) —
+# for measuring the jobs against the bucket's latencies.
+#
+#   make worker client docs
+#   ./casas-eternas start -t all --config dev/with-s3.yaml
+#
+# Paths are relative to the directory the server starts in (the project
+# root). The key pair is the dev identity's (deploy/aws/storage.yaml makes
+# it): two files, never values in this file. The buckets are made at the
+# first start when they are missing. A job worker reaches them over HTTPS,
+# not only the server (docs/operations/concepts.md, "Artifacts in S3").
+#
+# Every key here is also a flag and an environment variable; see
+# docs/operations/cli-reference.json.
+
+global:
+  listen: ":8080"
+  auth:
+    mode: none
+
+world:
+  storage:
+    type: s3
+    s3:
+      flavour: aws
+      region: eu-central-2
+      bucket: casas-eternas-dev-worlds
+      access-key-file: ./dev/secrets/aws-access-key
+      secret-key-file: ./dev/secrets/aws-secret-key
+  keep-revisions: 3
+
+artifacts:
+  storage:
+    type: s3
+    s3:
+      flavour: aws
+      region: eu-central-2
+      bucket: casas-eternas-dev-artifacts
+      access-key-file: ./dev/secrets/aws-access-key
+      secret-key-file: ./dev/secrets/aws-secret-key
+  # Empty: no cap. A size such as "20GB" evicts the least recently used.
+  cap: ""
+
+# The server's own state apart from the local `dir` server's (data/auth,
+# data/relay, data/jobs): its jobs name worlds the buckets do not hold.
+auth:
+  state-dir: ./data/s3/auth
+
+relay:
+  state-dir: ./data/s3/relay
+
+jobs:
+  state-dir: ./data/s3/jobs
+  # Empty: the job-worker.mjs beside the binary (make worker).
+  worker: ""
+  max-concurrent: 6
