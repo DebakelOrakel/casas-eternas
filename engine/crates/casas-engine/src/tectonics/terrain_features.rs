@@ -41,6 +41,10 @@ pub struct TerrainFeature {
     pub volcanic: Option<bool>,
     /// The boundary's shortening rate, km/Myr; None reads as 0.
     pub shortening_km_per_myr: Option<f64>,
+    /// The shortening was given before `volcanic`: TypeScript's object
+    /// then holds its key first, and the save writes it first. No
+    /// computation reads it.
+    pub shortening_first: bool,
 }
 
 const MERGE_RADIUS_M: f64 = 312_000.0;
@@ -116,6 +120,7 @@ pub fn find_or_create_feature_index(
         epochs_since_deposit: 0.0,
         volcanic: None,
         shortening_km_per_myr: None,
+        shortening_first: false,
     });
     features.len() - 1
 }

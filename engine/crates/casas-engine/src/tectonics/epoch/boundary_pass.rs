@@ -547,6 +547,9 @@ pub fn run_boundary_pass(sim: &mut PlateSimulation) -> BoundaryPassResult {
         let f = &mut sim.features[fi];
         f.thickness += sum / count;
         f.epochs_since_deposit = 0.0;
+        if f.shortening_km_per_myr.is_none() && f.volcanic.is_none() {
+            f.shortening_first = true;
+        }
         f.shortening_km_per_myr = Some(
             f.shortening_km_per_myr.unwrap_or(0.0)
                 + (1.0 - shortening_keep) * (sum / count) / (T.uplift_per_km * epoch_ma),

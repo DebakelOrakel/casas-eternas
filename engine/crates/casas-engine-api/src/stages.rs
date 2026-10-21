@@ -4,7 +4,7 @@
 //! call gives the body of the message the runtime posts.
 
 use casas_engine::climate::biomes::biome;
-use casas_engine::climate::climate_points::{ClimateCells, mean_land_runoff};
+use casas_engine::climate::climate_points::{ClimateCells, climate_cell_values, mean_land_runoff};
 use casas_engine::climate::refinement::refinement_fits;
 use casas_engine::climate::weather::WeatherParams;
 use casas_engine::climate::wind::CellVectors;
@@ -26,7 +26,7 @@ use casas_engine::pipeline::world_stages::{
 use casas_engine::surface::coast_graph::CoastGraph;
 use casas_engine::surface::erosion_engine::DEFAULT_SOLVER_PARAMS;
 use casas_engine::surface::hydrogeology::SpringFeature;
-use casas_engine::surface::hydrology::{SURFACE_ICE, max_discharge_over_land};
+use casas_engine::surface::hydrology::{SURFACE_ICE, discharge_to_m3s, max_discharge_over_land};
 use casas_engine::surface::river_graph::{RiverGraph, river_polylines_from_graph};
 use casas_engine::surface::sediment_basins::SedimentBasin;
 use casas_engine::tectonics::plate_simulation_types::PlateSimulation;
@@ -70,10 +70,16 @@ impl Stages {
     }
 
     /// An epoch: a new terrain mesh, and the ecology's key holds the
-    /// epoch.
+    /// epoch. The climate and the hydrology stay, on the mesh before.
     pub(crate) fn epoched(&mut self) {
         self.pixel_triangles = None;
         self.ecology = None;
+        if let Some(c) = &mut self.climate {
+            c.current = false;
+        }
+        if let Some(h) = &mut self.hydrology {
+            h.current = false;
+        }
     }
 }
 
@@ -86,6 +92,9 @@ struct Climate {
     mesh_wind: CellVectors,
     refined: bool,
     land: LandClimate,
+    /// `land` is at the nodes of the terrain mesh now (the runtime's
+    /// `land.mesh === meshTerrain.mesh`).
+    current: bool,
 }
 
 /// The hydrology the step shows (the runtime's `HydrologyResult`): the
@@ -99,6 +108,8 @@ struct Hydrology {
     sediment_basins: Vec<SedimentBasin>,
     ice: Option<Vec<f32>>,
     oases: Vec<SpringFeature>,
+    /// The route is on the terrain mesh now.
+    current: bool,
 }
 
 /// The ecology's physics and what it was computed on (the runtime's
@@ -232,6 +243,7 @@ fn climate_of(chain: ClimateChain, params: WeatherParams, land: LandClimate) -> 
         mesh_wind: chain.weather.wind,
         refined: false,
         land,
+        current: true,
     }
 }
 
@@ -350,6 +362,7 @@ impl World {
             mesh_wind: step.mesh_wind,
             refined: true,
             land,
+            current: true,
         });
         stages.hydrology = None;
         stages.ecology = None;
@@ -453,6 +466,7 @@ impl World {
                 sediment_basins: Vec::new(),
                 ice: None,
                 oases: Vec::new(),
+                current: true,
             });
         }
         let result = hydrology.as_mut().unwrap();
@@ -728,6 +742,79 @@ impl World {
             .put(
                 "data",
                 Value::U8s(data.map_or_else(Vec::new, |d| encode_fine_field(&d))),
+            )
+            .build())
+    }
+
+    /// The climate's cells as the save holds them (the runtime's
+    /// `climatePayload`, `ClimateCellValues`), or null before the climate
+    /// ran.
+    pub fn climate_payload(&mut self) -> Result<Value, EraError> {
+        let Some(c) = &self.stages.climate else {
+            return Ok(Value::Null);
+        };
+        let v = climate_cell_values(&c.cells);
+        Ok(ObjBuilder::new()
+            .num("cells", v.cells as f64)
+            .num("spacingM", v.spacing_m)
+            .put("seaLevelTemperature", Value::F32s(v.sea_level_temperature))
+            .put("precipitation", Value::F32s(v.precipitation))
+            .put("seasonalAmplitude", Value::F32s(v.seasonal_amplitude))
+            .put("monsoonIndex", Value::F32s(v.monsoon_index))
+            .build())
+    }
+
+    /// The land fields per node of the terrain mesh as the save holds them
+    /// (the runtime's `landPayload`): the biome (the hydrology's when it
+    /// ran, else the climate's), the Köppen class, and of the hydrology the
+    /// water table, the discharge in m³/s and the water body per node,
+    /// null before it ran. Null when no climate is at the mesh's nodes.
+    pub fn land_payload(&mut self) -> Result<Value, EraError> {
+        let Era::Plates { coupled, .. } = &self.era else {
+            return Ok(Value::Null);
+        };
+        let Some(climate) = self.stages.climate.as_ref() else {
+            return Ok(Value::Null);
+        };
+        let om = self
+            .stages
+            .hydrology
+            .as_ref()
+            .filter(|h| h.current)
+            .map(|h| &h.on_mesh);
+        if om.is_none() && !climate.current {
+            return Ok(Value::Null);
+        }
+        let land = om.map_or(&climate.land, |o| &o.land);
+        let count = coupled.mesh.alive_vertices as usize;
+        let null_or = |v: Option<Value>| v.unwrap_or(Value::Null);
+        let unit = discharge_to_m3s(1.0, coupled.mesh.domain.metres_per_unit);
+        let biome = om.and_then(|o| o.biome.as_ref()).unwrap_or(&land.biome);
+        Ok(ObjBuilder::new()
+            .num("count", count as f64)
+            .put("biome", Value::U8s(biome[..count].to_vec()))
+            .put("koppen", Value::U8s(land.koppen[..count].to_vec()))
+            .put(
+                "waterTable",
+                null_or(
+                    om.and_then(|o| o.water_table.as_ref())
+                        .map(|w| Value::F32s(w[..count].to_vec())),
+                ),
+            )
+            .put(
+                "discharge",
+                null_or(om.map(|o| {
+                    Value::F32s(
+                        o.discharge[..count]
+                            .iter()
+                            .map(|&d| (d as f64 * unit) as f32)
+                            .collect(),
+                    )
+                })),
+            )
+            .put(
+                "lakeBody",
+                null_or(om.map(|o| Value::I32s(o.lakes.body[..count].to_vec()))),
             )
             .build())
     }

@@ -713,6 +713,41 @@ BUILDING since 2026-10-20:
   states. Nothing imports the loaders yet, so the client's build does not
   need `make engine` until the switch; from then on it does, and the
   Docker image needs the Rust toolchain.
+- The save's climate and land fields through the boundary:
+  `climatePayload` gives the climate's cells, `landPayload` the land
+  fields at the terrain mesh's nodes as the runtime's `landPayload` gives
+  them (the hydrology's while current, else the climate's, else null).
+  The smoke test compares both for the save, the restored world and the
+  world after the next epoch.
+- A terrain feature's keys in TypeScript's order. TypeScript writes
+  `volcanic` and `shorteningKmPerMyr` in the order of their first
+  assignment, so the engine keeps that order on the feature
+  (`shortening_first`); no computation reads it. The save's `state.json`
+  is now equal as text, not only as values. The smoke test compares the
+  snapshots as JSON text; before, it sorted the keys and did not see it.
+- THE FULL COMPARISON on a real world (`engine/scripts/realWorld.mjs`):
+  Morvane (`b39d5739`, sphere 2048×1024, 308 steps, pipeline v11). The
+  replay at level 0 lands on the save bit for bit (`state.json` as text,
+  the mesh of 364 981 nodes, the ocean age, the mantle, the lattice) in
+  240 s. Restored from the save, the stages give the save's climate,
+  refinement, land fields and tables (1660 water bodies, 2276 reaches,
+  1264 coast reaches, 2702 sediment basins); restore, render, climate,
+  refinement and hydrology take 4.5 s together. Level 1 by replay is the
+  job worker's artifact in every file (8 342 735 nodes, 17 354 water
+  bodies, 8580 reaches): 1 h 38 min native on one thread, 18.5 GB
+  maximum resident set. The TypeScript task took 4 h 58 min from start to
+  end with one take-over; its `bakeMs` (2 h 19 min) counts only the run
+  after the take-over. So the engine is about three times as fast at
+  level 1. (A first run took 3 h 30 min while other processes kept about
+  six of the machine's ten cores busy; the bytes were the same.)
+  The tile levels (`engine/scripts/realTiles.mjs`): the engine's plan on
+  the stored level 1 has the 12 262 tiles the store holds (2961 of level
+  2, 9301 of level 3). 100 tiles of each level, baked again on one baker
+  from the stored level 1, the stored tiles above and the stored upstream
+  outflow, are the job worker's in every file (83 and 91 of them with
+  upstream). The bakes take 0.26 s a level-2 tile and 0.58 s a level-3
+  tile; the stored `bakeMs` is 0.36 s and 1.98 s, but it counts the
+  worker's reads of the tiles it waits for too.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

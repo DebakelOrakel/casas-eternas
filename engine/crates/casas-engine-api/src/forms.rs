@@ -69,7 +69,7 @@ pub fn raft(r: &Raft) -> Value {
 }
 
 fn feature(f: &TerrainFeature) -> Value {
-    ObjBuilder::new()
+    let b = ObjBuilder::new()
         .num("x", f.x)
         .num("y", f.y)
         .num("thickness", f.thickness)
@@ -85,6 +85,7 @@ fn feature(f: &TerrainFeature) -> Value {
                 .into(),
             ),
         )
+        .put("subsides", Value::Bool(f.subsides))
         .num("plateA", f.plate_a)
         .num("plateB", f.plate_b)
         .put(
@@ -94,11 +95,15 @@ fn feature(f: &TerrainFeature) -> Value {
                 MovesWith::Both => Value::Str("both".into()),
             },
         )
-        .put("subsides", Value::Bool(f.subsides))
-        .num("epochsSinceDeposit", f.epochs_since_deposit)
-        .opt("volcanic", f.volcanic.map(Value::Bool))
-        .opt_num("shorteningKmPerMyr", f.shortening_km_per_myr)
-        .build()
+        .num("epochsSinceDeposit", f.epochs_since_deposit);
+    // The optional keys in the order TypeScript gave them.
+    let volcanic = |b: ObjBuilder| b.opt("volcanic", f.volcanic.map(Value::Bool));
+    let shortening = |b: ObjBuilder| b.opt_num("shorteningKmPerMyr", f.shortening_km_per_myr);
+    if f.shortening_first {
+        volcanic(shortening(b)).build()
+    } else {
+        shortening(volcanic(b)).build()
+    }
 }
 
 fn plume(p: &Plume) -> Value {

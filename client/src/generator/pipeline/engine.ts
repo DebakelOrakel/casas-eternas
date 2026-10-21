@@ -17,6 +17,7 @@ import type { ArcheanSnapshot } from '../archean/archeanSnapshot'
 import type { PlateSimulationSnapshot, SimEvent } from '../tectonics/plateSimulationTypes'
 import type { SavedField } from '../fields/fieldMesh'
 import type { WeatherParams } from '../climate/weather'
+import type { ClimateCellValues } from '../climate/climatePoints'
 import type { RefinedClimate, RefinedReliability, RefinedStorms } from '../climate/refinement'
 import type { RefinedClimateChart } from '../climate/climateChart'
 import type { PlanetForcing } from '../planet/planetForcing'
@@ -53,6 +54,17 @@ export interface EngineMeshPayload {
   sedimentFlux?: Float32Array
   preErosionZ?: Float32Array
   ice?: Float32Array
+}
+
+// The land fields per node of the terrain mesh as the save holds them
+// (`LandPayload` with its arrays); the hydrology's null before it ran.
+export interface EngineLandPayload {
+  count: number
+  biome: Uint8Array
+  koppen: Uint8Array
+  waterTable: Float32Array | null
+  discharge: Float32Array | null
+  lakeBody: Int32Array | null
 }
 
 // The detection lattice's state (the plate simulation's `lattice*`).
@@ -160,6 +172,10 @@ export interface EngineWorld {
   // The mantle's and the ocean age's saved values, in this order.
   savedFields(): [SavedField, SavedField]
   meshPayload(): EngineMeshPayload
+  // The climate's cells, null before the climate ran; the land fields,
+  // null while no climate is at the terrain mesh's nodes.
+  climatePayload(): ClimateCellValues | null
+  landPayload(): EngineLandPayload | null
   // The world stages.
   climate(params: ClimateParams): ClimateBody
   refineClimate(restored: RefinedClimate | null): { refined: ClimateRefinedBody; annual: ClimateBody }

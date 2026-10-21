@@ -213,6 +213,10 @@ fn feature(v: &Value) -> ReadResult<TerrainFeature> {
         epochs_since_deposit: f.num("epochsSinceDeposit")?,
         volcanic: f.opt_bool("volcanic")?,
         shortening_km_per_myr: f.opt_num("shorteningKmPerMyr")?,
+        shortening_first: f
+            .keys()
+            .find(|&k| k == "volcanic" || k == "shorteningKmPerMyr")
+            == Some("shorteningKmPerMyr"),
     })
 }
 

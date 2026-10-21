@@ -255,6 +255,7 @@ fn field(name: &str, d: Domain, seed: u32) {
             epochs_since_deposit: 0.0,
             volcanic: None,
             shortening_km_per_myr: None,
+            shortening_first: false,
         });
     }
     let warp_seed = 2900000000.0 + seed as f64;

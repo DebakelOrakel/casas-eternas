@@ -160,6 +160,16 @@ impl World {
     }
 
     #[napi]
+    pub fn climate_payload(&mut self) -> napi::Result<Tree> {
+        self.0.climate_payload().map(Tree).map_err(era)
+    }
+
+    #[napi]
+    pub fn land_payload(&mut self) -> napi::Result<Tree> {
+        self.0.land_payload().map(Tree).map_err(era)
+    }
+
+    #[napi]
     pub fn render(&mut self, scale: u32) -> napi::Result<Tree> {
         self.0.render(scale).map(Tree).map_err(era)
     }

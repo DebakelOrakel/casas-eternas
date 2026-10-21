@@ -43,7 +43,7 @@ const { rasteriseNodeField, triangleRaster } = await L('/src/generator/mesh/mesh
 const WS = await L('/src/generator/pipeline/worldStages.ts')
 const { meshRouting } = await L('/src/generator/mesh/meshHydrology.ts')
 const { Biome } = await L('/src/generator/climate/biomes.ts')
-const { maxDischargeOverLand, SURFACE_ICE } = await L('/src/generator/surface/hydrology.ts')
+const { dischargeToM3s, maxDischargeOverLand, SURFACE_ICE } = await L('/src/generator/surface/hydrology.ts')
 const { climateAtPoints, climateCellsFromWeather, meanLandRunoff, meshPoints } = await L('/src/generator/climate/climatePoints.ts')
 const { riverPolylinesFromGraph, serializeRiverGraph } = await L('/src/generator/surface/riverGraph.ts')
 const { metersToElevation } = await L('/src/generator/elevation/elevationScale.ts')
@@ -276,6 +276,29 @@ const tsEcologyMonth = (t, field, month) => {
   const data = nodes ? E.ecologyFine(eco.base, nodes, eco.pixelLand, width, height, field === 'fish') : null
   return { field, month, resX: data ? width : 0, resY: data ? height : 0, data: data ? E.encodeFineField(data) : new Uint8Array(0) }
 }
+// The save's climate and land fields as the runtime's serializeWorld
+// makes them (climatePayload, landPayload): the land fields only while
+// they are at the nodes of the terrain mesh now.
+const tsSaveFields = (t) => {
+  if (!t.climate) return [null, null]
+  const mesh = t.coupled.mesh
+  const om = t.hydrology && t.hydrology.onMesh.land.mesh === mesh ? t.hydrology.onMesh : null
+  const land = om ? om.land : t.climate.land
+  if (land.mesh !== mesh) return [climateCellValues(t.climate.cells), null]
+  const count = mesh.aliveVertices
+  let discharge = null
+  if (om) {
+    const unit = dischargeToM3s(1, mesh.domain.metresPerUnit)
+    discharge = new Float32Array(count)
+    for (let v = 0; v < count; v++) discharge[v] = om.discharge[v] * unit
+  }
+  return [climateCellValues(t.climate.cells), {
+    count, biome: (om?.biome ?? land.biome).slice(0, count), koppen: land.koppen.slice(0, count),
+    waterTable: om?.waterTable ? om.waterTable.slice(0, count) : null, discharge, lakeBody: om ? om.lakes.body.slice(0, count) : null,
+  }]
+}
+const saveFields = (w) => [w.climatePayload(), w.landPayload()]
+
 const SLIDERS = [
   { carryingCapacity: 100, concentration: 0, provinceStrength: 0.45 },
   { carryingCapacity: 140, concentration: 30, provinceStrength: 0.8, tinRarity: 0.6, weights: { fish: 1.5, gold: 0.5, copper: 1.2 } },
@@ -381,9 +404,11 @@ for (const shape of ['torus', 'sphere']) {
   const months = agreeEcology(`${shape}: the ecology on the refinement`, t, worlds)
 
   // The tectonic save.
+  agree(`${shape}: the save's climate and land fields`, tsSaveFields(t), worlds, saveFields)
   const snapshot = serializePlateSimulation(sim)
   agree(`${shape}: the snapshot`, snapshot, worlds, (w) => w.snapshot())
-  if (Object.keys(worlds.native.snapshot()).join() !== Object.keys(snapshot).join()) fail(`${shape}: the snapshot's keys come in another order`)
+  // state.json as the world layer writes it: the keys in TypeScript's order too.
+  each(worlds, (w) => { if (JSON.stringify(w.snapshot()) !== JSON.stringify(snapshot)) fail(`${shape}: the snapshot's JSON differs`) })
   const mantle = savedMantle(sim.mantle, sim.domain)
   const oceanAge = savedOceanAge(sim.oceanAge, sim.domain)
   agree(`${shape}: the saved fields`, [mantle, oceanAge], worlds, (w) => w.savedFields())
@@ -410,11 +435,15 @@ for (const shape of ['torus', 'sphere']) {
   agree(`${shape}: the saved refinement`, tsRefine(t, refinement.refined.refined), all, (w) => w.refineClimate(refinement.refined.refined))
   agreeHydrology(`${shape}: the restored world's hydrology`, tsHydrology(t, planet ?? undefined), all, planet)
   agreeEcology(`${shape}: the restored world's ecology`, t, all)
+  agree(`${shape}: the restored world's climate and land fields`, tsSaveFields(t), all, saveFields)
   await CE.stepCoupledEpoch(sim, coupled, optionsOf(controls))
   each(restored, (w) => w.epoch(controls))
   each(worlds, (w) => w.epoch(controls))
   agree(`${shape}: the uninterrupted world's next epoch`, [serializePlateSimulation(sim), meshPayloadOf(coupled)], worlds, (w) => [w.snapshot(), w.meshPayload()])
   agree(`${shape}: the restored world's next epoch`, [serializePlateSimulation(sim), meshPayloadOf(coupled)], restored, (w) => [w.snapshot(), w.meshPayload()])
+  each(all, (w) => { if (JSON.stringify(w.snapshot()) !== JSON.stringify(serializePlateSimulation(sim))) fail(`${shape}: the next epoch's snapshot JSON differs`) })
+  // The land fields are of the mesh before the epoch now.
+  agree(`${shape}: the climate and land fields after the epoch`, tsSaveFields(t), all, saveFields)
   restored.wasm.free()
   worlds.wasm.free()
   console.log(`engine: ${shape} — ${STEPS} Archean steps (${ts.rafts.length} rafts) saved and restored; the hand-over, ${EPOCHS} epochs (${eventCount} events, ${mesh.count} nodes) saved and restored; the climate, the hydrology (${water}), the ecology (${months} of 4 months given): native, wasm and TypeScript agree`)

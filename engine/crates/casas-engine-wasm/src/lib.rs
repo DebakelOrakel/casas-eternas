@@ -146,6 +146,16 @@ impl World {
         self.0.mesh_payload().map(to_js).map_err(era)
     }
 
+    #[wasm_bindgen(js_name = climatePayload)]
+    pub fn climate_payload(&mut self) -> Result<JsValue, JsError> {
+        self.0.climate_payload().map(to_js).map_err(era)
+    }
+
+    #[wasm_bindgen(js_name = landPayload)]
+    pub fn land_payload(&mut self) -> Result<JsValue, JsError> {
+        self.0.land_payload().map(to_js).map_err(era)
+    }
+
     pub fn render(&mut self, scale: u32) -> Result<JsValue, JsError> {
         self.0.render(scale).map(to_js).map_err(era)
     }

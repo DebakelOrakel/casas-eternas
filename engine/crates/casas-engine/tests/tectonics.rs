@@ -374,6 +374,7 @@ fn scenario(name: &str, d: Domain, seed: u32) {
         epochs_since_deposit: 0.0,
         volcanic: None,
         shortening_km_per_myr: None,
+        shortening_first: false,
     };
     features.push(extra(10.0, 20.0, 5.0, -1));
     features.push(extra(30.0, 40.0, -7.0, -2));

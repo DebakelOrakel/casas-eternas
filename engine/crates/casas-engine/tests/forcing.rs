@@ -125,6 +125,7 @@ fn run(name: &str, d: Domain, seed: u32) {
             epochs_since_deposit: 0.0,
             volcanic: None,
             shortening_km_per_myr: None,
+            shortening_first: false,
         });
     }
     let current = world_epoch(sim.archean_epochs, sim.epoch);
