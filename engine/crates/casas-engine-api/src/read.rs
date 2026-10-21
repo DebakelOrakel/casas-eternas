@@ -1,15 +1,24 @@
 //! Value trees from TypeScript read back into the engine's types: a save's
 //! state (`PlateSimulationSnapshot`, `ArcheanSnapshot`, `SavedField`, the
-//! mesh payload, `RefinedClimate`) and a call's controls. The inverse of `forms`; a key a
+//! mesh payload, `RefinedClimate`, a level's `RiverGraph`, the saved
+//! climate) and a call's controls. The inverse of `forms`; a key a
 //! save written before a field existed leaves out reads as the
 //! TypeScript reader reads it (absent, or its default).
 
 use casas_engine::archean::archean_snapshot::ArcheanSnapshot;
+use casas_engine::climate::climate_points::ClimateCellValues;
 use casas_engine::climate::refinement::{RefinedClimate, RefinedReliability, RefinedStorms};
 use casas_engine::climate::weather::WeatherParams;
 use casas_engine::crust::raft_types::{Raft, RaftBlob, Suture};
 use casas_engine::fields::field_mesh::SavedField;
+use casas_engine::mesh::mesh_tile::TileId;
 use casas_engine::planet::planet_forcing::PlanetForcing;
+use casas_engine::surface::hydrogeology::SpringFeature;
+use casas_engine::surface::hydrology::{WaterBody, WaterKind};
+use casas_engine::surface::river_course::{RiverCourse, RiverPattern};
+use casas_engine::surface::river_graph::{
+    RiverGraph, RiverNode, RiverNodeKind, RiverReach, RiverReachKind, RiverRegime,
+};
 use casas_engine::tectonics::plate_motion::{EulerMotion, PlateMotion, RigidMotion};
 use casas_engine::tectonics::plate_seeds::PlateSeed;
 use casas_engine::tectonics::plate_simulation_types::{
@@ -41,6 +50,11 @@ impl<'a> Fields<'a> {
             .find(|(k, _)| k == key)
             .map(|(_, v)| v)
             .filter(|v| !matches!(v, Value::Null))
+    }
+
+    /// The object's keys, in order.
+    pub fn keys(&self) -> impl Iterator<Item = &'a str> {
+        self.0.iter().map(|(k, _)| k.as_ref())
     }
 
     fn need(&self, key: &str) -> ReadResult<&'a Value> {
@@ -382,5 +396,197 @@ pub fn refined_climate(v: &Value) -> ReadResult<RefinedClimate> {
             thunder: sa("thunder")?,
         },
         solves: None,
+    })
+}
+
+fn str_of<'a>(f: &Fields<'a>, key: &str) -> ReadResult<&'a str> {
+    match f.need(key)? {
+        Value::Str(s) => Ok(s),
+        _ => Err(format!("{}.{key} is not a string", f.1)),
+    }
+}
+
+/// A list of numbers.
+fn nums(v: &[Value], what: &str) -> ReadResult<Vec<f64>> {
+    v.iter()
+        .map(|x| match x {
+            Value::Num(n) => Ok(*n),
+            _ => Err(format!("{what} holds a value that is not a number")),
+        })
+        .collect()
+}
+
+/// `WaterBody`.
+pub fn water_body(v: &Value) -> ReadResult<WaterBody> {
+    let f = Fields::of(v, "a water body")?;
+    Ok(WaterBody {
+        id: f.num("id")? as usize,
+        kind: match str_of(&f, "kind")? {
+            "lake" => WaterKind::Lake,
+            "terminal" => WaterKind::Terminal,
+            "dry" => WaterKind::Dry,
+            k => return Err(format!("no water body kind {k}")),
+        },
+        level: f.num("level")?,
+        spill: f.num("spill")?,
+        floor: f.num("floor")?,
+        seed_x: f.num("seedX")?,
+        seed_y: f.num("seedY")?,
+        outlet_x: f.num("outletX")?,
+        outlet_y: f.num("outletY")?,
+        cells: f.num("cells")?,
+        frozen: f.bool("frozen")?,
+    })
+}
+
+fn river_node(v: &Value) -> ReadResult<RiverNode> {
+    let f = Fields::of(v, "a river node")?;
+    Ok(RiverNode {
+        id: f.num("id")? as usize,
+        kind: match str_of(&f, "kind")? {
+            "source" => RiverNodeKind::Source,
+            "junction" => RiverNodeKind::Junction,
+            "mouth" => RiverNodeKind::Mouth,
+            "inlet" => RiverNodeKind::Inlet,
+            "outlet" => RiverNodeKind::Outlet,
+            k => return Err(format!("no river node kind {k}")),
+        },
+        cell: f.num("cell")? as usize,
+        x: f.num("x")?,
+        y: f.num("y")?,
+        body: f.num("body")? as i32,
+        catchment_cells: f.num("catchmentCells")?,
+    })
+}
+
+fn river_reach(v: &Value) -> ReadResult<RiverReach> {
+    let f = Fields::of(v, "a river reach")?;
+    Ok(RiverReach {
+        id: f.num("id")? as usize,
+        kind: match str_of(&f, "kind")? {
+            "river" => RiverReachKind::River,
+            "lake" => RiverReachKind::Lake,
+            k => return Err(format!("no river reach kind {k}")),
+        },
+        from: f.num("from")? as usize,
+        to: f.num("to")? as usize,
+        cell_start: f.num("cellStart")? as usize,
+        cell_count: f.num("cellCount")? as usize,
+        discharge_in: f.num("dischargeIn")?,
+        discharge_out: f.num("dischargeOut")?,
+        width_px: f.num("widthPx")?,
+        length_km: f.num("lengthKm")?,
+        drop_m: f.num("dropM")?,
+        slope: f.num("slope")?,
+        sediment_m3: f.num("sedimentM3")?,
+        bank: f.num("bank")? as i32,
+        order: f.num("order")? as i32,
+        regime: match str_of(&f, "regime")? {
+            "perennial" => RiverRegime::Perennial,
+            "intermittent" => RiverRegime::Intermittent,
+            "ephemeral" => RiverRegime::Ephemeral,
+            k => return Err(format!("no river regime {k}")),
+        },
+        runoff_out: f.num("runoffOut")?,
+        spring_fed: f.bool("springFed")?,
+    })
+}
+
+fn spring(v: &Value) -> ReadResult<SpringFeature> {
+    let f = Fields::of(v, "a spring")?;
+    Ok(SpringFeature {
+        id: f.num("id")? as usize,
+        cell: f.num("cell")? as usize,
+        x: f.num("x")?,
+        y: f.num("y")?,
+        elevation: f.num("elevation")?,
+        oasis: f.bool("oasis")?,
+    })
+}
+
+fn course(v: &Value) -> ReadResult<RiverCourse> {
+    let f = Fields::of(v, "a river course")?;
+    let lines = |key: &str| -> ReadResult<Vec<Vec<f32>>> {
+        f.list(key)?
+            .iter()
+            .map(|l| Ok(f32s(l, "a course's line")?.to_vec()))
+            .collect()
+    };
+    Ok(RiverCourse {
+        reach: f.num("reach")? as usize,
+        pattern: match str_of(&f, "pattern")? {
+            "straight" => RiverPattern::Straight,
+            "meandering" => RiverPattern::Meandering,
+            "braided" => RiverPattern::Braided,
+            "anastomosing" => RiverPattern::Anastomosing,
+            k => return Err(format!("no river pattern {k}")),
+        },
+        discharge_m3s: f.num("dischargeM3s")?,
+        width_m: f.num("widthM")?,
+        depth_m: f.num("depthM")?,
+        slope: f.num("slope")?,
+        bank_strength: f.num("bankStrength")?,
+        lines: lines("lines")?,
+        line_width: nums(f.list("lineWidth")?, "a course's line widths")?,
+        sinuosity: f.num("sinuosity")?,
+        belt_width_m: f.num("beltWidthM")?,
+        oxbows: lines("oxbows")?,
+        lobe_ages: nums(f.list("lobeAges")?, "a course's lobe ages")?
+            .into_iter()
+            .map(|a| a as u32)
+            .collect(),
+    })
+}
+
+/// `RiverGraph` on the mesh, as `deserializeRiverGraph` gives it.
+pub fn river_graph(v: &Value) -> ReadResult<RiverGraph> {
+    let f = Fields::of(v, "a river graph")?;
+    if f.opt_str("substrate")?.as_deref() != Some("mesh") {
+        return Err("the river graph is not on the mesh".into());
+    }
+    Ok(RiverGraph {
+        width: f.num("width")?,
+        height: f.num("height")?,
+        nodes: each(f.list("nodes")?, river_node)?,
+        reaches: each(f.list("reaches")?, river_reach)?,
+        cells: match f.need("cells")? {
+            Value::I32s(a) => a.clone(),
+            _ => return Err("the river graph's cells are not an Int32Array".into()),
+        },
+        cell_x: f32s(f.need("cellX")?, "the river graph's cellX")?.to_vec(),
+        cell_y: f32s(f.need("cellY")?, "the river graph's cellY")?.to_vec(),
+        bodies: each(f.list("bodies")?, water_body)?,
+        courses: f
+            .opt_list("courses")?
+            .map(|c| each(c, course))
+            .transpose()?,
+        springs: f
+            .opt_list("springs")?
+            .map(|s| each(s, spring))
+            .transpose()?,
+    })
+}
+
+/// `ClimateCellValues`: the save's climate per cell of its field mesh.
+pub fn climate_cell_values(v: &Value) -> ReadResult<ClimateCellValues> {
+    let f = Fields::of(v, "the saved climate")?;
+    let a = |k: &str| -> ReadResult<Vec<f32>> { Ok(f32s(f.need(k)?, "a climate field")?.to_vec()) };
+    Ok(ClimateCellValues {
+        cells: f.num("cells")? as usize,
+        spacing_m: f.num("spacingM")?,
+        sea_level_temperature: a("seaLevelTemperature")?,
+        precipitation: a("precipitation")?,
+        seasonal_amplitude: a("seasonalAmplitude")?,
+        monsoon_index: a("monsoonIndex")?,
+    })
+}
+
+/// `TileId`: `{ level, x, y }`.
+pub fn tile_id(v: &Value) -> ReadResult<TileId> {
+    let f = Fields::of(v, "a tile")?;
+    Ok(TileId {
+        level: f.num("level")? as u32,
+        x: f.num("x")? as usize,
+        y: f.num("y")? as usize,
     })
 }

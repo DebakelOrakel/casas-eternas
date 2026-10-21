@@ -250,3 +250,55 @@ impl Replay {
         self.0.level(width, detail_seed).map(Tree).map_err(era)
     }
 }
+
+/// The tile levels' plan from level 1's artifact and each level's land
+/// tiles (`{ [level]: [[x, y], …] }`). Native only.
+#[napi(
+    ts_args_type = "artifact: unknown, width: number, height: number, shape: string, landTiles: unknown"
+)]
+pub fn plan_tiles(
+    artifact: Tree,
+    width: u32,
+    height: u32,
+    shape: String,
+    land_tiles: Tree,
+) -> napi::Result<Tree> {
+    casas_engine_api::tiles::plan(&artifact.0, width, height, shape_of(&shape)?, &land_tiles.0)
+        .map(Tree)
+        .map_err(era)
+}
+
+/// A worker's tile bakes on one world's level 1. Native only.
+#[napi]
+pub struct TileBaker(casas_engine_api::tiles::TileBaker);
+
+#[napi]
+impl TileBaker {
+    #[napi(
+        factory,
+        ts_args_type = "artifact: unknown, inputs: unknown, leafWorkers?: number | null"
+    )]
+    pub fn open(
+        artifact: Tree,
+        inputs: Tree,
+        leaf_workers: Option<u32>,
+    ) -> napi::Result<TileBaker> {
+        casas_engine_api::tiles::TileBaker::open(&artifact.0, &inputs.0, leaf_workers)
+            .map(TileBaker)
+            .map_err(era)
+    }
+
+    #[napi(ts_args_type = "tile: unknown, pieces: unknown, upstream: unknown, rounds: number")]
+    pub fn bake(
+        &mut self,
+        tile: Tree,
+        pieces: Tree,
+        upstream: Tree,
+        rounds: u32,
+    ) -> napi::Result<Tree> {
+        self.0
+            .bake(&tile.0, given(&pieces.0), &upstream.0, rounds)
+            .map(Tree)
+            .map_err(era)
+    }
+}

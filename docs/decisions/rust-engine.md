@@ -685,6 +685,19 @@ BUILDING since 2026-10-20:
   replays a plan with a restored run on both shapes and finds the
   checkpoints, the level (its river courses' JSON with it) and the level
   resumed from a checkpoint equal to TypeScript's.
+- The tile levels through the boundary, native only: the plan from level
+  1's artifact and each level's land tiles, and a `TileBaker` that holds
+  level 1 decoded with its sampler and the climate's field mesh for every
+  tile a worker bakes, as the worker's cache holds them, their walks with
+  them. A bake takes the tile, the level above's tiles for a level-3
+  tile, the upstream tiles' outflow and the rounds, and gives the tile as
+  its artifact holds it (`bakedTileToArtifact`'s form, now the engine's).
+  The smoke test plans on the replayed level 1 of both shapes and bakes a
+  level-3 tile with what it waits for, an upstream tile among them, on
+  one baker: plan and tiles equal to TypeScript's, the triangles too. The
+  land tiles stay the job worker's (`landTiles`, `cubeLandTiles`), read
+  off the save's raster; the cube's samples they use are the TypeScript
+  engine's still.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

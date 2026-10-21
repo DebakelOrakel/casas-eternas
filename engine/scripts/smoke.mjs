@@ -7,7 +7,8 @@
 // hydrology on it, the ecology on both, with its months; the tectonic
 // save; a world restored from it, its climate with the saved refinement,
 // its hydrology, its ecology and its next epoch; then level 1 by replay,
-// native only, with its checkpoints and resumed from one. A save goes
+// native only, with its checkpoints and resumed from one, the tile plan on
+// it and a level-3 tile baked with what it waits for. A save goes
 // through JSON and back, as it does through a file. Run by `make test`
 // after `make engine`; about ten minutes, most of it TypeScript's
 // refinement and its level-1 replay.
@@ -49,7 +50,19 @@ const { metersToElevation } = await L('/src/generator/elevation/elevationScale.t
 const E = await L('/src/generator/ecology/ecologyField.ts')
 const RR = await L('/src/generator/pipeline/replayRuns.ts')
 const { levelBudget, levelHydrology } = await L('/src/generator/pipeline/meshBakeStage.ts')
-const { meshLevelToArtifact } = await L('/src/world/meshArtifacts.ts')
+const { meshLevelToArtifact, meshLevelMesh } = await L('/src/world/meshArtifacts.ts')
+const { planTiles } = await L('/src/generator/pipeline/tilePlan.ts')
+const { bakeMeshTile } = await L('/src/generator/pipeline/meshTileBake.ts')
+const { bakedTileToArtifact } = await L('/src/world/meshTileArtifacts.ts')
+const { tileBakeInputs } = await L('/src/world/bakeInputs.ts')
+const MT = await L('/src/generator/mesh/meshTile.ts')
+const { cubeTileSamples } = await L('/src/generator/mesh/meshTileCube.ts')
+const { tileParentOn } = await L('/src/generator/mesh/tileLayout.ts')
+const { createMeshSampler } = await L('/src/generator/mesh/meshSampler.ts')
+const { coarseForcingFields } = await L('/src/generator/pipeline/erosionForcing.ts')
+const { SHELF_BREAK } = await L('/src/generator/elevation/elevationScale.ts')
+const { climateCellValues } = await L('/src/generator/climate/climatePoints.ts')
+const { CLIMATE_RES_X, CLIMATE_RES_Y } = await L('/src/generator/climate/climateField.ts')
 // The render pool's worker, in this process through a stand-in `self` (as
 // client/scripts/pipeline.mjs does), one band over the whole raster; the
 // worker posts through it, so it stays.
@@ -406,6 +419,55 @@ for (const shape of ['torus', 'sphere']) {
   worlds.wasm.free()
   console.log(`engine: ${shape} — ${STEPS} Archean steps (${ts.rafts.length} rafts) saved and restored; the hand-over, ${EPOCHS} epochs (${eventCount} events, ${mesh.count} nodes) saved and restored; the climate, the hydrology (${water}), the ecology (${months} of 4 months given): native, wasm and TypeScript agree`)
 }
+// A level's tiles with land or shelf on the save's raster, as the job
+// worker's landTiles and cubeLandTiles find them (scripts/jobWorker.ts;
+// copied, since that module runs a worker when it loads).
+const landTilesOf = (world, elevations, level) => {
+  const spec = MT.tileSpec(level)
+  const { width, height } = world
+  const out = []
+  if (world.kind === 'sphere') {
+    cubeTileSamples(world, spec.level, spec.cells, (tile, xs, ys) => {
+      for (let k = 0; k < xs.length; k++) {
+        const x = Math.min(width - 1, Math.floor(xs[k]))
+        const y = Math.min(height - 1, Math.max(0, Math.floor(ys[k])))
+        if (elevations[y * width + x] > SHELF_BREAK) { out.push([tile.x, tile.y]); return }
+      }
+    })
+    return out
+  }
+  const { cols, rows } = MT.tileGrid(width, height, spec)
+  for (let ty = 0; ty < rows; ty++) {
+    for (let tx = 0; tx < cols; tx++) {
+      const corner = MT.tileCorner({ level, x: tx, y: ty }, spec)
+      let found = false
+      for (let dy = 0; dy < spec.cells && !found; dy++) {
+        const y = (corner.y + dy) % height
+        for (let dx = 0; dx < spec.cells; dx++) if (elevations[y * width + (corner.x + dx) % width] > SHELF_BREAK) { found = true; break }
+      }
+      if (found) out.push([tx, ty])
+    }
+  }
+  return out
+}
+// The tiles a tile waits for, itself last, deduplicated: what a worker
+// bakes before it.
+const closureOf = (plan, target) => {
+  const byKey = new Map(plan.map((p) => [`${p.tile.level}:${p.tile.x},${p.tile.y}`, p]))
+  const order = []
+  const seen = new Set()
+  const visit = (t) => {
+    const k = `${t.level}:${t.x},${t.y}`
+    if (seen.has(k)) return
+    seen.add(k)
+    const p = byKey.get(k)
+    for (const d of [...p.parents, ...p.upstream]) visit(d)
+    order.push(p)
+  }
+  visit(target)
+  return order
+}
+
 // LEVEL 1 BY REPLAY, native only (fork 3): the plan replayed at level 1's
 // budget one epoch at a time with its checkpoints, the level's waters on
 // its end as the artifact holds them, and the replay resumed from a
@@ -421,7 +483,7 @@ for (const shape of ['torus', 'sphere']) {
     tectonics: [{ epochs: 4, controls, weather }, { epochs: 3, controls, weather: { ...weather, temperatureOffset: -2 }, restored: true }],
   }
   const checkpoints = []
-  const { terrain } = await RR.replayRuns(plan, { budget: levelBudget(1), onCheckpoint: (position, take) => { checkpoints.push({ position, snapshot: structuredClone(take()) }) } })
+  const { sim: replayed, terrain } = await RR.replayRuns(plan, { budget: levelBudget(1), onCheckpoint: (position, take) => { checkpoints.push({ position, snapshot: structuredClone(take()) }) } })
   const cells = climateCellsFromWeather(terrain.weather.result)
   const atNodes = climateAtPoints(cells, meshPoints(terrain.mesh, terrain.z))
   const water = levelHydrology(terrain.mesh, terrain.z, terrain.routing, terrain.areas, terrain.sedimentFlux, {
@@ -448,6 +510,45 @@ for (const shape of ['torus', 'sphere']) {
   while (resumed.step());
   if (canonical(resumed.level(width, detailSeed)) !== canonical(artifact)) fail(`${shape}: level 1 resumed differs from TypeScript`)
   console.log(`engine: ${shape} — level 1 replayed (${artifact.count} nodes, ${artifact.graph.reaches.length} reaches, ${artifact.graph.courses.length} courses), ${checkpoints.length} checkpoints, resumed: native and TypeScript agree`)
+
+  // THE TILE LEVELS on it: the plan, then a level-3 tile with its
+  // closure baked in order — the level-2 parents with their upstream
+  // tiles, the level-3 upstream ones — on one baker, as a worker does.
+  const world = terrain.mesh.domain
+  const elevations = rasteriseNodeField(terrain.mesh, terrain.z, width, height)
+  const land = Object.fromEntries([2, 3].map((l) => [l, landTilesOf(world, elevations, l)]))
+  const mesh1 = meshLevelMesh(artifact, width, height, shape)
+  const tsPlan = planTiles({ mesh: mesh1, z: artifact.z, routing: meshRouting(mesh1, artifact.z), width, height, levels: [2, 3], landTiles: (l) => land[l].map(([x, y]) => ({ level: l, x, y })) })
+  const tilePlan = native.planTiles(level, width, height, shape, land)
+  if (canonical(tilePlan) !== canonical(tsPlan)) fail(`${shape}: the tile plan differs from TypeScript`)
+  const third = tsPlan.filter((p) => p.tile.level === 3).map((p) => closureOf(tsPlan, p.tile))
+  const withUpstream = third.filter((c) => c.some((p) => p.upstream.length > 0))
+  const bakes = (withUpstream.length ? withUpstream : third).sort((a, b) => a.length - b.length)[0]
+  const { uplift, hardness } = coarseForcingFields(replayed, world)
+  const saved = {
+    width, height, kind: shape === 'sphere' ? 'SphereWorld' : 'TorusWorld', detailSeed, lithoSeed: 777,
+    erosionControls: controls, climate: climateCellValues(cells),
+    uplift: { data: uplift, resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y }, erodibility: { data: hardness, resX: CLIMATE_RES_X, resY: CLIMATE_RES_Y },
+  }
+  const baker = native.TileBaker.open(level, { width, height, shape, detailSeed, lithoSeed: 777, controls, uplift, erodibility: hardness, forcingResX: CLIMATE_RES_X, forcingResY: CLIMATE_RES_Y, climate: saved.climate }, 4)
+  const macro = createMeshSampler(mesh1, artifact.z)
+  const done = new Map()
+  const keyOf = (t) => `${t.level}:${t.x},${t.y}`
+  for (const p of bakes) {
+    const t = p.tile
+    const upstream = p.upstream.map((u) => done.get(keyOf(u))).map((a) => ({ tile: a.tile, count: a.count, nodes: a.nodes, outflow: a.outflow }))
+    let parent = { mesh: mesh1, z: artifact.z, discharge: null, sampler: macro, macro }
+    let pieces = null
+    if (t.level === 3) {
+      pieces = p.parents.map((q) => done.get(keyOf(q))).map((a) => ({ tile: a.tile, count: a.count, nodes: a.nodes, z: a.z }))
+      const patch = tileParentOn(pieces, world)
+      parent = { mesh: patch.mesh, z: patch.z, discharge: null, sampler: createMeshSampler(patch.mesh, patch.z, patch.region), macro }
+    }
+    const want = bakedTileToArtifact(await bakeMeshTile(tileBakeInputs(saved, parent, artifact.graph, upstream), t, { rounds: 2 }))
+    done.set(keyOf(t), want)
+    if (canonical(baker.bake(t, pieces, upstream, 2)) !== canonical(want)) fail(`${shape}: tile ${keyOf(t)} differs from TypeScript`)
+  }
+  console.log(`engine: ${shape} — the tile plan (${tsPlan.length} tiles), ${bakes.length} tiles baked (${bakes.filter((p) => p.upstream.length).length} with upstream, ${bakes.filter((p) => p.tile.level === 3).length} of level 3): native and TypeScript agree`)
 }
 
 if (failed) process.exit(1)

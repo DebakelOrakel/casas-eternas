@@ -10,6 +10,7 @@ pub mod forms;
 pub mod read;
 pub mod replay;
 mod stages;
+pub mod tiles;
 pub mod value;
 
 use casas_engine::archean::archean_snapshot::{deserialize_archean, serialize_archean};
