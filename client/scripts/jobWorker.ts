@@ -375,6 +375,7 @@ async function main(): Promise<void> {
 
   try {
     const outcome = await computeThread().run(job, stderrProgress(), false)
+    process.stderr.write(`${JSON.stringify({ ms: outcome.laps })}\n`)
     process.stdout.write(`${JSON.stringify(outcome.result)}\n`)
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error))
@@ -395,6 +396,27 @@ function stderrProgress(): (phase: string, fraction: number) => void {
   }
 }
 
+// WHERE A TASK'S TIME GOES, for the jobs' wall time (the profiling of
+// 2026-10-21): the milliseconds since the last lap under each phase's name,
+// summed where a name comes again. The worker writes them per task to
+// stderr, which the server logs; nothing of it goes to the coordinator.
+interface Laps {
+  lap: (name: string) => void
+  times: Record<string, number>
+}
+function laps(): Laps {
+  let last = performance.now()
+  const times: Record<string, number> = {}
+  return {
+    times,
+    lap: (name) => {
+      const now = performance.now()
+      times[name] = (times[name] ?? 0) + Math.round(now - last)
+      last = now
+    },
+  }
+}
+
 // What one job produced: the result line the Go side reads, and for a level
 // the tile levels' plan (a refine plan grows it, coordinator.go).
 interface JobOutcome {
@@ -405,6 +427,8 @@ interface JobOutcome {
   // coordinator marks the tiles already stored done instead of handing them
   // out (internal/modules/jobs/coordinator.go, storedTiles).
   tileVersions?: Record<string, string>
+  // Where its time went (Laps), for the log.
+  laps?: Record<string, number>
 }
 
 // The pipeline version of every tile level, as the plan's report carries it.
@@ -453,6 +477,12 @@ function recall<V>(cache: Map<string, V>, key: string): V | undefined {
 // One job, start to artifact. Throws with the reason instead of exiting, so
 // a serving worker can report it and go on to the next task.
 async function runJob(job: Job, onProgress: (phase: string, fraction: number) => void, cache?: JobCache): Promise<JobOutcome> {
+  const clock = laps()
+  const outcome = await runJobTimed(job, onProgress, clock, cache)
+  return { ...outcome, laps: clock.times }
+}
+
+async function runJobTimed(job: Job, onProgress: (phase: string, fraction: number) => void, clock: Laps, cache?: JobCache): Promise<JobOutcome> {
   // A world read from a file is cached by its path, which names one
   // revision; one fetched by URL with its revision, and asked for again
   // only if the server holds a newer one (readWorld).
@@ -472,9 +502,10 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
       if (worldKey && cache && (job.worldZip || read.etag)) remember(cache.worlds, worldKey, { inputs, etag: read.etag }, CACHED_WORLDS)
     }
   }
+  clock.lap('world')
   const store = artifactStoreFor(job, inputs.worldUid)
   if (!store) throw new Error('neither artifactsDir nor artifactsUrl was given')
-  if (job.stage !== 1 && TILE_SPECS[job.stage]) return bakeTile(job, inputs, store, onProgress, cache)
+  if (job.stage !== 1 && TILE_SPECS[job.stage]) return bakeTile(job, inputs, store, onProgress, clock, cache)
   if (job.stage !== 1) throw new Error(`stage ${job.stage}: no such level`)
   const started = Date.now()
   const pipelineVersion = meshPipelineVersion(1, job.erosionRounds)
@@ -482,28 +513,35 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
   if (job.reuse) {
     onProgress('read', 0)
     const stored = await readMeshLevelArtifact(store, key)
+    clock.lap('check')
     if (stored) {
       if (cache) remember(cache.levels, `${key.worldId}/${key.pipelineVersion}`, { artifact: stored.artifact }, CACHED_LEVELS)
       onProgress('plan', 0)
+      const tasks = planOf(inputs, stored.artifact)
+      clock.lap('plan')
       return {
         result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.artifact.count, durationMs: stored.bakeMs },
-        tasks: planOf(inputs, stored.artifact),
+        tasks,
         tileVersions: tileVersionsOf(job),
       }
     }
   }
   const artifact = await replayLevel(job, inputs, onProgress)
+  clock.lap('replay')
   const durationMs = Date.now() - started
   onProgress('store', 0)
   if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
+  clock.lap('write')
   if (cache) remember(cache.levels, `${key.worldId}/${key.pipelineVersion}`, { artifact }, CACHED_LEVELS)
   if (job.checkpointDir) await rm(checkpointPath(job.checkpointDir, inputs), { recursive: true, force: true })
   // The plan's phase stays on show until the tile levels' rows appear: it
   // covers the coordinator's check of the stored tiles too.
   onProgress('plan', 0)
+  const tasks = planOf(inputs, artifact)
+  clock.lap('plan')
   return {
     result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs },
-    tasks: planOf(inputs, artifact),
+    tasks,
     tileVersions: tileVersionsOf(job),
   }
 }
@@ -690,7 +728,7 @@ function cubeLandTiles(inputs: WorldInputs, world: Domain, spec: TileSpec): [num
 // read from the same artifact store the tile is written to. Level 1 is
 // read by every tile: its river graph brings the inflow, its surface the
 // synthesis' relief.
-async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onProgress: (phase: string, fraction: number) => void, cache?: JobCache): Promise<JobOutcome> {
+async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onProgress: (phase: string, fraction: number) => void, clock: Laps, cache?: JobCache): Promise<JobOutcome> {
   const spec = tileSpec(job.stage)
   const { cols, rows } = tileGridOn(domainOfKind(shapeOf(inputs), inputs.width, inputs.height), spec.level)
   if (!job.tile || !Number.isInteger(job.tile.x) || !Number.isInteger(job.tile.y) || job.tile.x < 0 || job.tile.y < 0 || job.tile.x >= cols || job.tile.y >= rows) {
@@ -705,6 +743,7 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   const key = artifactKey(inputs.worldId, pipelineVersion, meshTileStage(tile))
   if (job.reuse) {
     const stored = await meshTileArtifactInfo(store, key)
+    clock.lap('check')
     if (stored) return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: stored.nodes, durationMs: stored.bakeMs } }
   }
   onProgress('parent', 0)
@@ -717,9 +756,11 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     level1 = { artifact: read.artifact }
     if (cache) remember(cache.levels, levelKey, level1, CACHED_LEVELS)
   }
+  clock.lap('level1')
   // Opened once per worker, not once per tile: the engine holds level 1
   // decoded with its sampler, its river graph and the climate's field mesh.
   level1.baker ??= engine().TileBaker.open(level1.artifact, tileBakeSave(inputs), leafWorkers())
+  clock.lap('open')
   let pieces: TilePiece[] | null = null
   if (spec.level !== 2) {
     // The level above's tiles this one overlaps; every one must be there —
@@ -741,9 +782,12 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     upstream.push({ tile: up, count: read.count, nodes: read.nodes, outflow: read.outflow })
   }
   onProgress('parent', 1)
+  clock.lap('inputs')
   const artifact = level1.baker.bake(tile, pieces, upstream, job.erosionRounds)
+  clock.lap('bake')
   const durationMs = Date.now() - started
   if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
+  clock.lap('write')
   return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs } }
 }
 
@@ -1060,7 +1104,9 @@ async function serve(config: ServeConfig): Promise<void> {
     const heartbeat = setInterval(() => msg.working(), TASK_HEARTBEAT_MS)
     // A task that reaches its stores over HTTP carries a token; keep it fresh.
     const compute = computeThread()
+    const took = laps()
     const stopToken = job.authToken && taskId ? await keepJobToken(nc, job, taskId, compute.token) : null
+    took.lap('token')
     let last = ''
     const onProgress = (phase: string, fraction: number): void => {
       const percent = Math.floor(fraction * 100)
@@ -1071,8 +1117,11 @@ async function serve(config: ServeConfig): Promise<void> {
     }
     try {
       const outcome = await compute.run(job, onProgress, true)
+      took.lap('run')
       await js.publish(`jobs.done.${taskId}`, JSON.stringify({ taskId, ok: true, result: outcome.result, tasks: outcome.tasks, tileVersions: outcome.tileVersions }))
       msg.ack()
+      took.lap('publish')
+      process.stderr.write(`${JSON.stringify({ task: taskId, stage: doing?.stage, ms: { ...took.times, ...outcome.laps } })}\n`)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       // An artifact store or a world server that did not answer is not the
