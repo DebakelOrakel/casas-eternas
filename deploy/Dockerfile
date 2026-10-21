@@ -41,7 +41,8 @@ RUN RUSTFLAGS="-C target-feature=-crt-static" cargo build --release --locked -p 
  && mkdir -p /out \
  && cp target/release/libcasas_engine_node.so /out/casas-engine.node \
  && wasm-bindgen --target web --out-dir /out/wasm --out-name casas-engine \
-      target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
+      target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm \
+ && cargo run --release --locked -q -p casas-engine-api --bin constants > /out/constants.json
 
 # ---- Stage 1: the client bundle and the job worker -------------------------
 FROM node:22-alpine AS web
@@ -68,6 +69,7 @@ COPY client/ ./
 # tree, which is the point.
 COPY --from=engine /out/casas-engine.node /app/engine/dist/casas-engine.node
 COPY --from=engine /out/wasm /app/engine/dist/wasm
+COPY --from=engine /out/constants.json /app/engine/dist/constants.json
 RUN npm run build && npm run build:worker && npm run build:docs
 
 # ---- Stage 2: the server ----------------------------------------------------

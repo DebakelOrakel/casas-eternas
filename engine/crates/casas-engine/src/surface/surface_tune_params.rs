@@ -2,6 +2,9 @@
 //! Each constant's reasoning and measurements are in the TypeScript file,
 //! under the same name in camelCase.
 
+use serde::Serialize;
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SurfaceTuning {
     pub regime_dry_months: f64,
     pub snow_melt_mm_per_degree_month: f64,

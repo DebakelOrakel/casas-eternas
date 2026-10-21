@@ -7,6 +7,7 @@
 //! (wasm-bindgen) wrap these methods one for one.
 
 pub mod forms;
+pub mod pipeline;
 pub mod preview;
 pub mod read;
 pub mod replay;

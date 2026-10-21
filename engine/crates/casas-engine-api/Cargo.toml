@@ -13,3 +13,4 @@ parallel = ["casas-engine/parallel"]
 
 [dependencies]
 casas-engine = { path = "../casas-engine" }
+serde_json = "1"

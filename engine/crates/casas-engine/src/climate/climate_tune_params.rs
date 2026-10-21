@@ -3,9 +3,12 @@
 //! the same name in camelCase.
 
 use crate::elevation::elevation_scale::{ELEVATION_METERS, SLOPE_RECALIBRATION};
+use serde::Serialize;
 
 const LAPSE_C_PER_KM: f64 = 6.5;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ClimateTuning {
     pub precip_evap_zero_c: f64,
     pub precip_evap_span_c: f64,

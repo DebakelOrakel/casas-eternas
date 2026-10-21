@@ -4,7 +4,10 @@
 //! TypeScript file.
 
 use crate::core::js;
+use serde::Serialize;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MeshTuning {
     pub min_spacing_m: f64,
     pub max_spacing_m: f64,

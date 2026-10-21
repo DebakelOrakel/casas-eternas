@@ -9,6 +9,7 @@ use crate::core::js;
 use crate::crust::raft_field::build_blob_index;
 use crate::elevation::dynamic_topography::dynamic_topography_at;
 use crate::elevation::elevation_field::raft_baseline_at;
+use serde::Serialize;
 
 use super::archean_state::ArcheanSimulation;
 
@@ -38,7 +39,8 @@ pub fn archean_land_share(sim: &mut ArcheanSimulation) -> f64 {
     land / total
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LandShareParams {
     pub reach_epoch: f64,
     pub hold_epochs: f64,

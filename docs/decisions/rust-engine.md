@@ -324,6 +324,49 @@ the runtime, and the runtime calls it where it calls `worldStages` and
 the epoch now. The faithful mode (fork 5) is the engine's default until
 the full comparison.
 
+## Fork 7 — What goes with the TypeScript engine
+
+Decided 2026-10-21, after the generator and the job worker changed over.
+Some 190 imports of `generator/` come from outside it; four kinds:
+the vocabulary (units, the biome and Köppen ids, the colours, the
+sliders' declarations), the tuning the pipeline versions hash, the read
+side (a save's or an artifact's mesh decoded, sampled and rasterised:
+the load, the incubator, the screen's hover), and the simulation, which
+only the harnesses and the fixture scripts still call.
+
+**7a — The tuning the versions hash.**
+
+- **From the engine**: the engine gives its tuning under TypeScript's
+  names, and the world layer hashes it as now.
+- **TypeScript's tables stay** as data, a test holds them to the engine's.
+
+**Answer: from the engine.** One source: a constant changed in the engine
+changes the versions, with no copy to forget. Its structures serialise
+themselves (serde), so a new field is in the hash without a list to
+extend, as TypeScript's objects were; the few loose module constants are
+named by hand. `make engine` writes them as data the world layer reads
+when it loads, so a key needs no engine call.
+
+**7b — The read side.**
+
+- **TypeScript for now**: only the simulation goes; the read side stays
+  a TypeScript library (map/ may read pure field functions), held to the
+  engine's bits by a test.
+- **The engine too**: the load, the decode and the samplers through the
+  engine, in the main thread as well.
+
+**Answer: TypeScript for now**, each part movable on its own later.
+
+**7c — The harnesses of the TypeScript simulation.**
+
+- **Removed with it**: golden and the module tests of the simulation go;
+  the engine keeps its tests on the frozen fixtures, and the smoke test
+  compares the native build with the WASM one.
+- **Kept, frozen**: the TypeScript simulation stays unused, as the
+  reference.
+
+**Answer: removed with it.** The fixtures stay as data.
+
 ## Not decided — versioned pipelines
 
 With its own engine, a pipeline can be a release of its own. The direction
@@ -787,6 +830,20 @@ BUILDING since 2026-10-20:
   saves before and after it are the same in both. Cause not found; the
   engine's is the value of the saves around it. The refinement no longer
   posts its progress: the engine's call gives none.
+- The tuning for the versions from the engine (fork 7a): the tuning
+  structures derive serde's `Serialize` under TypeScript's names (one
+  rename: `flexureYoungsModulusGPa`), and `casas_engine_api::pipeline`
+  gives them by group with the amplification's table, the bake's loose
+  constants, each tile level's cube and tile constants and each level's
+  budget; `make engine` writes them to `engine/dist/constants.json`
+  (the binary `constants`), the image in its engine stage. The world
+  layer reads them through the alias `casas-engine-constants`
+  (`world/engineConstants.ts`) in `worldTuning`, `MESH_BAKE_CONSTANTS`
+  and the tiles' versions. Checked against TypeScript's tables before
+  they go: 426 tuning values, 51 of the amplification, 24 of the bake, 32
+  for each tile level and the budgets, all the same; the versions are
+  unchanged (`v11-1b1f7f4a8b14250e`, the tiles' `v11-f1a835a2d3bff754` and
+  `v11-777e6ec6085d9bce`).
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

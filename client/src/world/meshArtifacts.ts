@@ -1,6 +1,5 @@
-import { AMPLIFY_CONSTANTS } from '../generator/surface/amplify'
 import { worldTuning } from './worldTuning'
-import { MESH_TUNING } from '../generator/mesh/meshDensity'
+import { ENGINE_CONSTANTS, engineLevelBudget } from './engineConstants'
 import type { MeshLevel } from '../generator/pipeline/meshBakeStage'
 import { encodeMesh, decodeMesh, type SerializedMesh } from '../generator/mesh/meshSerial'
 import { deserializeRiverGraph, serializeRiverGraph, type RiverGraph } from '../generator/surface/riverGraph'
@@ -9,13 +8,6 @@ import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../storage/Arti
 import { domainOfKind, type Domain } from '../generator/core/domain'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
-import { levelBudget } from '../generator/pipeline/meshBakeStage'
-import { HISTORY_DEFAULTS } from '../generator/pipeline/coupledEpoch'
-import { LITHO_LATTICE_X, LITHO_LATTICE_Y } from '../generator/surface/erosionForcingFields'
-import { DIFFUSION_PAIR_CAP, EPSILON_FLOOD_STEP } from '../generator/surface/erosionEngine'
-import { DEFAULT_ROUTING_EVERY } from '../generator/mesh/meshErosion'
-import { RIVER_COURSE_MODEL_VERSION } from '../generator/surface/riverCourse'
-import { COVER_BY_BIOME } from '../generator/surface/cover'
 
 // A MESH LEVEL as an artifact (ADAPTIVE_MESH_PLAN.md phase 4.5; decision 3:
 // "global level state and tiles are artifacts, evictable"). What the mesh
@@ -56,15 +48,13 @@ export function meshLevelStage(level: number): string {
 // the bank-strength table. A change to any of them made different artifacts
 // under an unchanged key, which a client then served as current.
 export const MESH_BAKE_CONSTANTS: Record<string, number> = {
-  ...AMPLIFY_CONSTANTS,
-  ...Object.fromEntries(Object.entries(MESH_TUNING).map(([k, v]) => [`mesh_${k}`, v])),
-  lithoLatticeX: LITHO_LATTICE_X,
-  lithoLatticeY: LITHO_LATTICE_Y,
-  engineDiffusionPairCap: DIFFUSION_PAIR_CAP,
-  engineEpsilonFloodStep: EPSILON_FLOOD_STEP,
-  routingEvery: DEFAULT_ROUTING_EVERY,
-  riverCourseModel: RIVER_COURSE_MODEL_VERSION,
-  ...Object.fromEntries(Object.entries(COVER_BY_BIOME).map(([biome, cover]) => [`cover${biome}`, cover])),
+  // The engine's (engineConstants.ts): the amplification's table, the
+  // density rule's object, then the bake's loose constants (the lithology
+  // lattice, two of the erosion's module constants, the routing cadence,
+  // the river course model, the bank-strength table).
+  ...ENGINE_CONSTANTS.amplify,
+  ...Object.fromEntries(Object.entries(ENGINE_CONSTANTS.tuning.mesh as Record<string, number>).map(([k, v]) => [`mesh_${k}`, v])),
+  ...ENGINE_CONSTANTS.bake,
   // The tuning the history reads: level 1 is the history replayed, and
   // the tiles are refined from it (worldTuning.ts).
   ...worldTuning(),
@@ -77,9 +67,9 @@ export const MESH_BAKE_CONSTANTS: Record<string, number> = {
 // what it is, and `replay` parts it from the levels refined before.
 export function meshLevelPipelineConstants(level: number, rounds: number = AMPLIFY_EROSION_ROUNDS): Record<string, number> {
   const replay = level === 1
-    ? { replay: 1, ...Object.fromEntries(Object.entries(HISTORY_DEFAULTS).filter(([k]) => k !== 'budget' && k !== 'renderEvery').map(([k, v]) => [`history_${k}`, v])) }
+    ? { replay: 1, ...Object.fromEntries(Object.entries(ENGINE_CONSTANTS.tuning.history as Record<string, number>).filter(([k]) => k !== 'budget' && k !== 'renderEvery').map(([k, v]) => [`history_${k}`, v])) }
     : {}
-  return { ...MESH_BAKE_CONSTANTS, ...replay, meshBudget: levelBudget(level), rounds }
+  return { ...MESH_BAKE_CONSTANTS, ...replay, meshBudget: engineLevelBudget(level), rounds }
 }
 
 export function meshPipelineVersion(level: number, rounds: number = AMPLIFY_EROSION_ROUNDS): string {
@@ -144,7 +134,7 @@ export async function writeMeshLevelArtifact(store: ArtifactStore, key: Artifact
   }
   const meta: MeshLevelMeta = {
     key, level: artifact.level, nodes: artifact.count, bakeMs, createdAt: Date.now(), label,
-    pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, budget: levelBudget(artifact.level), constants: meshLevelPipelineConstants(artifact.level, rounds) },
+    pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, budget: engineLevelBudget(artifact.level), constants: meshLevelPipelineConstants(artifact.level, rounds) },
     files,
   }
   return (

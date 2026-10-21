@@ -8,12 +8,14 @@ use crate::core::world_time::world_epoch_ma;
 use crate::crust::raft_field::compute_craton_oldness_field;
 use crate::crust::raft_types::{Raft, Suture};
 use crate::tectonics::terrain_features::TerrainFeature;
+use serde::Serialize;
 
 use super::capsule::capsule_weight;
 use super::elevation_tune_params::ELEVATION_TUNING;
 
 /// `ErodibilityFieldParams` in TypeScript, which explains each.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ErodibilityFieldParams {
     pub craton_hardness: f64,
     pub young_suture_softness: f64,

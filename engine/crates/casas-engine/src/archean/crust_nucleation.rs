@@ -6,8 +6,10 @@ use crate::crust::raft_field::raft_field;
 use crate::crust::raft_types::{Raft, RaftBlob};
 use crate::elevation::elevation_scale::shoreline_field;
 use crate::mantle::mantle_field::MantleMesh;
+use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NucleationParams {
     pub upwelling_threshold: f64,
     pub persistence_epochs: f64,

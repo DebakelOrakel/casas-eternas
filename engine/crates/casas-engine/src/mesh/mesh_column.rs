@@ -4,7 +4,10 @@
 
 use crate::mesh::mesh_state::{FieldKind, MeshState};
 use crate::mesh::periodic_delaunay::PeriodicTriangulation;
+use serde::Serialize;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ColumnTuning {
     /// Layers per node; when full the two oldest merge.
     pub layer_cap: usize,

@@ -2,6 +2,9 @@
 //! The reasoning and the measurements behind each value are in the
 //! TypeScript file; this port keeps the values and their order.
 
+use serde::Serialize;
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TectonicsTuning {
     pub detection_lattice_resolution_x: usize,
     pub detection_lattice_resolution_y: usize,
@@ -61,6 +64,7 @@ pub struct TectonicsTuning {
     pub flexure_te_ocean_max_km: f64,
     pub flexure_crust_density: f64,
     pub flexure_mantle_density: f64,
+    #[serde(rename = "flexureYoungsModulusGPa")]
     pub flexure_youngs_modulus_gpa: f64,
     pub flexure_poisson: f64,
     pub flexure_deflection_scale: f64,

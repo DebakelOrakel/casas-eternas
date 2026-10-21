@@ -2,7 +2,10 @@
 //! in the TypeScript file.
 
 use super::elevation_scale::ELEVATION_METERS;
+use serde::Serialize;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ElevationTuning {
     pub range_perp_radius_m: f64,
     pub range_segment_half_length_m: f64,

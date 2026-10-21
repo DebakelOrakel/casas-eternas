@@ -13,6 +13,7 @@ use crate::mantle::mantle_field::{
     compute_mantle_flow, evolve_mantle_field, mantle_at, mantle_flow_at, sustain_mantle_vigour,
 };
 use crate::mantle::mantle_tune_params::MANTLE_TUNING;
+use serde::Serialize;
 
 use super::archean_land::{
     LandShareParams, archean_land_aim, archean_land_share, nucleation_budget,
@@ -22,7 +23,8 @@ use super::crust_nucleation::{
     NucleationParams, default_nucleation_params, find_nucleation_sites, nucleate_crust,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ArcheanParams {
     pub nucleation: NucleationParams,
     pub land_share: f64,

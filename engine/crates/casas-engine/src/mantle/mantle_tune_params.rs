@@ -1,6 +1,9 @@
 //! `mantle/mantleTuneParams.ts`. The reasoning behind each value is in the
 //! TypeScript file.
 
+use serde::Serialize;
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MantleTuning {
     pub insulation_rate: f64,
     pub ocean_cool_rate: f64,

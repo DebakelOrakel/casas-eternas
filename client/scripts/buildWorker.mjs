@@ -19,6 +19,8 @@ const result = spawnSync('npx', [
   'esbuild', 'scripts/jobWorker.ts',
   '--bundle', '--platform=node', '--format=esm', '--target=node20',
   `--outfile=${outfile}`, '--log-level=warning',
+  // The engine's constants for the pipeline versions (world/engineConstants.ts).
+  '--alias:casas-engine-constants=../engine/dist/constants.json',
   // Bundled CommonJS dependencies call require(); an ESM bundle has none.
   "--banner:js=import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
 ], { cwd: client, stdio: 'inherit' })

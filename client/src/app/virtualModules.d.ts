@@ -4,6 +4,21 @@ declare module 'virtual:handbook' {
   export default handbook
 }
 
+// The engine's constants for the pipeline versions (`make engine` writes
+// engine/dist/constants.json; world/engineConstants.ts).
+declare module 'casas-engine-constants' {
+  const constants: {
+    // The history's tuning by group, nested as the objects are.
+    tuning: Record<string, unknown>
+    amplify: Record<string, number>
+    bake: Record<string, number>
+    // Each tile level's cube and tile constants, by level.
+    tiles: Record<string, Record<string, number>>
+    levelBudget: Record<string, number>
+  }
+  export default constants
+}
+
 // The Rust engine's WASM build (`make engine` writes it to engine/dist/wasm;
 // vite.config.ts's alias `casas-engine-wasm` names that directory), with the
 // classes the adapter types (generator/pipeline/engine.ts).

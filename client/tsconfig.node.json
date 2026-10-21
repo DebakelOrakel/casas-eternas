@@ -17,5 +17,5 @@
     // RequestInit with the browser code it imports from.
     "lib": ["ES2023", "DOM"]
   },
-  "include": ["scripts"]
+  "include": ["scripts", "src/app/virtualModules.d.ts"]
 }

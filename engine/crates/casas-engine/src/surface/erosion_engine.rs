@@ -27,6 +27,7 @@ use crate::core::js;
 use crate::core::min_heap::MinHeap;
 use crate::core::shared::{SharedF32, SharedF64, SharedU8, block_ranges, for_ranges};
 use crate::elevation::elevation_scale::ELEVATION_METERS;
+use serde::Serialize;
 
 use super::erosion_engine_state::{
     EngineIndex, FLAG_GRID8, FLAG_HAS_ACCUM_WEIGHTS, FLAG_HAS_COAST_MASK, FLAG_HAS_PINNED,
@@ -40,7 +41,8 @@ pub const ITERATION_YEARS: f64 = 20_000.0;
 
 /// The solver's parameters (`ErosionEngineParams` in TypeScript, which
 /// explains each).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ErosionSolverParams {
     pub m: f64,
     pub kappa_dt: f64,

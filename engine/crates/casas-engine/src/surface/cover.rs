@@ -3,7 +3,10 @@
 //! and the river banks; zero before the land plants.
 
 use crate::climate::biomes::biome;
+use serde::Serialize;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoverTuning {
     pub erodibility_drop: f64,
     pub critical_slope_rise: f64,

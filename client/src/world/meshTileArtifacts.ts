@@ -1,7 +1,6 @@
 import { MESH_BAKE_CONSTANTS } from './meshArtifacts'
-import { tileConstants, tileSpec, TILE_ROLE_HALO, type TileId } from '../generator/mesh/meshTile'
-import { cubeConstants } from '../generator/mesh/meshTileCube'
-import { levelBudget } from '../generator/pipeline/meshBakeStage'
+import { TILE_ROLE_HALO, type TileId } from '../generator/mesh/meshTile'
+import { ENGINE_CONSTANTS, engineLevelBudget } from './engineConstants'
 import type { BakedTile } from '../generator/pipeline/meshTileBake'
 import type { ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
@@ -47,12 +46,18 @@ export function meshTilePipelineVersion(level: number, rounds: number = AMPLIFY_
 // torus tile does not read them; the price is that changing one makes the
 // torus's tiles again, against a version per shape every reader of a
 // stage would have to ask the world's shape for.
+function tileLevelConstants(level: number): Record<string, number> {
+  const constants = ENGINE_CONSTANTS.tiles[String(level)]
+  if (!constants) throw new Error(`level ${level} has no tiles`)
+  return constants
+}
+
 function tilePipelineConstants(level: number, rounds: number): Record<string, number> {
   return {
-    ...cubeConstants(level),
+    // The cube's and the tile's constants, the engine's (engineConstants.ts).
+    ...tileLevelConstants(level),
     ...MESH_BAKE_CONSTANTS,
-    parentBudget: levelBudget(level - 1),
-    ...tileConstants(tileSpec(level)),
+    parentBudget: engineLevelBudget(level - 1),
     rounds,
     // The erosion's routing cadence in a tile: fresh every routingEvery
     // rounds, waited for (meshTileBake.ts). Before 2026-10-04 the pool's

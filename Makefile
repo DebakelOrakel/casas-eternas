@@ -169,6 +169,8 @@ engine:
 		|| (echo "engine: needs wasm-bindgen $(WASM_BINDGEN) — cargo install wasm-bindgen-cli --version $(WASM_BINDGEN) --locked" >&2; exit 1)
 	mkdir -p engine/dist
 	cp engine/target/release/$(ENGINE_NODE_LIB) engine/dist/casas-engine.node
+	# The constants the pipeline versions are derived from (DEC-0044, fork 7a).
+	cd engine && cargo run --release -q -p casas-engine-api --bin constants > dist/constants.json
 	wasm-bindgen --target web --out-dir engine/dist/wasm --out-name casas-engine \
 		engine/target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
 

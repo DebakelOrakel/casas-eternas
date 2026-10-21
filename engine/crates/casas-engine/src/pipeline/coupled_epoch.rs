@@ -76,6 +76,7 @@ use crate::tectonics::plate_simulation_types::{
 };
 use crate::tectonics::tectonics_tune_params::TECTONICS_TUNING;
 use crate::tectonics::trench::trench_depression;
+use serde::Serialize;
 
 use super::erosion_forcing::coarse_forcing_fields;
 
@@ -127,6 +128,8 @@ pub struct CoupledEpochOptions {
 }
 
 /// The history's interim setting (`HISTORY_DEFAULTS`).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HistoryDefaults {
     pub iterations_per_epoch: u32,
     pub budget: f64,
