@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from 'vite'
 import { execSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { buildHandbook } from './scripts/handbook'
 
 // Where the Go server lives during development. Overridable so a dev client can
@@ -92,6 +93,11 @@ const handbook = (): Plugin => {
   }
 }
 
+// The Rust engine's WASM build (generator/pipeline/engineWasm.ts), where
+// `make engine` writes it. It is outside the client; the dev server serves
+// it all the same, as a module the client imports.
+const ENGINE_WASM = fileURLToPath(new URL('../engine/dist/wasm', import.meta.url))
+
 // The dev server's port is PINNED, and that is not cosmetic: browser storage
 // (OPFS, IndexedDB, caches) is scoped to the ORIGIN, port included. Vite's
 // default behaviour is to take 5173 and silently increment when it is busy —
@@ -102,6 +108,9 @@ const handbook = (): Plugin => {
 // one can actually debug.
 export default defineConfig({
   plugins: [alwaysFullResponses(), handbook()],
+  resolve: {
+    alias: { 'casas-engine-wasm': ENGINE_WASM },
+  },
   define: {
     __CASAS_BUILD__: JSON.stringify(BUILD),
     __CASAS_BUILD_DATE__: JSON.stringify(BUILD_DATE),

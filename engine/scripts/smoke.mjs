@@ -12,12 +12,10 @@
 // through JSON and back, as it does through a file. Run by `make test`
 // after `make engine`; about ten minutes, most of it TypeScript's
 // refinement and its level-1 replay.
-import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 const dist = new URL('../dist/', import.meta.url)
-const native = createRequire(import.meta.url)(new URL('casas-engine.node', dist).pathname)
 const wasm = await import(new URL('wasm/casas-engine.js', dist).href)
 await wasm.default({ module_or_path: await readFile(new URL('wasm/casas-engine_bg.wasm', dist)) })
 
@@ -25,6 +23,8 @@ const CLIENT = fileURLToPath(new URL('../../client', import.meta.url))
 const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
 const L = (p) => server.ssrLoadModule(p)
+// The native build through the job worker's loader.
+const native = (await L('/scripts/engineNative.ts')).loadNativeEngine(fileURLToPath(new URL('casas-engine.node', dist)))
 const { createArcheanSimulation } = await L('/src/generator/archean/archeanState.ts')
 const { archeanStep, DEFAULT_ARCHEAN_PARAMS } = await L('/src/generator/archean/archeanStep.ts')
 const { serializeArchean } = await L('/src/generator/archean/archeanSnapshot.ts')

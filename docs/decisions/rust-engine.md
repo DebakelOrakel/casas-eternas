@@ -698,6 +698,21 @@ BUILDING since 2026-10-20:
   land tiles stay the job worker's (`landTiles`, `cubeLandTiles`), read
   off the save's raster; the cube's samples they use are the TypeScript
   engine's still.
+- The TypeScript adapter: `generator/pipeline/engine.ts` types what both
+  bindings give with the generator's types (the message bodies with typed
+  arrays, the save's parts), `releaseWorld` frees a WASM world (napi's go
+  with the garbage collector). `generator/pipeline/engineWasm.ts` loads
+  the WASM build in the browser through the vite alias
+  `casas-engine-wasm` (engine/dist/wasm); `scripts/engineNative.ts`
+  loads the native build in Node and types the job worker's classes (the
+  replay, the tile plan, the tile baker) with the world layer's artifact
+  forms. Checked: the smoke test loads the native build through it; a
+  vite build of the WASM loader emits the `.wasm` as an asset and the
+  bundle runs an Archean step; the dev server serves both files; every
+  value a small world gives through the stages has the types the adapter
+  states. Nothing imports the loaders yet, so the client's build does not
+  need `make engine` until the switch; from then on it does, and the
+  Docker image needs the Rust toolchain.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;
