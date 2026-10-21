@@ -3,6 +3,9 @@
 Build, worker pool, deploy, performance, and code structure. See [README](./README.md) for
 the format.
 
+## 2026-10-21
+- **changed** Build: `make release` packs only macOS on Apple silicon and Linux on x86-64, each with the job worker's engine.
+
 ## 2026-10-19
 - **changed** Build: `make build` builds the binary for macOS, Linux and Windows, and `make image` builds the container image.
 - **new** Build: `make release` packs the binary, the job worker, the client and the docs into one archive per platform.

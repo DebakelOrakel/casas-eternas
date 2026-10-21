@@ -40,11 +40,15 @@ TAG   ?= latest
 VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/DebakelOrakel/casas-eternas/cmd.buildVersion=$(VERSION)
 
-.PHONY: lint test engine worker client docs run build release image push cli-reference
+.PHONY: lint test engine engines worker client docs run build release image push cli-reference
 
-# The platforms `make build` makes the binary for, as GOOS/GOARCH. The server
-# is pure Go (CGO_ENABLED=0), so one machine builds them all.
-PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64
+# The platforms `make build` and `make release` make, as GOOS/GOARCH. The
+# server is pure Go (CGO_ENABLED=0), so one machine builds them all; the job
+# worker's engine is a Node addon per platform (`make engines`), and these
+# are the platforms a Mac with Docker builds it for without other tools
+# (2026-10-21: linux/arm64, windows/amd64 and darwin/amd64 went with the
+# engine).
+PLATFORMS := darwin/arm64 linux/amd64
 
 lint:
 	cd client && npx tsc --noEmit
@@ -148,7 +152,8 @@ test: engine
 	cd client && npm run harness:golden
 
 # The Rust engine (docs/decisions/rust-engine.md), for this machine only: the
-# native build is a Node addon and cannot be cross-compiled like the server.
+# native build is a Node addon, built for each platform on its own (the
+# release's: `make engines`).
 # The WASM build needs the wasm32-unknown-unknown target, which rustup
 # installs from engine/rust-toolchain.toml.
 ENGINE_NODE_LIB := libcasas_engine_node.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
@@ -189,44 +194,54 @@ run: worker client docs
 	go build -ldflags="$(LDFLAGS)" -o casas-eternas .
 	./casas-eternas start --target all --client.content-dir client/dist --docs.content-dir client/docs-dist $(ARGS)
 
-# One binary per platform, bin/casas-eternas-<os>-<arch> (.exe on Windows),
-# and the job worker beside them: jobs.worker looks next to the executable,
-# and the bundle is the same on every platform. The client and the docs are
-# directories passed by flag (client.content-dir, docs.content-dir), built
-# by the targets above.
+# One binary per platform, bin/casas-eternas-<os>-<arch>, and the job worker
+# beside them with this machine's engine: jobs.worker looks next to the
+# executable, and the bundle is the same on every platform. The client and
+# the docs are directories passed by flag (client.content-dir,
+# docs.content-dir), built by the targets above.
 build: worker
 	@mkdir -p bin
 	@cp job-worker.mjs casas-engine.node bin/
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
-		ext=$$([ $$os = windows ] && echo .exe); \
-		echo "bin/casas-eternas-$$os-$$arch$$ext"; \
+		echo "bin/casas-eternas-$$os-$$arch"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags="$(LDFLAGS)" \
-			-o bin/casas-eternas-$$os-$$arch$$ext . || exit 1; \
+			-o bin/casas-eternas-$$os-$$arch . || exit 1; \
 	done
 
+# The engine's native build for every platform of PLATFORMS,
+# bin/engine/<os>-<arch>/casas-engine.node. On a Mac: darwin/arm64 by
+# rustup's target (engine/rust-toolchain.toml), linux/amd64 in Rust's
+# Debian image, so for glibc (the image's own is built for musl, in
+# deploy/Dockerfile). The registry is kept in a Docker volume between runs.
+engines:
+	cd engine && cargo build --release --locked -p casas-engine-node --target aarch64-apple-darwin
+	docker run --rm --platform linux/amd64 -v $(CURDIR)/engine:/src -w /src \
+		-v casas-engine-cargo:/usr/local/cargo/registry \
+		-e RUSTUP_TOOLCHAIN=1.98.1 -e CARGO_TARGET_DIR=/src/target/linux-amd64 \
+		rust:1.98.1-bookworm cargo build --release --locked -p casas-engine-node
+	@mkdir -p bin/engine/darwin-arm64 bin/engine/linux-amd64
+	cp engine/target/aarch64-apple-darwin/release/libcasas_engine_node.dylib bin/engine/darwin-arm64/casas-engine.node
+	cp engine/target/linux-amd64/release/libcasas_engine_node.so bin/engine/linux-amd64/casas-engine.node
+
 # One archive per platform with everything `start` serves, laid out as the
-# container image is: the binary, job-worker.mjs beside it (where jobs.worker
-# looks by default), dist/ and docs-dist/. A .zip for Windows, a .tar.gz for
-# the others. Run from the unpacked directory:
+# container image is: the binary, job-worker.mjs with the platform's engine
+# beside it (where jobs.worker looks by default), dist/ and docs-dist/, as a
+# .tar.gz. Run from the unpacked directory:
 #   ./casas-eternas start --target all --client.content-dir dist --docs.content-dir docs-dist
 # The job worker needs Node on the machine, as in the image.
-release: worker client docs build
+release: worker client docs build engines
 	@rm -rf bin/release && mkdir -p bin/release
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
-		ext=$$([ $$os = windows ] && echo .exe); \
 		name=casas-eternas-$(VERSION)-$$os-$$arch; dir=bin/release/$$name; \
 		mkdir -p $$dir; \
-		cp bin/casas-eternas-$$os-$$arch$$ext $$dir/casas-eternas$$ext; \
+		cp bin/casas-eternas-$$os-$$arch $$dir/casas-eternas; \
 		cp bin/job-worker.mjs $$dir/; \
+		cp bin/engine/$$os-$$arch/casas-engine.node $$dir/; \
 		cp -R client/dist $$dir/dist; \
 		cp -R client/docs-dist $$dir/docs-dist; \
-		if [ $$os = windows ]; then \
-			(cd bin/release && zip -qr $$name.zip $$name); echo "bin/release/$$name.zip"; \
-		else \
-			tar -czf bin/release/$$name.tar.gz -C bin/release $$name; echo "bin/release/$$name.tar.gz"; \
-		fi; \
+		tar -czf bin/release/$$name.tar.gz -C bin/release $$name; echo "bin/release/$$name.tar.gz"; \
 		rm -rf $$dir; \
 	done
 
