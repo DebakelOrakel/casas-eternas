@@ -19,6 +19,7 @@ saves
 # Generated: the image builds its own from source in the web stage, and a stale
 # copy from the host would be the exact drift the single-image design avoids.
 job-worker.mjs
+casas-engine.node
 casas-eternas
 engine/target
 engine/dist
@@ -36,3 +37,20 @@ docs/ideas/**
 
 notes-dont-process.md
 GPU_TECTONICS_PLAN.md
+
+# Local state and credentials: the image builds from the sources above and
+# needs none of these. data/ holds the dev server's stores (gigabytes), the
+# others hold keys, tokens and passwords, which must not reach a build
+# context even when no COPY names them.
+data
+dev
+bin
+.vite
+.envrc
+.htpasswd
+session.key
+kubeconfig
+values-*.yaml
+manifests-*.yaml
+*.zip
+*.log

@@ -4,9 +4,10 @@
 #                no ESLint/Biome is configured, and the branch convention is
 #                "verify with tsc", so this is the honest gate)
 #   make test    the Go tests plus the worldgen regression harness
-#   make worker  bundle the job worker for Node (./job-worker.mjs)
+#   make worker  bundle the job worker for Node (./job-worker.mjs, with
+#                ./casas-engine.node beside it)
 #   make engine  build the Rust engine, native and WASM, into engine/dist/
-#                (docs/decisions/rust-engine.md; nothing uses it yet)
+#                (docs/decisions/rust-engine.md; the job worker runs on it)
 #   make run     build everything and start a local server on :8080
 #   make build   build the binary for macOS, Linux and Windows into bin/,
 #                with the job worker beside it
@@ -166,9 +167,9 @@ engine:
 	wasm-bindgen --target web --out-dir engine/dist/wasm --out-name casas-engine \
 		engine/target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
 
-# The job worker, bundled for Node. Lands beside the binary because that is
-# where jobs.worker looks by default.
-worker:
+# The job worker, bundled for Node, with the engine's native build beside it.
+# Lands beside the binary because that is where jobs.worker looks by default.
+worker: engine
 	cd client && npm run build:worker
 
 client:
@@ -195,7 +196,7 @@ run: worker client docs
 # by the targets above.
 build: worker
 	@mkdir -p bin
-	@cp job-worker.mjs bin/
+	@cp job-worker.mjs casas-engine.node bin/
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
 		ext=$$([ $$os = windows ] && echo .exe); \

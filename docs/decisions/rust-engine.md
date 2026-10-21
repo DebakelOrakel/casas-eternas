@@ -748,6 +748,21 @@ BUILDING since 2026-10-20:
   upstream). The bakes take 0.26 s a level-2 tile and 0.58 s a level-3
   tile; the stored `bakeMs` is 0.36 s and 1.98 s, but it counts the
   worker's reads of the tiles it waits for too.
+- THE SWITCH, the job worker first (decided 2026-10-21): level 1's
+  replay with its waters, the tile plan and the tile bakes run on the
+  native build (`scripts/jobWorker.ts` through `scripts/engineNative.ts`);
+  the TypeScript engine pool, its threads and the stalled-engine path
+  went from the worker. The land tiles, the checkpoints' files, the
+  progress, the cache and the artifact forms stay the worker's; a
+  serving worker holds one `TileBaker` per level 1 in its cache.
+  `make worker` builds the engine and puts `casas-engine.node` beside
+  `job-worker.mjs`; the image builds it for its platform (Alpine, musl)
+  in a stage of its own. The pipeline versions do not change: the bytes
+  are the same. Checked on Morvane with the bundle: a level-2 and a
+  level-3 tile with upstream, each the stored artifact in every file;
+  level 1 stopped after its first checkpoint (epoch 12), then resumed
+  from it, the stored artifact in every file (1 h 35 min). The release
+  archives of the other platforms do not have the engine yet.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

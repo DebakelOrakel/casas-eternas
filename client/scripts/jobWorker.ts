@@ -7,13 +7,14 @@
 // without knowing where it came from. (It baked the raster amplification's
 // 4096²/8192² tiers until 2026-09-29.)
 //
-// WHY THIS IS NOT A PORT. Every module it touches is the browser's own: the
-// save reader, the pipeline, the artifact encoder, the key derivation. Nothing
-// here reimplements anything, and that is the whole design — an artifact
-// carries a key derived from its inputs, so a browser bake and a server bake
-// of one world must produce identical bytes. The golden harness has been
-// running this same pipeline under Node for months, which is what makes the
-// server tier wiring rather than a rewrite.
+// WHAT COMPUTES. The Rust engine's native build (docs/decisions/rust-engine.md,
+// fork 3: levels 1–3 run native), beside this bundle (`casas-engine.node`):
+// level 1's replay with its waters, the tile plan, the tile bakes. Everything
+// around them is the browser's own modules: the save reader, the artifact
+// encoder, the key derivation. An artifact carries a key derived from its
+// inputs, so the engine must give the bytes TypeScript gave under the same
+// key; engine/scripts/realWorld.mjs and realTiles.mjs compare it with a real
+// world's artifacts.
 //
 // WHY IT RUNS ON THE SERVER AT ALL: a level is large (level 1 of a real save
 // is ~17 M nodes and 349 MB, 155 s single-threaded) — unremarkable for a
@@ -26,30 +27,24 @@
 import { readFile, mkdir, writeFile, rename, readdir, rm, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Worker as NodeWorker, isMainThread, parentPort, workerData } from 'node:worker_threads'
 import { availableParallelism, hostname } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
-import { BAKE_PIPELINE_DEPTH, EngineStalledError, reusableWorkers, type PipelineOptions, type ReusableWorkers, type WorkerLike } from '../src/generator/surface/erosionEnginePool'
-import { levelBudget, levelHydrology, type MeshLevel } from '../src/generator/pipeline/meshBakeStage'
-import { planTiles } from '../src/generator/pipeline/tilePlan'
-import { meshRouting } from '../src/generator/mesh/meshHydrology'
-import { climateAtPoints, climateCellsFromWeather, meanLandRunoff, meshPoints } from '../src/generator/climate/climatePoints'
 import { WORLD_PIPELINE } from '../src/world/worldPipeline'
-import { replayHistory, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
+import { planFromRecipe, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
 import type { SavedField } from '../src/generator/fields/fieldMesh'
-import { meshLevelMesh, meshLevelStage, meshLevelToArtifact, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
-import { bakedTileToArtifact, meshTileArtifactInfo, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact, type MeshTileArtifact } from '../src/world/meshTileArtifacts'
-import { bakeMeshTile, type UpstreamTile } from '../src/generator/pipeline/meshTileBake'
-import { TILE_SPECS, tileCorner, tileGrid, tileSpec, type TileParent, type TilePiece, type TileSpec } from '../src/generator/mesh/meshTile'
+import { meshLevelStage, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
+import { meshTileArtifactInfo, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact, type MeshTileArtifact } from '../src/world/meshTileArtifacts'
+import { TILE_SPECS, tileCorner, tileGrid, tileSpec, type TileSpec } from '../src/generator/mesh/meshTile'
 import { domainOfKind, type Domain } from '../src/generator/core/domain'
 import { cubeTileSamples } from '../src/generator/mesh/meshTileCube'
-import { parentTilesOn, tileGridOn, tileParentOn } from '../src/generator/mesh/tileLayout'
+import { parentTilesOn, tileGridOn } from '../src/generator/mesh/tileLayout'
 import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
 import { connect, tokenAuthenticator } from '@nats-io/transport-node'
 import { wsconnect } from '@nats-io/nats-core'
 import { AckPolicy, jetstream, jetstreamManager, type JsMsg } from '@nats-io/jetstream'
-import { createMeshSampler, type MeshSampler } from '../src/generator/mesh/meshSampler'
-import { tileBakeInputs } from '../src/world/bakeInputs'
+import { loadNativeEngine, type EngineTileBaker, type NativeEngine, type TileBakeSave, type TilePiece, type UpstreamPiece } from './engineNative'
 import { createHttpArtifactStore } from '../src/storage/HttpArtifactStore'
 import { readWorld, WorldUnavailableError } from './readWorld'
 import { artifactKey, ArtifactStoreUnavailableError, isOldKey } from '../src/storage/ArtifactStore'
@@ -109,16 +104,12 @@ interface Job {
   // (the coordinator sets it for every task): its key names the inputs and
   // the pipeline version, so it is the one this job would write.
   reuse?: boolean
-  // False forces the single-threaded engine — ONE state buffer instead of the
-  // pool's pipelined pair, which halves the routing memory (measured layout:
-  // a 16K bake is ~17 GiB single-buffer against ~26 GiB pipelined, the
-  // difference between fitting a 32 GB machine and thrashing it). The Go
-  // server never sets it; it exists for a MANUAL local run:
+  // False replays level 1 without the pool's leaf blocks (leafWorkers). The
+  // Go server never sets it; it exists for a MANUAL local run:
   //   node job-worker.mjs '{"worldZip":"…","stage":1,"erosionRounds":12,
   //                    "artifactsDir":"…","pool":false}'
-  // Slower by the pool's factor (~2× at 8 cores), which a one-off accepts.
   // Level 1 only: its history epochs agree with the pool bit for bit, a
-  // tile's twelve rounds do not, and a tile refuses it (enginePool).
+  // tile's twelve rounds do not, and a tile refuses it.
   pool?: boolean
 }
 
@@ -333,61 +324,22 @@ function fail(message: string): never {
   process.exit(1)
 }
 
-// The engine's worker pool, self-spawned from THIS entry: job-worker.mjs is one
-// esbuild bundle, so `import.meta.url` names a file that already contains
-// the engine worker's code — a worker thread loading it takes the
-// `isMainThread` branch at the bottom and becomes an engine worker. No
-// second bundle, nothing for the Go side to ship or know. Sizing mirrors
-// the generator's (pipeline/runtime.ts): the split and the depth are
-// throughput knobs, never part of the result — the engine is byte-identical
-// across any worker count, which is what lets a job land on whatever
-// machine has cores to spare.
-
-// ALWAYS a pool, on a small machine one of one stencil and one refresh
-// thread: the pooled engine is a scheme of its own, and a tile baked
-// without it differs in the last bits under the same artifact key (the
-// pooled result is the same for every worker split — measured 1+1 against
-// 4+2, 2026-10-02). It used to be none below four cores.
-//
-// The threads are KEPT across engines, for the whole process: a history
-// builds an engine every epoch, and starting seven threads that load this
-// bundle again was part of every epoch of a level-1 replay (profiled
-// 2026-10-04). A kept thread is unreferenced while idle, so it keeps no
-// one-shot run alive, and one that has died is dropped, not handed out.
-let keptWorkers: ReusableWorkers | null = null
-function engineWorkers(): ReusableWorkers {
-  if (keptWorkers) return keptWorkers
-  const dead = new WeakSet<NodeWorker>()
-  const node = (worker: WorkerLike): NodeWorker => worker as unknown as NodeWorker
-  const supply = reusableWorkers(() => {
-    const worker = new NodeWorker(new URL(import.meta.url))
-    worker.on('exit', () => dead.add(worker))
-    return worker as unknown as WorkerLike
-  }, (worker) => !dead.has(node(worker)))
-  keptWorkers = {
-    createWorker: () => {
-      const worker = supply.createWorker()
-      node(worker).ref()
-      return worker
-    },
-    releaseWorker: (worker) => {
-      node(worker).unref()
-      supply.releaseWorker(worker)
-    },
-    close: supply.close,
-  }
-  return keptWorkers
+// THE ENGINE, the native build beside this bundle (`make worker` copies
+// engine/dist/casas-engine.node there). Loaded once, in the compute thread.
+let nativeEngine: NativeEngine | null = null
+function engine(): NativeEngine {
+  nativeEngine ??= loadNativeEngine(fileURLToPath(new URL('./casas-engine.node', import.meta.url)))
+  return nativeEngine
 }
 
-function enginePool(): { createWorker: () => WorkerLike; releaseWorker: (worker: WorkerLike) => void } & PipelineOptions {
+// The pool's leaf blocks of the erosion, sized as the TypeScript pool's
+// stencil threads were. ALWAYS given for a tile: the pooled engine is a
+// scheme of its own, and a tile baked without it differs in the last bits
+// under the same artifact key (the pooled result is the same for every
+// split — measured 1+1 against 4+2, 2026-10-02).
+function leafWorkers(): number {
   const cores = availableParallelism()
-  const workers = engineWorkers()
-  return {
-    createWorker: workers.createWorker,
-    releaseWorker: workers.releaseWorker,
-    ...(cores >= 8 ? { stencilWorkers: 4, refreshWorkers: 2 } : cores >= 4 ? { stencilWorkers: 2, refreshWorkers: 1 } : { stencilWorkers: 1, refreshWorkers: 1 }),
-    pipelineDepth: BAKE_PIPELINE_DEPTH,
-  }
+  return cores >= 8 ? 4 : cores >= 4 ? 2 : 1
 }
 
 async function main(): Promise<void> {
@@ -476,7 +428,7 @@ type WorldInputs = NonNullable<Awaited<ReturnType<typeof readWorldInputs>>>
 // again, and in a cluster read the 26 MB world again too).
 interface JobCache {
   worlds: Map<string, { inputs: WorldInputs; etag: string | null }>
-  levels: Map<string, { artifact: NonNullable<Awaited<ReturnType<typeof readMeshLevelArtifact>>>['artifact']; mesh?: ReturnType<typeof meshLevelMesh>; sampler?: MeshSampler }>
+  levels: Map<string, { artifact: MeshLevelArtifact; baker?: EngineTileBaker }>
   tiles: Map<string, MeshTileArtifact>
 }
 const CACHED_WORLDS = 2
@@ -540,10 +492,9 @@ async function runJob(job: Job, onProgress: (phase: string, fraction: number) =>
       }
     }
   }
-  const level = await replayLevel(job, inputs, onProgress)
+  const artifact = await replayLevel(job, inputs, onProgress)
   const durationMs = Date.now() - started
   onProgress('store', 0)
-  const artifact = meshLevelToArtifact(level)
   if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   if (cache) remember(cache.levels, `${key.worldId}/${key.pipelineVersion}`, { artifact }, CACHED_LEVELS)
   if (job.checkpointDir) await rm(checkpointPath(job.checkpointDir, inputs), { recursive: true, force: true })
@@ -572,13 +523,10 @@ interface PlannedTask {
 const shapeOf = (inputs: WorldInputs): 'torus' | 'sphere' => (inputs.kind === 'SphereWorld' ? 'sphere' : 'torus')
 
 function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[] {
-  const mesh = meshLevelMesh(artifact, inputs.width, inputs.height, shapeOf(inputs))
-  const routing = meshRouting(mesh, artifact.z)
-  const plan = planTiles({
-    mesh, z: artifact.z, routing, width: inputs.width, height: inputs.height,
-    levels: Object.keys(TILE_SPECS).map(Number).sort((a, b) => a - b),
-    landTiles: (level) => (shapeOf(inputs) === 'sphere' ? cubeLandTiles(inputs, mesh.domain, tileSpec(level)) : landTiles(inputs, tileSpec(level))).map(([x, y]) => ({ level, x, y })),
-  })
+  const shape = shapeOf(inputs)
+  const domain = domainOfKind(shape, inputs.width, inputs.height)
+  const land = Object.fromEntries(Object.keys(TILE_SPECS).map(Number).map((level) => [level, shape === 'sphere' ? cubeLandTiles(inputs, domain, tileSpec(level)) : landTiles(inputs, tileSpec(level))]))
+  const plan = engine().planTiles(artifact, inputs.width, inputs.height, shape, land)
   return plan.map((p) => ({
     level: p.tile.level, x: p.tile.x, y: p.tile.y,
     after: [...p.parents, ...p.upstream].map((t) => [t.level, t.x, t.y] as [number, number, number]),
@@ -596,44 +544,36 @@ function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[]
 // replayed the history at its own budget and compared it with the save,
 // because the world recorded a hash of the source files, which said
 // nothing about the simulation; the pipeline says it.
-async function replayLevel(job: Job, inputs: WorldInputs, onProgress: (phase: string, fraction: number) => void): Promise<MeshLevel> {
+async function replayLevel(job: Job, inputs: WorldInputs, onProgress: (phase: string, fraction: number) => void): Promise<MeshLevelArtifact> {
   const refusal = replayRefusal(inputs.history, inputs.pipeline)
   if (refusal) throw new Error(refusal)
   if (!inputs.mesh) throw new Error('the world carries no mesh — make it again to refine it')
   const recipe = { seed: inputs.seedText, width: inputs.width, height: inputs.height, shape: shapeOf(inputs), history: inputs.history }
-  const pool = job.pool === false ? undefined : enginePool()
   const dir = job.checkpointDir ? checkpointPath(job.checkpointDir, inputs) : null
   const resume = dir ? await readCheckpoint(dir) : null
   onProgress('history', 0)
   let lastCheckpoint = resume?.done ?? 0
-  let done = lastCheckpoint
-  const { terrain } = await replayHistory(recipe, {
-    budget: levelBudget(1),
-    pool,
-    resume: resume ? { position: resume.position, snapshot: resume.snapshot } : undefined,
-    onEpoch: (epochs, total) => {
-      done = epochs
-      onProgress('history', epochs / total)
-    },
-    onCheckpoint: dir
-      ? async (position, take) => {
-        if (done - lastCheckpoint < CHECKPOINT_EVERY_EPOCHS) return
-        await writeCheckpoint(dir, position, done, take())
+  const replay = engine().Replay.start(planFromRecipe(recipe), 1, resume ? { position: resume.position, snapshot: resume.snapshot } : null, job.pool === false ? null : leafWorkers())
+  // One epoch a call. Between two, the thread takes its messages (a fresh
+  // token) and the checkpoint is written where one restores exactly.
+  for (;;) {
+    const { done } = replay.progress()
+    if (dir && done - lastCheckpoint >= CHECKPOINT_EVERY_EPOCHS) {
+      const position = replay.checkpointDue()
+      if (position) {
+        await writeCheckpoint(dir, position, done, replay.snapshot())
         lastCheckpoint = done
       }
-      : undefined,
-  })
+    }
+    if (!replay.step()) break
+    const after = replay.progress()
+    onProgress('history', after.done / after.total)
+    await new Promise((resolve) => setImmediate(resolve))
+  }
   onProgress('hydrology', 0)
-  const weather = terrain.weather?.result
-  if (!terrain.routing || !weather) throw new Error('the replay ended without its last epoch\'s state')
-  // The last epoch's climate at the level's nodes (climate/climatePoints.ts).
-  const cells = climateCellsFromWeather(weather)
-  const atNodes = climateAtPoints(cells, meshPoints(terrain.mesh, terrain.z))
-  const water = levelHydrology(terrain.mesh, terrain.z, terrain.routing, terrain.areas, terrain.sedimentFlux, {
-    precipitation: atNodes.precipitation, temperature: atNodes.temperature, monsoonIndex: atNodes.monsoonIndex, meanRunoff: meanLandRunoff(cells),
-  }, { width: inputs.width, height: inputs.height, budget: levelBudget(1), detailSeed: inputs.detailSeed })
+  const level = replay.level(inputs.width, inputs.detailSeed)
   onProgress('hydrology', 1)
-  return { level: 1, mesh: terrain.mesh, z: terrain.z, routing: terrain.routing, ...water, inserted: 0 }
+  return level
 }
 
 // CHECKPOINTS of level 1's replay: hours of one task, so a worker that dies
@@ -756,9 +696,9 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   if (!job.tile || !Number.isInteger(job.tile.x) || !Number.isInteger(job.tile.y) || job.tile.x < 0 || job.tile.y < 0 || job.tile.x >= cols || job.tile.y >= rows) {
     throw new Error(`stage ${job.stage} needs a tile inside the ${cols} × ${rows} grid`)
   }
-  // Tiles bake on the pool only: without it the engine is the other scheme,
-  // and the artifact would differ under the same key (enginePool).
-  if (job.pool === false) throw new Error('a tile bakes on the engine pool only — pool: false is for level 1')
+  // Tiles bake on the pool's scheme only: without it the artifact would
+  // differ under the same key (leafWorkers).
+  if (job.pool === false) throw new Error('a tile bakes on the pool\'s scheme only — pool: false is for level 1')
   const tile = { level: spec.level, x: job.tile.x, y: job.tile.y }
   const started = Date.now()
   const pipelineVersion = meshTilePipelineVersion(spec.level, job.erosionRounds)
@@ -777,29 +717,23 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     level1 = { artifact: read.artifact }
     if (cache) remember(cache.levels, levelKey, level1, CACHED_LEVELS)
   }
-  // Decoded and indexed once per worker, not once per tile.
-  level1.mesh ??= meshLevelMesh(level1.artifact, inputs.width, inputs.height, shapeOf(inputs))
-  level1.sampler ??= createMeshSampler(level1.mesh, level1.artifact.z)
-  const macro = level1.sampler
-  let parent: TileParent
-  if (spec.level === 2) {
-    parent = { mesh: level1.mesh, z: level1.artifact.z, discharge: null, sampler: macro, macro }
-  } else {
-    // The level above's tiles this one overlaps, joined (meshTile.ts,
-    // tileParentFromTiles); every one must be there — the coordinator
-    // orders them first.
+  // Opened once per worker, not once per tile: the engine holds level 1
+  // decoded with its sampler, its river graph and the climate's field mesh.
+  level1.baker ??= engine().TileBaker.open(level1.artifact, tileBakeSave(inputs), leafWorkers())
+  let pieces: TilePiece[] | null = null
+  if (spec.level !== 2) {
+    // The level above's tiles this one overlaps; every one must be there —
+    // the coordinator orders them first.
     const above = tileSpec(spec.level - 1)
-    const pieces: TilePiece[] = []
-    for (const piece of parentTilesOn(tile, above, level1.mesh.domain)) {
+    pieces = []
+    for (const piece of parentTilesOn(tile, above, domainOfKind(shapeOf(inputs), inputs.width, inputs.height))) {
       const read = await readTile(store, artifactKey(inputs.worldId, meshTilePipelineVersion(above.level, job.erosionRounds), meshTileStage(piece)), cache)
       if (!read) throw new Error(`tile ${meshTileStage(piece)} of this world is not in the artifact store — the level above comes first`)
       pieces.push({ tile: piece, count: read.count, nodes: read.nodes, z: read.z })
     }
-    const patch = tileParentOn(pieces, level1.mesh.domain)
-    parent = { mesh: patch.mesh, z: patch.z, discharge: null, sampler: createMeshSampler(patch.mesh, patch.z, patch.region), macro }
   }
   // The upstream tiles' outflow; each was computed first (it is a dep).
-  const upstream: UpstreamTile[] = []
+  const upstream: UpstreamPiece[] = []
   for (const at of job.upstream ?? []) {
     const up = { level: spec.level, x: at.x, y: at.y }
     const read = await readTile(store, artifactKey(inputs.worldId, pipelineVersion, meshTileStage(up)), cache)
@@ -807,11 +741,27 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
     upstream.push({ tile: up, count: read.count, nodes: read.nodes, outflow: read.outflow })
   }
   onProgress('parent', 1)
-  const baked = await bakeMeshTile(tileBakeInputs(inputs, parent, level1.artifact.graph, upstream), tile, { rounds: job.erosionRounds, pool: enginePool(), onProgress })
+  const artifact = level1.baker.bake(tile, pieces, upstream, job.erosionRounds)
   const durationMs = Date.now() - started
-  const artifact = bakedTileToArtifact(baked)
   if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs } }
+}
+
+// The save's inputs a tile bake reads (world/bakeInputs.ts, tileBakeInputs).
+function tileBakeSave(inputs: WorldInputs): TileBakeSave {
+  return {
+    width: inputs.width,
+    height: inputs.height,
+    shape: shapeOf(inputs),
+    detailSeed: inputs.detailSeed,
+    lithoSeed: inputs.lithoSeed,
+    controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
+    uplift: inputs.uplift?.data,
+    erodibility: inputs.erodibility?.data,
+    forcingResX: inputs.uplift?.resX ?? 0,
+    forcingResY: inputs.uplift?.resY ?? 0,
+    climate: inputs.climate ?? undefined,
+  }
 }
 
 // A tile artifact, through the worker's cache when it has one.
@@ -948,7 +898,7 @@ async function accountName(): Promise<string> {
 // presence (gone after 45 s), the pongs (the relay closes a connection after
 // two pings of 30 s) and the heartbeat (after 5 min the relay gives the task
 // to a second worker). The thread changes where the computation runs, not
-// what it computes: the same runJob, the same engine pool, started from the
+// what it computes: the same runJob, the same engine, started from the
 // thread. One thread for the process; it keeps the cache between tasks.
 const COMPUTE_THREAD = 'casas-compute'
 
@@ -958,11 +908,11 @@ type ComputeReply =
   | { type: 'done'; outcome: JobOutcome }
   | { type: 'failed'; kind: ComputeFailure['kind']; message: string }
 
-// A task's failure as the serve loop decides on it: `stalled`, a dead
-// engine thread (the worker ends); `unavailable`, a store or world server
-// that did not answer (the task goes back); `final`, the task's answer.
+// A task's failure as the serve loop decides on it: `unavailable`, a store
+// or world server that did not answer (the task goes back); `final`, the
+// task's answer.
 class ComputeFailure extends Error {
-  readonly kind: 'stalled' | 'unavailable' | 'final'
+  readonly kind: 'unavailable' | 'final'
   constructor(kind: ComputeFailure['kind'], message: string) {
     super(message)
     this.name = 'ComputeFailure'
@@ -971,7 +921,6 @@ class ComputeFailure extends Error {
 }
 
 function failureKind(error: unknown): ComputeFailure['kind'] {
-  if (error instanceof EngineStalledError) return 'stalled'
   if (error instanceof ArtifactStoreUnavailableError || error instanceof WorldUnavailableError) return 'unavailable'
   return 'final'
 }
@@ -1126,15 +1075,8 @@ async function serve(config: ServeConfig): Promise<void> {
       msg.ack()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      // A dead engine thread is this worker's fault, not the task's: the
-      // worker ends without an answer, the pool starts a fresh one and the
-      // relay hands the task on once its heartbeat stops.
-      if (error instanceof ComputeFailure && error.kind === 'stalled') {
-        process.stderr.write(`task ${taskId}: ${message}; ending the worker\n`)
-        process.exit(1)
-      }
       // An artifact store or a world server that did not answer is not the
-      // task's fault either, and not a miss (HttpArtifactStore.ts,
+      // task's fault, and not a miss (HttpArtifactStore.ts,
       // readWorld): the task goes back to
       // the relay, as for a worker that crashed, and is handed out again —
       // to this worker or another — after a pause. Its last delivery
@@ -1163,15 +1105,10 @@ async function serve(config: ServeConfig): Promise<void> {
   }
 }
 
-// A worker thread loading this bundle is the COMPUTE THREAD when started
-// with COMPUTE_THREAD as its data (computeThread), else an ENGINE WORKER:
-// importing the worker module registers its parentPort handshake and the
-// pool drives it over SharedArrayBuffers from there. The main thread keeps
-// the bus.
+// A worker thread loading this bundle is the COMPUTE THREAD
+// (computeThread). The main thread keeps the bus.
 if (isMainThread) {
   void main().catch((error: unknown) => fail(String(error)))
 } else if (workerData === COMPUTE_THREAD) {
   serveComputation()
-} else {
-  void import('../src/generator/surface/erosionEngineWorker')
 }

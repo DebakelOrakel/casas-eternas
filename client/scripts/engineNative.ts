@@ -4,8 +4,8 @@
 // only this build has. Their forms are the world layer's: a level and a
 // tile as their artifacts hold them.
 //
-// Nothing calls this yet but the engine's smoke test; the job worker
-// changes over at the switch (fork 5).
+// The job worker (scripts/jobWorker.ts) computes on it, and the engine's
+// smoke test loads it.
 import { createRequire } from 'node:module'
 import type { Engine, Shape } from '../src/generator/pipeline/engine'
 import type { ReplayPlan, ReplayPosition, ReplaySnapshot } from '../src/generator/pipeline/replayRuns'

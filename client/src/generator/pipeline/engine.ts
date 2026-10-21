@@ -11,8 +11,8 @@
 // arrays where a message holds their buffers, and the save's parts as the
 // world layer writes them (fork 6c).
 //
-// Nothing calls this yet; the runtime and the job worker change over at the
-// switch (fork 5).
+// The job worker computes on the native build; the runtime changes over
+// next (fork 5).
 import type { ArcheanSnapshot } from '../archean/archeanSnapshot'
 import type { PlateSimulationSnapshot, SimEvent } from '../tectonics/plateSimulationTypes'
 import type { SavedField } from '../fields/fieldMesh'

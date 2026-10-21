@@ -9,7 +9,8 @@
 #   docker build -f deploy/Dockerfile -t casas-eternas:latest .
 #
 # WHY THE RUNTIME CARRIES NODE. The job worker is the client's own
-# TypeScript, bundled for Node and spawned as a subprocess — that is what keeps
+# TypeScript, bundled for Node and spawned as a subprocess, computing on the
+# Rust engine's native build beside it (stage 0) — that is what keeps
 # a server-baked artifact byte-identical to a browser-baked one, since both
 # carry a key derived from their inputs. Two images (Go here, Node there) would
 # be two things that can drift, and drift means a pipeline-version mismatch,
@@ -18,6 +19,21 @@
 #
 # OpenShift-ready: runs as a non-root, ARBITRARY UID (member of GID 0), listens
 # on 8080, and keeps all writable state on mounted volumes.
+
+# ---- Stage 0: the engine's native build -------------------------------------
+# The job worker computes on the Rust engine (docs/decisions/rust-engine.md),
+# a Node addon built for the runtime's platform: Alpine, so musl. Node loads
+# the addon into its own process, so the C library is linked dynamically
+# (crt-static off), as Node's is. RUSTUP_TOOLCHAIN stands for
+# engine/rust-toolchain.toml, whose WASM targets the image does not need.
+FROM rust:1.98.1-alpine AS engine
+ENV RUSTUP_TOOLCHAIN=1.98.1
+RUN apk add --no-cache musl-dev
+WORKDIR /src/engine
+COPY engine/Cargo.toml engine/Cargo.lock engine/clippy.toml ./
+COPY engine/crates/ ./crates/
+RUN RUSTFLAGS="-C target-feature=-crt-static" cargo build --release --locked -p casas-engine-node \
+ && mkdir -p /out && cp target/release/libcasas_engine_node.so /out/casas-engine.node
 
 # ---- Stage 1: the client bundle and the job worker -------------------------
 FROM node:22-alpine AS web
@@ -38,8 +54,10 @@ RUN npm ci
 COPY docs/ /app/docs/
 COPY client/ ./
 
-# dist/ is the app; job-worker.mjs is the job worker for the server to spawn.
-# Both come out of the same source tree in the same layer, which is the point.
+# dist/ is the app; job-worker.mjs is the job worker for the server to spawn,
+# with the engine beside it (build:worker copies engine/dist's). All come
+# out of the same source tree, which is the point.
+COPY --from=engine /out/casas-engine.node /app/engine/dist/casas-engine.node
 RUN npm run build && npm run build:worker && npm run build:docs
 
 # ---- Stage 2: the server ----------------------------------------------------
@@ -71,6 +89,7 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 COPY --from=server /out/casas-eternas /app/casas-eternas
 COPY --from=web    /app/job-worker.mjs /app/job-worker.mjs
+COPY --from=web    /app/casas-engine.node /app/casas-engine.node
 COPY --from=web    /app/client/dist   /app/dist
 COPY --from=web    /app/client/docs-dist /app/docs-dist
 
