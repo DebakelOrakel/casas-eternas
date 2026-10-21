@@ -100,7 +100,7 @@ func TestUncommittedUploadsCountAgainstTheCap(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		link, err := s.WriteLink(ctx, uid, "a.f32", 1000, time.Hour)
+		link, err := linkFor(s, ctx, uid, "a.f32", 1000, time.Hour)
 		if err != nil {
 			if !errors.Is(err, errStoreFull) {
 				t.Fatalf("link %d refused with %v, want errStoreFull", i, err)
@@ -124,14 +124,14 @@ func TestAnArtifactHoldsFewUncommittedFiles(t *testing.T) {
 	ctx := context.Background()
 	uid, _, _ := s.Resolve(ctx, testKey(), true)
 	for i := range maxPendingFiles {
-		if _, err := s.WriteLink(ctx, uid, "f"+strconv.Itoa(i), 1, time.Hour); err != nil {
+		if _, err := linkFor(s, ctx, uid, "f"+strconv.Itoa(i), 1, time.Hour); err != nil {
 			t.Fatalf("link %d: %v", i, err)
 		}
 	}
-	if _, err := s.WriteLink(ctx, uid, "f0", 1, time.Hour); err != nil {
+	if _, err := linkFor(s, ctx, uid, "f0", 1, time.Hour); err != nil {
 		t.Errorf("a fresh link for a pending file: %v", err)
 	}
-	if _, err := s.WriteLink(ctx, uid, "one-more", 1, time.Hour); !errors.Is(err, errTooManyPending) {
+	if _, err := linkFor(s, ctx, uid, "one-more", 1, time.Hour); !errors.Is(err, errTooManyPending) {
 		t.Errorf("link %d = %v, want errTooManyPending", maxPendingFiles+1, err)
 	}
 }
@@ -145,7 +145,7 @@ func TestAnExpiredUploadIsJunk(t *testing.T) {
 	clock := useClock(s)
 	ctx := context.Background()
 	uid, _, _ := s.Resolve(ctx, keyN("r"), true)
-	if _, err := s.WriteLink(ctx, uid, "a.f32", 1000, time.Minute); err != nil {
+	if _, err := linkFor(s, ctx, uid, "a.f32", 1000, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	key, _ := objectKey(uid, "a.f32")
@@ -234,7 +234,7 @@ func TestAMetaThatNamesAnotherKeyIsRefused(t *testing.T) {
 		t.Errorf("another link of the committed artifact = %d, want 403", code)
 	}
 	if got, _ := writeLink(t, mux, uid, metaName, len(good), jobA); got.Code != http.StatusConflict {
-		t.Errorf("write-link for a committed artifact = %d, want 409", got.Code)
+		t.Errorf("write-links for a committed artifact = %d, want 409", got.Code)
 	}
 	if raw, err := readFile(t, m.store, uid, metaName); err != nil || string(raw) != good {
 		t.Errorf("meta.json after the refused overwrite = %q, %v", raw, err)

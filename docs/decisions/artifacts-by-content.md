@@ -72,7 +72,7 @@ computes the bytes from that world's stored save, so the content is a
 function of the key by construction. The browser does not bake and does not
 upload: it reads from the server and keeps a copy in OPFS. An `Authorization`
 that is not a job token gets `403` on `resolve` with `create`, on
-`write-link`, on `commit` and on the server's `PUT`; an admin's session too.
+`write-links`, on `commit` and on the server's `PUT`; an admin's session too.
 The local mode, where every check answers yes, writes as before. (Today the
 browser bakes nothing; this closes the path before a browser bake can use
 it.)

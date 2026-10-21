@@ -738,6 +738,26 @@ same day). Each has a test that failed before the fix.
 - **The template mark.** A failed mark or unmark said "The server list
   cannot be reached"; it says `generator.load.template.failed` now.
 
+2026-10-22: **write links per artifact.** A tile is six files, and the
+worker asked for a link and uploaded one file after the other: thirteen
+round trips, on S3 about 0.3 s of a level-3 tile, after its inputs (read
+one after the other too, two thirds of the tile until then) were read at
+once. `POST /v1/artifacts/{uid}/write-link` became
+`POST /v1/artifacts/{uid}/write-links` `{files: [{name, size}]}`, which
+answers `{links: {name: {method, url, header, expires}}}`: all or none
+(`Store.WriteLinks`; a file named twice is `400`), with the same answers
+as before (`404`, `409` with or without the code "committed", `413`,
+`507`). The old route went, with no workers of older builds to serve. The
+client writes an artifact in one call (`ArtifactStore.writeFiles`): the
+links in one request, the uploads at once, one commit. The rules above
+stay, now per artifact: a fresh link for one file is the same route with
+that file; a `404` resolves again once and writes the whole artifact
+again; "committed" is true without a commit. The state the store kept per
+uid between calls (the uploaded files, the uids written again, the uids
+another writer committed) went with it. Tests: Go
+(`TestWriteLinksForAWholeArtifact`, the refusals in
+`TestDirWriteLinkRefusals`), `npm run test:http-store`.
+
 Open: **the relay is plain NATS over TCP**, not encrypted. The plan for
 external workers, and later the browser: NATS's WebSocket listener behind
 the Ingress/Route, with TLS from the router (or, standalone, the WebSocket

@@ -1,7 +1,7 @@
 import { MESH_BAKE_CONSTANTS } from './meshArtifacts'
 import type { TileId } from '../generator/mesh/meshTile'
 import { ENGINE_CONSTANTS, engineLevelBudget } from '../generator/pipeline/engineConstants'
-import type { ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
+import { writeArtifactFiles, type ArtifactKey, type ArtifactStore } from '../storage/ArtifactStore'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
 
@@ -110,14 +110,14 @@ export async function writeMeshTileArtifact(store: ArtifactStore, key: ArtifactK
       [F.outflow]: artifact.outflow.byteLength,
     },
   }
-  return (
-    (await store.write(handle, F.nodes, bytesOf(artifact.nodes))) &&
-    (await store.write(handle, F.triangles, bytesOf(artifact.triangles))) &&
-    (await store.write(handle, F.z, bytesOf(artifact.z))) &&
-    (await store.write(handle, F.role, artifact.role)) &&
-    (await store.write(handle, F.outflow, bytesOf(artifact.outflow))) &&
-    (await store.write(handle, F.meta, new TextEncoder().encode(JSON.stringify(meta))))
-  )
+  return writeArtifactFiles(store, handle, [
+    { name: F.nodes, bytes: bytesOf(artifact.nodes) },
+    { name: F.triangles, bytes: bytesOf(artifact.triangles) },
+    { name: F.z, bytes: bytesOf(artifact.z) },
+    { name: F.role, bytes: artifact.role },
+    { name: F.outflow, bytes: bytesOf(artifact.outflow) },
+    { name: F.meta, bytes: new TextEncoder().encode(JSON.stringify(meta)) },
+  ])
 }
 
 // A tile's artifact as far as reusing it needs: there, whole, its node count

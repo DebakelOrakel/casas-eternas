@@ -9,15 +9,15 @@
 // as it did before. Both halves are checked here against a real HTTP
 // server on loopback, in about a second; no Vite, no world.
 //
-// Also (DEC-0038, fork 7): the job worker's writes by link — a write link
-// per file, the upload without the job's credentials, the commit with
-// meta.json — and the rule for expired links: a link with less than the
-// margin left is asked for again before the upload, a refused upload (403,
-// 410) once after it. And the worker's read of the world: only a 404 is
-// "no such world", other failures give the task back. And a reservation
-// the server forgot at a restart: a 404 on a write by link resolves again
-// once and uploads the artifact again from its first file; a second 404
-// throws. And the world read by link (2026-10-16): the 302's ETag is the
+// Also (DEC-0038, fork 7): the job worker's writes by link — the write
+// links for all of an artifact's files in one request, the uploads at once
+// without the job's credentials, one commit — and the rule for expired
+// links: a link with less than the margin left is asked for again before
+// the upload, a refused upload (403, 410) once after it. And the worker's
+// read of the world: only a 404 is "no such world", other failures give the
+// task back. And a reservation the server forgot at a restart: a 404 on a
+// write by link resolves again once and writes the whole artifact again; a
+// second 404 throws. And the world read by link (2026-10-16): the 302's ETag is the
 // revision, the link is read without the job token, the 304 still comes.
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -52,34 +52,47 @@ const refusedFinally = (o) => o.error instanceof ArtifactStoreRefusedError && !(
 // The server's answer per route, set by each case.
 const answers = { resolve: 200, file: 200, put: 204 }
 // The writes by link: what the server answers, and what it was sent.
-const links = { linkStatus: [], linkTtlMs: [], upload: [], commit: 204, relative: false, asked: 0, uploads: [], commits: [] }
-const resetLinks = (change = {}) => Object.assign(links, { linkStatus: [], linkTtlMs: [], upload: [], commit: 204, relative: false, asked: 0, uploads: [], commits: [] }, change)
+// uploadFor: statuses per file name, before `upload`; delayMs holds each
+// upload back, so that uploads at once overlap (inFlight, mostInFlight).
+const fresh = () => ({ linkStatus: [], linkTtlMs: [], upload: [], uploadFor: {}, delayMs: 0, commit: 204, relative: false, asked: 0, requests: [], uploads: [], commits: [], inFlight: 0, mostInFlight: 0 })
+const links = fresh()
+const resetLinks = (change = {}) => Object.assign(links, fresh(), change)
 const server = createServer((req, res) => {
   const chunks = []
   req.on('data', (chunk) => chunks.push(chunk))
   req.on('end', () => {
     const url = new URL(req.url, 'http://x')
     const body = Buffer.concat(chunks)
-    const write = url.pathname.match(/^\/v1\/artifacts\/u1\/write-link$/)
+    const write = url.pathname.match(/^\/v1\/artifacts\/u1\/write-links$/)
     if (write && req.method === 'POST') {
       const n = ++links.asked
       const answer = links.linkStatus.shift() ?? 200
       const [status, error] = typeof answer === 'number' ? [answer, '{"error":"x"}'] : [answer.status, answer.body]
       if (status !== 200) return res.writeHead(status, { 'Content-Type': 'application/json' }).end(error)
-      const { name, size } = JSON.parse(body.toString())
+      const { files } = JSON.parse(body.toString())
+      links.requests.push(files)
       const ttl = links.linkTtlMs.shift() ?? 3_600_000
-      const path = `/bucket/u1/${name}?len=${size}&n=${n}`
-      return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
-        method: 'PUT',
-        url: links.relative ? path : `http://127.0.0.1:${port}${path}`,
-        header: { 'X-Signed': `link-${n}` },
-        expires: new Date(Date.now() + ttl).toISOString(),
+      const given = Object.fromEntries(files.map(({ name, size }) => {
+        const path = `/bucket/u1/${name}?len=${size}&n=${n}`
+        return [name, {
+          method: 'PUT',
+          url: links.relative ? path : `http://127.0.0.1:${port}${path}`,
+          header: { 'X-Signed': `link-${n}` },
+          expires: new Date(Date.now() + ttl).toISOString(),
+        }]
       }))
+      return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ links: given }))
     }
     if (url.pathname.startsWith('/bucket/') && req.method === 'PUT') {
-      links.uploads.push({ path: url.pathname, n: url.searchParams.get('n'), signed: req.headers['x-signed'], authorization: req.headers.authorization, length: body.length })
-      const status = links.upload.shift() ?? 200
-      return res.writeHead(status).end()
+      const name = url.pathname.split('/').pop()
+      links.uploads.push({ path: url.pathname, name, n: url.searchParams.get('n'), signed: req.headers['x-signed'], authorization: req.headers.authorization, length: body.length })
+      const status = links.uploadFor[name]?.shift() ?? links.upload.shift() ?? 200
+      links.mostInFlight = Math.max(links.mostInFlight, ++links.inFlight)
+      setTimeout(() => {
+        links.inFlight--
+        res.writeHead(status).end()
+      }, links.delayMs)
+      return
     }
     if (url.pathname === '/v1/artifacts/u1/commit' && req.method === 'POST') {
       links.commits.push({ body: JSON.parse(body.toString()), authorization: req.headers.authorization })
@@ -185,78 +198,73 @@ console.log('\n— the HTTP store: writes by link (the job worker) —')
   })
   const data = new Uint8Array(1000)
   const meta = new TextEncoder().encode('{"key":{}}')
+  const artifact = (...names) => names.map((name) => ({ name, bytes: name === 'meta.json' ? meta : data }))
+  const sizes = (...names) => names.map((name) => ({ name, size: name === 'meta.json' ? meta.byteLength : 1000 }))
 
-  resetLinks()
-  const a = await outcome(() => s.write(handle, 'a.f32', data))
-  check('a file → a link with its length, an upload to it, no commit yet', a.value === true && links.asked === 1 && links.uploads.length === 1 && links.uploads[0].length === 1000 && links.commits.length === 0, JSON.stringify({ a, links }))
-  check('the upload carries the link\'s headers', links.uploads[0].signed === 'link-1', JSON.stringify(links.uploads[0]))
-  check('the upload carries no Authorization (the link is the right)', links.uploads[0].authorization === undefined, String(links.uploads[0].authorization))
-  const m = await outcome(() => s.write(handle, 'meta.json', meta))
-  const committed = links.commits[0]?.body.files ?? []
-  check('meta.json → uploaded, then one commit of both files with their sizes', m.value === true && links.commits.length === 1 && JSON.stringify(committed) === JSON.stringify([{ name: 'a.f32', size: 1000 }, { name: 'meta.json', size: meta.byteLength }]), JSON.stringify({ m, commits: links.commits }))
+  resetLinks({ delayMs: 50 })
+  const all = await outcome(() => s.writeFiles(handle, artifact('a.f32', 'b.f32', 'meta.json')))
+  check('an artifact → one request for the links of all its files, with their lengths', all.value === true && links.asked === 1 && JSON.stringify(links.requests[0]) === JSON.stringify(sizes('a.f32', 'b.f32', 'meta.json')), JSON.stringify({ all, requests: links.requests }))
+  check('each file uploaded to its own link with its length, all at once', links.uploads.length === 3 && links.uploads.every((u) => u.path === `/bucket/u1/${u.name}` && u.length === (u.name === 'meta.json' ? meta.byteLength : 1000)) && links.mostInFlight === 3, JSON.stringify({ uploads: links.uploads, mostInFlight: links.mostInFlight }))
+  check('the uploads carry the link\'s headers', links.uploads.every((u) => u.signed === 'link-1'), JSON.stringify(links.uploads))
+  check('the uploads carry no Authorization (the link is the right)', links.uploads.every((u) => u.authorization === undefined), JSON.stringify(links.uploads))
+  check('then one commit of all files with their sizes', links.commits.length === 1 && JSON.stringify(links.commits[0].body.files) === JSON.stringify(sizes('a.f32', 'b.f32', 'meta.json')), JSON.stringify(links.commits))
   check('the commit carries the job\'s token', links.commits[0]?.authorization === 'Bearer job-token', String(links.commits[0]?.authorization))
 
-  resetLinks({ relative: true })
-  const relative = await outcome(() => s.write(handle, 'b.f32', data))
-  check('a dir link (a path) is resolved against the server', relative.value === true && links.uploads.length === 1, JSON.stringify(relative))
+  resetLinks()
+  const one = await outcome(() => s.write(handle, 'meta.json', meta))
+  check('a write of one file → that file as the artifact: a link, an upload, the commit', one.value === true && links.asked === 1 && links.uploads.length === 1 && links.commits.length === 1, JSON.stringify({ one, links }))
 
-  // The rule for expired links.
+  resetLinks({ relative: true })
+  const relative = await outcome(() => s.writeFiles(handle, artifact('b.f32', 'meta.json')))
+  check('a dir link (a path) is resolved against the server', relative.value === true && links.uploads.length === 2, JSON.stringify(relative))
+
+  // The rule for expired links, per file.
   resetLinks({ linkTtlMs: [60_000] })
-  const expiring = await outcome(() => s.write(handle, 'c.f32', data))
-  check('a link with less than the margin left → a fresh one first, one upload with it', expiring.value === true && links.asked === 2 && links.uploads.length === 1 && links.uploads[0].n === '2', JSON.stringify({ expiring, asked: links.asked, uploads: links.uploads }))
+  const expiring = await outcome(() => s.writeFiles(handle, artifact('c.f32')))
+  check('a link with less than the margin left → a fresh one first, one upload with it', expiring.value === true && links.asked === 2 && links.uploads.length === 1 && links.uploads[0].n === '2' && JSON.stringify(links.requests[1]) === JSON.stringify(sizes('c.f32')), JSON.stringify({ expiring, asked: links.asked, uploads: links.uploads }))
   for (const status of [403, 410]) {
-    resetLinks({ upload: [status] })
-    const refused = await outcome(() => s.write(handle, 'd.f32', data))
-    check(`an upload refused with ${status} → a fresh link, uploaded again`, refused.value === true && links.asked === 2 && links.uploads.length === 2 && links.uploads[1].n === '2', JSON.stringify({ refused, asked: links.asked, uploads: links.uploads }))
+    resetLinks({ uploadFor: { 'b.f32': [status] } })
+    const refused = await outcome(() => s.writeFiles(handle, artifact('a.f32', 'b.f32', 'meta.json')))
+    const b = links.uploads.filter((u) => u.name === 'b.f32')
+    check(`an upload refused with ${status} → a fresh link for that file only, uploaded again`, refused.value === true && links.asked === 2 && JSON.stringify(links.requests[1]) === JSON.stringify(sizes('b.f32')) && b.length === 2 && b[1].n === '2' && links.uploads.length === 4 && links.commits.length === 1, JSON.stringify({ refused, requests: links.requests, uploads: links.uploads }))
   }
   resetLinks({ upload: [403, 403] })
-  const twice = await outcome(() => s.write(handle, 'e.f32', data))
-  check('refused again with the fresh link → false, no third try', twice.value === false && links.uploads.length === 2, JSON.stringify({ twice, uploads: links.uploads.length }))
+  const twice = await outcome(() => s.writeFiles(handle, artifact('e.f32')))
+  check('refused again with the fresh link → false, no third try, no commit', twice.value === false && links.uploads.length === 2 && links.commits.length === 0, JSON.stringify({ twice, uploads: links.uploads.length }))
   resetLinks({ linkTtlMs: [60_000], upload: [403] })
-  const both = await outcome(() => s.write(handle, 'f.f32', data))
+  const both = await outcome(() => s.writeFiles(handle, artifact('f.f32')))
   check('fresh after the margin check, then refused → false (asked once only)', both.value === false && links.asked === 2 && links.uploads.length === 1, JSON.stringify({ both, asked: links.asked }))
+  resetLinks({ uploadFor: { 'b.f32': [400] } })
+  const oneRefused = await outcome(() => s.writeFiles(handle, artifact('a.f32', 'b.f32', 'meta.json')))
+  check('one file of several refused → false, no commit', oneRefused.value === false && links.commits.length === 0, JSON.stringify({ oneRefused, links }))
 
   // Failures: a refusal is false, a server that does not answer throws.
   resetLinks({ upload: [500] })
-  check('an upload answered 500 → unavailable', unavailable(await outcome(() => s.write(handle, 'g.f32', data))))
+  check('an upload answered 500 → unavailable', unavailable(await outcome(() => s.writeFiles(handle, artifact('g.f32')))))
   resetLinks({ linkStatus: [403] })
-  check('write-link refused (403) → false', (await outcome(() => s.write(handle, 'h.f32', data))).value === false)
+  check('write-links refused (403) → false', (await outcome(() => s.writeFiles(handle, artifact('h.f32')))).value === false)
   resetLinks({ linkStatus: [500] })
-  check('write-link 500 → unavailable', unavailable(await outcome(() => s.write(handle, 'h.f32', data))))
+  check('write-links 500 → unavailable', unavailable(await outcome(() => s.writeFiles(handle, artifact('h.f32')))))
   resetLinks({ commit: 409 })
-  check('commit refused (409) → false', (await outcome(() => s.write(handle, 'meta.json', meta))).value === false)
+  check('commit refused (409) → false', (await outcome(() => s.writeFiles(handle, artifact('meta.json')))).value === false)
   resetLinks({ linkStatus: [507] })
-  check('write-link 507 (the store is full) → unavailable', unavailable(await outcome(() => s.write(handle, 'h.f32', data))))
+  check('write-links 507 (the store is full) → unavailable', unavailable(await outcome(() => s.writeFiles(handle, artifact('h.f32')))))
 
   // A whole artifact: another writer committed it first (409, code
-  // "committed"). Already written: true, the rest of its files skipped,
-  // no commit.
+  // "committed"). Already written: true, nothing uploaded, no commit.
   const committedFirst = { status: 409, body: '{"error":"the artifact is whole","code":"committed"}' }
   resetLinks({ linkStatus: [committedFirst] })
-  const first = await outcome(() => s.write(handle, 'a.f32', data))
-  check('write-link 409 "committed" → true, nothing uploaded', first.value === true && links.asked === 1 && links.uploads.length === 0, JSON.stringify({ first, links }))
-  const rest = await outcome(() => s.write(handle, 'b.f32', data))
-  const last = await outcome(() => s.write(handle, 'meta.json', meta))
-  check('the rest of that artifact → true, no link asked, no commit', rest.value === true && last.value === true && links.asked === 1 && links.uploads.length === 0 && links.commits.length === 0, JSON.stringify({ rest, last, links }))
-  resetLinks()
-  const next = await outcome(() => s.write(handle, 'a.f32', data))
-  check('after its meta.json the uid is written as usual again', next.value === true && links.asked === 1 && links.uploads.length === 1, JSON.stringify({ next, links }))
-  resetLinks()
-  await s.write(handle, 'a.f32', data)
-  links.linkStatus.push(committedFirst)
-  const midway = await outcome(() => s.write(handle, 'b.f32', data))
-  const midMeta = await outcome(() => s.write(handle, 'meta.json', meta))
-  check('committed by another writer half-way → true, no commit of our files', midway.value === true && midMeta.value === true && links.commits.length === 0, JSON.stringify({ midway, midMeta, links }))
+  const first = await outcome(() => s.writeFiles(handle, artifact('a.f32', 'b.f32', 'meta.json')))
+  check('write-links 409 "committed" → true, nothing uploaded, no commit', first.value === true && links.asked === 1 && links.uploads.length === 0 && links.commits.length === 0, JSON.stringify({ first, links }))
   // On dir the module's link route refuses a link of a whole artifact (403);
   // the fresh link then answers 409 "committed".
   resetLinks({ upload: [403], linkStatus: [200, committedFirst] })
-  const refusedThenWhole = await outcome(() => s.write(handle, 'c.f32', data))
-  check('upload 403, then write-link 409 "committed" → true', refusedThenWhole.value === true && links.asked === 2 && links.uploads.length === 1, JSON.stringify({ refusedThenWhole, links }))
-  await s.write(handle, 'meta.json', meta)
+  const refusedThenWhole = await outcome(() => s.writeFiles(handle, artifact('c.f32')))
+  check('upload 403, then write-links 409 "committed" → true, no commit', refusedThenWhole.value === true && links.asked === 2 && links.uploads.length === 1 && links.commits.length === 0, JSON.stringify({ refusedThenWhole, links }))
   resetLinks({ linkStatus: [409] })
-  check('write-link 409 without the code (too many files) → false', (await outcome(() => s.write(handle, 'h.f32', data))).value === false)
+  check('write-links 409 without the code (too many files) → false', (await outcome(() => s.writeFiles(handle, artifact('h.f32')))).value === false)
   resetLinks({ commit: 503 })
-  check('commit 503 → unavailable', unavailable(await outcome(() => s.write(handle, 'meta.json', meta))))
+  check('commit 503 → unavailable', unavailable(await outcome(() => s.writeFiles(handle, artifact('meta.json')))))
 }
 
 console.log('\n— the HTTP store: a reservation the server forgot (a restart) —')
@@ -291,14 +299,15 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
         }
         return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ artifactUid: uid, files: [] }))
       }
-      let m = url.pathname.match(/^\/v1\/artifacts\/([^/]+)\/write-link$/)
+      let m = url.pathname.match(/^\/v1\/artifacts\/([^/]+)\/write-links$/)
       if (m && req.method === 'POST') {
-        const { name, size } = JSON.parse(body.toString())
-        maybeRestart('link', name)
+        const { files } = JSON.parse(body.toString())
+        maybeRestart('link', '')
         if (!fake.known.has(m[1])) return res.writeHead(404).end('{"error":"no such artifact"}')
-        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+        const given = Object.fromEntries(files.map(({ name, size }) => [name, {
           method: 'PUT', url: `/bucket/${m[1]}/${name}?len=${size}`, header: {}, expires: new Date(Date.now() + 3_600_000).toISOString(),
-        }))
+        }]))
+        return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ links: given }))
       }
       m = url.pathname.match(/^\/bucket\/([^/]+)\/(.+)$/)
       if (m && req.method === 'PUT') {
@@ -336,13 +345,13 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
   const meta = new TextEncoder().encode('{"key":{}}')
   const names = (commit) => (commit?.files ?? []).map((f) => `${f.name}:${f.size}`).join(',')
   const whole = `a.f32:100,b.f32:200,meta.json:${meta.byteLength}`
-  // The worker's write of one artifact: resolve with create, files, meta last.
+  // The worker's write of one artifact: resolve with create, its files.
   const writeAll = async (store, k) => {
     const h = await store.resolve(k, true)
-    const done = []
-    for (const [name, bytes] of [['a.f32', a], ['b.f32', b], ['meta.json', meta]]) done.push(await store.write(h, name, bytes))
+    const done = await store.writeFiles(h, [{ name: 'a.f32', bytes: a }, { name: 'b.f32', bytes: b }, { name: 'meta.json', bytes: meta }])
     return { h, done }
   }
+  const sorted = (list) => [...list].sort()
 
   reset()
   {
@@ -358,13 +367,13 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
   }
 
   reset()
-  fake.restartOn = (what, name) => what === 'link' && name === 'b.f32' && fake.minted === 1
+  fake.restartOn = (what) => what === 'link' && fake.minted === 1
   const k1 = artifactKey('w1', 'v1', '1')
   const lost = await outcome(() => writeAll(s, k1))
-  check('a restart between two files → resolved again, the artifact again from its first file, committed whole under the fresh uid',
-    lost.value?.done.every(Boolean) && fake.resolves === 2 && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole,
+  check('a restart before the links → resolved again, the artifact committed whole under the fresh uid',
+    lost.value?.done === true && fake.resolves === 2 && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole,
     JSON.stringify({ lost, resolves: fake.resolves, commits: fake.commits }))
-  check('the upload again starts at the first file', JSON.stringify(fake.uploads) === JSON.stringify(['r1/a.f32', 'r2/a.f32', 'r2/b.f32', 'r2/meta.json']), JSON.stringify(fake.uploads))
+  check('every file uploaded under the fresh uid, none under the old', JSON.stringify(sorted(fake.uploads)) === JSON.stringify(['r2/a.f32', 'r2/b.f32', 'r2/meta.json']), JSON.stringify(fake.uploads))
   const back = await outcome(() => s.read(lost.value.h, 'meta.json'))
   check('a read with the old handle goes to the fresh uid', back.value?.byteLength === meta.byteLength, String(back.error ?? back.value))
 
@@ -373,7 +382,7 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
   fake.restartOn = (what) => what === 'commit' && fake.minted === 1
   const atCommit = await outcome(() => writeAll(s, artifactKey('w2', 'v1', '1')))
   check('a restart before the commit → the commit answers 404 → every file again, then the commit',
-    atCommit.value?.done.every(Boolean) && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole && fake.uploads.filter((u) => u.startsWith('r2/')).length === 3,
+    atCommit.value?.done === true && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole && fake.uploads.filter((u) => u.startsWith('r2/')).length === 3,
     JSON.stringify({ atCommit, commits: fake.commits, uploads: fake.uploads }))
 
   reset()
@@ -382,20 +391,20 @@ console.log('\n— the HTTP store: a reservation the server forgot (a restart) �
   fake.restartOn = (what, name) => what === 'upload' && name === 'b.f32' && fake.minted === 1
   const atUpload = await outcome(() => writeAll(s, artifactKey('w3', 'v1', '1')))
   check('an upload answered 404 → the same, under a fresh uid',
-    atUpload.value?.done.every(Boolean) && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole,
+    atUpload.value?.done === true && fake.commits.length === 1 && fake.commits[0].uid === 'r2' && names(fake.commits[0]) === whole,
     JSON.stringify({ atUpload, commits: fake.commits, uploads: fake.uploads }))
 
   reset()
   s = linked()
   // Restarts again while the artifact is uploaded again.
-  fake.restartOn = (what, name) => what === 'link' && name === 'b.f32'
+  fake.restartOn = (what) => what === 'link'
   const twice = await outcome(() => writeAll(s, artifactKey('w4', 'v1', '1')))
   check('a 404 again under the fresh uid → unavailable (the task is given back)', unavailable(twice) && twice.error.status === 404 && fake.resolves === 2, String(twice.error ?? JSON.stringify(twice.value)))
   fake.restartOn = null
   fake.commits = []
   const after = await outcome(() => writeAll(s, artifactKey('w5', 'v1', '1')))
   check('the next artifact commits its own files only (the broken-off upload is let go)',
-    after.value?.done.every(Boolean) && fake.commits.length === 1 && names(fake.commits[0]) === whole,
+    after.value?.done === true && fake.commits.length === 1 && names(fake.commits[0]) === whole,
     JSON.stringify({ after, commits: fake.commits }))
 
   reset()

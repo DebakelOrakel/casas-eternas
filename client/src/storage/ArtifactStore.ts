@@ -111,6 +111,28 @@ export interface ArtifactStore {
   // throws as resolve does when its server does not answer; a refusal
   // (4xx) is false.
   write(handle: ArtifactHandle, name: string, bytes: ArrayBuffer | ArrayBufferView): Promise<boolean>
+  // The files of an artifact, meta.json last: true when all were stored.
+  // A store that can do better than one write after the other has it (the
+  // HTTP store by link: all at once, one commit); callers use
+  // writeArtifactFiles, which falls back to writeInTurn.
+  writeFiles?(handle: ArtifactHandle, files: ArtifactFile[]): Promise<boolean>
+}
+
+export interface ArtifactFile {
+  name: string
+  bytes: ArrayBuffer | ArrayBufferView
+}
+
+// One write after the other, in order, up to the first that fails.
+export async function writeInTurn(store: ArtifactStore, handle: ArtifactHandle, files: ArtifactFile[]): Promise<boolean> {
+  for (const file of files) {
+    if (!(await store.write(handle, file.name, file.bytes))) return false
+  }
+  return true
+}
+
+export function writeArtifactFiles(store: ArtifactStore, handle: ArtifactHandle, files: ArtifactFile[]): Promise<boolean> {
+  return store.writeFiles ? store.writeFiles(handle, files) : writeInTurn(store, handle, files)
 }
 
 // One listed entry, flattened the same way the server's listing is, so both

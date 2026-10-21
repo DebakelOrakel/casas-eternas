@@ -339,7 +339,7 @@ func TestArtifactsInheritTheWorldsACL(t *testing.T) {
 		{"editor create", http.MethodPost, "/v1/artifacts/resolve", createBody, editor, http.StatusForbidden},
 		{"admin create", http.MethodPost, "/v1/artifacts/resolve", createBody, admin, http.StatusForbidden},
 		{"editor write", http.MethodPut, "/v1/artifacts/" + minted.ArtifactUID + "/f2", "x", editor, http.StatusForbidden},
-		{"editor write link", http.MethodPost, "/v1/artifacts/" + minted.ArtifactUID + "/write-link", `{"name":"f3","size":1}`, editor, http.StatusForbidden},
+		{"editor write link", http.MethodPost, "/v1/artifacts/" + minted.ArtifactUID + "/write-links", `{"files":[{"name":"f3","size":1}]}`, editor, http.StatusForbidden},
 		{"viewer remove", http.MethodDelete, "/v1/artifacts/" + minted.ArtifactUID, "", viewer, http.StatusForbidden},
 		{"editor sweep needs owner", http.MethodDelete, "/v1/artifacts?world=" + worldUID, "", editor, http.StatusForbidden},
 		{"viewer clear-all", http.MethodDelete, "/v1/artifacts", "", viewer, http.StatusForbidden},
@@ -565,7 +565,7 @@ func TestAnonymousReadsAreAResolveAndAFileRead(t *testing.T) {
 		{http.MethodGet, "/v1/artifacts", false},
 		{http.MethodGet, "/v1/artifacts/levels", false},
 		{http.MethodPut, "/v1/artifacts/5f0e1c4a-0000-4000-8000-000000000001/meta.json", false},
-		{http.MethodPost, "/v1/artifacts/5f0e1c4a-0000-4000-8000-000000000001/write-link", false},
+		{http.MethodPost, "/v1/artifacts/5f0e1c4a-0000-4000-8000-000000000001/write-links", false},
 		{http.MethodDelete, "/v1/artifacts/5f0e1c4a-0000-4000-8000-000000000001", false},
 		{http.MethodGet, LinkBase + "5f0e1c4a-0000-4000-8000-000000000001/meta.json", false},
 	} {

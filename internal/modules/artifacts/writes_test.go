@@ -24,18 +24,32 @@ import (
 // file with its length, uploads to the bucket, and commits; the index
 // learns of the files only at the commit.
 
-// writeLink asks the module for a write link as `token` (empty: none).
+// writeLink asks the module for a write link for one file as `token`
+// (empty: none).
 func writeLink(t *testing.T, mux *http.ServeMux, uid, name string, size int, token string) (*httptest.ResponseRecorder, writeLinkResponse) {
 	t.Helper()
-	body := `{"name":"` + name + `","size":` + strconv.Itoa(size) + `}`
-	response := doAs(mux, http.MethodPost, "/v1/artifacts/"+uid+"/write-link", body, token)
-	var link writeLinkResponse
+	response, links := writeLinks(t, mux, uid, token, Upload{name, int64(size)})
+	return response, links[name]
+}
+
+// writeLinks asks the module for write links for `files` as `token`.
+func writeLinks(t *testing.T, mux *http.ServeMux, uid, token string, files ...Upload) (*httptest.ResponseRecorder, map[string]writeLinkResponse) {
+	t.Helper()
+	raw, _ := json.Marshal(writeLinksRequest{Files: files})
+	response := doAs(mux, http.MethodPost, "/v1/artifacts/"+uid+"/write-links", string(raw), token)
+	var body writeLinksResponse
 	if response.Code == http.StatusOK {
-		if err := json.Unmarshal(response.Body.Bytes(), &link); err != nil {
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return response, link
+	return response, body.Links
+}
+
+// linkFor is the store's write link for one file.
+func linkFor(s *Store, ctx context.Context, uid, name string, size int64, ttl time.Duration) (blob.Link, error) {
+	links, err := s.WriteLinks(ctx, uid, []Upload{{name, size}}, ttl)
+	return links[name], err
 }
 
 // putTo sends `body` to a dir link with the length the request has.
@@ -58,7 +72,7 @@ func TestDirWriteByLinkAndCommit(t *testing.T) {
 	payload := "raster-bytes"
 	response, link := writeLink(t, mux, uid, "elevation.f32", len(payload), "")
 	if response.Code != http.StatusOK {
-		t.Fatalf("write-link = %d %s", response.Code, response.Body)
+		t.Fatalf("write-links = %d %s", response.Code, response.Body)
 	}
 	u, _ := url.Parse(link.URL)
 	if link.Method != http.MethodPut || u.Host != "" || u.Path != LinkBase+uid+"/elevation.f32" || u.Query().Get("len") != "12" {
@@ -169,7 +183,7 @@ func TestDirWriteLinkRefusals(t *testing.T) {
 	}
 
 	// Expired: 410, and the gate lets it reach the route.
-	short, err := m.store.WriteLink(context.Background(), uid, "c.f32", 2, time.Second)
+	short, err := linkFor(m.store, context.Background(), uid, "c.f32", 2, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,18 +200,28 @@ func TestDirWriteLinkRefusals(t *testing.T) {
 		name, body string
 		want       int
 	}{
-		{"negative size", `{"name":"x.f32","size":-1}`, http.StatusBadRequest},
-		{"too large", `{"name":"x.f32","size":` + strconv.Itoa(UploadLimit+1) + `}`, http.StatusRequestEntityTooLarge},
-		{"a meta too large", `{"name":"meta.json","size":` + strconv.Itoa(metaLimit+1) + `}`, http.StatusRequestEntityTooLarge},
-		{"a bad name", `{"name":"../x","size":1}`, http.StatusBadRequest},
-		{"no name", `{"size":1}`, http.StatusBadRequest},
+		{"negative size", `{"files":[{"name":"x.f32","size":-1}]}`, http.StatusBadRequest},
+		{"too large", `{"files":[{"name":"x.f32","size":` + strconv.Itoa(UploadLimit+1) + `}]}`, http.StatusRequestEntityTooLarge},
+		{"a meta too large", `{"files":[{"name":"meta.json","size":` + strconv.Itoa(metaLimit+1) + `}]}`, http.StatusRequestEntityTooLarge},
+		{"a bad name", `{"files":[{"name":"../x","size":1}]}`, http.StatusBadRequest},
+		{"no name", `{"files":[{"size":1}]}`, http.StatusBadRequest},
+		{"no files", `{"files":[]}`, http.StatusBadRequest},
+		{"a file twice", `{"files":[{"name":"x.f32","size":1},{"name":"x.f32","size":1}]}`, http.StatusBadRequest},
+		{"one good file, one too large", `{"files":[{"name":"y.f32","size":1},{"name":"x.f32","size":` + strconv.Itoa(UploadLimit+1) + `}]}`, http.StatusRequestEntityTooLarge},
 	} {
-		if got := do(mux, http.MethodPost, "/v1/artifacts/"+uid+"/write-link", c.body).Code; got != c.want {
-			t.Errorf("write-link, %s = %d, want %d", c.name, got, c.want)
+		if got := do(mux, http.MethodPost, "/v1/artifacts/"+uid+"/write-links", c.body).Code; got != c.want {
+			t.Errorf("write-links, %s = %d, want %d", c.name, got, c.want)
 		}
 	}
-	if got := do(mux, http.MethodPost, "/v1/artifacts/00000000-dead-4bee-8888-000000000000/write-link", `{"name":"x","size":1}`).Code; got != http.StatusNotFound {
-		t.Errorf("write-link into an unminted uid = %d, want 404", got)
+	// All or none: the refused requests left nothing pending.
+	m.store.mu.Lock()
+	_, pendingY := m.store.entries[uid].pending["y.f32"]
+	m.store.mu.Unlock()
+	if pendingY {
+		t.Error("a refused request recorded a pending file")
+	}
+	if got := do(mux, http.MethodPost, "/v1/artifacts/00000000-dead-4bee-8888-000000000000/write-links", `{"files":[{"name":"x","size":1}]}`).Code; got != http.StatusNotFound {
+		t.Errorf("write-links into an unminted uid = %d, want 404", got)
 	}
 }
 
@@ -273,7 +297,7 @@ func TestWriteLinksNeedTheJobsWorld(t *testing.T) {
 		want       int
 	}{{"no token", "", http.StatusNotFound}, {"another world's job", wrongJob, http.StatusNotFound}, {"the job's own", rightJob, http.StatusOK}} {
 		if got, _ := writeLink(t, mux, uid, "a.f32", 3, c.token); got.Code != c.want {
-			t.Errorf("write-link, %s = %d, want %d", c.who, got.Code, c.want)
+			t.Errorf("write-links, %s = %d, want %d", c.who, got.Code, c.want)
 		}
 	}
 	_, link := writeLink(t, mux, uid, "a.f32", 3, rightJob)
@@ -297,7 +321,7 @@ func TestPendingUploadsAreRemovedAndSpared(t *testing.T) {
 	store := newStoreAt(t, dir, 0)
 	ctx := context.Background()
 	uid, _, _ := store.Resolve(ctx, testKey(), true)
-	if _, err := store.WriteLink(ctx, uid, "a.f32", 3, time.Hour); err != nil {
+	if _, err := linkFor(store, ctx, uid, "a.f32", 3, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	// The writer's upload, straight into the bucket.
@@ -320,7 +344,7 @@ func TestPendingUploadsAreRemovedAndSpared(t *testing.T) {
 	if err := write(capped, uploading, "old.f32", strings.Repeat("o", 150)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := capped.WriteLink(ctx, uploading, "more.f32", 10, time.Hour); err != nil {
+	if _, err := linkFor(capped, ctx, uploading, "more.f32", 10, time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	// Two more artifacts push the store over its cap.
@@ -344,7 +368,7 @@ func TestS3WriteByPresignedPut(t *testing.T) {
 	uid, _ := resolve(t, mux, true)
 	response, link := writeLink(t, mux, uid, "elevation.u16", 12, "")
 	if response.Code != http.StatusOK {
-		t.Fatalf("write-link = %d %s", response.Code, response.Body)
+		t.Fatalf("write-links = %d %s", response.Code, response.Body)
 	}
 	u, _ := url.Parse(link.URL)
 	if link.Method != http.MethodPut || !strings.HasPrefix(link.URL, srv.URL+"/artifacts/run/"+uid+"/elevation.u16?") ||
@@ -380,7 +404,7 @@ func TestS3WriteByPresignedPut(t *testing.T) {
 	}
 }
 
-// The two 409s of write-link can be told apart: a whole artifact (another
+// The two 409s of write-links can be told apart: a whole artifact (another
 // writer committed first, the bytes are there) carries the code
 // "committed" in the body; too many uncommitted files carries none. The
 // worker treats the first as "already written" and the second as a refusal.
@@ -401,6 +425,10 @@ func TestWriteLinkConflictsCarryACode(t *testing.T) {
 			t.Fatalf("link %d = %d", i, got.Code)
 		}
 	}
+	// The batch that would pass the bound is refused whole.
+	if got, _ := writeLinks(t, mux, uid, "", Upload{"f0", 1}, Upload{"one-more", 1}, Upload{"two-more", 1}); got.Code != http.StatusConflict {
+		t.Errorf("a batch past the bound = %d, want 409", got.Code)
+	}
 	full, _ := writeLink(t, mux, uid, "one-more", 1, "")
 	if full.Code != http.StatusConflict || codeOf(full) == WriteLinkCommitted {
 		t.Errorf("too many pending = %d %s, want 409 without the code %q", full.Code, full.Body, WriteLinkCommitted)
@@ -414,6 +442,37 @@ func TestWriteLinkConflictsCarryACode(t *testing.T) {
 	}
 	whole, _ := writeLink(t, mux, uid, "f0", 1, "")
 	if whole.Code != http.StatusConflict || codeOf(whole) != WriteLinkCommitted {
-		t.Errorf("write-link for a whole artifact = %d %s, want 409 with the code %q", whole.Code, whole.Body, WriteLinkCommitted)
+		t.Errorf("write-links for a whole artifact = %d %s, want 409 with the code %q", whole.Code, whole.Body, WriteLinkCommitted)
+	}
+}
+
+// One request gives the links for all of an artifact's files, each for
+// its own key and length; the uploads may run at once, and one commit
+// makes the artifact whole.
+func TestWriteLinksForAWholeArtifact(t *testing.T) {
+	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthNone, nil), adminWorlds())
+	uid, _ := resolve(t, mux, true)
+	key := Key{WorldID: "ba90bda173d581ef", PipelineVersion: "v6", Stage: "2"}
+	meta := metaFor(key, "batch")
+	bodies := map[string]string{"nodes.f32": "nnnnnnnn", "z.f32": "zzzz", metaName: meta}
+	files := []Upload{{"nodes.f32", 8}, {"z.f32", 4}, {metaName, int64(len(meta))}}
+	response, links := writeLinks(t, mux, uid, "", files...)
+	if response.Code != http.StatusOK || len(links) != len(files) {
+		t.Fatalf("write-links = %d, %d links %s", response.Code, len(links), response.Body)
+	}
+	for name, body := range bodies {
+		u, _ := url.Parse(links[name].URL)
+		if u.Path != LinkBase+uid+"/"+name || u.Query().Get("len") != strconv.Itoa(len(body)) {
+			t.Errorf("link for %s = %q", name, links[name].URL)
+		}
+		if code := putTo(mux, links[name].URL, body); code != http.StatusOK {
+			t.Fatalf("upload %s = %d", name, code)
+		}
+	}
+	if got := commit(mux, uid, "", files...); got.Code != http.StatusNoContent {
+		t.Fatalf("commit = %d %s", got.Code, got.Body)
+	}
+	if whole, _ := m.store.Whole(context.Background(), []Key{key}); !whole[0] {
+		t.Error("the commit did not make the artifact whole")
 	}
 }

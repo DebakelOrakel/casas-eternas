@@ -183,7 +183,7 @@ func TestSweepSparesACommitInFlight(t *testing.T) {
 	clock := useClock(s)
 	uid, _, _ := s.Resolve(ctx, keyN("r"), true)
 	bucket.key = uid + "/a.f32"
-	if _, err := s.WriteLink(ctx, uid, "a.f32", 150, time.Minute); err != nil {
+	if _, err := linkFor(s, ctx, uid, "a.f32", 150, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := bucket.Put(ctx, bucket.key, strings.NewReader(strings.Repeat("r", 150)), 150, blob.PutOptions{}); err != nil {
@@ -250,7 +250,7 @@ func TestAForgottenReservationAnswers404AndBecomesJunk(t *testing.T) {
 	// The restart.
 	m, after := newModule(t, openTestDir(t, dir), resolver, nobody)
 	if got, _ := writeLink(t, after, old, "role.u8", 3, job); got.Code != http.StatusNotFound {
-		t.Errorf("write-link for a forgotten reservation = %d, want 404", got.Code)
+		t.Errorf("write-links for a forgotten reservation = %d, want 404", got.Code)
 	}
 	if code := doAs(after, http.MethodPut, "/v1/artifacts/"+old+"/role.u8", "rrr", job).Code; code != http.StatusNotFound {
 		t.Errorf("server PUT into a forgotten reservation = %d, want 404", code)

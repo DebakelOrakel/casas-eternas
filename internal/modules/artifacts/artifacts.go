@@ -207,7 +207,7 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	// mode writes (writing), and a job worker writes by link (the two
 	// routes below, DEC-0038, fork 7); this route stays for the local mode.
 	mux.HandleFunc("PUT /v1/artifacts/{artifactUID}/{name...}", m.handlePut)
-	mux.HandleFunc("POST /v1/artifacts/{artifactUID}/write-link", m.handleWriteLink)
+	mux.HandleFunc("POST /v1/artifacts/{artifactUID}/write-links", m.handleWriteLinks)
 	mux.HandleFunc("POST /v1/artifacts/{artifactUID}/commit", m.handleCommit)
 	// The dir backend's own links. More specific than the routes above, so
 	// the mux sends /v1/artifacts/blob/… here (no uid is "blob": uids are
@@ -571,16 +571,15 @@ func (m *Module) handleLinkPut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// WriteLinkCommitted is the code in the body of the 409 that write-link
+// WriteLinkCommitted is the code in the body of the 409 that write-links
 // answers for a whole artifact: another writer committed it first, and its
 // bytes are there. The client takes it as "already written"
 // (HttpArtifactStore.ts). The other 409 of the route (too many uncommitted
 // files) carries no code: it is a refusal.
 const WriteLinkCommitted = "committed"
 
-type writeLinkRequest struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
+type writeLinksRequest struct {
+	Files []Upload `json:"files"`
 }
 
 // writeLinkResponse is a write link as a worker sends it: the method and
@@ -595,30 +594,38 @@ type writeLinkResponse struct {
 	Expires time.Time         `json:"expires"`
 }
 
-// handleWriteLink gives a writer a link to upload one file of an artifact
-// straight to the bucket (DEC-0038, fork 7), with the file's length signed
-// in and artifacts.write-link-ttl to live. The right is the right to write
-// the artifact, as for handlePut: a job token whose world holds the
-// artifact's terrain, or the local mode. The same route gives a fresh link when the
-// one in hand has expired or was refused.
-func (m *Module) handleWriteLink(w http.ResponseWriter, r *http.Request) {
+type writeLinksResponse struct {
+	Links map[string]writeLinkResponse `json:"links"`
+}
+
+// handleWriteLinks gives a writer links to upload files of an artifact
+// straight to the bucket (DEC-0038, fork 7), each with the file's length
+// signed in and artifacts.write-link-ttl to live: all of the artifact's
+// files in one request, or none when one may not be written. The right is
+// the right to write the artifact, as for handlePut: a job token whose
+// world holds the artifact's terrain, or the local mode. The same route
+// gives a fresh link for a file whose link in hand has expired or was
+// refused. Until 2026-10-22 the route was write-link, one file per request.
+func (m *Module) handleWriteLinks(w http.ResponseWriter, r *http.Request) {
 	uid := r.PathValue("artifactUID")
-	var request writeLinkRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&request); err != nil || request.Name == "" {
-		httpjson.ClientError(w, http.StatusBadRequest, "expected {name, size}")
+	var request writeLinksRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&request); err != nil || len(request.Files) == 0 || slices.ContainsFunc(request.Files, func(f Upload) bool { return f.Name == "" }) {
+		httpjson.ClientError(w, http.StatusBadRequest, "expected {files: [{name, size}]}")
 		return
 	}
 	worldID, _ := m.store.TerrainOf(r.Context(), uid)
 	if !m.allowed(w, r, worldID, writing) {
 		return
 	}
-	link, err := m.store.WriteLink(r.Context(), uid, request.Name, request.Size, m.writeTTL)
+	links, err := m.store.WriteLinks(r.Context(), uid, request.Files, m.writeTTL)
 	if err != nil {
 		switch {
 		case errors.Is(err, errTooLarge):
 			httpjson.ClientError(w, http.StatusRequestEntityTooLarge, "artifact file too large")
 		case errors.Is(err, errBadSize):
 			httpjson.ClientError(w, http.StatusBadRequest, "size must be the file's length in bytes")
+		case errors.Is(err, errNamedTwice):
+			httpjson.ClientError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, errCommitted):
 			httpjson.ClientErrorCode(w, http.StatusConflict, WriteLinkCommitted, err.Error())
 		case errors.Is(err, errTooManyPending):
@@ -635,14 +642,18 @@ func (m *Module) handleWriteLink(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	header := map[string]string{}
-	for name, values := range link.Header {
-		if strings.EqualFold(name, "Content-Length") || strings.EqualFold(name, "Host") {
-			continue
+	response := writeLinksResponse{Links: make(map[string]writeLinkResponse, len(links))}
+	for name, link := range links {
+		header := map[string]string{}
+		for key, values := range link.Header {
+			if strings.EqualFold(key, "Content-Length") || strings.EqualFold(key, "Host") {
+				continue
+			}
+			header[key] = strings.Join(values, ",")
 		}
-		header[name] = strings.Join(values, ",")
+		response.Links[name] = writeLinkResponse{Method: link.Method, URL: link.URL, Header: header, Expires: link.Expires.UTC()}
 	}
-	httpjson.Write(w, http.StatusOK, writeLinkResponse{Method: link.Method, URL: link.URL, Header: header, Expires: link.Expires.UTC()})
+	httpjson.Write(w, http.StatusOK, response)
 }
 
 type commitRequest struct {

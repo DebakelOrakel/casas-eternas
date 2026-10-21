@@ -114,19 +114,19 @@ func TestAWSWireArtifacts(t *testing.T) {
 	// presigned PUT straight to the bucket without the caller's
 	// credentials, then the commit, which makes it readable by the 302.
 	workerBytes := bytes.Repeat([]byte("worker-bytes-"), 20_000) // ~254 KiB
-	linkFor := func(name string, size int) writeLinkResponse {
+	askLink := func(name string, size int) writeLinkResponse {
 		t.Helper()
-		res, err := http.Post(srv.URL+"/v1/artifacts/"+minted.ArtifactUID+"/write-link", "application/json",
-			strings.NewReader(`{"name":"`+name+`","size":`+strconv.Itoa(size)+`}`))
+		res, err := http.Post(srv.URL+"/v1/artifacts/"+minted.ArtifactUID+"/write-links", "application/json",
+			strings.NewReader(`{"files":[{"name":"`+name+`","size":`+strconv.Itoa(size)+`}]}`))
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = res.Body.Close() }()
-		var link writeLinkResponse
-		if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&link) != nil {
-			t.Fatalf("write-link %s = %d", name, res.StatusCode)
+		var body writeLinksResponse
+		if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&body) != nil {
+			t.Fatalf("write-links %s = %d", name, res.StatusCode)
 		}
-		return link
+		return body.Links[name]
 	}
 	upload := func(link writeLinkResponse, target string, body []byte) int {
 		t.Helper()
@@ -142,7 +142,7 @@ func TestAWSWireArtifacts(t *testing.T) {
 		_ = res.Body.Close()
 		return res.StatusCode
 	}
-	link := linkFor("worker.bin", len(workerBytes))
+	link := askLink("worker.bin", len(workerBytes))
 	if !strings.Contains(link.URL, ".amazonaws.com/") {
 		t.Fatal("the write link does not go to the bucket")
 	}
@@ -162,7 +162,7 @@ func TestAWSWireArtifacts(t *testing.T) {
 		t.Errorf("key B was written: %v", err)
 	}
 	// Expired: the refusal the worker answers with a fresh link.
-	short, err := m.store.WriteLink(ctx, minted.ArtifactUID, "worker.bin", int64(len(workerBytes)), time.Second)
+	short, err := linkFor(m.store, ctx, minted.ArtifactUID, "worker.bin", int64(len(workerBytes)), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

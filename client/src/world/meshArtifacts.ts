@@ -3,7 +3,7 @@ import { ENGINE_CONSTANTS, engineLevelBudget } from '../generator/pipeline/engin
 import { decodeMesh, type SerializedMesh } from '../generator/mesh/meshSerial'
 import { deserializeRiverGraph, serializeRiverGraph, type RiverGraph } from '../generator/surface/riverGraph'
 import type { RiverPolylines, WaterBody } from '../generator/surface/hydrology'
-import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
+import { writeArtifactFiles, type ArtifactHandle, type ArtifactKey, type ArtifactStore } from '../storage/ArtifactStore'
 import { domainOfKind, type Domain } from '../generator/core/domain'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
@@ -129,22 +129,24 @@ export async function writeMeshLevelArtifact(store: ArtifactStore, key: Artifact
     pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, budget: engineLevelBudget(artifact.level), constants: meshLevelPipelineConstants(artifact.level, rounds) },
     files,
   }
-  return (
-    (await store.write(handle, F.nodes, bytesOf(artifact.nodes))) &&
-    (await store.write(handle, F.connectivity, artifact.connectivity)) &&
-    (await store.write(handle, F.z, bytesOf(artifact.z))) &&
-    (await store.write(handle, F.waterBodies, bodyBytes)) &&
-    (graph === null || graphBytes === null || (
-      (await store.write(handle, F.riverGraph, graphBytes)) &&
-      (await store.write(handle, F.riverGraphCells, bytesOf(graph.cells))) &&
-      (await store.write(handle, F.riverGraphPositions, graph.positions ? bytesOf(graph.positions) : new Uint8Array(0))) &&
-      (await store.write(handle, F.riverCoursePoints, bytesOf(graph.coursePoints))))) &&
-    (artifact.rivers === null || (
-      (await store.write(handle, F.riverPoints, bytesOf(artifact.rivers.points))) &&
-      (await store.write(handle, F.riverLengths, bytesOf(artifact.rivers.lengths))) &&
-      (await store.write(handle, F.riverRegimes, bytesOf(artifact.rivers.regimes))))) &&
-    (await store.write(handle, F.meta, encoder.encode(JSON.stringify(meta))))
-  )
+  return writeArtifactFiles(store, handle, [
+    { name: F.nodes, bytes: bytesOf(artifact.nodes) },
+    { name: F.connectivity, bytes: artifact.connectivity },
+    { name: F.z, bytes: bytesOf(artifact.z) },
+    { name: F.waterBodies, bytes: bodyBytes },
+    ...(graph && graphBytes ? [
+      { name: F.riverGraph, bytes: graphBytes },
+      { name: F.riverGraphCells, bytes: bytesOf(graph.cells) },
+      { name: F.riverGraphPositions, bytes: graph.positions ? bytesOf(graph.positions) : new Uint8Array(0) },
+      { name: F.riverCoursePoints, bytes: bytesOf(graph.coursePoints) },
+    ] : []),
+    ...(artifact.rivers ? [
+      { name: F.riverPoints, bytes: bytesOf(artifact.rivers.points) },
+      { name: F.riverLengths, bytes: bytesOf(artifact.rivers.lengths) },
+      { name: F.riverRegimes, bytes: bytesOf(artifact.rivers.regimes) },
+    ] : []),
+    { name: F.meta, bytes: encoder.encode(JSON.stringify(meta)) },
+  ])
 }
 
 export async function meshLevelArtifactExists(store: ArtifactStore, key: ArtifactKey): Promise<boolean> {

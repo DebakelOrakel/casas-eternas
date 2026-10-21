@@ -52,7 +52,7 @@ import (
 // directory mtime, so the co-resident job worker writes over HTTP now, as
 // a cluster worker always did (cmd/start.go). Since step 4 a worker writes
 // its bytes straight to the bucket by a write link the store signed, and
-// the index learns of them when the worker commits them (WriteLink,
+// the index learns of them when the worker commits them (WriteLinks,
 // Commit); the store stays the one that decides what the index holds. A
 // consequence: an entry that is copied into the directory by hand is seen
 // after a restart, not on the next request.
@@ -856,8 +856,9 @@ func (s *Store) recordLocked(e *entry, name string, size int64, meta *entryMeta)
 
 // WRITES BY LINK (DEC-0038, fork 7). A writer that is not this server's
 // request handler (a job worker) uploads straight to the bucket: it asks
-// for a write link per file, with the file's length (WriteLink), PUTs the
-// bytes to the link, and then tells the store what it wrote (Commit). The
+// for a write link per file, with the file's length, all of an artifact's
+// files in one request (WriteLinks, since 2026-10-22), PUTs the bytes to
+// the links, and then tells the store what it wrote (Commit). The
 // index learns of the files only at the commit, after a Head of each, so
 // it holds only what is in the bucket with the size that was signed.
 //
@@ -882,6 +883,9 @@ var errBadSize = errors.New("artifact file length is not valid")
 // it until the link expires — artifacts.write-link-ttl bounds that).
 var errCommitted = errors.New("the artifact is whole; it takes no more uploads by link")
 
+// errNamedTwice: a request for write links names one file twice.
+var errNamedTwice = errors.New("artifact file named twice")
+
 // errTooManyPending: an artifact has maxPendingFiles uploads by link that
 // no commit confirmed.
 var errTooManyPending = errors.New("too many uncommitted uploads for this artifact")
@@ -898,89 +902,112 @@ var errStoreFull = errors.New("the uncommitted uploads would pass the store's ca
 // link per file after a refusal, which takes no second place.
 const maxPendingFiles = 64
 
-// WriteLink returns a link that writes one file of an EXISTING artifact
-// (the uid comes from Resolve) with exactly `size` bytes until `ttl` has
-// passed: a presigned PUT on S3, the server's own signed link on Dir. The
-// caller has checked the right. The file is recorded as pending, so that a
-// removal deletes it and a commit may name it.
-func (s *Store) WriteLink(ctx context.Context, uid, name string, size int64, ttl time.Duration) (blob.Link, error) {
-	key, err := objectKey(uid, name)
-	if err != nil {
-		return blob.Link{}, err
-	}
-	switch {
-	case size < 0:
-		return blob.Link{}, fmt.Errorf("%w: %d", errBadSize, size)
-	case size > UploadLimit, name == metaName && size > metaLimit:
-		return blob.Link{}, fmt.Errorf("%w: %d bytes", errTooLarge, size)
-	}
-	if err := writableName(name); err != nil {
-		return blob.Link{}, err
+// WriteLinks returns a link per file that writes that file of an EXISTING
+// artifact (the uid comes from Resolve) with exactly its size until `ttl`
+// has passed: a presigned PUT on S3, the server's own signed link on Dir.
+// All or none: when one file may not have a link, no file gets one. A
+// writer asks once for all of an artifact's files, and again for a file
+// whose link expired or was refused. The caller has checked the right. The
+// files are recorded as pending, so that a removal deletes them and a
+// commit may name them.
+func (s *Store) WriteLinks(ctx context.Context, uid string, files []Upload, ttl time.Duration) (map[string]blob.Link, error) {
+	keys := make([]string, len(files))
+	seen := make(map[string]bool, len(files))
+	for i, f := range files {
+		key, err := objectKey(uid, f.Name)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case f.Size < 0:
+			return nil, fmt.Errorf("%w: %s: %d", errBadSize, f.Name, f.Size)
+		case f.Size > UploadLimit, f.Name == metaName && f.Size > metaLimit:
+			return nil, fmt.Errorf("%w: %s: %d bytes", errTooLarge, f.Name, f.Size)
+		case seen[f.Name]:
+			return nil, fmt.Errorf("%w: %s", errNamedTwice, f.Name)
+		}
+		if err := writableName(f.Name); err != nil {
+			return nil, err
+		}
+		keys[i] = key
+		seen[f.Name] = true
 	}
 	s.mu.Lock()
 	e, ok := s.entries[uid]
+	var err error
 	if ok {
-		err = s.admitLocked(e, name, size)
+		err = s.admitLocked(e, files)
 	}
 	s.mu.Unlock()
 	if !ok {
-		return blob.Link{}, ErrNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
-		return blob.Link{}, err
+		return nil, err
 	}
-	link, err := s.bucket.PresignPut(ctx, key, ttl, size)
-	if err != nil {
-		if errors.Is(err, blob.ErrBadKey) {
-			return blob.Link{}, ErrBadPath
+	links := make(map[string]blob.Link, len(files))
+	for i, f := range files {
+		link, err := s.bucket.PresignPut(ctx, keys[i], ttl, f.Size)
+		if err != nil {
+			if errors.Is(err, blob.ErrBadKey) {
+				return nil, ErrBadPath
+			}
+			return nil, err
 		}
-		return blob.Link{}, err
+		links[f.Name] = link
 	}
 	s.mu.Lock()
 	e, ok = s.entries[uid]
 	if !ok {
 		s.mu.Unlock()
-		// Removed while the link was signed: a commit would find no entry.
-		return blob.Link{}, ErrNotFound
+		// Removed while the links were signed: a commit would find no entry.
+		return nil, ErrNotFound
 	}
-	// Again under the lock that records it: another link may have been
+	// Again under the lock that records them: other links may have been
 	// given meanwhile.
-	if err := s.admitLocked(e, name, size); err != nil {
+	if err := s.admitLocked(e, files); err != nil {
 		s.mu.Unlock()
-		return blob.Link{}, err
+		return nil, err
 	}
 	if e.pending == nil {
 		e.pending = map[string]pendingFile{}
 	}
-	p := e.pending[name]
-	p.size = max(p.size, size)
-	if link.Expires.After(p.expires) {
-		p.expires = link.Expires
+	for _, f := range files {
+		p := e.pending[f.Name]
+		p.size = max(p.size, f.Size)
+		if expires := links[f.Name].Expires; expires.After(p.expires) {
+			p.expires = expires
+		}
+		e.pending[f.Name] = p
 	}
-	e.pending[name] = p
 	e.lastAccess = s.now()
-	// A link grows the store as a write does: the cap's sweep runs here too.
+	// Links grow the store as a write does: the cap's sweep runs here too.
 	victims := s.sweepLocked(uid)
 	s.mu.Unlock()
 	s.deleteObjects(context.WithoutCancel(ctx), victims)
-	return link, nil
+	return links, nil
 }
 
-// admitLocked decides whether the entry may get a write link for `name`
-// of `size` bytes: not when it is whole (errCommitted), when it has
-// maxPendingFiles other uploads that no commit confirmed
-// (errTooManyPending), or when the uncommitted uploads of the whole store
-// would pass the cap with this one (errStoreFull). The last rule is what
-// keeps a holder of write rights from filling the bucket with uploads the
-// index does not list: the sweep can evict only what is committed, and
-// spares what is still uploading. Called under s.mu.
-func (s *Store) admitLocked(e *entry, name string, size int64) error {
+// admitLocked decides whether the entry may get write links for `files`:
+// not when it is whole (errCommitted), when it would have more than
+// maxPendingFiles uploads that no commit confirmed (errTooManyPending), or
+// when the uncommitted uploads of the whole store would pass the cap with
+// these (errStoreFull). The last rule is what keeps a holder of write
+// rights from filling the bucket with uploads the index does not list: the
+// sweep can evict only what is committed, and spares what is still
+// uploading. Called under s.mu.
+func (s *Store) admitLocked(e *entry, files []Upload) error {
 	if e.meta != nil {
 		return errCommitted
 	}
-	held, again := e.pending[name]
-	if !again && len(e.pending) >= maxPendingFiles {
-		return fmt.Errorf("%w: %d", errTooManyPending, len(e.pending))
+	fresh := 0
+	for _, f := range files {
+		if _, again := e.pending[f.Name]; !again {
+			fresh++
+		}
+	}
+	if len(e.pending)+fresh > maxPendingFiles {
+		return fmt.Errorf("%w: %d + %d", errTooManyPending, len(e.pending), fresh)
 	}
 	if s.cap <= 0 {
 		return nil
@@ -989,7 +1016,10 @@ func (s *Store) admitLocked(e *entry, name string, size int64) error {
 	for _, other := range s.entries {
 		total += other.uncommitted()
 	}
-	add := max(0, size-max(held.size, e.files[name]))
+	var add int64
+	for _, f := range files {
+		add += max(0, f.Size-max(e.pending[f.Name].size, e.files[f.Name]))
+	}
 	if total+add > s.cap {
 		return fmt.Errorf("%w: %d + %d bytes > %d", errStoreFull, total, add, s.cap)
 	}
