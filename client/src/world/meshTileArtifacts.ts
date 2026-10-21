@@ -145,7 +145,12 @@ export async function readMeshTileArtifact(store: ArtifactStore, key: ArtifactKe
   const handle = await store.resolve(key, false)
   if (!handle) return null
   const F = MESH_TILE_FILES
-  const metaBytes = await store.read(handle, F.meta)
+  // All at once: on a bucket each read is a round trip, and a tile is six
+  // files (2026-10-22: in turn, a level-3 tile's inputs took two thirds of
+  // its time on S3).
+  const [metaBytes, nodes, triangles, z, role, outflow] = await Promise.all(
+    [F.meta, F.nodes, F.triangles, F.z, F.role, F.outflow].map((name) => store.read(handle, name)),
+  )
   if (!metaBytes) return null
   let meta: MeshTileMeta
   try {
@@ -153,11 +158,6 @@ export async function readMeshTileArtifact(store: ArtifactStore, key: ArtifactKe
   } catch {
     return null
   }
-  const nodes = await store.read(handle, F.nodes)
-  const triangles = await store.read(handle, F.triangles)
-  const z = await store.read(handle, F.z)
-  const role = await store.read(handle, F.role)
-  const outflow = await store.read(handle, F.outflow)
   if (!nodes || !triangles || !z || !role || !outflow) return null
   if (nodes.byteLength !== meta.nodes * 8 || z.byteLength !== meta.nodes * 4 || role.byteLength !== meta.nodes || outflow.byteLength !== meta.nodes * 4 || triangles.byteLength !== meta.triangles * 12) return null
   return {

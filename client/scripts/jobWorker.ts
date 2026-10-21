@@ -765,22 +765,21 @@ async function bakeTile(job: Job, inputs: WorldInputs, store: ArtifactStore, onP
   if (spec.level !== 2) {
     // The level above's tiles this one overlaps; every one must be there —
     // the coordinator orders them first.
+    // Read all at once, each a few round trips on a bucket; in order.
     const above = tileSpec(spec.level - 1)
-    pieces = []
-    for (const piece of parentTilesOn(tile, above, domainOfKind(shapeOf(inputs), inputs.width, inputs.height))) {
+    pieces = await Promise.all(parentTilesOn(tile, above, domainOfKind(shapeOf(inputs), inputs.width, inputs.height)).map(async (piece) => {
       const read = await readTile(store, artifactKey(inputs.worldId, meshTilePipelineVersion(above.level, job.erosionRounds), meshTileStage(piece)), cache)
       if (!read) throw new Error(`tile ${meshTileStage(piece)} of this world is not in the artifact store — the level above comes first`)
-      pieces.push({ tile: piece, count: read.count, nodes: read.nodes, z: read.z })
-    }
+      return { tile: piece, count: read.count, nodes: read.nodes, z: read.z }
+    }))
   }
   // The upstream tiles' outflow; each was computed first (it is a dep).
-  const upstream: UpstreamPiece[] = []
-  for (const at of job.upstream ?? []) {
+  const upstream: UpstreamPiece[] = await Promise.all((job.upstream ?? []).map(async (at) => {
     const up = { level: spec.level, x: at.x, y: at.y }
     const read = await readTile(store, artifactKey(inputs.worldId, pipelineVersion, meshTileStage(up)), cache)
     if (!read) throw new Error(`tile ${meshTileStage(up)} upstream of this one is not in the artifact store`)
-    upstream.push({ tile: up, count: read.count, nodes: read.nodes, outflow: read.outflow })
-  }
+    return { tile: up, count: read.count, nodes: read.nodes, outflow: read.outflow }
+  }))
   onProgress('parent', 1)
   clock.lap('inputs')
   const artifact = level1.baker.bake(tile, pieces, upstream, job.erosionRounds)
