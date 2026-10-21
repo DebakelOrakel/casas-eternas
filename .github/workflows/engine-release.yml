@@ -1,0 +1,214 @@
+# The engine's release (docs/decisions/rust-engine.md): a tag that starts
+# with `engine` builds the engine, checks every build, and puts the builds
+# on a GitHub release of that tag.
+#
+#   git tag engine-v11-abcdefg && git push origin engine-v11-abcdefg
+#
+# The assets:
+#   casas-engine-darwin-arm64.node      the job worker's engine on a Mac
+#   casas-engine-linux-amd64.node       on Linux with glibc (as `make engines`)
+#   casas-engine-windows-amd64.node     on Windows
+#   casas-engine-wasm.tar.gz            the generator's engine (wasm/ of engine/dist)
+#   constants.json                      the pipeline's constants
+#   SHA256SUMS
+#
+# The builds are the ones `make engines` and `make engine` make, with the
+# same images and the same flags. The toolchain is engine/rust-toolchain.toml's.
+# No musl build: the container image builds its own (deploy/Dockerfile,
+# stage 0), so that the image and its engine come from one commit.
+#
+# THE CHECKS. Rust does not promise the same floating-point bits on every
+# platform, and one different bit gives a world other artifacts. So each
+# native build runs, on its own platform, the engine's tests (the modules on
+# their fixtures) and the smoke test (the native build against this
+# commit's WASM build, then the read side), as `make test` does. The WASM
+# build runs the tests under WASI. A failed check gives no release.
+
+name: engine release
+
+on:
+  push:
+    tags: ['engine*']
+
+permissions:
+  contents: read
+
+jobs:
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # rustup installs engine/rust-toolchain.toml's toolchain and targets.
+      - run: rustup toolchain install
+        working-directory: engine
+      # The CLI must be the crate's version (casas-engine-wasm/Cargo.toml).
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build
+        working-directory: engine
+        run: |
+          cargo build --release --locked -p casas-engine-wasm --target wasm32-unknown-unknown
+          wasm-bindgen --target web --out-dir dist/wasm --out-name casas-engine \
+            target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
+          cargo run --release --locked -q -p casas-engine-api --bin constants > dist/constants.json
+      # Without `parallel`, as the browser build is.
+      - name: Tests under WASI
+        working-directory: engine
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: node --no-warnings ${{ github.workspace }}/engine/scripts/wasiRunner.mjs
+        run: cargo test -p casas-engine --release --locked --target wasm32-wasip1
+      - run: |
+          mkdir -p out
+          tar -czf out/casas-engine-wasm.tar.gz -C engine/dist wasm
+          cp engine/dist/constants.json out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: out/
+
+  darwin:
+    needs: wasm
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+        working-directory: engine
+      - name: Build
+        working-directory: engine
+        run: cargo build --release --locked -p casas-engine-node --target aarch64-apple-darwin
+      - name: Tests
+        working-directory: engine
+        run: |
+          cargo test --workspace --release --locked
+          cargo test -p casas-engine --release --locked
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Smoke test
+        run: |
+          mkdir -p engine/dist
+          tar -xzf wasm/casas-engine-wasm.tar.gz -C engine/dist
+          cp wasm/constants.json engine/dist/
+          cp engine/target/aarch64-apple-darwin/release/libcasas_engine_node.dylib engine/dist/casas-engine.node
+          (cd client && npm ci)
+          node engine/scripts/smoke.mjs
+      - run: |
+          mkdir -p out
+          cp engine/dist/casas-engine.node out/casas-engine-darwin-arm64.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin
+          path: out/
+
+  linux:
+    needs: wasm
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # In Rust's Debian image, for the glibc of `make engines`, not the
+      # runner's. The tests run there too.
+      - name: Build and tests
+        run: |
+          docker run --rm --platform linux/amd64 -v "$PWD/engine:/src" -w /src \
+            -e RUSTUP_TOOLCHAIN=1.98.1 -e CARGO_TARGET_DIR=/src/target/linux-amd64 \
+            rust:1.98.1-bookworm sh -c '
+              cargo build --release --locked -p casas-engine-node &&
+              cargo test --workspace --release --locked &&
+              cargo test -p casas-engine --release --locked'
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Smoke test
+        run: |
+          mkdir -p engine/dist
+          tar -xzf wasm/casas-engine-wasm.tar.gz -C engine/dist
+          cp wasm/constants.json engine/dist/
+          cp engine/target/linux-amd64/release/libcasas_engine_node.so engine/dist/casas-engine.node
+          (cd client && npm ci)
+          node engine/scripts/smoke.mjs
+      - run: |
+          mkdir -p out
+          cp engine/dist/casas-engine.node out/casas-engine-linux-amd64.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/
+
+  windows:
+    needs: wasm
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+        working-directory: engine
+      # MSVC. napi-rs loads Node's symbols at run time on Windows, so the
+      # build needs no node.lib.
+      - name: Build
+        working-directory: engine
+        run: cargo build --release --locked -p casas-engine-node --target x86_64-pc-windows-msvc
+      - name: Tests
+        working-directory: engine
+        run: |
+          cargo test --workspace --release --locked
+          cargo test -p casas-engine --release --locked
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Smoke test
+        run: |
+          mkdir -p engine/dist
+          tar -xzf wasm/casas-engine-wasm.tar.gz -C engine/dist
+          cp wasm/constants.json engine/dist/
+          cp engine/target/x86_64-pc-windows-msvc/release/casas_engine_node.dll engine/dist/casas-engine.node
+          (cd client && npm ci)
+          node engine/scripts/smoke.mjs
+      - run: |
+          mkdir -p out
+          cp engine/dist/casas-engine.node out/casas-engine-windows-amd64.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/
+
+  release:
+    needs: [wasm, darwin, linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - run: cd out && sha256sum * > SHA256SUMS
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --notes "The engine at $GITHUB_SHA."

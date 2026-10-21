@@ -28,7 +28,7 @@ const wasm = await import(new URL('wasm/casas-engine.js', dist).href)
 await wasm.default({ module_or_path: await readFile(new URL('wasm/casas-engine_bg.wasm', dist)) })
 
 const CLIENT = fileURLToPath(new URL('../../client', import.meta.url))
-const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
+const { createServer } = await import(new URL('../../client/node_modules/vite/dist/node/index.js', import.meta.url).href)
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true, hmr: false }, appType: 'custom', logLevel: 'error' })
 const L = (p) => server.ssrLoadModule(p)
 // The native build through the job worker's loader.
