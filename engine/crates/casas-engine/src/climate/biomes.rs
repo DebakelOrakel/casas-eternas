@@ -222,7 +222,7 @@ pub fn classify_points(
                 .1
             }
         };
-        biome[i] = if points.height[i] as f64 > CLIMATE_TUNING.alpine_treeline_elevation
+        biome[i] = if points.height.at(i) > CLIMATE_TUNING.alpine_treeline_elevation
             && base != biome::ICE
         {
             biome::ALPINE

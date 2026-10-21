@@ -20,20 +20,28 @@
 # OpenShift-ready: runs as a non-root, ARBITRARY UID (member of GID 0), listens
 # on 8080, and keeps all writable state on mounted volumes.
 
-# ---- Stage 0: the engine's native build -------------------------------------
-# The job worker computes on the Rust engine (docs/decisions/rust-engine.md),
-# a Node addon built for the runtime's platform: Alpine, so musl. Node loads
-# the addon into its own process, so the C library is linked dynamically
-# (crt-static off), as Node's is. RUSTUP_TOOLCHAIN stands for
-# engine/rust-toolchain.toml, whose WASM targets the image does not need.
+# ---- Stage 0: the engine ----------------------------------------------------
+# The Rust engine (docs/decisions/rust-engine.md) in its two builds. The job
+# worker computes on the native one, a Node addon built for the runtime's
+# platform: Alpine, so musl. Node loads the addon into its own process, so
+# the C library is linked dynamically (crt-static off), as Node's is. The
+# generator in the browser computes on the WASM one, which the client's
+# bundle carries; wasm-bindgen's CLI is the crate's version (the Makefile's
+# WASM_BINDGEN). RUSTUP_TOOLCHAIN stands for engine/rust-toolchain.toml.
 FROM rust:1.98.1-alpine AS engine
 ENV RUSTUP_TOOLCHAIN=1.98.1
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache musl-dev \
+ && rustup target add wasm32-unknown-unknown \
+ && cargo install wasm-bindgen-cli --version 0.2.129 --locked
 WORKDIR /src/engine
 COPY engine/Cargo.toml engine/Cargo.lock engine/clippy.toml ./
 COPY engine/crates/ ./crates/
 RUN RUSTFLAGS="-C target-feature=-crt-static" cargo build --release --locked -p casas-engine-node \
- && mkdir -p /out && cp target/release/libcasas_engine_node.so /out/casas-engine.node
+ && cargo build --release --locked -p casas-engine-wasm --target wasm32-unknown-unknown \
+ && mkdir -p /out \
+ && cp target/release/libcasas_engine_node.so /out/casas-engine.node \
+ && wasm-bindgen --target web --out-dir /out/wasm --out-name casas-engine \
+      target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
 
 # ---- Stage 1: the client bundle and the job worker -------------------------
 FROM node:22-alpine AS web
@@ -54,10 +62,12 @@ RUN npm ci
 COPY docs/ /app/docs/
 COPY client/ ./
 
-# dist/ is the app; job-worker.mjs is the job worker for the server to spawn,
-# with the engine beside it (build:worker copies engine/dist's). All come
-# out of the same source tree, which is the point.
+# dist/ is the app, the engine's WASM build among its assets; job-worker.mjs
+# is the job worker for the server to spawn, with the native engine beside
+# it (build:worker copies engine/dist's). All come out of the same source
+# tree, which is the point.
 COPY --from=engine /out/casas-engine.node /app/engine/dist/casas-engine.node
+COPY --from=engine /out/wasm /app/engine/dist/wasm
 RUN npm run build && npm run build:worker && npm run build:docs
 
 # ---- Stage 2: the server ----------------------------------------------------

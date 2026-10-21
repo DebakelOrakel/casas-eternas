@@ -2,13 +2,13 @@
 // fork 3: level 0 runs here), loaded once per worker. The build is not in
 // the repository: `make engine` writes it to engine/dist/wasm, and the
 // client's build needs it from the switch on, when the runtime imports this.
-import init, { version, World } from 'casas-engine-wasm/casas-engine.js'
+import init, { version, World, Replay, Preview } from 'casas-engine-wasm/casas-engine.js'
 import wasmUrl from 'casas-engine-wasm/casas-engine_bg.wasm?url'
 import type { Engine } from './engine'
 
 let loading: Promise<Engine> | null = null
 
 export function loadWasmEngine(): Promise<Engine> {
-  loading ??= init({ module_or_path: wasmUrl }).then(() => ({ version, World }))
+  loading ??= init({ module_or_path: wasmUrl }).then(() => ({ version, World, Replay, Preview }))
   return loading
 }

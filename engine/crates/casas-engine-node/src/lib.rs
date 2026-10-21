@@ -55,6 +55,11 @@ impl World {
         self.0.archean_step().map_err(era)
     }
 
+    #[napi]
+    pub fn set_archean_controls(&mut self, diffusion: f64, land_share: f64) {
+        self.0.set_archean_controls(diffusion, land_share);
+    }
+
     #[napi(getter)]
     pub fn archean_epoch(&self) -> napi::Result<f64> {
         self.0.archean_epoch().map_err(era)
@@ -147,6 +152,11 @@ impl World {
         self.0.snapshot().map(Tree).map_err(era)
     }
 
+    #[napi]
+    pub fn lattice(&mut self) -> napi::Result<Tree> {
+        self.0.lattice().map(Tree).map_err(era)
+    }
+
     /// The mantle's and the ocean age's saved values, as [mantle, ocean].
     #[napi]
     pub fn saved_fields(&mut self) -> napi::Result<Vec<Tree>> {
@@ -157,6 +167,16 @@ impl World {
     #[napi]
     pub fn mesh_payload(&mut self) -> napi::Result<Tree> {
         self.0.mesh_payload().map(Tree).map_err(era)
+    }
+
+    #[napi]
+    pub fn drop_stage(&mut self, stage: String) -> napi::Result<()> {
+        self.0.drop_stage(&stage).map_err(era)
+    }
+
+    #[napi]
+    pub fn migration_inputs(&mut self) -> napi::Result<Tree> {
+        self.0.migration_inputs().map(Tree).map_err(era)
     }
 
     #[napi]
@@ -211,8 +231,9 @@ fn shape_of(shape: &str) -> napi::Result<casas_engine_api::Shape> {
     }
 }
 
-/// A world's runs made again at a level's budget (the job worker's level
-/// 1), one epoch at a time. Native only: levels 1–3 run here (fork 3).
+/// A world's runs made again at a level's budget, one epoch at a time:
+/// the job worker's level 1, and the runtime's replay at level 0, whose end
+/// is a world.
 #[napi]
 pub struct Replay(casas_engine_api::replay::Replay);
 
@@ -258,6 +279,42 @@ impl Replay {
     #[napi]
     pub fn level(&mut self, width: u32, detail_seed: u32) -> napi::Result<Tree> {
         self.0.level(width, detail_seed).map(Tree).map_err(era)
+    }
+
+    /// The world from the replay's end; the replay ends here.
+    #[napi]
+    pub fn world(&mut self) -> napi::Result<World> {
+        self.0.world().map(World).map_err(era)
+    }
+}
+
+/// The planet preview's climate on a sample world's raster.
+#[napi]
+pub struct Preview(casas_engine_api::preview::Preview);
+
+#[napi]
+impl Preview {
+    #[napi(constructor)]
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Preview {
+        Preview(casas_engine_api::preview::Preview::new())
+    }
+
+    #[napi(
+        ts_args_type = "shape: string, width: number, height: number, elevation: Float32Array, params: unknown"
+    )]
+    pub fn climate(
+        &mut self,
+        shape: String,
+        width: u32,
+        height: u32,
+        elevation: Tree,
+        params: Tree,
+    ) -> napi::Result<Tree> {
+        self.0
+            .climate(shape_of(&shape)?, width, height, &elevation.0, &params.0)
+            .map(Tree)
+            .map_err(era)
     }
 }
 

@@ -10,7 +10,7 @@ use casas_engine::climate::climate_mesh::{
     ClimateTerrain, basin_rows, climate_cell_m, distance_to_sea, mesh_components, zonal_mean,
 };
 use casas_engine::climate::climate_points::{
-    ClimateMonthCells, ClimatePoints, climate_at_points, climate_cells_from_weather,
+    ClimateMonthCells, ClimatePoints, Heights, climate_at_points, climate_cells_from_weather,
     mean_land_runoff,
 };
 use casas_engine::climate::koppen::{classify_koppen, synthesize_months};
@@ -323,7 +323,7 @@ fn run(name: &str, d: Domain) {
             count,
             x: &xs,
             y: &ys,
-            height: &height,
+            height: Heights::F32(&height),
             land: pland,
             dry: Some(&pdry),
             alive: Some(&alive),

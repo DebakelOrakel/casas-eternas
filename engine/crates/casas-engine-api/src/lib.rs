@@ -7,6 +7,7 @@
 //! (wasm-bindgen) wrap these methods one for one.
 
 pub mod forms;
+pub mod preview;
 pub mod read;
 pub mod replay;
 mod stages;
@@ -43,7 +44,7 @@ pub fn version() -> &'static str {
 }
 
 /// The world's shape.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Shape {
     Torus,
     Sphere,
@@ -80,7 +81,7 @@ enum Era {
     Moving,
 }
 
-fn domain_of(shape: Shape, width: f64, height: f64) -> Domain {
+pub(crate) fn domain_of(shape: Shape, width: f64, height: f64) -> Domain {
     match shape {
         Shape::Torus => Domain::torus(width, height),
         Shape::Sphere => Domain::sphere(width, height),
@@ -168,6 +169,13 @@ impl World {
         }
     }
 
+    /// The Archean's controls from the next step on (the runtime's
+    /// `handleGenesisStart`): the mantle's diffusion and the land share.
+    pub fn set_archean_controls(&mut self, diffusion: f64, land_share: f64) {
+        self.archean_params.diffusion = diffusion;
+        self.archean_params.land_share = land_share;
+    }
+
     /// The Archean's epoch.
     pub fn archean_epoch(&self) -> Result<f64, EraError> {
         Ok(self.archean()?.epoch)
@@ -211,6 +219,14 @@ impl World {
     pub fn epoch(&mut self, controls: &Value) -> Result<Value, EraError> {
         let options = epoch_options(controls)?;
         let (sim, coupled) = self.plates()?;
+        // Refused, not run: an epoch without plates panics, and a panic in
+        // the WASM build leaves the world unusable (no render after it).
+        if sim.seeds.is_empty() {
+            return Err(wrong("the world has no plates to move"));
+        }
+        // As the runtime's start sets it, for a world restored from a save
+        // written before the epoch had a length.
+        sim.epoch_ma = TECTONIC_MA_PER_EPOCH;
         let stats = step_coupled_epoch(sim, coupled, &options);
         self.stages.epoched();
         Ok(Value::List(stats.events.iter().map(forms::event).collect()))
@@ -230,6 +246,23 @@ impl World {
         let mantle = saved_mantle(&sim.meshes.mantle, &sim.mantle);
         let ocean = saved_ocean_age(&sim.meshes.ocean, &sim.meshes.shared, &sim.ocean_age);
         Ok((forms::saved_field(&mantle), forms::saved_field(&ocean)))
+    }
+
+    /// The detection lattice's state as the save holds it
+    /// (`LatticeState`): `{ accumulated, lockedEpochs, lastClassCode }`.
+    pub fn lattice(&mut self) -> Result<Value, EraError> {
+        let (sim, _) = self.plates()?;
+        Ok(value::ObjBuilder::new()
+            .put("accumulated", Value::F32s(sim.lattice_accumulated.clone()))
+            .put(
+                "lockedEpochs",
+                Value::I16s(sim.lattice_locked_epochs.clone()),
+            )
+            .put(
+                "lastClassCode",
+                Value::I8s(sim.lattice_last_class_code.clone()),
+            )
+            .build())
     }
 
     /// The coupled terrain as the save's bytes.
@@ -339,6 +372,25 @@ impl World {
     /// tectonic save): the simulation, the detection lattice's state where
     /// its size fits, and the history's terrain from the mesh payload —
     /// routed — or, without one, from the synthesis.
+    /// The world a replay ended on, its terrain routed.
+    pub(crate) fn replayed(sim: PlateSimulation, mut coupled: CoupledTerrain) -> World {
+        if coupled.routing.is_none() {
+            coupled.routing = Some(mesh_routing(
+                &mut coupled.mesh,
+                &coupled.z,
+                &DEFAULT_SOLVER_PARAMS,
+            ));
+        }
+        World {
+            era: Era::Plates {
+                sim: Box::new(sim),
+                coupled: Box::new(coupled),
+            },
+            archean_params: default_archean_params(),
+            stages: Default::default(),
+        }
+    }
+
     pub fn restore_plates(
         shape: Shape,
         snapshot: &Value,

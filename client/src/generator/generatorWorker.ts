@@ -1,5 +1,6 @@
 import type { WorkerInboundMessage } from './pipeline/messages'
-import { dispatch, setEmitter } from './pipeline/runtime'
+import { dispatch, setEmitter, setEngine } from './pipeline/runtime'
+import { loadWasmEngine } from './pipeline/engineWasm'
 
 // The generator runs off the main thread: stepping an epoch and rendering the
 // full 2048x1024 raster (a per-pixel query against every plate and every terrain
@@ -20,6 +21,10 @@ setEmitter((message, transfer) => {
   else self.postMessage(message)
 })
 
+// The engine loads once, at the worker's start; the messages that arrive
+// before it is there wait for it, in their order.
+const ready = loadWasmEngine().then(setEngine)
+
 self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
-  dispatch(event.data)
+  void ready.then(() => dispatch(event.data))
 }

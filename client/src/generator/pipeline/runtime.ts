@@ -1,80 +1,53 @@
-import { serializePlateSimulation, deserializePlateSimulation } from '../tectonics/plateSimulation'
 import { domainOfKind, type Domain } from '../core/domain'
 import { sampleWorldElevation } from '../planet/sampleWorld'
-import type { PlateSimulation, SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
+import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
 import { renderSimulationImage } from '../render/elevationMapImage'
-import type { RenderSimulationOptions } from '../render/elevationMapImage'
-import { ElevationRenderPool } from '../render/elevationRenderPool'
+import type { RenderableWorld, RenderSimulationOptions } from '../render/elevationMapImage'
 import type { ElevationRenderer } from '../render/elevationRenderPool'
 import { downstreamOf } from './stages'
 import type { StageId } from './stages'
-import type { MeshTerrain } from './meshErosionStage'
-import { createCoupledTerrain, decodeCoupledTerrain, HISTORY_DEFAULTS, stepCoupledEpoch, type CoupledTerrain } from './coupledEpoch'
-import { chartMaxOfNodes, climateChain, ecologyInputsOf, hydrologyFeatures, hydrologyThreshold, idRaster, landClimateOf, pixelLandOf, refinedClimateOf, routeHydrology, type ClimateChain, type ClimateParams, type LandClimate, type MeshHydrology } from './worldStages'
-import { encodeColumn } from '../mesh/meshColumn'
-import { rasteriseNodeField, rasteriseNodePart, triangleRaster, type TriangleRaster } from '../mesh/meshRaster'
-import { Biome, classifyPoints } from '../climate/biomes'
-import { climateAtPoints, climateCellValues, meanLandRunoff, type ClimateCells, type ClimatePoints } from '../climate/climatePoints'
-import { chartLand, chartLandField } from '../climate/climateChart'
-import { OCEAN_PRECIP } from '../climate/precipitation'
-import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
+import { HISTORY_DEFAULTS } from './coupledEpoch'
+import type { ClimateParams } from './worldStages'
+import { releaseWorld, type ClimateBody, type Engine, type EnginePreview, type EngineWorld } from './engine'
 import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
-import { encodeMesh } from '../mesh/meshSerial'
-import { meshRouting } from '../mesh/meshHydrology'
-import { replayRuns } from './replayRuns'
 
 import type { ClimatePayload, FieldPayload, LandPayload, MeshPayload } from './messages'
-import type { ArcheanSimulation } from '../archean/archeanState'
-import { createArcheanSimulation } from '../archean/archeanState'
-import { deserializeArchean, serializeArchean } from '../archean/archeanSnapshot'
-import type { ArcheanParams } from '../archean/archeanStep'
-import { archeanStep, DEFAULT_ARCHEAN_PARAMS } from '../archean/archeanStep'
-import { finalizeArchean } from '../archean/finalizeArchean'
+import { DEFAULT_ARCHEAN_PARAMS } from '../archean/archeanStep'
 import { findPlumeSites } from '../tectonics/plumes'
 import { stabilisedFraction } from '../crust/raftField'
-import { TECTONIC_MA_PER_EPOCH, worldAgeMa, worldEpoch } from '../core/worldTime'
+import { worldAgeMa, worldEpoch } from '../core/worldTime'
 import { createOceanAgeField, savedOceanAge } from '../tectonics/oceanAge'
 import type { SavedField } from '../fields/fieldMesh'
-import { maxDischargeOverLand, dischargeToM3s, SURFACE_ICE, type RiverPolylines } from '../surface/hydrology'
-import { MANTLE_RES_X, MANTLE_RES_Y, mantleMesh, rasteriseMantle, savedMantle } from '../mantle/mantleField'
+import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { defaultWeatherParams, type WeatherParams } from '../climate/weather'
-import { type ClimateTerrain } from '../climate/climateMesh'
-
-import { refinementFits, type RefinedClimate } from '../climate/refinement'
-import type { CellVectors } from '../climate/wind'
-import { metersToElevation } from '../elevation/elevationScale'
-import type { WaterBody } from '../surface/hydrology'
-import { riverPolylinesFromGraph, serializeRiverGraph } from '../surface/riverGraph'
-import { type CoastGraph } from '../surface/coastGraph'
-import { type SedimentBasin } from '../surface/sedimentBasins'
-
-import type { RiverGraph } from '../surface/riverGraph'
+import { serializeRiverGraph } from '../surface/riverGraph'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
-import { applyEcology, ecologyFine, ecologyMonth, ecologyRasters, encodeFineField, isSeasonalEcologyField, prepareEcology, type EcologyBase, type EcologyFieldId, type EcologyParams } from '../ecology/ecologyField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerClimateRefineProgressMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
 // tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
-// demand. It owns the PlateSimulation instance entirely; only the rendered RGBA
-// buffer and the handful of numbers the UI displays ever leave.
+// demand. Only the rendered RGBA buffer and the handful of numbers the UI
+// displays ever leave.
 //
-// It is itself a coordinator, not the thing doing the expensive per-pixel work:
-// it owns a pool of nested workers (see render/elevationRenderPool.ts) that the
-// elevation query is farmed out to, since profiling showed that single loop is
-// ~88% of render time and is trivially parallel (every pixel's elevation is
-// independent of every other, given the current seeds/features state). stepEpoch
-// stays here, sequential — it has real epoch-to-epoch dependencies (boundary
-// detection depends on current seeds, deposits depend on boundary detection,
-// rift/merge depend on deposits) that cannot be farmed out the same way.
+// THE WORLD IS THE ENGINE'S (docs/decisions/rust-engine.md, fork 6a): the
+// Rust engine's WASM build holds the simulation, the terrain, the field
+// meshes with their walks and the stages' results, and this module holds a
+// handle (`world`). A step, an epoch, a stage is one call; what comes back
+// is the body of the message posted here. What stays here is what the
+// screen sees and the engine does not compute: the picture's colours, its
+// hillshade and its overlays (render/), from the engine's elevation and
+// the world's snapshot; the migration (its own screen, later), from what
+// the engine gives of the stages.
 //
 // **This module does not know it is in a worker.** Results leave through an
-// injected emitter rather than `self.postMessage`, and messages arrive through
-// `dispatch` rather than `self.onmessage`; generatorWorker.ts supplies both. That
-// is what lets the whole pipeline be driven from Node in a test — the one part of
-// the generator the golden harness cannot reach. See
+// injected emitter rather than `self.postMessage`, messages arrive through
+// `dispatch` rather than `self.onmessage`, and the engine is the host's
+// (`setEngine`); generatorWorker.ts supplies all three. That is what lets
+// the whole pipeline be driven from Node in a test — the one part of the
+// generator the golden harness cannot reach. See
 // docs/design/generator-pipeline.md.
 type Emit = (message: unknown, transfer?: Transferable[]) => void
 let emit: Emit = () => {}
@@ -83,16 +56,40 @@ export function setEmitter(next: Emit): void {
   emit = next
 }
 
+// The engine: its WASM build in the browser (generatorWorker.ts), the same
+// build loaded from engine/dist in a test.
+let engine: Engine | null = null
+export function setEngine(next: Engine): void {
+  engine = next
+}
+function theEngine(): Engine {
+  if (!engine) throw new Error('the generator has no engine (setEngine)')
+  return engine
+}
 
-let sim: PlateSimulation | null = null
-// The Archean world, while that phase is the active one. Exactly one of `archean`
-// and `sim` is meaningful at a time: finalizeArchean converts the first into the
-// second, and archeanReset goes back the other way.
-let archean: ArcheanSimulation | null = null
+// The world in the engine, and its era: the Archean, or the plates after
+// the hand-over. Exactly one era at a time; the hand-over moves the world
+// from the first to the second, and a genesis reset goes back.
+let world: EngineWorld | null = null
+let era: 'archean' | 'plates' | null = null
+// The world's shape and size, and its Domain for the overlays.
+let worldDomain: Domain | null = null
+
+// Puts `next` in place of the world held, whose memory goes back now.
+function replaceWorld(next: EngineWorld | null, nextEra: typeof era): void {
+  if (world && world !== next) releaseWorld(world)
+  world = next
+  era = next ? nextEra : null
+}
+function domainFor(shape: Domain['kind'], width: number, height: number): Domain {
+  if (!worldDomain || worldDomain.kind !== shape || worldDomain.width !== width || worldDomain.height !== height) worldDomain = domainOfKind(shape, width, height)
+  return worldDomain
+}
+
 let archeanSeed = ''
-// The Archean's tuning, held here because archeanStep needs it every step and a
-// reset has to rebuild the same world. Only `diffusion` is user-facing.
-let archeanParams: ArcheanParams = DEFAULT_ARCHEAN_PARAMS
+// The Archean's controls, held here because a reset has to rebuild the same
+// world. Both are user-facing.
+let archeanControls = { diffusion: DEFAULT_ARCHEAN_PARAMS.diffusion, landShare: DEFAULT_ARCHEAN_PARAMS.landShare }
 let archeanWidth = 0
 let archeanHeight = 0
 // The shape the Archean was made on (genesisInit), for a reset to make it
@@ -106,12 +103,10 @@ let epochIntervalMs = 400
 // starts at the count so the first epoch of a run draws.
 let epochsSinceRender: number = HISTORY_DEFAULTS.renderEvery
 let pendingEvents: SimEvent[] = []
-// The last render's pre-redistribution elevation field, kept up to date by
-// every renderAndPost call: what the climate and the hydrology read when no
-// coupled terrain exists yet (a restored save without a mesh).
-// The hand-over state, kept so the tectonics panel can return to it. Snapshotted
-// rather than re-derived: finalizeArchean consumes the Archean's RNG and names the
-// continents as it goes, so calling it twice does not produce the same world.
+// The hand-over state, kept so the tectonics panel can return to it. Kept
+// rather than re-derived: the hand-over consumes the Archean's RNG and
+// names the continents as it goes, so making it twice does not produce the
+// same world.
 let handoverSnapshot: PlateSimulationSnapshot | null = null
 let handoverOceanAge: SavedField | null = null
 let handoverMantle: SavedField | null = null
@@ -125,6 +120,9 @@ function dropHandover(): void {
   handoverOceanAge = null
   handoverMantle = null
 }
+// The last render's raw elevation on the world raster: what the stages
+// need before they run, and what the migration and the screen's physical
+// raster read.
 let lastRawElevations: Float32Array | null = null
 // The DISPLAY-space elevations of the last render (redistributed values the
 // map colors were computed from, with their grid size) — retained for the
@@ -133,165 +131,36 @@ let lastRawElevations: Float32Array | null = null
 // The physical field (lastRawElevations) would disagree with the map wherever
 // applyMountainRedistribution reshaped it. See SimulationRenderResult.
 let lastDisplayElevations: { data: Float32Array; width: number; height: number } | null = null
-// A second, deliberately less-eagerly-updated snapshot: the raw
-// elevations from the last *non*-erosion render only (see renderAndPost
-// — only updated when precomputedElevations wasn't supplied). Erosion
-// overwrites lastRawElevations every time it runs, so without this
-// there's no way back to "what tectonics actually produced" once you've
-// clicked Erode even once — regenerating from scratch would mean
-// re-running the whole live epoch-stepping loop again, not an instant
-// revert. WorkerResetErosionMessage re-renders from this instead.
-let preErosionElevations: Float32Array | null = null
+// The terrain mesh has a routing: an epoch ran on it, it came from a save
+// or a replay, or a stage routed it. Until then the screen gets no mesh with
+// the elevation field (requestElevationField), as before the engine.
+let routed = false
 
-// A STAGE'S RESULT IS ONE OBJECT — it exists or it does not, never half of it.
+// WHAT THE STAGES HAVE COMPUTED, as far as this module needs to know: the
+// results are the engine's; here, whether a climate stands (a stage that
+// needs one declines without it), the hydrology's generation and what the
+// migration reads.
 //
-// These were eighteen separate `let`s in three `last<Stage>*` families, which is
-// a struct written as a naming convention. The cost was not the names: it was
-// that "stale" had to be expressed by nulling the right subset, so every
-// invalidation was a hand-written list of assignments to keep correct, and states
-// like "dirty, but the arrays are still there" were representable and meaningless.
-// One object per stage makes freshness structural — see
+// One flag per stage, cleared by one rule — "invalidation is derived"
+// below — rather than by hand at every site, which is how the climate and
+// the hydrology once disagreed about what a world currently was. See
 // docs/design/generator-pipeline.md and the declared chain in stages.ts.
-//
-// The terrain is deliberately NOT one of these yet: `lastRawElevations` is
-// written by genesis, tectonics AND erosion, so it is the chain's shared
-// substrate rather than one stage's result, and it converts with the runner.
-
-interface ClimateResult {
-  // The inputs that produced it. Kept WITH the result, so "is this stale" can
-  // become a comparison instead of a flag — and so the hydrology's climate
-  // refinement can re-run the chain with the same settings it was given.
-  params: ClimateParams
-  // The climate per cell of its field mesh as every reader samples it
-  // (climate/climatePoints.ClimateCells, DEC-0036 phase 7): the static
-  // climate's, or the climate step's refinement's (with its months, its
-  // upwelling and its rain's reliability).
-  cells: ClimateCells
-  // The terrain it was computed on (its cells' land; the chart's).
-  terrain: ClimateTerrain
-  // The same climate per cell of its field mesh as the step's refinement
-  // starts from (refinement.refineClimate): the annual temperature and wind.
-  mesh: { temperature: Float64Array; wind: CellVectors }
-  // Set when this is the climate step's refinement (handleClimateRefine).
-  // The hydrology's own climate pass (the dry-basin v2) leaves such a
-  // climate alone.
-  refined: boolean
-  // The climate at the terrain mesh's nodes and the biomes and Köppen
-  // classes it gives there before the hydrology (DEC-0036 phase 7, fork 2:
-  // the land fields on the adaptive terrain mesh) — what the hydrology,
-  // the ecology and the save read.
-  land: LandClimate
-}
-let climate: ClimateResult | null = null
-
-// Rivers and lakes. Routing and discharge are the expensive parts, so a
-// density-only re-request reuses this and just re-thresholds the channels; the
-// object being absent IS "re-route needed", which is what `hydrologyDirty` used
-// to say alongside two null checks that could disagree with it.
-interface HydrologyResult {
-  // The lakes' raster recovery (meshHydrology.waterFieldsFromMesh): what
-  // the map's water shader and the save's lakeDepth layer read.
-  lakeDepth: Float32Array
-  // Terminal basins' exposed floor (computeLakes' LakeFields.saltFlat) on the
-  // world raster — the terrain render's salt band.
-  saltFlat: Uint8Array | null
-  dryBasin: Uint8Array | null
-  // Permanently frozen basins on the world raster.
-  frozen: Uint8Array | null
-  // The standing-water list and the per-cell level/frozen fields derived
-  // from it (LakeFields.bodies/level) — what the save carries and the
-  // screen draws shores against.
-  bodies: WaterBody[]
-  level: Float32Array
-  surface: Uint8Array
-  body: Int32Array
-  maxDischarge: number
-  meanRunoff: number
-  // The feature graph, built once per routing (after the riparian biomes,
-  // which it records as bank material); the ribbons derive from it.
-  graph: RiverGraph | null
-  // The coast reaches (surface/coastGraph.ts) on the terrain mesh's shore
-  // nodes, built with the graph.
-  coast: CoastGraph | null
-  // The erosion pass's deposits as features (surface/sedimentBasins.ts) on
-  // the terrain mesh's nodes, with provenance from the graph's catchments;
-  // empty for a world whose last epoch's start is not known (a loaded save).
-  sedimentBasins: SedimentBasin[]
-  // Ice thickness in metres on the world raster — the history's last
-  // epoch's ice, or the steady state the climate gives (phase 6).
-  ice: Float32Array | null
-  // The springs in an arid climate (phase 5a's oases), world coordinates —
-  // the ecology waters their fields.
-  oases: { x: number; y: number }[]
-  // The mesh's own hydrology: the discharge and the lakes per node, the
-  // climate at the nodes it ran under, the land fields per node. Since
-  // DEC-0036 phase 7b the only hydrology: no routing on the world raster.
-  onMesh: MeshHydrology
-}
-let hydrology: HydrologyResult | null = null
+let climateDone = false
 // Bumped whenever the hydrology result is dropped (an epoch, a reset, a
 // climate change) and read by the hydrology pass across its awaits: the
 // onmessage handler is sync, so nothing else stops a pass that started on a
 // terrain the world has since moved off from publishing onto the new one.
 let hydrologyGeneration = 0
 let hydrologyInFlight = false
-
 interface EcologyResult {
-  // Cached from the last computeEcology — the initial-migration step reads it as
+  // Cached from the last ecology run — the initial-migration step reads it as
   // the population/density driver.
   carryingCapacity: Float32Array
 }
 let ecology: EcologyResult | null = null
-// The ecology's physics (prepareEcology) and what it was computed from.
-let ecologyBase: { key: { climate: unknown; hydrology: unknown; elevation: unknown; sim: unknown; epoch: number }; base: EcologyBase; pixelLand: Uint8Array } | null = null
-// The sliders of the last ecology run, which a month's field is scaled by.
-let ecologyParams: EcologyParams | null = null
 
-// The last erosion's pre-fill elevations (basins still intact) — the terrain the
-// hydrology runs on, so lakes have depressions to fill. null when the current
-// terrain wasn't produced by erosion (fresh tectonics / restore), in which case
-// hydrology falls back to the final elevations (few lakes — erosion drains them).
-let lastLakeBasinElevations: Float32Array | null = null
-
-// The world's terrain since phase 4.3: the adaptive mesh the last erosion
-// ran on, with its eroded heights, in canonical numbering. What the save
-// carries (`mesh/…`), and what a restore brings back. The raster fields
-// above are its rasterisation while the consumers still walk cells.
-let meshTerrain: MeshTerrain | null = null
-// THE COUPLED TERRAIN (phase 5.1): the mesh the tectonics carry through
-// their epochs — erosion runs inside each one (pipeline/coupledEpoch.ts).
-// `meshTerrain` above is this same object once an epoch has run (it then
-// has a routing); before the first epoch, and for a world restored
-// without a mesh, it is null and the hydrology walks the raster.
-let coupled: CoupledTerrain | null = null
 // The tectonics panel's controls for the history (tectonicsInputParams).
 let historyControls: { alluvium: number; rockContrast: number; weather: WeatherParams } = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, weather: defaultWeatherParams() }
-
-// The coupled terrain as what the hydrology reads (a routing is required
-// there): the same arrays, once an epoch or a restore has routed it.
-function asMeshTerrain(c: CoupledTerrain): MeshTerrain | null {
-  return c.routing ? { mesh: c.mesh, z: c.z, routing: c.routing, areas: c.areas, sedimentFlux: c.sedimentFlux } : null
-}
-
-// The terrain's rasterisation, rendered and posted: what every consumer
-// that still walks cells reads, and the map's texture. The climate runs on
-// the current terrain (there is no pre-erosion terrain any more); the
-// sediment basins read the last epoch's start on the mesh
-// (CoupledTerrain.preErosionZ).
-async function renderTerrain(intermediate = false): Promise<void> {
-  if (!sim || !coupled) return
-  const elevations = rasteriseNodeField(coupled.mesh, coupled.z, sim.width, sim.height)
-  await renderAndPost(elevations, intermediate, 1)
-  preErosionElevations = null
-  lastLakeBasinElevations = elevations.slice()
-  meshPayloadCache = null
-}
-// The mesh terrain's bytes for the screen and the save, encoded once per
-// terrain (a second's work on a million nodes) and reused — for the heights
-// they were encoded from (`z`): every epoch makes a new array, so a save
-// between two pictures (the history draws every renderEvery-th epoch)
-// encodes the epoch it is at, not the last one drawn (2026-10-12).
-let meshPayloadCache: (MeshPayload & { z0: Float32Array }) | null = null
 
 // Where a stage's result is kept, and nowhere else. Exhaustive over StageId on
 // purpose: adding a stage to the table makes this a compile error, which is the
@@ -307,15 +176,13 @@ function clearResult(id: StageId): void {
       // erosion stage owns no result of its own.
       return
     case 'climate':
-      climate = null
+      climateDone = false
       return
     case 'hydrology':
-      hydrology = null
       hydrologyGeneration += 1
       return
     case 'ecology':
       ecology = null
-      ecologyBase = null
       return
     case 'migration':
       // Nothing retained: its four rasters go straight to the screen.
@@ -325,6 +192,9 @@ function clearResult(id: StageId): void {
 
 // INVALIDATION IS DERIVED, not written down. `id` produced something new, so
 // every result that reads it — transitively — no longer describes this world.
+// The engine drops its own results by the same chain where the same thing
+// happens to it (a render, an epoch, a stage run); a reset says it
+// (handleResetStage).
 //
 // This used to be two hand-written helpers, and the same cascade was ALSO written
 // out in GeneratorScreen. Two copies of one rule, and they had drifted: the screen
@@ -361,53 +231,31 @@ function fail(stage: StageId, error: unknown): void {
 // GeneratorScreen's event overlay). The worker just relays events; it does
 // not track or bake any highlight state.
 
-
-
-// Created on first use and reused for the lifetime of this pipeline — pool
-// workers have their own startup cost, not worth paying every epoch.
-//
-// Lazy rather than eager: constructing it spawns eight nested workers and reads
-// `self.navigator.hardwareConcurrency`, which was this module's last hard tie to
-// a browser and made it unimportable anywhere else. Deferring it costs nothing —
-// the first render pays a startup it used to pay at worker boot — and a run that
-// never renders (a test) never pays it at all.
-let renderer: ElevationRenderer | null = null
-const renderPool = (): ElevationRenderer => (renderer ??= new ElevationRenderPool())
-
-// The second half of the host seam, alongside setEmitter: supply an elevation
-// renderer and nothing here touches a browser at all.
-export function setElevationRenderer(next: ElevationRenderer): void {
-  renderer = next
+// The picture's elevation is the engine's (`render`), so the image render
+// never asks a pool for one: every render here passes it precomputed.
+const NO_POOL: ElevationRenderer = {
+  renderElevations: () => Promise.reject(new Error('the engine renders the elevation')),
 }
-// Renders are async (they await the pool). A render in flight reads the
-// world (sim.seeds/features) across its awaits, so nothing may step the
-// world under it: the step loop takes this flag for a step and its render,
-// and a step that finds it taken waits (BUSY_RETRY_MS). The simulation
-// paces itself to what the render pool can keep up with, rather than
-// risking a torn read.
+
+// Renders are async (the image's render yields). A render in flight reads the
+// world's snapshot across its awaits, and a step must not move the world
+// under it: the step loop takes this flag for a step and its render, and a
+// step that finds it taken waits (BUSY_RETRY_MS).
 let renderInFlight = false
 
 // Bumped whenever the world is REPLACED (a fresh init, or a restored save).
 // A render captures it at the start; if a newer init/restore superseded the
 // world while its (async) render was in flight, that stale render is discarded
-// — otherwise a slow initial pool render can land AFTER a fast precomputed
-// restore render and overwrite the just-loaded world (only visible when
-// loading quickly, before the initial render finished).
+// — otherwise a slow initial render can land AFTER a fast restore render and
+// overwrite the just-loaded world (only visible when loading quickly, before
+// the initial render finished).
 let worldGeneration = 0
 
-// precomputedElevations, when passed, is the coupled terrain's rasterisation
-// (renderTerrain) or a restored raster — always explicitly set (even to undefined)
-// rather than left alone, since renderOptions is a shared, reused-every-
-// call object and an erosion-triggered call's value would otherwise leak
-// into the next ordinary epoch-driven render. intermediate marks a
-// once-per-round redraw fired mid-erosion (see runErodeRequest) — see
-// WorkerRenderedMessage.intermediate for why the client needs to know.
-// Downscale factor for the live-preview elevation query while the sim is
-// actively stepping — see RenderSimulationOptions.elevationScale. 2 renders
-// the field on a 1024x512 grid (a quarter of the pixels) and bilinearly
-// upscales, for a several-times-faster preview at a slightly softer
-// elevation shading; plate outlines/overlays stay full-res. Any render that
-// feeds erosion/export, or the crisp paused view, uses scale 1 instead.
+// Downscale factor for the live-preview elevation while the Archean is
+// actively stepping — the engine's render evaluates the field on a 1024x512
+// grid (a quarter of the pixels) and upscales it bilinearly, for a
+// several-times-faster preview at a slightly softer elevation shading;
+// plate outlines/overlays stay full-res. Any other render uses scale 1.
 const PREVIEW_RENDER_SCALE = 2
 
 // Terminal-basin masks for the terrain render (see RenderSimulationOptions.
@@ -415,20 +263,40 @@ const PREVIEW_RENDER_SCALE = 2
 let renderDryBasin: Uint8Array | null = null
 let renderSaltFlat: Uint8Array | null = null
 
-async function renderAndPost(precomputedElevations?: Float32Array, intermediate = false, elevationScale = 1, skipInvalidation = false): Promise<void> {
-  if (!sim) return
+// What the picture's overlays read of the plates (RenderableWorld) from the
+// world's snapshot. The elevation is the engine's, so the fields it would
+// have been computed from (the ocean age, the mantle) are not needed.
+function renderableOf(snapshot: PlateSimulationSnapshot, domain: Domain): RenderableWorld {
+  return { width: snapshot.width, height: snapshot.height, domain, seeds: snapshot.seeds, rafts: snapshot.rafts, features: snapshot.features, oceanAge: null, warpSeed: snapshot.warpSeed, mantle: new Float64Array(0) }
+}
+
+// The terrain as the engine rasterises it, rendered and posted: what the
+// stages and the screen read, and the map's texture.
+async function renderTerrain(intermediate = false): Promise<void> {
+  if (!world || era !== 'plates') return
+  const { elevations, mantle } = world.render(1)
+  await renderAndPost(elevations, mantle, world.snapshot(), intermediate, false)
+}
+
+// The plates' picture from a raster and the mantle's chart raster, posted.
+// intermediate marks a redraw while the history runs — see
+// WorkerRenderedMessage.intermediate for why the client needs to know.
+// skipInvalidation: a render of the hydrology just computed (its dry
+// floors), which must not drop it.
+async function renderAndPost(elevations: Float32Array, mantle: Float32Array, snapshot: PlateSimulationSnapshot, intermediate: boolean, skipInvalidation: boolean): Promise<void> {
   const gen = worldGeneration
-  renderOptions.precomputedElevations = precomputedElevations
-  renderOptions.elevationScale = elevationScale
+  const domain = domainFor(archeanShape, snapshot.width, snapshot.height)
+  renderOptions.precomputedElevations = elevations
+  renderOptions.elevationScale = 1
   renderOptions.dryBasin = renderDryBasin ?? undefined
   renderOptions.saltFlat = renderSaltFlat ?? undefined
 
-  const result = await renderSimulationImage(sim, renderPool(), renderOptions)
+  const result = await renderSimulationImage(renderableOf(snapshot, domain), NO_POOL, renderOptions)
   // A newer init/restore replaced the world while this render was in flight —
   // discard it before it clobbers lastRawElevations or posts a stale frame.
   if (gen !== worldGeneration) return
   lastRawElevations = result.rawElevations
-  lastDisplayElevations = { data: result.elevations, width: sim.width, height: sim.height }
+  lastDisplayElevations = { data: result.elevations, width: snapshot.width, height: snapshot.height }
   if (!skipInvalidation) {
     invalidateAfter('tectonics')
     // New topography — whatever terminal basins the last hydrology found no
@@ -436,92 +304,84 @@ async function renderAndPost(precomputedElevations?: Float32Array, intermediate 
     renderDryBasin = null
     renderSaltFlat = null
   }
-  if (precomputedElevations === undefined) preErosionElevations = result.rawElevations
   const eventsToSend = pendingEvents
   pendingEvents = []
-
-  const volcanoes = collectVolcanoes(sim.features)
+  const archeanEpochs = snapshot.archeanEpochs ?? 0
 
   const message: WorkerRenderedMessage = {
     type: 'rendered',
     buffer: result.buffer.buffer as ArrayBuffer,
     relief: result.relief.buffer as ArrayBuffer,
     // The field on its chart raster (a fresh array, so transferable).
-    mantle: rasteriseMantle(sim.mantle, sim.domain).buffer as ArrayBuffer,
+    mantle: mantle.buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    cratonAge: computeCratonOldnessField(sim.rafts, worldEpoch(sim.archeanEpochs, sim.epoch), sim.archeanEpochs, MANTLE_RES_X, MANTLE_RES_Y, sim.domain).buffer as ArrayBuffer,
-    elevation: coarseElevation(result.elevations, sim.width, sim.height).buffer as ArrayBuffer,
+    cratonAge: computeCratonOldnessField(snapshot.rafts, worldEpoch(archeanEpochs, snapshot.epoch), archeanEpochs, MANTLE_RES_X, MANTLE_RES_Y, domain).buffer as ArrayBuffer,
+    elevation: coarseElevation(result.elevations, snapshot.width, snapshot.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
-    hotspots: sim.hotspots,
-    volcanoes,
-    width: sim.width,
-    height: sim.height,
+    hotspots: snapshot.hotspots,
+    volcanoes: collectVolcanoes(snapshot.features),
+    width: snapshot.width,
+    height: snapshot.height,
     landFraction: result.landFraction,
-    epoch: sim.epoch,
+    epoch: snapshot.epoch,
     boundaryMask: result.boundaryMask.buffer as ArrayBuffer,
     raftLabels: result.raftLabels,
-    plateCount: sim.seeds.length,
+    plateCount: snapshot.seeds.length,
     events: eventsToSend,
     intermediate,
   }
   // Transfers the underlying ArrayBuffers instead of copying them — safe
-  // because renderSimulationImage (buffer + boundaryMask) allocates fresh
-  // arrays every call, so there's no reference to any now-neutered buffer
-  // left to reuse.
+  // because the image render and the engine allocate fresh arrays every
+  // call, so there's no reference to any now-neutered buffer left to reuse.
   emit(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
 }
 
-// Renders the Archean world and posts its status. Reuses renderSimulationImage
-// through RenderableWorld — the elevation raster, hillshade and colour ramp need no
-// plates, and the plate-shaped overlays are skipped there.
+// Renders the Archean world and posts its status. The image render reads
+// the rafts for its overlays (labels); the plate-shaped ones are skipped
+// there, as the Archean has no plates.
 // The last Archean status sent, for the hand-over's own (handleGenesisFinalize).
 let lastGenesisStatus: WorkerGenesisStatusMessage | null = null
 
 async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
-  if (!archean) return
+  if (!world || era !== 'archean') return
   const gen = worldGeneration
-  renderOptions.precomputedElevations = undefined
-  renderOptions.elevationScale = elevationScale
+  const { snapshot, mantle: field } = world.archeanSave()
+  const { elevations, mantle } = world.render(elevationScale)
+  const domain = domainFor(archeanShape, snapshot.width, snapshot.height)
+  renderOptions.precomputedElevations = elevations
+  renderOptions.elevationScale = 1
   const result = await renderSimulationImage(
-    // No seeds, so no plate Voronoi: the Archean has no plates. No ocean age
-    // either (nothing creates or destroys seafloor yet): null reads as
-    // freshly formed crust everywhere, the right answer for a world whose
-    // entire seafloor is being recycled continuously. A paused
-    // render used to place the seeds finalizeArchean would, as a preview of
-    // the plates to come — but the genesis step offers no plate outlines
-    // (steps.ts), so nothing showed it, and the Voronoi over the whole map
-    // cost ~1.4 s a pause on the sphere (removed 2026-10-10). Seeds only
-    // drive the Voronoi mask; the elevation reads rafts, ocean age and
-    // features, so this changes no terrain.
-    { width: archean.width, height: archean.height, domain: archean.domain, seeds: [], rafts: archean.rafts, features: [], oceanAge: null, warpSeed: archean.warpSeed, mantle: archean.mantle },
-    renderPool(),
+    // No seeds, so no plate Voronoi: the Archean has no plates. The genesis
+    // step offers no plate outlines (steps.ts).
+    { width: snapshot.width, height: snapshot.height, domain, seeds: [], rafts: snapshot.rafts, features: [], oceanAge: null, warpSeed: snapshot.warpSeed, mantle: field.values },
+    NO_POOL,
     renderOptions,
   )
-  if (gen !== worldGeneration || !archean) return
+  if (gen !== worldGeneration || era !== 'archean') return
   lastRawElevations = result.rawElevations
-  lastDisplayElevations = { data: result.elevations, width: archean.width, height: archean.height }
+  lastDisplayElevations = { data: result.elevations, width: snapshot.width, height: snapshot.height }
   invalidateAfter('tectonics')
 
   const message: WorkerRenderedMessage = {
     type: 'rendered',
     buffer: result.buffer.buffer as ArrayBuffer,
     relief: result.relief.buffer as ArrayBuffer,
-    mantle: rasteriseMantle(archean.mantle, archean.domain).buffer as ArrayBuffer,
+    mantle: mantle.buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    cratonAge: computeCratonOldnessField(archean.rafts, archean.epoch, archean.epoch, MANTLE_RES_X, MANTLE_RES_Y, archean.domain).buffer as ArrayBuffer,
-    elevation: coarseElevation(result.elevations, archean.width, archean.height).buffer as ArrayBuffer,
+    cratonAge: computeCratonOldnessField(snapshot.rafts, snapshot.epoch, snapshot.epoch, MANTLE_RES_X, MANTLE_RES_Y, domain).buffer as ArrayBuffer,
+    elevation: coarseElevation(result.elevations, snapshot.width, snapshot.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
     // The Archean has plumes too — the same persistent upwellings crustNucleation
     // reads to decide where crust appears. Showing them costs nothing new: the phase
     // already computes them, and seeing WHERE crust is about to form is the point.
-    hotspots: findPlumeSites(archean.mantle, archean.domain),
+    hotspots: findPlumeSites(field.values, domain),
     volcanoes: [],
-    width: archean.width,
-    height: archean.height,
+    width: snapshot.width,
+    height: snapshot.height,
     landFraction: result.landFraction,
     // No plate epoch has passed yet — see WorkerRenderedMessage.epoch. The
     // Archean's own count travels in the genesisStatus below.
@@ -535,11 +395,11 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
 
   const status: WorkerGenesisStatusMessage = lastGenesisStatus = {
     type: 'genesisStatus',
-    epoch: archean.epoch,
-    worldAgeMa: worldAgeMa(archean.epoch, 0),
+    epoch: snapshot.epoch,
+    worldAgeMa: worldAgeMa(snapshot.epoch, 0),
     crustFraction: result.landFraction,
-    stabilisedFraction: stabilisedFraction(archean.rafts, archean.epoch, DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs),
-    cratonCount: archean.rafts.length,
+    stabilisedFraction: stabilisedFraction(snapshot.rafts, snapshot.epoch, DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs),
+    cratonCount: snapshot.rafts.length,
   }
   emit(status)
 }
@@ -559,82 +419,15 @@ function coarseElevation(elevations: Float32Array, worldWidth: number, worldHeig
   return out
 }
 
-// The mesh payload, encoded once per terrain. A COPY per request: the
-// buffers are transferred to the screen, and a transferred buffer is gone.
-function meshPayload(): MeshPayload | undefined {
-  if (!meshTerrain) return undefined
-  if (!meshPayloadCache || meshPayloadCache.z0 !== meshTerrain.z) meshPayloadCache = { ...serializeMeshTerrain(meshTerrain), z0: meshTerrain.z }
-  const c = meshPayloadCache
-  return { count: c.count, nodes: c.nodes.slice(0), connectivity: c.connectivity.slice(0), z: c.z.slice(0), column: c.column?.slice(0), sedimentFlux: c.sedimentFlux?.slice(0), preErosionZ: c.preErosionZ?.slice(0), ice: c.ice?.slice(0) }
-}
-
-// The terrain mesh for the save: the routed terrain's (meshPayload), or —
-// before anything routed it (the hand-over, a reset) — the coupled
-// terrain the next epoch starts from, so every tectonic save carries the
-// terrain its elevation is the rasterisation of (DEC-0036, the save step).
-// Not cached: a save before the first epoch is rare and the encoding a
-// second's work.
-function savedMeshPayload(): MeshPayload | undefined {
-  const routed = meshPayload()
-  if (routed || !coupled) return routed
-  return serializeMeshTerrain(coupled)
-}
-
-// The mesh terrain as the save's bytes (mesh/meshSerial.ts). The mesh is
-// canonical already, so the identity numbering is the Hilbert one.
-function serializeMeshTerrain(terrain: Pick<MeshTerrain, 'mesh' | 'z' | 'sedimentFlux'>): MeshPayload {
-  const order = new Int32Array(terrain.mesh.aliveVertices)
-  for (let i = 0; i < order.length; i++) order[i] = i
-  const serial = encodeMesh(terrain.mesh, order)
-  const z = terrain.z.slice(0, serial.count)
-  // The column rides along when the terrain is the coupled one (it always
-  // is once an epoch has run — the hydrology's view of it is `terrain`).
-  const own = coupled && coupled.mesh === terrain.mesh ? coupled : null
-  const column = own ? encodeColumn(own.column, serial.count) : undefined
-  // What the last epoch left, which the hydrology reads and a load cannot
-  // derive (decodeCoupledTerrain): the flux (zeros before the first epoch,
-  // which the river graph reads as it reads none), the heights its erosion
-  // started from, and the ice the plate carries (none before the first).
-  const perNode = (values: Float32Array | undefined, fallback: () => Float32Array): ArrayBuffer =>
-    (values && values.length >= serial.count ? values.slice(0, serial.count) : fallback()).buffer as ArrayBuffer
-  const sedimentFlux = perNode(terrain.sedimentFlux, () => new Float32Array(serial.count))
-  const preErosionZ = perNode(own?.preErosionZ, () => z.slice())
-  const ice = own && own.ice.length >= serial.count ? own.ice.slice(0, serial.count).buffer as ArrayBuffer : undefined
-  return { count: serial.count, nodes: serial.nodes.buffer as ArrayBuffer, connectivity: serial.connectivity.buffer as ArrayBuffer, z: z.buffer as ArrayBuffer, column: column ? column.buffer as ArrayBuffer : undefined, sedimentFlux, preErosionZ, ice }
-}
-
-
-// The terrain mesh the land fields sit on (DEC-0036 fork 2): the coupled
-// terrain, routed. A world without one yet — restored from a save made
-// before its first epoch — gets the one that epoch would build from the
-// synthesis (createCoupledTerrain is a function of the plates alone, so
-// the epoch then starts from the same mesh); its routing is derived, which
-// no epoch reads.
-function landTerrain(): MeshTerrain | null {
-  if (!sim) return null
-  if (!coupled) coupled = createCoupledTerrain(sim, HISTORY_DEFAULTS.budget)
-  if (!coupled.routing) {
-    coupled.routing = meshRouting(coupled.mesh, coupled.z)
-    meshPayloadCache = null
+// The terrain mesh as the save's bytes, from the engine (a fresh copy per
+// call, so transferable).
+function meshPayload(w: EngineWorld): MeshPayload {
+  const m = w.meshPayload()
+  return {
+    count: m.count, nodes: m.nodes.buffer as ArrayBuffer, connectivity: m.connectivity.buffer as ArrayBuffer, z: m.z.buffer as ArrayBuffer,
+    column: m.column?.buffer as ArrayBuffer | undefined, sedimentFlux: m.sedimentFlux?.buffer as ArrayBuffer | undefined,
+    preErosionZ: m.preErosionZ?.buffer as ArrayBuffer | undefined, ice: m.ice?.buffer as ArrayBuffer | undefined,
   }
-  meshTerrain = asMeshTerrain(coupled)
-  return meshTerrain
-}
-
-// Where each pixel of the world raster lies on the terrain mesh
-// (meshRaster.triangleRaster), found once per mesh and kept: every land
-// field drawn from the nodes (the biomes, the classes, the riparian rain,
-// the ecology's fourteen) reads it — a locate per pixel is ~0.4 s at 2048.
-let pixelTriangles: TriangleRaster | null = null
-function trianglesOf(mesh: PeriodicTriangulation, width: number, height: number): TriangleRaster {
-  if (!pixelTriangles || pixelTriangles.mesh !== mesh || pixelTriangles.width !== width || pixelTriangles.height !== height) pixelTriangles = triangleRaster(mesh, width, height)
-  return pixelTriangles
-}
-
-// A biome or a Köppen class per node on the world raster
-// (worldStages.idRaster), through the pixels' triangles kept here.
-function idRasterOf(land: LandClimate, ids: Uint8Array, pixelLand: Uint8Array, width: number, height: number, sea: number): Uint8Array {
-  return idRaster(land, ids, pixelLand, width, height, sea, trianglesOf(land.mesh, width, height))
 }
 
 // THE STEP LOOP: one for both eras, the Archean's steps and the
@@ -645,10 +438,10 @@ function idRasterOf(land: LandClimate, ids: Uint8Array, pixelLand: Uint8Array, w
 // finishes and posts the SETTLED picture.
 //
 // It replaces a setInterval plus a zero-delay "seamless" tick per epoch
-// that outlasted the interval (2026-09-26). An epoch does not yield in a
-// process without a render pool, so every interval beat ran one, and each
-// late epoch queued one more tick: the timer chains grew and never died
-// (6 after 22 epochs), and a stop waited behind them (2026-10-11).
+// that outlasted the interval (2026-09-26). An epoch does not yield, so
+// every interval beat ran one, and each late epoch queued one more tick:
+// the timer chains grew and never died (6 after 22 epochs), and a stop
+// waited behind them (2026-10-11).
 interface StepLoop {
   stage: 'genesis' | 'tectonics'
   minIntervalMs: number
@@ -716,8 +509,8 @@ function runStep(l: StepLoop): void {
         return
       }
       // Stopped while the step ran. The step drew the settled picture if the
-      // stop came before its render; a stop during the render (an awaiting
-      // pool) left an intermediate one, and a failure none.
+      // stop came before its render; a stop during the render left an
+      // intermediate one, and a failure none.
       if (l.ended === 'stop' && !posted) {
         try {
           await l.settle()
@@ -747,22 +540,19 @@ function stopTicking(): void {
 
 // One handler per inbound message type. The dispatcher below used to be a single
 // ~250-line if/else chain, several of whose branches were 40-50 lines of pipeline
-// wiring in their own right — the climate branch alone encodes the order
-// temperature → wind → currents → precipitation → biomes, which is real domain
-// knowledge that was invisible inside a chain of `else if`s.
+// wiring in their own right.
 
 
 function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'tectonicsStart' }>): void {
   if (loop) return
   // No plates yet: the Archean has not been handed over. Said out loud rather
   // than started anyway.
-  if (!sim) { decline('tectonics', 'genesis'); return }
+  if (!world || era !== 'plates') { decline('tectonics', 'genesis'); return }
   historyControls = {
     alluvium: message.alluvium ?? TECTONICS_INPUTS.alluvium.default,
     rockContrast: message.rockContrast ?? TECTONICS_INPUTS.rockContrast.default,
     weather: message.weather ?? defaultWeatherParams(),
   }
-  sim.epochMa = TECTONIC_MA_PER_EPOCH
   // THE COUPLED EPOCH (phase 5.1): the plates move, the mesh follows,
   // erosion runs inside the epoch, the terrain is rasterised and drawn. An
   // epoch takes what it takes; the epochs run back to back (minimum 0). The
@@ -771,27 +561,16 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
   // check builds its two worlds with.
   epochsSinceRender = HISTORY_DEFAULTS.renderEvery
   startLoop('tectonics', 0, 0, async (l) => {
-    const currentSim = sim
-    if (!currentSim) return false
-    // A world restored without a mesh (a save from before the history)
-    // gets one from its own synthesis on the first epoch.
-    if (!coupled) coupled = createCoupledTerrain(currentSim, HISTORY_DEFAULTS.budget)
-    const stats = await stepCoupledEpoch(currentSim, coupled, {
-      iterationsPerEpoch: HISTORY_DEFAULTS.iterationsPerEpoch,
-      budget: HISTORY_DEFAULTS.budget,
-      climateEvery: HISTORY_DEFAULTS.climateEvery,
-      remeshEvery: HISTORY_DEFAULTS.remeshEvery,
-      upliftScale: HISTORY_DEFAULTS.upliftScale,
-      controls: { alluvium: historyControls.alluvium, rockContrast: historyControls.rockContrast },
-      weather: historyControls.weather,
-    })
+    const current = world
+    if (!current || era !== 'plates') return false
+    const events = current.epoch(historyControls)
     // The world was replaced while the epoch ran: its result describes
     // nothing that is still here.
     if (l.ended === 'drop') return false
     // Events are forwarded to the main thread (batched with the next
     // render), which owns their notifications + faded map markers now.
-    pendingEvents.push(...stats.events)
-    meshTerrain = asMeshTerrain(coupled)
+    pendingEvents.push(...events)
+    routed = true
     // Intermediate while the loop still runs, and only every
     // HISTORY_DEFAULTS.renderEvery-th epoch (the first always): the next
     // picture replaces this one. The epoch that finishes after the stop
@@ -809,11 +588,9 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
 
 function handleTectonicsStop(): void {
   // The settled render: the last epoch's, if one is still in flight (the
-  // loop settles it), otherwise the terrain as it stands, once more. NOT a
-  // render from the synthesis — that would replace the history's terrain
-  // with the fields'.
+  // loop settles it), otherwise the terrain as it stands, once more.
   if (stopLoop('stop')?.inFlight) return
-  if (sim && coupled && !renderInFlight) {
+  if (world && era === 'plates' && !renderInFlight) {
     renderInFlight = true
     renderTerrain(false).finally(() => {
       renderInFlight = false
@@ -827,76 +604,44 @@ function resetErosion(): void {
   // Nothing to go back to: the terrain is the history's (phase 5.1).
 }
 
-// The climate levers of the last computeClimate — kept so the hydrology
-// handler's climate REFINEMENT pass (see handleHydrologyRun) can re-run
-// the identical chain with the terminal-basin land override.
-// One climate pass (worldStages.climateChain) with the marks' vectors on
-// the mesh for the screen.
-function computeClimateChain(elevation: Float32Array, domain: Domain, params: ClimateParams, dryLand?: Uint8Array) {
-  return withMarks(climateChain(elevation, domain, params, dryLand))
-}
-function withMarks(chain: ClimateChain) {
-  const { cm } = chain.weather.terrain
-  return {
-    ...chain,
-    windMesh: meshVectorPayload(cm.cellM, chain.weather.mesh.wind),
-    currentsMesh: meshVectorPayload(cm.cellM, chain.weather.mesh.currents),
-  }
-}
-
-// A vector field on the climate's field mesh for the screen's marks — the
-// wind (DEC-0036 phase 3), the currents (phase 4), the refinement's
-// (phase 5), WorkerClimateDataMessage.windMesh and .currentsMesh: copies
-// in Float64, transferred.
-function meshVectorPayload(spacingM: number, field: { e: ArrayLike<number>; s: ArrayLike<number> }): { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer } {
-  return { cells: field.e.length, spacingM, e: Float64Array.from(field.e).buffer as ArrayBuffer, s: Float64Array.from(field.s).buffer as ArrayBuffer }
-}
-
-// The climate the chain made, at the nodes of `land`'s terrain.
-function climateResultOf(chain: ClimateChain, params: ClimateParams, land: LandClimate): ClimateResult {
-  return { params, cells: chain.cells, terrain: chain.weather.terrain, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind }, refined: false, land }
-}
-
-// The screen's climate (WorkerClimateDataMessage): the chart's fields, the
-// marks' vectors on the mesh, and the biomes and the Köppen classes per
-// pixel of the world raster from the nodes (`pixelLand`, the raster's
-// land). Fresh arrays, transferred.
-function postClimate(
-  fields: { temperature: Float32Array; wind: Float32Array; currents: Float32Array; currentAnomaly: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array; monsoonIndex: Float32Array },
-  windMesh: WorkerClimateDataMessage['windMesh'], currentsMesh: WorkerClimateDataMessage['currentsMesh'],
-  land: LandClimate, pixelLand: Uint8Array, width: number, height: number, flags: { refinement?: boolean; refined?: boolean },
-): void {
+// The screen's climate (WorkerClimateDataMessage) from the engine's body:
+// the chart's fields, the marks' vectors on the mesh, and the biomes and
+// the Köppen classes per pixel of the world raster. Fresh arrays,
+// transferred.
+function postClimate(body: ClimateBody, flags: { refinement?: boolean; refined?: boolean }): void {
   const message: WorkerClimateDataMessage = {
     type: 'climateData',
     ...flags,
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
-    temperature: fields.temperature.slice().buffer as ArrayBuffer,
-    wind: fields.wind.slice().buffer as ArrayBuffer,
-    windMesh,
-    currentsMesh,
-    currents: fields.currents.slice().buffer as ArrayBuffer,
-    currentAnomaly: fields.currentAnomaly.slice().buffer as ArrayBuffer,
-    precipitation: fields.precipitation.slice().buffer as ArrayBuffer,
-    seasonalAmplitude: fields.seasonalAmplitude.slice().buffer as ArrayBuffer,
-    monsoonIndex: fields.monsoonIndex.slice().buffer as ArrayBuffer,
-    koppen: idRasterOf(land, land.koppen, pixelLand, width, height, 0).buffer as ArrayBuffer,
-    biomes: idRasterOf(land, land.biome, pixelLand, width, height, Biome.Ocean).buffer as ArrayBuffer,
+    temperature: body.temperature.buffer as ArrayBuffer,
+    wind: body.wind.buffer as ArrayBuffer,
+    windMesh: meshVectors(body.windMesh),
+    currentsMesh: meshVectors(body.currentsMesh),
+    currents: body.currents.buffer as ArrayBuffer,
+    currentAnomaly: body.currentAnomaly.buffer as ArrayBuffer,
+    precipitation: body.precipitation.buffer as ArrayBuffer,
+    seasonalAmplitude: body.seasonalAmplitude.buffer as ArrayBuffer,
+    monsoonIndex: body.monsoonIndex.buffer as ArrayBuffer,
+    koppen: body.koppen.buffer as ArrayBuffer,
+    biomes: body.biomes.buffer as ArrayBuffer,
   }
+  const { windMesh, currentsMesh } = message
   emit(message, [message.temperature, message.wind, windMesh.e, windMesh.s, currentsMesh.e, currentsMesh.s, message.currents, message.currentAnomaly, message.precipitation, message.seasonalAmplitude, message.monsoonIndex, message.koppen, message.biomes])
 }
 
+// A vector field on the climate's field mesh for the screen's marks — the
+// wind (DEC-0036 phase 3), the currents (phase 4), the refinement's
+// (phase 5), WorkerClimateDataMessage.windMesh and .currentsMesh.
+function meshVectors(v: ClimateBody['windMesh']): WorkerClimateDataMessage['windMesh'] {
+  return { cells: v.cells, spacingM: v.spacingM, e: v.e.buffer as ArrayBuffer, s: v.s.buffer as ArrayBuffer }
+}
+
 function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climateRun' }>): void {
-  // Runs on the PRE-EROSION terrain (stage-2 coupling: climate sits before
-  // erosion, so its result must not depend on whether erosion ran — this is
-  // the same input the erosion forcing evaluates its weather chain on). This
-  // is climate v1 — the optimistic mask where every sub-sea cell is water;
-  // the hydrology handler refines it (v2) on the CURRENT terrain once the
-  // terminal basins are known, which is where the post-erosion climate
-  // truth comes from.
-  const elevation = preErosionElevations ?? lastRawElevations
-  const terrain = landTerrain()
-  if (!sim || !elevation || !terrain) { decline('climate', 'tectonics'); return }
+  // On the last render's terrain. This is climate v1 — the optimistic mask
+  // where every sub-sea cell is water; the hydrology handler refines it (v2)
+  // once the terminal basins are known.
+  if (!world || era !== 'plates' || !lastRawElevations) { decline('climate', 'tectonics'); return }
   const params: ClimateParams = {
     temperatureOffset: message.temperatureOffset,
     temperatureContrast: message.temperatureContrast,
@@ -904,103 +649,61 @@ function handleClimateRun(message: Extract<WorkerInboundMessage, { type: 'climat
     equatorOffset: message.equatorOffset,
     planet: message.planet,
   }
-  const chain = computeClimateChain(elevation, sim.domain, params)
-  climate = climateResultOf(chain, params, landClimateOf(chain.cells, terrain))
-  postClimate(chain.chart, chain.windMesh, chain.currentsMesh, climate.land, pixelLandOf(elevation, null), sim.width, sim.height, {})
+  const body = world.climate(params)
+  routed = true
+  climateDone = true
+  postClimate(body, {})
   invalidateAfter('climate')
 }
 
 // The climate step's refinement (climate/refinement.ts), on the climate the
 // step shows and the terrain it was computed on. It runs on the climate's
 // field mesh (DEC-0036 phase 5); its values per cell go to the screen,
-// which keeps them for the save, its cells (climatePoints.
-// climateCellsFromRefined) feed the biomes and everything downstream here,
-// and its chart (climateChart.refinedChart) the screen's textures.
+// which keeps them for the save, and its chart the screen's textures. A
+// save's refinement is taken as it is — its values belong to this world's
+// climate mesh, or the engine refuses it.
 function handleClimateRefine(message: Extract<WorkerInboundMessage, { type: 'climateRefine' }>): void {
-  const elevation = preErosionElevations ?? lastRawElevations
-  const terrain = landTerrain()
-  if (!sim || !elevation || !terrain) { decline('climate', 'tectonics'); return }
-  if (!climate) { decline('climate', 'climate'); return }
-  const { width, height, domain } = sim
-  // A save's refinement is taken as it is — its values belong to this
-  // world's climate mesh, or it is no refinement of it; otherwise it is
-  // computed.
-  const restored = message.restored
-  if (restored && !refinementFits(domain, restored.cells, restored.spacingM)) throw new Error('the saved refinement belongs to another climate mesh')
-  const step = refinedClimateOf(elevation, domain, climate.params, climate.mesh, restored, (share) => {
-    const progress: WorkerClimateRefineProgressMessage = { type: 'climateRefineProgress', share: share * 0.85 }
-    emit(progress)
-  })
-  const { refined: r, terrain: refinedTerrain, chart, cells, annual, annualWind, meshWind } = step
-
-  const land = landClimateOf(cells, terrain)
-  climate = {
-    params: climate.params,
-    cells,
-    terrain: refinedTerrain,
-    mesh: { temperature: step.meshTemperature, wind: meshWind },
-    refined: true,
-    land,
-  }
-  const pixelLand = pixelLandOf(elevation, null)
-
-  // The values per cell, copied: the screen keeps them (the save's), the
-  // worker its own.
-  const values: RefinedClimate = structuredCopy(r)
+  if (!world || era !== 'plates' || !lastRawElevations) { decline('climate', 'tectonics'); return }
+  if (!climateDone) { decline('climate', 'climate'); return }
+  const { refined: r, annual } = world.refineClimate(message.restored ?? null)
+  routed = true
+  const values = r.refined
   const reply: WorkerClimateRefinedMessage = {
     type: 'climateRefined',
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
-    months: chart.months,
+    months: r.months,
     refined: values,
-    temperature: chart.temperature.slice().buffer as ArrayBuffer,
-    precipitation: chart.precipitation.slice().buffer as ArrayBuffer,
-    koppen: idRasterOf(land, land.koppen, pixelLand, width, height, 0).buffer as ArrayBuffer,
-    fog: chart.fog.buffer as ArrayBuffer,
-    foehn: chart.foehn.buffer as ArrayBuffer,
-    rainVariability: chart.reliability.rainVariability.buffer as ArrayBuffer,
-    ensoPattern: chart.reliability.ensoPattern.buffer as ArrayBuffer,
-    ensoPeriodYears: chart.reliability.ensoPeriodYears,
-    ensoStrength: chart.reliability.ensoStrength,
-    salinity: chart.salinity.buffer as ArrayBuffer,
-    deepWater: chart.deepWater.buffer as ArrayBuffer,
-    cyclone: chart.storms.cyclone.buffer as ArrayBuffer,
-    tornado: chart.storms.tornado.buffer as ArrayBuffer,
-    blizzard: chart.storms.blizzard.buffer as ArrayBuffer,
-    dust: chart.storms.dust.buffer as ArrayBuffer,
-    thunder: chart.storms.thunder.buffer as ArrayBuffer,
-    pressure: chart.pressure.buffer as ArrayBuffer,
-    wind: chart.wind.buffer as ArrayBuffer,
-    currents: chart.currents.slice().buffer as ArrayBuffer,
-    currentAnomaly: chart.currentAnomaly.slice().buffer as ArrayBuffer,
-    upwelling: chart.upwelling.buffer as ArrayBuffer,
+    temperature: r.temperature.buffer as ArrayBuffer,
+    precipitation: r.precipitation.buffer as ArrayBuffer,
+    koppen: r.koppen.buffer as ArrayBuffer,
+    fog: r.fog.buffer as ArrayBuffer,
+    foehn: r.foehn.buffer as ArrayBuffer,
+    rainVariability: r.rainVariability.buffer as ArrayBuffer,
+    ensoPattern: r.ensoPattern.buffer as ArrayBuffer,
+    ensoPeriodYears: r.ensoPeriodYears,
+    ensoStrength: r.ensoStrength,
+    salinity: r.salinity.buffer as ArrayBuffer,
+    deepWater: r.deepWater.buffer as ArrayBuffer,
+    cyclone: r.cyclone.buffer as ArrayBuffer,
+    tornado: r.tornado.buffer as ArrayBuffer,
+    blizzard: r.blizzard.buffer as ArrayBuffer,
+    dust: r.dust.buffer as ArrayBuffer,
+    thunder: r.thunder.buffer as ArrayBuffer,
+    pressure: r.pressure.buffer as ArrayBuffer,
+    wind: r.wind.buffer as ArrayBuffer,
+    currents: r.currents.buffer as ArrayBuffer,
+    currentAnomaly: r.currentAnomaly.buffer as ArrayBuffer,
+    upwelling: r.upwelling.buffer as ArrayBuffer,
   }
   emit(reply, [reply.temperature, reply.precipitation, reply.koppen, reply.fog, reply.foehn, reply.rainVariability, reply.ensoPattern, reply.salinity, reply.deepWater, reply.cyclone, reply.tornado, reply.blizzard, reply.dust, reply.thunder, reply.pressure, reply.wind, reply.currents, reply.currentAnomaly, reply.upwelling, ...refinedBuffers(values)])
   // The screen's annual fields follow, as a climate of its own kind; the
   // marks read the year's wind and the currents on the mesh.
-  postClimate(
-    { temperature: annual.temperature, wind: annualWind, currents: chart.currents, currentAnomaly: chart.currentAnomaly, precipitation: annual.precipitation, seasonalAmplitude: annual.seasonalAmplitude, monsoonIndex: annual.monsoonIndex },
-    meshVectorPayload(r.spacingM, meshWind), meshVectorPayload(r.spacingM, { e: r.currentE, s: r.currentS }),
-    land, pixelLand, width, height, { refined: true },
-  )
+  postClimate(annual, { refined: true })
   invalidateAfter('climate')
 }
 
-// A refinement's arrays copied, its solves left out (a diagnostic of the
-// run, not part of the climate).
-function structuredCopy(r: RefinedClimate): RefinedClimate {
-  return {
-    months: r.months, cells: r.cells, spacingM: r.spacingM,
-    temperature: r.temperature.slice(), precipitation: r.precipitation.slice(), pressure: r.pressure.slice(),
-    windE: r.windE.slice(), windS: r.windS.slice(), currentE: r.currentE.slice(), currentS: r.currentS.slice(),
-    currentAnomaly: r.currentAnomaly.slice(), upwelling: r.upwelling.slice(), salinity: r.salinity.slice(), deepWater: r.deepWater.slice(),
-    fog: r.fog.slice(), foehn: r.foehn.slice(),
-    reliability: { ...r.reliability, rainVariability: r.reliability.rainVariability.slice(), ensoPattern: r.reliability.ensoPattern.slice() },
-    storms: { cyclone: r.storms.cyclone.slice(), tornado: r.storms.tornado.slice(), blizzard: r.storms.blizzard.slice(), dust: r.storms.dust.slice(), thunder: r.storms.thunder.slice() },
-  }
-}
-
-function refinedBuffers(r: RefinedClimate): ArrayBuffer[] {
+function refinedBuffers(r: WorkerClimateRefinedMessage['refined']): ArrayBuffer[] {
   return [
     r.temperature, r.precipitation, r.pressure, r.windE, r.windS, r.currentE, r.currentS, r.currentAnomaly, r.upwelling, r.salinity, r.deepWater, r.fog, r.foehn,
     r.reliability.rainVariability, r.reliability.ensoPattern, r.storms.cyclone, r.storms.tornado, r.storms.blizzard, r.storms.dust, r.storms.thunder,
@@ -1009,143 +712,59 @@ function refinedBuffers(r: RefinedClimate): ArrayBuffer[] {
 
 function handleHydrologyRun(): void {
   // Needs the current topography + a computed climate (rivers' water source).
-  if (!sim || !lastRawElevations) { decline('hydrology', 'tectonics'); return }
-  if (!climate) { decline('hydrology', 'climate'); return }
-  // One pass at a time: a second call while one runs would route the same
-  // terrain twice and publish twice. The running pass answers for both.
+  if (!world || era !== 'plates' || !lastRawElevations) { decline('hydrology', 'tectonics'); return }
+  if (!climateDone) { decline('hydrology', 'climate'); return }
+  // One pass at a time: a second call while one runs would publish twice.
+  // The running pass answers for both.
   if (hydrologyInFlight) return
-  const terrain = lastRawElevations
-  const width = sim.width
-  const height = sim.height
-  const domain = sim.domain
-  const mt = landTerrain()
-  if (!mt) { decline('hydrology', 'tectonics'); return }
-  // The raster the lakes' recovery, the dry floors and the shores are drawn
-  // against: the terrain's rasterisation (renderTerrain). The hydrology
-  // itself runs on the mesh's nodes.
-  const elevation = lastLakeBasinElevations ?? terrain
-  // Bound now: the refinement below replaces the module's climate, and the rest
-  // of this pass must keep reading the one it started from unless it rebinds.
-  let weather = climate
-  // What this pass answers for. After each await below the pass asks whether
+  const current = world
+  // What this pass answers for. After the await below the pass asks whether
   // that is still the world's question — a world replaced under it, or a
   // result dropped by an epoch or a reset, and it stops without publishing.
-  const world = worldGeneration
+  const generationOfWorld = worldGeneration
   const generation = hydrologyGeneration
-  const stale = (): boolean => world !== worldGeneration || generation !== hydrologyGeneration
+  const stale = (): boolean => generationOfWorld !== worldGeneration || generation !== hydrologyGeneration
   hydrologyInFlight = true
   // Async (the render awaits); the onmessage handler is sync, so run it in
-  // an IIFE like the erode branch does.
+  // an IIFE.
   ;(async () => {
-    // Re-route only when topography/climate changed; a repeat call reuses the
-    // cached discharge + lakes (the expensive parts) and just re-derives the
-    // polylines. An absent result IS "re-route needed".
-    let rerouted = false
-    let result = hydrology
-    if (!result) {
-      // The lakes and the discharge on the mesh, and the climate v2 on the
-      // current terrain (worldStages.routeHydrology). Its climate updates
-      // the caches + screen WITHOUT invalidateAfter('climate'): the
-      // hydrology is recomputed under it right there, and dropping the
-      // hydrology result here would force a needless full re-route on
-      // the next call.
-      const onMesh = routeHydrology(mt, terrain, elevation, domain, width, height, weather, (v2, land, dryBasin) => {
-        const chain = withMarks(v2)
-        weather = climate = climateResultOf(chain, weather.params, land)
-        postClimate(chain.chart, chain.windMesh, chain.currentsMesh, land, pixelLandOf(terrain, dryBasin), width, height, { refinement: true })
-      })
-      const lakes = onMesh.raster
+    // A repeat call reuses the route (the expensive part) and sends the
+    // re-routed fields empty; the engine keeps the route.
+    const body = current.hydrology(historyControls.weather.planet ?? null)
+    routed = true
+    // The climate v2 on the current terrain: the caches + screen updated
+    // WITHOUT invalidateAfter('climate') — the hydrology is recomputed under
+    // it right there.
+    if (body.climate) postClimate(body.climate, { refinement: true })
+    if (body.render) {
       // Terrain truth: repaint the map with the dry basin floors as land
       // (salt band + basin rock, real hillshade). skipInvalidation — this
-      // render shows the hydrology we JUST computed; dropping the result here
-      // would force a pointless full re-route on the next call.
-      renderDryBasin = lakes.dryBasin
-      renderSaltFlat = lakes.saltFlat
-      await renderAndPost(terrain, false, 1, true)
+      // render shows the hydrology we JUST computed.
+      renderDryBasin = body.render.dryBasin
+      renderSaltFlat = body.render.saltFlat
+      await renderAndPost(lastRawElevations!, body.render.mantle, current.snapshot(), false, true)
       if (stale()) return
-      result = {
-        lakeDepth: lakes.depth, saltFlat: lakes.saltFlat, dryBasin: lakes.dryBasin, frozen: lakes.frozen,
-        bodies: onMesh.lakes.bodies, level: lakes.level, surface: lakes.surface, body: lakes.body,
-        // The graph's discharge scale: the substrate it is built on.
-        maxDischarge: maxDischargeOverLand(onMesh.discharge, mt.z), meanRunoff: meanLandRunoff(weather.cells),
-        graph: null, coast: null, sedimentBasins: [], ice: null, oases: [],
-        onMesh,
-      }
-      hydrology = result
-      rerouted = true
     }
-    // ONE threshold, the model's own: the generator draws exactly the
-    // canonical channel set the riparian biomes, the bake and the worldmap
-    // read. The density slider that used to threshold the drawing separately
-    // died with its panel (erosion-v2 P4/teardown).
-    const threshold = hydrologyThreshold(domain, result.meanRunoff)
-    // Lakes only change on a re-route; a repeat call sends an empty buffer.
-    const lakeOut = rerouted ? result.lakeDepth.slice() : new Float32Array(0)
-    const levelOut = rerouted ? result.level.slice() : new Float32Array(0)
-    const surfaceOut = rerouted ? result.surface.slice() : new Uint8Array(0)
-    // Watersheds + the discharge on the map: re-route only, same contract.
-    let watershedsOut: Uint16Array = new Uint16Array(0)
-    let dischargeOut: Float32Array = new Float32Array(0)
-    let coastTypeOut: Uint8Array = new Uint8Array(0)
-    // The biomes are pinned to the routing like the lakes, so they too
-    // change on a re-route only — a repeat call sends them empty (the screen
-    // keeps its last copy).
-    let biomesOut: Uint8Array = new Uint8Array(0)
-    let precipEffOut: Float32Array = new Float32Array(0)
-    if (rerouted) {
-      // The riparian biomes, the graph, the hydrogeology, the courses, the
-      // coast, the sediment basins and the ice (worldStages.hydrologyFeatures).
-      const features = hydrologyFeatures(
-        { sim, coupled, planet: historyControls.weather.planet }, mt, result.onMesh, result.maxDischarge, threshold,
-        terrain, elevation, result.dryBasin, weather.cells, width, height, () => trianglesOf(mt.mesh, width, height),
-      )
-      result.graph = features.graph
-      result.oases = features.oases
-      result.coast = features.coast
-      result.sedimentBasins = features.sedimentBasins
-      result.ice = features.ice
-      precipEffOut = features.precipitationEffective
-      watershedsOut = features.watersheds
-      dischargeOut = features.discharge
-      coastTypeOut = features.coastType
-      biomesOut = features.biomes
-    }
-    // The graph exists once a re-route ran; the ribbons derive from it.
-    const rivers: RiverPolylines = result.graph
-      ? riverPolylinesFromGraph(result.graph, result.maxDischarge, domain)
-      : { points: new Float32Array(0), lengths: new Uint32Array(0), regimes: new Uint8Array(0) }
-    // The glaciers (computed above with the graph) ride in the level field the shore drawing reads: an ice
-    // cell's level is its ice surface, its surface kind ice — the map
-    // paints them as ice bodies, thickness as depth.
-    if (rerouted && result.ice) {
-      for (let c = 0; c < levelOut.length; c++) {
-        if (result.ice[c] <= 0) continue
-        levelOut[c] = Math.max(levelOut[c], elevation[c] + metersToElevation(result.ice[c]))
-        surfaceOut[c] = SURFACE_ICE
-      }
-    }
-    const iceOut = rerouted && result.ice ? result.ice.slice() : new Float32Array(0)
-    const graphOut = rerouted && result.graph ? serializeRiverGraph(result.graph) : null
-    const coastOut = rerouted && result.coast ? result.coast : null
+    const graphOut = body.riverGraph ? serializeRiverGraph(body.riverGraph) : null
     const hydrologyMessage: WorkerHydrologyDataMessage = {
       type: 'hydrologyData',
-      riverPoints: rivers.points.buffer as ArrayBuffer,
-      riverLengths: rivers.lengths.buffer as ArrayBuffer,
-      riverRegimes: rivers.regimes.buffer as ArrayBuffer,
-      lakeDepth: lakeOut.buffer as ArrayBuffer,
-      biomes: biomesOut.buffer as ArrayBuffer,
-      precipitationEffective: precipEffOut.buffer as ArrayBuffer,
-      watersheds: watershedsOut.buffer as ArrayBuffer,
-      discharge: dischargeOut.buffer as ArrayBuffer,
-      maxDischarge: result.maxDischarge,
-      waterBodies: rerouted ? result.bodies : null,
-      waterLevel: levelOut.buffer as ArrayBuffer,
-      waterSurface: surfaceOut.buffer as ArrayBuffer,
+      riverPoints: body.riverPoints.buffer as ArrayBuffer,
+      riverLengths: body.riverLengths.buffer as ArrayBuffer,
+      riverRegimes: body.riverRegimes.buffer as ArrayBuffer,
+      lakeDepth: body.lakeDepth.buffer as ArrayBuffer,
+      biomes: body.biomes.buffer as ArrayBuffer,
+      precipitationEffective: body.precipitationEffective.buffer as ArrayBuffer,
+      watersheds: body.watersheds.buffer as ArrayBuffer,
+      discharge: body.discharge.buffer as ArrayBuffer,
+      maxDischarge: body.maxDischarge,
+      waterBodies: body.waterBodies,
+      waterLevel: body.waterLevel.buffer as ArrayBuffer,
+      waterSurface: body.waterSurface.buffer as ArrayBuffer,
       riverGraph: graphOut ? { json: graphOut.json, cells: graphOut.cells.slice().buffer as ArrayBuffer, coursePoints: graphOut.coursePoints.buffer as ArrayBuffer } : null,
-      coastType: coastTypeOut.buffer as ArrayBuffer,
-      coast: coastOut ? { reaches: coastOut.reaches, nodes: coastOut.nodes.slice().buffer as ArrayBuffer } : null,
-      sedimentBasins: rerouted ? result.sedimentBasins : null,
-      iceThickness: iceOut.buffer as ArrayBuffer,
+      coastType: body.coastType.buffer as ArrayBuffer,
+      coast: body.coast ? { reaches: body.coast.reaches, nodes: body.coast.nodes.buffer as ArrayBuffer } : null,
+      sedimentBasins: body.sedimentBasins,
+      iceThickness: body.iceThickness.buffer as ArrayBuffer,
     }
     const transfer = [hydrologyMessage.riverPoints, hydrologyMessage.riverLengths, hydrologyMessage.riverRegimes, hydrologyMessage.lakeDepth, hydrologyMessage.biomes, hydrologyMessage.precipitationEffective, hydrologyMessage.watersheds, hydrologyMessage.discharge, hydrologyMessage.waterLevel, hydrologyMessage.waterSurface]
     if (hydrologyMessage.riverGraph) transfer.push(hydrologyMessage.riverGraph.cells, hydrologyMessage.riverGraph.coursePoints)
@@ -1159,45 +778,32 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
   // Needs a computed climate (its cells feed productivity + pasture) plus
   // the current terrain mesh (the nodes the fields sit on, their slope)
   // and the sim's volcanoes (province layer). Noise seeded from warpSeed.
-  // Fresh arrays, so every field buffer transfers.
-  if (!sim || !lastRawElevations) { decline('ecology', 'tectonics'); return }
-  if (!climate) { decline('ecology', 'climate'); return }
-  const mt = landTerrain()
-  if (!mt) { decline('ecology', 'tectonics'); return }
-  // Hydrology (discharge/lakes) is optional here — if it hasn't been computed
-  // yet, fish falls back to its marine component; the ecology panel re-triggers
-  // this once hydrology lands (see GeneratorScreen's chaining).
-  // The physics depends on the world alone; while only the sliders move,
-  // the last one stands (prepareEcology is the expensive part, the sliders
-  // a fraction of it).
-  const key = { climate, hydrology, elevation: lastRawElevations, sim, epoch: sim.epoch }
-  const last = ecologyBase?.key
-  if (!ecologyBase || !last || last.climate !== key.climate || last.hydrology !== key.hydrology || last.elevation !== key.elevation || last.sim !== key.sim || last.epoch !== key.epoch) {
-    const om = hydrology && hydrology.onMesh.land.mesh === mt.mesh ? hydrology.onMesh : null
-    const land = om ? om.land : climate.land.mesh === mt.mesh && climate.land.z === mt.z ? climate.land : landClimateOf(climate.cells, mt)
-    const base = prepareEcology(ecologyInputsOf(sim, mt, land, om, hydrology))
-    base.raster = trianglesOf(mt.mesh, sim.width, sim.height)
-    ecologyBase = { key, base, pixelLand: pixelLandOf(lastRawElevations, hydrology?.dryBasin ?? null) }
-  }
-  ecologyParams = {
+  // Hydrology (discharge/lakes) is optional here — if it hasn't been
+  // computed yet, fish falls back to its marine component; the ecology
+  // panel re-triggers this once hydrology lands (see GeneratorScreen's
+  // chaining). The engine keeps the physics while only the sliders move.
+  if (!world || era !== 'plates' || !lastRawElevations) { decline('ecology', 'tectonics'); return }
+  if (!climateDone) { decline('ecology', 'climate'); return }
+  const body = world.ecology({
     carryingCapacity: message.carryingCapacity,
     concentration: message.concentration,
     provinceStrength: message.provinceStrength,
     tinRarity: message.tinRarity,
     weights: message.weights,
-  }
-  const eco = ecologyRasters(ecologyBase.base, applyEcology(ecologyBase.base, ecologyParams).fields, ecologyBase.pixelLand, sim.domain.grid(sim.width, sim.height))
+  })
+  routed = true
   // Cache a copy of carrying capacity BEFORE the buffers below are transferred
   // (transfer neuters them) — the migration step reads it.
-  ecology = { carryingCapacity: eco.fields.carryingCapacity.slice() }
-  const fields = Object.entries(eco.fields).map(([id, data]) => ({ id, data: data.buffer as ArrayBuffer }))
-  const fine = Object.entries(eco.fine.fields).map(([id, data]) => ({ id, data: encodeFineField(data).buffer as ArrayBuffer }))
+  const capacity = body.fields.find((f) => f.id === 'carryingCapacity')
+  ecology = capacity ? { carryingCapacity: capacity.data.slice() } : null
+  const fields = body.fields.map((f) => ({ id: f.id, data: f.data.buffer as ArrayBuffer }))
+  const fine = body.fine.fields.map((f) => ({ id: f.id, data: f.data.buffer as ArrayBuffer }))
   const ecologyMessage: WorkerEcologyDataMessage = {
     type: 'ecologyData',
-    resX: eco.resX,
-    resY: eco.resY,
+    resX: body.resX,
+    resY: body.resY,
     fields,
-    fine: { resX: eco.fine.resX, resY: eco.fine.resY, fields: fine },
+    fine: { resX: body.fine.resX, resY: body.fine.resY, fields: fine },
   }
   emit(ecologyMessage, [...fields.map((f) => f.data), ...fine.map((f) => f.data)])
 }
@@ -1207,33 +813,27 @@ function handleEcologyMonth(message: Extract<WorkerInboundMessage, { type: 'ecol
   // for a yearly field, or a climate without months) there is nothing to
   // send, and the screen keeps showing the year.
   // Always answered, with no data then, so the screen is not left waiting.
-  const field = message.field as EcologyFieldId
-  const nodes = ecologyBase && ecologyParams && isSeasonalEcologyField(field)
-    ? ecologyMonth(ecologyBase.base, field, message.month, ecologyParams.weights?.[field] ?? 1)
-    : null
-  const width = sim?.width ?? 0
-  const height = sim?.height ?? 0
-  const data = nodes && ecologyBase ? ecologyFine(ecologyBase.base, nodes, ecologyBase.pixelLand, width, height, field === 'fish') : null
+  const body = world && era === 'plates'
+    ? world.ecologyMonth(message.field, message.month)
+    : { field: message.field, month: message.month, resX: 0, resY: 0, data: new Uint8Array(0) }
   const reply: WorkerEcologyMonthDataMessage = {
-    type: 'ecologyMonthData', field, month: message.month,
-    resX: data ? width : 0, resY: data ? height : 0,
-    data: data ? encodeFineField(data).buffer as ArrayBuffer : new ArrayBuffer(0),
+    type: 'ecologyMonthData', field: body.field, month: body.month,
+    resX: body.resX, resY: body.resY,
+    data: body.data.buffer as ArrayBuffer,
   }
   emit(reply, [reply.data])
 }
 
 function handleMigrationRun(message: Extract<WorkerInboundMessage, { type: 'migrationRun' }>): void {
   // Needs ecology's carrying capacity (density) + the current climate/hydrology
-  // for the cost field. Discharge is downsampled to the coarse grid for river corridors.
-  if (!sim || !lastRawElevations) { decline('migration', 'tectonics'); return }
-  if (!climate) { decline('migration', 'climate'); return }
+  // for the cost field: the climate's land rain and the discharge on the
+  // climate's chart, as the engine gives them (the migration runs on the
+  // chart — its own screen, later; not one of DEC-0036 phase 7's stages).
+  if (!world || era !== 'plates' || !lastRawElevations || !worldDomain) { decline('migration', 'tectonics'); return }
+  if (!climateDone) { decline('migration', 'climate'); return }
   if (!ecology) { decline('migration', 'ecology'); return }
-  const coarseDischarge = hydrology ? chartMaxOfNodes(hydrology.onMesh.land.mesh, hydrology.onMesh.discharge, hydrology.onMesh.land.z) : null
-  // The migration runs on the climate's chart (its own screen, later; not
-  // one of DEC-0036 phase 7's stages): the climate's land and rain there.
-  const { cells, terrain } = climate
-  const precipitation = chartLandField(cells.cm, cells.precipitation, (i) => cells.precipitation[i] !== OCEAN_PRECIP, OCEAN_PRECIP, chartLand(terrain))
-  const mig = computeMigration(ecology.carryingCapacity, precipitation, lastRawElevations, coarseDischarge, hydrology?.maxDischarge ?? 0, message.origins, sim.domain, {
+  const inputs = world.migrationInputs()
+  const mig = computeMigration(ecology.carryingCapacity, inputs.precipitation, lastRawElevations, inputs.discharge, inputs.maxDischarge, message.origins, worldDomain, {
     spreadBudget: message.spreadBudget,
     seaCrossing: message.seaCrossing,
   })
@@ -1261,7 +861,7 @@ function handleRequestElevationField(): void {
   const raw = lastRawElevations && lastRawElevations.length === elevation.length ? lastRawElevations.slice() : elevation.slice()
   const message: WorkerElevationFieldMessage = {
     type: 'elevationField',
-    mesh: meshPayload(),
+    mesh: world && era === 'plates' && routed ? meshPayload(world) : undefined,
     elevation: elevation.buffer as ArrayBuffer,
     raw: raw.buffer as ArrayBuffer,
     width: lastDisplayElevations.width,
@@ -1273,13 +873,13 @@ function handleRequestElevationField(): void {
 }
 
 function handleSerializeWorld(): void {
-  if (archean && !sim && lastRawElevations) {
-    const snapshot = serializeArchean(archean)
-    const mantle = fieldPayload(savedMantle(archean.mantle, archean.domain))
-    const streak = archean.upwellingStreak.slice()
+  if (world && era === 'archean' && lastRawElevations) {
+    const save = world.archeanSave()
+    const mantle = fieldPayload(save.mantle)
+    const domain = domainFor(archeanShape, save.snapshot.width, save.snapshot.height)
     const message: WorkerWorldDataMessage = {
       type: 'worldData',
-      archean: { snapshot, mantle, streak: streak.buffer as ArrayBuffer },
+      archean: { snapshot: save.snapshot, mantle, streak: save.streak.buffer as ArrayBuffer },
       // The tectonic fields still travel, empty: the screen writes one zip either way,
       // and a reader that only understands the tectonic form gets a coherent (if
       // pre-tectonic) world rather than a half-written file.
@@ -1290,34 +890,32 @@ function handleSerializeWorld(): void {
       latticeAccumulated: new Float32Array(0).buffer as ArrayBuffer,
       latticeLockedEpochs: new Int16Array(0).buffer as ArrayBuffer,
       latticeLastClassCode: new Int8Array(0).buffer as ArrayBuffer,
-      oceanAge: fieldPayload(savedOceanAge(createOceanAgeField(0, archean.domain), archean.domain)),
+      oceanAge: fieldPayload(savedOceanAge(createOceanAgeField(0, domain), domain)),
     }
     emit(message, [message.archean!.mantle.values, message.archean!.streak])
     return
   }
-  if (!sim || !lastRawElevations) return
-  // The meshes' own values, copies (the bit-identical continuation; DEC-0036
-  // phases 1 and 2).
-  const mantle = fieldPayload(savedMantle(sim.mantle, sim.domain))
-  const oceanAge = fieldPayload(savedOceanAge(sim.oceanAge, sim.domain))
-  const accumulated = sim.latticeAccumulated.slice()
-  const locked = sim.latticeLockedEpochs.slice()
-  const lastClass = sim.latticeLastClassCode.slice()
-  // No raster (DEC-0036, the save step): the elevation is the mesh's
-  // rasterisation and the erosion's coarse forcing a function of the
-  // snapshot (erosionForcing.coarseForcingFields), both made again by
-  // whoever reads the save.
+  if (!world || era !== 'plates' || !lastRawElevations) return
+  // The meshes' own values (the bit-identical continuation; DEC-0036
+  // phases 1 and 2). No raster (DEC-0036, the save step): the elevation is
+  // the mesh's rasterisation and the erosion's coarse forcing a function
+  // of the snapshot (erosionForcing.coarseForcingFields), both made again
+  // by whoever reads the save.
+  const [mantle, oceanAge] = world.savedFields()
+  const lattice = world.lattice()
+  const climate = world.climatePayload()
+  const land = world.landPayload()
   const worldMessage: WorkerWorldDataMessage = {
     type: 'worldData',
-    snapshot: serializePlateSimulation(sim),
-    mantle,
-    latticeAccumulated: accumulated.buffer as ArrayBuffer,
-    latticeLockedEpochs: locked.buffer as ArrayBuffer,
-    latticeLastClassCode: lastClass.buffer as ArrayBuffer,
-    oceanAge,
-    mesh: savedMeshPayload(),
-    climate: climate ? climatePayload(climate.cells) : undefined,
-    land: landPayload(),
+    snapshot: world.snapshot(),
+    mantle: fieldPayload(mantle),
+    latticeAccumulated: lattice.accumulated.buffer as ArrayBuffer,
+    latticeLockedEpochs: lattice.lockedEpochs.buffer as ArrayBuffer,
+    latticeLastClassCode: lattice.lastClassCode.buffer as ArrayBuffer,
+    oceanAge: fieldPayload(oceanAge),
+    mesh: meshPayload(world),
+    climate: climate ? climatePayload(climate) : undefined,
+    land: land ? landPayload(land) : undefined,
   }
   const transfers = [worldMessage.mantle.values, worldMessage.latticeAccumulated, worldMessage.latticeLockedEpochs, worldMessage.latticeLastClassCode, worldMessage.oceanAge.values]
   if (worldMessage.mesh) transfers.push(worldMessage.mesh.nodes, worldMessage.mesh.connectivity, worldMessage.mesh.z)
@@ -1326,46 +924,27 @@ function handleSerializeWorld(): void {
   emit(worldMessage, transfers)
 }
 
-// The climate's cells as the save holds them (world/save/climateFields.ts),
-// copies.
-function climatePayload(cells: ClimateCells): ClimatePayload {
-  const v = climateCellValues(cells)
+// The climate's cells as the save holds them (world/save/climateFields.ts).
+function climatePayload(v: NonNullable<ReturnType<EngineWorld['climatePayload']>>): ClimatePayload {
   return {
     cells: v.cells, spacingM: v.spacingM,
-    seaLevelTemperature: v.seaLevelTemperature.slice().buffer as ArrayBuffer, precipitation: v.precipitation.slice().buffer as ArrayBuffer,
-    seasonalAmplitude: v.seasonalAmplitude.slice().buffer as ArrayBuffer, monsoonIndex: v.monsoonIndex.slice().buffer as ArrayBuffer,
+    seaLevelTemperature: v.seaLevelTemperature.buffer as ArrayBuffer, precipitation: v.precipitation.buffer as ArrayBuffer,
+    seasonalAmplitude: v.seasonalAmplitude.buffer as ArrayBuffer, monsoonIndex: v.monsoonIndex.buffer as ArrayBuffer,
   }
 }
 
-// The land fields per node of the mesh the save carries, in its numbering
-// (the canonical mesh's slots): the map's biome (the hydrology's when it
-// ran, else the climate's), the Köppen class, the water table and the
-// discharge (the hydrology's, null before it ran). Undefined
-// when no climate describes this mesh.
-function landPayload(): LandPayload | undefined {
-  if (!climate || !meshTerrain) return undefined
-  const om = hydrology && hydrology.onMesh.land.mesh === meshTerrain.mesh ? hydrology.onMesh : null
-  const land = om ? om.land : climate.land
-  if (land.mesh !== meshTerrain.mesh) return undefined
-  const count = meshTerrain.mesh.aliveVertices
-  // The discharge in m³/s per node (hydrology.dischargeToM3s: the unit is
-  // mm/yr over world cells, a cell the Domain's metres per unit).
-  let discharge: ArrayBuffer | null = null
-  if (om) {
-    const m3s = new Float32Array(count)
-    const unit = dischargeToM3s(1, meshTerrain.mesh.domain.metresPerUnit)
-    for (let v = 0; v < count; v++) m3s[v] = om.discharge[v] * unit
-    discharge = m3s.buffer as ArrayBuffer
-  }
+// The land fields per node of the mesh the save carries, in its numbering:
+// the map's biome (the hydrology's when it ran, else the climate's), the
+// Köppen class, the water table, the discharge in m³/s and the lakes per
+// node (the hydrology's, null before it ran).
+function landPayload(l: NonNullable<ReturnType<EngineWorld['landPayload']>>): LandPayload {
   return {
-    count,
-    biome: (om?.biome ?? land.biome).slice(0, count).buffer as ArrayBuffer,
-    koppen: land.koppen.slice(0, count).buffer as ArrayBuffer,
-    waterTable: om?.waterTable ? om.waterTable.slice(0, count).buffer as ArrayBuffer : null,
-    discharge,
-    // The lakes per node (the hydrology's bodies, which the screen saves as
-    // waterBodies.json): what a reader draws the lakes' raster from.
-    lakeBody: om ? om.lakes.body.slice(0, count).buffer as ArrayBuffer : null,
+    count: l.count,
+    biome: l.biome.buffer as ArrayBuffer,
+    koppen: l.koppen.buffer as ArrayBuffer,
+    waterTable: l.waterTable ? l.waterTable.buffer as ArrayBuffer : null,
+    discharge: l.discharge ? l.discharge.buffer as ArrayBuffer : null,
+    lakeBody: l.lakeBody ? l.lakeBody.buffer as ArrayBuffer : null,
   }
 }
 
@@ -1381,25 +960,32 @@ async function handleReplayRuns(message: Extract<WorkerInboundMessage, { type: '
   dropHandover()
   renderDryBasin = null
   renderSaltFlat = null
-  archean = null
-  sim = null
-  coupled = null
-  meshTerrain = null
-  meshPayloadCache = null
+  replaceWorld(null, null)
+  routed = false
+  lastRawElevations = null
   invalidateAfter('tectonics')
-  const result = await replayRuns(message.plan, {
-    budget: HISTORY_DEFAULTS.budget,
-    cancelled: () => generation !== worldGeneration,
-    onEpoch: (done, total) => emit({ type: 'replayProgress', done, total }),
-  })
-  if (!result || generation !== worldGeneration) return
-  sim = result.sim
-  coupled = result.terrain
-  coupled.routing ??= meshRouting(coupled.mesh, coupled.z)
-  meshTerrain = asMeshTerrain(coupled)
+  const { plan } = message
+  archeanShape = plan.shape ?? 'torus'
+  const replay = theEngine().Replay.start(plan, 0)
+  try {
+    for (;;) {
+      if (generation !== worldGeneration) return
+      if (!replay.step()) break
+      const { done, total } = replay.progress()
+      emit({ type: 'replayProgress', done, total })
+      // Between two epochs the worker takes its messages: a load or
+      // another replay stops this one.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    if (generation !== worldGeneration) return
+    replaceWorld(replay.world(), 'plates')
+  } finally {
+    ;(replay as { free?: () => void }).free?.()
+  }
+  routed = true
   // A run that follows goes on with the last run's controls until the
   // screen's next start sends its own.
-  const last = message.plan.tectonics[message.plan.tectonics.length - 1]
+  const last = plan.tectonics[plan.tectonics.length - 1]
   if (last) {
     historyControls = {
       alluvium: last.controls.alluvium ?? TECTONICS_INPUTS.alluvium.default,
@@ -1407,7 +993,8 @@ async function handleReplayRuns(message: Extract<WorkerInboundMessage, { type: '
       weather: last.weather,
     }
   }
-  emit({ type: 'replayDone', archeanEpochs: sim.archeanEpochs, epoch: sim.epoch })
+  const snapshot = world!.snapshot()
+  emit({ type: 'replayDone', archeanEpochs: snapshot.archeanEpochs ?? 0, epoch: snapshot.epoch })
   await renderTerrain()
 }
 
@@ -1430,81 +1017,57 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   stopTicking()
   worldGeneration += 1
   dropHandover()
-  // What the previous world's last epoch and hydrology left: its
-  // pre-erosion heights (the sediment basins diffed the new world against
-  // them), its sediment flux (the river graph read it where the sizes
-  // matched) and its terminal basins (painted on the new world's first
-  // render). None of them describes the world being restored (2026-10-01).
+  // What the previous world's hydrology left: its terminal basins (painted
+  // on the new world's first render). They do not describe the world being
+  // restored (2026-10-01).
   renderDryBasin = null
   renderSaltFlat = null
+  const shape = message.shape ?? 'torus'
+  // The hand-over's shape too: a genesis reset after a load starts the
+  // world's own shape again.
+  archeanShape = shape
+  pendingEvents = []
+  lastRawElevations = null
   if (message.archean) {
-    sim = null
-    archean = deserializeArchean(message.archean.snapshot, savedOf(message.archean.mantle), new Int16Array(message.archean.streak), message.shape ?? 'torus')
     archeanSeed = message.seed
-    archeanParams = {
-      ...DEFAULT_ARCHEAN_PARAMS,
+    archeanControls = {
       diffusion: message.mantleDiffusion ?? DEFAULT_ARCHEAN_PARAMS.diffusion,
       landShare: message.landShare ?? DEFAULT_ARCHEAN_PARAMS.landShare,
     }
-    archeanWidth = archean.width
-    archeanHeight = archean.height
-    archeanShape = archean.domain.kind
+    const a = message.archean
+    replaceWorld(theEngine().World.restoreArchean(shape, a.snapshot, savedOf(a.mantle), new Int16Array(a.streak), archeanControls.diffusion, archeanControls.landShare), 'archean')
+    archeanWidth = a.snapshot.width
+    archeanHeight = a.snapshot.height
+    routed = false
     // The raster is the Archean's render of its state, as in the session
     // (the save carries none since DEC-0036's save step).
-    lastRawElevations = null
-    preErosionElevations = null
     void renderArcheanAndPost()
     return
   }
-  // A restored TECTONIC world has no Archean any more — and leaving the previous
-  // one standing was a real fault, not tidiness. The Archean branch above clears
-  // `sim`; this branch did not clear `archean`, so a session that had run a
-  // Genesis before loading kept it. Entering the Tectonics panel then sent
-  // `archeanFinalize`, which found that leftover and replaced the world the user
-  // had just opened with it. It only ever happened after a Genesis run in the
-  // same session, which is why it looked intermittent.
-  archean = null
-  sim = deserializePlateSimulation(message.snapshot, savedOf(requireOceanAge(message.oceanAge)), savedOf(message.mantle), message.shape ?? 'torus')
-  // The hand-over's shape too: a genesis reset after a load starts the
-  // world's own shape again.
-  archeanShape = sim.domain.kind
-  // Restored after construction rather than through the constructor: the arrays are
-  // sized from the lattice the deserializer just built, so a save from a different
-  // lattice resolution is ignored instead of corrupting the grid.
-  if (message.lattice) {
-    const acc = new Float32Array(message.lattice.accumulated)
-    const lock = new Int16Array(message.lattice.lockedEpochs)
-    const cls = new Int8Array(message.lattice.lastClassCode)
-    if (acc.length === sim.latticeAccumulated.length) {
-      sim.latticeAccumulated.set(acc)
-      sim.latticeLockedEpochs.set(lock)
-      sim.latticeLastClassCode.set(cls)
-    }
-  }
-  pendingEvents = []
-  lastRawElevations = null
-  preErosionElevations = null
+  // A restored TECTONIC world replaces whatever world was held, an Archean
+  // too: a session that had run a Genesis before loading once kept it, and
+  // entering the Tectonics panel then sent `archeanFinalize`, which found
+  // that leftover and replaced the world the user had just opened with it.
+  //
   // The history's terrain from the save (phase 5.1): the mesh with its
-  // heights, the baseline from the restored sim, the routing derived. The
-  // raster is its rasterisation (renderTerrain), as after every epoch —
-  // the save carries none (DEC-0036, the save step). Without a mesh (the
-  // screen refuses such a save): the mesh the hand-over builds, a
-  // function of the plates, unrouted as the session's is.
-  if (message.mesh) {
-    const f32 = (buffer: ArrayBuffer | undefined): Float32Array | undefined => buffer ? new Float32Array(buffer) : undefined
-    coupled = decodeCoupledTerrain(sim, {
-      nodes: new Float32Array(message.mesh.nodes), connectivity: new Uint8Array(message.mesh.connectivity), z: new Float32Array(message.mesh.z),
-      column: message.mesh.column ? new Uint8Array(message.mesh.column) : undefined,
-      ice: f32(message.mesh.ice), sedimentFlux: f32(message.mesh.sedimentFlux), preErosionZ: f32(message.mesh.preErosionZ),
-    })
-    coupled.routing = meshRouting(coupled.mesh, coupled.z)
-    meshTerrain = asMeshTerrain(coupled)
-  } else {
-    coupled = createCoupledTerrain(sim, HISTORY_DEFAULTS.budget)
-    meshTerrain = null
-  }
-  meshPayloadCache = null
-  lastLakeBasinElevations = null
+  // heights, the routing derived; the raster is its rasterisation, as
+  // after every epoch — the save carries none (DEC-0036, the save step).
+  // Without a mesh (the screen refuses such a save): the mesh the
+  // hand-over builds, a function of the plates, unrouted as the session's
+  // is. The lattice is taken where it is the restored world's size.
+  const f32 = (buffer: ArrayBuffer | undefined): Float32Array | undefined => buffer ? new Float32Array(buffer) : undefined
+  const m = message.mesh
+  const mesh = m
+    ? {
+      count: m.count, nodes: new Float32Array(m.nodes), connectivity: new Uint8Array(m.connectivity), z: new Float32Array(m.z),
+      column: m.column ? new Uint8Array(m.column) : undefined, ice: f32(m.ice), sedimentFlux: f32(m.sedimentFlux), preErosionZ: f32(m.preErosionZ),
+    }
+    : null
+  const lattice = message.lattice
+    ? { accumulated: new Float32Array(message.lattice.accumulated), lockedEpochs: new Int16Array(message.lattice.lockedEpochs), lastClassCode: new Int8Array(message.lattice.lastClassCode) }
+    : null
+  replaceWorld(theEngine().World.restorePlates(shape, message.snapshot, savedOf(requireOceanAge(message.oceanAge)), savedOf(message.mantle) ?? null, lattice, mesh), 'plates')
+  routed = mesh !== null
   // The terrain's rasterisation, rendered — no re-erosion.
   void renderTerrain()
 }
@@ -1513,27 +1076,23 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
 // --- Archean phase ---
 // Mirrors the tectonic init/start/stop trio: the same step loop, same
 // renderInFlight guard, same coarse-while-running / full-res-when-paused split.
-// What differs is only which state is being advanced.
+// What differs is only which era is being advanced.
 
 function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genesisInit' }>): void {
   stopTicking()
   worldGeneration += 1
   dropHandover()
-  sim = null
   archeanSeed = message.seed
-  archeanParams = {
-    ...DEFAULT_ARCHEAN_PARAMS,
+  archeanControls = {
     diffusion: message.mantleDiffusion ?? DEFAULT_ARCHEAN_PARAMS.diffusion,
     landShare: message.landShare ?? DEFAULT_ARCHEAN_PARAMS.landShare,
   }
   archeanWidth = message.width
   archeanHeight = message.height
   archeanShape = message.shape ?? 'torus'
-  archean = createArcheanSimulation(message.seed, message.width, message.height, archeanShape)
+  replaceWorld(theEngine().World.genesis(message.seed, message.width, message.height, archeanShape, archeanControls.diffusion, archeanControls.landShare), 'archean')
   lastRawElevations = null
-  preErosionElevations = null
-  coupled = null
-  meshTerrain = null
+  routed = false
   renderOptions = message.renderOptions
   epochIntervalMs = message.epochIntervalMs
   void renderArcheanAndPost()
@@ -1541,14 +1100,15 @@ function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genes
 
 function handleGenesisStart(message: Extract<WorkerInboundMessage, { type: 'genesisStart' }>): void {
   if (loop) return
-  if (message.mantleDiffusion !== undefined) archeanParams = { ...archeanParams, diffusion: message.mantleDiffusion }
-  if (message.landShare !== undefined) archeanParams = { ...archeanParams, landShare: message.landShare }
+  if (message.mantleDiffusion !== undefined) archeanControls = { ...archeanControls, diffusion: message.mantleDiffusion }
+  if (message.landShare !== undefined) archeanControls = { ...archeanControls, landShare: message.landShare }
+  if (world && era === 'archean') world.setArcheanControls(archeanControls.diffusion, archeanControls.landShare)
   // Paced (epochIntervalMs from one step's start to the next's), the first
   // step one interval after the gesture. A step is synchronous up to its
   // render, so a stop always finds it before or inside the render.
   startLoop('genesis', epochIntervalMs, epochIntervalMs, async () => {
-    if (!archean) return false
-    archeanStep(archean, archeanParams)
+    if (!world || era !== 'archean') return false
+    world.archeanStep()
     await renderArcheanAndPost(PREVIEW_RENDER_SCALE)
     return false
   }, () => renderArcheanAndPost(1))
@@ -1559,17 +1119,18 @@ function handleGenesisStart(message: Extract<WorkerInboundMessage, { type: 'gene
 function handleGenesisStop(): void {
   // A step in flight: the loop draws the full-resolution picture after it.
   if (stopLoop('stop')?.inFlight) return
-  if (archean && !renderInFlight) {
+  if (world && era === 'archean' && !renderInFlight) {
     renderInFlight = true
     renderArcheanAndPost(1).finally(() => { renderInFlight = false })
   }
 }
 
-// Plate tectonics begins. The Archean state is dropped: everything worth keeping
-// (the rafts, their ages, the mantle field, the epoch count for the world clock)
-// is carried into the PlateSimulation by finalizeArchean.
+// Plate tectonics begins. Everything worth keeping of the Archean (the
+// rafts, their ages, the mantle field, the epoch count for the world clock)
+// is carried into the plates by the engine's hand-over, and the history's
+// terrain starts from the synthesis there (phase 5.1).
 function handleGenesisFinalize(): void {
-  if (!archean) return
+  if (!world || era !== 'archean') return
   stopTicking()
   // The Archean's last epochs said once more, at the epoch it ends on. A step
   // whose render was still in flight when the hand-over came never reports
@@ -1577,31 +1138,22 @@ function handleGenesisFinalize(): void {
   // Archean epochs from these statuses: one short, and a replay of the
   // history parts from the hand-over on (measured 2026-10-01). The figures
   // are the last status's; only the epoch is new.
-  if (lastGenesisStatus && lastGenesisStatus.epoch !== archean.epoch) {
-    emit({ ...lastGenesisStatus, epoch: archean.epoch, worldAgeMa: worldAgeMa(archean.epoch, 0) })
+  const epoch = world.archeanEpoch
+  if (lastGenesisStatus && lastGenesisStatus.epoch !== epoch) {
+    emit({ ...lastGenesisStatus, epoch, worldAgeMa: worldAgeMa(epoch, 0) })
   }
   lastGenesisStatus = null
-  sim = finalizeArchean(archean)
-  sim.epochMa = TECTONIC_MA_PER_EPOCH
-  // Deep-copied, because serializePlateSimulation hands back the sim's OWN arrays
-  // (rafts, features, seeds, motions) rather than copies — fine for its real job,
-  // where the result is written to a file immediately, but useless as a stored state:
-  // tectonics goes on mutating those same arrays, so an uncopied "snapshot" drifts
-  // along with the world it was meant to preserve. Measured: after 60 epochs a reset
-  // restored epoch 0 but 20 rafts and 386 features instead of the hand-over's 13 and 0.
-  handoverSnapshot = structuredClone(serializePlateSimulation(sim))
-  handoverOceanAge = savedOceanAge(sim.oceanAge, sim.domain)
-  handoverMantle = savedMantle(sim.mantle, sim.domain)
-  archean = null
+  world.finalize()
+  era = 'plates'
+  // The hand-over's state, copies: the engine gives them.
+  handoverSnapshot = world.snapshot()
+  ;[handoverMantle, handoverOceanAge] = world.savedFields()
   // No initial events under the raft model — a continent is a raft spanning
   // several plates, so there's no per-plate "continent created" moment to
   // announce at handover/reset; real continent events (collision/breakup/
-  // supercontinent) only ever arrive from stepEpoch's own raft lifecycle.
+  // supercontinent) only ever arrive from the epochs' own raft lifecycle.
   pendingEvents = []
-  // The history's terrain starts here: the mesh from the synthesis at the
-  // hand-over (phase 5.1), drawn from its rasterisation.
-  coupled = createCoupledTerrain(sim, HISTORY_DEFAULTS.budget)
-  meshTerrain = null
+  routed = false
   void renderTerrain()
 }
 
@@ -1610,26 +1162,17 @@ function resetTectonics(): void {
   // here — the save carries the world as it stood, not the hand-over behind it.
   if (!handoverSnapshot || !handoverOceanAge || !handoverMantle) return
   stopTicking()
-  // Fresh copies each time, so a second reset restores the same state as the first
-  // rather than whatever the last run left in the buffers.
-  sim = deserializePlateSimulation(handoverSnapshot, { ...handoverOceanAge, values: handoverOceanAge.values.slice() }, { ...handoverMantle, values: handoverMantle.values.slice() }, archeanShape)
-  sim.epochMa = TECTONIC_MA_PER_EPOCH
+  // A world from the hand-over's state each time, so a second reset
+  // restores the same state as the first; its terrain from the synthesis
+  // at the hand-over (phase 5.1).
+  replaceWorld(theEngine().World.restorePlates(archeanShape, handoverSnapshot, handoverOceanAge, handoverMantle, null, null), 'plates')
   lastRawElevations = null
-  preErosionElevations = null
-  // Was these two rules written out by hand, which is what the named helper
-  // exists to prevent. It still only reaches the hydrology: going back to the
-  // hand-over leaves a computed climate and ecology standing, which the declared
-  // chain says it should not. That is step 3c's to fix, not a move's.
+  // Still only reaches the hydrology: going back to the hand-over leaves a
+  // computed climate and ecology standing, which the declared chain says it
+  // should not. That is step 3c's to fix, not a move's.
   invalidateAfter('tectonics')
-  // No initial events under the raft model — a continent is a raft spanning
-  // several plates, so there's no per-plate "continent created" moment to
-  // announce at handover/reset; real continent events (collision/breakup/
-  // supercontinent) only ever arrive from stepEpoch's own raft lifecycle.
   pendingEvents = []
-  // The history's terrain starts here: the mesh from the synthesis at the
-  // hand-over (phase 5.1), drawn from its rasterisation.
-  coupled = createCoupledTerrain(sim, HISTORY_DEFAULTS.budget)
-  meshTerrain = null
+  routed = false
   void renderTerrain()
 }
 
@@ -1640,12 +1183,9 @@ function resetGenesis(): void {
   stopTicking()
   worldGeneration += 1
   dropHandover()
-  sim = null
-  archean = createArcheanSimulation(archeanSeed, archeanWidth, archeanHeight, archeanShape)
+  replaceWorld(theEngine().World.genesis(archeanSeed, archeanWidth, archeanHeight, archeanShape, archeanControls.diffusion, archeanControls.landShare), 'archean')
   lastRawElevations = null
-  preErosionElevations = null
-  coupled = null
-  meshTerrain = null
+  routed = false
   void renderArcheanAndPost()
 }
 
@@ -1675,10 +1215,11 @@ function handleResetStage(message: Extract<WorkerInboundMessage, { type: 'resetS
     case 'ecology':
     case 'migration':
       // Nothing to go back to: these stages have no state of their own beyond
-      // their result, so dropping it IS the reset. Re-running them is the screen's
-      // business — it holds the settings.
+      // their result, so dropping it IS the reset — here and in the engine.
+      // Re-running them is the screen's business — it holds the settings.
       clearResult(message.stage)
       invalidateAfter(message.stage)
+      if (world && era === 'plates') world.dropStage(message.stage)
       return
   }
 }
@@ -1712,6 +1253,8 @@ export const HANDLED_MESSAGE_TYPES: readonly string[] = Object.keys(HANDLERS)
 // The sample world's terrain and colour render, made once per size and
 // shape; the climate on it is recomputed per request (the controls change it).
 let sampleWorld: { width: number; height: number; shape: Domain['kind']; elevation: Float32Array; buffer: Uint8Array; relief: Uint8Array } | null = null
+// The engine's previews, which keep each size's climate mesh with its walk.
+let preview: EnginePreview | null = null
 
 // The elevation the preview runs on when the screen has supplied one (a
 // real world, at its own size), else the synthetic sample. Resampled to the
@@ -1745,28 +1288,23 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
   const { width, height } = message
   const shape = message.shape ?? 'torus'
   // A Domain does not cross the message boundary; the preview's size and shape do.
-  const domain = domainOfKind(shape, width, height)
   if (!sampleWorld || sampleWorld.width !== width || sampleWorld.height !== height || sampleWorld.shape !== shape) {
+    const domain = domainOfKind(shape, width, height)
     const elevation = previewElevation(domain)
     const rendered = await renderSimulationImage(
-      { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: null, warpSeed: 0, mantle: new Float64Array(mantleMesh(domain).mesh.count) },
-      renderPool(),
+      { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: null, warpSeed: 0, mantle: new Float64Array(0) },
+      NO_POOL,
       { precomputedElevations: elevation },
     )
     sampleWorld = { width, height, shape, elevation, buffer: rendered.buffer, relief: rendered.relief }
   }
   const params: ClimateParams = message.weather ?? defaultWeatherParams()
-  const chain = computeClimateChain(sampleWorld.elevation, domain, params)
   // The sample world has no terrain mesh: its biomes and classes are the
   // climate mesh's own cells' (their centres' heights), each pixel the
   // heaviest land corner's.
-  const { cm, z: cellZ, land: cellLand, dry: cellDry } = chain.weather.terrain
-  const cellPoints: ClimatePoints = { count: cm.mesh.count, x: cm.mesh.x, y: cm.mesh.y, height: cellZ, land: cellLand, dry: cellDry, alive: null }
-  const cellClasses = classifyPoints(climateAtPoints(chain.cells, cellPoints), cellPoints, domain)
-  const pixelLand = pixelLandOf(sampleWorld.elevation, null)
-  const cellTriangles = trianglesOf(cm.mesh.tri, width, height)
-  const cellRaster = (ids: Uint8Array, sea: number): Uint8Array => Uint8Array.from(rasteriseNodePart(cm.mesh.tri, ids, cellLand, pixelLand, sea, width, height, true, undefined, cellTriangles))
-  const preview: WorkerPlanetPreviewDataMessage = {
+  preview ??= new (theEngine().Preview)()
+  const body = preview.climate(shape, width, height, sampleWorld.elevation, params)
+  const message_: WorkerPlanetPreviewDataMessage = {
     type: 'planetPreviewData',
     width,
     height,
@@ -1775,19 +1313,20 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     relief: sampleWorld.relief.slice().buffer as ArrayBuffer,
     resX: CLIMATE_RES_X,
     resY: CLIMATE_RES_Y,
-    temperature: chain.chart.temperature.buffer as ArrayBuffer,
-    wind: chain.chart.wind.buffer as ArrayBuffer,
-    windMesh: chain.windMesh,
-    currentsMesh: chain.currentsMesh,
-    currents: chain.chart.currents.buffer as ArrayBuffer,
-    currentAnomaly: chain.chart.currentAnomaly.buffer as ArrayBuffer,
-    precipitation: chain.chart.precipitation.buffer as ArrayBuffer,
-    seasonalAmplitude: chain.chart.seasonalAmplitude.buffer as ArrayBuffer,
-    monsoonIndex: chain.chart.monsoonIndex.buffer as ArrayBuffer,
-    koppen: cellRaster(cellClasses.koppen, 0).buffer as ArrayBuffer,
-    biomes: cellRaster(cellClasses.biome, Biome.Ocean).buffer as ArrayBuffer,
+    temperature: body.temperature.buffer as ArrayBuffer,
+    wind: body.wind.buffer as ArrayBuffer,
+    windMesh: meshVectors(body.windMesh),
+    currentsMesh: meshVectors(body.currentsMesh),
+    currents: body.currents.buffer as ArrayBuffer,
+    currentAnomaly: body.currentAnomaly.buffer as ArrayBuffer,
+    precipitation: body.precipitation.buffer as ArrayBuffer,
+    seasonalAmplitude: body.seasonalAmplitude.buffer as ArrayBuffer,
+    monsoonIndex: body.monsoonIndex.buffer as ArrayBuffer,
+    koppen: body.koppen.buffer as ArrayBuffer,
+    biomes: body.biomes.buffer as ArrayBuffer,
   }
-  emit(preview, [preview.buffer, preview.relief, preview.temperature, preview.wind, chain.windMesh.e, chain.windMesh.s, chain.currentsMesh.e, chain.currentsMesh.s, preview.currents, preview.currentAnomaly, preview.precipitation, preview.seasonalAmplitude, preview.monsoonIndex, preview.koppen, preview.biomes])
+  const m = message_
+  emit(m, [m.buffer, m.relief, m.temperature, m.wind, m.windMesh.e, m.windMesh.s, m.currentsMesh.e, m.currentsMesh.s, m.currents, m.currentAnomaly, m.precipitation, m.seasonalAmplitude, m.monsoonIndex, m.koppen, m.biomes])
 }
 
 // The stage whose compute a message runs, where a failure must reach the

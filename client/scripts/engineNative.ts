@@ -7,7 +7,7 @@
 // The job worker (scripts/jobWorker.ts) computes on it, and the engine's
 // smoke test loads it.
 import { createRequire } from 'node:module'
-import type { Engine, Shape } from '../src/generator/pipeline/engine'
+import type { Engine, EngineReplay as Replay, Shape } from '../src/generator/pipeline/engine'
 import type { ReplayPlan, ReplayPosition, ReplaySnapshot } from '../src/generator/pipeline/replayRuns'
 import type { PlannedTile } from '../src/generator/pipeline/tilePlan'
 import type { TileId } from '../src/generator/mesh/meshTile'
@@ -19,14 +19,11 @@ import type { MeshTileArtifact } from '../src/world/meshTileArtifacts'
 // A world's runs made again at a level's budget, one epoch at a time
 // (`replayRuns`), so that the caller reports, writes the checkpoints and
 // stops between two.
-export interface EngineReplay {
-  progress(): { done: number; total: number }
+export interface EngineReplay extends Replay {
   // Where a checkpoint taken now restores to the same bytes, or null.
   checkpointDue(): ReplayPosition | null
   // A copy: it does not change with the epochs after it.
   snapshot(): ReplaySnapshot
-  // The next epoch; false past the last.
-  step(): boolean
   // The level from the replay's end; the replay ends here.
   level(width: number, detailSeed: number): MeshLevelArtifact
 }
@@ -63,7 +60,7 @@ export interface EngineTileBaker {
 
 export interface NativeEngine extends Engine {
   Replay: {
-    start(plan: ReplayPlan, level: number, resume: { position: ReplayPosition; snapshot: ReplaySnapshot } | null, leafWorkers: number | null): EngineReplay
+    start(plan: ReplayPlan, level: number, resume?: { position: ReplayPosition; snapshot: ReplaySnapshot } | null, leafWorkers?: number | null): EngineReplay
   }
   // The tile levels' plan from level 1 and each level's land tiles
   // (`{ [level]: [[x, y], …] }`).

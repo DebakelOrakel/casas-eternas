@@ -17,7 +17,7 @@ use casas_engine::pipeline::replay_runs::{
 use casas_engine::surface::erosion_forcing_fields::ErosionControls;
 
 use crate::value::ObjBuilder;
-use crate::{EraError, Value, forms, read, wrong};
+use crate::{EraError, Value, World, forms, read, wrong};
 
 /// `ReplayPlan`: `{ seed, width, height, shape?, genesis: [{ epochs,
 /// diffusion, landShare }], tectonics: [{ epochs, controls: { alluvium?,
@@ -229,6 +229,17 @@ impl Replay {
     /// The next epoch; false past the last.
     pub fn step(&mut self) -> Result<bool, EraError> {
         Ok(self.runs()?.step()?)
+    }
+
+    /// The world from the replay's end (the runtime's `handleReplayRuns`):
+    /// its terrain routed, no stage run on it. The replay ends here.
+    pub fn world(&mut self) -> Result<World, EraError> {
+        let runs = self
+            .runs
+            .take()
+            .ok_or_else(|| wrong("the replay has ended"))?;
+        let (sim, terrain) = runs.into_world();
+        Ok(World::replayed(sim, terrain))
     }
 
     /// The level from the replay's end (the job worker's `replayLevel`):

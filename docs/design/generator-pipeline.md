@@ -116,7 +116,10 @@ buffers, which is why the golden harness can build worlds — so the pool was th
 whole of it. It is now built lazily and the renderer is injectable
 (`ElevationRenderer`, one method), which makes the host seam two functions:
 `setEmitter` and `setElevationRenderer`. A pipeline that never renders now also
-never spawns a worker.
+never spawns a worker. Since the switch to the Rust engine (DEC-0044) the
+engine computes the elevation, and the seam is `setEmitter` and `setEngine`:
+the generator's worker loads the WASM build, the pipeline harness the same
+build from `engine/dist`. The render pool is no longer spawned.
 
 ### What a redesign would keep
 

@@ -11,7 +11,7 @@ use casas_engine::climate::climate_chart::{
 };
 use casas_engine::climate::climate_mesh::{ClimateTerrain, climate_cell_m};
 use casas_engine::climate::climate_points::{
-    ClimatePoints, climate_at_points, climate_cells_from_refined,
+    ClimatePoints, Heights, climate_at_points, climate_cells_from_refined,
 };
 use casas_engine::climate::energy_balance::month_insolation;
 use casas_engine::climate::refinement::refine_climate;
@@ -179,7 +179,7 @@ fn run(name: &str, d: Domain) {
             count,
             x: &xs,
             y: &ys,
-            height: &height,
+            height: Heights::F32(&height),
             land,
             dry: None,
             alive: None,

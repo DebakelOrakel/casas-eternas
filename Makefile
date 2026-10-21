@@ -177,7 +177,8 @@ engine:
 worker: engine
 	cd client && npm run build:worker
 
-client:
+# The generator computes on the engine's WASM build (engine/dist/wasm).
+client: engine
 	cd client && npm run build
 
 # The documentation site — docs/ rendered static (see the addendum in

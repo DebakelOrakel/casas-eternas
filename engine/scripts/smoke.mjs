@@ -4,11 +4,14 @@
 // Archean grown, rendered, saved and restored; the hand-over; coupled
 // epochs (one shape under another planet) and their renders; the climate
 // step, the hydrology with the climate v2, the refinement and the
-// hydrology on it, the ecology on both, with its months; the tectonic
+// hydrology on it, the ecology on both, with its months, and what the
+// migration reads of them; the tectonic
 // save; a world restored from it, its climate with the saved refinement,
 // its hydrology, its ecology and its next epoch; then level 1 by replay,
 // native only, with its checkpoints and resumed from one, the tile plan on
-// it and a level-3 tile baked with what it waits for. A save goes
+// it and a level-3 tile baked with what it waits for; the planet preview's
+// climate on a sample world; the replay at level 0 and the world it ends
+// on. A save goes
 // through JSON and back, as it does through a file. Run by `make test`
 // after `make engine`; about ten minutes, most of it TypeScript's
 // refinement and its level-1 replay.
@@ -63,6 +66,12 @@ const { coarseForcingFields } = await L('/src/generator/pipeline/erosionForcing.
 const { SHELF_BREAK } = await L('/src/generator/elevation/elevationScale.ts')
 const { climateCellValues } = await L('/src/generator/climate/climatePoints.ts')
 const { CLIMATE_RES_X, CLIMATE_RES_Y } = await L('/src/generator/climate/climateField.ts')
+const { domainOfKind } = await L('/src/generator/core/domain.ts')
+const { classifyPoints } = await L('/src/generator/climate/biomes.ts')
+const { rasteriseNodePart } = await L('/src/generator/mesh/meshRaster.ts')
+const { sampleWorldElevation } = await L('/src/generator/planet/sampleWorld.ts')
+const { chartLand, chartLandField } = await L('/src/generator/climate/climateChart.ts')
+const { OCEAN_PRECIP } = await L('/src/generator/climate/precipitation.ts')
 // The render pool's worker, in this process through a stand-in `self` (as
 // client/scripts/pipeline.mjs does), one band over the whole raster; the
 // worker posts through it, so it stays.
@@ -165,7 +174,7 @@ const tsClimate = (t, params) => {
   const land = WS.landClimateOf(chain.cells, terrain)
   const pixelLand = WS.pixelLandOf(t.elevation, null)
   const { cellM } = chain.weather.terrain.cm
-  t.climate = { params, cells: chain.cells, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind }, refined: false, land }
+  t.climate = { params, cells: chain.cells, terrain: chain.weather.terrain, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind }, refined: false, land }
   t.hydrology = null
   t.ecology = null
   return climateData(t, chain.chart, vectors(cellM, chain.weather.mesh.wind), vectors(cellM, chain.weather.mesh.currents), land, pixelLand)
@@ -176,7 +185,7 @@ const tsRefine = (t, restored) => {
   const { refined: r, chart } = step
   const land = WS.landClimateOf(step.cells, terrain)
   const pixelLand = WS.pixelLandOf(t.elevation, null)
-  t.climate = { params: t.climate.params, cells: step.cells, mesh: { temperature: step.meshTemperature, wind: step.meshWind }, refined: true, land }
+  t.climate = { params: t.climate.params, cells: step.cells, terrain: step.terrain, mesh: { temperature: step.meshTemperature, wind: step.meshWind }, refined: true, land }
   t.hydrology = null
   t.ecology = null
   const { solves, ...values } = r
@@ -210,7 +219,7 @@ const tsHydrology = (t, planet) => {
     const onMesh = WS.routeHydrology(mt, terrain, terrain, domain, width, height, weather, (chain, land, dryBasin) => {
       const { cellM } = chain.weather.terrain.cm
       climate = climateData(t, chain.chart, vectors(cellM, chain.weather.mesh.wind), vectors(cellM, chain.weather.mesh.currents), land, WS.pixelLandOf(terrain, dryBasin))
-      weather = t.climate = { params: weather.params, cells: chain.cells, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind }, refined: false, land }
+      weather = t.climate = { params: weather.params, cells: chain.cells, terrain: chain.weather.terrain, mesh: { temperature: chain.weather.mesh.temperature, wind: chain.weather.mesh.wind }, refined: false, land }
     })
     const lakes = onMesh.raster
     render = { mantle: rasteriseMantle(sim.mantle, sim.domain), dryBasin: lakes.dryBasin, saltFlat: lakes.saltFlat }
@@ -248,6 +257,16 @@ const tsHydrology = (t, planet) => {
     climate, render,
   }
 }
+// What the migration reads as the runtime's handleMigrationRun reads it:
+// the climate's land rain on its chart, the hydrology's discharge as each
+// chart cell's largest over its nodes.
+const tsMigration = (t) => {
+  const { cells, terrain } = t.climate
+  const precipitation = chartLandField(cells.cm, cells.precipitation, (i) => cells.precipitation[i] !== OCEAN_PRECIP, OCEAN_PRECIP, chartLand(terrain))
+  const h = t.hydrology
+  return { precipitation, discharge: h ? WS.chartMaxOfNodes(h.onMesh.land.mesh, h.onMesh.discharge, h.onMesh.land.z) : null, maxDischarge: h?.maxDischarge ?? 0 }
+}
+
 // The ecology step as the runtime's handleEcologyRun and
 // handleEcologyMonth make it: the physics kept while only the sliders
 // move, the pixels' triangles the stages' one cache.
@@ -390,10 +409,12 @@ for (const shape of ['torus', 'sphere']) {
 
   // The climate step and its refinement.
   agree(`${shape}: the climate`, tsClimate(t, weather), worlds, (w) => w.climate(weather))
+  agree(`${shape}: the migration's inputs on the climate`, tsMigration(t), worlds, (w) => w.migrationInputs())
   // The hydrology on it, with the climate v2.
   const planet = weather.planet ?? null
   const hydrology = tsHydrology(t, planet ?? undefined)
   agreeHydrology(`${shape}: the hydrology with the v2`, hydrology, worlds, planet)
+  agree(`${shape}: the migration's inputs on the hydrology`, tsMigration(t), worlds, (w) => w.migrationInputs())
   agreeEcology(`${shape}: the ecology on the annual climate`, t, worlds)
   const water = `${hydrology.riverGraph.reaches.length} reaches, ${hydrology.waterBodies.length} water bodies, ${hydrology.coast.reaches.length} coast reaches, ${hydrology.sedimentBasins.length} sediment basins, ${hydrology.riverGraph.courses?.length ?? 0} courses, ${hydrology.riverGraph.springs?.length ?? 0} springs, ${hydrology.render.dryBasin.reduce((a, b) => a + b, 0)} dry-floor pixels`
   const refinement = tsRefine(t, undefined)
@@ -401,6 +422,7 @@ for (const shape of ['torus', 'sphere']) {
   // The hydrology on the refinement, routed, then once more from its route.
   agreeHydrology(`${shape}: the hydrology`, tsHydrology(t, planet ?? undefined), worlds, planet)
   agreeHydrology(`${shape}: the hydrology again`, tsHydrology(t, planet ?? undefined), worlds, planet)
+  agree(`${shape}: the migration's inputs on the refinement`, tsMigration(t), worlds, (w) => w.migrationInputs())
   const months = agreeEcology(`${shape}: the ecology on the refinement`, t, worlds)
 
   // The tectonic save.
@@ -578,6 +600,70 @@ for (const shape of ['torus', 'sphere']) {
     if (canonical(baker.bake(t, pieces, upstream, 2)) !== canonical(want)) fail(`${shape}: tile ${keyOf(t)} differs from TypeScript`)
   }
   console.log(`engine: ${shape} — the tile plan (${tsPlan.length} tiles), ${bakes.length} tiles baked (${bakes.filter((p) => p.upstream.length).length} with upstream, ${bakes.filter((p) => p.tile.level === 3).length} of level 3): native and TypeScript agree`)
+}
+
+// THE PLANET PREVIEW (the runtime's handlePlanetPreview): the climate on
+// the sample world of both shapes, twice under other controls (the
+// meshes' walks go on from the first), on one Preview of each build.
+{
+  const previews = { native: new native.Preview(), wasm: new wasm.Preview() }
+  const [width, height] = [128, 64]
+  for (const shape of ['torus', 'sphere']) {
+    const domain = domainOfKind(shape, width, height)
+    const elevation = sampleWorldElevation(domain)
+    let plan = null
+    for (const params of [defaultWeatherParams(), { ...defaultWeatherParams(), temperatureOffset: 3, humidity: 1.2 }]) {
+      const chain = WS.climateChain(elevation, domain, params)
+      const { cm, z, land, dry } = chain.weather.terrain
+      const points = { count: cm.mesh.count, x: cm.mesh.x, y: cm.mesh.y, height: z, land, dry, alive: null }
+      const classes = classifyPoints(climateAtPoints(chain.cells, points), points, domain)
+      const pixelLand = WS.pixelLandOf(elevation, null)
+      plan ??= triangleRaster(cm.mesh.tri, width, height)
+      const raster = (ids, sea) => Uint8Array.from(rasteriseNodePart(cm.mesh.tri, ids, land, pixelLand, sea, width, height, true, undefined, plan))
+      const c = chain.chart
+      const want = {
+        temperature: c.temperature, wind: c.wind, windMesh: vectors(cm.cellM, chain.weather.mesh.wind), currentsMesh: vectors(cm.cellM, chain.weather.mesh.currents),
+        currents: c.currents, currentAnomaly: c.currentAnomaly, precipitation: c.precipitation, seasonalAmplitude: c.seasonalAmplitude, monsoonIndex: c.monsoonIndex,
+        koppen: raster(classes.koppen, 0), biomes: raster(classes.biome, Biome.Ocean),
+      }
+      agree(`${shape}: the preview's climate`, want, previews, (p) => p.climate(shape, width, height, elevation, params))
+    }
+  }
+  console.log('engine: the planet preview on both shapes, twice each: native, wasm and TypeScript agree')
+}
+
+// THE REPLAY AT LEVEL 0 (the runtime's handleReplayRuns): the world a
+// plan's replay ends on, against TypeScript's replayRuns in a module graph
+// of its own (the field meshes' walks are module state per domain there).
+for (const shape of ['torus', 'sphere']) {
+  const fresh = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
+  const F = (p) => fresh.ssrLoadModule(p)
+  const replayRuns = (await F('/src/generator/pipeline/replayRuns.ts')).replayRuns
+  const { serializePlateSimulation: serialize } = await F('/src/generator/tectonics/plateSimulation.ts')
+  const { encodeCoupledTerrain } = await F('/src/generator/pipeline/coupledEpoch.ts')
+  await fresh.close()
+  const weather = defaultWeatherParams()
+  const controls = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default }
+  const plan = {
+    seed: 'level0', width: 256, height: 128, shape,
+    genesis: [{ epochs: 30, diffusion: 2, landShare: 0.4 }],
+    tectonics: [{ epochs: 3, controls, weather }, { epochs: 2, controls, weather: { ...weather, humidity: 0.8 }, restored: true }],
+  }
+  const { sim: replayed, terrain } = await replayRuns(plan, { budget: D.budget })
+  const bytes = encodeCoupledTerrain(terrain)
+  const worlds = {}
+  for (const [name, build] of Object.entries({ native, wasm })) {
+    const replay = build.Replay.start(plan, 0)
+    while (replay.step());
+    worlds[name] = replay.world()
+  }
+  agree(`${shape}: the replayed world's snapshot`, viaJson(serialize(replayed)), worlds, (w) => w.snapshot())
+  agree(`${shape}: the replayed world's terrain`, { nodes: bytes.nodes, connectivity: bytes.connectivity, z: bytes.z }, worlds, (w) => {
+    const m = w.meshPayload()
+    return { nodes: m.nodes, connectivity: m.connectivity, z: m.z }
+  })
+  worlds.wasm.free()
+  console.log(`engine: ${shape} — a plan replayed at level 0 (${replayed.epoch} epochs): native, wasm and TypeScript agree`)
 }
 
 if (failed) process.exit(1)

@@ -196,12 +196,30 @@ pub fn mean_land_runoff(sh: &SharedFieldMesh, cells: &ClimateCells) -> f64 {
     if total > 0.0 { sum / total } else { 0.0 }
 }
 
+/// The points' heights as their stage holds them: a terrain mesh's z, or
+/// the climate mesh's own cells' (`ClimateTerrain::z`, f64 in TypeScript
+/// too).
+#[derive(Clone, Copy)]
+pub enum Heights<'a> {
+    F32(&'a [f32]),
+    F64(&'a [f64]),
+}
+
+impl Heights<'_> {
+    pub fn at(&self, i: usize) -> f64 {
+        match self {
+            Heights::F32(h) => h[i] as f64,
+            Heights::F64(h) => h[i],
+        }
+    }
+}
+
 /// Where a stage reads the climate (`ClimatePoints` in TypeScript).
 pub struct ClimatePoints<'a> {
     pub count: usize,
     pub x: &'a [f64],
     pub y: &'a [f64],
-    pub height: &'a [f32],
+    pub height: Heights<'a>,
     pub land: Vec<u8>,
     pub dry: Option<&'a [u8]>,
     pub alive: Option<&'a [u8]>,
@@ -226,7 +244,7 @@ pub fn mesh_points<'a>(
         count: n,
         x: &mesh.vx[..n],
         y: &mesh.vy[..n],
-        height: z,
+        height: Heights::F32(z),
         land,
         dry,
         alive: Some(&mesh.v_alive[..n]),
@@ -391,10 +409,7 @@ pub fn climate_at_points(
             continue;
         }
         let sea_t = tri(tsl, 0);
-        let lapse = lapse_at(
-            points.height[p] as f64,
-            points.dry.is_some_and(|d| d[p] == 1),
-        );
+        let lapse = lapse_at(points.height.at(p), points.dry.is_some_and(|d| d[p] == 1));
         out.sea_level_temperature[p] = sea_t as f32;
         out.temperature[p] = (sea_t - lapse) as f32;
         let island = if land_w > 0.0 {

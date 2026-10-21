@@ -18,26 +18,26 @@
 // meanings. See docs/design/generator-pipeline.md.
 //
 // This became possible when the pipeline stopped being a worker: pipeline/runtime.ts
-// takes its emitter and its elevation renderer from the host and touches no
-// browser API, so it can be driven straight from node.
+// takes its emitter and its engine from the host and touches no browser API, so
+// it can be driven straight from node. The engine is the one the browser runs,
+// the WASM build in engine/dist (`make engine`), loaded here once for every
+// instance (docs/decisions/rust-engine.md).
 //
-// TWO DELIBERATE DEPARTURES from the browser, both stated rather than implied:
+// DELIBERATE DEPARTURES from the browser, stated rather than implied:
 //
-//   1. The elevation renderer is SYNTHETIC. The real one is a pool of nested
-//      workers running the per-pixel elevation query — that query is golden's
-//      subject, not this one's. The stand-in keeps the real baselines (so rafts,
-//      ocean age and sea level still decide land from sea) and adds deterministic
-//      relief on top, which is all the pipeline needs: coasts, slopes and a field
-//      that moves when erosion runs.
-//   2. The world is 256x128, an eighth of the real one, so a check costs seconds
+//   1. The world is 256x128, an eighth of the real one, so a check costs seconds
 //      instead of minutes. Crust nucleates differently at that scale (a world this
 //      small ends up far more continental) — irrelevant here, where the subject is
 //      which handler clears what, but it is why no number in this file should be
 //      read as a statement about worlds.
+//   2. The engine's world can be made to throw (failSteps): a world wrapped so
+//      that its Archean step throws on demand, which is how a test makes a step
+//      fail without a hook in the pipeline.
 //   3. Everything else is the real code path, including detaching transferred
 //      buffers — see the emitter below.
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
@@ -58,34 +58,34 @@ const ARCHEAN_EPOCHS = 20
 // Here the climb ends at epoch 10 with a target of 85 % (an aim past
 // 100 %, archeanLandAim: nucleation near its ceiling, much as the
 // unthrottled rate was; 96 % land at the hand-over of the hydrology's
-// world, its rivers with courses), for every runtime instance and every
-// direct archeanStep alike (they share the module's object).
-{
-  const harnessArchean = (await server.ssrLoadModule('/src/generator/archean/archeanStep.ts')).DEFAULT_ARCHEAN_PARAMS
-  harnessArchean.land.reachEpoch = 10
-  harnessArchean.landShare = 0.85
+// world, its rivers with courses), for the tests that step the TypeScript
+// modules directly (they share the module's object). The runtime's engine
+// runs with the real ones, and so must a TypeScript replay of a world the
+// runtime made (withEngineArchean).
+const harnessArchean = (await server.ssrLoadModule('/src/generator/archean/archeanStep.ts')).DEFAULT_ARCHEAN_PARAMS
+const ENGINE_ARCHEAN = { reachEpoch: harnessArchean.land.reachEpoch, landShare: harnessArchean.landShare }
+harnessArchean.land.reachEpoch = 10
+harnessArchean.landShare = 0.85
+async function withEngineArchean(f) {
+  const harness = { reachEpoch: harnessArchean.land.reachEpoch, landShare: harnessArchean.landShare }
+  harnessArchean.land.reachEpoch = ENGINE_ARCHEAN.reachEpoch
+  harnessArchean.landShare = ENGINE_ARCHEAN.landShare
+  try {
+    return await f()
+  } finally {
+    harnessArchean.land.reachEpoch = harness.reachEpoch
+    harnessArchean.landShare = harness.landShare
+  }
 }
+
+// The engine's WASM build, as the browser's worker loads it.
+const WASM = await import(`${CLIENT}/../engine/dist/wasm/casas-engine.js`)
+await WASM.default({ module_or_path: await readFile(`${CLIENT}/../engine/dist/wasm/casas-engine_bg.wasm`) })
 
 let failures = 0
 const check = (name, ok, detail = '') => {
   if (!ok) failures++
   console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${name}${detail ? `  — ${detail}` : ''}`)
-}
-
-// Real baselines, synthetic relief. See departure 1 in the header.
-async function syntheticElevations(renderWidth, renderHeight, _worldWidth, _worldHeight, blendedBaselines, _features, warpSeed) {
-  const out = new Float32Array(renderWidth * renderHeight)
-  for (let y = 0; y < renderHeight; y++) {
-    for (let x = 0; x < renderWidth; x++) {
-      const i = y * renderWidth + x
-      const u = x / renderWidth
-      const v = y / renderHeight
-      out[i] = blendedBaselines[i]
-        + 0.07 * Math.sin(u * Math.PI * 12 + warpSeed * 0.001) * Math.cos(v * Math.PI * 8)
-        + 0.03 * Math.sin(u * Math.PI * 31 + v * Math.PI * 17)
-    }
-  }
-  return out
 }
 
 // Each test gets its OWN instance: the pipeline's state is module-level by
@@ -109,21 +109,42 @@ async function freshPipeline() {
     // that never neuters cannot tell whether that copy is still there.
     messages.push(structuredClone(message, transfer ? { transfer } : undefined))
   })
-  // The renderer can be made to throw (failRenders): the host seam is how a
-  // test makes an Archean step fail without a hook in the pipeline.
-  let renderFault = false
-  rt.setElevationRenderer({
-    renderElevations: (...args) => {
-      if (renderFault) throw new Error('the harness renderer refuses')
-      return syntheticElevations(...args)
+  // The world can be made to throw (failSteps, departure 2): the host seam is
+  // how a test makes an Archean step fail without a hook in the pipeline.
+  let stepFault = false
+  const wrap = (world) => new Proxy(world, {
+    get(target, key) {
+      if (key === 'archeanStep') {
+        return () => {
+          if (stepFault) throw new Error('the harness world refuses')
+          return target.archeanStep()
+        }
+      }
+      const value = Reflect.get(target, key, target)
+      return typeof value === 'function' ? value.bind(target) : value
     },
+  })
+  rt.setEngine({
+    version: WASM.version,
+    World: {
+      genesis: (...args) => wrap(WASM.World.genesis(...args)),
+      restoreArchean: (...args) => wrap(WASM.World.restoreArchean(...args)),
+      restorePlates: (...args) => wrap(WASM.World.restorePlates(...args)),
+    },
+    Replay: {
+      start: (...args) => {
+        const replay = WASM.Replay.start(...args)
+        return { progress: () => replay.progress(), step: () => replay.step(), world: () => wrap(replay.world()), free: () => replay.free() }
+      },
+    },
+    Preview: WASM.Preview,
   })
   return {
     dispatch: (message) => {
       dispatchedTypes.add(message.type)
       rt.dispatch(message)
     },
-    failRenders: (on) => { renderFault = on },
+    failSteps: (on) => { stepFault = on },
     messages,
     count: (type) => messages.filter((m) => m.type === type).length,
     // The tectonics redraw once per epoch while they tick (those carry
@@ -2570,7 +2591,8 @@ test('the stages compute, in order, on one world', async () => {
   await until(() => p.count('climateData') >= 1, { label: 'climate' })
   p.dispatch({ type: 'hydrologyRun' })
   await until(() => p.count('hydrologyData') >= 1, { label: 'hydrology' })
-  p.dispatch({ type: 'ecologyRun' })
+  // The sliders as the screen sends them, at their defaults.
+  p.dispatch({ type: 'ecologyRun', carryingCapacity: 100, concentration: 0, provinceStrength: 0.45, tinRarity: 0, weights: {} })
   await until(() => p.count('ecologyData') >= 1, { label: 'ecology' })
   p.dispatch({ type: 'migrationRun', origins: [] })
   await until(() => p.count('migrationData') >= 1, { label: 'migration' })
@@ -3150,7 +3172,7 @@ test('the history keeps one timer at most, and none after the stop', async () =>
 // the worker — lives on. Before 2026-10-11 the step's promise had no catch:
 // in node the rejection ended the process, in the browser the screen waited
 // for a settled picture that never came. Made to throw from outside: the
-// Archean through the host's renderer, the tectonics on a world with no
+// Archean through the host's engine, the tectonics on a world with no
 // plates (a restored snapshot without seeds).
 test('a history step that throws stops its loop and says so', async () => {
   const quietConsole = console.error
@@ -3161,13 +3183,13 @@ test('a history step that throws stops its loop and says so', async () => {
     await until(() => a.count('rendered') >= 1, { label: 'the first Archean render' })
     a.dispatch({ type: 'genesisStart' })
     await until(() => a.count('genesisStatus') >= 3, { label: 'three Archean epochs' })
-    a.failRenders(true)
+    a.failSteps(true)
     await until(() => a.count('stageFailed') >= 1, { label: 'the failed Archean step' })
     const statuses = a.count('genesisStatus')
     await settle(300)
     check('a throwing Archean step answers stageFailed for the genesis', a.count('stageFailed') === 1 && a.last('stageFailed').stage === 'genesis', a.messages.filter((m) => m.type === 'stageFailed').map((m) => `${m.stage}: ${m.error}`).join('; '))
     check('and its loop stops', a.count('genesisStatus') === statuses, `${statuses} -> ${a.count('genesisStatus')} statuses`)
-    a.failRenders(false)
+    a.failSteps(false)
     a.dispatch({ type: 'genesisStart' })
     await until(() => a.count('genesisStatus') > statuses + 2, { label: 'the Archean again' })
     a.dispatch({ type: 'genesisStop' })
@@ -3266,14 +3288,14 @@ test("level 1's replay makes the saved world again, across a load and a checkpoi
   const parts = (mesh) => ['nodes', 'connectivity', 'z', 'column'].map((k) => hash(bytes(mesh[k]))).join(' ')
   const savedParts = parts(final)
   let checkpoint = null
-  const replayed = await RE.replayHistory(recipe, {
+  const replayed = await withEngineArchean(() => RE.replayHistory(recipe, {
     budget: CE.HISTORY_DEFAULTS.budget,
     onCheckpoint: (position, take) => { if (!checkpoint && position.epoch > 0) checkpoint = { position, snapshot: structuredClone(take()) } },
-  })
+  }))
   check('the replay lands on the saved mesh bit for bit', parts(CE.encodeCoupledTerrain(replayed.terrain)) === savedParts, `${before} + ${after - before} epochs`)
   check('the replay offered a checkpoint inside a run', checkpoint !== null)
   if (checkpoint) {
-    const resumed = await RE.replayHistory(recipe, { budget: CE.HISTORY_DEFAULTS.budget, resume: checkpoint })
+    const resumed = await withEngineArchean(() => RE.replayHistory(recipe, { budget: CE.HISTORY_DEFAULTS.budget, resume: checkpoint }))
     check('a replay resumed from its checkpoint lands on the same bytes', parts(CE.encodeCoupledTerrain(resumed.terrain)) === savedParts, JSON.stringify(checkpoint.position))
   }
   check('a history without its code is refused', RE.replayRefusal(recipe.history, 'abc') !== null)

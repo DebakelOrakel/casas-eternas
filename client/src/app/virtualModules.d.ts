@@ -12,4 +12,6 @@ declare module 'casas-engine-wasm/casas-engine.js' {
   export default init
   export const version: import('../generator/pipeline/engine').Engine['version']
   export const World: import('../generator/pipeline/engine').EngineWorlds
+  export const Replay: import('../generator/pipeline/engine').Engine['Replay']
+  export const Preview: import('../generator/pipeline/engine').Engine['Preview']
 }

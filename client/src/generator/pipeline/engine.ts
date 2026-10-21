@@ -27,6 +27,7 @@ import type { CoastReach } from '../surface/coastGraph'
 import type { SedimentBasin } from '../surface/sedimentBasins'
 import type { EcologyParams } from '../ecology/ecologyField'
 import type { ClimateParams } from './worldStages'
+import type { ReplayPlan } from './replayRuns'
 
 // The history's controls for one coupled epoch (the runtime's
 // `historyControls`).
@@ -157,7 +158,8 @@ export interface EcologyMonthBody {
 // ones that move a field mesh's walk must come in the runtime's order (a
 // render before the stages that read its raster).
 export interface EngineWorld {
-  // The Archean.
+  // The Archean; its controls from the next step on.
+  setArcheanControls(diffusion: number, landShare: number): void
   archeanStep(): void
   readonly archeanEpoch: number
   readonly raftCount: number
@@ -171,6 +173,7 @@ export interface EngineWorld {
   snapshot(): PlateSimulationSnapshot
   // The mantle's and the ocean age's saved values, in this order.
   savedFields(): [SavedField, SavedField]
+  lattice(): LatticeState
   meshPayload(): EngineMeshPayload
   // The climate's cells, null before the climate ran; the land fields,
   // null while no climate is at the terrain mesh's nodes.
@@ -182,6 +185,12 @@ export interface EngineWorld {
   hydrology(planet: PlanetForcing | null): HydrologyBody
   ecology(params: EcologyParams): EcologyBody
   ecologyMonth(field: string, month: number): EcologyMonthBody
+  // A stage's reset: its result dropped, and every result that reads it.
+  dropStage(stage: 'climate' | 'hydrology' | 'ecology' | 'migration'): void
+  // What the migration reads of the stages: the climate's land rain on its
+  // chart, the hydrology's discharge as each chart cell's largest over its
+  // nodes (null before the hydrology).
+  migrationInputs(): { precipitation: Float32Array; discharge: Float32Array | null; maxDischarge: number }
 }
 
 export type Shape = 'torus' | 'sphere'
@@ -193,10 +202,30 @@ export interface EngineWorlds {
   restorePlates(shape: Shape, snapshot: PlateSimulationSnapshot, oceanAge: SavedField, mantle: SavedField | null, lattice: LatticeState | null, mesh: EngineMeshPayload | null): EngineWorld
 }
 
+// A plan's runs made again, one epoch at a time (`replayRuns`); at level
+// 0 the history's own budget, whose end is the session's world.
+export interface EngineReplay {
+  progress(): { done: number; total: number }
+  // The next epoch; false past the last.
+  step(): boolean
+  // The world from the replay's end; the replay ends here.
+  world(): EngineWorld
+}
+
+// The planet preview's climate on a sample world's raster
+// (`elevation`, `width` × `height`): the body of a `climateData` less its
+// flags and resolution. Keeps the climate mesh of each size and shape
+// between the previews, with its walk.
+export interface EnginePreview {
+  climate(shape: Shape, width: number, height: number, elevation: Float32Array, params: ClimateParams): ClimateBody
+}
+
 // What both bindings give.
 export interface Engine {
   version(): string
   World: EngineWorlds
+  Replay: { start(plan: ReplayPlan, level: number): EngineReplay }
+  Preview: new () => EnginePreview
 }
 
 // Gives a world's memory back now. The WASM binding's objects live in its

@@ -30,11 +30,12 @@ not.
 
 `generatorWorker.ts` is the entry point and stays at this root, but it is **only
 transport** — twenty-odd lines wiring `self` to the pipeline. The pipeline is
-`pipeline/runtime.ts`: it holds every stage's live state as module-level `let`s
-and orchestrates everything below. It takes its emitter and its elevation
-renderer from the host (`setEmitter`, `setElevationRenderer`) and touches no
-browser API itself, so it can be driven directly from Node — which is the only
-way this part of the generator can be tested at all, since the golden harness
+`pipeline/runtime.ts`: it holds a handle on the world in the Rust engine's
+WASM build (DEC-0044, `pipeline/engine.ts`), which computes every stage, and
+orchestrates the steps, the stages and the picture. It takes its emitter and
+its engine from the host (`setEmitter`, `setEngine`) and touches no browser
+API itself, so it can be driven directly from Node — which is the only way
+this part of the generator can be tested at all, since the golden harness
 does not reach it. `pipeline/messages.ts` is the message contract.
 
 **The history runs on ONE step loop** (`runtime.ts` `startLoop`, both eras,

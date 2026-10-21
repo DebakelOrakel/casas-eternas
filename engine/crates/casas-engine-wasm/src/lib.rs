@@ -53,6 +53,11 @@ impl World {
         self.0.archean_step().map_err(era)
     }
 
+    #[wasm_bindgen(js_name = setArcheanControls)]
+    pub fn set_archean_controls(&mut self, diffusion: f64, land_share: f64) {
+        self.0.set_archean_controls(diffusion, land_share);
+    }
+
     #[wasm_bindgen(getter, js_name = archeanEpoch)]
     pub fn archean_epoch(&self) -> Result<f64, JsError> {
         self.0.archean_epoch().map_err(era)
@@ -135,6 +140,10 @@ impl World {
     }
 
     /// The mantle's and the ocean age's saved values, as [mantle, ocean].
+    pub fn lattice(&mut self) -> Result<JsValue, JsError> {
+        self.0.lattice().map(to_js).map_err(era)
+    }
+
     #[wasm_bindgen(js_name = savedFields)]
     pub fn saved_fields(&mut self) -> Result<JsValue, JsError> {
         let (m, o) = self.0.saved_fields().map_err(era)?;
@@ -144,6 +153,16 @@ impl World {
     #[wasm_bindgen(js_name = meshPayload)]
     pub fn mesh_payload(&mut self) -> Result<JsValue, JsError> {
         self.0.mesh_payload().map(to_js).map_err(era)
+    }
+
+    #[wasm_bindgen(js_name = dropStage)]
+    pub fn drop_stage(&mut self, stage: &str) -> Result<(), JsError> {
+        self.0.drop_stage(stage).map_err(era)
+    }
+
+    #[wasm_bindgen(js_name = migrationInputs)]
+    pub fn migration_inputs(&mut self) -> Result<JsValue, JsError> {
+        self.0.migration_inputs().map(to_js).map_err(era)
     }
 
     #[wasm_bindgen(js_name = climatePayload)]
@@ -185,6 +204,76 @@ impl World {
             .refine_climate(given(&restored))
             .map(to_js)
             .map_err(era)
+    }
+}
+
+/// A world's runs made again at a level's budget, one epoch at a time:
+/// the runtime's replay at the history's own (level 0), whose end is the
+/// session's world.
+#[wasm_bindgen]
+pub struct Replay(casas_engine_api::replay::Replay);
+
+#[wasm_bindgen]
+impl Replay {
+    /// `plan` a `ReplayPlan`.
+    pub fn start(plan: &JsValue, level: u32) -> Result<Replay, JsError> {
+        casas_engine_api::replay::Replay::start(&from_js(plan)?, level, None, None)
+            .map(Replay)
+            .map_err(era)
+    }
+
+    pub fn progress(&mut self) -> Result<JsValue, JsError> {
+        self.0.progress().map(to_js).map_err(era)
+    }
+
+    /// The next epoch; false past the last.
+    pub fn step(&mut self) -> Result<bool, JsError> {
+        self.0.step().map_err(era)
+    }
+
+    /// The world from the replay's end; the replay ends here.
+    pub fn world(&mut self) -> Result<World, JsError> {
+        self.0.world().map(World).map_err(era)
+    }
+}
+
+/// The planet preview's climate on a sample world's raster.
+#[wasm_bindgen]
+pub struct Preview(casas_engine_api::preview::Preview);
+
+#[wasm_bindgen]
+impl Preview {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Preview {
+        Preview(casas_engine_api::preview::Preview::new())
+    }
+
+    /// `elevation` a Float32Array of `width` × `height`, `params`
+    /// `ClimateParams`.
+    pub fn climate(
+        &mut self,
+        shape: &str,
+        width: u32,
+        height: u32,
+        elevation: &JsValue,
+        params: &JsValue,
+    ) -> Result<JsValue, JsError> {
+        self.0
+            .climate(
+                shape_of(shape)?,
+                width,
+                height,
+                &from_js(elevation)?,
+                &from_js(params)?,
+            )
+            .map(to_js)
+            .map_err(era)
+    }
+}
+
+impl Default for Preview {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

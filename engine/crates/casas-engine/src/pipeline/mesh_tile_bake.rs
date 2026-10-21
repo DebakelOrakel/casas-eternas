@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::climate::climate_points::{
-    ClimateCellValues, ClimatePoints, climate_at_points, climate_cells_from_saved,
+    ClimateCellValues, ClimatePoints, Heights, climate_at_points, climate_cells_from_saved,
 };
 use crate::elevation::elevation_scale::SEA_LEVEL;
 use crate::fields::field_mesh::SharedFieldMesh;
@@ -113,7 +113,7 @@ pub fn bake_mesh_tile(
                 count: slots,
                 x: xs,
                 y: ys,
-                height: &tile.z,
+                height: Heights::F32(&tile.z),
                 land,
                 dry: None,
                 alive: Some(&tile.mesh.v_alive[..slots]),

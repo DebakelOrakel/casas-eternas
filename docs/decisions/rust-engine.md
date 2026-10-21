@@ -761,8 +761,32 @@ BUILDING since 2026-10-20:
   are the same. Checked on Morvane with the bundle: a level-2 and a
   level-3 tile with upstream, each the stored artifact in every file;
   level 1 stopped after its first checkpoint (epoch 12), then resumed
-  from it, the stored artifact in every file (1 h 35 min). The release
-  archives of the other platforms do not have the engine yet.
+  from it, the stored artifact in every file (1 h 35 min). `make
+  release` packs each archive with its platform's engine (`make
+  engines`); the release is darwin/arm64 and linux/amd64 only since.
+- THE SWITCH, the generator (decided 2026-10-21): `pipeline/runtime.ts`
+  holds a world in the WASM build (`setEngine`; `generatorWorker.ts`
+  loads it) and posts what the engine's calls give. The picture's
+  colours, hillshade and overlays stay TypeScript (`render/`), from the
+  engine's elevation and the world's snapshot; the render pool is no
+  longer spawned. New in the engine for it: the replay's end as a world
+  (`Replay.world`, and `Replay` in the WASM build), the planet preview's
+  climate on a sample raster (`Preview`, keeping each size's climate mesh
+  with its walk), the lattice for the save, the Archean's controls, a
+  stage's reset (`dropStage`) and what the migration reads
+  (`migrationInputs`; the migration stays TypeScript). The smoke test
+  checks each against TypeScript. The client's build needs `make engine`,
+  and the image builds the WASM in its engine stage. Checked: a session
+  through the runtime before the switch (a worktree of HEAD) and after it
+  on both shapes — the Archean, the hand-over, epochs, the climate, the
+  hydrology with its v2, the refinement, the ecology with its months, the
+  migration, the save, a load and its stages and epoch, a reset, the
+  preview, a replay — gives every message the same, but one: the save
+  that follows the migration in the same task, whose mantle the runtime
+  before the switch gave 0.025 lower (`oceanCoolRate`) on every cell; the
+  saves before and after it are the same in both. Cause not found; the
+  engine's is the value of the saves around it. The refinement no longer
+  posts its progress: the engine's call gives none.
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;
