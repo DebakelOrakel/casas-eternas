@@ -844,6 +844,28 @@ BUILDING since 2026-10-20:
   for each tile level and the budgets, all the same; the versions are
   unchanged (`v11-1b1f7f4a8b14250e`, the tiles' `v11-f1a835a2d3bff754` and
   `v11-777e6ec6085d9bce`).
+- The TypeScript simulation removed, as far as it is not interwoven
+  with the read side (fork 7c; 2026-10-21): the modules no entry point
+  that stays reaches — the app, the generator's worker, the incubator's,
+  the job worker, the kept scripts — by a value or a type, found by the
+  import graph and deleted in rounds (28 modules: the Archean's step and
+  hand-over, the coupled epoch, the world stages, the level and tile
+  bakes, the tile plan, the replay loop, the erosion engine's worker,
+  bridge and pass, the render pool, the glacier, flexure, folds, trench,
+  cover, courses, springs and basins); their types the kept code reads
+  moved to type modules (`surfaceTypes`, `archeanSnapshotTypes`,
+  `replayPlan`, the adapter's `ClimateParams`). With them went golden,
+  mesh, fields, calibrate and the measuring scripts, the fixture scripts
+  (their fixtures stay, as data) and the TypeScript replay of the world
+  layer; the pipeline harness keeps its tests through the runtime (32)
+  and replays through the engine. The smoke test compares the native
+  build with the WASM one, and the read side with the engine: the
+  terrain's raster from the saved mesh, the lakes from the saved water
+  bodies, the forcing from the snapshot (`World.forcing`). Some 20 000
+  lines went; about 30 000 of `generator/` stay, the read side with the
+  simulation it is interwoven with (`meshTile` with the refinement,
+  `climatePoints` with the refinement's solves, `amplify` with the
+  hydrology), until the read side moves too (fork 7b).
 
 Open: the boundary to TypeScript as fork 6 decides it, the Rust
 toolchain in CI and Docker, and the check whether the terrain feeds back into the plates. `columnMeanHeight` grows with the density by its algorithm;

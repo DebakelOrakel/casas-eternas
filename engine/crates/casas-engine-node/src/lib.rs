@@ -153,6 +153,11 @@ impl World {
     }
 
     #[napi]
+    pub fn forcing(&mut self) -> napi::Result<Tree> {
+        self.0.forcing().map(Tree).map_err(era)
+    }
+
+    #[napi]
     pub fn lattice(&mut self) -> napi::Result<Tree> {
         self.0.lattice().map(Tree).map_err(era)
     }

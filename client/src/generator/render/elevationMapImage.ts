@@ -1,11 +1,11 @@
 import { elevationToColor } from '../elevation/elevationColor'
 import { applyMountainRedistribution, computeRaftBaseline } from '../elevation/elevationField'
-import type { PlateSimulation } from '../tectonics/plateSimulation'
+import type { PlateSimulation } from '../tectonics/plateSimulationTypes'
+import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import type { Domain, DomainGrid } from '../core/domain'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
-import type { ElevationRenderer } from './elevationRenderPool'
 import { computeOwnerField } from '../crust/raftField'
 import { MANTLE_RES_X, MANTLE_RES_Y, mantleMesh } from '../mantle/mantleField'
 import { dynamicTopographyField } from '../elevation/dynamicTopography'
@@ -151,6 +151,26 @@ function touchesLand(elevations: Float32Array, grid: DomainGrid, cols: Int32Arra
 // Archean has no plates, no features and no ocean-age field, and should not have to
 // fabricate a PlateSimulation just to be drawn. Empty arrays for the plate-shaped
 // fields are a truthful description of that phase, not a placeholder.
+// What renderSimulationImage actually demands: one call that fills an elevation
+// grid. Named separately from the class because the pool is a browser thing (it
+// spawns nested workers and reads navigator.hardwareConcurrency) while the
+// demand is not — which is what lets the pipeline be driven headlessly with
+// something else supplied here. See docs/design/generator-pipeline.md.
+export interface ElevationRenderer {
+  renderElevations(
+    renderWidth: number,
+    renderHeight: number,
+    worldWidth: number,
+    worldHeight: number,
+    blendedBaselines: Float32Array,
+    features: TerrainFeature[],
+    warpSeed: number,
+    // The world's shape (Domain.kind): a Domain does not cross a worker
+    // boundary, its name does.
+    shape: Domain['kind'],
+  ): Promise<Float32Array>
+}
+
 export interface RenderableWorld {
   width: number
   height: number

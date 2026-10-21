@@ -1,14 +1,12 @@
-import type { CoupledTerrain } from '../generator/pipeline/coupledEpoch'
-import { replayRuns, type ReplayOptions, type ReplayPlan } from '../generator/pipeline/replayRuns'
-import type { PlateSimulation } from '../generator/tectonics/plateSimulation'
+import type { ReplayPlan } from '../generator/pipeline/replayPlan'
 import { landShareFromControl, mantleDiffusionFromVigour, weatherParamsFrom } from './runParams'
 import type { WorldHistory } from './save/worldHistory'
 import { WORLD_PIPELINE } from './worldPipeline'
 
 // A WORLD MADE AGAIN FROM ITS RECIPE (docs/decisions/detail-ladder.md,
 // fork 2): the seed and the `history:` block's runs, turned into run
-// parameters (runParams.ts) and made again by the generator's one replay
-// loop (generator/pipeline/replayRuns.ts). At the
+// parameters (runParams.ts) and made again by the engine's replay
+// (generator/pipeline/engine.ts, `Replay`). At the
 // history's own budget (HISTORY_DEFAULTS.budget, 4) it lands on the save's
 // level 0 bit for bit (measured 2026-10-01); at budget 1 it is level 1, a
 // sibling of the save with its outlines and its own valleys.
@@ -35,7 +33,7 @@ export function replayRefusal(history: WorldHistory, pipeline: string): string |
   return null
 }
 
-export { restoreSnapshot, snapshotOf, type ReplayOptions, type ReplayPosition, type ReplaySnapshot } from '../generator/pipeline/replayRuns'
+export type { ReplayPosition, ReplaySnapshot } from '../generator/pipeline/replayPlan'
 
 // The history as the generator's run parameters, the way the screen sends
 // its own runs (runParams.ts).
@@ -57,10 +55,4 @@ export function planFromRecipe(recipe: ReplayRecipe): ReplayPlan {
       ...(run.restored ? { restored: true } : {}),
     })),
   }
-}
-
-export async function replayHistory(recipe: ReplayRecipe, options: ReplayOptions): Promise<{ sim: PlateSimulation; terrain: CoupledTerrain }> {
-  const out = await replayRuns(planFromRecipe(recipe), options)
-  if (!out) throw new Error('the replay was cancelled')
-  return out
 }

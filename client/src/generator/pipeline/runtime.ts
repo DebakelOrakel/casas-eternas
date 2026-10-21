@@ -1,18 +1,15 @@
 import { domainOfKind, type Domain } from '../core/domain'
 import { sampleWorldElevation } from '../planet/sampleWorld'
-import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
+import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulationTypes'
 import { renderSimulationImage } from '../render/elevationMapImage'
-import type { RenderableWorld, RenderSimulationOptions } from '../render/elevationMapImage'
-import type { ElevationRenderer } from '../render/elevationRenderPool'
+import type { ElevationRenderer, RenderableWorld, RenderSimulationOptions } from '../render/elevationMapImage'
 import { downstreamOf } from './stages'
 import type { StageId } from './stages'
-import { HISTORY_DEFAULTS } from './coupledEpoch'
-import type { ClimateParams } from './worldStages'
-import { releaseWorld, type ClimateBody, type Engine, type EnginePreview, type EngineWorld } from './engine'
+import { releaseWorld, type ClimateBody, type ClimateParams, type Engine, type EnginePreview, type EngineWorld } from './engine'
+import { ENGINE_CONSTANTS } from './engineConstants'
 import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
 
 import type { ClimatePayload, FieldPayload, LandPayload, MeshPayload } from './messages'
-import { DEFAULT_ARCHEAN_PARAMS } from '../archean/archeanStep'
 import { findPlumeSites } from '../tectonics/plumes'
 import { stabilisedFraction } from '../crust/raftField'
 import { worldAgeMa, worldEpoch } from '../core/worldTime'
@@ -56,6 +53,11 @@ export function setEmitter(next: Emit): void {
   emit = next
 }
 
+// The engine's settings this module reads (engineConstants.ts): how often
+// the history draws, the Archean's controls' defaults and its stabilisation.
+const HISTORY = ENGINE_CONSTANTS.tuning.history as { renderEvery: number }
+const ARCHEAN = ENGINE_CONSTANTS.tuning.archean as { diffusion: number; landShare: number; stabilisationEpochs: number }
+
 // The engine: its WASM build in the browser (generatorWorker.ts), the same
 // build loaded from engine/dist in a test.
 let engine: Engine | null = null
@@ -89,7 +91,7 @@ function domainFor(shape: Domain['kind'], width: number, height: number): Domain
 let archeanSeed = ''
 // The Archean's controls, held here because a reset has to rebuild the same
 // world. Both are user-facing.
-let archeanControls = { diffusion: DEFAULT_ARCHEAN_PARAMS.diffusion, landShare: DEFAULT_ARCHEAN_PARAMS.landShare }
+let archeanControls = { diffusion: ARCHEAN.diffusion, landShare: ARCHEAN.landShare }
 let archeanWidth = 0
 let archeanHeight = 0
 // The shape the Archean was made on (genesisInit), for a reset to make it
@@ -99,9 +101,9 @@ let renderOptions: RenderSimulationOptions = {}
 // The Archean's pace (genesisInit): the shortest time from one step's
 // start to the next's, so its crust animates at a steady tempo.
 let epochIntervalMs = 400
-// Epochs run since the last intermediate picture (HISTORY_DEFAULTS.renderEvery);
+// Epochs run since the last intermediate picture (HISTORY.renderEvery);
 // starts at the count so the first epoch of a run draws.
-let epochsSinceRender: number = HISTORY_DEFAULTS.renderEvery
+let epochsSinceRender: number = HISTORY.renderEvery
 let pendingEvents: SimEvent[] = []
 // The hand-over state, kept so the tectonics panel can return to it. Kept
 // rather than re-derived: the hand-over consumes the Archean's RNG and
@@ -398,7 +400,7 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     epoch: snapshot.epoch,
     worldAgeMa: worldAgeMa(snapshot.epoch, 0),
     crustFraction: result.landFraction,
-    stabilisedFraction: stabilisedFraction(snapshot.rafts, snapshot.epoch, DEFAULT_ARCHEAN_PARAMS.stabilisationEpochs),
+    stabilisedFraction: stabilisedFraction(snapshot.rafts, snapshot.epoch, ARCHEAN.stabilisationEpochs),
     cratonCount: snapshot.rafts.length,
   }
   emit(status)
@@ -559,7 +561,7 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
   // first epoch starts with the gesture: a start followed by a stop is then
   // exactly one epoch, which is what the pipeline harness's determinism
   // check builds its two worlds with.
-  epochsSinceRender = HISTORY_DEFAULTS.renderEvery
+  epochsSinceRender = HISTORY.renderEvery
   startLoop('tectonics', 0, 0, async (l) => {
     const current = world
     if (!current || era !== 'plates') return false
@@ -572,13 +574,13 @@ function handleTectonicsStart(message: Extract<WorkerInboundMessage, { type: 'te
     pendingEvents.push(...events)
     routed = true
     // Intermediate while the loop still runs, and only every
-    // HISTORY_DEFAULTS.renderEvery-th epoch (the first always): the next
+    // HISTORY.renderEvery-th epoch (the first always): the next
     // picture replaces this one. The epoch that finishes after the stop
     // is the settled one — drawn whatever the count, the screen then
     // pulls the elevation field and runs the chain.
     epochsSinceRender++
     const running = loop === l
-    if (!running || epochsSinceRender >= HISTORY_DEFAULTS.renderEvery) {
+    if (!running || epochsSinceRender >= HISTORY.renderEvery) {
       epochsSinceRender = 0
       await renderTerrain(running)
     }
@@ -1031,8 +1033,8 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   if (message.archean) {
     archeanSeed = message.seed
     archeanControls = {
-      diffusion: message.mantleDiffusion ?? DEFAULT_ARCHEAN_PARAMS.diffusion,
-      landShare: message.landShare ?? DEFAULT_ARCHEAN_PARAMS.landShare,
+      diffusion: message.mantleDiffusion ?? ARCHEAN.diffusion,
+      landShare: message.landShare ?? ARCHEAN.landShare,
     }
     const a = message.archean
     replaceWorld(theEngine().World.restoreArchean(shape, a.snapshot, savedOf(a.mantle), new Int16Array(a.streak), archeanControls.diffusion, archeanControls.landShare), 'archean')
@@ -1084,8 +1086,8 @@ function handleGenesisInit(message: Extract<WorkerInboundMessage, { type: 'genes
   dropHandover()
   archeanSeed = message.seed
   archeanControls = {
-    diffusion: message.mantleDiffusion ?? DEFAULT_ARCHEAN_PARAMS.diffusion,
-    landShare: message.landShare ?? DEFAULT_ARCHEAN_PARAMS.landShare,
+    diffusion: message.mantleDiffusion ?? ARCHEAN.diffusion,
+    landShare: message.landShare ?? ARCHEAN.landShare,
   }
   archeanWidth = message.width
   archeanHeight = message.height

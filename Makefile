@@ -3,7 +3,7 @@
 #   make lint    type-check the client and vet the server (the project's lint;
 #                no ESLint/Biome is configured, and the branch convention is
 #                "verify with tsc", so this is the honest gate)
-#   make test    the Go tests plus the worldgen regression harness
+#   make test    the Go tests, the engine's tests and the harnesses
 #   make worker  bundle the job worker for Node (./job-worker.mjs, with
 #                ./casas-engine.node beside it)
 #   make engine  build the Rust engine, native and WASM, into engine/dist/
@@ -98,21 +98,6 @@ lint:
 	@go run ./tools/clidump | diff -q docs/operations/cli-reference.json - > /dev/null \
 		|| (echo "docs/operations/cli-reference.json is stale — run 'make cli-reference'" >&2; exit 1)
 	cd engine && cargo fmt --check
-	node engine/scripts/detMathFixture.mjs --check
-	node engine/scripts/delaunayFixture.mjs --check
-	node engine/scripts/meshFixture.mjs --check
-	node engine/scripts/fieldsFixture.mjs --check
-	node engine/scripts/domainFixture.mjs --check
-	node engine/scripts/mantleFixture.mjs --check
-	node engine/scripts/tectonicsFixture.mjs --check
-	node engine/scripts/elevationFixture.mjs --check
-	node engine/scripts/erosionFixture.mjs --check
-	node engine/scripts/climateFixture.mjs --check
-	node engine/scripts/surfaceFixture.mjs --check
-	node engine/scripts/hydrologyFixture.mjs --check
-	node engine/scripts/levelFixture.mjs --check
-	node engine/scripts/riversFixture.mjs --check
-	node engine/scripts/ecologyFixture.mjs --check
 	# The workspace builds the engine with `parallel` (the native crate turns
 	# it on); the engine alone builds it without, as the WASM build does.
 	cd engine && cargo clippy --workspace --all-targets -- -D warnings
@@ -125,17 +110,8 @@ cli-reference:
 
 test: engine
 	go test ./internal/...
-	# The epoch, Archean, forcing, refinement, coupled and replay fixtures take
-	# up to a minute to make: checked here, not in lint.
-	node engine/scripts/epochFixture.mjs --check
-	node engine/scripts/archeanFixture.mjs --check
-	node engine/scripts/forcingFixture.mjs --check
-	node engine/scripts/refinementFixture.mjs --check
-	node engine/scripts/coupledFixture.mjs --check
-	node engine/scripts/replayFixture.mjs --check
-	node engine/scripts/bakeFixture.mjs --check
-	node engine/scripts/tilesFixture.mjs --check
-	node engine/scripts/worldStagesFixture.mjs --check
+	# The engine's tests run on fixtures the TypeScript engine wrote before
+	# it went (DEC-0044, fork 7c): data now, in engine/crates/*/tests/fixtures.
 	cd engine && cargo test --workspace --release
 	cd engine && cargo test -p casas-engine --release
 	# WASM gives the native bits (DEC-0044, fork 4): the same tests built for
@@ -147,9 +123,6 @@ test: engine
 	cd client && npm run harness:roundtrip
 	cd client && npm run test:http-store
 	cd client && npm run harness:pipeline
-	cd client && npm run harness:mesh
-	cd client && npm run harness:fields
-	cd client && npm run harness:golden
 
 # The Rust engine (docs/decisions/rust-engine.md), for this machine only: the
 # native build is a Node addon, built for each platform on its own (the

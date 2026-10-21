@@ -1,7 +1,6 @@
 import { MESH_BAKE_CONSTANTS } from './meshArtifacts'
-import { TILE_ROLE_HALO, type TileId } from '../generator/mesh/meshTile'
-import { ENGINE_CONSTANTS, engineLevelBudget } from './engineConstants'
-import type { BakedTile } from '../generator/pipeline/meshTileBake'
+import type { TileId } from '../generator/mesh/meshTile'
+import { ENGINE_CONSTANTS, engineLevelBudget } from '../generator/pipeline/engineConstants'
 import type { ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
@@ -54,7 +53,7 @@ function tileLevelConstants(level: number): Record<string, number> {
 
 function tilePipelineConstants(level: number, rounds: number): Record<string, number> {
   return {
-    // The cube's and the tile's constants, the engine's (engineConstants.ts).
+    // The cube's and the tile's constants, the engine's (generator/pipeline/engineConstants.ts).
     ...tileLevelConstants(level),
     ...MESH_BAKE_CONSTANTS,
     parentBudget: engineLevelBudget(level - 1),
@@ -92,38 +91,6 @@ interface MeshTileMeta {
   label: string
   pipeline: { algoVersion: number; rounds: number; constants: Record<string, number> }
   files: Record<string, number>
-}
-
-// The inside of a baked tile: every node but the halo's, in the mesh's
-// (Hilbert) order, and every triangle with no corner in the halo.
-export function bakedTileToArtifact(baked: BakedTile): MeshTileArtifact {
-  const { mesh, role, halo, site, worldX, worldY } = baked.tile
-  const sphere = site.kind === 'cube'
-  const index = new Int32Array(mesh.vertexSlots).fill(-1)
-  let count = 0
-  for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v] && role[v] !== TILE_ROLE_HALO) index[v] = count++
-  const nodes = new Float32Array(count * 2)
-  const z = new Float32Array(count)
-  const roles = new Uint8Array(count)
-  const outflow = new Float32Array(count)
-  for (let v = 0; v < mesh.vertexSlots; v++) {
-    const i = index[v]
-    if (i < 0) continue
-    nodes[2 * i] = sphere ? worldX[v] : mesh.vx[v] - halo
-    nodes[2 * i + 1] = sphere ? worldY[v] : mesh.vy[v] - halo
-    z[i] = baked.z[v]
-    roles[i] = role[v]
-    outflow[i] = baked.outflow[v]
-  }
-  const triangles: number[] = []
-  for (let t = 0; t < mesh.triSlots; t++) {
-    if (!mesh.tAlive[t]) continue
-    const a = index[mesh.tris[3 * t]]
-    const b = index[mesh.tris[3 * t + 1]]
-    const c = index[mesh.tris[3 * t + 2]]
-    if (a >= 0 && b >= 0 && c >= 0) triangles.push(a, b, c)
-  }
-  return { tile: baked.tile.tile, count, nodes, triangles: Uint32Array.from(triangles), z, role: roles, outflow }
 }
 
 const bytesOf = (a: ArrayBufferView): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength)

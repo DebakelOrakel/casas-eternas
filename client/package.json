@@ -10,12 +10,6 @@
     "harness:roundtrip": "node scripts/roundtrip.mjs",
     "test:http-store": "node scripts/httpStore.mjs",
     "harness:pipeline": "node scripts/pipeline.mjs",
-    "harness:mesh": "node scripts/mesh.mjs",
-    "harness:fields": "node scripts/fields.mjs",
-    "harness:golden": "node --max-old-space-size=8192 scripts/golden.mjs",
-    "harness:golden:record": "node --max-old-space-size=8192 scripts/golden.mjs record",
-    "harness:golden:hash": "node --max-old-space-size=8192 scripts/golden.mjs hash-record",
-    "calibrate": "node scripts/calibrate.mjs",
     "build:worker": "node scripts/buildWorker.mjs",
     "build:docs": "npx esbuild scripts/docsite.ts --bundle --packages=external --platform=node --format=esm --target=node20 --outfile=scripts/.docsite.mjs --log-level=warning && node scripts/.docsite.mjs"
   },

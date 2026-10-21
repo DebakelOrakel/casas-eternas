@@ -1,9 +1,8 @@
 // A module-resolution hook for plain node: the generator's modules import
 // each other WITHOUT extensions (`from './flowRouting'`), which Vite
 // resolves and node does not. Node strips TypeScript types natively (the
-// engine's modules use only erasable syntax), so with this one hook a
-// worker thread can load the engine's worker entry directly — no bundler,
-// no Vite server in the worker. Registered by engineWorkerHost.mjs.
+// modules use only erasable syntax), so with this one hook a script loads
+// them directly — no bundler, no Vite server. Registered by httpStore.mjs.
 import { existsSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 

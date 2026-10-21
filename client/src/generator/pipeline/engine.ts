@@ -13,7 +13,7 @@
 //
 // The job worker computes on the native build; the runtime changes over
 // next (fork 5).
-import type { ArcheanSnapshot } from '../archean/archeanSnapshot'
+import type { ArcheanSnapshot } from '../archean/archeanSnapshotTypes'
 import type { PlateSimulationSnapshot, SimEvent } from '../tectonics/plateSimulationTypes'
 import type { SavedField } from '../fields/fieldMesh'
 import type { WeatherParams } from '../climate/weather'
@@ -24,10 +24,18 @@ import type { PlanetForcing } from '../planet/planetForcing'
 import type { WaterBody } from '../surface/hydrology'
 import type { RiverGraph } from '../surface/riverGraph'
 import type { CoastReach } from '../surface/coastGraph'
-import type { SedimentBasin } from '../surface/sedimentBasins'
+import type { SedimentBasin } from '../surface/surfaceTypes'
 import type { EcologyParams } from '../ecology/ecologyField'
-import type { ClimateParams } from './worldStages'
-import type { ReplayPlan } from './replayRuns'
+import type { ReplayPlan } from './replayPlan'
+
+// The climate's controls (the climate panel's and the planet's).
+export interface ClimateParams {
+  temperatureOffset: number
+  temperatureContrast: number
+  humidity: number
+  equatorOffset: number
+  planet?: PlanetForcing
+}
 
 // The history's controls for one coupled epoch (the runtime's
 // `historyControls`).
@@ -174,6 +182,9 @@ export interface EngineWorld {
   // The mantle's and the ocean age's saved values, in this order.
   savedFields(): [SavedField, SavedField]
   lattice(): LatticeState
+  // The erosion's coarse forcing on the climate's chart, as a reader of
+  // the save derives it from the snapshot (`coarseForcingFields`).
+  forcing(): { uplift: Float32Array; hardness: Float32Array }
   meshPayload(): EngineMeshPayload
   // The climate's cells, null before the climate ran; the land fields,
   // null while no climate is at the terrain mesh's nodes.

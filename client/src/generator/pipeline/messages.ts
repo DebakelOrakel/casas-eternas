@@ -2,7 +2,7 @@ import type { RefinedClimate } from '../climate/refinement'
 import type { WaterBody } from '../surface/hydrology'
 import type { PlanetForcing } from '../planet/planetForcing'
 import type { CoastReach } from '../surface/coastGraph'
-import type { SedimentBasin } from '../surface/sedimentBasins'
+import type { SedimentBasin } from '../surface/surfaceTypes'
 // The generator pipeline's message contract — every message that crosses the
 // worker boundary, in both directions. Kept apart from the pipeline itself so a
 // consumer (GeneratorScreen) can import the vocabulary without importing the
@@ -13,10 +13,10 @@ import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimula
 import type { Volcano } from '../tectonics/volcanoes'
 import type { RenderSimulationOptions } from '../render/elevationMapImage'
 import type { ContinentLabelPlacement } from '../render/continentLabelRenderer'
-import type { ArcheanSnapshot } from '../archean/archeanSnapshot'
+import type { ArcheanSnapshot } from '../archean/archeanSnapshotTypes'
 import type { MigrationOrigin } from '../migration/migrationField'
 import type { StageId } from './stages'
-import type { ReplayPlan } from './replayRuns'
+import type { ReplayPlan } from './replayPlan'
 
 export interface WorkerTectonicsStartMessage {
   type: 'tectonicsStart'

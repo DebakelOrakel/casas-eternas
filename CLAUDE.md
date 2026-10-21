@@ -19,8 +19,10 @@ client/src/
   storage/        artifact stores (OPFS / HTTP / tiered), bytes at paths
   server/         client-side HTTP clients for the Go server
   map/ ui/ camera/ app/ i18n/
-client/scripts/   the five harnesses (golden, pipeline, roundtrip, mesh, fields) and
-                  jobWorker.ts → job-worker.mjs, the server-side job worker bundle
+client/scripts/   the harnesses (roundtrip, pipeline) and jobWorker.ts → job-worker.mjs,
+                  the server-side job worker bundle
+engine/           the Rust engine (docs/decisions/rust-engine.md): the world's computation,
+                  native for the job worker, WASM for the generator; its smoke test
 internal/ cmd/    the Go server
 docs/             see docs/README.md for the taxonomy
 ```
@@ -124,16 +126,16 @@ reason.
 
 ```
 make lint      # tsc --noEmit, gofmt, go vet
-make test      # go test plus the harnesses (~20 min, most of it pipeline)
+make test      # go test, the engine's tests, the smoke test and the harnesses
+make engine    # the Rust engine, native and WASM, into engine/dist/ (the client needs it)
 make run       # build baker + client, then start the server locally
 cd client && npm run dev   # the usual loop
 
-# The five harnesses, cheapest first — each guards what the others cannot.
+# The checks, cheapest first — each guards what the others cannot.
 cd client && npm run harness:roundtrip   # the save format; 0.2 s, run it freely
-cd client && npm run harness:mesh        # the adaptive mesh; ~5 s
-cd client && npm run harness:fields      # the field mesh's operators (DEC-0036); ~30 s
-cd client && npm run harness:golden      # the generator's fields; ~4–5 min
-cd client && npm run harness:pipeline    # the generator pipeline's behaviour; ~13 min
+node engine/scripts/smoke.mjs            # the engine: native against WASM, the read side; ~3 min
+cd client && npm run harness:pipeline    # the generator pipeline's behaviour; ~5 min
+cd engine && cargo test --workspace --release   # the engine's modules on their fixtures
 
 ```
 

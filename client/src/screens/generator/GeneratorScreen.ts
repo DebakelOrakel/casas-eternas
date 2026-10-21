@@ -34,7 +34,7 @@ const SPHERE_METRES = metresOfShape('sphere')
 import JSZip from 'jszip'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
-import type { SedimentBasin } from '../../generator/surface/sedimentBasins'
+import type { SedimentBasin } from '../../generator/surface/surfaceTypes'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
 import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload, FieldPayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'

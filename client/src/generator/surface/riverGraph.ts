@@ -1,4 +1,4 @@
-import type { SpringFeature } from './hydrogeology'
+import type { SpringFeature } from './surfaceTypes'
 import type { FlowSubstrate } from './flowSubstrate'
 import { SEA_LEVEL, elevationToMeters } from '../elevation/elevationScale'
 import type { Domain } from '../core/domain'
@@ -6,7 +6,7 @@ import { detHypot } from '../core/detMath'
 import { buildChannelMaskOn, RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE } from './hydrology'
 import type { RegimeInputs, RiverPolylines, WaterBody } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
-import type { RiverCourse } from './riverCourse'
+import type { RiverCourse } from './surfaceTypes'
 
 // THE FEATURE GRAPH — the erosion's output as data (ADAPTIVE_MESH_PLAN.md
 // phase 2, decision 10 of adaptive-mesh.md). Rivers are REACHES between

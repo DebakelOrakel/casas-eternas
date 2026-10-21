@@ -266,6 +266,18 @@ impl World {
             .build())
     }
 
+    /// The erosion's coarse forcing on the climate's chart, `{ uplift,
+    /// hardness }`: what a reader of the save derives from its snapshot
+    /// (`erosionForcing.coarseForcingFields`) for the tile bakes.
+    pub fn forcing(&mut self) -> Result<Value, EraError> {
+        let (sim, _) = self.plates()?;
+        let f = casas_engine::pipeline::erosion_forcing::coarse_forcing_fields(sim, &sim.domain);
+        Ok(value::ObjBuilder::new()
+            .put("uplift", Value::F32s(f.uplift))
+            .put("hardness", Value::F32s(f.hardness))
+            .build())
+    }
+
     /// The coupled terrain as the save's bytes.
     pub fn mesh_payload(&mut self) -> Result<Value, EraError> {
         let (_, coupled) = self.plates()?;

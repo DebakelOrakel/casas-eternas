@@ -39,7 +39,6 @@ data/*
 # nature — Math results can move between V8 versions — and it exists only for
 # the length of one refactor, so it is recorded and deleted, never shared.
 # golden.json, the permanent metric baseline, IS committed.
-client/scripts/golden-hashes.json
 
 # Editor directories and files
 .claude/*

@@ -144,6 +144,10 @@ impl World {
         self.0.lattice().map(to_js).map_err(era)
     }
 
+    pub fn forcing(&mut self) -> Result<JsValue, JsError> {
+        self.0.forcing().map(to_js).map_err(era)
+    }
+
     #[wasm_bindgen(js_name = savedFields)]
     pub fn saved_fields(&mut self) -> Result<JsValue, JsError> {
         let (m, o) = self.0.saved_fields().map_err(era)?;

@@ -24,7 +24,7 @@ a field the stage smooths ends with
 `grid.averagePoleRows`. On the torus every one of these is 1 or the old
 arithmetic, so write each formula so that it IS the torus's operations when
 the weights are 1 (`1 * x`, `x / 1` and `x + 0` keep the bits; a changed
-summation order does not) — golden then stays byte-identical. A vector read
+summation order does not) — the engine, which ports these formulas, keeps the same rule. A vector read
 across a pole (its east is the far side's west) needs thought; a scalar does
 not.
 
@@ -35,8 +35,7 @@ WASM build (DEC-0044, `pipeline/engine.ts`), which computes every stage, and
 orchestrates the steps, the stages and the picture. It takes its emitter and
 its engine from the host (`setEmitter`, `setEngine`) and touches no browser
 API itself, so it can be driven directly from Node — which is the only way
-this part of the generator can be tested at all, since the golden harness
-does not reach it. `pipeline/messages.ts` is the message contract.
+this part of the generator can be tested at all. `pipeline/messages.ts` is the message contract.
 
 **The history runs on ONE step loop** (`runtime.ts` `startLoop`, both eras,
 2026-10-11): a step and its render, then exactly one timer for the next
@@ -81,8 +80,6 @@ mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay 
             pipeline/coupledEpoch.ts is phase 5's loop over it: z = baseline + relief
             per node, nodes drift with their plates, the mesh is rebuilt and remeshed
             each epoch (subduction and rifting), erosion runs inside the epoch.
-            `node scripts/calibrateHistory.mjs key=value …` prints what a setting does
-            to a world over N epochs — the calibration's instrument, not a gate.
             The generator's erosion stage runs on it
             (pipeline/meshErosionStage.ts), the lakes and the river graph run on it
             (meshHydrology: the flow substrate) and the save carries it; the map and the
@@ -96,7 +93,6 @@ fields/     the field mesh (DEC-0036): fieldMesh (a uniform mesh over a Domain a
             semi-Lagrangian transport, the Helmholtz/Poisson CG solve, and since
             phase 4 the general solvers: conjugateGradient, BiCGSTAB, a sparse
             matrix, ILU(0) and a two-level aggregation preconditioner).
-            `npm run harness:fields` holds each against an analytic answer
 planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
             what depends on the planet and not on the relief; the climate reads it
 mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
@@ -251,71 +247,44 @@ Ocean is marked by a different sentinel per aspect — `OCEAN_PRECIP`,
 invariant for ecology fields) — plus plain `elevation > 0` in other places. Do
 not assume; look up which one the field you touched uses.
 
-## Before touching anything: the harnesses
+## Before touching anything: the checks
+
+**The world is computed by the Rust engine** (`engine/`, DEC-0044) since
+2026-10-21: the generator's runtime and the job worker call it, and a
+change to what a world IS goes there. The TypeScript simulation went with
+fork 7c, as far as it was not interwoven with the READ SIDE — the modules
+that decode, sample and rasterise a save or an artifact (the load, the
+incubator, the screen's hover), which stay TypeScript for now (fork 7b)
+and must give the engine's bits. What of the old simulation is still here
+is that interweaving; it runs nowhere but where the read side calls it.
 
 ```
 cd client && npm run harness:roundtrip       # the save format; 0.2 s
-cd client && npm run harness:mesh            # the adaptive mesh; ~5 s
-cd client && npm run harness:fields          # the field mesh's operators; ~30 s
-cd client && npm run harness:pipeline        # the pipeline's behaviour; ~13 min
-cd client && npm run harness:golden          # the generator; ~20 min (4 world builds at 2048×1024, 4 coupled epochs each)
-cd client && npm run harness:golden:record   # re-record the metric baseline, on purpose
-cd client && npm run harness:golden:hash     # arm the refactor guard (layer 4)
-cd client && npm run calibrate               # the calibration's distributions; ~1 h, not a gate
+node engine/scripts/smoke.mjs                # native against WASM, the read side against the engine; ~3 min
+cd client && npm run harness:pipeline        # the pipeline's behaviour; ~5 min
 ```
 
-`npm run calibrate` (scripts/calibrate.mjs, DEC-0036 phase 8a) builds many
-worlds of both shapes at 2048 × 1024 the way the screen does (the Archean
-to its 0.5 gate, or to `archeanMa=` as a player stops it, at `landShare=`;
-40 coupled epochs, the climate step with its refinement,
-the hydrology) and prints the distributions the calibration is judged on,
-with the planet's and the genesis's sliders swept; `report <run.json>
-[<before.json>]` prints a run against another; `cache=<dir>` keeps each
-world's terrain after its history, and `climate cache=<dir>` runs the
-climate step alone on those terrains (20 s a world — a climate constant
-or lever judged without the history). Judge a tuning change there,
-not on a harness world (their land is out of proportion).
+The calibration's instrument (`scripts/calibrate.mjs`) and golden, mesh
+and fields went with the simulation; the calibration gets its instrument
+again on the engine when it starts again.
 
-`golden` has three permanent layers: **invariants** (no baseline, so a failure is always a
-bug), **determinism** (one seed built twice in the same run, hashed against
-itself), and **metrics** (magnitudes against `golden.json` with per-metric
-tolerances, default 2 %, reported as deltas). It loads the real modules through
-Vite's SSR pipeline because these modules use extensionless imports.
+**What each covers:**
 
-**Refactoring? Arm layer 4 first.** `npm run harness:golden:hash` freezes a
-per-stage byte hash into `golden-hashes.json`, and every later `npm run harness:golden`
-reports any stage that moved. Delete the file when the refactor lands — the
-layer exists only while the file does. It is needed because the other three
-cannot make this check: metrics carry a 2 % tolerance, so a sub-percent shift
-passes green, and determinism only ever compares a run against itself inside one
-process. The baseline is machine-local and gitignored; record it where you work.
-
-**Know its blind spots:**
-
-- It does **not** cover `pipeline/runtime.ts`. Message ordering and cache
-  invalidation are invisible to a field check — that is `npm run harness:pipeline`'s job
-  (see its own header). It drives the real pipeline headless on a small world:
-  hand-over, resets, save→restore, the stage chain, invalidation, stopping a pass
-  mid-flight. Run it after touching anything under `pipeline/`. What it still does
-  NOT reach is the screen — panel switching, button state and the DOM half of a
-  reset are unguarded.
-- It does **not** cover the level bake's terrain — `npm run harness:mesh`
-  bakes level 1 and checks that parents are kept, no node crosses the coast, the
-  same save bakes the same level and the artifact reads back identical (the
-  artifact cache depends on that absolutely). The artifact KEY is guarded
-  separately — `npm run harness:roundtrip` checks that every constant
-  AMPLIFY_CONSTANTS lists actually moves the pipeline version.
-- It does **not** cover the adaptive mesh — `npm run harness:mesh` does, in seconds
-  on a synthetic world: the triangulation's structure, the density rule's
-  convergence inside its hysteresis band, state conservation through a
-  remesh, determinism. Its `measure <save.zip>` mode reports node counts on
-  a real save; that is how MESH_TUNING's constants were set.
-- It does **not** cover the save format. That is `npm run harness:roundtrip`'s job —
-  quantisation, the recipe's layout, the identity hashes, the artifact bytes and
-  the shared zip reader, in 0.2 s. Run it after touching anything under
+- `npm run harness:pipeline` covers `pipeline/runtime.ts`: message ordering
+  and cache invalidation, driven headless on a small world with the
+  engine's WASM build — hand-over, resets, save→restore, the stage chain,
+  invalidation, stopping a pass mid-flight. Run it after touching anything
+  under `pipeline/`. What it does NOT reach is the screen — panel
+  switching, button state and the DOM half of a reset are unguarded.
+- `npm run harness:roundtrip` covers the save format — quantisation, the
+  recipe's layout, the identity hashes, the artifact bytes and the shared
+  zip reader, in 0.2 s — and checks that every constant the pipeline
+  versions name moves them. Run it after touching anything under
   `world/save/` or `storage/`.
-- Before blaming a golden failure on your change, `git stash` and re-run to see
-  whether it already fails on `HEAD`.
+- `node engine/scripts/smoke.mjs` covers the engine's two builds against
+  each other and the read side against the engine: the terrain's raster
+  from the saved mesh, the lakes from the saved water bodies, the forcing
+  from the snapshot.
 
 ## Parameters and identity
 
@@ -366,8 +335,8 @@ V8 (Chrome, the Node job worker) and JavaScriptCore (Safari); a world made in
 Safari was made again by the server identically up to epoch 93 of 151, then
 not (2026-10-02). Use `core/detMath.ts` (`detExp`, `detSin`, `sq` …) — a
 port of fdlibm out of exact operations only. `make lint` refuses the others
-in `generator/`, `render/` excepted; `harness:mesh` holds a hash of
-detMath's values confirmed in both engines.
+in `generator/`, `render/` excepted; the engine's `det_math` test holds its
+values against the fdlibm port's, confirmed in both JavaScript engines.
 
 **Routing differs by step, and conflating them is a recurring mistake.** Erosion
 is hybrid: drainage-area *accumulation* is MFD, stream-power *incision* is
@@ -435,5 +404,4 @@ instance (eight D8 slots, facets only across the four sides, area 1 —
 scan), the mesh the other (`mesh/meshErosion.ts`). A kernel that indexes
 `nbr[cell * 8 + slot]` or counts in cells is wrong on the mesh even if the
 raster harnesses pass; walk `nbrStart[i]..nbrStart[i + 1]` and multiply by
-`areaRel` / `lenRel`. `harness:mesh` runs the engine on a mesh and checks the
-sediment budget closes; golden runs it on the raster.
+`areaRel` / `lenRel`.

@@ -8,8 +8,7 @@
 // smoke test loads it.
 import { createRequire } from 'node:module'
 import type { Engine, EngineReplay as Replay, Shape } from '../src/generator/pipeline/engine'
-import type { ReplayPlan, ReplayPosition, ReplaySnapshot } from '../src/generator/pipeline/replayRuns'
-import type { PlannedTile } from '../src/generator/pipeline/tilePlan'
+import type { ReplayPlan, ReplayPosition, ReplaySnapshot } from '../src/generator/pipeline/replayPlan'
 import type { TileId } from '../src/generator/mesh/meshTile'
 import type { ClimateCellValues } from '../src/generator/climate/climatePoints'
 import type { ErosionControlsV2 } from '../src/generator/surface/erosionForcingFields'
@@ -56,6 +55,16 @@ export interface EngineTileBaker {
   // A level-2 tile on level 1 (`pieces` null), a level-3 tile on the
   // level-2 tiles it overlaps.
   bake(tile: TileId, pieces: TilePiece[] | null, upstream: UpstreamPiece[], rounds: number): MeshTileArtifact
+}
+
+// A tile of the plan with what it waits for (the engine's `plan_tiles`).
+export interface PlannedTile {
+  tile: TileId
+  // The tiles of the level above it overlaps (none for the first tile
+  // level, whose parent is level 1).
+  parents: TileId[]
+  // The tiles of its own level whose outflow it reads.
+  upstream: TileId[]
 }
 
 export interface NativeEngine extends Engine {

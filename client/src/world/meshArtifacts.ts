@@ -1,7 +1,6 @@
 import { worldTuning } from './worldTuning'
-import { ENGINE_CONSTANTS, engineLevelBudget } from './engineConstants'
-import type { MeshLevel } from '../generator/pipeline/meshBakeStage'
-import { encodeMesh, decodeMesh, type SerializedMesh } from '../generator/mesh/meshSerial'
+import { ENGINE_CONSTANTS, engineLevelBudget } from '../generator/pipeline/engineConstants'
+import { decodeMesh, type SerializedMesh } from '../generator/mesh/meshSerial'
 import { deserializeRiverGraph, serializeRiverGraph, type RiverGraph } from '../generator/surface/riverGraph'
 import type { RiverPolylines, WaterBody } from '../generator/surface/hydrology'
 import type { ArtifactHandle, ArtifactKey, ArtifactStore } from '../storage/ArtifactStore'
@@ -48,7 +47,7 @@ export function meshLevelStage(level: number): string {
 // the bank-strength table. A change to any of them made different artifacts
 // under an unchanged key, which a client then served as current.
 export const MESH_BAKE_CONSTANTS: Record<string, number> = {
-  // The engine's (engineConstants.ts): the amplification's table, the
+  // The engine's (generator/pipeline/engineConstants.ts): the amplification's table, the
   // density rule's object, then the bake's loose constants (the lithology
   // lattice, two of the erosion's module constants, the routing cadence,
   // the river course model, the bank-strength table).
@@ -96,13 +95,6 @@ interface MeshLevelMeta {
   label: string
   pipeline: { algoVersion: number; rounds: number; budget: number; constants: Record<string, number> }
   files: Record<string, number>
-}
-
-export function meshLevelToArtifact(level: MeshLevel): MeshLevelArtifact {
-  const order = new Int32Array(level.mesh.aliveVertices)
-  for (let i = 0; i < order.length; i++) order[i] = i
-  const serial = encodeMesh(level.mesh, order)
-  return { level: level.level, count: serial.count, nodes: serial.nodes, connectivity: serial.connectivity, z: level.z.slice(0, serial.count), waterBodies: level.waterBodies, graph: level.graph, rivers: level.rivers }
 }
 
 const bytesOf = (a: ArrayBufferView): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
