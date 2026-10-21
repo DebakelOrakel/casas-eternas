@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use crate::core::det_math::{det_asin, det_exp, det_pow, det_sin};
 use crate::core::domain::{Domain, DomainGrid, Vec2};
 use crate::core::js;
+use crate::core::shared::{block_ranges, for_ranges};
 use crate::crust::raft_field::{
     BlobIndex, build_blob_index, raft_field, raft_field_indexed, sample_owner_field,
 };
@@ -183,7 +184,7 @@ pub fn ocean_floor_at_age(age: f64) -> f64 {
 
 /// A term under the floor from the unwarped point, the margin parameter
 /// and the floor's age: the trench's depression.
-pub type BaselineTerm<'a> = &'a dyn Fn(f64, f64, f64, f64) -> f64;
+pub type BaselineTerm<'a> = &'a (dyn Fn(f64, f64, f64, f64) -> f64 + Sync);
 
 /// The ocean age a baseline reads: the field on its shared mesh.
 pub type OceanAgeInput<'a> = Option<(&'a mut SharedFieldMesh, &'a [f64])>;
@@ -227,6 +228,73 @@ pub fn raft_baseline_at(
     baseline_at_warped(w.x, w.y, rafts, age, domain, warp_seed, blobs, None, 0, t)
         + below(world_x, world_y, t, age)
 }
+
+/// `raft_baseline_at` at every point of `xs`, `ys`, the same bits: the
+/// warp and everything after the ocean age in fixed blocks on rayon's pool
+/// (`for_ranges`), the ocean age's sampler between them in the points'
+/// order, as the one-point calls walk it — its walk is state.
+#[allow(clippy::too_many_arguments)]
+pub fn raft_baselines(
+    xs: &[f64],
+    ys: &[f64],
+    rafts: &[Raft],
+    ocean_age: (&mut SharedFieldMesh, &[f64]),
+    domain: &Domain,
+    warp_seed: f64,
+    blobs: &BlobIndex,
+    below: Option<BaselineTerm>,
+) -> Vec<f64> {
+    let ranges = block_ranges(xs.len(), BASELINE_BLOCK);
+    let warped: Vec<Vec2> = for_ranges(&ranges, |r| {
+        r.map(|i| domain_warp_point(xs[i], ys[i], domain, warp_seed))
+            .collect::<Vec<_>>()
+    })
+    .concat();
+    let (sm, field) = ocean_age;
+    let ages: Vec<f64> = warped
+        .iter()
+        .map(|w| ocean_age_at(sm, field, w.x, w.y))
+        .collect();
+    for_ranges(&ranges, |r| {
+        r.map(|i| {
+            let (w, age) = (&warped[i], ages[i]);
+            match below {
+                None => baseline_at_warped(
+                    w.x,
+                    w.y,
+                    rafts,
+                    age,
+                    domain,
+                    warp_seed,
+                    Some(blobs),
+                    None,
+                    0,
+                    f64::NAN,
+                ),
+                Some(below) => {
+                    let t = margin_parameter(raft_field_indexed(w.x, w.y, blobs));
+                    baseline_at_warped(
+                        w.x,
+                        w.y,
+                        rafts,
+                        age,
+                        domain,
+                        warp_seed,
+                        Some(blobs),
+                        None,
+                        0,
+                        t,
+                    ) + below(xs[i], ys[i], t, age)
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+    })
+    .concat()
+}
+
+/// The points of one block of `raft_baselines`.
+const BASELINE_BLOCK: usize = 4096;
 
 /// The baseline after the warp. `relief`, when given, holds the hypsometry
 /// relief per cell (NaN: not yet), read from cell `index` or written there;

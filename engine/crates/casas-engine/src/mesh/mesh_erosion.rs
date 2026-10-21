@@ -11,6 +11,7 @@
 
 use crate::core::js;
 use crate::core::min_heap::MinHeap;
+use crate::core::shared::{block_ranges, for_ranges};
 use crate::surface::erosion_engine::{
     DEFAULT_SOLVER_PARAMS, ErosionForcing, ErosionSolver, ErosionSolverParams,
     PipelinedErosionSolver, Tallies,
@@ -241,19 +242,29 @@ pub fn build_mesh_engine_index(
 
 /// The cotangent at the apex of every halfedge of a live triangle (NaN on
 /// a dead one), a triangle's three from one frame.
+/// The triangles in fixed blocks on rayon's pool (`for_ranges`): each
+/// value is its own triangle's.
 pub fn apex_cotangents(mesh: &PeriodicTriangulation) -> Vec<f64> {
-    let mut cot = vec![f64::NAN; mesh.twin.len()];
-    for t in 0..mesh.tri_slots() {
-        if mesh.t_alive[t] == 0 {
-            continue;
+    let ranges = block_ranges(mesh.tri_slots(), COT_BLOCK);
+    let mut cot = for_ranges(&ranges, |r| {
+        let mut out = Vec::with_capacity(3 * r.len());
+        for t in r {
+            if mesh.t_alive[t] == 0 {
+                out.extend([f64::NAN; 3]);
+                continue;
+            }
+            let f = mesh.frame(t);
+            out.extend((0..3).map(|i| cot_in_frame(&f, i)));
         }
-        let f = mesh.frame(t);
-        for i in 0..3 {
-            cot[3 * t + i] = cot_in_frame(&f, i);
-        }
-    }
+        out
+    })
+    .concat();
+    cot.resize(mesh.twin.len(), f64::NAN);
     cot
 }
+
+/// The triangles of one block of `apex_cotangents`.
+const COT_BLOCK: usize = 8192;
 
 /// Cotangent of the angle at the apex of halfedge e's triangle (the corner
 /// opposite e), in the triangle's frame.

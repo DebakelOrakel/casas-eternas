@@ -32,7 +32,8 @@ use crate::crust::raft_lifecycle::{RAFT_CARRY_REACH, carrier_plate_at, raft_host
 use crate::crust::raft_types::Raft;
 use crate::elevation::dynamic_topography::dynamic_topography_at;
 use crate::elevation::elevation_field::{
-    BaselineTerm, build_feature_buckets, raft_baseline_at, uplift_deck_at, warped_sample_point,
+    BaselineTerm, build_feature_buckets, raft_baseline_at, raft_baselines, uplift_deck_at,
+    warped_sample_point,
 };
 use crate::elevation::elevation_sampler::{SynthesisSources, synthesis_sampler};
 use crate::elevation::elevation_scale::{ELEVATION_METERS, margin_parameter};
@@ -226,6 +227,34 @@ fn solid_baseline_at(
     ) + dynamic_topography_at(p.mantle, &mantle.sampler, &mut mantle.mesh, x, y)
 }
 
+/// `solid_baseline_at` at every point of `xs`, `ys`, the same bits
+/// (`raft_baselines`), the mantle's sampler walked in the points' order.
+#[allow(clippy::too_many_arguments)]
+fn solid_baselines(
+    p: &BaselineParts,
+    shared: &mut SharedFieldMesh,
+    mantle: &mut MantleMesh,
+    xs: &[f64],
+    ys: &[f64],
+    blobs: &BlobIndex,
+    trench: Option<BaselineTerm>,
+) -> Vec<f64> {
+    let mut out = raft_baselines(
+        xs,
+        ys,
+        p.rafts,
+        (shared, p.ocean_age),
+        p.domain,
+        p.warp_seed,
+        blobs,
+        trench,
+    );
+    for (i, b) in out.iter_mut().enumerate() {
+        *b += dynamic_topography_at(p.mantle, &mantle.sampler, &mut mantle.mesh, xs[i], ys[i]);
+    }
+    out
+}
+
 fn epoch_ma_of(sim: &PlateSimulation) -> f64 {
     if sim.epoch_ma == 0.0 || sim.epoch_ma.is_nan() {
         TECTONIC_MA_PER_EPOCH
@@ -333,19 +362,19 @@ fn baselines(sim: &mut PlateSimulation, mesh: &PeriodicTriangulation) -> Vec<f32
         warp_seed: sim.warp_seed,
     };
     let sea = sim.eustatic_m / ELEVATION_METERS;
-    (0..mesh.vertex_slots())
-        .map(|v| {
-            (solid_baseline_at(
-                &parts,
-                &mut sim.meshes.shared,
-                &mut sim.meshes.mantle,
-                mesh.vx[v],
-                mesh.vy[v],
-                &blobs,
-                trench_ref,
-            ) - sea) as f32
-        })
-        .collect()
+    let slots = mesh.vertex_slots();
+    solid_baselines(
+        &parts,
+        &mut sim.meshes.shared,
+        &mut sim.meshes.mantle,
+        &mesh.vx[..slots],
+        &mesh.vy[..slots],
+        &blobs,
+        trench_ref,
+    )
+    .into_iter()
+    .map(|b| (b - sea) as f32)
+    .collect()
 }
 
 /// The terrain at the start of the history: the mesh from the synthesis,
@@ -570,19 +599,22 @@ pub fn step_coupled_epoch(
     };
     let sea = sim.eustatic_m / ELEVATION_METERS;
     let mut solid1 = vec![0.0; mesh1.vertex_slots()];
-    for v in 0..mesh1.vertex_slots() {
-        if mesh1.v_alive[v] == 0 {
-            continue;
-        }
-        solid1[v] = solid_baseline_at(
-            &parts,
-            &mut sim.meshes.shared,
-            &mut sim.meshes.mantle,
-            mesh1.vx[v],
-            mesh1.vy[v],
-            &blobs,
-            trench_ref,
-        );
+    let alive: Vec<usize> = (0..mesh1.vertex_slots())
+        .filter(|&v| mesh1.v_alive[v] != 0)
+        .collect();
+    let xs: Vec<f64> = alive.iter().map(|&v| mesh1.vx[v]).collect();
+    let ys: Vec<f64> = alive.iter().map(|&v| mesh1.vy[v]).collect();
+    let solid = solid_baselines(
+        &parts,
+        &mut sim.meshes.shared,
+        &mut sim.meshes.mantle,
+        &xs,
+        &ys,
+        &blobs,
+        trench_ref,
+    );
+    for (k, &v) in alive.iter().enumerate() {
+        solid1[v] = solid[k];
         let h = state.get("h")[v] as f64;
         state.get_mut(MESH_Z)[v] = (solid1[v] - sea + h) as f32;
     }
