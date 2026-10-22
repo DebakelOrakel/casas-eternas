@@ -15,6 +15,7 @@
 #   casas-engine-wasm.tar.gz            the generator's engine (wasm/ of engine/dist)
 #   constants.json                      the pipeline's constants
 #   pipeline.json                       the pipeline's versions: the world's and each tile level's
+#   job-worker.mjs                      the job worker's bundle; it reads what the engine computes
 #   SHA256SUMS
 #
 # The builds are the ones `make engines` and `make engine` make, with the
@@ -66,7 +67,9 @@ jobs:
       # Before the expensive jobs. The versions are the job worker's
       # (`job-worker.mjs --version`). buildWorker.mjs copies the native
       # engine beside the bundle; this job has none, and --version does not
-      # load it, so an empty file stands in. It is not uploaded.
+      # load it, so an empty file stands in. It is not uploaded; the bundle
+      # is (it holds the read side in TypeScript, DEC-0044 fork 7, so an
+      # engine without its bundle cannot run a pipeline).
       #
       # `status.pipeline` does not hash the tile levels' constants. A change
       # to those only gives another engine under the same tag; the release
@@ -106,7 +109,7 @@ jobs:
       - run: |
           mkdir -p out
           tar -czf out/casas-engine-wasm.tar.gz -C engine/dist wasm
-          cp engine/dist/constants.json engine/dist/pipeline.json out/
+          cp engine/dist/constants.json engine/dist/pipeline.json "$RUNNER_TEMP/worker/job-worker.mjs" out/
       - uses: actions/upload-artifact@v4
         with:
           name: wasm

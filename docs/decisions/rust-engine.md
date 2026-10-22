@@ -388,7 +388,8 @@ from the discussion of 2026-10-19:
 - The browser needs only the WASM of the current pipeline.
 
 This changes the subjects and the scaler, so it is its own fork when it
-comes.
+comes. It came: [DEC-0045](./engine-releases.md) (2026-10-22), with a
+release per pipeline in place of an image per pipeline.
 
 ## Status
 
