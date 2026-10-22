@@ -19,7 +19,7 @@ import { decodeMesh } from '../generator/mesh/meshSerial'
 import type { PeriodicTriangulation } from '../generator/mesh/periodicDelaunay'
 import { rasteriseNodeField, rasteriseNodePart } from '../generator/mesh/meshRaster'
 import { waterFieldsFromMesh } from '../generator/mesh/meshHydrology'
-import { coarseForcingFields } from '../generator/pipeline/erosionForcing'
+import type { Engine } from '../generator/pipeline/engine'
 import type { PlateSimulationSnapshot } from '../generator/tectonics/plateSimulationTypes'
 import type { WaterBody } from '../generator/surface/hydrology'
 import { climateCellsFromSaved } from '../generator/climate/climatePoints'
@@ -95,6 +95,12 @@ export interface WorldRecipe {
   pipeline: string
 }
 
+// What a world's reader asks of the engine (DEC-0044, fork 7b): the parts
+// of a save whose values set an artifact's bytes are read by the engine.
+// The browser gives its WASM build (generator/pipeline/engineWasm), the
+// job worker its native one.
+export type WorldEngine = Pick<Engine, 'forcingOfSnapshot'>
+
 export interface World {
   // The world's shape (world.yaml's kind): the torus or the sphere.
   readonly kind: WorldKind
@@ -150,10 +156,11 @@ export function waterBodiesOf(raw: unknown): WaterBody[] | null {
 // rasterisation (meshRaster.rasteriseNodeField, the session's own after
 // every epoch), the lakes' depth the session's drawing of the mesh's lakes
 // (meshHydrology.waterFieldsFromMesh, from the water body per node), the
-// erosion's coarse forcing a function of the snapshot
-// (erosionForcing.coarseForcingFields), the climate its chart, the land
-// fields their nodes on the world raster.
-export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<World | null> {
+// erosion's coarse forcing the engine's of the snapshot (`engine`,
+// forcingOfSnapshot; DEC-0044 fork 7b: what sets an artifact's bytes is
+// the engine's), the climate its chart, the land fields their nodes on the
+// world raster.
+export async function openWorld(archive: ArrayBuffer | Uint8Array, engine: WorldEngine): Promise<World | null> {
   let zip: JSZip
   let manifest: WorldManifest
   try {
@@ -268,17 +275,14 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array): Promise<Worl
     snapshot = text ? (JSON.parse(text) as PlateSimulationSnapshot) : null
     return snapshot
   }
-  // The erosion's coarse forcing, as the generator derives it from the
-  // same state (the session's serialize wrote exactly these until the save
+  // The erosion's coarse forcing, as the engine derives it from the same
+  // state (the session's serialize wrote exactly these until the save
   // step).
   let forcing: { uplift: Float32Array; hardness: Float32Array } | null | undefined
   const forcingOf = async (): Promise<{ uplift: Float32Array; hardness: Float32Array } | null> => {
     if (forcing !== undefined) return forcing
     const snap = await snapshotOf()
-    forcing = snap ? coarseForcingFields({
-      features: snap.features, rafts: snap.rafts, sutures: snap.sutures ?? [],
-      epoch: snap.epoch, archeanEpochs: snap.archeanEpochs ?? 0, warpSeed: snap.warpSeed,
-    }, domain) : null
+    forcing = snap ? engine.forcingOfSnapshot(kind === 'SphereWorld' ? 'sphere' : 'torus', snap) : null
     return forcing
   }
 

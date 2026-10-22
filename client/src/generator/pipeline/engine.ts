@@ -183,7 +183,7 @@ export interface EngineWorld {
   savedFields(): [SavedField, SavedField]
   lattice(): LatticeState
   // The erosion's coarse forcing on the climate's chart, as a reader of
-  // the save derives it from the snapshot (`coarseForcingFields`).
+  // the save derives it from the snapshot (`Engine.forcingOfSnapshot`).
   forcing(): { uplift: Float32Array; hardness: Float32Array }
   meshPayload(): EngineMeshPayload
   // The climate's cells, null before the climate ran; the land fields,
@@ -234,6 +234,10 @@ export interface EnginePreview {
 // What both bindings give.
 export interface Engine {
   version(): string
+  // The erosion's coarse forcing of a save's snapshot (DEC-0044, fork 7b):
+  // what the world layer reads out of a save, as `EngineWorld.forcing`
+  // gives it of a live world.
+  forcingOfSnapshot(shape: Shape, snapshot: PlateSimulationSnapshot): { uplift: Float32Array; hardness: Float32Array }
   World: EngineWorlds
   Replay: { start(plan: ReplayPlan, level: number): EngineReplay }
   Preview: new () => EnginePreview

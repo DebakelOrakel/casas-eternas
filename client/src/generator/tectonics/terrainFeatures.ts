@@ -96,7 +96,7 @@ export interface TerrainFeature {
   // upliftPerKm), as a moving mean with a half-life of
   // TECTONICS_TUNING.shorteningHalfLifeMa (DEC-0036 phase 8g). Only the
   // boundary pass sets it: a hotspot or a flood basalt shortens nothing.
-  // The history's uplift rate is made from it (elevation/upliftField.ts).
+  // The history's uplift rate is made from it (the engine's uplift_field.rs).
   // Optional so old deserialized features (which lack it) read as 0.
   shorteningKmPerMyr?: number
 }

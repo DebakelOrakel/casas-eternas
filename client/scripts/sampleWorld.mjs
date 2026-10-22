@@ -30,6 +30,10 @@ const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
 const L = (p) => server.ssrLoadModule(p)
+// The engine's WASM build, as the browser loads it: the world layer reads
+// a save's forcing through it (DEC-0044, fork 7b).
+const ENGINE = await import(`${CLIENT}/../engine/dist/wasm/casas-engine.js`)
+await ENGINE.default({ module_or_path: await (await import('node:fs/promises')).readFile(`${CLIENT}/../engine/dist/wasm/casas-engine_bg.wasm`) })
 const M = {
   field: await L('/src/generator/core/field.ts'),
   layers: await L('/src/world/save/worldLayers.ts'),
@@ -53,7 +57,7 @@ async function archiveOf(path) {
   walk(path)
   return zip.generateAsync({ type: 'uint8array' })
 }
-const world = await M.query.openWorld(await archiveOf(source))
+const world = await M.query.openWorld(await archiveOf(source), ENGINE)
 if (!world) throw new Error(`${source}: not a world this build opens (a save from before the save held no raster is refused)`)
 const elevation = (await world.acquire('elevation')).data
 const { width, height } = world

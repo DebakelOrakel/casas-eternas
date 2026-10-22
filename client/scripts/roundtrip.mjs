@@ -27,6 +27,10 @@ const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
 const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
 const L = (p) => server.ssrLoadModule(p)
+// The engine's WASM build, as the browser loads it: the world layer reads
+// a save's forcing through it (DEC-0044, fork 7b).
+const ENGINE = await import(`${CLIENT}/../engine/dist/wasm/casas-engine.js`)
+await ENGINE.default({ module_or_path: await (await import('node:fs/promises')).readFile(`${CLIENT}/../engine/dist/wasm/casas-engine_bg.wasm`) })
 
 const M = {
   layers: await L('/src/world/save/worldLayers.ts'),
@@ -399,7 +403,6 @@ const MM = {
   serial: await L('/src/generator/mesh/meshSerial.ts'),
   raster: await L('/src/generator/mesh/meshRaster.ts'),
   hydro: await L('/src/generator/mesh/meshHydrology.ts'),
-  forcing: await L('/src/generator/pipeline/erosionForcing.ts'),
 }
 const writer = await L('/src/world/save/worldArchive.ts')
 const zipDomain = M.domain.torusDomain(W, H)
@@ -434,8 +437,8 @@ const zipParts = (over = {}) => ({
 })
 const zip = await JSZip.loadAsync(await writer.writeWorldArchive(zipParts()))
 const zipElev = MM.raster.rasteriseNodeField(MM.serial.decodeMesh(zipDomain, zipSerial), meshZ, W, H)
-const zipForcing = MM.forcing.coarseForcingFields(structuredClone(zipSnapshot), zipDomain)
-const loaded = await M.inputs.readWorldInputs(await zip.generateAsync({ type: 'arraybuffer' }))
+const zipForcing = ENGINE.forcingOfSnapshot(zipDomain.kind, structuredClone(zipSnapshot))
+const loaded = await M.inputs.readWorldInputs(await zip.generateAsync({ type: 'arraybuffer' }), ENGINE)
 if (!loaded) check('the zip reads back at all', false)
 else {
   check('the elevation is the mesh\'s rasterisation, byte for byte', String(loaded.elevations) === String(zipElev) && loaded.width === W && loaded.height === H)
@@ -456,7 +459,7 @@ else {
   })
   check('reader and direct derivation agree on the worldId', loaded.worldId === direct, `${loaded.worldId} vs ${direct}`)
   const query = await L('/src/world/query.ts')
-  const world = await query.openWorld(await zip.generateAsync({ type: 'arraybuffer' }))
+  const world = await query.openWorld(await zip.generateAsync({ type: 'arraybuffer' }), ENGINE)
   const lakes = await world.acquire('lakeDepth')
   const direct2 = MM.hydro.waterFieldsFromMesh(MM.serial.decodeMesh(zipDomain, zipSerial), zipLakeBody, zipBodies, zipElev, W, H).depth
   check('the lakes\' depth is the mesh\'s lakes drawn on that raster, byte for byte', lakes !== null && String(lakes.data) === String(direct2) && direct2.some((d) => d > 0) && world.has('lakeDepth'))
@@ -465,7 +468,7 @@ else {
 const refused = async (label, edit) => {
   const old = await JSZip.loadAsync(await zip.generateAsync({ type: 'arraybuffer' }))
   edit(old)
-  check(label, (await M.inputs.readWorldInputs(await old.generateAsync({ type: 'arraybuffer' }))) === null)
+  check(label, (await M.inputs.readWorldInputs(await old.generateAsync({ type: 'arraybuffer' }), ENGINE)) === null)
 }
 // A save with a chart raster the save step took out (DEC-0036): the
 // elevation, the lakes' depth, the forcing — or a tectonic save without
@@ -484,7 +487,7 @@ await refused('a save with the coast over raster cells (before DEC-0036 phase 7b
 {
   const fine = await JSZip.loadAsync(await zip.generateAsync({ type: 'arraybuffer' }))
   fine.file('layers/coast.json', JSON.stringify({ reaches: [], nodes: [5, 6] }))
-  check('a save with the coast over the mesh\'s nodes opens', (await M.inputs.readWorldInputs(await fine.generateAsync({ type: 'arraybuffer' }))) !== null)
+  check('a save with the coast over the mesh\'s nodes opens', (await M.inputs.readWorldInputs(await fine.generateAsync({ type: 'arraybuffer' }), ENGINE)) !== null)
 }
 {
   // The screen's own refusal is the same function (GeneratorScreen's load).
@@ -695,7 +698,7 @@ console.log('\n— zip writer —')
     try { await writer.readClimate(zip) } catch { partial = true }
     check('a climate with a field missing is refused', partial)
   }
-  const back = await M.inputs.readWorldInputs(written)
+  const back = await M.inputs.readWorldInputs(written, ENGINE)
   if (!back) check('the written archive reads back at all', false)
   else {
     check('the written elevation is the mesh\'s rasterisation', String(back.elevations) === String(zipElev))
@@ -708,7 +711,7 @@ console.log('\n— zip writer —')
       forcing: { uplift: zipForcing.uplift, erodibility: zipForcing.hardness }, mantle: zipMantle, oceanAge: zipAge,
     })
     check('the worldId hashes the mesh, the climate\'s cells, the forcing and the field meshes', back.worldId === direct, `${back.worldId} vs ${direct}`)
-    const world = await query.openWorld(written)
+    const world = await query.openWorld(written, ENGINE)
     const savedMesh = await world.mesh()
     check('the written mesh comes back as written', savedMesh !== null && savedMesh.count === zipCount && String(savedMesh.z) === String(meshZ) && String(savedMesh.connectivity) === String(zipSerial.connectivity))
     check('the manifest lists no raster layer', manifest.layers.every((l) => l.kind === 'table'))
@@ -724,7 +727,7 @@ console.log('\n— zip writer —')
 }
 
 // A zip that is not a world must be refused, not half-read.
-check('a zip without a manifest is refused', (await M.inputs.readWorldInputs(await new JSZip().file('a.txt', 'x').generateAsync({ type: 'arraybuffer' }))) === null)
+check('a zip without a manifest is refused', (await M.inputs.readWorldInputs(await new JSZip().file('a.txt', 'x').generateAsync({ type: 'arraybuffer' }), ENGINE)) === null)
 
 await server.close()
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'} — ${failures} failed`)

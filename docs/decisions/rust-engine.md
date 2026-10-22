@@ -357,6 +357,34 @@ when it loads, so a key needs no engine call.
 
 **Answer: TypeScript for now**, each part movable on its own later.
 
+**7b, the seam — decided 2026-10-22.** What moves, and what does not, by
+one question: would a change to it give other bytes in something stored?
+Then it is the engine's; what is only moved, named or shown stays
+TypeScript. The engine speaks files, TypeScript moves them:
+
+- The engine: the simulation; reading its own payloads out of a save (the
+  mesh, the snapshot, the fields); what it derives from them, the
+  erosion's forcing among it; the artifacts' formats, written and read;
+  the tiles' geometry and the land tiles.
+- TypeScript: the job worker's host (bus, store, HTTP, tokens, threads);
+  the save as a container (the zip, world.yaml, the history, the rights);
+  the identity (`worldId`, the keys, the spec — the world layer); the
+  display (rasters for the map, the incubator and the hover; lakes to
+  draw); stores, caches, copies.
+
+So the doubles of today go: the forcing (`coarseForcingFields`, which the
+tile bakes read) is the engine's once it reads the snapshot itself; the
+land tiles come from its own render. The raster and the lakes stay
+TypeScript, for display only, and the smoke test keeps them equal to the
+engine's (a difference is a picture's error, not a wrong artifact). The
+interface is bytes in, bytes out — a tile bake takes the save's payloads
+and the parents' files and gives the tile's files — and the pipeline
+module of the job worker (docs/decisions/engine-releases.md) shrinks to
+nothing. Work on the display, the incubator's 3D among it, never touches
+the engine. The save's container, the history and `worldId` stay with the
+world layer: they set the bytes of the identity, not of the computation,
+and have their own versions (the save format, `status.pipeline`).
+
 **7c — The harnesses of the TypeScript simulation.**
 
 - **Removed with it**: golden and the module tests of the simulation go;

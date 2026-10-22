@@ -44,6 +44,21 @@ pub fn version() -> &'static str {
     casas_engine::ENGINE_VERSION
 }
 
+/// The erosion's coarse forcing of a save's snapshot on the climate's
+/// chart, `{ uplift, hardness }` (docs/decisions/rust-engine.md, fork 7b):
+/// what the world layer reads out of a save for the tile bakes and the
+/// terrain's id, as `World::forcing` gives it of a live world. No world is
+/// made for it.
+pub fn forcing_of_snapshot(shape: Shape, snapshot: &Value) -> Result<Value, EraError> {
+    let snap = read::snapshot(snapshot)?;
+    let domain = domain_of(shape, snap.width, snap.height);
+    let f = casas_engine::pipeline::erosion_forcing::coarse_forcing_of_snapshot(&snap, &domain);
+    Ok(value::ObjBuilder::new()
+        .put("uplift", Value::F32s(f.uplift))
+        .put("hardness", Value::F32s(f.hardness))
+        .build())
+}
+
 /// The world's shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Shape {
@@ -268,7 +283,7 @@ impl World {
 
     /// The erosion's coarse forcing on the climate's chart, `{ uplift,
     /// hardness }`: what a reader of the save derives from its snapshot
-    /// (`erosionForcing.coarseForcingFields`) for the tile bakes.
+    /// (`forcing_of_snapshot`) for the tile bakes.
     pub fn forcing(&mut self) -> Result<Value, EraError> {
         let (sim, _) = self.plates()?;
         let f = casas_engine::pipeline::erosion_forcing::coarse_forcing_fields(sim, &sim.domain);

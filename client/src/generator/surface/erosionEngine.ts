@@ -218,7 +218,7 @@ export const DEFAULT_ENGINE_PARAMS: ErosionEngineParams = {
 }
 
 // The forcing is assembled by the CALLER (the tectonics exports — see
-// elevation/upliftField.ts and elevation/erodibilityField.ts). The engine
+// the engine's uplift_field.rs and erodibility_field.rs). The engine
 // is a pure solver; it does not know which world is meant. Every array is
 // on the FULL raster; the engine gathers its active subset once.
 export interface ErosionForcing {

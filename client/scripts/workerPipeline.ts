@@ -134,7 +134,7 @@ async function runTaskTimed(job: PipelineTask, io: PipelineIO, clock: Laps, cach
     if (read === 'unchanged') inputs = held!.inputs
     else {
       if (!read) throw new Error('cannot read the world')
-      const parsed = await readWorldInputs(read.archive)
+      const parsed = await readWorldInputs(read.archive, engine())
       if (!parsed) throw new Error('not a readable world archive')
       inputs = parsed
       // By URL only with a revision to ask with; without one it is read again.

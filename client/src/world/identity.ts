@@ -88,7 +88,7 @@ export interface BakeInputs {
   // the bake samples it at its nodes. Null before the climate ran.
   climate: { seaLevelTemperature: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array; monsoonIndex: Float32Array } | null
   // The erosion's coarse forcing the bake erodes with, derived from the
-  // snapshot (pipeline/erosionForcing.coarseForcingFields): the plates'
+  // snapshot (the engine's forcingOfSnapshot): the plates'
   // state as far as a bake reads it.
   forcing: { uplift: Float32Array; erodibility: Float32Array }
   // The field meshes the simulation continues from (Float64 per cell):

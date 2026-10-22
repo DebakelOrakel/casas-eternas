@@ -901,7 +901,7 @@ function handleSerializeWorld(): void {
   // The meshes' own values (the bit-identical continuation; DEC-0036
   // phases 1 and 2). No raster (DEC-0036, the save step): the elevation is
   // the mesh's rasterisation and the erosion's coarse forcing a function
-  // of the snapshot (erosionForcing.coarseForcingFields), both made again
+  // of the snapshot (the engine's forcingOfSnapshot), both made again
   // by whoever reads the save.
   const [mantle, oceanAge] = world.savedFields()
   const lattice = world.lattice()

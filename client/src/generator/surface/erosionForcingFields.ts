@@ -8,7 +8,7 @@ import { detExp, detPow } from '../core/detMath'
 // model, no save format — which is what lets it sit in surface/ and serve
 // BOTH producers of coarse fields:
 //
-//   - the generator (pipeline/erosionForcing.ts), whose coarse U/K come from
+//   - the generator (the engine's erosion_forcing.rs), whose coarse U/K come from
 //     the live tectonic sim and whose water forcing is the provisional
 //     default-parameter climate;
 //   - the amplification bake (runAmplification.ts), whose coarse U/K come
@@ -142,58 +142,7 @@ export function engineParamsFor(controls: ErosionControlsV2): ErosionEngineParam
   }
 }
 
-// `domain`: what the raster covers, one cell per unit.
-export function assembleFineForcing(
-  coarse: CoarseForcingInputs,
-  rawElevations: Float32Array,
-  domain: Domain,
-  controls: ErosionControlsV2 = {},
-): { forcing: ErosionForcing; params: ErosionEngineParams } {
-  const { width, height } = domain
-  const grids = forcingGrids(coarse, domain)
-  const n = width * height
-  const sigma = rockContrastSigma(controls)
-  const uplift = new Float32Array(n)
-  const erodibility = new Float32Array(n)
-  const coastMask = new Uint8Array(n)
-  const pair = new Float64Array(2)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = y * width + x
-      forcingAt(coarse, grids, sigma, x, y, pair)
-      uplift[i] = pair[0]
-      erodibility[i] = pair[1]
-      if (rawElevations[i] > 0) coastMask[i] = 1
-    }
-  }
-
-  // The water weights normalised to mean 1 over land (the mean taken in
-  // double before the weights are stored). A zero-precipitation cell
-  // contributes zero — that IS the coupling (the `|| 1` that used to sit
-  // here turned the driest cells into the uniform default, exactly where
-  // the climate should have bitten).
-  const accumulationWeights = new Float32Array(n)
-  if (coarse.water) {
-    let landSum = 0
-    let landCount = 0
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const i = y * width + x
-        const weight = waterAt(coarse, grids, x, y)
-        accumulationWeights[i] = weight
-        if (rawElevations[i] > 0) { landSum += weight; landCount++ }
-      }
-    }
-    const meanLand = landCount > 0 && landSum > 0 ? landSum / landCount : 1
-    for (let i = 0; i < n; i++) accumulationWeights[i] = accumulationWeights[i] / meanLand
-  } else {
-    accumulationWeights.fill(1)
-  }
-
-  return { forcing: { uplift, erodibility, coastMask, accumulationWeights }, params: engineParamsFor(controls) }
-}
-
-// The same forcing on a POINT SET — the mesh's nodes (mesh/meshErosion.ts):
+// The fine forcing on a POINT SET — the mesh's nodes (mesh/meshErosion.ts):
 // `xs`/`ys` in coordinates of `domain` (the world), `alive` marking the slots that hold a node, `areas` the
 // nodes' areas for the water normalisation. Arrays come back in the
 // point set's slot layout. `meanLandWater` replaces the water mean the

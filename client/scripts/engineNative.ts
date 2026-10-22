@@ -35,7 +35,7 @@ export interface TileBakeSave {
   detailSeed: number
   lithoSeed: number
   controls: ErosionControlsV2
-  // The erosion forcing on its grid (`coarseForcingFields`).
+  // The erosion forcing on its grid (as `forcingOfSnapshot` of a save).
   uplift?: Float32Array
   erodibility?: Float32Array
   forcingResX: number

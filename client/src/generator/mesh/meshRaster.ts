@@ -148,7 +148,7 @@ export function rasteriseNodePart(mesh: PeriodicTriangulation, field: ArrayLike<
 }
 
 // A coarse raster's value at each node: the nearest cell (the forcing's
-// hardness, erosionForcing.coarseForcingFields — the hydrogeology's read).
+// hardness, the engine's forcingOfSnapshot — the hydrogeology's read).
 export function nearestCellAtNodes(field: Float32Array, resX: number, resY: number, mesh: PeriodicTriangulation): Float32Array {
   const { width, height } = mesh.domain
   const out = new Float32Array(mesh.vertexSlots)

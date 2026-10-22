@@ -123,7 +123,7 @@ export const STAGES: readonly Stage[] = [
   {
     id: 'erosion',
     // The climate edge is about the CONTROLS, not the fields: the forcing
-    // evaluates the weather chain itself (erosionForcing.ts), but it does so
+    // evaluates the weather chain itself (the engine's erosion_forcing.rs), but it does so
     // with the climate panel's sliders — so their change invalidates the
     // carved terrain.
     dependsOn: ['tectonics', 'climate'],

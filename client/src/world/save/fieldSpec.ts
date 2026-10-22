@@ -79,7 +79,7 @@ export const WORLD_FIELDS: readonly FieldSpec[] = [
   // trenches), erodibility the crust-history hardness multiplier
   // BEFORE the seed-procedural lithology noise, which is applied at whatever
   // grid consumes it. Not in the save since DEC-0036's save step: the
-  // reader derives both from state.json (erosionForcing.coarseForcingFields),
+  // reader derives both from state.json (the engine's forcingOfSnapshot),
   // as the generator does; meaningful over ocean too (submarine features
   // uplift, oceanic crust has a hardness).
   climate('uplift', 'mm/yr', false),

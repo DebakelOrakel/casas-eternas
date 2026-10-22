@@ -37,7 +37,6 @@ const { domainOfKind } = await L('/src/generator/core/domain.ts')
 const { decodeMesh } = await L('/src/generator/mesh/meshSerial.ts')
 const { rasteriseNodeField } = await L('/src/generator/mesh/meshRaster.ts')
 const { waterFieldsFromMesh } = await L('/src/generator/mesh/meshHydrology.ts')
-const { coarseForcingFields } = await L('/src/generator/pipeline/erosionForcing.ts')
 const { defaultWeatherParams } = await L('/src/generator/climate/weather.ts')
 const { DEFAULT_PLANET_FORCING } = await L('/src/generator/planet/planetForcing.ts')
 const { TECTONICS_INPUTS } = await L('/src/generator/tectonics/tectonicsInputParams.ts')
@@ -87,8 +86,11 @@ const readSide = (shape, w, rendered, hydrology) => {
   same(`${shape}: the read side's raster of the saved mesh differs from the engine's render`, rasteriseNodeField(mesh, m.z, snap.width, snap.height), rendered.elevations)
   const water = waterFieldsFromMesh(mesh, w.landPayload().lakeBody, hydrology.waterBodies, rendered.elevations, snap.width, snap.height)
   same(`${shape}: the read side's lakes from the saved water bodies differ from the engine's`, water.depth, hydrology.lakeDepth)
-  const forcing = coarseForcingFields({ features: snap.features, rafts: snap.rafts, sutures: snap.sutures ?? [], epoch: snap.epoch, archeanEpochs: snap.archeanEpochs ?? 0, warpSeed: snap.warpSeed }, domain)
-  same(`${shape}: the read side's forcing from the snapshot differs from the engine's`, forcing, w.forcing())
+  // The forcing a reader gets of the saved snapshot (DEC-0044, fork 7b:
+  // the engine's since 2026-10-22), against the live world's, in both
+  // builds.
+  same(`${shape}: the native forcing of the snapshot differs from the world's`, native.forcingOfSnapshot(shape, structuredClone(snap)), w.forcing())
+  same(`${shape}: the WASM forcing of the snapshot differs from the world's`, wasm.forcingOfSnapshot(shape, structuredClone(snap)), w.forcing())
 }
 
 const SLIDERS = [

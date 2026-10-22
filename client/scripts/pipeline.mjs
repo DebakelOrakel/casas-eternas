@@ -1172,8 +1172,6 @@ test('a world survives serialize -> restore unchanged', async () => {
 test('a save holds no raster, and every reader draws the session\'s', async () => {
   const Q = await server.ssrLoadModule('/src/world/query.ts')
   const A = await server.ssrLoadModule('/src/world/save/worldArchive.ts')
-  const EF = await server.ssrLoadModule('/src/generator/pipeline/erosionForcing.ts')
-  const D = await server.ssrLoadModule('/src/generator/core/domain.ts')
   const JSZip = (await import(`${CLIENT}/node_modules/jszip/dist/jszip.min.js`)).default
   const climate = { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 }
   const make = async () => {
@@ -1195,7 +1193,7 @@ test('a save holds no raster, and every reader draws the session\'s', async () =
   const zip = await JSZip.loadAsync(bytes)
   const rasters = Object.keys(zip.files).filter((f) => /\.(f32|u8|u16|i16|i8)$/.test(f) && !f.startsWith('mesh/') && !f.startsWith('climate/') && !f.startsWith('lattice.'))
   check(`the save holds no chart raster (${Object.keys(zip.files).length} entries)`, rasters.length === 0 && A.FORMER_RASTERS.every((f) => zip.file(f) === null), rasters.join(', '))
-  const opened = await Q.openWorld(bytes)
+  const opened = await Q.openWorld(bytes, WASM)
   if (!opened) { check('the save opens', false); return }
   const elevation = await opened.acquire('elevation')
   check('the reader\'s elevation is the session\'s raster, byte for byte', elevation !== null && hash(elevation.data.buffer) === hash(raw))
@@ -1203,7 +1201,7 @@ test('a save holds no raster, and every reader draws the session\'s', async () =
   const session = new Float32Array(hyd.lakeDepth)
   const wet = session.reduce((n, d) => n + (d > 0 ? 1 : 0), 0)
   check(`the reader's lakes are the session's, byte for byte (${wet} wet pixels)`, lakes !== null && hash(lakes.data.buffer) === hash(hyd.lakeDepth) && wet > 0)
-  const forcing = EF.coarseForcingFields(structuredClone(world.snapshot), D.domainOfKind('torus', W, H))
+  const forcing = WASM.forcingOfSnapshot('torus', structuredClone(world.snapshot))
   const uplift = await opened.acquire('uplift')
   const erodibility = await opened.acquire('erodibility')
   check('the reader\'s forcing is the one the session derives', uplift !== null && erodibility !== null && hash(uplift.data.buffer) === hash(forcing.uplift.buffer) && hash(erodibility.data.buffer) === hash(forcing.hardness.buffer))
@@ -1221,17 +1219,17 @@ test('a save holds no raster, and every reader draws the session\'s', async () =
   q.dispatch({ type: 'hydrologyRun' })
   await until(() => q.count('hydrologyData') >= 1, { label: 'the loaded hydrology' })
   await quiet(q)
-  const again = await Q.openWorld(await archiveOf(worldDataOf(q), q.last('hydrologyData')))
+  const again = await Q.openWorld(await archiveOf(worldDataOf(q), q.last('hydrologyData')), WASM)
   const idAgain = again ? await again.worldId() : null
   check(`the world's id is stable across save → load → save (${id})`, idAgain === id, `${id} vs ${idAgain}`)
 
   const r = await make()
-  const twin = await Q.openWorld(await archiveOf(worldDataOf(r), r.last('hydrologyData')))
+  const twin = await Q.openWorld(await archiveOf(worldDataOf(r), r.last('hydrologyData')), WASM)
   const idTwin = twin ? await twin.worldId() : null
   check('two pipelines that made the same world give it one id', idTwin === id, `${id} vs ${idTwin}`)
   check('a world one epoch on has another id', await (async () => {
     await runOneEpoch(r)
-    const on = await Q.openWorld(await archiveOf(worldDataOf(r)))
+    const on = await Q.openWorld(await archiveOf(worldDataOf(r)), WASM)
     return on !== null && (await on.worldId()) !== id
   })())
 })

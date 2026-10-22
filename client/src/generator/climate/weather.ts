@@ -14,10 +14,10 @@ import type { ClimateTerrain } from './climateMesh'
 //
 // One function because it now has two callers that must not drift: the
 // climate stage (pipeline/runtime.ts adds biomes and caches the fields) and
-// the erosion engine's water forcing (pipeline/erosionForcing.ts — since the
+// the erosion engine's water forcing (the engine's erosion_forcing.rs — since the
 // stage-2 coupling, the climate panel's sliders reach the erosion solve, so
 // the solve must evaluate exactly the chain the panel controls). Same
-// precedent as assembleFineForcing: the chain lives once, whoever needs it
+// precedent as the fine forcing: the chain lives once, whoever needs it
 // imports it.
 //
 // ON THE CLIMATE'S FIELD MESH (DEC-0036 phases 3 and 4, climateMesh.ts):

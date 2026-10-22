@@ -227,8 +227,8 @@ climate, the land fields and the discharge are mesh values (phases 7 and
 `world/query.ts` makes every raster view on open — the elevation by
 `rasteriseNodeField`, the lakes' depth by `waterFieldsFromMesh`, the
 forcing's `uplift` / `erodibility` (256 × 128) by
-`erosionForcing.coarseForcingFields` from `state.json` — the session's
-own functions, so the views are the session's rasters bit for bit.
+the engine's `forcingOfSnapshot` from `state.json` — the session's own
+functions, so the views are the session's rasters bit for bit.
 
 Note what a coarse save layer means for a field that is computed finely: the
 reduction is a *choice*, and `downsampleMax` is the wrong one for anything

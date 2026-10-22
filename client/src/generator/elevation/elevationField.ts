@@ -9,7 +9,7 @@ import { ABYSSAL_FLOOR, RIDGE_CREST, marginParameter, marginProfile } from './el
 import { continentalHypsometry, hypsometryRelief, hypsometryWeight } from './hypsometry'
 import { buildBlobIndex, raftField, sampleOwnerField, raftFieldIndexed, type BlobIndex } from '../crust/raftField'
 import type { Raft } from '../crust/raftTypes'
-import { detAsin, detExp, detPow, detSin } from '../core/detMath'
+import { detExp, detPow } from '../core/detMath'
 
 // Farthest a feature can influence in any direction — its segment half-length
 // plus the perpendicular cap radius. The spatial bucket index must be at
@@ -56,78 +56,6 @@ export interface FeatureBuckets {
   clampRows: boolean
   // The bucket indices nearFeatureBuckets writes, read before its next call.
   near: Int32Array
-}
-
-// Spatial hash over the terrain features, bucket size at least as large
-// as the maximum feature reach in each axis — any feature within range of
-// a given point is guaranteed to land in that point's own bucket or one of
-// its 8 immediate neighbors, so a per-pixel query only ever has to check
-// those 9 buckets instead of every feature that exists. Rendering the
-// full 2048x1024 raster against every feature directly (no bucketing)
-// was cheap early on but degraded badly as features accumulated over a
-// long run — confirmed empirically: bumping how far plates move per
-// epoch (a separate, since-reverted change) pushed the per-pixel-scans-
-// all-features version into hanging the main thread for 10+ seconds.
-//
-// Sized to featureMaxReach (a feature's longest semi-axis) rather than a
-// single isotropic radius, since features are now anisotropic ridge
-// segments — an in-range feature can still be up to its along-tangent
-// reach away in any world direction if it happens to point that way.
-//
-// Bucket count uses floor (not ceil) of width/height over that reach, and
-// the actual per-axis bucket size is then derived back from that count —
-// deliberately, so every bucket ends up at LEAST the max reach wide/tall,
-// never shorter. Sizing buckets at exactly the reach via ceil() leaves a
-// short leftover bucket wherever the map dimension isn't an exact multiple
-// of it, and that short bucket breaks the "±1 neighbor bucket" guarantee
-// right where it matters most: at the wrap seam. A point near y=0 can have
-// a feature within range as far down as the wrapped side, but a short last
-// bucket doesn't reach that far — so the feature gets silently missed only
-// for points near that specific wrap edge, producing a real, measured
-// elevation discontinuity there (confirmed with the previous radius: ~13x
-// the color difference of a typical interior row).
-//
-// THE SPHERE (DEC-0035, step 4d3): a row of buckets is still at least the
-// reach tall (a chart row is arc), so ±1 rows hold every feature in reach;
-// but a bucket's width in arc shrinks as sin θ toward a pole, so a row is
-// searched as far either side as a feature in it can reach in longitude —
-// asin(sin α / sin θ) for the cap of arc α about a feature at colatitude θ,
-// at the row's smallest sin θ — and whole where a cap in it can hold a pole.
-// The column count is even, as every sphere grid's (across a pole is
-// column + resX / 2). Without features (the Archean) any lattice serves,
-// and it is two buckets by one.
-export function buildFeatureBuckets(features: TerrainFeature[], domain: Domain): FeatureBuckets {
-  const { width, height } = domain
-  const sphere = domain.kind === 'sphere'
-  const none = features.length === 0
-  const reach = featureMaxReach(domain)
-  const fitX = Math.max(1, Math.floor(width / reach))
-  const bucketsX = none ? 2 : sphere ? Math.max(2, fitX - (fitX % 2)) : fitX
-  const bucketsY = none ? 1 : Math.max(1, Math.floor(height / reach))
-  const bucketSizeX = width / bucketsX
-  const bucketSizeY = height / bucketsY
-  const buckets: TerrainFeature[][] = Array.from({ length: bucketsX * bucketsY }, () => [])
-  for (const feature of features) {
-    const bx = Math.min(bucketsX - 1, Math.floor(feature.x / bucketSizeX))
-    const by = Math.min(bucketsY - 1, Math.floor(feature.y / bucketSizeY))
-    buckets[by * bucketsX + bx].push(feature)
-  }
-  const rowSpan = new Int32Array(bucketsY).fill(1)
-  if (sphere) {
-    const R = width / (2 * Math.PI)
-    const sinReach = detSin(Math.min(Math.PI / 2, reach / R))
-    for (let r = 0; r < bucketsY; r++) {
-      const sinMin = Math.min(detSin((r * bucketSizeY) / R), detSin(Math.min(Math.PI, ((r + 1) * bucketSizeY) / R)))
-      if (!(sinMin > sinReach)) {
-        rowSpan[r] = -1
-        continue
-      }
-      // A margin far above the rounding, as discBox's.
-      const span = Math.ceil((detAsin(sinReach / sinMin) * R * (1 + 1e-9) + 1e-6) / bucketSizeX)
-      rowSpan[r] = 2 * span + 1 >= bucketsX ? -1 : span
-    }
-  }
-  return { buckets, grid: domain.grid(bucketsX, bucketsY), bucketsX, bucketsY, bucketSizeX, bucketSizeY, rowSpan, clampRows: sphere, near: new Int32Array(3 * Math.max(3, bucketsX)) }
 }
 
 // The buckets a query at (x, y) — a point in the domain — must search,

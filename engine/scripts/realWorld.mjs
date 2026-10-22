@@ -23,6 +23,10 @@ const CLIENT = fileURLToPath(new URL('../../client', import.meta.url))
 const { createServer } = await import(`${CLIENT}/node_modules/vite/dist/node/index.js`)
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' })
 const L = (p) => server.ssrLoadModule(p)
+// The engine's WASM build, as the browser loads it: the world layer reads
+// a save's forcing through it (DEC-0044, fork 7b).
+const ENGINE = await import(`${CLIENT}/../engine/dist/wasm/casas-engine.js`)
+await ENGINE.default({ module_or_path: await (await import('node:fs/promises')).readFile(`${CLIENT}/../engine/dist/wasm/casas-engine_bg.wasm`) })
 const native = (await L('/scripts/engineNative.ts')).loadNativeEngine(fileURLToPath(new URL('../dist/casas-engine.node', import.meta.url)))
 const { openWorld } = await L('/src/world/query.ts')
 const { planFromRecipe, replayRefusal } = await L('/src/world/replay.ts')
@@ -32,7 +36,7 @@ const { default: JSZip } = await import(`${CLIENT}/node_modules/jszip/lib/index.
 
 const archive = await readFile(zipPath)
 const zip = await JSZip.loadAsync(archive)
-const world = await openWorld(archive)
+const world = await openWorld(archive, ENGINE)
 if (!world) throw new Error(`${zipPath} is not a readable world`)
 const recipe = { seed: world.recipe.seedText, width: world.width, height: world.height, shape: world.kind === 'SphereWorld' ? 'sphere' : 'torus', history: world.recipe.history }
 const refusal = replayRefusal(recipe.history, world.recipe.pipeline)

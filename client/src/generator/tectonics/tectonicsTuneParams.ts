@@ -67,7 +67,7 @@ export const TECTONICS_TUNING = {
   // THE HISTORY'S UPLIFT RATE (DEC-0036 phase 8g): the crust a boundary
   // thickens is its shortening times the crust's thickness, spread over
   // the range's cross-section — mass conserved in the section, ḣ = v Hc / W
-  // (elevation/upliftField.ts). v is a feature's shortening rate
+  // (the engine's uplift_field.rs). v is a feature's shortening rate
   // (TerrainFeature.shorteningKmPerMyr), W the capsule's integral across,
   // ELEVATION_TUNING.rangePerpRadiusM (234 km). Hc is the thickness of the
   // crust that the shortening thickens, m: the continental crust is 35–45

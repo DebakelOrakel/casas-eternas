@@ -109,7 +109,7 @@ export type WorldArchiveParts = ArcheanArchiveParts | TectonicArchiveParts
 // the lakes' depth (layers/lakeDepth.u8 — drawn again from the water body
 // per node, mesh/lakeBody.i32, and layers/waterBodies.json), not the
 // erosion's coarse forcing (layers/uplift.f32, layers/erodibility.f32 — a
-// function of state.json, erosionForcing.coarseForcingFields). A save
+// function of state.json, the engine's forcingOfSnapshot). A save
 // holding any of them, or a tectonic one without its mesh, is refused
 // (refuseFormerRasters).
 export const WORLD_ARCHIVE_FORMAT_VERSION = 8

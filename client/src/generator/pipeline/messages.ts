@@ -760,7 +760,7 @@ export interface WorkerWorldDataMessage {
   // elevation raster is its rasterisation, made again on load), absent in
   // the Archean. No raster rides along (DEC-0036, the save step): the
   // erosion's coarse forcing is derived from `snapshot` by its reader
-  // (pipeline/erosionForcing.coarseForcingFields).
+  // (the engine's forcingOfSnapshot).
   mesh?: MeshPayload
   // The climate per cell of its field mesh and the land fields per node of
   // `mesh` (world/save/climateFields.ts, DEC-0036 phase 7); absent before

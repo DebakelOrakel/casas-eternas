@@ -2,6 +2,7 @@ import { Scene } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
 import { createGeneratorCamera } from '../../camera/generatorCamera'
 import { MAP_WIDTH, TORUS_METERS_PER_CELL } from '../../generator/core/mapConfig'
+import { loadWasmEngine } from '../../generator/pipeline/engineWasm'
 import { relabel } from '../../i18n/relabel'
 import { createScaleBar, planeMeasure } from '../../map/ScaleBar'
 import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, UNITS_PER_METER } from '../../map/mapSceneSettings'
@@ -242,7 +243,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function showLevel(archive: Blob, uid: string): Promise<boolean> {
     const started = performance.now()
     const step = (what: string): void => console.info(`[incubator] ${what} ${Math.round(performance.now() - started)} ms`)
-    const world = await openWorld(new Uint8Array(await archive.arrayBuffer()))
+    const world = await openWorld(new Uint8Array(await archive.arrayBuffer()), await loadWasmEngine())
     if (!world) {
       console.warn('[incubator] the archive is not a world')
       return false

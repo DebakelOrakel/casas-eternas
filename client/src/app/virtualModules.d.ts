@@ -26,6 +26,7 @@ declare module 'casas-engine-wasm/casas-engine.js' {
   const init: (options: { module_or_path: string }) => Promise<unknown>
   export default init
   export const version: import('../generator/pipeline/engine').Engine['version']
+  export const forcingOfSnapshot: import('../generator/pipeline/engine').Engine['forcingOfSnapshot']
   export const World: import('../generator/pipeline/engine').EngineWorlds
   export const Replay: import('../generator/pipeline/engine').Engine['Replay']
   export const Preview: import('../generator/pipeline/engine').Engine['Preview']

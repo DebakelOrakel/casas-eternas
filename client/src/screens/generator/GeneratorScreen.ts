@@ -38,6 +38,7 @@ import type { SedimentBasin } from '../../generator/surface/surfaceTypes'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
 import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload, FieldPayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
+import { loadWasmEngine } from '../../generator/pipeline/engineWasm'
 import type { StageId } from '../../generator/pipeline/stages'
 import type { ContinentLabelPlacement } from '../../generator/render/continentLabelRenderer'
 import { elevationToMeters } from '../../generator/elevation/elevationScale'
@@ -5056,7 +5057,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // regenerated meanwhile.
   async function noteSavedWorldId(archive: ArrayBuffer | Uint8Array): Promise<string | null> {
     const generation = ++savedWorldIdGeneration
-    const world = await openWorld(archive)
+    const world = await openWorld(archive, await loadWasmEngine())
     const id = world ? await world.worldId().catch(() => null) : null
     if (generation !== savedWorldIdGeneration) return id
     savedWorldId = id

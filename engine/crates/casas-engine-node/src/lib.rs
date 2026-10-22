@@ -15,6 +15,15 @@ pub fn version() -> String {
     casas_engine_api::version().to_string()
 }
 
+/// The erosion's coarse forcing of a save's snapshot, `{ uplift,
+/// hardness }` (`casas_engine_api::forcing_of_snapshot`).
+#[napi(ts_args_type = "shape: string, snapshot: unknown")]
+pub fn forcing_of_snapshot(shape: String, snapshot: Tree) -> napi::Result<Tree> {
+    casas_engine_api::forcing_of_snapshot(shape_of(&shape)?, &snapshot.0)
+        .map(Tree)
+        .map_err(era)
+}
+
 fn era(e: EraError) -> napi::Error {
     napi::Error::from_reason(e.0)
 }

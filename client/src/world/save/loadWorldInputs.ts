@@ -1,4 +1,4 @@
-import { openWorld, waterBodiesOf, type SavedMesh } from '../query'
+import { openWorld, waterBodiesOf, type SavedMesh, type WorldEngine } from '../query'
 import type { WorldKind } from '../worldRecord'
 import type { SavedClimate } from './climateFields'
 import type { World } from '../query'
@@ -76,7 +76,7 @@ export interface WorldInputs {
   erosionControls: ErosionControls
   // The erosion engine's coarse forcing (docs/design/erosion-v2.md, P3),
   // derived from the save's snapshot as the generator derives it
-  // (erosionForcing.coarseForcingFields; a save layer until DEC-0036's save
+  // (the engine's forcingOfSnapshot; a save layer until DEC-0036's save
   // step). Null without a snapshot — the bake then erodes with neutral
   // forcing (no uplift, lithology-only rock contrast).
   uplift: GridLayer | null
@@ -120,8 +120,8 @@ export interface WorldInputs {
 // a PROJECTION over `world/query.openWorld` rather than a second reader of the
 // same archive — one open, one parse, one derivation of the id. Two readers of
 // one file is exactly the drift this module's own header warns about.
-export async function readWorldInputs(archive: ArrayBuffer | Uint8Array): Promise<WorldInputs | null> {
-  const world = await openWorld(archive)
+export async function readWorldInputs(archive: ArrayBuffer | Uint8Array, engine: WorldEngine): Promise<WorldInputs | null> {
+  const world = await openWorld(archive, engine)
   return world ? worldInputsFrom(world) : null
 }
 

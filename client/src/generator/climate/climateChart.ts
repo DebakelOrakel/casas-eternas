@@ -7,7 +7,6 @@ import { lapseAt, type ClimateCells } from './climatePoints'
 import { OCEAN_PRECIP } from './precipitation'
 import { OCEAN_AMPLITUDE } from './seasonality'
 import type { RefinedClimate, RefinedReliability, RefinedStorms } from './refinement'
-import type { Weather } from './weather'
 
 // THE CLIMATE'S CHART (DEC-0036 fork 5: "the chart is the address and the
 // textures"): the climate's field-mesh fields on the CLIMATE_RES_X ×
@@ -117,21 +116,6 @@ export interface WeatherChart {
   monsoonIndex: Float32Array
   currents: Float32Array
   currentAnomaly: Float32Array
-}
-
-export function weatherChart(weather: Weather): WeatherChart {
-  const { terrain, mesh } = weather
-  const { cm } = terrain
-  const landPixels = chartLand(terrain)
-  return {
-    temperature: chartField(cm, mesh.temperature),
-    wind: chartVectorField(cm, mesh.wind.e, mesh.wind.s),
-    seasonalAmplitude: chartLandField(cm, mesh.seasonalAmplitude, (i) => terrain.land[i] === 1 && mesh.seasonalAmplitude[i] !== OCEAN_AMPLITUDE, OCEAN_AMPLITUDE, landPixels),
-    precipitation: chartLandField(cm, mesh.seasonal.annual, (i) => terrain.land[i] === 1 && mesh.seasonal.annual[i] !== OCEAN_PRECIP, OCEAN_PRECIP, landPixels),
-    monsoonIndex: chartLandField(cm, mesh.seasonal.index, (i) => terrain.land[i] === 1 && mesh.seasonal.index[i] !== OCEAN_PRECIP, OCEAN_PRECIP, landPixels),
-    currents: chartSeaVectorField(cm, mesh.currents.e, mesh.currents.s, landPixels),
-    currentAnomaly: chartSeaField(cm, mesh.currentAnomaly, landPixels),
-  }
 }
 
 // A climate's annual cells (climatePoints.ClimateCells) as charts — a save's

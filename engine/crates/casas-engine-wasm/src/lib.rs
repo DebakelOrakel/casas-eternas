@@ -14,6 +14,15 @@ pub fn version() -> String {
     casas_engine_api::version().to_string()
 }
 
+/// The erosion's coarse forcing of a save's snapshot, `{ uplift,
+/// hardness }` (`casas_engine_api::forcing_of_snapshot`).
+#[wasm_bindgen(js_name = forcingOfSnapshot)]
+pub fn forcing_of_snapshot(shape: &str, snapshot: &JsValue) -> Result<JsValue, JsError> {
+    casas_engine_api::forcing_of_snapshot(shape_of(shape)?, &from_js(snapshot)?)
+        .map(to_js)
+        .map_err(era)
+}
+
 fn era(e: EraError) -> JsError {
     JsError::new(&e.0)
 }

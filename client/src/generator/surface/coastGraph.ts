@@ -84,7 +84,7 @@ export interface CoastGraphInputs {
   // (climate/climatePoints.ts).
   windE: ArrayLike<number>
   windS: ArrayLike<number>
-  // The erodibility K factor per slot (erosionForcing.coarseForcingFields'
+  // The erodibility K factor per slot (the engine's forcingOfSnapshot's
   // hardness at the nodes), or absent (neutral).
   hardness?: ArrayLike<number>
   // The river graph on the same mesh (its cells are vertex ids), or null.
