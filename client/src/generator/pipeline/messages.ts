@@ -227,7 +227,7 @@ export interface MeshPayload {
   nodes: ArrayBuffer
   connectivity: ArrayBuffer
   z: ArrayBuffer
-  // The sediment column (phase 5.2, mesh/meshColumn.ts; `mesh/column.bin`,
+  // The sediment column (phase 5.2, the engine's mesh/mesh_column.rs; `mesh/column.bin`,
   // formatVersion 4). Absent in a save from before it.
   column?: ArrayBuffer
   // What the last epoch left per node, Float32 in the mesh's numbering
@@ -259,7 +259,7 @@ export interface WorkerRestoreWorldMessage {
   // step). A tectonic restore without `mesh` builds the mesh the hand-over
   // builds (coupledEpoch.createCoupledTerrain); the screen refuses such a
   // save.
-  // Absent, deserializePlateSimulation makes a new field (the screen refuses a
+  // Absent, the engine's `deserialize_plate_simulation` makes a new field (the screen refuses a
   // save without one since the field moved onto its mesh, formatVersion 8).
   mantle?: FieldPayload
   // Set when the saved world was still in the Archean; `snapshot` is then unused.
@@ -325,8 +325,9 @@ export interface WorkerGenesisInitMessage {
   // Less stirring leaves a finer-grained field, so more and smaller cratons and
   // plates; more stirring collects crust into fewer, larger continents.
   //
-  // This used to be createMantleField's INITIAL smoothing, which measurement showed
-  // washes out long before the phase is stopped. See DEFAULT_INITIAL_SMOOTHING.
+  // This used to be the mantle field's INITIAL smoothing, which measurement showed
+  // washes out long before the phase is stopped. See the engine's
+  // DEFAULT_INITIAL_SMOOTHING (mantle/mantle_field.rs).
   mantleDiffusion?: number
   // The land share the Archean makes crust toward, a fraction of the
   // world's area (ArcheanParams.landShare, archean/archeanLand.ts).
@@ -565,7 +566,7 @@ export interface WorkerClimateDataMessage {
 // The climate step's refinement: its values per cell of the climate's
 // field mesh (`refined`, DEC-0036 phase 5 — what the screen saves and
 // hands back on a load, and what the marks read), and the same on the
-// climate's chart once (climateChart.refinedChart, for the textures and
+// climate's chart once (the engine's `refined_chart`, for the textures and
 // readouts only): `months` twelve-month stacks, month 0 = January. Build
 // step 2 of docs/design/climate-refinement.md; B, Köppen and the rest add
 // their fields here.
@@ -635,11 +636,11 @@ export interface WorkerHydrologyDataMessage {
   // Connected river polylines for the scene-space ribbon overlay: `riverPoints`
   // is Float32 [x, y, widthPx, …] (texel coords) with all polylines concatenated,
   // `riverLengths` is Uint32 point-counts per polyline. See
-  // riverGraph.riverPolylinesFromGraph.
+  // the engine's `river_polylines_from_graph`.
   riverPoints: ArrayBuffer
   riverLengths: ArrayBuffer
   // The flow regime per polyline (Uint8, hydrology.RIVER_REGIME_CODE), one
-  // entry per length above. See riverPolylinesFromGraph.
+  // entry per length above. See the engine's `river_polylines_from_graph`.
   riverRegimes: ArrayBuffer
   // Lake water depth per full-res cell (Float32, 0 = dry). Only populated when the
   // hydrology was re-routed (lakes don't depend on the river-density knob); a
@@ -649,7 +650,7 @@ export interface WorkerHydrologyDataMessage {
   // Biomes RE-classified with the riparian moisture bonus from rivers/lakes
   // (Uint8, full-res — replaces the climate step's water-free biomes, and shares
   // its resolution so the display never switches grids mid-run): the nodes'
-  // (DEC-0036 phase 7, hydrology.riparianPrecipitationOn), each land pixel the
+  // (DEC-0036 phase 7, the engine's `riparian_precipitation_on`), each land pixel the
   // heaviest land corner's. Classified at the CANONICAL channel density, so
   // like lakeDepth it only arrives on a re-route — a density-only pass sends
   // it empty, meaning "biomes unchanged".
@@ -662,7 +663,7 @@ export interface WorkerHydrologyDataMessage {
   // Watershed labels (Uint16, full-res, 0 = unlabelled) and the discharge
   // (Float32, full-res, the hydrology's unit) + its land maximum — the
   // watershed overlay and the map hover's flow readout: the terrain mesh's
-  // per node (hydrology.watershedsOn, the discharge on its substrate), each
+  // per node (the engine's `watersheds_on`, the discharge on its substrate), each
   // land pixel its triangle's heaviest land corner's. Re-route only, like
   // lakeDepth.
   watersheds: ArrayBuffer
@@ -702,7 +703,7 @@ export interface WorkerHydrologyDataMessage {
 // set can grow per sub-step without changing the message shape. Each is Float32,
 // resX*resY, land only (ECOLOGY_OCEAN sentinel on water). See ecology/ecologyField.ts.
 // The answer to ecologyMonth: the field per pixel of the world raster, one
-// byte each (ecologyField.encodeFineField).
+// byte each (the engine's `encode_fine_field`).
 export interface WorkerEcologyMonthDataMessage {
   type: 'ecologyMonthData'
   field: string
@@ -719,7 +720,7 @@ export interface WorkerEcologyDataMessage {
   resY: number
   fields: { id: string; data: ArrayBuffer }[]
   // The fields per pixel of the world raster, one byte each
-  // (ecologyField.encodeFineField): the map and its readout.
+  // (the engine's `encode_fine_field`): the map and its readout.
   fine: { resX: number; resY: number; fields: { id: string; data: ArrayBuffer }[] }
 }
 

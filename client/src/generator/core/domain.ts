@@ -242,7 +242,7 @@ export interface DomainGrid {
   // A semi-Lagrangian departure (step 4d5): the bilinear taps of the point
   // reached from cell (gx, gy)'s centre by (dx, dy) cells — equator cells,
   // so a length — in that cell's local frame, written into `out` for
-  // sampleTaps. The torus: sampleBilinear's taps at (gx + dx, gy + dy), so a
+  // a tap sample (the engine's `sample_taps`). The torus: sampleBilinear's taps at (gx + dx, gy + dy), so a
   // sample through them is that sample's bits. The sphere: the point
   // reached along the great circle (Domain.advance), so an east-west step
   // near a pole is the distance it says and not 1 / cos φ of it, and a step
@@ -372,8 +372,8 @@ class TorusGrid implements DomainGrid {
     return sampleBilinearGrid(field, this.resX, this.resY, gx, gy)
   }
 
-  // The arithmetic of erosionForcingFields.upsampleAt as it was written,
-  // operation for operation.
+  // The arithmetic of erosionForcingFields.upsampleAt (now the engine's
+  // `upsample_at`) as it was written, operation for operation.
   interpolate(field: Float32Array, gx: number, gy: number): number {
     const resX = this.resX
     const x0 = Math.floor(gx)
@@ -387,7 +387,8 @@ class TorusGrid implements DomainGrid {
     return (field[r0 + c0] * (1 - fx) + field[r0 + c1] * fx) * (1 - fy) + (field[r1 + c0] * (1 - fx) + field[r1 + c1] * fx) * fy
   }
 
-  // sampleBilinearGrid's index arithmetic, kept for sampleTaps.
+  // sampleBilinearGrid's index arithmetic, kept for a tap sample (the
+  // engine's `sample_taps`).
   tapsAt(gx: number, gy: number, dx: number, dy: number, out: BilinearTaps, at: number): void {
     const resX = this.resX
     const resY = this.resY

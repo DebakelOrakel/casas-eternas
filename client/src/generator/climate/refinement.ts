@@ -30,7 +30,8 @@ import { detCos, detHypot, detSin } from '../core/detMath'
 // static climate runs on (climateMesh.ts), both shapes, one path, the
 // lengths in metres. No raster, no pole row. What reads it outside the
 // climate samples its cells at its own points (climatePoints.ts, phase 7);
-// the screen's textures are its chart (climateChart.refinedChart).
+// the screen's textures are its chart (the engine's
+// refined_chart, climate/climate_chart.rs).
 
 // The storms' fields, in the order the save writes them.
 export const REFINED_STORMS = ['cyclone', 'tornado', 'blizzard', 'dust', 'thunder'] as const
@@ -105,8 +106,8 @@ export function refinementFits(domain: Domain, cells: number, spacingM: number):
 }
 
 // `temperature` and `baseWind` are the climate the step shows per cell of
-// the climate's field mesh (climate/weather.computeWeather on the same
-// terrain: WeatherMesh.temperature, .wind), `params` the levers it was
+// the climate's field mesh (the engine's compute_weather on the same
+// terrain: its WeatherMesh.temperature, .wind), `params` the levers it was
 // computed with. `onProgress` hears the share done, 0..1, a few times a
 // run. `domain`: what the elevation raster covers, one cell per unit.
 export function refineClimate(
@@ -372,7 +373,7 @@ export function refineClimate(
 }
 
 // The annual fields of a refinement, in the forms the history's climate
-// has them (weather.computeWeather), so everything that reads a climate
+// has them (the engine's compute_weather), so everything that reads a climate
 // reads this one unchanged: the mean temperature; the mean rain (a mean of
 // rates), OCEAN_PRECIP on the sea; the seasonal range (warmest month minus
 // coldest), OCEAN_AMPLITUDE on the sea; the signed monsoon index from the

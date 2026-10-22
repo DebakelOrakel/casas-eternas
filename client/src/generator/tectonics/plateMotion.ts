@@ -14,11 +14,12 @@
 // `EulerMotion`, an Euler pole (a unit vector in the globe's frame,
 // Domain.noise.frame) and an angular rate about it. The torus keeps the
 // drift + spin form above (`RigidMotion`), its data and its arithmetic
-// untouched. One type for both, `PlateMotion`; the functions below are the
+// untouched. One type for both, `PlateMotion`; the engine's functions
+// (engine/crates/casas-engine/src/tectonics/plate_motion.rs) are the
 // interface the rest of tectonics uses (the velocity at a point, a point
 // moved forward and back, a motion fitted to the mantle flow, relaxed
 // toward one, or made to move with a velocity at a point), and each one
-// tells the two forms apart by the motion's own fields (isEulerMotion) —
+// tells the two forms apart by the motion's own fields —
 // a sphere world holds only Euler motions, a torus world only rigid ones.
 export type PlateMotion = RigidMotion | EulerMotion
 

@@ -197,7 +197,7 @@ const EPOCH_INTERVAL_MS = 180
 // It used to divide by a hardcoded 1.0. That happens to be well calibrated for the
 // TECTONIC phase — measured p90(|v|) climbs to 0.97 by epoch 100 over two seeds, so
 // the ramp there very nearly uses its full range. It is wrong for the Archean, whose
-// field sustainMantleVigour renormalises to a fixed RMS: p90 is 0.61, and the bulk
+// field the engine's `sustain_mantle_vigour` renormalises to a fixed RMS: p90 is 0.61, and the bulk
 // of the map is far below that. The measured median tint alpha in the Archean is
 // 0.06 out of a possible 0.55, falling from 0.16 by epoch 25 — a 6% wash in which
 // the field's real motion (correlation 0.9 per 25 epochs) is simply not visible.
@@ -1529,7 +1529,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the panel selector, on an absolute 0..1 scale.
   let lastEcologyFields: Partial<Record<EcologyFieldId, Float32Array>> = {}
   // The same fields per pixel of the world raster, one byte each
-  // (ecologyField.encodeFineField) — what the map paints and the readout
+  // (the engine's `encode_fine_field`) — what the map paints and the readout
   // reads. Empty for a world loaded from a save until the step runs.
   let lastEcologyFine: Partial<Record<EcologyFieldId, Uint8Array>> = {}
   let ecologyFineResX = 0
@@ -5936,7 +5936,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE PANEL FOLLOWS THE PICK (2026-09-27). A resource picked: its abundance
   // slider alone. Nothing picked (the off entry) or the carrying capacity:
   // the three levers — they shape exactly that map and nothing else
-  // (concentrationPipeline in ecologyField.ts scales, concentrates and
+  // (the engine's `concentration_pipeline` in ecology_field.rs scales, concentrates and
   // provinces the aggregate; the resource fields never see them), so beside
   // a resource they were three controls for a map you were not looking at.
   // Queried at call time rather than held: updateOverlays runs from handlers

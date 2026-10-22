@@ -19,7 +19,8 @@
 //    -> sampleBilinearGrid
 //  - rafts' `sampleMembershipField` (gone 2026-10-11 with its raster, DEC-0036)
 //    and worldSave's `sampleAt` -> sampleNearestWorld
-//  - ecology's and worldSave's `downsampleMax` -> downsampleMax
+//  - ecology's and worldSave's `downsampleMax` -> downsampleMax (the engine's
+//    `downsample_max` since 2026-10-22)
 // plus oceanAge's own bilinear-in-world-coordinates sampler -> sampleBilinearWorld
 // (the ocean age has been on its field mesh since 2026-10-11, DEC-0036).
 
@@ -138,7 +139,8 @@ export function sampleNearestWorld(
 
 // Full-resolution raster down to a coarse grid by the MEAN over each
 // footprint — the right reduction for a continuous field like elevation,
-// where downsampleMax would raise every coarse cell to its highest peak.
+// where a MAX reduction (the engine's `downsample_max`) would raise every
+// coarse cell to its highest peak.
 // The derived bake tiers lean on this being deterministic: same input,
 // same bytes, whoever computes it (docs/decisions/derived-bake-tiers.md).
 export function downsampleBox(fullRes: Float32Array, fullW: number, fullH: number, resX: number, resY: number): Float32Array {

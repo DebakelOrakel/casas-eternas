@@ -55,7 +55,7 @@ export function isLandAt(elevation: number, dryLand = false): boolean {
 // bound it; the anchor is only the unit. Since phase 8e there is no floor
 // in the history either: a trench on old floor stands 10–11 km deep
 // (tectonics/trench.ts; the Marianas, 10.9 km, are −1.21). The synthesis
-// (elevationField.computeElevation) keeps −1 under its trench deck.
+// (the engine's `compute_elevation`) keeps −1 under its trench deck.
 //
 // The reference heights the rest of the pipeline builds on. Earth values, so
 // they can be checked rather than argued about:
@@ -162,7 +162,7 @@ export function marginProfile(t: number, abyssalFloor: number): number {
 }
 
 // The margin parameter is its own smoothstep over the raw metaball field, with a
-// far WIDER band than rafts' own FIELD_LO/FIELD_HI membership threshold (0.35 to
+// far WIDER band than the engine's raft FIELD_LO/FIELD_HI membership threshold (0.35 to
 // 0.65). Deliberately decoupled: membership answers "is this continental crust"
 // — which drives plate typing, accretion, mantle insulation and rift eligibility
 // — while this answers "what height is the crust here", and the two questions

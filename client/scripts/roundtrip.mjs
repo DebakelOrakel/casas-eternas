@@ -38,7 +38,7 @@ const M = {
   inputs: await L('/src/world/save/loadWorldInputs.ts'),
   key: await L('/src/world/identity.ts'),
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
-  amplify: await L('/src/generator/surface/amplify.ts'),
+  bake: await L('/src/world/meshArtifacts.ts'),
   hydro: await L('/src/generator/surface/hydrology.ts'),
   domain: await L('/src/generator/core/domain.ts'),
   history: await L('/src/world/save/worldHistory.ts'),
@@ -376,10 +376,10 @@ check('the id is a pure 16-hex hash (label dropped 2026-08-12)', /^[0-9a-f]{16}$
 // catch a constant that was never listed — that is the gap which let three
 // values fall out of the amplification key (fixed 2026-08-09), and only reading
 // the module catches it. What it does catch is a listed constant the hash skips.
-const base = M.key.derivePipelineVersion(M.amplify.AMPLIFY_CONSTANTS)
-const inert = Object.keys(M.amplify.AMPLIFY_CONSTANTS).filter((k) =>
-  M.key.derivePipelineVersion({ ...M.amplify.AMPLIFY_CONSTANTS, [k]: M.amplify.AMPLIFY_CONSTANTS[k] + 1 }) === base)
-check(`all ${Object.keys(M.amplify.AMPLIFY_CONSTANTS).length} listed constants move the pipeline version`,
+const base = M.key.derivePipelineVersion(M.bake.MESH_BAKE_CONSTANTS)
+const inert = Object.keys(M.bake.MESH_BAKE_CONSTANTS).filter((k) =>
+  M.key.derivePipelineVersion({ ...M.bake.MESH_BAKE_CONSTANTS, [k]: M.bake.MESH_BAKE_CONSTANTS[k] + 1 }) === base)
+check(`all ${Object.keys(M.bake.MESH_BAKE_CONSTANTS).length} listed constants move the pipeline version`,
   inert.length === 0, inert.join(', '))
 
 // --- 4. the artifact store ---------------------------------------------------

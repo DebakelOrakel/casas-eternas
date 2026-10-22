@@ -6,7 +6,7 @@ import { SLOPE_RECALIBRATION } from '../elevation/elevationScale'
 // as a number instead of flagging the typo — the compile-time check that makes a
 // rename of this size safe in the first place. So the gap is stated rather than
 // hidden: whatever eventually hashes ecology's tuning must flatten these two in.
-// (AMPLIFY_CONSTANTS is what silent omission looks like — see surface/amplify.ts.)
+// (The amplification's constants are what silent omission looks like — see the engine's surface/amplify.rs.)
 
 export const ECOLOGY_TUNING = {
   // Weights of each subsistence source in the saturating carrying-capacity combine
@@ -20,7 +20,7 @@ export const ECOLOGY_TUNING = {
   wGame: 0.45,
   wPasture: 0.35,
 
-  // Fish tuning (prepareEcology). A sea's richness = a base + the shelf share
+  // Fish tuning (the engine's `prepare_ecology`). A sea's richness = a base + the shelf share
   // + the upwelling + the winter mixing, each weighted; freshwater = big
   // rivers + lake presence. The upwelling counts in full at
   // `fishUpwellingFull` (the refinement's units: at 3 it cools the sea by
@@ -85,7 +85,7 @@ export const ECOLOGY_TUNING = {
   fishRiverW: 0.6,
   fishLakeW: 0.5,
 
-  // Arable (prepareEcology): the coldest month that still grows, °C; a big
+  // Arable (the engine's `prepare_ecology`): the coldest month that still grows, °C; a big
   // river's water on the fields, mm/yr at full flow; the harvest's loss per
   // unit of the rain's variability.
   // Measured on Earth (scratch run of the refined climate with its rivers,
@@ -102,7 +102,7 @@ export const ECOLOGY_TUNING = {
   arableFrostC: 5,
   arableIrrigationMm: 1000,
   arableRiskW: 1,
-  // Water in dry land (prepareEcology): an oasis
+  // Water in dry land (the engine's `prepare_ecology`): an oasis
   // waters its cell's fields as a big river does (`oasisW`); a herd drinks
   // where the water table lies within `wellDepthM` (a hand-dug well), the
   // cell's share of it × `wellW`; below `pastureDryMm` of rain the grazing
@@ -137,8 +137,8 @@ export const ECOLOGY_TUNING = {
   // its four neighbours of another biome, averaged within `ecotoneReachM`.
   // On the terrain mesh (DEC-0036 phase 7) the boundary's length per area
   // in the unit a raster of `ecotoneCountedOnM` pixels counted it in — the
-  // 7.8 km pixel the share was set on (mesh/meshNeighbourhood.
-  // boundaryDensity) — so the figure does not move with the mesh's spacing.
+  // 7.8 km pixel the share was set on (the engine's
+  // `boundary_density`) — so the figure does not move with the mesh's spacing.
   // (Before the fields went per pixel: the share of a climate cell's fine
   // neighbour pairs; one straight border through the cell was some 0.06.
   // Per pixel the land's game mean stays 0.21.) Measured on Earth
@@ -180,7 +180,7 @@ export const ECOLOGY_TUNING = {
   goldLodeKeep: 0.5,
   gemKeep: 0.5,
 
-  // Salt (prepareEcology): below this precip (a month's rate where the climate
+  // Salt (the engine's `prepare_ecology`): below this precip (a month's rate where the climate
   // has months) a cell reads arid; coasts evaporate best; a salt flat
   // counts `saltFlatW`.
   // Measured on Earth (scratch run of the refined climate with its rivers

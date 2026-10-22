@@ -5,8 +5,8 @@
 //
 //  - **The tectonic phase is fixed at 1 Ma per epoch.** elevation/elevationField's
 //    oceanFloorAtAge uses GDH1 (Stein & Stein 1992) for seafloor subsidence, and
-//    that model's published coefficients are in millions of years; oceanAge's
-//    MAX_SEAFLOOR_AGE = 180 is Earth's ~180 Ma oldest seafloor read on the same
+//    that model's published coefficients are in millions of years; the engine's
+//    MAX_SEAFLOOR_AGE = 180 (tectonics/ocean_age.rs) is Earth's ~180 Ma oldest seafloor read on the same
 //    scale. Changing this number would silently rescale ocean depth.
 //  - **The Archean phase is free**, so it is chosen to make the phase last about as
 //    long as the real Archean did. That eon ran 4.03-2.5 Ga, roughly 1530 Ma; the

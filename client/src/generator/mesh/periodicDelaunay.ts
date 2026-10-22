@@ -72,7 +72,7 @@ import { detAsin, detAtan2, detCos, detSin, sq } from '../core/detMath'
 // exact on the torus and close on the globe (an edge's length and angles
 // to O(ℓ²/R²)); no predicate of the triangulation reads it there. Step
 // 4d5 measured both callers against the exact sphere: the cotangents are
-// close enough as they are (meshErosion.cotAtApex), the normals were not
+// close enough as they are (the engine's `cot_at_apex`), the normals were not
 // until each corner's frame was its own (meshSampler: a vector found in
 // the first corner's frame is carried to the others, Domain.transport).
 //
@@ -195,7 +195,7 @@ export class PeriodicTriangulation {
   // a twin, a vertex's edge or a vertex (setTriangle, pair, freeTriangle,
   // newVertex, remove). A value derived from the mesh and stamped with it
   // is still the mesh's while the version is the same — the Voronoi areas
-  // below, the engine index's cotangents (mesh/meshErosion.ts). Code that
+  // below, the engine index's cotangents (the engine's mesh/mesh_erosion.rs). Code that
   // writes the arrays directly (buildFromTriangles) does so before anything
   // is derived.
   private version = 0
@@ -223,9 +223,9 @@ export class PeriodicTriangulation {
 
   // An independent copy in the same state: the same slots, free lists,
   // capacities, walk start and counters, so every later operation on the
-  // copy does what it would have done on the original. What
-  // meshBuild.triangulatePoints starts each epoch from (the lattice built
-  // once). The derived caches start empty.
+  // copy does what it would have done on the original. The engine's
+  // `triangulate_points` starts each epoch from such a copy (the lattice
+  // built once). The derived caches start empty.
   clone(): PeriodicTriangulation {
     const copy = new PeriodicTriangulation(this.domain, 4)
     copy.vx = this.vx.slice()

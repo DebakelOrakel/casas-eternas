@@ -9,10 +9,11 @@ import { ELEVATION_TUNING } from './elevationTuneParams'
 // most DYNAMIC_RASTER_X × DYNAMIC_RASTER_Y, plus the row at y = H (the
 // south pole on the sphere, row 0 again on the torus), and read bilinearly
 // from it (a mantle cell, 125–156 km, spans 4–5 of its cells). Measured
-// 2026-10-11 at 2048 × 1024 against dynamicTopographyAt per pixel: at most
+// 2026-10-11 at 2048 × 1024 against the per-point term (now the engine's
+// `dynamic_topography_at`) per pixel: at most
 // 6 m (torus) and 9 m (sphere) off a term of ±550 m, for 13–14 ms instead of
-// 340–440 (a locate per pixel). The render only; the coupled epoch's
-// baseline reads dynamicTopographyAt per node.
+// 340–440 (a locate per pixel). The render only; the engine's coupled
+// epoch reads `dynamic_topography_at` per node.
 const DYNAMIC_RASTER_X = 256
 const DYNAMIC_RASTER_Y = 128
 

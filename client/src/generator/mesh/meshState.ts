@@ -17,7 +17,7 @@ import type { PeriodicTriangulation } from './periodicDelaunay'
 //              hole, and thickness times area is conserved exactly.
 //
 // A STACKED field holds `depth` values per node, laid out node-major
-// (`data[v * depth + k]`): the sediment column's layers (mesh/meshColumn.ts,
+// (`data[v * depth + k]`): the sediment column's layers (the engine's mesh/mesh_column.rs,
 // phase 5.2), every layer indexed by epoch across the whole mesh, so the
 // k-th value of one node and the k-th of its neighbour are the same layer
 // and inherit value by value under the same rule as a plain field.

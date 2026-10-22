@@ -89,7 +89,7 @@ export interface RenderSimulationOptions {
   // precomputedElevations is supplied (that array is already the final
   // full-res field).
   elevationScale?: number
-  // Terminal-basin truth from the hydrology (LakeFields.dryBasin/saltFlat):
+  // Terminal-basin truth from the hydrology (the engine's LakeFields, dry_basin/salt_flat):
   // dry sub-sea basin floor renders as LAND — salt-crust colour inside the
   // evaporite band, pale basin rock above it — shaded by the same hillshade
   // as everything else, so the exposed bathymetry keeps its real relief. Set

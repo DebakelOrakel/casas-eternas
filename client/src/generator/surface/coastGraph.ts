@@ -17,7 +17,7 @@ import { findShore } from './coastal'
 //   exposure  wave energy from the wind: speed² × fetch, the fetch being
 //             the open water UPWIND of the node (the direction the waves
 //             come from) up to `coastFetchCapKm`, marched in steps of
-//             `coastGraphFetchStepM` (coastal.shoreExposure), normalised to
+//             `coastGraphFetchStepM` (the engine's `shore_exposure`), normalised to
 //             the world's 90th-percentile coast and clamped, so it is
 //             relative (0..1; the top tenth reads 1). Measured 2026-09-22
 //             on golden alpha against the maximum instead: the median

@@ -8,7 +8,7 @@ import {
 
 // A FINE LEVEL'S TILE ON THE SPHERE (docs/decisions/sphere-tiles.md,
 // DEC-0041): the cube atlas's tile (cubeAtlas.ts) as a TileSite, so that
-// meshTile.buildTileMeshOn builds it as it builds a torus tile.
+// the engine's `build_tile_mesh_on` builds it as it builds a torus tile.
 //
 // - THE ATLAS of a level: n × n tiles a face, n the face's quarter of the
 //   equator in macro cells over the level's tile side (fork 9: a tile spans
@@ -33,7 +33,7 @@ import {
 
 // The rotation of each level's cube (fork 4): the face edges of one level
 // cross the inside of the next level's tiles. Constants of the level's
-// pipeline version (cubeConstants).
+// pipeline version (the engine's `cube_constants`).
 const LEVEL_ROTATIONS: Readonly<Record<number, { axis: Vec3; angle: number }>> = {
   2: { axis: [0, 0, 1], angle: 0 },
   3: { axis: [0.48, 0.6, 0.64], angle: 0.7 },

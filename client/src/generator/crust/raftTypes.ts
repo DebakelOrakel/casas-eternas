@@ -30,7 +30,7 @@ export interface Raft {
   name: string | null
   blobs: RaftBlob[]
   // Freshly-split halves get this stamp so they don't instantly re-weld:
-  // mergeOverlappingRafts skips any pair where either side is still within
+  // the engine's merge_overlapping_rafts skips any pair where either side is still within
   // its window. Lets a breakup stay visible instead of splitting and merging
   // back on consecutive epochs (a band-aid over the fixed-Euler-pole ceiling
   // — see the raft decision doc). Absent/0 = mergeable now.
@@ -40,8 +40,8 @@ export interface Raft {
 // A persisted collision-belt record: the accumulated history of every raft
 // suture, kept for the world's life (NOT pruned like terrain features) so
 // deep-time orogens survive as the Ecology layer's provenance for tin, lode
-// gold, and metamorphic gems. One is appended per RaftMergeEvent (see
-// plateSimulation.stepEpoch); `epoch` stamps when the collision happened, so an
+// gold, and metamorphic gems. One is appended per RaftMergeEvent (see the
+// engine's step_epoch, tectonics/plate_simulation.rs); `epoch` stamps when the collision happened, so an
 // old suture can read differently from a fresh one. See docs/decisions/ecology.md P1.
 export interface Suture {
   x: number

@@ -2,8 +2,9 @@
 // paired negative depression on the subducting side of a subduction/
 // island arc (see plateSimulation.ts's trench deposit). Both are oriented
 // ridge features; the distinction keeps a trench from ever merging into
-// its own arc's range feature in findOrCreateFeatureIndex (same plate
-// pair, only offset apart), and lets computeElevation give a trench a
+// its own arc's range feature in the engine's `find_or_create_feature_index`
+// (same plate pair, only offset apart), and lets the engine's
+// `compute_elevation` give a trench a
 // narrower, deeper cross-section than a broad range.
 export type FeatureKind = 'range' | 'trench'
 
@@ -20,7 +21,7 @@ export interface TerrainFeature {
   thickness: number
   // Unit vector along the boundary curve at this feature's location (the
   // ridge's own long axis) — perpendicular to the seed-to-seed normal at
-  // deposit time. computeElevation uses it for an anisotropic falloff:
+  // deposit time. The engine's `compute_elevation` uses it for an anisotropic falloff:
   // long along this tangent (so features spaced along one boundary blend
   // into a single continuous linear range instead of a row of round
   // blobs), narrow across it (so the range reads as a ridge with a crest,
@@ -32,25 +33,26 @@ export interface TerrainFeature {
   tangentY: number
   kind: FeatureKind
   // The two plates on either side of the boundary that created this
-  // feature — kept as an unordered pair (see findOrCreateFeatureIndex)
+  // feature — kept as an unordered pair (see the engine's
+  // `find_or_create_feature_index`)
   // even for asymmetric uplift, where only one side actually builds
   // terrain, so a *different* boundary that happens to share only one of
   // these plates can't merge into and deposit onto this feature. Confirmed
   // empirically without this: an unrelated rift boundary drifted within
-  // MERGE_RADIUS_M of an established fold-mountain feature (both merely
+  // the engine's MERGE_RADIUS_M of an established fold-mountain feature (both merely
   // touching the same plate on their own far sides) and canceled it —
   // thickness went from a steady climb to strongly negative within ~25
   // epochs.
   plateA: number
   plateB: number
   // Which plate's motion actually carries this feature — one of
-  // plateA/plateB *by value* (not by position, since detectBoundaries can
+  // plateA/plateB *by value* (not by position, since the engine's `detect_boundaries` can
   // relabel which plate is "A" vs "B" for the same physical boundary
   // across epochs) for asymmetric uplift, where only the owning side's
   // own crust the arc/range physically rides on. 'both' for symmetric
   // collisions (fold mountains, mid-ocean ridges): averages both plates'
   // velocity at the feature's position instead of attaching to either
-  // plate alone (see advanceTerrainFeatures) — attaching a symmetric
+  // plate alone (see the engine's `advance_terrain_features`) — attaching a symmetric
   // collision's shared range to just one side was confirmed empirically
   // to pull the two sides' deposits apart (45px within 40 epochs),
   // fragmenting one ridge into two separately-drifting mounds.
@@ -66,7 +68,7 @@ export interface TerrainFeature {
   // range stays put.
   subsides: boolean
   // Epochs since this feature last received a deposit — reset to 0 in
-  // plateSimulation.ts's stepEpoch whenever it's touched, incremented
+  // the engine's `step_epoch` whenever it's touched, incremented
   // every other epoch. Drives pruning: without it, every feature ever
   // created (even ones whose boundary went inactive epochs ago, decaying
   // toward zero thickness) stays in this array forever, since nothing
@@ -90,7 +92,7 @@ export interface TerrainFeature {
   // convergence its boundary points closed in the epoch, times the boundary
   // character's rate and the age multiplier (the deposit before
   // upliftPerKm), as a moving mean with a half-life of
-  // TECTONICS_TUNING.shorteningHalfLifeMa (DEC-0036 phase 8g). Only the
+  // the engine's TECTONICS_TUNING.shortening_half_life_ma (DEC-0036 phase 8g). Only the
   // boundary pass sets it: a hotspot or a flood basalt shortens nothing.
   // The history's uplift rate is made from it (the engine's uplift_field.rs).
   // Optional so old deserialized features (which lack it) read as 0.

@@ -171,7 +171,8 @@ export function seasonalCycle(terrain: ClimateTerrain, annualTemperature: ArrayL
 // hemisphere's summer solstice falls in late December (climateField.
 // TOP_SUMMER_MONTH); perihelion sits
 // `precessionDeg + 90°` of solar longitude past the vernal equinox, so 0
-// puts it in the top hemisphere's summer (planetForcing.seasonalityFactor).
+// puts it in the top hemisphere's summer (the engine's
+// seasonality_factor, planet/planet_forcing.rs).
 export function monthInsolation(latNorth: number, yearFraction: number, planet: PlanetForcing): number {
   const lambda = 2 * Math.PI * (yearFraction - CLIMATE_TUNING.ebmVernalEquinoxYear)
   const decl = detAsin(detSin(planet.obliquityDeg * RAD) * detSin(lambda))

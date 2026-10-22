@@ -125,12 +125,3 @@ export function parentTilesOf(tile: TileId, parentSpec: TileSpec, world: Domain)
   for (const y of span(corner.y, (j) => tiles.wrapRow(j))) for (const x of span(corner.x, (i) => tiles.wrapCol(i))) out.push({ level: parentSpec.level, x, y })
   return out
 }
-
-// A tile's inside as a parent piece: its nodes in cells from its corner,
-// its heights (the tile artifact's, world/meshTileArtifacts.ts).
-export interface TilePiece {
-  tile: TileId
-  count: number
-  nodes: Float32Array
-  z: Float32Array
-}

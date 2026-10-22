@@ -46,122 +46,64 @@ settled picture.
 
 Where this is going: [docs/design/generator-pipeline.md](../../../docs/design/generator-pipeline.md).
 
+The simulation itself is the engine's: its modules are in
+`engine/crates/casas-engine/src/` under the same directories and the same
+names in snake_case (`surface/erosion_engine.rs`, `tectonics/plate_simulation.rs`,
+`climate/refinement.rs` …). What is left here is the generator's transport,
+the read side (decode, sample, rasterise a save or an artifact) and what the
+screen draws (2026-10-22: the rest of the TypeScript simulation removed).
+
 ```
-pipeline/   messages (the worker contract), runtime (stage state + handlers), worldStages
-            (what a stage computes, as functions of its inputs: the runtime's
-            handlers call them, the Rust engine ports them — DEC-0044)
+pipeline/   messages (the worker contract), runtime (the stage state, the step loop, the
+            handlers; it holds the world in the engine), engine (the engine as TypeScript
+            sees it), engineWasm (the WASM build, loaded once per worker),
+            engineConstants (the numbers the pipeline versions come from, the engine's),
+            replayPlan (a world's runs as the engine's Replay takes them), stages (the
+            pipeline as data)
 core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, interpolation,
-            domain (the topology: periodicity, distance and latitude on the torus),
-            detMath (exp, log, sin, cos … the same bits in every JS engine)
-mesh/       the adaptive mesh (ADAPTIVE_MESH_PLAN.md phase 4): periodicDelaunay (the
-            triangulation on a domain — one topology code, the geometry planar on the
-            torus and exact 3D on the sphere), lattice (the bootstrap: hex on the torus,
-            geodesic on the sphere), hilbert (the insertion
-            order), meshDensity (the ONE density rule, MESH_TUNING), meshState (per-node
-            fields that survive remeshing), meshRelief, remesh (hysteresis insert/remove),
-            meshBuild (fields in, mesh out), meshErosion (the erosion engine's graph index
-            from the triangulation, the run adapter), meshRaster (node fields sampled on a
-            grid), meshSerial (the save's form: Hilbert numbering, varint connectivity,
-            the canonical rebuild), meshSampler (point location over a hint grid,
-            heights, fields and normals at a point — what map/ reads the mesh through),
-            meshRefine (one rung of the ladder: a parent refined to a finer budget,
-            parents kept, new nodes from the parent surface plus synthesis),
-            meshTile (the top level's tile: nodes placed by position, a pinned
-            edge row every tile shares with its neighbour, the tile plus its halo
-            triangulated as a small torus — docs/decisions/tile-jobs.md),
-            meshColumn (phase 5.2: the sediment column per node as epoch-indexed
-            layers with provenance — a stacked MeshState field, cut from the top,
-            the save's mesh/column.bin), meshNeighbourhood (DEC-0036 phase 7: a
-            node's neighbourhood in metres — the cells a reach touches, a mean by
-            the area of each inside it —, halos, discs, the slope, a boundary's
-            length per area: the ecology's windows on the mesh).
-            meshRaster.rasteriseNodePart draws a field a part of the nodes holds
-            (the land's) onto a raster without blending in the other part.
-            pipeline/coupledEpoch.ts is phase 5's loop over it: z = baseline + relief
-            per node, nodes drift with their plates, the mesh is rebuilt and remeshed
-            each epoch (subduction and rifting), erosion runs inside the epoch.
-            The generator's erosion stage runs on it
-            (pipeline/meshErosionStage.ts), the lakes and the river graph run on it
-            (meshHydrology: the flow substrate) and the save carries it; the map and the
-            raster consumers still read its 2048 rasterisation until 4.4
-fields/     the field mesh (DEC-0036): fieldMesh (a uniform mesh over a Domain at a spacing
-            in metres — Goldberg cells on the sphere, relaxed into a centroidal grid since
-            phase 3 (mesh/lattice.ts centroidalGeodesicLattice), hexagons on the torus — its
-            geometry, the sampler, the chart rasters in and out, sharedFieldMesh: one mesh
-            per domain and spacing, the stages that ask for the same one share it),
-            fieldOperators (diffusion, Gaussian smoothing, gradient, divergence,
-            semi-Lagrangian transport, the Helmholtz/Poisson CG solve, and since
-            phase 4 the general solvers: conjugateGradient, BiCGSTAB, a sparse
-            matrix, ILU(0) and a two-level aggregation preconditioner).
-planet/     the Planet stage's controls and their forcing (obliquity, orbit, sun, rotation) —
-            what depends on the planet and not on the relief; the climate reads it
-mantle/     the buoyancy field BOTH eras run on — the substrate, so it depends only
-            on core/, crust/ and fields/ and never on tectonics/; on the field mesh
-            since DEC-0036 phase 1 (mantleMesh: the mesh per domain, mantleAt the
-            sampler, rasteriseMantle the overlay; the save holds its cell values)
-archean/    the Archean era; hands over to tectonics via finalizeArchean.ts, which
-            is the ONLY archean file that may import from tectonics/
-tectonics/  plate*, boundary*, oceanAge (on the field mesh since DEC-0036 phase 2: oceanAgeMesh,
-            oceanAgeAt the sampler, the transport by the plates' exact departures,
-            the ridges' new crust where a departure crosses to another plate),
-            trench (phase 8e: the trench under the history's baseline, on the
-            boundary where an oceanic plate subducts), terrainFeatures, volcanoes,
-            tectonicsTuneParams (tuning constants), epoch/ (the per-epoch phases),
-            flexure (phase 5.3: Te as a field, the plate's deflection to a load
-            change; since DEC-0036 phase 6 the plate equation ∇²(D∇²w) + ρm g w = −ρc g h
-            solved by CG on the climate's field mesh, read back at the nodes), folds (phase
-            5.7: the buckling train across a range as a modulation of the uplift)
-crust/      continental crust as rafts — deliberately decoupled from the plates
-            (docs/decisions/continental-crust-rafts.md); crustTuneParams holds the
-            raft rules both eras pass in
-elevation/  elevationScale (what a height MEANS), elevationField, domainWarp, ridgedNoise,
-            globeNoise (the 3D lattice the sphere samples its noise on, Domain.noise)
-surface/    flowRouting (the raster engine's routing vocabulary), erosionEngine* (the engine,
-            its state, pool, worker), erosionPassV2, flowSubstrate (what the hydrology
-            reads of the mesh), hydrology (the discharge, the lakes, the channel criterion,
-            the watersheds, riparianPrecipitationOn: the rivers' wet margin per node),
-            riverGraph (the feature graph), riverCourse, coastGraph (the coast reaches on
-            the mesh's shore nodes), sedimentBasins (node sets),
-            cover (phase 5.5: the vegetation's hold per biome — one table for the
-            erodibility, the critical slope and the river banks), hydrogeology (phase 5a:
-            springs, the regime with baseflow, the water table — a classification over the
-            column, no process; per node of the mesh), glacial (phase 6: the epoch's ice
-            on the mesh at its steady state, the cut it does, the till it leaves; F4's
-            raster forerunner iceFlow went in DEC-0036 phase 7), coastal (phase 7: the
-            waves' cut at the shore and the one-line drift along it; findShore and
-            shoreExposure, which the coast graph shares), amplify
-            (the mesh level's synthesis layers and the level bake's constants)
-climate/    the static climate on the field mesh since DEC-0036 phase 3 (climateMesh: the
-            mesh W / 256, shared with the ocean age, the terrain read onto it, the zonal
-            means, the distance to the sea, the landmasses and seas as graph components):
-            temperature, wind, seasonality, monsoon,
-            precipitation, pressure; since phase 4 the ocean too (oceanCurrents: the
-            Stommel solve with the island rule, the SST, upwelling, the overturning's
-            inflow; energyBalance: the year's cycle; salinity); since phase 5 the
-            refinement too (refinement: the months, pressure and wind, the ocean highs
-            and the cold tongue by basinRows — the seas along the parallels — the rain;
-            phenomena, reliability, storms: tracks along great circles). Since phase 7
-            every reader outside the climate samples it at ITS points (climatePoints:
-            ClimateCells — the temperature reduced to sea level, the land fields with
-            their sea marks, the months — and climateAtPoints, each point its own
-            lapse, the land fields over the land corners); biomes classify per point
-            (biomes.classifyPoints, the Köppen class too); climateChart draws the
-            climate on its 256 × 128 chart for the screen and a save's readers — no
-            stage reads it
-ecology/    the ecology and the resources per node of the terrain mesh (DEC-0036 phase 7):
-            the climate at the nodes, the reaches in metres (mesh/meshNeighbourhood),
-            the screen's rasters from the nodes (ecologyRasters)
+            domain (the topology: periodicity, distance and latitude), detMath (exp, log,
+            sin, cos … the same bits in every JS engine), worldTime, inputParams
+mesh/       the terrain mesh's read side: periodicDelaunay (the triangulation on a
+            domain), lattice, hilbert, meshDensity (MESH_TUNING), meshState, remesh,
+            meshSerial (the save's form: Hilbert numbering, varint connectivity, the
+            canonical rebuild), meshSampler (point location over a hint grid — what map/
+            reads the mesh through), meshRaster (node fields on a grid;
+            rasteriseNodePart for the part of the nodes that holds a field),
+            meshHydrology (the water fields on the raster from the mesh),
+            meshNeighbourhood (a node's neighbourhood in metres); the fine levels'
+            tiles: meshTile (the torus), meshTileCube and cubeAtlas (the sphere),
+            tileLayout (by the world's shape), tileSampler (a tile's surface as a lookup)
+fields/     fieldMesh (the field mesh: geometry, sampler, chart rasters in and out,
+            SavedField), fieldOperators
+planet/     the Planet stage's controls, their forcing, the sample world
+mantle/     the mantle's field mesh and its saved values
+archean/    the Archean's controls, its snapshot types, the coastline-warp seed
+tectonics/  the controls, the plates' types and motion, the snapshot and event types
+            (plateSimulationTypes), oceanAge, terrainFeatures, volcanoes, plumes
+crust/      the rafts' types and fields (raftField: the owner field, the craton age)
+elevation/  elevationScale (what a height MEANS), elevationField, elevationTuneParams,
+            domainWarp, ridgedNoise, globeNoise, hypsometry, dynamicTopography,
+            elevationColor
+surface/    the shapes a save holds (hydrology: the water bodies and their levels;
+            riverGraph: the feature graph; coastGraph, coastal, surfaceTypes),
+            surfaceTuneParams, erosionForcingFields (the erosion controls' type)
+climate/    the climate's field mesh and chart (climateMesh, climateField, climateChart),
+            the climate at a point (climatePoints), the biomes and Köppen classes, the
+            refinement's types, colours and tuning
+ecology/    the ecology's fields, colours, controls and tuning
 migration/  still on the climate's chart (its own screen, later); render/
 ```
 
 **A new simulated field goes on a mesh, not on the 2:1 raster** (DEC-0036,
-`docs/decisions/fields-on-meshes.md`). A coarse global field (mantle, ocean
+`docs/decisions/fields-on-meshes.md`). The rules below hold for the
+engine's stages, where the fields are computed now, and for the read side
+here. A coarse global field (mantle, ocean
 age, climate, flexure) lives on the field mesh (`fields/`), a fine land field
 on the adaptive terrain mesh; the chart is the address, the textures and the
 save. Read a field mesh through its `FieldSampler`, never by a grid index;
 write it out with `rasteriseField` (cell centres, the DomainGrid's convention).
 Its vectors are east/south pairs in each cell's own frame — carry a
-neighbour's through `carryFrom` before adding it. Phase 0 (the operators),
+neighbour's into the cell's frame before adding it (the engine's `carry_from`). Phase 0 (the operators),
 phase 1 (the mantle), phase 2 (the ocean age), phase 3 (the static
 climate), phase 4 (the ocean and the energy balance), phase 5 (the
 refinement and the phenomena), phase 6 (the flexure), phase 7 (biomes,
@@ -171,7 +113,7 @@ on the terrain mesh; no routing on the 2:1 raster) and the save step (no
 chart raster in the save: the elevation, the lakes' depth and the erosion
 forcing are made by whoever reads it — world/query.ts) are built. A solve runs to a RESIDUAL (its
 SolveReport), never to a sweep count: a non-symmetric operator takes
-`solveBiCGSTAB`, a symmetric one CG, and a singular one (a Neumann
+BiCGSTAB, a symmetric one CG, and a singular one (a Neumann
 problem) a right-hand side balanced per connected part. A length in a
 stage on the mesh is in METRES (the mesh's, `domain.metresPerUnit`), never
 in cells — and so is every physical length a tuning object states (a
@@ -255,8 +197,8 @@ change to what a world IS goes there. The TypeScript simulation went with
 fork 7c, as far as it was not interwoven with the READ SIDE — the modules
 that decode, sample and rasterise a save or an artifact (the load, the
 incubator, the screen's hover), which stay TypeScript for now (fork 7b)
-and must give the engine's bits. What of the old simulation is still here
-is that interweaving; it runs nowhere but where the read side calls it.
+and must give the engine's bits. The rest of the old simulation was
+removed on 2026-10-22; a change to a stage goes to the engine.
 
 ```
 cd client && npm run harness:roundtrip       # the save format; 0.2 s
@@ -288,23 +230,20 @@ again on the engine when it starts again.
 
 ## Parameters and identity
 
-Every module with tuning has an `xyTuneParams.ts` holding ONE object; genesis,
-erosion, climate, hydrology, ecology and migration also declare their sliders in
-an `xyInputParams.ts` (min/max/step/default/unit/i18n key), and `world/save/worldSpec.ts`
-turns those declarations into the save's recipe. The reasoning is in
-`docs/design/architecture-unification.md`.
-
-Deliberately still outside a tuning object: `elevationScale.ts` (a definition
-module and a fifteen-file contract), each module's EXPORTED constants (an export
-is a cross-module contract and moves separately), and `surface/`'s
-`DEFAULT_*_PARAMS` (function arguments with defaults, not module constants).
+The tuning that makes a world is the engine's (`climate_tune_params.rs`,
+`tectonics_tune_params.rs` …), and the pipeline versions hash it as the
+engine gives it (`pipeline/engineConstants.ts`, `world/worldTuning.ts`,
+`world/meshArtifacts.ts` MESH_BAKE_CONSTANTS). The `xyTuneParams.ts`
+objects left here (climate, elevation, ecology, surface, migration) serve
+the read side and the screen; they are not hashed. Each controllable stage
+declares its sliders in an `xyInputParams.ts` (min/max/step/default/unit/i18n
+key), and `world/save/worldSpec.ts` turns those declarations into the
+save's recipe. The reasoning is in `docs/design/architecture-unification.md`.
 
 **A tuning file exports ONE object, and callers read it under its full name** —
-`TECTONICS_TUNING.splitGapM`, never a destructured local and never an
-`as TUNE` import. The object is what makes the constants hashable at all
-(`derivePipelineVersion` takes a `Record<string, number>`); the full name is what
-keeps every use site findable by grep. Both shortcuts were tried and removed the
-same day.
+`CLIMATE_TUNING.x`, never a destructured local and never an `as TUNE` import.
+The full name is what keeps every use site findable by grep. Both shortcuts
+were tried and removed the same day.
 
 **Not every constant belongs in a tuning object.** Only those whose change alters
 the generated world. Grid sizes, unit anchors (`elevationScale` calls itself the
@@ -317,15 +256,12 @@ the input's schema, so they belong with `xyInputParams`.
 `hashParams()` anywhere. `world/identity.ts` explains why in detail, and it
 was learned expensively: `deriveWorldId` hashes the world's state as the save
 holds it — the terrain mesh's bytes, the climate's cells, the erosion forcing
-and the field meshes' values (no raster since DEC-0036's save step; the
-elevation and precipitation rasters until then) — rather than the recipe,
-because the recipe cannot distinguish two worlds stopped at different
-tectonic epochs; and `riverDensity` is deliberately excluded from the key even
-though the bake reads it, because including it orphaned 17–67 MB of artifact per
-slider position.
-
-Tuning constants *are* hashed, via `derivePipelineVersion`, but only one module
-feeds it today.
+and the field meshes' values — rather than the recipe, because the recipe
+cannot distinguish two worlds stopped at different tectonic epochs; and
+`riverDensity` is deliberately excluded from the key even though the bake
+reads it, because including it orphaned 17–67 MB of artifact per slider
+position. `harness:roundtrip` checks that every constant MESH_BAKE_CONSTANTS
+lists moves the version.
 
 ## Traps that have bitten before
 
@@ -338,16 +274,11 @@ port of fdlibm out of exact operations only. `make lint` refuses the others
 in `generator/`, `render/` excepted; the engine's `det_math` test holds its
 values against the fdlibm port's, confirmed in both JavaScript engines.
 
-**Routing differs by step, and conflating them is a recurring mistake.** Erosion
-is hybrid: drainage-area *accumulation* is MFD, stream-power *incision* is
-single-flow. Rivers in `hydrology.ts` are pure single-flow for both — MFD
-smeared the drawn channels into valley-floor bands. On the mesh the
-single-flow receiver is the steepest descent over a node's star, per reach
-length; on the raster engine's grid (erosionEngine's FLAG_GRID8) it is
-D8-LTD, not plain steepest descent (2026-08-15 — plain D8's rounding error
-accumulates into axis-parallel streaks, and worse the finer the grid). The
-hydrology's own raster routing (`fillDepressionsAndRouteFlow`) went in
-DEC-0036 phase 7b.
+**The simulation's mechanics are the engine's.** How the erosion routes
+(MFD area, single-flow incision, D8-LTD on a grid), how the history moves,
+rebuilds and compacts the mesh each epoch, and the erosion engine's graph
+index are described where they live: `engine/crates/casas-engine/src/surface/`
+and `mesh/`, and `docs/decisions/rust-engine.md`.
 
 **The overlay canvas is displayed vertically mirrored.** Draw "up" as `+y`; text
 needs a further 180°. It is a vertical mirror, not a 180° rotation — arrow
@@ -361,47 +292,6 @@ copy. Any new vector paint layer drawing at specific map coordinates goes throug
 
 **Workers spawned from inside a worker use the `?worker` import form**, not
 `new URL(..., import.meta.url)` — `import.meta.url` is empty in a nested worker in
-Firefox, and the worker is created but never runs. The render pool that
-`pipeline/runtime.ts` constructs is exactly this case. (The Firefox failure is
+Firefox, and the worker is created but never runs. No nested worker is
+left today; the rule holds for the next one. (The Firefox failure is
 dev-server only; production builds are fine.)
-
-**Erosion deletes the material it removes** — there is no excavation budget. That
-is a deliberate, documented unrealism; marine deltas are a separate shipped
-mechanism. A sediment-budget attempt failed because erosion and deposition only
-discriminate mountain from plain when they compete in one sweep.
-
-**The generator erodes on the mesh, inside the tectonics' epochs; the raster
-is a rasterisation** (phase 4.3 then 5.1, 2026-09-23). There is no erosion
-run: `pipeline/coupledEpoch.stepCoupledEpoch` moves the mesh's nodes with
-their plates, rebuilds and remeshes it, swaps the tectonic baseline under the
-relief and runs the engine for the epoch's length (`sim.epochMa`, the world
-clock's `TECTONIC_MA_PER_EPOCH`; `HISTORY_DEFAULTS` holds the iterations,
-budget and uplift scale). The runtime rasterises z and sediment flux to 2048
-after every epoch for the hydrology, the climate and the map; the raster is
-therefore DERIVED and the save holds none — a load rasterises `mesh/` again
-(`renderTerrain`, byte for byte the session's); `mesh/` is the terrain, and a restored mesh
-must step to the same bytes as the session's — which is why positions are
-float32 on insert and the mesh is renumbered through the codec after every
-epoch (`mesh/meshSerial.compactMesh`). Do not hand the engine a mesh that has
-not been compacted and expect a reload to match. The erosion step is gone
-(2026-09-29); its former sliders are the tectonics panel's
-(`tectonics/tectonicsInputParams.ts`), its readout the climate step's.
-
-**The hydrology runs over a flow substrate** (phase 4.3, 2026-09-23).
-`surface/flowSubstrate.ts` is the one interface the discharge, the lakes, the
-channel criterion, the regime, the watersheds, the river graph and the
-sediment basins read; the mesh is its one instance since DEC-0036 phase 7b
-(the raster routing's went). Write a new hydrology rule against the substrate
-(`…On(sub, …)`), never against `width`/`height` and cell arithmetic, and read a
-graph node's place from `node.x/y` or `cellX/cellY`, never from `cell` as a
-raster index — a mesh graph's cells are vertex ids.
-
-**The erosion engine runs on a graph, not on a grid** (phase 4.2, 2026-09-23).
-`EngineIndex` is a CSR neighbour table with a reach length, a Voronoi facet and
-a reverse edge per directed edge and an area per node; the raster is one
-instance (eight D8 slots, facets only across the four sides, area 1 —
-`FLAG_GRID8` is the one place a kernel may assume the slot order, the LTD
-scan), the mesh the other (`mesh/meshErosion.ts`). A kernel that indexes
-`nbr[cell * 8 + slot]` or counts in cells is wrong on the mesh even if the
-raster harnesses pass; walk `nbrStart[i]..nbrStart[i + 1]` and multiply by
-`areaRel` / `lenRel`.

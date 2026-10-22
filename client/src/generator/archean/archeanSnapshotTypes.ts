@@ -18,7 +18,7 @@ export interface ArcheanSnapshot {
   height: number
   epoch: number
   warpSeed: number
-  // The land share controller's credit (ArcheanSimulation.nucleationCredit).
+  // The land share controller's credit (the engine's ArcheanSimulation.nucleation_credit).
   nucleationCredit: number
   rafts: Raft[]
   rngState: number

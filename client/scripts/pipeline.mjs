@@ -76,9 +76,9 @@ async function freshPipeline() {
     // structuredClone with a transfer list DETACHES the originals, exactly as
     // postMessage does across a real worker boundary. Keeping the originals
     // usable would be the friendlier harness and the wrong one: the pipeline
-    // compensates for neutering in places (computeEcology copies the carrying
-    // capacity out before handing the buffer over, and says so), and a harness
-    // that never neuters cannot tell whether that copy is still there.
+    // compensates for neutering in places (runtime.ts's handleEcologyRun
+    // copies the carrying capacity out before handing the buffer over, and
+    // says so), and a harness that never neuters cannot tell whether that copy is still there.
     messages.push(structuredClone(message, transfer ? { transfer } : undefined))
   })
   // The world can be made to throw (failSteps, departure 2): the host seam is
@@ -968,7 +968,7 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   check(`the sediment basins are finite and on the globe (${basins.length} basins)`, badBasins.length === 0, JSON.stringify(badBasins[0] ?? ''))
 })
 
-// The picture's step: RIVER_CHART_STEP in surface/riverGraph.ts.
+// The picture's step: the engine's RIVER_CHART_STEP (surface/river_graph.rs).
 const RIVER_CHART_STEP_HARNESS = 2
 
 // THE ECOLOGY ON THE SPHERE (DEC-0035, step 4f): the step's run and a

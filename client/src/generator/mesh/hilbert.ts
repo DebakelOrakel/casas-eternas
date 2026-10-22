@@ -1,12 +1,13 @@
 export const HILBERT_ORDER = 16
 
-// THE SAME INDEX, FOUR BITS A STEP (2026-10-02: hilbertIndex was 3 % of an
-// epoch). The loop above transforms the bits still to come by a complement
+// THE SAME INDEX, FOUR BITS A STEP (2026-10-02: the index a bit at a time
+// was 3 % of an epoch). Warren's xy2d loop (the engine's `hilbert_index`)
+// transforms the bits still to come by a complement
 // of both coordinates and a swap — two flags that commute, so four states.
 // For each state and each 4-bit chunk of x and y, the table holds what the
 // loop adds to d over those four bits and the state it leaves; it is made
-// by running hilbertIndex itself on the chunk, so it cannot disagree with
-// it. Integer sums below 2^53 — exact.
+// by running that loop itself on the chunk (below), so it cannot disagree
+// with it. Integer sums below 2^53 — exact.
 const CHUNK = 4
 const CHUNK_TABLE_D = new Uint8Array(4 * 256)
 const CHUNK_TABLE_STATE = new Uint8Array(4 * 256)

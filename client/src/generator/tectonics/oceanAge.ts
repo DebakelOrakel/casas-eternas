@@ -11,7 +11,7 @@ import { departures, type Departures } from '../fields/fieldOperators'
 // it's only the ocean-age scalar, which is smooth and large-scale, so a coarse
 // field is plenty. The field is carried with plate motion each epoch; the
 // crust the plates open at a divergent boundary starts at half an epoch
-// (advectOceanAge).
+// (the engine's `advect_ocean_age`).
 //
 // ON A FIELD MESH (DEC-0036 phase 2, docs/decisions/fields-on-meshes.md):
 // one Float64 value per cell of the ocean age's field mesh (fields/
@@ -19,7 +19,7 @@ import { departures, type Departures } from '../fields/fieldOperators'
 // epochs. One code for both shapes: no pole rows, no disc boxes. The
 // 256 × 128 chart raster it had until 2026-10-11 survives only as the
 // render's lookup (oceanAgeRaster); readers per point go through the
-// sampler (oceanAgeAt), the save holds the mesh's own values.
+// sampler (the engine's `ocean_age_at`), the save holds the mesh's own values.
 
 // The spacing as a raster's: the domain's width over OCEAN_AGE_RES_X — a
 // cell as wide as the former 256 × 128 raster's at the equator (62.4 km on
@@ -92,7 +92,7 @@ export function oceanAgeRaster(age: ArrayLike<number>, domain: Domain, resX: num
 
 // THE FIELD AS A SAVE HOLDS IT (DEC-0036 phase 2): the mesh's own values,
 // Float64 per cell, with the mesh's cell count and spacing — as the
-// mantle's (mantle/mantleField.savedMantle).
+// mantle's (the engine's `saved_mantle`).
 export function savedOceanAge(age: Float64Array, domain: Domain): SavedField {
   const om = oceanAgeMesh(domain)
   return { values: age.slice(), cells: om.mesh.count, spacingM: om.cellM }

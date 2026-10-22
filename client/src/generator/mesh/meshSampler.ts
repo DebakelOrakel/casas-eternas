@@ -43,7 +43,7 @@ export interface MeshSampler {
 const HINT_CELLS_PER_UNIT = 0.25
 
 // A region the mesh is dense in — a level-3 tile's parent, the level-2
-// tiles it overlaps (meshTile.ts, tileParentFromTiles) — and how many nodes
+// tiles it overlaps (the engine's `tile_parent_from_tiles`) — and how many nodes
 // it holds. Over it the sampler keeps a second hint grid at the region's own
 // density, about HINT_NODES_PER_CELL nodes a cell: under the world grid's
 // 4 × 4 cells sit hundreds of level-2 triangles, and a walk across them was

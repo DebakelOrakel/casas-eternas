@@ -23,7 +23,7 @@ import { climateMesh, type ClimateMesh } from './climateMesh'
 // marks ARE the cells' land mask; the refinement's months, its upwelling
 // and its rain's reliability when the climate is refined; the year's wind.
 //
-// At a point (`climateAtPoints`): the corners of the climate mesh's
+// At a point (the engine's `climate_at_points`): the corners of the climate mesh's
 // triangle under it, linearly. A land field reads the LAND corners only,
 // their weights renormalised — never a blend with a sea mark — and a land
 // point with no land corner (an island smaller than a cell) its latitude's

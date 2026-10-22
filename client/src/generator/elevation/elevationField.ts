@@ -32,7 +32,7 @@ export function oceanFloorAtAge(age: number): number {
 }
 const baselineWarp = { x: 0, y: 0 }
 
-// raftBaselineAt after the warp, with the ocean age at the warped point
+// The raft baseline (the engine's `raft_baseline_at`) after the warp, with the ocean age at the warped point
 // (epochs). `relief`, when given, holds
 // hypsometryRelief per cell for the same warped points (NaN = not yet
 // computed), and cell `index` is read from it or written into it.
@@ -84,7 +84,7 @@ function baselineAtWarped(wx: number, wy: number, rafts: Raft[], age: number, do
 // off by 0.03 epochs on average and by at most 5.8 at a ridge's step from
 // age 0 to old floor (900 m of depth there); at 512 × 256 27 / 32 ms, 0.10
 // and 14 epochs (1.4 km). The coupled history does not come here — it
-// evaluates the baseline per node through the sampler (raftBaselineAt) and
+// evaluates the baseline per node through the sampler (the engine's `raft_baseline_at`) and
 // renders its own terrain; this is the Archean's render and the scripts'.
 // A null field (the Archean's: none yet) is age 0 everywhere, freshly
 // formed crust.
@@ -107,7 +107,7 @@ export function computeRaftBaseline(rafts: Raft[], oceanAge: Float64Array | null
 
 // Per world and render size: the warped point of every cell, kept in
 // doubles (the bits the warp returns — the baseline sums them unwrapped,
-// unlike warpedSamplePoint), and the hypsometry's relief there, filled on
+// unlike the engine's `warped_sample_point`), and the hypsometry's relief there, filled on
 // the first render that reaches a cell's continent. The key is everything
 // the two depend on: the shape and size of the domain, the render size and
 // the seed. Two entries, the live preview's size and the full one; the

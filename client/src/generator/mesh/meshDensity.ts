@@ -21,11 +21,11 @@
 //                  across, not only along.
 //   h_column     = columnSpacingM where the sediment column is thicker
 //                  than columnThresholdM, else unbounded (live since
-//                  phase 5.2, mesh/meshColumn.ts).
+//                  phase 5.2, the engine's mesh/mesh_column.rs).
 //
 // Below `deepOceanBelowM` none of the terms applies and the spacing is
 // `oceanSpacingM` outright: the engine never computes there (the deep
-// ocean is frozen, erosionEngineState.ts), so a ridge flank or a trench
+// ocean is frozen, the engine's erosion_engine_state.rs), so a ridge flank or a trench
 // wall resolved at kilometres would be nodes carrying nothing. Measured
 // on the first build: with the relief term active under the sea, three
 // of four million nodes sat on the ocean floor. The shelf and the

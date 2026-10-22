@@ -2,17 +2,9 @@ import type { Domain } from '../core/domain'
 import { detCos, detSin } from '../core/detMath'
 import { buildFromTriangles, type PeriodicTriangulation } from './periodicDelaunay'
 
-// The bootstrap of a domain's mesh at one spacing: the torus's hex lattice
-// or the sphere's geodesic one. The one place the two shapes' meshes start
-// differently — the torus is closed by its period, the sphere by its own
-// surface — after it both are the same insertions and removals.
-export function bootstrapLattice(domain: Domain, spacing: number): PeriodicTriangulation {
-  return domain.kind === 'sphere' ? geodesicLattice(domain, spacing) : hexLattice(domain, spacing)
-}
-
 // The bootstrap: a hexagonal lattice over the whole domain at one spacing,
 // already a closed periodic triangulation. Everything finer is inserted
-// into it (meshBuild.ts), and its own points are ordinary vertices the
+// into it (the engine's mesh/mesh_build.rs), and its own points are ordinary vertices the
 // density rule may later remove. Rows alternate a half-cell offset, which
 // needs an even row count to close over the seam; the columns and rows
 // are rounded so the lattice tiles the domain exactly. The minimum of
@@ -65,7 +57,7 @@ export function hexLattice(domain: Domain, spacing: number): PeriodicTriangulati
 // The icosahedron is turned off the poles and the seam (TILT, SPIN): every
 // chart point (x, 0) is the north pole, so a lattice node there would be
 // the image of every point a later stage puts at the pole, and
-// triangulatePoints removes its lattice afterwards. The corners in detMath,
+// the engine's `triangulate_points` removes its lattice afterwards. The corners in detMath,
 // so the lattice is the same bits in every engine. An edge's interior
 // points are computed once, from its lower corner, so the two faces that
 // share it share them; a face's own interior points are its alone.
@@ -177,10 +169,6 @@ function geodesicPoints(domain: Domain, spacing: number): GeodesicPoints {
   }
   if (next !== count) throw new Error(`geodesicLattice: ${next} nodes, expected ${count}`)
   return { count, px, py, pz, tris: Int32Array.from(tris) }
-}
-
-export function geodesicLattice(domain: Domain, spacing: number): PeriodicTriangulation {
-  return latticeOnGlobe(domain, geodesicPoints(domain, spacing))
 }
 
 // The geodesic points in the chart, triangulated as the lattice's faces

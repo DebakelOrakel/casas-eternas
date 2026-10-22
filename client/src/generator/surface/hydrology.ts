@@ -2,27 +2,6 @@ import { SEA_LEVEL } from '../elevation/elevationScale'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import type { DomainGrid } from '../core/domain'
 
-// Rivers & lakes on the post-erosion topography, over the terrain mesh's
-// flow substrate (flowSubstrate.ts; DEC-0036 phase 7b took the last of the
-// raster's away): the erosion's drainage network (the single-flow receiver
-// for the channel tree, the priority flood's `filled` for basins) and the
-// climate's precipitation at the nodes as the water source. See
-// docs/decisions/climate-biomes.md's pipeline note.
-//
-// Discharge is accumulated along the SINGLE steepest-descent flowTarget, not
-// the multiple-flow edges erosion uses for drainage AREA. MFD is right for
-// erosion (smooth area, no striping) but for DRAWN rivers it smears flow across
-// the whole valley floor, so a "river" reads as a filled band rather than a line;
-// single-flow concentrates the water onto one traceable channel.
-
-// The one density the MODEL runs at: riparian biomes, the bake's extracted
-// rivers and the coast status mask all read the channel set at this density.
-// The panel's density slider is a DRAW filter over it — display-side, outside
-// the spec and the artifact key — so moving it can neither change saved
-// biomes nor invalidate a bake (erosion v2, P4). Same 0–100 scale as the
-// slider; densityToCriticalArea maps it.
-export const CANONICAL_RIVER_DENSITY = 55
-
 // The hydrology's discharge unit is mm/yr summed over contributing cells;
 // × cell area × 1e-3 m/mm ÷ seconds-per-year gives m³/s, and a nominal
 // runoff coefficient (real basins deliver roughly a third of their rainfall
@@ -80,7 +59,7 @@ export interface WaterBody {
   outletY: number
   // Flooded cells in the basin (its full extent up to the spill).
   cells: number
-  // Frozen through: a glacier surface, see LakeFields.frozen.
+  // Frozen through: a glacier surface, see the engine's `LakeFields.frozen`.
   frozen: boolean
 }
 
@@ -190,33 +169,8 @@ export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Flo
 export const RIVER_MIN_WIDTH = 0.4
 export const RIVER_MAX_WIDTH = 4
 
-// --- the channel criterion -------------------------------------------------
-//
-// A cell is a channel when its discharge clears a threshold — but discharge
-// alone gets mountains wrong, and measurably so. Channel density fell SEVENFOLD
-// from coast to summit on a measured world (20.4 to 2.9 per 1000 land cells)
-// even though the mountains are the wettest ground on it (936 mm/yr against
-// 507 at the coast). The cause is drainage AREA: near a divide almost nothing
-// drains to you, and a pure area criterion therefore cannot see a mountain
-// stream at all.
-//
-// Real drainage density does the opposite — it RISES with relief, because steep
-// ground concentrates flow into channels at far smaller catchments. That is the
-// classic slope-area criterion (A*S^theta), and this is it, expressed as a boost
-// on discharge so the density slider keeps its meaning.
-//
-// theta = 0.5 rather than the textbook 1.0, and the reason is the noise floor:
-// at 1.0 a cell ten times steeper than the reference would channelise on ~65
-// cells of support, under the 150-cell floor AREA_MIN exists to keep. Grid
-// artefacts are worst exactly where the boost is largest — a ridge is lined
-// with equally steep cells all picking the same D8 direction. At 0.5 that same
-// cell still needs ~207 cells, and the measured effect is what was wanted:
-// mountain density tripled while the TOTAL rose only 11 %, because the new
-// channels come out of the gentle 250-500 m plateau rather than out of nowhere.
-export const CHANNEL_SLOPE_EXPONENT = 0.5
-
-// River polylines for the scene-space ribbons (riverGraph.
-// riverPolylinesFromGraph derives them from the feature graph): the points
+// River polylines for the scene-space ribbons (the engine's
+// `river_polylines_from_graph` derives them from the feature graph): the points
 // as [x, y, widthPx, …] in texel coordinates, and a per-polyline
 // point-count table.
 export interface RiverPolylines {

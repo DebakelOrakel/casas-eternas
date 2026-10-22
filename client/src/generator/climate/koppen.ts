@@ -15,9 +15,6 @@ export const KOPPEN_CODES = [
 ] as const
 
 export type KoppenCode = Exclude<(typeof KOPPEN_CODES)[number], ''>
-
-const ID = new Map<string, number>(KOPPEN_CODES.map((c, i) => [c, i]))
-export const koppenId = (code: KoppenCode): number => ID.get(code)!
 export const koppenCode = (id: number): KoppenCode | null => (id > 0 && id < KOPPEN_CODES.length ? (KOPPEN_CODES[id] as KoppenCode) : null)
 
 // The class's i18n key (koppen.json); the worker holds keys, not names.

@@ -27,10 +27,11 @@ function blobKernel(distSq: number, radius: number): number {
 // (toroidally wrapped); brute-force over blobs for now, like the feature query
 // was before bucketing — add a spatial index later if it shows up in a profile.
 //
-// Exposed separately from raftMembership because elevation needs the field
-// itself, not the thresholded membership: the margin profile (elevationScale.ts)
-// runs its own, wider band over this same field so a continental shelf has room
-// to exist. Thresholding first would throw away exactly the range it needs.
+// Exposed separately from the membership (the engine's raft_membership)
+// because elevation needs the field itself, not the thresholded membership:
+// the margin profile (elevationScale.ts) runs its own, wider band over this
+// same field so a continental shelf has room to exist. Thresholding first
+// would throw away exactly the range it needs.
 export function raftField(x: number, y: number, rafts: Raft[], domain: Domain): number {
   let field = 0
   for (const raft of rafts) {
@@ -71,8 +72,8 @@ export interface BlobIndex {
 // THE CHORD TEST (the sphere): a great-circle distance is never shorter
 // than the chord between its two points, so a blob whose chord from the
 // point is at least its reach adds an exact 0 (raftFieldIndexed) or cannot
-// be the nearest (nearestRaftIndexed) — skipped without the distance,
-// whose arc (an atan2 per blob) was a tenth of a sphere epoch (profiled
+// be the nearest (the engine's nearest_raft_indexed) — skipped without the
+// distance, whose arc (an atan2 per blob) was a tenth of a sphere epoch (profiled
 // 2026-10-15). The margin keeps the test far outside the rounding of
 // either length: a blob near the boundary is measured as before, so the
 // sums and the nearest are the scans' bits.
@@ -250,7 +251,7 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, a
 // resX*resY*raftCount. "Most contribution" (not just "any contribution") is
 // what makes this well-defined at a border where two continents' fields both
 // reach the same cell: whichever's blob is closer/bigger there wins that
-// cell, which is the same tie-break spirit as raftMembership's own summed
+// cell, which is the same tie-break spirit as the membership's own summed
 // field, just tracked per-raft instead of pooled.
 export function computeOwnerField(rafts: Raft[], resX: number, resY: number, domain: Domain): Int32Array {
   const best = new Float32Array(resX * resY)
@@ -294,9 +295,9 @@ export function sampleOwnerField(owner: Int32Array, grid: DomainGrid, x: number,
 // until roughly 60%, and past ~85% the destructible pool has nearly vanished, so
 // the world stops changing shape and only accumulates land.
 // AREA-weighted (Σ radius²), not blob-counted (2026-08-06): blob
-// consolidation (consolidateRaftBlobs) merges stabilised blobs into fewer,
-// larger ones, so a count-based fraction structurally DEFLATES as the phase
-// matures — measured 61-63% at epoch 300 against 81-88% without
+// consolidation (the engine's consolidate_raft_blobs) merges stabilised
+// blobs into fewer, larger ones, so a count-based fraction structurally
+// DEFLATES as the phase matures — measured 61-63% at epoch 300 against 81-88% without
 // consolidation, for the same amount of stable crust. Area is what the
 // gauge always meant: how much of the CRUST is immune, not how many
 // bookkeeping blobs are.

@@ -9,7 +9,7 @@ import { barycentric } from './remesh'
 // biomes, the map's water plugin, the save's lakeDepth layer) read of the
 // mesh's lakes. Every cell takes the body of the NEAREST node of the
 // triangle it lies in (the largest barycentric weight) and applies the
-// per-cell rules of computeLakesOn to its own rasterised height: wet
+// per-cell rules of the engine's `compute_lakes_on` to its own rasterised height: wet
 // below the body's level (depth, frozen surface), a dry terminal floor
 // under sea level (dryBasin, the evaporite band). The level field
 // extends over every cell a basin node is nearest to, wet or dry — the

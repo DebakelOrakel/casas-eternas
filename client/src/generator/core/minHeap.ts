@@ -1,5 +1,7 @@
-// One binary min-heap for the two places that need one: the priority flood in
-// flowRouting.ts and the erosion engine, and the Dijkstra in migration/migrationField.ts. They had grown
+// One binary min-heap for the places that need one: the distances on the
+// climate's mesh (climateMesh.ts) and the Dijkstra in migration/migrationField.ts.
+// The priority flood of the raster routing and the erosion engine used it too
+// until they went to the Rust engine. Two of them had grown
 // separate implementations of the same structure — one typed-array-backed with a
 // fixed capacity, one plain-array-backed and growable — differing only in the
 // details each happened to need.

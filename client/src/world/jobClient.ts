@@ -47,7 +47,7 @@ export interface BakeJob {
   result?: BakeResult
   // The order that produced the job, as the server records it. What lets a
   // screen recognise a job as being about ITS world and stage when somebody
-  // else placed the order — see findActiveBake.
+  // else placed the order.
   request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number }; plan?: JobPlan; pipeline?: string }
   queuedAt?: string
   startedAt?: string

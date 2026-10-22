@@ -5,9 +5,10 @@
 //
 // Both signatures are kept rather than collapsed into one: the bare `smoothstep`
 // is the ease applied to an already-normalised 0..1 fraction (noise cell
-// interpolation, profile segments), and `smoothstepBetween` is the threshold-band
-// form (map a value across two edges, then ease). Forcing every caller through
-// the three-argument version would just make the common case noisier.
+// interpolation, profile segments), and `smoothstepBetween` (now the engine's
+// `smoothstep_between`) is the threshold-band form (map a value across two
+// edges, then ease). Forcing every caller through the three-argument version
+// would just make the common case noisier.
 
 export function clamp01(t: number): number {
   return t < 0 ? 0 : t > 1 ? 1 : t

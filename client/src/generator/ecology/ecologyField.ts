@@ -81,7 +81,7 @@ const aridWarm = (tempC: number, precipMm: number): number => clamp01(1 - precip
 
 // The physics of the ecology, every field before the step's sliders: the
 // expensive part, which depends on the world alone. The worker keeps it
-// while only the sliders move (applyEcology).
+// while only the sliders move (the engine's apply_ecology).
 export interface EcologyBase {
   mesh: PeriodicTriangulation
   geo: MeshGeometry
@@ -103,7 +103,7 @@ export interface EcologyBase {
   // months (not refined).
   seasonal: EcologySeasons | null
   // The pixels' triangles for the fields' rasters, made on the first
-  // (ecologyFine).
+  // (the engine's ecology_fine).
   raster: TriangleRaster | null
 }
 

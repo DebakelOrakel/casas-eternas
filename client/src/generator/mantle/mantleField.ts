@@ -20,10 +20,10 @@ import { stableDiffusionStep } from '../fields/fieldOperators'
 // diffusion, the Poisson solve by conjugate gradients, the least-squares
 // gradient. One code for both shapes, no pole rows, no line solves, no
 // sub-steps. The 128 × 64 chart raster it had until 2026-10-11 survives
-// only as the screen's overlay (rasteriseMantle); the save holds the mesh's
+// only as the screen's overlay (the engine's `rasterise_mantle`); the save holds the mesh's
 // own values (SavedField).
 // Its readers take a value at a point through the mesh's sampler
-// (mantleAt), the extrema searches walk the mesh's neighbour graph.
+// (the engine's `mantle_at`), the extrema searches walk the mesh's neighbour graph.
 //
 // LIVES IN ITS OWN MODULE because BOTH eras run on it: the Archean and the
 // tectonics read this field, so filing it under either one made the other
@@ -31,8 +31,9 @@ import { stableDiffusionStep } from '../fields/fieldOperators'
 //
 // The fit itself — `fitMotionsToFlow` — deliberately does NOT live here. It
 // takes plate seeds and returns plate motions, so keeping it would have made
-// the substrate depend on the thing riding on it. It is in
-// `tectonics/plateMotion.ts` with the types it speaks in.
+// the substrate depend on the thing riding on it. It is the engine's
+// `fit_motions_to_flow`, in tectonics/plate_motion.rs with the types it
+// speaks in.
 
 // The chart raster the field is written to (the screen's overlay) and, as
 // a length, the mesh's spacing: the domain's width over MANTLE_RES_X — a cell as wide as the raster's at the equator

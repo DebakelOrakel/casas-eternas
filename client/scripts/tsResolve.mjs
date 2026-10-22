@@ -1,5 +1,5 @@
 // A module-resolution hook for plain node: the generator's modules import
-// each other WITHOUT extensions (`from './flowRouting'`), which Vite
+// each other WITHOUT extensions (`from './hydrology'`), which Vite
 // resolves and node does not. Node strips TypeScript types natively (the
 // modules use only erasable syntax), so with this one hook a script loads
 // them directly — no bundler, no Vite server. Registered by httpStore.mjs.

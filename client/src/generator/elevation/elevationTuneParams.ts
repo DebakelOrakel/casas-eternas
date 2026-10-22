@@ -9,7 +9,7 @@ import { metersToElevation } from './elevationScale'
 // Splitting a definition module to chase a hash it has no consumer for is the wrong
 // trade today; it wants its own decision.
 //
-// Also out: the EXPORTED constants of this module (RIDGE_MEAN, FINE_DETAIL_SEED_SALT).
+// Also out: the EXPORTED constants of this module (FINE_DETAIL_SEED_SALT).
 // An export is a contract with other modules; this pass groups what a module keeps
 // to itself. (The land-target solver's search constants left with it, 2026-09-22.)
 
@@ -19,7 +19,7 @@ export const ELEVATION_TUNING = {
   // segment: its influence reaches far ALONG its own boundary tangent
   // (feature.tangentX/Y) and only a short distance ACROSS it. Two effects
   // fall out of that anisotropy, both deliberate:
-  //  - Along-axis reach is generous (well past terrainFeatures' MERGE_RADIUS_M
+  //  - Along-axis reach is generous (well past the engine's MERGE_RADIUS_M
   //    of 312 km) so consecutive features laid down along one boundary overlap
   //    heavily end-to-end and blend into a single *continuous linear range*,
   //    instead of the row of distinct rounded blobs an isotropic radial
@@ -64,14 +64,14 @@ export const ELEVATION_TUNING = {
   // open ocean (root cause confirmed via a headless render sweep, 2026-07-24 —
   // it survived removing trenches, keeping only active features, and aggressive
   // pruning, so it was the shape, not clutter); a capsule can't overshoot past
-  // its segment ends. Half-length ~ the feature spacing (terrainFeatures'
+  // its segment ends. Half-length ~ the feature spacing (the engine's
   // MERGE_RADIUS_M) so consecutive segments chain continuously.
   //
   // The perpendicular radii are METRES since DEC-0036 phase 8a — the
   // torus's 30 and 15 cells of 7.8 km, so the sphere's ranges have the
   // same cross-section (they were 25 % wider there). The half-lengths are
   // metres since phase 8f (the torus's 35 and 25 cells), with the plates'
-  // speeds and the features' spacing along a boundary (terrainFeatures'
+  // speeds and the features' spacing along a boundary (the engine's
   // MERGE_RADIUS_M): a half-length shorter than half that spacing would
   // break a range into beads.
   rangePerpRadiusM: 234_000,
@@ -153,8 +153,8 @@ export const ELEVATION_TUNING = {
   // only its SHAPE comes from the literature.
   //
   // One epoch is read as one million years here, which is what lets GDH1's
-  // published coefficients be used as-is; it's also roughly what oceanAge's
-  // MAX_SEAFLOOR_AGE = 180 already implied.
+  // published coefficients be used as-is; it's also roughly what the engine's
+  // MAX_SEAFLOOR_AGE = 180 (ocean_age.rs) already implied.
   //
   // A single plain exponential was tried first and is the obvious cheaper thing to
   // write, but it misses badly exactly where ocean floor is most visible: it has a
@@ -182,7 +182,7 @@ export const ELEVATION_TUNING = {
   // Takes the already-warped sample point (wx, wy) and the precomputed ridged-
   // multifractal value there, rather than (x, y) + warpSeed: both are pure
   // functions of position that the render worker precomputes once per world and
-  // caches (see warpedSamplePoint / elevationRenderWorker.ts), so this per-epoch
+  // caches (see the engine's `warped_sample_point`), so this per-epoch
   // hot loop does no warp or ridge noise math at all — only the dynamic feature
   // blend and baseline, which are all that actually change epoch to epoch.
   // Sub-range-scale relief for the LOWLANDS, the counterpart of the ridged

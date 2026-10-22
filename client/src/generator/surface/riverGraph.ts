@@ -23,7 +23,7 @@ import type { RiverCourse } from './surfaceTypes'
 // every consumer that needs a place reads `cellX`/`cellY`, the elements'
 // texel positions carried beside them, never the id as a raster index.
 // The river ribbons the generator draws are DERIVED from it
-// (riverPolylinesFromGraph) rather than traced from the D8 receivers a
+// (the engine's `river_polylines_from_graph`) rather than traced from the D8 receivers a
 // second time; where the graph agrees with the old tracing the picture is
 // the same, and where the old tracing broke a line at an arbitrary trunk
 // it now follows the main stem.

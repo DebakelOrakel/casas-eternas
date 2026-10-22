@@ -88,7 +88,7 @@ function fbmNoise(x: number, y: number, width: number, height: number, warpSeed:
 // displaced before sampling the elevation field. Two number-returning
 // calls at a call site (one per axis) rather than a single call
 // allocating a {x, y} pair — this runs once per pixel per axis inside
-// the project's own hottest loop (elevationField.ts's computeElevation),
+// the project's own hottest loop (the engine's `compute_elevation`),
 // so avoiding a per-pixel object allocation here matters the same way it
 // does for the flood's MinHeap pop (core/minHeap.ts).
 // The amplitude in domain units: the tuning's metres (DEC-0036 phase 8a);

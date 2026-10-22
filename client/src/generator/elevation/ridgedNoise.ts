@@ -12,7 +12,7 @@ import { globeOctaveOn } from './globeNoise'
 // Must tile exactly at the map's own wrap period in both axes — this is a
 // torus, and a non-periodic noise field would leave a seam at the wrap
 // edge. A sphere world samples the same octaves on a 3D lattice instead
-// (ridgedMultifractalOn, globeNoise.ts). Same periodic-value-noise construction as domainWarp.ts, but kept
+// (the engine's `ridged_multifractal_on`, globeNoise.ts). Same periodic-value-noise construction as domainWarp.ts, but kept
 // separate and independently tuned: domainWarp perturbs query points at
 // continent scale, this shapes relief at range scale, and folding both
 // into one parameterized helper would read worse than a second small copy
@@ -59,16 +59,16 @@ export function periodicValueNoise2D(x: number, y: number, cellsX: number, cells
 }
 const frame = globeFrame()
 
-// Finer-frequency companion to ridgedMultifractal, for
+// Finer-frequency companion to the engine's `ridged_multifractal`, for
 // render/erosionDetailTexture.ts's cosmetic detail pass — see that module's
 // own comment for why it exists (plains get near-zero detail from
-// ridgedMultifractal today, since computeElevation only applies it where
+// it today, since the engine's `compute_elevation` only applies it where
 // tectonic uplift is already positive). A separate octave table, not a
-// parameterization of RIDGE_OCTAVES: independently tunable frequency, and no
-// shared lattice phase to accidentally correlate the two.
+// parameterization of the engine's RIDGE_OCTAVES: independently tunable
+// frequency, and no shared lattice phase to accidentally correlate the two.
 //
 // Plain (non-ridged) value-noise fBm, deliberately NOT ridge-folded —
-// ridgedMultifractal's fold-and-square step is what makes mountain terrain
+// `ridged_multifractal`'s fold-and-square step is what makes mountain terrain
 // read as crests and valleys, which is the wrong shape for gentle plains
 // texture; this wants soft undulation instead. Each octave's value noise is
 // centered at 0 before summing, so the result is zero-mean by construction —
@@ -85,7 +85,7 @@ const DETAIL_OCTAVES: ReadonlyArray<{ cellsX: number; cellsY: number; amplitude:
 // field, or the plains drainage they each derive quietly disagrees.
 export const FINE_DETAIL_SEED_SALT = 0x11a7e5
 
-// Roughly [-0.5, 0.5], zero mean. Distinct seed salt from ridgedMultifractal
+// Roughly [-0.5, 0.5], zero mean. Distinct seed salt from `ridged_multifractal`
 // (xor'd by the caller, see erosionDetailTexture.ts) so the two layers don't
 // share a lattice phase either.
 export function fineDetailNoise(x: number, y: number, width: number, height: number, seed: number): number {
@@ -103,27 +103,8 @@ export function fineDetailNoise(x: number, y: number, width: number, height: num
   return sum / amplitudeSum
 }
 
-// fineDetailNoise on the globe with every octave's cells across the world
-// multiplied by `scale`: what a cascade of finer copies of the table reads
-// at a sphere point (a fine level's synthesis on the sphere, mesh/
-// meshRefine.levelSynthesis). The sphere's only.
-export function fineDetailNoiseScaledOn(domain: Domain, x: number, y: number, scale: number, seed: number): number {
-  const space = domain.noise
-  if (space.kind !== 'globe') throw new Error('fineDetailNoiseScaledOn samples the globe')
-  space.frame(x, y, frame)
-  let sum = 0
-  let amplitudeSum = 0
-  let octaveSeed = seed
-  for (const octave of DETAIL_OCTAVES) {
-    sum += (globeOctaveOn(frame, octave.cellsX * scale, domain, octaveSeed) - 0.5) * octave.amplitude
-    amplitudeSum += octave.amplitude
-    octaveSeed = (octaveSeed * 1664525 + 1013904223) >>> 0
-  }
-  return sum / amplitudeSum
-}
-
 // fineDetailNoise at domain point (x, y), sampled where the Domain says —
-// see ridgedMultifractalOn.
+// see the engine's `ridged_multifractal_on`.
 export function fineDetailNoiseOn(domain: Domain, x: number, y: number, seed: number): number {
   const space = domain.noise
   if (space.kind === 'chart') return fineDetailNoise(x, y, domain.width, domain.height, seed)

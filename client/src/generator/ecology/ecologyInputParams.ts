@@ -19,8 +19,8 @@ export const ECOLOGY_INPUTS = {
     inSpec: true,
   },
   // Volcanic-province fertility strength. The model wants 0..1 (toModel);
-  // this declaration is the default's only home — computeEcology takes the
-  // value and holds no fallback of its own.
+  // this declaration is the default's only home — the engine's compute_ecology
+  // takes the value and holds no fallback of its own.
   provinceStrength: {
     min: 0, max: 100, step: 5, default: 45,
     i18n: 'generator.panel.ecology.provinces',

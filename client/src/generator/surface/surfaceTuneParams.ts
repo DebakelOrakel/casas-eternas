@@ -4,17 +4,16 @@
 // The v1 erosion pass's whole section ("from erosion.ts": the delta freeboard
 // family, the estuary clamp, the zoned-incision thresholds, the talus angle —
 // each with its measurement history) was deleted with the pass in the erosion-v2
-// P5 teardown; the v2 engine's parameters live in DEFAULT_ENGINE_PARAMS
-// (erosionEngine.ts) and are hashed via AMPLIFY_CONSTANTS. Git history keeps
+// P5 teardown; the v2 engine's parameters live in the engine
+// (surface/erosion_engine.rs) and are hashed via its amplify_constants. Git history keeps
 // the measurements.
 //
-// Also out: CHANNEL_SLOPE_EXPONENT and CANONICAL_RIVER_DENSITY (exported =
-// contract), RIVER_MIN/MAX_WIDTH (drawn width, presentation), and
-// AMPLIFY_CONSTANTS, which already exists as its own hashed set.
+// Also out: RIVER_MIN/MAX_WIDTH (drawn width, presentation), and the
+// engine's amplify_constants, which already exists as its own hashed set.
 
 export const SURFACE_TUNING = {
-  // The flow regime from the climate step's months (hydrology.
-  // dryWaterFromMonths): the dry season is the mean of this many driest
+  // The flow regime from the climate step's months (the engine's
+  // `dry_water_from_months`): the dry season is the mean of this many driest
   // thawed months' water — six, the drier half-year, which is what the
   // regime's thresholds were set against (the smaller of the two seasons,
   // F6); three read far drier (Astrakan: the dry season's median share of
@@ -287,7 +286,7 @@ export const SURFACE_TUNING = {
   maxRiparianMm: 900,
 
   // How far the moisture bleeds from its water, metres, and its falloff:
-  // riparianDecay per riparianDecayLengthM (hydrology.riparianPrecipitationOn).
+  // riparianDecay per riparianDecayLengthM (the engine's `riparian_precipitation_on`).
   // On the terrain mesh since DEC-0036 phase 7; until then it bled
   // riparianSpread 1 coarse cell at 0.45 per cell — the reach and the length
   // are that 62.4 km cell (the torus's climate cell), not recalibrated. One

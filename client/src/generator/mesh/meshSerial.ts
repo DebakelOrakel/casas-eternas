@@ -22,7 +22,7 @@ import { buildFromTriangles, PeriodicTriangulation } from './periodicDelaunay'
 // goes through, so the session's mesh after a run IS the mesh a reload
 // produces (positions are float32 already, periodicDelaunay.ts). The
 // engine's node order and every summation in it then depend on the vertex
-// numbering alone (meshErosion.ts starts each star at the smallest id),
+// numbering alone (the engine's mesh_erosion.rs starts each star at the smallest id),
 // which is what makes a continued run and a reloaded run the same bytes.
 
 export interface SerializedMesh {
@@ -38,7 +38,7 @@ export interface SerializedMesh {
 // it, and the generator does not import world/.
 export interface SavedMesh extends SerializedMesh {
   z: Float32Array
-  // The sediment column's bytes (formatVersion 4, mesh/meshColumn.ts);
+  // The sediment column's bytes (formatVersion 4, the engine's mesh/mesh_column.rs);
   // undefined in a save from before it.
   column?: Uint8Array
 }

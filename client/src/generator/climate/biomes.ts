@@ -1,5 +1,5 @@
 // The biome set. Since 2026-09-28 the biome follows from the Köppen–Geiger
-// class of the place's twelve months (koppen.ts, biomeFromKoppen below), no
+// class of the place's twelve months (koppen.ts, the engine's biome_from_koppen), no
 // longer from the annual means on a Whittaker chart; the last four ids are
 // the biomes the months can tell apart and the means could not. Ocean is its
 // own id so the biome layer can skip it. Ids are stable (saves store them).

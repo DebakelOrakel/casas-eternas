@@ -150,7 +150,8 @@ export const CLIMATE_TUNING = {
   // Strength of the monsoon surface wind — a component up the seasonal-temperature
   // gradient (∇T points from cool sea toward hot summer land), added to the prescribed
   // zonal wind. Tuned so it reshapes moisture advection near coasts without swamping the
-  // base three-cell circulation (base zonal strength ~1). See computeMonsoonWind.
+  // base three-cell circulation (base zonal strength ~1). See the engine's
+  // compute_monsoon_wind (climate/monsoon.rs).
   // Per °C of difference over `climateGradientLengthM`.
   monsoonWindStrength: 0.05,
 
