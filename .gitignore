@@ -24,7 +24,7 @@ dist-ssr
 casas
 casas-eternas
 # make build's binaries
-bin/
+/bin/
 
 # The Rust engine's build output (make engine)
 engine/target/
