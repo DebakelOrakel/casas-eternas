@@ -357,7 +357,13 @@ async function main(): Promise<void> {
     } catch {
       return fail('--serve needs its configuration as JSON: {"relay": "nats://…", "pools": ["level", "tile"]}')
     }
-    return serve(config)
+    // An error once the worker is stopping is the stop's own — the drain
+    // ends the wait for a task, a task's report finds the connection
+    // closed — and not a failure: the drain's end exits with 0.
+    return serve(config).catch((error: unknown) => {
+      if (stopping) return new Promise<void>(() => undefined)
+      throw error
+    })
   }
   if (!raw) fail('usage: job-worker.mjs \'<job JSON>\'  |  job-worker.mjs --serve \'<config JSON>\'  |  job-worker.mjs --version; each with [--pipeline <pipeline.mjs>]')
   let job: Job
@@ -635,6 +641,9 @@ function computeThread(): NonNullable<typeof computeWorker> {
   return computeWorker
 }
 
+// Whether a serving worker was asked to stop (SIGTERM).
+let stopping = false
+
 async function serve(config: ServeConfig): Promise<void> {
   const token = await busToken(config)
   // Over a WebSocket where the relay is named by one (a worker outside the
@@ -685,6 +694,7 @@ async function serve(config: ServeConfig): Promise<void> {
   // drain that does not finish does not keep the worker alive (2026-10-02:
   // a hung worker ignored SIGTERM for as long as it hung).
   process.on('SIGTERM', () => {
+    stopping = true
     announce(true)
     current?.msg.nak()
     setTimeout(() => process.exit(0), 5_000).unref()

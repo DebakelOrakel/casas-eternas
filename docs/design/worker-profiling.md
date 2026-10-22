@@ -116,7 +116,9 @@ Proposed:
   no scaler, no worker bundle needed, and the jobs window wants no number
   of workers (`/v1/jobs/workers` without `wanted`); below 0 is refused.
 - The jobs window counts the connected workers from the presence, own and
-  external together; "workers starting" compares only the own pods.
+  external together (built 2026-10-18); "workers starting" compares only
+  the own pods (open: the cluster's own pods prove themselves with a
+  service account too, so the presence does not tell them apart).
 
 ## Assigning by profile
 
