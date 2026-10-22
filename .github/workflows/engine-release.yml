@@ -19,10 +19,11 @@
 #
 # THE CHECKS. Rust does not promise the same floating-point bits on every
 # platform, and one different bit gives a world other artifacts. So each
-# native build runs, on its own platform, the engine's tests (the modules on
-# their fixtures) and the smoke test (the native build against this
-# commit's WASM build, then the read side), as `make test` does. The WASM
-# build runs the tests under WASI. A failed check gives no release.
+# native build runs, on its own platform, the smoke test (the native build
+# against this commit's WASM build, then the read side). The engine's tests
+# (the modules on their fixtures) run once on Linux, natively and under
+# WASI; `make test` runs them all before a tag. A failed check gives no
+# release.
 
 name: engine release
 
@@ -82,11 +83,6 @@ jobs:
       - name: Build
         working-directory: engine
         run: cargo build --release --locked -p casas-engine-node --target aarch64-apple-darwin
-      - name: Tests
-        working-directory: engine
-        run: |
-          cargo test --workspace --release --locked
-          cargo test -p casas-engine --release --locked
       - uses: actions/download-artifact@v4
         with:
           name: wasm
@@ -167,11 +163,6 @@ jobs:
       - name: Build
         working-directory: engine
         run: cargo build --release --locked -p casas-engine-node --target x86_64-pc-windows-msvc
-      - name: Tests
-        working-directory: engine
-        run: |
-          cargo test --workspace --release --locked
-          cargo test -p casas-engine --release --locked
       - uses: actions/download-artifact@v4
         with:
           name: wasm
