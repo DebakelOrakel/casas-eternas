@@ -20,8 +20,8 @@
 #
 # The builds are the ones `make engines` and `make engine` make, with the
 # same images and the same flags. The toolchain is engine/rust-toolchain.toml's.
-# No musl build: the container image builds its own (deploy/Dockerfile,
-# stage 0), so that the image and its engine come from one commit.
+# No musl build: the container image takes the linux/amd64 one
+# (deploy/Dockerfile, stage 0), on a glibc base.
 #
 # NO TESTS HERE (2026-10-22): the engine's tests, the WASI run and the
 # smoke test run where the engine is made, `make test` before a tag. Here

@@ -85,7 +85,19 @@ holds the build the action checked, and Node 22 goes with it: on
 linux/amd64 its WASI run of the bake test stops with SIGSEGV (measured
 2026-10-22).
 
-Open: see fork 8 (an image without a release).
+How (built 2026-10-22): the Dockerfile's stage 0 downloads the release
+`ENGINE_RELEASE` (`make image` sets `engine-<pipeline>` from the tree's
+worker bundle) from `ENGINE_SOURCE`, checks every file with
+`sha256sum -c`, and gives the client build the WASM and the constants. The
+image takes the release's `pipeline.mjs` when the tree's module is the
+same pipeline, and stops otherwise; the host and the app come from the
+tree. It keeps the release's files and their `SHA256SUMS` in `/app/engine`.
+At its start the jobs module puts each one the artifact store lacks into
+it, checked against those `SHA256SUMS` (engines.go, seedPipelineFiles), so
+the store has the server's own pipeline without the release's host. A
+file beside no `SHA256SUMS` is never stored: a build from the tree has the
+pipeline's name, not necessarily the release's bytes. The bases are
+`node:26-bookworm-slim` (glibc).
 
 ## Fork 4 — what a release holds
 
@@ -209,13 +221,20 @@ and the scaler counts per pipeline: one pool of local processes, or one
 Deployment, per pipeline with work. Without this a worker of the current
 pipeline still takes an old task and fails it.
 
-## Fork 8 — an image without a release (open)
+## Fork 8 — an image without a release
 
 With fork 3 an image needs the release of its pipeline first: tag, action,
 then the image. `make image` from a working tree with a new pipeline has
 no release. Options: the Dockerfile builds from the source when a build
 argument says so (two ways to the same file), or `make image` refuses
 until the release is there (slow for a test image).
+
+**Decided and built 2026-10-22: the build argument.** `make image
+ENGINE=source` builds the engine in the image (Rust's Debian image, as the
+release's linux build), takes the tree's `pipeline.mjs`, and keeps no
+`SHA256SUMS`: such an image puts nothing into the artifact store. Without
+it, a tree with no release stops at the download, naming the missing
+file.
 
 ## Fork 9 — how long a pipeline stays (open)
 
@@ -233,11 +252,15 @@ is not needed until there are many.
 
 ## Status
 
-BUILDING since 2026-10-22. Forks 1–7 are decided; forks 8 and 9 are
-open. Built: the
-release action with the checks of fork 1 and the assets of fork 4; of
-fork 7, the job's `pipeline` (the client sends its `WORLD_PIPELINE`) and
-the task subject `jobs.task.<pool>.<pipeline>.<jobId>`, with a consumer
-per pipeline (`workers-<pipeline>`, deleted by the relay after 24 h
-without a worker); of fork 5, the route for a release's files; fork 6,
-the launcher. Next: the image on the release's engine (fork 3).
+BUILDING since 2026-10-22. Forks 1–8 are decided; fork 9 is open. Built:
+
+- the release action with the check of fork 1 and the assets of fork 4;
+- fork 7: the job's `pipeline` (the client sends its `WORLD_PIPELINE`) and
+  the task subject `jobs.task.<pool>.<pipeline>.<jobId>`, with a consumer
+  per pipeline (`workers-<pipeline>`, deleted by the relay after 24 h
+  without a worker);
+- fork 5: the route for a release's files;
+- fork 6: the launcher;
+- the host and the pipeline module, with their contract;
+- fork 3: the image on the release, with the store filled at the start;
+  fork 8: ENGINE=source.

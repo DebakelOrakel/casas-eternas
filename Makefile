@@ -14,7 +14,9 @@
 #   make release worker + client + docs + build, one archive per platform in
 #                bin/release/
 #   make image   build the container image (deploy/Dockerfile, context = repo
-#                root — it needs client/, docs/changelog/, cmd/, internal/)
+#                root — it needs client/, docs/changelog/, cmd/, internal/),
+#                on the release of the tree's pipeline, engine-<pipeline>;
+#                ENGINE=source builds the engine in the image instead
 #   make push    lint + image, then push to the registry
 #
 # The container is ONE binary that serves the client, stores worlds and
@@ -29,6 +31,9 @@
 
 IMAGE ?= ghcr.io/debakelorakel/casas-eternas
 TAG   ?= latest
+# Where the image's engine comes from: release (the pipeline's release) or
+# source (built in the image, for a pipeline without a release).
+ENGINE ?= release
 
 # What `casas-eternas version` reports, stamped into the binary at link time.
 # The same string the client bundle carries (client/vite.config.ts resolves it
@@ -222,8 +227,12 @@ release: worker client docs build engines
 		rm -rf $$dir; \
 	done
 
-image:
-	docker build --platform linux/amd64 --build-arg CASAS_VERSION=$(VERSION) -f deploy/Dockerfile -t $(IMAGE):$(TAG) .
+# The release is the tree's pipeline: the worker bundle tells it.
+image: worker
+	pipeline=$$(node job-worker.mjs --version | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).pipelineVersion') && \
+	docker build --platform linux/amd64 --build-arg CASAS_VERSION=$(VERSION) \
+		--build-arg ENGINE=$(ENGINE) --build-arg ENGINE_RELEASE=engine-$$pipeline \
+		-f deploy/Dockerfile -t $(IMAGE):$(TAG) .
 
 push: lint image
 	docker push $(IMAGE):$(TAG)

@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -126,4 +128,57 @@ func TestEngineReadsNeedNoCaller(t *testing.T) {
 	if AnonymousReads(httptest.NewRequest(http.MethodGet, "/v1/jobs", nil)) {
 		t.Error("the job list needs no caller")
 	}
+}
+
+// The shipped release goes into the store once, each file checked against
+// its SHA256SUMS; a file that does not match, or one beside no SHA256SUMS,
+// does not.
+func TestTheShippedReleaseIsStored(t *testing.T) {
+	sum := func(body string) string {
+		hash := sha256.Sum256([]byte(body))
+		return hex.EncodeToString(hash[:])
+	}
+	files := map[string]string{
+		"pipeline.json":                 `{"pipelineVersion":"` + testPipeline + `"}`,
+		"pipeline.mjs":                  "the module",
+		"casas-engine-linux-amd64.node": "an engine",
+	}
+	dir := t.TempDir()
+	sums := ""
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sums += sum(body) + "  " + name + "\n"
+	}
+	// Not the bytes the SHA256SUMS names.
+	if err := os.WriteFile(filepath.Join(dir, "casas-engine-linux-amd64.node"), []byte("another engine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryPipelineFiles{files: map[string][]byte{}}
+	seedPipelineFiles(context.Background(), dir, store)
+	if len(store.files) != 0 {
+		t.Fatalf("stored %d files beside no SHA256SUMS", len(store.files))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte(sums), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedPipelineFiles(context.Background(), dir, store)
+	if len(store.files) != 2 || string(store.files[testPipeline+"/pipeline.mjs"]) != "the module" || store.files[testPipeline+"/pipeline.json"] == nil {
+		t.Errorf("stored %v, want pipeline.mjs and pipeline.json", keys(store.files))
+	}
+	// Stored ones are not put again.
+	store.files[testPipeline+"/pipeline.mjs"] = []byte("kept")
+	seedPipelineFiles(context.Background(), dir, store)
+	if string(store.files[testPipeline+"/pipeline.mjs"]) != "kept" {
+		t.Error("a stored file was put again")
+	}
+}
+
+func keys(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
