@@ -159,7 +159,7 @@ func (r Request) Validate() error {
 	}
 	// A token of the task's subject: no dot, no wildcard.
 	if !pipelinePattern.MatchString(r.Pipeline) {
-		return fmt.Errorf("pipeline is required: a version such as v11-1b1f7f4a8b14250e")
+		return fmt.Errorf("pipeline is required: a version such as v12-53fe6efa9b110bf0")
 	}
 	// Level 1 runs over the whole world, the levels below one tile at a time.
 	switch r.Scope.Kind {

@@ -202,6 +202,9 @@ console.log('\n— run history —')
     PL.recordedPipeline(yaml) === 'v11-0123456789abcdef' && PL.recordedPipeline(legacyYaml(['54ee802771966159', '54ee802771966159'])) === PL.WORLD_PIPELINE
       && PL.recordedPipeline(legacyYaml(['54ee802771966159', 'abcdefabcdefabcd'])) === '' && PL.recordedPipeline(legacyYaml(['abcdefabcdefabcd'])) === '',
     PL.WORLD_PIPELINE)
+  // A pipeline that makes the same worlds as this one reads as this one:
+  // v11, whose code moved into the engine with no byte changed (v12).
+  check('a world v11 made is v12\'s', PL.recordedPipeline('status:\n  pipeline: v11-1b1f7f4a8b14250e') === PL.WORLD_PIPELINE, PL.WORLD_PIPELINE)
   const renamed = { ...record, name: 'Other' }
   check('a rename reads as a change, by name', WR.recordDiff(record, renamed).length === 1 && WR.recordDiff(record, renamed)[0].startsWith('name:'))
   const legacy = WR.recordFromYaml(yaml.replace(/  uid: .*\n/, '').replace(/  name: .*\n/, ''), { archeanEpochs: 0, epoch: 0 }, () => 'derived-uid')

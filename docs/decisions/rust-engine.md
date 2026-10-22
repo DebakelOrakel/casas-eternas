@@ -412,6 +412,18 @@ from the pipeline's release (docs/decisions/engine-releases.md):
    the forcing. Measured on Morvane: the plan of 12 262 tiles is the same,
    field for field. The detail seed stays in the world layer's recipe for
    the map's display.
+4. The version (2026-10-22): `AMPLIFICATION_ALGO_VERSION` 12, the
+   pipeline `v12-53fe6efa9b110bf0` (the tiles' `v12-f108cd0b3f0eb21b`,
+   `v12-9150463196cd1981`). With it the worlds' mappings of their recorded
+   controls entered the version (`world/runParams.ts`, `runParamConstants`:
+   the mantle's diffusion curve, the climate controls' `toModel` at three
+   points, the planet's defaults) — until then a change to one made other
+   worlds under an unchanged version. A world v11 made is v12's to refine
+   (`worldPipeline.ts`, `SAME_WORLDS_AS`): no byte of a world or an
+   artifact changed; the artifacts are made again under their new keys.
+
+What stays TypeScript, by the seam: the display's raster and lakes, the
+save's container, the history and the mappings of its controls.
 
 **7c — The harnesses of the TypeScript simulation.**
 

@@ -27,10 +27,25 @@ const PIPELINE_OF_CODE: Readonly<Record<string, string>> = {
   '9ac556ec02db1fff': 'v11-1b1f7f4a8b14250e',
 }
 
+// Pipelines that make the same worlds as a later one, by the later one:
+// v11 and v12 differ in where code runs, not in a byte of a world or an
+// artifact (2026-10-22, docs/decisions/rust-engine.md fork 7b: a level,
+// tiles, the tile plan of a real world compared byte for byte), so a world
+// v11 made is v12's to refine. Not a migration: a statement of equality.
+const SAME_WORLDS_AS: Readonly<Record<string, string>> = {
+  'v11-1b1f7f4a8b14250e': 'v12-53fe6efa9b110bf0',
+}
+
 // The pipeline a world.yaml records: `status.pipeline`, or for a world
 // before it the pipeline its runs' code names (all the same), or '' for
 // none — runs of two pipelines, a code no pipeline is known for, no run.
+// A pipeline that makes the same worlds as a later one reads as that one.
 export function recordedPipeline(yaml: string): string {
+  const pipeline = statedOrCoded(yaml)
+  return SAME_WORLDS_AS[pipeline] ?? pipeline
+}
+
+function statedOrCoded(yaml: string): string {
   const stated = readRecipeValue(yaml, 'status.pipeline')
   if (stated !== undefined) return stated
   const codes = new Set<string>()

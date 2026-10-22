@@ -2,7 +2,7 @@
 # with `engine` builds the engine and puts the builds on a GitHub release
 # of that tag.
 #
-#   git tag engine-v11-1b1f7f4a8b14250e && git push origin engine-v11-1b1f7f4a8b14250e
+#   git tag engine-v12-53fe6efa9b110bf0 && git push origin engine-v12-53fe6efa9b110bf0
 #
 # The tag is `engine-` and the pipeline a world.yaml records as
 # `status.pipeline` (world/worldPipeline.ts; `casas-eternas version` tells

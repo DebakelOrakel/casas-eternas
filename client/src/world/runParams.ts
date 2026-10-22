@@ -57,3 +57,28 @@ export function weatherParamsFrom(value: (path: string) => number): WeatherParam
     },
   }
 }
+
+// The mappings' numbers, for the pipeline's version (worldTuning.ts): a
+// change to one makes a replay compute another world, so it must change
+// the version as the engine's tuning does (until 2026-10-22 none of them
+// was in it). A `toModel` is a function and is hashed by its values at
+// both ends of its slider and in the middle — enough for the linear and
+// the curved mappings there are.
+export function runParamConstants(): Record<string, number> {
+  const probes = (name: string, toModel: (v: number) => number, min: number, max: number): Record<string, number> =>
+    Object.fromEntries([min, (min + max) / 2, max].map((v, i) => [`${name}.toModel.${i}`, toModel(v)]))
+  const { contrast, humidity } = CLIMATE_INPUTS
+  return {
+    mantleDiffusionMax: MANTLE_DIFFUSION_MAX,
+    mantleDiffusionCurve: MANTLE_DIFFUSION_CURVE,
+    mantleVigourMin: ARCHEAN_INPUTS.mantleVigour.min,
+    mantleVigourMax: ARCHEAN_INPUTS.mantleVigour.max,
+    landShareScale: landShareFromControl(100),
+    ...probes('climateContrast', contrast.toModel, contrast.min, contrast.max),
+    ...probes('climateHumidity', humidity.toModel, humidity.min, humidity.max),
+    eccentricity: DEFAULT_PLANET_FORCING.eccentricity,
+    precessionDeg: DEFAULT_PLANET_FORCING.precessionDeg,
+    solarConstant: DEFAULT_PLANET_FORCING.solarConstant,
+    landPlantsFromMa: DEFAULT_PLANET_FORCING.landPlantsFromMa,
+  }
+}

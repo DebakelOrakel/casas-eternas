@@ -1,4 +1,5 @@
 import { ENGINE_CONSTANTS } from '../generator/pipeline/engineConstants'
+import { runParamConstants } from './runParams'
 
 // THE TUNING A WORLD'S RUNS READ: every tuning object and default the
 // history reads — the Archean, the plates, the crust, the mantle, the
@@ -22,5 +23,8 @@ function flatten(prefix: string, value: unknown, out: Record<string, number>): v
 export function worldTuning(): Record<string, number> {
   const out: Record<string, number> = {}
   for (const [name, group] of Object.entries(ENGINE_CONSTANTS.tuning)) flatten(name, group, out)
+  // And how the recorded control values become the runs' parameters
+  // (runParams.ts, 2026-10-22).
+  flatten('runParams', runParamConstants(), out)
   return out
 }

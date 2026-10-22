@@ -218,7 +218,17 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // CANONICAL_RIVER_DENSITY instead of the save's slider value. Both change the
 // baked rivers and lakes for an unchanged world; the floor was never in
 // AMPLIFY_CONSTANTS, so the constants hash alone would not have moved.
-export const AMPLIFICATION_ALGO_VERSION = 11
+//
+// v12 (2026-10-22): what sets an artifact's bytes is the engine's
+// (docs/decisions/rust-engine.md, fork 7b): the forcing, the artifacts'
+// formats, the seeds, the raster and the land tiles moved into it, byte for
+// byte, so the engine of a pipeline's release carries them. The worlds'
+// mappings of their recorded controls (world/runParams.ts) entered the
+// version at the same time. No byte of an artifact changed; the version
+// moves because the image takes its engine from the release of its
+// pipeline (docs/decisions/engine-releases.md), and a release of v11 has
+// the engine without these.
+export const AMPLIFICATION_ALGO_VERSION = 12
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about
