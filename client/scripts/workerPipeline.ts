@@ -164,9 +164,12 @@ async function runTaskTimed(job: PipelineTask, io: PipelineIO, clock: Laps, cach
       }
     }
   }
-  const artifact = await replayLevel(job, inputs, onProgress)
+  const { artifact, earlierMs } = await replayLevel(job, inputs, onProgress, started)
   clock.lap('replay')
-  const durationMs = Date.now() - started
+  // The bake's time over every run of it: a worker that took the task over
+  // at a checkpoint adds the time of the runs before (2026-10-22; until
+  // then a take-over's bakeMs was its own run's only).
+  const durationMs = earlierMs + Date.now() - started
   onProgress('store', 0)
   if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   clock.lap('write')
@@ -213,7 +216,9 @@ function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[]
 // replayed the history at its own budget and compared it with the save,
 // because the world recorded a hash of the source files, which said
 // nothing about the simulation; the pipeline says it.
-async function replayLevel(job: PipelineTask, inputs: WorldInputs, onProgress: (phase: string, fraction: number) => void): Promise<MeshLevelArtifact> {
+// `started` is when this run began; the answer's `earlierMs` is what the
+// runs before it took, from the checkpoint it resumed.
+async function replayLevel(job: PipelineTask, inputs: WorldInputs, onProgress: (phase: string, fraction: number) => void, started: number): Promise<{ artifact: MeshLevelArtifact; earlierMs: number }> {
   const refusal = replayRefusal(inputs.history, inputs.pipeline)
   if (refusal) throw new Error(refusal)
   if (!inputs.mesh) throw new Error('the world carries no mesh — make it again to refine it')
@@ -222,6 +227,7 @@ async function replayLevel(job: PipelineTask, inputs: WorldInputs, onProgress: (
   const resume = dir ? await readCheckpoint(dir) : null
   onProgress('history', 0)
   let lastCheckpoint = resume?.done ?? 0
+  const earlierMs = resume?.elapsedMs ?? 0
   const replay = engine().Replay.start(planFromRecipe(recipe), 1, resume ? { position: resume.position, snapshot: resume.snapshot } : null, job.pool === false ? null : leafWorkers())
   // One epoch a call. Between two, the thread takes its messages (a fresh
   // token) and the checkpoint is written where one restores exactly.
@@ -230,7 +236,7 @@ async function replayLevel(job: PipelineTask, inputs: WorldInputs, onProgress: (
     if (dir && done - lastCheckpoint >= CHECKPOINT_EVERY_EPOCHS) {
       const position = replay.checkpointDue()
       if (position) {
-        await writeCheckpoint(dir, position, done, replay.snapshot())
+        await writeCheckpoint(dir, position, done, earlierMs + Date.now() - started, replay.snapshot())
         lastCheckpoint = done
       }
     }
@@ -242,7 +248,7 @@ async function replayLevel(job: PipelineTask, inputs: WorldInputs, onProgress: (
   onProgress('hydrology', 0)
   const level = replay.level(inputs.width, inputs.detailSeed)
   onProgress('hydrology', 1)
-  return level
+  return { artifact: level, earlierMs }
 }
 
 // CHECKPOINTS of level 1's replay: hours of one task, so a worker that dies
@@ -260,14 +266,15 @@ function checkpointPath(root: string, inputs: WorldInputs): string {
 const CHECKPOINT_ARRAYS = ['latticeAccumulated', 'latticeLockedEpochs', 'latticeLastClassCode'] as const
 const CHECKPOINT_MESH = ['nodes', 'connectivity', 'z', 'column', 'ice'] as const
 
-async function writeCheckpoint(dir: string, position: ReplayPosition, done: number, snapshot: ReplaySnapshot): Promise<void> {
+// `elapsedMs` is the bake's time up to it, over every run.
+async function writeCheckpoint(dir: string, position: ReplayPosition, done: number, elapsedMs: number, snapshot: ReplaySnapshot): Promise<void> {
   const fresh = `${dir}.${randomUUID()}`
   await mkdir(fresh, { recursive: true })
   const bytes = (a: ArrayBufferView): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
   // The field meshes' values (the mantle's, the ocean age's) beside the
   // arrays, each mesh's identity in position.json.
   const mesh = (f: SavedField): { cells: number; spacingM: number } => ({ cells: f.cells, spacingM: f.spacingM })
-  await writeFile(join(fresh, 'position.json'), JSON.stringify({ position, done, mantle: mesh(snapshot.mantle), oceanAge: mesh(snapshot.oceanAge) }))
+  await writeFile(join(fresh, 'position.json'), JSON.stringify({ position, done, elapsedMs, mantle: mesh(snapshot.mantle), oceanAge: mesh(snapshot.oceanAge) }))
   await writeFile(join(fresh, 'mantle.bin'), bytes(snapshot.mantle.values))
   await writeFile(join(fresh, 'oceanAge.bin'), bytes(snapshot.oceanAge.values))
   await writeFile(join(fresh, 'state.json'), JSON.stringify(snapshot.state))
@@ -277,10 +284,10 @@ async function writeCheckpoint(dir: string, position: ReplayPosition, done: numb
   await rename(fresh, dir)
 }
 
-async function readCheckpoint(dir: string): Promise<{ position: ReplayPosition; done: number; snapshot: ReplaySnapshot } | null> {
+async function readCheckpoint(dir: string): Promise<{ position: ReplayPosition; done: number; elapsedMs: number; snapshot: ReplaySnapshot } | null> {
   try {
     type MeshId = { cells: number; spacingM: number }
-    const { position, done, mantle, oceanAge } = JSON.parse(await readFile(join(dir, 'position.json'), 'utf8')) as { position: ReplayPosition; done: number; mantle: MeshId; oceanAge: MeshId }
+    const { position, done, elapsedMs, mantle, oceanAge } = JSON.parse(await readFile(join(dir, 'position.json'), 'utf8')) as { position: ReplayPosition; done: number; elapsedMs?: number; mantle: MeshId; oceanAge: MeshId }
     const read = async (name: string): Promise<ArrayBuffer> => {
       const b = await readFile(join(dir, name))
       return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
@@ -303,7 +310,7 @@ async function readCheckpoint(dir: string): Promise<{ position: ReplayPosition; 
       },
     }
     process.stderr.write(`resuming level 1 from epoch ${done} (${dir})\n`)
-    return { position, done, snapshot }
+    return { position, done, elapsedMs: elapsedMs ?? 0, snapshot }
   } catch {
     return null
   }
