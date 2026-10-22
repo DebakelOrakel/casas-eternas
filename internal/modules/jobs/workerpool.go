@@ -34,6 +34,10 @@ type serveConfig struct {
 	// The API base the launcher and the worker ask about the work per
 	// pipeline and get other pipelines' files from (`…/v1`).
 	Jobs string `json:"jobs,omitempty"`
+	// The server as a worker outside the cluster reaches it (the chart's
+	// workers.server.api): a URL of this API that the server names by its
+	// address inside is asked there.
+	API string `json:"api,omitempty"`
 }
 
 const (

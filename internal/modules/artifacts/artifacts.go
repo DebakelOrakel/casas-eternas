@@ -338,8 +338,9 @@ func (m *Module) allowed(w http.ResponseWriter, r *http.Request, worldID string,
 // (docs/decisions/engine-releases.md): the files of a pipeline's release,
 // one artifact per file, its stage the file's name. They belong to no
 // world, so they have rules of their own: everyone reads them; the jobs
-// module writes them, in this process (cmd/ composes it), and no HTTP
-// caller does; only the operator removes them.
+// module writes them — in this process (cmd/ composes it), or over HTTP
+// with its own credential (token.AudiencePipelineFiles), and in the local
+// mode, where nothing is checked; only the operator removes them.
 const PipelineWorld = "pipeline"
 
 // allowedPipeline is allowed for the pipeline builds.
@@ -348,6 +349,9 @@ func (m *Module) allowedPipeline(w http.ResponseWriter, r *http.Request, op oper
 	case reading:
 		return true
 	case writing:
+		if !m.cfg.Identity.ChecksIdentity() || m.cfg.Identity.PipelineFilesWriter(r) {
+			return true
+		}
 		httpjson.ClientError(w, http.StatusForbidden, "pipeline builds are written by the jobs module only")
 		return false
 	}

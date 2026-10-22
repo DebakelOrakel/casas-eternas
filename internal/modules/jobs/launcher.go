@@ -8,12 +8,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -74,7 +76,7 @@ func RunLauncher(ctx context.Context, cfg LauncherConfig) (int, error) {
 		pipeline := choosePipeline(ctx, serve.Jobs, own)
 		module := ""
 		if pipeline != own {
-			module, err = pipelineModule(ctx, serve.Jobs, cfg.CacheDir, cfg.Bundle, pipeline)
+			module, err = pipelineModule(ctx, serve, cfg.CacheDir, cfg.Bundle, pipeline)
 			if err != nil {
 				slog.Warn("job worker: the module of another pipeline", "pipeline", pipeline, "err", err)
 				module, pipeline = "", own
@@ -143,7 +145,8 @@ func pipelinesWork(ctx context.Context, jobsAPI string) (map[string]int, error) 
 // its engine for this platform beside it, as the shipped one has: fetched
 // from the server (GET /v1/jobs/engines) when it is not there, and checked
 // to be that pipeline by the host `bundle`.
-func pipelineModule(ctx context.Context, jobsAPI, cacheDir, bundle, pipeline string) (string, error) {
+func pipelineModule(ctx context.Context, serve serveConfig, cacheDir, bundle, pipeline string) (string, error) {
+	jobsAPI := serve.Jobs
 	if jobsAPI == "" {
 		return "", errors.New("the serving argument names no jobs API")
 	}
@@ -163,7 +166,7 @@ func pipelineModule(ctx context.Context, jobsAPI, cacheDir, bundle, pipeline str
 		if _, err := os.Stat(path); err == nil {
 			continue
 		}
-		if err := fetchPipelineFile(ctx, jobsAPI+"/jobs/engines/"+pipeline+"/"+name, path); err != nil {
+		if err := fetchPipelineFile(ctx, jobsAPI+"/jobs/engines/"+pipeline+"/"+name, serve.API, path); err != nil {
 			return "", fmt.Errorf("%s: %w", name, err)
 		}
 	}
@@ -179,14 +182,31 @@ func pipelineModule(ctx context.Context, jobsAPI, cacheDir, bundle, pipeline str
 
 // fetchPipelineFile downloads one file to `path`: into a temporary file
 // beside it first, so that a broken download leaves no file behind.
-func fetchPipelineFile(ctx context.Context, url, path string) error {
+//
+// The route answers with a link. A link to this API names the artifacts
+// module as the server reaches it — inside a cluster, by its Service — so
+// a worker outside asks its own `api` instead, as it does with a task's
+// URLs (jobWorker.ts, overApi). A link elsewhere (a presigned GET on the
+// bucket) is followed as it is.
+func fetchPipelineFile(ctx context.Context, url, api, path string) error {
 	ctx, cancel := context.WithTimeout(ctx, pipelineFetchTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	response, err := http.DefaultClient.Do(request)
+	client := &http.Client{CheckRedirect: func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if api != "" && strings.HasPrefix(next.URL.Path, "/v1/") {
+			if base, err := neturl.Parse(api); err == nil {
+				next.URL.Scheme, next.URL.Host, next.Host = base.Scheme, base.Host, base.Host
+			}
+		}
+		return nil
+	}}
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}

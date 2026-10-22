@@ -108,7 +108,24 @@ func (r *Resolver) ResolveBearer(authorization string) (caller string, admin boo
 	if _, _, _, err := r.tokens.VerifyJob(raw); err == nil {
 		return token.SubjectJob, false
 	}
+	// A module writing the pipeline builds (PipelineFilesWriter): a caller
+	// with no rights over any world, so it passes the gate and nothing else.
+	if subject, err := r.tokens.VerifyPipelineFiles(raw); err == nil {
+		return subject, false
+	}
 	return Anonymous, false
+}
+
+// PipelineFilesWriter reports whether the request carries the pipeline
+// builds' write credential (token.AudiencePipelineFiles): the jobs module,
+// writing them into the artifacts module of another process. False in the
+// local mode, where nothing is verified.
+func (r *Resolver) PipelineFilesWriter(req *http.Request) bool {
+	if !r.ChecksIdentity() || r.tokens == nil {
+		return false
+	}
+	_, err := r.tokens.VerifyPipelineFiles(bearer(req))
+	return err == nil
 }
 
 // Admin reports whether the request carries an admin's session.

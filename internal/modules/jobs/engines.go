@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/httpjson"
+	"github.com/DebakelOrakel/casas-eternas/internal/token"
 )
 
 // THE PIPELINE BUILDS (docs/decisions/engine-releases.md, fork 5): the
@@ -90,7 +91,7 @@ func (m *Module) handleEngineFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if m.cfg.PipelineFiles == nil {
-		httpjson.ClientError(w, http.StatusServiceUnavailable, "pipeline builds need the artifacts target in this process")
+		httpjson.ClientError(w, http.StatusServiceUnavailable, "pipeline builds need an artifact store")
 		return
 	}
 	link, err := m.pipelineFileLink(r.Context(), pipeline, file)
@@ -268,4 +269,104 @@ func seedPipelineFiles(ctx context.Context, dir string, files PipelineFiles) {
 	if stored > 0 {
 		slog.Info("jobs: the shipped release stored", "pipeline", pipeline, "files", stored)
 	}
+}
+
+// httpPipelineFiles is PipelineFiles over the artifacts module's API
+// (Config.ArtifactsURL), for a jobs module whose process does not run the
+// artifacts target: the split of a cluster (deploy/helm, compute and
+// stores). It writes as a module, with the pipeline builds' own credential
+// (token.AudiencePipelineFiles), the file and then its meta.json, as every
+// writer does; the meta is the store's writers' contract
+// (src/world/meshArtifacts.ts writes the same).
+type httpPipelineFiles struct {
+	base   string
+	tokens *token.Tokens
+}
+
+// How long the credential of one request holds.
+const pipelineFilesTokenTTL = 5 * time.Minute
+
+func (h httpPipelineFiles) request(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/octet-stream")
+	}
+	if h.tokens != nil {
+		credential, _, err := h.tokens.IssuePipelineFiles("jobs", pipelineFilesTokenTTL)
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("Authorization", "Bearer "+credential)
+	}
+	return http.DefaultClient.Do(request)
+}
+
+// resolve is the artifact of a release file: its uid and its files, or
+// ErrNoPipelineFile.
+func (h httpPipelineFiles) resolve(ctx context.Context, pipeline, file string, create bool) (string, []string, error) {
+	body, _ := json.Marshal(map[string]any{"worldId": "pipeline", "pipelineVersion": pipeline, "stage": file, "create": create})
+	response, err := h.request(ctx, http.MethodPost, h.base+"/artifacts/resolve", body)
+	if err != nil {
+		return "", nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode == http.StatusNotFound {
+		return "", nil, ErrNoPipelineFile
+	}
+	if response.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("resolve %s/%s: %s", pipeline, file, response.Status)
+	}
+	var resolved struct {
+		ArtifactUID string   `json:"artifactUid"`
+		Files       []string `json:"files"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&resolved); err != nil {
+		return "", nil, err
+	}
+	return resolved.ArtifactUID, resolved.Files, nil
+}
+
+// Link is the artifact's read route, which answers with a link to the
+// bytes; the URL is the artifacts module's as this server reaches it (the
+// launcher puts its own `api` in, launcher.go).
+func (h httpPipelineFiles) Link(ctx context.Context, pipeline, file string) (string, error) {
+	uid, files, err := h.resolve(ctx, pipeline, file, false)
+	if err != nil {
+		return "", err
+	}
+	for _, name := range files {
+		if name == "meta.json" {
+			return h.base + "/artifacts/" + uid + "/" + file, nil
+		}
+	}
+	return "", ErrNoPipelineFile
+}
+
+func (h httpPipelineFiles) Put(ctx context.Context, pipeline, file string, body []byte) error {
+	uid, _, err := h.resolve(ctx, pipeline, file, true)
+	if err != nil {
+		return err
+	}
+	meta, _ := json.Marshal(map[string]any{
+		"key":       map[string]string{"worldId": "pipeline", "pipelineVersion": pipeline, "stage": file},
+		"label":     "engine-" + pipeline + " " + file,
+		"createdAt": time.Now().UnixMilli(),
+	})
+	for _, part := range []struct {
+		name string
+		body []byte
+	}{{file, body}, {"meta.json", meta}} {
+		response, err := h.request(ctx, http.MethodPut, h.base+"/artifacts/"+uid+"/"+part.name, part.body)
+		if err != nil {
+			return err
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusNoContent {
+			return fmt.Errorf("PUT %s of %s/%s: %s", part.name, pipeline, file, response.Status)
+		}
+	}
+	return nil
 }

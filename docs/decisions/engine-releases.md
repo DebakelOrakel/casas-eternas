@@ -127,12 +127,14 @@ of the artifact store; on a miss it first downloads the file from
 it. In the store a release file is one artifact: `worldId` `pipeline`
 (`artifacts.PipelineWorld`), `pipelineVersion` the pipeline, `stage` the
 file's name. Such an artifact belongs to no world, so it has rules of its
-own: everyone reads it, the anonymous caller too; no HTTP caller writes
-it, not a job and not the admin, because the jobs module writes it in its
-own process; only the operator removes it; every listing shows it. The
-jobs module writes only where the artifacts target runs in the same
-process; elsewhere the route answers 503 until there is a server token for
-the write.
+own: everyone reads it, the anonymous caller too; only the jobs module
+writes it — in its own process, or, where the artifacts target runs in
+another one (the split of a cluster), over HTTP with a credential of its
+own (`token.AudiencePipelineFiles`, subject `module:jobs`; built
+2026-10-22), which writes nothing else; not a job and not the admin; only
+the operator removes it; every listing shows it. The route's link then
+names the artifacts module as the server reaches it; a worker outside the
+cluster asks its own `api` instead, as it does with a task's URLs.
 
 Not chosen: workers refuse other pipelines (old worlds then get no tiles);
 loads only on the local server (the cluster then cannot refine old
@@ -259,7 +261,7 @@ BUILDING since 2026-10-22. Forks 1–8 are decided; fork 9 is open. Built:
   the task subject `jobs.task.<pool>.<pipeline>.<jobId>`, with a consumer
   per pipeline (`workers-<pipeline>`, deleted by the relay after 24 h
   without a worker);
-- fork 5: the route for a release's files;
+- fork 5: the route for a release's files, in one process and split;
 - fork 6: the launcher;
 - the host and the pipeline module, with their contract;
 - fork 3: the image on the release, with the store filled at the start;

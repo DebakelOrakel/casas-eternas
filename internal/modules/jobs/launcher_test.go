@@ -101,7 +101,7 @@ func TestTheLauncherFetchesAndChecksAPipeline(t *testing.T) {
 	host := writeHost(t, t.TempDir(), "v0-own", 0)
 	cache := t.TempDir()
 	for range 2 {
-		module, err := pipelineModule(context.Background(), api, cache, host, "v0-other")
+		module, err := pipelineModule(context.Background(), serveConfig{Jobs: api}, cache, host, "v0-other")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,8 +117,30 @@ func TestTheLauncherFetchesAndChecksAPipeline(t *testing.T) {
 	}
 
 	wrong, _, _ := jobsAPI(t, []map[string]int{{}}, fakeModule("v0-third", 0))
-	if _, err := pipelineModule(context.Background(), wrong, t.TempDir(), host, "v0-other"); err == nil {
+	if _, err := pipelineModule(context.Background(), serveConfig{Jobs: wrong}, t.TempDir(), host, "v0-other"); err == nil {
 		t.Error("a module of another pipeline was taken")
+	}
+}
+
+// A link to this API that the server names by its address inside is asked
+// at the worker's `api`; another link is followed as it is.
+func TestTheLauncherAsksItsOwnAPI(t *testing.T) {
+	outside := http.NewServeMux()
+	outside.HandleFunc("GET /v1/artifacts/a/pipeline.mjs", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("the module"))
+	})
+	api := httptest.NewServer(outside)
+	t.Cleanup(api.Close)
+	jobs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://stores.inside.invalid:8080/v1/artifacts/a/pipeline.mjs", http.StatusFound)
+	}))
+	t.Cleanup(jobs.Close)
+	path := filepath.Join(t.TempDir(), "pipeline.mjs")
+	if err := fetchPipelineFile(context.Background(), jobs.URL+"/v1/jobs/engines/v0-other/pipeline.mjs", api.URL, path); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "the module" {
+		t.Errorf("got %q", got)
 	}
 }
 

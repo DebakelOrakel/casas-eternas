@@ -72,12 +72,40 @@ func TestPipelineBuildsHaveTheirOwnRules(t *testing.T) {
 		}
 	}
 
+	// The jobs module of another process writes with its own credential:
+	// the reserve, the file and the meta.
+	module, _, err := tokens.IssuePipelineFiles("jobs", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherBody := `{"worldId":"` + PipelineWorld + `","pipelineVersion":"v11-x","stage":"pipeline.json","create":true}`
+	created := doAs(mux, http.MethodPost, "/v1/artifacts/resolve", otherBody, module)
+	var minted resolveResponse
+	if created.Code != http.StatusOK || json.Unmarshal(created.Body.Bytes(), &minted) != nil {
+		t.Fatalf("module resolve with create = %d", created.Code)
+	}
+	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/pipeline.json", "{}", module).Code; got != http.StatusNoContent {
+		t.Errorf("module PUT = %d, want 204", got)
+	}
+	meta := `{"key":{"worldId":"` + PipelineWorld + `","pipelineVersion":"v11-x","stage":"pipeline.json"},"createdAt":1}`
+	if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+minted.ArtifactUID+"/meta.json", meta, module).Code; got != http.StatusNoContent {
+		t.Errorf("module PUT meta = %d, want 204", got)
+	}
+	if _, err := m.PipelineFileLink(ctx, "v11-x", "pipeline.json"); err != nil {
+		t.Errorf("the module's file is not whole: %v", err)
+	}
+	// Its credential writes no world's artifacts.
+	worldBody := `{"worldId":"ba90bda173d581ef","pipelineVersion":"v11-x","stage":"L1","create":true}`
+	if got := doAs(mux, http.MethodPost, "/v1/artifacts/resolve", worldBody, module).Code; got == http.StatusOK {
+		t.Error("the module's credential reserved a world's artifact")
+	}
+
 	// Listed for everyone, removable by nobody but the operator.
 	var listed struct {
 		Artifacts []callerArtifact `json:"artifacts"`
 	}
 	_ = json.Unmarshal(doAs(mux, http.MethodGet, "/v1/artifacts", "", user).Body.Bytes(), &listed)
-	if len(listed.Artifacts) != 1 || listed.Artifacts[0].WorldID != PipelineWorld || len(listed.Artifacts[0].Actions) != 0 {
+	if len(listed.Artifacts) != 2 || listed.Artifacts[0].WorldID != PipelineWorld || len(listed.Artifacts[0].Actions) != 0 {
 		t.Errorf("a user's listing = %+v", listed.Artifacts)
 	}
 	if got := doAs(mux, http.MethodDelete, "/v1/artifacts/"+found.ArtifactUID, "", user).Code; got != http.StatusForbidden {

@@ -64,6 +64,11 @@ const (
 	// route, never accepted as a session, and checked there against the
 	// user's session generation — the one point a session can be ended.
 	AudienceRefresh = "refresh"
+	// AudiencePipelineFiles is a module's credential to write the pipeline
+	// builds (docs/decisions/engine-releases.md, artifacts.PipelineWorld):
+	// the jobs module's, to the artifacts module in another process. Its
+	// own audience, so it writes nothing else and is no session.
+	AudiencePipelineFiles = "pipeline-files"
 )
 
 // SubjectWorker is who a job worker is on the bus. A worker serves every
@@ -97,6 +102,25 @@ func (t *Tokens) IssueRelay(subject string, ttl time.Duration) (string, time.Tim
 // VerifyRelay is Verify for the bus's audience.
 func (t *Tokens) VerifyRelay(raw string) (string, error) {
 	return t.Verify(raw, AudienceRelay)
+}
+
+// IssuePipelineFiles mints the pipeline builds' write credential for
+// `module` (ModuleSubject).
+func (t *Tokens) IssuePipelineFiles(module string, ttl time.Duration) (string, time.Time, error) {
+	return t.Issue(ModuleSubject(module), AudiencePipelineFiles, ttl)
+}
+
+// VerifyPipelineFiles is Verify for that audience; only a module's subject
+// passes.
+func (t *Tokens) VerifyPipelineFiles(raw string) (string, error) {
+	subject, err := t.Verify(raw, AudiencePipelineFiles)
+	if err != nil {
+		return "", err
+	}
+	if SubjectKind(subject) != "module" {
+		return "", fmt.Errorf("token: %q is no module", subject)
+	}
+	return subject, nil
 }
 
 // SubjectJob is who a bake Job is, as a caller.

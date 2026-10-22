@@ -141,7 +141,8 @@ type Config struct {
 	EngineSource string
 	// PipelineFiles keeps the files of the pipelines' releases in the
 	// artifact store: composed by cmd/ over a co-resident artifacts module.
-	// Nil: GET /v1/jobs/engines answers 503.
+	// Nil: over ArtifactsURL, with the module's own credential (engines.go,
+	// httpPipelineFiles).
 	PipelineFiles PipelineFiles
 }
 
@@ -243,6 +244,10 @@ func New(cfg Config) (*Module, error) {
 	if err != nil {
 		cancel()
 		return nil, err
+	}
+	if cfg.PipelineFiles == nil {
+		cfg.PipelineFiles = httpPipelineFiles{base: cfg.ArtifactsURL, tokens: cfg.Tokens}
+		m.cfg.PipelineFiles = cfg.PipelineFiles
 	}
 	// The release this installation ships, into the artifact store
 	// (engines.go), beside whatever starts now.
