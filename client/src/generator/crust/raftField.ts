@@ -1,8 +1,5 @@
-import type { PlateSeed } from '../tectonics/plateSeeds'
-import type { PlateType } from '../tectonics/plateTypes'
 import type { Raft } from './raftTypes'
 import { globeFrame, type CellBox, type Domain, type DomainGrid } from '../core/domain'
-import { smoothstepBetween } from '../core/interpolation'
 import { worldEpochMa } from '../core/worldTime'
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
@@ -24,15 +21,6 @@ function blobKernel(distSq: number, radius: number): number {
   const s = 1 - distSq / r2
   return s * s
 }
-
-// The summed metaball field maps to continental membership via a smooth
-// threshold band: below FIELD_LO fully oceanic, above FIELD_HI fully
-// continental, smoothstep between. A single blob peaks at field 1 at its
-// center, so a lone blob's coastline sits partway out; overlapping blobs
-// sum higher and union into one landmass with no seam.
-const FIELD_LO = 0.35
-const FIELD_HI = 0.65
-
 
 // The raw summed metaball field at a world point — 0 far from any crust, 1 at a
 // lone blob's centre, higher where blobs overlap. Sums every blob's kernel
@@ -186,83 +174,6 @@ export function raftFieldIndexed(x: number, y: number, index: BlobIndex): number
   return field
 }
 
-// raftFieldIndexed, and each raft's own field (raftField over that raft
-// alone) into `perRaft` (one entry per raft, written whole): both the
-// scans' bits, since a raft's blobs keep their order within a bucket and
-// a blob left out adds an exact 0. A finite point only.
-export function raftFieldsIndexed(x: number, y: number, index: BlobIndex, perRaft: Float64Array): number {
-  perRaft.fill(0)
-  const b = index.grid.cellAt(x, y)
-  const { items, bx, by, br, bp, braft, domain } = index
-  const globe = bp !== null && domain.noise.kind === 'globe'
-  if (globe && domain.noise.kind === 'globe') domain.noise.frame(x, y, queryFrame)
-  let field = 0
-  for (let k = index.start[b]; k < index.start[b + 1]; k++) {
-    const g = items[k]
-    if (globe && bp && chordSq(bp, g) >= br[g] * br[g] * CHORD_MARGIN) continue
-    const kernel = blobKernel(domain.distanceSq(x, y, bx[g], by[g]), br[g])
-    field += kernel
-    perRaft[braft[g]] += kernel
-  }
-  return field
-}
-
-// The raft whose blob is nearest in radii, within `reach` radii, or −1 —
-// the scan `d < nearest` over every blob in order, through the index (built
-// with at least this reach).
-export function nearestRaftIndexed(x: number, y: number, index: BlobIndex, reach: number): number {
-  const { items, bx, by, br, braft, domain } = index
-  let onRaft = -1
-  let nearest = reach
-  if (!(Math.abs(x) < Infinity && Math.abs(y) < Infinity)) {
-    for (let g = 0; g < bx.length; g++) {
-      const d = Math.sqrt(domain.distanceSq(x, y, bx[g], by[g])) / br[g]
-      if (d < nearest) { nearest = d; onRaft = braft[g] }
-    }
-    return onRaft
-  }
-  const b = index.grid.cellAt(x, y)
-  const bp = index.bp
-  if (bp && domain.noise.kind === 'globe') {
-    domain.noise.frame(x, y, queryFrame)
-    for (let k = index.start[b]; k < index.start[b + 1]; k++) {
-      const g = items[k]
-      const reachG = nearest * br[g]
-      if (chordSq(bp, g) >= reachG * reachG * CHORD_MARGIN) continue
-      const d = Math.sqrt(domain.distanceSq(x, y, bx[g], by[g])) / br[g]
-      if (d < nearest) { nearest = d; onRaft = braft[g] }
-    }
-    return onRaft
-  }
-  for (let k = index.start[b]; k < index.start[b + 1]; k++) {
-    const g = items[k]
-    const d = Math.sqrt(domain.distanceSq(x, y, bx[g], by[g])) / br[g]
-    if (d < nearest) { nearest = d; onRaft = braft[g] }
-  }
-  return onRaft
-}
-
-// Continental membership 0..1 at a world point — 0 open ocean, 1 solid
-// continental interior. This is the "is it continental crust" question (plate
-// typing, accretion, mantle insulation, rift eligibility), NOT "is it above
-// water" — see marginProfile for the latter.
-export function raftMembership(x: number, y: number, rafts: Raft[], domain: Domain): number {
-  return smoothstepBetween(FIELD_LO, FIELD_HI, raftField(x, y, rafts, domain))
-}
-
-// Continental membership (0..1, the raft field through FIELD_LO..FIELD_HI) at a
-// list of points — a field mesh's cell centres (the mantle's and the ocean
-// age's, DEC-0036) — through one blob index (the same bits as the scan, see
-// BlobIndex): on the sphere a distance costs a few times the torus's. It
-// replaced computeMembershipField, the 128 × 64 raster both read until
-// 2026-10-11, and its nearest-cell sampler.
-export function computeMembershipAt(rafts: Raft[], xs: ArrayLike<number>, ys: ArrayLike<number>, domain: Domain): Float64Array {
-  const out = new Float64Array(xs.length)
-  const blobs = buildBlobIndex(rafts, domain)
-  for (let i = 0; i < xs.length; i++) out[i] = smoothstepBetween(FIELD_LO, FIELD_HI, raftFieldIndexed(xs[i], ys[i], blobs))
-  return out
-}
-
 // A coarse (resX×resY) field of continental crust "oldness" 0..1 — 1 where the
 // crust formed at epoch 0 (the ancient cratonic cores), lower toward margins
 // accreted later (see RaftBlob.birthEpoch). Metaball-weighted mean birth
@@ -369,17 +280,6 @@ export function computeOwnerField(rafts: Raft[], resX: number, resY: number, dom
 
 export function sampleOwnerField(owner: Int32Array, grid: DomainGrid, x: number, y: number): number {
   return owner[grid.cellAt(x, y)]
-}
-
-// Phase 1 bridge: the existing crust-type-consuming code (boundary
-// classification, events, rift/merge) still reads a per-plate PlateType, but
-// rafts are the source of truth now, so a plate's type is DERIVED — it's
-// continental if a raft covers its seed. Later phases move those consumers
-// onto direct raft geometry and this goes away.
-const SEED_CONTINENTAL_THRESHOLD = 0.5
-
-export function derivePlateTypes(seeds: PlateSeed[], rafts: Raft[], domain: Domain): PlateType[] {
-  return seeds.map((seed) => (raftMembership(seed.x, seed.y, rafts, domain) >= SEED_CONTINENTAL_THRESHOLD ? 'continental' : 'oceanic'))
 }
 
 // Fraction of crust blobs that have passed the stabilisation age and can no longer

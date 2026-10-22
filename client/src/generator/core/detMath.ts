@@ -446,10 +446,6 @@ export function detPow(x: number, y: number): number {
   return detExp(y * detLog(x))
 }
 
-export function detLog2(x: number): number {
-  return detLog(x) * Math.LOG2E
-}
-
 export function detHypot(x: number, y: number, z = 0): number {
   return Math.sqrt(x * x + y * y + z * z)
 }

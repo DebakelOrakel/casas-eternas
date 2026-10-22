@@ -76,38 +76,6 @@ export interface WorkerLike {
   removeEventListener?(event: 'message', listener: (event: { data: unknown }) => void): void
 }
 
-// Workers kept for the next engine instead of terminated: a coupled
-// history builds a pipelined engine every epoch (the mesh changes), and a
-// thread started for each — loading its modules again — was part of
-// every epoch (profiled 2026-10-04, level 1 on 2048×1024: 7 threads per
-// epoch). The engine worker takes one init after another
-// (erosionEngineWorker.ts), so a kept thread is a fresh engine; nothing of
-// the last run survives in it but the loaded code.
-export interface ReusableWorkers {
-  createWorker: () => WorkerLike
-  releaseWorker: (worker: WorkerLike) => void
-  // Terminates the kept workers.
-  close: () => Promise<void>
-}
-
-// `alive` tells a kept worker that has died since (it is dropped): one
-// handed to an engine would never answer its init.
-export function reusableWorkers(createWorker: () => WorkerLike, alive: (worker: WorkerLike) => boolean = () => true): ReusableWorkers {
-  const idle: WorkerLike[] = []
-  return {
-    createWorker: () => {
-      for (let worker = idle.pop(); worker; worker = idle.pop()) if (alive(worker)) return worker
-      return createWorker()
-    },
-    releaseWorker: (worker) => {
-      idle.push(worker)
-    },
-    close: async () => {
-      await Promise.all(idle.splice(0).map((worker) => worker.terminate()))
-    },
-  }
-}
-
 // The listener goes once it has heard: a kept worker hears one 'ready'
 // per engine, and every engine adds its own.
 function onceReady(worker: WorkerLike): Promise<void> {
@@ -359,32 +327,6 @@ export class PooledErosionEngine {
     await Promise.all(this.workers.map((worker) => worker.terminate()))
   }
 }
-
-// ---------------------------------------------------------------------------
-// The PIPELINED engine: physics never waits for routing. Two routing
-// buffers; a dedicated refresh coordinator worker (plus its own small
-// worker group) recomputes routing from a z-SNAPSHOT while the stencil
-// group and the main coordinator keep iterating on the previous routing.
-//
-// Determinism is scheduling-free by design:
-//   - the snapshot is copied by the MAIN coordinator at a fixed iteration
-//     boundary (never while physics mutates z mid-copy),
-//   - the swap happens at the NEXT fixed boundary, whether the refresh
-//     finished long before it or the coordinator has to wait for it,
-//   - so the routing active during [kD, (k+1)D) is always routing(z_{(k-1)D}):
-//     staleness D..2D, identical for every worker split and every timing.
-// Physics tolerance for that staleness is the measured K-study (K ≤ 8
-// statistically equivalent; D defaults to 8 → staleness 8..16, validated
-// by the engine-check's stats gate).
-//
-// The pipelined engine and the single-threaded one are TWO SCHEMES: the
-// single one routes afresh every routingEvery iterations, this one on its
-// stale cadence. A run of more iterations than either cadence differs in
-// the last bits between them (2026-10-02: a level-3 tile, 12 rounds, baked
-// with and without a pool) — so every job worker bakes on a pool
-// (scripts/jobWorker.ts), and a history epoch stays within both cadences,
-// where the two agree bit for bit (harness:mesh checks it).
-export const BAKE_PIPELINE_DEPTH = 8
 
 export interface PipelineOptions {
   stencilWorkers: number

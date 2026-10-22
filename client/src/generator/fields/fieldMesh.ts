@@ -496,44 +496,6 @@ export function rasteriseField(fm: FieldMesh, field: ArrayLike<number>, resX: nu
   return result
 }
 
-// A vector field (east, south per cell, each in its own frame) on a
-// resX × resY chart raster, cell centres, interleaved [east, south] — each
-// pixel's vector in the PIXEL's own frame (the raster convention of the
-// climate grid, Domain.delta's): the corners' vectors mixed in 3D on the
-// sphere (FieldSampler.sampleVector), so near a pole, where the frames turn
-// round once, the mix is a vector and not a blend of numbers in different
-// frames. On the torus the plain interpolation.
-export function rasteriseVectorField(sampler: FieldSampler, fe: ArrayLike<number>, fs: ArrayLike<number>, resX: number, resY: number, out?: Float32Array): Float32Array {
-  const result = out ?? new Float32Array(resX * resY * 2)
-  const { domain } = sampler.mesh
-  const sx = domain.width / resX
-  const sy = domain.height / resY
-  const v = { x: 0, y: 0 }
-  for (let py = 0; py < resY; py++) {
-    const y = (py + 0.5) * sy
-    for (let px = 0; px < resX; px++) {
-      sampler.sampleVector(fe, fs, (px + 0.5) * sx, y, -1, v)
-      const k = (py * resX + px) * 2
-      result[k] = v.x
-      result[k + 1] = v.y
-    }
-  }
-  return result
-}
-
-// A chart raster (DomainGrid convention, centres at +0.5) onto the field
-// mesh, sampled bilinearly at each cell's centre (across a pole as the
-// sphere's grid samples). For a SMOOTH field from a raster about as coarse
-// as the mesh or coarser — an input map, a climate layer read back from a
-// save: it keeps the raster's values where they are and costs one sample
-// per cell. It aliases a raster much finer than the mesh.
-export function fieldFromRasterAtCentres(fm: FieldMesh, raster: Float32Array, resX: number, resY: number, out?: Float64Array): Float64Array {
-  const result = out ?? new Float64Array(fm.count)
-  const grid = fm.domain.grid(resX, resY)
-  for (let i = 0; i < fm.count; i++) result[i] = grid.sampleBilinearAt(raster, fm.x[i], fm.y[i])
-  return result
-}
-
 // The cell of the field mesh that owns each raster cell of a resX × resY
 // chart raster: the Voronoi cell its centre lies in (FieldSampler.
 // nearestCell). A locate per raster cell, so a reader that reduces one

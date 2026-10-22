@@ -5,7 +5,7 @@ import type { FieldPayload, MeshPayload } from '../../generator/pipeline/message
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { SedimentBasin } from '../../generator/surface/surfaceTypes'
-import type { PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulation'
+import type { PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulationTypes'
 import { refinedEntries, refinedFromEntries } from './refinedFields'
 import { climateEntries, LAND_FILES, type SavedClimate, type SavedLandFields } from './climateFields'
 import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'

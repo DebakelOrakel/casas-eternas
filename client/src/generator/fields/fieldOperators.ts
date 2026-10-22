@@ -1,57 +1,5 @@
 import type { FieldMesh, FieldSampler } from './fieldMesh'
 
-// THE OPERATORS ON A FIELD MESH (DEC-0036, phase 0): diffusion, gradient,
-// divergence, semi-Lagrangian transport and an elliptic solver, each one
-// code for both shapes — the shape is in the mesh's geometry
-// (fields/fieldMesh.ts), never in a branch here, except where a vector is
-// carried on the globe. Checked against analytic answers by `npm run
-// harness:fields` (scripts/fields.mjs) before any stage uses them.
-//
-// Fields are Float64Array per cell. The fields are small (24 000 cells at
-// the climate's 78 km is 190 kB), the solvers accumulate sums of many
-// terms that must cancel (a Laplacian of a smooth field is a difference of
-// near-equal fluxes, a conjugate gradient's residual falls to 1e-10), and
-// Float32 would put its rounding into every stage that reads them. A
-// field goes to Float32 where it leaves: the raster for a texture or the
-// save (rasteriseField). Inputs are ArrayLike<number>, so a Float32 field
-// may be read.
-//
-// A VECTOR field is two arrays, east and south (the Domain's frame, see
-// fieldMesh.ts), each cell's pair in its OWN tangent frame. A neighbour's
-// vector is read in a cell's frame through `turnC`/`turnS` (carryFrom);
-// on the torus that is the identity.
-//
-// The finite volume: cell i exchanges with neighbour j across their wall,
-// flux = κ · (φj − φi) · wall / dist, and a cell's change is the sum of its
-// fluxes over its area. The coupling wall / dist is symmetric, so the
-// operator times the areas is a symmetric matrix and the area-weighted sum
-// of a diffused field is kept to rounding.
-
-// ------------------------------------------------------------- frames
-
-// Neighbour fm.nbr[e]'s vector (ve, vs), in its own frame, read in the
-// frame of the cell that owns edge e. Into out.x, out.y.
-export function carryFrom(fm: FieldMesh, e: number, ve: number, vs: number, out: { x: number; y: number }): void {
-  const c = fm.turnC[e]
-  const s = fm.turnS[e]
-  out.x = c * ve - s * vs
-  out.y = s * ve + c * vs
-}
-
-// ---------------------------------------------------------- diffusion
-
-// The Laplacian ∇²φ per cell, 1 / m² times φ's unit: Σ_j k_ij (φj − φi) / A_i.
-export function laplacian(fm: FieldMesh, phi: ArrayLike<number>, out: Float64Array): Float64Array {
-  const { nbrStart, nbr, coupling, area } = fm
-  for (let i = 0; i < fm.count; i++) {
-    const p = phi[i]
-    let s = 0
-    for (let e = nbrStart[i]; e < nbrStart[i + 1]; e++) s += coupling[e] * (phi[nbr[e]] - p)
-    out[i] = s / area[i]
-  }
-  return out
-}
-
 // The largest explicit step (seconds, κ in m² / s) that keeps every
 // cell's new value a convex combination of the old: dt ≤ A_i / (κ Σ k_ij)
 // for all i. Stable and free of over-shoot; the strict stability bound is
@@ -79,17 +27,6 @@ export function diffuseExplicit(fm: FieldMesh, phi: ArrayLike<number>, kappa: nu
     out[i] = p + (k * s) / area[i]
   }
   return out
-}
-
-// One implicit (backward Euler) diffusion step, unconditionally stable:
-// (1 − dt κ ∇²) φ' = φ, the Helmholtz solve with α = 1 / (κ dt), from φ as
-// the first guess. Into out (which may be phi).
-export function diffuseImplicit(fm: FieldMesh, phi: ArrayLike<number>, kappa: number, dt: number, out: Float64Array, options: SolveOptions = {}): SolveReport {
-  const alpha = 1 / (kappa * dt)
-  const rhs = new Float64Array(fm.count)
-  for (let i = 0; i < fm.count; i++) rhs[i] = -alpha * phi[i]
-  if (out !== phi) for (let i = 0; i < fm.count; i++) out[i] = phi[i]
-  return solveHelmholtz(fm, alpha, rhs, out, options)
 }
 
 // A Gaussian smoothing of standard deviation `sigmaM` per axis (metres):
@@ -227,17 +164,6 @@ export function computeDepartures(fm: FieldMesh, sampler: FieldSampler, ve: Arra
   return out
 }
 
-// Departures known exactly rather than from a wind: cell i's parcel was at
-// (px[i], py[i]) a step ago — a rigid plate's, turned back by its own
-// motion (tectonics/oceanAge.ts), where a velocity sampled across a plate
-// boundary would mix two plates. The taps and offsets as computeDepartures
-// writes them.
-export function departuresFromPoints(fm: FieldMesh, sampler: FieldSampler, px: ArrayLike<number>, py: ArrayLike<number>, out: Departures): Departures {
-  const tap = departureTapper(fm, sampler, out)
-  for (let i = 0; i < fm.count; i++) tap(i, px[i], py[i])
-  return out
-}
-
 // Cell i's departure at (px, py) into out: the point, its triangle's
 // corners and weights, each corner's offset to it in metres, and on the
 // sphere its unit vector.
@@ -316,59 +242,6 @@ export function transportScalar(fm: FieldMesh, dep: Departures, phi: ArrayLike<n
   return out
 }
 
-// A vector field moved by the departures: the corners' vectors
-// interpolated at the departure (in 3D on the sphere, each from its own
-// frame), carried along the great circle to the arrival cell and read in
-// its frame. Into outE, outS (which must not be ve, vs).
-export function transportVector(fm: FieldMesh, dep: Departures, ve: ArrayLike<number>, vs: ArrayLike<number>, outE: Float64Array, outS: Float64Array): void {
-  const { corners, weights, unit } = dep
-  for (let i = 0; i < fm.count; i++) {
-    if (!fm.globe) {
-      let e = 0
-      let s = 0
-      for (let k = 3 * i; k < 3 * i + 3; k++) {
-        e += weights[k] * ve[corners[k]]
-        s += weights[k] * vs[corners[k]]
-      }
-      outE[i] = e
-      outS[i] = s
-      continue
-    }
-    let vx = 0
-    let vy = 0
-    let vz = 0
-    for (let k = 3 * i; k < 3 * i + 3; k++) {
-      const c = corners[k]
-      const a = ve[c] * weights[k]
-      const b = vs[c] * weights[k]
-      vx += a * fm.east[3 * c] + b * fm.south[3 * c]
-      vy += a * fm.east[3 * c + 1] + b * fm.south[3 * c + 1]
-      vz += a * fm.east[3 * c + 2] + b * fm.south[3 * c + 2]
-    }
-    const qx = unit[3 * i]
-    const qy = unit[3 * i + 1]
-    const qz = unit[3 * i + 2]
-    const r = vx * qx + vy * qy + vz * qz
-    vx -= r * qx
-    vy -= r * qy
-    vz -= r * qz
-    const o = 3 * i
-    const ux = fm.u[o]
-    const uy = fm.u[o + 1]
-    const uz = fm.u[o + 2]
-    const c = qx * ux + qy * uy + qz * uz
-    const wx = qy * uz - qz * uy
-    const wy = qz * ux - qx * uz
-    const wz = qx * uy - qy * ux
-    const k = (wx * vx + wy * vy + wz * vz) / (1 + c)
-    const rx = c * vx + (wy * vz - wz * vy) + wx * k
-    const ry = c * vy + (wz * vx - wx * vz) + wy * k
-    const rz = c * vz + (wx * vy - wy * vx) + wz * k
-    outE[i] = rx * fm.east[o] + ry * fm.east[o + 1] + rz * fm.east[o + 2]
-    outS[i] = rx * fm.south[o] + ry * fm.south[o + 1] + rz * fm.south[o + 2]
-  }
-}
-
 // ------------------------------------------------------- elliptic solves
 
 export interface SolveOptions {
@@ -385,52 +258,6 @@ export interface SolveReport {
   // For α = 0 (Poisson): the area-weighted mean of f that was removed —
   // ∇²φ = f has a solution only for a mean-free f on a closed surface.
   removedMean: number
-}
-
-// (∇² − α) φ = f by conjugate gradients, α ≥ 0 (1 / m²). Multiplied by −A,
-// the system is the symmetric (−K + α A) φ = −A f, K the finite-volume
-// coupling (K_ij = k_ij, K_ii = −Σ k_ij), positive definite for α > 0 and
-// semi-definite with the constants as null space for α = 0 — then f's mean
-// is removed and the solution returned with an area-weighted mean of 0.
-// Jacobi preconditioning (conjugateGradient). `phi` holds the first guess
-// and receives the solution. Every sum in a fixed order: the same input
-// gives the same bytes.
-export function solveHelmholtz(fm: FieldMesh, alpha: number, f: ArrayLike<number>, phi: Float64Array, options: SolveOptions = {}): SolveReport {
-  const n = fm.count
-  const { nbrStart, nbr, coupling, area } = fm
-  let totalArea = 0
-  for (let i = 0; i < n; i++) totalArea += area[i]
-  let removedMean = 0
-  const b = new Float64Array(n)
-  if (alpha === 0) {
-    let m = 0
-    for (let i = 0; i < n; i++) m += area[i] * f[i]
-    removedMean = m / totalArea
-  }
-  for (let i = 0; i < n; i++) b[i] = -area[i] * (f[i] - removedMean)
-  const diag = new Float64Array(n)
-  for (let i = 0; i < n; i++) {
-    let s = alpha * area[i]
-    for (let e = nbrStart[i]; e < nbrStart[i + 1]; e++) s += coupling[e]
-    diag[i] = s
-  }
-  const apply = (x: ArrayLike<number>, out: Float64Array): void => {
-    for (let i = 0; i < n; i++) {
-      const xi = x[i]
-      let s = alpha * area[i] * xi
-      for (let e = nbrStart[i]; e < nbrStart[i + 1]; e++) s += coupling[e] * (xi - x[nbr[e]])
-      out[i] = s
-    }
-  }
-  const report = conjugateGradient(n, apply, diag, b, phi, options)
-  if (alpha === 0) {
-    let m = 0
-    for (let i = 0; i < n; i++) m += area[i] * phi[i]
-    m /= totalArea
-    for (let i = 0; i < n; i++) phi[i] -= m
-  }
-  report.removedMean = removedMean
-  return report
 }
 
 // A symmetric positive (semi-)definite system A x = b by conjugate gradients

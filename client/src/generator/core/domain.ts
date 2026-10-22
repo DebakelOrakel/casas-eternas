@@ -282,25 +282,6 @@ export interface BilinearTaps {
   weights: Float64Array
 }
 
-export function bilinearTaps(count: number): BilinearTaps {
-  return { cells: new Int32Array(4 * count), weights: new Float64Array(3 * count) }
-}
-
-// A field sampled through the taps of slot `at`: in sampleBilinearGrid's
-// form, top · (1 − ty) + bottom · ty.
-export function sampleTaps(field: Float32Array, taps: BilinearTaps, at: number): number {
-  const c = taps.cells
-  const w = taps.weights
-  const i = 4 * at
-  const k = 3 * at
-  const tx0 = w[k]
-  const tx1 = w[k + 1]
-  const ty = w[k + 2]
-  const top = field[c[i]] * (1 - tx0) + field[c[i + 1]] * tx0
-  const bottom = field[c[i + 2]] * (1 - tx1) + field[c[i + 3]] * tx1
-  return top * (1 - ty) + bottom * ty
-}
-
 // A range of grid cells (DomainGrid.discBox): columns x0..x1, rows y0..y1,
 // both ends included, unwrapped.
 export interface CellBox {

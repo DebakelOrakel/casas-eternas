@@ -63,12 +63,6 @@ export interface CubeTileId {
   j: number
 }
 
-// The sides of a tile, in order: i low, j low, i high, j high.
-export const SIDE_I_LOW = 0
-export const SIDE_J_LOW = 1
-export const SIDE_I_HIGH = 2
-export const SIDE_J_HIGH = 3
-
 // The plane of one tile: gnomonic, tangent at the tile's centre (fork 3).
 // A great circle is a straight line in it.
 export interface TileFrame {
@@ -309,27 +303,4 @@ export function unproject(frame: TileFrame, x: number, y: number): Vec3 {
   const t = y / frame.radius
   const { centre: c, e1, e2 } = frame
   return normalise([c[0] + s * e1[0] + t * e2[0], c[1] + s * e1[1] + t * e2[1], c[2] + s * e1[2] + t * e2[2]])
-}
-
-// A point of a side, canonical (fork 5): the side from cube corner A to
-// cube corner B, at fraction f along the CUBE segment between them, as a
-// world direction. Whichever tile asks, it passes the two corners in the
-// same order (sideEnds), so the point is the same bits from both.
-// At f = 0 and f = 1 it is the corner itself: a + 1 · (b − a) is not b in
-// floating point, and a corner is shared by two sides of each tile.
-export function sidePoint(atlas: CubeAtlas, a: Vec3, b: Vec3, f: number): Vec3 {
-  const q: Vec3 = f === 0 ? a : f === 1 ? b : [a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1]), a[2] + f * (b[2] - a[2])]
-  return turn(atlas.rotation, normalise(q))
-}
-
-// A side's two cube corners in the canonical order: lexicographic on the
-// cube triple, so both tiles that share the side run it the same way.
-// `reversed` says whether that is against the tile's own order (corner
-// (side + 3) % 4 to corner side).
-export function sideEnds(atlas: CubeAtlas, tile: CubeTileId, side: number): { a: Vec3; b: Vec3; reversed: boolean } {
-  const cube: Vec3[] = [atlas.cubeCorner(tile, 0, 0), atlas.cubeCorner(tile, 1, 0), atlas.cubeCorner(tile, 1, 1), atlas.cubeCorner(tile, 0, 1)]
-  const from = cube[(side + 3) % 4]
-  const to = cube[side]
-  const before = from[0] - to[0] || from[1] - to[1] || from[2] - to[2]
-  return before < 0 ? { a: from, b: to, reversed: false } : { a: to, b: from, reversed: true }
 }

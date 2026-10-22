@@ -11,16 +11,6 @@ export function wrappedDelta(a: number, b: number, period: number): number {
   return delta
 }
 
-// Squared distance between two points on a torus of the given
-// width/height — the minimum-image-convention distance used throughout
-// this world's generation (seed spacing, nearest-seed rasterization) so
-// every distance check agrees on what "near" means across the wrap.
-export function toroidalDistanceSq(ax: number, ay: number, bx: number, by: number, width: number, height: number): number {
-  const dx = wrappedDelta(ax, bx, width)
-  const dy = wrappedDelta(ay, by, height)
-  return dx * dx + dy * dy
-}
-
 // Rotates (x, y) by `angle` radians about (centerX, centerY), staying
 // correct on a torus by working in the center's own locally-unwrapped
 // frame (a flat torus does not admit an arbitrary rotation as a *global*

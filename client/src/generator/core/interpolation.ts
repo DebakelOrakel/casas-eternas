@@ -20,13 +20,3 @@ export function clamp01(t: number): number {
 export function smoothstep(t: number): number {
   return t * t * (3 - 2 * t)
 }
-
-// Eased transition across a threshold band: 0 at or below `edge0`, 1 at or above
-// `edge1`, smoothstepped between.
-export function smoothstepBetween(edge0: number, edge1: number, x: number): number {
-  return smoothstep(Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0))))
-}
-
-export function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t
-}

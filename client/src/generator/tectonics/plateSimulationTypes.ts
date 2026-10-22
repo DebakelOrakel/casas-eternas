@@ -206,21 +206,3 @@ export interface SimEvent {
   // boundary (which may end up touching other neighbors too).
   otherPlateIndex?: number
 }
-
-export interface RiftEvent {
-  x: number
-  y: number
-  plateA: number
-  plateB: number
-}
-
-// Which plate is actually removed (consumed) vs. which one survives and
-// absorbs its territory — no longer always min/max by index, since a
-// subducting oceanic plate must be the one removed regardless of which
-// index it happens to hold (see stepEpoch's merge-resolution branch).
-export interface MergeEvent {
-  x: number
-  y: number
-  keepIndex: number
-  removeIndex: number
-}

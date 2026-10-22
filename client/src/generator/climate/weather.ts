@@ -1,12 +1,5 @@
-import { computeTemperature } from './temperature'
-import { DEFAULT_PLANET_FORCING, hadleyEdge, type PlanetForcing } from '../planet/planetForcing'
-import { computeWind, type CellVectors } from './wind'
-import { applyOceanSST, computeOceanCurrents, type OceanCurrents } from './oceanCurrents'
-import { computeSeasonalAmplitude } from './seasonality'
-import { computeSeasonalPrecipitation } from './monsoon'
-import type { SeasonalPrecipitation } from './monsoon'
+import { type PlanetForcing } from '../planet/planetForcing'
 import { CLIMATE_INPUTS } from './climateInputParams'
-import type { ClimateTerrain } from './climateMesh'
 
 // The METEOROLOGY of one terrain — the load-bearing chain base temperature →
 // wind → ocean currents (SST adjusts temperature) → seasonal amplitude →
@@ -53,40 +46,4 @@ export function defaultWeatherParams(): WeatherParams {
     // 2026-09-26, see climateInputParams.ts).
     equatorOffset: 0,
   }
-}
-
-// The static climate per cell of the climate's field mesh.
-export interface WeatherMesh {
-  // °C, the sea's with the currents' surface anomaly.
-  temperature: Float64Array
-  wind: CellVectors
-  // The currents (normalised, 0 on land) and the sea-surface anomaly they
-  // make, °C, 0 on land (oceanCurrents.applyOceanSST).
-  currents: OceanCurrents
-  currentAnomaly: Float64Array
-  // OCEAN_AMPLITUDE on the sea.
-  seasonalAmplitude: Float64Array
-  seasonal: SeasonalPrecipitation
-}
-
-export interface Weather {
-  terrain: ClimateTerrain
-  mesh: WeatherMesh
-}
-
-export function computeWeather(terrain: ClimateTerrain, params: WeatherParams): Weather {
-  const planet = params.planet ?? DEFAULT_PLANET_FORCING
-  const { cm } = terrain
-  const temperature = computeTemperature(terrain, params.temperatureOffset, params.temperatureContrast, params.equatorOffset, planet)
-  const wind = computeWind(cm, params.equatorOffset, planet.rotationHours)
-
-  // The currents under the wind, and the sea surface they make (in
-  // place: the sea takes its SST, the land the anomaly the wind carries).
-  const currents = computeOceanCurrents(terrain, wind, params.equatorOffset)
-  const currentAnomaly = applyOceanSST(terrain, temperature, currents, wind)
-
-  const seasonalAmplitude = computeSeasonalAmplitude(terrain, params.equatorOffset, planet)
-  const seasonal = computeSeasonalPrecipitation(terrain, temperature, seasonalAmplitude, wind, params.humidity, params.equatorOffset, hadleyEdge(planet.rotationHours))
-
-  return { terrain, mesh: { temperature, wind, currents, currentAnomaly, seasonalAmplitude, seasonal } }
 }

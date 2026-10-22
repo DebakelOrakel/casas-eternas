@@ -36,12 +36,6 @@ export interface WorldManifest {
   layers: WorldManifestLayer[]
 }
 
-export interface GridLayer {
-  data: Float32Array
-  resX: number
-  resY: number
-}
-
 // The world's own erosion settings, so a bake erodes the way the world was
 // eroded rather than by generic defaults. Undefined means the save predates
 // the setting; the pipeline falls back to its own default.

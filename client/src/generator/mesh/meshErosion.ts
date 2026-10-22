@@ -1,101 +1,10 @@
 import {
   DEFAULT_ENGINE_PARAMS,
-  ErosionEngine,
   type ErosionEngineParams,
-  type ErosionForcing,
 } from '../surface/erosionEngine'
-import { expandActive, type EngineIndex } from '../surface/erosionEngineState'
+import { type EngineIndex } from '../surface/erosionEngineState'
 import { MinHeap } from '../core/minHeap'
-import { PipelinedErosionEngine, type PipelineOptions, type WorkerLike } from '../surface/erosionEnginePool'
 import type { PeriodicTriangulation } from './periodicDelaunay'
-
-// Iterations between two routings of the drainage when the caller names
-// none; part of what a bake produces (world/meshArtifacts hashes it).
-export const DEFAULT_ROUTING_EVERY = 4
-
-// EROSION ON THE MESH (ADAPTIVE_MESH_PLAN.md phase 4.2): the engine of
-// surface/erosionEngine.ts over the triangulation. Nothing here is physics
-// — the kernels are the engine's, in their finite-volume form — this file
-// only builds the engine's graph INDEX from the mesh and adapts the
-// engine's active-space result back to node arrays.
-//
-// The index (erosionEngineState.EngineIndex): a node's neighbours are its
-// Delaunay star, counter-clockwise; a reach is the edge's length; the facet
-// over a reach is the dual Voronoi edge, taken in the cotangent form
-// (facet/length = (cot α + cot β)/2 over the two angles opposite the edge,
-// non-negative on a Delaunay triangulation); a node's area is its Voronoi
-// cell. Lengths are in domain units, and the reference length is the
-// macro cell, the domain's metresPerUnit (the shape's, DEC-0035 fork 6) —
-// a domain unit IS a macro cell, so every
-// length-bearing constant of the engine (settling lengths, diffusivity,
-// the shelf band) reads on the mesh exactly as it does on the 2048
-// raster. The frozen deep ocean and the shelf band follow the raster's
-// rule with a distance in place of a step count: ocean is the largest
-// facet-connected component of z ≤ 0, and the band is what lies within
-// shelfBandKm of a non-ocean node along the edges.
-//
-// Full arrays (the initial z, the forcing, every result) are laid out by
-// VERTEX SLOT (0..vertexSlots), dead slots ignored — the mesh's own
-// layout, so a MeshState field passes straight through.
-
-export interface MeshRouting {
-  // Per vertex slot: the single-flow receiver (vertex id, -1 when none),
-  // the flood-filled height, the accumulated drainage area in macro
-  // cells (water-weighted when the forcing weights it).
-  flowTarget: Int32Array
-  filled: Float32Array
-  accumulation: Float32Array
-  // Vertex ids in the flood's pop order — a topological order of the
-  // receiver graph; poppedCount entries valid.
-  popOrder: Int32Array
-  poppedCount: number
-}
-
-export interface MeshErosionResult {
-  // The eroded heights per vertex slot (the initial array is not touched).
-  z: Float32Array
-  routing: MeshRouting
-  // The ξ–q sediment flux through every node in the last iteration, m³.
-  sedimentFlux: Float32Array
-  erodedFluxM3: number
-  exportedFluxM3: number
-  index: EngineIndex
-  // THE SEDIMENT RECORD of the run per vertex slot (phase 5.2, the
-  // engine's per-node tallies): the fluvial cut and the deposit in m³,
-  // and the deposit's provenance as products (m³ × craton oldness, m³ ×
-  // source hardness) — the column's input (mesh/meshColumn.ts).
-  cutM3: Float32Array
-  depositM3: Float32Array
-  // The coarse part of the deposit (phase 5.2b), m³.
-  depositCoarseM3: Float32Array
-  // The net volume the hillslope creep handed a node (phase 5.6), m³,
-  // negative where it lost — scree is a layer.
-  hillNetM3: Float32Array
-  // The volume the tectonic uplift added (phase 8b-3), m³, negative where
-  // a rift lowered the node — the plate's load (pipeline/coupledEpoch.ts).
-  upliftM3: Float32Array
-  depositCraton: Float32Array
-  depositHard: Float32Array
-}
-
-export interface MeshErosionOptions {
-  age: number
-  routingEvery?: number
-  params?: ErosionEngineParams
-  // `releaseWorker`: the workers kept for the next run (reusableWorkers).
-  pool?: { createWorker: () => WorkerLike; releaseWorker?: (worker: WorkerLike) => void } & PipelineOptions
-  onProgress?: (fraction: number) => void
-  // The node heights every ~eighth of the run (a copy), for a redraw —
-  // the pass adapter's cadence (erosionPassV2.ts).
-  onChunkComplete?: (z: Float32Array, chunk: number) => void | Promise<void>
-  // Checked between chunks; true stops early with the partial result.
-  shouldCancel?: () => boolean
-  // Nodes frozen besides the deep ocean (per vertex slot, 1 = frozen): a
-  // tile's halo, computed around it and not eroded.
-  frozen?: Uint8Array
-}
-
-const PROGRESS_CHUNKS = 8
 
 // The engine index over the mesh for a terrain z (per vertex slot).
 //
@@ -313,28 +222,6 @@ export function apexCotangent(mesh: PeriodicTriangulation): (e: number) => numbe
   }
 }
 
-// Cotangent of the angle at the apex of halfedge e's triangle (the corner
-// opposite e).
-//
-// On the globe the triangle is the log map's picture in its first corner's
-// tangent plane (PeriodicTriangulation.frame), not the spherical triangle,
-// and the facet it gives is close to the exact one to O(ℓ² / R²). Kept so by
-// measurement (step 4d5, 2026-10-10), against the exact Voronoi edge on the
-// sphere (the arc between the two triangles' circumcentres) over a real
-// sphere world's mesh at budget 4: on 2048 × 1024 facet / length is off by
-// a median 1.4e-5 and a p99 1.1e-3 (max 2.5e-2, a near-zero facet), on the
-// harness's 256 × 128 (ℓ / R eight times larger) by 1.3e-3 and 9.7e-3. The
-// engine's mass balance does not depend on it — an edge's two slots read
-// one facet, so what one node gives the other takes — and the node areas
-// are the exact spherical cells (voronoiArea). An exact facet would be a
-// second geometry path here for a change below the engine's own
-// discretisation error.
-export function cotAtApex(mesh: PeriodicTriangulation, e: number, f: Float64Array): number {
-  const t = mesh.triangleOf(e)
-  mesh.frame(t, f)
-  return cotInFrame(f, e - 3 * t)
-}
-
 // cotAtApex for the halfedge i (0..2) of a triangle whose frame `f` holds.
 function cotInFrame(f: Float64Array, i: number): number {
   const ax = f[(2 * i) % 6]
@@ -350,76 +237,4 @@ function cotInFrame(f: Float64Array, i: number): number {
   const cross = ux * wy - uy * wx
   if (cross === 0) return 0
   return (ux * wx + uy * wy) / Math.abs(cross)
-}
-
-// Erodes the mesh's terrain: `initial` per vertex slot, the forcing per
-// vertex slot (surface/erosionForcingFields.assembleNodeForcing). Pooled
-// and pipelined when the caller supplies workers, single-threaded
-// otherwise — the same kernels either way.
-export async function runMeshErosion(mesh: PeriodicTriangulation, initial: Float32Array, forcing: ErosionForcing, options: MeshErosionOptions): Promise<MeshErosionResult> {
-  const params = options.params ?? DEFAULT_ENGINE_PARAMS
-  const index = buildMeshEngineIndex(mesh, initial, params, mesh.domain.metresPerUnit, options.frozen)
-  const chunkSize = Math.max(1, Math.ceil(options.age / PROGRESS_CHUNKS))
-  const chunks = async (run: (step: number, done: number) => void, expand: () => Float32Array): Promise<void> => {
-    let done = 0
-    while (done < options.age) {
-      const step = Math.min(chunkSize, options.age - done)
-      run(step, done)
-      done += step
-      if (options.onChunkComplete) await options.onChunkComplete(expand(), done / chunkSize)
-      if (options.shouldCancel?.()) break
-    }
-  }
-  const report = (done: number, iteration: number): void => options.onProgress?.((done + iteration + 1) / options.age)
-  if (options.pool) {
-    const { createWorker, releaseWorker, ...pipeline } = options.pool
-    const engine = await PipelinedErosionEngine.create(0, 0, initial, forcing, createWorker, pipeline, params, index, releaseWorker)
-    try {
-      await chunks((step, done) => engine.run(step, (iteration) => report(done, iteration)), () => engine.expandZ(initial))
-      const popped = engine.finalizeRouting()
-      return collect(engine.activeEngineViews, index, popped, initial, engine.erodedFluxM3, engine.exportedFluxM3)
-    } finally {
-      await engine.close()
-    }
-  }
-  const engine = ErosionEngine.onIndex(index, initial, forcing, params)
-  const routingEvery = options.routingEvery ?? DEFAULT_ROUTING_EVERY
-  await chunks((step, done) => engine.run(step, routingEvery, (iteration) => report(done, iteration)), () => engine.expandZ(initial))
-  engine.refreshRouting()
-  return collect(engine.views, index, engine.poppedCount, initial, engine.erodedFluxM3, engine.exportedFluxM3)
-}
-
-function collect(views: { z: Float32Array; filled: Float32Array; flowTarget: Int32Array; accumulation: Float32Array; popOrder: Int32Array; flux: Float32Array; fluxCoarse: Float32Array; cutVolume: Float32Array; depositVolume: Float32Array; depositCoarse: Float32Array; depositCraton: Float32Array; depositHard: Float32Array; hillNet: Float32Array; upliftNet: Float32Array }, index: EngineIndex, popped: number, initial: Float32Array, eroded: number, exported: number): MeshErosionResult {
-  const { active, activeCount } = index
-  // Both classes: the consumers read one flux.
-  const flux = new Float32Array(activeCount)
-  for (let a = 0; a < activeCount; a++) flux[a] = views.flux[a] + views.fluxCoarse[a]
-  const flowTarget = new Int32Array(index.cellCount).fill(-1)
-  for (let a = 0; a < activeCount; a++) {
-    const t = views.flowTarget[a]
-    if (t >= 0) flowTarget[active[a]] = active[t]
-  }
-  const popOrder = new Int32Array(popped)
-  for (let i = 0; i < popped; i++) popOrder[i] = active[views.popOrder[i]]
-  return {
-    z: expandActive(index, views.z, initial),
-    routing: {
-      flowTarget,
-      filled: expandActive(index, views.filled, initial),
-      accumulation: expandActive(index, views.accumulation, 0),
-      popOrder,
-      poppedCount: popped,
-    },
-    sedimentFlux: expandActive(index, flux, 0),
-    erodedFluxM3: eroded,
-    exportedFluxM3: exported,
-    index,
-    cutM3: expandActive(index, views.cutVolume, 0),
-    depositM3: expandActive(index, views.depositVolume, 0),
-    depositCoarseM3: expandActive(index, views.depositCoarse, 0),
-    hillNetM3: expandActive(index, views.hillNet, 0),
-    upliftM3: expandActive(index, views.upliftNet, 0),
-    depositCraton: expandActive(index, views.depositCraton, 0),
-    depositHard: expandActive(index, views.depositHard, 0),
-  }
 }

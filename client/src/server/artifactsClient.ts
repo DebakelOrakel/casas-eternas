@@ -56,33 +56,6 @@ export async function listServerArtifacts(): Promise<ServerArtifacts | null> {
   }
 }
 
-// Drops what one world takes with it when it is deleted: the artifacts of
-// its terrains that no other world holds (DEC-0039). Called before the
-// world is deleted.
-export async function removeServerWorldArtifacts(worldUid: string): Promise<boolean> {
-  const base = await apiBase()
-  if (!base) return false
-  try {
-    const response = await authFetch(`${base}/artifacts?world=${encodeURIComponent(worldUid)}`, { method: 'DELETE' })
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-// Drops one artifact by its uid — the reach for entries no world claims
-// (unreadable meta, older layouts).
-export async function removeServerArtifact(artifactUid: string): Promise<boolean> {
-  const base = await apiBase()
-  if (!base) return false
-  try {
-    const response = await authFetch(`${base}/artifacts/${encodeURIComponent(artifactUid)}`, { method: 'DELETE' })
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
 // One level of one terrain under one pipeline version, summed on the server
 // (GET /v1/artifacts/levels): a whole level (count 1) or its tiles. What the
 // artifact window shows as a row — a world refined to level 3 is ten

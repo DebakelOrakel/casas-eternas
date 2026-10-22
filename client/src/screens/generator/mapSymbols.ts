@@ -1,5 +1,5 @@
 import { type ContinentLabelPlacement, continentLabelSag, drawContinentLabel, fitContinentLabel } from '../../generator/render/continentLabelRenderer'
-import type { SimEvent } from '../../generator/tectonics/plateSimulation'
+import type { SimEvent } from '../../generator/tectonics/plateSimulationTypes'
 import type { VectorMark } from '../../map/vectorMarks'
 import type { SymbolPicture, WorldSymbol } from '../../map/worldView'
 

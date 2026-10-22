@@ -1,5 +1,4 @@
 import type { PeriodicTriangulation } from './periodicDelaunay'
-import type { DomainGrid } from '../core/domain'
 import { barycentric } from './remesh'
 
 // RASTERISING A NODE FIELD: the mesh sampled on a regular grid, linearly
@@ -145,47 +144,4 @@ export function rasteriseNodePart(mesh: PeriodicTriangulation, field: ArrayLike<
     result[p] = near >= 0 ? field[near] : outside
   }
   return result
-}
-
-// A coarse raster's value at each node: the nearest cell (the forcing's
-// hardness, the engine's forcingOfSnapshot — the hydrogeology's read).
-export function nearestCellAtNodes(field: Float32Array, resX: number, resY: number, mesh: PeriodicTriangulation): Float32Array {
-  const { width, height } = mesh.domain
-  const out = new Float32Array(mesh.vertexSlots)
-  for (let v = 0; v < out.length; v++) {
-    if (!mesh.vAlive[v]) continue
-    const cx = Math.min(resX - 1, Math.max(0, Math.floor((mesh.vx[v] / width) * resX)))
-    const cy = Math.min(resY - 1, Math.max(0, Math.floor((mesh.vy[v] / height) * resY)))
-    out[v] = field[cy * resX + cx]
-  }
-  return out
-}
-
-// A coarse field that marks the sea below 0 (the craton oldness, −1) at each
-// node: bilinear over its non-negative corners, renormalised; −1 with none.
-export function landBilinearAtNodes(field: Float32Array, grid: DomainGrid, mesh: PeriodicTriangulation): Float32Array {
-  const { width, height } = mesh.domain
-  const out = new Float32Array(mesh.vertexSlots).fill(-1)
-  for (let v = 0; v < out.length; v++) {
-    if (!mesh.vAlive[v]) continue
-    const gx = (mesh.vx[v] / width) * grid.resX - 0.5
-    const gy = (mesh.vy[v] / height) * grid.resY - 0.5
-    const x0 = Math.floor(gx)
-    const y0 = Math.floor(gy)
-    const fx = gx - x0
-    const fy = gy - y0
-    let sum = 0
-    let weight = 0
-    const add = (i: number, w: number): void => {
-      if (field[i] < 0) return
-      sum += field[i] * w
-      weight += w
-    }
-    add(grid.index(x0, y0), (1 - fx) * (1 - fy))
-    add(grid.index(x0 + 1, y0), fx * (1 - fy))
-    add(grid.index(x0, y0 + 1), (1 - fx) * fy)
-    add(grid.index(x0 + 1, y0 + 1), fx * fy)
-    if (weight > 0) out[v] = sum / weight
-  }
-  return out
 }

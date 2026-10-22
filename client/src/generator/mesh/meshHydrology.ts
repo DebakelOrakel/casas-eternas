@@ -1,80 +1,8 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
-import { DEFAULT_ENGINE_PARAMS, ErosionEngine, type ErosionEngineParams } from '../surface/erosionEngine'
-import type { EngineIndex } from '../surface/erosionEngineState'
-import type { FlowSubstrate } from '../surface/flowSubstrate'
 import { SEA_WATER_LEVEL, SURFACE_ICE, SURFACE_LAKE, SURFACE_SEA, type WaterBody } from '../surface/hydrology'
 import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
-import { buildMeshEngineIndex, type MeshRouting } from './meshErosion'
 import type { PeriodicTriangulation } from './periodicDelaunay'
 import { barycentric } from './remesh'
-
-// THE MESH AS A FLOW SUBSTRATE (surface/flowSubstrate.ts; ADAPTIVE_MESH_PLAN.md
-// phase 4.3, second half): the hydrology's discharge, lakes, channel
-// criterion and regime, and the river graph, run over the mesh's nodes
-// through this — the same functions that run over the raster's cells. An
-// element is a vertex slot; dead slots have no receiver and are never in
-// the pop order, so they fall out of every walk. Positions are the nodes'
-// (texel coordinates ARE world cells), the area is the Voronoi cell in
-// cells, a step is the edge length in cells, and both neighbourhoods are
-// the Delaunay star (every star edge is a Voronoi facet).
-export function meshSubstrate(mesh: PeriodicTriangulation, routing: MeshRouting, areas: Float32Array): FlowSubstrate {
-  const { domain } = mesh
-  return {
-    kind: 'mesh',
-    width: domain.width,
-    height: domain.height,
-    domain,
-    count: mesh.vertexSlots,
-    filled: routing.filled,
-    flowTarget: routing.flowTarget,
-    popOrder: routing.popOrder,
-    poppedCount: routing.poppedCount,
-    x: (v) => mesh.vx[v],
-    y: (v) => mesh.vy[v],
-    px: (v) => mesh.vx[v],
-    py: (v) => mesh.vy[v],
-    area: (v) => areas[v],
-    step: (a, b) => Math.sqrt(domain.distanceSq(mesh.vx[a], mesh.vy[a], mesh.vx[b], mesh.vy[b])) || 1,
-    facetNeighbours: (v, out) => (mesh.vAlive[v] ? mesh.neighbours(v, out) : 0),
-    rimNeighbours: (v, out) => (mesh.vAlive[v] ? mesh.neighbours(v, out) : 0),
-  }
-}
-
-// Every node's Voronoi area in cells (0 for a dead slot).
-export function meshAreas(mesh: PeriodicTriangulation): Float32Array {
-  const areas = new Float32Array(mesh.vertexSlots)
-  for (let v = 0; v < mesh.vertexSlots; v++) if (mesh.vAlive[v]) areas[v] = mesh.voronoiArea(v)
-  return areas
-}
-
-// The routing of a terrain on the mesh without eroding it — what a restored
-// world needs (the save carries the mesh and its heights, the routing is
-// derived): the engine's index and one routing refresh, exactly the flood
-// and receivers an erosion run ends with.
-// `reuse`: an engine index of this same mesh (buildMeshEngineIndex), taken
-// as it is where z freezes the same nodes.
-export function meshRouting(mesh: PeriodicTriangulation, z: Float32Array, params: ErosionEngineParams = DEFAULT_ENGINE_PARAMS, reuse?: EngineIndex): MeshRouting {
-  const index = buildMeshEngineIndex(mesh, z, params, undefined, undefined, reuse)
-  const neutral = new Float32Array(index.cellCount)
-  const engine = ErosionEngine.onIndex(index, z, { uplift: neutral, erodibility: neutral }, params)
-  engine.refreshRouting()
-  const { active, activeCount } = index
-  const flowTarget = new Int32Array(index.cellCount).fill(-1)
-  for (let a = 0; a < activeCount; a++) {
-    const t = engine.views.flowTarget[a]
-    if (t >= 0) flowTarget[active[a]] = active[t]
-  }
-  const popOrder = new Int32Array(engine.poppedCount)
-  for (let i = 0; i < engine.poppedCount; i++) popOrder[i] = active[engine.views.popOrder[i]]
-  const filled = new Float32Array(index.cellCount)
-  filled.set(z.subarray(0, index.cellCount))
-  const accumulation = new Float32Array(index.cellCount)
-  for (let a = 0; a < activeCount; a++) {
-    filled[active[a]] = engine.views.filled[a]
-    accumulation[active[a]] = engine.views.accumulation[a]
-  }
-  return { flowTarget, filled, accumulation, popOrder, poppedCount: engine.poppedCount }
-}
 
 // THE WATER FIELDS ON THE RASTER, FROM THE MESH: what the cell-walking
 // consumers (the climate refinement's dry-floor override, the riparian

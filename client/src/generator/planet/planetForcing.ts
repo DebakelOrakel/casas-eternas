@@ -1,5 +1,5 @@
 import { PLANET_INPUTS } from './planetInputParams'
-import { detCos, detPow, detSin, sq } from '../core/detMath'
+import { detPow, detSin, sq } from '../core/detMath'
 
 // PLANETARY FORCING (decision 13): the four astronomical controls as the
 // factors the climate chain multiplies in. Every factor is 1 at the
@@ -54,18 +54,6 @@ export function obliquityContrast(obliquityDeg: number): number {
 // percent, no feedbacks (the greenhouse control is the feedback knob).
 export function solarTemperatureOffsetC(solarConstant: number): number {
   return 255 * (detPow(Math.max(0.01, solarConstant), 0.25) - 1)
-}
-
-// The seasonal amplitude of one hemisphere: the tilt sets the swing (none
-// at 0°, relative to the default), the orbit biases it — the hemisphere
-// whose summer falls at perihelion swings 2e stronger, the other 2e weaker
-// (the insolation at perihelion over aphelion is (1+e)²/(1−e)² ≈ 1 + 4e,
-// half of it per hemisphere). Precession 0 puts perihelion in the top
-// hemisphere's summer, 180 in the bottom's, 90 at an equinox.
-export function seasonalityFactor(forcing: PlanetForcing, north: boolean): number {
-  const tilt = detSin(forcing.obliquityDeg * RAD) / detSin(PLANET_INPUTS.obliquity.default * RAD)
-  const bias = 2 * forcing.eccentricity * detCos(forcing.precessionDeg * RAD)
-  return Math.max(0, tilt * (1 + (north ? bias : -bias)))
 }
 
 // Where the Hadley cell ends, as a fraction of the equator-to-pole span:

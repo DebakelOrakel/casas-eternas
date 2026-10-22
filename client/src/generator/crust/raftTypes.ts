@@ -37,20 +37,6 @@ export interface Raft {
   noMergeUntilEpoch?: number
 }
 
-// What a raft collision (mergeOverlappingRafts) reports for the event/overlay
-// layer: the two continents' names (either may be null) plus the suture
-// geometry — a point on the collision seam and the tangent the seam runs
-// along (perpendicular to the convergence direction, i.e. along the
-// fold-mountain belt). The map marker draws a short band there.
-export interface RaftMergeEvent {
-  nameA: string | null
-  nameB: string | null
-  x: number
-  y: number
-  tangentX: number
-  tangentY: number
-}
-
 // A persisted collision-belt record: the accumulated history of every raft
 // suture, kept for the world's life (NOT pruned like terrain features) so
 // deep-time orogens survive as the Ecology layer's provenance for tin, lode
@@ -66,15 +52,4 @@ export interface Suture {
   // When the collision happened, on the continuous world-epoch axis
   // (core/worldTime.worldEpoch — same axis as RaftBlob.birthEpoch).
   epoch: number
-}
-
-// What a continental breakup (splitRaftAtRift) reports: the parent
-// continent's name plus the rift axis — a point on the tear and the
-// direction the rift line runs (perpendicular to the divergence normal).
-export interface RaftSplitEvent {
-  parentName: string | null
-  x: number
-  y: number
-  axisX: number
-  axisY: number
 }

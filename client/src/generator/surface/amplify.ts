@@ -1,7 +1,5 @@
-import { SEA_LEVEL, metersToElevation } from '../elevation/elevationScale'
-import { periodicValueNoise2D } from '../elevation/ridgedNoise'
 import { globeOctaveOn } from '../elevation/globeNoise'
-import { globeFrame, type Domain, type DomainGrid } from '../core/domain'
+import { globeFrame, type Domain } from '../core/domain'
 import { CANONICAL_RIVER_DENSITY, CHANNEL_SLOPE_EXPONENT } from './hydrology'
 import { SURFACE_TUNING } from './surfaceTuneParams'
 import { DEFAULT_ENGINE_PARAMS, STATUS_CLAMP_M } from './erosionEngine'
@@ -34,18 +32,6 @@ import { EROSION_LITHO_SEED_SALT, ROCK_CONTRAST_SIGMA_MAX } from './erosionForci
 // below still protects the coasts.
 const SEED_ROUGHNESS_M = 60
 
-// Height-scaled fade toward sea level, straight from the micro tile's
-// lesson: on a low coastal plain, the macro valley that should steer the
-// trunk river is only metres deep (plain incision is damped on purpose), so
-// full-amplitude noise would out-shout it and the river would wander off its
-// inherited course. Full roughness stays in the highlands, where competing
-// micro-valleys are exactly what we want. Ocean cells get none — nothing
-// routes on the seabed.
-export function seedRoughnessAmplitude(elevation: number): number {
-  if (elevation <= SEA_LEVEL) return 0
-  return Math.min(metersToElevation(SEED_ROUGHNESS_M), elevation * 0.5)
-}
-
 // The noise cascade for the seed layer. fineDetailNoise's own octave table
 // bottoms out at width/1024 — i.e. ~8 macro px, ~16 fine px at factor 2 —
 // which is far too coarse to seed fine drainage, so the field is summed over
@@ -57,24 +43,6 @@ export function seedRoughnessAmplitude(elevation: number): number {
 // detail, and erosion cannot act on it either.
 const MIN_OCTAVE_PIXELS = 3
 export const CASCADE_FALLOFF = 0.55
-
-export function seedCascadeScales(resX: number): number[] {
-  const scales: number[] = []
-  // Doubling (not quadrupling) so the spectrum keeps filling in as the
-  // resolution rises: at 4096 this yields [1] (one call = 8 px and 4 px
-  // octaves = 8 and 4 cells, exactly the band erosion needs), at the decided
-  // 8192 target [1, 2] — the second call restoring that same few-cells band
-  // at the finer spacing rather than leaving it at 16/8 cells.
-  for (let s = 1; s <= 64; s *= 2) {
-    // fineDetailNoise's finest octave is 1024 cells across the domain it is
-    // given (resX / s), so its wavelength in fine pixels is resX / (s * 1024).
-    // Below ~3 px there is nothing left to resolve and erosion cannot act on
-    // it either — that is the cutoff, not an aesthetic choice.
-    if (resX / (s * 1024) < MIN_OCTAVE_PIXELS) break
-    scales.push(s)
-  }
-  return scales.length > 0 ? scales : [1]
-}
 
 // (v1's per-cell erosion rescaling died with its pass — the v2 engine's
 // parameters are physical, so cellM covers what a rescaling table once did.)
@@ -274,24 +242,6 @@ export const AMPLIFY_CONSTANTS: Record<string, number> = {
   regimeDrySeasonBelow: SURFACE_TUNING.regimeDrySeasonBelow,
 }
 
-// Ridged fBm at an explicit octave table (the point of the exercise — see
-// RIDGE_OCTAVE_CELLS), in [0, 1). Each octave folds value noise into a ridge
-// and squares it to sharpen the crest, exactly as ridgedNoise does; the
-// table is local because the shared one is tuned for range scale.
-export function ridgedAt(x: number, y: number, width: number, height: number, seed: number): number {
-  let sum = 0
-  let norm = 0
-  for (let i = 0; i < RIDGE_OCTAVE_CELLS.length; i++) {
-    const cellsX = RIDGE_OCTAVE_CELLS[i]
-    const cellsY = Math.max(2, Math.round(cellsX / 2))
-    const noise = periodicValueNoise2D((x / width) * cellsX, (y / height) * cellsY, cellsX, cellsY, (seed + i * 0x9e3779b9) >>> 0)
-    const ridge = 1 - Math.abs(2 * noise - 1)
-    sum += ridge * ridge * RIDGE_OCTAVE_AMPLITUDES[i]
-    norm += RIDGE_OCTAVE_AMPLITUDES[i]
-  }
-  return sum / norm
-}
-
 // ridgedAt on the globe (a fine level's synthesis on the sphere, mesh/
 // meshRefine.levelSynthesis): the same octave table, each octave read on
 // the 3D lattice at the point's place, so a ridge neither stretches toward
@@ -316,40 +266,3 @@ export function ridgedAtOn(domain: Domain, x: number, y: number, seed: number): 
 // (2026-10-17: 0.4799 against 0.4702 over 300 000 area-uniform points and
 // six seeds each, at 2048 × 1024).
 export const RIDGE_GLOBE_OFFSET = 0.0097
-
-// How far each cell stands above the floor of its neighbourhood — the
-// stand-in for the generator's `uplift`, computable from a raster alone.
-// Sampled on a coarse ring rather than a full window: this only has to say
-// "is this raised ground", and a full min-filter at this radius would cost
-// more than the rest of the bake. `grid`: the macro grid over the domain.
-export function localRelief(field: Float32Array, grid: DomainGrid): Float32Array {
-  const { resX: width, resY: height } = grid
-  const out = new Float32Array(field.length)
-  const at = (x: number, y: number): number => field[y * width + x]
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) out[y * width + x] = localReliefAt(at, x, y, grid)
-  }
-  return out
-}
-
-// One cell of localRelief, over any source of the macro grid's heights —
-// the tiles of the top mesh level (mesh/meshTile.ts) need it for a few
-// cells around themselves, not for the world. Cells wrap through `grid`.
-export function localReliefAt(at: (x: number, y: number) => number, x: number, y: number, grid: DomainGrid): number {
-  const radius = Math.max(1, Math.round(grid.resX * RELIEF_RADIUS_FRACTION))
-  let lowest = Infinity
-  for (let dy = -radius; dy <= radius; dy += radius) {
-    const ny = grid.wrapRow(y + dy)
-    for (let dx = -radius; dx <= radius; dx += radius) {
-      const value = at(grid.wrapCol(x + dx), ny)
-      if (value < lowest) lowest = value
-    }
-  }
-  // Floored at sea level, which is not a detail: measured against the
-  // raw neighbourhood minimum, a 100 m coastal plain beside a 3,000 m
-  // deep ocean scored 3,100 m of "relief" and got ridged as hard as an
-  // alpine crest — 36,000 cells were driven below sea level and the
-  // plains moved by an average of 258 m. Relief means height above the
-  // surrounding LAND.
-  return Math.max(0, at(grid.wrapCol(x), grid.wrapRow(y)) - Math.max(SEA_LEVEL, lowest))
-}

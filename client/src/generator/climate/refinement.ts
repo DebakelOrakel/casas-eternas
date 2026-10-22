@@ -371,19 +371,6 @@ export function refineClimate(
   }
 }
 
-// The year's mean wind of a refinement per cell, east and south.
-export function refinedAnnualWind(r: RefinedClimate): CellVectors {
-  const n = r.cells
-  const out: CellVectors = { e: new Float64Array(n), s: new Float64Array(n) }
-  for (let m = 0; m < r.months; m++) {
-    for (let i = 0; i < n; i++) {
-      out.e[i] += r.windE[m * n + i] / r.months
-      out.s[i] += r.windS[m * n + i] / r.months
-    }
-  }
-  return out
-}
-
 // The annual fields of a refinement, in the forms the history's climate
 // has them (weather.computeWeather), so everything that reads a climate
 // reads this one unchanged: the mean temperature; the mean rain (a mean of

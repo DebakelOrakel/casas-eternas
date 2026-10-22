@@ -91,20 +91,3 @@ export const MESH_TUNING = {
   insertRatio: 1.5,
   removeRatio: 0.5,
 }
-
-// Target spacing in metres. `slope` is rise over run (m/m), `dischargeM3s`
-// the water flux, `curvaturePerM` the height field's Laplacian-type
-// curvature in 1/m, `columnM` the sediment column, `heightM` the height
-// above sea level (the deep-ocean test).
-export function targetSpacingM(slope: number, dischargeM3s: number, curvaturePerM: number, columnM: number, heightM: number, budget = 1): number {
-  const T = MESH_TUNING
-  if (heightM < T.deepOceanBelowM) return T.oceanSpacingM * budget
-  let h = T.maxSpacingM
-  if (slope > 0) h = Math.min(h, T.reliefPerNodeM / slope)
-  if (dischargeM3s > 0) h = Math.min(h, T.minSpacingM * Math.sqrt(T.dischargeRefM3s / dischargeM3s))
-  const k = Math.abs(curvaturePerM)
-  if (k > 0) h = Math.min(h, T.curvatureFactor / k)
-  if (columnM > T.columnThresholdM) h = Math.min(h, T.columnSpacingM)
-  if (h < T.minSpacingM) h = T.minSpacingM
-  return h * budget
-}

@@ -1,12 +1,12 @@
 import type { Domain } from '../core/domain'
 import { isLandAt } from '../elevation/elevationScale'
-import { rasteriseField, rasteriseVectorField } from '../fields/fieldMesh'
+import { rasteriseField } from '../fields/fieldMesh'
 import { CLIMATE_RES_X, CLIMATE_RES_Y } from './climateField'
-import { zonalMean, type ClimateMesh, type ClimateTerrain } from './climateMesh'
+import { zonalMean, type ClimateMesh } from './climateMesh'
 import { lapseAt, type ClimateCells } from './climatePoints'
 import { OCEAN_PRECIP } from './precipitation'
 import { OCEAN_AMPLITUDE } from './seasonality'
-import type { RefinedClimate, RefinedReliability, RefinedStorms } from './refinement'
+import type { RefinedReliability, RefinedStorms } from './refinement'
 
 // THE CLIMATE'S CHART (DEC-0036 fork 5: "the chart is the address and the
 // textures"): the climate's field-mesh fields on the CLIMATE_RES_X ×
@@ -24,8 +24,6 @@ import type { RefinedClimate, RefinedReliability, RefinedStorms } from './refine
 // chart's land. A vector is each pixel's in its own frame.
 
 export const chartField = (cm: ClimateMesh, field: ArrayLike<number>, resX = CLIMATE_RES_X, resY = CLIMATE_RES_Y): Float32Array => rasteriseField(cm.mesh, field, resX, resY)
-
-export const chartVectorField = (cm: ClimateMesh, fe: ArrayLike<number>, fs: ArrayLike<number>, resX = CLIMATE_RES_X, resY = CLIMATE_RES_Y): Float32Array => rasteriseVectorField(cm.sampler, fe, fs, resX, resY)
 
 // The terrain a chart's land is read off: a raster over the domain and its
 // dry floors (null: none).
@@ -52,23 +50,6 @@ export function chartLand(terrain: ChartTerrain, resX = CLIMATE_RES_X, resY = CL
       const t = ty * terrain.resX + Math.min(terrain.resX - 1, Math.floor(x * kx))
       out[gy * resX + gx] = isLandAt(terrain.elevation[t], terrain.dryLand !== null && terrain.dryLand[t] === 1) ? 1 : 0
     }
-  }
-  return out
-}
-
-// A sea field, 0 on the chart's land.
-export function chartSeaField(cm: ClimateMesh, field: ArrayLike<number>, landPixels: Uint8Array, resX = CLIMATE_RES_X, resY = CLIMATE_RES_Y): Float32Array {
-  const out = rasteriseField(cm.mesh, field, resX, resY)
-  for (let p = 0; p < out.length; p++) if (landPixels[p]) out[p] = 0
-  return out
-}
-
-export function chartSeaVectorField(cm: ClimateMesh, fe: ArrayLike<number>, fs: ArrayLike<number>, landPixels: Uint8Array, resX = CLIMATE_RES_X, resY = CLIMATE_RES_Y): Float32Array {
-  const out = rasteriseVectorField(cm.sampler, fe, fs, resX, resY)
-  for (let p = 0; p < landPixels.length; p++) {
-    if (!landPixels[p]) continue
-    out[2 * p] = 0
-    out[2 * p + 1] = 0
   }
   return out
 }
@@ -105,17 +86,6 @@ export function chartLandField(cm: ClimateMesh, field: ArrayLike<number>, isLand
     }
   }
   return out
-}
-
-// The static climate (weather.computeWeather) as the screen's textures.
-export interface WeatherChart {
-  temperature: Float32Array
-  wind: Float32Array
-  seasonalAmplitude: Float32Array
-  precipitation: Float32Array
-  monsoonIndex: Float32Array
-  currents: Float32Array
-  currentAnomaly: Float32Array
 }
 
 // A climate's annual cells (climatePoints.ClimateCells) as charts — a save's
@@ -168,54 +138,4 @@ export interface RefinedClimateChart {
   foehn: Float32Array
   reliability: RefinedReliability
   storms: RefinedStorms
-}
-
-export function refinedChart(r: RefinedClimate, terrain: ClimateTerrain): RefinedClimateChart {
-  const { cm } = terrain
-  const px = CLIMATE_RES_X * CLIMATE_RES_Y
-  const n = r.cells
-  const months = r.months
-  const landPixels = chartLand(terrain)
-  const temperature = new Float32Array(months * px)
-  const precipitation = new Float32Array(months * px)
-  const pressure = new Float32Array(months * px)
-  const wind = new Float32Array(months * px * 2)
-  for (let m = 0; m < months; m++) {
-    const at = (field: Float32Array): Float32Array => field.subarray(m * n, (m + 1) * n)
-    const rain = at(r.precipitation)
-    temperature.set(chartField(cm, at(r.temperature)), m * px)
-    precipitation.set(chartLandField(cm, rain, (i) => terrain.land[i] === 1 && rain[i] !== OCEAN_PRECIP, OCEAN_PRECIP, landPixels), m * px)
-    pressure.set(chartField(cm, at(r.pressure)), m * px)
-    wind.set(chartVectorField(cm, at(r.windE), at(r.windS)), m * px * 2)
-  }
-  const sea = (field: Float32Array): Float32Array => chartSeaField(cm, field, landPixels)
-  const landOnly = (field: Float32Array): Float32Array => chartLandField(cm, field, (i) => terrain.land[i] === 1, 0, landPixels)
-  const both = (field: Float32Array): Float32Array => chartField(cm, field)
-  return {
-    months,
-    temperature,
-    precipitation,
-    pressure,
-    wind,
-    currents: chartSeaVectorField(cm, r.currentE, r.currentS, landPixels),
-    currentAnomaly: sea(r.currentAnomaly),
-    upwelling: sea(r.upwelling),
-    salinity: sea(r.salinity),
-    deepWater: sea(r.deepWater),
-    fog: landOnly(r.fog),
-    foehn: landOnly(r.foehn),
-    reliability: {
-      rainVariability: landOnly(r.reliability.rainVariability),
-      ensoPattern: landOnly(r.reliability.ensoPattern),
-      ensoPeriodYears: r.reliability.ensoPeriodYears,
-      ensoStrength: r.reliability.ensoStrength,
-    },
-    storms: {
-      cyclone: both(r.storms.cyclone),
-      tornado: landOnly(r.storms.tornado),
-      blizzard: landOnly(r.storms.blizzard),
-      dust: both(r.storms.dust),
-      thunder: both(r.storms.thunder),
-    },
-  }
 }

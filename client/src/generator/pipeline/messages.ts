@@ -9,7 +9,7 @@ import type { SedimentBasin } from '../surface/surfaceTypes'
 // machine, and so the contract is readable as one document.
 //
 // See docs/design/generator-pipeline.md.
-import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulation'
+import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulationTypes'
 import type { Volcano } from '../tectonics/volcanoes'
 import type { RenderSimulationOptions } from '../render/elevationMapImage'
 import type { ContinentLabelPlacement } from '../render/continentLabelRenderer'

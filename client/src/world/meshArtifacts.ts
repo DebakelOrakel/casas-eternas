@@ -115,12 +115,6 @@ export async function writeMeshLevelArtifact(store: ArtifactStore, key: Artifact
   ])
 }
 
-export async function meshLevelArtifactExists(store: ArtifactStore, key: ArtifactKey): Promise<boolean> {
-  const handle = await store.resolve(key, false)
-  if (!handle) return false
-  return [MESH_LEVEL_FILES.meta, MESH_LEVEL_FILES.nodes, MESH_LEVEL_FILES.z].every((name) => handle.files.includes(name))
-}
-
 async function readMeta(store: ArtifactStore, handle: ArtifactHandle): Promise<MeshLevelMeta | null> {
   const bytes = await store.read(handle, MESH_LEVEL_FILES.meta)
   if (!bytes) return null

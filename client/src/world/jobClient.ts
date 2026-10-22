@@ -142,22 +142,6 @@ export type CommissionOutcome =
       message?: string
     }
 
-// How the follow ends. `mismatch` is a SUCCESS on the server's side: the bake
-// ran and produced bytes, they are simply not addressed by the key this client
-// searches. Reporting it as a failure would be a lie, and reporting it as
-// success would leave someone staring at an unchanged map.
-export type BakeOutcome =
-  | { ok: true; result: BakeResult }
-  | { ok: false; reason: 'failed' | 'lost'; message: string }
-  // The two versions travel as VALUES rather than baked into a sentence here,
-  // so the screen can put them through the catalog. A prebuilt English message
-  // returned from a client module would be untranslatable by construction.
-  | { ok: false; reason: 'mismatch'; serverVersion: string; clientVersion: string }
-
-// Matched to the server's own poll of the runner. Asking faster cannot surface
-// a state the server has not itself observed yet, so it would be pure traffic.
-const POLL_MS = 2000
-
 // The server reports progress WITHIN the current phase, so `history 84%` is
 // followed by `hydrology 0%`; each phase owns a band of the whole so the bar
 // runs one way. The phases are level 1's replay (scripts/jobWorker.ts,
@@ -194,19 +178,6 @@ export function bakeFraction(job: BakeJob): number | undefined {
   if (!band) return undefined
   return band[0] + (band[1] - band[0]) * Math.max(0, Math.min(1, job.percent / 100))
 }
-
-// Whether the job is still waiting rather than working. Queued here, or —
-// in a cluster — a Job whose pod has no node yet, which with hard anti-affinity
-// is routine rather than a fault and is worth saying out loud: nothing is
-// wrong, and nothing is happening either.
-export function bakeIsWaiting(job: BakeJob): boolean {
-  return job.state === 'queued' || job.phase === 'pending'
-}
-
-// Consecutive poll failures tolerated before the job counts as lost. A bake
-// runs for minutes, and a dropped request in the middle is not a dead bake —
-// but a server that has gone for good should not be waited on forever.
-const POLL_FAILURES_ALLOWED = 5
 
 // Whether this server can be asked for bakes at all.
 //
@@ -359,43 +330,6 @@ export function watchJobs(onJob: (job: BakeJob) => void, onLost: () => void): ()
   return () => abort.abort()
 }
 
-// The most recent job for this world and stage that has not failed, or null.
-//
-// This is how a screen discovers work SOMEBODY ELSE started — the worldgen
-// screen orders a bake, the user switches to the map, and without this the map
-// would only see "artifact absent" and start the same computation again. The
-// server does not deduplicate orders (two enqueues are two bakes), so noticing
-// existing work is the caller's job, and this is the noticing.
-//
-// A 'done' job is deliberately included: the artifact may have landed seconds
-// after the caller's read missed, and following a finished job simply returns
-// its result at the first poll — the cheap retry, by the existing road. Only
-// 'failed' is excluded, because attaching to it can produce nothing.
-//
-// Best-effort like every read in this file: offline, signed out, or a server
-// without the bake module all answer null, and the caller does whatever it
-// would have done without a server.
-export async function findActiveBake(worldUid: string, stage: number): Promise<BakeJob | null> {
-  if (worldUid === '' || !(await canCommissionBakes())) return null
-  const base = await apiBase()
-  if (!base) return null
-  let jobs: BakeJob[]
-  try {
-    const response = await authFetch(`${base}/jobs`, { cache: 'no-store' })
-    if (!response.ok) return null
-    jobs = (await response.json()) as BakeJob[]
-  } catch {
-    return null
-  }
-  const matching = jobs.filter((job) =>
-    job.state !== 'failed' && job.state !== 'cancelled' && job.request?.worldUid === worldUid && job.request?.stage === stage)
-  if (matching.length === 0) return null
-  // Newest first: orders are not deduplicated, so an old finished job and a
-  // fresh running one can coexist — the fresh one is the one to follow.
-  matching.sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))
-  return matching[0]
-}
-
 async function errorMessage(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { error?: string }
@@ -404,78 +338,4 @@ async function errorMessage(response: Response): Promise<string> {
     // A non-JSON body is not worth failing over; the status stands.
   }
   return `server refused the bake (${response.status})`
-}
-
-// Follow a job to its end, reporting progress along the way.
-//
-// `expectedPipelineVersion` is what the CALLER will look for in the artifact
-// store. Comparing it here rather than at the call site keeps the check
-// impossible to forget, and it is the only place that can tell the difference
-// between a bake that did nothing and a bake whose output is simply addressed
-// elsewhere.
-export async function followBake(
-  jobId: string,
-  expectedPipelineVersion: string,
-  onProgress: (job: BakeJob) => void,
-  signal?: AbortSignal,
-): Promise<BakeOutcome> {
-  const base = await apiBase()
-  if (!base) return { ok: false, reason: 'lost', message: 'no server to ask' }
-  let failures = 0
-
-  for (;;) {
-    await sleep(POLL_MS)
-    if (signal?.aborted) return { ok: false, reason: 'lost', message: 'stopped watching' }
-
-    let response: Response
-    try {
-      response = await authFetch(`${base}/jobs/${encodeURIComponent(jobId)}`, { cache: 'no-store', signal })
-    } catch {
-      // Still out there working, most likely. Only a run of failures ends it.
-      if (++failures > POLL_FAILURES_ALLOWED) {
-        return { ok: false, reason: 'lost', message: 'lost contact with the server' }
-      }
-      continue
-    }
-
-    // A 404 is different from a dropped request and must not be retried: the
-    // server restarted and the job went with it. Finished jobs are evicted
-    // eventually too, but never while in flight, so this cannot be a race with
-    // a job that is merely old.
-    if (response.status === 404) {
-      return { ok: false, reason: 'lost', message: 'the server forgot this job — it may have restarted' }
-    }
-    if (!response.ok) {
-      if (++failures > POLL_FAILURES_ALLOWED) {
-        return { ok: false, reason: 'lost', message: await errorMessage(response) }
-      }
-      continue
-    }
-
-    failures = 0
-    const job = (await response.json()) as BakeJob
-    onProgress(job)
-
-    if (job.state === 'failed') {
-      return { ok: false, reason: 'failed', message: job.error || 'the bake failed' }
-    }
-    if (job.state !== 'done') continue
-
-    if (!job.result) {
-      return { ok: false, reason: 'failed', message: 'the bake finished without saying what it produced' }
-    }
-    if (job.result.pipelineVersion !== expectedPipelineVersion) {
-      return {
-        ok: false,
-        reason: 'mismatch',
-        serverVersion: job.result.pipelineVersion,
-        clientVersion: expectedPipelineVersion,
-      }
-    }
-    return { ok: true, result: job.result }
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }

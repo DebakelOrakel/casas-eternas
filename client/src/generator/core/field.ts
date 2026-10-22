@@ -158,27 +158,3 @@ export function downsampleBox(fullRes: Float32Array, fullW: number, fullH: numbe
   }
   return out
 }
-
-// Full-resolution raster down to a coarse grid, taking the MAXIMUM over each
-// footprint rather than a mean or a centre sample. For thin features — rivers,
-// lakes — a footprint max is the only reduction that doesn't lose them entirely
-// between coarse cell centres.
-export function downsampleMax(fullRes: Float32Array, fullW: number, fullH: number, resX: number, resY: number): Float32Array {
-  const out = new Float32Array(resX * resY)
-  const fw = fullW / resX
-  const fh = fullH / resY
-  for (let gy = 0; gy < resY; gy++) {
-    const y0 = Math.floor(gy * fh)
-    const y1 = Math.floor((gy + 1) * fh)
-    for (let gx = 0; gx < resX; gx++) {
-      const x0 = Math.floor(gx * fw)
-      const x1 = Math.floor((gx + 1) * fw)
-      // Seeded from the block's first value, not 0: a block below zero
-      // everywhere has a real maximum too (an empty block stays 0).
-      let m = x1 > x0 && y1 > y0 ? fullRes[y0 * fullW + x0] : 0
-      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const v = fullRes[y * fullW + x]; if (v > m) m = v }
-      out[gy * resX + gx] = m
-    }
-  }
-  return out
-}

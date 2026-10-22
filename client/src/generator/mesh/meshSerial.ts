@@ -165,13 +165,6 @@ export function compactMesh(mesh: PeriodicTriangulation): { mesh: PeriodicTriang
   return { mesh: buildFromTriangles(mesh.domain, xs, ys, count, tris.slice(0, length)), order }
 }
 
-// A per-node field reordered: out[i] = field[order[i]].
-export function permute(field: Float32Array, order: Int32Array): Float32Array {
-  const out = new Float32Array(order.length)
-  for (let i = 0; i < order.length; i++) out[i] = field[order[i]]
-  return out
-}
-
 function zigzag(n: number): number {
   return n >= 0 ? n * 2 : -n * 2 - 1
 }
