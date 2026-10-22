@@ -15,7 +15,9 @@ import {
   keepArchiveInBrowser, listBrowserWorlds, openBrowserWorld, type BrowserWorld,
 } from '../../world/browserWorlds'
 import { COUNTED_STEPS, PROGRESS_STEPS, progressPosition, progressStepOf, type ProgressStep } from '../../world/worldProgress'
-import { levelPipelineVersion } from '../../world/levels'
+import { levelPipelineVersion, type PipelineVersions } from '../../world/levels'
+import { pipelineVersionsOf } from '../../world/jobClient'
+import { WORLD_PIPELINE, sameWorldsPipeline } from '../../world/worldPipeline'
 import { listServerArtifactLevels, type ServerArtifactLevel } from '../../server/artifactsClient'
 import type { NotificationOptions } from '../notifications/NotificationManager'
 import '../../ui/theme/design.css'
@@ -158,18 +160,24 @@ function progressText(progress: ProgressStep | null): string {
   return t('generator.load.progress', { n: position.n, all: position.all, step: t(`generator.step.${progress}.label` as TKey) })
 }
 
-// The levels on the server per terrain, as far as they are current for
-// this client (world/levels.ts): a level counts when it has its whole level
-// or at least one tile under the version this client reads it with. Read
-// live at every list, so what was deleted or evicted meanwhile no longer
-// shows.
-function currentLevels(levels: ServerArtifactLevel[]): Map<string, Set<number>> {
-  const out = new Map<string, Set<number>>()
+// The levels on the server per terrain. Read live at every list, so what
+// was deleted or evicted meanwhile no longer shows.
+function levelsOfTerrains(levels: ServerArtifactLevel[]): Map<string, ServerArtifactLevel[]> {
+  const out = new Map<string, ServerArtifactLevel[]>()
+  for (const level of levels) out.set(level.worldId, [...(out.get(level.worldId) ?? []), level])
+  return out
+}
+
+// What a terrain holds of each level (world/levels.ts): 'current' when it
+// has its whole level or at least one tile under the version this client
+// reads it with; 'world' when only under the version of the pipeline that
+// made the world, another one (`versions`, its release's), which refines
+// it as it is.
+function levelMarks(levels: ServerArtifactLevel[], versions: PipelineVersions | undefined): Map<number, 'current' | 'world'> {
+  const out = new Map<number, 'current' | 'world'>()
   for (const level of levels) {
-    if (level.pipelineVersion !== levelPipelineVersion(level.level, level.tiles)) continue
-    let set = out.get(level.worldId)
-    if (!set) out.set(level.worldId, (set = new Set()))
-    set.add(level.level)
+    if (level.pipelineVersion === levelPipelineVersion(level.level, level.tiles)) out.set(level.level, 'current')
+    else if (versions && out.get(level.level) !== 'current' && level.pipelineVersion === levelPipelineVersion(level.level, level.tiles, versions)) out.set(level.level, 'world')
   }
   return out
 }
@@ -366,8 +374,10 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   // between "not asked yet" and "cannot be reached", which the list has to
   // word differently.
   let serverReachable: boolean | null = null
-  // The current levels per terrain (currentLevels), from the last list.
-  let levelsByTerrain = new Map<string, Set<number>>()
+  // The levels per terrain (levelsOfTerrains), from the last list, and the
+  // versions of the other pipelines the listed worlds were made by.
+  let levelsByTerrain = new Map<string, ServerArtifactLevel[]>()
+  let pipelineVersions = new Map<string, PipelineVersions | null>()
   // Whether this browser can keep a world: the "copy to browser" needs it.
   let browserKeeps = false
   // Whether a sign-in stands between this browser and the server: a copy
@@ -406,7 +416,12 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
       listServerArtifactLevels(),
     ])
     if (run !== generation) return
-    levelsByTerrain = currentLevels(levels?.levels ?? [])
+    const others = [...new Set([...browser.map((w) => w.pipeline ?? ''), ...(server ?? []).map((w) => w.pipeline ?? '')].map(sameWorldsPipeline))]
+      .filter((pipeline) => pipeline !== '' && pipeline !== WORLD_PIPELINE)
+    const named = levels ? await Promise.all(others.map(async (pipeline) => [pipeline, await pipelineVersionsOf(pipeline)] as const)) : []
+    if (run !== generation) return
+    levelsByTerrain = levelsOfTerrains(levels?.levels ?? [])
+    pipelineVersions = new Map(named)
     serverReachable = server !== null
     browserKeeps = keeps
     signInMissing = signIn
@@ -848,8 +863,12 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
       row.append(mark)
     }
     const terrain = card.shown.terrain || card.server?.terrain || card.browser?.terrain || ''
-    const held = levelsByTerrain.get(terrain)
-    for (const level of SHOWN_LEVELS) row.append(el('span', held?.has(level) ? 'wc-stage wc-stage--level wc-stage--on' : 'wc-stage wc-stage--level', `L${level}`))
+    const pipeline = sameWorldsPipeline(card.shown.pipeline || card.server?.pipeline || card.browser?.pipeline || '')
+    const held = levelMarks(levelsByTerrain.get(terrain) ?? [], pipelineVersions.get(pipeline) ?? undefined)
+    for (const level of SHOWN_LEVELS) {
+      const mark = held.get(level)
+      row.append(el('span', mark === 'current' ? 'wc-stage wc-stage--level wc-stage--on' : mark === 'world' ? 'wc-stage wc-stage--level wc-stage--on wc-stage--older' : 'wc-stage wc-stage--level', `L${level}`))
+    }
     return row
   }
 

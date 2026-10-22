@@ -712,6 +712,14 @@
   color: var(--dc-on-teal);
 }
 
+/* A level held only under the pipeline that made the world, an older one:
+   its refinement, but not this client's. */
+.wc-stage--level.wc-stage--older {
+  border-color: color-mix(in srgb, var(--dc-teal) 45%, transparent);
+  background: color-mix(in srgb, var(--dc-teal) 22%, var(--dc-panel));
+  color: var(--dc-teal);
+}
+
 .wc-detail__note {
   margin: 0;
   display: flex;

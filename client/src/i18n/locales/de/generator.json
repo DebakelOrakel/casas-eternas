@@ -122,6 +122,7 @@
   "generator.artifacts.level.tiles": "{count} Kacheln",
   "generator.artifacts.state.otherTerrain": "anderes Gelände",
   "generator.artifacts.state.otherCode": "anderer Code",
+  "generator.artifacts.state.worldPipeline": "Pipeline der Welt",
   "generator.artifacts.engines.group": "Engines",
   "generator.artifacts.engines.files": "{count} Dateien",
   "generator.step.world.label": "Welt",

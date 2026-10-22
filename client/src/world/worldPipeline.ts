@@ -41,7 +41,13 @@ const SAME_WORLDS_AS: Readonly<Record<string, string>> = {
 // none — runs of two pipelines, a code no pipeline is known for, no run.
 // A pipeline that makes the same worlds as a later one reads as that one.
 export function recordedPipeline(yaml: string): string {
-  const pipeline = statedOrCoded(yaml)
+  return sameWorldsPipeline(statedOrCoded(yaml))
+}
+
+// A stated pipeline (`status.pipeline`, as a world list mirrors it) as the
+// pipeline that makes its worlds: the later one for one that makes the same
+// worlds as a later one (SAME_WORLDS_AS).
+export function sameWorldsPipeline(pipeline: string): string {
   return SAME_WORLDS_AS[pipeline] ?? pipeline
 }
 

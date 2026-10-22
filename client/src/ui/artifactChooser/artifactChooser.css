@@ -186,6 +186,11 @@
 .ac-state[data-stale='false'] {
   color: var(--dc-muted);
 }
+/* The refinement of a world of an older pipeline: current for that world,
+   not for this client — the world list's pale teal. */
+.ac-state[data-older='true'] {
+  color: color-mix(in srgb, var(--dc-teal) 70%, var(--dc-panel));
+}
 
 /* A world's head row, then its level rows under it, indented. */
 .ac-group {

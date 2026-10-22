@@ -122,6 +122,7 @@
   "generator.artifacts.level.tiles": "{count} tiles",
   "generator.artifacts.state.otherTerrain": "other terrain",
   "generator.artifacts.state.otherCode": "other code",
+  "generator.artifacts.state.worldPipeline": "world's pipeline",
   "generator.artifacts.engines.group": "Engines",
   "generator.artifacts.engines.files": "{count} files",
   "generator.step.world.label": "World",

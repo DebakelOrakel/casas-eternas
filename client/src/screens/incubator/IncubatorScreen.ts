@@ -13,6 +13,8 @@ import { artifactKey } from '../../storage/ArtifactStore'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
 import { isCurrentArtifact, parseStage } from '../../world/levels'
+import { sameWorldsPipeline } from '../../world/worldPipeline'
+import { pipelineVersionsOf } from '../../world/jobClient'
 import { openWorld, type World } from '../../world/query'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
@@ -81,23 +83,28 @@ function tiltForViewWidth(viewWidth: number): number {
 // shadows: ~190 km, where a mountain's shadow is pixels wide.
 const SHADOWS_BELOW_VIEW_WIDTH = 190_000 * UNITS_PER_METER
 
-// The server's current level-1 artifacts, by world uid: an artifact is
-// keyed by its terrain (DEC-0039), and each server world names the terrains
-// its jobs found or baked (WorldSummary.terrains). Any of them counts: the
-// level can belong to an older terrain of the world. Not in
-// world/meshArtifacts beside meshPipelineVersion, because the job worker
-// bundles that module and must not carry the server client.
+// The server's level-1 artifacts, by world uid: current for this client,
+// or made by the pipeline that made the world (a world of another pipeline
+// is refined by that pipeline; its level 1's version is the pipeline's
+// name, worldPipeline.ts). An artifact is keyed by its terrain (DEC-0039),
+// and each server world names the terrains its jobs found or baked
+// (WorldSummary.terrains). Any of them counts: the level can belong to an
+// older terrain of the world. Not in world/meshArtifacts beside
+// meshPipelineVersion, because the job worker bundles that module and must
+// not carry the server client.
 async function levelArtifacts(): Promise<Map<string, ServerArtifact[]>> {
   const [listed, worlds] = await Promise.all([listServerArtifacts(), listWorlds()])
   const stage = meshLevelStage(LEVEL)
   const byTerrain = new Map<string, ServerArtifact[]>()
   for (const a of listed?.artifacts ?? []) {
-    if (a.stage !== stage || !isCurrentArtifact(a) || a.worldId === '') continue
+    if (a.stage !== stage || a.worldId === '') continue
     byTerrain.set(a.worldId, [...(byTerrain.get(a.worldId) ?? []), a])
   }
   const byWorld = new Map<string, ServerArtifact[]>()
   for (const world of worlds ?? []) {
+    const pipeline = sameWorldsPipeline(world.pipeline ?? '')
     const list = (world.terrains ?? []).flatMap((terrain) => byTerrain.get(terrain) ?? [])
+      .filter((a) => isCurrentArtifact(a) || (pipeline !== '' && a.pipelineVersion === pipeline))
     if (list.length > 0) byWorld.set(world.uid, list)
   }
   return byWorld
@@ -264,10 +271,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       return false
     }
     step(`level read, ${read.artifact.count} nodes`)
-    // The tiles of levels 2 and 3 the server holds for this terrain.
+    // The tiles of levels 2 and 3 the server holds for this terrain, made
+    // by the pipeline of its level 1 (levels.ts): this client's, or the
+    // versions another one's release names.
+    const pipeline = isCurrentArtifact(chosen) ? undefined : await pipelineVersionsOf(chosen.pipelineVersion)
     const versions = new Map<string, string>()
     for (const a of (await listServerArtifacts())?.artifacts ?? []) {
-      if (a.worldId === chosen.worldId && parseStage(a.stage)?.tile) versions.set(a.stage, a.pipelineVersion)
+      if (pipeline !== null && parseStage(a.stage)?.tile && isCurrentArtifact(a, chosen.worldId, pipeline)) versions.set(a.stage, a.pipelineVersion)
     }
     step(`${versions.size} tiles listed`)
     // The save's climate fields; the terrain and the water the ground

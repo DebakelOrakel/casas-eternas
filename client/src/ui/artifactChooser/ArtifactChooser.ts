@@ -5,9 +5,9 @@ import { clearArtifacts } from '../../storage/artifactAdmin'
 import { listServerArtifactLevels, removeServerLevel, removeServerPipelineBuilds, type ServerPipelineBuilds } from '../../server/artifactsClient'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
-import { currentPipelineVersion, parseStage } from '../../world/levels'
-import { WORLD_PIPELINE } from '../../world/worldPipeline'
-import { commissionBake, type CommissionOutcome } from '../../world/jobClient'
+import { currentPipelineVersion, parseStage, type PipelineVersions } from '../../world/levels'
+import { WORLD_PIPELINE, sameWorldsPipeline } from '../../world/worldPipeline'
+import { commissionBake, pipelineVersionsOf, type CommissionOutcome } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { BROWSER_ICON, SERVER_ICON, icon } from '../../ui/chooserIcons'
 import type { NotificationManager } from '../notifications/NotificationManager'
@@ -93,6 +93,10 @@ interface LevelRow {
   // Why it is outdated, or null: another terrain than the world's last
   // save (known only for the world held here), or other code.
   stale: 'otherTerrain' | 'otherCode' | null
+  // Made under the version of the pipeline that made a world holding the
+  // terrain, another one than this client's: that world's refinement
+  // (docs/decisions/engine-releases.md), so not outdated.
+  older: boolean
   // The browser's entries, deleted one by one (the server deletes a level
   // in one request).
   localUids: string[]
@@ -105,11 +109,14 @@ function shortPipeline(version: string): string {
   return version.length > 12 ? `${version.slice(0, 8)}…` : version
 }
 
-function staleOf(row: Pick<LevelRow, 'worldId' | 'pipelineVersion' | 'level' | 'tiles'>, world: { worldId: string | null } | null, held: Set<string>): LevelRow['stale'] {
+// `versions`: those of the other pipelines that made the worlds holding the
+// row's terrain (their releases').
+function staleOf(row: Pick<LevelRow, 'worldId' | 'pipelineVersion' | 'level' | 'tiles'>, world: { worldId: string | null } | null, held: Set<string>, versions: PipelineVersions[]): Pick<LevelRow, 'stale' | 'older'> {
   const stage = row.tiles > 0 ? `L${row.level}:0,0` : `L${row.level}`
-  if (row.pipelineVersion !== currentPipelineVersion(stage)) return 'otherCode'
-  if (world?.worldId && held.has(row.worldId) && row.worldId !== world.worldId) return 'otherTerrain'
-  return null
+  const older = row.pipelineVersion !== currentPipelineVersion(stage)
+  if (older && !versions.some((v) => row.pipelineVersion === currentPipelineVersion(stage, v))) return { stale: 'otherCode', older: false }
+  if (world?.worldId && held.has(row.worldId) && row.worldId !== world.worldId) return { stale: 'otherTerrain', older }
+  return { stale: null, older }
 }
 
 export function createArtifactChooser(host: HTMLElement, options: ArtifactChooserOptions): ArtifactChooser {
@@ -203,7 +210,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
       worldId: l.worldId, pipelineVersion: l.pipelineVersion, level: l.level,
       tiles: l.tiles ? l.count : 0, where: 'server', bytes: l.bytes, label: l.label,
       deletable: l.actions?.includes('artifact.remove') ?? false,
-      stale: null, localUids: [],
+      stale: null, older: false, localUids: [],
     }))
     // The browser's entries, summed as the server sums its own.
     const localRows = new Map<string, LevelRow>()
@@ -213,7 +220,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
       const key = `${a.worldId}|${a.pipelineVersion}|${parsed.level}|${parsed.tile ? 't' : 'w'}`
       let row = localRows.get(key)
       if (!row) {
-        row = { worldId: a.worldId, pipelineVersion: a.pipelineVersion, level: parsed.level, tiles: 0, where: 'local', bytes: 0, label: a.label, deletable: true, stale: null, localUids: [] }
+        row = { worldId: a.worldId, pipelineVersion: a.pipelineVersion, level: parsed.level, tiles: 0, where: 'local', bytes: 0, label: a.label, deletable: true, stale: null, older: false, localUids: [] }
         localRows.set(key, row)
       }
       if (parsed.tile) row.tiles++
@@ -222,7 +229,14 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     }
     next.push(...localRows.values())
     const held = heldTerrains()
-    for (const row of next) row.stale = staleOf(row, world, held)
+    // The other pipelines the server's worlds were made by, and the
+    // versions their releases name, per terrain.
+    const pipelineOf = new Map((serverWorlds ?? []).map((w) => [w.uid, sameWorldsPipeline(w.pipeline ?? '')] as const))
+    const others = [...new Set(pipelineOf.values())].filter((pipeline) => pipeline !== '' && pipeline !== WORLD_PIPELINE)
+    const named = new Map(await Promise.all(others.map(async (pipeline) => [pipeline, await pipelineVersionsOf(pipeline)] as const)))
+    const versionsOf = (terrain: string): PipelineVersions[] =>
+      (holders.get(terrain) ?? []).map((uid) => named.get(pipelineOf.get(uid) ?? '')).filter((v): v is PipelineVersions => !!v)
+    for (const row of next) Object.assign(row, staleOf(row, world, held, versionsOf(row.worldId)))
     // By level, the current terrain first, then the server's copy first.
     rows = next.sort((a, b) => a.level - b.level || Number(a.stale !== null) - Number(b.stale !== null) || a.where.localeCompare(b.where) * -1)
     paint()
@@ -478,8 +492,10 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     const state = document.createElement('span')
     state.className = 'ac-state'
     state.dataset.stale = String(row.stale !== null)
+    state.dataset.older = String(row.stale === null && row.older)
     state.textContent = t(row.stale === 'otherTerrain' ? 'generator.artifacts.state.otherTerrain'
       : row.stale === 'otherCode' ? 'generator.artifacts.state.otherCode'
+      : row.older ? 'generator.artifacts.state.worldPipeline'
       : 'generator.artifacts.state.fresh')
     line.appendChild(state)
 
