@@ -2,7 +2,11 @@
 # with `engine` builds the engine, checks every build, and puts the builds
 # on a GitHub release of that tag.
 #
-#   git tag engine-v11-abcdefg && git push origin engine-v11-abcdefg
+#   git tag engine-v11-1b1f7f4a8b14250e && git push origin engine-v11-1b1f7f4a8b14250e
+#
+# The tag is `engine-` and the pipeline a world.yaml records as
+# `status.pipeline` (world/worldPipeline.ts; `casas-eternas version` tells
+# it), so a save names the release of the engine that made it.
 #
 # The assets:
 #   casas-engine-darwin-arm64.node      the job worker's engine on a Mac
@@ -10,6 +14,7 @@
 #   casas-engine-windows-amd64.node     on Windows
 #   casas-engine-wasm.tar.gz            the generator's engine (wasm/ of engine/dist)
 #   constants.json                      the pipeline's constants
+#   pipeline.json                       the pipeline's versions: the world's and each tile level's
 #   SHA256SUMS
 #
 # The builds are the ones `make engines` and `make engine` make, with the
@@ -49,6 +54,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
+          cache: npm
+          cache-dependency-path: client/package-lock.json
       - name: Build
         working-directory: engine
         run: |
@@ -56,6 +63,38 @@ jobs:
           wasm-bindgen --target web --out-dir dist/wasm --out-name casas-engine \
             target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
           cargo run --release --locked -q -p casas-engine-api --bin constants > dist/constants.json
+      # Before the expensive jobs. The versions are the job worker's
+      # (`job-worker.mjs --version`). buildWorker.mjs copies the native
+      # engine beside the bundle; this job has none, and --version does not
+      # load it, so an empty file stands in. It is not uploaded.
+      #
+      # `status.pipeline` does not hash the tile levels' constants. A change
+      # to those only gives another engine under the same tag; the release
+      # of the tag tells it by its pipeline.json.
+      - name: Pipeline versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          touch engine/dist/casas-engine.node
+          (cd client && npm ci && node scripts/buildWorker.mjs "$RUNNER_TEMP/worker/job-worker.mjs")
+          node "$RUNNER_TEMP/worker/job-worker.mjs" --version > engine/dist/pipeline.json
+          cat engine/dist/pipeline.json
+          version=$(node -p 'require("./engine/dist/pipeline.json").pipelineVersion')
+          if [ "$GITHUB_REF_NAME" != "engine-$version" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME, but this commit's pipeline is $version: tag it engine-$version."
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            if ! gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" -p pipeline.json -O "$RUNNER_TEMP/released.json"; then
+              echo "::error::$GITHUB_REF_NAME is released already, without pipeline.json."
+            elif cmp -s "$RUNNER_TEMP/released.json" engine/dist/pipeline.json; then
+              echo "::error::$GITHUB_REF_NAME is released already, with the same versions."
+            else
+              echo "::error::$GITHUB_REF_NAME is released already, with other versions: a constant outside status.pipeline changed. Increase AMPLIFICATION_ALGO_VERSION."
+              diff "$RUNNER_TEMP/released.json" engine/dist/pipeline.json || true
+            fi
+            exit 1
+          fi
       # Without `parallel`, as the browser build is. Not on Node 22: on
       # linux/amd64 its WASI run of tests/bake.rs stops with SIGSEGV
       # (measured 2026-10-22; Node 26 and Node 22 on darwin/arm64 pass).
@@ -67,7 +106,7 @@ jobs:
       - run: |
           mkdir -p out
           tar -czf out/casas-engine-wasm.tar.gz -C engine/dist wasm
-          cp engine/dist/constants.json out/
+          cp engine/dist/constants.json engine/dist/pipeline.json out/
       - uses: actions/upload-artifact@v4
         with:
           name: wasm
@@ -202,6 +241,15 @@ jobs:
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
+        # The notes tell the versions of pipeline.json, for a reader.
         run: |
+          {
+            echo "The engine at $GITHUB_SHA."
+            echo
+            echo "| Stage | Pipeline version |"
+            echo "|---|---|"
+            jq -r '"| world (`status.pipeline`) | `\(.pipelineVersion)` |",
+              (.tilePipelineVersions | to_entries[] | "| tiles of level \(.key) | `\(.value)` |")' out/pipeline.json
+          } > notes.md
           gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" --notes "The engine at $GITHUB_SHA."
+            --title "$GITHUB_REF_NAME" --notes-file notes.md
