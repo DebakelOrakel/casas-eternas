@@ -258,7 +258,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (chosen.worldId !== worldId) console.warn(`[incubator] level ${LEVEL} of an older terrain (${chosen.worldId}, the save is ${worldId})`)
     step('save read')
     const store = await getArtifactStore()
-    const read = await readMeshLevelArtifact(store, artifactKey(chosen.worldId, chosen.pipelineVersion, chosen.stage))
+    const read = await readMeshLevelArtifact(store, artifactKey(chosen.worldId, chosen.pipelineVersion, chosen.stage), await loadWasmEngine())
     if (!read) {
       console.warn(`[incubator] level ${LEVEL} of ${uid} could not be read`)
       return false

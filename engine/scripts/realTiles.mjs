@@ -74,7 +74,7 @@ const tileKey = (t) => artifactKey(inputs.worldId, meshTilePipelineVersion(t.lev
 const tileFile = async (t, name) => new Uint8Array(await readFile(join(storeDir, entryOf(tileKey(t)).dir, name)))
 const f32 = (b) => new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4)
 
-const level1 = await readMeshLevelArtifact(store, artifactKey(inputs.worldId, meshPipelineVersion(1, rounds), meshLevelStage(1)))
+const level1 = await readMeshLevelArtifact(store, artifactKey(inputs.worldId, meshPipelineVersion(1, rounds), meshLevelStage(1)), ENGINE)
 if (!level1) throw new Error('level 1 of this world is not in the store (or of another pipeline)')
 for (const level of [2, 3]) {
   const v = meshTilePipelineVersion(level, rounds)

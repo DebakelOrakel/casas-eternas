@@ -24,6 +24,47 @@ pub fn forcing_of_snapshot(shape: String, snapshot: Tree) -> napi::Result<Tree> 
         .map_err(era)
 }
 
+/// A level's files, `{ name: bytes }` (`casas_engine_api::formats`).
+#[napi(ts_args_type = "artifact: unknown")]
+pub fn level_files(artifact: Tree) -> napi::Result<Tree> {
+    casas_engine_api::formats::level_files(&artifact.0)
+        .map(Tree)
+        .map_err(era)
+}
+
+/// A tile's files, `{ name: bytes }`.
+#[napi(ts_args_type = "artifact: unknown")]
+pub fn tile_files(artifact: Tree) -> napi::Result<Tree> {
+    casas_engine_api::formats::tile_files(&artifact.0)
+        .map(Tree)
+        .map_err(era)
+}
+
+/// A river graph as a level and a save keep it, `{ json, cells,
+/// coursePoints, positions? }`.
+#[napi(ts_args_type = "graph: unknown")]
+pub fn river_graph_parts(graph: Tree) -> napi::Result<Tree> {
+    casas_engine_api::formats::river_graph_parts(&graph.0)
+        .map(Tree)
+        .map_err(era)
+}
+
+/// A level's arrays and waters from its files.
+#[napi(ts_args_type = "files: unknown")]
+pub fn level_of_files(files: Tree) -> napi::Result<Tree> {
+    casas_engine_api::formats::level_of_files(&files.0)
+        .map(Tree)
+        .map_err(era)
+}
+
+/// A tile's arrays from its files.
+#[napi(ts_args_type = "files: unknown")]
+pub fn tile_of_files(files: Tree) -> napi::Result<Tree> {
+    casas_engine_api::formats::tile_of_files(&files.0)
+        .map(Tree)
+        .map_err(era)
+}
+
 fn era(e: EraError) -> napi::Error {
     napi::Error::from_reason(e.0)
 }

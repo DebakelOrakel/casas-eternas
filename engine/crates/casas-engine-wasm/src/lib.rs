@@ -23,6 +23,47 @@ pub fn forcing_of_snapshot(shape: &str, snapshot: &JsValue) -> Result<JsValue, J
         .map_err(era)
 }
 
+/// A level's files, `{ name: bytes }` (`casas_engine_api::formats`).
+#[wasm_bindgen(js_name = levelFiles)]
+pub fn level_files(artifact: &JsValue) -> Result<JsValue, JsError> {
+    casas_engine_api::formats::level_files(&from_js(artifact)?)
+        .map(to_js)
+        .map_err(era)
+}
+
+/// A tile's files, `{ name: bytes }`.
+#[wasm_bindgen(js_name = tileFiles)]
+pub fn tile_files(artifact: &JsValue) -> Result<JsValue, JsError> {
+    casas_engine_api::formats::tile_files(&from_js(artifact)?)
+        .map(to_js)
+        .map_err(era)
+}
+
+/// A river graph as a level and a save keep it, `{ json, cells,
+/// coursePoints, positions? }`.
+#[wasm_bindgen(js_name = riverGraphParts)]
+pub fn river_graph_parts(graph: &JsValue) -> Result<JsValue, JsError> {
+    casas_engine_api::formats::river_graph_parts(&from_js(graph)?)
+        .map(to_js)
+        .map_err(era)
+}
+
+/// A level's arrays and waters from its files.
+#[wasm_bindgen(js_name = levelOfFiles)]
+pub fn level_of_files(files: &JsValue) -> Result<JsValue, JsError> {
+    casas_engine_api::formats::level_of_files(&from_js(files)?)
+        .map(to_js)
+        .map_err(era)
+}
+
+/// A tile's arrays from its files.
+#[wasm_bindgen(js_name = tileOfFiles)]
+pub fn tile_of_files(files: &JsValue) -> Result<JsValue, JsError> {
+    casas_engine_api::formats::tile_of_files(&from_js(files)?)
+        .map(to_js)
+        .map_err(era)
+}
+
 fn era(e: EraError) -> JsError {
     JsError::new(&e.0)
 }

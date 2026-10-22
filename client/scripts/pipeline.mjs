@@ -98,6 +98,10 @@ async function freshPipeline() {
   })
   rt.setEngine({
     version: WASM.version,
+    forcingOfSnapshot: WASM.forcingOfSnapshot,
+    levelFiles: WASM.levelFiles,
+    tileFiles: WASM.tileFiles,
+    riverGraphParts: WASM.riverGraphParts,
     World: {
       genesis: (...args) => wrap(WASM.World.genesis(...args)),
       restoreArchean: (...args) => wrap(WASM.World.restoreArchean(...args)),

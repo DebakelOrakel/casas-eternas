@@ -150,7 +150,7 @@ async function runTaskTimed(job: PipelineTask, io: PipelineIO, clock: Laps, cach
   const key = artifactKey(inputs.worldId, pipelineVersion, meshLevelStage(1))
   if (job.reuse) {
     onProgress('read', 0)
-    const stored = await readMeshLevelArtifact(store, key)
+    const stored = await readMeshLevelArtifact(store, key, engine())
     clock.lap('check')
     if (stored) {
       if (cache) remember(cache.levels, `${key.worldId}/${key.pipelineVersion}`, { artifact: stored.artifact }, CACHED_LEVELS)
@@ -171,7 +171,7 @@ async function runTaskTimed(job: PipelineTask, io: PipelineIO, clock: Laps, cach
   // then a take-over's bakeMs was its own run's only).
   const durationMs = earlierMs + Date.now() - started
   onProgress('store', 0)
-  if (!(await writeMeshLevelArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
+  if (!(await writeMeshLevelArtifact(store, key, engine(), artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   clock.lap('write')
   if (cache) remember(cache.levels, `${key.worldId}/${key.pipelineVersion}`, { artifact }, CACHED_LEVELS)
   if (job.checkpointDir) await rm(checkpointPath(job.checkpointDir, inputs), { recursive: true, force: true })
@@ -389,7 +389,7 @@ async function bakeTile(job: PipelineTask, inputs: WorldInputs, store: ArtifactS
   const levelKey = `${parentKey.worldId}/${parentKey.pipelineVersion}`
   let level1 = cache ? recall(cache.levels, levelKey) : undefined
   if (!level1) {
-    const read = await readMeshLevelArtifact(store, parentKey)
+    const read = await readMeshLevelArtifact(store, parentKey, engine())
     if (!read) throw new Error('level 1 of this world is not in the artifact store — refine the world first')
     level1 = { artifact: read.artifact }
     if (cache) remember(cache.levels, levelKey, level1, CACHED_LEVELS)
@@ -423,7 +423,7 @@ async function bakeTile(job: PipelineTask, inputs: WorldInputs, store: ArtifactS
   const artifact = level1.baker.bake(tile, pieces, upstream, job.erosionRounds)
   clock.lap('bake')
   const durationMs = Date.now() - started
-  if (!(await writeMeshTileArtifact(store, key, artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
+  if (!(await writeMeshTileArtifact(store, key, engine(), artifact, durationMs, inputs.seedText, job.erosionRounds))) throw new Error('could not write the artifact')
   clock.lap('write')
   return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs } }
 }
@@ -450,7 +450,7 @@ async function readTile(store: ArtifactStore, key: ArtifactKey, cache?: JobCache
   const id = `${key.worldId}/${key.pipelineVersion}/${key.stage}`
   const held = cache ? recall(cache.tiles, id) : undefined
   if (held) return held
-  const read = await readMeshTileArtifact(store, key)
+  const read = await readMeshTileArtifact(store, key, engine())
   if (!read) return null
   if (cache) remember(cache.tiles, id, read.artifact, CACHED_TILES)
   return read.artifact

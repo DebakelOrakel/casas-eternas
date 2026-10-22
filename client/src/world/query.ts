@@ -95,11 +95,11 @@ export interface WorldRecipe {
   pipeline: string
 }
 
-// What a world's reader asks of the engine (DEC-0044, fork 7b): the parts
-// of a save whose values set an artifact's bytes are read by the engine.
-// The browser gives its WASM build (generator/pipeline/engineWasm), the
-// job worker its native one.
-export type WorldEngine = Pick<Engine, 'forcingOfSnapshot'>
+// What the world layer asks of the engine (DEC-0044, fork 7b): what sets
+// the bytes of something stored is the engine's — the forcing a save's
+// snapshot gives, the artifacts' files written and read. The browser gives its WASM build
+// (generator/pipeline/engineWasm), the job worker its native one.
+export type WorldEngine = Pick<Engine, 'forcingOfSnapshot' | 'levelFiles' | 'tileFiles' | 'levelOfFiles' | 'tileOfFiles'>
 
 export interface World {
   // The world's shape (world.yaml's kind): the torus or the sphere.

@@ -30,8 +30,6 @@ await ENGINE.default({ module_or_path: await (await import('node:fs/promises')).
 const native = (await L('/scripts/engineNative.ts')).loadNativeEngine(fileURLToPath(new URL('../dist/casas-engine.node', import.meta.url)))
 const { openWorld } = await L('/src/world/query.ts')
 const { planFromRecipe, replayRefusal } = await L('/src/world/replay.ts')
-const { MESH_LEVEL_FILES } = await L('/src/world/meshArtifacts.ts')
-const { serializeRiverGraph } = await L('/src/generator/surface/riverGraph.ts')
 const { default: JSZip } = await import(`${CLIENT}/node_modules/jszip/lib/index.js`)
 
 const archive = await readFile(zipPath)
@@ -124,15 +122,8 @@ if (level1Dir) {
     while (replay1.step());
     return replay1.level(world.width, world.recipe.detailSeed)
   })
-  const F = MESH_LEVEL_FILES
-  const enc = new TextEncoder()
-  const graph = level.graph ? serializeRiverGraph(level.graph) : null
-  const want = [
-    [F.nodes, level.nodes], [F.connectivity, level.connectivity], [F.z, level.z], [F.waterBodies, enc.encode(JSON.stringify(level.waterBodies))],
-    ...(graph ? [[F.riverGraph, enc.encode(graph.json)], [F.riverGraphCells, graph.cells], [F.riverGraphPositions, graph.positions ?? new Uint8Array(0)], [F.riverCoursePoints, graph.coursePoints]] : []),
-    ...(level.rivers ? [[F.riverPoints, level.rivers.points], [F.riverLengths, level.rivers.lengths], [F.riverRegimes, level.rivers.regimes]] : []),
-  ]
-  for (const [name, values] of want) if (!same(values, await file(name))) fail(`level 1 (${name})`)
+  // The level's files as the engine writes them (DEC-0044, fork 7b).
+  for (const [name, bytes] of Object.entries(native.levelFiles(level))) if (!same(bytes, await file(name))) fail(`level 1 (${name})`)
   console.log(`engine: level 1 ${failed !== before ? 'differs from' : 'is'} the job worker's artifact (${level.count} nodes, ${level.waterBodies.length} water bodies, ${level.graph?.reaches.length ?? 0} reaches)`)
 }
 

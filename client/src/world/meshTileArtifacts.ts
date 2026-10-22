@@ -4,6 +4,7 @@ import { ENGINE_CONSTANTS, engineLevelBudget } from '../generator/pipeline/engin
 import { writeArtifactFiles, type ArtifactKey, type ArtifactStore } from '../storage/ArtifactStore'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
+import type { WorldEngine } from './query'
 
 // A TILE OF A FINE LEVEL as an artifact (docs/decisions/tile-jobs.md,
 // answer 5): one artifact per tile, stage `L<level>:x,y`. It holds the tile's
@@ -93,30 +94,20 @@ interface MeshTileMeta {
   files: Record<string, number>
 }
 
-const bytesOf = (a: ArrayBufferView): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
-
-export async function writeMeshTileArtifact(store: ArtifactStore, key: ArtifactKey, artifact: MeshTileArtifact, bakeMs: number, label = '', rounds: number = AMPLIFY_EROSION_ROUNDS): Promise<boolean> {
+// The files are the engine's (DEC-0044, fork 7b: `tileFiles`); the meta
+// is this layer's, written last.
+export async function writeMeshTileArtifact(store: ArtifactStore, key: ArtifactKey, engine: WorldEngine, artifact: MeshTileArtifact, bakeMs: number, label = '', rounds: number = AMPLIFY_EROSION_ROUNDS): Promise<boolean> {
   const handle = await store.resolve(key, true)
   if (!handle) return false
-  const F = MESH_TILE_FILES
+  const files = engine.tileFiles(artifact)
   const meta: MeshTileMeta = {
     key, tile: artifact.tile, nodes: artifact.count, triangles: artifact.triangles.length / 3, bakeMs, createdAt: Date.now(), label,
     pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, constants: tilePipelineConstants(artifact.tile.level, rounds) },
-    files: {
-      [F.nodes]: artifact.nodes.byteLength,
-      [F.triangles]: artifact.triangles.byteLength,
-      [F.z]: artifact.z.byteLength,
-      [F.role]: artifact.role.byteLength,
-      [F.outflow]: artifact.outflow.byteLength,
-    },
+    files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, bytes.byteLength])),
   }
   return writeArtifactFiles(store, handle, [
-    { name: F.nodes, bytes: bytesOf(artifact.nodes) },
-    { name: F.triangles, bytes: bytesOf(artifact.triangles) },
-    { name: F.z, bytes: bytesOf(artifact.z) },
-    { name: F.role, bytes: artifact.role },
-    { name: F.outflow, bytes: bytesOf(artifact.outflow) },
-    { name: F.meta, bytes: new TextEncoder().encode(JSON.stringify(meta)) },
+    ...Object.entries(files).map(([name, bytes]) => ({ name, bytes })),
+    { name: MESH_TILE_FILES.meta, bytes: new TextEncoder().encode(JSON.stringify(meta)) },
   ])
 }
 
@@ -141,7 +132,7 @@ export async function meshTileArtifactInfo(store: ArtifactStore, key: ArtifactKe
   }
 }
 
-export async function readMeshTileArtifact(store: ArtifactStore, key: ArtifactKey): Promise<{ artifact: MeshTileArtifact; bakeMs: number } | null> {
+export async function readMeshTileArtifact(store: ArtifactStore, key: ArtifactKey, engine: WorldEngine): Promise<{ artifact: MeshTileArtifact; bakeMs: number } | null> {
   const handle = await store.resolve(key, false)
   if (!handle) return null
   const F = MESH_TILE_FILES
@@ -160,8 +151,16 @@ export async function readMeshTileArtifact(store: ArtifactStore, key: ArtifactKe
   }
   if (!nodes || !triangles || !z || !role || !outflow) return null
   if (nodes.byteLength !== meta.nodes * 8 || z.byteLength !== meta.nodes * 4 || role.byteLength !== meta.nodes || outflow.byteLength !== meta.nodes * 4 || triangles.byteLength !== meta.triangles * 12) return null
-  return {
-    artifact: { tile: meta.tile, count: meta.nodes, nodes: new Float32Array(nodes.slice(0)), triangles: new Uint32Array(triangles.slice(0)), z: new Float32Array(z.slice(0)), role: new Uint8Array(role.slice(0)), outflow: new Float32Array(outflow.slice(0)) },
-    bakeMs: meta.bakeMs,
+  // Decoded by the engine (DEC-0044, fork 7b: tileOfFiles); the tile and
+  // its node count are the meta's.
+  let decoded: Omit<MeshTileArtifact, 'tile' | 'count'>
+  try {
+    decoded = engine.tileOfFiles({
+      [F.nodes]: new Uint8Array(nodes), [F.triangles]: new Uint8Array(triangles), [F.z]: new Uint8Array(z),
+      [F.role]: new Uint8Array(role), [F.outflow]: new Uint8Array(outflow),
+    }) as Omit<MeshTileArtifact, 'tile' | 'count'>
+  } catch {
+    return null
   }
+  return { artifact: { tile: meta.tile, count: meta.nodes, ...decoded }, bakeMs: meta.bakeMs }
 }

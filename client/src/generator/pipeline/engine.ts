@@ -22,7 +22,7 @@ import type { RefinedClimate, RefinedReliability, RefinedStorms } from '../clima
 import type { RefinedClimateChart } from '../climate/climateChart'
 import type { PlanetForcing } from '../planet/planetForcing'
 import type { WaterBody } from '../surface/hydrology'
-import type { RiverGraph } from '../surface/riverGraph'
+import type { RiverGraph, SerializedRiverGraph } from '../surface/riverGraph'
 import type { CoastReach } from '../surface/coastGraph'
 import type { SedimentBasin } from '../surface/surfaceTypes'
 import type { EcologyParams } from '../ecology/ecologyField'
@@ -238,6 +238,19 @@ export interface Engine {
   // what the world layer reads out of a save, as `EngineWorld.forcing`
   // gives it of a live world.
   forcingOfSnapshot(shape: Shape, snapshot: PlateSimulationSnapshot): { uplift: Float32Array; hardness: Float32Array }
+  // The formats of what the engine's results become on a disk (DEC-0044,
+  // fork 7b): a level's and a tile's files, `{ name: bytes }` — the
+  // artifacts as the world layer types them (world/meshArtifacts.ts,
+  // meshTileArtifacts.ts), which generator/ does not import — and the
+  // river graph as a level and a save keep it.
+  levelFiles(artifact: object): Record<string, Uint8Array>
+  tileFiles(artifact: object): Record<string, Uint8Array>
+  // And read: a level's arrays and waters, a tile's arrays, from their
+  // files — the artifact less what its meta says (its level or tile, its
+  // node count).
+  levelOfFiles(files: Record<string, Uint8Array>): object
+  tileOfFiles(files: Record<string, Uint8Array>): object
+  riverGraphParts(graph: RiverGraph): SerializedRiverGraph
   World: EngineWorlds
   Replay: { start(plan: ReplayPlan, level: number): EngineReplay }
   Preview: new () => EnginePreview

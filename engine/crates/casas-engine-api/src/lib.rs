@@ -6,6 +6,7 @@
 //! `forms`). `casas-engine-node` (napi) and `casas-engine-wasm`
 //! (wasm-bindgen) wrap these methods one for one.
 
+pub mod formats;
 pub mod forms;
 pub mod pipeline;
 pub mod preview;
@@ -83,7 +84,7 @@ impl From<String> for EraError {
     }
 }
 
-fn wrong(what: &str) -> EraError {
+pub(crate) fn wrong(what: &str) -> EraError {
     EraError(what.to_string())
 }
 

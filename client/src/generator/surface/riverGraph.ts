@@ -578,8 +578,9 @@ export function riverPolylinesFromGraph(graph: RiverGraph, maxDischarge: number,
   return { points: Float32Array.from(points), lengths: Uint32Array.from(lengths), regimes: Uint8Array.from(regimes) }
 }
 
-// The graph's serialised form: one JSON document for everything but the
-// cell runs, which travel as raw Int32 bytes (a baked world's reaches run to
+// The graph's serialised form, which the engine writes (DEC-0044, fork 7b:
+// `riverGraphParts`): one JSON document for everything but the cell runs,
+// which travel as raw Int32 bytes (a baked world's reaches run to
 // millions of cells; JSON would be an order of magnitude larger).
 export interface SerializedRiverGraph {
   json: string
@@ -591,74 +592,6 @@ export interface SerializedRiverGraph {
   // (a raster graph's positions follow from its cells and are not
   // written, so the artifact layout of the raster bake is unchanged).
   positions?: Float32Array
-}
-
-// A course as it sits in the JSON: the lines and oxbows replaced by
-// descriptors into coursePoints.
-type SerializedCourse = Omit<RiverCourse, 'lines' | 'oxbows'> & { lines: [number, number][]; oxbows: [number, number][] }
-
-export function serializeRiverGraph(graph: RiverGraph): SerializedRiverGraph {
-  const { cells, cellX, cellY, courses, ...rest } = graph
-  const chunks: Float32Array[] = []
-  let offset = 0
-  const describe = (line: Float32Array): [number, number] => {
-    const d: [number, number] = [offset, line.length / 2]
-    chunks.push(line)
-    offset += line.length / 2
-    return d
-  }
-  const serialCourses: SerializedCourse[] | undefined = courses?.map((c) => ({ ...c, lines: c.lines.map(describe), oxbows: c.oxbows.map(describe) }))
-  const coursePoints = new Float32Array(offset * 2)
-  let at = 0
-  for (const chunk of chunks) {
-    coursePoints.set(chunk, at)
-    at += chunk.length
-  }
-  let positions: Float32Array | undefined
-  if (graph.substrate === 'mesh') {
-    positions = new Float32Array(cells.length * 2)
-    for (let k = 0; k < cells.length; k++) {
-      positions[2 * k] = cellX[k]
-      positions[2 * k + 1] = cellY[k]
-    }
-  }
-  return { json: JSON.stringify(serialCourses ? { ...rest, courses: serialCourses } : rest), cells, coursePoints, positions }
-}
-
-export function deserializeRiverGraph(json: string, cells: Int32Array, coursePoints: Float32Array = new Float32Array(0), positions?: Float32Array): RiverGraph | null {
-  try {
-    const parsed = JSON.parse(json) as Omit<RiverGraph, 'cells' | 'cellX' | 'cellY' | 'courses'> & { courses?: SerializedCourse[] }
-    if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.reaches) || !Array.isArray(parsed.bodies)) return null
-    const slice = ([start, count]: [number, number]): Float32Array => coursePoints.slice(start * 2, (start + count) * 2)
-    const courses = parsed.courses?.map((c) => ({ ...c, lines: c.lines.map(slice), oxbows: c.oxbows.map(slice) }))
-    const { courses: _dropped, ...rest } = parsed
-    // A graph written before F6 carries no regime: perennial, as the
-    // builder without regime inputs says.
-    for (const r of rest.reaches) if (r.regime === undefined) r.regime = 'perennial'
-    // A graph written before phase 5a carries no hydrogeology.
-    for (const r of rest.reaches) { if (r.runoffOut === undefined) r.runoffOut = 0; if (r.springFed === undefined) r.springFed = false }
-    // A graph written before phase 4.3 is a raster graph; its positions
-    // follow from its cells. A mesh graph carries them.
-    const substrate = rest.substrate ?? 'raster'
-    const cellX = new Float32Array(cells.length)
-    const cellY = new Float32Array(cells.length)
-    if (substrate === 'raster') {
-      for (let k = 0; k < cells.length; k++) {
-        cellX[k] = (cells[k] % rest.width) + 0.5
-        cellY[k] = Math.floor(cells[k] / rest.width) + 0.5
-      }
-    } else if (positions && positions.length === cells.length * 2) {
-      for (let k = 0; k < cells.length; k++) {
-        cellX[k] = positions[2 * k]
-        cellY[k] = positions[2 * k + 1]
-      }
-    } else return null
-    const graph: RiverGraph = { ...rest, substrate, cells, cellX, cellY }
-    if (courses) graph.courses = courses
-    return graph
-  } catch {
-    return null
-  }
 }
 
 // The invariants every graph must hold — the harness layer of phase 2.

@@ -1,12 +1,13 @@
 import { worldTuning } from './worldTuning'
 import { ENGINE_CONSTANTS, engineLevelBudget } from '../generator/pipeline/engineConstants'
 import { decodeMesh, type SerializedMesh } from '../generator/mesh/meshSerial'
-import { deserializeRiverGraph, serializeRiverGraph, type RiverGraph } from '../generator/surface/riverGraph'
+import type { RiverGraph } from '../generator/surface/riverGraph'
 import type { RiverPolylines, WaterBody } from '../generator/surface/hydrology'
 import { writeArtifactFiles, type ArtifactHandle, type ArtifactKey, type ArtifactStore } from '../storage/ArtifactStore'
 import { domainOfKind, type Domain } from '../generator/core/domain'
 import { AMPLIFICATION_ALGO_VERSION, derivePipelineVersion } from './identity'
 import { AMPLIFY_EROSION_ROUNDS } from './bakeSettings'
+import type { WorldEngine } from './query'
 
 // A MESH LEVEL as an artifact (ADAPTIVE_MESH_PLAN.md phase 4.5; decision 3:
 // "global level state and tiles are artifacts, evictable"). What the mesh
@@ -97,55 +98,20 @@ interface MeshLevelMeta {
   files: Record<string, number>
 }
 
-const bytesOf = (a: ArrayBufferView): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
-
-export async function writeMeshLevelArtifact(store: ArtifactStore, key: ArtifactKey, artifact: MeshLevelArtifact, bakeMs: number, label = '', rounds: number = AMPLIFY_EROSION_ROUNDS): Promise<boolean> {
+// The files are the engine's (DEC-0044, fork 7b: `levelFiles`); the meta,
+// what the store and the key say of them, is this layer's, written last.
+export async function writeMeshLevelArtifact(store: ArtifactStore, key: ArtifactKey, engine: WorldEngine, artifact: MeshLevelArtifact, bakeMs: number, label = '', rounds: number = AMPLIFY_EROSION_ROUNDS): Promise<boolean> {
   const handle = await store.resolve(key, true)
   if (!handle) return false
-  const F = MESH_LEVEL_FILES
-  const encoder = new TextEncoder()
-  const bodyBytes = encoder.encode(JSON.stringify(artifact.waterBodies))
-  const graph = artifact.graph ? serializeRiverGraph(artifact.graph) : null
-  const graphBytes = graph ? encoder.encode(graph.json) : null
-  const files: Record<string, number> = {
-    [F.nodes]: artifact.nodes.byteLength,
-    [F.connectivity]: artifact.connectivity.byteLength,
-    [F.z]: artifact.z.byteLength,
-    [F.waterBodies]: bodyBytes.byteLength,
-  }
-  if (graph && graphBytes) {
-    files[F.riverGraph] = graphBytes.byteLength
-    files[F.riverGraphCells] = graph.cells.byteLength
-    files[F.riverGraphPositions] = graph.positions?.byteLength ?? 0
-    files[F.riverCoursePoints] = graph.coursePoints.byteLength
-  }
-  if (artifact.rivers) {
-    files[F.riverPoints] = artifact.rivers.points.byteLength
-    files[F.riverLengths] = artifact.rivers.lengths.byteLength
-    files[F.riverRegimes] = artifact.rivers.regimes.byteLength
-  }
+  const files = engine.levelFiles(artifact)
   const meta: MeshLevelMeta = {
     key, level: artifact.level, nodes: artifact.count, bakeMs, createdAt: Date.now(), label,
     pipeline: { algoVersion: AMPLIFICATION_ALGO_VERSION, rounds, budget: engineLevelBudget(artifact.level), constants: meshLevelPipelineConstants(artifact.level, rounds) },
-    files,
+    files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, bytes.byteLength])),
   }
   return writeArtifactFiles(store, handle, [
-    { name: F.nodes, bytes: bytesOf(artifact.nodes) },
-    { name: F.connectivity, bytes: artifact.connectivity },
-    { name: F.z, bytes: bytesOf(artifact.z) },
-    { name: F.waterBodies, bytes: bodyBytes },
-    ...(graph && graphBytes ? [
-      { name: F.riverGraph, bytes: graphBytes },
-      { name: F.riverGraphCells, bytes: bytesOf(graph.cells) },
-      { name: F.riverGraphPositions, bytes: graph.positions ? bytesOf(graph.positions) : new Uint8Array(0) },
-      { name: F.riverCoursePoints, bytes: bytesOf(graph.coursePoints) },
-    ] : []),
-    ...(artifact.rivers ? [
-      { name: F.riverPoints, bytes: bytesOf(artifact.rivers.points) },
-      { name: F.riverLengths, bytes: bytesOf(artifact.rivers.lengths) },
-      { name: F.riverRegimes, bytes: bytesOf(artifact.rivers.regimes) },
-    ] : []),
-    { name: F.meta, bytes: encoder.encode(JSON.stringify(meta)) },
+    ...Object.entries(files).map(([name, bytes]) => ({ name, bytes })),
+    { name: MESH_LEVEL_FILES.meta, bytes: new TextEncoder().encode(JSON.stringify(meta)) },
   ])
 }
 
@@ -165,41 +131,30 @@ async function readMeta(store: ArtifactStore, handle: ArtifactHandle): Promise<M
   }
 }
 
-export async function readMeshLevelArtifact(store: ArtifactStore, key: ArtifactKey): Promise<{ artifact: MeshLevelArtifact; bakeMs: number } | null> {
+// The files are read all at once (each a round trip on a bucket) and
+// decoded by the engine (DEC-0044, fork 7b: levelOfFiles); the level and
+// its node count are the meta's.
+export async function readMeshLevelArtifact(store: ArtifactStore, key: ArtifactKey, engine: WorldEngine): Promise<{ artifact: MeshLevelArtifact; bakeMs: number } | null> {
   const handle = await store.resolve(key, false)
   if (!handle) return null
   const meta = await readMeta(store, handle)
-  if (!meta) return null
-  const F = MESH_LEVEL_FILES
-  const nodes = await store.read(handle, F.nodes)
-  const connectivity = await store.read(handle, F.connectivity)
-  const z = await store.read(handle, F.z)
-  const bodies = await store.read(handle, F.waterBodies)
-  if (!nodes || !connectivity || !z || !bodies) return null
-  if (nodes.byteLength !== meta.nodes * 8 || z.byteLength !== meta.nodes * 4) return null
-  let waterBodies: WaterBody[] = []
+  if (!meta?.files) return null
+  const names = Object.keys(meta.files)
+  const read = await Promise.all(names.map((name) => store.read(handle, name)))
+  const files: Record<string, Uint8Array> = {}
+  for (let i = 0; i < names.length; i++) {
+    const bytes = read[i]
+    if (!bytes) return null
+    files[names[i]] = new Uint8Array(bytes)
+  }
+  if (files[MESH_LEVEL_FILES.nodes]?.byteLength !== meta.nodes * 8 || files[MESH_LEVEL_FILES.z]?.byteLength !== meta.nodes * 4) return null
+  let decoded: Omit<MeshLevelArtifact, 'level' | 'count'>
   try {
-    waterBodies = JSON.parse(new TextDecoder().decode(bodies)) as WaterBody[]
+    decoded = engine.levelOfFiles(files) as Omit<MeshLevelArtifact, 'level' | 'count'>
   } catch {
     return null
   }
-  let graph: RiverGraph | null = null
-  const graphBytes = await store.read(handle, F.riverGraph)
-  if (graphBytes) {
-    const cells = await store.read(handle, F.riverGraphCells)
-    const positions = await store.read(handle, F.riverGraphPositions)
-    const course = await store.read(handle, F.riverCoursePoints)
-    if (cells) graph = deserializeRiverGraph(new TextDecoder().decode(graphBytes), new Int32Array(cells.slice(0)), course ? new Float32Array(course.slice(0)) : undefined, positions && positions.byteLength > 0 ? new Float32Array(positions.slice(0)) : undefined)
-  }
-  let rivers: RiverPolylines | null = null
-  const points = await store.read(handle, F.riverPoints)
-  const lengths = await store.read(handle, F.riverLengths)
-  const regimes = await store.read(handle, F.riverRegimes)
-  if (points && lengths && regimes) rivers = { points: new Float32Array(points.slice(0)), lengths: new Uint32Array(lengths.slice(0)), regimes: new Uint8Array(regimes.slice(0)) }
-  return {
-    artifact: { level: meta.level, count: meta.nodes, nodes: new Float32Array(nodes.slice(0)), connectivity: new Uint8Array(connectivity.slice(0)), z: new Float32Array(z.slice(0)), waterBodies, graph, rivers },
-    bakeMs: meta.bakeMs,
-  }
+  return { artifact: { level: meta.level, count: meta.nodes, ...decoded }, bakeMs: meta.bakeMs }
 }
 
 // The level's triangulation from its artifact, on the world's shape (the

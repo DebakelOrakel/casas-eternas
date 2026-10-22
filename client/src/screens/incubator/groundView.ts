@@ -8,6 +8,7 @@ import type { MeshLevelArtifact } from '../../world/meshArtifacts'
 import { meshTileStage, readMeshTileArtifact } from '../../world/meshTileArtifacts'
 import { domainOfKind, type Domain } from '../../generator/core/domain'
 import type { TileId } from '../../generator/mesh/meshTile'
+import { loadWasmEngine } from '../../generator/pipeline/engineWasm'
 import { level1Stage, rasterBytes } from './groundRaster'
 import type { GridField } from './groundSource'
 import type { GroundWorkerInbound, GroundWorkerOutbound } from './groundWorker'
@@ -538,7 +539,7 @@ export function createGroundView(options: GroundViewOptions): GroundView {
     while (tileReads < TILE_READS_AT_ONCE && tileQueue.length > 0 && !disposed && key) {
       const job = tileQueue.shift()!
       tileReads++
-      void readMeshTileArtifact(store, artifactKey(key.worldId, job.version, job.stage)).then((read) => {
+      void loadWasmEngine().then((engine) => readMeshTileArtifact(store, artifactKey(key!.worldId, job.version, job.stage), engine)).then((read) => {
         tileReads--
         if (disposed) return
         const a = read?.artifact ?? null

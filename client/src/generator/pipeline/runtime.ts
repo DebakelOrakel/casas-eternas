@@ -17,7 +17,6 @@ import { createOceanAgeField, savedOceanAge } from '../tectonics/oceanAge'
 import type { SavedField } from '../fields/fieldMesh'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { defaultWeatherParams, type WeatherParams } from '../climate/weather'
-import { serializeRiverGraph } from '../surface/riverGraph'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
 import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
@@ -747,7 +746,8 @@ function handleHydrologyRun(): void {
       await renderAndPost(lastRawElevations!, body.render.mantle, current.snapshot(), false, true)
       if (stale()) return
     }
-    const graphOut = body.riverGraph ? serializeRiverGraph(body.riverGraph) : null
+    // The save's form of the graph is the engine's (DEC-0044, fork 7b).
+    const graphOut = body.riverGraph ? engine!.riverGraphParts(body.riverGraph) : null
     const hydrologyMessage: WorkerHydrologyDataMessage = {
       type: 'hydrologyData',
       riverPoints: body.riverPoints.buffer as ArrayBuffer,

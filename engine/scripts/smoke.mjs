@@ -330,7 +330,18 @@ for (const shape of ['torus', 'sphere']) {
     }
     return [...done.values()]
   }
-  same(`${shape}: the tiles baked on four leaf blocks and on one differ`, bakeAll(4), bakeAll(1))
+  const tiles = bakeAll(4)
+  same(`${shape}: the tiles baked on four leaf blocks and on one differ`, tiles, bakeAll(1))
+  // THE FORMATS (fork 7b): both builds write a level's and a tile's files
+  // alike, and reading them gives back what writes the same files.
+  const levelFiles = native.levelFiles(level)
+  same(`${shape}: the builds write level 1's files differently`, wasm.levelFiles(level), levelFiles)
+  same(`${shape}: level 1 read back from its files writes other files`, native.levelFiles(wasm.levelOfFiles(levelFiles)), levelFiles)
+  for (const tile of tiles.values()) {
+    const tileFiles = native.tileFiles(tile)
+    same(`${shape}: the builds write a tile's files differently`, wasm.tileFiles(tile), tileFiles)
+    same(`${shape}: a tile read back from its files writes other files`, native.tileFiles(wasm.tileOfFiles(tileFiles)), tileFiles)
+  }
   console.log(`engine: ${shape} — level 1 replayed (${level.count} nodes, ${level.graph.reaches.length} reaches), ${due.length} checkpoints, resumed; the tile plan (${tilePlan.length} tiles), ${bakes.length} tiles baked on two leaf splits (${bakes.filter((p) => p.upstream.length).length} with upstream): the same`)
 }
 

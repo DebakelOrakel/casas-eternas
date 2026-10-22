@@ -385,6 +385,24 @@ the engine. The save's container, the history and `worldId` stay with the
 world layer: they set the bytes of the identity, not of the computation,
 and have their own versions (the save format, `status.pipeline`).
 
+Built in steps, each byte for byte against a real world (Morvane's save,
+its level 1 of 11 files, a level-2 and a level-3 tile), and shipped with
+one new pipeline version at the end, because the image takes its engine
+from the pipeline's release (docs/decisions/engine-releases.md):
+
+1. The forcing (2026-10-22): `forcingOfSnapshot`; the world layer's
+   `openWorld` and `readWorldInputs` take the engine (WASM in the browser,
+   native in the job worker). TypeScript's `erosionForcing`, `upliftField`
+   and `erodibilityField` went. The terrain's id is unchanged.
+2. The artifacts' formats (2026-10-22): `levelFiles` / `tileFiles` write,
+   `levelOfFiles` / `tileOfFiles` read, `riverGraphParts` gives the river
+   graph as a level and a save keep it. The JSON in them is
+   `JSON.stringify`'s (`ryu_js` for the numbers) and is read as
+   `JSON.parse` reads it (`float_roundtrip`, the keys in their order).
+   The world layer writes and reads only the meta. TypeScript's
+   `serializeRiverGraph` and `deserializeRiverGraph` went; a graph not on
+   the mesh is no longer read (no older formats are kept).
+
 **7c — The harnesses of the TypeScript simulation.**
 
 - **Removed with it**: golden and the module tests of the simulation go;
