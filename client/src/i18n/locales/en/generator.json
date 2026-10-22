@@ -297,6 +297,8 @@
   "generator.replay.body": "This world was made by an earlier version of the generator. It can be made again from its history with the same values; it will look slightly different, and can then be refined.",
   "generator.replay.confirm": "Make again",
   "generator.replay.cancel": "Open as it is",
+  "generator.replay.run.body": "This world was made by an earlier version of the generator. It can be refined as it is. To run it on, it is first made again from its history with the same values; it will then look slightly different.",
+  "generator.replay.run.cancel": "Cancel",
   "generator.replay.progress.label": "Making the world again",
   "generator.replay.progress.epoch": "Epoch {epoch} of {total}",
   "generator.jobs.title": "Fine simulation",

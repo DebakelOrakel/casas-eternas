@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-22
+- **changed** Refinement: a world made by an earlier version is refined as it is, and is made again only before it runs on. `generator.finishing.refine`
+
 ## 2026-10-17
 - **fixed** Refinement: refined tiles no longer hold stray points at sea level in open sea and, on a sphere world, at their edges; levels 2 and 3 are refined again. `generator.finishing.refine`
 - **fixed** Refinement: a flat world no longer stops at a level-3 tile with "the link polygon has no ear". `generator.finishing.refine`

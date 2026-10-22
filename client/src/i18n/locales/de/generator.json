@@ -297,6 +297,8 @@
   "generator.replay.body": "Diese Welt stammt von einer früheren Version des Generators. Sie lässt sich aus ihrer Geschichte mit denselben Werten neu erstellen; sie sieht danach etwas anders aus und lässt sich verfeinern.",
   "generator.replay.confirm": "Neu erstellen",
   "generator.replay.cancel": "So öffnen",
+  "generator.replay.run.body": "Diese Welt stammt von einer früheren Version des Generators. Verfeinern lässt sie sich so, wie sie ist. Um sie weiterlaufen zu lassen, wird sie zuerst aus ihrer Geschichte mit denselben Werten neu erstellt; sie sieht danach etwas anders aus.",
+  "generator.replay.run.cancel": "Abbrechen",
   "generator.replay.progress.label": "Welt wird neu erstellt",
   "generator.replay.progress.epoch": "Epoche {epoch} von {total}",
   "generator.jobs.title": "Feinsimulation",

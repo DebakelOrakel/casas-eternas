@@ -252,9 +252,12 @@ takes approximately 9 MB, so a rule is not needed until there are many.
 ## Not in this decision
 
 - The browser. It keeps the WASM of the current pipeline only. A world of
-  another pipeline asks the player: make it again with this engine (a
-  different world: the simulation is chaotic), or not. A browser that
-  loads an old client is a step of its own.
+  another pipeline opens as it is, and its refinement goes to the workers
+  of its own pipeline: the job names the world's pipeline, and the client
+  reads that pipeline's versions from the release's pipeline.json
+  (2026-10-22). A run on such a world asks first: make it again with this
+  engine (a different world: the simulation is chaotic), or not run. A
+  browser that loads an old client is a step of its own.
 - Signing the builds (attestations): wait until it is needed.
 
 ## Status
