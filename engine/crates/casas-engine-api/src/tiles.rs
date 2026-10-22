@@ -4,19 +4,27 @@
 //! its sampler and the climate's field mesh for every tile a worker bakes,
 //! as the worker's cache holds them, their walks with them.
 
+use casas_engine::climate::climate_field::{CLIMATE_RES_X, CLIMATE_RES_Y};
 use casas_engine::climate::climate_mesh::climate_cell_m;
 use casas_engine::climate::climate_points::{
     ClimateCellValues, climate_cells_from_saved, mean_land_runoff,
 };
 use casas_engine::core::domain::Domain;
+use casas_engine::elevation::elevation_scale::SHELF_BREAK;
 use casas_engine::fields::field_mesh::{SharedFieldMesh, shared_field_mesh};
 use casas_engine::mesh::mesh_erosion::MeshPipeline;
 use casas_engine::mesh::mesh_hydrology::mesh_routing;
+use casas_engine::mesh::mesh_raster::rasterise_node_field;
 use casas_engine::mesh::mesh_sampler::{MeshSampler, create_mesh_sampler};
 use casas_engine::mesh::mesh_serial::{SerializedMesh, decode_mesh};
-use casas_engine::mesh::mesh_tile::{SiteKind, TILE_ROLE_HALO, TileId, TileParent, TilePiece};
+use casas_engine::mesh::mesh_tile::{
+    SiteKind, TILE_ROLE_HALO, TILE_SPECS, TileId, TileParent, TilePiece, TileSpec, tile_corner,
+    tile_grid,
+};
+use casas_engine::mesh::mesh_tile_cube::cube_tile_samples;
 use casas_engine::mesh::periodic_delaunay::PeriodicTriangulation;
 use casas_engine::mesh::tile_layout::tile_parent_on;
+use casas_engine::pipeline::erosion_forcing::coarse_forcing_of_snapshot;
 use casas_engine::pipeline::mesh_tile_bake::{
     BakedTile, TileBakeInputs, TileBakeOptions, UpstreamTile, bake_mesh_tile,
 };
@@ -54,56 +62,145 @@ fn level_mesh(artifact: &read::Fields, domain: &Domain) -> Result<PeriodicTriang
     )?)
 }
 
+/// What the bake and the plan read of a world's save (fork 7b: the engine
+/// derives what the world layer derived until 2026-10-22): `{ seed, width,
+/// height, shape?, controls: { alluvium?, rockContrast? }, snapshot?,
+/// climate?, mesh? }` — the seed text and the recipe's controls, and the
+/// save's own payloads as it holds them: the snapshot (`state.json`), the
+/// climate per cell of its field mesh (`ClimateCellValues`), the mesh
+/// (`{ count, nodes, connectivity, z }`).
+fn save_of(save: &Value) -> Result<(read::Fields<'_>, Domain, f64, f64, String), EraError> {
+    let s = read::Fields::of(save, "the save")?;
+    let shape = match s.opt_str("shape")?.as_deref() {
+        Some("sphere") => Shape::Sphere,
+        _ => Shape::Torus,
+    };
+    let (width, height) = (s.num("width")?, s.num("height")?);
+    let seed = s
+        .opt_str("seed")?
+        .ok_or_else(|| wrong("the save has no seed"))?;
+    Ok((s, domain_of(shape, width, height), width, height, seed))
+}
+
+/// The save's terrain on the world raster (the world layer's `elevation`
+/// view: its mesh's heights rasterised).
+fn save_elevations(
+    save: &read::Fields,
+    domain: &Domain,
+    width: usize,
+    height: usize,
+) -> Result<Vec<f32>, EraError> {
+    let m = read::Fields::of(
+        save.get("mesh")
+            .ok_or_else(|| wrong("the save has no mesh"))?,
+        "the save's mesh",
+    )?;
+    let need = |k: &str| {
+        m.get(k)
+            .ok_or_else(|| wrong(&format!("the save's mesh has no {k}")))
+    };
+    let mut mesh = decode_mesh(
+        domain,
+        &SerializedMesh {
+            count: m.num("count")? as usize,
+            nodes: read::f32s(need("nodes")?, "nodes")?.to_vec(),
+            connectivity: read::u8s(need("connectivity")?, "connectivity")?.to_vec(),
+        },
+    )?;
+    let z = read::f32s(need("z")?, "z")?;
+    Ok(rasterise_node_field(&mut mesh, z, width, height))
+}
+
+/// A level's tiles that hold land or shelf: every tile with a cell of the
+/// save's raster above the shelf break (the job worker's `landTiles`). What
+/// a refine plan computes past level 1; the deep ocean has no relief to
+/// refine.
+fn land_tiles(elevations: &[f32], width: usize, height: usize, spec: &TileSpec) -> Vec<TileId> {
+    let (cols, rows) = tile_grid(width as f64, height as f64, spec);
+    let cells = spec.cells as usize;
+    let mut out = Vec::new();
+    for ty in 0..rows {
+        for tx in 0..cols {
+            let tile = TileId {
+                level: spec.level,
+                x: tx,
+                y: ty,
+            };
+            let (cx, cy) = tile_corner(&tile, spec);
+            let (cx, cy) = (cx as usize, cy as usize);
+            let found = (0..cells).any(|dy| {
+                let y = (cy + dy) % height;
+                (0..cells)
+                    .any(|dx| f64::from(elevations[y * width + (cx + dx) % width]) > SHELF_BREAK)
+            });
+            if found {
+                out.push(tile);
+            }
+        }
+    }
+    out
+}
+
+/// The sphere's land tiles (`land_tiles`' rule on the cube atlas, the job
+/// worker's `cubeLandTiles`): every tile with a sample of the save's raster
+/// above the shelf break, the samples a grid of cells × cells over it.
+fn cube_land_tiles(
+    elevations: &[f32],
+    domain: &Domain,
+    width: usize,
+    height: usize,
+    spec: &TileSpec,
+) -> Vec<TileId> {
+    let mut out = Vec::new();
+    cube_tile_samples(
+        domain,
+        spec.level,
+        spec.cells as usize,
+        &mut |tile, xs, ys| {
+            for k in 0..xs.len() {
+                let x = (xs[k].floor() as usize).min(width - 1);
+                let y = (ys[k].floor().max(0.0) as usize).min(height - 1);
+                if f64::from(elevations[y * width + x]) > SHELF_BREAK {
+                    out.push(tile);
+                    return;
+                }
+            }
+        },
+    );
+    out
+}
+
 /// The tile levels' plan (the job worker's `planOf`) from level 1's
-/// artifact (`MeshLevelArtifact`), decoded and routed on its own, and
-/// each level's tiles with land or shelf (`{ [level]: [[x, y], …] }`):
+/// artifact (`MeshLevelArtifact`), decoded and routed on its own, and the
+/// save (`save_of`), whose raster says which tiles hold land:
 /// `[{ tile, parents, upstream }]` (`PlannedTile`), coarse to fine.
-pub fn plan(
-    artifact: &Value,
-    width: u32,
-    height: u32,
-    shape: Shape,
-    land_tiles: &Value,
-) -> Result<Value, EraError> {
+pub fn plan(artifact: &Value, save: &Value) -> Result<Value, EraError> {
+    let (s, domain, width, height, _) = save_of(save)?;
+    let (width, height) = (width as usize, height as usize);
     let a = read::Fields::of(artifact, "the level")?;
-    let domain = domain_of(shape, width as f64, height as f64);
     let mut mesh = level_mesh(&a, &domain)?;
     let z = read::f32s(a.get("z").ok_or_else(|| wrong("the level has no z"))?, "z")?;
     let routing = mesh_routing(&mut mesh, z, &DEFAULT_SOLVER_PARAMS);
-    let land = read::Fields::of(land_tiles, "the land tiles")?;
-    let mut levels: Vec<u32> = land
-        .keys()
-        .map(|k| {
-            k.parse::<u32>()
-                .map_err(|_| wrong(&format!("no tile level {k}")))
+    let elevations = save_elevations(&s, &domain, width, height)?;
+    let sphere = domain.is_sphere();
+    let levels: Vec<u32> = TILE_SPECS.iter().map(|spec| spec.level).collect();
+    let tiles_of: std::collections::HashMap<u32, Vec<TileId>> = TILE_SPECS
+        .iter()
+        .map(|spec| {
+            let land = if sphere {
+                cube_land_tiles(&elevations, &domain, width, height, spec)
+            } else {
+                land_tiles(&elevations, width, height, spec)
+            };
+            (spec.level, land)
         })
-        .collect::<Result<_, _>>()?;
-    levels.sort_unstable();
-    let mut tiles_of = std::collections::HashMap::new();
-    for &level in &levels {
-        let list = land.list(&level.to_string())?;
-        let tiles = list
-            .iter()
-            .map(|xy| match xy {
-                Value::List(p) if p.len() == 2 => match (&p[0], &p[1]) {
-                    (Value::Num(x), Value::Num(y)) => Ok(TileId {
-                        level,
-                        x: *x as usize,
-                        y: *y as usize,
-                    }),
-                    _ => Err(wrong("a land tile is not [x, y]")),
-                },
-                _ => Err(wrong("a land tile is not [x, y]")),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        tiles_of.insert(level, tiles);
-    }
+        .collect();
     let planned = plan_tiles(&TilePlanInput {
         mesh: &mesh,
         z,
         routing: &routing,
-        width: width as usize,
-        height: height as usize,
+        width,
+        height,
         levels: &levels,
         land_tiles: &|level| tiles_of.get(&level).cloned().unwrap_or_default(),
     });
@@ -152,23 +249,16 @@ pub struct TileBaker {
 }
 
 impl TileBaker {
-    /// Level 1's artifact (`MeshLevelArtifact`) and the save's inputs as
-    /// the bake reads them: `{ width, height, shape, detailSeed,
-    /// lithoSeed, controls: { alluvium?, rockContrast? }, uplift?,
-    /// erodibility?, forcingResX, forcingResY, climate? }` (the save's
-    /// `ClimateCellValues`). `leaf_workers`: the engine pool's threads.
+    /// Level 1's artifact (`MeshLevelArtifact`) and the world's save
+    /// (`save_of`): the bake's seeds from its seed text, its forcing from
+    /// its snapshot, its climate as the save holds it. `leaf_workers`: the
+    /// engine pool's threads.
     pub fn open(
         artifact: &Value,
-        inputs: &Value,
+        save: &Value,
         leaf_workers: Option<u32>,
     ) -> Result<TileBaker, EraError> {
-        let i = read::Fields::of(inputs, "the bake's inputs")?;
-        let shape = match i.opt_str("shape")?.as_deref() {
-            Some("sphere") => Shape::Sphere,
-            _ => Shape::Torus,
-        };
-        let (width, height) = (i.num("width")?, i.num("height")?);
-        let domain = domain_of(shape, width, height);
+        let (i, domain, width, height, seed) = save_of(save)?;
         let a = read::Fields::of(artifact, "the level")?;
         let mesh = level_mesh(&a, &domain)?;
         let z = read::f32s(a.get("z").ok_or_else(|| wrong("the level has no z"))?, "z")?;
@@ -190,24 +280,34 @@ impl TileBaker {
                 .ok_or_else(|| wrong("the bake's inputs have no controls"))?,
             "the controls",
         )?;
-        let field = |k: &str| -> Result<Option<Vec<f32>>, EraError> {
-            Ok(i.get(k)
-                .map(|v| read::f32s(v, k).map(|a| a.to_vec()))
-                .transpose()?)
+        // The erosion's coarse forcing of the snapshot, on the climate's
+        // chart; without a snapshot none (neutral forcing).
+        let forcing = i
+            .get("snapshot")
+            .map(read::snapshot)
+            .transpose()?
+            .map(|snap| coarse_forcing_of_snapshot(&snap, &domain));
+        let (forcing_res_x, forcing_res_y) = match forcing {
+            Some(_) => (CLIMATE_RES_X, CLIMATE_RES_Y),
+            None => (0, 0),
+        };
+        let (uplift, erodibility) = match forcing {
+            Some(f) => (Some(f.uplift), Some(f.hardness)),
+            None => (None, None),
         };
         let save = SaveInputs {
             width: width as usize,
             height: height as usize,
-            detail_seed: i.num("detailSeed")? as u32,
-            litho_seed: i.num("lithoSeed")? as u32,
+            detail_seed: crate::detail_seed(&seed),
+            litho_seed: crate::litho_seed(&seed),
             controls: ErosionControls {
                 alluvium: c.opt_num("alluvium")?,
                 rock_contrast: c.opt_num("rockContrast")?,
             },
-            uplift: field("uplift")?,
-            erodibility: field("erodibility")?,
-            forcing_res_x: i.num("forcingResX")? as usize,
-            forcing_res_y: i.num("forcingResY")? as usize,
+            uplift,
+            erodibility,
+            forcing_res_x,
+            forcing_res_y,
             climate,
             mean_land_water,
         };

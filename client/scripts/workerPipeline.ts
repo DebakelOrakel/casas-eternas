@@ -27,11 +27,9 @@ import { planFromRecipe, replayRefusal, type ReplayPosition, type ReplaySnapshot
 import type { SavedField } from '../src/generator/fields/fieldMesh'
 import { meshLevelStage, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
 import { meshTileArtifactInfo, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact, type MeshTileArtifact } from '../src/world/meshTileArtifacts'
-import { TILE_SPECS, tileCorner, tileGrid, tileSpec, type TileSpec } from '../src/generator/mesh/meshTile'
-import { domainOfKind, type Domain } from '../src/generator/core/domain'
-import { cubeTileSamples } from '../src/generator/mesh/meshTileCube'
+import { TILE_SPECS, tileSpec } from '../src/generator/mesh/meshTile'
+import { domainOfKind } from '../src/generator/core/domain'
 import { parentTilesOn, tileGridOn } from '../src/generator/mesh/tileLayout'
-import { SHELF_BREAK } from '../src/generator/elevation/elevationScale'
 import { artifactKey } from '../src/storage/ArtifactStore'
 import type { ArtifactKey, ArtifactStore } from '../src/storage/ArtifactStore'
 import { loadNativeEngine, type EngineTileBaker, type NativeEngine, type TileBakeSave, type TilePiece, type UpstreamPiece } from './engineNative'
@@ -195,10 +193,9 @@ async function runTaskTimed(job: PipelineTask, io: PipelineIO, clock: Laps, cach
 const shapeOf = (inputs: WorldInputs): 'torus' | 'sphere' => (inputs.kind === 'SphereWorld' ? 'sphere' : 'torus')
 
 function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[] {
-  const shape = shapeOf(inputs)
-  const domain = domainOfKind(shape, inputs.width, inputs.height)
-  const land = Object.fromEntries(Object.keys(TILE_SPECS).map(Number).map((level) => [level, shape === 'sphere' ? cubeLandTiles(inputs, domain, tileSpec(level)) : landTiles(inputs, tileSpec(level))]))
-  const plan = engine().planTiles(artifact, inputs.width, inputs.height, shape, land)
+  // The engine finds the land tiles on the save's raster itself (DEC-0044,
+  // fork 7b).
+  const plan = engine().planTiles(artifact, tileBakeSave(inputs))
   return plan.map((p) => ({
     level: p.tile.level, x: p.tile.x, y: p.tile.y,
     after: [...p.parents, ...p.upstream].map((t) => [t.level, t.x, t.y] as [number, number, number]),
@@ -246,7 +243,7 @@ async function replayLevel(job: PipelineTask, inputs: WorldInputs, onProgress: (
     await new Promise((resolve) => setImmediate(resolve))
   }
   onProgress('hydrology', 0)
-  const level = replay.level(inputs.width, inputs.detailSeed)
+  const level = replay.level()
   onProgress('hydrology', 1)
   return { artifact: level, earlierMs }
 }
@@ -316,51 +313,6 @@ async function readCheckpoint(dir: string): Promise<{ position: ReplayPosition; 
   }
 }
 
-// A level's tiles that hold land or shelf — every tile with a cell of the
-// save's raster above the shelf break. What a refine plan computes past
-// level 1; the deep ocean has no relief to refine.
-function landTiles(inputs: WorldInputs, spec: TileSpec): [number, number][] {
-  const { width, height } = inputs
-  const { cols, rows } = tileGrid(width, height, spec)
-  const out: [number, number][] = []
-  for (let ty = 0; ty < rows; ty++) {
-    for (let tx = 0; tx < cols; tx++) {
-      const corner = tileCorner({ level: spec.level, x: tx, y: ty }, spec)
-      let found = false
-      for (let dy = 0; dy < spec.cells && !found; dy++) {
-        const y = (corner.y + dy) % height
-        for (let dx = 0; dx < spec.cells; dx++) {
-          if (inputs.elevations[y * width + (corner.x + dx) % width] > SHELF_BREAK) {
-            found = true
-            break
-          }
-        }
-      }
-      if (found) out.push([tx, ty])
-    }
-  }
-  return out
-}
-
-// The sphere's land tiles (landTiles' rule on the cube atlas): every tile
-// with a sample of the save's raster above the shelf break, the samples a
-// grid of cells × cells over the tile.
-function cubeLandTiles(inputs: WorldInputs, world: Domain, spec: TileSpec): [number, number][] {
-  const { width, height } = inputs
-  const out: [number, number][] = []
-  cubeTileSamples(world, spec.level, spec.cells, (tile, xs, ys) => {
-    for (let k = 0; k < xs.length; k++) {
-      const x = Math.min(width - 1, Math.floor(xs[k]))
-      const y = Math.min(height - 1, Math.max(0, Math.floor(ys[k])))
-      if (inputs.elevations[y * width + x] > SHELF_BREAK) {
-        out.push([tile.x, tile.y])
-        return
-      }
-    }
-  })
-  return out
-}
-
 // A stage past level 1: one tile of that level, built on its parent — level
 // 1 for a level-2 tile, the level-2 tiles it overlaps for a level-3 tile —
 // read from the same artifact store the tile is written to. Level 1 is
@@ -428,20 +380,19 @@ async function bakeTile(job: PipelineTask, inputs: WorldInputs, store: ArtifactS
   return { result: { worldId: key.worldId, pipelineVersion, stage: key.stage, width: 0, height: 0, nodes: artifact.count, durationMs } }
 }
 
-// The save's inputs a tile bake reads (world/bakeInputs.ts, tileBakeInputs).
+// The save as the bake and the plan read it (DEC-0044, fork 7b): its seed
+// text and controls, and its own payloads; the engine derives the seeds,
+// the forcing and the raster.
 function tileBakeSave(inputs: WorldInputs): TileBakeSave {
   return {
+    seed: inputs.seedText,
     width: inputs.width,
     height: inputs.height,
     shape: shapeOf(inputs),
-    detailSeed: inputs.detailSeed,
-    lithoSeed: inputs.lithoSeed,
     controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
-    uplift: inputs.uplift?.data,
-    erodibility: inputs.erodibility?.data,
-    forcingResX: inputs.uplift?.resX ?? 0,
-    forcingResY: inputs.uplift?.resY ?? 0,
+    snapshot: inputs.snapshot ?? undefined,
     climate: inputs.climate ?? undefined,
+    mesh: inputs.mesh ?? undefined,
   }
 }
 

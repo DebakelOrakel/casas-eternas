@@ -31,10 +31,6 @@ const { readWorldInputs } = await L('/src/world/save/loadWorldInputs.ts')
 const { artifactKey } = await L('/src/storage/ArtifactStore.ts')
 const { meshPipelineVersion, meshLevelStage, readMeshLevelArtifact } = await L('/src/world/meshArtifacts.ts')
 const { MESH_TILE_FILES, meshTilePipelineVersion, meshTileStage } = await L('/src/world/meshTileArtifacts.ts')
-const { domainOfKind } = await L('/src/generator/core/domain.ts')
-const { SHELF_BREAK } = await L('/src/generator/elevation/elevationScale.ts')
-const MT = await L('/src/generator/mesh/meshTile.ts')
-const { cubeTileSamples } = await L('/src/generator/mesh/meshTileCube.ts')
 
 const inputs = await readWorldInputs(await readFile(zipPath), ENGINE)
 if (!inputs) throw new Error(`${zipPath} is not a readable world`)
@@ -81,35 +77,14 @@ for (const level of [2, 3]) {
   if (![...entries.values()].some((e) => e.meta.key.worldId === inputs.worldId && e.meta.key.pipelineVersion === v)) throw new Error(`no level-${level} tile of pipeline ${v} in the store`)
 }
 
-// The land tiles as the job worker's landTiles and cubeLandTiles find them
-// (copied, since that module runs a worker when it loads).
-const world = domainOfKind(shape, width, height)
-const landTilesOf = (level) => {
-  const spec = MT.tileSpec(level)
-  const out = []
-  const above = (x, y) => inputs.elevations[y * width + x] > SHELF_BREAK
-  if (shape === 'sphere') {
-    cubeTileSamples(world, spec.level, spec.cells, (tile, xs, ys) => {
-      for (let k = 0; k < xs.length; k++) {
-        if (above(Math.min(width - 1, Math.floor(xs[k])), Math.min(height - 1, Math.max(0, Math.floor(ys[k]))))) { out.push([tile.x, tile.y]); return }
-      }
-    })
-    return out
-  }
-  const { cols, rows } = MT.tileGrid(width, height, spec)
-  for (let ty = 0; ty < rows; ty++) {
-    for (let tx = 0; tx < cols; tx++) {
-      const corner = MT.tileCorner({ level, x: tx, y: ty }, spec)
-      let found = false
-      for (let dy = 0; dy < spec.cells && !found; dy++) {
-        for (let dx = 0; dx < spec.cells; dx++) if (above((corner.x + dx) % width, (corner.y + dy) % height)) { found = true; break }
-      }
-      if (found) out.push([tx, ty])
-    }
-  }
-  return out
+// The save as the plan and the bake read it (DEC-0044, fork 7b): its seed
+// text and controls, and its own payloads.
+const save = {
+  seed: inputs.seedText, width, height, shape,
+  controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
+  snapshot: inputs.snapshot ?? undefined, climate: inputs.climate ?? undefined, mesh: inputs.mesh ?? undefined,
 }
-const plan = native.planTiles(level1.artifact, width, height, shape, { 2: landTilesOf(2), 3: landTilesOf(3) })
+const plan = native.planTiles(level1.artifact, save)
 const stored = plan.filter((p) => entryOf(tileKey(p.tile)))
 console.log(`world: ${shape} ${width}×${height}, ${plan.length} tiles planned, ${stored.length} in the store`)
 
@@ -127,12 +102,7 @@ const sampleOf = (level) => {
 }
 
 const stencilWorkers = 4 // the job worker's enginePool on 8 cores or more
-const baker = native.TileBaker.open(level1.artifact, {
-  width, height, shape, detailSeed: inputs.detailSeed, lithoSeed: inputs.lithoSeed,
-  controls: { alluvium: inputs.erosionControls.alluvium, rockContrast: inputs.erosionControls.rockContrast },
-  uplift: inputs.uplift?.data, erodibility: inputs.erodibility?.data, forcingResX: inputs.uplift?.resX ?? 0, forcingResY: inputs.uplift?.resY ?? 0,
-  climate: inputs.climate ?? undefined,
-}, stencilWorkers)
+const baker = native.TileBaker.open(level1.artifact, save, stencilWorkers)
 
 let failed = false
 const bytesOf = (a) => new Uint8Array(a.buffer, a.byteOffset, a.byteLength)

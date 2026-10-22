@@ -60,6 +60,22 @@ pub fn forcing_of_snapshot(shape: Shape, snapshot: &Value) -> Result<Value, EraE
         .build())
 }
 
+/// The seed of a world's fine detail field (the world layer's
+/// `detailSeed` until 2026-10-22, fork 7b): the coastline-warp seed of its
+/// seed text, salted as every reader of the field family salts it.
+pub(crate) fn detail_seed(seed: &str) -> u32 {
+    casas_engine::archean::archean_state::coastal_warp_seed(seed)
+        ^ casas_engine::elevation::ridged_noise::FINE_DETAIL_SEED_SALT
+}
+
+/// The seed of a world's lithology lattice (the world layer's `lithoSeed`
+/// until 2026-10-22).
+pub(crate) fn litho_seed(seed: &str) -> u32 {
+    casas_engine::surface::erosion_forcing_fields::erosion_litho_seed(
+        casas_engine::archean::archean_state::coastal_warp_seed(seed) as f64,
+    )
+}
+
 /// The world's shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Shape {
@@ -498,5 +514,23 @@ impl World {
             archean_params: default_archean_params(),
             stages: Default::default(),
         })
+    }
+}
+
+#[cfg(test)]
+mod seed_tests {
+    /// The seeds as the world layer derived them until 2026-10-22
+    /// (world/query.ts), for a real world's seed, a plain one and one
+    /// with non-ASCII letters.
+    #[test]
+    fn seeds_are_the_world_layers() {
+        for (seed, detail, litho) in [
+            ("78923710", 1_671_205_072, 855_447_874),
+            ("replay", 3_509_536_448, 2_152_648_530),
+            ("räuber-öl", 1_132_283_730, 303_877_824),
+        ] {
+            assert_eq!(super::detail_seed(seed), detail, "detail seed of {seed}");
+            assert_eq!(super::litho_seed(seed), litho, "litho seed of {seed}");
+        }
     }
 }

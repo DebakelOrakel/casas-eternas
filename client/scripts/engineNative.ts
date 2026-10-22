@@ -12,6 +12,8 @@ import type { ReplayPlan, ReplayPosition, ReplaySnapshot } from '../src/generato
 import type { TileId } from '../src/generator/mesh/meshTile'
 import type { ClimateCellValues } from '../src/generator/climate/climatePoints'
 import type { ErosionControlsV2 } from '../src/generator/surface/erosionForcingFields'
+import type { PlateSimulationSnapshot } from '../src/generator/tectonics/plateSimulationTypes'
+import type { SavedMesh } from '../src/generator/mesh/meshSerial'
 import type { MeshLevelArtifact } from '../src/world/meshArtifacts'
 import type { MeshTileArtifact } from '../src/world/meshTileArtifacts'
 
@@ -23,24 +25,23 @@ export interface EngineReplay extends Replay {
   checkpointDue(): ReplayPosition | null
   // A copy: it does not change with the epochs after it.
   snapshot(): ReplaySnapshot
-  // The level from the replay's end; the replay ends here.
-  level(width: number, detailSeed: number): MeshLevelArtifact
+  // The level from the replay's end, on the plan's width and its seed's
+  // detail seed; the replay ends here.
+  level(): MeshLevelArtifact
 }
 
-// The save's inputs as a tile bake reads them (`tileBakeInputs`).
+// A world's save as the bake and the plan read it (DEC-0044, fork 7b):
+// the seed text and the recipe's controls, and the save's own payloads as
+// it holds them. The engine derives the seeds, the forcing and the raster.
 export interface TileBakeSave {
+  seed: string
   width: number
   height: number
   shape: Shape
-  detailSeed: number
-  lithoSeed: number
   controls: ErosionControlsV2
-  // The erosion forcing on its grid (as `forcingOfSnapshot` of a save).
-  uplift?: Float32Array
-  erodibility?: Float32Array
-  forcingResX: number
-  forcingResY: number
+  snapshot?: PlateSimulationSnapshot
   climate?: ClimateCellValues
+  mesh?: SavedMesh
 }
 
 // A tile of the level above, as its artifact holds it.
@@ -71,9 +72,9 @@ export interface NativeEngine extends Engine {
   Replay: {
     start(plan: ReplayPlan, level: number, resume?: { position: ReplayPosition; snapshot: ReplaySnapshot } | null, leafWorkers?: number | null): EngineReplay
   }
-  // The tile levels' plan from level 1 and each level's land tiles
-  // (`{ [level]: [[x, y], …] }`).
-  planTiles(artifact: MeshLevelArtifact, width: number, height: number, shape: Shape, landTiles: Record<number, [number, number][]>): PlannedTile[]
+  // The tile levels' plan from level 1 and the save, whose raster says
+  // which tiles hold land.
+  planTiles(artifact: MeshLevelArtifact, save: TileBakeSave): PlannedTile[]
   TileBaker: {
     open(artifact: MeshLevelArtifact, save: TileBakeSave, leafWorkers: number | null): EngineTileBaker
   }

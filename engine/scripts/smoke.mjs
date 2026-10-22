@@ -41,10 +41,6 @@ const { defaultWeatherParams } = await L('/src/generator/climate/weather.ts')
 const { DEFAULT_PLANET_FORCING } = await L('/src/generator/planet/planetForcing.ts')
 const { TECTONICS_INPUTS } = await L('/src/generator/tectonics/tectonicsInputParams.ts')
 const { sampleWorldElevation } = await L('/src/generator/planet/sampleWorld.ts')
-const { SHELF_BREAK } = await L('/src/generator/elevation/elevationScale.ts')
-const { CLIMATE_RES_X, CLIMATE_RES_Y } = await L('/src/generator/climate/climateField.ts')
-const MT = await L('/src/generator/mesh/meshTile.ts')
-const { cubeTileSamples } = await L('/src/generator/mesh/meshTileCube.ts')
 await server.close()
 
 let failed = false
@@ -227,37 +223,6 @@ for (const shape of ['torus', 'sphere']) {
   console.log(`engine: ${shape} — a plan replayed at level 0 (${snapshot.epoch} epochs): native and wasm agree`)
 }
 
-// A level's tiles with land or shelf on the save's raster, as the job
-// worker's landTiles and cubeLandTiles find them (scripts/jobWorker.ts;
-// copied, since that module runs a worker when it loads).
-const landTilesOf = (world, elevations, level) => {
-  const spec = MT.tileSpec(level)
-  const { width, height } = world
-  const out = []
-  if (world.kind === 'sphere') {
-    cubeTileSamples(world, spec.level, spec.cells, (tile, xs, ys) => {
-      for (let k = 0; k < xs.length; k++) {
-        const x = Math.min(width - 1, Math.floor(xs[k]))
-        const y = Math.min(height - 1, Math.max(0, Math.floor(ys[k])))
-        if (elevations[y * width + x] > SHELF_BREAK) { out.push([tile.x, tile.y]); return }
-      }
-    })
-    return out
-  }
-  const { cols, rows } = MT.tileGrid(width, height, spec)
-  for (let ty = 0; ty < rows; ty++) {
-    for (let tx = 0; tx < cols; tx++) {
-      const corner = MT.tileCorner({ level, x: tx, y: ty }, spec)
-      let found = false
-      for (let dy = 0; dy < spec.cells && !found; dy++) {
-        const y = (corner.y + dy) % height
-        for (let dx = 0; dx < spec.cells; dx++) if (elevations[y * width + (corner.x + dx) % width] > SHELF_BREAK) { found = true; break }
-      }
-      if (found) out.push([tx, ty])
-    }
-  }
-  return out
-}
 // The tiles a tile waits for, itself last, deduplicated: what a worker
 // bakes before it.
 const closureOf = (plan, target) => {
@@ -286,7 +251,7 @@ const closureOf = (plan, target) => {
 // worker does, once on four leaf blocks and once on one (the pooled
 // scheme gives the same bytes for every split).
 for (const shape of ['torus', 'sphere']) {
-  const [width, height, detailSeed] = [512, 256, 12345]
+  const [width, height] = [512, 256]
   const plan = planOf('replay', width, height, shape)
   const replay = native.Replay.start(plan, 1, null, 4)
   const due = []
@@ -295,29 +260,30 @@ for (const shape of ['torus', 'sphere']) {
     if (position) due.push({ position, snapshot: replay.snapshot() })
     if (!replay.step()) break
   }
-  const level = replay.level(width, detailSeed)
+  const level = replay.level()
   if (due.length === 0) fail(`${shape}: level 1's replay offered no checkpoint`)
   else {
     const at = due[due.length - 1]
     const resumed = native.Replay.start(plan, 1, { position: at.position, snapshot: { ...at.snapshot, state: viaJson(at.snapshot.state) } }, null)
     while (resumed.step());
-    same(`${shape}: level 1 resumed from its checkpoint differs`, resumed.level(width, detailSeed), level)
+    same(`${shape}: level 1 resumed from its checkpoint differs`, resumed.level(), level)
   }
 
-  // The save's inputs a tile bake reads, from the world at level 0 the
-  // same plan replays to.
+  // The save as the plan and the bake read it, from the world at level 0
+  // the same plan replays to: its seed text and controls, and its
+  // payloads; the engine derives the seeds, the forcing and the raster
+  // (fork 7b).
   const r0 = native.Replay.start(plan, 0)
   while (r0.step());
   const w0 = r0.world()
-  const elevations = w0.render(1).elevations
-  const land = Object.fromEntries([2, 3].map((l) => [l, landTilesOf(domainOfKind(shape, width, height), elevations, l)]))
-  const tilePlan = native.planTiles(level, width, height, shape, land)
+  // The climate needs the world rendered first.
+  w0.render(1)
+  w0.climate(defaultWeatherParams())
+  const save = { seed: plan.seed, width, height, shape, controls, snapshot: w0.snapshot(), climate: w0.climatePayload(), mesh: w0.meshPayload() }
+  const tilePlan = native.planTiles(level, save)
   const third = tilePlan.filter((p) => p.tile.level === 3).map((p) => closureOf(tilePlan, p.tile))
   const withUpstream = third.filter((c) => c.some((p) => p.upstream.length > 0))
   const bakes = (withUpstream.length ? withUpstream : third).sort((a, b) => a.length - b.length)[0]
-  w0.climate(defaultWeatherParams())
-  const { uplift, hardness } = w0.forcing()
-  const save = { width, height, shape, detailSeed, lithoSeed: 777, controls, uplift, erodibility: hardness, forcingResX: CLIMATE_RES_X, forcingResY: CLIMATE_RES_Y, climate: w0.climatePayload() }
   const keyOf = (t) => `${t.level}:${t.x},${t.y}`
   const bakeAll = (leafWorkers) => {
     const baker = native.TileBaker.open(level, save, leafWorkers)

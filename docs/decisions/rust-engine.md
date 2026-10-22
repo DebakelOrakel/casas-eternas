@@ -402,6 +402,16 @@ from the pipeline's release (docs/decisions/engine-releases.md):
    The world layer writes and reads only the meta. TypeScript's
    `serializeRiverGraph` and `deserializeRiverGraph` went; a graph not on
    the mesh is no longer read (no older formats are kept).
+3. The save's payloads (2026-10-22): the plan and the tile bake take the
+   save as it is — `{ seed, width, height, shape, controls, snapshot,
+   climate, mesh }` — and the engine derives the detail and lithology
+   seeds from the seed text, the forcing from the snapshot and the raster
+   from the mesh, and finds the land tiles on it; `Replay.level()` takes
+   the detail seed from its plan's seed. The job worker's `landTiles` and
+   `cubeLandTiles` went, and `WorldInputs` lost the raster, the seeds and
+   the forcing. Measured on Morvane: the plan of 12 262 tiles is the same,
+   field for field. The detail seed stays in the world layer's recipe for
+   the map's display.
 
 **7c — The harnesses of the TypeScript simulation.**
 

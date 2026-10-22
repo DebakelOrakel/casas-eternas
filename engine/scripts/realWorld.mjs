@@ -120,7 +120,7 @@ if (level1Dir) {
   const replay1 = native.Replay.start(plan, 1, null, null)
   const level = await timed(`engine: level 1 (TypeScript's bake: ${(meta.bakeMs / 1000).toFixed(1)} s)`, () => {
     while (replay1.step());
-    return replay1.level(world.width, world.recipe.detailSeed)
+    return replay1.level()
   })
   // The level's files as the engine writes them (DEC-0044, fork 7b).
   for (const [name, bytes] of Object.entries(native.levelFiles(level))) if (!same(bytes, await file(name))) fail(`level 1 (${name})`)

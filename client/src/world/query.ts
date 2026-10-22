@@ -10,7 +10,6 @@ import { worldKindOf, type WorldKind } from './worldRecord'
 import { recordedPipeline } from './worldPipeline'
 import { coastalWarpSeed } from '../generator/archean/archeanState'
 import { FINE_DETAIL_SEED_SALT } from '../generator/elevation/ridgedNoise'
-import { erosionLithoSeed } from '../generator/surface/erosionForcingFields'
 import type { ErosionControls, WorldManifest } from './save/loadWorldInputs'
 import { readClimate, readLandFields, refuseFormerHydrology, type SavedClimate, type SavedLandFields } from './save/climateFields'
 import { readField, refuseFormerRasters } from './save/savedFields'
@@ -78,10 +77,6 @@ export interface WorldRecipe {
   // seed roughness: the generator's own warpSeed, derived from the recipe's
   // seed and salted like every other consumer of that noise (see openWorld).
   detailSeed: number
-  // Seeds the erosion engine's lithology lattice — the same warpSeed under
-  // the erosion salt (surface/erosionForcingFields.erosionLithoSeed), so a
-  // bake carves the exact rock bands the generator carved.
-  lithoSeed: number
   erosionControls: ErosionControls
   // The world's identity in the server's store (`metadata.uid`) — the half that
   // does NOT move when the terrain does. Empty for a save written before the
@@ -127,6 +122,10 @@ export interface World {
   // mesh/meshSerial.ts) — the terrain proper since phase 4.3, in every
   // world openWorld opens since DEC-0036's save step.
   mesh(): Promise<SavedMesh | null>
+  // The tectonic state the save holds (`state.json`), as it is: what the
+  // engine derives the erosion's forcing from (DEC-0044, fork 7b). Null
+  // without one.
+  snapshot(): Promise<PlateSimulationSnapshot | null>
   // The climate per cell of its field mesh and the land fields per node of
   // the mesh (save/climateFields.ts, DEC-0036 phase 7); null for a save
   // without them. A save holding them as the former raster layers is
@@ -207,7 +206,6 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array, engine: World
   const recipe: WorldRecipe = {
     seedText,
     detailSeed,
-    lithoSeed: erosionLithoSeed(coastalWarpSeed(seedText)),
     erosionControls: {
       landscapeAge: readRecipeNumber(yamlText, 'spec.erosion.landscapeAge'),
       // Since phase 5.1 under the tectonics; the erosion paths are the
@@ -414,6 +412,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array, engine: World
     climate: async () => climate,
     land: landFields,
     mesh: savedMesh,
+    snapshot: snapshotOf,
   }
   // Refuse an archive with no terrain: a world without it is not a world,
   // and half-reading one is worse than saying so.

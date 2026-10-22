@@ -1,4 +1,5 @@
 import { openWorld, waterBodiesOf, type SavedMesh, type WorldEngine } from '../query'
+import type { PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulationTypes'
 import type { WorldKind } from '../worldRecord'
 import type { SavedClimate } from './climateFields'
 import type { World } from '../query'
@@ -54,9 +55,11 @@ export interface ErosionControls {
   rockContrast: number | undefined
 }
 
+// What the job worker reads of a save: the recipe, and the save's own
+// payloads as it holds them — the engine derives the seeds, the forcing
+// and the raster from them (DEC-0044, fork 7b; until 2026-10-22 they were
+// derived here).
 export interface WorldInputs {
-  // The terrain mesh's rasterisation on the world raster (world/query.ts).
-  elevations: Float32Array
   // The world's shape (world.yaml's kind).
   kind: WorldKind
   width: number
@@ -66,21 +69,7 @@ export interface WorldInputs {
   // and the pipeline that made them (worldPipeline.ts; '' for none).
   history: WorldHistory
   pipeline: string
-  // Seed for the deterministic near-field detail and for the bake's seed
-  // roughness. It IS the generator's warpSeed (salted), derived from the
-  // recipe's seed rather than stored — see world/query.openWorld.
-  detailSeed: number
-  // Seed of the erosion engine's lithology lattice (see world/query.ts) —
-  // derived from the recipe like detailSeed, present for every save.
-  lithoSeed: number
   erosionControls: ErosionControls
-  // The erosion engine's coarse forcing (docs/design/erosion-v2.md, P3),
-  // derived from the save's snapshot as the generator derives it
-  // (the engine's forcingOfSnapshot; a save layer until DEC-0036's save
-  // step). Null without a snapshot — the bake then erodes with neutral
-  // forcing (no uplift, lithology-only rock contrast).
-  uplift: GridLayer | null
-  erodibility: GridLayer | null
   // The climate per cell of its field mesh (climateFields.ts, DEC-0036
   // phase 7): the precipitation drives the discharge in the bake's
   // hydrology re-run AND the engine's water forcing contrast, the
@@ -97,6 +86,10 @@ export interface WorldInputs {
   // The adaptive mesh (phase 4.3), the terrain the mesh bake refines; null
   // for a save without one.
   mesh: SavedMesh | null
+  // The tectonic state (`state.json`), as the save holds it: the job
+  // worker hands it to the engine, which derives the forcing from it
+  // (DEC-0044, fork 7b). Null without one.
+  snapshot: PlateSimulationSnapshot | null
   // What the bake actually consumes, hashed — the artifact key. Derived here
   // rather than by the caller so every reader of a save agrees on it.
   worldId: string
@@ -130,29 +123,20 @@ export async function readWorldInputs(archive: ArrayBuffer | Uint8Array, engine:
 // acquires fields from it, and opening the same archive twice to get both would
 // be the double parse this whole layer exists to remove.
 export async function worldInputsFrom(world: World): Promise<WorldInputs | null> {
-  const elevation = await world.acquire('elevation')
-  if (!elevation) return null
-
-  const uplift = await world.acquire('uplift')
-  const erodibility = await world.acquire('erodibility')
   const waterBodies = waterBodiesOf(await world.table('waterBodies'))
 
   return {
-    elevations: elevation.data,
     kind: world.kind,
     width: world.width,
     height: world.height,
     seedText: world.recipe.seedText,
     history: world.recipe.history,
     pipeline: world.recipe.pipeline,
-    detailSeed: world.recipe.detailSeed,
-    lithoSeed: world.recipe.lithoSeed,
     erosionControls: world.recipe.erosionControls,
-    uplift,
-    erodibility,
     climate: await world.climate(),
     waterBodies,
     mesh: await world.mesh(),
+    snapshot: await world.snapshot(),
     worldId: await world.worldId(),
     worldUid: world.recipe.worldUid,
   }

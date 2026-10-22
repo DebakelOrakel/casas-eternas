@@ -332,8 +332,8 @@ impl Replay {
     }
 
     #[napi]
-    pub fn level(&mut self, width: u32, detail_seed: u32) -> napi::Result<Tree> {
-        self.0.level(width, detail_seed).map(Tree).map_err(era)
+    pub fn level(&mut self) -> napi::Result<Tree> {
+        self.0.level().map(Tree).map_err(era)
     }
 
     /// The world from the replay's end; the replay ends here.
@@ -373,19 +373,11 @@ impl Preview {
     }
 }
 
-/// The tile levels' plan from level 1's artifact and each level's land
-/// tiles (`{ [level]: [[x, y], …] }`). Native only.
-#[napi(
-    ts_args_type = "artifact: unknown, width: number, height: number, shape: string, landTiles: unknown"
-)]
-pub fn plan_tiles(
-    artifact: Tree,
-    width: u32,
-    height: u32,
-    shape: String,
-    land_tiles: Tree,
-) -> napi::Result<Tree> {
-    casas_engine_api::tiles::plan(&artifact.0, width, height, shape_of(&shape)?, &land_tiles.0)
+/// The tile levels' plan from level 1's artifact and the world's save,
+/// whose raster says which tiles hold land. Native only.
+#[napi(ts_args_type = "artifact: unknown, save: unknown")]
+pub fn plan_tiles(artifact: Tree, save: Tree) -> napi::Result<Tree> {
+    casas_engine_api::tiles::plan(&artifact.0, &save.0)
         .map(Tree)
         .map_err(era)
 }

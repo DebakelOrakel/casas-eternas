@@ -162,6 +162,10 @@ fn snapshot(s: &ReplaySnapshot) -> Value {
 pub struct Replay {
     runs: Option<Runs>,
     level: u32,
+    /// The plan's seed text and width: the level's detail seed and raster
+    /// width (`level`).
+    seed: String,
+    width: f64,
 }
 
 impl Replay {
@@ -176,6 +180,7 @@ impl Replay {
         leaf_workers: Option<u32>,
     ) -> Result<Replay, EraError> {
         let plan = plan_of(plan)?;
+        let (seed, width) = (plan.seed.clone(), plan.width);
         let resume = resume
             .map(|r| -> Result<_, EraError> {
                 let f = read::Fields::of(r, "the replay's resume")?;
@@ -197,6 +202,8 @@ impl Replay {
         Ok(Replay {
             runs: Some(runs),
             level,
+            seed,
+            width,
         })
     }
 
@@ -244,8 +251,10 @@ impl Replay {
 
     /// The level from the replay's end (the job worker's `replayLevel`):
     /// the last epoch's climate at the nodes, the level's waters, as the
-    /// artifact holds them (`MeshLevelArtifact`). The replay ends here.
-    pub fn level(&mut self, width: u32, detail_seed: u32) -> Result<Value, EraError> {
+    /// artifact holds them (`MeshLevelArtifact`), on the plan's width and
+    /// its seed's detail seed. The replay ends here.
+    pub fn level(&mut self) -> Result<Value, EraError> {
+        let (width, detail_seed) = (self.width as u32, crate::detail_seed(&self.seed));
         let runs = self
             .runs
             .take()

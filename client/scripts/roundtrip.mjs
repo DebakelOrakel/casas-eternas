@@ -441,15 +441,12 @@ const zipForcing = ENGINE.forcingOfSnapshot(zipDomain.kind, structuredClone(zipS
 const loaded = await M.inputs.readWorldInputs(await zip.generateAsync({ type: 'arraybuffer' }), ENGINE)
 if (!loaded) check('the zip reads back at all', false)
 else {
-  check('the elevation is the mesh\'s rasterisation, byte for byte', String(loaded.elevations) === String(zipElev) && loaded.width === W && loaded.height === H)
+  // The save's own payloads, as it holds them: the engine derives the
+  // seeds, the forcing and the raster (DEC-0044, fork 7b).
+  check('the mesh and the snapshot are read as the save holds them', loaded.mesh?.count === zipCount && String(loaded.mesh?.z) === String(meshZ) && loaded.snapshot?.epoch === zipSnapshot.epoch && loaded.width === W && loaded.height === H)
   check('the recipe is read', loaded.seedText === 'zip-welt' && loaded.erosionControls.landscapeAge === 25 && loaded.erosionControls.alluvium === 60 && loaded.erosionControls.rockContrast === 35)
   check('the uid is read rather than derived', loaded.worldUid === '0192abcd-0000-8000-8000-000000000000')
   check('the water-body table comes back as written', JSON.stringify(loaded.waterBodies) === JSON.stringify(zipBodies))
-  check('the forcing is the one the generator derives from the snapshot, byte for byte',
-    String(loaded.uplift?.data) === String(zipForcing.uplift) && String(loaded.erodibility?.data) === String(zipForcing.hardness) && loaded.uplift?.resX === 256)
-  // The lithology seed is DERIVED (like detailSeed), so every reader of one
-  // seed text must land on one lattice.
-  check('the lithology seed is derived from the recipe', Number.isInteger(loaded.lithoSeed) && loaded.lithoSeed >>> 0 === loaded.lithoSeed)
   check('a save without a climate reads as none', loaded.climate === null)
   // The reader must reach the SAME id as deriving it here by hand.
   const direct = M.key.deriveWorldId({
@@ -701,7 +698,7 @@ console.log('\n— zip writer —')
   const back = await M.inputs.readWorldInputs(written, ENGINE)
   if (!back) check('the written archive reads back at all', false)
   else {
-    check('the written elevation is the mesh\'s rasterisation', String(back.elevations) === String(zipElev))
+    check('the written mesh reads back', back.mesh?.count === zipCount && String(back.mesh?.z) === String(meshZ))
     check('the written recipe is read', back.seedText === 'writer-welt' && back.erosionControls.alluvium === 40 && back.worldUid === '0192abcd-0000-8000-8000-00000000beef')
     check('the written water bodies come back', JSON.stringify(back.waterBodies) === JSON.stringify(zipBodies))
     check('the bake\'s climate is the saved cells', back.climate !== null && back.climate.cells === nc && back.climate.precipitation[2] === zipClimate.precipitation[2])
