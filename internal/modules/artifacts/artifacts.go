@@ -863,9 +863,20 @@ type LevelSummary struct {
 	Actions         []string `json:"actions"`
 }
 
+// PipelineSummary is the pipeline builds of one pipeline version
+// (PipelineWorld): its files, their bytes, and what the caller may do —
+// the artifact window's row in its group "Engines".
+type PipelineSummary struct {
+	PipelineVersion string   `json:"pipelineVersion"`
+	Files           []string `json:"files"`
+	Bytes           int64    `json:"bytes"`
+	Actions         []string `json:"actions"`
+}
+
 // handleLevels lists what the caller may see, summed per terrain,
-// pipeline version and level. Entries whose stage is no level (junk, other
-// kinds) are left out; the flat listing still shows them.
+// pipeline version and level, and the pipeline builds per version.
+// Entries whose stage is no level (junk, other kinds) are left out; the
+// flat listing still shows them.
 func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 	visible, bytes, err := m.visible(r)
 	if err != nil {
@@ -879,7 +890,18 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 	}
 	groups := map[groupKey]*LevelSummary{}
 	var order []groupKey
+	builds := map[string]*PipelineSummary{}
 	for _, a := range visible {
+		if a.WorldID == PipelineWorld {
+			p := builds[a.PipelineVersion]
+			if p == nil {
+				p = &PipelineSummary{PipelineVersion: a.PipelineVersion, Files: []string{}, Actions: a.Actions}
+				builds[a.PipelineVersion] = p
+			}
+			p.Files = append(p.Files, a.Stage)
+			p.Bytes += a.Bytes
+			continue
+		}
 		level, tile, ok := StageLevel(a.Stage)
 		if !ok {
 			continue
@@ -909,7 +931,13 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 	for _, k := range order {
 		out = append(out, *groups[k])
 	}
-	httpjson.Write(w, http.StatusOK, map[string]any{"levels": out, "bytes": bytes})
+	pipelines := make([]PipelineSummary, 0, len(builds))
+	for _, p := range builds {
+		sort.Strings(p.Files)
+		pipelines = append(pipelines, *p)
+	}
+	sort.Slice(pipelines, func(i, j int) bool { return pipelines[i].PipelineVersion < pipelines[j].PipelineVersion })
+	httpjson.Write(w, http.StatusOK, map[string]any{"levels": out, "pipelines": pipelines, "bytes": bytes})
 }
 
 // A listed artifact with the actions the caller may perform on it (see
@@ -939,7 +967,8 @@ func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {
 // the world's terrains that no other world holds (the sweep before a world
 // is deleted), or — with ?worldId={id}&level={n} — one level of a terrain,
 // its tiles included, narrowed by &pipeline= to one version (the artifact
-// window's "delete this level").
+// window's "delete this level"), or — with ?pipeline={version} alone — the
+// pipeline builds of that version (PipelineWorld; the operator's).
 func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	if levelText := query.Get("level"); levelText != "" {
@@ -967,6 +996,19 @@ func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
 	}
 	if world := query.Get("world"); world != "" {
 		m.sweepWorld(w, r, world)
+		return
+	}
+	if pipeline := query.Get("pipeline"); pipeline != "" {
+		if !m.allowed(w, r, PipelineWorld, removing) {
+			return
+		}
+		removed, err := m.store.RemovePipelineBuilds(r.Context(), pipeline)
+		if err != nil {
+			respondStoreError(w, err)
+			return
+		}
+		slog.Info("pipeline builds dropped", "pipeline", pipeline, "count", removed)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	// Clearing EVERYTHING is store administration, not a per-world right.

@@ -100,8 +100,20 @@ export interface ServerArtifactLevel {
   actions?: string[]
 }
 
+// The pipeline builds of one pipeline version (docs/decisions/
+// engine-releases.md): the files of its release the server keeps, for
+// workers of that pipeline. The artifact window's group "Engines".
+export interface ServerPipelineBuilds {
+  pipelineVersion: string
+  files: string[]
+  bytes: number
+  // As ServerArtifact's: `artifact.remove` for the operator only.
+  actions?: string[]
+}
+
 export interface ServerArtifactLevels {
   levels: ServerArtifactLevel[]
+  pipelines: ServerPipelineBuilds[]
   bytes: number
 }
 
@@ -112,8 +124,8 @@ export async function listServerArtifactLevels(): Promise<ServerArtifactLevels |
   try {
     const response = await authFetch(`${base}/artifacts/levels`, { cache: 'no-store' })
     if (!response.ok) return null
-    const body = (await response.json()) as { levels?: ServerArtifactLevel[] | null; bytes?: number }
-    return { levels: body.levels ?? [], bytes: body.bytes ?? 0 }
+    const body = (await response.json()) as { levels?: ServerArtifactLevel[] | null; pipelines?: ServerPipelineBuilds[] | null; bytes?: number }
+    return { levels: body.levels ?? [], pipelines: body.pipelines ?? [], bytes: body.bytes ?? 0 }
   } catch {
     return null
   }
@@ -121,6 +133,19 @@ export async function listServerArtifactLevels(): Promise<ServerArtifactLevels |
 
 // Drops one level of a terrain — the whole level and every tile of it — of
 // one pipeline version.
+// Removes the pipeline builds of one version (the operator's).
+export async function removeServerPipelineBuilds(pipelineVersion: string): Promise<boolean> {
+  const base = await apiBase()
+  if (!base) return false
+  const query = new URLSearchParams({ pipeline: pipelineVersion })
+  try {
+    const response = await authFetch(`${base}/artifacts?${query}`, { method: 'DELETE' })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 export async function removeServerLevel(level: number, worldId: string, pipelineVersion: string): Promise<boolean> {
   const base = await apiBase()
   if (!base) return false

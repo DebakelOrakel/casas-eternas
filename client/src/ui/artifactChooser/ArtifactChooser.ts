@@ -2,10 +2,11 @@ import { t, type TKey } from '../../i18n/i18n'
 import { formatBytes } from '../../ui/format'
 import { getLocalArtifactStore } from '../../storage/artifactStoreProvider'
 import { clearArtifacts } from '../../storage/artifactAdmin'
-import { listServerArtifactLevels, removeServerLevel } from '../../server/artifactsClient'
+import { listServerArtifactLevels, removeServerLevel, removeServerPipelineBuilds, type ServerPipelineBuilds } from '../../server/artifactsClient'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { currentPipelineVersion, parseStage } from '../../world/levels'
+import { WORLD_PIPELINE } from '../../world/worldPipeline'
 import { commissionBake, type CommissionOutcome } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { BROWSER_ICON, SERVER_ICON, icon } from '../../ui/chooserIcons'
@@ -38,6 +39,11 @@ import './artifactChooser.css'
 // the viewer see (the server lists by the worlds' access, and says per row
 // what the viewer may do: a terrain other worlds hold too is deleted by an
 // admin only).
+//
+// ENGINES (docs/decisions/engine-releases.md): the server keeps the files of
+// the pipelines' releases for the workers of each pipeline. They belong to
+// no world, so they are a group of their own, last, in either scope: one
+// row per pipeline version, removed by the operator only.
 
 // The menu entry's icon, the same on every screen that offers the window.
 export const ARTIFACTS_ICON = 'M4 6a8 3 0 1 0 16 0a8 3 0 1 0-16 0M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'
@@ -93,6 +99,12 @@ interface LevelRow {
 }
 
 // `held` is the terrains of the world held here (heldTerrains).
+// A pipeline version as a row shows it: its first eight characters (the
+// algorithm's number and the start of the hash); the whole in the tooltip.
+function shortPipeline(version: string): string {
+  return version.length > 12 ? `${version.slice(0, 8)}…` : version
+}
+
 function staleOf(row: Pick<LevelRow, 'worldId' | 'pipelineVersion' | 'level' | 'tiles'>, world: { worldId: string | null } | null, held: Set<string>): LevelRow['stale'] {
   const stage = row.tiles > 0 ? `L${row.level}:0,0` : `L${row.level}`
   if (row.pipelineVersion !== currentPipelineVersion(stage)) return 'otherCode'
@@ -162,6 +174,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
   // --- data -------------------------------------------------------------------
 
   let rows: LevelRow[] = []
+  let pipelines: ServerPipelineBuilds[] = []
   // Each world's name and seed, from this browser's list and the server's.
   let worlds = new Map<string, { name: string; seed: string }>()
   // Each terrain's worlds, from the server's list (WorldSummary.terrains).
@@ -176,6 +189,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
       store.list(), store.usage(), listServerArtifactLevels(), listBrowserWorlds(), listWorlds(),
     ])
     serverReachable = server !== null
+    pipelines = server?.pipelines ?? []
     serverBytes = server ? server.bytes : null
     browserUsage = usage
     worlds = new Map([...(serverWorlds ?? []).map((w) => [w.uid, w] as const), ...browserWorlds.map((w) => [w.uid, w] as const)]
@@ -264,14 +278,15 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
 
     const header = document.createElement('div')
     header.className = 'ac-row ac-row--head mono'
-    for (const column of ['world', 'levels', 'where', 'size', 'state']) {
+    for (const column of ['world', 'pipeline', 'levels', 'where', 'size', 'state']) {
       const cell = document.createElement('span')
       cell.textContent = t(`generator.artifacts.col.${column}` as TKey)
       header.appendChild(cell)
     }
     header.appendChild(document.createElement('span'))
 
-    if (shown.length === 0) {
+    const engines = where === 'local' ? [] : pipelines.filter((p) => !onlyStale || p.pipelineVersion !== WORLD_PIPELINE)
+    if (shown.length === 0 && engines.length === 0) {
       const note = document.createElement('p')
       note.className = 'wc-note'
       const missingServer = serverReachable === false && where !== 'local'
@@ -284,7 +299,105 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     for (const row of shown) groups.set(row.worldId, [...(groups.get(row.worldId) ?? []), row])
     const bytesOf = (list: LevelRow[]): number => list.reduce((n, row) => n + row.bytes, 0)
     const ordered = [...groups.entries()].sort(([ta, a], [tb, b]) => Number(held.has(tb)) - Number(held.has(ta)) || bytesOf(b) - bytesOf(a))
-    table.replaceChildren(header, ...ordered.flatMap(([terrain, list]) => [renderGroup(terrain, list, held), ...list.map((row) => renderRow(row, world, held))]))
+    table.replaceChildren(
+      header,
+      ...ordered.flatMap(([terrain, list]) => [renderGroup(terrain, list, held), ...list.map((row) => renderRow(row, world, held))]),
+      ...(engines.length > 0 ? [renderEnginesGroup(engines), ...engines.map(renderEngineRow)] : []),
+    )
+  }
+
+  // The group of the pipeline builds: its name and what they take.
+  function renderEnginesGroup(list: ServerPipelineBuilds[]): HTMLElement {
+    const line = document.createElement('div')
+    line.className = 'ac-row ac-group'
+    const title = document.createElement('span')
+    title.className = 'ac-name'
+    const name = document.createElement('span')
+    name.className = 'ac-world'
+    name.textContent = t('generator.artifacts.engines.group')
+    title.appendChild(name)
+    const size = document.createElement('span')
+    size.className = 'ac-size mono'
+    size.textContent = formatBytes(list.reduce((n, p) => n + p.bytes, 0))
+    line.append(title, document.createElement('span'), document.createElement('span'), document.createElement('span'), size, document.createElement('span'), document.createElement('span'))
+    return line
+  }
+
+  // One pipeline version's builds: its files, where, size, whether it is
+  // this client's, and the operator's delete.
+  function renderEngineRow(builds: ServerPipelineBuilds): HTMLElement {
+    const line = document.createElement('div')
+    line.className = 'ac-row ac-level-row'
+    line.appendChild(document.createElement('span'))
+    line.appendChild(pipelineCell(builds.pipelineVersion))
+    const files = document.createElement('span')
+    files.className = 'ac-tiles-count'
+    files.textContent = t('generator.artifacts.engines.files', { count: builds.files.length.toLocaleString() })
+    files.title = builds.files.join('\n')
+    line.appendChild(files)
+    const place = document.createElement('span')
+    place.className = 'ac-where'
+    place.appendChild(icon(SERVER_ICON))
+    place.setAttribute('aria-label', t('generator.artifacts.where.server'))
+    line.appendChild(place)
+    const size = document.createElement('span')
+    size.className = 'ac-size mono'
+    size.textContent = formatBytes(builds.bytes)
+    line.appendChild(size)
+    const current = builds.pipelineVersion === WORLD_PIPELINE
+    const state = document.createElement('span')
+    state.className = 'ac-state'
+    state.dataset.stale = String(!current)
+    state.textContent = t(current ? 'generator.artifacts.state.fresh' : 'generator.artifacts.state.otherCode')
+    line.appendChild(state)
+    const actions = document.createElement('span')
+    actions.className = 'ac-actions'
+    actions.appendChild(removeButton(shortPipeline(builds.pipelineVersion), builds.actions?.includes('artifact.remove') ?? false, async () => {
+      await removeServerPipelineBuilds(builds.pipelineVersion)
+    }))
+    line.appendChild(actions)
+    return line
+  }
+
+  // A pipeline version, short, the whole in the tooltip.
+  function pipelineCell(version: string): HTMLElement {
+    const cell = document.createElement('span')
+    cell.className = 'ac-id mono'
+    cell.textContent = shortPipeline(version)
+    cell.title = version
+    return cell
+  }
+
+  // Deleting confirms in place, as a world does: the first click arms the
+  // button, the second within a few seconds deletes, then the window loads
+  // again. Greyed out where the server says the viewer may not.
+  function removeButton(artifact: string, enabled: boolean, remove: () => Promise<void>): HTMLButtonElement {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'wc-remove'
+    button.disabled = !enabled
+    button.textContent = t('generator.artifacts.remove.label', { artifact })
+    let armed: ReturnType<typeof setTimeout> | undefined
+    button.addEventListener('click', () => {
+      if (armed === undefined) {
+        button.textContent = t('generator.artifacts.remove.confirm')
+        button.classList.add('wc-remove--armed')
+        armed = setTimeout(() => {
+          armed = undefined
+          button.textContent = t('generator.artifacts.remove.label', { artifact })
+          button.classList.remove('wc-remove--armed')
+        }, 4000)
+        return
+      }
+      clearTimeout(armed)
+      armed = undefined
+      void (async () => {
+        button.disabled = true
+        await remove()
+        await reload()
+      })()
+    })
+    return button
   }
 
   function setValue(name: string, text: string): void {
@@ -311,7 +424,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     id.className = 'ac-id mono'
     id.textContent = terrain.slice(0, 8)
     title.append(nameText, id)
-    line.append(title, document.createElement('span'), document.createElement('span'))
+    line.append(title, document.createElement('span'), document.createElement('span'), document.createElement('span'))
     const size = document.createElement('span')
     size.className = 'ac-size mono'
     size.textContent = formatBytes(list.reduce((n, row) => n + row.bytes, 0))
@@ -334,6 +447,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
       : row.worldId.slice(0, 8)
     terrain.title = row.worldId
     line.appendChild(terrain)
+    line.appendChild(pipelineCell(row.pipelineVersion))
 
     const levels = document.createElement('span')
     levels.className = 'ac-levels'
@@ -369,37 +483,12 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
       : 'generator.artifacts.state.fresh')
     line.appendChild(state)
 
-    // Deleting confirms in place, as a world does: the first click arms the
-    // button, the second within a few seconds deletes. Greyed out where the
-    // server says the viewer may not.
-    const remove = document.createElement('button')
-    remove.type = 'button'
-    remove.className = 'wc-remove'
-    remove.disabled = !row.deletable
-    remove.textContent = t('generator.artifacts.remove.label', { artifact: levelName })
-    let armed: ReturnType<typeof setTimeout> | undefined
-    remove.addEventListener('click', () => {
-      if (armed === undefined) {
-        remove.textContent = t('generator.artifacts.remove.confirm')
-        remove.classList.add('wc-remove--armed')
-        armed = setTimeout(() => {
-          armed = undefined
-          remove.textContent = t('generator.artifacts.remove.label', { artifact: levelName })
-          remove.classList.remove('wc-remove--armed')
-        }, 4000)
-        return
+    const remove = removeButton(levelName, row.deletable, async () => {
+      if (row.where === 'server') await removeServerLevel(row.level, row.worldId, row.pipelineVersion)
+      else {
+        const store = await getLocalArtifactStore()
+        for (const uid of row.localUids) await store.removeArtifact(uid)
       }
-      clearTimeout(armed)
-      armed = undefined
-      void (async () => {
-        remove.disabled = true
-        if (row.where === 'server') await removeServerLevel(row.level, row.worldId, row.pipelineVersion)
-        else {
-          const store = await getLocalArtifactStore()
-          for (const uid of row.localUids) await store.removeArtifact(uid)
-        }
-        await reload()
-      })()
     })
     // An outdated level 1 on the server is ordered again from here (a job,
     // see the jobs window), for a world that holds the terrain: the world

@@ -89,7 +89,7 @@
    On the table's grid the last column is the widest button of all rows. */
 .ac-table {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) 150px 60px 90px 100px auto;
+  grid-template-columns: minmax(0, 2fr) 110px 150px 60px 90px 100px auto;
   /* On the table, so the subgrid rows inherit it and the tracks are sized
      with it. */
   column-gap: 14px;

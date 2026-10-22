@@ -1549,6 +1549,25 @@ func (s *Store) RemoveLevel(ctx context.Context, worldID string, level int, pipe
 	return removed, nil
 }
 
+// RemovePipelineBuilds drops the pipeline builds of one pipeline version
+// (PipelineWorld). Returns how many went; ErrNotFound for none.
+func (s *Store) RemovePipelineBuilds(ctx context.Context, pipeline string) (int, error) {
+	if !safeSegment(pipeline) {
+		return 0, ErrBadPath
+	}
+	removed, err := s.removeWhere(ctx, func(e *entry) bool {
+		key := e.keyOf()
+		return key != nil && key.WorldID == PipelineWorld && key.PipelineVersion == pipeline
+	})
+	if err != nil {
+		return removed, err
+	}
+	if removed == 0 {
+		return 0, ErrNotFound
+	}
+	return removed, nil
+}
+
 // RemoveTerrain drops every entry of one terrain — the unit of the sweep
 // "delete a world, its artifacts go too", for each terrain that no other
 // world holds (the module decides which). Returns how many went.

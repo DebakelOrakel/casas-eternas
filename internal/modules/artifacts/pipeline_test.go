@@ -108,10 +108,31 @@ func TestPipelineBuildsHaveTheirOwnRules(t *testing.T) {
 	if len(listed.Artifacts) != 2 || listed.Artifacts[0].WorldID != PipelineWorld || len(listed.Artifacts[0].Actions) != 0 {
 		t.Errorf("a user's listing = %+v", listed.Artifacts)
 	}
+	// Summed per pipeline in the levels' listing, with the caller's actions.
+	var levels struct {
+		Pipelines []PipelineSummary `json:"pipelines"`
+	}
+	_ = json.Unmarshal(doAs(mux, http.MethodGet, "/v1/artifacts/levels", "", user).Body.Bytes(), &levels)
+	if len(levels.Pipelines) != 1 || levels.Pipelines[0].PipelineVersion != "v11-x" || len(levels.Pipelines[0].Files) != 2 || len(levels.Pipelines[0].Actions) != 0 {
+		t.Errorf("a user's pipelines = %+v", levels.Pipelines)
+	}
+	_ = json.Unmarshal(doAs(mux, http.MethodGet, "/v1/artifacts/levels", "", admin).Body.Bytes(), &levels)
+	if len(levels.Pipelines) != 1 || len(levels.Pipelines[0].Actions) != 1 {
+		t.Errorf("the admin's pipelines = %+v", levels.Pipelines)
+	}
+	if got := doAs(mux, http.MethodDelete, "/v1/artifacts?pipeline=v11-x", "", user).Code; got != http.StatusForbidden {
+		t.Errorf("user removes the pipeline = %d, want 403", got)
+	}
 	if got := doAs(mux, http.MethodDelete, "/v1/artifacts/"+found.ArtifactUID, "", user).Code; got != http.StatusForbidden {
 		t.Errorf("user remove = %d, want 403", got)
 	}
 	if got := doAs(mux, http.MethodDelete, "/v1/artifacts/"+found.ArtifactUID, "", admin).Code; got != http.StatusNoContent {
 		t.Errorf("admin remove = %d, want 204", got)
+	}
+	if got := doAs(mux, http.MethodDelete, "/v1/artifacts?pipeline=v11-x", "", admin).Code; got != http.StatusNoContent {
+		t.Errorf("admin removes the pipeline = %d, want 204", got)
+	}
+	if _, err := m.PipelineFileLink(ctx, "v11-x", "pipeline.json"); err != ErrNotFound {
+		t.Errorf("after the pipeline's removal: %v", err)
 	}
 }
