@@ -280,6 +280,12 @@
           "env": "CASAS_GLOBAL_SERVICES_WORLDS"
         },
         {
+          "name": "jobs.engine-source",
+          "default": "https://github.com/DebakelOrakel/casas-eternas/releases/download",
+          "usage": "Where the pipelines' releases are: a file of a release is \u003cthis\u003e/engine-\u003cpipeline\u003e/\u003cfile\u003e. The server downloads from there what a worker of another pipeline needs, checks it against the release's SHA256SUMS, and keeps it in the artifact store.",
+          "env": "CASAS_JOBS_ENGINE_SOURCE"
+        },
+        {
           "name": "jobs.max-concurrent",
           "default": "1",
           "usage": "How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.",
@@ -539,6 +545,13 @@
       "env": "CASAS_GLOBAL_TLS_KEY",
       "usage": "Path to the server private key. Enables HTTPS together with global.tls.cert.",
       "command": "casas-eternas"
+    },
+    {
+      "key": "jobs.engine-source",
+      "env": "CASAS_JOBS_ENGINE_SOURCE",
+      "default": "https://github.com/DebakelOrakel/casas-eternas/releases/download",
+      "usage": "Where the pipelines' releases are: a file of a release is \u003cthis\u003e/engine-\u003cpipeline\u003e/\u003cfile\u003e. The server downloads from there what a worker of another pipeline needs, checks it against the release's SHA256SUMS, and keeps it in the artifact store.",
+      "command": "casas-eternas start"
     },
     {
       "key": "jobs.max-concurrent",

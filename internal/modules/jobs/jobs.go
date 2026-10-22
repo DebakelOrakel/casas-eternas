@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/DebakelOrakel/casas-eternas/internal/access"
@@ -129,6 +130,14 @@ type Config struct {
 	// the store is scanned once. Composed by cmd/ over a co-resident
 	// artifacts module; nil leaves the check to the workers.
 	ArtifactPresent func(ctx context.Context, keys []ArtifactKey) []bool
+	// EngineSource is where the pipelines' releases are
+	// (jobs.engine-source): a file of a release is
+	// <EngineSource>/engine-<pipeline>/<file> (engines.go).
+	EngineSource string
+	// PipelineFiles keeps the files of the pipelines' releases in the
+	// artifact store: composed by cmd/ over a co-resident artifacts module.
+	// Nil: GET /v1/jobs/engines answers 503.
+	PipelineFiles PipelineFiles
 }
 
 type Module struct {
@@ -152,6 +161,8 @@ type Module struct {
 	// The cluster's worker scaler; nil where this process starts its own
 	// workers.
 	scaler *workerScaler
+	// One download of a pipeline file at a time (engines.go).
+	fetchMu sync.Mutex
 }
 
 func New(cfg Config) (*Module, error) {
@@ -267,6 +278,7 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("GET /v1/jobs", m.handleList)
 	mux.HandleFunc("GET /v1/jobs/events", m.handleEvents)
 	mux.HandleFunc("GET /v1/jobs/workers", m.handleWorkers)
+	mux.HandleFunc("GET /v1/jobs/engines/{pipeline}/{file}", m.handleEngineFile)
 	mux.HandleFunc("GET /v1/jobs/{id}", m.handleGet)
 	mux.HandleFunc("DELETE /v1/jobs/{id}", m.handleCancel)
 	return nil

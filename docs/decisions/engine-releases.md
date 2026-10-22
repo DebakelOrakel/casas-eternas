@@ -105,9 +105,23 @@ its platform through the server. The server takes them from the artifact
 store, or on a miss from the GitHub release, checks them against
 `SHA256SUMS`, and keeps them in the store. A worker never talks to GitHub.
 
+How (built 2026-10-22): `GET /v1/jobs/engines/{pipeline}/{file}`, in the
+jobs module, `{file}` a release file's name. It answers 302 to a read link
+of the artifact store; on a miss it first downloads the file from
+`jobs.engine-source` (default the GitHub releases), checks it, and stores
+it. In the store a release file is one artifact: `worldId` `pipeline`
+(`artifacts.PipelineWorld`), `pipelineVersion` the pipeline, `stage` the
+file's name. Such an artifact belongs to no world, so it has rules of its
+own: everyone reads it, the anonymous caller too; no HTTP caller writes
+it, not a job and not the admin, because the jobs module writes it in its
+own process; only the operator removes it; every listing shows it. The
+jobs module writes only where the artifacts target runs in the same
+process; elsewhere the route answers 503 until there is a server token for
+the write.
+
 Not chosen: workers refuse other pipelines (old worlds then get no tiles);
 loads only on the local server (the cluster then cannot refine old
-worlds).
+worlds); a cache of the jobs module's own (all artifacts are in one place).
 
 ## Fork 6 — who starts the worker of a pipeline (open)
 
@@ -163,6 +177,7 @@ IDEA 2026-10-22. Forks 1–5 are decided; forks 6–9 are open. Built: the
 release action with the checks of fork 1 and the assets of fork 4; of
 fork 7, the job's `pipeline` (the client sends its `WORLD_PIPELINE`) and
 the task subject `jobs.task.<pool>.<pipeline>.<jobId>`, with a consumer
-per pipeline (`workers-<pipeline>`). The new
+per pipeline (`workers-<pipeline>`, deleted by the relay after 24 h
+without a worker); of fork 5, the route for a release's files. The new
 names (the subcommand, the server route for a pipeline's files, the config
 key for the release source) are proposed before they are written.

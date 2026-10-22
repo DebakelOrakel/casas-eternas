@@ -58,6 +58,7 @@ const (
 	keyJobsMax      = "jobs.max-concurrent"
 	keyJobsDir      = "jobs.state-dir"
 	keyJobsScale    = "jobs.scale-workers"
+	keyJobsEngines  = "jobs.engine-source"
 	keyRelayDir     = "relay.state-dir"
 	keyRelayAddr    = "relay.listen"
 	keyRelayWS      = "relay.websocket"
@@ -135,6 +136,7 @@ const (
 	textWorker       = `Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.`
 	textJobsMax      = `How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.`
 	textJobsScale    = `In a cluster, whether the server scales the worker Deployment (casas-eternas/component: worker) to the tasks waiting, up to jobs.max-concurrent. Off for a server whose workers all join from outside: it then needs no rights on Deployments. Off a cluster it changes nothing.`
+	textJobsEngines  = `Where the pipelines' releases are: a file of a release is <this>/engine-<pipeline>/<file>. The server downloads from there what a worker of another pipeline needs, checks it against the release's SHA256SUMS, and keeps it in the artifact store.`
 	textJobsDir      = `The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.`
 	textRelayDir     = `The directory of the relay's message store (JetStream).`
 	textRelayAddr    = `Address the relay accepts worker connections on, as host:port. The default keeps it on this machine. Where global.auth.mode checks identity, the relay admits only this server's own tokens, so it may listen beyond the machine; in mode none it checks nobody.`
@@ -222,6 +224,7 @@ func init() {
 	StartCmd.Flags().Int(keyJobsMax, 1, textJobsMax)
 	StartCmd.Flags().String(keyJobsDir, "./data/jobs", textJobsDir)
 	StartCmd.Flags().Bool(keyJobsScale, true, textJobsScale)
+	StartCmd.Flags().String(keyJobsEngines, "https://github.com/DebakelOrakel/casas-eternas/releases/download", textJobsEngines)
 	StartCmd.Flags().String(keyRelayDir, "./data/relay", textRelayDir)
 	StartCmd.Flags().String(keyRelayAddr, "127.0.0.1:4222", textRelayAddr)
 	StartCmd.Flags().String(keyRelayWS, "", textRelayWS)
@@ -238,7 +241,7 @@ func init() {
 		keyArtsType: StartCmd, keyArtsPath: StartCmd, keyArtsCap: StartCmd,
 		keyArtsReadTTL: StartCmd, keyArtsWriteTTL: StartCmd, keyArtsLinkKey: StartCmd, keyArtsLinkOld: StartCmd,
 		keyClientDir: StartCmd, keyWorker: StartCmd, keyJobsMax: StartCmd, keyDocsDir: StartCmd,
-		keySvcRelay: StartCmd, keyPeers: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyRelayWS: StartCmd, keyJobsDir: StartCmd, keyJobsScale: StartCmd,
+		keySvcRelay: StartCmd, keyPeers: StartCmd, keyRelayDir: StartCmd, keyRelayAddr: StartCmd, keyRelayWS: StartCmd, keyJobsDir: StartCmd, keyJobsScale: StartCmd, keyJobsEngines: StartCmd,
 	}
 	for key, cmd := range bindings {
 		flags := cmd.Flags()

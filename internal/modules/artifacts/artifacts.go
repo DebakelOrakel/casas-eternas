@@ -292,6 +292,9 @@ const (
 // the writer this system itself sent out, narrowed to the world it was
 // sent for (step 4 of the access plan, 2026-08-12). A job does not remove.
 func (m *Module) allowed(w http.ResponseWriter, r *http.Request, worldID string, op operation) bool {
+	if worldID == PipelineWorld {
+		return m.allowedPipeline(w, r, op)
+	}
 	if m.operator(r) {
 		if op == writing && m.cfg.Identity.ChecksIdentity() {
 			// The admin is no job: content comes from a worker's bake.
@@ -329,6 +332,30 @@ func (m *Module) allowed(w http.ResponseWriter, r *http.Request, worldID string,
 		return false
 	}
 	return true
+}
+
+// PipelineWorld is the worldId of the PIPELINE BUILDS
+// (docs/decisions/engine-releases.md): the files of a pipeline's release,
+// one artifact per file, its stage the file's name. They belong to no
+// world, so they have rules of their own: everyone reads them; the jobs
+// module writes them, in this process (cmd/ composes it), and no HTTP
+// caller does; only the operator removes them.
+const PipelineWorld = "pipeline"
+
+// allowedPipeline is allowed for the pipeline builds.
+func (m *Module) allowedPipeline(w http.ResponseWriter, r *http.Request, op operation) bool {
+	switch op {
+	case reading:
+		return true
+	case writing:
+		httpjson.ClientError(w, http.StatusForbidden, "pipeline builds are written by the jobs module only")
+		return false
+	}
+	if m.operator(r) {
+		return true
+	}
+	httpjson.ClientError(w, http.StatusForbidden, "only an admin removes pipeline builds")
+	return false
 }
 
 // mayRemove is the rule for removing the artifacts of a terrain, given the
@@ -388,6 +415,10 @@ func (m *Module) remember(worldUID, worldID string) {
 // names the world; the request's `world` does (resolveRequest.World).
 // False when it answered.
 func (m *Module) bind(w http.ResponseWriter, r *http.Request, worldID, world string) bool {
+	if worldID == PipelineWorld {
+		// No terrain: a job reads a pipeline build for no world.
+		return true
+	}
 	_, jobWorld, ok := m.cfg.Identity.JobToken(r)
 	if !m.cfg.Identity.ChecksIdentity() {
 		jobWorld, ok = world, world != ""
@@ -792,6 +823,11 @@ func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 	ranks := map[string]rank{}
 	for _, artifact := range artifacts {
 		if artifact.WorldID == "" {
+			continue
+		}
+		if artifact.WorldID == PipelineWorld {
+			visible = append(visible, callerArtifact{artifact, []string{}})
+			bytes += artifact.Bytes
 			continue
 		}
 		got, ranked := ranks[artifact.WorldID]

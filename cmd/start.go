@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	"io"
@@ -322,6 +323,10 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	if artifactsModule != nil {
 		readers = append(readers, artifacts.AnonymousReads)
 	}
+	// The pipeline builds, which everyone reads (jobs.EngineReads).
+	if targets.Has(config.TargetJobs) {
+		readers = append(readers, jobs.EngineReads)
+	}
 	anonymousReads := func(r *http.Request) bool {
 		for _, reads := range readers {
 			if reads(r) {
@@ -418,6 +423,7 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		Tokens:        tokens,
 		MaxConcurrent: cfg.Jobs.MaxConcurrent,
 		ScaleWorkers:  cfg.Jobs.ScaleWorkers,
+		EngineSource:  cfg.Jobs.EngineSource,
 	}
 
 	// The ranking is the shared closure built in buildModules; what remains
@@ -495,6 +501,9 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 			}
 			return whole
 		}
+		// The pipeline builds, in the same store (artifacts.PipelineWorld).
+		// Only co-resident: written in this process, never over HTTP.
+		bcfg.PipelineFiles = pipelineFiles{artifactsModule}
 	}
 	wired = true
 	return bcfg, internal, nil
@@ -868,4 +877,20 @@ func signingKey(path string) ([]byte, error) {
 		"setting", keyAuthKey,
 		"consequence", "sessions end at restart, and replicas will not accept each other's tokens")
 	return key, nil
+}
+
+// pipelineFiles is the jobs module's PipelineFiles over the co-resident
+// artifacts module.
+type pipelineFiles struct{ module *artifacts.Module }
+
+func (p pipelineFiles) Link(ctx context.Context, pipeline, file string) (string, error) {
+	link, err := p.module.PipelineFileLink(ctx, pipeline, file)
+	if errors.Is(err, artifacts.ErrNotFound) {
+		return "", jobs.ErrNoPipelineFile
+	}
+	return link, err
+}
+
+func (p pipelineFiles) Put(ctx context.Context, pipeline, file string, body []byte) error {
+	return p.module.PutPipelineFile(ctx, pipeline, file, body)
 }

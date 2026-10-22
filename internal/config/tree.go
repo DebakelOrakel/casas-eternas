@@ -269,6 +269,10 @@ type JobsConfig struct {
 	// outside: it then starts no scaler and needs no rights on Deployments
 	// (docs/decisions/helm-chart.md, fork 3).
 	ScaleWorkers bool `mapstructure:"scale-workers"`
+	// Where the pipelines' releases are: a release's file is
+	// <engine-source>/engine-<pipeline>/<file>
+	// (docs/decisions/engine-releases.md).
+	EngineSource string `mapstructure:"engine-source"`
 }
 
 // ClientConfig is the client module's section: the built bundle it serves.
