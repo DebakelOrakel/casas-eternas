@@ -123,8 +123,9 @@ func (m *Module) handleWorkers(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case m.scaler != nil:
 		wanted = int(m.scaler.wanted.Load())
-	case m.clusterMode:
-		// A cluster without the scaler (jobs.scale-workers off): the
+	case m.clusterMode, m.slots == 0:
+		// A cluster without the scaler (jobs.scale-workers off), or a
+		// server with no workers of its own (jobs.max-concurrent 0): the
 		// workers come from outside, and no number is wanted of them.
 		wanted = -1
 	}

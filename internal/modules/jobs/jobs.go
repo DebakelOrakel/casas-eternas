@@ -108,7 +108,8 @@ type Config struct {
 	// Deployment. One by default, and that is a memory argument: a level-1
 	// task wants gigabytes. In a cluster the ceiling is the nodes' free
 	// memory instead; setting this above what the cluster can hold only
-	// produces Pending pods.
+	// produces Pending pods. Zero: none of this server's own — every worker
+	// joins from outside (2026-10-22).
 	MaxConcurrent int
 	// ScaleWorkers: in a cluster, scale the worker Deployment (scaler.go).
 	// False for a server whose workers all come from outside.
@@ -195,6 +196,10 @@ func New(cfg Config) (*Module, error) {
 	if cfg.StateDir == "" {
 		return nil, fmt.Errorf("jobs.state-dir: the coordinator needs a directory for jobs.db")
 	}
+	if cfg.MaxConcurrent < 0 {
+		return nil, fmt.Errorf("jobs.max-concurrent: %d workers; 0 is none of this server's own", cfg.MaxConcurrent)
+	}
+	workers := cfg.MaxConcurrent
 	var workerPath string
 	var err error
 	if InCluster() {
@@ -204,16 +209,11 @@ func New(cfg Config) (*Module, error) {
 		if cfg.WorldsURL == "" {
 			return nil, fmt.Errorf("jobs in a cluster need WorldsURL; is CASAS_POD_IP set? (the chart, deploy/helm, wires it)")
 		}
-	} else {
+	} else if workers > 0 {
 		workerPath, err = workerBundle(cfg.WorkerPath)
 		if err != nil {
 			return nil, fmt.Errorf("jobs.worker: %w", err)
 		}
-	}
-
-	workers := cfg.MaxConcurrent
-	if workers < 1 {
-		workers = 1
 	}
 
 	declareCtx, declareCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -262,7 +262,7 @@ func New(cfg Config) (*Module, error) {
 		}
 		m.pool = startWorkerPool(localWorker{launcher: cfg.Launcher, bundle: workerPath, jobsAPI: cfg.LocalAPI, heapMB: NodeHeapMB}, cfg.RelayURL, workers, cfg.Tokens)
 	}
-	if InCluster() && cfg.ScaleWorkers {
+	if InCluster() && cfg.ScaleWorkers && workers > 0 {
 		api, err := newClusterAPI()
 		if err != nil {
 			m.coord.close()

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -693,4 +694,40 @@ func TestEventsStreamTheJobsTheCallerMaySee(t *testing.T) {
 		return
 	}
 	t.Fatal("no event arrived")
+}
+
+// jobs.max-concurrent 0: no worker of this server's own, and no bundle
+// needed for it; the jobs window wants no number of the workers that join
+// from outside. Below 0 is refused.
+func TestNoWorkersOfItsOwn(t *testing.T) {
+	_, conn := coordinatorRelay(t)
+	worlds := &fakeWorlds{levels: map[string]map[string]access.Level{}}
+	cfg := Config{
+		WorldAccess:   worlds.rank,
+		WorldZip:      worlds.zip,
+		ArtifactsURL:  "http://127.0.0.1:1/v1",
+		Identity:      identity.NewResolver(config.AuthNone, nil),
+		Relay:         conn,
+		RelayURL:      "nats://127.0.0.1:1",
+		StateDir:      t.TempDir(),
+		WorkerPath:    filepath.Join(t.TempDir(), "no-such-bundle.mjs"),
+		MaxConcurrent: 0,
+	}
+	m, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+	if m.pool != nil {
+		t.Error("a worker pool was started")
+	}
+	recorder := httptest.NewRecorder()
+	m.handleWorkers(recorder, httptest.NewRequest(http.MethodGet, "/v1/jobs/workers", nil))
+	if strings.Contains(recorder.Body.String(), `"wanted"`) {
+		t.Errorf("workers answer %s, want no wanted number", recorder.Body)
+	}
+	cfg.MaxConcurrent = -1
+	if _, err := New(cfg); err == nil {
+		t.Error("a negative max-concurrent was taken")
+	}
 }

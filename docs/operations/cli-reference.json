@@ -288,7 +288,7 @@
         {
           "name": "jobs.max-concurrent",
           "default": "1",
-          "usage": "How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.",
+          "usage": "How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have. 0: none of this server's own; every worker joins from outside.",
           "env": "CASAS_JOBS_MAX_CONCURRENT"
         },
         {
@@ -574,7 +574,7 @@
       "key": "jobs.max-concurrent",
       "env": "CASAS_JOBS_MAX_CONCURRENT",
       "default": "1",
-      "usage": "How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.",
+      "usage": "How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have. 0: none of this server's own; every worker joins from outside.",
       "command": "casas-eternas start"
     },
     {

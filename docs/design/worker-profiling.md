@@ -112,7 +112,9 @@ Proposed:
 
 - `jobs.max-concurrent: 0` means no own workers — no pool, no scaling, no
   message about a missing Deployment. It changes what a value of an
-  existing key means, so it is asked first.
+  existing key means, so it is asked first. **Built 2026-10-22**: no pool,
+  no scaler, no worker bundle needed, and the jobs window wants no number
+  of workers (`/v1/jobs/workers` without `wanted`); below 0 is refused.
 - The jobs window counts the connected workers from the presence, own and
   external together; "workers starting" compares only the own pods.
 

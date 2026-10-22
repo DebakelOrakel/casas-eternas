@@ -134,7 +134,7 @@ const (
 	textAuthDir      = `The directory the auth subsystem's state lives in — auth.db, holding users and their credentials, and the avatars. A users.json left by an older server is imported once when the database is founded.`
 	textDocsDir      = `The directory the built documentation site is served from (npm run build:docs). Empty serves nothing, which is what a dev run wants.`
 	textWorker       = `Path to the job worker bundle (npm run build:worker). Defaults to job-worker.mjs beside the binary.`
-	textJobsMax      = `How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have.`
+	textJobsMax      = `How many workers run at once on this machine (the coordinator starts and keeps them). One level-1 task of a real world holds some gigabytes, so raising this raises the memory the host must have. 0: none of this server's own; every worker joins from outside.`
 	textJobsScale    = `In a cluster, whether the server scales the worker Deployment (casas-eternas/component: worker) to the tasks waiting, up to jobs.max-concurrent. Off for a server whose workers all join from outside: it then needs no rights on Deployments. Off a cluster it changes nothing.`
 	textJobsEngines  = `Where the pipelines' releases are: a file of a release is <this>/engine-<pipeline>/<file>. The server downloads from there what a worker of another pipeline needs, checks it against the release's SHA256SUMS, and keeps it in the artifact store.`
 	textJobsDir      = `The directory of the jobs coordinator's state — jobs.db, holding the jobs, their tasks and where each stands.`
