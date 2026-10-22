@@ -13,7 +13,7 @@ summary.de: Jede Pipeline ist ein eigenes GitHub-Release, getaggt mit der
   anderen Pipeline bekommt, lädt Pipeline-Modul und native Engine dieser
   Pipeline über den Server, der sie im Artefaktspeicher hält.
 area: platform
-stage: building
+stage: built
 createdAt: 2026-10-22
 updatedAt: 2026-10-22
 related: [DEC-0044, DEC-0039, DEC-0043, DEC-0038]
@@ -238,11 +238,16 @@ release's linux build), takes the tree's `pipeline.mjs`, and keeps no
 it, a tree with no release stops at the download, naming the missing
 file.
 
-## Fork 9 — how long a pipeline stays (open)
+## Fork 9 — how long a pipeline stays
 
 GitHub keeps the releases until someone deletes them. The artifact store
-evicts by its cap (least recently used). A rule for deleting old releases
-is not needed until there are many.
+evicts by its cap (least recently used). The launcher keeps each pipeline
+it loaded in its cache directory.
+
+Decided 2026-10-22: no rule for now. The admin deletes the builds of a
+pipeline by hand, in the engines group of the artifact window
+(`DELETE /v1/artifacts?pipeline=`), as the other artifacts. A pipeline
+takes approximately 9 MB, so a rule is not needed until there are many.
 
 ## Not in this decision
 
@@ -254,7 +259,7 @@ is not needed until there are many.
 
 ## Status
 
-BUILDING since 2026-10-22. Forks 1–8 are decided; fork 9 is open. Built:
+BUILT 2026-10-22. All forks are decided; fork 9 needs no code. Built:
 
 - the release action with the check of fork 1 and the assets of fork 4;
 - fork 7: the job's `pipeline` (the client sends its `WORLD_PIPELINE`) and
