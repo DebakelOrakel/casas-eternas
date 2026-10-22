@@ -101,6 +101,13 @@ func workerBundle(path string) (string, error) {
 // artifact under a key nobody looks for, so the bake reports success and the
 // map never changes.
 func WorkerVersion(ctx context.Context, bakerPath string) (string, error) {
+	return workerVersion(ctx, bakerPath, "")
+}
+
+// workerVersion is WorkerVersion with another pipeline module than the
+// one beside the bundle (`--pipeline`, client/scripts/workerContract.ts):
+// the pipeline the bundle runs with it.
+func workerVersion(ctx context.Context, bakerPath, module string) (string, error) {
 	absolute, err := filepath.Abs(bakerPath)
 	if err != nil {
 		return "", err
@@ -110,7 +117,11 @@ func WorkerVersion(ctx context.Context, bakerPath string) (string, error) {
 	}
 	// No heap ceiling: --version parses no world and allocates nothing worth
 	// bounding. Output is one JSON line.
-	out, err := exec.CommandContext(ctx, "node", absolute, "--version").Output()
+	args := []string{absolute, "--version"}
+	if module != "" {
+		args = append(args, "--pipeline", module)
+	}
+	out, err := exec.CommandContext(ctx, "node", args...).Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && len(exit.Stderr) > 0 {

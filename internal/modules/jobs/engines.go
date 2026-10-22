@@ -19,8 +19,8 @@ import (
 )
 
 // THE PIPELINE BUILDS (docs/decisions/engine-releases.md, fork 5): the
-// files of a pipeline's release — the job worker's bundle, the native
-// engine per platform, the WASM build — for a worker that runs another
+// files of a pipeline's release — the job worker's pipeline module, the
+// native engine per platform, the WASM build — for a worker that runs another
 // pipeline than the one it was shipped with. GET
 // /v1/jobs/engines/{pipeline}/{file} answers with a link to the file in the
 // artifact store. On a miss it downloads the file from the release of the
@@ -43,7 +43,7 @@ var ErrNoPipelineFile = errors.New("no such pipeline file")
 
 // releaseFile is what a file of a release may be called: the names the
 // release action gives them.
-var releaseFile = regexp.MustCompile(`^(job-worker\.mjs|casas-engine-[a-z0-9]+-[a-z0-9]+\.node|casas-engine-wasm\.tar\.gz|constants\.json|pipeline\.json)$`)
+var releaseFile = regexp.MustCompile(`^(pipeline\.mjs|casas-engine-[a-z0-9]+-[a-z0-9]+\.node|casas-engine-wasm\.tar\.gz|constants\.json|pipeline\.json)$`)
 
 const (
 	// The largest file of a release that is downloaded: a native engine is

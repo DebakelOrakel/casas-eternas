@@ -64,9 +64,9 @@ COPY docs/ /app/docs/
 COPY client/ ./
 
 # dist/ is the app, the engine's WASM build among its assets; job-worker.mjs
-# is the job worker for the server to spawn, with the native engine beside
-# it (build:worker copies engine/dist's). All come out of the same source
-# tree, which is the point.
+# is the job worker for the server to spawn, with its pipeline module
+# (pipeline.mjs) and the native engine beside it (build:worker copies
+# engine/dist's). All come out of the same source tree, which is the point.
 COPY --from=engine /out/casas-engine.node /app/engine/dist/casas-engine.node
 COPY --from=engine /out/wasm /app/engine/dist/wasm
 COPY --from=engine /out/constants.json /app/engine/dist/constants.json
@@ -101,6 +101,7 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 COPY --from=server /out/casas-eternas /app/casas-eternas
 COPY --from=web    /app/job-worker.mjs /app/job-worker.mjs
+COPY --from=web    /app/pipeline.mjs /app/pipeline.mjs
 COPY --from=web    /app/casas-engine.node /app/casas-engine.node
 COPY --from=web    /app/client/dist   /app/dist
 COPY --from=web    /app/client/docs-dist /app/docs-dist

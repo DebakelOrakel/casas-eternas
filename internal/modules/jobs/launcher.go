@@ -22,8 +22,10 @@ import (
 // `casas-eternas worker` runs, wherever a worker starts — the local pool
 // (workerpool.go), the cluster's worker Deployment, a person on another
 // machine. It chooses the pipeline that has the work, finds that pipeline's
-// bundle and engine (the shipped ones, or the release's through the
-// server), and runs `node <bundle> --serve` on them. A worker whose pipeline
+// module and engine (the shipped ones, or the release's through the
+// server), and runs the shipped host on them: `node <bundle> --serve …
+// --pipeline <its pipeline.mjs>` (client/scripts/workerContract.ts). A
+// worker whose pipeline
 // has no more work while another one has exits with exitSwitch
 // (client/scripts/jobWorker.ts); the launcher then chooses again. Any other
 // end of the worker ends the launcher with the worker's code, and its
@@ -31,11 +33,11 @@ import (
 
 // LauncherConfig is what the launcher runs with.
 type LauncherConfig struct {
-	// The shipped bundle (jobs.worker), its engine beside it as
-	// casas-engine.node.
+	// The shipped bundle (jobs.worker), the host; its pipeline module
+	// (pipeline.mjs) and engine (casas-engine.node) beside it.
 	Bundle string
-	// Where the bundles and engines of other pipelines are kept, one
-	// directory per pipeline.
+	// Where the pipeline modules and engines of other pipelines are kept,
+	// one directory per pipeline.
 	CacheDir string
 	// The Node heap ceiling, MB.
 	HeapMB int
@@ -70,16 +72,16 @@ func RunLauncher(ctx context.Context, cfg LauncherConfig) (int, error) {
 	}
 	for {
 		pipeline := choosePipeline(ctx, serve.Jobs, own)
-		bundle := cfg.Bundle
+		module := ""
 		if pipeline != own {
-			bundle, err = pipelineBundle(ctx, serve.Jobs, cfg.CacheDir, pipeline)
+			module, err = pipelineModule(ctx, serve.Jobs, cfg.CacheDir, cfg.Bundle, pipeline)
 			if err != nil {
-				slog.Warn("job worker: the bundle of another pipeline", "pipeline", pipeline, "err", err)
-				bundle, pipeline = cfg.Bundle, own
+				slog.Warn("job worker: the module of another pipeline", "pipeline", pipeline, "err", err)
+				module, pipeline = "", own
 			}
 		}
-		slog.Info("job worker starting", "pipeline", pipeline, "bundle", bundle)
-		code, err := runServing(ctx, bundle, cfg.HeapMB, cfg.Serve)
+		slog.Info("job worker starting", "pipeline", pipeline, "module", module)
+		code, err := runServing(ctx, cfg.Bundle, module, cfg.HeapMB, cfg.Serve)
 		if err != nil || ctx.Err() != nil || code != exitSwitch {
 			return code, err
 		}
@@ -137,11 +139,11 @@ func pipelinesWork(ctx context.Context, jobsAPI string) (map[string]int, error) 
 	return answer.Pipelines, nil
 }
 
-// pipelineBundle is the bundle of `pipeline` in the cache, with its engine
-// for this platform beside it, as the shipped one has: fetched from the
-// server (GET /v1/jobs/engines) when it is not there, and checked to be
-// that pipeline.
-func pipelineBundle(ctx context.Context, jobsAPI, cacheDir, pipeline string) (string, error) {
+// pipelineModule is the pipeline module of `pipeline` in the cache, with
+// its engine for this platform beside it, as the shipped one has: fetched
+// from the server (GET /v1/jobs/engines) when it is not there, and checked
+// to be that pipeline by the host `bundle`.
+func pipelineModule(ctx context.Context, jobsAPI, cacheDir, bundle, pipeline string) (string, error) {
 	if jobsAPI == "" {
 		return "", errors.New("the serving argument names no jobs API")
 	}
@@ -149,9 +151,9 @@ func pipelineBundle(ctx context.Context, jobsAPI, cacheDir, pipeline string) (st
 		return "", fmt.Errorf("%q is no pipeline", pipeline)
 	}
 	dir := filepath.Join(cacheDir, pipeline)
-	bundle := filepath.Join(dir, "job-worker.mjs")
+	module := filepath.Join(dir, "pipeline.mjs")
 	files := map[string]string{
-		"job-worker.mjs": bundle,
+		"pipeline.mjs": module,
 		"casas-engine-" + runtime.GOOS + "-" + runtime.GOARCH + ".node": filepath.Join(dir, "casas-engine.node"),
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -165,14 +167,14 @@ func pipelineBundle(ctx context.Context, jobsAPI, cacheDir, pipeline string) (st
 			return "", fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	got, err := WorkerVersion(ctx, bundle)
+	got, err := workerVersion(ctx, bundle, module)
 	if err != nil {
 		return "", err
 	}
 	if got != pipeline {
-		return "", fmt.Errorf("the bundle in %s is %s, not %s", dir, got, pipeline)
+		return "", fmt.Errorf("the module in %s is %s, not %s", dir, got, pipeline)
 	}
-	return bundle, nil
+	return module, nil
 }
 
 // fetchPipelineFile downloads one file to `path`: into a temporary file
@@ -208,10 +210,15 @@ func fetchPipelineFile(ctx context.Context, url, path string) error {
 }
 
 // runServing runs one serving worker until it exits, and answers its exit
-// code. When ctx is done it asks the worker to stop, as the pool does
+// code: the host `bundle` on the pipeline `module` (empty: the one beside
+// it). When ctx is done it asks the worker to stop, as the pool does
 // (workerpool.go, runWorker).
-func runServing(ctx context.Context, bundle string, heapMB int, serve string) (int, error) {
-	cmd := exec.Command("node", "--max-old-space-size="+strconv.Itoa(heapMB), bundle, "--serve", serve)
+func runServing(ctx context.Context, bundle, module string, heapMB int, serve string) (int, error) {
+	args := []string{"--max-old-space-size=" + strconv.Itoa(heapMB), bundle, "--serve", serve}
+	if module != "" {
+		args = append(args, "--pipeline", module)
+	}
+	cmd := exec.Command("node", args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("the job worker did not start: %w", err)

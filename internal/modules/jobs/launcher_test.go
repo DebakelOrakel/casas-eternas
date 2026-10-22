@@ -13,21 +13,34 @@ import (
 	"testing"
 )
 
-// fakeBundle is a job worker bundle for the launcher: `--version` tells
-// `pipeline`, `--serve` ends with `code`.
-func fakeBundle(pipeline string, code int) string {
-	return `if (process.argv[2] === '--version') console.log(JSON.stringify({ pipelineVersion: '` + pipeline + `' }))
-else process.exit(` + strconv.Itoa(code) + `)
+// fakeHost is a job worker host for the launcher: it loads the pipeline
+// module beside it or by --pipeline, as the real one does; `--version`
+// tells the module's pipeline, `--serve` ends with the module's code.
+const fakeHost = `import { pathToFileURL } from 'node:url'
+const args = process.argv.slice(2)
+const at = args.indexOf('--pipeline')
+const path = at >= 0 ? args[at + 1] : new URL('./pipeline.mjs', import.meta.url).pathname
+const module = await import(pathToFileURL(path).href)
+if (args[0] === '--version') console.log(JSON.stringify({ pipelineVersion: module.version }))
+else process.exit(module.serveExit)
 `
+
+// fakeModule is a pipeline module for fakeHost.
+func fakeModule(pipeline string, code int) string {
+	return "export const version = '" + pipeline + "'\nexport const serveExit = " + strconv.Itoa(code) + "\n"
 }
 
-func writeBundle(t *testing.T, dir, pipeline string, code int) string {
+// writeHost writes the host with its own module beside it.
+func writeHost(t *testing.T, dir, pipeline string, code int) string {
 	t.Helper()
-	path := filepath.Join(dir, "job-worker.mjs")
-	if err := os.WriteFile(path, []byte(fakeBundle(pipeline, code)), 0o644); err != nil {
+	host := filepath.Join(dir, "job-worker.mjs")
+	if err := os.WriteFile(host, []byte(fakeHost), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	if err := os.WriteFile(filepath.Join(dir, "pipeline.mjs"), []byte(fakeModule(pipeline, code)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return host
 }
 
 // jobsAPI serves the work per pipeline, one answer per call (the last one
@@ -43,7 +56,7 @@ func jobsAPI(t *testing.T, answers []map[string]int, other string) (string, *ato
 	mux.HandleFunc("GET /v1/jobs/engines/v0-other/{file}", func(w http.ResponseWriter, r *http.Request) {
 		fetched.Add(1)
 		switch r.PathValue("file") {
-		case "job-worker.mjs":
+		case "pipeline.mjs":
 			_, _ = w.Write([]byte(other))
 		case "casas-engine-" + runtime.GOOS + "-" + runtime.GOARCH + ".node":
 			_, _ = w.Write([]byte("an engine"))
@@ -81,40 +94,41 @@ func TestTheLauncherChoosesThePipelineWithTheWork(t *testing.T) {
 	}
 }
 
-// Another pipeline's bundle and engine: fetched once into the cache, and
-// refused when the bundle is another pipeline than its name.
+// Another pipeline's module and engine: fetched once into the cache, and
+// refused when the module is another pipeline than its name.
 func TestTheLauncherFetchesAndChecksAPipeline(t *testing.T) {
-	api, _, fetched := jobsAPI(t, []map[string]int{{}}, fakeBundle("v0-other", 0))
+	api, _, fetched := jobsAPI(t, []map[string]int{{}}, fakeModule("v0-other", 0))
+	host := writeHost(t, t.TempDir(), "v0-own", 0)
 	cache := t.TempDir()
 	for range 2 {
-		bundle, err := pipelineBundle(context.Background(), api, cache, "v0-other")
+		module, err := pipelineModule(context.Background(), api, cache, host, "v0-other")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if bundle != filepath.Join(cache, "v0-other", "job-worker.mjs") {
-			t.Errorf("bundle %s", bundle)
+		if module != filepath.Join(cache, "v0-other", "pipeline.mjs") {
+			t.Errorf("module %s", module)
 		}
 	}
 	if fetched.Load() != 2 {
-		t.Errorf("%d files fetched, want 2 (the bundle and the engine, once)", fetched.Load())
+		t.Errorf("%d files fetched, want 2 (the module and the engine, once)", fetched.Load())
 	}
 	if engine, err := os.ReadFile(filepath.Join(cache, "v0-other", "casas-engine.node")); err != nil || string(engine) != "an engine" {
 		t.Errorf("the engine beside the bundle: %q, %v", engine, err)
 	}
 
-	wrong, _, _ := jobsAPI(t, []map[string]int{{}}, fakeBundle("v0-third", 0))
-	if _, err := pipelineBundle(context.Background(), wrong, t.TempDir(), "v0-other"); err == nil {
-		t.Error("a bundle of another pipeline was taken")
+	wrong, _, _ := jobsAPI(t, []map[string]int{{}}, fakeModule("v0-third", 0))
+	if _, err := pipelineModule(context.Background(), wrong, t.TempDir(), host, "v0-other"); err == nil {
+		t.Error("a module of another pipeline was taken")
 	}
 }
 
 // A worker that ends with exitSwitch is followed by the worker of the
 // pipeline with the work; any other end ends the launcher with its code.
 func TestTheLauncherSwitchesPipelines(t *testing.T) {
-	api, asked, _ := jobsAPI(t, []map[string]int{{}, {"v0-other": 1}}, fakeBundle("v0-other", 3))
+	api, asked, _ := jobsAPI(t, []map[string]int{{}, {"v0-other": 1}}, fakeModule("v0-other", 3))
 	serve, _ := json.Marshal(serveConfig{Relay: "nats://unused", Pools: []string{poolTile}, Jobs: api})
 	code, err := RunLauncher(context.Background(), LauncherConfig{
-		Bundle:   writeBundle(t, t.TempDir(), "v0-own", exitSwitch),
+		Bundle:   writeHost(t, t.TempDir(), "v0-own", exitSwitch),
 		CacheDir: t.TempDir(),
 		HeapMB:   64,
 		Serve:    string(serve),

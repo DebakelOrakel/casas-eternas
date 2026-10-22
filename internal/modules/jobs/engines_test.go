@@ -42,7 +42,7 @@ func releaseHost(t *testing.T, body []byte, sums string) (string, *atomic.Int32)
 	mux.HandleFunc("GET /engine-"+testPipeline+"/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(sums))
 	})
-	mux.HandleFunc("GET /engine-"+testPipeline+"/job-worker.mjs", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /engine-"+testPipeline+"/pipeline.mjs", func(w http.ResponseWriter, _ *http.Request) {
 		downloads.Add(1)
 		_, _ = w.Write(body)
 	})
@@ -63,29 +63,29 @@ func getEngineFile(m *Module, pipeline, file string) *httptest.ResponseRecorder 
 // A file of a release: downloaded once, checked, stored, then served from
 // the store by a link.
 func TestEngineFilesComeFromTheRelease(t *testing.T) {
-	body := []byte("the bundle")
+	body := []byte("the module")
 	sum := sha256.Sum256(body)
-	source, downloads := releaseHost(t, body, hex.EncodeToString(sum[:])+"  job-worker.mjs\n")
+	source, downloads := releaseHost(t, body, hex.EncodeToString(sum[:])+"  pipeline.mjs\n")
 	store := &memoryPipelineFiles{files: map[string][]byte{}}
 	m := &Module{cfg: Config{EngineSource: source, PipelineFiles: store}}
 
 	for range 2 {
-		got := getEngineFile(m, testPipeline, "job-worker.mjs")
-		if got.Code != http.StatusFound || got.Header().Get("Location") != "https://store.example/"+testPipeline+"/job-worker.mjs" {
+		got := getEngineFile(m, testPipeline, "pipeline.mjs")
+		if got.Code != http.StatusFound || got.Header().Get("Location") != "https://store.example/"+testPipeline+"/pipeline.mjs" {
 			t.Fatalf("got %d to %q", got.Code, got.Header().Get("Location"))
 		}
 	}
 	if downloads.Load() != 1 {
 		t.Errorf("%d downloads, want 1", downloads.Load())
 	}
-	if string(store.files[testPipeline+"/job-worker.mjs"]) != "the bundle" {
+	if string(store.files[testPipeline+"/pipeline.mjs"]) != "the module" {
 		t.Error("the file was not stored")
 	}
 }
 
 func TestEngineFilesAreRefused(t *testing.T) {
-	body := []byte("the bundle")
-	source, _ := releaseHost(t, body, "0000  job-worker.mjs\n")
+	body := []byte("the module")
+	source, _ := releaseHost(t, body, "0000  pipeline.mjs\n")
 	store := &memoryPipelineFiles{files: map[string][]byte{}}
 	m := &Module{cfg: Config{EngineSource: source, PipelineFiles: store}}
 	cases := []struct {
@@ -93,11 +93,11 @@ func TestEngineFilesAreRefused(t *testing.T) {
 		want           int
 	}{
 		// Not the release's checksum: nothing stored.
-		{testPipeline, "job-worker.mjs", http.StatusBadGateway},
+		{testPipeline, "pipeline.mjs", http.StatusBadGateway},
 		// Not in the release's SHA256SUMS.
 		{testPipeline, "casas-engine-linux-amd64.node", http.StatusNotFound},
 		// No such release.
-		{"v0-none", "job-worker.mjs", http.StatusNotFound},
+		{"v0-none", "pipeline.mjs", http.StatusNotFound},
 		// Not a file of a release.
 		{testPipeline, "SHA256SUMS", http.StatusNotFound},
 		{testPipeline, "..", http.StatusNotFound},
@@ -111,13 +111,13 @@ func TestEngineFilesAreRefused(t *testing.T) {
 		t.Errorf("stored %d files, want none", len(store.files))
 	}
 	// Without the artifacts target in this process.
-	if got := getEngineFile(&Module{cfg: Config{EngineSource: source}}, testPipeline, "job-worker.mjs").Code; got != http.StatusServiceUnavailable {
+	if got := getEngineFile(&Module{cfg: Config{EngineSource: source}}, testPipeline, "pipeline.mjs").Code; got != http.StatusServiceUnavailable {
 		t.Errorf("without a store = %d, want 503", got)
 	}
 }
 
 func TestEngineReadsNeedNoCaller(t *testing.T) {
-	if !AnonymousReads(httptest.NewRequest(http.MethodGet, "/v1/jobs/engines/v11-x/job-worker.mjs", nil)) {
+	if !AnonymousReads(httptest.NewRequest(http.MethodGet, "/v1/jobs/engines/v11-x/pipeline.mjs", nil)) {
 		t.Error("a pipeline file needs a caller")
 	}
 	if !AnonymousReads(httptest.NewRequest(http.MethodGet, "/v1/jobs/pipelines", nil)) {

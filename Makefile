@@ -5,7 +5,7 @@
 #                "verify with tsc", so this is the honest gate)
 #   make test    the Go tests, the engine's tests and the harnesses
 #   make worker  bundle the job worker for Node (./job-worker.mjs, with
-#                ./casas-engine.node beside it)
+#                ./pipeline.mjs and ./casas-engine.node beside it)
 #   make engine  build the Rust engine, native and WASM, into engine/dist/
 #                (docs/decisions/rust-engine.md; the job worker runs on it)
 #   make run     build everything and start a local server on :8080
@@ -177,7 +177,7 @@ run: worker client docs
 # docs.content-dir), built by the targets above.
 build: worker
 	@mkdir -p bin
-	@cp job-worker.mjs casas-engine.node bin/
+	@cp job-worker.mjs pipeline.mjs casas-engine.node bin/
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
 		echo "bin/casas-eternas-$$os-$$arch"; \
@@ -201,8 +201,9 @@ engines:
 	cp engine/target/linux-amd64/release/libcasas_engine_node.so bin/engine/linux-amd64/casas-engine.node
 
 # One archive per platform with everything `start` serves, laid out as the
-# container image is: the binary, job-worker.mjs with the platform's engine
-# beside it (where jobs.worker looks by default), dist/ and docs-dist/, as a
+# container image is: the binary, job-worker.mjs and pipeline.mjs with the
+# platform's engine beside them (where jobs.worker looks by default), dist/
+# and docs-dist/, as a
 # .tar.gz. Run from the unpacked directory:
 #   ./casas-eternas start --target all --client.content-dir dist --docs.content-dir docs-dist
 # The job worker needs Node on the machine, as in the image.
@@ -213,7 +214,7 @@ release: worker client docs build engines
 		name=casas-eternas-$(VERSION)-$$os-$$arch; dir=bin/release/$$name; \
 		mkdir -p $$dir; \
 		cp bin/casas-eternas-$$os-$$arch $$dir/casas-eternas; \
-		cp bin/job-worker.mjs $$dir/; \
+		cp bin/job-worker.mjs bin/pipeline.mjs $$dir/; \
 		cp bin/engine/$$os-$$arch/casas-engine.node $$dir/; \
 		cp -R client/dist $$dir/dist; \
 		cp -R client/docs-dist $$dir/docs-dist; \

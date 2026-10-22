@@ -38,26 +38,26 @@ func TestPipelineBuildsHaveTheirOwnRules(t *testing.T) {
 	m, mux := newModule(t, openTestDir(t, t.TempDir()), identity.NewResolver(config.AuthPassword, tokens), noWorlds())
 	ctx := context.Background()
 
-	if _, err := m.PipelineFileLink(ctx, "v11-x", "job-worker.mjs"); err != ErrNotFound {
+	if _, err := m.PipelineFileLink(ctx, "v11-x", "pipeline.mjs"); err != ErrNotFound {
 		t.Fatalf("before the put: %v, want ErrNotFound", err)
 	}
-	if err := m.PutPipelineFile(ctx, "v11-x", "job-worker.mjs", []byte("the bundle")); err != nil {
+	if err := m.PutPipelineFile(ctx, "v11-x", "pipeline.mjs", []byte("the module")); err != nil {
 		t.Fatal(err)
 	}
-	link, err := m.PipelineFileLink(ctx, "v11-x", "job-worker.mjs")
+	link, err := m.PipelineFileLink(ctx, "v11-x", "pipeline.mjs")
 	if err != nil || !strings.HasPrefix(link, LinkBase) {
 		t.Fatalf("link %q, %v", link, err)
 	}
 
 	// Read: a resolve and the file, without a caller.
-	resolveBody := `{"worldId":"` + PipelineWorld + `","pipelineVersion":"v11-x","stage":"job-worker.mjs"}`
+	resolveBody := `{"worldId":"` + PipelineWorld + `","pipelineVersion":"v11-x","stage":"pipeline.mjs"}`
 	resolved := doAs(mux, http.MethodPost, "/v1/artifacts/resolve", resolveBody, "")
 	var found resolveResponse
 	if resolved.Code != http.StatusOK || json.Unmarshal(resolved.Body.Bytes(), &found) != nil {
 		t.Fatalf("anonymous resolve = %d", resolved.Code)
 	}
-	read := follow(t, mux, "/v1/artifacts/"+found.ArtifactUID+"/job-worker.mjs", "")
-	if body, _ := io.ReadAll(read.Body); read.Code != http.StatusOK || string(body) != "the bundle" {
+	read := follow(t, mux, "/v1/artifacts/"+found.ArtifactUID+"/pipeline.mjs", "")
+	if body, _ := io.ReadAll(read.Body); read.Code != http.StatusOK || string(body) != "the module" {
 		t.Errorf("anonymous read = %d %q", read.Code, body)
 	}
 
@@ -67,7 +67,7 @@ func TestPipelineBuildsHaveTheirOwnRules(t *testing.T) {
 		if got := doAs(mux, http.MethodPost, "/v1/artifacts/resolve", createBody, bearer).Code; got != http.StatusForbidden {
 			t.Errorf("%s resolve with create = %d, want 403", name, got)
 		}
-		if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+found.ArtifactUID+"/job-worker.mjs", "other", bearer).Code; got != http.StatusForbidden {
+		if got := doAs(mux, http.MethodPut, "/v1/artifacts/"+found.ArtifactUID+"/pipeline.mjs", "other", bearer).Code; got != http.StatusForbidden {
 			t.Errorf("%s PUT = %d, want 403", name, got)
 		}
 	}

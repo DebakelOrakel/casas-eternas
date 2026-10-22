@@ -5,12 +5,12 @@ title.de: Engine-Releases
 summary.en: Each pipeline is a GitHub release of its own, tagged with the
   pipeline a save records. Every mode keeps its shipped engine for the
   current pipeline. A worker that gets a task of another pipeline loads
-  that pipeline's worker bundle and native engine through the server,
+  that pipeline's module and native engine through the server,
   which keeps them in the artifact store.
 summary.de: Jede Pipeline ist ein eigenes GitHub-Release, getaggt mit der
   Pipeline, die ein Save festhält. Jeder Modus behält seine mitgelieferte
   Engine für die aktuelle Pipeline. Ein Worker, der eine Aufgabe einer
-  anderen Pipeline bekommt, lädt Worker-Bundle und native Engine dieser
+  anderen Pipeline bekommt, lädt Pipeline-Modul und native Engine dieser
   Pipeline über den Server, der sie im Artefaktspeicher hält.
 area: platform
 stage: building
@@ -88,20 +88,22 @@ Open: see fork 8 (an image without a release).
 
 ## Fork 4 — what a release holds
 
-**Decided 2026-10-22: the bundle and the engines.**
+**Decided 2026-10-22: the pipeline module and the engines.**
 
-`job-worker.mjs` (one file for every platform), `casas-engine-<os>-<arch>.node`
+`pipeline.mjs`, the job worker's pipeline module (one file for every
+platform; see "The host and the pipeline"), `casas-engine-<os>-<arch>.node`
 for each platform, `casas-engine-wasm.tar.gz`, `constants.json`,
 `pipeline.json`, `SHA256SUMS`. When the read side moves into the engine
-(DEC-0044, fork 7b), the bundle stays in the release; it is then thin.
+(DEC-0044, fork 7b), the module stays in the release; it is then thin.
+Until 2026-10-22 the release held the whole bundle, `job-worker.mjs`.
 
 ## Fork 5 — tasks of another pipeline
 
 **Decided 2026-10-22: a worker computes them; it loads what it needs.**
 
 The pipeline of a task is the world's `status.pipeline`. A worker for a
-pipeline that is not its shipped one gets the bundle and the engine for
-its platform through the server. The server takes them from the artifact
+pipeline that is not its shipped one gets the pipeline module and the
+engine for its platform through the server. The server takes them from the artifact
 store, or on a miss from the GitHub release, checks them against
 `SHA256SUMS`, and keeps them in the store. A worker never talks to GitHub.
 
@@ -147,8 +149,8 @@ serving JSON has a field `jobs`, the API base (`…/v1`) of the jobs module.
 The launcher asks `GET /v1/jobs/pipelines` (no caller needed: pipeline
 versions and numbers only) and takes its own pipeline while it has work
 or nobody has any, else the one with the most work. It gets that one's
-bundle and engine through `GET /v1/jobs/engines` into the cache, checks
-that the bundle is that pipeline, and runs Node on it. A worker that had
+pipeline module and engine through `GET /v1/jobs/engines` into the cache,
+checks that the module is that pipeline, and runs Node on it. A worker that had
 no task for 60 s, while its pipeline has no work and another has, ends
 with code 75 (EX_TEMPFAIL); the launcher then chooses again. Any other end
 ends the launcher with the worker's code, for its supervisor. The local
@@ -157,9 +159,46 @@ pool starts the launcher (this binary, with jobs.worker's bundle by
 `/tmp/pipelines`). One Deployment, as before: the scaler counts the tasks
 of every pipeline.
 
-Only bundles from 2026-10-22 on can be another pipeline's worker: an older
-bundle listens on the task subject without the pipeline, and does not end
-for a switch.
+Since the split of the bundle (next section) the launcher runs the
+shipped host on the other pipeline's module: `node job-worker.mjs --serve
+… --pipeline <cache>/<pipeline>/pipeline.mjs`. Only releases with a
+`pipeline.mjs` can be another pipeline's.
+
+## The host and the pipeline
+
+**Decided and built 2026-10-22.** The bundle held two things that change
+for different reasons: what a task computes (the save's decoding, the
+replay, the tile plan and bakes, the artifact formats and their keys —
+the pipeline) and how a worker works (the relay, the tokens, the presence,
+the artifact store and the world over HTTP, the compute thread, the switch
+of the launcher — the host). A release with the whole bundle gave another
+pipeline's worker that release's host, with its old subject and without
+the switch; a host fix reached no older pipeline. And an image's bundle,
+built from a later commit with the same pipeline, was not the release's,
+so its checksum was not in the release's `SHA256SUMS`.
+
+So the bundle is two (client/scripts/workerContract.ts):
+
+- `job-worker.mjs`, the HOST (jobWorker.ts): always the installation's
+  own, the newest. It loads a pipeline module in its compute thread, the
+  one beside it or the one `--pipeline` names, and gives each task its io:
+  the world's archive, the artifact store, the progress, whether to cache.
+- `pipeline.mjs`, the PIPELINE MODULE (workerPipeline.ts), its engine
+  `casas-engine.node` beside it: what a task computes, for one pipeline.
+  It exports `contract`, `version` and `runTask(task, io)`. It talks to no
+  relay and no server itself, and the host imports nothing of it.
+- The CONTRACT between them, `WORKER_CONTRACT` (1): the types of
+  workerContract.ts, the artifact store's interface among them. A host
+  refuses a module of another contract, with a message.
+
+Measured: a level-2 tile of a real world (L2:147,28) baked by the split
+worker is byte-identical in every file to the one the whole bundle bakes.
+
+Not chosen: the read side into the engine first (DEC-0044, fork 7b). It
+is about 25 000 lines of the generator in the worker's bundle, interwoven
+with the refinement, to be ported bit for bit; the contract is the seam
+7b needs anyway, and each part that moves into the engine makes the
+module thinner without changing it.
 
 ## Fork 7 — which worker sees which task
 

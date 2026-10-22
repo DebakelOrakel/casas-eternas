@@ -134,7 +134,8 @@ relay pings every 30 s, so the Ingress's default timeouts hold without an
 annotation. Give the worker a service account of its own (`auth service
 add <name>`, as above), so it can be told apart and ended alone, and start
 the worker with its address and the server's, from the unpacked release
-archive (the binary with `job-worker.mjs` and its engine beside it):
+archive (the binary with `job-worker.mjs`, `pipeline.mjs` and the engine
+beside it):
 
 ```
 RELAY_CREDENTIALS=./credentials ./casas-eternas worker \
