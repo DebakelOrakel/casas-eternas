@@ -26,8 +26,9 @@ was a worker image per pipeline. Two facts since then change the frame:
 
 - The engine has a release action (`.github/workflows/engine-release.yml`,
   2026-10-22). A tag that starts with `engine` builds the native engine for
-  darwin/arm64, linux/amd64 and windows/amd64 and the WASM build, checks
-  each build on its own platform, and makes a GitHub release.
+  darwin/arm64, linux/amd64 and windows/amd64 and the WASM build, and
+  makes a GitHub release. It runs no tests since 2026-10-22: `make test`
+  runs them before a tag.
 - The read side is still TypeScript, in the job worker's bundle (DEC-0044,
   fork 7). An engine alone cannot run a pipeline: the worker for a
   pipeline is its bundle **and** its engine.

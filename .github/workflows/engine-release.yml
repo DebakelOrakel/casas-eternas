@@ -1,6 +1,6 @@
 # The engine's release (docs/decisions/rust-engine.md): a tag that starts
-# with `engine` builds the engine, checks every build, and puts the builds
-# on a GitHub release of that tag.
+# with `engine` builds the engine and puts the builds on a GitHub release
+# of that tag.
 #
 #   git tag engine-v11-1b1f7f4a8b14250e && git push origin engine-v11-1b1f7f4a8b14250e
 #
@@ -23,13 +23,10 @@
 # No musl build: the container image builds its own (deploy/Dockerfile,
 # stage 0), so that the image and its engine come from one commit.
 #
-# THE CHECKS. Rust does not promise the same floating-point bits on every
-# platform, and one different bit gives a world other artifacts. So each
-# native build runs, on its own platform, the smoke test (the native build
-# against this commit's WASM build, then the read side). The engine's tests
-# (the modules on their fixtures) run once on Linux, natively and under
-# WASI; `make test` runs them all before a tag. A failed check gives no
-# release.
+# NO TESTS HERE (2026-10-22): the engine's tests, the WASI run and the
+# smoke test run where the engine is made, `make test` before a tag. Here
+# they took most of the time and runners for what was tested already. The
+# one check is the tag's: it must be this commit's pipeline (below).
 
 name: engine release
 
@@ -64,7 +61,7 @@ jobs:
           wasm-bindgen --target web --out-dir dist/wasm --out-name casas-engine \
             target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
           cargo run --release --locked -q -p casas-engine-api --bin constants > dist/constants.json
-      # Before the expensive jobs. The versions are the job worker's
+      # Before the native builds, which wait for this job. The versions are the job worker's
       # (`job-worker.mjs --version`). buildWorker.mjs copies the native
       # engine beside the bundles; this job has none, and --version does not
       # load it, so an empty file stands in. It is not uploaded. The
@@ -100,14 +97,6 @@ jobs:
             fi
             exit 1
           fi
-      # Without `parallel`, as the browser build is. Not on Node 22: on
-      # linux/amd64 its WASI run of tests/bake.rs stops with SIGSEGV
-      # (measured 2026-10-22; Node 26 and Node 22 on darwin/arm64 pass).
-      - name: Tests under WASI
-        working-directory: engine
-        env:
-          CARGO_TARGET_WASM32_WASIP1_RUNNER: node --no-warnings ${{ github.workspace }}/engine/scripts/wasiRunner.mjs
-        run: cargo test -p casas-engine --release --locked --target wasm32-wasip1
       - run: |
           mkdir -p out
           tar -czf out/casas-engine-wasm.tar.gz -C engine/dist wasm
@@ -127,26 +116,9 @@ jobs:
       - name: Build
         working-directory: engine
         run: cargo build --release --locked -p casas-engine-node --target aarch64-apple-darwin
-      - uses: actions/download-artifact@v4
-        with:
-          name: wasm
-          path: wasm
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: client/package-lock.json
-      - name: Smoke test
-        run: |
-          mkdir -p engine/dist
-          tar -xzf wasm/casas-engine-wasm.tar.gz -C engine/dist
-          cp wasm/constants.json engine/dist/
-          cp engine/target/aarch64-apple-darwin/release/libcasas_engine_node.dylib engine/dist/casas-engine.node
-          (cd client && npm ci)
-          node engine/scripts/smoke.mjs
       - run: |
           mkdir -p out
-          cp engine/dist/casas-engine.node out/casas-engine-darwin-arm64.node
+          cp engine/target/aarch64-apple-darwin/release/libcasas_engine_node.dylib out/casas-engine-darwin-arm64.node
       - uses: actions/upload-artifact@v4
         with:
           name: darwin
@@ -158,35 +130,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # In Rust's Debian image, for the glibc of `make engines`, not the
-      # runner's. The tests run there too.
-      - name: Build and tests
+      # runner's.
+      - name: Build
         run: |
           docker run --rm --platform linux/amd64 -v "$PWD/engine:/src" -w /src \
             -e RUSTUP_TOOLCHAIN=1.98.1 -e CARGO_TARGET_DIR=/src/target/linux-amd64 \
-            rust:1.98.1-bookworm sh -c '
-              cargo build --release --locked -p casas-engine-node &&
-              cargo test --workspace --release --locked &&
-              cargo test -p casas-engine --release --locked'
-      - uses: actions/download-artifact@v4
-        with:
-          name: wasm
-          path: wasm
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: client/package-lock.json
-      - name: Smoke test
-        run: |
-          mkdir -p engine/dist
-          tar -xzf wasm/casas-engine-wasm.tar.gz -C engine/dist
-          cp wasm/constants.json engine/dist/
-          cp engine/target/linux-amd64/release/libcasas_engine_node.so engine/dist/casas-engine.node
-          (cd client && npm ci)
-          node engine/scripts/smoke.mjs
+            rust:1.98.1-bookworm cargo build --release --locked -p casas-engine-node
       - run: |
           mkdir -p out
-          cp engine/dist/casas-engine.node out/casas-engine-linux-amd64.node
+          cp engine/target/linux-amd64/release/libcasas_engine_node.so out/casas-engine-linux-amd64.node
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -207,26 +159,9 @@ jobs:
       - name: Build
         working-directory: engine
         run: cargo build --release --locked -p casas-engine-node --target x86_64-pc-windows-msvc
-      - uses: actions/download-artifact@v4
-        with:
-          name: wasm
-          path: wasm
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: client/package-lock.json
-      - name: Smoke test
-        run: |
-          mkdir -p engine/dist
-          tar -xzf wasm/casas-engine-wasm.tar.gz -C engine/dist
-          cp wasm/constants.json engine/dist/
-          cp engine/target/x86_64-pc-windows-msvc/release/casas_engine_node.dll engine/dist/casas-engine.node
-          (cd client && npm ci)
-          node engine/scripts/smoke.mjs
       - run: |
           mkdir -p out
-          cp engine/dist/casas-engine.node out/casas-engine-windows-amd64.node
+          cp engine/target/x86_64-pc-windows-msvc/release/casas_engine_node.dll out/casas-engine-windows-amd64.node
       - uses: actions/upload-artifact@v4
         with:
           name: windows
