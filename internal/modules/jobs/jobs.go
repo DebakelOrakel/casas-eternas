@@ -296,7 +296,7 @@ func newID() string {
 func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var request Request
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&request); err != nil {
-		httpjson.ClientError(w, http.StatusBadRequest, `expected {"worldUid": "…", "stage": 1} or {"worldUid": "…", "stage": 2, "scope": {"kind": "tile", "x": 0, "y": 0}}`)
+		httpjson.ClientError(w, http.StatusBadRequest, `expected {"worldUid": "…", "stage": 1, "pipeline": "…"} or {"worldUid": "…", "stage": 2, "scope": {"kind": "tile", "x": 0, "y": 0}, "pipeline": "…"}`)
 		return
 	}
 	if request.Scope.Kind == "" {

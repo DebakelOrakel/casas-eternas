@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -79,6 +80,11 @@ type Request struct {
 	// finishing step's "refine the world" (coordinator.go). Needs the
 	// coordinator.
 	Plan string `json:"plan,omitempty"`
+	// The pipeline that computes it: the one the caller reads its
+	// artifacts with (the client's WORLD_PIPELINE, `status.pipeline` of
+	// what it makes; docs/decisions/engine-releases.md). Its tasks go to
+	// the workers of that pipeline only, by their subject (streams.go).
+	Pipeline string `json:"pipeline"`
 }
 
 // Result is what a finished job produced — the artifact's coordinates, so a
@@ -151,6 +157,10 @@ func (r Request) Validate() error {
 	if r.WorldUID == "" {
 		return fmt.Errorf("worldUid is required")
 	}
+	// A token of the task's subject: no dot, no wildcard.
+	if !pipelinePattern.MatchString(r.Pipeline) {
+		return fmt.Errorf("pipeline is required: a version such as v11-1b1f7f4a8b14250e")
+	}
 	// Level 1 runs over the whole world, the levels below one tile at a time.
 	switch r.Scope.Kind {
 	case "", ScopeWorld:
@@ -186,6 +196,9 @@ func (r Request) Validate() error {
 	}
 	return nil
 }
+
+// pipelinePattern is what a pipeline version may be.
+var pipelinePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // StageName is the artifact stage a request produces: `L1` for a level,
 // `L2:x,y` for a tile — the client's meshLevelStage and meshTileStage.

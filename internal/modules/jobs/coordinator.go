@@ -24,7 +24,7 @@ import (
 // coordinator"). A job — what a caller orders — is a graph of TASKS: pure
 // computations whose dependencies are declared before they start, each with
 // one artifact as its result. The coordinator publishes every task whose
-// dependencies are done to the relay (`jobs.task.<pool>.<jobId>`), a worker computes
+// dependencies are done to the relay (`jobs.task.<pool>.<pipeline>.<jobId>`), a worker computes
 // it and reports on `jobs.done.<taskId>`, and the coordinator releases what
 // waited on it. Which worker computes what, and when, changes no byte.
 //
@@ -367,7 +367,7 @@ func (c *coordinator) publish(tasks []*Task) error {
 			if err != nil {
 				return err
 			}
-			future, err := js.PublishAsync(c.conn.Subject("task", task.Pool, task.JobID), raw, jetstream.WithMsgID(task.ID))
+			future, err := js.PublishAsync(c.conn.Subject("task", task.Pool, task.Request.Pipeline, task.JobID), raw, jetstream.WithMsgID(task.ID))
 			if err != nil {
 				return err
 			}
@@ -517,7 +517,7 @@ func (c *coordinator) applyDone(report taskDoneReport, stored map[[3]int]bool) {
 		byPlace := map[[3]int]string{}
 		added := make([]*Task, 0, len(planned))
 		for _, p := range planned {
-			request := Request{WorldUID: job.Request.WorldUID, Stage: p.Level, ErosionRounds: job.Request.ErosionRounds, Scope: Scope{Kind: ScopeTile, X: p.X, Y: p.Y}}
+			request := Request{WorldUID: job.Request.WorldUID, Stage: p.Level, ErosionRounds: job.Request.ErosionRounds, Scope: Scope{Kind: ScopeTile, X: p.X, Y: p.Y}, Pipeline: job.Request.Pipeline}
 			t := &Task{ID: fmt.Sprintf("%s-%d", job.ID, len(c.byJob[job.ID])+len(added)), JobID: job.ID, Pool: poolTile, Request: request, Deps: []string{task.ID}, Upstream: p.Upstream, State: taskWaiting}
 			if stored[[3]int{p.Level, p.X, p.Y}] {
 				// Already in the store: done as wired, never handed out. A tile
@@ -735,7 +735,7 @@ func (c *coordinator) endJob(jobID string, state State, reason string) {
 	// task a worker holds is gone from under it; its report is ignored.
 	if len(ended) > 0 {
 		ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-		if err := c.stream.Purge(ctx, jetstream.WithPurgeSubject(c.conn.Subject("task", "*", jobID))); err != nil {
+		if err := c.stream.Purge(ctx, jetstream.WithPurgeSubject(c.conn.Subject("task", "*", "*", jobID))); err != nil {
 			slog.Warn("jobs: could not withdraw the tasks", "job", jobID, "err", err)
 		}
 		cancel()

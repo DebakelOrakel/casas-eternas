@@ -230,7 +230,7 @@ another's namespace.
 
 | Subject | Stream | What |
 |---|---|---|
-| `jobs.task.<pool>.<jobId>` | `JOBS_TASKS` (work queue) | the micro-computations; `<pool>` e.g. `level`, `tile`; the job's id last, so a cancel purges its tasks in one call |
+| `jobs.task.<pool>.<jobId>` | `JOBS_TASKS` (work queue) | the micro-computations; `<pool>` e.g. `level`, `tile`; the job's id last, so a cancel purges its tasks in one call. Since 2026-10-22 `jobs.task.<pool>.<pipeline>.<jobId>` ([DEC-0045](./engine-releases.md)) |
 | `jobs.task.<pool>-urgent.<jobId>` | the same | the urgent ones (level 4), a pool of their own |
 | `jobs.event.<jobId>` | `JOBS_EVENTS` (short retention) | progress and the end; `jobs` passes them to the client as server-sent events — the client never speaks NATS |
 | `world.event.<uid>`, `artifacts.event.…` | later, a stream each | e.g. a world saved, an artifact written |

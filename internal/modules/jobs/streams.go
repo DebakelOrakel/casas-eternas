@@ -13,10 +13,14 @@ import (
 // The jobs module's streams on the relay (docs/decisions/detail-ladder.md,
 // "The relay and the coordinator"):
 //
-//   - TASKS  jobs.task.<pool>.<jobId> — the tasks, a work queue: each one
-//     goes to exactly one worker. Its message id is the task id, so a task
-//     published twice (a coordinator restarting) is dropped by JetStream; the
-//     job's id last, so a cancel purges the job's tasks in one call.
+//   - TASKS  jobs.task.<pool>.<pipeline>.<jobId> — the tasks, a work queue:
+//     each one goes to exactly one worker. The pipeline is the job's
+//     (Request.Pipeline): a worker takes only its own pipeline's tasks, so
+//     a worker of another pipeline never gets one to refuse
+//     (docs/decisions/engine-releases.md). Its message id is the task id, so
+//     a task published twice (a coordinator restarting) is dropped by
+//     JetStream; the job's id last, so a cancel purges the job's tasks in
+//     one call.
 //   - DONE   jobs.done.<taskId> — what the workers report back, a work queue
 //     the coordinator reads.
 //   - EVENTS jobs.event.<jobId> — progress, for the client; kept briefly.

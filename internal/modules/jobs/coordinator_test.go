@@ -140,7 +140,7 @@ func TestCoordinatorRunsTilesInPlanOrder(t *testing.T) {
 	computedOrder.Unlock()
 	stop, computed, _ := fakeWorker(t, server, false)
 	defer stop()
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 3, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 3, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	waitForJob(t, reg, job.ID, StateDone)
 	computedOrder.Lock()
 	order := append([]string(nil), computedOrder.names...)
@@ -200,7 +200,7 @@ func TestCoordinatorRunsARefinePlan(t *testing.T) {
 	defer c.close()
 	stop, computed, _ := fakeWorker(t, server, false)
 	defer stop()
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 2, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 2, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	done := waitForJob(t, reg, job.ID, StateDone)
 	if computed.Load() != 3 || done.Result == nil || done.Result.Stage != "L1" || done.Percent != 100 {
 		t.Errorf("computed %d, result %+v, percent %d", computed.Load(), done.Result, done.Percent)
@@ -228,12 +228,12 @@ func TestCoordinatorStopsAPlanAtItsStage(t *testing.T) {
 	defer c.close()
 	stop, computed, reused := fakeWorker(t, server, false)
 	defer stop()
-	plan := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	plan := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 1, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	waitForJob(t, reg, plan.ID, StateDone)
 	if computed.Load() != 1 || reused.Load() != 1 {
 		t.Errorf("plan to stage 1: computed %d, reused %d, want 1 and 1", computed.Load(), reused.Load())
 	}
-	single := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	single := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 1, Scope: Scope{Kind: ScopeWorld}})
 	waitForJob(t, reg, single.ID, StateDone)
 	if computed.Load() != 2 || reused.Load() != 2 {
 		t.Errorf("single order: tasks %d, reused %d, want 2 and 2", computed.Load(), reused.Load())
@@ -251,7 +251,7 @@ func TestCoordinatorFailsAJobOnAFailedTask(t *testing.T) {
 	defer c.close()
 	stop, _, _ := fakeWorker(t, server, true)
 	defer stop()
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 2, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	failed := waitForJob(t, reg, job.ID, StateFailed)
 	if !strings.Contains(failed.Error, "tile went wrong") {
 		t.Errorf("error %q", failed.Error)
@@ -267,9 +267,9 @@ func TestCoordinatorWithdrawsACancelledJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.close()
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 1, Scope: Scope{Kind: ScopeWorld}})
 	// Another job's task stays.
-	submitted(t, c, reg, Request{WorldUID: "v", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	submitted(t, c, reg, Request{WorldUID: "v", Pipeline: testPipeline, Stage: 1, Scope: Scope{Kind: ScopeWorld}})
 	if !c.cancelJob(job.ID) {
 		t.Fatal("cancel refused")
 	}
@@ -288,6 +288,44 @@ func TestCoordinatorWithdrawsACancelledJob(t *testing.T) {
 	}
 }
 
+// A job's tasks go to the workers of its pipeline: on the subject with its
+// pipeline, where a worker of another pipeline does not look.
+func TestCoordinatorPublishesUnderThePipeline(t *testing.T) {
+	_, conn := coordinatorRelay(t)
+	reg := newRegistry(jobHistory)
+	c, err := newCoordinator(t.TempDir(), conn, reg, plainSpec, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pending := func(pipeline string) uint64 {
+		t.Helper()
+		consumer, err := conn.JetStream().CreateOrUpdateConsumer(ctx, conn.StreamName(streamTasks), jetstream.ConsumerConfig{
+			Durable:       "workers-" + pipeline,
+			AckPolicy:     jetstream.AckExplicitPolicy,
+			FilterSubject: conn.Subject("task", "*", pipeline, "*"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := consumer.Info(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.NumPending
+	}
+	submitted(t, c, reg, Request{WorldUID: "w", Pipeline: "v1-other", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	submitted(t, c, reg, Request{WorldUID: "v", Pipeline: testPipeline, Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	if got := pending(testPipeline); got != 1 {
+		t.Errorf("%d tasks for %s, want 1", got, testPipeline)
+	}
+	if got := pending("v2-none"); got != 0 {
+		t.Errorf("%d tasks for a pipeline with no job, want 0", got)
+	}
+}
+
 // A cancelled job's running task is withdrawn too: its message waits for
 // the worker's ack, and would go to another worker if this one died.
 func TestCoordinatorWithdrawsARunningTask(t *testing.T) {
@@ -298,7 +336,7 @@ func TestCoordinatorWithdrawsARunningTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.close()
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 1, Scope: Scope{Kind: ScopeWorld}})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// A worker takes the task, reports progress and never acks.
@@ -356,7 +394,7 @@ func TestCoordinatorSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 2, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	c.close()
 
 	again := newRegistry(jobHistory)
@@ -407,7 +445,7 @@ func TestCoordinatorRenewsTokensForOpenTasksOnly(t *testing.T) {
 		}
 		return reply
 	}
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 1, Scope: Scope{Kind: ScopeWorld}})
 
 	fresh := ask(job.ID + "-0")
 	if fresh.Token == "" {
@@ -458,7 +496,7 @@ func TestCoordinatorSkipsStoredTiles(t *testing.T) {
 	computedOrder.Unlock()
 	stop, computed, _ := fakeWorker(t, server, false)
 	defer stop()
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 3, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 3, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	waitForJob(t, reg, job.ID, StateDone)
 	if computed.Load() != 3 {
 		t.Errorf("computed %d tasks, want 3: level 1, L2:1,0 and L3:0,0", computed.Load())
@@ -502,7 +540,7 @@ func TestCoordinatorAllTilesStored(t *testing.T) {
 	defer c.close()
 	stop, computed, _ := fakeWorker(t, server, false)
 	defer stop()
-	job := submitted(t, c, reg, Request{WorldUID: "w", Stage: 3, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
+	job := submitted(t, c, reg, Request{WorldUID: "w", Pipeline: testPipeline, Stage: 3, ErosionRounds: 12, Scope: Scope{Kind: ScopeWorld}, Plan: PlanRefine})
 	waitForJob(t, reg, job.ID, StateDone)
 	if computed.Load() != 1 {
 		t.Errorf("computed %d tasks, want only level 1", computed.Load())

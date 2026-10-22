@@ -1,4 +1,5 @@
 import { apiBase } from '../server/worldClient'
+import { WORLD_PIPELINE } from './worldPipeline'
 import { getServerStatus } from '../server/serverStatus'
 import { authFetch, hasSession } from '../server/session'
 
@@ -46,7 +47,7 @@ export interface BakeJob {
   // The order that produced the job, as the server records it. What lets a
   // screen recognise a job as being about ITS world and stage when somebody
   // else placed the order — see findActiveBake.
-  request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number }; plan?: JobPlan }
+  request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number }; plan?: JobPlan; pipeline?: string }
   queuedAt?: string
   startedAt?: string
   // What the caller may do with the job, as the server states it:
@@ -256,8 +257,9 @@ export async function commissionBake(
       // default. The client's artifact key is derived from its own constants
       // including this one, so a server whose default had drifted would bake a
       // real world under a key nobody asks for — the silent failure again, by
-      // a different route.
-      body: JSON.stringify({ worldUid, stage, erosionRounds, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}), ...(plan ? { plan } : {}) }),
+      // a different route. The pipeline is this client's for the same
+      // reason: the workers of that pipeline compute it.
+      body: JSON.stringify({ worldUid, stage, erosionRounds, pipeline: WORLD_PIPELINE, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}), ...(plan ? { plan } : {}) }),
     })
   } catch {
     return { ok: false, reason: 'offline' }

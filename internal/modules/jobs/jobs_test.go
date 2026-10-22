@@ -195,8 +195,12 @@ func writeWorld(t *testing.T, worlds *fakeWorlds, uid string, editorBearers ...s
 
 // post commissions a bake for uid. The uid is spliced into the JSON body —
 // since 2026-08-12 it travels there, not in the path — so the tests keep
-// stating bodies as the fields they are actually about.
+// stating bodies as the fields they are actually about. So is the pipeline,
+// where the body does not name one.
 func post(m *Module, uid, body, token string) *httptest.ResponseRecorder {
+	if strings.HasPrefix(body, "{") && !strings.Contains(body, `"pipeline"`) {
+		body = `{"pipeline":"` + testPipeline + `",` + body[1:]
+	}
 	if strings.HasPrefix(body, "{") {
 		body = `{"worldUid":"` + uid + `",` + body[1:]
 	}
@@ -210,6 +214,9 @@ func post(m *Module, uid, body, token string) *httptest.ResponseRecorder {
 }
 
 const testUID = "9f2c1b4e-7a30-4d55-8c11-2b6e5d0a1f83"
+
+// The pipeline the tests' jobs name.
+const testPipeline = "v0-test"
 
 // `none` is the LOCAL mode by definition: a person on their own machine, with
 // nobody to be protected from. The module still asks the ranking — the short
@@ -304,7 +311,7 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 	m, runner, worlds := newTestModule(t, config.AuthNone)
 	writeWorld(t, worlds, testUID)
 
-	for _, body := range []string{`{"stage":2}`, `{"stage":0}`, `{"stage":4,"plan":"refine"}`, `{"stage":0,"plan":"refine"}`, `{"scope":{"kind":"basin"},"stage":1}`, `not json`} {
+	for _, body := range []string{`{"stage":2}`, `{"stage":0}`, `{"stage":4,"plan":"refine"}`, `{"stage":0,"plan":"refine"}`, `{"scope":{"kind":"basin"},"stage":1}`, `{"stage":1,"pipeline":""}`, `{"stage":1,"pipeline":"v11.x"}`, `not json`} {
 		if got := post(m, testUID, body, "").Code; got != http.StatusBadRequest {
 			t.Errorf("body %q = %d, want 400", body, got)
 		}
@@ -488,18 +495,18 @@ func TestTileJobsNameTheirTile(t *testing.T) {
 		request Request
 		ok      bool
 	}{
-		{Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeWorld}}, true},
-		{Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeTile, X: 3, Y: 0}}, true},
-		{Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeWorld}}, false},
-		{Request{WorldUID: "w", Stage: 1, Scope: Scope{Kind: ScopeTile}}, false},
-		{Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeTile, X: -1}}, false},
+		{Request{WorldUID: "w", Pipeline: testPipeline, Stage: 1, Scope: Scope{Kind: ScopeWorld}}, true},
+		{Request{WorldUID: "w", Pipeline: testPipeline, Stage: 2, Scope: Scope{Kind: ScopeTile, X: 3, Y: 0}}, true},
+		{Request{WorldUID: "w", Pipeline: testPipeline, Stage: 2, Scope: Scope{Kind: ScopeWorld}}, false},
+		{Request{WorldUID: "w", Pipeline: testPipeline, Stage: 1, Scope: Scope{Kind: ScopeTile}}, false},
+		{Request{WorldUID: "w", Pipeline: testPipeline, Stage: 2, Scope: Scope{Kind: ScopeTile, X: -1}}, false},
 	}
 	for _, c := range cases {
 		if err := c.request.Validate(); (err == nil) != c.ok {
 			t.Errorf("Validate(%+v) = %v, want ok=%v", c.request, err, c.ok)
 		}
 	}
-	tile := Request{WorldUID: "w", Stage: 2, Scope: Scope{Kind: ScopeTile, X: 3, Y: 0}}
+	tile := Request{WorldUID: "w", Pipeline: testPipeline, Stage: 2, Scope: Scope{Kind: ScopeTile, X: 3, Y: 0}}
 	if got := tile.StageName(); got != "L2:3,0" {
 		t.Errorf("tile stage = %q, want L2:3,0", got)
 	}

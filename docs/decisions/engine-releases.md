@@ -160,6 +160,9 @@ is not needed until there are many.
 ## Status
 
 IDEA 2026-10-22. Forks 1–5 are decided; forks 6–9 are open. Built: the
-release action with the checks of fork 1 and the assets of fork 4. The new
+release action with the checks of fork 1 and the assets of fork 4; of
+fork 7, the job's `pipeline` (the client sends its `WORLD_PIPELINE`) and
+the task subject `jobs.task.<pool>.<pipeline>.<jobId>`, with a consumer
+per pipeline (`workers-<pipeline>`). The new
 names (the subcommand, the server route for a pipeline's files, the config
 key for the release source) are proposed before they are written.

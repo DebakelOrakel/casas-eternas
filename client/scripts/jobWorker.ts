@@ -908,13 +908,21 @@ async function busToken(config: ServeConfig): Promise<(() => string) | undefined
 }
 
 // The relay's names for the jobs module's streams (internal/modules/jobs/streams.go).
+// A consumer per pipeline: a worker takes only the tasks of its own
+// (`jobs.task.<pool>.<pipeline>.<jobId>`, docs/decisions/engine-releases.md),
+// and the consumers of a work queue must not overlap.
 const TASK_STREAM = 'JOBS_TASKS'
-const TASK_CONSUMER = 'workers'
+const TASK_CONSUMER = `workers-${WORLD_PIPELINE}`
 // How long a task may go unacknowledged before the relay hands it to
 // another worker; the worker says it is still working well inside it.
 const TASK_ACK_WAIT_MS = 5 * 60_000
 const TASK_HEARTBEAT_MS = 30_000
 const TASK_MAX_DELIVER = 5
+// How long a pipeline's consumer stays when no worker asks it for a task:
+// then the relay deletes it, so the consumers of past pipelines do not pile
+// up. Its tasks stay in the stream until a consumer acknowledges them; one
+// made again later hands them out from the start.
+const TASK_CONSUMER_IDLE_MS = 24 * 60 * 60_000
 // How long a task given back for an artifact store that did not answer
 // waits before the relay hands it out again: long enough for a server
 // restart, short against a task's minutes.
@@ -1037,7 +1045,8 @@ async function serve(config: ServeConfig): Promise<void> {
     ack_policy: AckPolicy.Explicit,
     ack_wait: TASK_ACK_WAIT_MS * 1_000_000,
     max_deliver: TASK_MAX_DELIVER,
-    filter_subjects: config.pools.map((pool) => `jobs.task.${pool}.*`),
+    inactive_threshold: TASK_CONSUMER_IDLE_MS * 1_000_000,
+    filter_subjects: config.pools.map((pool) => `jobs.task.${pool}.${WORLD_PIPELINE}.*`),
   }
   const jsm = await jetstreamManager(nc)
   try {

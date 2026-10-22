@@ -49,7 +49,7 @@ func TestWorkerGrantCoversAServingWorker(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := module.JetStream().Publish(ctx, "jobs.task.tile.j1", []byte("task")); err != nil {
+	if _, err := module.JetStream().Publish(ctx, "jobs.task.tile.v0-test.j1", []byte("task")); err != nil {
 		t.Fatal(err)
 	}
 
