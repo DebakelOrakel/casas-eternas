@@ -1,5 +1,6 @@
 import { apiBase } from '../server/worldClient'
 import { WORLD_PIPELINE } from './worldPipeline'
+import type { PipelineVersions } from './levels'
 import { getServerStatus } from '../server/serverStatus'
 import { authFetch, hasSession } from '../server/session'
 
@@ -242,9 +243,9 @@ export async function commissionBake(
   worldUid: string,
   stage: number,
   erosionRounds: number,
-  order: { tile?: { x: number; y: number }; plan?: JobPlan } = {},
+  order: { tile?: { x: number; y: number }; plan?: JobPlan; pipeline?: string } = {},
 ): Promise<CommissionOutcome> {
-  const { tile, plan } = order
+  const { tile, plan, pipeline = WORLD_PIPELINE } = order
   const base = await apiBase()
   if (!base) return { ok: false, reason: 'offline' }
 
@@ -258,8 +259,10 @@ export async function commissionBake(
       // including this one, so a server whose default had drifted would bake a
       // real world under a key nobody asks for — the silent failure again, by
       // a different route. The pipeline is this client's for the same
-      // reason: the workers of that pipeline compute it.
-      body: JSON.stringify({ worldUid, stage, erosionRounds, pipeline: WORLD_PIPELINE, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}), ...(plan ? { plan } : {}) }),
+      // reason: the workers of that pipeline compute it. A world of another
+      // pipeline names its own (`pipeline`): that pipeline's workers refine
+      // it as it is (docs/decisions/engine-releases.md).
+      body: JSON.stringify({ worldUid, stage, erosionRounds, pipeline, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}), ...(plan ? { plan } : {}) }),
     })
   } catch {
     return { ok: false, reason: 'offline' }
@@ -290,6 +293,35 @@ export async function commissionBake(
 // `onLost` is called once when the stream cannot be opened or ends without
 // being stopped — an older server, a proxy that buffers, a restart. The caller
 // then polls, as before the stream existed. The returned function stops it.
+// The versions another pipeline stores its levels under (levels.ts): its
+// release's pipeline.json, through the jobs module, which gets it from the
+// release when the store lacks it. Null when the server cannot say. A
+// release does not change, so each is asked once.
+const pipelineVersionsAsked = new Map<string, Promise<PipelineVersions | null>>()
+export function pipelineVersionsOf(pipeline: string): Promise<PipelineVersions | null> {
+  let asked = pipelineVersionsAsked.get(pipeline)
+  if (!asked) {
+    asked = readPipelineVersions(pipeline)
+    pipelineVersionsAsked.set(pipeline, asked)
+    void asked.then((versions) => { if (!versions) pipelineVersionsAsked.delete(pipeline) })
+  }
+  return asked
+}
+
+async function readPipelineVersions(pipeline: string): Promise<PipelineVersions | null> {
+  const base = await apiBase()
+  if (!base) return null
+  try {
+    const response = await authFetch(`${base}/jobs/engines/${encodeURIComponent(pipeline)}/pipeline.json`)
+    if (!response.ok) return null
+    const versions = (await response.json()) as Partial<PipelineVersions>
+    if (versions.pipelineVersion !== pipeline || typeof versions.tilePipelineVersions !== 'object' || versions.tilePipelineVersions === null) return null
+    return { pipelineVersion: versions.pipelineVersion, tilePipelineVersions: versions.tilePipelineVersions }
+  } catch {
+    return null
+  }
+}
+
 export function watchJobs(onJob: (job: BakeJob) => void, onLost: () => void): () => void {
   const abort = new AbortController()
   void (async () => {

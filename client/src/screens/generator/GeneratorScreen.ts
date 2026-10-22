@@ -84,10 +84,10 @@ import { advanceProgress, withdrawProgress, type ProgressStep } from '../../worl
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
 import { getServerStatus, peekServerStatus } from '../../server/serverStatus'
 import { hasSession } from '../../server/session'
-import { bakeFraction, commissionBake, listBakes, watchJobs, type BakeJob, type CommissionOutcome } from '../../world/jobClient'
+import { bakeFraction, commissionBake, listBakes, pipelineVersionsOf, watchJobs, type BakeJob, type CommissionOutcome } from '../../world/jobClient'
 import { listServerArtifacts } from '../../server/artifactsClient'
 import { meshLevelStage } from '../../world/meshArtifacts'
-import { isCurrentArtifact, parseStage } from '../../world/levels'
+import { isCurrentArtifact, parseStage, type PipelineVersions } from '../../world/levels'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
 import { createWorldChooser, type WorldShape } from '../../ui/worldChooser/WorldChooser'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission as reportCommissionTo } from '../../ui/artifactChooser/ArtifactChooser'
@@ -5324,10 +5324,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let finishingTimer: ReturnType<typeof setTimeout> | null = null
   let finishingUnwatch: (() => void) | null = null
   // What the last refresh found: why the world cannot be refined, its jobs
-  // (newest first) and the stages it holds on the server.
+  // (newest first), the stages it holds on the server, and the versions of
+  // the pipeline that refines it (undefined: this client's; null: another's
+  // the server could not name).
   let finishingNeeds: TKey | null = null
   let finishingJobs: BakeJob[] = []
   let finishingStored = new Set<string>()
+  let finishingVersions: PipelineVersions | null | undefined
+  // The pipeline that refines the world: the one that made it, whose
+  // workers refine it as it is (docs/decisions/engine-releases.md). A world
+  // no one pipeline made is ordered with this one's; its workers refuse it
+  // (world/replay.ts, replayRefusal) and the job says why.
+  const refinePipeline = (): string => worldPipeline === '' ? WORLD_PIPELINE : worldPipeline
   function stopFinishingPoll(): void {
     if (finishingTimer !== null) clearTimeout(finishingTimer)
     finishingTimer = null
@@ -5346,24 +5354,28 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     else if (status.loginPath !== '' && !hasSession()) needs = 'generator.finishing.needs.signIn'
     else if (worldUid === '' || !isStoredOnServer(worldUid)) needs = 'generator.finishing.needs.server'
     let jobs: BakeJob[] = []
-    // The stages this world holds on the server, for this client's pipeline
-    // and its current terrain. Nothing while that terrain's id is not known
-    // yet (it arrives a moment after a save or a load, and refreshes this):
-    // a level of another terrain is not this world's.
+    // The stages this world holds on the server, for the pipeline that
+    // refines it and its current terrain. Nothing while that terrain's id is
+    // not known yet (it arrives a moment after a save or a load, and
+    // refreshes this): a level of another terrain is not this world's.
     const stored = new Set<string>()
+    const pipeline = refinePipeline()
+    let versions: PipelineVersions | null | undefined
     if (!needs) {
-      const [listed, artifacts] = await Promise.all([listBakes(), listServerArtifacts()])
+      const [listed, artifacts, named] = await Promise.all([listBakes(), listServerArtifacts(), pipeline === WORLD_PIPELINE ? undefined : pipelineVersionsOf(pipeline)])
+      versions = named
       jobs = (listed ?? []).filter((j) => j.request?.worldUid === worldUid)
         .sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))
       for (const a of artifacts?.artifacts ?? []) {
         // By content (DEC-0039): the current terrain's, whichever world's job
         // baked it — a copy of a template finds the template's.
-        if (savedWorldId !== null && isCurrentArtifact(a, savedWorldId)) stored.add(a.stage)
+        if (savedWorldId !== null && versions !== null && isCurrentArtifact(a, savedWorldId, versions)) stored.add(a.stage)
       }
     }
     finishingNeeds = needs
     finishingJobs = jobs
     finishingStored = stored
+    finishingVersions = versions
     paintFinishing()
     // Follow the events from here on, once; not after the screen was left
     // during the awaits above.
@@ -5383,7 +5395,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // or what is stored — level 1, and the tile level once a tile of it is
     // there. A plan counts only for the terrain and the pipeline it was
     // asked for; one for an earlier save of this world is not this world's.
-    const planDone = job !== null && job.state === 'done' && job.result !== undefined && savedWorldId !== null && isCurrentArtifact(job.result, savedWorldId)
+    const planDone = job !== null && job.state === 'done' && job.result !== undefined && savedWorldId !== null && finishingVersions !== null && isCurrentArtifact(job.result, savedWorldId, finishingVersions)
     let refined = planDone ? job.request?.stage ?? 1 : 0
     if (finishingStored.has(meshLevelStage(1))) refined = Math.max(refined, 1)
     for (const stage of finishingStored) {
@@ -5432,7 +5444,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const reportCommission = (outcome: CommissionOutcome): void => reportCommissionTo(ctx.notifications, outcome)
   refineButton.addEventListener('click', () => {
     refineButton.disabled = true
-    void commissionBake(worldUid, refineDepth, AMPLIFY_EROSION_ROUNDS, { plan: 'refine' }).then((outcome) => {
+    void commissionBake(worldUid, refineDepth, AMPLIFY_EROSION_ROUNDS, { plan: 'refine', pipeline: refinePipeline() }).then((outcome) => {
       reportCommission(outcome)
       return refreshFinishing()
     })
