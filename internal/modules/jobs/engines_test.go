@@ -117,10 +117,13 @@ func TestEngineFilesAreRefused(t *testing.T) {
 }
 
 func TestEngineReadsNeedNoCaller(t *testing.T) {
-	if !EngineReads(httptest.NewRequest(http.MethodGet, "/v1/jobs/engines/v11-x/job-worker.mjs", nil)) {
+	if !AnonymousReads(httptest.NewRequest(http.MethodGet, "/v1/jobs/engines/v11-x/job-worker.mjs", nil)) {
 		t.Error("a pipeline file needs a caller")
 	}
-	if EngineReads(httptest.NewRequest(http.MethodGet, "/v1/jobs", nil)) {
+	if !AnonymousReads(httptest.NewRequest(http.MethodGet, "/v1/jobs/pipelines", nil)) {
+		t.Error("the work per pipeline needs a caller")
+	}
+	if AnonymousReads(httptest.NewRequest(http.MethodGet, "/v1/jobs", nil)) {
 		t.Error("the job list needs no caller")
 	}
 }

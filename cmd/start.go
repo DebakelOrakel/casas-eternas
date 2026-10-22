@@ -323,9 +323,10 @@ func buildModules(ctx context.Context, targets config.Targets, cfg config.Config
 	if artifactsModule != nil {
 		readers = append(readers, artifacts.AnonymousReads)
 	}
-	// The pipeline builds, which everyone reads (jobs.EngineReads).
+	// The jobs module's: the pipeline builds and the work per pipeline
+	// (jobs.AnonymousReads).
 	if targets.Has(config.TargetJobs) {
-		readers = append(readers, jobs.EngineReads)
+		readers = append(readers, jobs.AnonymousReads)
 	}
 	anonymousReads := func(r *http.Request) bool {
 		for _, reads := range readers {
@@ -424,6 +425,19 @@ func bakeConfig(targets config.Targets, cfg config.Config, worldModule *world.Mo
 		MaxConcurrent: cfg.Jobs.MaxConcurrent,
 		ScaleWorkers:  cfg.Jobs.ScaleWorkers,
 		EngineSource:  cfg.Jobs.EngineSource,
+	}
+	// The local workers' launcher is this binary (`worker`), and they ask
+	// this server about the work per pipeline. In a cluster the workers are
+	// pods; the chart gives them both.
+	if !inCluster {
+		executable, err := os.Executable()
+		if err != nil {
+			return jobs.Config{}, nil, fmt.Errorf("the job workers' launcher: %w", err)
+		}
+		bcfg.Launcher = executable
+		if bcfg.LocalAPI, err = localAPI(); err != nil {
+			return jobs.Config{}, nil, err
+		}
 	}
 
 	// The ranking is the shared closure built in buildModules; what remains

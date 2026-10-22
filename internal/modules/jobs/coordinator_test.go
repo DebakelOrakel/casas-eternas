@@ -324,6 +324,9 @@ func TestCoordinatorPublishesUnderThePipeline(t *testing.T) {
 	if got := pending("v2-none"); got != 0 {
 		t.Errorf("%d tasks for a pipeline with no job, want 0", got)
 	}
+	if got := c.pipelineWork(); len(got) != 2 || got[testPipeline] != 1 || got["v1-other"] != 1 {
+		t.Errorf("work per pipeline = %v", got)
+	}
 }
 
 // A cancelled job's running task is withdrawn too: its message waits for

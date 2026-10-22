@@ -42,7 +42,7 @@ func TestNodeHeapMirrorsTheWorkerDeployment(t *testing.T) {
 	if err != nil {
 		t.Skipf("the chart not beside the server: %v", err)
 	}
-	if got := mirrored(t, string(values), `(?m)^  heapMB: (\d+)`); got != nodeHeapMB {
-		t.Errorf("deploy/helm/values.yaml workers.heapMB = %d, nodeHeapMB = %d", got, nodeHeapMB)
+	if got := mirrored(t, string(values), `(?m)^  heapMB: (\d+)`); got != NodeHeapMB {
+		t.Errorf("deploy/helm/values.yaml workers.heapMB = %d, NodeHeapMB = %d", got, NodeHeapMB)
 	}
 }

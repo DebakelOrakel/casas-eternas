@@ -13,7 +13,7 @@ summary.de: Jede Pipeline ist ein eigenes GitHub-Release, getaggt mit der
   anderen Pipeline bekommt, lädt Worker-Bundle und native Engine dieser
   Pipeline über den Server, der sie im Artefaktspeicher hält.
 area: platform
-stage: idea
+stage: building
 createdAt: 2026-10-22
 updatedAt: 2026-10-22
 related: [DEC-0044, DEC-0039, DEC-0043, DEC-0038]
@@ -123,7 +123,7 @@ Not chosen: workers refuse other pipelines (old worlds then get no tiles);
 loads only on the local server (the cluster then cannot refine old
 worlds); a cache of the jobs module's own (all artifacts are in one place).
 
-## Fork 6 — who starts the worker of a pipeline (open)
+## Fork 6 — who starts the worker of a pipeline
 
 The process that runs is always `node job-worker.mjs --serve` of one
 pipeline. Something must find the right bundle first. Three places start
@@ -141,7 +141,27 @@ Other option: the bundle loads the other bundle itself and runs it as a
 child. No new subcommand, but code that loads code in TypeScript, and the
 local pool still needs to know which pipelines to start.
 
-## Fork 7 — which worker sees which task (open)
+**Decided and built 2026-10-22: `casas-eternas worker '<serving JSON>'`**
+(`--cache-dir`, `--heap-mb`; internal/modules/jobs/launcher.go). The
+serving JSON has a field `jobs`, the API base (`…/v1`) of the jobs module.
+The launcher asks `GET /v1/jobs/pipelines` (no caller needed: pipeline
+versions and numbers only) and takes its own pipeline while it has work
+or nobody has any, else the one with the most work. It gets that one's
+bundle and engine through `GET /v1/jobs/engines` into the cache, checks
+that the bundle is that pipeline, and runs Node on it. A worker that had
+no task for 60 s, while its pipeline has no work and another has, ends
+with code 75 (EX_TEMPFAIL); the launcher then chooses again. Any other end
+ends the launcher with the worker's code, for its supervisor. The local
+pool starts the launcher (this binary, with jobs.worker's bundle by
+`CASAS_JOBS_WORKER`), and so does the chart's worker Deployment (cache in
+`/tmp/pipelines`). One Deployment, as before: the scaler counts the tasks
+of every pipeline.
+
+Only bundles from 2026-10-22 on can be another pipeline's worker: an older
+bundle listens on the task subject without the pipeline, and does not end
+for a switch.
+
+## Fork 7 — which worker sees which task
 
 Recommended, as DEC-0044 sketched: the subject carries the pipeline
 (`jobs.task.<pool>.<pipeline>.*`), a worker subscribes only to its own,
@@ -173,11 +193,11 @@ is not needed until there are many.
 
 ## Status
 
-IDEA 2026-10-22. Forks 1–5 are decided; forks 6–9 are open. Built: the
+BUILDING since 2026-10-22. Forks 1–7 are decided; forks 8 and 9 are
+open. Built: the
 release action with the checks of fork 1 and the assets of fork 4; of
 fork 7, the job's `pipeline` (the client sends its `WORLD_PIPELINE`) and
 the task subject `jobs.task.<pool>.<pipeline>.<jobId>`, with a consumer
 per pipeline (`workers-<pipeline>`, deleted by the relay after 24 h
-without a worker); of fork 5, the route for a release's files. The new
-names (the subcommand, the server route for a pipeline's files, the config
-key for the release source) are proposed before they are written.
+without a worker); of fork 5, the route for a release's files; fork 6,
+the launcher. Next: the image on the release's engine (fork 3).

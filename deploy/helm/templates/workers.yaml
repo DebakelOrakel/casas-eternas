@@ -8,11 +8,14 @@
 {{- /* Inside: the relay's Service, the token trade at the auth component. */}}
 {{- $_ := set $serve "relay" (printf "nats://%s:4222" (include "casas-eternas.componentName" (dict "root" . "name" $relayComponent))) }}
 {{- $_ := set $serve "auth" (printf "http://%s:8080" (include "casas-eternas.componentName" (dict "root" . "name" $authComponent))) }}
+{{- /* The work per pipeline and other pipelines' files (launcher.go). */}}
+{{- $_ := set $serve "jobs" (printf "http://%s:8080/v1" (include "casas-eternas.componentName" (dict "root" . "name" $jobsComponent))) }}
 {{- else }}
 {{- /* Alone, for a server elsewhere: its addresses (validate requires them). */}}
 {{- $_ := set $serve "relay" $w.server.relay }}
 {{- $_ := set $serve "auth" $w.server.api }}
 {{- $_ := set $serve "api" $w.server.api }}
+{{- $_ := set $serve "jobs" (printf "%s/v1" (trimSuffix "/" $w.server.api)) }}
 {{- end }}
 {{- $selector := dict "app.kubernetes.io/name" (include "casas-eternas.name" .) "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/component" "worker" }}
 ---
@@ -96,12 +99,15 @@ spec:
         - name: worker
           image: {{ include "casas-eternas.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Through the launcher, which chooses the pipeline that has the
+          # work (docs/decisions/engine-releases.md); other pipelines' files
+          # go to /tmp.
           command:
-            - node
-            - --max-old-space-size={{ $w.heapMB }}
-            - /app/job-worker.mjs
-            - --serve
+            - /app/casas-eternas
+            - worker
             - {{ toJson $serve | squote }}
+            - --heap-mb={{ $w.heapMB }}
+            - --cache-dir=/tmp/pipelines
           env:
             {{- if .Values.secrets.workerCredentials.name }}
             - name: RELAY_CREDENTIALS

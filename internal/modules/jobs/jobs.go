@@ -40,7 +40,7 @@ import (
 // with no carved valleys, which looks like a broken bake.
 const defaultErosionRounds = 12
 
-// nodeHeapMB is what the baker's Node process is allowed. Sized for the 8192²
+// NodeHeapMB is what the baker's Node process is allowed. Sized for the 8192²
 // measurement (~2.6 GB) with headroom, since running out mid-bake wastes the
 // minutes already spent. The worker Deployment pins the same number by hand
 // in the chart (deploy/helm/values.yaml, workers.heapMB) — change the two together;
@@ -57,7 +57,7 @@ const defaultErosionRounds = 12
 //
 // (Both runs produced byte-identical artifacts, which is also the determinism
 // check at that size.)
-const nodeHeapMB = 6144
+const NodeHeapMB = 6144
 
 // jobHistory caps the in-memory job records. The RESULT lives in the artifact
 // store, so an evicted record loses only the story of how it got there.
@@ -130,6 +130,11 @@ type Config struct {
 	// the store is scanned once. Composed by cmd/ over a co-resident
 	// artifacts module; nil leaves the check to the workers.
 	ArtifactPresent func(ctx context.Context, keys []ArtifactKey) []bool
+	// Launcher is this binary, which runs `worker` (launcher.go) for each
+	// local worker; LocalAPI this server's API as a local worker reaches it
+	// (`…/v1`).
+	Launcher string
+	LocalAPI string
 	// EngineSource is where the pipelines' releases are
 	// (jobs.engine-source): a file of a release is
 	// <EngineSource>/engine-<pipeline>/<file> (engines.go).
@@ -240,7 +245,12 @@ func New(cfg Config) (*Module, error) {
 		return nil, err
 	}
 	if workerPath != "" && cfg.RelayURL != "" {
-		m.pool = startWorkerPool(workerPath, cfg.RelayURL, workers, nodeHeapMB, cfg.Tokens)
+		if cfg.Launcher == "" {
+			m.coord.close()
+			cancel()
+			return nil, fmt.Errorf("local workers need their launcher (Launcher); that is cmd/'s job")
+		}
+		m.pool = startWorkerPool(localWorker{launcher: cfg.Launcher, bundle: workerPath, jobsAPI: cfg.LocalAPI, heapMB: NodeHeapMB}, cfg.RelayURL, workers, cfg.Tokens)
 	}
 	if InCluster() && cfg.ScaleWorkers {
 		api, err := newClusterAPI()
@@ -279,6 +289,7 @@ func (m *Module) Mount(mux *http.ServeMux) error {
 	mux.HandleFunc("GET /v1/jobs/events", m.handleEvents)
 	mux.HandleFunc("GET /v1/jobs/workers", m.handleWorkers)
 	mux.HandleFunc("GET /v1/jobs/engines/{pipeline}/{file}", m.handleEngineFile)
+	mux.HandleFunc("GET /v1/jobs/pipelines", m.handlePipelines)
 	mux.HandleFunc("GET /v1/jobs/{id}", m.handleGet)
 	mux.HandleFunc("DELETE /v1/jobs/{id}", m.handleCancel)
 	return nil

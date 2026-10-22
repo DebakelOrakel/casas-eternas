@@ -58,11 +58,25 @@ const (
 // errNoRelease: the release, or the file in it, is not there.
 var errNoRelease = errors.New("no such release file")
 
-// EngineReads names the requests of this module that need no caller: the
-// pipeline builds, which everyone reads (artifacts.PipelineWorld). cmd/
+// AnonymousReads names the requests of this module that need no caller:
+// the pipeline builds, which everyone reads (artifacts.PipelineWorld), and
+// the work per pipeline, which a launcher asks before it has a token. cmd/
 // hands it to server.Gate with the other modules'.
-func EngineReads(r *http.Request) bool {
-	return r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/jobs/engines/")
+func AnonymousReads(r *http.Request) bool {
+	return r.Method == http.MethodGet && (strings.HasPrefix(r.URL.Path, "/v1/jobs/engines/") || r.URL.Path == "/v1/jobs/pipelines")
+}
+
+// pipelinesResponse is GET /v1/jobs/pipelines: the open work per pipeline.
+type pipelinesResponse struct {
+	Pipelines map[string]int `json:"pipelines"`
+}
+
+func (m *Module) handlePipelines(w http.ResponseWriter, _ *http.Request) {
+	work := map[string]int{}
+	if m.coord != nil {
+		work = m.coord.pipelineWork()
+	}
+	httpjson.Write(w, http.StatusOK, pipelinesResponse{Pipelines: work})
 }
 
 func (m *Module) handleEngineFile(w http.ResponseWriter, r *http.Request) {

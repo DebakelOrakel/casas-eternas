@@ -18,15 +18,22 @@ import (
 
 // The LOCAL WORKERS (docs/decisions/detail-ladder.md, "Workers"): long-lived
 // Node processes serving the coordinator's tasks over the relay
-// (`job-worker.mjs --serve`). The module starts `jobs.max-concurrent` of them
-// and keeps them: one that dies is started again after a pause. They replaced
-// the subprocess per job (removed 2026-10-03) — a worker keeps the parent
-// level it has read, tile after tile.
+// (`job-worker.mjs --serve`), each through a launcher (`casas-eternas
+// worker`, launcher.go) that chooses its pipeline. The module starts
+// `jobs.max-concurrent` of them and keeps them: one that dies is started
+// again after a pause. They replaced the subprocess per job (removed
+// 2026-10-03) — a worker keeps the parent level it has read, tile after
+// tile.
 
-// serveConfig is the worker's serving argument, its one JSON argv entry.
+// serveConfig is the worker's serving argument, its one JSON argv entry
+// (jobWorker.ts's ServeConfig). The pool fills relay, pools and jobs; the
+// chart (deploy/helm, workers.yaml) the others too.
 type serveConfig struct {
 	Relay string   `json:"relay"`
 	Pools []string `json:"pools"`
+	// The API base the launcher and the worker ask about the work per
+	// pipeline and get other pipelines' files from (`…/v1`).
+	Jobs string `json:"jobs,omitempty"`
 }
 
 const (
@@ -46,24 +53,36 @@ const (
 // name, which is the server's configuration namespace.
 const workerTokenEnv = "RELAY_TOKEN"
 
+// workerBundleEnv is jobs.worker's variable (key = flag = variable,
+// docs/decisions/server-config.md), which the launcher reads.
+const workerBundleEnv = "CASAS_JOBS_WORKER"
+
 type workerPool struct {
 	cancel context.CancelFunc
 	done   sync.WaitGroup
 }
 
+// localWorker is how the pool starts a worker: the launcher (this binary,
+// `worker`), the shipped bundle it uses, and the API base for its serving
+// argument.
+type localWorker struct {
+	launcher, bundle, jobsAPI string
+	heapMB                    int
+}
+
 // startWorkerPool starts `count` serving workers on the relay at `relayURL`.
 // With `tokens` (a mode that checks identity, so the relay does) each
 // worker is started with a bus token of its own.
-func startWorkerPool(workerPath, relayURL string, count, maxHeapMB int, tokens *token.Tokens) *workerPool {
+func startWorkerPool(worker localWorker, relayURL string, count int, tokens *token.Tokens) *workerPool {
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := &workerPool{cancel: cancel}
-	config, _ := json.Marshal(serveConfig{Relay: relayURL, Pools: []string{poolLevel, poolTile}})
+	config, _ := json.Marshal(serveConfig{Relay: relayURL, Pools: []string{poolLevel, poolTile}, Jobs: worker.jobsAPI})
 	for i := range count {
 		pool.done.Add(1)
 		go func() {
 			defer pool.done.Done()
 			for ctx.Err() == nil {
-				runWorker(ctx, i, workerPath, string(config), maxHeapMB, tokens)
+				runWorker(ctx, i, worker, string(config), tokens)
 				select {
 				case <-ctx.Done():
 				case <-time.After(workerRestartPause):
@@ -76,15 +95,17 @@ func startWorkerPool(workerPath, relayURL string, count, maxHeapMB int, tokens *
 }
 
 // runWorker runs one worker until it exits or the pool stops.
-func runWorker(ctx context.Context, index int, workerPath, config string, maxHeapMB int, tokens *token.Tokens) {
-	cmd := exec.Command("node", "--max-old-space-size="+strconv.Itoa(maxHeapMB), workerPath, "--serve", config)
+func runWorker(ctx context.Context, index int, worker localWorker, config string, tokens *token.Tokens) {
+	cmd := exec.Command(worker.launcher, "worker", config, "--heap-mb", strconv.Itoa(worker.heapMB))
+	// The bundle as `start` resolved it (jobs.worker), by its variable.
+	cmd.Env = append(os.Environ(), workerBundleEnv+"="+worker.bundle)
 	if tokens != nil {
 		busToken, _, err := tokens.IssueRelay(token.SubjectWorker, workerTokenTTL)
 		if err != nil {
 			slog.Error("job worker: no bus token", "worker", index, "err", err)
 			return
 		}
-		cmd.Env = append(os.Environ(), workerTokenEnv+"="+busToken)
+		cmd.Env = append(cmd.Env, workerTokenEnv+"="+busToken)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {

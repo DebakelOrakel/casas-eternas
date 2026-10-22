@@ -841,6 +841,11 @@ interface ServeConfig {
   // server's address inside it (its pod IP), and the scheme, host and port of
   // both are replaced by this one's. Absent for a worker inside.
   api?: string
+  // The API base (`…/v1`) where the work per pipeline is
+  // (`/jobs/pipelines`): a worker whose pipeline has none while another
+  // has some ends, for its launcher to start that one
+  // (internal/modules/jobs/launcher.go). Absent: the worker never ends so.
+  jobs?: string
 }
 
 // A task's URL at the server's address as this worker reaches it
@@ -1089,11 +1094,20 @@ async function serve(config: ServeConfig): Promise<void> {
     setTimeout(() => process.exit(0), 5_000).unref()
     void nc.drain().finally(() => process.exit(0))
   })
-  process.stderr.write(`serving ${config.pools.join(', ')} on ${config.relay}\n`)
+  process.stderr.write(`serving ${config.pools.join(', ')} of ${WORLD_PIPELINE} on ${config.relay}\n`)
 
+  let idleSince = Date.now()
   for (;;) {
     const msg = await consumer.next({ expires: 30_000 })
-    if (!msg) continue
+    if (!msg) {
+      if (config.jobs && Date.now() - idleSince >= SWITCH_IDLE_MS && (await anotherPipelineHasWork(config.jobs))) {
+        process.stderr.write(`no work for ${WORLD_PIPELINE}, another pipeline has some: ending for the launcher\n`)
+        announce(true)
+        await nc.drain().catch(() => undefined)
+        process.exit(EXIT_SWITCH)
+      }
+      continue
+    }
     let job: Job
     try {
       job = JSON.parse(msg.string()) as Job
@@ -1158,7 +1172,27 @@ async function serve(config: ServeConfig): Promise<void> {
       current = null
       doing = null
       announce()
+      idleSince = Date.now()
     }
+  }
+}
+
+// How long a worker waits for a task of its pipeline before it asks
+// whether another pipeline has the work, and the exit code that tells its
+// launcher so (EX_TEMPFAIL; launcher.go, exitSwitch).
+const SWITCH_IDLE_MS = 60_000
+const EXIT_SWITCH = 75
+
+// Whether this worker's pipeline has no open work and another one has
+// (GET /v1/jobs/pipelines). No answer: no.
+async function anotherPipelineHasWork(jobs: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${jobs}/jobs/pipelines`, { signal: AbortSignal.timeout(10_000) })
+    if (!response.ok) return false
+    const { pipelines } = (await response.json()) as { pipelines: Record<string, number> }
+    return !(pipelines[WORLD_PIPELINE] > 0) && Object.values(pipelines).some((work) => work > 0)
+  } catch {
+    return false
   }
 }
 

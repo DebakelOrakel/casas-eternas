@@ -167,7 +167,7 @@ workers:
     # credential for a bus token), e.g. https://casas-eternas.example.org
     api: ""
   # The Node heap ceiling, MB. Keep it equal to the jobs module's
-  # nodeHeapMB (internal/modules/jobs/jobs.go; a test compares them).
+  # NodeHeapMB (internal/modules/jobs/jobs.go; a test compares them).
   heapMB: 6144
   # A level-1 replay held 6.2 GB on one worker (detail-ladder.md). No CPU
   # limit, on purpose: a limit throttles a worker on an idle node, and the

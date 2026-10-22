@@ -854,3 +854,27 @@ func (c *coordinator) workload() (open, tasks int) {
 	}
 	return open, tasks
 }
+
+// pipelineWork is the work of the open jobs per pipeline: their tasks
+// handed out, and at least one for a job whose next tasks are not planned
+// yet, as for the scaler (wantWorkers). What a launcher chooses a pipeline
+// by (launcher.go).
+func (c *coordinator) pipelineWork() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	work := map[string]int{}
+	for jobID, ids := range c.byJob {
+		job, ok := c.registry.get(jobID)
+		if !ok || (job.State != StateQueued && job.State != StateRunning) {
+			continue
+		}
+		tasks := 0
+		for _, id := range ids {
+			if task := c.tasks[id]; task != nil && (task.State == taskQueued || task.State == taskRunning) {
+				tasks++
+			}
+		}
+		work[job.Request.Pipeline] += max(tasks, 1)
+	}
+	return work
+}
