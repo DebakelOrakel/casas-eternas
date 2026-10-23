@@ -1,21 +1,21 @@
-import { Scene } from '@babylonjs/core'
+import { Color4, FreeCamera, Scene, Vector3 } from '@babylonjs/core'
 import type { Screen, ScreenContext, ScreenFactory } from '../../app/Screen'
-import { createGeneratorCamera } from '../../camera/generatorCamera'
-import { MAP_WIDTH, TORUS_METERS_PER_CELL } from '../../generator/core/mapConfig'
+import { domainOfKind } from '../../generator/core/domain'
 import { loadWasmEngine } from '../../generator/pipeline/engineWasm'
 import { relabel } from '../../i18n/relabel'
-import { createScaleBar, planeMeasure } from '../../map/ScaleBar'
-import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, UNITS_PER_METER } from '../../map/mapSceneSettings'
+import { createFlatWorldView } from '../../map/flatWorldView'
+import { createScaleBar } from '../../map/ScaleBar'
+import { createGlobeWorldView } from '../../map/sphereView'
+import type { WorldView } from '../../map/worldView'
 import { listServerArtifacts, type ServerArtifact } from '../../server/artifactsClient'
 import { fetchWorld, listWorlds } from '../../server/worldClient'
 import { peekServerStatus } from '../../server/serverStatus'
 import { artifactKey } from '../../storage/ArtifactStore'
 import { getArtifactStore } from '../../storage/artifactStoreProvider'
 import { meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
-import { isCurrentArtifact, parseStage } from '../../world/levels'
+import { isCurrentArtifact } from '../../world/levels'
 import { sameWorldsPipeline } from '../../world/worldPipeline'
-import { pipelineVersionsOf } from '../../world/jobClient'
-import { openWorld, type World } from '../../world/query'
+import { openWorld } from '../../world/query'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createSidebar } from '../../ui/sidebar/Sidebar'
@@ -24,8 +24,7 @@ import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
-import { createGroundView } from './groundView'
-import type { GridField } from './groundSource'
+import type { ChartWorkerInbound, ChartWorkerOutbound } from './chartWorker'
 import '../../ui/theme/design.css'
 
 // THE INCUBATOR: the step between the generator and the game. The generator
@@ -38,50 +37,33 @@ import '../../ui/theme/design.css'
 // So its first step is the generator's world list, which opens only the
 // worlds that hold level 1.
 //
-// For now it is a DEBUG screen, to look at a world: after a choice it shows
-// the terrain in 3D as the ground rings (groundView.ts): level 1 far out,
-// the tiles of levels 2 and 3 near, painted by surface — the biome's
-// cover, rock on the slopes, snow where it is cold, the sea by its depth.
-// Progress and failures go to the console, not to the screen.
+// For now it is a DEBUG screen, to look at a world. Since 2026-10-23 it
+// shows the world as the generator does — the whole globe on the white
+// page with its atmosphere, or the flat map of a torus (map/worldView.ts)
+// — with level 1's terrain in place of the save's: the paper, the
+// hillshade, the terrain wash and the lakes painted from the level at its
+// own resolution (chartWorker.ts), the level's rivers over them. The zoom
+// stops where a node of the level is about two pixels. (The ground rings
+// with the tiles of levels 2 and 3, groundView.ts and its kin, are not
+// used now; they stay for later.) Progress and failures go to the
+// console, not to the screen.
 
 // The level the incubator runs on.
 const LEVEL = 1
 
-// The map view's deepest zoom, as the fraction of the world's width in
-// view: 1 % is ~160 km across. Beyond it the camera's NEAR regime takes
-// over: perspective, down to NEAR_MIN_ALTITUDE_M over the ground.
-const DEEPEST_VIEW_FRACTION = 0.01
+// The chart the level is painted on, texels: 2.4 km a texel at the
+// sphere's equator, 2 km on the torus — a level-1 node (LEVEL_NODE_SPACING_M)
+// per texel or so. Two such RGBA textures are 128 MB each.
+const CHART_WIDTH = 8192
+const CHART_HEIGHT = 4096
 
-// The near regime's lowest camera height over the ground under the focus,
-// metres.
-const NEAR_MIN_ALTITUDE_M = 1000
-
-// The tilt limit, degrees off vertical (the generator's is 60°).
-const MAX_TILT_DEG = 80
-
-// THE TILT BY THE VIEW: flat as a map while the view is wider than
-// TILT_FLAT_KM, leaning in as it narrows (a game's oblique view from
-// about 50 km on), to TILT_GROUND_DEG at TILT_GROUND_KM and below.
-// Linear in the logarithm of the width, so every halving of the view
-// leans the same amount.
-const TILT_FLAT_KM = 200
-const TILT_MID_KM = 20
-const TILT_MID_DEG = 50
-const TILT_GROUND_KM = 2
-const TILT_GROUND_DEG = 68
-function tiltForViewWidth(viewWidth: number): number {
-  const km = viewWidth / UNITS_PER_METER / 1000
-  const l = Math.log10(Math.max(TILT_GROUND_KM, Math.min(TILT_FLAT_KM, km)))
-  const flat = Math.log10(TILT_FLAT_KM)
-  const mid = Math.log10(TILT_MID_KM)
-  const ground = Math.log10(TILT_GROUND_KM)
-  const deg = l >= mid ? ((flat - l) / (flat - mid)) * TILT_MID_DEG : TILT_MID_DEG + ((mid - l) / (mid - ground)) * (TILT_GROUND_DEG - TILT_MID_DEG)
-  return (deg * Math.PI) / 180
-}
-
-// The view width (world units) under which the nearest rings cast
-// shadows: ~190 km, where a mountain's shadow is pixels wide.
-const SHADOWS_BELOW_VIEW_WIDTH = 190_000 * UNITS_PER_METER
+// The level's typical node spacing on land, metres (map/groundPaint.ts
+// NODE_SPACING_M), and how many pixels it may span at the deepest zoom.
+const LEVEL_NODE_SPACING_M = 2200
+const PIXELS_PER_NODE = 2
+// On the flat map the camera's own limit without the deep zoom (10 % of
+// the world's width in view, generatorCamera) is that already: 1 600 km
+// over a canvas 1 500 px wide, 1.07 km a pixel.
 
 // The server's level-1 artifacts, by world uid: current for this client,
 // or made by the pipeline that made the world (a world of another pipeline
@@ -110,44 +92,35 @@ async function levelArtifacts(): Promise<Map<string, ServerArtifact[]>> {
   return byWorld
 }
 
-// A save's field as the painter's grid, or null when the save lacks it.
-async function gridField(world: World, name: string): Promise<GridField | null> {
-  const view = await world.acquire(name)
-  return view ? { data: view.data, resX: view.resX, resY: view.resY } : null
+// Level 1 painted on the chart, in the chart worker.
+function paintChart(input: ChartWorkerInbound): Promise<(ChartWorkerOutbound & { type: 'painted' }) | null> {
+  return new Promise((resolve) => {
+    const worker = new Worker(new URL('./chartWorker.ts', import.meta.url), { type: 'module' })
+    worker.onmessage = (event: MessageEvent<ChartWorkerOutbound>): void => {
+      worker.terminate()
+      if (event.data.type === 'failed') {
+        console.warn(`[incubator] the chart could not be painted: ${event.data.message}`)
+        resolve(null)
+        return
+      }
+      resolve(event.data)
+    }
+    worker.onerror = (event): void => {
+      worker.terminate()
+      console.warn(`[incubator] the chart worker failed: ${event.message}`)
+      resolve(null)
+    }
+    worker.postMessage(input)
+  })
 }
 
 export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
-  const scene = new Scene(ctx.engine)
-  const query = new URLSearchParams(window.location.search)
-
-  let ground: ReturnType<typeof createGroundView> | null = null
-  let shown = false
-
-  const camera = createGeneratorCamera({
-    scene,
-    canvas: ctx.canvas,
-    engine: ctx.engine,
-    worldWidth: MAP_WORLD_WIDTH,
-    worldHeight: MAP_WORLD_HEIGHT,
-    deepMaxZoomWorldFraction: DEEPEST_VIEW_FRACTION,
-    // Steeper than the generator's 60°, and open from further out: in the
-    // orthographic map view a steep tilt is the only way to see heights.
-    maxTiltDeg: MAX_TILT_DEG,
-    tiltStartZoom: 0.1,
-    nearModeEnabled: true,
-    nearMinAltitude: NEAR_MIN_ALTITUDE_M * UNITS_PER_METER,
-    autoTilt: tiltForViewWidth,
-    // The drawn ground under the focus, so that the camera keeps its height
-    // over the terrain, not over the sea; and under the camera itself,
-    // which it never sinks below.
-    getGroundHeight: () => {
-      const focus = camera.getFocus()
-      return ground?.drawnHeightAt(focus.x, focus.z) ?? 0
-    },
-    getGroundHeightAt: (x, z) => ground?.drawnHeightAt(x, z) ?? 0,
-  })
-  // A level is always eroded terrain: the deep zoom and the tilt are open.
-  camera.setDeepZoomEnabled(true)
+  // THE SCENES. Before a world is shown, an empty white page; then the
+  // world's view, made for its shape and dropped with it.
+  const idleScene = new Scene(ctx.engine)
+  idleScene.clearColor = new Color4(1, 1, 1, 1)
+  new FreeCamera('incubatorIdle', new Vector3(0, 1, 0), idleScene)
+  let view: WorldView | null = null
 
   const root = document.createElement('div')
   root.className = 'incubator-screen'
@@ -178,64 +151,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   })
   titleBar.setWorld(null)
 
-  // The scale bar at the lower right, as in the generator. Measured every
-  // frame; it does nothing while the view has not changed. A scene unit is
-  // UNITS_PER_METER of a metre on both shapes (groundFrame.ts).
-  const scaleBar = createScaleBar(root, { measure: planeMeasure(scene, MAP_WORLD_WIDTH, MAP_WORLD_HEIGHT, (TORUS_METERS_PER_CELL * MAP_WIDTH) / MAP_WORLD_WIDTH) })
-  scaleBar.element.hidden = true
-  scene.onBeforeRenderObservable.add(() => {
-    if (!shown || !ground) return
-    const focus = camera.getFocus()
-    // On a sphere the ground follows the focus, and its anchor moves when
-    // the focus went too far (groundView.follow): the camera then stands
-    // at the origin of the new plane, turned with the ground.
-    const turned = ground.follow(focus.x, focus.z)
-    if (turned !== null) {
-      camera.setView({ x: 0, z: 0, zoom: camera.getZoom(), yaw: camera.getYaw() - turned, tilt: camera.getTilt() })
-      return
-    }
-    const viewWidth = camera.getViewWidth()
-    // WHERE THE RINGS CENTRE. On the map the focus: the pixel is the same
-    // size everywhere. Tilted, the nearest ground is at the frame's
-    // bottom and its pixels the smallest, so the finest ring belongs
-    // there and the coarser ones toward the horizon, not around the
-    // frame's centre (2026-10-03). The centre slides from the focus to
-    // the nearest ground in view (the frustum's lower edge on the ground)
-    // as the tilt opens past half the field of view — below that the
-    // frame's near edge is under the camera anyway. Pixels per world
-    // unit there, for the innermost ring's choice, scale with the
-    // distance to the eye.
-    let centreX = focus.x
-    let centreZ = focus.z
-    let unitsPerPixel = viewWidth / ctx.engine.getRenderWidth()
-    if (camera.getZoom() > 1) {
-      const tilt = camera.getTilt()
-      const halfFov = camera.camera.fov / 2
-      const w = Math.min(1, Math.max(0, (tilt - halfFov) / halfFov))
-      if (w > 0) {
-        const altitude = camera.getAltitude()
-        const yaw = camera.getYaw()
-        const upX = Math.sin(yaw)
-        const upZ = Math.cos(yaw)
-        // Ground distances from the eye's foot: the focus, the near edge.
-        const toFocus = altitude * Math.tan(tilt)
-        const toNear = altitude * Math.tan(Math.max(0, tilt - halfFov))
-        const back = (toFocus - toNear) * w
-        centreX = focus.x - upX * back
-        centreZ = focus.z - upZ * back
-        const eyeDistanceFocus = Math.hypot(altitude, toFocus)
-        const eyeDistanceCentre = Math.hypot(altitude, toFocus - back)
-        unitsPerPixel *= eyeDistanceCentre / eyeDistanceFocus
-      }
-    }
-    debug.view = { centreX, centreZ, unitsPerPixel, viewWidth, tilt: camera.getTilt(), altitude: camera.getAltitude(), zoom: camera.getZoom(), focus }
-    ground.update(centreX, centreZ, unitsPerPixel, viewWidth < SHADOWS_BELOW_VIEW_WIDTH && query.get('shadows') !== '0', {
-      altitude: camera.getZoom() > 1 ? camera.getAltitude() : 0,
-      eye: camera.camera.position,
-      farPlane: camera.camera.maxZ,
-    })
-    scaleBar.update(`${focus.x.toFixed(3)},${focus.z.toFixed(3)},${camera.getZoom().toFixed(4)},${camera.getYaw().toFixed(3)},${window.innerWidth},${window.innerHeight}`)
+  // The scale bar at the lower right, as in the generator: measured on the
+  // view's reference surface, at the screen's centre on the globe.
+  const scaleBar = createScaleBar(root, {
+    measure: (ax, ay, bx, by) => {
+      if (!view) return null
+      const a = view.chartAt(ax, ay)
+      const b = view.chartAt(bx, by)
+      return a && b ? view.metresBetween(a, b) : null
+    },
+    at: () => (view?.shape === 'sphere' ? { x: ctx.canvas.clientWidth / 2, y: ctx.canvas.clientHeight / 2 } : null),
   })
+  scaleBar.element.hidden = true
+  const renderScaleBar = (): void => {
+    if (view) scaleBar.update(`${view.viewKey()},${window.innerWidth},${window.innerHeight}`)
+  }
 
   const sidebar = createSidebar(root, 'incubator.step')
   sidebar.setStep('world')
@@ -245,8 +175,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Set on dispose, so a level that arrives after leaving is dropped.
   let disposed = false
 
-  // Read the world's level 1 and show it. The level of the save's own
-  // terrain when the server holds it, else any level of the world.
+  // Read the world's level 1, paint it and show it. The level of the save's
+  // own terrain when the server holds it, else any level of the world.
   async function showLevel(archive: Blob, uid: string): Promise<boolean> {
     const started = performance.now()
     const step = (what: string): void => console.info(`[incubator] ${what} ${Math.round(performance.now() - started)} ms`)
@@ -270,44 +200,55 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       console.warn(`[incubator] level ${LEVEL} of ${uid} could not be read`)
       return false
     }
-    step(`level read, ${read.artifact.count} nodes`)
-    // The tiles of levels 2 and 3 the server holds for this terrain, made
-    // by the pipeline of its level 1 (levels.ts): this client's, or the
-    // versions another one's release names.
-    const pipeline = isCurrentArtifact(chosen) ? undefined : await pipelineVersionsOf(chosen.pipelineVersion)
-    const versions = new Map<string, string>()
-    for (const a of (await listServerArtifacts())?.artifacts ?? []) {
-      if (pipeline !== null && parseStage(a.stage)?.tile && isCurrentArtifact(a, chosen.worldId, pipeline)) versions.set(a.stage, a.pipelineVersion)
-    }
-    step(`${versions.size} tiles listed`)
-    // The save's climate fields; the terrain and the water the ground
-    // makes from the level itself (groundWorker.ts, waterLevels.ts), the
-    // save's elevation standing in until then.
-    const fields = {
-      biome: await gridField(world, 'biome'),
-      elevation: await gridField(world, 'elevation'),
-      temperature: await gridField(world, 'temperature'),
-      // The climate's rain on its chart (world/query's view of the save's
-      // climate cells, DEC-0036 phase 7; the riparian rain left the save).
-      precipitation: await gridField(world, 'precipitation'),
-      lakeDepth: await gridField(world, 'lakeDepth'),
-      waterLevel: null,
-      waterFloor: null,
-      waterDam: null,
-      waterSurface: null,
-    }
-    if (disposed) return false
-    if (!ground) ground = createGroundView({ scene, store })
-    if (query.get('rings') === '1') ground.setTinted(true)
-    if (query.get('detail')) ground.setDetailStrength(Number(query.get('detail')))
-    ground.onLevels((levels) => {
-      debug.water = levels
-      debug.elevation = levels.elevation
+    const level = read.artifact
+    step(`level read, ${level.count} nodes`)
+    const kind = world.kind === 'SphereWorld' ? 'sphere' : 'torus'
+    const biome = await world.acquire('biome')
+    const painted = await paintChart({
+      kind,
+      width: world.width,
+      height: world.height,
+      chartWidth: CHART_WIDTH,
+      chartHeight: CHART_HEIGHT,
+      level: { count: level.count, nodes: level.nodes, connectivity: level.connectivity, z: level.z, waterBodies: level.waterBodies },
+      biome: biome ? Float32Array.from(biome.data) : null,
+      detailSeed: world.recipe.detailSeed,
     })
-    await ground.setWorld({ worldId: chosen.worldId, kind: world.kind === 'SphereWorld' ? 'sphere' : 'torus', width: world.width, height: world.height, level: read.artifact, versions, fields })
-    step('ground ready')
-    if (disposed) return false
-    shown = true
+    if (!painted || disposed) return false
+    step(`chart painted (${Object.entries(painted.ms).map(([k, v]) => `${k} ${v}`).join(', ')})`)
+
+    // The view for the world's shape, a new one per world.
+    view?.dispose()
+    view = null
+    const domain = domainOfKind(kind, world.width, world.height)
+    const deepestMetresPerPixel = LEVEL_NODE_SPACING_M / PIXELS_PER_NODE
+    if (kind === 'sphere') {
+      const globe = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: CHART_WIDTH, textureHeight: CHART_HEIGHT, metresRound: domain.metresAround, deepestMetresPerPixel })
+      globe.setHome('overview', true)
+      // The globe is lit by the sphere's normal alone: it wears the
+      // composite WITH the hillshade, or the level's relief would not show.
+      globe.reliefTexture.update(painted.shaded)
+      globe.setLayersShown(true)
+      view = globe
+    } else {
+      const flat = createFlatWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: CHART_WIDTH, textureHeight: CHART_HEIGHT, metresWide: domain.metresPerUnit * world.width, metresHigh: domain.metresPerUnit * world.height })
+      flat.baseTexture.update(painted.shaded)
+      flat.reliefTexture.update(painted.unshaded)
+      view = flat
+    }
+    view.scene.onAfterRenderObservable.add(renderScaleBar)
+    // The level's rivers, from the world raster's texels to the chart's.
+    if (level.rivers) {
+      const points = Float32Array.from(level.rivers.points)
+      const gain = CHART_WIDTH / world.width
+      for (let i = 0; i < points.length; i += 3) {
+        points[i] *= gain
+        points[i + 1] *= gain
+      }
+      view.rivers.setPolylines(points, level.rivers.lengths, level.rivers.regimes)
+      view.rivers.setEnabled(true)
+    }
+    step('shown')
     held = { uid, name: '', seed: '', worldId: chosen.worldId }
     scaleBar.element.hidden = false
     return true
@@ -342,7 +283,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
   })
 
-  // The jobs and the artifacts, full screen over the ground as in the
+  // The jobs and the artifacts, full screen over the world as in the
   // generator; one at a time, the column out of the way while one is up.
   // "This world" is the world shown. Over the world list they cover the list,
   // and closing one leaves the list as it was.
@@ -381,35 +322,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   sidebar.setVisible(false)
   worldChooser.open()
 
-  // DEBUG: `?screen=incubator&world=<uid>&view=x,z,zoom[,yaw,tilt]` opens a
-  // server world and puts the camera at a view, so a screenshot ladder
-  // shows the same places every time. `data-ready` on the root says the
-  // level is shown. Not a user surface: no text, no keys.
-  const debug: { errors: string[]; ground: () => unknown; scene: Scene; shaders?: () => string[]; view?: unknown; water?: unknown; elevation?: Float32Array | null } = { errors: [], ground: () => ground?.stats() ?? null, scene }
+  // DEBUG: `?screen=incubator&world=<uid>` opens a server world, so a
+  // check sees the same world every time. `data-ready` on the root says
+  // the level is shown. Not a user surface: no text, no keys.
+  const debug: { errors: string[]; view: () => WorldView | null } = { errors: [], view: () => view }
   ;(window as unknown as { __incubator?: unknown }).__incubator = debug
   window.addEventListener('error', (e) => debug.errors.push(String(e.message)))
   window.addEventListener('unhandledrejection', (e) => debug.errors.push(String(e.reason)))
-  // Babylon reports a shader that fails to compile on the console only.
-  const consoleError = console.error.bind(console)
-  console.error = (...args: unknown[]): void => {
-    debug.errors.push(args.map(String).join(' ').slice(0, 300))
-    consoleError(...args)
-  }
-  // Safari reports a shader that fails to compile as a stack trace with no
-  // message, and Babylon keeps drawing with the previous effect; the
-  // ladder then shows the old look with no error (2026-10-03). So the
-  // effects are checked: a material not ready for seconds is listed.
-  debug.shaders = () => {
-    const out: string[] = []
-    for (const mesh of scene.meshes) {
-      if (!mesh.material || !mesh.isEnabled()) continue
-      const effect = mesh.subMeshes?.[0]?._drawWrapper?.effect
-      if (effect && !effect.isReady()) out.push(`${mesh.name}: effect not ready (${String(effect.getCompilationError?.() ?? '').slice(0, 80)})`)
-    }
-    return out
-  }
-  const worldParam = query.get('world')
-  const viewParam = query.get('view')
+  const worldParam = new URLSearchParams(window.location.search).get('world')
   if (worldParam) {
     void (async () => {
       levels = await levelArtifacts()
@@ -421,19 +341,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       root.dataset.ready = '1'
     })()
   }
-  if (viewParam) {
-    const [x, z, zoom, yaw, tilt] = viewParam.split(',').map(Number)
-    if ([x, z, zoom].every(Number.isFinite)) {
-      camera.setView({ x, z, zoom, yaw: Number.isFinite(yaw) ? yaw : undefined, tilt: Number.isFinite(tilt) ? (tilt * Math.PI) / 180 : undefined })
-    }
-  }
 
   ctx.overlay.appendChild(root)
 
   const helpTooltip = createHelpTooltip(root)
 
   return {
-    scene,
+    get scene() {
+      return view?.scene ?? idleScene
+    },
     dispose() {
       disposed = true
       worldChooser.dispose()
@@ -444,11 +360,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       titleBar.dispose()
       helpTooltip.dispose()
       serverIndicator.dispose()
-      ground?.dispose()
-      // scene.dispose() does not remove the camera's own listeners on the
-      // shared canvas (see the generator's dispose).
-      camera.dispose()
-      scene.dispose()
+      // A view disposes its own camera and its listeners on the shared
+      // canvas with its scene.
+      view?.dispose()
+      idleScene.dispose()
     },
   }
 }

@@ -122,6 +122,10 @@ export interface GlobeWorldViewOptions {
   textureHeight: number
   // The equator's length on the world, metres: the chart's width.
   metresRound: number
+  // How deep the zoom goes: the metres a pixel spans at the close shot,
+  // straight down, for the canvas's height when the view is made. The
+  // rig's own close shot (0.15 R) when left out.
+  deepestMetresPerPixel?: number
 }
 
 const RADIUS = 1
@@ -215,7 +219,12 @@ Effect.ShadersStore[`${SHADER}FragmentShader`] = `
 `
 
 export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorldView {
-  const { engine, canvas, textureWidth, textureHeight, metresRound } = options
+  const { engine, canvas, textureWidth, textureHeight, metresRound, deepestMetresPerPixel } = options
+  // The close shot's height for that pixel: the frame spans
+  // 2 h tan(fov / 2) top to bottom at the height h over the surface.
+  const altitudeFactor = deepestMetresPerPixel === undefined
+    ? undefined
+    : (Math.max(1, engine.getRenderHeight()) * deepestMetresPerPixel) / (2 * Math.tan(GLOBE_FOV / 2)) / (metresRound / (2 * Math.PI))
   const scene = new Scene(engine)
   scene.clearColor = new Color4(1, 1, 1, 1)
 
@@ -237,6 +246,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     canvas,
     engine,
     radius: RADIUS,
+    altitudeFactor,
     globeFrame: () => ({ lean: tilt.rotation.z, turn: spin.rotation.y }),
   })
   rig.camera.fov = GLOBE_FOV
