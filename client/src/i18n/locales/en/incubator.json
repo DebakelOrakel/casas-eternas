@@ -1,6 +1,6 @@
 {
-  "incubator.step.world.label": "World",
-  "incubator.step.world.help": "Choose a world that holds level 1.",
+  "incubator.step.flora.label": "Flora",
+  "incubator.step.flora.help": "The world's wild plants: where they grow and what they give people.",
   "incubator.load.title": "Choose a world",
   "incubator.load.subtitle": "Only worlds refined on the server (level 1) can be incubated.",
   "incubator.load.noLevel": "No level 1 yet"

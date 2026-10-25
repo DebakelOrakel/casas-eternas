@@ -2,8 +2,8 @@ import { t, type TKey } from '../../i18n/i18n'
 import '../../ui/theme/design.css'
 import './stepBar.css'
 
-// The strip along the foot of the generator: which step you are on, which are
-// computed, and the way between them. From the design canvas (Main.dc.html,
+// The strip along the foot of the generator and the incubator: which step
+// you are on, which are computed, and the way between them. From the design canvas (Main.dc.html,
 // "Fussleiste: Schritte"), light theme.
 //
 // It REPLACES the ‹ › arrows. The arrows could only offer the next step and
@@ -22,8 +22,8 @@ import './stepBar.css'
 // run are the same thing here. Making them different is its own step.
 
 export interface StepBarStep {
-  // A pipeline stage id. The labels are looked up as `generator.step.<id>`,
-  // so a step and its wording cannot drift apart.
+  // The step's id. The labels are looked up as `<stepKeys>.<id>`, so a step
+  // and its wording cannot drift apart.
   id: string
   // Set apart from the chain: reachable, but not one of the steps that build
   // on each other. Migration is the only one, until it gets its own screen.
@@ -50,6 +50,12 @@ export interface StepBarState {
 
 export interface StepBarOptions {
   steps: readonly StepBarStep[]
+  // The catalog branch of the steps' names and hover cards, as the sidebar
+  // takes it: `generator.step` for the generator.
+  stepKeys: string
+  // The first step's number: 0 in the generator, whose step 0 names and
+  // seeds the world; 1 in the incubator, which has no such step.
+  firstNumber?: number
   // Asked for a step. The screen decides whether it happens — a blocked step
   // still reports the click, because refusing silently is how a control
   // teaches nothing.
@@ -88,21 +94,22 @@ export function createStepBar(host: HTMLElement, options: StepBarOptions): StepB
     const button = document.createElement('button')
     button.type = 'button'
     button.className = 'step-bar__step'
-    button.dataset.help = `generator.step.${step.id}`
+    button.dataset.help = `${options.stepKeys}.${step.id}`
 
     const mark = document.createElement('span')
     mark.className = 'step-bar__mark mono'
-    // Numbered from ZERO, because step 0 is a real step here: naming the world
-    // and choosing its seed is something you do, not something that happens
-    // before you start. The steps set apart get no number at all — a number
-    // says "this many to go", which is a promise migration does not keep.
-    mark.textContent = step.aside ? '·' : String(index)
+    // Numbered from ZERO in the generator, because step 0 is a real step
+    // there: naming the world and choosing its seed is something you do, not
+    // something that happens before you start. The steps set apart get no
+    // number at all — a number says "this many to go", which is a promise
+    // migration does not keep.
+    mark.textContent = step.aside ? '·' : String(index + (options.firstNumber ?? 0))
 
     const text = document.createElement('span')
     text.className = 'step-bar__text'
     const label = document.createElement('span')
     label.className = 'step-bar__label'
-    label.textContent = t(`generator.step.${step.id}.label` as TKey)
+    label.textContent = t(`${options.stepKeys}.${step.id}.label` as TKey)
     const status = document.createElement('span')
     status.className = 'step-bar__status'
     text.append(label, status)
@@ -135,7 +142,7 @@ export function createStepBar(host: HTMLElement, options: StepBarOptions): StepB
     setState,
     relabel() {
       buttons.forEach(({ label }, index) => {
-        label.textContent = t(`generator.step.${options.steps[index].id}.label` as TKey)
+        label.textContent = t(`${options.stepKeys}.${options.steps[index].id}.label` as TKey)
       })
     },
     setVisible(visible) {

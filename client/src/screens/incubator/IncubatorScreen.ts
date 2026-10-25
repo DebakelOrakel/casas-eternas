@@ -26,6 +26,10 @@ import { formatBytes } from '../../ui/format'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
+import { createOverlayList } from '../generator/OverlayList'
+import { OVERLAY_META, overlayKey } from '../generator/overlays'
+import { createStepBar } from '../generator/StepBar'
+import { t } from '../../i18n/i18n'
 import type { ChartWorkerInbound, ChartWorkerOutbound } from './chartWorker'
 import '../../ui/theme/design.css'
 
@@ -47,8 +51,17 @@ import '../../ui/theme/design.css'
 // own resolution (chartWorker.ts), the level's rivers over them. The zoom
 // stops where a node of the level is about two pixels. (The ground rings
 // with the tiles of levels 2 and 3, groundView.ts and its kin, are not
-// used now; they stay for later.) The load panel shows the steps of an
+// used now; they stay for later.)
+//
+// THE STEPS (2026-10-25), along the foot as in the generator, numbered
+// from 1: the world is chosen in the list, not in a step. 1 the flora —
+// the wild plants, still to come. The terrain colour is a layer that can
+// be switched off: then the land is the bare paper, white with its
+// hillshade, as on the generator's map. The load panel shows the steps of an
 // open and which one failed; why it failed goes to the console.
+
+// The incubator's steps, in order; their names are `incubator.step.<id>`.
+const STEPS = ['flora'] as const
 
 // The level the incubator runs on.
 const LEVEL = 1
@@ -150,6 +163,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       jobChooser.relabel()
       handbookPanel.relabel()
       loadPanel.relabel()
+      stepBar.relabel()
+      updateSteps()
+      overlayList.relabel()
     },
   })
   titleBar.setWorld(null)
@@ -171,7 +187,62 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   const sidebar = createSidebar(root, 'incubator.step')
-  sidebar.setStep('world')
+
+  // THE STEPS. The flora has nothing to compute yet.
+  let stepIndex = 0
+  const stepBar = createStepBar(root, {
+    steps: STEPS.map((id) => ({ id })),
+    stepKeys: 'incubator.step',
+    firstNumber: 1,
+    onSelect: (index) => showStep(index),
+  })
+  function showStep(index: number): void {
+    stepIndex = index
+    sidebar.setStep(STEPS[index])
+    updateSteps()
+  }
+  function updateSteps(): void {
+    stepBar.setState({
+      current: stepIndex,
+      steps: STEPS.map(() => ({ status: t('generator.step.status.pending'), settled: false, blocked: false })),
+    })
+  }
+  // The column and the bar step aside together: for the world list and
+  // for the windows.
+  function setFurniture(visible: boolean): void {
+    sidebar.setVisible(visible)
+    stepBar.setVisible(visible)
+  }
+
+  // THE LAYERS. The terrain colour alone for now: on, the
+  // chart with the terrain wash; off, the bare paper. The chart worker
+  // paints both (chartWorker.ts).
+  let terrainOn = true
+  let charts: { shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null; paperShaded: Uint8ClampedArray; paperUnshaded: Uint8ClampedArray | null } | null = null
+  const overlayList = createOverlayList({
+    onToggle: () => {
+      terrainOn = !terrainOn
+      showCharts()
+    },
+    onPick: () => {},
+  })
+  overlayList.setRows([{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }])
+  sidebar.body.append(overlayList.element)
+  function showCharts(): void {
+    overlayList.refresh(() => ({ on: terrainOn, available: charts !== null }))
+    if (!charts || !view) return
+    const shaded = terrainOn ? charts.shaded : charts.paperShaded
+    const unshaded = terrainOn ? charts.unshaded : charts.paperUnshaded
+    // The globe is lit by the sphere's normal alone: it wears the
+    // composite WITH the hillshade, or the level's relief would not show.
+    if (view.shape === 'sphere') view.reliefTexture.update(shaded)
+    else {
+      view.baseTexture.update(shaded)
+      view.reliefTexture.update(unshaded!)
+    }
+  }
+  showStep(0)
+  showCharts()
 
   // What the chooser's last reload found, for the open that follows it.
   let levels = new Map<string, ServerArtifact[]>()
@@ -237,17 +308,16 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (kind === 'sphere') {
       const globe = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: CHART_WIDTH, textureHeight: CHART_HEIGHT, metresRound: domain.metresAround, deepestMetresPerPixel })
       globe.setHome('overview', true)
-      // The globe is lit by the sphere's normal alone: it wears the
-      // composite WITH the hillshade, or the level's relief would not show.
-      globe.reliefTexture.update(painted.shaded)
       globe.setLayersShown(true)
       view = globe
     } else {
-      const flat = createFlatWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: CHART_WIDTH, textureHeight: CHART_HEIGHT, metresWide: domain.metresPerUnit * world.width, metresHigh: domain.metresPerUnit * world.height })
-      flat.baseTexture.update(painted.shaded)
-      flat.reliefTexture.update(painted.unshaded)
-      view = flat
+      view = createFlatWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: CHART_WIDTH, textureHeight: CHART_HEIGHT, metresWide: domain.metresPerUnit * world.width, metresHigh: domain.metresPerUnit * world.height })
     }
+    // The globe wears only the shaded charts; the unshaded ones are 128 MB
+    // each, not kept for nothing.
+    const flat = kind !== 'sphere'
+    charts = { shaded: painted.shaded, unshaded: flat ? painted.unshaded : null, paperShaded: painted.paperShaded, paperUnshaded: flat ? painted.paperUnshaded : null }
+    showCharts()
     view.scene.onAfterRenderObservable.add(renderScaleBar)
     // The level's rivers, from the world raster's texels to the chart's.
     if (level.rivers) {
@@ -293,7 +363,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         titleBar.setWorld({ name: kept.name || undefined, seed: kept.seed })
         titleBar.setSaveState({ kind: kept.where === 'server' ? 'server' : 'local', at: new Date(kept.savedAt) })
         worldChooser.close()
-        sidebar.setVisible(true)
+        setFurniture(true)
       })()
     },
   })
@@ -325,7 +395,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!window.isOpen()) return
     window.close()
     // Over the world list, the list stays and the column stays away.
-    if (!worldChooser.isOpen()) sidebar.setVisible(true)
+    if (!worldChooser.isOpen()) setFurniture(true)
   }
   const artifactChooser = createArtifactChooser(root, {
     currentWorld: () => held,
@@ -347,12 +417,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     handbookPanel.close()
     const other = window === artifactChooser ? jobChooser : artifactChooser
     if (other.isOpen()) closeWindow(other)
-    sidebar.setVisible(false)
+    setFurniture(false)
     window.open()
   }
 
   // The list first, the column behind it — as the generator opens.
-  sidebar.setVisible(false)
+  setFurniture(false)
   worldChooser.open()
 
   // DEBUG: `?screen=incubator&world=<uid>` opens a server world, so a
@@ -372,7 +442,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (!archive || disposed) return
       if (!(await showLevel(archive, worldParam))) return
       worldChooser.close()
-      sidebar.setVisible(true)
+      setFurniture(true)
       root.dataset.ready = '1'
     })()
   }
@@ -393,6 +463,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       jobChooser.dispose()
       handbookPanel.dispose()
       sidebar.dispose()
+      stepBar.dispose()
       titleBar.dispose()
       helpTooltip.dispose()
       serverIndicator.dispose()

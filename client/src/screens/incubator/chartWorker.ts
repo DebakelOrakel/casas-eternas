@@ -22,6 +22,10 @@ import { waterLevelsFromBodies } from './waterLevels'
 // widened to the chart. The lakes stand at the levels the level's own
 // water bodies give on the world raster (waterLevels.ts), and their
 // shores are where the level's chart heights cross them.
+//
+// Two paints of each: with the terrain wash, and the bare paper (white
+// land with its hillshade, as the generator's map with its terrain colour
+// off). The screen switches between them; the lakes are on both.
 
 export interface ChartWorkerInbound {
   kind: Domain['kind']
@@ -37,7 +41,16 @@ export interface ChartWorkerInbound {
 }
 
 export type ChartWorkerOutbound =
-  | { type: 'painted'; shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray; ms: Record<string, number> }
+  | {
+    type: 'painted'
+    // With the terrain wash.
+    shaded: Uint8ClampedArray
+    unshaded: Uint8ClampedArray
+    // The bare paper.
+    paperShaded: Uint8ClampedArray
+    paperUnshaded: Uint8ClampedArray
+    ms: Record<string, number>
+  }
   | { type: 'failed'; message: string }
 
 const worker = self as unknown as Worker
@@ -90,8 +103,10 @@ function paint(message: ChartWorkerInbound): void {
       relief[i] = (elevation[i] > 0 ? 128 : 0) | Math.round(reliefShadeAt(scaled, i, y * W + cols[x + 2], down) * 127)
     }
   }
-  const shaded = buildPaperBase(relief)
-  const unshaded = buildUnshadedPaperBase(relief)
+  const paperShaded = buildPaperBase(relief)
+  const paperUnshaded = buildUnshadedPaperBase(relief)
+  const shaded = paperShaded.slice()
+  const unshaded = paperUnshaded.slice()
   step('paper')
   let ids: Uint8Array | null = null
   if (message.biome) {
@@ -111,8 +126,7 @@ function paint(message: ChartWorkerInbound): void {
       depth[i] = water.surface[cell] === 1 && water.body[cell] >= 0 ? Math.max(0, (water.level[cell] - elevation[i]) * ELEVATION_METERS) : 0
     }
   }
-  applyLakeWash(shaded, depth, ids)
-  applyLakeWash(unshaded, depth, ids)
+  for (const chart of [shaded, unshaded, paperShaded, paperUnshaded]) applyLakeWash(chart, depth, ids)
   step('lakes')
-  worker.postMessage({ type: 'painted', shaded, unshaded, ms } satisfies ChartWorkerOutbound, [shaded.buffer, unshaded.buffer])
+  worker.postMessage({ type: 'painted', shaded, unshaded, paperShaded, paperUnshaded, ms } satisfies ChartWorkerOutbound, [shaded.buffer, unshaded.buffer, paperShaded.buffer, paperUnshaded.buffer])
 }

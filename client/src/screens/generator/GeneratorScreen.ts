@@ -6477,6 +6477,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   const stepBar = createStepBar(root, {
     steps: STEPS.map((s) => ({ id: s.id, aside: s.aside === true })),
+    stepKeys: 'generator.step',
     onSelect: (index) => {
       if (index === panelIndex) return
       const reason = entryRequirementUnmet(index)
