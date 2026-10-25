@@ -323,26 +323,41 @@ const PLANT_PALETTE: readonly (readonly [number, number, number])[] = [
 // SUITABLE 0.3, the niche coded 2 … 255).
 const PLANT_SUITS = 2 + Math.round(253 * 0.3)
 
-// The plants of a use over a painted chart, into a copy: per cell the
-// plant in range that suits it best, in its colour, as strong as its
-// niche; grey where one would suit but none came. A range reaches past
-// its niche, where the plant is rare: not drawn.
-// `from`: the code from which a layer is drawn (an animal's codes are how
-// many, drawn from 2).
+// A cell holds at most this many of a group in its stripes, the ones
+// that suit it best; and a stripe is this many chart texels wide (a world
+// cell is 4), across the diagonal. A trial (2026-10-25).
+const STRIPES_MAX = 3
+const STRIPE_TEXELS = 6
+
+// The plants (or the trees, the animals) of a group over a painted chart,
+// into a copy: per cell the ones that live there in diagonal stripes, each
+// in its colour, as strong as its code there; grey where one would suit
+// but none came. The stripes go in the layers' order, not by their codes,
+// so they run on across the cells. A range reaches past its niche, where
+// the plant is rare: not drawn. `from`: the code from which a layer is
+// drawn (an animal's codes are how many, drawn from 2).
 function blendPlantGroup(base: Uint8ClampedArray, layers: readonly { codes: Uint8Array; colour: number }[], width: number, height: number, scale: number, from = PLANT_SUITS): Uint8ClampedArray {
   const n = width * height
-  const pick = new Uint8Array(n).fill(255)
-  // The best suiting code, 1 for an empty niche, 0 for none.
-  const best = new Uint8Array(n)
-  for (let k = 0; k < layers.length; k++) {
-    const codes = layers[k].codes
-    for (let i = 0; i < n; i++) {
-      const c = codes[i]
-      if (c >= from && c > best[i]) {
-        best[i] = c
-        pick[i] = k
-      } else if (c === 1 && best[i] === 0) best[i] = 1
+  // Per cell its layers (by index, ascending) and how many; 0 with an
+  // empty niche marks grey.
+  const pick = new Uint8Array(n * STRIPES_MAX)
+  const count = new Uint8Array(n)
+  const empty = new Uint8Array(n)
+  const best: number[] = []
+  for (let i = 0; i < n; i++) {
+    best.length = 0
+    for (let k = 0; k < layers.length; k++) {
+      const c = layers[k].codes[i]
+      if (c >= from) best.push(k)
+      else if (c === 1) empty[i] = 1
     }
+    if (best.length > STRIPES_MAX) {
+      best.sort((p, q) => layers[q].codes[i] - layers[p].codes[i])
+      best.length = STRIPES_MAX
+    }
+    best.sort((p, q) => p - q)
+    count[i] = best.length
+    for (let j = 0; j < best.length; j++) pick[i * STRIPES_MAX + j] = best[j]
   }
   const out = new Uint8ClampedArray(base)
   const W = width * scale
@@ -351,14 +366,21 @@ function blendPlantGroup(base: Uint8ClampedArray, layers: readonly { codes: Uint
     const row = Math.floor(y / scale) * width
     for (let x = 0; x < W; x++) {
       const cell = row + Math.floor(x / scale)
-      const code = best[cell]
-      if (code === 0) continue
-      const a = code === 1 ? 0.45 : 0.35 + 0.55 * ((code - from) / (255 - from))
-      const [cr, cg, cb] = code === 1 ? [120, 120, 120] : PLANT_PALETTE[layers[pick[cell]].colour % PLANT_PALETTE.length]
+      const m = count[cell]
+      let a: number
+      let rgb: readonly [number, number, number]
+      if (m > 0) {
+        const k = pick[cell * STRIPES_MAX + (Math.floor((x + y) / STRIPE_TEXELS) % m)]
+        a = 0.35 + 0.55 * ((layers[k].codes[cell] - from) / (255 - from))
+        rgb = PLANT_PALETTE[layers[k].colour % PLANT_PALETTE.length]
+      } else if (empty[cell]) {
+        a = 0.45
+        rgb = [120, 120, 120]
+      } else continue
       const i = 4 * (y * W + x)
-      out[i] = out[i] * (1 - a) + cr * a
-      out[i + 1] = out[i + 1] * (1 - a) + cg * a
-      out[i + 2] = out[i + 2] * (1 - a) + cb * a
+      out[i] = out[i] * (1 - a) + rgb[0] * a
+      out[i + 1] = out[i + 1] * (1 - a) + rgb[1] * a
+      out[i + 2] = out[i + 2] * (1 - a) + rgb[2] * a
     }
   }
   return out
