@@ -3,6 +3,8 @@
   "incubator.step.flora.help": "Die wilden Pflanzen der Welt: wo sie wachsen und was sie den Menschen geben.",
   "incubator.step.fauna.label": "Fauna",
   "incubator.step.fauna.help": "Die wilden Tiere der Welt: wo sie leben und wie viele.",
+  "incubator.step.people.label": "Menschen",
+  "incubator.step.people.help": "Wie sich die Menschen von ihrem Ursprung über die Welt ausbreiten.",
   "incubator.step.testing.label": "Testing",
   "incubator.step.testing.help": "Versuche, die noch keinen eigenen Schritt haben.",
   "incubator.load.title": "Welt wählen",
@@ -15,5 +17,15 @@
   "incubator.section.wood.label": "Holz",
   "incubator.section.wood.help": "Welches Holz wo wächst — eine Auswahl ersetzt die vorige.",
   "incubator.section.animals.label": "Tiere",
-  "incubator.section.animals.help": "Die wilden Tiere, die Menschen nutzen oder fürchten — eine Auswahl ersetzt die vorige."
+  "incubator.section.animals.help": "Die wilden Tiere, die Menschen nutzen oder fürchten — eine Auswahl ersetzt die vorige.",
+  "incubator.people.spread.label": "Ausbreitung",
+  "incubator.people.spread.help": "Die Front der Menschen über die Zeit; ein Klick auf die Karte setzt ihren Ursprung.",
+  "incubator.people.routes.label": "Routen",
+  "incubator.people.routes.help": "Die Wege, über die die meisten kamen.",
+  "incubator.people.play.label": "Abspielen",
+  "incubator.people.play.labelActive": "Anhalten",
+  "incubator.people.play.help": "Lässt die Ausbreitung von vorne ablaufen.",
+  "incubator.people.time": "vor {years} Jahren",
+  "incubator.people.legend.front": "Front",
+  "incubator.people.legend.settled": "Besiedelt"
 }

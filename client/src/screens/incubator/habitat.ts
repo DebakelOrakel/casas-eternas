@@ -44,8 +44,10 @@ export interface HabitatInput {
   // Level 1's rivers, in the world raster's texels; null for the save's
   // discharge instead.
   rivers: Pick<RiverPolylines, 'points' | 'lengths' | 'regimes'> | null
-  // The ecology's game, 0 … 3 (its fine field, decoded); null without one.
+  // The ecology's game and carrying capacity, 0 … 3 (its fine fields,
+  // decoded); null without them.
   game: Float32Array | null
+  carrying?: Float32Array | null
   seed: number
 }
 
@@ -113,7 +115,7 @@ export function levelRasters(
   nodeH: number,
   W: number,
   H: number,
-): Pick<HabitatInput, 'elevation' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth' | 'game'> {
+): Pick<HabitatInput, 'elevation' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth' | 'game' | 'carrying'> {
   const n = W * H
   const elevation = new Float32Array(n)
   const biome = new Float32Array(n)
@@ -122,6 +124,8 @@ export function levelRasters(
   const lakeDepth = new Float32Array(n)
   const gameCodes = land.ecology.game
   const game = gameCodes ? new Float32Array(n) : null
+  const carryingCodes = land.ecology.carryingCapacity
+  const carrying = carryingCodes ? new Float32Array(n) : null
   for (let y = 0; y < H; y++) {
     const ny = Math.min(nodeH - 1, Math.floor(((y + 0.5) / H) * nodeH))
     for (let x = 0; x < W; x++) {
@@ -133,9 +137,10 @@ export function levelRasters(
       discharge[i] = land.discharge[v]
       lakeDepth[i] = land.lakeDepth[v]
       if (game && gameCodes && gameCodes[v] !== ECOLOGY_FINE_OCEAN) game[i] = decodeFineValue(gameCodes[v])
+      if (carrying && carryingCodes && carryingCodes[v] !== ECOLOGY_FINE_OCEAN) carrying[i] = decodeFineValue(carryingCodes[v])
     }
   }
-  return { elevation, biome, koppen, discharge, lakeDepth, game }
+  return { elevation, biome, koppen, discharge, lakeDepth, game, carrying }
 }
 
 export function mulberry32(seed: number): () => number {

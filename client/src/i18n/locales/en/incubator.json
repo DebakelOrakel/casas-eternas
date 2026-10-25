@@ -3,6 +3,8 @@
   "incubator.step.flora.help": "The world's wild plants: where they grow and what they give people.",
   "incubator.step.fauna.label": "Fauna",
   "incubator.step.fauna.help": "The wild animals of the world: where they live, and how many.",
+  "incubator.step.people.label": "People",
+  "incubator.step.people.help": "How people spread from where they began over the world.",
   "incubator.step.testing.label": "Testing",
   "incubator.step.testing.help": "Trials that have no step of their own yet.",
   "incubator.load.title": "Choose a world",
@@ -15,5 +17,15 @@
   "incubator.section.wood.label": "Wood",
   "incubator.section.wood.help": "Which wood grows where — one pick replaces the last.",
   "incubator.section.animals.label": "Animals",
-  "incubator.section.animals.help": "The wild animals people use or fear — one pick replaces the last."
+  "incubator.section.animals.help": "The wild animals people use or fear — one pick replaces the last.",
+  "incubator.people.spread.label": "Spread",
+  "incubator.people.spread.help": "The front of people over time; a click on the map sets where they began.",
+  "incubator.people.routes.label": "Routes",
+  "incubator.people.routes.help": "The ways most came by.",
+  "incubator.people.play.label": "Play",
+  "incubator.people.play.labelActive": "Pause",
+  "incubator.people.play.help": "Runs the spread from the start.",
+  "incubator.people.time": "{years} years ago",
+  "incubator.people.legend.front": "Front",
+  "incubator.people.legend.settled": "Settled"
 }

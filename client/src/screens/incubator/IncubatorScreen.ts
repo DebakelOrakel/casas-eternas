@@ -32,7 +32,7 @@ import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
 import { createOverlayList } from '../generator/OverlayList'
 import { OVERLAY_META, overlayKey } from '../generator/overlays'
 import { createStepBar } from '../generator/StepBar'
-import { formatValue, t, type TKey } from '../../i18n/i18n'
+import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { buildProbeCard } from '../../ui/mapProbe/probeCard'
 import { elevationToMeters } from '../../generator/elevation/elevationScale'
@@ -45,6 +45,7 @@ import type { LevelLand } from '../../world/meshArtifacts'
 import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
 import type { AnimalLayer, AnimalWorkerInbound, AnimalWorkerOutbound } from './animalWorker'
 import type { AnimalUse } from './animals'
+import { SPAN_YEARS, type PeopleResult, type PeopleWorkerInbound, type PeopleWorkerOutbound } from './peopleWorker'
 import type { World } from '../../world/query'
 import type { PlantUse } from './plants'
 import type { PlantLayer, PlantWorkerInbound, PlantWorkerOutbound, TreeLayer } from './plantWorker'
@@ -78,7 +79,8 @@ import '../generator/overlayList.css'
 //
 // THE STEPS (2026-10-25), along the foot as in the generator, numbered
 // from 1: the world is chosen in the list, not in a step. 1 the flora —
-// the wild plants and the trees; 2 the fauna — the animals; and set apart
+// the wild plants and the trees; 2 the fauna — the animals; 3 the people —
+// their spread from one origin over the world, played; and set apart
 // at the end, as the generator's migration, T the testing — the trials
 // that have no step of their own (the catchments). The terrain colour is a layer that can
 // be switched off: then the land is the bare paper, white with its
@@ -87,7 +89,7 @@ import '../generator/overlayList.css'
 // map, the generator's hover card for the level's node under the pointer.
 
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
-const STEPS = ['flora', 'fauna', 'testing'] as const
+const STEPS = ['flora', 'fauna', 'people', 'testing'] as const
 
 // The ecology's fields the incubator shows (the level's artifact holds all
 // fourteen, docs/decisions/level-waters.md), with their icons as the
@@ -387,6 +389,98 @@ function blendPlantGroup(base: Uint8ClampedArray, layers: readonly { codes: Uint
   return out
 }
 
+// Where the people spread, in the people worker.
+function spreadPeople(input: PeopleWorkerInbound): Promise<(PeopleWorkerOutbound & { type: 'people' }) | null> {
+  return new Promise((resolve) => {
+    const worker = new Worker(new URL('./peopleWorker.ts', import.meta.url), { type: 'module' })
+    worker.onmessage = (event: MessageEvent<PeopleWorkerOutbound>): void => {
+      worker.terminate()
+      if (event.data.type === 'failed') {
+        console.warn(`[incubator] the people could not spread: ${event.data.message}`)
+        resolve(null)
+        return
+      }
+      resolve(event.data)
+    }
+    worker.onerror = (event): void => {
+      worker.terminate()
+      console.warn(`[incubator] the people worker failed: ${event.message}`)
+      resolve(null)
+    }
+    worker.postMessage(input)
+  })
+}
+
+// The people's colours: the front (where they arrived within FRONT_YEARS),
+// the land they settled before, the routes. A trial (2026-10-25).
+const PEOPLE_FRONT: readonly [number, number, number] = [250, 180, 50]
+const PEOPLE_SETTLED: readonly [number, number, number] = [200, 90, 40]
+const PEOPLE_ROUTE: readonly [number, number, number] = [90, 40, 25]
+const FRONT_YEARS = 1500
+// A route is drawn where this many land cells were reached through it;
+// its width grows with the logarithm of that, 1 to 4 chart texels.
+const ROUTE_MIN_CELLS = 200
+// The years before the game the people set out (SPAN_YEARS later, they
+// stand 5 000 years before it).
+const PEOPLE_AGO_AT_START = 70_000
+
+// The people at `t` years after their departure over a painted chart,
+// into a copy: the land they reached by then, the front bright; and the
+// routes they took to get there.
+function blendPeople(base: Uint8ClampedArray, people: PeopleResult, t: number, spread: boolean, routes: boolean, width: number, height: number, scale: number): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(base)
+  const W = width * scale
+  const H = height * scale
+  if (spread) {
+    for (let y = 0; y < H; y++) {
+      const row = Math.floor(y / scale) * width
+      for (let x = 0; x < W; x++) {
+        const cell = row + Math.floor(x / scale)
+        const at = people.arrival[cell]
+        if (!(at <= t) || !people.land[cell]) continue
+        const front = t - at < FRONT_YEARS
+        const [cr, cg, cb] = front ? PEOPLE_FRONT : PEOPLE_SETTLED
+        const a = front ? 0.8 : 0.45
+        const i = 4 * (y * W + x)
+        out[i] = out[i] * (1 - a) + cr * a
+        out[i + 1] = out[i + 1] * (1 - a) + cg * a
+        out[i + 2] = out[i + 2] * (1 - a) + cb * a
+      }
+    }
+  }
+  if (routes) {
+    const [cr, cg, cb] = PEOPLE_ROUTE
+    for (let c = 0; c < people.flow.length; c++) {
+      const f = people.flow[c]
+      const to = people.from[c]
+      if (f < ROUTE_MIN_CELLS || to < 0 || !(people.arrival[c] <= t)) continue
+      const half = Math.min(4, 1 + 1.2 * Math.log10(f / ROUTE_MIN_CELLS)) / 2
+      const ax = ((c % width) + 0.5) * scale
+      const ay = (Math.floor(c / width) + 0.5) * scale
+      let bx = ((to % width) + 0.5) * scale
+      const by = (Math.floor(to / width) + 0.5) * scale
+      // Across the wrap, the short way.
+      if (bx - ax > W / 2) bx -= W
+      else if (ax - bx > W / 2) bx += W
+      const steps = Math.ceil(Math.hypot(bx - ax, by - ay))
+      for (let s = 0; s <= steps; s++) {
+        const px = ax + ((bx - ax) * s) / Math.max(1, steps)
+        const py = ay + ((by - ay) * s) / Math.max(1, steps)
+        for (let dy = Math.floor(py - half); dy <= Math.ceil(py + half); dy++) {
+          if (dy < 0 || dy >= H) continue
+          for (let dx = Math.floor(px - half); dx <= Math.ceil(px + half); dx++) {
+            const i = 4 * (dy * W + (((dx % W) + W) % W))
+            out[i] = cr
+            out[i + 1] = cg
+            out[i + 2] = cb
+          }
+        }
+      }
+    }
+  }
+  return out
+}
+
 // The smallest catchment that makes a region of its own, km², the
 // choices of the trial control.
 const REGION_MIN_AREAS_KM2 = [100, 300, 1000, 3000]
@@ -428,6 +522,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       stepBar.relabel()
       updateSteps()
       overlayList.relabel()
+      peoplePlayer.relabel()
       showPlants()
       cameraTools.relabel()
       mapScales.relabel()
@@ -444,6 +539,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let stepIndex = 0
   const onFlora = (): boolean => STEPS[stepIndex] === 'flora'
   const onTesting = (): boolean => STEPS[stepIndex] === 'testing'
+  const onPeople = (): boolean => STEPS[stepIndex] === 'people'
   // True once the screen is built: the step's layers are below.
   let built = false
   const stepBar = createStepBar(root, {
@@ -511,12 +607,22 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The animals of animals.ts, and the use shown (the fauna's step).
   let animals: AnimalLayer[] | null = null
   let animalShown: AnimalUse | null = null
+  // The people's spread (peopleWorker.ts), the time shown (years from the
+  // departure), its two layers, and the origin set by a click (-1: chosen).
+  let people: PeopleResult | null = null
+  let peopleTime = SPAN_YEARS
+  let spreadOn = true
+  let routesOn = true
+  let peopleOrigin = -1
   // The last blend, for showing it again without blending it again.
   let blended: { key: string; shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } | null = null
   const overlayList = createOverlayList({
-    onToggle: () => {
-      terrainOn = !terrainOn
+    onToggle: (id) => {
+      if (id === 'people:spread') spreadOn = !spreadOn
+      else if (id === 'people:routes') routesOn = !routesOn
+      else terrainOn = !terrainOn
       showCharts()
+      plantLegend.refresh()
     },
     onPick: (id) => {
       if (id === NO_PLANTS || id.startsWith('plant:') || id === NO_WOOD || id.startsWith('wood:')) {
@@ -575,9 +681,108 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   plantInfo.className = 'gen-overlays'
   plantInfo.append(plantStatus)
   sidebar.body.append(plantInfo)
+
+  // THE PEOPLE'S TIME (step 3): the years ago shown, a play button, and a
+  // slider over the span. Playing runs the span from its start in
+  // PEOPLE_PLAY_FRAMES steps.
+  const PEOPLE_PLAY_FRAMES = 80
+  const PEOPLE_FRAME_MS = 250
+  const peopleSection = document.createElement('section')
+  peopleSection.className = 'gen-overlays'
+  const peopleRow = document.createElement('div')
+  peopleRow.className = 'gen-month'
+  const peopleSpare = document.createElement('span')
+  peopleSpare.className = 'gen-month__spare'
+  const peopleLabel = document.createElement('span')
+  peopleLabel.className = 'gen-month__label'
+  const peopleButton = document.createElement('button')
+  peopleButton.type = 'button'
+  peopleButton.className = 'gen-action-icon'
+  peopleButton.dataset.help = 'incubator.people.play'
+  const peopleIcon = document.createElement('img')
+  peopleIcon.alt = ''
+  peopleButton.append(peopleIcon)
+  peopleRow.append(peopleSpare, peopleLabel, peopleButton)
+  const peopleSlider = document.createElement('input')
+  peopleSlider.type = 'range'
+  peopleSlider.className = 'gen-param__range'
+  peopleSlider.min = '0'
+  peopleSlider.max = String(SPAN_YEARS)
+  peopleSlider.step = '100'
+  peopleSection.append(peopleRow, peopleSlider)
+  sidebar.body.append(peopleSection)
+  const peoplePlayer = (() => {
+    let timer: ReturnType<typeof setInterval> | null = null
+    const sayButton = (): void => {
+      const key: TKey = timer ? 'incubator.people.play.labelActive' : 'incubator.people.play.label'
+      peopleButton.dataset.tAria = key
+      peopleButton.setAttribute('aria-label', t(key))
+      peopleButton.setAttribute('aria-pressed', String(timer !== null))
+      peopleIcon.src = timer ? '/icons/stop.png' : '/icons/play.png'
+    }
+    const say = (): void => {
+      const ago = Math.round((PEOPLE_AGO_AT_START - peopleTime) / 100) * 100
+      peopleLabel.textContent = t('incubator.people.time', { years: ago.toLocaleString(getLocale()) })
+    }
+    const player = {
+      show(time: number): void {
+        peopleTime = Math.min(SPAN_YEARS, Math.max(0, time))
+        peopleSlider.value = String(peopleTime)
+        say()
+        if (people) showCharts()
+      },
+      stop(): void {
+        if (timer) clearInterval(timer)
+        timer = null
+        sayButton()
+      },
+      relabel(): void {
+        say()
+        sayButton()
+      },
+    }
+    peopleButton.addEventListener('click', () => {
+      if (timer) {
+        player.stop()
+        return
+      }
+      if (peopleTime >= SPAN_YEARS) player.show(0)
+      timer = setInterval(() => {
+        player.show(peopleTime + SPAN_YEARS / PEOPLE_PLAY_FRAMES)
+        if (peopleTime >= SPAN_YEARS) player.stop()
+      }, PEOPLE_FRAME_MS)
+      sayButton()
+    })
+    peopleSlider.addEventListener('input', () => {
+      player.stop()
+      player.show(Number(peopleSlider.value))
+    })
+    return player
+  })()
+  peoplePlayer.relabel()
+  // A click on the map (not a drag) sets the people's origin there.
+  let pressAt: { x: number; y: number } | null = null
+  const onPress = (e: PointerEvent): void => {
+    pressAt = { x: e.clientX, y: e.clientY }
+  }
+  const onRelease = (e: PointerEvent): void => {
+    const press = pressAt
+    pressAt = null
+    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4 || !onPeople() || !shown || !view) return
+    const rect = ctx.canvas.getBoundingClientRect()
+    const at = view.groundAt(e.clientX - rect.left, e.clientY - rect.top)
+    if (!at) return
+    const cell = Math.min(shown.height - 1, Math.floor(at.v * shown.height)) * shown.width + Math.min(shown.width - 1, Math.floor(at.u * shown.width))
+    peopleOrigin = cell
+    void growPeople()
+  }
+  ctx.canvas.addEventListener('pointerdown', onPress)
+  ctx.canvas.addEventListener('pointerup', onRelease)
   function showCharts(): void {
     overlayList.refresh((id) => {
       if (id === 'terrain') return { on: terrainOn, available: charts !== null }
+      if (id === 'people:spread') return { on: spreadOn, available: people !== null }
+      if (id === 'people:routes') return { on: routesOn, available: people !== null }
       if (id === NO_FIELD) return { on: picked === null, available: true }
       if (id === NO_PLANTS) return { on: plantShown === null, available: true }
       if (id.startsWith('plant:')) return { on: plantShown !== null && id === plantPickId(plantShown), available: charts !== null }
@@ -643,7 +848,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }),
         // TRIAL: the plants there, on the world raster, one a line; the
         // use named on its first.
-        ...(shown && !onTesting() ? (onFlora() ? plantsAt : animalsAt)(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name }))) : []),
+        ...(shown && !onTesting() && !onPeople() ? (onFlora() ? plantsAt : animalsAt)(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name }))) : []),
       ] : [],
       months: t('readout.months').split(','),
       charts: [],
@@ -765,7 +970,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // A plant's colour is its place in its use; a tree's its place among
   // the trees, the same under every wood it gives.
   function shownGroup(): { title: string; from: number; layers: { name: string; codes: Uint8Array; reached: number; colour: number }[] } | null {
-    if (onTesting()) return null
+    if (onTesting() || onPeople()) return null
     if (!onFlora()) {
       if (!animals || !animalShown) return null
       const use = animalShown
@@ -796,6 +1001,20 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   const plantLegend = createLegendPanel(root, {
     content: () => {
+      if (onPeople()) {
+        if (!people || (!spreadOn && !routesOn)) return { count: 0, build: () => [] }
+        return {
+          count: 1,
+          build: () => [{
+            type: 'swatches',
+            title: t('incubator.step.people.label'),
+            items: [
+              ...(spreadOn ? [{ label: t('incubator.people.legend.front'), rgb: [...PEOPLE_FRONT] as [number, number, number] }, { label: t('incubator.people.legend.settled'), rgb: [...PEOPLE_SETTLED] as [number, number, number] }] : []),
+              ...(routesOn ? [{ label: t('incubator.people.routes.label'), rgb: [...PEOPLE_ROUTE] as [number, number, number], shape: 'line' as const }] : []),
+            ],
+          }],
+        }
+      }
       const group = shownGroup()
       if (!group) return { count: 0, build: () => [] }
       return {
@@ -871,6 +1090,33 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function growWorld(): Promise<void> {
     await growFlora()
     await growFauna()
+    await growPeople()
+  }
+  // The people, from the origin clicked or chosen: their way over the
+  // land is the carrying capacity's, over the sea the boat wood's.
+  let peopleAsk = 0
+  async function growPeople(): Promise<void> {
+    const ask = ++peopleAsk
+    if (!shown || !shownWorld) return
+    const world = shownWorld
+    const label = t('incubator.step.people.label')
+    progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
+    const input = await habitatOf(world)
+    const n = shown.width * shown.height
+    const boat = new Uint8Array(n)
+    for (const tree of plants?.trees ?? []) if (tree.woods.includes('boat')) for (let i = 0; i < n; i++) if (tree.codes[i] >= PLANT_SUITS) boat[i] = 1
+    // Without level 1's ecology, every land cell feeds alike.
+    const carrying = input?.carrying ?? new Float32Array(n).fill(0.4)
+    const done = input ? await spreadPeople({ ...input, carrying, boat, origin: peopleOrigin }) : null
+    if (ask !== peopleAsk || shownWorld !== world) return
+    progressPill.hide()
+    if (!done) {
+      plantStatus.textContent = t(input ? 'incubator.plants.failed' : 'incubator.plants.missing')
+      return
+    }
+    console.info(`[incubator] people spread, ${done.ms} ms`)
+    people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin }
+    showPlants()
   }
   // The picks' plants, wood or animals on the map, and their legend.
   function showPlants(): void {
@@ -905,6 +1151,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (unshaded) unshaded = blendOver(unshaded, regionCut.overlay)
     }
     const scale = CHART_WIDTH / shown.width
+    if (onPeople() && people && (spreadOn || routesOn)) {
+      shaded = blendPeople(shaded, people, peopleTime, spreadOn, routesOn, shown.width, shown.height, scale)
+      if (unshaded) unshaded = blendPeople(unshaded, people, peopleTime, spreadOn, routesOn, shown.width, shown.height, scale)
+    }
     const group = shownGroup()
     if (group) {
       shaded = blendPlantGroup(shaded, group.layers, shown.width, shown.height, scale, group.from)
@@ -1029,6 +1279,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     shownWorld = world
     plants = null
     animals = null
+    people = null
+    peopleOrigin = -1
+    peoplePlayer.stop()
+    peoplePlayer.show(SPAN_YEARS)
     plantStatus.textContent = ''
     plantLegend.refresh()
     if (regionBox.checked) void showRegions()
@@ -1138,7 +1392,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // sections; the map and its legend redrawn.
   function stepLayers(): void {
     const picks = onFlora() ? [RESOURCE_PICKS, PLANT_PICKS, WOOD_PICKS] : onTesting() ? [RESOURCE_PICKS] : [RESOURCE_PICKS, ANIMAL_PICKS]
-    overlayList.setRows([{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }], picks)
+    const rows = [{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }]
+    if (onPeople()) rows.push({ id: 'people:spread', helpBase: 'incubator.people.spread', icon: '/icons/human.png' }, { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' })
+    overlayList.setRows(rows, onPeople() ? [RESOURCE_PICKS] : picks)
+    peopleSection.hidden = !onPeople()
+    if (!onPeople()) peoplePlayer.stop()
     regionSection.hidden = !onTesting()
     showCharts()
     plantLegend.refresh()
@@ -1195,6 +1453,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       titleBar.dispose()
       helpTooltip.dispose()
       progressPill.dispose()
+      peoplePlayer.stop()
+      ctx.canvas.removeEventListener('pointerdown', onPress)
+      ctx.canvas.removeEventListener('pointerup', onRelease)
       hoverTooltip.dispose()
       serverIndicator.dispose()
       // A view disposes its own camera and its listeners on the shared
