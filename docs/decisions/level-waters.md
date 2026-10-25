@@ -193,5 +193,15 @@ makes level 1 as the job does — the stages on the replay's world, the
 ecology, the artifact with its land and ecology fields — resumes it from a
 checkpoint to the same artifact, bakes tiles on it, and writes and reads
 its files alike in both builds. On Morvane's save at level 0 the ecology
-takes 1.0 s for 365 k nodes. Step 4 built the same day. No level 1 of a
-real world made yet.
+takes 1.0 s for 365 k nodes. Step 4 built the same day.
+
+The first level 1 of a real world (Morvane, 8.3 M nodes) failed: the
+system stopped the worker in the stages. The ecology kept its
+neighbourhoods (30 km about every node) as tables, and a table grows
+with the node density squared: some 25–30 GB at level 1. The
+neighbourhoods are now gathered one node at a time
+(`mesh_neighbourhood::max_within`, `mean_within`), to the same values
+(the engine's fixtures unchanged). Measured on Morvane from the job's
+checkpoint at epoch 96 (2026-10-25): the stages 196 s (the hydrology
+16 s, the ecology 174 s), their peak 15 GB resident against the epochs'
+21 GB; the artifact 410 MB.

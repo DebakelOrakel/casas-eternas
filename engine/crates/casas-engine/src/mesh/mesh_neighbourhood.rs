@@ -194,6 +194,10 @@ fn lens_area(r: f64, R: f64, d: f64) -> f64 {
 
 /// The cells within a radius of each admitted node, with their lens
 /// weights (m²), as a CSR table per slot. Every centre holds itself.
+/// The table grows with the radius over the node spacing squared (at level
+/// 1, 30 km: some 190 members a node, 12 GB): `max_within` and
+/// `mean_within` gather one neighbourhood at a time instead, in the same
+/// order, to the same values.
 pub struct Neighbourhoods {
     pub start: Vec<u32>,
     pub member: Vec<u32>,
@@ -211,25 +215,23 @@ pub fn neighbourhoods(
         .step_by(NEIGHBOURHOOD_BLOCK)
         .map(|b| b..(b + NEIGHBOURHOOD_BLOCK).min(slots))
         .collect();
-    let new_scratch = || (vec![u32::MAX; slots], Vec::new());
     #[cfg(feature = "parallel")]
     let parts: Vec<Block> = {
         use rayon::prelude::*;
         blocks
             .into_par_iter()
-            .map_init(new_scratch, |(stamp, queue), range| {
-                neighbourhood_block(geo, mesh, radius_m, centre, range, stamp, queue)
-            })
+            .map_init(
+                || Gather::new(slots),
+                |g, range| neighbourhood_block(geo, mesh, radius_m, centre, range, g),
+            )
             .collect()
     };
     #[cfg(not(feature = "parallel"))]
     let parts: Vec<Block> = {
-        let (mut stamp, mut queue) = new_scratch();
+        let mut g = Gather::new(slots);
         blocks
             .into_iter()
-            .map(|range| {
-                neighbourhood_block(geo, mesh, radius_m, centre, range, &mut stamp, &mut queue)
-            })
+            .map(|range| neighbourhood_block(geo, mesh, radius_m, centre, range, &mut g))
             .collect()
     };
     // The blocks in their order: the table one pass over the slots makes.
@@ -262,17 +264,14 @@ struct Block {
     weight: Vec<f32>,
 }
 
-/// The neighbourhoods of the centres in `range`. `stamp` holds, per slot,
-/// the last centre that reached it (`u32::MAX`: none); a scratch the
-/// blocks of one thread share, as the centres are distinct.
+/// The neighbourhoods of the centres in `range`.
 fn neighbourhood_block(
     geo: &MeshStar,
     mesh: &PeriodicTriangulation,
     radius_m: f64,
     centre: Option<&[u8]>,
     range: std::ops::Range<usize>,
-    stamp: &mut [u32],
-    queue: &mut Vec<usize>,
+    g: &mut Gather,
 ) -> Block {
     let mut block = Block {
         start: Vec::with_capacity(range.len()),
@@ -284,6 +283,44 @@ fn neighbourhood_block(
         if mesh.v_alive[i] == 0 || centre.is_some_and(|c| c[i] == 0) {
             continue;
         }
+        g.gather(geo, mesh, radius_m, i);
+        block.member.extend_from_slice(&g.member);
+        block.weight.extend_from_slice(&g.weight);
+    }
+    block
+}
+
+/// The scratch of one thread's walks. `stamp` holds, per slot, the last
+/// centre that reached it (`u32::MAX`: none); the walks of one thread can
+/// share it, as their centres are distinct.
+struct Gather {
+    stamp: Vec<u32>,
+    queue: Vec<usize>,
+    member: Vec<u32>,
+    weight: Vec<f32>,
+}
+
+impl Gather {
+    fn new(slots: usize) -> Self {
+        Gather {
+            stamp: vec![u32::MAX; slots],
+            queue: Vec::new(),
+            member: Vec::new(),
+            weight: Vec::new(),
+        }
+    }
+
+    /// The neighbourhood of `i` into `member` and `weight`, in the order
+    /// of the walk.
+    fn gather(&mut self, geo: &MeshStar, mesh: &PeriodicTriangulation, radius_m: f64, i: usize) {
+        let Gather {
+            stamp,
+            queue,
+            member,
+            weight,
+        } = self;
+        member.clear();
+        weight.clear();
         queue.clear();
         queue.push(i);
         stamp[i] = i as u32;
@@ -300,8 +337,8 @@ fn neighbourhood_block(
             if w <= 0.0 && j != i {
                 continue;
             }
-            block.member.push(j as u32);
-            block.weight.push(w as f32);
+            member.push(j as u32);
+            weight.push(w as f32);
             for &k in &geo.star[geo.star_start[j] as usize..geo.star_start[j + 1] as usize] {
                 let k = k as usize;
                 if stamp[k] == i as u32 {
@@ -312,50 +349,98 @@ fn neighbourhood_block(
             }
         }
     }
-    block
 }
 
-/// The largest value over each neighbourhood; 0 where a slot has none.
-pub fn max_within<T: Copy + Into<f64>>(nb: &Neighbourhoods, field: &[T]) -> Vec<f32> {
-    let slots = nb.start.len() - 1;
+/// A value per admitted node from its neighbourhood (`reduce(member,
+/// weight)`), gathered one node at a time; 0 where a slot is not admitted.
+fn reduce_within(
+    geo: &MeshStar,
+    mesh: &PeriodicTriangulation,
+    radius_m: f64,
+    centre: Option<&[u8]>,
+    reduce: impl Fn(&[u32], &[f32]) -> f32 + Sync,
+) -> Vec<f32> {
+    let slots = mesh.vertex_slots();
     let mut out = vec![0f32; slots];
-    for i in 0..slots {
+    let run = |g: &mut Gather, base: usize, chunk: &mut [f32]| {
+        for (k, o) in chunk.iter_mut().enumerate() {
+            let i = base + k;
+            if mesh.v_alive[i] == 0 || centre.is_some_and(|c| c[i] == 0) {
+                continue;
+            }
+            g.gather(geo, mesh, radius_m, i);
+            *o = reduce(&g.member, &g.weight);
+        }
+    };
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        out.par_chunks_mut(NEIGHBOURHOOD_BLOCK)
+            .enumerate()
+            .for_each_init(
+                || Gather::new(slots),
+                |g, (b, chunk)| run(g, b * NEIGHBOURHOOD_BLOCK, chunk),
+            );
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut g = Gather::new(slots);
+        for (b, chunk) in out.chunks_mut(NEIGHBOURHOOD_BLOCK).enumerate() {
+            run(&mut g, b * NEIGHBOURHOOD_BLOCK, chunk);
+        }
+    }
+    out
+}
+
+/// The largest value over each neighbourhood of `radius_m` about the
+/// admitted nodes; 0 where a slot has none.
+pub fn max_within<T: Copy + Into<f64> + Sync>(
+    geo: &MeshStar,
+    mesh: &PeriodicTriangulation,
+    radius_m: f64,
+    centre: Option<&[u8]>,
+    field: &[T],
+) -> Vec<f32> {
+    reduce_within(geo, mesh, radius_m, centre, |member, _| {
         let mut m = f64::NEG_INFINITY;
-        for k in nb.start[i] as usize..nb.start[i + 1] as usize {
-            let v: f64 = field[nb.member[k] as usize].into();
+        for &j in member {
+            let v: f64 = field[j as usize].into();
             if v > m {
                 m = v;
             }
         }
-        out[i] = if m == f64::NEG_INFINITY {
+        if m == f64::NEG_INFINITY {
             0.0
         } else {
             m as f32
-        };
-    }
-    out
+        }
+    })
 }
 
-/// The lens-weighted mean over each neighbourhood; 0 where a slot has none.
-pub fn mean_within<T: Copy + Into<f64>>(nb: &Neighbourhoods, field: &[T]) -> Vec<f32> {
-    let slots = nb.start.len() - 1;
-    let mut out = vec![0f32; slots];
-    for i in 0..slots {
+/// The lens-weighted mean over each neighbourhood of `radius_m` about the
+/// admitted nodes; 0 where a slot has none.
+pub fn mean_within<T: Copy + Into<f64> + Sync>(
+    geo: &MeshStar,
+    mesh: &PeriodicTriangulation,
+    radius_m: f64,
+    centre: Option<&[u8]>,
+    field: &[T],
+) -> Vec<f32> {
+    reduce_within(geo, mesh, radius_m, centre, |member, weight| {
         let mut sum = 0.0;
         let mut total = 0.0;
-        for k in nb.start[i] as usize..nb.start[i + 1] as usize {
-            let w = nb.weight[k] as f64;
-            let v: f64 = field[nb.member[k] as usize].into();
+        for (&j, &w) in member.iter().zip(weight) {
+            let w = w as f64;
+            let v: f64 = field[j as usize].into();
             sum += w * v;
             total += w;
         }
-        out[i] = if total > 0.0 {
+        if total > 0.0 {
             (sum / total) as f32
         } else {
             0.0
-        };
-    }
-    out
+        }
+    })
 }
 
 /// The node under a point: the heaviest corner of the triangle it lies in.

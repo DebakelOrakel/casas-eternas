@@ -312,8 +312,8 @@ fn build_remesh(name: &str, domain: Domain) {
         h.add_all(&n.start);
         h.add_all(&n.member);
         h.add_all(&n.weight);
-        h.add_all(&nb::max_within(&n, &z));
-        h.add_all(&nb::mean_within(&n, &z));
+        h.add_all(&nb::max_within(&geo.cells, &mesh, radius, admit, &z));
+        h.add_all(&nb::mean_within(&geo.cells, &mesh, radius, admit, &z));
     }
     assert_eq!(
         h.line(&format!("{name}_neighbourhoods")),
@@ -442,13 +442,8 @@ fn a_dumped_column_mean_height_gives_the_typescript_values() {
     let rising: Vec<u8> = read(&dir, "rising.u8");
     let height: Vec<f32> = read(&dir, "height.f32");
     let start = std::time::Instant::now();
-    let n = nb::neighbourhoods(&geo, &mesh, 10000.0, Some(&rising));
-    let result = nb::mean_within(&n, &height);
-    eprintln!(
-        "{} members in {:.0} ms",
-        n.member.len(),
-        start.elapsed().as_secs_f64() * 1e3
-    );
+    let result = nb::mean_within(&geo, &mesh, 10000.0, Some(&rising), &height);
+    eprintln!("{:.0} ms", start.elapsed().as_secs_f64() * 1e3);
     let want: Vec<f32> = read(&dir, "result.f32");
     let differ = result
         .iter()

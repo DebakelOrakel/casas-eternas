@@ -48,7 +48,7 @@ use crate::mesh::mesh_column::{
 use crate::mesh::mesh_density::MESH_TUNING;
 use crate::mesh::mesh_erosion::{MeshErosionOptions, MeshPipeline, MeshRouting, run_mesh_erosion};
 use crate::mesh::mesh_hydrology::{MeshSubstrate, mesh_routing};
-use crate::mesh::mesh_neighbourhood::{mean_within, mesh_star, neighbourhoods};
+use crate::mesh::mesh_neighbourhood::{mean_within, mesh_star};
 use crate::mesh::mesh_raster::rasterise_node_field;
 use crate::mesh::mesh_serial::{SerializedMesh, compact_mesh, decode_mesh, encode_mesh, permute};
 use crate::mesh::mesh_state::{FieldKind, MeshState};
@@ -470,8 +470,13 @@ fn column_mean_height(
         })
         .collect();
     let star = mesh_star(mesh, unit_m);
-    let nb = neighbourhoods(&star, mesh, TECTONICS_TUNING.wedge_radius_m, Some(rising));
-    mean_within(&nb, &height_m)
+    mean_within(
+        &star,
+        mesh,
+        TECTONICS_TUNING.wedge_radius_m,
+        Some(rising),
+        &height_m,
+    )
 }
 
 /// The column's factor on a node's thickening over the epoch.

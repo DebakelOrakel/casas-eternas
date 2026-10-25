@@ -270,7 +270,7 @@ fn run(name: &str, domain: Domain) {
         }
         for id in SEASONAL_ECOLOGY_FIELDS {
             for m in [1, 7, 12] {
-                let month = ecology_month(&eco, id, m, 1.3);
+                let month = ecology_month(&eco, &mesh, id, m, 1.3);
                 h.add(f64::from(u8::from(month.is_some())));
                 if let Some(month) = month {
                     h.add_all(&month);

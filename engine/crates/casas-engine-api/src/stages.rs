@@ -725,7 +725,7 @@ impl World {
         let data = match stages.ecology.as_mut() {
             Some(eco) if eco.params.is_some() && is_seasonal_ecology_field(id) => {
                 let weight = eco.params.as_ref().unwrap().weights[id.index()].unwrap_or(1.0);
-                ecology_month(&eco.base, id, month as usize, weight).map(|nodes| {
+                ecology_month(&eco.base, &coupled.mesh, id, month as usize, weight).map(|nodes| {
                     eco.base.raster = tri.take();
                     let fine = ecology_fine(
                         &mut eco.base,

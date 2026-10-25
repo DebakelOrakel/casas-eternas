@@ -14,8 +14,8 @@ use crate::core::js;
 use crate::elevation::elevation_scale::{SEA_LEVEL, meters_to_elevation};
 use crate::elevation::globe_noise::globe_octave_on;
 use crate::mesh::mesh_neighbourhood::{
-    MeshGeometry, Neighbourhoods, boundary_density, discs_around, gaussian_halos, max_within,
-    mean_within, mesh_geometry, neighbourhoods, slope_of,
+    MeshGeometry, boundary_density, discs_around, gaussian_halos, max_within, mean_within,
+    mesh_geometry, slope_of,
 };
 use crate::mesh::mesh_raster::{TriangleRaster, rasterise_node_part, triangle_raster};
 use crate::mesh::periodic_delaunay::PeriodicTriangulation;
@@ -168,7 +168,6 @@ pub struct EcologySeasons {
     pub sea_rich_static: Vec<f32>,
     pub access: Vec<f32>,
     pub freshwater: Vec<f32>,
-    pub coast: Neighbourhoods,
 }
 
 /// The physics of the ecology, every field before the sliders
@@ -240,16 +239,20 @@ pub fn prepare_ecology(
         .collect();
 
     // Water and sea within reach.
-    let coast = neighbourhoods(&geo.cells, mesh, t.coast_reach_m, None);
-    let water = neighbourhoods(&geo.cells, mesh, t.water_reach_m, Some(land));
-    let placer = neighbourhoods(&geo.cells, mesh, t.placer_reach_m, Some(land));
-    let ecotone = neighbourhoods(&geo.cells, mesh, t.ecotone_reach_m, Some(land));
+    let coast = |field: &[f32], mean: bool| {
+        if mean {
+            mean_within(&geo.cells, mesh, t.coast_reach_m, None, field)
+        } else {
+            max_within(&geo.cells, mesh, t.coast_reach_m, None, field)
+        }
+    };
+    let water = |field: &[f32]| max_within(&geo.cells, mesh, t.water_reach_m, Some(land), field);
 
     let shelf_floor = SEA_LEVEL - meters_to_elevation(t.fish_shelf_depth_m);
     let shallow: Vec<f32> = (0..n)
         .map(|v| f32::from(u8::from(sea[v] != 0 && z[v] as f64 > shelf_floor)))
         .collect();
-    let shelf_share = mean_within(&coast, &shallow);
+    let shelf_share = coast(&shallow, true);
     let mut sea_rich = vec![0f32; n];
     let mut sea_rich_static = vec![0f32; n];
     for v in 0..n {
@@ -266,8 +269,8 @@ pub fn prepare_ecology(
             + t.fish_upwelling_w * rising) as f32;
         sea_rich[v] = (sea_rich_static[v] as f64 + t.fish_mixing_w * cool) as f32;
     }
-    let rich_sea_near = max_within(&coast, &sea_rich);
-    let sea_share = mean_within(&coast, &sea_f);
+    let rich_sea_near = coast(&sea_rich, false);
+    let sea_share = coast(&sea_f, true);
 
     // A big river's water per land node, and what lies within reach of it.
     let has_hydrology = inputs.discharge.is_some() && inputs.max_discharge > 0.0;
@@ -296,10 +299,10 @@ pub fn prepare_ecology(
             }
         }
     }
-    let river_near = max_within(&water, &river);
-    let river_root_near = max_within(&placer, &river_root);
-    let river_wet_near = max_within(&water, &river_wet);
-    let lake_near = max_within(&water, &lake);
+    let river_near = water(&river);
+    let river_root_near = max_within(&geo.cells, mesh, t.placer_reach_m, Some(land), &river_root);
+    let river_wet_near = water(&river_wet);
+    let lake_near = water(&lake);
     let well_near = inputs.water_table.map(|table| {
         let shallow_table: Vec<f32> = (0..n)
             .map(|v| {
@@ -308,7 +311,7 @@ pub fn prepare_ecology(
                 ))
             })
             .collect();
-        max_within(&water, &shallow_table)
+        water(&shallow_table)
     });
     let mut waterlogged = vec![0f32; n];
     if let Some(table) = inputs.water_table {
@@ -323,7 +326,13 @@ pub fn prepare_ecology(
     // Game's edges.
     let differs = |a: usize, b: usize| land[b] == 1 && biome_at[a] != biome_at[b];
     let edge_density = boundary_density(&geo, mesh, land, &differs, t.ecotone_counted_on_m);
-    let edges = mean_within(&ecotone, &edge_density);
+    let edges = mean_within(
+        &geo.cells,
+        mesh,
+        t.ecotone_reach_m,
+        Some(land),
+        &edge_density,
+    );
 
     let slope = slope_of(&geo, mesh, z);
 
@@ -563,7 +572,6 @@ pub fn prepare_ecology(
         sea_rich_static,
         access: k_access,
         freshwater: k_freshwater,
-        coast,
     });
     EcologyBase {
         geo,
@@ -596,6 +604,7 @@ pub fn prepare_ecology(
 /// when the climate has no months or the field is not seasonal.
 pub fn ecology_month(
     eco: &EcologyBase,
+    mesh: &PeriodicTriangulation,
     field: EcologyField,
     month: usize,
     weight: f64,
@@ -619,7 +628,7 @@ pub fn ecology_month(
                 as f32;
             out[v] = (weight * (1.0 - det_exp(-(rich[v] as f64)))) as f32;
         }
-        let near = max_within(&s.coast, &rich);
+        let near = max_within(&eco.geo.cells, mesh, t.coast_reach_m, None, &rich);
         for v in 0..n {
             if land[v] != 0 {
                 out[v] = (weight
