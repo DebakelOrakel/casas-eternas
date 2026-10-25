@@ -25,7 +25,5 @@
   "incubator.people.play.label": "Abspielen",
   "incubator.people.play.labelActive": "Anhalten",
   "incubator.people.play.help": "Lässt die Ausbreitung von vorne ablaufen.",
-  "incubator.people.time": "vor {years} Jahren",
-  "incubator.people.legend.front": "Front",
-  "incubator.people.legend.settled": "Besiedelt"
+  "incubator.people.time": "vor {years} Jahren"
 }

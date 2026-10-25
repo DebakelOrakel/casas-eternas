@@ -46,6 +46,7 @@ import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
 import type { AnimalLayer, AnimalWorkerInbound, AnimalWorkerOutbound } from './animalWorker'
 import type { AnimalUse } from './animals'
 import { SPAN_YEARS, type PeopleResult, type PeopleWorkerInbound, type PeopleWorkerOutbound } from './peopleWorker'
+import { arrowsOf, drawArrows, type PeopleArrow } from './peopleArrows'
 import type { World } from '../../world/query'
 import type { PlantUse } from './plants'
 import type { PlantLayer, PlantWorkerInbound, PlantWorkerOutbound, TreeLayer } from './plantWorker'
@@ -411,23 +412,50 @@ function spreadPeople(input: PeopleWorkerInbound): Promise<(PeopleWorkerOutbound
   })
 }
 
-// The people's colours: the front (where they arrived within FRONT_YEARS),
-// the land they settled before, the routes. A trial (2026-10-25).
-const PEOPLE_FRONT: readonly [number, number, number] = [250, 180, 50]
-const PEOPLE_SETTLED: readonly [number, number, number] = [200, 90, 40]
+// The people's colours: the land by when it was settled, years before the
+// game, dark the first, light the last (a ramp, PEOPLE_AGE_STOPS); the
+// arrows. A trial (2026-10-25); the first try drew the front bright and
+// the land behind it in one colour.
+const PEOPLE_AGE_STOPS: readonly { value: number; rgb: [number, number, number] }[] = [
+  { value: 5_000, rgb: [250, 225, 120] },
+  { value: 25_000, rgb: [240, 150, 55] },
+  { value: 45_000, rgb: [200, 75, 40] },
+  { value: 70_000, rgb: [110, 25, 35] },
+]
 const PEOPLE_ROUTE: readonly [number, number, number] = [90, 40, 25]
-const FRONT_YEARS = 1500
-// A route is drawn where this many land cells were reached through it;
-// its width grows with the logarithm of that, 1 to 4 chart texels.
-const ROUTE_MIN_CELLS = 200
+// The ramp's colour for a settlement `ago` years before the game.
+function ageColour(ago: number): [number, number, number] {
+  const stops = PEOPLE_AGE_STOPS
+  if (ago <= stops[0].value) return stops[0].rgb
+  for (let k = 1; k < stops.length; k++) {
+    if (ago <= stops[k].value) {
+      const f = (ago - stops[k - 1].value) / (stops[k].value - stops[k - 1].value)
+      const a = stops[k - 1].rgb
+      const b = stops[k].rgb
+      return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
+    }
+  }
+  return stops[stops.length - 1].rgb
+}
+// The origin's mark, chart texels: a red dot in a dark ring, crosshairs
+// out to ORIGIN_TICK_TEXELS, each on a white rim, so it stands out on any
+// ground (the first, a small dark ring, was easy to miss, 2026-10-25).
+const ORIGIN_RING_TEXELS = 46
+const ORIGIN_RING_WIDTH = 9
+const ORIGIN_DOT_TEXELS = 18
+const ORIGIN_TICK_TEXELS = 90
+const ORIGIN_TICK_WIDTH = 7
+const ORIGIN_RIM = 3
+const ORIGIN_DOT: readonly [number, number, number] = [220, 30, 30]
+const ORIGIN_DARK: readonly [number, number, number] = [25, 25, 25]
 // The years before the game the people set out (SPAN_YEARS later, they
 // stand 5 000 years before it).
 const PEOPLE_AGO_AT_START = 70_000
 
 // The people at `t` years after their departure over a painted chart,
-// into a copy: the land they reached by then, the front bright; and the
-// routes they took to get there.
-function blendPeople(base: Uint8ClampedArray, people: PeopleResult, t: number, spread: boolean, routes: boolean, width: number, height: number, scale: number): Uint8ClampedArray {
+// into a copy: the land they reached by then, by when they came; the
+// arrows of the way they took to get there; and where they set out.
+function blendPeople(base: Uint8ClampedArray, people: PeopleResult, arrows: readonly PeopleArrow[], t: number, spread: boolean, routes: boolean, width: number, height: number, scale: number): Uint8ClampedArray {
   const out = new Uint8ClampedArray(base)
   const W = width * scale
   const H = height * scale
@@ -438,9 +466,8 @@ function blendPeople(base: Uint8ClampedArray, people: PeopleResult, t: number, s
         const cell = row + Math.floor(x / scale)
         const at = people.arrival[cell]
         if (!(at <= t) || !people.land[cell]) continue
-        const front = t - at < FRONT_YEARS
-        const [cr, cg, cb] = front ? PEOPLE_FRONT : PEOPLE_SETTLED
-        const a = front ? 0.8 : 0.45
+        const [cr, cg, cb] = ageColour(PEOPLE_AGO_AT_START - at)
+        const a = 0.7
         const i = 4 * (y * W + x)
         out[i] = out[i] * (1 - a) + cr * a
         out[i + 1] = out[i + 1] * (1 - a) + cg * a
@@ -448,33 +475,36 @@ function blendPeople(base: Uint8ClampedArray, people: PeopleResult, t: number, s
       }
     }
   }
-  if (routes) {
-    const [cr, cg, cb] = PEOPLE_ROUTE
-    for (let c = 0; c < people.flow.length; c++) {
-      const f = people.flow[c]
-      const to = people.from[c]
-      if (f < ROUTE_MIN_CELLS || to < 0 || !(people.arrival[c] <= t)) continue
-      const half = Math.min(4, 1 + 1.2 * Math.log10(f / ROUTE_MIN_CELLS)) / 2
-      const ax = ((c % width) + 0.5) * scale
-      const ay = (Math.floor(c / width) + 0.5) * scale
-      let bx = ((to % width) + 0.5) * scale
-      const by = (Math.floor(to / width) + 0.5) * scale
-      // Across the wrap, the short way.
-      if (bx - ax > W / 2) bx -= W
-      else if (ax - bx > W / 2) bx += W
-      const steps = Math.ceil(Math.hypot(bx - ax, by - ay))
-      for (let s = 0; s <= steps; s++) {
-        const px = ax + ((bx - ax) * s) / Math.max(1, steps)
-        const py = ay + ((by - ay) * s) / Math.max(1, steps)
-        for (let dy = Math.floor(py - half); dy <= Math.ceil(py + half); dy++) {
-          if (dy < 0 || dy >= H) continue
-          for (let dx = Math.floor(px - half); dx <= Math.ceil(px + half); dx++) {
-            const i = 4 * (dy * W + (((dx % W) + W) % W))
-            out[i] = cr
-            out[i + 1] = cg
-            out[i + 2] = cb
-          }
-        }
+  if (routes) drawArrows(out, arrows, t, W, H, PEOPLE_ROUTE)
+  if (people.origin >= 0) {
+    const ox = ((people.origin % width) + 0.5) * scale
+    const oy = (Math.floor(people.origin / width) + 0.5) * scale
+    const R = ORIGIN_RING_TEXELS
+    const half = ORIGIN_RING_WIDTH / 2
+    const tick = ORIGIN_TICK_WIDTH / 2
+    // What a texel of the mark is: 0 none, 1 rim, 2 dark, 3 the dot.
+    const markAt = (dx: number, dy: number): number => {
+      const d = Math.hypot(dx, dy)
+      if (d <= ORIGIN_DOT_TEXELS) return 3
+      if (Math.abs(d - R) <= half) return 2
+      const ticked = d > R + half && d <= ORIGIN_TICK_TEXELS && (Math.abs(dx) <= tick || Math.abs(dy) <= tick)
+      if (ticked) return 2
+      if (d <= ORIGIN_DOT_TEXELS + ORIGIN_RIM || Math.abs(d - R) <= half + ORIGIN_RIM) return 1
+      if (d > R && d <= ORIGIN_TICK_TEXELS + ORIGIN_RIM && (Math.abs(dx) <= tick + ORIGIN_RIM || Math.abs(dy) <= tick + ORIGIN_RIM)) return 1
+      return 0
+    }
+    const reach = ORIGIN_TICK_TEXELS + ORIGIN_RIM
+    for (let dy = -reach; dy <= reach; dy++) {
+      const y = Math.round(oy + dy)
+      if (y < 0 || y >= H) continue
+      for (let dx = -reach; dx <= reach; dx++) {
+        const m = markAt(dx, dy)
+        if (m === 0) continue
+        const [cr, cg, cb] = m === 3 ? ORIGIN_DOT : m === 2 ? ORIGIN_DARK : [255, 255, 255]
+        const i = 4 * (y * W + (((Math.round(ox + dx) % W) + W) % W))
+        out[i] = cr
+        out[i + 1] = cg
+        out[i + 2] = cb
       }
     }
   }
@@ -610,6 +640,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The people's spread (peopleWorker.ts), the time shown (years from the
   // departure), its two layers, and the origin set by a click (-1: chosen).
   let people: PeopleResult | null = null
+  let peopleArrows: PeopleArrow[] = []
   let peopleTime = SPAN_YEARS
   let spreadOn = true
   let routesOn = true
@@ -1003,16 +1034,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     content: () => {
       if (onPeople()) {
         if (!people || (!spreadOn && !routesOn)) return { count: 0, build: () => [] }
+        const routes = routesOn ? [{ label: t('incubator.people.routes.label'), rgb: [...PEOPLE_ROUTE] as [number, number, number], shape: 'line' as const }] : []
         return {
           count: 1,
-          build: () => [{
-            type: 'swatches',
-            title: t('incubator.step.people.label'),
-            items: [
-              ...(spreadOn ? [{ label: t('incubator.people.legend.front'), rgb: [...PEOPLE_FRONT] as [number, number, number] }, { label: t('incubator.people.legend.settled'), rgb: [...PEOPLE_SETTLED] as [number, number, number] }] : []),
-              ...(routesOn ? [{ label: t('incubator.people.routes.label'), rgb: [...PEOPLE_ROUTE] as [number, number, number], shape: 'line' as const }] : []),
-            ],
-          }],
+          // The ramp as the years before the game the land was settled.
+          build: () => [spreadOn
+            ? { type: 'gradient', title: t('incubator.people.time', { years: '…' }), unit: '', stops: PEOPLE_AGE_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })), items: routes }
+            : { type: 'swatches', title: t('incubator.step.people.label'), items: routes }],
         }
       }
       const group = shownGroup()
@@ -1116,6 +1144,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     console.info(`[incubator] people spread, ${done.ms} ms`)
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin }
+    peopleArrows = arrowsOf(people, shown.width, CHART_WIDTH / shown.width)
+    console.info(`[incubator] ${peopleArrows.length} arrows`)
     showPlants()
   }
   // The picks' plants, wood or animals on the map, and their legend.
@@ -1151,9 +1181,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (unshaded) unshaded = blendOver(unshaded, regionCut.overlay)
     }
     const scale = CHART_WIDTH / shown.width
-    if (onPeople() && people && (spreadOn || routesOn)) {
-      shaded = blendPeople(shaded, people, peopleTime, spreadOn, routesOn, shown.width, shown.height, scale)
-      if (unshaded) unshaded = blendPeople(unshaded, people, peopleTime, spreadOn, routesOn, shown.width, shown.height, scale)
+    if (onPeople() && people) {
+      shaded = blendPeople(shaded, people, peopleArrows, peopleTime, spreadOn, routesOn, shown.width, shown.height, scale)
+      if (unshaded) unshaded = blendPeople(unshaded, people, peopleArrows, peopleTime, spreadOn, routesOn, shown.width, shown.height, scale)
     }
     const group = shownGroup()
     if (group) {

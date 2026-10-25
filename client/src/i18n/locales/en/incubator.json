@@ -25,7 +25,5 @@
   "incubator.people.play.label": "Play",
   "incubator.people.play.labelActive": "Pause",
   "incubator.people.play.help": "Runs the spread from the start.",
-  "incubator.people.time": "{years} years ago",
-  "incubator.people.legend.front": "Front",
-  "incubator.people.legend.settled": "Settled"
+  "incubator.people.time": "{years} years ago"
 }

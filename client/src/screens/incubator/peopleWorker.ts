@@ -17,15 +17,25 @@ import { readHabitat, type HabitatInput } from './habitat'
 //  - the land bridges: while the sea stands low (an ice age), the shelf
 //    down to SHELF_M is land, until BRIDGE_UNTIL;
 //  - the crossings: open water as far as the reach of the time, which
-//    grows from REACH_START to REACH_END over the span; a crossing longer
-//    than its time allows waits for it. Beyond REACH_NO_BOAT only by people
+//    grows evenly from REACH_START to REACH_END over the span; a crossing
+//    longer than its time allows waits for it. Beyond REACH_NO_BOAT only by people
 //    who have boats: who passed land with boat wood on their way (the
 //    trees' `boat`, trees.ts) and carry the craft on. Asked of the coast
 //    alone, it left Morvane's two largest continents unreached: no boat
 //    wood grows by the straits (2026-10-25, 18 % of the land reached
 //    against 82 % without the rule).
 // So people fill their own landmass first, walk to the near ones while the
-// sea is low, and reach the far islands last.
+// sea is low, and reach the far islands last, or never: before the bronze
+// age the earth's remote islands were empty too.
+//
+// Against the earth (2026-10-25): the span is the spread out of Africa,
+// some 70 000 years ago, to the bronze age, some 5 000; the sea rose over
+// the shelf from some 12 000 to 8 000 years ago, here 10 000; the crossing
+// to Australia, some 90 km, was made 65 000 to 50 000 years ago. On
+// Morvane, REACH_END 450 reaches 80 % of the land and 80 of its 85
+// landmasses; a continent 645 km over the sea stays empty. With the reach
+// growing with the cube of the time, or ending at 300 or 400 km, most
+// continents stayed empty.
 //
 // The numbers are first guesses, not calibrated.
 
@@ -66,21 +76,21 @@ const SPEED_MIN_KM_A = 0.05
 const SPEED_MAX_KM_A = 0.5
 const SLOPE_DRAG = 10
 const CORRIDOR = 2
-// The land bridges: the shelf to 120 m under today's sea, dry until 55 000
-// years after the departure.
+// The land bridges: the shelf to 120 m under today's sea, dry until 60 000
+// years after the departure, 10 000 years before the game.
 const SHELF_M = 120
-const BRIDGE_UNTIL = 55_000
-// The crossings: km of open water, growing with the cube of the time;
-// without boat wood no farther than REACH_NO_BOAT. On the water the front
+const BRIDGE_UNTIL = 60_000
+// The crossings: km of open water, growing evenly with the time; without
+// boats no farther than REACH_NO_BOAT. On the water the front
 // moves SEA_KM_A.
 const REACH_START = 30
-const REACH_END = 600
+const REACH_END = 450
 const REACH_NO_BOAT = 60
 const SEA_KM_A = 20
 
-const reachAt = (t: number): number => REACH_START + (REACH_END - REACH_START) * Math.min(1, t / SPAN_YEARS) ** 3
+const reachAt = (t: number): number => REACH_START + (REACH_END - REACH_START) * Math.min(1, t / SPAN_YEARS)
 // The time the reach first is `km`; Infinity beyond REACH_END.
-const timeForReach = (km: number): number => (km <= REACH_START ? 0 : km > REACH_END ? Infinity : SPAN_YEARS * ((km - REACH_START) / (REACH_END - REACH_START)) ** (1 / 3))
+const timeForReach = (km: number): number => (km <= REACH_START ? 0 : km > REACH_END ? Infinity : SPAN_YEARS * ((km - REACH_START) / (REACH_END - REACH_START)))
 
 const worker = self as unknown as Worker
 
