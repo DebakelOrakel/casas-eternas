@@ -28,6 +28,9 @@ export interface StepBarStep {
   // Set apart from the chain: reachable, but not one of the steps that build
   // on each other. Migration is the only one, until it gets its own screen.
   aside?: boolean
+  // What the mark says instead of the number, or the dot of a step set
+  // apart (the incubator's T for its trials).
+  mark?: string
 }
 
 export interface StepBarStepState {
@@ -103,7 +106,7 @@ export function createStepBar(host: HTMLElement, options: StepBarOptions): StepB
     // something that happens before you start. The steps set apart get no
     // number at all — a number says "this many to go", which is a promise
     // migration does not keep.
-    mark.textContent = step.aside ? '·' : String(index + (options.firstNumber ?? 0))
+    mark.textContent = step.mark ?? (step.aside ? '·' : String(index + (options.firstNumber ?? 0)))
 
     const text = document.createElement('span')
     text.className = 'step-bar__text'

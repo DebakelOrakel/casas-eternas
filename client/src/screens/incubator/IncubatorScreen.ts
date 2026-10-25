@@ -78,15 +78,16 @@ import '../generator/overlayList.css'
 //
 // THE STEPS (2026-10-25), along the foot as in the generator, numbered
 // from 1: the world is chosen in the list, not in a step. 1 the flora —
-// the wild plants and the trees; 2 the fauna — the trial's catchments and
-// animals. The terrain colour is a layer that can
+// the wild plants and the trees; 2 the fauna — the animals; and set apart
+// at the end, as the generator's migration, T the testing — the trials
+// that have no step of their own (the catchments). The terrain colour is a layer that can
 // be switched off: then the land is the bare paper, white with its
 // hillshade, as on the generator's map. The load panel shows the steps of an
 // open and which one failed; why it failed goes to the console. Over the
 // map, the generator's hover card for the level's node under the pointer.
 
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
-const STEPS = ['flora', 'fauna'] as const
+const STEPS = ['flora', 'fauna', 'testing'] as const
 
 // The ecology's fields the incubator shows (the level's artifact holds all
 // fourteen, docs/decisions/level-waters.md), with their icons as the
@@ -437,14 +438,16 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const sidebar = createSidebar(root, 'incubator.step')
 
   // THE STEPS. Each shows its own layers (stepLayers): the flora the
-  // plants and the wood, the fauna the trial's catchments and animals; the
-  // terrain and the ecology both. What a step had on stays for its return.
+  // plants and the wood, the fauna the animals, the testing the trial's
+  // catchments; the terrain and the ecology all. What a step had on stays
+  // for its return.
   let stepIndex = 0
   const onFlora = (): boolean => STEPS[stepIndex] === 'flora'
+  const onTesting = (): boolean => STEPS[stepIndex] === 'testing'
   // True once the screen is built: the step's layers are below.
   let built = false
   const stepBar = createStepBar(root, {
-    steps: STEPS.map((id) => ({ id })),
+    steps: STEPS.map((id) => (id === 'testing' ? { id, aside: true, mark: 'T' } : { id })),
     stepKeys: 'incubator.step',
     firstNumber: 1,
     onSelect: (index) => showStep(index),
@@ -640,7 +643,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }),
         // TRIAL: the plants there, on the world raster, one a line; the
         // use named on its first.
-        ...(shown ? (onFlora() ? plantsAt : animalsAt)(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name }))) : []),
+        ...(shown && !onTesting() ? (onFlora() ? plantsAt : animalsAt)(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name }))) : []),
       ] : [],
       months: t('readout.months').split(','),
       charts: [],
@@ -762,6 +765,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // A plant's colour is its place in its use; a tree's its place among
   // the trees, the same under every wood it gives.
   function shownGroup(): { title: string; from: number; layers: { name: string; codes: Uint8Array; reached: number; colour: number }[] } | null {
+    if (onTesting()) return null
     if (!onFlora()) {
       if (!animals || !animalShown) return null
       const use = animalShown
@@ -896,7 +900,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the animal or the plant. Each a copy of the chart, 128 MB.
   function overTrials(shaded: Uint8ClampedArray, unshaded: Uint8ClampedArray | null): { shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } {
     if (!shown) return { shaded, unshaded }
-    if (!onFlora() && regionBox.checked && regionCut) {
+    if (onTesting() && regionBox.checked && regionCut) {
       shaded = blendOver(shaded, regionCut.overlay)
       if (unshaded) unshaded = blendOver(unshaded, regionCut.overlay)
     }
@@ -1133,9 +1137,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The layers the step on screen offers: its picks and its trial
   // sections; the map and its legend redrawn.
   function stepLayers(): void {
-    const flora = onFlora()
-    overlayList.setRows([{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }], flora ? [RESOURCE_PICKS, PLANT_PICKS, WOOD_PICKS] : [RESOURCE_PICKS, ANIMAL_PICKS])
-    regionSection.hidden = flora
+    const picks = onFlora() ? [RESOURCE_PICKS, PLANT_PICKS, WOOD_PICKS] : onTesting() ? [RESOURCE_PICKS] : [RESOURCE_PICKS, ANIMAL_PICKS]
+    overlayList.setRows([{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }], picks)
+    regionSection.hidden = !onTesting()
     showCharts()
     plantLegend.refresh()
     hoverTooltip.refresh()
