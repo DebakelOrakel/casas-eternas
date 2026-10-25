@@ -4,9 +4,8 @@ import { WORLD_PIPELINE } from '../../world/worldPipeline'
 import { createFlatWorldView } from '../../map/flatWorldView'
 import { createGlobeWorldView, type GlobeWorldView } from '../../map/sphereView'
 import type { SymbolPicture, WorldSymbol, WorldSymbols, WorldView } from '../../map/worldView'
-import { createGlobeScaleArc } from '../../map/globeScaleArc'
-import { createGlobeTemperatureArc } from '../../map/globeTemperatureArc'
-import { createScaleBar } from '../../map/ScaleBar'
+import { createCameraTools } from '../../map/cameraTools'
+import { createMapScales, type FreeArea, type MapScales } from '../../map/mapScales'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
 import { buildProbeCard } from '../../ui/mapProbe/probeCard'
 import type { ProbeChart, ProbeRow } from '../../ui/mapProbe/probeCard'
@@ -362,37 +361,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // at 100, restarting at 100 stops at 200, and so on.
   let autoStopAtEpoch = MAX_TECTONICS_EPOCHS
 
-  // The temperature scale and the scale bar follow the camera — but only
-  // once it has come to rest: both read the map through ground picks (a
-  // ray against the relief meshes and their wrapped copies, a hundred of
-  // them for the scale), and doing that every frame of a pan made the pan
-  // crawl (picture check 2026-09-27). The view's key is compared per
-  // frame, which is cheap; the redraw waits VIEW_SETTLE_MS after the last
-  // change.
-  const VIEW_SETTLE_MS = 60
-  let viewKeySeen = ''
-  let viewChangedAt = 0
-  let viewDirty = true
-  // On the engine's frame, not a scene's: the view on screen is the flat
-  // one or the globe, each with its own scene.
-  const viewSettleObserver = ctx.engine.onBeginFrameObservable.add(() => {
-    const key = `${activeView().viewKey()},${window.innerWidth},${window.innerHeight},${freeAreaKey}`
-    if (key !== viewKeySeen) {
-      viewKeySeen = key
-      viewChangedAt = performance.now()
-      viewDirty = true
-      // The globe's curved scale reads no pick: it follows at once, and
-      // does not stand beside a globe that has grown over it.
-      renderScaleArc()
-      return
-    }
-    if (viewDirty && performance.now() - viewChangedAt >= VIEW_SETTLE_MS) {
-      viewDirty = false
-      renderTemperatureScale()
-      renderScaleBar()
-    }
-  })
-
   // Relief preview gate: eroded terrain unlocks the deeper zoom ceiling and
   // the tilt envelope; losing it (reset/regenerate/tectonics rerun) folds the
   // view back flat and drops the stale surface. Called from the 'rendered'
@@ -496,7 +464,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         <path class="compute-progress__fill" data-value="compute-progress-fill" d=""/>
       </svg>
     </div>
-    <div class="temp-scale"><canvas data-value="temp-scale" role="img"></canvas></div>
     <div class="world-panel" data-stage="world">
       <div class="world-panel__fields">
         <label class="world-field">
@@ -810,7 +777,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // rather than its strings (see i18n/relabel).
       relabel(sidebar.body)
       relabel(sidebar.foot)
-      relabelCameraTools()
+      cameraTools.relabel()
       climatePlayer.relabel()
       ecologyPlayer.relabel()
       sidebar.relabel()
@@ -821,8 +788,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       handbookPanel.relabel()
       loadPanel.relabel()
       saveMenu.relabel()
-      tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
-      temperatureArc.element.setAttribute('aria-label', t('overlay.temperature.scale'))
+      mapScales?.relabel()
       // The step statuses are words the screen chooses, not the bar's; this is
       // what puts the new language into them.
       updateNavState()
@@ -955,59 +921,27 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The layers go to the view whose shape is theirs (layerView, at the
   // compositor below).
   const activeView = (): WorldView => globeView ?? flatView
-  // THE GLOBE'S CAMERA BUTTONS, at the map's lower left (sphere worlds
-  // only; the flat map keeps its own keys): the view back to where it
-  // started (WorldView.resetCamera), the globe turning about its axis, and
-  // the look toward the horizon. The two toggles hold for the session —
-  // a new sphere world takes them over (setWorldShape) — and start off.
-  const cameraTools = document.createElement('div')
-  cameraTools.className = 'camera-tools'
-  const cameraTool = (helpKey: 'generator.camera.reset' | 'generator.camera.spin' | 'generator.camera.tilt', icon: string, onClick: () => void): HTMLButtonElement => {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'camera-tool'
-    button.setAttribute('aria-label', t(`${helpKey}.label`))
-    button.dataset.help = helpKey
-    button.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>`
-    button.addEventListener('click', onClick)
-    cameraTools.appendChild(button)
-    return button
-  }
-  let globeSpinning = false
-  let globeTilted = false
-  const cameraResetButton = cameraTool('generator.camera.reset', '<circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>', () => activeView().resetCamera())
-  const cameraSpinButton = cameraTool('generator.camera.spin', '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 3v5h-5"/>', () => {
-    globeSpinning = !globeSpinning
-    cameraSpinButton.setAttribute('aria-pressed', String(globeSpinning))
-    globeView?.setSpinning(globeSpinning)
+  // THE GLOBE'S CAMERA BUTTONS (map/cameraTools.ts), sphere worlds only.
+  // The two toggles hold for the session — a new sphere world takes them
+  // over (setWorldShape).
+  const cameraTools = createCameraTools(root, {
+    reset: () => activeView().resetCamera(),
+    spin: (on) => globeView?.setSpinning(on),
+    tilt: (on) => globeView?.setTilted(on),
   })
-  const cameraTiltButton = cameraTool('generator.camera.tilt', '<path d="M8 8h8l5 11H3z"/><path d="M5.7 13h12.6"/>', () => {
-    globeTilted = !globeTilted
-    cameraTiltButton.setAttribute('aria-pressed', String(globeTilted))
-    globeView?.setTilted(globeTilted)
-  })
-  cameraSpinButton.setAttribute('aria-pressed', 'false')
-  cameraTiltButton.setAttribute('aria-pressed', 'false')
-  const relabelCameraTools = (): void => {
-    cameraResetButton.setAttribute('aria-label', t('generator.camera.reset.label'))
-    cameraSpinButton.setAttribute('aria-label', t('generator.camera.spin.label'))
-    cameraTiltButton.setAttribute('aria-label', t('generator.camera.tilt.label'))
-  }
-  root.appendChild(cameraTools)
-  // The part of the canvas no bar covers (measureFreeArea, below): the
-  // globe's far shot fits into it.
-  let globeFreeArea: { left: number; top: number; right: number; bottom: number } | null = null
-  // The same as a key, for the scales' redraw (renderScaleArc).
-  let freeAreaKey = ''
+  // The part of the canvas no bar covers (map/mapScales.ts): the globe's
+  // far shot fits into it.
+  let globeFreeArea: FreeArea | null = null
   const setWorldShape = (shape: WorldShape): void => {
     worldShape = shape
     root.classList.toggle('generator-screen--sphere', shape === 'sphere')
+    cameraTools.setVisible(shape === 'sphere')
     if (shape === 'sphere' && !globeView) {
       globeView = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: MAP_WIDTH, textureHeight: MAP_HEIGHT, metresRound: SPHERE_METRES.around })
       globeView.setObliquity(Number(obliquityInput.value))
       globeView.setDayLength(Number(rotationInput.value))
-      globeView.setSpinning(globeSpinning)
-      globeView.setTilted(globeTilted)
+      globeView.setSpinning(cameraTools.spinning)
+      globeView.setTilted(cameraTools.tilted)
       globeView.setFreeArea(globeFreeArea)
       globeHome = homeForStep(panelIndex)
       globeView.setHome(globeHome, true)
@@ -3326,130 +3260,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     syncEcologyPanel()
     refreshOverlayList()
     renderLegends()
-    renderTemperatureScale(true)
+    mapScales?.redraw()
   }
 
-  // THE TEMPERATURE SCALE beside the map (2026-09-26): a strip between the
-  // column and the map, coloured like the temperature wash with the
-  // sea-level band of the latitude each screen row looks at — the band the
-  // climate's own function gives (climate/temperature.ts), with the
-  // greenhouse, the contrast and the planet's forcing as they stand, and
-  // nothing of the terrain. A reading aid, not a field: it follows the
-  // camera, since a row's latitude does, and stands in every step (decided
-  // 2026-09-26). The view's chartAt, per sampled row — its reference
-  // surface, met analytically, never the relief.
-
-  // The scale bar at the map's lower right (map/ScaleBar).
-  const scaleBar = createScaleBar(root, {
-    measure: (ax, ay, bx, by) => {
-      const view = activeView()
-      const a = view.chartAt(ax, ay)
-      const b = view.chartAt(bx, by)
-      return a && b ? view.metresBetween(a, b) : null
-    },
-    at: () => (globeView ? { x: ctx.canvas.clientWidth / 2, y: ctx.canvas.clientHeight / 2 } : null),
-  })
-  // On the globe (2026-10-11) the bar measures at the screen's centre, and
-  // the curved scale beside the globe (map/globeScaleArc.ts) stands in for
-  // it while it fits and the camera looks at the globe's centre (the tilt
-  // off). The flat map's bar is as before. arcShows counts the arc's
-  // appearances: the bar's key holds it, so that a bar hidden under the arc
-  // measures again when the arc goes, even at a view it measured before.
-  const scaleArc = createGlobeScaleArc(root)
-  let arcShown = false
-  let arcShows = 0
-  function renderScaleArc(): void {
-    let input: Parameters<typeof scaleArc.update>[0] = null
-    if (globeView) {
-      const canvasRect = ctx.canvas.getBoundingClientRect()
-      const area = globeFreeArea ?? { left: 0, top: 0, right: 1, bottom: 1 }
-      input = {
-        silhouette: globeView.silhouette(),
-        free: { left: area.left * canvasRect.width, top: area.top * canvasRect.height, right: area.right * canvasRect.width, bottom: area.bottom * canvasRect.height },
-        canvas: { left: canvasRect.left, top: canvasRect.top, width: canvasRect.width, height: canvasRect.height },
-      }
-    }
-    const shown = scaleArc.update(input)
-    renderTemperatureArc(input)
-    if (shown && !arcShown) arcShows++
-    arcShown = shown
-    if (shown) scaleBar.element.hidden = true
-  }
-  function renderScaleBar(): void {
-    if (arcShown) return
-    scaleBar.update(`${activeView().viewKey()},${window.innerWidth},${window.innerHeight},${freeAreaKey},${arcShows}`)
-  }
-
-  const tempScale = root.querySelector<HTMLCanvasElement>('[data-value="temp-scale"]')!
-  tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
-  const TEMP_SCALE_SAMPLES = 64
-  let tempScaleSeen = ''
-  // On a sphere world the strip is hidden (generator.css), and the globe's
-  // temperature scale (map/globeTemperatureArc.ts) stands in for it: an
-  // arc on the left of the globe that gives each point the temperature of
-  // the limb's latitude at its screen angle, pole to pole. Like the
-  // distance arc it reads no pick and follows the view at once
-  // (renderScaleArc), and the temperature levers redraw it with the strip.
-  const temperatureArc = createGlobeTemperatureArc(root, t('overlay.temperature.scale'))
-  function renderTemperatureArc(view: Parameters<typeof scaleArc.update>[0]): void {
-    const globe = globeView
-    if (!view || !globe) { temperatureArc.update(null); return }
+  // THE MAP'S SCALES (map/mapScales.ts): the distance and the temperature
+  // beside the map. Made with the bars round the map, at the foot of this
+  // function; updateOverlays may run before.
+  let mapScales: MapScales | null = null
+  // The temperature scale's band: the sea-level band the climate's own
+  // function gives (climate/temperature.ts), with the greenhouse, the
+  // contrast and the planet's forcing as they stand.
+  const temperatureBand = (): { values: Float32Array; key: string } => {
     const params = weatherParams()
-    temperatureArc.update({
-      ...view,
-      limbV: (psi) => globe.limbChartAt(psi)?.v ?? null,
-      band: seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, worldShape === 'sphere' ? 'sphere' : 'torus'),
-    })
-  }
-  function renderTemperatureScale(force = false): void {
-    if (force) renderScaleArc()
-    // The whole view key, the turn included: turning the view changes
-    // which latitude a row looks at (until 2026-10-10 the key left it out,
-    // and a turn alone kept the old scale).
-    const key = `${activeView().viewKey()},${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${tempScale.clientHeight}`
-    if (!force && key === tempScaleSeen) return
-    tempScaleSeen = key
-    const params = weatherParams()
-    const band = seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, worldShape === 'sphere' ? 'sphere' : 'torus')
-    const rect = tempScale.getBoundingClientRect()
-    const dpr = window.devicePixelRatio || 1
-    const w = Math.max(1, Math.round(rect.width * dpr))
-    const h = Math.max(1, Math.round(rect.height * dpr))
-    if (tempScale.width !== w || tempScale.height !== h) { tempScale.width = w; tempScale.height = h }
-    const c = tempScale.getContext('2d')
-    if (!c) return
-    c.clearRect(0, 0, w, h)
-    const bandW = Math.round(10 * dpr)
-    const pickX = rect.right + 2
-    const values: (number | null)[] = []
-    for (let i = 0; i <= TEMP_SCALE_SAMPLES; i++) {
-      const screenY = rect.top + (rect.height * i) / TEMP_SCALE_SAMPLES
-      const at = activeView().chartAt(pickX, screenY)
-      if (!at) { values.push(null); continue }
-      const row = Math.min(band.length - 1, Math.max(0, Math.floor(at.v * band.length)))
-      values.push(band[row])
-    }
-    const step = h / TEMP_SCALE_SAMPLES
-    for (let i = 0; i < TEMP_SCALE_SAMPLES; i++) {
-      const v = values[i]
-      if (v === null) continue
-      const [r, g, b] = temperatureColor(v)
-      c.fillStyle = `rgb(${r},${g},${b})`
-      c.fillRect(0, Math.floor(i * step), bandW, Math.ceil(step) + 1)
-    }
-    // Ticks where the band crosses a multiple of 10 °C between two samples.
-    c.fillStyle = 'rgba(31, 35, 40, 0.85)'
-    c.font = `${Math.round(9 * dpr)}px 'IBM Plex Sans', system-ui, sans-serif`
-    c.textBaseline = 'middle'
-    for (let i = 0; i < TEMP_SCALE_SAMPLES; i++) {
-      const a = values[i]
-      const b = values[i + 1]
-      if (a === null || b === null) continue
-      const lo = Math.ceil(Math.min(a, b) / 10) * 10
-      if (lo > Math.max(a, b) || lo === Math.min(a, b)) continue
-      const y = Math.round(step * (i + (lo - a) / (b - a || 1)))
-      c.fillRect(bandW, y, Math.round(4 * dpr), 1)
-      c.fillText(String(lo), bandW + Math.round(6 * dpr), y)
+    return {
+      values: seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, worldShape === 'sphere' ? 'sphere' : 'torus'),
+      key: `${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${worldShape}`,
     }
   }
 
@@ -6677,33 +6502,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // now; more controls as they get keys).
   const helpTooltip = createHelpTooltip(root)
 
-  // THE MAP'S FREE AREA: the canvas less the title bar above it, the step
-  // bar below it and the column if it lies over it, as fractions of the
-  // canvas, for the globe's far shot (GlobeWorldView.setFreeArea). Measured
-  // from the elements' rects whenever one of them changes size (a hidden
-  // bar measures zero and covers nothing).
-  const measureFreeArea = (): void => {
-    const canvasRect = ctx.canvas.getBoundingClientRect()
-    if (canvasRect.width <= 0 || canvasRect.height <= 0) return
-    const shown = (el: HTMLElement): DOMRect | null => {
-      const r = el.getBoundingClientRect()
-      return r.width > 0 && r.height > 0 ? r : null
-    }
-    const title = shown(titleBar.element)
-    const steps = shown(stepBar.element)
-    const column = shown(sidebar.element)
-    const clamp = (value: number): number => Math.min(1, Math.max(0, value))
-    globeFreeArea = {
-      left: column ? clamp((column.right - canvasRect.left) / canvasRect.width) : 0,
-      top: title ? clamp((title.bottom - canvasRect.top) / canvasRect.height) : 0,
-      right: 1,
-      bottom: steps ? clamp((steps.top - canvasRect.top) / canvasRect.height) : 1,
-    }
-    globeView?.setFreeArea(globeFreeArea)
-    freeAreaKey = `${globeFreeArea.left.toFixed(4)},${globeFreeArea.top.toFixed(4)},${globeFreeArea.bottom.toFixed(4)}`
-  }
-  const freeAreaObserver = new ResizeObserver(measureFreeArea)
-  for (const el of [ctx.canvas, titleBar.element, stepBar.element, sidebar.element]) freeAreaObserver.observe(el)
+  // THE MAP'S SCALES and its free area (map/mapScales.ts), once the bars
+  // round the map exist.
+  mapScales = createMapScales(root, {
+    engine: ctx.engine,
+    canvas: ctx.canvas,
+    view: activeView,
+    globe: () => globeView,
+    band: temperatureBand,
+    bars: { title: titleBar.element, steps: stepBar.element, column: sidebar.element },
+    onFreeArea: (area) => {
+      globeFreeArea = area
+      globeView?.setFreeArea(area)
+    },
+  })
 
   showPanel(0)
 
@@ -6759,7 +6571,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       return activeView().scene
     },
     dispose() {
-      ctx.engine.onBeginFrameObservable.remove(viewSettleObserver)
+      mapScales?.dispose()
+      cameraTools.dispose()
       globeView?.dispose()
       globeView = null
       // Everything that ticks on its own goes first: each one held the whole
@@ -6778,7 +6591,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       loadPanel.dispose()
       titleBar.dispose()
       helpTooltip.dispose()
-      freeAreaObserver.disconnect()
       artifactChooser.dispose()
       jobChooser.dispose()
       stopFinishingWatch()

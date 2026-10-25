@@ -1,0 +1,19 @@
+/* The temperature strip between the column and the map (mapScales.ts): the
+   height of the map, pointer-transparent, on the map chrome's layer. The
+   canvas fills the box — a canvas of its own keeps its intrinsic size
+   under top/bottom. */
+.temp-scale {
+  position: fixed;
+  top: var(--title-bar-height, 0px);
+  bottom: var(--step-bar-height, 0px);
+  left: var(--sidebar-width, 0px);
+  width: 34px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.temp-scale canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

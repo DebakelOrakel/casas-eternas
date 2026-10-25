@@ -5,6 +5,7 @@ import { fieldSpec } from './save/fieldSpec'
 import type { FieldSpec } from './save/fieldSpec'
 import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
 import { historyFromYaml, type WorldHistory } from './save/worldHistory'
+import { specFromYaml } from './save/worldSpec'
 import { deriveWorldId } from './identity'
 import { worldKindOf, type WorldKind } from './worldRecord'
 import { recordedPipeline } from './worldPipeline'
@@ -88,6 +89,10 @@ export interface WorldRecipe {
   history: WorldHistory
   // The pipeline that made it (worldPipeline.ts); '' for none.
   pipeline: string
+  // The controls' values by spec path, each control's default where the
+  // save has none (save/worldSpec.ts): what world/runParams turns into a
+  // run's parameters. Null for a spec that save/worldSpec refuses.
+  values: Readonly<Record<string, number>> | null
 }
 
 // What the world layer asks of the engine (DEC-0044, fork 7b): what sets
@@ -216,6 +221,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array, engine: World
     worldUid: readRecipeValue(yamlText, 'metadata.uid') ?? '',
     history: historyFromYaml(yamlText),
     pipeline: recordedPipeline(yamlText),
+    values: specValues(yamlText),
   }
   // The climate and the land fields on their meshes (DEC-0036 phase 7, the
   // hydrology's 7b); the former raster layers refuse the archive.
@@ -417,4 +423,13 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array, engine: World
   // Refuse an archive with no terrain: a world without it is not a world,
   // and half-reading one is worse than saying so.
   return (await savedMesh()) ? world : null
+}
+
+// The spec's values, or null when save/worldSpec refuses the spec.
+function specValues(yamlText: string): Readonly<Record<string, number>> | null {
+  try {
+    return specFromYaml(yamlText, '').values
+  } catch {
+    return null
+  }
 }

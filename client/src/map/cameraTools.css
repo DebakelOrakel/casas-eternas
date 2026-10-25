@@ -1,0 +1,39 @@
+/* The globe's camera buttons (cameraTools.ts) at the map's lower left: the
+   view reset, the spin and the tilt. A toggle that is on wears the accent,
+   as the pressed options of the column do (.gen-depth__options). */
+.camera-tools {
+  position: fixed;
+  left: calc(1rem + var(--sidebar-width, 0px));
+  bottom: calc(1rem + var(--step-bar-height, 0px));
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+}
+/* `display: flex` outranks the user-agent rule for [hidden]. */
+.camera-tools[hidden] {
+  display: none;
+}
+.camera-tool {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dc-line2);
+  border-radius: 18px;
+  background: var(--dc-menu-bg);
+  color: var(--dc-text2);
+  cursor: pointer;
+}
+.camera-tool:hover {
+  background: var(--dc-hover);
+}
+.camera-tool[aria-pressed='true'] {
+  border-color: var(--dc-accent);
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+}
+.camera-tool:focus-visible {
+  outline: 2px solid var(--dc-accent);
+  outline-offset: 2px;
+}

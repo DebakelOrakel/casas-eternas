@@ -358,75 +358,13 @@
   filter: none;
 }
 
-/* The temperature scale between the column and the map (see
-   GeneratorScreen.renderTemperatureScale): a strip the height of the map,
-   pointer-transparent, on the map chrome's layer. The canvas fills the
-   box — a canvas of its own keeps its intrinsic size under top/bottom. */
-.generator-screen .temp-scale {
-  position: fixed;
-  top: var(--title-bar-height, 0px);
-  bottom: var(--step-bar-height, 0px);
-  left: var(--sidebar-width, 0px);
-  width: 34px;
-  z-index: 2;
-  pointer-events: none;
-}
-
-.generator-screen .temp-scale canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
 /* A sphere world (map/sphereView.ts) shows its own layers in steps 1 and
    2 (DEC-0035, steps 4d2 and 4d5: --sphere-layers, set by the screen while
    the globe wears them). Elsewhere the legend and the step's layer list would
-   describe the flat sample world, and are hidden. The temperature strip
-   is hidden too: the globe has its own form of it, an arc on the left of
-   the globe (map/globeTemperatureArc.ts, 2026-10-11). The scale bar is shown again since the
-   orbit camera's zoom no longer tilts the view (2026-10-11): straight down,
-   it reads the globe as the flat map. */
+   describe the flat sample world, and are hidden. (The temperature strip
+   hides itself on a globe: map/mapScales.ts.) */
 .generator-screen--sphere:not(.generator-screen--sphere-layers) .overlay-legend,
-.generator-screen--sphere:not(.generator-screen--sphere-layers) .gen-layers,
-.generator-screen--sphere .temp-scale {
+.generator-screen--sphere:not(.generator-screen--sphere-layers) .gen-layers {
   display: none;
 }
 
-/* The globe's camera buttons (sphere worlds only) at the map's lower left:
-   the view reset, the spin and the tilt. A toggle that is on wears the
-   accent, as the pressed options of the column do (.gen-depth__options). */
-.generator-screen .camera-tools {
-  position: fixed;
-  left: calc(1rem + var(--sidebar-width, 0px));
-  bottom: calc(1rem + var(--step-bar-height, 0px));
-  z-index: 2;
-  display: none;
-  gap: 8px;
-}
-.generator-screen--sphere .camera-tools {
-  display: flex;
-}
-.generator-screen .camera-tool {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--dc-line2);
-  border-radius: 18px;
-  background: var(--dc-menu-bg);
-  color: var(--dc-text2);
-  cursor: pointer;
-}
-.generator-screen .camera-tool:hover {
-  background: var(--dc-hover);
-}
-.generator-screen .camera-tool[aria-pressed='true'] {
-  border-color: var(--dc-accent);
-  background: var(--dc-accent);
-  color: var(--dc-on-accent);
-}
-.generator-screen .camera-tool:focus-visible {
-  outline: 2px solid var(--dc-accent);
-  outline-offset: 2px;
-}

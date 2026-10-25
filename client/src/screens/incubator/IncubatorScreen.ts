@@ -4,8 +4,11 @@ import { domainOfKind } from '../../generator/core/domain'
 import { loadWasmEngine } from '../../generator/pipeline/engineWasm'
 import { relabel } from '../../i18n/relabel'
 import { createFlatWorldView } from '../../map/flatWorldView'
-import { createScaleBar } from '../../map/ScaleBar'
-import { createGlobeWorldView } from '../../map/sphereView'
+import { createCameraTools } from '../../map/cameraTools'
+import { createMapScales } from '../../map/mapScales'
+import { createGlobeWorldView, type GlobeWorldView } from '../../map/sphereView'
+import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
+import { weatherParamsFrom } from '../../world/runParams'
 import type { WorldView } from '../../map/worldView'
 import { listServerArtifacts, type ServerArtifact } from '../../server/artifactsClient'
 import { fetchWorld, listWorlds } from '../../server/worldClient'
@@ -166,25 +169,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       stepBar.relabel()
       updateSteps()
       overlayList.relabel()
+      cameraTools.relabel()
+      mapScales.relabel()
     },
   })
   titleBar.setWorld(null)
-
-  // The scale bar at the lower right, as in the generator: measured on the
-  // view's reference surface, at the screen's centre on the globe.
-  const scaleBar = createScaleBar(root, {
-    measure: (ax, ay, bx, by) => {
-      if (!view) return null
-      const a = view.chartAt(ax, ay)
-      const b = view.chartAt(bx, by)
-      return a && b ? view.metresBetween(a, b) : null
-    },
-    at: () => (view?.shape === 'sphere' ? { x: ctx.canvas.clientWidth / 2, y: ctx.canvas.clientHeight / 2 } : null),
-  })
-  scaleBar.element.hidden = true
-  const renderScaleBar = (): void => {
-    if (view) scaleBar.update(`${view.viewKey()},${window.innerWidth},${window.innerHeight}`)
-  }
 
   const sidebar = createSidebar(root, 'incubator.step')
 
@@ -213,6 +202,27 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     sidebar.setVisible(visible)
     stepBar.setVisible(visible)
   }
+
+  // THE MAP'S FURNITURE, as in the generator: the globe's camera buttons
+  // (map/cameraTools.ts), and the distance and temperature scales with the
+  // free area the globe's far shot fits into (map/mapScales.ts). The
+  // temperature is the sea-level band of the world's own levers.
+  let globe: GlobeWorldView | null = null
+  let band: { values: Float32Array; key: string } | null = null
+  const cameraTools = createCameraTools(root, {
+    reset: () => view?.resetCamera(),
+    spin: (on) => globe?.setSpinning(on),
+    tilt: (on) => globe?.setTilted(on),
+  })
+  const mapScales = createMapScales(root, {
+    engine: ctx.engine,
+    canvas: ctx.canvas,
+    view: () => view,
+    globe: () => globe,
+    band: () => band,
+    bars: { title: titleBar.element, steps: stepBar.element, column: sidebar.element },
+    onFreeArea: (area) => globe?.setFreeArea(area),
+  })
 
   // THE LAYERS. The terrain colour alone for now: on, the
   // chart with the terrain wash; off, the bare paper. The chart worker
@@ -300,13 +310,28 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!painted || disposed) return false
     step(`chart painted (${Object.entries(painted.ms).map(([k, v]) => `${k} ${v}`).join(', ')})`)
 
-    // The view for the world's shape, a new one per world.
+    // The view for the world's shape, a new one per world. The globe as
+    // the generator's: leaning with the world's obliquity, turning with its
+    // day, its far shot in the free area.
     view?.dispose()
     view = null
+    globe = null
     const domain = domainOfKind(kind, world.width, world.height)
     const deepestMetresPerPixel = LEVEL_NODE_SPACING_M / PIXELS_PER_NODE
+    const values = world.recipe.values
+    const params = values ? weatherParamsFrom((path) => values[path]) : null
+    band = params
+      ? { values: seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, kind), key: uid }
+      : null
     if (kind === 'sphere') {
-      const globe = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: CHART_WIDTH, textureHeight: CHART_HEIGHT, metresRound: domain.metresAround, deepestMetresPerPixel })
+      globe = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: CHART_WIDTH, textureHeight: CHART_HEIGHT, metresRound: domain.metresAround, deepestMetresPerPixel })
+      if (values) {
+        globe.setObliquity(values['planet.obliquity'])
+        globe.setDayLength(values['planet.rotation'])
+      }
+      globe.setSpinning(cameraTools.spinning)
+      globe.setTilted(cameraTools.tilted)
+      globe.setFreeArea(mapScales.freeArea())
       globe.setHome('overview', true)
       globe.setLayersShown(true)
       view = globe
@@ -318,7 +343,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const flat = kind !== 'sphere'
     charts = { shaded: painted.shaded, unshaded: flat ? painted.unshaded : null, paperShaded: painted.paperShaded, paperUnshaded: flat ? painted.paperUnshaded : null }
     showCharts()
-    view.scene.onAfterRenderObservable.add(renderScaleBar)
+    cameraTools.setVisible(kind === 'sphere')
+    mapScales.redraw()
     // The level's rivers, from the world raster's texels to the chart's.
     if (level.rivers) {
       const points = Float32Array.from(level.rivers.points)
@@ -333,7 +359,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     step('shown')
     loadPanel.close()
     held = { uid, name: '', seed: '', worldId: chosen.worldId }
-    scaleBar.element.hidden = false
     return true
   }
 
@@ -464,6 +489,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       handbookPanel.dispose()
       sidebar.dispose()
       stepBar.dispose()
+      mapScales.dispose()
+      cameraTools.dispose()
       titleBar.dispose()
       helpTooltip.dispose()
       serverIndicator.dispose()
