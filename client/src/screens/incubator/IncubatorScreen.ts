@@ -32,7 +32,12 @@ import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
 import { createOverlayList } from '../generator/OverlayList'
 import { OVERLAY_META, overlayKey } from '../generator/overlays'
 import { createStepBar } from '../generator/StepBar'
-import { t } from '../../i18n/i18n'
+import { formatValue, t, type TKey } from '../../i18n/i18n'
+import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
+import { buildProbeCard } from '../../ui/mapProbe/probeCard'
+import { elevationToMeters } from '../../generator/elevation/elevationScale'
+import { koppenLabelKey } from '../../generator/climate/koppen'
+import { biomeLabelKey } from '../../generator/climate/biomes'
 import type { ChartWorkerInbound, ChartWorkerOutbound } from './chartWorker'
 import { decodeFineValue, ECOLOGY_FINE_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
@@ -64,7 +69,8 @@ import '../../ui/theme/design.css'
 // the wild plants, still to come. The terrain colour is a layer that can
 // be switched off: then the land is the bare paper, white with its
 // hillshade, as on the generator's map. The load panel shows the steps of an
-// open and which one failed; why it failed goes to the console.
+// open and which one failed; why it failed goes to the console. Over the
+// map, the generator's hover card for the level's node under the pointer.
 
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
 const STEPS = ['flora'] as const
@@ -338,6 +344,40 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   showStep(0)
   showCharts()
 
+  // THE HOVER READOUT, the generator's card (ui/mapProbe): the node under
+  // the pointer through the chart's node map, its height, and on land its
+  // climate class, its biome and the ecology's fields shown (ECOLOGY_PICKS).
+  // None in a level made before its land fields. Only what it reads is
+  // kept of the level's land fields.
+  let probe: { nodes: Int32Array; z: Float32Array; land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'ecology'> } | null = null
+  function describeNode(x: number, y: number): HTMLElement | null {
+    if (!probe) return null
+    const node = probe.nodes[(y >> 1) * (CHART_WIDTH >> 1) + (x >> 1)]
+    const metres = Math.round(elevationToMeters(probe.z[node]))
+    const onLand = probe.land.land[node] === 1
+    const koppen = probe.land.koppen[node]
+    return buildProbeCard({
+      heading: metres >= 0 ? formatValue(String(metres), 'common.unit.metres') : t('readout.metresDeep', { v: String(-metres) }),
+      kind: onLand ? t('readout.kind.land') : t('readout.kind.ocean'),
+      land: onLand,
+      highlights: onLand ? [...(koppen > 0 ? [t(koppenLabelKey(koppen) as TKey)] : []), t(biomeLabelKey(probe.land.biome[node]) as TKey)] : [],
+      rows: onLand ? ECOLOGY_PICKS.flatMap((p) => {
+        const code = probe!.land.ecology[p.id]?.[node]
+        return code === undefined || code === ECOLOGY_FINE_OCEAN ? [] : [{ label: t(`resource.${p.id}.label` as TKey), value: formatValue(String(Math.round(decodeFineValue(code) * 100)), 'common.unit.percent') }]
+      }) : [],
+      months: t('readout.months').split(','),
+      charts: [],
+    })
+  }
+  const hoverTooltip = createMapHoverTooltip({
+    locate: (x, y) => view?.groundAt(x, y) ?? null,
+    surface: ctx.canvas,
+    host: root,
+    textureWidth: CHART_WIDTH,
+    textureHeight: CHART_HEIGHT,
+    describe: describeNode,
+  })
+
   // What the chooser's last reload found, for the open that follows it.
   let levels = new Map<string, ServerArtifact[]>()
   // Set on dispose, so a level that arrives after leaving is dropped.
@@ -434,6 +474,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ? { nodes: painted.nodes, fields: Object.fromEntries(ECOLOGY_PICKS.flatMap((p) => (land.ecology[p.id] ? [[p.id, land.ecology[p.id]]] : []))) }
       : null
     blended = null
+    probe = land && painted.nodes && ecology
+      ? { nodes: painted.nodes, z: level.z, land: { land: land.land, biome: land.biome, koppen: land.koppen, ecology: ecology.fields } }
+      : null
+    hoverTooltip.refresh()
     showCharts()
     cameraTools.setVisible(kind === 'sphere')
     mapScales.redraw()
@@ -585,6 +629,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       cameraTools.dispose()
       titleBar.dispose()
       helpTooltip.dispose()
+      hoverTooltip.dispose()
       serverIndicator.dispose()
       // A view disposes its own camera and its listeners on the shared
       // canvas with its scene.
