@@ -1,23 +1,23 @@
 import { Biome } from '../../generator/climate/biomes'
+import type { Trapezoid } from './habitat'
 
-// THE INCUBATOR'S SPECIES (2026-10-23, a trial): a few animals and plants
-// that matter to people just before the bronze age, each a NICHE over the
-// fields the save holds. Archetypes, named for now after the real species
-// they stand for. Hardcoded names, no catalog keys: we are trying it out.
+// THE INCUBATOR'S ANIMALS (2026-10-23, a trial): a few animals that matter
+// to people just before the bronze age, each a NICHE over the fields the
+// save holds. The plants are in plants.ts. Archetypes, named for now
+// after the real species they stand for. Hardcoded names, no catalog
+// keys: we are trying it out.
 //
 // A niche is a product of responses, each 0 … 1: the coldest and the
 // warmest month (the annual mean ∓ half the seasonal range), °C; the rain,
 // mm a year; the height, metres; the slope, metres a metre over a world
 // cell; the biome's weight; and, with `water`, how much the species needs
 // a river near (0 does not care, 1 lives only there). A response is a
-// trapezoid [a, b, c, d]: 0 below a, up to 1 at b, 1 to c, down to 0 at d.
+// trapezoid (habitat.ts).
 //
 // The numbers are first guesses from the real species' ranges, not
 // calibrated.
 
-export type Trapezoid = readonly [number, number, number, number]
-
-export type SpeciesRole = 'herbivore' | 'predator' | 'fish' | 'plant'
+export type SpeciesRole = 'herbivore' | 'predator' | 'fish'
 
 export interface SpeciesSpec {
   id: string
@@ -112,59 +112,6 @@ export const SPECIES: readonly SpeciesSpec[] = [
     id: 'salmon', name: 'Lachs', role: 'fish',
     coldest: [-60, -50, 10, 15], warmest: [4, 8, 18, 22], rain: [0, 0, 1e9, 1e9],
     biomes: ANY_LAND,
-  },
-  // The plants: where they grow, not how much people get.
-  {
-    id: 'wheat', name: 'Wildgetreide (Weizen/Gerste)', role: 'plant',
-    coldest: [-8, 0, 10, 14], warmest: [18, 22, 32, 36], rain: [200, 300, 700, 1100], height: [-1e9, -1e9, 1800, 2500],
-    biomes: { [Biome.MediterraneanScrub]: 1, [Biome.Steppe]: 0.9, [Biome.Grassland]: 0.7, [Biome.Woodland]: 0.6 },
-  },
-  {
-    id: 'millet', name: 'Wildhirse', role: 'plant',
-    coldest: [5, 12, 30, 35], warmest: [24, 27, 38, 42], rain: [250, 400, 1000, 1500],
-    biomes: { [Biome.Savanna]: 1, [Biome.TropicalDryForest]: 0.8, [Biome.Grassland]: 0.6, [Biome.Steppe]: 0.5 },
-  },
-  {
-    id: 'rice', name: 'Wildreis', role: 'plant',
-    coldest: [10, 16, 30, 35], warmest: [24, 27, 38, 42], rain: [900, 1300, 5000, 8000],
-    biomes: { [Biome.TropicalDryForest]: 0.8, [Biome.Savanna]: 0.7, [Biome.TropicalRainforest]: 0.6, [Biome.Woodland]: 0.5 },
-    water: 0.9,
-  },
-  {
-    id: 'lentil', name: 'Linse / Erbse', role: 'plant',
-    coldest: [-10, -2, 12, 16], warmest: [16, 20, 32, 36], rain: [250, 350, 900, 1300],
-    biomes: { [Biome.MediterraneanScrub]: 1, [Biome.Grassland]: 0.8, [Biome.Woodland]: 0.8, [Biome.Steppe]: 0.7, [Biome.TemperateForest]: 0.4 },
-  },
-  {
-    id: 'oak', name: 'Eiche (Eicheln)', role: 'plant',
-    coldest: [-18, -8, 10, 15], warmest: [14, 18, 30, 34], rain: [400, 600, 2000, 3000],
-    biomes: { [Biome.TemperateForest]: 1, [Biome.Woodland]: 1, [Biome.MediterraneanScrub]: 0.8, [Biome.TemperateRainforest]: 0.5 },
-  },
-  {
-    id: 'hazel', name: 'Haselnuss', role: 'plant',
-    coldest: [-25, -15, 6, 10], warmest: [13, 16, 26, 30], rain: [500, 700, 2000, 3000],
-    biomes: { [Biome.TemperateForest]: 1, [Biome.Woodland]: 0.7, [Biome.TemperateRainforest]: 0.7, [Biome.Boreal]: 0.4 },
-  },
-  {
-    id: 'apple', name: 'Wildobst (Apfel/Birne)', role: 'plant',
-    coldest: [-25, -15, 5, 10], warmest: [14, 17, 28, 32], rain: [400, 600, 1500, 2500],
-    biomes: { [Biome.Woodland]: 1, [Biome.TemperateForest]: 0.8, [Biome.MediterraneanScrub]: 0.4, [Biome.Steppe]: 0.3 },
-  },
-  {
-    id: 'olive', name: 'Olive', role: 'plant',
-    coldest: [2, 5, 12, 15], warmest: [22, 24, 32, 36], rain: [250, 400, 900, 1200],
-    biomes: { [Biome.MediterraneanScrub]: 1, [Biome.Woodland]: 0.4 },
-  },
-  {
-    id: 'date', name: 'Dattelpalme', role: 'plant',
-    coldest: [8, 12, 25, 30], warmest: [28, 32, 45, 50], rain: [0, 0, 300, 600],
-    biomes: { [Biome.Desert]: 1, [Biome.Steppe]: 0.5, [Biome.Savanna]: 0.4, [Biome.SaltFlat]: 0.2 },
-    water: 0.95,
-  },
-  {
-    id: 'yam', name: 'Knollen (Yams)', role: 'plant',
-    coldest: [14, 18, 30, 35], warmest: [22, 25, 38, 42], rain: [900, 1200, 5000, 8000],
-    biomes: { [Biome.TropicalRainforest]: 1, [Biome.TropicalDryForest]: 0.8, [Biome.Savanna]: 0.5 },
   },
 ]
 

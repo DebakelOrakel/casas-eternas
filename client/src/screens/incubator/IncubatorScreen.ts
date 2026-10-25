@@ -31,6 +31,9 @@ import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
 import type { SpeciesLayer, SpeciesWorkerInbound, SpeciesWorkerOutbound } from './speciesWorker'
 import type { World } from '../../world/query'
 import { SPECIES } from './species'
+import { PLANTS, type PlantUse } from './plants'
+import type { PlantCover, PlantLayer, PlantWorkerInbound, PlantWorkerOutbound } from './plantWorker'
+import type { HabitatInput } from './habitat'
 import '../../ui/theme/design.css'
 // The generator's layer switches, for the trial's switch.
 import '../generator/overlayList.css'
@@ -177,23 +180,78 @@ function distributeSpecies(input: SpeciesWorkerInbound): Promise<(SpeciesWorkerO
   })
 }
 
+// Where the plants grow, in the plant worker.
+function growPlants(input: PlantWorkerInbound): Promise<(PlantWorkerOutbound & { type: 'plants' }) | null> {
+  return new Promise((resolve) => {
+    const worker = new Worker(new URL('./plantWorker.ts', import.meta.url), { type: 'module' })
+    worker.onmessage = (event: MessageEvent<PlantWorkerOutbound>): void => {
+      worker.terminate()
+      if (event.data.type === 'failed') {
+        console.warn(`[incubator] the plants could not be grown: ${event.data.message}`)
+        resolve(null)
+        return
+      }
+      resolve(event.data)
+    }
+    worker.onerror = (event): void => {
+      worker.terminate()
+      console.warn(`[incubator] the plant worker failed: ${event.message}`)
+      resolve(null)
+    }
+    worker.postMessage(input)
+  })
+}
+
+// A plant's colour by its use, and the use's name.
+const USE_COLOURS: Record<PlantUse, readonly [number, number, number]> = {
+  starch: [180, 130, 0],
+  fat: [110, 70, 20],
+  fruit: [190, 30, 100],
+  fibre: [20, 110, 150],
+}
+const USE_NAMES: Record<PlantUse, string> = { starch: 'Stärke', fat: 'Fett / Eiweiss', fruit: 'Obst', fibre: 'Faser' }
+
+// The cover over a painted chart, into a copy: red where no starch grows,
+// else yellow to green by how many of starch, fat and fruit grow there.
+const COVER_COLOURS: readonly (readonly [number, number, number])[] = [[230, 200, 60], [140, 190, 70], [30, 130, 50]]
+function blendCover(base: Uint8ClampedArray, cover: PlantCover, width: number, height: number, scale: number): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(base)
+  const W = width * scale
+  const H = height * scale
+  const a = 0.6
+  for (let y = 0; y < H; y++) {
+    const row = Math.floor(y / scale) * width
+    for (let x = 0; x < W; x++) {
+      const code = cover.codes[row + Math.floor(x / scale)]
+      if (code === 0) continue
+      const m = code - 1
+      const foods = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1)
+      const [cr, cg, cb] = m & 1 ? COVER_COLOURS[foods - 1] : [210, 40, 30]
+      const i = 4 * (y * W + x)
+      out[i] = out[i] * (1 - a) + cr * a
+      out[i + 1] = out[i + 1] * (1 - a) + cg * a
+      out[i + 2] = out[i + 2] * (1 - a) + cb * a
+    }
+  }
+  return out
+}
+
 // A species' colour by its role.
 const ROLE_COLOURS: Record<SpeciesLayer['role'], readonly [number, number, number]> = {
   herbivore: [170, 60, 20],
   predator: [120, 30, 140],
   fish: [20, 80, 200],
-  plant: [20, 120, 30],
 }
 
-// A species layer over a painted chart, into a copy: its density in its
-// role's colour, the empty niche grey, its origins as rings. The layer is
-// on the world raster, the chart `scale` times finer; a texel reads its
-// cell.
-function blendSpecies(base: Uint8ClampedArray, layer: SpeciesLayer, width: number, height: number, scale: number): Uint8ClampedArray {
+// An animal's or a plant's layer over a painted chart, into a copy: its
+// density in `colour`, the empty niche grey, its origins as rings. The
+// layer is on the world raster, the chart `scale` times finer; a texel
+// reads its cell.
+function blendSpecies(base: Uint8ClampedArray, layer: Pick<SpeciesLayer, 'codes' | 'origins'>, colour: readonly [number, number, number], width: number, height: number, scale: number): Uint8ClampedArray {
   const out = new Uint8ClampedArray(base)
   const W = width * scale
   const H = height * scale
-  const [r, g, b] = ROLE_COLOURS[layer.role]
+  const [r, g, b] = colour
   for (let y = 0; y < H; y++) {
     const row = Math.floor(y / scale) * width
     for (let x = 0; x < W; x++) {
@@ -298,6 +356,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     height: number
     worldAreaM2: number
     level: RegionWorkerInbound['level']
+    rivers: HabitatInput['rivers']
     shaded: Uint8ClampedArray
     unshaded: Uint8ClampedArray
   } | null = null
@@ -359,12 +418,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const speciesStatus = document.createElement('p')
   const speciesTitle = document.createElement('span')
   speciesTitle.className = 'gen-overlay__label'
-  speciesTitle.textContent = 'Art'
+  speciesTitle.textContent = 'Tiere'
   const speciesSection = document.createElement('section')
   speciesSection.className = 'gen-overlays'
   speciesSection.append(speciesTitle, speciesPick, speciesStatus)
   sidebar.body.append(speciesSection)
-  const ROLE_NAMES: Record<SpeciesLayer['role'], string> = { herbivore: 'Pflanzenfresser', predator: 'Räuber', fish: 'Fische', plant: 'Pflanzen' }
+  const ROLE_NAMES: Record<SpeciesLayer['role'], string> = { herbivore: 'Pflanzenfresser', predator: 'Räuber', fish: 'Fische' }
   function fillSpeciesPick(): void {
     const none = document.createElement('option')
     none.value = ''
@@ -392,25 +451,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (speciesPick.value !== '' && !speciesLayers) {
       speciesStatus.textContent = 'rechnet …'
       const world = shownWorld
-      const [elevation, biome, discharge, temperature, precipitation, seasonalAmplitude] = await Promise.all(
-        ['elevation', 'biome', 'discharge', 'temperature', 'precipitation', 'seasonalAmplitude'].map((name) => world.acquire(name)))
-      if (!elevation || !biome || !discharge || !temperature || !precipitation || !seasonalAmplitude) {
+      const input = await habitatOf(world)
+      if (!input) {
         speciesStatus.textContent = 'der Welt fehlen Felder (Konsole)'
-        console.warn('[incubator] the species need elevation, biome, discharge and the climate')
         return
       }
-      const domain = domainOfKind(shown.kind, shown.width, shown.height)
-      const done = await distributeSpecies({
-        kind: shown.kind,
-        width: shown.width,
-        height: shown.height,
-        cellMetres: shown.kind === 'sphere' ? domain.metresAround / shown.width : domain.metresPerUnit,
-        elevation: elevation.data,
-        biome: biome.data,
-        discharge: discharge.data,
-        climate: { resX: temperature.resX, resY: temperature.resY, temperature: temperature.data, precipitation: precipitation.data, seasonalAmplitude: seasonalAmplitude.data },
-        seed: world.recipe.detailSeed,
-      })
+      const done = await distributeSpecies(input)
       if (ask !== speciesAsk || shownWorld !== world) return
       if (!done) {
         speciesStatus.textContent = 'fehlgeschlagen (Konsole)'
@@ -427,20 +473,135 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       : ''
     refreshTextures()
   }
-  speciesPick.addEventListener('change', () => void showSpecies())
+  speciesPick.addEventListener('change', () => {
+    if (speciesPick.value !== '') plantPick.value = ''
+    void showSpecies()
+    void showPlants()
+  })
+
+  // The fields the animals and the plants live on (habitat.ts), from the
+  // world shown; null when it lacks one.
+  async function habitatOf(world: World): Promise<HabitatInput | null> {
+    if (!shown) return null
+    const [elevation, biome, discharge, koppen, temperature, precipitation, seasonalAmplitude] = await Promise.all(
+      ['elevation', 'biome', 'discharge', 'koppen', 'temperature', 'precipitation', 'seasonalAmplitude'].map((name) => world.acquire(name)))
+    if (!elevation || !biome || !discharge || !koppen || !temperature || !precipitation || !seasonalAmplitude) {
+      console.warn('[incubator] the habitat needs elevation, biome, discharge, the Köppen classes and the climate')
+      return null
+    }
+    const domain = domainOfKind(shown.kind, shown.width, shown.height)
+    return {
+      kind: shown.kind,
+      width: shown.width,
+      height: shown.height,
+      cellMetres: shown.kind === 'sphere' ? domain.metresAround / shown.width : domain.metresPerUnit,
+      elevation: elevation.data,
+      biome: biome.data,
+      discharge: discharge.data,
+      koppen: koppen.data,
+      rivers: shown.rivers,
+      climate: { resX: temperature.resX, resY: temperature.resY, temperature: temperature.data, precipitation: precipitation.data, seasonalAmplitude: seasonalAmplitude.data },
+      seed: world.recipe.detailSeed,
+    }
+  }
+
+  // TRIAL (2026-10-25): where the plants of plants.ts grow, one at a time,
+  // or the cover: what they give together. One layer over the chart at a
+  // time: picking a plant drops the animal, and back.
+  let plants: { layers: PlantLayer[]; cover: PlantCover } | null = null
+  const COVER = 'cover'
+  const plantPick = document.createElement('select')
+  const plantStatus = document.createElement('p')
+  const plantTitle = document.createElement('span')
+  plantTitle.className = 'gen-overlay__label'
+  plantTitle.textContent = 'Pflanzen'
+  const plantSection = document.createElement('section')
+  plantSection.className = 'gen-overlays'
+  plantSection.append(plantTitle, plantPick, plantStatus)
+  sidebar.body.append(plantSection)
+  function fillPlantPick(): void {
+    const none = document.createElement('option')
+    none.value = ''
+    none.textContent = plants ? '(keine)' : '(keine; die erste Wahl rechnet)'
+    const cover = document.createElement('option')
+    cover.value = COVER
+    cover.textContent = 'Deckung (alle zusammen)'
+    const groups = (Object.keys(USE_NAMES) as PlantUse[]).map((use) => {
+      const group = document.createElement('optgroup')
+      group.label = USE_NAMES[use]
+      return { use, group }
+    })
+    const value = plantPick.value
+    plantPick.replaceChildren(none, cover, ...groups.map((g) => g.group))
+    for (const spec of PLANTS) {
+      const option = document.createElement('option')
+      option.value = spec.id
+      option.textContent = spec.domesticable ? `${spec.name} •` : spec.name
+      groups.find((g) => g.use === spec.use)!.group.append(option)
+    }
+    plantPick.value = value
+  }
+  fillPlantPick()
+  let plantAsk = 0
+  async function showPlants(): Promise<void> {
+    const ask = ++plantAsk
+    if (!shown || !shownWorld) return
+    if (plantPick.value !== '' && !plants) {
+      plantStatus.textContent = 'rechnet …'
+      const world = shownWorld
+      const input = await habitatOf(world)
+      if (!input) {
+        plantStatus.textContent = 'der Welt fehlen Felder (Konsole)'
+        return
+      }
+      const done = await growPlants(input)
+      if (ask !== plantAsk || shownWorld !== world) return
+      if (!done) {
+        plantStatus.textContent = 'fehlgeschlagen (Konsole)'
+        return
+      }
+      console.info(`[incubator] plants grown, ${done.ms} ms`)
+      plants = { layers: done.layers, cover: done.cover }
+      fillPlantPick()
+    }
+    const pct = (v: number): string => `${(100 * v).toFixed(1)} %`
+    const layer = plants?.layers.find((l) => l.id === plantPick.value)
+    if (plantPick.value === COVER && plants) {
+      const c = plants.cover
+      plantStatus.textContent = `Vom eisfreien Land haben Stärke ${pct(c.shares.starch)}, Fett ${pct(c.shares.fat)}, Obst ${pct(c.shares.fruit)}, Faser ${pct(c.shares.fibre)}; alle drei Nahrungen ${pct(c.food)}. Rot: keine Stärke; gelb bis grün: 1 bis 3 Nahrungen.`
+    } else if (layer) {
+      plantStatus.textContent = `Nische ${pct(layer.suitable)} des Landes, davon erreicht ${pct(layer.reached)}, leer (grau) ${pct(layer.empty)}.${layer.domesticable ? ' Domestizierbar.' : ''} Ringe: Ursprünge.`
+    } else {
+      plantStatus.textContent = plants ? '• domestizierbar' : ''
+    }
+    refreshTextures()
+  }
+  plantPick.addEventListener('change', () => {
+    if (plantPick.value !== '') speciesPick.value = ''
+    void showPlants()
+    void showSpecies()
+  })
 
   // The chart with what is switched on over it: the catchments, then the
-  // species.
+  // animal or the plant.
   function refreshTextures(): void {
     if (!shown || !view) return
     const regions = regionBox.checked && regionBlend
     let shaded = regions ? regionBlend!.shaded : shown.shaded
     let unshaded = regions ? regionBlend!.unshaded : shown.unshaded
+    const scale = CHART_WIDTH / shown.width
+    const flat = view.shape !== 'sphere'
     const layer = speciesLayers?.find((l) => l.id === speciesPick.value)
+    const plant = plants?.layers.find((l) => l.id === plantPick.value)
     if (layer) {
-      const scale = CHART_WIDTH / shown.width
-      shaded = blendSpecies(shaded, layer, shown.width, shown.height, scale)
-      if (view.shape !== 'sphere') unshaded = blendSpecies(unshaded, layer, shown.width, shown.height, scale)
+      shaded = blendSpecies(shaded, layer, ROLE_COLOURS[layer.role], shown.width, shown.height, scale)
+      if (flat) unshaded = blendSpecies(unshaded, layer, ROLE_COLOURS[layer.role], shown.width, shown.height, scale)
+    } else if (plant) {
+      shaded = blendSpecies(shaded, plant, USE_COLOURS[plant.use], shown.width, shown.height, scale)
+      if (flat) unshaded = blendSpecies(unshaded, plant, USE_COLOURS[plant.use], shown.width, shown.height, scale)
+    } else if (plantPick.value === COVER && plants) {
+      shaded = blendCover(shaded, plants.cover, shown.width, shown.height, scale)
+      if (flat) unshaded = blendCover(unshaded, plants.cover, shown.width, shown.height, scale)
     }
     if (view.shape === 'sphere') view.reliefTexture.update(shaded)
     else {
@@ -531,6 +692,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       height: world.height,
       worldAreaM2: kind === 'sphere' ? domain.metresAround ** 2 / Math.PI : (domain.metresPerUnit ** 2) * world.width * world.height,
       level: { count: level.count, nodes: level.nodes, connectivity: level.connectivity, z: level.z },
+      rivers: level.rivers,
       shaded: painted.shaded,
       unshaded: painted.unshaded,
     }
@@ -538,8 +700,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     shownWorld = world
     speciesLayers = null
     fillSpeciesPick()
+    plants = null
+    fillPlantPick()
     if (regionBox.checked) void showRegions()
     if (speciesPick.value !== '') void showSpecies()
+    if (plantPick.value !== '') void showPlants()
     // The level's rivers, from the world raster's texels to the chart's.
     if (level.rivers) {
       const points = Float32Array.from(level.rivers.points)
