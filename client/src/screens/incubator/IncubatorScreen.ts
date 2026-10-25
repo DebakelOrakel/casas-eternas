@@ -77,14 +77,15 @@ import '../generator/overlayList.css'
 //
 // THE STEPS (2026-10-25), along the foot as in the generator, numbered
 // from 1: the world is chosen in the list, not in a step. 1 the flora —
-// the wild plants, still to come. The terrain colour is a layer that can
+// the wild plants and the trees; 2 the fauna — the trial's catchments and
+// animals. The terrain colour is a layer that can
 // be switched off: then the land is the bare paper, white with its
 // hillshade, as on the generator's map. The load panel shows the steps of an
 // open and which one failed; why it failed goes to the console. Over the
 // map, the generator's hover card for the level's node under the pointer.
 
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
-const STEPS = ['flora'] as const
+const STEPS = ['flora', 'fauna'] as const
 
 // The ecology's fields the incubator shows (the level's artifact holds all
 // fourteen, docs/decisions/level-waters.md), with their icons as the
@@ -448,8 +449,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   const sidebar = createSidebar(root, 'incubator.step')
 
-  // THE STEPS. The flora has nothing to compute yet.
+  // THE STEPS. Each shows its own layers (stepLayers): the flora the
+  // plants and the wood, the fauna the trial's catchments and animals; the
+  // terrain and the ecology both. What a step had on stays for its return.
   let stepIndex = 0
+  const onFlora = (): boolean => STEPS[stepIndex] === 'flora'
+  // True once the screen is built: the step's layers are below.
+  let built = false
   const stepBar = createStepBar(root, {
     steps: STEPS.map((id) => ({ id })),
     stepKeys: 'incubator.step',
@@ -460,6 +466,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     stepIndex = index
     sidebar.setStep(STEPS[index])
     updateSteps()
+    if (built) stepLayers()
   }
   function updateSteps(): void {
     stepBar.setState({
@@ -527,7 +534,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           woodShown = id === NO_WOOD ? null : (id.slice('wood:'.length) as WoodUse)
           if (woodShown) plantShown = null
         }
-        if (plantShown || woodShown) speciesPick.value = ''
         void showPlants()
         void showSpecies()
         return
@@ -536,25 +542,28 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       showCharts()
     },
   })
-  overlayList.setRows([{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }], [{
+  // The pick groups; the step shows its own (stepLayers).
+  const RESOURCE_PICKS = {
     title: 'generator.section.resources',
     rows: [
       { id: NO_FIELD, helpBase: 'overlay.none', icon: '/icons/clear.png' },
       ...ECOLOGY_PICKS.map((p) => ({ id: p.id, helpBase: `resource.${p.id}`, icon: p.icon })),
     ],
-  }, {
+  }
+  const PLANT_PICKS = {
     title: 'incubator.section.plants',
     rows: [
       { id: NO_PLANTS, helpBase: 'overlay.none', icon: '/icons/clear.png' },
       ...PLANT_USES.map((p) => ({ id: plantPickId(p.use), helpBase: `plant.use.${p.use}`, icon: p.icon })),
     ],
-  }, {
+  }
+  const WOOD_PICKS = {
     title: 'incubator.section.wood',
     rows: [
       { id: NO_WOOD, helpBase: 'overlay.none', icon: '/icons/clear.png' },
       ...WOOD_USES.map((p) => ({ id: woodPickId(p.use), helpBase: `wood.use.${p.use}`, icon: p.icon })),
     ],
-  }])
+  }
   sidebar.body.append(overlayList.element)
   // Under the picks, a line while the plants are grown, or why they are not.
   const plantStatus = document.createElement('p')
@@ -628,7 +637,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }),
         // TRIAL: the plants there, on the world raster, one a line; the
         // use named on its first.
-        ...(shown ? plantsAt(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name }))) : []),
+        ...(shown && onFlora() ? plantsAt(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name }))) : []),
       ] : [],
       months: t('readout.months').split(','),
       charts: [],
@@ -767,14 +776,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       : ''
     showCharts()
   }
-  speciesPick.addEventListener('change', () => {
-    if (speciesPick.value !== '') {
-      plantShown = null
-      woodShown = null
-    }
-    void showSpecies()
-    void showPlants()
-  })
+  speciesPick.addEventListener('change', () => void showSpecies())
 
   // The fields the animals and the plants live on (habitat.ts), from the
   // world shown; null when it lacks one.
@@ -816,7 +818,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // A plant's colour is its place in its use; a tree's its place among
   // the trees, the same under every wood it gives.
   function shownGroup(): { title: string; layers: { name: string; codes: Uint8Array; reached: number; colour: number }[] } | null {
-    if (!plants) return null
+    if (!plants || !onFlora()) return null
     if (plantShown) {
       const use = plantShown
       return {
@@ -893,12 +895,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the animal or the plant. Each a copy of the chart, 128 MB.
   function overTrials(shaded: Uint8ClampedArray, unshaded: Uint8ClampedArray | null): { shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } {
     if (!shown) return { shaded, unshaded }
-    if (regionBox.checked && regionCut) {
+    if (!onFlora() && regionBox.checked && regionCut) {
       shaded = blendOver(shaded, regionCut.overlay)
       if (unshaded) unshaded = blendOver(unshaded, regionCut.overlay)
     }
     const scale = CHART_WIDTH / shown.width
-    const layer = speciesLayers?.find((l) => l.id === speciesPick.value)
+    const layer = onFlora() ? undefined : speciesLayers?.find((l) => l.id === speciesPick.value)
     const group = shownGroup()
     if (layer) {
       shaded = blendSpecies(shaded, layer, ROLE_COLOURS[layer.role], shown.width, shown.height, scale)
@@ -1130,6 +1132,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     setFurniture(false)
     window.open()
   }
+
+  // The layers the step on screen offers: its picks and its trial
+  // sections; the map and its legend redrawn.
+  function stepLayers(): void {
+    const flora = onFlora()
+    overlayList.setRows([{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }], flora ? [RESOURCE_PICKS, PLANT_PICKS, WOOD_PICKS] : [RESOURCE_PICKS])
+    plantInfo.hidden = !flora
+    regionSection.hidden = flora
+    speciesSection.hidden = flora
+    showCharts()
+    plantLegend.refresh()
+    hoverTooltip.refresh()
+  }
+  built = true
+  stepLayers()
 
   // The list first, the column behind it — as the generator opens.
   setFurniture(false)
