@@ -2,13 +2,14 @@ import { MinHeap } from '../../generator/core/minHeap'
 import { Biome } from '../../generator/climate/biomes'
 import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
 import type { LevelLand } from '../../world/meshArtifacts'
+import { decodeFineValue, ECOLOGY_FINE_OCEAN } from '../../generator/ecology/ecologyField'
 import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE, type RiverPolylines } from '../../generator/surface/hydrology'
 
 // THE INCUBATOR'S HABITAT (2026-10-25, a trial): the world raster as a
-// living thing sees it, for the animals (speciesWorker.ts) and the plants
-// (plantWorker.ts) alike: per land cell the coldest and the warmest month,
-// the rain, the height, the slope, a river near and its size, a lake
-// near, the sea near. The
+// living thing sees it, for the animals (animalWorker.ts) and the plants
+// (plantWorker.ts) alike: per land cell the height, the slope, a river
+// near and its size, a lake near, the sea near, and the game the land
+// feeds. The
 // rivers are level 1's, the ones the chart draws, when they are given: the
 // save's discharge on the world raster follows other courses (2026-10-25,
 // Morvane: 17 % of level 1's river points lie on a raster cell the save's
@@ -20,10 +21,11 @@ import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE, type RiverPolyline
 // The ground and the water are level 1's when it carries its land fields
 // (levelRasters, 2026-10-25): the height, the biomes, the Köppen classes,
 // the discharge and the lakes of the level's node under each cell, so the
-// plants and the animals stand on the terrain the chart draws. Without
-// them, the save's rasters. The climate is the save's, on its own chart
-// (256 × 128), read bilinearly over its land cells; a land cell of level 1
-// with no land cell of the chart near has no months (NaN).
+// plants and the animals stand on the terrain the chart draws; and the
+// ecology's game (its field `game`). Without them, the save's rasters and
+// no game. The climate counts through the Köppen classes alone: the
+// months the save's chart holds (256 × 128) left a level-1 coast without
+// any, and the world's climates are not the earth's (plants.ts).
 
 
 export interface HabitatInput {
@@ -42,7 +44,8 @@ export interface HabitatInput {
   // Level 1's rivers, in the world raster's texels; null for the save's
   // discharge instead.
   rivers: Pick<RiverPolylines, 'points' | 'lengths' | 'regimes'> | null
-  climate: { resX: number; resY: number; temperature: Float32Array; precipitation: Float32Array; seasonalAmplitude: Float32Array }
+  // The ecology's game, 0 … 3 (its fine field, decoded); null without one.
+  game: Float32Array | null
   seed: number
 }
 
@@ -52,9 +55,6 @@ export interface Habitat {
   torus: boolean
   land: Uint8Array
   landCount: number
-  coldest: Float32Array
-  warmest: Float32Array
-  rain: Float32Array
   heightM: Float32Array
   slope: Float32Array
   // A river in the cell (level 1's), or near it (the save's discharge,
@@ -99,34 +99,6 @@ export function trapezoid(v: number, t: Trapezoid): number {
   return 1
 }
 
-// The climate at a world cell: bilinear over the chart's land cells (the
-// sea's sentinel left out), the longitude wrapping; NaN with no land cell
-// near.
-function climateSampler(c: HabitatInput['climate'], width: number, height: number, torus: boolean) {
-  return (field: Float32Array, x: number, y: number): number => {
-    const fx = ((x + 0.5) / width) * c.resX - 0.5
-    const fy = ((y + 0.5) / height) * c.resY - 0.5
-    const x0 = Math.floor(fx)
-    const y0 = Math.floor(fy)
-    let sum = 0
-    let weight = 0
-    for (let j = 0; j < 2; j++) {
-      let yy = y0 + j
-      if (torus) yy = ((yy % c.resY) + c.resY) % c.resY
-      else yy = Math.min(c.resY - 1, Math.max(0, yy))
-      const wy = j === 0 ? 1 - (fy - y0) : fy - y0
-      for (let i = 0; i < 2; i++) {
-        const xx = (((x0 + i) % c.resX) + c.resX) % c.resX
-        const wx = i === 0 ? 1 - (fx - x0) : fx - x0
-        const k = yy * c.resX + xx
-        if (c.precipitation[k] < 0) continue
-        sum += wx * wy * field[k]
-        weight += wx * wy
-      }
-    }
-    return weight > 1e-6 ? sum / weight : Number.NaN
-  }
-}
 
 // The habitat's ground and water from level 1: per world cell the fields
 // of the node under its middle, through the chart's node map (chartWorker,
@@ -134,20 +106,22 @@ function climateSampler(c: HabitatInput['climate'], width: number, height: numbe
 // sea's level (a dry basin's floor) is put just above it, as the habitat
 // tells the land by its height.
 export function levelRasters(
-  land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth'>,
+  land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth' | 'ecology'>,
   z: Float32Array,
   nodes: Int32Array,
   nodeW: number,
   nodeH: number,
   W: number,
   H: number,
-): Pick<HabitatInput, 'elevation' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth'> {
+): Pick<HabitatInput, 'elevation' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth' | 'game'> {
   const n = W * H
   const elevation = new Float32Array(n)
   const biome = new Float32Array(n)
   const koppen = new Float32Array(n)
   const discharge = new Float32Array(n)
   const lakeDepth = new Float32Array(n)
+  const gameCodes = land.ecology.game
+  const game = gameCodes ? new Float32Array(n) : null
   for (let y = 0; y < H; y++) {
     const ny = Math.min(nodeH - 1, Math.floor(((y + 0.5) / H) * nodeH))
     for (let x = 0; x < W; x++) {
@@ -158,9 +132,10 @@ export function levelRasters(
       koppen[i] = land.koppen[v]
       discharge[i] = land.discharge[v]
       lakeDepth[i] = land.lakeDepth[v]
+      if (game && gameCodes && gameCodes[v] !== ECOLOGY_FINE_OCEAN) game[i] = decodeFineValue(gameCodes[v])
     }
   }
-  return { elevation, biome, koppen, discharge, lakeDepth }
+  return { elevation, biome, koppen, discharge, lakeDepth, game }
 }
 
 export function mulberry32(seed: number): () => number {
@@ -184,7 +159,6 @@ export function readHabitat(input: HabitatInput): Habitat {
   const { width: W, height: H, elevation, biome, discharge } = input
   const torus = input.kind === 'torus'
   const n = W * H
-  const climateAt = climateSampler(input.climate, W, H, torus)
   const dyKm = input.cellMetres / 1000
   const dxKm = new Float64Array(H)
   for (let y = 0; y < H; y++) dxKm[y] = torus ? dyKm : dyKm * Math.cos(((y + 0.5) / H - 0.5) * Math.PI)
@@ -192,9 +166,6 @@ export function readHabitat(input: HabitatInput): Habitat {
   const clampY = (y: number): number => torus ? (y + H) % H : Math.min(H - 1, Math.max(0, y))
 
   const land = new Uint8Array(n)
-  const coldest = new Float32Array(n)
-  const warmest = new Float32Array(n)
-  const rain = new Float32Array(n)
   const heightM = new Float32Array(n)
   const slope = new Float32Array(n)
   const river = new Uint8Array(n)
@@ -207,14 +178,8 @@ export function readHabitat(input: HabitatInput): Habitat {
     for (let x = 0; x < W; x++) {
       const i = y * W + x
       if (elevation[i] <= 0 || biome[i] === Biome.Ocean) continue
-      const t = climateAt(input.climate.temperature, x, y)
-      const p = climateAt(input.climate.precipitation, x, y)
-      const a = climateAt(input.climate.seasonalAmplitude, x, y)
       land[i] = 1
       landCount++
-      coldest[i] = t - a / 2
-      warmest[i] = t + a / 2
-      rain[i] = p
       heightM[i] = elevation[i] * ELEVATION_METERS
       const ex = (elevation[y * W + wrapX(x + 1)] - elevation[y * W + wrapX(x - 1)]) * ELEVATION_METERS / (2 * dxKm[y] * 1000)
       const ey = (elevation[clampY(y + 1) * W + x] - elevation[clampY(y - 1) * W + x]) * ELEVATION_METERS / (2 * dyKm * 1000)
@@ -299,7 +264,7 @@ export function readHabitat(input: HabitatInput): Habitat {
   }
   const landmassKm2 = new Float64Array(landmasses)
   for (let i = 0; i < n; i++) if (landmass[i] >= 0) landmassKm2[landmass[i]] += dxKm[Math.floor(i / W)] * dyKm
-  return { W, H, torus, land, landCount, coldest, warmest, rain, heightM, slope, nearRiver, riverSize, nearLake, nearSea, landmass, landmasses, landmassKm2, dxKm, dyKm, wrapX, clampY }
+  return { W, H, torus, land, landCount, heightM, slope, nearRiver, riverSize, nearLake, nearSea, landmass, landmasses, landmassKm2, dxKm, dyKm, wrapX, clampY }
 }
 
 // Origins drawn by the niche to the fourth, from the cells it suits.

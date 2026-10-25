@@ -11,5 +11,7 @@
   "incubator.plants.missing": "The world lacks fields.",
   "incubator.plants.failed": "Failed.",
   "incubator.section.wood.label": "Wood",
-  "incubator.section.wood.help": "Which wood grows where — one pick replaces the last."
+  "incubator.section.wood.help": "Which wood grows where — one pick replaces the last.",
+  "incubator.section.animals.label": "Animals",
+  "incubator.section.animals.help": "The wild animals people use or fear — one pick replaces the last."
 }

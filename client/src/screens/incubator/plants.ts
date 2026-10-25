@@ -6,7 +6,7 @@ import type { Trapezoid } from './habitat'
 // the save holds (habitat.ts). Archetypes, named after the real species
 // they stand for; their names are `plant.<id>` (i18n/locales/*/plant.json).
 // Only food and fibre for people: what the animals eat is the forage of
-// speciesWorker.ts.
+// animalWorker.ts.
 //
 // The aim: every land cell where gathering can feed people has a source of
 // starch, of fat or protein and of fruit within the range of a plant
