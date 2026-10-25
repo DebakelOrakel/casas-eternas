@@ -8,5 +8,7 @@
   "incubator.section.plants.help": "Die wilden Pflanzen, die Menschen nutzen — eine Auswahl ersetzt die vorige.",
   "incubator.plants.computing": "rechnet …",
   "incubator.plants.missing": "Der Welt fehlen Felder.",
-  "incubator.plants.failed": "Fehlgeschlagen."
+  "incubator.plants.failed": "Fehlgeschlagen.",
+  "incubator.section.wood.label": "Holz",
+  "incubator.section.wood.help": "Welches Holz wo wächst — eine Auswahl ersetzt die vorige."
 }

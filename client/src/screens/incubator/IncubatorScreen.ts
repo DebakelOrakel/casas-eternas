@@ -47,7 +47,8 @@ import type { SpeciesLayer, SpeciesWorkerInbound, SpeciesWorkerOutbound } from '
 import type { World } from '../../world/query'
 import { SPECIES } from './species'
 import type { PlantUse } from './plants'
-import type { PlantLayer, PlantWorkerInbound, PlantWorkerOutbound } from './plantWorker'
+import type { PlantLayer, PlantWorkerInbound, PlantWorkerOutbound, TreeLayer } from './plantWorker'
+import type { WoodUse } from './trees'
 import type { HabitatInput } from './habitat'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import '../../ui/theme/design.css'
@@ -285,6 +286,17 @@ const PLANT_USES: readonly { use: PlantUse; icon: string }[] = [
 const NO_PLANTS = 'none:plants'
 const plantPickId = (use: PlantUse): string => `plant:${use}`
 
+// The uses of the wood, as the plants'; their names are `wood.use.<use>`.
+const WOOD_USES: readonly { use: WoodUse; icon: string }[] = [
+  { use: 'build', icon: '/icons/timber.png' },
+  { use: 'fuel', icon: '/icons/bonfire.png' },
+  { use: 'tool', icon: '/icons/stone_axe.png' },
+  { use: 'boat', icon: '/icons/boat.png' },
+  { use: 'resin', icon: '/icons/resin.png' },
+]
+const NO_WOOD = 'none:wood'
+const woodPickId = (use: WoodUse): string => `wood:${use}`
+
 // A colour for each plant of a group, told apart (Trubetskoy's twenty
 // distinct colours, 2017): a group holds at most sixteen.
 const PLANT_PALETTE: readonly (readonly [number, number, number])[] = [
@@ -301,7 +313,7 @@ const PLANT_SUITS = 2 + Math.round(253 * 0.3)
 // plant in range that suits it best, in its colour, as strong as its
 // niche; grey where one would suit but none came. A range reaches past
 // its niche, where the plant is rare: not drawn.
-function blendPlantGroup(base: Uint8ClampedArray, layers: readonly PlantLayer[], width: number, height: number, scale: number): Uint8ClampedArray {
+function blendPlantGroup(base: Uint8ClampedArray, layers: readonly { codes: Uint8Array; colour: number }[], width: number, height: number, scale: number): Uint8ClampedArray {
   const n = width * height
   const pick = new Uint8Array(n).fill(255)
   // The best suiting code, 1 for an empty niche, 0 for none.
@@ -326,7 +338,7 @@ function blendPlantGroup(base: Uint8ClampedArray, layers: readonly PlantLayer[],
       const code = best[cell]
       if (code === 0) continue
       const a = code === 1 ? 0.45 : 0.35 + 0.55 * ((code - PLANT_SUITS) / (255 - PLANT_SUITS))
-      const [cr, cg, cb] = code === 1 ? [120, 120, 120] : PLANT_PALETTE[pick[cell] % PLANT_PALETTE.length]
+      const [cr, cg, cb] = code === 1 ? [120, 120, 120] : PLANT_PALETTE[layers[pick[cell]].colour % PLANT_PALETTE.length]
       const i = 4 * (y * W + x)
       out[i] = out[i] * (1 - a) + cr * a
       out[i + 1] = out[i + 1] * (1 - a) + cg * a
@@ -495,8 +507,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let picked: EcologyFieldId | null = null
   // TRIAL (2026-10-25): the plants of plants.ts, grown on the first pick;
   // the use shown, or null. Declared here, above the first showCharts.
-  let plants: { layers: PlantLayer[] } | null = null
+  let plants: { layers: PlantLayer[]; trees: TreeLayer[] } | null = null
   let plantShown: PlantUse | null = null
+  // The wood shown, or null; one of the two at a time.
+  let woodShown: WoodUse | null = null
   // The last blend, for showing it again without blending it again.
   let blended: { key: string; shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } | null = null
   const overlayList = createOverlayList({
@@ -505,9 +519,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       showCharts()
     },
     onPick: (id) => {
-      if (id === NO_PLANTS || id.startsWith('plant:')) {
-        plantShown = id === NO_PLANTS ? null : (id.slice('plant:'.length) as PlantUse)
-        if (plantShown) speciesPick.value = ''
+      if (id === NO_PLANTS || id.startsWith('plant:') || id === NO_WOOD || id.startsWith('wood:')) {
+        if (id === NO_PLANTS || id.startsWith('plant:')) {
+          plantShown = id === NO_PLANTS ? null : (id.slice('plant:'.length) as PlantUse)
+          if (plantShown) woodShown = null
+        } else {
+          woodShown = id === NO_WOOD ? null : (id.slice('wood:'.length) as WoodUse)
+          if (woodShown) plantShown = null
+        }
+        if (plantShown || woodShown) speciesPick.value = ''
         void showPlants()
         void showSpecies()
         return
@@ -528,6 +548,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       { id: NO_PLANTS, helpBase: 'overlay.none', icon: '/icons/clear.png' },
       ...PLANT_USES.map((p) => ({ id: plantPickId(p.use), helpBase: `plant.use.${p.use}`, icon: p.icon })),
     ],
+  }, {
+    title: 'incubator.section.wood',
+    rows: [
+      { id: NO_WOOD, helpBase: 'overlay.none', icon: '/icons/clear.png' },
+      ...WOOD_USES.map((p) => ({ id: woodPickId(p.use), helpBase: `wood.use.${p.use}`, icon: p.icon })),
+    ],
   }])
   sidebar.body.append(overlayList.element)
   // Under the picks, a line while the plants are grown, or why they are not.
@@ -542,6 +568,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (id === NO_FIELD) return { on: picked === null, available: true }
       if (id === NO_PLANTS) return { on: plantShown === null, available: true }
       if (id.startsWith('plant:')) return { on: plantShown !== null && id === plantPickId(plantShown), available: charts !== null }
+      if (id === NO_WOOD) return { on: woodShown === null, available: true }
+      if (id.startsWith('wood:')) return { on: woodShown !== null && id === woodPickId(woodShown), available: charts !== null }
       return { on: picked === id, available: ecology?.fields[id as EcologyFieldId] !== undefined }
     })
     if (!charts || !view) return
@@ -600,7 +628,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }),
         // TRIAL: the plants there, on the world raster, one a line; the
         // use named on its first.
-        ...(shown ? plantsAt(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? t(`plant.use.${g.use}.label` as TKey) : '', value: name }))) : []),
+        ...(shown ? plantsAt(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name }))) : []),
       ] : [],
       months: t('readout.months').split(','),
       charts: [],
@@ -740,7 +768,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showCharts()
   }
   speciesPick.addEventListener('change', () => {
-    if (speciesPick.value !== '') plantShown = null
+    if (speciesPick.value !== '') {
+      plantShown = null
+      woodShown = null
+    }
     void showSpecies()
     void showPlants()
   })
@@ -781,20 +812,40 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // place.
   // The legend, as the generator's (ui/legend): the plants of the use
   // shown, each in its colour, the ones that grow nowhere left out.
+  // The group on the map: the plants of a use, or the trees of a wood.
+  // A plant's colour is its place in its use; a tree's its place among
+  // the trees, the same under every wood it gives.
+  function shownGroup(): { title: string; layers: { name: string; codes: Uint8Array; reached: number; colour: number }[] } | null {
+    if (!plants) return null
+    if (plantShown) {
+      const use = plantShown
+      return {
+        title: t(`plant.use.${use}.label` as TKey),
+        layers: plants.layers.filter((l) => l.use === use).map((l, k) => ({ name: t(`plant.${l.id}.label` as TKey), codes: l.codes, reached: l.reached, colour: k })),
+      }
+    }
+    if (woodShown) {
+      const use = woodShown
+      return {
+        title: t(`wood.use.${use}.label` as TKey),
+        layers: plants.trees.flatMap((l, k) => (l.woods.includes(use) ? [{ name: t(`wood.${l.id}.label` as TKey), codes: l.codes, reached: l.reached, colour: k }] : [])),
+      }
+    }
+    return null
+  }
   const plantLegend = createLegendPanel(root, {
     content: () => {
-      if (!plants || !plantShown) return { count: 0, build: () => [] }
-      const use = plantShown
-      const group = plants.layers.filter((l) => l.use === use)
+      const group = shownGroup()
+      if (!group) return { count: 0, build: () => [] }
       return {
         count: 1,
         build: () => [{
           type: 'swatches',
-          title: t(`plant.use.${use}.label` as TKey),
-          items: group.flatMap((layer, k) => layer.reached === 0 ? [] : [{
+          title: group.title,
+          items: group.layers.flatMap((layer) => layer.reached === 0 ? [] : [{
             // The name and the share of the land it reached, whole percent.
-            label: `${t(`plant.${layer.id}.label` as TKey)} (${formatValue(layer.reached < 0.005 ? '<1' : String(Math.round(100 * layer.reached)), 'common.unit.percent')})`,
-            rgb: [...PLANT_PALETTE[k % PLANT_PALETTE.length]] as [number, number, number],
+            label: `${layer.name} (${formatValue(layer.reached < 0.005 ? '<1' : String(Math.round(100 * layer.reached)), 'common.unit.percent')})`,
+            rgb: [...PLANT_PALETTE[layer.colour % PLANT_PALETTE.length]] as [number, number, number],
           }]),
         }],
       }
@@ -804,7 +855,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function showPlants(): Promise<void> {
     const ask = ++plantAsk
     if (!shown || !shownWorld) return
-    if (plantShown && !plants) {
+    if ((plantShown || woodShown) && !plants) {
       plantStatus.textContent = t('incubator.plants.computing')
       const world = shownWorld
       const input = await habitatOf(world)
@@ -820,7 +871,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         return
       }
       console.info(`[incubator] plants grown, ${done.ms} ms`)
-      plants = { layers: done.layers }
+      plants = { layers: done.layers, trees: done.trees }
       hoverTooltip.refresh()
     }
     plantLegend.refresh()
@@ -830,12 +881,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // The plants at a cell of the world raster, by use: those in range whose
   // niche suits it, the best first. Empty before the plants are grown.
-  function plantsAt(cell: number): { use: PlantUse; names: string[] }[] {
+  function plantsAt(cell: number): { label: string; names: string[] }[] {
     if (!plants) return []
-    return PLANT_USES.flatMap(({ use }) => {
-      const here = plants!.layers.filter((l) => l.use === use && l.codes[cell] >= PLANT_SUITS).sort((p, q) => q.codes[cell] - p.codes[cell])
-      return here.length > 0 ? [{ use, names: here.map((l) => t(`plant.${l.id}.label` as TKey)) }] : []
-    })
+    const best = <L extends { codes: Uint8Array }>(layers: L[]): L[] => layers.filter((l) => l.codes[cell] >= PLANT_SUITS).sort((p, q) => q.codes[cell] - p.codes[cell])
+    const uses = PLANT_USES.map(({ use }) => ({ label: t(`plant.use.${use}.label` as TKey), names: best(plants!.layers.filter((l) => l.use === use)).map((l) => t(`plant.${l.id}.label` as TKey)) }))
+    const woods = WOOD_USES.map(({ use }) => ({ label: t(`wood.use.${use}.label` as TKey), names: best(plants!.trees.filter((l) => l.woods.includes(use))).map((l) => t(`wood.${l.id}.label` as TKey)) }))
+    return [...uses, ...woods].filter((g) => g.names.length > 0)
   }
 
   // The trials' layers over the chart (showCharts): the catchments, then
@@ -848,13 +899,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     const scale = CHART_WIDTH / shown.width
     const layer = speciesLayers?.find((l) => l.id === speciesPick.value)
-    const group = plants && plantShown ? plants.layers.filter((l) => l.use === plantShown) : null
+    const group = shownGroup()
     if (layer) {
       shaded = blendSpecies(shaded, layer, ROLE_COLOURS[layer.role], shown.width, shown.height, scale)
       if (unshaded) unshaded = blendSpecies(unshaded, layer, ROLE_COLOURS[layer.role], shown.width, shown.height, scale)
     } else if (group) {
-      shaded = blendPlantGroup(shaded, group, shown.width, shown.height, scale)
-      if (unshaded) unshaded = blendPlantGroup(unshaded, group, shown.width, shown.height, scale)
+      shaded = blendPlantGroup(shaded, group.layers, shown.width, shown.height, scale)
+      if (unshaded) unshaded = blendPlantGroup(unshaded, group.layers, shown.width, shown.height, scale)
     }
     return { shaded, unshaded }
   }
@@ -978,7 +1029,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     plantLegend.refresh()
     if (regionBox.checked) void showRegions()
     if (speciesPick.value !== '') void showSpecies()
-    if (plantShown) void showPlants()
+    if (plantShown || woodShown) void showPlants()
     // The level's rivers, from the world raster's texels to the chart's.
     if (level.rivers) {
       const points = Float32Array.from(level.rivers.points)

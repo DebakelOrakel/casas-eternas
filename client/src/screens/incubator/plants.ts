@@ -40,11 +40,9 @@ import type { Trapezoid } from './habitat'
 // What people get of a plant.
 export type PlantUse = 'starch' | 'fat' | 'fruit' | 'fibre'
 
-export interface PlantSpec {
+// A niche over the habitat, the plant's and the tree's alike (trees.ts).
+export interface NicheSpec {
   id: string
-  use: PlantUse
-  // A founder of farming, or one that was domesticated by the bronze age.
-  domesticable: boolean
   climates: Partial<Record<KoppenCode, number>>
   oasis?: readonly KoppenCode[]
   height?: Trapezoid
@@ -56,12 +54,18 @@ export interface PlantSpec {
   salt?: boolean
 }
 
+export interface PlantSpec extends NicheSpec {
+  use: PlantUse
+  // A founder of farming, or one that was domesticated by the bronze age.
+  domesticable: boolean
+}
+
 // A height response: full up to `top`, none from `end`, metres.
-const UP_TO = (top: number, end: number): Trapezoid => [-1e9, -1e9, top, end]
+export const UP_TO = (top: number, end: number): Trapezoid => [-1e9, -1e9, top, end]
 
 // Every class of a main group, at one weight.
-const ALL_C: Partial<Record<KoppenCode, number>> = { Csa: 1, Csb: 1, Csc: 1, Cwa: 1, Cwb: 1, Cwc: 1, Cfa: 1, Cfb: 1, Cfc: 1 }
-const ALL_D: Partial<Record<KoppenCode, number>> = { Dsa: 1, Dsb: 1, Dsc: 1, Dsd: 1, Dwa: 1, Dwb: 1, Dwc: 1, Dwd: 1, Dfa: 1, Dfb: 1, Dfc: 1, Dfd: 1 }
+export const ALL_C: Partial<Record<KoppenCode, number>> = { Csa: 1, Csb: 1, Csc: 1, Cwa: 1, Cwb: 1, Cwc: 1, Cfa: 1, Cfb: 1, Cfc: 1 }
+export const ALL_D: Partial<Record<KoppenCode, number>> = { Dsa: 1, Dsb: 1, Dsc: 1, Dsd: 1, Dwa: 1, Dwb: 1, Dwc: 1, Dwd: 1, Dfa: 1, Dfb: 1, Dfc: 1, Dfd: 1 }
 const ALL_A = (w: number): Partial<Record<KoppenCode, number>> => ({ Af: w, Am: w, Aw: w, As: w })
 const ALL_B = (w: number): Partial<Record<KoppenCode, number>> => ({ BWh: w, BWk: w, BSh: w, BSk: w })
 

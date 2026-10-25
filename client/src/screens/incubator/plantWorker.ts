@@ -1,7 +1,8 @@
 import { Biome } from '../../generator/climate/biomes'
 import { KOPPEN_CODES, type KoppenCode } from '../../generator/climate/koppen'
 import { drawOriginsByLandmass, hashText, mulberry32, readHabitat, spreadRange, trapezoid, type Habitat, type HabitatInput } from './habitat'
-import { PLANTS, type PlantSpec, type PlantUse } from './plants'
+import { PLANTS, type NicheSpec, type PlantUse } from './plants'
+import { TREES, type WoodUse } from './trees'
 
 // THE INCUBATOR'S PLANT WORKER (2026-10-25, a trial): where each plant of
 // plants.ts grows, on the world raster (habitat.ts), and what the plants
@@ -16,6 +17,7 @@ import { PLANTS, type PlantSpec, type PlantUse } from './plants'
 //    is BARRIER times dearer, the sea is not crossed. A suitable place outside the
 //    range is an empty niche. So most landmasses have a plant of each
 //    use, and some lack one: what it would grow on there is grey.
+// The trees of trees.ts grow the same way, a layer each.
 // 3. THE COVER: per land cell without ice, which uses (starch, fat, fruit,
 //    fibre) a plant in range gives there. The aim of the catalogue is
 //    every such cell with a starch, a fat and a fruit.
@@ -36,6 +38,17 @@ export interface PlantLayer {
   origins: { x: number; y: number }[]
 }
 
+// A tree's layer: as a plant's, by the uses of its wood.
+export interface TreeLayer {
+  id: string
+  woods: readonly WoodUse[]
+  codes: Uint8Array
+  suitable: number
+  reached: number
+  empty: number
+  origins: { x: number; y: number }[]
+}
+
 // The cover: one code a cell, 0 for the sea and the ice, else 1 + a bit
 // per use present (USE_BITS). `shares`: of the land without ice, the share
 // each use is present on; `food`: the share with starch, fat and fruit.
@@ -48,7 +61,7 @@ export interface PlantCover {
 export const USE_BITS: Record<PlantUse, number> = { starch: 1, fat: 2, fruit: 4, fibre: 8 }
 
 export type PlantWorkerOutbound =
-  | { type: 'plants'; layers: PlantLayer[]; cover: PlantCover; ms: number }
+  | { type: 'plants'; layers: PlantLayer[]; trees: TreeLayer[]; cover: PlantCover; ms: number }
   | { type: 'failed'; message: string }
 
 const worker = self as unknown as Worker
@@ -56,8 +69,8 @@ const worker = self as unknown as Worker
 worker.onmessage = (event: MessageEvent<PlantWorkerInbound>): void => {
   try {
     const started = performance.now()
-    const { layers, cover } = grow(event.data)
-    worker.postMessage({ type: 'plants', layers, cover, ms: Math.round(performance.now() - started) } satisfies PlantWorkerOutbound, [...layers.map((l) => l.codes.buffer), cover.codes.buffer])
+    const { layers, trees, cover } = grow(event.data)
+    worker.postMessage({ type: 'plants', layers, trees, cover, ms: Math.round(performance.now() - started) } satisfies PlantWorkerOutbound, [...layers.map((l) => l.codes.buffer), ...trees.map((l) => l.codes.buffer), cover.codes.buffer])
   } catch (e) {
     worker.postMessage({ type: 'failed', message: String(e) } satisfies PlantWorkerOutbound)
   }
@@ -94,7 +107,7 @@ const BIG_RIVER = 0.3
 // tropical forest are both, half open.
 const OPEN_BIOMES = new Set<number>([Biome.Grassland, Biome.Steppe, Biome.Savanna, Biome.Desert, Biome.ColdDesert, Biome.Tundra, Biome.Alpine, Biome.MediterraneanScrub, Biome.SaltFlat])
 const FOREST_BIOMES = new Set<number>([Biome.Boreal, Biome.TemperateForest, Biome.TemperateRainforest, Biome.TropicalRainforest])
-function coverFit(s: PlantSpec, biome: number): number {
+function coverFit(s: NicheSpec, biome: number): number {
   if (!s.cover) return 1
   const open = OPEN_BIOMES.has(biome)
   const forest = FOREST_BIOMES.has(biome)
@@ -108,7 +121,7 @@ function coverFit(s: PlantSpec, biome: number): number {
 // river spread through the dry land between two rivers no better than
 // through land it does not suit, and stayed on the river it started on
 // (2026-10-25: the date on 0.1 % of the land).
-function nicheOf(s: PlantSpec, h: ReturnType<typeof readHabitat>, koppen: Float32Array, biome: Float32Array): { niche: Float32Array; climate: Float32Array } {
+function nicheOf(s: NicheSpec, h: ReturnType<typeof readHabitat>, koppen: Float32Array, biome: Float32Array): { niche: Float32Array; climate: Float32Array } {
   const n = h.W * h.H
   // The weight and the oasis rule by class id.
   const weight = KOPPEN_CODES.map((code) => (code === '' ? 0 : s.climates[code as KoppenCode] ?? 0))
@@ -134,37 +147,52 @@ function nicheOf(s: PlantSpec, h: ReturnType<typeof readHabitat>, koppen: Float3
   return { niche, climate }
 }
 
-function grow(message: PlantWorkerInbound): { layers: PlantLayer[]; cover: PlantCover } {
+// One niche's range on the world raster: its codes and shares, and the
+// cells it is suitable on and reached (`present`).
+function rangeOf(s: NicheSpec, h: Habitat, message: PlantWorkerInbound): { codes: Uint8Array; present: Uint8Array; suitable: number; reached: number; empty: number; origins: { x: number; y: number }[] } {
+  const W = message.width
+  const n = W * message.height
+  const { niche, climate } = nicheOf(s, h, message.koppen, message.biome)
+  const starts = drawOriginsByLandmass(h, niche, originChance(h), SUITABLE, mulberry32(hashText(s.id) ^ message.seed))
+  const range = spreadRange(h, climate, starts, { suitable: SUITABLE, barrier: BARRIER, maxKm: SPREAD_KM })
+  const codes = new Uint8Array(n)
+  const present = new Uint8Array(n)
+  let suitable = 0
+  let reached = 0
+  let empty = 0
+  for (let i = 0; i < n; i++) {
+    const fits = niche[i] >= SUITABLE
+    if (fits) suitable++
+    if (fits && range[i]) {
+      reached++
+      present[i] = 1
+    }
+    if (range[i] && niche[i] > 0) codes[i] = 2 + Math.round(253 * Math.min(1, niche[i]))
+    else if (fits) {
+      codes[i] = 1
+      empty++
+    }
+  }
+  return {
+    codes, present,
+    suitable: suitable / h.landCount, reached: reached / h.landCount, empty: empty / h.landCount,
+    origins: starts.map((i) => ({ x: i % W, y: Math.floor(i / W) })),
+  }
+}
+
+function grow(message: PlantWorkerInbound): { layers: PlantLayer[]; trees: TreeLayer[]; cover: PlantCover } {
   const { width: W, biome } = message
   const h = readHabitat(message)
   const n = W * message.height
   const present = new Uint8Array(n)
   const layers = PLANTS.map((s): PlantLayer => {
-    const { niche, climate } = nicheOf(s, h, message.koppen, biome)
-    const starts = drawOriginsByLandmass(h, niche, originChance(h), SUITABLE, mulberry32(hashText(s.id) ^ message.seed))
-    const range = spreadRange(h, climate, starts, { suitable: SUITABLE, barrier: BARRIER, maxKm: SPREAD_KM })
-    const codes = new Uint8Array(n)
-    let suitable = 0
-    let reached = 0
-    let empty = 0
-    for (let i = 0; i < n; i++) {
-      const fits = niche[i] >= SUITABLE
-      if (fits) suitable++
-      if (fits && range[i]) {
-        reached++
-        present[i] |= USE_BITS[s.use]
-      }
-      if (range[i] && niche[i] > 0) codes[i] = 2 + Math.round(253 * Math.min(1, niche[i]))
-      else if (fits) {
-        codes[i] = 1
-        empty++
-      }
-    }
-    return {
-      id: s.id, use: s.use, domesticable: s.domesticable, codes,
-      suitable: suitable / h.landCount, reached: reached / h.landCount, empty: empty / h.landCount,
-      origins: starts.map((i) => ({ x: i % W, y: Math.floor(i / W) })),
-    }
+    const { present: here, ...range } = rangeOf(s, h, message)
+    for (let i = 0; i < n; i++) if (here[i]) present[i] |= USE_BITS[s.use]
+    return { id: s.id, use: s.use, domesticable: s.domesticable, ...range }
+  })
+  const trees = TREES.map((s): TreeLayer => {
+    const { present: _here, ...range } = rangeOf(s, h, message)
+    return { id: s.id, woods: s.woods, ...range }
   })
 
   // The cover, over the land without ice.
@@ -183,6 +211,7 @@ function grow(message: PlantWorkerInbound): { layers: PlantLayer[]; cover: Plant
   const share = (v: number): number => (open > 0 ? v / open : 0)
   return {
     layers,
+    trees,
     cover: { codes, shares: { starch: share(counts.starch), fat: share(counts.fat), fruit: share(counts.fruit), fibre: share(counts.fibre) }, food: share(food) },
   }
 }
