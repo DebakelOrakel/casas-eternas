@@ -64,6 +64,8 @@ export interface Habitat {
   // sea; and how many there are.
   landmass: Int32Array
   landmasses: number
+  // Each landmass's area, km².
+  landmassKm2: Float64Array
   // A cell's east-west extent by row, and its north-south one, km.
   dxKm: Float64Array
   dyKm: number
@@ -254,7 +256,9 @@ export function readHabitat(input: HabitatInput): Habitat {
     }
     landmasses++
   }
-  return { W, H, torus, land, landCount, coldest, warmest, rain, heightM, slope, nearRiver, riverSize, nearLake, nearSea, landmass, landmasses, dxKm, dyKm, wrapX, clampY }
+  const landmassKm2 = new Float64Array(landmasses)
+  for (let i = 0; i < n; i++) if (landmass[i] >= 0) landmassKm2[landmass[i]] += dxKm[Math.floor(i / W)] * dyKm
+  return { W, H, torus, land, landCount, coldest, warmest, rain, heightM, slope, nearRiver, riverSize, nearLake, nearSea, landmass, landmasses, landmassKm2, dxKm, dyKm, wrapX, clampY }
 }
 
 // Origins drawn by the niche to the fourth, from the cells it suits.
@@ -275,16 +279,16 @@ export function drawOrigins(best: Float32Array, count: number, suitable: number,
   return origins
 }
 
-// One origin on a landmass, with `chance`, for each landmass the niche
-// suits somewhere: drawn there by the niche to the fourth.
-export function drawOriginsByLandmass(h: Habitat, best: Float32Array, chance: number, suitable: number, random: () => number): number[] {
+// One origin on a landmass, with its `chance`, for each landmass the
+// niche suits somewhere: drawn there by the niche to the fourth.
+export function drawOriginsByLandmass(h: Habitat, best: Float32Array, chance: (landmass: number) => number, suitable: number, random: () => number): number[] {
   const total = new Float64Array(h.landmasses)
   for (let i = 0; i < best.length; i++) if (best[i] >= suitable) total[h.landmass[i]] += best[i] ** 4
   const pick = new Float64Array(h.landmasses).fill(-1)
   for (let m = 0; m < h.landmasses; m++) {
     // Both draws for every landmass, so one landmass's draw does not
     // depend on which others the niche suits.
-    const take = random() < chance
+    const take = random() < chance(m)
     const at = random()
     if (take && total[m] > 0) pick[m] = at * total[m]
   }

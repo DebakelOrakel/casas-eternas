@@ -1,6 +1,6 @@
 import { Biome } from '../../generator/climate/biomes'
 import { KOPPEN_CODES, type KoppenCode } from '../../generator/climate/koppen'
-import { drawOriginsByLandmass, hashText, mulberry32, readHabitat, spreadRange, trapezoid, type HabitatInput } from './habitat'
+import { drawOriginsByLandmass, hashText, mulberry32, readHabitat, spreadRange, trapezoid, type Habitat, type HabitatInput } from './habitat'
 import { PLANTS, type PlantSpec, type PlantUse } from './plants'
 
 // THE INCUBATOR'S PLANT WORKER (2026-10-25, a trial): where each plant of
@@ -10,7 +10,7 @@ import { PLANTS, type PlantSpec, type PlantUse } from './plants'
 // 1. THE NICHE: the plant's weight for the cell's Köppen class, times its
 //    responses to the height, slope, cover, water and sea (plants.ts).
 //    A salt flat suits only the plants that stand it.
-// 2. THE RANGE: a plant starts on a landmass with ORIGIN_CHANCE, at one
+// 2. THE RANGE: a plant starts on a landmass by originChance, at one
 //    origin drawn by its niche, and spreads by the cheapest way, as an
 //    animal does (speciesWorker.ts): land whose climate it does not suit
 //    is BARRIER times dearer, the sea is not crossed. A suitable place outside the
@@ -71,11 +71,17 @@ const SUITABLE = 0.3
 const BARRIER = 30
 // How far a range spreads, in kilometres through the niche.
 const SPREAD_KM = 8000
-// The chance a plant reached a landmass its niche suits: more than an
-// animal's two origins on the whole world, because a plant has had the
-// millennia since the ice and its seeds travel with birds, rivers and
-// people; less than one, so a landmass can lack it.
-const ORIGIN_CHANCE = 0.6
+// The chance a plant reached a landmass its niche suits, by the
+// landmass's size: 1 − e^(−area / ORIGIN_AREA_KM2). More than an animal's
+// two origins on the whole world, because a plant has had the millennia
+// since the ice and its seeds travel with birds, rivers and people. A
+// continent has nearly every plant (Australia's 7.7 M km²: 1.00), an
+// island of Madagascar's size most (0.69), Britain's a third (0.37). A
+// chance of 0.6 on every landmass (the first try, 2026-10-25) left the
+// niche empty on whole continents: on Morvane four fifths of the empty
+// fruit niche lay on landmasses the plant had no origin on.
+const ORIGIN_AREA_KM2 = 500_000
+const originChance = (h: Habitat) => (m: number): number => 1 - Math.exp(-h.landmassKm2[m] / ORIGIN_AREA_KM2)
 // A plant of the open land in the forest, or a forest plant in the open:
 // at its edges and clearings, so a part of its niche, under the
 // threshold where the class alone would suit it.
@@ -136,7 +142,7 @@ function grow(message: PlantWorkerInbound): { layers: PlantLayer[]; cover: Plant
   const present = new Uint8Array(n)
   const layers = PLANTS.map((s): PlantLayer => {
     const { niche, climate } = nicheOf(s, h, message.koppen, biome)
-    const starts = drawOriginsByLandmass(h, niche, ORIGIN_CHANCE, SUITABLE, mulberry32(hashText(s.id) ^ message.seed))
+    const starts = drawOriginsByLandmass(h, niche, originChance(h), SUITABLE, mulberry32(hashText(s.id) ^ message.seed))
     const range = spreadRange(h, climate, starts, { suitable: SUITABLE, barrier: BARRIER, maxKm: SPREAD_KM })
     const codes = new Uint8Array(n)
     let suitable = 0
