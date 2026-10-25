@@ -46,6 +46,7 @@ import type { SimEvent, PlateSimulationSnapshot } from '../../generator/tectonic
 import { eventCategory } from '../../generator/tectonics/plateSimulationTypes'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { createLegendPanel, type LegendSpec } from '../../ui/legend/LegendPanel'
+import { createProgressPill } from '../../ui/progressPill/ProgressPill'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
 import { KOPPEN_CODES, koppenCode, koppenColor, koppenLabelKey } from '../../generator/climate/koppen'
@@ -449,22 +450,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     </div>`
 
   root.innerHTML = `
-    <div class="compute-progress" data-value="compute-progress" role="status" hidden>
-      <span class="compute-progress__text">
-        <span class="compute-progress__label" data-value="compute-progress-label"></span>
-        <span class="compute-progress__sub" data-value="compute-progress-sub" hidden></span>
-      </span>
-      <svg class="compute-progress__disc" viewBox="0 0 120 120" aria-hidden="true">
-        <circle class="compute-progress__track" cx="60" cy="60" r="44"/>
-        <g data-value="compute-progress-plume">
-          <circle class="compute-progress__pulse" cx="60" cy="60" r="10"/>
-          <circle class="compute-progress__pulse" cx="60" cy="60" r="10"/>
-          <circle class="compute-progress__pulse" cx="60" cy="60" r="10"/>
-          <circle class="compute-progress__core" cx="60" cy="60" r="7"/>
-        </g>
-        <path class="compute-progress__fill" data-value="compute-progress-fill" d=""/>
-      </svg>
-    </div>
     <div class="world-panel" data-stage="world">
       <div class="world-panel__fields">
         <label class="world-field">
@@ -851,11 +836,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     toggleSimButton.querySelector('.gen-action__label')!.textContent = label
   }
   sayTectonicsButton(false)
-  const computeProgress = root.querySelector<HTMLElement>('[data-value="compute-progress"]')!
-  const computeProgressLabel = root.querySelector<HTMLElement>('[data-value="compute-progress-label"]')!
-  const computeProgressSub = root.querySelector<HTMLElement>('[data-value="compute-progress-sub"]')!
-  const computeProgressPlume = root.querySelector<SVGGElement>('[data-value="compute-progress-plume"]')!
-  const computeProgressFill = root.querySelector<SVGPathElement>('[data-value="compute-progress-fill"]')!
+  // The progress pill over the map (ui/progressPill): updateProgress says
+  // what it shows.
+  const progressPill = createProgressPill(root)
 
   // Simulation and rendering both happen inside this worker (see
   // generator/pipeline/runtime.ts) — stepping an epoch and rendering the full
@@ -1066,77 +1049,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // screen.
   let replaying: { done: number; total: number } | null = null
   let replayedHistory: WorldHistory | null = null
-  const PROGRESS_R = 44
-  const PROGRESS_CY = 60
   let progressTicker: ReturnType<typeof setInterval> | undefined
   // Set by dispose: what an await still in flight checks before it arms
   // anything new.
   let screenDisposed = false
+  // A measured run that stands still (the Archean standing): the pill's
+  // wave holds.
   let progressPaused = false
-  // The wave's phase runs on the clock, not on the updates: drawn every
-  // frame while the disc shows a fill (progressFrame), so it moves
-  // smoothly whatever the run reports and however often. Its speed is the
-  // 0.6 rad a second it stepped by when it was redrawn once a second.
-  const WAVE_RAD_PER_MS = 0.6 / 1000
-  let progressFraction: number | null = null
-  let progressFrameId: number | null = null
-  // Where the wave stood when it last stopped (the Archean standing), so it
-  // starts again from there rather than jumping.
-  let wavePhaseHeld = 0
-  let waveClockStart = performance.now()
-  const wavePhaseNow = (): number => (progressPaused ? wavePhaseHeld : wavePhaseHeld + (performance.now() - waveClockStart) * WAVE_RAD_PER_MS)
-  // The plume's rings on the same clock, drawn here rather than by a CSS
-  // animation: Safari does not animate an SVG circle's `r` from keyframes,
-  // so the rings stayed round the dot (2026-10-02). The design canvas's
-  // curve (Fortschritt.dc.html, variant C): r 8 → 42 and opacity 0.85 → 0
-  // over 1.8 s, eased out, the three rings 0.55 s apart.
-  const PLUME_CYCLE_MS = 1800
-  const PLUME_OFFSETS_MS = [0, 550, 1100]
-  const plumeRings = [...computeProgressPlume.querySelectorAll<SVGCircleElement>('.compute-progress__pulse')]
-  const drawPlume = (now: number): void => {
-    plumeRings.forEach((ring, i) => {
-      const t = (((now - PLUME_OFFSETS_MS[i]) % PLUME_CYCLE_MS) + PLUME_CYCLE_MS) % PLUME_CYCLE_MS / PLUME_CYCLE_MS
-      const eased = 1 - (1 - t) * (1 - t)
-      ring.setAttribute('r', (8 + 34 * eased).toFixed(2))
-      ring.setAttribute('opacity', (0.85 * (1 - eased)).toFixed(3))
-    })
-  }
-  const progressFrame = (): void => {
-    progressFrameId = null
-    if (computeProgress.hidden || screenDisposed) return
-    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    if (progressFraction !== null) computeProgressFill.setAttribute('d', progressFillPath(progressFraction, wavePhaseNow()))
-    else if (!still) drawPlume(performance.now())
-    if (!still && !(progressPaused && progressFraction !== null)) progressFrameId = requestAnimationFrame(progressFrame)
-  }
-  // The fill: the disc below a wavy water line at `fraction` of its height,
-  // as one closed path — the wave across the chord, the circle's lower arc
-  // back to the start.
-  const progressFillPath = (fraction: number, phase: number): string => {
-    const f = Math.min(0.985, Math.max(0.015, fraction))
-    const level = PROGRESS_CY + PROGRESS_R - 2 * PROGRESS_R * f
-    const half = Math.sqrt(Math.max(0, PROGRESS_R * PROGRESS_R - (level - PROGRESS_CY) * (level - PROGRESS_CY)))
-    const x0 = 60 - half
-    const x1 = 60 + half
-    const amplitude = Math.min(3.5, half * 0.12)
-    const points: string[] = []
-    const steps = 24
-    for (let i = 0; i <= steps; i++) {
-      const x = x0 + ((x1 - x0) * i) / steps
-      const y = level + amplitude * Math.sin(((x - 60) / 22) + phase)
-      points.push(`${i === 0 ? 'M' : 'L'}${x.toFixed(2)} ${y.toFixed(2)}`)
-    }
-    const yEnd = level + amplitude * Math.sin(((x1 - 60) / 22) + phase)
-    const yStart = level + amplitude * Math.sin(((x0 - 60) / 22) + phase)
-    return `${points.join(' ')} L${x1.toFixed(2)} ${yEnd.toFixed(2)} A${PROGRESS_R} ${PROGRESS_R} 0 0 1 60 ${PROGRESS_CY + PROGRESS_R} A${PROGRESS_R} ${PROGRESS_R} 0 0 1 ${x0.toFixed(2)} ${yStart.toFixed(2)} Z`
-  }
   const updateProgress = (): void => {
     let label = ''
     let sub: string | null = null
     let fraction: number | null = null
     let stage: 'early' | 'window' | 'late' | null = null
     const archeanStanding = archeanNarrated && !archeanFinalised && !hasHandover && panelIndex === GENESIS_PANEL_INDEX
-    const wasPaused = progressPaused
     progressPaused = false
     if (replaying) {
       // A world made again on load (startReplay): its epochs done of all.
@@ -1171,35 +1096,22 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     } else if (migrationInFlight) {
       label = t('generator.step.migration.label')
     } else {
-      computeProgress.hidden = true
-      progressFraction = null
+      progressPill.hide()
       if (progressTicker !== undefined) { clearInterval(progressTicker); progressTicker = undefined }
       return
     }
-    // The wave holds its phase through a pause and goes on from it.
-    if (progressPaused && !wasPaused) wavePhaseHeld += (performance.now() - waveClockStart) * WAVE_RAD_PER_MS
-    if (!progressPaused && wasPaused) waveClockStart = performance.now()
-    computeProgress.hidden = false
-    computeProgressLabel.textContent = label
-    computeProgressSub.textContent = sub ?? ''
-    computeProgressSub.hidden = sub === null
-    progressFraction = fraction
-    if (fraction === null) {
-      computeProgressPlume.style.display = ''
-      if (progressFrameId === null) progressFrameId = requestAnimationFrame(progressFrame)
-      computeProgressFill.setAttribute('d', '')
-      delete computeProgress.dataset.stage
-      computeProgress.setAttribute('aria-label', t('generator.progress.ariaRunning', { step: label }))
-    } else {
-      computeProgressPlume.style.display = 'none'
-      computeProgressFill.setAttribute('d', progressFillPath(fraction, wavePhaseNow()))
-      if (progressFrameId === null) progressFrameId = requestAnimationFrame(progressFrame)
-      if (stage) computeProgress.dataset.stage = stage
-      else delete computeProgress.dataset.stage
-      computeProgress.setAttribute('aria-label', t('generator.progress.aria', { step: label, percent: formatValue(Math.round(fraction * 100), 'common.unit.percent') }))
-    }
+    progressPill.show({
+      label,
+      sub,
+      fraction,
+      stage,
+      paused: progressPaused,
+      aria: fraction === null
+        ? t('generator.progress.ariaRunning', { step: label })
+        : t('generator.progress.aria', { step: label, percent: formatValue(Math.round(fraction * 100), 'common.unit.percent') }),
+    })
     // The words and the fill's height once a second while the pill shows
-    // (the wave itself moves every frame, progressFrame).
+    // (the wave itself moves every frame, in the pill).
     if (progressTicker === undefined && !screenDisposed) progressTicker = setInterval(() => updateProgress(), 1000)
   }
 
@@ -6467,6 +6379,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       screenDisposed = true
       if (progressTicker !== undefined) clearInterval(progressTicker)
       progressTicker = undefined
+      progressPill.dispose()
       climatePlayer.stop()
       ecologyPlayer.stop()
       stopSim()

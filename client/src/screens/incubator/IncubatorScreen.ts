@@ -51,6 +51,7 @@ import type { PlantLayer, PlantWorkerInbound, PlantWorkerOutbound, TreeLayer } f
 import type { WoodUse } from './trees'
 import type { HabitatInput } from './habitat'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
+import { createProgressPill } from '../../ui/progressPill/ProgressPill'
 import '../../ui/theme/design.css'
 // The generator's layer switches, for the trial's switch.
 import '../generator/overlayList.css'
@@ -440,7 +441,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       stepBar.relabel()
       updateSteps()
       overlayList.relabel()
-      void showPlants()
+      showPlants()
       cameraTools.relabel()
       mapScales.relabel()
     },
@@ -534,7 +535,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           woodShown = id === NO_WOOD ? null : (id.slice('wood:'.length) as WoodUse)
           if (woodShown) plantShown = null
         }
-        void showPlants()
+        showPlants()
         void showSpecies()
         return
       }
@@ -853,31 +854,40 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
     },
   })
+  // The plants and the trees grow by themselves once a world is shown,
+  // in the background, the pill saying so; a pick shows them once they
+  // are there. Each world asks again; an answer for an older one is
+  // dropped.
+  const progressPill = createProgressPill(root)
   let plantAsk = 0
-  async function showPlants(): Promise<void> {
+  async function growFlora(): Promise<void> {
     const ask = ++plantAsk
     if (!shown || !shownWorld) return
-    if ((plantShown || woodShown) && !plants) {
-      plantStatus.textContent = t('incubator.plants.computing')
-      const world = shownWorld
-      const input = await habitatOf(world)
-      if (!input) {
-        console.warn('[incubator] the plants need the habitat\'s fields')
-        plantStatus.textContent = t('incubator.plants.missing')
-        return
-      }
-      const done = await growPlants(input)
-      if (ask !== plantAsk || shownWorld !== world) return
-      if (!done) {
-        plantStatus.textContent = t('incubator.plants.failed')
-        return
-      }
-      console.info(`[incubator] plants grown, ${done.ms} ms`)
-      plants = { layers: done.layers, trees: done.trees }
-      hoverTooltip.refresh()
-    }
-    plantLegend.refresh()
+    const world = shownWorld
+    const label = t('incubator.step.flora.label')
+    progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
     plantStatus.textContent = ''
+    const input = await habitatOf(world)
+    const done = input ? await growPlants(input) : null
+    if (ask !== plantAsk || shownWorld !== world) return
+    progressPill.hide()
+    if (!input) {
+      console.warn('[incubator] the plants need the habitat\'s fields')
+      plantStatus.textContent = t('incubator.plants.missing')
+      return
+    }
+    if (!done) {
+      plantStatus.textContent = t('incubator.plants.failed')
+      return
+    }
+    console.info(`[incubator] plants grown, ${done.ms} ms`)
+    plants = { layers: done.layers, trees: done.trees }
+    hoverTooltip.refresh()
+    showPlants()
+  }
+  // The picks' plants or wood on the map, and their legend.
+  function showPlants(): void {
+    plantLegend.refresh()
     showCharts()
   }
 
@@ -1031,7 +1041,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     plantLegend.refresh()
     if (regionBox.checked) void showRegions()
     if (speciesPick.value !== '') void showSpecies()
-    if (plantShown || woodShown) void showPlants()
+    void growFlora()
     // The level's rivers, from the world raster's texels to the chart's.
     if (level.rivers) {
       const points = Float32Array.from(level.rivers.points)
@@ -1195,6 +1205,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       cameraTools.dispose()
       titleBar.dispose()
       helpTooltip.dispose()
+      progressPill.dispose()
       hoverTooltip.dispose()
       serverIndicator.dispose()
       // A view disposes its own camera and its listeners on the shared

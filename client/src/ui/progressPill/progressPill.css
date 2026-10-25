@@ -1,0 +1,81 @@
+/* The progress pill over the map — design canvas Fortschritt.dc.html,
+   variant C "Plume und Füllstand" (2026-09-26): what runs, a line under it,
+   a 22 px disc. Endless states let rings rise out of the centre; measured
+   ones fill the disc from the bottom under a wave (ProgressPill.ts,
+   fillPath). Centred on the MAP, not on the window: the column takes
+   real width off the left, so a plain 50% sits a sidebar's half to the left
+   of the map's middle. */
+.compute-progress {
+  position: fixed;
+  bottom: calc(1.25rem + var(--step-bar-height, 0px));
+  left: calc(50% + var(--sidebar-width, 0px) / 2);
+  transform: translateX(-50%);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 8px 0 16px;
+  border-radius: 22px;
+  background: rgba(251, 248, 242, 0.94);
+  border: 1px solid var(--dc-line2, #d3cab8);
+  box-shadow: 0 8px 22px rgba(70, 52, 24, 0.16);
+  color: var(--dc-strong, #15191d);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  pointer-events: none;
+}
+.compute-progress[hidden] {
+  display: none;
+}
+.compute-progress__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.compute-progress__label {
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.compute-progress__sub {
+  font-size: 11px;
+  color: var(--dc-faint, #6b727a);
+  white-space: nowrap;
+}
+.compute-progress__sub[hidden] {
+  display: none;
+}
+/* The disc uses the pill's height: 34 of 44 px (the canvas drew 22; user's
+   call 2026-09-26 — the wave is the display, let it show). */
+.compute-progress__disc {
+  width: 34px;
+  height: 34px;
+  display: block;
+  flex-shrink: 0;
+}
+.compute-progress__track {
+  fill: none;
+  stroke: var(--dc-line2, #d3cab8);
+  stroke-width: 5;
+}
+.compute-progress__pulse {
+  fill: none;
+  stroke: var(--dc-accent, #d8912e);
+  stroke-width: 5;
+}
+/* The plume's source: the dot the rings rise from (design canvas,
+   Fortschritt.dc.html, variant C). */
+.compute-progress__core {
+  fill: var(--dc-accent, #d8912e);
+}
+/* The fill's colour is the same three-stage judgement the banner text states
+   (below 20% of the Archean nothing has settled, 20-70% is the window where
+   separate cratons exist and still move, above 70% continents assemble; the
+   tectonics grey below the epochs the climate needs, green above). */
+.compute-progress__fill {
+  fill: var(--dc-accent, #d8912e);
+  opacity: 0.9;
+}
+.compute-progress[data-stage='early'] .compute-progress__fill { fill: #7a8794; }
+.compute-progress[data-stage='window'] .compute-progress__fill { fill: #4f9d5d; }
+.compute-progress[data-stage='late'] .compute-progress__fill { fill: #c98a3c; }
