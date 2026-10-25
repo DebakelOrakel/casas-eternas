@@ -49,7 +49,7 @@ import { SPECIES } from './species'
 import type { PlantUse } from './plants'
 import type { PlantLayer, PlantWorkerInbound, PlantWorkerOutbound, TreeLayer } from './plantWorker'
 import type { WoodUse } from './trees'
-import type { HabitatInput } from './habitat'
+import { levelRasters, type HabitatInput } from './habitat'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
 import '../../ui/theme/design.css'
@@ -663,6 +663,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     worldAreaM2: number
     level: RegionWorkerInbound['level']
     rivers: HabitatInput['rivers']
+    // Level 1's ground and water on the world raster (habitat.ts,
+    // levelRasters); null for a level made before its land fields.
+    ground: ReturnType<typeof levelRasters> | null
   } | null = null
   // The last cut, for its threshold: drawn over the chart in showCharts.
   let regionCut: { minAreaKm2: number; overlay: Uint8ClampedArray } | null = null
@@ -783,25 +786,30 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // world shown; null when it lacks one.
   async function habitatOf(world: World): Promise<HabitatInput | null> {
     if (!shown) return null
-    const [elevation, biome, discharge, koppen, temperature, precipitation, seasonalAmplitude] = await Promise.all(
-      ['elevation', 'biome', 'discharge', 'koppen', 'temperature', 'precipitation', 'seasonalAmplitude'].map((name) => world.acquire(name)))
-    if (!elevation || !biome || !discharge || !koppen || !temperature || !precipitation || !seasonalAmplitude) {
-      console.warn('[incubator] the habitat needs elevation, biome, discharge, the Köppen classes and the climate')
+    const [temperature, precipitation, seasonalAmplitude] = await Promise.all(['temperature', 'precipitation', 'seasonalAmplitude'].map((name) => world.acquire(name)))
+    if (!temperature || !precipitation || !seasonalAmplitude) {
+      console.warn('[incubator] the habitat needs the save\'s climate')
       return null
     }
-    // A world without lakes has no lake depth.
-    const lakeDepth = await world.acquire('lakeDepth')
+    // Level 1's ground and water; the save's for a level without them.
+    let ground = shown.ground
+    if (!ground) {
+      const [elevation, biome, discharge, koppen] = await Promise.all(['elevation', 'biome', 'discharge', 'koppen'].map((name) => world.acquire(name)))
+      if (!elevation || !biome || !discharge || !koppen) {
+        console.warn('[incubator] the habitat needs elevation, biome, discharge and the Köppen classes')
+        return null
+      }
+      // A world without lakes has no lake depth.
+      const lakeDepth = await world.acquire('lakeDepth')
+      ground = { elevation: elevation.data, biome: biome.data, discharge: discharge.data, koppen: koppen.data, lakeDepth: lakeDepth?.data ?? null }
+    }
     const domain = domainOfKind(shown.kind, shown.width, shown.height)
     return {
       kind: shown.kind,
       width: shown.width,
       height: shown.height,
       cellMetres: shown.kind === 'sphere' ? domain.metresAround / shown.width : domain.metresPerUnit,
-      elevation: elevation.data,
-      biome: biome.data,
-      discharge: discharge.data,
-      lakeDepth: lakeDepth?.data ?? null,
-      koppen: koppen.data,
+      ...ground,
       rivers: shown.rivers,
       climate: { resX: temperature.resX, resY: temperature.resY, temperature: temperature.data, precipitation: precipitation.data, seasonalAmplitude: seasonalAmplitude.data },
       seed: world.recipe.detailSeed,
@@ -1032,6 +1040,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       worldAreaM2: kind === 'sphere' ? domain.metresAround ** 2 / Math.PI : (domain.metresPerUnit ** 2) * world.width * world.height,
       level: { count: level.count, nodes: level.nodes, connectivity: level.connectivity, z: level.z },
       rivers: level.rivers,
+      ground: land && painted.nodes ? levelRasters(land, level.z, painted.nodes, CHART_WIDTH >> 1, CHART_HEIGHT >> 1, world.width, world.height) : null,
     }
     regionCut = null
     shownWorld = world

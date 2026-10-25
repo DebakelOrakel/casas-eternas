@@ -1,6 +1,7 @@
 import { MinHeap } from '../../generator/core/minHeap'
 import { Biome } from '../../generator/climate/biomes'
 import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
+import type { LevelLand } from '../../world/meshArtifacts'
 import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE, type RiverPolylines } from '../../generator/surface/hydrology'
 
 // THE INCUBATOR'S HABITAT (2026-10-25, a trial): the world raster as a
@@ -16,8 +17,14 @@ import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE, type RiverPolyline
 // steps both take: a niche's response (a trapezoid) and the spread of a
 // range from its origins.
 //
-// The climate is the save's, on its own chart (256 × 128), read bilinearly
-// over its land cells.
+// The ground and the water are level 1's when it carries its land fields
+// (levelRasters, 2026-10-25): the height, the biomes, the Köppen classes,
+// the discharge and the lakes of the level's node under each cell, so the
+// plants and the animals stand on the terrain the chart draws. Without
+// them, the save's rasters. The climate is the save's, on its own chart
+// (256 × 128), read bilinearly over its land cells; a land cell of level 1
+// with no land cell of the chart near has no months (NaN).
+
 
 export interface HabitatInput {
   kind: 'sphere' | 'torus'
@@ -121,6 +128,41 @@ function climateSampler(c: HabitatInput['climate'], width: number, height: numbe
   }
 }
 
+// The habitat's ground and water from level 1: per world cell the fields
+// of the node under its middle, through the chart's node map (chartWorker,
+// `nodeW` × `nodeH` over the world). A node of the land at or under the
+// sea's level (a dry basin's floor) is put just above it, as the habitat
+// tells the land by its height.
+export function levelRasters(
+  land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth'>,
+  z: Float32Array,
+  nodes: Int32Array,
+  nodeW: number,
+  nodeH: number,
+  W: number,
+  H: number,
+): Pick<HabitatInput, 'elevation' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth'> {
+  const n = W * H
+  const elevation = new Float32Array(n)
+  const biome = new Float32Array(n)
+  const koppen = new Float32Array(n)
+  const discharge = new Float32Array(n)
+  const lakeDepth = new Float32Array(n)
+  for (let y = 0; y < H; y++) {
+    const ny = Math.min(nodeH - 1, Math.floor(((y + 0.5) / H) * nodeH))
+    for (let x = 0; x < W; x++) {
+      const v = nodes[ny * nodeW + Math.min(nodeW - 1, Math.floor(((x + 0.5) / W) * nodeW))]
+      const i = y * W + x
+      elevation[i] = land.land[v] ? Math.max(z[v], 1e-6) : z[v]
+      biome[i] = land.biome[v]
+      koppen[i] = land.koppen[v]
+      discharge[i] = land.discharge[v]
+      lakeDepth[i] = land.lakeDepth[v]
+    }
+  }
+  return { elevation, biome, koppen, discharge, lakeDepth }
+}
+
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0
   return () => {
@@ -168,7 +210,6 @@ export function readHabitat(input: HabitatInput): Habitat {
       const t = climateAt(input.climate.temperature, x, y)
       const p = climateAt(input.climate.precipitation, x, y)
       const a = climateAt(input.climate.seasonalAmplitude, x, y)
-      if (Number.isNaN(t) || Number.isNaN(p)) continue
       land[i] = 1
       landCount++
       coldest[i] = t - a / 2

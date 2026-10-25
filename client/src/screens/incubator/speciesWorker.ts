@@ -72,7 +72,7 @@ function distribute(message: SpeciesWorkerInbound): SpeciesLayer[] {
   // the biome's edible share.
   const forage = new Float32Array(n)
   for (let i = 0; i < n; i++) {
-    if (!land[i]) continue
+    if (!land[i] || Number.isNaN(coldest[i])) continue
     const t = (coldest[i] + warmest[i]) / 2
     const npp = Math.min(3000 / (1 + Math.exp(1.315 - 0.119 * t)), 3000 * (1 - Math.exp(-0.000664 * rain[i])))
     forage[i] = npp * (EDIBLE_SHARE[biome[i]] ?? 0)
@@ -82,7 +82,8 @@ function distribute(message: SpeciesWorkerInbound): SpeciesLayer[] {
   const niches = SPECIES.map((s) => {
     const niche = new Float32Array(n)
     for (let i = 0; i < n; i++) {
-      if (!land[i]) continue
+      // A cell without the save's months (habitat.ts) suits none.
+      if (!land[i] || Number.isNaN(coldest[i])) continue
       let v = trapezoid(coldest[i], s.coldest) * trapezoid(warmest[i], s.warmest) * trapezoid(rain[i], s.rain) * (s.biomes[biome[i]] ?? 0)
       if (v === 0) continue
       if (s.height) v *= trapezoid(heightM[i], s.height)
