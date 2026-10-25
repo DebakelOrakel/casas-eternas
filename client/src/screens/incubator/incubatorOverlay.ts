@@ -189,3 +189,114 @@ export function paintPeople(o: OverlayRaster, people: PeopleResult, arrows: read
     }
   }
 }
+
+// THE SETTLEMENT (settleWorker.ts, a proof of concept): the lifeways, the
+// density, the villages and the trade, onto the overlay.
+export const LIFEWAY_COLOURS: Record<number, readonly [number, number, number]> = {
+  1: [150, 140, 110],
+  2: [40, 120, 190],
+  3: [215, 160, 40],
+  4: [60, 150, 60],
+}
+export const DENSITY_STOPS: readonly { value: number; rgb: [number, number, number] }[] = [
+  { value: 0.01, rgb: [245, 240, 220] },
+  { value: 0.3, rgb: [240, 180, 90] },
+  { value: 3, rgb: [210, 90, 50] },
+  { value: 30, rgb: [110, 20, 40] },
+]
+export const GOOD_COLOURS: readonly (readonly [number, number, number])[] = [[60, 60, 60], [240, 240, 240], [200, 110, 40]]
+export const TRADE_COLOUR: readonly [number, number, number] = [120, 40, 140]
+
+const cellOf = (x: number, y: number, o: OverlayRaster, width: number, height: number): number =>
+  Math.min(height - 1, Math.floor((y * height) / o.height)) * width + Math.min(width - 1, Math.floor((x * width) / o.width))
+
+export function paintLifeways(o: OverlayRaster, lifeway: Uint8Array, width: number, height: number): void {
+  for (let y = 0; y < o.height; y++) {
+    for (let x = 0; x < o.width; x++) {
+      const c = LIFEWAY_COLOURS[lifeway[cellOf(x, y, o, width, height)]]
+      if (c) put(o, 4 * (y * o.width + x), c[0], c[1], c[2], 0.6)
+    }
+  }
+}
+
+// The density on a logarithmic ramp (DENSITY_STOPS).
+export function paintDensity(o: OverlayRaster, density: Float32Array, width: number, height: number): void {
+  const logs = DENSITY_STOPS.map((s) => Math.log10(s.value))
+  for (let y = 0; y < o.height; y++) {
+    for (let x = 0; x < o.width; x++) {
+      const d = density[cellOf(x, y, o, width, height)]
+      if (!(d > 0)) continue
+      const l = Math.log10(d)
+      let k = 1
+      while (k < logs.length - 1 && l > logs[k]) k++
+      const f = Math.min(1, Math.max(0, (l - logs[k - 1]) / (logs[k] - logs[k - 1])))
+      const a = DENSITY_STOPS[k - 1].rgb
+      const b = DENSITY_STOPS[k].rgb
+      put(o, 4 * (y * o.width + x), a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, 0.7)
+    }
+  }
+}
+
+// A filled disc of `r` texels, on a dark or white rim.
+function disc(o: OverlayRaster, cx: number, cy: number, r: number, rgb: readonly [number, number, number], rim: readonly [number, number, number]): void {
+  for (let dy = -r - 1; dy <= r + 1; dy++) {
+    const y = Math.round(cy + dy)
+    if (y < 0 || y >= o.height) continue
+    for (let dx = -r - 1; dx <= r + 1; dx++) {
+      const d = Math.hypot(dx, dy)
+      if (d > r + 1) continue
+      const x = ((Math.round(cx + dx) % o.width) + o.width) % o.width
+      const c = d <= r ? rgb : rim
+      put(o, 4 * (y * o.width + x), c[0], c[1], c[2], 1)
+    }
+  }
+}
+
+const centre = (cell: number, o: OverlayRaster, width: number, height: number): [number, number] =>
+  [((cell % width) + 0.5) * (o.width / width), (Math.floor(cell / width) + 0.5) * (o.height / height)]
+
+// The villages: a dot each, in its lifeway's colour, bigger the denser.
+export function paintVillages(o: OverlayRaster, villages: Int32Array, density: Float32Array, width: number, height: number): void {
+  for (let k = 0; k < villages.length; k += 2) {
+    const [x, y] = centre(villages[k], o, width, height)
+    const r = Math.min(5, 2 + Math.log10(1 + density[villages[k]]))
+    disc(o, x, y, r, LIFEWAY_COLOURS[villages[k + 1]] ?? [0, 0, 0], [25, 25, 25])
+  }
+}
+
+// The trade: the links that carry goods, wider the more, and the sources
+// as squares in their good's colour.
+export function paintTrade(o: OverlayRaster, villages: Int32Array, links: Float32Array, sources: Int32Array, width: number, height: number): void {
+  const [cr, cg, cb] = TRADE_COLOUR
+  for (let k = 0; k < links.length; k += 3) {
+    const w = links[k + 2]
+    if (w < 0.05) continue
+    const half = Math.min(3, 0.6 + Math.sqrt(w)) / 2
+    const [ax, ay] = centre(villages[2 * links[k]], o, width, height)
+    let [bx, by] = centre(villages[2 * links[k + 1]], o, width, height)
+    if (bx - ax > o.width / 2) bx -= o.width
+    else if (ax - bx > o.width / 2) bx += o.width
+    const steps = Math.ceil(Math.hypot(bx - ax, by - ay))
+    for (let s = 0; s <= steps; s++) {
+      const px = ax + ((bx - ax) * s) / Math.max(1, steps)
+      const py = ay + ((by - ay) * s) / Math.max(1, steps)
+      for (let dy = Math.floor(py - half); dy <= Math.ceil(py + half); dy++) {
+        if (dy < 0 || dy >= o.height) continue
+        for (let dx = Math.floor(px - half); dx <= Math.ceil(px + half); dx++) put(o, 4 * (dy * o.width + (((dx % o.width) + o.width) % o.width)), cr, cg, cb, 0.8)
+      }
+    }
+  }
+  for (let k = 0; k < sources.length; k += 2) {
+    const [x, y] = centre(sources[k], o, width, height)
+    const c = GOOD_COLOURS[sources[k + 1]]
+    for (let dy = -5; dy <= 5; dy++) {
+      for (let dx = -5; dx <= 5; dx++) {
+        const yy = Math.round(y + dy)
+        if (yy < 0 || yy >= o.height) continue
+        const edge = Math.abs(dx) === 5 || Math.abs(dy) === 5
+        const col = edge ? [25, 25, 25] : c
+        put(o, 4 * (yy * o.width + (((Math.round(x + dx) % o.width) + o.width) % o.width)), col[0], col[1], col[2], 1)
+      }
+    }
+  }
+}

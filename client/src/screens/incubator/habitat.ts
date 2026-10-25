@@ -2,7 +2,7 @@ import { MinHeap } from '../../generator/core/minHeap'
 import { Biome } from '../../generator/climate/biomes'
 import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
 import type { LevelLand } from '../../world/meshArtifacts'
-import { decodeFineValue, ECOLOGY_FINE_OCEAN } from '../../generator/ecology/ecologyField'
+import { decodeFineValue, ECOLOGY_FINE_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE, type RiverPolylines } from '../../generator/surface/hydrology'
 
 // THE INCUBATOR'S HABITAT (2026-10-25, a trial): the world raster as a
@@ -48,6 +48,9 @@ export interface HabitatInput {
   // decoded); null without them.
   game: Float32Array | null
   carrying?: Float32Array | null
+  // More of the ecology's fields on the raster, decoded likewise, for the
+  // people's lifeways (settleWorker.ts): LEVEL_ECOLOGY.
+  ecology?: Partial<Record<EcologyFieldId, Float32Array>>
   seed: number
 }
 
@@ -102,6 +105,10 @@ export function trapezoid(v: number, t: Trapezoid): number {
 }
 
 
+// The ecology's fields the habitat carries besides the game and the
+// carrying capacity.
+export const LEVEL_ECOLOGY: readonly EcologyFieldId[] = ['arable', 'pasture', 'fish', 'toolStone', 'salt', 'copper']
+
 // The habitat's ground and water from level 1: per world cell the fields
 // of the node under its middle, through the chart's node map (chartWorker,
 // `nodeW` × `nodeH` over the world). A node of the land at or under the
@@ -115,7 +122,7 @@ export function levelRasters(
   nodeH: number,
   W: number,
   H: number,
-): Pick<HabitatInput, 'elevation' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth' | 'game' | 'carrying'> {
+): Pick<HabitatInput, 'elevation' | 'biome' | 'koppen' | 'discharge' | 'lakeDepth' | 'game' | 'carrying' | 'ecology'> {
   const n = W * H
   const elevation = new Float32Array(n)
   const biome = new Float32Array(n)
@@ -126,6 +133,14 @@ export function levelRasters(
   const game = gameCodes ? new Float32Array(n) : null
   const carryingCodes = land.ecology.carryingCapacity
   const carrying = carryingCodes ? new Float32Array(n) : null
+  const ecology: Partial<Record<EcologyFieldId, Float32Array>> = {}
+  const ecologyCodes = LEVEL_ECOLOGY.flatMap((id) => {
+    const codes = land.ecology[id]
+    if (!codes) return []
+    const values = new Float32Array(n)
+    ecology[id] = values
+    return [{ codes, values }]
+  })
   for (let y = 0; y < H; y++) {
     const ny = Math.min(nodeH - 1, Math.floor(((y + 0.5) / H) * nodeH))
     for (let x = 0; x < W; x++) {
@@ -138,9 +153,10 @@ export function levelRasters(
       lakeDepth[i] = land.lakeDepth[v]
       if (game && gameCodes && gameCodes[v] !== ECOLOGY_FINE_OCEAN) game[i] = decodeFineValue(gameCodes[v])
       if (carrying && carryingCodes && carryingCodes[v] !== ECOLOGY_FINE_OCEAN) carrying[i] = decodeFineValue(carryingCodes[v])
+      for (const f of ecologyCodes) if (f.codes[v] !== ECOLOGY_FINE_OCEAN) f.values[i] = decodeFineValue(f.codes[v])
     }
   }
-  return { elevation, biome, koppen, discharge, lakeDepth, game, carrying }
+  return { elevation, biome, koppen, discharge, lakeDepth, game, carrying, ecology }
 }
 
 export function mulberry32(seed: number): () => number {

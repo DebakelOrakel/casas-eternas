@@ -45,9 +45,13 @@ import type { LevelLand } from '../../world/meshArtifacts'
 import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
 import type { AnimalLayer, AnimalWorkerInbound, AnimalWorkerOutbound } from './animalWorker'
 import type { AnimalUse } from './animals'
-import { SPAN_YEARS, type PeopleResult, type PeopleWorkerInbound, type PeopleWorkerOutbound } from './peopleWorker'
+import type { PeopleResult, PeopleWorkerInbound, PeopleWorkerOutbound } from './peopleWorker'
+import { SPAN_YEARS } from './peopleShared'
 import { arrowsOf, type PeopleArrow } from './peopleArrows'
-import { clearOverlay, OVERLAY_DIVISOR, paintGroup, paintPeople, paintRaster, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import type { SettleResult, SettleWorkerInbound, SettleWorkerOutbound } from './settleWorker'
+import { GOODS } from './settleShared'
+import { PLANTS } from './plants'
+import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, paintVillages, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
@@ -329,6 +333,35 @@ function spreadPeople(input: PeopleWorkerInbound): Promise<(PeopleWorkerOutbound
   })
 }
 
+// The people's end state, in the settlement worker (a proof of concept).
+function settlePeople(input: SettleWorkerInbound): Promise<(SettleWorkerOutbound & { type: 'settled' }) | null> {
+  return new Promise((resolve) => {
+    const worker = new Worker(new URL('./settleWorker.ts', import.meta.url), { type: 'module' })
+    worker.onmessage = (event: MessageEvent<SettleWorkerOutbound>): void => {
+      worker.terminate()
+      if (event.data.type === 'failed') {
+        console.warn(`[incubator] the people could not settle: ${event.data.message}`)
+        resolve(null)
+        return
+      }
+      resolve(event.data)
+    }
+    worker.onerror = (event): void => {
+      worker.terminate()
+      console.warn(`[incubator] the settlement worker failed: ${event.message}`)
+      resolve(null)
+    }
+    worker.postMessage(input)
+  })
+}
+
+// The tamable herd animals (animals.ts) the herders keep.
+const HERD_ANIMALS = new Set(['aurochs', 'horse', 'sheep', 'camel', 'reindeer', 'yak', 'buffalo'])
+// The domesticable starch plants (plants.ts) the farmers sow.
+const FARM_PLANTS = new Set(PLANTS.filter((p) => p.domesticable && p.use === 'starch').map((p) => p.id))
+// The lifeways' names in the trial, no catalog keys (settleWorker.ts).
+const LIFEWAY_NAMES: Record<number, string> = { 1: 'Jäger und Sammler', 2: 'Sesshafte Fischer', 3: 'Hirten', 4: 'Bauern' }
+
 // The smallest catchment that makes a region of its own, km², the
 // choices of the trial control.
 const REGION_MIN_AREAS_KM2 = [100, 300, 1000, 3000]
@@ -463,6 +496,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let spreadOn = true
   let routesOn = true
   let peopleOrigin = -1
+  // The people's end state (settleWorker.ts), a proof of concept.
+  let settled: SettleResult | null = null
   // The composite last uploaded (showCharts), and the charts' version: a
   // new world's charts are a new composite.
   let uploadedBase = ''
@@ -566,6 +601,33 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   peopleSlider.step = '100'
   peopleSection.append(peopleRow, peopleSlider)
   sidebar.body.append(peopleSection)
+  // TRIAL (2026-10-25, a proof of concept): the people's end state on four
+  // switches. Hardcoded text, no catalog keys: we are trying it out.
+  const settleSection = document.createElement('section')
+  settleSection.className = 'gen-overlays'
+  const settleTitle = document.createElement('span')
+  settleTitle.className = 'gen-overlay__label'
+  settleTitle.textContent = 'Versuch: Endzustand'
+  settleSection.append(settleTitle)
+  const settleBox = (name: string): HTMLInputElement => {
+    const row = document.createElement('label')
+    row.className = 'gen-overlay'
+    const label = document.createElement('span')
+    label.className = 'gen-overlay__label'
+    label.textContent = name
+    const box = document.createElement('input')
+    box.type = 'checkbox'
+    box.className = 'gen-overlay__switch'
+    box.addEventListener('change', () => showPlants())
+    row.append(label, box)
+    settleSection.append(row)
+    return box
+  }
+  const lifewayBox = settleBox('Lebensweise')
+  const densityBox = settleBox('Dichte')
+  const villageBox = settleBox('Dörfer')
+  const tradeBox = settleBox('Handel')
+  sidebar.body.append(settleSection)
   const peoplePlayer = (() => {
     let timer: ReturnType<typeof setInterval> | null = null
     const sayButton = (): void => {
@@ -953,6 +1015,26 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     peopleArrows = arrowsOf(people, shown.width, CHART_WIDTH / OVERLAY_DIVISOR / shown.width, CHART_HEIGHT / OVERLAY_DIVISOR / shown.height)
     console.info(`[incubator] ${peopleArrows.length} arrows`)
     showPlants()
+    await growSettle()
+  }
+  // The end state from the spread, the flora and the fauna.
+  let settleAsk = 0
+  async function growSettle(): Promise<void> {
+    const ask = ++settleAsk
+    if (!shown || !shownWorld || !people) return
+    const world = shownWorld
+    const input = await habitatOf(world)
+    if (!input) return
+    const n = shown.width * shown.height
+    const farmPlant = new Uint8Array(n)
+    const herdAnimal = new Uint8Array(n)
+    for (const plant of plants?.layers ?? []) if (FARM_PLANTS.has(plant.id)) for (let i = 0; i < n; i++) if (plant.codes[i] >= PLANT_SUITS) farmPlant[i] = 1
+    for (const animal of animals ?? []) if (HERD_ANIMALS.has(animal.id)) for (let i = 0; i < n; i++) if (animal.codes[i] >= 2) herdAnimal[i] = 1
+    const done = await settlePeople({ ...input, arrival: people.arrival, carrying: input.carrying ?? new Float32Array(n).fill(0.4), farmPlant, herdAnimal })
+    if (ask !== settleAsk || shownWorld !== world || !done) return
+    console.info(`[incubator] people settled, ${done.ms} ms, ${done.villages.length / 2} villages`)
+    settled = { lifeway: done.lifeway, density: done.density, villages: done.villages, sources: done.sources, links: done.links }
+    showPlants()
   }
   // The picks' plants, wood or animals on the map, and their legend.
   function showPlants(): void {
@@ -1032,6 +1114,33 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           : { type: 'swatches', title: t('incubator.step.people.label'), items: routes }]
       },
       probe: () => [],
+    },
+    {
+      // TRIAL: the end state, drawn over the spread.
+      steps: ['people'],
+      on: () => settled !== null && (lifewayBox.checked || densityBox.checked || villageBox.checked || tradeBox.checked),
+      paint: (o) => {
+        if (!settled || !shown) return
+        if (lifewayBox.checked) paintLifeways(o, settled.lifeway, shown.width, shown.height)
+        if (densityBox.checked) paintDensity(o, settled.density, shown.width, shown.height)
+        if (tradeBox.checked) paintTrade(o, settled.villages, settled.links, settled.sources, shown.width, shown.height)
+        if (villageBox.checked) paintVillages(o, settled.villages, settled.density, shown.width, shown.height)
+      },
+      legend: () => {
+        if (!settled) return []
+        const specs: LegendSpec[] = []
+        if (lifewayBox.checked) specs.push({ type: 'swatches', title: 'Lebensweise', items: [1, 2, 3, 4].map((w) => ({ label: LIFEWAY_NAMES[w], rgb: [...LIFEWAY_COLOURS[w]] as [number, number, number] })) })
+        if (densityBox.checked) specs.push({ type: 'gradient', title: 'Menschen je km²', unit: '', stops: DENSITY_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })) })
+        if (tradeBox.checked) specs.push({ type: 'swatches', title: 'Handel', items: [{ label: 'Handelsweg', rgb: [...TRADE_COLOUR] as [number, number, number], shape: 'line' }, ...GOODS.map((g, k) => ({ label: t(`resource.${g}.label` as TKey), rgb: [...GOOD_COLOURS[k]] as [number, number, number] }))] })
+        return specs
+      },
+      probe: (cell) => {
+        if (!settled || !settled.lifeway[cell]) return []
+        return [
+          { label: 'Lebensweise', value: LIFEWAY_NAMES[settled.lifeway[cell]] },
+          { label: 'Dichte', value: `${settled.density[cell].toFixed(2)} / km²` },
+        ]
+      },
     },
     {
       steps: ['testing'],
@@ -1178,6 +1287,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     plants = null
     animals = null
     people = null
+    settled = null
     peopleOrigin = -1
     peoplePlayer.stop()
     peoplePlayer.show(SPAN_YEARS)
@@ -1294,6 +1404,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (onPeople()) rows.push({ id: 'people:spread', helpBase: 'incubator.people.spread', icon: '/icons/human.png' }, { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' })
     overlayList.setRows(rows, onPeople() ? [RESOURCE_PICKS] : picks)
     peopleSection.hidden = !onPeople()
+    settleSection.hidden = !onPeople()
     if (!onPeople()) peoplePlayer.stop()
     regionSection.hidden = !onTesting()
     showCharts()

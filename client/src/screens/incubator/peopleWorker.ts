@@ -3,6 +3,7 @@ import { KOPPEN_CODES } from '../../generator/climate/koppen'
 import { MinHeap } from '../../generator/core/minHeap'
 import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
 import { readHabitat, type HabitatInput } from './habitat'
+import { SPAN_YEARS } from './peopleShared'
 
 // THE INCUBATOR'S PEOPLE (2026-10-25, a trial): when people reach each
 // cell of the world raster, from one origin, and by which way — the idea of
@@ -65,8 +66,6 @@ export type PeopleWorkerOutbound =
   | ({ type: 'people'; ms: number } & PeopleResult)
   | { type: 'failed'; message: string }
 
-// The span of the spread, years.
-export const SPAN_YEARS = 65_000
 // The front over land, km a year: on land that feeds nobody, and on land
 // that feeds as well as CARRYING_FULL or better (Morvane's mean is 0.4,
 // 2026-10-25). A slope of 0.1 halves it; a river or a coast doubles it.
