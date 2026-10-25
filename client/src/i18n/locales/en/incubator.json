@@ -3,5 +3,11 @@
   "incubator.step.flora.help": "The world's wild plants: where they grow and what they give people.",
   "incubator.load.title": "Choose a world",
   "incubator.load.subtitle": "Only worlds refined on the server (level 1) can be incubated.",
-  "incubator.load.noLevel": "No level 1 yet"
+  "incubator.load.noLevel": "No level 1 yet",
+  "incubator.section.plants.label": "Plants",
+  "incubator.section.plants.help": "The wild plants people use — one pick replaces the last.",
+  "incubator.plants.computing": "computing …",
+  "incubator.plants.missing": "The world lacks fields.",
+  "incubator.plants.failed": "Failed.",
+  "incubator.plants.group": "At each place the plant that suits it best, the stronger the better. Grey: suitable, but none came. • domesticable."
 }

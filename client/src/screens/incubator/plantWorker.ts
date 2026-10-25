@@ -26,7 +26,6 @@ export type PlantWorkerInbound = HabitatInput
 // range, the niche (1 at 255).
 export interface PlantLayer {
   id: string
-  name: string
   use: PlantUse
   domesticable: boolean
   codes: Uint8Array
@@ -162,7 +161,7 @@ function grow(message: PlantWorkerInbound): { layers: PlantLayer[]; cover: Plant
       }
     }
     return {
-      id: s.id, name: s.name, use: s.use, domesticable: s.domesticable, codes,
+      id: s.id, use: s.use, domesticable: s.domesticable, codes,
       suitable: suitable / h.landCount, reached: reached / h.landCount, empty: empty / h.landCount,
       origins: starts.map((i) => ({ x: i % W, y: Math.floor(i / W) })),
     }
