@@ -20,7 +20,9 @@ import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createSidebar } from '../../ui/sidebar/Sidebar'
 import { createTitleBar } from '../../ui/titleBar/TitleBar'
-import { createWorldChooser } from '../../ui/worldChooser/WorldChooser'
+import { createWorldChooser, type OpenedCopy } from '../../ui/worldChooser/WorldChooser'
+import { createLoadPanel } from '../../ui/loadPanel/LoadPanel'
+import { formatBytes } from '../../ui/format'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
@@ -45,8 +47,8 @@ import '../../ui/theme/design.css'
 // own resolution (chartWorker.ts), the level's rivers over them. The zoom
 // stops where a node of the level is about two pixels. (The ground rings
 // with the tiles of levels 2 and 3, groundView.ts and its kin, are not
-// used now; they stay for later.) Progress and failures go to the
-// console, not to the screen.
+// used now; they stay for later.) The load panel shows the steps of an
+// open and which one failed; why it failed goes to the console.
 
 // The level the incubator runs on.
 const LEVEL = 1
@@ -147,6 +149,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       artifactChooser.relabel()
       jobChooser.relabel()
       handbookPanel.relabel()
+      loadPanel.relabel()
     },
   })
   titleBar.setWorld(null)
@@ -180,9 +183,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function showLevel(archive: Blob, uid: string): Promise<boolean> {
     const started = performance.now()
     const step = (what: string): void => console.info(`[incubator] ${what} ${Math.round(performance.now() - started)} ms`)
+    loadPanel.done('fetch', formatBytes(archive.size))
+    loadPanel.start('read')
     const world = await openWorld(new Uint8Array(await archive.arrayBuffer()), await loadWasmEngine())
     if (!world) {
       console.warn('[incubator] the archive is not a world')
+      loadPanel.fail('read')
       return false
     }
     const worldId = await world.worldId()
@@ -190,18 +196,23 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const chosen = candidates.find((a) => a.worldId === worldId) ?? candidates[0]
     if (!chosen) {
       console.warn(`[incubator] world ${uid} holds no level ${LEVEL}`)
+      loadPanel.fail('level')
       return false
     }
     if (chosen.worldId !== worldId) console.warn(`[incubator] level ${LEVEL} of an older terrain (${chosen.worldId}, the save is ${worldId})`)
     step('save read')
+    loadPanel.start('level')
     const store = await getArtifactStore()
     const read = await readMeshLevelArtifact(store, artifactKey(chosen.worldId, chosen.pipelineVersion, chosen.stage), await loadWasmEngine())
     if (!read) {
       console.warn(`[incubator] level ${LEVEL} of ${uid} could not be read`)
+      loadPanel.fail('level')
       return false
     }
     const level = read.artifact
     step(`level read, ${level.count} nodes`)
+    loadPanel.done('level', formatBytes(chosen.bytes))
+    loadPanel.start('paint')
     const kind = world.kind === 'SphereWorld' ? 'sphere' : 'torus'
     const biome = await world.acquire('biome')
     const painted = await paintChart({
@@ -214,6 +225,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       biome: biome ? Float32Array.from(biome.data) : null,
       detailSeed: world.recipe.detailSeed,
     })
+    if (!painted) loadPanel.fail('paint')
     if (!painted || disposed) return false
     step(`chart painted (${Object.entries(painted.ms).map(([k, v]) => `${k} ${v}`).join(', ')})`)
 
@@ -249,6 +261,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       view.rivers.setEnabled(true)
     }
     step('shown')
+    loadPanel.close()
     held = { uid, name: '', seed: '', worldId: chosen.worldId }
     scaleBar.element.hidden = false
     return true
@@ -269,8 +282,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       },
       reasonKey: 'incubator.load.noLevel',
     },
-    // The list stays up while the level loads (seconds), and stays up if it
-    // fails; the console says why.
+    // The list stays up behind the load panel while the level loads
+    // (seconds), and stays up if it fails; the console says why.
+    onOpening: (kept) => openLoad(kept),
+    onOpenFailed: () => loadPanel.fail('fetch'),
     onOpenArchive: (archive, kept) => {
       void (async () => {
         if (!(await showLevel(archive, kept.uid))) return
@@ -282,6 +297,24 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       })()
     },
   })
+
+  // The open's steps, over the list. Only server worlds open here.
+  const loadPanel = createLoadPanel(root)
+  function openLoad(kept: OpenedCopy): void {
+    loadPanel.open({
+      screenKey: 'common.title.nav.incubator',
+      name: kept.name,
+      seed: kept.seed,
+      source: { where: kept.where, savedAt: kept.savedAt },
+      steps: [
+        { id: 'fetch', labelKey: kept.where === 'server' ? 'common.loading.step.fetch.server' : 'common.loading.step.fetch.browser' },
+        { id: 'read', labelKey: 'common.loading.step.read' },
+        { id: 'level', labelKey: 'common.loading.step.level', weight: 2 },
+        { id: 'paint', labelKey: 'common.loading.step.paint', weight: 4 },
+      ],
+    })
+    loadPanel.start('fetch')
+  }
 
   // The jobs and the artifacts, full screen over the world as in the
   // generator; one at a time, the column out of the way while one is up.
@@ -332,8 +365,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const worldParam = new URLSearchParams(window.location.search).get('world')
   if (worldParam) {
     void (async () => {
+      openLoad({ where: 'server', savedAt: '', uid: worldParam, name: '', seed: worldParam })
       levels = await levelArtifacts()
       const archive = await fetchWorld(worldParam)
+      if (!archive) loadPanel.fail('fetch')
       if (!archive || disposed) return
       if (!(await showLevel(archive, worldParam))) return
       worldChooser.close()
@@ -353,6 +388,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     dispose() {
       disposed = true
       worldChooser.dispose()
+      loadPanel.dispose()
       artifactChooser.dispose()
       jobChooser.dispose()
       handbookPanel.dispose()

@@ -79,6 +79,8 @@ import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleBar'
 import { createSaveMenu, type SaveTarget } from '../../ui/titleBar/SaveMenu'
 import { createConfirmDialog } from '../../ui/confirmDialog/ConfirmDialog'
+import { formatBytes } from '../../ui/format'
+import { createLoadPanel } from '../../ui/loadPanel/LoadPanel'
 import { keepWorldInBrowser } from '../../world/browserWorlds'
 import { advanceProgress, withdrawProgress, type ProgressStep } from '../../world/worldProgress'
 import { isStoredOnServer, uploadWorld } from '../../server/worldClient'
@@ -89,7 +91,7 @@ import { listServerArtifacts } from '../../server/artifactsClient'
 import { meshLevelStage } from '../../world/meshArtifacts'
 import { isCurrentArtifact, parseStage, type PipelineVersions } from '../../world/levels'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
-import { createWorldChooser, type WorldShape } from '../../ui/worldChooser/WorldChooser'
+import { createWorldChooser, type OpenedCopy, type WorldShape } from '../../ui/worldChooser/WorldChooser'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission as reportCommissionTo } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { openWorld } from '../../world/query'
@@ -817,6 +819,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       artifactChooser.relabel()
       jobChooser.relabel()
       handbookPanel.relabel()
+      loadPanel.relabel()
       saveMenu.relabel()
       tempScale.setAttribute('aria-label', t('overlay.temperature.scale'))
       temperatureArc.element.setAttribute('aria-label', t('overlay.temperature.scale'))
@@ -4443,6 +4446,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (message.type === 'climateRefineProgress') {
       refineShare = message.share
       updateProgress()
+      loadPanel.progress('climate', message.share)
       return
     }
     if (message.type === 'planetPreviewData') {
@@ -4556,7 +4560,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // ordered, and each needs the one before it to have landed.
     if (restoredFromSave && !message.intermediate) {
       restoredFromSave = false
-      void catchUpAfterRestore()
+      loadPanel.done('restore')
+      void catchUpAfterRestore().finally(() => loadPanel.close())
     }
 
     // Relief preview: re-sync the gate off the fresh erosion state, then pull
@@ -5225,6 +5230,29 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const awaitCompute = (setResolver: (r: () => void) => void, request: () => void): Promise<void> =>
     new Promise((resolve) => { setResolver(resolve); request() })
 
+  // THE LOAD PANEL: the steps of an open, from the archive to the last
+  // stage computed after the restore (catchUpAfterRestore). A step the
+  // world does not reach is dropped when the panel closes. `kept` is the
+  // world list's copy; a picked file has none, and no fetch.
+  const loadPanel = createLoadPanel(root)
+  function openLoad(kept?: OpenedCopy): void {
+    loadPanel.open({
+      screenKey: 'common.title.nav.generator',
+      name: kept?.name ?? '',
+      seed: kept?.seed ?? '',
+      source: kept ? { where: kept.where, savedAt: kept.savedAt } : null,
+      steps: [
+        ...(kept ? [{ id: 'fetch', labelKey: kept.where === 'server' ? 'common.loading.step.fetch.server' as const : 'common.loading.step.fetch.browser' as const }] : []),
+        { id: 'read', labelKey: 'common.loading.step.read' },
+        { id: 'restore', labelKey: 'common.loading.step.restore', weight: 3 },
+        { id: 'climate', labelKey: 'generator.step.climate.label', weight: 3 },
+        { id: 'hydrology', labelKey: 'generator.progress.hydrology', weight: 3 },
+        { id: 'ecology', labelKey: 'generator.step.ecology.label', weight: 2 },
+      ],
+    })
+    loadPanel.start(kept ? 'fetch' : 'read')
+  }
+
   // The generator's first screen (see WorldChooser). Built here, beside the
   // other two ways into a world, and opened at the foot of this function.
   const worldChooser = createWorldChooser(root, {
@@ -5259,6 +5287,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Same path a picked file takes — `loadWorldFromZip` closes the chooser
     // once the archive has actually turned out to be a world.
     onOpenArchive: (archive, kept) => { void loadWorldFromZip(new File([archive], 'world.zip'), kept) },
+    onOpening: (kept) => openLoad(kept),
+    onOpenFailed: () => loadPanel.fail('fetch'),
     onPickFile: () => pickLocalWorldFile(),
     notifications: ctx.notifications,
   })
@@ -5499,6 +5529,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (lastEpoch < MIN_TECTONIC_EPOCHS) return
     restoreChainActive = true
     try {
+      loadPanel.start('climate')
       if (lastTemperature === null) {
         await awaitCompute((r) => { climateResolve = r }, () => { if (!climateInFlight) requestClimate() })
       }
@@ -5510,11 +5541,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         restoredRefinement = null
         await awaitRefinement(saved ?? undefined)
       }
+      loadPanel.done('climate')
       if (erosionRunCount < 1) return
+      loadPanel.start('hydrology')
       if (lastRiverData === null) {
         await awaitCompute((r) => { hydrologyResolve = r }, () => { if (!hydrologyInFlight) requestHydrology() })
       }
-      if (!hasEcologyData() && stepRunsOnShape(ECOLOGY_PANEL_INDEX)) {
+      loadPanel.done('hydrology')
+      if (!stepRunsOnShape(ECOLOGY_PANEL_INDEX)) return
+      loadPanel.start('ecology')
+      if (!hasEcologyData()) {
         await awaitCompute((r) => { ecologyResolve = r }, () => { if (!ecologyInFlight) requestEcology() })
       }
     } finally {
@@ -5577,7 +5613,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // `kept`: where the world rests when it came from the world list (this
   // browser or the server) — it is saved there, as of then. A picked file
   // rests nowhere this generator holds, like a download.
-  async function loadWorldFromZip(file: File, kept?: { where: 'browser' | 'server'; savedAt: string }): Promise<void> {
+  async function loadWorldFromZip(file: File, kept?: OpenedCopy): Promise<void> {
+    if (kept) {
+      loadPanel.done('fetch', formatBytes(file.size))
+      loadPanel.start('read')
+    } else {
+      openLoad()
+    }
     let zip: JSZip
     let yaml: string
     let shape: WorldShape = 'flat'
@@ -5664,9 +5706,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (!archeanPayload) refined = await readRefined(zip)
       if (refined && !refinementFits(domain, refined.cells, refined.spacingM)) throw new Error('another climate mesh')
     } catch {
-      ctx.notifications.show({ message: t('notify.open.invalidFile'), icon: '/icons/folder.png', durationMs: 6000 })
+      loadPanel.fail('read', t('notify.open.invalidFile'))
       return
     }
+    loadPanel.done('read')
 
     // Past the point where the archive can turn out not to be a world.
     setWorldShape(shape)
@@ -5775,9 +5818,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       titleKey: 'generator.replay.title', bodyKey: 'generator.replay.body',
       confirmKey: 'generator.replay.confirm', cancelKey: 'generator.replay.cancel',
     })) {
+      // The replay has its own progress, in the pill.
+      loadPanel.close()
       startReplay(record)
       return
     }
+    loadPanel.start('restore')
     markCleanOnNextRender = true
     restoredFromSave = true
     tectonicsRunRestored = !archeanPayload
@@ -6728,6 +6774,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       handbookPanel.dispose()
       stepBar.dispose()
       worldChooser.dispose()
+      loadPanel.dispose()
       titleBar.dispose()
       helpTooltip.dispose()
       freeAreaObserver.disconnect()

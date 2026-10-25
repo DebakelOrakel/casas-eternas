@@ -61,5 +61,18 @@
   "common.panel.signIn.redeem.badName": "Please choose a login name: 2–32 letters, digits, dots or dashes.",
   "common.password.rule": "A password has at least 10 characters, with upper- and lower-case letters among them.",
   "common.panel.signIn.redeem.limited": "Too many attempts; try again later.",
-  "common.panel.signIn.back": "Back to sign-in"
+  "common.panel.signIn.back": "Back to sign-in",
+  "common.loading.title": "Loading {world}",
+  "common.loading.failed": "{world} could not be loaded",
+  "common.loading.source.server": "Server copy · {when}",
+  "common.loading.source.browser": "Browser copy · {when}",
+  "common.loading.source.file": "From a file",
+  "common.loading.step.fetch.server": "Fetch the world from the server",
+  "common.loading.step.fetch.browser": "Read the world from the browser",
+  "common.loading.step.read": "Check the save",
+  "common.loading.step.restore": "Restore the simulation",
+  "common.loading.step.level": "Fetch level 1",
+  "common.loading.step.paint": "Draw the map",
+  "common.loading.back": "Back to the list",
+  "common.loading.aria": "Loading, {percent}"
 }

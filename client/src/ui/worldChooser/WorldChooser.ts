@@ -73,6 +73,10 @@ const SHAPES: readonly { shape: WorldShape; ready: boolean }[] = [
 ]
 
 
+// The copy an open was asked for: where it rests and since when, and which
+// world the list meant.
+export interface OpenedCopy { where: Where; savedAt: string; uid: string; name: string; seed: string }
+
 export interface WorldChooserOptions {
   // The heading and the line under it. The generator's when left out.
   titleKey?: TKey
@@ -89,7 +93,11 @@ export interface WorldChooserOptions {
   // Hands an archive over; the screen owns the loading itself. `kept`
   // says where the world rests and since when — an opened world is a saved
   // one, and the title bar says so — and which world the list meant.
-  onOpenArchive(archive: Blob, kept: { where: Where; savedAt: string; uid: string; name: string; seed: string }): void
+  onOpenArchive(archive: Blob, kept: OpenedCopy): void
+  // The open began: the archive is on its way (the screen's load panel
+  // shows it), or it did not come (`onOpenFailed`; the list says so too).
+  onOpening?(kept: OpenedCopy): void
+  onOpenFailed?(): void
   // The plain file picker, for a world that lives in neither place.
   onPickFile?(): void
   // Which worlds may be opened here: asked at every reload, beside the two
@@ -482,15 +490,18 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     copy.where === 'browser' ? openBrowserWorld(copy.uid) : fetchWorld(copy.uid)
 
   async function openCopy(copy: WorldCopy, trigger: HTMLButtonElement): Promise<void> {
+    const kept = { where: copy.where, savedAt: copy.savedAt, uid: copy.uid, name: copy.name, seed: copy.seed }
     trigger.disabled = true
+    options.onOpening?.(kept)
     const archive = await readArchive(copy)
     trigger.disabled = false
     if (!archive) {
       closeDetail()
       setNote(t('generator.load.unavailable'))
+      options.onOpenFailed?.()
       return
     }
-    options.onOpenArchive(archive, { where: copy.where, savedAt: copy.savedAt, uid: copy.uid, name: copy.name, seed: copy.seed })
+    options.onOpenArchive(archive, kept)
   }
 
   // Copies a world to the other place, with the save's own notifications —

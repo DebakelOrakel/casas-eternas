@@ -61,5 +61,18 @@
   "common.panel.signIn.redeem.badName": "Bitte einen Anmeldenamen wählen: 2–32 Buchstaben, Ziffern, Punkt oder Strich.",
   "common.password.rule": "Ein Passwort hat mindestens 10 Zeichen, darunter Gross- und Kleinbuchstaben.",
   "common.panel.signIn.redeem.limited": "Zu viele Versuche; später nochmal.",
-  "common.panel.signIn.back": "Zurück zur Anmeldung"
+  "common.panel.signIn.back": "Zurück zur Anmeldung",
+  "common.loading.title": "{world} wird geladen",
+  "common.loading.failed": "{world} konnte nicht geladen werden",
+  "common.loading.source.server": "Serverstand · {when}",
+  "common.loading.source.browser": "Browserstand · {when}",
+  "common.loading.source.file": "Aus einer Datei",
+  "common.loading.step.fetch.server": "Welt vom Server holen",
+  "common.loading.step.fetch.browser": "Welt aus dem Browser lesen",
+  "common.loading.step.read": "Save prüfen",
+  "common.loading.step.restore": "Simulation wiederherstellen",
+  "common.loading.step.level": "Level 1 holen",
+  "common.loading.step.paint": "Karte zeichnen",
+  "common.loading.back": "Zurück zur Auswahl",
+  "common.loading.aria": "Lädt, {percent}"
 }
