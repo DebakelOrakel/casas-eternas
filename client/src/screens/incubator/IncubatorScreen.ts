@@ -46,7 +46,7 @@ import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
 import type { SpeciesLayer, SpeciesWorkerInbound, SpeciesWorkerOutbound } from './speciesWorker'
 import type { World } from '../../world/query'
 import { SPECIES } from './species'
-import { PLANTS, type PlantUse } from './plants'
+import type { PlantUse } from './plants'
 import type { PlantCover, PlantLayer, PlantWorkerInbound, PlantWorkerOutbound } from './plantWorker'
 import type { HabitatInput } from './habitat'
 import '../../ui/theme/design.css'
@@ -272,14 +272,59 @@ function growPlants(input: PlantWorkerInbound): Promise<(PlantWorkerOutbound & {
   })
 }
 
-// A plant's colour by its use, and the use's name.
-const USE_COLOURS: Record<PlantUse, readonly [number, number, number]> = {
-  starch: [180, 130, 0],
-  fat: [110, 70, 20],
-  fruit: [190, 30, 100],
-  fibre: [20, 110, 150],
-}
+// A use's name.
 const USE_NAMES: Record<PlantUse, string> = { starch: 'Stärke', fat: 'Fett / Eiweiss', fruit: 'Obst', fibre: 'Faser' }
+
+// A colour for each plant of a group, told apart (Trubetskoy's twenty
+// distinct colours, 2017): a group holds at most sixteen.
+const PLANT_PALETTE: readonly (readonly [number, number, number])[] = [
+  [230, 25, 75], [60, 180, 75], [255, 225, 25], [67, 99, 216], [245, 130, 49], [145, 30, 180], [70, 240, 240], [240, 50, 230],
+  [188, 246, 12], [0, 128, 128], [154, 99, 36], [128, 0, 0], [128, 128, 0], [0, 0, 117], [250, 190, 190], [170, 255, 195],
+  [230, 190, 255], [255, 216, 177], [255, 250, 200], [128, 128, 128],
+]
+
+// A layer's code from which its niche suits a cell (plantWorker.ts:
+// SUITABLE 0.3, the niche coded 2 … 255).
+const PLANT_SUITS = 2 + Math.round(253 * 0.3)
+
+// The plants of a use over a painted chart, into a copy: per cell the
+// plant in range that suits it best, in its colour, as strong as its
+// niche; grey where one would suit but none came. A range reaches past
+// its niche, where the plant is rare: not drawn.
+function blendPlantGroup(base: Uint8ClampedArray, layers: readonly PlantLayer[], width: number, height: number, scale: number): Uint8ClampedArray {
+  const n = width * height
+  const pick = new Uint8Array(n).fill(255)
+  // The best suiting code, 1 for an empty niche, 0 for none.
+  const best = new Uint8Array(n)
+  for (let k = 0; k < layers.length; k++) {
+    const codes = layers[k].codes
+    for (let i = 0; i < n; i++) {
+      const c = codes[i]
+      if (c >= PLANT_SUITS && c > best[i]) {
+        best[i] = c
+        pick[i] = k
+      } else if (c === 1 && best[i] === 0) best[i] = 1
+    }
+  }
+  const out = new Uint8ClampedArray(base)
+  const W = width * scale
+  const H = height * scale
+  for (let y = 0; y < H; y++) {
+    const row = Math.floor(y / scale) * width
+    for (let x = 0; x < W; x++) {
+      const cell = row + Math.floor(x / scale)
+      const code = best[cell]
+      if (code === 0) continue
+      const a = code === 1 ? 0.45 : 0.35 + 0.55 * ((code - PLANT_SUITS) / (255 - PLANT_SUITS))
+      const [cr, cg, cb] = code === 1 ? [120, 120, 120] : PLANT_PALETTE[pick[cell] % PLANT_PALETTE.length]
+      const i = 4 * (y * W + x)
+      out[i] = out[i] * (1 - a) + cr * a
+      out[i + 1] = out[i + 1] * (1 - a) + cg * a
+      out[i + 2] = out[i + 2] * (1 - a) + cb * a
+    }
+  }
+  return out
+}
 
 // The cover over a painted chart, into a copy: red where no starch grows,
 // else yellow to green by how many of starch, fat and fruit grow there.
@@ -313,7 +358,7 @@ const ROLE_COLOURS: Record<SpeciesLayer['role'], readonly [number, number, numbe
   fish: [20, 80, 200],
 }
 
-// An animal's or a plant's layer over a painted chart, into a copy: its
+// An animal's layer over a painted chart, into a copy: its
 // density in `colour`, the empty niche grey, its origins as rings. The
 // layer is on the world raster, the chart `scale` times finer; a texel
 // reads its cell.
@@ -536,10 +581,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       kind: onLand ? t('readout.kind.land') : t('readout.kind.ocean'),
       land: onLand,
       highlights: onLand ? [...(koppen > 0 ? [t(koppenLabelKey(koppen) as TKey)] : []), t(biomeLabelKey(probe.land.biome[node]) as TKey)] : [],
-      rows: onLand ? ECOLOGY_PICKS.flatMap((p) => {
-        const code = probe!.land.ecology[p.id]?.[node]
-        return code === undefined || code === ECOLOGY_FINE_OCEAN ? [] : [{ label: t(`resource.${p.id}.label` as TKey), value: formatValue(String(Math.round(decodeFineValue(code) * 100)), 'common.unit.percent') }]
-      }) : [],
+      rows: onLand ? [
+        ...ECOLOGY_PICKS.flatMap((p) => {
+          const code = probe!.land.ecology[p.id]?.[node]
+          return code === undefined || code === ECOLOGY_FINE_OCEAN ? [] : [{ label: t(`resource.${p.id}.label` as TKey), value: formatValue(String(Math.round(decodeFineValue(code) * 100)), 'common.unit.percent') }]
+        }),
+        // TRIAL: the plants there, on the world raster.
+        ...(shown ? plantsAt(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).map((g) => ({ label: USE_NAMES[g.use], value: g.names.join(', ') })) : []),
+      ] : [],
       months: t('readout.months').split(','),
       charts: [],
     })
@@ -678,7 +727,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showCharts()
   }
   speciesPick.addEventListener('change', () => {
-    if (speciesPick.value !== '') plantPick.value = ''
+    if (speciesPick.value !== '') setPlantShown('')
     void showSpecies()
     void showPlants()
   })
@@ -712,48 +761,87 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
-  // TRIAL (2026-10-25): where the plants of plants.ts grow, one at a time,
-  // or the cover: what they give together. One layer over the chart at a
-  // time: picking a plant drops the animal, and back.
+  // TRIAL (2026-10-25): where the plants of plants.ts grow, a use at a
+  // time (each plant of it in a colour of its own), or the cover: what
+  // they give together. One layer over the chart at a time: picking a
+  // plant group drops the animal, and back. The hover card names the
+  // plants at the place.
   let plants: { layers: PlantLayer[]; cover: PlantCover } | null = null
   const COVER = 'cover'
-  const plantPick = document.createElement('select')
-  const plantStatus = document.createElement('p')
-  const plantTitle = document.createElement('span')
-  plantTitle.className = 'gen-overlay__label'
+  // '' none, COVER, or a use.
+  let plantShown: '' | typeof COVER | PlantUse = ''
+  const PLANT_CHOICES: readonly { id: '' | typeof COVER | PlantUse; name: string; icon: string | null }[] = [
+    { id: '', name: 'Keine', icon: '/icons/clear.png' },
+    { id: COVER, name: 'Deckung (alle zusammen)', icon: '/icons/ecology.png' },
+    ...(Object.keys(USE_NAMES) as PlantUse[]).map((use) => ({ id: use, name: USE_NAMES[use], icon: use === 'starch' ? '/icons/wheat.png' : null })),
+  ]
+  const plantTitle = document.createElement('h2')
+  plantTitle.className = 'gen-section-title'
   plantTitle.textContent = 'Pflanzen'
+  const plantList = document.createElement('div')
+  plantList.className = 'gen-overlays__picks'
+  const plantBoxes = new Map<string, HTMLInputElement>()
+  for (const choice of PLANT_CHOICES) {
+    const row = document.createElement('label')
+    row.className = 'gen-overlay'
+    const icon = document.createElement('img')
+    icon.className = 'gen-overlay__icon'
+    icon.alt = ''
+    if (choice.icon) icon.src = choice.icon
+    else icon.style.visibility = 'hidden'
+    const name = document.createElement('span')
+    name.className = 'gen-overlay__label'
+    name.textContent = choice.name
+    const box = document.createElement('input')
+    box.type = 'radio'
+    box.name = 'incubator-plants'
+    box.className = 'gen-overlay__pick'
+    box.checked = choice.id === ''
+    box.addEventListener('change', () => {
+      if (!box.checked) return
+      plantShown = choice.id
+      if (plantShown !== '') speciesPick.value = ''
+      void showPlants()
+      void showSpecies()
+    })
+    plantBoxes.set(choice.id, box)
+    row.append(icon, name, box)
+    plantList.append(row)
+  }
+  function setPlantShown(id: typeof plantShown): void {
+    plantShown = id
+    plantBoxes.get(id)!.checked = true
+  }
+  // The legend of the group shown: each plant's colour, the plants that
+  // grow nowhere left out.
+  const plantLegend = document.createElement('div')
+  const plantStatus = document.createElement('p')
   const plantSection = document.createElement('section')
   plantSection.className = 'gen-overlays'
-  plantSection.append(plantTitle, plantPick, plantStatus)
+  plantSection.append(plantTitle, plantList, plantLegend, plantStatus)
   sidebar.body.append(plantSection)
-  function fillPlantPick(): void {
-    const none = document.createElement('option')
-    none.value = ''
-    none.textContent = plants ? '(keine)' : '(keine; die erste Wahl rechnet)'
-    const cover = document.createElement('option')
-    cover.value = COVER
-    cover.textContent = 'Deckung (alle zusammen)'
-    const groups = (Object.keys(USE_NAMES) as PlantUse[]).map((use) => {
-      const group = document.createElement('optgroup')
-      group.label = USE_NAMES[use]
-      return { use, group }
+  function fillPlantLegend(): void {
+    plantLegend.replaceChildren()
+    if (!plants || plantShown === '' || plantShown === COVER) return
+    const group = plants.layers.filter((l) => l.use === plantShown)
+    group.forEach((layer, k) => {
+      if (layer.reached === 0) return
+      const item = document.createElement('div')
+      item.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;line-height:20px'
+      const swatch = document.createElement('span')
+      const [cr, cg, cb] = PLANT_PALETTE[k % PLANT_PALETTE.length]
+      swatch.style.cssText = `width:12px;height:12px;border-radius:2px;flex-shrink:0;background:rgb(${cr},${cg},${cb})`
+      const text = document.createElement('span')
+      text.textContent = `${layer.name}${layer.domesticable ? ' •' : ''} — ${(100 * layer.reached).toFixed(1)} %`
+      item.append(swatch, text)
+      plantLegend.append(item)
     })
-    const value = plantPick.value
-    plantPick.replaceChildren(none, cover, ...groups.map((g) => g.group))
-    for (const spec of PLANTS) {
-      const option = document.createElement('option')
-      option.value = spec.id
-      option.textContent = spec.domesticable ? `${spec.name} •` : spec.name
-      groups.find((g) => g.use === spec.use)!.group.append(option)
-    }
-    plantPick.value = value
   }
-  fillPlantPick()
   let plantAsk = 0
   async function showPlants(): Promise<void> {
     const ask = ++plantAsk
     if (!shown || !shownWorld) return
-    if (plantPick.value !== '' && !plants) {
+    if (plantShown !== '' && !plants) {
       plantStatus.textContent = 'rechnet …'
       const world = shownWorld
       const input = await habitatOf(world)
@@ -769,25 +857,30 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
       console.info(`[incubator] plants grown, ${done.ms} ms`)
       plants = { layers: done.layers, cover: done.cover }
-      fillPlantPick()
+      hoverTooltip.refresh()
     }
     const pct = (v: number): string => `${(100 * v).toFixed(1)} %`
-    const layer = plants?.layers.find((l) => l.id === plantPick.value)
-    if (plantPick.value === COVER && plants) {
+    fillPlantLegend()
+    if (plantShown === COVER && plants) {
       const c = plants.cover
       plantStatus.textContent = `Vom eisfreien Land haben Stärke ${pct(c.shares.starch)}, Fett ${pct(c.shares.fat)}, Obst ${pct(c.shares.fruit)}, Faser ${pct(c.shares.fibre)}; alle drei Nahrungen ${pct(c.food)}. Rot: keine Stärke; gelb bis grün: 1 bis 3 Nahrungen.`
-    } else if (layer) {
-      plantStatus.textContent = `Nische ${pct(layer.suitable)} des Landes, davon erreicht ${pct(layer.reached)}, leer (grau) ${pct(layer.empty)}.${layer.domesticable ? ' Domestizierbar.' : ''} Ringe: Ursprünge.`
+    } else if (plantShown !== '' && plants) {
+      plantStatus.textContent = 'Je Ort die Pflanze mit der besten Nische; je kräftiger, desto besser. Grau: geeignet, aber keine hingekommen. Prozent: Anteil des Landes erreicht. • domestizierbar.'
     } else {
-      plantStatus.textContent = plants ? '• domestizierbar' : ''
+      plantStatus.textContent = ''
     }
     showCharts()
   }
-  plantPick.addEventListener('change', () => {
-    if (plantPick.value !== '') speciesPick.value = ''
-    void showPlants()
-    void showSpecies()
-  })
+
+  // The plants at a cell of the world raster, by use: those in range whose
+  // niche suits it, the best first. Empty before the plants are grown.
+  function plantsAt(cell: number): { use: PlantUse; names: string[] }[] {
+    if (!plants) return []
+    return (Object.keys(USE_NAMES) as PlantUse[]).flatMap((use) => {
+      const here = plants!.layers.filter((l) => l.use === use && l.codes[cell] >= PLANT_SUITS).sort((p, q) => q.codes[cell] - p.codes[cell])
+      return here.length > 0 ? [{ use, names: here.map((l) => l.name) }] : []
+    })
+  }
 
   // The trials' layers over the chart (showCharts): the catchments, then
   // the animal or the plant. Each a copy of the chart, 128 MB.
@@ -799,14 +892,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     const scale = CHART_WIDTH / shown.width
     const layer = speciesLayers?.find((l) => l.id === speciesPick.value)
-    const plant = plants?.layers.find((l) => l.id === plantPick.value)
+    const group = plants && plantShown !== '' && plantShown !== COVER ? plants.layers.filter((l) => l.use === plantShown) : null
     if (layer) {
       shaded = blendSpecies(shaded, layer, ROLE_COLOURS[layer.role], shown.width, shown.height, scale)
       if (unshaded) unshaded = blendSpecies(unshaded, layer, ROLE_COLOURS[layer.role], shown.width, shown.height, scale)
-    } else if (plant) {
-      shaded = blendSpecies(shaded, plant, USE_COLOURS[plant.use], shown.width, shown.height, scale)
-      if (unshaded) unshaded = blendSpecies(unshaded, plant, USE_COLOURS[plant.use], shown.width, shown.height, scale)
-    } else if (plantPick.value === COVER && plants) {
+    } else if (group) {
+      shaded = blendPlantGroup(shaded, group, shown.width, shown.height, scale)
+      if (unshaded) unshaded = blendPlantGroup(unshaded, group, shown.width, shown.height, scale)
+    } else if (plantShown === COVER && plants) {
       shaded = blendCover(shaded, plants.cover, shown.width, shown.height, scale)
       if (unshaded) unshaded = blendCover(unshaded, plants.cover, shown.width, shown.height, scale)
     }
@@ -929,10 +1022,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     speciesLayers = null
     fillSpeciesPick()
     plants = null
-    fillPlantPick()
+    fillPlantLegend()
     if (regionBox.checked) void showRegions()
     if (speciesPick.value !== '') void showSpecies()
-    if (plantPick.value !== '') void showPlants()
+    if (plantShown !== '') void showPlants()
     // The level's rivers, from the world raster's texels to the chart's.
     if (level.rivers) {
       const points = Float32Array.from(level.rivers.points)
