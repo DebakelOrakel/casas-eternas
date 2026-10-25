@@ -4,6 +4,8 @@
 //! `RefinedClimate`, `RiverGraph`), as value trees. Keys and shapes are the TypeScript
 //! types'; their order is the TypeScript serializer's.
 
+use std::borrow::Cow;
+
 use casas_engine::climate::climate_chart::RefinedClimateChart;
 use casas_engine::climate::refinement::RefinedClimate;
 use casas_engine::crust::raft_types::{Raft, Suture};
@@ -26,6 +28,7 @@ use casas_engine::tectonics::plate_simulation_types::{
 };
 use casas_engine::tectonics::plumes::Plume;
 use casas_engine::tectonics::terrain_features::{FeatureKind, MovesWith, TerrainFeature};
+use casas_engine::tectonics::volcanoes::{Volcano, VolcanoKind};
 
 use crate::value::{ObjBuilder, Value};
 
@@ -610,7 +613,8 @@ pub fn river_polylines(r: &RiverPolylines) -> Value {
 }
 
 /// A mesh level as its artifact holds it (`meshLevelToArtifact`): the
-/// mesh's codec in its own numbering, the heights, the waters.
+/// mesh's codec in its own numbering, the heights, the waters, and the
+/// land fields when given (`LevelLand`, docs/decisions/level-waters.md).
 pub fn mesh_level_artifact(
     level: u32,
     mesh: &PeriodicTriangulation,
@@ -618,20 +622,88 @@ pub fn mesh_level_artifact(
     bodies: &[WaterBody],
     graph: Option<&RiverGraph>,
     rivers: Option<&RiverPolylines>,
+    land: Option<&LevelLand<'_>>,
 ) -> Value {
     let order: Vec<i32> = (0..mesh.alive_vertices as i32).collect();
     let serial = encode_mesh(mesh, &order);
+    let count = serial.count;
     ObjBuilder::new()
         .num("level", level)
-        .num("count", serial.count as f64)
+        .num("count", count as f64)
         .put("nodes", Value::F32s(serial.nodes))
         .put("connectivity", Value::U8s(serial.connectivity))
-        .put("z", Value::F32s(z[..serial.count].to_vec()))
+        .put("z", Value::F32s(z[..count].to_vec()))
         .put(
             "waterBodies",
             Value::List(bodies.iter().map(water_body).collect()),
         )
         .put("graph", graph.map_or(Value::Null, river_graph))
         .put("rivers", rivers.map_or(Value::Null, river_polylines))
+        .put("land", land.map_or(Value::Null, |l| level_land(l, count)))
+        .build()
+}
+
+/// What the ecology reads of a level's land, per node in the mesh's
+/// numbering, besides the heights and the climate (`EcologyInputs`): the
+/// hydrology's products on the level's mesh, and the world's features.
+pub struct LevelLand<'a> {
+    pub land: &'a [u8],
+    pub biome: &'a [u8],
+    pub koppen: &'a [u8],
+    pub discharge: &'a [f32],
+    pub lake_depth: &'a [f32],
+    pub salt_flat: &'a [u8],
+    pub water_table: Option<&'a [f32]>,
+    pub craton_age: &'a [f32],
+    pub oases: &'a [(f64, f64)],
+    pub volcanoes: &'a [Volcano],
+    pub orogen_points: &'a [(f64, f64)],
+    pub max_discharge: f64,
+    /// The ecology's fields by id, a byte a node as the screen's fine
+    /// fields are coded (`encode_fine_field`); empty before an ecology run.
+    pub ecology: &'a [(&'static str, Vec<u8>)],
+}
+
+/// `LevelLand` as the artifact holds it: the per-node fields cut to the
+/// mesh's `count` nodes, the points as `[x, y, …]`, the volcanoes as
+/// `[x, y, thickness, kind, …]` (kind 0 hotspot, 1 flood, 2 arc).
+fn level_land(l: &LevelLand<'_>, count: usize) -> Value {
+    let cut_u8 = |v: &[u8]| Value::U8s(v[..count].to_vec());
+    let cut_f32 = |v: &[f32]| Value::F32s(v[..count].to_vec());
+    let points = |p: &[(f64, f64)]| Value::F64s(p.iter().flat_map(|&(x, y)| [x, y]).collect());
+    let volcanoes = l
+        .volcanoes
+        .iter()
+        .flat_map(|v| {
+            let kind = match v.kind {
+                VolcanoKind::Hotspot => 0.0,
+                VolcanoKind::Flood => 1.0,
+                VolcanoKind::Arc => 2.0,
+            };
+            [v.x, v.y, v.thickness, kind]
+        })
+        .collect();
+    ObjBuilder::new()
+        .put("land", cut_u8(l.land))
+        .put("biome", cut_u8(l.biome))
+        .put("koppen", cut_u8(l.koppen))
+        .put("discharge", cut_f32(l.discharge))
+        .put("lakeDepth", cut_f32(l.lake_depth))
+        .put("saltFlat", cut_u8(l.salt_flat))
+        .put("waterTable", l.water_table.map_or(Value::Null, cut_f32))
+        .put("cratonAge", cut_f32(l.craton_age))
+        .put("oases", points(l.oases))
+        .put("volcanoes", Value::F64s(volcanoes))
+        .put("orogenPoints", points(l.orogen_points))
+        .num("maxDischarge", l.max_discharge)
+        .put(
+            "ecology",
+            Value::Obj(
+                l.ecology
+                    .iter()
+                    .map(|(id, codes)| (Cow::Borrowed(*id), Value::U8s(codes[..count].to_vec())))
+                    .collect(),
+            ),
+        )
         .build()
 }

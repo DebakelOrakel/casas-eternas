@@ -24,6 +24,7 @@ import { availableParallelism } from 'node:os'
 import { readWorldInputs } from '../src/world/save/loadWorldInputs'
 import { WORLD_PIPELINE } from '../src/world/worldPipeline'
 import { planFromRecipe, replayRefusal, type ReplayPosition, type ReplaySnapshot } from '../src/world/replay'
+import { ecologyParamsFrom } from '../src/world/runParams'
 import type { SavedField } from '../src/generator/fields/fieldMesh'
 import { meshLevelStage, meshPipelineVersion, readMeshLevelArtifact, writeMeshLevelArtifact, type MeshLevelArtifact } from '../src/world/meshArtifacts'
 import { meshTileArtifactInfo, meshTilePipelineVersion, meshTileStage, readMeshTileArtifact, writeMeshTileArtifact, type MeshTileArtifact } from '../src/world/meshTileArtifacts'
@@ -207,9 +208,14 @@ function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[]
 // history made again at level 1's budget, its waters derived on the
 // result. Two phases:
 //   history  — the replay at level 1's budget, with checkpoints;
-//   hydrology — the level's waters from the save's climate, the one its
-//               tiles' waters are derived from (docs/decisions/
-//               level-waters.md; until 2026-10-25 the last epoch's).
+//   hydrology — the stages a load runs in the generator, on the world at
+//               the replay's end: the render, the climate, the save's
+//               refinement, the hydrology, the ecology under the save's
+//               sliders; then the level's artifact with its land and
+//               ecology fields (docs/decisions/level-waters.md). The
+//               waters so come from the save's climate, the one its tiles'
+//               waters are derived from; until 2026-10-25 from the last
+//               epoch's, with no land fields.
 // Refused, not approximated, where the world's pipeline is not this
 // bundle's (world/worldPipeline.ts). Until 2026-10-17 a first phase
 // replayed the history at its own budget and compared it with the save,
@@ -227,7 +233,15 @@ async function replayLevel(job: PipelineTask, inputs: WorldInputs, onProgress: (
   onProgress('history', 0)
   let lastCheckpoint = resume?.done ?? 0
   const earlierMs = resume?.elapsedMs ?? 0
-  const replay = engine().Replay.start(planFromRecipe(recipe), 1, resume ? { position: resume.position, snapshot: resume.snapshot } : null, job.pool === false ? null : leafWorkers())
+  // The level's waters need the save's refinement and the last run's
+  // weather (the hydrology below): refused before the hours of the replay.
+  if (!inputs.refined) throw new Error('the world carries no refined climate — run its climate step to refine it')
+  const values = inputs.values
+  if (!values) throw new Error('the world\'s spec cannot be read')
+  const recipePlan = planFromRecipe(recipe)
+  const weather = recipePlan.tectonics[recipePlan.tectonics.length - 1]?.weather
+  if (!weather) throw new Error('the world carries no tectonic run')
+  const replay = engine().Replay.start(recipePlan, 1, resume ? { position: resume.position, snapshot: resume.snapshot } : null, job.pool === false ? null : leafWorkers())
   // One epoch a call. Between two, the thread takes its messages (a fresh
   // token) and the checkpoint is written where one restores exactly.
   for (;;) {
@@ -245,7 +259,19 @@ async function replayLevel(job: PipelineTask, inputs: WorldInputs, onProgress: (
     await new Promise((resolve) => setImmediate(resolve))
   }
   onProgress('hydrology', 0)
-  const level = replay.level(inputs.climate)
+  // The climate under the last run's weather, as the history made the
+  // world, then replaced by the save's refinement, as a load replaces it.
+  const world = replay.world()
+  world.render(1)
+  world.climate(weather)
+  world.refineClimate(inputs.refined)
+  onProgress('hydrology', 0.5)
+  world.hydrology(weather.planet ?? null)
+  // The ecology under the save's sliders: its fields go into the level
+  // whole, since a browser cannot hold the rule's state at level 1's size
+  // (docs/decisions/level-waters.md, fork 2).
+  world.ecology(ecologyParamsFrom((path) => values[path]))
+  const level = world.levelArtifact(1)
   onProgress('hydrology', 1)
   return { artifact: level, earlierMs }
 }

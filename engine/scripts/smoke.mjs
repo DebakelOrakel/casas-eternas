@@ -242,17 +242,45 @@ const closureOf = (plan, target) => {
 }
 
 // LEVEL 1 BY REPLAY, native only (fork 3): the plan replayed at level 1's
-// budget one epoch at a time with its checkpoints, the level's waters on
-// its end as the artifact holds them, and the replay resumed from its last
-// checkpoint, its state through JSON as a checkpoint's state.json goes,
-// landing on the same level. Then the tile levels on it: the plan, and a
-// level-3 tile with its closure baked in order — the level-2 parents with
-// their upstream tiles, the level-3 upstream ones — on one baker, as a
-// worker does, once on four leaf blocks and once on one (the pooled
-// scheme gives the same bytes for every split).
+// budget one epoch at a time with its checkpoints, then on the world at its
+// end the stages a load runs — the render, the climate, the save's
+// refinement, the hydrology, the ecology — and the level's artifact with its
+// land and ecology fields (docs/decisions/level-waters.md), as the job
+// worker makes it; and the
+// replay resumed from its last checkpoint, its state through JSON as a
+// checkpoint's state.json goes, landing on the same level. Then the tile
+// levels on it: the plan, and a level-3 tile with its closure baked in
+// order — the level-2 parents with their upstream tiles, the level-3
+// upstream ones — on one baker, as a worker does, once on four leaf blocks
+// and once on one (the pooled scheme gives the same bytes for every split).
 for (const shape of ['torus', 'sphere']) {
   const [width, height] = [512, 256]
   const plan = planOf('replay', width, height, shape)
+  const weather = defaultWeatherParams()
+
+  // The save as the plan and the bake read it, from the world at level 0
+  // the same plan replays to: its seed text and controls, and its
+  // payloads, the climate after its refinement as a save holds it; the
+  // engine derives the seeds, the forcing and the raster (fork 7b).
+  const r0 = native.Replay.start(plan, 0)
+  while (r0.step());
+  const w0 = r0.world()
+  // The climate needs the world rendered first.
+  w0.render(1)
+  w0.climate(weather)
+  // The refinement's values, as a save holds them and a load restores them.
+  const refined = w0.refineClimate(null).refined.refined
+  const save = { seed: plan.seed, width, height, shape, controls, snapshot: w0.snapshot(), climate: w0.climatePayload(), mesh: w0.meshPayload() }
+
+  const levelOf = (r) => {
+    const w = r.world()
+    w.render(1)
+    w.climate(weather)
+    w.refineClimate(refined)
+    w.hydrology(weather.planet ?? null)
+    w.ecology(SLIDERS[0])
+    return w.levelArtifact(1)
+  }
   const replay = native.Replay.start(plan, 1, null, 4)
   const due = []
   for (;;) {
@@ -260,39 +288,18 @@ for (const shape of ['torus', 'sphere']) {
     if (position) due.push({ position, snapshot: replay.snapshot() })
     if (!replay.step()) break
   }
-  const level = replay.level()
+  const level = levelOf(replay)
   if (due.length === 0) fail(`${shape}: level 1's replay offered no checkpoint`)
   else {
     const at = due[due.length - 1]
     const resumed = native.Replay.start(plan, 1, { position: at.position, snapshot: { ...at.snapshot, state: viaJson(at.snapshot.state) } }, null)
     while (resumed.step());
-    same(`${shape}: level 1 resumed from its checkpoint differs`, resumed.level(), level)
+    same(`${shape}: level 1 resumed from its checkpoint differs`, levelOf(resumed), level)
   }
-
-  // The save as the plan and the bake read it, from the world at level 0
-  // the same plan replays to: its seed text and controls, and its
-  // payloads; the engine derives the seeds, the forcing and the raster
-  // (fork 7b).
-  const r0 = native.Replay.start(plan, 0)
-  while (r0.step());
-  const w0 = r0.world()
-  // The climate needs the world rendered first.
-  w0.render(1)
-  w0.climate(defaultWeatherParams())
-  const save = { seed: plan.seed, width, height, shape, controls, snapshot: w0.snapshot(), climate: w0.climatePayload(), mesh: w0.meshPayload() }
-
-  // The level's waters from the save's climate, as the job worker asks
-  // since 2026-10-25 (docs/decisions/level-waters.md): the same terrain,
-  // its own rivers.
-  if (due.length > 0) {
-    const at = due[due.length - 1]
-    const again = native.Replay.start(plan, 1, { position: at.position, snapshot: { ...at.snapshot, state: viaJson(at.snapshot.state) } }, null)
-    while (again.step());
-    const fromSaved = again.level(save.climate)
-    same(`${shape}: level 1 from the save's climate has another terrain`, fromSaved.z, level.z)
-    if (!fromSaved.rivers || fromSaved.rivers.lengths.length === 0) fail(`${shape}: level 1 from the save's climate has no rivers`)
-    else console.log(`  ${shape}: level 1's rivers ${level.rivers?.lengths.length ?? 0} from the last epoch's climate, ${fromSaved.rivers.lengths.length} from the save's`)
-  }
+  if (!level.land || level.land.biome.length !== level.count) fail(`${shape}: level 1 has no land fields at its nodes`)
+  const ecologyFields = Object.values(level.land?.ecology ?? {})
+  if (ecologyFields.length !== 14 || ecologyFields.some((f) => f.length !== level.count)) fail(`${shape}: level 1 has not the ecology's fourteen fields at its nodes`)
+  if (!level.rivers || level.rivers.lengths.length === 0) fail(`${shape}: level 1 has no rivers`)
   const tilePlan = native.planTiles(level, save)
   const third = tilePlan.filter((p) => p.tile.level === 3).map((p) => closureOf(tilePlan, p.tile))
   const withUpstream = third.filter((c) => c.some((p) => p.upstream.length > 0))
@@ -321,7 +328,7 @@ for (const shape of ['torus', 'sphere']) {
     same(`${shape}: the builds write a tile's files differently`, wasm.tileFiles(tile), tileFiles)
     same(`${shape}: a tile read back from its files writes other files`, native.tileFiles(wasm.tileOfFiles(tileFiles)), tileFiles)
   }
-  console.log(`engine: ${shape} — level 1 replayed (${level.count} nodes, ${level.graph.reaches.length} reaches), ${due.length} checkpoints, resumed; the tile plan (${tilePlan.length} tiles), ${bakes.length} tiles baked on two leaf splits (${bakes.filter((p) => p.upstream.length).length} with upstream): the same`)
+  console.log(`engine: ${shape} — level 1 replayed (${level.count} nodes, ${level.graph.reaches.length} reaches, ${level.land.oases.length / 2} oases), its land and ecology fields, ${due.length} checkpoints, resumed; the tile plan (${tilePlan.length} tiles), ${bakes.length} tiles baked on two leaf splits (${bakes.filter((p) => p.upstream.length).length} with upstream): the same`)
 }
 
 if (failed) process.exit(1)

@@ -26,6 +26,99 @@ pub const LEVEL_RIVER_COURSE_POINTS: &str = "riverCoursePoints.f32";
 pub const LEVEL_RIVER_POINTS: &str = "rivers.f32";
 pub const LEVEL_RIVER_LENGTHS: &str = "riverLengths.u32";
 pub const LEVEL_RIVER_REGIMES: &str = "riverRegimes.u8";
+// The land fields (`forms::LevelLand`, docs/decisions/level-waters.md):
+// a byte or a 16-bit code a node (`land_codes`), the features' points.
+pub const LEVEL_LAND: &str = "land.json";
+pub const LEVEL_LAND_MASK: &str = "landMask.u8";
+pub const LEVEL_BIOME: &str = "biome.u8";
+pub const LEVEL_KOPPEN: &str = "koppen.u8";
+pub const LEVEL_SALT_FLAT: &str = "saltFlat.u8";
+pub const LEVEL_DISCHARGE: &str = "discharge.u16";
+pub const LEVEL_LAKE_DEPTH: &str = "lakeDepth.u16";
+pub const LEVEL_WATER_TABLE: &str = "waterTable.u16";
+pub const LEVEL_CRATON_AGE: &str = "cratonAge.u16";
+pub const LEVEL_OASES: &str = "oases.f64";
+pub const LEVEL_VOLCANOES: &str = "volcanoes.f64";
+pub const LEVEL_OROGEN_POINTS: &str = "orogenPoints.f64";
+// The ecology's fields after an ecology run: their ids in
+// `ecology.json`, each a byte a node in `eco.<id>.u8`, as the screen's fine
+// fields are coded (`encode_fine_field`).
+pub const LEVEL_ECOLOGY: &str = "ecology.json";
+fn level_ecology_file(id: &str) -> String {
+    format!("eco.{id}.u8")
+}
+
+/// The land fields' 16-bit codes (docs/decisions/level-waters.md, fork
+/// 3), set from the ranges measured on Morvane (2026-10-25): its discharge
+/// per node 2.7 … 2.2 · 10⁷, its lakes to 0.46 deep (elevation units), its
+/// water table to 6 146 m, its craton age −1 … 0.76.
+pub mod land_codes {
+    use casas_engine::core::det_math::{det_exp, det_log};
+    use std::f64::consts::LN_10;
+
+    /// The discharge: 0 for none, else logarithmic over 10^LOG_MIN …
+    /// 10^LOG_MAX, a step 0.046 % of the value. By the engine's own log
+    /// and exp, so the native build and WASM write the same codes.
+    pub const DISCHARGE_LOG_MIN: f64 = -3.0;
+    pub const DISCHARGE_LOG_MAX: f64 = 10.0;
+    /// The lake depth, elevation units (1 = ELEVATION_METERS): linear over
+    /// 0 … LAKE_DEPTH_MAX, a step 14 cm.
+    pub const LAKE_DEPTH_MAX: f64 = 1.0;
+    /// The water table's depth, metres: a step WATER_TABLE_STEP_M, so to
+    /// 16 383.5 m; the top code is the field's −1 (under water).
+    pub const WATER_TABLE_STEP_M: f64 = 0.25;
+    /// The craton age (the oldness's share, −1 at sea): linear over −1 … 1.
+    pub const CRATON_AGE_MIN: f64 = -1.0;
+    pub const CRATON_AGE_MAX: f64 = 1.0;
+
+    const TOP: f64 = 65535.0;
+
+    fn linear(v: f64, min: f64, max: f64) -> u16 {
+        (((v - min) / (max - min)) * TOP).round().clamp(0.0, TOP) as u16
+    }
+
+    pub fn discharge(v: f32) -> u16 {
+        let v = v as f64;
+        if v.is_nan() || v <= 0.0 {
+            return 0;
+        }
+        let t = (det_log(v) / LN_10 - DISCHARGE_LOG_MIN) / (DISCHARGE_LOG_MAX - DISCHARGE_LOG_MIN);
+        1 + (t * (TOP - 1.0)).round().clamp(0.0, TOP - 1.0) as u16
+    }
+    pub fn discharge_of(c: u16) -> f32 {
+        if c == 0 {
+            return 0.0;
+        }
+        let t = (c - 1) as f64 / (TOP - 1.0);
+        det_exp((DISCHARGE_LOG_MIN + t * (DISCHARGE_LOG_MAX - DISCHARGE_LOG_MIN)) * LN_10) as f32
+    }
+    pub fn lake_depth(v: f32) -> u16 {
+        linear(v as f64, 0.0, LAKE_DEPTH_MAX)
+    }
+    pub fn lake_depth_of(c: u16) -> f32 {
+        (c as f64 / TOP * LAKE_DEPTH_MAX) as f32
+    }
+    pub fn water_table(v: f32) -> u16 {
+        if v < 0.0 {
+            return TOP as u16;
+        }
+        (v as f64 / WATER_TABLE_STEP_M)
+            .round()
+            .clamp(0.0, TOP - 1.0) as u16
+    }
+    pub fn water_table_of(c: u16) -> f32 {
+        if c == TOP as u16 {
+            return -1.0;
+        }
+        (c as f64 * WATER_TABLE_STEP_M) as f32
+    }
+    pub fn craton_age(v: f32) -> u16 {
+        linear(v as f64, CRATON_AGE_MIN, CRATON_AGE_MAX)
+    }
+    pub fn craton_age_of(c: u16) -> f32 {
+        (CRATON_AGE_MIN + c as f64 / TOP * (CRATON_AGE_MAX - CRATON_AGE_MIN)) as f32
+    }
+}
 
 /// A tile's files (`world/meshTileArtifacts.ts`, `MESH_TILE_FILES`).
 pub const TILE_NODES: &str = "tileNodes.f32";
@@ -311,7 +404,84 @@ pub fn level_files(artifact: &Value) -> Result<Value, EraError> {
                 Value::U8s(bytes(field(rivers, "regimes", "the river lines")?)?),
             );
     }
+    if let Some(land) = given(artifact, "land") {
+        files = level_land_files(files, land)?;
+    }
     Ok(files.build())
+}
+
+/// The land fields' files (`forms::LevelLand`): the bytes as they are,
+/// the measures in their 16-bit codes (`land_codes`), the points as
+/// doubles, the maximum discharge in `land.json`.
+fn level_land_files(files: ObjBuilder, land: &Value) -> Result<ObjBuilder, EraError> {
+    let what = "the level's land";
+    let u8s = |k: &str| -> Result<Vec<u8>, EraError> {
+        match field(land, k, what)? {
+            Value::U8s(a) => Ok(a.clone()),
+            _ => Err(EraError(format!("{what}'s {k} is not bytes"))),
+        }
+    };
+    let coded = |v: &Value, k: &str, code: fn(f32) -> u16| -> Result<Vec<u8>, EraError> {
+        match v {
+            Value::F32s(a) => Ok(a.iter().flat_map(|&x| code(x).to_le_bytes()).collect()),
+            _ => Err(EraError(format!("{what}'s {k} is not Float32s"))),
+        }
+    };
+    let measure = |k: &str, code: fn(f32) -> u16| coded(field(land, k, what)?, k, code);
+    let Value::Num(max_discharge) = field(land, "maxDischarge", what)? else {
+        return Err(wrong("the level's land has no maximum discharge"));
+    };
+    let meta = ObjBuilder::new()
+        .num("maxDischarge", *max_discharge)
+        .build();
+    let mut files = files
+        .put(LEVEL_LAND, Value::U8s(js_json(&meta).into_bytes()))
+        .put(LEVEL_LAND_MASK, Value::U8s(u8s("land")?))
+        .put(LEVEL_BIOME, Value::U8s(u8s("biome")?))
+        .put(LEVEL_KOPPEN, Value::U8s(u8s("koppen")?))
+        .put(LEVEL_SALT_FLAT, Value::U8s(u8s("saltFlat")?))
+        .put(
+            LEVEL_DISCHARGE,
+            Value::U8s(measure("discharge", land_codes::discharge)?),
+        )
+        .put(
+            LEVEL_LAKE_DEPTH,
+            Value::U8s(measure("lakeDepth", land_codes::lake_depth)?),
+        )
+        .put(
+            LEVEL_CRATON_AGE,
+            Value::U8s(measure("cratonAge", land_codes::craton_age)?),
+        )
+        .put(LEVEL_OASES, Value::U8s(bytes(field(land, "oases", what)?)?))
+        .put(
+            LEVEL_VOLCANOES,
+            Value::U8s(bytes(field(land, "volcanoes", what)?)?),
+        )
+        .put(
+            LEVEL_OROGEN_POINTS,
+            Value::U8s(bytes(field(land, "orogenPoints", what)?)?),
+        );
+    if let Some(Value::Obj(fields)) = given(land, "ecology")
+        && !fields.is_empty()
+    {
+        let ids = Value::List(
+            fields
+                .iter()
+                .map(|(id, _)| Value::Str(id.to_string()))
+                .collect(),
+        );
+        files = files.put(LEVEL_ECOLOGY, Value::U8s(js_json(&ids).into_bytes()));
+        for (id, codes) in fields {
+            files = files.put_owned(level_ecology_file(id), Value::U8s(bytes(codes)?));
+        }
+    }
+    if let Some(table) = given(land, "waterTable") {
+        files = files.put(
+            LEVEL_WATER_TABLE,
+            Value::U8s(coded(table, "waterTable", land_codes::water_table)?),
+        );
+    }
+    Ok(files)
 }
 
 /// A tile's files (`writeMeshTileArtifact`), `{ name: bytes }`.
@@ -591,7 +761,89 @@ pub fn level_of_files(files: &Value) -> Result<Value, EraError> {
         )
         .put("graph", graph)
         .put("rivers", rivers)
+        .put(
+            "land",
+            match optional_file(files, LEVEL_LAND) {
+                Some(meta) => level_land_of(files, &json_of(meta, LEVEL_LAND)?)?,
+                None => Value::Null,
+            },
+        )
         .build())
+}
+
+/// The land fields from their files (`level_land_files`' inverse), the
+/// measures decoded, in the keys' order of `forms::LevelLand`.
+fn level_land_of(files: &Value, meta: &Value) -> Result<Value, EraError> {
+    let decoded = |name: &str, of: fn(u16) -> f32| -> Result<Value, EraError> {
+        let codes = words(file(files, name)?, name, "Uint16s", u16::from_le_bytes)?;
+        Ok(Value::F32s(codes.into_iter().map(of).collect()))
+    };
+    let doubles = |name: &str| -> Result<Value, EraError> {
+        Ok(Value::F64s(words(
+            file(files, name)?,
+            name,
+            "Float64s",
+            f64::from_le_bytes,
+        )?))
+    };
+    let Value::Num(max_discharge) = field(meta, "maxDischarge", LEVEL_LAND)? else {
+        return Err(EraError(format!("{LEVEL_LAND} has no maximum discharge")));
+    };
+    Ok(ObjBuilder::new()
+        .put("land", Value::U8s(file(files, LEVEL_LAND_MASK)?.to_vec()))
+        .put("biome", Value::U8s(file(files, LEVEL_BIOME)?.to_vec()))
+        .put("koppen", Value::U8s(file(files, LEVEL_KOPPEN)?.to_vec()))
+        .put(
+            "discharge",
+            decoded(LEVEL_DISCHARGE, land_codes::discharge_of)?,
+        )
+        .put(
+            "lakeDepth",
+            decoded(LEVEL_LAKE_DEPTH, land_codes::lake_depth_of)?,
+        )
+        .put(
+            "saltFlat",
+            Value::U8s(file(files, LEVEL_SALT_FLAT)?.to_vec()),
+        )
+        .put(
+            "waterTable",
+            match optional_file(files, LEVEL_WATER_TABLE) {
+                Some(_) => decoded(LEVEL_WATER_TABLE, land_codes::water_table_of)?,
+                None => Value::Null,
+            },
+        )
+        .put(
+            "cratonAge",
+            decoded(LEVEL_CRATON_AGE, land_codes::craton_age_of)?,
+        )
+        .put("oases", doubles(LEVEL_OASES)?)
+        .put("volcanoes", doubles(LEVEL_VOLCANOES)?)
+        .put("orogenPoints", doubles(LEVEL_OROGEN_POINTS)?)
+        .num("maxDischarge", *max_discharge)
+        .put("ecology", level_ecology_of(files)?)
+        .build())
+}
+
+/// The ecology's fields from their files, the bytes as they are; none
+/// without `ecology.json`.
+fn level_ecology_of(files: &Value) -> Result<Value, EraError> {
+    let Some(list) = optional_file(files, LEVEL_ECOLOGY) else {
+        return Ok(Value::Obj(Vec::new()));
+    };
+    let Value::List(ids) = json_of(list, LEVEL_ECOLOGY)? else {
+        return Err(EraError(format!("{LEVEL_ECOLOGY} is not a list")));
+    };
+    let mut fields = Vec::new();
+    for id in ids {
+        let Value::Str(id) = id else {
+            return Err(EraError(format!(
+                "{LEVEL_ECOLOGY} names a field by no string"
+            )));
+        };
+        let codes = file(files, &level_ecology_file(&id))?.to_vec();
+        fields.push((Cow::Owned(id), Value::U8s(codes)));
+    }
+    Ok(Value::Obj(fields))
 }
 
 /// A tile's arrays from its files (`tile_files`' inverse): `{ nodes,

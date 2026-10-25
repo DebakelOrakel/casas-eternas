@@ -759,6 +759,70 @@ impl World {
             .build())
     }
 
+    /// The world as a mesh level's artifact (`MeshLevelArtifact`; the job
+    /// worker's level 1, the world from its replay's end): the terrain
+    /// mesh, its heights and the hydrology's waters, and `land`, what the
+    /// ecology reads of the land per node and, after an ecology run, its
+    /// fields per node (`forms::LevelLand`, docs/decisions/level-waters.md).
+    /// Needs the hydrology.
+    pub fn level_artifact(&mut self, level: u32) -> Result<Value, EraError> {
+        let (sim, coupled, stages) = self.staged()?;
+        let h = stages
+            .hydrology
+            .as_ref()
+            .ok_or_else(|| wrong("the world has no hydrology yet"))?;
+        // The ecology's fields per node under the last run's sliders, as
+        // the screen's fine fields are coded; none before an ecology run.
+        let ecology: Vec<(&'static str, Vec<u8>)> = match stages.ecology.as_ref() {
+            Some(Ecology {
+                base,
+                params: Some(params),
+                ..
+            }) => apply_ecology(base, &mut coupled.mesh, params)
+                .iter()
+                .enumerate()
+                .map(|(k, f)| (ECOLOGY_FIELD_IDS[k], encode_fine_field(f)))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let om = &h.on_mesh;
+        let rivers = h
+            .graph
+            .as_ref()
+            .map(|g| river_polylines_from_graph(g, h.max_discharge, Some(&sim.domain)));
+        let eco = ecology_inputs_of(
+            sim,
+            &coupled.mesh,
+            Some(om),
+            Some((h.max_discharge, &h.oases[..])),
+        );
+        let lake_depth = eco.lake_depth.as_deref().unwrap_or(&om.lakes.depth);
+        let land = forms::LevelLand {
+            land: &om.land.land,
+            biome: om.ecology_biome.as_deref().unwrap_or(&om.land.biome),
+            koppen: &om.land.koppen,
+            discharge: &om.discharge,
+            lake_depth,
+            salt_flat: &om.lakes.salt_flat,
+            water_table: om.water_table.as_deref(),
+            craton_age: &eco.craton_age,
+            oases: &eco.oases,
+            volcanoes: &eco.volcanoes,
+            orogen_points: &eco.orogen_points,
+            max_discharge: h.max_discharge,
+            ecology: &ecology,
+        };
+        Ok(forms::mesh_level_artifact(
+            level,
+            &coupled.mesh,
+            &coupled.z,
+            &om.lakes.bodies,
+            h.graph.as_ref(),
+            rivers.as_ref(),
+            Some(&land),
+        ))
+    }
+
     /// The climate's cells as the save holds them (the runtime's
     /// `climatePayload`, `ClimateCellValues`), or null before the climate
     /// ran.

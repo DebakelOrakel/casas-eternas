@@ -57,6 +57,12 @@ impl ObjBuilder {
         self
     }
 
+    /// `put` with a key made at run time (a file named by a field's id).
+    pub fn put_owned(mut self, key: String, value: Value) -> Self {
+        self.0.push((Cow::Owned(key), value));
+        self
+    }
+
     pub fn num<T: Into<f64>>(self, key: &'static str, v: T) -> Self {
         self.put(key, Value::Num(v.into()))
     }

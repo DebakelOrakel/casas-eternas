@@ -229,11 +229,12 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // pipeline (docs/decisions/engine-releases.md), and a release of v11 has
 // the engine without these.
 //
-// v13 (2026-10-25): level 1's waters come from the save's climate, the
-// one its tiles' waters are derived from, not from the last epoch's
-// (docs/decisions/level-waters.md). Its rivers and lakes change for an
-// unchanged world, and the tiles that continue them with them; the
-// worlds do not.
+// v13 (2026-10-25): level 1 is the generator's stages on the world at its
+// replay's end — the save's refinement, the hydrology with its features —
+// not `level_hydrology` on the last epoch's climate, and its artifact
+// carries the land fields the ecology reads and the ecology's fields
+// under the save's sliders (docs/decisions/level-waters.md). Its rivers and lakes change for an unchanged world,
+// and the tiles that continue them with them; the worlds do not.
 export const AMPLIFICATION_ALGO_VERSION = 13
 
 // The constants the bake's output actually depends on. Passed in by the

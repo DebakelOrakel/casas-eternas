@@ -6,6 +6,8 @@ import type { FieldSpec } from './save/fieldSpec'
 import { readRecipeNumber, readRecipeValue } from './save/recipeYaml'
 import { historyFromYaml, type WorldHistory } from './save/worldHistory'
 import { specFromYaml } from './save/worldSpec'
+import { refinedFromEntries } from './save/refinedFields'
+import type { RefinedClimate } from '../generator/climate/refinement'
 import { deriveWorldId } from './identity'
 import { worldKindOf, type WorldKind } from './worldRecord'
 import { recordedPipeline } from './worldPipeline'
@@ -137,6 +139,10 @@ export interface World {
   // refused by openWorld.
   climate(): Promise<SavedClimate | null>
   land(): Promise<SavedLandFields | null>
+  // The climate step's refinement as its field mesh's values (refined.json,
+  // save/refinedFields.ts): what a level made from the save takes as its
+  // climate (docs/decisions/level-waters.md). Null for a save without one.
+  refined(): Promise<RefinedClimate | null>
 }
 
 // The type lives with the codec (generator/mesh/meshSerial), which the
@@ -417,6 +423,11 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array, engine: World
     acquire: made,
     climate: async () => climate,
     land: landFields,
+    refined: async () => {
+      const meta = zip.file('refined.json')
+      if (!meta) return null
+      return refinedFromEntries(await meta.async('string'), async (file) => (await zip.file(file)?.async('arraybuffer')) ?? null)
+    },
     mesh: savedMesh,
     snapshot: snapshotOf,
   }

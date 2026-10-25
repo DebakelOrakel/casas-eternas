@@ -7,7 +7,7 @@
 // The job worker (scripts/jobWorker.ts) computes on it, and the engine's
 // smoke test loads it.
 import { createRequire } from 'node:module'
-import type { Engine, EngineReplay as Replay, Shape } from '../src/generator/pipeline/engine'
+import type { Engine, EngineReplay as Replay, EngineWorld, Shape } from '../src/generator/pipeline/engine'
 import type { ReplayPlan, ReplayPosition, ReplaySnapshot } from '../src/generator/pipeline/replayPlan'
 import type { TileId } from '../src/generator/mesh/meshTile'
 import type { ClimateCellValues } from '../src/generator/climate/climatePoints'
@@ -17,18 +17,30 @@ import type { SavedMesh } from '../src/generator/mesh/meshSerial'
 import type { MeshLevelArtifact } from '../src/world/meshArtifacts'
 import type { MeshTileArtifact } from '../src/world/meshTileArtifacts'
 
+// A world of the native build: the bindings' world, and the level's
+// artifact it makes of itself.
+export interface NativeWorld extends EngineWorld {
+  // The world as a mesh level's artifact, its land fields included
+  // (docs/decisions/level-waters.md); needs the hydrology.
+  levelArtifact(level: number): MeshLevelArtifact
+}
+
 // A world's runs made again at a level's budget, one epoch at a time
 // (`replayRuns`), so that the caller reports, writes the checkpoints and
 // stops between two.
 export interface EngineReplay extends Replay {
+  // The world from the replay's end; the replay ends here.
+  world(): NativeWorld
   // Where a checkpoint taken now restores to the same bytes, or null.
   checkpointDue(): ReplayPosition | null
   // A copy: it does not change with the epochs after it.
   snapshot(): ReplaySnapshot
-  // The level from the replay's end, on the plan's width and its seed's
-  // detail seed; the replay ends here. Its waters from `saved`, the save's
-  // climate, when given; else from the last epoch's.
-  level(saved?: ClimateCellValues | null): MeshLevelArtifact
+  // The level from the replay's end as the job worker made it until
+  // 2026-10-25 (its waters from the last epoch's climate, no land fields),
+  // on the plan's width and its seed's detail seed; the replay ends here.
+  // For comparing the artifacts made before; the job takes the world's
+  // levelArtifact.
+  level(): MeshLevelArtifact
 }
 
 // A world's save as the bake and the plan read it (DEC-0044, fork 7b):

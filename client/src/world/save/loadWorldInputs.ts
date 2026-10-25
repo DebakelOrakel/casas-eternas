@@ -2,6 +2,7 @@ import { openWorld, waterBodiesOf, type SavedMesh, type WorldEngine } from '../q
 import type { PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulationTypes'
 import type { WorldKind } from '../worldRecord'
 import type { SavedClimate } from './climateFields'
+import type { RefinedClimate } from '../../generator/climate/refinement'
 import type { World } from '../query'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import type { WorldHistory } from './worldHistory'
@@ -72,6 +73,12 @@ export interface WorldInputs {
   // bake's own nodes (climate/climatePoints.ts). Absent for a world saved
   // before climate was computed; the bake then stops after erosion.
   climate: SavedClimate | null
+  // The climate step's refinement (World.refined): level 1 takes it as its
+  // climate (docs/decisions/level-waters.md). Null for a save without one.
+  refined: RefinedClimate | null
+  // The controls' values by spec path (World.recipe.values): the ecology's
+  // sliders level 1's ecology runs under. Null for a spec the reader refuses.
+  values: Readonly<Record<string, number>> | null
   // The save's standing water (ADAPTIVE_MESH_PLAN.md phase 1): the bodies
   // the water body per node indexes (mesh/lakeBody.i32), from which
   // world.acquire('lakeDepth') draws the lakes. Null for a save without
@@ -128,6 +135,8 @@ export async function worldInputsFrom(world: World): Promise<WorldInputs | null>
     pipeline: world.recipe.pipeline,
     erosionControls: world.recipe.erosionControls,
     climate: await world.climate(),
+    refined: await world.refined(),
+    values: world.recipe.values,
     waterBodies,
     mesh: await world.mesh(),
     snapshot: await world.snapshot(),

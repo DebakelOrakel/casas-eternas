@@ -1,3 +1,4 @@
+import type { EcologyFieldId } from '../generator/ecology/ecologyField'
 import { worldTuning } from './worldTuning'
 import { ENGINE_CONSTANTS, engineLevelBudget } from '../generator/pipeline/engineConstants'
 import { decodeMesh, type SerializedMesh } from '../generator/mesh/meshSerial'
@@ -85,6 +86,39 @@ export interface MeshLevelArtifact {
   waterBodies: WaterBody[]
   graph: RiverGraph | null
   rivers: RiverPolylines | null
+  // What the ecology reads of the land, per node; absent in a level made
+  // before 2026-10-25 (docs/decisions/level-waters.md).
+  land?: LevelLand | null
+}
+
+// A level's land fields (the engine's `forms::LevelLand`): per node in the
+// mesh's numbering, the hydrology's products on the level's mesh; then the
+// world's features. The measures are as the artifact's 16-bit codes give
+// them back (`land_codes` in the engine's formats).
+export interface LevelLand {
+  // 1 for land: above the sea, or a terminal basin's dry floor.
+  land: Uint8Array
+  biome: Uint8Array
+  koppen: Uint8Array
+  // The discharge per node, the engine's units.
+  discharge: Float32Array
+  // The liquid lakes' depth, elevation units.
+  lakeDepth: Float32Array
+  saltFlat: Uint8Array
+  // The water table's depth, metres; −1 under water. Null without one.
+  waterTable: Float32Array | null
+  // The cratons' oldness as a share, −1 at sea.
+  cratonAge: Float32Array
+  // [x, y, …] in world raster cells.
+  oases: Float64Array
+  // [x, y, thickness, kind, …]: kind 0 hotspot, 1 flood basalt, 2 arc.
+  volcanoes: Float64Array
+  orogenPoints: Float64Array
+  maxDischarge: number
+  // The ecology's fields under the save's sliders, a byte a node as the
+  // generator's fine fields are coded (ecologyField.decodeFineValue); none
+  // in a level made without an ecology run.
+  ecology: Partial<Record<EcologyFieldId, Uint8Array>>
 }
 
 interface MeshLevelMeta {

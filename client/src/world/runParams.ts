@@ -2,6 +2,8 @@ import { ARCHEAN_INPUTS } from '../generator/archean/archeanInputParams'
 import { CLIMATE_INPUTS } from '../generator/climate/climateInputParams'
 import type { WeatherParams } from '../generator/climate/weather'
 import { DEFAULT_PLANET_FORCING } from '../generator/planet/planetForcing'
+import { ECOLOGY_ABUNDANCE, ECOLOGY_ABUNDANCE_GROUPS, ECOLOGY_INPUTS } from '../generator/ecology/ecologyInputParams'
+import type { EcologyParams } from '../generator/ecology/ecologyField'
 
 // A WORLD'S RECORDED VALUES AS ITS RUNS TAKE THEM. The spec and the
 // history (world/save) hold the controls' values by path; the generator's
@@ -55,6 +57,26 @@ export function weatherParamsFrom(value: (path: string) => number): WeatherParam
       landPlantsFromMa: DEFAULT_PLANET_FORCING.landPlantsFromMa,
       rotationHours: value('planet.rotation'),
     },
+  }
+}
+
+// The ecology's controls → the sliders an ecology run takes, as the
+// generator's ecology step sends them: the carrying capacity and the
+// concentration as they stand, the provinces and the thirteen abundances
+// through their mappings. For a level made from a save (the job worker,
+// docs/decisions/level-waters.md): its ecology under the save's sliders.
+// `value` reads a control's value by its spec path.
+export function ecologyParamsFrom(value: (path: string) => number): EcologyParams {
+  const weights: NonNullable<EcologyParams['weights']> = {}
+  for (const group of ECOLOGY_ABUNDANCE_GROUPS) {
+    for (const field of group.fields) weights[field] = ECOLOGY_ABUNDANCE.toModel(value(`ecology.${group.id}.${field}`))
+  }
+  return {
+    carryingCapacity: value('ecology.carryingCapacity'),
+    concentration: value('ecology.concentration'),
+    provinceStrength: ECOLOGY_INPUTS.provinceStrength.toModel(value('ecology.provinceStrength')),
+    tinRarity: 0,
+    weights,
   }
 }
 

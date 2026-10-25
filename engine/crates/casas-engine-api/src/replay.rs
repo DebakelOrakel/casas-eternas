@@ -4,8 +4,7 @@
 //! checkpoints and stops between two, and the level's waters on its end.
 
 use casas_engine::climate::climate_points::{
-    climate_at_points, climate_cells_from_saved, climate_cells_from_weather, mean_land_runoff,
-    mesh_points,
+    climate_at_points, climate_cells_from_weather, mean_land_runoff, mesh_points,
 };
 use casas_engine::climate::weather::WeatherParams;
 use casas_engine::pipeline::coupled_epoch::CoupledTerrainBytes;
@@ -250,19 +249,14 @@ impl Replay {
         Ok(World::replayed(sim, terrain))
     }
 
-    /// The level from the replay's end (the job worker's `replayLevel`):
-    /// the climate at the nodes, the level's waters, as the artifact holds
-    /// them (`MeshLevelArtifact`), on the plan's width and its seed's
-    /// detail seed. The replay ends here.
-    ///
-    /// The climate is `saved`, the save's per cell of its field mesh
-    /// (`ClimateCellValues`), when given: the climate the save's own
-    /// waters and its tiles' are derived from (`mesh_tile_bake`), so the
-    /// level's rivers are the ones its tiles continue and its land fields
-    /// are of one climate (docs/decisions/level-waters.md). Without it, the
-    /// last epoch's, as before 2026-10-25.
-    pub fn level(&mut self, saved: Option<&Value>) -> Result<Value, EraError> {
-        let saved = saved.map(read::climate_cell_values).transpose()?;
+    /// The level from the replay's end as the job worker made it until
+    /// 2026-10-25: the last epoch's climate at the nodes, the level's
+    /// waters, as the artifact holds them (`MeshLevelArtifact`), on the
+    /// plan's width and its seed's detail seed. The replay ends here. The
+    /// job worker now runs the stages on `world` and takes its
+    /// `level_artifact` (docs/decisions/level-waters.md); this stays for
+    /// comparing the artifacts made before (`engine/scripts/realWorld.mjs`).
+    pub fn level(&mut self) -> Result<Value, EraError> {
         let (width, detail_seed) = (self.width as u32, crate::detail_seed(&self.seed));
         let runs = self
             .runs
@@ -274,10 +268,7 @@ impl Replay {
             return Err(wrong("the replay ended without its last epoch's state"));
         };
         let shared = &mut sim.meshes.shared;
-        let cells = match saved {
-            Some(saved) => climate_cells_from_saved(shared, saved).map_err(|e| wrong(&e))?,
-            None => climate_cells_from_weather(&weather.terrain, &weather.mesh),
-        };
+        let cells = climate_cells_from_weather(&weather.terrain, &weather.mesh);
         let at_nodes = climate_at_points(
             shared,
             &cells,
@@ -309,6 +300,7 @@ impl Replay {
             &water.water_bodies,
             Some(&water.graph),
             Some(&water.rivers),
+            None,
         ))
     }
 }

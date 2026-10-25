@@ -2,20 +2,22 @@
 id: DEC-0046
 title.en: Level 1's waters and land fields
 title.de: Wasser und Landfelder von Level 1
-summary.en: Level 1 derives its waters from the save's climate, the one its
-  tiles use, not from the last epoch's. Its artifact then carries the
-  land fields per node that the ecology rule reads (biome, discharge,
-  lakes, water table, salt, oases, craton age), packed to 16 bits. The
-  incubator evaluates the rule on level 1's mesh through the WASM engine,
-  so every overlay that depends on the terrain or the water stands on
-  level 1.
-summary.de: Level 1 leitet sein Wasser aus dem Klima des Saves ab, dem seiner
-  Kacheln, nicht aus dem der letzten Epoche. Sein Artefakt trägt danach
-  die Landfelder pro Knoten, die die Ökologie-Regel liest (Biom, Abfluss,
-  Seen, Grundwasser, Salz, Oasen, Kratonalter), auf 16 Bit gepackt. Der
-  Inkubator wertet die Regel über die WASM-Engine auf dem Netz von
-  Level 1 aus, so dass jedes Overlay, das vom Gelände oder vom Wasser
-  abhängt, auf Level 1 steht.
+summary.en: Level 1 runs the generator's stages on the world at its replay's
+  end, so its waters come from the save's climate, the one its tiles use,
+  not from the last epoch's. Its artifact carries the land fields per
+  node that the ecology rule reads (biome, discharge, lakes, water table,
+  salt, oases, craton age), packed to 16 bits, and the ecology's fourteen
+  fields under the save's sliders, a byte a node. The incubator reads
+  them, so every overlay that depends on the terrain or the water stands
+  on level 1.
+summary.de: Level 1 rechnet am Ende seines Replays die Stufen des Generators,
+  so dass sein Wasser aus dem Klima des Saves kommt, dem seiner Kacheln,
+  nicht aus dem der letzten Epoche. Sein Artefakt trägt die Landfelder pro
+  Knoten, die die Ökologie-Regel liest (Biom, Abfluss, Seen, Grundwasser,
+  Salz, Oasen, Kratonalter), auf 16 Bit gepackt, und die vierzehn
+  Ökologiefelder unter den Reglern des Saves, ein Byte pro Knoten. Der
+  Inkubator liest sie, so dass jedes Overlay, das vom Gelände oder vom
+  Wasser abhängt, auf Level 1 steht.
 area: generator
 stage: building
 createdAt: 2026-10-25
@@ -60,63 +62,131 @@ tiles used two climates.
   overlays and the tiles are derived from.
 
 **B.** Level 1's waters, its land fields and its tiles then stand on one
-climate. The job passes the save's climate per cell of its field mesh
-(`ClimateCellValues`, as the tiles get it) to `Replay.level`. Without it
-the engine takes the last epoch's, as before.
+climate.
+
+How (step 2, 2026-10-25): the job takes the world at the replay's end
+(`Replay.world`) and runs on it the stages a load runs in the generator —
+the render, the climate under the last run's weather, the **save's
+refinement** restored, the hydrology with its features — then
+`World.levelArtifact`. Level 1's waters are then the generator's
+hydrology on level 1's mesh: the same discharge and lakes, the river graph
+with the biomes and the months' regime, the hydrogeology (water table,
+springs, oases). The river courses take the same cell size as
+`level_hydrology` did: `level_budget(1)` is 1. A first form (step 1, the
+same day) passed the save's annual climate to `level_hydrology`; the
+stages replaced it, because the land fields need the refinement's months
+and the hydrology's features. `Replay.level` stays, with the last
+epoch's climate, to compare the artifacts made before.
 
 Consequence: level 1's rivers and lakes change for an unchanged world (on
-the smoke test's small worlds 77 → 83 rivers on the torus, 52 → 50 on the
-sphere), and with them every tile. `AMPLIFICATION_ALGO_VERSION` goes to
+the smoke test's small worlds 264 → 212 reaches on the torus, 185 → 108 on
+the sphere), and with them every tile. `AMPLIFICATION_ALGO_VERSION` goes to
 13, so the pipeline goes to `v13`. The worlds do not change: v12 and v11
-worlds read as v13's (`SAME_WORLDS_AS`), and need a new level-1 job. The
-artifact key does not need more: the save's climate is in the world id
+worlds read as v13's (`SAME_WORLDS_AS`), and need a new level-1 job. A
+world without a refinement is refused before the replay. The artifact key
+does not need more: the save's climate is in the world id
 (`deriveWorldId`).
 
-## Fork 2 — fields or inputs in the artifact: DECIDED — inputs
+## Fork 2 — fields or inputs in the artifact: DECIDED — both
 
 - **A. The ecology fields.** The fourteen fields per node, evaluated in
-  the job. Simple to read, but the incubator cannot apply the ecology's
-  sliders, and it stores results, against DEC-0030.
+  the job under the save's sliders. Simple to read; the incubator cannot
+  move the sliders.
 - **B. The inputs of the rule.** The land fields per node the rule reads
   (`EcologyInputs`): biome, discharge, lake depth, water table, salt flat,
   oases, craton age; the volcanoes and the orogen points as lists. The
   incubator evaluates the rule with the save's climate and sliders.
 
-**B**, as DEC-0030 does for the save. It needs one new WASM function: the
-rule on a given mesh with given inputs. The rule does not change.
+First answered **B** (the morning of 2026-10-25), as DEC-0030 does for the
+save. Answered again the same day: **A and B**. The rule's state at level
+1's 8.3 M nodes does not fit a browser: the mesh some 0.5–0.8 GB, the
+climate per node with its months 0.3–0.8 GB, the raw fields 0.47 GB, the
+seasonal ones 0.3–0.7 GB — 1.5–3 GB of WASM memory beside the incubator's
+textures, where Safari already reloaded the page for its memory. The job
+runs the ecology natively (`World.ecology` under the save's sliders,
+`world/runParams.ecologyParamsFrom`), and the artifact carries its
+fourteen fields a byte a node, as the generator's fine fields are coded
+(`encode_fine_field`): 116 MB at level 1. The sliders are set in the
+generator, not in the incubator. The inputs stay in the artifact too: a
+tile level can evaluate the rule at its own resolution, as DEC-0030 means
+it. Not against DEC-0030: the save stays the authority and carries the
+inputs; the level is derived, and made again from it at any time.
 
 ## Fork 3 — packing: DECIDED — 16 bits, measured first
 
-8.3 M nodes (Morvane): a field as f32 is 33 MB. Packed to 16 bits:
+8.3 M nodes (Morvane): a field as f32 is 33 MB. Packed to 16 bits
+(`formats::land_codes` in the engine), the scales set from the ranges of
+Morvane's land fields (2026-10-25, the stages on its save at level 0,
+365 k nodes, as a stand-in for level 1):
 
-| Field | Encoding |
-|---|---|
-| Discharge | logarithmic over its range: some 0.04 % relative a step |
-| Lake depth | linear, 5 cm a step |
-| Water table | linear, 10 cm a step |
-| Craton age | linear, 0.1 Ma a step |
-| Biome, salt flat | u8 as they are |
+| Field | Range measured | Encoding | Worst error back |
+|---|---|---|---|
+| Discharge (engine units) | 2.7 … 2.2 · 10⁷ | 0 none, else logarithmic over 10⁻³ … 10¹⁰ | 0.023 % |
+| Lake depth (elevation units) | to 0.46 | linear over 0 … 1 (14 cm a step) | 7.6 · 10⁻⁶ (7 cm) |
+| Water table (m) | 0 … 6 146, −1 under water | 25 cm a step to 16 383.5 m, the top code −1 | 0.125 m |
+| Craton age (share) | −1 … 0.76 | linear over −1 … 1 | 1.5 · 10⁻⁵ |
+| Land, biome, Köppen, salt flat | bytes | as they are | none |
+| Oases, volcanoes, orogen points | lists | doubles | none |
 
-The scales are set from the ranges of the first level-1 artifact, not
-assumed. The check: the ecology from f32 inputs against the ecology from
-the packed ones, as DEC-0030 step 2 did for the save (the share of nodes
-that differ by more than 0.05).
+The log and the exp are the engine's own (`det_math`), so the native
+build and WASM write the same codes (the smoke test compares the files).
+On Morvane the land fields are 4.4 MB at level 0; at level 1's 8.3 M
+nodes some 100 MB. The ecology in the artifact is evaluated in the job on
+the f32 inputs (fork 2), so the packing does not reach it; it reaches a
+tile level that evaluates the rule on the packed inputs, and is checked
+there when one does.
+
+## Seen on the way: the water table — not changed
+
+58 % of Morvane's land nodes have the water table at 0 m: 78 % of its
+desert, 82 % of its steppe, 89 % of its tropical rainforest (on the world
+raster too). A matter of the hydrogeology, not of the packing.
+
+The cause (`surface/hydrogeology.rs`): the table starts at the nearest
+water downstream and rises with the flow distance by
+`aquifer_rise_base` = 0.05 m a metre (50 m a km) on tight ground at
+1 000 mm of rain, scaled by the recharge — still some 3.4 m a km in a
+desert of 100 mm on bedrock. Most plains and hills rise slower than that,
+so the table comes out above the ground and is cut to 0. Only 10 % of the
+nodes at 0 m lie in a filled depression. The tuning says of these numbers
+"all unmeasured". On the Earth a table shallower than some 5 m holds on
+about a quarter of the land, and a desert's lies tens to hundreds of
+metres down (Fan, Li and Miguez-Macho 2013, Science 339, 940–943).
+
+What it does to the ecology (`ecology/ecology_field.rs`): a table within
+`well_depth_m` (30 m) is a well, water for the herds, so the dry lands'
+pasture is hardly cut, and the carrying capacity of the deserts is too
+high. A table at 0 m is waterlogged ground, so bog iron is far too
+common in the humid lowlands. The arable land, the fish, the game, the
+timber, the springs and the oases do not read the table.
+
+The way out, when the engine's freeze allows a change to its tuning:
+calibrate `aquifer_rise_base` against Fan et al. (the share of the land
+with a shallow table, the depths by climate). It changes no world, only
+the hydrology's products, and so the level-1 artifacts: a pipeline
+version.
 
 ## Build order
 
-1. **Level 1 from the save's climate.** `Replay.level(saved)` in the
-   engine, the job passes the save's climate, version 13. BUILT
-   2026-10-25.
-2. **The land fields in the artifact.** The job runs the hydrology's
-   features at level 1's scale (the river courses at level 1's cell size,
-   as `level_hydrology` does) and writes the inputs of fork 2, packed.
-3. **The rule in WASM.** The ecology on level 1's mesh with the
-   artifact's inputs, the save's climate and the save's sliders.
+1. **Level 1 from the save's climate**, version 13. BUILT 2026-10-25
+   (first through `Replay.level`, then through the stages of step 2).
+2. **The land fields in the artifact.** The job runs the generator's
+   stages on the world at the replay's end and writes
+   `World.levelArtifact`: the waters and the inputs of fork 2, packed.
+   BUILT 2026-10-25.
+3. **The ecology in the artifact** (fork 2, answered again): the job runs
+   the ecology under the save's sliders, the artifact carries its
+   fourteen fields. BUILT 2026-10-25. (The rule in WASM, the step this
+   replaced, went with fork 2's first answer.)
 4. **The incubator.** The terrain colour from level 1's biomes; the
    carrying capacity and the arable land as overlays.
 
 ## Status
 
-decided 2026-10-25; step 1 built the same day (the engine smoke test
-replays level 1 from the save's climate: the same terrain, its own
-rivers). Steps 2–4 open.
+decided 2026-10-25; steps 1–3 built the same day. The engine smoke test
+makes level 1 as the job does — the stages on the replay's world, the
+ecology, the artifact with its land and ecology fields — resumes it from a
+checkpoint to the same artifact, bakes tiles on it, and writes and reads
+its files alike in both builds. On Morvane's save at level 0 the ecology
+takes 1.0 s for 365 k nodes. No level 1 of a real world made yet. Step 4
+open.
