@@ -207,7 +207,9 @@ function planOf(inputs: WorldInputs, artifact: MeshLevelArtifact): PlannedTask[]
 // history made again at level 1's budget, its waters derived on the
 // result. Two phases:
 //   history  — the replay at level 1's budget, with checkpoints;
-//   hydrology — the level's waters from its last epoch's climate.
+//   hydrology — the level's waters from the save's climate, the one its
+//               tiles' waters are derived from (docs/decisions/
+//               level-waters.md; until 2026-10-25 the last epoch's).
 // Refused, not approximated, where the world's pipeline is not this
 // bundle's (world/worldPipeline.ts). Until 2026-10-17 a first phase
 // replayed the history at its own budget and compared it with the save,
@@ -243,7 +245,7 @@ async function replayLevel(job: PipelineTask, inputs: WorldInputs, onProgress: (
     await new Promise((resolve) => setImmediate(resolve))
   }
   onProgress('hydrology', 0)
-  const level = replay.level()
+  const level = replay.level(inputs.climate)
   onProgress('hydrology', 1)
   return { artifact: level, earlierMs }
 }

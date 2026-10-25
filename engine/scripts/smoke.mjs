@@ -280,6 +280,19 @@ for (const shape of ['torus', 'sphere']) {
   w0.render(1)
   w0.climate(defaultWeatherParams())
   const save = { seed: plan.seed, width, height, shape, controls, snapshot: w0.snapshot(), climate: w0.climatePayload(), mesh: w0.meshPayload() }
+
+  // The level's waters from the save's climate, as the job worker asks
+  // since 2026-10-25 (docs/decisions/level-waters.md): the same terrain,
+  // its own rivers.
+  if (due.length > 0) {
+    const at = due[due.length - 1]
+    const again = native.Replay.start(plan, 1, { position: at.position, snapshot: { ...at.snapshot, state: viaJson(at.snapshot.state) } }, null)
+    while (again.step());
+    const fromSaved = again.level(save.climate)
+    same(`${shape}: level 1 from the save's climate has another terrain`, fromSaved.z, level.z)
+    if (!fromSaved.rivers || fromSaved.rivers.lengths.length === 0) fail(`${shape}: level 1 from the save's climate has no rivers`)
+    else console.log(`  ${shape}: level 1's rivers ${level.rivers?.lengths.length ?? 0} from the last epoch's climate, ${fromSaved.rivers.lengths.length} from the save's`)
+  }
   const tilePlan = native.planTiles(level, save)
   const third = tilePlan.filter((p) => p.tile.level === 3).map((p) => closureOf(tilePlan, p.tile))
   const withUpstream = third.filter((c) => c.some((p) => p.upstream.length > 0))

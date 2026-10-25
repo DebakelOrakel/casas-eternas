@@ -331,9 +331,10 @@ impl Replay {
         self.0.step().map_err(era)
     }
 
-    #[napi]
-    pub fn level(&mut self) -> napi::Result<Tree> {
-        self.0.level().map(Tree).map_err(era)
+    /// `saved` the save's climate per cell (`ClimateCellValues`) or null.
+    #[napi(ts_args_type = "saved?: unknown")]
+    pub fn level(&mut self, saved: Tree) -> napi::Result<Tree> {
+        self.0.level(given(&saved.0)).map(Tree).map_err(era)
     }
 
     /// The world from the replay's end; the replay ends here.

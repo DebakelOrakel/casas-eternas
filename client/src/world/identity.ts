@@ -228,7 +228,13 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // moves because the image takes its engine from the release of its
 // pipeline (docs/decisions/engine-releases.md), and a release of v11 has
 // the engine without these.
-export const AMPLIFICATION_ALGO_VERSION = 12
+//
+// v13 (2026-10-25): level 1's waters come from the save's climate, the
+// one its tiles' waters are derived from, not from the last epoch's
+// (docs/decisions/level-waters.md). Its rivers and lakes change for an
+// unchanged world, and the tiles that continue them with them; the
+// worlds do not.
+export const AMPLIFICATION_ALGO_VERSION = 13
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

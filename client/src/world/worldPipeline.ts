@@ -31,9 +31,14 @@ const PIPELINE_OF_CODE: Readonly<Record<string, string>> = {
 // v11 and v12 differ in where code runs, not in a byte of a world or an
 // artifact (2026-10-22, docs/decisions/rust-engine.md fork 7b: a level,
 // tiles, the tile plan of a real world compared byte for byte), so a world
-// v11 made is v12's to refine. Not a migration: a statement of equality.
+// v11 made is v12's to refine. v12 and v13 make the same worlds; v13
+// derives level 1's waters from the save's climate (docs/decisions/
+// level-waters.md), so their levels differ, each under its own version.
+// Not a migration: a statement of equality of the worlds. Each entry
+// names the current pipeline, not the next one: the lookup is one step.
 const SAME_WORLDS_AS: Readonly<Record<string, string>> = {
-  'v11-1b1f7f4a8b14250e': 'v12-53fe6efa9b110bf0',
+  'v11-1b1f7f4a8b14250e': 'v13-53fe6efa9b110bf0',
+  'v12-53fe6efa9b110bf0': 'v13-53fe6efa9b110bf0',
 }
 
 // The pipeline a world.yaml records: `status.pipeline`, or for a world

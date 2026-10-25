@@ -26,8 +26,9 @@ export interface EngineReplay extends Replay {
   // A copy: it does not change with the epochs after it.
   snapshot(): ReplaySnapshot
   // The level from the replay's end, on the plan's width and its seed's
-  // detail seed; the replay ends here.
-  level(): MeshLevelArtifact
+  // detail seed; the replay ends here. Its waters from `saved`, the save's
+  // climate, when given; else from the last epoch's.
+  level(saved?: ClimateCellValues | null): MeshLevelArtifact
 }
 
 // A world's save as the bake and the plan read it (DEC-0044, fork 7b):
