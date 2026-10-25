@@ -1,12 +1,14 @@
 import { domainOfKind, type Domain } from '../../generator/core/domain'
 import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
 import { rasteriseNodeField } from '../../generator/mesh/meshRaster'
+import type { PeriodicTriangulation } from '../../generator/mesh/periodicDelaunay'
+import { barycentric } from '../../generator/mesh/remesh'
 import { reliefShadeAt } from '../../generator/render/reliefShade'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import { dilateLandBiomes, expandBiomeIds } from '../../map/biomeIds'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { applyLakeWash, applyTerrainWash, DEFAULT_TERRAIN_WASH } from '../../map/terrainPalette'
-import { meshLevelMesh, type MeshLevelArtifact } from '../../world/meshArtifacts'
+import { meshLevelMesh, type LevelLand, type MeshLevelArtifact } from '../../world/meshArtifacts'
 import { waterLevelsFromBodies } from './waterLevels'
 
 // THE INCUBATOR'S CHART WORKER: level 1 painted onto the chart as the
@@ -16,12 +18,18 @@ import { waterLevelsFromBodies } from './waterLevels'
 // world raster's. One paint per world; off the main thread, because the
 // level's mesh and a chart of 8192 × 4096 are seconds and a gigabyte.
 //
-// The heights are level 1's. The biomes are the save's (level 0's
-// nodes, on the world raster): the level has no classification of its
-// own, so they are spread over the level's coast (dilateLandBiomes) and
-// widened to the chart. The lakes stand at the levels the level's own
-// water bodies give on the world raster (waterLevels.ts), and their
-// shores are where the level's chart heights cross them.
+// The heights are level 1's. The biomes are level 1's own, per node
+// (its land fields, docs/decisions/level-waters.md): a texel takes its
+// triangle's nearest corner, a land corner on land. A level made before
+// them has none: then the save's (level 0's nodes, on the world raster),
+// spread over the level's coast (dilateLandBiomes) and widened to the
+// chart. The lakes stand at the levels the level's own water bodies give
+// on the world raster (waterLevels.ts), and their shores are where the
+// level's chart heights cross them.
+//
+// With the biomes it answers which node a texel shows, at half the
+// chart's resolution (`nodes`, a texel of it for 2 × 2 of the chart): the
+// screen draws a node field from it — the ecology's — without the mesh.
 //
 // Two paints of each: with the terrain wash, and the bare paper (white
 // land with its hillshade, as the generator's map with its terrain colour
@@ -35,7 +43,11 @@ export interface ChartWorkerInbound {
   chartWidth: number
   chartHeight: number
   level: Pick<MeshLevelArtifact, 'count' | 'nodes' | 'connectivity' | 'z'> & { waterBodies: WaterBody[] }
-  // The save's biome ids on the world raster, or null.
+  // The level's land and biome per node, or null for a level without its
+  // land fields.
+  land: Pick<LevelLand, 'land' | 'biome'> | null
+  // The save's biome ids on the world raster, or null: for a level
+  // without its land fields.
   biome: Float32Array | null
   detailSeed: number
 }
@@ -49,6 +61,9 @@ export type ChartWorkerOutbound =
     // The bare paper.
     paperShaded: Uint8ClampedArray
     paperUnshaded: Uint8ClampedArray
+    // The node each texel of the half-resolution chart shows, or null for
+    // a level without its land fields.
+    nodes: Int32Array | null
     ms: Record<string, number>
   }
   | { type: 'failed'; message: string }
@@ -79,7 +94,8 @@ function paint(message: ChartWorkerInbound): void {
   const coarse = rasteriseNodeField(mesh, level.z, width, height)
   const water = waterLevelsFromBodies(level.waterBodies, coarse, width, height, kind === 'torus')
   step('water')
-  const elevation = rasteriseNodeField(mesh, level.z, W, H)
+  const pass = message.land ? chartPass(mesh, level.z, message.land, W, H) : null
+  const elevation = pass ? pass.elevation : rasteriseNodeField(mesh, level.z, W, H)
   step('raster')
   // THE HILLSHADE as the generator's (reliefShade.ts), whose exaggeration
   // is set for a difference between neighbours on the world raster: on
@@ -108,9 +124,9 @@ function paint(message: ChartWorkerInbound): void {
   const shaded = paperShaded.slice()
   const unshaded = paperUnshaded.slice()
   step('paper')
-  let ids: Uint8Array | null = null
-  if (message.biome) {
-    ids = expandBiomeIds(dilateLandBiomes(message.biome, width, height), width, height, W, H, message.detailSeed)
+  let ids: Uint8Array | null = pass ? pass.biome : null
+  if (!ids && message.biome) ids = expandBiomeIds(dilateLandBiomes(message.biome, width, height), width, height, W, H, message.detailSeed)
+  if (ids) {
     applyTerrainWash(shaded, relief, ids, DEFAULT_TERRAIN_WASH)
     applyTerrainWash(unshaded, relief, ids, DEFAULT_TERRAIN_WASH)
   }
@@ -128,5 +144,50 @@ function paint(message: ChartWorkerInbound): void {
   }
   for (const chart of [shaded, unshaded, paperShaded, paperUnshaded]) applyLakeWash(chart, depth, ids)
   step('lakes')
-  worker.postMessage({ type: 'painted', shaded, unshaded, paperShaded, paperUnshaded, ms } satisfies ChartWorkerOutbound, [shaded.buffer, unshaded.buffer, paperShaded.buffer, paperUnshaded.buffer])
+  const nodes = pass ? pass.nodes : null
+  const transfer = [shaded.buffer, unshaded.buffer, paperShaded.buffer, paperUnshaded.buffer]
+  if (nodes) transfer.push(nodes.buffer)
+  worker.postMessage({ type: 'painted', shaded, unshaded, paperShaded, paperUnshaded, nodes, ms } satisfies ChartWorkerOutbound, transfer)
+}
+
+// One walk over the chart for the heights, the biomes and the nodes. The
+// heights as rasteriseNodeField gives them (the same walk, the same sum in
+// the same order, so the same bits); the biome of the triangle's nearest
+// corner, of its nearest land corner where the texel is land; the nearest
+// corner on every second row and column for `nodes`.
+function chartPass(mesh: PeriodicTriangulation, z: Float32Array, land: Pick<LevelLand, 'land' | 'biome'>, W: number, H: number): { elevation: Float32Array; biome: Uint8Array; nodes: Int32Array } {
+  const elevation = new Float32Array(W * H)
+  const biome = new Uint8Array(W * H)
+  const half = W >> 1
+  const nodes = new Int32Array(half * (H >> 1))
+  const sx = mesh.domain.width / W
+  const sy = mesh.domain.height / H
+  const bary = new Float64Array(3)
+  const corner = new Int32Array(3)
+  let hint = mesh.lastTri
+  let rowStart = hint
+  for (let py = 0; py < H; py++) {
+    const y = py * sy
+    hint = rowStart
+    for (let px = 0; px < W; px++) {
+      const x = px * sx
+      const t = mesh.locate(x, y, hint)
+      hint = t
+      if (px === 0) rowStart = t
+      barycentric(mesh, t, x, y, bary)
+      corner[0] = mesh.tris[3 * t]
+      corner[1] = mesh.tris[3 * t + 1]
+      corner[2] = mesh.tris[3 * t + 2]
+      const i = py * W + px
+      const h = bary[0] * z[corner[0]] + bary[1] * z[corner[1]] + bary[2] * z[corner[2]]
+      elevation[i] = h
+      let near = 0
+      for (let k = 1; k < 3; k++) if (bary[k] > bary[near]) near = k
+      let nearLand = -1
+      if (h > 0) for (let k = 0; k < 3; k++) if (land.land[corner[k]] && (nearLand < 0 || bary[k] > bary[nearLand])) nearLand = k
+      biome[i] = land.biome[corner[nearLand >= 0 ? nearLand : near]]
+      if (((px | py) & 1) === 0) nodes[(py >> 1) * half + (px >> 1)] = corner[near]
+    }
+  }
+  return { elevation, biome, nodes }
 }

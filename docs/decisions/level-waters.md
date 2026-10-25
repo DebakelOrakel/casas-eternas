@@ -178,8 +178,13 @@ version.
    the ecology under the save's sliders, the artifact carries its
    fourteen fields. BUILT 2026-10-25. (The rule in WASM, the step this
    replaced, went with fork 2's first answer.)
-4. **The incubator.** The terrain colour from level 1's biomes; the
-   carrying capacity and the arable land as overlays.
+4. **The incubator.** The terrain colour from level 1's biomes (the
+   map's, with the ice model's glaciers, as the save's `mesh/biome.u8`;
+   the artifact carries the ecology's own beside them); the carrying
+   capacity and the arable land as overlays, read per node through a map
+   of the node each texel shows. BUILT 2026-10-25; on Morvane's save at
+   level 0 the biomes per node are the save's on every node, on 99.2 % of
+   the land texels.
 
 ## Status
 
@@ -188,5 +193,5 @@ makes level 1 as the job does — the stages on the replay's world, the
 ecology, the artifact with its land and ecology fields — resumes it from a
 checkpoint to the same artifact, bakes tiles on it, and writes and reads
 its files alike in both builds. On Morvane's save at level 0 the ecology
-takes 1.0 s for 365 k nodes. No level 1 of a real world made yet. Step 4
-open.
+takes 1.0 s for 365 k nodes. Step 4 built the same day. No level 1 of a
+real world made yet.

@@ -34,6 +34,9 @@ import { OVERLAY_META, overlayKey } from '../generator/overlays'
 import { createStepBar } from '../generator/StepBar'
 import { t } from '../../i18n/i18n'
 import type { ChartWorkerInbound, ChartWorkerOutbound } from './chartWorker'
+import { decodeFineValue, ECOLOGY_FINE_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
+import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
+import type { LevelLand } from '../../world/meshArtifacts'
 import '../../ui/theme/design.css'
 
 // THE INCUBATOR: the step between the generator and the game. The generator
@@ -65,6 +68,51 @@ import '../../ui/theme/design.css'
 
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
 const STEPS = ['flora'] as const
+
+// The ecology's fields the incubator shows (the level's artifact holds all
+// fourteen, docs/decisions/level-waters.md), with their icons as the
+// generator's resource picks have them.
+const ECOLOGY_PICKS: readonly { id: EcologyFieldId; icon: string }[] = [
+  { id: 'carryingCapacity', icon: '/icons/ecology.png' },
+  { id: 'arable', icon: '/icons/wheat.png' },
+]
+// The pick that paints none of them.
+const NO_FIELD = 'none:fields'
+
+// An ecology field over a chart, into a copy, as the generator paints it
+// (GeneratorScreen.paintEcology): its ramp at 0.6, a deposit field fading
+// in from 0 to 0.05. The field is a byte a node (the generator's fine
+// code); `nodes` names the node each texel of the half-resolution chart
+// shows (chartWorker.ts). The colour of each code is made once.
+function blendEcology(base: Uint8ClampedArray, field: EcologyFieldId, codes: Uint8Array, nodes: Int32Array, width: number, height: number): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(base)
+  const fadeZero = ECOLOGY_FIELD_META[field].fadeZero === true
+  const rgb = new Uint8Array(256 * 3)
+  const alpha = new Float32Array(256)
+  for (let c = 0; c < 256; c++) {
+    if (c === ECOLOGY_FINE_OCEAN) continue
+    const v = decodeFineValue(c)
+    const [r, g, b] = ecologyFieldColor(field, v)
+    rgb[3 * c] = r
+    rgb[3 * c + 1] = g
+    rgb[3 * c + 2] = b
+    alpha[c] = fadeZero ? 0.6 * Math.min(1, v / 0.05) : 0.6
+  }
+  const half = width >> 1
+  for (let y = 0; y < height; y++) {
+    const row = (y >> 1) * half
+    for (let x = 0; x < width; x++) {
+      const c = codes[nodes[row + (x >> 1)]]
+      const a = alpha[c]
+      if (a === 0) continue
+      const i = 4 * (y * width + x)
+      out[i] = out[i] * (1 - a) + rgb[3 * c] * a
+      out[i + 1] = out[i + 1] * (1 - a) + rgb[3 * c + 1] * a
+      out[i + 2] = out[i + 2] * (1 - a) + rgb[3 * c + 2] * a
+    }
+  }
+  return out
+}
 
 // The level the incubator runs on.
 const LEVEL = 1
@@ -224,25 +272,61 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onFreeArea: (area) => globe?.setFreeArea(area),
   })
 
-  // THE LAYERS. The terrain colour alone for now: on, the
-  // chart with the terrain wash; off, the bare paper. The chart worker
-  // paints both (chartWorker.ts).
+  // THE LAYERS. The terrain colour: on, the chart with the terrain wash;
+  // off, the bare paper. The chart worker paints both (chartWorker.ts).
+  // Over it, one of the ecology's fields at a time (ECOLOGY_PICKS), read
+  // from the level's artifact per node; none in a level made before its
+  // land fields.
   let terrainOn = true
   let charts: { shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null; paperShaded: Uint8ClampedArray; paperUnshaded: Uint8ClampedArray | null } | null = null
+  let ecology: { nodes: Int32Array; fields: LevelLand['ecology'] } | null = null
+  let picked: EcologyFieldId | null = null
+  // The last blend, for showing it again without blending it again.
+  let blended: { key: string; shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } | null = null
   const overlayList = createOverlayList({
     onToggle: () => {
       terrainOn = !terrainOn
       showCharts()
     },
-    onPick: () => {},
+    onPick: (id) => {
+      picked = id === NO_FIELD ? null : (id as EcologyFieldId)
+      showCharts()
+    },
   })
-  overlayList.setRows([{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }])
+  overlayList.setRows([{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }], [{
+    title: 'generator.section.resources',
+    rows: [
+      { id: NO_FIELD, helpBase: 'overlay.none', icon: '/icons/clear.png' },
+      ...ECOLOGY_PICKS.map((p) => ({ id: p.id, helpBase: `resource.${p.id}`, icon: p.icon })),
+    ],
+  }])
   sidebar.body.append(overlayList.element)
   function showCharts(): void {
-    overlayList.refresh(() => ({ on: terrainOn, available: charts !== null }))
+    overlayList.refresh((id) => {
+      if (id === 'terrain') return { on: terrainOn, available: charts !== null }
+      if (id === NO_FIELD) return { on: picked === null, available: true }
+      return { on: picked === id, available: ecology?.fields[id as EcologyFieldId] !== undefined }
+    })
     if (!charts || !view) return
-    const shaded = terrainOn ? charts.shaded : charts.paperShaded
-    const unshaded = terrainOn ? charts.unshaded : charts.paperUnshaded
+    let shaded = terrainOn ? charts.shaded : charts.paperShaded
+    let unshaded = terrainOn ? charts.unshaded : charts.paperUnshaded
+    const codes = picked && ecology ? ecology.fields[picked] : undefined
+    if (picked && ecology && codes) {
+      const key = `${picked},${terrainOn}`
+      if (blended?.key !== key) {
+        // The last blend goes before the next is made: two are 256 MB.
+        blended = null
+        blended = {
+          key,
+          shaded: blendEcology(shaded, picked, codes, ecology.nodes, CHART_WIDTH, CHART_HEIGHT),
+          unshaded: unshaded ? blendEcology(unshaded, picked, codes, ecology.nodes, CHART_WIDTH, CHART_HEIGHT) : null,
+        }
+      }
+      shaded = blended.shaded
+      unshaded = blended.unshaded
+    } else {
+      blended = null
+    }
     // The globe is lit by the sphere's normal alone: it wears the
     // composite WITH the hillshade, or the level's relief would not show.
     if (view.shape === 'sphere') view.reliefTexture.update(shaded)
@@ -295,7 +379,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     loadPanel.done('level', formatBytes(chosen.bytes))
     loadPanel.start('paint')
     const kind = world.kind === 'SphereWorld' ? 'sphere' : 'torus'
-    const biome = await world.acquire('biome')
+    // The level's own biomes; the save's for a level made before them.
+    const land = level.land ?? null
+    const biome = land ? null : await world.acquire('biome')
     const painted = await paintChart({
       kind,
       width: world.width,
@@ -303,6 +389,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       chartWidth: CHART_WIDTH,
       chartHeight: CHART_HEIGHT,
       level: { count: level.count, nodes: level.nodes, connectivity: level.connectivity, z: level.z, waterBodies: level.waterBodies },
+      land: land ? { land: land.land, biome: land.biome } : null,
       biome: biome ? Float32Array.from(biome.data) : null,
       detailSeed: world.recipe.detailSeed,
     })
@@ -342,6 +429,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // each, not kept for nothing.
     const flat = kind !== 'sphere'
     charts = { shaded: painted.shaded, unshaded: flat ? painted.unshaded : null, paperShaded: painted.paperShaded, paperUnshaded: flat ? painted.paperUnshaded : null }
+    // Only the fields shown are kept of the level's fourteen.
+    ecology = land && painted.nodes
+      ? { nodes: painted.nodes, fields: Object.fromEntries(ECOLOGY_PICKS.flatMap((p) => (land.ecology[p.id] ? [[p.id, land.ecology[p.id]]] : []))) }
+      : null
+    blended = null
     showCharts()
     cameraTools.setVisible(kind === 'sphere')
     mapScales.redraw()

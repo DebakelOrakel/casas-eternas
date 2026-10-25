@@ -98,7 +98,10 @@ export interface MeshLevelArtifact {
 export interface LevelLand {
   // 1 for land: above the sea, or a terminal basin's dry floor.
   land: Uint8Array
+  // The map's biome (with the ice model's glaciers, as the save's), and
+  // the one the ecology reads (without them).
   biome: Uint8Array
+  ecologyBiome: Uint8Array
   koppen: Uint8Array
   // The discharge per node, the engine's units.
   discharge: Float32Array

@@ -799,7 +799,8 @@ impl World {
         let lake_depth = eco.lake_depth.as_deref().unwrap_or(&om.lakes.depth);
         let land = forms::LevelLand {
             land: &om.land.land,
-            biome: om.ecology_biome.as_deref().unwrap_or(&om.land.biome),
+            biome: om.biome.as_deref().unwrap_or(&om.land.biome),
+            ecology_biome: om.ecology_biome.as_deref().unwrap_or(&om.land.biome),
             koppen: &om.land.koppen,
             discharge: &om.discharge,
             lake_depth,

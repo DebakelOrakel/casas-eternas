@@ -648,7 +648,10 @@ pub fn mesh_level_artifact(
 /// hydrology's products on the level's mesh, and the world's features.
 pub struct LevelLand<'a> {
     pub land: &'a [u8],
+    /// The map's biome (the save's `mesh/biome.u8`: with the ice model's
+    /// glaciers), and the one the ecology reads (without them).
     pub biome: &'a [u8],
+    pub ecology_biome: &'a [u8],
     pub koppen: &'a [u8],
     pub discharge: &'a [f32],
     pub lake_depth: &'a [f32],
@@ -686,6 +689,7 @@ fn level_land(l: &LevelLand<'_>, count: usize) -> Value {
     ObjBuilder::new()
         .put("land", cut_u8(l.land))
         .put("biome", cut_u8(l.biome))
+        .put("ecologyBiome", cut_u8(l.ecology_biome))
         .put("koppen", cut_u8(l.koppen))
         .put("discharge", cut_f32(l.discharge))
         .put("lakeDepth", cut_f32(l.lake_depth))

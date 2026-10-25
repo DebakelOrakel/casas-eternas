@@ -31,6 +31,7 @@ pub const LEVEL_RIVER_REGIMES: &str = "riverRegimes.u8";
 pub const LEVEL_LAND: &str = "land.json";
 pub const LEVEL_LAND_MASK: &str = "landMask.u8";
 pub const LEVEL_BIOME: &str = "biome.u8";
+pub const LEVEL_ECOLOGY_BIOME: &str = "ecologyBiome.u8";
 pub const LEVEL_KOPPEN: &str = "koppen.u8";
 pub const LEVEL_SALT_FLAT: &str = "saltFlat.u8";
 pub const LEVEL_DISCHARGE: &str = "discharge.u16";
@@ -438,6 +439,7 @@ fn level_land_files(files: ObjBuilder, land: &Value) -> Result<ObjBuilder, EraEr
         .put(LEVEL_LAND, Value::U8s(js_json(&meta).into_bytes()))
         .put(LEVEL_LAND_MASK, Value::U8s(u8s("land")?))
         .put(LEVEL_BIOME, Value::U8s(u8s("biome")?))
+        .put(LEVEL_ECOLOGY_BIOME, Value::U8s(u8s("ecologyBiome")?))
         .put(LEVEL_KOPPEN, Value::U8s(u8s("koppen")?))
         .put(LEVEL_SALT_FLAT, Value::U8s(u8s("saltFlat")?))
         .put(
@@ -792,6 +794,10 @@ fn level_land_of(files: &Value, meta: &Value) -> Result<Value, EraError> {
     Ok(ObjBuilder::new()
         .put("land", Value::U8s(file(files, LEVEL_LAND_MASK)?.to_vec()))
         .put("biome", Value::U8s(file(files, LEVEL_BIOME)?.to_vec()))
+        .put(
+            "ecologyBiome",
+            Value::U8s(file(files, LEVEL_ECOLOGY_BIOME)?.to_vec()),
+        )
         .put("koppen", Value::U8s(file(files, LEVEL_KOPPEN)?.to_vec()))
         .put(
             "discharge",
