@@ -80,6 +80,9 @@ export interface WorldView {
   // The same composite without the hillshade, for the relief, whose own
   // normals and light shade it.
   readonly reliefTexture: RawTexture
+  // A screen's own layer over the composite (overlayMaterialPlugin.ts):
+  // RGBA by its alpha, any size over the chart; null takes it off.
+  setOverlay(pixels: Uint8Array | null, width: number, height: number): void
   setLakesVisible(visible: boolean): void
   // Standing water: the per-cell level and surface kind, and the coast type,
   // or nulls for "the sea everywhere"; the terrain the shores are found on,

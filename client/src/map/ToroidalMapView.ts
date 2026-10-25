@@ -3,6 +3,7 @@ import type { AbstractMesh, InstancedMesh } from '@babylonjs/core'
 import type { ElevationSurface } from './elevationSurface'
 import { HexGridMaterialPlugin } from './hexGridMaterialPlugin'
 import { WaterField, WaterMaterialPlugin } from './waterMaterialPlugin'
+import { createMapOverlay, OverlayMaterialPlugin } from './overlayMaterialPlugin'
 
 // Which representation the map should wear this frame — decided by the
 // caller (it owns the camera/zoom semantics):
@@ -91,6 +92,8 @@ export interface ToroidalMapView {
   // would double-shade every slope. The screen updates it alongside
   // `texture` whenever relief is active.
   readonly reliefTexture: RawTexture
+  // The screen's own layer over the map (overlayMaterialPlugin.ts).
+  setOverlay(pixels: Uint8Array | null, width: number, height: number): void
   // Supply (or clear, with null) the relief layers: subdivided copies of the
   // map plane, vertex Y displaced (and normals derived) from the surfaces.
   // `coarse` displaces the half-res mesh (built eagerly — it's the workhorse
@@ -257,6 +260,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   const waterField = new WaterField(scene)
   const waterPlugin = new WaterMaterialPlugin(material, 'paper', waterField)
   const reliefWaterPlugin = new WaterMaterialPlugin(reliefMaterial, 'paperUnshaded', waterField)
+  const overlay = createMapOverlay(scene, [new OverlayMaterialPlugin(material, 'paper'), new OverlayMaterialPlugin(reliefMaterial, 'paper')])
   let hexGridPlugin: HexGridMaterialPlugin | null = null
   if (hexGrid) {
     hexGridPlugin = new HexGridMaterialPlugin(reliefMaterial)
@@ -655,6 +659,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
   return {
     texture,
     reliefTexture,
+    setOverlay: (pixels: Uint8Array | null, width: number, height: number) => overlay.set(pixels, width, height),
     setReliefSurfaces(coarse: ElevationSurface | null, fine: ElevationSurface | null = null): void {
       coarseSurface = coarse
       fineSurface = fine
@@ -751,6 +756,7 @@ export function createToroidalMapView(options: ToroidalMapViewOptions): Toroidal
       reliefMaterial.dispose()
       patchMaterial?.dispose()
       reliefTexture.dispose()
+      overlay.dispose()
       shadows?.dispose()
       sun.dispose()
       fill.dispose()

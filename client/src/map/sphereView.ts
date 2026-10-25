@@ -27,6 +27,7 @@ import { presenceThreshold, RIVER_RGB } from './riverWidth'
 import { createSymbolLayerSet } from './symbolLayer'
 import { GLOBE_SYMBOL_LIFT, globeChartOfFrame, globeSymbolFrame, globeSymbolSegments, globeSymbolVertex } from './symbolPlacement'
 import { WaterField, WaterMaterialPlugin } from './waterMaterialPlugin'
+import { createMapOverlay, OverlayMaterialPlugin } from './overlayMaterialPlugin'
 import type { ChartPoint, WorldView } from './worldView'
 
 // THE SPHERE'S FIRST VIEW (docs/design/two-topologies.md): an ocean globe on
@@ -368,6 +369,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
   layered.specularPower = sea.specularPower
   const waterField = new WaterField(scene, 'sphere')
   const waterPlugin = new WaterMaterialPlugin(layered, 'globe', waterField)
+  const overlay = createMapOverlay(scene, [new OverlayMaterialPlugin(layered, 'globe')])
 
   // The chart point of a world direction: into the globe's own frame
   // (below the tilt, the turn and the spin), then longitude and latitude.
@@ -483,6 +485,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
     scene,
     baseTexture,
     reliefTexture,
+    setOverlay: (pixels, width, height) => overlay.set(pixels, width, height),
     setLakesVisible: (visible) => waterPlugin.setLakesVisible(visible),
     setWaterLevels: (level, surface, coast = null) => waterField.setLevels(level, surface, coast),
     setWaterElevation: (data, width, height) => waterField.setElevation(data, width, height),
@@ -573,6 +576,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
       layered.dispose()
       baseTexture.dispose()
       reliefTexture.dispose()
+      overlay.dispose()
       glow.dispose(rig.camera)
       rig.dispose()
       scene.dispose()

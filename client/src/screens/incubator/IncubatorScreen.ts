@@ -46,7 +46,10 @@ import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
 import type { AnimalLayer, AnimalWorkerInbound, AnimalWorkerOutbound } from './animalWorker'
 import type { AnimalUse } from './animals'
 import { SPAN_YEARS, type PeopleResult, type PeopleWorkerInbound, type PeopleWorkerOutbound } from './peopleWorker'
-import { arrowsOf, drawArrows, type PeopleArrow } from './peopleArrows'
+import { arrowsOf, type PeopleArrow } from './peopleArrows'
+import { clearOverlay, OVERLAY_DIVISOR, paintGroup, paintPeople, paintRaster, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import type { LegendSpec } from '../../ui/legend/LegendPanel'
+import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
 import type { PlantUse } from './plants'
 import type { PlantLayer, PlantWorkerInbound, PlantWorkerOutbound, TreeLayer } from './plantWorker'
@@ -225,17 +228,6 @@ function cutRegions(input: RegionWorkerInbound): Promise<(RegionWorkerOutbound &
   })
 }
 
-// The region layer blended over a painted chart, into a copy.
-function blendOver(base: Uint8ClampedArray, overlay: Uint8ClampedArray): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(base)
-  for (let i = 0; i < out.length; i += 4) {
-    const a = overlay[i + 3] / 255
-    if (a === 0) continue
-    for (let c = 0; c < 3; c++) out[i + c] = out[i + c] * (1 - a) + overlay[i + c] * a
-  }
-  return out
-}
-
 // Where the animals live and how many, in the animal worker.
 function populateAnimals(input: AnimalWorkerInbound): Promise<(AnimalWorkerOutbound & { type: 'animals' }) | null> {
   return new Promise((resolve) => {
@@ -315,81 +307,6 @@ const ANIMAL_USES: readonly { use: AnimalUse; icon: string }[] = [
 const NO_ANIMALS = 'none:animals'
 const animalPickId = (use: AnimalUse): string => `animal:${use}`
 
-// A colour for each plant of a group, told apart (Trubetskoy's twenty
-// distinct colours, 2017): a group holds at most sixteen.
-const PLANT_PALETTE: readonly (readonly [number, number, number])[] = [
-  [230, 25, 75], [60, 180, 75], [255, 225, 25], [67, 99, 216], [245, 130, 49], [145, 30, 180], [70, 240, 240], [240, 50, 230],
-  [188, 246, 12], [0, 128, 128], [154, 99, 36], [128, 0, 0], [128, 128, 0], [0, 0, 117], [250, 190, 190], [170, 255, 195],
-  [230, 190, 255], [255, 216, 177], [255, 250, 200], [128, 128, 128],
-]
-
-// A layer's code from which its niche suits a cell (plantWorker.ts:
-// SUITABLE 0.3, the niche coded 2 … 255).
-const PLANT_SUITS = 2 + Math.round(253 * 0.3)
-
-// A cell holds at most this many of a group in its stripes, the ones
-// that suit it best; and a stripe is this many chart texels wide (a world
-// cell is 4), across the diagonal. A trial (2026-10-25).
-const STRIPES_MAX = 3
-const STRIPE_TEXELS = 6
-
-// The plants (or the trees, the animals) of a group over a painted chart,
-// into a copy: per cell the ones that live there in diagonal stripes, each
-// in its colour, as strong as its code there; grey where one would suit
-// but none came. The stripes go in the layers' order, not by their codes,
-// so they run on across the cells. A range reaches past its niche, where
-// the plant is rare: not drawn. `from`: the code from which a layer is
-// drawn (an animal's codes are how many, drawn from 2).
-function blendPlantGroup(base: Uint8ClampedArray, layers: readonly { codes: Uint8Array; colour: number }[], width: number, height: number, scale: number, from = PLANT_SUITS): Uint8ClampedArray {
-  const n = width * height
-  // Per cell its layers (by index, ascending) and how many; 0 with an
-  // empty niche marks grey.
-  const pick = new Uint8Array(n * STRIPES_MAX)
-  const count = new Uint8Array(n)
-  const empty = new Uint8Array(n)
-  const best: number[] = []
-  for (let i = 0; i < n; i++) {
-    best.length = 0
-    for (let k = 0; k < layers.length; k++) {
-      const c = layers[k].codes[i]
-      if (c >= from) best.push(k)
-      else if (c === 1) empty[i] = 1
-    }
-    if (best.length > STRIPES_MAX) {
-      best.sort((p, q) => layers[q].codes[i] - layers[p].codes[i])
-      best.length = STRIPES_MAX
-    }
-    best.sort((p, q) => p - q)
-    count[i] = best.length
-    for (let j = 0; j < best.length; j++) pick[i * STRIPES_MAX + j] = best[j]
-  }
-  const out = new Uint8ClampedArray(base)
-  const W = width * scale
-  const H = height * scale
-  for (let y = 0; y < H; y++) {
-    const row = Math.floor(y / scale) * width
-    for (let x = 0; x < W; x++) {
-      const cell = row + Math.floor(x / scale)
-      const m = count[cell]
-      let a: number
-      let rgb: readonly [number, number, number]
-      if (m > 0) {
-        const k = pick[cell * STRIPES_MAX + (Math.floor((x + y) / STRIPE_TEXELS) % m)]
-        a = 0.35 + 0.55 * ((layers[k].codes[cell] - from) / (255 - from))
-        rgb = PLANT_PALETTE[layers[k].colour % PLANT_PALETTE.length]
-      } else if (empty[cell]) {
-        a = 0.45
-        rgb = [120, 120, 120]
-      } else continue
-      const i = 4 * (y * W + x)
-      out[i] = out[i] * (1 - a) + rgb[0] * a
-      out[i + 1] = out[i + 1] * (1 - a) + rgb[1] * a
-      out[i + 2] = out[i + 2] * (1 - a) + rgb[2] * a
-    }
-  }
-  return out
-}
-
 // Where the people spread, in the people worker.
 function spreadPeople(input: PeopleWorkerInbound): Promise<(PeopleWorkerOutbound & { type: 'people' }) | null> {
   return new Promise((resolve) => {
@@ -410,105 +327,6 @@ function spreadPeople(input: PeopleWorkerInbound): Promise<(PeopleWorkerOutbound
     }
     worker.postMessage(input)
   })
-}
-
-// The people's colours: the land by when it was settled, years before the
-// game, dark the first, light the last (a ramp, PEOPLE_AGE_STOPS); the
-// arrows. A trial (2026-10-25); the first try drew the front bright and
-// the land behind it in one colour.
-const PEOPLE_AGE_STOPS: readonly { value: number; rgb: [number, number, number] }[] = [
-  { value: 5_000, rgb: [250, 225, 120] },
-  { value: 25_000, rgb: [240, 150, 55] },
-  { value: 45_000, rgb: [200, 75, 40] },
-  { value: 70_000, rgb: [110, 25, 35] },
-]
-const PEOPLE_ROUTE: readonly [number, number, number] = [90, 40, 25]
-// The ramp's colour for a settlement `ago` years before the game.
-function ageColour(ago: number): [number, number, number] {
-  const stops = PEOPLE_AGE_STOPS
-  if (ago <= stops[0].value) return stops[0].rgb
-  for (let k = 1; k < stops.length; k++) {
-    if (ago <= stops[k].value) {
-      const f = (ago - stops[k - 1].value) / (stops[k].value - stops[k - 1].value)
-      const a = stops[k - 1].rgb
-      const b = stops[k].rgb
-      return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
-    }
-  }
-  return stops[stops.length - 1].rgb
-}
-// The origin's mark, chart texels: a red dot in a dark ring, crosshairs
-// out to ORIGIN_TICK_TEXELS, each on a white rim, so it stands out on any
-// ground (the first, a small dark ring, was easy to miss, 2026-10-25).
-const ORIGIN_RING_TEXELS = 46
-const ORIGIN_RING_WIDTH = 9
-const ORIGIN_DOT_TEXELS = 18
-const ORIGIN_TICK_TEXELS = 90
-const ORIGIN_TICK_WIDTH = 7
-const ORIGIN_RIM = 3
-const ORIGIN_DOT: readonly [number, number, number] = [220, 30, 30]
-const ORIGIN_DARK: readonly [number, number, number] = [25, 25, 25]
-// The years before the game the people set out (SPAN_YEARS later, they
-// stand 5 000 years before it).
-const PEOPLE_AGO_AT_START = 70_000
-
-// The people at `t` years after their departure over a painted chart,
-// into a copy: the land they reached by then, by when they came; the
-// arrows of the way they took to get there; and where they set out.
-function blendPeople(base: Uint8ClampedArray, people: PeopleResult, arrows: readonly PeopleArrow[], t: number, spread: boolean, routes: boolean, width: number, height: number, scale: number): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(base)
-  const W = width * scale
-  const H = height * scale
-  if (spread) {
-    for (let y = 0; y < H; y++) {
-      const row = Math.floor(y / scale) * width
-      for (let x = 0; x < W; x++) {
-        const cell = row + Math.floor(x / scale)
-        const at = people.arrival[cell]
-        if (!(at <= t) || !people.land[cell]) continue
-        const [cr, cg, cb] = ageColour(PEOPLE_AGO_AT_START - at)
-        const a = 0.7
-        const i = 4 * (y * W + x)
-        out[i] = out[i] * (1 - a) + cr * a
-        out[i + 1] = out[i + 1] * (1 - a) + cg * a
-        out[i + 2] = out[i + 2] * (1 - a) + cb * a
-      }
-    }
-  }
-  if (routes) drawArrows(out, arrows, t, W, H, PEOPLE_ROUTE)
-  if (people.origin >= 0) {
-    const ox = ((people.origin % width) + 0.5) * scale
-    const oy = (Math.floor(people.origin / width) + 0.5) * scale
-    const R = ORIGIN_RING_TEXELS
-    const half = ORIGIN_RING_WIDTH / 2
-    const tick = ORIGIN_TICK_WIDTH / 2
-    // What a texel of the mark is: 0 none, 1 rim, 2 dark, 3 the dot.
-    const markAt = (dx: number, dy: number): number => {
-      const d = Math.hypot(dx, dy)
-      if (d <= ORIGIN_DOT_TEXELS) return 3
-      if (Math.abs(d - R) <= half) return 2
-      const ticked = d > R + half && d <= ORIGIN_TICK_TEXELS && (Math.abs(dx) <= tick || Math.abs(dy) <= tick)
-      if (ticked) return 2
-      if (d <= ORIGIN_DOT_TEXELS + ORIGIN_RIM || Math.abs(d - R) <= half + ORIGIN_RIM) return 1
-      if (d > R && d <= ORIGIN_TICK_TEXELS + ORIGIN_RIM && (Math.abs(dx) <= tick + ORIGIN_RIM || Math.abs(dy) <= tick + ORIGIN_RIM)) return 1
-      return 0
-    }
-    const reach = ORIGIN_TICK_TEXELS + ORIGIN_RIM
-    for (let dy = -reach; dy <= reach; dy++) {
-      const y = Math.round(oy + dy)
-      if (y < 0 || y >= H) continue
-      for (let dx = -reach; dx <= reach; dx++) {
-        const m = markAt(dx, dy)
-        if (m === 0) continue
-        const [cr, cg, cb] = m === 3 ? ORIGIN_DOT : m === 2 ? ORIGIN_DARK : [255, 255, 255]
-        const i = 4 * (y * W + (((Math.round(ox + dx) % W) + W) % W))
-        out[i] = cr
-        out[i + 1] = cg
-        out[i + 2] = cb
-      }
-    }
-  }
-  return out
 }
 
 // The smallest catchment that makes a region of its own, km², the
@@ -645,6 +463,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let spreadOn = true
   let routesOn = true
   let peopleOrigin = -1
+  // The composite last uploaded (showCharts), and the charts' version: a
+  // new world's charts are a new composite.
+  let uploadedBase = ''
+  let baseVersion = 0
+  // The overlay the trials paint (incubatorOverlay.ts), the world's.
+  let overlay: OverlayRaster | null = null
   // The last blend, for showing it again without blending it again.
   let blended: { key: string; shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } | null = null
   const overlayList = createOverlayList({
@@ -843,14 +667,20 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     } else {
       blended = null
     }
-    ;({ shaded, unshaded } = overTrials(shaded, unshaded))
-    // The globe is lit by the sphere's normal alone: it wears the
-    // composite WITH the hillshade, or the level's relief would not show.
-    if (view.shape === 'sphere') view.reliefTexture.update(shaded)
-    else {
-      view.baseTexture.update(shaded)
-      view.reliefTexture.update(unshaded!)
+    // The composite goes up only when it changed: the layers over it are
+    // the overlay's (paintOverlay).
+    const key = `${terrainOn},${picked},${baseVersion}`
+    if (uploadedBase !== key) {
+      uploadedBase = key
+      // The globe is lit by the sphere's normal alone: it wears the
+      // composite WITH the hillshade, or the level's relief would not show.
+      if (view.shape === 'sphere') view.reliefTexture.update(shaded)
+      else {
+        view.baseTexture.update(shaded)
+        view.reliefTexture.update(unshaded!)
+      }
     }
+    paintOverlay()
   }
   showStep(0)
   showCharts()
@@ -877,9 +707,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           const code = probe!.land.ecology[p.id]?.[node]
           return code === undefined || code === ECOLOGY_FINE_OCEAN ? [] : [{ label: t(`resource.${p.id}.label` as TKey), value: formatValue(String(Math.round(decodeFineValue(code) * 100)), 'common.unit.percent') }]
         }),
-        // TRIAL: the plants there, on the world raster, one a line; the
-        // use named on its first.
-        ...(shown && !onTesting() && !onPeople() ? (onFlora() ? plantsAt : animalsAt)(Math.floor(y / (CHART_HEIGHT / shown.height)) * shown.width + Math.floor(x / (CHART_WIDTH / shown.width))).flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name }))) : []),
+        // The trials' rows at the world cell under the pointer.
+        ...(shown ? stepTrials().flatMap((l) => l.probe(Math.floor(y / (CHART_HEIGHT / shown!.height)) * shown!.width + Math.floor(x / (CHART_WIDTH / shown!.width)))) : []),
       ] : [],
       months: t('readout.months').split(','),
       charts: [],
@@ -941,7 +770,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const minAreaKm2 = Number(regionSize.value)
     if (on && regionCut?.minAreaKm2 !== minAreaKm2) {
       regionStatus.textContent = 'rechnet …'
-      const cut = await cutRegions({ kind: shown.kind, width: shown.width, height: shown.height, chartWidth: CHART_WIDTH, chartHeight: CHART_HEIGHT, level: shown.level, worldAreaM2: shown.worldAreaM2, minAreaKm2 })
+      const cut = await cutRegions({ kind: shown.kind, width: shown.width, height: shown.height, chartWidth: CHART_WIDTH / OVERLAY_DIVISOR, chartHeight: CHART_HEIGHT / OVERLAY_DIVISOR, level: shown.level, worldAreaM2: shown.worldAreaM2, minAreaKm2 })
       if (ask !== regionAsk || !shown) return
       if (!cut) {
         regionStatus.textContent = 'fehlgeschlagen (Konsole)'
@@ -1032,31 +861,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   const plantLegend = createLegendPanel(root, {
     content: () => {
-      if (onPeople()) {
-        if (!people || (!spreadOn && !routesOn)) return { count: 0, build: () => [] }
-        const routes = routesOn ? [{ label: t('incubator.people.routes.label'), rgb: [...PEOPLE_ROUTE] as [number, number, number], shape: 'line' as const }] : []
-        return {
-          count: 1,
-          // The ramp as the years before the game the land was settled.
-          build: () => [spreadOn
-            ? { type: 'gradient', title: t('incubator.people.time', { years: '…' }), unit: '', stops: PEOPLE_AGE_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })), items: routes }
-            : { type: 'swatches', title: t('incubator.step.people.label'), items: routes }],
-        }
-      }
-      const group = shownGroup()
-      if (!group) return { count: 0, build: () => [] }
-      return {
-        count: 1,
-        build: () => [{
-          type: 'swatches',
-          title: group.title,
-          items: group.layers.flatMap((layer) => layer.reached === 0 ? [] : [{
-            // The name and the share of the land it reached, whole percent.
-            label: `${layer.name} (${formatValue(layer.reached < 0.005 ? '<1' : String(Math.round(100 * layer.reached)), 'common.unit.percent')})`,
-            rgb: [...PLANT_PALETTE[layer.colour % PLANT_PALETTE.length]] as [number, number, number],
-          }]),
-        }],
-      }
+      const specs = activeTrials().flatMap((l) => l.legend())
+      return { count: specs.length, build: () => specs }
     },
   })
   // The plants and the trees grow by themselves once a world is shown,
@@ -1144,7 +950,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     console.info(`[incubator] people spread, ${done.ms} ms`)
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin }
-    peopleArrows = arrowsOf(people, shown.width, CHART_WIDTH / shown.width)
+    peopleArrows = arrowsOf(people, shown.width, CHART_WIDTH / OVERLAY_DIVISOR / shown.width, CHART_HEIGHT / OVERLAY_DIVISOR / shown.height)
     console.info(`[incubator] ${peopleArrows.length} arrows`)
     showPlants()
   }
@@ -1172,25 +978,85 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return ANIMAL_USES.map(({ use }) => ({ label: t(`animal.use.${use}.label` as TKey), names: here.filter((l) => l.uses.includes(use)).map((l) => t(`animal.${l.id}.label` as TKey)) })).filter((g) => g.names.length > 0)
   }
 
-  // The trials' layers over the chart (showCharts): the catchments, then
-  // the animal or the plant. Each a copy of the chart, 128 MB.
-  function overTrials(shaded: Uint8ClampedArray, unshaded: Uint8ClampedArray | null): { shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } {
-    if (!shown) return { shaded, unshaded }
-    if (onTesting() && regionBox.checked && regionCut) {
-      shaded = blendOver(shaded, regionCut.overlay)
-      if (unshaded) unshaded = blendOver(unshaded, regionCut.overlay)
+  // THE TRIALS' LAYERS, as the generator's table of its layers
+  // (overlayReadout): per layer the steps that offer it, whether it draws
+  // now, how it paints the overlay, its legend and its hover rows. The
+  // overlay, the legend and the hover card derive from it.
+  interface TrialLayer {
+    steps: readonly (typeof STEPS)[number][]
+    on(): boolean
+    paint(o: OverlayRaster): void
+    legend(): LegendSpec[]
+    // The rows at a world cell, whether drawn or not.
+    probe(cell: number): ProbeRow[]
+  }
+  // A group's swatches: each layer's name and the share of the land it
+  // reached, whole percent, the ones that grow nowhere left out.
+  const groupLegend = (group: NonNullable<ReturnType<typeof shownGroup>>): LegendSpec => ({
+    type: 'swatches',
+    title: group.title,
+    items: group.layers.flatMap((layer) => layer.reached === 0 ? [] : [{
+      label: `${layer.name} (${formatValue(layer.reached < 0.005 ? '<1' : String(Math.round(100 * layer.reached)), 'common.unit.percent')})`,
+      rgb: [...PLANT_PALETTE[layer.colour % PLANT_PALETTE.length]] as [number, number, number],
+    }]),
+  })
+  const groupRows = (groups: { label: string; names: string[] }[]): ProbeRow[] => groups.flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name })))
+  const groupLayer = (steps: TrialLayer['steps'], at: (cell: number) => { label: string; names: string[] }[]): TrialLayer => ({
+    steps,
+    on: () => shownGroup() !== null,
+    paint: (o) => {
+      const group = shownGroup()
+      if (group && shown) paintGroup(o, group.layers, shown.width, shown.height, group.from)
+    },
+    legend: () => {
+      const group = shownGroup()
+      return group ? [groupLegend(group)] : []
+    },
+    probe: (cell) => groupRows(at(cell)),
+  })
+  const TRIALS: readonly TrialLayer[] = [
+    groupLayer(['flora'], plantsAt),
+    groupLayer(['fauna'], animalsAt),
+    {
+      steps: ['people'],
+      on: () => people !== null,
+      paint: (o) => {
+        if (people && shown) paintPeople(o, people, peopleArrows, peopleTime, spreadOn, routesOn, shown.width, shown.height)
+      },
+      legend: () => {
+        if (!people || (!spreadOn && !routesOn)) return []
+        const routes = routesOn ? [{ label: t('incubator.people.routes.label'), rgb: [...PEOPLE_ROUTE] as [number, number, number], shape: 'line' as const }] : []
+        // The ramp as the years before the game the land was settled.
+        return [spreadOn
+          ? { type: 'gradient', title: t('incubator.people.time', { years: '…' }), unit: '', stops: PEOPLE_AGE_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })), items: routes }
+          : { type: 'swatches', title: t('incubator.step.people.label'), items: routes }]
+      },
+      probe: () => [],
+    },
+    {
+      steps: ['testing'],
+      on: () => regionBox.checked && regionCut !== null,
+      paint: (o) => {
+        if (regionCut) paintRaster(o, regionCut.overlay)
+      },
+      legend: () => [],
+      probe: () => [],
+    },
+  ]
+  const stepTrials = (): TrialLayer[] => TRIALS.filter((l) => l.steps.includes(STEPS[stepIndex]))
+  const activeTrials = (): TrialLayer[] => stepTrials().filter((l) => l.on())
+
+  // The overlay from the step's layers that draw now; none, none at all.
+  function paintOverlay(): void {
+    if (!view) return
+    const active = activeTrials()
+    if (!overlay || active.length === 0) {
+      view.setOverlay(null, 0, 0)
+      return
     }
-    const scale = CHART_WIDTH / shown.width
-    if (onPeople() && people) {
-      shaded = blendPeople(shaded, people, peopleArrows, peopleTime, spreadOn, routesOn, shown.width, shown.height, scale)
-      if (unshaded) unshaded = blendPeople(unshaded, people, peopleArrows, peopleTime, spreadOn, routesOn, shown.width, shown.height, scale)
-    }
-    const group = shownGroup()
-    if (group) {
-      shaded = blendPlantGroup(shaded, group.layers, shown.width, shown.height, scale, group.from)
-      if (unshaded) unshaded = blendPlantGroup(unshaded, group.layers, shown.width, shown.height, scale, group.from)
-    }
-    return { shaded, unshaded }
+    clearOverlay(overlay)
+    for (const layer of active) layer.paint(overlay)
+    view.setOverlay(new Uint8Array(overlay.data.buffer), overlay.width, overlay.height)
   }
 
   // What the chooser's last reload found, for the open that follows it.
@@ -1289,6 +1155,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ? { nodes: painted.nodes, fields: Object.fromEntries(ECOLOGY_PICKS.flatMap((p) => (land.ecology[p.id] ? [[p.id, land.ecology[p.id]]] : []))) }
       : null
     blended = null
+    baseVersion++
+    overlay = { data: new Uint8ClampedArray((CHART_WIDTH / OVERLAY_DIVISOR) * (CHART_HEIGHT / OVERLAY_DIVISOR) * 4), width: CHART_WIDTH / OVERLAY_DIVISOR, height: CHART_HEIGHT / OVERLAY_DIVISOR }
     probe = land && painted.nodes && ecology
       ? { nodes: painted.nodes, z: level.z, land: { land: land.land, biome: land.biome, koppen: land.koppen, ecology: ecology.fields } }
       : null

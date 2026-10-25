@@ -9,22 +9,25 @@ import type { PeopleResult } from './peopleWorker'
 // part, an arrow ends and two begin. Each is sampled every
 // ARROW_STEP_CELLS cells and smoothed, and one shorter than
 // ARROW_MIN_CELLS is left out. Its shaft is ARROW_MIN_TEXELS to
-// ARROW_MAX_TEXELS wide, with the square root of its share; its head
-// ARROW_HEAD times that.
+// ARROW_MAX_TEXELS wide (texels of the incubator's overlay, half the
+// chart's), with the square root of its share; its head ARROW_HEAD times
+// that.
 const ARROW_SHARE = 0.02
 const ARROW_STEP_CELLS = 25
 const ARROW_MIN_CELLS = 30
-const ARROW_MIN_TEXELS = 8
-const ARROW_MAX_TEXELS = 34
+const ARROW_MIN_TEXELS = 4
+const ARROW_MAX_TEXELS = 17
 const ARROW_HEAD = 2.4
 
 export interface PeopleArrow {
-  // In chart texels, unwrapped along the arrow; with the arrival there.
+  // In the overlay's texels, unwrapped along the arrow; with the arrival
+  // there.
   points: { x: number; y: number; at: number }[]
   width: number
 }
 
-export function arrowsOf(people: PeopleResult, width: number, scale: number): PeopleArrow[] {
+// `sx`, `sy`: the overlay's texels a world cell spans.
+export function arrowsOf(people: PeopleResult, width: number, sx: number, sy: number): PeopleArrow[] {
   const { from, flow, arrival, origin } = people
   if (origin < 0) return []
   const total = flow[origin]
@@ -37,7 +40,7 @@ export function arrowsOf(people: PeopleResult, width: number, scale: number): Pe
     if (list) list.push(c)
     else children.set(from[c], [c])
   }
-  const W = width * scale
+  const W = width * sx
   const arrows: PeopleArrow[] = []
   // A branch from `start` (its first cell after `root`) down to its end
   // or its parting; the parting's branches follow.
@@ -75,21 +78,14 @@ export function arrowsOf(people: PeopleResult, width: number, scale: number): Pe
   return arrows.sort((a, b) => a.width - b.width)
 
   function pointOf(cell: number): { x: number; y: number; at: number } {
-    return { x: ((cell % width) + 0.5) * scale, y: (Math.floor(cell / width) + 0.5) * scale, at: arrival[cell] }
+    return { x: ((cell % width) + 0.5) * sx, y: (Math.floor(cell / width) + 0.5) * sy, at: arrival[cell] }
   }
 }
 
-// The arrows as far as the people came by `t`, onto `out` (W × H texels):
-// the shaft as a run of discs, the head a triangle past its last point.
-export function drawArrows(out: Uint8ClampedArray, arrows: readonly PeopleArrow[], t: number, W: number, H: number, colour: readonly [number, number, number]): void {
-  const [cr, cg, cb] = colour
-  const plot = (x: number, y: number, a: number): void => {
-    if (y < 0 || y >= H) return
-    const i = 4 * (y * W + (((x % W) + W) % W))
-    out[i] = out[i] * (1 - a) + cr * a
-    out[i + 1] = out[i + 1] * (1 - a) + cg * a
-    out[i + 2] = out[i + 2] * (1 - a) + cb * a
-  }
+// The arrows as far as the people came by `t`, onto a W × H raster, each
+// texel through `plot` once an arrow: the shaft as a run of discs, the
+// head a triangle past its last point.
+export function drawArrows(plot: (x: number, y: number) => void, arrows: readonly PeopleArrow[], t: number, W: number, H: number): void {
   for (const arrow of arrows) {
     const shown = arrow.points.filter((p) => p.at <= t)
     if (shown.length < 2) continue
@@ -112,7 +108,7 @@ export function drawArrows(out: Uint8ClampedArray, arrows: readonly PeopleArrow[
       const key = y * W + (((x % W) + W) % W)
       if (y < 0 || y >= H || seen.has(key)) return
       seen.add(key)
-      plot(x, y, 0.85)
+      plot(((x % W) + W) % W, y)
     }
     for (let k = 1; k < shaft.length; k++) {
       const a = shaft[k - 1]

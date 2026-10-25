@@ -159,6 +159,7 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
     scene,
     baseTexture: map.texture,
     reliefTexture: map.reliefTexture,
+    setOverlay: (pixels, width, height) => map.setOverlay(pixels, width, height),
     setLakesVisible: (visible) => map.setLakesVisible(visible),
     setWaterLevels: (level, surface, coast) => map.setWaterLevels(level, surface, coast),
     setWaterElevation: (data, width, height) => map.setWaterElevation(data, width, height),
