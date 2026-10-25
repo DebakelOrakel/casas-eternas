@@ -42,7 +42,16 @@ import type { ChartWorkerInbound, ChartWorkerOutbound } from './chartWorker'
 import { decodeFineValue, ECOLOGY_FINE_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import type { LevelLand } from '../../world/meshArtifacts'
+import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
+import type { SpeciesLayer, SpeciesWorkerInbound, SpeciesWorkerOutbound } from './speciesWorker'
+import type { World } from '../../world/query'
+import { SPECIES } from './species'
+import { PLANTS, type PlantUse } from './plants'
+import type { PlantCover, PlantLayer, PlantWorkerInbound, PlantWorkerOutbound } from './plantWorker'
+import type { HabitatInput } from './habitat'
 import '../../ui/theme/design.css'
+// The generator's layer switches, for the trial's switch.
+import '../generator/overlayList.css'
 
 // THE INCUBATOR: the step between the generator and the game. The generator
 // makes a world; the incubator will grow its prehistory — not the geological
@@ -185,6 +194,171 @@ function paintChart(input: ChartWorkerInbound): Promise<(ChartWorkerOutbound & {
     worker.postMessage(input)
   })
 }
+
+// Level 1's catchments as a layer over the chart, in the region worker.
+function cutRegions(input: RegionWorkerInbound): Promise<(RegionWorkerOutbound & { type: 'regions' }) | null> {
+  return new Promise((resolve) => {
+    const worker = new Worker(new URL('./regionWorker.ts', import.meta.url), { type: 'module' })
+    worker.onmessage = (event: MessageEvent<RegionWorkerOutbound>): void => {
+      worker.terminate()
+      if (event.data.type === 'failed') {
+        console.warn(`[incubator] the regions could not be cut: ${event.data.message}`)
+        resolve(null)
+        return
+      }
+      resolve(event.data)
+    }
+    worker.onerror = (event): void => {
+      worker.terminate()
+      console.warn(`[incubator] the region worker failed: ${event.message}`)
+      resolve(null)
+    }
+    worker.postMessage(input)
+  })
+}
+
+// The region layer blended over a painted chart, into a copy.
+function blendOver(base: Uint8ClampedArray, overlay: Uint8ClampedArray): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(base)
+  for (let i = 0; i < out.length; i += 4) {
+    const a = overlay[i + 3] / 255
+    if (a === 0) continue
+    for (let c = 0; c < 3; c++) out[i + c] = out[i + c] * (1 - a) + overlay[i + c] * a
+  }
+  return out
+}
+
+// Where the species live, in the species worker.
+function distributeSpecies(input: SpeciesWorkerInbound): Promise<(SpeciesWorkerOutbound & { type: 'species' }) | null> {
+  return new Promise((resolve) => {
+    const worker = new Worker(new URL('./speciesWorker.ts', import.meta.url), { type: 'module' })
+    worker.onmessage = (event: MessageEvent<SpeciesWorkerOutbound>): void => {
+      worker.terminate()
+      if (event.data.type === 'failed') {
+        console.warn(`[incubator] the species could not be distributed: ${event.data.message}`)
+        resolve(null)
+        return
+      }
+      resolve(event.data)
+    }
+    worker.onerror = (event): void => {
+      worker.terminate()
+      console.warn(`[incubator] the species worker failed: ${event.message}`)
+      resolve(null)
+    }
+    worker.postMessage(input)
+  })
+}
+
+// Where the plants grow, in the plant worker.
+function growPlants(input: PlantWorkerInbound): Promise<(PlantWorkerOutbound & { type: 'plants' }) | null> {
+  return new Promise((resolve) => {
+    const worker = new Worker(new URL('./plantWorker.ts', import.meta.url), { type: 'module' })
+    worker.onmessage = (event: MessageEvent<PlantWorkerOutbound>): void => {
+      worker.terminate()
+      if (event.data.type === 'failed') {
+        console.warn(`[incubator] the plants could not be grown: ${event.data.message}`)
+        resolve(null)
+        return
+      }
+      resolve(event.data)
+    }
+    worker.onerror = (event): void => {
+      worker.terminate()
+      console.warn(`[incubator] the plant worker failed: ${event.message}`)
+      resolve(null)
+    }
+    worker.postMessage(input)
+  })
+}
+
+// A plant's colour by its use, and the use's name.
+const USE_COLOURS: Record<PlantUse, readonly [number, number, number]> = {
+  starch: [180, 130, 0],
+  fat: [110, 70, 20],
+  fruit: [190, 30, 100],
+  fibre: [20, 110, 150],
+}
+const USE_NAMES: Record<PlantUse, string> = { starch: 'Stärke', fat: 'Fett / Eiweiss', fruit: 'Obst', fibre: 'Faser' }
+
+// The cover over a painted chart, into a copy: red where no starch grows,
+// else yellow to green by how many of starch, fat and fruit grow there.
+const COVER_COLOURS: readonly (readonly [number, number, number])[] = [[230, 200, 60], [140, 190, 70], [30, 130, 50]]
+function blendCover(base: Uint8ClampedArray, cover: PlantCover, width: number, height: number, scale: number): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(base)
+  const W = width * scale
+  const H = height * scale
+  const a = 0.6
+  for (let y = 0; y < H; y++) {
+    const row = Math.floor(y / scale) * width
+    for (let x = 0; x < W; x++) {
+      const code = cover.codes[row + Math.floor(x / scale)]
+      if (code === 0) continue
+      const m = code - 1
+      const foods = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1)
+      const [cr, cg, cb] = m & 1 ? COVER_COLOURS[foods - 1] : [210, 40, 30]
+      const i = 4 * (y * W + x)
+      out[i] = out[i] * (1 - a) + cr * a
+      out[i + 1] = out[i + 1] * (1 - a) + cg * a
+      out[i + 2] = out[i + 2] * (1 - a) + cb * a
+    }
+  }
+  return out
+}
+
+// A species' colour by its role.
+const ROLE_COLOURS: Record<SpeciesLayer['role'], readonly [number, number, number]> = {
+  herbivore: [170, 60, 20],
+  predator: [120, 30, 140],
+  fish: [20, 80, 200],
+}
+
+// An animal's or a plant's layer over a painted chart, into a copy: its
+// density in `colour`, the empty niche grey, its origins as rings. The
+// layer is on the world raster, the chart `scale` times finer; a texel
+// reads its cell.
+function blendSpecies(base: Uint8ClampedArray, layer: Pick<SpeciesLayer, 'codes' | 'origins'>, colour: readonly [number, number, number], width: number, height: number, scale: number): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(base)
+  const W = width * scale
+  const H = height * scale
+  const [r, g, b] = colour
+  for (let y = 0; y < H; y++) {
+    const row = Math.floor(y / scale) * width
+    for (let x = 0; x < W; x++) {
+      const code = layer.codes[row + Math.floor(x / scale)]
+      if (code === 0) continue
+      const i = 4 * (y * W + x)
+      const a = code === 1 ? 0.45 : 0.25 + 0.65 * ((code - 2) / 253)
+      const [cr, cg, cb] = code === 1 ? [120, 120, 120] : [r, g, b]
+      out[i] = out[i] * (1 - a) + cr * a
+      out[i + 1] = out[i + 1] * (1 - a) + cg * a
+      out[i + 2] = out[i + 2] * (1 - a) + cb * a
+    }
+  }
+  const radius = 6 * scale
+  for (const o of layer.origins) {
+    const cx = (o.x + 0.5) * scale
+    const cy = (o.y + 0.5) * scale
+    for (let dy = -radius - 2; dy <= radius + 2; dy++) {
+      for (let dx = -radius - 2; dx <= radius + 2; dx++) {
+        const d = Math.hypot(dx, dy)
+        if (d < radius - scale || d > radius + scale) continue
+        const x = (((Math.round(cx + dx) % W) + W) % W)
+        const y = Math.round(cy + dy)
+        if (y < 0 || y >= H) continue
+        const i = 4 * (y * W + x)
+        out[i] = 20
+        out[i + 1] = 20
+        out[i + 2] = 20
+      }
+    }
+  }
+  return out
+}
+
+// The smallest catchment that makes a region of its own, km², the
+// choices of the trial control.
+const REGION_MIN_AREAS_KM2 = [100, 300, 1000, 3000]
 
 export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   // THE SCENES. Before a world is shown, an empty white page; then the
@@ -333,6 +507,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     } else {
       blended = null
     }
+    ;({ shaded, unshaded } = overTrials(shaded, unshaded))
     // The globe is lit by the sphere's normal alone: it wears the
     // composite WITH the hillshade, or the level's relief would not show.
     if (view.shape === 'sphere') view.reliefTexture.update(shaded)
@@ -377,6 +552,266 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     textureHeight: CHART_HEIGHT,
     describe: describeNode,
   })
+
+  // TRIAL (2026-10-23): the catchments over the chart, on a switch in the
+  // column. Hardcoded text, no catalog keys: we are trying it out.
+  // The world shown, kept for the layers drawn over it.
+  let shown: {
+    kind: 'sphere' | 'torus'
+    width: number
+    height: number
+    worldAreaM2: number
+    level: RegionWorkerInbound['level']
+    rivers: HabitatInput['rivers']
+  } | null = null
+  // The last cut, for its threshold: drawn over the chart in showCharts.
+  let regionCut: { minAreaKm2: number; overlay: Uint8ClampedArray } | null = null
+  const regionRow = document.createElement('label')
+  regionRow.className = 'gen-overlay'
+  const regionName = document.createElement('span')
+  regionName.className = 'gen-overlay__label'
+  regionName.textContent = 'Einzugsgebiete'
+  const regionBox = document.createElement('input')
+  regionBox.type = 'checkbox'
+  regionBox.className = 'gen-overlay__switch'
+  regionRow.append(regionName, regionBox)
+  const regionSize = document.createElement('select')
+  for (const km2 of REGION_MIN_AREAS_KM2) {
+    const option = document.createElement('option')
+    option.value = String(km2)
+    option.textContent = `ab ${km2} km²`
+    regionSize.append(option)
+  }
+  regionSize.value = '300'
+  const regionStatus = document.createElement('p')
+  const regionSection = document.createElement('section')
+  regionSection.className = 'gen-overlays'
+  regionSection.append(regionRow, regionSize, regionStatus)
+  sidebar.body.append(regionSection)
+  // Each change asks again; an answer to an older ask is dropped.
+  let regionAsk = 0
+  async function showRegions(): Promise<void> {
+    const ask = ++regionAsk
+    if (!shown || !view) return
+    const on = regionBox.checked
+    const minAreaKm2 = Number(regionSize.value)
+    if (on && regionCut?.minAreaKm2 !== minAreaKm2) {
+      regionStatus.textContent = 'rechnet …'
+      const cut = await cutRegions({ kind: shown.kind, width: shown.width, height: shown.height, chartWidth: CHART_WIDTH, chartHeight: CHART_HEIGHT, level: shown.level, worldAreaM2: shown.worldAreaM2, minAreaKm2 })
+      if (ask !== regionAsk || !shown) return
+      if (!cut) {
+        regionStatus.textContent = 'fehlgeschlagen (Konsole)'
+        return
+      }
+      console.info(`[incubator] regions cut (${Object.entries(cut.ms).map(([k, v]) => `${k} ${v}`).join(', ')})`)
+      const areas = Float64Array.from(cut.areas).sort()
+      const median = areas.length > 0 ? areas[Math.floor(areas.length / 2)] : 0
+      regionStatus.textContent = `${areas.length.toLocaleString()} Gebiete, Median ${Math.round(median)} km²`
+      regionCut = { minAreaKm2, overlay: cut.overlay }
+    }
+    showCharts()
+  }
+  regionBox.addEventListener('change', () => void showRegions())
+  regionSize.addEventListener('change', () => void showRegions())
+
+  // TRIAL (2026-10-23): where the species of species.ts live, one at a
+  // time over the chart (and over the catchments, when they are on).
+  let shownWorld: World | null = null
+  let speciesLayers: SpeciesLayer[] | null = null
+  const speciesPick = document.createElement('select')
+  const speciesStatus = document.createElement('p')
+  const speciesTitle = document.createElement('span')
+  speciesTitle.className = 'gen-overlay__label'
+  speciesTitle.textContent = 'Tiere'
+  const speciesSection = document.createElement('section')
+  speciesSection.className = 'gen-overlays'
+  speciesSection.append(speciesTitle, speciesPick, speciesStatus)
+  sidebar.body.append(speciesSection)
+  const ROLE_NAMES: Record<SpeciesLayer['role'], string> = { herbivore: 'Pflanzenfresser', predator: 'Räuber', fish: 'Fische' }
+  function fillSpeciesPick(): void {
+    const none = document.createElement('option')
+    none.value = ''
+    none.textContent = speciesLayers ? '(keine)' : '(keine; die erste Wahl rechnet)'
+    const groups = (Object.keys(ROLE_NAMES) as SpeciesLayer['role'][]).map((role) => {
+      const group = document.createElement('optgroup')
+      group.label = ROLE_NAMES[role]
+      return { role, group }
+    })
+    const value = speciesPick.value
+    speciesPick.replaceChildren(none, ...groups.map((g) => g.group))
+    for (const spec of SPECIES) {
+      const option = document.createElement('option')
+      option.value = spec.id
+      option.textContent = spec.name
+      groups.find((g) => g.role === spec.role)!.group.append(option)
+    }
+    speciesPick.value = value
+  }
+  fillSpeciesPick()
+  let speciesAsk = 0
+  async function showSpecies(): Promise<void> {
+    const ask = ++speciesAsk
+    if (!shown || !shownWorld) return
+    if (speciesPick.value !== '' && !speciesLayers) {
+      speciesStatus.textContent = 'rechnet …'
+      const world = shownWorld
+      const input = await habitatOf(world)
+      if (!input) {
+        speciesStatus.textContent = 'der Welt fehlen Felder (Konsole)'
+        return
+      }
+      const done = await distributeSpecies(input)
+      if (ask !== speciesAsk || shownWorld !== world) return
+      if (!done) {
+        speciesStatus.textContent = 'fehlgeschlagen (Konsole)'
+        return
+      }
+      console.info(`[incubator] species distributed, ${done.ms} ms`)
+      speciesLayers = done.layers
+      fillSpeciesPick()
+    }
+    const layer = speciesLayers?.find((l) => l.id === speciesPick.value)
+    const pct = (v: number): string => `${(100 * v).toFixed(1)} %`
+    speciesStatus.textContent = layer
+      ? `Nische ${pct(layer.suitable)} des Landes, davon erreicht ${pct(layer.reached)}, leer (grau) ${pct(layer.empty)}. Ringe: Ursprünge.`
+      : ''
+    showCharts()
+  }
+  speciesPick.addEventListener('change', () => {
+    if (speciesPick.value !== '') plantPick.value = ''
+    void showSpecies()
+    void showPlants()
+  })
+
+  // The fields the animals and the plants live on (habitat.ts), from the
+  // world shown; null when it lacks one.
+  async function habitatOf(world: World): Promise<HabitatInput | null> {
+    if (!shown) return null
+    const [elevation, biome, discharge, koppen, temperature, precipitation, seasonalAmplitude] = await Promise.all(
+      ['elevation', 'biome', 'discharge', 'koppen', 'temperature', 'precipitation', 'seasonalAmplitude'].map((name) => world.acquire(name)))
+    if (!elevation || !biome || !discharge || !koppen || !temperature || !precipitation || !seasonalAmplitude) {
+      console.warn('[incubator] the habitat needs elevation, biome, discharge, the Köppen classes and the climate')
+      return null
+    }
+    // A world without lakes has no lake depth.
+    const lakeDepth = await world.acquire('lakeDepth')
+    const domain = domainOfKind(shown.kind, shown.width, shown.height)
+    return {
+      kind: shown.kind,
+      width: shown.width,
+      height: shown.height,
+      cellMetres: shown.kind === 'sphere' ? domain.metresAround / shown.width : domain.metresPerUnit,
+      elevation: elevation.data,
+      biome: biome.data,
+      discharge: discharge.data,
+      lakeDepth: lakeDepth?.data ?? null,
+      koppen: koppen.data,
+      rivers: shown.rivers,
+      climate: { resX: temperature.resX, resY: temperature.resY, temperature: temperature.data, precipitation: precipitation.data, seasonalAmplitude: seasonalAmplitude.data },
+      seed: world.recipe.detailSeed,
+    }
+  }
+
+  // TRIAL (2026-10-25): where the plants of plants.ts grow, one at a time,
+  // or the cover: what they give together. One layer over the chart at a
+  // time: picking a plant drops the animal, and back.
+  let plants: { layers: PlantLayer[]; cover: PlantCover } | null = null
+  const COVER = 'cover'
+  const plantPick = document.createElement('select')
+  const plantStatus = document.createElement('p')
+  const plantTitle = document.createElement('span')
+  plantTitle.className = 'gen-overlay__label'
+  plantTitle.textContent = 'Pflanzen'
+  const plantSection = document.createElement('section')
+  plantSection.className = 'gen-overlays'
+  plantSection.append(plantTitle, plantPick, plantStatus)
+  sidebar.body.append(plantSection)
+  function fillPlantPick(): void {
+    const none = document.createElement('option')
+    none.value = ''
+    none.textContent = plants ? '(keine)' : '(keine; die erste Wahl rechnet)'
+    const cover = document.createElement('option')
+    cover.value = COVER
+    cover.textContent = 'Deckung (alle zusammen)'
+    const groups = (Object.keys(USE_NAMES) as PlantUse[]).map((use) => {
+      const group = document.createElement('optgroup')
+      group.label = USE_NAMES[use]
+      return { use, group }
+    })
+    const value = plantPick.value
+    plantPick.replaceChildren(none, cover, ...groups.map((g) => g.group))
+    for (const spec of PLANTS) {
+      const option = document.createElement('option')
+      option.value = spec.id
+      option.textContent = spec.domesticable ? `${spec.name} •` : spec.name
+      groups.find((g) => g.use === spec.use)!.group.append(option)
+    }
+    plantPick.value = value
+  }
+  fillPlantPick()
+  let plantAsk = 0
+  async function showPlants(): Promise<void> {
+    const ask = ++plantAsk
+    if (!shown || !shownWorld) return
+    if (plantPick.value !== '' && !plants) {
+      plantStatus.textContent = 'rechnet …'
+      const world = shownWorld
+      const input = await habitatOf(world)
+      if (!input) {
+        plantStatus.textContent = 'der Welt fehlen Felder (Konsole)'
+        return
+      }
+      const done = await growPlants(input)
+      if (ask !== plantAsk || shownWorld !== world) return
+      if (!done) {
+        plantStatus.textContent = 'fehlgeschlagen (Konsole)'
+        return
+      }
+      console.info(`[incubator] plants grown, ${done.ms} ms`)
+      plants = { layers: done.layers, cover: done.cover }
+      fillPlantPick()
+    }
+    const pct = (v: number): string => `${(100 * v).toFixed(1)} %`
+    const layer = plants?.layers.find((l) => l.id === plantPick.value)
+    if (plantPick.value === COVER && plants) {
+      const c = plants.cover
+      plantStatus.textContent = `Vom eisfreien Land haben Stärke ${pct(c.shares.starch)}, Fett ${pct(c.shares.fat)}, Obst ${pct(c.shares.fruit)}, Faser ${pct(c.shares.fibre)}; alle drei Nahrungen ${pct(c.food)}. Rot: keine Stärke; gelb bis grün: 1 bis 3 Nahrungen.`
+    } else if (layer) {
+      plantStatus.textContent = `Nische ${pct(layer.suitable)} des Landes, davon erreicht ${pct(layer.reached)}, leer (grau) ${pct(layer.empty)}.${layer.domesticable ? ' Domestizierbar.' : ''} Ringe: Ursprünge.`
+    } else {
+      plantStatus.textContent = plants ? '• domestizierbar' : ''
+    }
+    showCharts()
+  }
+  plantPick.addEventListener('change', () => {
+    if (plantPick.value !== '') speciesPick.value = ''
+    void showPlants()
+    void showSpecies()
+  })
+
+  // The trials' layers over the chart (showCharts): the catchments, then
+  // the animal or the plant. Each a copy of the chart, 128 MB.
+  function overTrials(shaded: Uint8ClampedArray, unshaded: Uint8ClampedArray | null): { shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } {
+    if (!shown) return { shaded, unshaded }
+    if (regionBox.checked && regionCut) {
+      shaded = blendOver(shaded, regionCut.overlay)
+      if (unshaded) unshaded = blendOver(unshaded, regionCut.overlay)
+    }
+    const scale = CHART_WIDTH / shown.width
+    const layer = speciesLayers?.find((l) => l.id === speciesPick.value)
+    const plant = plants?.layers.find((l) => l.id === plantPick.value)
+    if (layer) {
+      shaded = blendSpecies(shaded, layer, ROLE_COLOURS[layer.role], shown.width, shown.height, scale)
+      if (unshaded) unshaded = blendSpecies(unshaded, layer, ROLE_COLOURS[layer.role], shown.width, shown.height, scale)
+    } else if (plant) {
+      shaded = blendSpecies(shaded, plant, USE_COLOURS[plant.use], shown.width, shown.height, scale)
+      if (unshaded) unshaded = blendSpecies(unshaded, plant, USE_COLOURS[plant.use], shown.width, shown.height, scale)
+    } else if (plantPick.value === COVER && plants) {
+      shaded = blendCover(shaded, plants.cover, shown.width, shown.height, scale)
+      if (unshaded) unshaded = blendCover(unshaded, plants.cover, shown.width, shown.height, scale)
+    }
+    return { shaded, unshaded }
+  }
 
   // What the chooser's last reload found, for the open that follows it.
   let levels = new Map<string, ServerArtifact[]>()
@@ -481,6 +916,23 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showCharts()
     cameraTools.setVisible(kind === 'sphere')
     mapScales.redraw()
+    shown = {
+      kind,
+      width: world.width,
+      height: world.height,
+      worldAreaM2: kind === 'sphere' ? domain.metresAround ** 2 / Math.PI : (domain.metresPerUnit ** 2) * world.width * world.height,
+      level: { count: level.count, nodes: level.nodes, connectivity: level.connectivity, z: level.z },
+      rivers: level.rivers,
+    }
+    regionCut = null
+    shownWorld = world
+    speciesLayers = null
+    fillSpeciesPick()
+    plants = null
+    fillPlantPick()
+    if (regionBox.checked) void showRegions()
+    if (speciesPick.value !== '') void showSpecies()
+    if (plantPick.value !== '') void showPlants()
     // The level's rivers, from the world raster's texels to the chart's.
     if (level.rivers) {
       const points = Float32Array.from(level.rivers.points)
