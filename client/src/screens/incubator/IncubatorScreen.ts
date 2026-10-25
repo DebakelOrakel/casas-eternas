@@ -49,6 +49,7 @@ import { SPECIES } from './species'
 import type { PlantUse } from './plants'
 import type { PlantLayer, PlantWorkerInbound, PlantWorkerOutbound } from './plantWorker'
 import type { HabitatInput } from './habitat'
+import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import '../../ui/theme/design.css'
 // The generator's layer switches, for the trial's switch.
 import '../generator/overlayList.css'
@@ -459,6 +460,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function setFurniture(visible: boolean): void {
     sidebar.setVisible(visible)
     stepBar.setVisible(visible)
+    plantLegend.element.hidden = !visible
   }
 
   // THE MAP'S FURNITURE, as in the generator: the globe's camera buttons
@@ -528,12 +530,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ],
   }])
   sidebar.body.append(overlayList.element)
-  // Under the picks, the legend of the plants shown and what it means.
-  const plantLegend = document.createElement('div')
+  // Under the picks, a line while the plants are grown, or why they are not.
   const plantStatus = document.createElement('p')
   const plantInfo = document.createElement('section')
   plantInfo.className = 'gen-overlays'
-  plantInfo.append(plantLegend, plantStatus)
+  plantInfo.append(plantStatus)
   sidebar.body.append(plantInfo)
   function showCharts(): void {
     overlayList.refresh((id) => {
@@ -778,23 +779,27 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // ecology's). One layer over the chart at a time: picking a plant group
   // drops the animal, and back. The hover card names the plants at the
   // place.
-  function fillPlantLegend(): void {
-    plantLegend.replaceChildren()
-    if (!plants || !plantShown) return
-    const group = plants.layers.filter((l) => l.use === plantShown)
-    group.forEach((layer, k) => {
-      if (layer.reached === 0) return
-      const item = document.createElement('div')
-      item.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;line-height:20px'
-      const swatch = document.createElement('span')
-      const [cr, cg, cb] = PLANT_PALETTE[k % PLANT_PALETTE.length]
-      swatch.style.cssText = `width:12px;height:12px;border-radius:2px;flex-shrink:0;background:rgb(${cr},${cg},${cb})`
-      const text = document.createElement('span')
-      text.textContent = `${t(`plant.${layer.id}.label` as TKey)}${layer.domesticable ? ' •' : ''} — ${formatValue((100 * layer.reached).toFixed(1), 'common.unit.percent')}`
-      item.append(swatch, text)
-      plantLegend.append(item)
-    })
-  }
+  // The legend, as the generator's (ui/legend): the plants of the use
+  // shown, each in its colour, the ones that grow nowhere left out.
+  const plantLegend = createLegendPanel(root, {
+    content: () => {
+      if (!plants || !plantShown) return { count: 0, build: () => [] }
+      const use = plantShown
+      const group = plants.layers.filter((l) => l.use === use)
+      return {
+        count: 1,
+        build: () => [{
+          type: 'swatches',
+          title: t(`plant.use.${use}.label` as TKey),
+          items: group.flatMap((layer, k) => layer.reached === 0 ? [] : [{
+            // The name and the share of the land it reached, whole percent.
+            label: `${t(`plant.${layer.id}.label` as TKey)} (${formatValue(layer.reached < 0.005 ? '<1' : String(Math.round(100 * layer.reached)), 'common.unit.percent')})`,
+            rgb: [...PLANT_PALETTE[k % PLANT_PALETTE.length]] as [number, number, number],
+          }]),
+        }],
+      }
+    },
+  })
   let plantAsk = 0
   async function showPlants(): Promise<void> {
     const ask = ++plantAsk
@@ -818,8 +823,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       plants = { layers: done.layers }
       hoverTooltip.refresh()
     }
-    fillPlantLegend()
-    plantStatus.textContent = plantShown && plants ? t('incubator.plants.group') : ''
+    plantLegend.refresh()
+    plantStatus.textContent = ''
     showCharts()
   }
 
@@ -970,7 +975,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     speciesLayers = null
     fillSpeciesPick()
     plants = null
-    fillPlantLegend()
+    plantLegend.refresh()
     if (regionBox.checked) void showRegions()
     if (speciesPick.value !== '') void showSpecies()
     if (plantShown) void showPlants()

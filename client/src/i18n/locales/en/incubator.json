@@ -8,6 +8,5 @@
   "incubator.section.plants.help": "The wild plants people use — one pick replaces the last.",
   "incubator.plants.computing": "computing …",
   "incubator.plants.missing": "The world lacks fields.",
-  "incubator.plants.failed": "Failed.",
-  "incubator.plants.group": "At each place the plant that suits it best, the stronger the better. Grey: suitable, but none came. • domesticable."
+  "incubator.plants.failed": "Failed."
 }

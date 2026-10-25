@@ -45,6 +45,7 @@ import { formatWorldAge, worldAgeMa } from '../../generator/core/worldTime'
 import type { SimEvent, PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulationTypes'
 import { eventCategory } from '../../generator/tectonics/plateSimulationTypes'
 import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
+import { createLegendPanel, type LegendSpec } from '../../ui/legend/LegendPanel'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
 import { KOPPEN_CODES, koppenCode, koppenColor, koppenLabelKey } from '../../generator/climate/koppen'
@@ -2614,16 +2615,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // steps.ts; the table below (overlayReadout) says when a layer can be shown,
   // what its legend says and what it reads out, because all three read this
   // screen's own data. Events are not a layer you switch — they are always on.
-  //
-  // 'gradient' = a continuous colour ramp with value labels; 'swatches' =
-  // discrete colour+label rows. Shown on the right whenever a legend-bearing
-  // overlay is active.
-  type LegendItem = { label: string; rgb: [number, number, number]; shape?: 'square' | 'cone' | 'ring' | 'line'; dash?: 'solid' | 'dashed' | 'dotted' }
-  // A gradient may carry items under its bar: a mark the same layer draws
-  // over its ramp (the salinity's sinking water).
-  type LegendSpec =
-    | { type: 'gradient'; title: string; unit: string; stops: { value: number; rgb: [number, number, number] }[]; items?: LegendItem[] }
-    | { type: 'swatches'; title: string; items: LegendItem[] }
+  // A layer's legend is a LegendSpec (ui/legend): shown in the legend panel
+  // whenever the layer is on.
   // ONE ROW PER LAYER, and every layer must fill it in (a layer added to
   // overlays.ts is a compile error here until it does): whether it can be
   // shown right now, what its legend says, and what it reads out at a hovered
@@ -3065,128 +3058,21 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // over the map is gone. True once a status has said something.
   let archeanNarrated = false
 
-  // The legend for the active overlay(s) that carry one (see overlayLegend), as
-  // a collapsible panel: a header button that names it and counts what is in it,
-  // and a body that opens under it. COLLAPSED BY DEFAULT — the map is the thing
-  // being looked at, and a standing column of swatches is an answer to a question
-  // most hovers do not ask.
-  //
-  // It stays at the left edge of the map rather than moving to the bottom-left
-  // corner the design puts it in: that corner is the parameter panel's, and its
-  // step title already sits there.
-  const legendPanel = document.createElement('section')
-  legendPanel.className = 'overlay-legend'
-  const legendToggle = document.createElement('button')
-  legendToggle.type = 'button'
-  legendToggle.className = 'legend-toggle'
-  const legendToggleLabel = document.createElement('span')
-  legendToggleLabel.className = 'legend-toggle-label'
-  const legendCount = document.createElement('span')
-  legendCount.className = 'legend-toggle-count'
-  const legendChevron = document.createElement('span')
-  legendChevron.className = 'legend-toggle-chevron'
-  legendChevron.setAttribute('aria-hidden', 'true')
-  legendToggle.append(legendToggleLabel, legendCount, legendChevron)
-  const legendBody = document.createElement('div')
-  legendBody.className = 'legend-body'
-  legendPanel.append(legendToggle, legendBody)
-  root.appendChild(legendPanel)
-
-  let legendOpen = false
-  legendToggle.addEventListener('click', () => {
-    legendOpen = !legendOpen
-    renderLegends()
+  // The legend of the layers on the map that carry one (overlayReadout), in
+  // the shared panel (ui/legend/LegendPanel.ts).
+  const legendPanel = createLegendPanel(root, {
+    content: () => {
+      // Ecology's legend follows its EFFECTIVE state (the pick in the column OR a
+      // hover preview over one of its sliders).
+      const active = OVERLAY_IDS.filter((id) => overlayReadout[id].legend && overlayShown(id))
+      return { count: active.length, build: () => active.map((id) => overlayReadout[id].legend!()) }
+    },
   })
 
-  function buildLegendBlock(spec: LegendSpec): HTMLElement {
-    const block = document.createElement('div')
-    block.className = 'legend-block'
-    const title = document.createElement('div')
-    title.className = 'legend-title'
-    title.textContent = spec.type === 'gradient' && spec.unit ? `${spec.title} (${spec.unit})` : spec.title
-    block.appendChild(title)
-    if (spec.type === 'gradient') {
-      const min = spec.stops[0].value
-      const max = spec.stops[spec.stops.length - 1].value
-      const span = max - min || 1
-      const css = spec.stops.map((s) => `rgb(${s.rgb[0]},${s.rgb[1]},${s.rgb[2]}) ${(((s.value - min) / span) * 100).toFixed(1)}%`).join(', ')
-      const row = document.createElement('div')
-      row.className = 'legend-gradient-row'
-      const bar = document.createElement('div')
-      bar.className = 'legend-gradient-bar'
-      bar.style.background = `linear-gradient(to right, ${css})`
-      const labels = document.createElement('div')
-      labels.className = 'legend-gradient-labels'
-      const fmt = (v: number): string => (Number.isInteger(v) ? String(v) : v.toFixed(1))
-      for (const v of [min, (min + max) / 2, max]) {
-        const l = document.createElement('span')
-        l.textContent = fmt(v)
-        labels.appendChild(l)
-      }
-      row.append(bar, labels)
-      block.appendChild(row)
-    }
-    if (spec.items && spec.items.length > 0) block.appendChild(buildLegendSwatches(spec.items))
-    return block
-  }
-
-  function buildLegendSwatches(items: LegendItem[]): HTMLElement {
-    const list = document.createElement('div')
-    list.className = 'legend-swatches'
-    for (const it of items) {
-      const r = document.createElement('div')
-      r.className = 'legend-swatch-row'
-      const sw = document.createElement('span')
-      if (it.shape === 'cone') {
-        // Match the map's volcano marker (an upward cone), not a flat square.
-        sw.className = 'legend-cone'
-        sw.style.borderBottomColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
-      } else if (it.shape === 'ring') {
-        // Match the map's hotspot-plume marker (an orange ring).
-        sw.className = 'legend-ring'
-        sw.style.borderColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
-      } else if (it.shape === 'line') {
-        // A drawn line: the rivers' regimes (solid, dashed, dotted — the
-        // ribbon shader's convention) and the coast's cliff line.
-        sw.className = 'legend-line'
-        sw.style.borderTopStyle = it.dash ?? 'solid'
-        sw.style.borderTopColor = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
-      } else {
-        sw.className = 'legend-swatch'
-        sw.style.background = `rgb(${it.rgb[0]},${it.rgb[1]},${it.rgb[2]})`
-      }
-      const lb = document.createElement('span')
-      lb.textContent = it.label
-      r.append(sw, lb)
-      list.appendChild(r)
-    }
-    return list
-  }
-
-  // Rebuild the right-side legend from whichever legend-bearing overlays are
-  // currently on + available (stacked; usually one or two). Hidden when none.
+  // Rebuild the legend from whichever legend-bearing overlays are currently
+  // on + available (stacked; usually one or two).
   function renderLegends(): void {
-    // Ecology's legend follows its EFFECTIVE state (the pick in the column OR a
-    // hover preview over one of its sliders).
-    const active = OVERLAY_IDS.filter((id) => overlayReadout[id].legend && overlayShown(id))
-    legendToggleLabel.textContent = t('overlay.legend.title')
-    legendCount.textContent = String(active.length)
-    legendToggle.setAttribute('aria-expanded', String(legendOpen))
-    legendPanel.classList.toggle('overlay-legend--open', legendOpen)
-    if (!legendOpen) {
-      legendBody.replaceChildren()
-      return
-    }
-    if (active.length === 0) {
-      // Open and empty says something the closed button cannot: the layers on
-      // the map are ones whose colours explain themselves.
-      const empty = document.createElement('div')
-      empty.className = 'legend-empty'
-      empty.textContent = t('overlay.legend.empty')
-      legendBody.replaceChildren(empty)
-      return
-    }
-    legendBody.replaceChildren(...active.map((id) => buildLegendBlock(overlayReadout[id].legend!())))
+    legendPanel.refresh()
   }
 
   // Whether a layer is actually on the map: wanted AND available. Ecology is the
