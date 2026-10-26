@@ -176,10 +176,29 @@ export const GOOD_COLOURS: readonly (readonly [number, number, number])[] = [[60
 export const TRADE_COLOUR: readonly [number, number, number] = [120, 40, 140]
 
 
-export function paintLifeways(o: OverlayRaster, lifeway: Uint8Array): void {
-  for (let k = 0; k < o.owners.length; k++) {
-    const c = LIFEWAY_COLOURS[lifeway[o.owners[k]]]
-    if (c) put(o, 4 * k, c[0], c[1], c[2], 0.6)
+// The lifeways' shares (settleShared.ts sharesAt), as diagonal stripes, each
+// lifeway's as wide as its share of LIFEWAY_PERIOD texels; a share under
+// LIFEWAY_LEAST left out. `shares`: 4 a cell, the lifeways 1 … 4, 0 … 255.
+const LIFEWAY_PERIOD = 12
+const LIFEWAY_LEAST = 0.1 * 255
+export function paintLifeways(o: OverlayRaster, shares: Uint8Array): void {
+  for (let y = 0; y < o.height; y++) {
+    for (let x = 0; x < o.width; x++) {
+      const t = y * o.width + x
+      const at = 4 * o.owners[t]
+      let sum = 0
+      for (let w = 0; w < 4; w++) if (shares[at + w] >= LIFEWAY_LEAST) sum += shares[at + w]
+      if (sum === 0) continue
+      let phase = (((x + y) % LIFEWAY_PERIOD) + 0.5) / LIFEWAY_PERIOD * sum
+      let way = 0
+      for (let w = 0; w < 4 && phase >= 0; w++) {
+        if (shares[at + w] < LIFEWAY_LEAST) continue
+        phase -= shares[at + w]
+        way = w
+      }
+      const c = LIFEWAY_COLOURS[way + 1]
+      put(o, 4 * t, c[0], c[1], c[2], 0.6)
+    }
   }
 }
 

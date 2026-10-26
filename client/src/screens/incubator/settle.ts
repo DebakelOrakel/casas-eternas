@@ -1,7 +1,7 @@
 import { MinHeap } from '../../generator/core/minHeap'
 import { hashText, kmBetween, mulberry32, type Habitat } from './habitat'
 import { SPAN_YEARS } from './peopleShared'
-import { CARRYING_FULL, densityAt, GOODS, lifewayAt, lifewaySince, type SettleTimes } from './settleShared'
+import { CARRYING_FULL, densityAt, GOODS, LIFEWAY, lifewaySince, sharesAt, type SettleTimes } from './settleShared'
 
 // THE INCUBATOR'S SETTLEMENT (2026-10-25, a proof of concept): the people's
 // end state, 5 000 years before the game — how they live in each cell they
@@ -26,10 +26,16 @@ import { CARRYING_FULL, densityAt, GOODS, lifewayAt, lifewaySince, type SettleTi
 //    centres HERD_LAG later — sheep and goats were tamed with the fields —
 //    and spreads HERD_KM_A, the herds faster than the fields, into the
 //    pasture: the earth's nomads took the steppes late and fast.
-// 3. THE LIFEWAYS AND THE DENSITY over the time (settleShared.ts): the
-//    end state's, 5 000 years before the game, places the villages: where
-//    farmers or fishers live, the cells densest within VILLAGE_RADIUS of
-//    them; a village is there from its lifeway's start.
+//    The herding has centres of its own too (2026-10-26), no more than
+//    HERD_CENTRES_MAX, CENTRE_SPACING_KM from any centre: where
+//    HERD_CENTRE_ANIMALS tamable herd animals or more live together on
+//    pasture of HERD_CENTRE_PASTURE or more, the first HERD_EARLIEST, 8 000
+//    years before the game, the next 1 000 to 3 000 years after — the
+//    earth's reindeer, llamas and yaks were tamed far from any field.
+// 3. THE LIFEWAYS' SHARES AND THE DENSITY over the time (settleShared.ts):
+//    the end state's, 5 000 years before the game, places the villages:
+//    where farmers or fishers are the most, the cells densest within
+//    VILLAGE_RADIUS of them; a village is there from its lifeway's start.
 // 4. THE TRADE: each village linked to its LINKS nearest within LINK_KM;
 //    from the sources of tool stone, salt and copper (the ecology's fields
 //    at SOURCE_RICH or more, one a SOURCE_RADIUS) the goods go down the
@@ -62,15 +68,19 @@ export interface SettleInput {
 }
 
 export interface SettleResult {
-  // The end state's lifeway and density.
+  // The end state's largest lifeway and density.
   lifeway: Uint8Array
   density: Float32Array
   // The times the lifeways follow (settleShared.ts), the arrival aside.
   farmAt: Float32Array
   herdAt: Float32Array
   fishOk: Uint8Array
+  farmSuit: Float32Array
+  herdSuit: Float32Array
+  fishSuit: Float32Array
   carrying: Float32Array
-  // [cell, time] a centre of the farming, the time it began there.
+  // [cell, time, lifeway] a centre of the farming (LIFEWAY.farmers) or of
+  // the herding (LIFEWAY.herders), the time it began there.
   centres: Float32Array
   // [cell, lifeway] a village, and when it began.
   villages: Int32Array
@@ -109,6 +119,10 @@ const FARM_EARLIEST = SPAN_YEARS - 6000
 const FARM_KM_A = 1
 const FARM_BARRIER = 5
 const HERD_LAG = 1000
+const HERD_CENTRES_MAX = 3
+const HERD_CENTRE_ANIMALS = 2
+const HERD_CENTRE_PASTURE = 0.5
+const HERD_EARLIEST = SPAN_YEARS - 3000
 const HERD_KM_A = 2
 const HERD_BARRIER = 3
 // The big game and its chance to die out where people came new.
@@ -197,31 +211,62 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
   const herdOk = new Uint8Array(n)
   const fishOk = new Uint8Array(n)
   const carryingNorm = new Float32Array(n)
+  const farmSuit = new Float32Array(n)
+  const herdSuit = new Float32Array(n)
+  const fishSuit = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     if (!land[i] || !(arrival[i] < Infinity)) continue
+    farmSuit[i] = Math.min(1, at(eco.arable, i))
+    herdSuit[i] = Math.min(1, at(eco.pasture, i))
+    fishSuit[i] = Math.min(1, at(eco.fish, i))
     if (farmPlant[i] && at(eco.arable, i) >= FARM_ARABLE) farmOk[i] = 1
     if (herdAnimal[i] && at(eco.pasture, i) >= HERD_PASTURE) herdOk[i] = 1
     if (at(eco.fish, i) >= FISH_RICH) fishOk[i] = 1
     carryingNorm[i] = Math.min(2, carrying[i] / CARRYING_FULL)
   }
 
-  // 2. The farming's centres, then its spread.
-  const candidates: { cell: number; score: number }[] = []
-  for (let i = 0; i < n; i++) {
-    if (!farmOk[i] || farmPlant[i] < CENTRE_PLANTS || at(eco.arable, i) < CENTRE_ARABLE || arrival[i] > FARM_EARLIEST - FARM_SETTLED) continue
-    candidates.push({ cell: i, score: farmPlant[i] * at(eco.arable, i) * carrying[i] })
-  }
-  candidates.sort((p, q) => q.score - p.score || p.cell - q.cell)
+  // 2. The farming's centres, then the herding's, then their spread.
   const centres: number[] = []
-  const random = mulberry32(hashText('farming') ^ input.seed)
-  let next = FARM_EARLIEST
-  for (const c of candidates) {
-    if (centres.length / 2 >= CENTRES_MAX) break
-    let far = true
-    for (let k = 0; k < centres.length && far; k += 2) far = kmBetween(h, c.cell, centres[k]) >= CENTRE_SPACING_KM
-    if (!far) continue
-    centres.push(c.cell, Math.max(next, arrival[c.cell] + FARM_SETTLED))
-    next += 1000 + 2000 * random()
+  // The best of `candidates` CENTRE_SPACING_KM from every centre, as
+  // centres of `way` from `earliest` on, `most` of them.
+  const placeCentres = (candidates: { cell: number; score: number }[], way: number, earliest: number, most: number): void => {
+    candidates.sort((p, q) => q.score - p.score || p.cell - q.cell)
+    const random = mulberry32(hashText(way === LIFEWAY.farmers ? 'farming' : 'herding') ^ input.seed)
+    let next = earliest
+    let placed = 0
+    for (const c of candidates) {
+      if (placed >= most) break
+      let far = true
+      for (let k = 0; k < centres.length && far; k += 3) far = kmBetween(h, c.cell, centres[k]) >= CENTRE_SPACING_KM
+      if (!far) continue
+      // One beginning after the span never shows.
+      const begins = Math.max(next, arrival[c.cell] + FARM_SETTLED)
+      if (begins > SPAN_YEARS) continue
+      centres.push(c.cell, begins, way)
+      placed++
+      next += 1000 + 2000 * random()
+    }
+  }
+  const farmCandidates: { cell: number; score: number }[] = []
+  const herdCandidates: { cell: number; score: number }[] = []
+  for (let i = 0; i < n; i++) {
+    if (farmOk[i] && farmPlant[i] >= CENTRE_PLANTS && at(eco.arable, i) >= CENTRE_ARABLE && arrival[i] <= FARM_EARLIEST - FARM_SETTLED) {
+      farmCandidates.push({ cell: i, score: farmPlant[i] * at(eco.arable, i) * carrying[i] })
+    }
+    if (herdOk[i] && herdAnimal[i] >= HERD_CENTRE_ANIMALS && at(eco.pasture, i) >= HERD_CENTRE_PASTURE && arrival[i] <= HERD_EARLIEST - FARM_SETTLED) {
+      herdCandidates.push({ cell: i, score: herdAnimal[i] * at(eco.pasture, i) * carrying[i] })
+    }
+  }
+  placeCentres(farmCandidates, LIFEWAY.farmers, FARM_EARLIEST, CENTRES_MAX)
+  placeCentres(herdCandidates, LIFEWAY.herders, HERD_EARLIEST, HERD_CENTRES_MAX)
+  // The waves' starts, [cell, time] …: the fields from the farming's
+  // centres; the herds from their own, and from the farming's HERD_LAG
+  // after the fields.
+  const farmStarts: number[] = []
+  const herdStarts: number[] = []
+  for (let k = 0; k < centres.length; k += 3) {
+    if (centres[k + 2] === LIFEWAY.farmers) farmStarts.push(centres[k], centres[k + 1])
+    herdStarts.push(centres[k], centres[k + 1] + (centres[k + 2] === LIFEWAY.farmers ? HERD_LAG : 0))
   }
   // A wave from its starts ([cell, time] …) over the land people reached,
   // `kmA` a year where `ok` allows its lifeway, `barrier` times slower
@@ -253,21 +298,21 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
     }
     return came
   }
-  const farmAt = wave(centres, farmOk, FARM_KM_A, FARM_BARRIER)
-  // The herds from the farming's centres, HERD_LAG after the fields, faster
-  // than the farmers (2026-10-26: at one time over all the pasture, the
-  // herders came up everywhere at once).
-  const herdAt = wave(centres.map((v, k) => (k % 2 === 1 ? v + HERD_LAG : v)), herdOk, HERD_KM_A, HERD_BARRIER)
+  const farmAt = wave(farmStarts, farmOk, FARM_KM_A, FARM_BARRIER)
+  // The herds faster than the farmers (2026-10-26: at one time over all
+  // the pasture, the herders came up everywhere at once).
+  const herdAt = wave(herdStarts, herdOk, HERD_KM_A, HERD_BARRIER)
 
   // 3. The end state's lifeway and density, and its villages: the densest
   // cell within its radius.
-  const times: SettleTimes = { arrival, farmAt, herdAt, fishOk, carrying: carryingNorm }
+  const times: SettleTimes = { arrival, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm }
   const lifeway = new Uint8Array(n)
   const density = new Float32Array(n)
+  const shares = new Float32Array(5)
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
-    lifeway[i] = lifewayAt(times, i, SPAN_YEARS)
-    density[i] = densityAt(times, i, SPAN_YEARS)
+    lifeway[i] = sharesAt(times, i, SPAN_YEARS, shares)
+    density[i] = densityAt(times, i, SPAN_YEARS, shares)
   }
   const villageCells: number[] = []
   const villageWays: number[] = []
@@ -343,7 +388,7 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
   villageCells.forEach((c, v) => villages.push(c, villageWays[v]))
   const villageFrom = Float32Array.from(villageCells, (c, v) => lifewaySince(times, c, villageWays[v]))
   const extinctions = dyingOut(h, input)
-  return { lifeway, density, farmAt, herdAt, fishOk, carrying: carryingNorm, centres: Float32Array.from(centres), villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: h.landmass.slice() }
+  return { lifeway, density, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm, centres: Float32Array.from(centres), villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: h.landmass.slice() }
 }
 
 // 5. The big game dying out where people came new.

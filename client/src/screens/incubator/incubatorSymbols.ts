@@ -2,7 +2,7 @@ import type { SymbolPicture, WorldSymbol } from '../../map/worldView'
 import { GOOD_COLOURS, LIFEWAY_COLOURS } from './incubatorOverlay'
 
 // THE INCUBATOR'S MARKS (2026-10-26): the places the people step shows —
-// the villages, the farming's centres, the origin, the sources of the
+// the villages, the farming's and the herding's centres, the origin, the sources of the
 // goods — as symbols the views lay in their surface (map/worldView.ts,
 // WorldSymbols), round on the globe and sharp at any zoom, as the
 // generator's volcanoes, not painted into the overlay. A picture's size is
@@ -49,8 +49,9 @@ export function villageSymbols(villages: Int32Array, density: Float32Array, u: F
   return symbols
 }
 
-// THE FARMING'S CENTRES: a green disc in a white ring on a dark rim.
-export const centrePictures = (): SymbolPicture[] => [picture(70, (c) => {
+// THE CENTRES: a disc in the lifeway's colour in a white ring on a dark
+// rim. Picture 0 the farming's, 1 the herding's.
+export const centrePictures = (): SymbolPicture[] => [4, 3].map((way) => picture(70, (c) => {
   c.beginPath()
   c.arc(0, 0, 30, 0, Math.PI * 2)
   c.fillStyle = 'white'
@@ -60,9 +61,9 @@ export const centrePictures = (): SymbolPicture[] => [picture(70, (c) => {
   c.stroke()
   c.beginPath()
   c.arc(0, 0, 20, 0, Math.PI * 2)
-  c.fillStyle = rgb(LIFEWAY_COLOURS[4])
+  c.fillStyle = rgb(LIFEWAY_COLOURS[way])
   c.fill()
-})]
+}))
 
 // THE ORIGIN: a red dot in a dark ring with crosshairs, on a white rim, so
 // it stands out on any ground.

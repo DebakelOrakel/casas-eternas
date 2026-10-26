@@ -49,7 +49,7 @@ import type { PeopleResult } from './people'
 import { SPAN_YEARS } from './peopleShared'
 import { arrowsOf, type PeopleArrow } from './peopleArrows'
 import type { SettleResult } from './settle'
-import { densityAt, GOODS, lifewayAt, pressure, type SettleTimes } from './settleShared'
+import { densityAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { cellPoint, centrePictures, originPictures, sourcePictures, villagePictures, villageSymbols } from './incubatorSymbols'
 import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
@@ -301,7 +301,7 @@ const PEOPLE_ROWS: readonly { id: string; helpBase: string; icon: string }[] = [
   { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' },
   { id: 'people:trade', helpBase: 'incubator.people.trade', icon: '/icons/trade.png' },
   { id: 'people:villages', helpBase: 'incubator.people.villages', icon: '/icons/village.png' },
-  { id: 'people:centres', helpBase: 'incubator.people.centres', icon: '/icons/wheat.png' },
+  { id: 'people:centres', helpBase: 'incubator.people.centres', icon: '/icons/origin.png' },
   { id: 'people:sources', helpBase: 'incubator.people.sources', icon: '/icons/stone_axe.png' },
 ]
 type Settlement = 'spread' | 'lifeway' | 'density'
@@ -440,7 +440,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let peopleTime = SPAN_YEARS
   // What the settled land shows, and the people's switches.
   let settlementShown: Settlement | null = 'spread'
-  const peopleOn: Record<string, boolean> = { 'people:routes': true, 'people:trade': false, 'people:villages': false, 'people:centres': false, 'people:sources': false }
+  const peopleOn: Record<string, boolean> = { 'people:routes': true, 'people:trade': false, 'people:villages': false, 'people:centres': true, 'people:sources': false }
   const routesOn = (): boolean => peopleOn['people:routes']
   let peopleOrigin = -1
   // The people's end state (settle.ts), a proof of concept.
@@ -597,13 +597,17 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const hunted = spec ? spec.uses.includes('hunt') || spec.uses.includes('fur') : false
     const gone = new Set(settled.extinctions.filter((e) => e.id === animal.id && e.at <= peopleTime).map((e) => e.landmass))
     const codes = new Uint8Array(animal.codes.length)
+    const shares = new Float32Array(5)
     let lives = 0
     let land = 0
     for (let i = 0; i < codes.length; i++) {
       if (settled.landmass[i] >= 0) land++
       let c = animal.codes[i]
       if (c >= 2 && gone.has(settled.landmass[i])) c = 1
-      else if (c >= 2 && now && spec && now.lifeway[i]) c = Math.max(2, 2 + Math.round((c - 2) * pressure(spec.role, hunted, now.lifeway[i], now.density[i])))
+      else if (c >= 2 && now && spec && now.lifeway[i]) {
+        for (let w = 1; w < 5; w++) shares[w] = now.shares[4 * i + w - 1] / 255
+        c = Math.max(2, 2 + Math.round((c - 2) * pressure(spec.role, hunted, shares, now.density[i])))
+      }
       codes[i] = c
       if (c >= 2) lives++
     }
@@ -611,20 +615,24 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     animalsAtTime.set(animal.id, made)
     return made
   }
-  // The end state's lifeways, density, villages and links at the time
-  // shown (settleShared.ts), made for the time and kept for it.
-  let settledAtTime: { time: number; lifeway: Uint8Array; density: Float32Array; villages: Int32Array; links: Float32Array } | null = null
+  // The end state's lifeways (the largest, and the shares: 4 a cell, the
+  // lifeways 1 … 4, 0 … 255), density, villages and links at the time shown
+  // (settleShared.ts), made for the time and kept for it.
+  let settledAtTime: { time: number; lifeway: Uint8Array; shares: Uint8Array; density: Float32Array; villages: Int32Array; links: Float32Array } | null = null
   function settledNow(): NonNullable<typeof settledAtTime> | null {
     if (!settled || !people) return null
     if (settledAtTime?.time === peopleTime) return settledAtTime
-    const times: SettleTimes = { arrival: people.arrival, farmAt: settled.farmAt, herdAt: settled.herdAt, fishOk: settled.fishOk, carrying: settled.carrying }
+    const times: SettleTimes = { arrival: people.arrival, farmAt: settled.farmAt, herdAt: settled.herdAt, fishOk: settled.fishOk, farmSuit: settled.farmSuit, herdSuit: settled.herdSuit, fishSuit: settled.fishSuit, carrying: settled.carrying }
     const n = people.arrival.length
     const lifeway = new Uint8Array(n)
+    const shares = new Uint8Array(4 * n)
     const density = new Float32Array(n)
+    const cell = new Float32Array(5)
     for (let i = 0; i < n; i++) {
       if (!(people.arrival[i] <= peopleTime) || !people.land[i]) continue
-      lifeway[i] = lifewayAt(times, i, peopleTime)
-      density[i] = densityAt(times, i, peopleTime)
+      lifeway[i] = sharesAt(times, i, peopleTime, cell)
+      density[i] = densityAt(times, i, peopleTime, cell)
+      for (let w = 1; w < 5; w++) shares[4 * i + w - 1] = Math.round(cell[w] * 255)
     }
     // The villages there by now; the links between two of them, their
     // indices into the end state's villages kept.
@@ -634,7 +642,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (let k = 0; k < settled.links.length; k += 3) {
       if (settled.villageFrom[settled.links[k]] <= peopleTime && settled.villageFrom[settled.links[k + 1]] <= peopleTime) links.push(settled.links[k], settled.links[k + 1], settled.links[k + 2])
     }
-    settledAtTime = { time: peopleTime, lifeway, density, villages: Int32Array.from(villages), links: Float32Array.from(links) }
+    settledAtTime = { time: peopleTime, lifeway, shares, density, villages: Int32Array.from(villages), links: Float32Array.from(links) }
     return settledAtTime
   }
   // The animals shown, at the time shown.
@@ -1062,12 +1070,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     {
       // TRIAL: the end state, drawn over the spread.
       steps: ['people'],
-      on: () => settled !== null && (settlementShown === 'lifeway' || settlementShown === 'density' || peopleOn['people:trade']),
+      on: () => settled !== null && (settlementShown === 'lifeway' || settlementShown === 'density' || peopleOn['people:trade'] || peopleOn['people:centres']),
       paint: (o) => {
         if (!settled) return
         const now = settledNow()
         if (!now) return
-        if (settlementShown === 'lifeway') paintLifeways(o, now.lifeway)
+        if (settlementShown === 'lifeway') paintLifeways(o, now.shares)
         if (settlementShown === 'density') paintDensity(o, now.density)
         if (peopleOn['people:trade']) paintTrade(o, settled.villages, now.links)
       },
@@ -1076,15 +1084,23 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const specs: LegendSpec[] = []
         if (settlementShown === 'lifeway') specs.push({ type: 'swatches', title: t('incubator.people.lifeway.label'), items: [1, 2, 3, 4].map((w) => ({ label: t(LIFEWAY_KEYS[w]), rgb: [...LIFEWAY_COLOURS[w]] as [number, number, number] })) })
         if (settlementShown === 'density') specs.push({ type: 'gradient', title: t('incubator.people.densityUnit'), unit: '', stops: DENSITY_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })) })
-        if (peopleOn['people:centres']) specs.push({ type: 'swatches', title: t('incubator.people.centres.label'), items: [{ label: t('incubator.people.centres.label'), rgb: [...LIFEWAY_COLOURS[4]] as [number, number, number], shape: 'ring' }] })
+        if (peopleOn['people:centres']) {
+          specs.push({ type: 'swatches', title: t('incubator.people.centres.label'), items: [
+            { label: t('incubator.people.origin'), rgb: [220, 30, 30], shape: 'ring' },
+            { label: t('incubator.people.farmCentre'), rgb: [...LIFEWAY_COLOURS[LIFEWAY.farmers]] as [number, number, number], shape: 'ring' },
+            { label: t('incubator.people.herdCentre'), rgb: [...LIFEWAY_COLOURS[LIFEWAY.herders]] as [number, number, number], shape: 'ring' },
+          ] })
+        }
         if (peopleOn['people:trade'] || peopleOn['people:sources']) specs.push({ type: 'swatches', title: t('incubator.people.trade.label'), items: [...(peopleOn['people:trade'] ? [{ label: t('incubator.people.trade.label'), rgb: [...TRADE_COLOUR] as [number, number, number], shape: 'line' as const }] : []), ...(peopleOn['people:sources'] ? GOODS.map((g, k) => ({ label: t(`resource.${g}.label` as TKey), rgb: [...GOOD_COLOURS[k]] as [number, number, number] })) : [])] })
         return specs
       },
       probe: (cell) => {
         const now = settledNow()
         if (!now || !now.lifeway[cell]) return []
+        // The lifeways of a share of 5 % or more, the largest first.
+        const ways = [1, 2, 3, 4].filter((w) => now.shares[4 * cell + w - 1] >= 13).sort((a, b) => now.shares[4 * cell + b - 1] - now.shares[4 * cell + a - 1])
         return [
-          { label: t('incubator.people.lifeway.label'), value: t(LIFEWAY_KEYS[now.lifeway[cell]]) },
+          ...ways.map((w) => ({ label: t(LIFEWAY_KEYS[w]), value: `${Math.round((100 * now.shares[4 * cell + w - 1]) / 255)} %` })),
           { label: t('incubator.people.density.label'), value: `${now.density[cell].toFixed(2)} ${t('incubator.people.densityUnit')}` },
         ]
       },
@@ -1103,7 +1119,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const activeTrials = (): TrialLayer[] => stepTrials().filter((l) => l.on())
 
   // THE MARKS (incubatorSymbols.ts) of the people step: the sources, the
-  // villages, the farming's centres, the origin, in that order from below;
+  // villages, the farming's and the herding's centres, the origin, in that
+  // order from below; the centres and the origin on one switch (Zentren);
   // each view is given the pictures once.
   const marked = new WeakSet<WorldView>()
   function syncMarks(): void {
@@ -1129,10 +1146,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     villages.setEnabled(showVillages)
     const showCentres = now !== null && settled !== null && peopleOn['people:centres']
     const centreSymbols: WorldSymbol[] = []
-    if (showCentres) for (let k = 0; k < settled!.centres.length; k += 2) if (settled!.centres[k + 1] <= peopleTime) centreSymbols.push({ at: cellPoint(settled!.centres[k], u, v), picture: 0 })
+    if (showCentres) {
+      for (let k = 0; k < settled!.centres.length; k += 3) {
+        if (settled!.centres[k + 1] <= peopleTime) centreSymbols.push({ at: cellPoint(settled!.centres[k], u, v), picture: settled!.centres[k + 2] === LIFEWAY.farmers ? 0 : 1 })
+      }
+    }
     centres.setSymbols(centreSymbols)
     centres.setEnabled(showCentres)
-    const showOrigin = onPeople() && people !== null && people.origin >= 0
+    const showOrigin = onPeople() && people !== null && people.origin >= 0 && peopleOn['people:centres']
     origin.setSymbols(showOrigin ? [{ at: cellPoint(people!.origin, u, v), picture: 0 }] : [])
     origin.setEnabled(showOrigin)
   }

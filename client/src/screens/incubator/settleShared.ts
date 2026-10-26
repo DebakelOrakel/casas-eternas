@@ -1,6 +1,6 @@
 // What the settlement (settle.ts) and the screen share, out
-// of the worker for the reason peopleShared.ts gives: the lifeways and the
-// density of a cell at a time, from its times (SettleTimes). The worker
+// of the worker for the reason peopleShared.ts gives: the lifeways' shares
+// and the density of a cell at a time, from its times (SettleTimes). The worker
 // places the villages by them, the screen draws them as the time plays.
 
 export const LIFEWAY = { none: 0, foragers: 1, fishers: 2, herders: 3, farmers: 4 } as const
@@ -27,55 +27,87 @@ export interface SettleTimes {
   // settled fishers.
   herdAt: Float32Array
   fishOk: Uint8Array
+  // How well the land suits the fields, the herds and the fishers, 0 … 1
+  // (the ecology's arable land, pasture and fish).
+  farmSuit: Float32Array
+  herdSuit: Float32Array
+  fishSuit: Float32Array
   // The carrying capacity over CARRYING_FULL, to 2.
   carrying: Float32Array
 }
 
-// The lifeway of a cell at `t` years after the departure.
-export function lifewayAt(s: SettleTimes, i: number, t: number): number {
-  const came = s.arrival[i]
-  if (!(came <= t)) return LIFEWAY.none
-  if (s.farmAt[i] <= t) return LIFEWAY.farmers
-  if (s.herdAt[i] <= t) return LIFEWAY.herders
-  if (s.fishOk[i] && t >= came + SETTLE_AFTER) return LIFEWAY.fishers
-  return LIFEWAY.foragers
-}
+// THE LIFEWAYS' SHARES (2026-10-26): a cell holds several lifeways at a
+// time — the farmers and the herders of one valley, the hunters left
+// between them. Each lifeway the cell has by then weighs its suit (the
+// arable land, the pasture, the fish) by SHARE_GAIN, grown with the time
+// since it came as the density grows (DENSITY_TAU); the foragers weigh
+// FORAGER_WEIGHT always. So the foragers give way as the others grow,
+// the fields weigh most, and a cell of fields and pasture holds both.
+const SHARE_GAIN: Record<number, number> = { 2: 1, 3: 2, 4: 4 }
+const FORAGER_WEIGHT = 0.2
 
-// When a cell's lifeway at `t` began.
+const grownSince = (t: number, since: number): number => Math.max(0, 1 - Math.exp(-(t - since) / DENSITY_TAU))
+
+// When a lifeway came to a cell; Infinity for never.
 export function lifewaySince(s: SettleTimes, i: number, way: number): number {
   if (way === LIFEWAY.farmers) return s.farmAt[i]
   if (way === LIFEWAY.herders) return s.herdAt[i]
-  if (way === LIFEWAY.fishers) return s.arrival[i] + SETTLE_AFTER
+  if (way === LIFEWAY.fishers) return s.fishOk[i] ? s.arrival[i] + SETTLE_AFTER : Infinity
   return s.arrival[i]
 }
 
-// People a km² in a cell at `t`: grown since its lifeway began from the
-// foragers' to its own.
-export function densityAt(s: SettleTimes, i: number, t: number): number {
-  const way = lifewayAt(s, i, t)
-  if (way === LIFEWAY.none) return 0
+// The lifeways' shares of a cell at `t` years after the departure, into
+// `shares` (by LIFEWAY, summing to 1, all 0 before people came); the
+// largest's lifeway returned, LIFEWAY.none before people came.
+export function sharesAt(s: SettleTimes, i: number, t: number, shares: Float32Array): number {
+  shares.fill(0)
+  if (!(s.arrival[i] <= t)) return LIFEWAY.none
+  shares[LIFEWAY.foragers] = FORAGER_WEIGHT
+  let sum = FORAGER_WEIGHT
+  const suits = [0, 0, s.fishSuit[i], s.herdSuit[i], s.farmSuit[i]]
+  for (const way of [LIFEWAY.fishers, LIFEWAY.herders, LIFEWAY.farmers]) {
+    const since = lifewaySince(s, i, way)
+    if (!(since <= t)) continue
+    const w = SHARE_GAIN[way] * suits[way] * grownSince(t, since)
+    shares[way] = w
+    sum += w
+  }
+  let top: number = LIFEWAY.foragers
+  for (let w = 1; w < shares.length; w++) {
+    shares[w] /= sum
+    if (shares[w] > shares[top]) top = w
+  }
+  return top
+}
+
+// People a km² in a cell at `t`: each lifeway's share of its own density,
+// grown since it came from the foragers' to its own.
+export function densityAt(s: SettleTimes, i: number, t: number, shares: Float32Array): number {
   const floor = DENSITY[LIFEWAY.foragers] * s.carrying[i]
-  const full = DENSITY[way] * s.carrying[i]
-  const grown = 1 - Math.exp(-(t - lifewaySince(s, i, way)) / DENSITY_TAU)
-  return floor + (full - floor) * Math.max(0, grown)
+  let d = 0
+  for (let way = 1; way < shares.length; way++) {
+    if (!(shares[way] > 0)) continue
+    const full = DENSITY[way] * s.carrying[i]
+    d += shares[way] * (floor + (full - floor) * grownSince(t, lifewaySince(s, i, way)))
+  }
+  return d
 }
 
 // THE PEOPLE'S PRESSURE ON AN ANIMAL in a cell, a factor on its numbers
 // (2026-10-26): the animals people hunt (game, fur) thin out with the
 // people's density, 1 / (1 + density / HUNT_HALF); the wild herbivores
 // give way to the herds and the fields (HERDERS_LEAVE, FARMERS_LEAVE), the
-// predators are hunted down there (PREDATORS_LEAVE). The animals of the
-// water are left as they are.
+// predators are hunted down there (PREDATORS_LEAVE), each by its lifeway's
+// share of the cell. The animals of the water are left as they are.
 export const HUNT_HALF = 3
 export const HERDERS_LEAVE = 0.6
 export const FARMERS_LEAVE = 0.4
 export const PREDATORS_LEAVE = 0.3
 
-export function pressure(role: string, hunted: boolean, way: number, density: number): number {
-  let f = 1
-  if (hunted) f /= 1 + density / HUNT_HALF
-  if (role === 'herbivore') f *= way === LIFEWAY.herders ? HERDERS_LEAVE : way === LIFEWAY.farmers ? FARMERS_LEAVE : 1
-  if (role === 'predator' && (way === LIFEWAY.herders || way === LIFEWAY.farmers)) f *= PREDATORS_LEAVE
+export function pressure(role: string, hunted: boolean, shares: Float32Array, density: number): number {
+  let f = hunted ? 1 / (1 + density / HUNT_HALF) : 1
+  if (role === 'herbivore') f *= 1 - shares[LIFEWAY.herders] * (1 - HERDERS_LEAVE) - shares[LIFEWAY.farmers] * (1 - FARMERS_LEAVE)
+  if (role === 'predator') f *= 1 - (shares[LIFEWAY.herders] + shares[LIFEWAY.farmers]) * (1 - PREDATORS_LEAVE)
   return f
 }
 
