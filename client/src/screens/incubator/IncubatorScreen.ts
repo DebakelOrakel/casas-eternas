@@ -54,14 +54,11 @@ import { decodeFineValue, ECOLOGY_FIELD_IDS, ECOLOGY_FINE_OCEAN, type EcologyFie
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import type { LevelLand } from '../../world/meshArtifacts'
 import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
-import type { AnimalLayer } from './fauna'
 import type { AnimalUse } from './animals'
-import type { PeopleResult } from './people'
+import type { AnimalLayer, PeopleResult, PlantLayer, SettleResult, TreeLayer } from './cellsShared'
 import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
-import { climateHistoryOf, ICE_REACH_KM } from './climateHistory'
 import { flowAt, routeOrder, routesOf, type RouteLine } from './peopleArrows'
 import type { LogEvent } from './historyLogShared'
-import type { SettleResult } from './settle'
 import { CAME_STEP, clearedAt, clearedOf, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { campPictures, campSymbols, cellPoint, centrePictures, hamletPictures, hamletSymbols, isCampWay, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
@@ -71,11 +68,10 @@ import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
 import type { ChartPoint } from '../../map/worldView'
 import type { PlantUse } from './plants'
-import type { PlantLayer, TreeLayer } from './flora'
 import type { IncubatorAnswer, IncubatorRequest } from './incubatorWorker'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
 import type { WoodUse } from './trees'
-import { LEVEL_ECOLOGY } from './habitat'
+import { LEVEL_ECOLOGY } from './cellsShared'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
 import '../../ui/theme/design.css'
@@ -494,7 +490,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // marks.
   const flowOn: Record<string, boolean> = { 'flow:temperature': false, 'flow:pressure': false, 'flow:wind': false, 'flow:currents': false, 'flow:iceAge': false }
   // The world's climate history (climateHistory.ts), for the ice's overlay.
-  let iceHistory: ReturnType<typeof climateHistoryOf> | null = null
+  // The world's cold over the span (casas-history, from its seed): at a
+  // time, and the ice's reach and the sea's drop then.
+  let iceHistory: { cold(t: number): number; iceReachKm: number; seaDropM(t: number): number } | null = null
   let flowMarked: { charts: RefinedCharts; view: WorldView; wind: boolean; currents: boolean } | null = null
   // The geology's switches and its marks: the volcanoes and the plumes of
   // the save's snapshot, on the world raster's texels.
@@ -787,10 +785,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlayList.setVisible(furnitureShown && layersShown)
   })
   sidebar.body.append(layersButton)
-  // THE HISTORY'S BUTTONS (the people step), as the generator's steps have
-  // theirs: start the history (simulation.ts, DES-0033) in the rules'
-  // place; reset the origin to the one chosen by itself and the people to
-  // the rules'.
+  // THE HISTORY'S BUTTON (the people step), as the generator's steps have
+  // theirs: reset the origin to the one chosen by itself, and the history
+  // with it. A button to start the history went with the rules' preview
+  // (2026-10-27): a world shows its history at once, kept or run.
   const historyActions = document.createElement('div')
   historyActions.className = 'gen-step__actions'
   const historyReset = document.createElement('button')
@@ -802,24 +800,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   resetIcon.src = '/icons/reset.png'
   resetIcon.alt = ''
   historyReset.append(resetIcon)
-  const historyRun = document.createElement('button')
-  historyRun.type = 'button'
-  historyRun.className = 'gen-action'
-  historyRun.dataset.help = 'incubator.action.runHistory'
   const sayHistory = (): void => {
-    historyRun.textContent = t('incubator.action.runHistory.label')
     historyReset.setAttribute('aria-label', t('incubator.action.resetHistory.label'))
   }
   sayHistory()
-  historyActions.append(historyReset, historyRun)
+  historyActions.append(historyReset)
   sidebar.foot.append(historyActions)
-  historyRun.addEventListener('click', () => {
-    historyRun.disabled = true
-    void growPeople(true).finally(() => (historyRun.disabled = false))
-  })
   historyReset.addEventListener('click', () => {
     peopleOrigin = -1
-    void growPeople()
+    void peopleFor(-1)
   })
   // Under the picks, why the plants or the animals could not be grown.
   const plantStatus = document.createElement('p')
@@ -1016,8 +1005,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (overlay) eventPlaces.set(event, cellPoint(cell, overlay.u, overlay.v))
     }
     const landmassName = (m: number): string => t('incubator.chronicle.landmass', { n: String(cellFacts ? cellFacts.rank[m] : m + 1) })
-    // The log (historyLogShared.ts), the history's or the rules': what it
-    // tells of each kind.
+    // The log (historyLogShared.ts), the history's: what it tells of each
+    // kind.
     const log = settled?.log ?? []
     const facts = cellFacts
     const o = overlay
@@ -1160,8 +1149,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   function sayCounts(): void {
     const now = settledNow()
-    // A history's people are its own count (simulation.ts), between the
-    // curve's samples linearly; the rules' the density's.
+    // A history's people are its own count (casas-history), between the
+    // curve's samples linearly; before its first kept state comes, the
+    // density's.
     let persons = 0
     if (historyFrames && settled) {
       const curve = settled.population
@@ -1198,7 +1188,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const ox = Math.min(overlay.width - 1, Math.floor(at.u * overlay.width))
     const oy = Math.min(overlay.height - 1, Math.floor(at.v * overlay.height))
     peopleOrigin = overlay.owners[oy * overlay.width + ox]
-    void growPeople()
+    void peopleFor(peopleOrigin)
   }
   ctx.canvas.addEventListener('pointerdown', onPress)
   ctx.canvas.addEventListener('pointerup', onRelease)
@@ -1534,7 +1524,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The people, from the origin clicked or chosen, then their settlement.
   // THE HISTORY'S PLAYBACK (DES-0033): the kept state at the time shown —
   // the people a km², KEEP_YEARS apart — asked of the worker as the time
-  // comes to it, the last few kept; null while the people are the rules'.
+  // comes to it, the last few kept; null before a history.
   // A frame: the people a km², the small game's share and each big game
   // species' share (in 255ths, per cell; 255 where the species is not).
   type HistoryFrame = { people: Float32Array; small: Uint8Array; big: Map<string, Uint8Array> }
@@ -1616,23 +1606,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     return null
   }
-  // `history`: the simulation's (simulation.ts) instead of the rules'.
-  // `loadStep`: the load panel's row, as the world opens (work). False
-  // where it failed.
-  // `restore`: a packed history (the H1 artifact) taken in a run's place.
-  // A history run is kept as one (keepHistory); after the rules' spread, a
-  // history kept for its origin is loaded (loadHistory).
-  async function growPeople(history = false, loadStep?: string, restore?: ArrayBuffer): Promise<boolean> {
+  // THE PEOPLE (casas-history, DES-0033): the history from the origin
+  // clicked or chosen (peopleOrigin; -1: the worker's choice), run — and
+  // kept as the H1 artifact (keepHistory) — or, `restore`, a kept one taken
+  // in a run's place. The rules' preview, shown before a history until
+  // 2026-10-27, went with the port (DEC-0048): a run is quick enough.
+  // `loadStep`: the load panel's row (work). False where it failed.
+  async function growPeople(restore?: ArrayBuffer, loadStep?: string): Promise<boolean> {
     if (!overlay) return false
     const started = performance.now()
     const done = restore
       ? await work(t('incubator.progress.loadHistory'), { type: 'restore', bytes: restore }, 'people', loadStep)
-      : history
-      ? await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, rain: refinedCharts ? { width: refinedCharts.width, height: refinedCharts.height, variability: refinedCharts.weather.rainVariability, enso: refinedCharts.weather.enso, ensoStrength: refinedCharts.ensoStrength } : null }, 'people', loadStep)
-      : await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people', loadStep)
+      : await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, rain: refinedCharts ? { width: refinedCharts.width, height: refinedCharts.height, variability: refinedCharts.weather.rainVariability, enso: refinedCharts.weather.enso, ensoStrength: refinedCharts.ensoStrength } : null }, 'people', loadStep)
     if (!done || !overlay) return false
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
-    historyFrames = history || restore ? new Map() : null
+    historyFrames = new Map()
     framesAsked.clear()
     // The routes blue over the crossings' ways (every crossing's, not the
     // told ones alone; the dry shelf walked stays brown).
@@ -1659,8 +1647,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showPlants()
     sayChronicle()
     if (restore) console.info(`[incubator] history loaded, ${Math.round(performance.now() - started)} ms`)
-    else if (history) void keepHistory(performance.now() - started)
-    else void loadHistory()
+    else void keepHistory(performance.now() - started)
     return true
   }
   // THE H1 ARTIFACT (world/historyArtifacts.ts): a history run is kept in
@@ -1690,9 +1677,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     console.info(`[incubator] history ${kept ? 'kept' : 'not kept'}, ${(packed.bytes.byteLength / 1e6).toFixed(0)} MB`)
   }
   // As a world opens: the history it kept last (latestHistoryOrigin), its
-  // origin the people's, without the rules' preview first; else the rules'
-  // spread (2026-10-26: a history kept for an origin clicked was not found,
-  // the rules' chosen one asked for).
+  // origin the people's (2026-10-26: a history kept for an origin clicked
+  // was not found, the rules' chosen one asked for); else the history from
+  // the worker's origin.
   async function openPeople(): Promise<void> {
     const worldId = held?.worldId
     const world = shownWorld
@@ -1700,32 +1687,58 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const origin = worldId ? await latestHistoryOrigin(store, worldId).catch(() => null) : null
     if (shownWorld !== world) return
     if (origin !== null && worldId) {
-      const label = t('incubator.progress.loadHistory')
-      progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
-      const bytes = await readHistoryArtifact(store, historyKey(worldId, origin)).catch(() => null)
+      const bytes = await readKept(historyKey(worldId, origin))
       if (shownWorld !== world) return
-      progressPill.hide()
       if (bytes) {
         peopleOrigin = origin
-        if (await growPeople(true, undefined, bytes)) return
+        if (await growPeople(bytes)) return
       }
+    }
+    await peopleFor(peopleOrigin)
+  }
+  // The history from `origin` (-1: the worker's choice): the one kept for
+  // it, else run.
+  async function peopleFor(origin: number): Promise<void> {
+    const worldId = held?.worldId
+    const world = shownWorld
+    let at = origin
+    if (at < 0) {
+      const answer = await incubator.ask({ type: 'origin' })
+      if (shownWorld !== world) return
+      at = answer?.type === 'origin' ? answer.origin : -1
+    }
+    if (worldId && at >= 0) {
+      const bytes = await readKept(historyKey(worldId, at))
+      if (shownWorld !== world) return
+      if (bytes && (await growPeople(bytes))) return
     }
     await growPeople()
   }
-  async function loadHistory(): Promise<void> {
-    const worldId = held?.worldId
-    const origin = people?.origin ?? -1
-    if (!worldId || origin < 0) return
-    const world = shownWorld
+  // A kept history's bytes, under the pill; null where none is kept.
+  async function readKept(key: ReturnType<typeof historyKey>): Promise<ArrayBuffer | null> {
     const store = await getLocalArtifactStore()
-    const key = historyKey(worldId, origin)
-    if (!(await store.resolve(key, false))) return
+    if (!(await store.resolve(key, false))) return null
     const label = t('incubator.progress.loadHistory')
     progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
     const bytes = await readHistoryArtifact(store, key).catch(() => null)
-    if (shownWorld === world) progressPill.hide()
-    if (!bytes || shownWorld !== world || people?.origin !== origin || historyFrames) return
-    await growPeople(true, undefined, bytes)
+    progressPill.hide()
+    return bytes
+  }
+  // The world's cold over the span from the worker (casas-history), every
+  // stepYears: on the chronicle's axis every 500 years, and for the ice's
+  // overlay.
+  async function loadColdCurve(world: World): Promise<void> {
+    const answer = await incubator.ask({ type: 'climate', seed: world.recipe.detailSeed })
+    if (shownWorld !== world || answer?.type !== 'climate') return
+    const { cold: curve, stepYears, iceReachKm, seaDropM } = answer
+    const cold = (t: number): number => {
+      const x = Math.max(0, Math.min(curve.length - 1, t / stepYears))
+      const k = Math.floor(x)
+      return curve[k] + (curve[Math.min(curve.length - 1, k + 1)] - curve[k]) * (x - k)
+    }
+    iceHistory = { cold, iceReachKm, seaDropM: (t) => seaDropM * cold(t) }
+    chronicle.setCold(Float32Array.from({ length: SPAN_YEARS / 500 + 1 }, (_, k) => cold(k * 500)))
+    showPlants()
   }
   // The picks' plants, wood or animals on the map, and their legend.
   function showPlants(): void {
@@ -1829,7 +1842,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       on: () => flowOn['flow:iceAge'] && cellFacts !== null && iceHistory !== null,
       paint: (o) => {
         if (!cellFacts || !iceHistory) return
-        const reach = ICE_REACH_KM * iceHistory.cold(peopleTime)
+        const reach = iceHistory.iceReachKm * iceHistory.cold(peopleTime)
         const drop = iceHistory.seaDropM(peopleTime)
         const { iceKm, seaDepthM, land } = cellFacts
         for (let k = 0; k < o.owners.length; k++) {
@@ -2289,10 +2302,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     pressureShown = null
     historyFrames = null
     // The world's climate history on the chronicle's axis, every 500 years,
-    // and for the ice's overlay.
-    const history = climateHistoryOf(world.recipe.detailSeed, SPAN_YEARS)
-    iceHistory = history
-    chronicle.setCold(Float32Array.from({ length: SPAN_YEARS / 500 + 1 }, (_, k) => history.cold(k * 500)))
+    // and for the ice's overlay (the worker's: casas-history).
+    iceHistory = null
+    void loadColdCurve(world)
     void loadClimate(world, domain, kind === 'sphere' ? domain.metresAround / world.width : domain.metresPerUnit)
     plants = null
     animals = null

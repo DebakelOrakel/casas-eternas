@@ -96,8 +96,6 @@
   "incubator.chronicle.populationDetail": "{villages} villages · {centres} centres",
   "incubator.layers.climate": "Climate",
   "incubator.action.runHistory.label": "Start history",
-  "incubator.action.runHistory.labelActive": "Stop history",
-  "incubator.action.runHistory.help": "Run the 100,000 years step by step.",
   "incubator.action.resetHistory.label": "Reset origin and history",
   "incubator.action.resetHistory.help": "Choose the origin again by itself and discard the history.",
   "incubator.progress.keepHistory": "Saving the history",

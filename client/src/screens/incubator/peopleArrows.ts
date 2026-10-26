@@ -1,4 +1,4 @@
-import type { PeopleResult } from './people'
+import type { PeopleResult } from './cellsShared'
 
 // THE INCUBATOR'S PEOPLE ROUTES (2026-10-25, a trial): the people's spread
 // drawn as its rough directions (IncubatorScreen's people step).

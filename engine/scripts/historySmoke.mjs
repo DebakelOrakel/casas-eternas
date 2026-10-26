@@ -1,21 +1,24 @@
-// The incubator's history: its crate's WASM build against the TypeScript
-// it was ported from (docs/decisions/incubator-history-engine.md, the way
-// there 2–6), on worlds made here — no world, no level 1 from a store. Two
-// small synthetic worlds, a torus and a sphere (its raster 256 wide, the
-// globe an eighth of the map's 2 048: at 8 km some 40 000 cells), with continents
-// and islands, ice, the climates' belts, rivers, the ecology's fields, the
-// rain's reliability. Both sides take the same inputs; the habitat, the
-// flora, the fauna, the history (its packed bytes) and its settlement must
-// be the same bits. And the world must reach what it is there to test:
-// a crossing, a farming and a herding centre, a village, a camp, a famine,
-// an extinction, the ice coming and going (`reaches`), or the check would
-// pass on less than it claims.
+// The incubator's history (docs/decisions/incubator-history-engine.md): its
+// crate's WASM build on worlds made here — no world, no level 1 from a
+// store — against a recorded reference. Two small synthetic worlds, a torus
+// and a sphere (its raster 256 wide, the globe an eighth of the map's
+// 2 048: at 8 km some 40 000 cells), with continents and islands, ice, the
+// climates' belts, rivers, the ecology's fields, the rain's reliability:
+// the habitat, the flora, the fauna, the history (its packed bytes) and its
+// settlement, hashed, must be the reference's. The reference was recorded
+// while the TypeScript the crate was ported from still stood beside it and
+// gave the same bits (2026-10-27; and on Morvane, the whole H1 alike); it
+// is recorded again only on purpose, with --record, when the history is
+// meant to change (and HISTORY_VERSION with it). And the worlds must reach
+// what they are there to test (`reaches`), or the check passes on less than
+// it claims.
 //
-//   node engine/scripts/historySmoke.mjs
+//   node engine/scripts/historySmoke.mjs [--record]
 //
 // Needs `make engine` (engine/dist/history).
 
-import { readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 const dist = new URL('../dist/', import.meta.url)
@@ -26,18 +29,10 @@ const CLIENT = fileURLToPath(new URL('../../client', import.meta.url))
 const { createServer } = await import(new URL('../../client/node_modules/vite/dist/node/index.js', import.meta.url).href)
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true, hmr: false }, appType: 'custom', logLevel: 'error' })
 const L = (p) => server.ssrLoadModule(p)
-const { buildCells } = await L('/src/screens/incubator/cells.ts')
-const { growFlora } = await L('/src/screens/incubator/flora.ts')
-const { populate } = await L('/src/screens/incubator/fauna.ts')
-const { simulate } = await L('/src/screens/incubator/simulation.ts')
-const { packHistory, unpackHistory, unpackSettled } = await L('/src/screens/incubator/historyPack.ts')
-const { originOf } = await L('/src/screens/incubator/people.ts')
-const { MEGAFAUNA, settle, logWithTrade } = await L('/src/screens/incubator/settle.ts')
-const { PLANTS } = await L('/src/screens/incubator/plants.ts')
-const catalog = (await L('casas-history-data/catalog.json')).default
 const { Biome } = await L('/src/generator/climate/biomes.ts')
 const { KOPPEN_CODES } = await L('/src/generator/climate/koppen.ts')
 const { ECOLOGY_FINE_OCEAN, ECOLOGY_FINE_STEP } = await L('/src/generator/ecology/ecologyField.ts')
+const { unpackHistory, unpackSettled } = await L('/src/screens/incubator/historyPack.ts')
 await server.close()
 
 let failed = false
@@ -46,14 +41,6 @@ const fail = (message) => {
   failed = true
 }
 const bytesOf = (v) => Buffer.from(v.buffer, v.byteOffset, v.byteLength)
-const same = (label, a, b) => {
-  if (a.length !== b.length) return fail(`${label}: ${a.length} against ${b.length} values`)
-  if (!bytesOf(a).equals(bytesOf(b))) {
-    let k = 0
-    while (k < a.length && (a[k] === b[k] || (Number.isNaN(a[k]) && Number.isNaN(b[k])))) k++
-    fail(`${label}: differs from ${k} on (${a[k]} against ${b[k]})`)
-  }
-}
 
 // THE SYNTHETIC WORLDS. Fields on a node grid twice the world raster's
 // size, one node a texel (the chart's node map the identity).
@@ -174,115 +161,62 @@ function wasmCells(c) {
   return new wasm.Incubator(c.kind === 'sphere', c.spacingKm, c.width, c.height, c.nodes, c.nodeW, c.nodeH, c.land, c.biome, c.koppen, c.z, c.lakeDepth, ecology, present, c.rivers.points, c.rivers.lengths, c.rivers.regimes)
 }
 
+const GOLDEN = new URL('historySmoke.golden.json', import.meta.url)
+const golden = process.argv.includes('--record') ? null : JSON.parse(await readFile(GOLDEN, 'utf8'))
+// The WASM's outputs hashed, against the reference.
+const hashes = {}
 // What the worlds reached between them.
 const seen = new Set()
+const hashOf = (...parts) => {
+  const digest = createHash('sha256')
+  for (const p of parts) digest.update(ArrayBuffer.isView(p) ? bytesOf(p) : p)
+  return digest.digest('hex')
+}
 for (const kind of ['torus', 'sphere']) {
   const world = synthWorld(kind)
-  const started = performance.now()
-  const ts = buildCells(world.cells)
-  const tsMs = performance.now() - started
-  const rs = wasmCells(world.cells)
-  const rsMs = performance.now() - started - tsMs
-  const h = ts.habitat
-  console.log(`history: ${kind} — ${h.count} cells, ${h.landCount} on land, ${h.landmasses} landmasses (TS ${Math.round(tsMs)} ms, WASM ${Math.round(rsMs)} ms)`)
-  same(`${kind} owners`, ts.owners, rs.owners())
-  for (const name of ['areaKm2', 'heightM', 'slope', 'seaDepthM', 'riverSize', 'distKm', 'u', 'v']) same(`${kind} ${name}`, h[name], rs.floats(name))
-  for (const id of CELL_ECOLOGY) same(`${kind} ecology ${id}`, h.ecology[id], rs.floats(`eco:${id}`))
-  for (const name of ['land', 'biome', 'koppen', 'nearRiver', 'nearLake', 'nearSea']) same(`${kind} ${name}`, h[name], rs.bytes(name))
-  for (const name of ['landmass', 'nbrStart', 'nbr']) same(`${kind} ${name}`, h[name], rs.ints(name))
-  same(`${kind} landmassKm2`, h.landmassKm2, rs.landmassKm2())
-  same(`${kind} scalars`, Float64Array.of(h.landCount, h.landmasses, h.radiusKm, h.widthKm, h.heightKm), rs.scalars())
-
-  // The flora and the fauna.
   let t0 = performance.now()
-  const flora = growFlora(h, world.seed)
-  const fauna = populate(h, world.seed)
-  const tsGrow = performance.now() - t0
+  const rs = wasmCells(world.cells)
+  const cellsMs = performance.now() - t0
+  const [landCount, landmasses] = rs.scalars()
+  hashes[`${kind} habitat`] = hashOf(
+    rs.owners(),
+    ...['areaKm2', 'heightM', 'slope', 'seaDepthM', 'riverSize', 'distKm', 'u', 'v'].map((name) => rs.floats(name)),
+    ...CELL_ECOLOGY.map((id) => rs.floats(`eco:${id}`)),
+    ...['land', 'biome', 'koppen', 'nearRiver', 'nearLake', 'nearSea'].map((name) => rs.bytes(name)),
+    ...['landmass', 'nbrStart', 'nbr'].map((name) => rs.ints(name)),
+    rs.landmassKm2(), rs.scalars(), rs.iceKm(), wasm.coldCurve(world.seed),
+  )
   t0 = performance.now()
   rs.growFlora(world.seed)
   rs.populate(world.seed)
-  const rsGrow = performance.now() - t0
-  const layers = [...flora.plants, ...flora.trees]
-  const joined = (list) => {
-    const out = new Uint8Array(list.length * h.count)
-    list.forEach((l, k) => out.set(l.codes, k * h.count))
-    return out
-  }
-  same(`${kind} flora codes`, joined(layers), rs.floraCodes())
-  same(`${kind} flora shares`, Float64Array.from(layers.flatMap((l) => [l.suitable, l.reached, l.empty])), rs.floraShares())
-  same(`${kind} fauna codes`, joined(fauna), rs.faunaCodes())
-  same(`${kind} fauna shares`, Float64Array.from(fauna.flatMap((l) => [l.suitable, l.reached, l.empty])), rs.faunaShares())
-  console.log(`history: ${kind} — ${layers.filter((l) => l.reached > 0).length} of ${layers.length} plants and trees, ${fauna.filter((l) => l.reached > 0).length} of ${fauna.length} animals (TS ${Math.round(tsGrow)} ms, WASM ${Math.round(rsGrow)} ms)`)
-
-  // The history, its inputs as the incubator's worker makes them.
-  const carrying = h.carrying ?? new Float32Array(h.count).fill(0.4)
-  const origin = originOf(h, carrying)
-  const FARM_PLANTS = new Set(PLANTS.filter((p) => p.domesticable && p.use === 'starch').map((p) => p.id))
-  const HERD_ANIMALS = new Set(catalog.herdAnimals)
+  const growMs = performance.now() - t0
+  hashes[`${kind} flora`] = hashOf(rs.floraCodes(), rs.floraShares())
+  hashes[`${kind} fauna`] = hashOf(rs.faunaCodes(), rs.faunaShares())
   const r = world.rain
-  const variability = new Float32Array(h.count)
-  const enso = new Float32Array(h.count)
-  for (let i = 0; i < h.count; i++) {
-    const t = Math.min(r.height - 1, Math.floor(h.v[i] * r.height)) * r.width + Math.min(r.width - 1, Math.floor(h.u[i] * r.width))
-    variability[i] = r.variability[t]
-    enso[i] = r.enso[t]
+  t0 = performance.now()
+  const pack = rs.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength, undefined)
+  const runMs = performance.now() - t0
+  hashes[`${kind} history`] = hashOf(pack)
+  const history = unpackHistory(pack.buffer.slice(pack.byteOffset, pack.byteOffset + pack.byteLength))
+  if (!history) {
+    fail(`${kind} history: its pack does not read`)
+    continue
   }
-  t0 = performance.now()
-  const history = simulate(h, {
-    carrying, origin, seed: world.seed,
-    bigGame: fauna.filter((a) => a.id in MEGAFAUNA).map((a) => ({ id: a.id, codes: a.codes, vulnerability: MEGAFAUNA[a.id] })),
-    crops: flora.plants.filter((p) => FARM_PLANTS.has(p.id)),
-    herds: fauna.filter((a) => HERD_ANIMALS.has(a.id)),
-    rain: { variability, enso, ensoStrength: r.ensoStrength },
-  })
-  const tsRun = performance.now() - t0
-  const tsPack = new Uint8Array(packHistory(history))
-  t0 = performance.now()
-  const rsPack = rs.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength, undefined)
-  const rsRun = performance.now() - t0
-  if (!Buffer.from(tsPack).equals(Buffer.from(rsPack))) {
-    // Where they part: read both back.
-    const a = unpackHistory(tsPack.buffer)
-    const b = unpackHistory(rsPack.buffer.slice(rsPack.byteOffset, rsPack.byteOffset + rsPack.byteLength))
-    if (!b) fail(`${kind} history: the WASM's pack does not read (${rsPack.length} against ${tsPack.length} bytes)`)
-    else {
-      const parts = { arrival: (x) => x.people.arrival, from: (x) => x.people.from, flow: (x) => x.people.flow, crossings: (x) => x.people.crossings, population: (x) => x.lifeways.population, farmAt: (x) => x.lifeways.farmAt, villages: (x) => x.lifeways.villages.villages }
-      for (const [name, get] of Object.entries(parts)) same(`${kind} history ${name}`, get(a), get(b))
-      const la = JSON.stringify(a.log), lb = JSON.stringify(b.log)
-      if (la !== lb) {
-        let k = 0
-        while (k < a.log.length && JSON.stringify(a.log[k]) === JSON.stringify(b.log[k])) k++
-        fail(`${kind} history log: differs from event ${k} on (${JSON.stringify(a.log[k])} against ${JSON.stringify(b.log[k])})`)
-      }
-      fail(`${kind} history: the packs differ (${tsPack.length} against ${rsPack.length} bytes)`)
-    }
-  }
-  // The history's settlement.
-  t0 = performance.now()
-  const crops = flora.plants.filter((p) => FARM_PLANTS.has(p.id))
-  const herds = fauna.filter((a) => HERD_ANIMALS.has(a.id))
-  const settled = settle(h, { arrival: history.people.arrival, crops, herds, origin: history.people.origin, animals: fauna, seed: world.seed, given: history.lifeways })
-  const tsTrade = logWithTrade(history.log, settled).find((e) => e.kind === 'trade') ?? null
-  const tsSettle = performance.now() - t0
-  t0 = performance.now()
   const v = history.lifeways.villages
-  const rsSettled = unpackSettled(new Uint8Array(rs.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo)).buffer)
-  const rsSettle = performance.now() - t0
-  if (!rsSettled) fail(`${kind} settlement: the WASM's pack does not read`)
-  else {
-    for (const name of ['lifeway', 'density', 'fishOk', 'farmSuit', 'herdSuit', 'fishSuit', 'carrying', 'sources', 'links']) same(`${kind} settlement ${name}`, settled[name], rsSettled.arrays.get(name))
-    if (JSON.stringify(tsTrade) !== JSON.stringify(rsSettled.trade)) fail(`${kind} settlement: the first trade ${JSON.stringify(rsSettled.trade)} against ${JSON.stringify(tsTrade)}`)
-    if (tsTrade) seen.add('trade')
-  }
-  const count = (k) => history.log.filter((e) => e.kind === k).length
-  // What the world reached, for `reaches` (both worlds together).
+  t0 = performance.now()
+  const settledPack = rs.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo)
+  const settleMs = performance.now() - t0
+  hashes[`${kind} settlement`] = hashOf(settledPack)
+  const settled = unpackSettled(settledPack.buffer.slice(settledPack.byteOffset, settledPack.byteOffset + settledPack.byteLength))
+  if (settled?.trade) seen.add('trade')
+  // What the world reached, for `reaches`.
   for (const e of history.log) seen.add(e.kind === 'centre' ? `centre ${e.lifeway}` : e.kind)
   // The ice: a cell lived in, left (its people gone in a kept state), lived
   // in again.
-  const frames = history.kept
-  for (let i = 0; i < h.count && !seen.has('ice'); i++) {
+  const n = history.people.arrival.length
+  for (let i = 0; i < n && !seen.has('ice'); i++) {
     let was = 0
-    for (const f of frames) {
+    for (const f of history.kept) {
       const p = f.people[i] > 0
       if (was === 0 && p) was = 1
       else if (was === 1 && !p) was = 2
@@ -292,25 +226,12 @@ for (const kind of ['torus', 'sphere']) {
       }
     }
   }
-  if (process.env.HISTORY_DEBUG) {
-    const herds = fauna.filter((a) => HERD_ANIMALS.has(a.id))
-    const byLm = new Map()
-    for (let i = 0; i < h.count; i++) {
-      if (!h.land[i] || !(history.people.arrival[i] < Infinity)) continue
-      const wild = herds.filter((a) => a.codes[i] >= 2).length
-      const pas = h.ecology.pasture[i]
-      const m = h.landmass[i]
-      const e = byLm.get(m) ?? { cells: 0, pasture: 0, two: 0, both: 0 }
-      e.cells++
-      if (pas >= 0.5) e.pasture++
-      if (wild >= 2) e.two++
-      if (pas >= 0.5 && wild >= 2) e.both++
-      byLm.set(m, e)
-    }
-    console.log(kind, 'herd candidates by landmass', JSON.stringify([...byLm]))
+  const count = (k) => history.log.filter((e) => e.kind === k).length
+  console.log(`history: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
+  if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'settlement']) {
+    const key = `${kind} ${part}`
+    if (golden[key] !== hashes[key]) fail(`${key}: not the reference's (${hashes[key].slice(0, 12)} against ${String(golden[key]).slice(0, 12)})`)
   }
-  console.log(`history: ${kind} — ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions (TS ${Math.round(tsRun)} ms, WASM ${Math.round(rsRun)} ms)`)
-  console.log(`history: ${kind} — settled, ${settled.links.length / 3} links, ${settled.sources.length / 2} sources (TS ${Math.round(tsSettle)} ms, WASM ${Math.round(rsSettle)} ms)`)
   rs.free()
 }
 
@@ -318,5 +239,9 @@ for (const kind of ['torus', 'sphere']) {
 // check passes on less than it claims; then the worlds are to be changed.
 const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'centre 3', 'domesticated', 'extinct', 'famine', 'village', 'villageLeft', 'camp', 'campLeft', 'population', 'ice']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
+if (!golden && !failed) {
+  await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')
+  console.log('history: recorded the reference')
+}
 if (failed) process.exit(1)
-console.log('history: the WASM build gives the TypeScript\'s bits')
+console.log(golden ? 'history: the WASM build gives the reference\'s bits' : 'history: recorded')

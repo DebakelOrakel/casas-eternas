@@ -9,7 +9,7 @@ use casas_engine::core::js;
 use casas_engine::core::rng::Mulberry32;
 use std::f64::consts::PI;
 
-const SEA_DROP_M: f64 = 120.0;
+pub const SEA_DROP_M: f64 = 120.0;
 const STADIALS: usize = 4;
 const STABLE_COLD: f64 = 0.15;
 const STABLE_YEARS: f64 = 2000.0;

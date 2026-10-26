@@ -510,3 +510,12 @@ whatever its origin, without the rules' preview; an origin set later loads
 the history kept for it, if any, after the rules' spread. Packed and read back, the log, the count,
 the villages, the links and the spread came out the same, bit for bit. The
 world list and the artifact window show it as H1.
+
+**The crate** (2026-10-27, [DEC-0048](../decisions/incubator-history-engine.md)):
+the history and everything it stands on — the cells, the flora, the
+fauna, the settlement — run in `casas-history`, its WASM build in the
+incubator's worker; the TypeScript went to detMath first, and the crate
+gives its bits (the whole H1 on Morvane, byte for byte). The rules'
+preview went with it: a world shows its history at once, kept or run. On
+Morvane the run takes some 13 s (the TypeScript's 25), the settlement of a
+history 0.1 s (0.3 s in Node, up to 10 s in Safari).

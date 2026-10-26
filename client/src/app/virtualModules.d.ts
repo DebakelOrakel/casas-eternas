@@ -61,3 +61,36 @@ declare module 'casas-history-wasm/version.json' {
   const version: { version: string }
   export default version
 }
+
+// The incubator's history's WASM build (`make engine` writes it to
+// engine/dist/history; vite.config.ts's alias `casas-history-wasm` names that
+// directory), as wasm-bindgen types it (its casas-history.d.ts).
+declare module 'casas-history-wasm/casas-history.js' {
+  const init: (options: { module_or_path: string | BufferSource }) => Promise<unknown>
+  export default init
+  export function version(): string
+  export function coldCurve(seed: number): Float32Array
+  export function iceReachKm(): number
+  export function seaDropM(): number
+  export class Incubator {
+    constructor(sphere: boolean, spacingKm: number, width: number, height: number, nodes: Int32Array, nodeW: number, nodeH: number, land: Uint8Array, biome: Uint8Array, koppen: Uint8Array, z: Float32Array, lakeDepth: Float32Array, ecology: Uint8Array, ecologyPresent: number, riverPoints?: Float32Array, riverLengths?: Uint32Array, riverRegimes?: Uint8Array)
+    free(): void
+    count(): number
+    owners(): Int32Array
+    scalars(): Float64Array
+    floats(name: string): Float32Array
+    bytes(name: string): Uint8Array
+    ints(name: string): Int32Array
+    landmassKm2(): Float64Array
+    iceKm(): Float32Array
+    originOf(): number
+    growFlora(seed: number): void
+    populate(seed: number): void
+    floraCodes(): Uint8Array
+    floraShares(): Float64Array
+    faunaCodes(): Uint8Array
+    faunaShares(): Float64Array
+    simulate(origin: number, seed: number, rainWidth: number, rainHeight: number, variability: Float32Array | undefined, enso: Float32Array | undefined, ensoStrength: number, progress: ((share: number) => void) | undefined): Uint8Array
+    settleHistory(arrival: Float32Array, farmAt: Float32Array, herdAt: Float32Array, villages: Int32Array, villageFrom: Float32Array, villageTo: Float32Array): Uint8Array
+  }
+}

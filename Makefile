@@ -125,6 +125,9 @@ test: engine
 	cd engine && CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings $(CURDIR)/engine/scripts/wasiRunner.mjs" \
 		cargo test -p casas-engine --release --target wasm32-wasip1
 	node engine/scripts/smoke.mjs
+	# The incubator's history: its WASM build on two synthetic worlds against
+	# the recorded reference (docs/decisions/incubator-history-engine.md).
+	node engine/scripts/historySmoke.mjs
 	cd client && npm run harness:roundtrip
 	cd client && npm run test:http-store
 	cd client && npm run harness:pipeline

@@ -4,18 +4,41 @@
 //! incubator's worker's state: the habitat made once a world, then what is
 //! grown and run on it.
 
+use casas_history::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M};
 use casas_history::flora::{Layer, grow_flora, populate};
 use casas_history::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
-use casas_history::history::{RainChart, run_history};
+use casas_history::history::{RainChart, carrying_of, origin_of, run_history};
 use casas_history::pack::{pack_history, pack_settled};
 use casas_history::settle::settle_history;
-use casas_history::simulation::SimulationResult;
+use casas_history::simulation::{SPAN_YEARS, STEP_YEARS, SimulationResult, ice_distance};
 use wasm_bindgen::prelude::*;
 
 /// The history's version (`casas_history::HISTORY_VERSION`).
 #[wasm_bindgen]
 pub fn version() -> String {
     casas_history::HISTORY_VERSION.to_string()
+}
+
+/// The world's cold over the span (climate_history.rs), every STEP_YEARS
+/// from the departure, for the chronicle and the ice's overlay.
+#[wasm_bindgen(js_name = coldCurve)]
+pub fn cold_curve(seed: f64) -> Vec<f32> {
+    let climate = ClimateHistory::of(seed, SPAN_YEARS);
+    let steps = (SPAN_YEARS / STEP_YEARS) as usize;
+    (0..=steps)
+        .map(|k| climate.cold(k as f64 * STEP_YEARS) as f32)
+        .collect()
+}
+
+/// How far the ice reaches from today's glaciers at a cold of 1, km; how
+/// far the sea then stands below today's, m.
+#[wasm_bindgen(js_name = iceReachKm)]
+pub fn ice_reach_km() -> f64 {
+    ICE_REACH_KM
+}
+#[wasm_bindgen(js_name = seaDropM)]
+pub fn sea_drop_m() -> f64 {
+    SEA_DROP_M
 }
 
 #[wasm_bindgen]
@@ -286,6 +309,20 @@ impl Incubator {
             village_from,
             village_to,
         ))
+    }
+
+    /// Each cell's distance from today's glaciers over the cold climates,
+    /// km (simulation.rs ice_distance).
+    #[wasm_bindgen(js_name = iceKm)]
+    pub fn ice_km(&self) -> Vec<f32> {
+        ice_distance(&self.habitat)
+    }
+
+    /// The origin a history takes when none is given (history.rs
+    /// origin_of).
+    #[wasm_bindgen(js_name = originOf)]
+    pub fn origin_of(&self) -> i32 {
+        origin_of(&self.habitat, &carrying_of(&self.habitat))
     }
 
     #[wasm_bindgen(js_name = landmassKm2)]

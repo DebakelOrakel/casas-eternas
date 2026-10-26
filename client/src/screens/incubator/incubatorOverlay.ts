@@ -1,5 +1,5 @@
 import type { WashTarget } from '../../map/climateLayers'
-import type { PeopleResult } from './people'
+import type { PeopleResult } from './cellsShared'
 import { PLANT_SUITS_CODE } from './settleShared'
 
 // THE INCUBATOR'S OVERLAY (2026-10-25): what the steps draw over the chart

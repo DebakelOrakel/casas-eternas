@@ -78,13 +78,31 @@ was considered and left: in German it names the Sturmabteilung.
    (`historyPack.ts`, `world/historyArtifacts.ts`) and loaded when a world is
    shown with a kept history for its origin; the badge in the world list and
    the artifact window.
-2. The crate: the simulation ported from `simulation.ts`, checked against
-   it on the log and the people's count (as the engine's smoke test checks
-   native against WASM); detMath in place of Math.exp and Math.log.
-3. The WASM build in the incubator's worker in the TypeScript's place.
+2. **Done (2026-10-27): the crate** (`engine/crates/casas-history`): the
+   habitat's cells, the flora, the fauna, the climate history, the ways'
+   days, the simulation, the history's settlement and the H1 bytes, ported
+   from `client/src/screens/incubator/` after the TypeScript went to
+   detMath (Math.exp, Math.log, Math.sin and the like differ between
+   JavaScript's engines in the last bit). The catalogs — the plants, the
+   trees, the animals, the big game, the herd animals — are one data file,
+   the crate's `data/catalog.json`, which the client reads too. Checked
+   against the TypeScript on two synthetic worlds (a torus and a sphere)
+   and on Morvane: the same bits throughout, the whole H1 (168 MB on
+   Morvane) byte for byte. On Morvane the WASM build takes some 18 s where
+   the TypeScript took 37 (the history 13 s against some 25).
+3. **Done (2026-10-27): the WASM build in the incubator's worker** in the
+   TypeScript's place (`casas-history-wasm`, `engine/dist/history`); the
+   TypeScript modules it was ported from went, and the rules' preview with
+   them (`people.ts`, `settle.ts`, `rulesLog`): a world shows its history at
+   once — the one kept last, or one run from the origin the crate chooses;
+   an origin clicked loads its kept history or runs one. The button to
+   start a history went too: a run gives the same history every time. The
+   check is `engine/scripts/historySmoke.mjs` (`make test`): the WASM build
+   on the two synthetic worlds against a reference recorded while the
+   TypeScript still stood beside it, and the worlds must reach every kind of
+   event (a crossing, both centres, a village, a camp, a famine, an
+   extinction, the first trade, the ice coming and going).
 4. The job: the native build on the job worker, H1 on the server.
-5. Then the rules' preview can go (`people.ts`, the rules' part of
-   `settle.ts`, `rulesLog`).
 
 ## Not decided
 

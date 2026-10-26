@@ -10,3 +10,7 @@ export const SPAN_YEARS = 100_000
 // A simulated history (simulation.ts) keeps its state every KEEP_YEARS, the
 // playback's frames.
 export const KEEP_YEARS = 2500
+
+// A kept state's people a km², in steps of PEOPLE_FRAME_STEP (16 bits; the
+// farmers reach 15 a km² and more, the foragers' 0.1 is 100 steps).
+export const PEOPLE_FRAME_STEP = 1e-3

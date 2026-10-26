@@ -1,12 +1,13 @@
+import type { PeopleResult, SettleResult } from './cellsShared'
 import type { LogEvent } from './historyLogShared'
-import type { SimFrame, SimulationResult } from './simulation'
 
 // THE HISTORY PACKED (2026-10-26, the H1 artifact: world/historyArtifacts.ts):
-// a simulated history (simulation.ts) as one file, so a world opened again
-// with the same origin loads it instead of running it. What the worker keeps
-// of a run and the screen reads — the spread, the kept states, the species'
-// cells, the lifeways, the villages, the people's count, the extinctions,
-// the log — not the knowledge or the regions, which nothing reads after.
+// a simulated history as one file, so a world opened again with the same
+// origin loads it instead of running it — the spread, the kept states, the
+// species' cells, the lifeways, the villages, the people's count, the
+// extinctions, the log. casas-history writes it (its pack.rs, since
+// 2026-10-27; this file wrote it before, the crate's bytes are its); this
+// module reads it, and the crate's settlement of it.
 //
 // The layout: a u32 with the header's length, the header (JSON: the plain
 // values, and each array's name, type, offset and length), padding to 8,
@@ -20,28 +21,11 @@ import type { SimFrame, SimulationResult } from './simulation'
 type Typed = Float32Array | Int32Array | Uint8Array | Uint16Array
 const TYPES = { f32: Float32Array, i32: Int32Array, u8: Uint8Array, u16: Uint16Array } as const
 type TypeName = keyof typeof TYPES
-const typeOf = (a: Typed): TypeName => (a instanceof Float32Array ? 'f32' : a instanceof Int32Array ? 'i32' : a instanceof Uint16Array ? 'u16' : 'u8')
 const pad8 = (n: number): number => (n + 7) & ~7
 
 interface Header {
   json: unknown
   arrays: { name: string; type: TypeName; offset: number; length: number }[]
-}
-
-function pack(json: unknown, arrays: [string, Typed][]): ArrayBuffer {
-  let offset = 0
-  const placed = arrays.map(([name, a]) => {
-    const at = offset
-    offset = pad8(offset + a.byteLength)
-    return { name, type: typeOf(a), offset: at, length: a.length }
-  })
-  const head = new TextEncoder().encode(JSON.stringify({ json, arrays: placed } satisfies Header))
-  const start = pad8(4 + head.byteLength)
-  const out = new ArrayBuffer(start + offset)
-  new DataView(out).setUint32(0, head.byteLength, true)
-  new Uint8Array(out, 4, head.byteLength).set(head)
-  arrays.forEach(([, a], k) => new Uint8Array(out, start + placed[k].offset, a.byteLength).set(new Uint8Array(a.buffer, a.byteOffset, a.byteLength)))
-  return out
 }
 
 function unpack(buffer: ArrayBuffer): { json: unknown; arrays: Map<string, Typed> } {
@@ -53,60 +37,45 @@ function unpack(buffer: ArrayBuffer): { json: unknown; arrays: Map<string, Typed
   return { json: header.json, arrays }
 }
 
-// What a packed history holds: a SimulationResult but its knowledge and
-// regions, and its time.
-export type PackedHistory = Omit<SimulationResult, 'region' | 'knowledge' | 'ms'>
+// A kept state (every KEEP_YEARS from 0): the people a km² in
+// PEOPLE_FRAME_STEP steps, the small game's share in 255ths, each species
+// of the big game's share in 255ths on its cells (`species`, aligned).
+export interface SimFrame {
+  people: Uint16Array
+  small: Uint8Array
+  big: Uint8Array[]
+}
+
+// What a packed history holds.
+export interface PackedHistory {
+  people: PeopleResult
+  kept: SimFrame[]
+  // The big game's species, their cells (the frames' `big` aligned).
+  species: { id: string; cells: Int32Array }[]
+  // The climate history's draw.
+  climate: { maxAt: number; depth: number; deglaciation: number }
+  extinctions: SettleResult['extinctions']
+  log: LogEvent[]
+  lifeways: {
+    centres: Float32Array
+    farmAt: Float32Array
+    herdAt: Float32Array
+    domestications: SettleResult['domestications']
+    villages?: { villages: Int32Array; villageFrom: Float32Array; villageTo: Float32Array }
+    population?: Float32Array
+  }
+}
 
 interface Plain {
   origin: number
-  climate: SimulationResult['climate']
-  extinctions: SimulationResult['extinctions']
-  log: SimulationResult['log']
+  climate: PackedHistory['climate']
+  extinctions: PackedHistory['extinctions']
+  log: LogEvent[]
   species: string[]
   frames: number
   domestications: { kind: 'plant' | 'animal'; id: string; cell: number; at: number }[]
 }
 
-export function packHistory(h: PackedHistory): ArrayBuffer {
-  const p = h.people
-  const l = h.lifeways
-  const arrays: [string, Typed][] = [
-    ['arrival', p.arrival], ['land', p.land], ['from', p.from], ['flow', p.flow], ['crossings', p.crossings], ['crossingWays', p.crossingWays],
-    ['centres', l.centres], ['farmAt', l.farmAt], ['herdAt', l.herdAt],
-  ]
-  if (l.villages) arrays.push(['villages', l.villages.villages], ['villageFrom', l.villages.villageFrom], ['villageTo', l.villages.villageTo])
-  if (l.population) arrays.push(['population', l.population])
-  l.domestications.forEach((d, k) => arrays.push([`came${k}`, d.came]))
-  h.species.forEach((s, k) => arrays.push([`species${k}`, s.cells]))
-  // The cells reached, and for each species its own cells among them.
-  const reached: number[] = []
-  for (let i = 0; i < p.arrival.length; i++) if (p.arrival[i] < Infinity) reached.push(i)
-  const speciesReached = h.species.map((s) => {
-    const at: number[] = []
-    s.cells.forEach((c, k) => {
-      if (p.arrival[c] < Infinity) at.push(k)
-    })
-    return Int32Array.from(at)
-  })
-  arrays.push(['reached', Int32Array.from(reached)])
-  speciesReached.forEach((at, j) => arrays.push([`speciesReached${j}`, at]))
-  h.kept.forEach((f, k) => {
-    arrays.push([`people${k}`, Uint16Array.from(reached, (c) => f.people[c])], [`small${k}`, Uint8Array.from(reached, (c) => f.small[c])])
-    f.big.forEach((b, j) => arrays.push([`big${k}.${j}`, Uint8Array.from(speciesReached[j], (at) => b[at])]))
-  })
-  const plain: Plain = {
-    origin: p.origin,
-    climate: h.climate,
-    extinctions: h.extinctions,
-    log: h.log,
-    species: h.species.map((s) => s.id),
-    frames: h.kept.length,
-    domestications: l.domestications.map(({ kind, id, cell, at }) => ({ kind, id, cell, at })),
-  }
-  return pack(plain, arrays)
-}
-
-// Null where the bytes are not a packed history.
 export function unpackHistory(buffer: ArrayBuffer): PackedHistory | null {
   try {
     const { json, arrays } = unpack(buffer)

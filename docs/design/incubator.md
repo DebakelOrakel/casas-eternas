@@ -56,8 +56,9 @@ after, maybe in detMath or in the engine.
   step aside (T) for the demos. The flora and the fauna were steps 1 and 2
   until 2026-10-26; they are grown on the way in now, with the habitat's
   cells, as rows of the load panel (`ui/loadPanel`), their layers in the
-  panel in every step. The people's preview (the rules) follows in its
-  step, under the progress pill (`ui/progressPill`).
+  panel in every step. The people's history follows in its step, under the
+  progress pill (`ui/progressPill`): the one kept last, or one run (the
+  rules' preview before it went on 2026-10-27, DEC-0048).
 - **The layer panel** (`layerPanel.ts`, 2026-10-26, after the design
   canvas's "Overlays in Gruppen"): a column of its own beside the left
   one, shown and hidden by a button in it. Every layer, in every step:
@@ -128,7 +129,11 @@ every step. Why a mesh and why these choices:
 
 `incubatorWorker.ts` holds the habitat and what each step made, and
 answers the screen's requests in turn: the cells, then the flora, the
-fauna, the people, the settlement. A later step reads the earlier ones in
+fauna, the people, the settlement. Since 2026-10-27 all of it is computed
+by the history's crate, `casas-history`, its WASM build in the worker
+([DEC-0048](../decisions/incubator-history-engine.md)); the modules named
+below were its TypeScript and are gone, their reasoning kept in the
+crate's files. A later step reads the earlier ones in
 the worker (the people's boats from the trees, the settlement's fields and
 herds from the plants and the animals). Measured on Morvane: the cells 8 s,
 the flora 1.8 s, the fauna 1.6 s, the people 0.3 s, the settlement 0.3 s.
@@ -178,6 +183,11 @@ too. On Morvane 16 of 29 such cases end in the span; the others keep a
 larger part where people never came.
 
 ## The people
+
+The spread and the settlement below were the RULES: times per cell, the
+preview before a history and its frame. Since 2026-10-27 the people are
+the simulated history alone ([DES-0033](./incubator-simulation.md)), and
+the rules' code went with the port (DEC-0048); what follows records them.
 
 **The spread** (`people.ts`). From one origin (a click, or the land that
 feeds best in a tropical class), the cheapest ways in years over the

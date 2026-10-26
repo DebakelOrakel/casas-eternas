@@ -1,6 +1,9 @@
 import catalog from 'casas-history-data/catalog.json'
 import type { KoppenCode } from '../../generator/climate/koppen'
-import type { Trapezoid } from './habitat'
+
+// A trapezoid [a, b, c, d]: 0 below a, up to 1 at b, 1 to c, down to 0 at d
+// (casas-history habitat.rs trapezoid).
+export type Trapezoid = readonly [number, number, number, number]
 
 // THE INCUBATOR'S PLANTS (2026-10-25, a trial): what people eat or use of
 // the wild plants just before the bronze age, each a NICHE over the fields
