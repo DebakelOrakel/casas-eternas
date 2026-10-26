@@ -60,7 +60,7 @@ import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
 import { climateHistoryOf, ICE_REACH_KM } from './climateHistory'
 import { flowAt, routeOrder, routesOf, type RouteLine } from './peopleArrows'
 import type { SettleResult } from './settle'
-import { CAME_STEP, clearedAt, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
+import { CAME_STEP, clearedAt, clearedOf, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { cellPoint, centrePictures, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
 import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
@@ -902,11 +902,17 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const density = new Float32Array(n)
     const cleared = new Float32Array(n)
     const cell = new Float32Array(5)
+    // A history's people are its kept state's (frameNow, KEEP_YEARS
+    // apart), the clearing theirs; a cell they left is empty (2026-10-26;
+    // until then the rules' density from the history's times). The
+    // lifeways' shares stay the times' (sharesAt), a history's own.
+    const living = livingNow()
     for (let i = 0; i < n; i++) {
       if (!(people.arrival[i] <= peopleTime) || !people.land[i]) continue
+      if (living && living[i] <= 0) continue
       lifeway[i] = sharesAt(times, i, peopleTime, cell)
-      density[i] = densityAt(times, i, peopleTime, cell)
-      cleared[i] = clearedAt(times, i, peopleTime, cell)
+      density[i] = living ? living[i] : densityAt(times, i, peopleTime, cell)
+      cleared[i] = living ? clearedOf(cell, living[i]) : clearedAt(times, i, peopleTime, cell)
       for (let w = 1; w < 5; w++) shares[4 * i + w - 1] = Math.round(cell[w] * 255)
     }
     // The villages standing now (a history's may be left); the links
@@ -1578,6 +1584,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }
         frames.set(index, { people: answer.people, small: answer.small, big })
         animalsAtTime.clear()
+        settledAtTime = null
+        treesAtTime = null
         while (frames.size > FRAMES_KEPT) frames.delete(frames.keys().next().value!)
         showPlants()
       })

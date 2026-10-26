@@ -424,3 +424,10 @@ famines, 12 told (29 by the 10 000 alone, 92 by the share alone), most
 of them after the farming began; 2.7 M people lost over the span. With the
 year's variability whole and a famine from the second dry step: 71 814
 famines, 3 597 told.
+
+**The map shows the history's people** (the same day): in a history the
+density, the clearing and the cells lived in are the kept state's at the
+time shown (every 2 500 years, the last before it), no longer the rules'
+density from the history's times; a cell people left (the ice, the sea, a
+famine) is empty. The lifeways' shares stay the times' — the history's
+own arrival, fields and herds, weighed as the rules weigh them.

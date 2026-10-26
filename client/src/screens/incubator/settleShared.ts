@@ -110,6 +110,14 @@ export function clearedAt(s: SettleTimes, i: number, t: number, shares: Float32A
   return Math.min(CLEAR_MOST, ha / 100)
 }
 
+// The same for a cell of `density` people a km² as a history counts them
+// (simulation.ts): its density shared out by the lifeways' shares.
+export function clearedOf(shares: Float32Array, density: number): number {
+  let ha = 0
+  for (const way of [LIFEWAY.herders, LIFEWAY.farmers]) ha += shares[way] * density * CLEAR_HA[way]
+  return Math.min(CLEAR_MOST, ha / 100)
+}
+
 // THE PEOPLE'S PRESSURE ON AN ANIMAL in a cell, a factor on its numbers
 // (2026-10-26): the animals people hunt (game, fur) thin out with the
 // people's density, 1 / (1 + density / HUNT_HALF); the wild herbivores
