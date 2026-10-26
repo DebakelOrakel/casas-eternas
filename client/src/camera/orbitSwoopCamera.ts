@@ -120,6 +120,10 @@ export interface OrbitSwoopCamera {
   // opening view (φ0, farFill). `now`: there at once, not eased (a globe
   // just made).
   setHome: (home: { latitude: number; fill: number } | null, now?: boolean) => void
+  // Turn the globe, eased, until `point` (unit, in the globe's own frame,
+  // under its lean and spin) is at the view's centre, and keep it there
+  // while the globe spins, until a drag or reset() takes over.
+  lookAt: (point: Vec3) => void
   dispose: () => void
 }
 
@@ -229,6 +233,8 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
   // Set by reset(): the view eases back to (0, φ0) until it arrives or a
   // drag takes over.
   let returning = false
+  // Set by lookAt(): the point the view turns to, in the globe's own frame.
+  let aim: Vec3 | null = null
   let isDragging = false
   // The grabbed point, in the globe's own frame: it turns with the spin,
   // so a spinning globe keeps it.
@@ -255,6 +261,7 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
     if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
       isDragging = true
       returning = false
+      aim = null
       momentumLambda = 0
       momentumPhi = 0
       velocity.clear()
@@ -350,6 +357,10 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
         momentumLambda = 0
         momentumPhi = 0
       }
+    } else if (aim) {
+      const goal = solveGrab(basis, mulVec(frame, aim), basis.c, lambda, phi, latitudeLimit)
+      lambda += wrapAngle(goal.lambda - lambda) * easeFactor
+      phi += (goal.phi - phi) * easeFactor
     } else if (returning) {
       lambda = wrapAngle(lambda) * (1 - easeFactor)
       phi += (homePhi - phi) * easeFactor
@@ -368,11 +379,18 @@ export function createOrbitSwoopCamera(options: OrbitSwoopCameraOptions): OrbitS
     reset() {
       targetZoom = 0
       returning = true
+      aim = null
       momentumLambda = 0
       momentumPhi = 0
     },
     setTilted(tilted) {
       targetTilt = tilted ? 1 : 0
+    },
+    lookAt(point) {
+      aim = point
+      returning = false
+      momentumLambda = 0
+      momentumPhi = 0
     },
     setFreeArea(area) {
       freeArea = area ?? { left: 0, top: 0, right: 1, bottom: 1 }

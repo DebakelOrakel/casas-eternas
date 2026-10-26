@@ -52,13 +52,15 @@ import type { SettleResult } from './settle'
 import { densityAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { cellPoint, centrePictures, originPictures, sourcePictures, villagePictures, villageSymbols } from './incubatorSymbols'
-import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
+import type { ChartPoint } from '../../map/worldView'
 import type { PlantUse } from './plants'
 import type { PlantLayer, TreeLayer } from './flora'
 import type { IncubatorAnswer, IncubatorRequest } from './incubatorWorker'
+import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
 import type { WoodUse } from './trees'
 import { LEVEL_ECOLOGY } from './habitat'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
@@ -348,7 +350,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       stepBar.relabel()
       updateSteps()
       overlayList.relabel()
-      peoplePlayer.relabel()
+      chronicle.relabel()
+      sayChronicle()
       showPlants()
       cameraTools.relabel()
       mapScales.relabel()
@@ -357,6 +360,22 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   titleBar.setWorld(null)
 
   const sidebar = createSidebar(root, 'incubator.step')
+  // THE CHRONICLE (chroniclePanel.ts, DES-0031): the time and its playback
+  // on the right, in every step; a click on an event goes to its time and
+  // its place (eventPlaces).
+  const eventPlaces = new Map<ChronicleEvent, ChartPoint>()
+  const chronicle = createChroniclePanel(root, {
+    span: SPAN_YEARS,
+    onTime: (time) => {
+      peopleTime = time
+      if (people) showPlants()
+      sayCounts()
+    },
+    onEvent: (event) => {
+      const at = eventPlaces.get(event)
+      if (at) view?.lookAt(at)
+    },
+  })
 
   // THE STEPS. Each shows its own layers (stepLayers): the flora the
   // plants and the wood, the fauna the animals, the testing the trial's
@@ -390,6 +409,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // for the windows.
   function setFurniture(visible: boolean): void {
     sidebar.setVisible(visible)
+    chronicle.setVisible(visible)
     stepBar.setVisible(visible)
     plantLegend.element.hidden = !visible
   }
@@ -445,6 +465,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let peopleOrigin = -1
   // The people's end state (settle.ts), a proof of concept.
   let settled: SettleResult | null = null
+  // What the chronicle tells of the cells (cells.ts): each one's landmass
+  // and area, the landmasses' areas, and their rank by it (1 the largest),
+  // which names them.
+  let cellFacts: { landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; rank: Int32Array } | null = null
   // The composite last uploaded (showCharts), and the charts' version: a
   // new world's charts are a new composite.
   let uploadedBase = ''
@@ -532,56 +556,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   plantInfo.append(plantStatus)
   sidebar.body.append(plantInfo)
 
-  // THE TIME (steps 1 to 3): a slider over the span and under it the years
-  // ago shown with a play button and the speed, in the column's foot as the
-  // generator's months. Playing runs the span from its start, at 1×
-  // YEARS_A_SECOND years a second, a frame every PEOPLE_FRAME_MS. The people's layers follow it; the flora and the fauna do not
-  // yet.
-  const YEARS_A_SECOND = 100
-  const PEOPLE_FRAME_MS = 250
-  const peopleSection = document.createElement('section')
-  peopleSection.className = 'gen-overlays'
-  const peopleRow = document.createElement('div')
-  peopleRow.className = 'gen-month'
-  // The speed, on the row's left where the generator keeps a spare: a press
-  // steps through PLAY_SPEEDS.
-  const PLAY_SPEEDS = [0.5, 1, 2, 4]
-  let speedIndex = 1
-  const speedButton = document.createElement('button')
-  speedButton.type = 'button'
-  speedButton.className = 'gen-action-icon'
-  speedButton.dataset.help = 'incubator.people.speed'
-  speedButton.dataset.tAria = 'incubator.people.speed.label'
-  speedButton.style.font = 'inherit'
-  speedButton.style.fontSize = '13px'
-  const saySpeed = (): void => {
-    const speed = PLAY_SPEEDS[speedIndex]
-    speedButton.textContent = `${speed === 0.5 ? '½' : String(speed)}×`
-    speedButton.setAttribute('aria-label', `${t('incubator.people.speed.label')} ${speedButton.textContent}`)
-  }
-  saySpeed()
-  speedButton.addEventListener('click', () => {
-    speedIndex = (speedIndex + 1) % PLAY_SPEEDS.length
-    saySpeed()
-  })
-  const peopleLabel = document.createElement('span')
-  peopleLabel.className = 'gen-month__label'
-  const peopleButton = document.createElement('button')
-  peopleButton.type = 'button'
-  peopleButton.className = 'gen-action-icon'
-  peopleButton.dataset.help = 'incubator.people.play'
-  const peopleIcon = document.createElement('img')
-  peopleIcon.alt = ''
-  peopleButton.append(peopleIcon)
-  peopleRow.append(speedButton, peopleLabel, peopleButton)
-  const peopleSlider = document.createElement('input')
-  peopleSlider.type = 'range'
-  peopleSlider.className = 'gen-param__range'
-  peopleSlider.min = '0'
-  peopleSlider.max = String(SPAN_YEARS)
-  peopleSlider.step = '100'
-  peopleSection.append(peopleSlider, peopleRow)
-  sidebar.foot.append(peopleSection)
   // THE ANIMALS AT THE TIME SHOWN (2026-10-26): as the fauna placed them
   // before people came; where people live by then, under their pressure by
   // the lifeway and the density of that time (settleShared.ts); a big game
@@ -651,56 +625,63 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return animals.map((a) => ({ ...a, ...animalAtTime(a) }))
   }
 
-  const peoplePlayer = (() => {
-    let timer: ReturnType<typeof setInterval> | null = null
-    const sayButton = (): void => {
-      const key: TKey = timer ? 'incubator.people.play.labelActive' : 'incubator.people.play.label'
-      peopleButton.dataset.tAria = key
-      peopleButton.setAttribute('aria-label', t(key))
-      peopleButton.setAttribute('aria-pressed', String(timer !== null))
-      peopleIcon.src = timer ? '/icons/stop.png' : '/icons/play.png'
+  // THE CHRONICLE's texts and counts (chroniclePanel.ts): the events of the
+  // people's spread and settlement, said in the language active now; the
+  // people, the villages and the centres at the time shown.
+  const CROSSING_LEAST_KM2 = 100_000
+  const BOAT_RGB = [40, 120, 190] as const
+  function sayChronicle(): void {
+    eventPlaces.clear()
+    const events: ChronicleEvent[] = []
+    const place = (event: ChronicleEvent, cell: number): void => {
+      events.push(event)
+      if (overlay) eventPlaces.set(event, cellPoint(cell, overlay.u, overlay.v))
     }
-    const say = (): void => {
-      const ago = Math.round((PEOPLE_AGO_AT_START - peopleTime) / 100) * 100
-      peopleLabel.textContent = t('incubator.people.time', { years: ago.toLocaleString(getLocale()) })
-    }
-    const player = {
-      show(time: number): void {
-        peopleTime = Math.min(SPAN_YEARS, Math.max(0, time))
-        peopleSlider.value = String(peopleTime)
-        say()
-        if (people) showPlants()
-      },
-      stop(): void {
-        if (timer) clearInterval(timer)
-        timer = null
-        sayButton()
-      },
-      relabel(): void {
-        say()
-        sayButton()
-        saySpeed()
-      },
-    }
-    peopleButton.addEventListener('click', () => {
-      if (timer) {
-        player.stop()
-        return
+    const landmassName = (m: number): string => t('incubator.chronicle.landmass', { n: String(cellFacts ? cellFacts.rank[m] : m + 1) })
+    if (settled && cellFacts) {
+      for (let k = 0; k < settled.centres.length; k += 3) {
+        const cell = settled.centres[k]
+        const farm = settled.centres[k + 2] === LIFEWAY.farmers
+        place({
+          time: settled.centres[k + 1],
+          icon: farm ? '/icons/wheat.png' : '/icons/pastures.png',
+          rgb: LIFEWAY_COLOURS[farm ? LIFEWAY.farmers : LIFEWAY.herders],
+          title: t(farm ? 'incubator.chronicle.event.farmCentre' : 'incubator.chronicle.event.herdCentre'),
+          detail: landmassName(cellFacts.landmass[cell]),
+        }, cell)
       }
-      if (peopleTime >= SPAN_YEARS) player.show(0)
-      timer = setInterval(() => {
-        player.show(peopleTime + YEARS_A_SECOND * (PEOPLE_FRAME_MS / 1000) * PLAY_SPEEDS[speedIndex])
-        if (peopleTime >= SPAN_YEARS) player.stop()
-      }, PEOPLE_FRAME_MS)
-      sayButton()
-    })
-    peopleSlider.addEventListener('input', () => {
-      player.stop()
-      player.show(Number(peopleSlider.value))
-    })
-    return player
-  })()
-  peoplePlayer.relabel()
+    }
+    if (people && cellFacts) {
+      const c = people.crossings
+      for (let k = 0; k < c.length; k += 4) {
+        const km2 = cellFacts.landmassKm2[c[k]]
+        if (km2 < CROSSING_LEAST_KM2) continue
+        place({
+          time: c[k + 2],
+          icon: '/icons/boat.png',
+          rgb: BOAT_RGB,
+          title: t('incubator.chronicle.event.crossing', { n: String(cellFacts.rank[c[k]]) }),
+          detail: t('incubator.chronicle.crossingDetail', { area: Math.round(km2).toLocaleString(getLocale()), km: Math.round(c[k + 3]).toLocaleString(getLocale()) }),
+        }, c[k + 1])
+      }
+    }
+    chronicle.setEvents(events)
+    chronicle.setCurve(settled ? settled.population : null)
+    sayCounts()
+  }
+  function sayCounts(): void {
+    const now = settledNow()
+    let persons = 0
+    if (now && cellFacts) for (let i = 0; i < now.density.length; i++) if (now.density[i] > 0) persons += now.density[i] * cellFacts.areaKm2[i]
+    let centres = 0
+    if (settled) for (let k = 0; k < settled.centres.length; k += 3) if (settled.centres[k + 1] <= peopleTime) centres++
+    const say = (n: number): string => (now ? Math.round(n).toLocaleString(getLocale()) : '–')
+    chronicle.setStats([
+      { label: t('incubator.chronicle.people'), value: say(persons) },
+      { label: t('incubator.chronicle.villages'), value: say(now ? now.villages.length / 2 : 0) },
+      { label: t('incubator.chronicle.centres'), value: say(centres) },
+    ])
+  }
   // A click on the map (not a drag) sets the people's origin there.
   let pressAt: { x: number; y: number } | null = null
   const onPress = (e: PointerEvent): void => {
@@ -958,6 +939,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const cells = await work(t('incubator.step.flora.label'), cellsInput, 'cells')
     if (!cells) return
     overlay = { data: new Uint8ClampedArray(cells.owners.length * 4), width: CHART_WIDTH / OVERLAY_DIVISOR, height: CHART_HEIGHT / OVERLAY_DIVISOR, owners: cells.owners, count: cells.count, u: cells.u, v: cells.v }
+    const rank = new Int32Array(cells.landmassKm2.length)
+    Array.from(cells.landmassKm2.keys()).sort((a, b) => cells.landmassKm2[b] - cells.landmassKm2[a]).forEach((m, k) => (rank[m] = k + 1))
+    cellFacts = { landmass: cells.landmass, landmassKm2: cells.landmassKm2, areaKm2: cells.areaKm2, rank }
     const flora = await work(t('incubator.step.flora.label'), { type: 'flora' }, 'flora')
     if (!flora) return
     plants = { layers: flora.plants, trees: flora.trees }
@@ -975,9 +959,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!overlay) return
     const done = await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people')
     if (!done || !overlay) return
-    people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin }
+    people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings }
     peopleArrows = arrowsOf(people, overlay.u, overlay.v, overlay.width, overlay.height)
     showPlants()
+    sayChronicle()
     const result = await work(t('incubator.step.people.label'), { type: 'settle' }, 'settle')
     if (!result) return
     const { type: _type, ms: _ms, ...rest } = result
@@ -985,6 +970,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     settledAtTime = null
     animalsAtTime.clear()
     showPlants()
+    sayChronicle()
   }
   // The picks' plants, wood or animals on the map, and their legend.
   function showPlants(): void {
@@ -1062,7 +1048,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const routes = routesOn() ? [{ label: t('incubator.people.routes.label'), rgb: [...PEOPLE_ROUTE] as [number, number, number], shape: 'line' as const }] : []
         // The ramp as the years before the game the land was settled.
         return [spreadOn
-          ? { type: 'gradient', title: t('incubator.people.time', { years: '…' }), unit: '', stops: PEOPLE_AGE_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })), items: routes }
+          ? { type: 'gradient', title: t('incubator.chronicle.year', { year: '…' }), unit: '', stops: PEOPLE_AGE_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })), items: routes }
           : { type: 'swatches', title: t('incubator.step.people.label'), items: routes }]
       },
       probe: () => [],
@@ -1302,8 +1288,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     people = null
     settled = null
     peopleOrigin = -1
-    peoplePlayer.stop()
-    peoplePlayer.show(SPAN_YEARS)
+    cellFacts = null
+    chronicle.stop()
+    chronicle.show(SPAN_YEARS)
+    sayChronicle()
     plantStatus.textContent = ''
     plantLegend.refresh()
     if (regionBox.checked) void showRegions()
@@ -1416,8 +1404,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const rows = [{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }]
     if (onPeople()) rows.push(...PEOPLE_ROWS)
     overlayList.setRows(rows, onPeople() ? [SETTLEMENT_PICKS, RESOURCE_PICKS] : picks)
-    peopleSection.hidden = onTesting()
-    if (onTesting()) peoplePlayer.stop()
+    if (onTesting()) chronicle.stop()
     regionSection.hidden = !onTesting()
     showCharts()
     plantLegend.refresh()
@@ -1475,7 +1462,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       helpTooltip.dispose()
       progressPill.dispose()
       incubator.dispose()
-      peoplePlayer.stop()
+      chronicle.dispose()
       ctx.canvas.removeEventListener('pointerdown', onPress)
       ctx.canvas.removeEventListener('pointerup', onRelease)
       hoverTooltip.dispose()

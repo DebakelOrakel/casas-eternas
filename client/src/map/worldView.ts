@@ -114,5 +114,8 @@ export interface WorldView {
   setPanEnabled(enabled: boolean): void
   setDeepZoom(enabled: boolean): void
   resetCamera(): void
+  // Turn or pan the view, eased, until `at` is at its centre; a drag takes
+  // over.
+  lookAt(at: ChartPoint): void
   dispose(): void
 }

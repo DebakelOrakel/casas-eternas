@@ -168,6 +168,9 @@ export interface GeneratorCamera {
   // the yaw and the tilt (radians; the regime clamps it). A debug
   // instrument — a screenshot ladder needs the same views every time.
   setView: (view: { x: number; z: number; zoom: number; yaw?: number; tilt?: number }) => void
+  // Pan, eased, until the focus is at (x, z), the shorter way round the
+  // torus; a drag or a key press takes over.
+  panTo: (x: number, z: number) => void
 }
 
 // Wrap an angle into (-π, π] so the automatic return-to-north always takes
@@ -273,6 +276,8 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
   // it plus tilt/yaw/height.
   let focusX = 0
   let focusZ = 0
+  // Set by panTo(): where the focus eases to.
+  let panGoal: { x: number; z: number } | null = null
   // The tilt/yaw actually applied this frame vs. what the user asked for —
   // see the envelope logic in the render observer.
   let tiltAngle = 0
@@ -351,6 +356,7 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
   const pointerObserver: Observer<PointerInfo> | null = scene.onPointerObservable.add((pointerInfo) => {
     if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
       isDragging = true
+      panGoal = null
       lastPointerX = pointerInfo.event.clientX
       lastPointerY = pointerInfo.event.clientY
     } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
@@ -528,7 +534,17 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
     // extent so a key press always crosses the same fraction of the view
     // regardless of zoom or regime.
     let panned = false
+    if (panGoal) {
+      // The shorter way round each axis.
+      const dx = panGoal.x - focusX - worldWidth * Math.round((panGoal.x - focusX) / worldWidth)
+      const dz = panGoal.z - focusZ - worldHeight * Math.round((panGoal.z - focusZ) / worldHeight)
+      if (Math.hypot(dx, dz) < viewWidthAtFocus * 1e-4) panGoal = null
+      focusX += dx * easeFactor
+      focusZ += dz * easeFactor
+      panned = true
+    }
     if (pressedKeys.size > 0) {
+      panGoal = null
       const step = viewWidthAtFocus * keyPanViewFractionPerSecond * dt
       const up = screenUp()
       const right = screenRight()
@@ -626,6 +642,9 @@ export function createGeneratorCamera(options: GeneratorCameraOptions): Generato
     },
     getTilt() {
       return tiltAngle
+    },
+    panTo(x, z) {
+      panGoal = { x, z }
     },
     setView(view) {
       focusX = view.x

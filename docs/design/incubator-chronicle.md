@@ -13,7 +13,7 @@ summary.de: Eine Zeitleiste für die Wiedergabe des Inkubators — die Zeit, die
   deterministisch sind; die Chronik wird abgeleitet, nicht aufgezeichnet.
   Eine erste Form zeigt nur Ackerbau, Viehzucht und Boote.
 area: ui
-stage: idea
+stage: building
 createdAt: 2026-10-26
 related: [DES-0023, DES-0032]
 ---
@@ -95,16 +95,25 @@ A place has no name yet: the text uses a number ("Village 1", "Village
 - **Events without a model:** pottery, walls, droughts.
 - **The search and the export.**
 
-## Open questions
+## Answered (2026-10-26)
 
-1. Where the playback goes: from the left column's foot into the
-   chronicle, so that there is one place for it. And in which steps the
-   chronicle shows: the playback runs in steps 1 to 3.
-2. A click on an event: only to its time, or the camera to its place too.
-   The event's cell is known.
-3. The boat events need the crossings in the result of `people.ts`: today
-   it has `from` per cell, not which way was over the sea.
+1. **The playback** moved from the left column's foot into the chronicle,
+   which shows in every step. Its slider stays under the year.
+2. **A click on an event** goes to its time, and the view turns or pans to
+   its cell (`WorldView.lookAt`: the globe's rig turns as a drag would,
+   `solveGrab`; the flat map pans the shorter way round).
+3. **The crossings**: `people.ts` gives, per landmass first reached over
+   open water, the cell landed on, the time and the widest stretch of open
+   water on the way (`crossings`). A landmass first reached over land or a
+   land bridge has none. On Morvane 54 landmasses; the chronicle names those
+   of CROSSING_LEAST_KM2 (100 000 km²) or more, 8.
+4. **No filter, no search, no export** while there are three kinds.
+
+A landmass is named by its rank by area, 1 the largest. The axis carries
+the people over the span (`settle.ts` population, every 500 years, on a
+logarithmic scale) and the handle; not the epochs yet.
 
 ## Status
 
-Idea, 2026-10-26. Nothing built.
+Building, 2026-10-26: the panel, the three kinds of events, the travel to
+them.

@@ -1,0 +1,300 @@
+/* The incubator's chronicle (chroniclePanel.ts): the right column, after the
+   design canvas (Inkubator.dc.html), light. Between the title bar and the
+   step bar, as the left column. */
+.chronicle {
+  position: fixed;
+  top: var(--title-bar-height, 0px);
+  bottom: var(--step-bar-height, 0px);
+  right: 0;
+  width: var(--right-sidebar-width, 392px);
+  z-index: 3;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--dc-line);
+  background: var(--dc-panel);
+  color: var(--dc-text);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+.chronicle[hidden] {
+  display: none;
+}
+
+.chronicle__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  flex-shrink: 0;
+  padding: 0 12px 0 18px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--dc-line);
+}
+
+.chronicle__title {
+  flex-grow: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dc-strong);
+}
+
+.chronicle__count,
+.chronicle__when,
+.chronicle__year,
+.chronicle__stat-value {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.chronicle__count {
+  font-size: 11.5px;
+  color: var(--dc-muted);
+}
+
+.chronicle__present {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--dc-line);
+}
+
+.chronicle__year {
+  font-size: 26px;
+  line-height: 1;
+  color: var(--dc-strong);
+}
+
+.chronicle__controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chronicle__button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--dc-line2);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--dc-text2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.chronicle__button img {
+  width: 18px;
+  height: 18px;
+}
+
+.chronicle__button:hover,
+.chronicle__speeds button:hover {
+  background: var(--dc-hover);
+}
+
+.chronicle__speeds {
+  margin-left: auto;
+  height: 26px;
+  display: flex;
+  border: 1px solid var(--dc-line2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.chronicle__speeds button {
+  padding: 0 10px;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  background: transparent;
+  color: var(--dc-muted);
+  cursor: pointer;
+}
+
+.chronicle__speeds button + button {
+  border-left: 1px solid var(--dc-line2);
+}
+
+.chronicle__speeds button[aria-pressed='true'] {
+  background: var(--dc-strong);
+  color: var(--dc-panel);
+}
+
+.chronicle__slider {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--dc-accent);
+}
+
+.chronicle__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--dc-line);
+}
+
+.chronicle__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chronicle__stat-label {
+  font-size: 11px;
+  color: var(--dc-muted);
+}
+
+.chronicle__stat-value {
+  font-size: 15px;
+  color: var(--dc-strong);
+}
+
+.chronicle__body {
+  flex-grow: 1;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px 16px 16px;
+}
+
+.chronicle__axis-box {
+  position: relative;
+  flex-shrink: 0;
+  width: 26px;
+  margin: 10px 0;
+}
+
+.chronicle__axis {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.chronicle__axis-line {
+  stroke: var(--dc-line2);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.chronicle__axis-done {
+  stroke: var(--dc-accent);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+
+.chronicle__axis-curve {
+  fill: var(--dc-accent);
+  opacity: 0.18;
+}
+
+.chronicle__handle {
+  position: absolute;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid var(--dc-panel);
+  background: var(--dc-accent);
+}
+
+.chronicle__list {
+  flex-grow: 1;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chronicle__event {
+  display: grid;
+  grid-template-columns: 26px 54px 1fr;
+  align-items: start;
+  gap: 10px;
+  width: 100%;
+  min-height: 54px;
+  padding: 9px 10px 9px 4px;
+  border: 0;
+  border-radius: 2px;
+  text-align: left;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.chronicle__event:hover {
+  background: var(--dc-hover);
+}
+
+.chronicle__event--later {
+  opacity: 0.55;
+}
+
+.chronicle__dot {
+  justify-self: center;
+  margin-top: 3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 5px;
+}
+
+.chronicle__when {
+  font-size: 11.5px;
+  color: var(--dc-muted);
+  padding-top: 2px;
+}
+
+.chronicle__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.chronicle__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chronicle__icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.chronicle__name {
+  flex-grow: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dc-text);
+}
+
+.chronicle__tag {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  color: var(--dc-muted);
+}
+
+.chronicle__tag[hidden] {
+  display: none;
+}
+
+.chronicle__tag--now {
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
+  text-transform: uppercase;
+}
+
+.chronicle__detail {
+  font-size: 12px;
+  color: var(--dc-muted);
+}

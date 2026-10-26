@@ -112,23 +112,22 @@ export function paintRaster(o: OverlayRaster, rgba: Uint8ClampedArray): void {
 // The people's colours: the land by when it was settled, years before the
 // game, dark the first, light the last (a ramp); the arrows. The first try
 // drew the front bright and the land behind it in one colour.
+// The spread's colour by the year people came (years after the departure):
+// the earliest dark, the latest light.
 export const PEOPLE_AGE_STOPS: readonly { value: number; rgb: [number, number, number] }[] = [
-  { value: 5_000, rgb: [250, 225, 120] },
-  { value: 25_000, rgb: [240, 150, 55] },
-  { value: 45_000, rgb: [200, 75, 40] },
-  { value: 70_000, rgb: [110, 25, 35] },
+  { value: 0, rgb: [110, 25, 35] },
+  { value: 25_000, rgb: [200, 75, 40] },
+  { value: 45_000, rgb: [240, 150, 55] },
+  { value: 65_000, rgb: [250, 225, 120] },
 ]
 export const PEOPLE_ROUTE: readonly [number, number, number] = [90, 40, 25]
-// The years before the game the people set out (SPAN_YEARS later, they
-// stand 5 000 years before it).
-export const PEOPLE_AGO_AT_START = 70_000
 
-function ageColour(ago: number): [number, number, number] {
+function ageColour(year: number): [number, number, number] {
   const stops = PEOPLE_AGE_STOPS
-  if (ago <= stops[0].value) return stops[0].rgb
+  if (year <= stops[0].value) return stops[0].rgb
   for (let k = 1; k < stops.length; k++) {
-    if (ago <= stops[k].value) {
-      const f = (ago - stops[k - 1].value) / (stops[k].value - stops[k - 1].value)
+    if (year <= stops[k].value) {
+      const f = (year - stops[k - 1].value) / (stops[k].value - stops[k - 1].value)
       const a = stops[k - 1].rgb
       const b = stops[k].rgb
       return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
@@ -147,7 +146,7 @@ export function paintPeople(o: OverlayRaster, people: PeopleResult, arrows: read
       const cell = o.owners[k]
       const at = people.arrival[cell]
       if (!(at <= t) || !people.land[cell]) continue
-      const [r, g, b] = ageColour(PEOPLE_AGO_AT_START - at)
+      const [r, g, b] = ageColour(at)
       put(o, 4 * k, r, g, b, 0.7)
     }
   }

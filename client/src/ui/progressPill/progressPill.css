@@ -8,7 +8,7 @@
 .compute-progress {
   position: fixed;
   bottom: calc(1.25rem + var(--step-bar-height, 0px));
-  left: calc(50% + var(--sidebar-width, 0px) / 2);
+  left: calc(50% + var(--sidebar-width, 0px) / 2 - var(--right-sidebar-width, 0px) / 2);
   transform: translateX(-50%);
   z-index: 3;
   display: inline-flex;

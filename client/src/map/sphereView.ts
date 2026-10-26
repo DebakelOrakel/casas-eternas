@@ -25,7 +25,7 @@ import { buildGlobeRibbons } from './globeRibbons'
 import { RibbonWidthMaterialPlugin } from './ribbonWidthMaterialPlugin'
 import { presenceThreshold, RIVER_RGB } from './riverWidth'
 import { createSymbolLayerSet } from './symbolLayer'
-import { GLOBE_SYMBOL_LIFT, globeChartOfFrame, globeSymbolFrame, globeSymbolSegments, globeSymbolVertex } from './symbolPlacement'
+import { GLOBE_SYMBOL_LIFT, globeChartOfFrame, globeFrameOfChart, globeSymbolFrame, globeSymbolSegments, globeSymbolVertex } from './symbolPlacement'
 import { WaterField, WaterMaterialPlugin } from './waterMaterialPlugin'
 import { createMapOverlay, OverlayMaterialPlugin } from './overlayMaterialPlugin'
 import type { ChartPoint, WorldView } from './worldView'
@@ -540,6 +540,7 @@ export function createGlobeWorldView(options: GlobeWorldViewOptions): GlobeWorld
       spinRate = (2 * Math.PI) / (SPIN_SECONDS_PER_TURN * Math.max(1, hours) / SPIN_REFERENCE_DAY_HOURS)
     },
     setTilted: (tilted) => rig.setTilted(tilted),
+    lookAt: (at) => rig.lookAt(globeFrameOfChart(at)),
     setFreeArea: (area) => rig.setFreeArea(area),
     setHome(view, now) {
       rig.setHome(view === 'profile' ? { latitude: 0, fill: PROFILE_FILL } : null, now)

@@ -23,7 +23,7 @@ export type IncubatorRequest =
   | { type: 'settle' }
 
 export type IncubatorAnswer =
-  | { type: 'cells'; count: number; owners: Int32Array; u: Float32Array; v: Float32Array; land: Uint8Array; ms: number }
+  | { type: 'cells'; count: number; owners: Int32Array; u: Float32Array; v: Float32Array; land: Uint8Array; landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; ms: number }
   | { type: 'flora'; plants: PlantLayer[]; trees: TreeLayer[]; ms: number }
   | { type: 'fauna'; animals: AnimalLayer[]; ms: number }
   | ({ type: 'people'; ms: number } & PeopleResult)
@@ -59,8 +59,8 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       flora = null
       animals = null
       people = null
-      const answer: IncubatorAnswer = { type: 'cells', count: habitat.count, owners: built.owners, u: habitat.u.slice(), v: habitat.v.slice(), land: habitat.land.slice(), ms: ms() }
-      worker.postMessage(answer, [built.owners.buffer, answer.u.buffer, answer.v.buffer, answer.land.buffer])
+      const answer: IncubatorAnswer = { type: 'cells', count: habitat.count, owners: built.owners, u: habitat.u.slice(), v: habitat.v.slice(), land: habitat.land.slice(), landmass: habitat.landmass.slice(), landmassKm2: habitat.landmassKm2.slice(), areaKm2: habitat.areaKm2.slice(), ms: ms() }
+      worker.postMessage(answer, [built.owners.buffer, answer.u.buffer, answer.v.buffer, answer.land.buffer, answer.landmass.buffer, answer.landmassKm2.buffer, answer.areaKm2.buffer])
       return
     }
     if (!habitat) throw new Error('no cells yet')
@@ -83,8 +83,8 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       const boat = new Uint8Array(h.count)
       for (const tree of flora.trees) if (tree.woods.includes('boat')) for (let i = 0; i < h.count; i++) if (tree.codes[i] >= PLANT_SUITS_CODE) boat[i] = 1
       people = spreadPeople(h, h.carrying ?? new Float32Array(h.count).fill(0.4), boat, ask.origin)
-      const out = { ...people, arrival: people.arrival.slice(), land: people.land.slice(), from: people.from.slice(), flow: people.flow.slice() }
-      worker.postMessage({ type: 'people', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer])
+      const out = { ...people, arrival: people.arrival.slice(), land: people.land.slice(), from: people.from.slice(), flow: people.flow.slice(), crossings: people.crossings.slice() }
+      worker.postMessage({ type: 'people', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer])
       return
     }
     if (!flora || !animals || !people) throw new Error('the settlement needs the flora, the fauna and the people first')
@@ -93,7 +93,7 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
     for (const plant of flora.plants) if (FARM_PLANTS.has(plant.id)) for (let i = 0; i < h.count; i++) if (plant.codes[i] >= PLANT_SUITS_CODE && farmPlant[i] < 255) farmPlant[i]++
     for (const animal of animals) if (HERD_ANIMALS.has(animal.id)) for (let i = 0; i < h.count; i++) if (animal.codes[i] >= 2 && herdAnimal[i] < 255) herdAnimal[i]++
     const result = settle(h, { arrival: people.arrival, farmPlant, herdAnimal, origin: people.origin, animals, seed })
-    worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
+    worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
   } catch (e) {
     worker.postMessage({ type: 'failed', message: String(e) } satisfies IncubatorAnswer)
   }

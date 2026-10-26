@@ -4,7 +4,7 @@ import type { ElevationSurface } from './elevationSurface'
 import { MAP_WORLD_HEIGHT, MAP_WORLD_WIDTH, RELIEF_FINE_ZOOM, RELIEF_MIN_ZOOM } from './mapSceneSettings'
 import { pickMapPlane } from './ScaleBar'
 import { createSymbolLayerSet } from './symbolLayer'
-import { type FlatChart, flatChartOfScene, flatSymbolFrame, flatSymbolVertex } from './symbolPlacement'
+import { type FlatChart, flatChartOfScene, flatSceneOfChart, flatSymbolFrame, flatSymbolVertex } from './symbolPlacement'
 import { createToroidalMapView, LABEL_RENDERING_GROUP } from './ToroidalMapView'
 import { createToroidalRibbonOverlay } from './ToroidalRibbonOverlay'
 import type { WorldView } from './worldView'
@@ -192,6 +192,10 @@ export function createFlatWorldView(options: FlatWorldViewOptions): FlatWorldVie
     setDeepZoom: (enabled) => camera.setDeepZoomEnabled(enabled),
     // Not asked for the flat map yet (DEC-0035, "what this does not decide").
     resetCamera: () => {},
+    lookAt(at) {
+      const { x, z } = flatSceneOfChart(chart, at)
+      camera.panTo(x, z)
+    },
     chartAt(screenX, screenY) {
       // The plane, analytically (ScaleBar.ts, pickMapPlane) — never a pick
       // against the relief, which cost milliseconds a ray at deep zoom: the

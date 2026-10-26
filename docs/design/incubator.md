@@ -68,9 +68,11 @@ after, maybe in detMath or in the engine.
   generator's.
 - **The tooltip** on hover: the height, the Köppen class, the biome, the
   carrying capacity, the arable land, and each active layer's own rows.
-- **The time.** A slider over 65 000 years with play and a speed (1× =
-  100 years a second), at the foot of the left column; the chronicle
-  ([DES-0031](./incubator-chronicle.md)) is to take it over.
+- **The time.** Counted up from the people's departure, year 0 to
+  65 000, in the chronicle on the right
+  ([DES-0031](./incubator-chronicle.md)): the playback at 1× / 4× / 16×
+  (1× = 100 years a second), the counts, the events, a click to travel to
+  one.
 
 ## The cells
 

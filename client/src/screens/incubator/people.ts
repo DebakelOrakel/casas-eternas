@@ -53,6 +53,11 @@ export interface PeopleResult {
   // How many cells were reached through each: the routes' weight.
   flow: Float32Array
   origin: number
+  // [landmass, cell, time, km] a landmass people first came to over open
+  // water (by boat, or a crossing short enough without), the cell they
+  // landed on, when, and the open water's widest stretch on the way, km.
+  // Not one first reached over land or a land bridge.
+  crossings: Float32Array
 }
 
 // The front over land, km a year: on land that feeds nobody, and on land
@@ -102,7 +107,7 @@ export function spreadPeople(h: Habitat, carrying: Float32Array, boat: Uint8Arra
   const arrival = new Float32Array(n).fill(Infinity)
   const from = new Int32Array(n).fill(-1)
   const flow = new Float32Array(n)
-  if (origin < 0) return { arrival, land, from, flow, origin }
+  if (origin < 0) return { arrival, land, from, flow, origin, crossings: new Float32Array(0) }
   const time = new Float64Array(n).fill(Infinity)
   // The open water crossed since the last land, km, and whether the
   // people there have boats.
@@ -164,5 +169,28 @@ export function spreadPeople(h: Habitat, carrying: Float32Array, boat: Uint8Arra
     if (land[i]) flow[i] += 1
     if (from[i] >= 0) flow[from[i]] += flow[i]
   }
-  return { arrival, land, from, flow, origin }
+  return { arrival, land, from, flow, origin, crossings: crossingsOf(h, time, from, water) }
+}
+
+// The crossings (PeopleResult): each landmass's first cell reached, and
+// the way back from it to the land of another landmass; open water on that
+// way makes it a crossing.
+function crossingsOf(h: Habitat, time: Float64Array, from: Int32Array, water: Float32Array): Float32Array {
+  const first = new Int32Array(h.landmasses).fill(-1)
+  for (let i = 0; i < h.count; i++) {
+    const m = h.landmass[i]
+    if (m >= 0 && time[i] < Infinity && (first[m] < 0 || time[i] < time[first[m]])) first[m] = i
+  }
+  const crossings: number[] = []
+  for (let m = 0; m < h.landmasses; m++) {
+    const landed = first[m]
+    if (landed < 0) continue
+    let km = 0
+    for (let c = from[landed]; c >= 0; c = from[c]) {
+      if (h.land[c] && h.landmass[c] !== m) break
+      if (!h.land[c]) km = Math.max(km, water[c])
+    }
+    if (km > 0) crossings.push(m, landed, time[landed], km)
+  }
+  return Float32Array.from(crossings)
 }

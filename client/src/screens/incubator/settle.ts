@@ -79,6 +79,9 @@ export interface SettleResult {
   herdSuit: Float32Array
   fishSuit: Float32Array
   carrying: Float32Array
+  // The people over the span, every POPULATION_STEP years from the
+  // departure: the density over the land reached, times its cells' areas.
+  population: Float32Array
   // [cell, time, lifeway] a centre of the farming (LIFEWAY.farmers) or of
   // the herding (LIFEWAY.herders), the time it began there.
   centres: Float32Array
@@ -130,6 +133,7 @@ const MEGAFAUNA: Record<string, number> = { elephant: 0.8, horse: 0.6, bison: 0.
 const EXTINCT_AFTER = 2000
 const ISLAND_KM2 = 1_000_000
 const ISLAND_CHANCE = 1.5
+export const POPULATION_STEP = 500
 
 
 // The cells within `rings` rings of cell `c`, itself first.
@@ -314,6 +318,16 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
     lifeway[i] = sharesAt(times, i, SPAN_YEARS, shares)
     density[i] = densityAt(times, i, SPAN_YEARS, shares)
   }
+  // The people over the span.
+  const population = new Float32Array(Math.floor(SPAN_YEARS / POPULATION_STEP) + 1)
+  for (let i = 0; i < n; i++) {
+    if (!land[i] || !(arrival[i] < Infinity)) continue
+    for (let k = Math.ceil(arrival[i] / POPULATION_STEP); k < population.length; k++) {
+      const t = k * POPULATION_STEP
+      sharesAt(times, i, t, shares)
+      population[k] += densityAt(times, i, t, shares) * h.areaKm2[i]
+    }
+  }
   const villageCells: number[] = []
   const villageWays: number[] = []
   for (const way of [2, 4]) {
@@ -388,7 +402,7 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
   villageCells.forEach((c, v) => villages.push(c, villageWays[v]))
   const villageFrom = Float32Array.from(villageCells, (c, v) => lifewaySince(times, c, villageWays[v]))
   const extinctions = dyingOut(h, input)
-  return { lifeway, density, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm, centres: Float32Array.from(centres), villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: h.landmass.slice() }
+  return { lifeway, density, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm, population, centres: Float32Array.from(centres), villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: h.landmass.slice() }
 }
 
 // 5. The big game dying out where people came new.
