@@ -49,9 +49,9 @@ import type { PeopleResult } from './people'
 import { SPAN_YEARS } from './peopleShared'
 import { arrowsOf, type PeopleArrow } from './peopleArrows'
 import type { SettleResult } from './settle'
-import { clearedAt, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
+import { CAME_STEP, clearedAt, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
-import { cellPoint, centrePictures, originPictures, sourcePictures, villagePictures, villageSymbols } from './incubatorSymbols'
+import { cellPoint, centrePictures, crossingPictures, crossingSymbols, originPictures, sourcePictures, villagePictures, villageSymbols } from './incubatorSymbols'
 import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
@@ -352,6 +352,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       overlayList.relabel()
       chronicle.relabel()
       sayChronicle()
+      // The crossings' years are pictures: made again in the new language.
+      crossingWays = null
       showPlants()
       cameraTools.relabel()
       mapScales.relabel()
@@ -626,32 +628,22 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return settledAtTime
   }
   // THE DOMESTICATES AT THE TIME SHOWN (2026-10-26): per crop and herd
-  // animal, the cells where people sow or keep it by then — where the
-  // fields, the herds, came from a centre that tamed it (settle.ts,
-  // farmFrom, herdFrom) and its niche suits the cell, reached by the wild
-  // one or not. Made for the time and kept for it.
+  // animal, the cells where people sow or keep it by then — where its wave
+  // came by then (settle.ts, the domesticates; one a centre that tamed it).
+  // Made for the time and kept for it.
   let keptAtTime: { time: number; crops: Map<string, Uint8Array>; herds: Map<string, Uint8Array> } | null = null
   function keptNow(): { crops: Map<string, Uint8Array>; herds: Map<string, Uint8Array> } | null {
-    if (!settled || !plants || !animals) return null
+    if (!settled) return null
     if (keptAtTime?.time === peopleTime) return keptAtTime
-    const s = settled
-    const ofCentre = (kind: 'plant' | 'animal'): string[][] => Array.from({ length: s.centres.length / 3 }, (_, k) => s.domestications.filter((d) => d.kind === kind && d.cell === s.centres[3 * k]).map((d) => d.id))
-    const mark = (into: Map<string, Uint8Array>, at: Float32Array, from: Int8Array, ofIt: string[][], codesOf: (id: string) => Uint8Array | undefined, suits: (code: number) => boolean): void => {
-      for (let i = 0; i < at.length; i++) {
-        if (!(at[i] <= peopleTime) || from[i] < 0) continue
-        for (const id of ofIt[from[i]]) {
-          const codes = codesOf(id)
-          if (!codes || !suits(codes[i])) continue
-          let mask = into.get(id)
-          if (!mask) into.set(id, (mask = new Uint8Array(at.length)))
-          mask[i] = 1
-        }
-      }
-    }
     const crops = new Map<string, Uint8Array>()
     const herds = new Map<string, Uint8Array>()
-    mark(crops, s.farmAt, s.farmFrom, ofCentre('plant'), (id) => plants!.layers.find((l) => l.id === id)?.codes, (c) => c === 1 || c >= PLANT_SUITS)
-    mark(herds, s.herdAt, s.herdFrom, ofCentre('animal'), (id) => animals!.find((a) => a.id === id)?.codes, (c) => c >= 1)
+    const by = Math.floor(peopleTime / CAME_STEP)
+    for (const d of settled.domestications) {
+      const into = d.kind === 'plant' ? crops : herds
+      let mask = into.get(d.id)
+      if (!mask) into.set(d.id, (mask = new Uint8Array(d.came.length)))
+      for (let i = 0; i < d.came.length; i++) if (d.came[i] <= by) mask[i] = 1
+    }
     keptAtTime = { time: peopleTime, crops, herds }
     return keptAtTime
   }
@@ -1047,7 +1039,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!overlay) return
     const done = await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people')
     if (!done || !overlay) return
-    people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings }
+    people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
     peopleArrows = arrowsOf(people, overlay.u, overlay.v, overlay.width, overlay.height)
     showPlants()
     sayChronicle()
@@ -1203,14 +1195,42 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const activeTrials = (): TrialLayer[] => stepTrials().filter((l) => l.on())
 
   // THE MARKS (incubatorSymbols.ts) of the people step: the sources, the
-  // villages, the farming's and the herding's centres, the origin, in that
-  // order from below; the centres and the origin on one switch (Zentren);
-  // each view is given the pictures once.
+  // villages, the crossings, the farming's and the herding's centres, the
+  // origin, in that order from below; the centres and the origin on one
+  // switch (Zentren), the crossings on the routes'; each view is given the
+  // pictures once, the crossings' again for new people.
   const marked = new WeakSet<WorldView>()
+  // The crossings drawn: those the chronicle tells (EVENT_LEAST_KM2), each
+  // its way over the open water (people.ts, crossingWays) and when they
+  // landed; and the people and the view their pictures were made for.
+  let crossingWays: { people: PeopleResult; view: WorldView; ways: { path: number[]; time: number }[] } | null = null
+  function crossingsOf(p: PeopleResult): { path: number[]; time: number }[] {
+    const ways: { path: number[]; time: number }[] = []
+    if (!cellFacts) return ways
+    const c = p.crossings
+    let at = 0
+    for (let k = 0; k < c.length; k += 4) {
+      const path: number[] = []
+      for (; p.crossingWays[at] >= 0; at++) path.push(p.crossingWays[at])
+      at++
+      if (cellFacts.landmassKm2[c[k]] >= EVENT_LEAST_KM2) ways.push({ path, time: c[k + 2] })
+    }
+    return ways
+  }
+  // The true direction from one chart point to the next (WorldSymbol.angle):
+  // on the globe a degree of longitude shrinks with the latitude; the
+  // torus's texels are square.
+  function directionOf(a: ChartPoint, b: ChartPoint): number {
+    const du = b.u - a.u - Math.round(b.u - a.u)
+    const dv = b.v - a.v
+    if (!shown || shown.kind === 'sphere') return Math.atan2(dv * Math.PI, du * 2 * Math.PI * Math.cos((0.5 - (a.v + b.v) / 2) * Math.PI))
+    return Math.atan2((dv - Math.round(dv)) * shown.height, du * shown.width)
+  }
   function syncMarks(): void {
     if (!view || !overlay) return
     const sources = view.symbols('incubator-sources')
     const villages = view.symbols('incubator-villages')
+    const crossings = view.symbols('incubator-crossings')
     const centres = view.symbols('incubator-centres')
     const origin = view.symbols('incubator-origin')
     if (!marked.has(view)) {
@@ -1228,6 +1248,16 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const showVillages = now !== null && peopleOn['people:villages']
     villages.setSymbols(showVillages ? villageSymbols(now!.villages, now!.density, u, v) : [])
     villages.setEnabled(showVillages)
+    const showCrossings = onPeople() && people !== null && routesOn()
+    if (people && (crossingWays?.people !== people || crossingWays.view !== view)) {
+      const ways = crossingsOf(people)
+      crossings.setPictures(crossingPictures(ways.map((w) => t('incubator.chronicle.year', { year: Math.round(w.time).toLocaleString(getLocale()) }))))
+      crossingWays = { people, view, ways }
+    }
+    const shownWays = showCrossings && crossingWays ? crossingWays.ways.map((w) => (w.time <= peopleTime ? w.path : [])) : []
+    const v0 = view
+    crossings.setSymbols(crossingSymbols(shownWays, u, v, (a, b) => v0.metresBetween(a, b) / 1000, directionOf))
+    crossings.setEnabled(showCrossings)
     const showCentres = now !== null && settled !== null && peopleOn['people:centres']
     const centreSymbols: WorldSymbol[] = []
     if (showCentres) {

@@ -142,6 +142,11 @@ export function extinctAt(arrival: number, cell: number): number {
   return arrival + EXTINCT_AFTER + EXTINCT_SPREAD * ((x >>> 0) / 4294967296)
 }
 
+// When a domesticate's wave came to a cell (settle.ts), in CAME_STEP years;
+// CAME_NEVER where it never did.
+export const CAME_STEP = 10
+export const CAME_NEVER = 0xffff
+
 // A plant's or a tree's code from which its niche suits a cell (niche.ts:
 // SUITABLE 0.3, the niche coded 2 … 255).
 export const PLANT_SUITS_CODE = 2 + Math.round(253 * 0.3)

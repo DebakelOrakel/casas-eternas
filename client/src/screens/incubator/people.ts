@@ -58,6 +58,10 @@ export interface PeopleResult {
   // landed on, when, and the open water's widest stretch on the way, km.
   // Not one first reached over land or a land bridge.
   crossings: Float32Array
+  // Each crossing's way, in the same order: the cells from the last one
+  // before the open water to the cell landed on, a crossing after another,
+  // each ended by -1.
+  crossingWays: Int32Array
 }
 
 // The front over land, km a year: on land that feeds nobody, and on land
@@ -107,7 +111,7 @@ export function spreadPeople(h: Habitat, carrying: Float32Array, boat: Uint8Arra
   const arrival = new Float32Array(n).fill(Infinity)
   const from = new Int32Array(n).fill(-1)
   const flow = new Float32Array(n)
-  if (origin < 0) return { arrival, land, from, flow, origin, crossings: new Float32Array(0) }
+  if (origin < 0) return { arrival, land, from, flow, origin, crossings: new Float32Array(0), crossingWays: new Int32Array(0) }
   const time = new Float64Array(n).fill(Infinity)
   // The open water crossed since the last land, km, and whether the
   // people there have boats.
@@ -169,28 +173,40 @@ export function spreadPeople(h: Habitat, carrying: Float32Array, boat: Uint8Arra
     if (land[i]) flow[i] += 1
     if (from[i] >= 0) flow[from[i]] += flow[i]
   }
-  return { arrival, land, from, flow, origin, crossings: crossingsOf(h, time, from, water) }
+  return { arrival, land, from, flow, origin, ...crossingsOf(h, time, from, water) }
 }
 
 // The crossings (PeopleResult): each landmass's first cell reached, and
 // the way back from it to the land of another landmass; open water on that
 // way makes it a crossing.
-function crossingsOf(h: Habitat, time: Float64Array, from: Int32Array, water: Float32Array): Float32Array {
+function crossingsOf(h: Habitat, time: Float64Array, from: Int32Array, water: Float32Array): Pick<PeopleResult, 'crossings' | 'crossingWays'> {
   const first = new Int32Array(h.landmasses).fill(-1)
   for (let i = 0; i < h.count; i++) {
     const m = h.landmass[i]
     if (m >= 0 && time[i] < Infinity && (first[m] < 0 || time[i] < time[first[m]])) first[m] = i
   }
   const crossings: number[] = []
+  const ways: number[] = []
   for (let m = 0; m < h.landmasses; m++) {
     const landed = first[m]
     if (landed < 0) continue
     let km = 0
+    // The way back, and how much of it to keep: to the cell before the
+    // open water farthest back; the dry shelf beyond it is walked, not
+    // sailed.
+    const way = [landed]
+    let keep = 0
     for (let c = from[landed]; c >= 0; c = from[c]) {
+      way.push(c)
       if (h.land[c] && h.landmass[c] !== m) break
-      if (!h.land[c]) km = Math.max(km, water[c])
+      if (!h.land[c] && water[c] > 0) {
+        km = Math.max(km, water[c])
+        keep = way.length
+      }
     }
-    if (km > 0) crossings.push(m, landed, time[landed], km)
+    if (km <= 0) continue
+    crossings.push(m, landed, time[landed], km)
+    ways.push(...way.slice(0, Math.min(way.length, keep + 1)).reverse(), -1)
   }
-  return Float32Array.from(crossings)
+  return { crossings: Float32Array.from(crossings), crossingWays: Int32Array.from(ways) }
 }

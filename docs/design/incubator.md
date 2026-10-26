@@ -155,7 +155,11 @@ water is crossed as far as the time's reach, which grows from 30 to 450 km
 over the span; beyond 60 km only with boats, which people carry on once
 they passed boat wood. On Morvane it reaches 83 % of the ice-free land.
 Shown as the age of the spread, with a few broad arrows of its directions
-(`peopleArrows.ts`) and the origin marked.
+(`peopleArrows.ts`) and the origin marked. The crossings to a landmass of
+100 000 km² or more are blue arrows along their way over the sea (the open
+water, the shelf between its stretches; not the dry shelf walked before
+it), with the year they landed as text. The boats are dugouts, rafts and
+bark canoes: good for a daring crossing, not for trade.
 
 **The settlement** (`settle.ts`, `settleShared.ts`). Everything is a time
 per cell, so the state at any time is a function and the animation needs
@@ -172,16 +176,18 @@ no snapshots:
   spreads 2 km a year: the earth's nomads took the steppes late and fast.
 - **The domesticates.** A farming centre tames the domesticable starch
   plants that grow wild there, and 1 000 years later its herd animals; a
-  herding centre its herd animals. Each wave carries its centre's own and
-  goes where one of them suits the land (its niche, beyond its wild
-  range), as wheat went to Europe; before, a wave needed a wild one in
-  every cell. On Morvane the fields kept their extent (15 362 → 15 190
-  cells), the herds halved (10 258 → 5 740): each wave brings only its own
-  animals now. 14 domestications. Shown hatched in the plants' and the
+  herding centre its herd animals. Each spreads in a wave of its own
+  where it suits the land (its niche, beyond its wild range), as wheat
+  went to Europe; where two meet, a cell holds both, as the earth's farmers
+  sowed several crops. Not over the sea: the crops stay on their
+  continent, so that not every crop ends up everywhere. Before, a wave
+  needed a wild one in every cell. On Morvane the fields kept their extent
+  (15 362 → 15 179 cells), the herds halved (10 258 → 5 740): the herds
+  are only the tamed ones now. 14 domestications. Shown hatched in the plants' and the
   animals' views, the tooltip naming what is cultivated or kept. Almost
-  all of it lies in the wild range anyway (outside: 57 of 24 335 crop
-  cells, 84 of 6 892 herd cells): the wild plants and animals already
-  cover their niche on a landmass, and the waves do not cross the sea.
+  all of it lies in the wild range anyway (outside: 29 crop cells, 84 herd
+  cells): the wild plants and animals already cover their niche on a
+  landmass.
 - **The clearing.** People clear the forest only as far as they need it: a
   hectare a farmer for the fields, the fallow and the village, 0.3 a
   herder for the grazing, at most half a cell. The trees there show

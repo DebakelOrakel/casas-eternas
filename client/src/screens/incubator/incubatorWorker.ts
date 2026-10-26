@@ -83,13 +83,13 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       const boat = new Uint8Array(h.count)
       for (const tree of flora.trees) if (tree.woods.includes('boat')) for (let i = 0; i < h.count; i++) if (tree.codes[i] >= PLANT_SUITS_CODE) boat[i] = 1
       people = spreadPeople(h, h.carrying ?? new Float32Array(h.count).fill(0.4), boat, ask.origin)
-      const out = { ...people, arrival: people.arrival.slice(), land: people.land.slice(), from: people.from.slice(), flow: people.flow.slice(), crossings: people.crossings.slice() }
-      worker.postMessage({ type: 'people', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer])
+      const out = { ...people, arrival: people.arrival.slice(), land: people.land.slice(), from: people.from.slice(), flow: people.flow.slice(), crossings: people.crossings.slice(), crossingWays: people.crossingWays.slice() }
+      worker.postMessage({ type: 'people', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer])
       return
     }
     if (!flora || !animals || !people) throw new Error('the settlement needs the flora, the fauna and the people first')
     const result = settle(h, { arrival: people.arrival, crops: flora.plants.filter((p) => FARM_PLANTS.has(p.id)), herds: animals.filter((a) => HERD_ANIMALS.has(a.id)), origin: people.origin, animals, seed })
-    worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, result.farmFrom.buffer, result.herdFrom.buffer, result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
+    worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, ...result.domestications.map((d) => d.came.buffer), result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
   } catch (e) {
     worker.postMessage({ type: 'failed', message: String(e) } satisfies IncubatorAnswer)
   }
