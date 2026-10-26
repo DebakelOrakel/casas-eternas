@@ -217,9 +217,12 @@ no snapshots:
   went to Europe; where two meet, a cell holds both, as the earth's farmers
   sowed several crops. Not over the sea: the crops stay on their
   continent, so that not every crop ends up everywhere. Before, a wave
-  needed a wild one in every cell. On Morvane the fields kept their extent
-  (15 362 → 15 179 cells), the herds halved (10 258 → 5 740): the herds
-  are only the tamed ones now. 14 domestications. Shown hatched in the plants' and the
+  needed a wild one in every cell. With that change (2026-10-26) the
+  fields kept their extent on Morvane (15 362 → 15 179 cells) and the
+  herds' fell from 10 258 to 5 740 cells, the herds being only the tamed
+  ones — a comparison of the two rules, not a decline over the time. With
+  the rules as they stand since (the same day, later): the fields on
+  15 190 cells, the herds on 10 451. 14 domestications. Shown hatched in the plants' and the
   animals' views, the tooltip naming what is cultivated or kept. Almost
   all of it lies in the wild range anyway (outside: 29 crop cells, 84 herd
   cells): the wild plants and animals already cover their niche on a
