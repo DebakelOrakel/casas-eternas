@@ -1,8 +1,10 @@
 import { Biome } from '../../generator/climate/biomes'
 import { MinHeap } from '../../generator/core/minHeap'
-import { mulberry32, type Habitat } from './habitat'
+import { kmBetween, mulberry32, type Habitat } from './habitat'
 import type { PeopleResult } from './people'
 import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
+import type { SettleLifeways } from './settle'
+import { CAME_NEVER, CAME_STEP, LIFEWAY, PLANT_SUITS_CODE } from './settleShared'
 import { climateHistoryOf, coldShare, iceMayCover, ICE_REACH_KM } from './climateHistory'
 
 // THE INCUBATOR'S SIMULATION, its skeleton (2026-10-26, DES-0033 step 2):
@@ -43,7 +45,10 @@ const SUB_STEPS = 3
 const FORAGER_DENSITY = 0.1
 const CARRYING_FULL = 0.8
 const GROWTH_A = 0.01
-const SEED_SHARE = 0.5
+// A third (2026-10-26; a half before): with the cold and the hunt the
+// foragers seldom got to half of what the land carried before, and the
+// front stood.
+const SEED_SHARE = 1 / 3
 const SEED_PEOPLE = 0.2
 const FULL_SHARE = 0.95
 const SPEED_MIN_KM_A = 0.05
@@ -90,8 +95,47 @@ const BIG_FOOD = 0.15
 const EXTINCT_BELOW = 0.1
 const FOOD_MOVED = 0.02
 const CAPACITY_MOVED = 0.02
+// THE FARMING AND THE HERDING (2026-10-26, DES-0033 "Progression"):
+// no dates. Every CLIMATE_YEARS each region's best cell may become a
+// centre, by a chance: of the farming (FARM_RATE × its wild crops over two
+// × its arable land) while the climate is stable (climateHistory.ts),
+// where people have lived SETTLED_YEARS, CENTRE_CROPS wild crops grow and
+// the arable land is CENTRE_ARABLE, and the region knows KNOW_FARM; of the
+// herding (HERD_RATE × its herd animals over two × its pasture) likewise,
+// the climate stable too (without it a herding centre came at year 7 500,
+// deep in the cold; the earth's animals were all tamed in the Holocene),
+// with CENTRE_HERDS herd animals, CENTRE_PASTURE pasture and KNOW_HERD — at
+// CENTRE_SPACING_KM from any centre of its lifeway. A farming centre tames its wild crops
+// at once, its herd animals HERD_LAG later; a herding centre its herd
+// animals. They spread over the cells people live in, FARM_KM_A and
+// HERD_KM_A a year, each where it suits (its niche; FARM_ARABLE,
+// HERD_PASTURE): a cell takes what its neighbour has and suits it. The
+// fields carry FARM_GAIN × the arable land times more people, the herds
+// HERD_GAIN × the pasture (the rules' densities: farmers 15, herders 1.5,
+// foragers 0.1 a km²). A cell keeps its domesticates as bits, MAX_TAMED
+// of them at most.
+const SETTLED_YEARS = 5000
+const FARM_RATE = 0.3
+const HERD_RATE = 0.2
+const CENTRE_CROPS = 2
+const CENTRE_ARABLE = 0.5
+const CENTRE_HERDS = 2
+const CENTRE_PASTURE = 0.5
+const KNOW_FARM = 1
+const KNOW_HERD = 0.8
+const CENTRE_SPACING_KM = 1500
+const HERD_LAG = 1000
+const FARM_KM_A = 1
+const HERD_KM_A = 2
+const FARM_ARABLE = 0.3
+const HERD_PASTURE = 0.3
+const FARM_GAIN = 100
+const HERD_GAIN = 10
+const MAX_TAMED = 32
 const KNOW_SCALE = 1
-const KNOW_PEOPLE = 10_000
+// 3 000 (2026-10-26; 10 000 before): the foragers are thin, a region
+// knew too little to cross for most of the span.
+const KNOW_PEOPLE = 3000
 const KNOW_GAIN = 0.1
 const KNOW_LOSS = 0.02
 const KNOW_CARRIED = 0.8
@@ -110,6 +154,10 @@ export interface SimulationInput {
   // a code a cell, 2 and above where it lives; and how vulnerable it is,
   // 0 … 1 (MEGAFAUNA's weight: the elephant 0.8 … the aurochs 0.2).
   bigGame: { id: string; codes: Uint8Array; vulnerability: number }[]
+  // The domesticable starch plants (plants.ts) and the tamable herd
+  // animals (animals.ts) as the flora and the fauna placed them.
+  crops: { id: string; codes: Uint8Array }[]
+  herds: { id: string; codes: Uint8Array }[]
 }
 
 // A kept state (every KEEP_YEARS from 0): the people a km² in
@@ -122,7 +170,8 @@ export interface SimFrame {
   small: Uint8Array
   big: Uint8Array[]
 }
-export const PEOPLE_FRAME_STEP = 1e-5
+// 1e-3: the farmers reach 15 a km² and more; the foragers' 0.1 is 100 steps.
+export const PEOPLE_FRAME_STEP = 1e-3
 
 export interface SimulationResult {
   people: PeopleResult
@@ -134,6 +183,9 @@ export interface SimulationResult {
   // Where a species of the big game died out (settle.ts SettleResult's
   // form): on a landmass, when its last tenth went, at a cell of it.
   extinctions: { id: string; landmass: number; areaKm2: number; at: number; cell: number }[]
+  // The farming and the herding (settle.ts SettleLifeways): the settlement
+  // takes them in the rules' place.
+  lifeways: SettleLifeways
   // The regions (the habitable land's connected parts) and their knowledge
   // at the end, for a readout.
   region: Int32Array
@@ -400,8 +452,55 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     bigCount[i]++
   }
   const homeLandmass = input.origin >= 0 ? h.landmass[input.origin] : -1
+  // What the fields and the herds add, as a factor on what the land carries.
+  const gain = (i: number): number => (farmAt[i] < Infinity ? 1 + FARM_GAIN * (arable?.[i] ?? 0) : 1) * (herdAt[i] < Infinity ? 1 + HERD_GAIN * (pasture?.[i] ?? 0) : 1)
   const food = (i: number): number => PLANT_FOOD + (bigCount[i] ? SMALL_FOOD * small[i] + BIG_FOOD * (bigSum[i] / bigCount[i]) : (SMALL_FOOD + BIG_FOOD) * small[i])
   const extinctions: SimulationResult['extinctions'] = []
+  // The farming and the herding: when each came to a cell, its
+  // domesticates there as bits, the centres, the domesticates.
+  const farmAt = new Float32Array(n).fill(Infinity)
+  const herdAt = new Float32Array(n).fill(Infinity)
+  const tamedBits = new Uint32Array(n)
+  const centres: number[] = []
+  const tamed: { kind: 'plant' | 'animal'; id: string; cell: number; at: number; came: Uint16Array; codes: Uint8Array }[] = []
+  // Herds a farming centre tames HERD_LAG after its fields.
+  const herdsDue: { cell: number; at: number }[] = []
+  // The cells that may pass the fields or the herds on.
+  let farmFront: number[] = []
+  let herdFront: number[] = []
+  const arable = h.ecology.arable
+  const pasture = h.ecology.pasture
+  const suits = (d: number, cell: number): boolean => {
+    const c = tamed[d].codes[cell]
+    return tamed[d].kind === 'plant'
+      ? (c === 1 || c >= PLANT_SUITS_CODE) && (arable?.[cell] ?? 0) >= FARM_ARABLE
+      : c >= 1 && (pasture?.[cell] ?? 0) >= HERD_PASTURE
+  }
+  // A cell takes domesticate `d` at `t`.
+  const take = (d: number, cell: number, t: number): void => {
+    if (tamedBits[cell] & (1 << d)) return
+    tamedBits[cell] |= 1 << d
+    tamed[d].came[cell] = Math.round(t / CAME_STEP)
+    if (tamed[d].kind === 'plant') {
+      if (farmAt[cell] === Infinity) farmFront.push(cell)
+      if (t < farmAt[cell]) farmAt[cell] = t
+    } else {
+      if (herdAt[cell] === Infinity) herdFront.push(cell)
+      if (t < herdAt[cell]) herdAt[cell] = t
+    }
+  }
+  const tame = (kind: 'plant' | 'animal', layer: { id: string; codes: Uint8Array }, cell: number, t: number): void => {
+    if (tamed.length >= MAX_TAMED) return
+    tamed.push({ kind, id: layer.id, cell, at: t, came: new Uint16Array(n).fill(CAME_NEVER), codes: layer.codes })
+    take(tamed.length - 1, cell, t)
+  }
+  // CENTRE_SPACING_KM from every centre of the same lifeway: the farming
+  // may begin beside a herding centre (with it, a herding centre at year
+  // 7 500 kept Morvane's one place fit for the fields from farming).
+  const farCentre = (cell: number, way: number): boolean => {
+    for (let k = 0; k < centres.length; k += 3) if (centres[k + 2] === way && kmBetween(h, cell, centres[k]) < CENTRE_SPACING_KM) return false
+    return true
+  }
   // The cells hunted, kept while their game grows back.
   let hunted: number[] = []
   const inHunted = new Uint8Array(n)
@@ -497,6 +596,47 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         const target = KNOW_SCALE * Math.log10(1 + regionPeople[g] / KNOW_PEOPLE)
         knowledge[g] += (target - knowledge[g]) * (target > knowledge[g] ? KNOW_GAIN : KNOW_LOSS)
       }
+      // The centres: each region's best cell for the farming and for the
+      // herding, by a chance.
+      const bestFarm = new Map<number, { cell: number; w: number }>()
+      const bestHerd = new Map<number, { cell: number; w: number }>()
+      const stable = climate.stable(t)
+      for (const i of lived) {
+        const g = region[i]
+        if (g < 0 || people[i] === 0 || arrival[i] > t - SETTLED_YEARS) continue
+        if (stable && farmAt[i] === Infinity && knowledge[g] >= KNOW_FARM && (arable?.[i] ?? 0) >= CENTRE_ARABLE) {
+          let wild = 0
+          for (const crop of input.crops) if (crop.codes[i] >= PLANT_SUITS_CODE) wild++
+          const w = wild >= CENTRE_CROPS ? (wild / 2) * (arable?.[i] ?? 0) : 0
+          if (w > (bestFarm.get(g)?.w ?? 0)) bestFarm.set(g, { cell: i, w })
+        }
+        if (stable && herdAt[i] === Infinity && knowledge[g] >= KNOW_HERD && (pasture?.[i] ?? 0) >= CENTRE_PASTURE) {
+          let wild = 0
+          for (const herd of input.herds) if (herd.codes[i] >= 2) wild++
+          const w = wild >= CENTRE_HERDS ? (wild / 2) * (pasture?.[i] ?? 0) : 0
+          if (w > (bestHerd.get(g)?.w ?? 0)) bestHerd.set(g, { cell: i, w })
+        }
+      }
+      for (const { cell, w } of bestFarm.values()) {
+        if (random() >= FARM_RATE * Math.min(1, w) || !farCentre(cell, LIFEWAY.farmers)) continue
+        centres.push(cell, t, LIFEWAY.farmers)
+        for (const crop of input.crops) if (crop.codes[cell] >= PLANT_SUITS_CODE) tame('plant', crop, cell, t)
+        herdsDue.push({ cell, at: t + HERD_LAG })
+        grows(cell)
+      }
+      for (const { cell, w } of bestHerd.values()) {
+        if (random() >= HERD_RATE * Math.min(1, w) || !farCentre(cell, LIFEWAY.herders)) continue
+        centres.push(cell, t, LIFEWAY.herders)
+        for (const herd of input.herds) if (herd.codes[cell] >= 2) tame('animal', herd, cell, t)
+        grows(cell)
+      }
+      for (let k = herdsDue.length - 1; k >= 0; k--) {
+        if (herdsDue[k].at > t) continue
+        const { cell } = herdsDue[k]
+        for (const herd of input.herds) if (herd.codes[cell] >= 2) tame('animal', herd, cell, t)
+        herdsDue.splice(k, 1)
+        grows(cell)
+      }
     }
     // 0b. The game, every GAME_STEPS: hunted where people live, grown back
     //     where they hunted; the cells people live in grow or shrink by it.
@@ -541,7 +681,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     //    leaves the list.
     const stillGrowing: number[] = []
     for (const i of growing) {
-      const k = capacity[i] * food(i)
+      const k = capacity[i] * food(i) * gain(i)
       if (people[i] > 0) people[i] += (k - people[i]) * grow
       if (people[i] > 0 && Math.abs(k - people[i]) > (1 - FULL_SHARE) * k) stillGrowing.push(i)
       else inGrowing[i] = 0
@@ -570,6 +710,40 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       // The newly settled, pushed onto `front` by settle, follow.
       for (let k = count; k < front.length; k++) stillFront.push(front[k])
       front = stillFront
+    }
+    // 2b. The fields and the herds, passed on to the lived-in neighbours
+    //     they suit; a front cell with nothing left to pass leaves.
+    const passOn = (frontList: number[], kmA: number, plant: boolean): number[] => {
+      const still: number[] = []
+      const count = frontList.length
+      for (let k = 0; k < count; k++) {
+        const i = frontList[k]
+        let left = false
+        for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
+          const u = h.nbr[e]
+          if (people[u] === 0) continue
+          for (let d = 0; d < tamed.length; d++) {
+            if (!(tamedBits[i] & (1 << d)) || (tamedBits[u] & (1 << d)) || (tamed[d].kind === 'plant') !== plant || !suits(d, u)) continue
+            left = true
+            if (random() < Math.min(1, (kmA * STEP_YEARS) / h.distKm[e])) {
+              take(d, u, t + STEP_YEARS)
+              grows(u)
+            }
+          }
+        }
+        if (left) still.push(i)
+      }
+      return still
+    }
+    if (farmFront.length > 0) {
+      const added = farmFront.length
+      const kept0 = passOn(farmFront.slice(0, added), FARM_KM_A, true)
+      farmFront = kept0.concat(farmFront.slice(added))
+    }
+    if (herdFront.length > 0) {
+      const added = herdFront.length
+      const kept0 = passOn(herdFront.slice(0, added), HERD_KM_A, false)
+      herdFront = kept0.concat(herdFront.slice(added))
     }
     // 3. The crossings within the reach of their coast's knowledge.
     for (const [source, list] of crossingsFrom) {
@@ -615,6 +789,12 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     kept,
     climate: { maxAt: climate.maxAt, depth: climate.depth, deglaciation: climate.deglaciation },
     species: species.map((sp) => ({ id: sp.id, cells: sp.cells })),
+    lifeways: {
+      centres: Float32Array.from(centres),
+      farmAt,
+      herdAt,
+      domestications: tamed.map(({ kind, id, cell, at, came }) => ({ kind, id, cell, at, came })),
+    },
     extinctions,
     region,
     knowledge,

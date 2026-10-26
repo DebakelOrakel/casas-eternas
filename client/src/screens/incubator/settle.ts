@@ -81,6 +81,20 @@ export interface SettleInput {
   origin: number
   animals: { id: string; codes: Uint8Array }[]
   seed: number
+  // The farming and the herding as a simulated history made them
+  // (simulation.ts): its centres, its domesticates, when the fields and
+  // the herds came to each cell. Given, they take the rules' place
+  // (2 below).
+  given?: SettleLifeways
+}
+
+// The farming's and the herding's centres, domesticates and times (2
+// below), the rules' or a history's.
+export interface SettleLifeways {
+  centres: Float32Array
+  farmAt: Float32Array
+  herdAt: Float32Array
+  domestications: SettleResult['domestications']
 }
 
 export interface SettleResult {
@@ -139,14 +153,17 @@ const CENTRE_SPACING_KM = 1500
 const CENTRE_PLANTS = 2
 const CENTRE_ARABLE = 0.5
 const FARM_SETTLED = 10_000
-const FARM_EARLIEST = SPAN_YEARS - 6000
+// The world's timeline (climateHistory.ts): the first fields from year
+// 67 000, the herds from 70 000 (until 2026-10-26 11 000 and 8 000 years
+// before the game).
+const FARM_EARLIEST = 67_000
 const FARM_KM_A = 1
 const FARM_BARRIER = 5
 const HERD_LAG = 1000
 const HERD_CENTRES_MAX = 3
 const HERD_CENTRE_ANIMALS = 2
 const HERD_CENTRE_PASTURE = 0.5
-const HERD_EARLIEST = SPAN_YEARS - 3000
+const HERD_EARLIEST = 70_000
 const HERD_KM_A = 2
 const HERD_BARRIER = 3
 // The big game and its chance to die out where people came new.
@@ -251,116 +268,122 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
     carryingNorm[i] = Math.min(2, carrying[i] / CARRYING_FULL)
   }
 
-  // 2. The farming's centres, then the herding's, then their spread.
-  const centres: number[] = []
-  // The best of `candidates` CENTRE_SPACING_KM from every centre, as
-  // centres of `way` from `earliest` on, `most` of them.
-  const placeCentres = (candidates: { cell: number; score: number }[], way: number, earliest: number, most: number): void => {
-    candidates.sort((p, q) => q.score - p.score || p.cell - q.cell)
-    const random = mulberry32(hashText(way === LIFEWAY.farmers ? 'farming' : 'herding') ^ input.seed)
-    let next = earliest
-    let placed = 0
-    for (const c of candidates) {
-      if (placed >= most) break
-      let far = true
-      for (let k = 0; k < centres.length && far; k += 3) far = kmBetween(h, c.cell, centres[k]) >= CENTRE_SPACING_KM
-      if (!far) continue
-      // One beginning after the span never shows.
-      const begins = Math.max(next, arrival[c.cell] + FARM_SETTLED)
-      if (begins > SPAN_YEARS) continue
-      centres.push(c.cell, begins, way)
-      placed++
-      next += 1000 + 2000 * random()
-    }
-  }
-  const farmCandidates: { cell: number; score: number }[] = []
-  const herdCandidates: { cell: number; score: number }[] = []
-  for (let i = 0; i < n; i++) {
-    if (farmPlant[i] >= CENTRE_PLANTS && at(eco.arable, i) >= CENTRE_ARABLE && arrival[i] <= FARM_EARLIEST - FARM_SETTLED) {
-      farmCandidates.push({ cell: i, score: farmPlant[i] * at(eco.arable, i) * carrying[i] })
-    }
-    if (herdAnimal[i] >= HERD_CENTRE_ANIMALS && at(eco.pasture, i) >= HERD_CENTRE_PASTURE && arrival[i] <= HERD_EARLIEST - FARM_SETTLED) {
-      herdCandidates.push({ cell: i, score: herdAnimal[i] * at(eco.pasture, i) * carrying[i] })
-    }
-  }
-  placeCentres(farmCandidates, LIFEWAY.farmers, FARM_EARLIEST, CENTRES_MAX)
-  placeCentres(herdCandidates, LIFEWAY.herders, HERD_EARLIEST, HERD_CENTRES_MAX)
-  // A wave from a centre's cell at `start` over the land people reached,
-  // `kmA` a year where `ok` allows its lifeway, `barrier` times slower
-  // where not, never over the sea nor ahead of the people: the time it
-  // came to each cell `ok` allows, Infinity elsewhere.
-  const wave = (cell: number, start: number, ok: Uint8Array, kmA: number, barrier: number): Float32Array => {
-    const came = new Float32Array(n).fill(Infinity)
-    const time = new Float64Array(n).fill(Infinity)
-    const heap = new MinHeap(1 << 16)
-    if (start <= SPAN_YEARS) {
-      time[cell] = start
-      heap.push(start, cell)
-    }
-    while (heap.length > 0) {
-      heap.pop()
-      const i = heap.poppedIndex
-      const t = heap.poppedKey
-      if (t > time[i]) continue
-      if (ok[i]) came[i] = t
-      for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
-        const u = h.nbr[e]
-        if (!land[u] || !(arrival[u] < Infinity)) continue
-        const at2 = Math.max(t + (h.distKm[e] / kmA) * (ok[u] ? 1 : barrier), arrival[u])
-        if (at2 >= time[u] || at2 > SPAN_YEARS) continue
-        time[u] = at2
-        heap.push(at2, u)
+  // 2. The farming's centres, then the herding's, then their spread; or
+  // a history's.
+  const lifeways: SettleLifeways = input.given ?? ((): SettleLifeways => {
+    const centres: number[] = []
+    // The best of `candidates` CENTRE_SPACING_KM from every centre, as
+    // centres of `way` from `earliest` on, `most` of them.
+    const placeCentres = (candidates: { cell: number; score: number }[], way: number, earliest: number, most: number): void => {
+      candidates.sort((p, q) => q.score - p.score || p.cell - q.cell)
+      const random = mulberry32(hashText(way === LIFEWAY.farmers ? 'farming' : 'herding') ^ input.seed)
+      let next = earliest
+      let placed = 0
+      for (const c of candidates) {
+        if (placed >= most) break
+        let far = true
+        for (let k = 0; k < centres.length && far; k += 3) far = kmBetween(h, c.cell, centres[k]) >= CENTRE_SPACING_KM
+        if (!far) continue
+        // One beginning after the span never shows.
+        const begins = Math.max(next, arrival[c.cell] + FARM_SETTLED)
+        if (begins > SPAN_YEARS) continue
+        centres.push(c.cell, begins, way)
+        placed++
+        next += 1000 + 2000 * random()
       }
     }
-    return came
-  }
-  // Where a centre's domesticates suit a cell, with the land its lifeway
-  // needs.
-  const suitedBy = (layers: { codes: Uint8Array }[], from: number, field: Float32Array | undefined, least: number): Uint8Array => {
-    const ok = new Uint8Array(n)
+    const farmCandidates: { cell: number; score: number }[] = []
+    const herdCandidates: { cell: number; score: number }[] = []
     for (let i = 0; i < n; i++) {
-      if (!land[i] || !(arrival[i] < Infinity) || at(field, i) < least) continue
-      for (const layer of layers) {
-        const c = layer.codes[i]
-        if (c === 1 || c >= from) {
-          ok[i] = 1
-          break
+      if (farmPlant[i] >= CENTRE_PLANTS && at(eco.arable, i) >= CENTRE_ARABLE && arrival[i] <= FARM_EARLIEST - FARM_SETTLED) {
+        farmCandidates.push({ cell: i, score: farmPlant[i] * at(eco.arable, i) * carrying[i] })
+      }
+      if (herdAnimal[i] >= HERD_CENTRE_ANIMALS && at(eco.pasture, i) >= HERD_CENTRE_PASTURE && arrival[i] <= HERD_EARLIEST - FARM_SETTLED) {
+        herdCandidates.push({ cell: i, score: herdAnimal[i] * at(eco.pasture, i) * carrying[i] })
+      }
+    }
+    placeCentres(farmCandidates, LIFEWAY.farmers, FARM_EARLIEST, CENTRES_MAX)
+    placeCentres(herdCandidates, LIFEWAY.herders, HERD_EARLIEST, HERD_CENTRES_MAX)
+    // A wave from a centre's cell at `start` over the land people reached,
+    // `kmA` a year where `ok` allows its lifeway, `barrier` times slower
+    // where not, never over the sea nor ahead of the people: the time it
+    // came to each cell `ok` allows, Infinity elsewhere.
+    const wave = (cell: number, start: number, ok: Uint8Array, kmA: number, barrier: number): Float32Array => {
+      const came = new Float32Array(n).fill(Infinity)
+      const time = new Float64Array(n).fill(Infinity)
+      const heap = new MinHeap(1 << 16)
+      if (start <= SPAN_YEARS) {
+        time[cell] = start
+        heap.push(start, cell)
+      }
+      while (heap.length > 0) {
+        heap.pop()
+        const i = heap.poppedIndex
+        const t = heap.poppedKey
+        if (t > time[i]) continue
+        if (ok[i]) came[i] = t
+        for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
+          const u = h.nbr[e]
+          if (!land[u] || !(arrival[u] < Infinity)) continue
+          const at2 = Math.max(t + (h.distKm[e] / kmA) * (ok[u] ? 1 : barrier), arrival[u])
+          if (at2 >= time[u] || at2 > SPAN_YEARS) continue
+          time[u] = at2
+          heap.push(at2, u)
         }
       }
+      return came
     }
-    return ok
-  }
-  // Each centre's domesticates and their waves: the crops from a farming
-  // centre; the herds from a herding centre, and from a farming centre
-  // HERD_LAG after the fields. The fields, the herds come to a cell with
-  // the first.
-  const domestications: SettleResult['domestications'] = []
-  const farmAt = new Float32Array(n).fill(Infinity)
-  const herdAt = new Float32Array(n).fill(Infinity)
-  const tame = (kind: 'plant' | 'animal', layer: { id: string; codes: Uint8Array }, cell: number, begins: number): void => {
-    const plant = kind === 'plant'
-    const ok = suitedBy([layer], plant ? PLANT_SUITS_CODE : 2, plant ? eco.arable : eco.pasture, plant ? FARM_ARABLE : HERD_PASTURE)
-    const came = plant ? wave(cell, begins, ok, FARM_KM_A, FARM_BARRIER) : wave(cell, begins, ok, HERD_KM_A, HERD_BARRIER)
-    const into = plant ? farmAt : herdAt
-    const steps = new Uint16Array(n).fill(CAME_NEVER)
-    for (let i = 0; i < n; i++) {
-      if (!(came[i] < Infinity)) continue
-      steps[i] = Math.round(came[i] / CAME_STEP)
-      if (came[i] < into[i]) into[i] = came[i]
+    // Where a centre's domesticates suit a cell, with the land its lifeway
+    // needs.
+    const suitedBy = (layers: { codes: Uint8Array }[], from: number, field: Float32Array | undefined, least: number): Uint8Array => {
+      const ok = new Uint8Array(n)
+      for (let i = 0; i < n; i++) {
+        if (!land[i] || !(arrival[i] < Infinity) || at(field, i) < least) continue
+        for (const layer of layers) {
+          const c = layer.codes[i]
+          if (c === 1 || c >= from) {
+            ok[i] = 1
+            break
+          }
+        }
+      }
+      return ok
     }
-    domestications.push({ kind, id: layer.id, cell, at: begins, came: steps })
-  }
-  for (let k = 0; k < centres.length; k += 3) {
-    const cell = centres[k]
-    const begins = centres[k + 1]
-    const farm = centres[k + 2] === LIFEWAY.farmers
-    if (farm) for (const crop of crops) if (crop.codes[cell] >= PLANT_SUITS_CODE) tame('plant', crop, cell, begins)
-    // The herds faster than the farmers (2026-10-26: at one time over all
-    // the pasture, the herders came up everywhere at once).
-    const herdsFrom = farm ? begins + HERD_LAG : begins
-    if (herdsFrom > SPAN_YEARS) continue
-    for (const herd of herds) if (herd.codes[cell] >= 2) tame('animal', herd, cell, herdsFrom)
-  }
+    // Each centre's domesticates and their waves: the crops from a farming
+    // centre; the herds from a herding centre, and from a farming centre
+    // HERD_LAG after the fields. The fields, the herds come to a cell with
+    // the first.
+    const domestications: SettleResult['domestications'] = []
+    const farmAt = new Float32Array(n).fill(Infinity)
+    const herdAt = new Float32Array(n).fill(Infinity)
+    const tame = (kind: 'plant' | 'animal', layer: { id: string; codes: Uint8Array }, cell: number, begins: number): void => {
+      const plant = kind === 'plant'
+      const ok = suitedBy([layer], plant ? PLANT_SUITS_CODE : 2, plant ? eco.arable : eco.pasture, plant ? FARM_ARABLE : HERD_PASTURE)
+      const came = plant ? wave(cell, begins, ok, FARM_KM_A, FARM_BARRIER) : wave(cell, begins, ok, HERD_KM_A, HERD_BARRIER)
+      const into = plant ? farmAt : herdAt
+      const steps = new Uint16Array(n).fill(CAME_NEVER)
+      for (let i = 0; i < n; i++) {
+        if (!(came[i] < Infinity)) continue
+        steps[i] = Math.round(came[i] / CAME_STEP)
+        if (came[i] < into[i]) into[i] = came[i]
+      }
+      domestications.push({ kind, id: layer.id, cell, at: begins, came: steps })
+    }
+    for (let k = 0; k < centres.length; k += 3) {
+      const cell = centres[k]
+      const begins = centres[k + 1]
+      const farm = centres[k + 2] === LIFEWAY.farmers
+      if (farm) for (const crop of crops) if (crop.codes[cell] >= PLANT_SUITS_CODE) tame('plant', crop, cell, begins)
+      // The herds faster than the farmers (2026-10-26: at one time over all
+      // the pasture, the herders came up everywhere at once).
+      const herdsFrom = farm ? begins + HERD_LAG : begins
+      if (herdsFrom > SPAN_YEARS) continue
+      for (const herd of herds) if (herd.codes[cell] >= 2) tame('animal', herd, cell, herdsFrom)
+    }
+    return { centres: Float32Array.from(centres), farmAt, herdAt, domestications }
+  })()
+  const { farmAt, herdAt, domestications } = lifeways
+  const centres = Array.from(lifeways.centres)
 
   // 3. The end state's lifeway and density, and its villages: the densest
   // cell within its radius.

@@ -317,3 +317,18 @@ to the end but on one landmass. The kept states hold the game too, in a
 compact form (the people in 16 bits, the shares in 8: some 5.5 MB a state,
 225 MB for 41), and the animals' layers show it in a history: the big
 game by its species' share, the hunted ones by the small game's. 14.5 s.
+
+**The farming and the herding** (the same day), no dates: every 500 years
+each region's best cell may become a centre, by a chance, once the climate
+is stable (warm and calm 2 000 years: the Holocene), people have lived
+there 5 000 years, the region knows enough, and wild crops (two or more,
+good arable land) or herd animals (two or more, good pasture) are there;
+1 500 km from any centre of the same lifeway (across the lifeways it
+kept the farming from the one place fit for it). A farming centre tames
+its wild crops, its herd animals 1 000 years later. The domesticates
+spread step by step over the cells people live in (the fields 1 km a
+year, the herds 2), each where it suits; the fields carry up to 100 times
+the people, the herds 10. The settlement takes these in the rules' place
+(settle.ts `given`). On Morvane: the farming at year 93 500 (millet,
+rice, yam, cassava), its herds at 94 500, two herding centres at 97 500
+and 98 000; the fields on 8 536 cells, the herds on 3 135. 18 s.

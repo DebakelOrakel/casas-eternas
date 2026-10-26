@@ -12,17 +12,21 @@ import { mulberry32 } from './habitat'
 // THE CURVE, `cold` 0 … 1 (1: the earth's last glacial maximum): from a
 // middling cold at the departure it deepens, with stadials (STADIALS
 // swings), to its maximum at `maxAt` of the span; it ends over
-// `deglaciation` years, and the rest is warm and calm (the Holocene). On
-// the earth: the departure some 100 000 years ago in a mild phase of the
-// last glacial, its maximum some 20 000 years ago (here 0.76 … 0.86 of the
-// span), the melt over some 10 000 years.
+// `deglaciation` years, and the rest is warm and calm. THE WORLD'S
+// TIMELINE (2026-10-26, asked for): the departure in year 0, the large
+// landmasses reached by some 40 000, the cold deepest at 40 … 55 % of the
+// span, a stable warmth from some 60 000, the first fields by 65 000 …
+// 70 000, some 30 000 years of farming before the game. The first form
+// put the maximum at 76 … 86 %, after the earth (some 20 000 years before
+// a bronze-age game), and so no farming before year 85 000.
 //
 // WHAT FOLLOWS:
 // - the sea stands SEA_DROP_M lower at cold 1 (the earth's −120 m), in
 //   proportion: the shelf to that depth is land;
 // - the ice grows out of today's glaciers over the cold climates (Köppen D
 //   and E), ICE_REACH_KM far at cold 1, in proportion (iceDistance): the
-//   ice sheets grew from their cores. A first form closed the whole tundra
+//   ice sheets grew from their cores. 800 km at first; Morvane, half
+//   under ice today, was then shut for most of the cold. A first form closed the whole tundra
 //   from cold 0.5 and the subarctic from 0.8; on Morvane, cold and half
 //   under ice, that shut most of the world for most of the span, while the
 //   earth's glacial tundra was the mammoth steppe, lived in;
@@ -53,7 +57,7 @@ const STABLE_YEARS = 2000
 
 export function climateHistoryOf(seed: number, span: number): ClimateHistory {
   const random = mulberry32(seed ^ 0xc11a7e)
-  const maxAt = span * (0.76 + 0.1 * random())
+  const maxAt = span * (0.4 + 0.15 * random())
   const depth = 0.75 + 0.25 * random()
   const deglaciation = 6000 + 6000 * random()
   const start = 0.3 + 0.2 * random()
@@ -83,7 +87,7 @@ export function climateHistoryOf(seed: number, span: number): ClimateHistory {
 // What the cold takes of what the land carries, at cold 1, by the class's
 // main group (A tropical … E polar).
 const COLD_LOSS: Record<string, number> = { A: 0.1, B: 0.3, C: 0.25, D: 0.4, E: 0.5 }
-export const ICE_REACH_KM = 800
+export const ICE_REACH_KM = 400
 
 // Whether the ice may grow over a Köppen class (the cold ones, D and E).
 export const iceMayCover = (koppen: number): boolean => {
