@@ -362,7 +362,19 @@ const HERD_ANIMALS = new Set(['aurochs', 'horse', 'sheep', 'camel', 'reindeer', 
 // The domesticable starch plants (plants.ts) the farmers sow.
 const FARM_PLANTS = new Set(PLANTS.filter((p) => p.domesticable && p.use === 'starch').map((p) => p.id))
 // The lifeways' names in the trial, no catalog keys (settleWorker.ts).
-const LIFEWAY_NAMES: Record<number, string> = { 1: 'Jäger und Sammler', 2: 'Sesshafte Fischer', 3: 'Hirten', 4: 'Bauern' }
+const LIFEWAY_KEYS: Record<number, TKey> = { 1: 'incubator.lifeway.foragers', 2: 'incubator.lifeway.fishers', 3: 'incubator.lifeway.herders', 4: 'incubator.lifeway.farmers' }
+
+// The people step's switches (rows) and its pick of what the settled land
+// shows (SETTLEMENT_PICKS), as the generator's layers.
+const PEOPLE_ROWS: readonly { id: string; helpBase: string; icon: string }[] = [
+  { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' },
+  { id: 'people:trade', helpBase: 'incubator.people.trade', icon: '/icons/network.png' },
+  { id: 'people:villages', helpBase: 'incubator.people.villages', icon: '/icons/village.png' },
+  { id: 'people:centres', helpBase: 'incubator.people.centres', icon: '/icons/wheat.png' },
+  { id: 'people:sources', helpBase: 'incubator.people.sources', icon: '/icons/stone_axe.png' },
+]
+type Settlement = 'spread' | 'lifeway' | 'density'
+const NO_SETTLEMENT = 'none:settlement'
 
 // The smallest catchment that makes a region of its own, km², the
 // choices of the trial control.
@@ -495,8 +507,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let people: PeopleResult | null = null
   let peopleArrows: PeopleArrow[] = []
   let peopleTime = SPAN_YEARS
-  let spreadOn = true
-  let routesOn = true
+  // What the settled land shows, and the people's switches.
+  let settlementShown: Settlement | null = 'spread'
+  const peopleOn: Record<string, boolean> = { 'people:routes': true, 'people:trade': false, 'people:villages': false, 'people:centres': false, 'people:sources': false }
+  const routesOn = (): boolean => peopleOn['people:routes']
   let peopleOrigin = -1
   // The people's end state (settleWorker.ts), a proof of concept.
   let settled: SettleResult | null = null
@@ -510,8 +524,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let blended: { key: string; shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } | null = null
   const overlayList = createOverlayList({
     onToggle: (id) => {
-      if (id === 'people:spread') spreadOn = !spreadOn
-      else if (id === 'people:routes') routesOn = !routesOn
+      if (id in peopleOn) peopleOn[id] = !peopleOn[id]
       else terrainOn = !terrainOn
       showCharts()
       plantLegend.refresh()
@@ -525,6 +538,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           woodShown = id === NO_WOOD ? null : (id.slice('wood:'.length) as WoodUse)
           if (woodShown) plantShown = null
         }
+        showPlants()
+        return
+      }
+      if (id === NO_SETTLEMENT || id.startsWith('settle:')) {
+        settlementShown = id === NO_SETTLEMENT ? null : (id.slice('settle:'.length) as Settlement)
         showPlants()
         return
       }
@@ -557,6 +575,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     rows: [
       { id: NO_WOOD, helpBase: 'overlay.none', icon: '/icons/clear.png' },
       ...WOOD_USES.map((p) => ({ id: woodPickId(p.use), helpBase: `wood.use.${p.use}`, icon: p.icon })),
+    ],
+  }
+  const SETTLEMENT_PICKS = {
+    title: 'incubator.section.settlement',
+    rows: [
+      { id: NO_SETTLEMENT, helpBase: 'overlay.none', icon: '/icons/clear.png' },
+      { id: 'settle:spread', helpBase: 'incubator.people.spread', icon: '/icons/human.png' },
+      { id: 'settle:lifeway', helpBase: 'incubator.people.lifeway', icon: '/icons/pastures.png' },
+      { id: 'settle:density', helpBase: 'incubator.people.density', icon: '/icons/population.png' },
     ],
   }
   const ANIMAL_PICKS = {
@@ -624,33 +651,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   peopleSlider.step = '100'
   peopleSection.append(peopleSlider, peopleRow)
   sidebar.foot.append(peopleSection)
-  // TRIAL (2026-10-25, a proof of concept): the people's end state on four
-  // switches. Hardcoded text, no catalog keys: we are trying it out.
-  const settleSection = document.createElement('section')
-  settleSection.className = 'gen-overlays'
-  const settleTitle = document.createElement('span')
-  settleTitle.className = 'gen-overlay__label'
-  settleTitle.textContent = 'Versuch: Endzustand'
-  settleSection.append(settleTitle)
-  const settleBox = (name: string): HTMLInputElement => {
-    const row = document.createElement('label')
-    row.className = 'gen-overlay'
-    const label = document.createElement('span')
-    label.className = 'gen-overlay__label'
-    label.textContent = name
-    const box = document.createElement('input')
-    box.type = 'checkbox'
-    box.className = 'gen-overlay__switch'
-    box.addEventListener('change', () => showPlants())
-    row.append(label, box)
-    settleSection.append(row)
-    return box
-  }
-  const lifewayBox = settleBox('Lebensweise')
-  const densityBox = settleBox('Dichte')
-  const villageBox = settleBox('Dörfer')
-  const tradeBox = settleBox('Handel')
-  sidebar.body.append(settleSection)
   // THE ANIMALS AT THE TIME SHOWN (2026-10-26): as the fauna placed them
   // before people came; where people live by then, under their pressure by
   // the lifeway and the density of that time (settleShared.ts); a big game
@@ -783,8 +783,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function showCharts(): void {
     overlayList.refresh((id) => {
       if (id === 'terrain') return { on: terrainOn, available: charts !== null }
-      if (id === 'people:spread') return { on: spreadOn, available: people !== null }
-      if (id === 'people:routes') return { on: routesOn, available: people !== null }
+      if (id in peopleOn) return { on: peopleOn[id], available: id === 'people:routes' ? people !== null : settled !== null }
+      if (id === NO_SETTLEMENT) return { on: settlementShown === null, available: true }
+      if (id.startsWith('settle:')) return { on: id === `settle:${settlementShown}`, available: id === 'settle:spread' ? people !== null : settled !== null }
       if (id === NO_FIELD) return { on: picked === null, available: true }
       if (id === NO_PLANTS) return { on: plantShown === null, available: true }
       if (id.startsWith('plant:')) return { on: plantShown !== null && id === plantPickId(plantShown), available: charts !== null }
@@ -1196,11 +1197,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       steps: ['people'],
       on: () => people !== null,
       paint: (o) => {
-        if (people && shown) paintPeople(o, people, peopleArrows, peopleTime, spreadOn, routesOn, shown.width, shown.height)
+        if (people && shown) paintPeople(o, people, peopleArrows, peopleTime, settlementShown === 'spread', routesOn(), shown.width, shown.height)
       },
       legend: () => {
-        if (!people || (!spreadOn && !routesOn)) return []
-        const routes = routesOn ? [{ label: t('incubator.people.routes.label'), rgb: [...PEOPLE_ROUTE] as [number, number, number], shape: 'line' as const }] : []
+        const spreadOn = settlementShown === 'spread'
+        if (!people || (!spreadOn && !routesOn())) return []
+        const routes = routesOn() ? [{ label: t('incubator.people.routes.label'), rgb: [...PEOPLE_ROUTE] as [number, number, number], shape: 'line' as const }] : []
         // The ramp as the years before the game the land was settled.
         return [spreadOn
           ? { type: 'gradient', title: t('incubator.people.time', { years: '…' }), unit: '', stops: PEOPLE_AGE_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })), items: routes }
@@ -1211,29 +1213,30 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     {
       // TRIAL: the end state, drawn over the spread.
       steps: ['people'],
-      on: () => settled !== null && (lifewayBox.checked || densityBox.checked || tradeBox.checked),
+      on: () => settled !== null && (settlementShown === 'lifeway' || settlementShown === 'density' || peopleOn['people:trade']),
       paint: (o) => {
         if (!settled || !shown) return
         const now = settledNow()
         if (!now) return
-        if (lifewayBox.checked) paintLifeways(o, now.lifeway, shown.width, shown.height)
-        if (densityBox.checked) paintDensity(o, now.density, shown.width, shown.height)
-        if (tradeBox.checked) paintTrade(o, settled.villages, now.links, shown.width, shown.height)
+        if (settlementShown === 'lifeway') paintLifeways(o, now.lifeway, shown.width, shown.height)
+        if (settlementShown === 'density') paintDensity(o, now.density, shown.width, shown.height)
+        if (peopleOn['people:trade']) paintTrade(o, settled.villages, now.links, shown.width, shown.height)
       },
       legend: () => {
         if (!settled) return []
         const specs: LegendSpec[] = []
-        if (lifewayBox.checked) specs.push({ type: 'swatches', title: 'Lebensweise', items: [...[1, 2, 3, 4].map((w) => ({ label: LIFEWAY_NAMES[w], rgb: [...LIFEWAY_COLOURS[w]] as [number, number, number] })), { label: 'Ackerbau-Zentrum', rgb: [...LIFEWAY_COLOURS[4]] as [number, number, number], shape: 'ring' as const }] })
-        if (densityBox.checked) specs.push({ type: 'gradient', title: 'Menschen je km²', unit: '', stops: DENSITY_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })) })
-        if (tradeBox.checked) specs.push({ type: 'swatches', title: 'Handel', items: [{ label: 'Handelsweg', rgb: [...TRADE_COLOUR] as [number, number, number], shape: 'line' }, ...GOODS.map((g, k) => ({ label: t(`resource.${g}.label` as TKey), rgb: [...GOOD_COLOURS[k]] as [number, number, number] }))] })
+        if (settlementShown === 'lifeway') specs.push({ type: 'swatches', title: t('incubator.people.lifeway.label'), items: [1, 2, 3, 4].map((w) => ({ label: t(LIFEWAY_KEYS[w]), rgb: [...LIFEWAY_COLOURS[w]] as [number, number, number] })) })
+        if (settlementShown === 'density') specs.push({ type: 'gradient', title: t('incubator.people.densityUnit'), unit: '', stops: DENSITY_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })) })
+        if (peopleOn['people:centres']) specs.push({ type: 'swatches', title: t('incubator.people.centres.label'), items: [{ label: t('incubator.people.centres.label'), rgb: [...LIFEWAY_COLOURS[4]] as [number, number, number], shape: 'ring' }] })
+        if (peopleOn['people:trade'] || peopleOn['people:sources']) specs.push({ type: 'swatches', title: t('incubator.people.trade.label'), items: [...(peopleOn['people:trade'] ? [{ label: t('incubator.people.trade.label'), rgb: [...TRADE_COLOUR] as [number, number, number], shape: 'line' as const }] : []), ...(peopleOn['people:sources'] ? GOODS.map((g, k) => ({ label: t(`resource.${g}.label` as TKey), rgb: [...GOOD_COLOURS[k]] as [number, number, number] })) : [])] })
         return specs
       },
       probe: (cell) => {
         const now = settledNow()
         if (!now || !now.lifeway[cell]) return []
         return [
-          { label: 'Lebensweise', value: LIFEWAY_NAMES[now.lifeway[cell]] },
-          { label: 'Dichte', value: `${now.density[cell].toFixed(2)} / km²` },
+          { label: t('incubator.people.lifeway.label'), value: t(LIFEWAY_KEYS[now.lifeway[cell]]) },
+          { label: t('incubator.people.density.label'), value: `${now.density[cell].toFixed(2)} ${t('incubator.people.densityUnit')}` },
         ]
       },
     },
@@ -1269,13 +1272,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     const { width, height } = shown
     const now = onPeople() ? settledNow() : null
-    const showSources = now !== null && settled !== null && tradeBox.checked
+    const showSources = now !== null && settled !== null && peopleOn['people:sources']
     sources.setSymbols(showSources ? Array.from({ length: settled!.sources.length / 2 }, (_, k) => ({ at: cellPoint(settled!.sources[2 * k], width, height), picture: settled!.sources[2 * k + 1] })) : [])
     sources.setEnabled(showSources)
-    const showVillages = now !== null && villageBox.checked
+    const showVillages = now !== null && peopleOn['people:villages']
     villages.setSymbols(showVillages ? villageSymbols(now!.villages, now!.density, width, height) : [])
     villages.setEnabled(showVillages)
-    const showCentres = now !== null && settled !== null && (lifewayBox.checked || villageBox.checked)
+    const showCentres = now !== null && settled !== null && peopleOn['people:centres']
     const centreSymbols: WorldSymbol[] = []
     if (showCentres) for (let k = 0; k < settled!.centres.length; k += 2) if (settled!.centres[k + 1] <= peopleTime) centreSymbols.push({ at: cellPoint(settled!.centres[k], width, height), picture: 0 })
     centres.setSymbols(centreSymbols)
@@ -1532,10 +1535,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function stepLayers(): void {
     const picks = onFlora() ? [RESOURCE_PICKS, PLANT_PICKS, WOOD_PICKS] : onTesting() ? [RESOURCE_PICKS] : [RESOURCE_PICKS, ANIMAL_PICKS]
     const rows = [{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }]
-    if (onPeople()) rows.push({ id: 'people:spread', helpBase: 'incubator.people.spread', icon: '/icons/human.png' }, { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' })
-    overlayList.setRows(rows, onPeople() ? [RESOURCE_PICKS] : picks)
+    if (onPeople()) rows.push(...PEOPLE_ROWS)
+    overlayList.setRows(rows, onPeople() ? [SETTLEMENT_PICKS, RESOURCE_PICKS] : picks)
     peopleSection.hidden = onTesting()
-    settleSection.hidden = !onPeople()
     if (onTesting()) peoplePlayer.stop()
     regionSection.hidden = !onTesting()
     showCharts()
