@@ -62,6 +62,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "casas-history-node"
+version = "0.1.0"
+dependencies = [
+ "casas-history",
+ "napi",
+ "napi-build",
+ "napi-derive",
+]
+
+[[package]]
 name = "casas-history-wasm"
 version = "0.1.0"
 dependencies = [

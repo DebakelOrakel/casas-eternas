@@ -138,6 +138,7 @@ test: engine
 # The WASM build needs the wasm32-unknown-unknown target, which rustup
 # installs from engine/rust-toolchain.toml.
 ENGINE_NODE_LIB := libcasas_engine_node.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
+HISTORY_NODE_LIB := libcasas_history_node.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
 WASM_BINDGEN := 0.2.129
 
@@ -156,6 +157,8 @@ engine:
 		engine/target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
 	# The incubator's history (docs/decisions/incubator-history-engine.md),
 	# a crate of its own beside the engine: its WASM build and its version.
+	cd engine && cargo build --release -p casas-history-node
+	cp engine/target/release/$(HISTORY_NODE_LIB) engine/dist/casas-history.node
 	cd engine && cargo build --release -p casas-history-wasm --target wasm32-unknown-unknown
 	wasm-bindgen --target web --out-dir engine/dist/history --out-name casas-history \
 		engine/target/wasm32-unknown-unknown/release/casas_history_wasm.wasm

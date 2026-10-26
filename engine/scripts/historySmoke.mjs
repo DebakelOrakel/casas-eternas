@@ -15,15 +15,20 @@
 //
 //   node engine/scripts/historySmoke.mjs [--record]
 //
-// Needs `make engine` (engine/dist/history).
+// The native build (the job worker's) runs the same worlds and must give
+// the WASM's bits. Needs `make engine` (engine/dist/history,
+// engine/dist/casas-history.node).
 
 import { createHash } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 const dist = new URL('../dist/', import.meta.url)
 const wasm = await import(new URL('history/casas-history.js', dist).href)
 await wasm.default({ module_or_path: await readFile(new URL('history/casas-history_bg.wasm', dist)) })
+// The native build, the job worker's: the same bits as the WASM's.
+const native = createRequire(import.meta.url)(fileURLToPath(new URL('casas-history.node', dist)))
 
 const CLIENT = fileURLToPath(new URL('../../client', import.meta.url))
 const { createServer } = await import(new URL('../../client/node_modules/vite/dist/node/index.js', import.meta.url).href)
@@ -144,7 +149,7 @@ function synthWorld(kind) {
 }
 
 // The WASM build's habitat for the same input.
-function wasmCells(c) {
+function wasmCells(c, build = wasm) {
   let present = 0
   const parts = []
   CELL_ECOLOGY.forEach((id, k) => {
@@ -158,7 +163,7 @@ function wasmCells(c) {
     ecology.set(p, at)
     at += p.length
   }
-  return new wasm.Incubator(c.kind === 'sphere', c.spacingKm, c.width, c.height, c.nodes, c.nodeW, c.nodeH, c.land, c.biome, c.koppen, c.z, c.lakeDepth, ecology, present, c.rivers.points, c.rivers.lengths, c.rivers.regimes)
+  return new build.Incubator(c.kind === 'sphere', c.spacingKm, c.width, c.height, c.nodes, c.nodeW, c.nodeH, c.land, c.biome, c.koppen, c.z, c.lakeDepth, ecology, present, c.rivers.points, c.rivers.lengths, c.rivers.regimes)
 }
 
 const GOLDEN = new URL('historySmoke.golden.json', import.meta.url)
@@ -228,6 +233,23 @@ for (const kind of ['torus', 'sphere']) {
   }
   const count = (k) => history.log.filter((e) => e.kind === k).length
   console.log(`history: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
+  // The native build on the same world.
+  t0 = performance.now()
+  const nat = wasmCells(world.cells, native)
+  nat.growFlora(world.seed)
+  nat.populate(world.seed)
+  const natPack = nat.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength)
+  const natSettled = nat.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo)
+  const natMs = performance.now() - t0
+  const natHashes = {
+    habitat: hashOf(nat.owners(), ...['areaKm2', 'heightM', 'slope', 'seaDepthM', 'riverSize', 'distKm', 'u', 'v'].map((name) => nat.floats(name)), ...CELL_ECOLOGY.map((id) => nat.floats(`eco:${id}`)), ...['land', 'biome', 'koppen', 'nearRiver', 'nearLake', 'nearSea'].map((name) => nat.bytes(name)), ...['landmass', 'nbrStart', 'nbr'].map((name) => nat.ints(name)), nat.landmassKm2(), nat.scalars(), nat.iceKm(), native.coldCurve(world.seed)),
+    flora: hashOf(nat.floraCodes(), nat.floraShares()),
+    fauna: hashOf(nat.faunaCodes(), nat.faunaShares()),
+    history: hashOf(natPack),
+    settlement: hashOf(natSettled),
+  }
+  for (const [part, h] of Object.entries(natHashes)) if (h !== hashes[`${kind} ${part}`]) fail(`${kind} ${part}: the native build differs from the WASM's`)
+  console.log(`history: ${kind} — the native build in ${Math.round(natMs)} ms`)
   if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'settlement']) {
     const key = `${kind} ${part}`
     if (golden[key] !== hashes[key]) fail(`${key}: not the reference's (${hashes[key].slice(0, 12)} against ${String(golden[key]).slice(0, 12)})`)
