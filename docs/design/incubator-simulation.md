@@ -152,6 +152,45 @@ What is open: the step against the drought's length (a drought lasts years
 to decades; a step of 50 years would smear it — hence 25), how far the
 regions reach, whether a step holds an average and a worst year.
 
+## Progression: conditions, not dates
+
+The rules set dates (2026-10-26): the farming from 11 000 years before the
+game, a centre every 1 000 to 3 000 years after; the herding from 8 000;
+the land bridges until 10 000; the reach over the sea growing evenly with
+the time. Every world runs the same calendar, whatever it is like.
+
+The simulation sets none. An event has a chance a step that follows from
+the state, and its date comes out:
+
+1. **A climate history of the world**: a glacial cycle over the span, its
+   depth, its maximum and how fast it ends drawn once from the world's
+   seed. From it the sea level (the shelf, the land bridges), the ice's
+   edge (land that opens as it melts), the dryness of the cold, and a warm,
+   stable climate as a condition of the farming — on the earth it began
+   only in the Holocene. Still a curve, but one cause instead of a date a
+   rule; the droughts sit in it.
+2. **Knowledge grows with people and contact**: a region's knowledge grows
+   with its people and its exchange with its neighbours, and a small
+   isolated group loses some (Henrich: the cumulative culture of
+   connected populations). From it the boats' reach — many people on a
+   coast with boat wood build better boats — and the readiness to tame.
+3. **Settled before farming**: where fish or wild plants are rich enough,
+   people stay and grow dense (the Natufians, the Jōmon); a settled, dense
+   people tames, by a chance growing with its density, how long it has
+   been settled, its wild crops and its knowledge. The centres come where
+   that comes together best, several apart.
+4. **The herding two ways**: farmers tame the herd animals near them;
+   hunters who follow a herd long enough tame it without fields (the
+   reindeer).
+
+Calibrated by the rates, not by dates: an earth-like world should give an
+earth-like course on the mean (the farming in the last eighth, the far
+islands late); a world poor in crops farms late or never, and rightly.
+The rules stay the preview, with their dates.
+
+Order: the climate history first (the sea, the bridges and the droughts
+hang on it), then knowledge and boats, then the settling and the taming.
+
 ## The log and the chronicle
 
 Every event of a step goes into a log: a time, a kind, a place, what it
@@ -222,3 +261,25 @@ the ice-free land reached against the rules' 82.9 %, 28 crossings.
 "Start history" and a reset (origin and people back to the rules') are
 the people step's buttons. The span of the whole incubator is 100 000
 years since (`SPAN_YEARS`). The kept states are not played back yet.
+
+**The climate history** (`climateHistory.ts`, the same day): the cold
+curve drawn from the seed (Morvane: deepest at year 82 380, depth 0.85,
+the melt 10 600 years); the sea's drop in proportion (to 120 m at cold
+1); the ice grown out of today's glaciers over the cold climates (Köppen
+D, E) up to 800 km at cold 1; what the land carries lowered by the cold,
+the cold climates most. Every 500 years the cells' carrying is made
+again; a cell under the ice or the sea is left, and may be settled again.
+
+On the way, two faults of the skeleton came out: a crossing could land on
+a coast of ice, where its people were 0 — and still settled the land
+beyond (the skeleton's 82 % on Morvane were that); and with one crossing
+a pair of landmasses, every sea km counted, Morvane's first continent was
+258 km of open water from any other coast people can live on. Now: the
+crossings join REGIONS (the habitable land's connected parts, a landmass
+the ice cuts being several), the reach limits the longest stretch of open
+water (a sea cell beside land ends it: boats keep to the coast, past the
+ice), a voyage is 3 000 km at most, 32 crossings a pair of regions. On
+Morvane: 98.5 % of the ice-free land reached (the rules 82.9 %), 1 182
+crossings, the arrival's median at year 43 700; 4.1 s. More than the
+rules: the boats' reach still grows evenly with the time — knowledge
+(above) is to rein it in.
