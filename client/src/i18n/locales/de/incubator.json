@@ -87,5 +87,10 @@
   "incubator.chronicle.village": "Dorf {n}",
   "incubator.chronicle.tradeDetail": "{a} – {b} · {km} km",
   "incubator.chronicle.populationDetail": "{villages} Dörfer · {centres} Zentren",
-  "incubator.layers.climate": "Klima"
+  "incubator.layers.climate": "Klima",
+  "incubator.action.runHistory.label": "Geschichte starten",
+  "incubator.action.runHistory.labelActive": "Geschichte stoppen",
+  "incubator.action.runHistory.help": "Die 100 000 Jahre Schritt für Schritt durchrechnen.",
+  "incubator.action.resetHistory.label": "Ursprung und Geschichte zurücksetzen",
+  "incubator.action.resetHistory.help": "Den Ursprung wieder selbst wählen und die Geschichte verwerfen."
 }

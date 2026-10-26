@@ -130,9 +130,9 @@ export function paintRaster(o: OverlayRaster, rgba: Uint8ClampedArray): void {
 // the earliest dark, the latest light.
 export const PEOPLE_AGE_STOPS: readonly { value: number; rgb: [number, number, number] }[] = [
   { value: 0, rgb: [110, 25, 35] },
-  { value: 25_000, rgb: [200, 75, 40] },
-  { value: 45_000, rgb: [240, 150, 55] },
-  { value: 65_000, rgb: [250, 225, 120] },
+  { value: 40_000, rgb: [200, 75, 40] },
+  { value: 70_000, rgb: [240, 150, 55] },
+  { value: 100_000, rgb: [250, 225, 120] },
 ]
 export const PEOPLE_ROUTE: readonly [number, number, number] = [90, 40, 25]
 

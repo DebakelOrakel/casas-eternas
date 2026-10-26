@@ -370,6 +370,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       updateSteps()
       overlayList.relabel()
       sayLayersButton()
+      sayHistory()
       chronicle.relabel()
       sayChronicle()
       // The crossings' years are pictures: made again in the new language.
@@ -776,6 +777,40 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlayList.setVisible(furnitureShown && layersShown)
   })
   sidebar.body.append(layersButton)
+  // THE HISTORY'S BUTTONS (the people step), as the generator's steps have
+  // theirs: start the history (simulation.ts, DES-0033) in the rules'
+  // place; reset the origin to the one chosen by itself and the people to
+  // the rules'.
+  const historyActions = document.createElement('div')
+  historyActions.className = 'gen-step__actions'
+  const historyReset = document.createElement('button')
+  historyReset.type = 'button'
+  historyReset.className = 'gen-action-icon'
+  historyReset.dataset.help = 'incubator.action.resetHistory'
+  historyReset.dataset.tAria = 'incubator.action.resetHistory.label'
+  const resetIcon = document.createElement('img')
+  resetIcon.src = '/icons/reset.png'
+  resetIcon.alt = ''
+  historyReset.append(resetIcon)
+  const historyRun = document.createElement('button')
+  historyRun.type = 'button'
+  historyRun.className = 'gen-action'
+  historyRun.dataset.help = 'incubator.action.runHistory'
+  const sayHistory = (): void => {
+    historyRun.textContent = t('incubator.action.runHistory.label')
+    historyReset.setAttribute('aria-label', t('incubator.action.resetHistory.label'))
+  }
+  sayHistory()
+  historyActions.append(historyReset, historyRun)
+  sidebar.foot.append(historyActions)
+  historyRun.addEventListener('click', () => {
+    historyRun.disabled = true
+    void growPeople(true).finally(() => (historyRun.disabled = false))
+  })
+  historyReset.addEventListener('click', () => {
+    peopleOrigin = -1
+    void growPeople()
+  })
   // Under the picks, why the plants or the animals could not be grown.
   const plantStatus = document.createElement('p')
   const plantInfo = document.createElement('section')
@@ -1411,9 +1446,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     await growPeople()
   }
   // The people, from the origin clicked or chosen, then their settlement.
-  async function growPeople(): Promise<void> {
+  // `history`: the simulation's (simulation.ts) instead of the rules'.
+  async function growPeople(history = false): Promise<void> {
     if (!overlay) return
-    const done = await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people')
+    const done = history
+      ? await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin }, 'people')
+      : await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people')
     if (!done || !overlay) return
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
     // The routes blue over the crossings the chronicle tells.
@@ -2074,6 +2112,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       one(RESOURCE_PICKS),
     ])
     if (onTesting()) chronicle.stop()
+    historyActions.hidden = !onPeople()
     regionSection.hidden = !onTesting()
     showCharts()
     plantLegend.refresh()

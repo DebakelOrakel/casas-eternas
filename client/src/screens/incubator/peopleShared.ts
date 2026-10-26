@@ -3,5 +3,7 @@
 // where its `self.onmessage` is the window's — a message to the window,
 // answered by the window, ran a loop that left the page white (2026-10-25).
 
-// The span of the spread, years.
-export const SPAN_YEARS = 65_000
+// The span of the people's history, years: from their departure, year 0,
+// to the game. 65 000 until 2026-10-26, then 100 000 for the simulation
+// (DES-0033), the rules with it.
+export const SPAN_YEARS = 100_000

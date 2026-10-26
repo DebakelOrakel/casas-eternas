@@ -19,7 +19,7 @@ summary.de: Die Regeln des Inkubators sind Zeitpunkte pro Zelle, einmal
   Ereignis kommt in ein Protokoll, das die Chronik zeigt. Noch nicht
   deterministisch; später in die Engine exportiert, wie die des Generators.
 area: mechanics
-stage: idea
+stage: building
 createdAt: 2026-10-26
 related: [DES-0032, DES-0031, DES-0023]
 ---
@@ -195,8 +195,8 @@ skeleton (below) before anything else is built on it.
 
 ## Open questions
 
-1. **The step**: 25 years (droughts) or 50 (half the cost)? Measured on
-   the skeleton.
+1. **The step**: 25 years, measured on the skeleton: the whole run costs
+   0.33 s, so a finer one is open to the droughts.
 2. **The regions** a drought takes: a landmass's part of a fixed size,
    or the climate's cells (78 km on Morvane)?
 3. **The preview**: is the spread alone enough, or the lifeways too?
@@ -207,4 +207,18 @@ skeleton (below) before anything else is built on it.
 
 ## Status
 
-Idea, 2026-10-26. Nothing built.
+Building, 2026-10-26. **The skeleton** (`simulation.ts`): the people, one
+lifeway, 4 000 steps of 25 years with three sub-steps of settling; a full
+cell settles its empty neighbours by a chance from the rules' speeds (a
+diffusion on cells of 10 km would be stable only in steps of some 2
+years); the shelf walked until 10 000 years before the game; the
+crossings over open water made once (the shortest between each pair of
+landmasses) and tried at 2 % a step within the time's reach. It gives the
+spread in the rules' form, so the settlement and the chronicle read it as
+they read the rules'. On Morvane: 0.33 s (40 s while every settled cell
+was visited a step; now the front and the growing cells alone), 82.2 % of
+the ice-free land reached against the rules' 82.9 %, 28 crossings.
+
+"Start history" and a reset (origin and people back to the rules') are
+the people step's buttons. The span of the whole incubator is 100 000
+years since (`SPAN_YEARS`). The kept states are not played back yet.

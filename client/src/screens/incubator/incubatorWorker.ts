@@ -5,6 +5,7 @@ import type { Habitat } from './habitat'
 import { spreadPeople, type PeopleResult } from './people'
 import { PLANTS } from './plants'
 import { settle, type SettleResult } from './settle'
+import { simulate } from './simulation'
 import { PLANT_SUITS_CODE } from './settleShared'
 
 // THE INCUBATOR'S WORKER (2026-10-26): the habitat's cells (cells.ts), made
@@ -20,6 +21,7 @@ export type IncubatorRequest =
   | { type: 'flora' }
   | { type: 'fauna' }
   | { type: 'people'; origin: number }
+  | { type: 'simulate'; origin: number }
   | { type: 'settle' }
 
 export type IncubatorAnswer =
@@ -76,6 +78,16 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       animals = populate(h, seed)
       const out = copied(animals)
       worker.postMessage({ type: 'fauna', animals: out, ms: ms() } satisfies IncubatorAnswer, out.map((l) => l.codes.buffer))
+      return
+    }
+    if (ask.type === 'simulate') {
+      // The history (simulation.ts) in the rules' place: the settlement
+      // after it reads it as it read the rules' spread. Its kept states are
+      // not played back yet (DES-0033).
+      const result = simulate(h, { carrying: h.carrying ?? new Float32Array(h.count).fill(0.4), origin: ask.origin >= 0 ? ask.origin : people?.origin ?? -1, seed })
+      people = result.people
+      const out = { ...people, arrival: people.arrival.slice(), land: people.land.slice(), from: people.from.slice(), flow: people.flow.slice(), crossings: people.crossings.slice(), crossingWays: people.crossingWays.slice() }
+      worker.postMessage({ type: 'people', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer])
       return
     }
     if (ask.type === 'people') {

@@ -73,10 +73,10 @@ const SPEED_MIN_KM_A = 0.05
 const SPEED_MAX_KM_A = 0.5
 const SLOPE_DRAG = 10
 const CORRIDOR = 2
-// The land bridges: the shelf to 120 m under today's sea, dry until 60 000
-// years after the departure, 10 000 years before the game.
+// The land bridges: the shelf to 120 m under today's sea, dry until 10 000
+// years before the game.
 const SHELF_M = 120
-const BRIDGE_UNTIL = 60_000
+const BRIDGE_UNTIL = SPAN_YEARS - 10_000
 // The crossings: km of open water, growing evenly with the time; without
 // boats no farther than REACH_NO_BOAT. On the water the front
 // moves SEA_KM_A.
