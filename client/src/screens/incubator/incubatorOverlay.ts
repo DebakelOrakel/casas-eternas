@@ -57,6 +57,12 @@ export const PLANT_SUITS = PLANT_SUITS_CODE
 // diagonal (a trial, 2026-10-25).
 const STRIPES_MAX = 3
 const STRIPE_TEXELS = 3
+// What people keep (a crop sown, a herd kept; settle.ts, the domesticates)
+// is hatched across the stripes, a line every HATCH_TEXELS texels, its
+// colour HATCH_SHADE as bright; outside its niche it counts as KEPT_CODE.
+const HATCH_TEXELS = 4
+const HATCH_SHADE = 0.45
+const KEPT_CODE = 200
 
 // A group of layers (the plants of a use, the trees of a wood, the
 // animals) on the habitat's cells, onto the overlay: per
@@ -65,8 +71,15 @@ const STRIPE_TEXELS = 3
 // The stripes go in the layers' order, not by their codes, so they run on
 // across the cells. `from`: the code from which a layer is drawn (a
 // plant's niche from PLANT_SUITS, an animal's numbers from 2).
-export function paintGroup(o: OverlayRaster, layers: readonly { codes: Uint8Array; colour: number }[], from = PLANT_SUITS): void {
+export function paintGroup(o: OverlayRaster, layers: readonly { codes: Uint8Array; colour: number; kept?: Uint8Array | null }[], from = PLANT_SUITS): void {
   const n = o.count
+  // A layer's weight in a cell: its code where it suits, KEPT_CODE where
+  // people keep it outside that (a crop sown, a herd kept), 0 elsewhere.
+  const weight = (k: number, i: number): number => {
+    const c = layers[k].codes[i]
+    const kept = layers[k].kept?.[i] ? KEPT_CODE : 0
+    return Math.max(c >= from ? c : 0, kept)
+  }
   // Per cell its layers (by index, ascending) and how many; an empty
   // niche marks grey.
   const pick = new Uint8Array(n * STRIPES_MAX)
@@ -76,12 +89,11 @@ export function paintGroup(o: OverlayRaster, layers: readonly { codes: Uint8Arra
   for (let i = 0; i < n; i++) {
     best.length = 0
     for (let k = 0; k < layers.length; k++) {
-      const c = layers[k].codes[i]
-      if (c >= from) best.push(k)
-      else if (c === 1) empty[i] = 1
+      if (weight(k, i) > 0) best.push(k)
+      else if (layers[k].codes[i] === 1) empty[i] = 1
     }
     if (best.length > STRIPES_MAX) {
-      best.sort((p, q) => layers[q].codes[i] - layers[p].codes[i])
+      best.sort((p, q) => weight(q, i) - weight(p, i))
       best.length = STRIPES_MAX
     }
     best.sort((p, q) => p - q)
@@ -97,7 +109,9 @@ export function paintGroup(o: OverlayRaster, layers: readonly { codes: Uint8Arra
       if (m > 0) {
         const k = pick[cell * STRIPES_MAX + (Math.floor((x + y) / STRIPE_TEXELS) % m)]
         const [r, g, b] = PLANT_PALETTE[layers[k].colour % PLANT_PALETTE.length]
-        put(o, i, r, g, b, 0.35 + 0.55 * ((layers[k].codes[cell] - from) / (255 - from)))
+        // Kept by people: hatched across the stripes, darker.
+        if (layers[k].kept?.[cell] && (((x - y) % HATCH_TEXELS) + HATCH_TEXELS) % HATCH_TEXELS === 0) put(o, i, r * HATCH_SHADE, g * HATCH_SHADE, b * HATCH_SHADE, 0.95)
+        else put(o, i, r, g, b, 0.35 + 0.55 * ((weight(k, cell) - from) / (255 - from)))
       } else if (empty[cell]) put(o, i, 120, 120, 120, 0.45)
     }
   }

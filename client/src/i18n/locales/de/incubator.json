@@ -63,6 +63,9 @@
   "incubator.chronicle.event.herdCentre": "Viehzucht-Zentrum entstanden",
   "incubator.chronicle.event.crossing": "Überfahrt nach Landmasse {n}",
   "incubator.chronicle.event.extinct": "{animal} ausgestorben",
+  "incubator.chronicle.event.domesticated": "{name} domestiziert",
   "incubator.chronicle.landmass": "Landmasse {n}",
-  "incubator.chronicle.crossingDetail": "{area} km² · {km} km übers Meer"
+  "incubator.chronicle.crossingDetail": "{area} km² · {km} km übers Meer",
+  "incubator.domestic.crops": "Angebaut",
+  "incubator.domestic.herds": "Gehalten"
 }

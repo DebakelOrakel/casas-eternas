@@ -88,12 +88,8 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       return
     }
     if (!flora || !animals || !people) throw new Error('the settlement needs the flora, the fauna and the people first')
-    const farmPlant = new Uint8Array(h.count)
-    const herdAnimal = new Uint8Array(h.count)
-    for (const plant of flora.plants) if (FARM_PLANTS.has(plant.id)) for (let i = 0; i < h.count; i++) if (plant.codes[i] >= PLANT_SUITS_CODE && farmPlant[i] < 255) farmPlant[i]++
-    for (const animal of animals) if (HERD_ANIMALS.has(animal.id)) for (let i = 0; i < h.count; i++) if (animal.codes[i] >= 2 && herdAnimal[i] < 255) herdAnimal[i]++
-    const result = settle(h, { arrival: people.arrival, farmPlant, herdAnimal, origin: people.origin, animals, seed })
-    worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
+    const result = settle(h, { arrival: people.arrival, crops: flora.plants.filter((p) => FARM_PLANTS.has(p.id)), herds: animals.filter((a) => HERD_ANIMALS.has(a.id)), origin: people.origin, animals, seed })
+    worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, result.farmFrom.buffer, result.herdFrom.buffer, result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
   } catch (e) {
     worker.postMessage({ type: 'failed', message: String(e) } satisfies IncubatorAnswer)
   }

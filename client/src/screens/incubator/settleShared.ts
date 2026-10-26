@@ -80,17 +80,34 @@ export function sharesAt(s: SettleTimes, i: number, t: number, shares: Float32Ar
   return top
 }
 
-// People a km² in a cell at `t`: each lifeway's share of its own density,
-// grown since it came from the foragers' to its own.
-export function densityAt(s: SettleTimes, i: number, t: number, shares: Float32Array): number {
+// People a km² of a lifeway in a cell at `t`, were it alone there: grown
+// since it came from the foragers' to its own.
+function wayDensity(s: SettleTimes, i: number, t: number, way: number): number {
   const floor = DENSITY[LIFEWAY.foragers] * s.carrying[i]
+  const full = DENSITY[way] * s.carrying[i]
+  return floor + (full - floor) * grownSince(t, lifewaySince(s, i, way))
+}
+
+// People a km² in a cell at `t`: each lifeway's share of its own density.
+export function densityAt(s: SettleTimes, i: number, t: number, shares: Float32Array): number {
   let d = 0
-  for (let way = 1; way < shares.length; way++) {
-    if (!(shares[way] > 0)) continue
-    const full = DENSITY[way] * s.carrying[i]
-    d += shares[way] * (floor + (full - floor) * grownSince(t, lifewaySince(s, i, way)))
-  }
+  for (let way = 1; way < shares.length; way++) if (shares[way] > 0) d += shares[way] * wayDensity(s, i, t, way)
   return d
+}
+
+// THE CLEARING (2026-10-26): the share of a cell's forest people cleared by
+// `t`, only as much as they need — CLEAR_HA hectares a person for the
+// fields, the fallow and the village (the farmers), or for the grazing that
+// keeps the wood from growing back (the herders); at the farmers' full
+// density of 15 a km², some 15 % of the land. Never more than CLEAR_MOST.
+const CLEAR_HA: Record<number, number> = { 3: 0.3, 4: 1 }
+const CLEAR_MOST = 0.5
+
+export function clearedAt(s: SettleTimes, i: number, t: number, shares: Float32Array): number {
+  let ha = 0
+  for (const way of [LIFEWAY.herders, LIFEWAY.farmers]) if (shares[way] > 0) ha += shares[way] * wayDensity(s, i, t, way) * CLEAR_HA[way]
+  // A hectare is a hundredth of a km².
+  return Math.min(CLEAR_MOST, ha / 100)
 }
 
 // THE PEOPLE'S PRESSURE ON AN ANIMAL in a cell, a factor on its numbers

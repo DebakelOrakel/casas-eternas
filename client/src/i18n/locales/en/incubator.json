@@ -63,6 +63,9 @@
   "incubator.chronicle.event.herdCentre": "Herding centre arises",
   "incubator.chronicle.event.crossing": "Crossing to landmass {n}",
   "incubator.chronicle.event.extinct": "{animal} dies out",
+  "incubator.chronicle.event.domesticated": "{name} domesticated",
   "incubator.chronicle.landmass": "Landmass {n}",
-  "incubator.chronicle.crossingDetail": "{area} km² · {km} km over the sea"
+  "incubator.chronicle.crossingDetail": "{area} km² · {km} km over the sea",
+  "incubator.domestic.crops": "Cultivated",
+  "incubator.domestic.herds": "Kept"
 }

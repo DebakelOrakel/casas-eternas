@@ -170,6 +170,23 @@ no snapshots:
   herd animals or more, good pasture; the first 8 000 years before the
   game), and at the farming's centres 1 000 years after the fields. It
   spreads 2 km a year: the earth's nomads took the steppes late and fast.
+- **The domesticates.** A farming centre tames the domesticable starch
+  plants that grow wild there, and 1 000 years later its herd animals; a
+  herding centre its herd animals. Each wave carries its centre's own and
+  goes where one of them suits the land (its niche, beyond its wild
+  range), as wheat went to Europe; before, a wave needed a wild one in
+  every cell. On Morvane the fields kept their extent (15 362 → 15 190
+  cells), the herds halved (10 258 → 5 740): each wave brings only its own
+  animals now. 14 domestications. Shown hatched in the plants' and the
+  animals' views, the tooltip naming what is cultivated or kept. Almost
+  all of it lies in the wild range anyway (outside: 57 of 24 335 crop
+  cells, 84 of 6 892 herd cells): the wild plants and animals already
+  cover their niche on a landmass, and the waves do not cross the sea.
+- **The clearing.** People clear the forest only as far as they need it: a
+  hectare a farmer for the fields, the fallow and the village, 0.3 a
+  herder for the grazing, at most half a cell. The trees there show
+  fainter, not gone. On Morvane at the end 9 % of a cell in the median,
+  23.5 % at most.
 - **The lifeways' shares.** A cell holds several at once: the foragers
   always a little, the fishers, herders and farmers by the fish, pasture
   and arable land, each grown with the time since it came. The density is
@@ -182,9 +199,9 @@ no snapshots:
   from the sources of tool stone, salt and copper the goods go down the
   links, less each step.
 
-On Morvane at the end: two farming and two herding centres, 18 M people
-(13 M of them farmers), 638 villages; one cell in ten that people reached
-holds two lifeways or more.
+On Morvane at the end: two farming and two herding centres, 17.7 M people
+(13 M of them farmers), 640 villages; one cell in twelve that people
+reached holds two lifeways or more.
 
 The layers of step 3, in order: the spread, the lifeways or the density
 (one at a time), the trade, the villages, the sources, the centres with

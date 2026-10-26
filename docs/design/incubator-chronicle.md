@@ -114,11 +114,14 @@ A fourth kind came the same day: **a species dies out** on a landmass of
 last tenth goes, at the cell it went from last; the icon of its animal
 group. On Morvane 15.
 
+A fifth: **a plant or an animal domesticated** at a centre (`settle.ts`,
+the domesticates), at the centre's cell. On Morvane 14.
+
 A landmass is named by its rank by area, 1 the largest. The axis carries
 the people over the span (`settle.ts` population, every 500 years, on a
 logarithmic scale) and the handle; not the epochs yet.
 
 ## Status
 
-Building, 2026-10-26: the panel, four kinds of events, the travel to
+Building, 2026-10-26: the panel, five kinds of events, the travel to
 them.

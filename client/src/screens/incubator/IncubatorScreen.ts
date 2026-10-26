@@ -49,11 +49,11 @@ import type { PeopleResult } from './people'
 import { SPAN_YEARS } from './peopleShared'
 import { arrowsOf, type PeopleArrow } from './peopleArrows'
 import type { SettleResult } from './settle'
-import { densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
+import { clearedAt, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { cellPoint, centrePictures, originPictures, sourcePictures, villagePictures, villageSymbols } from './incubatorSymbols'
 import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
-import type { LegendSpec } from '../../ui/legend/LegendPanel'
+import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
 import type { ChartPoint } from '../../map/worldView'
@@ -596,7 +596,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The end state's lifeways (the largest, and the shares: 4 a cell, the
   // lifeways 1 … 4, 0 … 255), density, villages and links at the time shown
   // (settleShared.ts), made for the time and kept for it.
-  let settledAtTime: { time: number; lifeway: Uint8Array; shares: Uint8Array; density: Float32Array; villages: Int32Array; links: Float32Array } | null = null
+  let settledAtTime: { time: number; lifeway: Uint8Array; shares: Uint8Array; density: Float32Array; cleared: Float32Array; villages: Int32Array; links: Float32Array } | null = null
   function settledNow(): NonNullable<typeof settledAtTime> | null {
     if (!settled || !people) return null
     if (settledAtTime?.time === peopleTime) return settledAtTime
@@ -605,11 +605,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const lifeway = new Uint8Array(n)
     const shares = new Uint8Array(4 * n)
     const density = new Float32Array(n)
+    const cleared = new Float32Array(n)
     const cell = new Float32Array(5)
     for (let i = 0; i < n; i++) {
       if (!(people.arrival[i] <= peopleTime) || !people.land[i]) continue
       lifeway[i] = sharesAt(times, i, peopleTime, cell)
       density[i] = densityAt(times, i, peopleTime, cell)
+      cleared[i] = clearedAt(times, i, peopleTime, cell)
       for (let w = 1; w < 5; w++) shares[4 * i + w - 1] = Math.round(cell[w] * 255)
     }
     // The villages there by now; the links between two of them, their
@@ -620,8 +622,58 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (let k = 0; k < settled.links.length; k += 3) {
       if (settled.villageFrom[settled.links[k]] <= peopleTime && settled.villageFrom[settled.links[k + 1]] <= peopleTime) links.push(settled.links[k], settled.links[k + 1], settled.links[k + 2])
     }
-    settledAtTime = { time: peopleTime, lifeway, shares, density, villages: Int32Array.from(villages), links: Float32Array.from(links) }
+    settledAtTime = { time: peopleTime, lifeway, shares, density, cleared, villages: Int32Array.from(villages), links: Float32Array.from(links) }
     return settledAtTime
+  }
+  // THE DOMESTICATES AT THE TIME SHOWN (2026-10-26): per crop and herd
+  // animal, the cells where people sow or keep it by then — where the
+  // fields, the herds, came from a centre that tamed it (settle.ts,
+  // farmFrom, herdFrom) and its niche suits the cell, reached by the wild
+  // one or not. Made for the time and kept for it.
+  let keptAtTime: { time: number; crops: Map<string, Uint8Array>; herds: Map<string, Uint8Array> } | null = null
+  function keptNow(): { crops: Map<string, Uint8Array>; herds: Map<string, Uint8Array> } | null {
+    if (!settled || !plants || !animals) return null
+    if (keptAtTime?.time === peopleTime) return keptAtTime
+    const s = settled
+    const ofCentre = (kind: 'plant' | 'animal'): string[][] => Array.from({ length: s.centres.length / 3 }, (_, k) => s.domestications.filter((d) => d.kind === kind && d.cell === s.centres[3 * k]).map((d) => d.id))
+    const mark = (into: Map<string, Uint8Array>, at: Float32Array, from: Int8Array, ofIt: string[][], codesOf: (id: string) => Uint8Array | undefined, suits: (code: number) => boolean): void => {
+      for (let i = 0; i < at.length; i++) {
+        if (!(at[i] <= peopleTime) || from[i] < 0) continue
+        for (const id of ofIt[from[i]]) {
+          const codes = codesOf(id)
+          if (!codes || !suits(codes[i])) continue
+          let mask = into.get(id)
+          if (!mask) into.set(id, (mask = new Uint8Array(at.length)))
+          mask[i] = 1
+        }
+      }
+    }
+    const crops = new Map<string, Uint8Array>()
+    const herds = new Map<string, Uint8Array>()
+    mark(crops, s.farmAt, s.farmFrom, ofCentre('plant'), (id) => plants!.layers.find((l) => l.id === id)?.codes, (c) => c === 1 || c >= PLANT_SUITS)
+    mark(herds, s.herdAt, s.herdFrom, ofCentre('animal'), (id) => animals!.find((a) => a.id === id)?.codes, (c) => c >= 1)
+    keptAtTime = { time: peopleTime, crops, herds }
+    return keptAtTime
+  }
+  // THE TREES AT THE TIME SHOWN (2026-10-26): where people cleared part of
+  // a cell's forest by then (settleShared.ts, clearedAt), each tree that
+  // suits it there that much less above its threshold, so it shows fainter
+  // but stays. Made for the time and kept for it.
+  let treesAtTime: { time: number; trees: TreeLayer[] } | null = null
+  function shownTrees(): TreeLayer[] | null {
+    if (!plants) return null
+    const now = settledNow()
+    if (!now) return plants.trees
+    if (treesAtTime?.time === peopleTime) return treesAtTime.trees
+    const trees = plants.trees.map((tree) => {
+      const codes = tree.codes.slice()
+      for (let i = 0; i < codes.length; i++) {
+        if (now.cleared[i] > 0 && codes[i] >= PLANT_SUITS) codes[i] = PLANT_SUITS + Math.round((codes[i] - PLANT_SUITS) * (1 - now.cleared[i]))
+      }
+      return { ...tree, codes }
+    })
+    treesAtTime = { time: peopleTime, trees }
+    return trees
   }
   // The animals shown, at the time shown.
   function shownAnimals(): AnimalLayer[] | null {
@@ -656,6 +708,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           title: t(farm ? 'incubator.chronicle.event.farmCentre' : 'incubator.chronicle.event.herdCentre'),
           detail: landmassName(cellFacts.landmass[cell]),
         }, cell)
+      }
+    }
+    if (settled && cellFacts) {
+      for (const d of settled.domestications) {
+        const plant = d.kind === 'plant'
+        place({
+          time: d.at,
+          icon: plant ? '/icons/wheat.png' : '/icons/pastures.png',
+          rgb: LIFEWAY_COLOURS[plant ? LIFEWAY.farmers : LIFEWAY.herders],
+          title: t('incubator.chronicle.event.domesticated', { name: t(`${plant ? 'plant' : 'animal'}.${d.id}.label` as TKey) }),
+          detail: landmassName(cellFacts.landmass[d.cell]),
+        }, d.cell)
       }
     }
     if (settled && cellFacts) {
@@ -887,7 +951,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The group on the map: the plants of a use, or the trees of a wood.
   // A plant's colour is its place in its use; a tree's its place among
   // the trees, the same under every wood it gives.
-  function shownGroup(): { title: string; from: number; layers: { name: string; codes: Uint8Array; reached: number; colour: number }[] } | null {
+  function shownGroup(): { title: string; from: number; keptKey: TKey; layers: { name: string; codes: Uint8Array; reached: number; colour: number; kept: Uint8Array | null }[] } | null {
     if (onTesting() || onPeople()) return null
     if (!onFlora()) {
       const animals = shownAnimals()
@@ -896,7 +960,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       return {
         title: t(`animal.use.${use}.label` as TKey),
         from: 2,
-        layers: animals.flatMap((l, k) => (l.uses.includes(use) ? [{ name: t(`animal.${l.id}.label` as TKey), codes: l.codes, reached: l.reached, colour: k }] : [])),
+        keptKey: 'incubator.domestic.herds',
+        layers: animals.flatMap((l, k) => (l.uses.includes(use) ? [{ name: t(`animal.${l.id}.label` as TKey), codes: l.codes, reached: l.reached, colour: k, kept: keptNow()?.herds.get(l.id) ?? null }] : [])),
       }
     }
     if (!plants) return null
@@ -905,7 +970,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       return {
         title: t(`plant.use.${use}.label` as TKey),
         from: PLANT_SUITS,
-        layers: plants.layers.filter((l) => l.use === use).map((l, k) => ({ name: t(`plant.${l.id}.label` as TKey), codes: l.codes, reached: l.reached, colour: k })),
+        keptKey: 'incubator.domestic.crops',
+        layers: plants.layers.filter((l) => l.use === use).map((l, k) => ({ name: t(`plant.${l.id}.label` as TKey), codes: l.codes, reached: l.reached, colour: k, kept: keptNow()?.crops.get(l.id) ?? null })),
       }
     }
     if (woodShown) {
@@ -913,7 +979,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       return {
         title: t(`wood.use.${use}.label` as TKey),
         from: PLANT_SUITS,
-        layers: plants.trees.flatMap((l, k) => (l.woods.includes(use) ? [{ name: t(`wood.${l.id}.label` as TKey), codes: l.codes, reached: l.reached, colour: k }] : [])),
+        keptKey: 'incubator.domestic.crops',
+        layers: (shownTrees() ?? plants.trees).flatMap((l, k) => (l.woods.includes(use) ? [{ name: t(`wood.${l.id}.label` as TKey), codes: l.codes, reached: l.reached, colour: k, kept: null }] : [])),
       }
     }
     return null
@@ -989,6 +1056,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const { type: _type, ms: _ms, ...rest } = result
     settled = rest
     settledAtTime = null
+    treesAtTime = null
+    keptAtTime = null
     animalsAtTime.clear()
     showPlants()
     sayChronicle()
@@ -1006,7 +1075,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const best = <L extends { codes: Uint8Array }>(layers: L[]): L[] => layers.filter((l) => l.codes[cell] >= PLANT_SUITS).sort((p, q) => q.codes[cell] - p.codes[cell])
     const uses = PLANT_USES.map(({ use }) => ({ label: t(`plant.use.${use}.label` as TKey), names: best(plants!.layers.filter((l) => l.use === use)).map((l) => t(`plant.${l.id}.label` as TKey)) }))
     const woods = WOOD_USES.map(({ use }) => ({ label: t(`wood.use.${use}.label` as TKey), names: best(plants!.trees.filter((l) => l.woods.includes(use))).map((l) => t(`wood.${l.id}.label` as TKey)) }))
-    return [...uses, ...woods].filter((g) => g.names.length > 0)
+    const kept = keptNow()
+    const crops = { label: t('incubator.domestic.crops'), names: kept ? [...kept.crops].filter(([, mask]) => mask[cell]).map(([id]) => t(`plant.${id}.label` as TKey)) : [] }
+    return [crops, ...uses, ...woods].filter((g) => g.names.length > 0)
   }
 
   // The animals at a cell of the world raster, by use: those that live
@@ -1015,7 +1086,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const animals = shownAnimals()
     if (!animals) return []
     const here = animals.filter((l) => l.codes[cell] >= 2).sort((p, q) => q.codes[cell] - p.codes[cell])
-    return ANIMAL_USES.map(({ use }) => ({ label: t(`animal.use.${use}.label` as TKey), names: here.filter((l) => l.uses.includes(use)).map((l) => t(`animal.${l.id}.label` as TKey)) })).filter((g) => g.names.length > 0)
+    const kept = keptNow()
+    const herds = { label: t('incubator.domestic.herds'), names: kept ? [...kept.herds].filter(([, mask]) => mask[cell]).map(([id]) => t(`animal.${id}.label` as TKey)) : [] }
+    return [herds, ...ANIMAL_USES.map(({ use }) => ({ label: t(`animal.use.${use}.label` as TKey), names: here.filter((l) => l.uses.includes(use)).map((l) => t(`animal.${l.id}.label` as TKey)) }))].filter((g) => g.names.length > 0)
   }
 
   // THE TRIALS' LAYERS, as the generator's table of its layers
@@ -1035,10 +1108,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const groupLegend = (group: NonNullable<ReturnType<typeof shownGroup>>): LegendSpec => ({
     type: 'swatches',
     title: group.title,
-    items: group.layers.flatMap((layer) => layer.reached === 0 ? [] : [{
-      label: `${layer.name} (${formatValue(layer.reached < 0.005 ? '<1' : String(Math.round(100 * layer.reached)), 'common.unit.percent')})`,
-      rgb: [...PLANT_PALETTE[layer.colour % PLANT_PALETTE.length]] as [number, number, number],
-    }]),
+    items: [
+      ...group.layers.flatMap((layer): LegendItem[] => layer.reached === 0 ? [] : [{
+        label: `${layer.name} (${formatValue(layer.reached < 0.005 ? '<1' : String(Math.round(100 * layer.reached)), 'common.unit.percent')})`,
+        rgb: [...PLANT_PALETTE[layer.colour % PLANT_PALETTE.length]] as [number, number, number],
+      }]),
+      // What people keep, hatched (incubatorOverlay.ts, paintGroup).
+      ...(group.layers.some((layer) => layer.kept) ? [{ label: t(group.keptKey), rgb: [60, 60, 60], shape: 'line' } satisfies LegendItem] : []),
+    ],
   })
   const groupRows = (groups: { label: string; names: string[] }[]): ProbeRow[] => groups.flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name })))
   const groupLayer = (steps: TrialLayer['steps'], at: (cell: number) => { label: string; names: string[] }[]): TrialLayer => ({
