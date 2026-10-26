@@ -2,6 +2,7 @@ import { Biome } from '../../generator/climate/biomes'
 import { KOPPEN_CODES, type KoppenCode } from '../../generator/climate/koppen'
 import { drawOriginsByLandmass, hashText, mulberry32, spreadRange, trapezoid, type Habitat } from './habitat'
 import type { NicheSpec } from './plants'
+import { detExp } from '../../generator/core/detMath'
 
 // THE INCUBATOR'S NICHES (2026-10-25, a trial): where a plant, a tree or an
 // animal can live (its niche over the habitat, NicheSpec) and where it got
@@ -25,7 +26,7 @@ const SPREAD_KM = 8000
 // niche empty on whole continents: on Morvane four fifths of the empty
 // fruit niche lay on landmasses the plant had no origin on.
 const ORIGIN_AREA_KM2 = 500_000
-const originChance = (h: Habitat) => (m: number): number => 1 - Math.exp(-h.landmassKm2[m] / ORIGIN_AREA_KM2)
+const originChance = (h: Habitat) => (m: number): number => 1 - detExp(-h.landmassKm2[m] / ORIGIN_AREA_KM2)
 // A plant of the open land in the forest, or a forest plant in the open:
 // at its edges and clearings, so a part of its niche, under the
 // threshold where the class alone would suit it.

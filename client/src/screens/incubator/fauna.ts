@@ -1,6 +1,7 @@
 import { spreadRange, type Habitat } from './habitat'
 import { ANIMALS, EDIBLE_SHARE, type AnimalUse } from './animals'
 import { BARRIER, nicheOf, rangeOf, SUITABLE } from './niche'
+import { sq } from '../../generator/core/detMath'
 
 // THE INCUBATOR'S FAUNA (2026-10-25, a trial): where each animal of
 // animals.ts lives, and how many, on the habitat's cells.
@@ -64,12 +65,12 @@ export function populate(h: Habitat, seed: number): AnimalLayer[] {
   for (let i = 0; i < n; i++) {
     if (!land[i]) continue
     let sum = 0
-    for (const k of herbivores) if (lives(k, i)) sum += grown[k].niche[i] ** 2
+    for (const k of herbivores) if (lives(k, i)) sum += sq(grown[k].niche[i])
     if (sum === 0) continue
     const forage = (game ? game[i] : 1) * (EDIBLE_SHARE[biome[i]] ?? 0)
     for (const k of herbivores) {
       if (!lives(k, i)) continue
-      density[k][i] = (forage * grown[k].niche[i] ** 2) / sum
+      density[k][i] = (forage * sq(grown[k].niche[i])) / sum
       prey[i] += density[k][i]
     }
   }

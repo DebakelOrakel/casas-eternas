@@ -1,6 +1,7 @@
 import { Biome } from '../../generator/climate/biomes'
 import { MinHeap } from '../../generator/core/minHeap'
 import type { Habitat } from './habitat'
+import { detExp } from '../../generator/core/detMath'
 
 // THE WAYS' DAYS (2026-10-26, DES-0033 "Villages and trade"): how long a
 // step from a cell to its neighbour takes, in days, for the central places'
@@ -55,7 +56,7 @@ export function travelDays(h: Habitat): Float32Array {
         const ease = TERRAIN_EASE[h.biome[u]] ?? 1
         if (ease <= 0) continue
         const grade = (h.heightM[u] - h.heightM[i]) / (km * 1000)
-        let kmDay = WALK_HOURS * 6 * Math.exp(-3.5 * Math.abs(grade + 0.05)) * ease
+        let kmDay = WALK_HOURS * 6 * detExp(-3.5 * Math.abs(grade + 0.05)) * ease
         if (h.riverSize[i] >= RIVER_BOAT_SIZE && h.riverSize[u] >= RIVER_BOAT_SIZE) kmDay = Math.max(kmDay, h.heightM[u] <= h.heightM[i] ? RIVER_DOWN_KM_DAY : RIVER_UP_KM_DAY)
         days[e] = km / kmDay
       } else if (byBoat(i) && byBoat(u)) days[e] = km / COAST_KM_DAY

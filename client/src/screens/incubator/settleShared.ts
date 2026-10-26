@@ -1,3 +1,4 @@
+import { detExp } from '../../generator/core/detMath'
 // What the settlement (settle.ts) and the screen share, out
 // of the worker for the reason peopleShared.ts gives: the lifeways' shares
 // and the density of a cell at a time, from its times (SettleTimes). The worker
@@ -46,7 +47,7 @@ export interface SettleTimes {
 const SHARE_GAIN: Record<number, number> = { 2: 1, 3: 2, 4: 4 }
 const FORAGER_WEIGHT = 0.2
 
-const grownSince = (t: number, since: number): number => Math.max(0, 1 - Math.exp(-(t - since) / DENSITY_TAU))
+const grownSince = (t: number, since: number): number => Math.max(0, 1 - detExp(-(t - since) / DENSITY_TAU))
 
 // When a lifeway came to a cell; Infinity for never.
 export function lifewaySince(s: SettleTimes, i: number, way: number): number {

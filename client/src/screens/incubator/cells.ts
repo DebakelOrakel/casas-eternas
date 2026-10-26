@@ -5,6 +5,7 @@ import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
 import { createFieldMesh, createFieldSampler, rasterOwners } from '../../generator/fields/fieldMesh'
 import { RIVER_MAX_WIDTH, RIVER_MIN_WIDTH, RIVER_REGIME_CODE, type RiverPolylines } from '../../generator/surface/hydrology'
 import { LEVEL_ECOLOGY, type Habitat } from './habitat'
+import { detHypot } from '../../generator/core/detMath'
 
 // THE INCUBATOR'S CELLS (2026-10-26): the habitat (habitat.ts) on the
 // generator's field mesh at CELL_SPACING_KM, unrelaxed (fields/fieldMesh.ts,
@@ -150,7 +151,7 @@ export function buildCells(input: CellInput): { habitat: Habitat; owners: Int32A
           const bx = points[3 * k + 3]
           const by = points[3 * k + 4]
           const size = (points[3 * k + 2] - RIVER_MIN_WIDTH) / (RIVER_MAX_WIDTH - RIVER_MIN_WIDTH)
-          const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 0.25))
+          const steps = Math.max(1, Math.ceil(detHypot(bx - ax, by - ay) / 0.25))
           for (let s = 0; s <= steps; s++) {
             const c = sampler.nearestCell(domain.wrapX(ax + ((bx - ax) * s) / steps), Math.min(domain.height - 1e-6, Math.max(0, ay + ((by - ay) * s) / steps)))
             if (!land[c]) continue

@@ -5,6 +5,7 @@ import { POPULATION_MARKS, type LogEvent } from './historyLogShared'
 import { reset, travelDays, withinDays } from './travel'
 import type { PeopleResult } from './people'
 import { CAME_NEVER, CAME_STEP, CARRYING_FULL, densityAt, extinctAt, GOODS, LIFEWAY, lifewaySince, PLANT_SUITS_CODE, sharesAt, type SettleTimes } from './settleShared'
+import { detExp } from '../../generator/core/detMath'
 
 // THE INCUBATOR'S SETTLEMENT (2026-10-25, a proof of concept): the people's
 // end state, 5 000 years before the game — how they live in each cell they
@@ -488,7 +489,7 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
         const first = !days.has(u)
         days.set(u, nd)
         heap.push(nd, u)
-        if (first) weight.set(keyOf(v, u), (weight.get(keyOf(v, u)) ?? 0) + Math.exp(-d / DECAY_DAYS))
+        if (first) weight.set(keyOf(v, u), (weight.get(keyOf(v, u)) ?? 0) + detExp(-d / DECAY_DAYS))
       }
     }
   }

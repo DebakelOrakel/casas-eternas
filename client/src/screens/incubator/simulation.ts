@@ -8,12 +8,15 @@ import { reset, travelDays, withinDays } from './travel'
 import { CAME_NEVER, CAME_STEP, LIFEWAY, PLANT_SUITS_CODE, SETTLE_AFTER } from './settleShared'
 import { POPULATION_MARKS, type LogEvent } from './historyLogShared'
 import { climateHistoryOf, coldShare, iceMayCover, ICE_REACH_KM } from './climateHistory'
+import { detCos, detExp, detLog } from '../../generator/core/detMath'
 
 // THE INCUBATOR'S SIMULATION, its skeleton (2026-10-26, DES-0033 step 2):
 // the people, one lifeway, over SPAN_YEARS in steps of STEP_YEARS, on the
 // habitat's cells. Functions over typed arrays, no DOM, no screen state:
-// to be ported to the engine later. Seeded, not yet bit-equal across
-// builds.
+// ported to casas-history (docs/decisions/incubator-history-engine.md),
+// which must give its bits. Seeded, and on detMath since 2026-10-26 (not
+// Math.exp, Math.log and the like, which differ between JavaScript's
+// engines in the last bit).
 //
 // A STEP:
 // 1. GROWTH: each cell's people toward what the land carries (its carrying
@@ -712,7 +715,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     for (let i = 0; i < n; i++) {
       if (!land[i]) continue
       const row = Math.min(rows - 1, Math.floor(h.v[i] * rows))
-      const around = h.radiusKm > 0 ? 2 * Math.PI * h.radiusKm * Math.cos((0.5 - (row + 0.5) / rows) * Math.PI) : h.widthKm
+      const around = h.radiusKm > 0 ? 2 * Math.PI * h.radiusKm * detCos((0.5 - (row + 0.5) / rows) * Math.PI) : h.widthKm
       const cols = Math.max(1, Math.round(around / DRY_SQUARE_KM))
       const key = `${h.landmass[i]} ${row} ${Math.min(cols - 1, Math.floor(h.u[i] * cols))}`
       let id = ids.get(key)
@@ -750,11 +753,11 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     if (!f || f.cell < 0) return
     log.push({ kind: 'famine', at: f.at, to: t, cell: f.cell, landmass: h.landmass[f.cell], before: f.before, lost: f.lost, left: f.left, villages: f.villages })
   }
-  const gauss = (): number => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random())
+  const gauss = (): number => Math.sqrt(-2 * detLog(1 - random())) * detCos(2 * Math.PI * random())
 
   const steps = Math.round(SPAN_YEARS / STEP_YEARS)
   const subYears = STEP_YEARS / SUB_STEPS
-  const grow = 1 - Math.exp(-GROWTH_A * STEP_YEARS)
+  const grow = 1 - detExp(-GROWTH_A * STEP_YEARS)
   for (let s = 0; s <= steps; s++) {
     const t = s * STEP_YEARS
     if (t % KEEP_YEARS === 0) {
@@ -817,7 +820,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       regionPeople.fill(0)
       for (const i of lived) if (region[i] >= 0) regionPeople[region[i]] += people[i] * h.areaKm2[i]
       for (let g = 0; g < regions; g++) {
-        const target = KNOW_SCALE * Math.log10(1 + regionPeople[g] / KNOW_PEOPLE)
+        const target = KNOW_SCALE * (detLog(1 + regionPeople[g] / KNOW_PEOPLE) / Math.LN10)
         knowledge[g] += (target - knowledge[g]) * (target > knowledge[g] ? KNOW_GAIN : KNOW_LOSS)
       }
       for (let k = 0; k < links.length; k += 2) {

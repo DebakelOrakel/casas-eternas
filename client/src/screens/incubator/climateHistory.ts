@@ -1,5 +1,6 @@
 import { KOPPEN_CODES } from '../../generator/climate/koppen'
 import { mulberry32 } from './habitat'
+import { detCos, detPow, detSin } from '../../generator/core/detMath'
 
 // THE WORLD'S CLIMATE HISTORY (2026-10-26, DES-0033 "Progression"): a
 // glacial cycle over the people's span, drawn once from the world's seed —
@@ -65,14 +66,14 @@ export function climateHistoryOf(seed: number, span: number): ClimateHistory {
   const cold = (t: number): number => {
     if (t <= maxAt) {
       const f = Math.max(0, t / maxAt)
-      let c = start + (depth - start) * f ** 1.5
+      let c = start + (depth - start) * detPow(f, 1.5)
       // The stadials fade out toward the maximum, where the cold holds.
-      for (const s of swings) c += s.amplitude * (1 - f) * Math.sin((2 * Math.PI * t) / s.period + s.phase)
+      for (const s of swings) c += s.amplitude * (1 - f) * detSin((2 * Math.PI * t) / s.period + s.phase)
       return Math.max(0, Math.min(1, c))
     }
     if (t >= maxAt + deglaciation) return 0
     // The melt: a smooth fall from the maximum to the warmth.
-    return depth * 0.5 * (1 + Math.cos((Math.PI * (t - maxAt)) / deglaciation))
+    return depth * 0.5 * (1 + detCos((Math.PI * (t - maxAt)) / deglaciation))
   }
   return {
     cold,

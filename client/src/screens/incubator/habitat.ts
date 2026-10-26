@@ -1,5 +1,6 @@
 import { MinHeap } from '../../generator/core/minHeap'
 import type { EcologyFieldId } from '../../generator/ecology/ecologyField'
+import { detAcos, detCos, detHypot, detSin, sq } from '../../generator/core/detMath'
 
 // THE INCUBATOR'S HABITAT (2026-10-25, a trial): the world as a living
 // thing sees it, for the plants (flora.ts), the animals (fauna.ts) and
@@ -76,14 +77,14 @@ export function kmBetween(h: Habitat, a: number, b: number): number {
     const lonB = h.u[b] * 2 * Math.PI
     const latA = (0.5 - h.v[a]) * Math.PI
     const latB = (0.5 - h.v[b]) * Math.PI
-    const c = Math.sin(latA) * Math.sin(latB) + Math.cos(latA) * Math.cos(latB) * Math.cos(lonA - lonB)
-    return h.radiusKm * Math.acos(Math.min(1, Math.max(-1, c)))
+    const c = detSin(latA) * detSin(latB) + detCos(latA) * detCos(latB) * detCos(lonA - lonB)
+    return h.radiusKm * detAcos(Math.min(1, Math.max(-1, c)))
   }
   let du = Math.abs(h.u[a] - h.u[b])
   let dv = Math.abs(h.v[a] - h.v[b])
   du = Math.min(du, 1 - du)
   dv = Math.min(dv, 1 - dv)
-  return Math.hypot(du * h.widthKm, dv * h.heightKm)
+  return detHypot(du * h.widthKm, dv * h.heightKm)
 }
 
 // The ecology's fields the habitat carries besides the game and the
@@ -121,7 +122,7 @@ export function hashText(text: string): number {
 // niche suits somewhere: drawn there by the niche to the fourth.
 export function drawOriginsByLandmass(h: Habitat, best: Float32Array, chance: (landmass: number) => number, suitable: number, random: () => number): number[] {
   const total = new Float64Array(h.landmasses)
-  for (let i = 0; i < best.length; i++) if (best[i] >= suitable && h.landmass[i] >= 0) total[h.landmass[i]] += best[i] ** 4
+  for (let i = 0; i < best.length; i++) if (best[i] >= suitable && h.landmass[i] >= 0) total[h.landmass[i]] += sq(sq(best[i]))
   const pick = new Float64Array(h.landmasses).fill(-1)
   for (let m = 0; m < h.landmasses; m++) {
     // Both draws for every landmass, so one landmass's draw does not
@@ -135,7 +136,7 @@ export function drawOriginsByLandmass(h: Habitat, best: Float32Array, chance: (l
     if (best[i] < suitable || h.landmass[i] < 0) continue
     const m = h.landmass[i]
     if (pick[m] < 0) continue
-    pick[m] -= best[i] ** 4
+    pick[m] -= sq(sq(best[i]))
     if (pick[m] > 0) continue
     origins.push(i)
     pick[m] = -1
