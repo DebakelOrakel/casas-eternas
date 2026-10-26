@@ -107,7 +107,12 @@ A place has no name yet: the text uses a number ("Village 1", "Village
    water on the way (`crossings`). A landmass first reached over land or a
    land bridge has none. On Morvane 54 landmasses; the chronicle names those
    of CROSSING_LEAST_KM2 (100 000 km²) or more, 8.
-4. **No filter, no search, no export** while there are three kinds.
+4. **No filter, no search, no export** while there are so few kinds.
+
+A fourth kind came the same day: **a species dies out** on a landmass of
+100 000 km² or more (`settle.ts`, the big game's loss), at the time its
+last tenth goes, at the cell it went from last; the icon of its animal
+group. On Morvane 15.
 
 A landmass is named by its rank by area, 1 the largest. The axis carries
 the people over the span (`settle.ts` population, every 500 years, on a
@@ -115,5 +120,5 @@ logarithmic scale) and the handle; not the epochs yet.
 
 ## Status
 
-Building, 2026-10-26: the panel, the three kinds of events, the travel to
+Building, 2026-10-26: the panel, four kinds of events, the travel to
 them.

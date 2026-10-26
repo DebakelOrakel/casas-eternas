@@ -1,7 +1,7 @@
 import { MinHeap } from '../../generator/core/minHeap'
 import { hashText, kmBetween, mulberry32, type Habitat } from './habitat'
 import { SPAN_YEARS } from './peopleShared'
-import { CARRYING_FULL, densityAt, GOODS, LIFEWAY, lifewaySince, sharesAt, type SettleTimes } from './settleShared'
+import { CARRYING_FULL, densityAt, extinctAt, GOODS, LIFEWAY, lifewaySince, sharesAt, type SettleTimes } from './settleShared'
 
 // THE INCUBATOR'S SETTLEMENT (2026-10-25, a proof of concept): the people's
 // end state, 5 000 years before the game — how they live in each cell they
@@ -43,11 +43,15 @@ import { CARRYING_FULL, densityAt, GOODS, LIFEWAY, lifewaySince, sharesAt, type 
 //    (Renfrew's fall-off).
 // 5. THE PEOPLE'S MARK ON THE ANIMALS (fauna, the step before):
 //    the big game dies out where people came new: on a landmass other than
-//    the people's own, settled EXTINCT_AFTER years or more, each species of
-//    MEGAFAUNA by its chance, half again on an island (under ISLAND_KM2) —
-//    as on the earth, where Australia's, the Americas' and the islands' big
-//    animals went soon after people came, and Africa's, which grew up with
-//    them, stayed. The hunt's and the herds' pressure on the animals is the
+//    the people's own, each species of MEGAFAUNA by its chance, half again
+//    on an island (under ISLAND_KM2) — as on the earth, where Australia's,
+//    the Americas' and the islands' big animals went soon after people
+//    came, and Africa's, which grew up with them, stayed. It goes cell by
+//    cell behind the people's front (settleShared.ts, extinctAt; until
+//    2026-10-26 from the whole landmass at once); once less than
+//    REFUGE_LEAST of its cells are left, the rest go too, too few to last.
+//    Without it a species lived on in the corners people never reached:
+//    on Morvane 1 to 5 % of its cells, in 25 of 27 cases. The hunt's and the herds' pressure on the animals is the
 //    screen's, at the time it shows (settleShared.ts, pressure).
 
 
@@ -92,9 +96,10 @@ export interface SettleResult {
   sources: Int32Array
   // [village a, village b, weight] a link (indices into villages).
   links: Float32Array
-  // Where a species died out: on a landmass, some years after the
-  // departure; and each cell's landmass (-1 at sea).
-  extinctions: { id: string; landmass: number; areaKm2: number; at: number }[]
+  // Where a species dies out: on a landmass, cell by cell (extinctAt), until
+  // the rest goes at `at` (REFUGE_LEAST; Infinity where people leave more),
+  // `cell` the last to go before; and each cell's landmass (-1 at sea).
+  extinctions: { id: string; landmass: number; areaKm2: number; at: number; cell: number }[]
   landmass: Int32Array
 }
 
@@ -130,9 +135,9 @@ const HERD_KM_A = 2
 const HERD_BARRIER = 3
 // The big game and its chance to die out where people came new.
 const MEGAFAUNA: Record<string, number> = { elephant: 0.8, horse: 0.6, bison: 0.5, camel: 0.5, buffalo: 0.3, aurochs: 0.2, bear: 0.2 }
-const EXTINCT_AFTER = 2000
 const ISLAND_KM2 = 1_000_000
 const ISLAND_CHANCE = 1.5
+const REFUGE_LEAST = 0.1
 export const POPULATION_STEP = 500
 
 
@@ -410,9 +415,6 @@ function dyingOut(h: Habitat, input: SettleInput): SettleResult['extinctions'] {
   const { arrival, origin, seed } = input
   const n = h.count
   const home = origin >= 0 ? h.landmass[origin] : -1
-  // Each landmass's first people.
-  const first = new Float64Array(h.landmasses).fill(Infinity)
-  for (let i = 0; i < n; i++) if (h.landmass[i] >= 0 && arrival[i] < first[h.landmass[i]]) first[h.landmass[i]] = arrival[i]
   const extinctions: SettleResult['extinctions'] = []
   for (const animal of input.animals) {
     const chance = MEGAFAUNA[animal.id]
@@ -421,15 +423,23 @@ function dyingOut(h: Habitat, input: SettleInput): SettleResult['extinctions'] {
     const gone = new Uint8Array(h.landmasses)
     for (let m = 0; m < h.landmasses; m++) {
       const draw = random()
-      if (m === home || first[m] + EXTINCT_AFTER > SPAN_YEARS) continue
+      if (m === home) continue
       if (draw < Math.min(1, chance * (h.landmassKm2[m] < ISLAND_KM2 ? ISLAND_CHANCE : 1))) gone[m] = 1
     }
-    const lived = new Uint8Array(h.landmasses)
+    // Each landmass's cells of it, by when they go.
+    const goes = new Map<number, { at: number; cell: number }[]>()
     for (let i = 0; i < n; i++) {
       const m = h.landmass[i]
-      if (m >= 0 && gone[m] && animal.codes[i] >= 2) lived[m] = 1
+      if (m < 0 || !gone[m] || animal.codes[i] < 2) continue
+      let list = goes.get(m)
+      if (!list) goes.set(m, (list = []))
+      list.push({ at: extinctAt(arrival[i], i), cell: i })
     }
-    for (let m = 0; m < h.landmasses; m++) if (lived[m]) extinctions.push({ id: animal.id, landmass: m, areaKm2: h.landmassKm2[m], at: first[m] + EXTINCT_AFTER })
+    for (const [m, list] of goes) {
+      list.sort((a, b) => a.at - b.at)
+      const last = list[Math.max(0, Math.ceil((1 - REFUGE_LEAST) * list.length) - 1)]
+      extinctions.push({ id: animal.id, landmass: m, areaKm2: h.landmassKm2[m], at: last.at, cell: last.cell })
+    }
   }
   return extinctions
 }

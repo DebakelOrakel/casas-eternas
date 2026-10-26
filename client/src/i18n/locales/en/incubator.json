@@ -62,6 +62,7 @@
   "incubator.chronicle.event.farmCentre": "Farming centre arises",
   "incubator.chronicle.event.herdCentre": "Herding centre arises",
   "incubator.chronicle.event.crossing": "Crossing to landmass {n}",
+  "incubator.chronicle.event.extinct": "{animal} dies out",
   "incubator.chronicle.landmass": "Landmass {n}",
   "incubator.chronicle.crossingDetail": "{area} km² · {km} km over the sea"
 }

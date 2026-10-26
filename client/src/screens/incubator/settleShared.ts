@@ -111,6 +111,20 @@ export function pressure(role: string, hunted: boolean, shares: Float32Array, de
   return f
 }
 
+// THE BIG GAME'S LOSS, cell by cell (2026-10-26): where a species dies out
+// on a landmass (settle.ts), it goes from a cell EXTINCT_AFTER to
+// EXTINCT_AFTER + EXTINCT_SPREAD years after people came there, the cell's
+// own share of that drawn from its index; Infinity where they never came.
+export const EXTINCT_AFTER = 1000
+export const EXTINCT_SPREAD = 1000
+
+export function extinctAt(arrival: number, cell: number): number {
+  let x = Math.imul(cell ^ 0x9e3779b9, 0x85ebca6b)
+  x = Math.imul(x ^ (x >>> 13), 0xc2b2ae35)
+  x ^= x >>> 16
+  return arrival + EXTINCT_AFTER + EXTINCT_SPREAD * ((x >>> 0) / 4294967296)
+}
+
 // A plant's or a tree's code from which its niche suits a cell (niche.ts:
 // SUITABLE 0.3, the niche coded 2 … 255).
 export const PLANT_SUITS_CODE = 2 + Math.round(253 * 0.3)

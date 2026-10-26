@@ -139,7 +139,10 @@ hunted ones by the people's density, the herds and the fields push the
 wild herbivores and the predators back (by the lifeways' shares), and the
 big game dies out on a landmass the people came to new, by its chance,
 half again on an island. Africa's case, the people's own landmass, keeps
-its big game.
+its big game. It goes cell by cell, 1 000 to 2 000 years behind the
+people's front; once less than a tenth of its cells are left, the rest go
+too. On Morvane 16 of 29 such cases end in the span; the others keep a
+larger part where people never came.
 
 ## Step 3 — the people
 
@@ -209,6 +212,26 @@ removed again do not.
 - **The trade again**: the foragers' camps as nodes too.
 - **Names** for places; **epochs** for the time.
 - **The port**: once the rules settle, to detMath or the engine.
+
+## One history, and later a simulation
+
+The steps compute in turn but are not three simulations: the flora and
+the fauna are maps, and the people's part is a time per cell (when people,
+the fields, the herds came; when an animal went), from which the state at
+any time is a function. That is fast (some 12 s on Morvane for all of it)
+and lets the time go back and forth freely.
+
+**Next form (not built): one history.** One pass in the worker that makes
+every time in the order of its causes — the flora, the fauna, the spread,
+the farming and the herding, the animals' loss — and the steps only show
+it. Still a time per cell, still a function of the time.
+
+**Later: a simulation in time steps**, for feedback: the game thinned, the
+land feeds fewer, people move on; droughts, hunger, people leaving. It
+costs what the history does not: the state is no longer a function of the
+time, so going back needs snapshots or a replay; minutes instead of
+seconds; more memory; and it must be deterministic for the engine. Worth it
+when the crises are wanted, with the port to detMath or the engine.
 
 ## Status
 

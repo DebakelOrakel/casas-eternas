@@ -49,7 +49,7 @@ import type { PeopleResult } from './people'
 import { SPAN_YEARS } from './peopleShared'
 import { arrowsOf, type PeopleArrow } from './peopleArrows'
 import type { SettleResult } from './settle'
-import { densityAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
+import { densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { cellPoint, centrePictures, originPictures, sourcePictures, villagePictures, villageSymbols } from './incubatorSymbols'
 import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
@@ -559,7 +559,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE ANIMALS AT THE TIME SHOWN (2026-10-26): as the fauna placed them
   // before people came; where people live by then, under their pressure by
   // the lifeway and the density of that time (settleShared.ts); a big game
-  // gone from a landmass once its time came (settle.ts). Made per
+  // gone from a cell of a landmass it dies out on once its time came there
+  // (settle.ts, extinctAt). Made per
   // animal for the time and kept for it.
   const animalsAtTime = new Map<string, { time: number; codes: Uint8Array; reached: number }>()
   function animalAtTime(animal: AnimalLayer): { codes: Uint8Array; reached: number } {
@@ -569,7 +570,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const now = settledNow()
     const spec = ANIMALS.find((a) => a.id === animal.id)
     const hunted = spec ? spec.uses.includes('hunt') || spec.uses.includes('fur') : false
-    const gone = new Set(settled.extinctions.filter((e) => e.id === animal.id && e.at <= peopleTime).map((e) => e.landmass))
+    // The landmasses it dies out on, cell by cell behind the people, and
+    // when the rest goes.
+    const gone = new Map(settled.extinctions.filter((e) => e.id === animal.id).map((e) => [e.landmass, e.at]))
     const codes = new Uint8Array(animal.codes.length)
     const shares = new Float32Array(5)
     let lives = 0
@@ -577,7 +580,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (let i = 0; i < codes.length; i++) {
       if (settled.landmass[i] >= 0) land++
       let c = animal.codes[i]
-      if (c >= 2 && gone.has(settled.landmass[i])) c = 1
+      const rest = gone.get(settled.landmass[i])
+      if (c >= 2 && rest !== undefined && (rest <= peopleTime || extinctAt(people.arrival[i], i) <= peopleTime)) c = 1
       else if (c >= 2 && now && spec && now.lifeway[i]) {
         for (let w = 1; w < 5; w++) shares[w] = now.shares[4 * i + w - 1] / 255
         c = Math.max(2, 2 + Math.round((c - 2) * pressure(spec.role, hunted, shares, now.density[i])))
@@ -628,8 +632,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE CHRONICLE's texts and counts (chroniclePanel.ts): the events of the
   // people's spread and settlement, said in the language active now; the
   // people, the villages and the centres at the time shown.
-  const CROSSING_LEAST_KM2 = 100_000
+  // A crossing or a species dying out tells of a landmass of
+  // EVENT_LEAST_KM2 or more.
+  const EVENT_LEAST_KM2 = 100_000
   const BOAT_RGB = [40, 120, 190] as const
+  const EXTINCT_RGB = [176, 57, 44] as const
   function sayChronicle(): void {
     eventPlaces.clear()
     const events: ChronicleEvent[] = []
@@ -651,11 +658,25 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }, cell)
       }
     }
+    if (settled && cellFacts) {
+      for (const e of settled.extinctions) {
+        if (e.at > SPAN_YEARS || e.areaKm2 < EVENT_LEAST_KM2) continue
+        const spec = ANIMALS.find((a) => a.id === e.id)
+        const group = ANIMAL_USES.find((u) => spec?.uses.includes(u.use))
+        place({
+          time: e.at,
+          icon: group ? group.icon : '/icons/deer.png',
+          rgb: EXTINCT_RGB,
+          title: t('incubator.chronicle.event.extinct', { animal: t(`animal.${e.id}.label` as TKey) }),
+          detail: landmassName(e.landmass),
+        }, e.cell)
+      }
+    }
     if (people && cellFacts) {
       const c = people.crossings
       for (let k = 0; k < c.length; k += 4) {
         const km2 = cellFacts.landmassKm2[c[k]]
-        if (km2 < CROSSING_LEAST_KM2) continue
+        if (km2 < EVENT_LEAST_KM2) continue
         place({
           time: c[k + 2],
           icon: '/icons/boat.png',
