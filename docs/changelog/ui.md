@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-27
+- **new** Incubator: a history shown is saved on the server by a job, and a world opens with the history saved last. `incubator.action.saveHistory`
+
 ## 2026-10-19
 - **changed** Layout: the menu has the same entries on every screen and over the list of worlds, and the title screen's name leads home too. `titlebar`
 - **new** Layout: the menu names the build's day and the client's and server's builds. `titlebar.build`

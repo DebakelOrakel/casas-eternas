@@ -182,3 +182,17 @@ func keys(m map[string][]byte) []string {
 	}
 	return out
 }
+
+// A history's version has its own release, with the history's native
+// build in it.
+func TestAHistoryHasItsOwnRelease(t *testing.T) {
+	if got := releaseTag("h1-2026-10-26c"); got != "history-h1-2026-10-26c" {
+		t.Errorf("release of a history = %s", got)
+	}
+	if got := releaseTag("v12-53fe6efa9b110bf0"); got != "engine-v12-53fe6efa9b110bf0" {
+		t.Errorf("release of a pipeline = %s", got)
+	}
+	if !releaseFile.MatchString("casas-history-linux-amd64.node") {
+		t.Error("the history's native build is no release file")
+	}
+}

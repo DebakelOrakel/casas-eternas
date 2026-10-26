@@ -14,8 +14,9 @@ import { listServerArtifacts, type ServerArtifact } from '../../server/artifacts
 import { fetchWorld, listWorlds } from '../../server/worldClient'
 import { peekServerStatus } from '../../server/serverStatus'
 import { artifactKey } from '../../storage/ArtifactStore'
-import { getArtifactStore, getLocalArtifactStore } from '../../storage/artifactStoreProvider'
-import { historyKey, latestHistoryOrigin, readHistoryArtifact, writeHistoryArtifact } from '../../world/historyArtifacts'
+import { getArtifactStore, getServerArtifactStore } from '../../storage/artifactStoreProvider'
+import { historyKey, historyOrigins, readHistoryArtifact } from '../../world/historyArtifacts'
+import { canCommissionBakes, commissionHistory, listBakes, watchJobs, type BakeJob } from '../../world/jobClient'
 import { meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
 import { isCurrentArtifact } from '../../world/levels'
 import { sameWorldsPipeline } from '../../world/worldPipeline'
@@ -71,7 +72,7 @@ import type { PlantUse } from './plants'
 import type { IncubatorAnswer, IncubatorRequest } from './incubatorWorker'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
 import type { WoodUse } from './trees'
-import { LEVEL_ECOLOGY } from './cellsShared'
+import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from './historyInput'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
 import '../../ui/theme/design.css'
@@ -166,12 +167,6 @@ function blendEcology(base: Uint8ClampedArray, field: EcologyFieldId, codes: Uin
 
 // The level the incubator runs on.
 const LEVEL = 1
-
-// The chart the level is painted on, texels: 2.4 km a texel at the
-// sphere's equator, 2 km on the torus — a level-1 node (LEVEL_NODE_SPACING_M)
-// per texel or so. Two such RGBA textures are 128 MB each.
-const CHART_WIDTH = 8192
-const CHART_HEIGHT = 4096
 
 // The level's typical node spacing on land, metres (map/groundPaint.ts
 // NODE_SPACING_M), and how many pixels it may span at the deepest zoom.
@@ -482,6 +477,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let seaShown: SeaLayer | null = null
   let weatherShown: WeatherLayer | null = null
   let refinedCharts: RefinedCharts | null = null
+  // The rain the history takes (historyInput.ts rainOf), as the history's
+  // job takes it: a run waits for it, so that the two give one history.
+  let historyRain: Promise<HistoryRain | null> = Promise.resolve(null)
   let pressureShown: PressurePicture | null = null
   // The wind's streaks and the currents' arrows, switched as the global
   // layers; their marks made once a world.
@@ -800,12 +798,35 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   resetIcon.src = '/icons/reset.png'
   resetIcon.alt = ''
   historyReset.append(resetIcon)
-  const sayHistory = (): void => {
+  // Save: the history shown as a job on the server (saveHistory), where
+  // the server takes jobs; locked while there is nothing to save.
+  const historySave = document.createElement('button')
+  historySave.type = 'button'
+  historySave.className = 'gen-action-icon'
+  historySave.dataset.help = 'incubator.action.saveHistory'
+  const saveIcon = document.createElement('img')
+  saveIcon.src = '/icons/server_load.png'
+  saveIcon.alt = ''
+  historySave.append(saveIcon)
+  // The history shown: none yet, run here and not saved, its job running,
+  // on the server.
+  let historySaved: 'none' | 'unsaved' | 'saving' | 'saved' = 'none'
+  let jobsTaken = false
+  void canCommissionBakes().then((can) => {
+    jobsTaken = can
+    sayHistory()
+  })
+  function sayHistory(): void {
     historyReset.setAttribute('aria-label', t('incubator.action.resetHistory.label'))
+    const key = historySaved === 'saving' ? 'incubator.action.saveHistory.labelActive' : historySaved === 'saved' ? 'incubator.action.saveHistory.labelDone' : 'incubator.action.saveHistory.label'
+    historySave.dataset.tAria = key
+    historySave.setAttribute('aria-label', t(key))
+    historySave.disabled = !jobsTaken || historySaved !== 'unsaved'
   }
   sayHistory()
-  historyActions.append(historyReset)
+  historyActions.append(historyReset, historySave)
   sidebar.foot.append(historyActions)
+  historySave.addEventListener('click', () => void saveHistory())
   historyReset.addEventListener('click', () => {
     peopleOrigin = -1
     void peopleFor(-1)
@@ -1607,9 +1628,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return null
   }
   // THE PEOPLE (casas-history, DES-0033): the history from the origin
-  // clicked or chosen (peopleOrigin; -1: the worker's choice), run — and
-  // kept as the H1 artifact (keepHistory) — or, `restore`, a kept one taken
-  // in a run's place. The rules' preview, shown before a history until
+  // clicked or chosen (peopleOrigin; -1: the worker's choice), run — shown
+  // only, until it is saved (saveHistory) — or, `restore`, the server's
+  // H1 of it taken in a run's place. The rules' preview, shown before a history until
   // 2026-10-27, went with the port (DEC-0048): a run is quick enough.
   // `loadStep`: the load panel's row (work). False where it failed.
   async function growPeople(restore?: ArrayBuffer, loadStep?: string): Promise<boolean> {
@@ -1617,7 +1638,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const started = performance.now()
     const done = restore
       ? await work(t('incubator.progress.loadHistory'), { type: 'restore', bytes: restore }, 'people', loadStep)
-      : await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, rain: refinedCharts ? { width: refinedCharts.width, height: refinedCharts.height, variability: refinedCharts.weather.rainVariability, enso: refinedCharts.weather.enso, ensoStrength: refinedCharts.ensoStrength } : null }, 'people', loadStep)
+      : await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, rain: await historyRain }, 'people', loadStep)
     if (!done || !overlay) return false
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
     historyFrames = new Map()
@@ -1646,48 +1667,77 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     animalsAtTime.clear()
     showPlants()
     sayChronicle()
-    if (restore) console.info(`[incubator] history loaded, ${Math.round(performance.now() - started)} ms`)
-    else void keepHistory(performance.now() - started)
+    console.info(`[incubator] history ${restore ? 'loaded' : 'run'}, ${Math.round(performance.now() - started)} ms`)
+    historySaved = restore ? 'saved' : 'unsaved'
+    sayHistory()
     return true
   }
-  // THE H1 ARTIFACT (world/historyArtifacts.ts): a history run is kept in
-  // the browser's store, keyed by the terrain and its origin; a world shown
-  // with a kept history for its origin loads it.
-  async function keepHistory(runMs: number): Promise<void> {
-    const worldId = held?.worldId
+  // THE H1 ARTIFACT (world/historyArtifacts.ts), on the server: a history
+  // run in the browser is shown only; saved, a job runs it on the server
+  // (the history's route, scripts/historyPipeline.ts) and keeps it as H1
+  // there — the same bits, the same key. A world shown with a history on
+  // the server for its origin loads it.
+  async function saveHistory(): Promise<void> {
+    const at = held
     const origin = people?.origin ?? -1
-    if (!worldId || origin < 0) {
-      console.warn(`[incubator] history not kept: ${worldId ? 'no origin' : 'no terrain id'}`)
+    if (!at?.worldId || !at.level || origin < 0 || historySaved !== 'unsaved') return
+    historySaved = 'saving'
+    sayHistory()
+    const ordered = await commissionHistory(at.uid, origin, at.level)
+    if (!sameHeld(at)) return
+    if (!ordered.ok) {
+      console.warn(`[incubator] history not saved: ${ordered.reason}${ordered.message ? ` (${ordered.message})` : ''}`)
+      historySaved = 'unsaved'
+      sayHistory()
       return
     }
-    const world = shownWorld
-    // Under the pill: storing takes a while (minutes in Safari at 300 MB).
-    const label = t('incubator.progress.keepHistory')
-    progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
-    const packed = await incubator.ask({ type: 'pack' })
-    if (shownWorld !== world) return
-    if (packed?.type !== 'pack' || !packed.bytes) {
-      progressPill.hide()
-      console.warn('[incubator] history not kept: it could not be packed')
-      return
-    }
-    const store = await getLocalArtifactStore()
-    const kept = await writeHistoryArtifact(store, historyKey(worldId, origin), origin, packed.bytes, Math.round(runMs)).catch(() => false)
-    if (shownWorld === world) progressPill.hide()
-    console.info(`[incubator] history ${kept ? 'kept' : 'not kept'}, ${(packed.bytes.byteLength / 1e6).toFixed(0)} MB`)
+    followHistoryJob(ordered.job.id, at, origin)
   }
-  // As a world opens: the history it kept last (latestHistoryOrigin), its
-  // origin the people's (2026-10-26: a history kept for an origin clicked
-  // was not found, the rules' chosen one asked for); else the history from
-  // the worker's origin.
+  // Whether the world shown is still the one `at` named (`held` is made
+  // anew when its name arrives).
+  const sameHeld = (at: NonNullable<typeof held>): boolean => held?.uid === at.uid && held.worldId === at.worldId
+  // The history's job until it ends: saved when it is done, again to save
+  // when it failed. Polled where the jobs' stream cannot be opened.
+  let stopHistoryJob: (() => void) | null = null
+  function followHistoryJob(id: string, at: NonNullable<typeof held>, origin: number): void {
+    stopHistoryJob?.()
+    let poll: ReturnType<typeof setInterval> | null = null
+    const stop = (): void => {
+      stopWatch()
+      if (poll) clearInterval(poll)
+      if (stopHistoryJob === stop) stopHistoryJob = null
+    }
+    const seen = (job: BakeJob): void => {
+      if (job.id !== id || job.state === 'queued' || job.state === 'running') return
+      stop()
+      if (job.state !== 'done') console.warn(`[incubator] the history's job ${job.state}${job.error ? `: ${job.error}` : ''}`)
+      if (!sameHeld(at) || people?.origin !== origin) return
+      historySaved = job.state === 'done' ? 'saved' : 'unsaved'
+      sayHistory()
+    }
+    const stopWatch = watchJobs(seen, () => {
+      poll = setInterval(() => void listBakes().then((jobs) => jobs?.forEach(seen)), 5000)
+    })
+    stopHistoryJob = stop
+  }
+  // The origins of the server's histories of the world shown, on its
+  // level, the one saved last first; none without a server.
+  async function serverHistories(): Promise<number[]> {
+    const at = held
+    if (!at?.worldId || !at.level) return []
+    const listed = await listServerArtifacts()
+    return listed ? historyOrigins(getServerArtifactStore(), listed.artifacts, at.worldId, at.level).catch(() => []) : []
+  }
+  // As a world opens: the history saved last on the server, its origin the
+  // people's (2026-10-26: a history kept for an origin clicked was not
+  // found, the rules' chosen one asked for); else the history from the
+  // worker's origin.
   async function openPeople(): Promise<void> {
-    const worldId = held?.worldId
     const world = shownWorld
-    const store = await getLocalArtifactStore()
-    const origin = worldId ? await latestHistoryOrigin(store, worldId).catch(() => null) : null
+    const [origin] = await serverHistories()
     if (shownWorld !== world) return
-    if (origin !== null && worldId) {
-      const bytes = await readKept(historyKey(worldId, origin))
+    if (origin !== undefined) {
+      const bytes = await readSaved(origin)
       if (shownWorld !== world) return
       if (bytes) {
         peopleOrigin = origin
@@ -1696,10 +1746,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     await peopleFor(peopleOrigin)
   }
-  // The history from `origin` (-1: the worker's choice): the one kept for
-  // it, else run.
+  // The history from `origin` (-1: the worker's choice): the server's,
+  // else run.
   async function peopleFor(origin: number): Promise<void> {
-    const worldId = held?.worldId
     const world = shownWorld
     let at = origin
     if (at < 0) {
@@ -1707,17 +1756,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (shownWorld !== world) return
       at = answer?.type === 'origin' ? answer.origin : -1
     }
-    if (worldId && at >= 0) {
-      const bytes = await readKept(historyKey(worldId, at))
+    if (at >= 0) {
+      const bytes = await readSaved(at)
       if (shownWorld !== world) return
       if (bytes && (await growPeople(bytes))) return
     }
     await growPeople()
   }
-  // A kept history's bytes, under the pill; null where none is kept.
-  async function readKept(key: ReturnType<typeof historyKey>): Promise<ArrayBuffer | null> {
-    const store = await getLocalArtifactStore()
-    if (!(await store.resolve(key, false))) return null
+  // The server's history from `origin`, under the pill; null where it has
+  // none. Read past this machine's cache, which would keep it too.
+  async function readSaved(origin: number): Promise<ArrayBuffer | null> {
+    const at = held
+    if (!at?.worldId || !at.level) return null
+    const store = getServerArtifactStore()
+    const key = historyKey(at.worldId, at.level, origin)
+    if (!(await store.resolve(key, false).catch(() => null))) return null
     const label = t('incubator.progress.loadHistory')
     progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
     const bytes = await readHistoryArtifact(store, key).catch(() => null)
@@ -2270,13 +2323,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The cells' input: the node map and level 1's land fields, copied on
     // the way to the worker.
     cellsInput = land && painted.nodes
-      ? {
-        type: 'cells', seed: world.recipe.detailSeed, kind, width: world.width, height: world.height,
-        nodes: painted.nodes, nodeW: CHART_WIDTH / OVERLAY_DIVISOR, nodeH: CHART_HEIGHT / OVERLAY_DIVISOR,
-        land: land.land, biome: land.biome, koppen: land.koppen, z: level.z, lakeDepth: land.lakeDepth,
-        ecology: Object.fromEntries((['game', 'carryingCapacity', ...LEVEL_ECOLOGY] as const).flatMap((id) => (land.ecology[id] ? [[id, land.ecology[id]]] : []))),
-        rivers: level.rivers,
-      }
+      ? { type: 'cells', seed: world.recipe.detailSeed, ...cellInputOf(kind, world.width, world.height, painted.nodes, level, land) }
       : null
     probe = land && painted.nodes && ecology
       ? { nodes: painted.nodes, z: level.z, land: { land: land.land, biome: land.biome, koppen: land.koppen, cratonAge: land.cratonAge, ecology: ecology.fields } }
@@ -2299,6 +2346,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     koppenPresent = null
     // A world texel's metres, at the equator on the globe.
     refinedCharts = null
+    historyRain = world.refined().then((r) => (r ? rainOf(domain, r) : null)).catch(() => null)
     pressureShown = null
     historyFrames = null
     // The world's climate history on the chronicle's axis, every 500 years,
@@ -2334,7 +2382,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!(await growWorld())) return false
     step('grown')
     loadPanel.close()
-    held = { uid, name: '', seed: '', worldId: chosen.worldId }
+    held = { uid, name: '', seed: '', worldId: chosen.worldId, level: chosen.pipelineVersion }
+    historySaved = 'none'
+    sayHistory()
+    stopHistoryJob?.()
     void openPeople()
     return true
   }
@@ -2395,7 +2446,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // generator; one at a time, the column out of the way while one is up.
   // "This world" is the world shown. Over the world list they cover the list,
   // and closing one leaves the list as it was.
-  let held: { uid: string; name: string; seed: string; worldId: string | null } | null = null
+  // `level`: the pipeline of the level 1 shown, which its histories run on.
+  let held: { uid: string; name: string; seed: string; worldId: string | null; level?: string } | null = null
   const closeWindow = (window: { isOpen(): boolean; close(): void }): void => {
     if (!window.isOpen()) return
     window.close()

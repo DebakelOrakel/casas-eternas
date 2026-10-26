@@ -519,3 +519,10 @@ gives its bits (the whole H1 on Morvane, byte for byte). The rules'
 preview went with it: a world shows its history at once, kept or run. On
 Morvane the run takes some 13 s (the TypeScript's 25), the settlement of a
 history 0.1 s (0.3 s in Node, up to 10 s in Safari).
+
+**On the server** (2026-10-27, [DEC-0048](../decisions/incubator-history-engine.md)
+forks 3 and 4): the browser no longer keeps H1. It runs a history and
+shows it; saved, a job runs it natively and puts H1 in the server's store
+(`client/scripts/historyPipeline.ts`, on the history's own route). A world
+opens with the history saved last on the server. On Morvane the job's H1
+is the browser's, byte for byte, in some 24 s.

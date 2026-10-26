@@ -39,11 +39,18 @@ const (
 	// ScopeTile is one tile of a fine mesh level (stage 2 or 3): X and Y are
 	// its column and row on that level's tile grid (docs/decisions/tile-jobs.md).
 	ScopeTile ScopeKind = "tile"
+	// ScopeHistory is the incubator's history of the world from one origin
+	// (docs/decisions/incubator-history-engine.md): ID is the origin's
+	// cell, the stage is 1, the level it runs on. Its pipeline is the
+	// history's version (casas-history HISTORY_VERSION), a route of its
+	// own: the history changes, the level's engine does not.
+	ScopeHistory ScopeKind = "history"
 )
 
 type Scope struct {
 	Kind ScopeKind `json:"kind"`
-	// Which basin, once Kind is ScopeBasin. Ignored for ScopeWorld.
+	// Which basin, once Kind is ScopeBasin; the origin's cell, once Kind
+	// is ScopeHistory. Ignored for ScopeWorld.
 	ID int `json:"id,omitempty"`
 	// Which tile, once Kind is ScopeTile. The grid's size depends on the
 	// world, so the upper bound is the worker's to check.
@@ -85,6 +92,9 @@ type Request struct {
 	// what it makes; docs/decisions/engine-releases.md). Its tasks go to
 	// the workers of that pipeline only, by their subject (streams.go).
 	Pipeline string `json:"pipeline"`
+	// For a history: the pipeline of the level 1 it runs on, the level's
+	// artifact key's (the world's terrain, this, `L1`).
+	Level string `json:"level,omitempty"`
 }
 
 // Result is what a finished job produced — the artifact's coordinates, so a
@@ -189,6 +199,19 @@ func (r Request) Validate() error {
 		if r.Scope.X < 0 || r.Scope.Y < 0 {
 			return fmt.Errorf("tile x and y must not be negative")
 		}
+	case ScopeHistory:
+		if r.Plan != "" {
+			return fmt.Errorf("a history has no plan")
+		}
+		if r.Stage != 1 {
+			return fmt.Errorf("a history runs on stage 1")
+		}
+		if r.Scope.ID < 0 {
+			return fmt.Errorf("the origin's cell must not be negative")
+		}
+		if !pipelinePattern.MatchString(r.Level) {
+			return fmt.Errorf("level is required for a history: the pipeline of its level 1")
+		}
 	case ScopeBasin:
 		return fmt.Errorf("basin scope is not implemented yet")
 	default:
@@ -201,8 +224,12 @@ func (r Request) Validate() error {
 var pipelinePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // StageName is the artifact stage a request produces: `L1` for a level,
-// `L2:x,y` for a tile — the client's meshLevelStage and meshTileStage.
+// `L2:x,y` for a tile, `H1:cell` for a history — the client's
+// meshLevelStage, meshTileStage and historyStage.
 func (r Request) StageName() string {
+	if r.Scope.Kind == ScopeHistory {
+		return fmt.Sprintf("H1:%d", r.Scope.ID)
+	}
 	if r.Scope.Kind == ScopeTile {
 		return fmt.Sprintf("L%d:%d,%d", r.Stage, r.Scope.X, r.Scope.Y)
 	}

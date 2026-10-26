@@ -2,7 +2,7 @@ import { t, type TKey } from '../../i18n/i18n'
 import { formatBytes } from '../../ui/format'
 import { getLocalArtifactStore } from '../../storage/artifactStoreProvider'
 import { clearArtifacts } from '../../storage/artifactAdmin'
-import { listServerArtifactLevels, removeServerLevel, removeServerPipelineBuilds, type ServerPipelineBuilds } from '../../server/artifactsClient'
+import { listServerArtifactLevels, removeServerHistories, removeServerLevel, removeServerPipelineBuilds, type ServerPipelineBuilds } from '../../server/artifactsClient'
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { currentPipelineVersion, parseStage, type PipelineVersions } from '../../world/levels'
@@ -217,8 +217,8 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     }
     const world = options.currentWorld()
     const next: LevelRow[] = (server?.levels ?? []).map((l) => ({
-      worldId: l.worldId, pipelineVersion: l.pipelineVersion, level: l.level,
-      tiles: l.tiles ? l.count : 0, history: false, where: 'server', bytes: l.bytes, label: l.label,
+      worldId: l.worldId, pipelineVersion: l.pipelineVersion, level: l.history ? HISTORY_ORDER : l.level,
+      tiles: l.tiles ? l.count : 0, history: l.history ?? false, where: 'server', bytes: l.bytes, label: l.label,
       deletable: l.actions?.includes('artifact.remove') ?? false,
       stale: null, older: false, localUids: [],
     }))
@@ -511,7 +511,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     line.appendChild(state)
 
     const remove = removeButton(levelName, row.deletable, async () => {
-      if (row.where === 'server') await removeServerLevel(row.level, row.worldId, row.pipelineVersion)
+      if (row.where === 'server') await (row.history ? removeServerHistories(row.worldId, row.pipelineVersion) : removeServerLevel(row.level, row.worldId, row.pipelineVersion))
       else {
         const store = await getLocalArtifactStore()
         for (const uid of row.localUids) await store.removeArtifact(uid)

@@ -174,7 +174,7 @@ function progressText(progress: ProgressStep | null): string {
 // was deleted or evicted meanwhile no longer shows.
 function levelsOfTerrains(levels: ServerArtifactLevel[]): Map<string, ServerArtifactLevel[]> {
   const out = new Map<string, ServerArtifactLevel[]>()
-  for (const level of levels) out.set(level.worldId, [...(out.get(level.worldId) ?? []), level])
+  for (const level of levels) if (!level.history) out.set(level.worldId, [...(out.get(level.worldId) ?? []), level])
   return out
 }
 
@@ -435,7 +435,9 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     const named = levels ? await Promise.all(others.map(async (pipeline) => [pipeline, await pipelineVersionsOf(pipeline)] as const)) : []
     if (run !== generation) return
     levelsByTerrain = levelsOfTerrains(levels?.levels ?? [])
-    historyTerrains = new Set(local.filter(isCurrentHistory).map((a) => a.worldId))
+    // The histories on the server, and those a browser kept before they
+    // went there (2026-10-27).
+    historyTerrains = new Set([...local, ...(levels?.levels ?? []).filter((l) => l.history).map((l) => ({ ...l, stage: 'H1:0' }))].filter(isCurrentHistory).map((a) => a.worldId))
     pipelineVersions = new Map(named)
     serverReachable = server !== null
     browserKeeps = keeps

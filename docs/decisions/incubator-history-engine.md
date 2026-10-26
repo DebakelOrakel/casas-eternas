@@ -6,18 +6,19 @@ summary.en: The incubator's history is simulated, not computed on demand,
   and kept as an artifact, H1, keyed by the terrain, level 1's and the
   history's versions and the origin. It moves to a crate of its own in the
   Rust workspace, beside the generator's engine and not in it, with its own
-  version and releases; it runs as WASM in the browser, and later as a job
-  that puts H1 on the server. The browser keeps its H1 to itself, as
-  DEC-0039 has it.
+  version and releases. It runs as WASM in the browser, which only shows
+  it; saved, a job runs it natively on the server and puts H1 there, on a
+  route of the history's own version.
 summary.de: Die Geschichte des Inkubators wird simuliert, nicht auf Abruf
   gerechnet, und als Artefakt H1 gehalten, geschlüsselt nach Gelände, den
   Versionen von Stufe 1 und der Geschichte und dem Ursprung. Sie zieht in
   eine eigene Crate im Rust-Workspace, neben die Engine des Generators und
-  nicht in sie, mit eigener Version und eigenen Releases; sie läuft als WASM
-  im Browser und später als Job, der H1 auf den Server legt. Der Browser
-  behält sein H1 für sich, wie DEC-0039 es will.
+  nicht in sie, mit eigener Version und eigenen Releases. Sie läuft als
+  WASM im Browser, der sie nur zeigt; gespeichert, rechnet ein Job sie
+  nativ auf dem Server und legt H1 dort ab, auf einer Route der eigenen
+  Version der Geschichte.
 area: platform
-stage: building
+stage: built
 createdAt: 2026-10-26
 related: [DES-0033, DEC-0044, DEC-0045, DEC-0039, DEC-0047]
 ---
@@ -59,18 +60,52 @@ was considered and left: in German it names the Sturmabteilung.
   history versions) — and its own release tag, `history-<version>`.
 - **C. A workspace of its own.** Nothing shared; the mesh and detMath twice.
 
-## Fork 3 — where it runs: DECIDED — WASM in the browser, later a job
+## Fork 3 — where it runs: DECIDED — WASM to show, a job to keep
 
-- **A. In the browser, as WASM** (chosen, first). The history runs where it
-  is looked at; the result is kept in the browser's store. The browser does
-  not upload ([DEC-0039](./artifacts-by-content.md)): H1 stays on the
-  machine that made it.
-- **B. As a job on the server.** The job worker runs the native build and
-  puts H1 in the artifact store for every reader of the world. Chosen as
-  the second step, once the crate builds natively; the browser then runs a
-  history only where the server has none.
+- **A. In the browser, as WASM, kept there.** The history runs where it is
+  looked at; the result is kept in the browser's store. Built first
+  (2026-10-26), and left on 2026-10-27: storing 170 MB took minutes in
+  Safari, and a history kept in one browser serves nobody else.
+- **B. In the browser to show it, as a job on the server to keep it**
+  (chosen, 2026-10-27). The browser runs the history and only shows it; it
+  writes no H1. Saving it (the people step's button) orders a job: the job
+  worker runs the native build on the same input and puts H1 in the
+  artifact store, for every reader of the world. A world opens with the
+  history saved last on the server, and runs one only where the server has
+  none for the origin. The browser reads H1 past its cache, which would
+  keep the 170 MB too.
 - **C. The browser uploads its H1.** Would need DEC-0039 changed and the
   server to trust what a browser made. Not chosen.
+
+The job gives the browser's bits because both make their input with the
+same functions (`screens/incubator/historyInput.ts`: the chart's node map
+of level 1, the cells' input, the rain) and the crate's two builds agree
+(`engine/scripts/historySmoke.mjs`). On Morvane the job's H1 is the
+browser's, byte for byte, 168 MB; the job takes some 24 s (the cells 12 s
+with the node map, the run 11 s).
+
+## Fork 4 — the job's route: DECIDED — the history's own
+
+A task goes to the workers of its pipeline ([DEC-0045](./engine-releases.md)):
+the subject names it, and a worker serves one pipeline's module.
+
+- **A. The world's pipeline.** The history's code in each pipeline's
+  module (pipeline.mjs). Only a pipeline released after it could run a
+  history, and a new history version would need a new engine release.
+- **B. The history's version as the route** (chosen). A history's task
+  names the history's version (HISTORY_VERSION, `h1-…`) as its pipeline;
+  its module is `history.mjs` (`client/scripts/historyPipeline.ts`), with
+  the history's native build (`casas-history.node`) and the engine's,
+  which reads the save and level 1. The launcher serves it where it was
+  shipped beside the host, else from the history's release,
+  `history-<version>` (`.github/workflows/history-release.yml`; the jobs
+  module's `releaseTag`). The order names the scope `history`, the origin
+  as its id, and the pipeline of the level 1 it runs on (`level`):
+  `{"worldUid": "…", "stage": 1, "scope": {"kind": "history", "id": 678764}, "level": "v13-…", "pipeline": "h1-2026-10-26c"}`.
+
+H1 is keyed by the level read (its pipeline version, `+`,
+HISTORY_VERSION), not by the client's own level pipeline: a world shown on
+an older level 1 keeps its histories under that one.
 
 ## The way there
 
@@ -102,7 +137,14 @@ was considered and left: in German it names the Sturmabteilung.
    TypeScript still stood beside it, and the worlds must reach every kind of
    event (a crossing, both centres, a village, a camp, a famine, an
    extinction, the first trade, the ice coming and going).
-4. The job: the native build on the job worker, H1 on the server.
+4. **Done (2026-10-27): the job** (fork 4). The native build
+   (`casas-history-node`, `engine/dist/casas-history.node`; the check runs
+   it beside the WASM on the same worlds), the history's module
+   `history.mjs` with the launcher's route to it, its release, the image
+   building it from the tree; the browser's keeping of H1 went (fork 3),
+   the people step saves a history by its job. The artifact window and the
+   world list show the server's histories (the levels summary's `history`
+   rows).
 
 ## Not decided
 

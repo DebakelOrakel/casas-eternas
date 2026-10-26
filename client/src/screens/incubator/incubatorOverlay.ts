@@ -10,7 +10,7 @@ import { PLANT_SUITS_CODE } from './settleShared'
 // overlay alone. It is half the chart's size (OVERLAY_DIVISOR): a world
 // cell is some 2 × 2 of its texels.
 
-export const OVERLAY_DIVISOR = 2
+export { OVERLAY_DIVISOR } from './historyInput'
 
 export interface OverlayRaster {
   data: Uint8ClampedArray

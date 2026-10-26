@@ -262,6 +262,18 @@ func StageLevel(stage string) (level int, tile bool, ok bool) {
 	return n, tile, true
 }
 
+// StageHistory reads whether a stage names a history: `H1:<cell>`, the
+// incubator's history from that origin (the client's
+// world/historyArtifacts.ts parseHistoryStage).
+func StageHistory(stage string) bool {
+	cell, ok := strings.CutPrefix(stage, "H1:")
+	if !ok {
+		return false
+	}
+	n, err := strconv.Atoi(cell)
+	return err == nil && n >= 0
+}
+
 // ListedArtifact is one entry of the listing — flat, the client groups.
 type ListedArtifact struct {
 	ArtifactUID string `json:"artifactUid"`
@@ -1539,6 +1551,26 @@ func (s *Store) RemoveLevel(ctx context.Context, worldID string, level int, pipe
 		}
 		n, _, ok := StageLevel(key.Stage)
 		return ok && n == level
+	})
+	if err != nil {
+		return removed, err
+	}
+	if removed == 0 {
+		return 0, ErrNotFound
+	}
+	return removed, nil
+}
+
+// RemoveHistories drops the histories of one terrain (StageHistory),
+// under one pipeline version or, with pipeline "", every one. Returns how
+// many went; ErrNotFound for none.
+func (s *Store) RemoveHistories(ctx context.Context, worldID, pipeline string) (int, error) {
+	if !safeSegment(worldID) {
+		return 0, ErrBadPath
+	}
+	removed, err := s.removeWhere(ctx, func(e *entry) bool {
+		key := e.keyOf()
+		return key != nil && key.WorldID == worldID && (pipeline == "" || key.PipelineVersion == pipeline) && StageHistory(key.Stage)
 	})
 	if err != nil {
 		return removed, err

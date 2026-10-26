@@ -1,5 +1,6 @@
 import { apiBase } from '../server/worldClient'
 import { WORLD_PIPELINE } from './worldPipeline'
+import { HISTORY_VERSION } from './historyArtifacts'
 import type { PipelineVersions } from './levels'
 import { getServerStatus } from '../server/serverStatus'
 import { authFetch, hasSession } from '../server/session'
@@ -48,7 +49,7 @@ export interface BakeJob {
   // The order that produced the job, as the server records it. What lets a
   // screen recognise a job as being about ITS world and stage when somebody
   // else placed the order.
-  request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number }; plan?: JobPlan; pipeline?: string }
+  request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number; id?: number }; plan?: JobPlan; pipeline?: string; level?: string }
   queuedAt?: string
   startedAt?: string
   // What the caller may do with the job, as the server states it:
@@ -164,6 +165,17 @@ const TILE_PHASE_BANDS: Record<string, [number, number]> = {
   erosion: [0.3, 1],
 }
 
+// A history's (scripts/historyPipeline.ts): the world and level 1 read,
+// the cells, the run, the H1 written. From Morvane's run on a Mac
+// (2026-10-27): the reads 2 s, the cells 12 s with the chart's node map,
+// the run 11 s.
+const HISTORY_PHASE_BANDS: Record<string, [number, number]> = {
+  read: [0, 0.05],
+  cells: [0.05, 0.55],
+  history: [0.55, 0.98],
+  store: [0.98, 1],
+}
+
 // Undefined for a phase with no band — the cluster runner's `pending` and
 // `running`, where any bar would be invented rather than measured.
 //
@@ -173,7 +185,8 @@ const TILE_PHASE_BANDS: Record<string, [number, number]> = {
 // 2026-10-01: level 1 ~30 s, the tiles of one world ~2.5 h on two workers).
 export function bakeFraction(job: BakeJob): number | undefined {
   if (job.phase === 'tiles') return Math.max(0, Math.min(1, job.percent / 100))
-  const bands = job.request?.scope?.kind === 'tile' ? TILE_PHASE_BANDS : PHASE_BANDS
+  const kind = job.request?.scope?.kind
+  const bands = kind === 'tile' ? TILE_PHASE_BANDS : kind === 'history' ? HISTORY_PHASE_BANDS : PHASE_BANDS
   const band = bands[job.phase ?? '']
   if (!band) return undefined
   return band[0] + (band[1] - band[0]) * Math.max(0, Math.min(1, job.percent / 100))
@@ -197,13 +210,15 @@ export async function canCommissionBakes(): Promise<boolean> {
 }
 
 // The artifact stage a job produces, as the server names it (the jobs
-// module's StageName): `L1`, or `L2:x,y` for a tile; `L1–L2` for a refine
+// module's StageName): `L1`, or `L2:x,y` for a tile, `H1:cell` for a
+// history; `L1–L2` for a refine
 // plan up to level 2, which produces both.
 export function jobStageName(job: BakeJob): string {
   const request = job.request
   if (!request) return '?'
   if (request.plan === 'refine') return request.stage > 1 ? `L1–L${request.stage}` : 'L1'
   const scope = request.scope
+  if (scope?.kind === 'history') return `H1:${scope.id ?? 0}`
   if (scope?.kind === 'tile') return `L${request.stage}:${scope.x ?? 0},${scope.y ?? 0}`
   return `L${request.stage}`
 }
@@ -217,6 +232,26 @@ export async function commissionBake(
   order: { tile?: { x: number; y: number }; plan?: JobPlan; pipeline?: string } = {},
 ): Promise<CommissionOutcome> {
   const { tile, plan, pipeline = WORLD_PIPELINE } = order
+  // erosionRounds is sent EXPLICITLY rather than left to the server's
+  // default. The client's artifact key is derived from its own constants
+  // including this one, so a server whose default had drifted would bake a
+  // real world under a key nobody asks for — the silent failure again, by
+  // a different route. The pipeline is this client's for the same
+  // reason: the workers of that pipeline compute it. A world of another
+  // pipeline names its own (`pipeline`): that pipeline's workers refine
+  // it as it is (docs/decisions/engine-releases.md).
+  return orderJob({ worldUid, stage, erosionRounds, pipeline, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}), ...(plan ? { plan } : {}) })
+}
+
+// The incubator's history of the world from `origin` on the level 1 of the
+// pipeline `level` (world/historyArtifacts.ts): its job, on the route of
+// this client's history version (internal/modules/jobs, ScopeHistory).
+export function commissionHistory(worldUid: string, origin: number, level: string): Promise<CommissionOutcome> {
+  return orderJob({ worldUid, stage: 1, scope: { kind: 'history', id: origin }, level, pipeline: HISTORY_VERSION })
+}
+
+// POST /v1/jobs with `body`, its answer as an outcome.
+async function orderJob(body: Record<string, unknown>): Promise<CommissionOutcome> {
   const base = await apiBase()
   if (!base) return { ok: false, reason: 'offline' }
 
@@ -225,15 +260,7 @@ export async function commissionBake(
     response = await authFetch(`${base}/jobs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // erosionRounds is sent EXPLICITLY rather than left to the server's
-      // default. The client's artifact key is derived from its own constants
-      // including this one, so a server whose default had drifted would bake a
-      // real world under a key nobody asks for — the silent failure again, by
-      // a different route. The pipeline is this client's for the same
-      // reason: the workers of that pipeline compute it. A world of another
-      // pipeline names its own (`pipeline`): that pipeline's workers refine
-      // it as it is (docs/decisions/engine-releases.md).
-      body: JSON.stringify({ worldUid, stage, erosionRounds, pipeline, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}), ...(plan ? { plan } : {}) }),
+      body: JSON.stringify(body),
     })
   } catch {
     return { ok: false, reason: 'offline' }

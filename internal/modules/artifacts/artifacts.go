@@ -850,12 +850,15 @@ func (m *Module) visible(r *http.Request) ([]callerArtifact, int64, error) {
 // LevelSummary is one level of one terrain under one pipeline version: a
 // whole level (count 1) or its tiles (count of them), and their bytes —
 // what the artifact window shows as a row, instead of an entry per tile
-// (a world refined to level 3 is ten thousand of them, 2026-10-02).
+// (a world refined to level 3 is ten thousand of them, 2026-10-02). Or
+// the histories of a terrain (History, StageHistory): level 1's, which
+// they run on, the count of their origins.
 type LevelSummary struct {
 	WorldID         string   `json:"worldId"`
 	PipelineVersion string   `json:"pipelineVersion"`
 	Level           int      `json:"level"`
 	Tiles           bool     `json:"tiles"`
+	History         bool     `json:"history,omitempty"`
 	Count           int      `json:"count"`
 	Bytes           int64    `json:"bytes"`
 	Label           string   `json:"label"`
@@ -875,8 +878,9 @@ type PipelineSummary struct {
 
 // handleLevels lists what the caller may see, summed per terrain,
 // pipeline version and level, and the pipeline builds per version.
-// Entries whose stage is no level (junk, other kinds) are left out; the
-// flat listing still shows them.
+// The histories count as a group of their own. Entries whose stage is
+// neither (junk, other kinds) are left out; the flat listing still shows
+// them.
 func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 	visible, bytes, err := m.visible(r)
 	if err != nil {
@@ -886,7 +890,7 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 	type groupKey struct {
 		terrain, pipeline string
 		level             int
-		tiles             bool
+		tiles, history    bool
 	}
 	groups := map[groupKey]*LevelSummary{}
 	var order []groupKey
@@ -903,13 +907,16 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		level, tile, ok := StageLevel(a.Stage)
-		if !ok {
+		history := !ok && StageHistory(a.Stage)
+		if history {
+			level = 1
+		} else if !ok {
 			continue
 		}
-		k := groupKey{a.WorldID, a.PipelineVersion, level, tile}
+		k := groupKey{a.WorldID, a.PipelineVersion, level, tile, history}
 		g := groups[k]
 		if g == nil {
-			g = &LevelSummary{WorldID: a.WorldID, PipelineVersion: a.PipelineVersion, Level: level, Tiles: tile, Label: a.Label, Actions: a.Actions}
+			g = &LevelSummary{WorldID: a.WorldID, PipelineVersion: a.PipelineVersion, Level: level, Tiles: tile, History: history, Label: a.Label, Actions: a.Actions}
 			groups[k] = g
 			order = append(order, k)
 		}
@@ -924,6 +931,9 @@ func (m *Module) handleLevels(w http.ResponseWriter, r *http.Request) {
 		}
 		if a.level != b.level {
 			return a.level < b.level
+		}
+		if a.history != b.history {
+			return b.history
 		}
 		return a.pipeline < b.pipeline
 	})
@@ -971,6 +981,25 @@ func (m *Module) handleRemove(w http.ResponseWriter, r *http.Request) {
 // pipeline builds of that version (PipelineWorld; the operator's).
 func (m *Module) handleClear(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	// A terrain's histories, as the levels summary groups them.
+	if query.Get("history") == "1" {
+		worldID := query.Get("worldId")
+		if worldID == "" {
+			httpjson.ClientError(w, http.StatusBadRequest, "histories are removed for one terrain: worldId is missing")
+			return
+		}
+		if !m.allowed(w, r, worldID, removing) {
+			return
+		}
+		removed, err := m.store.RemoveHistories(r.Context(), worldID, query.Get("pipeline"))
+		if err != nil {
+			respondStoreError(w, err)
+			return
+		}
+		slog.Info("artifacts dropped", "world", worldID, "histories", removed)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if levelText := query.Get("level"); levelText != "" {
 		level, err := strconv.Atoi(levelText)
 		if err != nil || level < 0 {

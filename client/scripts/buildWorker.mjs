@@ -11,11 +11,14 @@ import { fileURLToPath } from 'node:url'
 //                                            the server; another path leaves a
 //                                            running server's bundle alone
 //
-// Two bundles (scripts/workerContract.ts): the host, scripts/jobWorker.ts →
+// Three bundles (scripts/workerContract.ts): the host, scripts/jobWorker.ts →
 // <outfile>, and the pipeline module, scripts/workerPipeline.ts →
 // pipeline.mjs beside it, which the host loads. The engine's native build
 // goes beside them as casas-engine.node, where the pipeline module loads
-// it: engine/dist's, which `make engine` writes.
+// it: engine/dist's, which `make engine` writes. The history's module,
+// scripts/historyPipeline.ts → history.mjs, the route of the incubator's
+// histories, with the history's native build beside it as
+// casas-history.node.
 const client = join(fileURLToPath(import.meta.url), '..', '..')
 const outfile = process.argv[2] ?? '../job-worker.mjs'
 const outdir = dirname(resolve(client, outfile))
@@ -33,9 +36,12 @@ const bundle = (entry, out, extra = []) => {
 bundle('scripts/jobWorker.ts', outfile)
 // The engine's constants for the pipeline versions (world/engineConstants.ts).
 bundle('scripts/workerPipeline.ts', join(outdir, 'pipeline.mjs'), ['--alias:casas-engine-constants=../engine/dist/constants.json'])
-const engine = join(client, '..', 'engine', 'dist', 'casas-engine.node')
-if (!existsSync(engine)) {
-  console.error(`${engine} is not there: run \`make engine\` first`)
-  process.exit(1)
+bundle('scripts/historyPipeline.ts', join(outdir, 'history.mjs'), ['--alias:casas-engine-constants=../engine/dist/constants.json', '--alias:casas-history-wasm=../engine/dist/history'])
+for (const name of ['casas-engine.node', 'casas-history.node']) {
+  const build = join(client, '..', 'engine', 'dist', name)
+  if (!existsSync(build)) {
+    console.error(`${build} is not there: run \`make engine\` first`)
+    process.exit(1)
+  }
+  copyFileSync(build, join(outdir, name))
 }
-copyFileSync(engine, join(outdir, 'casas-engine.node'))

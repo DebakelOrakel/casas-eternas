@@ -1,14 +1,13 @@
 import { domainOfKind, type Domain } from '../../generator/core/domain'
 import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
 import { rasteriseNodeField } from '../../generator/mesh/meshRaster'
-import type { PeriodicTriangulation } from '../../generator/mesh/periodicDelaunay'
-import { barycentric } from '../../generator/mesh/remesh'
 import { reliefShadeAt } from '../../generator/render/reliefShade'
 import type { WaterBody } from '../../generator/surface/hydrology'
 import { dilateLandBiomes, expandBiomeIds } from '../../map/biomeIds'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { applyLakeWash, applyTerrainWash, DEFAULT_TERRAIN_WASH } from '../../map/terrainPalette'
 import { meshLevelMesh, type LevelLand, type MeshLevelArtifact } from '../../world/meshArtifacts'
+import { chartPass } from './historyInput'
 import { waterLevelsFromBodies } from './waterLevels'
 
 // THE INCUBATOR'S CHART WORKER: level 1 painted onto the chart as the
@@ -148,46 +147,4 @@ function paint(message: ChartWorkerInbound): void {
   const transfer = [shaded.buffer, unshaded.buffer, paperShaded.buffer, paperUnshaded.buffer]
   if (nodes) transfer.push(nodes.buffer)
   worker.postMessage({ type: 'painted', shaded, unshaded, paperShaded, paperUnshaded, nodes, ms } satisfies ChartWorkerOutbound, transfer)
-}
-
-// One walk over the chart for the heights, the biomes and the nodes. The
-// heights as rasteriseNodeField gives them (the same walk, the same sum in
-// the same order, so the same bits); the biome of the triangle's nearest
-// corner, of its nearest land corner where the texel is land; the nearest
-// corner on every second row and column for `nodes`.
-function chartPass(mesh: PeriodicTriangulation, z: Float32Array, land: Pick<LevelLand, 'land' | 'biome'>, W: number, H: number): { elevation: Float32Array; biome: Uint8Array; nodes: Int32Array } {
-  const elevation = new Float32Array(W * H)
-  const biome = new Uint8Array(W * H)
-  const half = W >> 1
-  const nodes = new Int32Array(half * (H >> 1))
-  const sx = mesh.domain.width / W
-  const sy = mesh.domain.height / H
-  const bary = new Float64Array(3)
-  const corner = new Int32Array(3)
-  let hint = mesh.lastTri
-  let rowStart = hint
-  for (let py = 0; py < H; py++) {
-    const y = py * sy
-    hint = rowStart
-    for (let px = 0; px < W; px++) {
-      const x = px * sx
-      const t = mesh.locate(x, y, hint)
-      hint = t
-      if (px === 0) rowStart = t
-      barycentric(mesh, t, x, y, bary)
-      corner[0] = mesh.tris[3 * t]
-      corner[1] = mesh.tris[3 * t + 1]
-      corner[2] = mesh.tris[3 * t + 2]
-      const i = py * W + px
-      const h = bary[0] * z[corner[0]] + bary[1] * z[corner[1]] + bary[2] * z[corner[2]]
-      elevation[i] = h
-      let near = 0
-      for (let k = 1; k < 3; k++) if (bary[k] > bary[near]) near = k
-      let nearLand = -1
-      if (h > 0) for (let k = 0; k < 3; k++) if (land.land[corner[k]] && (nearLand < 0 || bary[k] > bary[nearLand])) nearLand = k
-      biome[i] = land.biome[corner[nearLand >= 0 ? nearLand : near]]
-      if (((px | py) & 1) === 0) nodes[(py >> 1) * half + (px >> 1)] = corner[near]
-    }
-  }
-  return { elevation, biome, nodes }
 }

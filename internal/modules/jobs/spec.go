@@ -29,6 +29,8 @@ type Spec struct {
 	ErosionRounds int `json:"erosionRounds"`
 	// The tile, for a stage with tiles (2, 3).
 	Tile *TileRef `json:"tile,omitempty"`
+	// The history, for a history's task (ScopeHistory).
+	History *HistoryRef `json:"history,omitempty"`
 	// The artifact stage the job produces (Request.StageName). Not sent to
 	// the worker.
 	StageName string `json:"-"`
@@ -67,6 +69,13 @@ type Spec struct {
 	// The job's id, set by the coordinator (coordinator.go): the worker
 	// reports its progress on jobs.event.<jobId>, and a cancel names it.
 	JobID string `json:"jobId,omitempty"`
+}
+
+// HistoryRef is a history's origin and the pipeline of its level 1, as
+// the worker reads them.
+type HistoryRef struct {
+	Origin int    `json:"origin"`
+	Level  string `json:"level"`
 }
 
 // TileRef is a tile's column and row, as the worker reads them.

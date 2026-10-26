@@ -2,6 +2,7 @@ import initHistory, { coldCurve, iceReachKm, Incubator, seaDropM } from 'casas-h
 import historyWasmUrl from 'casas-history-wasm/casas-history_bg.wasm?url'
 import { ANIMALS } from './animals'
 import type { AnimalLayer, CellInput, PeopleResult, PlantLayer, SettleResult, TreeLayer } from './cellsShared'
+import { incubatorOf } from './historyInput'
 import { unpackHistory, unpackSettled, type PackedHistory } from './historyPack'
 import { PEOPLE_FRAME_STEP } from './peopleShared'
 import { PLANTS } from './plants'
@@ -52,9 +53,6 @@ export type IncubatorAnswer =
 
 // The cold curve's step (casas-history STEP_YEARS).
 const COLD_STEP_YEARS = 25
-// CELL_ECOLOGY's order (casas-history habitat.rs): the fields the crate
-// takes, one after the other, a bit each.
-const CELL_ECOLOGY = ['game', 'carryingCapacity', 'arable', 'pasture', 'fish', 'toolStone', 'salt', 'copper'] as const
 
 const worker = self as unknown as Worker
 
@@ -90,23 +88,11 @@ async function answer(ask: IncubatorRequest): Promise<void> {
     return
   }
   if (ask.type === 'cells') {
-    const n = ask.land.length
-    let present = 0
-    const parts: Uint8Array[] = []
-    CELL_ECOLOGY.forEach((id, k) => {
-      const field = ask.ecology[id]
-      if (!field) return
-      present |= 1 << k
-      parts.push(field)
-    })
-    const ecology = new Uint8Array(parts.length * n)
-    parts.forEach((p, k) => ecology.set(p, k * n))
     engine?.free()
     history = null
     historyBytes = null
     seed = ask.seed
-    const r = ask.rivers
-    engine = new Incubator(ask.kind === 'sphere', ask.spacingKm ?? 10, ask.width, ask.height, ask.nodes, ask.nodeW, ask.nodeH, ask.land, ask.biome, ask.koppen, ask.z, ask.lakeDepth, ecology, present, r ? Float32Array.from(r.points) : undefined, r ? Uint32Array.from(r.lengths) : undefined, r ? Uint8Array.from(r.regimes) : undefined)
+    engine = incubatorOf(Incubator, ask, ask.spacingKm)
     const e = engine
     const out: IncubatorAnswer = { type: 'cells', count: e.count(), owners: e.owners(), u: e.floats('u'), v: e.floats('v'), land: e.bytes('land'), landmass: e.ints('landmass'), landmassKm2: e.landmassKm2(), areaKm2: e.floats('areaKm2'), iceKm: e.iceKm(), seaDepthM: e.floats('seaDepthM'), ms: ms() }
     worker.postMessage(out, [out.owners.buffer, out.u.buffer, out.v.buffer, out.land.buffer, out.landmass.buffer, out.landmassKm2.buffer, out.areaKm2.buffer, out.iceKm.buffer, out.seaDepthM.buffer])

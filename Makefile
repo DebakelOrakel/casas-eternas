@@ -126,7 +126,8 @@ test: engine
 		cargo test -p casas-engine --release --target wasm32-wasip1
 	node engine/scripts/smoke.mjs
 	# The incubator's history: its WASM build on two synthetic worlds against
-	# the recorded reference (docs/decisions/incubator-history-engine.md).
+	# the recorded reference, its native build against the WASM
+	# (docs/decisions/incubator-history-engine.md).
 	node engine/scripts/historySmoke.mjs
 	cd client && npm run harness:roundtrip
 	cd client && npm run test:http-store
@@ -164,7 +165,8 @@ engine:
 		engine/target/wasm32-unknown-unknown/release/casas_history_wasm.wasm
 	cd engine && cargo run --release -q -p casas-history --bin history-version > dist/history/version.json
 
-# The job worker, bundled for Node, with the engine's native build beside it.
+# The job worker, bundled for Node, with the engine's native build beside it,
+# and the history's module with the history's.
 # Lands beside the binary because that is where jobs.worker looks by default.
 worker: engine
 	cd client && npm run build:worker
@@ -194,7 +196,7 @@ run: worker client docs
 # docs.content-dir), built by the targets above.
 build: worker
 	@mkdir -p bin
-	@cp job-worker.mjs pipeline.mjs casas-engine.node bin/
+	@cp job-worker.mjs pipeline.mjs casas-engine.node history.mjs casas-history.node bin/
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
 		echo "bin/casas-eternas-$$os-$$arch"; \
@@ -203,23 +205,27 @@ build: worker
 	done
 
 # The engine's native build for every platform of PLATFORMS,
-# bin/engine/<os>-<arch>/casas-engine.node. On a Mac: darwin/arm64 by
+# bin/engine/<os>-<arch>/casas-engine.node, and the history's beside it
+# (casas-history.node). On a Mac: darwin/arm64 by
 # rustup's target (engine/rust-toolchain.toml), linux/amd64 in Rust's
 # Debian image, so for glibc (the image's own is built for musl, in
 # deploy/Dockerfile). The registry is kept in a Docker volume between runs.
 engines:
-	cd engine && cargo build --release --locked -p casas-engine-node --target aarch64-apple-darwin
+	cd engine && cargo build --release --locked -p casas-engine-node -p casas-history-node --target aarch64-apple-darwin
 	docker run --rm --platform linux/amd64 -v $(CURDIR)/engine:/src -w /src \
 		-v casas-engine-cargo:/usr/local/cargo/registry \
 		-e RUSTUP_TOOLCHAIN=1.98.1 -e CARGO_TARGET_DIR=/src/target/linux-amd64 \
-		rust:1.98.1-bookworm cargo build --release --locked -p casas-engine-node
+		rust:1.98.1-bookworm cargo build --release --locked -p casas-engine-node -p casas-history-node
 	@mkdir -p bin/engine/darwin-arm64 bin/engine/linux-amd64
 	cp engine/target/aarch64-apple-darwin/release/libcasas_engine_node.dylib bin/engine/darwin-arm64/casas-engine.node
 	cp engine/target/linux-amd64/release/libcasas_engine_node.so bin/engine/linux-amd64/casas-engine.node
+	cp engine/target/aarch64-apple-darwin/release/libcasas_history_node.dylib bin/engine/darwin-arm64/casas-history.node
+	cp engine/target/linux-amd64/release/libcasas_history_node.so bin/engine/linux-amd64/casas-history.node
 
 # One archive per platform with everything `start` serves, laid out as the
-# container image is: the binary, job-worker.mjs and pipeline.mjs with the
-# platform's engine beside them (where jobs.worker looks by default), dist/
+# container image is: the binary, job-worker.mjs, pipeline.mjs and
+# history.mjs with the platform's engine and history beside them (where
+# jobs.worker looks by default), dist/
 # and docs-dist/, as a
 # .tar.gz. Run from the unpacked directory:
 #   ./casas-eternas start --target all --client.content-dir dist --docs.content-dir docs-dist
@@ -231,8 +237,8 @@ release: worker client docs build engines
 		name=casas-eternas-$(VERSION)-$$os-$$arch; dir=bin/release/$$name; \
 		mkdir -p $$dir; \
 		cp bin/casas-eternas-$$os-$$arch $$dir/casas-eternas; \
-		cp bin/job-worker.mjs bin/pipeline.mjs $$dir/; \
-		cp bin/engine/$$os-$$arch/casas-engine.node $$dir/; \
+		cp bin/job-worker.mjs bin/pipeline.mjs bin/history.mjs $$dir/; \
+		cp bin/engine/$$os-$$arch/casas-engine.node bin/engine/$$os-$$arch/casas-history.node $$dir/; \
 		cp -R client/dist $$dir/dist; \
 		cp -R client/docs-dist $$dir/docs-dist; \
 		tar -czf bin/release/$$name.tar.gz -C bin/release $$name; echo "bin/release/$$name.tar.gz"; \

@@ -78,18 +78,21 @@ func TestTheLauncherChoosesThePipelineWithTheWork(t *testing.T) {
 		{map[string]int{"v0-own": 1, "v0-other": 9}, "v0-own"},
 		{map[string]int{"v0-other": 2, "v0-third": 5}, "v0-third"},
 		{map[string]int{"v0-b": 3, "v0-a": 3}, "v0-a"},
+		// The own history's work before another pipeline's.
+		{map[string]int{"h1-own": 1, "v0-other": 9}, "h1-own"},
+		{map[string]int{"v0-own": 1, "h1-own": 9}, "v0-own"},
 	}
 	for _, c := range cases {
 		api, _, _ := jobsAPI(t, []map[string]int{c.work}, "")
-		if got := choosePipeline(context.Background(), api, "v0-own"); got != c.want {
+		if got := choosePipeline(context.Background(), api, "v0-own", "h1-own"); got != c.want {
 			t.Errorf("work %v: %s, want %s", c.work, got, c.want)
 		}
 	}
 	// No server, no answer: the own pipeline.
-	if got := choosePipeline(context.Background(), "", "v0-own"); got != "v0-own" {
+	if got := choosePipeline(context.Background(), "", "v0-own", ""); got != "v0-own" {
 		t.Errorf("without a jobs API: %s", got)
 	}
-	if got := choosePipeline(context.Background(), "http://127.0.0.1:1/v1", "v0-own"); got != "v0-own" {
+	if got := choosePipeline(context.Background(), "http://127.0.0.1:1/v1", "v0-own", ""); got != "v0-own" {
 		t.Errorf("without an answer: %s", got)
 	}
 }

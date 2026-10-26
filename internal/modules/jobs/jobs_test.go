@@ -312,7 +312,7 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 	m, runner, worlds := newTestModule(t, config.AuthNone)
 	writeWorld(t, worlds, testUID)
 
-	for _, body := range []string{`{"stage":2}`, `{"stage":0}`, `{"stage":4,"plan":"refine"}`, `{"stage":0,"plan":"refine"}`, `{"scope":{"kind":"basin"},"stage":1}`, `{"stage":1,"pipeline":""}`, `{"stage":1,"pipeline":"v11.x"}`, `not json`} {
+	for _, body := range []string{`{"stage":2}`, `{"stage":0}`, `{"stage":4,"plan":"refine"}`, `{"stage":0,"plan":"refine"}`, `{"scope":{"kind":"basin"},"stage":1}`, `{"stage":1,"pipeline":""}`, `{"stage":1,"pipeline":"v11.x"}`, `{"stage":1,"scope":{"kind":"history","id":5}}`, `{"stage":2,"scope":{"kind":"history","id":5},"level":"v0-level"}`, `{"stage":1,"scope":{"kind":"history","id":-1},"level":"v0-level"}`, `{"stage":1,"scope":{"kind":"history","id":5},"level":"v0-level","plan":"refine"}`, `not json`} {
 		if got := post(m, testUID, body, "").Code; got != http.StatusBadRequest {
 			t.Errorf("body %q = %d, want 400", body, got)
 		}
@@ -334,6 +334,24 @@ func TestRequestsAreValidatedBeforeQueueing(t *testing.T) {
 	}
 	if job.Request.Scope.Kind != ScopeWorld {
 		t.Errorf("scope = %q, want %q", job.Request.Scope.Kind, ScopeWorld)
+	}
+}
+
+// A history's task carries its origin and its level to the worker, and
+// names the H1 stage.
+func TestAHistoryReachesTheWorkerWithItsOrigin(t *testing.T) {
+	m, runner, worlds := newTestModule(t, config.AuthNone)
+	writeWorld(t, worlds, testUID)
+	recorder := post(m, testUID, `{"stage":1,"scope":{"kind":"history","id":42},"level":"v0-level"}`, "")
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("history request = %d, want 202: %s", recorder.Code, recorder.Body.String())
+	}
+	spec := runner.awaitSpec(t)
+	if spec.History == nil || spec.History.Origin != 42 || spec.History.Level != "v0-level" || spec.Stage != 1 || spec.Tile != nil {
+		t.Errorf("spec = %+v, history %+v", spec, spec.History)
+	}
+	if name := (Request{Stage: 1, Scope: Scope{Kind: ScopeHistory, ID: 42}}).StageName(); name != "H1:42" {
+		t.Errorf("stage name = %s, want H1:42", name)
 	}
 }
 

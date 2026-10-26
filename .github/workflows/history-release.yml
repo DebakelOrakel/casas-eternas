@@ -1,0 +1,156 @@
+# The history's release (docs/decisions/incubator-history-engine.md): a tag
+# that starts with `history` builds the incubator's history for the job
+# worker and puts the builds on a GitHub release of that tag.
+#
+#   git tag history-h1-2026-10-26c && git push origin history-h1-2026-10-26c
+#
+# The tag is `history-` and the history's version (casas-history
+# HISTORY_VERSION; `job-worker.mjs --version --pipeline history.mjs` tells
+# it): the route of the history's tasks, whose workers take this release
+# where they were not shipped with it (internal/modules/jobs, releaseTag).
+#
+# The assets:
+#   casas-history-darwin-arm64.node     the history's native build on a Mac
+#   casas-history-linux-amd64.node      on Linux with glibc (as `make engines`)
+#   casas-history-windows-amd64.node    on Windows
+#   casas-engine-<os>-<arch>.node       the engine's, which reads the save and level 1
+#   pipeline.json                       the history's version
+#   pipeline.mjs                        the history's module (history.mjs); the name the launcher fetches
+#   SHA256SUMS
+#
+# No tests here, as in engine-release.yml: `make test` before a tag.
+
+name: history release
+
+on:
+  push:
+    tags: ['history*']
+
+permissions:
+  contents: read
+
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+        working-directory: engine
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      # The module bundles the engine's constants and the history's version;
+      # buildWorker.mjs copies the native builds beside the bundles, which
+      # this job has none of, and --version loads neither, so empty files
+      # stand in. They are not uploaded.
+      - name: History version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p engine/dist/history
+          (cd engine && cargo run --release --locked -q -p casas-engine-api --bin constants > dist/constants.json)
+          (cd engine && cargo run --release --locked -q -p casas-history --bin history-version > dist/history/version.json)
+          touch engine/dist/casas-engine.node engine/dist/casas-history.node
+          (cd client && npm ci && node scripts/buildWorker.mjs "$RUNNER_TEMP/worker/job-worker.mjs")
+          node "$RUNNER_TEMP/worker/job-worker.mjs" --version --pipeline "$RUNNER_TEMP/worker/history.mjs" > engine/dist/pipeline.json
+          cat engine/dist/pipeline.json
+          version=$(node -p 'require("./engine/dist/pipeline.json").pipelineVersion')
+          if [ "$GITHUB_REF_NAME" != "history-$version" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME, but this commit's history is $version: tag it history-$version."
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::$GITHUB_REF_NAME is released already: a change to the history raises HISTORY_VERSION."
+            exit 1
+          fi
+      - run: |
+          mkdir -p out
+          cp engine/dist/pipeline.json out/
+          cp "$RUNNER_TEMP/worker/history.mjs" out/pipeline.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: module
+          path: out/
+
+  darwin:
+    needs: module
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+        working-directory: engine
+      - name: Build
+        working-directory: engine
+        run: cargo build --release --locked -p casas-engine-node -p casas-history-node --target aarch64-apple-darwin
+      - run: |
+          mkdir -p out
+          cp engine/target/aarch64-apple-darwin/release/libcasas_engine_node.dylib out/casas-engine-darwin-arm64.node
+          cp engine/target/aarch64-apple-darwin/release/libcasas_history_node.dylib out/casas-history-darwin-arm64.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin
+          path: out/
+
+  linux:
+    needs: module
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # In Rust's Debian image, for the glibc of `make engines`, not the
+      # runner's.
+      - name: Build
+        run: |
+          docker run --rm --platform linux/amd64 -v "$PWD/engine:/src" -w /src \
+            -e RUSTUP_TOOLCHAIN=1.98.1 -e CARGO_TARGET_DIR=/src/target/linux-amd64 \
+            rust:1.98.1-bookworm cargo build --release --locked -p casas-engine-node -p casas-history-node
+      - run: |
+          mkdir -p out
+          cp engine/target/linux-amd64/release/libcasas_engine_node.so out/casas-engine-linux-amd64.node
+          cp engine/target/linux-amd64/release/libcasas_history_node.so out/casas-history-linux-amd64.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/
+
+  windows:
+    needs: module
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install
+        working-directory: engine
+      - name: Build
+        working-directory: engine
+        run: cargo build --release --locked -p casas-engine-node -p casas-history-node --target x86_64-pc-windows-msvc
+      - run: |
+          mkdir -p out
+          cp engine/target/x86_64-pc-windows-msvc/release/casas_engine_node.dll out/casas-engine-windows-amd64.node
+          cp engine/target/x86_64-pc-windows-msvc/release/casas_history_node.dll out/casas-history-windows-amd64.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/
+
+  release:
+    needs: [module, darwin, linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - run: cd out && sha256sum * > SHA256SUMS
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "The incubator's history at $GITHUB_SHA, version \`$(jq -r .pipelineVersion out/pipeline.json)\`." > notes.md
+          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md

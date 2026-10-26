@@ -65,6 +65,9 @@ interface Job {
   // its column and row on the world's tile grid. Level 1 of the world must
   // be in the artifact store — the tile is built on it.
   tile?: { x: number; y: number }
+  // For a history (stage 1, the history's module, historyPipeline.ts): its
+  // origin's cell and the pipeline of its level 1.
+  history?: { origin: number; level: string }
   // For a tile: the tiles of its level upstream of it, whose outflow it
   // reads (the refine plan's flow edges, Spec.Upstream).
   upstream?: { x: number; y: number }[]
@@ -727,7 +730,7 @@ async function serve(config: ServeConfig): Promise<void> {
     }
     const taskId = job.taskId ?? ''
     current = { msg, jobId: job.jobId ?? '' }
-    doing = { jobId: job.jobId ?? '', taskId, stage: job.tile ? `L${job.stage}:${job.tile.x},${job.tile.y}` : `L${job.stage}`, phase: '', percent: 0 }
+    doing = { jobId: job.jobId ?? '', taskId, stage: job.history ? `H1:${job.history.origin}` : job.tile ? `L${job.stage}:${job.tile.x},${job.tile.y}` : `L${job.stage}`, phase: '', percent: 0 }
     announce()
     const heartbeat = setInterval(() => msg.working(), TASK_HEARTBEAT_MS)
     // A task that reaches its stores over HTTP carries a token; keep it fresh.

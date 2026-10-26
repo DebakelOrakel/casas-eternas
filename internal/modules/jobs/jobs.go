@@ -329,7 +329,7 @@ func newID() string {
 func (m *Module) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var request Request
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&request); err != nil {
-		httpjson.ClientError(w, http.StatusBadRequest, `expected {"worldUid": "…", "stage": 1, "pipeline": "…"} or {"worldUid": "…", "stage": 2, "scope": {"kind": "tile", "x": 0, "y": 0}, "pipeline": "…"}`)
+		httpjson.ClientError(w, http.StatusBadRequest, `expected {"worldUid": "…", "stage": 1, "pipeline": "…"}, {"worldUid": "…", "stage": 2, "scope": {"kind": "tile", "x": 0, "y": 0}, "pipeline": "…"} or {"worldUid": "…", "stage": 1, "scope": {"kind": "history", "id": 0}, "level": "…", "pipeline": "…"}`)
 		return
 	}
 	if request.Scope.Kind == "" {
@@ -535,6 +535,9 @@ func (m *Module) buildSpec(ctx context.Context, id string, request Request) (Spe
 	}
 	if request.Scope.Kind == ScopeTile {
 		spec.Tile = &TileRef{X: request.Scope.X, Y: request.Scope.Y}
+	}
+	if request.Scope.Kind == ScopeHistory {
+		spec.History = &HistoryRef{Origin: request.Scope.ID, Level: request.Level}
 	}
 	if m.cfg.WorldZip != nil {
 		zip, ok := m.cfg.WorldZip(ctx, request.WorldUID)

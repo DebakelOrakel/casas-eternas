@@ -74,6 +74,28 @@ RUN cargo build --release --locked -p casas-engine-node \
 
 FROM engine-${ENGINE} AS engine
 
+# ---- Stage 0b: the history ---------------------------------------------------
+# The incubator's history (docs/decisions/incubator-history-engine.md) in its
+# two builds, from the tree always: the WASM one for the incubator in the
+# browser, the native one for the history's jobs (history.mjs). Its own
+# crate and version, not the pipeline's: the history changes, the engine's
+# release does not. Its release (`history-<version>`) is for workers of
+# another history version; the image runs the tree's.
+FROM rust:1.98.1-bookworm AS history
+ENV RUSTUP_TOOLCHAIN=1.98.1
+RUN rustup target add wasm32-unknown-unknown \
+ && cargo install wasm-bindgen-cli --version 0.2.129 --locked
+WORKDIR /src/engine
+COPY engine/Cargo.toml engine/Cargo.lock engine/clippy.toml ./
+COPY engine/crates/ ./crates/
+RUN cargo build --release --locked -p casas-history-node \
+ && cargo build --release --locked -p casas-history-wasm --target wasm32-unknown-unknown \
+ && mkdir -p /out/dist/history \
+ && cp target/release/libcasas_history_node.so /out/dist/casas-history.node \
+ && wasm-bindgen --target web --out-dir /out/dist/history --out-name casas-history \
+      target/wasm32-unknown-unknown/release/casas_history_wasm.wasm \
+ && cargo run --release --locked -q -p casas-history --bin history-version > /out/dist/history/version.json
+
 # ---- Stage 1: the client bundle and the job worker -------------------------
 FROM node:26-bookworm-slim AS web
 # Mirrors the repo layout (/app/client + /app/docs) rather than flattening the
@@ -96,11 +118,13 @@ COPY client/ ./
 # dist/ is the app, the engine's WASM build among its assets; job-worker.mjs
 # is the job worker for the server to spawn, with its pipeline module
 # (pipeline.mjs) and the native engine beside it (build:worker copies
-# engine/dist's). The host and the app come out of this tree. The pipeline
+# engine/dist's), and the history's module (history.mjs) with the
+# history's native build. The host and the app come out of this tree. The pipeline
 # module is the release's, where there is one: the tree's must be the same
 # pipeline, or the build stops — a tree whose pipeline is not its release's
 # is a release that is missing (or ENGINE=source).
 COPY --from=engine /out/dist/ /app/engine/dist/
+COPY --from=history /out/dist/ /app/engine/dist/
 COPY --from=engine /out/release/ /app/engine-release/
 RUN npm run build && npm run build:worker && npm run build:docs \
  && if [ -f /app/engine-release/pipeline.mjs ]; then \
@@ -149,6 +173,8 @@ COPY --from=web    /app/pipeline.mjs /app/pipeline.mjs
 # the jobs module puts into the artifact store at its start.
 COPY --from=engine /out/release/ /app/engine/
 COPY --from=web    /app/casas-engine.node /app/casas-engine.node
+COPY --from=web    /app/history.mjs /app/history.mjs
+COPY --from=web    /app/casas-history.node /app/casas-history.node
 COPY --from=web    /app/client/dist   /app/dist
 COPY --from=web    /app/client/docs-dist /app/docs-dist
 

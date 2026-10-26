@@ -514,6 +514,8 @@ func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
 	mint("L3:1,0", "v6")
 	mint("L3:0,0", "v7")
 	mint("odd", "v6")
+	mint("H1:5", "v6+h1-x")
+	mint("H1:9", "v6+h1-x")
 
 	levels := func() map[string]int {
 		t.Helper()
@@ -526,12 +528,16 @@ func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
 		}
 		out := map[string]int{}
 		for _, l := range decoded.Levels {
-			out[fmt.Sprintf("L%d %v %s", l.Level, l.Tiles, l.PipelineVersion)] = l.Count
+			name := fmt.Sprintf("L%d %v %s", l.Level, l.Tiles, l.PipelineVersion)
+			if l.History {
+				name = "H1 " + l.PipelineVersion
+			}
+			out[name] = l.Count
 		}
 		return out
 	}
 	got := levels()
-	want := map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v6": 2, "L3 true v7": 1}
+	want := map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v6": 2, "L3 true v7": 1, "H1 v6+h1-x": 2}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("levels %v, want %v", got, want)
 	}
@@ -539,9 +545,17 @@ func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
 		t.Fatalf("delete level = %d", code)
 	}
 	got = levels()
-	want = map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v7": 1}
+	want = map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v7": 1, "H1 v6+h1-x": 2}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("after delete %v, want %v", got, want)
+	}
+	if code := do(mux, http.MethodDelete, "/v1/artifacts?worldId=ba90bda173d581ef&history=1&pipeline=v6%2Bh1-x", "").Code; code != http.StatusNoContent {
+		t.Fatalf("delete histories = %d", code)
+	}
+	got = levels()
+	want = map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v7": 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("after deleting the histories %v, want %v", got, want)
 	}
 	if code := do(mux, http.MethodDelete, "/v1/artifacts?worldId=ba90bda173d581ef&level=x", "").Code; code != http.StatusBadRequest {
 		t.Errorf("a level that is no number = %d, want 400", code)

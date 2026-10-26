@@ -65,6 +65,9 @@ export interface ServerArtifactLevel {
   pipelineVersion: string
   level: number
   tiles: boolean
+  // The histories of the terrain (H1, world/historyArtifacts.ts) on level
+  // 1 under the pipeline version: `count` origins.
+  history?: boolean
   count: number
   bytes: number
   label: string
@@ -111,6 +114,20 @@ export async function removeServerPipelineBuilds(pipelineVersion: string): Promi
   const base = await apiBase()
   if (!base) return false
   const query = new URLSearchParams({ pipeline: pipelineVersion })
+  try {
+    const response = await authFetch(`${base}/artifacts?${query}`, { method: 'DELETE' })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+// The histories of a terrain under a pipeline version (the levels
+// summary's history row).
+export async function removeServerHistories(worldId: string, pipelineVersion: string): Promise<boolean> {
+  const base = await apiBase()
+  if (!base) return false
+  const query = new URLSearchParams({ history: '1', worldId, pipeline: pipelineVersion })
   try {
     const response = await authFetch(`${base}/artifacts?${query}`, { method: 'DELETE' })
     return response.ok

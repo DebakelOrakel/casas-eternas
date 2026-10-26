@@ -40,6 +40,15 @@ export function getLocalArtifactStore(): Promise<LocalArtifactStore> {
   return localPending
 }
 
+// The server's store alone, read without the backfill into this machine's
+// cache: for an artifact too large to keep here as well (the incubator's
+// history, world/historyArtifacts.ts, 170 MB and more).
+export function getServerArtifactStore(): ArtifactStore {
+  serverStore ??= createHttpArtifactStore({ resolveBase: apiBase, fetch: authFetch })
+  return serverStore
+}
+let serverStore: ArtifactStore | null = null
+
 // The store the BAKE should use: local, then the server, then compute.
 //
 // This is the COMPOSITION ROOT for artifact storage, and the one place in
