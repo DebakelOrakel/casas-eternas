@@ -1,3 +1,4 @@
+import type { WashTarget } from '../../map/climateLayers'
 import type { PeopleResult } from './people'
 import { PLANT_SUITS_CODE } from './settleShared'
 
@@ -225,3 +226,6 @@ export function paintDensity(o: OverlayRaster, density: Float32Array): void {
     }
   }
 }
+
+// The overlay as a wash's target (map/climateLayers.ts).
+export const washTarget = (o: OverlayRaster): WashTarget => ({ width: o.width, height: o.height, blend: (t, rgb, a) => put(o, 4 * t, rgb[0], rgb[1], rgb[2], a) })

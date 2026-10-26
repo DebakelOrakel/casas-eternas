@@ -6,7 +6,7 @@
   position: fixed;
   top: var(--title-bar-height, 0px);
   bottom: var(--step-bar-height, 0px);
-  left: var(--sidebar-width, 0px);
+  left: calc(var(--sidebar-width, 0px) + var(--left-panel-width, 0px));
   width: 34px;
   z-index: 2;
   pointer-events: none;

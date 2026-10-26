@@ -15,7 +15,7 @@ import { coastalWarpSeed } from '../generator/archean/archeanState'
 import { FINE_DETAIL_SEED_SALT } from '../generator/elevation/ridgedNoise'
 import type { ErosionControls, WorldManifest } from './save/loadWorldInputs'
 import { readClimate, readLandFields, refuseFormerHydrology, type SavedClimate, type SavedLandFields } from './save/climateFields'
-import { readField, refuseFormerRasters } from './save/savedFields'
+import { readField, refuseFormerRasters, type SavedFieldBytes } from './save/savedFields'
 import { domainOfKind, type Domain } from '../generator/core/domain'
 import { decodeMesh } from '../generator/mesh/meshSerial'
 import type { PeriodicTriangulation } from '../generator/mesh/periodicDelaunay'
@@ -133,6 +133,10 @@ export interface World {
   // engine derives the erosion's forcing from (DEC-0044, fork 7b). Null
   // without one.
   snapshot(): Promise<PlateSimulationSnapshot | null>
+  // A field the save holds on a field mesh of its own (the mantle, the ocean
+  // age): its values per cell and the mesh's cell count and spacing; null
+  // without it.
+  meshField(name: 'mantle' | 'oceanAge'): Promise<SavedFieldBytes | null>
   // The climate per cell of its field mesh and the land fields per node of
   // the mesh (save/climateFields.ts, DEC-0036 phase 7); null for a save
   // without them. A save holding them as the former raster layers is
@@ -421,6 +425,7 @@ export async function openWorld(archive: ArrayBuffer | Uint8Array, engine: World
     },
 
     acquire: made,
+    meshField: (name) => readField(zip, name).catch(() => null),
     climate: async () => climate,
     land: landFields,
     refined: async () => {

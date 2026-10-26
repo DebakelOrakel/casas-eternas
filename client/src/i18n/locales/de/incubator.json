@@ -67,5 +67,16 @@
   "incubator.chronicle.landmass": "Landmasse {n}",
   "incubator.chronicle.crossingDetail": "{area} km² · {km} km übers Meer",
   "incubator.domestic.crops": "Angebaut",
-  "incubator.domestic.herds": "Gehalten"
+  "incubator.domestic.herds": "Gehalten",
+  "incubator.layers.title": "Overlays",
+  "incubator.layers.active": "{count} aktiv",
+  "incubator.layers.allOff": "Alles aus",
+  "incubator.layers.defaults": "Standard",
+  "incubator.layers.oneOf": "1 von {count}",
+  "incubator.layers.global": "Global",
+  "incubator.layers.toggle": "Overlays ein-/ausblenden",
+  "incubator.layers.geology": "Geologie",
+  "incubator.layers.climateLand": "Klima Land",
+  "incubator.layers.climateSea": "Klima Meer",
+  "incubator.layers.flows": "Wind und Meeresströmung"
 }

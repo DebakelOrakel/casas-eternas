@@ -3,7 +3,7 @@
    as the pressed options of the column do (.gen-depth__options). */
 .camera-tools {
   position: fixed;
-  left: calc(1rem + var(--sidebar-width, 0px));
+  left: calc(1rem + var(--sidebar-width, 0px) + var(--left-panel-width, 0px));
   bottom: calc(1rem + var(--step-bar-height, 0px));
   z-index: 2;
   display: flex;

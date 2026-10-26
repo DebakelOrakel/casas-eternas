@@ -29,8 +29,17 @@ import { formatBytes } from '../../ui/format'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
-import { createOverlayList } from '../generator/OverlayList'
+import { createLayerPanel, type LayerGroup } from './layerPanel'
+import type { OverlayListRow } from '../generator/OverlayList'
 import { OVERLAY_META, overlayKey } from '../generator/overlays'
+import { CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols, type ChartSize, type VolcanoMark } from '../generator/mapSymbols'
+import { collectVolcanoes } from '../../generator/tectonics/volcanoes'
+import { Biome } from '../../generator/climate/biomes'
+import { CLIMATE_WASHES, climateWashAvailable, climateWashLegend, paintClimateWash, type ClimateClasses, type ClimateFields, type ClimateWash } from '../../map/climateLayers'
+import { cratonAgeLegend, hotspotLegend, mantleLegend, mantleRaster, paintCratonAge, paintMantle, volcanoLegend, type MantleRaster } from '../../map/geologyLayers'
+import { computeRaftLabelPlacements } from '../../generator/render/raftLabelLayout'
+import { chartRefined, currentClass, currentMarks, paintPressure, paintSea, paintWeather, paintWindCalm, pressureLegend, pressurePicture, seaLegend, SEA_LAYERS, WEATHER_LAYERS, weatherLegend, windMarks, type PressurePicture, type RefinedCharts, type SeaLayer, type WeatherLayer } from '../../map/refinedLayers'
+import type { Domain } from '../../generator/core/domain'
 import { createStepBar } from '../generator/StepBar'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { createMapHoverTooltip } from '../../map/MapHoverTooltip'
@@ -39,7 +48,7 @@ import { elevationToMeters } from '../../generator/elevation/elevationScale'
 import { koppenLabelKey } from '../../generator/climate/koppen'
 import { biomeLabelKey } from '../../generator/climate/biomes'
 import type { ChartWorkerInbound, ChartWorkerOutbound } from './chartWorker'
-import { decodeFineValue, ECOLOGY_FINE_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
+import { decodeFineValue, ECOLOGY_FIELD_IDS, ECOLOGY_FINE_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import type { LevelLand } from '../../world/meshArtifacts'
 import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
@@ -52,7 +61,7 @@ import type { SettleResult } from './settle'
 import { CAME_STEP, clearedAt, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { cellPoint, centrePictures, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
-import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
@@ -103,13 +112,19 @@ import '../generator/overlayList.css'
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
 const STEPS = ['flora', 'fauna', 'people', 'testing'] as const
 
-// The ecology's fields the incubator shows (the level's artifact holds all
-// fourteen, docs/decisions/level-waters.md), with their icons as the
-// generator's resource picks have them.
-const ECOLOGY_PICKS: readonly { id: EcologyFieldId; icon: string }[] = [
-  { id: 'carryingCapacity', icon: '/icons/ecology.png' },
-  { id: 'arable', icon: '/icons/wheat.png' },
-]
+// The ecology's fields the incubator shows: all fourteen the level's
+// artifact holds (docs/decisions/level-waters.md), with their icons as the
+// generator's resource picks have them (GeneratorScreen FIELD_ICON). The
+// tooltip names TOOLTIP_FIELDS and the one picked.
+const FIELD_ICON: Record<EcologyFieldId, string> = {
+  carryingCapacity: 'ecology',
+  arable: 'wheat', fish: 'fish', game: 'deer', pasture: 'pastures',
+  timber: 'timber', salt: 'salt', toolStone: 'stone_axe',
+  copper: 'copper_ore', tin: 'tin_ore', iron: 'iron_ore',
+  silver: 'silver', gold: 'gold', gems: 'gems',
+}
+const ECOLOGY_PICKS: readonly { id: EcologyFieldId; icon: string }[] = ECOLOGY_FIELD_IDS.map((id) => ({ id, icon: `/icons/${FIELD_ICON[id]}.png` }))
+const TOOLTIP_FIELDS: readonly EcologyFieldId[] = ['carryingCapacity', 'arable']
 // The pick that paints none of them.
 const NO_FIELD = 'none:fields'
 
@@ -269,6 +284,9 @@ const ANIMAL_USES: readonly { use: AnimalUse; icon: string }[] = [
   { use: 'danger', icon: '/icons/tiger.png' },
 ]
 const NO_ANIMALS = 'none:animals'
+const NO_CLIMATE = 'none:climate'
+const NO_SEA = 'none:sea'
+const NO_WEATHER = 'none:weather'
 const animalPickId = (use: AnimalUse): string => `animal:${use}`
 
 // THE WORKER (incubatorWorker.ts): one for the screen, its answers in the
@@ -350,6 +368,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       stepBar.relabel()
       updateSteps()
       overlayList.relabel()
+      sayLayersButton()
       chronicle.relabel()
       sayChronicle()
       // The crossings' years are pictures: made again in the new language.
@@ -379,12 +398,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
   })
 
-  // THE STEPS. Each shows its own layers (stepLayers): the flora the
-  // plants and the wood, the fauna the animals, the testing the trial's
-  // catchments; the terrain and the ecology all. What a step had on stays
-  // for its return.
+  // THE STEPS. They compute and say what they did; the layers are the
+  // panel's, the same in every step (stepLayers), the testing's trial
+  // catchments aside.
   let stepIndex = 0
-  const onFlora = (): boolean => STEPS[stepIndex] === 'flora'
   const onTesting = (): boolean => STEPS[stepIndex] === 'testing'
   const onPeople = (): boolean => STEPS[stepIndex] === 'people'
   // True once the screen is built: the step's layers are below.
@@ -411,6 +428,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // for the windows.
   function setFurniture(visible: boolean): void {
     sidebar.setVisible(visible)
+    furnitureShown = visible
+    overlayList.setVisible(visible && layersShown)
     chronicle.setVisible(visible)
     stepBar.setVisible(visible)
     plantLegend.element.hidden = !visible
@@ -446,6 +465,30 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let charts: { shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null; paperShaded: Uint8ClampedArray; paperUnshaded: Uint8ClampedArray | null } | null = null
   let ecology: { nodes: Int32Array; fields: LevelLand['ecology'] } | null = null
   let picked: EcologyFieldId | null = null
+  // The climate's wash shown (map/climateLayers.ts) and its fields, the
+  // save's on its chart (level 1 has none of its own; the classes, Köppen
+  // and biome, are level 1's, and so is the coast the washes keep to).
+  // The land's washes, the pressure among them (the refinement's).
+  let climateShown: ClimateWash | 'pressure' | null = null
+  let climateFields: ClimateFields | null = null
+  // The refinement's layers (map/refinedLayers.ts): the sea's wash, the
+  // weather's, on the save's refinement charted; the pressure's picture at
+  // the overlay's size, made once a world.
+  let seaShown: SeaLayer | null = null
+  let weatherShown: WeatherLayer | null = null
+  let refinedCharts: RefinedCharts | null = null
+  let pressureShown: PressurePicture | null = null
+  // The wind's streaks and the currents' arrows, switched as the global
+  // layers; their marks made once a world.
+  const flowOn: Record<string, boolean> = { 'flow:wind': false, 'flow:currents': false }
+  let flowMarked: { charts: RefinedCharts; view: WorldView; wind: boolean; currents: boolean } | null = null
+  // The geology's switches and its marks: the volcanoes and the plumes of
+  // the save's snapshot, on the world raster's texels.
+  const geoOn: Record<string, boolean> = { 'geo:volcanoes': false, 'geo:hotspots': false, 'geo:names': false, 'geo:cratonAge': false, 'geo:mantle': false }
+  // The continents' names (raftLabelLayout.ts) and the mantle's buoyancy on
+  // the overlay's raster (geologyLayers.ts, null without the field).
+  type Geology = { volcanoes: VolcanoMark[]; hotspots: { x: number; y: number }[]; names: ReturnType<typeof computeRaftLabelPlacements>; mantle: MantleRaster | null; chart: ChartSize }
+  let geology: Geology | null = null
   // TRIAL (2026-10-25): the plants of plants.ts, grown on the first pick;
   // the use shown, or null. Declared here, above the first showCharts.
   let plants: { layers: PlantLayer[]; trees: TreeLayer[] } | null = null
@@ -499,32 +542,135 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let overlay: OverlayRaster | null = null
   // The last blend, for showing it again without blending it again.
   let blended: { key: string; shaded: Uint8ClampedArray; unshaded: Uint8ClampedArray | null } | null = null
-  const overlayList = createOverlayList({
+  // The save's climate fields and its geology, for the panel's washes and
+  // marks; in the background, dropped for a world no longer shown.
+  async function loadClimate(world: World, domain: Domain, metresPerTexel: number): Promise<void> {
+    const [temperature, precipitation, seasonality, monsoon] = await Promise.all(['temperature', 'precipitation', 'seasonalAmplitude', 'monsoonIndex'].map((n) => world.acquire(n).catch(() => null)))
+    if (shownWorld !== world) return
+    const size = temperature ?? precipitation
+    climateFields = size
+      ? { width: size.resX, height: size.resY, temperature: temperature?.data ?? null, precipitation: precipitation?.data ?? null, seasonality: seasonality?.data ?? null, monsoon: monsoon?.data ?? null }
+      : null
+    showCharts()
+    const refined = await world.refined().catch(() => null)
+    if (shownWorld !== world) return
+    refinedCharts = refined ? chartRefined(domain, refined) : null
+    showCharts()
+    const snapshot = await world.snapshot().catch(() => null)
+    if (shownWorld !== world || !snapshot) return
+    const mantle = await world.meshField('mantle')
+    if (shownWorld !== world) return
+    geology = {
+      volcanoes: collectVolcanoes(snapshot.features),
+      hotspots: snapshot.hotspots.map((h) => ({ x: h.x, y: h.y })),
+      names: computeRaftLabelPlacements(snapshot.rafts, domain),
+      mantle: mantle ? mantleRaster(domain, new Float64Array(mantle.values)) : null,
+      chart: { width: world.width, height: world.height, metresPerTexel },
+    }
+    showCharts()
+  }
+
+  // THE LAYERS (layerPanel.ts): a column of their own beside the left one,
+  // shown and hidden by a button in it; whether it shows is the viewer's,
+  // kept in the browser.
+  const LAYERS_SHOWN_KEY = 'incubator.layers.shown'
+  let layersShown = ((): boolean => {
+    try {
+      return localStorage.getItem(LAYERS_SHOWN_KEY) !== '0'
+    } catch {
+      return true
+    }
+  })()
+  let furnitureShown = false
+  // Every layer off, or as a world opens.
+  const layersOff = (): void => {
+    terrainOn = false
+    for (const id of Object.keys(peopleOn)) peopleOn[id] = false
+    picked = null
+    plantShown = null
+    woodShown = null
+    animalShown = null
+    settlementShown = null
+    climateShown = null
+    seaShown = null
+    weatherShown = null
+    for (const id of Object.keys(geoOn)) geoOn[id] = false
+    for (const id of Object.keys(flowOn)) flowOn[id] = false
+  }
+  const layersDefault = (): void => {
+    layersOff()
+    terrainOn = true
+    peopleOn['people:routes'] = true
+    peopleOn['people:centres'] = true
+    settlementShown = 'spread'
+  }
+  const overlayList = createLayerPanel(root, {
+    onAllOff: () => {
+      layersOff()
+      showPlants()
+    },
+    onDefaults: () => {
+      layersDefault()
+      showPlants()
+    },
     onToggle: (id) => {
       if (id in peopleOn) peopleOn[id] = !peopleOn[id]
+      else if (id in geoOn) geoOn[id] = !geoOn[id]
+      else if (id in flowOn) flowOn[id] = !flowOn[id]
       else terrainOn = !terrainOn
       showCharts()
       plantLegend.refresh()
     },
     onPick: (id) => {
-      if (id === NO_PLANTS || id.startsWith('plant:') || id === NO_WOOD || id.startsWith('wood:')) {
-        if (id === NO_PLANTS || id.startsWith('plant:')) {
-          plantShown = id === NO_PLANTS ? null : (id.slice('plant:'.length) as PlantUse)
-          if (plantShown) woodShown = null
-        } else {
-          woodShown = id === NO_WOOD ? null : (id.slice('wood:'.length) as WoodUse)
-          if (woodShown) plantShown = null
-        }
+      // The plants, the wood, the animals and the settlement paint the same
+      // overlay: one of them at a time, a choice in one clearing the others.
+      const area = (keep: 'plant' | 'wood' | 'animal' | 'settle' | 'climate' | 'weather'): void => {
+        if (keep !== 'plant') plantShown = null
+        if (keep !== 'wood') woodShown = null
+        if (keep !== 'animal') animalShown = null
+        if (keep !== 'settle') settlementShown = null
+        if (keep !== 'climate') climateShown = null
+        if (keep !== 'weather') weatherShown = null
+      }
+      if (id === NO_CLIMATE || id.startsWith('climate:')) {
+        climateShown = id === NO_CLIMATE ? null : (id.slice('climate:'.length) as ClimateWash | 'pressure')
+        if (climateShown) area('climate')
+        showPlants()
+        return
+      }
+      if (id === NO_WEATHER || id.startsWith('weather:')) {
+        weatherShown = id === NO_WEATHER ? null : (id.slice('weather:'.length) as WeatherLayer)
+        if (weatherShown) area('weather')
+        showPlants()
+        return
+      }
+      // The sea's washes lie on the sea: they combine with the land's.
+      if (id === NO_SEA || id.startsWith('sea:')) {
+        seaShown = id === NO_SEA ? null : (id.slice('sea:'.length) as SeaLayer)
+        showPlants()
+        return
+      }
+      if (id === NO_PLANTS || id.startsWith('plant:')) {
+        plantShown = id === NO_PLANTS ? null : (id.slice('plant:'.length) as PlantUse)
+        if (plantShown) area('plant')
+        showPlants()
+        return
+      }
+      if (id === NO_WOOD || id.startsWith('wood:')) {
+        woodShown = id === NO_WOOD ? null : (id.slice('wood:'.length) as WoodUse)
+        if (woodShown) area('wood')
         showPlants()
         return
       }
       if (id === NO_SETTLEMENT || id.startsWith('settle:')) {
         settlementShown = id === NO_SETTLEMENT ? null : (id.slice('settle:'.length) as Settlement)
+        if (settlementShown) area('settle')
         showPlants()
         return
       }
       if (id === NO_ANIMALS || id.startsWith('animal:')) {
         animalShown = id === NO_ANIMALS ? null : (id.slice('animal:'.length) as AnimalUse)
+        if (animalShown) area('animal')
         showPlants()
         return
       }
@@ -563,6 +709,39 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       { id: 'settle:density', helpBase: 'incubator.people.density', icon: '/icons/population.png' },
     ],
   }
+  const CLIMATE_PICKS = {
+    title: 'generator.section.land',
+    rows: [
+      { id: NO_CLIMATE, helpBase: 'overlay.none', icon: '/icons/clear.png' },
+      ...CLIMATE_WASHES.map((w) => ({ id: `climate:${w}`, helpBase: overlayKey(w), icon: OVERLAY_META[w].icon })),
+      { id: 'climate:pressure', helpBase: overlayKey('pressure'), icon: OVERLAY_META.pressure.icon },
+    ],
+  }
+  const SEA_PICKS = {
+    title: 'generator.section.sea',
+    rows: [
+      { id: NO_SEA, helpBase: 'overlay.none', icon: '/icons/clear.png' },
+      ...SEA_LAYERS.map((l) => ({ id: `sea:${l}`, helpBase: overlayKey(l), icon: OVERLAY_META[l].icon })),
+    ],
+  }
+  const WEATHER_PICKS = {
+    title: 'generator.section.weather',
+    rows: [
+      { id: NO_WEATHER, helpBase: 'overlay.none', icon: '/icons/clear.png' },
+      ...WEATHER_LAYERS.map((l) => ({ id: `weather:${l}`, helpBase: overlayKey(l), icon: OVERLAY_META[l].icon })),
+    ],
+  }
+  const FLOW_ROWS = [
+    { id: 'flow:wind', helpBase: overlayKey('wind'), icon: OVERLAY_META.wind.icon },
+    { id: 'flow:currents', helpBase: overlayKey('currents'), icon: OVERLAY_META.currents.icon },
+  ]
+  const GEOLOGY_ROWS = [
+    { id: 'geo:volcanoes', helpBase: overlayKey('volcanoes'), icon: OVERLAY_META.volcanoes.icon },
+    { id: 'geo:hotspots', helpBase: overlayKey('hotspots'), icon: OVERLAY_META.hotspots.icon },
+    { id: 'geo:names', helpBase: overlayKey('names'), icon: OVERLAY_META.names.icon },
+    { id: 'geo:cratonAge', helpBase: overlayKey('cratonAge'), icon: OVERLAY_META.cratonAge.icon },
+    { id: 'geo:mantle', helpBase: overlayKey('mantle'), icon: OVERLAY_META.mantle.icon },
+  ]
   const ANIMAL_PICKS = {
     title: 'incubator.section.animals',
     rows: [
@@ -570,7 +749,28 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ...ANIMAL_USES.map((p) => ({ id: animalPickId(p.use), helpBase: `animal.use.${p.use}`, icon: p.icon })),
     ],
   }
-  sidebar.body.append(overlayList.element)
+  // The button that shows and hides the layers' column.
+  const layersButton = document.createElement('button')
+  layersButton.type = 'button'
+  layersButton.className = 'layer-panel__toggle'
+  layersButton.dataset.tAria = 'incubator.layers.toggle'
+  const sayLayersButton = (): void => {
+    layersButton.textContent = t('incubator.layers.title')
+    layersButton.setAttribute('aria-label', t('incubator.layers.toggle'))
+    layersButton.setAttribute('aria-pressed', String(layersShown))
+  }
+  sayLayersButton()
+  layersButton.addEventListener('click', () => {
+    layersShown = !layersShown
+    try {
+      localStorage.setItem(LAYERS_SHOWN_KEY, layersShown ? '1' : '0')
+    } catch {
+      // Not kept: it shows as it is until the page closes.
+    }
+    sayLayersButton()
+    overlayList.setVisible(furnitureShown && layersShown)
+  })
+  sidebar.body.append(layersButton)
   // Under the picks, why the plants or the animals could not be grown.
   const plantStatus = document.createElement('p')
   const plantInfo = document.createElement('section')
@@ -802,6 +1002,17 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlayList.refresh((id) => {
       if (id === 'terrain') return { on: terrainOn, available: charts !== null }
       if (id in peopleOn) return { on: peopleOn[id], available: id === 'people:routes' ? people !== null : settled !== null }
+      if (id === 'geo:cratonAge') return { on: geoOn[id], available: probe?.land.cratonAge !== undefined }
+      if (id === 'geo:mantle') return { on: geoOn[id], available: geology?.mantle != null }
+      if (id in geoOn) return { on: geoOn[id], available: geology !== null }
+      if (id === NO_CLIMATE) return { on: climateShown === null, available: true }
+      if (id === 'climate:pressure') return { on: climateShown === 'pressure', available: refinedCharts !== null }
+      if (id.startsWith('climate:')) return { on: id === `climate:${climateShown}`, available: climateWashAvailable(id.slice('climate:'.length) as ClimateWash, climateFields, climateClasses()) }
+      if (id === NO_SEA) return { on: seaShown === null, available: true }
+      if (id.startsWith('sea:')) return { on: id === `sea:${seaShown}`, available: refinedCharts !== null }
+      if (id === NO_WEATHER) return { on: weatherShown === null, available: true }
+      if (id.startsWith('weather:')) return { on: id === `weather:${weatherShown}`, available: refinedCharts !== null }
+      if (id in flowOn) return { on: flowOn[id], available: refinedCharts !== null }
       if (id === NO_SETTLEMENT) return { on: settlementShown === null, available: true }
       if (id.startsWith('settle:')) return { on: id === `settle:${settlementShown}`, available: id === 'settle:spread' ? people !== null : settled !== null }
       if (id === NO_FIELD) return { on: picked === null, available: true }
@@ -856,7 +1067,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // climate class, its biome and the ecology's fields shown (ECOLOGY_PICKS).
   // None in a level made before its land fields. Only what it reads is
   // kept of the level's land fields.
-  let probe: { nodes: Int32Array; z: Float32Array; land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'ecology'> } | null = null
+  let probe: { nodes: Int32Array; z: Float32Array; land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'cratonAge' | 'ecology'> } | null = null
+  // The climate's classes per overlay texel, level 1's through the node map
+  // (a node a texel at the overlay's size), and its land: the washes keep
+  // to level 1's coast. Null before a level with its land fields.
+  function climateClasses(): ClimateClasses | null {
+    if (!probe) return null
+    const { nodes, land } = probe
+    return {
+      koppen: (t) => (land.land[nodes[t]] ? land.koppen[nodes[t]] : 0),
+      biome: (t) => (land.land[nodes[t]] ? land.biome[nodes[t]] : Biome.Ocean),
+    }
+  }
+  const onLevelLand = (t: number): boolean => probe !== null && probe.land.land[probe.nodes[t]] === 1
+  // The Köppen classes level 1's land has, for the legend.
+  let koppenPresent: Set<number> | null = null
   function describeNode(x: number, y: number): HTMLElement | null {
     if (!probe) return null
     const node = probe.nodes[(y >> 1) * (CHART_WIDTH >> 1) + (x >> 1)]
@@ -869,9 +1094,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       land: onLand,
       highlights: onLand ? [...(koppen > 0 ? [t(koppenLabelKey(koppen) as TKey)] : []), t(biomeLabelKey(probe.land.biome[node]) as TKey)] : [],
       rows: onLand ? [
-        ...ECOLOGY_PICKS.flatMap((p) => {
-          const code = probe!.land.ecology[p.id]?.[node]
-          return code === undefined || code === ECOLOGY_FINE_OCEAN ? [] : [{ label: t(`resource.${p.id}.label` as TKey), value: formatValue(String(Math.round(decodeFineValue(code) * 100)), 'common.unit.percent') }]
+        ...[...TOOLTIP_FIELDS, ...(picked && !TOOLTIP_FIELDS.includes(picked) ? [picked] : [])].flatMap((id) => {
+          const code = probe!.land.ecology[id]?.[node]
+          return code === undefined || code === ECOLOGY_FINE_OCEAN ? [] : [{ label: t(`resource.${id}.label` as TKey), value: formatValue(String(Math.round(decodeFineValue(code) * 100)), 'common.unit.percent') }]
         }),
         // The trials' rows at the world cell under the pointer.
         ...(overlay ? stepTrials().flatMap((l) => l.probe(overlay!.owners[(y >> 1) * overlay!.width + (x >> 1)])) : []),
@@ -964,10 +1189,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // A plant's colour is its place in its use; a tree's its place among
   // the trees, the same under every wood it gives.
   function shownGroup(): { title: string; from: number; keptKey: TKey; layers: { name: string; codes: Uint8Array; reached: number; colour: number; kept: Uint8Array | null }[] } | null {
-    if (onTesting() || onPeople()) return null
-    if (!onFlora()) {
+    if (animalShown) {
       const animals = shownAnimals()
-      if (!animals || !animalShown) return null
+      if (!animals) return null
       const use = animalShown
       return {
         title: t(`animal.use.${use}.label` as TKey),
@@ -1136,7 +1360,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ],
   })
   const groupRows = (groups: { label: string; names: string[] }[]): ProbeRow[] => groups.flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name })))
-  const groupLayer = (steps: TrialLayer['steps'], at: (cell: number) => { label: string; names: string[] }[]): TrialLayer => ({
+  const groupLayer = (steps: readonly (typeof STEPS)[number][], at: (cell: number) => { label: string; names: string[] }[]): TrialLayer => ({
     steps,
     on: () => shownGroup() !== null,
     paint: (o) => {
@@ -1149,11 +1373,77 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     probe: (cell) => groupRows(at(cell)),
   })
+  // Every step shows every layer (layerPanel.ts, 2026-10-26): the steps
+  // compute, the panel chooses.
+  const ALL_STEPS = STEPS.filter((id) => id !== 'testing')
   const TRIALS: readonly TrialLayer[] = [
-    groupLayer(['flora'], plantsAt),
-    groupLayer(['fauna'], animalsAt),
     {
-      steps: ['people'],
+      // The geology (map/geologyLayers.ts): the mantle's and the cratons'
+      // washes under every other layer, and the marks' legends. The
+      // cratons' age is level 1's, per node, on its land.
+      steps: ALL_STEPS,
+      on: () => Object.values(geoOn).some(Boolean),
+      paint: (o) => {
+        if (!probe || probe.nodes.length !== o.width * o.height) return
+        const target = washTarget(o)
+        if (geoOn['geo:mantle'] && geology?.mantle) paintMantle(target, geology.mantle)
+        const { nodes, land } = probe
+        if (geoOn['geo:cratonAge']) paintCratonAge(target, (t) => land.cratonAge[nodes[t]], onLevelLand)
+      },
+      legend: () => [
+        ...(geoOn['geo:mantle'] && geology?.mantle ? [mantleLegend()] : []),
+        ...(geoOn['geo:cratonAge'] ? [cratonAgeLegend()] : []),
+        ...(geoOn['geo:volcanoes'] && geology ? [volcanoLegend()] : []),
+        ...(geoOn['geo:hotspots'] && geology ? [hotspotLegend()] : []),
+      ],
+      probe: () => [],
+    },
+    groupLayer(ALL_STEPS, (cell) => (animalShown ? animalsAt(cell) : plantsAt(cell))),
+    {
+      // The climate's wash (map/climateLayers.ts).
+      steps: ALL_STEPS,
+      on: () => climateShown !== null,
+      paint: (o) => {
+        if (!climateShown || !probe || probe.nodes.length !== o.width * o.height) return
+        if (climateShown !== 'pressure') {
+          paintClimateWash(washTarget(o), climateShown, climateFields, climateClasses(), onLevelLand)
+          return
+        }
+        if (!refinedCharts) return
+        if (!pressureShown || pressureShown.width !== o.width) pressureShown = pressurePicture(refinedCharts, o.width, o.height)
+        paintPressure(washTarget(o), pressureShown)
+      },
+      legend: () => {
+        if (!climateShown) return []
+        if (climateShown === 'pressure') return [pressureLegend()]
+        if (climateShown === 'koppen' && !koppenPresent && probe) {
+          koppenPresent = new Set()
+          for (let v = 0; v < probe.land.koppen.length; v++) if (probe.land.land[v]) koppenPresent.add(probe.land.koppen[v])
+        }
+        return [climateWashLegend(climateShown, koppenPresent ?? undefined)]
+      },
+      probe: () => [],
+    },
+    {
+      // The refinement's washes (map/refinedLayers.ts): the sea's on level
+      // 1's sea, the weather's on its land, the wind's calm belts.
+      steps: ALL_STEPS,
+      on: () => refinedCharts !== null && (seaShown !== null || weatherShown !== null || flowOn['flow:wind']),
+      paint: (o) => {
+        if (!refinedCharts || !probe || probe.nodes.length !== o.width * o.height) return
+        const target = washTarget(o)
+        if (flowOn['flow:wind']) paintWindCalm(target, refinedCharts)
+        if (seaShown) paintSea(target, refinedCharts, seaShown, (t) => !onLevelLand(t))
+        if (weatherShown) paintWeather(target, refinedCharts, weatherShown, onLevelLand)
+      },
+      legend: () => [
+        ...(seaShown ? [seaLegend(seaShown)] : []),
+        ...(weatherShown && refinedCharts ? [weatherLegend(weatherShown, refinedCharts.ensoPeriodYears)] : []),
+      ],
+      probe: () => [],
+    },
+    {
+      steps: ALL_STEPS,
       on: () => people !== null,
       paint: (o) => {
         if (people && settlementShown === 'spread') paintPeople(o, people, peopleTime)
@@ -1226,6 +1516,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // each view is given the pictures once, the crossings' again for new
   // people.
   const marked = new WeakSet<WorldView>()
+  // The geology and the view its marks were made for.
+  let geologyMarked: { geology: Geology | null; view: WorldView } | null = null
+  let namesMarked: { geology: Geology | null; view: WorldView } | null = null
   // The crossings drawn: those the chronicle tells (EVENT_LEAST_KM2), each
   // its way over the open water (people.ts, crossingWays) and when they
   // landed; and the people and the view their pictures were made for.
@@ -1254,6 +1547,52 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   function syncMarks(): void {
     if (!view || !overlay) return
+    const volcanoes = view.symbols('incubator-volcanoes')
+    const hotspots = view.symbols('incubator-hotspots')
+    if (geologyMarked?.geology !== geology || geologyMarked?.view !== view) {
+      if (geology) {
+        const v1 = volcanoSymbols(geology.volcanoes, geology.chart)
+        const h1 = hotspotSymbols(geology.hotspots, geology.chart)
+        volcanoes.setPictures(v1.pictures)
+        volcanoes.setSymbols(v1.symbols)
+        hotspots.setPictures(h1.pictures)
+        hotspots.setSymbols(h1.symbols)
+      } else {
+        volcanoes.setSymbols([])
+        hotspots.setSymbols([])
+      }
+      geologyMarked = { geology, view }
+    }
+    volcanoes.setEnabled(geology !== null && geoOn['geo:volcanoes'])
+    const names = view.symbols('incubator-names')
+    if (namesMarked?.geology !== geology || namesMarked?.view !== view) {
+      if (geology) {
+        const n1 = nameSymbols(geology.names, geology.chart)
+        names.setPictures(n1.pictures)
+        names.setSymbols(n1.symbols)
+      } else names.setSymbols([])
+      namesMarked = { geology, view }
+    }
+    names.setEnabled(geology !== null && geoOn['geo:names'])
+    // The wind's streaks and the currents' arrows, made once a world each,
+    // when first switched on.
+    const wind = view.symbols('incubator-wind')
+    const currents = view.symbols('incubator-currents')
+    if (refinedCharts && geology && (flowMarked?.charts !== refinedCharts || flowMarked.view !== view)) flowMarked = { charts: refinedCharts, view, wind: false, currents: false }
+    if (flowMarked && geology && flowOn['flow:wind'] && !flowMarked.wind) {
+      wind.setPictures(windPictures(geology.chart))
+      wind.setSymbols(windSymbols(windMarks(flowMarked.charts, WIND_LENGTH, WIND_GAP)))
+      flowMarked.wind = true
+    }
+    if (flowMarked && geology && flowOn['flow:currents'] && !flowMarked.currents) {
+      const charts = flowMarked.charts
+      currents.setPictures(currentPictures(geology.chart))
+      currents.setSymbols(currentSymbols(currentMarks(charts, CURRENT_LENGTH, CURRENT_GAP), (m) => currentClass(charts, m)))
+      flowMarked.currents = true
+    }
+    wind.setEnabled(flowOn['flow:wind'] && flowMarked?.wind === true)
+    currents.setEnabled(flowOn['flow:currents'] && flowMarked?.currents === true)
+    hotspots.setEnabled(geology !== null && geoOn['geo:hotspots'])
     const sources = view.symbols('incubator-sources')
     const trade = view.symbols('incubator-trade')
     const villages = view.symbols('incubator-villages')
@@ -1273,11 +1612,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const { u, v } = overlay
     const v0 = view
     const geometry: LineGeometry = { km: (a, b) => v0.metresBetween(a, b) / 1000, direction: directionOf }
-    const now = onPeople() ? settledNow() : null
+    const now = settledNow()
     const showTrade = now !== null && settled !== null && peopleOn['people:trade']
     trade.setSymbols(showTrade ? tradeSymbols(settled!.villages, now!.links, u, v, geometry) : [])
     trade.setEnabled(showTrade)
-    const showRoutes = onPeople() && people !== null && routesOn()
+    const showRoutes = people !== null && routesOn()
     if (showRoutes) {
       const widths = routeWidthsNow()
       routes.setSymbols(routeSymbols(peopleRoutes, peopleTime, people!.arrival, (cell) => widths[cell], routeSea, u, v, geometry))
@@ -1289,7 +1628,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const showVillages = now !== null && peopleOn['people:villages']
     villages.setSymbols(showVillages ? villageSymbols(now!.villages, now!.density, u, v) : [])
     villages.setEnabled(showVillages)
-    const showCrossings = onPeople() && people !== null && routesOn()
+    const showCrossings = people !== null && routesOn()
     if (people && (crossingWays?.people !== people || crossingWays.view !== view)) {
       const ways = crossingsOf(people)
       crossings.setPictures(crossingPictures(ways.map((w) => t('incubator.chronicle.year', { year: Math.round(w.time).toLocaleString(getLocale()) }))))
@@ -1307,7 +1646,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     centres.setSymbols(centreSymbols)
     centres.setEnabled(showCentres)
-    const showOrigin = onPeople() && people !== null && people.origin >= 0 && peopleOn['people:centres']
+    const showOrigin = people !== null && people.origin >= 0 && peopleOn['people:centres']
     origin.setSymbols(showOrigin ? [{ at: cellPoint(people!.origin, u, v), picture: 0 }] : [])
     origin.setEnabled(showOrigin)
   }
@@ -1436,7 +1775,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
       : null
     probe = land && painted.nodes && ecology
-      ? { nodes: painted.nodes, z: level.z, land: { land: land.land, biome: land.biome, koppen: land.koppen, ecology: ecology.fields } }
+      ? { nodes: painted.nodes, z: level.z, land: { land: land.land, biome: land.biome, koppen: land.koppen, cratonAge: land.cratonAge, ecology: ecology.fields } }
       : null
     hoverTooltip.refresh()
     showCharts()
@@ -1451,6 +1790,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     regionCut = null
     shownWorld = world
+    climateFields = null
+    geology = null
+    koppenPresent = null
+    // A world texel's metres, at the equator on the globe.
+    refinedCharts = null
+    pressureShown = null
+    void loadClimate(world, domain, kind === 'sphere' ? domain.metresAround / world.width : domain.metresPerUnit)
     plants = null
     animals = null
     people = null
@@ -1568,10 +1914,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The layers the step on screen offers: its picks and its trial
   // sections; the map and its legend redrawn.
   function stepLayers(): void {
-    const picks = onFlora() ? [RESOURCE_PICKS, PLANT_PICKS, WOOD_PICKS] : onTesting() ? [RESOURCE_PICKS] : [RESOURCE_PICKS, ANIMAL_PICKS]
-    const rows = [{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }]
-    if (onPeople()) rows.push(...PEOPLE_ROWS)
-    overlayList.setRows(rows, onPeople() ? [SETTLEMENT_PICKS, RESOURCE_PICKS] : picks)
+    // Every layer in every step, grouped (layerPanel.ts).
+    const one = (g: { title: string; rows: OverlayListRow[] }): LayerGroup => ({ title: `${g.title}.label` as TKey, kind: 'one', rows: g.rows })
+    overlayList.setGroups([
+      { title: 'incubator.layers.global', kind: 'any', rows: [{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }, ...PEOPLE_ROWS] },
+      { title: 'incubator.layers.geology', kind: 'any', rows: GEOLOGY_ROWS },
+      { title: 'incubator.layers.flows', kind: 'any', rows: FLOW_ROWS },
+      one(SETTLEMENT_PICKS),
+      one(PLANT_PICKS),
+      one(WOOD_PICKS),
+      one(ANIMAL_PICKS),
+      { title: 'incubator.layers.climateLand', kind: 'one', rows: CLIMATE_PICKS.rows },
+      { title: 'incubator.layers.climateSea', kind: 'one', rows: SEA_PICKS.rows },
+      one(WEATHER_PICKS),
+      one(RESOURCE_PICKS),
+    ])
     if (onTesting()) chronicle.stop()
     regionSection.hidden = !onTesting()
     showCharts()

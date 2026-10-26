@@ -55,6 +55,31 @@ after, maybe in detMath or in the engine.
 - **The steps.** A step bar as the generator's: 1 Flora, 2 Fauna,
   3 People, and a Testing step aside (T) for the demos. A step computes by
   itself when the world is shown, under the progress pill (`ui/progressPill`).
+- **The layer panel** (`layerPanel.ts`, 2026-10-26, after the design
+  canvas's "Overlays in Gruppen"): a column of its own beside the left
+  one, shown and hidden by a button in it. Every layer, in every step:
+  the switches the group "Global", first; the picks groups of one choice
+  with "none" (the settlement, the plants, the wood, the animals, the
+  ecology, the climate), the five that paint the overlay one at a time;
+  a group of switches for the geology (the volcanoes, the plumes, of the
+  save's snapshot). The climate's washes (`map/climateLayers.ts`, written
+  apart from the screen so that the generator can take them over): the
+  Köppen classes and the biomes are level 1's, and so is the coast every
+  wash keeps to; the temperature, the precipitation, its span, the monsoon
+  and the water balance exist only on the save's climate chart (256 × 128
+  on Morvane), a coastal texel on its sea taking the nearest land value.
+  The refinement's (`map/refinedLayers.ts`, the year's mean where it has
+  months): the pressure with its isobars among the land's washes; the
+  sea's (upwelling, salt) on level 1's sea, free to combine; the weather's
+  nine on its land; the wind's streaks with its calm belts and the
+  currents' arrows as switches of a group of their own. The geology's
+  (`map/geologyLayers.ts`), switches: the volcanoes, the plumes and the
+  continents' names of the save's snapshot; the cratons' age, level 1's
+  per node; the mantle's buoyancy, the save's field mesh (`World.meshField`),
+  under every other layer.
+  A group folds; the
+  head counts what is on, "all off", "defaults". The incubator's alone;
+  the legend stays its own box.
 - **The overlays.** Each step's layers are entries of one table (`TRIALS`
   in `IncubatorScreen.ts`): the steps it shows in, whether it is on, how it
   paints, its legend, its tooltip rows. They paint into one RGBA raster at
