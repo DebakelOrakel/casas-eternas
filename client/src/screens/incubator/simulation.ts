@@ -112,11 +112,12 @@ const CAPACITY_MOVED = 0.02
 // HERD_PASTURE): a cell takes what its neighbour has and suits it. The
 // fields carry FARM_GAIN × the arable land times more people, the herds
 // HERD_GAIN × the pasture (the rules' densities: farmers 15, herders 1.5,
-// foragers 0.1 a km²). A cell keeps its domesticates as bits, MAX_TAMED
+// foragers 0.1 a km²). HERD_RATE was 0.2: the first herding centre came before
+// the first fields on Morvane. A cell keeps its domesticates as bits, MAX_TAMED
 // of them at most.
 const SETTLED_YEARS = 5000
 const FARM_RATE = 0.3
-const HERD_RATE = 0.2
+const HERD_RATE = 0.1
 const CENTRE_CROPS = 2
 const CENTRE_ARABLE = 0.5
 const CENTRE_HERDS = 2
@@ -601,18 +602,24 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       const bestFarm = new Map<number, { cell: number; w: number }>()
       const bestHerd = new Map<number, { cell: number; w: number }>()
       const stable = climate.stable(t)
+      // A domesticate is tamed once on a landmass: a centre counts only the
+      // wild ones not tamed there yet (each centre tamed its own; on
+      // Morvane the horse five times, five herding centres, 2026-10-26).
+      const tamedOn = new Set<string>()
+      for (const d of tamed) tamedOn.add(`${d.id} ${h.landmass[d.cell]}`)
+      const wildHere = (id: string, i: number): boolean => !tamedOn.has(`${id} ${h.landmass[i]}`)
       for (const i of lived) {
         const g = region[i]
         if (g < 0 || people[i] === 0 || arrival[i] > t - SETTLED_YEARS) continue
         if (stable && farmAt[i] === Infinity && knowledge[g] >= KNOW_FARM && (arable?.[i] ?? 0) >= CENTRE_ARABLE) {
           let wild = 0
-          for (const crop of input.crops) if (crop.codes[i] >= PLANT_SUITS_CODE) wild++
+          for (const crop of input.crops) if (crop.codes[i] >= PLANT_SUITS_CODE && wildHere(crop.id, i)) wild++
           const w = wild >= CENTRE_CROPS ? (wild / 2) * (arable?.[i] ?? 0) : 0
           if (w > (bestFarm.get(g)?.w ?? 0)) bestFarm.set(g, { cell: i, w })
         }
         if (stable && herdAt[i] === Infinity && knowledge[g] >= KNOW_HERD && (pasture?.[i] ?? 0) >= CENTRE_PASTURE) {
           let wild = 0
-          for (const herd of input.herds) if (herd.codes[i] >= 2) wild++
+          for (const herd of input.herds) if (herd.codes[i] >= 2 && wildHere(herd.id, i)) wild++
           const w = wild >= CENTRE_HERDS ? (wild / 2) * (pasture?.[i] ?? 0) : 0
           if (w > (bestHerd.get(g)?.w ?? 0)) bestHerd.set(g, { cell: i, w })
         }
@@ -620,20 +627,20 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       for (const { cell, w } of bestFarm.values()) {
         if (random() >= FARM_RATE * Math.min(1, w) || !farCentre(cell, LIFEWAY.farmers)) continue
         centres.push(cell, t, LIFEWAY.farmers)
-        for (const crop of input.crops) if (crop.codes[cell] >= PLANT_SUITS_CODE) tame('plant', crop, cell, t)
+        for (const crop of input.crops) if (crop.codes[cell] >= PLANT_SUITS_CODE && wildHere(crop.id, cell)) tame('plant', crop, cell, t)
         herdsDue.push({ cell, at: t + HERD_LAG })
         grows(cell)
       }
       for (const { cell, w } of bestHerd.values()) {
         if (random() >= HERD_RATE * Math.min(1, w) || !farCentre(cell, LIFEWAY.herders)) continue
         centres.push(cell, t, LIFEWAY.herders)
-        for (const herd of input.herds) if (herd.codes[cell] >= 2) tame('animal', herd, cell, t)
+        for (const herd of input.herds) if (herd.codes[cell] >= 2 && wildHere(herd.id, cell)) tame('animal', herd, cell, t)
         grows(cell)
       }
       for (let k = herdsDue.length - 1; k >= 0; k--) {
         if (herdsDue[k].at > t) continue
         const { cell } = herdsDue[k]
-        for (const herd of input.herds) if (herd.codes[cell] >= 2) tame('animal', herd, cell, t)
+        for (const herd of input.herds) if (herd.codes[cell] >= 2 && wildHere(herd.id, cell)) tame('animal', herd, cell, t)
         herdsDue.splice(k, 1)
         grows(cell)
       }

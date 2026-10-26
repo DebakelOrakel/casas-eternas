@@ -1006,7 +1006,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }, people.origin)
     }
     if (settled && cellFacts) {
-      for (const d of settled.domestications) {
+      // Only a domesticate's first taming is told: each centre tames its
+      // own, and the chronicle held some 25 tamings over 20 000 years
+      // (2026-10-26).
+      const told = new Set<string>()
+      for (const d of [...settled.domestications].sort((x, y) => x.at - y.at)) {
+        if (told.has(d.id)) continue
+        told.add(d.id)
         const plant = d.kind === 'plant'
         place({
           time: d.at,

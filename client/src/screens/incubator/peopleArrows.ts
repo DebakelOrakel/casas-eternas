@@ -5,21 +5,23 @@ import type { PeopleResult } from './people'
 //
 // THE TREE (2026-10-26, after the generator's migration arrows,
 // GeneratorScreen drawMigrationArrows): the routes' tree (people.ts, `from`
-// and `flow`) cut at ROUTE_SHARE of all the land reached, split into
+// and `flow`) cut at ROUTE_SHARE of all the land reached (0.005 at first: too dense with
+// the wider spread), split into
 // lines: a line runs from the origin or a parting to the next parting or
 // an end. A line's width at a cell follows the people living beyond it at
 // the time shown (flowAt), the trunk broad, the branches thinning toward
 // the front. Drawn as continuous lines (incubatorSymbols.ts, routeSymbols),
 // blue over the crossings the chronicle tells.
-const ROUTE_SHARE = 0.005
+const ROUTE_SHARE = 0.01
 // A line that ends (no parting after it) shorter than this many cells is
 // left out: a stub.
 const ROUTE_MIN_CELLS = 8
-// A crossing's landing that settled LANDING_LEAST land cells or more keeps
-// its branch, back to the origin, under ROUTE_SHARE too: a land reached
-// over the sea was drawn without a way to it while its branch was thin
-// (2026-10-26).
-const LANDING_LEAST = 30
+// A crossing's landing whose flow is LANDING_SHARE of all the land reached
+// or more keeps its branch, back to the origin, under ROUTE_SHARE too: a
+// land reached over the sea was drawn without a way to it while its branch
+// was thin (2026-10-26). At first 30 cells, absolute: with the wider
+// spread 109 landings on Morvane kept their branch, 190 lines in all.
+const LANDING_SHARE = 0.003
 // A branch begins this many cells back on the line it parts from, so that
 // smoothed it leaves that line along it, not at an angle; the cells it
 // shares lie under that line. Without it a branch bent at the parting
@@ -40,7 +42,7 @@ export function routesOf(people: PeopleResult): RouteLine[] {
   const kept = new Uint8Array(from.length)
   for (let k = 0; k < people.crossings.length; k += 4) {
     const landed = people.crossings[k + 1]
-    if (flow[landed] < LANDING_LEAST) continue
+    if (flow[landed] < LANDING_SHARE * flow[origin]) continue
     for (let c = landed; c >= 0 && !kept[c]; c = from[c]) kept[c] = 1
   }
   const children = new Map<number, number[]>()
