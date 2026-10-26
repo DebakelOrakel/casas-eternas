@@ -150,7 +150,7 @@ const HERD_EARLIEST = SPAN_YEARS - 3000
 const HERD_KM_A = 2
 const HERD_BARRIER = 3
 // The big game and its chance to die out where people came new.
-const MEGAFAUNA: Record<string, number> = { elephant: 0.8, horse: 0.6, bison: 0.5, camel: 0.5, buffalo: 0.3, aurochs: 0.2, bear: 0.2 }
+export const MEGAFAUNA: Record<string, number> = { elephant: 0.8, horse: 0.6, bison: 0.5, camel: 0.5, buffalo: 0.3, aurochs: 0.2, bear: 0.2 }
 const ISLAND_KM2 = 1_000_000
 const ISLAND_CHANCE = 1.5
 const REFUGE_LEAST = 0.1

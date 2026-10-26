@@ -833,6 +833,32 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!settled || !people) return animal
     const kept = animalsAtTime.get(animal.id)
     if (kept && kept.time === peopleTime) return kept
+    // THE HISTORY'S GAME (simulation.ts): with a simulated history the
+    // animals are its state at the time shown — the big game by its
+    // species' share, the hunted ones by the small game's, the rest as the
+    // fauna placed them; a species gone from a landmass by then, gone.
+    const frame = frameNow()
+    if (frame) {
+      const spec = ANIMALS.find((a) => a.id === animal.id)
+      const hunted = spec ? spec.uses.includes('hunt') || spec.uses.includes('fur') : false
+      const share = frame.big.get(animal.id) ?? (hunted ? frame.small : null)
+      const gone = new Map(settled.extinctions.filter((e) => e.id === animal.id).map((e) => [e.landmass, e.at]))
+      const codes = new Uint8Array(animal.codes.length)
+      let lives = 0
+      let land = 0
+      for (let i = 0; i < codes.length; i++) {
+        if (settled.landmass[i] >= 0) land++
+        let c = animal.codes[i]
+        const at = gone.get(settled.landmass[i])
+        if (c >= 2 && at !== undefined && at <= peopleTime) c = 1
+        else if (c >= 2 && share) c = share[i] < GAME_GONE ? 1 : 2 + Math.round(((c - 2) * share[i]) / 255)
+        codes[i] = c
+        if (c >= 2) lives++
+      }
+      const made = { time: peopleTime, codes, reached: land > 0 ? lives / land : 0 }
+      animalsAtTime.set(animal.id, made)
+      return made
+    }
     const now = settledNow()
     const spec = ANIMALS.find((a) => a.id === animal.id)
     const hunted = spec ? spec.uses.includes('hunt') || spec.uses.includes('fur') : false
@@ -1454,10 +1480,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE HISTORY'S PLAYBACK (DES-0033): the kept state at the time shown —
   // the people a km², KEEP_YEARS apart — asked of the worker as the time
   // comes to it, the last few kept; null while the people are the rules'.
-  let historyFrames: Map<number, Float32Array> | null = null
+  // A frame: the people a km², the small game's share and each big game
+  // species' share (in 255ths, per cell; 255 where the species is not).
+  type HistoryFrame = { people: Float32Array; small: Uint8Array; big: Map<string, Uint8Array> }
+  let historyFrames: Map<number, HistoryFrame> | null = null
   const framesAsked = new Set<number>()
   const FRAMES_KEPT = 6
+  // Under this share (in 255ths) the game is gone from a cell.
+  const GAME_GONE = 5
   function livingNow(): Float32Array | null {
+    return frameNow()?.people ?? null
+  }
+  function frameNow(): HistoryFrame | null {
     if (!historyFrames) return null
     const index = Math.min(Math.floor(SPAN_YEARS / KEEP_YEARS), Math.floor(peopleTime / KEEP_YEARS))
     const frame = historyFrames.get(index)
@@ -1466,8 +1500,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       framesAsked.add(index)
       const frames = historyFrames
       void incubator.ask({ type: 'frame', index }).then((answer) => {
-        if (historyFrames !== frames || answer?.type !== 'frame' || !answer.people) return
-        frames.set(index, answer.people)
+        if (historyFrames !== frames || answer?.type !== 'frame' || !answer.people || !answer.small) return
+        const big = new Map<string, Uint8Array>()
+        for (const b of answer.big) {
+          const full = new Uint8Array(answer.people.length).fill(255)
+          b.cells.forEach((cell, k) => (full[cell] = b.share[k]))
+          big.set(b.id, full)
+        }
+        frames.set(index, { people: answer.people, small: answer.small, big })
+        animalsAtTime.clear()
         while (frames.size > FRAMES_KEPT) frames.delete(frames.keys().next().value!)
         showPlants()
       })

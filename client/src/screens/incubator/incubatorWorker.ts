@@ -4,8 +4,8 @@ import { growFlora, type PlantLayer, type TreeLayer } from './flora'
 import type { Habitat } from './habitat'
 import { spreadPeople, type PeopleResult } from './people'
 import { PLANTS } from './plants'
-import { settle, type SettleResult } from './settle'
-import { iceDistance, simulate } from './simulation'
+import { MEGAFAUNA, settle, type SettleResult } from './settle'
+import { iceDistance, PEOPLE_FRAME_STEP, simulate, type SimFrame, type SimulationResult } from './simulation'
 import { PLANT_SUITS_CODE } from './settleShared'
 
 // THE INCUBATOR'S WORKER (2026-10-26): the habitat's cells (cells.ts), made
@@ -31,7 +31,7 @@ export type IncubatorAnswer =
   | { type: 'fauna'; animals: AnimalLayer[]; ms: number }
   | ({ type: 'people'; ms: number } & PeopleResult)
   | ({ type: 'settle'; ms: number } & SettleResult)
-  | { type: 'frame'; index: number; people: Float32Array | null; ms: number }
+  | { type: 'frame'; index: number; people: Float32Array | null; small: Uint8Array | null; big: { id: string; cells: Int32Array; share: Uint8Array }[]; ms: number }
   | { type: 'failed'; message: string }
 
 // The tamable herd animals (animals.ts) the herders keep; the domesticable
@@ -48,7 +48,10 @@ let animals: AnimalLayer[] | null = null
 let people: PeopleResult | null = null
 // The history's kept states (simulation.ts KEEP_YEARS apart), null for the
 // rules' spread.
-let frames: Float32Array[] | null = null
+let frames: SimFrame[] | null = null
+let frameSpecies: SimulationResult['species'] = []
+// The history's extinctions (simulation.ts), null for the rules' spread.
+let historyExtinctions: SimulationResult['extinctions'] | null = null
 
 // A layer's codes copied, for the answer; the worker keeps its own.
 const copied = <L extends { codes: Uint8Array }>(layers: L[]): L[] => layers.map((l) => ({ ...l, codes: l.codes.slice() }))
@@ -90,20 +93,28 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       // The history (simulation.ts) in the rules' place: the settlement
       // after it reads it as it read the rules' spread. Its kept states stay
       // here, sent one at a time as the playback asks (`frame`).
-      const result = simulate(h, { carrying: h.carrying ?? new Float32Array(h.count).fill(0.4), origin: ask.origin >= 0 ? ask.origin : people?.origin ?? -1, seed })
+      if (!animals) throw new Error('the history needs the fauna first')
+      const result = simulate(h, { carrying: h.carrying ?? new Float32Array(h.count).fill(0.4), origin: ask.origin >= 0 ? ask.origin : people?.origin ?? -1, seed, bigGame: animals.filter((a) => a.id in MEGAFAUNA).map((a) => ({ id: a.id, codes: a.codes, vulnerability: MEGAFAUNA[a.id] })) })
       people = result.people
       frames = result.kept
+      frameSpecies = result.species
+      historyExtinctions = result.extinctions
       const out = { ...people, arrival: people.arrival.slice(), land: people.land.slice(), from: people.from.slice(), flow: people.flow.slice(), crossings: people.crossings.slice(), crossingWays: people.crossingWays.slice() }
       worker.postMessage({ type: 'people', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer])
       return
     }
     if (ask.type === 'frame') {
-      const frame = frames?.[ask.index]?.slice() ?? null
-      worker.postMessage({ type: 'frame', index: ask.index, people: frame, ms: ms() } satisfies IncubatorAnswer, frame ? [frame.buffer] : [])
+      // Sent out of its compact form: the people a km², the shares.
+      const frame = frames?.[ask.index]
+      const peopleNow = frame ? Float32Array.from(frame.people, (p) => p * PEOPLE_FRAME_STEP) : null
+      const small = frame ? frame.small.slice() : null
+      const big = frame ? frameSpecies.map((sp, k) => ({ id: sp.id, cells: sp.cells.slice(), share: frame.big[k].slice() })) : []
+      worker.postMessage({ type: 'frame', index: ask.index, people: peopleNow, small, big, ms: ms() } satisfies IncubatorAnswer, [...(peopleNow ? [peopleNow.buffer] : []), ...(small ? [small.buffer] : []), ...big.flatMap((b) => [b.cells.buffer, b.share.buffer])])
       return
     }
     if (ask.type === 'people') {
       frames = null
+      historyExtinctions = null
       if (!flora) throw new Error('the people need the flora first')
       const boat = new Uint8Array(h.count)
       for (const tree of flora.trees) if (tree.woods.includes('boat')) for (let i = 0; i < h.count; i++) if (tree.codes[i] >= PLANT_SUITS_CODE) boat[i] = 1
@@ -113,7 +124,9 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       return
     }
     if (!flora || !animals || !people) throw new Error('the settlement needs the flora, the fauna and the people first')
-    const result = settle(h, { arrival: people.arrival, crops: flora.plants.filter((p) => FARM_PLANTS.has(p.id)), herds: animals.filter((a) => HERD_ANIMALS.has(a.id)), origin: people.origin, animals, seed })
+    const ruled = settle(h, { arrival: people.arrival, crops: flora.plants.filter((p) => FARM_PLANTS.has(p.id)), herds: animals.filter((a) => HERD_ANIMALS.has(a.id)), origin: people.origin, animals, seed })
+    // The history's extinctions in the rules' place: hunted out, not drawn.
+    const result = historyExtinctions ? { ...ruled, extinctions: historyExtinctions } : ruled
     worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, ...result.domestications.map((d) => d.came.buffer), result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
   } catch (e) {
     worker.postMessage({ type: 'failed', message: String(e) } satisfies IncubatorAnswer)

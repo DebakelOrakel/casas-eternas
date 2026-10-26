@@ -45,7 +45,7 @@ const CARRYING_FULL = 0.8
 const GROWTH_A = 0.01
 const SEED_SHARE = 0.5
 const SEED_PEOPLE = 0.2
-const FULL_SHARE = 0.99
+const FULL_SHARE = 0.95
 const SPEED_MIN_KM_A = 0.05
 const SPEED_MAX_KM_A = 0.5
 const SLOPE_DRAG = 10
@@ -63,6 +63,33 @@ const CLIMATE_YEARS = 500
 // most — no longer the time's (it grew evenly from 30 to 450 km over the
 // span, and reached 98.5 % of Morvane's land, its far islands too). A
 // crossing within it is tried with CROSSING_CHANCE a step.
+// THE GAME (2026-10-26, DES-0033 step 3), every GAME_STEPS steps on the
+// cells people live in or have hunted: the small game and the big game, a
+// share each of what the land holds without people. Each grows back
+// toward it (SMALL_REGROW_A, BIG_REGROW_A a year: the big slowly) and is
+// hunted by the people there by their density over the foragers' (HUNT_A,
+// BIG_HUNT_A a year at that density). The big game is each species' own
+// (2026-10-26; one share for all of it before): a vulnerable species
+// grows back slower, by (1.2 − its vulnerability), and is hunted harder, by
+// its vulnerability over 0.5 — the elephant and the horse go first, the
+// aurochs holds; the big game of the people's own
+// landmass, which grew up with them, at HOME_WARY of that. What the
+// foragers live on: PLANT_FOOD of it plants, the rest the game — SMALL_FOOD
+// small, BIG_FOOD big where there is big game. A species of the big game is
+// gone from a landmass when its cells there hold less than EXTINCT_BELOW
+// of it: the rules drew that.
+const GAME_STEPS = 8
+const SMALL_REGROW_A = 0.05
+const BIG_REGROW_A = 0.002
+const HUNT_A = 0.02
+const BIG_HUNT_A = 0.01
+const HOME_WARY = 0.03
+const PLANT_FOOD = 0.5
+const SMALL_FOOD = 0.35
+const BIG_FOOD = 0.15
+const EXTINCT_BELOW = 0.1
+const FOOD_MOVED = 0.02
+const CAPACITY_MOVED = 0.02
 const KNOW_SCALE = 1
 const KNOW_PEOPLE = 10_000
 const KNOW_GAIN = 0.1
@@ -79,14 +106,34 @@ export interface SimulationInput {
   carrying: Float32Array
   origin: number
   seed: number
+  // The big game (settle.ts MEGAFAUNA) as the fauna placed it (fauna.ts):
+  // a code a cell, 2 and above where it lives; and how vulnerable it is,
+  // 0 … 1 (MEGAFAUNA's weight: the elephant 0.8 … the aurochs 0.2).
+  bigGame: { id: string; codes: Uint8Array; vulnerability: number }[]
 }
+
+// A kept state (every KEEP_YEARS from 0): the people a km² in
+// PEOPLE_FRAME_STEP steps, the small game's share in 255ths, each species
+// of the big game's share in 255ths on its cells (SimulationResult
+// `species`, aligned). Float32 a cell, the people alone took 241 MB on
+// Morvane.
+export interface SimFrame {
+  people: Uint16Array
+  small: Uint8Array
+  big: Uint8Array[]
+}
+export const PEOPLE_FRAME_STEP = 1e-5
 
 export interface SimulationResult {
   people: PeopleResult
-  // The people a km² at every KEEP_YEARS from 0, one array each.
-  kept: Float32Array[]
+  kept: SimFrame[]
+  // The big game's species, their cells (the frames' `big` aligned).
+  species: { id: string; cells: Int32Array }[]
   // The climate history's draw (climateHistory.ts).
   climate: { maxAt: number; depth: number; deglaciation: number }
+  // Where a species of the big game died out (settle.ts SettleResult's
+  // form): on a landmass, when its last tenth went, at a cell of it.
+  extinctions: { id: string; landmass: number; areaKm2: number; at: number; cell: number }[]
   // The regions (the habitable land's connected parts) and their knowledge
   // at the end, for a readout.
   region: Int32Array
@@ -294,12 +341,17 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   // What each cell carries now (climateHistory.ts): the cold's share of
   // today's, 0 under the ice; the shelf while the sea stands below it.
   const capacity = new Float32Array(n)
+  // A cell whose carrying moved by CAPACITY_MOVED of it or more is marked
+  // (`movedNow`), to grow or shrink again.
+  const movedNow = new Uint8Array(n)
   const updateClimate = (t: number): void => {
     const cold = climate.cold(t)
     const drop = climate.seaDropM(t)
     for (let i = 0; i < n; i++) {
       if (base[i] <= 0) continue
+      const was = capacity[i]
       capacity[i] = shelf[i] ? (seaDepthM[i] <= drop ? base[i] : 0) : base[i] * coldShare(koppen[i], iceKm[i], cold)
+      movedNow[i] = Math.abs(capacity[i] - was) >= CAPACITY_MOVED * Math.max(was, capacity[i]) ? 1 : 0
     }
   }
   const habitable = (i: number): boolean => land[i] === 1 && base[i] > 0
@@ -314,6 +366,45 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     else crossingsFrom.set(c.from, [c])
   }
 
+  // The game, a share of the land's; big game only where a species of it
+  // lives (`bigHere`). `food`: what the foragers get of what the land
+  // carries, from it.
+  const small = new Float32Array(n).fill(1)
+  // Each species of the big game: its cells, its share in each (aligned),
+  // its cells' positions by landmass (for its extinction), its rates.
+  const species = input.bigGame.map((g) => {
+    const cells: number[] = []
+    for (let i = 0; i < n; i++) if (g.codes[i] >= 2) cells.push(i)
+    const byLandmass = new Map<number, number[]>()
+    cells.forEach((i, k) => {
+      if (h.landmass[i] < 0) return
+      const list = byLandmass.get(h.landmass[i])
+      if (list) list.push(k)
+      else byLandmass.set(h.landmass[i], [k])
+    })
+    return {
+      id: g.id,
+      cells: Int32Array.from(cells),
+      share: new Float32Array(cells.length).fill(1),
+      byLandmass,
+      regrow: BIG_REGROW_A * (1.2 - g.vulnerability),
+      hunt: BIG_HUNT_A * (g.vulnerability / 0.5),
+      gone: new Set<number>(),
+    }
+  })
+  // Per cell the big game's shares summed, and how many species.
+  const bigSum = new Float32Array(n)
+  const bigCount = new Uint8Array(n)
+  for (const sp of species) for (const i of sp.cells) {
+    bigSum[i] += 1
+    bigCount[i]++
+  }
+  const homeLandmass = input.origin >= 0 ? h.landmass[input.origin] : -1
+  const food = (i: number): number => PLANT_FOOD + (bigCount[i] ? SMALL_FOOD * small[i] + BIG_FOOD * (bigSum[i] / bigCount[i]) : (SMALL_FOOD + BIG_FOOD) * small[i])
+  const extinctions: SimulationResult['extinctions'] = []
+  // The cells hunted, kept while their game grows back.
+  let hunted: number[] = []
+  const inHunted = new Uint8Array(n)
   const people = new Float32Array(n)
   const arrival = new Float32Array(n).fill(Infinity)
   const from = new Int32Array(n).fill(-1)
@@ -321,13 +412,20 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   // made (PeopleResult's crossings and crossingWays).
   const made: number[] = []
   const ways: number[] = []
-  const kept: Float32Array[] = []
+  const kept: SimFrame[] = []
   // A step touches two lists alone: the cells still growing or shrinking
   // (until within FULL_SHARE of what they carry), and the front — lived-in
   // cells with an empty neighbour people could settle. Over all the
   // lived-in cells a run took 40 s on Morvane. Both are made again from
   // all the lived-in cells when the climate moves (CLIMATE_YEARS).
   let growing: number[] = []
+  // A cell on `growing` once at most.
+  const inGrowing = new Uint8Array(n)
+  const grows = (cell: number): void => {
+    if (inGrowing[cell]) return
+    inGrowing[cell] = 1
+    growing.push(cell)
+  }
   let front: number[] = []
   let lived: number[] = []
   // A cell is settled once it has people; one left (the ice, the sea over
@@ -338,7 +436,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       arrival[cell] = t
       from[cell] = parent
     }
-    growing.push(cell)
+    grows(cell)
     front.push(cell)
     lived.push(cell)
   }
@@ -351,7 +449,18 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   const grow = 1 - Math.exp(-GROWTH_A * STEP_YEARS)
   for (let s = 0; s <= steps; s++) {
     const t = s * STEP_YEARS
-    if (t % KEEP_YEARS === 0) kept.push(people.slice())
+    if (t % KEEP_YEARS === 0) {
+      const frame: SimFrame = { people: new Uint16Array(n), small: new Uint8Array(n), big: species.map((sp) => new Uint8Array(sp.share.length)) }
+      for (let i = 0; i < n; i++) {
+        const p = people[i] / PEOPLE_FRAME_STEP
+        frame.people[i] = p > 65535 ? 65535 : p + 0.5
+        frame.small[i] = small[i] * 255 + 0.5
+      }
+      species.forEach((sp, k) => {
+        for (let j = 0; j < sp.share.length; j++) frame.big[k][j] = sp.share[j] * 255 + 0.5
+      })
+      kept.push(frame)
+    }
     if (s === steps) break
     // 0. The climate, every CLIMATE_YEARS: what the cells carry; the people
     //    of a cell that carries nothing now leave it.
@@ -367,8 +476,20 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         still.push(i)
       }
       lived = still
-      growing = still.slice()
+      for (const i of still) if (movedNow[i]) grows(i)
       front = still.slice()
+      // The big game's extinctions: a species under EXTINCT_BELOW of its
+      // own on a landmass.
+      for (const sp of species) {
+        for (const [m, at] of sp.byLandmass) {
+          if (sp.gone.has(m)) continue
+          let sum = 0
+          for (const k of at) sum += sp.share[k]
+          if (sum >= EXTINCT_BELOW * at.length) continue
+          sp.gone.add(m)
+          extinctions.push({ id: sp.id, landmass: m, areaKm2: h.landmassKm2[m], at: t, cell: sp.cells[at[0]] })
+        }
+      }
       // The knowledge, toward what each region's people keep.
       regionPeople.fill(0)
       for (const i of lived) if (region[i] >= 0) regionPeople[region[i]] += people[i] * h.areaKm2[i]
@@ -377,14 +498,53 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         knowledge[g] += (target - knowledge[g]) * (target > knowledge[g] ? KNOW_GAIN : KNOW_LOSS)
       }
     }
+    // 0b. The game, every GAME_STEPS: hunted where people live, grown back
+    //     where they hunted; the cells people live in grow or shrink by it.
+    if (s % GAME_STEPS === 0) {
+      const years = GAME_STEPS * STEP_YEARS
+      for (const i of lived) {
+        if (people[i] > 0 && !inHunted[i]) {
+          inHunted[i] = 1
+          hunted.push(i)
+        }
+      }
+      const stillHunted: number[] = []
+      // The cells whose food moved by FOOD_MOVED or more grow or shrink again.
+      const moved: number[] = []
+      const before = hunted.map(food)
+      for (const i of hunted) {
+        const pressure = people[i] / FORAGER_DENSITY
+        small[i] = Math.max(0.01, Math.min(1, small[i] + years * (SMALL_REGROW_A * small[i] * (1 - small[i]) - HUNT_A * pressure * small[i])))
+      }
+      // Each species over its cells hunted or growing back.
+      for (const sp of species) {
+        for (let k = 0; k < sp.cells.length; k++) {
+          const i = sp.cells[k]
+          const was = sp.share[k]
+          if (people[i] === 0 && was >= 0.999) continue
+          const pressure = people[i] / FORAGER_DENSITY
+          const wary = h.landmass[i] === homeLandmass ? HOME_WARY : 1
+          const now = Math.max(0.001, Math.min(1, was + years * (sp.regrow * was * (1 - was) - sp.hunt * wary * pressure * was)))
+          sp.share[k] = now
+          bigSum[i] += now - was
+        }
+      }
+      hunted.forEach((i, k) => {
+        if (people[i] > 0 || small[i] < 0.99 || (bigCount[i] && bigSum[i] < 0.99 * bigCount[i])) stillHunted.push(i)
+        else inHunted[i] = 0
+        if (people[i] > 0 && Math.abs(food(i) - before[k]) >= FOOD_MOVED) moved.push(i)
+      })
+      hunted = stillHunted
+      for (const i of moved) grows(i)
+    }
     // 1. Growth, or shrinking toward less; a cell near what it carries
     //    leaves the list.
     const stillGrowing: number[] = []
     for (const i of growing) {
-      const k = capacity[i]
-      if (people[i] === 0) continue
-      people[i] += (k - people[i]) * grow
-      if (Math.abs(k - people[i]) > (1 - FULL_SHARE) * k) stillGrowing.push(i)
+      const k = capacity[i] * food(i)
+      if (people[i] > 0) people[i] += (k - people[i]) * grow
+      if (people[i] > 0 && Math.abs(k - people[i]) > (1 - FULL_SHARE) * k) stillGrowing.push(i)
+      else inGrowing[i] = 0
     }
     growing = stillGrowing
     // 2. Settling, over SUB_STEPS passes; the newly settled join the next.
@@ -401,7 +561,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
           const u = h.nbr[e]
           if (!open(u)) continue
           openLeft = true
-          if (people[i] < SEED_SHARE * capacity[i]) continue
+          if (people[i] < SEED_SHARE * capacity[i] * food(i)) continue
           const chance = Math.min(1, (speed[u] * subYears) / h.distKm[e])
           if (random() < chance) settle(u, at, capacity[u] * SEED_PEOPLE, i)
         }
@@ -413,7 +573,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     }
     // 3. The crossings within the reach of their coast's knowledge.
     for (const [source, list] of crossingsFrom) {
-      if (people[source] < SEED_SHARE * capacity[source]) continue
+      if (people[source] < SEED_SHARE * capacity[source] * food(source)) continue
       const known = knowledge[region[source]]
       const reach = Math.min(REACH_END, REACH_START + REACH_PER_KNOW * known)
       for (const c of list) {
@@ -454,6 +614,8 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     people: { arrival, land, from, flow, origin: input.origin, crossings: Float32Array.from(made), crossingWays: Int32Array.from(ways) },
     kept,
     climate: { maxAt: climate.maxAt, depth: climate.depth, deglaciation: climate.deglaciation },
+    species: species.map((sp) => ({ id: sp.id, cells: sp.cells })),
+    extinctions,
     region,
     knowledge,
     ms: Math.round(performance.now() - started),

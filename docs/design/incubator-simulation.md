@@ -293,3 +293,27 @@ pockets the ice leaves), the arrival's median at year 11 200 and its
 90th percentile at 96 700 (land the melting ice opens); the first
 continent (4 M km²) at knowledge 1.57, a reach of 266 km, the largest
 region (15 M km²) reached late, at 0.46; 3.4 s. Uncalibrated.
+
+**The game and the hunt** (the same day): a cell's small game and big
+game, a share each of what the land holds, grow back (5 % a year, the big
+0.2 %) and are hunted by the people there by their density (2 % and 1 % a
+year at the foragers' full density); the big game of the people's own
+landmass, which grew up with them, at a tenth of that. The foragers live
+half on plants, the rest on the game, so a hunted-out land feeds fewer. A
+species of the big game is gone from a landmass when its cells there
+hold less than a tenth of it — the history's extinctions take the rules'
+drawn ones' place. On Morvane: 23 extinctions, the first from year 3 500
+on the landmasses reached early, many more at the end as the ice frees
+land and people with it; the reach 32.6 % of the land against 34.7 %
+without the hunt; 9.6 s (a cell is grown again only when what it carries
+moved by 2 % or more).
+
+Then the big game by species: each its own share, a vulnerable one (the
+rules' MEGAFAUNA weights, the elephant 0.8 … the aurochs 0.2) growing back
+slower and hunted harder; the people's own landmass's big game hunted at
+3 % (at 10 % its elephants went too). On Morvane: 18 extinctions, the
+elephant first (from year 7 000), the horse, the camel; the aurochs holds
+to the end but on one landmass. The kept states hold the game too, in a
+compact form (the people in 16 bits, the shares in 8: some 5.5 MB a state,
+225 MB for 41), and the animals' layers show it in a history: the big
+game by its species' share, the hunted ones by the small game's. 14.5 s.
