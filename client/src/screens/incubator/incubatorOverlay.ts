@@ -1,4 +1,3 @@
-import { drawArrows, type PeopleArrow } from './peopleArrows'
 import type { PeopleResult } from './people'
 import { PLANT_SUITS_CODE } from './settleShared'
 
@@ -150,29 +149,23 @@ function ageColour(year: number): [number, number, number] {
   return stops[stops.length - 1].rgb
 }
 
-// The people at `t` years after their departure, on the world raster
-// cells, onto the overlay: the land they reached by then,
-// by when they came; the arrows of the way they took. Where they set out
-// is a mark (incubatorSymbols.ts).
-export function paintPeople(o: OverlayRaster, people: PeopleResult, arrows: readonly PeopleArrow[], t: number, spread: boolean, routes: boolean): void {
-  if (spread) {
-    for (let k = 0; k < o.owners.length; k++) {
-      const cell = o.owners[k]
-      const at = people.arrival[cell]
-      if (!(at <= t) || !people.land[cell]) continue
-      const [r, g, b] = ageColour(at)
-      put(o, 4 * k, r, g, b, 0.7)
-    }
+// The people at `t` years after their departure, on the habitat's cells,
+// onto the overlay: the land they reached by then, by when they came.
+// Where they set out, the ways they took (the routes, the crossings) are
+// marks (incubatorSymbols.ts).
+export function paintPeople(o: OverlayRaster, people: PeopleResult, t: number): void {
+  for (let k = 0; k < o.owners.length; k++) {
+    const cell = o.owners[k]
+    const at = people.arrival[cell]
+    if (!(at <= t) || !people.land[cell]) continue
+    const [r, g, b] = ageColour(at)
+    put(o, 4 * k, r, g, b, 0.7)
   }
-  if (routes) {
-    const [r, g, b] = PEOPLE_ROUTE
-    drawArrows((x, y) => put(o, 4 * (y * o.width + x), r, g, b, 0.85), arrows, t, o.width, o.height)
-  }
-
 }
 
-// THE SETTLEMENT (settle.ts, a proof of concept): the lifeways, the
-// density, the villages and the trade, onto the overlay.
+// THE SETTLEMENT (settle.ts, a proof of concept): the lifeways and the
+// density, onto the overlay; the villages, the trade and the sources are
+// marks (incubatorSymbols.ts).
 export const LIFEWAY_COLOURS: Record<number, readonly [number, number, number]> = {
   1: [150, 140, 110],
   2: [40, 120, 190],
@@ -232,31 +225,3 @@ export function paintDensity(o: OverlayRaster, density: Float32Array): void {
     }
   }
 }
-
-const centre = (cell: number, o: OverlayRaster): [number, number] => [o.u[cell] * o.width, o.v[cell] * o.height]
-
-// The trade: the links that carry goods, wider the more. The sources are
-// marks (incubatorSymbols.ts).
-export function paintTrade(o: OverlayRaster, villages: Int32Array, links: Float32Array): void {
-  const [cr, cg, cb] = TRADE_COLOUR
-  for (let k = 0; k < links.length; k += 3) {
-    const w = links[k + 2]
-    if (w < 0.05) continue
-    const half = Math.min(3, 0.6 + Math.sqrt(w)) / 2
-    const [ax, ay] = centre(villages[2 * links[k]], o)
-    let [bx, by] = centre(villages[2 * links[k + 1]], o)
-    if (bx - ax > o.width / 2) bx -= o.width
-    else if (ax - bx > o.width / 2) bx += o.width
-    const steps = Math.ceil(Math.hypot(bx - ax, by - ay))
-    for (let s = 0; s <= steps; s++) {
-      const px = ax + ((bx - ax) * s) / Math.max(1, steps)
-      const py = ay + ((by - ay) * s) / Math.max(1, steps)
-      for (let dy = Math.floor(py - half); dy <= Math.ceil(py + half); dy++) {
-        if (dy < 0 || dy >= o.height) continue
-        for (let dx = Math.floor(px - half); dx <= Math.ceil(px + half); dx++) put(o, 4 * (dy * o.width + (((dx % o.width) + o.width) % o.width)), cr, cg, cb, 0.8)
-      }
-    }
-  }
-
-}
-

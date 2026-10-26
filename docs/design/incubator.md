@@ -63,7 +63,9 @@ after, maybe in detMath or in the engine.
   repaints that raster alone.
 - **The marks.** Villages, centres, the origin and the sources are symbols
   in the views' surface (`incubatorSymbols.ts`, `view.symbols`), sized in
-  km on the world, sharp at any zoom.
+  km on the world, sharp at any zoom. So are the lines — the spread's
+  arrows, the trade, the crossings: pieces of a line that join, and a head
+  (`lineSymbols`); painted into the overlay until 2026-10-26.
 - **The legend** in a separate box that folds (`ui/legend`), as the
   generator's.
 - **The tooltip** on hover: the height, the Köppen class, the biome, the
@@ -154,9 +156,12 @@ is not crossed. The shelf down to 120 m is dry land until year 60 000. Open
 water is crossed as far as the time's reach, which grows from 30 to 450 km
 over the span; beyond 60 km only with boats, which people carry on once
 they passed boat wood. On Morvane it reaches 83 % of the ice-free land.
-Shown as the age of the spread, with a few broad arrows of its directions
-(`peopleArrows.ts`) and the origin marked. The crossings to a landmass of
-100 000 km² or more are blue arrows along their way over the sea (the open
+Shown as the age of the spread, with its routes as a tree of smoothed,
+continuous lines, as wide as the square root of the people living beyond
+them at the time shown, heads at the tips and at the front while it
+moves, as the generator's migration arrows (`peopleArrows.ts`), and the
+origin marked. The crossings to a landmass of
+100 000 km² or more are the routes' own lines, blue over the sea (the open
 water, the shelf between its stretches; not the dry shelf walked before
 it), with the year they landed as text. The boats are dugouts, rafts and
 bark canoes: good for a daring crossing, not for trade.
@@ -228,8 +233,6 @@ removed again do not.
 
 - **The chronicle** ([DES-0031](./incubator-chronicle.md)): the time, the
   events, travel to them.
-- **Lines as vectors**: the arrows, the trade and the sea crossings as
-  lines like the rivers, not painted into the overlay.
 - **Boats**: the crossings made visible, harbours where boat wood grows by
   the coast.
 - **The trade again**: the foragers' camps as nodes too.

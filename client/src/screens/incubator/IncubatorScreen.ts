@@ -47,12 +47,12 @@ import type { AnimalLayer } from './fauna'
 import type { AnimalUse } from './animals'
 import type { PeopleResult } from './people'
 import { SPAN_YEARS } from './peopleShared'
-import { arrowsOf, type PeopleArrow } from './peopleArrows'
+import { flowAt, routeOrder, routesOf, type RouteLine } from './peopleArrows'
 import type { SettleResult } from './settle'
 import { CAME_STEP, clearedAt, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
-import { cellPoint, centrePictures, crossingPictures, crossingSymbols, originPictures, sourcePictures, villagePictures, villageSymbols } from './incubatorSymbols'
-import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import { cellPoint, centrePictures, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
+import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
@@ -458,7 +458,27 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The people's spread (people.ts), the time shown (years from the
   // departure), its two layers, and the origin set by a click (-1: chosen).
   let people: PeopleResult | null = null
-  let peopleArrows: PeopleArrow[] = []
+  let peopleRoutes: RouteLine[] = []
+  let peopleOrder: Int32Array = new Int32Array(0)
+  let routeSea: Uint8Array | null = null
+  // THE ROUTES' WIDTHS at the time shown, km a cell: as the generator's
+  // migration arrows, the square root of the people living beyond a cell
+  // (peopleArrows.ts, flowAt) over all of them, ROUTE_MIN_KM to
+  // ROUTE_MAX_KM; before the settlement, the land beyond it. Made for the
+  // time and kept for it.
+  const ROUTE_MIN_KM = 12
+  const ROUTE_MAX_KM = 110
+  let routeWidths: { time: number; widths: Float32Array } | null = null
+  function routeWidthsNow(): Float32Array {
+    if (routeWidths?.time === peopleTime) return routeWidths.widths
+    const p = people!
+    const now = settledNow()
+    const flow = flowAt(p, peopleOrder, peopleTime, now && cellFacts ? (cell) => now.density[cell] * cellFacts!.areaKm2[cell] : (cell) => p.land[cell])
+    const total = Math.max(1e-9, flow[p.origin])
+    const widths = Float32Array.from(flow, (f) => ROUTE_MIN_KM + (ROUTE_MAX_KM - ROUTE_MIN_KM) * Math.sqrt(Math.min(1, f / total)))
+    routeWidths = { time: peopleTime, widths }
+    return widths
+  }
   let peopleTime = SPAN_YEARS
   // What the settled land shows, and the people's switches.
   let settlementShown: Settlement | null = 'spread'
@@ -1040,7 +1060,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const done = await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people')
     if (!done || !overlay) return
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
-    peopleArrows = arrowsOf(people, overlay.u, overlay.v, overlay.width, overlay.height)
+    // The routes blue over the crossings the chronicle tells.
+    routeSea = new Uint8Array(people.arrival.length)
+    for (const way of crossingsOf(people)) for (const cell of way.path) routeSea[cell] = 1
+    peopleRoutes = routesOf(people)
+    peopleOrder = routeOrder(people)
+    routeWidths = null
     showPlants()
     sayChronicle()
     const result = await work(t('incubator.step.people.label'), { type: 'settle' }, 'settle')
@@ -1048,6 +1073,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const { type: _type, ms: _ms, ...rest } = result
     settled = rest
     settledAtTime = null
+    routeWidths = null
     treesAtTime = null
     keptAtTime = null
     animalsAtTime.clear()
@@ -1130,7 +1156,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       steps: ['people'],
       on: () => people !== null,
       paint: (o) => {
-        if (people) paintPeople(o, people, peopleArrows, peopleTime, settlementShown === 'spread', routesOn())
+        if (people && settlementShown === 'spread') paintPeople(o, people, peopleTime)
       },
       legend: () => {
         const spreadOn = settlementShown === 'spread'
@@ -1153,7 +1179,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         if (!now) return
         if (settlementShown === 'lifeway') paintLifeways(o, now.shares)
         if (settlementShown === 'density') paintDensity(o, now.density)
-        if (peopleOn['people:trade']) paintTrade(o, settled.villages, now.links)
       },
       legend: () => {
         if (!settled) return []
@@ -1195,10 +1220,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const activeTrials = (): TrialLayer[] => stepTrials().filter((l) => l.on())
 
   // THE MARKS (incubatorSymbols.ts) of the people step: the sources, the
-  // villages, the crossings, the farming's and the herding's centres, the
-  // origin, in that order from below; the centres and the origin on one
-  // switch (Zentren), the crossings on the routes'; each view is given the
-  // pictures once, the crossings' again for new people.
+  // trade, the villages, the routes, the crossings, the farming's and the
+  // herding's centres, the origin, in that order from below; the centres
+  // and the origin on one switch (Zentren), the crossings on the routes';
+  // each view is given the pictures once, the crossings' again for new
+  // people.
   const marked = new WeakSet<WorldView>()
   // The crossings drawn: those the chronicle tells (EVENT_LEAST_KM2), each
   // its way over the open water (people.ts, crossingWays) and when they
@@ -1229,19 +1255,34 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function syncMarks(): void {
     if (!view || !overlay) return
     const sources = view.symbols('incubator-sources')
+    const trade = view.symbols('incubator-trade')
     const villages = view.symbols('incubator-villages')
+    const routes = view.symbols('incubator-routes')
     const crossings = view.symbols('incubator-crossings')
     const centres = view.symbols('incubator-centres')
     const origin = view.symbols('incubator-origin')
     if (!marked.has(view)) {
       sources.setPictures(sourcePictures())
+      trade.setPictures(tradePictures(TRADE_COLOUR))
       villages.setPictures(villagePictures())
+      routes.setPictures(routePictures(PEOPLE_ROUTE))
       centres.setPictures(centrePictures())
       origin.setPictures(originPictures())
       marked.add(view)
     }
     const { u, v } = overlay
+    const v0 = view
+    const geometry: LineGeometry = { km: (a, b) => v0.metresBetween(a, b) / 1000, direction: directionOf }
     const now = onPeople() ? settledNow() : null
+    const showTrade = now !== null && settled !== null && peopleOn['people:trade']
+    trade.setSymbols(showTrade ? tradeSymbols(settled!.villages, now!.links, u, v, geometry) : [])
+    trade.setEnabled(showTrade)
+    const showRoutes = onPeople() && people !== null && routesOn()
+    if (showRoutes) {
+      const widths = routeWidthsNow()
+      routes.setSymbols(routeSymbols(peopleRoutes, peopleTime, people!.arrival, (cell) => widths[cell], routeSea, u, v, geometry))
+    } else routes.setSymbols([])
+    routes.setEnabled(showRoutes)
     const showSources = now !== null && settled !== null && peopleOn['people:sources']
     sources.setSymbols(showSources ? Array.from({ length: settled!.sources.length / 2 }, (_, k) => ({ at: cellPoint(settled!.sources[2 * k], u, v), picture: settled!.sources[2 * k + 1] })) : [])
     sources.setEnabled(showSources)
@@ -1255,8 +1296,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       crossingWays = { people, view, ways }
     }
     const shownWays = showCrossings && crossingWays ? crossingWays.ways.map((w) => (w.time <= peopleTime ? w.path : [])) : []
-    const v0 = view
-    crossings.setSymbols(crossingSymbols(shownWays, u, v, (a, b) => v0.metresBetween(a, b) / 1000, directionOf))
+    crossings.setSymbols(crossingSymbols(shownWays, u, v, geometry))
     crossings.setEnabled(showCrossings)
     const showCentres = now !== null && settled !== null && peopleOn['people:centres']
     const centreSymbols: WorldSymbol[] = []
