@@ -59,6 +59,7 @@ import type { PeopleResult } from './people'
 import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
 import { climateHistoryOf, ICE_REACH_KM } from './climateHistory'
 import { flowAt, routeOrder, routesOf, type RouteLine } from './peopleArrows'
+import type { LogEvent } from './historyLogShared'
 import type { SettleResult } from './settle'
 import { CAME_STEP, clearedAt, clearedOf, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
@@ -993,8 +994,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const CROSSING_LEAST_KM = 10
   const BOAT_RGB = [40, 120, 190] as const
   const EXTINCT_RGB = [176, 57, 44] as const
-  // The population's thresholds the chronicle tells.
-  const POPULATION_MARKS = [100_000, 1_000_000, 10_000_000]
   function sayChronicle(): void {
     eventPlaces.clear()
     const events: ChronicleEvent[] = []
@@ -1003,77 +1002,118 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (overlay) eventPlaces.set(event, cellPoint(cell, overlay.u, overlay.v))
     }
     const landmassName = (m: number): string => t('incubator.chronicle.landmass', { n: String(cellFacts ? cellFacts.rank[m] : m + 1) })
-    if (settled && cellFacts) {
-      for (let k = 0; k < settled.centres.length; k += 3) {
-        const cell = settled.centres[k]
-        const farm = settled.centres[k + 2] === LIFEWAY.farmers
-        place({
-          time: settled.centres[k + 1],
-          icon: farm ? '/icons/wheat.png' : '/icons/pastures.png',
-          rgb: LIFEWAY_COLOURS[farm ? LIFEWAY.farmers : LIFEWAY.herders],
-          title: t(farm ? 'incubator.chronicle.event.farmCentre' : 'incubator.chronicle.event.herdCentre'),
-          detail: landmassName(cellFacts.landmass[cell]),
-        }, cell)
-      }
-    }
-    // The people set out from their origin, in year 0.
-    if (people && cellFacts && people.origin >= 0) {
-      place({
-        time: 0,
-        icon: '/icons/origin.png',
-        rgb: [220, 30, 30],
-        title: t('incubator.chronicle.event.departure'),
-        detail: landmassName(cellFacts.landmass[people.origin]),
-      }, people.origin)
-    }
-    if (settled && cellFacts) {
+    // The log (historyLogShared.ts), the history's or the rules': what it
+    // tells of each kind.
+    const log = settled?.log ?? []
+    const facts = cellFacts
+    const o = overlay
+    if (facts && o) {
+      // The villages numbered by when they were founded, 1 the first.
+      const villageName = (v: number): string => t('incubator.chronicle.village', { n: String(v + 1) })
+      const villageOrder = new Map<number, number>()
+      for (const e of log) if (e.kind === 'village') villageOrder.set(e.village, villageOrder.size)
+      const nameOf = (v: number): string => villageName(villageOrder.get(v) ?? v)
       // Only a domesticate's first taming is told: each centre tames its
       // own, and the chronicle held some 25 tamings over 20 000 years
       // (2026-10-26).
-      const told = new Set<string>()
-      for (const d of [...settled.domestications].sort((x, y) => x.at - y.at)) {
-        if (told.has(d.id)) continue
-        told.add(d.id)
-        const plant = d.kind === 'plant'
-        place({
-          time: d.at,
-          icon: plant ? '/icons/wheat.png' : '/icons/pastures.png',
-          rgb: LIFEWAY_COLOURS[plant ? LIFEWAY.farmers : LIFEWAY.herders],
-          title: t('incubator.chronicle.event.domesticated', { name: t(`${plant ? 'plant' : 'animal'}.${d.id}.label` as TKey) }),
-          detail: landmassName(cellFacts.landmass[d.cell]),
-        }, d.cell)
+      const tamed = new Set<string>()
+      let villageTold = false
+      const famines: Extract<LogEvent, { kind: 'famine' }>[] = []
+      for (const e of log) {
+        if (e.kind === 'departure') {
+          place({ time: 0, icon: '/icons/origin.png', rgb: [220, 30, 30], title: t('incubator.chronicle.event.departure'), detail: landmassName(facts.landmass[e.cell]) }, e.cell)
+        } else if (e.kind === 'centre') {
+          const farm = e.lifeway === LIFEWAY.farmers
+          place({
+            time: e.at,
+            icon: farm ? '/icons/wheat.png' : '/icons/pastures.png',
+            rgb: LIFEWAY_COLOURS[farm ? LIFEWAY.farmers : LIFEWAY.herders],
+            title: t(farm ? 'incubator.chronicle.event.farmCentre' : 'incubator.chronicle.event.herdCentre'),
+            detail: landmassName(facts.landmass[e.cell]),
+          }, e.cell)
+        } else if (e.kind === 'domesticated') {
+          if (tamed.has(e.id)) continue
+          tamed.add(e.id)
+          place({
+            time: e.at,
+            icon: e.plant ? '/icons/wheat.png' : '/icons/pastures.png',
+            rgb: LIFEWAY_COLOURS[e.plant ? LIFEWAY.farmers : LIFEWAY.herders],
+            title: t('incubator.chronicle.event.domesticated', { name: t(`${e.plant ? 'plant' : 'animal'}.${e.id}.label` as TKey) }),
+            detail: landmassName(facts.landmass[e.cell]),
+          }, e.cell)
+        } else if (e.kind === 'extinct') {
+          if (facts.landmassKm2[e.landmass] < EVENT_LEAST_KM2) continue
+          const spec = ANIMALS.find((a) => a.id === e.id)
+          const group = ANIMAL_USES.find((u) => spec?.uses.includes(u.use))
+          place({
+            time: e.at,
+            icon: group ? group.icon : '/icons/deer.png',
+            rgb: EXTINCT_RGB,
+            title: t('incubator.chronicle.event.extinct', { animal: t(`animal.${e.id}.label` as TKey) }),
+            detail: landmassName(e.landmass),
+          }, e.cell)
+        } else if (e.kind === 'crossing') {
+          if (!toldCrossing(e)) continue
+          place({
+            time: e.at,
+            icon: '/icons/boat.png',
+            rgb: BOAT_RGB,
+            title: t('incubator.chronicle.event.crossing', { n: String(facts.rank[e.landmass]) }),
+            detail: t('incubator.chronicle.crossingDetail', { area: Math.round(facts.landmassKm2[e.landmass]).toLocaleString(getLocale()), km: Math.round(e.km).toLocaleString(getLocale()) }),
+          }, e.cell)
+        } else if (e.kind === 'village') {
+          if (villageTold) continue
+          villageTold = true
+          place({
+            time: e.at,
+            icon: '/icons/village.png',
+            rgb: LIFEWAY_COLOURS[e.lifeway],
+            title: t('incubator.chronicle.event.firstVillage'),
+            detail: `${nameOf(e.village)} · ${landmassName(facts.landmass[e.cell])}`,
+          }, e.cell)
+        } else if (e.kind === 'trade' && settled) {
+          // Placed at the link's middle.
+          const pa = cellPoint(settled.villages[2 * e.a], o.u, o.v)
+          const pb = cellPoint(settled.villages[2 * e.b], o.u, o.v)
+          const km = view ? Math.round(view.metresBetween(pa, pb) / 1000) : 0
+          const event: ChronicleEvent = {
+            time: e.at,
+            icon: '/icons/trade.png',
+            rgb: TRADE_COLOUR,
+            title: t('incubator.chronicle.event.firstTrade'),
+            detail: t('incubator.chronicle.tradeDetail', { a: nameOf(e.a), b: nameOf(e.b), km: km.toLocaleString(getLocale()) }),
+          }
+          events.push(event)
+          const du = pb.u - pa.u - Math.round(pb.u - pa.u)
+          eventPlaces.set(event, { u: (((pa.u + du / 2) % 1) + 1) % 1, v: (pa.v + pb.v) / 2 })
+        } else if (e.kind === 'population') {
+          // No place.
+          events.push({
+            time: e.at,
+            icon: '/icons/population.png',
+            rgb: [110, 20, 40],
+            title: t('incubator.chronicle.event.population', { count: e.count.toLocaleString(getLocale()) }),
+            detail: t('incubator.chronicle.populationDetail', { villages: e.villages.toLocaleString(getLocale()), centres: String(e.centres) }),
+          })
+        } else if (e.kind === 'famine') {
+          if (e.before > 0 && e.lost >= FAMINE_SHARE * e.before && e.lost >= FAMINE_LEAST) famines.push(e)
+        }
       }
-    }
-    if (settled && cellFacts) {
-      for (const e of settled.extinctions) {
-        if (e.at > SPAN_YEARS || e.areaKm2 < EVENT_LEAST_KM2) continue
-        const spec = ANIMALS.find((a) => a.id === e.id)
-        const group = ANIMAL_USES.find((u) => spec?.uses.includes(u.use))
-        place({
-          time: e.at,
-          icon: group ? group.icon : '/icons/deer.png',
-          rgb: EXTINCT_RGB,
-          title: t('incubator.chronicle.event.extinct', { animal: t(`animal.${e.id}.label` as TKey) }),
-          detail: landmassName(e.landmass),
-        }, e.cell)
-      }
-    }
-    if (settled && cellFacts) {
-      // A history's famines (simulation.ts): those that cost FAMINE_SHARE of
-      // their square's people and FAMINE_LEAST people or more; the ones on a
-      // landmass within FAMINE_JOIN_YEARS of each other told as one, at the
-      // cell of the one that cost most. On Morvane 12 (2026-10-26): with
-      // 10 000 people at least alone, 29; with the share alone, 92 — a thin
-      // square loses a third soon; their spans alone rarely touch.
-      const severe = settled.famines.filter((f) => f.before > 0 && f.lost >= FAMINE_SHARE * f.before && f.lost >= FAMINE_LEAST).sort((a, b) => a.landmass - b.landmass || a.at - b.at)
-      for (let k = 0; k < severe.length; ) {
-        const first = severe[k]
+      // The famines: those that cost FAMINE_SHARE of their square's people
+      // and FAMINE_LEAST people or more; the ones on a landmass within
+      // FAMINE_JOIN_YEARS of each other told as one, at the cell of the one
+      // that cost most. On Morvane 12 (2026-10-26): with 10 000 people at
+      // least alone, 29; with the share alone, 92 — a thin square loses a
+      // third soon; their spans alone rarely touch.
+      famines.sort((a, b) => a.landmass - b.landmass || a.at - b.at)
+      for (let k = 0; k < famines.length; ) {
+        const first = famines[k]
         let to = first.to
         let lost = 0
         let villages = 0
         let worst = first
-        for (; k < severe.length && severe[k].landmass === first.landmass && severe[k].at <= to + FAMINE_JOIN_YEARS; k++) {
-          const f = severe[k]
+        for (; k < famines.length && famines[k].landmass === first.landmass && famines[k].at <= to + FAMINE_JOIN_YEARS; k++) {
+          const f = famines[k]
           to = Math.max(to, f.to)
           lost += f.lost
           villages += f.villages
@@ -1086,89 +1126,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           title: t('incubator.chronicle.event.famine'),
           detail: t('incubator.chronicle.famineDetail', { landmass: landmassName(first.landmass), people: Math.round(lost).toLocaleString(getLocale()), villages: String(villages) }),
         }, worst.cell)
-      }
-    }
-    if (people && cellFacts) {
-      const c = people.crossings
-      for (const k of toldCrossings(people)) {
-        const km2 = cellFacts.landmassKm2[c[k]]
-        place({
-          time: c[k + 2],
-          icon: '/icons/boat.png',
-          rgb: BOAT_RGB,
-          title: t('incubator.chronicle.event.crossing', { n: String(cellFacts.rank[c[k]]) }),
-          detail: t('incubator.chronicle.crossingDetail', { area: Math.round(km2).toLocaleString(getLocale()), km: Math.round(c[k + 3]).toLocaleString(getLocale()) }),
-        }, c[k + 1])
-      }
-    }
-    if (settled && cellFacts && overlay) {
-      const s = settled
-      const o = overlay
-      // The villages numbered by when they began, 1 the first.
-      const order = Array.from(s.villageFrom.keys()).sort((a, b) => s.villageFrom[a] - s.villageFrom[b] || a - b)
-      const number = new Int32Array(s.villageFrom.length)
-      order.forEach((v, k) => (number[v] = k + 1))
-      const villageName = (v: number): string => t('incubator.chronicle.village', { n: String(number[v]) })
-      if (order.length > 0) {
-        const v = order[0]
-        const cell = s.villages[2 * v]
-        place({
-          time: s.villageFrom[v],
-          icon: '/icons/village.png',
-          rgb: LIFEWAY_COLOURS[s.villages[2 * v + 1]],
-          title: t('incubator.chronicle.event.firstVillage'),
-          detail: `${villageName(v)} · ${landmassName(cellFacts.landmass[cell])}`,
-        }, cell)
-      }
-      // The first link that carries goods, once both its villages stand;
-      // its place the link's middle.
-      let first = -1
-      let firstAt = Infinity
-      for (let k = 0; k < s.links.length; k += 3) {
-        if (s.links[k + 2] < 0.05) continue
-        const at = Math.max(s.villageFrom[s.links[k]], s.villageFrom[s.links[k + 1]])
-        if (at >= Math.min(s.villageTo[s.links[k]], s.villageTo[s.links[k + 1]])) continue
-        if (at < firstAt) {
-          firstAt = at
-          first = k
-        }
-      }
-      if (first >= 0 && firstAt <= SPAN_YEARS) {
-        const a = s.links[first]
-        const b = s.links[first + 1]
-        const pa = cellPoint(s.villages[2 * a], o.u, o.v)
-        const pb = cellPoint(s.villages[2 * b], o.u, o.v)
-        const km = view ? Math.round(view.metresBetween(pa, pb) / 1000) : 0
-        const event: ChronicleEvent = {
-          time: firstAt,
-          icon: '/icons/trade.png',
-          rgb: TRADE_COLOUR,
-          title: t('incubator.chronicle.event.firstTrade'),
-          detail: t('incubator.chronicle.tradeDetail', { a: villageName(a), b: villageName(b), km: km.toLocaleString(getLocale()) }),
-        }
-        events.push(event)
-        const du = pb.u - pa.u - Math.round(pb.u - pa.u)
-        eventPlaces.set(event, { u: (((pa.u + du / 2) % 1) + 1) % 1, v: (pa.v + pb.v) / 2 })
-      }
-      // The population over each mark, between the curve's samples
-      // linearly; no place.
-      const curve = s.population
-      const step = SPAN_YEARS / Math.max(1, curve.length - 1)
-      for (const mark of POPULATION_MARKS) {
-        const k = curve.findIndex((p) => p >= mark)
-        if (k < 0) continue
-        const at = k === 0 ? 0 : (k - 1 + (mark - curve[k - 1]) / Math.max(1e-9, curve[k] - curve[k - 1])) * step
-        let villages = 0
-        for (let v = 0; v < s.villageFrom.length; v++) if (standing(s, v, at)) villages++
-        let centres = 0
-        for (let c = 0; c < s.centres.length; c += 3) if (s.centres[c + 1] <= at) centres++
-        events.push({
-          time: at,
-          icon: '/icons/population.png',
-          rgb: [110, 20, 40],
-          title: t('incubator.chronicle.event.population', { count: mark.toLocaleString(getLocale()) }),
-          detail: t('incubator.chronicle.populationDetail', { villages: villages.toLocaleString(getLocale()), centres: String(centres) }),
-        })
       }
     }
     chronicle.setEvents(events)
@@ -1563,12 +1520,28 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const FRAMES_KEPT = 6
   // Under this share (in 255ths) the game is gone from a cell.
   const GAME_GONE = 5
+  // The people at the time shown: between the kept states before and after
+  // it, mixed by the time (2026-10-26; the last before it until then, so
+  // the map jumped every KEEP_YEARS); the one before alone until the one
+  // after comes. Made for the time and kept for it.
+  let livingAt: { time: number; before: HistoryFrame; after: HistoryFrame | null; people: Float32Array } | null = null
   function livingNow(): Float32Array | null {
-    return frameNow()?.people ?? null
+    const before = frameNow()
+    if (!before) return null
+    const x = peopleTime / KEEP_YEARS
+    const share = x - Math.floor(x)
+    const after = share > 0 && historyFrames?.get(Math.floor(x)) === before ? frameAt(Math.floor(x) + 1) : null
+    if (!after) return before.people
+    if (livingAt && livingAt.time === peopleTime && livingAt.before === before && livingAt.after === after) return livingAt.people
+    const mixed = livingAt && livingAt.people.length === before.people.length ? livingAt.people : new Float32Array(before.people.length)
+    for (let i = 0; i < mixed.length; i++) mixed[i] = before.people[i] + (after.people[i] - before.people[i]) * share
+    livingAt = { time: peopleTime, before, after, people: mixed }
+    return mixed
   }
-  function frameNow(): HistoryFrame | null {
-    if (!historyFrames) return null
-    const index = Math.min(Math.floor(SPAN_YEARS / KEEP_YEARS), Math.floor(peopleTime / KEEP_YEARS))
+  // The kept state `index`, asked of the worker if it is not here; null
+  // until it comes, and past the last.
+  function frameAt(index: number): HistoryFrame | null {
+    if (!historyFrames || index > Math.floor(SPAN_YEARS / KEEP_YEARS)) return null
     const frame = historyFrames.get(index)
     if (frame) return frame
     if (!framesAsked.has(index)) {
@@ -1586,11 +1559,26 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         animalsAtTime.clear()
         settledAtTime = null
         treesAtTime = null
-        while (frames.size > FRAMES_KEPT) frames.delete(frames.keys().next().value!)
+        routeWidths = null
+        // The oldest asked go; asked again when the time comes back to
+        // them (until 2026-10-26 they were never asked again).
+        while (frames.size > FRAMES_KEPT) {
+          const oldest = frames.keys().next().value!
+          frames.delete(oldest)
+          framesAsked.delete(oldest)
+        }
         showPlants()
       })
     }
-    // Until it comes, the nearest kept before it.
+    return null
+  }
+  // The kept state at or before the time shown; until it comes, the
+  // nearest kept before it.
+  function frameNow(): HistoryFrame | null {
+    if (!historyFrames) return null
+    const index = Math.min(Math.floor(SPAN_YEARS / KEEP_YEARS), Math.floor(peopleTime / KEEP_YEARS))
+    const frame = frameAt(index)
+    if (frame) return frame
     for (let k = index - 1; k >= 0; k--) {
       const earlier = historyFrames.get(k)
       if (earlier) return earlier
@@ -1613,8 +1601,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // told ones alone; the dry shelf walked stays brown).
     routeSea = new Uint8Array(people.arrival.length)
     for (const cell of people.crossingWays) if (cell >= 0 && !people.land[cell]) routeSea[cell] = 1
-    const landed = people.crossings
-    peopleRoutes = routesOf(people, toldCrossings(people).map((k) => landed[k + 1]))
+    peopleRoutes = routesOf(people, [])
     peopleOrder = routeOrder(people)
     routeWidths = null
     showPlants()
@@ -1623,6 +1610,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!result) return false
     const { type: _type, ms: _ms, ...rest } = result
     settled = rest
+    // The routes again, with the landings the log tells.
+    const landed = people!.crossings
+    peopleRoutes = routesOf(people!, [...toldCrossings()].map((n) => landed[4 * n + 1]))
+    crossingWays = null
     settledAtTime = null
     routeWidths = null
     treesAtTime = null
@@ -1890,42 +1881,37 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function crossingsOf(p: PeopleResult): { path: number[]; time: number }[] {
     const ways: { path: number[]; time: number }[] = []
     const c = p.crossings
-    const told = new Set(toldCrossings(p))
+    const told = toldCrossings()
     let at = 0
     for (let k = 0; k < c.length; k += 4) {
       const path: number[] = []
       for (; p.crossingWays[at] >= 0; at++) path.push(p.crossingWays[at])
       at++
-      if (told.has(k)) ways.push({ path, time: c[k + 2] })
+      if (told.has(k / 4)) ways.push({ path, time: c[k + 2] })
     }
     return ways
   }
-  // The crossings the chronicle tells and the map draws (their index into
-  // PeopleResult.crossings, a quadruple each): the first arrival on each
-  // landmass of EVENT_LEAST_KM2 or more, when it was a crossing over
-  // CROSSING_LEAST_KM of open water or more; not the people's own. The history's crossings join the
+  // The crossings the chronicle tells and the map draws: the first arrival
+  // on a landmass of EVENT_LEAST_KM2 or more, by any way (the log's
+  // `first`), when it was a crossing over CROSSING_LEAST_KM of open water
+  // or more; not the people's own. The history's crossings join the
   // regions the ice leaves apart, a landmass's pockets one by one, most
   // along the coast alone: each told, they were hundreds (2026-10-26).
-  function toldCrossings(p: PeopleResult): number[] {
-    if (!cellFacts) return []
-    const c = p.crossings
-    const home = p.origin >= 0 ? cellFacts.landmass[p.origin] : -1
-    // Each landmass's first arrival, by any way: a crossing is told only
-    // if it is that one, not one after people walked or kept to the coast
-    // there.
-    const arrived = new Float64Array(cellFacts.landmassKm2.length).fill(Infinity)
-    for (let i = 0; i < p.arrival.length; i++) {
-      const m = cellFacts.landmass[i]
-      if (m >= 0 && p.arrival[i] < arrived[m]) arrived[m] = p.arrival[i]
+  function toldCrossing(e: Extract<LogEvent, { kind: 'crossing' }>): boolean {
+    if (!cellFacts || !people) return false
+    const home = people.origin >= 0 ? cellFacts.landmass[people.origin] : -1
+    return e.first && e.landmass !== home && cellFacts.landmassKm2[e.landmass] >= EVENT_LEAST_KM2 && e.km >= CROSSING_LEAST_KM
+  }
+  // Those, by their order in the log, which is PeopleResult.crossings'.
+  function toldCrossings(): Set<number> {
+    const told = new Set<number>()
+    let n = 0
+    for (const e of settled?.log ?? []) {
+      if (e.kind !== 'crossing') continue
+      if (toldCrossing(e)) told.add(n)
+      n++
     }
-    const first = new Map<number, number>()
-    for (let k = 0; k < c.length; k += 4) {
-      const m = c[k]
-      if (m === home || cellFacts.landmassKm2[m] < EVENT_LEAST_KM2 || c[k + 2] > arrived[m]) continue
-      const known = first.get(m)
-      if (known === undefined || c[k + 2] < c[known + 2]) first.set(m, k)
-    }
-    return [...first.values()].filter((k) => c[k + 3] >= CROSSING_LEAST_KM)
+    return told
   }
   // The true direction from one chart point to the next (WorldSymbol.angle):
   // on the globe a degree of longitude shrinks with the latitude; the

@@ -5,6 +5,7 @@ import type { PeopleResult } from './people'
 import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
 import { FISH_RICH, POPULATION_STEP, ringsAround, VILLAGE_LEAST, VILLAGE_RADIUS, type SettleLifeways } from './settle'
 import { CAME_NEVER, CAME_STEP, LIFEWAY, PLANT_SUITS_CODE, SETTLE_AFTER } from './settleShared'
+import { POPULATION_MARKS, type LogEvent } from './historyLogShared'
 import { climateHistoryOf, coldShare, iceMayCover, ICE_REACH_KM } from './climateHistory'
 
 // THE INCUBATOR'S SIMULATION, its skeleton (2026-10-26, DES-0033 step 2):
@@ -165,6 +166,18 @@ const DRY_KEEP = 0.6
 const DRY_BELOW = 0.75
 const ENSO_CHANCE = 0.3
 const ENSO_PUSH = 1.5
+// THE FLIGHT (2026-10-26, DES-0033 "Droughts"): of those a famine's land
+// does not carry, FAMINE_DEATH die; the rest leave for the cells around
+// its square that no famine holds, as far as each has room — up to
+// FLIGHT_CROWD times what it carries (they thin out to it as the people
+// do) — and the rest of them die too. Before, all of them died. On
+// Morvane some 450 000 fled, 2.7 M died: the cells around are mostly
+// full. Herders taking a famine's farmland were tried the same day and
+// never came: a farming cell that suits the herds has them already, and
+// the fields cannot be given up while the lifeways are times that only
+// go forward.
+const FAMINE_DEATH = 0.5
+const FLIGHT_CROWD = 1.5
 const VILLAGE_LEAVE = 0.5
 const SETTLED_YEARS = 5000
 const FARM_RATE = 0.3
@@ -245,10 +258,9 @@ export interface SimulationResult {
   // Where a species of the big game died out (settle.ts SettleResult's
   // form): on a landmass, when its last tenth went, at a cell of it.
   extinctions: { id: string; landmass: number; areaKm2: number; at: number; cell: number }[]
-  // The famines (THE DROUGHTS): when one began and ended, its square's
-  // most populous cell then, its landmass, the square's people when it
-  // began, the people it cost, the villages given up.
-  famines: { at: number; to: number; cell: number; landmass: number; before: number; lost: number; villages: number }[]
+  // The history's log (historyLogShared.ts), each event written when it
+  // happened, in the order it happened (THE LOG).
+  log: LogEvent[]
   // The farming and the herding (settle.ts SettleLifeways): the settlement
   // takes them in the rules' place.
   lifeways: SettleLifeways
@@ -559,6 +571,11 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   const ringSeen = new Int32Array(n).fill(-1)
   let ringMark = 0
   const population = new Float32Array(Math.floor(SPAN_YEARS / POPULATION_STEP) + 1)
+  let nextMark = 0
+  // THE LOG (historyLogShared.ts): each event when it happens; which
+  // landmasses people reached, for a crossing's `first`.
+  const log: LogEvent[] = []
+  const landmassReached = new Uint8Array(h.landmasses)
   const suits = (d: number, cell: number): boolean => {
     const c = tamed[d].codes[cell]
     return tamed[d].kind === 'plant'
@@ -582,6 +599,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   const tame = (kind: 'plant' | 'animal', layer: { id: string; codes: Uint8Array }, cell: number, t: number): void => {
     if (tamed.length >= MAX_TAMED) return
     tamed.push({ kind, id: layer.id, cell, at: t, came: new Uint16Array(n).fill(CAME_NEVER), codes: layer.codes })
+    log.push({ kind: 'domesticated', at: t, cell, id: layer.id, plant: kind === 'plant' })
     take(tamed.length - 1, cell, t)
   }
   // CENTRE_SPACING_KM from every centre of the same lifeway: the farming
@@ -624,6 +642,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     if (arrival[cell] === Infinity) {
       arrival[cell] = t
       from[cell] = parent
+      if (h.landmass[cell] >= 0) landmassReached[h.landmass[cell]] = 1
     }
     grows(cell)
     front.push(cell)
@@ -631,7 +650,10 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   }
   const open = (u: number): boolean => people[u] === 0 && capacity[u] > 0
   updateClimate(0)
-  if (input.origin >= 0 && capacity[input.origin] > 0) settle(input.origin, 0, capacity[input.origin] * SEED_SHARE, -1)
+  if (input.origin >= 0 && capacity[input.origin] > 0) {
+    settle(input.origin, 0, capacity[input.origin] * SEED_SHARE, -1)
+    log.push({ kind: 'departure', at: 0, cell: input.origin })
+  }
 
   // The droughts' squares (THE DROUGHTS): their cells, their mean
   // variability and ENSO mark, their anomaly, rain, dry steps in a row, and
@@ -669,13 +691,18 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   const anomaly = new Float32Array(squares)
   const squareRain = new Float32Array(squares).fill(1)
   const dryRun = new Int32Array(squares)
-  const famine: ({ at: number; cell: number; before: number; lost: number; villages: number } | null)[] = new Array(squares).fill(null)
-  const famines: SimulationResult['famines'] = []
+  const famine: ({ at: number; cell: number; before: number; lost: number; left: number; villages: number } | null)[] = new Array(squares).fill(null)
+  // The cells around each square, outside it: where its people flee to.
+  const squareRim: number[][] = squareCells.map((cells, q) => {
+    const rim = new Set<number>()
+    for (const i of cells) for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) if (drySquare[h.nbr[e]] !== q && base[h.nbr[e]] > 0) rim.add(h.nbr[e])
+    return [...rim]
+  })
   const endFamine = (q: number, t: number): void => {
     const f = famine[q]
-    if (!f) return
-    famines.push({ at: f.at, to: t, cell: f.cell, landmass: h.landmass[f.cell], before: f.before, lost: f.lost, villages: f.villages })
     famine[q] = null
+    if (!f || f.cell < 0) return
+    log.push({ kind: 'famine', at: f.at, to: t, cell: f.cell, landmass: h.landmass[f.cell], before: f.before, lost: f.lost, left: f.left, villages: f.villages })
   }
   const gauss = (): number => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random())
 
@@ -700,6 +727,15 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       let sum = 0
       for (const i of lived) sum += people[i] * h.areaKm2[i]
       population[t / POPULATION_STEP] = sum
+      // The marks passed since the last count, at the time between.
+      const last = t > 0 ? population[t / POPULATION_STEP - 1] : 0
+      while (nextMark < POPULATION_MARKS.length && sum >= POPULATION_MARKS[nextMark]) {
+        const mark = POPULATION_MARKS[nextMark++]
+        let standing = 0
+        for (const to of villageTo) if (to === Infinity) standing++
+        const at = t > 0 ? t - POPULATION_STEP * (1 - (mark - last) / Math.max(1e-9, sum - last)) : 0
+        log.push({ kind: 'population', at, cell: input.origin, count: mark, villages: standing, centres: centres.length / 3 })
+      }
     }
     if (s === steps) break
     // 0. The climate, every CLIMATE_YEARS: what the cells carry; the people
@@ -728,6 +764,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
           if (sum >= EXTINCT_BELOW * at.length) continue
           sp.gone.add(m)
           extinctions.push({ id: sp.id, landmass: m, areaKm2: h.landmassKm2[m], at: t, cell: sp.cells[at[0]] })
+          log.push({ kind: 'extinct', at: t, cell: sp.cells[at[0]], landmass: m, id: sp.id })
         }
       }
       // The knowledge, toward what each region's people keep.
@@ -774,6 +811,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       for (const { cell, w } of bestFarm.values()) {
         if (random() >= FARM_RATE * Math.min(1, w) || !farCentre(cell, LIFEWAY.farmers)) continue
         centres.push(cell, t, LIFEWAY.farmers)
+        log.push({ kind: 'centre', at: t, cell, lifeway: LIFEWAY.farmers })
         for (const crop of input.crops) if (crop.codes[cell] >= PLANT_SUITS_CODE && wildHere(crop.id, cell)) tame('plant', crop, cell, t)
         herdsDue.push({ cell, at: t + HERD_LAG })
         grows(cell)
@@ -781,6 +819,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       for (const { cell, w } of bestHerd.values()) {
         if (random() >= HERD_RATE * Math.min(1, w) || !farCentre(cell, LIFEWAY.herders)) continue
         centres.push(cell, t, LIFEWAY.herders)
+        log.push({ kind: 'centre', at: t, cell, lifeway: LIFEWAY.herders })
         for (const herd of input.herds) if (herd.codes[cell] >= 2 && wildHere(herd.id, cell)) tame('animal', herd, cell, t)
         grows(cell)
       }
@@ -802,6 +841,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         if (villageTo[v] < Infinity || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
         villageTo[v] = t
         villageAt[cell] = -1
+        log.push({ kind: 'villageLeft', at: t, cell, village: v })
       }
       for (const i of lived) {
         const way = farmAt[i] <= t ? LIFEWAY.farmers : fishing[i] ? LIFEWAY.fishers : LIFEWAY.none
@@ -815,6 +855,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         }
         if (!top) continue
         villageAt[i] = villageTo.length
+        log.push({ kind: 'village', at: t, cell: i, village: villageTo.length, lifeway: way })
         villages.push(i, way)
         villageFrom.push(t)
         villageTo.push(Infinity)
@@ -876,18 +917,43 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         squareRain[q] = r
         for (const i of squareCells[q]) if (people[i] > 0) grows(i)
         if (r === 1) continue
-        // The famine: those the land does not carry now die.
+        // The famine: of those the land does not carry now, some die, the
+        // rest flee (THE FLIGHT).
         let lost = 0
         let most = -1
         let before = 0
+        let fleeing = 0
         for (const i of squareCells[q]) {
           if (people[i] === 0) continue
           before += people[i] * h.areaKm2[i]
           if (most < 0 || people[i] > people[most]) most = i
           const k = capacity[i] * food(i) * gain(i)
           if (people[i] <= k) continue
-          lost += (people[i] - k) * h.areaKm2[i]
+          const over = (people[i] - k) * h.areaKm2[i]
+          lost += FAMINE_DEATH * over
+          fleeing += (1 - FAMINE_DEATH) * over
           people[i] = k
+        }
+        // Their room around the square, people.
+        let room = 0
+        const rooms: number[] = []
+        for (const u of squareRim[q]) {
+          const free = rainOf(u) < 1 || capacity[u] <= 0 ? 0 : Math.max(0, (FLIGHT_CROWD * capacity[u] * food(u) * gain(u) - people[u]) * h.areaKm2[u])
+          rooms.push(free)
+          room += free
+        }
+        const fled = Math.min(fleeing, room)
+        lost += fleeing - fled
+        if (fled > 0) {
+          squareRim[q].forEach((u, k) => {
+            if (rooms[k] <= 0) return
+            const density = (rooms[k] * fled) / room / h.areaKm2[u]
+            if (people[u] === 0) settle(u, t, density, most)
+            else {
+              people[u] += density
+              grows(u)
+            }
+          })
         }
         let left = 0
         for (let v = 0; v < villageTo.length; v++) {
@@ -895,10 +961,12 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
           if (villageTo[v] < Infinity || drySquare[cell] !== q || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
           villageTo[v] = t
           villageAt[cell] = -1
+          log.push({ kind: 'villageLeft', at: t, cell, village: v })
           left++
         }
-        const f = famine[q] ?? (famine[q] = { at: t, cell: most, before, lost: 0, villages: 0 })
+        const f = famine[q] ?? (famine[q] = { at: t, cell: most, before, lost: 0, left: 0, villages: 0 })
         f.lost += lost
+        f.left += fled
         f.villages += left
         if (f.cell < 0) f.cell = most
       }
@@ -996,6 +1064,8 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
             }
             if (arrival[cell] < Infinity) parent = cell
           }
+          const landed = h.landmass[c.to]
+          log.push({ kind: 'crossing', at: t + STEP_YEARS, cell: c.to, landmass: landed, km: c.km, first: landed >= 0 && !landmassReached[landed] })
           settle(c.to, t + STEP_YEARS, capacity[c.to] * SEED_PEOPLE, parent)
           const to = region[c.to]
           knowledge[to] = Math.max(knowledge[to], KNOW_CARRIED * knowledge[region[source]])
@@ -1075,7 +1145,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       population,
     },
     extinctions,
-    famines,
+    log,
     region,
     knowledge,
     ms: Math.round(performance.now() - started),

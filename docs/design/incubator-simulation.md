@@ -431,3 +431,32 @@ time shown (every 2 500 years, the last before it), no longer the rules'
 density from the history's times; a cell people left (the ice, the sea, a
 famine) is empty. The lifeways' shares stay the times' — the history's
 own arrival, fields and herds, weighed as the rules weigh them.
+
+**The log** (the same day, `historyLogShared.ts`): the simulation writes
+every event when it happens — the departure, each crossing (`first` when
+it was the first arrival on its landmass by any way), the centres, the
+domesticates, the extinctions, the villages founded and given up, the
+famines, the people's marks (100 000, 1 M, 10 M, between the counts);
+the settlement adds the first trade. For the rules a log of the same form
+is made from their times (`settle.ts` rulesLog). The chronicle reads the
+log alone and picks what it tells (the first taming of each domesticate,
+the first village, the first crossing to a large landmass, the large
+famines); the crossings drawn are the told ones. On Morvane a history's
+log holds some 2 600 events (1 567 crossings, 694 villages, 301 famines).
+
+**Between the kept states** (the same day): the people at the time shown
+are the kept states before and after it, mixed by the time (the one
+before alone until the one after comes from the worker), so the map no
+longer jumps every 2 500 years; the game still does. A kept state the
+screen let go was never asked for again; now it is.
+
+**The flight** (the same day): of those a famine's land does not carry,
+half die; the rest leave for the cells around its square that no famine
+holds, as far as each has room (up to 1.5 times what it carries; they
+thin out to it as the people do), and the rest of them die too. On
+Morvane some 450 000 fled and 2.7 M died over the span: the cells around
+are mostly full. Herders taking a famine's farmland were tried the same
+day and never came: a farming cell that suits the herds has them already
+from the domesticates' waves, and the fields cannot be given up while the
+lifeways are times that only go forward — that waits for lifeways held
+as a state.

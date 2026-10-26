@@ -1,7 +1,8 @@
 import { MinHeap } from '../../generator/core/minHeap'
 import { hashText, kmBetween, mulberry32, type Habitat } from './habitat'
 import { SPAN_YEARS } from './peopleShared'
-import type { SimulationResult } from './simulation'
+import { POPULATION_MARKS, type LogEvent } from './historyLogShared'
+import type { PeopleResult } from './people'
 import { CAME_NEVER, CAME_STEP, CARRYING_FULL, densityAt, extinctAt, GOODS, LIFEWAY, lifewaySince, PLANT_SUITS_CODE, sharesAt, type SettleTimes } from './settleShared'
 
 // THE INCUBATOR'S SETTLEMENT (2026-10-25, a proof of concept): the people's
@@ -136,8 +137,10 @@ export interface SettleResult {
   // the rest goes at `at` (REFUGE_LEAST; Infinity where people leave more),
   // `cell` the last to go before; and each cell's landmass (-1 at sea).
   extinctions: { id: string; landmass: number; areaKm2: number; at: number; cell: number }[]
-  // A history's famines (simulation.ts); the rules have none.
-  famines: SimulationResult['famines']
+  // The log (historyLogShared.ts): a history's own, with the first trade
+  // added (logWithTrade); the rules' made from their times (rulesLog).
+  // Empty out of settle(); the worker fills it.
+  log: LogEvent[]
   landmass: Int32Array
 }
 
@@ -498,7 +501,72 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
   const villageFrom = given ? given.villageFrom.slice() : Float32Array.from(villageCells, (c, v) => lifewaySince(times, c, villageWays[v]))
   const villageTo = given ? given.villageTo.slice() : new Float32Array(villageCells.length).fill(Infinity)
   const extinctions = dyingOut(h, input)
-  return { lifeway, density, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm, population, centres: Float32Array.from(centres), domestications, villages: Int32Array.from(villages), villageFrom, villageTo, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, famines: [], landmass: h.landmass.slice() }
+  return { lifeway, density, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm, population, centres: Float32Array.from(centres), domestications, villages: Int32Array.from(villages), villageFrom, villageTo, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, log: [], landmass: h.landmass.slice() }
+}
+
+// THE LOG's first trade (historyLogShared.ts): the first link that carries
+// goods (a weight of TRADE_TOLD or more) once both its villages stand, at
+// its first village's cell.
+const TRADE_TOLD = 0.05
+function firstTrade(s: SettleResult): LogEvent | null {
+  let first = -1
+  let firstAt = Infinity
+  for (let k = 0; k < s.links.length; k += 3) {
+    if (s.links[k + 2] < TRADE_TOLD) continue
+    const at = Math.max(s.villageFrom[s.links[k]], s.villageFrom[s.links[k + 1]])
+    if (at >= Math.min(s.villageTo[s.links[k]], s.villageTo[s.links[k + 1]]) || at >= firstAt) continue
+    firstAt = at
+    first = k
+  }
+  if (first < 0 || firstAt > SPAN_YEARS) return null
+  const a = s.links[first]
+  return { kind: 'trade', at: firstAt, cell: s.villages[2 * a], a, b: s.links[first + 1] }
+}
+
+// A history's log with its first trade, which the settlement lays.
+export function logWithTrade(log: readonly LogEvent[], s: SettleResult): LogEvent[] {
+  const trade = firstTrade(s)
+  return (trade ? [...log, trade] : [...log]).sort((x, y) => x.at - y.at)
+}
+
+// THE RULES' LOG: the same events from the rules' times (people.ts,
+// settle()): the departure, the crossings (`first` for the earliest to a
+// landmass, made no later than any arrival there), the centres, the
+// domesticates, the extinctions, the villages, the people's marks, the
+// first trade.
+export function rulesLog(h: Habitat, people: PeopleResult, s: SettleResult): LogEvent[] {
+  const log: LogEvent[] = []
+  if (people.origin >= 0) log.push({ kind: 'departure', at: 0, cell: people.origin })
+  const arrived = new Float64Array(h.landmasses).fill(Infinity)
+  for (let i = 0; i < people.arrival.length; i++) {
+    const m = h.landmass[i]
+    if (m >= 0 && people.arrival[i] < arrived[m]) arrived[m] = people.arrival[i]
+  }
+  const c = people.crossings
+  const earliest = new Map<number, number>()
+  for (let k = 0; k < c.length; k += 4) {
+    const known = earliest.get(c[k])
+    if (c[k + 2] <= arrived[c[k]] && (known === undefined || c[k + 2] < c[known + 2])) earliest.set(c[k], k)
+  }
+  const firsts = new Set(earliest.values())
+  for (let k = 0; k < c.length; k += 4) log.push({ kind: 'crossing', at: c[k + 2], cell: c[k + 1], landmass: c[k], km: c[k + 3], first: firsts.has(k) })
+  for (let k = 0; k < s.centres.length; k += 3) log.push({ kind: 'centre', at: s.centres[k + 1], cell: s.centres[k], lifeway: s.centres[k + 2] })
+  for (const d of s.domestications) log.push({ kind: 'domesticated', at: d.at, cell: d.cell, id: d.id, plant: d.kind === 'plant' })
+  for (const e of s.extinctions) if (e.at <= SPAN_YEARS) log.push({ kind: 'extinct', at: e.at, cell: e.cell, landmass: e.landmass, id: e.id })
+  for (let v = 0; v < s.villageFrom.length; v++) if (s.villageFrom[v] <= SPAN_YEARS) log.push({ kind: 'village', at: s.villageFrom[v], cell: s.villages[2 * v], village: v, lifeway: s.villages[2 * v + 1] })
+  // The marks, between the curve's samples linearly.
+  const curve = s.population
+  for (const mark of POPULATION_MARKS) {
+    const k = curve.findIndex((p) => p >= mark)
+    if (k < 0) continue
+    const at = k === 0 ? 0 : (k - 1 + (mark - curve[k - 1]) / Math.max(1e-9, curve[k] - curve[k - 1])) * POPULATION_STEP
+    let villages = 0
+    for (let v = 0; v < s.villageFrom.length; v++) if (s.villageFrom[v] <= at && at < s.villageTo[v]) villages++
+    let centres = 0
+    for (let k2 = 0; k2 < s.centres.length; k2 += 3) if (s.centres[k2 + 1] <= at) centres++
+    log.push({ kind: 'population', at, cell: people.origin, count: mark, villages, centres })
+  }
+  return logWithTrade(log, s)
 }
 
 // 5. The big game dying out where people came new.

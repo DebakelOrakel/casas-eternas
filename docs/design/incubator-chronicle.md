@@ -128,6 +128,10 @@ the domesticates), at the centre's cell — its first taming only: in a
 history each centre tames its own, and the chronicle held some 25 tamings
 (2026-10-26). On Morvane 14 by the rules.
 
+Since 2026-10-26 the events come from one log (historyLogShared.ts),
+the history's own or made from the rules' times (DES-0033 "The log"); the
+chronicle picks from it what is said here.
+
 A sixth, a history's only: **a famine** (simulation.ts, the droughts)
 that cost 30 % of its square's people and 10 000 or more, the ones on a
 landmass within 1 000 years of each other as one, at the most costly's
