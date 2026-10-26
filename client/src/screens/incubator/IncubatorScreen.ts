@@ -572,9 +572,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   plantInfo.append(plantStatus)
   sidebar.body.append(plantInfo)
 
-  // THE PEOPLE'S TIME (step 3): the years ago shown, a play button, and a
-  // slider over the span. Playing runs the span from its start in
-  // PEOPLE_PLAY_FRAMES steps.
+  // THE TIME (steps 1 to 3): a slider over the span and under it the years
+  // ago shown with a play button, in the column's foot as the generator's
+  // months. Playing runs the span from its start in PEOPLE_PLAY_FRAMES
+  // steps. The people's layers follow it; the flora and the fauna do not
+  // yet.
   const PEOPLE_PLAY_FRAMES = 80
   const PEOPLE_FRAME_MS = 250
   const peopleSection = document.createElement('section')
@@ -599,8 +601,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   peopleSlider.min = '0'
   peopleSlider.max = String(SPAN_YEARS)
   peopleSlider.step = '100'
-  peopleSection.append(peopleRow, peopleSlider)
-  sidebar.body.append(peopleSection)
+  peopleSection.append(peopleSlider, peopleRow)
+  sidebar.foot.append(peopleSection)
   // TRIAL (2026-10-25, a proof of concept): the people's end state on four
   // switches. Hardcoded text, no catalog keys: we are trying it out.
   const settleSection = document.createElement('section')
@@ -628,6 +630,38 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const villageBox = settleBox('Dörfer')
   const tradeBox = settleBox('Handel')
   sidebar.body.append(settleSection)
+  // THE ANIMALS AT THE TIME SHOWN (2026-10-26): as the fauna placed them
+  // before people came; where people live by then, under their pressure
+  // (settleWorker.ts, the end state's); a big game gone from a landmass
+  // once its time came. Made per animal for the time and kept for it.
+  const animalsAtTime = new Map<string, { time: number; codes: Uint8Array; reached: number }>()
+  function animalAtTime(animal: AnimalLayer): { codes: Uint8Array; reached: number } {
+    if (!settled || !people) return animal
+    const kept = animalsAtTime.get(animal.id)
+    if (kept && kept.time === peopleTime) return kept
+    const after = settled.animals.find((a) => a.id === animal.id)?.codes
+    const gone = new Set(settled.extinctions.filter((e) => e.id === animal.id && e.at <= peopleTime).map((e) => e.landmass))
+    const codes = new Uint8Array(animal.codes.length)
+    let lives = 0
+    let land = 0
+    for (let i = 0; i < codes.length; i++) {
+      if (settled.landmass[i] >= 0) land++
+      let c = animal.codes[i]
+      if (c >= 2 && gone.has(settled.landmass[i])) c = 1
+      else if (c >= 2 && after && people.arrival[i] <= peopleTime) c = after[i]
+      codes[i] = c
+      if (c >= 2) lives++
+    }
+    const made = { time: peopleTime, codes, reached: land > 0 ? lives / land : 0 }
+    animalsAtTime.set(animal.id, made)
+    return made
+  }
+  // The animals shown, at the time shown.
+  function shownAnimals(): AnimalLayer[] | null {
+    if (!animals) return null
+    return animals.map((a) => ({ ...a, ...animalAtTime(a) }))
+  }
+
   const peoplePlayer = (() => {
     let timer: ReturnType<typeof setInterval> | null = null
     const sayButton = (): void => {
@@ -646,7 +680,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         peopleTime = Math.min(SPAN_YEARS, Math.max(0, time))
         peopleSlider.value = String(peopleTime)
         say()
-        if (people) showCharts()
+        if (people) showPlants()
       },
       stop(): void {
         if (timer) clearInterval(timer)
@@ -894,6 +928,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function shownGroup(): { title: string; from: number; layers: { name: string; codes: Uint8Array; reached: number; colour: number }[] } | null {
     if (onTesting() || onPeople()) return null
     if (!onFlora()) {
+      const animals = shownAnimals()
       if (!animals || !animalShown) return null
       const use = animalShown
       return {
@@ -1030,10 +1065,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const herdAnimal = new Uint8Array(n)
     for (const plant of plants?.layers ?? []) if (FARM_PLANTS.has(plant.id)) for (let i = 0; i < n; i++) if (plant.codes[i] >= PLANT_SUITS) farmPlant[i] = 1
     for (const animal of animals ?? []) if (HERD_ANIMALS.has(animal.id)) for (let i = 0; i < n; i++) if (animal.codes[i] >= 2) herdAnimal[i] = 1
-    const done = await settlePeople({ ...input, arrival: people.arrival, carrying: input.carrying ?? new Float32Array(n).fill(0.4), farmPlant, herdAnimal })
+    // The animals' codes copied: the worker marks them, the wild ones stay.
+    const wild = (animals ?? []).map((a) => ({ id: a.id, codes: a.codes.slice() }))
+    const done = await settlePeople({ ...input, arrival: people.arrival, carrying: input.carrying ?? new Float32Array(n).fill(0.4), farmPlant, herdAnimal, origin: people.origin, animals: wild })
     if (ask !== settleAsk || shownWorld !== world || !done) return
     console.info(`[incubator] people settled, ${done.ms} ms, ${done.villages.length / 2} villages`)
-    settled = { lifeway: done.lifeway, density: done.density, villages: done.villages, sources: done.sources, links: done.links }
+    settled = { lifeway: done.lifeway, density: done.density, villages: done.villages, sources: done.sources, links: done.links, animals: done.animals, extinctions: done.extinctions, landmass: done.landmass }
+    animalsAtTime.clear()
     showPlants()
   }
   // The picks' plants, wood or animals on the map, and their legend.
@@ -1055,6 +1093,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The animals at a cell of the world raster, by use: those that live
   // there, the most first. Empty before the animals are placed.
   function animalsAt(cell: number): { label: string; names: string[] }[] {
+    const animals = shownAnimals()
     if (!animals) return []
     const here = animals.filter((l) => l.codes[cell] >= 2).sort((p, q) => q.codes[cell] - p.codes[cell])
     return ANIMAL_USES.map(({ use }) => ({ label: t(`animal.use.${use}.label` as TKey), names: here.filter((l) => l.uses.includes(use)).map((l) => t(`animal.${l.id}.label` as TKey)) })).filter((g) => g.names.length > 0)
@@ -1403,9 +1442,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const rows = [{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }]
     if (onPeople()) rows.push({ id: 'people:spread', helpBase: 'incubator.people.spread', icon: '/icons/human.png' }, { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' })
     overlayList.setRows(rows, onPeople() ? [RESOURCE_PICKS] : picks)
-    peopleSection.hidden = !onPeople()
+    peopleSection.hidden = onTesting()
     settleSection.hidden = !onPeople()
-    if (!onPeople()) peoplePlayer.stop()
+    if (onTesting()) peoplePlayer.stop()
     regionSection.hidden = !onTesting()
     showCharts()
     plantLegend.refresh()
