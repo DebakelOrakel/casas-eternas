@@ -22,6 +22,9 @@ export const CELL_SPACING_KM = 10
 
 export interface CellInput {
   kind: 'sphere' | 'torus'
+  // The cells' spacing, km: CELL_SPACING_KM unless given (coarser for a
+  // test world: on the sphere the cells are as many whatever its raster).
+  spacingKm?: number
   // The world raster's size, the domain's.
   width: number
   height: number
@@ -47,7 +50,7 @@ const CELL_ECOLOGY: readonly EcologyFieldId[] = ['game', 'carryingCapacity', ...
 
 export function buildCells(input: CellInput): { habitat: Habitat; owners: Int32Array } {
   const domain = domainOfKind(input.kind, input.width, input.height)
-  const fm = createFieldMesh(domain, CELL_SPACING_KM * 1000, false)
+  const fm = createFieldMesh(domain, (input.spacingKm ?? CELL_SPACING_KM) * 1000, false)
   const sampler = createFieldSampler(fm)
   const n = fm.count
   const owners = rasterOwners(sampler, input.nodeW, input.nodeH)

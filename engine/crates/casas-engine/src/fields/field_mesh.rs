@@ -14,7 +14,7 @@
 use crate::core::det_math::det_atan2;
 use crate::core::domain::Domain;
 use crate::core::js;
-use crate::mesh::lattice::{centroidal_geodesic_lattice, hex_lattice};
+use crate::mesh::lattice::{centroidal_geodesic_lattice, geodesic_lattice, hex_lattice};
 use crate::mesh::mesh_sampler::hint_grid;
 use crate::mesh::periodic_delaunay::PeriodicTriangulation;
 
@@ -63,9 +63,21 @@ impl FieldMesh {
 }
 
 pub fn create_field_mesh(domain: &Domain, spacing_m: f64) -> FieldMesh {
+    create_field_mesh_as(domain, spacing_m, true)
+}
+
+/// `createFieldMesh(domain, spacingM, relax)`: `relax` on the sphere is the
+/// centroidal relaxation (the fields'); false takes the lattice as cut
+/// (mesh/lattice.rs geodesic_lattice), for a fine mesh made in seconds — the
+/// incubator's cells (casas-history).
+pub fn create_field_mesh_as(domain: &Domain, spacing_m: f64, relax: bool) -> FieldMesh {
     let unit_m = domain.metres_per_unit;
     let mut tri = if domain.is_sphere() {
-        centroidal_geodesic_lattice(domain, spacing_m / unit_m)
+        if relax {
+            centroidal_geodesic_lattice(domain, spacing_m / unit_m)
+        } else {
+            geodesic_lattice(domain, spacing_m / unit_m)
+        }
     } else {
         hex_lattice(domain, spacing_m / unit_m)
     };

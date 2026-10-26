@@ -4,7 +4,11 @@
 //! settlement, the H1 artifact's bytes. Plain data in, plain data out; the
 //! bindings (`casas-history-wasm`) wrap it.
 
+// A port keeps the TypeScript's loops over indices, as the engine does.
+#![allow(clippy::needless_range_loop)]
+
 pub mod catalog;
+pub mod habitat;
 
 /// The history's version (world/historyArtifacts.ts HISTORY_VERSION): raised
 /// by hand on any change to what a run gives or to the packed form, as the
