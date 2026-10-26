@@ -1,0 +1,16 @@
+[package]
+name = "casas-history-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+casas-history = { path = "../casas-history" }
+# The engine's pins (casas-engine-wasm/Cargo.toml): `make engine` runs one
+# wasm-bindgen CLI over both builds.
+wasm-bindgen = "=0.2.129"
+js-sys = "=0.3.106"

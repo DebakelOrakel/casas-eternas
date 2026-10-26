@@ -36,3 +36,24 @@ declare module 'casas-engine-wasm/casas-engine.js' {
   export const Replay: import('../generator/pipeline/engine').Engine['Replay']
   export const Preview: import('../generator/pipeline/engine').Engine['Preview']
 }
+
+// The incubator's catalogs, data shared with the history's crate
+// (engine/crates/casas-history/data; vite.config.ts's alias
+// `casas-history-data`).
+declare module 'casas-history-data/catalog.json' {
+  const catalog: {
+    plants: readonly import('../screens/incubator/plants').PlantSpec[]
+    trees: readonly import('../screens/incubator/trees').TreeSpec[]
+    animals: readonly import('../screens/incubator/animals').AnimalSpec[]
+    // The herbivores' share of a biome's production, by the biome's name.
+    edibleShare: Record<string, number>
+  }
+  export default catalog
+}
+
+// The history's version (`make engine` writes engine/dist/history/
+// version.json from the crate's HISTORY_VERSION).
+declare module 'casas-history-wasm/version.json' {
+  const version: { version: string }
+  export default version
+}

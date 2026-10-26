@@ -1,3 +1,4 @@
+import historyVersion from 'casas-history-wasm/version.json'
 import { artifactKey, writeArtifactFiles, type ArtifactKey, type ArtifactStore, type LocalArtifactStore } from '../storage/ArtifactStore'
 import { meshPipelineVersion } from './meshArtifacts'
 
@@ -11,11 +12,11 @@ import { meshPipelineVersion } from './meshArtifacts'
 // Keyed by content, as every artifact: the terrain (worldId), the level it
 // runs on and the history's own version (pipelineVersion: level 1's, `+`,
 // HISTORY_VERSION), and the origin people set out from (the stage,
-// `H1:<cell>`). The history's version is ours to raise by hand: any change
-// to what a run gives — the simulation, the habitat's cells, the flora, the
-// fauna — or to the packed form (historyPack.ts) must raise it, or a world
-// loads an old history as current, or fails to read it.
-export const HISTORY_VERSION = 'h1-2026-10-26b'
+// `H1:<cell>`). The history's version is its crate's (casas-history
+// HISTORY_VERSION, raised by hand there: any change to what a run gives or
+// to the packed form must raise it, or a world loads an old history as
+// current, or fails to read it).
+export const HISTORY_VERSION: string = historyVersion.version
 export const HISTORY_FILES = { history: 'history.bin', meta: 'meta.json' } as const
 
 const HISTORY_STAGE = 'H1'

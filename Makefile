@@ -151,6 +151,12 @@ engine:
 	cd engine && cargo run --release -q -p casas-engine-api --bin constants > dist/constants.json
 	wasm-bindgen --target web --out-dir engine/dist/wasm --out-name casas-engine \
 		engine/target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm
+	# The incubator's history (docs/decisions/incubator-history-engine.md),
+	# a crate of its own beside the engine: its WASM build and its version.
+	cd engine && cargo build --release -p casas-history-wasm --target wasm32-unknown-unknown
+	wasm-bindgen --target web --out-dir engine/dist/history --out-name casas-history \
+		engine/target/wasm32-unknown-unknown/release/casas_history_wasm.wasm
+	cd engine && cargo run --release -q -p casas-history --bin history-version > dist/history/version.json
 
 # The job worker, bundled for Node, with the engine's native build beside it.
 # Lands beside the binary because that is where jobs.worker looks by default.

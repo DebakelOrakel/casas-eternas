@@ -1,0 +1,22 @@
+[package]
+name = "casas-history"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The incubator's history (docs/decisions/incubator-history-engine.md,
+# DEC-0048): its habitat, flora, fauna, simulation and settlement, a port of
+# client/src/screens/incubator/ that gives its bits. Beside the generator's
+# engine, not in it: the engine's releases are tied to the pipeline a save
+# records, the history changes on its own (fork 2). It reads the engine's
+# shared parts — the field mesh, the deterministic math, the heap, the
+# generator — and changes none of them.
+
+[dependencies]
+casas-engine = { path = "../casas-engine" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+# JavaScript's number-to-text, for the log and the packed history's header,
+# which must be the client's bytes.
+ryu-js = "1.0.3"

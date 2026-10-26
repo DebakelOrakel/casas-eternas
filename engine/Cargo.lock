@@ -52,6 +52,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "casas-history"
+version = "0.1.0"
+dependencies = [
+ "casas-engine",
+ "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "casas-history-wasm"
+version = "0.1.0"
+dependencies = [
+ "casas-history",
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
