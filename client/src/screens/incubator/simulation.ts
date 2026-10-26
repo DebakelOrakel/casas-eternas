@@ -54,9 +54,23 @@ const CORRIDOR = 2
 const SHELF_M = 120
 // The climate moves the cells' carrying and the sea every CLIMATE_YEARS.
 const CLIMATE_YEARS = 500
-// The reach over open water grows evenly from REACH_START to REACH_END km
-// over the span; a crossing within it is tried with CROSSING_CHANCE a step.
+// THE KNOWLEDGE (2026-10-26, DES-0033 "Progression"), a region's (the
+// habitable land's connected parts), every CLIMATE_YEARS: it moves toward
+// KNOW_SCALE × log10(1 + its people / KNOW_PEOPLE) — more people keep more
+// — by KNOW_GAIN of the way up, KNOW_LOSS of the way down (a small,
+// isolated group loses some: Henrich's cumulative culture). People who
+// cross bring KNOW_CARRIED of theirs. The boats' reach over open water is
+// a region's: REACH_START + REACH_PER_KNOW × its knowledge, REACH_END at
+// most — no longer the time's (it grew evenly from 30 to 450 km over the
+// span, and reached 98.5 % of Morvane's land, its far islands too). A
+// crossing within it is tried with CROSSING_CHANCE a step.
+const KNOW_SCALE = 1
+const KNOW_PEOPLE = 10_000
+const KNOW_GAIN = 0.1
+const KNOW_LOSS = 0.02
+const KNOW_CARRIED = 0.8
 const REACH_START = 30
+const REACH_PER_KNOW = 150
 const REACH_END = 450
 const CROSSING_CHANCE = 0.02
 const CROSSINGS_A_PAIR = 32
@@ -74,6 +88,10 @@ export interface SimulationResult {
   kept: Float32Array[]
   // The climate history's draw (climateHistory.ts).
   climate: { maxAt: number; depth: number; deglaciation: number }
+  // The regions (the habitable land's connected parts) and their knowledge
+  // at the end, for a readout.
+  region: Int32Array
+  knowledge: Float32Array
   ms: number
 }
 
@@ -85,32 +103,10 @@ interface Crossing {
   km: number
 }
 
-// The crossings, once: from every coast cell people can live on today
-// (`habitable`) over the sea, a multi-source Dijkstra on the voyage's
-// length, labelled by its REGION — the land people can live on, connected
-// (a landmass the ice cuts into parts is several; by landmass, a landing
-// reached one part and its people stayed there); where two labels meet,
-// the way between
-// their two coasts. A crossing needs as much reach as its longest stretch
-// of OPEN water: a sea cell beside land (any land, ice too) ends a stretch
-// — boats keep to the coast, past the ice (the "kelp highway" of the
-// Americas' first people). A voyage is VOYAGE_KM long at most. For each
-// coast cell its shortest to each other region; of those the
-// CROSSINGS_A_PAIR needing the least reach a pair of regions, both ways.
-// Before (2026-10-26): the single shortest a pair, every sea km counted,
-// left Morvane's first continent 258 km of open water from any other coast
-// people can live on; and a coast of ice was a landing, where people
-// stood on a strip before a glacier (the first skeleton even let such a
-// landing, with no people, settle the land beyond: its 82 % were that).
-function crossingsOf(h: Habitat, maxKm: number, habitable: (i: number) => boolean): Crossing[] {
+// The regions: the habitable land's connected parts, an id a cell (-1
+// elsewhere), and how many.
+function regionsOf(h: Habitat, habitable: (i: number) => boolean): { region: Int32Array; regions: number } {
   const n = h.count
-  const voyage = new Float64Array(n).fill(Infinity)
-  // The open stretch at a cell and the longest on the way to it.
-  const stretch = new Float32Array(n)
-  const longest = new Float32Array(n)
-  const source = new Int32Array(n).fill(-1)
-  const heap = new MinHeap(1 << 16)
-  // The regions: the habitable land's connected parts.
   const region = new Int32Array(n).fill(-1)
   let regions = 0
   const stack: number[] = []
@@ -129,6 +125,35 @@ function crossingsOf(h: Habitat, maxKm: number, habitable: (i: number) => boolea
     }
     regions++
   }
+  return { region, regions }
+}
+
+// The crossings, once: from every coast cell people can live on today
+// (`habitable`) over the sea, a multi-source Dijkstra on the voyage's
+// length, labelled by its REGION — the land people can live on, connected
+// (a landmass the ice cuts into parts is several; by landmass, a landing
+// reached one part and its people stayed there); where two labels meet,
+// the way between
+// their two coasts. A crossing needs as much reach as its longest stretch
+// of OPEN water: a sea cell beside land (any land, ice too) ends a stretch
+// — boats keep to the coast, past the ice (the "kelp highway" of the
+// Americas' first people). A voyage is VOYAGE_KM long at most. For each
+// coast cell its shortest to each other region; of those the
+// CROSSINGS_A_PAIR needing the least reach a pair of regions, both ways.
+// `region`: regionsOf's.
+// Before (2026-10-26): the single shortest a pair, every sea km counted,
+// left Morvane's first continent 258 km of open water from any other coast
+// people can live on; and a coast of ice was a landing, where people
+// stood on a strip before a glacier (the first skeleton even let such a
+// landing, with no people, settle the land beyond: its 82 % were that).
+function crossingsOf(h: Habitat, maxKm: number, habitable: (i: number) => boolean, region: Int32Array): Crossing[] {
+  const n = h.count
+  const voyage = new Float64Array(n).fill(Infinity)
+  // The open stretch at a cell and the longest on the way to it.
+  const stretch = new Float32Array(n)
+  const longest = new Float32Array(n)
+  const source = new Int32Array(n).fill(-1)
+  const heap = new MinHeap(1 << 16)
   const coastal = new Uint8Array(n)
   for (let i = 0; i < n; i++) {
     if (h.land[i]) continue
@@ -255,7 +280,11 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       capacity[i] = shelf[i] ? (seaDepthM[i] <= drop ? base[i] : 0) : base[i] * coldShare(koppen[i], iceKm[i], cold)
     }
   }
-  const crossings = crossingsOf(h, REACH_END, (i) => base[i] > 0)
+  const habitable = (i: number): boolean => land[i] === 1 && base[i] > 0
+  const { region, regions } = regionsOf(h, habitable)
+  const crossings = crossingsOf(h, REACH_END, habitable, region)
+  const knowledge = new Float32Array(regions)
+  const regionPeople = new Float64Array(regions)
   const crossingsFrom = new Map<number, Crossing[]>()
   for (const c of crossings) {
     const list = crossingsFrom.get(c.from)
@@ -318,6 +347,13 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       lived = still
       growing = still.slice()
       front = still.slice()
+      // The knowledge, toward what each region's people keep.
+      regionPeople.fill(0)
+      for (const i of lived) if (region[i] >= 0) regionPeople[region[i]] += people[i] * h.areaKm2[i]
+      for (let g = 0; g < regions; g++) {
+        const target = KNOW_SCALE * Math.log10(1 + regionPeople[g] / KNOW_PEOPLE)
+        knowledge[g] += (target - knowledge[g]) * (target > knowledge[g] ? KNOW_GAIN : KNOW_LOSS)
+      }
     }
     // 1. Growth, or shrinking toward less; a cell near what it carries
     //    leaves the list.
@@ -353,14 +389,17 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       for (let k = count; k < front.length; k++) stillFront.push(front[k])
       front = stillFront
     }
-    // 3. The crossings within the time's reach.
-    const reach = REACH_START + (REACH_END - REACH_START) * (t / SPAN_YEARS)
+    // 3. The crossings within the reach of their coast's knowledge.
     for (const [source, list] of crossingsFrom) {
       if (people[source] < SEED_SHARE * capacity[source]) continue
+      const known = knowledge[region[source]]
+      const reach = Math.min(REACH_END, REACH_START + REACH_PER_KNOW * known)
       for (const c of list) {
         if (c.km > reach || !open(c.to) || arrival[c.to] < Infinity) continue
         if (random() < CROSSING_CHANCE) {
           settle(c.to, t + STEP_YEARS, capacity[c.to] * SEED_PEOPLE, c.from)
+          const to = region[c.to]
+          knowledge[to] = Math.max(knowledge[to], KNOW_CARRIED * known)
           made.push(h.landmass[c.to], c.to, t + STEP_YEARS, c.km)
           ways.push(c.from, c.to, -1)
         }
@@ -382,6 +421,8 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     people: { arrival, land, from, flow, origin: input.origin, crossings: Float32Array.from(made), crossingWays: Int32Array.from(ways) },
     kept,
     climate: { maxAt: climate.maxAt, depth: climate.depth, deglaciation: climate.deglaciation },
+    region,
+    knowledge,
     ms: Math.round(performance.now() - started),
   }
 }

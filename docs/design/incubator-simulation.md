@@ -283,3 +283,13 @@ Morvane: 98.5 % of the ice-free land reached (the rules 82.9 %), 1 182
 crossings, the arrival's median at year 43 700; 4.1 s. More than the
 rules: the boats' reach still grows evenly with the time — knowledge
 (above) is to rein it in.
+
+**Knowledge and boats** (the same day): a region's knowledge moves every
+500 years toward log10(1 + its people / 10 000), a tenth of the way up, a
+fiftieth down; people who cross bring 0.8 of theirs; a coast's reach is
+30 km + 150 km × its region's knowledge, 450 at most. On Morvane: 50.2 %
+of the ice-free land reached, 951 of 2 712 regions (most of them small
+pockets the ice leaves), the arrival's median at year 11 200 and its
+90th percentile at 96 700 (land the melting ice opens); the first
+continent (4 M km²) at knowledge 1.57, a reach of 266 km, the largest
+region (15 M km²) reached late, at 0.46; 3.4 s. Uncalibrated.
