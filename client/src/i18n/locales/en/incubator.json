@@ -91,6 +91,7 @@
   "incubator.chronicle.famineDetail": "{landmass} · {people} dead · {left} fled · {villages} villages given up",
   "incubator.chronicle.event.population": "Over {count} people",
   "incubator.chronicle.village": "Village {n}",
+  "incubator.chronicle.camp": "Camp {n}",
   "incubator.chronicle.tradeDetail": "{a} – {b} · {km} km",
   "incubator.chronicle.populationDetail": "{villages} villages · {centres} centres",
   "incubator.layers.climate": "Climate",

@@ -841,11 +841,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // animals are its state at the time shown — the big game by its
     // species' share, the hunted ones by the small game's, the rest as the
     // fauna placed them; a species gone from a landmass by then, gone.
+    // The shares mixed between the kept states before and after the time
+    // (frameAfter), as the people (2026-10-26).
     const frame = frameNow()
     if (frame) {
       const spec = ANIMALS.find((a) => a.id === animal.id)
       const hunted = spec ? spec.uses.includes('hunt') || spec.uses.includes('fur') : false
-      const share = frame.big.get(animal.id) ?? (hunted ? frame.small : null)
+      const pick = (f: HistoryFrame): Uint8Array | null => f.big.get(animal.id) ?? (hunted ? f.small : null)
+      const shareBefore = pick(frame)
+      const next = frameAfter(frame)
+      const shareAfter = next ? pick(next.after) : null
+      let share = shareBefore
+      if (shareBefore && shareAfter) {
+        share = new Uint8Array(shareBefore.length)
+        for (let i = 0; i < share.length; i++) share[i] = shareBefore[i] + (shareAfter[i] - shareBefore[i]) * next!.share + 0.5
+      }
       const gone = new Map(settled.extinctions.filter((e) => e.id === animal.id).map((e) => [e.landmass, e.at]))
       const codes = new Uint8Array(animal.codes.length)
       let lives = 0
@@ -1016,7 +1026,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const campOrder = new Map<number, number>()
       for (const e of log) if (e.kind === 'village') villageOrder.set(e.village, villageOrder.size)
       else if (e.kind === 'camp') campOrder.set(e.village, campOrder.size)
-      const nameOf = (v: number): string => (campOrder.has(v) ? `${t('incubator.chronicle.camps')} ${campOrder.get(v)! + 1}` : villageName(villageOrder.get(v) ?? v))
+      const nameOf = (v: number): string => (campOrder.has(v) ? t('incubator.chronicle.camp', { n: String(campOrder.get(v)! + 1) }) : villageName(villageOrder.get(v) ?? v))
       // Only a domesticate's first taming is told: each centre tames its
       // own, and the chronicle held some 25 tamings over 20 000 years
       // (2026-10-26).
@@ -1536,13 +1546,21 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the map jumped every KEEP_YEARS); the one before alone until the one
   // after comes. Made for the time and kept for it.
   let livingAt: { time: number; before: HistoryFrame; after: HistoryFrame | null; people: Float32Array } | null = null
-  function livingNow(): Float32Array | null {
-    const before = frameNow()
-    if (!before) return null
+  // The kept state after the one before the time shown, and how far the
+  // time is between them, 0 … 1; null until it comes, and where the one
+  // before is not the time's own (still coming).
+  function frameAfter(before: HistoryFrame): { after: HistoryFrame; share: number } | null {
     const x = peopleTime / KEEP_YEARS
     const share = x - Math.floor(x)
     const after = share > 0 && historyFrames?.get(Math.floor(x)) === before ? frameAt(Math.floor(x) + 1) : null
-    if (!after) return before.people
+    return after ? { after, share } : null
+  }
+  function livingNow(): Float32Array | null {
+    const before = frameNow()
+    if (!before) return null
+    const next = frameAfter(before)
+    if (!next) return before.people
+    const { after, share } = next
     if (livingAt && livingAt.time === peopleTime && livingAt.before === before && livingAt.after === after) return livingAt.people
     const mixed = livingAt && livingAt.people.length === before.people.length ? livingAt.people : new Float32Array(before.people.length)
     for (let i = 0; i < mixed.length; i++) mixed[i] = before.people[i] + (after.people[i] - before.people[i]) * share

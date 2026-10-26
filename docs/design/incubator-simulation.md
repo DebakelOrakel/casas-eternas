@@ -447,7 +447,9 @@ log holds some 2 600 events (1 567 crossings, 694 villages, 301 famines).
 **Between the kept states** (the same day): the people at the time shown
 are the kept states before and after it, mixed by the time (the one
 before alone until the one after comes from the worker), so the map no
-longer jumps every 2 500 years; the game still does. A kept state the
+longer jumps every 2 500 years; the game's shares likewise (the same
+day, later). The camps still move every 2 500 years: that is the
+simulation's own pace for them. A kept state the
 screen let go was never asked for again; now it is.
 
 **The flight** (the same day): of those a famine's land does not carry,

@@ -91,6 +91,7 @@
   "incubator.chronicle.famineDetail": "{landmass} · {people} Tote · {left} abgewandert · {villages} Dörfer aufgegeben",
   "incubator.chronicle.event.population": "Über {count} Menschen",
   "incubator.chronicle.village": "Dorf {n}",
+  "incubator.chronicle.camp": "Lager {n}",
   "incubator.chronicle.tradeDetail": "{a} – {b} · {km} km",
   "incubator.chronicle.populationDetail": "{villages} Dörfer · {centres} Zentren",
   "incubator.layers.climate": "Klima",
