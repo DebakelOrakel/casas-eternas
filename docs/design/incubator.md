@@ -1,0 +1,214 @@
+---
+id: DES-0032
+title.en: The incubator
+title.de: Der Inkubator
+summary.en: The incubator shows a world's level 1 and grows on it, step by
+  step, what lived there before the game — the wild plants and the wood,
+  the animals, the people's spread from one origin and their settlement:
+  the lifeways, the farming's and the herding's centres, the villages and
+  the trade. All on one cell mesh of 10 km, in one worker, from simple
+  rules with first-guess numbers. A trial: it shows what the end state
+  could look like before the details are simulated.
+summary.de: Der Inkubator zeigt Level 1 einer Welt und lässt darauf Schritt für
+  Schritt wachsen, was vor dem Spiel dort lebte — die Wildpflanzen und das
+  Holz, die Tiere, die Ausbreitung der Menschen von einem Ursprung und ihre
+  Besiedlung: die Lebensweisen, die Zentren von Ackerbau und Viehzucht,
+  die Dörfer und der Handel. Alles auf einem Zellnetz von 10 km, in einem
+  Worker, aus einfachen Regeln mit ersten Schätzwerten. Ein Versuch: Er
+  zeigt, wie der Endzustand aussehen könnte, bevor die Details simuliert
+  werden.
+area: mechanics
+stage: building
+createdAt: 2026-10-26
+related: [DEC-0046, DEC-0047, DES-0031, DES-0023]
+---
+
+This note is the map of the incubator. The rules and their numbers are in
+the code, each next to its constant, with the measurements that set it;
+this note says what there is, how it fits together and why. The module
+named in each section holds the detail.
+
+## Where this starts
+
+The generator makes a world's terrain, water, climate and ecology. The
+game needs more: what lives on that world and where people are when the
+game begins, some 5 000 years before the bronze age. The incubator grows
+that on the world, as a separate screen (`client/src/screens/incubator/`).
+
+It began on 2026-10-23 as a proof of concept on the save's world raster
+(level 0) and moved to level 1 on 2026-10-25 ([DEC-0046](../decisions/level-waters.md)).
+Since 2026-10-26 it stands on a cell mesh of its own
+([DEC-0047](../decisions/incubator-cells.md)).
+
+It is a trial. The rules are simple, the numbers first guesses, compared
+with the earth where a comparison exists. The aim is a picture of the end
+state, to talk about what is needed; the simulation of the details comes
+after, maybe in detMath or in the engine.
+
+## The screen
+
+- **The ground.** Level 1 on the generator's globe (a sphere) or as a flat
+  map (a torus), on a white page with the generator's look. Zoom only as
+  far as level 1 holds detail. The chart worker (`chartWorker.ts`) paints
+  the terrain and keeps the level-1 node under each texel (a map at half
+  the chart's size), so everything per node can be read per texel.
+- **The steps.** A step bar as the generator's: 1 Flora, 2 Fauna,
+  3 People, and a Testing step aside (T) for the demos. A step computes by
+  itself when the world is shown, under the progress pill (`ui/progressPill`).
+- **The overlays.** Each step's layers are entries of one table (`TRIALS`
+  in `IncubatorScreen.ts`): the steps it shows in, whether it is on, how it
+  paints, its legend, its tooltip rows. They paint into one RGBA raster at
+  half the chart's size (`incubatorOverlay.ts`), laid over the map by a
+  material plugin (`map/overlayMaterialPlugin.ts`); an animation frame
+  repaints that raster alone.
+- **The marks.** Villages, centres, the origin and the sources are symbols
+  in the views' surface (`incubatorSymbols.ts`, `view.symbols`), sized in
+  km on the world, sharp at any zoom.
+- **The legend** in a separate box that folds (`ui/legend`), as the
+  generator's.
+- **The tooltip** on hover: the height, the Köppen class, the biome, the
+  carrying capacity, the arable land, and each active layer's own rows.
+- **The time.** A slider over 65 000 years with play and a speed (1× =
+  100 years a second), at the foot of the left column; the chronicle
+  ([DES-0031](./incubator-chronicle.md)) is to take it over.
+
+## The cells
+
+One mesh for everything: the generator's field mesh at 10 km, unrelaxed
+(`cells.ts`). On Morvane (a sphere, 20 000 km round) 1.47 M cells, some
+95 km² each, six neighbours (the sphere's twelve, five). Each cell takes
+level 1's nodes under it through the chart's node map: land where most of
+its texels are, its biome and Köppen class from its centre, its height and
+the ecology's fields as the mean over its land, its sea depth from its
+shallowest sea texel. Its rivers are level 1's river lines, the ephemeral
+ones left out; the lakes and the coast are near or not. The landmasses
+are the connected land. The same map of texels to cells draws the overlay:
+a texel shows the cell that owns it.
+
+The habitat (`habitat.ts`) is that per-cell view of the world, shared by
+every step. Why a mesh and why these choices:
+[DEC-0047](../decisions/incubator-cells.md).
+
+## One worker
+
+`incubatorWorker.ts` holds the habitat and what each step made, and
+answers the screen's requests in turn: the cells, then the flora, the
+fauna, the people, the settlement. A later step reads the earlier ones in
+the worker (the people's boats from the trees, the settlement's fields and
+herds from the plants and the animals). Measured on Morvane: the cells 8 s,
+the flora 1.8 s, the fauna 1.6 s, the people 0.3 s, the settlement 0.3 s.
+
+A module the screen imports must not set `self.onmessage`: in the window,
+that handler is the window's. What the screen and the worker share lives in
+modules of its own (`peopleShared.ts`, `settleShared.ts`).
+
+## Step 1 — the flora
+
+What people eat and use of the wild plants (`plants.ts`, 39 archetypes,
+named after the real species they stand for) and the wood they cut
+(`trees.ts`, 12). Each has a **niche** over the habitat (`niche.ts`): a
+weight for each Köppen class, times its responses to the height, the
+slope, the cover (open land or forest), the water (a river or a lake
+near, a big river's floodplain), the coast and salt. And a **range**: an
+origin on a landmass, with a chance by the landmass's area, and a spread
+by the cheapest way, through land it does not suit 30 times dearer, never
+over the sea. A suitable cell outside the range is an empty niche, drawn
+grey.
+
+The plants are shown by use: starch, fat and protein, fruit, fibre. The
+trees by the use of their wood: build, fuel, tool, boat, resin. A group
+draws its members in diagonal stripes, each in its colour, at most three a
+cell. The aim: every cell where gathering can feed people has starch,
+fat or protein and fruit in reach; the tundra and the desert keep their
+gaps.
+
+## Step 2 — the fauna
+
+The animals people hunt, tame, fish, wear or fear (`animals.ts`, 23
+archetypes), with the same niche and range as the plants (`fauna.ts`).
+The salmon swims up the rivers from every suitable mouth; the shore's
+animals (shellfish, seal) come along every coast that suits them. How many:
+the herbivores share the ecology's game, each by its niche among those in
+range; a predator follows the herbivores in its range; the animals of the
+water are their niche. Shown by use: hunt, tame, water, fur, danger.
+
+From step 3 on, the animals change with the time shown: the hunt thins the
+hunted ones by the people's density, the herds and the fields push the
+wild herbivores and the predators back (by the lifeways' shares), and the
+big game dies out on a landmass the people came to new, by its chance,
+half again on an island. Africa's case, the people's own landmass, keeps
+its big game.
+
+## Step 3 — the people
+
+**The spread** (`people.ts`). From one origin (a click, or the land that
+feeds best in a tropical class), the cheapest ways in years over the
+cells. Over land the front moves 0.05 to 0.5 km a year by the carrying
+capacity, slower up a slope, twice as fast along a river or a coast; ice
+is not crossed. The shelf down to 120 m is dry land until year 60 000. Open
+water is crossed as far as the time's reach, which grows from 30 to 450 km
+over the span; beyond 60 km only with boats, which people carry on once
+they passed boat wood. On Morvane it reaches 83 % of the ice-free land.
+Shown as the age of the spread, with a few broad arrows of its directions
+(`peopleArrows.ts`) and the origin marked.
+
+**The settlement** (`settle.ts`, `settleShared.ts`). Everything is a time
+per cell, so the state at any time is a function and the animation needs
+no snapshots:
+
+- **The farming** begins at up to five centres 1 500 km apart, where
+  people lived 10 000 years, two domesticable starch plants or more grow
+  and the arable land is good: the first 11 000 years before the game,
+  the next 1 000 to 3 000 years after. It spreads 1 km a year from them,
+  five times slower through land it cannot farm, never over the sea.
+- **The herding** begins at up to three centres of its own (two tamable
+  herd animals or more, good pasture; the first 8 000 years before the
+  game), and at the farming's centres 1 000 years after the fields. It
+  spreads 2 km a year: the earth's nomads took the steppes late and fast.
+- **The lifeways' shares.** A cell holds several at once: the foragers
+  always a little, the fishers, herders and farmers by the fish, pasture
+  and arable land, each grown with the time since it came. The density is
+  each share of its own lifeway's density (foragers 0.1, fishers 1,
+  herders 1.5, farmers 15 people a km², scaled by the carrying capacity).
+  Shown in stripes as wide as the shares; the tooltip lists them.
+- **The villages**: where farmers or fishers are the most, the densest
+  cell of its neighbourhood.
+- **The trade**: each village linked to its three nearest within 150 km;
+  from the sources of tool stone, salt and copper the goods go down the
+  links, less each step.
+
+On Morvane at the end: two farming and two herding centres, 18 M people
+(13 M of them farmers), 638 villages; one cell in ten that people reached
+holds two lifeways or more.
+
+The layers of step 3, in order: the spread, the lifeways or the density
+(one at a time), the trade, the villages, the sources, the centres with
+the origin (on by default).
+
+## The testing step
+
+Demos that may come back elsewhere: the catchments of level 1's rivers,
+cut by a threshold.
+
+## Text
+
+The plants, trees, animals, lifeways and the layers have catalog keys
+(`plant.*`, `wood.*`, `animal.*`, `incubator.*`). Demos that are tried and
+removed again do not.
+
+## Next
+
+- **The chronicle** ([DES-0031](./incubator-chronicle.md)): the time, the
+  events, travel to them.
+- **Lines as vectors**: the arrows, the trade and the sea crossings as
+  lines like the rivers, not painted into the overlay.
+- **Boats**: the crossings made visible, harbours where boat wood grows by
+  the coast.
+- **The trade again**: the foragers' camps as nodes too.
+- **Names** for places; **epochs** for the time.
+- **The port**: once the rules settle, to detMath or the engine.
+
+## Status
+
+Building, 2026-10-26. Everything above is built as a trial; nothing is
+calibrated.

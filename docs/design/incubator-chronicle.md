@@ -1,0 +1,110 @@
+---
+id: DES-0031
+title.en: The incubator's chronicle
+title.de: Die Chronik des Inkubators
+summary.en: A timeline panel for the incubator's playback — the time, the
+  play controls, a few counts and a list of events that a click travels
+  to. The events come from the settlement's data, which is deterministic,
+  so the chronicle is derived, not recorded. A first form shows the
+  farming, the herding and the boats only.
+summary.de: Eine Zeitleiste für die Wiedergabe des Inkubators — die Zeit, die
+  Bedienung, einige Kennzahlen und eine Liste von Ereignissen, zu denen ein
+  Klick reist. Die Ereignisse kommen aus den Daten der Besiedlung, die
+  deterministisch sind; die Chronik wird abgeleitet, nicht aufgezeichnet.
+  Eine erste Form zeigt nur Ackerbau, Viehzucht und Boote.
+area: ui
+stage: idea
+createdAt: 2026-10-26
+related: [DES-0023, DES-0032]
+---
+
+## Where this starts
+
+The incubator plays its three steps (flora, fauna, people) over 65 000
+years: a slider, a play button and a speed button at the foot of the left
+column. Many things happen in that time (the farming and the herding
+begin at their centres, people cross the sea, animals die out), but the
+screen shows only the state at the time on the slider. To find a moment,
+the user must search for it with the slider.
+
+The design canvas (Weltgenerator, `project/Inkubator.dc.html`) shows a
+timeline as a right sidebar, in two variants: A, the simulation runs; B,
+the user travelled back.
+
+## The panel in the canvas
+
+From the top down, 392 px wide:
+
+- A head: "Zeitlinie" and the number of events.
+- The present: the epoch's name, the year in large type; one event back,
+  play or stop, one event forward; the speed 1× / 4× / 16×.
+- Three counts: people, settlements, centres.
+- A filter by kind (all, subsistence, settlement, trade, crisis) and a
+  search.
+- The events from the top down: a dot, the year, an icon, a title and a
+  line below it (a place, a number). The event at the time shown is marked
+  "now", the events after it "later". At the left, an axis with the
+  epochs as bands, the population as a curve and a handle at the time
+  shown. A click on an event travels to it.
+- A foot: a hint and an export button.
+- Variant B only: a banner "an earlier state, the simulation stopped" with
+  "back to the present".
+
+## Direction
+
+**Derived, not recorded.** The settlement is a function of the time
+(`settleShared.ts`: every cell has its times, the state at a time comes
+from them). So each event is a time and a cell, found in the result of
+`settle.ts`, and the chronicle is made again with it. There is no log to
+keep and no present that a travel back leaves: variant B's banner does not
+apply. The events after the time shown are still marked "later".
+
+**Kept from the canvas:** the present with the controls, the counts, the
+list, a click that travels to an event.
+
+**Changed from the canvas:**
+
+- The light theme, as the generator and the incubator have.
+- The time counted up from the people's departure, year 0, to the span's
+  end, year 65 000, as the canvas counts ("year 2 840"). The settlement
+  already counts so (`t`, years after the departure); the slider shows
+  "years ago" now and goes over to it, so the screen has one count.
+- The speed 1× / 4× / 16× with 1× = 100 years a second. It replaces the
+  speed button.
+
+**The first events: the farming, the herding, the boats.** No more until
+these work:
+
+| Kind | Event | From |
+|---|---|---|
+| Farming | A farming centre begins | `centres` (LIFEWAY.farmers) |
+| Herding | A herding centre begins | `centres` (LIFEWAY.herders) |
+| Boats | People cross to a landmass by boat | `people.ts` (the crossings) |
+
+A place has no name yet: the text uses a number ("Village 1", "Village
+839"). Names come later.
+
+## Not yet
+
+- **Epochs** (the bands, the name in the present): kept in mind, not
+  built. They could come from the events (before the first farming centre,
+  after it).
+- **More events:** the first village, the first trade link, a species that
+  dies out, the land bridges under the sea, the population over a
+  threshold. Their data exists.
+- **Events without a model:** pottery, walls, droughts.
+- **The search and the export.**
+
+## Open questions
+
+1. Where the playback goes: from the left column's foot into the
+   chronicle, so that there is one place for it. And in which steps the
+   chronicle shows: the playback runs in steps 1 to 3.
+2. A click on an event: only to its time, or the camera to its place too.
+   The event's cell is known.
+3. The boat events need the crossings in the result of `people.ts`: today
+   it has `from` per cell, not which way was over the sea.
+
+## Status
+
+Idea, 2026-10-26. Nothing built.
