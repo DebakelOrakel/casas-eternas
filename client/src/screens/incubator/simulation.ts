@@ -143,6 +143,28 @@ const CAPACITY_MOVED = 0.02
 // span are counted every POPULATION_STEP years. Before, a history's
 // villages and its people were the rules', from its times.
 const FISH_GAIN = 10
+// THE DROUGHTS (2026-10-26, DES-0033 "Droughts"): the land in squares of
+// DRY_SQUARE_KM a landmass, so that a drought is a place. Each step a
+// square's rain is its mean times 1 + DRY_SCALE × its variability × an
+// anomaly (the variability is a year's; a step's mean of 25 years varies
+// less): its own random walk (DRY_KEEP of the last, the rest new), and in
+// a step with a strong ENSO (ENSO_CHANCE × the see-saw's strength)
+// ENSO_PUSH × its mark. Under DRY_BELOW the step is dry: STORE_STEPS of
+// them in a row the stores take; more are a famine — the fields and the
+// pasture give
+// the rain's share, the plants and the game half the shortfall less, and
+// the people more than that die at once; a village under VILLAGE_LEAVE of
+// its least is left. A famine is told in the log (`famines`) with the
+// people it cost and the villages given up. With the year's variability
+// whole and a famine from the second dry step, Morvane had 71 814 famines
+// (3 597 of 10 000 people or more); now some 650 (some 30).
+const DRY_SQUARE_KM = 300
+const DRY_SCALE = 0.25
+const STORE_STEPS = 2
+const DRY_KEEP = 0.6
+const DRY_BELOW = 0.75
+const ENSO_CHANCE = 0.3
+const ENSO_PUSH = 1.5
 const VILLAGE_LEAVE = 0.5
 const SETTLED_YEARS = 5000
 const FARM_RATE = 0.3
@@ -193,6 +215,11 @@ export interface SimulationInput {
   // animals (animals.ts) as the flora and the fauna placed them.
   crops: { id: string; codes: Uint8Array }[]
   herds: { id: string; codes: Uint8Array }[]
+  // The rain's reliability per cell (the save's, generator/climate/
+  // reliability.ts): the annual rain's coefficient of variation, the
+  // ENSO see-saw's mark (−1 drier in its warm phase … +1), the see-saw's
+  // strength (0 … 1); null without the save's refinement: no droughts.
+  rain: { variability: Float32Array; enso: Float32Array; ensoStrength: number } | null
 }
 
 // A kept state (every KEEP_YEARS from 0): the people a km² in
@@ -218,6 +245,10 @@ export interface SimulationResult {
   // Where a species of the big game died out (settle.ts SettleResult's
   // form): on a landmass, when its last tenth went, at a cell of it.
   extinctions: { id: string; landmass: number; areaKm2: number; at: number; cell: number }[]
+  // The famines (THE DROUGHTS): when one began and ended, its square's
+  // most populous cell then, its landmass, the square's people when it
+  // began, the people it cost, the villages given up.
+  famines: { at: number; to: number; cell: number; landmass: number; before: number; lost: number; villages: number }[]
   // The farming and the herding (settle.ts SettleLifeways): the settlement
   // takes them in the rules' place.
   lifeways: SettleLifeways
@@ -494,7 +525,12 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   }
   const homeLandmass = input.origin >= 0 ? h.landmass[input.origin] : -1
   // What the fields and the herds add, as a factor on what the land carries.
-  const gain = (i: number): number => (farmAt[i] < Infinity ? 1 + FARM_GAIN * (arable?.[i] ?? 0) : fishing[i] ? 1 + FISH_GAIN * (fish?.[i] ?? 0) : 1) * (herdAt[i] < Infinity ? 1 + HERD_GAIN * (pasture?.[i] ?? 0) : 1)
+  // The rain's share this step where a famine is (THE DROUGHTS), else 1.
+  const rainOf = (i: number): number => (drySquare[i] >= 0 ? squareRain[drySquare[i]] : 1)
+  const gain = (i: number): number => {
+    const r = rainOf(i)
+    return (farmAt[i] < Infinity ? 1 + FARM_GAIN * (arable?.[i] ?? 0) * r : fishing[i] ? 1 + FISH_GAIN * (fish?.[i] ?? 0) : 1) * (herdAt[i] < Infinity ? 1 + HERD_GAIN * (pasture?.[i] ?? 0) * r : 1) * ((1 + r) / 2)
+  }
   const food = (i: number): number => PLANT_FOOD + (bigCount[i] ? SMALL_FOOD * small[i] + BIG_FOOD * (bigSum[i] / bigCount[i]) : (SMALL_FOOD + BIG_FOOD) * small[i])
   const extinctions: SimulationResult['extinctions'] = []
   // The farming and the herding: when each came to a cell, its
@@ -596,6 +632,52 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   const open = (u: number): boolean => people[u] === 0 && capacity[u] > 0
   updateClimate(0)
   if (input.origin >= 0 && capacity[input.origin] > 0) settle(input.origin, 0, capacity[input.origin] * SEED_SHARE, -1)
+
+  // The droughts' squares (THE DROUGHTS): their cells, their mean
+  // variability and ENSO mark, their anomaly, rain, dry steps in a row, and
+  // the famine going on in each.
+  const drySquare = new Int32Array(n).fill(-1)
+  const squareCells: number[][] = []
+  if (input.rain) {
+    const ids = new Map<string, number>()
+    const rows = Math.max(1, Math.round((h.radiusKm > 0 ? Math.PI * h.radiusKm : h.heightKm) / DRY_SQUARE_KM))
+    for (let i = 0; i < n; i++) {
+      if (!land[i]) continue
+      const row = Math.min(rows - 1, Math.floor(h.v[i] * rows))
+      const around = h.radiusKm > 0 ? 2 * Math.PI * h.radiusKm * Math.cos((0.5 - (row + 0.5) / rows) * Math.PI) : h.widthKm
+      const cols = Math.max(1, Math.round(around / DRY_SQUARE_KM))
+      const key = `${h.landmass[i]} ${row} ${Math.min(cols - 1, Math.floor(h.u[i] * cols))}`
+      let id = ids.get(key)
+      if (id === undefined) {
+        id = squareCells.length
+        ids.set(key, id)
+        squareCells.push([])
+      }
+      drySquare[i] = id
+      squareCells[id].push(i)
+    }
+  }
+  const squares = squareCells.length
+  const squareVariability = new Float32Array(squares)
+  const squareEnso = new Float32Array(squares)
+  for (let q = 0; q < squares; q++) {
+    for (const i of squareCells[q]) {
+      squareVariability[q] += input.rain!.variability[i] / squareCells[q].length
+      squareEnso[q] += input.rain!.enso[i] / squareCells[q].length
+    }
+  }
+  const anomaly = new Float32Array(squares)
+  const squareRain = new Float32Array(squares).fill(1)
+  const dryRun = new Int32Array(squares)
+  const famine: ({ at: number; cell: number; before: number; lost: number; villages: number } | null)[] = new Array(squares).fill(null)
+  const famines: SimulationResult['famines'] = []
+  const endFamine = (q: number, t: number): void => {
+    const f = famine[q]
+    if (!f) return
+    famines.push({ at: f.at, to: t, cell: f.cell, landmass: h.landmass[f.cell], before: f.before, lost: f.lost, villages: f.villages })
+    famine[q] = null
+  }
+  const gauss = (): number => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random())
 
   const steps = Math.round(SPAN_YEARS / STEP_YEARS)
   const subYears = STEP_YEARS / SUB_STEPS
@@ -777,6 +859,50 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       hunted = stillHunted
       for (const i of moved) grows(i)
     }
+    // 0c. The droughts (THE DROUGHTS).
+    if (squares > 0) {
+      const enso = random() < ENSO_CHANCE * input.rain!.ensoStrength ? ENSO_PUSH : 0
+      const spread = Math.sqrt(1 - DRY_KEEP * DRY_KEEP)
+      for (let q = 0; q < squares; q++) {
+        anomaly[q] = DRY_KEEP * anomaly[q] + spread * gauss() + enso * squareEnso[q]
+        const wet = 1 + DRY_SCALE * squareVariability[q] * anomaly[q]
+        if (wet < DRY_BELOW) dryRun[q]++
+        else {
+          dryRun[q] = 0
+          endFamine(q, t)
+        }
+        const r = dryRun[q] > STORE_STEPS ? Math.max(0, wet) : 1
+        if (r === squareRain[q]) continue
+        squareRain[q] = r
+        for (const i of squareCells[q]) if (people[i] > 0) grows(i)
+        if (r === 1) continue
+        // The famine: those the land does not carry now die.
+        let lost = 0
+        let most = -1
+        let before = 0
+        for (const i of squareCells[q]) {
+          if (people[i] === 0) continue
+          before += people[i] * h.areaKm2[i]
+          if (most < 0 || people[i] > people[most]) most = i
+          const k = capacity[i] * food(i) * gain(i)
+          if (people[i] <= k) continue
+          lost += (people[i] - k) * h.areaKm2[i]
+          people[i] = k
+        }
+        let left = 0
+        for (let v = 0; v < villageTo.length; v++) {
+          const cell = villages[2 * v]
+          if (villageTo[v] < Infinity || drySquare[cell] !== q || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
+          villageTo[v] = t
+          villageAt[cell] = -1
+          left++
+        }
+        const f = famine[q] ?? (famine[q] = { at: t, cell: most, before, lost: 0, villages: 0 })
+        f.lost += lost
+        f.villages += left
+        if (f.cell < 0) f.cell = most
+      }
+    }
     // 1. Growth, or shrinking toward less; a cell near what it carries
     //    leaves the list.
     const stillGrowing: number[] = []
@@ -882,6 +1008,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     }
     if (onProgress && s % 100 === 0) onProgress(s / steps)
   }
+  for (let q = 0; q < squares; q++) endFamine(q, SPAN_YEARS)
   // THE ROUTES' TREE (2026-10-26), made after the run: the shortest ways
   // from the origin over the cells reached (the quickest, at the cells'
   // speeds, ran along the rivers and the coasts in zigzags), never to a
@@ -948,6 +1075,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       population,
     },
     extinctions,
+    famines,
     region,
     knowledge,
     ms: Math.round(performance.now() - started),

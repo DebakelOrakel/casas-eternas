@@ -5,7 +5,7 @@ import type { Habitat } from './habitat'
 import { spreadPeople, type PeopleResult } from './people'
 import { PLANTS } from './plants'
 import { MEGAFAUNA, settle, type SettleResult } from './settle'
-import { iceDistance, PEOPLE_FRAME_STEP, simulate, type SimFrame, type SimulationResult } from './simulation'
+import { iceDistance, PEOPLE_FRAME_STEP, simulate, type SimFrame, type SimulationInput, type SimulationResult } from './simulation'
 import { PLANT_SUITS_CODE } from './settleShared'
 
 // THE INCUBATOR'S WORKER (2026-10-26): the habitat's cells (cells.ts), made
@@ -21,7 +21,9 @@ export type IncubatorRequest =
   | { type: 'flora' }
   | { type: 'fauna' }
   | { type: 'people'; origin: number }
-  | { type: 'simulate'; origin: number }
+  // `rain`: the rain's reliability charted (map/refinedLayers.ts, the
+  // variability and the ENSO mark; null without the save's refinement).
+  | { type: 'simulate'; origin: number; rain: { width: number; height: number; variability: Float32Array; enso: Float32Array; ensoStrength: number } | null }
   | { type: 'frame'; index: number }
   | { type: 'settle' }
 
@@ -53,6 +55,19 @@ let frameSpecies: SimulationResult['species'] = []
 // The history's extinctions (simulation.ts), null for the rules' spread.
 let historyExtinctions: SimulationResult['extinctions'] | null = null
 let historyLifeways: SimulationResult['lifeways'] | null = null
+let historyFamines: SimulationResult['famines'] | null = null
+
+// The rain's reliability at each cell's centre, from its chart.
+function rainOfCells(h: Habitat, rain: NonNullable<Extract<IncubatorRequest, { type: 'simulate' }>['rain']>): SimulationInput['rain'] {
+  const variability = new Float32Array(h.count)
+  const enso = new Float32Array(h.count)
+  for (let i = 0; i < h.count; i++) {
+    const t = Math.min(rain.height - 1, Math.floor(h.v[i] * rain.height)) * rain.width + Math.min(rain.width - 1, Math.floor(h.u[i] * rain.width))
+    variability[i] = rain.variability[t]
+    enso[i] = rain.enso[t]
+  }
+  return { variability, enso, ensoStrength: rain.ensoStrength }
+}
 
 // A layer's codes copied, for the answer; the worker keeps its own.
 const copied = <L extends { codes: Uint8Array }>(layers: L[]): L[] => layers.map((l) => ({ ...l, codes: l.codes.slice() }))
@@ -95,8 +110,9 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       // after it reads it as it read the rules' spread. Its kept states stay
       // here, sent one at a time as the playback asks (`frame`).
       if (!animals || !flora) throw new Error('the history needs the flora and the fauna first')
-      const result = simulate(h, { carrying: h.carrying ?? new Float32Array(h.count).fill(0.4), origin: ask.origin >= 0 ? ask.origin : people?.origin ?? -1, seed, bigGame: animals.filter((a) => a.id in MEGAFAUNA).map((a) => ({ id: a.id, codes: a.codes, vulnerability: MEGAFAUNA[a.id] })), crops: flora!.plants.filter((p) => FARM_PLANTS.has(p.id)), herds: animals.filter((a) => HERD_ANIMALS.has(a.id)) })
+      const result = simulate(h, { carrying: h.carrying ?? new Float32Array(h.count).fill(0.4), origin: ask.origin >= 0 ? ask.origin : people?.origin ?? -1, seed, bigGame: animals.filter((a) => a.id in MEGAFAUNA).map((a) => ({ id: a.id, codes: a.codes, vulnerability: MEGAFAUNA[a.id] })), crops: flora!.plants.filter((p) => FARM_PLANTS.has(p.id)), herds: animals.filter((a) => HERD_ANIMALS.has(a.id)), rain: ask.rain ? rainOfCells(h, ask.rain) : null })
       people = result.people
+      historyFamines = result.famines
       frames = result.kept
       frameSpecies = result.species
       historyExtinctions = result.extinctions
@@ -118,6 +134,7 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       frames = null
       historyExtinctions = null
       historyLifeways = null
+      historyFamines = null
       if (!flora) throw new Error('the people need the flora first')
       const boat = new Uint8Array(h.count)
       for (const tree of flora.trees) if (tree.woods.includes('boat')) for (let i = 0; i < h.count; i++) if (tree.codes[i] >= PLANT_SUITS_CODE) boat[i] = 1
@@ -130,7 +147,7 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
     const ruled = settle(h, { arrival: people.arrival, crops: flora.plants.filter((p) => FARM_PLANTS.has(p.id)), herds: animals.filter((a) => HERD_ANIMALS.has(a.id)), origin: people.origin, animals, seed, given: historyLifeways ?? undefined })
     // The history's extinctions in the rules' place: hunted out, not drawn.
     // The history's domesticates are the worker's own: sent as copies.
-    const result = historyExtinctions ? { ...ruled, extinctions: historyExtinctions, domestications: ruled.domestications.map((d) => ({ ...d, came: d.came.slice() })) } : ruled
+    const result = historyExtinctions ? { ...ruled, extinctions: historyExtinctions, famines: historyFamines ?? [], domestications: ruled.domestications.map((d) => ({ ...d, came: d.came.slice() })) } : ruled
     worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, ...result.domestications.map((d) => d.came.buffer), result.villageFrom.buffer, result.villageTo.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
   } catch (e) {
     worker.postMessage({ type: 'failed', message: String(e) } satisfies IncubatorAnswer)

@@ -83,6 +83,8 @@
   "incubator.chronicle.event.departure": "Aufbruch der Menschen",
   "incubator.chronicle.event.firstVillage": "Erstes Dorf",
   "incubator.chronicle.event.firstTrade": "Erster Handelsweg",
+  "incubator.chronicle.event.famine": "Hungersnot",
+  "incubator.chronicle.famineDetail": "{landmass} · {people} Menschen weniger · {villages} Dörfer aufgegeben",
   "incubator.chronicle.event.population": "Über {count} Menschen",
   "incubator.chronicle.village": "Dorf {n}",
   "incubator.chronicle.tradeDetail": "{a} – {b} · {km} km",

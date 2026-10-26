@@ -1,6 +1,7 @@
 import { MinHeap } from '../../generator/core/minHeap'
 import { hashText, kmBetween, mulberry32, type Habitat } from './habitat'
 import { SPAN_YEARS } from './peopleShared'
+import type { SimulationResult } from './simulation'
 import { CAME_NEVER, CAME_STEP, CARRYING_FULL, densityAt, extinctAt, GOODS, LIFEWAY, lifewaySince, PLANT_SUITS_CODE, sharesAt, type SettleTimes } from './settleShared'
 
 // THE INCUBATOR'S SETTLEMENT (2026-10-25, a proof of concept): the people's
@@ -135,6 +136,8 @@ export interface SettleResult {
   // the rest goes at `at` (REFUGE_LEAST; Infinity where people leave more),
   // `cell` the last to go before; and each cell's landmass (-1 at sea).
   extinctions: { id: string; landmass: number; areaKm2: number; at: number; cell: number }[]
+  // A history's famines (simulation.ts); the rules have none.
+  famines: SimulationResult['famines']
   landmass: Int32Array
 }
 
@@ -495,7 +498,7 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
   const villageFrom = given ? given.villageFrom.slice() : Float32Array.from(villageCells, (c, v) => lifewaySince(times, c, villageWays[v]))
   const villageTo = given ? given.villageTo.slice() : new Float32Array(villageCells.length).fill(Infinity)
   const extinctions = dyingOut(h, input)
-  return { lifeway, density, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm, population, centres: Float32Array.from(centres), domestications, villages: Int32Array.from(villages), villageFrom, villageTo, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: h.landmass.slice() }
+  return { lifeway, density, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm, population, centres: Float32Array.from(centres), domestications, villages: Int32Array.from(villages), villageFrom, villageTo, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, famines: [], landmass: h.landmass.slice() }
 }
 
 // 5. The big game dying out where people came new.

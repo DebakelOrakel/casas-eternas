@@ -407,3 +407,20 @@ The quickest ways, at the simulation's speeds, ran along the rivers and
 the coasts in zigzags (a line 1.27 times its chord, now 1.12). A line's
 width follows the land reached beyond it, 8 to 50 km (the people beyond,
 to 110 km, swelled it where it entered the fields).
+
+**The droughts** (the same day): the land in squares of 300 km a
+landmass (818 on Morvane). Each step a square's rain is its mean times
+1 + 0.25 × its variability (the save's, a year's: a step's mean of 25
+years varies less) × an anomaly — its own random walk (0.6 of the last),
+and in a step with a strong ENSO (30 % × the see-saw's strength) 1.5 ×
+its mark. Under 0.75 a step is dry; two in a row the stores take, more
+are a famine: the fields and the pasture give the rain's share, the
+plants and the game half the shortfall less, the people more than that
+die at once, a village under half its least is left. The famines go into
+a log of the simulation's own (`famines`); the chronicle tells those
+that cost 30 % of their square's people and 10 000 or more, the ones on
+a landmass within 1 000 years of each other as one. On Morvane some 650
+famines, 12 told (29 by the 10 000 alone, 92 by the share alone), most
+of them after the farming began; 2.7 M people lost over the span. With the
+year's variability whole and a famine from the second dry step: 71 814
+famines, 3 597 told.

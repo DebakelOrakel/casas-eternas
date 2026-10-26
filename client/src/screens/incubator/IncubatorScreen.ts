@@ -978,6 +978,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // A crossing or a species dying out tells of a landmass of
   // EVENT_LEAST_KM2 or more.
   const EVENT_LEAST_KM2 = 100_000
+  // The famines the chronicle tells, and their colour (sayChronicle).
+  const FAMINE_SHARE = 0.3
+  const FAMINE_LEAST = 10_000
+  const FAMINE_JOIN_YEARS = 1000
+  const FAMINE_RGB: [number, number, number] = [150, 110, 40]
   const CROSSING_LEAST_KM = 10
   const BOAT_RGB = [40, 120, 190] as const
   const EXTINCT_RGB = [176, 57, 44] as const
@@ -1044,6 +1049,36 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           title: t('incubator.chronicle.event.extinct', { animal: t(`animal.${e.id}.label` as TKey) }),
           detail: landmassName(e.landmass),
         }, e.cell)
+      }
+    }
+    if (settled && cellFacts) {
+      // A history's famines (simulation.ts): those that cost FAMINE_SHARE of
+      // their square's people and FAMINE_LEAST people or more; the ones on a
+      // landmass within FAMINE_JOIN_YEARS of each other told as one, at the
+      // cell of the one that cost most. On Morvane 12 (2026-10-26): with
+      // 10 000 people at least alone, 29; with the share alone, 92 — a thin
+      // square loses a third soon; their spans alone rarely touch.
+      const severe = settled.famines.filter((f) => f.before > 0 && f.lost >= FAMINE_SHARE * f.before && f.lost >= FAMINE_LEAST).sort((a, b) => a.landmass - b.landmass || a.at - b.at)
+      for (let k = 0; k < severe.length; ) {
+        const first = severe[k]
+        let to = first.to
+        let lost = 0
+        let villages = 0
+        let worst = first
+        for (; k < severe.length && severe[k].landmass === first.landmass && severe[k].at <= to + FAMINE_JOIN_YEARS; k++) {
+          const f = severe[k]
+          to = Math.max(to, f.to)
+          lost += f.lost
+          villages += f.villages
+          if (f.lost > worst.lost) worst = f
+        }
+        place({
+          time: first.at,
+          icon: '/icons/warning.png',
+          rgb: FAMINE_RGB,
+          title: t('incubator.chronicle.event.famine'),
+          detail: t('incubator.chronicle.famineDetail', { landmass: landmassName(first.landmass), people: Math.round(lost).toLocaleString(getLocale()), villages: String(villages) }),
+        }, worst.cell)
       }
     }
     if (people && cellFacts) {
@@ -1547,7 +1582,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function growPeople(history = false): Promise<void> {
     if (!overlay) return
     const done = history
-      ? await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin }, 'people')
+      ? await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, rain: refinedCharts ? { width: refinedCharts.width, height: refinedCharts.height, variability: refinedCharts.weather.rainVariability, enso: refinedCharts.weather.enso, ensoStrength: refinedCharts.ensoStrength } : null }, 'people')
       : await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people')
     if (!done || !overlay) return
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }

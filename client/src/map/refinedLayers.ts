@@ -47,8 +47,9 @@ export interface RefinedCharts {
   // Per cell of the field mesh, east and south; the year's mean wind.
   wind: { e: Float64Array; s: Float64Array; reference: number }
   currents: { e: Float64Array; s: Float64Array; reference: number }
-  // The ENSO's period, years (0: none).
+  // The ENSO's period, years (0: none), and its strength, 0 … 1.
   ensoPeriodYears: number
+  ensoStrength: number
   domain: Domain
 }
 
@@ -109,6 +110,7 @@ export function chartRefined(domain: Domain, refined: RefinedClimate): RefinedCh
     wind: { e: windE, s: windS, reference: referenceSpeed(windE, windS) },
     currents: { e: currentE, s: currentS, reference: referenceSpeed(currentE, currentS) },
     ensoPeriodYears: refined.reliability.ensoPeriodYears,
+    ensoStrength: refined.reliability.ensoStrength,
     domain,
   }
 }
