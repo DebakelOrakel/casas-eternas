@@ -27,6 +27,8 @@ const { createServer } = await import(new URL('../../client/node_modules/vite/di
 const server = await createServer({ root: CLIENT, server: { middlewareMode: true, hmr: false }, appType: 'custom', logLevel: 'error' })
 const L = (p) => server.ssrLoadModule(p)
 const { buildCells } = await L('/src/screens/incubator/cells.ts')
+const { growFlora } = await L('/src/screens/incubator/flora.ts')
+const { populate } = await L('/src/screens/incubator/fauna.ts')
 const { Biome } = await L('/src/generator/climate/biomes.ts')
 const { KOPPEN_CODES } = await L('/src/generator/climate/koppen.ts')
 const { ECOLOGY_FINE_OCEAN, ECOLOGY_FINE_STEP } = await L('/src/generator/ecology/ecologyField.ts')
@@ -182,6 +184,27 @@ for (const kind of ['torus', 'sphere']) {
   for (const name of ['landmass', 'nbrStart', 'nbr']) same(`${kind} ${name}`, h[name], rs.ints(name))
   same(`${kind} landmassKm2`, h.landmassKm2, rs.landmassKm2())
   same(`${kind} scalars`, Float64Array.of(h.landCount, h.landmasses, h.radiusKm, h.widthKm, h.heightKm), rs.scalars())
+
+  // The flora and the fauna.
+  let t0 = performance.now()
+  const flora = growFlora(h, world.seed)
+  const fauna = populate(h, world.seed)
+  const tsGrow = performance.now() - t0
+  t0 = performance.now()
+  rs.growFlora(world.seed)
+  rs.populate(world.seed)
+  const rsGrow = performance.now() - t0
+  const layers = [...flora.plants, ...flora.trees]
+  const joined = (list) => {
+    const out = new Uint8Array(list.length * h.count)
+    list.forEach((l, k) => out.set(l.codes, k * h.count))
+    return out
+  }
+  same(`${kind} flora codes`, joined(layers), rs.floraCodes())
+  same(`${kind} flora shares`, Float64Array.from(layers.flatMap((l) => [l.suitable, l.reached, l.empty])), rs.floraShares())
+  same(`${kind} fauna codes`, joined(fauna), rs.faunaCodes())
+  same(`${kind} fauna shares`, Float64Array.from(fauna.flatMap((l) => [l.suitable, l.reached, l.empty])), rs.faunaShares())
+  console.log(`history: ${kind} — ${layers.filter((l) => l.reached > 0).length} of ${layers.length} plants and trees, ${fauna.filter((l) => l.reached > 0).length} of ${fauna.length} animals (TS ${Math.round(tsGrow)} ms, WASM ${Math.round(rsGrow)} ms)`)
   rs.free()
 }
 

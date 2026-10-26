@@ -4,6 +4,7 @@
 //! incubator's worker's state: the habitat made once a world, then what is
 //! grown and run on it.
 
+use casas_history::flora::{Layer, grow_flora, populate};
 use casas_history::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
 use wasm_bindgen::prelude::*;
 
@@ -17,6 +18,24 @@ pub fn version() -> String {
 pub struct Incubator {
     habitat: Habitat,
     owners: Vec<i32>,
+    // The plants and the trees, the animals, in the catalog's order.
+    flora: Vec<Layer>,
+    fauna: Vec<Layer>,
+}
+
+/// The layers' codes one after the other, and their shares of the land
+/// ([suitable, reached, empty] a layer).
+fn codes_of(layers: &[Layer]) -> Vec<u8> {
+    layers
+        .iter()
+        .flat_map(|l| l.codes.iter().copied())
+        .collect()
+}
+fn shares_of(layers: &[Layer]) -> Vec<f64> {
+    layers
+        .iter()
+        .flat_map(|l| [l.suitable, l.reached, l.empty])
+        .collect()
 }
 
 #[wasm_bindgen]
@@ -75,7 +94,43 @@ impl Incubator {
             rivers,
         };
         let (habitat, owners) = build_cells(&input);
-        Incubator { habitat, owners }
+        Incubator {
+            habitat,
+            owners,
+            flora: Vec::new(),
+            fauna: Vec::new(),
+        }
+    }
+
+    /// The plants, then the trees (flora.rs grow_flora), kept.
+    #[wasm_bindgen(js_name = growFlora)]
+    pub fn grow_flora(&mut self, seed: f64) {
+        let (plants, trees) = grow_flora(&self.habitat, seed);
+        self.flora = plants.into_iter().chain(trees).collect();
+    }
+
+    /// The animals (flora.rs populate), kept.
+    pub fn populate(&mut self, seed: f64) {
+        self.fauna = populate(&self.habitat, seed);
+    }
+
+    /// The flora's codes, a layer after the other (`count` each), and its
+    /// shares; the fauna's.
+    #[wasm_bindgen(js_name = floraCodes)]
+    pub fn flora_codes(&self) -> Vec<u8> {
+        codes_of(&self.flora)
+    }
+    #[wasm_bindgen(js_name = floraShares)]
+    pub fn flora_shares(&self) -> Vec<f64> {
+        shares_of(&self.flora)
+    }
+    #[wasm_bindgen(js_name = faunaCodes)]
+    pub fn fauna_codes(&self) -> Vec<u8> {
+        codes_of(&self.fauna)
+    }
+    #[wasm_bindgen(js_name = faunaShares)]
+    pub fn fauna_shares(&self) -> Vec<f64> {
+        shares_of(&self.fauna)
     }
 
     pub fn count(&self) -> usize {
