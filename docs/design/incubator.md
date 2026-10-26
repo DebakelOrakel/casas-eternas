@@ -52,9 +52,12 @@ after, maybe in detMath or in the engine.
   far as level 1 holds detail. The chart worker (`chartWorker.ts`) paints
   the terrain and keeps the level-1 node under each texel (a map at half
   the chart's size), so everything per node can be read per texel.
-- **The steps.** A step bar as the generator's: 1 Flora, 2 Fauna,
-  3 People, and a Testing step aside (T) for the demos. A step computes by
-  itself when the world is shown, under the progress pill (`ui/progressPill`).
+- **The steps.** A step bar as the generator's: 1 People, and a Testing
+  step aside (T) for the demos. The flora and the fauna were steps 1 and 2
+  until 2026-10-26; they are grown on the way in now, with the habitat's
+  cells, as rows of the load panel (`ui/loadPanel`), their layers in the
+  panel in every step. The people's preview (the rules) follows in its
+  step, under the progress pill (`ui/progressPill`).
 - **The layer panel** (`layerPanel.ts`, 2026-10-26, after the design
   canvas's "Overlays in Gruppen"): a column of its own beside the left
   one, shown and hidden by a button in it. Every layer, in every step:
@@ -134,7 +137,7 @@ A module the screen imports must not set `self.onmessage`: in the window,
 that handler is the window's. What the screen and the worker share lives in
 modules of its own (`peopleShared.ts`, `settleShared.ts`).
 
-## Step 1 — the flora
+## The flora
 
 What people eat and use of the wild plants (`plants.ts`, 39 archetypes,
 named after the real species they stand for) and the wood they cut
@@ -154,7 +157,7 @@ cell. The aim: every cell where gathering can feed people has starch,
 fat or protein and fruit in reach; the tundra and the desert keep their
 gaps.
 
-## Step 2 — the fauna
+## The fauna
 
 The animals people hunt, tame, fish, wear or fear (`animals.ts`, 23
 archetypes), with the same niche and range as the plants (`fauna.ts`).
@@ -164,7 +167,7 @@ the herbivores share the ecology's game, each by its niche among those in
 range; a predator follows the herbivores in its range; the animals of the
 water are their niche. Shown by use: hunt, tame, water, fur, danger.
 
-From step 3 on, the animals change with the time shown: the hunt thins the
+Once people are shown, the animals change with the time shown: the hunt thins the
 hunted ones by the people's density, the herds and the fields push the
 wild herbivores and the predators back (by the lifeways' shares), and the
 big game dies out on a landmass the people came to new, by its chance,
@@ -174,7 +177,7 @@ people's front; once less than a tenth of its cells are left, the rest go
 too. On Morvane 16 of 29 such cases end in the span; the others keep a
 larger part where people never came.
 
-## Step 3 — the people
+## The people
 
 **The spread** (`people.ts`). From one origin (a click, or the land that
 feeds best in a tropical class), the cheapest ways in years over the
@@ -242,7 +245,7 @@ On Morvane at the end: two farming and two herding centres, 17.7 M people
 (13 M of them farmers), 640 villages; one cell in twelve that people
 reached holds two lifeways or more.
 
-The layers of step 3, in order: the spread, the lifeways or the density
+The people's layers, in order: the spread, the lifeways or the density
 (one at a time), the trade, the villages, the sources, the centres with
 the origin (on by default).
 
@@ -269,7 +272,7 @@ removed again do not.
 
 ## One history, and later a simulation
 
-The steps compute in turn but are not three simulations: the flora and
+The flora, the fauna and the people compute in turn but are not three simulations: the flora and
 the fauna are maps, and the people's part is a time per cell (when people,
 the fields, the herds came; when an animal went), from which the state at
 any time is a function. That is fast (some 12 s on Morvane for all of it)

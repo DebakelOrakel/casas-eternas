@@ -1,8 +1,4 @@
 {
-  "incubator.step.flora.label": "Flora",
-  "incubator.step.flora.help": "Die wilden Pflanzen der Welt: wo sie wachsen und was sie den Menschen geben.",
-  "incubator.step.fauna.label": "Fauna",
-  "incubator.step.fauna.help": "Die wilden Tiere der Welt: wo sie leben und wie viele.",
   "incubator.step.people.label": "Menschen",
   "incubator.step.people.help": "Wie sich die Menschen von ihrem Ursprung über die Welt ausbreiten.",
   "incubator.step.testing.label": "Testing",
@@ -10,6 +6,9 @@
   "incubator.load.title": "Welt wählen",
   "incubator.load.subtitle": "Nur auf dem Server verfeinerte Welten (Stufe 1) lassen sich inkubieren.",
   "incubator.load.noLevel": "Noch keine Stufe 1",
+  "incubator.load.step.cells": "Lebensräume anlegen",
+  "incubator.load.step.flora": "Pflanzen wachsen lassen",
+  "incubator.load.step.fauna": "Tiere ansiedeln",
   "incubator.section.plants.label": "Pflanzen",
   "incubator.section.plants.help": "Die wilden Pflanzen, die Menschen nutzen — eine Auswahl ersetzt die vorige.",
   "incubator.plants.missing": "Der Welt fehlen Felder.",

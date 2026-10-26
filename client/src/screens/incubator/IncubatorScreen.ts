@@ -101,18 +101,19 @@ import '../generator/overlayList.css'
 // used now; they stay for later.)
 //
 // THE STEPS (2026-10-25), along the foot as in the generator, numbered
-// from 1: the world is chosen in the list, not in a step. 1 the flora —
-// the wild plants and the trees; 2 the fauna — the animals; 3 the people —
+// from 1: the world is chosen in the list, not in a step. 1 the people —
 // their spread from one origin over the world, played; and set apart
 // at the end, as the generator's migration, T the testing — the trials
-// that have no step of their own (the catchments). The terrain colour is a layer that can
+// that have no step of their own (the catchments). The flora and the
+// fauna were steps 1 and 2 until 2026-10-26: they are grown on the way in
+// now (growWorld), their layers in the panel in every step. The terrain colour is a layer that can
 // be switched off: then the land is the bare paper, white with its
 // hillshade, as on the generator's map. The load panel shows the steps of an
 // open and which one failed; why it failed goes to the console. Over the
 // map, the generator's hover card for the level's node under the pointer.
 
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
-const STEPS = ['flora', 'fauna', 'people', 'testing'] as const
+const STEPS = ['people', 'testing'] as const
 
 // The ecology's fields the incubator shows: all fourteen the level's
 // artifact holds (docs/decisions/level-waters.md), with their icons as the
@@ -503,7 +504,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let plantShown: PlantUse | null = null
   // The wood shown, or null; one of the two at a time.
   let woodShown: WoodUse | null = null
-  // The animals of animals.ts, and the use shown (the fauna's step).
+  // The animals of animals.ts, and the use shown (the animals' group).
   let animals: AnimalLayer[] | null = null
   let animalShown: AnimalUse | null = null
   // The people's spread (people.ts), the time shown (years from the
@@ -1495,44 +1496,54 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let cellsInput: Extract<IncubatorRequest, { type: 'cells' }> | null = null
   // A step's work in the worker under the pill; the world it was asked for
   // still shown, or nothing.
-  async function work<T extends IncubatorAnswer['type']>(label: string, request: IncubatorRequest, type: T): Promise<Extract<IncubatorAnswer, { type: T }> | null> {
+  // While a world opens (`loadStep`: its row in the load panel) the panel
+  // shows the work instead of the pill; the caller marks the row done.
+  async function work<T extends IncubatorAnswer['type']>(label: string, request: IncubatorRequest, type: T, loadStep?: string): Promise<Extract<IncubatorAnswer, { type: T }> | null> {
     const world = shownWorld
-    progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
+    if (loadStep) loadPanel.start(loadStep)
+    else progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
     const answer = await incubator.ask(request)
     if (shownWorld !== world) return null
     progressPill.hide()
     if (!answer || answer.type !== type) {
       plantStatus.textContent = t('incubator.plants.failed')
+      if (loadStep) loadPanel.fail(loadStep)
       return null
     }
     console.info(`[incubator] ${type}, ${answer.type === 'failed' ? 0 : answer.ms} ms`)
     return answer as Extract<IncubatorAnswer, { type: T }>
   }
-  // The world's steps in turn: the cells, the flora, the fauna, the people
-  // and their settlement.
-  async function growWorld(): Promise<void> {
+  // What the world opens with, in turn: the cells, the flora, the fauna —
+  // rows of the load panel (2026-10-26; after it, under the pill, while the
+  // map was shown). False where one failed. The people follow in their
+  // step, under the pill (showLevel).
+  async function growWorld(): Promise<boolean> {
     if (!cellsInput) {
       console.warn('[incubator] the habitat needs level 1\'s land fields')
       plantStatus.textContent = t('incubator.plants.missing')
-      return
+      loadPanel.fail('cells')
+      return false
     }
-    const cells = await work(t('incubator.step.flora.label'), cellsInput, 'cells')
-    if (!cells) return
+    const cells = await work(t('incubator.section.plants.label'), cellsInput, 'cells', 'cells')
+    if (!cells) return false
+    loadPanel.done('cells')
     overlay = { data: new Uint8ClampedArray(cells.owners.length * 4), width: CHART_WIDTH / OVERLAY_DIVISOR, height: CHART_HEIGHT / OVERLAY_DIVISOR, owners: cells.owners, count: cells.count, u: cells.u, v: cells.v }
     const rank = new Int32Array(cells.landmassKm2.length)
     Array.from(cells.landmassKm2.keys()).sort((a, b) => cells.landmassKm2[b] - cells.landmassKm2[a]).forEach((m, k) => (rank[m] = k + 1))
     cellFacts = { landmass: cells.landmass, landmassKm2: cells.landmassKm2, areaKm2: cells.areaKm2, rank, iceKm: cells.iceKm, seaDepthM: cells.seaDepthM, land: cells.land }
-    const flora = await work(t('incubator.step.flora.label'), { type: 'flora' }, 'flora')
-    if (!flora) return
+    const flora = await work(t('incubator.section.plants.label'), { type: 'flora' }, 'flora', 'flora')
+    if (!flora) return false
+    loadPanel.done('flora')
     plants = { layers: flora.plants, trees: flora.trees }
     hoverTooltip.refresh()
     showPlants()
-    const fauna = await work(t('incubator.step.fauna.label'), { type: 'fauna' }, 'fauna')
-    if (!fauna) return
+    const fauna = await work(t('incubator.section.animals.label'), { type: 'fauna' }, 'fauna', 'fauna')
+    if (!fauna) return false
+    loadPanel.done('fauna')
     animals = fauna.animals
     hoverTooltip.refresh()
     showPlants()
-    await growPeople()
+    return true
   }
   // The people, from the origin clicked or chosen, then their settlement.
   // THE HISTORY'S PLAYBACK (DES-0033): the kept state at the time shown —
@@ -1579,12 +1590,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return null
   }
   // `history`: the simulation's (simulation.ts) instead of the rules'.
-  async function growPeople(history = false): Promise<void> {
-    if (!overlay) return
+  // `loadStep`: the load panel's row, as the world opens (work). False
+  // where it failed.
+  async function growPeople(history = false, loadStep?: string): Promise<boolean> {
+    if (!overlay) return false
     const done = history
-      ? await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, rain: refinedCharts ? { width: refinedCharts.width, height: refinedCharts.height, variability: refinedCharts.weather.rainVariability, enso: refinedCharts.weather.enso, ensoStrength: refinedCharts.ensoStrength } : null }, 'people')
-      : await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people')
-    if (!done || !overlay) return
+      ? await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, rain: refinedCharts ? { width: refinedCharts.width, height: refinedCharts.height, variability: refinedCharts.weather.rainVariability, enso: refinedCharts.weather.enso, ensoStrength: refinedCharts.ensoStrength } : null }, 'people', loadStep)
+      : await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people', loadStep)
+    if (!done || !overlay) return false
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
     historyFrames = history ? new Map() : null
     framesAsked.clear()
@@ -1598,8 +1611,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     routeWidths = null
     showPlants()
     sayChronicle()
-    const result = await work(t('incubator.step.people.label'), { type: 'settle' }, 'settle')
-    if (!result) return
+    const result = await work(t('incubator.step.people.label'), { type: 'settle' }, 'settle', loadStep)
+    if (!result) return false
     const { type: _type, ms: _ms, ...rest } = result
     settled = rest
     settledAtTime = null
@@ -1609,6 +1622,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     animalsAtTime.clear()
     showPlants()
     sayChronicle()
+    return true
   }
   // The picks' plants, wood or animals on the map, and their legend.
   function showPlants(): void {
@@ -2184,7 +2198,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     plantStatus.textContent = ''
     plantLegend.refresh()
     if (regionBox.checked) void showRegions()
-    void growWorld()
     // The level's rivers, from the world raster's texels to the chart's.
     if (level.rivers) {
       const points = Float32Array.from(level.rivers.points)
@@ -2197,8 +2210,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       view.rivers.setEnabled(true)
     }
     step('shown')
+    loadPanel.done('paint')
+    if (!(await growWorld())) return false
+    step('grown')
     loadPanel.close()
     held = { uid, name: '', seed: '', worldId: chosen.worldId }
+    void growPeople()
     return true
   }
 
@@ -2246,6 +2263,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         { id: 'read', labelKey: 'common.loading.step.read' },
         { id: 'level', labelKey: 'common.loading.step.level', weight: 2 },
         { id: 'paint', labelKey: 'common.loading.step.paint', weight: 4 },
+        { id: 'cells', labelKey: 'incubator.load.step.cells', weight: 6 },
+        { id: 'flora', labelKey: 'incubator.load.step.flora', weight: 2 },
+        { id: 'fauna', labelKey: 'incubator.load.step.fauna', weight: 2 },
       ],
     })
     loadPanel.start('fetch')

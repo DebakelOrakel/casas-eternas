@@ -1,8 +1,4 @@
 {
-  "incubator.step.flora.label": "Flora",
-  "incubator.step.flora.help": "The world's wild plants: where they grow and what they give people.",
-  "incubator.step.fauna.label": "Fauna",
-  "incubator.step.fauna.help": "The wild animals of the world: where they live, and how many.",
   "incubator.step.people.label": "People",
   "incubator.step.people.help": "How people spread from where they began over the world.",
   "incubator.step.testing.label": "Testing",
@@ -10,6 +6,9 @@
   "incubator.load.title": "Choose a world",
   "incubator.load.subtitle": "Only worlds refined on the server (level 1) can be incubated.",
   "incubator.load.noLevel": "No level 1 yet",
+  "incubator.load.step.cells": "Lay out the habitats",
+  "incubator.load.step.flora": "Grow the plants",
+  "incubator.load.step.fauna": "Settle the animals",
   "incubator.section.plants.label": "Plants",
   "incubator.section.plants.help": "The wild plants people use — one pick replaces the last.",
   "incubator.plants.missing": "The world lacks fields.",
