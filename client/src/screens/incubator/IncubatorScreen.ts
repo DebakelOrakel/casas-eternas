@@ -368,7 +368,7 @@ const LIFEWAY_KEYS: Record<number, TKey> = { 1: 'incubator.lifeway.foragers', 2:
 // shows (SETTLEMENT_PICKS), as the generator's layers.
 const PEOPLE_ROWS: readonly { id: string; helpBase: string; icon: string }[] = [
   { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' },
-  { id: 'people:trade', helpBase: 'incubator.people.trade', icon: '/icons/network.png' },
+  { id: 'people:trade', helpBase: 'incubator.people.trade', icon: '/icons/trade.png' },
   { id: 'people:villages', helpBase: 'incubator.people.villages', icon: '/icons/village.png' },
   { id: 'people:centres', helpBase: 'incubator.people.centres', icon: '/icons/wheat.png' },
   { id: 'people:sources', helpBase: 'incubator.people.sources', icon: '/icons/stone_axe.png' },
