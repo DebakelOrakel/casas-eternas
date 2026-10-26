@@ -35,6 +35,7 @@ import { OVERLAY_META, overlayKey } from '../generator/overlays'
 import { CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols, type ChartSize, type VolcanoMark } from '../generator/mapSymbols'
 import { collectVolcanoes } from '../../generator/tectonics/volcanoes'
 import { Biome } from '../../generator/climate/biomes'
+import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { CLIMATE_WASHES, climateWashAvailable, climateWashLegend, paintClimateWash, type ClimateClasses, type ClimateFields, type ClimateWash } from '../../map/climateLayers'
 import { cratonAgeLegend, hotspotLegend, mantleLegend, mantleRaster, paintCratonAge, paintMantle, volcanoLegend, type MantleRaster } from '../../map/geologyLayers'
 import { computeRaftLabelPlacements } from '../../generator/render/raftLabelLayout'
@@ -469,7 +470,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // save's on its chart (level 1 has none of its own; the classes, Köppen
   // and biome, are level 1's, and so is the coast the washes keep to).
   // The land's washes, the pressure among them (the refinement's).
-  let climateShown: ClimateWash | 'pressure' | null = null
+  let climateShown: ClimateWash | null = null
   let climateFields: ClimateFields | null = null
   // The refinement's layers (map/refinedLayers.ts): the sea's wash, the
   // weather's, on the save's refinement charted; the pressure's picture at
@@ -480,7 +481,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let pressureShown: PressurePicture | null = null
   // The wind's streaks and the currents' arrows, switched as the global
   // layers; their marks made once a world.
-  const flowOn: Record<string, boolean> = { 'flow:wind': false, 'flow:currents': false }
+  // The climate's layers over land and sea, switches (2026-10-26): the
+  // temperature's and the pressure's washes, the wind's and the currents'
+  // marks.
+  const flowOn: Record<string, boolean> = { 'flow:temperature': false, 'flow:pressure': false, 'flow:wind': false, 'flow:currents': false }
   let flowMarked: { charts: RefinedCharts; view: WorldView; wind: boolean; currents: boolean } | null = null
   // The geology's switches and its marks: the volcanoes and the plumes of
   // the save's snapshot, on the world raster's texels.
@@ -633,7 +637,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         if (keep !== 'weather') weatherShown = null
       }
       if (id === NO_CLIMATE || id.startsWith('climate:')) {
-        climateShown = id === NO_CLIMATE ? null : (id.slice('climate:'.length) as ClimateWash | 'pressure')
+        climateShown = id === NO_CLIMATE ? null : (id.slice('climate:'.length) as ClimateWash)
         if (climateShown) area('climate')
         showPlants()
         return
@@ -713,8 +717,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     title: 'generator.section.land',
     rows: [
       { id: NO_CLIMATE, helpBase: 'overlay.none', icon: '/icons/clear.png' },
-      ...CLIMATE_WASHES.map((w) => ({ id: `climate:${w}`, helpBase: overlayKey(w), icon: OVERLAY_META[w].icon })),
-      { id: 'climate:pressure', helpBase: overlayKey('pressure'), icon: OVERLAY_META.pressure.icon },
+      ...CLIMATE_WASHES.filter((w) => w !== 'temperature').map((w) => ({ id: `climate:${w}`, helpBase: overlayKey(w), icon: OVERLAY_META[w].icon })),
     ],
   }
   const SEA_PICKS = {
@@ -732,6 +735,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ],
   }
   const FLOW_ROWS = [
+    { id: 'flow:temperature', helpBase: overlayKey('temperature'), icon: OVERLAY_META.temperature.icon },
+    { id: 'flow:pressure', helpBase: overlayKey('pressure'), icon: OVERLAY_META.pressure.icon },
     { id: 'flow:wind', helpBase: overlayKey('wind'), icon: OVERLAY_META.wind.icon },
     { id: 'flow:currents', helpBase: overlayKey('currents'), icon: OVERLAY_META.currents.icon },
   ]
@@ -1095,7 +1100,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (id === 'geo:mantle') return { on: geoOn[id], available: geology?.mantle != null }
       if (id in geoOn) return { on: geoOn[id], available: geology !== null }
       if (id === NO_CLIMATE) return { on: climateShown === null, available: true }
-      if (id === 'climate:pressure') return { on: climateShown === 'pressure', available: refinedCharts !== null }
+      if (id === 'flow:temperature') return { on: flowOn[id], available: climateFields?.temperature != null }
       if (id.startsWith('climate:')) return { on: id === `climate:${climateShown}`, available: climateWashAvailable(id.slice('climate:'.length) as ClimateWash, climateFields, climateClasses()) }
       if (id === NO_SEA) return { on: seaShown === null, available: true }
       if (id.startsWith('sea:')) return { on: id === `sea:${seaShown}`, available: refinedCharts !== null }
@@ -1171,6 +1176,41 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const onLevelLand = (t: number): boolean => probe !== null && probe.land.land[probe.nodes[t]] === 1
   // The Köppen classes level 1's land has, for the legend.
   let koppenPresent: Set<number> | null = null
+  // THE CLIMATE AT THE POINTER (2026-10-26, variant A): the save's fields
+  // at the chart point (u, v), its chart's texel under it — the year's
+  // temperature, everywhere, and the rain on the land; and the value of the
+  // climate layer shown, where it has one. Coarse, and of level 0's
+  // heights: level 1 has no climate of its own.
+  function climateRows(u: number, v: number, onLand: boolean): ProbeRow[] {
+    const at = (field: Float32Array, width: number, height: number): number =>
+      field[Math.min(height - 1, Math.floor(v * height)) * width + Math.min(width - 1, Math.floor(u * width))]
+    const rows: ProbeRow[] = []
+    const f = climateFields
+    if (f?.temperature) rows.push({ label: t('readout.row.temperature'), value: formatValue(String(Math.round(at(f.temperature, f.width, f.height))), 'common.unit.celsius') })
+    if (onLand && f?.precipitation) {
+      const mm = at(f.precipitation, f.width, f.height)
+      if (mm !== OCEAN_PRECIP) rows.push({ label: t('readout.row.precipitation'), value: formatValue(String(Math.round(mm)), 'common.unit.millimetresPerYear') })
+    }
+    if (onLand && climateShown === 'monsoon' && f?.monsoon) {
+      const m = at(f.monsoon, f.width, f.height)
+      if (m !== OCEAN_PRECIP) rows.push({ label: t('readout.row.monsoon'), value: Math.abs(m).toFixed(2) })
+    }
+    const c = refinedCharts
+    if (!c) return rows
+    if (flowOn['flow:pressure']) rows.push({ label: t('readout.row.pressure'), value: formatValue(String(Math.round(at(c.pressure, c.width, c.height))), 'common.unit.hectopascal') })
+    if (!onLand && seaShown === 'salinity') rows.push({ label: t('readout.row.salinity'), value: formatValue(at(c.salinity, c.width, c.height).toFixed(1), 'common.unit.psu') })
+    if (!onLand && seaShown === 'upwelling' && c.upwellingPeak > 0) {
+      rows.push({ label: t('readout.row.upwelling'), value: formatValue(String(Math.round(100 * Math.max(0, Math.min(1, at(c.upwelling, c.width, c.height) / c.upwellingPeak)))), 'common.unit.percent') })
+    }
+    if (onLand && weatherShown) {
+      const w = at(c.weather[weatherShown], c.width, c.height)
+      if (Math.abs(w) > 0.005) {
+        const shown = weatherShown === 'enso' ? `${w > 0 ? '+' : '−'}${Math.round(100 * Math.abs(w))}` : String(Math.round(100 * w))
+        rows.push({ label: t(`overlay.${weatherShown}.label` as TKey), value: formatValue(shown, 'common.unit.percent') })
+      }
+    }
+    return rows
+  }
   function describeNode(x: number, y: number): HTMLElement | null {
     if (!probe) return null
     const node = probe.nodes[(y >> 1) * (CHART_WIDTH >> 1) + (x >> 1)]
@@ -1182,14 +1222,17 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       kind: onLand ? t('readout.kind.land') : t('readout.kind.ocean'),
       land: onLand,
       highlights: onLand ? [...(koppen > 0 ? [t(koppenLabelKey(koppen) as TKey)] : []), t(biomeLabelKey(probe.land.biome[node]) as TKey)] : [],
-      rows: onLand ? [
+      rows: [
+        ...climateRows(x / CHART_WIDTH, y / CHART_HEIGHT, onLand),
+        ...(onLand ? [
         ...[...TOOLTIP_FIELDS, ...(picked && !TOOLTIP_FIELDS.includes(picked) ? [picked] : [])].flatMap((id) => {
           const code = probe!.land.ecology[id]?.[node]
           return code === undefined || code === ECOLOGY_FINE_OCEAN ? [] : [{ label: t(`resource.${id}.label` as TKey), value: formatValue(String(Math.round(decodeFineValue(code) * 100)), 'common.unit.percent') }]
         }),
         // The trials' rows at the world cell under the pointer.
         ...(overlay ? stepTrials().flatMap((l) => l.probe(overlay!.owners[(y >> 1) * overlay!.width + (x >> 1)])) : []),
-      ] : [],
+        ] : []),
+      ],
       months: t('readout.months').split(','),
       charts: [],
     })
@@ -1464,7 +1507,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   })
   // Every step shows every layer (layerPanel.ts, 2026-10-26): the steps
   // compute, the panel chooses.
-  const ALL_STEPS = STEPS.filter((id) => id !== 'testing')
+  const ALL_STEPS = STEPS
   const TRIALS: readonly TrialLayer[] = [
     {
       // The geology (map/geologyLayers.ts): the mantle's and the cratons'
@@ -1487,6 +1530,25 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ],
       probe: () => [],
     },
+    {
+      // The climate's washes over land and sea (switches): the temperature,
+      // the pressure with its isobars; under the other layers.
+      steps: ALL_STEPS,
+      on: () => flowOn['flow:temperature'] || flowOn['flow:pressure'],
+      paint: (o) => {
+        const target = washTarget(o)
+        if (flowOn['flow:temperature']) paintClimateWash(target, 'temperature', climateFields, null)
+        if (flowOn['flow:pressure'] && refinedCharts) {
+          if (!pressureShown || pressureShown.width !== o.width) pressureShown = pressurePicture(refinedCharts, o.width, o.height)
+          paintPressure(target, pressureShown)
+        }
+      },
+      legend: () => [
+        ...(flowOn['flow:temperature'] ? [climateWashLegend('temperature')] : []),
+        ...(flowOn['flow:pressure'] && refinedCharts ? [pressureLegend()] : []),
+      ],
+      probe: () => [],
+    },
     groupLayer(ALL_STEPS, (cell) => (animalShown ? animalsAt(cell) : plantsAt(cell))),
     {
       // The climate's wash (map/climateLayers.ts).
@@ -1494,17 +1556,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       on: () => climateShown !== null,
       paint: (o) => {
         if (!climateShown || !probe || probe.nodes.length !== o.width * o.height) return
-        if (climateShown !== 'pressure') {
-          paintClimateWash(washTarget(o), climateShown, climateFields, climateClasses(), onLevelLand)
-          return
-        }
-        if (!refinedCharts) return
-        if (!pressureShown || pressureShown.width !== o.width) pressureShown = pressurePicture(refinedCharts, o.width, o.height)
-        paintPressure(washTarget(o), pressureShown)
+        paintClimateWash(washTarget(o), climateShown, climateFields, climateClasses(), onLevelLand)
       },
       legend: () => {
         if (!climateShown) return []
-        if (climateShown === 'pressure') return [pressureLegend()]
         if (climateShown === 'koppen' && !koppenPresent && probe) {
           koppenPresent = new Set()
           for (let v = 0; v < probe.land.koppen.length; v++) if (probe.land.land[v]) koppenPresent.add(probe.land.koppen[v])
@@ -1550,7 +1605,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     {
       // TRIAL: the end state, drawn over the spread.
-      steps: ['people'],
+      steps: ALL_STEPS,
       on: () => settled !== null && (settlementShown === 'lifeway' || settlementShown === 'density' || peopleOn['people:trade'] || peopleOn['people:centres']),
       paint: (o) => {
         if (!settled) return
@@ -2008,7 +2063,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlayList.setGroups([
       { title: 'incubator.layers.global', kind: 'any', rows: [{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }, ...PEOPLE_ROWS] },
       { title: 'incubator.layers.geology', kind: 'any', rows: GEOLOGY_ROWS },
-      { title: 'incubator.layers.flows', kind: 'any', rows: FLOW_ROWS },
+      { title: 'incubator.layers.climate', kind: 'any', rows: FLOW_ROWS },
       one(SETTLEMENT_PICKS),
       one(PLANT_PICKS),
       one(WOOD_PICKS),

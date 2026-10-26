@@ -69,10 +69,13 @@ after, maybe in detMath or in the engine.
   and the water balance exist only on the save's climate chart (256 × 128
   on Morvane), a coastal texel on its sea taking the nearest land value.
   The refinement's (`map/refinedLayers.ts`, the year's mean where it has
-  months): the pressure with its isobars among the land's washes; the
-  sea's (upwelling, salt) on level 1's sea, free to combine; the weather's
-  nine on its land; the wind's streaks with its calm belts and the
-  currents' arrows as switches of a group of their own. The geology's
+  months): the sea's (upwelling, salt) on level 1's sea, free to combine;
+  the weather's nine on its land. A group "Climate" of switches over land
+  and sea: the temperature and the pressure with its isobars, washes under
+  the other layers; the wind's streaks with its calm belts; the currents'
+  arrows. The tooltip reads the save's temperature and rain at the
+  pointer, and the value of the climate layer shown (coarse: level 1 has
+  no climate of its own). The geology's
   (`map/geologyLayers.ts`), switches: the volcanoes, the plumes and the
   continents' names of the save's snapshot; the cratons' age, level 1's
   per node; the mantle's buoyancy, the save's field mesh (`World.meshField`),

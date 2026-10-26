@@ -78,7 +78,6 @@
   "incubator.layers.geology": "Geology",
   "incubator.layers.climateLand": "Climate: land",
   "incubator.layers.climateSea": "Climate: sea",
-  "incubator.layers.flows": "Wind and currents",
   "incubator.epoch.paleolithic": "Palaeolithic",
   "incubator.epoch.neolithic": "Neolithic",
   "incubator.chronicle.event.departure": "The people set out",
@@ -87,5 +86,6 @@
   "incubator.chronicle.event.population": "Over {count} people",
   "incubator.chronicle.village": "Village {n}",
   "incubator.chronicle.tradeDetail": "{a} – {b} · {km} km",
-  "incubator.chronicle.populationDetail": "{villages} villages · {centres} centres"
+  "incubator.chronicle.populationDetail": "{villages} villages · {centres} centres",
+  "incubator.layers.climate": "Climate"
 }
