@@ -131,7 +131,7 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
     // The history's extinctions in the rules' place: hunted out, not drawn.
     // The history's domesticates are the worker's own: sent as copies.
     const result = historyExtinctions ? { ...ruled, extinctions: historyExtinctions, domestications: ruled.domestications.map((d) => ({ ...d, came: d.came.slice() })) } : ruled
-    worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, ...result.domestications.map((d) => d.came.buffer), result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
+    worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, ...result.domestications.map((d) => d.came.buffer), result.villageFrom.buffer, result.villageTo.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
   } catch (e) {
     worker.postMessage({ type: 'failed', message: String(e) } satisfies IncubatorAnswer)
   }

@@ -3,8 +3,8 @@ import { MinHeap } from '../../generator/core/minHeap'
 import { kmBetween, mulberry32, type Habitat } from './habitat'
 import type { PeopleResult } from './people'
 import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
-import type { SettleLifeways } from './settle'
-import { CAME_NEVER, CAME_STEP, LIFEWAY, PLANT_SUITS_CODE } from './settleShared'
+import { FISH_RICH, POPULATION_STEP, ringsAround, VILLAGE_LEAST, VILLAGE_RADIUS, type SettleLifeways } from './settle'
+import { CAME_NEVER, CAME_STEP, LIFEWAY, PLANT_SUITS_CODE, SETTLE_AFTER } from './settleShared'
 import { climateHistoryOf, coldShare, iceMayCover, ICE_REACH_KM } from './climateHistory'
 
 // THE INCUBATOR'S SIMULATION, its skeleton (2026-10-26, DES-0033 step 2):
@@ -120,12 +120,30 @@ const CAPACITY_MOVED = 0.02
 // at once, its herd animals HERD_LAG later; a herding centre its herd
 // animals. They spread over the cells people live in, FARM_KM_A and
 // HERD_KM_A a year, each where it suits (its niche; FARM_ARABLE,
-// HERD_PASTURE): a cell takes what its neighbour has and suits it. The
+// HERD_PASTURE): a cell takes what its neighbour has and suits it; land it
+// does not suit it crosses FARM_BARRIER, HERD_BARRIER times slower, kept
+// nowhere there (the rules'). Through suiting cells alone the waves ran
+// out along the arable and pasture strips, half of the suiting cells
+// never reached, in fronds (2026-10-26). The
 // fields carry FARM_GAIN × the arable land times more people, the herds
 // HERD_GAIN × the pasture (the rules' densities: farmers 15, herders 1.5,
 // foragers 0.1 a km²). HERD_RATE was 0.2: the first herding centre came before
 // the first fields on Morvane. A cell keeps its domesticates as bits, MAX_TAMED
 // of them at most.
+// THE FISHERS (2026-10-26, DES-0033 "Progression" 3): where the fish are
+// FISH_RICH or more, people who have lived there SETTLE_AFTER years stay
+// and grow dense — the fish carry FISH_GAIN × the fish times more people
+// (the rules' densities: fishers 1 a km², foragers 0.1), where no fields
+// carry them instead (the Jōmon).
+// THE VILLAGES (the same day), every CLIMATE_YEARS: where the farmers (the
+// fields) or the fishers live VILLAGE_LEAST a km² or more, the densest
+// cell within VILLAGE_RADIUS rings with no village founds one (the rules'
+// measures, settle.ts); a village whose people fall under VILLAGE_LEAVE of
+// its least is left (the ice, the sea, the hunger). The people over the
+// span are counted every POPULATION_STEP years. Before, a history's
+// villages and its people were the rules', from its times.
+const FISH_GAIN = 10
+const VILLAGE_LEAVE = 0.5
 const SETTLED_YEARS = 5000
 const FARM_RATE = 0.3
 const HERD_RATE = 0.1
@@ -139,6 +157,8 @@ const CENTRE_SPACING_KM = 1500
 const HERD_LAG = 1000
 const FARM_KM_A = 1
 const HERD_KM_A = 2
+const FARM_BARRIER = 5
+const HERD_BARRIER = 3
 const FARM_ARABLE = 0.3
 const HERD_PASTURE = 0.3
 const FARM_GAIN = 100
@@ -155,6 +175,7 @@ const REACH_START = 30
 const REACH_PER_KNOW = 150
 const REACH_END = 450
 const CROSSING_CHANCE = 0.02
+const ROUTE_SLACK_YEARS = 1000
 const STONE_CELLS = 100
 const STONE_CHANCE = 0.5
 const CROSSINGS_A_PAIR = 32
@@ -473,7 +494,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   }
   const homeLandmass = input.origin >= 0 ? h.landmass[input.origin] : -1
   // What the fields and the herds add, as a factor on what the land carries.
-  const gain = (i: number): number => (farmAt[i] < Infinity ? 1 + FARM_GAIN * (arable?.[i] ?? 0) : 1) * (herdAt[i] < Infinity ? 1 + HERD_GAIN * (pasture?.[i] ?? 0) : 1)
+  const gain = (i: number): number => (farmAt[i] < Infinity ? 1 + FARM_GAIN * (arable?.[i] ?? 0) : fishing[i] ? 1 + FISH_GAIN * (fish?.[i] ?? 0) : 1) * (herdAt[i] < Infinity ? 1 + HERD_GAIN * (pasture?.[i] ?? 0) : 1)
   const food = (i: number): number => PLANT_FOOD + (bigCount[i] ? SMALL_FOOD * small[i] + BIG_FOOD * (bigSum[i] / bigCount[i]) : (SMALL_FOOD + BIG_FOOD) * small[i])
   const extinctions: SimulationResult['extinctions'] = []
   // The farming and the herding: when each came to a cell, its
@@ -490,24 +511,37 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   let herdFront: number[] = []
   const arable = h.ecology.arable
   const pasture = h.ecology.pasture
+  const fish = h.ecology.fish
+  // The cells the fishers live in (THE FISHERS).
+  const fishing = new Uint8Array(n)
+  // The villages: [cell, lifeway], when founded and left; the village in
+  // a cell, -1 for none.
+  const villages: number[] = []
+  const villageFrom: number[] = []
+  const villageTo: number[] = []
+  const villageAt = new Int32Array(n).fill(-1)
+  const ringSeen = new Int32Array(n).fill(-1)
+  let ringMark = 0
+  const population = new Float32Array(Math.floor(SPAN_YEARS / POPULATION_STEP) + 1)
   const suits = (d: number, cell: number): boolean => {
     const c = tamed[d].codes[cell]
     return tamed[d].kind === 'plant'
       ? (c === 1 || c >= PLANT_SUITS_CODE) && (arable?.[cell] ?? 0) >= FARM_ARABLE
       : c >= 1 && (pasture?.[cell] ?? 0) >= HERD_PASTURE
   }
-  // A cell takes domesticate `d` at `t`.
+  // A cell takes domesticate `d` at `t`: knows it, and keeps it where it
+  // suits; where not, only passes it on.
   const take = (d: number, cell: number, t: number): void => {
     if (tamedBits[cell] & (1 << d)) return
     tamedBits[cell] |= 1 << d
+    // On the front for each it takes: a cell that had left it with its
+    // first passed none it took later on.
+    const plant = tamed[d].kind === 'plant'
+    ;(plant ? farmFront : herdFront).push(cell)
+    if (!suits(d, cell)) return
     tamed[d].came[cell] = Math.round(t / CAME_STEP)
-    if (tamed[d].kind === 'plant') {
-      if (farmAt[cell] === Infinity) farmFront.push(cell)
-      if (t < farmAt[cell]) farmAt[cell] = t
-    } else {
-      if (herdAt[cell] === Infinity) herdFront.push(cell)
-      if (t < herdAt[cell]) herdAt[cell] = t
-    }
+    if (plant) farmAt[cell] = Math.min(farmAt[cell], t)
+    else herdAt[cell] = Math.min(herdAt[cell], t)
   }
   const tame = (kind: 'plant' | 'animal', layer: { id: string; codes: Uint8Array }, cell: number, t: number): void => {
     if (tamed.length >= MAX_TAMED) return
@@ -579,6 +613,11 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         for (let j = 0; j < sp.share.length; j++) frame.big[k][j] = sp.share[j] * 255 + 0.5
       })
       kept.push(frame)
+    }
+    if (t % POPULATION_STEP === 0) {
+      let sum = 0
+      for (const i of lived) sum += people[i] * h.areaKm2[i]
+      population[t / POPULATION_STEP] = sum
     }
     if (s === steps) break
     // 0. The climate, every CLIMATE_YEARS: what the cells carry; the people
@@ -670,6 +709,34 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         herdsDue.splice(k, 1)
         grows(cell)
       }
+      // The fishers, the villages (THE FISHERS, THE VILLAGES).
+      for (const i of lived) {
+        if (fishing[i] || (fish?.[i] ?? 0) < FISH_RICH || arrival[i] > t - SETTLE_AFTER) continue
+        fishing[i] = 1
+        grows(i)
+      }
+      for (let v = 0; v < villageTo.length; v++) {
+        const cell = villages[2 * v]
+        if (villageTo[v] < Infinity || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
+        villageTo[v] = t
+        villageAt[cell] = -1
+      }
+      for (const i of lived) {
+        const way = farmAt[i] <= t ? LIFEWAY.farmers : fishing[i] ? LIFEWAY.fishers : LIFEWAY.none
+        if (way === LIFEWAY.none || villageAt[i] >= 0 || people[i] < VILLAGE_LEAST[way]) continue
+        let top = true
+        for (const u of ringsAround(h, i, VILLAGE_RADIUS[way], ringSeen, ++ringMark)) {
+          if (u !== i && (villageAt[u] >= 0 || people[u] > people[i] || (people[u] === people[i] && u < i))) {
+            top = false
+            break
+          }
+        }
+        if (!top) continue
+        villageAt[i] = villageTo.length
+        villages.push(i, way)
+        villageFrom.push(t)
+        villageTo.push(Infinity)
+      }
     }
     // 0b. The game, every GAME_STEPS: hunted where people live, grown back
     //     where they hunted; the cells people live in grow or shrink by it.
@@ -756,9 +823,10 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
           const u = h.nbr[e]
           if (people[u] === 0) continue
           for (let d = 0; d < tamed.length; d++) {
-            if (!(tamedBits[i] & (1 << d)) || (tamedBits[u] & (1 << d)) || (tamed[d].kind === 'plant') !== plant || !suits(d, u)) continue
+            if (!(tamedBits[i] & (1 << d)) || (tamedBits[u] & (1 << d)) || (tamed[d].kind === 'plant') !== plant) continue
             left = true
-            if (random() < Math.min(1, (kmA * STEP_YEARS) / h.distKm[e])) {
+            const barrier = suits(d, u) ? 1 : plant ? FARM_BARRIER : HERD_BARRIER
+            if (random() < Math.min(1, (kmA * STEP_YEARS) / (h.distKm[e] * barrier))) {
               take(d, u, t + STEP_YEARS)
               grows(u)
             }
@@ -814,18 +882,60 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     }
     if (onProgress && s % 100 === 0) onProgress(s / steps)
   }
+  // THE ROUTES' TREE (2026-10-26), made after the run: the shortest ways
+  // from the origin over the cells reached (the quickest, at the cells'
+  // speeds, ran along the rivers and the coasts in zigzags), never to a
+  // cell settled more
+  // than ROUTE_SLACK_YEARS before the one it leaves — the history's order
+  // kept, its chance not. `from` as settled (each cell to the neighbour that
+  // settled it, by a chance) drew the routes as hair. A cell the ways do not
+  // reach keeps the settling's parent.
+  const routeFrom = new Int32Array(n).fill(-1)
+  const cost = new Float64Array(n).fill(Infinity)
+  const popped: number[] = []
+  if (input.origin >= 0 && arrival[input.origin] < Infinity) {
+    const heap = new MinHeap(1 << 16)
+    cost[input.origin] = 0
+    heap.push(0, input.origin)
+    while (heap.length > 0) {
+      heap.pop()
+      const i = heap.poppedIndex
+      const d = heap.poppedKey
+      if (d > cost[i]) continue
+      popped.push(i)
+      for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
+        const u = h.nbr[e]
+        if (!(arrival[u] < Infinity) || arrival[u] < arrival[i] - ROUTE_SLACK_YEARS) continue
+        const nd = d + h.distKm[e]
+        if (nd >= cost[u]) continue
+        cost[u] = nd
+        routeFrom[u] = i
+        heap.push(nd, u)
+      }
+    }
+  }
   // The routes' weights: each land cell reached counts once on its way
-  // back, the latest first.
+  // back — the cells the ways missed first (on the settling's parents, the
+  // latest first), then the ways' from their ends in.
   const flow = new Float32Array(n)
-  const order: number[] = []
-  for (let i = 0; i < n; i++) if (arrival[i] < Infinity) order.push(i)
-  order.sort((a, b) => arrival[b] - arrival[a])
-  for (const i of order) {
+  const missed: number[] = []
+  for (let i = 0; i < n; i++) {
+    if (!(arrival[i] < Infinity) || cost[i] < Infinity) continue
+    routeFrom[i] = from[i]
+    missed.push(i)
+  }
+  missed.sort((a, b) => arrival[b] - arrival[a])
+  for (const i of missed) {
     if (land[i]) flow[i] += 1
-    if (from[i] >= 0) flow[from[i]] += flow[i]
+    if (routeFrom[i] >= 0) flow[routeFrom[i]] += flow[i]
+  }
+  for (let k = popped.length - 1; k >= 0; k--) {
+    const i = popped[k]
+    if (land[i]) flow[i] += 1
+    if (routeFrom[i] >= 0) flow[routeFrom[i]] += flow[i]
   }
   return {
-    people: { arrival, land, from, flow, origin: input.origin, crossings: Float32Array.from(made), crossingWays: Int32Array.from(ways) },
+    people: { arrival, land, from: routeFrom, flow, origin: input.origin, crossings: Float32Array.from(made), crossingWays: Int32Array.from(ways) },
     kept,
     climate: { maxAt: climate.maxAt, depth: climate.depth, deglaciation: climate.deglaciation },
     species: species.map((sp) => ({ id: sp.id, cells: sp.cells })),
@@ -834,6 +944,8 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       farmAt,
       herdAt,
       domestications: tamed.map(({ kind, id, cell, at, came }) => ({ kind, id, cell, at, came })),
+      villages: { villages: Int32Array.from(villages), villageFrom: Float32Array.from(villageFrom), villageTo: Float32Array.from(villageTo) },
+      population,
     },
     extinctions,
     region,

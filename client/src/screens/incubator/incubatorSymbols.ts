@@ -188,7 +188,7 @@ export function lineSymbols(points: readonly At[], style: LineStyle, first: numb
 // THE ROUTES: the spread's lines (peopleArrows.ts) as far as the people
 // came by `t`, as continuous lines of the route's colour: sampled every
 // ROUTE_SAMPLE cells and smoothed (Chaikin, twice), so the cells' zigzag
-// does not show, then laid with round-ended pieces close enough to join.
+// does not show (5 cells until 2026-10-26: a history's lines still bent), then laid with round-ended pieces close enough to join.
 // A piece is the line's width there (`widthOf`, km) in ROUTE_WIDTHS_KM
 // classes, so the line thins toward the front. A head where a line ends
 // by then with nothing going on from it: at a tip, and at the front while
@@ -198,14 +198,14 @@ export function lineSymbols(points: readonly At[], style: LineStyle, first: numb
 // the generator's migration arrows (GeneratorScreen
 // drawMigrationArrows). Chevrons, framed, were tried the same day and were
 // hard to read.
-const ROUTE_WIDTHS_KM = [12, 20, 30, 42, 56, 72, 90, 110]
-const ROUTE_SAMPLE = 5
+const ROUTE_WIDTHS_KM = [8, 12, 17, 23, 30, 39, 50]
+const ROUTE_SAMPLE = 10
 // The pieces' spacing, a share of the width, ROUTE_STEP_LEAST km at least:
 // a piece is its spacing and its width long, so they always join.
 const ROUTE_STEP = 1
-const ROUTE_STEP_LEAST = 12
+const ROUTE_STEP_LEAST = 8
 const ROUTE_HEAD = 2.2
-const ROUTE_HEAD_LEAST = 60
+const ROUTE_HEAD_LEAST = 40
 const routeClass = (widthKm: number): number => ROUTE_WIDTHS_KM.reduce((best, w, k) => (Math.abs(w - widthKm) < Math.abs(ROUTE_WIDTHS_KM[best] - widthKm) ? k : best), 0)
 const routeStep = (k: number): number => Math.max(ROUTE_STEP_LEAST, ROUTE_STEP * ROUTE_WIDTHS_KM[k])
 export const routePictures = (colour: readonly [number, number, number]): SymbolPicture[] => ROUTE_WIDTHS_KM.flatMap((_, k) => [...routeClassPictures(k, colour), ...routeClassPictures(k, CROSSING_RGB)])

@@ -5,13 +5,15 @@ import type { PeopleResult } from './people'
 //
 // THE TREE (2026-10-26, after the generator's migration arrows,
 // GeneratorScreen drawMigrationArrows): the routes' tree (people.ts, `from`
-// and `flow`) cut at ROUTE_SHARE of all the land reached (0.005, then
-// 0.01: too dense with the wider spread), split into lines: a line runs from the origin or a parting to the next parting or
+// and `flow`) cut at ROUTE_SHARE of all the land reached (0.005 at
+// first, too dense with the wider spread; 0.03 while a history's tree, as
+// settled, reached the origin from a seventh of its land), split into
+// lines: a line runs from the origin or a parting to the next parting or
 // an end. A line's width at a cell follows the people living beyond it at
 // the time shown (flowAt), the trunk broad, the branches thinning toward
 // the front. Drawn as continuous lines (incubatorSymbols.ts, routeSymbols),
 // blue over the crossings the chronicle tells.
-const ROUTE_SHARE = 0.03
+const ROUTE_SHARE = 0.01
 // A line that ends (no parting after it) shorter than this many cells is
 // left out: a stub.
 const ROUTE_MIN_CELLS = 8

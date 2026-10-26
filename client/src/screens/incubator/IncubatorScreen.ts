@@ -513,18 +513,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let peopleOrder: Int32Array = new Int32Array(0)
   let routeSea: Uint8Array | null = null
   // THE ROUTES' WIDTHS at the time shown, km a cell: as the generator's
-  // migration arrows, the square root of the people living beyond a cell
-  // (peopleArrows.ts, flowAt) over all of them, ROUTE_MIN_KM to
-  // ROUTE_MAX_KM; before the settlement, the land beyond it. Made for the
-  // time and kept for it.
-  const ROUTE_MIN_KM = 12
-  const ROUTE_MAX_KM = 110
+  // migration arrows, the square root of the land reached beyond a cell
+  // (peopleArrows.ts, flowAt) over all of it, ROUTE_MIN_KM to
+  // ROUTE_MAX_KM. Made for the time and kept for it. By the people beyond
+  // (until 2026-10-26) a line swelled where it entered the fields, and to
+  // 110 km it hid the land.
+  const ROUTE_MIN_KM = 8
+  const ROUTE_MAX_KM = 50
   let routeWidths: { time: number; widths: Float32Array } | null = null
   function routeWidthsNow(): Float32Array {
     if (routeWidths?.time === peopleTime) return routeWidths.widths
     const p = people!
-    const now = settledNow()
-    const flow = flowAt(p, peopleOrder, peopleTime, now && cellFacts ? (cell) => now.density[cell] * cellFacts!.areaKm2[cell] : (cell) => p.land[cell])
+    const flow = flowAt(p, peopleOrder, peopleTime, (cell) => p.land[cell])
     const total = Math.max(1e-9, flow[p.origin])
     const widths = Float32Array.from(flow, (f) => ROUTE_MIN_KM + (ROUTE_MAX_KM - ROUTE_MIN_KM) * Math.sqrt(Math.min(1, f / total)))
     routeWidths = { time: peopleTime, widths }
@@ -888,6 +888,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The end state's lifeways (the largest, and the shares: 4 a cell, the
   // lifeways 1 … 4, 0 … 255), density, villages and links at the time shown
   // (settleShared.ts), made for the time and kept for it.
+  // Whether village `v` stands at `t`: founded, not left.
+  const standing = (s: SettleResult, v: number, t: number): boolean => s.villageFrom[v] <= t && t < s.villageTo[v]
   let settledAtTime: { time: number; lifeway: Uint8Array; shares: Uint8Array; density: Float32Array; cleared: Float32Array; villages: Int32Array; links: Float32Array } | null = null
   function settledNow(): NonNullable<typeof settledAtTime> | null {
     if (!settled || !people) return null
@@ -906,13 +908,20 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       cleared[i] = clearedAt(times, i, peopleTime, cell)
       for (let w = 1; w < 5; w++) shares[4 * i + w - 1] = Math.round(cell[w] * 255)
     }
-    // The villages there by now; the links between two of them, their
-    // indices into the end state's villages kept.
+    // The villages standing now (a history's may be left); the links
+    // between two of them, their indices into these.
     const villages: number[] = []
-    for (let v = 0; v < settled.villageFrom.length; v++) if (settled.villageFrom[v] <= peopleTime) villages.push(settled.villages[2 * v], settled.villages[2 * v + 1])
+    const index = new Int32Array(settled.villageFrom.length).fill(-1)
+    for (let v = 0; v < settled.villageFrom.length; v++) {
+      if (!standing(settled, v, peopleTime)) continue
+      index[v] = villages.length / 2
+      villages.push(settled.villages[2 * v], settled.villages[2 * v + 1])
+    }
     const links: number[] = []
     for (let k = 0; k < settled.links.length; k += 3) {
-      if (settled.villageFrom[settled.links[k]] <= peopleTime && settled.villageFrom[settled.links[k + 1]] <= peopleTime) links.push(settled.links[k], settled.links[k + 1], settled.links[k + 2])
+      const a = index[settled.links[k]]
+      const b = index[settled.links[k + 1]]
+      if (a >= 0 && b >= 0) links.push(a, b, settled.links[k + 2])
     }
     settledAtTime = { time: peopleTime, lifeway, shares, density, cleared, villages: Int32Array.from(villages), links: Float32Array.from(links) }
     return settledAtTime
@@ -1076,6 +1085,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       for (let k = 0; k < s.links.length; k += 3) {
         if (s.links[k + 2] < 0.05) continue
         const at = Math.max(s.villageFrom[s.links[k]], s.villageFrom[s.links[k + 1]])
+        if (at >= Math.min(s.villageTo[s.links[k]], s.villageTo[s.links[k + 1]])) continue
         if (at < firstAt) {
           firstAt = at
           first = k
@@ -1107,7 +1117,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         if (k < 0) continue
         const at = k === 0 ? 0 : (k - 1 + (mark - curve[k - 1]) / Math.max(1e-9, curve[k] - curve[k - 1])) * step
         let villages = 0
-        for (const from of s.villageFrom) if (from <= at) villages++
+        for (let v = 0; v < s.villageFrom.length; v++) if (standing(s, v, at)) villages++
         let centres = 0
         for (let c = 0; c < s.centres.length; c += 3) if (s.centres[c + 1] <= at) centres++
         events.push({
@@ -1133,8 +1143,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   function sayCounts(): void {
     const now = settledNow()
+    // A history's people are its own count (simulation.ts), between the
+    // curve's samples linearly; the rules' the density's.
     let persons = 0
-    if (now && cellFacts) for (let i = 0; i < now.density.length; i++) if (now.density[i] > 0) persons += now.density[i] * cellFacts.areaKm2[i]
+    if (historyFrames && settled) {
+      const curve = settled.population
+      const x = Math.min(curve.length - 1, peopleTime / (SPAN_YEARS / Math.max(1, curve.length - 1)))
+      const k = Math.floor(x)
+      persons = curve[k] + (curve[Math.min(curve.length - 1, k + 1)] - curve[k]) * (x - k)
+    } else if (now && cellFacts) for (let i = 0; i < now.density.length; i++) if (now.density[i] > 0) persons += now.density[i] * cellFacts.areaKm2[i]
     let centres = 0
     if (settled) for (let k = 0; k < settled.centres.length; k += 3) if (settled.centres[k + 1] <= peopleTime) centres++
     const say = (n: number): string => (now ? Math.round(n).toLocaleString(getLocale()) : '–')
@@ -1931,7 +1948,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const geometry: LineGeometry = { km: (a, b) => v0.metresBetween(a, b) / 1000, direction: directionOf }
     const now = settledNow()
     const showTrade = now !== null && settled !== null && peopleOn['people:trade']
-    trade.setSymbols(showTrade ? tradeSymbols(settled!.villages, now!.links, u, v, geometry) : [])
+    trade.setSymbols(showTrade ? tradeSymbols(now!.villages, now!.links, u, v, geometry) : [])
     trade.setEnabled(showTrade)
     const showRoutes = people !== null && routesOn()
     if (showRoutes) {

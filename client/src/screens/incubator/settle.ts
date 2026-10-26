@@ -89,12 +89,15 @@ export interface SettleInput {
 }
 
 // The farming's and the herding's centres, domesticates and times (2
-// below), the rules' or a history's.
+// below), the rules' or a history's; a history's villages (3 below) and
+// its people over the span too.
 export interface SettleLifeways {
   centres: Float32Array
   farmAt: Float32Array
   herdAt: Float32Array
   domestications: SettleResult['domestications']
+  villages?: { villages: Int32Array; villageFrom: Float32Array; villageTo: Float32Array }
+  population?: Float32Array
 }
 
 export interface SettleResult {
@@ -119,9 +122,11 @@ export interface SettleResult {
   // and when its wave came to each cell, in CAME_STEP years (CAME_NEVER
   // where it never did).
   domestications: { kind: 'plant' | 'animal'; id: string; cell: number; at: number; came: Uint16Array }[]
-  // [cell, lifeway] a village, and when it began.
+  // [cell, lifeway] a village, when it began and when it was left
+  // (Infinity: never; the rules' are never left).
   villages: Int32Array
   villageFrom: Float32Array
+  villageTo: Float32Array
   // [cell, good index] a source.
   sources: Int32Array
   // [village a, village b, weight] a link (indices into villages).
@@ -135,11 +140,11 @@ export interface SettleResult {
 
 const FARM_ARABLE = 0.3
 const HERD_PASTURE = 0.3
-const FISH_RICH = 0.5
+export const FISH_RICH = 0.5
 // In rings of cells (some 10 km each).
-const VILLAGE_RADIUS: Record<number, number> = { 2: 5, 4: 3 }
+export const VILLAGE_RADIUS: Record<number, number> = { 2: 5, 4: 3 }
 // Below this many people a km², no village.
-const VILLAGE_LEAST: Record<number, number> = { 2: 0.3, 4: 2 }
+export const VILLAGE_LEAST: Record<number, number> = { 2: 0.3, 4: 2 }
 const LINKS = 3
 const LINK_KM = 150
 const SOURCE_RICH = 0.6
@@ -175,7 +180,7 @@ export const POPULATION_STEP = 500
 
 
 // The cells within `rings` rings of cell `c`, itself first.
-function ringsAround(h: Habitat, c: number, rings: number, seen: Int32Array, mark: number): number[] {
+export function ringsAround(h: Habitat, c: number, rings: number, seen: Int32Array, mark: number): number[] {
   const cells = [c]
   seen[c] = mark
   let from = 0
@@ -396,9 +401,10 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
     lifeway[i] = sharesAt(times, i, SPAN_YEARS, shares)
     density[i] = densityAt(times, i, SPAN_YEARS, shares)
   }
-  // The people over the span.
-  const population = new Float32Array(Math.floor(SPAN_YEARS / POPULATION_STEP) + 1)
-  for (let i = 0; i < n; i++) {
+  // The people over the span; a history's own (copied: the worker keeps
+  // it for the next settlement).
+  const population = input.given?.population?.slice() ?? new Float32Array(Math.floor(SPAN_YEARS / POPULATION_STEP) + 1)
+  for (let i = 0; i < n && !input.given?.population; i++) {
     if (!land[i] || !(arrival[i] < Infinity)) continue
     for (let k = Math.ceil(arrival[i] / POPULATION_STEP); k < population.length; k++) {
       const t = k * POPULATION_STEP
@@ -408,10 +414,18 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
   }
   const villageCells: number[] = []
   const villageWays: number[] = []
-  for (const way of [2, 4]) {
-    for (const c of localTops(h, density, VILLAGE_RADIUS[way], (i) => lifeway[i] === way && density[i] >= VILLAGE_LEAST[way])) {
-      villageCells.push(c)
-      villageWays.push(way)
+  const given = input.given?.villages
+  if (given) {
+    for (let v = 0; v < given.villages.length; v += 2) {
+      villageCells.push(given.villages[v])
+      villageWays.push(given.villages[v + 1])
+    }
+  } else {
+    for (const way of [2, 4]) {
+      for (const c of localTops(h, density, VILLAGE_RADIUS[way], (i) => lifeway[i] === way && density[i] >= VILLAGE_LEAST[way])) {
+        villageCells.push(c)
+        villageWays.push(way)
+      }
     }
   }
 
@@ -478,9 +492,10 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
   for (const [key, [a, b]] of edges) links.push(a, b, weight.get(key) ?? 0)
   const villages: number[] = []
   villageCells.forEach((c, v) => villages.push(c, villageWays[v]))
-  const villageFrom = Float32Array.from(villageCells, (c, v) => lifewaySince(times, c, villageWays[v]))
+  const villageFrom = given ? given.villageFrom.slice() : Float32Array.from(villageCells, (c, v) => lifewaySince(times, c, villageWays[v]))
+  const villageTo = given ? given.villageTo.slice() : new Float32Array(villageCells.length).fill(Infinity)
   const extinctions = dyingOut(h, input)
-  return { lifeway, density, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm, population, centres: Float32Array.from(centres), domestications, villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: h.landmass.slice() }
+  return { lifeway, density, farmAt, herdAt, fishOk, farmSuit, herdSuit, fishSuit, carrying: carryingNorm, population, centres: Float32Array.from(centres), domestications, villages: Int32Array.from(villages), villageFrom, villageTo, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: h.landmass.slice() }
 }
 
 // 5. The big game dying out where people came new.

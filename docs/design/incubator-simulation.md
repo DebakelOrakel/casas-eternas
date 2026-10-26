@@ -371,3 +371,39 @@ first on each landmass) keep their branch under it: 66 lines on Morvane,
 190 before. A domesticate is tamed once on a landmass — a centre counts
 only the wild ones not tamed there yet — and the chronicle tells its
 first taming only; the herding at 10 % (20 %).
+
+**The fishers, the villages, the people** (the same day): where the fish
+are rich (0.5 or more), people who have lived there 3 000 years stay and
+grow dense, the fish carrying up to 10 times the people where no fields
+do. Every 500 years the densest cell of the farmers or the fishers with
+no village near founds one (the rules' measures: 2 a km² and 3 rings for
+the farmers, 0.3 and 5 for the fishers); a village whose people fall
+under half of that is left. The people over the span are the
+simulation's own count. The settlement takes the villages and the count
+in the rules' place and lays the trade on them; the screen shows a
+village from its founding to its leaving. Before, a history's villages
+and people were the rules', from its times. On Morvane: the first
+village (fishers) at year 3 500, 55 by 30 000, 224 at 65 000, 394 at the
+end, none left; some 470 000 people through the cold, 2.5 M at 70 000,
+5.7 M at the end (the rules 24 M).
+
+**The waves through unsuiting land** (the same day): the fields and the
+herds spread through suiting cells alone, so they ran out along the
+arable and pasture strips in fronds, and half the suiting cells were never
+reached (88 420 of 184 704 on Morvane); a cell that had passed its first
+domesticate on passed none it took later. Now a wave crosses land it does
+not suit 5 (fields) and 3 (herds) times slower, kept nowhere there, as
+the rules' do; every domesticate a cell takes puts it on the front. On
+Morvane: 4 % of the suiting cells left unreached; the fields on 40 618
+cells, the herds on 83 338; 686 villages, 8.7 M people at the end.
+
+**The routes' tree made after the run** (the same day): `from` as settled
+(each cell to the neighbour that settled it, by a chance) drew the routes
+as hair, and reached the origin from a seventh of the land. Now the tree
+is made after the run: the shortest ways from the origin over the cells
+reached, never to a cell settled more than 1 000 years before the one it
+leaves. The routes cut at 1 % of the land reached: 34 lines on Morvane.
+The quickest ways, at the simulation's speeds, ran along the rivers and
+the coasts in zigzags (a line 1.27 times its chord, now 1.12). A line's
+width follows the land reached beyond it, 8 to 50 km (the people beyond,
+to 110 km, swelled it where it entered the fields).
