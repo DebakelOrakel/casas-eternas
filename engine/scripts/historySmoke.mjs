@@ -29,6 +29,12 @@ const L = (p) => server.ssrLoadModule(p)
 const { buildCells } = await L('/src/screens/incubator/cells.ts')
 const { growFlora } = await L('/src/screens/incubator/flora.ts')
 const { populate } = await L('/src/screens/incubator/fauna.ts')
+const { simulate } = await L('/src/screens/incubator/simulation.ts')
+const { packHistory, unpackHistory } = await L('/src/screens/incubator/historyPack.ts')
+const { originOf } = await L('/src/screens/incubator/people.ts')
+const { MEGAFAUNA } = await L('/src/screens/incubator/settle.ts')
+const { PLANTS } = await L('/src/screens/incubator/plants.ts')
+const catalog = (await L('casas-history-data/catalog.json')).default
 const { Biome } = await L('/src/generator/climate/biomes.ts')
 const { KOPPEN_CODES } = await L('/src/generator/climate/koppen.ts')
 const { ECOLOGY_FINE_OCEAN, ECOLOGY_FINE_STEP } = await L('/src/generator/ecology/ecologyField.ts')
@@ -69,7 +75,7 @@ function synthWorld(kind) {
   const fine = (v) => Math.max(0, Math.min(254, Math.round(v / ECOLOGY_FINE_STEP)))
   // Three continents, a chain of islands between two of them, a polar
   // land; the distance wraps across.
-  const blobs = [[0.2, 0.42, 0.26, 0.5], [0.62, 0.36, 0.2, 0.5], [0.84, 0.7, 0.16, 0.45], [0.425, 0.4, 0.04, 0.35], [0.47, 0.38, 0.035, 0.35], [0.5, 0.06, 0.3, 0.42], [0.3, 0.82, 0.12, 0.45]]
+  const blobs = [[0.2, 0.42, 0.26, 0.5], [0.62, 0.3, 0.2, 0.5], [0.84, 0.7, 0.16, 0.45], [0.425, 0.4, 0.04, 0.35], [0.47, 0.38, 0.035, 0.35], [0.5, 0.06, 0.3, 0.42], [0.3, 0.82, 0.12, 0.45]]
   const wrap = (d) => d - Math.round(d)
   for (let py = 0; py < nodeH; py++) {
     for (let px = 0; px < nodeW; px++) {
@@ -168,6 +174,8 @@ function wasmCells(c) {
   return new wasm.Incubator(c.kind === 'sphere', c.spacingKm, c.width, c.height, c.nodes, c.nodeW, c.nodeH, c.land, c.biome, c.koppen, c.z, c.lakeDepth, ecology, present, c.rivers.points, c.rivers.lengths, c.rivers.regimes)
 }
 
+// What the worlds reached between them.
+const seen = new Set()
 for (const kind of ['torus', 'sphere']) {
   const world = synthWorld(kind)
   const started = performance.now()
@@ -205,8 +213,92 @@ for (const kind of ['torus', 'sphere']) {
   same(`${kind} fauna codes`, joined(fauna), rs.faunaCodes())
   same(`${kind} fauna shares`, Float64Array.from(fauna.flatMap((l) => [l.suitable, l.reached, l.empty])), rs.faunaShares())
   console.log(`history: ${kind} — ${layers.filter((l) => l.reached > 0).length} of ${layers.length} plants and trees, ${fauna.filter((l) => l.reached > 0).length} of ${fauna.length} animals (TS ${Math.round(tsGrow)} ms, WASM ${Math.round(rsGrow)} ms)`)
+
+  // The history, its inputs as the incubator's worker makes them.
+  const carrying = h.carrying ?? new Float32Array(h.count).fill(0.4)
+  const origin = originOf(h, carrying)
+  const FARM_PLANTS = new Set(PLANTS.filter((p) => p.domesticable && p.use === 'starch').map((p) => p.id))
+  const HERD_ANIMALS = new Set(catalog.herdAnimals)
+  const r = world.rain
+  const variability = new Float32Array(h.count)
+  const enso = new Float32Array(h.count)
+  for (let i = 0; i < h.count; i++) {
+    const t = Math.min(r.height - 1, Math.floor(h.v[i] * r.height)) * r.width + Math.min(r.width - 1, Math.floor(h.u[i] * r.width))
+    variability[i] = r.variability[t]
+    enso[i] = r.enso[t]
+  }
+  t0 = performance.now()
+  const history = simulate(h, {
+    carrying, origin, seed: world.seed,
+    bigGame: fauna.filter((a) => a.id in MEGAFAUNA).map((a) => ({ id: a.id, codes: a.codes, vulnerability: MEGAFAUNA[a.id] })),
+    crops: flora.plants.filter((p) => FARM_PLANTS.has(p.id)),
+    herds: fauna.filter((a) => HERD_ANIMALS.has(a.id)),
+    rain: { variability, enso, ensoStrength: r.ensoStrength },
+  })
+  const tsRun = performance.now() - t0
+  const tsPack = new Uint8Array(packHistory(history))
+  t0 = performance.now()
+  const rsPack = rs.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength, undefined)
+  const rsRun = performance.now() - t0
+  if (!Buffer.from(tsPack).equals(Buffer.from(rsPack))) {
+    // Where they part: read both back.
+    const a = unpackHistory(tsPack.buffer)
+    const b = unpackHistory(rsPack.buffer.slice(rsPack.byteOffset, rsPack.byteOffset + rsPack.byteLength))
+    if (!b) fail(`${kind} history: the WASM's pack does not read (${rsPack.length} against ${tsPack.length} bytes)`)
+    else {
+      const parts = { arrival: (x) => x.people.arrival, from: (x) => x.people.from, flow: (x) => x.people.flow, crossings: (x) => x.people.crossings, population: (x) => x.lifeways.population, farmAt: (x) => x.lifeways.farmAt, villages: (x) => x.lifeways.villages.villages }
+      for (const [name, get] of Object.entries(parts)) same(`${kind} history ${name}`, get(a), get(b))
+      const la = JSON.stringify(a.log), lb = JSON.stringify(b.log)
+      if (la !== lb) {
+        let k = 0
+        while (k < a.log.length && JSON.stringify(a.log[k]) === JSON.stringify(b.log[k])) k++
+        fail(`${kind} history log: differs from event ${k} on (${JSON.stringify(a.log[k])} against ${JSON.stringify(b.log[k])})`)
+      }
+      fail(`${kind} history: the packs differ (${tsPack.length} against ${rsPack.length} bytes)`)
+    }
+  }
+  const count = (k) => history.log.filter((e) => e.kind === k).length
+  // What the world reached, for `reaches` (both worlds together).
+  for (const e of history.log) seen.add(e.kind === 'centre' ? `centre ${e.lifeway}` : e.kind)
+  // The ice: a cell lived in, left (its people gone in a kept state), lived
+  // in again.
+  const frames = history.kept
+  for (let i = 0; i < h.count && !seen.has('ice'); i++) {
+    let was = 0
+    for (const f of frames) {
+      const p = f.people[i] > 0
+      if (was === 0 && p) was = 1
+      else if (was === 1 && !p) was = 2
+      else if (was === 2 && p) {
+        seen.add('ice')
+        break
+      }
+    }
+  }
+  if (process.env.HISTORY_DEBUG) {
+    const herds = fauna.filter((a) => HERD_ANIMALS.has(a.id))
+    const byLm = new Map()
+    for (let i = 0; i < h.count; i++) {
+      if (!h.land[i] || !(history.people.arrival[i] < Infinity)) continue
+      const wild = herds.filter((a) => a.codes[i] >= 2).length
+      const pas = h.ecology.pasture[i]
+      const m = h.landmass[i]
+      const e = byLm.get(m) ?? { cells: 0, pasture: 0, two: 0, both: 0 }
+      e.cells++
+      if (pas >= 0.5) e.pasture++
+      if (wild >= 2) e.two++
+      if (pas >= 0.5 && wild >= 2) e.both++
+      byLm.set(m, e)
+    }
+    console.log(kind, 'herd candidates by landmass', JSON.stringify([...byLm]))
+  }
+  console.log(`history: ${kind} — ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions (TS ${Math.round(tsRun)} ms, WASM ${Math.round(rsRun)} ms)`)
   rs.free()
 }
 
+// THE REACH: each kind of event at least once on the two worlds, or the
+// check passes on less than it claims; then the worlds are to be changed.
+const reaches = ['departure', 'crossing', 'centre 4', 'centre 3', 'domesticated', 'extinct', 'famine', 'village', 'villageLeft', 'camp', 'campLeft', 'population', 'ice']
+for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (failed) process.exit(1)
 console.log('history: the WASM build gives the TypeScript\'s bits')

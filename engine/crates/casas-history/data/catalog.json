@@ -1364,5 +1364,23 @@
     "Steppe": 0.9,
     "TropicalDryForest": 0.6,
     "ColdDesert": 0.5
-  }
+  },
+  "megafauna": {
+    "elephant": 0.8,
+    "horse": 0.6,
+    "bison": 0.5,
+    "camel": 0.5,
+    "buffalo": 0.3,
+    "aurochs": 0.2,
+    "bear": 0.2
+  },
+  "herdAnimals": [
+    "aurochs",
+    "horse",
+    "sheep",
+    "camel",
+    "reindeer",
+    "yak",
+    "buffalo"
+  ]
 }

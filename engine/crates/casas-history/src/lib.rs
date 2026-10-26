@@ -8,9 +8,15 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod catalog;
+pub mod climate_history;
 pub mod flora;
 pub mod habitat;
+pub mod history;
+pub mod log;
 pub mod niche;
+pub mod pack;
+pub mod simulation;
+pub mod travel;
 
 /// The history's version (world/historyArtifacts.ts HISTORY_VERSION): raised
 /// by hand on any change to what a run gives or to the packed form, as the

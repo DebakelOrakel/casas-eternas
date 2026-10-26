@@ -91,7 +91,7 @@ const timeForReach = (km: number): number => (km <= REACH_START ? 0 : km > REACH
 
 // The origin when none is given: the land that feeds best in a tropical
 // class (Köppen A), else anywhere.
-function originOf(h: Habitat, carrying: Float32Array): number {
+export function originOf(h: Habitat, carrying: Float32Array): number {
   const tropical = KOPPEN_CODES.map((code) => code.startsWith('A'))
   let best = -1
   let bestTropical = -1

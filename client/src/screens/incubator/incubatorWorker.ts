@@ -1,3 +1,4 @@
+import catalog from 'casas-history-data/catalog.json'
 import { buildCells, type CellInput } from './cells'
 import { populate, type AnimalLayer } from './fauna'
 import { growFlora, type PlantLayer, type TreeLayer } from './flora'
@@ -44,7 +45,7 @@ export type IncubatorAnswer =
 
 // The tamable herd animals (animals.ts) the herders keep; the domesticable
 // starch plants (plants.ts) the farmers sow.
-const HERD_ANIMALS = new Set(['aurochs', 'horse', 'sheep', 'camel', 'reindeer', 'yak', 'buffalo'])
+const HERD_ANIMALS = new Set(catalog.herdAnimals)
 const FARM_PLANTS = new Set(PLANTS.filter((p) => p.domesticable && p.use === 'starch').map((p) => p.id))
 
 const worker = self as unknown as Worker

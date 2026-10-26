@@ -64,6 +64,10 @@ pub struct Catalog {
     pub animals: Vec<Animal>,
     /// By the biome's name (generator/climate/biomes.ts `Biome`).
     pub edible_share: BTreeMap<String, f64>,
+    /// The big game and how vulnerable each is (settle.ts MEGAFAUNA).
+    pub megafauna: BTreeMap<String, f64>,
+    /// The herd animals the herders keep (incubatorWorker.ts HERD_ANIMALS).
+    pub herd_animals: Vec<String>,
 }
 
 /// The catalog, read once.

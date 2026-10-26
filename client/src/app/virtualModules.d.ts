@@ -47,6 +47,10 @@ declare module 'casas-history-data/catalog.json' {
     animals: readonly import('../screens/incubator/animals').AnimalSpec[]
     // The herbivores' share of a biome's production, by the biome's name.
     edibleShare: Record<string, number>
+    // The big game and how vulnerable each is (settle.ts MEGAFAUNA); the
+    // herd animals the herders keep (incubatorWorker.ts).
+    megafauna: Record<string, number>
+    herdAnimals: readonly string[]
   }
   export default catalog
 }

@@ -6,6 +6,9 @@
 
 use casas_history::flora::{Layer, grow_flora, populate};
 use casas_history::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
+use casas_history::history::{RainChart, run_history};
+use casas_history::pack::pack_history;
+use casas_history::simulation::SimulationResult;
 use wasm_bindgen::prelude::*;
 
 /// The history's version (`casas_history::HISTORY_VERSION`).
@@ -21,6 +24,8 @@ pub struct Incubator {
     // The plants and the trees, the animals, in the catalog's order.
     flora: Vec<Layer>,
     fauna: Vec<Layer>,
+    // The history run last.
+    history: Option<SimulationResult>,
 }
 
 /// The layers' codes one after the other, and their shares of the land
@@ -99,6 +104,7 @@ impl Incubator {
             owners,
             flora: Vec::new(),
             fauna: Vec::new(),
+            history: None,
         }
     }
 
@@ -203,6 +209,58 @@ impl Incubator {
             "nbr" => h.nbr.iter().map(|&x| x as i32).collect(),
             _ => return Err(JsError::new(&format!("no habitat array {name}"))),
         })
+    }
+
+    /// The history (history.rs run_history) from `origin` (-1: chosen), on
+    /// the flora and the fauna grown, the rain's reliability charted
+    /// `rain_width` × `rain_height` (none: no droughts); `progress` called
+    /// with the share done. Kept; its packed bytes (pack.rs, the H1
+    /// artifact's).
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate(
+        &mut self,
+        origin: i32,
+        seed: f64,
+        rain_width: usize,
+        rain_height: usize,
+        variability: Option<Vec<f32>>,
+        enso: Option<Vec<f32>>,
+        enso_strength: f64,
+        progress: Option<js_sys::Function>,
+    ) -> Result<Vec<u8>, JsError> {
+        if self.flora.is_empty() || self.fauna.is_empty() {
+            return Err(JsError::new(
+                "the history needs the flora and the fauna first",
+            ));
+        }
+        let rain = match (&variability, &enso) {
+            (Some(v), Some(e)) => Some(RainChart {
+                width: rain_width,
+                height: rain_height,
+                variability: v,
+                enso: e,
+                enso_strength,
+            }),
+            _ => None,
+        };
+        let mut report = |share: f64| {
+            if let Some(p) = &progress {
+                let _ = p.call1(&JsValue::NULL, &JsValue::from_f64(share));
+            }
+        };
+        let (plants_and_trees, animals) = (&self.flora, &self.fauna);
+        let result = run_history(
+            &self.habitat,
+            plants_and_trees,
+            animals,
+            origin,
+            seed,
+            rain.as_ref(),
+            Some(&mut report),
+        );
+        let bytes = pack_history(&result);
+        self.history = Some(result);
+        Ok(bytes)
     }
 
     #[wasm_bindgen(js_name = landmassKm2)]
