@@ -130,19 +130,10 @@ function ageColour(ago: number): [number, number, number] {
   return stops[stops.length - 1].rgb
 }
 
-// The origin's mark, overlay texels: a red dot in a dark ring, crosshairs
-// out to ORIGIN_TICK, each on a white rim, so it stands out on any ground
-// (the first, a small dark ring, was easy to miss).
-const ORIGIN_RING = 23
-const ORIGIN_RING_WIDTH = 5
-const ORIGIN_DOT = 9
-const ORIGIN_TICK = 45
-const ORIGIN_TICK_WIDTH = 4
-const ORIGIN_RIM = 2
-
 // The people at `t` years after their departure, on the world raster
 // (`width` × `height`), onto the overlay: the land they reached by then,
-// by when they came; the arrows of the way they took; where they set out.
+// by when they came; the arrows of the way they took. Where they set out
+// is a mark (incubatorSymbols.ts).
 export function paintPeople(o: OverlayRaster, people: PeopleResult, arrows: readonly PeopleArrow[], t: number, spread: boolean, routes: boolean, width: number, height: number): void {
   if (spread) {
     for (let y = 0; y < o.height; y++) {
@@ -160,34 +151,7 @@ export function paintPeople(o: OverlayRaster, people: PeopleResult, arrows: read
     const [r, g, b] = PEOPLE_ROUTE
     drawArrows((x, y) => put(o, 4 * (y * o.width + x), r, g, b, 0.85), arrows, t, o.width, o.height)
   }
-  if (people.origin < 0) return
-  const ox = ((people.origin % width) + 0.5) * (o.width / width)
-  const oy = (Math.floor(people.origin / width) + 0.5) * (o.height / height)
-  const half = ORIGIN_RING_WIDTH / 2
-  const tick = ORIGIN_TICK_WIDTH / 2
-  // What a texel of the mark is: 0 none, 1 rim, 2 dark, 3 the dot.
-  const markAt = (dx: number, dy: number): number => {
-    const d = Math.hypot(dx, dy)
-    if (d <= ORIGIN_DOT) return 3
-    if (Math.abs(d - ORIGIN_RING) <= half) return 2
-    if (d > ORIGIN_RING + half && d <= ORIGIN_TICK && (Math.abs(dx) <= tick || Math.abs(dy) <= tick)) return 2
-    if (d <= ORIGIN_DOT + ORIGIN_RIM || Math.abs(d - ORIGIN_RING) <= half + ORIGIN_RIM) return 1
-    if (d > ORIGIN_RING && d <= ORIGIN_TICK + ORIGIN_RIM && (Math.abs(dx) <= tick + ORIGIN_RIM || Math.abs(dy) <= tick + ORIGIN_RIM)) return 1
-    return 0
-  }
-  const reach = ORIGIN_TICK + ORIGIN_RIM
-  for (let dy = -reach; dy <= reach; dy++) {
-    const y = Math.round(oy + dy)
-    if (y < 0 || y >= o.height) continue
-    for (let dx = -reach; dx <= reach; dx++) {
-      const m = markAt(dx, dy)
-      if (m === 0) continue
-      const i = 4 * (y * o.width + (((Math.round(ox + dx) % o.width) + o.width) % o.width))
-      if (m === 3) put(o, i, 220, 30, 30, 1)
-      else if (m === 2) put(o, i, 25, 25, 25, 1)
-      else put(o, i, 255, 255, 255, 1)
-    }
-  }
+
 }
 
 // THE SETTLEMENT (settleWorker.ts, a proof of concept): the lifeways, the
@@ -237,36 +201,12 @@ export function paintDensity(o: OverlayRaster, density: Float32Array, width: num
   }
 }
 
-// A filled disc of `r` texels, on a dark or white rim.
-function disc(o: OverlayRaster, cx: number, cy: number, r: number, rgb: readonly [number, number, number], rim: readonly [number, number, number]): void {
-  for (let dy = -r - 1; dy <= r + 1; dy++) {
-    const y = Math.round(cy + dy)
-    if (y < 0 || y >= o.height) continue
-    for (let dx = -r - 1; dx <= r + 1; dx++) {
-      const d = Math.hypot(dx, dy)
-      if (d > r + 1) continue
-      const x = ((Math.round(cx + dx) % o.width) + o.width) % o.width
-      const c = d <= r ? rgb : rim
-      put(o, 4 * (y * o.width + x), c[0], c[1], c[2], 1)
-    }
-  }
-}
-
 const centre = (cell: number, o: OverlayRaster, width: number, height: number): [number, number] =>
   [((cell % width) + 0.5) * (o.width / width), (Math.floor(cell / width) + 0.5) * (o.height / height)]
 
-// The villages: a dot each, in its lifeway's colour, bigger the denser.
-export function paintVillages(o: OverlayRaster, villages: Int32Array, density: Float32Array, width: number, height: number): void {
-  for (let k = 0; k < villages.length; k += 2) {
-    const [x, y] = centre(villages[k], o, width, height)
-    const r = Math.min(5, 2 + Math.log10(1 + density[villages[k]]))
-    disc(o, x, y, r, LIFEWAY_COLOURS[villages[k + 1]] ?? [0, 0, 0], [25, 25, 25])
-  }
-}
-
-// The trade: the links that carry goods, wider the more, and the sources
-// as squares in their good's colour.
-export function paintTrade(o: OverlayRaster, villages: Int32Array, links: Float32Array, sources: Int32Array, width: number, height: number): void {
+// The trade: the links that carry goods, wider the more. The sources are
+// marks (incubatorSymbols.ts).
+export function paintTrade(o: OverlayRaster, villages: Int32Array, links: Float32Array, width: number, height: number): void {
   const [cr, cg, cb] = TRADE_COLOUR
   for (let k = 0; k < links.length; k += 3) {
     const w = links[k + 2]
@@ -286,27 +226,6 @@ export function paintTrade(o: OverlayRaster, villages: Int32Array, links: Float3
       }
     }
   }
-  for (let k = 0; k < sources.length; k += 2) {
-    const [x, y] = centre(sources[k], o, width, height)
-    const c = GOOD_COLOURS[sources[k + 1]]
-    for (let dy = -5; dy <= 5; dy++) {
-      for (let dx = -5; dx <= 5; dx++) {
-        const yy = Math.round(y + dy)
-        if (yy < 0 || yy >= o.height) continue
-        const edge = Math.abs(dx) === 5 || Math.abs(dy) === 5
-        const col = edge ? [25, 25, 25] : c
-        put(o, 4 * (yy * o.width + (((Math.round(x + dx) % o.width) + o.width) % o.width)), col[0], col[1], col[2], 1)
-      }
-    }
-  }
+
 }
 
-// The farming's centres by the time shown: a big green disc on a dark rim.
-export function paintCentres(o: OverlayRaster, centres: Float32Array, t: number, width: number, height: number): void {
-  for (let k = 0; k < centres.length; k += 2) {
-    if (centres[k + 1] > t) continue
-    const [x, y] = centre(centres[k], o, width, height)
-    disc(o, x, y, 9, [255, 255, 255], [25, 25, 25])
-    disc(o, x, y, 6, LIFEWAY_COLOURS[4], [25, 25, 25])
-  }
-}

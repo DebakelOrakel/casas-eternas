@@ -25,5 +25,7 @@
   "incubator.people.play.label": "Play",
   "incubator.people.play.labelActive": "Pause",
   "incubator.people.play.help": "Runs the spread from the start.",
+  "incubator.people.speed.label": "Speed",
+  "incubator.people.speed.help": "How fast the time runs while it plays.",
   "incubator.people.time": "{years} years ago"
 }

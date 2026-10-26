@@ -25,5 +25,7 @@
   "incubator.people.play.label": "Abspielen",
   "incubator.people.play.labelActive": "Anhalten",
   "incubator.people.play.help": "Lässt die Ausbreitung von vorne ablaufen.",
+  "incubator.people.speed.label": "Tempo",
+  "incubator.people.speed.help": "Wie schnell die Zeit beim Abspielen läuft.",
   "incubator.people.time": "vor {years} Jahren"
 }

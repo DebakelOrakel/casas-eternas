@@ -9,7 +9,7 @@ import { createMapScales } from '../../map/mapScales'
 import { createGlobeWorldView, type GlobeWorldView } from '../../map/sphereView'
 import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
 import { weatherParamsFrom } from '../../world/runParams'
-import type { WorldView } from '../../map/worldView'
+import type { WorldSymbol, WorldView } from '../../map/worldView'
 import { listServerArtifacts, type ServerArtifact } from '../../server/artifactsClient'
 import { fetchWorld, listWorlds } from '../../server/worldClient'
 import { peekServerStatus } from '../../server/serverStatus'
@@ -51,8 +51,9 @@ import { arrowsOf, type PeopleArrow } from './peopleArrows'
 import type { SettleResult, SettleWorkerInbound, SettleWorkerOutbound } from './settleWorker'
 import { densityAt, GOODS, lifewayAt, pressure, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
+import { cellPoint, centrePictures, originPictures, sourcePictures, villagePictures, villageSymbols } from './incubatorSymbols'
 import { PLANTS } from './plants'
-import { clearOverlay, OVERLAY_DIVISOR, paintCentres, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, paintVillages, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
@@ -574,18 +575,37 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   sidebar.body.append(plantInfo)
 
   // THE TIME (steps 1 to 3): a slider over the span and under it the years
-  // ago shown with a play button, in the column's foot as the generator's
-  // months. Playing runs the span from its start in PEOPLE_PLAY_FRAMES
-  // steps. The people's layers follow it; the flora and the fauna do not
+  // ago shown with a play button and the speed, in the column's foot as the
+  // generator's months. Playing runs the span from its start, at 1×
+  // YEARS_A_SECOND years a second, a frame every PEOPLE_FRAME_MS. The people's layers follow it; the flora and the fauna do not
   // yet.
-  const PEOPLE_PLAY_FRAMES = 80
+  const YEARS_A_SECOND = 100
   const PEOPLE_FRAME_MS = 250
   const peopleSection = document.createElement('section')
   peopleSection.className = 'gen-overlays'
   const peopleRow = document.createElement('div')
   peopleRow.className = 'gen-month'
-  const peopleSpare = document.createElement('span')
-  peopleSpare.className = 'gen-month__spare'
+  // The speed, on the row's left where the generator keeps a spare: a press
+  // steps through PLAY_SPEEDS.
+  const PLAY_SPEEDS = [0.5, 1, 2, 4]
+  let speedIndex = 1
+  const speedButton = document.createElement('button')
+  speedButton.type = 'button'
+  speedButton.className = 'gen-action-icon'
+  speedButton.dataset.help = 'incubator.people.speed'
+  speedButton.dataset.tAria = 'incubator.people.speed.label'
+  speedButton.style.font = 'inherit'
+  speedButton.style.fontSize = '13px'
+  const saySpeed = (): void => {
+    const speed = PLAY_SPEEDS[speedIndex]
+    speedButton.textContent = `${speed === 0.5 ? '½' : String(speed)}×`
+    speedButton.setAttribute('aria-label', `${t('incubator.people.speed.label')} ${speedButton.textContent}`)
+  }
+  saySpeed()
+  speedButton.addEventListener('click', () => {
+    speedIndex = (speedIndex + 1) % PLAY_SPEEDS.length
+    saySpeed()
+  })
   const peopleLabel = document.createElement('span')
   peopleLabel.className = 'gen-month__label'
   const peopleButton = document.createElement('button')
@@ -595,7 +615,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const peopleIcon = document.createElement('img')
   peopleIcon.alt = ''
   peopleButton.append(peopleIcon)
-  peopleRow.append(peopleSpare, peopleLabel, peopleButton)
+  peopleRow.append(speedButton, peopleLabel, peopleButton)
   const peopleSlider = document.createElement('input')
   peopleSlider.type = 'range'
   peopleSlider.className = 'gen-param__range'
@@ -720,6 +740,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       relabel(): void {
         say()
         sayButton()
+        saySpeed()
       },
     }
     peopleButton.addEventListener('click', () => {
@@ -729,7 +750,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
       if (peopleTime >= SPAN_YEARS) player.show(0)
       timer = setInterval(() => {
-        player.show(peopleTime + SPAN_YEARS / PEOPLE_PLAY_FRAMES)
+        player.show(peopleTime + YEARS_A_SECOND * (PEOPLE_FRAME_MS / 1000) * PLAY_SPEEDS[speedIndex])
         if (peopleTime >= SPAN_YEARS) player.stop()
       }, PEOPLE_FRAME_MS)
       sayButton()
@@ -1190,16 +1211,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     {
       // TRIAL: the end state, drawn over the spread.
       steps: ['people'],
-      on: () => settled !== null && (lifewayBox.checked || densityBox.checked || villageBox.checked || tradeBox.checked),
+      on: () => settled !== null && (lifewayBox.checked || densityBox.checked || tradeBox.checked),
       paint: (o) => {
         if (!settled || !shown) return
         const now = settledNow()
         if (!now) return
         if (lifewayBox.checked) paintLifeways(o, now.lifeway, shown.width, shown.height)
         if (densityBox.checked) paintDensity(o, now.density, shown.width, shown.height)
-        if (tradeBox.checked) paintTrade(o, settled.villages, now.links, settled.sources, shown.width, shown.height)
-        if (villageBox.checked) paintVillages(o, now.villages, now.density, shown.width, shown.height)
-        if (lifewayBox.checked || villageBox.checked) paintCentres(o, settled.centres, peopleTime, shown.width, shown.height)
+        if (tradeBox.checked) paintTrade(o, settled.villages, now.links, shown.width, shown.height)
       },
       legend: () => {
         if (!settled) return []
@@ -1231,9 +1250,45 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const stepTrials = (): TrialLayer[] => TRIALS.filter((l) => l.steps.includes(STEPS[stepIndex]))
   const activeTrials = (): TrialLayer[] => stepTrials().filter((l) => l.on())
 
+  // THE MARKS (incubatorSymbols.ts) of the people step: the sources, the
+  // villages, the farming's centres, the origin, in that order from below;
+  // each view is given the pictures once.
+  const marked = new WeakSet<WorldView>()
+  function syncMarks(): void {
+    if (!view || !shown) return
+    const sources = view.symbols('incubator-sources')
+    const villages = view.symbols('incubator-villages')
+    const centres = view.symbols('incubator-centres')
+    const origin = view.symbols('incubator-origin')
+    if (!marked.has(view)) {
+      sources.setPictures(sourcePictures())
+      villages.setPictures(villagePictures())
+      centres.setPictures(centrePictures())
+      origin.setPictures(originPictures())
+      marked.add(view)
+    }
+    const { width, height } = shown
+    const now = onPeople() ? settledNow() : null
+    const showSources = now !== null && settled !== null && tradeBox.checked
+    sources.setSymbols(showSources ? Array.from({ length: settled!.sources.length / 2 }, (_, k) => ({ at: cellPoint(settled!.sources[2 * k], width, height), picture: settled!.sources[2 * k + 1] })) : [])
+    sources.setEnabled(showSources)
+    const showVillages = now !== null && villageBox.checked
+    villages.setSymbols(showVillages ? villageSymbols(now!.villages, now!.density, width, height) : [])
+    villages.setEnabled(showVillages)
+    const showCentres = now !== null && settled !== null && (lifewayBox.checked || villageBox.checked)
+    const centreSymbols: WorldSymbol[] = []
+    if (showCentres) for (let k = 0; k < settled!.centres.length; k += 2) if (settled!.centres[k + 1] <= peopleTime) centreSymbols.push({ at: cellPoint(settled!.centres[k], width, height), picture: 0 })
+    centres.setSymbols(centreSymbols)
+    centres.setEnabled(showCentres)
+    const showOrigin = onPeople() && people !== null && people.origin >= 0
+    origin.setSymbols(showOrigin ? [{ at: cellPoint(people!.origin, width, height), picture: 0 }] : [])
+    origin.setEnabled(showOrigin)
+  }
+
   // The overlay from the step's layers that draw now; none, none at all.
   function paintOverlay(): void {
     if (!view) return
+    syncMarks()
     const active = activeTrials()
     if (!overlay || active.length === 0) {
       view.setOverlay(null, 0, 0)
