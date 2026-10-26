@@ -3,7 +3,8 @@ import { MinHeap } from '../../generator/core/minHeap'
 import { kmBetween, mulberry32, type Habitat } from './habitat'
 import type { PeopleResult } from './people'
 import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
-import { FISH_RICH, POPULATION_STEP, ringsAround, VILLAGE_LEAST, VILLAGE_RADIUS, type SettleLifeways } from './settle'
+import { FISH_RICH, POPULATION_STEP, VILLAGE_LEAST, type SettleLifeways } from './settle'
+import { reset, travelDays, withinDays } from './travel'
 import { CAME_NEVER, CAME_STEP, LIFEWAY, PLANT_SUITS_CODE, SETTLE_AFTER } from './settleShared'
 import { POPULATION_MARKS, type LogEvent } from './historyLogShared'
 import { climateHistoryOf, coldShare, iceMayCover, ICE_REACH_KM } from './climateHistory'
@@ -136,14 +137,21 @@ const CAPACITY_MOVED = 0.02
 // and grow dense — the fish carry FISH_GAIN × the fish times more people
 // (the rules' densities: fishers 1 a km², foragers 0.1), where no fields
 // carry them instead (the Jōmon).
-// THE VILLAGES (the same day), every CLIMATE_YEARS: where the farmers (the
-// fields) or the fishers live VILLAGE_LEAST a km² or more, the densest
-// cell within VILLAGE_RADIUS rings with no village founds one (the rules'
-// measures, settle.ts); a village whose people fall under VILLAGE_LEAVE of
-// its least is left (the ice, the sea, the hunger). The people over the
-// span are counted every POPULATION_STEP years. Before, a history's
-// villages and its people were the rules', from its times.
+// THE VILLAGES (the same day), every CLIMATE_YEARS: the central places of
+// the settled — where the farmers (the fields) or the fishers live
+// VILLAGE_LEAST a km² or more (the rules' measure, settle.ts), the densest
+// first, each more than VILLAGE_DAYS of the ways (travel.ts) from any
+// village standing founds one (a day and the fishers' a day and a half
+// gave 2 262 on Morvane, too many; now 1 352); a village whose people fall under
+// VILLAGE_LEAVE of its least is left (the ice, the sea, the hunger). The
+// many small settlements around them are the hamlets, a count the screen
+// makes of the density. The spacing was the rules' rings until 2026-10-26
+// (3 cells for the farmers, 5 for the fishers: some 30 and 50 km). The
+// people over the span are counted every POPULATION_STEP years. Before, a
+// history's villages and its people were the rules', from its times.
 const FISH_GAIN = 10
+const VILLAGE_DAYS: Record<number, number> = { [LIFEWAY.fishers]: 2, [LIFEWAY.farmers]: 1.5 }
+const VILLAGE_DAYS_MOST = 2
 // THE DROUGHTS (2026-10-26, DES-0033 "Droughts"): the land in squares of
 // DRY_SQUARE_KM a landmass, so that a drought is a place. Each step a
 // square's rain is its mean times 1 + DRY_SCALE × its variability × an
@@ -177,6 +185,13 @@ const ENSO_PUSH = 1.5
 // the fields cannot be given up while the lifeways are times that only
 // go forward.
 const FAMINE_DEATH = 0.5
+// THE EXCHANGE (2026-10-26): the everyday goods — grain, herds, wool —
+// go no further than a day or two, from those who have to those who lack.
+// In a famine a cell within EXCHANGE_DAYS of land no famine holds gets up
+// to EXCHANGE of its shortfall from there, less with the days; deep in a
+// famine's square nothing comes. Not drawn: it shows in fewer dead.
+const EXCHANGE = 0.5
+const EXCHANGE_DAYS = 2
 const FLIGHT_CROWD = 1.5
 const VILLAGE_LEAVE = 0.5
 const SETTLED_YEARS = 5000
@@ -538,7 +553,10 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   const homeLandmass = input.origin >= 0 ? h.landmass[input.origin] : -1
   // What the fields and the herds add, as a factor on what the land carries.
   // The rain's share this step where a famine is (THE DROUGHTS), else 1.
-  const rainOf = (i: number): number => (drySquare[i] >= 0 ? squareRain[drySquare[i]] : 1)
+  const rainOf = (i: number): number => {
+    const r = drySquare[i] >= 0 ? squareRain[drySquare[i]] : 1
+    return r + (1 - r) * EXCHANGE * fed[i]
+  }
   const gain = (i: number): number => {
     const r = rainOf(i)
     return (farmAt[i] < Infinity ? 1 + FARM_GAIN * (arable?.[i] ?? 0) * r : fishing[i] ? 1 + FISH_GAIN * (fish?.[i] ?? 0) : 1) * (herdAt[i] < Infinity ? 1 + HERD_GAIN * (pasture?.[i] ?? 0) * r : 1) * ((1 + r) / 2)
@@ -568,8 +586,15 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   const villageFrom: number[] = []
   const villageTo: number[] = []
   const villageAt = new Int32Array(n).fill(-1)
-  const ringSeen = new Int32Array(n).fill(-1)
-  let ringMark = 0
+  // The ways' days (travel.ts); each cell's days to the nearest village
+  // standing; whether one was left since they were made.
+  const wayDays = travelDays(h)
+  const nearVillage = new Float32Array(n).fill(Infinity)
+  const scratchDays = new Float32Array(n).fill(Infinity)
+  // How much of a famine's shortfall a cell's neighbours make up, 0 … 1
+  // (THE EXCHANGE).
+  const fed = new Float32Array(n)
+  let villagesLeft = false
   const population = new Float32Array(Math.floor(SPAN_YEARS / POPULATION_STEP) + 1)
   let nextMark = 0
   // THE LOG (historyLogShared.ts): each event when it happens; which
@@ -841,19 +866,28 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         if (villageTo[v] < Infinity || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
         villageTo[v] = t
         villageAt[cell] = -1
+        villagesLeft = true
         log.push({ kind: 'villageLeft', at: t, cell, village: v })
       }
-      for (const i of lived) {
-        const way = farmAt[i] <= t ? LIFEWAY.farmers : fishing[i] ? LIFEWAY.fishers : LIFEWAY.none
-        if (way === LIFEWAY.none || villageAt[i] >= 0 || people[i] < VILLAGE_LEAST[way]) continue
-        let top = true
-        for (const u of ringsAround(h, i, VILLAGE_RADIUS[way], ringSeen, ++ringMark)) {
-          if (u !== i && (villageAt[u] >= 0 || people[u] > people[i] || (people[u] === people[i] && u < i))) {
-            top = false
-            break
-          }
-        }
-        if (!top) continue
+      if (villagesLeft) {
+        nearVillage.fill(Infinity)
+        const standing: number[] = []
+        for (let v = 0; v < villageTo.length; v++) if (villageTo[v] === Infinity) standing.push(villages[2 * v])
+        withinDays(h, wayDays, standing, VILLAGE_DAYS_MOST, nearVillage)
+        villagesLeft = false
+      }
+      const wayOf = (i: number): number => (farmAt[i] <= t ? LIFEWAY.farmers : fishing[i] ? LIFEWAY.fishers : LIFEWAY.none)
+      const candidates = lived.filter((i) => {
+        const way = wayOf(i)
+        return way !== LIFEWAY.none && people[i] >= VILLAGE_LEAST[way] && nearVillage[i] > VILLAGE_DAYS[way]
+      })
+      candidates.sort((a, b) => people[b] - people[a] || a - b)
+      for (const i of candidates) {
+        const way = wayOf(i)
+        if (nearVillage[i] <= VILLAGE_DAYS[way]) continue
+        const touched = withinDays(h, wayDays, [i], VILLAGE_DAYS_MOST, scratchDays)
+        for (const c of touched) nearVillage[c] = Math.min(nearVillage[c], scratchDays[c])
+        reset(scratchDays, touched)
         villageAt[i] = villageTo.length
         log.push({ kind: 'village', at: t, cell: i, village: villageTo.length, lifeway: way })
         villages.push(i, way)
@@ -916,7 +950,13 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         if (r === squareRain[q]) continue
         squareRain[q] = r
         for (const i of squareCells[q]) if (people[i] > 0) grows(i)
+        // What the neighbours bring (THE EXCHANGE).
+        for (const i of squareCells[q]) fed[i] = 0
         if (r === 1) continue
+        const givers = squareRim[q].filter((u) => people[u] > 0 && rainOf(u) === 1)
+        const reached = withinDays(h, wayDays, givers, EXCHANGE_DAYS, scratchDays)
+        for (const c of reached) if (drySquare[c] === q) fed[c] = 1 - scratchDays[c] / EXCHANGE_DAYS
+        reset(scratchDays, reached)
         // The famine: of those the land does not carry now, some die, the
         // rest flee (THE FLIGHT).
         let lost = 0
@@ -961,6 +1001,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
           if (villageTo[v] < Infinity || drySquare[cell] !== q || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
           villageTo[v] = t
           villageAt[cell] = -1
+          villagesLeft = true
           log.push({ kind: 'villageLeft', at: t, cell, village: v })
           left++
         }

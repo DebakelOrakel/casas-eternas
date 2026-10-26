@@ -237,9 +237,14 @@ no snapshots:
   Shown in stripes as wide as the shares; the tooltip lists them.
 - **The villages**: where farmers or fishers are the most, the densest
   cell of its neighbourhood.
-- **The trade**: each village linked to its three nearest within 150 km;
-  from the sources of tool stone, salt and copper the goods go down the
-  links, less each step.
+- **The hamlets** (2026-10-26): the many small settlements around them,
+  one for some 150 of the settled; a count by cell, not placed one by
+  one, shown as dots in a layer of their own.
+- **The trade**: each village linked to its three nearest within 6 days
+  of the ways (`travel.ts`: on foot by the grade and the land, by dugout
+  on the rivers, by boat along the coast; 150 km over the cells until
+  2026-10-26); from the sources of tool stone, salt and copper the goods
+  go down the links, less the more days from the source.
 
 On Morvane at the end: two farming and two herding centres, 17.7 M people
 (13 M of them farmers), 640 villages; one cell in twelve that people

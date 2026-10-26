@@ -2,6 +2,7 @@ import { MinHeap } from '../../generator/core/minHeap'
 import { hashText, kmBetween, mulberry32, type Habitat } from './habitat'
 import { SPAN_YEARS } from './peopleShared'
 import { POPULATION_MARKS, type LogEvent } from './historyLogShared'
+import { reset, travelDays, withinDays } from './travel'
 import type { PeopleResult } from './people'
 import { CAME_NEVER, CAME_STEP, CARRYING_FULL, densityAt, extinctAt, GOODS, LIFEWAY, lifewaySince, PLANT_SUITS_CODE, sharesAt, type SettleTimes } from './settleShared'
 
@@ -49,11 +50,18 @@ import { CAME_NEVER, CAME_STEP, CARRYING_FULL, densityAt, extinctAt, GOODS, LIFE
 //    the end state's, 5 000 years before the game, places the villages:
 //    where farmers or fishers are the most, the cells densest within
 //    VILLAGE_RADIUS of them; a village is there from its lifeway's start.
-// 4. THE TRADE: each village linked to its LINKS nearest within LINK_KM;
-//    from the sources of tool stone, salt and copper (the ecology's fields
-//    at SOURCE_RICH or more, one a SOURCE_RADIUS) the goods go down the
-//    line, each link a step less (DECAY_HOPS), as obsidian did on the earth
-//    (Renfrew's fall-off).
+// 4. THE TRADE, the far one (the everyday goods go a day or two, between
+//    neighbours: simulation.ts, THE EXCHANGE): each village linked to its
+//    LINKS nearest within LINK_DAYS of the ways (travel.ts: on foot by the
+//    grade and the land, by dugout on the rivers, by boat along the
+//    coast); from the sources of tool stone, salt and copper (the
+//    ecology's fields at SOURCE_RICH or more, one a SOURCE_RADIUS) the
+//    goods go down the line, less the more days from the source
+//    (DECAY_DAYS), as obsidian did on the earth (Renfrew's fall-off).
+//    Until 2026-10-26 the links were km over the cells (150 at most) and
+//    the goods lost a step each link (a quarter, 16 links at most). With
+//    the villages a day and a half apart, links of 4 days and a decay of
+//    6 carried goods on few of them.
 // 5. THE PEOPLE'S MARK ON THE ANIMALS (fauna, the step before):
 //    the big game dies out where people came new: on a landmass other than
 //    the people's own, each species of MEGAFAUNA by its chance, half again
@@ -152,13 +160,13 @@ export const VILLAGE_RADIUS: Record<number, number> = { 2: 5, 4: 3 }
 // Below this many people a km², no village.
 export const VILLAGE_LEAST: Record<number, number> = { 2: 0.3, 4: 2 }
 const LINKS = 3
-const LINK_KM = 150
+const LINK_DAYS = 6
 const SOURCE_RICH = 0.6
-const SOURCE_REACH_KM = 800
+const SOURCE_DAYS = 20
 // In rings of cells.
 const SOURCE_RADIUS = 10
-const DECAY_HOPS = 4
-const MAX_HOPS = 16
+const DECAY_DAYS = 8
+const MAX_DAYS = 32
 const CENTRES_MAX = 5
 const CENTRE_SPACING_KM = 1500
 const CENTRE_PLANTS = 2
@@ -223,32 +231,6 @@ function localTops(h: Habitat, value: Float32Array, rings: number, candidate: (i
     if (top) tops.push(i)
   }
   return tops
-}
-
-// From cell `c` over the cells, the nearest first, as far as `maxKm`:
-// `visit(cell, km)` for each, stopping where it returns true.
-function nearest(h: Habitat, c: number, maxKm: number, visit: (cell: number, km: number) => boolean, dist: Float64Array, touched: number[]): void {
-  const heap = new MinHeap(256)
-  dist[c] = 0
-  touched.push(c)
-  heap.push(0, c)
-  while (heap.length > 0) {
-    heap.pop()
-    const i = heap.poppedIndex
-    const d = heap.poppedKey
-    if (d > dist[i]) continue
-    if (visit(i, d)) break
-    for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
-      const u = h.nbr[e]
-      const nd = d + h.distKm[e]
-      if (nd > maxKm || nd >= dist[u]) continue
-      if (dist[u] === Infinity) touched.push(u)
-      dist[u] = nd
-      heap.push(nd, u)
-    }
-  }
-  for (const i of touched) dist[i] = Infinity
-  touched.length = 0
 }
 
 export function settle(h: Habitat, input: SettleInput): SettleResult {
@@ -435,25 +417,28 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
     }
   }
 
-  // 4. The links: each village's LINKS nearest within LINK_KM, over the
-  // cells.
+  // 4. The links: each village's LINKS nearest within LINK_DAYS of the
+  // ways (travel.ts).
+  const wayDays = travelDays(h)
   const villageOf = new Map<number, number>()
   villageCells.forEach((c, v) => villageOf.set(c, v))
-  const dist = new Float64Array(n).fill(Infinity)
-  const touched: number[] = []
+  const dist = new Float32Array(n).fill(Infinity)
   const edges = new Map<string, [number, number]>()
+  const edgeDays = new Map<string, number>()
   const neighbours: number[][] = villageCells.map(() => [])
+  const keyOf = (a: number, b: number): string => (a < b ? `${a},${b}` : `${b},${a}`)
   villageCells.forEach((c, v) => {
-    const near: number[] = []
-    nearest(h, c, LINK_KM, (cell) => {
+    const near: [number, number][] = []
+    reset(dist, withinDays(h, wayDays, [c], LINK_DAYS, dist, (cell, d) => {
       const u = villageOf.get(cell)
-      if (u !== undefined && u !== v) near.push(u)
+      if (u !== undefined && u !== v) near.push([u, d])
       return near.length >= LINKS
-    }, dist, touched)
-    for (const u of near) {
-      const key = v < u ? `${v},${u}` : `${u},${v}`
+    }))
+    for (const [u, d] of near) {
+      const key = keyOf(v, u)
       if (edges.has(key)) continue
       edges.set(key, v < u ? [v, u] : [u, v])
+      edgeDays.set(key, d)
       neighbours[v].push(u)
       neighbours[u].push(v)
     }
@@ -461,7 +446,7 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
 
   // The sources: the richest cell of a good within SOURCE_RADIUS rings,
   // reached by people; its goods leave from the village nearest to it,
-  // within SOURCE_REACH_KM.
+  // within SOURCE_DAYS.
   const sources: number[] = []
   GOODS.forEach((good, g) => {
     const field = eco[good]
@@ -471,26 +456,30 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
   const weight = new Map<string, number>()
   for (let s = 0; s < sources.length; s += 2) {
     let start = -1
-    nearest(h, sources[s], SOURCE_REACH_KM, (cell) => {
+    reset(dist, withinDays(h, wayDays, [sources[s]], SOURCE_DAYS, dist, (cell) => {
       const u = villageOf.get(cell)
       if (u === undefined) return false
       start = u
       return true
-    }, dist, touched)
+    }))
     if (start < 0) continue
-    // The goods down the line, a step of the links less each hop.
-    const hops = new Map<number, number>([[start, 0]])
-    const queue = [start]
-    for (let q = 0; q < queue.length; q++) {
-      const v = queue[q]
-      const d = hops.get(v)!
-      if (d >= MAX_HOPS) continue
+    // The goods down the line, less the more days from the source's
+    // village (DECAY_DAYS), as far as MAX_DAYS.
+    const days = new Map<number, number>([[start, 0]])
+    const heap = new MinHeap(64)
+    heap.push(0, start)
+    while (heap.length > 0) {
+      heap.pop()
+      const v = heap.poppedIndex
+      const d = heap.poppedKey
+      if (d > days.get(v)!) continue
       for (const u of neighbours[v]) {
-        if (hops.has(u)) continue
-        hops.set(u, d + 1)
-        queue.push(u)
-        const key = v < u ? `${v},${u}` : `${u},${v}`
-        weight.set(key, (weight.get(key) ?? 0) + Math.exp(-d / DECAY_HOPS))
+        const nd = d + edgeDays.get(keyOf(v, u))!
+        if (nd > MAX_DAYS || nd >= (days.get(u) ?? Infinity)) continue
+        const first = !days.has(u)
+        days.set(u, nd)
+        heap.push(nd, u)
+        if (first) weight.set(keyOf(v, u), (weight.get(keyOf(v, u)) ?? 0) + Math.exp(-d / DECAY_DAYS))
       }
     }
   }

@@ -63,7 +63,7 @@ import type { LogEvent } from './historyLogShared'
 import type { SettleResult } from './settle'
 import { CAME_STEP, clearedAt, clearedOf, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
-import { cellPoint, centrePictures, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
+import { cellPoint, centrePictures, hamletPictures, hamletSymbols, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
 import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
@@ -325,6 +325,7 @@ const PEOPLE_ROWS: readonly { id: string; helpBase: string; icon: string }[] = [
   { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' },
   { id: 'people:trade', helpBase: 'incubator.people.trade', icon: '/icons/trade.png' },
   { id: 'people:villages', helpBase: 'incubator.people.villages', icon: '/icons/village.png' },
+  { id: 'people:hamlets', helpBase: 'incubator.people.hamlets', icon: '/icons/hamlet.png' },
   { id: 'people:centres', helpBase: 'incubator.people.centres', icon: '/icons/origin.png' },
   { id: 'people:sources', helpBase: 'incubator.people.sources', icon: '/icons/stone_axe.png' },
 ]
@@ -535,7 +536,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let peopleTime = SPAN_YEARS
   // What the settled land shows, and the people's switches.
   let settlementShown: Settlement | null = 'spread'
-  const peopleOn: Record<string, boolean> = { 'people:routes': true, 'people:trade': false, 'people:villages': false, 'people:centres': true, 'people:sources': false }
+  const peopleOn: Record<string, boolean> = { 'people:routes': true, 'people:trade': false, 'people:villages': false, 'people:hamlets': false, 'people:centres': true, 'people:sources': false }
   const routesOn = (): boolean => peopleOn['people:routes']
   let peopleOrigin = -1
   // The people's end state (settle.ts), a proof of concept.
@@ -1974,6 +1975,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     hotspots.setEnabled(geology !== null && geoOn['geo:hotspots'])
     const sources = view.symbols('incubator-sources')
     const trade = view.symbols('incubator-trade')
+    const hamlets = view.symbols('incubator-hamlets')
     const villages = view.symbols('incubator-villages')
     const routes = view.symbols('incubator-routes')
     const crossings = view.symbols('incubator-crossings')
@@ -1982,6 +1984,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!marked.has(view)) {
       sources.setPictures(sourcePictures())
       trade.setPictures(tradePictures(TRADE_COLOUR))
+      hamlets.setPictures(hamletPictures())
       villages.setPictures(villagePictures())
       routes.setPictures(routePictures(PEOPLE_ROUTE))
       centres.setPictures(centrePictures())
@@ -2007,6 +2010,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const showVillages = now !== null && peopleOn['people:villages']
     villages.setSymbols(showVillages ? villageSymbols(now!.villages, now!.density, u, v) : [])
     villages.setEnabled(showVillages)
+    const showHamlets = now !== null && cellFacts !== null && peopleOn['people:hamlets']
+    hamlets.setSymbols(showHamlets ? hamletSymbols(now!.density, now!.shares, cellFacts!.areaKm2, u, v) : [])
+    hamlets.setEnabled(showHamlets)
     const showCrossings = people !== null && routesOn()
     if (people && (crossingWays?.people !== people || crossingWays.view !== view)) {
       const ways = crossingsOf(people)

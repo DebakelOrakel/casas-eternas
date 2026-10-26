@@ -460,3 +460,25 @@ day and never came: a farming cell that suits the herds has them already
 from the domesticates' waves, and the fields cannot be given up while the
 lifeways are times that only go forward — that waits for lifeways held
 as a state.
+
+**The ways, the central places, the hamlets, the trade, the exchange**
+(the same day). The ways take days (`travel.ts`): on foot by Tobler's
+hiking function on the step's grade, 6 hours a day (some 30 km on the
+flat), slowed by the land (the rainforest half, the forests and the dry
+land four fifths, ice and glaciers not crossed); by dugout on the rivers
+(50 km a day down, 20 up); by boat along the coast (40 km a day on sea
+200 m deep or less, a quarter day to land or set out). The villages are
+the central places of the settled: the densest first, each more than a
+day and a half (the fishers' two) from any village standing — the rules'
+rings until then; a day (a day and a half) gave 2 262 on Morvane, too
+many. The many small settlements around them are the
+hamlets, a count the screen makes of the density (one for some 150 of the
+settled), shown as dots. Two kinds of trade: the far one — tool stone,
+salt, copper — over the villages, each linked to its three nearest
+within 6 days, the goods less the more days from their source (e^(−days/8),
+32 days at most), drawn as before; and the everyday one — grain, herds,
+wool — a day or two between neighbours, not drawn: in a famine a cell
+within 2 days of land no famine holds gets up to half its shortfall from
+there, less with the days. On Morvane: 1 352 villages (694 by the rings),
+1 071 of the farmers at the end; the famines' dead 1.7 M (2.7 M without
+the exchange), 338 000 fled; 250 links that carry goods.

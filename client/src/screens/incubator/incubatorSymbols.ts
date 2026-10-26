@@ -1,5 +1,6 @@
 import type { SymbolPicture, WorldSymbol } from '../../map/worldView'
 import { GOOD_COLOURS, LIFEWAY_COLOURS } from './incubatorOverlay'
+import { LIFEWAY } from './settleShared'
 import type { RouteLine } from './peopleArrows'
 
 // THE INCUBATOR'S MARKS (2026-10-26): the places the people step shows —
@@ -46,6 +47,39 @@ export function villageSymbols(villages: Int32Array, density: Float32Array, u: F
     const d = density[villages[k]]
     const size = d >= 10 ? 2 : d >= 2 ? 1 : 0
     symbols.push({ at: cellPoint(villages[k], u, v), picture: (villages[k + 1] - 1) * VILLAGE_KM.length + size })
+  }
+  return symbols
+}
+
+// THE HAMLETS (2026-10-26): the many small settlements around the central
+// places, one for HAMLET_PEOPLE of the settled (the fishers and the
+// farmers); counted, not placed one by one — a cell's dot is larger the
+// more it holds (HAMLET_KM by HAMLET_CLASSES), in the colour of the
+// larger of the two lifeways. None under half a hamlet. Picture
+// (fishers 0, farmers 1) · 3 + size.
+const HAMLET_PEOPLE = 150
+const HAMLET_KM = [4, 6, 8]
+const HAMLET_CLASSES = [3, 8]
+export const hamletPictures = (): SymbolPicture[] => [LIFEWAY.fishers, LIFEWAY.farmers].flatMap((way) => HAMLET_KM.map((km) => picture(km, (c) => {
+  c.beginPath()
+  c.arc(0, 0, km / 2 - 0.5, 0, Math.PI * 2)
+  c.fillStyle = rgb(LIFEWAY_COLOURS[way])
+  c.fill()
+  c.lineWidth = 1
+  c.strokeStyle = 'rgb(25,25,25)'
+  c.stroke()
+})))
+// `shares`: the lifeways' shares, 4 a cell (1 … 4), in 255ths.
+export function hamletSymbols(density: Float32Array, shares: Uint8Array, areaKm2: Float32Array, u: Float32Array, v: Float32Array): WorldSymbol[] {
+  const symbols: WorldSymbol[] = []
+  for (let i = 0; i < density.length; i++) {
+    if (density[i] <= 0) continue
+    const fishers = shares[4 * i + LIFEWAY.fishers - 1]
+    const farmers = shares[4 * i + LIFEWAY.farmers - 1]
+    const count = (density[i] * areaKm2[i] * (fishers + farmers)) / 255 / HAMLET_PEOPLE
+    if (count < 0.5) continue
+    const size = count >= HAMLET_CLASSES[1] ? 2 : count >= HAMLET_CLASSES[0] ? 1 : 0
+    symbols.push({ at: cellPoint(i, u, v), picture: (farmers >= fishers ? 1 : 0) * HAMLET_KM.length + size })
   }
   return symbols
 }
