@@ -237,6 +237,9 @@ no snapshots:
   Shown in stripes as wide as the shares; the tooltip lists them.
 - **The villages**: where farmers or fishers are the most, the densest
   cell of its neighbourhood.
+- **The camps** (2026-10-26): the foragers' and the herders', as their
+  villages (12 and 9 rings, 0.05 and 0.5 people a km²), in the villages'
+  lists, told apart by their lifeway; nodes of the trade too.
 - **The hamlets** (2026-10-26): the many small settlements around them,
   one for some 150 of the settled; a count by cell, not placed one by
   one, shown as dots in a layer of their own.

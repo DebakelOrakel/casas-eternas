@@ -132,7 +132,8 @@ export interface SettleResult {
   // and when its wave came to each cell, in CAME_STEP years (CAME_NEVER
   // where it never did).
   domestications: { kind: 'plant' | 'animal'; id: string; cell: number; at: number; came: Uint16Array }[]
-  // [cell, lifeway] a village, when it began and when it was left
+  // [cell, lifeway] a village — or a camp, where the lifeway is the
+  // foragers' or the herders' — when it began and when it was left
   // (Infinity: never; the rules' are never left).
   villages: Int32Array
   villageFrom: Float32Array
@@ -159,6 +160,10 @@ export const FISH_RICH = 0.5
 export const VILLAGE_RADIUS: Record<number, number> = { 2: 5, 4: 3 }
 // Below this many people a km², no village.
 export const VILLAGE_LEAST: Record<number, number> = { 2: 0.3, 4: 2 }
+// The rules' camps (2026-10-26), the foragers' and the herders', as their
+// villages: in rings, and the least people a km².
+const CAMP_RADIUS: Record<number, number> = { 1: 12, 3: 9 }
+const CAMP_LEAST: Record<number, number> = { 1: 0.05, 3: 0.5 }
 const LINKS = 3
 const LINK_DAYS = 6
 const SOURCE_RICH = 0.6
@@ -409,8 +414,12 @@ export function settle(h: Habitat, input: SettleInput): SettleResult {
       villageWays.push(given.villages[v + 1])
     }
   } else {
-    for (const way of [2, 4]) {
-      for (const c of localTops(h, density, VILLAGE_RADIUS[way], (i) => lifeway[i] === way && density[i] >= VILLAGE_LEAST[way])) {
+    // The villages, then the camps (in the villages' lists, told apart by
+    // their lifeway: the foragers' and the herders').
+    for (const way of [2, 4, 1, 3]) {
+      const radius = VILLAGE_RADIUS[way] ?? CAMP_RADIUS[way]
+      const least = VILLAGE_LEAST[way] ?? CAMP_LEAST[way]
+      for (const c of localTops(h, density, radius, (i) => lifeway[i] === way && density[i] >= least)) {
         villageCells.push(c)
         villageWays.push(way)
       }
@@ -542,7 +551,11 @@ export function rulesLog(h: Habitat, people: PeopleResult, s: SettleResult): Log
   for (let k = 0; k < s.centres.length; k += 3) log.push({ kind: 'centre', at: s.centres[k + 1], cell: s.centres[k], lifeway: s.centres[k + 2] })
   for (const d of s.domestications) log.push({ kind: 'domesticated', at: d.at, cell: d.cell, id: d.id, plant: d.kind === 'plant' })
   for (const e of s.extinctions) if (e.at <= SPAN_YEARS) log.push({ kind: 'extinct', at: e.at, cell: e.cell, landmass: e.landmass, id: e.id })
-  for (let v = 0; v < s.villageFrom.length; v++) if (s.villageFrom[v] <= SPAN_YEARS) log.push({ kind: 'village', at: s.villageFrom[v], cell: s.villages[2 * v], village: v, lifeway: s.villages[2 * v + 1] })
+  for (let v = 0; v < s.villageFrom.length; v++) {
+    if (s.villageFrom[v] > SPAN_YEARS) continue
+    const way = s.villages[2 * v + 1]
+    log.push({ kind: way === LIFEWAY.foragers || way === LIFEWAY.herders ? 'camp' : 'village', at: s.villageFrom[v], cell: s.villages[2 * v], village: v, lifeway: way })
+  }
   // The marks, between the curve's samples linearly.
   const curve = s.population
   for (const mark of POPULATION_MARKS) {
@@ -550,7 +563,7 @@ export function rulesLog(h: Habitat, people: PeopleResult, s: SettleResult): Log
     if (k < 0) continue
     const at = k === 0 ? 0 : (k - 1 + (mark - curve[k - 1]) / Math.max(1e-9, curve[k] - curve[k - 1])) * POPULATION_STEP
     let villages = 0
-    for (let v = 0; v < s.villageFrom.length; v++) if (s.villageFrom[v] <= at && at < s.villageTo[v]) villages++
+    for (let v = 0; v < s.villageFrom.length; v++) if (s.villageFrom[v] <= at && at < s.villageTo[v] && (s.villages[2 * v + 1] === LIFEWAY.fishers || s.villages[2 * v + 1] === LIFEWAY.farmers)) villages++
     let centres = 0
     for (let k2 = 0; k2 < s.centres.length; k2 += 3) if (s.centres[k2 + 1] <= at) centres++
     log.push({ kind: 'population', at, cell: people.origin, count: mark, villages, centres })

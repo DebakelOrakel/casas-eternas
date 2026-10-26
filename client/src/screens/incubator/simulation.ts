@@ -150,6 +150,22 @@ const CAPACITY_MOVED = 0.02
 // people over the span are counted every POPULATION_STEP years. Before, a
 // history's villages and its people were the rules', from its times.
 const FISH_GAIN = 10
+// THE CAMPS (2026-10-26): the meeting places of the foragers and the
+// herders, kept in the villages' lists (their lifeway tells them apart),
+// every CAMP_YEARS: where they live CAMP_LEAST a km² or more, the densest
+// first, each more than CAMP_DAYS from any camp standing makes one; a camp
+// is left where its people turn to the fields or the fish, fall under
+// VILLAGE_LEAVE of its least, or a cell of its land (the cells nearest it)
+// holds CAMP_MOVE times its people — then one is made there: the camps
+// move with the people, the ice and the droughts. The far trade runs over
+// them as over the villages. On Morvane some 200 foragers' camps through
+// the cold, 580 herders' at the end; at 4 and 3 days and 0.05 a km² the
+// foragers' were 2 800, over the thin land too.
+const CAMP_YEARS = 2500
+const CAMP_DAYS: Record<number, number> = { [LIFEWAY.foragers]: 6, [LIFEWAY.herders]: 4 }
+const CAMP_DAYS_MOST = 6
+const CAMP_LEAST: Record<number, number> = { [LIFEWAY.foragers]: 0.1, [LIFEWAY.herders]: 0.3 }
+const CAMP_MOVE = 1.5
 const VILLAGE_DAYS: Record<number, number> = { [LIFEWAY.fishers]: 2, [LIFEWAY.farmers]: 1.5 }
 const VILLAGE_DAYS_MOST = 2
 // THE DROUGHTS (2026-10-26, DES-0033 "Droughts"): the land in squares of
@@ -595,6 +611,11 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   // (THE EXCHANGE).
   const fed = new Float32Array(n)
   let villagesLeft = false
+  // A place of the villages' lists is a camp by its lifeway (THE CAMPS);
+  // each cell's days to the nearest camp, and which.
+  const isCamp = (v: number): boolean => villages[2 * v + 1] === LIFEWAY.foragers || villages[2 * v + 1] === LIFEWAY.herders
+  const nearCamp = new Float32Array(n).fill(Infinity)
+  const campOwner = new Int32Array(n).fill(-1)
   const population = new Float32Array(Math.floor(SPAN_YEARS / POPULATION_STEP) + 1)
   let nextMark = 0
   // THE LOG (historyLogShared.ts): each event when it happens; which
@@ -757,7 +778,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       while (nextMark < POPULATION_MARKS.length && sum >= POPULATION_MARKS[nextMark]) {
         const mark = POPULATION_MARKS[nextMark++]
         let standing = 0
-        for (const to of villageTo) if (to === Infinity) standing++
+        for (let v = 0; v < villageTo.length; v++) if (villageTo[v] === Infinity && !isCamp(v)) standing++
         const at = t > 0 ? t - POPULATION_STEP * (1 - (mark - last) / Math.max(1e-9, sum - last)) : 0
         log.push({ kind: 'population', at, cell: input.origin, count: mark, villages: standing, centres: centres.length / 3 })
       }
@@ -863,7 +884,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       }
       for (let v = 0; v < villageTo.length; v++) {
         const cell = villages[2 * v]
-        if (villageTo[v] < Infinity || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
+        if (villageTo[v] < Infinity || isCamp(v) || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
         villageTo[v] = t
         villageAt[cell] = -1
         villagesLeft = true
@@ -872,14 +893,14 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       if (villagesLeft) {
         nearVillage.fill(Infinity)
         const standing: number[] = []
-        for (let v = 0; v < villageTo.length; v++) if (villageTo[v] === Infinity) standing.push(villages[2 * v])
+        for (let v = 0; v < villageTo.length; v++) if (villageTo[v] === Infinity && !isCamp(v)) standing.push(villages[2 * v])
         withinDays(h, wayDays, standing, VILLAGE_DAYS_MOST, nearVillage)
         villagesLeft = false
       }
       const wayOf = (i: number): number => (farmAt[i] <= t ? LIFEWAY.farmers : fishing[i] ? LIFEWAY.fishers : LIFEWAY.none)
       const candidates = lived.filter((i) => {
         const way = wayOf(i)
-        return way !== LIFEWAY.none && people[i] >= VILLAGE_LEAST[way] && nearVillage[i] > VILLAGE_DAYS[way]
+        return way !== LIFEWAY.none && people[i] >= VILLAGE_LEAST[way] && nearVillage[i] > VILLAGE_DAYS[way] && villageAt[i] < 0
       })
       candidates.sort((a, b) => people[b] - people[a] || a - b)
       for (const i of candidates) {
@@ -890,6 +911,53 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         reset(scratchDays, touched)
         villageAt[i] = villageTo.length
         log.push({ kind: 'village', at: t, cell: i, village: villageTo.length, lifeway: way })
+        villages.push(i, way)
+        villageFrom.push(t)
+        villageTo.push(Infinity)
+      }
+    }
+    // The camps, every CAMP_YEARS (THE CAMPS).
+    if (t > 0 && t % CAMP_YEARS === 0) {
+      const campWayOf = (i: number): number => (farmAt[i] <= t || fishing[i] ? LIFEWAY.none : herdAt[i] <= t ? LIFEWAY.herders : LIFEWAY.foragers)
+      // Each cell's nearest camp: the camp's land; its densest cell.
+      const near = (): number[] => {
+        const standing: number[] = []
+        for (let v = 0; v < villageTo.length; v++) if (villageTo[v] === Infinity && isCamp(v)) standing.push(v)
+        nearCamp.fill(Infinity)
+        campOwner.fill(-1)
+        withinDays(h, wayDays, standing.map((v) => villages[2 * v]), CAMP_DAYS_MOST, nearCamp, undefined, campOwner)
+        return standing
+      }
+      const standing = near()
+      const densest = new Float32Array(standing.length)
+      for (const i of lived) {
+        const k = campOwner[i]
+        if (k >= 0 && campWayOf(i) !== LIFEWAY.none && people[i] > densest[k]) densest[k] = people[i]
+      }
+      let campsLeft = false
+      standing.forEach((v, k) => {
+        const cell = villages[2 * v]
+        const way = campWayOf(cell)
+        if (way !== LIFEWAY.none && people[cell] >= CAMP_LEAST[way] * VILLAGE_LEAVE && densest[k] <= CAMP_MOVE * people[cell]) return
+        villageTo[v] = t
+        villageAt[cell] = -1
+        campsLeft = true
+        log.push({ kind: 'campLeft', at: t, cell, village: v })
+      })
+      if (campsLeft) near()
+      const candidates = lived.filter((i) => {
+        const way = campWayOf(i)
+        return way !== LIFEWAY.none && people[i] >= CAMP_LEAST[way] && nearCamp[i] > CAMP_DAYS[way] && villageAt[i] < 0
+      })
+      candidates.sort((a, b) => people[b] - people[a] || a - b)
+      for (const i of candidates) {
+        const way = campWayOf(i)
+        if (nearCamp[i] <= CAMP_DAYS[way]) continue
+        const touched = withinDays(h, wayDays, [i], CAMP_DAYS_MOST, scratchDays)
+        for (const c of touched) nearCamp[c] = Math.min(nearCamp[c], scratchDays[c])
+        reset(scratchDays, touched)
+        villageAt[i] = villageTo.length
+        log.push({ kind: 'camp', at: t, cell: i, village: villageTo.length, lifeway: way })
         villages.push(i, way)
         villageFrom.push(t)
         villageTo.push(Infinity)
@@ -998,7 +1066,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         let left = 0
         for (let v = 0; v < villageTo.length; v++) {
           const cell = villages[2 * v]
-          if (villageTo[v] < Infinity || drySquare[cell] !== q || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
+          if (villageTo[v] < Infinity || isCamp(v) || drySquare[cell] !== q || people[cell] >= VILLAGE_LEAST[villages[2 * v + 1]] * VILLAGE_LEAVE) continue
           villageTo[v] = t
           villageAt[cell] = -1
           villagesLeft = true

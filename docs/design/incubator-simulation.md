@@ -482,3 +482,15 @@ within 2 days of land no famine holds gets up to half its shortfall from
 there, less with the days. On Morvane: 1 352 villages (694 by the rings),
 1 071 of the farmers at the end; the famines' dead 1.7 M (2.7 M without
 the exchange), 338 000 fled; 250 links that carry goods.
+
+**The camps** (the same day): the foragers' and the herders' meeting
+places, every 2 500 years, kept in the villages' lists (their lifeway
+tells them apart): where they live 0.1 (the herders 0.3) a km² or more,
+the densest first, each more than 6 (4) days from any camp standing; a
+camp is left where its people turn to the fields or the fish, thin out,
+or a cell of its land (the cells nearest it) holds 1.5 times its people —
+then one is made there, so the camps move with the people. They are nodes
+of the far trade, which so begins long before the fields. Shown as tents;
+counted beside the villages in the chronicle. On Morvane some 200
+foragers' camps through the cold, 580 herders' at the end; 1 391 made,
+630 left; the first trade in year 2 500; 361 links that carry goods.

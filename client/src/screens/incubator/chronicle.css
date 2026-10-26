@@ -157,8 +157,9 @@
 
 .chronicle__stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  /* People, villages, camps, centres. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
   padding: 12px 18px;
   border-bottom: 1px solid var(--dc-line);
 }
@@ -175,7 +176,7 @@
 }
 
 .chronicle__stat-value {
-  font-size: 15px;
+  font-size: 14px;
   color: var(--dc-strong);
 }
 

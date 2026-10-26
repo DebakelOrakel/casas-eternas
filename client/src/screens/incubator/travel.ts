@@ -68,16 +68,18 @@ export function travelDays(h: Habitat): Float32Array {
 // From the cells `from` over the ways, the nearest first, as far as
 // `maxDays`: `dist` set on each cell reached (the caller's, Infinity
 // elsewhere, set back by `reset`), `visit(cell, days)` for each, stopping
-// where it returns true. The cells reached, to reset.
-export function withinDays(h: Habitat, days: Float32Array, from: readonly number[], maxDays: number, dist: Float32Array, visit?: (cell: number, d: number) => boolean): number[] {
+// where it returns true; `owner`, if given, set on each cell reached to
+// the index in `from` of the cell nearest it. The cells reached, to reset.
+export function withinDays(h: Habitat, days: Float32Array, from: readonly number[], maxDays: number, dist: Float32Array, visit?: (cell: number, d: number) => boolean, owner?: Int32Array): number[] {
   const touched: number[] = []
   const heap = new MinHeap(256)
-  for (const c of from) {
-    if (dist[c] === 0) continue
+  from.forEach((c, k) => {
+    if (dist[c] === 0) return
     dist[c] = 0
+    if (owner) owner[c] = k
     touched.push(c)
     heap.push(0, c)
-  }
+  })
   while (heap.length > 0) {
     heap.pop()
     const i = heap.poppedIndex
@@ -90,6 +92,7 @@ export function withinDays(h: Habitat, days: Float32Array, from: readonly number
       if (nd > maxDays || nd >= dist[u]) continue
       if (dist[u] === Infinity) touched.push(u)
       dist[u] = nd
+      if (owner) owner[u] = owner[i]
       heap.push(nd, u)
     }
   }

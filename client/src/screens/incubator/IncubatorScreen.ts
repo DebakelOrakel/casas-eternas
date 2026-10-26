@@ -63,7 +63,7 @@ import type { LogEvent } from './historyLogShared'
 import type { SettleResult } from './settle'
 import { CAME_STEP, clearedAt, clearedOf, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
-import { cellPoint, centrePictures, hamletPictures, hamletSymbols, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
+import { campPictures, campSymbols, cellPoint, centrePictures, hamletPictures, hamletSymbols, isCampWay, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
 import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
@@ -324,8 +324,9 @@ const LIFEWAY_KEYS: Record<number, TKey> = { 1: 'incubator.lifeway.foragers', 2:
 const PEOPLE_ROWS: readonly { id: string; helpBase: string; icon: string }[] = [
   { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' },
   { id: 'people:trade', helpBase: 'incubator.people.trade', icon: '/icons/trade.png' },
-  { id: 'people:villages', helpBase: 'incubator.people.villages', icon: '/icons/village.png' },
   { id: 'people:hamlets', helpBase: 'incubator.people.hamlets', icon: '/icons/hamlet.png' },
+  { id: 'people:camps', helpBase: 'incubator.people.camps', icon: '/icons/yurt.png' },
+  { id: 'people:villages', helpBase: 'incubator.people.villages', icon: '/icons/village.png' },
   { id: 'people:centres', helpBase: 'incubator.people.centres', icon: '/icons/origin.png' },
   { id: 'people:sources', helpBase: 'incubator.people.sources', icon: '/icons/stone_axe.png' },
 ]
@@ -536,7 +537,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let peopleTime = SPAN_YEARS
   // What the settled land shows, and the people's switches.
   let settlementShown: Settlement | null = 'spread'
-  const peopleOn: Record<string, boolean> = { 'people:routes': true, 'people:trade': false, 'people:villages': false, 'people:hamlets': false, 'people:centres': true, 'people:sources': false }
+  const peopleOn: Record<string, boolean> = { 'people:routes': true, 'people:trade': false, 'people:villages': false, 'people:hamlets': false, 'people:camps': false, 'people:centres': true, 'people:sources': false }
   const routesOn = (): boolean => peopleOn['people:routes']
   let peopleOrigin = -1
   // The people's end state (settle.ts), a proof of concept.
@@ -1012,8 +1013,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // The villages numbered by when they were founded, 1 the first.
       const villageName = (v: number): string => t('incubator.chronicle.village', { n: String(v + 1) })
       const villageOrder = new Map<number, number>()
+      const campOrder = new Map<number, number>()
       for (const e of log) if (e.kind === 'village') villageOrder.set(e.village, villageOrder.size)
-      const nameOf = (v: number): string => villageName(villageOrder.get(v) ?? v)
+      else if (e.kind === 'camp') campOrder.set(e.village, campOrder.size)
+      const nameOf = (v: number): string => (campOrder.has(v) ? `${t('incubator.chronicle.camps')} ${campOrder.get(v)! + 1}` : villageName(villageOrder.get(v) ?? v))
       // Only a domesticate's first taming is told: each centre tames its
       // own, and the chronicle held some 25 tamings over 20 000 years
       // (2026-10-26).
@@ -1157,9 +1160,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     let centres = 0
     if (settled) for (let k = 0; k < settled.centres.length; k += 3) if (settled.centres[k + 1] <= peopleTime) centres++
     const say = (n: number): string => (now ? Math.round(n).toLocaleString(getLocale()) : '–')
+    let villages = 0
+    let camps = 0
+    if (now) for (let k = 1; k < now.villages.length; k += 2) if (isCampWay(now.villages[k])) camps++
+    else villages++
     chronicle.setStats([
       { label: t('incubator.chronicle.people'), value: say(persons) },
-      { label: t('incubator.chronicle.villages'), value: say(now ? now.villages.length / 2 : 0) },
+      { label: t('incubator.chronicle.villages'), value: say(villages) },
+      { label: t('incubator.chronicle.camps'), value: say(camps) },
       { label: t('incubator.chronicle.centres'), value: say(centres) },
     ])
   }
@@ -1976,6 +1984,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const sources = view.symbols('incubator-sources')
     const trade = view.symbols('incubator-trade')
     const hamlets = view.symbols('incubator-hamlets')
+    const camps = view.symbols('incubator-camps')
     const villages = view.symbols('incubator-villages')
     const routes = view.symbols('incubator-routes')
     const crossings = view.symbols('incubator-crossings')
@@ -1985,6 +1994,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       sources.setPictures(sourcePictures())
       trade.setPictures(tradePictures(TRADE_COLOUR))
       hamlets.setPictures(hamletPictures())
+      camps.setPictures(campPictures())
       villages.setPictures(villagePictures())
       routes.setPictures(routePictures(PEOPLE_ROUTE))
       centres.setPictures(centrePictures())
@@ -2013,6 +2023,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const showHamlets = now !== null && cellFacts !== null && peopleOn['people:hamlets']
     hamlets.setSymbols(showHamlets ? hamletSymbols(now!.density, now!.shares, cellFacts!.areaKm2, u, v) : [])
     hamlets.setEnabled(showHamlets)
+    const showCamps = now !== null && peopleOn['people:camps']
+    camps.setSymbols(showCamps ? campSymbols(now!.villages, u, v) : [])
+    camps.setEnabled(showCamps)
     const showCrossings = people !== null && routesOn()
     if (people && (crossingWays?.people !== people || crossingWays.view !== view)) {
       const ways = crossingsOf(people)

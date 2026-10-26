@@ -41,13 +41,40 @@ export const villagePictures = (): SymbolPicture[] => [1, 2, 3, 4].flatMap((way)
   c.strokeStyle = 'rgb(25,25,25)'
   c.stroke()
 })))
+// The camps in the villages' lists are not villages (campSymbols).
 export function villageSymbols(villages: Int32Array, density: Float32Array, u: Float32Array, v: Float32Array): WorldSymbol[] {
   const symbols: WorldSymbol[] = []
   for (let k = 0; k < villages.length; k += 2) {
+    if (isCampWay(villages[k + 1])) continue
     const d = density[villages[k]]
     const size = d >= 10 ? 2 : d >= 2 ? 1 : 0
     symbols.push({ at: cellPoint(villages[k], u, v), picture: (villages[k + 1] - 1) * VILLAGE_KM.length + size })
   }
+  return symbols
+}
+
+// THE CAMPS (2026-10-26): the foragers' and the herders' meeting places
+// (simulation.ts, THE CAMPS), kept in the villages' lists: a tent, a
+// triangle in the lifeway's colour on a dark rim. Picture 0 the
+// foragers', 1 the herders'.
+export const isCampWay = (way: number): boolean => way === LIFEWAY.foragers || way === LIFEWAY.herders
+const CAMP_KM = 16
+export const campPictures = (): SymbolPicture[] => [LIFEWAY.foragers, LIFEWAY.herders].map((way) => picture(CAMP_KM, (c) => {
+  const r = CAMP_KM / 2 - 1.5
+  c.beginPath()
+  c.moveTo(0, -r)
+  c.lineTo(r * 0.95, r * 0.7)
+  c.lineTo(-r * 0.95, r * 0.7)
+  c.closePath()
+  c.fillStyle = rgb(LIFEWAY_COLOURS[way])
+  c.fill()
+  c.lineWidth = 2
+  c.strokeStyle = 'rgb(25,25,25)'
+  c.stroke()
+}))
+export function campSymbols(villages: Int32Array, u: Float32Array, v: Float32Array): WorldSymbol[] {
+  const symbols: WorldSymbol[] = []
+  for (let k = 0; k < villages.length; k += 2) if (isCampWay(villages[k + 1])) symbols.push({ at: cellPoint(villages[k], u, v), picture: villages[k + 1] === LIFEWAY.herders ? 1 : 0 })
   return symbols
 }
 
