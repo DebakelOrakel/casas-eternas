@@ -113,6 +113,26 @@ func WorkerVersion(ctx context.Context, bakerPath string) (string, error) {
 	return workerVersion(ctx, bakerPath, "")
 }
 
+// HistoryModule is where the history's module is shipped: history.mjs
+// beside the bundle (client/scripts/historyPipeline.ts).
+func HistoryModule(bakerPath string) string {
+	return filepath.Join(filepath.Dir(bakerPath), "history.mjs")
+}
+
+// HistoryVersion asks the bundle which history its history's module IS
+// (`job-worker.mjs --version --pipeline history.mjs`): the route of the
+// history's tasks (ScopeHistory). An error wrapping fs.ErrNotExist where no
+// module is shipped. The same silent failure as WorkerVersion guards
+// against: a module of another history version writes H1 under a key the
+// incubator never asks for.
+func HistoryVersion(ctx context.Context, bakerPath string) (string, error) {
+	module := HistoryModule(bakerPath)
+	if _, err := os.Stat(module); err != nil {
+		return "", fmt.Errorf("no history module at %s: %w", module, err)
+	}
+	return workerVersion(ctx, bakerPath, module)
+}
+
 // workerVersion is WorkerVersion with another pipeline module than the
 // one beside the bundle (`--pipeline`, client/scripts/workerContract.ts):
 // the pipeline the bundle runs with it.

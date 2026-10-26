@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	neturl "net/url"
@@ -78,12 +79,10 @@ func RunLauncher(ctx context.Context, cfg LauncherConfig) (int, error) {
 		return 0, err
 	}
 	// The shipped history module, where there is one.
-	history := filepath.Join(filepath.Dir(cfg.Bundle), "history.mjs")
-	ownHistory := ""
-	if _, err := os.Stat(history); err == nil {
-		if ownHistory, err = workerVersion(ctx, cfg.Bundle, history); err != nil {
-			slog.Warn("job worker: the shipped history module", "err", err)
-		}
+	history := HistoryModule(cfg.Bundle)
+	ownHistory, err := HistoryVersion(ctx, cfg.Bundle)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		slog.Warn("job worker: the shipped history module", "err", err)
 	}
 	for {
 		pipeline := choosePipeline(ctx, serve.Jobs, own, ownHistory)

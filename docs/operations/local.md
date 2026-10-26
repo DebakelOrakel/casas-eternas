@@ -99,4 +99,6 @@ so a bundle built from a different commit than the client bakes perfectly
 good bytes under a key no client ever looks for — the bake succeeds and the
 map never changes. If the line reads `unknown`, this process has no bundle
 (normal for a `world` or `auth` target) or `jobs.worker` points somewhere
-empty.
+empty. The **history** line is the same check for the incubator's history
+(H1): the version of `history.mjs` beside the bundle, which its jobs run
+and its artifacts are keyed by; `none` where no such module is shipped.
