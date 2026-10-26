@@ -56,13 +56,14 @@ import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
 import type { AnimalLayer } from './fauna'
 import type { AnimalUse } from './animals'
 import type { PeopleResult } from './people'
-import { SPAN_YEARS } from './peopleShared'
+import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
+import { climateHistoryOf, ICE_REACH_KM } from './climateHistory'
 import { flowAt, routeOrder, routesOf, type RouteLine } from './peopleArrows'
 import type { SettleResult } from './settle'
 import { CAME_STEP, clearedAt, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { cellPoint, centrePictures, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
-import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
@@ -485,7 +486,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The climate's layers over land and sea, switches (2026-10-26): the
   // temperature's and the pressure's washes, the wind's and the currents'
   // marks.
-  const flowOn: Record<string, boolean> = { 'flow:temperature': false, 'flow:pressure': false, 'flow:wind': false, 'flow:currents': false }
+  const flowOn: Record<string, boolean> = { 'flow:temperature': false, 'flow:pressure': false, 'flow:wind': false, 'flow:currents': false, 'flow:iceAge': false }
+  // The world's climate history (climateHistory.ts), for the ice's overlay.
+  let iceHistory: ReturnType<typeof climateHistoryOf> | null = null
   let flowMarked: { charts: RefinedCharts; view: WorldView; wind: boolean; currents: boolean } | null = null
   // The geology's switches and its marks: the volcanoes and the plumes of
   // the save's snapshot, on the world raster's texels.
@@ -538,7 +541,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // What the chronicle tells of the cells (cells.ts): each one's landmass
   // and area, the landmasses' areas, and their rank by it (1 the largest),
   // which names them.
-  let cellFacts: { landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; rank: Int32Array } | null = null
+  let cellFacts: { landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; rank: Int32Array; iceKm: Float32Array; seaDepthM: Float32Array; land: Uint8Array } | null = null
   // The composite last uploaded (showCharts), and the charts' version: a
   // new world's charts are a new composite.
   let uploadedBase = ''
@@ -736,6 +739,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ],
   }
   const FLOW_ROWS = [
+    { id: 'flow:iceAge', helpBase: 'incubator.layers.iceAge', icon: '/icons/blizzard.png' },
     { id: 'flow:temperature', helpBase: overlayKey('temperature'), icon: OVERLAY_META.temperature.icon },
     { id: 'flow:pressure', helpBase: overlayKey('pressure'), icon: OVERLAY_META.pressure.icon },
     { id: 'flow:wind', helpBase: overlayKey('wind'), icon: OVERLAY_META.wind.icon },
@@ -939,6 +943,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // A crossing or a species dying out tells of a landmass of
   // EVENT_LEAST_KM2 or more.
   const EVENT_LEAST_KM2 = 100_000
+  const CROSSING_LEAST_KM = 10
   const BOAT_RGB = [40, 120, 190] as const
   const EXTINCT_RGB = [176, 57, 44] as const
   // The population's thresholds the chronicle tells.
@@ -1002,9 +1007,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     if (people && cellFacts) {
       const c = people.crossings
-      for (let k = 0; k < c.length; k += 4) {
+      for (const k of toldCrossings(people)) {
         const km2 = cellFacts.landmassKm2[c[k]]
-        if (km2 < EVENT_LEAST_KM2) continue
         place({
           time: c[k + 2],
           icon: '/icons/boat.png',
@@ -1136,6 +1140,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (id in geoOn) return { on: geoOn[id], available: geology !== null }
       if (id === NO_CLIMATE) return { on: climateShown === null, available: true }
       if (id === 'flow:temperature') return { on: flowOn[id], available: climateFields?.temperature != null }
+      if (id === 'flow:iceAge') return { on: flowOn[id], available: cellFacts !== null }
       if (id.startsWith('climate:')) return { on: id === `climate:${climateShown}`, available: climateWashAvailable(id.slice('climate:'.length) as ClimateWash, climateFields, climateClasses()) }
       if (id === NO_SEA) return { on: seaShown === null, available: true }
       if (id.startsWith('sea:')) return { on: id === `sea:${seaShown}`, available: refinedCharts !== null }
@@ -1432,7 +1437,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlay = { data: new Uint8ClampedArray(cells.owners.length * 4), width: CHART_WIDTH / OVERLAY_DIVISOR, height: CHART_HEIGHT / OVERLAY_DIVISOR, owners: cells.owners, count: cells.count, u: cells.u, v: cells.v }
     const rank = new Int32Array(cells.landmassKm2.length)
     Array.from(cells.landmassKm2.keys()).sort((a, b) => cells.landmassKm2[b] - cells.landmassKm2[a]).forEach((m, k) => (rank[m] = k + 1))
-    cellFacts = { landmass: cells.landmass, landmassKm2: cells.landmassKm2, areaKm2: cells.areaKm2, rank }
+    cellFacts = { landmass: cells.landmass, landmassKm2: cells.landmassKm2, areaKm2: cells.areaKm2, rank, iceKm: cells.iceKm, seaDepthM: cells.seaDepthM, land: cells.land }
     const flora = await work(t('incubator.step.flora.label'), { type: 'flora' }, 'flora')
     if (!flora) return
     plants = { layers: flora.plants, trees: flora.trees }
@@ -1446,6 +1451,34 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     await growPeople()
   }
   // The people, from the origin clicked or chosen, then their settlement.
+  // THE HISTORY'S PLAYBACK (DES-0033): the kept state at the time shown —
+  // the people a km², KEEP_YEARS apart — asked of the worker as the time
+  // comes to it, the last few kept; null while the people are the rules'.
+  let historyFrames: Map<number, Float32Array> | null = null
+  const framesAsked = new Set<number>()
+  const FRAMES_KEPT = 6
+  function livingNow(): Float32Array | null {
+    if (!historyFrames) return null
+    const index = Math.min(Math.floor(SPAN_YEARS / KEEP_YEARS), Math.floor(peopleTime / KEEP_YEARS))
+    const frame = historyFrames.get(index)
+    if (frame) return frame
+    if (!framesAsked.has(index)) {
+      framesAsked.add(index)
+      const frames = historyFrames
+      void incubator.ask({ type: 'frame', index }).then((answer) => {
+        if (historyFrames !== frames || answer?.type !== 'frame' || !answer.people) return
+        frames.set(index, answer.people)
+        while (frames.size > FRAMES_KEPT) frames.delete(frames.keys().next().value!)
+        showPlants()
+      })
+    }
+    // Until it comes, the nearest kept before it.
+    for (let k = index - 1; k >= 0; k--) {
+      const earlier = historyFrames.get(k)
+      if (earlier) return earlier
+    }
+    return null
+  }
   // `history`: the simulation's (simulation.ts) instead of the rules'.
   async function growPeople(history = false): Promise<void> {
     if (!overlay) return
@@ -1454,9 +1487,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       : await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people')
     if (!done || !overlay) return
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
-    // The routes blue over the crossings the chronicle tells.
+    historyFrames = history ? new Map() : null
+    framesAsked.clear()
+    // The routes blue over the crossings' ways (every crossing's, not the
+    // told ones alone; the dry shelf walked stays brown).
     routeSea = new Uint8Array(people.arrival.length)
-    for (const way of crossingsOf(people)) for (const cell of way.path) routeSea[cell] = 1
+    for (const cell of people.crossingWays) if (cell >= 0 && !people.land[cell]) routeSea[cell] = 1
     peopleRoutes = routesOf(people)
     peopleOrder = routeOrder(people)
     routeWidths = null
@@ -1569,6 +1605,30 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       probe: () => [],
     },
     {
+      // THE ICE AND THE SEA at the time shown (climateHistory.ts): the ice
+      // grown past today's glaciers, white; the shelf the low sea lays dry,
+      // sand. As the history's simulation has them.
+      steps: ALL_STEPS,
+      on: () => flowOn['flow:iceAge'] && cellFacts !== null && iceHistory !== null,
+      paint: (o) => {
+        if (!cellFacts || !iceHistory) return
+        const reach = ICE_REACH_KM * iceHistory.cold(peopleTime)
+        const drop = iceHistory.seaDropM(peopleTime)
+        const { iceKm, seaDepthM, land } = cellFacts
+        for (let k = 0; k < o.owners.length; k++) {
+          const cell = o.owners[k]
+          if (land[cell]) {
+            if (iceKm[cell] > 0 && iceKm[cell] <= reach) putTexel(o, k, [245, 248, 252], 0.85)
+          } else if (seaDepthM[cell] <= drop) putTexel(o, k, [226, 206, 160], 0.75)
+        }
+      },
+      legend: () => [{ type: 'swatches', title: t('incubator.layers.iceAge.label'), items: [
+        { label: t('incubator.layers.iceAge.ice'), rgb: [245, 248, 252] },
+        { label: t('incubator.layers.iceAge.shelf'), rgb: [226, 206, 160] },
+      ] }],
+      probe: () => [],
+    },
+    {
       // The climate's washes over land and sea (switches): the temperature,
       // the pressure with its isobars; under the other layers.
       steps: ALL_STEPS,
@@ -1628,7 +1688,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       steps: ALL_STEPS,
       on: () => people !== null,
       paint: (o) => {
-        if (people && settlementShown === 'spread') paintPeople(o, people, peopleTime)
+        if (people && settlementShown === 'spread') paintPeople(o, people, peopleTime, livingNow())
       },
       legend: () => {
         const spreadOn = settlementShown === 'spread'
@@ -1707,16 +1767,43 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let crossingWays: { people: PeopleResult; view: WorldView; ways: { path: number[]; time: number }[] } | null = null
   function crossingsOf(p: PeopleResult): { path: number[]; time: number }[] {
     const ways: { path: number[]; time: number }[] = []
-    if (!cellFacts) return ways
     const c = p.crossings
+    const told = new Set(toldCrossings(p))
     let at = 0
     for (let k = 0; k < c.length; k += 4) {
       const path: number[] = []
       for (; p.crossingWays[at] >= 0; at++) path.push(p.crossingWays[at])
       at++
-      if (cellFacts.landmassKm2[c[k]] >= EVENT_LEAST_KM2) ways.push({ path, time: c[k + 2] })
+      if (told.has(k)) ways.push({ path, time: c[k + 2] })
     }
     return ways
+  }
+  // The crossings the chronicle tells and the map draws (their index into
+  // PeopleResult.crossings, a quadruple each): the first arrival on each
+  // landmass of EVENT_LEAST_KM2 or more, when it was a crossing over
+  // CROSSING_LEAST_KM of open water or more; not the people's own. The history's crossings join the
+  // regions the ice leaves apart, a landmass's pockets one by one, most
+  // along the coast alone: each told, they were hundreds (2026-10-26).
+  function toldCrossings(p: PeopleResult): number[] {
+    if (!cellFacts) return []
+    const c = p.crossings
+    const home = p.origin >= 0 ? cellFacts.landmass[p.origin] : -1
+    // Each landmass's first arrival, by any way: a crossing is told only
+    // if it is that one, not one after people walked or kept to the coast
+    // there.
+    const arrived = new Float64Array(cellFacts.landmassKm2.length).fill(Infinity)
+    for (let i = 0; i < p.arrival.length; i++) {
+      const m = cellFacts.landmass[i]
+      if (m >= 0 && p.arrival[i] < arrived[m]) arrived[m] = p.arrival[i]
+    }
+    const first = new Map<number, number>()
+    for (let k = 0; k < c.length; k += 4) {
+      const m = c[k]
+      if (m === home || cellFacts.landmassKm2[m] < EVENT_LEAST_KM2 || c[k + 2] > arrived[m]) continue
+      const known = first.get(m)
+      if (known === undefined || c[k + 2] < c[known + 2]) first.set(m, k)
+    }
+    return [...first.values()].filter((k) => c[k + 3] >= CROSSING_LEAST_KM)
   }
   // The true direction from one chart point to the next (WorldSymbol.angle):
   // on the globe a degree of longitude shrinks with the latitude; the
@@ -1978,6 +2065,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // A world texel's metres, at the equator on the globe.
     refinedCharts = null
     pressureShown = null
+    historyFrames = null
+    // The world's climate history on the chronicle's axis, every 500 years,
+    // and for the ice's overlay.
+    const history = climateHistoryOf(world.recipe.detailSeed, SPAN_YEARS)
+    iceHistory = history
+    chronicle.setCold(Float32Array.from({ length: SPAN_YEARS / 500 + 1 }, (_, k) => history.cold(k * 500)))
     void loadClimate(world, domain, kind === 'sphere' ? domain.metresAround / world.width : domain.metresPerUnit)
     plants = null
     animals = null

@@ -31,6 +31,9 @@ export interface ChroniclePanel {
   // The people over the span, evenly spaced from the departure on; null,
   // none.
   setCurve(values: Float32Array | null): void
+  // The climate's cold over the span, 0 … 1, evenly spaced from the
+  // departure on (climateHistory.ts); null, none.
+  setCold(values: Float32Array | null): void
   // The epochs, each from its year on to the next's, their names said; the
   // first from 0.
   setEpochs(epochs: readonly { from: number; name: string }[]): void
@@ -151,6 +154,7 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
   let events: readonly ChronicleEvent[] = []
   let rows: HTMLButtonElement[] = []
   let curve: Float32Array | null = null
+  let cold: Float32Array | null = null
   let epochs: readonly { from: number; name: string }[] = []
 
   function saySpeeds(): void {
@@ -188,6 +192,11 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
       if (k % 2 === 1) parts.push(`<rect x="0" y="${y0.toFixed(1)}" width="${AXIS_WIDTH}" height="${(y1 - y0).toFixed(1)}" class="chronicle__axis-band"/>`)
       if (k > 0) parts.push(`<line x1="0" y1="${y0.toFixed(1)}" x2="${AXIS_WIDTH}" y2="${y0.toFixed(1)}" class="chronicle__axis-border"/>`)
     })
+    // The cold, from the axis's right edge leftward, as wide as it is cold.
+    if (cold && cold.length > 1) {
+      const points = Array.from(cold, (v, k) => `${(AXIS_WIDTH - (AXIS_WIDTH - 2) * Math.max(0, Math.min(1, v))).toFixed(1)} ${((1000 * k) / (cold!.length - 1)).toFixed(1)}`)
+      parts.push(`<path d="M${AXIS_WIDTH} 0 L${points.join(' L')} L${AXIS_WIDTH} 1000 Z" class="chronicle__axis-cold"/>`)
+    }
     parts.push(`<line x1="13" y1="0" x2="13" y2="1000" class="chronicle__axis-line"/>`)
     if (curve && curve.length > 1) {
       // The people on a logarithmic scale over the axis's width.
@@ -334,6 +343,10 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
     },
     setCurve(values) {
       curve = values
+      drawAxis()
+    },
+    setCold(values) {
+      cold = values
       drawAxis()
     },
     setEpochs(list_) {

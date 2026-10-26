@@ -5,7 +5,7 @@ import type { Habitat } from './habitat'
 import { spreadPeople, type PeopleResult } from './people'
 import { PLANTS } from './plants'
 import { settle, type SettleResult } from './settle'
-import { simulate } from './simulation'
+import { iceDistance, simulate } from './simulation'
 import { PLANT_SUITS_CODE } from './settleShared'
 
 // THE INCUBATOR'S WORKER (2026-10-26): the habitat's cells (cells.ts), made
@@ -22,14 +22,16 @@ export type IncubatorRequest =
   | { type: 'fauna' }
   | { type: 'people'; origin: number }
   | { type: 'simulate'; origin: number }
+  | { type: 'frame'; index: number }
   | { type: 'settle' }
 
 export type IncubatorAnswer =
-  | { type: 'cells'; count: number; owners: Int32Array; u: Float32Array; v: Float32Array; land: Uint8Array; landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; ms: number }
+  | { type: 'cells'; count: number; owners: Int32Array; u: Float32Array; v: Float32Array; land: Uint8Array; landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; iceKm: Float32Array; seaDepthM: Float32Array; ms: number }
   | { type: 'flora'; plants: PlantLayer[]; trees: TreeLayer[]; ms: number }
   | { type: 'fauna'; animals: AnimalLayer[]; ms: number }
   | ({ type: 'people'; ms: number } & PeopleResult)
   | ({ type: 'settle'; ms: number } & SettleResult)
+  | { type: 'frame'; index: number; people: Float32Array | null; ms: number }
   | { type: 'failed'; message: string }
 
 // The tamable herd animals (animals.ts) the herders keep; the domesticable
@@ -44,6 +46,9 @@ let seed = 0
 let flora: { plants: PlantLayer[]; trees: TreeLayer[] } | null = null
 let animals: AnimalLayer[] | null = null
 let people: PeopleResult | null = null
+// The history's kept states (simulation.ts KEEP_YEARS apart), null for the
+// rules' spread.
+let frames: Float32Array[] | null = null
 
 // A layer's codes copied, for the answer; the worker keeps its own.
 const copied = <L extends { codes: Uint8Array }>(layers: L[]): L[] => layers.map((l) => ({ ...l, codes: l.codes.slice() }))
@@ -58,11 +63,12 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       const built = buildCells(input)
       habitat = built.habitat
       seed = worldSeed
+      frames = null
       flora = null
       animals = null
       people = null
-      const answer: IncubatorAnswer = { type: 'cells', count: habitat.count, owners: built.owners, u: habitat.u.slice(), v: habitat.v.slice(), land: habitat.land.slice(), landmass: habitat.landmass.slice(), landmassKm2: habitat.landmassKm2.slice(), areaKm2: habitat.areaKm2.slice(), ms: ms() }
-      worker.postMessage(answer, [built.owners.buffer, answer.u.buffer, answer.v.buffer, answer.land.buffer, answer.landmass.buffer, answer.landmassKm2.buffer, answer.areaKm2.buffer])
+      const answer: IncubatorAnswer = { type: 'cells', count: habitat.count, owners: built.owners, u: habitat.u.slice(), v: habitat.v.slice(), land: habitat.land.slice(), landmass: habitat.landmass.slice(), landmassKm2: habitat.landmassKm2.slice(), areaKm2: habitat.areaKm2.slice(), iceKm: iceDistance(habitat), seaDepthM: habitat.seaDepthM.slice(), ms: ms() }
+      worker.postMessage(answer, [built.owners.buffer, answer.u.buffer, answer.v.buffer, answer.land.buffer, answer.landmass.buffer, answer.landmassKm2.buffer, answer.areaKm2.buffer, answer.iceKm.buffer, answer.seaDepthM.buffer])
       return
     }
     if (!habitat) throw new Error('no cells yet')
@@ -82,15 +88,22 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
     }
     if (ask.type === 'simulate') {
       // The history (simulation.ts) in the rules' place: the settlement
-      // after it reads it as it read the rules' spread. Its kept states are
-      // not played back yet (DES-0033).
+      // after it reads it as it read the rules' spread. Its kept states stay
+      // here, sent one at a time as the playback asks (`frame`).
       const result = simulate(h, { carrying: h.carrying ?? new Float32Array(h.count).fill(0.4), origin: ask.origin >= 0 ? ask.origin : people?.origin ?? -1, seed })
       people = result.people
+      frames = result.kept
       const out = { ...people, arrival: people.arrival.slice(), land: people.land.slice(), from: people.from.slice(), flow: people.flow.slice(), crossings: people.crossings.slice(), crossingWays: people.crossingWays.slice() }
       worker.postMessage({ type: 'people', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer])
       return
     }
+    if (ask.type === 'frame') {
+      const frame = frames?.[ask.index]?.slice() ?? null
+      worker.postMessage({ type: 'frame', index: ask.index, people: frame, ms: ms() } satisfies IncubatorAnswer, frame ? [frame.buffer] : [])
+      return
+    }
     if (ask.type === 'people') {
+      frames = null
       if (!flora) throw new Error('the people need the flora first')
       const boat = new Uint8Array(h.count)
       for (const tree of flora.trees) if (tree.woods.includes('boat')) for (let i = 0; i < h.count; i++) if (tree.codes[i] >= PLANT_SUITS_CODE) boat[i] = 1

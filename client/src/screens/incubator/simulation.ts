@@ -2,7 +2,7 @@ import { Biome } from '../../generator/climate/biomes'
 import { MinHeap } from '../../generator/core/minHeap'
 import { mulberry32, type Habitat } from './habitat'
 import type { PeopleResult } from './people'
-import { SPAN_YEARS } from './peopleShared'
+import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
 import { climateHistoryOf, coldShare, iceMayCover, ICE_REACH_KM } from './climateHistory'
 
 // THE INCUBATOR'S SIMULATION, its skeleton (2026-10-26, DES-0033 step 2):
@@ -39,7 +39,6 @@ import { climateHistoryOf, coldShare, iceMayCover, ICE_REACH_KM } from './climat
 // KEEP_YEARS, kept to play back.
 
 export const STEP_YEARS = 25
-export const KEEP_YEARS = 2500
 const SUB_STEPS = 3
 const FORAGER_DENSITY = 0.1
 const CARRYING_FULL = 0.8
@@ -101,6 +100,41 @@ interface Crossing {
   from: number
   to: number
   km: number
+  // Its way over the sea, `from` to `to` (crossingsOf: made for the ones
+  // kept).
+  path: number[]
+  // Where the two searches met: a on `from`'s side, b on `to`'s.
+  a: number
+  b: number
+}
+
+// Each cell's distance from today's glaciers over the cold climates
+// (climateHistory.ts iceMayCover), km: how soon the ice reaches it;
+// Infinity where it cannot. The simulation's and the ice's overlay's.
+export function iceDistance(h: Habitat): Float32Array {
+  const n = h.count
+  const { land, biome, koppen } = h
+  const iceKm = new Float32Array(n).fill(Infinity)
+  const heap = new MinHeap(1 << 16)
+  for (let i = 0; i < n; i++) {
+    if (!land[i] || (biome[i] !== Biome.Ice && biome[i] !== Biome.Glacier)) continue
+    iceKm[i] = 0
+    heap.push(0, i)
+  }
+  while (heap.length > 0) {
+    heap.pop()
+    const i = heap.poppedIndex
+    const d = heap.poppedKey
+    if (d > iceKm[i]) continue
+    for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
+      const u = h.nbr[e]
+      const nd = d + h.distKm[e]
+      if (!land[u] || !iceMayCover(koppen[u]) || nd >= iceKm[u] || nd > ICE_REACH_KM) continue
+      iceKm[u] = nd
+      heap.push(nd, u)
+    }
+  }
+  return iceKm
 }
 
 // The regions: the habitable land's connected parts, an id a cell (-1
@@ -153,6 +187,8 @@ function crossingsOf(h: Habitat, maxKm: number, habitable: (i: number) => boolea
   const stretch = new Float32Array(n)
   const longest = new Float32Array(n)
   const source = new Int32Array(n).fill(-1)
+  // The cell each was reached from, for the ways.
+  const prev = new Int32Array(n).fill(-1)
   const heap = new MinHeap(1 << 16)
   const coastal = new Uint8Array(n)
   for (let i = 0; i < n; i++) {
@@ -176,10 +212,10 @@ function crossingsOf(h: Habitat, maxKm: number, habitable: (i: number) => boolea
     const mb = region[source[b]]
     const km = Math.max(longest[a], longest[b])
     if (ma === mb || km > maxKm) return
-    for (const [from, to] of [[source[a], source[b]], [source[b], source[a]]]) {
+    for (const [from, to, sa, sb] of [[source[a], source[b], a, b], [source[b], source[a], b, a]]) {
       const key = `${from},${region[to]}`
       const known = best.get(key)
-      if (!known || km < known.km) best.set(key, { from, to, km })
+      if (!known || km < known.km) best.set(key, { from, to, km, path: [], a: sa, b: sb })
     }
   }
   while (heap.length > 0) {
@@ -199,6 +235,7 @@ function crossingsOf(h: Habitat, maxKm: number, habitable: (i: number) => boolea
       const most = Math.max(longest[i], open)
       if (nd >= voyage[u] || nd > VOYAGE_KM || most > maxKm) continue
       voyage[u] = nd
+      prev[u] = i
       stretch[u] = open
       longest[u] = most
       source[u] = source[i]
@@ -212,7 +249,15 @@ function crossingsOf(h: Habitat, maxKm: number, habitable: (i: number) => boolea
     if (list) list.push(c)
     else byPair.set(key, [c])
   }
-  return [...byPair.values()].flatMap((list) => list.sort((a, b) => a.km - b.km).slice(0, CROSSINGS_A_PAIR))
+  const kept = [...byPair.values()].flatMap((list) => list.sort((a, b) => a.km - b.km).slice(0, CROSSINGS_A_PAIR))
+  // The ways: from `from` out to where the searches met, and in to `to`.
+  const back = (x: number): number[] => {
+    const chain: number[] = []
+    for (let c = x; c >= 0; c = prev[c]) chain.push(c)
+    return chain
+  }
+  for (const c of kept) c.path = [...back(c.a).reverse(), ...back(c.b)]
+  return kept
 }
 
 export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share: number) => void): SimulationResult {
@@ -245,30 +290,7 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     if (nearRiver[i] || nearSea[i]) v *= CORRIDOR
     speed[i] = v
   }
-  // Each cell's distance from today's glaciers over the cold climates
-  // (climateHistory.ts iceMayCover): how soon the ice reaches it.
-  const iceKm = new Float32Array(n).fill(Infinity)
-  {
-    const heap = new MinHeap(1 << 16)
-    for (let i = 0; i < n; i++) {
-      if (!land[i] || (biome[i] !== Biome.Ice && biome[i] !== Biome.Glacier)) continue
-      iceKm[i] = 0
-      heap.push(0, i)
-    }
-    while (heap.length > 0) {
-      heap.pop()
-      const i = heap.poppedIndex
-      const d = heap.poppedKey
-      if (d > iceKm[i]) continue
-      for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
-        const u = h.nbr[e]
-        const nd = d + h.distKm[e]
-        if (!land[u] || !iceMayCover(koppen[u]) || nd >= iceKm[u] || nd > ICE_REACH_KM) continue
-        iceKm[u] = nd
-        heap.push(nd, u)
-      }
-    }
-  }
+  const iceKm = iceDistance(h)
   // What each cell carries now (climateHistory.ts): the cold's share of
   // today's, 0 under the ice; the shelf while the sea stands below it.
   const capacity = new Float32Array(n)
@@ -397,11 +419,22 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
       for (const c of list) {
         if (c.km > reach || !open(c.to) || arrival[c.to] < Infinity) continue
         if (random() < CROSSING_CHANCE) {
-          settle(c.to, t + STEP_YEARS, capacity[c.to] * SEED_PEOPLE, c.from)
+          // The way over the sea is passed (an arrival and a from, as the
+          // rules' crossings have them), so the routes follow it.
+          let parent = c.from
+          for (const cell of c.path) {
+            if (cell === c.from || cell === c.to) continue
+            if (!land[cell] && arrival[cell] === Infinity) {
+              arrival[cell] = t + STEP_YEARS
+              from[cell] = parent
+            }
+            parent = cell
+          }
+          settle(c.to, t + STEP_YEARS, capacity[c.to] * SEED_PEOPLE, parent)
           const to = region[c.to]
           knowledge[to] = Math.max(knowledge[to], KNOW_CARRIED * known)
           made.push(h.landmass[c.to], c.to, t + STEP_YEARS, c.km)
-          ways.push(c.from, c.to, -1)
+          ways.push(...c.path, -1)
         }
       }
     }

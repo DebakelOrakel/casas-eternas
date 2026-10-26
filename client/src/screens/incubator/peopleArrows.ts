@@ -15,6 +15,11 @@ const ROUTE_SHARE = 0.005
 // A line that ends (no parting after it) shorter than this many cells is
 // left out: a stub.
 const ROUTE_MIN_CELLS = 8
+// A crossing's landing that settled LANDING_LEAST land cells or more keeps
+// its branch, back to the origin, under ROUTE_SHARE too: a land reached
+// over the sea was drawn without a way to it while its branch was thin
+// (2026-10-26).
+const LANDING_LEAST = 30
 // A branch begins this many cells back on the line it parts from, so that
 // smoothed it leaves that line along it, not at an angle; the cells it
 // shares lie under that line. Without it a branch bent at the parting
@@ -32,9 +37,15 @@ export function routesOf(people: PeopleResult): RouteLine[] {
   const { from, flow, origin } = people
   if (origin < 0) return []
   const least = Math.max(1, ROUTE_SHARE * flow[origin])
+  const kept = new Uint8Array(from.length)
+  for (let k = 0; k < people.crossings.length; k += 4) {
+    const landed = people.crossings[k + 1]
+    if (flow[landed] < LANDING_LEAST) continue
+    for (let c = landed; c >= 0 && !kept[c]; c = from[c]) kept[c] = 1
+  }
   const children = new Map<number, number[]>()
   for (let c = 0; c < from.length; c++) {
-    if (from[c] < 0 || flow[c] < least) continue
+    if (from[c] < 0 || (flow[c] < least && !kept[c])) continue
     const list = children.get(from[c])
     if (list) list.push(c)
     else children.set(from[c], [c])

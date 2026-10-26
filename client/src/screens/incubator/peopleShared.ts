@@ -7,3 +7,6 @@
 // to the game. 65 000 until 2026-10-26, then 100 000 for the simulation
 // (DES-0033), the rules with it.
 export const SPAN_YEARS = 100_000
+// A simulated history (simulation.ts) keeps its state every KEEP_YEARS, the
+// playback's frames.
+export const KEEP_YEARS = 2500

@@ -154,11 +154,14 @@ function ageColour(year: number): [number, number, number] {
 // onto the overlay: the land they reached by then, by when they came.
 // Where they set out, the ways they took (the routes, the crossings) are
 // marks (incubatorSymbols.ts).
-export function paintPeople(o: OverlayRaster, people: PeopleResult, t: number): void {
+// `living`: the people a km² at the time (a history's kept state), or null:
+// with it a cell people have left (the ice, the sea over the shelf) is not
+// drawn.
+export function paintPeople(o: OverlayRaster, people: PeopleResult, t: number, living: Float32Array | null = null): void {
   for (let k = 0; k < o.owners.length; k++) {
     const cell = o.owners[k]
     const at = people.arrival[cell]
-    if (!(at <= t) || !people.land[cell]) continue
+    if (!(at <= t) || !people.land[cell] || (living && !(living[cell] > 0))) continue
     const [r, g, b] = ageColour(at)
     put(o, 4 * k, r, g, b, 0.7)
   }
@@ -229,3 +232,6 @@ export function paintDensity(o: OverlayRaster, density: Float32Array): void {
 
 // The overlay as a wash's target (map/climateLayers.ts).
 export const washTarget = (o: OverlayRaster): WashTarget => ({ width: o.width, height: o.height, blend: (t, rgb, a) => put(o, 4 * t, rgb[0], rgb[1], rgb[2], a) })
+
+// A colour onto an overlay texel, over what is there.
+export const putTexel = (o: OverlayRaster, t: number, rgb: readonly [number, number, number], a: number): void => put(o, 4 * t, rgb[0], rgb[1], rgb[2], a)

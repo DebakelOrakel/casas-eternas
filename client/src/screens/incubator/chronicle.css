@@ -212,6 +212,11 @@
   vector-effect: non-scaling-stroke;
 }
 
+.chronicle__axis-cold {
+  fill: #5a8ac8;
+  opacity: 0.18;
+}
+
 .chronicle__axis-curve {
   fill: var(--dc-accent);
   opacity: 0.18;
