@@ -20,7 +20,7 @@ summary.de: Der Inkubator zeigt Level 1 einer Welt und lässt darauf Schritt fü
 area: mechanics
 stage: building
 createdAt: 2026-10-26
-related: [DEC-0046, DEC-0047, DES-0031, DES-0023]
+related: [DEC-0046, DEC-0047, DES-0031, DES-0023, DES-0033]
 ---
 
 This note is the map of the incubator. The rules and their numbers are in
@@ -280,7 +280,7 @@ every time in the order of its causes — the flora, the fauna, the spread,
 the farming and the herding, the animals' loss — and the steps only show
 it. Still a time per cell, still a function of the time.
 
-**Later: a simulation in time steps**, for feedback: the game thinned, the
+**Later: a simulation in time steps** ([DES-0033](./incubator-simulation.md)), for feedback: the game thinned, the
 land feeds fewer, people move on; droughts, hunger, people leaving. It
 costs what the history does not: the state is no longer a function of the
 time, so going back needs snapshots or a replay; minutes instead of
