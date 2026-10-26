@@ -49,7 +49,8 @@ import type { PeopleResult, PeopleWorkerInbound, PeopleWorkerOutbound } from './
 import { SPAN_YEARS } from './peopleShared'
 import { arrowsOf, type PeopleArrow } from './peopleArrows'
 import type { SettleResult, SettleWorkerInbound, SettleWorkerOutbound } from './settleWorker'
-import { densityAt, GOODS, lifewayAt, type SettleTimes } from './settleShared'
+import { densityAt, GOODS, lifewayAt, pressure, type SettleTimes } from './settleShared'
+import { ANIMALS } from './animals'
 import { PLANTS } from './plants'
 import { clearOverlay, OVERLAY_DIVISOR, paintCentres, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, paintVillages, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendSpec } from '../../ui/legend/LegendPanel'
@@ -631,15 +632,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const tradeBox = settleBox('Handel')
   sidebar.body.append(settleSection)
   // THE ANIMALS AT THE TIME SHOWN (2026-10-26): as the fauna placed them
-  // before people came; where people live by then, under their pressure
-  // (settleWorker.ts, the end state's); a big game gone from a landmass
-  // once its time came. Made per animal for the time and kept for it.
+  // before people came; where people live by then, under their pressure by
+  // the lifeway and the density of that time (settleShared.ts); a big game
+  // gone from a landmass once its time came (settleWorker.ts). Made per
+  // animal for the time and kept for it.
   const animalsAtTime = new Map<string, { time: number; codes: Uint8Array; reached: number }>()
   function animalAtTime(animal: AnimalLayer): { codes: Uint8Array; reached: number } {
     if (!settled || !people) return animal
     const kept = animalsAtTime.get(animal.id)
     if (kept && kept.time === peopleTime) return kept
-    const after = settled.animals.find((a) => a.id === animal.id)?.codes
+    const now = settledNow()
+    const spec = ANIMALS.find((a) => a.id === animal.id)
+    const hunted = spec ? spec.uses.includes('hunt') || spec.uses.includes('fur') : false
     const gone = new Set(settled.extinctions.filter((e) => e.id === animal.id && e.at <= peopleTime).map((e) => e.landmass))
     const codes = new Uint8Array(animal.codes.length)
     let lives = 0
@@ -648,7 +652,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (settled.landmass[i] >= 0) land++
       let c = animal.codes[i]
       if (c >= 2 && gone.has(settled.landmass[i])) c = 1
-      else if (c >= 2 && after && people.arrival[i] <= peopleTime) c = after[i]
+      else if (c >= 2 && now && spec && now.lifeway[i]) c = Math.max(2, 2 + Math.round((c - 2) * pressure(spec.role, hunted, now.lifeway[i], now.density[i])))
       codes[i] = c
       if (c >= 2) lives++
     }
@@ -1091,8 +1095,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const herdAnimal = new Uint8Array(n)
     for (const plant of plants?.layers ?? []) if (FARM_PLANTS.has(plant.id)) for (let i = 0; i < n; i++) if (plant.codes[i] >= PLANT_SUITS && farmPlant[i] < 255) farmPlant[i]++
     for (const animal of animals ?? []) if (HERD_ANIMALS.has(animal.id)) for (let i = 0; i < n; i++) if (animal.codes[i] >= 2) herdAnimal[i] = 1
-    // The animals' codes copied: the worker marks them, the wild ones stay.
-    const wild = (animals ?? []).map((a) => ({ id: a.id, codes: a.codes.slice() }))
+    // The animals where they live, for the dying out; the worker reads
+    // them, the codes are cloned on the way.
+    const wild = (animals ?? []).map((a) => ({ id: a.id, codes: a.codes }))
     const done = await settlePeople({ ...input, arrival: people.arrival, carrying: input.carrying ?? new Float32Array(n).fill(0.4), farmPlant, herdAnimal, origin: people.origin, animals: wild })
     if (ask !== settleAsk || shownWorld !== world || !done) return
     console.info(`[incubator] people settled, ${done.ms} ms, ${done.villages.length / 2} villages`)

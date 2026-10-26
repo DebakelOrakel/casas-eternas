@@ -1,5 +1,4 @@
 import { hashText, mulberry32, readHabitat, type HabitatInput } from './habitat'
-import { ANIMALS } from './animals'
 import { SPAN_YEARS } from './peopleShared'
 import { MinHeap } from '../../generator/core/minHeap'
 import { CARRYING_FULL, densityAt, GOODS, lifewayAt, lifewaySince, type SettleTimes } from './settleShared'
@@ -39,11 +38,8 @@ import { CARRYING_FULL, densityAt, GOODS, lifewayAt, lifewaySince, type SettleTi
 //    MEGAFAUNA by its chance, half again on an island (under ISLAND_KM2) —
 //    as on the earth, where Australia's, the Americas' and the islands' big
 //    animals went soon after people came, and Africa's, which grew up with
-//    them, stayed. The animals people hunt (game, fur) thin out with the
-//    people's density (1 / (1 + density / HUNT_HALF)); the wild herbivores
-//    give way to the herds and the fields (HERDERS_LEAVE, FARMERS_LEAVE),
-//    the predators are hunted down there (PREDATORS_LEAVE). The fish are
-//    left as they are.
+//    them, stayed. The hunt's and the herds' pressure on the animals is the
+//    screen's, at the time it shows (settleShared.ts, pressure).
 
 
 export interface SettleWorkerInbound extends HabitatInput {
@@ -56,7 +52,7 @@ export interface SettleWorkerInbound extends HabitatInput {
   farmPlant: Uint8Array
   herdAnimal: Uint8Array
   // The people's origin cell; the animals as the fauna placed them
-  // (animalWorker.ts), their codes copied in.
+  // (animalWorker.ts), their codes copied in: where they live.
   origin: number
   animals: { id: string; codes: Uint8Array }[]
 }
@@ -79,10 +75,6 @@ export interface SettleResult {
   sources: Int32Array
   // [village a, village b, weight] a link (indices into villages).
   links: Float32Array
-  // The animals under the people's pressure where people live (their
-  // codes, animalWorker.ts's coding), the dying out not in them: the screen
-  // lays both on the animals by the time it shows.
-  animals: { id: string; codes: Uint8Array }[]
   // Where a species died out: on a landmass, some years after the
   // departure; and each cell's landmass (-1 at sea).
   extinctions: { id: string; landmass: number; areaKm2: number; at: number }[]
@@ -118,10 +110,6 @@ const MEGAFAUNA: Record<string, number> = { elephant: 0.8, horse: 0.6, bison: 0.
 const EXTINCT_AFTER = 2000
 const ISLAND_KM2 = 1_000_000
 const ISLAND_CHANCE = 1.5
-const HUNT_HALF = 3
-const HERDERS_LEAVE = 0.6
-const FARMERS_LEAVE = 0.4
-const PREDATORS_LEAVE = 0.3
 
 const worker = self as unknown as Worker
 
@@ -129,7 +117,7 @@ worker.onmessage = (event: MessageEvent<SettleWorkerInbound>): void => {
   try {
     const started = performance.now()
     const result = settle(event.data)
-    worker.postMessage({ type: 'settled', ms: Math.round(performance.now() - started), ...result } satisfies SettleWorkerOutbound, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdOk.buffer, result.fishOk.buffer, result.carrying.buffer, result.centres.buffer, result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, ...result.animals.map((a) => a.codes.buffer), result.landmass.buffer])
+    worker.postMessage({ type: 'settled', ms: Math.round(performance.now() - started), ...result } satisfies SettleWorkerOutbound, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdOk.buffer, result.fishOk.buffer, result.carrying.buffer, result.centres.buffer, result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
   } catch (e) {
     worker.postMessage({ type: 'failed', message: String(e) } satisfies SettleWorkerOutbound)
   }
@@ -357,14 +345,12 @@ function settle(message: SettleWorkerInbound): SettleResult {
   const villages: number[] = []
   villageCells.forEach((c, v) => villages.push(c, villageWays[v]))
   const villageFrom = Float32Array.from(villageCells, (c, v) => lifewaySince(times, c, villageWays[v]))
-  const { animals, extinctions } = markAnimals(message, h, lifeway, density)
-  return { lifeway, density, farmAt, herdOk, fishOk, carrying: carryingNorm, centres: Float32Array.from(centres), villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), animals, extinctions, landmass: Int32Array.from(h.landmass) }
+  const extinctions = dyingOut(message, h)
+  return { lifeway, density, farmAt, herdOk, fishOk, carrying: carryingNorm, centres: Float32Array.from(centres), villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: Int32Array.from(h.landmass) }
 }
 
 // 5. The animals after the people.
-function markAnimals(message: SettleWorkerInbound, h: ReturnType<typeof readHabitat>, lifeway: Uint8Array, density: Float32Array): Pick<SettleResult, 'animals' | 'extinctions'> {
-  // The dying out is listed, not written into the codes: the screen
-  // applies it from its time on.
+function dyingOut(message: SettleWorkerInbound, h: ReturnType<typeof readHabitat>): SettleResult['extinctions'] {
   const { arrival, origin, seed } = message
   const n = message.width * message.height
   const home = origin >= 0 ? h.landmass[origin] : -1
@@ -372,36 +358,22 @@ function markAnimals(message: SettleWorkerInbound, h: ReturnType<typeof readHabi
   const first = new Float64Array(h.landmasses).fill(Infinity)
   for (let i = 0; i < n; i++) if (h.landmass[i] >= 0 && arrival[i] < first[h.landmass[i]]) first[h.landmass[i]] = arrival[i]
   const extinctions: SettleResult['extinctions'] = []
-  const animals = message.animals.map((animal) => {
-    const spec = ANIMALS.find((a) => a.id === animal.id)
-    const codes = animal.codes
+  for (const animal of message.animals) {
     const chance = MEGAFAUNA[animal.id]
-    if (chance) {
-      const random = mulberry32(hashText(animal.id) ^ seed)
-      const gone = new Uint8Array(h.landmasses)
-      for (let m = 0; m < h.landmasses; m++) {
-        const draw = random()
-        if (m === home || first[m] + EXTINCT_AFTER > SPAN_YEARS) continue
-        if (draw < Math.min(1, chance * (h.landmassKm2[m] < ISLAND_KM2 ? ISLAND_CHANCE : 1))) gone[m] = 1
-      }
-      const lived = new Uint8Array(h.landmasses)
-      for (let i = 0; i < n; i++) {
-        const m = h.landmass[i]
-        if (m >= 0 && gone[m] && codes[i] >= 2) lived[m] = 1
-      }
-      for (let m = 0; m < h.landmasses; m++) if (lived[m]) extinctions.push({ id: animal.id, landmass: m, areaKm2: h.landmassKm2[m], at: first[m] + EXTINCT_AFTER })
+    if (!chance) continue
+    const random = mulberry32(hashText(animal.id) ^ seed)
+    const gone = new Uint8Array(h.landmasses)
+    for (let m = 0; m < h.landmasses; m++) {
+      const draw = random()
+      if (m === home || first[m] + EXTINCT_AFTER > SPAN_YEARS) continue
+      if (draw < Math.min(1, chance * (h.landmassKm2[m] < ISLAND_KM2 ? ISLAND_CHANCE : 1))) gone[m] = 1
     }
-    // Thinned by the hunt, given way to the herds and the fields.
-    const hunted = spec ? spec.uses.includes('hunt') || spec.uses.includes('fur') : false
+    const lived = new Uint8Array(h.landmasses)
     for (let i = 0; i < n; i++) {
-      if (codes[i] < 2) continue
-      let f = 1
-      if (hunted) f /= 1 + density[i] / HUNT_HALF
-      if (spec?.role === 'herbivore') f *= lifeway[i] === 3 ? HERDERS_LEAVE : lifeway[i] === 4 ? FARMERS_LEAVE : 1
-      if (spec?.role === 'predator' && (lifeway[i] === 3 || lifeway[i] === 4)) f *= PREDATORS_LEAVE
-      codes[i] = Math.max(2, 2 + Math.round((codes[i] - 2) * f))
+      const m = h.landmass[i]
+      if (m >= 0 && gone[m] && animal.codes[i] >= 2) lived[m] = 1
     }
-    return { id: animal.id, codes }
-  })
-  return { animals, extinctions }
+    for (let m = 0; m < h.landmasses; m++) if (lived[m]) extinctions.push({ id: animal.id, landmass: m, areaKm2: h.landmassKm2[m], at: first[m] + EXTINCT_AFTER })
+  }
+  return extinctions
 }

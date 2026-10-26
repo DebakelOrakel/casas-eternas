@@ -62,3 +62,22 @@ export function densityAt(s: SettleTimes, i: number, t: number): number {
   const grown = 1 - Math.exp(-(t - lifewaySince(s, i, way)) / DENSITY_TAU)
   return floor + (full - floor) * Math.max(0, grown)
 }
+
+// THE PEOPLE'S PRESSURE ON AN ANIMAL in a cell, a factor on its numbers
+// (2026-10-26): the animals people hunt (game, fur) thin out with the
+// people's density, 1 / (1 + density / HUNT_HALF); the wild herbivores
+// give way to the herds and the fields (HERDERS_LEAVE, FARMERS_LEAVE), the
+// predators are hunted down there (PREDATORS_LEAVE). The animals of the
+// water are left as they are.
+export const HUNT_HALF = 3
+export const HERDERS_LEAVE = 0.6
+export const FARMERS_LEAVE = 0.4
+export const PREDATORS_LEAVE = 0.3
+
+export function pressure(role: string, hunted: boolean, way: number, density: number): number {
+  let f = 1
+  if (hunted) f /= 1 + density / HUNT_HALF
+  if (role === 'herbivore') f *= way === LIFEWAY.herders ? HERDERS_LEAVE : way === LIFEWAY.farmers ? FARMERS_LEAVE : 1
+  if (role === 'predator' && (way === LIFEWAY.herders || way === LIFEWAY.farmers)) f *= PREDATORS_LEAVE
+  return f
+}
