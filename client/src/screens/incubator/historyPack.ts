@@ -1,3 +1,4 @@
+import type { LogEvent } from './historyLogShared'
 import type { SimFrame, SimulationResult } from './simulation'
 
 // THE HISTORY PACKED (2026-10-26, the H1 artifact: world/historyArtifacts.ts):
@@ -155,6 +156,23 @@ export function unpackHistory(buffer: ArrayBuffer): PackedHistory | null {
         population: arrays.has('population') ? get('population') : undefined,
       },
     }
+  } catch {
+    return null
+  }
+}
+
+// What casas-history's settlement of a history computes besides the
+// history's own (the crate's pack.rs pack_settled): the arrays by their
+// names in SettleResult, and the first trade; null where the bytes are not
+// such a pack.
+export interface PackedSettled {
+  trade: Extract<LogEvent, { kind: 'trade' }> | null
+  arrays: Map<string, Typed>
+}
+export function unpackSettled(buffer: ArrayBuffer): PackedSettled | null {
+  try {
+    const { json, arrays } = unpack(buffer)
+    return { trade: (json as { trade: PackedSettled['trade'] }).trade, arrays }
   } catch {
     return null
   }

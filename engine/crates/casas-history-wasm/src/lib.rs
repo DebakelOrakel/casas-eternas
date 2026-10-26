@@ -7,7 +7,8 @@
 use casas_history::flora::{Layer, grow_flora, populate};
 use casas_history::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
 use casas_history::history::{RainChart, run_history};
-use casas_history::pack::pack_history;
+use casas_history::pack::{pack_history, pack_settled};
+use casas_history::settle::settle_history;
 use casas_history::simulation::SimulationResult;
 use wasm_bindgen::prelude::*;
 
@@ -261,6 +262,30 @@ impl Incubator {
         let bytes = pack_history(&result);
         self.history = Some(result);
         Ok(bytes)
+    }
+
+    /// A history's settlement (settle.rs settle_history) on its spread,
+    /// its fields' and herds' times and its villages and camps; packed
+    /// (pack.rs pack_settled).
+    #[wasm_bindgen(js_name = settleHistory)]
+    pub fn settle_history(
+        &self,
+        arrival: &[f32],
+        farm_at: &[f32],
+        herd_at: &[f32],
+        villages: &[i32],
+        village_from: &[f32],
+        village_to: &[f32],
+    ) -> Vec<u8> {
+        pack_settled(&settle_history(
+            &self.habitat,
+            arrival,
+            farm_at,
+            herd_at,
+            villages,
+            village_from,
+            village_to,
+        ))
     }
 
     #[wasm_bindgen(js_name = landmassKm2)]

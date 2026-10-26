@@ -30,9 +30,9 @@ const { buildCells } = await L('/src/screens/incubator/cells.ts')
 const { growFlora } = await L('/src/screens/incubator/flora.ts')
 const { populate } = await L('/src/screens/incubator/fauna.ts')
 const { simulate } = await L('/src/screens/incubator/simulation.ts')
-const { packHistory, unpackHistory } = await L('/src/screens/incubator/historyPack.ts')
+const { packHistory, unpackHistory, unpackSettled } = await L('/src/screens/incubator/historyPack.ts')
 const { originOf } = await L('/src/screens/incubator/people.ts')
-const { MEGAFAUNA } = await L('/src/screens/incubator/settle.ts')
+const { MEGAFAUNA, settle, logWithTrade } = await L('/src/screens/incubator/settle.ts')
 const { PLANTS } = await L('/src/screens/incubator/plants.ts')
 const catalog = (await L('casas-history-data/catalog.json')).default
 const { Biome } = await L('/src/generator/climate/biomes.ts')
@@ -257,6 +257,23 @@ for (const kind of ['torus', 'sphere']) {
       fail(`${kind} history: the packs differ (${tsPack.length} against ${rsPack.length} bytes)`)
     }
   }
+  // The history's settlement.
+  t0 = performance.now()
+  const crops = flora.plants.filter((p) => FARM_PLANTS.has(p.id))
+  const herds = fauna.filter((a) => HERD_ANIMALS.has(a.id))
+  const settled = settle(h, { arrival: history.people.arrival, crops, herds, origin: history.people.origin, animals: fauna, seed: world.seed, given: history.lifeways })
+  const tsTrade = logWithTrade(history.log, settled).find((e) => e.kind === 'trade') ?? null
+  const tsSettle = performance.now() - t0
+  t0 = performance.now()
+  const v = history.lifeways.villages
+  const rsSettled = unpackSettled(new Uint8Array(rs.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo)).buffer)
+  const rsSettle = performance.now() - t0
+  if (!rsSettled) fail(`${kind} settlement: the WASM's pack does not read`)
+  else {
+    for (const name of ['lifeway', 'density', 'fishOk', 'farmSuit', 'herdSuit', 'fishSuit', 'carrying', 'sources', 'links']) same(`${kind} settlement ${name}`, settled[name], rsSettled.arrays.get(name))
+    if (JSON.stringify(tsTrade) !== JSON.stringify(rsSettled.trade)) fail(`${kind} settlement: the first trade ${JSON.stringify(rsSettled.trade)} against ${JSON.stringify(tsTrade)}`)
+    if (tsTrade) seen.add('trade')
+  }
   const count = (k) => history.log.filter((e) => e.kind === k).length
   // What the world reached, for `reaches` (both worlds together).
   for (const e of history.log) seen.add(e.kind === 'centre' ? `centre ${e.lifeway}` : e.kind)
@@ -293,12 +310,13 @@ for (const kind of ['torus', 'sphere']) {
     console.log(kind, 'herd candidates by landmass', JSON.stringify([...byLm]))
   }
   console.log(`history: ${kind} — ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions (TS ${Math.round(tsRun)} ms, WASM ${Math.round(rsRun)} ms)`)
+  console.log(`history: ${kind} — settled, ${settled.links.length / 3} links, ${settled.sources.length / 2} sources (TS ${Math.round(tsSettle)} ms, WASM ${Math.round(rsSettle)} ms)`)
   rs.free()
 }
 
 // THE REACH: each kind of event at least once on the two worlds, or the
 // check passes on less than it claims; then the worlds are to be changed.
-const reaches = ['departure', 'crossing', 'centre 4', 'centre 3', 'domesticated', 'extinct', 'famine', 'village', 'villageLeft', 'camp', 'campLeft', 'population', 'ice']
+const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'centre 3', 'domesticated', 'extinct', 'famine', 'village', 'villageLeft', 'camp', 'campLeft', 'population', 'ice']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (failed) process.exit(1)
 console.log('history: the WASM build gives the TypeScript\'s bits')

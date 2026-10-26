@@ -240,3 +240,34 @@ pub fn pack_history(r: &SimulationResult) -> Vec<u8> {
         &arrays,
     )
 }
+
+/// A history's settlement packed (settle.rs settle_history), for the
+/// client's worker to read as it reads a history: the arrays by their
+/// TypeScript names, the first trade in the header (`{"trade":…}` or
+/// `{"trade":null}`).
+pub fn pack_settled(s: &crate::settle::Settled) -> Vec<u8> {
+    let arrays: Vec<(String, Array)> = vec![
+        ("lifeway".into(), Array::U8(&s.lifeway)),
+        ("density".into(), Array::F32(&s.density)),
+        ("fishOk".into(), Array::U8(&s.fish_ok)),
+        ("farmSuit".into(), Array::F32(&s.farm_suit)),
+        ("herdSuit".into(), Array::F32(&s.herd_suit)),
+        ("fishSuit".into(), Array::F32(&s.fish_suit)),
+        ("carrying".into(), Array::F32(&s.carrying)),
+        ("sources".into(), Array::I32(&s.sources)),
+        ("links".into(), Array::F32(&s.links)),
+    ];
+    pack(
+        |j| {
+            j.open_object().key("trade");
+            match &s.trade {
+                Some(e) => e.write(j),
+                None => {
+                    j.number(f64::NAN);
+                }
+            }
+            j.close_object();
+        },
+        &arrays,
+    )
+}
