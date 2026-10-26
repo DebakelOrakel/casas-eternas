@@ -49,9 +49,9 @@ import type { PeopleResult, PeopleWorkerInbound, PeopleWorkerOutbound } from './
 import { SPAN_YEARS } from './peopleShared'
 import { arrowsOf, type PeopleArrow } from './peopleArrows'
 import type { SettleResult, SettleWorkerInbound, SettleWorkerOutbound } from './settleWorker'
-import { GOODS } from './settleShared'
+import { densityAt, GOODS, lifewayAt, type SettleTimes } from './settleShared'
 import { PLANTS } from './plants'
-import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, paintVillages, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import { clearOverlay, OVERLAY_DIVISOR, paintCentres, paintDensity, paintGroup, paintLifeways, paintPeople, paintRaster, paintTrade, paintVillages, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_AGO_AT_START, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
@@ -656,6 +656,32 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     animalsAtTime.set(animal.id, made)
     return made
   }
+  // The end state's lifeways, density, villages and links at the time
+  // shown (settleShared.ts), made for the time and kept for it.
+  let settledAtTime: { time: number; lifeway: Uint8Array; density: Float32Array; villages: Int32Array; links: Float32Array } | null = null
+  function settledNow(): NonNullable<typeof settledAtTime> | null {
+    if (!settled || !people) return null
+    if (settledAtTime?.time === peopleTime) return settledAtTime
+    const times: SettleTimes = { arrival: people.arrival, farmAt: settled.farmAt, herdOk: settled.herdOk, fishOk: settled.fishOk, carrying: settled.carrying }
+    const n = people.arrival.length
+    const lifeway = new Uint8Array(n)
+    const density = new Float32Array(n)
+    for (let i = 0; i < n; i++) {
+      if (!(people.arrival[i] <= peopleTime) || !people.land[i]) continue
+      lifeway[i] = lifewayAt(times, i, peopleTime)
+      density[i] = densityAt(times, i, peopleTime)
+    }
+    // The villages there by now; the links between two of them, their
+    // indices into the end state's villages kept.
+    const villages: number[] = []
+    for (let v = 0; v < settled.villageFrom.length; v++) if (settled.villageFrom[v] <= peopleTime) villages.push(settled.villages[2 * v], settled.villages[2 * v + 1])
+    const links: number[] = []
+    for (let k = 0; k < settled.links.length; k += 3) {
+      if (settled.villageFrom[settled.links[k]] <= peopleTime && settled.villageFrom[settled.links[k + 1]] <= peopleTime) links.push(settled.links[k], settled.links[k + 1], settled.links[k + 2])
+    }
+    settledAtTime = { time: peopleTime, lifeway, density, villages: Int32Array.from(villages), links: Float32Array.from(links) }
+    return settledAtTime
+  }
   // The animals shown, at the time shown.
   function shownAnimals(): AnimalLayer[] | null {
     if (!animals) return null
@@ -1063,14 +1089,16 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const n = shown.width * shown.height
     const farmPlant = new Uint8Array(n)
     const herdAnimal = new Uint8Array(n)
-    for (const plant of plants?.layers ?? []) if (FARM_PLANTS.has(plant.id)) for (let i = 0; i < n; i++) if (plant.codes[i] >= PLANT_SUITS) farmPlant[i] = 1
+    for (const plant of plants?.layers ?? []) if (FARM_PLANTS.has(plant.id)) for (let i = 0; i < n; i++) if (plant.codes[i] >= PLANT_SUITS && farmPlant[i] < 255) farmPlant[i]++
     for (const animal of animals ?? []) if (HERD_ANIMALS.has(animal.id)) for (let i = 0; i < n; i++) if (animal.codes[i] >= 2) herdAnimal[i] = 1
     // The animals' codes copied: the worker marks them, the wild ones stay.
     const wild = (animals ?? []).map((a) => ({ id: a.id, codes: a.codes.slice() }))
     const done = await settlePeople({ ...input, arrival: people.arrival, carrying: input.carrying ?? new Float32Array(n).fill(0.4), farmPlant, herdAnimal, origin: people.origin, animals: wild })
     if (ask !== settleAsk || shownWorld !== world || !done) return
     console.info(`[incubator] people settled, ${done.ms} ms, ${done.villages.length / 2} villages`)
-    settled = { lifeway: done.lifeway, density: done.density, villages: done.villages, sources: done.sources, links: done.links, animals: done.animals, extinctions: done.extinctions, landmass: done.landmass }
+    const { type: _type, ms: _ms, ...result } = done
+    settled = result
+    settledAtTime = null
     animalsAtTime.clear()
     showPlants()
   }
@@ -1160,24 +1188,28 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       on: () => settled !== null && (lifewayBox.checked || densityBox.checked || villageBox.checked || tradeBox.checked),
       paint: (o) => {
         if (!settled || !shown) return
-        if (lifewayBox.checked) paintLifeways(o, settled.lifeway, shown.width, shown.height)
-        if (densityBox.checked) paintDensity(o, settled.density, shown.width, shown.height)
-        if (tradeBox.checked) paintTrade(o, settled.villages, settled.links, settled.sources, shown.width, shown.height)
-        if (villageBox.checked) paintVillages(o, settled.villages, settled.density, shown.width, shown.height)
+        const now = settledNow()
+        if (!now) return
+        if (lifewayBox.checked) paintLifeways(o, now.lifeway, shown.width, shown.height)
+        if (densityBox.checked) paintDensity(o, now.density, shown.width, shown.height)
+        if (tradeBox.checked) paintTrade(o, settled.villages, now.links, settled.sources, shown.width, shown.height)
+        if (villageBox.checked) paintVillages(o, now.villages, now.density, shown.width, shown.height)
+        if (lifewayBox.checked || villageBox.checked) paintCentres(o, settled.centres, peopleTime, shown.width, shown.height)
       },
       legend: () => {
         if (!settled) return []
         const specs: LegendSpec[] = []
-        if (lifewayBox.checked) specs.push({ type: 'swatches', title: 'Lebensweise', items: [1, 2, 3, 4].map((w) => ({ label: LIFEWAY_NAMES[w], rgb: [...LIFEWAY_COLOURS[w]] as [number, number, number] })) })
+        if (lifewayBox.checked) specs.push({ type: 'swatches', title: 'Lebensweise', items: [...[1, 2, 3, 4].map((w) => ({ label: LIFEWAY_NAMES[w], rgb: [...LIFEWAY_COLOURS[w]] as [number, number, number] })), { label: 'Ackerbau-Zentrum', rgb: [...LIFEWAY_COLOURS[4]] as [number, number, number], shape: 'ring' as const }] })
         if (densityBox.checked) specs.push({ type: 'gradient', title: 'Menschen je km²', unit: '', stops: DENSITY_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })) })
         if (tradeBox.checked) specs.push({ type: 'swatches', title: 'Handel', items: [{ label: 'Handelsweg', rgb: [...TRADE_COLOUR] as [number, number, number], shape: 'line' }, ...GOODS.map((g, k) => ({ label: t(`resource.${g}.label` as TKey), rgb: [...GOOD_COLOURS[k]] as [number, number, number] }))] })
         return specs
       },
       probe: (cell) => {
-        if (!settled || !settled.lifeway[cell]) return []
+        const now = settledNow()
+        if (!now || !now.lifeway[cell]) return []
         return [
-          { label: 'Lebensweise', value: LIFEWAY_NAMES[settled.lifeway[cell]] },
-          { label: 'Dichte', value: `${settled.density[cell].toFixed(2)} / km²` },
+          { label: 'Lebensweise', value: LIFEWAY_NAMES[now.lifeway[cell]] },
+          { label: 'Dichte', value: `${now.density[cell].toFixed(2)} / km²` },
         ]
       },
     },

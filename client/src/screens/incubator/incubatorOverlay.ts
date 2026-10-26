@@ -300,3 +300,13 @@ export function paintTrade(o: OverlayRaster, villages: Int32Array, links: Float3
     }
   }
 }
+
+// The farming's centres by the time shown: a big green disc on a dark rim.
+export function paintCentres(o: OverlayRaster, centres: Float32Array, t: number, width: number, height: number): void {
+  for (let k = 0; k < centres.length; k += 2) {
+    if (centres[k + 1] > t) continue
+    const [x, y] = centre(centres[k], o, width, height)
+    disc(o, x, y, 9, [255, 255, 255], [25, 25, 25])
+    disc(o, x, y, 6, LIFEWAY_COLOURS[4], [25, 25, 25])
+  }
+}

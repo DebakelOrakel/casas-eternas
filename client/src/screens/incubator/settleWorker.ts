@@ -1,7 +1,8 @@
 import { hashText, mulberry32, readHabitat, type HabitatInput } from './habitat'
 import { ANIMALS } from './animals'
 import { SPAN_YEARS } from './peopleShared'
-import { GOODS, LIFEWAY } from './settleShared'
+import { MinHeap } from '../../generator/core/minHeap'
+import { CARRYING_FULL, densityAt, GOODS, lifewayAt, lifewaySince, type SettleTimes } from './settleShared'
 
 // THE INCUBATOR'S SETTLEMENT (2026-10-25, a proof of concept): the people's
 // end state, 5 000 years before the game — how they live in each cell they
@@ -9,19 +10,24 @@ import { GOODS, LIFEWAY } from './settleShared'
 // rules, to see what it could look like; the time along the spread, and the
 // numbers, are for later.
 //
-// 1. THE LIFEWAY of a reached land cell, the first that holds:
-//    farmers   a domesticable starch plant grows there, the arable land is
-//              FARM_ARABLE or more;
-//    herders   a tamable herd animal lives there, the pasture is HERD_PASTURE
-//              or more;
-//    fishers   the ecology's fish is FISH_RICH or more: sedentary, as the
-//              earth's rich coasts' foragers were (the Jōmon);
-//    foragers  else: mobile bands.
-// 2. THE DENSITY, people a km²: the carrying capacity over CARRYING_FULL,
-//    times the lifeway's DENSITY (the earth's: foragers some 0.01 to 0.2,
-//    herders 0.5 to 3, farmers 10 to 100).
-// 3. THE VILLAGES: where farmers or fishers live, the cells densest within
-//    VILLAGE_RADIUS of them.
+// 1. WHAT A CELL ALLOWS: farming, where a domesticable starch plant grows
+//    and the arable land is FARM_ARABLE or more; herding, where a tamable
+//    herd animal lives and the pasture is HERD_PASTURE or more; settled
+//    fishing, where the ecology's fish is FISH_RICH or more (the Jōmon).
+// 2. THE FARMING, invented and spread (2026-10-26): at no more than
+//    CENTRES_MAX centres CENTRE_SPACING_KM apart — where people lived
+//    FARM_SETTLED years or more, CENTRE_PLANTS domesticable starch plants
+//    or more grow together and the arable land is CENTRE_ARABLE or more,
+//    the most of them first — the first FARM_EARLIEST, 11 000 years before
+//    the game, the next some 1 000 to 3 000 years after each other, as on
+//    the earth's (the Fertile Crescent, China, New Guinea, the Americas).
+//    From each the farmers spread FARM_KM_A, as the earth's did into
+//    Europe; through land they cannot farm FARM_BARRIER times slower, not
+//    over the sea, not ahead of the people.
+// 3. THE LIFEWAYS AND THE DENSITY over the time (settleShared.ts): the
+//    end state's, 5 000 years before the game, places the villages: where
+//    farmers or fishers live, the cells densest within VILLAGE_RADIUS of
+//    them; a village is there from its lifeway's start.
 // 4. THE TRADE: each village linked to its LINKS nearest within LINK_KM;
 //    from the sources of tool stone, salt and copper (the ecology's fields
 //    at SOURCE_RICH or more, one a SOURCE_RADIUS) the goods go down the
@@ -41,11 +47,12 @@ import { GOODS, LIFEWAY } from './settleShared'
 
 
 export interface SettleWorkerInbound extends HabitatInput {
+  // How many domesticable starch plants grow in a cell; whether a tamable
+  // herd animal lives there.
   // Years from the departure to the arrival (peopleWorker.ts); Infinity
   // where none came.
   arrival: Float32Array
   carrying: Float32Array
-  // 1 where a domesticable starch plant grows, a tamable herd animal lives.
   farmPlant: Uint8Array
   herdAnimal: Uint8Array
   // The people's origin cell; the animals as the fauna placed them
@@ -55,10 +62,19 @@ export interface SettleWorkerInbound extends HabitatInput {
 }
 
 export interface SettleResult {
+  // The end state's lifeway and density.
   lifeway: Uint8Array
   density: Float32Array
-  // [cell, lifeway] a village.
+  // The times the lifeways follow (settleShared.ts), the arrival aside.
+  farmAt: Float32Array
+  herdOk: Uint8Array
+  fishOk: Uint8Array
+  carrying: Float32Array
+  // [cell, time] a centre of the farming, the time it began there.
+  centres: Float32Array
+  // [cell, lifeway] a village, and when it began.
   villages: Int32Array
+  villageFrom: Float32Array
   // [cell, good index] a source.
   sources: Int32Array
   // [village a, village b, weight] a link (indices into villages).
@@ -80,8 +96,6 @@ export type SettleWorkerOutbound =
 const FARM_ARABLE = 0.3
 const HERD_PASTURE = 0.3
 const FISH_RICH = 0.5
-const CARRYING_FULL = 0.8
-const DENSITY: Record<number, number> = { 1: 0.1, 2: 1, 3: 1.5, 4: 15 }
 const VILLAGE_RADIUS: Record<number, number> = { 2: 5, 4: 3 }
 // Below this many people a km², no village.
 const VILLAGE_LEAST: Record<number, number> = { 2: 0.3, 4: 2 }
@@ -91,6 +105,14 @@ const SOURCE_RICH = 0.6
 const SOURCE_RADIUS = 10
 const DECAY_HOPS = 4
 const MAX_HOPS = 16
+const CENTRES_MAX = 5
+const CENTRE_SPACING_KM = 1500
+const CENTRE_PLANTS = 2
+const CENTRE_ARABLE = 0.5
+const FARM_SETTLED = 10_000
+const FARM_EARLIEST = SPAN_YEARS - 6000
+const FARM_KM_A = 1
+const FARM_BARRIER = 5
 // The big game and its chance to die out where people came new.
 const MEGAFAUNA: Record<string, number> = { elephant: 0.8, horse: 0.6, bison: 0.5, camel: 0.5, buffalo: 0.3, aurochs: 0.2, bear: 0.2 }
 const EXTINCT_AFTER = 2000
@@ -107,7 +129,7 @@ worker.onmessage = (event: MessageEvent<SettleWorkerInbound>): void => {
   try {
     const started = performance.now()
     const result = settle(event.data)
-    worker.postMessage({ type: 'settled', ms: Math.round(performance.now() - started), ...result } satisfies SettleWorkerOutbound, [result.lifeway.buffer, result.density.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, ...result.animals.map((a) => a.codes.buffer), result.landmass.buffer])
+    worker.postMessage({ type: 'settled', ms: Math.round(performance.now() - started), ...result } satisfies SettleWorkerOutbound, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdOk.buffer, result.fishOk.buffer, result.carrying.buffer, result.centres.buffer, result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, ...result.animals.map((a) => a.codes.buffer), result.landmass.buffer])
   } catch (e) {
     worker.postMessage({ type: 'failed', message: String(e) } satisfies SettleWorkerOutbound)
   }
@@ -121,17 +143,88 @@ function settle(message: SettleWorkerInbound): SettleResult {
   const { land, dxKm, dyKm } = h
   const at = (field: Float32Array | undefined, i: number): number => (field ? field[i] : 0)
 
-  // 1, 2. The lifeway and the density.
+  const kmBetween = (a: number, b: number): number => {
+    const ay = Math.floor(a / W)
+    const by = Math.floor(b / W)
+    let dx = Math.abs((a % W) - (b % W))
+    dx = Math.min(dx, W - dx)
+    return Math.hypot(dx * dxKm[Math.min(H - 1, Math.floor((ay + by) / 2))], (by - ay) * dyKm)
+  }
+
+  // 1. What each reached land cell allows.
+  const farmOk = new Uint8Array(n)
+  const herdOk = new Uint8Array(n)
+  const fishOk = new Uint8Array(n)
+  const carryingNorm = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    if (!land[i] || !(arrival[i] < Infinity)) continue
+    if (farmPlant[i] && at(eco.arable, i) >= FARM_ARABLE) farmOk[i] = 1
+    if (herdAnimal[i] && at(eco.pasture, i) >= HERD_PASTURE) herdOk[i] = 1
+    if (at(eco.fish, i) >= FISH_RICH) fishOk[i] = 1
+    carryingNorm[i] = Math.min(2, carrying[i] / CARRYING_FULL)
+  }
+
+  // 2. The farming's centres, then its spread.
+  const candidates: { cell: number; score: number }[] = []
+  for (let i = 0; i < n; i++) {
+    if (!farmOk[i] || farmPlant[i] < CENTRE_PLANTS || at(eco.arable, i) < CENTRE_ARABLE || arrival[i] > FARM_EARLIEST - FARM_SETTLED) continue
+    candidates.push({ cell: i, score: farmPlant[i] * at(eco.arable, i) * carrying[i] })
+  }
+  candidates.sort((p, q) => q.score - p.score || p.cell - q.cell)
+  const centres: number[] = []
+  const random = mulberry32(hashText('farming') ^ message.seed)
+  let next = FARM_EARLIEST
+  for (const c of candidates) {
+    if (centres.length / 2 >= CENTRES_MAX) break
+    let far = true
+    for (let k = 0; k < centres.length && far; k += 2) far = kmBetween(c.cell, centres[k]) >= CENTRE_SPACING_KM
+    if (!far) continue
+    centres.push(c.cell, Math.max(next, arrival[c.cell] + FARM_SETTLED))
+    next += 1000 + 2000 * random()
+  }
+  const farmAt = new Float32Array(n).fill(Infinity)
+  {
+    const time = new Float64Array(n).fill(Infinity)
+    const heap = new MinHeap(1 << 16)
+    for (let k = 0; k < centres.length; k += 2) {
+      if (centres[k + 1] > SPAN_YEARS) continue
+      time[centres[k]] = centres[k + 1]
+      heap.push(centres[k + 1], centres[k])
+    }
+    while (heap.length > 0) {
+      heap.pop()
+      const i = heap.poppedIndex
+      const t = heap.poppedKey
+      if (t > time[i]) continue
+      if (farmOk[i]) farmAt[i] = t
+      const x = i % W
+      const y = Math.floor(i / W)
+      for (let j = -1; j <= 1; j++) {
+        const yy = y + j
+        if (!h.torus && (yy < 0 || yy >= H)) continue
+        for (let k = -1; k <= 1; k++) {
+          if (k === 0 && j === 0) continue
+          const u = h.clampY(yy) * W + h.wrapX(x + k)
+          if (!land[u] || !(arrival[u] < Infinity)) continue
+          const km = Math.hypot(k * dxKm[y], j * dyKm)
+          const step = (km / FARM_KM_A) * (farmOk[u] ? 1 : FARM_BARRIER)
+          const at2 = Math.max(t + step, arrival[u])
+          if (at2 >= time[u] || at2 > SPAN_YEARS) continue
+          time[u] = at2
+          heap.push(at2, u)
+        }
+      }
+    }
+  }
+
+  // 3. The end state's lifeway and density.
+  const times: SettleTimes = { arrival, farmAt, herdOk, fishOk, carrying: carryingNorm }
   const lifeway = new Uint8Array(n)
   const density = new Float32Array(n)
   for (let i = 0; i < n; i++) {
-    if (!land[i] || !(arrival[i] < Infinity)) continue
-    let way: number = LIFEWAY.foragers
-    if (farmPlant[i] && at(eco.arable, i) >= FARM_ARABLE) way = LIFEWAY.farmers
-    else if (herdAnimal[i] && at(eco.pasture, i) >= HERD_PASTURE) way = LIFEWAY.herders
-    else if (at(eco.fish, i) >= FISH_RICH) way = LIFEWAY.fishers
-    lifeway[i] = way
-    density[i] = DENSITY[way] * Math.min(2, carrying[i] / CARRYING_FULL)
+    if (!land[i]) continue
+    lifeway[i] = lifewayAt(times, i, SPAN_YEARS)
+    density[i] = densityAt(times, i, SPAN_YEARS)
   }
 
   // 3. The villages: the densest cell within its radius, ties to the lower
@@ -173,13 +266,6 @@ function settle(message: SettleWorkerInbound): SettleResult {
     if (list) list.push(v)
     else buckets.set(key, [v])
   })
-  const kmBetween = (a: number, b: number): number => {
-    const ay = Math.floor(a / W)
-    const by = Math.floor(b / W)
-    let dx = Math.abs((a % W) - (b % W))
-    dx = Math.min(dx, W - dx)
-    return Math.hypot(dx * dxKm[Math.min(H - 1, Math.floor((ay + by) / 2))], (by - ay) * dyKm)
-  }
   const edges = new Map<string, [number, number]>()
   const neighbours: number[][] = villageCells.map(() => [])
   villageCells.forEach((c, v) => {
@@ -270,8 +356,9 @@ function settle(message: SettleWorkerInbound): SettleResult {
   for (const [key, [a, b]] of edges) links.push(a, b, weight.get(key) ?? 0)
   const villages: number[] = []
   villageCells.forEach((c, v) => villages.push(c, villageWays[v]))
+  const villageFrom = Float32Array.from(villageCells, (c, v) => lifewaySince(times, c, villageWays[v]))
   const { animals, extinctions } = markAnimals(message, h, lifeway, density)
-  return { lifeway, density, villages: Int32Array.from(villages), sources: Int32Array.from(sources), links: Float32Array.from(links), animals, extinctions, landmass: Int32Array.from(h.landmass) }
+  return { lifeway, density, farmAt, herdOk, fishOk, carrying: carryingNorm, centres: Float32Array.from(centres), villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), animals, extinctions, landmass: Int32Array.from(h.landmass) }
 }
 
 // 5. The animals after the people.
