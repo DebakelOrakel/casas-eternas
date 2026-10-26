@@ -81,5 +81,11 @@
   "incubator.layers.flows": "Wind und Meeresströmung",
   "incubator.epoch.paleolithic": "Altsteinzeit",
   "incubator.epoch.neolithic": "Jungsteinzeit",
-  "incubator.chronicle.event.departure": "Aufbruch der Menschen"
+  "incubator.chronicle.event.departure": "Aufbruch der Menschen",
+  "incubator.chronicle.event.firstVillage": "Erstes Dorf",
+  "incubator.chronicle.event.firstTrade": "Erster Handelsweg",
+  "incubator.chronicle.event.population": "Über {count} Menschen",
+  "incubator.chronicle.village": "Dorf {n}",
+  "incubator.chronicle.tradeDetail": "{a} – {b} · {km} km",
+  "incubator.chronicle.populationDetail": "{villages} Dörfer · {centres} Zentren"
 }

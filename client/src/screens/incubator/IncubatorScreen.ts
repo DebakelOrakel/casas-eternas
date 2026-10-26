@@ -901,6 +901,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const EVENT_LEAST_KM2 = 100_000
   const BOAT_RGB = [40, 120, 190] as const
   const EXTINCT_RGB = [176, 57, 44] as const
+  // The population's thresholds the chronicle tells.
+  const POPULATION_MARKS = [100_000, 1_000_000, 10_000_000]
   function sayChronicle(): void {
     eventPlaces.clear()
     const events: ChronicleEvent[] = []
@@ -970,6 +972,75 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           title: t('incubator.chronicle.event.crossing', { n: String(cellFacts.rank[c[k]]) }),
           detail: t('incubator.chronicle.crossingDetail', { area: Math.round(km2).toLocaleString(getLocale()), km: Math.round(c[k + 3]).toLocaleString(getLocale()) }),
         }, c[k + 1])
+      }
+    }
+    if (settled && cellFacts && overlay) {
+      const s = settled
+      const o = overlay
+      // The villages numbered by when they began, 1 the first.
+      const order = Array.from(s.villageFrom.keys()).sort((a, b) => s.villageFrom[a] - s.villageFrom[b] || a - b)
+      const number = new Int32Array(s.villageFrom.length)
+      order.forEach((v, k) => (number[v] = k + 1))
+      const villageName = (v: number): string => t('incubator.chronicle.village', { n: String(number[v]) })
+      if (order.length > 0) {
+        const v = order[0]
+        const cell = s.villages[2 * v]
+        place({
+          time: s.villageFrom[v],
+          icon: '/icons/village.png',
+          rgb: LIFEWAY_COLOURS[s.villages[2 * v + 1]],
+          title: t('incubator.chronicle.event.firstVillage'),
+          detail: `${villageName(v)} · ${landmassName(cellFacts.landmass[cell])}`,
+        }, cell)
+      }
+      // The first link that carries goods, once both its villages stand;
+      // its place the link's middle.
+      let first = -1
+      let firstAt = Infinity
+      for (let k = 0; k < s.links.length; k += 3) {
+        if (s.links[k + 2] < 0.05) continue
+        const at = Math.max(s.villageFrom[s.links[k]], s.villageFrom[s.links[k + 1]])
+        if (at < firstAt) {
+          firstAt = at
+          first = k
+        }
+      }
+      if (first >= 0 && firstAt <= SPAN_YEARS) {
+        const a = s.links[first]
+        const b = s.links[first + 1]
+        const pa = cellPoint(s.villages[2 * a], o.u, o.v)
+        const pb = cellPoint(s.villages[2 * b], o.u, o.v)
+        const km = view ? Math.round(view.metresBetween(pa, pb) / 1000) : 0
+        const event: ChronicleEvent = {
+          time: firstAt,
+          icon: '/icons/trade.png',
+          rgb: TRADE_COLOUR,
+          title: t('incubator.chronicle.event.firstTrade'),
+          detail: t('incubator.chronicle.tradeDetail', { a: villageName(a), b: villageName(b), km: km.toLocaleString(getLocale()) }),
+        }
+        events.push(event)
+        const du = pb.u - pa.u - Math.round(pb.u - pa.u)
+        eventPlaces.set(event, { u: (((pa.u + du / 2) % 1) + 1) % 1, v: (pa.v + pb.v) / 2 })
+      }
+      // The population over each mark, between the curve's samples
+      // linearly; no place.
+      const curve = s.population
+      const step = SPAN_YEARS / Math.max(1, curve.length - 1)
+      for (const mark of POPULATION_MARKS) {
+        const k = curve.findIndex((p) => p >= mark)
+        if (k < 0) continue
+        const at = k === 0 ? 0 : (k - 1 + (mark - curve[k - 1]) / Math.max(1e-9, curve[k] - curve[k - 1])) * step
+        let villages = 0
+        for (const from of s.villageFrom) if (from <= at) villages++
+        let centres = 0
+        for (let c = 0; c < s.centres.length; c += 3) if (s.centres[c + 1] <= at) centres++
+        events.push({
+          time: at,
+          icon: '/icons/population.png',
+          rgb: [110, 20, 40],
+          title: t('incubator.chronicle.event.population', { count: mark.toLocaleString(getLocale()) }),
+          detail: t('incubator.chronicle.populationDetail', { villages: villages.toLocaleString(getLocale()), centres: String(centres) }),
+        })
       }
     }
     chronicle.setEvents(events)

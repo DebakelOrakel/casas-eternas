@@ -86,9 +86,7 @@ A place has no name yet: the text uses a number ("Village 1", "Village
 
 ## Not yet
 
-- **More events:** the first village, the first trade link, a species that
-  dies out, the land bridges under the sea, the population over a
-  threshold. Their data exists.
+- **More events:** the land bridges under the sea.
 - **Events without a model:** pottery, walls, droughts.
 - **The search and the export.**
 
@@ -117,6 +115,13 @@ Neolithic from it (none on a world without one); bands on the axis, the
 name over the year, a heading over the epoch's events in the list (a click
 goes to its start). The epoch's start is no event of its own: it is the
 first farming centre's.
+
+More the same day: **the first village** (the villages numbered by when
+they began), **the first trade route** (the first link that carries goods,
+once both its villages stand, placed at its middle), **the population
+over 100 000, 1 M and 10 M** (from the curve, between its samples
+linearly; no place). On Morvane: year 4 714 (a fishing village), 42 199,
+819, 58 019, 62 666.
 
 A fifth: **a plant or an animal domesticated** at a centre (`settle.ts`,
 the domesticates), at the centre's cell. On Morvane 14.
