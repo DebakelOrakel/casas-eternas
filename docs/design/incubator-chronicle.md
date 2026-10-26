@@ -135,7 +135,7 @@ chronicle picks from it what is said here.
 A sixth, a history's only: **a famine** (simulation.ts, the droughts)
 that cost 30 % of its square's people and 10 000 or more, the ones on a
 landmass within 1 000 years of each other as one, at the most costly's
-cell, with the people they cost and the villages given up.
+cell, with the people who died, those who fled and the villages given up.
 
 A landmass is named by its rank by area, 1 the largest. The axis carries
 the people over the span (`settle.ts` population, every 500 years, on a

@@ -1110,12 +1110,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const first = famines[k]
         let to = first.to
         let lost = 0
+        let left = 0
         let villages = 0
         let worst = first
         for (; k < famines.length && famines[k].landmass === first.landmass && famines[k].at <= to + FAMINE_JOIN_YEARS; k++) {
           const f = famines[k]
           to = Math.max(to, f.to)
           lost += f.lost
+          left += f.left
           villages += f.villages
           if (f.lost > worst.lost) worst = f
         }
@@ -1124,7 +1126,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           icon: '/icons/warning.png',
           rgb: FAMINE_RGB,
           title: t('incubator.chronicle.event.famine'),
-          detail: t('incubator.chronicle.famineDetail', { landmass: landmassName(first.landmass), people: Math.round(lost).toLocaleString(getLocale()), villages: String(villages) }),
+          detail: t('incubator.chronicle.famineDetail', { landmass: landmassName(first.landmass), people: Math.round(lost).toLocaleString(getLocale()), left: Math.round(left).toLocaleString(getLocale()), villages: String(villages) }),
         }, worst.cell)
       }
     }

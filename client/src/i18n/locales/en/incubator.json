@@ -83,7 +83,7 @@
   "incubator.chronicle.event.firstVillage": "First village",
   "incubator.chronicle.event.firstTrade": "First trade route",
   "incubator.chronicle.event.famine": "Famine",
-  "incubator.chronicle.famineDetail": "{landmass} · {people} fewer people · {villages} villages given up",
+  "incubator.chronicle.famineDetail": "{landmass} · {people} dead · {left} fled · {villages} villages given up",
   "incubator.chronicle.event.population": "Over {count} people",
   "incubator.chronicle.village": "Village {n}",
   "incubator.chronicle.tradeDetail": "{a} – {b} · {km} km",
