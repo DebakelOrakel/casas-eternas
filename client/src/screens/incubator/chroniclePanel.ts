@@ -31,6 +31,9 @@ export interface ChroniclePanel {
   // The people over the span, evenly spaced from the departure on; null,
   // none.
   setCurve(values: Float32Array | null): void
+  // The epochs, each from its year on to the next's, their names said; the
+  // first from 0.
+  setEpochs(epochs: readonly { from: number; name: string }[]): void
   relabel(): void
   setVisible(visible: boolean): void
   dispose(): void
@@ -70,6 +73,9 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
   present.className = 'chronicle__present'
   const year = document.createElement('span')
   year.className = 'chronicle__year'
+  // The epoch of the time shown, over the year.
+  const epoch = document.createElement('span')
+  epoch.className = 'chronicle__epoch'
   const controls = document.createElement('div')
   controls.className = 'chronicle__controls'
   const previous = document.createElement('button')
@@ -110,7 +116,10 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
   slider.min = '0'
   slider.max = String(span)
   slider.step = '100'
-  present.append(year, controls, slider)
+  const when = document.createElement('div')
+  when.className = 'chronicle__when-now'
+  when.append(epoch, year)
+  present.append(when, controls, slider)
 
   const stats = document.createElement('div')
   stats.className = 'chronicle__stats'
@@ -142,6 +151,7 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
   let events: readonly ChronicleEvent[] = []
   let rows: HTMLButtonElement[] = []
   let curve: Float32Array | null = null
+  let epochs: readonly { from: number; name: string }[] = []
 
   function saySpeeds(): void {
     speedButtons.forEach((b, k) => b.setAttribute('aria-pressed', String(k === speedIndex)))
@@ -155,6 +165,7 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
   }
   function sayTime(): void {
     year.textContent = t('incubator.chronicle.year', { year: (Math.round(time / 10) * 10).toLocaleString(getLocale()) })
+    epoch.textContent = [...epochs].reverse().find((e) => e.from <= time)?.name ?? ''
     slider.value = String(time)
     // The last event by now is "now", the ones after it "later".
     let now = -1
@@ -169,7 +180,15 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
     drawAxis()
   }
   function drawAxis(): void {
-    const parts: string[] = [`<line x1="13" y1="0" x2="13" y2="1000" class="chronicle__axis-line"/>`]
+    const parts: string[] = []
+    // The epochs as bands, every second one toned, a line at each border.
+    epochs.forEach((e, k) => {
+      const y0 = (1000 * e.from) / span
+      const y1 = k + 1 < epochs.length ? (1000 * epochs[k + 1].from) / span : 1000
+      if (k % 2 === 1) parts.push(`<rect x="0" y="${y0.toFixed(1)}" width="${AXIS_WIDTH}" height="${(y1 - y0).toFixed(1)}" class="chronicle__axis-band"/>`)
+      if (k > 0) parts.push(`<line x1="0" y1="${y0.toFixed(1)}" x2="${AXIS_WIDTH}" y2="${y0.toFixed(1)}" class="chronicle__axis-border"/>`)
+    })
+    parts.push(`<line x1="13" y1="0" x2="13" y2="1000" class="chronicle__axis-line"/>`)
     if (curve && curve.length > 1) {
       // The people on a logarithmic scale over the axis's width.
       let top = 0
@@ -183,6 +202,26 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
     parts.push(`<line x1="13" y1="0" x2="13" y2="${y.toFixed(1)}" class="chronicle__axis-done"/>`)
     axis.innerHTML = parts.join('')
     handle.style.top = `${(100 * time) / span}%`
+  }
+  // The list: under each epoch's heading the events from its year to the
+  // next's; a click on a heading goes to the epoch's start.
+  function layOut(): void {
+    list.replaceChildren()
+    let k = 0
+    epochs.forEach((e, n) => {
+      const until = n + 1 < epochs.length ? epochs[n + 1].from : Infinity
+      const head = document.createElement('button')
+      head.type = 'button'
+      head.className = 'chronicle__epoch-head'
+      head.textContent = e.name
+      head.addEventListener('click', () => {
+        stop()
+        show(e.from)
+      })
+      list.append(head)
+      for (; k < events.length && events[k].time < until; k++) list.append(rows[k])
+    })
+    for (; k < events.length; k++) list.append(rows[k])
   }
   function say(): void {
     title.textContent = t('incubator.chronicle.title')
@@ -274,9 +313,9 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
           show(event.time)
           options.onEvent(event)
         })
-        list.append(row)
         return row
       })
+      layOut()
       say()
     },
     setStats(statRows) {
@@ -296,6 +335,11 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
     setCurve(values) {
       curve = values
       drawAxis()
+    },
+    setEpochs(list_) {
+      epochs = list_
+      layOut()
+      sayTime()
     },
     relabel: say,
     setVisible(visible) {

@@ -86,9 +86,6 @@ A place has no name yet: the text uses a number ("Village 1", "Village
 
 ## Not yet
 
-- **Epochs** (the bands, the name in the present): kept in mind, not
-  built. They could come from the events (before the first farming centre,
-  after it).
 - **More events:** the first village, the first trade link, a species that
   dies out, the land bridges under the sea, the population over a
   threshold. Their data exists.
@@ -114,12 +111,19 @@ A fourth kind came the same day: **a species dies out** on a landmass of
 last tenth goes, at the cell it went from last; the icon of its animal
 group. On Morvane 15.
 
+**The departure** in year 0, at the origin. **The epochs** (2026-10-26),
+two, from the events: the Palaeolithic to the first farming centre, the
+Neolithic from it (none on a world without one); bands on the axis, the
+name over the year, a heading over the epoch's events in the list (a click
+goes to its start). The epoch's start is no event of its own: it is the
+first farming centre's.
+
 A fifth: **a plant or an animal domesticated** at a centre (`settle.ts`,
 the domesticates), at the centre's cell. On Morvane 14.
 
 A landmass is named by its rank by area, 1 the largest. The axis carries
 the people over the span (`settle.ts` population, every 500 years, on a
-logarithmic scale) and the handle; not the epochs yet.
+logarithmic scale), the handle and the epochs.
 
 ## Status
 

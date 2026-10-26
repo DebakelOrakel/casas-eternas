@@ -78,5 +78,8 @@
   "incubator.layers.geology": "Geology",
   "incubator.layers.climateLand": "Climate: land",
   "incubator.layers.climateSea": "Climate: sea",
-  "incubator.layers.flows": "Wind and currents"
+  "incubator.layers.flows": "Wind and currents",
+  "incubator.epoch.paleolithic": "Palaeolithic",
+  "incubator.epoch.neolithic": "Neolithic",
+  "incubator.chronicle.event.departure": "The people set out"
 }

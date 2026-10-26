@@ -59,6 +59,32 @@
   border-bottom: 1px solid var(--dc-line);
 }
 
+.chronicle__when-now {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chronicle__epoch {
+  font-size: 11.5px;
+  color: var(--dc-muted);
+}
+
+.chronicle__epoch:empty {
+  display: none;
+}
+
+.chronicle__axis-band {
+  fill: var(--dc-text);
+  opacity: 0.05;
+}
+
+.chronicle__axis-border {
+  stroke: var(--dc-line2);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
 .chronicle__year {
   font-size: 26px;
   line-height: 1;
@@ -209,6 +235,30 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.chronicle__epoch-head {
+  margin: 8px 0 2px;
+  padding: 4px 10px 4px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--dc-line);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--dc-text2);
+  cursor: pointer;
+}
+
+.chronicle__epoch-head:first-child {
+  margin-top: 0;
+}
+
+.chronicle__epoch-head:hover {
+  background: var(--dc-hover);
 }
 
 .chronicle__event {

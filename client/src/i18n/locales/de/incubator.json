@@ -78,5 +78,8 @@
   "incubator.layers.geology": "Geologie",
   "incubator.layers.climateLand": "Klima Land",
   "incubator.layers.climateSea": "Klima Meer",
-  "incubator.layers.flows": "Wind und Meeresströmung"
+  "incubator.layers.flows": "Wind und Meeresströmung",
+  "incubator.epoch.paleolithic": "Altsteinzeit",
+  "incubator.epoch.neolithic": "Jungsteinzeit",
+  "incubator.chronicle.event.departure": "Aufbruch der Menschen"
 }

@@ -922,6 +922,16 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }, cell)
       }
     }
+    // The people set out from their origin, in year 0.
+    if (people && cellFacts && people.origin >= 0) {
+      place({
+        time: 0,
+        icon: '/icons/origin.png',
+        rgb: [220, 30, 30],
+        title: t('incubator.chronicle.event.departure'),
+        detail: landmassName(cellFacts.landmass[people.origin]),
+      }, people.origin)
+    }
     if (settled && cellFacts) {
       for (const d of settled.domestications) {
         const plant = d.kind === 'plant'
@@ -964,6 +974,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     chronicle.setEvents(events)
     chronicle.setCurve(settled ? settled.population : null)
+    // The epochs: the Palaeolithic to the first farming centre, the
+    // Neolithic from it.
+    let farming = Infinity
+    if (settled) for (let k = 0; k < settled.centres.length; k += 3) if (settled.centres[k + 2] === LIFEWAY.farmers) farming = Math.min(farming, settled.centres[k + 1])
+    chronicle.setEpochs([
+      { from: 0, name: t('incubator.epoch.paleolithic') },
+      ...(farming <= SPAN_YEARS ? [{ from: farming, name: t('incubator.epoch.neolithic') }] : []),
+    ])
     sayCounts()
   }
   function sayCounts(): void {
