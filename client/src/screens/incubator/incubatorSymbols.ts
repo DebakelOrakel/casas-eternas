@@ -24,8 +24,8 @@ function picture(km: number, draw: (c: CanvasRenderingContext2D) => void): Symbo
 
 const rgb = (c: readonly [number, number, number]): string => `rgb(${c[0]},${c[1]},${c[2]})`
 
-// A cell's centre as a chart point.
-export const cellPoint = (cell: number, width: number, height: number): WorldSymbol['at'] => ({ u: ((cell % width) + 0.5) / width, v: (Math.floor(cell / width) + 0.5) / height })
+// A cell's centre as a chart point (the habitat's centres, cells.ts).
+export const cellPoint = (cell: number, u: Float32Array, v: Float32Array): WorldSymbol['at'] => ({ u: u[cell], v: v[cell] })
 
 // THE VILLAGES: a dot in its lifeway's colour on a dark rim, three sizes by
 // the density there. Picture (lifeway − 1) · 3 + size.
@@ -39,12 +39,12 @@ export const villagePictures = (): SymbolPicture[] => [1, 2, 3, 4].flatMap((way)
   c.strokeStyle = 'rgb(25,25,25)'
   c.stroke()
 })))
-export function villageSymbols(villages: Int32Array, density: Float32Array, width: number, height: number): WorldSymbol[] {
+export function villageSymbols(villages: Int32Array, density: Float32Array, u: Float32Array, v: Float32Array): WorldSymbol[] {
   const symbols: WorldSymbol[] = []
   for (let k = 0; k < villages.length; k += 2) {
     const d = density[villages[k]]
     const size = d >= 10 ? 2 : d >= 2 ? 1 : 0
-    symbols.push({ at: cellPoint(villages[k], width, height), picture: (villages[k + 1] - 1) * VILLAGE_KM.length + size })
+    symbols.push({ at: cellPoint(villages[k], u, v), picture: (villages[k + 1] - 1) * VILLAGE_KM.length + size })
   }
   return symbols
 }

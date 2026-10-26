@@ -1,9 +1,9 @@
-import type { PeopleResult } from './peopleWorker'
+import type { PeopleResult } from './people'
 
 // THE INCUBATOR'S PEOPLE ARROWS (2026-10-25, a trial): the people's spread
 // drawn as its rough directions (IncubatorScreen's people step).
 
-// THE ARROWS: the routes' tree (peopleWorker.ts, `from` and `flow`) as a
+// THE ARROWS: the routes' tree (people.ts, `from` and `flow`) as a
 // few broad arrows of the spread's direction. A branch is a way at least
 // ARROW_SHARE of all the land reached went through; where two such ways
 // part, an arrow ends and two begin. Each is sampled every
@@ -26,8 +26,9 @@ export interface PeopleArrow {
   width: number
 }
 
-// `sx`, `sy`: the overlay's texels a world cell spans.
-export function arrowsOf(people: PeopleResult, width: number, sx: number, sy: number): PeopleArrow[] {
+// `u`, `v`: the cells' centres on the chart, as fractions; `W` × `H` the
+// overlay's texels.
+export function arrowsOf(people: PeopleResult, u: Float32Array, v: Float32Array, W: number, H: number): PeopleArrow[] {
   const { from, flow, arrival, origin } = people
   if (origin < 0) return []
   const total = flow[origin]
@@ -40,7 +41,6 @@ export function arrowsOf(people: PeopleResult, width: number, sx: number, sy: nu
     if (list) list.push(c)
     else children.set(from[c], [c])
   }
-  const W = width * sx
   const arrows: PeopleArrow[] = []
   // A branch from `start` (its first cell after `root`) down to its end
   // or its parting; the parting's branches follow.
@@ -78,7 +78,7 @@ export function arrowsOf(people: PeopleResult, width: number, sx: number, sy: nu
   return arrows.sort((a, b) => a.width - b.width)
 
   function pointOf(cell: number): { x: number; y: number; at: number } {
-    return { x: ((cell % width) + 0.5) * sx, y: (Math.floor(cell / width) + 0.5) * sy, at: arrival[cell] }
+    return { x: u[cell] * W, y: v[cell] * H, at: arrival[cell] }
   }
 }
 

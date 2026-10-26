@@ -1,9 +1,9 @@
-import { readHabitat, spreadRange, type HabitatInput } from './habitat'
+import { spreadRange, type Habitat } from './habitat'
 import { ANIMALS, EDIBLE_SHARE, type AnimalUse } from './animals'
 import { BARRIER, nicheOf, rangeOf, SUITABLE } from './niche'
 
-// THE INCUBATOR'S ANIMAL WORKER (2026-10-25, a trial): where each animal of
-// animals.ts lives, and how many, on the world raster (habitat.ts).
+// THE INCUBATOR'S FAUNA (2026-10-25, a trial): where each animal of
+// animals.ts lives, and how many, on the habitat's cells.
 //
 // 1. THE NICHE AND THE RANGE, as a plant's (niche.ts): the Köppen class,
 //    the cover, the water and the coast; an origin on a landmass by its
@@ -15,8 +15,6 @@ import { BARRIER, nicheOf, rangeOf, SUITABLE } from './niche'
 //    among those in range there; a predator follows the herbivores in its
 //    range; an animal of the water is its niche. Without the game, every
 //    land cell feeds alike.
-
-export type AnimalWorkerInbound = HabitatInput
 
 // One code a cell: 0 nothing, 1 suitable but not reached, 2 … 255 where
 // it suits and lives, how many on a scale of the animal's own (its 99th
@@ -31,51 +29,29 @@ export interface AnimalLayer {
   empty: number
 }
 
-export type AnimalWorkerOutbound =
-  | { type: 'animals'; layers: AnimalLayer[]; ms: number }
-  | { type: 'failed'; message: string }
-
-const worker = self as unknown as Worker
-
-worker.onmessage = (event: MessageEvent<AnimalWorkerInbound>): void => {
-  try {
-    const started = performance.now()
-    const layers = populate(event.data)
-    worker.postMessage({ type: 'animals', layers, ms: Math.round(performance.now() - started) } satisfies AnimalWorkerOutbound, layers.map((l) => l.codes.buffer))
-  } catch (e) {
-    worker.postMessage({ type: 'failed', message: String(e) } satisfies AnimalWorkerOutbound)
-  }
-}
-
-function populate(message: AnimalWorkerInbound): AnimalLayer[] {
-  const { width: W, height: H, elevation, biome, game } = message
-  const n = W * H
-  const h = readHabitat(message)
-  const { land, landCount, clampY, wrapX } = h
+export function populate(h: Habitat, seed: number): AnimalLayer[] {
+  const { count: n, biome, game, land, landCount } = h
 
   // 1. The niches and the ranges.
   const grown = ANIMALS.map((s) => {
     if (s.bySea) {
-      const { niche } = nicheOf(s, h, message.koppen, biome)
+      const { niche } = nicheOf(s, h)
       const range = new Uint8Array(n)
       for (let i = 0; i < n; i++) if (niche[i] >= SUITABLE) range[i] = 1
       return { niche, range }
     }
     if (!s.upriver) {
-      const { niche, range } = rangeOf(s, h, message)
+      const { niche, range } = rangeOf(s, h, seed)
       return { niche, range }
     }
-    const { niche } = nicheOf(s, h, message.koppen, biome)
+    const { niche } = nicheOf(s, h)
     // Every suitable cell by the sea.
     const starts: number[] = []
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const i = y * W + x
-        if (niche[i] < SUITABLE) continue
-        let sea = false
-        for (let j = -1; j <= 1 && !sea; j++) for (let k = -1; k <= 1 && !sea; k++) sea = elevation[clampY(y + j) * W + wrapX(x + k)] <= 0
-        if (sea) starts.push(i)
-      }
+    for (let i = 0; i < n; i++) {
+      if (niche[i] < SUITABLE) continue
+      let sea = false
+      for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1] && !sea; e++) sea = !land[h.nbr[e]]
+      if (sea) starts.push(i)
     }
     return { niche, range: spreadRange(h, niche, starts, { suitable: SUITABLE, barrier: BARRIER, maxKm: Infinity, onlySuitable: true }) }
   })

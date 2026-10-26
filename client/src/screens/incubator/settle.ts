@@ -1,6 +1,6 @@
-import { hashText, mulberry32, readHabitat, type HabitatInput } from './habitat'
-import { SPAN_YEARS } from './peopleShared'
 import { MinHeap } from '../../generator/core/minHeap'
+import { hashText, kmBetween, mulberry32, type Habitat } from './habitat'
+import { SPAN_YEARS } from './peopleShared'
 import { CARRYING_FULL, densityAt, GOODS, lifewayAt, lifewaySince, type SettleTimes } from './settleShared'
 
 // THE INCUBATOR'S SETTLEMENT (2026-10-25, a proof of concept): the people's
@@ -22,7 +22,10 @@ import { CARRYING_FULL, densityAt, GOODS, lifewayAt, lifewaySince, type SettleTi
 //    the earth's (the Fertile Crescent, China, New Guinea, the Americas).
 //    From each the farmers spread FARM_KM_A, as the earth's did into
 //    Europe; through land they cannot farm FARM_BARRIER times slower, not
-//    over the sea, not ahead of the people.
+//    over the sea, not ahead of the people. The herding begins at the same
+//    centres HERD_LAG later — sheep and goats were tamed with the fields —
+//    and spreads HERD_KM_A, the herds faster than the fields, into the
+//    pasture: the earth's nomads took the steppes late and fast.
 // 3. THE LIFEWAYS AND THE DENSITY over the time (settleShared.ts): the
 //    end state's, 5 000 years before the game, places the villages: where
 //    farmers or fishers live, the cells densest within VILLAGE_RADIUS of
@@ -42,19 +45,20 @@ import { CARRYING_FULL, densityAt, GOODS, lifewayAt, lifewaySince, type SettleTi
 //    screen's, at the time it shows (settleShared.ts, pressure).
 
 
-export interface SettleWorkerInbound extends HabitatInput {
-  // How many domesticable starch plants grow in a cell; whether a tamable
-  // herd animal lives there.
-  // Years from the departure to the arrival (peopleWorker.ts); Infinity
-  // where none came.
+// What the settlement reads besides the habitat.
+export interface SettleInput {
+  // Years from the departure to the arrival (people.ts); Infinity where
+  // none came.
   arrival: Float32Array
-  carrying: Float32Array
+  // How many domesticable starch plants grow in a cell; how many tamable
+  // herd animals live there.
   farmPlant: Uint8Array
   herdAnimal: Uint8Array
   // The people's origin cell; the animals as the fauna placed them
-  // (animalWorker.ts), their codes copied in: where they live.
+  // (fauna.ts): where they live.
   origin: number
   animals: { id: string; codes: Uint8Array }[]
+  seed: number
 }
 
 export interface SettleResult {
@@ -63,7 +67,7 @@ export interface SettleResult {
   density: Float32Array
   // The times the lifeways follow (settleShared.ts), the arrival aside.
   farmAt: Float32Array
-  herdOk: Uint8Array
+  herdAt: Float32Array
   fishOk: Uint8Array
   carrying: Float32Array
   // [cell, time] a centre of the farming, the time it began there.
@@ -81,19 +85,18 @@ export interface SettleResult {
   landmass: Int32Array
 }
 
-export type SettleWorkerOutbound =
-  | ({ type: 'settled'; ms: number } & SettleResult)
-  | { type: 'failed'; message: string }
-
 const FARM_ARABLE = 0.3
 const HERD_PASTURE = 0.3
 const FISH_RICH = 0.5
+// In rings of cells (some 10 km each).
 const VILLAGE_RADIUS: Record<number, number> = { 2: 5, 4: 3 }
 // Below this many people a km², no village.
 const VILLAGE_LEAST: Record<number, number> = { 2: 0.3, 4: 2 }
 const LINKS = 3
 const LINK_KM = 150
 const SOURCE_RICH = 0.6
+const SOURCE_REACH_KM = 800
+// In rings of cells.
 const SOURCE_RADIUS = 10
 const DECAY_HOPS = 4
 const MAX_HOPS = 16
@@ -105,39 +108,89 @@ const FARM_SETTLED = 10_000
 const FARM_EARLIEST = SPAN_YEARS - 6000
 const FARM_KM_A = 1
 const FARM_BARRIER = 5
+const HERD_LAG = 1000
+const HERD_KM_A = 2
+const HERD_BARRIER = 3
 // The big game and its chance to die out where people came new.
 const MEGAFAUNA: Record<string, number> = { elephant: 0.8, horse: 0.6, bison: 0.5, camel: 0.5, buffalo: 0.3, aurochs: 0.2, bear: 0.2 }
 const EXTINCT_AFTER = 2000
 const ISLAND_KM2 = 1_000_000
 const ISLAND_CHANCE = 1.5
 
-const worker = self as unknown as Worker
 
-worker.onmessage = (event: MessageEvent<SettleWorkerInbound>): void => {
-  try {
-    const started = performance.now()
-    const result = settle(event.data)
-    worker.postMessage({ type: 'settled', ms: Math.round(performance.now() - started), ...result } satisfies SettleWorkerOutbound, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdOk.buffer, result.fishOk.buffer, result.carrying.buffer, result.centres.buffer, result.villageFrom.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
-  } catch (e) {
-    worker.postMessage({ type: 'failed', message: String(e) } satisfies SettleWorkerOutbound)
+// The cells within `rings` rings of cell `c`, itself first.
+function ringsAround(h: Habitat, c: number, rings: number, seen: Int32Array, mark: number): number[] {
+  const cells = [c]
+  seen[c] = mark
+  let from = 0
+  for (let r = 0; r < rings; r++) {
+    const to = cells.length
+    for (let k = from; k < to; k++) {
+      const i = cells[k]
+      for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
+        const u = h.nbr[e]
+        if (seen[u] === mark) continue
+        seen[u] = mark
+        cells.push(u)
+      }
+    }
+    from = to
   }
+  return cells
 }
 
-function settle(message: SettleWorkerInbound): SettleResult {
-  const { width: W, height: H, arrival, carrying, farmPlant, herdAnimal } = message
-  const eco = message.ecology ?? {}
-  const n = W * H
-  const h = readHabitat(message)
-  const { land, dxKm, dyKm } = h
-  const at = (field: Float32Array | undefined, i: number): number => (field ? field[i] : 0)
-
-  const kmBetween = (a: number, b: number): number => {
-    const ay = Math.floor(a / W)
-    const by = Math.floor(b / W)
-    let dx = Math.abs((a % W) - (b % W))
-    dx = Math.min(dx, W - dx)
-    return Math.hypot(dx * dxKm[Math.min(H - 1, Math.floor((ay + by) / 2))], (by - ay) * dyKm)
+// The cells where `value` is the largest within `rings` rings, ties to the
+// lower index, of those `candidate` admits.
+function localTops(h: Habitat, value: Float32Array, rings: number, candidate: (i: number) => boolean): number[] {
+  const seen = new Int32Array(h.count).fill(-1)
+  const tops: number[] = []
+  for (let i = 0; i < h.count; i++) {
+    if (!candidate(i)) continue
+    let top = true
+    for (const u of ringsAround(h, i, rings, seen, i)) {
+      if (u !== i && (value[u] > value[i] || (value[u] === value[i] && u < i))) {
+        top = false
+        break
+      }
+    }
+    if (top) tops.push(i)
   }
+  return tops
+}
+
+// From cell `c` over the cells, the nearest first, as far as `maxKm`:
+// `visit(cell, km)` for each, stopping where it returns true.
+function nearest(h: Habitat, c: number, maxKm: number, visit: (cell: number, km: number) => boolean, dist: Float64Array, touched: number[]): void {
+  const heap = new MinHeap(256)
+  dist[c] = 0
+  touched.push(c)
+  heap.push(0, c)
+  while (heap.length > 0) {
+    heap.pop()
+    const i = heap.poppedIndex
+    const d = heap.poppedKey
+    if (d > dist[i]) continue
+    if (visit(i, d)) break
+    for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
+      const u = h.nbr[e]
+      const nd = d + h.distKm[e]
+      if (nd > maxKm || nd >= dist[u]) continue
+      if (dist[u] === Infinity) touched.push(u)
+      dist[u] = nd
+      heap.push(nd, u)
+    }
+  }
+  for (const i of touched) dist[i] = Infinity
+  touched.length = 0
+}
+
+export function settle(h: Habitat, input: SettleInput): SettleResult {
+  const { arrival, farmPlant, herdAnimal } = input
+  const n = h.count
+  const { land } = h
+  const eco = h.ecology
+  const carrying = h.carrying ?? new Float32Array(n).fill(0.4)
+  const at = (field: Float32Array | undefined, i: number): number => (field ? field[i] : 0)
 
   // 1. What each reached land cell allows.
   const farmOk = new Uint8Array(n)
@@ -160,53 +213,55 @@ function settle(message: SettleWorkerInbound): SettleResult {
   }
   candidates.sort((p, q) => q.score - p.score || p.cell - q.cell)
   const centres: number[] = []
-  const random = mulberry32(hashText('farming') ^ message.seed)
+  const random = mulberry32(hashText('farming') ^ input.seed)
   let next = FARM_EARLIEST
   for (const c of candidates) {
     if (centres.length / 2 >= CENTRES_MAX) break
     let far = true
-    for (let k = 0; k < centres.length && far; k += 2) far = kmBetween(c.cell, centres[k]) >= CENTRE_SPACING_KM
+    for (let k = 0; k < centres.length && far; k += 2) far = kmBetween(h, c.cell, centres[k]) >= CENTRE_SPACING_KM
     if (!far) continue
     centres.push(c.cell, Math.max(next, arrival[c.cell] + FARM_SETTLED))
     next += 1000 + 2000 * random()
   }
-  const farmAt = new Float32Array(n).fill(Infinity)
-  {
+  // A wave from its starts ([cell, time] …) over the land people reached,
+  // `kmA` a year where `ok` allows its lifeway, `barrier` times slower
+  // where not, never over the sea nor ahead of the people: the time it
+  // came to each cell `ok` allows, Infinity elsewhere.
+  const wave = (starts: number[], ok: Uint8Array, kmA: number, barrier: number): Float32Array => {
+    const came = new Float32Array(n).fill(Infinity)
     const time = new Float64Array(n).fill(Infinity)
     const heap = new MinHeap(1 << 16)
-    for (let k = 0; k < centres.length; k += 2) {
-      if (centres[k + 1] > SPAN_YEARS) continue
-      time[centres[k]] = centres[k + 1]
-      heap.push(centres[k + 1], centres[k])
+    for (let k = 0; k < starts.length; k += 2) {
+      if (starts[k + 1] > SPAN_YEARS || starts[k + 1] >= time[starts[k]]) continue
+      time[starts[k]] = starts[k + 1]
+      heap.push(starts[k + 1], starts[k])
     }
     while (heap.length > 0) {
       heap.pop()
       const i = heap.poppedIndex
       const t = heap.poppedKey
       if (t > time[i]) continue
-      if (farmOk[i]) farmAt[i] = t
-      const x = i % W
-      const y = Math.floor(i / W)
-      for (let j = -1; j <= 1; j++) {
-        const yy = y + j
-        if (!h.torus && (yy < 0 || yy >= H)) continue
-        for (let k = -1; k <= 1; k++) {
-          if (k === 0 && j === 0) continue
-          const u = h.clampY(yy) * W + h.wrapX(x + k)
-          if (!land[u] || !(arrival[u] < Infinity)) continue
-          const km = Math.hypot(k * dxKm[y], j * dyKm)
-          const step = (km / FARM_KM_A) * (farmOk[u] ? 1 : FARM_BARRIER)
-          const at2 = Math.max(t + step, arrival[u])
-          if (at2 >= time[u] || at2 > SPAN_YEARS) continue
-          time[u] = at2
-          heap.push(at2, u)
-        }
+      if (ok[i]) came[i] = t
+      for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
+        const u = h.nbr[e]
+        if (!land[u] || !(arrival[u] < Infinity)) continue
+        const at2 = Math.max(t + (h.distKm[e] / kmA) * (ok[u] ? 1 : barrier), arrival[u])
+        if (at2 >= time[u] || at2 > SPAN_YEARS) continue
+        time[u] = at2
+        heap.push(at2, u)
       }
     }
+    return came
   }
+  const farmAt = wave(centres, farmOk, FARM_KM_A, FARM_BARRIER)
+  // The herds from the farming's centres, HERD_LAG after the fields, faster
+  // than the farmers (2026-10-26: at one time over all the pasture, the
+  // herders came up everywhere at once).
+  const herdAt = wave(centres.map((v, k) => (k % 2 === 1 ? v + HERD_LAG : v)), herdOk, HERD_KM_A, HERD_BARRIER)
 
-  // 3. The end state's lifeway and density.
-  const times: SettleTimes = { arrival, farmAt, herdOk, fishOk, carrying: carryingNorm }
+  // 3. The end state's lifeway and density, and its villages: the densest
+  // cell within its radius.
+  const times: SettleTimes = { arrival, farmAt, herdAt, fishOk, carrying: carryingNorm }
   const lifeway = new Uint8Array(n)
   const density = new Float32Array(n)
   for (let i = 0; i < n; i++) {
@@ -214,64 +269,31 @@ function settle(message: SettleWorkerInbound): SettleResult {
     lifeway[i] = lifewayAt(times, i, SPAN_YEARS)
     density[i] = densityAt(times, i, SPAN_YEARS)
   }
-
-  // 3. The villages: the densest cell within its radius, ties to the lower
-  // index.
   const villageCells: number[] = []
   const villageWays: number[] = []
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = y * W + x
-      const way = lifeway[i]
-      const r = VILLAGE_RADIUS[way]
-      if (!r || density[i] < VILLAGE_LEAST[way]) continue
-      let top = true
-      for (let j = -r; j <= r && top; j++) {
-        const yy = y + j
-        if (yy < 0 || yy >= H) continue
-        for (let k = -r; k <= r && top; k++) {
-          const u = yy * W + h.wrapX(x + k)
-          if (u !== i && (density[u] > density[i] || (density[u] === density[i] && u < i))) top = false
-        }
-      }
-      if (top) {
-        villageCells.push(i)
-        villageWays.push(way)
-      }
+  for (const way of [2, 4]) {
+    for (const c of localTops(h, density, VILLAGE_RADIUS[way], (i) => lifeway[i] === way && density[i] >= VILLAGE_LEAST[way])) {
+      villageCells.push(c)
+      villageWays.push(way)
     }
   }
 
-  // 4. The links: each village's LINKS nearest within LINK_KM, by a grid of
-  // buckets a LINK_KM wide.
-  const kmPerCell = dyKm
-  const bucket = Math.max(1, Math.ceil(LINK_KM / kmPerCell))
-  const bw = Math.ceil(W / bucket)
-  const bh = Math.ceil(H / bucket)
-  const buckets = new Map<number, number[]>()
-  villageCells.forEach((c, v) => {
-    const key = Math.floor(Math.floor(c / W) / bucket) * bw + Math.floor((c % W) / bucket)
-    const list = buckets.get(key)
-    if (list) list.push(v)
-    else buckets.set(key, [v])
-  })
+  // 4. The links: each village's LINKS nearest within LINK_KM, over the
+  // cells.
+  const villageOf = new Map<number, number>()
+  villageCells.forEach((c, v) => villageOf.set(c, v))
+  const dist = new Float64Array(n).fill(Infinity)
+  const touched: number[] = []
   const edges = new Map<string, [number, number]>()
   const neighbours: number[][] = villageCells.map(() => [])
   villageCells.forEach((c, v) => {
-    const by = Math.floor(Math.floor(c / W) / bucket)
-    const bx = Math.floor((c % W) / bucket)
-    const near: { v: number; km: number }[] = []
-    for (let j = -1; j <= 1; j++) {
-      if (by + j < 0 || by + j >= bh) continue
-      for (let k = -1; k <= 1; k++) {
-        for (const u of buckets.get((by + j) * bw + ((bx + k + bw) % bw)) ?? []) {
-          if (u === v) continue
-          const km = kmBetween(c, villageCells[u])
-          if (km <= LINK_KM) near.push({ v: u, km })
-        }
-      }
-    }
-    near.sort((p, q) => p.km - q.km)
-    for (const { v: u } of near.slice(0, LINKS)) {
+    const near: number[] = []
+    nearest(h, c, LINK_KM, (cell) => {
+      const u = villageOf.get(cell)
+      if (u !== undefined && u !== v) near.push(u)
+      return near.length >= LINKS
+    }, dist, touched)
+    for (const u of near) {
       const key = v < u ? `${v},${u}` : `${u},${v}`
       if (edges.has(key)) continue
       edges.set(key, v < u ? [v, u] : [u, v])
@@ -280,51 +302,26 @@ function settle(message: SettleWorkerInbound): SettleResult {
     }
   })
 
-  // The sources: the richest cell of a good within SOURCE_RADIUS, reached
-  // by people; its goods leave from the village nearest to it.
+  // The sources: the richest cell of a good within SOURCE_RADIUS rings,
+  // reached by people; its goods leave from the village nearest to it,
+  // within SOURCE_REACH_KM.
   const sources: number[] = []
   GOODS.forEach((good, g) => {
     const field = eco[good]
     if (!field) return
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const i = y * W + x
-        if (field[i] < SOURCE_RICH || !lifeway[i]) continue
-        let top = true
-        for (let j = -SOURCE_RADIUS; j <= SOURCE_RADIUS && top; j++) {
-          const yy = y + j
-          if (yy < 0 || yy >= H) continue
-          for (let k = -SOURCE_RADIUS; k <= SOURCE_RADIUS && top; k++) {
-            const u = yy * W + h.wrapX(x + k)
-            if (u !== i && (field[u] > field[i] || (field[u] === field[i] && u < i))) top = false
-          }
-        }
-        if (top) sources.push(i, g)
-      }
-    }
+    for (const c of localTops(h, field, SOURCE_RADIUS, (i) => field[i] >= SOURCE_RICH && lifeway[i] > 0)) sources.push(c, g)
   })
-  // The goods down the line: from each source's nearest village, a step of
-  // the links less each hop.
   const weight = new Map<string, number>()
   for (let s = 0; s < sources.length; s += 2) {
-    const c = sources[s]
     let start = -1
-    let best = Infinity
-    const by = Math.floor(Math.floor(c / W) / bucket)
-    const bx = Math.floor((c % W) / bucket)
-    for (let j = -1; j <= 1; j++) {
-      if (by + j < 0 || by + j >= bh) continue
-      for (let k = -1; k <= 1; k++) {
-        for (const u of buckets.get((by + j) * bw + ((bx + k + bw) % bw)) ?? []) {
-          const km = kmBetween(c, villageCells[u])
-          if (km < best) {
-            best = km
-            start = u
-          }
-        }
-      }
-    }
+    nearest(h, sources[s], SOURCE_REACH_KM, (cell) => {
+      const u = villageOf.get(cell)
+      if (u === undefined) return false
+      start = u
+      return true
+    }, dist, touched)
     if (start < 0) continue
+    // The goods down the line, a step of the links less each hop.
     const hops = new Map<number, number>([[start, 0]])
     const queue = [start]
     for (let q = 0; q < queue.length; q++) {
@@ -345,20 +342,20 @@ function settle(message: SettleWorkerInbound): SettleResult {
   const villages: number[] = []
   villageCells.forEach((c, v) => villages.push(c, villageWays[v]))
   const villageFrom = Float32Array.from(villageCells, (c, v) => lifewaySince(times, c, villageWays[v]))
-  const extinctions = dyingOut(message, h)
-  return { lifeway, density, farmAt, herdOk, fishOk, carrying: carryingNorm, centres: Float32Array.from(centres), villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: Int32Array.from(h.landmass) }
+  const extinctions = dyingOut(h, input)
+  return { lifeway, density, farmAt, herdAt, fishOk, carrying: carryingNorm, centres: Float32Array.from(centres), villages: Int32Array.from(villages), villageFrom, sources: Int32Array.from(sources), links: Float32Array.from(links), extinctions, landmass: h.landmass.slice() }
 }
 
-// 5. The animals after the people.
-function dyingOut(message: SettleWorkerInbound, h: ReturnType<typeof readHabitat>): SettleResult['extinctions'] {
-  const { arrival, origin, seed } = message
-  const n = message.width * message.height
+// 5. The big game dying out where people came new.
+function dyingOut(h: Habitat, input: SettleInput): SettleResult['extinctions'] {
+  const { arrival, origin, seed } = input
+  const n = h.count
   const home = origin >= 0 ? h.landmass[origin] : -1
   // Each landmass's first people.
   const first = new Float64Array(h.landmasses).fill(Infinity)
   for (let i = 0; i < n; i++) if (h.landmass[i] >= 0 && arrival[i] < first[h.landmass[i]]) first[h.landmass[i]] = arrival[i]
   const extinctions: SettleResult['extinctions'] = []
-  for (const animal of message.animals) {
+  for (const animal of input.animals) {
     const chance = MEGAFAUNA[animal.id]
     if (!chance) continue
     const random = mulberry32(hashText(animal.id) ^ seed)

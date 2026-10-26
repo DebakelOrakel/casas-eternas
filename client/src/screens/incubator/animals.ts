@@ -8,9 +8,9 @@ import { ALL_C, ALL_D, UP_TO, type NicheSpec } from './plants'
 // are `animal.<id>`. The first try (2026-10-23, the POC) set the coldest
 // and the warmest month and the rain after the real species, and drew two
 // origins on the whole world: the plants showed both wrong (plants.ts,
-// plantWorker.ts).
+// flora.ts).
 //
-// The role says how many there are (animalWorker.ts): a herbivore shares
+// The role says how many there are (fauna.ts): a herbivore shares
 // the land's game with the herbivores in range by its niche, a predator
 // follows the herbivores in its range, the animals of the water are as
 // many as their niche. The salmon swims up the rivers from the sea alone,

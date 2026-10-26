@@ -7,7 +7,7 @@ import { ALL_C, ALL_D, UP_TO, type NicheSpec } from './plants'
 // (a dugout from a big trunk, a bark canoe, a raft), for resin (birch pitch
 // to haft a point, tar to seal a boat, incense). Archetypes,
 // a niche over the habitat as the plants' (plants.ts), grown with them
-// (plantWorker.ts); their names are `wood.<id>`. A tree serves one use or
+// (flora.ts); their names are `wood.<id>`. A tree serves one use or
 // more. Not hard and soft wood: that split is the botanist's (a broadleaf
 // against a conifer), and says little of what the wood is good for.
 //

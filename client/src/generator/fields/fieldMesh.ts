@@ -2,7 +2,7 @@ import type { Domain } from '../core/domain'
 import { globeFrame } from '../core/domain'
 import { detAtan2 } from '../core/detMath'
 import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
-import { centroidalGeodesicLattice, hexLattice } from '../mesh/lattice'
+import { centroidalGeodesicLattice, geodesicLattice, hexLattice } from '../mesh/lattice'
 import { hintGrid } from '../mesh/meshSampler'
 
 // THE FIELD MESH (DEC-0036, docs/decisions/fields-on-meshes.md, phase 0):
@@ -83,9 +83,14 @@ export interface FieldMesh {
   readonly maxDegree: number
 }
 
-export function createFieldMesh(domain: Domain, spacingM: number): FieldMesh {
+// `relax`: on the sphere, the centroidal relaxation (the fields'); false
+// takes the lattice as cut (mesh/lattice.ts geodesicLattice), for a fine
+// mesh made in seconds.
+export function createFieldMesh(domain: Domain, spacingM: number, relax = true): FieldMesh {
   const unitM = domain.metresPerUnit
-  const tri = domain.kind === 'sphere' ? centroidalGeodesicLattice(domain, spacingM / unitM) : hexLattice(domain, spacingM / unitM)
+  const tri = domain.kind === 'sphere'
+    ? (relax ? centroidalGeodesicLattice : geodesicLattice)(domain, spacingM / unitM)
+    : hexLattice(domain, spacingM / unitM)
   const count = tri.vertexSlots
   if (tri.aliveVertices !== count) throw new Error('createFieldMesh: the lattice has dead vertex slots')
   const globe = tri.globe

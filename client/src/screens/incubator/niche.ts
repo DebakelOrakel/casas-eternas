@@ -1,12 +1,12 @@
 import { Biome } from '../../generator/climate/biomes'
 import { KOPPEN_CODES, type KoppenCode } from '../../generator/climate/koppen'
-import { drawOriginsByLandmass, hashText, mulberry32, readHabitat, spreadRange, trapezoid, type Habitat, type HabitatInput } from './habitat'
+import { drawOriginsByLandmass, hashText, mulberry32, spreadRange, trapezoid, type Habitat } from './habitat'
 import type { NicheSpec } from './plants'
 
 // THE INCUBATOR'S NICHES (2026-10-25, a trial): where a plant, a tree or an
 // animal can live (its niche over the habitat, NicheSpec) and where it got
-// to (its range), on the world raster (habitat.ts). The plants and the
-// trees grow by it (plantWorker.ts), the animals too (animalWorker.ts).
+// to (its range), on the habitat's cells (habitat.ts). The plants and the
+// trees grow by it (flora.ts), the animals too (fauna.ts).
 
 // A cell is suitable from this niche on.
 export const SUITABLE = 0.3
@@ -53,8 +53,8 @@ function coverFit(s: NicheSpec, biome: number): number {
 // river spread through the dry land between two rivers no better than
 // through land it does not suit, and stayed on the river it started on
 // (2026-10-25: the date on 0.1 % of the land).
-export function nicheOf(s: NicheSpec, h: ReturnType<typeof readHabitat>, koppen: Float32Array, biome: Float32Array): { niche: Float32Array; climate: Float32Array } {
-  const n = h.W * h.H
+export function nicheOf(s: NicheSpec, h: Habitat): { niche: Float32Array; climate: Float32Array } {
+  const { count: n, koppen, biome } = h
   // The weight and the oasis rule by class id.
   const weight = KOPPEN_CODES.map((code) => (code === '' ? 0 : s.climates[code as KoppenCode] ?? 0))
   const oasis = KOPPEN_CODES.map((code) => code !== '' && (s.oasis ?? []).includes(code as KoppenCode))
@@ -81,14 +81,13 @@ export function nicheOf(s: NicheSpec, h: ReturnType<typeof readHabitat>, koppen:
   return { niche, climate }
 }
 
-// One niche's range on the world raster: its codes and shares, the cells
-// it is suitable on and reached (`present`), and the niche and the range
-// themselves (the animals' densities need them, animalWorker.ts).
-export function rangeOf(s: NicheSpec, h: Habitat, message: HabitatInput): { codes: Uint8Array; present: Uint8Array; niche: Float32Array; range: Uint8Array; suitable: number; reached: number; empty: number; origins: { x: number; y: number }[] } {
-  const W = message.width
-  const n = W * message.height
-  const { niche, climate } = nicheOf(s, h, message.koppen, message.biome)
-  const starts = drawOriginsByLandmass(h, niche, originChance(h), SUITABLE, mulberry32(hashText(s.id) ^ message.seed))
+// One niche's range on the cells: its codes and shares, the cells it is
+// suitable on and reached (`present`), and the niche and the range
+// themselves (the animals' densities need them, fauna.ts).
+export function rangeOf(s: NicheSpec, h: Habitat, seed: number): { codes: Uint8Array; present: Uint8Array; niche: Float32Array; range: Uint8Array; suitable: number; reached: number; empty: number } {
+  const n = h.count
+  const { niche, climate } = nicheOf(s, h)
+  const starts = drawOriginsByLandmass(h, niche, originChance(h), SUITABLE, mulberry32(hashText(s.id) ^ seed))
   const range = spreadRange(h, climate, starts, { suitable: SUITABLE, barrier: BARRIER, maxKm: SPREAD_KM })
   const codes = new Uint8Array(n)
   const present = new Uint8Array(n)
@@ -111,7 +110,6 @@ export function rangeOf(s: NicheSpec, h: Habitat, message: HabitatInput): { code
   return {
     codes, present, niche, range,
     suitable: suitable / h.landCount, reached: reached / h.landCount, empty: empty / h.landCount,
-    origins: starts.map((i) => ({ x: i % W, y: Math.floor(i / W) })),
   }
 }
 

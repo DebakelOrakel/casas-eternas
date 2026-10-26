@@ -1,18 +1,18 @@
 import { Biome } from '../../generator/climate/biomes'
 import { KOPPEN_CODES } from '../../generator/climate/koppen'
 import { MinHeap } from '../../generator/core/minHeap'
-import { ELEVATION_METERS } from '../../generator/elevation/elevationScale'
-import { readHabitat, type HabitatInput } from './habitat'
+import type { Habitat } from './habitat'
 import { SPAN_YEARS } from './peopleShared'
 
 // THE INCUBATOR'S PEOPLE (2026-10-25, a trial): when people reach each
-// cell of the world raster, from one origin, and by which way — the idea of
+// cell of the habitat (habitat.ts), from one origin, and by which way — the idea of
 // the generator's migration step (generator/migration/migrationField.ts),
 // for people alone and with a time.
 //
-// The cheapest ways from the origin, in years (a Dijkstra on the arrival
-// time). Over the land the front moves as fast as the land feeds it (the
-// ecology's carrying capacity, level 1's), slower up a slope, faster
+// The cheapest ways from the origin over the cells, in years (a Dijkstra
+// on the arrival time). Over the land the front moves as fast as the land
+// feeds it (the ecology's carrying capacity, level 1's), slower up a slope,
+// faster
 // along a river or a coast; the ice it does not cross. Over the sea two
 // ways, both in time:
 //  - the land bridges: while the sea stands low (an ice age), the shelf
@@ -34,20 +34,13 @@ import { SPAN_YEARS } from './peopleShared'
 // the shelf from some 12 000 to 8 000 years ago, here 10 000; the crossing
 // to Australia, some 90 km, was made 65 000 to 50 000 years ago. On
 // Morvane, REACH_END 450 reaches 80 % of the land and 80 of its 85
-// landmasses; a continent 645 km over the sea stays empty. With the reach
+// landmasses; a continent 645 km over the sea stays empty. On the cells
+// (cells.ts, 2026-10-26) 83 % of the ice-free land and 55 of its 75
+// landmasses: the cells merge the small islands. With the reach
 // growing with the cube of the time, or ending at 300 or 400 km, most
 // continents stayed empty.
 //
 // The numbers are first guesses, not calibrated.
-
-export interface PeopleWorkerInbound extends HabitatInput {
-  // The carrying capacity of a land cell, 0 … 3 (the ecology's field).
-  carrying: Float32Array
-  // 1 where boat wood grows.
-  boat: Uint8Array
-  // The origin's cell; -1 to choose it (originOf).
-  origin: number
-}
 
 export interface PeopleResult {
   // Years from the departure to the arrival, the sea's cells crossed too;
@@ -61,10 +54,6 @@ export interface PeopleResult {
   flow: Float32Array
   origin: number
 }
-
-export type PeopleWorkerOutbound =
-  | ({ type: 'people'; ms: number } & PeopleResult)
-  | { type: 'failed'; message: string }
 
 // The front over land, km a year: on land that feeds nobody, and on land
 // that feeds as well as CARRYING_FULL or better (Morvane's mean is 0.4,
@@ -91,38 +80,25 @@ const reachAt = (t: number): number => REACH_START + (REACH_END - REACH_START) *
 // The time the reach first is `km`; Infinity beyond REACH_END.
 const timeForReach = (km: number): number => (km <= REACH_START ? 0 : km > REACH_END ? Infinity : SPAN_YEARS * ((km - REACH_START) / (REACH_END - REACH_START)))
 
-const worker = self as unknown as Worker
-
-worker.onmessage = (event: MessageEvent<PeopleWorkerInbound>): void => {
-  try {
-    const started = performance.now()
-    const result = spread(event.data)
-    worker.postMessage({ type: 'people', ms: Math.round(performance.now() - started), ...result } satisfies PeopleWorkerOutbound, [result.arrival.buffer, result.land.buffer, result.from.buffer, result.flow.buffer])
-  } catch (e) {
-    worker.postMessage({ type: 'failed', message: String(e) } satisfies PeopleWorkerOutbound)
-  }
-}
-
 // The origin when none is given: the land that feeds best in a tropical
 // class (Köppen A), else anywhere.
-function originOf(message: PeopleWorkerInbound, land: Uint8Array): number {
+function originOf(h: Habitat, carrying: Float32Array): number {
   const tropical = KOPPEN_CODES.map((code) => code.startsWith('A'))
   let best = -1
   let bestTropical = -1
-  for (let i = 0; i < land.length; i++) {
-    if (!land[i] || message.biome[i] === Biome.Ice || message.biome[i] === Biome.Glacier) continue
-    if (best < 0 || message.carrying[i] > message.carrying[best]) best = i
-    if (tropical[message.koppen[i]] && (bestTropical < 0 || message.carrying[i] > message.carrying[bestTropical])) bestTropical = i
+  for (let i = 0; i < h.count; i++) {
+    if (!h.land[i] || h.biome[i] === Biome.Ice || h.biome[i] === Biome.Glacier) continue
+    if (best < 0 || carrying[i] > carrying[best]) best = i
+    if (tropical[h.koppen[i]] && (bestTropical < 0 || carrying[i] > carrying[bestTropical])) bestTropical = i
   }
   return bestTropical >= 0 ? bestTropical : best
 }
 
-function spread(message: PeopleWorkerInbound): PeopleResult {
-  const { width: W, height: H, elevation, biome, carrying, boat } = message
-  const n = W * H
-  const h = readHabitat(message)
-  const { land, slope, nearRiver, nearSea, dxKm, dyKm, torus } = h
-  const origin = message.origin >= 0 && land[message.origin] ? message.origin : originOf(message, land)
+// `boat`: 1 where boat wood grows (the trees'); `origin`: a cell, or -1 to
+// choose it (originOf).
+export function spreadPeople(h: Habitat, carrying: Float32Array, boat: Uint8Array, given: number): PeopleResult {
+  const { count: n, land, slope, nearRiver, nearSea, biome, seaDepthM } = h
+  const origin = given >= 0 && land[given] ? given : originOf(h, carrying)
   const arrival = new Float32Array(n).fill(Infinity)
   const from = new Int32Array(n).fill(-1)
   const flow = new Float32Array(n)
@@ -132,7 +108,6 @@ function spread(message: PeopleWorkerInbound): PeopleResult {
   // people there have boats.
   const water = new Float32Array(n)
   const withBoat = new Uint8Array(n)
-  const depthM = (i: number): number => -elevation[i] * ELEVATION_METERS
   const landSpeed = (i: number): number => {
     let v = SPEED_MIN_KM_A + (SPEED_MAX_KM_A - SPEED_MIN_KM_A) * Math.min(1, Math.max(0, carrying[i] / CARRYING_FULL))
     v /= 1 + slope[i] * SLOPE_DRAG
@@ -150,43 +125,36 @@ function spread(message: PeopleWorkerInbound): PeopleResult {
     const t = heap.poppedKey
     if (t > time[i]) continue
     order.push(i)
-    const x = i % W
-    const y = Math.floor(i / W)
     const atSea = !land[i]
-    for (let j = -1; j <= 1; j++) {
-      const yy = y + j
-      if (!torus && (yy < 0 || yy >= H)) continue
-      for (let k = -1; k <= 1; k++) {
-        if (k === 0 && j === 0) continue
-        const u = h.clampY(yy) * W + h.wrapX(x + k)
-        const km = Math.hypot(k * dxKm[y], j * dyKm)
-        let next: number
-        let wet = 0
-        let boatHere = 0
-        if (land[u]) {
-          if (biome[u] === Biome.Ice || biome[u] === Biome.Glacier) continue
-          next = t + km / landSpeed(u)
-          boatHere = withBoat[i] || boat[u]
-        } else if (t < BRIDGE_UNTIL && depthM(u) <= SHELF_M) {
-          // The dry shelf, a coast to walk along; a boat's wood comes
-          // along it.
-          next = t + km / (SPEED_MIN_KM_A * CORRIDOR)
-          if (next > BRIDGE_UNTIL) continue
-          boatHere = withBoat[i]
-        } else {
-          wet = (atSea ? water[i] : 0) + km
-          boatHere = withBoat[i]
-          if (!boatHere && wet > REACH_NO_BOAT) continue
-          next = t + km / SEA_KM_A
-          if (wet > reachAt(next)) next = Math.max(next, timeForReach(wet))
-        }
-        if (next >= time[u] || next > SPAN_YEARS) continue
-        time[u] = next
-        from[u] = i
-        water[u] = wet
-        withBoat[u] = boatHere
-        heap.push(next, u)
+    for (let e = h.nbrStart[i]; e < h.nbrStart[i + 1]; e++) {
+      const u = h.nbr[e]
+      const km = h.distKm[e]
+      let next: number
+      let wet = 0
+      let boatHere = 0
+      if (land[u]) {
+        if (biome[u] === Biome.Ice || biome[u] === Biome.Glacier) continue
+        next = t + km / landSpeed(u)
+        boatHere = withBoat[i] || boat[u]
+      } else if (t < BRIDGE_UNTIL && seaDepthM[u] <= SHELF_M) {
+        // The dry shelf, a coast to walk along; a boat's wood comes along
+        // it.
+        next = t + km / (SPEED_MIN_KM_A * CORRIDOR)
+        if (next > BRIDGE_UNTIL) continue
+        boatHere = withBoat[i]
+      } else {
+        wet = (atSea ? water[i] : 0) + km
+        boatHere = withBoat[i]
+        if (!boatHere && wet > REACH_NO_BOAT) continue
+        next = t + km / SEA_KM_A
+        if (wet > reachAt(next)) next = Math.max(next, timeForReach(wet))
       }
+      if (next >= time[u] || next > SPAN_YEARS) continue
+      time[u] = next
+      from[u] = i
+      water[u] = wet
+      withBoat[u] = boatHere
+      heap.push(next, u)
     }
   }
   // The routes: each land cell reached counts once on its way back.
