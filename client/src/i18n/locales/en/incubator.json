@@ -100,6 +100,8 @@
   "incubator.action.runHistory.help": "Run the 100,000 years step by step.",
   "incubator.action.resetHistory.label": "Reset origin and history",
   "incubator.action.resetHistory.help": "Choose the origin again by itself and discard the history.",
+  "incubator.progress.keepHistory": "Saving the history",
+  "incubator.progress.loadHistory": "Loading the history",
   "incubator.layers.iceAge.label": "Ice and sea level",
   "incubator.layers.iceAge.help": "Where the ice lay and the sea stood, at the time shown.",
   "incubator.layers.iceAge.ice": "Ice",

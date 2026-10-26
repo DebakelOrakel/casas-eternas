@@ -14,7 +14,8 @@ import { listServerArtifacts, type ServerArtifact } from '../../server/artifacts
 import { fetchWorld, listWorlds } from '../../server/worldClient'
 import { peekServerStatus } from '../../server/serverStatus'
 import { artifactKey } from '../../storage/ArtifactStore'
-import { getArtifactStore } from '../../storage/artifactStoreProvider'
+import { getArtifactStore, getLocalArtifactStore } from '../../storage/artifactStoreProvider'
+import { historyKey, latestHistoryOrigin, readHistoryArtifact, writeHistoryArtifact } from '../../world/historyArtifacts'
 import { meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
 import { isCurrentArtifact } from '../../world/levels'
 import { sameWorldsPipeline } from '../../world/worldPipeline'
@@ -310,7 +311,8 @@ function createIncubatorClient(): { ask(request: IncubatorRequest): Promise<Incu
   return {
     ask: (request) => new Promise((resolve) => {
       waiting.push(resolve)
-      worker.postMessage(request)
+      // A packed history (300 MB) is handed over, not copied.
+      worker.postMessage(request, request.type === 'restore' ? [request.bytes] : [])
     }),
     dispose: () => worker.terminate(),
   }
@@ -1617,14 +1619,20 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // `history`: the simulation's (simulation.ts) instead of the rules'.
   // `loadStep`: the load panel's row, as the world opens (work). False
   // where it failed.
-  async function growPeople(history = false, loadStep?: string): Promise<boolean> {
+  // `restore`: a packed history (the H1 artifact) taken in a run's place.
+  // A history run is kept as one (keepHistory); after the rules' spread, a
+  // history kept for its origin is loaded (loadHistory).
+  async function growPeople(history = false, loadStep?: string, restore?: ArrayBuffer): Promise<boolean> {
     if (!overlay) return false
-    const done = history
+    const started = performance.now()
+    const done = restore
+      ? await work(t('incubator.progress.loadHistory'), { type: 'restore', bytes: restore }, 'people', loadStep)
+      : history
       ? await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, rain: refinedCharts ? { width: refinedCharts.width, height: refinedCharts.height, variability: refinedCharts.weather.rainVariability, enso: refinedCharts.weather.enso, ensoStrength: refinedCharts.ensoStrength } : null }, 'people', loadStep)
       : await work(t('incubator.step.people.label'), { type: 'people', origin: peopleOrigin }, 'people', loadStep)
     if (!done || !overlay) return false
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
-    historyFrames = history ? new Map() : null
+    historyFrames = history || restore ? new Map() : null
     framesAsked.clear()
     // The routes blue over the crossings' ways (every crossing's, not the
     // told ones alone; the dry shelf walked stays brown).
@@ -1650,7 +1658,74 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     animalsAtTime.clear()
     showPlants()
     sayChronicle()
+    if (restore) console.info(`[incubator] history loaded, ${Math.round(performance.now() - started)} ms`)
+    else if (history) void keepHistory(performance.now() - started)
+    else void loadHistory()
     return true
+  }
+  // THE H1 ARTIFACT (world/historyArtifacts.ts): a history run is kept in
+  // the browser's store, keyed by the terrain and its origin; a world shown
+  // with a kept history for its origin loads it.
+  async function keepHistory(runMs: number): Promise<void> {
+    const worldId = held?.worldId
+    const origin = people?.origin ?? -1
+    if (!worldId || origin < 0) {
+      console.warn(`[incubator] history not kept: ${worldId ? 'no origin' : 'no terrain id'}`)
+      return
+    }
+    const world = shownWorld
+    // Under the pill: storing takes a while (minutes in Safari at 300 MB).
+    const label = t('incubator.progress.keepHistory')
+    progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
+    const packed = await incubator.ask({ type: 'pack' })
+    if (shownWorld !== world) return
+    if (packed?.type !== 'pack' || !packed.bytes) {
+      progressPill.hide()
+      console.warn('[incubator] history not kept: it could not be packed')
+      return
+    }
+    const store = await getLocalArtifactStore()
+    const kept = await writeHistoryArtifact(store, historyKey(worldId, origin), origin, packed.bytes, Math.round(runMs)).catch(() => false)
+    if (shownWorld === world) progressPill.hide()
+    console.info(`[incubator] history ${kept ? 'kept' : 'not kept'}, ${(packed.bytes.byteLength / 1e6).toFixed(0)} MB`)
+  }
+  // As a world opens: the history it kept last (latestHistoryOrigin), its
+  // origin the people's, without the rules' preview first; else the rules'
+  // spread (2026-10-26: a history kept for an origin clicked was not found,
+  // the rules' chosen one asked for).
+  async function openPeople(): Promise<void> {
+    const worldId = held?.worldId
+    const world = shownWorld
+    const store = await getLocalArtifactStore()
+    const origin = worldId ? await latestHistoryOrigin(store, worldId).catch(() => null) : null
+    if (shownWorld !== world) return
+    if (origin !== null && worldId) {
+      const label = t('incubator.progress.loadHistory')
+      progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
+      const bytes = await readHistoryArtifact(store, historyKey(worldId, origin)).catch(() => null)
+      if (shownWorld !== world) return
+      progressPill.hide()
+      if (bytes) {
+        peopleOrigin = origin
+        if (await growPeople(true, undefined, bytes)) return
+      }
+    }
+    await growPeople()
+  }
+  async function loadHistory(): Promise<void> {
+    const worldId = held?.worldId
+    const origin = people?.origin ?? -1
+    if (!worldId || origin < 0) return
+    const world = shownWorld
+    const store = await getLocalArtifactStore()
+    const key = historyKey(worldId, origin)
+    if (!(await store.resolve(key, false))) return
+    const label = t('incubator.progress.loadHistory')
+    progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
+    const bytes = await readHistoryArtifact(store, key).catch(() => null)
+    if (shownWorld === world) progressPill.hide()
+    if (!bytes || shownWorld !== world || people?.origin !== origin || historyFrames) return
+    await growPeople(true, undefined, bytes)
   }
   // The picks' plants, wood or animals on the map, and their legend.
   function showPlants(): void {
@@ -2248,7 +2323,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     step('grown')
     loadPanel.close()
     held = { uid, name: '', seed: '', worldId: chosen.worldId }
-    void growPeople()
+    void openPeople()
     return true
   }
 

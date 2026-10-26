@@ -6,6 +6,7 @@ import { listServerArtifactLevels, removeServerLevel, removeServerPipelineBuilds
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { currentPipelineVersion, parseStage, type PipelineVersions } from '../../world/levels'
+import { historyStage, isCurrentHistory, parseHistoryStage } from '../../world/historyArtifacts'
 import { WORLD_PIPELINE, sameWorldsPipeline } from '../../world/worldPipeline'
 import { commissionBake, pipelineVersionsOf, type CommissionOutcome } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
@@ -77,13 +78,18 @@ export interface ArtifactChooser {
 }
 
 type Scope = 'world' | 'all'
+// A history row sorts after every level.
+const HISTORY_ORDER = 1000
 type Where = 'all' | 'server' | 'local'
 
-// One row: one level of one terrain under one pipeline version, in one place.
+// One row: one level of one terrain under one pipeline version, in one place;
+// or the incubator's histories of it (H1, world/historyArtifacts.ts: one row
+// for its origins together), after the levels.
 interface LevelRow {
   worldId: string
   pipelineVersion: string
   level: number
+  history: boolean
   // How many tiles, for a level that comes in tiles; 0 for a whole level.
   tiles: number
   where: 'server' | 'local'
@@ -111,7 +117,11 @@ function shortPipeline(version: string): string {
 
 // `versions`: those of the other pipelines that made the worlds holding the
 // row's terrain (their releases').
-function staleOf(row: Pick<LevelRow, 'worldId' | 'pipelineVersion' | 'level' | 'tiles'>, world: { worldId: string | null } | null, held: Set<string>, versions: PipelineVersions[]): Pick<LevelRow, 'stale' | 'older'> {
+function staleOf(row: Pick<LevelRow, 'worldId' | 'pipelineVersion' | 'level' | 'tiles' | 'history'>, world: { worldId: string | null } | null, held: Set<string>, versions: PipelineVersions[]): Pick<LevelRow, 'stale' | 'older'> {
+  if (row.history) {
+    if (!isCurrentHistory({ stage: historyStage(0), pipelineVersion: row.pipelineVersion })) return { stale: 'otherCode', older: false }
+    return { stale: world?.worldId && held.has(row.worldId) && row.worldId !== world.worldId ? 'otherTerrain' : null, older: false }
+  }
   const stage = row.tiles > 0 ? `L${row.level}:0,0` : `L${row.level}`
   const older = row.pipelineVersion !== currentPipelineVersion(stage)
   if (older && !versions.some((v) => row.pipelineVersion === currentPipelineVersion(stage, v))) return { stale: 'otherCode', older: false }
@@ -208,7 +218,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     const world = options.currentWorld()
     const next: LevelRow[] = (server?.levels ?? []).map((l) => ({
       worldId: l.worldId, pipelineVersion: l.pipelineVersion, level: l.level,
-      tiles: l.tiles ? l.count : 0, where: 'server', bytes: l.bytes, label: l.label,
+      tiles: l.tiles ? l.count : 0, history: false, where: 'server', bytes: l.bytes, label: l.label,
       deletable: l.actions?.includes('artifact.remove') ?? false,
       stale: null, older: false, localUids: [],
     }))
@@ -216,14 +226,15 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
     const localRows = new Map<string, LevelRow>()
     for (const a of local) {
       const parsed = parseStage(a.stage)
-      if (!parsed) continue
-      const key = `${a.worldId}|${a.pipelineVersion}|${parsed.level}|${parsed.tile ? 't' : 'w'}`
+      const history = parseHistoryStage(a.stage) !== null
+      if (!parsed && !history) continue
+      const key = history ? `${a.worldId}|${a.pipelineVersion}|H` : `${a.worldId}|${a.pipelineVersion}|${parsed!.level}|${parsed!.tile ? 't' : 'w'}`
       let row = localRows.get(key)
       if (!row) {
-        row = { worldId: a.worldId, pipelineVersion: a.pipelineVersion, level: parsed.level, tiles: 0, where: 'local', bytes: 0, label: a.label, deletable: true, stale: null, older: false, localUids: [] }
+        row = { worldId: a.worldId, pipelineVersion: a.pipelineVersion, level: history ? HISTORY_ORDER : parsed!.level, tiles: 0, history, where: 'local', bytes: 0, label: a.label, deletable: true, stale: null, older: false, localUids: [] }
         localRows.set(key, row)
       }
-      if (parsed.tile) row.tiles++
+      if (parsed?.tile) row.tiles++
       row.bytes += a.bytes
       row.localUids.push(a.artifactUid)
     }
@@ -449,7 +460,7 @@ export function createArtifactChooser(host: HTMLElement, options: ArtifactChoose
   function renderRow(row: LevelRow, world: { uid: string; worldId: string | null } | null, held: Set<string>): HTMLElement {
     const line = document.createElement('div')
     line.className = 'ac-row ac-level-row'
-    const levelName = `L${row.level}`
+    const levelName = row.history ? 'H1' : `L${row.level}`
 
     // Which terrain: for the world held here, its last save's or an older
     // one; for any other, the terrain's id (which is current is not known

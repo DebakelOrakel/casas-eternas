@@ -241,8 +241,9 @@ skeleton (below) before anything else is built on it.
 3. **The preview**: is the spread alone enough, or the lifeways too?
 4. **The origin**: as now (a click, or the best tropical land), the
    simulation run again for another?
-5. **Where the result lives**: the browser first, the server later — and
-   who may run one there.
+5. **Where the result lives**: decided in
+   [DEC-0048](../decisions/incubator-history-engine.md) — the artifact H1,
+   in the browser first, on the server by a job later.
 
 ## Status
 
@@ -496,3 +497,16 @@ of the far trade, which so begins long before the fields. Shown as tents;
 counted beside the villages in the chronicle. On Morvane some 200
 foragers' camps through the cold, 580 herders' at the end; 1 391 made,
 630 left; the first trade in year 2 500; 361 links that carry goods.
+
+**H1** (the same day, [DEC-0048](../decisions/incubator-history-engine.md)):
+a run is packed whole (`historyPack.ts`: the spread, the kept states, the
+species' cells, the lifeways, the villages and camps, the people's count,
+the extinctions, the log; the kept states on the cells people reached
+alone — 168 MB on Morvane, 301 MB whole, which Safari took minutes to
+store) and kept in
+the browser's artifact store under the terrain, level 1's and the history's
+versions and the origin. A world opens with the history it kept last,
+whatever its origin, without the rules' preview; an origin set later loads
+the history kept for it, if any, after the rules' spread. Packed and read back, the log, the count,
+the villages, the links and the spread came out the same, bit for bit. The
+world list and the artifact window show it as H1.

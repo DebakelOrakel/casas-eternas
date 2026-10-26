@@ -19,6 +19,8 @@ import { levelPipelineVersion, type PipelineVersions } from '../../world/levels'
 import { pipelineVersionsOf } from '../../world/jobClient'
 import { WORLD_PIPELINE, sameWorldsPipeline } from '../../world/worldPipeline'
 import { listServerArtifactLevels, type ServerArtifactLevel } from '../../server/artifactsClient'
+import { getLocalArtifactStore } from '../../storage/artifactStoreProvider'
+import { isCurrentHistory } from '../../world/historyArtifacts'
 import type { NotificationOptions } from '../notifications/NotificationManager'
 import '../../ui/theme/design.css'
 import './worldChooser.css'
@@ -385,6 +387,9 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
   // The levels per terrain (levelsOfTerrains), from the last list, and the
   // versions of the other pipelines the listed worlds were made by.
   let levelsByTerrain = new Map<string, ServerArtifactLevel[]>()
+  // The terrains this browser keeps a current history of (the incubator's
+  // H1, world/historyArtifacts.ts).
+  let historyTerrains = new Set<string>()
   let pipelineVersions = new Map<string, PipelineVersions | null>()
   // Whether this browser can keep a world: the "copy to browser" needs it.
   let browserKeeps = false
@@ -415,13 +420,14 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     // Asked together: the server list is a network round trip and the browser
     // list is not, and waiting for the slow one before showing either would
     // make a local-only user pay for a server they do not use.
-    const [browser, server, openable, keeps, signIn, levels] = await Promise.all([
+    const [browser, server, openable, keeps, signIn, levels, local] = await Promise.all([
       listBrowserWorlds(),
       listWorlds(),
       options.openable?.load() ?? null,
       canKeepWorldsInBrowser(),
       needsSignIn(),
       listServerArtifactLevels(),
+      getLocalArtifactStore().then((store) => store.list()).catch(() => []),
     ])
     if (run !== generation) return
     const others = [...new Set([...browser.map((w) => w.pipeline ?? ''), ...(server ?? []).map((w) => w.pipeline ?? '')].map(sameWorldsPipeline))]
@@ -429,6 +435,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     const named = levels ? await Promise.all(others.map(async (pipeline) => [pipeline, await pipelineVersionsOf(pipeline)] as const)) : []
     if (run !== generation) return
     levelsByTerrain = levelsOfTerrains(levels?.levels ?? [])
+    historyTerrains = new Set(local.filter(isCurrentHistory).map((a) => a.worldId))
     pipelineVersions = new Map(named)
     serverReachable = server !== null
     browserKeeps = keeps
@@ -862,8 +869,9 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
     [card.browser, card.server].some((copy) => copy !== null && opens(copy.where, copy.uid))
 
   // The card's badges for how far it was taken: the counted steps as their
-  // numbers, on when accepted (the save's), and the levels its terrain has
-  // on the server (the artifact store's, read live).
+  // numbers, on when accepted (the save's), the levels its terrain has
+  // on the server (the artifact store's, read live), and H1 when this
+  // browser keeps a history of it (2026-10-26).
   function stageMarks(card: WorldCard): HTMLElement {
     const row = el('span', 'wc-stages')
     const position = progressPosition(card.shown.progress)
@@ -880,6 +888,7 @@ export function createWorldChooser(host: HTMLElement, options: WorldChooserOptio
       const mark = held.get(level)
       row.append(el('span', mark === 'current' ? 'wc-stage wc-stage--level wc-stage--on' : mark === 'world' ? 'wc-stage wc-stage--level wc-stage--on wc-stage--older' : 'wc-stage wc-stage--level', `L${level}`))
     }
+    row.append(el('span', historyTerrains.has(terrain) ? 'wc-stage wc-stage--level wc-stage--on' : 'wc-stage wc-stage--level', 'H1'))
     return row
   }
 

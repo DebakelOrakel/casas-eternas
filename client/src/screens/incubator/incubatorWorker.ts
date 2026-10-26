@@ -5,6 +5,7 @@ import type { Habitat } from './habitat'
 import { spreadPeople, type PeopleResult } from './people'
 import { PLANTS } from './plants'
 import { logWithTrade, MEGAFAUNA, rulesLog, settle, type SettleResult } from './settle'
+import { packHistory, unpackHistory, type PackedHistory } from './historyPack'
 import { iceDistance, PEOPLE_FRAME_STEP, simulate, type SimFrame, type SimulationInput, type SimulationResult } from './simulation'
 import { PLANT_SUITS_CODE } from './settleShared'
 
@@ -25,6 +26,10 @@ export type IncubatorRequest =
   // variability and the ENSO mark; null without the save's refinement).
   | { type: 'simulate'; origin: number; rain: { width: number; height: number; variability: Float32Array; enso: Float32Array; ensoStrength: number } | null }
   | { type: 'frame'; index: number }
+  // The history run last, packed (historyPack.ts), for its artifact; and a
+  // packed one taken in a run's place.
+  | { type: 'pack' }
+  | { type: 'restore'; bytes: ArrayBuffer }
   | { type: 'settle' }
 
 export type IncubatorAnswer =
@@ -34,6 +39,7 @@ export type IncubatorAnswer =
   | ({ type: 'people'; ms: number } & PeopleResult)
   | ({ type: 'settle'; ms: number } & SettleResult)
   | { type: 'frame'; index: number; people: Float32Array | null; small: Uint8Array | null; big: { id: string; cells: Int32Array; share: Uint8Array }[]; ms: number }
+  | { type: 'pack'; bytes: ArrayBuffer | null; ms: number }
   | { type: 'failed'; message: string }
 
 // The tamable herd animals (animals.ts) the herders keep; the domesticable
@@ -56,6 +62,19 @@ let frameSpecies: SimulationResult['species'] = []
 let historyExtinctions: SimulationResult['extinctions'] | null = null
 let historyLifeways: SimulationResult['lifeways'] | null = null
 let historyLog: SimulationResult['log'] | null = null
+let historyClimate: SimulationResult['climate'] | null = null
+
+// A history run or restored, kept: the people, the kept states, the
+// species, the extinctions, the lifeways, the log.
+function adopt(result: PackedHistory): void {
+  people = result.people
+  historyLog = result.log
+  historyClimate = result.climate
+  frames = result.kept
+  frameSpecies = result.species
+  historyExtinctions = result.extinctions
+  historyLifeways = result.lifeways
+}
 
 // The rain's reliability at each cell's centre, from its chart.
 function rainOfCells(h: Habitat, rain: NonNullable<Extract<IncubatorRequest, { type: 'simulate' }>['rain']>): SimulationInput['rain'] {
@@ -111,14 +130,26 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
       // here, sent one at a time as the playback asks (`frame`).
       if (!animals || !flora) throw new Error('the history needs the flora and the fauna first')
       const result = simulate(h, { carrying: h.carrying ?? new Float32Array(h.count).fill(0.4), origin: ask.origin >= 0 ? ask.origin : people?.origin ?? -1, seed, bigGame: animals.filter((a) => a.id in MEGAFAUNA).map((a) => ({ id: a.id, codes: a.codes, vulnerability: MEGAFAUNA[a.id] })), crops: flora!.plants.filter((p) => FARM_PLANTS.has(p.id)), herds: animals.filter((a) => HERD_ANIMALS.has(a.id)), rain: ask.rain ? rainOfCells(h, ask.rain) : null })
-      people = result.people
-      historyLog = result.log
-      frames = result.kept
-      frameSpecies = result.species
-      historyExtinctions = result.extinctions
-      historyLifeways = result.lifeways
-      const out = { ...people, arrival: people.arrival.slice(), land: people.land.slice(), from: people.from.slice(), flow: people.flow.slice(), crossings: people.crossings.slice(), crossingWays: people.crossingWays.slice() }
+      adopt(result)
+      const p = result.people
+      const out = { ...p, arrival: p.arrival.slice(), land: p.land.slice(), from: p.from.slice(), flow: p.flow.slice(), crossings: p.crossings.slice(), crossingWays: p.crossingWays.slice() }
       worker.postMessage({ type: 'people', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer])
+      return
+    }
+    if (ask.type === 'restore') {
+      const result = unpackHistory(ask.bytes)
+      if (!result) throw new Error('the bytes are not a packed history')
+      adopt(result)
+      const p = result.people
+      const out = { ...p, arrival: p.arrival.slice(), land: p.land.slice(), from: p.from.slice(), flow: p.flow.slice(), crossings: p.crossings.slice(), crossingWays: p.crossingWays.slice() }
+      worker.postMessage({ type: 'people', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer])
+      return
+    }
+    if (ask.type === 'pack') {
+      const bytes = people && frames && historyLifeways && historyLog && historyExtinctions
+        ? packHistory({ people, kept: frames, species: frameSpecies, extinctions: historyExtinctions, log: historyLog, lifeways: historyLifeways, climate: historyClimate! })
+        : null
+      worker.postMessage({ type: 'pack', bytes, ms: ms() } satisfies IncubatorAnswer, bytes ? [bytes] : [])
       return
     }
     if (ask.type === 'frame') {
@@ -146,8 +177,11 @@ worker.onmessage = (event: MessageEvent<IncubatorRequest>): void => {
     if (!flora || !animals || !people) throw new Error('the settlement needs the flora, the fauna and the people first')
     const ruled = settle(h, { arrival: people.arrival, crops: flora.plants.filter((p) => FARM_PLANTS.has(p.id)), herds: animals.filter((a) => HERD_ANIMALS.has(a.id)), origin: people.origin, animals, seed, given: historyLifeways ?? undefined })
     // The history's extinctions in the rules' place: hunted out, not drawn.
-    // The history's domesticates are the worker's own: sent as copies.
-    const result = historyExtinctions ? { ...ruled, extinctions: historyExtinctions, domestications: ruled.domestications.map((d) => ({ ...d, came: d.came.slice() })) } : ruled
+    // The history's domesticates and its fields' and herds' times are the
+    // worker's own (the settlement hands them back): sent as copies, as the
+    // answer's buffers go to the screen — sent whole, they left the worker's
+    // empty, and its history could not be packed (2026-10-26).
+    const result = historyExtinctions ? { ...ruled, extinctions: historyExtinctions, farmAt: ruled.farmAt.slice(), herdAt: ruled.herdAt.slice(), domestications: ruled.domestications.map((d) => ({ ...d, came: d.came.slice() })) } : ruled
     result.log = historyLog ? logWithTrade(historyLog, result) : rulesLog(h, people, result)
     worker.postMessage({ type: 'settle', ms: ms(), ...result } satisfies IncubatorAnswer, [result.lifeway.buffer, result.density.buffer, result.farmAt.buffer, result.herdAt.buffer, result.fishOk.buffer, result.farmSuit.buffer, result.herdSuit.buffer, result.fishSuit.buffer, result.carrying.buffer, result.centres.buffer, result.population.buffer, ...result.domestications.map((d) => d.came.buffer), result.villageFrom.buffer, result.villageTo.buffer, result.villages.buffer, result.sources.buffer, result.links.buffer, result.landmass.buffer])
   } catch (e) {
