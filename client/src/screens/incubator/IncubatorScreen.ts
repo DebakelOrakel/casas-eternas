@@ -1540,7 +1540,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // told ones alone; the dry shelf walked stays brown).
     routeSea = new Uint8Array(people.arrival.length)
     for (const cell of people.crossingWays) if (cell >= 0 && !people.land[cell]) routeSea[cell] = 1
-    peopleRoutes = routesOf(people)
+    const landed = people.crossings
+    peopleRoutes = routesOf(people, toldCrossings(people).map((k) => landed[k + 1]))
     peopleOrder = routeOrder(people)
     routeWidths = null
     showPlants()

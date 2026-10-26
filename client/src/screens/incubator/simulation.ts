@@ -68,6 +68,17 @@ const CLIMATE_YEARS = 500
 // most — no longer the time's (it grew evenly from 30 to 450 km over the
 // span, and reached 98.5 % of Morvane's land, its far islands too). A
 // crossing within it is tried with CROSSING_CHANCE a step.
+// THE SEAFARING (2026-10-26, a cheat, asked for): the reach takes the
+// larger of a region's knowledge and its `seafaring`, which a crossing
+// brings in full and which never falls; every CLIMATE_YEARS it passes
+// both ways along the crossings made. Without it the ways to the large
+// landmasses ran over small islands whose few people kept little, and
+// Morvane's people reached 3 of its 7 large landmasses.
+// THE STEPPING STONES (2026-10-26, a cheat too): from a region of fewer
+// than STONE_CELLS cells people set out at once — any people, every
+// crossing with STONE_CHANCE a step. The way to Morvane's largest
+// landmass ran over some 100 such regions along a cold coast, at
+// CROSSING_CHANCE each over 100 000 years.
 // THE GAME (2026-10-26, DES-0033 step 3), every GAME_STEPS steps on the
 // cells people live in or have hunted: the small game and the big game, a
 // share each of what the land holds without people. Each grows back
@@ -144,6 +155,8 @@ const REACH_START = 30
 const REACH_PER_KNOW = 150
 const REACH_END = 450
 const CROSSING_CHANCE = 0.02
+const STONE_CELLS = 100
+const STONE_CHANCE = 0.5
 const CROSSINGS_A_PAIR = 32
 const VOYAGE_KM = 3000
 
@@ -412,6 +425,12 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
   const crossings = crossingsOf(h, REACH_END, habitable, region)
   const knowledge = new Float32Array(regions)
   const regionPeople = new Float64Array(regions)
+  const seafaring = new Float32Array(regions)
+  const regionCells = new Int32Array(regions)
+  for (let i = 0; i < n; i++) if (region[i] >= 0) regionCells[region[i]]++
+  const seaKnown = (g: number): number => Math.max(knowledge[g], seafaring[g])
+  // The regions joined by a crossing made, in pairs.
+  const links: number[] = []
   const crossingsFrom = new Map<number, Crossing[]>()
   for (const c of crossings) {
     const list = crossingsFrom.get(c.from)
@@ -597,6 +616,13 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
         const target = KNOW_SCALE * Math.log10(1 + regionPeople[g] / KNOW_PEOPLE)
         knowledge[g] += (target - knowledge[g]) * (target > knowledge[g] ? KNOW_GAIN : KNOW_LOSS)
       }
+      for (let k = 0; k < links.length; k += 2) {
+        const a = links[k]
+        const b = links[k + 1]
+        const most = Math.max(seaKnown(a), seaKnown(b))
+        seafaring[a] = Math.max(seafaring[a], most)
+        seafaring[b] = Math.max(seafaring[b], most)
+      }
       // The centres: each region's best cell for the farming and for the
       // herding, by a chance.
       const bestFarm = new Map<number, { cell: number; w: number }>()
@@ -754,14 +780,19 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
     }
     // 3. The crossings within the reach of their coast's knowledge.
     for (const [source, list] of crossingsFrom) {
-      if (people[source] < SEED_SHARE * capacity[source] * food(source)) continue
-      const known = knowledge[region[source]]
+      // An empty coast sets out on none: where it carries nothing (the
+      // ice) the share alone was 0 ≤ 0, and coasts never reached set out
+      // (2026-10-26; a third of Morvane's crossings, and `from` in circles).
+      const stone = regionCells[region[source]] < STONE_CELLS
+      if (people[source] === 0 || (!stone && people[source] < SEED_SHARE * capacity[source] * food(source))) continue
+      const known = seaKnown(region[source])
       const reach = Math.min(REACH_END, REACH_START + REACH_PER_KNOW * known)
       for (const c of list) {
         if (c.km > reach || !open(c.to) || arrival[c.to] < Infinity) continue
-        if (random() < CROSSING_CHANCE) {
+        if (random() < (stone ? STONE_CHANCE : CROSSING_CHANCE)) {
           // The way over the sea is passed (an arrival and a from, as the
-          // rules' crossings have them), so the routes follow it.
+          // rules' crossings have them), so the routes follow it. A land
+          // cell on the way is a parent only once reached.
           let parent = c.from
           for (const cell of c.path) {
             if (cell === c.from || cell === c.to) continue
@@ -769,11 +800,13 @@ export function simulate(h: Habitat, input: SimulationInput, onProgress?: (share
               arrival[cell] = t + STEP_YEARS
               from[cell] = parent
             }
-            parent = cell
+            if (arrival[cell] < Infinity) parent = cell
           }
           settle(c.to, t + STEP_YEARS, capacity[c.to] * SEED_PEOPLE, parent)
           const to = region[c.to]
-          knowledge[to] = Math.max(knowledge[to], KNOW_CARRIED * known)
+          knowledge[to] = Math.max(knowledge[to], KNOW_CARRIED * knowledge[region[source]])
+          seafaring[to] = Math.max(seafaring[to], known)
+          links.push(region[source], to)
           made.push(h.landmass[c.to], c.to, t + STEP_YEARS, c.km)
           ways.push(...c.path, -1)
         }
