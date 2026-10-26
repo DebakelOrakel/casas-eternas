@@ -34,7 +34,7 @@ import { mulberry32 } from './habitat'
 //   (COLD_LOSS by the class's main group), the dry ones by the cold's
 //   dryness;
 // - the climate is stable when it has stayed under STABLE_COLD for
-//   STABLE_YEARS: a condition of the farming (not used yet).
+//   STABLE_YEARS: a condition of the farming and the herding.
 
 export interface ClimateHistory {
   // The cold at `t` years after the departure, 0 … 1.

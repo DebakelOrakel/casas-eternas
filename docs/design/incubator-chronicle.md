@@ -124,7 +124,9 @@ linearly; no place). On Morvane: year 4 714 (a fishing village), 42 199,
 819, 58 019, 62 666.
 
 A fifth: **a plant or an animal domesticated** at a centre (`settle.ts`,
-the domesticates), at the centre's cell. On Morvane 14.
+the domesticates), at the centre's cell — its first taming only: in a
+history each centre tames its own, and the chronicle held some 25 tamings
+(2026-10-26). On Morvane 14 by the rules.
 
 A landmass is named by its rank by area, 1 the largest. The axis carries
 the people over the span (`settle.ts` population, every 500 years, on a

@@ -183,9 +183,9 @@ the state, and its date comes out:
    hunters who follow a herd long enough tame it without fields (the
    reindeer).
 
-Calibrated by the rates, not by dates: an earth-like world should give an
-earth-like course on the mean (the farming in the last eighth, the far
-islands late); a world poor in crops farms late or never, and rightly.
+Calibrated by the rates, not by dates: a world should give the world's
+timeline (Status) on the mean — the large landmasses by some 40 000, the
+farming by 65 000 … 70 000, the far islands late; a world poor in crops farms late or never, and rightly.
 The rules stay the preview, with their dates.
 
 Order: the climate history first (the sea, the bridges and the droughts
@@ -332,3 +332,42 @@ the people, the herds 10. The settlement takes these in the rules' place
 (settle.ts `given`). On Morvane: the farming at year 93 500 (millet,
 rice, yam, cassava), its herds at 94 500, two herding centres at 97 500
 and 98 000; the fields on 8 536 cells, the herds on 3 135. 18 s.
+
+**The world's timeline** (the same day, asked for): the departure in year
+0, the large landmasses reached by some 40 000, the cold deepest at 40 …
+55 % of the span (it was 76 … 86 %, after the earth: no farming before
+year 85 000), a stable warmth from some 60 000, the first fields by
+65 000 … 70 000, some 30 000 years of farming before the game. With it
+the ice reaches 400 km from today's glaciers at cold 1 (800 shut half of
+Morvane for most of the cold), a cell settles its neighbours from a third
+of what it carries, the knowledge counts its people by 3 000; in the
+rules the farming from 67 000, the herding from 70 000, the bridges until
+60 000.
+
+**The crossings from empty coasts** (the same day): a coast set out when
+its people were a third of what it carries — 0 of 0 under the ice, and on
+coasts never reached. A third of Morvane's crossings came from nowhere;
+they made its "6 of 7 large landmasses in the first century", and gave
+`from` circles that left whole continents without routes. A coast sets
+out with people only now. Honestly reached, 3 of 7: the way to the
+largest (16 M km²) runs over some 100 regions of 1 to 10 cells along a
+cold coast, each a crossing at 2 % a step. Two cheats, asked for ("not
+100 % realistic, but it works"):
+
+- **The seafaring**: a crossing brings its source's reach knowledge in
+  full, and it never falls; every 500 years it passes both ways along the
+  crossings made. The reach takes the larger of it and the region's
+  knowledge.
+- **The stepping stones**: from a region of fewer than 100 cells people
+  set out with any people, every crossing at 50 % a step.
+
+On Morvane: all 7 large landmasses, 4 of them by year 6 825, the 3 cold
+ones (under the ice) once it melts, 61 600 … 66 850; the fields from
+62 000, the herds from 60 000; some 24 M people at the end.
+
+**Fewer marks** (the same day): the routes cut at 3 % of all the land
+reached (0.5 % at first), and only the landings the chronicle tells (the
+first on each landmass) keep their branch under it: 66 lines on Morvane,
+190 before. A domesticate is tamed once on a landmass — a centre counts
+only the wild ones not tamed there yet — and the chronicle tells its
+first taming only; the herding at 10 % (20 %).
