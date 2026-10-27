@@ -16,7 +16,10 @@
 //!
 //! Each cell keeps the cell it was reached from. Those links make a tree,
 //! and the tree is the relationship of the groups: where two branches
-//! part, two groups parted.
+//! part, two groups parted. A group begins where the tree forks into two
+//! branches of GROUP_SHARE of the land reached or more, and where a
+//! crossing lands people who settle that much: the large forks, not every
+//! valley.
 //!
 //! Not in the tuning (`tuning.rs`) and not in H1 yet: a trial beside the
 //! simulation, which it is meant to replace as step 1.
@@ -36,6 +39,9 @@ pub const SEA_KM_A: f64 = 1.0;
 /// A landing after open sea as long as the reach costs this many years;
 /// less in proportion.
 pub const CROSSING_YEARS: f64 = 1000.0;
+/// A branch of this share of the land cells reached, or more, is a group
+/// of its own.
+pub const GROUP_SHARE: f64 = 0.02;
 
 pub struct Peopling {
     /// The years from the span's start; Infinity where not reached.
@@ -44,6 +50,12 @@ pub struct Peopling {
     pub from: Vec<i32>,
     /// The origin each cell's people came from, by its index in the input.
     pub root: Vec<i32>,
+    /// Each reached cell's group, numbered by when its first cell was
+    /// reached; -1 where not reached.
+    pub group: Vec<i32>,
+    pub groups: usize,
+    /// 1 where people came by boat.
+    pub afloat: Vec<u8>,
     /// The foragers in each reached cell of today's land at the span's end.
     pub foragers: Vec<f32>,
     /// The span: from the start to the end of the cold, years.
@@ -141,7 +153,14 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
         heap.push(0.0, o as i32);
     }
     let mut landmass_reached = vec![false; h.landmasses];
-    let mut log = Vec::new();
+    let mut log: Vec<LogEvent> = origins
+        .iter()
+        .filter(|&&o| o < n)
+        .map(|&o| LogEvent::Departure {
+            at: 0.0,
+            cell: o as f64,
+        })
+        .collect();
     while !heap.is_empty() {
         heap.pop();
         let i = heap.popped_index as usize;
@@ -232,6 +251,7 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
             heap.push(at, u as i32);
         }
     }
+    let (group, groups) = groups_of(h, &arrival, &from, &afloat);
     let foragers = (0..n)
         .map(|i| {
             if h.land[i] != 0 && arrival[i] < f64::INFINITY {
@@ -245,8 +265,52 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
         arrival: arrival.iter().map(|&a| a as f32).collect(),
         from,
         root,
+        group,
+        groups,
+        afloat,
         foragers,
         span,
         log,
     }
+}
+
+// The groups: a cell heads one where its branch holds GROUP_SHARE of the
+// land cells reached or more, and its parent has another such branch or
+// it landed from a boat; every other cell is its parent's.
+fn groups_of(h: &Habitat, arrival: &[f64], from: &[i32], afloat: &[u8]) -> (Vec<i32>, usize) {
+    let n = h.count;
+    let mut order: Vec<usize> = (0..n).filter(|&i| arrival[i] < f64::INFINITY).collect();
+    order.sort_by(|&a, &b| arrival[a].total_cmp(&arrival[b]).then(a.cmp(&b)));
+    // The land cells reached through each cell, itself among them.
+    let mut beyond = vec![0u32; n];
+    for &i in order.iter().rev() {
+        beyond[i] += u32::from(h.land[i] != 0);
+        if from[i] >= 0 {
+            beyond[from[i] as usize] += beyond[i];
+        }
+    }
+    let reached = order.iter().filter(|&&i| h.land[i] != 0).count();
+    let least = ((GROUP_SHARE * reached as f64).ceil() as u32).max(1);
+    let mut large = vec![0u8; n];
+    for &i in &order {
+        if from[i] >= 0 && beyond[i] >= least {
+            let p = from[i] as usize;
+            large[p] = large[p].saturating_add(1);
+        }
+    }
+    let mut group = vec![-1i32; n];
+    let mut groups = 0usize;
+    for &i in &order {
+        let p = from[i];
+        let heads = p < 0
+            || (beyond[i] >= least
+                && (large[p as usize] >= 2 || (h.land[i] != 0 && afloat[p as usize] != 0)));
+        group[i] = if heads {
+            groups += 1;
+            groups as i32 - 1
+        } else {
+            group[p as usize]
+        };
+    }
+    (group, groups)
 }

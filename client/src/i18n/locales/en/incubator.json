@@ -1,4 +1,6 @@
 {
+  "incubator.step.oldStoneAge.label": "Old Stone Age",
+  "incubator.step.oldStoneAge.help": "Where people could go, and when: their spread, its routes, its groups.",
   "incubator.step.people.label": "People",
   "incubator.step.people.help": "How people spread from where they began over the world.",
   "incubator.step.testing.label": "Testing",
@@ -19,6 +21,8 @@
   "incubator.section.animals.help": "The wild animals people use or fear — one pick replaces the last.",
   "incubator.people.spread.label": "Spread",
   "incubator.people.spread.help": "When people reached a place; a click on the map sets where they began.",
+  "incubator.peopling.groups.label": "Groups",
+  "incubator.peopling.groups.help": "Who came from whom; one colour a branch.",
   "incubator.people.routes.label": "Routes",
   "incubator.people.routes.help": "The rough directions of the spread.",
   "incubator.people.play.label": "Play",

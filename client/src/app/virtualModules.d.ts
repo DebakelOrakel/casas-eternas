@@ -92,6 +92,11 @@ declare module 'casas-incubator-wasm/casas-incubator.js' {
     faunaShares(): Float64Array
     simulate(origin: number, seed: number, rainWidth: number, rainHeight: number, variability: Float32Array | undefined, enso: Float32Array | undefined, ensoStrength: number, progress: ((share: number) => void) | undefined): Uint8Array
     settleHistory(arrival: Float32Array, farmAt: Float32Array, herdAt: Float32Array, villages: Int32Array, villageFrom: Float32Array, villageTo: Float32Array): Uint8Array
+    people(origins: Int32Array, seed: number): number
+    peoplingFloats(name: string): Float32Array
+    peoplingInts(name: string): Int32Array
+    peoplingAfloat(): Uint8Array
+    peoplingLandings(): Float64Array
   }
   export class Chart {
     constructor(sphere: boolean, width: number, height: number, count: number, nodes: Float32Array, connectivity: Uint8Array)

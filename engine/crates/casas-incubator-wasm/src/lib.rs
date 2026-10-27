@@ -9,7 +9,9 @@ use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M}
 use casas_incubator::flora::{Layer, grow_flora, populate};
 use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
 use casas_incubator::history::{RainChart, carrying_of, origin_of, run_history};
+use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
+use casas_incubator::peopling::{Peopling, people};
 use casas_incubator::settle::settle_history;
 use casas_incubator::simulation::{SPAN_YEARS, STEP_YEARS, SimulationResult, ice_distance};
 use wasm_bindgen::prelude::*;
@@ -51,6 +53,7 @@ pub struct Incubator {
     fauna: Vec<Layer>,
     // The history run last.
     history: Option<SimulationResult>,
+    peopling: Option<Peopling>,
 }
 
 /// The layers' codes one after the other, and their shares of the land
@@ -59,6 +62,21 @@ fn codes_of(layers: &[Layer]) -> Vec<u8> {
     layers
         .iter()
         .flat_map(|l| l.codes.iter().copied())
+        .collect()
+}
+fn landings(p: &Peopling) -> Vec<f64> {
+    p.log
+        .iter()
+        .flat_map(|e| match *e {
+            LogEvent::Crossing {
+                at,
+                cell,
+                landmass,
+                km,
+                ..
+            } => vec![at, cell, landmass, km],
+            _ => vec![],
+        })
         .collect()
 }
 fn shares_of(layers: &[Layer]) -> Vec<f64> {
@@ -130,6 +148,7 @@ impl Incubator {
             flora: Vec::new(),
             fauna: Vec::new(),
             history: None,
+            peopling: None,
         }
     }
 
@@ -286,6 +305,62 @@ impl Incubator {
         let bytes = pack_history(&result);
         self.history = Some(result);
         Ok(bytes)
+    }
+
+    /// Step 1 of the prehistory (peopling.rs) from `origins`, kept for the
+    /// `peopling*` reads; its span, years.
+    pub fn people(&mut self, origins: &[i32], seed: f64) -> f64 {
+        let origins: Vec<usize> = origins.iter().map(|&o| o as usize).collect();
+        let p = people(&self.habitat, &carrying_of(&self.habitat), &origins, seed);
+        let span = p.span;
+        self.peopling = Some(p);
+        span
+    }
+
+    #[wasm_bindgen(js_name = peoplingFloats)]
+    pub fn peopling_floats(&self, name: &str) -> Result<Vec<f32>, JsError> {
+        let p = self
+            .peopling
+            .as_ref()
+            .ok_or_else(|| JsError::new("no peopling yet"))?;
+        Ok(match name {
+            "arrival" => p.arrival.clone(),
+            "foragers" => p.foragers.clone(),
+            _ => return Err(JsError::new(&format!("no peopling array {name}"))),
+        })
+    }
+
+    #[wasm_bindgen(js_name = peoplingInts)]
+    pub fn peopling_ints(&self, name: &str) -> Result<Vec<i32>, JsError> {
+        let p = self
+            .peopling
+            .as_ref()
+            .ok_or_else(|| JsError::new("no peopling yet"))?;
+        Ok(match name {
+            "from" => p.from.clone(),
+            "root" => p.root.clone(),
+            "group" => p.group.clone(),
+            _ => return Err(JsError::new(&format!("no peopling array {name}"))),
+        })
+    }
+
+    #[wasm_bindgen(js_name = peoplingAfloat)]
+    pub fn peopling_afloat(&self) -> Result<Vec<u8>, JsError> {
+        let p = self
+            .peopling
+            .as_ref()
+            .ok_or_else(|| JsError::new("no peopling yet"))?;
+        Ok(p.afloat.clone())
+    }
+
+    /// The landings after open sea: [at, cell, landmass, km] each.
+    #[wasm_bindgen(js_name = peoplingLandings)]
+    pub fn peopling_landings(&self) -> Result<Vec<f64>, JsError> {
+        let p = self
+            .peopling
+            .as_ref()
+            .ok_or_else(|| JsError::new("no peopling yet"))?;
+        Ok(landings(p))
     }
 
     /// A history's settlement (settle.rs settle_history) on its spread,

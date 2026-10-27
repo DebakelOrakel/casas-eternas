@@ -167,6 +167,17 @@ export function paintPeople(o: OverlayRaster, people: PeopleResult, t: number, l
   }
 }
 
+// The old stone age's groups (casas-incubator peopling.rs) at `t`: the land
+// reached by then in its group's colour, the plants' palette over again.
+export function paintGroups(o: OverlayRaster, people: PeopleResult, group: Int32Array, t: number): void {
+  for (let k = 0; k < o.owners.length; k++) {
+    const cell = o.owners[k]
+    if (!(people.arrival[cell] <= t) || !people.land[cell] || group[cell] < 0) continue
+    const [r, g, b] = PLANT_PALETTE[group[cell] % PLANT_PALETTE.length]
+    put(o, 4 * k, r, g, b, 0.7)
+  }
+}
+
 // THE SETTLEMENT (settle.ts, a proof of concept): the lifeways and the
 // density, onto the overlay; the villages, the trade and the sources are
 // marks (incubatorSymbols.ts).

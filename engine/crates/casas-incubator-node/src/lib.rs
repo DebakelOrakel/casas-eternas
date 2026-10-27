@@ -304,7 +304,10 @@ impl Incubator {
 
     #[napi]
     pub fn peopling_floats(&self, name: String) -> napi::Result<Float32Array> {
-        let p = self.peopling.as_ref().ok_or_else(|| error("no peopling yet".into()))?;
+        let p = self
+            .peopling
+            .as_ref()
+            .ok_or_else(|| error("no peopling yet".into()))?;
         Ok(Float32Array::new(match name.as_str() {
             "arrival" => p.arrival.clone(),
             "foragers" => p.foragers.clone(),
@@ -314,10 +317,14 @@ impl Incubator {
 
     #[napi]
     pub fn peopling_ints(&self, name: String) -> napi::Result<Int32Array> {
-        let p = self.peopling.as_ref().ok_or_else(|| error("no peopling yet".into()))?;
+        let p = self
+            .peopling
+            .as_ref()
+            .ok_or_else(|| error("no peopling yet".into()))?;
         Ok(Int32Array::new(match name.as_str() {
             "from" => p.from.clone(),
             "root" => p.root.clone(),
+            "group" => p.group.clone(),
             _ => return Err(error(format!("no peopling array {name}"))),
         }))
     }
@@ -325,12 +332,21 @@ impl Incubator {
     /// The landings after open sea: [at, cell, landmass, km] each.
     #[napi]
     pub fn peopling_landings(&self) -> napi::Result<Float64Array> {
-        let p = self.peopling.as_ref().ok_or_else(|| error("no peopling yet".into()))?;
+        let p = self
+            .peopling
+            .as_ref()
+            .ok_or_else(|| error("no peopling yet".into()))?;
         Ok(Float64Array::new(
             p.log
                 .iter()
                 .flat_map(|e| match *e {
-                    LogEvent::Crossing { at, cell, landmass, km, .. } => vec![at, cell, landmass, km],
+                    LogEvent::Crossing {
+                        at,
+                        cell,
+                        landmass,
+                        km,
+                        ..
+                    } => vec![at, cell, landmass, km],
                     _ => vec![],
                 })
                 .collect(),

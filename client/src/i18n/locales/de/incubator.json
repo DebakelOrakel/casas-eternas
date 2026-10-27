@@ -1,4 +1,6 @@
 {
+  "incubator.step.oldStoneAge.label": "Altsteinzeit",
+  "incubator.step.oldStoneAge.help": "Wohin Menschen gelangen konnten, und wann: ihre Ausbreitung, ihre Routen, ihre Gruppen.",
   "incubator.step.people.label": "Menschen",
   "incubator.step.people.help": "Wie sich die Menschen von ihrem Ursprung über die Welt ausbreiten.",
   "incubator.step.testing.label": "Testing",
@@ -19,6 +21,8 @@
   "incubator.section.animals.help": "Die wilden Tiere, die Menschen nutzen oder fürchten — eine Auswahl ersetzt die vorige.",
   "incubator.people.spread.label": "Ausbreitung",
   "incubator.people.spread.help": "Wann die Menschen ein Gebiet erreichten; ein Klick auf die Karte setzt ihren Ursprung.",
+  "incubator.peopling.groups.label": "Gruppen",
+  "incubator.peopling.groups.help": "Wer von wem abstammt; eine Farbe je Ast.",
   "incubator.people.routes.label": "Routen",
   "incubator.people.routes.help": "Die groben Richtungen der Ausbreitung.",
   "incubator.people.play.label": "Abspielen",

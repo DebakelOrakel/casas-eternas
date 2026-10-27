@@ -3,6 +3,7 @@ import historyWasmUrl from 'casas-incubator-wasm/casas-incubator_bg.wasm?url'
 import { ANIMALS } from './animals'
 import type { AnimalLayer, CellInput, PeopleResult, PlantLayer, SettleResult, TreeLayer } from './cellsShared'
 import { incubatorOf } from './historyInput'
+import type { LogEvent } from './historyLogShared'
 import { unpackHistory, unpackSettled, type PackedHistory } from './historyPack'
 import { PEOPLE_FRAME_STEP } from './peopleShared'
 import { PLANTS } from './plants'
@@ -31,6 +32,8 @@ export type IncubatorRequest =
   | { type: 'climate'; seed: number }
   | { type: 'simulate'; origin: number; rain: { width: number; height: number; variability: Float32Array; enso: Float32Array; ensoStrength: number } | null }
   | { type: 'frame'; index: number }
+  // The old stone age from `origin` (-1: the one a history takes).
+  | { type: 'peopling'; origin: number }
   // The history run or restored last, packed, for its artifact; and a
   // packed one taken in a run's place.
   | { type: 'pack' }
@@ -46,6 +49,10 @@ export type IncubatorAnswer =
   // sea's drop at a cold of 1.
   | { type: 'climate'; cold: Float32Array; stepYears: number; iceReachKm: number; seaDropM: number; ms: number }
   | ({ type: 'people'; ms: number } & PeopleResult)
+  // The old stone age (casas-incubator peopling.rs): its spread as a
+  // history's, `flow` left 0; each cell's group and their number; its log,
+  // the departure and the landings after open sea; its span, years.
+  | ({ type: 'peopling'; group: Int32Array; groups: number; log: LogEvent[]; span: number; ms: number } & PeopleResult)
   | ({ type: 'settle'; ms: number } & SettleResult)
   | { type: 'frame'; index: number; people: Float32Array | null; small: Uint8Array | null; big: { id: string; cells: Int32Array; share: Uint8Array }[]; ms: number }
   | { type: 'pack'; bytes: ArrayBuffer | null; ms: number }
@@ -122,6 +129,35 @@ async function answer(ask: IncubatorRequest): Promise<void> {
   }
   if (ask.type === 'origin') {
     worker.postMessage({ type: 'origin', origin: e.originOf(), ms: ms() } satisfies IncubatorAnswer)
+    return
+  }
+  if (ask.type === 'peopling') {
+    const origin = ask.origin >= 0 ? ask.origin : e.originOf()
+    const span = e.people(Int32Array.of(origin), seed)
+    const arrival = e.peoplingFloats('arrival')
+    const from = e.peoplingInts('from')
+    const group = e.peoplingInts('group')
+    const afloat = e.peoplingAfloat()
+    const landings = e.peoplingLandings()
+    // As a history's: [landmass, cell, time, km] a crossing, and its way
+    // from the cell it set off from over the water, ended by -1.
+    const crossings = new Float32Array(landings.length)
+    const ways: number[] = []
+    const log: LogEvent[] = [{ kind: 'departure', at: 0, cell: origin }]
+    for (let k = 0; k < landings.length; k += 4) {
+      const [at, cell, landmass, km] = landings.subarray(k, k + 4)
+      crossings.set([landmass, cell, at, km], k)
+      const way = [cell]
+      let c = from[cell]
+      for (; c >= 0 && afloat[c]; c = from[c]) way.push(c)
+      if (c >= 0) way.push(c)
+      ways.push(...way.reverse(), -1)
+      log.push({ kind: 'crossing', at, cell, landmass, km, first: true })
+    }
+    let groups = 0
+    for (const g of group) groups = Math.max(groups, g + 1)
+    const out = { arrival, land: e.bytes('land'), from, flow: new Float32Array(n), origin, crossings, crossingWays: Int32Array.from(ways), group, groups, log, span }
+    worker.postMessage({ type: 'peopling', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, out.group.buffer])
     return
   }
   if (ask.type === 'simulate') {
