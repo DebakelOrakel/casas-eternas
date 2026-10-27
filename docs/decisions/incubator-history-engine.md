@@ -171,9 +171,13 @@ an older level 1 keeps its histories under that one.
   peoples, every counter), not only what the playback shows: each state
   larger, but fewer of them.
 - The game's end state as an artifact of its own, apart from the playback.
-- The habitat's cells, the flora and the fauna as artifacts too, so a world
-  with its H1 opens without computing them (2026-10-26, left as it is):
-  some 340 MB on Morvane beside H1, the cells' mesh alone some 110 MB;
-  their times in Safari ranged widely (the cells 7 … 36 s, the flora
-  1.5 … 16 s; in Node 9 and 2 s). Ported into the crate, they may be quick
-  enough not to keep.
+
+## Not kept: the cells, the flora, the fauna
+
+The habitat's cells, the flora and the fauna are not artifacts; the
+browser computes them each time (decided 2026-10-27). Kept, they would be
+some 340 MB on Morvane beside H1, the cells' mesh alone some 110 MB. In
+TypeScript their times in Safari ranged widely (the cells 7 … 36 s, the
+flora 1.5 … 16 s). With the crate's WASM build, on Morvane in Safari: the
+cells 3.3 s, the flora 1.1 s, the fauna 0.7 s, some 5 s together, less
+than the download of 340 MB would take.
