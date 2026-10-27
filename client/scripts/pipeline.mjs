@@ -280,8 +280,12 @@ function worldDataOf(p) {
 const TESTS = []
 const test = (name, run) => TESTS.push({ name, run })
 // The runtime's sphere world's seed (see the sphere tests) and the tests to
-// run (all, or those whose name holds the first argument).
-const SPHERE_SEED = process.env.SPHERE_SEED ?? 'c4'
+// run (all, or those whose name holds the first argument). c5 since
+// 2026-10-27, with the seasons the history's ice reads (DEC-0050): c4's
+// small world, like c2's and c6's, then held no catchment past the channel
+// threshold and so no river (the real-size worlds kept theirs, 591 to 1565
+// reaches).
+const SPHERE_SEED = process.env.SPHERE_SEED ?? 'c5'
 const ONLY = process.argv[2] ?? ''
 
 // ------------------------------------------------------------- the stage table
@@ -1750,14 +1754,15 @@ test('two pipelines given the same messages agree byte for byte', async () => {
 // loaded climate.
 test('a loaded world runs the hydrology the session ran', async () => {
   const p = await freshPipeline()
-  // 28 Archean epochs, not the harness's 20: since DEC-0036 phase 8d
+  // 30 Archean epochs, not the harness's 20: since DEC-0036 phase 8d
   // (the cut near the snow line is the buzzsaw's, no longer twice the
   // sliding's) the 20-epoch world's trunk river runs through a chain of
   // lakes and leaves no reach long enough for a course; since phase 8f
   // (the plates' speed) the 22-epoch world has none either; since phase
   // 8g-2 (the uplift at the continents' margins) none of 18–24 has one
-  // (26, 28 and 30 have courses).
-  await growWorld(p, { epochs: 28 })
+  // (26, 28 and 30 have courses); since DEC-0050 (the seasons the ice
+  // reads) 24, 26, 28 and 34 have none, 30 and 32 have.
+  await growWorld(p, { epochs: 30 })
   await runOneEpoch(p)
   // Humidity 160 %: with the colder, drier mid-latitudes of DEC-0036
   // phase 8b-2 no river of this small world is wide enough for a course,
