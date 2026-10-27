@@ -7,16 +7,16 @@ summary.en: The history made no island in the open ocean. Its uplift is
   mesh lost what was built in the deep sea. Now an active island arc and
   a hotspot build up from the sea floor, a new node in the open ocean
   keeps its parents' relief, and built relief in the deep sea keeps a
-  40 km mesh. Islands of 1 000–100 000 km² are about twice as many, and
-  3.7–5.3 % of the sphere's land is on islands instead of 1.1–4.0 %.
+  40 km mesh. A volcano is a cone, an arc a chain of three per feature:
+  islands of 1 000–10 000 km² are 1.5 to 3 times as many, in chains.
 summary.de: Die Geschichte machte keine Insel im offenen Ozean. Ihre
   Hebung ist Krustenverdickung und hebt nur Land, ein Hotspot hat keine
   Hebung, und das Netz verlor, was in der Tiefsee aufgebaut wurde. Jetzt
   bauen aktive Inselbögen und Hotspots vom Meeresboden auf, ein neuer
   Knoten im offenen Ozean behält das Relief seiner Eltern, und
   aufgebautes Relief in der Tiefsee behält ein 40-km-Netz. Inseln von
-  1 000–100 000 km² sind etwa doppelt so viele, und 3,7–5,3 % des Landes
-  der Kugel liegen auf Inseln statt 1,1–4,0 %.
+  1 000–10 000 km² sind 1,5- bis 3-mal so viele, in Ketten: ein Vulkan
+  ist ein Kegel, ein Bogen eine Kette von drei je Merkmal.
 area: generator
 stage: built
 createdAt: 2026-10-27
@@ -55,15 +55,26 @@ hand-over, and both wear down.
 (b) A build of its own in the epoch, as the shelf's fill is.
 
 **(b).** A volcano is lava piled up, not crust thickened: it has its own
-rate, needs no shortening (a hotspot has none), and its footprint is
-narrower than a range's. `tectonics/volcanic_build.rs` raises the surface
-under an active island arc (a volcanic feature that subsides, both plates
-oceanic, a deposit this epoch) and a hotspot's feature while the plume
-feeds it, by `volcano_build_m_per_myr` (1500) at the axis in the capsule
-falloff of `volcano_radius_m` (80 km; the hotspot's a disc), up to
-`volcano_top_m` (1500 m). The build loads the plate. The plate carries it
-off; the ocean floor's age takes it down again, and the waves plane it.
-A subduction arc on a continent keeps its uplift alone.
+rate, needs no shortening (a hotspot has none), and its footprint is a
+cone, not a range's. `tectonics/volcanic_build.rs` builds a cone at each
+active volcano: an island arc's feature (a volcanic feature that
+subsides, both plates oceanic, a deposit this epoch) holds three, at
+`volcano_spacing_m` (120 km) along it, a hotspot's feature one while the
+plume feeds it. A cone of `volcano_radius_m` (50 km) rises by
+`volcano_build_m_per_myr` (1500) at its summit toward a cone of
+`volcano_top_m` (1500 m) in the capsule falloff, so its slopes reach the
+sea at its foot. A cone no node is within builds at its nearest node
+within `volcano_reach_m` (120 km): the deep sea's nodes are 160 km apart,
+and the built relief refines the mesh (fork 2). The build loads the
+plate. The plate carries it off; the ocean floor's age takes it down
+again, and the waves plane it. A subduction arc on a continent keeps its
+uplift alone.
+
+The first build raised the whole arc segment, 2 × 273 km long, to
+1500 m: the arcs rose as strips some 160 km wide and flat on top, and the
+islands of 10 000–1 000 000 km² were 2.9–4.5 times as long as wide on the
+sphere (1.3–1.7 before) — it looked smeared. An arc is a chain of
+volcanoes 50–100 km apart; the mesh's 31–40 km takes 120 km.
 
 ## Fork 2 — the mesh in the open ocean: DECIDED — keep the relief, refine what is built
 
@@ -81,18 +92,20 @@ the spread of the runs.
 
 ## The worlds
 
-| 3 seeds per shape, epoch 40 | before | after |
-|---|---|---|
-| islands 1 000–10 000 km², torus / sphere | 20–28 / 4–18 | 22–38 / 24–46 |
-| islands 10 000–100 000 km², torus / sphere | 3–7 / 2–5 | 5–12 / 10–19 |
-| islands 100 000–1 000 000 km², torus / sphere | 0–3 / 1–6 | 2–5 / 2–4 |
-| land on masses < 1 000 000 km², torus / sphere | 0.9–2.7 / 1.1–4.0 % | 2.2–4.7 / 3.7–5.3 % |
-| land share, torus / sphere | 30.6–40.7 / 25.3–29.4 % | 32.0–43.9 / 26.5–31.1 % |
-| land at −120 m, torus / sphere | +7.3–10.5 / +7.7–14.3 % | +6.2–9.9 / +7.6–13.8 % |
+| 3 seeds per shape, epoch 40 | before | strips (first build) | cones (built) |
+|---|---|---|---|
+| islands 1 000–10 000 km², torus / sphere | 20–28 / 4–18 | 22–38 / 24–46 | 28–39 / 18–50 |
+| islands 10 000–100 000 km², torus / sphere | 3–7 / 2–5 | 5–12 / 10–19 | 3–5 / 0–5 |
+| islands 100 000–1 000 000 km², torus / sphere | 0–3 / 1–6 | 2–5 / 2–4 | 4–5 / 1–5 |
+| land on masses < 1 000 000 km², torus / sphere | 0.9–2.7 / 1.1–4.0 % | 2.2–4.7 / 3.7–5.3 % | 2.1–2.9 / 1.5–3.6 % |
+| land share, torus / sphere | 30.6–40.7 / 25.3–29.4 % | 32.0–43.9 / 26.5–31.1 % | 31.5–42.3 / 25.8–29.8 % |
 
-The land share grows by 1–3 points over the Land share control: arcs
-beside a continent join it. The smallest class stays below Earth's: an
-island under some 1 000 km² is a node or two at 8–31 km.
+A cone stands at most 7 800 km² above the sea: the arcs and hotspots add
+islands of 1 000–10 000 km², as chains. The classes above that stay
+Earth's minus its large volcanic islands (Iceland, Java, Honshu): those
+are arcs grown together over far more than 40 Ma, or a plume on a ridge.
+The smallest class stays below Earth's: an island under some 1 000 km² is
+a node or two at 8–31 km.
 
 ## Consequences
 

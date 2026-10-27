@@ -7,18 +7,25 @@
 //! epoch 40): 1107 subsiding features on the torus, the median's highest
 //! node −4300 to −4600 m.
 //!
-//! The build: under an active volcano the surface rises by
-//! `volcano_build_m_per_myr` at the axis, in the capsule falloff of
-//! `volcano_radius_m` across it (a hotspot's a disc), until it stands at
-//! `volcano_top_m`; above that the erosion and the arc's shortening have
-//! it. Active: an island arc (a volcanic feature that subsides, both plates
+//! The build: a cone at each active volcano, `volcano_radius_m` round, rises
+//! by `volcano_build_m_per_myr` at its summit toward a cone of
+//! `volcano_top_m` (the capsule falloff, so the slopes fall to the sea at
+//! its foot); above that the erosion and the arc's shortening have it. A
+//! hotspot is one cone; an island arc's feature holds three, at
+//! `volcano_spacing_m` along it, as an arc is a chain of volcanoes: built
+//! along the whole segment, an arc rose as a strip 160 km wide and 1500 m
+//! flat (islands of 10 000–1 000 000 km² three to four times as long as
+//! wide, 2026-10-27). A cone no node is within builds at its nearest node,
+//! within `volcano_reach_m`: the deep sea's mesh is 160 km, and the built
+//! relief refines it (mesh_density.rs). Active: an island arc (a volcanic feature that subsides, both plates
 //! oceanic) that took a deposit this epoch, a hotspot's feature while the
 //! plume feeds it. The plate carries the build away; the ocean floor's age
 //! takes it down again, and the waves plane it.
 
+use crate::core::det_math::det_hypot;
 use crate::core::domain::Domain;
 use crate::elevation::capsule::capsule_weight;
-use crate::elevation::elevation_field::{build_feature_buckets, range_half_length};
+use crate::elevation::elevation_field::build_feature_buckets;
 use crate::elevation::elevation_scale::ELEVATION_METERS;
 use crate::mesh::periodic_delaunay::PeriodicTriangulation;
 
@@ -35,6 +42,34 @@ fn active(f: &TerrainFeature) -> bool {
     }
 }
 
+// The active volcanoes' cones, each a feature of no length (so the feature
+// buckets find them).
+fn cones(features: &[TerrainFeature], domain: &Domain) -> Vec<TerrainFeature> {
+    let spacing = TECTONICS_TUNING.volcano_spacing_m / domain.metres_per_unit;
+    let mut out = Vec::new();
+    for f in features.iter().filter(|f| active(f)) {
+        let along: &[f64] = if f.plate_b == -1 {
+            &[0.0]
+        } else {
+            &[-1.0, 0.0, 1.0]
+        };
+        for &k in along {
+            let p = domain.advance(
+                f.x,
+                f.y,
+                k * spacing * f.tangent_x,
+                k * spacing * f.tangent_y,
+            );
+            out.push(TerrainFeature {
+                x: p.x,
+                y: p.y,
+                ..f.clone()
+            });
+        }
+    }
+    out
+}
+
 /// The build at each slot, metres, over `epoch_ma`; `z` in elevation units
 /// against the sea.
 pub fn build_volcanoes(
@@ -46,42 +81,55 @@ pub fn build_volcanoes(
 ) -> Vec<f32> {
     let t = &TECTONICS_TUNING;
     let mut build_m = vec![0f32; z.len()];
-    let buckets = build_feature_buckets(features, domain);
+    let cones = cones(features, domain);
+    if cones.is_empty() {
+        return build_m;
+    }
+    let buckets = build_feature_buckets(&cones, domain);
     let radius = t.volcano_radius_m / domain.metres_per_unit;
-    let arc_half = range_half_length(domain);
+    let reach = t.volcano_reach_m / domain.metres_per_unit;
     let most = t.volcano_build_m_per_myr * epoch_ma;
+    let build = |v: usize, weight: f64| -> f32 {
+        let room = t.volcano_top_m * weight - z[v] as f64 * ELEVATION_METERS;
+        if room <= 0.0 {
+            return 0.0;
+        }
+        (most * weight).min(room) as f32
+    };
+    // Each cone's nearest node and whether one is within its radius.
+    let mut nearest = vec![(f64::INFINITY, usize::MAX); cones.len()];
+    let mut covered = vec![false; cones.len()];
     let mut near = Vec::new();
     for v in 0..z.len() {
         if mesh.v_alive[v] == 0 {
-            continue;
-        }
-        let room = t.volcano_top_m - z[v] as f64 * ELEVATION_METERS;
-        if room <= 0.0 {
             continue;
         }
         let (x, y) = (mesh.vx[v], mesh.vy[v]);
         buckets.near(x, y, &mut near);
         let mut weight = 0f64;
         for &b in &near {
-            for &fi in &buckets.buckets[b as usize] {
-                let f = &features[fi as usize];
-                if !active(f) {
-                    continue;
+            for &ci in &buckets.buckets[b as usize] {
+                let c = &cones[ci as usize];
+                let o = domain.delta(x, y, c.x, c.y);
+                let d = det_hypot(o.x, o.y);
+                let ci = ci as usize;
+                if d < nearest[ci].0 {
+                    nearest[ci] = (d, v);
                 }
-                let half = if f.plate_b == -1 { 0.0 } else { arc_half };
-                let o = domain.delta(x, y, f.x, f.y);
-                weight = weight.max(capsule_weight(
-                    o.x,
-                    o.y,
-                    f.tangent_x,
-                    f.tangent_y,
-                    half,
-                    radius,
-                ));
+                let w = capsule_weight(o.x, o.y, c.tangent_x, c.tangent_y, 0.0, radius);
+                if w > 0.0 {
+                    covered[ci] = true;
+                    weight = weight.max(w);
+                }
             }
         }
         if weight > 0.0 {
-            build_m[v] = (most * weight).min(room) as f32;
+            build_m[v] = build(v, weight);
+        }
+    }
+    for (ci, &(d, v)) in nearest.iter().enumerate() {
+        if !covered[ci] && d <= reach {
+            build_m[v] = build_m[v].max(build(v, 1.0 - d / reach));
         }
     }
     build_m
