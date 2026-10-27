@@ -165,8 +165,11 @@ an older level 1 keeps its histories under that one.
 ## Not decided
 
 - What the kept states hold, and how often: the state between two is mixed
-  now, not run again; running it again needs the whole state kept and the
-  run deterministic across builds.
+  now, not run again. The run is deterministic across builds (step 4: the
+  native and the WASM build give the same bits). Running it again needs a
+  kept state to hold the whole state of the run (the random numbers, the
+  peoples, every counter), not only what the playback shows: each state
+  larger, but fewer of them.
 - The game's end state as an artifact of its own, apart from the playback.
 - The habitat's cells, the flora and the fauna as artifacts too, so a world
   with its H1 opens without computing them (2026-10-26, left as it is):
