@@ -20,80 +20,38 @@
 # OpenShift-ready: runs as a non-root, ARBITRARY UID (member of GID 0), listens
 # on 8080, and keeps all writable state on mounted volumes.
 
-# ---- Stage 0: the engine ----------------------------------------------------
-# The Rust engine (docs/decisions/rust-engine.md) in its two builds: the
-# native one for the job worker, the WASM one for the generator in the
-# browser, which the client's bundle carries. From the pipeline's release
-# (docs/decisions/engine-releases.md, fork 3), so the image holds the builds
-# the release made: ENGINE_RELEASE names it (`engine-<pipeline>`; `make
-# image` reads the pipeline from the tree), ENGINE_SOURCE where the releases
-# are. Every file is checked against the release's SHA256SUMS, which the
-# image keeps in /app/engine: with it the jobs module puts the files into
-# the artifact store at its start, for workers elsewhere.
-#
-# ENGINE=source builds the engine here instead (fork 8), for an image of a
-# pipeline that has no release yet: glibc, as the release's linux build,
-# and without SHA256SUMS, so nothing of it goes into the artifact store.
-# wasm-bindgen's CLI is the crate's version (the Makefile's WASM_BINDGEN);
+# ---- Stage 0: the engine and the incubator ---------------------------------
+# The Rust workspace's two crates, from the tree, each in its two builds
+# (docs/decisions/engine-releases.md, fork 3): the engine
+# (docs/decisions/rust-engine.md) native for the job worker and WASM for the
+# generator in the browser; the incubator
+# (docs/decisions/incubator-history-engine.md) native for its history jobs
+# (incubator.mjs) and WASM for the incubator in the browser. The client's
+# bundle carries the WASM builds. glibc, as the releases' linux builds. A
+# worker of another pipeline or incubator version gets its files from that
+# release, through the server, which keeps them in the artifact store.
+# wasm-bindgen's CLI is the crates' version (the Makefile's WASM_BINDGEN);
 # RUSTUP_TOOLCHAIN stands for engine/rust-toolchain.toml.
 #
-# Every stage's /out: dist/ as engine/dist holds it (casas-engine.node,
-# wasm/, constants.json), and release/ the release's files as they are named
-# there (empty from the source).
-ARG ENGINE=release
-
-FROM debian:bookworm-slim AS engine-release
-ARG ENGINE_RELEASE
-ARG ENGINE_SOURCE=https://github.com/DebakelOrakel/casas-eternas/releases/download
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
- && rm -rf /var/lib/apt/lists/*
-WORKDIR /out/release
-RUN test -n "$ENGINE_RELEASE" || { echo "ENGINE_RELEASE is not set: \`make image\` sets it, or ENGINE=source builds the engine" >&2; exit 1; } \
- && files="casas-engine-linux-amd64.node casas-engine-wasm.tar.gz constants.json pipeline.json pipeline.mjs" \
- && curl -fsSL -o SHA256SUMS.all "$ENGINE_SOURCE/$ENGINE_RELEASE/SHA256SUMS" \
- && for file in $files; do curl -fsSL -o "$file" "$ENGINE_SOURCE/$ENGINE_RELEASE/$file" || { echo "$ENGINE_RELEASE has no $file" >&2; exit 1; }; \
-      grep -E "  $file\$" SHA256SUMS.all >> SHA256SUMS || { echo "$file is not in the SHA256SUMS of $ENGINE_RELEASE" >&2; exit 1; }; done \
- && rm SHA256SUMS.all && sha256sum -c SHA256SUMS \
- && mkdir -p /out/dist && tar -xzf casas-engine-wasm.tar.gz -C /out/dist \
- && cp constants.json /out/dist/ && cp casas-engine-linux-amd64.node /out/dist/casas-engine.node
-
-FROM rust:1.98.1-bookworm AS engine-source
+# /out/dist is what engine/dist holds (casas-engine.node, wasm/,
+# constants.json, casas-incubator.node, incubator/).
+FROM rust:1.98.1-bookworm AS engine
 ENV RUSTUP_TOOLCHAIN=1.98.1
 RUN rustup target add wasm32-unknown-unknown \
  && cargo install wasm-bindgen-cli --version 0.2.129 --locked
 WORKDIR /src/engine
 COPY engine/Cargo.toml engine/Cargo.lock engine/clippy.toml ./
 COPY engine/crates/ ./crates/
-RUN cargo build --release --locked -p casas-engine-node \
- && cargo build --release --locked -p casas-engine-wasm --target wasm32-unknown-unknown \
- && mkdir -p /out/dist /out/release \
+RUN cargo build --release --locked -p casas-engine-node -p casas-incubator-node \
+ && cargo build --release --locked -p casas-engine-wasm -p casas-incubator-wasm --target wasm32-unknown-unknown \
+ && mkdir -p /out/dist/incubator \
  && cp target/release/libcasas_engine_node.so /out/dist/casas-engine.node \
+ && cp target/release/libcasas_incubator_node.so /out/dist/casas-incubator.node \
  && wasm-bindgen --target web --out-dir /out/dist/wasm --out-name casas-engine \
       target/wasm32-unknown-unknown/release/casas_engine_wasm.wasm \
- && cargo run --release --locked -q -p casas-engine-api --bin constants > /out/dist/constants.json
-
-FROM engine-${ENGINE} AS engine
-
-# ---- Stage 0b: the incubator -------------------------------------------------
-# The incubator (docs/decisions/incubator-history-engine.md) in its two
-# builds, from the tree always: the WASM one for the incubator in the
-# browser, the native one for its history jobs (incubator.mjs). Its own
-# crate and version, not the pipeline's: the incubator changes, the
-# engine's release does not. Its release (`incubator-<version>`) is for
-# workers of another incubator version; the image runs the tree's.
-FROM rust:1.98.1-bookworm AS incubator
-ENV RUSTUP_TOOLCHAIN=1.98.1
-RUN rustup target add wasm32-unknown-unknown \
- && cargo install wasm-bindgen-cli --version 0.2.129 --locked
-WORKDIR /src/engine
-COPY engine/Cargo.toml engine/Cargo.lock engine/clippy.toml ./
-COPY engine/crates/ ./crates/
-RUN cargo build --release --locked -p casas-incubator-node \
- && cargo build --release --locked -p casas-incubator-wasm --target wasm32-unknown-unknown \
- && mkdir -p /out/dist/incubator \
- && cp target/release/libcasas_incubator_node.so /out/dist/casas-incubator.node \
  && wasm-bindgen --target web --out-dir /out/dist/incubator --out-name casas-incubator \
       target/wasm32-unknown-unknown/release/casas_incubator_wasm.wasm \
+ && cargo run --release --locked -q -p casas-engine-api --bin constants > /out/dist/constants.json \
  && cargo run --release --locked -q -p casas-incubator --bin incubator-version > /out/dist/incubator/version.json \
  && cargo run --release --locked -q -p casas-incubator --bin incubator-constants > /out/dist/incubator/constants.json
 
@@ -120,19 +78,12 @@ COPY client/ ./
 # is the job worker for the server to spawn, with its pipeline module
 # (pipeline.mjs) and the native engine beside it (build:worker copies
 # engine/dist's), and the incubator's module (incubator.mjs) with the
-# incubator's native build. The host and the app come out of this tree. The pipeline
-# module is the release's, where there is one: the tree's must be the same
-# pipeline, or the build stops — a tree whose pipeline is not its release's
-# is a release that is missing (or ENGINE=source).
+# incubator's native build.
 COPY --from=engine /out/dist/ /app/engine/dist/
-COPY --from=incubator /out/dist/ /app/engine/dist/
-COPY --from=engine /out/release/ /app/engine-release/
-RUN npm run build && npm run build:worker && npm run build:docs \
- && if [ -f /app/engine-release/pipeline.mjs ]; then \
-      node -e 'const [tree, release] = process.argv.slice(1).map((v) => JSON.parse(v)); if (JSON.stringify(tree) !== JSON.stringify(release)) { console.error(`the tree is pipeline ${JSON.stringify(tree)}, the release ${JSON.stringify(release)}`); process.exit(1) }' \
-        "$(node /app/job-worker.mjs --version)" "$(cat /app/engine-release/pipeline.json)" \
-      && cp /app/engine-release/pipeline.mjs /app/pipeline.mjs; \
-    fi
+# The incubator's catalogs, which the client reads as the crate does
+# (vite.config.ts, casas-incubator-data).
+COPY engine/crates/casas-incubator/data/ /app/engine/crates/casas-incubator/data/
+RUN npm run build && npm run build:worker && npm run build:docs
 
 # ---- Stage 2: the server ----------------------------------------------------
 FROM golang:1.26-alpine AS server
@@ -170,9 +121,6 @@ WORKDIR /app
 COPY --from=server /out/casas-eternas /app/casas-eternas
 COPY --from=web    /app/job-worker.mjs /app/job-worker.mjs
 COPY --from=web    /app/pipeline.mjs /app/pipeline.mjs
-# The release's files with their SHA256SUMS (empty for ENGINE=source): what
-# the jobs module puts into the artifact store at its start.
-COPY --from=engine /out/release/ /app/engine/
 COPY --from=web    /app/casas-engine.node /app/casas-engine.node
 COPY --from=web    /app/incubator.mjs /app/incubator.mjs
 COPY --from=web    /app/casas-incubator.node /app/casas-incubator.node

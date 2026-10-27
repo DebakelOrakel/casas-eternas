@@ -249,11 +249,6 @@ func New(cfg Config) (*Module, error) {
 		cfg.PipelineFiles = httpPipelineFiles{base: cfg.ArtifactsURL, tokens: cfg.Tokens}
 		m.cfg.PipelineFiles = cfg.PipelineFiles
 	}
-	// The release this installation ships, into the artifact store
-	// (engines.go), beside whatever starts now.
-	if cfg.PipelineFiles != nil && cfg.WorkerPath != "" {
-		go seedPipelineFiles(m.shutdown, filepath.Join(filepath.Dir(cfg.WorkerPath), shippedRelease), cfg.PipelineFiles)
-	}
 	if workerPath != "" && cfg.RelayURL != "" {
 		if cfg.Launcher == "" {
 			m.coord.close()

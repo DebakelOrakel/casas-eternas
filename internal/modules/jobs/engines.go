@@ -10,11 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -223,78 +220,6 @@ func parseSums(raw []byte) map[string]string {
 		}
 	}
 	return sums
-}
-
-// THE SHIPPED RELEASE (docs/decisions/engine-releases.md, step 4): an image
-// built on a pipeline's release carries the release's files with their
-// SHA256SUMS in engine/ beside the worker bundle (deploy/Dockerfile). At its
-// start the module puts each one the artifact store lacks into it, after
-// checking it against the SHA256SUMS: then the store has the server's own
-// pipeline without the release's host. Without a SHA256SUMS (a build from
-// the tree, ENGINE=source) nothing goes in: such a file under the pipeline's
-// name need not be the release's bytes.
-const shippedRelease = "engine"
-
-// seedPipelineFiles is that, for the release in `dir`. It says what it did
-// and what failed, and fails nothing.
-func seedPipelineFiles(ctx context.Context, dir string, files PipelineFiles) {
-	rawSums, err := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return
-	}
-	if err != nil {
-		slog.Warn("jobs: the shipped release", "dir", dir, "err", err)
-		return
-	}
-	sums := parseSums(rawSums)
-	read := func(name string) ([]byte, error) {
-		body, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			return nil, err
-		}
-		got := sha256.Sum256(body)
-		if want, ok := sums[name]; !ok || hex.EncodeToString(got[:]) != want {
-			return nil, fmt.Errorf("%s does not match the SHA256SUMS beside it", name)
-		}
-		return body, nil
-	}
-	raw, err := read("pipeline.json")
-	if err != nil {
-		slog.Warn("jobs: the shipped release", "dir", dir, "err", err)
-		return
-	}
-	var versions struct {
-		PipelineVersion string `json:"pipelineVersion"`
-	}
-	if err := json.Unmarshal(raw, &versions); err != nil || !pipelinePattern.MatchString(versions.PipelineVersion) {
-		slog.Warn("jobs: the shipped release names no pipeline", "dir", dir)
-		return
-	}
-	pipeline := versions.PipelineVersion
-	stored := 0
-	for name := range sums {
-		if !releaseFile.MatchString(name) {
-			continue
-		}
-		if _, err := files.Link(ctx, pipeline, name); !errors.Is(err, ErrNoPipelineFile) {
-			if err != nil {
-				slog.Warn("jobs: the shipped release", "file", name, "err", err)
-			}
-			continue
-		}
-		body, err := read(name)
-		if err == nil {
-			err = files.Put(ctx, pipeline, name, body)
-		}
-		if err != nil {
-			slog.Warn("jobs: the shipped release", "file", name, "err", err)
-			continue
-		}
-		stored++
-	}
-	if stored > 0 {
-		slog.Info("jobs: the shipped release stored", "pipeline", pipeline, "files", stored)
-	}
 }
 
 // httpPipelineFiles is PipelineFiles over the artifacts module's API

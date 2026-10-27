@@ -15,7 +15,7 @@ summary.de: Jede Pipeline ist ein eigenes GitHub-Release, getaggt mit der
 area: platform
 stage: built
 createdAt: 2026-10-22
-updatedAt: 2026-10-22
+updatedAt: 2026-10-27
 related: [DEC-0044, DEC-0039, DEC-0043, DEC-0038]
 ---
 
@@ -77,27 +77,27 @@ would replace a change to the source without a sign.
 
 ## Fork 3 — the image's engine
 
-**Decided 2026-10-22: the image takes the release's linux/amd64 build.**
+**Decided 2026-10-22: the image takes the release's linux/amd64 build.
+Changed 2026-10-27: the image builds the engine from the tree.**
 
 Stage 0 (the musl build) goes. The image base changes from
-`node:22-alpine` to a glibc base (`node:26-bookworm-slim`). The image then
-holds the build the action checked, and Node 22 goes with it: on
-linux/amd64 its WASI run of the bake test stops with SIGSEGV (measured
-2026-10-22).
+`node:22-alpine` to a glibc base (`node:26-bookworm-slim`). Node 22 goes
+with it: on linux/amd64 its WASI run of the bake test stops with SIGSEGV
+(measured 2026-10-22).
 
-How (built 2026-10-22): the Dockerfile's stage 0 downloads the release
-`ENGINE_RELEASE` (`make image` sets `engine-<pipeline>` from the tree's
-worker bundle) from `ENGINE_SOURCE`, checks every file with
-`sha256sum -c`, and gives the client build the WASM and the constants. The
-image takes the release's `pipeline.mjs` when the tree's module is the
-same pipeline, and stops otherwise; the host and the app come from the
-tree. It keeps the release's files and their `SHA256SUMS` in `/app/engine`.
-At its start the jobs module puts each one the artifact store lacks into
-it, checked against those `SHA256SUMS` (engines.go, seedPipelineFiles), so
-the store has the server's own pipeline without the release's host. A
-file beside no `SHA256SUMS` is never stored: a build from the tree has the
-pipeline's name, not necessarily the release's bytes. The bases are
-`node:26-bookworm-slim` (glibc).
+First built (2026-10-22): stage 0 downloaded the release of the tree's
+pipeline, checked every file with `sha256sum -c`, and kept the files with
+their `SHA256SUMS` in `/app/engine`. At its start the jobs module put them
+into the artifact store. An image then needed the release of its
+pipeline first: tag, action, then the image. On 2026-10-27 `make image`
+stopped because no one had tagged the release of v13.
+
+Now (2026-10-27): stage 0 builds the engine from the tree, as the
+incubator (DEC-0048), in Rust's Debian image (glibc, as the release's
+linux build). The image needs no release. The store gets the files of a
+pipeline when a worker asks for them (fork 5): the server downloads them
+from the release then and keeps them. Its own pipeline the image ships
+beside the bundle, so its workers ask for none.
 
 ## Fork 4 — what a release holds
 
@@ -234,18 +234,10 @@ pipeline still takes an old task and fails it.
 
 ## Fork 8 — an image without a release
 
-With fork 3 an image needs the release of its pipeline first: tag, action,
-then the image. `make image` from a working tree with a new pipeline has
-no release. Options: the Dockerfile builds from the source when a build
-argument says so (two ways to the same file), or `make image` refuses
-until the release is there (slow for a test image).
-
-**Decided and built 2026-10-22: the build argument.** `make image
-ENGINE=source` builds the engine in the image (Rust's Debian image, as the
-release's linux build), takes the tree's `pipeline.mjs`, and keeps no
-`SHA256SUMS`: such an image puts nothing into the artifact store. Without
-it, a tree with no release stops at the download, naming the missing
-file.
+With fork 3 as first built, an image needed the release of its pipeline
+first. Decided and built 2026-10-22: a build argument, `make image
+ENGINE=source`, built the engine in the image instead. Gone 2026-10-27
+with fork 3's change: every image builds from the tree.
 
 ## Fork 9 — how long a pipeline stays
 
@@ -281,5 +273,5 @@ BUILT 2026-10-22. All forks are decided; fork 9 needs no code. Built:
 - fork 5: the route for a release's files, in one process and split;
 - fork 6: the launcher;
 - the host and the pipeline module, with their contract;
-- fork 3: the image on the release, with the store filled at the start;
-  fork 8: ENGINE=source.
+- fork 3: the image builds the engine from the tree (2026-10-27; first on
+  the release, with the store filled at the start); fork 8 went with it.
