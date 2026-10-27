@@ -2,9 +2,10 @@
 //! the TypeScript engine's `pipeline/coupledEpoch.ts`: from the synthetic
 //! simulation after 12 tectonic epochs, the terrain from the synthesis and
 //! 4 coupled epochs at the history's settings, on both shapes, bit for bit
-//! (docs/decisions/rust-engine.md, fork 5). The fixture is written by
-//! `engine/scripts/coupledFixture.mjs`. A failure names the first epoch
-//! that differs.
+//! (docs/decisions/rust-engine.md, fork 5). The fixture was written by
+//! `engine/scripts/coupledFixture.mjs`, and is recorded from this engine
+//! since DEC-0049 (`fixture`). A failure names the first epoch that
+//! differs.
 
 use casas_engine::core::domain::Domain;
 use casas_engine::pipeline::coupled_epoch::{
@@ -15,12 +16,15 @@ use casas_engine::surface::erosion_forcing_fields::ErosionControls;
 use casas_engine::tectonics::plate_simulation::step_epoch;
 use casas_engine::tectonics::plate_simulation_types::PlateSimulation;
 
+mod fixture;
 mod sim_hash;
 mod synthetic_sim;
 
+use fixture::check;
 use sim_hash::state_hash;
 use synthetic_sim::synthetic_sim;
 
+const FILE: &str = "coupled.txt";
 const FIXTURE: &str = include_str!("fixtures/coupled.txt");
 const EPOCHS: usize = 12;
 const COUPLED: usize = 4;
@@ -137,10 +141,11 @@ fn run(name: &str, d: Domain, seed: u32) {
     let mut terrain = create_coupled_terrain(&mut sim, 4.0);
     let mut h = Hash::new();
     h.terrain(&terrain);
-    assert_eq!(
-        format!("{name} 0 {:08x} {}", h.0, state_hash(&sim, &[])),
+    check(
+        FILE,
+        &format!("{name} 0 {:08x} {}", h.0, state_hash(&sim, &[])),
         expected[0],
-        "{name}: the terrain from the synthesis differs"
+        &format!("{name}: the terrain from the synthesis differs"),
     );
     let options = CoupledEpochOptions {
         weather: None,
@@ -158,10 +163,11 @@ fn run(name: &str, d: Domain, seed: u32) {
         h.terrain(&terrain);
         h.sim(&sim);
         h.stats(&stats);
-        assert_eq!(
+        check(
+            FILE,
             &format!("{name} {e} {:08x} {}", h.0, state_hash(&sim, &stats.events)),
             want,
-            "{name}: coupled epoch {e} is the first that differs"
+            &format!("{name}: coupled epoch {e} is the first that differs"),
         );
     }
 }

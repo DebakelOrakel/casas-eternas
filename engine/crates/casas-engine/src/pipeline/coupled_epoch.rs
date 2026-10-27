@@ -64,6 +64,7 @@ use crate::surface::erosion_forcing_fields::{
 };
 use crate::surface::glacial::{MeshIceInputs, compute_ice_on_mesh, glacial_erosion_on_mesh};
 use crate::surface::hydrology::{WaterKind, accumulate_discharge_on, compute_lakes_on};
+use crate::surface::shelf_fill::fill_shelf;
 use crate::surface::surface_tune_params::SURFACE_TUNING;
 use crate::tectonics::flexure::{
     elastic_thickness_km, flexural_response, flexural_rigidity_m4, node_load_spreader,
@@ -139,6 +140,9 @@ pub struct HistoryDefaults {
     pub remesh_every: f64,
     pub render_every: f64,
     pub routing_every: u32,
+    /// The epochs whose mean sea level the margin profile stands on
+    /// (`profile_sea`).
+    pub sea_mean_epochs: u32,
 }
 
 pub const HISTORY_DEFAULTS: HistoryDefaults = HistoryDefaults {
@@ -149,6 +153,7 @@ pub const HISTORY_DEFAULTS: HistoryDefaults = HistoryDefaults {
     remesh_every: 3.0,
     render_every: 3.0,
     routing_every: 1,
+    sea_mean_epochs: 5,
 };
 
 const CLIMATE_HISTORY_CAP: usize = 512;
@@ -348,6 +353,36 @@ fn mesh_areas_of(mesh: &mut PeriodicTriangulation) -> Vec<f32> {
         .collect()
 }
 
+/// THE SEA THE MARGIN PROFILE STANDS ON, m: the sea level `sea_m` against
+/// its mean over the last `sea_mean_epochs` epochs, `sea_m` the newest of
+/// them and `history` the ones before. The profile's shoreline and shelf
+/// (elevation_scale.MARGIN_STOPS) are the waves' and the sediment's work
+/// at the sea there is, which they keep up with in far less than an epoch
+/// (a Ma): a world whose ice holds the sea 100 m down has its shelf 100 m
+/// down. Against the ice-free datum the profile stood above such a sea and
+/// the shelf was dry land, its break the new coast (measured 2026-10-27:
+/// the torus's sea stands at −75 to −170 m, the sphere's at −10 to −70 m).
+/// What moves the coast is the sea leaving its mean, as an ice age.
+fn profile_sea_m(history: &[ClimateEpochRecord], sea_m: f64) -> f64 {
+    let before = (HISTORY_DEFAULTS.sea_mean_epochs as usize)
+        .saturating_sub(1)
+        .min(history.len());
+    let sum: f64 = history[history.len() - before..]
+        .iter()
+        .map(|r| r.sea_level_m)
+        .sum();
+    sea_m - (sum + sea_m) / (before + 1) as f64
+}
+
+/// `profile_sea_m` at the epoch's start: its sea level is the newest
+/// record's (or none yet, at the hand-over).
+fn profile_sea_now(sim: &PlateSimulation) -> f64 {
+    match sim.climate_history.split_last() {
+        Some((last, before)) => profile_sea_m(before, last.sea_level_m),
+        None => 0.0,
+    }
+}
+
 /// The baselines of every node of `mesh` with the sea level.
 fn baselines(sim: &mut PlateSimulation, mesh: &PeriodicTriangulation) -> Vec<f32> {
     let domain = sim.domain.clone();
@@ -361,7 +396,7 @@ fn baselines(sim: &mut PlateSimulation, mesh: &PeriodicTriangulation) -> Vec<f32
         domain: &domain,
         warp_seed: sim.warp_seed,
     };
-    let sea = sim.eustatic_m / ELEVATION_METERS;
+    let sea = profile_sea_now(sim) / ELEVATION_METERS;
     let slots = mesh.vertex_slots();
     solid_baselines(
         &parts,
@@ -602,7 +637,7 @@ pub fn step_coupled_epoch(
         domain: &domain,
         warp_seed: sim.warp_seed,
     };
-    let sea = sim.eustatic_m / ELEVATION_METERS;
+    let sea = profile_sea_now(sim) / ELEVATION_METERS;
     let mut solid1 = vec![0.0; mesh1.vertex_slots()];
     let alive: Vec<usize> = (0..mesh1.vertex_slots())
         .filter(|&v| mesh1.v_alive[v] != 0)
@@ -1125,6 +1160,37 @@ pub fn step_coupled_epoch(
         }
     }
 
+    // The shelf's fill (surface/shelf_fill.rs): the epoch's export, off
+    // the active band and off the coast, laid on the sunken shelf.
+    let shelf = fill_shelf(
+        &mesh,
+        &result.z,
+        &baseline,
+        &areas,
+        cell_m2,
+        result.exported_flux_m3 + coastal.exported_m3,
+    );
+    // The ledger holds the erosion's export alone; the coast's leaves the
+    // world uncounted, so the fill takes from it first.
+    sim.sediment_export_m3 -= js::max(0.0, shelf.filled_m3 - coastal.exported_m3);
+    for v in 0..slots {
+        let fill_m = shelf.fill_m[v] as f64;
+        if fill_m <= 0.0 {
+            continue;
+        }
+        deposit(
+            &mut column,
+            v,
+            fill_m,
+            craton_age[v] as f64,
+            rock_hard[v] as f64,
+            at_nodes.temperature[v] as f64,
+            js::max(0.0, at_nodes.precipitation[v] as f64),
+            false,
+        );
+        result.z[v] = (result.z[v] as f64 + fill_m / ELEVATION_METERS) as f32;
+    }
+
     // The flexure.
     let flex_cells = sim.meshes.shared.mesh.count;
     let mut load_m = vec![0.0; flex_cells];
@@ -1144,6 +1210,7 @@ pub fn step_coupled_epoch(
             + uplift_m3
             + (glacial.till_m[v] as f64 - glacial.cut_m[v] as f64 + coastal.deposit_m[v] as f64
                 - coastal.cut_m[v] as f64
+                + shelf.fill_m[v] as f64
                 + ice_m)
                 * a
                 * cell_m2;
@@ -1190,8 +1257,10 @@ pub fn step_coupled_epoch(
         result.z[v] = (result.z[v] as f64 + w_m / ELEVATION_METERS) as f32;
     }
 
-    // The sea level's change.
-    let sea_shift = -(sea_level_m - sim.eustatic_m) / ELEVATION_METERS;
+    // The sea level's change, against the profile's sea (`profile_sea_m`).
+    let profile_before = profile_sea_now(sim);
+    let profile_after = profile_sea_m(&sim.climate_history, sea_level_m);
+    let sea_shift = -(profile_after - profile_before) / ELEVATION_METERS;
     sim.eustatic_m = sea_level_m;
     if sea_shift != 0.0 {
         for v in 0..slots {
@@ -1199,7 +1268,7 @@ pub fn step_coupled_epoch(
                 continue;
             }
             result.z[v] = (result.z[v] as f64 + sea_shift) as f32;
-            baseline[v] = (solid[v] - sim.eustatic_m / ELEVATION_METERS) as f32;
+            baseline[v] = (solid[v] - profile_after / ELEVATION_METERS) as f32;
         }
     }
 

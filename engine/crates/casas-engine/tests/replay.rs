@@ -1,9 +1,10 @@
 //! The module test of the replay (pipeline/replay_runs) against the
 //! TypeScript engine's `pipeline/replayRuns.ts`: a plan of two Archean
-//! runs, the hand-over, a tectonics run and a restored one, on both
-//! shapes, its checkpoints, and the world resumed from a checkpoint
-//! (docs/decisions/rust-engine.md, fork 5). The fixture is written by
-//! `engine/scripts/replayFixture.mjs`.
+//! runs, the hand-over, a tectonics run and a restored one, on both shapes,
+//! its checkpoints, and the world resumed from a checkpoint
+//! (docs/decisions/rust-engine.md, fork 5). The fixture was written by
+//! `engine/scripts/replayFixture.mjs`, and is recorded from this engine
+//! since DEC-0049 (`fixture`).
 
 use casas_engine::climate::weather::{WeatherParams, default_weather_params};
 use casas_engine::pipeline::coupled_epoch::CoupledTerrain;
@@ -13,10 +14,13 @@ use casas_engine::pipeline::replay_runs::{
 };
 use casas_engine::surface::erosion_forcing_fields::ErosionControls;
 
+mod fixture;
 mod sim_hash;
 
+use fixture::check;
 use sim_hash::state_hash;
 
+const FILE: &str = "replay.txt";
 const FIXTURE: &str = include_str!("fixtures/replay.txt");
 
 struct Hash(u32);
@@ -164,7 +168,10 @@ fn run(name: &str, sphere: bool) {
         .lines()
         .filter(|l| l.starts_with(&format!("{name} ")))
         .collect();
-    assert_eq!(lines, expected);
+    assert_eq!(lines.len(), expected.len(), "{name}: the fixture's lines");
+    for (got, want) in lines.iter().zip(&expected) {
+        check(FILE, got, want, name);
+    }
 }
 
 #[test]

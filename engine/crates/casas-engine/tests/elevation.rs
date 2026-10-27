@@ -1,9 +1,10 @@
 //! The module test of the elevation (scale, capsule, the noises, the warp,
 //! the hypsometry, the elevation field) and of the trench and the folds
 //! against the TypeScript engine: the same calls give the same bits
-//! (docs/decisions/rust-engine.md, fork 5). The fixture is written by
-//! `engine/scripts/elevationFixture.mjs`; the calls below are that
-//! script's, one for one.
+//! (docs/decisions/rust-engine.md, fork 5). The fixture was written by
+//! `engine/scripts/elevationFixture.mjs`, and is recorded from this engine
+//! since DEC-0049 (`fixture`); the calls below are that script's, one for
+//! one.
 
 #![allow(clippy::needless_range_loop)]
 
@@ -27,6 +28,11 @@ use casas_engine::tectonics::plate_seeds::PlateSeed;
 use casas_engine::tectonics::terrain_features::{FeatureKind, MovesWith, TerrainFeature};
 use casas_engine::tectonics::trench::trench_depression;
 
+mod fixture;
+
+use fixture::check;
+
+const FILE: &str = "elevation.txt";
 const FIXTURE: &str = include_str!("fixtures/elevation.txt");
 
 struct Gen(u32);
@@ -59,6 +65,11 @@ impl Hash {
     fn line(&self, name: &str) -> String {
         format!("{name} {:08x}", self.0)
     }
+}
+
+// The hash's line against the fixture's.
+fn same(h: &Hash, name: &str) {
+    check(FILE, &h.line(name), &expected(name), name);
 }
 
 fn expected(name: &str) -> String {
@@ -133,7 +144,7 @@ fn the_scale_capsule_and_tuning_give_the_typescript_values() {
         let (hl, pr) = (g.uniform(5.0, 40.0), g.uniform(5.0, 40.0));
         h.add(capsule_weight(ox, oy, tx, ty, hl, pr));
     }
-    assert_eq!(h.line("scale"), expected("scale"));
+    same(&h, "scale");
 }
 
 fn noise(name: &str, d: Domain, seed: u32) {
@@ -174,10 +185,7 @@ fn noise(name: &str, d: Domain, seed: u32) {
             h.add(hy::continental_hypsometry(x, y, t, &d, s));
         }
     }
-    assert_eq!(
-        h.line(&format!("{name}_noise")),
-        expected(&format!("{name}_noise"))
-    );
+    same(&h, &format!("{name}_noise"));
 }
 
 #[test]
@@ -299,10 +307,7 @@ fn field(name: &str, d: Domain, seed: u32) {
         h.add(ws.x);
         h.add(ws.y);
     }
-    assert_eq!(
-        h.line(&format!("{name}_features")),
-        expected(&format!("{name}_features"))
-    );
+    same(&h, &format!("{name}_features"));
 
     let mut h = Hash::new();
     let mut sm = shared_field_mesh(&d, oa::ocean_age_spacing_m(&d));
@@ -355,10 +360,7 @@ fn field(name: &str, d: Domain, seed: u32) {
     }
     h.add(sm.mesh.tri.last_tri as f64);
     h.add(sm.mesh.tri.walk_steps as f64);
-    assert_eq!(
-        h.line(&format!("{name}_baseline")),
-        expected(&format!("{name}_baseline"))
-    );
+    same(&h, &format!("{name}_baseline"));
 }
 
 #[test]
@@ -403,5 +405,5 @@ fn the_redistribution_gives_the_typescript_values() {
     for &v in &elev {
         h.add(v as f64);
     }
-    assert_eq!(h.line("redistribution"), expected("redistribution"));
+    same(&h, "redistribution");
 }

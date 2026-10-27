@@ -435,6 +435,13 @@ save's container, the history and the mappings of its controls.
 
 **Answer: removed with it.** The fixtures stay as data.
 
+Added 2026-10-27, with the first change to the model since
+([DEC-0049](./shelf-and-sea.md)): a fixture that a change moves is
+recorded from this engine. The tests check each line through
+`tests/fixture/`, and `CASAS_RECORD=1` writes the engine's line where it
+differs. From then on, that fixture guards against a change that is not
+meant, no longer against the TypeScript engine.
+
 ## Not decided — versioned pipelines
 
 With its own engine, a pipeline can be a release of its own. The direction

@@ -70,6 +70,7 @@ export function isLandAt(elevation: number, dryLand = false): boolean {
 export const LAND_BASE = metersToElevation(360) // +0.040  continental interior
 export const COASTAL_PLAIN = metersToElevation(60) // +0.007  inner edge of the coastal plain
 export const SHELF_BREAK = metersToElevation(-140) // -0.016  outer edge of the shelf
+export const INNER_SHELF = metersToElevation(-60) // -0.007  the shelf's middle
 export const SLOPE_FOOT = metersToElevation(-3000) // -0.333  base of the continental slope
 export const RIDGE_CREST = metersToElevation(-2600) // -0.289  mid-ocean ridge crest
 export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided old basin
@@ -102,7 +103,8 @@ export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided 
 // it happens far offshore and underwater, where nobody reads it as a cliff at
 // the coast.
 //
-// So the profile is shaped rather than interpolated:
+// So the profile is shaped rather than interpolated (the stops until
+// 2026-10-27; what moved is below):
 //
 //   t = 0.00   abyssal floor (age-dependent, supplied by the caller)
 //   t = 0.15   SLOPE_FOOT      foot of the continental slope
@@ -127,14 +129,26 @@ export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided 
 // this all exists for — the steepest point of the profile is always at least
 // 70 km offshore and below -1400 m. That is the continental slope, which is
 // supposed to be steep. The coast is not.
+//
+// 2026-10-27 (docs/decisions/shelf-and-sea.md): the stops moved seaward —
+// the break from t = 0.45 to 0.25, the slope's foot from 0.15 to 0.10 — and
+// a stop on the inner shelf (-60 m at 0.55) took the shoreline's place in
+// the middle of a segment: the coastal plain's stop at 0.7957 puts the
+// shoreline at t = 0.6729 as before (the segment's middle, where the
+// smoothstep is steepest, as the paragraph above wants it), so the Archean's
+// land and the shoreline field do not move. The shelf is twice as wide in t;
+// at the hand-over the worlds' shelf was 5.7 % of the ocean against 2.7 %.
+// The rust engine holds the profile (casas-engine elevation_scale.rs); this
+// copy is its reasoning.
 // The margin parameter at the foot of the continental slope — the first
 // stop below; the trench's depression (elevationField.slabDepressionAt)
 // ends here, seaward of the overriding plate's slope.
-export const SLOPE_FOOT_T = 0.15
+export const SLOPE_FOOT_T = 0.1
 const MARGIN_STOPS: readonly (readonly [t: number, elevation: number])[] = [
   [SLOPE_FOOT_T, SLOPE_FOOT],
-  [0.45, SHELF_BREAK],
-  [0.8, COASTAL_PLAIN],
+  [0.25, SHELF_BREAK],
+  [0.55, INNER_SHELF],
+  [0.7957197562366026, COASTAL_PLAIN],
   [1.0, LAND_BASE],
 ]
 

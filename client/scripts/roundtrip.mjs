@@ -195,17 +195,21 @@ console.log('\n— run history —')
   check('and compares as unchanged', WR.recordSignature(back) === WR.recordSignature(record))
   // The pipeline that made a world (worldPipeline.ts): `status.pipeline`;
   // for a world before it, the frozen engine's file hash in every run
-  // names this pipeline, any other code or a mix none.
+  // names its pipeline (v13 since the shelf, DEC-0049), any other code or
+  // a mix none.
   const PL = await L('/src/world/worldPipeline.ts')
+  const V13 = 'v13-53fe6efa9b110bf0'
   const legacyYaml = (codes) => ['status:', '  revision: 1', 'history:', '  genesis:', ...codes.flatMap((code, i) => [`    ${i}:`, '      epochs: 3', '      generator: bb6a054-dirty', `      code: ${code}`])].join('\n')
   check('a world records its pipeline, and one from before the field is the frozen engine\'s by its code',
-    PL.recordedPipeline(yaml) === 'v11-0123456789abcdef' && PL.recordedPipeline(legacyYaml(['54ee802771966159', '54ee802771966159'])) === PL.WORLD_PIPELINE
+    PL.recordedPipeline(yaml) === 'v11-0123456789abcdef' && PL.recordedPipeline(legacyYaml(['54ee802771966159', '54ee802771966159'])) === V13
       && PL.recordedPipeline(legacyYaml(['54ee802771966159', 'abcdefabcdefabcd'])) === '' && PL.recordedPipeline(legacyYaml(['abcdefabcdefabcd'])) === '',
-    PL.WORLD_PIPELINE)
-  // A pipeline that makes the same worlds as this one reads as this one:
-  // v11, whose code moved into the engine with no byte changed (v12).
-  check('a world v11 made is the current pipeline\'s', PL.recordedPipeline('status:\n  pipeline: v11-1b1f7f4a8b14250e') === PL.WORLD_PIPELINE, PL.WORLD_PIPELINE)
-  check('a world v12 made is the current pipeline\'s', PL.recordedPipeline('status:\n  pipeline: v12-53fe6efa9b110bf0') === PL.WORLD_PIPELINE, PL.WORLD_PIPELINE)
+    PL.recordedPipeline(legacyYaml(['54ee802771966159'])))
+  // A pipeline that makes the same worlds as a later one reads as that one:
+  // v11, whose code moved into the engine with no byte changed (v12), and
+  // v12, whose worlds v13 makes. v14 makes other worlds (DEC-0049).
+  check('a world v11 made is v13\'s', PL.recordedPipeline('status:\n  pipeline: v11-1b1f7f4a8b14250e') === V13, PL.recordedPipeline('status:\n  pipeline: v11-1b1f7f4a8b14250e'))
+  check('a world v12 made is v13\'s', PL.recordedPipeline('status:\n  pipeline: v12-53fe6efa9b110bf0') === V13, PL.recordedPipeline('status:\n  pipeline: v12-53fe6efa9b110bf0'))
+  check('the current pipeline is not v13', PL.WORLD_PIPELINE !== V13 && PL.WORLD_PIPELINE.startsWith('v14-'), PL.WORLD_PIPELINE)
   const renamed = { ...record, name: 'Other' }
   check('a rename reads as a change, by name', WR.recordDiff(record, renamed).length === 1 && WR.recordDiff(record, renamed)[0].startsWith('name:'))
   const legacy = WR.recordFromYaml(yaml.replace(/  uid: .*\n/, '').replace(/  name: .*\n/, ''), { archeanEpochs: 0, epoch: 0 }, () => 'derived-uid')

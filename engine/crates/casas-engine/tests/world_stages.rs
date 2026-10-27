@@ -1,8 +1,9 @@
 //! The module test of the world stages (pipeline/world_stages) against the
 //! TypeScript engine (docs/decisions/rust-engine.md, fork 5): the stages in
 //! the runtime's order on the synthetic simulation after 12 tectonic and 2
-//! coupled epochs. The fixture is written by
-//! `engine/scripts/worldStagesFixture.mjs`; the scenarios below are that
+//! coupled epochs. The fixture was written by
+//! `engine/scripts/worldStagesFixture.mjs`, and is recorded from this
+//! engine since DEC-0049 (`fixture`); the scenarios below are that
 //! script's, step for step.
 
 use casas_engine::climate::climate_chart::WeatherChart;
@@ -25,10 +26,13 @@ use casas_engine::surface::erosion_forcing_fields::ErosionControls;
 use casas_engine::surface::hydrology::max_discharge_over_land;
 use casas_engine::tectonics::plate_simulation::step_epoch;
 
+mod fixture;
 mod synthetic_sim;
 
+use fixture::check;
 use synthetic_sim::synthetic_sim;
 
+const FILE: &str = "worldStages.txt";
 const FIXTURE: &str = include_str!("fixtures/worldStages.txt");
 
 struct Hash(u32);
@@ -162,7 +166,7 @@ impl Hash {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(name))
             .unwrap_or_else(|| panic!("no {name} in the fixture"));
-        assert_eq!(format!("{name} {:08x}", self.0), want);
+        check(FILE, &format!("{name} {:08x}", self.0), want, name);
         *self = Hash::new();
     }
 }

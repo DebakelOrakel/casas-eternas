@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-27
+- **changed** Tectonics: continental shelves are about twice as wide and stay under the sea when ice lowers it, so a seed makes a different world. `generator.step.tectonics`
+
 ## 2026-10-22
 - **changed** Refinement: a world made by an earlier version is refined as it is, and is made again only before it runs on. `generator.finishing.refine`
 

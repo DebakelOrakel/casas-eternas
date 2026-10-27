@@ -56,6 +56,11 @@ pub struct SurfaceTuning {
     pub coast_marsh_relief_m: f64,
     pub coast_marsh_supply: f64,
     pub coast_beach_supply: f64,
+    /// The shelf's fill (shelf_fill.rs): up to this far below the sea, over
+    /// a baseline down to `shelf_fill_slope_m`, this far out from the coast.
+    pub shelf_fill_depth_m: f64,
+    pub shelf_fill_slope_m: f64,
+    pub shelf_fill_reach_km: f64,
     pub sediment_basin_min_thickness_m: f64,
     pub sediment_basin_min_area_km2: f64,
     pub ice_snow_to_ice: f64,
@@ -131,6 +136,9 @@ pub const SURFACE_TUNING: SurfaceTuning = SurfaceTuning {
     coast_marsh_relief_m: 40.0,
     coast_marsh_supply: 0.02,
     coast_beach_supply: 0.1,
+    shelf_fill_depth_m: 20.0,
+    shelf_fill_slope_m: 1500.0,
+    shelf_fill_reach_km: 120.0,
     sediment_basin_min_thickness_m: 5.0,
     sediment_basin_min_area_km2: 243.36,
     ice_snow_to_ice: 0.4,

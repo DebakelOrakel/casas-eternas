@@ -265,7 +265,13 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
     }
     let (group, groups) = groups_of(h, &arrival, &from, &afloat);
     let density = (0..n)
-        .map(|i| if arrival[i] < f64::INFINITY { base[i] } else { 0.0 })
+        .map(|i| {
+            if arrival[i] < f64::INFINITY {
+                base[i]
+            } else {
+                0.0
+            }
+        })
         .collect();
     Peopling {
         arrival: arrival.iter().map(|&a| a as f32).collect(),

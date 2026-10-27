@@ -15,4 +15,5 @@ pub mod hydrology;
 pub mod river_course;
 pub mod river_graph;
 pub mod sediment_basins;
+pub mod shelf_fill;
 pub mod surface_tune_params;

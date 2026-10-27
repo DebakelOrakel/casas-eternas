@@ -29,16 +29,21 @@ pub fn is_land_at(elevation: f64, dry_land: bool) -> bool {
 pub const LAND_BASE: f64 = 360.0 / ELEVATION_METERS;
 pub const COASTAL_PLAIN: f64 = 60.0 / ELEVATION_METERS;
 pub const SHELF_BREAK: f64 = -140.0 / ELEVATION_METERS;
+pub const INNER_SHELF: f64 = -60.0 / ELEVATION_METERS;
 pub const SLOPE_FOOT: f64 = -3000.0 / ELEVATION_METERS;
 pub const RIDGE_CREST: f64 = -2600.0 / ELEVATION_METERS;
 pub const ABYSSAL_FLOOR: f64 = -5700.0 / ELEVATION_METERS;
 
-/// The margin parameter at the foot of the continental slope.
-pub const SLOPE_FOOT_T: f64 = 0.15;
-const MARGIN_STOPS: [(f64, f64); 4] = [
+/// The margin parameter at the foot of the continental slope. The stops
+/// moved seaward on 2026-10-27 with a stop on the inner shelf, the
+/// shoreline's t (0.6729) kept: the shelf twice as wide in t, the slope
+/// steeper (docs/decisions/shelf-and-sea.md).
+pub const SLOPE_FOOT_T: f64 = 0.10;
+const MARGIN_STOPS: [(f64, f64); 5] = [
     (SLOPE_FOOT_T, SLOPE_FOOT),
-    (0.45, SHELF_BREAK),
-    (0.8, COASTAL_PLAIN),
+    (0.25, SHELF_BREAK),
+    (0.55, INNER_SHELF),
+    (0.795_719_756_236_602_6, COASTAL_PLAIN),
     (1.0, LAND_BASE),
 ];
 

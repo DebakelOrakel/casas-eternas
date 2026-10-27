@@ -235,7 +235,14 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // carries the land fields the ecology reads and the ecology's fields
 // under the save's sliders (docs/decisions/level-waters.md). Its rivers and lakes change for an unchanged world,
 // and the tiles that continue them with them; the worlds do not.
-export const AMPLIFICATION_ALGO_VERSION = 13
+//
+// v14 (2026-10-27): the history's shelf (docs/decisions/shelf-and-sea.md) —
+// the margin profile's stops moved seaward, the profile stands on the mean
+// sea of the last epochs instead of the ice-free datum, and the epoch's
+// export fills the shelf. The worlds change: a recipe replays to other
+// terrain. The fill's three numbers are in the surface tuning; the stops
+// and the sea's anchor are in no hashed constant, hence the bump.
+export const AMPLIFICATION_ALGO_VERSION = 14
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

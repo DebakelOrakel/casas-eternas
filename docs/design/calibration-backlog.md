@@ -72,7 +72,9 @@ procedure.
    (8e, `tectonics/trench.ts`) is placed correctly. The synthesis trench
    deck is still clamped at −1 (golden worlds only).
 7. **No outer rise, no sediment fill in trenches.**
-8. **The shelf is narrow.** 2.6–4 % of the ocean (Earth 7.3 %), median width
+8. ~~**The shelf is narrow.**~~ Done 2026-10-27 in
+   [shelf-and-sea.md](../decisions/shelf-and-sea.md) (DEC-0049): 6.2 / 4.5 %
+   of the ocean, 50 / 66 km; the coast's length stays. Was: 2.6–4 % of the ocean (Earth 7.3 %), median width
    34–38 km (Earth 50–80). Most of the gap is coast length: the coast is
    about 3–4× shorter than Earth's at scale, smooth at 8–31 km nodes. Deep
    ocean nodes are 160 km apart at budget 4, so a 100 km trench shows as a
@@ -232,6 +234,13 @@ procedure.
     Done 2026-10-15: `calibrate` reads the peak after every epoch
     (`peakPerEpoch`, `historyPeakM`, `historyPeakEpoch`); torus alpha's
     history peak is 8571 m (epoch 39), its final peak 7837 m.
+31. **Too much ice.** It covers 20–34 % of the torus's land and 15–20 % of
+    the sphere's (Earth ~10 %); on the torus 10–14 % of the land between
+    30° and 60° (sphere 0–3 %, Earth ~0); the sea it holds stands at −75
+    to −170 m (torus) and −10 to −70 m (sphere). A glacial maximum as the
+    steady state. Since DEC-0049 the sea no longer lays the shelf dry, but
+    the incubator's glacial sea, and the climate, start from it. Found
+    2026-10-27 (6 worlds, epoch 40). Not estimated.
 
 ## Status
 
@@ -247,3 +256,5 @@ relief, entries 1 and 23 annotated; entries 26–30 found and added.
 
 2026-10-15: entries 16, 22 and 30 done (tooling only, no change to the
 worlds).
+
+2026-10-27: entry 8 done (DEC-0049); entry 31 found and added.
