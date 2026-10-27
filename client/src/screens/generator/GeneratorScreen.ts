@@ -5433,11 +5433,11 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // bar's "saved in the browser" belongs to the world it names.
     const savedAt = kept ? new Date(kept.savedAt) : null
     lastSave = kept && savedAt && !Number.isNaN(savedAt.getTime()) ? { target: kept.where === 'server' ? 'server' : 'browser', at: savedAt } : undefined
-    // A world no one pipeline made: offered to be made again from its
-    // history with this code, the only way it can be refined
-    // (world/replay.ts). A world of another pipeline opens as it is: that
-    // pipeline's workers refine it, and a run asks first (goOnWithWorld).
-    if (!archeanPayload && record.pipeline === '' && replayable(record) && await confirmDialog.ask({
+    // A world of another pipeline, or of none: offered to be made again
+    // from its history with this code (world/replay.ts). Opened as it is,
+    // its own pipeline's workers refine it (none for a world of none), and
+    // a run asks again (goOnWithWorld).
+    if (!archeanPayload && replayable(record) && await confirmDialog.ask({
       titleKey: 'generator.replay.title', bodyKey: 'generator.replay.body',
       confirmKey: 'generator.replay.confirm', cancelKey: 'generator.replay.cancel',
     })) {

@@ -256,9 +256,11 @@ takes approximately 9 MB, so a rule is not needed until there are many.
   another pipeline opens as it is, and its refinement goes to the workers
   of its own pipeline: the job names the world's pipeline, and the client
   reads that pipeline's versions from the release's pipeline.json
-  (2026-10-22). A run on such a world asks first: make it again with this
-  engine (a different world: the simulation is chaotic), or not run. A
-  browser that loads an old client is a step of its own.
+  (2026-10-22). Its load asks first: make it again with this engine (a
+  different world: the simulation is chaotic), or open it as it is
+  (2026-10-27; before, only a run asked). A run on a world opened as it
+  is asks again: make it again, or not run. A browser that loads an old
+  client is a step of its own.
 - Signing the builds (attestations): wait until it is needed.
 
 ## Status
