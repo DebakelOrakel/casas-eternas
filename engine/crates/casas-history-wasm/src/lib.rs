@@ -13,10 +13,10 @@ use casas_history::settle::settle_history;
 use casas_history::simulation::{SPAN_YEARS, STEP_YEARS, SimulationResult, ice_distance};
 use wasm_bindgen::prelude::*;
 
-/// The history's version (`casas_history::HISTORY_VERSION`).
+/// The history's version (`casas_history::tuning::history_version`).
 #[wasm_bindgen]
 pub fn version() -> String {
-    casas_history::HISTORY_VERSION.to_string()
+    casas_history::tuning::history_version()
 }
 
 /// The world's cold over the span (climate_history.rs), every STEP_YEARS

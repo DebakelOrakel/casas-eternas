@@ -164,6 +164,7 @@ engine:
 	wasm-bindgen --target web --out-dir engine/dist/history --out-name casas-history \
 		engine/target/wasm32-unknown-unknown/release/casas_history_wasm.wasm
 	cd engine && cargo run --release -q -p casas-history --bin history-version > dist/history/version.json
+	cd engine && cargo run --release -q -p casas-history --bin history-constants > dist/history/constants.json
 
 # The job worker, bundled for Node, with the engine's native build beside it,
 # and the history's module with the history's.

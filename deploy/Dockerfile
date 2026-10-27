@@ -94,7 +94,8 @@ RUN cargo build --release --locked -p casas-history-node \
  && cp target/release/libcasas_history_node.so /out/dist/casas-history.node \
  && wasm-bindgen --target web --out-dir /out/dist/history --out-name casas-history \
       target/wasm32-unknown-unknown/release/casas_history_wasm.wasm \
- && cargo run --release --locked -q -p casas-history --bin history-version > /out/dist/history/version.json
+ && cargo run --release --locked -q -p casas-history --bin history-version > /out/dist/history/version.json \
+ && cargo run --release --locked -q -p casas-history --bin history-constants > /out/dist/history/constants.json
 
 # ---- Stage 1: the client bundle and the job worker -------------------------
 FROM node:26-bookworm-slim AS web

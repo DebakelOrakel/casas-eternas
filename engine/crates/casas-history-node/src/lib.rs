@@ -13,10 +13,10 @@ use casas_history::simulation::{SPAN_YEARS, STEP_YEARS, ice_distance};
 use napi::bindgen_prelude::{Float32Array, Float64Array, Int32Array, Uint8Array, Uint32Array};
 use napi_derive::napi;
 
-/// The history's version (`casas_history::HISTORY_VERSION`).
+/// The history's version (`casas_history::tuning::history_version`).
 #[napi]
 pub fn version() -> String {
-    casas_history::HISTORY_VERSION.to_string()
+    casas_history::tuning::history_version()
 }
 
 /// The world's cold over the span, every STEP_YEARS.

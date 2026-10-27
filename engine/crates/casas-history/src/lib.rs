@@ -18,9 +18,4 @@ pub mod pack;
 pub mod settle;
 pub mod simulation;
 pub mod travel;
-
-/// The history's version (world/historyArtifacts.ts HISTORY_VERSION): raised
-/// by hand on any change to what a run gives or to the packed form, as the
-/// client's was. `make engine` writes it to `dist/history/version.json`,
-/// where the client reads it.
-pub const HISTORY_VERSION: &str = "h1-2026-10-26c";
+pub mod tuning;

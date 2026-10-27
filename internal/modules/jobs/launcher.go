@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,7 +37,7 @@ import (
 //
 // A history's tasks have a pipeline of their own, the history's version
 // (ScopeHistory): its module is history.mjs beside the bundle, shipped as
-// pipeline.mjs is, or the one in its release (releaseTag), with the
+// pipeline.mjs is, or the one in its release (releaseTags), with the
 // history's native build beside the engine's.
 
 // LauncherConfig is what the launcher runs with.
@@ -85,12 +86,12 @@ func RunLauncher(ctx context.Context, cfg LauncherConfig) (int, error) {
 		slog.Warn("job worker: the shipped history module", "err", err)
 	}
 	for {
-		pipeline := choosePipeline(ctx, serve.Jobs, own, ownHistory)
+		pipeline, isHistory := choosePipeline(ctx, serve.Jobs, own, ownHistory)
 		module := ""
 		if pipeline == ownHistory {
 			module = history
 		} else if pipeline != own {
-			module, err = pipelineModule(ctx, serve, cfg.CacheDir, cfg.Bundle, pipeline)
+			module, err = pipelineModule(ctx, serve, cfg.CacheDir, cfg.Bundle, pipeline, isHistory)
 			if err != nil {
 				slog.Warn("job worker: the module of another pipeline", "pipeline", pipeline, "err", err)
 				module, pipeline = "", own
@@ -107,21 +108,22 @@ func RunLauncher(ctx context.Context, cfg LauncherConfig) (int, error) {
 // choosePipeline is the pipeline to serve: this installation's own while it
 // has work or nobody has any, else its own history's (empty: none) while
 // that has work, else the one with the most work. Without an answer from
-// the server, the own one.
-func choosePipeline(ctx context.Context, jobsAPI, own, ownHistory string) string {
+// the server, the own one. And whether the one chosen is a history's.
+func choosePipeline(ctx context.Context, jobsAPI, own, ownHistory string) (string, bool) {
 	if jobsAPI == "" {
-		return own
+		return own, false
 	}
-	work, err := pipelinesWork(ctx, jobsAPI)
+	answer, err := pipelinesWork(ctx, jobsAPI)
 	if err != nil {
 		slog.Warn("job worker: the work per pipeline", "err", err)
-		return own
+		return own, false
 	}
+	work := answer.Pipelines
 	if work[own] > 0 || len(work) == 0 {
-		return own
+		return own, false
 	}
 	if ownHistory != "" && work[ownHistory] > 0 {
-		return ownHistory
+		return ownHistory, true
 	}
 	pipelines := make([]string, 0, len(work))
 	for pipeline := range work {
@@ -133,38 +135,38 @@ func choosePipeline(ctx context.Context, jobsAPI, own, ownHistory string) string
 		}
 		return pipelines[i] < pipelines[j]
 	})
-	return pipelines[0]
+	return pipelines[0], slices.Contains(answer.Histories, pipelines[0])
 }
 
 // pipelinesWork asks GET /v1/jobs/pipelines.
-func pipelinesWork(ctx context.Context, jobsAPI string) (map[string]int, error) {
+func pipelinesWork(ctx context.Context, jobsAPI string) (pipelinesResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, pipelinesTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, jobsAPI+"/jobs/pipelines", nil)
 	if err != nil {
-		return nil, err
+		return pipelinesResponse{}, err
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return nil, err
+		return pipelinesResponse{}, err
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET /jobs/pipelines: %s", response.Status)
+		return pipelinesResponse{}, fmt.Errorf("GET /jobs/pipelines: %s", response.Status)
 	}
 	var answer pipelinesResponse
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&answer); err != nil {
-		return nil, err
+		return pipelinesResponse{}, err
 	}
-	return answer.Pipelines, nil
+	return answer, nil
 }
 
 // pipelineModule is the pipeline module of `pipeline` in the cache, with
-// its engine for this platform beside it (a history's: and the history's
-// native build), as the shipped one has: fetched
+// its engine for this platform beside it (`isHistory`, a history's: and
+// the history's native build), as the shipped one has: fetched
 // from the server (GET /v1/jobs/engines) when it is not there, and checked
 // to be that pipeline by the host `bundle`.
-func pipelineModule(ctx context.Context, serve serveConfig, cacheDir, bundle, pipeline string) (string, error) {
+func pipelineModule(ctx context.Context, serve serveConfig, cacheDir, bundle, pipeline string, isHistory bool) (string, error) {
 	jobsAPI := serve.Jobs
 	if jobsAPI == "" {
 		return "", errors.New("the serving argument names no jobs API")
@@ -178,7 +180,7 @@ func pipelineModule(ctx context.Context, serve serveConfig, cacheDir, bundle, pi
 		"pipeline.mjs": module,
 		"casas-engine-" + runtime.GOOS + "-" + runtime.GOARCH + ".node": filepath.Join(dir, "casas-engine.node"),
 	}
-	if historyPipeline.MatchString(pipeline) {
+	if isHistory {
 		files["casas-history-"+runtime.GOOS+"-"+runtime.GOARCH+".node"] = filepath.Join(dir, "casas-history.node")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {

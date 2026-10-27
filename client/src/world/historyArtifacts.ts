@@ -11,10 +11,11 @@ import { artifactKey, writeArtifactFiles, type ArtifactKey, type ArtifactStore }
 // Keyed by content, as every artifact: the terrain (worldId), the level it
 // runs on and the history's own version (pipelineVersion: the pipeline of
 // the level 1 read, `+`, HISTORY_VERSION), and the origin people set out
-// from (the stage, `H1:<cell>`). The history's version is its crate's (casas-history
-// HISTORY_VERSION, raised by hand there: any change to what a run gives or
-// to the packed form must raise it, or a world loads an old history as
-// current, or fails to read it).
+// from (the stage, `H1:<cell>`). The history's version is its crate's
+// (casas-history tuning.rs, `v<HISTORY_ALGO_VERSION>-<hash>`): derived from
+// its tuning and catalog, as the pipeline's from the engine's constants;
+// the number raised by hand on a change to the code that changes what a
+// run gives or to the packed form.
 export const HISTORY_VERSION: string = historyVersion.version
 export const HISTORY_FILES = { history: 'history.bin', meta: 'meta.json' } as const
 

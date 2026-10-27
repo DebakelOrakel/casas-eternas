@@ -41,8 +41,16 @@ gave the same numbers — so it can be made once and kept.
 
 Its key is content, as every artifact's ([DEC-0039](./artifacts-by-content.md)):
 the terrain (worldId); level 1's pipeline version and the history's own,
-`+`-joined (`world/historyArtifacts.ts`, HISTORY_VERSION, raised by hand on
-any change to what a run gives); the stage `H1:<origin cell>`. Its badge is
+`+`-joined (`world/historyArtifacts.ts`); the stage `H1:<origin cell>`.
+The history's version is made as the pipeline's (2026-10-27, after a
+string raised by hand): `v<HISTORY_ALGO_VERSION>-<hash>`, the hash over
+the crate's tuning (`casas-history` `tuning.rs`, a table of its
+constants by module, as `casas_engine_api::pipeline::constants`, and the
+catalog without its notes; `make engine` writes it to
+`engine/dist/history/constants.json`). A test keeps the table whole: each
+constant of the crate is in it or named as format. The number is raised by
+hand on a change to the code that changes what a run gives, or to the
+packed form. Its badge is
 **H1** — the history's first stage, as L1 … L3 are the levels'; a later
 stage of the history (to the game's start) would be H2. "SA" (stone age)
 was considered and left: in German it names the Sturmabteilung.
@@ -93,7 +101,7 @@ the subject names it, and a worker serves one pipeline's module.
   module (pipeline.mjs). Only a pipeline released after it could run a
   history, and a new history version would need a new engine release.
 - **B. The history's version as the route** (chosen). A history's task
-  names the history's version (HISTORY_VERSION, `h1-…`) as its pipeline;
+  names the history's version (`v1-…`) as its pipeline;
   its module is `history.mjs` (`client/scripts/historyPipeline.ts`), with
   the history's native build (`casas-history.node`) and the engine's,
   which reads the save and level 1. The launcher serves it where it was
@@ -101,7 +109,11 @@ the subject names it, and a worker serves one pipeline's module.
   `history-<version>` (`.github/workflows/history-release.yml`; the jobs
   module's `releaseTag`). The order names the scope `history`, the origin
   as its id, and the pipeline of the level 1 it runs on (`level`):
-  `{"worldUid": "…", "stage": 1, "scope": {"kind": "history", "id": 678764}, "level": "v13-…", "pipeline": "h1-2026-10-26c"}`.
+  `{"worldUid": "…", "stage": 1, "scope": {"kind": "history", "id": 678764}, "level": "v13-…", "pipeline": "v1-7744e9f7c599f615"}`.
+  The version has a pipeline's form, so the server says which pipelines
+  are histories' (`GET /v1/jobs/pipelines`, `histories`: those of open
+  history jobs), and a file of a pipeline comes from `engine-<version>`,
+  else from `history-<version>`.
 
 H1 is keyed by the level read (its pipeline version, `+`,
 HISTORY_VERSION), not by the client's own level pipeline: a world shown on

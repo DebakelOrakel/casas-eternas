@@ -10,9 +10,9 @@ use casas_engine::core::rng::Mulberry32;
 use std::f64::consts::PI;
 
 pub const SEA_DROP_M: f64 = 120.0;
-const STADIALS: usize = 4;
-const STABLE_COLD: f64 = 0.15;
-const STABLE_YEARS: f64 = 2000.0;
+pub(crate) const STADIALS: usize = 4;
+pub(crate) const STABLE_COLD: f64 = 0.15;
+pub(crate) const STABLE_YEARS: f64 = 2000.0;
 pub const ICE_REACH_KM: f64 = 400.0;
 
 struct Swing {

@@ -15,19 +15,19 @@ use casas_engine::core::js;
 use casas_engine::core::min_heap::MinHeap;
 use std::collections::HashMap;
 
-const CARRYING_FULL: f64 = 0.8;
-const DENSITY_TAU: f64 = 3000.0;
-const FORAGER_WEIGHT: f64 = 0.2;
-const LINKS: usize = 3;
-const LINK_DAYS: f64 = 6.0;
-const SOURCE_RICH: f64 = 0.6;
-const SOURCE_DAYS: f64 = 20.0;
-const SOURCE_RADIUS: usize = 10;
-const DECAY_DAYS: f64 = 8.0;
-const MAX_DAYS: f64 = 32.0;
-const TRADE_TOLD: f64 = 0.05;
+pub(crate) const CARRYING_FULL: f64 = 0.8;
+pub(crate) const DENSITY_TAU: f64 = 3000.0;
+pub(crate) const FORAGER_WEIGHT: f64 = 0.2;
+pub(crate) const LINKS: usize = 3;
+pub(crate) const LINK_DAYS: f64 = 6.0;
+pub(crate) const SOURCE_RICH: f64 = 0.6;
+pub(crate) const SOURCE_DAYS: f64 = 20.0;
+pub(crate) const SOURCE_RADIUS: usize = 10;
+pub(crate) const DECAY_DAYS: f64 = 8.0;
+pub(crate) const MAX_DAYS: f64 = 32.0;
+pub(crate) const TRADE_TOLD: f64 = 0.05;
 /// settleShared.ts GOODS, in order: the fields of the habitat.
-const GOODS: [usize; 3] = [5, 6, 7];
+pub(crate) const GOODS: [usize; 3] = [5, 6, 7];
 
 fn density_of(way: usize) -> f64 {
     [0.0, 0.1, 1.0, 1.5, 15.0][way]

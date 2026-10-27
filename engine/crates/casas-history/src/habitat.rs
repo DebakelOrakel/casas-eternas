@@ -21,7 +21,7 @@ use casas_engine::surface::hydrology::{RIVER_MAX_WIDTH, RIVER_MIN_WIDTH};
 
 pub const CELL_SPACING_KM: f64 = 10.0;
 /// `RIVER_REGIME_CODE.ephemeral` (surface/hydrology.ts).
-const RIVER_EPHEMERAL: u8 = 2;
+pub(crate) const RIVER_EPHEMERAL: u8 = 2;
 
 /// The ecology's fields a cell takes, in this order (cells.ts
 /// CELL_ECOLOGY: the game, the carrying capacity and LEVEL_ECOLOGY).

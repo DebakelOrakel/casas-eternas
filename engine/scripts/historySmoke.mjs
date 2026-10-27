@@ -9,7 +9,8 @@
 // while the TypeScript the crate was ported from still stood beside it and
 // gave the same bits (2026-10-27; and on Morvane, the whole H1 alike); it
 // is recorded again only on purpose, with --record, when the history is
-// meant to change (and HISTORY_VERSION with it). And the worlds must reach
+// meant to change (and the history's version with it: a tuning changed
+// changes it by itself, the code changed by HISTORY_ALGO_VERSION). And the worlds must reach
 // what they are there to test (`reaches`), or the check passes on less than
 // it claims.
 //

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -184,13 +185,26 @@ func keys(m map[string][]byte) []string {
 }
 
 // A history's version has its own release, with the history's native
-// build in it.
+// build in it: a file not in `engine-<version>` is looked for in
+// `history-<version>`.
 func TestAHistoryHasItsOwnRelease(t *testing.T) {
-	if got := releaseTag("h1-2026-10-26c"); got != "history-h1-2026-10-26c" {
-		t.Errorf("release of a history = %s", got)
+	body := []byte("the history's module")
+	sum := sha256.Sum256(body)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /history-"+testPipeline+"/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(hex.EncodeToString(sum[:]) + "  pipeline.mjs\n"))
+	})
+	mux.HandleFunc("GET /history-"+testPipeline+"/pipeline.mjs", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	got, err := fetchReleaseFile(context.Background(), server.URL, testPipeline, "pipeline.mjs")
+	if err != nil || string(got) != string(body) {
+		t.Errorf("from the history's release: %q, %v", got, err)
 	}
-	if got := releaseTag("v12-53fe6efa9b110bf0"); got != "engine-v12-53fe6efa9b110bf0" {
-		t.Errorf("release of a pipeline = %s", got)
+	if _, err := fetchReleaseFile(context.Background(), server.URL, testPipeline, "constants.json"); !errors.Is(err, errNoRelease) {
+		t.Errorf("a file in neither release: %v", err)
 	}
 	if !releaseFile.MatchString("casas-history-linux-amd64.node") {
 		t.Error("the history's native build is no release file")

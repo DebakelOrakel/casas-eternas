@@ -181,10 +181,12 @@ shipped host on the other pipeline's module: `node job-worker.mjs --serve
 
 The incubator's histories have a route of their own (2026-10-27,
 [DEC-0048](./incubator-history-engine.md) fork 4): their tasks name the
-history's version (`h1-…`) as their pipeline. The launcher serves it
-after its own pipeline, by `history.mjs` beside the host, else from the
-release `history-<version>` (`releaseTag`), which holds the history's
-native build (`casas-history-<os>-<arch>.node`) beside the engine's.
+history's version (`v<n>-<hash>`, a pipeline's form) as their pipeline,
+and `GET /v1/jobs/pipelines` names them (`histories`). The launcher serves
+one after its own pipeline, by `history.mjs` beside the host, else from
+the release `history-<version>` (`releaseTags`: a file is looked for in
+`engine-<version>` first), which holds the history's native build
+(`casas-history-<os>-<arch>.node`) beside the engine's.
 
 ## The host and the pipeline
 

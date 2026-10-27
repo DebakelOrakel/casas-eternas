@@ -8,13 +8,13 @@ use casas_engine::core::det_math::det_exp;
 use casas_engine::core::js;
 use casas_engine::core::min_heap::MinHeap;
 
-const WALK_HOURS: f64 = 6.0;
-const RIVER_BOAT_SIZE: f64 = 0.1;
-const RIVER_DOWN_KM_DAY: f64 = 50.0;
-const RIVER_UP_KM_DAY: f64 = 20.0;
-const COAST_DEPTH_M: f64 = 200.0;
-const COAST_KM_DAY: f64 = 40.0;
-const LANDING_DAYS: f64 = 0.25;
+pub(crate) const WALK_HOURS: f64 = 6.0;
+pub(crate) const RIVER_BOAT_SIZE: f64 = 0.1;
+pub(crate) const RIVER_DOWN_KM_DAY: f64 = 50.0;
+pub(crate) const RIVER_UP_KM_DAY: f64 = 20.0;
+pub(crate) const COAST_DEPTH_M: f64 = 200.0;
+pub(crate) const COAST_KM_DAY: f64 = 40.0;
+pub(crate) const LANDING_DAYS: f64 = 0.25;
 
 fn terrain_ease(b: u8) -> f64 {
     match b {

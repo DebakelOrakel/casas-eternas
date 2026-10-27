@@ -2,12 +2,12 @@
 # that starts with `history` builds the incubator's history for the job
 # worker and puts the builds on a GitHub release of that tag.
 #
-#   git tag history-h1-2026-10-26c && git push origin history-h1-2026-10-26c
+#   git tag history-v1-7744e9f7c599f615 && git push origin history-v1-7744e9f7c599f615
 #
 # The tag is `history-` and the history's version (casas-history
-# HISTORY_VERSION; `job-worker.mjs --version --pipeline history.mjs` tells
-# it): the route of the history's tasks, whose workers take this release
-# where they were not shipped with it (internal/modules/jobs, releaseTag).
+# tuning.rs history_version; `casas-eternas version` tells it): the route
+# of the history's tasks, whose workers take this release where they were
+# not shipped with it (internal/modules/jobs, releaseTags).
 #
 # The assets:
 #   casas-history-darwin-arm64.node     the history's native build on a Mac
@@ -15,6 +15,7 @@
 #   casas-history-windows-amd64.node    on Windows
 #   casas-engine-<os>-<arch>.node       the engine's, which reads the save and level 1
 #   pipeline.json                       the history's version
+#   constants.json                      the tuning the version hashes
 #   pipeline.mjs                        the history's module (history.mjs); the name the launcher fetches
 #   SHA256SUMS
 #
@@ -52,6 +53,7 @@ jobs:
           mkdir -p engine/dist/history
           (cd engine && cargo run --release --locked -q -p casas-engine-api --bin constants > dist/constants.json)
           (cd engine && cargo run --release --locked -q -p casas-history --bin history-version > dist/history/version.json)
+          (cd engine && cargo run --release --locked -q -p casas-history --bin history-constants > dist/history/constants.json)
           touch engine/dist/casas-engine.node engine/dist/casas-history.node
           (cd client && npm ci && node scripts/buildWorker.mjs "$RUNNER_TEMP/worker/job-worker.mjs")
           node "$RUNNER_TEMP/worker/job-worker.mjs" --version --pipeline "$RUNNER_TEMP/worker/history.mjs" > engine/dist/pipeline.json
@@ -62,12 +64,13 @@ jobs:
             exit 1
           fi
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "::error::$GITHUB_REF_NAME is released already: a change to the history raises HISTORY_VERSION."
+            echo "::error::$GITHUB_REF_NAME is released already: a change to the history's code raises HISTORY_ALGO_VERSION."
             exit 1
           fi
       - run: |
           mkdir -p out
           cp engine/dist/pipeline.json out/
+          cp engine/dist/history/constants.json out/
           cp "$RUNNER_TEMP/worker/history.mjs" out/pipeline.mjs
       - uses: actions/upload-artifact@v4
         with:

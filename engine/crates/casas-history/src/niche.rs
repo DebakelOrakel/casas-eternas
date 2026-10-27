@@ -14,10 +14,10 @@ use casas_engine::core::rng::Mulberry32;
 
 pub const SUITABLE: f64 = 0.3;
 pub const BARRIER: f64 = 30.0;
-const SPREAD_KM: f64 = 8000.0;
-const ORIGIN_AREA_KM2: f64 = 500_000.0;
-const OFF_COVER: f64 = 0.25;
-const BIG_RIVER: f64 = 0.3;
+pub(crate) const SPREAD_KM: f64 = 8000.0;
+pub(crate) const ORIGIN_AREA_KM2: f64 = 500_000.0;
+pub(crate) const OFF_COVER: f64 = 0.25;
+pub(crate) const BIG_RIVER: f64 = 0.3;
 
 fn open_biome(b: u8) -> bool {
     matches!(

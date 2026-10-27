@@ -29,7 +29,7 @@ import (
 // pipeline than the one it was shipped with. GET
 // /v1/jobs/engines/{pipeline}/{file} answers with a link to the file in the
 // artifact store. On a miss it downloads the file from the release of the
-// pipeline (releaseTag: `engine-<pipeline>`, .github/workflows/
+// pipeline (releaseTags: `engine-<pipeline>`, .github/workflows/
 // engine-release.yml; a history's `history-<version>`),
 // checks it against the release's SHA256SUMS, and stores it first. A
 // worker never talks to the release's host.
@@ -51,20 +51,14 @@ var ErrNoPipelineFile = errors.New("no such pipeline file")
 // release action gives them.
 var releaseFile = regexp.MustCompile(`^(pipeline\.mjs|casas-(engine|history)-[a-z0-9]+-[a-z0-9]+\.node|casas-engine-wasm\.tar\.gz|constants\.json|pipeline\.json)$`)
 
-// historyPipeline is what a history's version is (casas-history
-// HISTORY_VERSION, `h1-…`): the pipeline of a history's tasks
-// (ScopeHistory), whose release is `history-<version>`
-// (.github/workflows/history-release.yml) and holds the history's native
-// build beside the engine's.
-var historyPipeline = regexp.MustCompile(`^h[0-9]+-`)
-
-// releaseTag is the release of a pipeline: `engine-<pipeline>`, or
-// `history-<version>` for a history's.
-func releaseTag(pipeline string) string {
-	if historyPipeline.MatchString(pipeline) {
-		return "history-" + pipeline
-	}
-	return "engine-" + pipeline
+// releaseTags are the releases a pipeline's files may be in, in the order
+// asked: `engine-<pipeline>`, then `history-<pipeline>` — a history's
+// version (casas-history history_version, the pipeline of its tasks,
+// ScopeHistory) has the form of a pipeline's, and its release
+// (.github/workflows/history-release.yml) holds the history's native build
+// beside the engine's. The versions are hashes: one names one release.
+func releaseTags(pipeline string) []string {
+	return []string{"engine-" + pipeline, "history-" + pipeline}
 }
 
 const (
@@ -88,17 +82,20 @@ func AnonymousReads(r *http.Request) bool {
 	return r.Method == http.MethodGet && (strings.HasPrefix(r.URL.Path, "/v1/jobs/engines/") || r.URL.Path == "/v1/jobs/pipelines")
 }
 
-// pipelinesResponse is GET /v1/jobs/pipelines: the open work per pipeline.
+// pipelinesResponse is GET /v1/jobs/pipelines: the open work per pipeline,
+// and which of them are histories' (ScopeHistory): their module needs the
+// history's native build beside it.
 type pipelinesResponse struct {
 	Pipelines map[string]int `json:"pipelines"`
+	Histories []string       `json:"histories,omitempty"`
 }
 
 func (m *Module) handlePipelines(w http.ResponseWriter, _ *http.Request) {
-	work := map[string]int{}
+	answer := pipelinesResponse{Pipelines: map[string]int{}}
 	if m.coord != nil {
-		work = m.coord.pipelineWork()
+		answer.Pipelines, answer.Histories = m.coord.pipelineWork()
 	}
-	httpjson.Write(w, http.StatusOK, pipelinesResponse{Pipelines: work})
+	httpjson.Write(w, http.StatusOK, answer)
 }
 
 func (m *Module) handleEngineFile(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +111,7 @@ func (m *Module) handleEngineFile(w http.ResponseWriter, r *http.Request) {
 	link, err := m.pipelineFileLink(r.Context(), pipeline, file)
 	switch {
 	case errors.Is(err, errNoRelease):
-		httpjson.ClientError(w, http.StatusNotFound, fmt.Sprintf("the release %s has no %s", releaseTag(pipeline), file))
+		httpjson.ClientError(w, http.StatusNotFound, fmt.Sprintf("no release of %s has %s", pipeline, file))
 		return
 	case err != nil:
 		slog.Warn("jobs: a pipeline file", "pipeline", pipeline, "file", file, "err", err)
@@ -151,12 +148,24 @@ func (m *Module) pipelineFileLink(ctx context.Context, pipeline, file string) (s
 	return m.cfg.PipelineFiles.Link(ctx, pipeline, file)
 }
 
-// fetchReleaseFile downloads one file of the release of `pipeline` and
-// checks it against the release's SHA256SUMS.
+// fetchReleaseFile downloads one file of the release of `pipeline`
+// (releaseTags, the first that has it) and checks it against the release's
+// SHA256SUMS.
 func fetchReleaseFile(ctx context.Context, source, pipeline, file string) ([]byte, error) {
+	for _, tag := range releaseTags(pipeline) {
+		body, err := fetchTaggedFile(ctx, source, tag, file)
+		if !errors.Is(err, errNoRelease) {
+			return body, err
+		}
+	}
+	return nil, errNoRelease
+}
+
+// fetchTaggedFile is fetchReleaseFile in the release `tag`.
+func fetchTaggedFile(ctx context.Context, source, tag, file string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, releaseFetchTimeout)
 	defer cancel()
-	base := strings.TrimRight(source, "/") + "/" + releaseTag(pipeline) + "/"
+	base := strings.TrimRight(source, "/") + "/" + tag + "/"
 	rawSums, err := download(ctx, base+"SHA256SUMS", maxReleaseSums)
 	if err != nil {
 		return nil, err
@@ -171,7 +180,7 @@ func fetchReleaseFile(ctx context.Context, source, pipeline, file string) ([]byt
 	}
 	got := sha256.Sum256(body)
 	if hex.EncodeToString(got[:]) != want {
-		return nil, fmt.Errorf("%s of %s does not match its SHA256SUMS", file, releaseTag(pipeline))
+		return nil, fmt.Errorf("%s of %s does not match its SHA256SUMS", file, tag)
 	}
 	return body, nil
 }
@@ -369,7 +378,7 @@ func (h httpPipelineFiles) Put(ctx context.Context, pipeline, file string, body 
 	}
 	meta, _ := json.Marshal(map[string]any{
 		"key":       map[string]string{"worldId": "pipeline", "pipelineVersion": pipeline, "stage": file},
-		"label":     releaseTag(pipeline) + " " + file,
+		"label":     "engine-" + pipeline + " " + file,
 		"createdAt": time.Now().UnixMilli(),
 	})
 	for _, part := range []struct {

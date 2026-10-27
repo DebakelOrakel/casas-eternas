@@ -79,21 +79,35 @@ func TestTheLauncherChoosesThePipelineWithTheWork(t *testing.T) {
 		{map[string]int{"v0-other": 2, "v0-third": 5}, "v0-third"},
 		{map[string]int{"v0-b": 3, "v0-a": 3}, "v0-a"},
 		// The own history's work before another pipeline's.
-		{map[string]int{"h1-own": 1, "v0-other": 9}, "h1-own"},
-		{map[string]int{"v0-own": 1, "h1-own": 9}, "v0-own"},
+		{map[string]int{"v0-history": 1, "v0-other": 9}, "v0-history"},
+		{map[string]int{"v0-own": 1, "v0-history": 9}, "v0-own"},
 	}
 	for _, c := range cases {
 		api, _, _ := jobsAPI(t, []map[string]int{c.work}, "")
-		if got := choosePipeline(context.Background(), api, "v0-own", "h1-own"); got != c.want {
+		if got, _ := choosePipeline(context.Background(), api, "v0-own", "v0-history"); got != c.want {
 			t.Errorf("work %v: %s, want %s", c.work, got, c.want)
 		}
 	}
 	// No server, no answer: the own pipeline.
-	if got := choosePipeline(context.Background(), "", "v0-own", ""); got != "v0-own" {
+	if got, _ := choosePipeline(context.Background(), "", "v0-own", ""); got != "v0-own" {
 		t.Errorf("without a jobs API: %s", got)
 	}
-	if got := choosePipeline(context.Background(), "http://127.0.0.1:1/v1", "v0-own", ""); got != "v0-own" {
+	if got, _ := choosePipeline(context.Background(), "http://127.0.0.1:1/v1", "v0-own", ""); got != "v0-own" {
 		t.Errorf("without an answer: %s", got)
+	}
+}
+
+// The server names the pipelines that are histories': the launcher then
+// fetches the history's native build too.
+func TestTheLauncherKnowsAHistoryByTheServer(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/jobs/pipelines", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(pipelinesResponse{Pipelines: map[string]int{"v0-other": 2}, Histories: []string{"v0-other"}})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	if got, isHistory := choosePipeline(context.Background(), server.URL+"/v1", "v0-own", ""); got != "v0-other" || !isHistory {
+		t.Errorf("chose %s, a history %v; want v0-other, a history", got, isHistory)
 	}
 }
 
@@ -104,7 +118,7 @@ func TestTheLauncherFetchesAndChecksAPipeline(t *testing.T) {
 	host := writeHost(t, t.TempDir(), "v0-own", 0)
 	cache := t.TempDir()
 	for range 2 {
-		module, err := pipelineModule(context.Background(), serveConfig{Jobs: api}, cache, host, "v0-other")
+		module, err := pipelineModule(context.Background(), serveConfig{Jobs: api}, cache, host, "v0-other", false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +134,7 @@ func TestTheLauncherFetchesAndChecksAPipeline(t *testing.T) {
 	}
 
 	wrong, _, _ := jobsAPI(t, []map[string]int{{}}, fakeModule("v0-third", 0))
-	if _, err := pipelineModule(context.Background(), serveConfig{Jobs: wrong}, t.TempDir(), host, "v0-other"); err == nil {
+	if _, err := pipelineModule(context.Background(), serveConfig{Jobs: wrong}, t.TempDir(), host, "v0-other", false); err == nil {
 		t.Error("a module of another pipeline was taken")
 	}
 }

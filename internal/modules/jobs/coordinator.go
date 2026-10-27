@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -858,11 +860,13 @@ func (c *coordinator) workload() (open, tasks int) {
 // pipelineWork is the work of the open jobs per pipeline: their tasks
 // handed out, and at least one for a job whose next tasks are not planned
 // yet, as for the scaler (wantWorkers). What a launcher chooses a pipeline
-// by (launcher.go).
-func (c *coordinator) pipelineWork() map[string]int {
+// by (launcher.go); and the pipelines of them that are histories'
+// (ScopeHistory), sorted.
+func (c *coordinator) pipelineWork() (map[string]int, []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	work := map[string]int{}
+	histories := map[string]bool{}
 	for jobID, ids := range c.byJob {
 		job, ok := c.registry.get(jobID)
 		if !ok || (job.State != StateQueued && job.State != StateRunning) {
@@ -875,6 +879,9 @@ func (c *coordinator) pipelineWork() map[string]int {
 			}
 		}
 		work[job.Request.Pipeline] += max(tasks, 1)
+		if job.Request.Scope.Kind == ScopeHistory {
+			histories[job.Request.Pipeline] = true
+		}
 	}
-	return work
+	return work, slices.Sorted(maps.Keys(histories))
 }
