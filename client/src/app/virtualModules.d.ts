@@ -37,10 +37,10 @@ declare module 'casas-engine-wasm/casas-engine.js' {
   export const Preview: import('../generator/pipeline/engine').Engine['Preview']
 }
 
-// The incubator's catalogs, data shared with the history's crate
-// (engine/crates/casas-history/data; vite.config.ts's alias
-// `casas-history-data`).
-declare module 'casas-history-data/catalog.json' {
+// The incubator's catalogs, data shared with the incubator's crate
+// (engine/crates/casas-incubator/data; vite.config.ts's alias
+// `casas-incubator-data`).
+declare module 'casas-incubator-data/catalog.json' {
   const catalog: {
     plants: readonly import('../screens/incubator/plants').PlantSpec[]
     trees: readonly import('../screens/incubator/trees').TreeSpec[]
@@ -55,17 +55,17 @@ declare module 'casas-history-data/catalog.json' {
   export default catalog
 }
 
-// The history's version (`make engine` writes engine/dist/history/
-// version.json from the crate's HISTORY_VERSION).
-declare module 'casas-history-wasm/version.json' {
+// The incubator's version (`make engine` writes engine/dist/incubator/
+// version.json from the crate's INCUBATOR_VERSION).
+declare module 'casas-incubator-wasm/version.json' {
   const version: { version: string }
   export default version
 }
 
-// The incubator's history's WASM build (`make engine` writes it to
-// engine/dist/history; vite.config.ts's alias `casas-history-wasm` names that
-// directory), as wasm-bindgen types it (its casas-history.d.ts).
-declare module 'casas-history-wasm/casas-history.js' {
+// The incubator's WASM build (`make engine` writes it to
+// engine/dist/incubator; vite.config.ts's alias `casas-incubator-wasm` names that
+// directory), as wasm-bindgen types it (its casas-incubator.d.ts).
+declare module 'casas-incubator-wasm/casas-incubator.js' {
   const init: (options: { module_or_path: string | BufferSource }) => Promise<unknown>
   export default init
   export function version(): string

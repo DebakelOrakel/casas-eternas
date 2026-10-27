@@ -63,15 +63,15 @@ client/docs-dist/
 client/scripts/.docsite.mjs
 
 # The job worker bundled for Node, the host, its pipeline module and the
-# history's module. Built
+# incubator's module. Built
 # by `make worker` (and by the Dockerfile itself), so a tracked copy is only
-# ever stale. The engine's native build and the history's beside them,
+# ever stale. The engine's native build and the incubator's beside them,
 # copied there by the same build.
 job-worker.mjs
 /pipeline.mjs
-/history.mjs
+/incubator.mjs
 casas-engine.node
-casas-history.node
+casas-incubator.node
 
 # Local credentials for development (e.g. the dev object storage key pair).
 # Read from files by path, never committed.

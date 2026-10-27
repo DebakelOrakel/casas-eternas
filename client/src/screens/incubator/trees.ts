@@ -1,4 +1,4 @@
-import catalog from 'casas-history-data/catalog.json'
+import catalog from 'casas-incubator-data/catalog.json'
 import type { NicheSpec } from './plants'
 
 // THE INCUBATOR'S TREES (2026-10-25, a trial): the wood people cut just

@@ -1,5 +1,5 @@
 [package]
-name = "casas-history-wasm"
+name = "casas-incubator-wasm"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-casas-history = { path = "../casas-history" }
+casas-incubator = { path = "../casas-incubator" }
 # The engine's pins (casas-engine-wasm/Cargo.toml): `make engine` runs one
 # wasm-bindgen CLI over both builds.
 wasm-bindgen = "=0.2.129"

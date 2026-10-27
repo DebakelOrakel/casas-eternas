@@ -99,11 +99,11 @@ const handbook = (): Plugin => {
 const ENGINE_WASM = fileURLToPath(new URL('../engine/dist/wasm', import.meta.url))
 // And its constants for the pipeline versions (world/engineConstants.ts).
 const ENGINE_CONSTANTS = fileURLToPath(new URL('../engine/dist/constants.json', import.meta.url))
-// The incubator's history (docs/decisions/incubator-history-engine.md): its
+// The incubator (docs/decisions/incubator-history-engine.md): its
 // crate's data, the catalogs the client reads too.
-const HISTORY_DATA = fileURLToPath(new URL('../engine/crates/casas-history/data', import.meta.url))
+const INCUBATOR_DATA = fileURLToPath(new URL('../engine/crates/casas-incubator/data', import.meta.url))
 // And its WASM build and version, where `make engine` writes them.
-const HISTORY_WASM = fileURLToPath(new URL('../engine/dist/history', import.meta.url))
+const INCUBATOR_WASM = fileURLToPath(new URL('../engine/dist/incubator', import.meta.url))
 
 // The dev server's port is PINNED, and that is not cosmetic: browser storage
 // (OPFS, IndexedDB, caches) is scoped to the ORIGIN, port included. Vite's
@@ -116,7 +116,7 @@ const HISTORY_WASM = fileURLToPath(new URL('../engine/dist/history', import.meta
 export default defineConfig({
   plugins: [alwaysFullResponses(), handbook()],
   resolve: {
-    alias: { 'casas-engine-wasm': ENGINE_WASM, 'casas-engine-constants': ENGINE_CONSTANTS, 'casas-history-data': HISTORY_DATA, 'casas-history-wasm': HISTORY_WASM },
+    alias: { 'casas-engine-wasm': ENGINE_WASM, 'casas-engine-constants': ENGINE_CONSTANTS, 'casas-incubator-data': INCUBATOR_DATA, 'casas-incubator-wasm': INCUBATOR_WASM },
   },
   define: {
     __CASAS_BUILD__: JSON.stringify(BUILD),

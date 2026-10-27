@@ -9,16 +9,16 @@
 // while the TypeScript the crate was ported from still stood beside it and
 // gave the same bits (2026-10-27; and on Morvane, the whole H1 alike); it
 // is recorded again only on purpose, with --record, when the history is
-// meant to change (and the history's version with it: a tuning changed
-// changes it by itself, the code changed by HISTORY_ALGO_VERSION). And the worlds must reach
+// meant to change (and the incubator's version with it: a tuning changed
+// changes it by itself, the code changed by INCUBATOR_ALGO_VERSION). And the worlds must reach
 // what they are there to test (`reaches`), or the check passes on less than
 // it claims.
 //
-//   node engine/scripts/historySmoke.mjs [--record]
+//   node engine/scripts/incubatorSmoke.mjs [--record]
 //
 // The native build (the job worker's) runs the same worlds and must give
-// the WASM's bits. Needs `make engine` (engine/dist/history,
-// engine/dist/casas-history.node).
+// the WASM's bits. Needs `make engine` (engine/dist/incubator,
+// engine/dist/casas-incubator.node).
 
 import { createHash } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -26,10 +26,10 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 const dist = new URL('../dist/', import.meta.url)
-const wasm = await import(new URL('history/casas-history.js', dist).href)
-await wasm.default({ module_or_path: await readFile(new URL('history/casas-history_bg.wasm', dist)) })
+const wasm = await import(new URL('incubator/casas-incubator.js', dist).href)
+await wasm.default({ module_or_path: await readFile(new URL('incubator/casas-incubator_bg.wasm', dist)) })
 // The native build, the job worker's: the same bits as the WASM's.
-const native = createRequire(import.meta.url)(fileURLToPath(new URL('casas-history.node', dist)))
+const native = createRequire(import.meta.url)(fileURLToPath(new URL('casas-incubator.node', dist)))
 
 const CLIENT = fileURLToPath(new URL('../../client', import.meta.url))
 const { createServer } = await import(new URL('../../client/node_modules/vite/dist/node/index.js', import.meta.url).href)
@@ -43,7 +43,7 @@ await server.close()
 
 let failed = false
 const fail = (message) => {
-  console.error(`history: ${message}`)
+  console.error(`incubator: ${message}`)
   failed = true
 }
 const bytesOf = (v) => Buffer.from(v.buffer, v.byteOffset, v.byteLength)
@@ -167,7 +167,7 @@ function wasmCells(c, build = wasm) {
   return new build.Incubator(c.kind === 'sphere', c.spacingKm, c.width, c.height, c.nodes, c.nodeW, c.nodeH, c.land, c.biome, c.koppen, c.z, c.lakeDepth, ecology, present, c.rivers.points, c.rivers.lengths, c.rivers.regimes)
 }
 
-const GOLDEN = new URL('historySmoke.golden.json', import.meta.url)
+const GOLDEN = new URL('incubatorSmoke.golden.json', import.meta.url)
 const golden = process.argv.includes('--record') ? null : JSON.parse(await readFile(GOLDEN, 'utf8'))
 // The WASM's outputs hashed, against the reference.
 const hashes = {}
@@ -233,7 +233,7 @@ for (const kind of ['torus', 'sphere']) {
     }
   }
   const count = (k) => history.log.filter((e) => e.kind === k).length
-  console.log(`history: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
+  console.log(`incubator: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
   // The native build on the same world.
   t0 = performance.now()
   const nat = wasmCells(world.cells, native)
@@ -250,7 +250,7 @@ for (const kind of ['torus', 'sphere']) {
     settlement: hashOf(natSettled),
   }
   for (const [part, h] of Object.entries(natHashes)) if (h !== hashes[`${kind} ${part}`]) fail(`${kind} ${part}: the native build differs from the WASM's`)
-  console.log(`history: ${kind} — the native build in ${Math.round(natMs)} ms`)
+  console.log(`incubator: ${kind} — the native build in ${Math.round(natMs)} ms`)
   if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'settlement']) {
     const key = `${kind} ${part}`
     if (golden[key] !== hashes[key]) fail(`${key}: not the reference's (${hashes[key].slice(0, 12)} against ${String(golden[key]).slice(0, 12)})`)
@@ -264,7 +264,7 @@ const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'centre 3', 'dome
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')
-  console.log('history: recorded the reference')
+  console.log('incubator: recorded the reference')
 }
 if (failed) process.exit(1)
-console.log(golden ? 'history: the WASM build gives the reference\'s bits' : 'history: recorded')
+console.log(golden ? 'incubator: the WASM build gives the reference\'s bits' : 'incubator: recorded')

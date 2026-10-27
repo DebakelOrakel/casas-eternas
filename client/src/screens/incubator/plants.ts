@@ -1,8 +1,8 @@
-import catalog from 'casas-history-data/catalog.json'
+import catalog from 'casas-incubator-data/catalog.json'
 import type { KoppenCode } from '../../generator/climate/koppen'
 
 // A trapezoid [a, b, c, d]: 0 below a, up to 1 at b, 1 to c, down to 0 at d
-// (casas-history habitat.rs trapezoid).
+// (casas-incubator habitat.rs trapezoid).
 export type Trapezoid = readonly [number, number, number, number]
 
 // THE INCUBATOR'S PLANTS (2026-10-25, a trial): what people eat or use of
@@ -41,8 +41,8 @@ export type Trapezoid = readonly [number, number, number, number]
 // The weights are first guesses from the real species' ranges: 1 the main
 // classes, about 0.5 the edge.
 //
-// The catalog itself is data since 2026-10-26 (casas-history's
-// data/catalog.json): the history's crate reads it as this client does
+// The catalog itself is data since 2026-10-26 (casas-incubator's
+// data/catalog.json): the incubator's crate reads it as this client does
 // (docs/decisions/incubator-history-engine.md). A comment that stood before
 // an entry is its `note`.
 

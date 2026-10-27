@@ -50,10 +50,10 @@ const bakerVersionTimeout = 5 * time.Second
 // image's pipeline something you read off it in a second rather than infer
 // from a cache that never hits.
 //
-// The HISTORY version is the same kind of key for the incubator's history
-// (H1, docs/decisions/incubator-history-engine.md): its tasks have a route
-// of their own, and a history's module of another version than the
-// client's writes H1 under a key the incubator never asks for.
+// The INCUBATOR version is the same kind of key for the incubator's
+// histories (H1, docs/decisions/incubator-history-engine.md): their tasks
+// have a route of their own, and an incubator module of another version
+// than the client's writes H1 under a key the incubator never asks for.
 //
 // Text only, on purpose: the machine-readable answer already exists and is
 // better placed — GET /v1/capabilities carries the same build string from a
@@ -61,7 +61,7 @@ const bakerVersionTimeout = 5 * time.Second
 // second format here would be a second surface saying the same thing.
 var VersionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Prints the build, the API version, the bake pipeline and the history this binary carries.",
+	Short: "Prints the build, the API version, the bake pipeline and the incubator this binary carries.",
 	Long: `Prints what this binary is.
 
 The pipeline version is the one worth reading: artifacts are addressed by it,
@@ -72,9 +72,9 @@ installation would actually run. A world records the same version as the one
 that made it, and this installation makes level 1 only of a world that records
 this one.
 
-The history version is the incubator's history's (H1): read from the history's
-module beside the bundle (history.mjs), it names the route the history's jobs
-take and the version their artifacts are keyed by.
+The incubator version is the incubator's (its histories, H1): read from the
+incubator's module beside the bundle (incubator.mjs), it names the route the
+history jobs take and the version their artifacts are keyed by.
 
 A running server reports the same build string at GET /v1/capabilities.`,
 	Args: cobra.NoArgs,
@@ -90,13 +90,13 @@ func RunVersion(cmd *cobra.Command, args []string) error {
 	// The program name as a bare header, then five labelled lines. The build is
 	// labelled like the rest rather than sharing the header's line: it is one
 	// of five versions this binary carries, and singling it out typographically
-	// suggests the others are footnotes — the pipeline and the history in
+	// suggests the others are footnotes — the pipeline and the incubator in
 	// particular are the ones worth reading.
 	fmt.Fprintf(out, "casas-eternas\n")
 	fmt.Fprintf(out, "  binary    %s\n", buildVersion)
 	fmt.Fprintf(out, "  api       %s\n", server.APIPrefix)
 	fmt.Fprintf(out, "  pipeline  %s\n", pipelineLine(cmd))
-	fmt.Fprintf(out, "  history   %s\n", historyLine(cmd))
+	fmt.Fprintf(out, "  incubator %s\n", incubatorLine(cmd))
 	fmt.Fprintf(out, "  go        %s %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	return nil
 }
@@ -122,10 +122,10 @@ func pipelineLine(cmd *cobra.Command) string {
 	return fmt.Sprintf("%s (%s)", pipeline, path)
 }
 
-// historyLine is pipelineLine for the history's module beside the bundle:
+// incubatorLine is pipelineLine for the incubator's module beside the bundle:
 // `none` where none is shipped, which is as valid as a binary without a
 // bundle.
-func historyLine(cmd *cobra.Command) string {
+func incubatorLine(cmd *cobra.Command) string {
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Sprintf("unknown (%v)", err)
@@ -133,12 +133,12 @@ func historyLine(cmd *cobra.Command) string {
 	path := workerPath(cfg.Jobs.Worker)
 	ctx, cancel := context.WithTimeout(cmd.Context(), bakerVersionTimeout)
 	defer cancel()
-	history, err := jobs.HistoryVersion(ctx, path)
+	version, err := jobs.IncubatorVersion(ctx, path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Sprintf("none (%s)", jobs.HistoryModule(path))
+		return fmt.Sprintf("none (%s)", jobs.IncubatorModule(path))
 	}
 	if err != nil {
 		return fmt.Sprintf("unknown (%v)", err)
 	}
-	return fmt.Sprintf("%s (%s)", history, jobs.HistoryModule(path))
+	return fmt.Sprintf("%s (%s)", version, jobs.IncubatorModule(path))
 }

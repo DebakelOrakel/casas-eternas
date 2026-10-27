@@ -69,7 +69,7 @@ pub fn create_field_mesh(domain: &Domain, spacing_m: f64) -> FieldMesh {
 /// `createFieldMesh(domain, spacingM, relax)`: `relax` on the sphere is the
 /// centroidal relaxation (the fields'); false takes the lattice as cut
 /// (mesh/lattice.rs geodesic_lattice), for a fine mesh made in seconds — the
-/// incubator's cells (casas-history).
+/// incubator's cells (casas-incubator).
 pub fn create_field_mesh_as(domain: &Domain, spacing_m: f64, relax: bool) -> FieldMesh {
     let unit_m = domain.metres_per_unit;
     let mut tri = if domain.is_sphere() {

@@ -11,7 +11,7 @@ import { LEVEL_ECOLOGY, type CellInput } from './cellsShared'
 // WHAT A HISTORY IS RUN FROM (2026-10-27): the chart's node map, the
 // cells' input, the rain — made the same way in the incubator (its chart
 // worker, its worker) and in the history's job (client/scripts/
-// historyPipeline.ts), so the two give the same bits under the same H1 key.
+// incubatorPipeline.ts), so the two give the same bits under the same H1 key.
 // No DOM, no i18n: the job worker bundles it.
 
 // The chart the level is painted on, texels: 2.4 km a texel at the
@@ -76,12 +76,12 @@ export function cellInputOf(kind: CellInput['kind'], width: number, height: numb
   }
 }
 
-// CELL_ECOLOGY's order (casas-history habitat.rs): the fields the crate
+// CELL_ECOLOGY's order (casas-incubator habitat.rs): the fields the crate
 // takes, one after the other, a bit each.
 const CELL_ECOLOGY = ['game', 'carryingCapacity', 'arable', 'pasture', 'fish', 'toolStone', 'salt', 'copper'] as const
 
-// The crate's incubator, as both its builds have it (casas-history-wasm,
-// casas-history-node): what the history's run asks of it.
+// The crate's incubator, as both its builds have it (casas-incubator-wasm,
+// casas-incubator-node): what the history's run asks of it.
 export interface HistoryIncubator {
   count(): number
   growFlora(seed: number): void

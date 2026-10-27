@@ -65,7 +65,7 @@ interface Job {
   // its column and row on the world's tile grid. Level 1 of the world must
   // be in the artifact store — the tile is built on it.
   tile?: { x: number; y: number }
-  // For a history (stage 1, the history's module, historyPipeline.ts): its
+  // For a history (stage 1, the incubator's module, incubatorPipeline.ts): its
   // origin's cell and the pipeline of its level 1.
   history?: { origin: number; level: string }
   // For a tile: the tiles of its level upstream of it, whose outflow it

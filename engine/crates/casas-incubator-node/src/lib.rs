@@ -1,22 +1,22 @@
-//! The native build of the incubator's history for the Node job worker
+//! The native build of the incubator for the Node job worker
 //! (docs/decisions/incubator-history-engine.md, fork 3 B). `make engine`
-//! copies it to `engine/dist/casas-history.node`. The same object as the
-//! WASM build's (`casas-history-wasm`), and the same bits.
+//! copies it to `engine/dist/casas-incubator.node`. The same object as the
+//! WASM build's (`casas-incubator-wasm`), and the same bits.
 
-use casas_history::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M};
-use casas_history::flora::{Layer, grow_flora, populate};
-use casas_history::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
-use casas_history::history::{RainChart, carrying_of, origin_of, run_history};
-use casas_history::pack::{pack_history, pack_settled};
-use casas_history::settle::settle_history;
-use casas_history::simulation::{SPAN_YEARS, STEP_YEARS, ice_distance};
+use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M};
+use casas_incubator::flora::{Layer, grow_flora, populate};
+use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
+use casas_incubator::history::{RainChart, carrying_of, origin_of, run_history};
+use casas_incubator::pack::{pack_history, pack_settled};
+use casas_incubator::settle::settle_history;
+use casas_incubator::simulation::{SPAN_YEARS, STEP_YEARS, ice_distance};
 use napi::bindgen_prelude::{Float32Array, Float64Array, Int32Array, Uint8Array, Uint32Array};
 use napi_derive::napi;
 
-/// The history's version (`casas_history::tuning::history_version`).
+/// The incubator's version (`casas_incubator::tuning::incubator_version`).
 #[napi]
 pub fn version() -> String {
-    casas_history::tuning::history_version()
+    casas_incubator::tuning::incubator_version()
 }
 
 /// The world's cold over the span, every STEP_YEARS.

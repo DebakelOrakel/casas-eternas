@@ -1,5 +1,5 @@
 import { Biome } from '../../generator/climate/biomes'
-import catalog from 'casas-history-data/catalog.json'
+import catalog from 'casas-incubator-data/catalog.json'
 import type { NicheSpec } from './plants'
 
 // THE INCUBATOR'S ANIMALS (2026-10-25, a trial): the wild animals people

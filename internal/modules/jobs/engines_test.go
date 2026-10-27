@@ -184,29 +184,29 @@ func keys(m map[string][]byte) []string {
 	return out
 }
 
-// A history's version has its own release, with the history's native
+// The incubator's version has its own release, with the incubator's native
 // build in it: a file not in `engine-<version>` is looked for in
-// `history-<version>`.
-func TestAHistoryHasItsOwnRelease(t *testing.T) {
-	body := []byte("the history's module")
+// `incubator-<version>`.
+func TestTheIncubatorHasItsOwnRelease(t *testing.T) {
+	body := []byte("the incubator's module")
 	sum := sha256.Sum256(body)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /history-"+testPipeline+"/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /incubator-"+testPipeline+"/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(hex.EncodeToString(sum[:]) + "  pipeline.mjs\n"))
 	})
-	mux.HandleFunc("GET /history-"+testPipeline+"/pipeline.mjs", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /incubator-"+testPipeline+"/pipeline.mjs", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(body)
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	got, err := fetchReleaseFile(context.Background(), server.URL, testPipeline, "pipeline.mjs")
 	if err != nil || string(got) != string(body) {
-		t.Errorf("from the history's release: %q, %v", got, err)
+		t.Errorf("from the incubator's release: %q, %v", got, err)
 	}
 	if _, err := fetchReleaseFile(context.Background(), server.URL, testPipeline, "constants.json"); !errors.Is(err, errNoRelease) {
 		t.Errorf("a file in neither release: %v", err)
 	}
-	if !releaseFile.MatchString("casas-history-linux-amd64.node") {
-		t.Error("the history's native build is no release file")
+	if !releaseFile.MatchString("casas-incubator-linux-amd64.node") {
+		t.Error("the incubator's native build is no release file")
 	}
 }

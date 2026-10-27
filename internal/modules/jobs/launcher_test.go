@@ -98,16 +98,16 @@ func TestTheLauncherChoosesThePipelineWithTheWork(t *testing.T) {
 }
 
 // The server names the pipelines that are histories': the launcher then
-// fetches the history's native build too.
+// fetches the incubator's native build too.
 func TestTheLauncherKnowsAHistoryByTheServer(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/jobs/pipelines", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(pipelinesResponse{Pipelines: map[string]int{"v0-other": 2}, Histories: []string{"v0-other"}})
+		_ = json.NewEncoder(w).Encode(pipelinesResponse{Pipelines: map[string]int{"v0-other": 2}, Incubators: []string{"v0-other"}})
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	if got, isHistory := choosePipeline(context.Background(), server.URL+"/v1", "v0-own", ""); got != "v0-other" || !isHistory {
-		t.Errorf("chose %s, a history %v; want v0-other, a history", got, isHistory)
+	if got, isIncubator := choosePipeline(context.Background(), server.URL+"/v1", "v0-own", ""); got != "v0-other" || !isIncubator {
+		t.Errorf("chose %s, a history %v; want v0-other, a history", got, isIncubator)
 	}
 }
 

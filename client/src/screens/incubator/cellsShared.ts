@@ -7,15 +7,15 @@ import type { WoodUse } from './trees'
 
 // WHAT THE INCUBATOR'S WORKER AND ITS SCREEN SHARE (2026-10-27): the cells'
 // input, the layers the flora and the fauna grow, the people's spread, the
-// settlement — the shapes of the worker's answers, which casas-history
+// settlement — the shapes of the worker's answers, which casas-incubator
 // computes (docs/decisions/incubator-history-engine.md). Its own module for
 // the reason peopleShared.ts gives.
 
 // The ecology's fields the habitat carries besides the game and the
-// carrying capacity (casas-history habitat.rs CELL_ECOLOGY).
+// carrying capacity (casas-incubator habitat.rs CELL_ECOLOGY).
 export const LEVEL_ECOLOGY: readonly EcologyFieldId[] = ['arable', 'pasture', 'fish', 'toolStone', 'salt', 'copper']
 
-// What the cells are made from (casas-history habitat.rs CellInput).
+// What the cells are made from (casas-incubator habitat.rs CellInput).
 export interface CellInput {
   kind: 'sphere' | 'torus'
   // The world raster's size, the domain's.
@@ -116,5 +116,5 @@ export interface SettleResult {
   landmass: Int32Array
 }
 
-// The people's count every POPULATION_STEP years (casas-history).
+// The people's count every POPULATION_STEP years (casas-incubator).
 export const POPULATION_STEP = 500

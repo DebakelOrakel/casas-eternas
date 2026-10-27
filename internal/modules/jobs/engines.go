@@ -30,7 +30,7 @@ import (
 // /v1/jobs/engines/{pipeline}/{file} answers with a link to the file in the
 // artifact store. On a miss it downloads the file from the release of the
 // pipeline (releaseTags: `engine-<pipeline>`, .github/workflows/
-// engine-release.yml; a history's `history-<version>`),
+// engine-release.yml; the incubator's `incubator-<version>`),
 // checks it against the release's SHA256SUMS, and stores it first. A
 // worker never talks to the release's host.
 
@@ -49,16 +49,16 @@ var ErrNoPipelineFile = errors.New("no such pipeline file")
 
 // releaseFile is what a file of a release may be called: the names the
 // release action gives them.
-var releaseFile = regexp.MustCompile(`^(pipeline\.mjs|casas-(engine|history)-[a-z0-9]+-[a-z0-9]+\.node|casas-engine-wasm\.tar\.gz|constants\.json|pipeline\.json)$`)
+var releaseFile = regexp.MustCompile(`^(pipeline\.mjs|casas-(engine|incubator)-[a-z0-9]+-[a-z0-9]+\.node|casas-engine-wasm\.tar\.gz|constants\.json|pipeline\.json)$`)
 
 // releaseTags are the releases a pipeline's files may be in, in the order
-// asked: `engine-<pipeline>`, then `history-<pipeline>` — a history's
-// version (casas-history history_version, the pipeline of its tasks,
+// asked: `engine-<pipeline>`, then `incubator-<pipeline>` — the incubator's
+// version (casas-incubator incubator_version, the pipeline of its tasks,
 // ScopeHistory) has the form of a pipeline's, and its release
-// (.github/workflows/history-release.yml) holds the history's native build
+// (.github/workflows/incubator-release.yml) holds the incubator's native build
 // beside the engine's. The versions are hashes: one names one release.
 func releaseTags(pipeline string) []string {
-	return []string{"engine-" + pipeline, "history-" + pipeline}
+	return []string{"engine-" + pipeline, "incubator-" + pipeline}
 }
 
 const (
@@ -83,17 +83,17 @@ func AnonymousReads(r *http.Request) bool {
 }
 
 // pipelinesResponse is GET /v1/jobs/pipelines: the open work per pipeline,
-// and which of them are histories' (ScopeHistory): their module needs the
-// history's native build beside it.
+// and which of them are the incubator's (ScopeHistory): their module needs
+// the incubator's native build beside it.
 type pipelinesResponse struct {
-	Pipelines map[string]int `json:"pipelines"`
-	Histories []string       `json:"histories,omitempty"`
+	Pipelines  map[string]int `json:"pipelines"`
+	Incubators []string       `json:"incubators,omitempty"`
 }
 
 func (m *Module) handlePipelines(w http.ResponseWriter, _ *http.Request) {
 	answer := pipelinesResponse{Pipelines: map[string]int{}}
 	if m.coord != nil {
-		answer.Pipelines, answer.Histories = m.coord.pipelineWork()
+		answer.Pipelines, answer.Incubators = m.coord.pipelineWork()
 	}
 	httpjson.Write(w, http.StatusOK, answer)
 }

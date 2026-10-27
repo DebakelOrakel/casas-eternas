@@ -488,7 +488,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // marks.
   const flowOn: Record<string, boolean> = { 'flow:temperature': false, 'flow:pressure': false, 'flow:wind': false, 'flow:currents': false, 'flow:iceAge': false }
   // The world's climate history (climateHistory.ts), for the ice's overlay.
-  // The world's cold over the span (casas-history, from its seed): at a
+  // The world's cold over the span (casas-incubator, from its seed): at a
   // time, and the ice's reach and the sea's drop then.
   let iceHistory: { cold(t: number): number; iceReachKm: number; seaDropM(t: number): number } | null = null
   let flowMarked: { charts: RefinedCharts; view: WorldView; wind: boolean; currents: boolean } | null = null
@@ -1170,7 +1170,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   function sayCounts(): void {
     const now = settledNow()
-    // A history's people are its own count (casas-history), between the
+    // A history's people are its own count (casas-incubator), between the
     // curve's samples linearly; before its first kept state comes, the
     // density's.
     let persons = 0
@@ -1627,7 +1627,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     return null
   }
-  // THE PEOPLE (casas-history, DES-0033): the history from the origin
+  // THE PEOPLE (casas-incubator, DES-0033): the history from the origin
   // clicked or chosen (peopleOrigin; -1: the worker's choice), run — shown
   // only, until it is saved (saveHistory) — or, `restore`, the server's
   // H1 of it taken in a run's place. The rules' preview, shown before a history until
@@ -1674,7 +1674,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   // THE H1 ARTIFACT (world/historyArtifacts.ts), on the server: a history
   // run in the browser is shown only; saved, a job runs it on the server
-  // (the history's route, scripts/historyPipeline.ts) and keeps it as H1
+  // (the history's route, scripts/incubatorPipeline.ts) and keeps it as H1
   // there — the same bits, the same key. A world shown with a history on
   // the server for its origin loads it.
   async function saveHistory(): Promise<void> {
@@ -1777,7 +1777,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     progressPill.hide()
     return bytes
   }
-  // The world's cold over the span from the worker (casas-history), every
+  // The world's cold over the span from the worker (casas-incubator), every
   // stepYears: on the chronicle's axis every 500 years, and for the ice's
   // overlay.
   async function loadColdCurve(world: World): Promise<void> {
@@ -2350,7 +2350,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     pressureShown = null
     historyFrames = null
     // The world's climate history on the chronicle's axis, every 500 years,
-    // and for the ice's overlay (the worker's: casas-history).
+    // and for the ice's overlay (the worker's: casas-incubator).
     iceHistory = null
     void loadColdCurve(world)
     void loadClimate(world, domain, kind === 'sphere' ? domain.metresAround / world.width : domain.metresPerUnit)

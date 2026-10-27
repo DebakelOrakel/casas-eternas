@@ -130,7 +130,7 @@ every step. Why a mesh and why these choices:
 `incubatorWorker.ts` holds the habitat and what each step made, and
 answers the screen's requests in turn: the cells, then the flora, the
 fauna, the people, the settlement. Since 2026-10-27 all of it is computed
-by the history's crate, `casas-history`, its WASM build in the worker
+by the incubator's crate, `casas-incubator`, its WASM build in the worker
 ([DEC-0048](../decisions/incubator-history-engine.md)); the modules named
 below were its TypeScript and are gone, their reasoning kept in the
 crate's files. A later step reads the earlier ones in

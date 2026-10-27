@@ -1,5 +1,5 @@
-import initHistory, { coldCurve, iceReachKm, Incubator, seaDropM } from 'casas-history-wasm/casas-history.js'
-import historyWasmUrl from 'casas-history-wasm/casas-history_bg.wasm?url'
+import initHistory, { coldCurve, iceReachKm, Incubator, seaDropM } from 'casas-incubator-wasm/casas-incubator.js'
+import historyWasmUrl from 'casas-incubator-wasm/casas-incubator_bg.wasm?url'
 import { ANIMALS } from './animals'
 import type { AnimalLayer, CellInput, PeopleResult, PlantLayer, SettleResult, TreeLayer } from './cellsShared'
 import { incubatorOf } from './historyInput'
@@ -8,7 +8,7 @@ import { PEOPLE_FRAME_STEP } from './peopleShared'
 import { PLANTS } from './plants'
 import { TREES } from './trees'
 
-// THE INCUBATOR'S WORKER (2026-10-26; on casas-history since 2026-10-27,
+// THE INCUBATOR'S WORKER (2026-10-26; on casas-incubator since 2026-10-27,
 // docs/decisions/incubator-history-engine.md): the crate's WASM build holds
 // the habitat's cells, made once a world, and what is grown and run on
 // them in turn — the flora, the fauna, the history, its settlement — each
@@ -51,7 +51,7 @@ export type IncubatorAnswer =
   | { type: 'pack'; bytes: ArrayBuffer | null; ms: number }
   | { type: 'failed'; message: string }
 
-// The cold curve's step (casas-history STEP_YEARS).
+// The cold curve's step (casas-incubator STEP_YEARS).
 const COLD_STEP_YEARS = 25
 
 const worker = self as unknown as Worker

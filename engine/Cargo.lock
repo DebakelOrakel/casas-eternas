@@ -52,7 +52,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "casas-history"
+name = "casas-incubator"
 version = "0.1.0"
 dependencies = [
  "casas-engine",
@@ -62,20 +62,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "casas-history-node"
+name = "casas-incubator-node"
 version = "0.1.0"
 dependencies = [
- "casas-history",
+ "casas-incubator",
  "napi",
  "napi-build",
  "napi-derive",
 ]
 
 [[package]]
-name = "casas-history-wasm"
+name = "casas-incubator-wasm"
 version = "0.1.0"
 dependencies = [
- "casas-history",
+ "casas-incubator",
  "js-sys",
  "wasm-bindgen",
 ]

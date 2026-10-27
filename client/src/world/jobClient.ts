@@ -1,6 +1,6 @@
 import { apiBase } from '../server/worldClient'
 import { WORLD_PIPELINE } from './worldPipeline'
-import { HISTORY_VERSION } from './historyArtifacts'
+import { INCUBATOR_VERSION } from './historyArtifacts'
 import type { PipelineVersions } from './levels'
 import { getServerStatus } from '../server/serverStatus'
 import { authFetch, hasSession } from '../server/session'
@@ -165,7 +165,7 @@ const TILE_PHASE_BANDS: Record<string, [number, number]> = {
   erosion: [0.3, 1],
 }
 
-// A history's (scripts/historyPipeline.ts): the world and level 1 read,
+// A history's (scripts/incubatorPipeline.ts): the world and level 1 read,
 // the cells, the run, the H1 written. From Morvane's run on a Mac
 // (2026-10-27): the reads 2 s, the cells 12 s with the chart's node map,
 // the run 11 s.
@@ -247,7 +247,7 @@ export async function commissionBake(
 // pipeline `level` (world/historyArtifacts.ts): its job, on the route of
 // this client's history version (internal/modules/jobs, ScopeHistory).
 export function commissionHistory(worldUid: string, origin: number, level: string): Promise<CommissionOutcome> {
-  return orderJob({ worldUid, stage: 1, scope: { kind: 'history', id: origin }, level, pipeline: HISTORY_VERSION })
+  return orderJob({ worldUid, stage: 1, scope: { kind: 'history', id: origin }, level, pipeline: INCUBATOR_VERSION })
 }
 
 // POST /v1/jobs with `body`, its answer as an outcome.

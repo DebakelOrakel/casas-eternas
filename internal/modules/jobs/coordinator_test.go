@@ -325,12 +325,12 @@ func TestCoordinatorPublishesUnderThePipeline(t *testing.T) {
 		t.Errorf("%d tasks for a pipeline with no job, want 0", got)
 	}
 	submitted(t, c, reg, Request{WorldUID: "u", Pipeline: "v1-history", Stage: 1, Scope: Scope{Kind: ScopeHistory, ID: 3}, Level: "v1-level"})
-	got, histories := c.pipelineWork()
+	got, incubators := c.pipelineWork()
 	if len(got) != 3 || got[testPipeline] != 1 || got["v1-other"] != 1 || got["v1-history"] != 1 {
 		t.Errorf("work per pipeline = %v", got)
 	}
-	if len(histories) != 1 || histories[0] != "v1-history" {
-		t.Errorf("histories = %v, want [v1-history]", histories)
+	if len(incubators) != 1 || incubators[0] != "v1-history" {
+		t.Errorf("incubators = %v, want [v1-history]", incubators)
 	}
 }
 

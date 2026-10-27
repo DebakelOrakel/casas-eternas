@@ -42,7 +42,7 @@ const (
 	// ScopeHistory is the incubator's history of the world from one origin
 	// (docs/decisions/incubator-history-engine.md): ID is the origin's
 	// cell, the stage is 1, the level it runs on. Its pipeline is the
-	// history's version (casas-history HISTORY_VERSION), a route of its
+	// history's version (casas-incubator INCUBATOR_VERSION), a route of its
 	// own: the history changes, the level's engine does not.
 	ScopeHistory ScopeKind = "history"
 )

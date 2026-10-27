@@ -113,22 +113,22 @@ func WorkerVersion(ctx context.Context, bakerPath string) (string, error) {
 	return workerVersion(ctx, bakerPath, "")
 }
 
-// HistoryModule is where the history's module is shipped: history.mjs
-// beside the bundle (client/scripts/historyPipeline.ts).
-func HistoryModule(bakerPath string) string {
-	return filepath.Join(filepath.Dir(bakerPath), "history.mjs")
+// IncubatorModule is where the incubator's module is shipped: incubator.mjs
+// beside the bundle (client/scripts/incubatorPipeline.ts).
+func IncubatorModule(bakerPath string) string {
+	return filepath.Join(filepath.Dir(bakerPath), "incubator.mjs")
 }
 
-// HistoryVersion asks the bundle which history its history's module IS
-// (`job-worker.mjs --version --pipeline history.mjs`): the route of the
-// history's tasks (ScopeHistory). An error wrapping fs.ErrNotExist where no
-// module is shipped. The same silent failure as WorkerVersion guards
-// against: a module of another history version writes H1 under a key the
-// incubator never asks for.
-func HistoryVersion(ctx context.Context, bakerPath string) (string, error) {
-	module := HistoryModule(bakerPath)
+// IncubatorVersion asks the bundle which incubator its incubator module IS
+// (`job-worker.mjs --version --pipeline incubator.mjs`): the route of the
+// histories' tasks (ScopeHistory). An error wrapping fs.ErrNotExist where
+// no module is shipped. The same silent failure as WorkerVersion guards
+// against: a module of another incubator version writes H1 under a key
+// the incubator never asks for.
+func IncubatorVersion(ctx context.Context, bakerPath string) (string, error) {
+	module := IncubatorModule(bakerPath)
 	if _, err := os.Stat(module); err != nil {
-		return "", fmt.Errorf("no history module at %s: %w", module, err)
+		return "", fmt.Errorf("no incubator module at %s: %w", module, err)
 	}
 	return workerVersion(ctx, bakerPath, module)
 }

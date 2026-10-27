@@ -1,8 +1,8 @@
-//! The incubator's history (docs/decisions/incubator-history-engine.md):
+//! The incubator (docs/decisions/incubator-history-engine.md):
 //! a port of `client/src/screens/incubator/` that gives its bits — the
 //! habitat's cells, the flora, the fauna, the simulated history and its
 //! settlement, the H1 artifact's bytes. Plain data in, plain data out; the
-//! bindings (`casas-history-wasm`) wrap it.
+//! bindings (`casas-incubator-wasm`) wrap it.
 
 // A port keeps the TypeScript's loops over indices, as the engine does.
 #![allow(clippy::needless_range_loop)]

@@ -513,7 +513,7 @@ world list and the artifact window show it as H1.
 
 **The crate** (2026-10-27, [DEC-0048](../decisions/incubator-history-engine.md)):
 the history and everything it stands on — the cells, the flora, the
-fauna, the settlement — run in `casas-history`, its WASM build in the
+fauna, the settlement — run in `casas-incubator`, its WASM build in the
 incubator's worker; the TypeScript went to detMath first, and the crate
 gives its bits (the whole H1 on Morvane, byte for byte). The rules'
 preview went with it: a world shows its history at once, kept or run. On
@@ -523,6 +523,6 @@ history 0.1 s (0.3 s in Node, up to 10 s in Safari).
 **On the server** (2026-10-27, [DEC-0048](../decisions/incubator-history-engine.md)
 forks 3 and 4): the browser no longer keeps H1. It runs a history and
 shows it; saved, a job runs it natively and puts H1 in the server's store
-(`client/scripts/historyPipeline.ts`, on the history's own route). A world
+(`client/scripts/incubatorPipeline.ts`, on the incubator's own route). A world
 opens with the history saved last on the server. On Morvane the job's H1
 is the browser's, byte for byte, in some 24 s.

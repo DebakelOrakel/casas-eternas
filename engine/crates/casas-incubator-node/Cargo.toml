@@ -1,5 +1,5 @@
 [package]
-name = "casas-history-node"
+name = "casas-incubator-node"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-casas-history = { path = "../casas-history" }
+casas-incubator = { path = "../casas-incubator" }
 napi = { version = "3", default-features = false, features = ["napi4"] }
 napi-derive = "3"
 

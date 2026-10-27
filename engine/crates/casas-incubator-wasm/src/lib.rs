@@ -1,22 +1,22 @@
-//! The WASM build of the incubator's history for the browser
+//! The WASM build of the incubator for the browser
 //! (docs/decisions/incubator-history-engine.md, fork 3). `make engine` runs
-//! wasm-bindgen over it into `engine/dist/history/`. One object, the
+//! wasm-bindgen over it into `engine/dist/incubator/`. One object, the
 //! incubator's worker's state: the habitat made once a world, then what is
 //! grown and run on it.
 
-use casas_history::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M};
-use casas_history::flora::{Layer, grow_flora, populate};
-use casas_history::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
-use casas_history::history::{RainChart, carrying_of, origin_of, run_history};
-use casas_history::pack::{pack_history, pack_settled};
-use casas_history::settle::settle_history;
-use casas_history::simulation::{SPAN_YEARS, STEP_YEARS, SimulationResult, ice_distance};
+use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M};
+use casas_incubator::flora::{Layer, grow_flora, populate};
+use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
+use casas_incubator::history::{RainChart, carrying_of, origin_of, run_history};
+use casas_incubator::pack::{pack_history, pack_settled};
+use casas_incubator::settle::settle_history;
+use casas_incubator::simulation::{SPAN_YEARS, STEP_YEARS, SimulationResult, ice_distance};
 use wasm_bindgen::prelude::*;
 
-/// The history's version (`casas_history::tuning::history_version`).
+/// The incubator's version (`casas_incubator::tuning::incubator_version`).
 #[wasm_bindgen]
 pub fn version() -> String {
-    casas_history::tuning::history_version()
+    casas_incubator::tuning::incubator_version()
 }
 
 /// The world's cold over the span (climate_history.rs), every STEP_YEARS

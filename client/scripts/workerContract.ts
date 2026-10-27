@@ -5,8 +5,8 @@
 // relay, the tokens, the presence, the artifact store and the world over
 // HTTP or a directory, the compute thread. It is always the newest. The
 // pipeline module (workerPipeline.ts → pipeline.mjs, with its engine
-// casas-engine.node beside it; or the history's, historyPipeline.ts →
-// history.mjs) is what a task computes: the save's
+// casas-engine.node beside it; or the incubator's, incubatorPipeline.ts →
+// incubator.mjs) is what a task computes: the save's
 // decoding, the replay, the tile plan and bakes, the artifact formats and
 // their keys. It belongs to one pipeline version and is in that pipeline's
 // release, so a host of today runs the pipeline of any release.
@@ -41,7 +41,7 @@ export interface PipelineVersion {
 // things are (the host's) — internal/modules/jobs/spec.go.
 export interface PipelineTask {
   // 1: level 1 by replay; 2, 3: one tile of that level (`tile`); 1 with
-  // `history`: the history from an origin on level 1 (historyPipeline.ts).
+  // `history`: the history from an origin on level 1 (incubatorPipeline.ts).
   stage: number
   tile?: { x: number; y: number }
   // For a history: its origin's cell and the pipeline of its level 1.

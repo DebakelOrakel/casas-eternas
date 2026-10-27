@@ -1,12 +1,12 @@
-//! The history's tuning and its version, as the engine has them
+//! The incubator's tuning and its version, as the engine has them
 //! (`casas_engine_api::pipeline::constants`, world/identity.ts
 //! derivePipelineVersion): every constant a run's numbers depend on, by
 //! module, and the catalog (`data/catalog.json`); the version
-//! `v<HISTORY_ALGO_VERSION>-<hash of them>`. A change to a constant or to
+//! `v<INCUBATOR_ALGO_VERSION>-<hash of them>`. A change to a constant or to
 //! the catalog gives another version by itself; a change to the code that
 //! changes what a run gives, or to the packed form, raises
-//! HISTORY_ALGO_VERSION by hand. `make engine` writes both to
-//! `dist/history/` (constants.json, version.json).
+//! INCUBATOR_ALGO_VERSION by hand. `make engine` writes both to
+//! `dist/incubator/` (constants.json, version.json).
 
 use crate::{climate_history, habitat, log, niche, settle, simulation, travel};
 use serde_json::{Map, Value, json};
@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 /// or to the packed form (H1). The tuning is hashed beside it.
 ///
 /// v1 (2026-10-27): the history as the crate ported it from the client.
-pub const HISTORY_ALGO_VERSION: u32 = 1;
+pub const INCUBATOR_ALGO_VERSION: u32 = 1;
 
 // The constants of a module as (name, value) pairs.
 macro_rules! table {
@@ -135,15 +135,15 @@ fn hash_bytes(bytes: &[u8], seed_a: u32, seed_b: u32) -> (u32, u32) {
     (a, b)
 }
 
-/// The history's version: `v<HISTORY_ALGO_VERSION>-` and the hash of the
+/// The incubator's version: `v<INCUBATOR_ALGO_VERSION>-` and the hash of the
 /// tuning's leaves, `path=value` sorted and `|`-joined, as
 /// derivePipelineVersion hashes the pipeline's constants.
-pub fn history_version() -> String {
+pub fn incubator_version() -> String {
     let mut leaves = Vec::new();
     flatten(&constants(), "", &mut leaves);
     leaves.sort();
     let (a, b) = hash_bytes(leaves.join("|").as_bytes(), 0x811c_9dc5, 0x9e37_79b9);
-    format!("v{HISTORY_ALGO_VERSION}-{a:08x}{b:08x}")
+    format!("v{INCUBATOR_ALGO_VERSION}-{a:08x}{b:08x}")
 }
 
 #[cfg(test)]
@@ -151,7 +151,7 @@ mod tests {
     use super::*;
 
     // What is format, not tuning: codes and the order of fields the client
-    // shares. A change to them is HISTORY_ALGO_VERSION's.
+    // shares. A change to them is INCUBATOR_ALGO_VERSION's.
     const FORMAT: &[&str] = &[
         "CELL_ECOLOGY",
         "GAME",
@@ -168,7 +168,7 @@ mod tests {
         "FARMERS",
         "GOODS",
         "POPULATION_MARKS",
-        "HISTORY_ALGO_VERSION",
+        "INCUBATOR_ALGO_VERSION",
     ];
 
     // Every constant of the modules is in the table or is format: one

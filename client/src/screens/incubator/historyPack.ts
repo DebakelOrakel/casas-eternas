@@ -5,7 +5,7 @@ import type { LogEvent } from './historyLogShared'
 // a simulated history as one file, so a world opened again with the same
 // origin loads it instead of running it — the spread, the kept states, the
 // species' cells, the lifeways, the villages, the people's count, the
-// extinctions, the log. casas-history writes it (its pack.rs, since
+// extinctions, the log. casas-incubator writes it (its pack.rs, since
 // 2026-10-27; this file wrote it before, the crate's bytes are its); this
 // module reads it, and the crate's settlement of it.
 //
@@ -130,7 +130,7 @@ export function unpackHistory(buffer: ArrayBuffer): PackedHistory | null {
   }
 }
 
-// What casas-history's settlement of a history computes besides the
+// What casas-incubator's settlement of a history computes besides the
 // history's own (the crate's pack.rs pack_settled): the arrays by their
 // names in SettleResult, and the first trade; null where the bytes are not
 // such a pack.

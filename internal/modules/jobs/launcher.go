@@ -35,10 +35,10 @@ import (
 // end of the worker ends the launcher with the worker's code, and its
 // supervisor (the pool, Kubernetes) starts it again.
 //
-// A history's tasks have a pipeline of their own, the history's version
-// (ScopeHistory): its module is history.mjs beside the bundle, shipped as
-// pipeline.mjs is, or the one in its release (releaseTags), with the
-// history's native build beside the engine's.
+// A history's tasks (ScopeHistory) have a pipeline of their own, the
+// incubator's version: its module is incubator.mjs beside the bundle,
+// shipped as pipeline.mjs is, or the one in its release (releaseTags), with
+// the incubator's native build beside the engine's.
 
 // LauncherConfig is what the launcher runs with.
 type LauncherConfig struct {
@@ -79,19 +79,19 @@ func RunLauncher(ctx context.Context, cfg LauncherConfig) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// The shipped history module, where there is one.
-	history := HistoryModule(cfg.Bundle)
-	ownHistory, err := HistoryVersion(ctx, cfg.Bundle)
+	// The shipped incubator module, where there is one.
+	incubator := IncubatorModule(cfg.Bundle)
+	ownIncubator, err := IncubatorVersion(ctx, cfg.Bundle)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		slog.Warn("job worker: the shipped history module", "err", err)
+		slog.Warn("job worker: the shipped incubator module", "err", err)
 	}
 	for {
-		pipeline, isHistory := choosePipeline(ctx, serve.Jobs, own, ownHistory)
+		pipeline, isIncubator := choosePipeline(ctx, serve.Jobs, own, ownIncubator)
 		module := ""
-		if pipeline == ownHistory {
-			module = history
+		if pipeline == ownIncubator {
+			module = incubator
 		} else if pipeline != own {
-			module, err = pipelineModule(ctx, serve, cfg.CacheDir, cfg.Bundle, pipeline, isHistory)
+			module, err = pipelineModule(ctx, serve, cfg.CacheDir, cfg.Bundle, pipeline, isIncubator)
 			if err != nil {
 				slog.Warn("job worker: the module of another pipeline", "pipeline", pipeline, "err", err)
 				module, pipeline = "", own
@@ -106,10 +106,10 @@ func RunLauncher(ctx context.Context, cfg LauncherConfig) (int, error) {
 }
 
 // choosePipeline is the pipeline to serve: this installation's own while it
-// has work or nobody has any, else its own history's (empty: none) while
+// has work or nobody has any, else its own incubator's (empty: none) while
 // that has work, else the one with the most work. Without an answer from
-// the server, the own one. And whether the one chosen is a history's.
-func choosePipeline(ctx context.Context, jobsAPI, own, ownHistory string) (string, bool) {
+// the server, the own one. And whether the one chosen is an incubator's.
+func choosePipeline(ctx context.Context, jobsAPI, own, ownIncubator string) (string, bool) {
 	if jobsAPI == "" {
 		return own, false
 	}
@@ -122,8 +122,8 @@ func choosePipeline(ctx context.Context, jobsAPI, own, ownHistory string) (strin
 	if work[own] > 0 || len(work) == 0 {
 		return own, false
 	}
-	if ownHistory != "" && work[ownHistory] > 0 {
-		return ownHistory, true
+	if ownIncubator != "" && work[ownIncubator] > 0 {
+		return ownIncubator, true
 	}
 	pipelines := make([]string, 0, len(work))
 	for pipeline := range work {
@@ -135,7 +135,7 @@ func choosePipeline(ctx context.Context, jobsAPI, own, ownHistory string) (strin
 		}
 		return pipelines[i] < pipelines[j]
 	})
-	return pipelines[0], slices.Contains(answer.Histories, pipelines[0])
+	return pipelines[0], slices.Contains(answer.Incubators, pipelines[0])
 }
 
 // pipelinesWork asks GET /v1/jobs/pipelines.
@@ -162,11 +162,11 @@ func pipelinesWork(ctx context.Context, jobsAPI string) (pipelinesResponse, erro
 }
 
 // pipelineModule is the pipeline module of `pipeline` in the cache, with
-// its engine for this platform beside it (`isHistory`, a history's: and
-// the history's native build), as the shipped one has: fetched
+// its engine for this platform beside it (`isIncubator`, an incubator's: and
+// the incubator's native build), as the shipped one has: fetched
 // from the server (GET /v1/jobs/engines) when it is not there, and checked
 // to be that pipeline by the host `bundle`.
-func pipelineModule(ctx context.Context, serve serveConfig, cacheDir, bundle, pipeline string, isHistory bool) (string, error) {
+func pipelineModule(ctx context.Context, serve serveConfig, cacheDir, bundle, pipeline string, isIncubator bool) (string, error) {
 	jobsAPI := serve.Jobs
 	if jobsAPI == "" {
 		return "", errors.New("the serving argument names no jobs API")
@@ -180,8 +180,8 @@ func pipelineModule(ctx context.Context, serve serveConfig, cacheDir, bundle, pi
 		"pipeline.mjs": module,
 		"casas-engine-" + runtime.GOOS + "-" + runtime.GOARCH + ".node": filepath.Join(dir, "casas-engine.node"),
 	}
-	if isHistory {
-		files["casas-history-"+runtime.GOOS+"-"+runtime.GOARCH+".node"] = filepath.Join(dir, "casas-history.node")
+	if isIncubator {
+		files["casas-incubator-"+runtime.GOOS+"-"+runtime.GOARCH+".node"] = filepath.Join(dir, "casas-incubator.node")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
