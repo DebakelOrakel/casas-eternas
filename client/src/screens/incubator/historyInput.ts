@@ -3,8 +3,6 @@ import { CLIMATE_RES_X, CLIMATE_RES_Y } from '../../generator/climate/climateFie
 import { climateMesh } from '../../generator/climate/climateMesh'
 import type { RefinedClimate } from '../../generator/climate/refinement'
 import type { Domain } from '../../generator/core/domain'
-import type { PeriodicTriangulation } from '../../generator/mesh/periodicDelaunay'
-import { barycentric } from '../../generator/mesh/remesh'
 import type { LevelLand, MeshLevelArtifact } from '../../world/meshArtifacts'
 import { LEVEL_ECOLOGY, type CellInput } from './cellsShared'
 
@@ -23,46 +21,24 @@ export const CHART_HEIGHT = 4096
 // (incubatorOverlay.ts).
 export const OVERLAY_DIVISOR = 2
 
-// One walk over the chart for the heights, the biomes and the nodes. The
-// heights as rasteriseNodeField gives them (the same walk, the same sum in
-// the same order, so the same bits); the biome of the triangle's nearest
-// corner, of its nearest land corner where the texel is land; the nearest
-// corner on every second row and column for `nodes`.
-export function chartPass(mesh: PeriodicTriangulation, z: Float32Array, land: Pick<LevelLand, 'land' | 'biome'>, W: number, H: number): { elevation: Float32Array; biome: Uint8Array; nodes: Int32Array } {
-  const elevation = new Float32Array(W * H)
-  const biome = new Uint8Array(W * H)
-  const half = W >> 1
-  const nodes = new Int32Array(half * (H >> 1))
-  const sx = mesh.domain.width / W
-  const sy = mesh.domain.height / H
-  const bary = new Float64Array(3)
-  const corner = new Int32Array(3)
-  let hint = mesh.lastTri
-  let rowStart = hint
-  for (let py = 0; py < H; py++) {
-    const y = py * sy
-    hint = rowStart
-    for (let px = 0; px < W; px++) {
-      const x = px * sx
-      const t = mesh.locate(x, y, hint)
-      hint = t
-      if (px === 0) rowStart = t
-      barycentric(mesh, t, x, y, bary)
-      corner[0] = mesh.tris[3 * t]
-      corner[1] = mesh.tris[3 * t + 1]
-      corner[2] = mesh.tris[3 * t + 2]
-      const i = py * W + px
-      const h = bary[0] * z[corner[0]] + bary[1] * z[corner[1]] + bary[2] * z[corner[2]]
-      elevation[i] = h
-      let near = 0
-      for (let k = 1; k < 3; k++) if (bary[k] > bary[near]) near = k
-      let nearLand = -1
-      if (h > 0) for (let k = 0; k < 3; k++) if (land.land[corner[k]] && (nearLand < 0 || bary[k] > bary[nearLand])) nearLand = k
-      biome[i] = land.biome[corner[nearLand >= 0 ? nearLand : near]]
-      if (((px | py) & 1) === 0) nodes[(py >> 1) * half + (px >> 1)] = corner[near]
-    }
-  }
-  return { elevation, biome, nodes }
+// The crate's chart of level 1 (casas-incubator chart.rs), as both its
+// builds have it: the level's mesh decoded once; a node field on a
+// raster; one walk over the chart for the heights, the biomes and, at
+// OVERLAY_DIVISOR, the nodes, whose arrays are taken one by one. The
+// chart worker paints with it, the history's job takes its node map: the
+// same walk, the same bits.
+export interface HistoryChart {
+  raster(z: Float32Array, w: number, h: number): Float32Array
+  pass(z: Float32Array, land: Uint8Array, biome: Uint8Array, w: number, h: number): void
+  takeElevation(): Float32Array
+  takeBiome(): Uint8Array
+  takeNodes(): Int32Array
+}
+export type ChartBuild<T> = new (sphere: boolean, width: number, height: number, count: number, nodes: Float32Array, connectivity: Uint8Array) => T
+
+// The crate's chart of a level on the world raster's domain.
+export function chartOf<T>(Build: ChartBuild<T>, kind: CellInput['kind'], width: number, height: number, level: Pick<MeshLevelArtifact, 'count' | 'nodes' | 'connectivity'>): T {
+  return new Build(kind === 'sphere', width, height, level.count, level.nodes, level.connectivity)
 }
 
 // The cells' input from level 1, its land fields and the chart's node map.

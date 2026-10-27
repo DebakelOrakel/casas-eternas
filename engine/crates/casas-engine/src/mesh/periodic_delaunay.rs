@@ -565,7 +565,12 @@ impl PeriodicTriangulation {
     }
 
     fn barycentric_on_globe(&self, t: usize, x: f64, y: f64) -> [f64; 3] {
-        let q = self.unit_of(x, y);
+        self.barycentric_unit(t, self.unit_of(x, y))
+    }
+
+    /// `barycentric` on the globe for a point given as its unit vector
+    /// (`unit_of`; `globe_scale` makes it from tables).
+    pub fn barycentric_unit(&self, t: usize, q: [f64; 3]) -> [f64; 3] {
         let a = self.u(self.t(3 * t));
         let b = self.u(self.t(3 * t + 1));
         let c = self.u(self.t(3 * t + 2));
@@ -588,8 +593,22 @@ impl PeriodicTriangulation {
     }
 
     fn locate_on_globe(&mut self, x: f64, y: f64, hint: usize) -> usize {
+        self.locate_unit(self.unit_of(x, y), Some(hint))
+    }
+
+    /// The angles of a unit of x and of y on the globe: a point's unit
+    /// vector is (sin θ cos λ, sin θ sin λ, cos θ) with λ = x · the first
+    /// and θ = y · the second, each through det_math (`unit_of`). For a
+    /// caller that walks many points of few rows and columns, with
+    /// `locate_unit` and `barycentric_unit`.
+    pub fn globe_scale(&self) -> (f64, f64) {
+        (self.to_lon, self.to_colat)
+    }
+
+    /// `locate` on the globe for a point given as its unit vector.
+    pub fn locate_unit(&mut self, q: [f64; 3], hint: Option<usize>) -> usize {
+        let hint = hint.unwrap_or(self.last_tri as usize);
         let mut t = self.hint_or_any(hint);
-        let q = self.unit_of(x, y);
         let max_steps = self.tri_slots() * 2 + 16;
         let mut steps = 0;
         loop {

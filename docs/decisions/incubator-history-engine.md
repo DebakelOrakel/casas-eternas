@@ -92,9 +92,13 @@ was considered and left: in German it names the Sturmabteilung.
 The job gives the browser's bits because both make their input with the
 same functions (`screens/incubator/historyInput.ts`: the chart's node map
 of level 1, the cells' input, the rain) and the crate's two builds agree
-(`engine/scripts/incubatorSmoke.mjs`). On Morvane the job's H1 is the
-browser's, byte for byte, 168 MB; the job takes some 24 s (the cells 12 s
-with the node map, the run 11 s).
+(`engine/scripts/incubatorSmoke.mjs`). The chart's node map is the
+crate's too (`chart.rs`, 2026-10-27): level 1's mesh and the walk over the
+chart, which the chart worker paints with. On Morvane the job's H1 is the
+browser's, byte for byte, 168 MB; the job takes some 19 s (the cells 6 s
+with the node map, the run 11 s). The chart worker's mesh and walk took
+some 34 s in Safari in TypeScript; in Node the crate's WASM build takes
+4 s where the TypeScript took 10.
 
 ## Fork 4 — the job's route: DECIDED — the incubator's own
 

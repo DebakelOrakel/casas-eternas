@@ -5,6 +5,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 
 ## 2026-10-27
 - **new** Incubator: a history shown is saved on the server by a job, and a world opens with the history saved last. `incubator.action.saveHistory`
+- **changed** Incubator: a world's map is drawn faster.
 
 ## 2026-10-19
 - **changed** Layout: the menu has the same entries on every screen and over the list of worlds, and the title screen's name leads home too. `titlebar`

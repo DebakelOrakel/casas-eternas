@@ -8,6 +8,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod catalog;
+pub mod chart;
 pub mod climate_history;
 pub mod flora;
 pub mod habitat;

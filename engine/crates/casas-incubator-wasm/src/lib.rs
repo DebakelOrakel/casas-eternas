@@ -4,6 +4,7 @@
 //! incubator's worker's state: the habitat made once a world, then what is
 //! grown and run on it.
 
+use casas_incubator::chart::{ChartPass, PeriodicTriangulation, chart_pass, level_mesh, raster};
 use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M};
 use casas_incubator::flora::{Layer, grow_flora, populate};
 use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
@@ -328,5 +329,64 @@ impl Incubator {
     #[wasm_bindgen(js_name = landmassKm2)]
     pub fn landmass_km2(&self) -> Vec<f64> {
         self.habitat.landmass_km2.clone()
+    }
+}
+
+/// Level 1's chart (chart.rs): the mesh decoded once, then rasters and the
+/// one walk over the chart, whose arrays are taken one by one.
+#[wasm_bindgen]
+pub struct Chart {
+    mesh: PeriodicTriangulation,
+    pass: Option<ChartPass>,
+}
+
+#[wasm_bindgen]
+impl Chart {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        sphere: bool,
+        width: f64,
+        height: f64,
+        count: usize,
+        nodes: &[f32],
+        connectivity: &[u8],
+    ) -> Result<Chart, JsError> {
+        let mesh = level_mesh(sphere, width, height, count, nodes, connectivity)
+            .map_err(|e| JsError::new(&e))?;
+        Ok(Chart { mesh, pass: None })
+    }
+
+    /// A node field on a `w` × `h` raster.
+    pub fn raster(&mut self, z: &[f32], w: usize, h: usize) -> Vec<f32> {
+        raster(&mut self.mesh, z, w, h)
+    }
+
+    /// The walk over a `w` × `h` chart, kept until its arrays are taken.
+    pub fn pass(&mut self, z: &[f32], land: &[u8], biome: &[u8], w: usize, h: usize) {
+        self.pass = Some(chart_pass(&mut self.mesh, z, land, biome, w, h));
+    }
+
+    #[wasm_bindgen(js_name = takeElevation)]
+    pub fn take_elevation(&mut self) -> Vec<f32> {
+        self.pass
+            .as_mut()
+            .map(|p| std::mem::take(&mut p.elevation))
+            .unwrap_or_default()
+    }
+
+    #[wasm_bindgen(js_name = takeBiome)]
+    pub fn take_biome(&mut self) -> Vec<u8> {
+        self.pass
+            .as_mut()
+            .map(|p| std::mem::take(&mut p.biome))
+            .unwrap_or_default()
+    }
+
+    #[wasm_bindgen(js_name = takeNodes)]
+    pub fn take_nodes(&mut self) -> Vec<i32> {
+        self.pass
+            .as_mut()
+            .map(|p| std::mem::take(&mut p.nodes))
+            .unwrap_or_default()
     }
 }

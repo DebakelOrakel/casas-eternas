@@ -3,6 +3,7 @@
 //! copies it to `engine/dist/casas-incubator.node`. The same object as the
 //! WASM build's (`casas-incubator-wasm`), and the same bits.
 
+use casas_incubator::chart::{ChartPass, PeriodicTriangulation, chart_pass, level_mesh, raster};
 use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M};
 use casas_incubator::flora::{Layer, grow_flora, populate};
 use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
@@ -305,5 +306,76 @@ impl Incubator {
             &village_from,
             &village_to,
         )))
+    }
+}
+
+/// Level 1's chart (chart.rs), as the WASM build's.
+#[napi]
+pub struct Chart {
+    mesh: PeriodicTriangulation,
+    pass: Option<ChartPass>,
+}
+
+#[napi]
+impl Chart {
+    #[napi(constructor)]
+    pub fn new(
+        sphere: bool,
+        width: f64,
+        height: f64,
+        count: u32,
+        nodes: Float32Array,
+        connectivity: Uint8Array,
+    ) -> napi::Result<Chart> {
+        let mesh = level_mesh(sphere, width, height, count as usize, &nodes, &connectivity)
+            .map_err(error)?;
+        Ok(Chart { mesh, pass: None })
+    }
+
+    #[napi]
+    pub fn raster(&mut self, z: Float32Array, w: u32, h: u32) -> Float32Array {
+        Float32Array::new(raster(&mut self.mesh, &z, w as usize, h as usize))
+    }
+
+    #[napi]
+    pub fn pass(&mut self, z: Float32Array, land: Uint8Array, biome: Uint8Array, w: u32, h: u32) {
+        self.pass = Some(chart_pass(
+            &mut self.mesh,
+            &z,
+            &land,
+            &biome,
+            w as usize,
+            h as usize,
+        ));
+    }
+
+    #[napi]
+    pub fn take_elevation(&mut self) -> Float32Array {
+        Float32Array::new(
+            self.pass
+                .as_mut()
+                .map(|p| std::mem::take(&mut p.elevation))
+                .unwrap_or_default(),
+        )
+    }
+
+    #[napi]
+    pub fn take_biome(&mut self) -> Uint8Array {
+        Uint8Array::new(
+            self.pass
+                .as_mut()
+                .map(|p| std::mem::take(&mut p.biome))
+                .unwrap_or_default(),
+        )
+    }
+
+    #[napi]
+    pub fn take_nodes(&mut self) -> Int32Array {
+        Int32Array::new(
+            self.pass
+                .as_mut()
+                .map(|p| std::mem::take(&mut p.nodes))
+                .unwrap_or_default(),
+        )
     }
 }

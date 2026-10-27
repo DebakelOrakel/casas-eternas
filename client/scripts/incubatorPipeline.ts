@@ -12,16 +12,17 @@
 // cells, the flora, the fauna, the run, the H1 bytes — the same bits as
 // its WASM build in the incubator (engine/scripts/incubatorSmoke.mjs). Its
 // input is made by the incubator's own functions (historyInput.ts): the
-// chart's node map from level 1, the cells' input, the rain. The engine's
+// chart's node map from level 1 (the crate's chart), the cells' input,
+// the rain. The engine's
 // native build reads the save and level 1 (casas-engine.node beside it).
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { domainOfKind } from '../src/generator/core/domain'
 import { openWorld } from '../src/world/query'
-import { meshLevelMesh, meshLevelStage, readMeshLevelArtifact } from '../src/world/meshArtifacts'
+import { meshLevelStage, readMeshLevelArtifact } from '../src/world/meshArtifacts'
 import { INCUBATOR_VERSION, historyKey, readHistoryArtifact, writeHistoryArtifact } from '../src/world/historyArtifacts'
 import { artifactKey } from '../src/storage/ArtifactStore'
-import { cellInputOf, chartPass, CHART_HEIGHT, CHART_WIDTH, incubatorOf, rainOf, type HistoryIncubator, type IncubatorBuild } from '../src/screens/incubator/historyInput'
+import { cellInputOf, chartOf, CHART_HEIGHT, CHART_WIDTH, incubatorOf, rainOf, type ChartBuild, type HistoryChart, type HistoryIncubator, type IncubatorBuild } from '../src/screens/incubator/historyInput'
 import { loadNativeEngine, type NativeEngine } from './engineNative'
 import { laps } from './laps'
 import { WORKER_CONTRACT, type PipelineIO, type PipelineTask, type PipelineVersion, type TaskOutcome } from './workerContract'
@@ -37,6 +38,7 @@ interface NativeIncubator extends HistoryIncubator {
 interface NativeIncubatorBuild {
   version(): string
   Incubator: IncubatorBuild<NativeIncubator>
+  Chart: ChartBuild<HistoryChart>
 }
 
 // The builds beside this module, loaded at the first task: --version
@@ -76,8 +78,9 @@ export async function runTask(task: PipelineTask, io: PipelineIO): Promise<TaskO
   clock.lap('level')
   io.progress('cells', 0)
   const kind = world.kind === 'SphereWorld' ? 'sphere' : 'torus'
-  const mesh = meshLevelMesh(level, world.width, world.height, kind)
-  const { nodes } = chartPass(mesh, level.z, level.land, CHART_WIDTH, CHART_HEIGHT)
+  const chart = chartOf(build.Chart, kind, world.width, world.height, level)
+  chart.pass(level.z, level.land.land, level.land.biome, CHART_WIDTH, CHART_HEIGHT)
+  const nodes = chart.takeNodes()
   const refined = await world.refined()
   const rain = refined ? rainOf(domainOfKind(kind, world.width, world.height), refined) : null
   const seed = world.recipe.detailSeed
