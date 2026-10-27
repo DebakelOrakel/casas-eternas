@@ -166,7 +166,7 @@ versions and numbers only) and takes its own pipeline while it has work
 or nobody has any, else the one with the most work. It gets that one's
 pipeline module and engine through `GET /v1/jobs/engines` into the cache,
 checks that the module is that pipeline, and runs Node on it. A worker that had
-no task for 60 s, while its pipeline has no work and another has, ends
+no task for 10 s, while its pipeline has no work and another has, ends
 with code 75 (EX_TEMPFAIL); the launcher then chooses again. Any other end
 ends the launcher with the worker's code, for its supervisor. The local
 pool starts the launcher (this binary, with jobs.worker's bundle by

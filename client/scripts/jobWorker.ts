@@ -707,7 +707,7 @@ async function serve(config: ServeConfig): Promise<void> {
 
   let idleSince = Date.now()
   for (;;) {
-    const msg = await consumer.next({ expires: 30_000 })
+    const msg = await consumer.next({ expires: SWITCH_IDLE_MS })
     if (!msg) {
       if (config.jobs && Date.now() - idleSince >= SWITCH_IDLE_MS && (await anotherPipelineHasWork(config.jobs))) {
         process.stderr.write(`no work for ${PIPELINE}, another pipeline has some: ending for the launcher\n`)
@@ -789,7 +789,7 @@ async function serve(config: ServeConfig): Promise<void> {
 // How long a worker waits for a task of its pipeline before it asks
 // whether another pipeline has the work, and the exit code that tells its
 // launcher so (EX_TEMPFAIL; launcher.go, exitSwitch).
-const SWITCH_IDLE_MS = 60_000
+const SWITCH_IDLE_MS = 10_000
 const EXIT_SWITCH = 75
 
 // Whether this worker's pipeline has no open work and another one has
