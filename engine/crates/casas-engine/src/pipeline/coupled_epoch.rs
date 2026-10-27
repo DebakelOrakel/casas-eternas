@@ -78,6 +78,7 @@ use crate::tectonics::plate_simulation_types::{
 };
 use crate::tectonics::tectonics_tune_params::TECTONICS_TUNING;
 use crate::tectonics::trench::trench_depression;
+use crate::tectonics::volcanic_build::build_volcanoes;
 use serde::Serialize;
 
 use super::erosion_forcing::coarse_forcing_fields;
@@ -685,10 +686,12 @@ pub fn step_coupled_epoch(
                 ),
                 margin(mesh.vx[c], mesh.vy[c]),
             );
+            // Off the continents the parents' relief is the ocean's own (a
+            // volcano's, the sea floor's sediment): it stays.
             let scale = if t_parents > 0.0 {
                 js::min(1.0, js::max(0.0, t / t_parents))
             } else {
-                0.0
+                1.0
             };
             let hv = &mut state.get_mut("h")[v];
             *hv = (*hv as f64 * scale) as f32;
@@ -1191,6 +1194,15 @@ pub fn step_coupled_epoch(
         result.z[v] = (result.z[v] as f64 + fill_m / ELEVATION_METERS) as f32;
     }
 
+    // The volcanoes' build (tectonics/volcanic_build.rs): the island arcs
+    // and the hotspots, from the sea floor up.
+    let volcanic = build_volcanoes(&mesh, &result.z, &sim.features, &domain, epoch_ma);
+    for v in 0..slots {
+        if volcanic[v] > 0.0 {
+            result.z[v] = (result.z[v] as f64 + volcanic[v] as f64 / ELEVATION_METERS) as f32;
+        }
+    }
+
     // The flexure.
     let flex_cells = sim.meshes.shared.mesh.count;
     let mut load_m = vec![0.0; flex_cells];
@@ -1211,6 +1223,7 @@ pub fn step_coupled_epoch(
             + (glacial.till_m[v] as f64 - glacial.cut_m[v] as f64 + coastal.deposit_m[v] as f64
                 - coastal.cut_m[v] as f64
                 + shelf.fill_m[v] as f64
+                + volcanic[v] as f64
                 + ice_m)
                 * a
                 * cell_m2;

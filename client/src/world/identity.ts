@@ -243,7 +243,9 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // terrain. The fill's three numbers are in the surface tuning; the stops
 // and the sea's anchor are in no hashed constant, hence the bump. With it,
 // unpublished, the static annual range the history's ice reads
-// (docs/decisions/seasons-and-ice.md): its form and its constants.
+// (docs/decisions/seasons-and-ice.md): its form and its constants; and the
+// volcanoes' build and the mesh in the open ocean
+// (docs/decisions/volcanic-islands.md).
 export const AMPLIFICATION_ALGO_VERSION = 14
 
 // The constants the bake's output actually depends on. Passed in by the

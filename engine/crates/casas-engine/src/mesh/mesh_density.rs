@@ -13,6 +13,8 @@ pub struct MeshTuning {
     pub max_spacing_m: f64,
     pub ocean_spacing_m: f64,
     pub deep_ocean_below_m: f64,
+    pub ocean_built_above_m: f64,
+    pub ocean_built_spacing_m: f64,
     pub relief_per_node_m: f64,
     pub discharge_ref_m3s: f64,
     pub curvature_factor: f64,
@@ -27,6 +29,8 @@ pub const MESH_TUNING: MeshTuning = MeshTuning {
     max_spacing_m: 7800.0,
     ocean_spacing_m: 40000.0,
     deep_ocean_below_m: -300.0,
+    ocean_built_above_m: 500.0,
+    ocean_built_spacing_m: 10_000.0,
     relief_per_node_m: 100.0,
     discharge_ref_m3s: 5000.0,
     curvature_factor: 0.5,
@@ -37,16 +41,24 @@ pub const MESH_TUNING: MeshTuning = MeshTuning {
 };
 
 /// Target spacing in metres from the slope (m/m), the discharge (m³/s), the
-/// curvature (1/m), the sediment column (m) and the height above sea level.
+/// curvature (1/m), the sediment column (m), the height above sea level and
+/// the relief built on the solid baseline (m). In the deep sea, relief built
+/// past `ocean_built_above_m` (a volcano, tectonics/volcanic_build.rs) keeps
+/// `ocean_built_spacing_m`: at the ocean's spacing a cone 160 km wide is one
+/// node, and coarsening spreads it out.
 pub fn target_spacing_m(
     slope: f64,
     discharge_m3s: f64,
     curvature_per_m: f64,
     column_m: f64,
     height_m: f64,
+    built_m: f64,
     budget: f64,
 ) -> f64 {
     if height_m < MESH_TUNING.deep_ocean_below_m {
+        if built_m > MESH_TUNING.ocean_built_above_m {
+            return MESH_TUNING.ocean_built_spacing_m * budget;
+        }
         return MESH_TUNING.ocean_spacing_m * budget;
     }
     let mut h = MESH_TUNING.max_spacing_m;

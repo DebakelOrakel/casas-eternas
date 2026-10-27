@@ -181,6 +181,7 @@ fn the_density_rule_gives_the_typescript_spacing() {
             k,
             column,
             height,
+            0.0,
             if i % 2 == 0 { 1.0 } else { 0.25 },
         ));
     }

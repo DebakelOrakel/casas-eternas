@@ -890,6 +890,7 @@ impl ParentSurface {
                 curvature,
                 0.0,
                 z[v] as f64 * ELEVATION_METERS,
+                0.0,
                 self.budget,
             ) / self.unit_m;
             self.targets.insert(v, h);

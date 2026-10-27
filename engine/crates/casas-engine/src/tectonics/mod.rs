@@ -17,4 +17,5 @@ pub mod plumes;
 pub mod tectonics_tune_params;
 pub mod terrain_features;
 pub mod trench;
+pub mod volcanic_build;
 pub mod volcanoes;

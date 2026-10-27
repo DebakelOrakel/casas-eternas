@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-27
+- **changed** Tectonics: island arcs and hotspots build volcanoes up from the sea floor, so oceans hold about twice as many islands and island chains, and a seed makes a different world. `generator.step.tectonics`
 - **changed** Tectonics: the history's summers past 50° are as warm as the finished world's, so a third less land lies under ice, the sea stands higher, and a seed makes a different world. `generator.step.tectonics`
 - **changed** Tectonics: continental shelves are about twice as wide and stay under the sea when ice lowers it, so a seed makes a different world. `generator.step.tectonics`
 

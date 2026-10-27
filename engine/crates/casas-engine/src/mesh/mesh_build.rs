@@ -56,6 +56,11 @@ impl TargetSpacing for DensityTarget {
         } else {
             None
         };
+        let built = if state.has("h") {
+            Some(state.get("h"))
+        } else {
+            None
+        };
         let budget = self.budget;
         let at = |v: usize, targets: &mut [f64]| {
             let (slope, curvature) = relief_at(mesh, z, v, units_to_m, ELEVATION_METERS);
@@ -66,6 +71,7 @@ impl TargetSpacing for DensityTarget {
                 curvature,
                 column_m,
                 z[v] as f64 * ELEVATION_METERS,
+                built.map_or(0.0, |h| h[v] as f64 * ELEVATION_METERS),
                 budget,
             );
             targets[v] = h / units_to_m;
