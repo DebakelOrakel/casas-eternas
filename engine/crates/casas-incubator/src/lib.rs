@@ -15,6 +15,7 @@ pub mod habitat;
 pub mod history;
 pub mod log;
 pub mod niche;
+pub mod peopling;
 pub mod pack;
 pub mod settle;
 pub mod simulation;

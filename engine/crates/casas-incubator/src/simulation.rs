@@ -662,14 +662,18 @@ impl Sim<'_, '_> {
     }
 }
 
-pub fn simulate(
-    h: &Habitat,
-    input: &SimulationInput,
-    mut on_progress: Option<&mut dyn FnMut(f64)>,
-) -> SimulationResult {
+/// The foragers' density a cell carries in today's climate (people a km²),
+/// the speed of their front over it (km a year), and whether it is a shelf
+/// the sea can leave dry; 0 for ice and for the sea below SHELF_M.
+pub(crate) struct Ground {
+    pub base: Vec<f32>,
+    pub speed: Vec<f32>,
+    pub shelf: Vec<u8>,
+}
+
+pub(crate) fn ground_of(h: &Habitat, carrying: &[f32]) -> Ground {
     let n = h.count;
     let land = &h.land;
-    let climate = ClimateHistory::of(input.seed, SPAN_YEARS);
     let mut base = vec![0f32; n];
     let mut speed = vec![0f32; n];
     let mut shelf = vec![0u8; n];
@@ -686,7 +690,7 @@ pub fn simulate(
         if h.biome[i] == biome::ICE || h.biome[i] == biome::GLACIER {
             continue;
         }
-        let k = js::min(2.0, input.carrying[i] as f64 / CARRYING_FULL);
+        let k = js::min(2.0, carrying[i] as f64 / CARRYING_FULL);
         base[i] = (FORAGER_DENSITY * js::max(0.05, k)) as f32;
         let mut v = SPEED_MIN_KM_A + (SPEED_MAX_KM_A - SPEED_MIN_KM_A) * js::min(1.0, k);
         v /= 1.0 + h.slope[i] as f64 * SLOPE_DRAG;
@@ -695,6 +699,18 @@ pub fn simulate(
         }
         speed[i] = v as f32;
     }
+    Ground { base, speed, shelf }
+}
+
+pub fn simulate(
+    h: &Habitat,
+    input: &SimulationInput,
+    mut on_progress: Option<&mut dyn FnMut(f64)>,
+) -> SimulationResult {
+    let n = h.count;
+    let land = &h.land;
+    let climate = ClimateHistory::of(input.seed, SPAN_YEARS);
+    let Ground { base, speed, shelf } = ground_of(h, input.carrying);
     let ice_km = ice_distance(h);
     let mut moved_now = vec![0u8; n];
     let update_climate = |t: f64, capacity: &mut [f32], moved_now: &mut [u8]| {

@@ -8,7 +8,9 @@ use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M}
 use casas_incubator::flora::{Layer, grow_flora, populate};
 use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
 use casas_incubator::history::{RainChart, carrying_of, origin_of, run_history};
+use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
+use casas_incubator::peopling::{Peopling, people};
 use casas_incubator::settle::settle_history;
 use casas_incubator::simulation::{SPAN_YEARS, STEP_YEARS, ice_distance};
 use napi::bindgen_prelude::{Float32Array, Float64Array, Int32Array, Uint8Array, Uint32Array};
@@ -52,6 +54,7 @@ pub struct Incubator {
     owners: Vec<i32>,
     flora: Vec<Layer>,
     fauna: Vec<Layer>,
+    peopling: Option<Peopling>,
 }
 
 fn codes_of(layers: &[Layer]) -> Vec<u8> {
@@ -126,6 +129,7 @@ impl Incubator {
             owners,
             flora: Vec::new(),
             fauna: Vec::new(),
+            peopling: None,
         }
     }
 
@@ -285,6 +289,52 @@ impl Incubator {
             None,
         );
         Ok(Uint8Array::new(pack_history(&result)))
+    }
+
+    /// Step 1 of the prehistory (peopling.rs) from the given origins, kept
+    /// for the `peopling_*` reads; its span in years.
+    #[napi]
+    pub fn people(&mut self, origins: Int32Array, seed: f64) -> f64 {
+        let origins: Vec<usize> = origins.iter().map(|&o| o as usize).collect();
+        let p = people(&self.habitat, &carrying_of(&self.habitat), &origins, seed);
+        let span = p.span;
+        self.peopling = Some(p);
+        span
+    }
+
+    #[napi]
+    pub fn peopling_floats(&self, name: String) -> napi::Result<Float32Array> {
+        let p = self.peopling.as_ref().ok_or_else(|| error("no peopling yet".into()))?;
+        Ok(Float32Array::new(match name.as_str() {
+            "arrival" => p.arrival.clone(),
+            "foragers" => p.foragers.clone(),
+            _ => return Err(error(format!("no peopling array {name}"))),
+        }))
+    }
+
+    #[napi]
+    pub fn peopling_ints(&self, name: String) -> napi::Result<Int32Array> {
+        let p = self.peopling.as_ref().ok_or_else(|| error("no peopling yet".into()))?;
+        Ok(Int32Array::new(match name.as_str() {
+            "from" => p.from.clone(),
+            "root" => p.root.clone(),
+            _ => return Err(error(format!("no peopling array {name}"))),
+        }))
+    }
+
+    /// The landings after open sea: [at, cell, landmass, km] each.
+    #[napi]
+    pub fn peopling_landings(&self) -> napi::Result<Float64Array> {
+        let p = self.peopling.as_ref().ok_or_else(|| error("no peopling yet".into()))?;
+        Ok(Float64Array::new(
+            p.log
+                .iter()
+                .flat_map(|e| match *e {
+                    LogEvent::Crossing { at, cell, landmass, km, .. } => vec![at, cell, landmass, km],
+                    _ => vec![],
+                })
+                .collect(),
+        ))
     }
 
     #[napi]
