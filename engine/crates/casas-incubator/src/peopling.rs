@@ -56,8 +56,9 @@ pub struct Peopling {
     pub groups: usize,
     /// 1 where people came by boat.
     pub afloat: Vec<u8>,
-    /// The foragers in each reached cell of today's land at the span's end.
-    pub foragers: Vec<f32>,
+    /// The foragers a km² each reached cell carries in today's climate, a
+    /// dry shelf too (`ground_of`); 0 where not reached.
+    pub density: Vec<f32>,
     /// The span: from the start to the end of the cold, years.
     pub span: f64,
     /// The first landing on each landmass after open sea.
@@ -142,6 +143,10 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
     let mut longest = vec![0f32; n];
     let mut voyage = vec![0f32; n];
     let mut afloat = vec![0u8; n];
+    // On dry ground: the longest open sea of the crossing that brought
+    // people there, kept over the dry shelf they walk on from where they
+    // landed; -1 on land reached on foot.
+    let mut landed = vec![-1f32; n];
     let mut done = vec![0u8; n];
     let mut heap = MinHeap::new(1 << 16);
     for (r, &o) in origins.iter().enumerate() {
@@ -173,12 +178,12 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
             let m = h.landmass[i];
             if m >= 0 && !landmass_reached[m as usize] {
                 landmass_reached[m as usize] = true;
-                if from[i] >= 0 && afloat[from[i] as usize] != 0 {
+                if landed[i] >= 0.0 {
                     log.push(LogEvent::Crossing {
                         at: t,
                         cell: i as f64,
                         landmass: m as f64,
-                        km: longest[from[i] as usize] as f64,
+                        km: landed[i] as f64,
                         first: true,
                     });
                 }
@@ -242,6 +247,13 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
                     voyage[u] = went as f32;
                 }
                 None => {
+                    landed[u] = if afloat[i] != 0 {
+                        longest[i]
+                    } else if h.land[i] == 0 {
+                        landed[i]
+                    } else {
+                        -1.0
+                    };
                     afloat[u] = 0;
                     stretch[u] = 0.0;
                     longest[u] = 0.0;
@@ -252,14 +264,8 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
         }
     }
     let (group, groups) = groups_of(h, &arrival, &from, &afloat);
-    let foragers = (0..n)
-        .map(|i| {
-            if h.land[i] != 0 && arrival[i] < f64::INFINITY {
-                base[i] * h.area_km2[i]
-            } else {
-                0.0
-            }
-        })
+    let density = (0..n)
+        .map(|i| if arrival[i] < f64::INFINITY { base[i] } else { 0.0 })
         .collect();
     Peopling {
         arrival: arrival.iter().map(|&a| a as f32).collect(),
@@ -268,7 +274,7 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
         group,
         groups,
         afloat,
-        foragers,
+        density,
         span,
         log,
     }

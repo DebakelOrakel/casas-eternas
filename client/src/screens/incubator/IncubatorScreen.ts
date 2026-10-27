@@ -562,13 +562,34 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // history's form, with its routes, their order and their way over the
   // sea, as a history's are made (growPeople); each cell's group; its log;
   // and the origin set by a click in its step (-1: chosen).
-  let stone: { people: PeopleResult; routes: RouteLine[]; order: Int32Array; sea: Uint8Array; group: Int32Array; groups: number; log: LogEvent[] } | null = null
+  let stone: { people: PeopleResult; routes: RouteLine[]; order: Int32Array; sea: Uint8Array; group: Int32Array; groups: number; density: Float32Array; log: LogEvent[] } | null = null
   let stoneOrigin = -1
   // The spread the step on screen shows: the old stone age's in its step,
   // the history's in the others.
   function spreadShown(): { people: PeopleResult; routes: RouteLine[]; order: Int32Array; sea: Uint8Array | null } | null {
     if (onOldStoneAge()) return stone
     return people ? { people, routes: peopleRoutes, order: peopleOrder, sea: routeSea } : null
+  }
+  // The old stone age's foragers a km² at the time shown: where people
+  // came by then, but not under the ice of that time, nor on a shelf the
+  // sea covers then (as the ice's layer draws them). The cold's toll on
+  // the rest is not taken. Made for the time and kept for it.
+  let stoneDensity: { time: number; density: Float32Array } | null = null
+  function stoneDensityNow(): Float32Array | null {
+    if (!stone || !cellFacts) return null
+    if (stoneDensity?.time === peopleTime) return stoneDensity.density
+    const { arrival } = stone.people
+    const reach = iceHistory ? iceHistory.iceReachKm * iceHistory.cold(peopleTime) : 0
+    const drop = iceHistory ? iceHistory.seaDropM(peopleTime) : 0
+    const { iceKm, seaDepthM, land } = cellFacts
+    const density = new Float32Array(arrival.length)
+    for (let i = 0; i < density.length; i++) {
+      if (!(arrival[i] <= peopleTime)) continue
+      if (land[i] ? iceKm[i] > 0 && iceKm[i] <= reach : seaDepthM[i] > drop) continue
+      density[i] = stone.density[i]
+    }
+    stoneDensity = { time: peopleTime, density }
+    return density
   }
   const logShown = (): LogEvent[] => (onOldStoneAge() ? stone?.log ?? [] : settled?.log ?? [])
   // The people's end state (settle.ts), a proof of concept.
@@ -1207,22 +1228,26 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // A history's people are its own count (casas-incubator), between the
     // curve's samples linearly; before its first kept state comes, the
     // density's.
+    // The old stone age's, from its density at the time.
+    const stoneNow = onOldStoneAge() ? stoneDensityNow() : null
     let persons = 0
-    if (historyFrames && settled) {
+    if (stoneNow && cellFacts) {
+      for (let i = 0; i < stoneNow.length; i++) if (stoneNow[i] > 0) persons += stoneNow[i] * cellFacts.areaKm2[i]
+    } else if (historyFrames && settled && historyShown()) {
       const curve = settled.population
       const x = Math.min(curve.length - 1, peopleTime / (SPAN_YEARS / Math.max(1, curve.length - 1)))
       const k = Math.floor(x)
       persons = curve[k] + (curve[Math.min(curve.length - 1, k + 1)] - curve[k]) * (x - k)
     } else if (now && cellFacts) for (let i = 0; i < now.density.length; i++) if (now.density[i] > 0) persons += now.density[i] * cellFacts.areaKm2[i]
     let centres = 0
-    if (settled) for (let k = 0; k < settled.centres.length; k += 3) if (settled.centres[k + 1] <= peopleTime) centres++
+    if (settled && historyShown()) for (let k = 0; k < settled.centres.length; k += 3) if (settled.centres[k + 1] <= peopleTime) centres++
     const say = (n: number): string => (now ? Math.round(n).toLocaleString(getLocale()) : '–')
     let villages = 0
     let camps = 0
     if (now) for (let k = 1; k < now.villages.length; k += 2) if (isCampWay(now.villages[k])) camps++
     else villages++
     chronicle.setStats([
-      { label: t('incubator.chronicle.people'), value: say(persons) },
+      { label: t('incubator.chronicle.people'), value: stoneNow ? Math.round(persons).toLocaleString(getLocale()) : say(persons) },
       { label: t('incubator.chronicle.villages'), value: say(villages) },
       { label: t('incubator.chronicle.camps'), value: say(camps) },
       { label: t('incubator.chronicle.centres'), value: say(centres) },
@@ -1270,7 +1295,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       if (id.startsWith('weather:')) return { on: id === `weather:${weatherShown}`, available: refinedCharts !== null }
       if (id in flowOn) return { on: flowOn[id], available: refinedCharts !== null }
       if (id === NO_SETTLEMENT) return { on: settlementShown === null, available: true }
-      if (id.startsWith('settle:')) return { on: id === `settle:${settlementShown}`, available: id === 'settle:spread' ? spreadShown() !== null : id === 'settle:groups' ? onOldStoneAge() && stone !== null : settled !== null && historyShown() }
+      if (id.startsWith('settle:')) return { on: id === `settle:${settlementShown}`, available: id === 'settle:spread' ? spreadShown() !== null : id === 'settle:groups' ? onOldStoneAge() && stone !== null : id === 'settle:density' && onOldStoneAge() ? stone !== null : settled !== null && historyShown() }
       if (id === NO_FIELD) return { on: picked === null, available: true }
       if (id === NO_PLANTS) return { on: plantShown === null, available: true }
       if (id.startsWith('plant:')) return { on: plantShown !== null && id === plantPickId(plantShown), available: charts !== null }
@@ -1816,7 +1841,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     p.flow = Float32Array.from(flowAt(p, order, Infinity, (cell) => p.land[cell]))
     const sea = new Uint8Array(p.arrival.length)
     for (const cell of p.crossingWays) if (cell >= 0 && !p.land[cell]) sea[cell] = 1
-    stone = { people: p, routes: [], order, sea, group: done.group, groups: done.groups, log: done.log }
+    stone = { people: p, routes: [], order, sea, group: done.group, groups: done.groups, density: done.density, log: done.log }
+    stoneDensity = null
     stone.routes = routesOf(p, [...toldCrossings(done.log, p.origin)].map((n) => p.crossings[4 * n + 1]))
     routeWidths = null
     crossingWays = null
@@ -2035,9 +2061,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const spread = spreadShown()
         if (spread && settlementShown === 'spread') paintPeople(o, spread.people, peopleTime, livingNow())
         if (stone && onOldStoneAge() && settlementShown === 'groups') paintGroups(o, stone.people, stone.group, peopleTime)
+        const density = onOldStoneAge() && settlementShown === 'density' ? stoneDensityNow() : null
+        if (density) paintDensity(o, density)
       },
       legend: () => {
         const spreadOn = settlementShown === 'spread'
+        if (onOldStoneAge() && settlementShown === 'density') return stone ? [{ type: 'gradient', title: t('incubator.people.densityUnit'), unit: '', stops: DENSITY_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })) }] : []
         // A colour stands for every group its number in the palette names.
         if (stone && onOldStoneAge() && settlementShown === 'groups') {
           const items = Array.from({ length: Math.min(stone.groups, PLANT_PALETTE.length) }, (_, c) => ({

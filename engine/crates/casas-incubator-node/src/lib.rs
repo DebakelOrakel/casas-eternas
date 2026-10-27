@@ -310,7 +310,7 @@ impl Incubator {
             .ok_or_else(|| error("no peopling yet".into()))?;
         Ok(Float32Array::new(match name.as_str() {
             "arrival" => p.arrival.clone(),
-            "foragers" => p.foragers.clone(),
+            "density" => p.density.clone(),
             _ => return Err(error(format!("no peopling array {name}"))),
         }))
     }

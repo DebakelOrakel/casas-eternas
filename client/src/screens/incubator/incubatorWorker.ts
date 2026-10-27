@@ -50,9 +50,10 @@ export type IncubatorAnswer =
   | { type: 'climate'; cold: Float32Array; stepYears: number; iceReachKm: number; seaDropM: number; ms: number }
   | ({ type: 'people'; ms: number } & PeopleResult)
   // The old stone age (casas-incubator peopling.rs): its spread as a
-  // history's, `flow` left 0; each cell's group and their number; its log,
+  // history's, `flow` left 0; each cell's group and their number; the
+  // foragers a km² each reached cell carries in today's climate; its log,
   // the departure and the landings after open sea; its span, years.
-  | ({ type: 'peopling'; group: Int32Array; groups: number; log: LogEvent[]; span: number; ms: number } & PeopleResult)
+  | ({ type: 'peopling'; group: Int32Array; groups: number; density: Float32Array; log: LogEvent[]; span: number; ms: number } & PeopleResult)
   | ({ type: 'settle'; ms: number } & SettleResult)
   | { type: 'frame'; index: number; people: Float32Array | null; small: Uint8Array | null; big: { id: string; cells: Int32Array; share: Uint8Array }[]; ms: number }
   | { type: 'pack'; bytes: ArrayBuffer | null; ms: number }
@@ -138,9 +139,11 @@ async function answer(ask: IncubatorRequest): Promise<void> {
     const from = e.peoplingInts('from')
     const group = e.peoplingInts('group')
     const afloat = e.peoplingAfloat()
+    const land = e.bytes('land')
     const landings = e.peoplingLandings()
     // As a history's: [landmass, cell, time, km] a crossing, and its way
-    // from the cell it set off from over the water, ended by -1.
+    // from the cell it set off from over the water, ended by -1; with the
+    // dry shelf walked from where the boat landed.
     const crossings = new Float32Array(landings.length)
     const ways: number[] = []
     const log: LogEvent[] = [{ kind: 'departure', at: 0, cell: origin }]
@@ -149,6 +152,7 @@ async function answer(ask: IncubatorRequest): Promise<void> {
       crossings.set([landmass, cell, at, km], k)
       const way = [cell]
       let c = from[cell]
+      for (; c >= 0 && !land[c] && !afloat[c]; c = from[c]) way.push(c)
       for (; c >= 0 && afloat[c]; c = from[c]) way.push(c)
       if (c >= 0) way.push(c)
       ways.push(...way.reverse(), -1)
@@ -156,8 +160,8 @@ async function answer(ask: IncubatorRequest): Promise<void> {
     }
     let groups = 0
     for (const g of group) groups = Math.max(groups, g + 1)
-    const out = { arrival, land: e.bytes('land'), from, flow: new Float32Array(n), origin, crossings, crossingWays: Int32Array.from(ways), group, groups, log, span }
-    worker.postMessage({ type: 'peopling', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, out.group.buffer])
+    const out = { arrival, land, from, flow: new Float32Array(n), origin, crossings, crossingWays: Int32Array.from(ways), group, groups, density: e.peoplingFloats('density'), log, span }
+    worker.postMessage({ type: 'peopling', ms: ms(), ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, out.group.buffer, out.density.buffer])
     return
   }
   if (ask.type === 'simulate') {

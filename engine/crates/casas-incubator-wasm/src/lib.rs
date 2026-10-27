@@ -325,7 +325,7 @@ impl Incubator {
             .ok_or_else(|| JsError::new("no peopling yet"))?;
         Ok(match name {
             "arrival" => p.arrival.clone(),
-            "foragers" => p.foragers.clone(),
+            "density" => p.density.clone(),
             _ => return Err(JsError::new(&format!("no peopling array {name}"))),
         })
     }
