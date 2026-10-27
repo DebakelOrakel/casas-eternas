@@ -232,7 +232,7 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
     // Its share done: tiles by count, a whole level by its phase.
     const fraction = left === 0 && level.done === level.total ? 1
       : tiles ? level.done / Math.max(1, level.total)
-      : level.running > 0 ? (bakeFraction({ ...job, phase: level.phase, percent: level.percent, request: job.request ? { ...job.request, scope: { kind: 'world' } } : undefined }) ?? 0)
+      : level.running > 0 ? (bakeFraction({ ...job, phase: level.phase, percent: level.percent, request: job.request ? { ...job.request, scope: job.request.scope?.kind === 'history' ? job.request.scope : { kind: 'world' } } : undefined }) ?? 0)
       : 0
     let state: BakeJob['state']
     let stateText: string
@@ -442,7 +442,8 @@ export function createJobChooser(host: HTMLElement, options: JobChooserOptions):
       const chip = document.createElement('span')
       chip.className = 'ac-level mono'
       chip.dataset.present = String(view.state === 'done')
-      chip.textContent = `L${view.stage}`
+      // A history runs on level 1, and is H1 (world/historyArtifacts.ts).
+      chip.textContent = job.request?.scope?.kind === 'history' ? 'H1' : `L${view.stage}`
       level.appendChild(chip)
       line.appendChild(level)
       line.appendChild(stateCell(view.state, view.stateText, view.error))
