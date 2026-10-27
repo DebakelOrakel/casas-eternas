@@ -1,8 +1,9 @@
 //! The module test of the static climate (climate/ through `weather`, and
 //! planet/planet_forcing) against the TypeScript engine: the same scenarios
 //! give the same bits (docs/decisions/rust-engine.md, fork 5). The fixture
-//! is written by `engine/scripts/climateFixture.mjs`; the scenarios below
-//! are that script's, step for step.
+//! was written by `engine/scripts/climateFixture.mjs`, and is recorded from
+//! this engine since DEC-0050 (`fixture`); the scenarios below are that
+//! script's, step for step.
 
 use casas_engine::climate::biomes::{biome_from_koppen, classify_points};
 use casas_engine::climate::climate_field::{belt_y_norm, in_top_summer_half, top_summer_cos};
@@ -33,6 +34,9 @@ use casas_engine::planet::planet_forcing::{
     solar_temperature_offset_c,
 };
 
+mod fixture;
+
+const FILE: &str = "climate.txt";
 const FIXTURE: &str = include_str!("fixtures/climate.txt");
 
 struct Hash(u32);
@@ -65,7 +69,7 @@ impl Hash {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(name))
             .unwrap_or_else(|| panic!("no {name} in the fixture"));
-        assert_eq!(format!("{name} {:08x}", self.0), want);
+        fixture::check(FILE, &format!("{name} {:08x}", self.0), want, name);
     }
 }
 

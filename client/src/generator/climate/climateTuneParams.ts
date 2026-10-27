@@ -126,9 +126,14 @@ export const CLIMATE_TUNING = {
   // --- from seasonality.ts ---
 
   // Peak annual temperature range (°C, summer − winter) — reached by a
-  // continental interior at high latitude. The equator sits near 0 (sun always
-  // high), a coast/ocean stays low (thermal inertia). Tune by eye.
-  seasonMaxAmplitude: 42,
+  // continental interior at the pole; it falls as sin φ to the equator (the
+  // summer's and the winter's sun differ so), and a coast keeps
+  // seasonCoastDamp of it (thermal inertia). Fitted 2026-10-27 to the
+  // refinement's twelve months, which classify the world: the history's ice
+  // reads this static range, and at 42 °C and φ itself its summers were
+  // some 10 °C colder than the refinement's past 50°
+  // (docs/decisions/seasons-and-ice.md).
+  seasonMaxAmplitude: 62,
 
   // Land this far from the nearest ocean, metres along the field mesh,
   // counts as fully continental; nearer interpolates. A big continent's
@@ -137,7 +142,7 @@ export const CLIMATE_TUNING = {
   seasonContinentalityScaleM: 2_808_000,
 
   // Coastal land floor (continentality 0): even a coast swings a bit.
-  seasonCoastDamp: 0.3,
+  seasonCoastDamp: 0.45,
 
   // --- from monsoon.ts ---
 

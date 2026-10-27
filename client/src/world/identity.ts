@@ -241,7 +241,9 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // sea of the last epochs instead of the ice-free datum, and the epoch's
 // export fills the shelf. The worlds change: a recipe replays to other
 // terrain. The fill's three numbers are in the surface tuning; the stops
-// and the sea's anchor are in no hashed constant, hence the bump.
+// and the sea's anchor are in no hashed constant, hence the bump. With it,
+// unpublished, the static annual range the history's ice reads
+// (docs/decisions/seasons-and-ice.md): its form and its constants.
 export const AMPLIFICATION_ALGO_VERSION = 14
 
 // The constants the bake's output actually depends on. Passed in by the

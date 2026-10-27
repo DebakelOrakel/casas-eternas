@@ -28,8 +28,8 @@ export const PLANET_INPUTS = {
   // between the bands over the year, as it does on the sphere. The range is
   // the window the climate chain is calibrated for (2026-09-22): under 10°
   // the seasons and with them the monsoon vanish, above 40° the seasonal
-  // swing leaves the calibrated band (seasonMaxAmplitude 42 °C becomes
-  // 68 °C at 40°, 91 °C at 60°) and from 54.7° the gradient reverses — a
+  // swing leaves the calibrated band (seasonMaxAmplitude 62 °C becomes
+  // 100 °C at 40°, 135 °C at 60°) and from 54.7° the gradient reverses — a
   // Uranus, not a world to play on.
   obliquity: {
     min: 10, max: 40, step: 0.5, default: 23.5,

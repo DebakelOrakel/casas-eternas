@@ -234,7 +234,10 @@ procedure.
     Done 2026-10-15: `calibrate` reads the peak after every epoch
     (`peakPerEpoch`, `historyPeakM`, `historyPeakEpoch`); torus alpha's
     history peak is 8571 m (epoch 39), its final peak 7837 m.
-31. **Too much ice.** It covers 20–34 % of the torus's land and 15–20 % of
+31. ~~**Too much ice.**~~ Done 2026-10-27 in
+    [seasons-and-ice.md](../decisions/seasons-and-ice.md) (DEC-0050): the
+    static annual range follows the refinement's; 31 / 5 % of the land,
+    −67 to −85 m on the torus. Was: it covers 20–34 % of the torus's land and 15–20 % of
     the sphere's (Earth ~10 %); on the torus 10–14 % of the land between
     30° and 60° (sphere 0–3 %, Earth ~0); the sea it holds stands at −75
     to −170 m (torus) and −10 to −70 m (sphere). A glacial maximum as the
@@ -257,4 +260,5 @@ relief, entries 1 and 23 annotated; entries 26–30 found and added.
 2026-10-15: entries 16, 22 and 30 done (tooling only, no change to the
 worlds).
 
-2026-10-27: entry 8 done (DEC-0049); entry 31 found and added.
+2026-10-27: entry 8 done (DEC-0049); entry 31 found and added, and done
+(DEC-0050).

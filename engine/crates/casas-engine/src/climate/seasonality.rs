@@ -1,6 +1,7 @@
 //! `climate/seasonality.ts`: the annual temperature amplitude per land cell
 //! of the climate's field mesh, from latitude and continentality.
 
+use crate::core::det_math::det_sin;
 use crate::core::js;
 use crate::fields::field_mesh::FieldMesh;
 use crate::planet::planet_forcing::{PlanetForcing, seasonality_factor};
@@ -8,6 +9,8 @@ use crate::planet::planet_forcing::{PlanetForcing, seasonality_factor};
 use super::climate_field::{latitude_of_norm, shifted_norm};
 use super::climate_mesh::{ClimateTerrain, distance_to_sea};
 use super::climate_tune_params::CLIMATE_TUNING;
+
+use std::f64::consts::PI;
 
 /// The sea's sentinel: seasonality is a land field.
 pub const OCEAN_AMPLITUDE: f64 = -1.0;
@@ -41,8 +44,11 @@ pub fn compute_seasonal_amplitude(
                 return OCEAN_AMPLITUDE;
             }
             let y_norm = shifted_norm(terrain.cm.y_norm[i], equator_offset);
+            // The summer's and the winter's sun differ as sin φ.
             let phi = latitude_of_norm(y_norm);
-            let amp_lat = t.season_max_amplitude * phi * seasonality_factor(planet, y_norm < 0.5);
+            let amp_lat = t.season_max_amplitude
+                * det_sin(phi * PI / 2.0)
+                * seasonality_factor(planet, y_norm < 0.5);
             amp_lat * (t.season_coast_damp + (1.0 - t.season_coast_damp) * continentality[i])
         })
         .collect()

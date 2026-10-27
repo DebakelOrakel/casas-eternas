@@ -1,18 +1,18 @@
 # Hashes of client/src/generator/climate/ (the static climate) and planet/planetForcing.ts, for crates/casas-engine/tests/climate.rs.
-# Written by engine/scripts/climateFixture.mjs; do not edit.
+# Written by the TypeScript engine, recorded from this one since DEC-0050 (tests/fixture/); do not edit.
 functions 7b39e84a
 koppen c9806a76
 torus_mesh 13745108
-torus_weather_default 985ab3ee
-torus_refined_default a8521ddb
-torus_points_default e52972d8
-torus_weather_moved c06b4254
-torus_refined_moved 332aa26a
-torus_points_moved 6bd13a75
+torus_weather_default f13a76f4
+torus_refined_default e327a881
+torus_points_default 77fd893d
+torus_weather_moved 0c22691c
+torus_refined_moved 06896f8e
+torus_points_moved b12e9108
 sphere_mesh 1ef2022f
-sphere_weather_default 11c81bc1
-sphere_refined_default 571f5d55
-sphere_points_default 4e8aae11
-sphere_weather_moved 96f9f057
-sphere_refined_moved 2243ac85
-sphere_points_moved d63b9414
+sphere_weather_default 71f807da
+sphere_refined_default 937c16ef
+sphere_points_default 12d7e790
+sphere_weather_moved 96cbe3af
+sphere_refined_moved d3f5ddad
+sphere_points_moved 1efc932c

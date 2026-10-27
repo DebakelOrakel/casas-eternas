@@ -1,8 +1,9 @@
 //! The module test of the climate's refinement (climate/refinement and its
 //! parts: pressure, energy_balance, phenomena, reliability, storms,
 //! salinity) and of the climate at points it gives, against the TypeScript
-//! engine (docs/decisions/rust-engine.md, fork 5). The fixture is written
-//! by `engine/scripts/refinementFixture.mjs`; the scenarios below are that
+//! engine (docs/decisions/rust-engine.md, fork 5). The fixture was written
+//! by `engine/scripts/refinementFixture.mjs`, and is recorded from this
+//! engine since DEC-0050 (`fixture`); the scenarios below are that
 //! script's, step for step.
 
 use casas_engine::climate::biomes::classify_points;
@@ -22,6 +23,9 @@ use casas_engine::fields::field_mesh::shared_field_mesh;
 use casas_engine::fields::field_operators::SolveReport;
 use casas_engine::planet::planet_forcing::{DEFAULT_PLANET_FORCING, PlanetForcing};
 
+mod fixture;
+
+const FILE: &str = "refinement.txt";
 const FIXTURE: &str = include_str!("fixtures/refinement.txt");
 
 struct Hash(u32);
@@ -54,7 +58,7 @@ impl Hash {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(name))
             .unwrap_or_else(|| panic!("no {name} in the fixture"));
-        assert_eq!(format!("{name} {:08x}", self.0), want);
+        fixture::check(FILE, &format!("{name} {:08x}", self.0), want, name);
     }
 }
 
