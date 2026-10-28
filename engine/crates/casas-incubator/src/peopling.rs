@@ -123,7 +123,9 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
             .map(|k| ICE_REACH_KM * history.cold(k as f64 * CLIMATE_YEARS))
             .collect(),
     };
-    let Ground { base, speed, shelf } = ground_of(h, carrying);
+    let Ground {
+        base, speed, shelf, ..
+    } = ground_of(h, carrying);
     let ice_km = ice_distance(h);
     let iced = |i: usize| ice_may_cover(h.koppen[i]) && ice_km[i] < f32::INFINITY;
 

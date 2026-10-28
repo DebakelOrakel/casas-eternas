@@ -301,6 +301,10 @@ Building since 2026-10-27:
   and on one far origin none in the span (its largest town 9 500): the
   far origins' cities stand near CITY_PEOPLE, and a small change moves
   them.
+- 2026-10-28: a dry shelf carries what its coast carries and is crossed
+  as fast (it carried as little as the poorest land: empty). On Morvane
+  the five coasts that go under move 1 459 to 1 998 people each (58 to
+  168 before); step 1 reaches 95.4 % of the land, as before.
 
 Open:
 
@@ -310,3 +314,7 @@ Open:
 3. The far trade: where which goods came from, for step 3 (above, the
    exchange).
 4. Step 1's sea-level curve: drawn from the world's seed, or a control.
+5. The dry shelf's own land fields (idea, with the next generator round):
+   the engine's ecology with the shelf down to −120 m as land, in today's
+   climate, kept with level 1; it replaces the coast's values the shelf
+   takes now.

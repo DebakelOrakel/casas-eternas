@@ -129,9 +129,10 @@ pub(crate) const CLIMATE_YEARS: f64 = 500.0;
 // landmass's (`shelf_landmass`). Before, the people of such a cell were
 // gone. On Morvane (v14) the sea took 10 000 km² or more of a landmass 36
 // times in step 2's first 5 000 years (4 landmasses, 10 200 to 67 900 km²
-// each); at 50 000 the chronicle tells 5 of them. They held few people:
-// a dry shelf carries what the poorest land does (`ground_of`), some 140
-// people moved from each.
+// each); at 50 000 the chronicle tells 5 of them. Since a dry shelf
+// carries what its coast carries (`ground_of`, 2026-10-28), 1 459 to 1 998
+// people move from each (58 to 168 when it carried what the poorest land
+// does).
 pub(crate) const DROWNED_TOLD_KM2: f64 = 50_000.0;
 // THE GAME (2026-10-26), every GAME_STEPS steps on the cells people live in
 // or have hunted: the small game and the big game, a share each of what the
@@ -1031,13 +1032,10 @@ impl Sim<'_, '_> {
     }
 }
 
-/// The foragers' density a cell carries in today's climate (people a km²),
-/// the speed of their front over it (km a year), and whether it is a shelf
-/// the sea can leave dry; 0 for ice and for the sea below SHELF_M.
-/// Each shelf cell's landmass, its nearest by the way over the shelf (a
-/// shelf between two is parted where their ways meet); -1 elsewhere and
-/// for a shelf no land touches.
-fn shelf_landmass_of(h: &Habitat, shelf: &[u8]) -> Vec<i32> {
+/// Each shelf cell's coast: the land cell nearest it by the way over the
+/// shelf (a shelf between two landmasses is parted where their ways meet);
+/// -1 elsewhere and for a shelf no land touches.
+fn shelf_coast_of(h: &Habitat, shelf: &[u8]) -> Vec<i32> {
     let n = h.count;
     let mut of = vec![-1i32; n];
     let mut km = vec![f64::INFINITY; n];
@@ -1050,7 +1048,7 @@ fn shelf_landmass_of(h: &Habitat, shelf: &[u8]) -> Vec<i32> {
         if !touches {
             continue;
         }
-        of[i] = h.landmass[i];
+        of[i] = i as i32;
         km[i] = 0.0;
         heap.push(0.0, i as i32);
     }
@@ -1084,8 +1082,22 @@ pub(crate) struct Ground {
     pub base: Vec<f32>,
     pub speed: Vec<f32>,
     pub shelf: Vec<u8>,
+    // Each shelf cell's coast (shelf_coast_of); -1 elsewhere.
+    pub coast: Vec<i32>,
 }
 
+/// The foragers' density a cell carries in today's climate (people a km²),
+/// the speed of their front over it (km a year), and whether it is a shelf
+/// the sea can leave dry; 0 for ice and for the sea below SHELF_M.
+///
+/// A dry shelf carries what its coast carries, and is crossed as fast
+/// (2026-10-28). The level holds no land fields under the sea, so the
+/// shelf carried as little as the poorest land (FORAGER_DENSITY × 0.05)
+/// and was crossed at the slowest: empty, while the earth's dry shelves
+/// (Doggerland, Sundaland, Beringia) were lowlands of rivers, marshes and
+/// coasts, lived in. A shelf no land touches keeps the old values. To be
+/// replaced by the level's own fields for a dry shelf (the ecology with
+/// the shelf as land), with the next generator round.
 pub(crate) fn ground_of(h: &Habitat, carrying: &[f32]) -> Ground {
     let n = h.count;
     let land = &h.land;
@@ -1116,7 +1128,20 @@ pub(crate) fn ground_of(h: &Habitat, carrying: &[f32]) -> Ground {
         }
         speed[i] = v as f32;
     }
-    Ground { base, speed, shelf }
+    let coast = shelf_coast_of(h, &shelf);
+    for i in 0..n {
+        let c = coast[i];
+        if shelf[i] != 0 && c >= 0 && base[c as usize] > 0.0 {
+            base[i] = base[c as usize];
+            speed[i] = speed[c as usize];
+        }
+    }
+    Ground {
+        base,
+        speed,
+        shelf,
+        coast,
+    }
 }
 
 pub fn simulate(
@@ -1127,7 +1152,12 @@ pub fn simulate(
     let n = h.count;
     let land = &h.land;
     let climate = ClimateHistory::of(input.seed, SPAN_YEARS);
-    let Ground { base, speed, shelf } = ground_of(h, input.carrying);
+    let Ground {
+        base,
+        speed,
+        shelf,
+        coast,
+    } = ground_of(h, input.carrying);
     let ice_km = ice_distance(h);
     // A cell whose carrying moved by CAPACITY_MOVED of it or more is marked
     // (`moved_now`), to grow or shrink again.
@@ -1164,7 +1194,11 @@ pub fn simulate(
             moved_now[i] = u8::from((c - was).abs() >= CAPACITY_MOVED * js::max(was, c));
         }
     };
-    let shelf_landmass = shelf_landmass_of(h, &shelf);
+    // Each shelf cell's landmass, its coast's.
+    let shelf_landmass: Vec<i32> = coast
+        .iter()
+        .map(|&c| if c < 0 { -1 } else { h.landmass[c as usize] })
+        .collect();
     let mut drowned: Vec<usize> = Vec::new();
     let habitable = |i: usize| land[i] == 1 && base[i] > 0.0;
     let (region, regions) = regions_of(h, &habitable);
