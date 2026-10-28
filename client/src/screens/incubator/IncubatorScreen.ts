@@ -117,8 +117,8 @@ const STEPS = ['oldStoneAge', 'newStoneAge'] as const
 // "Defaults", everything else off (favouritesToTurnOn: of a group of one
 // choice, the first listed).
 const FAVOURITES: Record<(typeof STEPS)[number], readonly string[]> = {
-  oldStoneAge: ['terrain', 'people:routes', 'people:centres', 'settle:spread', 'settle:groups', 'settle:density'],
-  newStoneAge: ['terrain', 'people:routes', 'people:villages', 'people:centres', 'settle:lifeway', 'settle:density'],
+  oldStoneAge: ['people:routes', 'people:centres', 'settle:spread', 'settle:groups', 'settle:density'],
+  newStoneAge: ['people:routes', 'people:villages', 'people:centres', 'settle:lifeway', 'settle:density'],
 }
 
 // The ecology's fields the incubator shows: all fourteen the level's

@@ -62,11 +62,10 @@ export const STEPS: readonly Step[] = [
     //
     // The planet preview computes no refinement and no hydrology: only its
     // own layers are available on it (GeneratorScreen PLANET_PREVIEW_LAYERS).
-    // Temperature is the favourite: the planet sliders act on it first.
     id: 'world',
     stage: 'planet',
     layers: ['temperature', 'wind', 'currents', 'precipitation', 'seasonality', 'monsoon', 'koppen'],
-    favourites: ['temperature'],
+    favourites: [],
   },
   {
     // No continent names: nothing is named until the hand-over. No plate
@@ -75,7 +74,7 @@ export const STEPS: readonly Step[] = [
     id: 'genesis',
     stage: 'genesis',
     layers: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
-    favourites: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
+    favourites: ['mantle', 'hotspots', 'cratonAge'],
   },
   {
     // The mantle and its plumes again: they drove the Archean and they drive
@@ -84,15 +83,12 @@ export const STEPS: readonly Step[] = [
     id: 'tectonics',
     stage: 'tectonics',
     layers: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
-    favourites: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
+    favourites: ['mantle', 'hotspots', 'volcanoes', 'cratonAge'],
   },
   {
     // TEMPERATURE IS THE STEP'S GROUND. It drives everything else here —
     // seasonality is its annual amplitude, the biomes are classified from it —
     // so it is a switch that stays on, not one answer among many.
-    //
-    // No terrain wash among the favourites: a colour wash under a
-    // temperature ramp reads as a third colour.
     //
     // The rivers, the water balance and the watersheds are the climate's
     // readout since the erosion step went (2026-09-29): the hydrology runs
@@ -100,15 +96,15 @@ export const STEPS: readonly Step[] = [
     id: 'climate',
     stage: 'climate',
     layers: ['terrain', 'names', 'temperature', 'wind', 'currents', 'rivers', ...CLIMATE_WASHES],
-    favourites: ['names', 'temperature'],
+    favourites: ['rivers', 'pressure', 'wind', 'currents', 'koppen', 'biomes'],
   },
   {
-    // The resource layer is the reason you are here: its first field, the
-    // carrying capacity, is a favourite.
+    // The resource layer is the reason you are here: the carrying capacity
+    // first, then the fields most looked at.
     id: 'ecology',
     stage: 'ecology',
     layers: ['terrain', 'names', 'biomes', 'rivers', 'ecology'],
-    favourites: ['names', resourceLayerId('carryingCapacity')],
+    favourites: [...(['carryingCapacity', 'arable', 'timber', 'copper', 'iron', 'gold'] as const).map(resourceLayerId)],
   },
   {
     // The detail jobs on the finished world (2026-09-29): nothing yet — which
@@ -116,7 +112,7 @@ export const STEPS: readonly Step[] = [
     id: 'finishing',
     stage: 'finishing',
     layers: ['terrain', 'names', 'rivers', 'biomes'],
-    favourites: ['terrain', 'names', 'rivers'],
+    favourites: [],
     mark: 'F',
   },
 ]
@@ -128,6 +124,9 @@ export const STEPS: readonly Step[] = [
 for (const s of STEPS) {
   const unknown = s.favourites.filter((id) => !overlayGroupOf(id))
   if (unknown.length > 0) throw new Error(`generator step ${s.id} has favourites that are no layer row: ${unknown}`)
+  // The global layers are on or off for every step alike: never a favourite.
+  const global = s.favourites.filter((id) => overlayGroupOf(id)?.id === 'global')
+  if (global.length > 0) throw new Error(`generator step ${s.id} has global layers as favourites: ${global}`)
 }
 
 export const STEP_IDS: readonly StepId[] = STEPS.map((s) => s.id)

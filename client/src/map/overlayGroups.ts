@@ -91,7 +91,7 @@ const heading = (group: OverlayGroupId): { title: TKey; helpBase: string } => ({
 // The groups, in their order. Only the first starts open; the rest start
 // folded until the viewer opens them.
 export const OVERLAY_GROUPS: readonly OverlayGroup[] = [
-  { id: 'global', ...heading('global'), kind: 'any', open: true, rows: (['terrain', 'names', 'boundaries'] as const).map(overlayRow) },
+  { id: 'global', ...heading('global'), kind: 'any', open: true, rows: (['terrain', 'names', 'boundaries', 'temperature'] as const).map(overlayRow) },
   { id: 'geology', ...heading('geology'), kind: 'any', rows: (['volcanoes', 'hotspots', 'cratonAge', 'mantle'] as const).map(overlayRow) },
   {
     id: 'climate',
@@ -99,7 +99,7 @@ export const OVERLAY_GROUPS: readonly OverlayGroup[] = [
     kind: 'any',
     rows: [
       { id: 'iceAge', helpBase: 'incubator.layers.iceAge', icon: '/icons/blizzard.png' },
-      ...(['temperature', 'rivers', 'pressure', 'wind', 'currents'] as const).map(overlayRow),
+      ...(['rivers', 'pressure', 'wind', 'currents'] as const).map(overlayRow),
     ],
   },
   // The land's washes: one at a time, since a later wash covers an earlier.
