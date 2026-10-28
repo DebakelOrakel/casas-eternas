@@ -10,14 +10,14 @@
 //
 // WHAT THE MAP CAN SHOW IS NOT THE STEP'S (2026-10-28). The layer panel
 // holds every layer of the world in every step, in the world's groups
-// (screens/overlayGroups.ts); a layer is greyed out only while its data is not there. A
+// (map/overlayGroups.ts); a layer is greyed out only while its data is not there. A
 // step decides its controls, the layers its hover card reads out and its
 // handbook page lists (`layers`), and its favourites, the panel's first
 // group (`favourites`). A step turns no layer on or off: entering one
 // changes only the favourites.
 import { STAGES, type StageId } from '../../generator/pipeline/stages'
-import type { OverlayId } from './overlays'
-import { overlayGroupOf, resourceLayerId } from '../overlayGroups'
+import type { OverlayId } from '../../map/overlays'
+import { overlayGroupOf, resourceLayerId } from '../../map/overlayGroups'
 import { PROGRESS_STEPS } from '../../world/worldProgress'
 
 export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'ecology' | 'finishing'
@@ -31,7 +31,7 @@ export interface Step {
   // Archean's subject and still drives the plates afterwards.
   layers: readonly OverlayId[]
   // THE FAVOURITES (2026-10-28): rows of the layer panel, by their id in
-  // screens/overlayGroups.ts, in the order the panel's first group shows
+  // map/overlayGroups.ts, in the order the panel's first group shows
   // them. They are also what comes on as a world opens in this step and
   // on the panel's "Defaults", everything else off (favouritesToTurnOn:
   // of a group of one choice, the first listed). A resource field is its

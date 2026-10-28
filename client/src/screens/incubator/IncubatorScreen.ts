@@ -32,8 +32,9 @@ import { formatBytes } from '../../ui/format'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
-import { createLayerPanel, type LayerState } from '../../ui/layerPanel/LayerPanel'
-import { ANIMAL_USES, OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, PLANT_USES, favouritesToTurnOn, WOOD_USES, animalLayerId, isNoneLayer, overlayGroupOf, plantLayerId, resourceLayerId, woodLayerId, type OverlayGroupId } from '../overlayGroups'
+import { createLayerPanel } from '../../ui/layerPanel/LayerPanel'
+import type { LayerState } from '../../ui/layerPanel/layerTypes'
+import { ANIMAL_USES, OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, PLANT_USES, favouritesToTurnOn, WOOD_USES, animalLayerId, isNoneLayer, overlayGroupOf, plantLayerId, resourceLayerId, woodLayerId, type AnimalUse, type OverlayGroupId, type PlantUse, type WoodUse } from '../../map/overlayGroups'
 import { CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols, type ChartSize, type VolcanoMark } from '../generator/mapSymbols'
 import { collectVolcanoes } from '../../generator/tectonics/volcanoes'
 import { Biome } from '../../generator/climate/biomes'
@@ -54,7 +55,6 @@ import type { ChartWorkerInbound, ChartWorkerOutbound } from './chartWorker'
 import { decodeFineValue, ECOLOGY_FIELD_IDS, ECOLOGY_FINE_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import type { LevelLand } from '../../world/meshArtifacts'
-import type { AnimalUse } from './animals'
 import { POPULATION_STEP, type AnimalLayer, type PeopleResult, type PlantLayer, type SettleResult, type TreeLayer } from './cellsShared'
 import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
 import { flowAt, routeOrder, routesOf, type RouteLine } from './peopleArrows'
@@ -67,10 +67,8 @@ import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
 import type { ChartPoint } from '../../map/worldView'
-import type { PlantUse } from './plants'
 import type { IncubatorAnswer, IncubatorRequest } from './incubatorWorker'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
-import type { WoodUse } from './trees'
 import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from './historyInput'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
@@ -114,7 +112,7 @@ import '../generator/overlayList.css'
 const STEPS = ['oldStoneAge', 'newStoneAge'] as const
 
 // THE STEPS' FAVOURITES (2026-10-28): the layer panel's first group, rows of
-// screens/overlayGroups.ts. A step sets them and nothing else of the
+// map/overlayGroups.ts. A step sets them and nothing else of the
 // layers; they are what comes on as a world opens and on the panel's
 // "Defaults", everything else off (favouritesToTurnOn: of a group of one
 // choice, the first listed).
@@ -125,7 +123,7 @@ const FAVOURITES: Record<(typeof STEPS)[number], readonly string[]> = {
 
 // The ecology's fields the incubator shows: all fourteen the level's
 // artifact holds (docs/decisions/level-waters.md), their rows the shared
-// list's (screens/overlayGroups.ts). The tooltip names TOOLTIP_FIELDS and
+// list's (map/overlayGroups.ts). The tooltip names TOOLTIP_FIELDS and
 // the one picked.
 const TOOLTIP_FIELDS: readonly EcologyFieldId[] = ['carryingCapacity', 'arable']
 
@@ -322,7 +320,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   })
 
   // THE STEPS. They compute and say what they did; the layers are the
-  // panel's, the same in every step (screens/overlayGroups.ts).
+  // panel's, the same in every step (map/overlayGroups.ts).
   let stepIndex = 0
   const onNewStoneAge = (): boolean => STEPS[stepIndex] === 'newStoneAge'
   const onOldStoneAge = (): boolean => STEPS[stepIndex] === 'oldStoneAge'
@@ -402,7 +400,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // THE LAYERS. The terrain colour: on, the chart with the terrain wash;
   // off, the bare paper. The chart worker paints both (chartWorker.ts).
-  // Over it, one of the ecology's fields at a time (screens/overlayGroups.ts), read
+  // Over it, one of the ecology's fields at a time (map/overlayGroups.ts), read
   // from the level's artifact per node; none in a level made before its
   // land fields.
   let terrainOn = true
@@ -601,7 +599,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     for (const id of Object.keys(geoOn)) geoOn[id] = false
     for (const id of Object.keys(flowOn)) flowOn[id] = false
   }
-  // THE PICKS: per group of one choice (screens/overlayGroups.ts), the row
+  // THE PICKS: per group of one choice (map/overlayGroups.ts), the row
   // shown as its id, or null for the group's "none".
   const prefixed = <T extends string>(prefix: string, get: () => T | null, set: (value: T | null) => void): { shown(): string | null; show(id: string | null): void } => ({
     shown: () => {
@@ -704,7 +702,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       showPlants()
     },
   })
-  // Every layer in every step, the world's list (screens/overlayGroups.ts).
+  // Every layer in every step, the world's list (map/overlayGroups.ts).
   overlayList.setGroups(OVERLAY_GROUPS)
   // THE HISTORY'S BUTTON (the people step), as the generator's steps have
   // theirs: reset the origin to the one chosen by itself, and the history

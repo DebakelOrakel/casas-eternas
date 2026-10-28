@@ -15,7 +15,7 @@ import type { NicheSpec } from './plants'
 // The weights are first guesses from the real trees' ranges: 1 the main
 // classes, about 0.5 the edge. The catalog is data (plants.ts).
 
-export type WoodUse = 'build' | 'fuel' | 'tool' | 'boat' | 'resin'
+import type { WoodUse } from '../../map/overlayGroups'
 
 export interface TreeSpec extends NicheSpec {
   woods: readonly WoodUse[]

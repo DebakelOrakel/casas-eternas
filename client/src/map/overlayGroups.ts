@@ -7,7 +7,7 @@
 // boundaries.
 //
 // One id per overlay, the same string in both screens: a generator layer
-// is its OverlayId (generator/overlays.ts), the ice its own word, the rest
+// is its OverlayId (overlays.ts), the ice its own word, the rest
 // carry a prefix by what they are ('resource:', 'people:', 'settle:',
 // 'plant:', 'animal:', 'wood:'). A group of one choice opens with its
 // "none", `none:<group>`.
@@ -17,15 +17,20 @@
 // its own business (the incubator's plants, animals and trees paint one
 // overlay, so one of them at a time).
 //
-// Here and not in ui/, which imports nothing outside itself; beside both
-// screens, which may import each other's leaf modules.
+// In map/, with the layers' vocabulary (overlays.ts) and their painting
+// (climateLayers.ts, refinedLayers.ts, geologyLayers.ts): no screen's
+// state, so both screens read it.
 import type { TKey } from '../i18n/i18n'
-import type { LayerGroup, LayerPanelTexts, LayerRow } from '../ui/layerPanel/LayerPanel'
+import type { LayerGroup, LayerPanelTexts, LayerRow } from '../ui/layerPanel/layerTypes'
 import { ECOLOGY_FIELD_IDS, type EcologyFieldId } from '../generator/ecology/ecologyField'
-import { OVERLAY_IDS, OVERLAY_META, overlayKey, type OverlayId } from './generator/overlays'
-import type { PlantUse } from './incubator/plants'
-import type { WoodUse } from './incubator/trees'
-import type { AnimalUse } from './incubator/animals'
+import { OVERLAY_IDS, OVERLAY_META, overlayKey, type OverlayId } from './overlays'
+
+// What people get of a plant, of a tree's wood, of an animal: the uses the
+// incubator's plants, trees and animals carry (screens/incubator plants.ts,
+// trees.ts, animals.ts), here because the overlays pick by them.
+export type PlantUse = 'starch' | 'fat' | 'fruit' | 'fibre'
+export type WoodUse = 'build' | 'fuel' | 'tool' | 'boat' | 'resin'
+export type AnimalUse = 'hunt' | 'tame' | 'water' | 'fur' | 'danger'
 
 export type OverlayGroupId =
   | 'global' | 'geology' | 'climate' | 'land' | 'sea' | 'weather'

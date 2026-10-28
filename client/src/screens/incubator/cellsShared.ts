@@ -1,9 +1,7 @@
 import type { EcologyFieldId } from '../../generator/ecology/ecologyField'
 import type { RiverPolylines } from '../../generator/surface/hydrology'
 import type { LogEvent } from './historyLogShared'
-import type { AnimalUse } from './animals'
-import type { PlantUse } from './plants'
-import type { WoodUse } from './trees'
+import type { AnimalUse, PlantUse, WoodUse } from '../../map/overlayGroups'
 
 // WHAT THE INCUBATOR'S WORKER AND ITS SCREEN SHARE (2026-10-27): the cells'
 // input, the layers the flora and the fauna grow, the people's spread, the

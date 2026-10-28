@@ -22,7 +22,7 @@ import type { NicheSpec } from './plants'
 // animal's own — land by the sea, low, reached by the sea — is written out
 // in it.
 
-export type AnimalUse = 'hunt' | 'tame' | 'water' | 'fur' | 'danger'
+import type { AnimalUse } from '../../map/overlayGroups'
 export type AnimalRole = 'herbivore' | 'predator' | 'water'
 
 export interface AnimalSpec extends NicheSpec {

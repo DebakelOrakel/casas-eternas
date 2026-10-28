@@ -7,8 +7,9 @@
 // both keyed by this type, so a layer added here is a compile error until it
 // answers both.
 //
-// Split out for the step table (see steps.ts), which must be able to name a
-// layer without pulling the whole screen in.
+// In map/ with the overlay list (overlayGroups.ts), so the generator, its
+// step table (screens/generator/steps.ts) and the incubator name a layer
+// without pulling a screen in.
 
 export type OverlayId =
   | 'terrain'
@@ -93,4 +94,4 @@ export const OVERLAY_META: Record<OverlayId, OverlayMeta> = {
 export const OVERLAY_IDS = Object.keys(OVERLAY_META) as OverlayId[]
 
 // The layer panel's groups are the world's, the incubator's too: see
-// screens/overlayGroups.ts.
+// map/overlayGroups.ts.

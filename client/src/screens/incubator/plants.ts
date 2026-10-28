@@ -46,8 +46,8 @@ export type Trapezoid = readonly [number, number, number, number]
 // (docs/decisions/incubator-history-engine.md). A comment that stood before
 // an entry is its `note`.
 
-// What people get of a plant.
-export type PlantUse = 'starch' | 'fat' | 'fruit' | 'fibre'
+// What people get of a plant: map/overlayGroups.ts.
+import type { PlantUse } from '../../map/overlayGroups'
 
 // A niche over the habitat, the plant's and the tree's alike (trees.ts).
 export interface NicheSpec {

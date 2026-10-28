@@ -66,8 +66,8 @@ import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createLayerPanel, type LayerPanel } from '../../ui/layerPanel/LayerPanel'
 import { createPanelToggles } from '../../ui/titleBar/PanelToggles'
-import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlays'
-import { OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, favouritesToTurnOn, groupLayers, isNoneLayer, noneLayerId, overlayGroupOf, resourceLayerId } from '../overlayGroups'
+import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from '../../map/overlays'
+import { OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, favouritesToTurnOn, groupLayers, isNoneLayer, noneLayerId, overlayGroupOf, resourceLayerId } from '../../map/overlayGroups'
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
 import { type ChartSize, CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, eventPictures, type VolcanoMark, eventSymbol, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols } from './mapSymbols'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
@@ -2351,14 +2351,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let hoverTooltip: ReturnType<typeof createMapHoverTooltip> | null = null
 
   // THE OVERLAYS. Which layers exist, what they are called and which icon
-  // stands for them lives in overlays.ts, with their groups in the layer
+  // stands for them lives in map/overlays.ts, with their groups in the layer
   // panel; which of them a step is about lives in steps.ts; the table below
   // (overlayReadout) says when a layer can be shown, what its legend says and
   // what it reads out, because all three read this screen's own data. Events are not a layer you switch — they are always on.
   // A layer's legend is a LegendSpec (ui/legend): shown in the legend panel
   // whenever the layer is on.
   // ONE ROW PER LAYER, and every layer must fill it in (a layer added to
-  // overlays.ts is a compile error here until it does): whether it can be
+  // map/overlays.ts is a compile error here until it does): whether it can be
   // shown right now, what its legend says, and what it reads out at a hovered
   // cell. `null` is an answer — a legend that would explain nothing (names,
   // boundaries, wind), a readout the layer has no per-cell value for.
@@ -2834,7 +2834,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     hoverTooltip?.refresh()
   }
 
-  // A row of the layer panel (screens/overlayGroups.ts) that is one of the
+  // A row of the layer panel (map/overlayGroups.ts) that is one of the
   // generator's layers. The 'ecology' layer is no row: its rows are the
   // resource fields.
   const isOverlayId = (id: string): id is OverlayId => id in OVERLAY_META && id !== 'ecology'
@@ -2843,7 +2843,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // Pick one of a group's layers: it comes on, the rest of ITS group goes
   // off, the other groups stay as they are. The groups are the world's
-  // (screens/overlayGroups.ts), the same in every step, and the state is
+  // (map/overlayGroups.ts), the same in every step, and the state is
   // the ordinary `overlaysOn` — a pick is a switch that turns its siblings
   // off, not a second kind of thing to keep in sync. A group's "none"
   // switches it off; the resources' "none" switches the ecology layer off.
@@ -5693,7 +5693,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   relabel(worldPanel)
 
   // THE LAYERS (ui/layerPanel, 2026-10-28): a column of their own beside the
-  // left one, the incubator's list (screens/overlayGroups.ts). Every layer
+  // left one, the incubator's list (map/overlayGroups.ts). Every layer
   // of the world in every step: the switches, the picks of one with their
   // "none", and the resource fields the ecology layer paints; the
   // incubator's rows too, greyed out. A row is greyed out only while its
