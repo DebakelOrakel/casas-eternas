@@ -178,6 +178,21 @@ constants in simulation.rs.
   farming keep theirs. The peoples are the clusters of alike, joined
   cells. A language is, for now, a slow trait among them; their names
   come later ([DES-0033](./naming-languages.md)).
+- **The exchange, not the trade.** The far exchange of the new stone age
+  went from village to village ("down the line"): no traders, no fixed
+  routes, no dependency; goods of rank (obsidian, shells, copper), less
+  of them at each stop. Step 2's trade links become this: over land and
+  along the coast, never over the open sea. Step 3 reads where which goods
+  came from. Organised far trade (traders, caravans, ships, the tin) is
+  step 3's.
+- **The climate's events, in this order:** (1) the rising sea drowns
+  cells, their people go to the neighbours, and a large loss is told in
+  the chronicle (a coast goes under, as Doggerland); (2) one or two cold
+  spells drawn from the seed, as the 8.2 ka event, some centuries of more
+  drought and cold through the droughts already there, told in the
+  chronicle; (3) the land drying, as the green Sahara's end, a wetter
+  early Holocene in the subtropics that fades toward today — looked at
+  again with the towns, as a cause of centres in river valleys.
 
 ### The climate in step 2
 
@@ -256,7 +271,6 @@ Open:
 1. Step 2's times against the earth's (the copper, the smelting, the city
    after the farming).
 2. The peoples (above) and how they are stored per cell.
-3. The far trade: step 2 still shows it (the settlement's links and
-   sources); whether it belongs to step 2 or 3.
+3. The far trade: decided (above, the exchange); not built.
 4. Step 1's sea-level curve: drawn from the world's seed, or a control.
 5. The timeline above, checked against sources.
