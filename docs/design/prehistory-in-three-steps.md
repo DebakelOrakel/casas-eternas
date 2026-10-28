@@ -18,8 +18,9 @@ summary.de: Der Inkubator machte zwei Dinge in einer Simulation: die
   Inkubator: Es sind die Regeln des Spiels, ohne Spieler gerechnet. Eine
   Chronik liest alle drei.
 area: mechanics
-stage: idea
+stage: building
 createdAt: 2026-10-27
+updatedAt: 2026-10-28
 related: [DES-0032, DES-0033, DES-0031, DES-0027, DES-0023, DEC-0048]
 ---
 
@@ -168,8 +169,9 @@ land bridges.
 
 Not part of the incubator. A proof of concept for the game's engine: the
 rules the computer plays by when no player acts. New rules, a small
-empire simulation: centres, ranks, copper and then bronze as a
-technology, trade as a dependency. It reads H1. More in its own doc.
+empire simulation: centres, ranks, bronze as a technology, trade as a
+dependency. It reads H1. Its polities:
+[DES-0036](./polities-from-the-land.md).
 
 ## One chronicle
 
