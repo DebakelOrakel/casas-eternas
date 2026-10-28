@@ -2246,7 +2246,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     const { u, v } = overlay
     const v0 = view
-    const geometry: LineGeometry = { km: (a, b) => v0.metresBetween(a, b) / 1000, direction: directionOf }
+    const geometry: LineGeometry = { km: (a, b) => v0.metresBetween(a, b) / 1000, direction: directionOf, wrapsV: shown?.kind === 'torus' }
     const now = settledNow()
     const showTrade = now !== null && settled !== null && peopleOn['people:trade']
     trade.setSymbols(showTrade ? tradeSymbols(now!.villages, now!.links, u, v, geometry) : [])

@@ -181,11 +181,21 @@ export interface LineStyle {
   headKm: number
 }
 // `km`: the distance between two chart points; `direction`: the true
-// direction from one to the next (WorldSymbol.angle).
+// direction from one to the next (WorldSymbol.angle); `wrapsV`: whether v
+// goes round too (the torus), as u always does.
 export interface LineGeometry {
   km: (a: At, b: At) => number
   direction: (a: At, b: At) => number
+  wrapsV: boolean
 }
+// The step from `a` to `b` the shorter way round: in u always, in v where
+// it wraps.
+const stepOf = (a: At, b: At, g: LineGeometry): { du: number; dv: number } => ({
+  du: b.u - a.u - Math.round(b.u - a.u),
+  dv: g.wrapsV ? b.v - a.v - Math.round(b.v - a.v) : b.v - a.v,
+})
+// A point back on the chart: u, and v where it wraps, into [0, 1).
+const onChart = (u: number, v: number, g: LineGeometry): At => ({ u: ((u % 1) + 1) % 1, v: g.wrapsV ? ((v % 1) + 1) % 1 : v })
 
 export const lineStyle = (widthKm: number, head: boolean): LineStyle => {
   const pieceKm = Math.max(10, 1.5 * widthKm)
@@ -225,9 +235,8 @@ function walkAlong(points: readonly At[], g: LineGeometry): { total: number; alo
     const f = lengths[j] > 0 ? Math.max(0, Math.min(1, d / lengths[j])) : 0
     const a = points[j]
     const b = points[j + 1]
-    // The shorter way round in u.
-    const du = b.u - a.u - Math.round(b.u - a.u)
-    return { at: { u: (((a.u + du * f) % 1) + 1) % 1, v: a.v + (b.v - a.v) * f }, angle: g.direction(a, b) }
+    const { du, dv } = stepOf(a, b, g)
+    return { at: onChart(a.u + du * f, a.v + dv * f, g), angle: g.direction(a, b) }
   }
   return { total, along }
 }
@@ -314,13 +323,16 @@ export function routeSymbols(lines: readonly RouteLine[], t: number, arrival: Fl
   lines.forEach(({ cells: line, lead }, n) => {
     const shown = shownOf[n]
     if (shown < lead + 2) return
-    // Sampled, unwrapped in u, with the width there and whether it is over
+    // Sampled, unwrapped in u (and in v where it wraps), with the width there and whether it is over
     // a crossing (1) or not (0).
     const sample = (cell: number): { u: number; v: number; w: number; s: number } => ({ u: u[cell], v: v[cell], w: widthOf(cell), s: sea?.[cell] ?? 0 })
     let points: { u: number; v: number; w: number; s: number }[] = []
     for (let j = 0; j < shown; j += ROUTE_SAMPLE) points.push(sample(line[j]))
     if ((shown - 1) % ROUTE_SAMPLE !== 0) points.push(sample(line[shown - 1]))
-    for (let j = 1; j < points.length; j++) points[j].u -= Math.round(points[j].u - points[j - 1].u)
+    for (let j = 1; j < points.length; j++) {
+      points[j].u -= Math.round(points[j].u - points[j - 1].u)
+      if (g.wrapsV) points[j].v -= Math.round(points[j].v - points[j - 1].v)
+    }
     // Chaikin's corners cut, the ends kept.
     for (let pass = 0; pass < 2 && points.length > 2; pass++) {
       const cut = [points[0]]
@@ -333,18 +345,18 @@ export function routeSymbols(lines: readonly RouteLine[], t: number, arrival: Fl
       cut.push(points[points.length - 1])
       points = cut
     }
-    const at = points.map((p) => ({ u: ((p.u % 1) + 1) % 1, v: p.v }))
+    const at = points.map((p) => onChart(p.u, p.v, g))
     for (let j = 0; j < at.length - 1; j++) {
       const a = at[j]
       const b = at[j + 1]
       const km = g.km(a, b)
       const angle = g.direction(a, b)
-      const du = b.u - a.u - Math.round(b.u - a.u)
+      const { du, dv } = stepOf(a, b, g)
       for (let d = 0; d < km; ) {
         const f = km > 0 ? d / km : 0
         const k = routeClass(points[j].w + (points[j + 1].w - points[j].w) * f)
         const blue = points[j].s + (points[j + 1].s - points[j].s) * f >= 0.5 ? 2 : 0
-        symbols.push({ at: { u: (((a.u + du * f) % 1) + 1) % 1, v: a.v + (b.v - a.v) * f }, angle, picture: 4 * k + blue })
+        symbols.push({ at: onChart(a.u + du * f, a.v + dv * f, g), angle, picture: 4 * k + blue })
         d += routeStep(k)
       }
     }
