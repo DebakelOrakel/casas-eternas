@@ -47,7 +47,7 @@ is computed by the crate `casas-incubator`
   keeps the level-1 node under each texel, so everything per node can be
   read per texel.
 - **The steps.** A step bar as the generator's: 1 the old stone age, 2 the
-  people (the new stone age), and a testing step aside. A step gives the
+  new stone age, and a testing step aside. A step gives the
   controls — a click sets step 1's origin, the history's actions are step
   2's — not what the map shows. The flora and the fauna are grown on the
   way in, with the cells, as rows of the load panel (`ui/loadPanel`).

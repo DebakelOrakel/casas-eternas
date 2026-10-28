@@ -1,8 +1,8 @@
 {
   "incubator.step.oldStoneAge.label": "Altsteinzeit",
   "incubator.step.oldStoneAge.help": "Wohin Menschen gelangen konnten, und wann: ihre Ausbreitung, ihre Routen, ihre Gruppen.",
-  "incubator.step.people.label": "Menschen",
-  "incubator.step.people.help": "Wie sich die Menschen von ihrem Ursprung über die Welt ausbreiten.",
+  "incubator.step.newStoneAge.label": "Jungsteinzeit",
+  "incubator.step.newStoneAge.help": "Die Geschichte von der Eiszeit bis zur ersten Stadt: Ackerbau, Viehzucht, Dörfer, Kupfer.",
   "incubator.step.testing.label": "Testing",
   "incubator.step.testing.help": "Versuche, die noch keinen eigenen Schritt haben.",
   "incubator.load.title": "Welt wählen",

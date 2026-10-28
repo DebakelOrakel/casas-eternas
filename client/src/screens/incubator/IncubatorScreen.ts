@@ -114,7 +114,7 @@ import '../generator/overlayList.css'
 // map, the generator's hover card for the level's node under the pointer.
 
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
-const STEPS = ['oldStoneAge', 'people', 'testing'] as const
+const STEPS = ['oldStoneAge', 'newStoneAge', 'testing'] as const
 
 // The ecology's fields the incubator shows: all fourteen the level's
 // artifact holds (docs/decisions/level-waters.md), with their icons as the
@@ -405,7 +405,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // catchments aside.
   let stepIndex = 0
   const onTesting = (): boolean => STEPS[stepIndex] === 'testing'
-  const onPeople = (): boolean => STEPS[stepIndex] === 'people'
+  const onNewStoneAge = (): boolean => STEPS[stepIndex] === 'newStoneAge'
   const onOldStoneAge = (): boolean => STEPS[stepIndex] === 'oldStoneAge'
   // The history's settlement, its kept states and what follows from them
   // show in every step but the old stone age's.
@@ -1328,7 +1328,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const onRelease = (e: PointerEvent): void => {
     const press = pressAt
     pressAt = null
-    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4 || !(onPeople() || onOldStoneAge()) || !overlay || !view) return
+    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4 || !(onNewStoneAge() || onOldStoneAge()) || !overlay || !view) return
     const rect = ctx.canvas.getBoundingClientRect()
     const at = view.groundAt(e.clientX - rect.left, e.clientY - rect.top)
     if (!at) return
@@ -1793,7 +1793,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     routeWidths = null
     showPlants()
     sayChronicle()
-    const result = await work(t('incubator.step.people.label'), { type: 'settle' }, 'settle', loadStep)
+    const result = await work(t('incubator.chronicle.people'), { type: 'settle' }, 'settle', loadStep)
     if (!result) return false
     const { type: _type, ms: _ms, ...rest } = result
     settled = rest
@@ -2154,7 +2154,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         // The ramp as the years before the game the land was settled.
         return [spreadOn
           ? { type: 'gradient', title: t('incubator.chronicle.year', { year: '…' }), unit: '', stops: PEOPLE_AGE_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })), items: routes }
-          : { type: 'swatches', title: t('incubator.step.people.label'), items: routes }]
+          : { type: 'swatches', title: t('incubator.chronicle.people'), items: routes }]
       },
       probe: (cell) => (stone && settlementShown === 'groups' && stone.group[cell] >= 0 && stone.people.arrival[cell] <= peopleTime ? [{ label: t('incubator.peopling.groups.label'), value: String(stone.group[cell] + 1) }] : []),
     },
@@ -2680,7 +2680,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       one(RESOURCE_PICKS),
     ])
     if (onTesting()) chronicle.stop()
-    historyActions.hidden = !onPeople()
+    historyActions.hidden = !onNewStoneAge()
     regionSection.hidden = !onTesting()
     showCharts()
     plantLegend.refresh()
