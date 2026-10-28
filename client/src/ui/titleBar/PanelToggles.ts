@@ -31,7 +31,7 @@ export function createPanelToggles(slot: HTMLElement, screen: string, panels: re
   const buttons = panels.map((id) => {
     const button = document.createElement('button')
     button.type = 'button'
-    button.className = 'panel-toggles__button'
+    button.className = 'title-bar__tool panel-toggles__button'
     button.dataset.help = `common.panel.${id}`
     button.addEventListener('click', () => {
       const on = !shown.get(id)
