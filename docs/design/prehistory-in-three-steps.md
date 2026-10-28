@@ -21,7 +21,7 @@ area: mechanics
 stage: building
 createdAt: 2026-10-27
 updatedAt: 2026-10-28
-related: [DES-0031, DES-0027, DES-0023, DEC-0048]
+related: [DES-0031, DES-0027, DES-0023, DEC-0048, DES-0035]
 ---
 
 ## Where this starts
@@ -50,25 +50,30 @@ and how far it went, and what is far, late or empty.
 ## The earth's timeline
 
 For scale, the Near East, with year 0 at the farming's start (some
-9 600 BC). Numbers from memory, ±500 years; not checked against
-sources yet.
+9 600 BC). Checked against sources on 2026-10-28
+([DES-0035](./earth-prehistory-sources.md), with the references and
+what is not verified).
 
 | Years after farming | What |
 |---|---|
-| −2 000 | Settled villages before the farming (the Natufians) |
-| ≈ 0 | Göbekli Tepe: a cult centre built by hunters |
+| −3 400 | Settled villages before the farming (the Natufians, from some 13 000 BC) |
 | −1 500 | Obsidian from Melos carried over the sea |
-| +600 … +1 500 | Native copper hammered cold: beads, awls |
+| ≈ 0 | Göbekli Tepe: a cult centre built by hunters |
 | +1 000 | Cyprus settled with cattle, over some 70 km of open sea |
-| +2 500 | Large villages of up to 5 000 people (Çatalhöyük), no ranks |
+| +1 400 … +2 100 | Native copper hammered cold: beads, awls (copper-mineral beads from −900) |
+| +2 500 | Large villages of some hundreds to a few thousand people (Çatalhöyük) |
 | +2 600 | Pottery |
-| +3 500 | The farming spreads by boat along the Mediterranean coast; reed boats in the Gulf |
-| +3 500 … +5 000 | The first centres: temples with a hinterland, ranks (Ubaid) |
+| +3 100 | Milk |
+| +3 300 … +3 460 | The 8.2 ka event: some 160 years of cold, in Europe about −1 °C and −20 % rain |
+| +3 500 | The farming spreads by boat along the Mediterranean coast (Cardial in the west +4 200) |
+| +3 100 … +5 500 | The first centres: temples with a hinterland, ranks (Ubaid) |
+| +4 100 | Reed boats in the Gulf |
+| +4 300 | The green Sahara dries from here; people go to the Nile |
 | +4 500 | Copper smelted: the copper age begins |
 | +5 000 | Varna: graves of gold and copper, an elite |
-| +5 500 … +6 000 | Plough, wheel, wool, milk, draught animals; the sail on the Nile |
-| +6 000 … +6 300 | Cities (Uruk, some 40 000 people), writing, the state |
-| +6 300 | Tin bronze: the bronze age (3 300 BC) |
+| +6 000 … +6 500 | Cities (Uruk; some 40 000 people, not verified), writing, the state |
+| +6 100 … +6 400 | The wheel; the sail on the Nile |
+| +6 600 | Tin bronze in regular use (the bronze age's label: 3 300 BC, mostly arsenical copper) |
 | +6 600 | Plank boats |
 
 Other regions keep their own pace: Europe farms from some 6 500 BC and
@@ -157,7 +162,7 @@ people give. Nothing of step 1 is kept again but its log.
 - **The towns**: a farmers' village draws a share of the people within a
   day of it, more with the copper, more with the smelting.
 - **Its end**: the first city, a town of 10 000 (Çatalhöyük had some
-  5 000, Uruk some 40 000).
+  hundreds to a few thousand, Uruk perhaps 40 000; DES-0035).
 
 The numbers and the measurements that set them are next to their
 constants in simulation.rs.
@@ -273,4 +278,3 @@ Open:
 2. The peoples (above) and how they are stored per cell.
 3. The far trade: decided (above, the exchange); not built.
 4. Step 1's sea-level curve: drawn from the world's seed, or a control.
-5. The timeline above, checked against sources.

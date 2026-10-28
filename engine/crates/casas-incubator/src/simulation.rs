@@ -319,7 +319,8 @@ pub(crate) const SMELT_RATE: f64 = 0.1;
 /// draws). Its town grows toward that share at TOWN_GROWTH_A. The people
 /// of the cells stay as they are: the town is a part of them. The history
 /// ends at its first city, a town of CITY_PEOPLE or more (Çatalhöyük, a
-/// large village, had some 5 000, Uruk some 40 000), at the CLIMATE_YEARS
+/// large village, had some hundreds to a few thousand, Uruk perhaps
+/// 40 000: docs/design/earth-prehistory-sources.md), at the CLIMATE_YEARS
 /// it grows to it; at SPAN_YEARS if none does.
 pub(crate) const CITY_DAYS: f64 = 1.0;
 pub(crate) const TOWN_SHARE: f64 = 0.15;
