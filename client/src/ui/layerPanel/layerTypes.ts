@@ -32,14 +32,12 @@ export interface LayerGroup {
 }
 
 // The panel's own strings, by the screen: its title, the count of what is
-// on (`{count}`), the two actions, and a pick group's "of how many"
-// (`{count}`).
+// on (`{count}`) and the two actions.
 export interface LayerPanelTexts {
   title: TKey
   active: TKey
   allOff: TKey
   defaults: TKey
-  oneOf: TKey
   // The favourites' name, for assistive technology only: they show no
   // heading.
   favourites: TKey

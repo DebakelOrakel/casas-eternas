@@ -124,17 +124,39 @@
 }
 
 .layer-panel__badge {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 2px;
-  border: 1px solid var(--dc-line2);
-  color: var(--dc-muted);
-  white-space: nowrap;
+  /* A number in a filled circle: grey, how many have their data; in the
+     accent, how many are on. */
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  background: var(--dc-line2);
+  color: var(--dc-text2);
   flex-shrink: 0;
 }
 
-.layer-panel__badge[hidden] {
-  display: none;
+/* The circle's place: at the heading's right, as wide as a row's switch
+   (.layer-panel__switch, 30px) and as far from the edge (the rows' 6px and
+   a row's 10px), so the circle is centred over the switches. */
+.layer-panel__badge-slot {
+  width: 30px;
+  margin-left: auto;
+  margin-right: 4px;
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.layer-panel__badge--on {
+  background: var(--dc-accent);
+  color: var(--dc-on-accent);
 }
 
 .layer-panel__rows {

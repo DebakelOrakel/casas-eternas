@@ -85,7 +85,6 @@
   "common.layers.active.label": "{count} aktiv",
   "common.layers.allOff.label": "Alles aus",
   "common.layers.defaults.label": "Standard",
-  "common.layers.oneOf.label": "1 von {count}",
   "common.layers.favourites.label": "Favoriten",
   "common.layers.global.label": "Global",
   "common.layers.global.help": "Ebenen für die ganze Welt: Geländefarbe, Kontinentnamen und Zellen.",

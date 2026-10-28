@@ -189,6 +189,5 @@ export const OVERLAY_PANEL_TEXTS: LayerPanelTexts = {
   active: 'common.layers.active.label',
   allOff: 'common.layers.allOff.label',
   defaults: 'common.layers.defaults.label',
-  oneOf: 'common.layers.oneOf.label',
   favourites: 'common.layers.favourites.label',
 }

@@ -85,7 +85,6 @@
   "common.layers.active.label": "{count} on",
   "common.layers.allOff.label": "All off",
   "common.layers.defaults.label": "Defaults",
-  "common.layers.oneOf.label": "1 of {count}",
   "common.layers.favourites.label": "Favourites",
   "common.layers.global.label": "Global",
   "common.layers.global.help": "Layers for the full world: the terrain colour, the continent names and the cells.",

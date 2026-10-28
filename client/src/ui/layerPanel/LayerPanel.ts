@@ -11,9 +11,11 @@ import './layerPanel.css'
 // there, never because of the step.
 //
 // The groups come in two kinds: of one choice ('one'), radio rows with
-// "none" among them, the head saying of how many; of switches ('any'),
-// each on or off by itself. A group folds. The head counts what is on and
-// offers "all off" and the defaults. A group starts folded unless it says
+// "none" among them; of switches ('any'), each on or off by itself. A
+// group folds. A group's heading has a number in a circle: how many of
+// its layers are on, in the accent; with none on, how many have their
+// data, in grey. The panel's head counts what is on and offers "all off"
+// and the defaults. A group starts folded unless it says
 // it starts open; the viewer's folding is kept, by the group's title, while
 // the panel lives. A row's mark is its icon. The legend
 // stays the screen's own box (ui/legend); no keyboard shortcuts.
@@ -159,8 +161,12 @@ export function createLayerPanel(host: HTMLElement, options: {
     name.className = 'layer-panel__name'
     const badge = document.createElement('span')
     badge.className = 'layer-panel__badge'
-    badge.hidden = !pick
-    heading.append(chevron, name, badge)
+    // As wide as a row's switch and as far in, so the circle stands over
+    // the switches' middle.
+    const badgeSlot = document.createElement('span')
+    badgeSlot.className = 'layer-panel__badge-slot'
+    badgeSlot.append(badge)
+    heading.append(chevron, name, badgeSlot)
     const list = document.createElement('div')
     list.className = 'layer-panel__rows'
     list.setAttribute('role', pick ? 'radiogroup' : 'group')
@@ -202,8 +208,6 @@ export function createLayerPanel(host: HTMLElement, options: {
     for (const r of favourites) r.label.textContent = t(`${r.helpBase}.label` as TKey)
     for (const g of groups) {
       g.name.textContent = t(g.titleKey)
-      // Of how many layers, "none" not one.
-      g.badge.textContent = t(options.texts.oneOf, { count: String(g.rows.filter((r) => r.helpBase !== 'overlay.none').length) })
       for (const r of g.rows) r.label.textContent = t(`${r.helpBase}.label` as TKey)
     }
     if (lastState) refresh(lastState)
@@ -221,11 +225,19 @@ export function createLayerPanel(host: HTMLElement, options: {
       return state
     }
     for (const g of groups) {
+      // The head's number: what is on, in the accent; with nothing on,
+      // how many have their data, in grey. "None" is a choice, not a layer.
+      let groupOn = 0
+      let groupAvailable = 0
       for (const r of g.rows) {
-        // "None" is a choice, not a layer on.
-        const none = r.helpBase === 'overlay.none'
-        if (show(r).on && !none) on++
+        const state = show(r)
+        if (r.helpBase === 'overlay.none') continue
+        if (state.on) groupOn++
+        if (state.available) groupAvailable++
       }
+      on += groupOn
+      g.badge.textContent = String(groupOn > 0 ? groupOn : groupAvailable)
+      g.badge.classList.toggle('layer-panel__badge--on', groupOn > 0)
     }
     // Links, not layers of their own: not counted again.
     for (const r of favourites) show(r)
