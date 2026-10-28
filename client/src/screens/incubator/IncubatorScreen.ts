@@ -16,7 +16,6 @@ import { peekServerStatus } from '../../server/serverStatus'
 import { artifactKey } from '../../storage/ArtifactStore'
 import { getArtifactStore, getServerArtifactStore } from '../../storage/artifactStoreProvider'
 import { historyKey, historyOrigins, readHistoryArtifact } from '../../world/historyArtifacts'
-import { canCommissionBakes, commissionHistory, listBakes, watchJobs, type BakeJob } from '../../world/jobClient'
 import { meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
 import { isCurrentArtifact } from '../../world/levels'
 import { sameWorldsPipeline } from '../../world/worldPipeline'
@@ -289,7 +288,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       panelToggles.relabel()
       updateSteps()
       overlayList.relabel()
-      sayHistory()
       chronicle.relabel()
       sayChronicle()
       // The crossings' years are pictures: made again in the new language.
@@ -704,51 +702,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   })
   // Every layer in every step, the world's list (map/overlayGroups.ts).
   overlayList.setGroups(OVERLAY_GROUPS)
-  // THE HISTORY'S BUTTON (the people step), as the generator's steps have
-  // theirs: reset the origin to the one chosen by itself, and the history
-  // with it. A button to start the history went with the rules' preview
-  // (2026-10-27): a world shows its history at once, kept or run.
-  const historyActions = document.createElement('div')
-  historyActions.className = 'gen-step__actions'
-  const historyReset = document.createElement('button')
-  historyReset.type = 'button'
-  historyReset.className = 'gen-action-icon'
-  historyReset.dataset.help = 'incubator.action.resetHistory'
-  historyReset.dataset.tAria = 'incubator.action.resetHistory.label'
-  const resetIcon = document.createElement('img')
-  resetIcon.src = '/icons/reset.png'
-  resetIcon.alt = ''
-  historyReset.append(resetIcon)
-  // Save: the history shown as a job on the server (saveHistory), where
-  // the server takes jobs; locked while there is nothing to save.
-  const historySave = document.createElement('button')
-  historySave.type = 'button'
-  historySave.className = 'gen-action-icon'
-  historySave.dataset.help = 'incubator.action.saveHistory'
-  const saveIcon = document.createElement('img')
-  saveIcon.src = '/icons/server_load.png'
-  saveIcon.alt = ''
-  historySave.append(saveIcon)
-  // The history shown: none yet, run here and not saved, its job running,
-  // on the server.
-  let historySaved: 'none' | 'unsaved' | 'saving' | 'saved' = 'none'
-  let jobsTaken = false
-  void canCommissionBakes().then((can) => {
-    jobsTaken = can
-    sayHistory()
-  })
-  function sayHistory(): void {
-    historyReset.setAttribute('aria-label', t('incubator.action.resetHistory.label'))
-    const key = historySaved === 'saving' ? 'incubator.action.saveHistory.labelActive' : historySaved === 'saved' ? 'incubator.action.saveHistory.labelDone' : 'incubator.action.saveHistory.label'
-    historySave.dataset.tAria = key
-    historySave.setAttribute('aria-label', t(key))
-    historySave.disabled = !jobsTaken || historySaved !== 'unsaved'
-  }
-  sayHistory()
-  historyActions.append(historyReset, historySave)
-  sidebar.foot.append(historyActions)
-  historySave.addEventListener('click', () => void saveHistory())
-  historyReset.addEventListener('click', () => void originAt(-1))
   // Under the picks, why the plants or the animals could not be grown.
   const plantStatus = document.createElement('p')
   const plantInfo = document.createElement('section')
@@ -1532,7 +1485,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   // THE PEOPLE (casas-incubator, DES-0032): the history from the origin
   // the old stone age's (peopleOrigin), run — shown
-  // only, until it is saved (saveHistory) — or, `restore`, the server's
+  // only — or, `restore`, the server's
   // H1 of it taken in a run's place. The rules' preview, shown before a history until
   // 2026-10-27, went with the port (DEC-0048): a run is quick enough.
   // `loadStep`: the load panel's row (work). False where it failed.
@@ -1564,58 +1517,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showPlants()
     sayChronicle()
     console.info(`[incubator] history ${restore ? 'loaded' : 'run'}, ${Math.round(performance.now() - started)} ms`)
-    historySaved = restore ? 'saved' : 'unsaved'
-    sayHistory()
     return true
   }
-  // THE H1 ARTIFACT (world/historyArtifacts.ts), on the server: a history
-  // run in the browser is shown only; saved, a job runs it on the server
-  // (the history's route, scripts/incubatorPipeline.ts) and keeps it as H1
-  // there — the same bits, the same key. A world shown with a history on
-  // the server for its origin loads it.
-  async function saveHistory(): Promise<void> {
-    const at = held
-    const origin = people?.origin ?? -1
-    if (!at?.worldId || !at.level || origin < 0 || historySaved !== 'unsaved') return
-    historySaved = 'saving'
-    sayHistory()
-    const ordered = await commissionHistory(at.uid, origin, at.level)
-    if (!sameHeld(at)) return
-    if (!ordered.ok) {
-      console.warn(`[incubator] history not saved: ${ordered.reason}${ordered.message ? ` (${ordered.message})` : ''}`)
-      historySaved = 'unsaved'
-      sayHistory()
-      return
-    }
-    followHistoryJob(ordered.job.id, at, origin)
-  }
-  // Whether the world shown is still the one `at` named (`held` is made
-  // anew when its name arrives).
-  const sameHeld = (at: NonNullable<typeof held>): boolean => held?.uid === at.uid && held.worldId === at.worldId
-  // The history's job until it ends: saved when it is done, again to save
-  // when it failed. Polled where the jobs' stream cannot be opened.
-  let stopHistoryJob: (() => void) | null = null
-  function followHistoryJob(id: string, at: NonNullable<typeof held>, origin: number): void {
-    stopHistoryJob?.()
-    let poll: ReturnType<typeof setInterval> | null = null
-    const stop = (): void => {
-      stopWatch()
-      if (poll) clearInterval(poll)
-      if (stopHistoryJob === stop) stopHistoryJob = null
-    }
-    const seen = (job: BakeJob): void => {
-      if (job.id !== id || job.state === 'queued' || job.state === 'running') return
-      stop()
-      if (job.state !== 'done') console.warn(`[incubator] the history's job ${job.state}${job.error ? `: ${job.error}` : ''}`)
-      if (!sameHeld(at) || people?.origin !== origin) return
-      historySaved = job.state === 'done' ? 'saved' : 'unsaved'
-      sayHistory()
-    }
-    const stopWatch = watchJobs(seen, () => {
-      poll = setInterval(() => void listBakes().then((jobs) => jobs?.forEach(seen)), 5000)
-    })
-    stopHistoryJob = stop
-  }
+  // THE H1 ARTIFACT (world/historyArtifacts.ts), on the server: a job runs
+  // a history there and keeps it as H1 (the history's route,
+  // scripts/incubatorPipeline.ts) — the same bits, the same key. A world
+  // shown with a history on the server for its origin loads it.
+  //
   // The origins of the server's histories of the world shown, on its
   // level, the one saved last first; none without a server.
   async function serverHistories(): Promise<number[]> {
@@ -1661,8 +1569,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     treesAtTime = null
     keptAtTime = null
     animalsAtTime.clear()
-    historySaved = 'none'
-    sayHistory()
     showTimeRange()
     showPlants()
     sayChronicle()
@@ -2315,9 +2221,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     step('grown')
     loadPanel.close()
     held = { uid, name: '', seed: '', worldId: chosen.worldId, level: chosen.pipelineVersion }
-    historySaved = 'none'
-    sayHistory()
-    stopHistoryJob?.()
     void openPeople()
     return true
   }
@@ -2414,7 +2317,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The step on screen: its actions; the panel's rows, the map and its
   // legend redrawn. The layers are the same in every step.
   function stepLayers(): void {
-    historyActions.hidden = !onNewStoneAge()
     showCharts()
     plantLegend.refresh()
     hoverTooltip.refresh()

@@ -47,9 +47,10 @@ is computed by the crate `casas-incubator`
   keeps the level-1 node under each texel, so everything per node can be
   read per texel.
 - **The steps.** A step bar as the generator's: 1 the old stone age, 2 the
-  new stone age. A step gives the controls — a click sets step 1's origin,
-  the history's actions are step 2's — not what the map shows. The flora and the fauna are grown on the
-  way in, with the cells, as rows of the load panel (`ui/loadPanel`).
+  new stone age. A step gives the controls — a click sets step 1's origin;
+  step 2 has none — not what the map shows. The flora and the fauna are
+  grown on the way in, with the cells, as rows of the load panel
+  (`ui/loadPanel`).
 - **The overlay list** (`ui/layerPanel`): a column of its own, every
   overlay of the world in groups — the switches ("Global", the geology,
   the climate) and the picks of one choice with "none" (the settlement, the
@@ -170,9 +171,10 @@ Step 1, the old stone age, and step 2, the history:
   The map mixes the kept states before and after the time shown. Its
   overlays: the spread, the lifeways or the density, the villages, the
   camps, the hamlets, the trade and its sources, the centres.
-- **H1**: saved, a job runs the history natively on the server and keeps
-  it as the artifact H1 ([DEC-0048](../decisions/incubator-history-engine.md));
-  a world opens with the history saved last and its origin.
+- **H1**: a job runs the history natively on the server and keeps it as
+  the artifact H1 ([DEC-0048](../decisions/incubator-history-engine.md));
+  a world opens with the history saved last and its origin. The screen
+  has no button to order the job since 2026-10-28.
 
 ## Text
 
