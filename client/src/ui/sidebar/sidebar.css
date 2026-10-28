@@ -5,8 +5,9 @@
   position: fixed;
   top: var(--title-bar-height, 0px);
   bottom: var(--step-bar-height, 0px);
-  left: 0;
-  width: var(--sidebar-width, 300px);
+  /* Of its own width; moved out to the left by what it does not take. */
+  left: calc(var(--sidebar-width) - 300px);
+  width: 300px;
   /* Same layer as the rest of the map chrome, below the title bar (4). */
   z-index: 3;
   box-sizing: border-box;

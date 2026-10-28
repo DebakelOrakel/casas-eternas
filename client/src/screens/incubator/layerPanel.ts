@@ -45,7 +45,7 @@ export function createLayerPanel(host: HTMLElement, options: {
 }): LayerPanel {
   const aside = document.createElement('aside')
   aside.className = 'layer-panel design-light'
-  aside.hidden = true
+  aside.inert = true
 
   const head = document.createElement('div')
   head.className = 'layer-panel__head'
@@ -193,7 +193,7 @@ export function createLayerPanel(host: HTMLElement, options: {
     refresh,
     relabel: say,
     setVisible(visible) {
-      aside.hidden = !visible
+      aside.inert = !visible
       document.documentElement.style.setProperty(WIDTH_VAR, visible ? WIDTH : '0px')
     },
     dispose() {

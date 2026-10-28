@@ -5,9 +5,11 @@
   position: fixed;
   top: var(--title-bar-height, 0px);
   bottom: var(--step-bar-height, 0px);
-  left: var(--sidebar-width, 0px);
-  width: var(--left-panel-width, 300px);
-  z-index: 3;
+  /* Of its own width; moved out under the left column by what it does not
+     take. */
+  left: calc(var(--sidebar-width) + var(--left-panel-width) - 300px);
+  width: 300px;
+  z-index: 2;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -239,26 +241,4 @@
 .layer-panel__row--on .layer-panel__switch::after {
   left: 16px;
   background: var(--dc-on-accent);
-}
-
-/* The button in the left column that shows and hides the panel. */
-.layer-panel__toggle {
-  width: 100%;
-  height: 36px;
-  border: 1px solid var(--dc-line2);
-  border-radius: 2px;
-  background: transparent;
-  font: inherit;
-  font-size: 13px;
-  color: var(--dc-text2);
-  cursor: pointer;
-}
-
-.layer-panel__toggle:hover {
-  background: var(--dc-hover);
-}
-
-.layer-panel__toggle[aria-pressed='true'] {
-  border-color: var(--dc-accent);
-  color: var(--dc-strong);
 }

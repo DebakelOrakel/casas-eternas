@@ -101,6 +101,9 @@ export interface TitleBar {
   // offers the place rather than the buttons. Doors used less often go into
   // the menu instead (`menuItems`).
   tools: HTMLElement
+  // Where a screen hangs the switches of its panels (PanelToggles), left of
+  // the save state; shown with it, while a world is open.
+  panels: HTMLElement
   // Whether a world is open: its save state shows then. Its name and seed
   // are the step bar's (2026-10-28).
   setWorldShown(shown: boolean): void
@@ -146,6 +149,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
     </${markTag}>
     <div class="title-bar__divider" data-slot="world-divider"></div>
     <div class="title-bar__world" data-slot="world">
+      <span data-slot="panels"></span>
       <span class="title-bar__status" data-slot="status"></span>
     </div>
     <div class="title-bar__spacer"></div>
@@ -179,6 +183,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   const worldGroup = bar.querySelector<HTMLElement>('[data-slot="world"]')!
   const statusText = bar.querySelector<HTMLElement>('[data-slot="status"]')!
   const toolsSlot = bar.querySelector<HTMLElement>('[data-slot="tools"]')!
+  const panelsSlot = bar.querySelector<HTMLElement>('[data-slot="panels"]')!
   const menuHost = bar.querySelector<HTMLElement>('[data-slot="menu"]')!
   const menuButton = bar.querySelector<HTMLButtonElement>('[data-slot="menu-button"]')!
   const menuList = bar.querySelector<HTMLElement>('[data-slot="menu-list"]')!
@@ -473,6 +478,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   return {
     element: bar,
     tools: toolsSlot,
+    panels: panelsSlot,
     setWorldShown(shown) {
       worldShown = shown
       paintWorld()

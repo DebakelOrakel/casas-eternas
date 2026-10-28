@@ -25,6 +25,7 @@ import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createSidebar } from '../../ui/sidebar/Sidebar'
 import { createTitleBar } from '../../ui/titleBar/TitleBar'
+import { createPanelToggles } from '../../ui/titleBar/PanelToggles'
 import { createWorldChooser, type OpenedCopy } from '../../ui/worldChooser/WorldChooser'
 import { createLoadPanel } from '../../ui/loadPanel/LoadPanel'
 import { formatBytes } from '../../ui/format'
@@ -338,9 +339,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       handbookPanel.relabel()
       loadPanel.relabel()
       stepBar.relabel()
+      panelToggles.relabel()
       updateSteps()
       overlayList.relabel()
-      sayLayersButton()
       sayHistory()
       chronicle.relabel()
       sayChronicle()
@@ -421,10 +422,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The column and the bar step aside together: for the world list and
   // for the windows.
   function setFurniture(visible: boolean): void {
-    sidebar.setVisible(visible)
     furnitureShown = visible
-    overlayList.setVisible(visible && layersShown)
-    chronicle.setVisible(visible)
+    showPanels()
     stepBar.setVisible(visible)
     plantLegend.element.hidden = !visible
   }
@@ -625,18 +624,17 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showCharts()
   }
 
-  // THE LAYERS (layerPanel.ts): a column of their own beside the left one,
-  // shown and hidden by a button in it; whether it shows is the viewer's,
-  // kept in the browser.
-  const LAYERS_SHOWN_KEY = 'incubator.layers.shown'
-  let layersShown = ((): boolean => {
-    try {
-      return localStorage.getItem(LAYERS_SHOWN_KEY) !== '0'
-    } catch {
-      return true
-    }
-  })()
+  // THE PANELS (2026-10-28): the step's actions (the left column), the
+  // layers (layerPanel.ts) beside it and the chronicle on the right, each
+  // shown and hidden by its switch in the title bar (ui/titleBar/
+  // PanelToggles), while the furniture shows.
   let furnitureShown = false
+  const panelToggles = createPanelToggles(titleBar.panels, 'incubator', ['actions', 'overlays', 'chronicle'], () => showPanels())
+  function showPanels(): void {
+    sidebar.setVisible(furnitureShown && panelToggles.shown('actions'))
+    overlayList.setVisible(furnitureShown && panelToggles.shown('overlays'))
+    chronicle.setVisible(furnitureShown && panelToggles.shown('chronicle'))
+  }
   // Every layer off, or as a world opens.
   const layersOff = (): void => {
     terrainOn = false
@@ -807,28 +805,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ...ANIMAL_USES.map((p) => ({ id: animalPickId(p.use), helpBase: `animal.use.${p.use}`, icon: p.icon })),
     ],
   }
-  // The button that shows and hides the layers' column.
-  const layersButton = document.createElement('button')
-  layersButton.type = 'button'
-  layersButton.className = 'layer-panel__toggle'
-  layersButton.dataset.tAria = 'incubator.layers.toggle'
-  const sayLayersButton = (): void => {
-    layersButton.textContent = t('incubator.layers.title')
-    layersButton.setAttribute('aria-label', t('incubator.layers.toggle'))
-    layersButton.setAttribute('aria-pressed', String(layersShown))
-  }
-  sayLayersButton()
-  layersButton.addEventListener('click', () => {
-    layersShown = !layersShown
-    try {
-      localStorage.setItem(LAYERS_SHOWN_KEY, layersShown ? '1' : '0')
-    } catch {
-      // Not kept: it shows as it is until the page closes.
-    }
-    sayLayersButton()
-    overlayList.setVisible(furnitureShown && layersShown)
-  })
-  sidebar.body.append(layersButton)
   // THE HISTORY'S BUTTON (the people step), as the generator's steps have
   // theirs: reset the origin to the one chosen by itself, and the history
   // with it. A button to start the history went with the rules' preview

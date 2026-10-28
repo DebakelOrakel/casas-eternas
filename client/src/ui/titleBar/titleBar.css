@@ -101,6 +101,41 @@ button.title-bar__mark:hover {
   min-width: 0;
 }
 
+/* The panels' switches (PanelToggles): one segmented row of text buttons. */
+.panel-toggles {
+  display: flex;
+  align-self: center;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.panel-toggles__button {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--dc-line2);
+  background: transparent;
+  color: var(--dc-muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.panel-toggles__button:first-child {
+  border-left: 0;
+}
+
+.panel-toggles__button:hover {
+  background: var(--dc-hover);
+}
+
+.panel-toggles__button[aria-pressed='true'] {
+  background: var(--dc-hover);
+  color: var(--dc-strong);
+  font-weight: 500;
+}
+
 .title-bar__status {
   font-size: 12px;
   color: var(--dc-muted);

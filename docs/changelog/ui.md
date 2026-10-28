@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-28
+- **new** Incubator: switches in the title bar show and hide the actions, the overlays and the chronicle, each sliding in from its side. `common.panel.actions`
 - **changed** Layout: the world's name and seed stand at the left of the step bar in the generator and the incubator, no longer in the title bar. `titlebar.world`
 - **changed** Incubator: the people's step is called New Stone Age, and the chronicle's epochs Old Stone Age, New Stone Age and Copper Age. `incubator.step.newStoneAge`
 - **changed** Incubator: the people's history has copper, hammered and then smelted, towns that draw the people around them, and ends at its first city; it runs on from the old stone age's end, under the old stone age's routes, in one chronicle. `incubator.step.newStoneAge`

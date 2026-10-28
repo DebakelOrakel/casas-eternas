@@ -118,9 +118,10 @@ export function createSidebar(host: HTMLElement, stepKeys: string, handbook?: Si
     },
     relabel: paint,
     setVisible(visible) {
-      aside.hidden = !visible
-      // The map takes the width back while the column is away, rather than
-      // leaving a strip of nothing beside the load screen.
+      // Away, it slides out (style.css) and takes no input; the map takes
+      // the width back, rather than leaving a strip of nothing beside the
+      // load screen.
+      aside.inert = !visible
       publishWidth(visible ? WIDTH : '0px')
     },
     dispose() {

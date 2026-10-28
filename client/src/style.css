@@ -1,3 +1,35 @@
+/* The panels' widths (the left column, the layer panel, the chronicle),
+   published on the document element by each panel. Registered, so a change
+   slides: the canvas and the map's furniture follow the width, and each
+   panel, of a fixed width, moves in from its side by the same amount. */
+@property --sidebar-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --left-panel-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --right-sidebar-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+:root {
+  transition: --sidebar-width 0.22s ease, --left-panel-width 0.22s ease, --right-sidebar-width 0.22s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    transition: none;
+  }
+}
+
 html, body {
   margin: 0;
   padding: 0;

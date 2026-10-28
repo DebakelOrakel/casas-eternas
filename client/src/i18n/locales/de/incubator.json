@@ -84,7 +84,6 @@
   "incubator.layers.defaults": "Standard",
   "incubator.layers.oneOf": "1 von {count}",
   "incubator.layers.global": "Global",
-  "incubator.layers.toggle": "Overlays ein-/ausblenden",
   "incubator.layers.geology": "Geologie",
   "incubator.layers.climateLand": "Klima Land",
   "incubator.layers.climateSea": "Klima Meer",

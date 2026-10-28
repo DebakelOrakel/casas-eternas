@@ -5,8 +5,9 @@
   position: fixed;
   top: var(--title-bar-height, 0px);
   bottom: var(--step-bar-height, 0px);
-  right: 0;
-  width: var(--right-sidebar-width, 392px);
+  /* Of its own width; moved out to the right by what it does not take. */
+  right: calc(var(--right-sidebar-width) - 392px);
+  width: 392px;
   z-index: 3;
   box-sizing: border-box;
   display: flex;

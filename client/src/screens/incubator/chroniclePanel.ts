@@ -383,7 +383,7 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
     },
     relabel: say,
     setVisible(visible) {
-      aside.hidden = !visible
+      aside.inert = !visible
       document.documentElement.style.setProperty(WIDTH_VAR, visible ? WIDTH : '0px')
       if (!visible) stop()
     },
