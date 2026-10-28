@@ -32,8 +32,7 @@ import { formatBytes } from '../../ui/format'
 import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../ui/artifactChooser/ArtifactChooser'
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
-import { createLayerPanel, type LayerGroup } from './layerPanel'
-import type { OverlayListRow } from '../generator/OverlayList'
+import { createLayerPanel, type LayerGroup, type LayerRow } from '../../ui/layerPanel/LayerPanel'
 import { OVERLAY_META, overlayKey } from '../generator/overlays'
 import { CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols, type ChartSize, type VolcanoMark } from '../generator/mapSymbols'
 import { collectVolcanoes } from '../../generator/tectonics/volcanoes'
@@ -625,7 +624,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   // THE PANELS (2026-10-28): the step's actions (the left column), the
-  // layers (layerPanel.ts) beside it and the chronicle on the right, each
+  // layers (ui/layerPanel) beside it and the chronicle on the right, each
   // shown and hidden by its switch in the title bar (ui/titleBar/
   // PanelToggles), while the furniture shows.
   let furnitureShown = false
@@ -658,6 +657,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     settlementShown = 'spread'
   }
   const overlayList = createLayerPanel(root, {
+    texts: { title: 'incubator.layers.title', active: 'incubator.layers.active', allOff: 'incubator.layers.allOff', defaults: 'incubator.layers.defaults', oneOf: 'incubator.layers.oneOf' },
     onAllOff: () => {
       layersOff()
       showPlants()
@@ -1926,7 +1926,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     probe: (cell) => groupRows(at(cell)),
   })
-  // Every step shows every layer (layerPanel.ts, 2026-10-26): the steps
+  // Every step shows every layer (ui/layerPanel, 2026-10-26): the steps
   // compute, the panel chooses.
   const TRIALS: readonly TrialLayer[] = [
     {
@@ -2540,8 +2540,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The layers the step on screen offers: its picks; the map and its
   // legend redrawn.
   function stepLayers(): void {
-    // Every layer in every step, grouped (layerPanel.ts).
-    const one = (g: { title: string; rows: OverlayListRow[] }): LayerGroup => ({ title: `${g.title}.label` as TKey, kind: 'one', rows: g.rows })
+    // Every layer in every step, grouped (ui/layerPanel).
+    const one = (g: { title: string; rows: LayerRow[] }): LayerGroup => ({ title: `${g.title}.label` as TKey, kind: 'one', rows: g.rows })
     overlayList.setGroups([
       { title: 'incubator.layers.global', kind: 'any', rows: [{ id: 'terrain', helpBase: overlayKey('terrain'), icon: OVERLAY_META.terrain.icon }, ...PEOPLE_ROWS] },
       { title: 'incubator.layers.geology', kind: 'any', rows: GEOLOGY_ROWS },

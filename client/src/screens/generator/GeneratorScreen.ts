@@ -64,12 +64,13 @@ import { refinementFits, type RefinedClimate } from '../../generator/climate/ref
 import type { RefinedClimateChart } from '../../generator/climate/climateChart'
 import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
-import { createOverlayList } from './OverlayList'
-import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlays'
+import { createLayerPanel, type LayerPanel } from '../../ui/layerPanel/LayerPanel'
+import { createPanelToggles } from '../../ui/titleBar/PanelToggles'
+import { OVERLAY_META, OVERLAY_IDS, PICK_GROUPS, RESOURCE_FIELDS, RESOURCES_TITLE, SWITCH_GROUPS, overlayKey, type OverlayId } from './overlays'
 
-// The pick row that paints none of a group's layers (overlayList): one per
-// group, `none:<index>` for the step's layer groups and `none:fields` for its
-// resource picks.
+// The pick row that paints none of a group's layers (the layer panel): one
+// per group, `none:<index>` for the pick groups (overlays.ts PICK_GROUPS)
+// and `none:fields` for the resource picks.
 const NO_PICK_PREFIX = 'none:'
 const noPickOf = (group: number | 'fields'): string => `${NO_PICK_PREFIX}${group}`
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
@@ -721,6 +722,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       climatePlayer.relabel()
       ecologyPlayer.relabel()
       sidebar.relabel()
+      layerPanel?.relabel()
+      panelToggles.relabel()
       stepBar.relabel()
       worldChooser.relabel()
       artifactChooser.relabel()
@@ -2054,6 +2057,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The shape the planet preview on show was computed on, null while none
   // is (THE PLANET PREVIEW, below).
   let planetPreviewShape: 'torus' | 'sphere' | null = null
+  // Whether the planet preview's sample world is on the map (THE PLANET
+  // PREVIEW, below).
+  let planetPreviewShown = false
+  // The layer panel (ui/layerPanel), made with the column, at the foot of
+  // this function; the map may be redrawn before.
+  let layerPanel: LayerPanel | null = null
   const paintsGlobe = (): boolean => globeView !== null && (STEP_IDS[panelIndex] === 'world' ? planetPreviewShape === 'sphere' : baseIsWorld)
   const layerView = (): WorldView => (paintsGlobe() ? globeView! : flatView)
   // The globe shows its layers when they are this world's and the step's;
@@ -2067,6 +2076,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     hoverTooltip?.setEnabled(worldShape !== 'sphere' || shown)
     syncSymbols()
     syncWaterShown()
+    refreshOverlayList()
   }
   const overlay = new MapOverlayCompositor(MAP_WIDTH, MAP_HEIGHT, (pixels) => {
     lastCompositePixels = pixels
@@ -2354,10 +2364,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let hoverTooltip: ReturnType<typeof createMapHoverTooltip> | null = null
 
   // THE OVERLAYS. Which layers exist, what they are called and which icon
-  // stands for them lives in overlays.ts; which of them a step offers lives in
-  // steps.ts; the table below (overlayReadout) says when a layer can be shown,
-  // what its legend says and what it reads out, because all three read this
-  // screen's own data. Events are not a layer you switch — they are always on.
+  // stands for them lives in overlays.ts, with their groups in the layer
+  // panel; which of them a step is about lives in steps.ts; the table below
+  // (overlayReadout) says when a layer can be shown, what its legend says and
+  // what it reads out, because all three read this screen's own data. Events are not a layer you switch — they are always on.
   // A layer's legend is a LegendSpec (ui/legend): shown in the legend panel
   // whenever the layer is on.
   // ONE ROW PER LAYER, and every layer must fill it in (a layer added to
@@ -2696,14 +2706,18 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       },
     },
   }
-  const overlayAvailable = (id: OverlayId): boolean => overlayReadout[id].available()
+  // Under the planet preview the map shows the sample world: only the layers
+  // the preview computes for it have their data there. The others' mirrors
+  // hold the world's, which would paint over the sample world.
+  const PLANET_PREVIEW_LAYERS: ReadonlySet<OverlayId> = new Set<OverlayId>(['terrain', 'temperature', 'wind', 'currents', 'precipitation', 'seasonality', 'monsoon', 'koppen', 'biomes'])
+  const overlayAvailable = (id: OverlayId): boolean =>
+    (!planetPreviewShown || PLANET_PREVIEW_LAYERS.has(id)) && overlayReadout[id].available()
 
-  // The layers a step's tooltip reads out: the ones the step OFFERS, switched
-  // on or not — a point has its values whatever is painted over it — and, in
-  // a step that paints a resource field, that layer. The order is the column's.
-  function probedLayers(stepId: StepId): OverlayId[] {
-    const s = step(stepId)
-    return [...s.overlays, ...s.groups.flatMap((g) => g.members), ...(s.fields.length > 0 ? ['ecology' as const] : [])]
+  // The layers a step's tooltip reads out: the ones the step is ABOUT
+  // (steps.ts `layers`), switched on or not — a point has its values
+  // whatever is painted over it.
+  function probedLayers(stepId: StepId): readonly OverlayId[] {
+    return step(stepId).layers
   }
   function probeRowsFor(stepId: StepId, cell: ProbeCell): ProbeRow[] {
     return probedLayers(stepId).flatMap((id) => {
@@ -2755,14 +2769,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlayMemory.clear()
     if (!panelEverShown) return
     panelEverShown = false
+    applyStepDefaults()
+    if (lastColoredBase) updateOverlays()
+  }
+  // The step on screen's defaults (steps.ts): its layers on, the rest off; a
+  // step that starts on the resource layer starts on its first field.
+  function applyStepDefaults(): void {
     const current = step(STEP_IDS[panelIndex])
     for (const id of OVERLAY_IDS) overlaysOn[id] = current.defaults.includes(id)
-    if (current.fields.length > 0) {
-      selectedEcologyField = current.fields[0]
+    if (current.defaults.includes('ecology')) {
+      selectedEcologyField = RESOURCE_FIELDS[0]
       pickedEcologyField = selectedEcologyField
       showAbundanceFor(pickedEcologyField)
     }
-    if (lastColoredBase) updateOverlays()
   }
 
   // Picking a resource field points the ecology layer at that field. Unlike every
@@ -2815,7 +2834,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // one exception — it also shows while an abundance slider is hovered, which is
   // a preview of what that slider does, not a state anybody switched on.
   const overlayShown = (id: OverlayId): boolean =>
-    id === 'ecology' ? ecologyLayerOn() : overlaysOn[id] && overlayAvailable(id)
+    id === 'ecology' ? ecologyLayerOn() && overlayAvailable(id) : overlaysOn[id] && overlayAvailable(id)
 
   // Enable each layer per overlayShown; 'rivers' drives the scene ribbons and
   // the lakes (drawn by the map's water plugin, not a layer) together. One
@@ -2838,39 +2857,41 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const isOverlayId = (id: string): id is OverlayId => id in OVERLAY_META
 
   // Pick one of a group's layers: it comes on, the rest of ITS group goes
-  // off, the other groups stay as they are. The groups are read from the
-  // step table rather than kept a second time, and the state is the ordinary
-  // `overlaysOn` — a pick is a switch that turns its siblings off, not a
-  // second kind of thing to keep in sync. A group's "none" switches it off;
-  // the resource picks' "none" switches the ecology layer off.
+  // off, the other groups stay as they are. The groups are the world's
+  // (overlays.ts PICK_GROUPS), the same in every step, and the state is the
+  // ordinary `overlaysOn` — a pick is a switch that turns its siblings off,
+  // not a second kind of thing to keep in sync. A group's "none" switches it
+  // off; the resource picks' "none" switches the ecology layer off.
   function pickExclusiveOverlay(id: string): void {
-    const current = step(STEP_IDS[panelIndex])
     if (id === noPickOf('fields')) {
       overlaysOn.ecology = false
     } else if (id.startsWith(NO_PICK_PREFIX)) {
-      const group = current.groups[Number(id.slice(NO_PICK_PREFIX.length))]
+      const group = PICK_GROUPS[Number(id.slice(NO_PICK_PREFIX.length))]
       if (!group) return
       for (const member of group.members) overlaysOn[member] = false
     } else {
-      const group = current.groups.find((g) => g.members.includes(id as OverlayId))
+      const group = PICK_GROUPS.find((g) => g.members.includes(id as OverlayId))
       if (!group) return
       for (const member of group.members) overlaysOn[member] = member === id
     }
     updateOverlays()
   }
 
-  // The column's switches and picks, from the same state the map is drawn from.
-  // A resource field is reachable exactly when the ecology layer is, and checked
-  // when it is the one being painted.
+  // The panel's switches and picks, from the same state the map is drawn
+  // from. A resource field is reachable exactly when the ecology layer is,
+  // and checked when it is the one being painted. A sphere world's globe that
+  // wears none of the world's layers (syncGlobeLayers) has none of them to
+  // show: every row is greyed out then, as the legend hides.
   function refreshOverlayList(): void {
-    const ecologyAvailable = overlayAvailable('ecology')
-    const current = step(STEP_IDS[panelIndex])
-    overlayList.refresh((id) => isOverlayId(id)
-      ? { on: overlaysOn[id], available: overlayAvailable(id) }
+    if (!layerPanel) return
+    const onMap = worldShape !== 'sphere' || (paintsGlobe() && globePainted)
+    const ecologyAvailable = onMap && overlayAvailable('ecology')
+    layerPanel.refresh((id) => isOverlayId(id)
+      ? { on: overlaysOn[id], available: onMap && overlayAvailable(id) }
       : id === noPickOf('fields')
         ? { on: !overlaysOn.ecology, available: true }
       : id.startsWith(NO_PICK_PREFIX)
-        ? { on: !(current.groups[Number(id.slice(NO_PICK_PREFIX.length))]?.members.some((member) => overlaysOn[member]) ?? false), available: true }
+        ? { on: !(PICK_GROUPS[Number(id.slice(NO_PICK_PREFIX.length))]?.members.some((member) => overlaysOn[member]) ?? false), available: true }
       // The PICK, not what a hover is showing: hovering a lever previews the
       // aggregate, and the mark would leave the resource you chose.
       : { on: overlaysOn.ecology && pickedEcologyField === id, available: ecologyAvailable })
@@ -3007,7 +3028,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
 
   // ── The hover readout ──────────────────────────────────────────────────────
   //
-  // The height line always; under it the rows of the layers the step offers
+  // The height line always; under it the rows of the layers the step is about
   // (overlayReadout, probeRowsFor) and, where a layer draws a year, its chart.
   //
   // The hovered cell, resolved once per hover into every grid the rows need.
@@ -3119,8 +3140,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // with the climate the controls make on it. The real base is kept aside
   // and put back on leaving; the climate fields are the preview's for as
   // long as it stands and are cleared with it, so nothing downstream ever
-  // sees them as the world's climate.
-  let planetPreviewShown = false
+  // sees them as the world's climate. (`planetPreviewShown` is declared
+  // with the globe's state, above: the layers' availability reads it.)
   // The shape of the preview this world wants: its own.
   const previewShape = (): 'torus' | 'sphere' => (worldShape === 'sphere' ? 'sphere' : 'torus')
   let planetPreviewRealBase: { base: Uint8ClampedArray; relief: Uint8Array } | null = null
@@ -4648,6 +4669,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Back to the world list. The step bar is for steps WITHIN a world; leaving
   // one is a different kind of move, and it hangs off the world's name in the
   // title bar — the place that says which world you are in.
+  // The step bar and the panels step aside together, and come back as their
+  // switches say (showPanels).
+  function setFurniture(visible: boolean): void {
+    stepBar.setVisible(visible)
+    furnitureShown = visible
+    showPanels()
+  }
   function openWorldChooser(): void {
     if (chooserOpen) return
     chooserOpen = true
@@ -4657,8 +4685,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // nobody has asked yet. One place does this, and startup goes through it
     // too — the first opening used to hide them separately, and when that line
     // drifted the load screen came up sitting on top of the steps.
-    stepBar.setVisible(false)
-    sidebar.setVisible(false)
+    setFurniture(false)
     updateSaveIndicator()
     worldChooser.open()
   }
@@ -4669,8 +4696,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (artifactChooser.isOpen()) return
     handbookPanel.close()
     closeJobs()
-    stepBar.setVisible(false)
-    sidebar.setVisible(false)
+    setFurniture(false)
     artifactChooser.open()
   }
   // The jobs window, the same way; one of the two at a time.
@@ -4678,8 +4704,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (jobChooser.isOpen()) return
     handbookPanel.close()
     closeArtifacts()
-    stepBar.setVisible(false)
-    sidebar.setVisible(false)
+    setFurniture(false)
     jobChooser.open()
   }
   function closeJobs(): void {
@@ -4687,8 +4712,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     jobChooser.close()
     // Over the world list, the list stays and the furniture stays away.
     if (chooserOpen) return
-    stepBar.setVisible(true)
-    sidebar.setVisible(true)
+    setFurniture(true)
   }
 
   // THE FINISHING STEP: the world held refined on the server, as one plan —
@@ -4868,15 +4892,13 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!artifactChooser.isOpen()) return
     artifactChooser.close()
     if (chooserOpen) return
-    stepBar.setVisible(true)
-    sidebar.setVisible(true)
+    setFurniture(true)
   }
 
   function closeWorldChooser(): void {
     if (!chooserOpen) return
     chooserOpen = false
-    stepBar.setVisible(true)
-    sidebar.setVisible(true)
+    setFurniture(true)
     worldChooser.close()
     // The bar has been showing no world; now there is one to name.
     updateSaveIndicator()
@@ -5648,7 +5670,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The handbook (ui/handbook): a step's page is `generator.step.<id>`
   // (docs/handbook/), opened from the title bar's menu or from the book
   // beside the step's name. The layers' pages are made from the overlay
-  // catalog, and which of them a step offers is the step table's — the
+  // catalog, and which of them a step is about is the step table's — the
   // handbook does not repeat either.
   const stepPage = (id: StepId): string => `generator.step.${id}`
   const handbookPanel = createHandbookPanel(root, {
@@ -5664,7 +5686,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })),
     stepOverlays: (anchor) => {
       const shown = STEPS.find((s) => stepPage(s.id) === anchor)
-      return shown ? [...shown.overlays, ...shown.groups.flatMap((group) => group.members)].map(overlayKey) : []
+      return shown ? shown.layers.map(overlayKey) : []
     },
   })
   const sidebar = createSidebar(root, 'generator.step', {
@@ -5677,27 +5699,69 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const worldPanel = panels[panelIndexOf('world')]
   relabel(worldPanel)
 
-  // The step's own overlays, as switches in the column (see OverlayList). The
-  // bar over the map stays for now: it is the only door to the terrain colour
-  // and to the Ecology fields, which pick ONE field rather than combining, so
-  // a row of switches would say something untrue about them. Both doors drive
-  // the same `overlaysOn`, and refreshOverlayBar paints both.
-  //
-  // Which overlays belong to a step: the stage that COMPUTES a layer owns it.
-  // Erosion shows the hydrology group, because rivers and lakes are what the
-  // solve produces; step 0 and Ecology show nothing, and the section hides.
-  const overlayList = createOverlayList({
+  // THE LAYERS (ui/layerPanel, 2026-10-28): a column of their own beside the
+  // left one, as the incubator's. Every layer of the world in every step, in
+  // the world's groups (overlays.ts): the switches, the picks of one with
+  // their "none", and the resource fields the ecology layer paints. A row is
+  // greyed out only while its data is not there (refreshOverlayList).
+  // Entering a step still puts its defaults on (showPanel).
+  // The panel's strings are the incubator's until they have a common home.
+  layerPanel = createLayerPanel(root, {
+    texts: { title: 'generator.section.overlays.label', active: 'incubator.layers.active', allOff: 'incubator.layers.allOff', defaults: 'incubator.layers.defaults', oneOf: 'incubator.layers.oneOf' },
     onToggle: (id) => toggleOverlay(id as OverlayId),
-    // One pick group, two kinds of member: a layer the step shows one at a time,
-    // or — in Ecology — a resource field the one layer paints. The id says which.
+    // Two kinds of pick: a layer of a group, or a resource field the one
+    // ecology layer paints. The id says which.
     onPick: (id) => (isOverlayId(id) || id.startsWith(NO_PICK_PREFIX) ? pickExclusiveOverlay(id) : selectEcologyField(id as EcologyFieldId)),
+    onAllOff: () => {
+      for (const id of OVERLAY_IDS) overlaysOn[id] = false
+      updateOverlays()
+    },
+    onDefaults: () => {
+      applyStepDefaults()
+      updateControlsDisabled()
+      showEcologyMonth()
+      updateOverlays()
+    },
   })
+  const overlayRow = (id: OverlayId) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })
+  layerPanel.setGroups([
+    ...SWITCH_GROUPS.map((g) => ({ title: g.title, kind: 'any' as const, rows: g.members.map(overlayRow) })),
+    // Each pick group opens with its way out, first (2026-09-22): a step
+    // starts painting none of a group's layers unless it names one.
+    ...PICK_GROUPS.map((g, index) => ({
+      title: g.title,
+      kind: 'one' as const,
+      rows: [{ id: noPickOf(index), helpBase: 'overlay.none', icon: '/icons/clear.png' }, ...g.members.map(overlayRow)],
+    })),
+    // The resource picks have a "none" too (2026-09-27): it is how the
+    // ecology layer goes off, and the ecology panel shows the levers of the
+    // whole map while nothing is picked.
+    {
+      title: RESOURCES_TITLE,
+      kind: 'one' as const,
+      rows: [
+        { id: noPickOf('fields'), helpBase: 'overlay.none', icon: '/icons/clear.png' },
+        ...RESOURCE_FIELDS.map((field) => ({ id: field, helpBase: `resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
+      ],
+    },
+  ])
+  refreshOverlayList()
+  // THE PANELS' SWITCHES (ui/titleBar/PanelToggles): the step's actions (the
+  // left column) and the layers, each shown and hidden by its switch in the
+  // title bar, while the furniture shows. The world list and the windows
+  // step the furniture aside (setFurniture).
+  let furnitureShown = false
+  const panelToggles = createPanelToggles(titleBar.panels, 'generator', ['actions', 'overlays'], () => showPanels())
+  function showPanels(): void {
+    sidebar.setVisible(furnitureShown && panelToggles.shown('actions'))
+    layerPanel?.setVisible(furnitureShown && panelToggles.shown('overlays'))
+  }
   // The steps whose controls have moved out of the panel row at the foot and
   // into the column. The rest follow one per step, in pipeline order.
-  // Step 0 comes in two parts with the overlays between them: name, seed and
-  // shape first, then what the map shows, then the planet's sliders.
+  // Step 0 comes in two parts: name, seed and shape first, then the planet's
+  // sliders.
   const worldParams = root.querySelector<HTMLElement>('[data-stage-part="world"]')!
-  sidebar.body.append(worldPanel, overlayList.element, worldParams, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[ECOLOGY_PANEL_INDEX], panels[panelIndexOf('finishing')])
+  sidebar.body.append(worldPanel, worldParams, panels[GENESIS_PANEL_INDEX], panels[TECTONICS_PANEL_INDEX], panels[CLIMATE_PANEL_INDEX], panels[ECOLOGY_PANEL_INDEX], panels[panelIndexOf('finishing')])
   // Each step's foot goes to the column's foot, which does not scroll. Tagged
   // with its step, so showPanel shows it with the step it belongs to.
   // A step's foot may sit in its second part (step 0), not in its panel.
@@ -5832,45 +5896,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     sidebar.setStep(STEP_IDS[index])
     // An open handbook follows to the new step's page, where it has one.
     if (handbookPanel.isOpen() && handbookPanel.has(stepPage(STEP_IDS[index]))) handbookPanel.open(stepPage(STEP_IDS[index]))
-    // Which layers this step offers, and which of them are showing. Both come
-    // from the step table (steps.ts): this used to be a grouping over there plus
-    // ten lines of `overlaysOn.x = index === Y` here, which is how the column
-    // came to list layers the map was already showing.
+    // Which layers are showing: as you left the step, or — the first time on
+    // this world — the step's defaults (steps.ts). The panel's rows are the
+    // world's and stay; this used to set the rows per step as well.
     const stepDef = step(STEP_IDS[index])
-    overlayList.setRows(
-      stepDef.overlays.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
-      [
-        // Each group opens with its way out, first and the default
-        // (2026-09-22): a step starts painting none of a group's layers. The
-        // groups share one hover card, which says what a group is.
-        ...stepDef.groups.map((g, index) => ({
-          title: g.title,
-          help: 'generator.section.climateFields',
-          rows: [
-            { id: noPickOf(index), helpBase: 'overlay.none', icon: '/icons/clear.png' },
-            ...g.members.map((id) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })),
-          ],
-        })),
-        // The resource picks have a "none" too (2026-09-27): it is how the
-        // ecology layer goes off, and the panel shows the levers of the whole
-        // map while nothing is picked.
-        ...(stepDef.fields.length > 0 ? [{
-          title: stepDef.fieldsTitle,
-          rows: [
-            { id: noPickOf('fields'), helpBase: 'overlay.none', icon: '/icons/clear.png' },
-            ...stepDef.fields.map((field) => ({ id: field, helpBase: `resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
-          ],
-        }] : []),
-      ],
-    )
-    // As you left it, or — the first time on this world — the step's defaults.
     const remembered = overlayMemory.get(stepDef.id)
-    for (const id of OVERLAY_IDS) overlaysOn[id] = remembered ? remembered.on[id] : stepDef.defaults.includes(id)
-    // A step that paints a resource field starts on the first one it offers.
-    if (stepDef.fields.length > 0) {
-      selectedEcologyField = remembered?.field ?? stepDef.fields[0]
-      pickedEcologyField = selectedEcologyField
-      showAbundanceFor(pickedEcologyField)
+    if (remembered) {
+      for (const id of OVERLAY_IDS) overlaysOn[id] = remembered.on[id]
+      if (remembered.field !== null) {
+        selectedEcologyField = remembered.field
+        pickedEcologyField = selectedEcologyField
+        showAbundanceFor(pickedEcologyField)
+      }
+    } else {
+      applyStepDefaults()
     }
     ecologyHoverField = null // drop any stale hover preview when switching steps
     panels.forEach((panel, i) => {
@@ -5885,6 +5924,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // the moment the phase is handed over (see updateProgress).
     updateProgress()
     if (lastColoredBase) updateOverlays()
+    else refreshOverlayList()
     updateNavState()
   }
 
@@ -5992,6 +6032,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ecologyPlayer.stop()
       stopSim()
       sidebar.dispose()
+      layerPanel?.dispose()
       handbookPanel.dispose()
       stepBar.dispose()
       worldChooser.dispose()

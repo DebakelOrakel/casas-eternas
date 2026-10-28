@@ -1,5 +1,5 @@
 // THE STEPS, AS DATA. One entry per step: which pipeline stage it drives, which
-// map layers it offers, and which of those are showing when you enter it.
+// map layers it is about, and which layers are showing when you enter it.
 //
 // A STEP is not a STAGE. Step 0 names and seeds the world and also drives the
 // planet stage, whose controls are values you set rather than a run you start;
@@ -8,17 +8,14 @@
 // offered by the Climate step. The pipeline table (generator/pipeline/stages.ts) says what
 // computes what; this one says what you SEE and WHEN.
 //
-// WHY IT EXISTS. The same question — "what belongs to this step?" — used to be
-// answered in four places that could disagree, and did: a per-stage grouping of
-// the overlay bar named every layer exactly ONCE, while the screen switched the
-// mantle and the plumes on for Tectonics as well. The bar then offered them
-// under Genesis while Tectonics showed them, and the column's count said "0 / 2"
-// with five layers on the map. A layer belongs to as many steps as it is useful
-// in, which is what `overlays` says and a grouping could not.
+// WHAT THE MAP CAN SHOW IS NOT THE STEP'S (2026-10-28). The layer panel
+// holds every layer of the world in every step, in groups of its own
+// (overlays.ts); a layer is greyed out only while its data is not there. A
+// step decides its controls, the layers its hover card reads out and its
+// handbook page lists (`layers`), and which layers are on as you enter it
+// (`defaults`).
 import { STAGES, type StageId } from '../../generator/pipeline/stages'
-import { ECOLOGY_ABUNDANCE_GROUPS } from '../../generator/ecology/ecologyInputParams'
-import type { EcologyFieldId } from '../../generator/ecology/ecologyField'
-import type { OverlayId } from './overlays'
+import { PICK_GROUPS, type OverlayId } from './overlays'
 import { PROGRESS_STEPS } from '../../world/worldProgress'
 
 export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'ecology' | 'finishing'
@@ -27,37 +24,16 @@ export interface Step {
   id: StepId
   // The stage this step drives.
   stage: StageId
-  // The layers the column offers, in the order it lists them. A layer may
-  // appear in several steps — the mantle field is the Archean's subject and
-  // still drives the plates afterwards.
-  overlays: readonly OverlayId[]
-  // Layers the step shows ONE AT A TIME. Same shape as `fields` below — a pick,
-  // not a set of switches — but of ordinary layers. Two kinds of thing end up
-  // here: full-map washes, which physically cannot share the map (the later one
-  // covers the earlier, and what is left is a colour on no legend), and layers
-  // the step simply asks one at a time. The second is a reading decision, not a
-  // rendering one.
-  //
-  // Disjoint from `overlays`, and at most one member of a group is in
-  // `defaults`: each group has a "none" (the screen adds it, first and
-  // selected), and since 2026-09-22 a step starts on it unless it names a
-  // layer.
-  //
-  // SEVERAL GROUPS since 2026-09-29, by what the layers draw: one on the
-  // land, one on the sea, one of lines and arrows, one of weather — a layer
-  // is one at a time within its group, and the groups combine (the climate
-  // classes with the salinity with the currents). One group of eleven had
-  // made every one of them exclude every other.
-  groups: readonly PickGroup[]
-  // The catalog base for the resource picks' heading (Ecology).
-  fieldsTitle?: string
-  // Of those, the ones showing when the step is entered. Entering a step is a
-  // statement about what you want to look at, so this is a reset, not a memory.
+  // The layers the step is about, in the order the hover card reads them
+  // out. A layer may belong to several steps — the mantle field is the
+  // Archean's subject and still drives the plates afterwards.
+  layers: readonly OverlayId[]
+  // The layers showing when the step is entered the first time on a world
+  // (after that, as you left it). Entering a step is a statement about what
+  // you want to look at. At most one member of a pick group (overlays.ts):
+  // each group has a "none", and since 2026-09-22 a step starts on it unless
+  // it names a layer. 'ecology' paints the first resource field.
   defaults: readonly OverlayId[]
-  // Resource fields, which are a PICK rather than a set of switches: the layer
-  // paints one field over the whole land, so a second could only overwrite the
-  // first. Empty everywhere but Ecology.
-  fields: readonly EcologyFieldId[]
   // What the bar's mark says instead of the number: the finishing's F. The
   // finishing holds the detail jobs on the finished world, and is outside the
   // numbering; it stays linked to the step before it, and it is the last
@@ -65,128 +41,82 @@ export interface Step {
   mark?: string
 }
 
-// A pick group: its heading's catalog base, and its layers in the order the
-// column lists them.
-export interface PickGroup {
-  title: string
-  members: readonly OverlayId[]
-}
-
-// The climate's groups (2026-09-29), shared by step 0 (which offers some of
-// them on the planet preview) and the climate step. The lines — wind,
-// currents, rivers — are no group: streaks, arrows and ribbons read over each
-// other and over any wash, so they are switches.
-// The pressure is a wash over land and sea with its isobars; it sits with the
-// land's washes (2026-09-29), and may still read over a sea wash. The water
-// balance and the watersheds are land washes (since the erosion step went).
-const LAND: PickGroup = { title: 'generator.section.land', members: ['precipitation', 'seasonality', 'monsoon', 'koppen', 'biomes', 'pressure', 'waterBalance', 'watersheds'] }
-const SEA: PickGroup = { title: 'generator.section.sea', members: ['upwelling', 'salinity'] }
-const WEATHER: PickGroup = { title: 'generator.section.weather', members: ['fog', 'foehn', 'rainVariability', 'enso', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder'] }
-
-// Flat list of the per-field abundance controls, derived from the grouping the
-// save uses, so the picker and the save can never disagree about which fields
-// exist.
-const RESOURCE_FIELDS: readonly EcologyFieldId[] = ECOLOGY_ABUNDANCE_GROUPS.flatMap((g) => [...g.fields])
+// The climate's washes, by where they paint (overlays.ts PICK_GROUPS).
+const CLIMATE_WASHES: readonly OverlayId[] = PICK_GROUPS.flatMap((g) => g.members)
 
 export const STEPS: readonly Step[] = [
   {
     // Name, seed and the planet. The planet acts through the climate, so the
-    // step shows the climate's own layers — on the sample world until the
-    // world has plates, then on the world itself. The washes are one at a
-    // time; the wind and the currents are switches. (Step 1 was the planet alone until 2026-09-28; its three
-    // sliders did not earn a step.)
+    // step is about the climate's own layers — on the sample world until the
+    // world has plates, then on the world itself. (Step 1 was the planet
+    // alone until 2026-09-28; its three sliders did not earn a step.)
     //
-    // No terrain wash (2026-09-28). Temperature is on at entry: the planet
-    // sliders act on it first.
+    // The planet preview computes no refinement and no hydrology: only its
+    // own layers are available on it (GeneratorScreen PLANET_PREVIEW_LAYERS).
+    // Temperature is on at entry: the planet sliders act on it first.
     id: 'world',
     stage: 'planet',
-    overlays: ['temperature', 'wind', 'currents'],
-    // The planet preview has no refinement: its land washes only.
-    groups: [
-      { title: LAND.title, members: ['precipitation', 'seasonality', 'monsoon', 'koppen'] },
-    ],
+    layers: ['temperature', 'wind', 'currents', 'precipitation', 'seasonality', 'monsoon', 'koppen'],
     defaults: ['temperature'],
-    fields: [],
   },
   {
+    // No continent names: nothing is named until the hand-over. No plate
+    // outlines either — the Archean has no plates, and its renders place
+    // none.
     id: 'genesis',
     stage: 'genesis',
-    // No continent names: nothing is named until the hand-over, so the row
-    // would be permanently unavailable. No plate outlines either — the Archean
-    // has no plates, and its renders place none.
-    overlays: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
-    groups: [],
+    layers: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
     defaults: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
-    fields: [],
   },
   {
-    id: 'tectonics',
-    stage: 'tectonics',
     // The mantle and its plumes again: they drove the Archean and they drive
     // the plates, and this is the step where you watch them do it. The plate
-    // outlines belong HERE ALONE — they are what this step makes, and on a
-    // climate or a resource map they are a grid over somebody else's subject.
-    overlays: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
-    groups: [],
+    // outlines are what this step makes.
+    id: 'tectonics',
+    stage: 'tectonics',
+    layers: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
     defaults: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
-    fields: [],
   },
   {
-    id: 'climate',
-    stage: 'climate',
     // TEMPERATURE IS THE STEP'S GROUND. It drives everything else here —
     // seasonality is its annual amplitude, the biomes are classified from it —
     // so it is a switch that stays on, not one answer among many.
-    //
-    // The lines — wind, currents, rivers — are switches beside it. The
-    // washes are in groups by where they paint (see `groups`): one on the
-    // land, one on the sea, one weather phenomenon.
     //
     // No terrain wash by default: a colour wash under a temperature ramp reads
     // as a third colour.
     //
     // The rivers, the water balance and the watersheds are the climate's
     // readout since the erosion step went (2026-09-29): the hydrology runs
-    // on this step's refined climate. The two washes are land picks.
-    overlays: ['terrain', 'names', 'temperature', 'wind', 'currents', 'rivers'],
-    groups: [LAND, SEA, WEATHER],
+    // on this step's refined climate.
+    id: 'climate',
+    stage: 'climate',
+    layers: ['terrain', 'names', 'temperature', 'wind', 'currents', 'rivers', ...CLIMATE_WASHES],
     defaults: ['names', 'temperature'],
-    fields: [],
   },
   {
+    // The resource layer comes on with the step — it is the reason you are
+    // here — painting the first resource field.
     id: 'ecology',
     stage: 'ecology',
-    overlays: ['terrain', 'names', 'biomes', 'rivers'],
-    groups: [],
-    // The resource layer comes on with the step — it is the reason you are
-    // here — painting whichever field the picker below starts on.
+    layers: ['terrain', 'names', 'biomes', 'rivers', 'ecology'],
     defaults: ['names', 'ecology'],
-    fields: ['carryingCapacity', ...RESOURCE_FIELDS],
-    fieldsTitle: 'generator.section.resources',
   },
   {
     // The detail jobs on the finished world (2026-09-29): nothing yet — which
     // jobs belong here is decided when they are built.
     id: 'finishing',
     stage: 'finishing',
-    overlays: ['terrain', 'names', 'rivers', 'biomes'],
-    groups: [],
+    layers: ['terrain', 'names', 'rivers', 'biomes'],
     defaults: ['terrain', 'names', 'rivers'],
-    fields: [],
     mark: 'F',
   },
 ]
 
-// A pick group with no member on, or with two, is a radio that cannot say what
-// the map is showing; a layer that is both a switch and a pick is two answers to
-// one question. Checked here rather than left to the screen, for the same reason
-// the pipeline order is.
+// A pick group with two members on is a radio that cannot say what the map
+// is showing. Checked here rather than left to the screen, for the same
+// reason the pipeline order is.
 for (const s of STEPS) {
-  const picked = s.groups.flatMap((g) => g.members)
-  const both = picked.filter((id) => s.overlays.includes(id))
-  if (both.length > 0) throw new Error(`generator step ${s.id} lists ${both} as both a switch and a pick`)
-  if (new Set(picked).size !== picked.length) throw new Error(`generator step ${s.id} puts a layer in two pick groups`)
-  for (const g of s.groups) {
+  for (const g of PICK_GROUPS) {
     const chosen = g.members.filter((id) => s.defaults.includes(id))
     if (chosen.length > 1) throw new Error(`generator step ${s.id} must default to at most one layer of ${g.title}, not ${chosen.length}`)
   }

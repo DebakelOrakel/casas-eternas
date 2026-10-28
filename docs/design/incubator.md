@@ -50,7 +50,7 @@ is computed by the crate `casas-incubator`
   new stone age. A step gives the controls — a click sets step 1's origin,
   the history's actions are step 2's — not what the map shows. The flora and the fauna are grown on the
   way in, with the cells, as rows of the load panel (`ui/loadPanel`).
-- **The overlay list** (`layerPanel.ts`): a column of its own, every
+- **The overlay list** (`ui/layerPanel`): a column of its own, every
   overlay of the world in groups — the switches ("Global", the geology,
   the climate) and the picks of one choice with "none" (the settlement, the
   plants, the wood, the animals, the ecology, the climate over land and

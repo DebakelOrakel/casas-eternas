@@ -107,11 +107,11 @@
 
 /* A sphere world (map/sphereView.ts) shows its own layers in steps 1 and
    2 (DEC-0035, steps 4d2 and 4d5: --sphere-layers, set by the screen while
-   the globe wears them). Elsewhere the legend and the step's layer list would
-   describe the flat sample world, and are hidden. (The temperature strip
-   hides itself on a globe: map/mapScales.ts.) */
-.generator-screen--sphere:not(.generator-screen--sphere-layers) .overlay-legend,
-.generator-screen--sphere:not(.generator-screen--sphere-layers) .gen-layers {
+   the globe wears them). Elsewhere the legend would describe the flat sample
+   world, and is hidden; the layer panel greys its rows out (GeneratorScreen
+   refreshOverlayList). (The temperature strip hides itself on a globe:
+   map/mapScales.ts.) */
+.generator-screen--sphere:not(.generator-screen--sphere-layers) .overlay-legend {
   display: none;
 }
 

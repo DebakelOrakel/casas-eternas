@@ -1,32 +1,60 @@
 import { t, type TKey } from '../../i18n/i18n'
-import type { OverlayListRow, OverlayListState } from '../generator/OverlayList'
-import '../../ui/theme/design.css'
+import '../theme/design.css'
 import './layerPanel.css'
 
-// THE INCUBATOR'S LAYER PANEL (2026-10-26): its overlays in a column of
-// their own beside the left one, after the design canvas
-// (Overlays.dc.html, "Overlays in Gruppen"), light; shown and hidden by the
-// screen. The incubator's alone: the generator keeps its OverlayList.
+// THE LAYER PANEL (2026-10-26): a screen's overlays in a column of their
+// own beside the left one, after the design canvas (Overlays.dc.html,
+// "Overlays in Gruppen"), light; shown and hidden by the screen. The
+// incubator's first, the generator's too since 2026-10-28. It holds every
+// overlay of the world; a row is greyed out only while its data is not
+// there, never because of the step.
 //
 // The groups come in two kinds: of one choice ('one'), radio rows with
 // "none" among them, the head saying of how many; of switches ('any'),
-// each on or off by itself (the global group, the volcanoes and the
-// plumes). A group folds. The head counts what is on and offers "all off" and the
-// defaults. A row's mark is its icon, as OverlayList's. The legend stays
-// the screen's own box (ui/legend); no keyboard shortcuts.
+// each on or off by itself. A group folds. The head counts what is on and
+// offers "all off" and the defaults. A row's mark is its icon. The legend
+// stays the screen's own box (ui/legend); no keyboard shortcuts.
+
+// One row: a layer, or a pick of one.
+export interface LayerRow {
+  id: string
+  // The catalog base: `.label` names the row, `.help` fills the hover card the
+  // delegated `data-help` listener shows. `overlay.none` marks a group's way
+  // out, which counts as no layer.
+  helpBase: string
+  icon: string
+}
+
+// A row's state, read from the same state the map is drawn from rather than
+// kept a second time here.
+export interface LayerState {
+  on: boolean
+  available: boolean
+}
 
 export interface LayerGroup {
   // Its name's catalog key.
   title: TKey
   kind: 'one' | 'any'
-  rows: readonly OverlayListRow[]
+  rows: readonly LayerRow[]
+}
+
+// The panel's own strings, by the screen: its title, the count of what is
+// on (`{count}`), the two actions, and a pick group's "of how many"
+// (`{count}`).
+export interface LayerPanelTexts {
+  title: TKey
+  active: TKey
+  allOff: TKey
+  defaults: TKey
+  oneOf: TKey
 }
 
 export interface LayerPanel {
   element: HTMLElement
   // The groups, in their order.
   setGroups(groups: readonly LayerGroup[]): void
-  refresh(stateOf: (id: string) => OverlayListState): void
+  refresh(stateOf: (id: string) => LayerState): void
   relabel(): void
   setVisible(visible: boolean): void
   dispose(): void
@@ -38,6 +66,7 @@ const WIDTH_VAR = '--left-panel-width'
 const WIDTH = '300px'
 
 export function createLayerPanel(host: HTMLElement, options: {
+  texts: LayerPanelTexts
   onToggle: (id: string) => void
   onPick: (id: string) => void
   onAllOff: () => void
@@ -86,9 +115,9 @@ export function createLayerPanel(host: HTMLElement, options: {
   }
   let groups: Group[] = []
   const folded = new Set<string>()
-  let lastState: ((id: string) => OverlayListState) | null = null
+  let lastState: ((id: string) => LayerState) | null = null
 
-  function groupOf(titleKey: TKey, pick: boolean, rows: readonly OverlayListRow[]): Group {
+  function groupOf(titleKey: TKey, pick: boolean, rows: readonly LayerRow[]): Group {
     const section = document.createElement('section')
     section.className = 'layer-panel__group'
     const heading = document.createElement('button')
@@ -152,19 +181,19 @@ export function createLayerPanel(host: HTMLElement, options: {
   }
 
   function say(): void {
-    title.textContent = t('incubator.layers.title')
-    allOff.textContent = t('incubator.layers.allOff')
-    defaults.textContent = t('incubator.layers.defaults')
+    title.textContent = t(options.texts.title)
+    allOff.textContent = t(options.texts.allOff)
+    defaults.textContent = t(options.texts.defaults)
     for (const g of groups) {
       g.name.textContent = t(g.titleKey)
       // Of how many layers, "none" not one.
-      g.badge.textContent = t('incubator.layers.oneOf', { count: String(g.rows.filter((r) => r.helpBase !== 'overlay.none').length) })
+      g.badge.textContent = t(options.texts.oneOf, { count: String(g.rows.filter((r) => r.helpBase !== 'overlay.none').length) })
       for (const r of g.rows) r.label.textContent = t(`${r.helpBase}.label` as TKey)
     }
     if (lastState) refresh(lastState)
   }
 
-  function refresh(stateOf: (id: string) => OverlayListState): void {
+  function refresh(stateOf: (id: string) => LayerState): void {
     lastState = stateOf
     let on = 0
     for (const g of groups) {
@@ -179,7 +208,7 @@ export function createLayerPanel(host: HTMLElement, options: {
         if (state.on && !none) on++
       }
     }
-    count.textContent = t('incubator.layers.active', { count: String(on) })
+    count.textContent = t(options.texts.active, { count: String(on) })
   }
 
   return {

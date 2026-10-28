@@ -19,7 +19,7 @@ import './handbook.css'
 // and their one sentence are the overlay catalog's (`overlay.<id>.label` and
 // `.help`, the same words as the layer's hover card), so a layer's page is
 // built here from them, with whatever docs/handbook/<locale>/overlays/ adds
-// below; and which layers a step offers is the step table's. A second copy
+// below; and which layers a step is about is the step table's. A second copy
 // of either in the handbook would drift.
 //
 // A widget: it knows no world and no step table. The screen says which page
