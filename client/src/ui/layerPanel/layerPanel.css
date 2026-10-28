@@ -215,6 +215,8 @@
 .layer-panel__radio {
   width: 14px;
   height: 14px;
+  /* In a switch's width (30px), centred: the marks stand in one column. */
+  margin: 0 8px;
   flex-shrink: 0;
   box-sizing: border-box;
   border-radius: 50%;

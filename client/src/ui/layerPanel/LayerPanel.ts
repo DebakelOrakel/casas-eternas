@@ -128,7 +128,8 @@ export function createLayerPanel(host: HTMLElement, options: {
     if (pick) {
       (element as HTMLButtonElement).type = 'button'
       element.setAttribute('role', 'radio')
-      element.append(mark, icon, label)
+      // The mark at the end, as a switch's: one column of marks.
+      element.append(icon, label, mark)
       element.addEventListener('click', () => options.onPick(row.id))
     } else {
       element.setAttribute('role', 'switch')
