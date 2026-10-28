@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-28
+- **changed** Layout: each step of the generator and the incubator shows its favourite overlays at the top of the overlay panel, and changing the step no longer switches overlays on or off. `common.layers.favourites`
 - **changed** Layout: the generator and the incubator list the same overlays in the same groups, the air pressure among the climate's switches, and every group but Global starts folded. `common.layers`
 - **new** Incubator: switches in the title bar show and hide the actions, the overlays and the chronicle, each sliding in from its side. `common.panel.actions`
 - **changed** Generator: all the world's overlays are in a panel of their own in every step, greyed out only until their data exists, and switches in the title bar show and hide it and the actions. `common.panel.overlays`

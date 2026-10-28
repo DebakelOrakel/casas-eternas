@@ -242,3 +242,12 @@
   left: 16px;
   background: var(--dc-on-accent);
 }
+
+/* The favourites: links to rows of the groups below, without a heading. */
+.layer-panel__favourites .layer-panel__rows {
+  padding-top: 6px;
+}
+
+.layer-panel__favourites[hidden] + .layer-panel__group {
+  border-top: 0;
+}

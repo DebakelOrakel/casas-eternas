@@ -33,7 +33,7 @@ import { ARTIFACTS_ICON, createArtifactChooser, reportCommission } from '../../u
 import { createJobChooser, JOBS_ICON } from '../../ui/jobChooser/JobChooser'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
 import { createLayerPanel, type LayerState } from '../../ui/layerPanel/LayerPanel'
-import { ANIMAL_USES, OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, PLANT_USES, WOOD_USES, animalLayerId, isNoneLayer, overlayGroupOf, plantLayerId, resourceLayerId, woodLayerId, type OverlayGroupId } from '../overlayGroups'
+import { ANIMAL_USES, OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, PLANT_USES, favouritesToTurnOn, WOOD_USES, animalLayerId, isNoneLayer, overlayGroupOf, plantLayerId, resourceLayerId, woodLayerId, type OverlayGroupId } from '../overlayGroups'
 import { CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols, type ChartSize, type VolcanoMark } from '../generator/mapSymbols'
 import { collectVolcanoes } from '../../generator/tectonics/volcanoes'
 import { Biome } from '../../generator/climate/biomes'
@@ -112,6 +112,16 @@ import '../generator/overlayList.css'
 
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
 const STEPS = ['oldStoneAge', 'newStoneAge'] as const
+
+// THE STEPS' FAVOURITES (2026-10-28): the layer panel's first group, rows of
+// screens/overlayGroups.ts. A step sets them and nothing else of the
+// layers; they are what comes on as a world opens and on the panel's
+// "Defaults", everything else off (favouritesToTurnOn: of a group of one
+// choice, the first listed).
+const FAVOURITES: Record<(typeof STEPS)[number], readonly string[]> = {
+  oldStoneAge: ['terrain', 'people:routes', 'people:centres', 'settle:spread', 'settle:groups', 'settle:density'],
+  newStoneAge: ['terrain', 'people:routes', 'people:villages', 'people:centres', 'settle:lifeway', 'settle:density'],
+}
 
 // The ecology's fields the incubator shows: all fourteen the level's
 // artifact holds (docs/decisions/level-waters.md), their rows the shared
@@ -336,6 +346,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const wasStone = onOldStoneAge()
     stepIndex = index
     sidebar.setStep(STEPS[index])
+    // The step's favourites; the layers on stay as they are.
+    overlayList.setFavourites(FAVOURITES[STEPS[index]])
     updateSteps()
     showTimeRange()
     if (built) stepLayers()
@@ -574,7 +586,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     overlayList.setVisible(furnitureShown && panelToggles.shown('overlays'))
     chronicle.setVisible(furnitureShown && panelToggles.shown('chronicle'))
   }
-  // Every layer off, or as a world opens.
+  // Every layer off: by "All off", and before the favourites come on.
   const layersOff = (): void => {
     terrainOn = false
     for (const id of Object.keys(peopleOn)) peopleOn[id] = false
@@ -588,13 +600,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     weatherShown = null
     for (const id of Object.keys(geoOn)) geoOn[id] = false
     for (const id of Object.keys(flowOn)) flowOn[id] = false
-  }
-  const layersDefault = (): void => {
-    layersOff()
-    terrainOn = true
-    peopleOn['people:routes'] = true
-    peopleOn['people:centres'] = true
-    settlementShown = 'spread'
   }
   // THE PICKS: per group of one choice (screens/overlayGroups.ts), the row
   // shown as its id, or null for the group's "none".
@@ -619,6 +624,24 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // one of the three groups at a time, a choice in one clearing the others.
   // The other groups combine, as the list has them.
   const ONE_OVERLAY: readonly OverlayGroupId[] = ['plants', 'animals', 'trees']
+  // The favourites of the step shown on (FAVOURITES), everything else off:
+  // as a world opens, and on the panel's "Defaults".
+  const layersFavourite = (): void => {
+    layersOff()
+    for (const id of favouritesToTurnOn(FAVOURITES[STEPS[stepIndex]])) {
+      if (id === 'terrain') terrainOn = true
+      else if (id in peopleOn) peopleOn[id] = true
+      else if (id in geoOn) geoOn[id] = true
+      else if (id in flowOn) flowOn[id] = true
+      else {
+        const group = overlayGroupOf(id)
+        const pick = group ? picks[group.id] : undefined
+        if (!group || !pick || isNoneLayer(id)) continue
+        pick.show(id)
+        if (ONE_OVERLAY.includes(group.id)) for (const other of ONE_OVERLAY) if (other !== group.id) picks[other]!.show(null)
+      }
+    }
+  }
   // Whether a pick's row has its data here.
   function pickAvailable(group: OverlayGroupId, id: string): boolean {
     switch (group) {
@@ -632,6 +655,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
   // A row's state, from the screen's own; a row the incubator has not (the
   // plate boundaries, the rivers, the watersheds) is never on and greyed out.
+  // The level's land fields the hover readout (below) and the layers read.
+  // None in a level made before its land fields. Only what it reads is
+  // kept of the level's land fields.
+  let probe: { nodes: Int32Array; z: Float32Array; land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'cratonAge' | 'ecology'> } | null = null
   function layerState(id: string): LayerState {
     if (id === 'terrain') return { on: terrainOn, available: charts !== null }
     if (id in peopleOn) return { on: peopleOn[id], available: id === 'people:routes' ? stone !== null : id === 'people:centres' ? stone !== null || settled !== null : settled !== null }
@@ -654,7 +681,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       showPlants()
     },
     onDefaults: () => {
-      layersDefault()
+      layersFavourite()
       showPlants()
     },
     onToggle: (id) => {
@@ -1206,9 +1233,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE HOVER READOUT, the generator's card (ui/mapProbe): the node under
   // the pointer through the chart's node map, its height, and on land its
   // climate class, its biome and the ecology's fields shown.
-  // None in a level made before its land fields. Only what it reads is
-  // kept of the level's land fields.
-  let probe: { nodes: Int32Array; z: Float32Array; land: Pick<LevelLand, 'land' | 'biome' | 'koppen' | 'cratonAge' | 'ecology'> } | null = null
+  // Its level's land fields (`probe`), above, where the layers read them.
   // The climate's classes per overlay texel, level 1's through the node map
   // (a node a texel at the overlay's size), and its land: the washes keep
   // to level 1's coast. Null before a level with its land fields.
@@ -2241,6 +2266,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ? { nodes: painted.nodes, z: level.z, land: { land: land.land, biome: land.biome, koppen: land.koppen, cratonAge: land.cratonAge, ecology: ecology.fields } }
       : null
     hoverTooltip.refresh()
+    // A world opens on the favourites of the step shown.
+    layersFavourite()
     showCharts()
     cameraTools.setVisible(kind === 'sphere')
     mapScales.redraw()

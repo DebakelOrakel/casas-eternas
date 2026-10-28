@@ -57,7 +57,7 @@ import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/climate/biomes'
 import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
-import { ECOLOGY_FIELD_IDS, ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
+import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ELEVATION_ENCODING, decodeLayer } from '../../world/save/worldLayers'
 import { readField, readMeshEpochFiles, readRefined, refuseFormerRasters, withWorldYaml, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
 import { refinementFits, type RefinedClimate } from '../../generator/climate/refinement'
@@ -67,7 +67,7 @@ import { relabel } from '../../i18n/relabel'
 import { createLayerPanel, type LayerPanel } from '../../ui/layerPanel/LayerPanel'
 import { createPanelToggles } from '../../ui/titleBar/PanelToggles'
 import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlays'
-import { OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, groupLayers, isNoneLayer, noneLayerId, overlayGroupOf, resourceLayerId } from '../overlayGroups'
+import { OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, favouritesToTurnOn, groupLayers, isNoneLayer, noneLayerId, overlayGroupOf, resourceLayerId } from '../overlayGroups'
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
 import { type ChartSize, CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, eventPictures, type VolcanoMark, eventSymbol, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols } from './mapSymbols'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
@@ -2727,45 +2727,38 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })
   }
 
-  // Which layers are showing. Set from the step you enter (see steps.ts) and
-  // changed by the switches in the column; a layer stays "wanted" while its data
-  // comes and goes, which is what lets a switch survive a recompute.
+  // Which layers are showing: one state for the world, not per step (a step
+  // sets only the panel's favourites, steps.ts). Set to the shown step's
+  // favourites as a world opens and changed by the panel; a layer stays
+  // "wanted" while its data comes and goes, which is what lets a switch
+  // survive a recompute.
   const overlaysOn: Record<OverlayId, boolean> = Object.fromEntries(OVERLAY_IDS.map((id) => [id, false])) as Record<OverlayId, boolean>
 
-  // WHAT EACH STEP SHOWED WHEN YOU LEFT IT (2026-09-27): the switches, the
-  // pick and the resource field. Entering a step used to be a reset to its
-  // defaults, and re-entering Climate after a look at the rivers meant
-  // finding the wash you had chosen again. Per step, in memory only — a
-  // view preference, not the world's — and dropped with the world: a new
-  // one and a loaded one start every step on its defaults.
-  interface OverlayMemory { on: Record<OverlayId, boolean>; field: EcologyFieldId | null }
-  const overlayMemory = new Map<StepId, OverlayMemory>()
-  // Whether the panel on screen belongs to the world on screen — false until
-  // the first showPanel, and again after forgetOverlays. Declared HERE, above
-  // the first initArchean: that call runs while the screen is still being
-  // built, and a `let` further down would be in its temporal dead zone — a
-  // ReferenceError that aborts the build and leaves the chooser on white.
+  // Whether a panel has been shown — false until the first showPanel; the
+  // handbook follows the step from then on. And whether the next showPanel
+  // turns the favourites of the step it shows on: true from the start and
+  // after forgetOverlays. Declared HERE, above the first initArchean: that
+  // call runs while the screen is still being built, and a `let` further
+  // down would be in its temporal dead zone — a ReferenceError that aborts
+  // the build and leaves the chooser on white.
   let panelEverShown = false
-  const rememberOverlays = (): void => {
-    overlayMemory.set(STEP_IDS[panelIndex], { on: { ...overlaysOn }, field: pickedEcologyField })
-  }
-  // A new or a loaded world: nothing remembered, and the step on screen goes
-  // back to its defaults — it belongs to the world that is gone, so it is
-  // not worth remembering either (the next showPanel must not file it).
+  let favouritesDue = true
+  // A new or a loaded world: the layers of the world that is gone are not
+  // this one's. The step shown next starts on its favourites (showPanel);
+  // every caller shows a step right after.
   const forgetOverlays = (): void => {
-    overlayMemory.clear()
-    if (!panelEverShown) return
-    panelEverShown = false
-    applyStepDefaults()
-    if (lastColoredBase) updateOverlays()
+    favouritesDue = true
   }
-  // The step on screen's defaults (steps.ts): its layers on, the rest off; a
-  // step that starts on the resource layer starts on its first field.
-  function applyStepDefaults(): void {
-    const current = step(STEP_IDS[panelIndex])
-    for (const id of OVERLAY_IDS) overlaysOn[id] = current.defaults.includes(id)
-    if (current.defaults.includes('ecology')) {
-      selectedEcologyField = ECOLOGY_FIELD_IDS[0]
+  // The favourites of the step on screen on (steps.ts, favouritesToTurnOn),
+  // everything else off. A resource field among them is the ecology
+  // layer's pick.
+  function applyFavourites(): void {
+    const on = favouritesToTurnOn(step(STEP_IDS[panelIndex]).favourites)
+    for (const id of OVERLAY_IDS) overlaysOn[id] = isOverlayId(id) && on.includes(id)
+    const field = on.map(resourceOf).find((f) => f !== null)
+    if (field) {
+      overlaysOn.ecology = true
+      selectedEcologyField = field
       pickedEcologyField = selectedEcologyField
       showAbundanceFor(pickedEcologyField)
     }
@@ -5704,8 +5697,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // of the world in every step: the switches, the picks of one with their
   // "none", and the resource fields the ecology layer paints; the
   // incubator's rows too, greyed out. A row is greyed out only while its
-  // data is not there (refreshOverlayList). Entering a step still puts its
-  // defaults on (showPanel).
+  // data is not there (refreshOverlayList). A step sets only the
+  // favourites, the panel's first group (showPanel); "Defaults" turns them
+  // on and the rest off.
   layerPanel = createLayerPanel(root, {
     texts: OVERLAY_PANEL_TEXTS,
     onToggle: (id) => {
@@ -5718,7 +5712,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       updateOverlays()
     },
     onDefaults: () => {
-      applyStepDefaults()
+      applyFavourites()
       updateControlsDisabled()
       showEcologyMonth()
       updateOverlays()
@@ -5857,12 +5851,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   // Show a panel. It navigates, asks for the data that panel needs, and sets the
-  // overlay defaults for it — and since 2026-08-09 it does NOT commit anything:
+  // panel's favourites for it — and since 2026-08-09 it does NOT commit anything:
   // the Archean hand-over moved to the gesture that means it (see commitGenesis).
   const showPanel = (index: number): void => {
     if (STEP_IDS[index] !== 'world') leavePlanetPreview()
-    // Leaving a step: what it showed is what it shows next time.
-    if (panelEverShown && index !== panelIndex) rememberOverlays()
     panelEverShown = true
     panelIndex = index
     // In and out of the planet step the globe hides or shows its layers,
@@ -5876,20 +5868,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     sidebar.setStep(STEP_IDS[index])
     // An open handbook follows to the new step's page, where it has one.
     if (handbookPanel.isOpen() && handbookPanel.has(stepPage(STEP_IDS[index]))) handbookPanel.open(stepPage(STEP_IDS[index]))
-    // Which layers are showing: as you left the step, or — the first time on
-    // this world — the step's defaults (steps.ts). The panel's rows are the
-    // world's and stay; this used to set the rows per step as well.
-    const stepDef = step(STEP_IDS[index])
-    const remembered = overlayMemory.get(stepDef.id)
-    if (remembered) {
-      for (const id of OVERLAY_IDS) overlaysOn[id] = remembered.on[id]
-      if (remembered.field !== null) {
-        selectedEcologyField = remembered.field
-        pickedEcologyField = selectedEcologyField
-        showAbundanceFor(pickedEcologyField)
-      }
-    } else {
-      applyStepDefaults()
+    // The step's favourites in the panel; the layers on stay as they are
+    // (2026-10-28), but as a world opens: then its favourites come on.
+    layerPanel?.setFavourites(step(STEP_IDS[index]).favourites)
+    if (favouritesDue) {
+      favouritesDue = false
+      applyFavourites()
     }
     ecologyHoverField = null // drop any stale hover preview when switching steps
     panels.forEach((panel, i) => {

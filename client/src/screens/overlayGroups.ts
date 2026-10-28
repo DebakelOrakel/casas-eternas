@@ -79,16 +79,18 @@ export const noneLayerId = (group: OverlayGroupId): string => `none:${group}`
 
 const overlayRow = (id: OverlayId): LayerRow => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })
 const none = (group: OverlayGroupId): LayerRow => ({ id: noneLayerId(group), helpBase: 'overlay.none', icon: '/icons/clear.png' })
-const title = (group: OverlayGroupId): TKey => `common.layers.${group}.label`
+// A group's name and its heading's hover card: `common.layers.<group>`,
+// whose `.label` is the name and `.help` the card's text.
+const heading = (group: OverlayGroupId): { title: TKey; helpBase: string } => ({ title: `common.layers.${group}.label`, helpBase: `common.layers.${group}` })
 
 // The groups, in their order. Only the first starts open; the rest start
 // folded until the viewer opens them.
 export const OVERLAY_GROUPS: readonly OverlayGroup[] = [
-  { id: 'global', title: title('global'), kind: 'any', open: true, rows: (['terrain', 'names', 'boundaries'] as const).map(overlayRow) },
-  { id: 'geology', title: title('geology'), kind: 'any', rows: (['volcanoes', 'hotspots', 'cratonAge', 'mantle'] as const).map(overlayRow) },
+  { id: 'global', ...heading('global'), kind: 'any', open: true, rows: (['terrain', 'names', 'boundaries'] as const).map(overlayRow) },
+  { id: 'geology', ...heading('geology'), kind: 'any', rows: (['volcanoes', 'hotspots', 'cratonAge', 'mantle'] as const).map(overlayRow) },
   {
     id: 'climate',
-    title: title('climate'),
+    ...heading('climate'),
     kind: 'any',
     rows: [
       { id: 'iceAge', helpBase: 'incubator.layers.iceAge', icon: '/icons/blizzard.png' },
@@ -96,20 +98,20 @@ export const OVERLAY_GROUPS: readonly OverlayGroup[] = [
     ],
   },
   // The land's washes: one at a time, since a later wash covers an earlier.
-  { id: 'land', title: title('land'), kind: 'one', rows: [none('land'), ...(['seasonality', 'koppen', 'biomes', 'precipitation', 'monsoon', 'waterBalance', 'watersheds'] as const).map(overlayRow)] },
-  { id: 'sea', title: title('sea'), kind: 'one', rows: [none('sea'), ...(['upwelling', 'salinity'] as const).map(overlayRow)] },
-  { id: 'weather', title: title('weather'), kind: 'one', rows: [none('weather'), ...(['fog', 'foehn', 'rainVariability', 'enso', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder'] as const).map(overlayRow)] },
+  { id: 'land', ...heading('land'), kind: 'one', rows: [none('land'), ...(['seasonality', 'koppen', 'biomes', 'precipitation', 'monsoon', 'waterBalance', 'watersheds'] as const).map(overlayRow)] },
+  { id: 'sea', ...heading('sea'), kind: 'one', rows: [none('sea'), ...(['upwelling', 'salinity'] as const).map(overlayRow)] },
+  { id: 'weather', ...heading('weather'), kind: 'one', rows: [none('weather'), ...(['fog', 'foehn', 'rainVariability', 'enso', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder'] as const).map(overlayRow)] },
   // The ecology's fields: the generator's 'ecology' layer paints ONE of
   // them over the whole land.
   {
     id: 'resources',
-    title: title('resources'),
+    ...heading('resources'),
     kind: 'one',
     rows: [none('resources'), ...ECOLOGY_FIELD_IDS.map((field) => ({ id: resourceLayerId(field), helpBase: `resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` }))],
   },
   {
     id: 'people',
-    title: title('people'),
+    ...heading('people'),
     kind: 'any',
     rows: [
       { id: 'people:routes', helpBase: 'incubator.people.routes', icon: '/icons/river.png' },
@@ -123,7 +125,7 @@ export const OVERLAY_GROUPS: readonly OverlayGroup[] = [
   },
   {
     id: 'settlement',
-    title: title('settlement'),
+    ...heading('settlement'),
     kind: 'one',
     rows: [
       none('settlement'),
@@ -133,9 +135,9 @@ export const OVERLAY_GROUPS: readonly OverlayGroup[] = [
       { id: 'settle:density', helpBase: 'incubator.people.density', icon: '/icons/population.png' },
     ],
   },
-  { id: 'plants', title: title('plants'), kind: 'one', rows: [none('plants'), ...PLANT_USES.map((p) => ({ id: plantLayerId(p.use), helpBase: `plant.use.${p.use}`, icon: p.icon }))] },
-  { id: 'animals', title: title('animals'), kind: 'one', rows: [none('animals'), ...ANIMAL_USES.map((p) => ({ id: animalLayerId(p.use), helpBase: `animal.use.${p.use}`, icon: p.icon }))] },
-  { id: 'trees', title: title('trees'), kind: 'one', rows: [none('trees'), ...WOOD_USES.map((p) => ({ id: woodLayerId(p.use), helpBase: `wood.use.${p.use}`, icon: p.icon }))] },
+  { id: 'plants', ...heading('plants'), kind: 'one', rows: [none('plants'), ...PLANT_USES.map((p) => ({ id: plantLayerId(p.use), helpBase: `plant.use.${p.use}`, icon: p.icon }))] },
+  { id: 'animals', ...heading('animals'), kind: 'one', rows: [none('animals'), ...ANIMAL_USES.map((p) => ({ id: animalLayerId(p.use), helpBase: `animal.use.${p.use}`, icon: p.icon }))] },
+  { id: 'trees', ...heading('trees'), kind: 'one', rows: [none('trees'), ...WOOD_USES.map((p) => ({ id: woodLayerId(p.use), helpBase: `wood.use.${p.use}`, icon: p.icon }))] },
 ]
 
 const GROUP_OF = new Map<string, OverlayGroup>(OVERLAY_GROUPS.flatMap((g) => g.rows.map((r) => [r.id, g] as const)))
@@ -146,6 +148,25 @@ export const overlayGroup = (id: OverlayGroupId): OverlayGroup => OVERLAY_GROUPS
 // A group's layers, its "none" not one of them.
 export const groupLayers = (group: OverlayGroup): string[] => group.rows.filter((r) => !isNoneLayer(r.id)).map((r) => r.id)
 export const isNoneLayer = (id: string): boolean => id.startsWith('none:')
+
+// A screen's FAVOURITES (2026-10-28): the rows of the panel's first group,
+// links to rows of the groups, set per step. They are the only thing a
+// step says about the layers; it turns none on. What comes on as a world
+// opens, and on the panel's "Defaults", is these: the rows to turn on,
+// everything else off. A group of one choice may list several of its
+// members among the favourites, but one of them can be on: the first
+// listed. An id that is no row is left out.
+export function favouritesToTurnOn(favourites: readonly string[]): string[] {
+  const chosen = new Set<OverlayGroupId>()
+  return favourites.filter((id) => {
+    const group = GROUP_OF.get(id)
+    if (!group) return false
+    if (group.kind !== 'one') return true
+    if (chosen.has(group.id)) return false
+    chosen.add(group.id)
+    return true
+  })
+}
 
 // Every row once, and every generator layer a row but 'ecology', whose rows
 // are the resource fields. Checked at startup: a layer in no group has no
@@ -164,4 +185,5 @@ export const OVERLAY_PANEL_TEXTS: LayerPanelTexts = {
   allOff: 'common.layers.allOff.label',
   defaults: 'common.layers.defaults.label',
   oneOf: 'common.layers.oneOf.label',
+  favourites: 'common.layers.favourites.label',
 }

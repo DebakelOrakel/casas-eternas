@@ -1,5 +1,5 @@
 // THE STEPS, AS DATA. One entry per step: which pipeline stage it drives, which
-// map layers it is about, and which layers are showing when you enter it.
+// map layers it is about, and which layers are its favourites.
 //
 // A STEP is not a STAGE. Step 0 names and seeds the world and also drives the
 // planet stage, whose controls are values you set rather than a run you start;
@@ -12,12 +12,12 @@
 // holds every layer of the world in every step, in the world's groups
 // (screens/overlayGroups.ts); a layer is greyed out only while its data is not there. A
 // step decides its controls, the layers its hover card reads out and its
-// handbook page lists (`layers`), and which layers are on as you enter it
-// (`defaults`).
+// handbook page lists (`layers`), and its favourites, the panel's first
+// group (`favourites`). A step turns no layer on or off: entering one
+// changes only the favourites.
 import { STAGES, type StageId } from '../../generator/pipeline/stages'
 import type { OverlayId } from './overlays'
-import { OVERLAY_GROUPS, groupLayers, resourceLayerId } from '../overlayGroups'
-import { ECOLOGY_FIELD_IDS } from '../../generator/ecology/ecologyField'
+import { overlayGroupOf, resourceLayerId } from '../overlayGroups'
 import { PROGRESS_STEPS } from '../../world/worldProgress'
 
 export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'ecology' | 'finishing'
@@ -30,13 +30,13 @@ export interface Step {
   // out. A layer may belong to several steps — the mantle field is the
   // Archean's subject and still drives the plates afterwards.
   layers: readonly OverlayId[]
-  // The layers showing when the step is entered the first time on a world
-  // (after that, as you left it). Entering a step is a statement about what
-  // you want to look at. At most one member of a group of one choice
-  // (screens/overlayGroups.ts):
-  // each group has a "none", and since 2026-09-22 a step starts on it unless
-  // it names a layer. 'ecology' paints the first resource field.
-  defaults: readonly OverlayId[]
+  // THE FAVOURITES (2026-10-28): rows of the layer panel, by their id in
+  // screens/overlayGroups.ts, in the order the panel's first group shows
+  // them. They are also what comes on as a world opens in this step and
+  // on the panel's "Defaults", everything else off (favouritesToTurnOn:
+  // of a group of one choice, the first listed). A resource field is its
+  // row, `resource:<field>`.
+  favourites: readonly string[]
   // What the bar's mark says instead of the number: the finishing's F. The
   // finishing holds the detail jobs on the finished world, and is outside the
   // numbering; it stays linked to the step before it, and it is the last
@@ -62,11 +62,11 @@ export const STEPS: readonly Step[] = [
     //
     // The planet preview computes no refinement and no hydrology: only its
     // own layers are available on it (GeneratorScreen PLANET_PREVIEW_LAYERS).
-    // Temperature is on at entry: the planet sliders act on it first.
+    // Temperature is the favourite: the planet sliders act on it first.
     id: 'world',
     stage: 'planet',
     layers: ['temperature', 'wind', 'currents', 'precipitation', 'seasonality', 'monsoon', 'koppen'],
-    defaults: ['temperature'],
+    favourites: ['temperature'],
   },
   {
     // No continent names: nothing is named until the hand-over. No plate
@@ -75,7 +75,7 @@ export const STEPS: readonly Step[] = [
     id: 'genesis',
     stage: 'genesis',
     layers: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
-    defaults: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
+    favourites: ['terrain', 'mantle', 'hotspots', 'cratonAge'],
   },
   {
     // The mantle and its plumes again: they drove the Archean and they drive
@@ -84,15 +84,15 @@ export const STEPS: readonly Step[] = [
     id: 'tectonics',
     stage: 'tectonics',
     layers: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
-    defaults: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
+    favourites: ['terrain', 'boundaries', 'names', 'mantle', 'hotspots', 'volcanoes'],
   },
   {
     // TEMPERATURE IS THE STEP'S GROUND. It drives everything else here —
     // seasonality is its annual amplitude, the biomes are classified from it —
     // so it is a switch that stays on, not one answer among many.
     //
-    // No terrain wash by default: a colour wash under a temperature ramp reads
-    // as a third colour.
+    // No terrain wash among the favourites: a colour wash under a
+    // temperature ramp reads as a third colour.
     //
     // The rivers, the water balance and the watersheds are the climate's
     // readout since the erosion step went (2026-09-29): the hydrology runs
@@ -100,15 +100,15 @@ export const STEPS: readonly Step[] = [
     id: 'climate',
     stage: 'climate',
     layers: ['terrain', 'names', 'temperature', 'wind', 'currents', 'rivers', ...CLIMATE_WASHES],
-    defaults: ['names', 'temperature'],
+    favourites: ['names', 'temperature'],
   },
   {
-    // The resource layer comes on with the step — it is the reason you are
-    // here — painting the first resource field.
+    // The resource layer is the reason you are here: its first field, the
+    // carrying capacity, is a favourite.
     id: 'ecology',
     stage: 'ecology',
     layers: ['terrain', 'names', 'biomes', 'rivers', 'ecology'],
-    defaults: ['names', 'ecology'],
+    favourites: ['names', resourceLayerId('carryingCapacity')],
   },
   {
     // The detail jobs on the finished world (2026-09-29): nothing yet — which
@@ -116,22 +116,18 @@ export const STEPS: readonly Step[] = [
     id: 'finishing',
     stage: 'finishing',
     layers: ['terrain', 'names', 'rivers', 'biomes'],
-    defaults: ['terrain', 'names', 'rivers'],
+    favourites: ['terrain', 'names', 'rivers'],
     mark: 'F',
   },
 ]
 
-// A group of one choice with two members on is a radio that cannot say what
-// the map is showing. Checked here rather than left to the screen, for the
-// same reason the pipeline order is. 'ecology' is the resource group's
-// first field (applyStepDefaults); a default that is no row is a typo.
+// A favourite that is no row of the panel is a typo, and would be left out
+// without a word. Checked here rather than left to the screen, for the same
+// reason the pipeline order is. Several members of a group of one choice
+// may be favourites; the first listed is the one that comes on.
 for (const s of STEPS) {
-  const rows = s.defaults.map((id) => (id === 'ecology' ? resourceLayerId(ECOLOGY_FIELD_IDS[0]) : id))
-  for (const g of OVERLAY_GROUPS) {
-    if (g.kind !== 'one') continue
-    const chosen = groupLayers(g).filter((id) => rows.includes(id))
-    if (chosen.length > 1) throw new Error(`generator step ${s.id} must default to at most one layer of ${g.id}, not ${chosen.length}`)
-  }
+  const unknown = s.favourites.filter((id) => !overlayGroupOf(id))
+  if (unknown.length > 0) throw new Error(`generator step ${s.id} has favourites that are no layer row: ${unknown}`)
 }
 
 export const STEP_IDS: readonly StepId[] = STEPS.map((s) => s.id)

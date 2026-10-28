@@ -16,6 +16,12 @@ import './layerPanel.css'
 // it starts open; the viewer's folding is kept, by the group's title, while
 // the panel lives. A row's mark is its icon. The legend
 // stays the screen's own box (ui/legend); no keyboard shortcuts.
+//
+// THE FAVOURITES (2026-10-28): a group at the top without a heading, set by
+// the screen (setFavourites). Its rows are LINKS to rows of the groups: the
+// same id, icon, label and help, the same state, and a click does what the
+// row's own click does (a pick picks within its own group). Hidden while
+// there are none. They are not counted a second time.
 
 // One row: a layer, or a pick of one.
 export interface LayerRow {
@@ -40,6 +46,8 @@ export interface LayerGroup {
   kind: 'one' | 'any'
   // Whether it starts open; a group starts folded otherwise.
   open?: boolean
+  // The catalog base of its heading's hover card (`.label`, `.help`).
+  helpBase?: string
   rows: readonly LayerRow[]
 }
 
@@ -52,12 +60,18 @@ export interface LayerPanelTexts {
   allOff: TKey
   defaults: TKey
   oneOf: TKey
+  // The favourites' name, for assistive technology only: they show no
+  // heading.
+  favourites: TKey
 }
 
 export interface LayerPanel {
   element: HTMLElement
   // The groups, in their order.
   setGroups(groups: readonly LayerGroup[]): void
+  // The favourites, by row id, in this order; an id that is no row of the
+  // groups is left out.
+  setFavourites(ids: readonly string[]): void
   refresh(stateOf: (id: string) => LayerState): void
   relabel(): void
   setVisible(visible: boolean): void
@@ -105,6 +119,9 @@ export function createLayerPanel(host: HTMLElement, options: {
   aside.append(head, actions, body)
   host.appendChild(aside)
 
+  // A row's elements; `pick` whether it is a pick of one (a radio) or a
+  // switch.
+  interface Row { id: string; helpBase: string; pick: boolean; element: HTMLElement; mark: HTMLElement; label: HTMLElement }
   // A group's heading, its rows; folded or not, by
   // its title, kept across steps (`folded`, what the viewer chose; a group
   // not in it as it starts).
@@ -116,18 +133,66 @@ export function createLayerPanel(host: HTMLElement, options: {
     heading: HTMLButtonElement
     name: HTMLElement
     badge: HTMLElement
-    rows: { id: string; helpBase: string; element: HTMLElement; mark: HTMLElement; label: HTMLElement }[]
+    rows: Row[]
   }
   let groups: Group[] = []
+  // The groups as given, to find a favourite's row and its kind by.
+  let given: readonly LayerGroup[] = []
+  let favouriteIds: readonly string[] = []
+  let favourites: Row[] = []
   const folded = new Map<string, boolean>()
   let lastState: ((id: string) => LayerState) | null = null
 
-  function groupOf(titleKey: TKey, pick: boolean, open: boolean, rows: readonly LayerRow[]): Group {
+  // The favourites' section, first in the body: no heading, only rows.
+  const favouriteSection = document.createElement('section')
+  favouriteSection.className = 'layer-panel__group layer-panel__favourites'
+  const favouriteList = document.createElement('div')
+  favouriteList.className = 'layer-panel__rows'
+  favouriteList.setAttribute('role', 'group')
+  favouriteSection.append(favouriteList)
+  favouriteSection.hidden = true
+
+  function rowOf(row: LayerRow, pick: boolean): Row {
+    const element: HTMLElement = document.createElement(pick ? 'button' : 'label')
+    element.className = 'layer-panel__row'
+    element.dataset.help = row.helpBase
+    const mark = document.createElement('span')
+    mark.className = pick ? 'layer-panel__radio' : 'layer-panel__switch'
+    const icon = document.createElement('img')
+    icon.className = 'layer-panel__icon'
+    icon.src = row.icon
+    icon.alt = ''
+    const label = document.createElement('span')
+    label.className = 'layer-panel__label'
+    if (pick) {
+      (element as HTMLButtonElement).type = 'button'
+      element.setAttribute('role', 'radio')
+      element.append(mark, icon, label)
+      element.addEventListener('click', () => options.onPick(row.id))
+    } else {
+      element.setAttribute('role', 'switch')
+      element.tabIndex = 0
+      element.append(icon, label, mark)
+      element.addEventListener('click', (e) => {
+        e.preventDefault()
+        if (element.getAttribute('aria-disabled') !== 'true') options.onToggle(row.id)
+      })
+      element.addEventListener('keydown', (e) => {
+        if (e.key !== ' ' && e.key !== 'Enter') return
+        e.preventDefault()
+        if (element.getAttribute('aria-disabled') !== 'true') options.onToggle(row.id)
+      })
+    }
+    return { id: row.id, helpBase: row.helpBase, pick, element, mark, label }
+  }
+
+  function groupOf(titleKey: TKey, helpBase: string | undefined, pick: boolean, open: boolean, rows: readonly LayerRow[]): Group {
     const section = document.createElement('section')
     section.className = 'layer-panel__group'
     const heading = document.createElement('button')
     heading.type = 'button'
     heading.className = 'layer-panel__heading'
+    if (helpBase) heading.dataset.help = helpBase
     const chevron = document.createElement('span')
     chevron.className = 'layer-panel__chevron'
     chevron.setAttribute('aria-hidden', 'true')
@@ -142,38 +207,9 @@ export function createLayerPanel(host: HTMLElement, options: {
     list.setAttribute('role', pick ? 'radiogroup' : 'group')
     const group: Group = { titleKey, pick, section, heading, name, badge, rows: [] }
     for (const row of rows) {
-      const element: HTMLElement = document.createElement(pick ? 'button' : 'label')
-      element.className = 'layer-panel__row'
-      element.dataset.help = row.helpBase
-      const mark = document.createElement('span')
-      mark.className = pick ? 'layer-panel__radio' : 'layer-panel__switch'
-      const icon = document.createElement('img')
-      icon.className = 'layer-panel__icon'
-      icon.src = row.icon
-      icon.alt = ''
-      const label = document.createElement('span')
-      label.className = 'layer-panel__label'
-      if (pick) {
-        (element as HTMLButtonElement).type = 'button'
-        element.setAttribute('role', 'radio')
-        element.append(mark, icon, label)
-        element.addEventListener('click', () => options.onPick(row.id))
-      } else {
-        element.setAttribute('role', 'switch')
-        element.tabIndex = 0
-        element.append(icon, label, mark)
-        element.addEventListener('click', (e) => {
-          e.preventDefault()
-          if (element.getAttribute('aria-disabled') !== 'true') options.onToggle(row.id)
-        })
-        element.addEventListener('keydown', (e) => {
-          if (e.key !== ' ' && e.key !== 'Enter') return
-          e.preventDefault()
-          if (element.getAttribute('aria-disabled') !== 'true') options.onToggle(row.id)
-        })
-      }
-      list.append(element)
-      group.rows.push({ id: row.id, helpBase: row.helpBase, element, mark, label })
+      const made = rowOf(row, pick)
+      list.append(made.element)
+      group.rows.push(made)
     }
     const isFolded = (): boolean => folded.get(titleKey) ?? !open
     heading.addEventListener('click', () => {
@@ -185,10 +221,26 @@ export function createLayerPanel(host: HTMLElement, options: {
     return group
   }
 
+  // The favourites' rows again, from the groups given: a link is a row of
+  // its own made from the same LayerRow, so it says and does the same.
+  function buildFavourites(): void {
+    favourites = favouriteIds.flatMap((id) => {
+      for (const g of given) {
+        const row = g.rows.find((r) => r.id === id)
+        if (row) return [rowOf(row, g.kind === 'one')]
+      }
+      return []
+    })
+    favouriteList.replaceChildren(...favourites.map((r) => r.element))
+    favouriteSection.hidden = favourites.length === 0
+  }
+
   function say(): void {
     title.textContent = t(options.texts.title)
     allOff.textContent = t(options.texts.allOff)
     defaults.textContent = t(options.texts.defaults)
+    favouriteList.setAttribute('aria-label', t(options.texts.favourites))
+    for (const r of favourites) r.label.textContent = t(`${r.helpBase}.label` as TKey)
     for (const g of groups) {
       g.name.textContent = t(g.titleKey)
       // Of how many layers, "none" not one.
@@ -201,27 +253,39 @@ export function createLayerPanel(host: HTMLElement, options: {
   function refresh(stateOf: (id: string) => LayerState): void {
     lastState = stateOf
     let on = 0
+    const show = (r: Row): LayerState => {
+      const state = stateOf(r.id)
+      r.element.setAttribute('aria-checked', String(state.on))
+      r.element.setAttribute('aria-disabled', String(!state.available))
+      if (r.pick) (r.element as HTMLButtonElement).disabled = !state.available
+      r.element.classList.toggle('layer-panel__row--on', state.on)
+      return state
+    }
     for (const g of groups) {
       for (const r of g.rows) {
-        const state = stateOf(r.id)
-        r.element.setAttribute('aria-checked', String(state.on))
-        r.element.setAttribute('aria-disabled', String(!state.available))
-        if (g.pick && 'disabled' in r.element) (r.element as HTMLButtonElement).disabled = !state.available
-        r.element.classList.toggle('layer-panel__row--on', state.on)
         // "None" is a choice, not a layer on.
         const none = r.helpBase === 'overlay.none'
-        if (state.on && !none) on++
+        if (show(r).on && !none) on++
       }
     }
+    // Links, not layers of their own: not counted again.
+    for (const r of favourites) show(r)
     count.textContent = t(options.texts.active, { count: String(on) })
   }
 
   return {
     element: aside,
     setGroups(list) {
-      body.replaceChildren()
-      groups = list.map((g) => groupOf(g.title, g.kind === 'one', g.open === true, g.rows))
+      body.replaceChildren(favouriteSection)
+      given = list
+      groups = list.map((g) => groupOf(g.title, g.helpBase, g.kind === 'one', g.open === true, g.rows))
       for (const g of groups) body.append(g.section)
+      buildFavourites()
+      say()
+    },
+    setFavourites(ids) {
+      favouriteIds = [...ids]
+      buildFavourites()
       say()
     },
     refresh,
