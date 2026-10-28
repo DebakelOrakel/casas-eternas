@@ -3,8 +3,8 @@ import type { PeopleResult } from './cellsShared'
 import { PLANT_SUITS_CODE } from './settleShared'
 
 // THE INCUBATOR'S OVERLAY (2026-10-25): what the steps draw over the chart
-// — the plants', the trees' and the animals' ranges, the people's spread,
-// the catchments — on a raster of its own, RGBA with its alpha, laid over
+// — the plants', the trees' and the animals' ranges, the people's spread —
+// on a raster of its own, RGBA with its alpha, laid over
 // the map by the views (map/overlayMaterialPlugin.ts). Painting it touches
 // neither the chart nor its textures, so a frame of an animation costs the
 // overlay alone. It is half the chart's size (OVERLAY_DIVISOR): a world
@@ -115,12 +115,6 @@ export function paintGroup(o: OverlayRaster, layers: readonly { codes: Uint8Arra
       } else if (empty[cell]) put(o, i, 120, 120, 120, 0.45)
     }
   }
-}
-
-// An RGBA raster of the overlay's size (the catchments, regionWorker.ts)
-// onto it.
-export function paintRaster(o: OverlayRaster, rgba: Uint8ClampedArray): void {
-  for (let i = 0; i < o.data.length; i += 4) if (rgba[i + 3] > 0) put(o, i, rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3] / 255)
 }
 
 // The people's colours: the land by when it was settled, years before the

@@ -47,9 +47,8 @@ is computed by the crate `casas-incubator`
   keeps the level-1 node under each texel, so everything per node can be
   read per texel.
 - **The steps.** A step bar as the generator's: 1 the old stone age, 2 the
-  new stone age, and a testing step aside. A step gives the
-  controls — a click sets step 1's origin, the history's actions are step
-  2's — not what the map shows. The flora and the fauna are grown on the
+  new stone age. A step gives the controls — a click sets step 1's origin,
+  the history's actions are step 2's — not what the map shows. The flora and the fauna are grown on the
   way in, with the cells, as rows of the load panel (`ui/loadPanel`).
 - **The overlay list** (`layerPanel.ts`): a column of its own, every
   overlay of the world in groups — the switches ("Global", the geology,
@@ -171,11 +170,6 @@ Step 1, the old stone age, and step 2, the history:
 - **H1**: saved, a job runs the history natively on the server and keeps
   it as the artifact H1 ([DEC-0048](../decisions/incubator-history-engine.md));
   a world opens with the history saved last.
-
-## The testing step
-
-Demos that may come back elsewhere: the catchments of level 1's rivers,
-cut by a threshold.
 
 ## Text
 

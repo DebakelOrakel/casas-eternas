@@ -3,8 +3,6 @@
   "incubator.step.oldStoneAge.help": "Where people could go, and when: their spread, its routes, its groups.",
   "incubator.step.newStoneAge.label": "New Stone Age",
   "incubator.step.newStoneAge.help": "The history from the ice age to the first city: farming, herding, villages, copper.",
-  "incubator.step.testing.label": "Testing",
-  "incubator.step.testing.help": "Trials that have no step of their own yet.",
   "incubator.load.title": "Choose a world",
   "incubator.load.subtitle": "Only worlds refined on the server (level 1) can be incubated.",
   "incubator.load.noLevel": "No level 1 yet",

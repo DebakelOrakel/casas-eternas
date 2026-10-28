@@ -3,8 +3,6 @@
   "incubator.step.oldStoneAge.help": "Wohin Menschen gelangen konnten, und wann: ihre Ausbreitung, ihre Routen, ihre Gruppen.",
   "incubator.step.newStoneAge.label": "Jungsteinzeit",
   "incubator.step.newStoneAge.help": "Die Geschichte von der Eiszeit bis zur ersten Stadt: Ackerbau, Viehzucht, Dörfer, Kupfer.",
-  "incubator.step.testing.label": "Testing",
-  "incubator.step.testing.help": "Versuche, die noch keinen eigenen Schritt haben.",
   "incubator.load.title": "Welt wählen",
   "incubator.load.subtitle": "Nur auf dem Server verfeinerte Welten (Stufe 1) lassen sich inkubieren.",
   "incubator.load.noLevel": "Noch keine Stufe 1",

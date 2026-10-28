@@ -54,7 +54,6 @@ import type { ChartWorkerInbound, ChartWorkerOutbound } from './chartWorker'
 import { decodeFineValue, ECOLOGY_FIELD_IDS, ECOLOGY_FINE_OCEAN, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import type { LevelLand } from '../../world/meshArtifacts'
-import type { RegionWorkerInbound, RegionWorkerOutbound } from './regionWorker'
 import type { AnimalUse } from './animals'
 import { POPULATION_STEP, type AnimalLayer, type PeopleResult, type PlantLayer, type SettleResult, type TreeLayer } from './cellsShared'
 import { KEEP_YEARS, SPAN_YEARS } from './peopleShared'
@@ -63,7 +62,7 @@ import type { LogEvent } from './historyLogShared'
 import { CAME_STEP, clearedAt, clearedOf, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { campPictures, campSymbols, cellPoint, centrePictures, hamletPictures, hamletSymbols, isCampWay, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
-import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintGroups, paintLifeways, paintPeople, paintRaster, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintGroups, paintLifeways, paintPeople, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
@@ -76,7 +75,7 @@ import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
 import '../../ui/theme/design.css'
-// The generator's layer switches, for the trial's switch.
+// The generator's layer switches' section, for the plants' notes.
 import '../generator/overlayList.css'
 
 // THE INCUBATOR: the step between the generator and the game. The generator
@@ -103,9 +102,7 @@ import '../generator/overlayList.css'
 // from 1: the world is chosen in the list, not in a step. 1 the old stone
 // age (2026-10-27, docs/design/prehistory-in-three-steps.md) — where people
 // could go and when, a graph, not a simulation; 2 the people — the
-// history, from one origin over the world, played; and set apart
-// at the end, as the generator's migration, T the testing — the trials
-// that have no step of their own (the catchments). The flora and the
+// history, from one origin over the world, played. The flora and the
 // fauna were steps 1 and 2 until 2026-10-26: they are grown on the way in
 // now (growWorld), their layers in the panel in every step. The terrain colour is a layer that can
 // be switched off: then the land is the bare paper, white with its
@@ -114,7 +111,7 @@ import '../generator/overlayList.css'
 // map, the generator's hover card for the level's node under the pointer.
 
 // The incubator's steps, in order; their names are `incubator.step.<id>`.
-const STEPS = ['oldStoneAge', 'newStoneAge', 'testing'] as const
+const STEPS = ['oldStoneAge', 'newStoneAge'] as const
 
 // The ecology's fields the incubator shows: all fourteen the level's
 // artifact holds (docs/decisions/level-waters.md), with their icons as the
@@ -227,28 +224,6 @@ function paintChart(input: ChartWorkerInbound): Promise<(ChartWorkerOutbound & {
   })
 }
 
-// Level 1's catchments as a layer over the chart, in the region worker.
-function cutRegions(input: RegionWorkerInbound): Promise<(RegionWorkerOutbound & { type: 'regions' }) | null> {
-  return new Promise((resolve) => {
-    const worker = new Worker(new URL('./regionWorker.ts', import.meta.url), { type: 'module' })
-    worker.onmessage = (event: MessageEvent<RegionWorkerOutbound>): void => {
-      worker.terminate()
-      if (event.data.type === 'failed') {
-        console.warn(`[incubator] the regions could not be cut: ${event.data.message}`)
-        resolve(null)
-        return
-      }
-      resolve(event.data)
-    }
-    worker.onerror = (event): void => {
-      worker.terminate()
-      console.warn(`[incubator] the region worker failed: ${event.message}`)
-      resolve(null)
-    }
-    worker.postMessage(input)
-  })
-}
-
 // The uses of the plants, in the order of their picks, with their icons;
 // their names are `plant.use.<use>`.
 const PLANT_USES: readonly { use: PlantUse; icon: string }[] = [
@@ -328,10 +303,6 @@ const PEOPLE_ROWS: readonly { id: string; helpBase: string; icon: string }[] = [
 type Settlement = 'spread' | 'groups' | 'lifeway' | 'density'
 const NO_SETTLEMENT = 'none:settlement'
 
-// The smallest catchment that makes a region of its own, km², the
-// choices of the trial control.
-const REGION_MIN_AREAS_KM2 = [100, 300, 1000, 3000]
-
 export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   // THE SCENES. Before a world is shown, an empty white page; then the
   // world's view, made for its shape and dropped with it.
@@ -401,10 +372,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   })
 
   // THE STEPS. They compute and say what they did; the layers are the
-  // panel's, the same in every step (stepLayers), the testing's trial
-  // catchments aside.
+  // panel's, the same in every step (stepLayers).
   let stepIndex = 0
-  const onTesting = (): boolean => STEPS[stepIndex] === 'testing'
   const onNewStoneAge = (): boolean => STEPS[stepIndex] === 'newStoneAge'
   const onOldStoneAge = (): boolean => STEPS[stepIndex] === 'oldStoneAge'
   // The history's settlement, its kept states and what follows from them
@@ -417,7 +386,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // True once the screen is built: the step's layers are below.
   let built = false
   const stepBar = createStepBar(root, {
-    steps: STEPS.map((id) => (id === 'testing' ? { id, aside: true, mark: 'T' } : { id })),
+    steps: STEPS.map((id) => ({ id })),
     stepKeys: 'incubator.step',
     firstNumber: 1,
     onSelect: (index) => showStep(index),
@@ -1488,7 +1457,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           return code === undefined || code === ECOLOGY_FINE_OCEAN ? [] : [{ label: t(`resource.${id}.label` as TKey), value: formatValue(String(Math.round(decodeFineValue(code) * 100)), 'common.unit.percent') }]
         }),
         // The trials' rows at the world cell under the pointer.
-        ...(overlay ? stepTrials().flatMap((l) => l.probe(overlay!.owners[(y >> 1) * overlay!.width + (x >> 1)])) : []),
+        ...(overlay ? TRIALS.flatMap((l) => l.probe(overlay!.owners[(y >> 1) * overlay!.width + (x >> 1)])) : []),
         ] : []),
       ],
       months: t('readout.months').split(','),
@@ -1504,66 +1473,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     describe: describeNode,
   })
 
-  // TRIAL (2026-10-23): the catchments over the chart, on a switch in the
-  // column. Hardcoded text, no catalog keys: we are trying it out.
-  // The world shown, kept for the layers drawn over it.
-  let shown: {
-    kind: 'sphere' | 'torus'
-    width: number
-    height: number
-    worldAreaM2: number
-    level: RegionWorkerInbound['level']
-  } | null = null
-  // The last cut, for its threshold: drawn over the chart in showCharts.
-  let regionCut: { minAreaKm2: number; overlay: Uint8ClampedArray } | null = null
-  const regionRow = document.createElement('label')
-  regionRow.className = 'gen-overlay'
-  const regionName = document.createElement('span')
-  regionName.className = 'gen-overlay__label'
-  regionName.textContent = 'Einzugsgebiete'
-  const regionBox = document.createElement('input')
-  regionBox.type = 'checkbox'
-  regionBox.className = 'gen-overlay__switch'
-  regionRow.append(regionName, regionBox)
-  const regionSize = document.createElement('select')
-  for (const km2 of REGION_MIN_AREAS_KM2) {
-    const option = document.createElement('option')
-    option.value = String(km2)
-    option.textContent = `ab ${km2} km²`
-    regionSize.append(option)
-  }
-  regionSize.value = '300'
-  const regionStatus = document.createElement('p')
-  const regionSection = document.createElement('section')
-  regionSection.className = 'gen-overlays'
-  regionSection.append(regionRow, regionSize, regionStatus)
-  sidebar.body.append(regionSection)
-  // Each change asks again; an answer to an older ask is dropped.
-  let regionAsk = 0
-  async function showRegions(): Promise<void> {
-    const ask = ++regionAsk
-    if (!shown || !view) return
-    const on = regionBox.checked
-    const minAreaKm2 = Number(regionSize.value)
-    if (on && regionCut?.minAreaKm2 !== minAreaKm2) {
-      regionStatus.textContent = 'rechnet …'
-      const cut = await cutRegions({ kind: shown.kind, width: shown.width, height: shown.height, chartWidth: CHART_WIDTH / OVERLAY_DIVISOR, chartHeight: CHART_HEIGHT / OVERLAY_DIVISOR, level: shown.level, worldAreaM2: shown.worldAreaM2, minAreaKm2 })
-      if (ask !== regionAsk || !shown) return
-      if (!cut) {
-        regionStatus.textContent = 'fehlgeschlagen (Konsole)'
-        return
-      }
-      console.info(`[incubator] regions cut (${Object.entries(cut.ms).map(([k, v]) => `${k} ${v}`).join(', ')})`)
-      const areas = Float64Array.from(cut.areas).sort()
-      const median = areas.length > 0 ? areas[Math.floor(areas.length / 2)] : 0
-      regionStatus.textContent = `${areas.length.toLocaleString()} Gebiete, Median ${Math.round(median)} km²`
-      regionCut = { minAreaKm2, overlay: cut.overlay }
-    }
-    showCharts()
-  }
-  regionBox.addEventListener('change', () => void showRegions())
-  regionSize.addEventListener('change', () => void showRegions())
-
+  // The world shown, its shape and size, for the marks' directions.
+  let shown: { kind: 'sphere' | 'torus'; width: number; height: number } | null = null
   let shownWorld: World | null = null
 
 
@@ -1988,11 +1899,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   // THE TRIALS' LAYERS, as the generator's table of its layers
-  // (overlayReadout): per layer the steps that offer it, whether it draws
-  // now, how it paints the overlay, its legend and its hover rows. The
+  // (overlayReadout): per layer whether it draws now, how it paints the overlay, its legend and its hover rows. The
   // overlay, the legend and the hover card derive from it.
   interface TrialLayer {
-    steps: readonly (typeof STEPS)[number][]
     on(): boolean
     paint(o: OverlayRaster): void
     legend(): LegendSpec[]
@@ -2014,8 +1923,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ],
   })
   const groupRows = (groups: { label: string; names: string[] }[]): ProbeRow[] => groups.flatMap((g) => g.names.map((name, k) => ({ label: k === 0 ? g.label : '', value: name })))
-  const groupLayer = (steps: readonly (typeof STEPS)[number][], at: (cell: number) => { label: string; names: string[] }[]): TrialLayer => ({
-    steps,
+  const groupLayer = (at: (cell: number) => { label: string; names: string[] }[]): TrialLayer => ({
     on: () => shownGroup() !== null,
     paint: (o) => {
       const group = shownGroup()
@@ -2029,13 +1937,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   })
   // Every step shows every layer (layerPanel.ts, 2026-10-26): the steps
   // compute, the panel chooses.
-  const ALL_STEPS = STEPS
   const TRIALS: readonly TrialLayer[] = [
     {
       // The geology (map/geologyLayers.ts): the mantle's and the cratons'
       // washes under every other layer, and the marks' legends. The
       // cratons' age is level 1's, per node, on its land.
-      steps: ALL_STEPS,
       on: () => Object.values(geoOn).some(Boolean),
       paint: (o) => {
         if (!probe || probe.nodes.length !== o.width * o.height) return
@@ -2056,7 +1962,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       // THE ICE AND THE SEA at the time shown (climateHistory.ts): the ice
       // grown past today's glaciers, white; the shelf the low sea lays dry,
       // sand. As the history's simulation has them.
-      steps: ALL_STEPS,
       on: () => flowOn['flow:iceAge'] && cellFacts !== null && iceHistory !== null,
       paint: (o) => {
         if (!cellFacts || !iceHistory) return
@@ -2079,7 +1984,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     {
       // The climate's washes over land and sea (switches): the temperature,
       // the pressure with its isobars; under the other layers.
-      steps: ALL_STEPS,
       on: () => flowOn['flow:temperature'] || flowOn['flow:pressure'],
       paint: (o) => {
         const target = washTarget(o)
@@ -2095,10 +1999,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       ],
       probe: () => [],
     },
-    groupLayer(ALL_STEPS, (cell) => (animalShown ? animalsAt(cell) : plantsAt(cell))),
+    groupLayer((cell) => (animalShown ? animalsAt(cell) : plantsAt(cell))),
     {
       // The climate's wash (map/climateLayers.ts).
-      steps: ALL_STEPS,
       on: () => climateShown !== null,
       paint: (o) => {
         if (!climateShown || !probe || probe.nodes.length !== o.width * o.height) return
@@ -2117,7 +2020,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     {
       // The refinement's washes (map/refinedLayers.ts): the sea's on level
       // 1's sea, the weather's on its land, the wind's calm belts.
-      steps: ALL_STEPS,
       on: () => refinedCharts !== null && (seaShown !== null || weatherShown !== null || flowOn['flow:wind']),
       paint: (o) => {
         if (!refinedCharts || !probe || probe.nodes.length !== o.width * o.height) return
@@ -2133,7 +2035,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       probe: () => [],
     },
     {
-      steps: ALL_STEPS,
       on: () => spreadShown() !== null,
       paint: (o) => {
         const spread = spreadShown()
@@ -2164,7 +2065,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     {
       // TRIAL: the end state, drawn over the spread.
-      steps: ALL_STEPS,
       on: () => settled !== null && historyShown() && (settlementShown === 'lifeway' || settlementShown === 'density' || peopleOn['people:trade'] || peopleOn['people:centres']),
       paint: (o) => {
         if (!settled) return
@@ -2199,18 +2099,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         ]
       },
     },
-    {
-      steps: ['testing'],
-      on: () => regionBox.checked && regionCut !== null,
-      paint: (o) => {
-        if (regionCut) paintRaster(o, regionCut.overlay)
-      },
-      legend: () => [],
-      probe: () => [],
-    },
   ]
-  const stepTrials = (): TrialLayer[] => TRIALS.filter((l) => l.steps.includes(STEPS[stepIndex]))
-  const activeTrials = (): TrialLayer[] => stepTrials().filter((l) => l.on())
+  const activeTrials = (): TrialLayer[] => TRIALS.filter((l) => l.on())
 
   // THE MARKS (incubatorSymbols.ts) of the people step: the sources, the
   // trade, the villages, the routes, the crossings, the farming's and the
@@ -2514,14 +2404,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showCharts()
     cameraTools.setVisible(kind === 'sphere')
     mapScales.redraw()
-    shown = {
-      kind,
-      width: world.width,
-      height: world.height,
-      worldAreaM2: kind === 'sphere' ? domain.metresAround ** 2 / Math.PI : (domain.metresPerUnit ** 2) * world.width * world.height,
-      level: { count: level.count, nodes: level.nodes, connectivity: level.connectivity, z: level.z },
-    }
-    regionCut = null
+    shown = { kind, width: world.width, height: world.height }
     shownWorld = world
     climateFields = null
     geology = null
@@ -2551,7 +2434,6 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     sayChronicle()
     plantStatus.textContent = ''
     plantLegend.refresh()
-    if (regionBox.checked) void showRegions()
     // The level's rivers, from the world raster's texels to the chart's.
     if (level.rivers) {
       const points = Float32Array.from(level.rivers.points)
@@ -2665,8 +2547,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     window.open()
   }
 
-  // The layers the step on screen offers: its picks and its trial
-  // sections; the map and its legend redrawn.
+  // The layers the step on screen offers: its picks; the map and its
+  // legend redrawn.
   function stepLayers(): void {
     // Every layer in every step, grouped (layerPanel.ts).
     const one = (g: { title: string; rows: OverlayListRow[] }): LayerGroup => ({ title: `${g.title}.label` as TKey, kind: 'one', rows: g.rows })
@@ -2683,9 +2565,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       one(WEATHER_PICKS),
       one(RESOURCE_PICKS),
     ])
-    if (onTesting()) chronicle.stop()
     historyActions.hidden = !onNewStoneAge()
-    regionSection.hidden = !onTesting()
     showCharts()
     plantLegend.refresh()
     hoverTooltip.refresh()
