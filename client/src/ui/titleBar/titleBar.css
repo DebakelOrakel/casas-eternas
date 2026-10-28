@@ -101,28 +101,6 @@ button.title-bar__mark:hover {
   min-width: 0;
 }
 
-.title-bar__world-name {
-  font-size: 15px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Hidden rather than emptied when a world has no name of its own: an empty
-   flex item still eats one `gap`, which reads as a stray space before the
-   seed. */
-.title-bar__world-name:empty {
-  display: none;
-}
-
-.title-bar__seed {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 12px;
-  color: var(--dc-muted);
-  white-space: nowrap;
-}
-
 .title-bar__status {
   font-size: 12px;
   color: var(--dc-muted);

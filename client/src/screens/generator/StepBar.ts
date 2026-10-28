@@ -46,6 +46,13 @@ export interface StepBarStepState {
   blocked: boolean
 }
 
+// The world the steps are of, at the bar's left: its name, large, and its
+// seed under it. The name only where it says more than the seed.
+export interface StepBarWorld {
+  name?: string
+  seed: string
+}
+
 export interface StepBarState {
   current: number
   steps: readonly StepBarStepState[]
@@ -68,6 +75,8 @@ export interface StepBarOptions {
 export interface StepBar {
   element: HTMLElement
   setState(state: StepBarState): void
+  // The world at the left, or none (the block goes).
+  setWorld(world: StepBarWorld | null): void
   // The step names again, in the language that is active now. The statuses
   // come with the next setState, which the screen runs on every change anyway.
   relabel(): void
@@ -84,10 +93,30 @@ export function createStepBar(host: HTMLElement, options: StepBarOptions): StepB
   const bar = document.createElement('nav')
   bar.className = 'step-bar design-light'
 
+  // Which world: the name over the seed, then the steps beside them.
+  const worldBlock = document.createElement('div')
+  worldBlock.className = 'step-bar__world'
+  worldBlock.dataset.help = 'titlebar.world'
+  worldBlock.hidden = true
+  const worldName = document.createElement('span')
+  worldName.className = 'step-bar__world-name'
+  const worldSeed = document.createElement('span')
+  worldSeed.className = 'step-bar__seed mono'
+  worldBlock.append(worldName, worldSeed)
+  bar.appendChild(worldBlock)
+  let world: StepBarWorld | null = null
+  function paintWorld(): void {
+    worldBlock.hidden = world === null
+    if (!world) return
+    worldName.textContent = world.name && world.name !== world.seed ? world.name : ''
+    worldSeed.textContent = `${t('titlebar.seed')} ${world.seed}`
+  }
+
   const buttons = options.steps.map((step, index) => {
     const slot = document.createElement('div')
     slot.className = 'step-bar__slot'
     if (step.aside) slot.classList.add('step-bar__slot--aside')
+    if (index === 0) slot.classList.add('step-bar__slot--first')
 
     // The connector belongs to the step on its RIGHT, so the first step has
     // none and the line is never left dangling when a step is set apart.
@@ -143,7 +172,12 @@ export function createStepBar(host: HTMLElement, options: StepBarOptions): StepB
   return {
     element: bar,
     setState,
+    setWorld(next) {
+      world = next
+      paintWorld()
+    },
     relabel() {
+      paintWorld()
       buttons.forEach(({ label }, index) => {
         label.textContent = t(`${options.stepKeys}.${options.steps[index].id}.label` as TKey)
       })

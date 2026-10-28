@@ -351,7 +351,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       mapScales.relabel()
     },
   })
-  titleBar.setWorld(null)
+  titleBar.setWorldShown(false)
 
   const sidebar = createSidebar(root, 'incubator.step')
   // THE CHRONICLE (chroniclePanel.ts, DES-0031): the time and its playback
@@ -2495,7 +2495,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       void (async () => {
         if (!(await showLevel(archive, kept.uid))) return
         if (held) held = { ...held, name: kept.name, seed: kept.seed }
-        titleBar.setWorld({ name: kept.name || undefined, seed: kept.seed })
+        titleBar.setWorldShown(true)
+        stepBar.setWorld({ name: kept.name || undefined, seed: kept.seed })
         titleBar.setSaveState({ kind: kept.where === 'server' ? 'server' : 'local', at: new Date(kept.savedAt) })
         worldChooser.close()
         setFurniture(true)

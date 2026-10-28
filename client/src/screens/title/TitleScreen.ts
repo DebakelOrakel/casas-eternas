@@ -95,7 +95,7 @@ export const createTitleScreen: ScreenFactory = (ctx: ScreenContext): Screen => 
     ],
     onLocaleChange: () => ctx.goTo('title'),
   })
-  titleBar.setWorld(null)
+  titleBar.setWorldShown(false)
 
   ctx.overlay.appendChild(root)
 

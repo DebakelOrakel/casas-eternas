@@ -4624,7 +4624,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // Nothing while the chooser is up. The generator has already built a world
     // behind it, so there IS a seed to show — showing it would say a world is
     // open when the question on screen is still which one.
-    titleBar.setWorld(chooserOpen ? null : { name: worldName, seed: seedInput.value })
+    titleBar.setWorldShown(!chooserOpen)
+    stepBar.setWorld(chooserOpen ? null : { name: worldName, seed: seedInput.value })
     // Nor anything to save there: the world behind the list is the one the
     // list is about to replace, and offering to write it would be offering to
     // keep a world nobody has chosen yet.

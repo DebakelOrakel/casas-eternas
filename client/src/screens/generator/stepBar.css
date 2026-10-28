@@ -50,8 +50,46 @@
 }
 
 .step-bar__slot--aside .step-bar__line,
-.step-bar__slot:first-child .step-bar__line {
+.step-bar__slot--first .step-bar__line {
   display: none;
+}
+
+/* Which world, at the left: the name large and bold, the seed under it, a
+   rule between it and the steps. */
+.step-bar__world {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+  max-width: 240px;
+  margin-right: 14px;
+  padding: 0 16px 0 6px;
+  border-right: 1px solid var(--dc-line2);
+}
+
+.step-bar__world[hidden] {
+  display: none;
+}
+
+.step-bar__world-name {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--dc-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.step-bar__world-name:empty {
+  display: none;
+}
+
+.step-bar__seed {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--dc-muted);
+  white-space: nowrap;
 }
 
 .step-bar__line {

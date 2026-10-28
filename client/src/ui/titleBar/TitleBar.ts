@@ -32,15 +32,6 @@ import './titleBar.css'
 // What it does NOT know is the world. A screen pushes that in, because "which
 // world is meant" is world-layer knowledge and the bar is chrome.
 
-export interface TitleBarWorld {
-  // The world's own name, when it has one that is not simply the seed. The
-  // generator writes `metadata.name = seed` today (GeneratorScreen's
-  // buildWorldYaml), so a distinct name only exists for worlds that arrived
-  // from elsewhere — hence optional rather than "" for the common case.
-  name?: string
-  seed: string
-}
-
 // Four states, not the design's three: "never saved" is the generator's usual
 // opening state and would otherwise have to borrow the `unsaved` wording,
 // which says a world changed since a save that never happened.
@@ -110,7 +101,9 @@ export interface TitleBar {
   // offers the place rather than the buttons. Doors used less often go into
   // the menu instead (`menuItems`).
   tools: HTMLElement
-  setWorld(world: TitleBarWorld | null): void
+  // Whether a world is open: its save state shows then. Its name and seed
+  // are the step bar's (2026-10-28).
+  setWorldShown(shown: boolean): void
   setSaveState(state: TitleBarSaveState): void
   dispose(): void
 }
@@ -152,9 +145,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
       <span class="title-bar__name">${options.nameKey ? t(options.nameKey) : APP_NAME}</span>
     </${markTag}>
     <div class="title-bar__divider" data-slot="world-divider"></div>
-    <div class="title-bar__world" data-slot="world" data-help="titlebar.world">
-      <span class="title-bar__world-name" data-slot="world-name"></span>
-      <span class="title-bar__seed" data-slot="seed"></span>
+    <div class="title-bar__world" data-slot="world">
       <span class="title-bar__status" data-slot="status"></span>
     </div>
     <div class="title-bar__spacer"></div>
@@ -186,8 +177,6 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
 
   const worldDivider = bar.querySelector<HTMLElement>('[data-slot="world-divider"]')!
   const worldGroup = bar.querySelector<HTMLElement>('[data-slot="world"]')!
-  const worldName = bar.querySelector<HTMLElement>('[data-slot="world-name"]')!
-  const seedText = bar.querySelector<HTMLElement>('[data-slot="seed"]')!
   const statusText = bar.querySelector<HTMLElement>('[data-slot="status"]')!
   const toolsSlot = bar.querySelector<HTMLElement>('[data-slot="tools"]')!
   const menuHost = bar.querySelector<HTMLElement>('[data-slot="menu"]')!
@@ -444,22 +433,15 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
 
   // --- world and save state -------------------------------------------------
 
-  let world: TitleBarWorld | null = null
+  let worldShown = false
   let saveState: TitleBarSaveState = { kind: 'new' }
 
   function paintWorld(): void {
     // No world: the whole group goes, divider included. A screen that never
     // has one (and a generator before its first seed) then shows a bar with
     // the wordmark alone rather than a lone "Seed" with nothing after it.
-    const shown = world !== null
-    worldGroup.hidden = !shown
-    worldDivider.hidden = !shown
-    if (!world) return
-
-    // The name is shown only when it says something the seed does not — see
-    // TitleBarWorld.name.
-    worldName.textContent = world.name && world.name !== world.seed ? world.name : ''
-    seedText.textContent = `${t('titlebar.seed')} ${world.seed}`
+    worldGroup.hidden = !worldShown
+    worldDivider.hidden = !worldShown
   }
 
   function paintStatus(): void {
@@ -470,9 +452,7 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
     statusText.textContent = t(`titlebar.status.${saveState.kind}.label` as TKey, { when })
     // The help card follows the state, the way the save button's does, so the
     // line is never a claim with no explanation behind it. It sits on the
-    // status span rather than on the group, so the group keeps its own
-    // `titlebar.world` card for the name and seed beside it — HelpTooltip
-    // walks UP from what the pointer is over, so the nearer one wins.
+    // status span.
     statusText.dataset.help = `titlebar.status.${saveState.kind}`
   }
 
@@ -493,8 +473,8 @@ export function createTitleBar(host: HTMLElement, options: TitleBarOptions): Tit
   return {
     element: bar,
     tools: toolsSlot,
-    setWorld(next) {
-      world = next
+    setWorldShown(shown) {
+      worldShown = shown
       paintWorld()
     },
     setSaveState(next) {
