@@ -265,8 +265,10 @@ for (const kind of ['torus', 'sphere']) {
 // after the cold, no village is left and the ice only gives land back
 // (2026-10-28); they come back with step 2's rising sea and drying land.
 // Not 'city': no town of these small worlds grows to one, so the history
-// runs to its span's end.
-const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'centre 3', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper']
+// runs to its span's end. Not 'centre 3' (a herding centre): the torus's
+// came on land step 2 reached over more than 100 km of open sea, which it
+// crosses no more (REACH_END, 2026-10-28); Morvane makes three.
+const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')

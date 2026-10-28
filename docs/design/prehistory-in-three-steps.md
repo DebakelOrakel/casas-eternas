@@ -156,6 +156,9 @@ people give. Nothing of step 1 is kept again but its log.
 - **The droughts**: the rain per square of 300 km, a random walk with
   ENSO; a long dry spell is a famine, people die and flee, villages are
   given up.
+- **The sea**: no open sea until ships fit for trade. Boats go along
+  the coast and to land in sight, 100 km of open water at most (Cyprus,
+  some 70 km off and seen from the coast, was settled at +1 000).
 - **The copper**: a farmers' village that stood 1 000 years within 20
   days of a deposit finds it and hammers it; one that knew it 3 000 years
   smelts it. Both pass on by contact. It feeds no one: it is rank.
@@ -169,10 +172,6 @@ constants in simulation.rs.
 
 **Decided, not built (2026-10-28):**
 
-- **No crossing of the open sea** in step 2, until ships fit for trade:
-  small boats along the coast and to what is in sight of land stay (the
-  fishers, the islands off a coast). Today step 2 still crosses up to
-  450 km.
 - **The peoples.** A people is a set of joined cells whose people meet
   and so stay alike. Each cell carries a few cultural traits, seeded from
   step 1's groups (the descent, which no one in the world knows). Traits
@@ -270,6 +269,12 @@ Building since 2026-10-27:
   after the farming (on the earth some 6 000). 6.8 % of the land farmed:
   the generator's arable land is short (10.7 % of the land at 0.3 or
   more).
+- 2026-10-28: step 2 crosses 100 km of open water at most (450 km
+  before). A centre keeps others of its lifeway away on its own landmass
+  only: an island's centre had kept Morvane's largest landmass from
+  farming. On Morvane over six origins: 7.4 % of the land farmed, no
+  crossing over 100 km, the city at +25 500 to +42 000 after step 2's
+  start.
 
 Open:
 

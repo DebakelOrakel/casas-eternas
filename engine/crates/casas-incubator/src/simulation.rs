@@ -27,7 +27,8 @@
 //!    some 2 years, 50 000 of them.
 //! 3. THE SEA: over open water the crossings (`crossings_of`, made once):
 //!    from a settled coast cell to the nearest coast of another landmass,
-//!    once the reach of its region is as far, with CROSSING_CHANCE a step.
+//!    once the reach of its region is as far, with CROSSING_CHANCE a step;
+//!    never farther than land in sight (REACH_END).
 //!
 //! The rest — the game, the knowledge, the farming and the herding, the
 //! fishers, the villages, the camps, the droughts, the copper, the towns —
@@ -221,7 +222,7 @@ pub(crate) const VILLAGE_LEAVE: f64 = 0.5;
 // too (without it a herding centre came at year 7 500, deep in the cold;
 // the earth's animals were all tamed in the Holocene), with CENTRE_HERDS
 // herd animals, CENTRE_PASTURE pasture and KNOW_HERD — at
-// CENTRE_SPACING_KM from any centre of its lifeway. A farming centre tames
+// CENTRE_SPACING_KM from any centre of its lifeway on its landmass. A farming centre tames
 // its wild crops at once, its herd animals HERD_LAG later; a herding
 // centre its herd animals. They spread over the cells people live in,
 // FARM_KM_A and HERD_KM_A a year, each where it suits (its niche;
@@ -265,6 +266,12 @@ pub(crate) const MAX_TAMED: usize = 32;
 // until 2026-10-26, as it is in step 1 (peopling.rs): it grew evenly from
 // 30 to 450 km over the span, and reached 98.5 % of Morvane's land, its far
 // islands too. A crossing within it is tried with CROSSING_CHANCE a step.
+// REACH_END is land in sight (2026-10-28, docs/design/prehistory-in-three-
+// steps.md: no open sea in step 2, only the coast and what is seen from
+// it): Cyprus, some 70 km off the coast and seen from it, was settled with
+// cattle at +1 000 (docs/design/earth-prehistory-sources.md); 450 km until
+// then, when this loop peopled the world itself. On Morvane (v14) step 2
+// crossed 129 times, 8 of them over 100 km, the longest 432 km.
 pub(crate) const KNOW_SCALE: f64 = 1.0;
 // 3 000 (2026-10-26; 10 000 before): the foragers are thin, a region knew
 // too little to cross for most of the span.
@@ -274,7 +281,7 @@ pub(crate) const KNOW_LOSS: f64 = 0.02;
 pub(crate) const KNOW_CARRIED: f64 = 0.8;
 pub(crate) const REACH_START: f64 = 30.0;
 pub(crate) const REACH_PER_KNOW: f64 = 150.0;
-pub(crate) const REACH_END: f64 = 450.0;
+pub(crate) const REACH_END: f64 = 100.0;
 pub(crate) const CROSSING_CHANCE: f64 = 0.02;
 // THE SEAFARING (2026-10-26, a cheat, asked for): the reach takes the
 // larger of a region's knowledge and its `seafaring`, which a crossing
@@ -918,14 +925,22 @@ impl Sim<'_, '_> {
         self.take(d, cell, t);
     }
 
-    // CENTRE_SPACING_KM from every centre of the same lifeway: the farming
-    // may begin beside a herding centre (with it, a herding centre at year
-    // 7 500 kept Morvane's one place fit for the fields from farming).
+    // CENTRE_SPACING_KM from every centre of the same lifeway on the same
+    // landmass: the farming may begin beside a herding centre (with it, a
+    // herding centre at year 7 500 kept Morvane's one place fit for the
+    // fields from farming), and on another landmass (2026-10-28: step 2
+    // crosses no open sea, so a centre does not spread over it; an
+    // island's centre 737 km off Morvane's largest landmass kept that
+    // landmass from farming, 2.4 % of the land farmed instead of 6.8 %).
+    // On the earth the farming began apart many times (the Near East,
+    // China, New Guinea, Mesoamerica).
     fn far_centre(&self, cell: usize, way: u8) -> bool {
         let mut k = 0;
         while k < self.centres.len() {
+            let other = self.centres[k] as usize;
             if self.centres[k + 2] == way as f64
-                && km_between(self.h, cell, self.centres[k] as usize) < CENTRE_SPACING_KM
+                && self.h.landmass[other] == self.h.landmass[cell]
+                && km_between(self.h, cell, other) < CENTRE_SPACING_KM
             {
                 return false;
             }
