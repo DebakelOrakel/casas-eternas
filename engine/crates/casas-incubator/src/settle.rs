@@ -28,7 +28,9 @@
 //!    Until 2026-10-26 the links were km over the cells (150 at most) and
 //!    the goods lost a step each link (a quarter, 16 links at most). With
 //!    the villages a day and a half apart, links of 4 days and a decay of
-//!    6 carried goods on few of them.
+//!    6 carried goods on few of them. A village draws the goods by its
+//!    size (2026-10-28, `draw_of`): what comes to it over a link is
+//!    weighed by its town over the towns' median.
 
 use crate::habitat::{ARABLE, CARRYING, FISH, Habitat, PASTURE};
 use crate::log::LogEvent;
@@ -55,7 +57,32 @@ pub(crate) const SOURCE_RICH: f64 = 0.6;
 pub(crate) const SOURCE_DAYS: f64 = 20.0;
 // In rings of cells.
 pub(crate) const SOURCE_RADIUS: usize = 10;
-pub(crate) const DECAY_DAYS: f64 = 8.0;
+// 5 (2026-10-28; 8 before): the Anatolian obsidian is some 0.5 % of the
+// chipped stone at 700 – 800 km from its source (Ibáñez et al. 2015,
+// docs/design/earth-prehistory-sources.md), some 26 days on foot at 30 km
+// a day; exp(−26 / 5) ≈ 0.55 %. At 8 it was 3.9 %.
+pub(crate) const DECAY_DAYS: f64 = 5.0;
+// THE DRAW (2026-10-28): what comes to a village over a link is weighed by
+// the village's size, its town at the history's end (simulation.rs THE
+// TOWNS) over the median of the towns there, DRAW_LEAST to DRAW_MOST; a
+// place with no town (a camp, a fishers' village, a village left before
+// the end) draws DRAW_NONE, as the median village: the draw tells the
+// large villages from the rest, it does not take the goods from the
+// camps, which pass them on. On the earth the PPNB sites more than 500 km
+// from the obsidian had 0.073 % (small), 0.398 % (medium) and 2.41 % (big)
+// of it: a fifth and six times the medium (Ibáñez et al. 2015, DES-0035).
+// The median, not the mean: the towns are skewed (on Morvane v14 the mean
+// is 1.8 times the median; over the mean most villages drew less than 1).
+// On Morvane (v14) the farmers' 1 044 towns are 0.4 (a tenth of them
+// less) to 4 (a tenth more) times the median; 1 784 of the 2 828 places
+// have no town. Of the 4 948 links there (TRADE_TOLD or more) 129 carry
+// goods, 13 of them 1 or more, the farthest village 564 km (18.6 days)
+// from its source; at a decay of 8 and no draw 240, 13, 611 km (24.6
+// days); at 5 and no draw 117. With the places of no town at DRAW_LEAST,
+// 68 carried goods, none 1 or more: the sources lie among the camps.
+pub(crate) const DRAW_LEAST: f64 = 0.25;
+pub(crate) const DRAW_MOST: f64 = 4.0;
+pub(crate) const DRAW_NONE: f64 = 1.0;
 pub(crate) const MAX_DAYS: f64 = 32.0;
 // THE LOG's first trade (historyLogShared.ts): the first link that carries
 // goods (a weight of TRADE_TOLD or more) once both its villages stand, at
@@ -221,8 +248,19 @@ pub struct Settled {
     pub trade: Option<LogEvent>,
 }
 
+/// How much a village draws of the goods that come to it (THE DRAW): its
+/// town over the towns' `median`, DRAW_LEAST to DRAW_MOST; DRAW_NONE with
+/// no town.
+fn draw_of(town: f64, median: f64) -> f64 {
+    if town <= 0.0 || median <= 0.0 {
+        return DRAW_NONE;
+    }
+    js::max(DRAW_LEAST, js::min(DRAW_MOST, town / median))
+}
+
 /// `villages` [cell, lifeway] the history's villages and camps, when each
-/// began and was left; the settlement at `end`, the history's.
+/// began and was left, and its town at the end (simulation.rs
+/// `village_town`); the settlement at `end`, the history's.
 #[allow(clippy::too_many_arguments)]
 pub fn settle_history(
     h: &Habitat,
@@ -232,6 +270,7 @@ pub fn settle_history(
     villages: &[i32],
     village_from: &[f32],
     village_to: &[f32],
+    village_town: &[f32],
     end: f64,
 ) -> Settled {
     let n = h.count;
@@ -336,6 +375,17 @@ pub fn settle_history(
             sources.extend([c as i32, g as i32]);
         }
     }
+    // The draw: the median of the towns at the end (THE DRAW).
+    let mut towns: Vec<f64> = village_town
+        .iter()
+        .filter(|&&x| x > 0.0)
+        .map(|&x| x as f64)
+        .collect();
+    towns.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let town_median = towns.get(towns.len() / 2).copied().unwrap_or(0.0);
+    let draw: Vec<f64> = (0..count)
+        .map(|v| draw_of(village_town.get(v).map_or(0.0, |&x| x as f64), town_median))
+        .collect();
     let mut weight = vec![0f64; edges.len()];
     let mut s = 0;
     while s < sources.len() {
@@ -362,7 +412,8 @@ pub fn settle_history(
         s += 2;
         let Some(start) = start else { continue };
         // The goods down the line, less the more days from the source's
-        // village (DECAY_DAYS), as far as MAX_DAYS.
+        // village (DECAY_DAYS), as far as MAX_DAYS; each link weighs what
+        // its far village draws of them (THE DRAW).
         let mut days: HashMap<usize, f64> = HashMap::from([(start, 0.0)]);
         let mut heap = MinHeap::new(64);
         heap.push(0.0, start as i32);
@@ -383,7 +434,7 @@ pub fn settle_history(
                 days.insert(u, nd);
                 heap.push(nd, u as i32);
                 if first {
-                    weight[k] += det_exp(-d / DECAY_DAYS);
+                    weight[k] += det_exp(-d / DECAY_DAYS) * draw[u];
                 }
             }
         }

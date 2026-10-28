@@ -210,7 +210,7 @@ for (const kind of ['torus', 'sphere']) {
   }
   const v = history.lifeways.villages
   t0 = performance.now()
-  const settledPack = rs.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo, history.end)
+  const settledPack = rs.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo, v.villageTown, history.end)
   const settleMs = performance.now() - t0
   hashes[`${kind} settlement`] = hashOf(settledPack)
   const settled = unpackSettled(settledPack.buffer.slice(settledPack.byteOffset, settledPack.byteOffset + settledPack.byteLength))
@@ -240,7 +240,7 @@ for (const kind of ['torus', 'sphere']) {
   nat.growFlora(world.seed)
   nat.populate(world.seed)
   const natPack = nat.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength)
-  const natSettled = nat.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo, history.end)
+  const natSettled = nat.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo, v.villageTown, history.end)
   const natMs = performance.now() - t0
   const natHashes = {
     habitat: hashOf(nat.owners(), ...['areaKm2', 'heightM', 'slope', 'seaDepthM', 'riverSize', 'distKm', 'u', 'v'].map((name) => nat.floats(name)), ...CELL_ECOLOGY.map((id) => nat.floats(`eco:${id}`)), ...['land', 'biome', 'koppen', 'nearRiver', 'nearLake', 'nearSea'].map((name) => nat.bytes(name)), ...['landmass', 'nbrStart', 'nbr'].map((name) => nat.ints(name)), nat.landmassKm2(), nat.scalars(), nat.iceKm(), native.coldCurve(world.seed)),
@@ -264,11 +264,13 @@ for (const kind of ['torus', 'sphere']) {
 // again): since the history begins where step 1 of the prehistory ends,
 // after the cold, no village is left and the ice only gives land back
 // (2026-10-28); they come back with step 2's rising sea and drying land.
-// Not 'city': no town of these small worlds grows to one, so the history
-// runs to its span's end. Not 'centre 3' (a herding centre): the torus's
-// came on land step 2 reached over more than 100 km of open sea, which it
-// crosses no more (REACH_END, 2026-10-28); Morvane makes three.
-const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper']
+// Not 'city' and not 'centre 3' (a herding centre): the torus's herding
+// centre came on land step 2 reached over more than 100 km of open sea,
+// which it crosses no more (REACH_END, 2026-10-28), and no town grew to a
+// city; since the rising sea and the cold spells (2026-10-28) the worlds
+// reach both again, by chance. Not 'drowned': the sea takes less than
+// DROWNED_TOLD_KM2 of these small worlds' shelves in a CLIMATE_YEARS.
+const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')

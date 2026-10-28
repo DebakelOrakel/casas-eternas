@@ -12,8 +12,10 @@
 //! 0. THE CLIMATE (climate_history.rs), every CLIMATE_YEARS: the cold
 //!    lowers what the land carries and puts the land near today's glaciers
 //!    under the ice; the sea's drop lays the shelf to it dry, to SHELF_M. A
-//!    cell that carries nothing any more is left; one that carries again
-//!    may be settled again.
+//!    cell that carries nothing any more is left, its people go to the
+//!    neighbours (THE RISING SEA); one that carries again may be settled
+//!    again. A cold spell (climate_history.rs THE COLD SPELLS) moves what
+//!    the land carries at its start and its end too.
 //! 1. GROWTH: each cell's people toward what the land carries (its carrying
 //!    capacity, CARRYING_FULL at FORAGER_DENSITY a km², to twice), by
 //!    GROWTH_A a year, logistic.
@@ -42,7 +44,10 @@
 //! step 1 is kept again but its log. The big game is first hunted here.
 //! It ends at its first city.
 
-use crate::climate_history::{ClimateHistory, ICE_REACH_KM, cold_share, ice_may_cover};
+use crate::climate_history::{
+    COLD_SPELL_DRY, COLD_SPELL_YEARS, ClimateHistory, ICE_REACH_KM, cold_share, cold_spells,
+    ice_may_cover, spell_cold,
+};
 use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between};
 use crate::log::{LogEvent, POPULATION_MARKS};
 use crate::peopling::Peopling;
@@ -114,6 +119,20 @@ pub(crate) const CORRIDOR: f64 = 2.0;
 pub(crate) const SHELF_M: f64 = 120.0;
 // The climate moves the cells' carrying and the sea every CLIMATE_YEARS.
 pub(crate) const CLIMATE_YEARS: f64 = 500.0;
+// THE RISING SEA (2026-10-28): the people of a cell that carries nothing
+// any more (the sea over the shelf, the ice) go to its neighbours that
+// still carry, lived in or empty, evenly, each up to FLIGHT_CROWD times
+// what it carries (as THE FLIGHT); the rest die. Where the sea took
+// DROWNED_TOLD_KM2 of a landmass's shelf or more in one CLIMATE_YEARS, the
+// log tells it (`Drowned`), with the people who moved away from it: a
+// coast goes under, as Doggerland did. A shelf cell is its nearest
+// landmass's (`shelf_landmass`). Before, the people of such a cell were
+// gone. On Morvane (v14) the sea took 10 000 km² or more of a landmass 36
+// times in step 2's first 5 000 years (4 landmasses, 10 200 to 67 900 km²
+// each); at 50 000 the chronicle tells 5 of them. They held few people:
+// a dry shelf carries what the poorest land does (`ground_of`), some 140
+// people moved from each.
+pub(crate) const DROWNED_TOLD_KM2: f64 = 50_000.0;
 // THE GAME (2026-10-26), every GAME_STEPS steps on the cells people live in
 // or have hunted: the small game and the big game, a share each of what the
 // land holds without people. Each grows back toward it (SMALL_REGROW_A,
@@ -185,7 +204,8 @@ pub(crate) const VILLAGE_DAYS_MOST: f64 = 2.0;
 // left. A famine is told in the log (`famines`) with the people it cost
 // and the villages given up. With the year's variability whole and a
 // famine from the second dry step, Morvane had 71 814 famines (3 597 of
-// 10 000 people or more); now some 650 (some 30).
+// 10 000 people or more); now some 650 (some 30). A cold spell takes
+// COLD_SPELL_DRY of the rain (climate_history.rs THE COLD SPELLS).
 pub(crate) const DRY_SQUARE_KM: f64 = 300.0;
 pub(crate) const DRY_SCALE: f64 = 0.25;
 pub(crate) const STORE_STEPS: i32 = 2;
@@ -1014,6 +1034,52 @@ impl Sim<'_, '_> {
 /// The foragers' density a cell carries in today's climate (people a km²),
 /// the speed of their front over it (km a year), and whether it is a shelf
 /// the sea can leave dry; 0 for ice and for the sea below SHELF_M.
+/// Each shelf cell's landmass, its nearest by the way over the shelf (a
+/// shelf between two is parted where their ways meet); -1 elsewhere and
+/// for a shelf no land touches.
+fn shelf_landmass_of(h: &Habitat, shelf: &[u8]) -> Vec<i32> {
+    let n = h.count;
+    let mut of = vec![-1i32; n];
+    let mut km = vec![f64::INFINITY; n];
+    let mut heap = MinHeap::new(1 << 16);
+    for i in 0..n {
+        if h.land[i] == 0 || h.landmass[i] < 0 {
+            continue;
+        }
+        let touches = h.edges(i).any(|e| shelf[h.nbr[e] as usize] != 0);
+        if !touches {
+            continue;
+        }
+        of[i] = h.landmass[i];
+        km[i] = 0.0;
+        heap.push(0.0, i as i32);
+    }
+    while !heap.is_empty() {
+        heap.pop();
+        let i = heap.popped_index as usize;
+        let d = heap.popped_key;
+        if d > km[i] {
+            continue;
+        }
+        for e in h.edges(i) {
+            let u = h.nbr[e] as usize;
+            let nd = d + h.dist_km[e] as f64;
+            if shelf[u] == 0 || nd >= km[u] {
+                continue;
+            }
+            km[u] = nd;
+            of[u] = of[i];
+            heap.push(nd, u as i32);
+        }
+    }
+    for i in 0..n {
+        if shelf[i] == 0 {
+            of[i] = -1;
+        }
+    }
+    of
+}
+
 pub(crate) struct Ground {
     pub base: Vec<f32>,
     pub speed: Vec<f32>,
@@ -1066,9 +1132,16 @@ pub fn simulate(
     // A cell whose carrying moved by CAPACITY_MOVED of it or more is marked
     // (`moved_now`), to grow or shrink again.
     let mut moved_now = vec![0u8; n];
-    let update_climate = |t: f64, capacity: &mut [f32], moved_now: &mut [u8]| {
+    // `t` the climate's (a CLIMATE_YEARS), `spell` the cold a spell adds
+    // now; the shelf cells the sea covers that were dry into `drowned`.
+    let update_climate = |t: f64,
+                          spell: f64,
+                          capacity: &mut [f32],
+                          moved_now: &mut [u8],
+                          drowned: &mut Vec<usize>| {
         let cold = climate.cold(t);
         let drop = climate.sea_drop_m(t);
+        drowned.clear();
         for i in 0..n {
             if base[i] <= 0.0 {
                 continue;
@@ -1081,13 +1154,18 @@ pub fn simulate(
                     0.0
                 }
             } else {
-                base[i] as f64 * cold_share(h.koppen[i], ice_km[i] as f64, cold)
+                base[i] as f64 * cold_share(h.koppen[i], ice_km[i] as f64, cold, spell)
             };
             capacity[i] = now as f32;
+            if shelf[i] != 0 && was > 0.0 && now <= 0.0 {
+                drowned.push(i);
+            }
             let c = capacity[i] as f64;
             moved_now[i] = u8::from((c - was).abs() >= CAPACITY_MOVED * js::max(was, c));
         }
     };
+    let shelf_landmass = shelf_landmass_of(h, &shelf);
+    let mut drowned: Vec<usize> = Vec::new();
     let habitable = |i: usize| land[i] == 1 && base[i] > 0.0;
     let (region, regions) = regions_of(h, &habitable);
     let crossings = crossings_of(h, REACH_END, &habitable, &region);
@@ -1261,6 +1339,10 @@ pub fn simulate(
     let start = input.peopling;
     let t0 = start.span;
     sim.log.extend(start.log.iter().cloned());
+    // The cold spells, all after t0 (THE COLD SPELLS); the cold a spell
+    // added at the last step.
+    let spells = cold_spells(input.seed, t0, STEP_YEARS);
+    let mut spell_was = 0.0;
 
     // The droughts' squares (THE DROUGHTS): their cells, their mean
     // variability and ENSO mark, their anomaly, rain, dry steps in a row,
@@ -1364,7 +1446,13 @@ pub fn simulate(
         // arrival and where they came from, the knowledge their numbers
         // give.
         if t == t0 {
-            update_climate(t, &mut sim.capacity, &mut moved_now);
+            update_climate(
+                t,
+                spell_cold(&spells, t),
+                &mut sim.capacity,
+                &mut moved_now,
+                &mut drowned,
+            );
             for i in 0..n {
                 if start.arrival[i] == f32::INFINITY {
                     continue;
@@ -1435,28 +1523,124 @@ pub fn simulate(
         if s == steps {
             break;
         }
+        // 0. A cold spell begins or ends (THE COLD SPELLS): what the cells
+        //    carry, at the climate's last CLIMATE_YEARS; every lived-in
+        //    cell grows or shrinks to it (its change is under
+        //    CAPACITY_MOVED in the warm climates).
+        let spell = spell_cold(&spells, t);
+        if spell != spell_was {
+            spell_was = spell;
+            if spell > 0.0 {
+                sim.log.push(LogEvent::ColdSpell {
+                    at: t,
+                    years: COLD_SPELL_YEARS,
+                });
+            }
+            if t % CLIMATE_YEARS != 0.0 {
+                let last = (t / CLIMATE_YEARS).floor() * CLIMATE_YEARS;
+                update_climate(last, spell, &mut sim.capacity, &mut moved_now, &mut drowned);
+            }
+            for k in 0..sim.lived.len() {
+                let i = sim.lived[k];
+                if sim.people[i] > 0.0 {
+                    sim.grows(i);
+                }
+            }
+        }
         // 0. The climate, every CLIMATE_YEARS: what the cells carry; the
-        //    people of a cell that carries nothing now leave it.
+        //    people of a cell that carries nothing now leave it for its
+        //    neighbours (THE RISING SEA).
         if t > 0.0 && t % CLIMATE_YEARS == 0.0 {
-            update_climate(t, &mut sim.capacity, &mut moved_now);
+            update_climate(t, spell, &mut sim.capacity, &mut moved_now, &mut drowned);
             let mut still = Vec::new();
+            let mut leaving = Vec::new();
             for k in 0..sim.lived.len() {
                 let i = sim.lived[k];
                 if sim.people[i] == 0.0 {
                     continue;
                 }
                 if sim.capacity[i] <= 0.0 {
-                    sim.people[i] = 0.0;
+                    leaving.push(i);
                     continue;
                 }
                 still.push(i);
             }
-            sim.lived = still.clone();
-            for &i in &still {
+            sim.lived = still;
+            for k in 0..sim.lived.len() {
+                let i = sim.lived[k];
                 if moved_now[i] != 0 {
                     sim.grows(i);
                 }
             }
+            // Each landmass's shelf the sea took, in the order of its first
+            // cell: [landmass, km², the people who moved from it, its cell of
+            // the most people, their number].
+            let mut sea_took: Vec<(i32, f64, f64, i32, f64)> = Vec::new();
+            let mut took_at: HashMap<i32, usize> = HashMap::new();
+            for &i in &drowned {
+                let m = shelf_landmass[i];
+                if m < 0 {
+                    continue;
+                }
+                let k = *took_at.entry(m).or_insert_with(|| {
+                    sea_took.push((m, 0.0, 0.0, i as i32, -1.0));
+                    sea_took.len() - 1
+                });
+                sea_took[k].1 += h.area_km2[i] as f64;
+            }
+            for &i in &leaving {
+                let had = sim.people[i] as f64 * h.area_km2[i] as f64;
+                sim.people[i] = 0.0;
+                let to: Vec<usize> = h
+                    .edges(i)
+                    .map(|e| h.nbr[e] as usize)
+                    .filter(|&u| sim.capacity[u] > 0.0)
+                    .collect();
+                let mut moved = 0.0;
+                for &u in &to {
+                    let room = js::max(
+                        0.0,
+                        (FLIGHT_CROWD * sim.carried(u) - sim.people[u] as f64)
+                            * h.area_km2[u] as f64,
+                    );
+                    let came = js::min(had / to.len() as f64, room);
+                    if came <= 0.0 {
+                        continue;
+                    }
+                    moved += came;
+                    let density = came / h.area_km2[u] as f64;
+                    if sim.people[u] == 0.0 {
+                        sim.settle(u, t, density, i as i32);
+                    } else {
+                        sim.people[u] = (sim.people[u] as f64 + density) as f32;
+                        sim.grows(u);
+                    }
+                }
+                // The sea's (a shelf cell), not the ice's.
+                if shelf[i] == 0 {
+                    continue;
+                }
+                let Some(&k) = took_at.get(&shelf_landmass[i]) else {
+                    continue;
+                };
+                sea_took[k].2 += moved;
+                if had > sea_took[k].4 {
+                    sea_took[k].3 = i as i32;
+                    sea_took[k].4 = had;
+                }
+            }
+            for &(m, km2, people, cell, _) in &sea_took {
+                if km2 >= DROWNED_TOLD_KM2 {
+                    sim.log.push(LogEvent::Drowned {
+                        at: t,
+                        cell: cell as f64,
+                        landmass: m as f64,
+                        km2,
+                        people,
+                    });
+                }
+            }
+            let still = sim.lived.clone();
             sim.front = still;
             // The big game's extinctions: a species under EXTINCT_BELOW of
             // its own on a landmass.
@@ -2048,6 +2232,12 @@ pub fn simulate(
                 0.0
             };
             let spread = (1.0 - DRY_KEEP * DRY_KEEP).sqrt();
+            // A cold spell's rain, COLD_SPELL_DRY less (THE COLD SPELLS).
+            let spell_rain = if spell > 0.0 {
+                1.0 + COLD_SPELL_DRY
+            } else {
+                1.0
+            };
             for q in 0..squares {
                 let g = {
                     let a = sim.random.next();
@@ -2057,7 +2247,8 @@ pub fn simulate(
                 anomaly[q] = (DRY_KEEP * anomaly[q] as f64
                     + spread * g
                     + enso * square_enso[q] as f64) as f32;
-                let wet = 1.0 + DRY_SCALE * square_variability[q] as f64 * anomaly[q] as f64;
+                let wet = (1.0 + DRY_SCALE * square_variability[q] as f64 * anomaly[q] as f64)
+                    * spell_rain;
                 if wet < DRY_BELOW {
                     dry_run[q] += 1;
                 } else {

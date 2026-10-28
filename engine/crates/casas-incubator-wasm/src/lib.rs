@@ -376,6 +376,7 @@ impl Incubator {
         villages: &[i32],
         village_from: &[f32],
         village_to: &[f32],
+        village_town: &[f32],
         end: f64,
     ) -> Vec<u8> {
         pack_settled(&settle_history(
@@ -386,6 +387,7 @@ impl Incubator {
             villages,
             village_from,
             village_to,
+            village_town,
             end,
         ))
     }

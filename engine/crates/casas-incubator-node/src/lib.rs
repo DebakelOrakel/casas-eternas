@@ -363,6 +363,7 @@ impl Incubator {
         villages: Int32Array,
         village_from: Float32Array,
         village_to: Float32Array,
+        village_town: Float32Array,
         end: f64,
     ) -> Uint8Array {
         Uint8Array::new(pack_settled(&settle_history(
@@ -373,6 +374,7 @@ impl Incubator {
             &villages,
             &village_from,
             &village_to,
+            &village_town,
             end,
         )))
     }

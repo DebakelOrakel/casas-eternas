@@ -53,7 +53,8 @@ pub fn constants() -> Value {
         )
     }));
     json!({
-        "climate": object(table!(climate_history: SEA_DROP_M, STADIALS, STABLE_COLD, STABLE_YEARS, ICE_REACH_KM)),
+        "climate": object(table!(climate_history: SEA_DROP_M, STADIALS, STABLE_COLD, STABLE_YEARS, ICE_REACH_KM,
+            COLD_SPELLS_MOST, COLD_SPELL_YEARS, COLD_SPELL_COLD, COLD_SPELL_DRY, COLD_SPELL_FROM, COLD_SPELL_TO)),
         "habitat": object(table!(habitat: CELL_SPACING_KM)),
         "niche": object(table!(niche: SUITABLE, BARRIER, SPREAD_KM, ORIGIN_AREA_KM2, OFF_COVER, BIG_RIVER)),
         "travel": object(table!(travel: WALK_HOURS, RIVER_BOAT_SIZE, RIVER_DOWN_KM_DAY, RIVER_UP_KM_DAY, COAST_DEPTH_M, COAST_KM_DAY, LANDING_DAYS)),
@@ -61,7 +62,7 @@ pub fn constants() -> Value {
         "simulation": object(table!(simulation:
             SPAN_YEARS, KEEP_YEARS, POPULATION_STEP, STEP_YEARS, PEOPLE_FRAME_STEP, CAME_STEP, SETTLE_AFTER, FISH_RICH,
             SUB_STEPS, FORAGER_DENSITY, CARRYING_FULL, GROWTH_A, SEED_SHARE, SEED_PEOPLE, FULL_SHARE,
-            SPEED_MIN_KM_A, SPEED_MAX_KM_A, SLOPE_DRAG, CORRIDOR, SHELF_M, CLIMATE_YEARS, GAME_STEPS,
+            SPEED_MIN_KM_A, SPEED_MAX_KM_A, SLOPE_DRAG, CORRIDOR, SHELF_M, CLIMATE_YEARS, DROWNED_TOLD_KM2, GAME_STEPS,
             SMALL_REGROW_A, BIG_REGROW_A, HUNT_A, BIG_HUNT_A, HOME_WARY, PLANT_FOOD, SMALL_FOOD, BIG_FOOD,
             EXTINCT_BELOW, FOOD_MOVED, CAPACITY_MOVED, FISH_GAIN, CAMP_YEARS, CAMP_DAYS_MOST, CAMP_MOVE,
             VILLAGE_DAYS_MOST, DRY_SQUARE_KM, DRY_SCALE, STORE_STEPS, DRY_KEEP, DRY_BELOW, ENSO_CHANCE,
@@ -77,7 +78,7 @@ pub fn constants() -> Value {
         )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,
-            SOURCE_RADIUS, DECAY_DAYS, MAX_DAYS, TRADE_TOLD,
+            SOURCE_RADIUS, DECAY_DAYS, DRAW_LEAST, DRAW_MOST, DRAW_NONE, MAX_DAYS, TRADE_TOLD,
         )),
         "log": object(log),
         "catalog": without_notes(catalog),

@@ -892,6 +892,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The copper's and the first city's colours.
   const COPPER_RGB = [184, 115, 51] as const
   const CITY_RGB = [120, 70, 150] as const
+  // The rising sea's and the cold spells' colours.
+  const DROWNED_RGB = [40, 90, 150] as const
+  const COLD_RGB = [90, 130, 170] as const
   function sayChronicle(): void {
     eventPlaces.clear()
     const events: ChronicleEvent[] = []
@@ -957,6 +960,23 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             title: t('incubator.chronicle.event.city'),
             detail: t('incubator.chronicle.cityDetail', { people: Math.round(e.people).toLocaleString(getLocale()), landmass: landmassName(facts.landmass[e.cell]) }),
           }, e.cell)
+        } else if (e.kind === 'drowned') {
+          place({
+            time: e.at,
+            icon: '/icons/ocean.png',
+            rgb: DROWNED_RGB,
+            title: t('incubator.chronicle.event.drowned'),
+            detail: t('incubator.chronicle.drownedDetail', { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()) }),
+          }, e.cell)
+        } else if (e.kind === 'coldSpell') {
+          // No place: the whole world's.
+          events.push({
+            time: e.at,
+            icon: '/icons/blizzard.png',
+            rgb: COLD_RGB,
+            title: t('incubator.chronicle.event.coldSpell'),
+            detail: t('incubator.chronicle.coldSpellDetail', { years: Math.round(e.years).toLocaleString(getLocale()) }),
+          })
         } else if (e.kind === 'extinct') {
           if (facts.landmassKm2[e.landmass] < EVENT_LEAST_KM2) continue
           const spec = ANIMALS.find((a) => a.id === e.id)

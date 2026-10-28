@@ -36,6 +36,12 @@ export type LogEvent =
   | { kind: 'copper'; at: number; cell: number; smelted: boolean }
   // The first city, the history's end: the people of its town.
   | { kind: 'city'; at: number; cell: number; people: number }
+  // The sea took `km2` of a landmass's shelf in 500 years (simulation.rs
+  // THE RISING SEA), `people` moved away from it; at its cell of the most
+  // people.
+  | { kind: 'drowned'; at: number; cell: number; landmass: number; km2: number; people: number }
+  // A cold spell begins (climate_history.rs THE COLD SPELLS), `years` long.
+  | { kind: 'coldSpell'; at: number; years: number }
 
 // The people's marks the log notes.
 export const POPULATION_MARKS = [100_000, 1_000_000, 10_000_000]

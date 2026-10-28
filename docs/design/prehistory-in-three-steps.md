@@ -156,6 +156,14 @@ people give. Nothing of step 1 is kept again but its log.
 - **The droughts**: the rain per square of 300 km, a random walk with
   ENSO; a long dry spell is a famine, people die and flee, villages are
   given up.
+- **The rising sea**: a cell the sea or the ice covers sends its people
+  to the neighbours that still carry, as far as they have room; the rest
+  die. A large loss of a landmass's shelf is told in the chronicle (a
+  coast goes under, as Doggerland).
+- **The cold spells**: one or two from the world's seed, 2 000 to 10 000
+  years after step 2's start, each 160 years, as the 8.2 ka event: the
+  land carries a little less and the rain of the droughts is a fifth
+  less. Told in the chronicle.
 - **The sea**: no open sea until ships fit for trade. Boats go along
   the coast and to land in sight, 100 km of open water at most (Cyprus,
   some 70 km off and seen from the coast, was settled at +1 000).
@@ -188,26 +196,29 @@ constants in simulation.rs.
   of them at each stop. Step 2's trade links become this: over land and
   along the coast, never over the open sea. Step 3 reads where which goods
   came from. Organised far trade (traders, caravans, ships, the tin) is
-  step 3's.
+  step 3's. Built 2026-10-28: the fall-off and the large villages' draw
+  (settle.rs); where which goods came from is not kept yet.
 - **The climate's events, in this order:** (1) the rising sea drowns
   cells, their people go to the neighbours, and a large loss is told in
-  the chronicle (a coast goes under, as Doggerland); (2) one or two cold
-  spells drawn from the seed, as the 8.2 ka event, some centuries of more
-  drought and cold through the droughts already there, told in the
-  chronicle; (3) the land drying, as the green Sahara's end, a wetter
-  early Holocene in the subtropics that fades toward today — looked at
-  again with the towns, as a cause of centres in river valleys.
+  the chronicle (a coast goes under, as Doggerland) — built 2026-10-28;
+  (2) one or two cold spells drawn from the seed, as the 8.2 ka event,
+  some centuries of more drought and cold through the droughts already
+  there, told in the chronicle — built 2026-10-28; (3) the land drying,
+  as the green Sahara's end, a wetter early Holocene in the subtropics
+  that fades toward today — looked at again with the towns, as a cause of
+  centres in river valleys. Not built.
 
 ### The climate in step 2
 
 What step 2 needs is the ice age's end:
 
-- **The sea rises** from −50 m to today's level: coasts go under (not
-  told in the chronicle yet).
+- **The sea rises** from −50 m to today's level: coasts go under, their
+  people move to the neighbours, a large loss is told in the chronicle.
 - **The land dries.** On the earth the green Sahara ends near +6 000,
   and people move into the river valleys. A cause of centres. Not built.
-- **Single events**, such as the 8.2 ka cold event: some centuries of
-  drought and cold, so hunger and people leaving. Not built.
+- **Single events**, such as the 8.2 ka cold event: one or two cold
+  spells of 160 years, more drought and some cold, so hunger and people
+  leaving.
 
 The glacial cycle (`casas-incubator` climate_history.rs) is one curve
 drawn from the world's seed: its depth makes step 1's land bridges, its
@@ -275,11 +286,27 @@ Building since 2026-10-27:
   farming. On Morvane over six origins: 7.4 % of the land farmed, no
   crossing over 100 km, the city at +25 500 to +42 000 after step 2's
   start.
+- 2026-10-28: the exchange, the rising sea and the cold spells. The goods
+  fall off by a decay of 5 days, not 8 (0.55 % at 26 days, the Anatolian
+  obsidian's 0.5 % at 700 – 800 km), and a village draws them by its
+  town; on Morvane 129 links carry goods (240 before), the farthest
+  village 564 km from its source (611). The sea took 10 000 km² or more
+  of a landmass 36 times in step 2's first 5 000 years; 50 000 km² or
+  more (the chronicle's) 5 times, some 140 people moving from each (a
+  dry shelf carries what the poorest land does). The cold spells at
+  +6 750 and +7 525: 117 famines in their 350 years (488 in the whole
+  history), 111 000 dead, the people 1 % fewer 500 years on than without
+  them. Over six origins without the rain: 6.8 to 7.4 % farmed, 8.1 to
+  8.5 M people, no crossing over 100 km; the city at +24 500 to +38 500,
+  and on one far origin none in the span (its largest town 9 500): the
+  far origins' cities stand near CITY_PEOPLE, and a small change moves
+  them.
 
 Open:
 
 1. Step 2's times against the earth's (the copper, the smelting, the city
    after the farming).
 2. The peoples (above) and how they are stored per cell.
-3. The far trade: decided (above, the exchange); not built.
+3. The far trade: where which goods came from, for step 3 (above, the
+   exchange).
 4. Step 1's sea-level curve: drawn from the world's seed, or a control.

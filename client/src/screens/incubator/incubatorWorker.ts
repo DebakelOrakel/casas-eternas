@@ -190,7 +190,7 @@ async function answer(ask: IncubatorRequest): Promise<void> {
   const l = history.lifeways
   const v = l.villages
   if (!v || !l.population) throw new Error('the history holds no villages')
-  const settled = unpackSettled(e.settleHistory(p.arrival, l.farmAt, l.herdAt, v.villages, v.villageFrom, v.villageTo, history.end).buffer as ArrayBuffer)
+  const settled = unpackSettled(e.settleHistory(p.arrival, l.farmAt, l.herdAt, v.villages, v.villageFrom, v.villageTo, v.villageTown, history.end).buffer as ArrayBuffer)
   if (!settled) throw new Error('the settlement could not be read')
   const a = settled.arrays
   const get = <T>(name: string): T => a.get(name) as T

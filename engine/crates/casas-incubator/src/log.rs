@@ -94,6 +94,22 @@ pub enum LogEvent {
         cell: f64,
         people: f64,
     },
+    /// The sea took `km2` of a landmass's shelf in one CLIMATE_YEARS
+    /// (simulation.rs THE RISING SEA), `people` moved away from it; at its
+    /// cell of the most people.
+    Drowned {
+        at: f64,
+        cell: f64,
+        landmass: f64,
+        km2: f64,
+        people: f64,
+    },
+    /// A cold spell begins (climate_history.rs THE COLD SPELLS), `years`
+    /// long.
+    ColdSpell {
+        at: f64,
+        years: f64,
+    },
 }
 
 impl LogEvent {
@@ -112,7 +128,9 @@ impl LogEvent {
             | LogEvent::Trade { at, .. }
             | LogEvent::Population { at, .. }
             | LogEvent::Copper { at, .. }
-            | LogEvent::City { at, .. } => *at,
+            | LogEvent::City { at, .. }
+            | LogEvent::Drowned { at, .. }
+            | LogEvent::ColdSpell { at, .. } => *at,
         }
     }
 
@@ -311,6 +329,29 @@ impl LogEvent {
                     .number(*cell)
                     .key("people")
                     .number(*people);
+            }
+            LogEvent::Drowned {
+                at,
+                cell,
+                landmass,
+                km2,
+                people,
+            } => {
+                kind(j, "drowned");
+                j.key("at")
+                    .number(*at)
+                    .key("cell")
+                    .number(*cell)
+                    .key("landmass")
+                    .number(*landmass)
+                    .key("km2")
+                    .number(*km2)
+                    .key("people")
+                    .number(*people);
+            }
+            LogEvent::ColdSpell { at, years } => {
+                kind(j, "coldSpell");
+                j.key("at").number(*at).key("years").number(*years);
             }
         }
         j.close_object();

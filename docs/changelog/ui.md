@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-28
+- **new** Incubator: the chronicle tells of coasts the rising sea takes and of cold spells, and large villages draw more of the far trade. `incubator.chronicle.event.drowned`
 - **removed** Incubator: the New Stone Age has no buttons to reset the origin or to save the history on the server any more. `incubator.step.newStoneAge`
 - **changed** Layout: each step of the generator and the incubator shows its favourite overlays at the top of the overlay panel, and changing the step no longer switches overlays on or off. `common.layers.favourites`
 - **changed** Layout: the generator and the incubator list the same overlays in the same groups, the air pressure among the climate's switches, and every group but Global starts folded. `common.layers`

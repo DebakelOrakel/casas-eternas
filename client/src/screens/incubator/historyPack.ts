@@ -66,7 +66,9 @@ export interface PackedHistory {
     farmAt: Float32Array
     herdAt: Float32Array
     domestications: SettleResult['domestications']
-    villages?: { villages: Int32Array; villageFrom: Float32Array; villageTo: Float32Array }
+    // villageTown: each one's town at the end, people (0 for a camp; the
+    // settlement's draw, settle.rs).
+    villages?: { villages: Int32Array; villageFrom: Float32Array; villageTo: Float32Array; villageTown: Float32Array }
     population?: Float32Array
   }
 }
@@ -132,7 +134,7 @@ export function unpackHistory(buffer: ArrayBuffer): PackedHistory | null {
         farmAt: get('farmAt'),
         herdAt: get('herdAt'),
         domestications: plain.domestications.map((d, k) => ({ ...d, came: get(`came${k}`) })),
-        villages: arrays.has('villages') ? { villages: get('villages'), villageFrom: get('villageFrom'), villageTo: get('villageTo') } : undefined,
+        villages: arrays.has('villages') ? { villages: get('villages'), villageFrom: get('villageFrom'), villageTo: get('villageTo'), villageTown: get('villageTown') } : undefined,
         population: arrays.has('population') ? get('population') : undefined,
       },
     }
