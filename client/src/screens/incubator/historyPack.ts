@@ -49,6 +49,11 @@ export interface SimFrame {
 // What a packed history holds.
 export interface PackedHistory {
   people: PeopleResult
+  // Its start, the old stone age's end, and its end, years after the
+  // departure: the kept states every KEEP_YEARS from the start and at the
+  // end, the people's count every POPULATION_STEP from the start.
+  start: number
+  end: number
   kept: SimFrame[]
   // The big game's species, their cells (the frames' `big` aligned).
   species: { id: string; cells: Int32Array }[]
@@ -68,6 +73,8 @@ export interface PackedHistory {
 
 interface Plain {
   origin: number
+  start: number
+  end: number
   climate: PackedHistory['climate']
   extinctions: PackedHistory['extinctions']
   log: LogEvent[]
@@ -110,7 +117,11 @@ export function unpackHistory(buffer: ArrayBuffer): PackedHistory | null {
       kept.push({ people, small, big })
     }
     return {
-      people: { arrival: get('arrival'), land: get('land'), from: get('from'), flow: get('flow'), origin: plain.origin, crossings: get('crossings'), crossingWays: get('crossingWays') },
+      // No flow: the history makes no routes of its own (the old stone
+      // age's are the routes).
+      people: { arrival: get('arrival'), land: get('land'), from: get('from'), flow: new Float32Array(n), origin: plain.origin, crossings: get('crossings'), crossingWays: get('crossingWays') },
+      start: plain.start,
+      end: plain.end,
       kept,
       climate: plain.climate,
       species: plain.species.map((id, k) => ({ id, cells: get(`species${k}`) })),

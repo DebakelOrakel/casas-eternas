@@ -48,7 +48,8 @@ export type IncubatorAnswer =
   // The cold every `stepYears` from the departure; the ice's reach and the
   // sea's drop at a cold of 1.
   | { type: 'climate'; cold: Float32Array; stepYears: number; iceReachKm: number; seaDropM: number; ms: number }
-  | ({ type: 'people'; ms: number } & PeopleResult)
+  // The history's spread, and its start and end (historyPack.ts).
+  | ({ type: 'people'; start: number; end: number; ms: number } & PeopleResult)
   // The old stone age (casas-incubator peopling.rs): its spread as a
   // history's, `flow` left 0; each cell's group and their number; the
   // foragers a km² each reached cell carries in today's climate; its log,
@@ -72,9 +73,10 @@ let history: PackedHistory | null = null
 let historyBytes: Uint8Array | null = null
 
 // The spread, copied for an answer.
-function peopleAnswer(p: PeopleResult, ms: number): void {
+function peopleAnswer(h: PackedHistory, ms: number): void {
+  const p = h.people
   const out = { ...p, arrival: p.arrival.slice(), land: p.land.slice(), from: p.from.slice(), flow: p.flow.slice(), crossings: p.crossings.slice(), crossingWays: p.crossingWays.slice() }
-  worker.postMessage({ type: 'people', ms, ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer])
+  worker.postMessage({ type: 'people', start: h.start, end: h.end, ms, ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer])
 }
 
 // A history's bytes taken: read, kept.
@@ -167,11 +169,11 @@ async function answer(ask: IncubatorRequest): Promise<void> {
   if (ask.type === 'simulate') {
     const rain = ask.rain
     const bytes = e.simulate(ask.origin, seed, rain?.width ?? 0, rain?.height ?? 0, rain?.variability, rain?.enso, rain?.ensoStrength ?? 0, undefined)
-    peopleAnswer(adopt(bytes).people, ms())
+    peopleAnswer(adopt(bytes), ms())
     return
   }
   if (ask.type === 'restore') {
-    peopleAnswer(adopt(new Uint8Array(ask.bytes)).people, ms())
+    peopleAnswer(adopt(new Uint8Array(ask.bytes)), ms())
     return
   }
   if (ask.type === 'pack') {
@@ -195,7 +197,7 @@ async function answer(ask: IncubatorRequest): Promise<void> {
   const l = history.lifeways
   const v = l.villages
   if (!v || !l.population) throw new Error('the history holds no villages')
-  const settled = unpackSettled(e.settleHistory(p.arrival, l.farmAt, l.herdAt, v.villages, v.villageFrom, v.villageTo).buffer as ArrayBuffer)
+  const settled = unpackSettled(e.settleHistory(p.arrival, l.farmAt, l.herdAt, v.villages, v.villageFrom, v.villageTo, history.end).buffer as ArrayBuffer)
   if (!settled) throw new Error('the settlement could not be read')
   const a = settled.arrays
   const get = <T>(name: string): T => a.get(name) as T

@@ -364,9 +364,10 @@ impl Incubator {
     }
 
     /// A history's settlement (settle.rs settle_history) on its spread,
-    /// its fields' and herds' times and its villages and camps; packed
-    /// (pack.rs pack_settled).
+    /// its fields' and herds' times and its villages and camps, at its
+    /// `end`; packed (pack.rs pack_settled).
     #[wasm_bindgen(js_name = settleHistory)]
+    #[allow(clippy::too_many_arguments)]
     pub fn settle_history(
         &self,
         arrival: &[f32],
@@ -375,6 +376,7 @@ impl Incubator {
         villages: &[i32],
         village_from: &[f32],
         village_to: &[f32],
+        end: f64,
     ) -> Vec<u8> {
         pack_settled(&settle_history(
             &self.habitat,
@@ -384,6 +386,7 @@ impl Incubator {
             villages,
             village_from,
             village_to,
+            end,
         ))
     }
 

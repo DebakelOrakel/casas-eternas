@@ -123,7 +123,6 @@ pub fn pack_history(r: &SimulationResult) -> Vec<u8> {
         ("arrival".into(), Array::F32(&r.arrival)),
         ("land".into(), Array::U8(&r.land)),
         ("from".into(), Array::I32(&r.from)),
-        ("flow".into(), Array::F32(&r.flow)),
         ("crossings".into(), Array::F32(&r.crossings)),
         ("crossingWays".into(), Array::I32(&r.crossing_ways)),
         ("centres".into(), Array::F32(&r.centres)),
@@ -133,6 +132,9 @@ pub fn pack_history(r: &SimulationResult) -> Vec<u8> {
         ("villageFrom".into(), Array::F32(&r.village_from)),
         ("villageTo".into(), Array::F32(&r.village_to)),
         ("population".into(), Array::F32(&r.population)),
+        ("villageTown".into(), Array::F32(&r.village_town)),
+        ("copperAt".into(), Array::F32(&r.copper_at)),
+        ("smeltAt".into(), Array::F32(&r.smelt_at)),
     ];
     for (k, d) in r.domestications.iter().enumerate() {
         arrays.push((format!("came{k}"), Array::U16(&d.came)));
@@ -185,6 +187,8 @@ pub fn pack_history(r: &SimulationResult) -> Vec<u8> {
         |j| {
             j.open_object();
             j.key("origin").number(r.origin as f64);
+            j.key("start").number(r.start);
+            j.key("end").number(r.end);
             j.key("climate")
                 .open_object()
                 .key("maxAt")

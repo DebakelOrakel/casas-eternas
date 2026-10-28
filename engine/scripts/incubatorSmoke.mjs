@@ -210,7 +210,7 @@ for (const kind of ['torus', 'sphere']) {
   }
   const v = history.lifeways.villages
   t0 = performance.now()
-  const settledPack = rs.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo)
+  const settledPack = rs.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo, history.end)
   const settleMs = performance.now() - t0
   hashes[`${kind} settlement`] = hashOf(settledPack)
   const settled = unpackSettled(settledPack.buffer.slice(settledPack.byteOffset, settledPack.byteOffset + settledPack.byteLength))
@@ -240,7 +240,7 @@ for (const kind of ['torus', 'sphere']) {
   nat.growFlora(world.seed)
   nat.populate(world.seed)
   const natPack = nat.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength)
-  const natSettled = nat.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo)
+  const natSettled = nat.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo, history.end)
   const natMs = performance.now() - t0
   const natHashes = {
     habitat: hashOf(nat.owners(), ...['areaKm2', 'heightM', 'slope', 'seaDepthM', 'riverSize', 'distKm', 'u', 'v'].map((name) => nat.floats(name)), ...CELL_ECOLOGY.map((id) => nat.floats(`eco:${id}`)), ...['land', 'biome', 'koppen', 'nearRiver', 'nearLake', 'nearSea'].map((name) => nat.bytes(name)), ...['landmass', 'nbrStart', 'nbr'].map((name) => nat.ints(name)), nat.landmassKm2(), nat.scalars(), nat.iceKm(), native.coldCurve(world.seed)),
@@ -260,10 +260,13 @@ for (const kind of ['torus', 'sphere']) {
 
 // THE REACH: each kind of event at least once on the two worlds, or the
 // check passes on less than it claims; then the worlds are to be changed.
-// Not 'villageLeft': since the history begins where step 1 of the
-// prehistory ends, after the cold, no village is left (2026-10-28, eight
-// seeds); it comes back with step 2's rising sea and drying land.
-const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'centre 3', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'ice']
+// Not 'villageLeft' and not 'ice' (a cell lived in, left and lived in
+// again): since the history begins where step 1 of the prehistory ends,
+// after the cold, no village is left and the ice only gives land back
+// (2026-10-28); they come back with step 2's rising sea and drying land.
+// Not 'city': no town of these small worlds grows to one, so the history
+// runs to its span's end.
+const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'centre 3', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')

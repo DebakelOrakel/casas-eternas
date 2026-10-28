@@ -8,7 +8,7 @@
 
 use crate::habitat::{ARABLE, CARRYING, FISH, Habitat, PASTURE};
 use crate::log::LogEvent;
-use crate::simulation::{FISH_RICH, SETTLE_AFTER, SPAN_YEARS, lifeway};
+use crate::simulation::{FISH_RICH, SETTLE_AFTER, lifeway};
 use crate::travel::{reset, travel_days, within_days};
 use casas_engine::core::det_math::det_exp;
 use casas_engine::core::js;
@@ -182,7 +182,8 @@ pub struct Settled {
 }
 
 /// `villages` [cell, lifeway] the history's villages and camps, when each
-/// began and was left.
+/// began and was left; the settlement at `end`, the history's.
+#[allow(clippy::too_many_arguments)]
 pub fn settle_history(
     h: &Habitat,
     arrival: &[f32],
@@ -191,6 +192,7 @@ pub fn settle_history(
     villages: &[i32],
     village_from: &[f32],
     village_to: &[f32],
+    end: f64,
 ) -> Settled {
     let n = h.count;
     let carrying_field = h.ecology[CARRYING].as_deref();
@@ -229,8 +231,8 @@ pub fn settle_history(
         if h.land[i] == 0 {
             continue;
         }
-        lifeway_of[i] = shares_at(&times, i, SPAN_YEARS, &mut shares);
-        density[i] = density_at(&times, i, SPAN_YEARS, &shares) as f32;
+        lifeway_of[i] = shares_at(&times, i, end, &mut shares);
+        density[i] = density_at(&times, i, end, &shares) as f32;
     }
 
     // The links.
@@ -365,7 +367,7 @@ pub fn settle_history(
         first = Some(k);
         k += 3;
     }
-    let trade = first.filter(|_| first_at <= SPAN_YEARS).map(|k| {
+    let trade = first.filter(|_| first_at <= end).map(|k| {
         let a = links[k] as usize;
         LogEvent::Trade {
             at: first_at,

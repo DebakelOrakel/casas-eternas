@@ -40,6 +40,7 @@ pub const CARRYING: usize = 1;
 pub const ARABLE: usize = 2;
 pub const PASTURE: usize = 3;
 pub const FISH: usize = 4;
+pub const COPPER: usize = 7;
 
 /// What the cells are made from (cells.ts CellInput).
 pub struct CellInput<'a> {

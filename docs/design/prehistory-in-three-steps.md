@@ -219,10 +219,23 @@ Idea, 2026-10-27. Built since:
   lost its limit on a voyage since the last landing: its search keeps one
   way a cell, and the limit closed cells to later, fresher ways (on
   Morvane 27 % of the land reached instead of 79 %).
+- 2026-10-28: step 2's time runs from step 1's end: it keeps no state of
+  step 1 again and makes no routes of its own; the incubator shows step
+  1's routes in both steps, and one chronicle over both, step 1's log
+  first. It has the copper: a farmers'
+  village within 20 days of a deposit finds it and hammers it, one that
+  has known it 3 000 years smelts it; both are passed on by contact. A
+  farmers' village draws a share of the people within a day of it, more
+  with the copper, more with the smelting: its town. Step 2 ends at its
+  first city, a town of 10 000. On Morvane (v14): the first farming at
+  59 500, the copper at 65 000, the smelting at 69 000, the city at
+  79 500, some 20 000 years after the farming (on the earth some 6 000);
+  the times are not tuned yet.
 
 The simulation still holds parts of step 3. Open:
 
-0. Step 1's and step 2's ends: conditions, not times.
+0. Step 2's times against the earth's (the copper, the smelting, the city
+   after the farming).
 1. The interfaces in detail, above all how a group and a language are
    stored per cell.
 2. Step 1's sea-level curve: drawn from the world's seed, or a control.

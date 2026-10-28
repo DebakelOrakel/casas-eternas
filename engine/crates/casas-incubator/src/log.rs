@@ -82,6 +82,18 @@ pub enum LogEvent {
         villages: f64,
         centres: f64,
     },
+    /// The copper found and hammered, or smelted, where it was not passed on.
+    Copper {
+        at: f64,
+        cell: f64,
+        smelted: bool,
+    },
+    /// The first city, the history's end: the people within a day of it.
+    City {
+        at: f64,
+        cell: f64,
+        people: f64,
+    },
 }
 
 impl LogEvent {
@@ -98,7 +110,9 @@ impl LogEvent {
             | LogEvent::Camp { at, .. }
             | LogEvent::CampLeft { at, .. }
             | LogEvent::Trade { at, .. }
-            | LogEvent::Population { at, .. } => *at,
+            | LogEvent::Population { at, .. }
+            | LogEvent::Copper { at, .. }
+            | LogEvent::City { at, .. } => *at,
         }
     }
 
@@ -279,6 +293,24 @@ impl LogEvent {
                     .number(*villages)
                     .key("centres")
                     .number(*centres);
+            }
+            LogEvent::Copper { at, cell, smelted } => {
+                kind(j, "copper");
+                j.key("at")
+                    .number(*at)
+                    .key("cell")
+                    .number(*cell)
+                    .key("smelted")
+                    .boolean(*smelted);
+            }
+            LogEvent::City { at, cell, people } => {
+                kind(j, "city");
+                j.key("at")
+                    .number(*at)
+                    .key("cell")
+                    .number(*cell)
+                    .key("people")
+                    .number(*people);
             }
         }
         j.close_object();

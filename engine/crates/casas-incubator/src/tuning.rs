@@ -16,7 +16,8 @@ use serde_json::{Map, Value, json};
 ///
 /// v1 (2026-10-27): the history as the crate ported it from the client.
 /// v2 (2026-10-28): the history begins where step 1 of the prehistory
-/// (peopling.rs) ends.
+/// (peopling.rs) ends, has the copper and the towns, and ends at its
+/// first city; its time and its end in the packed form.
 pub const INCUBATOR_ALGO_VERSION: u32 = 2;
 
 // The constants of a module as (name, value) pairs.
@@ -69,7 +70,10 @@ pub fn constants() -> Value {
             KNOW_HERD, CENTRE_SPACING_KM, HERD_LAG, FARM_KM_A, HERD_KM_A, FARM_BARRIER, HERD_BARRIER,
             FARM_ARABLE, HERD_PASTURE, FARM_GAIN, HERD_GAIN, MAX_TAMED, KNOW_SCALE, KNOW_PEOPLE, KNOW_GAIN,
             KNOW_LOSS, KNOW_CARRIED, REACH_START, REACH_PER_KNOW, REACH_END, CROSSING_CHANCE,
-            ROUTE_SLACK_YEARS, STONE_CELLS, STONE_CHANCE, CROSSINGS_A_PAIR, VOYAGE_KM,
+            STONE_CELLS, STONE_CHANCE, CROSSINGS_A_PAIR, VOYAGE_KM,
+            COPPER_RICH, COPPER_DAYS, COPPER_VILLAGE_YEARS, COPPER_RATE, COPPER_SPACING_KM, COPPER_KM_A,
+            SMELT_AFTER, SMELT_VILLAGE_YEARS, SMELT_RATE, CITY_DAYS, TOWN_SHARE, COPPER_SHARE, SMELT_SHARE,
+            TOWN_GROWTH_A, CITY_PEOPLE,
         )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,
@@ -162,6 +166,7 @@ mod tests {
         "ARABLE",
         "PASTURE",
         "FISH",
+        "COPPER",
         "RIVER_EPHEMERAL",
         "CAME_NEVER",
         "NONE",

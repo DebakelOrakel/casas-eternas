@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-28
+- **changed** Incubator: the people's history has copper, hammered and then smelted, towns that draw the people around them, and ends at its first city; it runs on from the old stone age's end, under the old stone age's routes, in one chronicle. `incubator.step.people`
 - **changed** Incubator: the people's history begins where the old stone age ends, with the people where it brought them, and the old stone age reaches the landmasses its boats reach by coast. `incubator.step.people`
 
 ## 2026-10-27

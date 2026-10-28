@@ -9,12 +9,12 @@
 //! the simulation begins where step 1 (peopling.rs) ends, with the people
 //! where it brought them, at the carrying capacity, each cell's arrival
 //! and the cell it came from as step 1 gives them, and each region's
-//! knowledge at what its people give. Before that, the kept states and the
-//! people's count are step 1's: its cells at the capacity of their time.
-//! The big game is not hunted before step 2.
+//! knowledge at what its people give. Its time runs from there: nothing of
+//! step 1 is kept again but its log. The big game is first hunted here.
+//! It ends at its first city.
 
 use crate::climate_history::{ClimateHistory, ICE_REACH_KM, cold_share, ice_may_cover};
-use crate::habitat::{ARABLE, FISH, Habitat, PASTURE, km_between};
+use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between};
 use crate::log::{LogEvent, POPULATION_MARKS};
 use crate::peopling::Peopling;
 use crate::travel::{reset, travel_days, within_days};
@@ -131,11 +131,46 @@ pub(crate) const REACH_START: f64 = 30.0;
 pub(crate) const REACH_PER_KNOW: f64 = 150.0;
 pub(crate) const REACH_END: f64 = 450.0;
 pub(crate) const CROSSING_CHANCE: f64 = 0.02;
-pub(crate) const ROUTE_SLACK_YEARS: f64 = 1000.0;
 pub(crate) const STONE_CELLS: i32 = 100;
 pub(crate) const STONE_CHANCE: f64 = 0.5;
 pub(crate) const CROSSINGS_A_PAIR: usize = 32;
 pub(crate) const VOYAGE_KM: f64 = 3000.0;
+/// The copper (docs/design/prehistory-in-three-steps.md, step 2): a
+/// farmers' village that has stood COPPER_VILLAGE_YEARS within COPPER_DAYS
+/// of copper of COPPER_RICH or more finds it and hammers it (the copper
+/// lies in the mountains, the fields do not: it is fetched, as obsidian
+/// was), at COPPER_RATE a
+/// CLIMATE_YEARS and COPPER_SPACING_KM from where it was found before; a
+/// village that has known it SMELT_AFTER years and stood
+/// SMELT_VILLAGE_YEARS smelts it, at SMELT_RATE, as far from the smelting
+/// before. Both are passed on to the people around at COPPER_KM_A, as the
+/// fields are, the smelting only to who knows the copper. The copper
+/// changes no food: on the earth it was an ornament first, then a sign of
+/// rank.
+pub(crate) const COPPER_RICH: f64 = 0.6;
+pub(crate) const COPPER_DAYS: f64 = 20.0;
+pub(crate) const COPPER_VILLAGE_YEARS: f64 = 1000.0;
+pub(crate) const COPPER_RATE: f64 = 0.3;
+pub(crate) const COPPER_SPACING_KM: f64 = 1500.0;
+pub(crate) const COPPER_KM_A: f64 = 1.0;
+pub(crate) const SMELT_AFTER: f64 = 3000.0;
+pub(crate) const SMELT_VILLAGE_YEARS: f64 = 2000.0;
+pub(crate) const SMELT_RATE: f64 = 0.1;
+/// The towns: a farmers' village draws to itself a share of the people
+/// of its hinterland, the land within CITY_DAYS nearer to it than to
+/// another village: TOWN_SHARE, COPPER_SHARE more when it knows the copper
+/// and SMELT_SHARE more when it smelts it (the copper is rank, and rank
+/// draws). Its town grows toward that share at TOWN_GROWTH_A. The people
+/// of the cells stay as they are: the town is a part of them. The history
+/// ends at its first city, a town of CITY_PEOPLE or more (Çatalhöyük, a
+/// large village, had some 5 000, Uruk some 40 000), at the CLIMATE_YEARS
+/// it grows to it; at SPAN_YEARS if none does.
+pub(crate) const CITY_DAYS: f64 = 1.0;
+pub(crate) const TOWN_SHARE: f64 = 0.15;
+pub(crate) const COPPER_SHARE: f64 = 0.1;
+pub(crate) const SMELT_SHARE: f64 = 0.2;
+pub(crate) const TOWN_GROWTH_A: f64 = 0.0005;
+pub(crate) const CITY_PEOPLE: f64 = 10_000.0;
 
 fn camp_least(way: u8) -> f64 {
     if way == FORAGERS { 0.1 } else { 0.3 }
@@ -205,7 +240,6 @@ pub struct SimulationResult {
     pub arrival: Vec<f32>,
     pub land: Vec<u8>,
     pub from: Vec<i32>,
-    pub flow: Vec<f32>,
     pub origin: i32,
     pub crossings: Vec<f32>,
     pub crossing_ways: Vec<i32>,
@@ -222,6 +256,17 @@ pub struct SimulationResult {
     pub village_from: Vec<f32>,
     pub village_to: Vec<f32>,
     pub population: Vec<f32>,
+    /// Each village's and camp's town at the end, people (0 for a camp).
+    pub village_town: Vec<f32>,
+    /// When each cell knew the copper, and smelted it; Infinity for never.
+    pub copper_at: Vec<f32>,
+    pub smelt_at: Vec<f32>,
+    /// The history's start, step 1's end (peopling.rs span), and its end:
+    /// its first city's time, or SPAN_YEARS. The states are kept every
+    /// KEEP_YEARS from the start and at the end, the people's count every
+    /// POPULATION_STEP from the start.
+    pub start: f64,
+    pub end: f64,
 }
 
 /// Each cell's distance from today's glaciers over the cold climates, km
@@ -501,6 +546,10 @@ struct Sim<'h, 'a> {
     tamed: Vec<Tamed>,
     farm_front: Vec<usize>,
     herd_front: Vec<usize>,
+    copper_at: Vec<f32>,
+    smelt_at: Vec<f32>,
+    copper_front: Vec<usize>,
+    smelt_front: Vec<usize>,
     fishing: Vec<u8>,
     dry_square: Vec<i32>,
     square_rain: Vec<f32>,
@@ -661,6 +710,42 @@ impl Sim<'_, '_> {
         self.grows(cell);
         self.front.push(cell);
         self.lived.push(cell);
+    }
+
+    // The copper known, or smelted, at `cell` from `t`.
+    fn knows(&mut self, smelted: bool, cell: usize, t: f64) {
+        if smelted {
+            self.smelt_at[cell] = t as f32;
+            self.smelt_front.push(cell);
+        } else {
+            self.copper_at[cell] = t as f32;
+            self.copper_front.push(cell);
+        }
+    }
+
+    // The state kept every KEEP_YEARS.
+    fn frame(&self) -> SimFrame {
+        let n = self.h.count;
+        let mut frame = SimFrame {
+            people: vec![0u16; n],
+            small: vec![0u8; n],
+            big: self
+                .species
+                .iter()
+                .map(|sp| vec![0u8; sp.share.len()])
+                .collect(),
+        };
+        for i in 0..n {
+            let p = self.people[i] as f64 / PEOPLE_FRAME_STEP;
+            frame.people[i] = if p > 65535.0 { 65535 } else { (p + 0.5) as u16 };
+            frame.small[i] = (self.small[i] as f64 * 255.0 + 0.5) as u8;
+        }
+        for (k, sp) in self.species.iter().enumerate() {
+            for j in 0..sp.share.len() {
+                frame.big[k][j] = (sp.share[j] as f64 * 255.0 + 0.5) as u8;
+            }
+        }
+        frame
     }
 
     fn open(&self, u: usize) -> bool {
@@ -841,6 +926,10 @@ pub fn simulate(
         tamed: Vec::new(),
         farm_front: Vec::new(),
         herd_front: Vec::new(),
+        copper_at: vec![f32::INFINITY; n],
+        smelt_at: vec![f32::INFINITY; n],
+        copper_front: Vec::new(),
+        smelt_front: Vec::new(),
         fishing: vec![0u8; n],
         dry_square: vec![-1i32; n],
         square_rain: Vec::new(),
@@ -862,12 +951,36 @@ pub fn simulate(
     let mut village_to: Vec<f64> = Vec::new();
     let mut village_at = vec![-1i32; n];
     let way_days = travel_days(h);
+    // Each cell's days from copper rich enough to find, to COPPER_DAYS.
+    let mut copper_days = vec![f32::INFINITY; n];
+    {
+        let rich: Vec<usize> = (0..n)
+            .filter(|&i| land[i] != 0 && h.eco(COPPER, i) >= COPPER_RICH)
+            .collect();
+        within_days(
+            h,
+            &way_days,
+            &rich,
+            COPPER_DAYS,
+            &mut copper_days,
+            None,
+            None,
+        );
+    }
+    let mut town: Vec<f64> = Vec::new();
+    let mut hinterland_days = vec![f32::INFINITY; n];
+    let mut hinterland_of = vec![-1i32; n];
+    let town_grow = 1.0 - det_exp(-TOWN_GROWTH_A * CLIMATE_YEARS);
+    let mut found_copper: Vec<usize> = Vec::new();
+    let mut found_smelting: Vec<usize> = Vec::new();
+    let mut end = SPAN_YEARS;
     let mut near_village = vec![f32::INFINITY; n];
     let mut scratch_days = vec![f32::INFINITY; n];
     let mut villages_left = false;
     let mut near_camp = vec![f32::INFINITY; n];
     let mut camp_owner = vec![-1i32; n];
-    let mut population = vec![0f32; (SPAN_YEARS / POPULATION_STEP).floor() as usize + 1];
+    let mut population =
+        vec![0f32; ((SPAN_YEARS - input.peopling.span) / POPULATION_STEP).floor() as usize + 1];
     let mut next_mark = 0usize;
     let mut hunted: Vec<usize> = Vec::new();
     let mut in_hunted = vec![0u8; n];
@@ -875,18 +988,9 @@ pub fn simulate(
     let mut ways: Vec<i32> = Vec::new();
     let mut kept: Vec<SimFrame> = Vec::new();
 
-    // Step 1's span, its cells by arrival and its log.
+    // Step 1's end, where the history begins, and its log.
     let start = input.peopling;
     let t0 = start.span;
-    let mut by_arrival: Vec<usize> = (0..n)
-        .filter(|&i| start.arrival[i] < f32::INFINITY)
-        .collect();
-    by_arrival.sort_by(|&a, &b| {
-        start.arrival[a]
-            .total_cmp(&start.arrival[b])
-            .then(a.cmp(&b))
-    });
-    let mut arrived = 0usize;
     sim.log.extend(start.log.iter().cloned());
 
     // The droughts' squares.
@@ -982,33 +1086,25 @@ pub fn simulate(
     let sub_years = STEP_YEARS / SUB_STEPS as f64;
     let grow = 1.0 - det_exp(-GROWTH_A * STEP_YEARS);
     let plant_code = plant_suits_code();
-    for s in 0..=steps {
+    for s in (t0 / STEP_YEARS) as usize..=steps {
         let t = s as f64 * STEP_YEARS;
-        // Step 1: its cells reached by `t` at the capacity of the time.
-        if t <= t0 {
-            if t % CLIMATE_YEARS != 0.0 {
-                continue;
-            }
-            update_climate(t, &mut sim.capacity, &mut moved_now);
-            while arrived < by_arrival.len() && start.arrival[by_arrival[arrived]] as f64 <= t {
-                arrived += 1;
-            }
-            sim.lived.clear();
-            for &i in &by_arrival[..arrived] {
-                sim.people[i] = sim.capacity[i];
-                if sim.capacity[i] > 0.0 {
-                    sim.lived.push(i);
-                }
-            }
-        }
-        // Step 2 begins: step 1's people, their arrival and where they
-        // came from, the knowledge their numbers give.
+        // The history begins: step 1's people at the capacity, their
+        // arrival and where they came from, the knowledge their numbers
+        // give.
         if t == t0 {
-            for &i in &by_arrival {
+            update_climate(t, &mut sim.capacity, &mut moved_now);
+            for i in 0..n {
+                if start.arrival[i] == f32::INFINITY {
+                    continue;
+                }
                 sim.arrival[i] = start.arrival[i];
                 sim.from[i] = start.from[i];
                 if land[i] != 0 && h.landmass[i] >= 0 {
                     sim.landmass_reached[h.landmass[i] as usize] = 1;
+                }
+                if sim.capacity[i] > 0.0 {
+                    sim.people[i] = sim.capacity[i];
+                    sim.lived.push(i);
                 }
             }
             sim.front = sim.lived.clone();
@@ -1025,36 +1121,17 @@ pub fn simulate(
                     (KNOW_SCALE * (det_log(1.0 + region_people[g] / KNOW_PEOPLE) / LN_10)) as f32;
             }
         }
-        if t % KEEP_YEARS == 0.0 {
-            let mut frame = SimFrame {
-                people: vec![0u16; n],
-                small: vec![0u8; n],
-                big: sim
-                    .species
-                    .iter()
-                    .map(|sp| vec![0u8; sp.share.len()])
-                    .collect(),
-            };
-            for i in 0..n {
-                let p = sim.people[i] as f64 / PEOPLE_FRAME_STEP;
-                frame.people[i] = if p > 65535.0 { 65535 } else { (p + 0.5) as u16 };
-                frame.small[i] = (sim.small[i] as f64 * 255.0 + 0.5) as u8;
-            }
-            for (k, sp) in sim.species.iter().enumerate() {
-                for j in 0..sp.share.len() {
-                    frame.big[k][j] = (sp.share[j] as f64 * 255.0 + 0.5) as u8;
-                }
-            }
-            kept.push(frame);
+        if (t - t0) % KEEP_YEARS == 0.0 {
+            kept.push(sim.frame());
         }
-        if t % POPULATION_STEP == 0.0 {
+        if (t - t0) % POPULATION_STEP == 0.0 {
             let mut sum = 0.0;
             for &i in &sim.lived {
                 sum += sim.people[i] as f64 * h.area_km2[i] as f64;
             }
-            let at_k = (t / POPULATION_STEP) as usize;
+            let at_k = ((t - t0) / POPULATION_STEP) as usize;
             population[at_k] = sum as f32;
-            let last = if t > 0.0 {
+            let last = if t > t0 {
                 population[at_k - 1] as f64
             } else {
                 0.0
@@ -1068,10 +1145,10 @@ pub fn simulate(
                         standing += 1;
                     }
                 }
-                let at = if t > 0.0 {
+                let at = if t > t0 {
                     t - POPULATION_STEP * (1.0 - (mark - last) / js::max(1e-9, sum - last))
                 } else {
-                    0.0
+                    t0
                 };
                 sim.log.push(LogEvent::Population {
                     at,
@@ -1084,9 +1161,6 @@ pub fn simulate(
         }
         if s == steps {
             break;
-        }
-        if t < t0 {
-            continue;
         }
         // 0. The climate, every CLIMATE_YEARS.
         if t > 0.0 && t % CLIMATE_YEARS == 0.0 {
@@ -1401,6 +1475,98 @@ pub fn simulate(
                 villages.extend([i as i32, way as i32]);
                 village_from.push(t);
                 village_to.push(f64::INFINITY);
+                town.push(0.0);
+            }
+            // The copper, found and smelted.
+            let far = |found: &[usize], cell: usize| {
+                found
+                    .iter()
+                    .all(|&c| km_between(h, cell, c) >= COPPER_SPACING_KM)
+            };
+            for v in 0..village_to.len() {
+                if village_to[v] < f64::INFINITY || villages[2 * v + 1] as u8 != FARMERS {
+                    continue;
+                }
+                let cell = villages[2 * v] as usize;
+                let stood = t - village_from[v];
+                let smelted = if sim.copper_at[cell] == f32::INFINITY {
+                    if stood < COPPER_VILLAGE_YEARS
+                        || copper_days[cell] as f64 > COPPER_DAYS
+                        || !far(&found_copper, cell)
+                        || sim.random.next() >= COPPER_RATE
+                    {
+                        continue;
+                    }
+                    found_copper.push(cell);
+                    false
+                } else {
+                    if sim.smelt_at[cell] < f32::INFINITY
+                        || (sim.copper_at[cell] as f64) > t - SMELT_AFTER
+                        || stood < SMELT_VILLAGE_YEARS
+                        || !far(&found_smelting, cell)
+                        || sim.random.next() >= SMELT_RATE
+                    {
+                        continue;
+                    }
+                    found_smelting.push(cell);
+                    true
+                };
+                sim.knows(smelted, cell, t);
+                sim.log.push(LogEvent::Copper {
+                    at: t,
+                    cell: cell as f64,
+                    smelted,
+                });
+            }
+            // The towns, and the first city: the history's end.
+            let seats: Vec<usize> = (0..village_to.len())
+                .filter(|&v| village_to[v] == f64::INFINITY && villages[2 * v + 1] as u8 == FARMERS)
+                .collect();
+            let seat_cells: Vec<usize> = seats.iter().map(|&v| villages[2 * v] as usize).collect();
+            let touched = within_days(
+                h,
+                &way_days,
+                &seat_cells,
+                CITY_DAYS,
+                &mut hinterland_days,
+                None,
+                Some(&mut hinterland_of),
+            );
+            let mut hinterland = vec![0f64; seats.len()];
+            for &c in &touched {
+                hinterland[hinterland_of[c] as usize] +=
+                    sim.people[c] as f64 * h.area_km2[c] as f64;
+                hinterland_of[c] = -1;
+            }
+            reset(&mut hinterland_days, &touched);
+            for v in 0..village_to.len() {
+                if village_to[v] < f64::INFINITY {
+                    town[v] = 0.0;
+                }
+            }
+            let mut city: Option<(usize, f64)> = None;
+            for (k, &v) in seats.iter().enumerate() {
+                let cell = seat_cells[k];
+                let mut share = TOWN_SHARE;
+                if sim.copper_at[cell] as f64 <= t {
+                    share += COPPER_SHARE;
+                }
+                if sim.smelt_at[cell] as f64 <= t {
+                    share += SMELT_SHARE;
+                }
+                town[v] += (share * hinterland[k] - town[v]) * town_grow;
+                if town[v] >= CITY_PEOPLE && city.is_none_or(|(_, most)| town[v] > most) {
+                    city = Some((cell, town[v]));
+                }
+            }
+            if let Some((cell, people)) = city {
+                sim.log.push(LogEvent::City {
+                    at: t,
+                    cell: cell as f64,
+                    people,
+                });
+                end = t;
+                break;
             }
         }
         // The camps, every CAMP_YEARS.
@@ -1513,6 +1679,7 @@ pub fn simulate(
                 villages.extend([i as i32, way as i32]);
                 village_from.push(t);
                 village_to.push(f64::INFINITY);
+                town.push(0.0);
             }
         }
         // 0b. The game, every GAME_STEPS.
@@ -1846,6 +2013,48 @@ pub fn simulate(
             still.extend_from_slice(&front[added..]);
             *front = still;
         }
+        // 2c. The copper and its smelting, passed on.
+        for smelted in [false, true] {
+            let front = std::mem::take(if smelted {
+                &mut sim.smelt_front
+            } else {
+                &mut sim.copper_front
+            });
+            let mut still = Vec::new();
+            for &i in &front {
+                let mut left = false;
+                for e in h.edges(i) {
+                    let u = h.nbr[e] as usize;
+                    let known = if smelted {
+                        sim.smelt_at[u]
+                    } else {
+                        sim.copper_at[u]
+                    };
+                    if sim.people[u] == 0.0
+                        || known < f32::INFINITY
+                        || (smelted && sim.copper_at[u] == f32::INFINITY)
+                    {
+                        continue;
+                    }
+                    left = true;
+                    if sim.random.next()
+                        < js::min(1.0, (COPPER_KM_A * STEP_YEARS) / h.dist_km[e] as f64)
+                    {
+                        sim.knows(smelted, u, t + STEP_YEARS);
+                    }
+                }
+                if left {
+                    still.push(i);
+                }
+            }
+            let front = if smelted {
+                &mut sim.smelt_front
+            } else {
+                &mut sim.copper_front
+            };
+            still.append(front);
+            *front = still;
+        }
         // 3. The crossings.
         for (source, list) in &crossings_from {
             let source = *source;
@@ -1908,72 +2117,16 @@ pub fn simulate(
         }
     }
     for q in 0..squares {
-        end_famine(&mut famine, q, SPAN_YEARS, &mut sim.log);
+        end_famine(&mut famine, q, end, &mut sim.log);
     }
-    // THE ROUTES' TREE.
-    let mut route_from = vec![-1i32; n];
-    let mut cost = vec![f64::INFINITY; n];
-    let mut popped: Vec<usize> = Vec::new();
-    if input.origin >= 0 && sim.arrival[input.origin as usize] < f32::INFINITY {
-        let o = input.origin as usize;
-        let mut heap = MinHeap::new(1 << 16);
-        cost[o] = 0.0;
-        heap.push(0.0, o as i32);
-        while !heap.is_empty() {
-            heap.pop();
-            let i = heap.popped_index as usize;
-            let d = heap.popped_key;
-            if d > cost[i] {
-                continue;
-            }
-            popped.push(i);
-            for e in h.edges(i) {
-                let u = h.nbr[e] as usize;
-                if sim.arrival[u] >= f32::INFINITY
-                    || (sim.arrival[u] as f64) < sim.arrival[i] as f64 - ROUTE_SLACK_YEARS
-                {
-                    continue;
-                }
-                let nd = d + h.dist_km[e] as f64;
-                if nd >= cost[u] {
-                    continue;
-                }
-                cost[u] = nd;
-                route_from[u] = i as i32;
-                heap.push(nd, u as i32);
-            }
-        }
+    if (end - t0) % KEEP_YEARS != 0.0 {
+        kept.push(sim.frame());
     }
-    let mut flow = vec![0f32; n];
-    let mut missed: Vec<usize> = Vec::new();
-    for i in 0..n {
-        if sim.arrival[i] >= f32::INFINITY || cost[i] < f64::INFINITY {
-            continue;
-        }
-        route_from[i] = sim.from[i];
-        missed.push(i);
-    }
-    missed.sort_by(|&a, &b| sim.arrival[b].partial_cmp(&sim.arrival[a]).unwrap());
-    let add_flow = |i: usize, flow: &mut Vec<f32>| {
-        if land[i] != 0 {
-            flow[i] += 1.0;
-        }
-        if route_from[i] >= 0 {
-            let p = route_from[i] as usize;
-            flow[p] = (flow[p] as f64 + flow[i] as f64) as f32;
-        }
-    };
-    for &i in &missed {
-        add_flow(i, &mut flow);
-    }
-    for k in (0..popped.len()).rev() {
-        add_flow(popped[k], &mut flow);
-    }
+    population.truncate(((end - t0) / POPULATION_STEP) as usize + 1);
     SimulationResult {
         arrival: sim.arrival,
         land: land.clone(),
-        from: route_from,
-        flow,
+        from: sim.from,
         origin: input.origin,
         crossings: made.iter().map(|&x| x as f32).collect(),
         crossing_ways: ways,
@@ -2004,5 +2157,10 @@ pub fn simulate(
         village_from: village_from.iter().map(|&x| x as f32).collect(),
         village_to: village_to.iter().map(|&x| x as f32).collect(),
         population,
+        village_town: town.iter().map(|&x| x as f32).collect(),
+        copper_at: sim.copper_at,
+        smelt_at: sim.smelt_at,
+        start: t0,
+        end,
     }
 }

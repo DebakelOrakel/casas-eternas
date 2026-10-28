@@ -10,6 +10,9 @@ import './chronicle.css'
 //
 // It owns the playback: the screen hears the time through `onTime` and
 // gives the events, the counts and the curve, their text already said.
+// The axis is a range of the time, the step's (setRange): the old stone
+// age's from the departure, the history's from the old stone age's end;
+// the events outside it are not listed.
 
 export interface ChronicleEvent {
   // Years after the departure.
@@ -26,16 +29,18 @@ export interface ChroniclePanel {
   time(): number
   show(time: number): void
   stop(): void
+  // The axis's range of the time, years after the departure; the time
+  // shown kept in it (onTime is told if it moves).
+  setRange(from: number, to: number): void
   setEvents(events: readonly ChronicleEvent[]): void
   setStats(rows: readonly { label: string; value: string }[]): void
-  // The people over the span, evenly spaced from the departure on; null,
-  // none.
+  // The people over the range, evenly spaced from its start; null, none.
   setCurve(values: Float32Array | null): void
-  // The climate's cold over the span, 0 … 1, evenly spaced from the
-  // departure on (climateHistory.ts); null, none.
+  // The climate's cold over the range, 0 … 1, evenly spaced from its start
+  // (climateHistory.ts); null, none.
   setCold(values: Float32Array | null): void
   // The epochs, each from its year on to the next's, their names said; the
-  // first from 0.
+  // first from 0 or before the range.
   setEpochs(epochs: readonly { from: number; name: string }[]): void
   relabel(): void
   setVisible(visible: boolean): void
@@ -59,7 +64,11 @@ const svgIcon = (path: string): string =>
   `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`
 
 export function createChroniclePanel(host: HTMLElement, options: { span: number; onTime: (time: number) => void; onEvent: (event: ChronicleEvent) => void }): ChroniclePanel {
-  const { span } = options
+  // The range shown.
+  let from = 0
+  let to = options.span
+  // The time as a share of the range, 0 … 1.
+  const along = (at: number): number => (to > from ? (at - from) / (to - from) : 0)
   const aside = document.createElement('aside')
   aside.className = 'chronicle design-light'
 
@@ -116,8 +125,8 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
   const slider = document.createElement('input')
   slider.type = 'range'
   slider.className = 'chronicle__slider'
-  slider.min = '0'
-  slider.max = String(span)
+  slider.min = String(from)
+  slider.max = String(to)
   slider.step = '100'
   const when = document.createElement('div')
   when.className = 'chronicle__when-now'
@@ -149,8 +158,10 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
   host.appendChild(aside)
   document.documentElement.style.setProperty(WIDTH_VAR, WIDTH)
 
-  let time = span
+  let time = to
   let timer: ReturnType<typeof setInterval> | null = null
+  // The events given, and those in the range, listed.
+  let given: readonly ChronicleEvent[] = []
   let events: readonly ChronicleEvent[] = []
   let rows: HTMLButtonElement[] = []
   let curve: Float32Array | null = null
@@ -187,8 +198,9 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
     const parts: string[] = []
     // The epochs as bands, every second one toned, a line at each border.
     epochs.forEach((e, k) => {
-      const y0 = (1000 * e.from) / span
-      const y1 = k + 1 < epochs.length ? (1000 * epochs[k + 1].from) / span : 1000
+      const y0 = 1000 * Math.max(0, along(e.from))
+      const y1 = k + 1 < epochs.length ? 1000 * Math.max(0, along(epochs[k + 1].from)) : 1000
+      if (y1 <= 0 || y0 >= 1000) return
       if (k % 2 === 1) parts.push(`<rect x="0" y="${y0.toFixed(1)}" width="${AXIS_WIDTH}" height="${(y1 - y0).toFixed(1)}" class="chronicle__axis-band"/>`)
       if (k > 0) parts.push(`<line x1="0" y1="${y0.toFixed(1)}" x2="${AXIS_WIDTH}" y2="${y0.toFixed(1)}" class="chronicle__axis-border"/>`)
     })
@@ -207,10 +219,10 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
       const points = Array.from(curve, (v, k) => `${x(v).toFixed(1)} ${((1000 * k) / (curve!.length - 1)).toFixed(1)}`)
       parts.push(`<path d="M0 0 L${points.join(' L')} L0 1000 Z" class="chronicle__axis-curve"/>`)
     }
-    const y = (1000 * time) / span
+    const y = 1000 * along(time)
     parts.push(`<line x1="13" y1="0" x2="13" y2="${y.toFixed(1)}" class="chronicle__axis-done"/>`)
     axis.innerHTML = parts.join('')
-    handle.style.top = `${(100 * time) / span}%`
+    handle.style.top = `${100 * along(time)}%`
   }
   // The list: under each epoch's heading the events from its year to the
   // next's; a click on a heading goes to the epoch's start.
@@ -219,13 +231,14 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
     let k = 0
     epochs.forEach((e, n) => {
       const until = n + 1 < epochs.length ? epochs[n + 1].from : Infinity
+      if (until <= from || e.from > to) return
       const head = document.createElement('button')
       head.type = 'button'
       head.className = 'chronicle__epoch-head'
       head.textContent = e.name
       head.addEventListener('click', () => {
         stop()
-        show(e.from)
+        show(Math.max(from, e.from))
       })
       list.append(head)
       for (; k < events.length && events[k].time < until; k++) list.append(rows[k])
@@ -243,7 +256,7 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
   }
 
   function show(at: number): void {
-    time = Math.min(span, Math.max(0, at))
+    time = Math.min(to, Math.max(from, at))
     sayTime()
     options.onTime(time)
   }
@@ -257,10 +270,10 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
       stop()
       return
     }
-    if (time >= span) show(0)
+    if (time >= to) show(from)
     timer = setInterval(() => {
       show(time + YEARS_A_SECOND * (FRAME_MS / 1000) * SPEEDS[speedIndex])
-      if (time >= span) stop()
+      if (time >= to) stop()
     }, FRAME_MS)
     sayPlay()
   })
@@ -271,7 +284,7 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
   previous.addEventListener('click', () => {
     stop()
     const before = [...events].reverse().find((e) => e.time < time - 1e-6)
-    show(before ? before.time : 0)
+    show(before ? before.time : from)
   })
   next.addEventListener('click', () => {
     stop()
@@ -279,53 +292,67 @@ export function createChroniclePanel(host: HTMLElement, options: { span: number;
     if (after) show(after.time)
   })
 
+  // The events in the range, listed.
+  function listEvents(): void {
+    events = given.filter((e) => e.time >= from && e.time <= to)
+    list.replaceChildren()
+    rows = events.map((event) => {
+      const row = document.createElement('button')
+      row.type = 'button'
+      row.className = 'chronicle__event'
+      const dot = document.createElement('span')
+      dot.className = 'chronicle__dot'
+      dot.style.background = `rgb(${event.rgb.join(',')})`
+      const when = document.createElement('span')
+      when.className = 'chronicle__when'
+      when.textContent = Math.round(event.time).toLocaleString(getLocale())
+      const text = document.createElement('span')
+      text.className = 'chronicle__text'
+      const line = document.createElement('span')
+      line.className = 'chronicle__line'
+      const icon = document.createElement('img')
+      icon.className = 'chronicle__icon'
+      icon.src = event.icon
+      icon.alt = ''
+      const name = document.createElement('span')
+      name.className = 'chronicle__name'
+      name.textContent = event.title
+      const tag = document.createElement('span')
+      tag.className = 'chronicle__tag'
+      line.append(icon, name, tag)
+      const detail = document.createElement('span')
+      detail.className = 'chronicle__detail'
+      detail.textContent = event.detail
+      text.append(line, detail)
+      row.append(dot, when, text)
+      row.addEventListener('click', () => {
+        stop()
+        show(event.time)
+        options.onEvent(event)
+      })
+      return row
+    })
+    layOut()
+    say()
+  }
+
   say()
   return {
     element: aside,
     time: () => time,
     show,
     stop,
+    setRange(start, end) {
+      from = start
+      to = Math.max(start, end)
+      slider.min = String(from)
+      slider.max = String(to)
+      listEvents()
+      if (time < from || time > to) show(time)
+    },
     setEvents(list_) {
-      events = [...list_].sort((a, b) => a.time - b.time)
-      list.replaceChildren()
-      rows = events.map((event) => {
-        const row = document.createElement('button')
-        row.type = 'button'
-        row.className = 'chronicle__event'
-        const dot = document.createElement('span')
-        dot.className = 'chronicle__dot'
-        dot.style.background = `rgb(${event.rgb.join(',')})`
-        const when = document.createElement('span')
-        when.className = 'chronicle__when'
-        when.textContent = Math.round(event.time).toLocaleString(getLocale())
-        const text = document.createElement('span')
-        text.className = 'chronicle__text'
-        const line = document.createElement('span')
-        line.className = 'chronicle__line'
-        const icon = document.createElement('img')
-        icon.className = 'chronicle__icon'
-        icon.src = event.icon
-        icon.alt = ''
-        const name = document.createElement('span')
-        name.className = 'chronicle__name'
-        name.textContent = event.title
-        const tag = document.createElement('span')
-        tag.className = 'chronicle__tag'
-        line.append(icon, name, tag)
-        const detail = document.createElement('span')
-        detail.className = 'chronicle__detail'
-        detail.textContent = event.detail
-        text.append(line, detail)
-        row.append(dot, when, text)
-        row.addEventListener('click', () => {
-          stop()
-          show(event.time)
-          options.onEvent(event)
-        })
-        return row
-      })
-      layOut()
-      say()
+      given = [...list_].sort((a, b) => a.time - b.time)
+      listEvents()
     },
     setStats(statRows) {
       stats.replaceChildren(...statRows.map((r) => {

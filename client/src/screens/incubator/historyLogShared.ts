@@ -31,6 +31,10 @@ export type LogEvent =
   | { kind: 'trade'; at: number; cell: number; a: number; b: number }
   // The people over a mark, and the villages and the centres then.
   | { kind: 'population'; at: number; cell: number; count: number; villages: number; centres: number }
+  // The copper found and hammered, or smelted, where it was not passed on.
+  | { kind: 'copper'; at: number; cell: number; smelted: boolean }
+  // The first city, the history's end: the people of its town.
+  | { kind: 'city'; at: number; cell: number; people: number }
 
 // The people's marks the log notes.
 export const POPULATION_MARKS = [100_000, 1_000_000, 10_000_000]
