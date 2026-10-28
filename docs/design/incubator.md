@@ -73,11 +73,13 @@ is computed by the crate `casas-incubator`
 ## The chronicle
 
 The right column (`chroniclePanel.ts`), after the design canvas
-(`Inkubator.dc.html`), the same in every step:
+(`Inkubator.dc.html`). One chronicle, each step's built on the one
+before: a step shows it up to its own end, with its events and those of
+the steps before it.
 
-- **The time**, counted up from the people's departure (year 0) to the
-  history's end, its first city, or to step 1's end while there is no
-  history. One axis over all steps: step 1's part, then step 2's.
+- **The time**, counted up from the people's departure (year 0): in step 1
+  to step 1's end; in step 2 on to the history's end, its first city, or
+  to step 1's end while there is no history.
 - **The playback**: one event back, play or stop, one event forward, the
   speed 1× / 4× / 16× (1× = 100 years a second), a slider under the year.
 - **The counts** at the time shown: people (a wider column), villages,
@@ -86,8 +88,8 @@ The right column (`chroniclePanel.ts`), after the design canvas
   logarithmic scale (step 1's from its density where people came by then,
   then step 2's own count), the cold of the climate history, a handle at
   the time shown.
-- **The events**, read from the history's log (`historyLogShared.ts`),
-  which holds step 1's log before its own, or from step 1's alone: the
+- **The events**, read from the log (`historyLogShared.ts`): step 1's in
+  step 1; after it the history's, which holds step 1's before its own: the
   departure, the first crossing to each landmass of 100 000 km² or more,
   the farming and herding centres, each domesticate's first taming, the
   extinctions on large landmasses, the first village, the first trade

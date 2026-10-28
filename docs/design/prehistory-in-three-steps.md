@@ -205,7 +205,8 @@ trade as a dependency. It reads H1. Its polities:
 ## One chronicle
 
 The chronicle ([DES-0031](./incubator.md)) is one over all steps, on one
-time axis. It reads only a log. Step 1 does not simulate, so it writes
+time axis, each step's built on the one before: a step shows it up to its
+own end. It reads only a log. Step 1 does not simulate, so it writes
 events derived from the graph (the departure, the first landing on each
 landmass); the history's log holds step 1's before its own. Steps 2 and 3
 write their events as they happen. One log in game time, the one

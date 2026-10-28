@@ -567,9 +567,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The history's time (historyPack.ts): from the old stone age's end to
   // its first city.
   let historyTime: { start: number; end: number } | null = null
-  // The chronicle's range, the same in every step: from the departure
-  // to the history's end, or the old stone age's.
+  // The chronicle's range: from the departure to the step's end — the old
+  // stone age's in its step, the history's after it (2026-10-28: one
+  // chronicle, each step's built on the one before).
   function timeRange(): [number, number] {
+    if (onOldStoneAge()) return [0, stone?.span ?? SPAN_YEARS]
     return [0, historyTime?.end ?? stone?.span ?? SPAN_YEARS]
   }
   function showTimeRange(): void {
@@ -605,9 +607,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     stoneDensity = { time: peopleTime, density }
     return density
   }
-  // The chronicle's log, the same in every step: the history's, which
-  // holds the old stone age's before its own, or the old stone age's.
-  const logShown = (): LogEvent[] => settled?.log ?? stone?.log ?? []
+  // The chronicle's log: the old stone age's in its step; after it the
+  // history's, which holds the old stone age's before its own.
+  const logShown = (): LogEvent[] => (onOldStoneAge() ? stone?.log ?? [] : settled?.log ?? stone?.log ?? [])
   // The people's end state (settle.ts), a proof of concept.
   let settled: SettleResult | null = null
   // What the chronicle tells of the cells (cells.ts): each one's landmass
@@ -1247,12 +1249,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
     }
     chronicle.setEvents(events)
-    chronicle.setCurve(curveNow())
+    // The curve over the range: the old stone age's part alone in its step.
+    const curve = curveNow()
+    chronicle.setCurve(curve && onOldStoneAge() && stone ? curve.slice(0, Math.floor(stone.span / POPULATION_STEP) + 1) : curve)
     // The epochs: the Palaeolithic to the first farming centre, the
     // Neolithic from it, the Copper Age from the first smelting.
     let farming = Infinity
     let smelting = Infinity
-    if (settled) {
+    if (settled && !onOldStoneAge()) {
       for (let k = 0; k < settled.centres.length; k += 3) if (settled.centres[k + 2] === LIFEWAY.farmers) farming = Math.min(farming, settled.centres[k + 1])
       for (const e of log) if (e.kind === 'copper' && e.smelted) smelting = Math.min(smelting, e.at)
     }
