@@ -1,6 +1,20 @@
-//! `screens/incubator/travel.ts`: how long a step from a cell to its
-//! neighbour takes, in days, and the search over those days. The reasoning
-//! is in the TypeScript file.
+//! THE WAYS' DAYS (2026-10-26): how long a step from a cell to its
+//! neighbour takes, in days, and the search over those days. They give
+//! the central places' spacing, the trade and the exchange between
+//! neighbours. Before, these counted km over the cells, and the trade
+//! counted the links it passed.
+//!
+//! - On foot: Tobler's hiking function on the step's grade, WALK_HOURS a
+//!   day (6 km/h at a slight downhill, 5 on the flat: some 30 km a day),
+//!   times the land's ease (`terrain_ease` by biome: the rainforest half,
+//!   the open land whole); ice and glaciers are not crossed.
+//! - On a river (both cells beside one of RIVER_BOAT_SIZE or more, the
+//!   habitat's river size): by dugout, RIVER_DOWN_KM_DAY downstream (the
+//!   lower cell ahead), RIVER_UP_KM_DAY up — or on foot, whichever is
+//!   quicker.
+//! - Along the coast, by boat: sea cells of COAST_DEPTH_M or less at
+//!   COAST_KM_DAY, landing or setting out LANDING_DAYS; the open sea is
+//!   not a way (the crossings are the people's, not the trade's).
 
 use crate::habitat::Habitat;
 use casas_engine::climate::biomes::biome;
@@ -76,9 +90,10 @@ pub fn travel_days(h: &Habitat) -> Vec<f32> {
 }
 
 /// From the cells `from` over the ways, the nearest first, as far as
-/// `max_days` (travel.ts withinDays): `dist` set on each cell reached,
-/// `visit(cell, days)` for each, stopping where it returns true; `owner`, if
-/// given, set to the index in `from` of the nearest. The cells reached.
+/// `max_days`: `dist` set on each cell reached (the caller's, Infinity
+/// elsewhere, set back by `reset`), `visit(cell, days)` for each, stopping
+/// where it returns true; `owner`, if given, set on each cell reached to the
+/// index in `from` of the cell nearest it. The cells reached, to reset.
 pub fn within_days(
     h: &Habitat,
     days: &[f32],

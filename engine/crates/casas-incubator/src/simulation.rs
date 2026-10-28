@@ -1,9 +1,37 @@
-//! `screens/incubator/simulation.ts`: THE HISTORY — the people over the span
-//! in steps of STEP_YEARS on the habitat's cells, the climate, the sea, the
-//! game, the farming and the herding, the villages and the camps, the
-//! droughts, the log. The reasoning is in the TypeScript file; this is its
-//! port, step for step, draw for draw: a double where the TypeScript
-//! computes, a float where it keeps a Float32Array.
+//! THE HISTORY (2026-10-26): the people over the span in steps of
+//! STEP_YEARS on the habitat's cells, the climate, the sea, the game, the
+//! farming and the herding, the villages and the camps, the droughts, the
+//! copper and the towns, the log. Functions over plain arrays, no screen
+//! state. Ported from the TypeScript (removed 2026-10-27) step for step,
+//! draw for draw: a double where it computed, a float where it kept a
+//! Float32Array. Seeded, and on
+//! det_math since 2026-10-26 (not exp, log and the like, which differ
+//! between JavaScript's engines in the last bit).
+//!
+//! A STEP:
+//! 0. THE CLIMATE (climate_history.rs), every CLIMATE_YEARS: the cold
+//!    lowers what the land carries and puts the land near today's glaciers
+//!    under the ice; the sea's drop lays the shelf to it dry, to SHELF_M. A
+//!    cell that carries nothing any more is left; one that carries again
+//!    may be settled again.
+//! 1. GROWTH: each cell's people toward what the land carries (its carrying
+//!    capacity, CARRYING_FULL at FORAGER_DENSITY a km², to twice), by
+//!    GROWTH_A a year, logistic.
+//! 2. SETTLING, SUB_STEPS times: a cell at SEED_SHARE of what it carries or
+//!    more settles each empty neighbour with a chance — its speed there (as
+//!    step 1's front, `ground_of`: SPEED_MIN_KM_A to SPEED_MAX_KM_A by the
+//!    carrying capacity, slower up a slope, CORRIDOR times faster along a
+//!    river or a coast) times the sub-step's years over the way's km — and
+//!    gives it SEED_PEOPLE of its own. Ice is not settled. Cellular, not a
+//!    diffusion: a diffusion on cells of 10 km is stable only in steps of
+//!    some 2 years, 50 000 of them.
+//! 3. THE SEA: over open water the crossings (`crossings_of`, made once):
+//!    from a settled coast cell to the nearest coast of another landmass,
+//!    once the reach of its region is as far, with CROSSING_CHANCE a step.
+//!
+//! The rest — the game, the knowledge, the farming and the herding, the
+//! fishers, the villages, the camps, the droughts, the copper, the towns —
+//! is told at its constants.
 //!
 //! STEP 2 OF THE PREHISTORY (docs/design/prehistory-in-three-steps.md):
 //! the simulation begins where step 1 (peopling.rs) ends, with the people
@@ -26,16 +54,24 @@ use casas_engine::core::rng::Mulberry32;
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::{LN_10, PI};
 
+// The people's span, years: the climate history's, from step 1's start;
+// the history ends at it if no city comes first. 65 000 until 2026-10-26,
+// then 100 000 for the simulation.
 pub const SPAN_YEARS: f64 = 100_000.0;
+// A history keeps its state every KEEP_YEARS, the playback's frames.
 pub const KEEP_YEARS: f64 = 2500.0;
 pub const POPULATION_STEP: f64 = 500.0;
 pub const STEP_YEARS: f64 = 25.0;
+// 1e-3: the farmers reach 15 a km² and more; the foragers' 0.1 is 100 steps.
 pub const PEOPLE_FRAME_STEP: f64 = 1e-3;
+// When a domesticate's wave came to a cell, in CAME_STEP years; CAME_NEVER
+// where it never did.
 pub const CAME_STEP: f64 = 10.0;
 pub const CAME_NEVER: u16 = 0xffff;
+// The fishers settle this long after people came.
 pub const SETTLE_AFTER: f64 = 3000.0;
 pub const FISH_RICH: f64 = 0.5;
-/// niche.ts SUITABLE 0.3, coded (settleShared.ts PLANT_SUITS_CODE).
+/// niche.rs SUITABLE 0.3, coded (settleShared.ts PLANT_SUITS_CODE).
 pub fn plant_suits_code() -> u8 {
     (2.0 + js::round(253.0 * 0.3)) as u8
 }
@@ -50,7 +86,7 @@ pub mod lifeway {
 }
 use lifeway::{FARMERS, FISHERS, FORAGERS, HERDERS, NONE};
 
-/// settle.ts VILLAGE_LEAST: the least people a km² of a village, by its
+/// VILLAGE_LEAST: the least people a km² of a village, by its
 /// lifeway (the fishers, the farmers).
 pub fn village_least(way: u8) -> f64 {
     match way {
@@ -64,6 +100,9 @@ pub(crate) const SUB_STEPS: usize = 3;
 pub(crate) const FORAGER_DENSITY: f64 = 0.1;
 pub(crate) const CARRYING_FULL: f64 = 0.8;
 pub(crate) const GROWTH_A: f64 = 0.01;
+// A third (2026-10-26; a half before): with the cold and the hunt the
+// foragers seldom got to half of what the land carried before, and the
+// front stood.
 pub(crate) const SEED_SHARE: f64 = 1.0 / 3.0;
 pub(crate) const SEED_PEOPLE: f64 = 0.2;
 pub(crate) const FULL_SHARE: f64 = 0.95;
@@ -72,7 +111,22 @@ pub(crate) const SPEED_MAX_KM_A: f64 = 0.5;
 pub(crate) const SLOPE_DRAG: f64 = 10.0;
 pub(crate) const CORRIDOR: f64 = 2.0;
 pub(crate) const SHELF_M: f64 = 120.0;
+// The climate moves the cells' carrying and the sea every CLIMATE_YEARS.
 pub(crate) const CLIMATE_YEARS: f64 = 500.0;
+// THE GAME (2026-10-26), every GAME_STEPS steps on the cells people live in
+// or have hunted: the small game and the big game, a share each of what the
+// land holds without people. Each grows back toward it (SMALL_REGROW_A,
+// BIG_REGROW_A a year: the big slowly) and is hunted by the people there by
+// their density over the foragers' (HUNT_A, BIG_HUNT_A a year at that
+// density). The big game is each species' own (2026-10-26; one share for
+// all of it before): a vulnerable species grows back slower, by (1.2 − its
+// vulnerability), and is hunted harder, by its vulnerability over 0.5 —
+// the elephant and the horse go first, the aurochs holds; the big game of
+// the people's own landmass, which grew up with them, at HOME_WARY of
+// that. What the foragers live on: PLANT_FOOD of it plants, the rest the
+// game — SMALL_FOOD small, BIG_FOOD big where there is big game. A species
+// of the big game is gone from a landmass when its cells there hold less
+// than EXTINCT_BELOW of it.
 pub(crate) const GAME_STEPS: usize = 8;
 pub(crate) const SMALL_REGROW_A: f64 = 0.05;
 pub(crate) const BIG_REGROW_A: f64 = 0.002;
@@ -85,11 +139,52 @@ pub(crate) const BIG_FOOD: f64 = 0.15;
 pub(crate) const EXTINCT_BELOW: f64 = 0.1;
 pub(crate) const FOOD_MOVED: f64 = 0.02;
 pub(crate) const CAPACITY_MOVED: f64 = 0.02;
+// THE FISHERS (2026-10-26): where the fish are FISH_RICH or more, people
+// who have lived there SETTLE_AFTER years stay and grow dense — the fish
+// carry FISH_GAIN × the fish times more people (the settlement's densities,
+// settle.rs: fishers 1 a km², foragers 0.1), where no fields carry them
+// instead (the Jōmon).
+// THE VILLAGES (the same day), every CLIMATE_YEARS: the central places of
+// the settled — where the farmers (the fields) or the fishers live
+// `village_least` a km² or more, the densest first, each more than
+// `village_days` of the ways (travel.rs) from any village standing founds
+// one (a day and the fishers' a day and a half gave 2 262 on Morvane, too
+// many; now 1 352); a village whose people fall under VILLAGE_LEAVE of its
+// least is left (the ice, the sea, the hunger). The many small settlements
+// around them are the hamlets, a count the screen makes of the density.
+// The spacing was in rings of cells until 2026-10-26 (3 cells for the
+// farmers, 5 for the fishers: some 30 and 50 km). The people over the span
+// are counted every POPULATION_STEP years.
 pub(crate) const FISH_GAIN: f64 = 10.0;
+// THE CAMPS (2026-10-26): the meeting places of the foragers and the
+// herders, kept in the villages' lists (their lifeway tells them apart),
+// every CAMP_YEARS: where they live `camp_least` a km² or more, the
+// densest first, each more than `camp_days` from any camp standing makes
+// one; a camp is left where its people turn to the fields or the fish, fall
+// under VILLAGE_LEAVE of its least, or a cell of its land (the cells
+// nearest it) holds CAMP_MOVE times its people — then one is made there:
+// the camps move with the people, the ice and the droughts. The far trade
+// runs over them as over the villages. On Morvane some 200 foragers' camps
+// through the cold, 580 herders' at the end; at 4 and 3 days and 0.05 a
+// km² the foragers' were 2 800, over the thin land too.
 pub(crate) const CAMP_YEARS: f64 = 2500.0;
 pub(crate) const CAMP_DAYS_MOST: f64 = 6.0;
 pub(crate) const CAMP_MOVE: f64 = 1.5;
 pub(crate) const VILLAGE_DAYS_MOST: f64 = 2.0;
+// THE DROUGHTS (2026-10-26): the land in squares of DRY_SQUARE_KM a
+// landmass, so that a drought is a place. Each step a square's rain is its
+// mean times 1 + DRY_SCALE × its variability × an anomaly (the variability
+// is a year's; a step's mean of 25 years varies less): its own random walk
+// (DRY_KEEP of the last, the rest new), and in a step with a strong ENSO
+// (ENSO_CHANCE × the see-saw's strength) ENSO_PUSH × its mark. Under
+// DRY_BELOW the step is dry: STORE_STEPS of them in a row the stores take;
+// more are a famine — the fields and the pasture give the rain's share,
+// the plants and the game half the shortfall less, and the people more
+// than that die at once; a village under VILLAGE_LEAVE of its least is
+// left. A famine is told in the log (`famines`) with the people it cost
+// and the villages given up. With the year's variability whole and a
+// famine from the second dry step, Morvane had 71 814 famines (3 597 of
+// 10 000 people or more); now some 650 (some 30).
 pub(crate) const DRY_SQUARE_KM: f64 = 300.0;
 pub(crate) const DRY_SCALE: f64 = 0.25;
 pub(crate) const STORE_STEPS: i32 = 2;
@@ -97,11 +192,49 @@ pub(crate) const DRY_KEEP: f64 = 0.6;
 pub(crate) const DRY_BELOW: f64 = 0.75;
 pub(crate) const ENSO_CHANCE: f64 = 0.3;
 pub(crate) const ENSO_PUSH: f64 = 1.5;
+// THE FLIGHT (2026-10-26): of those a famine's land does not carry,
+// FAMINE_DEATH die; the rest leave for the cells around its square that no
+// famine holds, as far as each has room — up to FLIGHT_CROWD times what it
+// carries (they thin out to it as the people do) — and the rest of them die
+// too. Before, all of them died. On Morvane some 450 000 fled, 2.7 M died:
+// the cells around are mostly full. Herders taking a famine's farmland
+// were tried the same day and never came: a farming cell that suits the
+// herds has them already, and the fields cannot be given up while the
+// lifeways are times that only go forward.
 pub(crate) const FAMINE_DEATH: f64 = 0.5;
+// THE EXCHANGE (2026-10-26): the everyday goods — grain, herds, wool — go
+// no further than a day or two, from those who have to those who lack. In
+// a famine a cell within EXCHANGE_DAYS of land no famine holds gets up to
+// EXCHANGE of its shortfall from there, less with the days; deep in a
+// famine's square nothing comes. Not drawn: it shows in fewer dead.
 pub(crate) const EXCHANGE: f64 = 0.5;
 pub(crate) const EXCHANGE_DAYS: f64 = 2.0;
 pub(crate) const FLIGHT_CROWD: f64 = 1.5;
 pub(crate) const VILLAGE_LEAVE: f64 = 0.5;
+// THE FARMING AND THE HERDING (2026-10-26): no dates. Every CLIMATE_YEARS
+// each region's best cell may become a centre, by a chance: of the farming
+// (FARM_RATE × its wild crops over two × its arable land) while the
+// climate is stable (climate_history.rs), where people have lived
+// SETTLED_YEARS, CENTRE_CROPS wild crops grow and the arable land is
+// CENTRE_ARABLE, and the region knows KNOW_FARM; of the herding (HERD_RATE
+// × its herd animals over two × its pasture) likewise, the climate stable
+// too (without it a herding centre came at year 7 500, deep in the cold;
+// the earth's animals were all tamed in the Holocene), with CENTRE_HERDS
+// herd animals, CENTRE_PASTURE pasture and KNOW_HERD — at
+// CENTRE_SPACING_KM from any centre of its lifeway. A farming centre tames
+// its wild crops at once, its herd animals HERD_LAG later; a herding
+// centre its herd animals. They spread over the cells people live in,
+// FARM_KM_A and HERD_KM_A a year, each where it suits (its niche;
+// FARM_ARABLE, HERD_PASTURE): a cell takes what its neighbour has and
+// suits it; land it does not suit it crosses FARM_BARRIER, HERD_BARRIER
+// times slower, kept nowhere there. Through suiting cells alone the waves
+// ran out along the arable and pasture strips, half of the suiting cells
+// never reached, in fronds (2026-10-26). The fields carry FARM_GAIN × the
+// arable land times more people, the herds HERD_GAIN × the pasture (the
+// settlement's densities, settle.rs: farmers 15, herders 1.5, foragers 0.1
+// a km²). HERD_RATE was 0.2: the first herding centre came before the
+// first fields on Morvane. A cell keeps its domesticates as bits, MAX_TAMED
+// of them at most.
 pub(crate) const SETTLED_YEARS: f64 = 5000.0;
 pub(crate) const FARM_RATE: f64 = 0.3;
 pub(crate) const HERD_RATE: f64 = 0.1;
@@ -122,7 +255,19 @@ pub(crate) const HERD_PASTURE: f64 = 0.3;
 pub(crate) const FARM_GAIN: f64 = 100.0;
 pub(crate) const HERD_GAIN: f64 = 10.0;
 pub(crate) const MAX_TAMED: usize = 32;
+// THE KNOWLEDGE (2026-10-26), a region's (the habitable land's connected
+// parts), every CLIMATE_YEARS: it moves toward KNOW_SCALE × log10(1 + its
+// people / KNOW_PEOPLE) — more people keep more — by KNOW_GAIN of the way
+// up, KNOW_LOSS of the way down (a small, isolated group loses some:
+// Henrich's cumulative culture). People who cross bring KNOW_CARRIED of
+// theirs. The boats' reach over open water is a region's: REACH_START +
+// REACH_PER_KNOW × its knowledge, REACH_END at most. It was the time's
+// until 2026-10-26, as it is in step 1 (peopling.rs): it grew evenly from
+// 30 to 450 km over the span, and reached 98.5 % of Morvane's land, its far
+// islands too. A crossing within it is tried with CROSSING_CHANCE a step.
 pub(crate) const KNOW_SCALE: f64 = 1.0;
+// 3 000 (2026-10-26; 10 000 before): the foragers are thin, a region knew
+// too little to cross for most of the span.
 pub(crate) const KNOW_PEOPLE: f64 = 3000.0;
 pub(crate) const KNOW_GAIN: f64 = 0.1;
 pub(crate) const KNOW_LOSS: f64 = 0.02;
@@ -131,6 +276,17 @@ pub(crate) const REACH_START: f64 = 30.0;
 pub(crate) const REACH_PER_KNOW: f64 = 150.0;
 pub(crate) const REACH_END: f64 = 450.0;
 pub(crate) const CROSSING_CHANCE: f64 = 0.02;
+// THE SEAFARING (2026-10-26, a cheat, asked for): the reach takes the
+// larger of a region's knowledge and its `seafaring`, which a crossing
+// brings in full and which never falls; every CLIMATE_YEARS it passes both
+// ways along the crossings made. Without it the ways to the large
+// landmasses ran over small islands whose few people kept little, and
+// Morvane's people reached 3 of its 7 large landmasses.
+// THE STEPPING STONES (2026-10-26, a cheat too): from a region of fewer
+// than STONE_CELLS cells people set out at once — any people, every
+// crossing with STONE_CHANCE a step. The way to Morvane's largest landmass
+// ran over some 100 such regions along a cold coast, at CROSSING_CHANCE
+// each over 100 000 years.
 pub(crate) const STONE_CELLS: i32 = 100;
 pub(crate) const STONE_CHANCE: f64 = 0.5;
 pub(crate) const CROSSINGS_A_PAIR: usize = 32;
@@ -188,12 +344,19 @@ pub struct Layer<'a> {
     pub codes: &'a [u8],
 }
 
+/// The big game as the fauna placed it (flora.rs populate): a code a cell,
+/// 2 and above where it lives; and how vulnerable it is, 0 … 1 (the
+/// catalog's megafauna weight: the elephant 0.8 … the aurochs 0.2).
 pub struct BigGame<'a> {
     pub id: String,
     pub codes: &'a [u8],
     pub vulnerability: f64,
 }
 
+/// The rain's reliability per cell (the save's, generator/climate/
+/// reliability.ts): the annual rain's coefficient of variation, the ENSO
+/// see-saw's mark (−1 drier in its warm phase … +1), the see-saw's
+/// strength (0 … 1).
 pub struct Rain {
     pub variability: Vec<f32>,
     pub enso: Vec<f32>,
@@ -207,12 +370,19 @@ pub struct SimulationInput<'a> {
     pub peopling: &'a Peopling,
     pub seed: f64,
     pub big_game: Vec<BigGame<'a>>,
+    /// The domesticable starch plants and the tamable herd animals of the
+    /// catalog as the flora and the fauna placed them.
     pub crops: Vec<Layer<'a>>,
     pub herds: Vec<Layer<'a>>,
+    /// None without the save's refinement: no droughts.
     pub rain: Option<Rain>,
 }
 
-/// A kept state (simulation.ts SimFrame).
+/// A kept state: the people a km² in
+/// PEOPLE_FRAME_STEP steps, the small game's share in 255ths, each species
+/// of the big game's share in 255ths on its cells (SimulationResult
+/// `species`, aligned). Float32 a cell, the people alone took 241 MB on
+/// Morvane.
 pub struct SimFrame {
     pub people: Vec<u16>,
     pub small: Vec<u8>,
@@ -235,7 +405,7 @@ pub struct Domestication {
     pub came: Vec<u16>,
 }
 
-/// simulation.ts SimulationResult, but its knowledge and regions.
+/// The history's result, without its knowledge and its regions.
 pub struct SimulationResult {
     pub arrival: Vec<f32>,
     pub land: Vec<u8>,
@@ -244,9 +414,16 @@ pub struct SimulationResult {
     pub crossings: Vec<f32>,
     pub crossing_ways: Vec<i32>,
     pub kept: Vec<SimFrame>,
+    /// The big game's species, their cells (the frames' `big` aligned).
     pub species: Vec<(String, Vec<i32>)>,
+    /// The climate history's draw: when the cold was deepest, its depth,
+    /// the melt's years.
     pub climate: (f64, f64, f64),
+    /// Where a species of the big game died out: on a landmass, when its
+    /// last tenth went, at a cell of it.
     pub extinctions: Vec<Extinction>,
+    /// The history's log (historyLogShared.ts), each event written when it
+    /// happened, in the order it happened.
     pub log: Vec<LogEvent>,
     pub centres: Vec<f32>,
     pub farm_at: Vec<f32>,
@@ -270,7 +447,8 @@ pub struct SimulationResult {
 }
 
 /// Each cell's distance from today's glaciers over the cold climates, km
-/// (simulation.ts iceDistance).
+/// (climate_history.rs ice_may_cover): how soon
+/// the ice reaches it; Infinity where it cannot.
 pub fn ice_distance(h: &Habitat) -> Vec<f32> {
     let n = h.count;
     let mut ice_km = vec![f32::INFINITY; n];
@@ -306,6 +484,8 @@ pub fn ice_distance(h: &Habitat) -> Vec<f32> {
     ice_km
 }
 
+/// The regions: the habitable land's connected parts, an id a cell (-1
+/// elsewhere), and how many.
 fn regions_of(h: &Habitat, habitable: &dyn Fn(usize) -> bool) -> (Vec<i32>, usize) {
     let n = h.count;
     let mut region = vec![-1i32; n];
@@ -332,17 +512,37 @@ fn regions_of(h: &Habitat, habitable: &dyn Fn(usize) -> bool) -> (Vec<i32>, usiz
     (region, regions)
 }
 
+/// A crossing over open water: from a coast cell to another landmass's
+/// nearest coast, km of sea between.
 #[derive(Clone)]
 struct Crossing {
     from: usize,
     to: usize,
     km: f64,
+    // Its way over the sea, `from` to `to` (made for the ones kept).
     path: Vec<usize>,
+    // Where the two searches met: a on `from`'s side, b on `to`'s.
     a: usize,
     b: usize,
 }
 
-/// The crossings, once (simulation.ts crossingsOf).
+/// The crossings, once: from every coast cell
+/// people can live on today (`habitable`) over the sea, a multi-source
+/// Dijkstra on the voyage's length, labelled by its REGION — the land
+/// people can live on, connected (a landmass the ice cuts into parts is
+/// several; by landmass, a landing reached one part and its people stayed
+/// there); where two labels meet, the way between their two coasts. A
+/// crossing needs as much reach as its longest stretch of OPEN water: a sea
+/// cell beside land (any land, ice too) ends a stretch — boats keep to the
+/// coast, past the ice (the "kelp highway" of the Americas' first people).
+/// A voyage is VOYAGE_KM long at most. For each coast cell its shortest to
+/// each other region; of those the CROSSINGS_A_PAIR needing the least reach
+/// a pair of regions, both ways. `region`: regions_of's.
+// Before (2026-10-26): the single shortest a pair, every sea km counted,
+// left Morvane's first continent 258 km of open water from any other coast
+// people can live on; and a coast of ice was a landing, where people stood
+// on a strip before a glacier (the first skeleton even let such a landing,
+// with no people, settle the land beyond: its 82 % were that).
 fn crossings_of(
     h: &Habitat,
     max_km: f64,
@@ -351,9 +551,11 @@ fn crossings_of(
 ) -> Vec<Crossing> {
     let n = h.count;
     let mut voyage = vec![f64::INFINITY; n];
+    // The open stretch at a cell and the longest on the way to it.
     let mut stretch = vec![0f32; n];
     let mut longest = vec![0f32; n];
     let mut source = vec![-1i32; n];
+    // The cell each was reached from, for the ways.
     let mut prev = vec![-1i32; n];
     let mut heap = MinHeap::new(1 << 16);
     let mut coastal = vec![0u8; n];
@@ -476,6 +678,7 @@ fn crossings_of(
             }
         }
     }
+    // The ways: from `from` out to where the searches met, and in to `to`.
     let back = |x: usize| -> Vec<usize> {
         let mut chain = Vec::new();
         let mut c = x as i32;
@@ -500,6 +703,8 @@ fn crossings_of(
     kept
 }
 
+// A species of the big game: its cells, its share in each (aligned), its
+// cells' positions by landmass (for its extinction), its rates.
 struct Species {
     id: String,
     cells: Vec<i32>,
@@ -534,33 +739,52 @@ struct Sim<'h, 'a> {
     h: &'h Habitat,
     input: &'h SimulationInput<'a>,
     random: Mulberry32,
+    // What each cell carries now (climate_history.rs): the cold's share of
+    // today's, 0 under the ice; the shelf while the sea stands below it.
     capacity: Vec<f32>,
+    // The game, a share of the land's; big game only where a species of it
+    // lives.
     small: Vec<f32>,
     species: Vec<Species>,
+    // Per cell the big game's shares summed, and how many species.
     big_sum: Vec<f32>,
     big_count: Vec<u8>,
+    // The farming and the herding: when each came to a cell, its
+    // domesticates there as bits, the centres, the domesticates.
     farm_at: Vec<f32>,
     herd_at: Vec<f32>,
     tamed_bits: Vec<u32>,
     centres: Vec<f64>,
     tamed: Vec<Tamed>,
+    // The cells that may pass the fields or the herds on.
     farm_front: Vec<usize>,
     herd_front: Vec<usize>,
     copper_at: Vec<f32>,
     smelt_at: Vec<f32>,
     copper_front: Vec<usize>,
     smelt_front: Vec<usize>,
+    // The cells the fishers live in (THE FISHERS).
     fishing: Vec<u8>,
     dry_square: Vec<i32>,
     square_rain: Vec<f32>,
+    // How much of a famine's shortfall a cell's neighbours make up, 0 … 1
+    // (THE EXCHANGE).
     fed: Vec<f32>,
     people: Vec<f32>,
     arrival: Vec<f32>,
     from: Vec<i32>,
+    // A step touches two lists alone: the cells still growing or shrinking
+    // (until within FULL_SHARE of what they carry), and the front — lived-in
+    // cells with an empty neighbour people could settle. Over all the
+    // lived-in cells a run took 40 s on Morvane. Both are made again from
+    // all the lived-in cells when the climate moves (CLIMATE_YEARS).
     growing: Vec<usize>,
+    // A cell on `growing` once at most.
     in_growing: Vec<u8>,
     front: Vec<usize>,
     lived: Vec<usize>,
+    // THE LOG (historyLogShared.ts): each event when it happens; which
+    // landmasses people reached, for a crossing's `first`.
     landmass_reached: Vec<u8>,
     log: Vec<LogEvent>,
 }
@@ -570,6 +794,7 @@ impl Sim<'_, '_> {
         self.h.eco(field, i)
     }
 
+    // The rain's share this step where a famine is (THE DROUGHTS), else 1.
     fn rain_of(&self, i: usize) -> f64 {
         let r = if self.dry_square[i] >= 0 {
             self.square_rain[self.dry_square[i] as usize] as f64
@@ -579,6 +804,8 @@ impl Sim<'_, '_> {
         r + (1.0 - r) * EXCHANGE * self.fed[i] as f64
     }
 
+    // What the fields and the herds add, as a factor on what the land
+    // carries.
     fn gain(&self, i: usize) -> f64 {
         let r = self.rain_of(i);
         let fields = if self.farm_at[i] < f32::INFINITY {
@@ -596,6 +823,7 @@ impl Sim<'_, '_> {
         fields * herds * ((1.0 + r) / 2.0)
     }
 
+    // What the foragers get of what the land carries, from the game.
     fn food(&self, i: usize) -> f64 {
         let small = self.small[i] as f64;
         PLANT_FOOD
@@ -636,11 +864,15 @@ impl Sim<'_, '_> {
         self.growing.push(cell);
     }
 
+    // A cell takes domesticate `d` at `t`: knows it, and keeps it where it
+    // suits; where not, only passes it on.
     fn take(&mut self, d: usize, cell: usize, t: f64) {
         if self.tamed_bits[cell] & (1 << d) != 0 {
             return;
         }
         self.tamed_bits[cell] |= 1 << d;
+        // On the front for each it takes: a cell that had left it with its
+        // first passed none it took later on.
         let plant = self.tamed[d].plant;
         if plant {
             self.farm_front.push(cell);
@@ -685,6 +917,9 @@ impl Sim<'_, '_> {
         self.take(d, cell, t);
     }
 
+    // CENTRE_SPACING_KM from every centre of the same lifeway: the farming
+    // may begin beside a herding centre (with it, a herding centre at year
+    // 7 500 kept Morvane's one place fit for the fields from farming).
     fn far_centre(&self, cell: usize, way: u8) -> bool {
         let mut k = 0;
         while k < self.centres.len() {
@@ -698,6 +933,8 @@ impl Sim<'_, '_> {
         true
     }
 
+    // A cell is settled once it has people; one left (the ice, the sea over
+    // the shelf) may be settled again. Its arrival is the first.
     fn settle(&mut self, cell: usize, t: f64, density: f64, parent: i32) {
         self.people[cell] = density as f32;
         if self.arrival[cell] == f32::INFINITY {
@@ -778,6 +1015,8 @@ pub(crate) fn ground_of(h: &Habitat, carrying: &[f32]) -> Ground {
             if h.sea_depth_m[i] as f64 > SHELF_M {
                 continue;
             }
+            // Walked while dry, carrying as little as the poorest land,
+            // crossed at the slowest.
             shelf[i] = 1;
             base[i] = (FORAGER_DENSITY * 0.05) as f32;
             speed[i] = (SPEED_MIN_KM_A * CORRIDOR) as f32;
@@ -808,6 +1047,8 @@ pub fn simulate(
     let climate = ClimateHistory::of(input.seed, SPAN_YEARS);
     let Ground { base, speed, shelf } = ground_of(h, input.carrying);
     let ice_km = ice_distance(h);
+    // A cell whose carrying moved by CAPACITY_MOVED of it or more is marked
+    // (`moved_now`), to grow or shrink again.
     let mut moved_now = vec![0u8; n];
     let update_climate = |t: f64, capacity: &mut [f32], moved_now: &mut [u8]| {
         let cold = climate.cold(t);
@@ -846,6 +1087,7 @@ pub fn simulate(
     let sea_known = |knowledge: &[f32], seafaring: &[f32], g: usize| {
         js::max(knowledge[g] as f64, seafaring[g] as f64)
     };
+    // The regions joined by a crossing made, in pairs.
     let mut links: Vec<usize> = Vec::new();
     // The crossings by their coast cell, in the order the cells came.
     let mut crossings_from: Vec<(usize, Vec<usize>)> = Vec::new();
@@ -945,11 +1187,16 @@ pub fn simulate(
         log: Vec::new(),
     };
     let mut extinctions: Vec<Extinction> = Vec::new();
+    // Herds a farming centre tames HERD_LAG after its fields.
     let mut herds_due: Vec<(usize, f64)> = Vec::new();
+    // The villages: [cell, lifeway], when founded and left; the village in
+    // a cell, -1 for none. A place of these lists is a camp by its lifeway
+    // (THE CAMPS).
     let mut villages: Vec<i32> = Vec::new();
     let mut village_from: Vec<f64> = Vec::new();
     let mut village_to: Vec<f64> = Vec::new();
     let mut village_at = vec![-1i32; n];
+    // The ways' days (travel.rs).
     let way_days = travel_days(h);
     // Each cell's days from copper rich enough to find, to COPPER_DAYS.
     let mut copper_days = vec![f32::INFINITY; n];
@@ -974,16 +1221,22 @@ pub fn simulate(
     let mut found_copper: Vec<usize> = Vec::new();
     let mut found_smelting: Vec<usize> = Vec::new();
     let mut end = SPAN_YEARS;
+    // Each cell's days to the nearest village standing; whether one was
+    // left since they were made.
     let mut near_village = vec![f32::INFINITY; n];
     let mut scratch_days = vec![f32::INFINITY; n];
     let mut villages_left = false;
+    // Each cell's days to the nearest camp, and which.
     let mut near_camp = vec![f32::INFINITY; n];
     let mut camp_owner = vec![-1i32; n];
     let mut population =
         vec![0f32; ((SPAN_YEARS - input.peopling.span) / POPULATION_STEP).floor() as usize + 1];
     let mut next_mark = 0usize;
+    // The cells hunted, kept while their game grows back.
     let mut hunted: Vec<usize> = Vec::new();
     let mut in_hunted = vec![0u8; n];
+    // [landmass, cell landed on, time, km] each crossing made, and its
+    // way's cells, then -1.
     let mut made: Vec<f64> = Vec::new();
     let mut ways: Vec<i32> = Vec::new();
     let mut kept: Vec<SimFrame> = Vec::new();
@@ -993,7 +1246,9 @@ pub fn simulate(
     let t0 = start.span;
     sim.log.extend(start.log.iter().cloned());
 
-    // The droughts' squares.
+    // The droughts' squares (THE DROUGHTS): their cells, their mean
+    // variability and ENSO mark, their anomaly, rain, dry steps in a row,
+    // and the famine going on in each.
     let mut square_cells: Vec<Vec<usize>> = Vec::new();
     if input.rain.is_some() {
         let mut ids: HashMap<(i32, i64, i64), usize> = HashMap::new();
@@ -1045,6 +1300,7 @@ pub fn simulate(
     sim.square_rain = vec![1f32; squares];
     let mut dry_run = vec![0i32; squares];
     let mut famine: Vec<Option<Famine>> = (0..squares).map(|_| None).collect();
+    // The cells around each square, outside it: where its people flee to.
     let square_rim: Vec<Vec<usize>> = {
         let mut seen = vec![usize::MAX; n];
         square_cells
@@ -1131,6 +1387,7 @@ pub fn simulate(
             }
             let at_k = ((t - t0) / POPULATION_STEP) as usize;
             population[at_k] = sum as f32;
+            // The marks passed since the last count, at the time between.
             let last = if t > t0 {
                 population[at_k - 1] as f64
             } else {
@@ -1162,7 +1419,8 @@ pub fn simulate(
         if s == steps {
             break;
         }
-        // 0. The climate, every CLIMATE_YEARS.
+        // 0. The climate, every CLIMATE_YEARS: what the cells carry; the
+        //    people of a cell that carries nothing now leave it.
         if t > 0.0 && t % CLIMATE_YEARS == 0.0 {
             update_climate(t, &mut sim.capacity, &mut moved_now);
             let mut still = Vec::new();
@@ -1184,7 +1442,8 @@ pub fn simulate(
                 }
             }
             sim.front = still;
-            // The big game's extinctions.
+            // The big game's extinctions: a species under EXTINCT_BELOW of
+            // its own on a landmass.
             for sp in sim.species.iter_mut() {
                 for (m, at) in &sp.by_landmass {
                     if sp.gone.contains(m) {
@@ -1214,7 +1473,7 @@ pub fn simulate(
                     });
                 }
             }
-            // The knowledge.
+            // The knowledge, toward what each region's people keep.
             region_people.fill(0.0);
             for &i in &sim.lived {
                 if region[i] >= 0 {
@@ -1240,8 +1499,13 @@ pub fn simulate(
                 seafaring[b] = js::max(seafaring[b] as f64, most) as f32;
                 k += 2;
             }
-            // The centres.
+            // The centres: each region's best cell for the farming and for
+            // the herding, by a chance.
             let stable = climate.stable(t);
+            // A domesticate is tamed once on a landmass: a centre counts
+            // only the wild ones not tamed there yet (each centre tamed its
+            // own; on Morvane the horse five times, five herding centres,
+            // 2026-10-26).
             let tamed_on: HashSet<(String, i32)> = sim
                 .tamed
                 .iter()
@@ -1372,7 +1636,7 @@ pub fn simulate(
                 herds_due.remove(k);
                 sim.grows(cell);
             }
-            // The fishers, the villages.
+            // The fishers, the villages (THE FISHERS, THE VILLAGES).
             for k in 0..sim.lived.len() {
                 let i = sim.lived[k];
                 if sim.fishing[i] != 0
@@ -1569,7 +1833,7 @@ pub fn simulate(
                 break;
             }
         }
-        // The camps, every CAMP_YEARS.
+        // The camps, every CAMP_YEARS (THE CAMPS).
         if t > 0.0 && t % CAMP_YEARS == 0.0 {
             let camp_way_of = |sim: &Sim, i: usize| {
                 if sim.farm_at[i] as f64 <= t || sim.fishing[i] != 0 {
@@ -1580,6 +1844,7 @@ pub fn simulate(
                     FORAGERS
                 }
             };
+            // Each cell's nearest camp: the camp's land; its densest cell.
             let near = |near_camp: &mut [f32],
                         camp_owner: &mut [i32],
                         villages: &[i32],
@@ -1682,7 +1947,9 @@ pub fn simulate(
                 town.push(0.0);
             }
         }
-        // 0b. The game, every GAME_STEPS.
+        // 0b. The game, every GAME_STEPS: hunted where people live, grown
+        //     back where they hunted; the cells people live in grow or
+        //     shrink by it.
         if s % GAME_STEPS == 0 {
             let years = GAME_STEPS as f64 * STEP_YEARS;
             for k in 0..sim.lived.len() {
@@ -1707,6 +1974,7 @@ pub fn simulate(
                     ),
                 ) as f32;
             }
+            // Each species over its cells hunted or growing back.
             for sp in sim.species.iter_mut() {
                 for k in 0..sp.cells.len() {
                     let i = sp.cells[k] as usize;
@@ -1733,6 +2001,8 @@ pub fn simulate(
                 }
             }
             let mut still_hunted = Vec::new();
+            // The cells whose food moved by FOOD_MOVED or more grow or
+            // shrink again.
             let mut moved = Vec::new();
             for (k, &i) in hunted.iter().enumerate() {
                 if sim.people[i] > 0.0
@@ -1753,7 +2023,7 @@ pub fn simulate(
                 sim.grows(i);
             }
         }
-        // 0c. The droughts.
+        // 0c. The droughts (THE DROUGHTS).
         if squares > 0 {
             let rain = input.rain.as_ref().unwrap();
             let enso = if sim.random.next() < ENSO_CHANCE * rain.enso_strength {
@@ -1792,6 +2062,7 @@ pub fn simulate(
                         sim.grows(i);
                     }
                 }
+                // What the neighbours bring (THE EXCHANGE).
                 for &i in &square_cells[q] {
                     sim.fed[i] = 0.0;
                 }
@@ -1818,7 +2089,8 @@ pub fn simulate(
                     }
                 }
                 reset(&mut scratch_days, &reached);
-                // The famine.
+                // The famine: of those the land does not carry now, some
+                // die, the rest flee (THE FLIGHT).
                 let mut lost = 0.0;
                 let mut most: i32 = -1;
                 let mut before = 0.0;
@@ -1840,6 +2112,7 @@ pub fn simulate(
                     fleeing += (1.0 - FAMINE_DEATH) * over;
                     sim.people[i] = k as f32;
                 }
+                // Their room around the square, people.
                 let mut room = 0.0;
                 let mut rooms = Vec::with_capacity(square_rim[q].len());
                 for &u in &square_rim[q] {
@@ -1909,7 +2182,8 @@ pub fn simulate(
                 }
             }
         }
-        // 1. Growth.
+        // 1. Growth, or shrinking toward less; a cell near what it carries
+        //    leaves the list.
         let mut still_growing = Vec::new();
         for k in 0..sim.growing.len() {
             let i = sim.growing[k];
@@ -1924,7 +2198,8 @@ pub fn simulate(
             }
         }
         sim.growing = still_growing;
-        // 2. Settling.
+        // 2. Settling, over SUB_STEPS passes; the newly settled join the
+        //    next. A front cell with no open neighbour left leaves the list.
         for pass in 0..SUB_STEPS {
             let at = t + (pass as f64 + 1.0) * sub_years;
             let count = sim.front.len();
@@ -1954,10 +2229,13 @@ pub fn simulate(
                     still_front.push(i);
                 }
             }
+            // The newly settled, pushed onto `front` by settle, follow.
             still_front.extend_from_slice(&sim.front[count..]);
             sim.front = still_front;
         }
-        // 2b. The fields and the herds, passed on.
+        // 2b. The fields and the herds, passed on to the lived-in
+        //     neighbours they suit; a front cell with nothing left to pass
+        //     leaves.
         for plant in [true, false] {
             let front = if plant {
                 &sim.farm_front
@@ -2055,10 +2333,14 @@ pub fn simulate(
             still.append(front);
             *front = still;
         }
-        // 3. The crossings.
+        // 3. The crossings within the reach of their coast's knowledge.
         for (source, list) in &crossings_from {
             let source = *source;
             let g = region[source] as usize;
+            // An empty coast sets out on none: where it carries nothing (the
+            // ice) the share alone was 0 ≤ 0, and coasts never reached set
+            // out (2026-10-26; a third of Morvane's crossings, and `from` in
+            // circles).
             let stone = region_cells[g] < STONE_CELLS;
             if sim.people[source] == 0.0
                 || (!stone
@@ -2075,6 +2357,9 @@ pub fn simulate(
                     continue;
                 }
                 if sim.random.next() < if stone { STONE_CHANCE } else { CROSSING_CHANCE } {
+                    // The way over the sea is passed: an arrival and a from
+                    // on its sea cells, as step 1 gives them. A land cell on
+                    // the way is a parent only once reached.
                     let mut parent = c.from as i32;
                     for &cell in &c.path {
                         if cell == c.from || cell == c.to {

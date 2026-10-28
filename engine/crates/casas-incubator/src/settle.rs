@@ -1,10 +1,34 @@
-//! `screens/incubator/settle.ts`, its part for a history: what each reached
-//! cell allows, the lifeways' shares and the density at the span's end
-//! (`settleShared.ts`), the sources of the goods, the far trade's links
-//! over the history's villages and camps, and its first trade for the log.
-//! The rest of a settlement — the centres, the domesticates, the villages,
-//! the people's count — is the history's own (the H1 artifact). The
-//! reasoning is in the TypeScript files.
+//! THE SETTLEMENT of a history: what each reached cell allows, the
+//! lifeways' shares and the density at the history's end (the client's
+//! `settleShared.ts` computes the same for the screen), the sources of the
+//! goods, the far trade's links over the history's villages and camps, and
+//! its first trade for the log. The rest of a settlement — the centres, the
+//! domesticates, the villages, the people's count — is the history's own
+//! (the H1 artifact).
+//!
+//! 1. WHAT A CELL ALLOWS: the land's suit for the fields, the herds and the
+//!    fishers (the ecology's arable land, pasture and fish, to 1); settled
+//!    fishing where the fish is FISH_RICH or more (the Jōmon).
+//! 2. THE LIFEWAYS' SHARES AND THE DENSITY (2026-10-26): a cell holds
+//!    several lifeways at a time — the farmers and the herders of one
+//!    valley, the hunters left between them. Each lifeway the cell has by
+//!    then weighs its suit by its gain (`share_gain`), grown with the time
+//!    since it came as the density grows (DENSITY_TAU); the foragers weigh
+//!    FORAGER_WEIGHT always. So the foragers give way as the others grow,
+//!    the fields weigh most, and a cell of fields and pasture holds both.
+//!    The density is each lifeway's share of its own density.
+//! 3. THE TRADE, the far one (the everyday goods go a day or two, between
+//!    neighbours: simulation.rs, THE EXCHANGE): each village linked to its
+//!    LINKS nearest within LINK_DAYS of the ways (travel.rs: on foot by the
+//!    grade and the land, by dugout on the rivers, by boat along the
+//!    coast); from the sources of tool stone, salt and copper (the
+//!    ecology's fields at SOURCE_RICH or more, one a SOURCE_RADIUS) the
+//!    goods go down the line, less the more days from the source
+//!    (DECAY_DAYS), as obsidian did on the earth (Renfrew's fall-off).
+//!    Until 2026-10-26 the links were km over the cells (150 at most) and
+//!    the goods lost a step each link (a quarter, 16 links at most). With
+//!    the villages a day and a half apart, links of 4 days and a decay of
+//!    6 carried goods on few of them.
 
 use crate::habitat::{ARABLE, CARRYING, FISH, Habitat, PASTURE};
 use crate::log::LogEvent;
@@ -15,16 +39,27 @@ use casas_engine::core::js;
 use casas_engine::core::min_heap::MinHeap;
 use std::collections::HashMap;
 
+// People a km² at the carrying capacity's CARRYING_FULL, by lifeway
+// (`density_of`; the earth's: foragers some 0.01 to 0.2, herders 0.5 to 3,
+// farmers 10 to 100); the land's own carrying capacity scales it, to twice.
 pub(crate) const CARRYING_FULL: f64 = 0.8;
+// The fishers settle SETTLE_AFTER years after people came; a lifeway's
+// density grows to its own with the time constant DENSITY_TAU.
 pub(crate) const DENSITY_TAU: f64 = 3000.0;
+// THE LIFEWAYS' SHARES: the foragers' weight, the others' gains
+// (`share_gain`) on their suits.
 pub(crate) const FORAGER_WEIGHT: f64 = 0.2;
 pub(crate) const LINKS: usize = 3;
 pub(crate) const LINK_DAYS: f64 = 6.0;
 pub(crate) const SOURCE_RICH: f64 = 0.6;
 pub(crate) const SOURCE_DAYS: f64 = 20.0;
+// In rings of cells.
 pub(crate) const SOURCE_RADIUS: usize = 10;
 pub(crate) const DECAY_DAYS: f64 = 8.0;
 pub(crate) const MAX_DAYS: f64 = 32.0;
+// THE LOG's first trade (historyLogShared.ts): the first link that carries
+// goods (a weight of TRADE_TOLD or more) once both its villages stand, at
+// its first village's cell.
 pub(crate) const TRADE_TOLD: f64 = 0.05;
 /// settleShared.ts GOODS, in order: the fields of the habitat.
 pub(crate) const GOODS: [usize; 3] = [5, 6, 7];
@@ -52,6 +87,7 @@ fn grown_since(t: f64, since: f64) -> f64 {
     js::max(0.0, 1.0 - det_exp(-(t - since) / DENSITY_TAU))
 }
 
+/// When a lifeway came to a cell; Infinity for never.
 pub fn lifeway_since(s: &Times, i: usize, way: usize) -> f64 {
     match way as u8 {
         lifeway::FARMERS => s.farm_at[i] as f64,
@@ -68,7 +104,8 @@ pub fn lifeway_since(s: &Times, i: usize, way: usize) -> f64 {
 }
 
 /// The lifeways' shares at `t` into `shares` (a Float32Array of 5 in the
-/// TypeScript), the largest's lifeway returned.
+/// TypeScript; by lifeway, summing to 1, all 0 before people came), the
+/// largest's lifeway returned, `lifeway::NONE` before people came.
 pub fn shares_at(s: &Times, i: usize, t: f64, shares: &mut [f32; 5]) -> u8 {
     *shares = [0.0; 5];
     if (s.arrival[i] as f64) > t || s.arrival[i].is_nan() {
@@ -103,6 +140,8 @@ pub fn shares_at(s: &Times, i: usize, t: f64, shares: &mut [f32; 5]) -> u8 {
     top as u8
 }
 
+/// People a km² of a lifeway in a cell at `t`, were it alone there: grown
+/// since it came from the foragers' to its own.
 fn way_density(s: &Times, i: usize, t: f64, way: usize) -> f64 {
     let c = s.carrying[i] as f64;
     let floor = density_of(lifeway::FORAGERS as usize) * c;
@@ -110,6 +149,7 @@ fn way_density(s: &Times, i: usize, t: f64, way: usize) -> f64 {
     floor + (full - floor) * grown_since(t, lifeway_since(s, i, way))
 }
 
+/// People a km² in a cell at `t`: each lifeway's share of its own density.
 pub fn density_at(s: &Times, i: usize, t: f64, shares: &[f32; 5]) -> f64 {
     let mut d = 0.0;
     for way in 1..5 {
@@ -235,7 +275,8 @@ pub fn settle_history(
         density[i] = density_at(&times, i, end, &shares) as f32;
     }
 
-    // The links.
+    // The links: each village's LINKS nearest within LINK_DAYS of the ways
+    // (travel.rs).
     let way_days = travel_days(h);
     let count = village_from.len();
     let mut village_of: HashMap<usize, usize> = HashMap::new();
@@ -281,7 +322,9 @@ pub fn settle_history(
         }
     }
 
-    // The sources.
+    // The sources: the richest cell of a good within SOURCE_RADIUS rings,
+    // reached by people; its goods leave from the village nearest to it,
+    // within SOURCE_DAYS.
     let mut sources: Vec<i32> = Vec::new();
     for (g, &field) in GOODS.iter().enumerate() {
         let Some(values) = h.ecology[field].as_deref() else {
@@ -318,6 +361,8 @@ pub fn settle_history(
         reset(&mut dist, &touched);
         s += 2;
         let Some(start) = start else { continue };
+        // The goods down the line, less the more days from the source's
+        // village (DECAY_DAYS), as far as MAX_DAYS.
         let mut days: HashMap<usize, f64> = HashMap::from([(start, 0.0)]);
         let mut heap = MinHeap::new(64);
         heap.push(0.0, start as i32);
@@ -348,7 +393,7 @@ pub fn settle_history(
         links.extend([a as f32, b as f32, weight[k] as f32]);
     }
 
-    // The first trade (settle.ts firstTrade).
+    // The first trade.
     let mut first: Option<usize> = None;
     let mut first_at = f64::INFINITY;
     let mut k = 0;

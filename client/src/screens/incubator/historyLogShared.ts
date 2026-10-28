@@ -1,12 +1,13 @@
-// THE HISTORY'S LOG (2026-10-26, DES-0033 "The log and the chronicle"):
-// every event of the people's past, as the simulation (simulation.ts)
-// writes it when it happens, or as the rules' times give it (settle.ts,
-// rulesLog). The chronicle (IncubatorScreen sayChronicle) reads it alone
+// THE HISTORY'S LOG (2026-10-26, DES-0032 "One chronicle"): every event
+// of the people's past — step 1's, derived from its graph (casas-incubator
+// peopling.rs), then the history's, written when it happens
+// (simulation.rs); the settlement adds the first trade (settle.rs). The
+// chronicle (IncubatorScreen sayChronicle) reads it alone
 // and picks what it tells; it is the event log in game time DES-0023
 // proposes. Out of the worker for the reason peopleShared.ts gives.
 //
 // `at` is years after the departure; `cell` the incubator's cell
-// (cells.ts) it happened at.
+// (casas-incubator habitat.rs) it happened at.
 export type LogEvent =
   | { kind: 'departure'; at: number; cell: number }
   // A crossing made; `first` when it was the first arrival on its landmass

@@ -1,9 +1,20 @@
-//! `screens/incubator/historyPack.ts`: a simulated history as one file, the
-//! H1 artifact's (world/historyArtifacts.ts) — the client's bytes: a u32
-//! with the header's length, the header (JSON, as `JSON.stringify` writes
-//! it), padding to 8, the arrays at offsets a multiple of 8. The kept
-//! states on the cells people reached alone. The reasoning is in the
-//! TypeScript file.
+//! THE HISTORY PACKED (2026-10-26): a simulated history as one file, the
+//! H1 artifact's (world/historyArtifacts.ts), so a world opened again with
+//! the same origin loads it instead of running it — the spread, the kept
+//! states, the species' cells, the lifeways, the villages, the people's
+//! count, the extinctions, the log. This module writes it (since
+//! 2026-10-27; `screens/incubator/historyPack.ts` wrote it before, and now
+//! reads it), and the settlement of it too.
+//!
+//! The layout, the client's bytes: a u32 with the header's length, the
+//! header (JSON, as `JSON.stringify` writes it: the plain values, and each
+//! array's name, type, offset and length), padding to 8, the arrays'
+//! bytes, each at an offset a multiple of 8.
+//!
+//! The kept states hold the cells people ever reached alone (`reached`):
+//! elsewhere the people are none and the game whole, at every state. Whole,
+//! they were 301 MB on Morvane, and Safari took minutes to store them; now
+//! 168 MB.
 
 use crate::log::Json;
 use crate::simulation::SimulationResult;

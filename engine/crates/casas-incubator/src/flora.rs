@@ -1,6 +1,28 @@
-//! `screens/incubator/flora.ts` and `fauna.ts`: where each plant and tree
-//! grows and where each animal lives, and how many. The reasoning is in the
-//! TypeScript files.
+//! THE INCUBATOR'S FLORA AND FAUNA (2026-10-25, a trial): where each plant
+//! and tree of the catalog grows and where each animal lives, and how many,
+//! on the habitat's cells.
+//!
+//! THE FLORA:
+//! 1. THE NICHE: the plant's weight for the cell's Köppen class, times its
+//!    responses to the height, slope, cover, water and sea (the catalog's
+//!    niche). A salt flat suits only the plants that stand it.
+//! 2. THE RANGE: a plant starts on a landmass by its size, at one origin
+//!    drawn by its niche, and spreads by the cheapest way (niche.rs): land
+//!    whose climate it does not suit is dearer, the sea is not crossed. A
+//!    suitable place outside the range is an empty niche: what it would
+//!    grow on there is grey.
+//!
+//! THE FAUNA:
+//! 1. THE NICHE AND THE RANGE, as a plant's: the Köppen class, the cover,
+//!    the water and the coast; an origin on a landmass by its size, the
+//!    spread by the cheapest way. The salmon instead swims up the rivers
+//!    from every suitable mouth; the shore's animals are on every coast that
+//!    suits them.
+//! 2. HOW MANY: the herbivores share the land's game (the ecology's field,
+//!    level 1's) times the biome's edible share, each by its niche squared
+//!    among those in range there; a predator follows the herbivores in its
+//!    range; an animal of the water is its niche. Without the game, every
+//!    land cell feeds alike.
 
 use crate::catalog::catalog;
 use crate::habitat::{GAME, Habitat, SpreadOptions, spread_range};
@@ -10,6 +32,8 @@ use casas_engine::core::js;
 
 /// A layer: one code a cell (0 nothing, 1 suitable but not reached, 2 …
 /// 255 in the range), and its shares of the land.
+// A plant's or a tree's 2 … 255 is its niche (1 at 255); an animal's is
+// how many, on a scale of the animal's own (its 99th percentile at 255).
 pub struct Layer {
     pub codes: Vec<u8>,
     pub suitable: f64,
@@ -17,7 +41,7 @@ pub struct Layer {
     pub empty: f64,
 }
 
-/// The plants, then the trees, in the catalog's order (flora.ts growFlora).
+/// The plants, then the trees, in the catalog's order.
 pub fn grow_flora(h: &Habitat, seed: f64) -> (Vec<Layer>, Vec<Layer>) {
     let c = catalog();
     let layer = |r: crate::niche::Range| Layer {
@@ -64,7 +88,7 @@ fn biome_id(name: &str) -> u8 {
     }
 }
 
-/// The animals, in the catalog's order (fauna.ts populate).
+/// The animals, in the catalog's order.
 pub fn populate(h: &Habitat, seed: f64) -> Vec<Layer> {
     let c = catalog();
     let n = h.count;
@@ -92,6 +116,7 @@ pub fn populate(h: &Habitat, seed: f64) -> Vec<Layer> {
                 return (r.niche, r.range);
             }
             let (niche, _) = niche_of(&s.niche, h);
+            // Every suitable cell by the sea.
             let mut starts = Vec::new();
             for i in 0..n {
                 if (niche[i] as f64) < SUITABLE {

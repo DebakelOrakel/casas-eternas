@@ -1675,7 +1675,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return true
   }
   // The people, from the origin clicked or chosen, then their settlement.
-  // THE HISTORY'S PLAYBACK (DES-0033): the kept state at the time shown —
+  // THE HISTORY'S PLAYBACK (DES-0032): the kept state at the time shown —
   // the people a km², KEEP_YEARS apart — asked of the worker as the time
   // comes to it, the last few kept; null before a history.
   // A frame: the people a km², the small game's share and each big game
@@ -1772,7 +1772,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     return null
   }
-  // THE PEOPLE (casas-incubator, DES-0033): the history from the origin
+  // THE PEOPLE (casas-incubator, DES-0032): the history from the origin
   // clicked or chosen (peopleOrigin; -1: the worker's choice), run — shown
   // only, until it is saved (saveHistory) — or, `restore`, the server's
   // H1 of it taken in a run's place. The rules' preview, shown before a history until

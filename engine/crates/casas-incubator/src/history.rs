@@ -2,7 +2,7 @@
 //! them (incubatorWorker.ts `simulate`): the domesticable starch plants, the
 //! herd animals and the big game of the catalog, as the flora and the fauna
 //! placed them; the carrying capacity; the rain's reliability at each cell's
-//! centre; the origin, or the one people.ts chooses (originOf); step 1 of
+//! centre; the origin, or the one origin_of chooses; step 1 of
 //! the prehistory from it (peopling.rs), where the history begins.
 
 use crate::catalog::catalog;
@@ -49,7 +49,7 @@ pub fn carrying_of(h: &Habitat) -> Vec<f32> {
 }
 
 /// The origin when none is given: the land that feeds best in a tropical
-/// class (Köppen A), else anywhere (people.ts originOf).
+/// class (Köppen A), else anywhere.
 pub fn origin_of(h: &Habitat, carrying: &[f32]) -> i32 {
     let mut best: i32 = -1;
     let mut best_tropical: i32 = -1;

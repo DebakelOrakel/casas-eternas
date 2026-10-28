@@ -20,12 +20,13 @@ summary.de: Die Geschichte des Inkubators wird simuliert, nicht auf Abruf
 area: platform
 stage: built
 createdAt: 2026-10-26
-related: [DES-0033, DEC-0044, DEC-0045, DEC-0039, DEC-0047]
+related: [DEC-0044, DEC-0045, DEC-0039, DEC-0047]
 ---
 
 ## Where this starts
 
-The incubator's history ([DES-0033](../design/incubator-simulation.md)) runs
+The incubator's history (now step 2 of
+[DES-0032](../design/prehistory-in-three-steps.md)) runs
 in TypeScript in the incubator's worker: some 25 s on Morvane, every time a
 world is opened or an origin set, with the rules' preview shown meanwhile.
 A run is a fixed result of its inputs — the simulation is seeded; two runs

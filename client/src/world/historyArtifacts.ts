@@ -1,8 +1,7 @@
 import incubatorVersion from 'casas-incubator-wasm/version.json'
 import { artifactKey, writeArtifactFiles, type ArtifactKey, type ArtifactStore } from '../storage/ArtifactStore'
 
-// THE HISTORY'S ARTIFACT, H1 (2026-10-26, DES-0033 "Where the result
-// lives"): the incubator's simulated history of a world (casas-incubator),
+// THE HISTORY'S ARTIFACT, H1 (2026-10-26, DEC-0048): the incubator's simulated history of a world (casas-incubator),
 // packed whole (historyPack.ts), so a world opened again with the same
 // origin loads it instead of running it. On the server: the browser does
 // not upload (DEC-0039), a job writes it (scripts/incubatorPipeline.ts) when

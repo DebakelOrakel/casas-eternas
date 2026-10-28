@@ -1,5 +1,5 @@
 ---
-id: DES-0034
+id: DES-0032
 title.en: The prehistory in three steps
 title.de: Die Vorgeschichte in drei Schritten
 summary.en: The incubator did two things in one simulation: the peopling of
@@ -21,15 +21,14 @@ area: mechanics
 stage: building
 createdAt: 2026-10-27
 updatedAt: 2026-10-28
-related: [DES-0032, DES-0033, DES-0031, DES-0027, DES-0023, DEC-0048]
+related: [DES-0031, DES-0027, DES-0023, DEC-0048]
 ---
 
 ## Where this starts
 
-The incubator's simulation ([DES-0033](./incubator-simulation.md)) runs
-100 000 years in one loop: the spread of people over the world, the
-farming, the villages, the trade. A first form of it exists. Looking at
-it raised three problems:
+The incubator's simulation, as it stood on 2026-10-27, ran 100 000 years
+in one loop: the spread of people over the world, the farming, the
+villages, the trade. Looking at it raised three problems:
 
 - **Two epochs in one loop.** The spread out of one origin is the old
   stone age (some 70 000 to 15 000 years ago on the earth). The farming,
@@ -88,16 +87,15 @@ What follows from it:
   come the control of trade routes, warriors, horse and chariot, palaces
   and states.
 
-The game's start is at some +3 000 to +5 000: after the large villages,
-near the first centres and the first copper.
+The game's start is shortly before the bronze: after the copper, at the
+first city (step 2's end, below).
 
 ## Step 1: the old stone age — a graph
 
 No simulation. A cost distance over the cell mesh, from one or more
 origins:
 
-- Over land, the cost follows the terrain and the biome, as the rules'
-  spread did ([DES-0032](./incubator.md)).
+- Over land, the cost follows the terrain and the biome.
 - Over water, a crossing is allowed up to a reach that grows with the
   time. The sea level as a curve over the time sets which shelf is dry
   land: the land bridges.
@@ -108,9 +106,8 @@ origins:
 - The people per cell follow from the carrying capacity: foragers at
   their density.
 
-Controls: the origins (a click on the globe), the reach over the sea
-across the time, the lowest sea level. Perhaps a few for the flora and
-the fauna, which the loading screen makes today.
+Controls: the origin (a click on the globe). The reach over the sea and
+the lowest sea level as controls are not built.
 
 Land that the graph does not reach stays empty. That is a property of
 the world and a part of the game (a frontier, an island found late), not
@@ -121,65 +118,97 @@ is kept is the input (the origins, the controls), not the result.
 
 ## Step 2: the new stone age — the simulation, H1
 
-The incubator's simulation, from the farming's start to the game's start,
-reading step 1's result as its first state. It makes H1
-([DEC-0048](../decisions/incubator-history-engine.md)).
+The incubator's simulation (`casas-incubator` simulation.rs), from step
+1's end to the first city, reading step 1's result as its first state. It
+makes H1 ([DEC-0048](../decisions/incubator-history-engine.md)). For the
+world's people, history begins here: they know their neighbours, not
+where their forebears came from.
 
-What belongs here:
+**Its start.** Step 1 ends when the melting ice brings the sea up to 50 m
+below today's (on the earth some 40 to 60 m when the farming began). The
+people stand where step 1 brought them, at the carrying capacity, with
+step 1's arrival and predecessor; each region's knowledge is what its
+people give. Nothing of step 1 is kept again but its log.
 
-- the farming begins in centres (the conditions of DES-0033 stay valid)
-  and spreads over the foragers: it pushes them back, they take it on,
-  or they mix;
-- **the cultures, the groups and the languages**, which the current
-  simulation does not make: the tree of step 1 as the base, split and
-  mixed by the spread of the farming;
-- the lifeways and the density, the villages;
-- the boats along the coast: fishing, settling by sea, contact;
-- droughts, famines, people leaving.
+**A step** of 25 years, on the cells people live in:
 
-What goes to step 3: the centres with ranks, the long-distance trade as
-a system, the copper. The current simulation has some of it already
-(central places, trade by days); it was taken too early.
+- **The climate**, every 500 years: the rest of the glacial cycle's end,
+  the sea rising, the land freed by the ice; a stable warmth (the
+  Holocene) is a condition of the farming.
+- **The people** grow toward what the land carries; a full cell settles
+  its empty neighbours (land step 1 did not reach, or that the ice or the
+  sea gave back).
+- **The game**: hunted by the people, grown back; a species gone from a
+  landmass is an extinction.
+- **The farming and the herding**: a region's best cell becomes a centre
+  by a chance, where people lived long beside two wild crops or herd
+  animals and the region knows enough; the domesticates spread from cell
+  to cell where they suit (1 and 2 km a year). The fields carry up to 100
+  times the people, the herds 10.
+- **The fishers**: where the fish are rich, people stay and grow dense.
+- **Villages and camps**: the central places of the settled, more than a
+  day and a half apart; the foragers' and herders' camps move with them.
+- **The droughts**: the rain per square of 300 km, a random walk with
+  ENSO; a long dry spell is a famine, people die and flee, villages are
+  given up.
+- **The copper**: a farmers' village that stood 1 000 years within 20
+  days of a deposit finds it and hammers it; one that knew it 3 000 years
+  smelts it. Both pass on by contact. It feeds no one: it is rank.
+- **The towns**: a farmers' village draws a share of the people within a
+  day of it, more with the copper, more with the smelting.
+- **Its end**: the first city, a town of 10 000 (Çatalhöyük had some
+  5 000, Uruk some 40 000).
 
-It runs live in the incubator, with controls, as now. Changes only on a
-button, as in the generator.
+The numbers and the measurements that set them are next to their
+constants in simulation.rs.
+
+**Decided, not built (2026-10-28):**
+
+- **No crossing of the open sea** in step 2, until ships fit for trade:
+  small boats along the coast and to what is in sight of land stay (the
+  fishers, the islands off a coast). Today step 2 still crosses up to
+  450 km.
+- **The peoples.** A people is a set of joined cells whose people meet
+  and so stay alike. Each cell carries a few cultural traits, seeded from
+  step 1's groups (the descent, which no one in the world knows). Traits
+  drift slowly; neighbours with much contact (people, few days between
+  them) grow alike, mountains, deserts and the sea part them. The
+  innovations (the farming, the copper) are traits that spread by
+  contact; farmers who spread carry their traits, foragers who take the
+  farming keep theirs. The peoples are the clusters of alike, joined
+  cells. A language is, for now, a slow trait among them; their names
+  come later ([DES-0033](./naming-languages.md)).
 
 ### The climate in step 2
 
-No ice age: the farming begins after it, in the Holocene. What step 2
-needs is its end:
+What step 2 needs is the ice age's end:
 
-- **The sea rises.** At the farming's start it is still some 40 to 60 m
-  lower and reaches today's level near +4 500 (Doggerland and the Gulf
-  are flooded). Villages on the coast go under; the chronicle gets its
-  floods.
+- **The sea rises** from −50 m to today's level: coasts go under (not
+  told in the chronicle yet).
 - **The land dries.** On the earth the green Sahara ends near +6 000,
-  and people move into the river valleys. A cause of centres, so close
-  to step 3.
+  and people move into the river valleys. A cause of centres. Not built.
 - **Single events**, such as the 8.2 ka cold event: some centuries of
-  drought and cold, so hunger and people leaving.
+  drought and cold, so hunger and people leaving. Not built.
 
-A curve of sea level and wetness, from the end of the ice age to
-today's level. No climate simulation.
-
-The glacial cycle belongs to step 1, as the low sea level that makes the
-land bridges.
+The glacial cycle (`casas-incubator` climate_history.rs) is one curve
+drawn from the world's seed: its depth makes step 1's land bridges, its
+end is step 2's start.
 
 ## Step 3: the bronze age — the game's rules
 
 Not part of the incubator. A proof of concept for the game's engine: the
 rules the computer plays by when no player acts. New rules, a small
-empire simulation: centres, ranks, bronze as a technology, trade as a
-dependency. It reads H1. Its polities:
-[DES-0036](./polities-from-the-land.md).
+empire simulation: polities, ranks, bronze as a technology (the tin),
+trade as a dependency. It reads H1. Its polities:
+[DES-0034](./polities-from-the-land.md).
 
 ## One chronicle
 
-The chronicle ([DES-0031](./incubator-chronicle.md)) stays, over all
-three steps. It reads only a log, as now (DES-0033). Step 1 does not
-simulate, so it writes events derived from the graph: "the island X
-reached at −40 000", "the groups A and B part". Steps 2 and 3 write
-their events as they happen. One log in game time, the one
+The chronicle ([DES-0031](./incubator.md)) is one over all steps, on one
+time axis. It reads only a log. Step 1 does not simulate, so it writes
+events derived from the graph (the departure, the first landing on each
+landmass); the history's log holds step 1's before its own. Steps 2 and 3
+write their events as they happen. One log in game time, the one
 [DES-0023](./game-knowledge.md) proposes.
 
 ## The interfaces first
@@ -188,59 +217,45 @@ Each step reads only what the one before gives:
 
 | Step | Reads | Gives |
 |---|---|---|
-| 1 | L1, origins, controls | per cell: arrival time, predecessor, foragers; the tree; log |
-| 2 | step 1's result | H1: per cell the people by lifeway and group; the groups, cultures and languages; log |
+| 1 | L1, the origin | per cell: arrival time, predecessor, group, foragers; its span; log |
+| 2 | step 1's result | H1: kept states, lifeways, villages, copper, towns, its start and end; the peoples (not built); log |
 | 3 | H1 | the game's state; log |
 
 With these fixed, each step can be rebuilt alone.
 
 ## The generator's shelf
 
-The shelf is narrow: 2.6 to 4 % of the ocean against 7.3 % on the earth
-([DES-0027](./calibration-backlog.md), item 8). Three things hang on
-it: the land bridges of step 1, the coast lost by the rising sea of
-step 2, and the deltas. It is a generator problem, not one of the
-incubator, and it is fixed in the generator.
-
-It does not need to come first. Step 1 works on any sea floor; a steep
-shelf only gives fewer bridges. But step 1 gives the measurement the fix
-needs: how much land is dry at −120 m, how many landmasses are joined.
-So step 1 first, the shelf against that measurement, and both before
-step 2's coast and sea level are tuned.
+The shelf was narrow: 2.6 to 4 % of the ocean against 7.3 % on the earth
+([DES-0027](./calibration-backlog.md), item 8). The land bridges of step
+1, the coast lost by the rising sea of step 2 and the deltas hang on it.
+Step 1 gave the measurement, and the generator was fixed:
+[DEC-0049](../decisions/shelf-and-sea.md), with the ice that holds the sea
+([DEC-0050](../decisions/seasons-and-ice.md)) and the volcanic islands
+([DEC-0051](../decisions/volcanic-islands.md)).
 
 ## Status
 
-Idea, 2026-10-27. Built since:
+Building since 2026-10-27:
 
 - 2026-10-27: step 1 (`casas-incubator` peopling.rs), shown in the
   incubator's first step.
-- 2026-10-28: step 2 begins where step 1 ends. Step 1 ends when the
-  melting ice brings the sea up to 50 m below today's; the simulation
-  (DES-0033) runs on from there, with step 1's people at the carrying
-  capacity, their arrival and their tree, until the span's end. Step 1
-  lost its limit on a voyage since the last landing: its search keeps one
-  way a cell, and the limit closed cells to later, fresher ways (on
-  Morvane 27 % of the land reached instead of 79 %).
-- 2026-10-28: step 2's time runs from step 1's end: it keeps no state of
-  step 1 again and makes no routes of its own; the incubator shows step
-  1's routes in both steps, and one chronicle over both, step 1's log
-  first. It has the copper: a farmers'
-  village within 20 days of a deposit finds it and hammers it, one that
-  has known it 3 000 years smelts it; both are passed on by contact. A
-  farmers' village draws a share of the people within a day of it, more
-  with the copper, more with the smelting: its town. Step 2 ends at its
-  first city, a town of 10 000. On Morvane (v14): the first farming at
-  59 500, the copper at 65 000, the smelting at 69 000, the city at
-  79 500, some 20 000 years after the farming (on the earth some 6 000);
-  the times are not tuned yet.
+- 2026-10-28: step 2 begins where step 1 ends and keeps nothing of it
+  again but its log. Step 1 lost its limit on a voyage since the last
+  landing: its search keeps one way a cell, and the limit closed cells to
+  later, fresher ways (on Morvane 27 % of the land reached instead of
+  79 %). Step 2 has the copper and the towns and ends at its first city.
+  On Morvane (v14): the first farming at year 59 500, the copper at
+  65 000, the smelting at 69 000, the city at 79 500 — some 20 000 years
+  after the farming (on the earth some 6 000). 6.8 % of the land farmed:
+  the generator's arable land is short (10.7 % of the land at 0.3 or
+  more).
 
-The simulation still holds parts of step 3. Open:
+Open:
 
-0. Step 2's times against the earth's (the copper, the smelting, the city
+1. Step 2's times against the earth's (the copper, the smelting, the city
    after the farming).
-1. The interfaces in detail, above all how a group and a language are
-   stored per cell.
-2. Step 1's sea-level curve: drawn from the world's seed, or a control.
-3. What of the current simulation moves to step 3, and what step 2
-   keeps while step 3 does not exist.
-4. The timeline above, checked against sources.
+2. The peoples (above) and how they are stored per cell.
+3. The far trade: step 2 still shows it (the settlement's links and
+   sources); whether it belongs to step 2 or 3.
+4. Step 1's sea-level curve: drawn from the world's seed, or a control.
+5. The timeline above, checked against sources.

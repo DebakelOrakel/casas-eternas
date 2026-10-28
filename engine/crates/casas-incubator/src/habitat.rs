@@ -1,12 +1,31 @@
-//! `screens/incubator/cells.ts` and `habitat.ts`: THE HABITAT on the
-//! generator's field mesh at CELL_SPACING_KM, unrelaxed, made from level 1
-//! through the chart's node map; and the steps the flora, the fauna and the
-//! people take on it — a niche's trapezoid, the origins by landmass, a
-//! range's spread. The reasoning is in the TypeScript files.
+//! THE INCUBATOR'S HABITAT (2026-10-25, a trial): the world as a living
+//! thing sees it, for the plants, the animals (flora.rs) and the people
+//! (simulation.rs, settle.rs) alike; and the steps they all take on it — a
+//! niche's response (a trapezoid), the origins by landmass, the spread of a
+//! range from its origins.
 //!
-//! The TypeScript computes in doubles and keeps what a Float32Array holds
-//! as a float: every `as f32` here is such a store, every read of one `as
-//! f64` (docs/decisions/incubator-history-engine.md, the way there 2).
+//! THE CELLS (2026-10-26): the generator's field mesh at CELL_SPACING_KM,
+//! unrelaxed — an icosahedron's lattice on the sphere, the hexagons on the
+//! torus: cells of near one size everywhere, six neighbours each (the
+//! sphere's twelve, five) at their true distances, no pole. The world
+//! raster this stood on before (2048 × 1024) had cells half as wide at 60°
+//! as at the equator, none at the poles, and fronts that ran octagons along
+//! its eight neighbours.
+//!
+//! A cell is made from level 1: it takes the level's nodes under it through
+//! the chart's node map (chartWorker.ts, a node per texel at half the
+//! chart's size). It is land where most of its texels are; its biome and
+//! Köppen class are its centre's (or one of its land's); its height and
+//! ecology are the mean over its land; its sea's depth is its shallowest
+//! sea texel's — the mean over a cell of 10 km left 1.5 % of Morvane's sea
+//! on the shelf and no land bridge (2026-10-26). It holds its rivers too
+//! (the ones the chart draws), its lakes and its coast. Its texels are
+//! found once (`owners`), and serve the drawing too: a texel shows the cell
+//! that owns it.
+//!
+//! The TypeScript it was ported from computed in doubles and kept what a
+//! Float32Array holds as a float: every `as f32` here is such a store,
+//! every read of one `as f64` (docs/decisions/incubator-history-engine.md, the way there 2).
 
 use casas_engine::climate::biomes::biome;
 use casas_engine::core::det_math::{det_acos, det_cos, det_hypot, det_sin};
@@ -23,8 +42,9 @@ pub const CELL_SPACING_KM: f64 = 10.0;
 /// `RIVER_REGIME_CODE.ephemeral` (surface/hydrology.ts).
 pub(crate) const RIVER_EPHEMERAL: u8 = 2;
 
-/// The ecology's fields a cell takes, in this order (cells.ts
-/// CELL_ECOLOGY: the game, the carrying capacity and LEVEL_ECOLOGY).
+/// The ecology's fields a cell takes, in this order (the client's
+/// historyInput.ts gives them so): the game, the carrying capacity and
+/// LEVEL_ECOLOGY (cellsShared.ts).
 pub const CELL_ECOLOGY: [&str; 8] = [
     "game",
     "carryingCapacity",
@@ -42,7 +62,7 @@ pub const PASTURE: usize = 3;
 pub const FISH: usize = 4;
 pub const COPPER: usize = 7;
 
-/// What the cells are made from (cells.ts CellInput).
+/// What the cells are made from.
 pub struct CellInput<'a> {
     pub sphere: bool,
     /// The cells' spacing, km: CELL_SPACING_KM; coarser for a test world.
@@ -69,28 +89,44 @@ pub struct CellInput<'a> {
 pub struct Habitat {
     pub count: usize,
     pub torus: bool,
+    // Per cell: on the land (most of it under level 1's land), its area.
     pub land: Vec<u8>,
     pub land_count: usize,
     pub area_km2: Vec<f32>,
+    // The land's height and slope (m a m, the mean over its neighbours); the
+    // sea's depth, m.
     pub height_m: Vec<f32>,
     pub slope: Vec<f32>,
     pub sea_depth_m: Vec<f32>,
     pub biome: Vec<u8>,
+    // The Köppen–Geiger class ids.
     pub koppen: Vec<u8>,
+    // A river through the cell (level 1's that hold water some of the year
+    // at least), and the size of its biggest: the square root of its
+    // discharge over the world's largest, as the ribbon's width is, 0 … 1.
     pub near_river: Vec<u8>,
     pub river_size: Vec<f32>,
+    // A lake in the cell or a neighbour; the sea within two rings.
     pub near_lake: Vec<u8>,
     pub near_sea: Vec<u8>,
+    // The land's connected pieces: an id a land cell, -1 at sea; their
+    // number and areas, km².
     pub landmass: Vec<i32>,
     pub landmasses: usize,
     pub landmass_km2: Vec<f64>,
     /// CELL_ECOLOGY's fields, each the mean over the cell's land.
     pub ecology: [Option<Vec<f32>>; 8],
+    // The neighbours, CSR: cell i's are nbr[nbr_start[i] .. nbr_start[i +
+    // 1]), dist_km[e] the way to each.
     pub nbr_start: Vec<u32>,
     pub nbr: Vec<u32>,
     pub dist_km: Vec<f32>,
+    // Where the cell's centre lies on the chart, as fractions (u across, v
+    // down), for the marks and the arrows.
     pub u: Vec<f32>,
     pub v: Vec<f32>,
+    // The world's size: the globe's radius, km (0 on the torus), or the
+    // torus's width and height, km.
     pub radius_km: f64,
     pub width_km: f64,
     pub height_km: f64,
@@ -136,6 +172,7 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
     let mut lake = vec![0u8; n];
     let mut any_land_node = vec![-1i32; n];
     let mut sums: Vec<Vec<f64>> = (0..CELL_ECOLOGY.len()).map(|_| vec![0.0; n]).collect();
+    // The texels of each cell, their land and their sums.
     for t in 0..owners.len() {
         let c = owners[t] as usize;
         let v = input.nodes[t] as usize;
@@ -160,6 +197,7 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
         }
     }
 
+    // The node at a cell's centre, through the node map.
     let centre_node = |c: usize, fm_x: f64, fm_y: f64| -> usize {
         let px = js::min(
             (input.node_w - 1) as f64,
@@ -239,6 +277,7 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
     let dist_km: Vec<f32> = fm.dist.iter().map(|d| (d / 1000.0) as f32).collect();
     let edges = |c: usize| nbr_start[c] as usize..nbr_start[c + 1] as usize;
 
+    // The slope: the mean over the neighbours of the height's fall a metre.
     let mut slope = vec![0f32; n];
     for c in 0..n {
         if land[c] == 0 {
@@ -262,6 +301,8 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
         };
     }
 
+    // The rivers: the cells their segments cross, walked a quarter of a
+    // world texel at a time; the ephemeral ones left out.
     let mut near_river = vec![0u8; n];
     let mut river_size = vec![0f32; n];
     if let Some((points, lengths, regimes)) = input.rivers {
@@ -296,6 +337,7 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
         }
     }
 
+    // The lakes near, the sea within two rings.
     let mut near_lake = vec![0u8; n];
     let mut near_sea = vec![0u8; n];
     let mut sea_ring = vec![0u8; n];
@@ -387,7 +429,8 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
     (habitat, owners)
 }
 
-/// The distance between two cells' centres, km (habitat.ts kmBetween).
+/// The distance between two cells' centres, km: the
+/// great circle on the globe, the shorter way round on the torus.
 pub fn km_between(h: &Habitat, a: usize, b: usize) -> f64 {
     use std::f64::consts::PI;
     if h.radius_km > 0.0 {
@@ -406,6 +449,8 @@ pub fn km_between(h: &Habitat, a: usize, b: usize) -> f64 {
     det_hypot(du * h.width_km, dv * h.height_km)
 }
 
+/// A trapezoid [a, b, c, d]: 0 below a, up to 1 at b, 1 to c, down to 0 at
+/// d.
 pub type Trapezoid = [f64; 4];
 
 pub fn trapezoid(v: f64, t: &Trapezoid) -> f64 {
@@ -421,11 +466,12 @@ pub fn trapezoid(v: f64, t: &Trapezoid) -> f64 {
     1.0
 }
 
-/// FNV-1a over a text's UTF-16 units (habitat.ts hashText).
+/// FNV-1a over a text's UTF-16 units.
 pub use casas_engine::core::rng::hash_seed_string as hash_text;
 
 /// One origin on each landmass the niche suits somewhere, with its
-/// `chance` (habitat.ts drawOriginsByLandmass).
+/// `chance`: drawn there by the niche to
+/// the fourth.
 pub fn draw_origins_by_landmass(
     h: &Habitat,
     best: &[f32],
@@ -442,6 +488,8 @@ pub fn draw_origins_by_landmass(
     }
     let mut pick = vec![-1f64; h.landmasses];
     for m in 0..h.landmasses {
+        // Both draws for every landmass, so one landmass's draw does not
+        // depend on which others the niche suits.
         let take = random.next() < chance(m);
         let at = random.next();
         if take && total[m] > 0.0 {
@@ -468,14 +516,19 @@ pub fn draw_origins_by_landmass(
 }
 
 pub struct SpreadOptions {
+    // A cell is suitable from this niche on.
     pub suitable: f64,
+    // The cost of a kilometre through land the niche does not suit, over one
+    // through it.
     pub barrier: f64,
+    // How far a range spreads, kilometres through the niche.
     pub max_km: f64,
+    // Only through suitable cells (the salmon up its rivers).
     pub only_suitable: bool,
 }
 
 /// A range: what the cheapest ways from the starts reach within the budget,
-/// over land only (habitat.ts spreadRange).
+/// over land only — the sea is not crossed.
 pub fn spread_range(h: &Habitat, best: &[f32], starts: &[usize], o: &SpreadOptions) -> Vec<u8> {
     let mut range = vec![0u8; h.count];
     let mut cost = vec![f64::INFINITY; h.count];

@@ -17,12 +17,12 @@ summary.de: Der Inkubator rechnet auf dem Feldnetz des Generators mit 10 km,
 area: mechanics
 stage: built
 createdAt: 2026-10-26
-related: [DES-0032, DEC-0046]
+related: [DEC-0046]
 ---
 
 ## Where this starts
 
-The incubator's steps ([DES-0032](../design/incubator.md)) first computed
+The incubator's steps ([DES-0031](../design/incubator.md)) first computed
 on the save's world raster, 2048 × 1024 on Morvane, with level 1 sampled
 onto it. On a sphere that raster is a longitude–latitude grid: a cell at
 60° is half as wide as at the equator, the poles have none, and a spread

@@ -21,12 +21,12 @@ summary.de: Der Kontinentalschelf der Geschichte war ein Drittel des
 area: generator
 stage: built
 createdAt: 2026-10-27
-related: [DES-0027, DES-0034, DEC-0036]
+related: [DES-0027, DES-0032, DEC-0036]
 ---
 
 ## Where this starts
 
-The prehistory's first step ([DES-0034](../design/prehistory-in-three-steps.md))
+The prehistory's first step ([DES-0032](../design/prehistory-in-three-steps.md))
 lets people walk the shelf a glacial sea lays dry. On the worlds it made,
 a sea 120 m lower added 3.5–4 % land and joined no landmass; on Earth it
 adds some 15 %. The shelf was narrow: 2.2–2.7 % of the ocean (Earth 7.3 %),

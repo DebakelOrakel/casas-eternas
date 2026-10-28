@@ -1,7 +1,7 @@
 import { getLocale, t } from '../../i18n/i18n'
 import './chronicle.css'
 
-// THE INCUBATOR'S CHRONICLE (2026-10-26, docs/design/incubator-chronicle.md):
+// THE INCUBATOR'S CHRONICLE (2026-10-26, docs/design/incubator.md "The chronicle"):
 // the right column, after the design canvas (Inkubator.dc.html), light. The
 // time shown, counted up from the people's departure, with the playback;
 // the counts at that time; the events from the top down, beside an axis

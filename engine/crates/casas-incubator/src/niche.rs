@@ -1,6 +1,7 @@
-//! `screens/incubator/niche.ts`: where a plant, a tree or an animal can live
-//! (its niche over the habitat) and where it got to (its range). The
-//! reasoning is in the TypeScript file.
+//! THE INCUBATOR'S NICHES (2026-10-25, a trial): where a plant, a tree or
+//! an animal can live (its niche over the habitat) and where it got to (its
+//! range), on the habitat's cells (habitat.rs). The plants and the trees
+//! grow by it, the animals too (flora.rs).
 
 use crate::catalog::Niche;
 use crate::habitat::{
@@ -12,13 +13,34 @@ use casas_engine::core::det_math::det_exp;
 use casas_engine::core::js;
 use casas_engine::core::rng::Mulberry32;
 
+// A cell is suitable from this niche on.
 pub const SUITABLE: f64 = 0.3;
+// The cost of a kilometre through land the plant does not suit, over one
+// through its niche.
 pub const BARRIER: f64 = 30.0;
+// How far a range spreads, in kilometres through the niche.
 pub(crate) const SPREAD_KM: f64 = 8000.0;
+// The chance a plant reached a landmass its niche suits, by the
+// landmass's size: 1 − e^(−area / ORIGIN_AREA_KM2). More than an animal's
+// two origins on the whole world, because a plant has had the millennia
+// since the ice and its seeds travel with birds, rivers and people. A
+// continent has nearly every plant (Australia's 7.7 M km²: 1.00), an
+// island of Madagascar's size most (0.69), Britain's a third (0.37). A
+// chance of 0.6 on every landmass (the first try, 2026-10-25) left the
+// niche empty on whole continents: on Morvane four fifths of the empty
+// fruit niche lay on landmasses the plant had no origin on.
 pub(crate) const ORIGIN_AREA_KM2: f64 = 500_000.0;
+// A plant of the open land in the forest, or a forest plant in the open:
+// at its edges and clearings, so a part of its niche, under the
+// threshold where the class alone would suit it.
 pub(crate) const OFF_COVER: f64 = 0.25;
+// A big river (`floodplain`): a size of 0.3, about the largest tenth of
+// level 1's rivers (Morvane, 2026-10-25), 9 % of the world's largest
+// discharge.
 pub(crate) const BIG_RIVER: f64 = 0.3;
 
+// The biomes of the open land and of the forest. The woodland and the dry
+// tropical forest are both, half open.
 fn open_biome(b: u8) -> bool {
     matches!(
         b,
@@ -58,7 +80,12 @@ fn cover_fit(s: &Niche, b: u8) -> f64 {
     }
 }
 
-/// The niche, and the climate's part of it alone (niche.ts nicheOf).
+/// The niche, and the climate's part of it alone: the
+/// class, the height, the slope. A plant spreads through its climate,
+/// carried by birds, animals and people, and grows where its water is too.
+/// A plant of the river spread through the dry land between two rivers no
+/// better than through land it does not suit, and stayed on the river it
+/// started on (2026-10-25: the date on 0.1 % of the land).
 pub fn niche_of(s: &Niche, h: &Habitat) -> (Vec<f32>, Vec<f32>) {
     let n = h.count;
     let weight: Vec<f64> = KOPPEN_CODES
@@ -79,6 +106,9 @@ pub fn niche_of(s: &Niche, h: &Habitat) -> (Vec<f32>, Vec<f32>) {
     let mut climate = vec![0f32; n];
     for i in 0..n {
         let b = h.biome[i];
+        // Nothing grows or lives on the ice: level 1's glaciers lie on near
+        // half of Morvane's land, its rivers and coasts with them
+        // (2026-10-25).
         if h.land[i] == 0 || b == biome::ICE || b == biome::GLACIER {
             continue;
         }
@@ -121,7 +151,7 @@ pub fn niche_of(s: &Niche, h: &Habitat) -> (Vec<f32>, Vec<f32>) {
 }
 
 /// One niche's range: its codes and shares of the land, its niche and its
-/// range (niche.ts rangeOf).
+/// range.
 pub struct Range {
     pub codes: Vec<u8>,
     pub niche: Vec<f32>,

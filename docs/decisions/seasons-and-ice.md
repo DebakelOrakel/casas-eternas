@@ -30,7 +30,7 @@ Entry 31 of the calibration backlog
 the torus's land and 15–20 % of the sphere's (Earth ~10 %), 10–14 % of the
 torus's land between 30° and 60°; the sea it held stood at −75 to −170 m
 on the torus. A glacial maximum as the steady state. The prehistory's
-first step ([DES-0034](../design/prehistory-in-three-steps.md)) reads that
+first step ([DES-0032](../design/prehistory-in-three-steps.md)) reads that
 ice: it closes the land to people.
 
 ## How it was measured

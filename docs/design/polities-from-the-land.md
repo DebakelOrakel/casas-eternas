@@ -1,5 +1,5 @@
 ---
-id: DES-0036
+id: DES-0034
 title.en: Polities from the land
 title.de: Gemeinwesen aus dem Land
 summary.en: Step 3 of the prehistory, the bronze age, simulates polities:
@@ -19,12 +19,12 @@ summary.de: Schritt 3 der Vorgeschichte, die Bronzezeit, simuliert
 area: mechanics
 stage: idea
 createdAt: 2026-10-28
-related: [DES-0034, DES-0035]
+related: [DES-0032, DES-0033]
 ---
 
 ## Where this starts
 
-Step 3 of the prehistory ([DES-0034](./prehistory-in-three-steps.md)) is
+Step 3 of the prehistory ([DES-0032](./prehistory-in-three-steps.md)) is
 the game's own rules run without a player: a small simulation of empires.
 Peoples ("groups" in a loose sense, not step 1's overlay) form
 proto-states; these spread, fight, become small kingdoms, perhaps empires,

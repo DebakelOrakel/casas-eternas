@@ -1,5 +1,5 @@
 ---
-id: DES-0035
+id: DES-0033
 title.en: Names from made languages
 title.de: Namen aus erzeugten Sprachen
 summary.en: Villages, peoples, rivers and mountains need many names, and the
@@ -17,7 +17,7 @@ summary.de: Dörfer, Völker, Flüsse und Berge brauchen viele Namen, und die
 area: mechanics
 stage: idea
 createdAt: 2026-10-28
-related: [DES-0034]
+related: [DES-0032]
 ---
 
 ## Where this starts
@@ -59,7 +59,7 @@ Languages", 2016): make the languages, and let the names come from them.
 ## Where it hangs
 
 The languages follow the peoples of step 2 of the prehistory
-([DES-0034](./prehistory-in-three-steps.md)): where a people splits, its
+([DES-0032](./prehistory-in-three-steps.md)): where a people splits, its
 language splits. So the peoples come first.
 
 Kept are the languages alone (the seed, the sounds, the sound changes);
