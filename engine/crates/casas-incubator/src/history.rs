@@ -2,11 +2,13 @@
 //! them (incubatorWorker.ts `simulate`): the domesticable starch plants, the
 //! herd animals and the big game of the catalog, as the flora and the fauna
 //! placed them; the carrying capacity; the rain's reliability at each cell's
-//! centre; the origin, or the one people.ts chooses (originOf).
+//! centre; the origin, or the one people.ts chooses (originOf); step 1 of
+//! the prehistory from it (peopling.rs), where the history begins.
 
 use crate::catalog::catalog;
 use crate::flora::Layer as Grown;
 use crate::habitat::{CARRYING, Habitat};
+use crate::peopling::people;
 use crate::simulation::{BigGame, Layer, Rain, SimulationInput, SimulationResult, simulate};
 use casas_engine::climate::biomes::biome;
 use casas_engine::climate::koppen::KOPPEN_CODES;
@@ -122,9 +124,11 @@ pub fn run_history(
             })
         })
         .collect();
+    let peopling = people(h, &carrying, &[origin as usize], seed);
     let input = SimulationInput {
         carrying: &carrying,
         origin,
+        peopling: &peopling,
         seed,
         big_game,
         crops,

@@ -1,8 +1,9 @@
 //! STEP 1 OF THE PREHISTORY (docs/design/prehistory-in-three-steps.md): the
 //! old stone age as a reachability graph, not a simulation. From one or
 //! more origins, the earliest time people can be in each cell, over the
-//! span the world's glacial cycle gives (ClimateHistory) until the cold
-//! ends, where step 2 begins.
+//! span the world's glacial cycle gives (ClimateHistory) until the melting
+//! ice brings the sea up to END_SEA_DROP_M below today's, where step 2
+//! begins (simulation.rs): the sea rises on in it.
 //!
 //! A search by time over all cells. Over dry ground the front moves at the
 //! simulation's speeds (`ground_of`). The shelf is dry ground while the sea
@@ -12,7 +13,11 @@
 //! any dry ground) as the time's reach, which grows from REACH_START_KM to
 //! REACH_END_KM over the span; a crossing beyond the reach waits for it.
 //! A landing after open sea costs time by how near the reach it went:
-//! crossings at the limit of what boats can do are made rarely.
+//! crossings at the limit of what boats can do are made rarely. A voyage
+//! along a coast has no limit but its time: a limit on the way since the
+//! last landing depends on the way, and the search keeps one way a cell,
+//! the earliest, so a long early voyage closed the cells it reached to a
+//! fresh later one (on Morvane two of the large landmasses).
 //!
 //! Each cell keeps the cell it was reached from. Those links make a tree,
 //! and the tree is the relationship of the groups: where two branches
@@ -21,13 +26,12 @@
 //! crossing lands people who settle that much: the large forks, not every
 //! valley.
 //!
-//! Not in the tuning (`tuning.rs`) and not in H1 yet: a trial beside the
-//! simulation, which it is meant to replace as step 1.
+//! Step 2 starts from it, so it is part of H1 and of the tuning.
 
 use crate::climate_history::{ClimateHistory, ICE_REACH_KM, ice_may_cover};
 use crate::habitat::Habitat;
 use crate::log::LogEvent;
-use crate::simulation::{CLIMATE_YEARS, Ground, SPAN_YEARS, VOYAGE_KM, ground_of, ice_distance};
+use crate::simulation::{CLIMATE_YEARS, Ground, SPAN_YEARS, ground_of, ice_distance};
 use casas_engine::core::min_heap::MinHeap;
 
 /// The boats' reach over open sea at the span's start and end, km.
@@ -42,6 +46,9 @@ pub const CROSSING_YEARS: f64 = 1000.0;
 /// A branch of this share of the land cells reached, or more, is a group
 /// of its own.
 pub const GROUP_SHARE: f64 = 0.02;
+/// The span ends when the melting brings the sea up to this many metres
+/// below today's: on the earth some 40 to 60 m when the farming began.
+pub const END_SEA_DROP_M: f64 = 50.0;
 
 pub struct Peopling {
     /// The years from the span's start; Infinity where not reached.
@@ -59,7 +66,7 @@ pub struct Peopling {
     /// The foragers a km² each reached cell carries in today's climate, a
     /// dry shelf too (`ground_of`); 0 where not reached.
     pub density: Vec<f32>,
-    /// The span: from the start to the end of the cold, years.
+    /// The span: from the start to where step 2 begins (span_of), years.
     pub span: f64,
     /// The first landing on each landmass after open sea.
     pub log: Vec<LogEvent>,
@@ -76,6 +83,16 @@ impl Climate {
     fn at(&self, t: f64) -> usize {
         ((t / CLIMATE_YEARS) as usize).min(self.drop_m.len() - 1)
     }
+}
+
+/// The span: from the start to the first CLIMATE_YEARS after the cold's
+/// height where the sea stands END_SEA_DROP_M below today's or higher.
+pub fn span_of(history: &ClimateHistory) -> f64 {
+    let mut k = (history.max_at / CLIMATE_YEARS).ceil() as usize;
+    while history.sea_drop_m(k as f64 * CLIMATE_YEARS) > END_SEA_DROP_M {
+        k += 1;
+    }
+    k as f64 * CLIMATE_YEARS
 }
 
 fn reach_km(t: f64, span: f64) -> f64 {
@@ -96,7 +113,7 @@ fn reach_at(km: f64, span: f64) -> f64 {
 pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Peopling {
     let n = h.count;
     let history = ClimateHistory::of(seed, SPAN_YEARS);
-    let span = history.max_at + history.deglaciation;
+    let span = span_of(&history);
     let samples = (span / CLIMATE_YEARS) as usize + 1;
     let climate = Climate {
         drop_m: (0..samples)
@@ -137,11 +154,10 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
     let mut arrival = vec![f64::INFINITY; n];
     let mut from = vec![-1i32; n];
     let mut root = vec![-1i32; n];
-    // Afloat: the open sea since the last sight of dry ground, the longest
-    // such stretch and the voyage since the last landing, km.
+    // Afloat: the open sea since the last sight of dry ground and the
+    // longest such stretch, km.
     let mut stretch = vec![0f32; n];
     let mut longest = vec![0f32; n];
-    let mut voyage = vec![0f32; n];
     let mut afloat = vec![0u8; n];
     // On dry ground: the longest open sea of the crossing that brought
     // people there, kept over the dry shelf they walk on from where they
@@ -210,17 +226,13 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
             } else {
                 // Afloat. A shelf that will be dry is walked onto later
                 // only if no boat gets there first.
-                // On dry ground the three are 0.
+                // On dry ground the two are 0.
                 let open = if near_dry(u, k) {
                     0.0
                 } else {
                     stretch[i] as f64 + km
                 };
                 let most = open.max(longest[i] as f64);
-                let went = voyage[i] as f64 + km;
-                if went > VOYAGE_KM {
-                    continue;
-                }
                 let ready = t.max(reach_at(most, span));
                 let at = ready + km / SEA_KM_A;
                 let walk_later = if shelf[u] != 0 {
@@ -230,7 +242,7 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
                 };
                 match walk_later {
                     Some(w) if w <= at => (w, None),
-                    _ => (at, Some((open, most, went))),
+                    _ => (at, Some((open, most))),
                 }
             };
             if at > span || at >= arrival[u] {
@@ -240,11 +252,10 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
             from[u] = i as i32;
             root[u] = root[i];
             match float {
-                Some((open, most, went)) => {
+                Some((open, most)) => {
                     afloat[u] = 1;
                     stretch[u] = open as f32;
                     longest[u] = most as f32;
-                    voyage[u] = went as f32;
                 }
                 None => {
                     landed[u] = if afloat[i] != 0 {
@@ -257,7 +268,6 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
                     afloat[u] = 0;
                     stretch[u] = 0.0;
                     longest[u] = 0.0;
-                    voyage[u] = 0.0;
                 }
             }
             heap.push(at, u as i32);

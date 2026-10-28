@@ -4,10 +4,19 @@
 //! droughts, the log. The reasoning is in the TypeScript file; this is its
 //! port, step for step, draw for draw: a double where the TypeScript
 //! computes, a float where it keeps a Float32Array.
+//!
+//! STEP 2 OF THE PREHISTORY (docs/design/prehistory-in-three-steps.md):
+//! the simulation begins where step 1 (peopling.rs) ends, with the people
+//! where it brought them, at the carrying capacity, each cell's arrival
+//! and the cell it came from as step 1 gives them, and each region's
+//! knowledge at what its people give. Before that, the kept states and the
+//! people's count are step 1's: its cells at the capacity of their time.
+//! The big game is not hunted before step 2.
 
 use crate::climate_history::{ClimateHistory, ICE_REACH_KM, cold_share, ice_may_cover};
 use crate::habitat::{ARABLE, FISH, Habitat, PASTURE, km_between};
 use crate::log::{LogEvent, POPULATION_MARKS};
+use crate::peopling::Peopling;
 use crate::travel::{reset, travel_days, within_days};
 use casas_engine::climate::biomes::biome;
 use casas_engine::core::det_math::{det_cos, det_exp, det_log};
@@ -159,6 +168,8 @@ pub struct Rain {
 pub struct SimulationInput<'a> {
     pub carrying: &'a [f32],
     pub origin: i32,
+    /// Step 1 from `origin`.
+    pub peopling: &'a Peopling,
     pub seed: f64,
     pub big_game: Vec<BigGame<'a>>,
     pub crops: Vec<Layer<'a>>,
@@ -864,16 +875,19 @@ pub fn simulate(
     let mut ways: Vec<i32> = Vec::new();
     let mut kept: Vec<SimFrame> = Vec::new();
 
-    update_climate(0.0, &mut sim.capacity, &mut moved_now);
-    if input.origin >= 0 && sim.capacity[input.origin as usize] > 0.0 {
-        let o = input.origin as usize;
-        let density = sim.capacity[o] as f64 * SEED_SHARE;
-        sim.settle(o, 0.0, density, -1);
-        sim.log.push(LogEvent::Departure {
-            at: 0.0,
-            cell: input.origin as f64,
-        });
-    }
+    // Step 1's span, its cells by arrival and its log.
+    let start = input.peopling;
+    let t0 = start.span;
+    let mut by_arrival: Vec<usize> = (0..n)
+        .filter(|&i| start.arrival[i] < f32::INFINITY)
+        .collect();
+    by_arrival.sort_by(|&a, &b| {
+        start.arrival[a]
+            .total_cmp(&start.arrival[b])
+            .then(a.cmp(&b))
+    });
+    let mut arrived = 0usize;
+    sim.log.extend(start.log.iter().cloned());
 
     // The droughts' squares.
     let mut square_cells: Vec<Vec<usize>> = Vec::new();
@@ -970,6 +984,47 @@ pub fn simulate(
     let plant_code = plant_suits_code();
     for s in 0..=steps {
         let t = s as f64 * STEP_YEARS;
+        // Step 1: its cells reached by `t` at the capacity of the time.
+        if t <= t0 {
+            if t % CLIMATE_YEARS != 0.0 {
+                continue;
+            }
+            update_climate(t, &mut sim.capacity, &mut moved_now);
+            while arrived < by_arrival.len() && start.arrival[by_arrival[arrived]] as f64 <= t {
+                arrived += 1;
+            }
+            sim.lived.clear();
+            for &i in &by_arrival[..arrived] {
+                sim.people[i] = sim.capacity[i];
+                if sim.capacity[i] > 0.0 {
+                    sim.lived.push(i);
+                }
+            }
+        }
+        // Step 2 begins: step 1's people, their arrival and where they
+        // came from, the knowledge their numbers give.
+        if t == t0 {
+            for &i in &by_arrival {
+                sim.arrival[i] = start.arrival[i];
+                sim.from[i] = start.from[i];
+                if land[i] != 0 && h.landmass[i] >= 0 {
+                    sim.landmass_reached[h.landmass[i] as usize] = 1;
+                }
+            }
+            sim.front = sim.lived.clone();
+            for k in 0..sim.lived.len() {
+                let i = sim.lived[k];
+                sim.grows(i);
+                if region[i] >= 0 {
+                    region_people[region[i] as usize] +=
+                        sim.people[i] as f64 * h.area_km2[i] as f64;
+                }
+            }
+            for g in 0..regions {
+                knowledge[g] =
+                    (KNOW_SCALE * (det_log(1.0 + region_people[g] / KNOW_PEOPLE) / LN_10)) as f32;
+            }
+        }
         if t % KEEP_YEARS == 0.0 {
             let mut frame = SimFrame {
                 people: vec![0u16; n],
@@ -1029,6 +1084,9 @@ pub fn simulate(
         }
         if s == steps {
             break;
+        }
+        if t < t0 {
+            continue;
         }
         // 0. The climate, every CLIMATE_YEARS.
         if t > 0.0 && t % CLIMATE_YEARS == 0.0 {

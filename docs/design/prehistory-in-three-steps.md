@@ -208,9 +208,21 @@ step 2's coast and sea level are tuned.
 
 ## Status
 
-Idea, 2026-10-27. Nothing built. The current simulation (DES-0033) is the
-first form of step 2 and holds parts of steps 1 and 3. Open:
+Idea, 2026-10-27. Built since:
 
+- 2026-10-27: step 1 (`casas-incubator` peopling.rs), shown in the
+  incubator's first step.
+- 2026-10-28: step 2 begins where step 1 ends. Step 1 ends when the
+  melting ice brings the sea up to 50 m below today's; the simulation
+  (DES-0033) runs on from there, with step 1's people at the carrying
+  capacity, their arrival and their tree, until the span's end. Step 1
+  lost its limit on a voyage since the last landing: its search keeps one
+  way a cell, and the limit closed cells to later, fresher ways (on
+  Morvane 27 % of the land reached instead of 79 %).
+
+The simulation still holds parts of step 3. Open:
+
+0. Step 1's and step 2's ends: conditions, not times.
 1. The interfaces in detail, above all how a group and a language are
    stored per cell.
 2. Step 1's sea-level curve: drawn from the world's seed, or a control.

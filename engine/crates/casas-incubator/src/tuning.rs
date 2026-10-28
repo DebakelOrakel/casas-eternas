@@ -8,14 +8,16 @@
 //! INCUBATOR_ALGO_VERSION by hand. `make engine` writes both to
 //! `dist/incubator/` (constants.json, version.json).
 
-use crate::{climate_history, habitat, log, niche, settle, simulation, travel};
+use crate::{climate_history, habitat, log, niche, peopling, settle, simulation, travel};
 use serde_json::{Map, Value, json};
 
 /// Raised by hand on a change to the code that changes what a run gives,
 /// or to the packed form (H1). The tuning is hashed beside it.
 ///
 /// v1 (2026-10-27): the history as the crate ported it from the client.
-pub const INCUBATOR_ALGO_VERSION: u32 = 1;
+/// v2 (2026-10-28): the history begins where step 1 of the prehistory
+/// (peopling.rs) ends.
+pub const INCUBATOR_ALGO_VERSION: u32 = 2;
 
 // The constants of a module as (name, value) pairs.
 macro_rules! table {
@@ -34,7 +36,7 @@ fn object(pairs: Vec<(&str, f64)>) -> Value {
 }
 
 /// The tuning by module, and the catalog: `{ climate, habitat, niche,
-/// travel, simulation, settle, log, catalog }`.
+/// travel, peopling, simulation, settle, log, catalog }`.
 pub fn constants() -> Value {
     let catalog: Value =
         serde_json::from_str(include_str!("../data/catalog.json")).expect("data/catalog.json");
@@ -54,6 +56,7 @@ pub fn constants() -> Value {
         "habitat": object(table!(habitat: CELL_SPACING_KM)),
         "niche": object(table!(niche: SUITABLE, BARRIER, SPREAD_KM, ORIGIN_AREA_KM2, OFF_COVER, BIG_RIVER)),
         "travel": object(table!(travel: WALK_HOURS, RIVER_BOAT_SIZE, RIVER_DOWN_KM_DAY, RIVER_UP_KM_DAY, COAST_DEPTH_M, COAST_KM_DAY, LANDING_DAYS)),
+        "peopling": object(table!(peopling: REACH_START_KM, REACH_END_KM, SEA_KM_A, CROSSING_YEARS, GROUP_SHARE, END_SEA_DROP_M)),
         "simulation": object(table!(simulation:
             SPAN_YEARS, KEEP_YEARS, POPULATION_STEP, STEP_YEARS, PEOPLE_FRAME_STEP, CAME_STEP, SETTLE_AFTER, FISH_RICH,
             SUB_STEPS, FORAGER_DENSITY, CARRYING_FULL, GROWTH_A, SEED_SHARE, SEED_PEOPLE, FULL_SHARE,
@@ -180,6 +183,7 @@ mod tests {
             ("habitat", include_str!("habitat.rs")),
             ("niche", include_str!("niche.rs")),
             ("travel", include_str!("travel.rs")),
+            ("peopling", include_str!("peopling.rs")),
             ("simulation", include_str!("simulation.rs")),
             ("settle", include_str!("settle.rs")),
             ("log", include_str!("log.rs")),
