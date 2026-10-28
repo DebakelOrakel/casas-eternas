@@ -203,8 +203,8 @@ export const MARGIN_FIELD_HI = 1.0
 // distribution, so each is scaled by this to preserve the behaviour it was tuned
 // for. They are eye-tuned visual/gameplay knobs, not physical quantities — the
 // honest move is to keep them where they were, not to re-guess them. Applied in
-// erosion (talusSlope), precipitation (orographic lift), ecology (flatness),
-// migration (terrain cost) and the hillshade.
+// erosion (talusSlope), precipitation (orographic lift), ecology (flatness)
+// and the hillshade.
 export const SLOPE_RECALIBRATION = 2
 
 export function marginParameter(field: number): number {

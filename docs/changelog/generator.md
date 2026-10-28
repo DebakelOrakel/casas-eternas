@@ -3,6 +3,9 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-28
+- **removed** Migration: the step is gone, and Finishing, marked F, reads computed once level 1 is there. `generator.finishing.refine`
+
 ## 2026-10-27
 - **changed** Refinement: opening a world made by an earlier version asks again whether to make it again with this version or to open it as it is. `generator.finishing.refine`
 - **changed** Tectonics: island arcs and hotspots build volcanoes up from the sea floor, so oceans hold chains of small volcanic islands, and a seed makes a different world. `generator.step.tectonics`

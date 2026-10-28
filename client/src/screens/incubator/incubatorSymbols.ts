@@ -265,8 +265,7 @@ export function lineSymbols(points: readonly At[], style: LineStyle, first: numb
 // the people spread. Over a crossing the chronicle tells (`sea`) the line
 // is blue (CROSSING_RGB); a separate blue arrow until 2026-10-26.
 // Pictures four a class: the piece, the head, then both blue; the head as
-// the generator's migration arrows (GeneratorScreen
-// drawMigrationArrows). Chevrons, framed, were tried the same day and were
+// the migration arrows the generator had. Chevrons, framed, were tried the same day and were
 // hard to read.
 const ROUTE_WIDTHS_KM = [8, 12, 17, 23, 30, 39, 50]
 const ROUTE_SAMPLE = 10

@@ -42,7 +42,6 @@ export type OverlayId =
   | 'waterBalance'
   | 'watersheds'
   | 'ecology'
-  | 'migration'
 
 export interface OverlayMeta {
   icon: string
@@ -89,7 +88,6 @@ export const OVERLAY_META: Record<OverlayId, OverlayMeta> = {
   waterBalance: { icon: '/icons/waterbilance.png' },
   watersheds: { icon: '/icons/watersheds.png' },
   ecology: { icon: '/icons/ecology.png' },
-  migration: { icon: '/icons/human.png' },
 }
 
 export const OVERLAY_IDS = Object.keys(OVERLAY_META) as OverlayId[]

@@ -157,22 +157,6 @@ export function eventSymbol(ev: SimEvent, alpha: number, chart: ChartSize): Worl
   return { at, picture, alpha }
 }
 
-// --- the migration's origins ------------------------------------------------
-
-// A disc in each race's hue; `origins` in chart texels.
-export function originSymbols(origins: { x: number; y: number; race: number }[], raceRgb: [number, number, number][], chart: ChartSize): { pictures: SymbolPicture[]; symbols: WorldSymbol[] } {
-  const pictures = raceRgb.map(([r, g, b]) => picture(40, 40, chart.metresPerTexel, SYMBOL_RESOLUTION, (c) => {
-    c.beginPath()
-    c.arc(0, 0, 16, 0, Math.PI * 2)
-    c.fillStyle = `rgb(${r},${g},${b})`
-    c.fill()
-    c.lineWidth = 4
-    c.strokeStyle = 'rgba(255,255,255,0.9)'
-    c.stroke()
-  }))
-  return { pictures, symbols: origins.map((o) => ({ at: chartPoint(o.x, o.y, chart.width, chart.height), picture: o.race })) }
-}
-
 // --- the continent names ----------------------------------------------------
 
 // One picture per name, drawn by the label renderer (generator/render/

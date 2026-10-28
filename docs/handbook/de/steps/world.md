@@ -49,9 +49,7 @@ ist der Äquator, der obere und der untere Rand sind zusammen der Pol.
 Kugel ist ein Globus mit zwei Polen; er läuft nur in Ost-West-Richtung
 um. Seine Achse folgt der Achsneigung. In diesem Schritt siehst du die
 Kugel von der Seite, damit die ganze Neigung sichtbar ist; die anderen
-Schritte blicken von über dem Nordpol auf sie. Eine Kugelwelt rechnet
-die Schritte bis Ökologie; Feinschliff und Migration sind für sie
-gesperrt.
+Schritte blicken von über dem Nordpol auf sie.
 
 {{concept globe}}
 

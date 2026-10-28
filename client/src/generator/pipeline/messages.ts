@@ -14,7 +14,6 @@ import type { Volcano } from '../tectonics/volcanoes'
 import type { RenderSimulationOptions } from '../render/elevationMapImage'
 import type { ContinentLabelPlacement } from '../render/continentLabelRenderer'
 import type { ArcheanSnapshot } from '../archean/archeanSnapshotTypes'
-import type { MigrationOrigin } from '../migration/migrationField'
 import type { StageId } from './stages'
 import type { ReplayPlan } from './replayPlan'
 
@@ -199,15 +198,6 @@ export interface WorkerEcologyRunMessage {
   tinRarity: number
   weights: Record<string, number>
 }
-// Requests an initial-migration compute: multi-source least-cost dispersal from the
-// given origins over the physical cost field, using the cached carrying capacity for
-// density. Replies with WorkerMigrationDataMessage. See anthropology-initial-migration.md.
-export interface WorkerMigrationRunMessage {
-  type: 'migrationRun'
-  origins: MigrationOrigin[]
-  spreadBudget: number
-  seaCrossing: number
-}
 // Requests the full sim snapshot (+ the field meshes' values + the terrain
 // mesh) for saving — replies with a WorkerWorldDataMessage.
 export interface WorkerSerializeWorldMessage {
@@ -300,7 +290,6 @@ export type WorkerInboundMessage =
   | WorkerHydrologyRunMessage
   | WorkerEcologyRunMessage
   | WorkerEcologyMonthMessage
-  | WorkerMigrationRunMessage
   | WorkerSerializeWorldMessage
   | WorkerRestoreWorldMessage
   | WorkerGenesisInitMessage
@@ -715,24 +704,13 @@ export interface WorkerEcologyMonthDataMessage {
 
 export interface WorkerEcologyDataMessage {
   type: 'ecologyData'
-  // The fields on the climate grid (Float32): the save and the migration.
+  // The fields on the climate grid (Float32).
   resX: number
   resY: number
   fields: { id: string; data: ArrayBuffer }[]
   // The fields per pixel of the world raster, one byte each
   // (the engine's `encode_fine_field`): the map and its readout.
   fine: { resX: number; resY: number; fields: { id: string; data: ArrayBuffer }[] }
-}
-
-// The initial-migration result (coarse climate grid). See migration/migrationField.ts.
-export interface WorkerMigrationDataMessage {
-  type: 'migrationData'
-  resX: number
-  resY: number
-  race: ArrayBuffer // Int8 owning race per cell (-1 = unreached)
-  density: ArrayBuffer // Float32 population per cell
-  flow: ArrayBuffer // Float32 accumulated population up the tree (arrow width)
-  predecessor: ArrayBuffer // Int32 parent cell toward the origin (-1 = root/unreached)
 }
 
 // The data a world SAVE needs (see the save/load feature): the JSON-able sim
@@ -825,7 +803,6 @@ export type WorkerOutboundMessage =
   | WorkerHydrologyDataMessage
   | WorkerEcologyDataMessage
   | WorkerEcologyMonthDataMessage
-  | WorkerMigrationDataMessage
   | WorkerWorldDataMessage
   | WorkerGenesisStatusMessage
   | WorkerElevationFieldMessage

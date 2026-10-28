@@ -10,9 +10,8 @@
 // save field, and the world layer may not import a screen; steps.ts checks at
 // startup that its chain and this list agree.
 
-// The step chain, in order, without the aside (migration): a world's progress
-// is counted on it, for both shapes, so the count does not change with what a
-// shape runs today.
+// The step chain, in order: a world's progress is counted on it, for both
+// shapes, so the count does not change with what a shape runs today.
 export const PROGRESS_STEPS = ['world', 'genesis', 'tectonics', 'climate', 'ecology', 'finishing'] as const
 export type ProgressStep = (typeof PROGRESS_STEPS)[number]
 
@@ -23,7 +22,7 @@ export function progressStepOf(value: string | null | undefined): ProgressStep |
 }
 
 // The progress after a move from step `from` to step `to`, both indices into
-// `order` (the screen's whole step list, aside included). A move forward
+// `order` (the screen's whole step list). A move forward
 // accepts every step before the one it enters, so the progress becomes the
 // last chain step before `to`. A move back, or to the same step, changes
 // nothing; and the progress never goes down.
@@ -38,8 +37,8 @@ export function advanceProgress(current: ProgressStep | null, order: readonly st
 
 // The progress after the user reset `step`: the step is open again, so it
 // and every step after it are no longer accepted — the progress drops to
-// the chain step before it, or to none. A step off the chain (the aside),
-// or a reset behind the progress, changes nothing.
+// the chain step before it, or to none. A step off the chain, or a reset
+// behind the progress, changes nothing.
 export function withdrawProgress(current: ProgressStep | null, step: string): ProgressStep | null {
   const at = (PROGRESS_STEPS as readonly string[]).indexOf(step)
   if (current === null || at < 0 || PROGRESS_STEPS.indexOf(current) < at) return current

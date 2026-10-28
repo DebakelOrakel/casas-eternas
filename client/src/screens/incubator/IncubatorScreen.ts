@@ -81,7 +81,7 @@ import '../generator/overlayList.css'
 // THE INCUBATOR: the step between the generator and the game. The generator
 // makes a world; the incubator will grow its prehistory — not the geological
 // one, the human one: peoples, their spread, what they did before the game
-// starts. It replaces the generator's migration step once it can.
+// starts. It takes the place of the migration step the generator had.
 //
 // It works on a FINISHED world and needs level 1 of it (the world refined on
 // the server, the finishing step's job): that is the terrain it will run on.
@@ -505,8 +505,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The people's spread (people.ts), the time shown (years from the
   // departure), its two layers, and the origin set by a click (-1: chosen).
   let people: PeopleResult | null = null
-  // THE ROUTES' WIDTHS at the time shown, km a cell: as the generator's
-  // migration arrows, the square root of the land reached beyond a cell
+  // THE ROUTES' WIDTHS at the time shown, km a cell: as the migration
+  // arrows the generator had, the square root of the land reached beyond a cell
   // (peopleArrows.ts, flowAt) over all of it, ROUTE_MIN_KM to
   // ROUTE_MAX_KM. Made for the time and kept for it. By the people beyond
   // (until 2026-10-26) a line swelled where it entered the fields, and to

@@ -97,7 +97,7 @@ export function latitudeAt(gridY: number, equatorOffset = 0): number {
 // climate grid maps linearly onto the world; a single center sample is enough
 // for a smooth field like temperature (orographic precip will sample the fine
 // gradient itself in a later phase). Read today by the chart's elevation
-// readout and the migration's land.
+// readout.
 export function sampleElevationAtCell(
   elevation: Float32Array,
   gridX: number,

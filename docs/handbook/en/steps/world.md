@@ -49,8 +49,7 @@ the equator, and the top and bottom edges together are the pole.
 Sphere is a globe with two poles; it wraps only from east to west. Its
 axis follows the axial tilt. In this step you see the globe side on, so
 the tilt shows whole; the other steps look down on it from above the
-north pole. A sphere world runs the steps up to Ecology; Finishing and
-Migration are locked for it.
+north pole.
 
 {{concept globe}}
 

@@ -2,10 +2,9 @@
 // default and the label key stop being retyped into HTML.
 //
 // Lives in core/ because every module with a panel needs it and none of them
-// owns it. It started in migration/migrationInputParams.ts, where the pattern
+// owns it. It started in the migration's input params, where the pattern
 // was first proved, and moved here the moment a second module needed it — a
-// shared vocabulary type has no business living inside one of its users,
-// especially one that may leave the generator.
+// shared vocabulary type has no business living inside one of its users.
 
 export interface InputParam {
   min: number
@@ -29,7 +28,7 @@ export interface InputParam {
   //
   // It also carries a second, softer meaning: a control whose home is not yet
   // settled stays out until it is, because a save format written today is a
-  // format to migrate tomorrow. Migration's sliders are the current case.
+  // format to migrate tomorrow.
   inSpec: boolean
   // Slider units → model units, when they differ. Absent means identity.
   // Declared here rather than at the call site so the UI and the save agree on

@@ -26,10 +26,10 @@ export interface StepBarStep {
   // and its wording cannot drift apart.
   id: string
   // Set apart from the chain: reachable, but not one of the steps that build
-  // on each other. Migration is the only one, until it gets its own screen.
+  // on each other. No step is set apart today.
   aside?: boolean
   // What the mark says instead of the number, or the dot of a step set
-  // apart (the incubator's T for its trials).
+  // apart (the generator's F for its finishing).
   mark?: string
 }
 
@@ -133,8 +133,8 @@ export function createStepBar(host: HTMLElement, options: StepBarOptions): StepB
     // Numbered from ZERO in the generator, because step 0 is a real step
     // there: naming the world and choosing its seed is something you do, not
     // something that happens before you start. The steps set apart get no
-    // number at all — a number says "this many to go", which is a promise
-    // migration does not keep.
+    // number at all — a number says "this many to go", and a step set apart
+    // is not one of them.
     mark.textContent = step.mark ?? (step.aside ? '·' : String(index + (options.firstNumber ?? 0)))
 
     const text = document.createElement('span')

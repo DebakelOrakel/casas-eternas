@@ -25,14 +25,13 @@ import { PLANET_INPUTS } from '../planet/planetInputParams'
 import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
 import { CLIMATE_INPUTS } from '../climate/climateInputParams'
 import { ECOLOGY_INPUTS } from '../ecology/ecologyInputParams'
-import { MIGRATION_INPUTS } from '../migration/migrationInputParams'
 
 // `genesis` rather than `archean` because that is what the two user-facing
 // surfaces already say: the panel is Genesis and every save on disk carries
 // `spec.genesis.*`. The module is `archean/` (the era) and the messages are
 // `archeanInit`/`archeanStart` (the implementation) — three names for one stage,
 // which step 3d is where it gets resolved, not here.
-export type StageId = 'planet' | 'genesis' | 'tectonics' | 'erosion' | 'climate' | 'hydrology' | 'ecology' | 'finishing' | 'migration'
+export type StageId = 'planet' | 'genesis' | 'tectonics' | 'erosion' | 'climate' | 'hydrology' | 'ecology' | 'finishing'
 
 // How a stage occupies time, which decides what controlling it looks like. This
 // is a real difference in kind, not an accident: a steppable stage runs on a
@@ -173,22 +172,6 @@ export const STAGES: readonly Stage[] = [
     dependsOn: ['hydrology', 'ecology'],
     kind: 'oneShot',
     inputs: {},
-    outputs: [],
-  },
-  {
-    id: 'migration',
-    // Reads the carrying capacity, and through it everything ecology read.
-    dependsOn: ['ecology'],
-    kind: 'oneShot',
-    inputs: {
-      spreadBudget: MIGRATION_INPUTS.spreadBudget,
-      arrowThreshold: MIGRATION_INPUTS.arrowThreshold,
-      seaCrossing: MIGRATION_INPUTS.seaCrossing,
-    },
-    // Deliberately empty. Migration produces four rasters (race, density, flow,
-    // predecessor) that are registered nowhere and saved nowhere, because the
-    // step may yet leave the generator for a screen of its own — which is also
-    // why its controls carry inSpec: false.
     outputs: [],
   },
 ]

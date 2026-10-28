@@ -341,12 +341,12 @@ test('the stage table agrees with the code around it', async () => {
   check('every spec group names a stage', orphanGroups.length === 0, orphanGroups.join(', '))
 
   // The reset taxonomy, asserted on the real table rather than in prose.
-  check('resetting ecology reaches only finishing and migration', String(stages.downstreamOf('ecology')) === 'finishing,migration', String(stages.downstreamOf('ecology')))
+  check('resetting ecology reaches only finishing', String(stages.downstreamOf('ecology')) === 'finishing', String(stages.downstreamOf('ecology')))
   // Climate before erosion since the stage-2 coupling: the order below IS
   // the pipeline order, so the string asserts it too.
-  check('resetting tectonics reaches every later stage', String(stages.downstreamOf('tectonics')) === 'climate,erosion,hydrology,ecology,finishing,migration', String(stages.downstreamOf('tectonics')))
+  check('resetting tectonics reaches every later stage', String(stages.downstreamOf('tectonics')) === 'climate,erosion,hydrology,ecology,finishing', String(stages.downstreamOf('tectonics')))
   check('a climate change invalidates the carved terrain', stages.downstreamOf('climate').includes('erosion'), String(stages.downstreamOf('climate')))
-  check('nothing is downstream of migration', stages.downstreamOf('migration').length === 0)
+  check('nothing is downstream of finishing', stages.downstreamOf('finishing').length === 0)
 })
 
 // ---------------------------------------------------------------- the Archean
@@ -1346,15 +1346,10 @@ test('the stages compute, in order, on one world', async () => {
   // The sliders as the screen sends them, at their defaults.
   p.dispatch({ type: 'ecologyRun', carryingCapacity: 100, concentration: 0, provinceStrength: 0.45, tinRarity: 0, weights: {} })
   await until(() => p.count('ecologyData') >= 1, { label: 'ecology' })
-  p.dispatch({ type: 'migrationRun', origins: [] })
-  await until(() => p.count('migrationData') >= 1, { label: 'migration' })
 
   check('every stage produced its result', true)
   const eco = p.last('ecologyData')
   check('ecology returns fields, not an empty envelope', eco.fields.length > 0, `${eco.fields.length} fields`)
-  // The carrying capacity is copied out before the buffer is transferred; with a
-  // detaching emitter, a missing copy shows up here as migration failing.
-  check('migration ran off the ecology it was handed', p.count('migrationData') >= 1)
 })
 
 test('the climate refinement answers with twelve months, and declines without a climate', async () => {
@@ -1432,7 +1427,7 @@ test('the climate refinement answers with twelve months, and declines without a 
 })
 
 test('INVALIDATION: the epochs stale everything downstream, per the declared chain', async () => {
-  // stages.ts says climate, hydrology, ecology and migration all sit downstream of
+  // stages.ts says climate, hydrology, ecology and finishing all sit downstream of
   // erosion. Before 3c this side dropped only the hydrology while WorldGenScreen
   // dropped the climate too, so the two halves of one pipeline disagreed about
   // what the world currently was.
@@ -1472,10 +1467,9 @@ test('a stage that cannot run says so instead of going quiet', async () => {
   p.dispatch({ type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 })
   p.dispatch({ type: 'hydrologyRun' })
   p.dispatch({ type: 'ecologyRun' })
-  p.dispatch({ type: 'migrationRun', origins: [] })
   await settle(200)
   const declined = p.messages.filter((m) => m.type === 'stageDeclined')
-  check('all four refuse on a world that does not exist yet', declined.length === 4, declined.map((d) => d.stage).join(', '))
+  check('all three refuse on a world that does not exist yet', declined.length === 3, declined.map((d) => d.stage).join(', '))
   check('each names the world itself as what is missing', declined.every((d) => d.needs === 'tectonics'), JSON.stringify(declined.map((d) => d.needs)))
   // A month of a resource is answered even with nothing to show, so the
   // screen is not left waiting on it.
@@ -1678,9 +1672,9 @@ test('every message type is dispatchable from a cold start', async () => {
     { type: 'planetSample', width: 2, height: 1, elevation: new Float32Array(2).buffer },
     { type: 'climateRun', temperatureOffset: 0, temperatureContrast: 1, humidity: 1, equatorOffset: 0 },
     { type: 'hydrologyRun' },
-    { type: 'ecologyRun' }, { type: 'migrationRun', origins: [] },
+    { type: 'ecologyRun' },
     { type: 'serializeWorld' },
-    ...['genesis', 'tectonics', 'erosion', 'climate', 'hydrology', 'ecology', 'migration'].map((stage) => ({ type: 'resetStage', stage })),
+    ...['genesis', 'tectonics', 'erosion', 'climate', 'hydrology', 'ecology'].map((stage) => ({ type: 'resetStage', stage })),
     { type: 'genesisStart' }, { type: 'genesisStop' }, { type: 'genesisFinalize' },
   ]
   const p = await freshPipeline()

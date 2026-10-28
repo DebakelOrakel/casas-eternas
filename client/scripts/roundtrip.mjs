@@ -232,13 +232,13 @@ console.log('\n— run history —')
   // The rule that sets it: a move forward accepts every step before the one
   // it enters, a move back changes nothing, and it never goes down.
   const WP = await L('/src/world/worldProgress.ts')
-  const order = [...WP.PROGRESS_STEPS, 'migration']
-  const moves = [[0, 1], [1, 0], [1, 2], [2, 4], [4, 2], [2, 3], [5, 6]]
+  const order = [...WP.PROGRESS_STEPS]
+  const moves = [[0, 1], [1, 0], [1, 2], [2, 4], [4, 2], [2, 3], [4, 5]]
   const walked = []
   let progress = null
   for (const [from, to] of moves) walked.push(progress = WP.advanceProgress(progress, order, from, to))
-  check('progress follows the forward moves only', walked.join(',') === 'world,world,genesis,climate,climate,climate,finishing', walked.join(','))
-  check('a reset withdraws its step and the steps after it, not those before', WP.withdrawProgress('ecology', 'tectonics') === 'genesis' && WP.withdrawProgress('ecology', 'ecology') === 'climate' && WP.withdrawProgress('genesis', 'world') === null && WP.withdrawProgress('genesis', 'ecology') === 'genesis' && WP.withdrawProgress('climate', 'migration') === 'climate' && WP.withdrawProgress(null, 'genesis') === null)
+  check('progress follows the forward moves only', walked.join(',') === 'world,world,genesis,climate,climate,climate,ecology', walked.join(','))
+  check('a reset withdraws its step and the steps after it, not those before', WP.withdrawProgress('ecology', 'tectonics') === 'genesis' && WP.withdrawProgress('ecology', 'ecology') === 'climate' && WP.withdrawProgress('genesis', 'world') === null && WP.withdrawProgress('genesis', 'ecology') === 'genesis' && WP.withdrawProgress('climate', 'weaving') === 'climate' && WP.withdrawProgress(null, 'genesis') === null)
   check('and counts the steps up to the ecology, the finishing as the last of them', JSON.stringify(WP.progressPosition('genesis')) === '{"n":1,"all":4,"done":false}' && WP.progressPosition('ecology').done && JSON.stringify(WP.progressPosition('finishing')) === '{"n":4,"all":4,"done":true}' && WP.progressPosition(null) === null)
   check('the terrain id goes into world.yaml when known, and only then', WR.recordToYaml(record, 'x', '0123456789abcdef').includes('\n  terrain: 0123456789abcdef\n') && !WR.recordToYaml(record, 'x').includes('terrain:'))
   check('a new progress reads as a change, by name', WR.recordDiff(record, { ...record, progress: 'finishing' }).some((d) => d.startsWith('progress:')))

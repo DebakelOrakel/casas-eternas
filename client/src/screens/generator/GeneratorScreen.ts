@@ -1,4 +1,3 @@
-import { PointerEventTypes } from '@babylonjs/core'
 import { BUILD_VERSION } from '../../app/buildVersion'
 import { WORLD_PIPELINE } from '../../world/worldPipeline'
 import { createFlatWorldView } from '../../map/flatWorldView'
@@ -35,7 +34,7 @@ import type { WaterBody } from '../../generator/surface/hydrology'
 import type { CoastReach } from '../../generator/surface/coastGraph'
 import type { SedimentBasin } from '../../generator/surface/surfaceTypes'
 import { dischargeToM3s } from '../../generator/surface/hydrology'
-import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerMigrationDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload, FieldPayload } from '../../generator/pipeline/messages'
+import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload, FieldPayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import { loadWasmEngine } from '../../generator/pipeline/engineWasm'
 import type { StageId } from '../../generator/pipeline/stages'
@@ -74,7 +73,7 @@ import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlay
 const NO_PICK_PREFIX = 'none:'
 const noPickOf = (group: number | 'fields'): string => `${NO_PICK_PREFIX}${group}`
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
-import { type ChartSize, CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, eventPictures, type VolcanoMark, eventSymbol, hotspotSymbols, nameSymbols, originSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols } from './mapSymbols'
+import { type ChartSize, CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, eventPictures, type VolcanoMark, eventSymbol, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols } from './mapSymbols'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
 import { createServerIndicator } from '../../ui/serverIndicator/ServerIndicator'
 import { createTitleBar, type TitleBarSaveState } from '../../ui/titleBar/TitleBar'
@@ -101,7 +100,6 @@ import { createSidebar } from '../../ui/sidebar/Sidebar'
 import { BOOK_ICON, createHandbookPanel } from '../../ui/handbook/HandbookPanel'
 import { createMonthPlayer } from './monthPlayer'
 import { deriveWorldUid, newWorldUid } from '../../world/identity'
-import { MIGRATION_INPUTS } from '../../generator/migration/migrationInputParams'
 import { ARCHEAN_INPUTS } from '../../generator/archean/archeanInputParams'
 import { landShareFromControl, mantleDiffusionFromVigour, weatherParamsFrom } from '../../world/runParams'
 import { CLIMATE_INPUTS } from '../../generator/climate/climateInputParams'
@@ -146,17 +144,6 @@ const FIELD_ICON: Record<EcologyFieldId, string> = {
   copper: 'copper_ore', tin: 'tin_ore', iron: 'iron_ore',
   silver: 'silver', gold: 'gold', gems: 'gems',
 }
-
-// The initial-migration races (icon toggles + distinct hues). Order = the race
-// index used in migrationOrigins / the worker's race field.
-// The name is NOT here: it is `species.<id>.label` in the catalogs, which the
-// toggles and the legend both read. Carrying a second English copy beside the id
-// is how the two drift apart, and only one of them can follow a language switch.
-const MIGRATION_RACES: { id: string; icon: string; rgb: [number, number, number] }[] = [
-  { id: 'human', icon: 'human', rgb: [86, 116, 200] },
-  { id: 'dwarf', icon: 'dwarf', rgb: [96, 176, 92] },
-  { id: 'beaver', icon: 'beaver', rgb: [216, 76, 58] },
-]
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
 // from the worker's boundary mask — see the compositor).
@@ -386,40 +373,17 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // worldmap screen too; generator-screen scopes everything specific.
   root.className = 'generator-screen map-chrome'
 
-  // One slider field, rendered from its declaration instead of from four
-  // hand-typed copies of the same numbers (the range, the shown default, the
-  // input's default, and the reset handler's). The migration panel below is the
-  // first to use it; the remaining panels follow in part B6.
-  // One slider field, rendered from its declaration. The variants are real, not
-  // decoration: genesis sits INSIDE a <label>, so it must be a <span> (nested
-  // labels are invalid HTML), and the ecology fields carry a data-ecofield the
-  // overlay selector reads.
-  //
-  // The value and its unit are always wrapped together in one <span>. That is a
-  // layout requirement, not tidiness: `.field-label` is `justify-content:
-  // space-between`, so an unwrapped "30" + "%" would be two flex items and the
-  // percent sign would be pushed to the far edge, away from its number.
   // Every control the markup below declares, so the DOM elements can be found again
   // from the InputParam that produced them. Recorded here rather than assembled by
   // hand afterwards: a control that exists has exactly one place it was written.
   const declaredSliders: { param: InputParam; cls: string; valueKey: string }[] = []
   const sliderBindings = new Map<InputParam, { input: HTMLInputElement; label: HTMLElement }>()
 
-  const sliderField = (p: InputParam, cls: string, valueKey: string,
-    opts: { tag?: 'label' | 'span'; extraClass?: string; attrs?: string } = {}): string => {
-    declaredSliders.push({ param: p, cls, valueKey })
-    const tag = opts.tag ?? 'label'
-    const label = t(`${p.i18n}.label` as TKey)
-    return `<${tag} class="field${opts.extraClass ? ` ${opts.extraClass}` : ''}" data-help="${p.i18n}"${opts.attrs ?? ''}>
-        <span class="field-label">${label}: <span><span data-value="${valueKey}">${displayValue(p, p.default)}</span>${p.unit ? t(p.unit as TKey) : ''}</span></span>
-        <input type="range" class="${cls}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.default}" aria-label="${label}" />
-      </${tag}>`
-  }
-
-
-  // The same declaration in the COLUMN's layout: name left, value right, the
-  // track under both (design canvas, the Params section). The panel row keeps
-  // its own variant above, where a slider has to fit beside five others.
+  // One slider field, rendered from its declaration instead of from four
+  // hand-typed copies of the same numbers (the range, the shown default, the
+  // input's default, and the reset handler's), in the COLUMN's layout: name
+  // left, value right, the track under both (design canvas, the Params
+  // section). The value and its unit are wrapped together in one <span>.
   // The strings sit on the elements as keys, so the column can be said again in
   // another language without the screen being rebuilt (see i18n/relabel).
   const paramField = (p: InputParam, cls: string, valueKey: string, opts: { attrs?: string } = {}): string => {
@@ -634,15 +598,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         </div>
       </div>
     </div>
-    <div class="panel" data-stage="migration">
-      <button type="button" class="icon-button panel-reset" data-action="reset-migration" aria-label="${t('generator.action.resetMigration.label')}" data-help="generator.action.resetMigration">
-        <img src="/icons/reset.png" alt="" />
-      </button>
-      ${sliderField(MIGRATION_INPUTS.spreadBudget, 'migration-spread-input', 'migration-spread-label')}
-      ${sliderField(MIGRATION_INPUTS.arrowThreshold, 'migration-threshold-input', 'migration-threshold-label')}
-      ${sliderField(MIGRATION_INPUTS.seaCrossing, 'migration-sea-input', 'migration-sea-label')}
-      <span class="ecology-cat-buttons" data-value="migration-races"></span>
-    </div>
   `
 
   const seedInput = root.querySelector<HTMLInputElement>('.seed-input')!
@@ -719,7 +674,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onMonth: () => showEcologyMonth(),
   })
   const resetEcologyButton = root.querySelector<HTMLButtonElement>('[data-action="reset-ecology"]')!
-  const resetMigrationButton = root.querySelector<HTMLButtonElement>('[data-action="reset-migration"]')!
   // The artifact cache is filled by the worldmap, but inspecting it is just
   // as wanted from here — a world tuned in this screen is what ends up
   // costing minutes to bake over there. Same centred window, un-localized
@@ -816,12 +770,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const carryingCapacityLabel = root.querySelector<HTMLElement>('[data-value="carrying-capacity-label"]')!
   const concentrationInput = root.querySelector<HTMLInputElement>('.concentration-input')!
   const concentrationLabel = root.querySelector<HTMLElement>('[data-value="concentration-label"]')!
-  const migrationSpreadInput = root.querySelector<HTMLInputElement>('.migration-spread-input')!
-  const migrationSpreadLabel = root.querySelector<HTMLElement>('[data-value="migration-spread-label"]')!
-  const migrationThresholdInput = root.querySelector<HTMLInputElement>('.migration-threshold-input')!
-  const migrationThresholdLabel = root.querySelector<HTMLElement>('[data-value="migration-threshold-label"]')!
-  const migrationSeaInput = root.querySelector<HTMLInputElement>('.migration-sea-input')!
-  const migrationSeaLabel = root.querySelector<HTMLElement>('[data-value="migration-sea-label"]')!
   const statLand = root.querySelector<HTMLElement>('[data-value="stat-land"]')!
   const statLandBar = root.querySelector<HTMLElement>('[data-value="stat-land-bar"]')!
   const statTectAge = root.querySelector<HTMLElement>('[data-value="stat-tect-age"]')!
@@ -975,7 +923,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let refineShare = 0
   let hydrologyInFlight = false
   let ecologyInFlight = false
-  let migrationInFlight = false
   // One-shot resolvers so the save flow can await each compute (compute-on-save):
   // set before requesting a step, called by its data handler when it lands.
   let climateResolve: (() => void) | null = null
@@ -984,7 +931,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // True while the save flow drives the compute chain — suppresses the ecology
   // panel's own auto-recompute so it doesn't double-fire.
   let saveChainActive = false
-  const isBusy = (): boolean => tectonicsRunning || climateInFlight || refineInFlight || hydrologyInFlight || ecologyInFlight || migrationInFlight
+  const isBusy = (): boolean => tectonicsRunning || climateInFlight || refineInFlight || hydrologyInFlight || ecologyInFlight
 
   // Disable every panel control while a compute runs; the running process keeps its
   // stop button live (tectonics = toggle-sim, erosion = erode, which becomes a stop).
@@ -1002,7 +949,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     climatePlayer.setEnabled(lastRefined !== null)
     ecologyPlayer.setEnabled(lastRefined !== null && hasEcologyData() && isSeasonalEcologyField(pickedEcologyField))
     resetEcologyButton.disabled = busy
-    resetMigrationButton.disabled = busy
     // A running Archean cannot be saved (saveWorld declines while it steps):
     // the menu says so rather than taking a click that does nothing.
     saveMenu.setEnabled(!busy && !archeanRunning)
@@ -1032,7 +978,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // safety stop — coloured by the same three-stage judgement the banner
   // states (archeanStage; the tectonics grey below the minimum the climate
   // needs, green above). Where there is none — the climate, the rivers,
-  // the ecology, the migration — rings rise out of the centre like a
+  // the ecology — rings rise out of the centre like a
   // plume. No percentage is written (user's call). Hidden when idle —
   // except in the Genesis step, where the Archean's pill STANDS after the
   // stop, wave and clock still, with its narration and its disc: that is
@@ -1093,8 +1039,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       label = t('generator.progress.hydrology')
     } else if (ecologyInFlight) {
       label = t('generator.step.ecology.label')
-    } else if (migrationInFlight) {
-      label = t('generator.step.migration.label')
     } else {
       progressPill.hide()
       if (progressTicker !== undefined) { clearInterval(progressTicker); progressTicker = undefined }
@@ -1183,9 +1127,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const GENESIS_PANEL_INDEX = panelIndexOf('genesis')
   // Whether a step runs on this world's shape. A sphere runs every step up
   // to the finishing (DEC-0035, steps 4d2–4f; the finishing's tiles since
-  // 2026-10-17, docs/decisions/sphere-tiles.md); the migration is locked,
-  // and nothing may compute it for it — not the gate alone, a load's
-  // catch-up too.
+  // 2026-10-17, docs/decisions/sphere-tiles.md). A step after it is
+  // locked there, and nothing may compute it for it — not the gate alone, a
+  // load's catch-up too.
   const stepRunsOnShape = (index: number): boolean => worldShape !== 'sphere' || index <= panelIndexOf('finishing')
 
   // Entering this panel is what commits the Archean — see commitGenesis.
@@ -1405,14 +1349,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let ecologyResX = 0
   let ecologyResY = 0
   const hasEcologyData = (): boolean => lastEcologyFields.carryingCapacity != null
-  // Initial-migration panel — its own step after ecology. Three races (icon toggles),
-  // origins auto-placed at good cradles, least-cost dispersal → density + arrow tree.
-  const MIGRATION_PANEL_INDEX = panelIndexOf('migration')
-  let lastMigration: { race: Int8Array; density: Float32Array; flow: Float32Array; predecessor: Int32Array; resX: number; resY: number } | null = null
-  const migrationRaceEnabled = MIGRATION_RACES.map(() => true)
-  let migrationOrigins: { cell: number; race: number }[] = [] // one per race index (by MIGRATION_RACES order)
-  let migrationMaxDensity = 0 // for the density-fill brightness (cached on compute)
-  let migrationMaxFlow = 0 // for the arrow-tree width + threshold (cached on compute)
 
   function paintBoundaryMask(data: Uint8ClampedArray): void {
     if (!lastBoundaryMask) return
@@ -2197,102 +2133,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
-  // Migration density fill: each reached cell tinted its race's hue, alpha ∝
-  // population density (denser = stronger). Ocean/unreached left as terrain.
-  function paintMigration(data: Uint8ClampedArray): void {
-    if (!lastMigration || migrationMaxDensity <= 0) return
-    const { race, density, resX, resY } = lastMigration
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(resY - 1, Math.floor((y / MAP_HEIGHT) * resY))
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const gx = Math.min(resX - 1, Math.floor((x / MAP_WIDTH) * resX))
-        const cell = gy * resX + gx
-        const r = race[cell]
-        if (r < 0) continue
-        const a = 0.62 * Math.min(1, density[cell] / migrationMaxDensity)
-        if (a < 0.02) continue
-        const [rr, gg, bb] = MIGRATION_RACES[r].rgb
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - a) + rr * a
-        data[p + 1] = data[p + 1] * (1 - a) + gg * a
-        data[p + 2] = data[p + 2] * (1 - a) + bb * a
-      }
-    }
-  }
-
-  // Migration arrow-tree: the pruned predecessor tree drawn as tapering ribbons —
-  // each edge's width ∝ the population flowing through it, so a corridor narrows
-  // as it fans out (flow[child] < flow[parent]). Race sets the hue, local density
-  // modulates brightness, and arrowheads mark only the outer *drawn* tips (the
-  // frontiers) so direction reads without clutter. Pruned by the "arrows"
-  // threshold slider (higher = lower flow cut = more arrows). No-op until computed.
-  const MIGRATION_ARROW_MAX_WIDTH = 15
-  const MIGRATION_ARROW_MIN_WIDTH = 1.4
-  function drawMigrationArrows(c: CanvasRenderingContext2D): void {
-    if (!lastMigration || migrationMaxFlow <= 0) return
-    const { race, density, flow, predecessor, resX, resY } = lastMigration
-    const n = resX * resY
-    // Flow spans orders of magnitude (trunk ≈ whole population, leaf ≈ one cell),
-    // so the slider maps EXPONENTIALLY onto the flow cut: s=0 → only the fattest
-    // trunks (0.12·max), s=1 → fine branches (0.0004·max). Higher slider = more arrows.
-    const s = Math.max(0, Math.min(1, MIGRATION_INPUTS.arrowThreshold.toModel(Number(migrationThresholdInput.value))))
-    const threshold = migrationMaxFlow * Math.exp(Math.log(0.12) + s * (Math.log(0.0004) - Math.log(0.12))) + 1e-9
-    const cellWX = (cell: number): number => (((cell % resX) + 0.5) / resX) * MAP_WIDTH
-    const cellWY = (cell: number): number => ((Math.floor(cell / resX) + 0.5) / resY) * MAP_HEIGHT
-    const wd = (a: number, b: number, m: number): number => { let d = a - b; if (d > m / 2) d -= m; if (d < -m / 2) d += m; return d }
-    // A drawn cell is a frontier tip if no drawn child hangs off it.
-    const hasDrawnChild = new Uint8Array(n)
-    for (let i = 0; i < n; i++) {
-      if (race[i] < 0 || flow[i] <= threshold) continue
-      const p = predecessor[i]
-      if (p >= 0) hasDrawnChild[p] = 1
-    }
-    c.lineCap = 'round'
-    c.lineJoin = 'round'
-    for (let i = 0; i < n; i++) {
-      if (race[i] < 0 || flow[i] <= threshold) continue
-      const p = predecessor[i]
-      if (p < 0) continue
-      const cx = cellWX(i)
-      const cy = cellWY(i)
-      const ddx = wd(cellWX(p), cx, MAP_WIDTH) // child→parent, wrapped (edges are grid-adjacent)
-      const ddy = wd(cellWY(p), cy, MAP_HEIGHT)
-      const width = MIGRATION_ARROW_MIN_WIDTH + (MIGRATION_ARROW_MAX_WIDTH - MIGRATION_ARROW_MIN_WIDTH) * Math.sqrt(Math.min(1, flow[i] / migrationMaxFlow))
-      const bright = 0.45 + 0.55 * (migrationMaxDensity > 0 ? Math.min(1, density[i] / migrationMaxDensity) : 1)
-      const [rr, gg, bb] = MIGRATION_RACES[race[i]].rgb
-      const col = `rgb(${Math.round(rr * bright)},${Math.round(gg * bright)},${Math.round(bb * bright)})`
-      c.strokeStyle = col
-      c.lineWidth = width
-      c.beginPath()
-      c.moveTo(cx + ddx, cy + ddy)
-      c.lineTo(cx, cy)
-      c.stroke()
-      if (!hasDrawnChild[i]) {
-        const angle = Math.atan2(-ddy, -ddx) // outward = parent→child direction
-        const head = Math.max(13, width * 3.2)
-        c.fillStyle = col
-        c.beginPath()
-        c.moveTo(cx + Math.cos(angle) * head, cy + Math.sin(angle) * head)
-        c.lineTo(cx + Math.cos(angle + 2.5) * head * 0.6, cy + Math.sin(angle + 2.5) * head * 0.6)
-        c.lineTo(cx + Math.cos(angle - 2.5) * head * 0.6, cy + Math.sin(angle - 2.5) * head * 0.6)
-        c.closePath()
-        c.fill()
-      }
-    }
-  }
-
-  // Origin markers: a filled disc in the race hue at each enabled race's
-  // origin, a symbol of the 'migration' layer (syncSymbols).
-  function migrationOriginMarks(): { x: number; y: number; race: number }[] {
-    const migration = lastMigration
-    if (!migration) return []
-    return migrationOrigins.filter((o) => migrationRaceEnabled[o.race]).map((o) => {
-      const gy = Math.floor(o.cell / migration.resX)
-      const gx = o.cell - gy * migration.resX
-      return { x: ((gx + 0.5) / migration.resX) * MAP_WIDTH, y: ((gy + 0.5) / migration.resY) * MAP_HEIGHT, race: o.race }
-    })
-  }
-
   overlay.setLayers([
     // Muted terrain wash first (bottom-most tint, over the relief base).
     { id: 'terrain', enabled: false, paintPixels: paintTerrain },
@@ -2303,9 +2143,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     { id: 'koppen', enabled: false, paintPixels: paintKoppen },
     { id: 'biomes', enabled: false, paintPixels: paintBiomes },
     { id: 'ecology', enabled: false, paintPixels: paintEcology },
-    // Migration: race-tinted density fill (paintPixels) + the arrow tree
-    // (paint); its origin markers are symbols (syncSymbols).
-    { id: 'migration', enabled: false, paintPixels: paintMigration, paint: (c) => paintWrapped(c, drawMigrationArrows) },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
     { id: 'mantle', enabled: false, paintPixels: paintMantle },
     // Symbols only (syncSymbols): the layers hold their switch, not paint.
@@ -2390,12 +2227,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     { id: 'volcanoes', shown: () => overlay.isLayerEnabled('volcanoes'), inputs: () => [lastVolcanoes], build: (chart) => volcanoSymbols(lastVolcanoes, chart) },
     { id: 'hotspots', shown: () => overlay.isLayerEnabled('hotspots'), inputs: () => [lastHotspots], build: (chart) => hotspotSymbols(lastHotspots, chart) },
-    {
-      id: 'migration',
-      shown: () => overlay.isLayerEnabled('migration'),
-      inputs: () => [lastMigration, migrationOrigins, ...migrationRaceEnabled],
-      build: (chart) => originSymbols(migrationOriginMarks(), MIGRATION_RACES.map((r) => r.rgb), chart),
-    },
     { id: 'names', shown: () => labelsShown, inputs: () => [lastRaftLabels], build: (chart) => nameSymbols(lastRaftLabels, chart) },
   ]
   // What each view's layer was last handed: the inputs it was built from,
@@ -2863,13 +2694,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         }
         return v === ECOLOGY_OCEAN ? [] : [{ label: t(`resource.${selectedEcologyField}.label` as TKey), value: formatValue(String(Math.round(v * 100)), 'common.unit.percent') }]
       },
-    },
-    // Migration leaves the generator for a screen of its own; until then the
-    // layer has a legend and no readout.
-    migration: {
-      available: () => lastMigration !== null,
-      legend: () => ({ type: 'swatches', title: t('overlay.migration.legend.title'), items: MIGRATION_RACES.map((r) => ({ label: t(`species.${r.id}.label` as TKey), rgb: r.rgb })) }),
-      probe: null,
     },
   }
   const overlayAvailable = (id: OverlayId): boolean => overlayReadout[id].available()
@@ -3530,7 +3354,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // WHAT A CHANGE STALES, from the one declaration both sides read.
   //
   // This cascade used to be written out here (invalidateClimate called hydrology
-  // and ecology, ecology called migration) AND again in the worker — two copies of
+  // and ecology) AND again in the worker — two copies of
   // one rule, which had already drifted apart: this side dropped the climate on
   // every topography change while the worker kept it, so the two disagreed about
   // what the world currently was. Both now derive it from generator/pipeline/stages.ts.
@@ -3566,9 +3390,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         ecologyResolve?.()
         ecologyResolve = null
         break
-      case 'migration':
-        migrationInFlight = false
-        break
       case 'tectonics':
         // A start the worker declined (no plates: the Archean not handed
         // over) never ran: the run ends here as a stop ends it, with no
@@ -3590,8 +3411,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   // A stage's compute threw in the worker: released as a decline is, so
-  // the chain that waits for it (a load's catch-up, the save's, the
-  // migration's) goes on instead of waiting forever. The failure goes to
+  // the chain that waits for it (a load's catch-up, the save's) goes on instead of waiting forever. The failure goes to
   // the console, as a worker's uncaught error does; the stage shows no
   // result, as before it ran.
   function handleStageFailed(message: WorkerStageFailedMessage): void {
@@ -3636,9 +3456,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         return
       case 'ecology':
         clearEcology()
-        return
-      case 'migration':
-        clearMigration()
         return
     }
   }
@@ -3883,93 +3700,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     applyOverlays()
   }
 
-  // --- initial migration ---
-
-  function clearMigration(): void {
-    lastMigration = null
-    migrationMaxDensity = 0
-    migrationMaxFlow = 0
-    updateOverlays()
-  }
-
-  // Greedily pick one origin per race at the highest-carrying-capacity land cells,
-  // spaced apart (torus distance) so the races don't start on top of each other.
-  function autoPlaceMigrationOrigins(): void {
-    const cc = lastEcologyFields.carryingCapacity
-    if (!cc) return
-    const rx = ecologyResX
-    const ry = ecologyResY
-    const minDistSq = (rx * 0.22) * (rx * 0.22)
-    const excluded = new Uint8Array(rx * ry)
-    const chosen: number[] = []
-    for (let k = 0; k < MIGRATION_RACES.length; k++) {
-      let best = -1
-      let bestV = -Infinity
-      for (let i = 0; i < cc.length; i++) {
-        if (cc[i] === ECOLOGY_OCEAN || excluded[i]) continue
-        if (cc[i] > bestV) { bestV = cc[i]; best = i }
-      }
-      if (best < 0) break
-      chosen.push(best)
-      const by = Math.floor(best / rx)
-      const bx = best - by * rx
-      for (let i = 0; i < cc.length; i++) {
-        const gy = Math.floor(i / rx)
-        const gx = i - gy * rx
-        const dx = Math.min(Math.abs(gx - bx), rx - Math.abs(gx - bx))
-        const dy = Math.min(Math.abs(gy - by), ry - Math.abs(gy - by))
-        if (dx * dx + dy * dy < minDistSq) excluded[i] = 1
-      }
-    }
-    migrationOrigins = chosen.map((cell, race) => ({ cell, race }))
-  }
-
-  function handleMigrationData(message: WorkerMigrationDataMessage): void {
-    lastMigration = {
-      race: new Int8Array(message.race),
-      density: new Float32Array(message.density),
-      flow: new Float32Array(message.flow),
-      predecessor: new Int32Array(message.predecessor),
-      resX: message.resX,
-      resY: message.resY,
-    }
-    let maxD = 0
-    for (const v of lastMigration.density) if (v > maxD) maxD = v
-    migrationMaxDensity = maxD
-    let maxF = 0
-    for (const v of lastMigration.flow) if (v > maxF) maxF = v
-    migrationMaxFlow = maxF
-    migrationInFlight = false
-    updateControlsDisabled()
-    updateProgress()
-    updateOverlays()
-  }
-
-  // Posts a migration compute with the enabled races' origins + the sliders. Needs
-  // ecology (carrying capacity, cached in the worker) — the panel ensures it first.
-  function requestMigration(): void {
-    if (tectonicsRunning || !hasEcologyData() || migrationOrigins.length === 0) return
-    const origins = migrationOrigins.filter((o) => migrationRaceEnabled[o.race])
-    if (origins.length === 0) { clearMigration(); return } // all races off → nothing
-    migrationInFlight = true
-    updateControlsDisabled()
-    updateProgress()
-    postToWorker({ type: 'migrationRun', origins, spreadBudget: Number(migrationSpreadInput.value), seaCrossing: MIGRATION_INPUTS.seaCrossing.toModel(Number(migrationSeaInput.value)) })
-  }
-
-  // Ensures the upstream chain (climate → hydrology → ecology) is computed, then
-  // auto-places origins (first time) and computes migration. Runs on panel open;
-  // no panel switch (the computes are worker-side).
-  async function ensureMigration(): Promise<void> {
-    if (tectonicsRunning || erosionRunCount < 1) return
-    if (lastTemperature === null) await awaitCompute((r) => { climateResolve = r }, requestClimate)
-    if (lastRefined === null) await awaitRefinement()
-    if (lastRiverData === null) await awaitCompute((r) => { hydrologyResolve = r }, requestHydrology)
-    if (!hasEcologyData()) await awaitCompute((r) => { ecologyResolve = r }, requestEcology)
-    if (migrationOrigins.length === 0) autoPlaceMigrationOrigins()
-    requestMigration()
-  }
-
   // Posts an ecology compute with the current top-slider values. Needs a computed
   // climate (its cached temperature+precipitation feed productivity); the ecology
   // panel ensures that first. Self-guards a running sim.
@@ -4088,11 +3818,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
     if (message.type === 'ecologyMonthData') {
       handleEcologyMonthData(message)
-      return
-    }
-
-    if (message.type === 'migrationData') {
-      handleMigrationData(message)
       return
     }
 
@@ -4706,8 +4431,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const id = world ? await world.worldId().catch(() => null) : null
     if (generation !== savedWorldIdGeneration) return id
     savedWorldId = id
-    // The finishing step judged the levels without it.
-    if (STEP_IDS[panelIndex] === 'finishing') void refreshFinishing()
+    // The finishing step judged the levels without it, and the step bar
+    // shows them on every step.
+    void refreshFinishing()
     return id
   }
 
@@ -4752,6 +4478,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         // export: nothing here holds it afterwards.
         lastSave = { target: 'server', at: new Date() }
         markWorldEstablished()
+        // Now on the server: the finishing can ask for its levels.
+        void refreshFinishing()
         return
       }
       if (outcome.reason === 'conflict') {
@@ -5001,6 +4729,9 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   let finishingJobs: BakeJob[] = []
   let finishingStored = new Set<string>()
   let finishingVersions: PipelineVersions | null | undefined
+  // The terrain id the last refresh judged the levels for: a world saved or
+  // opened since then has not been asked about.
+  let finishingFor: string | null = null
   // The pipeline that refines the world: the one that made it, whose
   // workers refine it as it is (docs/decisions/engine-releases.md). A world
   // no one pipeline made is ordered with this one's; its workers refuse it
@@ -5031,21 +4762,24 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const stored = new Set<string>()
     const pipeline = refinePipeline()
     let versions: PipelineVersions | null | undefined
+    let terrain: string | null = null
     if (!needs) {
       const [listed, artifacts, named] = await Promise.all([listBakes(), listServerArtifacts(), pipeline === WORLD_PIPELINE ? undefined : pipelineVersionsOf(pipeline)])
       versions = named
+      terrain = savedWorldId
       jobs = (listed ?? []).filter((j) => j.request?.worldUid === worldUid)
         .sort((a, b) => (b.queuedAt ?? '').localeCompare(a.queuedAt ?? ''))
       for (const a of artifacts?.artifacts ?? []) {
         // By content (DEC-0039): the current terrain's, whichever world's job
         // baked it — a copy of a template finds the template's.
-        if (savedWorldId !== null && versions !== null && isCurrentArtifact(a, savedWorldId, versions)) stored.add(a.stage)
+        if (terrain !== null && versions !== null && isCurrentArtifact(a, terrain, versions)) stored.add(a.stage)
       }
     }
     finishingNeeds = needs
     finishingJobs = jobs
     finishingStored = stored
     finishingVersions = versions
+    finishingFor = terrain
     paintFinishing()
     // Follow the events from here on, once; not after the screen was left
     // during the awaits above.
@@ -5057,27 +4791,37 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       })
     }
   }
-  function paintFinishing(): void {
-    const needs = finishingNeeds
+  // How far the world is refined: what its newest finished plan reached,
+  // or what is stored — level 1, and the tile level once a tile of it is
+  // there. A plan counts only for the terrain and the pipeline it was
+  // asked for; one for an earlier save of this world is not this world's.
+  // 0 while the last refresh was for another terrain (or none). The step
+  // bar counts the finishing as computed from level 1 on.
+  function finishingLevel(): number {
+    if (savedWorldId === null || finishingFor !== savedWorldId) return 0
     const job = finishingJobs.find((j) => j.request?.plan === 'refine') ?? null
-    const active = job !== null && (job.state === 'queued' || job.state === 'running')
-    // How far the world is refined: what its newest finished plan reached,
-    // or what is stored — level 1, and the tile level once a tile of it is
-    // there. A plan counts only for the terrain and the pipeline it was
-    // asked for; one for an earlier save of this world is not this world's.
-    const planDone = job !== null && job.state === 'done' && job.result !== undefined && savedWorldId !== null && finishingVersions !== null && isCurrentArtifact(job.result, savedWorldId, finishingVersions)
+    const planDone = job !== null && job.state === 'done' && job.result !== undefined && finishingVersions !== null && isCurrentArtifact(job.result, savedWorldId, finishingVersions)
     let refined = planDone ? job.request?.stage ?? 1 : 0
     if (finishingStored.has(meshLevelStage(1))) refined = Math.max(refined, 1)
     for (const stage of finishingStored) {
       const parsed = parseStage(stage)
       if (parsed?.tile) refined = Math.max(refined, parsed.level)
     }
+    return refined
+  }
+  function paintFinishing(): void {
+    const needs = finishingNeeds
+    const job = finishingJobs.find((j) => j.request?.plan === 'refine') ?? null
+    const active = job !== null && (job.state === 'queued' || job.state === 'running')
+    const refined = finishingLevel()
     finishingState.textContent = needs ? t(needs)
       : active ? jobStateText(job)
       : refined > 0 ? t('generator.finishing.state.done', { level: refined })
       : !job || job.state === 'cancelled' ? t('generator.finishing.state.none')
       : jobStateText(job)
     refineButton.disabled = needs !== null || active
+    // The step bar's finishing status reads the same levels.
+    updateNavState()
   }
   // One job changed, from the event stream: this world's only. A plan that
   // ended may have stored stages, so that asks the server again.
@@ -5218,7 +4962,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (erosionRunCount >= 1) {
       saveChainActive = true
       try {
-        // Only when missing, like the restore's and the migration's chains:
+        // Only when missing, like the restore's chain:
         // the step-0 sliders recompute the climate as they move, so one that
         // exists is current. Recomputing it anyway made a new climate, and a
         // new climate drops the step's refinement (2026-09-28).
@@ -5351,8 +5095,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     invalidateAfter('tectonics')
     restoredRefinement = refined
     forgetSavedWorldId()
-    // The previous world's peoples start on the previous world's land.
-    migrationOrigins = []
     // A replay still running for the previous world stops in the worker.
     replaying = null
     replayedHistory = null
@@ -5635,33 +5377,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // so no flicker) — the previewed overlay disappears when the mouse is away.
   ecologyPanel.addEventListener('mouseleave', clearPreview)
 
-  // Migration panel: 3 race enable/disable icon-toggles + the 3 sliders. Spread +
-  // sea-crossing recompute (debounced); arrow threshold is a render-only knob
-  // (the arrow tree — Phase 3), so it just recomposites.
-  const migrationRacesContainer = root.querySelector<HTMLElement>('[data-value="migration-races"]')!
-  MIGRATION_RACES.forEach((race, i) => {
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = 'icon-button ecology-cat is-active'
-    // Species name + help from the catalog (species.*), and data-help so
-    // the shared hover card explains what clicking one does.
-    // The key stays on the button, not just its answer, so a language switch
-    // finds it again (see i18n/relabel) — the icon carries no word of its own.
-    btn.dataset.tAria = `species.${race.id}.label`
-    btn.setAttribute('aria-label', t(`species.${race.id}.label` as TKey))
-    btn.dataset.help = `species.${race.id}`
-    const img = document.createElement('img')
-    img.src = `/icons/${race.icon}.png`
-    img.alt = ''
-    btn.appendChild(img)
-    btn.addEventListener('click', () => {
-      migrationRaceEnabled[i] = !migrationRaceEnabled[i]
-      btn.classList.toggle('is-active', migrationRaceEnabled[i])
-      requestMigration()
-    })
-    migrationRacesContainer.appendChild(btn)
-  })
-
   // EVERYTHING THE SCREEN SAYS ITSELF, said again — what onLocaleChange calls
   // after `relabel` has done the markup.
   //
@@ -5679,22 +5394,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     setArcheanRunning(archeanRunning)
     sayTectonicsButton(tectonicsRunning)
     showAbundanceFor(pickedEcologyField)
-    // The species buttons are an icon and an accessible name, and they live in
-    // the old panel row, which relabel(sidebar.body) does not reach.
-    relabel(migrationRacesContainer)
     // The pill's words are read from the catalog on every update.
     updateProgress()
     renderLegends()
   }
-  let migrationDebounce: ReturnType<typeof setTimeout> | undefined
-  const scheduleMigration = (): void => {
-    if (tectonicsRunning) return
-    clearTimeout(migrationDebounce)
-    migrationDebounce = setTimeout(requestMigration, 150)
-  }
-  migrationSpreadInput.addEventListener('input', () => { migrationSpreadLabel.textContent = migrationSpreadInput.value; scheduleMigration() })
-  migrationSeaInput.addEventListener('input', () => { migrationSeaLabel.textContent = migrationSeaInput.value; scheduleMigration() })
-  migrationThresholdInput.addEventListener('input', () => { migrationThresholdLabel.textContent = migrationThresholdInput.value; updateOverlays() })
 
   // Per-panel reset: that stage's controls back to their declared defaults, then
   // recompute. Which controls those are comes from the stage table — see resetInputs.
@@ -5747,98 +5450,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showAbundanceFor(pickedEcologyField)
     requestEcology()
   })
-  resetMigrationButton.addEventListener('click', () => {
-    resetInputs('migration')
-    migrationRaceEnabled.fill(true)
-    for (const btn of migrationRacesContainer.querySelectorAll('.ecology-cat')) btn.classList.add('is-active')
-    migrationOrigins = [] // re-auto-place at the default cradles
-    if (lastEcologyFields.carryingCapacity) autoPlaceMigrationOrigins()
-    requestMigration()
-  })
-
-  // --- Phase 2b: drag a migration origin marker to reposition it ---
-  const originGhost = document.createElement('div')
-  originGhost.className = 'migration-origin-ghost'
-  originGhost.hidden = true
-  root.appendChild(originGhost)
-  let draggingOriginRace = -1
-
-  // Pointer → full-res map texel, through the view's pick of what is drawn.
-  const pointerToTexel = (): { mx: number; my: number } | null => {
-    const at = flatView.groundAt(flatView.scene.pointerX, flatView.scene.pointerY)
-    return at ? { mx: at.u * MAP_WIDTH, my: at.v * MAP_HEIGHT } : null
-  }
-  // Nearest land cell (coarse grid) to a texel; spirals out if it lands on ocean.
-  const snapToLandCell = (mx: number, my: number): number => {
-    const cc = lastEcologyFields.carryingCapacity
-    if (!cc) return -1
-    const rx = ecologyResX
-    const ry = ecologyResY
-    const gx0 = wrapValue(Math.floor((mx / MAP_WIDTH) * rx), rx)
-    const gy0 = wrapValue(Math.floor((my / MAP_HEIGHT) * ry), ry)
-    const isLand = (i: number): boolean => cc[i] !== ECOLOGY_OCEAN
-    if (isLand(gy0 * rx + gx0)) return gy0 * rx + gx0
-    for (let r = 1; r < Math.max(rx, ry); r++) {
-      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
-        const ni = wrapValue(gy0 + dy, ry) * rx + wrapValue(gx0 + dx, rx)
-        if (isLand(ni)) return ni
-      }
-    }
-    return -1
-  }
-  flatView.scene.onPointerObservable.add((info) => {
-    if (panelIndex !== MIGRATION_PANEL_INDEX || !lastMigration) return
-    const { resX, resY } = lastMigration
-    if (info.type === PointerEventTypes.POINTERDOWN) {
-      const t = pointerToTexel()
-      if (!t) return
-      const hitR = MAP_WIDTH * 0.03
-      let best = -1
-      let bestD = hitR
-      for (const o of migrationOrigins) {
-        if (!migrationRaceEnabled[o.race]) continue
-        const gy = Math.floor(o.cell / resX)
-        const gx = o.cell - gy * resX
-        const ox = ((gx + 0.5) / resX) * MAP_WIDTH
-        const oy = ((gy + 0.5) / resY) * MAP_HEIGHT
-        const dx = Math.min(Math.abs(t.mx - ox), MAP_WIDTH - Math.abs(t.mx - ox))
-        const dy = Math.min(Math.abs(t.my - oy), MAP_HEIGHT - Math.abs(t.my - oy))
-        const d = Math.hypot(dx, dy)
-        if (d < bestD) { bestD = d; best = o.race }
-      }
-      if (best >= 0) {
-        draggingOriginRace = best
-        flatView.setPanEnabled(false)
-        const [r, g, b] = MIGRATION_RACES[best].rgb
-        originGhost.style.background = `rgb(${r},${g},${b})`
-        originGhost.style.left = `${info.event.clientX}px`
-        originGhost.style.top = `${info.event.clientY}px`
-        originGhost.hidden = false
-      }
-    } else if (info.type === PointerEventTypes.POINTERMOVE && draggingOriginRace >= 0) {
-      originGhost.style.left = `${info.event.clientX}px`
-      originGhost.style.top = `${info.event.clientY}px`
-    } else if (info.type === PointerEventTypes.POINTERUP && draggingOriginRace >= 0) {
-      const t = pointerToTexel()
-      originGhost.hidden = true
-      flatView.setPanEnabled(true)
-      const race = draggingOriginRace
-      draggingOriginRace = -1
-      if (t) {
-        const cell = snapToLandCell(t.mx, t.my)
-        const o = migrationOrigins.find((o) => o.race === race)
-        if (cell >= 0 && o) { o.cell = cell; requestMigration() }
-      }
-    }
-  })
 
   const regenerate = (): void => {
     stopSim()
     ctx.notifications.clearAll()
     clearEventMarkers()
     invalidateAfter('tectonics')
-    migrationOrigins = [] // fresh world → re-auto-place origins on the next migration open
     erosionRunCount = 0
     // A genuinely different world, so it must not inherit the previous one's
     // identity — otherwise saving would overwrite that world on the server.
@@ -5875,7 +5492,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ctx.notifications.clearAll()
     clearEventMarkers()
     invalidateAfter('tectonics')
-    migrationOrigins = []
     erosionRunCount = 0
     // Back at the hand-over: the tectonics runs are undone, the Archean's stand.
     history.tectonics = []
@@ -6026,11 +5642,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (index > panelIndexOf('climate') && erosionRunCount < 1) return t('generator.notify.needsErosion')
     return null
   }
-  // Migration is carried as `aside`: it is reachable but not part of the chain
-  // the other steps form, and it leaves the generator for a screen of its own
-  // later. Dropping it from the bar now would make it unreachable — the arrows
-  // that used to reach it are gone — which is a feature removed by accident
-  // rather than decided.
   // The column, and step 0 moving into it. The other steps keep their controls
   // in the panel row along the foot for now; each moves in its own step, so a
   // broken one is always traceable to the step that broke it.
@@ -6100,7 +5711,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   relabel(sidebar.foot)
 
   const stepBar = createStepBar(root, {
-    steps: STEPS.map((s) => ({ id: s.id, aside: s.aside === true })),
+    steps: STEPS.map((s) => ({ id: s.id, mark: s.mark })),
     stepKeys: 'generator.step',
     onSelect: (index) => {
       if (index === panelIndex) return
@@ -6141,9 +5752,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // The climate step is done when its refinement is.
     climate: () => lastRefined !== null,
     ecology: () => hasEcologyData(),
-    // Nothing to compute yet: the step holds no job.
-    finishing: () => false,
-    migration: () => lastMigration !== null,
+    // Refined on the server: level 1 of this terrain is there.
+    finishing: () => finishingLevel() >= 1,
   }
 
   // The bar shows the whole chain at once, so it is repainted as a whole:
@@ -6197,9 +5807,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       else if (lastRiverData === null && erosionRunCount >= 1 && !hydrologyInFlight) requestHydrology()
       else if (index === ECOLOGY_PANEL_INDEX && lastRiverData !== null && !hasEcologyData()) requestEcology()
     }
-    // Migration ensures the whole upstream chain, auto-places origins the first
-    // time, then computes.
-    if (index === MIGRATION_PANEL_INDEX && lastMigration === null) void ensureMigration()
     // The finishing step asks the server for its world's job on entry.
     if (STEP_IDS[index] === 'finishing') void refreshFinishing()
     else stopFinishingWatch()

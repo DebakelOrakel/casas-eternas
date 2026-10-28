@@ -18,13 +18,12 @@ import type { SavedField } from '../fields/fieldMesh'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { defaultWeatherParams, type WeatherParams } from '../climate/weather'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
-import { computeMigration } from '../migration/migrationField'
 import { collectVolcanoes } from '../tectonics/volcanoes'
 import { computeCratonOldnessField } from '../crust/raftField'
-import type { WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerMigrationDataMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
+import type { WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
-// tectonics, erosion, climate, hydrology, ecology, migration — and runs them on
+// tectonics, erosion, climate, hydrology, ecology — and runs them on
 // demand. Only the rendered RGBA buffer and the handful of numbers the UI
 // displays ever leave.
 //
@@ -35,8 +34,7 @@ import type { WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesi
 // is the body of the message posted here. What stays here is what the
 // screen sees and the engine does not compute: the picture's colours, its
 // hillshade and its overlays (render/), from the engine's elevation and
-// the world's snapshot; the migration (its own screen, later), from what
-// the engine gives of the stages.
+// the world's snapshot.
 //
 // **This module does not know it is in a worker.** Results leave through an
 // injected emitter rather than `self.postMessage`, messages arrive through
@@ -122,8 +120,7 @@ function dropHandover(): void {
   handoverMantle = null
 }
 // The last render's raw elevation on the world raster: what the stages
-// need before they run, and what the migration and the screen's physical
-// raster read.
+// need before they run, and what the screen's physical raster reads.
 let lastRawElevations: Float32Array | null = null
 // The DISPLAY-space elevations of the last render (redistributed values the
 // map colors were computed from, with their grid size) — retained for the
@@ -139,8 +136,7 @@ let routed = false
 
 // WHAT THE STAGES HAVE COMPUTED, as far as this module needs to know: the
 // results are the engine's; here, whether a climate stands (a stage that
-// needs one declines without it), the hydrology's generation and what the
-// migration reads.
+// needs one declines without it) and the hydrology's generation.
 //
 // One flag per stage, cleared by one rule — "invalidation is derived"
 // below — rather than by hand at every site, which is how the climate and
@@ -153,12 +149,6 @@ let climateDone = false
 // terrain the world has since moved off from publishing onto the new one.
 let hydrologyGeneration = 0
 let hydrologyInFlight = false
-interface EcologyResult {
-  // Cached from the last ecology run — the initial-migration step reads it as
-  // the population/density driver.
-  carryingCapacity: Float32Array
-}
-let ecology: EcologyResult | null = null
 
 // The tectonics panel's controls for the history (tectonicsInputParams).
 let historyControls: { alluvium: number; rockContrast: number; weather: WeatherParams } = { alluvium: TECTONICS_INPUTS.alluvium.default, rockContrast: TECTONICS_INPUTS.rockContrast.default, weather: defaultWeatherParams() }
@@ -183,10 +173,7 @@ function clearResult(id: StageId): void {
       hydrologyGeneration += 1
       return
     case 'ecology':
-      ecology = null
-      return
-    case 'migration':
-      // Nothing retained: its four rasters go straight to the screen.
+      // The fields go straight to the screen; nothing is kept here.
       return
   }
 }
@@ -794,10 +781,6 @@ function handleEcologyRun(message: Extract<WorkerInboundMessage, { type: 'ecolog
     weights: message.weights,
   })
   routed = true
-  // Cache a copy of carrying capacity BEFORE the buffers below are transferred
-  // (transfer neuters them) — the migration step reads it.
-  const capacity = body.fields.find((f) => f.id === 'carryingCapacity')
-  ecology = capacity ? { carryingCapacity: capacity.data.slice() } : null
   const fields = body.fields.map((f) => ({ id: f.id, data: f.data.buffer as ArrayBuffer }))
   const fine = body.fine.fields.map((f) => ({ id: f.id, data: f.data.buffer as ArrayBuffer }))
   const ecologyMessage: WorkerEcologyDataMessage = {
@@ -824,31 +807,6 @@ function handleEcologyMonth(message: Extract<WorkerInboundMessage, { type: 'ecol
     data: body.data.buffer as ArrayBuffer,
   }
   emit(reply, [reply.data])
-}
-
-function handleMigrationRun(message: Extract<WorkerInboundMessage, { type: 'migrationRun' }>): void {
-  // Needs ecology's carrying capacity (density) + the current climate/hydrology
-  // for the cost field: the climate's land rain and the discharge on the
-  // climate's chart, as the engine gives them (the migration runs on the
-  // chart — its own screen, later; not one of DEC-0036 phase 7's stages).
-  if (!world || era !== 'plates' || !lastRawElevations || !worldDomain) { decline('migration', 'tectonics'); return }
-  if (!climateDone) { decline('migration', 'climate'); return }
-  if (!ecology) { decline('migration', 'ecology'); return }
-  const inputs = world.migrationInputs()
-  const mig = computeMigration(ecology.carryingCapacity, inputs.precipitation, lastRawElevations, inputs.discharge, inputs.maxDischarge, message.origins, worldDomain, {
-    spreadBudget: message.spreadBudget,
-    seaCrossing: message.seaCrossing,
-  })
-  const migrationMessage: WorkerMigrationDataMessage = {
-    type: 'migrationData',
-    resX: mig.resX,
-    resY: mig.resY,
-    race: mig.race.buffer as ArrayBuffer,
-    density: mig.density.buffer as ArrayBuffer,
-    flow: mig.flow.buffer as ArrayBuffer,
-    predecessor: mig.predecessor.buffer as ArrayBuffer,
-  }
-  emit(migrationMessage, [migrationMessage.race, migrationMessage.density, migrationMessage.flow, migrationMessage.predecessor])
 }
 
 // Posts the retained display elevations of the last completed render (a
@@ -1195,9 +1153,9 @@ function resetGenesis(): void {
 // worker understands is a list you can read, and so a new one cannot silently
 // land in the wrong branch.
 
-// One gesture, seven stages. The stage-specific half is "what does this stage go
+// One gesture, six stages. The stage-specific half is "what does this stage go
 // back to"; the generic half — discard everything downstream — comes from the
-// chain, so the four stages that never had a reset get one for free.
+// chain, so the stages that never had a reset get one for free.
 //
 // Exhaustive over StageId: a new stage cannot be added without deciding what
 // resetting it means.
@@ -1215,7 +1173,6 @@ function handleResetStage(message: Extract<WorkerInboundMessage, { type: 'resetS
     case 'climate':
     case 'hydrology':
     case 'ecology':
-    case 'migration':
       // Nothing to go back to: these stages have no state of their own beyond
       // their result, so dropping it IS the reset — here and in the engine.
       // Re-running them is the screen's business — it holds the settings.
@@ -1238,7 +1195,6 @@ const HANDLERS: { [K in WorkerInboundMessage['type']]: (message: WorkerInboundMe
   hydrologyRun: () => handleHydrologyRun(),
   ecologyRun: (m) => handleEcologyRun(m as Extract<WorkerInboundMessage, { type: 'ecologyRun' }>),
   ecologyMonth: (m) => handleEcologyMonth(m as Extract<WorkerInboundMessage, { type: 'ecologyMonth' }>),
-  migrationRun: (m) => handleMigrationRun(m as Extract<WorkerInboundMessage, { type: 'migrationRun' }>),
   serializeWorld: () => handleSerializeWorld(),
   restoreWorld: (m) => handleRestoreWorld(m as Extract<WorkerInboundMessage, { type: 'restoreWorld' }>),
   replayRuns: (m) => void handleReplayRuns(m as Extract<WorkerInboundMessage, { type: 'replayRuns' }>),
@@ -1333,9 +1289,9 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
 
 // The stage whose compute a message runs, where a failure must reach the
 // screen: it waits for the answer (the climate's two runs, the hydrology,
-// the ecology and its month, the migration).
+// the ecology and its month).
 const COMPUTE_STAGE: Partial<Record<WorkerInboundMessage['type'], StageId>> = {
-  climateRun: 'climate', climateRefine: 'climate', hydrologyRun: 'hydrology', ecologyRun: 'ecology', ecologyMonth: 'ecology', migrationRun: 'migration',
+  climateRun: 'climate', climateRefine: 'climate', hydrologyRun: 'hydrology', ecologyRun: 'ecology', ecologyMonth: 'ecology',
 }
 
 export function dispatch(message: WorkerInboundMessage): void {

@@ -43,8 +43,8 @@
   flex-shrink: 0;
 }
 
-/* The step set apart from the chain drifts to the right and drops its
-   connector, so the eye reads six linked steps and one thing beside them. */
+/* The step set apart drifts to the right and drops its connector, so the
+   eye reads the linked steps and one thing beside them. */
 .step-bar__slot--aside {
   margin-left: auto;
 }

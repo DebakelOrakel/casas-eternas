@@ -91,7 +91,7 @@ climate/    the climate's field mesh and chart (climateMesh, climateField, clima
             the climate at a point (climatePoints), the biomes and Köppen classes, the
             refinement's types, colours and tuning
 ecology/    the ecology's fields, colours, controls and tuning
-migration/  still on the climate's chart (its own screen, later); render/
+render/     the picture: the relief's shade, the elevation image, the continent names
 ```
 
 **A new simulated field goes on a mesh, not on the 2:1 raster** (DEC-0036,
@@ -234,7 +234,7 @@ The tuning that makes a world is the engine's (`climate_tune_params.rs`,
 `tectonics_tune_params.rs` …), and the pipeline versions hash it as the
 engine gives it (`pipeline/engineConstants.ts`, `world/worldTuning.ts`,
 `world/meshArtifacts.ts` MESH_BAKE_CONSTANTS). The `xyTuneParams.ts`
-objects left here (climate, elevation, ecology, surface, migration) serve
+objects left here (climate, elevation, ecology, surface) serve
 the read side and the screen; they are not hashed. Each controllable stage
 declares its sliders in an `xyInputParams.ts` (min/max/step/default/unit/i18n
 key), and `world/save/worldSpec.ts` turns those declarations into the

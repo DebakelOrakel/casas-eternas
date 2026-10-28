@@ -21,7 +21,7 @@ import type { EcologyFieldId } from '../../generator/ecology/ecologyField'
 import type { OverlayId } from './overlays'
 import { PROGRESS_STEPS } from '../../world/worldProgress'
 
-export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'ecology' | 'finishing' | 'migration'
+export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'ecology' | 'finishing'
 
 export interface Step {
   id: StepId
@@ -58,10 +58,11 @@ export interface Step {
   // paints one field over the whole land, so a second could only overwrite the
   // first. Empty everywhere but Ecology.
   fields: readonly EcologyFieldId[]
-  // Reachable, but not a link in the chain — migration leaves the generator for
-  // a screen of its own later, and dropping it from the bar now would make it
-  // unreachable by accident rather than by decision.
-  aside?: boolean
+  // What the bar's mark says instead of the number: the finishing's F. The
+  // finishing holds the detail jobs on the finished world, and is outside the
+  // numbering; it stays linked to the step before it, and it is the last
+  // link of the chain that a world's progress is counted on.
+  mark?: string
 }
 
 // A pick group: its heading's catalog base, and its layers in the order the
@@ -172,15 +173,7 @@ export const STEPS: readonly Step[] = [
     groups: [],
     defaults: ['terrain', 'names', 'rivers'],
     fields: [],
-  },
-  {
-    id: 'migration',
-    stage: 'migration',
-    overlays: ['terrain', 'names', 'migration'],
-    groups: [],
-    defaults: ['names', 'migration'],
-    fields: [],
-    aside: true,
+    mark: 'F',
   },
 ]
 
@@ -231,11 +224,11 @@ if (String(pipelineOrder) !== String(stepped)) {
   throw new Error(`generator steps are out of pipeline order: ${stepped} vs ${pipelineOrder}`)
 }
 
-// A world's progress (world/worldProgress.ts) is counted on this chain without
-// the aside. The world layer names the steps again, since it may not import a
+// A world's progress (world/worldProgress.ts) is counted on this chain. The
+// world layer names the steps again, since it may not import a
 // screen; the two lists must agree, or a saved progress would name a step the
 // bar does not have.
-const chain = STEPS.filter((s) => !s.aside).map((s) => s.id)
+const chain = STEPS.map((s) => s.id)
 if (String(chain) !== String(PROGRESS_STEPS)) {
   throw new Error(`generator step chain ${chain} does not match the progress steps ${PROGRESS_STEPS}`)
 }

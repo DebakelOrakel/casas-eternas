@@ -4,8 +4,8 @@ import { runParamConstants } from './runParams'
 // THE TUNING A WORLD'S RUNS READ: every tuning object and default the
 // history reads — the Archean, the plates, the crust, the mantle, the
 // mesh, the erosion, the climate inside the epochs —, as the engine gives
-// them (generator/pipeline/engineConstants.ts), by group. Not the ecology's and
-// the migration's: no run reads them. Level 1 is the history replayed
+// them (generator/pipeline/engineConstants.ts), by group. Not the ecology's:
+// no run reads it. Level 1 is the history replayed
 // (world/replay.ts), so these are part of the mesh pipeline's version
 // (meshArtifacts.MESH_BAKE_CONSTANTS, 2026-10-17) — a change to any of
 // them makes the levels and the tiles again, and the worlds made before

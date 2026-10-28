@@ -13,8 +13,8 @@ import { readRecipeNumber, readRecipeValue } from './recipeYaml'
 // that concatenated strings out of `input.value`, and a load path that pulled
 // the same keys back one regex at a time. Nothing tied them together, so a key
 // added to one and forgotten in the other would save fine and silently load its
-// default — which is exactly what happened to the migration sliders, present in
-// the UI and in the worker message and absent from every save ever written.
+// default — which is exactly what happened to the migration sliders: they were
+// in the UI and in the worker message, and absent from every save ever written.
 //
 // The order below IS the file order. Changing it changes the bytes of every
 // world.yaml written afterwards, so it is a format decision, not formatting.

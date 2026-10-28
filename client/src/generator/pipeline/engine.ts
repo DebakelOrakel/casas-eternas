@@ -197,11 +197,7 @@ export interface EngineWorld {
   ecology(params: EcologyParams): EcologyBody
   ecologyMonth(field: string, month: number): EcologyMonthBody
   // A stage's reset: its result dropped, and every result that reads it.
-  dropStage(stage: 'climate' | 'hydrology' | 'ecology' | 'migration'): void
-  // What the migration reads of the stages: the climate's land rain on its
-  // chart, the hydrology's discharge as each chart cell's largest over its
-  // nodes (null before the hydrology).
-  migrationInputs(): { precipitation: Float32Array; discharge: Float32Array | null; maxDischarge: number }
+  dropStage(stage: 'climate' | 'hydrology' | 'ecology'): void
 }
 
 export type Shape = 'torus' | 'sphere'
