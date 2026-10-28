@@ -14,13 +14,13 @@ summary.de: Die Laufzeit-Pipeline des Generators — ihr Zustand ist schon nach 
 area: generator
 stage: built
 createdAt: 2026-08-09
-updatedAt: 2026-08-12
+updatedAt: 2026-10-28
 related: [DES-0007]
 ---
 
 One module runs the whole generator — archean, tectonics, erosion, climate,
-hydrology, ecology, migration, the micro-tile inspector, save and restore.
-Nineteen inbound message types, 1503 lines, 39 module-level `let`s, and the one
+hydrology, ecology, migration (removed 2026-10-28), the micro-tile inspector,
+save and restore. Nineteen inbound message types, 1503 lines, 39 module-level `let`s, and the one
 part of the generator the golden harness explicitly does not cover. Until
 2026-08-09 it was a single file called `plateSimulationWorker.ts`; step 1 below
 split it, and the measurements in this document are from before that split.
@@ -128,7 +128,8 @@ unhandled message type is a compile error. It would be reinvented as-is.
 
 The distinction between **steppable** stages (archean and tectonics run
 interactively with start/stop; erosion runs progressively with a progress bar) and
-**one-shot** stages (climate, hydrology, ecology, migration). That is a real
+**one-shot** stages (climate, hydrology, ecology; migration was one until its
+removal on 2026-10-28). That is a real
 difference in kind, not an accident of history, and a runner has to carry it.
 
 ## Reset: the taxonomy
@@ -507,4 +508,7 @@ split `ui/serverIndicator` already makes.
 
 ## Status
 
-implemented — all five steps built 2026-08-09
+implemented — all five steps built 2026-08-09.
+2026-10-28: the migration stage is removed from the chain (DEC-0010 is
+superseded). The text above that names it is history; the chain now ends
+with the finishing step.

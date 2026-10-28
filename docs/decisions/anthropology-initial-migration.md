@@ -17,11 +17,18 @@ summary.de: PROTOTYP — die erste Ausgabe der Anthropologie. Setzt die Völker 
   über einer groben Bevölkerungsdichte. Steuerbar und deterministisch: Der
   Nutzer setzt die Ursprünge, die Ausbreitung ist deterministisch.
 area: generator
-stage: built
+stage: superseded
+supersededBy: DES-0032
 createdAt: 2026-07-26
-updatedAt: 2026-08-12
+updatedAt: 2026-10-28
 related: [DEC-0007]
 ---
+
+> **Removed 2026-10-28.** The generator's migration step is gone: its panel,
+> races, origins, overlay, pipeline stage and worker messages were deleted.
+> The incubator spreads the people now (DES-0031, DES-0032). The text below
+> is the record of the prototype as it was built. The paths and names in it
+> do not exist in the client any more.
 
 The **first concrete Anthropology step** (see `anthropology.md` for the whole
 human layer). Goal: a *very rough* first look at how peoples spread and where they
@@ -180,5 +187,7 @@ like Ecology.
 
 ## Status
 
-proto BUILT — all 5 themes decided, Phases 1–3 built (worker core, panel +
-drag origins, ribbon arrow-tree)
+SUPERSEDED 2026-10-28 by the incubator (DES-0031, DES-0032). The proto was
+built (all 5 themes decided, Phases 1–3: worker core, panel + drag origins,
+ribbon arrow-tree), then removed from the generator. The Rust engine still
+exports `migration_inputs`; the client does not call it.

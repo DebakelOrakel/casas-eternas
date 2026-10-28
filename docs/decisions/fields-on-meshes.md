@@ -23,7 +23,7 @@ summary.de: Die Raster-Stufen des Generators verlassen die 2:1-Karte. Die groben
 area: generator
 stage: built
 createdAt: 2026-10-11
-updatedAt: 2026-10-14
+updatedAt: 2026-10-28
 related: [DES-0025, DEC-0035, DES-0017, DEC-0029]
 ---
 
@@ -201,6 +201,11 @@ done before or beside it.
   generator does everywhere.
 
 ## Status
+
+2026-10-28: the generator's migration is removed (DEC-0010 is
+superseded). The entries below that name it as a raster reader ("its own
+screen, later", its costs and river corridors) are history; no screen
+reads those rasters for it now.
 
 2026-10-15: **a performance pass, the generator frozen.** Every change
 keeps the results byte-identical (golden's 46 stages × 3 seeds against

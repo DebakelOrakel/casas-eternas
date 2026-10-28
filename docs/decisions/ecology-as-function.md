@@ -18,6 +18,7 @@ summary.de: Die Ökologiefelder werden zu einer lokalen Regel über das grobe Kl
 area: generator
 stage: building
 createdAt: 2026-09-29
+updatedAt: 2026-10-28
 concepts: [resource.carryingCapacity, generator.concept.resource-roles]
 related: [DEC-0008]
 ---
@@ -27,7 +28,7 @@ related: [DEC-0008]
 The ecology fields (carrying capacity and 13 resources, see
 [ecology.md](./ecology.md)) are computed on the 256×128 climate grid,
 62 km a cell, stored in the save at that grid, and read by the migration
-at that grid. The finished map is meant to zoom to the ground: some 122 m
+at that grid (the migration was removed on 2026-10-28). The finished map is meant to zoom to the ground: some 122 m
 a cell ("128K", [design/adaptive-mesh.md](../design/adaptive-mesh.md)),
 the 300 m hex of [hex-tiling.md](./hex-tiling.md), in tiles computed on
 demand ([adaptive-mesh.md](./adaptive-mesh.md), fork 3: no global raster
@@ -96,7 +97,7 @@ is downscaled by the terrain in the tile.
 - **The generator shows the rule at 2048**, on the biome map's raster,
   so the ecology overlays and the biome map agree. The migration keeps
   its grid for now and reads the carrying capacity reduced to it; moving
-  it is its own step.
+  it is its own step. (Void since 2026-10-28: the migration is removed.)
 
 ## What this changes
 
@@ -178,3 +179,6 @@ pixel at 2048×1024 (prepareEcology, some 2 s, kept by the worker while only
 the sliders move; applyEcology, some 0.3 s), the map and its readout show
 it, the migration reads its means per climate cell, the save carries its
 inputs only (formatVersion 7). Steps 3–4 open.
+
+2026-10-28: the migration is removed from the generator (DEC-0010 is
+superseded). No reader of the means per climate cell is left for it.

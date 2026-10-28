@@ -23,7 +23,7 @@ summary.de: Wie Torus und Kugel einen Generator und einen Screen teilen, ohne si
 area: generator
 stage: decided
 createdAt: 2026-10-09
-updatedAt: 2026-10-12
+updatedAt: 2026-10-28
 related: [DES-0017, DEC-0029, DEC-0015, DEC-0024, DES-0025]
 ---
 
@@ -217,6 +217,10 @@ flat map's scene and fine relief, the tile sampler, the incubator).
 - Whether the flat map gets a camera reset like the globe's.
 
 ## Status
+
+2026-10-28: the generator's migration step is removed (DEC-0010 is
+superseded; the incubator spreads the people now). The entries below that
+name the migration, its origins, arrows or lock are history.
 
 2026-10-14: THE PLATES IN METRES (DEC-0036 phase 8f, fields-on-meshes.md).
 The plates' kinematics and the features' spacing along a boundary were

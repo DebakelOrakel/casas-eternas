@@ -20,7 +20,7 @@ summary.de: Texte der Client-Oberfläche kommen aus dem Code in JSON-Kataloge, z
 area: ui
 stage: built
 createdAt: 2026-07-28
-updatedAt: 2026-09-20
+updatedAt: 2026-10-28
 related: [DEC-0012]
 ---
 
@@ -110,6 +110,8 @@ icon and slider gets both.
   stays `caveman.png`. The code identifiers (`MIGRATION_RACES`, the `race` field, the
   `'caveman'` id, related comments) remain to be renamed in a **separate** mechanical
   refactor; key strings are independent of variable names and can be used now.
+  *(2026-10-28: void. The generator's migration is removed, with `MIGRATION_RACES`,
+  the races and the `species` catalog.)*
 
 ## Catalog format & type safety
 
@@ -202,6 +204,7 @@ The legacy `worldgen-sphere` and `mars` screens are out.
 
 - Building any of the above (this is a design decision, nothing is implemented yet).
 - The `race` → `species` identifier refactor (separate mechanical change, noted above).
+  Void since 2026-10-28: the code it was to rename is removed.
 - Confirming/removing i18n from the worker import graph (open question above).
 
 ## Addendum 2026-09-20 — the areas as they now stand
@@ -222,6 +225,9 @@ header carries the same split beside the code.
 | `readout` | a line of the map's hover readout | 32 |
 | `overlay` | a map layer, its legend included | 57 |
 | `biome` / `resource` / `species` | one branch per member of an enum the generator computes | 15 / 28 / 6 |
+
+(2026-10-28: the `species` catalog is removed with the generator's migration.
+The incubator's catalogs — `plant`, `wood`, `animal` — came after this table.)
 
 Three of these group by SCREEN REGION, two by WHAT THE STRING IS, three by
 VOCABULARY. That is not untidiness: a key is looked for by the question its

@@ -18,7 +18,7 @@ summary.de: Der Generator bekommt eine zweite Engine in Rust, nur wegen der
 area: generator
 stage: building
 createdAt: 2026-10-19
-updatedAt: 2026-10-20
+updatedAt: 2026-10-28
 related: [DES-0001, DES-0006, DEC-0039, DEC-0032, DEC-0043]
 ---
 
@@ -793,7 +793,8 @@ BUILDING since 2026-10-20:
   test runs it on the annual climate and on the refinement with two sets
   of sliders and four months, and in the restored worlds: equal to
   TypeScript's in both builds. The migration does not cross: it is to
-  leave the generator.
+  leave the generator. (It left on 2026-10-28: the client's migration is
+  removed.)
 - Level 1 by replay through the boundary, native only (fork 3): a
   `Replay` object runs the plan at the level's budget one epoch at a
   time, says where a checkpoint is due and gives its snapshot, starts
@@ -893,7 +894,10 @@ BUILDING since 2026-10-20:
   climate on a sample raster (`Preview`, keeping each size's climate mesh
   with its walk), the lattice for the save, the Archean's controls, a
   stage's reset (`dropStage`) and what the migration reads
-  (`migrationInputs`; the migration stays TypeScript). The smoke test
+  (`migrationInputs`; the migration stays TypeScript). (2026-10-28: the
+  client's migration is removed and does not call `migrationInputs` now.
+  The frozen engine keeps `migration_inputs`, unused; the smoke test
+  still compares it, native against WASM.) The smoke test
   checks each against TypeScript. The client's build needs `make engine`,
   and the image builds the WASM in its engine stage. Checked: a session
   through the runtime before the switch (a worktree of HEAD) and after it

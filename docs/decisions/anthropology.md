@@ -15,7 +15,7 @@ summary.de: PROTOTYP — die menschliche Ebene der Weltgenerierung nach der Öko
 area: generator
 stage: idea
 createdAt: 2026-07-26
-updatedAt: 2026-08-12
+updatedAt: 2026-10-28
 related: [DEC-0008, DEC-0010]
 ---
 
@@ -72,14 +72,15 @@ Two candidate models were weighed:
 
 ### Bounded dispersal sketch (to flesh out later)
 
-> **The first step of this is now being designed in detail as the "initial
-> migration" — see `anthropology-initial-migration.md`.** That refines Origin +
-> Spread below into: **user-placed origins, one per ~3 toggleable races**, a
+> **The first step of this was built as the "initial migration" — see
+> `anthropology-initial-migration.md` (DEC-0010). It was removed from the
+> generator on 2026-10-28; the incubator spreads the people now (DES-0031,
+> DES-0032).** It refined Origin + Spread below into: **user-placed origins, one per ~3 toggleable races**, a
 > **multi-source least-cost (Dijkstra) spread** whose **predecessor tree +
 > population-flow accumulation** render as a **migration arrow-tree** (width =
 > flow, colour = race) over a coarse density background. Steerable-deterministic
 > (user places origins, spread is deterministic). Settlements / densification /
-> contact graph (steps below) come after.
+> contact graph (steps below) were to come after.
 
 Keep it a few coarse epochs, **not** an agent sim:
 
@@ -127,4 +128,6 @@ genuine link between the two panels; see the same note in `ecology.md`.
 
 ## Status
 
-proto / brainstorming — comes AFTER the Ecology panel is built
+proto / brainstorming — comes AFTER the Ecology panel is built.
+2026-10-28: the generator's migration step (DEC-0010) is removed. The human
+layer continues in the incubator (DES-0031, DES-0032), not in the generator.

@@ -22,6 +22,7 @@ summary.de: Die feinen Ebenen (L2, L3) kacheln die Kugel mit den sechs
 area: generator
 stage: decided
 createdAt: 2026-10-17
+updatedAt: 2026-10-28
 related: [DEC-0032, DEC-0031, DEC-0035, DES-0017, DES-0022]
 ---
 
@@ -245,7 +246,8 @@ player made: the screen's finishing step stays locked for a sphere world
   again too — against a version per shape every reader of a stage would
   have to ask the world's shape for.
 - **The worker** plans and bakes a sphere world's tiles; the finishing step
-  is unlocked for a sphere world (the migration stays locked); the
+  is unlocked for a sphere world (the migration stayed locked; it is
+  removed since 2026-10-28); the
   incubator leaves sphere worlds out.
 - `harness:mesh` [1t] on [1g]'s sphere world: a tile at a cube corner meets
   its four neighbours on three faces (the shared row bit for bit, every

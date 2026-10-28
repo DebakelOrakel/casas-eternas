@@ -15,7 +15,7 @@ summary.de: Plan für zwei verbundene Umbauten — ein Modul `world` als der ein
 area: platform
 stage: built
 createdAt: 2026-08-09
-updatedAt: 2026-08-12
+updatedAt: 2026-10-28
 related: [DES-0008]
 ---
 
@@ -203,6 +203,8 @@ only a field name (`archeanEpochs`), not code — there is no real cycle.
 **B1. Reference implementation in `migration/`. BUILT 2026-08-09**, verified
 38 of 38 stages byte-identical. One file, 193 lines, small enough that the
 pattern rather than the module is what one sees, and it is going to grow.
+(`migration/` was removed on 2026-10-28 with the migration step. The pattern
+stays: `InputParam` lives in `core/inputParams.ts`, see B4.)
 
 Two things the reference settled that the plan had not:
 
@@ -437,7 +439,8 @@ What makes it more than a sign test is the `dryLand` term: a terminal basin belo
 sea level holding no water IS land, and every field that skips ocean has to skip
 it the same way or the biome map and the ecology mask disagree about one cell.
 
-**Deliberately unchanged:** ecology, migration and hydrology still derive land
+**Deliberately unchanged:** ecology, migration (removed 2026-10-28) and
+hydrology still derive land
 from `precipitation !== OCEAN_PRECIP`. That is the same mask propagated through a
 field, not a second definition — precipitation writes the sentinel exactly where
 the ocean test says ocean. Passing the mask explicitly instead is a signature
@@ -592,7 +595,8 @@ Split by audience, not by topic:
 4. **New i18n keys.** The input declaration references existing keys. Any slider
    without a help key needs new ones, to be approved first.
 5. **`world.yaml` gains the migration sliders.** Old saves read defaults; whether
-   that warrants a format version is undecided.
+   that warrants a format version is undecided. *Closed 2026-10-28: the
+   migration step is removed, so the question is void.*
 
 ## Closed after the plan (2026-08-09)
 
@@ -627,4 +631,6 @@ Split by audience, not by topic:
 ## Status
 
 COMPLETE 2026-08-09 — parts 0, A, B, C and D all built and verified.
+The migration module (B1's reference) was removed on 2026-10-28; the text
+names it as it was.
 Follow-ups and the questions the work opened are listed at the end

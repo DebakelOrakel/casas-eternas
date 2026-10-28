@@ -18,7 +18,7 @@ area: generator
 stage: idea
 createdAt: 2026-09-20
 related: [DEC-0015, DEC-0035]
-updatedAt: 2026-10-09
+updatedAt: 2026-10-28
 ---
 
 The torus was chosen over the sphere before any rationale was written
@@ -67,6 +67,8 @@ arithmetic):
 | ecology + migration | 1156 | 22 | distance queries only |
 | render | 885 | 11 | equirect texture, hillshade neighbours |
 | pipeline | 1904 | 0 | topology-agnostic |
+
+The migration was removed on 2026-10-28; the counts stay as measured.
 
 ## Which sphere substrate keeps the most
 
