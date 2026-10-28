@@ -57,7 +57,7 @@ import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
 import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/climate/biomes'
 import { evaporationPotential } from '../../generator/surface/hydrology'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
-import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
+import { ECOLOGY_FIELD_IDS, ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ELEVATION_ENCODING, decodeLayer } from '../../world/save/worldLayers'
 import { readField, readMeshEpochFiles, readRefined, refuseFormerRasters, withWorldYaml, writeWorldArchive, type WorldArchiveParts } from '../../world/save/worldArchive'
 import { refinementFits, type RefinedClimate } from '../../generator/climate/refinement'
@@ -66,13 +66,8 @@ import { formatValue, getLocale, t, type TKey } from '../../i18n/i18n'
 import { relabel } from '../../i18n/relabel'
 import { createLayerPanel, type LayerPanel } from '../../ui/layerPanel/LayerPanel'
 import { createPanelToggles } from '../../ui/titleBar/PanelToggles'
-import { OVERLAY_META, OVERLAY_IDS, PICK_GROUPS, RESOURCE_FIELDS, RESOURCES_TITLE, SWITCH_GROUPS, overlayKey, type OverlayId } from './overlays'
-
-// The pick row that paints none of a group's layers (the layer panel): one
-// per group, `none:<index>` for the pick groups (overlays.ts PICK_GROUPS)
-// and `none:fields` for the resource picks.
-const NO_PICK_PREFIX = 'none:'
-const noPickOf = (group: number | 'fields'): string => `${NO_PICK_PREFIX}${group}`
+import { OVERLAY_META, OVERLAY_IDS, overlayKey, type OverlayId } from './overlays'
+import { OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, groupLayers, isNoneLayer, noneLayerId, overlayGroupOf, resourceLayerId } from '../overlayGroups'
 import { STEPS, STEP_IDS, step, type StepId } from './steps'
 import { type ChartSize, CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, eventPictures, type VolcanoMark, eventSymbol, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols } from './mapSymbols'
 import { createHelpTooltip } from '../../ui/help/HelpTooltip'
@@ -137,14 +132,6 @@ import '../../ui/chrome/chrome.css'
 const ECOLOGY_WEIGHT_FIELDS: EcologyFieldId[] = ECOLOGY_ABUNDANCE_GROUPS.flatMap((g) => [...g.fields])
 const ecologyWeightPath = (field: EcologyFieldId): string =>
   `spec.ecology.${ECOLOGY_ABUNDANCE_GROUPS.find((g) => g.fields.includes(field))!.id}.${field}`
-// Per-field icon; every field has its own.
-const FIELD_ICON: Record<EcologyFieldId, string> = {
-  carryingCapacity: 'ecology',
-  arable: 'wheat', fish: 'fish', game: 'deer', pasture: 'pastures',
-  timber: 'timber', salt: 'salt', toolStone: 'stone_axe',
-  copper: 'copper_ore', tin: 'tin_ore', iron: 'iron_ore',
-  silver: 'silver', gold: 'gold', gems: 'gems',
-}
 
 // Plate-boundary line color for the boundaries overlay (drawn main-thread
 // from the worker's boundary mask — see the compositor).
@@ -2778,7 +2765,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const current = step(STEP_IDS[panelIndex])
     for (const id of OVERLAY_IDS) overlaysOn[id] = current.defaults.includes(id)
     if (current.defaults.includes('ecology')) {
-      selectedEcologyField = RESOURCE_FIELDS[0]
+      selectedEcologyField = ECOLOGY_FIELD_IDS[0]
       pickedEcologyField = selectedEcologyField
       showAbundanceFor(pickedEcologyField)
     }
@@ -2854,25 +2841,33 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     hoverTooltip?.refresh()
   }
 
-  const isOverlayId = (id: string): id is OverlayId => id in OVERLAY_META
+  // A row of the layer panel (screens/overlayGroups.ts) that is one of the
+  // generator's layers. The 'ecology' layer is no row: its rows are the
+  // resource fields.
+  const isOverlayId = (id: string): id is OverlayId => id in OVERLAY_META && id !== 'ecology'
+  const RESOURCE_PREFIX = resourceLayerId('' as EcologyFieldId)
+  const resourceOf = (id: string): EcologyFieldId | null => (id.startsWith(RESOURCE_PREFIX) ? (id.slice(RESOURCE_PREFIX.length) as EcologyFieldId) : null)
 
   // Pick one of a group's layers: it comes on, the rest of ITS group goes
   // off, the other groups stay as they are. The groups are the world's
-  // (overlays.ts PICK_GROUPS), the same in every step, and the state is the
-  // ordinary `overlaysOn` — a pick is a switch that turns its siblings off,
-  // not a second kind of thing to keep in sync. A group's "none" switches it
-  // off; the resource picks' "none" switches the ecology layer off.
+  // (screens/overlayGroups.ts), the same in every step, and the state is
+  // the ordinary `overlaysOn` — a pick is a switch that turns its siblings
+  // off, not a second kind of thing to keep in sync. A group's "none"
+  // switches it off; the resources' "none" switches the ecology layer off.
+  // A row the generator has not (the incubator's) does nothing.
   function pickExclusiveOverlay(id: string): void {
-    if (id === noPickOf('fields')) {
+    const field = resourceOf(id)
+    if (field) {
+      selectEcologyField(field)
+      return
+    }
+    const group = overlayGroupOf(id)
+    if (!group || group.kind !== 'one') return
+    if (group.id === 'resources') {
       overlaysOn.ecology = false
-    } else if (id.startsWith(NO_PICK_PREFIX)) {
-      const group = PICK_GROUPS[Number(id.slice(NO_PICK_PREFIX.length))]
-      if (!group) return
-      for (const member of group.members) overlaysOn[member] = false
     } else {
-      const group = PICK_GROUPS.find((g) => g.members.includes(id as OverlayId))
-      if (!group) return
-      for (const member of group.members) overlaysOn[member] = member === id
+      if (!isNoneLayer(id) && !isOverlayId(id)) return
+      for (const member of groupLayers(group).filter(isOverlayId)) overlaysOn[member] = member === id
     }
     updateOverlays()
   }
@@ -2886,15 +2881,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!layerPanel) return
     const onMap = worldShape !== 'sphere' || (paintsGlobe() && globePainted)
     const ecologyAvailable = onMap && overlayAvailable('ecology')
-    layerPanel.refresh((id) => isOverlayId(id)
-      ? { on: overlaysOn[id], available: onMap && overlayAvailable(id) }
-      : id === noPickOf('fields')
-        ? { on: !overlaysOn.ecology, available: true }
-      : id.startsWith(NO_PICK_PREFIX)
-        ? { on: !(PICK_GROUPS[Number(id.slice(NO_PICK_PREFIX.length))]?.members.some((member) => overlaysOn[member]) ?? false), available: true }
+    layerPanel.refresh((id) => {
+      if (isOverlayId(id)) return { on: overlaysOn[id], available: onMap && overlayAvailable(id) }
+      if (id === noneLayerId('resources')) return { on: !overlaysOn.ecology, available: true }
+      if (isNoneLayer(id)) {
+        const group = overlayGroupOf(id)
+        return { on: !(group && groupLayers(group).some((member) => isOverlayId(member) && overlaysOn[member])), available: true }
+      }
       // The PICK, not what a hover is showing: hovering a lever previews the
       // aggregate, and the mark would leave the resource you chose.
-      : { on: overlaysOn.ecology && pickedEcologyField === id, available: ecologyAvailable })
+      const f = resourceOf(id)
+      if (f) return { on: overlaysOn.ecology && pickedEcologyField === f, available: ecologyAvailable }
+      // The incubator's: the generator has no people, no plants, no ice.
+      return { on: false, available: false }
+    })
   }
   // Called whenever overlay data appears/disappears (climate/hydrology computed
   // or invalidated, world re-rendered) so the column + layers stay in sync.
@@ -5700,18 +5700,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   relabel(worldPanel)
 
   // THE LAYERS (ui/layerPanel, 2026-10-28): a column of their own beside the
-  // left one, as the incubator's. Every layer of the world in every step, in
-  // the world's groups (overlays.ts): the switches, the picks of one with
-  // their "none", and the resource fields the ecology layer paints. A row is
-  // greyed out only while its data is not there (refreshOverlayList).
-  // Entering a step still puts its defaults on (showPanel).
-  // The panel's strings are the incubator's until they have a common home.
+  // left one, the incubator's list (screens/overlayGroups.ts). Every layer
+  // of the world in every step: the switches, the picks of one with their
+  // "none", and the resource fields the ecology layer paints; the
+  // incubator's rows too, greyed out. A row is greyed out only while its
+  // data is not there (refreshOverlayList). Entering a step still puts its
+  // defaults on (showPanel).
   layerPanel = createLayerPanel(root, {
-    texts: { title: 'generator.section.overlays.label', active: 'incubator.layers.active', allOff: 'incubator.layers.allOff', defaults: 'incubator.layers.defaults', oneOf: 'incubator.layers.oneOf' },
-    onToggle: (id) => toggleOverlay(id as OverlayId),
-    // Two kinds of pick: a layer of a group, or a resource field the one
-    // ecology layer paints. The id says which.
-    onPick: (id) => (isOverlayId(id) || id.startsWith(NO_PICK_PREFIX) ? pickExclusiveOverlay(id) : selectEcologyField(id as EcologyFieldId)),
+    texts: OVERLAY_PANEL_TEXTS,
+    onToggle: (id) => {
+      if (isOverlayId(id)) toggleOverlay(id)
+    },
+    // A layer of a group, or a resource field the one ecology layer paints.
+    onPick: (id) => pickExclusiveOverlay(id),
     onAllOff: () => {
       for (const id of OVERLAY_IDS) overlaysOn[id] = false
       updateOverlays()
@@ -5723,28 +5724,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       updateOverlays()
     },
   })
-  const overlayRow = (id: OverlayId) => ({ id, helpBase: overlayKey(id), icon: OVERLAY_META[id].icon })
-  layerPanel.setGroups([
-    ...SWITCH_GROUPS.map((g) => ({ title: g.title, kind: 'any' as const, rows: g.members.map(overlayRow) })),
-    // Each pick group opens with its way out, first (2026-09-22): a step
-    // starts painting none of a group's layers unless it names one.
-    ...PICK_GROUPS.map((g, index) => ({
-      title: g.title,
-      kind: 'one' as const,
-      rows: [{ id: noPickOf(index), helpBase: 'overlay.none', icon: '/icons/clear.png' }, ...g.members.map(overlayRow)],
-    })),
-    // The resource picks have a "none" too (2026-09-27): it is how the
-    // ecology layer goes off, and the ecology panel shows the levers of the
-    // whole map while nothing is picked.
-    {
-      title: RESOURCES_TITLE,
-      kind: 'one' as const,
-      rows: [
-        { id: noPickOf('fields'), helpBase: 'overlay.none', icon: '/icons/clear.png' },
-        ...RESOURCE_FIELDS.map((field) => ({ id: field, helpBase: `resource.${field}`, icon: `/icons/${FIELD_ICON[field]}.png` })),
-      ],
-    },
-  ])
+  layerPanel.setGroups(OVERLAY_GROUPS)
   refreshOverlayList()
   // THE PANELS' SWITCHES (ui/titleBar/PanelToggles): the step's actions (the
   // left column) and the layers, each shown and hidden by its switch in the

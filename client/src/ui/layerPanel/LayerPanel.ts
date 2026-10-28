@@ -12,7 +12,9 @@ import './layerPanel.css'
 // The groups come in two kinds: of one choice ('one'), radio rows with
 // "none" among them, the head saying of how many; of switches ('any'),
 // each on or off by itself. A group folds. The head counts what is on and
-// offers "all off" and the defaults. A row's mark is its icon. The legend
+// offers "all off" and the defaults. A group starts folded unless it says
+// it starts open; the viewer's folding is kept, by the group's title, while
+// the panel lives. A row's mark is its icon. The legend
 // stays the screen's own box (ui/legend); no keyboard shortcuts.
 
 // One row: a layer, or a pick of one.
@@ -36,6 +38,8 @@ export interface LayerGroup {
   // Its name's catalog key.
   title: TKey
   kind: 'one' | 'any'
+  // Whether it starts open; a group starts folded otherwise.
+  open?: boolean
   rows: readonly LayerRow[]
 }
 
@@ -102,7 +106,8 @@ export function createLayerPanel(host: HTMLElement, options: {
   host.appendChild(aside)
 
   // A group's heading, its rows; folded or not, by
-  // its title, kept across steps.
+  // its title, kept across steps (`folded`, what the viewer chose; a group
+  // not in it as it starts).
   interface Group {
     // The catalog key of its name: a pick group's title with `.label`.
     titleKey: TKey
@@ -114,10 +119,10 @@ export function createLayerPanel(host: HTMLElement, options: {
     rows: { id: string; helpBase: string; element: HTMLElement; mark: HTMLElement; label: HTMLElement }[]
   }
   let groups: Group[] = []
-  const folded = new Set<string>()
+  const folded = new Map<string, boolean>()
   let lastState: ((id: string) => LayerState) | null = null
 
-  function groupOf(titleKey: TKey, pick: boolean, rows: readonly LayerRow[]): Group {
+  function groupOf(titleKey: TKey, pick: boolean, open: boolean, rows: readonly LayerRow[]): Group {
     const section = document.createElement('section')
     section.className = 'layer-panel__group'
     const heading = document.createElement('button')
@@ -170,12 +175,12 @@ export function createLayerPanel(host: HTMLElement, options: {
       list.append(element)
       group.rows.push({ id: row.id, helpBase: row.helpBase, element, mark, label })
     }
+    const isFolded = (): boolean => folded.get(titleKey) ?? !open
     heading.addEventListener('click', () => {
-      if (folded.has(titleKey)) folded.delete(titleKey)
-      else folded.add(titleKey)
-      section.classList.toggle('layer-panel__group--folded', folded.has(titleKey))
+      folded.set(titleKey, !isFolded())
+      section.classList.toggle('layer-panel__group--folded', isFolded())
     })
-    section.classList.toggle('layer-panel__group--folded', folded.has(titleKey))
+    section.classList.toggle('layer-panel__group--folded', isFolded())
     section.append(heading, list)
     return group
   }
@@ -215,7 +220,7 @@ export function createLayerPanel(host: HTMLElement, options: {
     element: aside,
     setGroups(list) {
       body.replaceChildren()
-      groups = list.map((g) => groupOf(g.title, g.kind === 'one', g.rows))
+      groups = list.map((g) => groupOf(g.title, g.kind === 'one', g.open === true, g.rows))
       for (const g of groups) body.append(g.section)
       say()
     },

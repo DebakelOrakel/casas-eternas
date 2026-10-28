@@ -9,13 +9,15 @@
 // computes what; this one says what you SEE and WHEN.
 //
 // WHAT THE MAP CAN SHOW IS NOT THE STEP'S (2026-10-28). The layer panel
-// holds every layer of the world in every step, in groups of its own
-// (overlays.ts); a layer is greyed out only while its data is not there. A
+// holds every layer of the world in every step, in the world's groups
+// (screens/overlayGroups.ts); a layer is greyed out only while its data is not there. A
 // step decides its controls, the layers its hover card reads out and its
 // handbook page lists (`layers`), and which layers are on as you enter it
 // (`defaults`).
 import { STAGES, type StageId } from '../../generator/pipeline/stages'
-import { PICK_GROUPS, type OverlayId } from './overlays'
+import type { OverlayId } from './overlays'
+import { OVERLAY_GROUPS, groupLayers, resourceLayerId } from '../overlayGroups'
+import { ECOLOGY_FIELD_IDS } from '../../generator/ecology/ecologyField'
 import { PROGRESS_STEPS } from '../../world/worldProgress'
 
 export type StepId = 'world' | 'genesis' | 'tectonics' | 'climate' | 'ecology' | 'finishing'
@@ -30,7 +32,8 @@ export interface Step {
   layers: readonly OverlayId[]
   // The layers showing when the step is entered the first time on a world
   // (after that, as you left it). Entering a step is a statement about what
-  // you want to look at. At most one member of a pick group (overlays.ts):
+  // you want to look at. At most one member of a group of one choice
+  // (screens/overlayGroups.ts):
   // each group has a "none", and since 2026-09-22 a step starts on it unless
   // it names a layer. 'ecology' paints the first resource field.
   defaults: readonly OverlayId[]
@@ -41,8 +44,14 @@ export interface Step {
   mark?: string
 }
 
-// The climate's washes, by where they paint (overlays.ts PICK_GROUPS).
-const CLIMATE_WASHES: readonly OverlayId[] = PICK_GROUPS.flatMap((g) => g.members)
+// The climate's washes and the pressure, in the order the hover card reads
+// them out (the order of the panel's groups until the pressure became a
+// switch, 2026-10-28).
+const CLIMATE_WASHES: readonly OverlayId[] = [
+  'precipitation', 'seasonality', 'monsoon', 'koppen', 'biomes', 'pressure', 'waterBalance', 'watersheds',
+  'upwelling', 'salinity',
+  'fog', 'foehn', 'rainVariability', 'enso', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder',
+]
 
 export const STEPS: readonly Step[] = [
   {
@@ -112,13 +121,16 @@ export const STEPS: readonly Step[] = [
   },
 ]
 
-// A pick group with two members on is a radio that cannot say what the map
-// is showing. Checked here rather than left to the screen, for the same
-// reason the pipeline order is.
+// A group of one choice with two members on is a radio that cannot say what
+// the map is showing. Checked here rather than left to the screen, for the
+// same reason the pipeline order is. 'ecology' is the resource group's
+// first field (applyStepDefaults); a default that is no row is a typo.
 for (const s of STEPS) {
-  for (const g of PICK_GROUPS) {
-    const chosen = g.members.filter((id) => s.defaults.includes(id))
-    if (chosen.length > 1) throw new Error(`generator step ${s.id} must default to at most one layer of ${g.title}, not ${chosen.length}`)
+  const rows = s.defaults.map((id) => (id === 'ecology' ? resourceLayerId(ECOLOGY_FIELD_IDS[0]) : id))
+  for (const g of OVERLAY_GROUPS) {
+    if (g.kind !== 'one') continue
+    const chosen = groupLayers(g).filter((id) => rows.includes(id))
+    if (chosen.length > 1) throw new Error(`generator step ${s.id} must default to at most one layer of ${g.id}, not ${chosen.length}`)
   }
 }
 
