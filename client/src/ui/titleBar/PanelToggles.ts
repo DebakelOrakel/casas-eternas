@@ -9,6 +9,15 @@ import { t, type TKey } from '../../i18n/i18n'
 
 export type PanelId = 'actions' | 'overlays' | 'chronicle'
 
+// Each switch's mark, a stroke on a 24 grid as the bar's other marks
+// (TitleBar MENU_ICON): a window with its left column, layers stacked, a
+// window with its right column.
+const ICONS: Record<PanelId, string> = {
+  actions: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+  overlays: '<path d="M12 3 3 7.5l9 4.5 9-4.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/>',
+  chronicle: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
+}
+
 export interface PanelToggles {
   shown(id: PanelId): boolean
   relabel(): void
@@ -31,8 +40,9 @@ export function createPanelToggles(slot: HTMLElement, screen: string, panels: re
   const buttons = panels.map((id) => {
     const button = document.createElement('button')
     button.type = 'button'
-    button.className = 'title-bar__tool panel-toggles__button'
+    button.className = 'panel-toggles__button'
     button.dataset.help = `common.panel.${id}`
+    button.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[id]}</svg>`
     button.addEventListener('click', () => {
       const on = !shown.get(id)
       shown.set(id, on)
@@ -49,7 +59,8 @@ export function createPanelToggles(slot: HTMLElement, screen: string, panels: re
   })
   function say(): void {
     for (const { id, button } of buttons) {
-      button.textContent = t(`common.panel.${id}.label` as TKey)
+      // The name for assistive technology; the hover card says it too.
+      button.setAttribute('aria-label', t(`common.panel.${id}.label` as TKey))
       button.setAttribute('aria-pressed', String(shown.get(id)))
     }
   }

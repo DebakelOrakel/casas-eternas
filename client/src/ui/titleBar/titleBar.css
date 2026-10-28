@@ -101,18 +101,42 @@ button.title-bar__mark:hover {
   min-width: 0;
 }
 
-/* The panels' switches (PanelToggles): buttons of the bar's own shape
-   (.title-bar__tool, as the save menu and the menu), side by side; a panel
-   shown reads pressed. */
+/* The panels' switches (PanelToggles): one joined row of marks, as high
+   as the bar's other buttons (.title-bar__tool, 36px) and framed as they
+   are; a panel shown reads pressed. */
 .panel-toggles {
   display: flex;
   align-self: center;
-  gap: 6px;
+  border: 1px solid var(--dc-line2);
+  border-radius: 6px;
+  overflow: hidden;
 }
 
 .panel-toggles__button {
-  font-family: inherit;
+  width: 40px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--dc-line2);
+  background: transparent;
+  color: var(--dc-muted);
   cursor: pointer;
+}
+
+.panel-toggles__button:first-child {
+  border-left: 0;
+}
+
+.panel-toggles__button:hover {
+  background: var(--dc-hover);
+}
+
+.panel-toggles__button[aria-pressed='true'] {
+  background: var(--dc-hover);
+  color: var(--dc-strong);
 }
 
 .title-bar__status {
