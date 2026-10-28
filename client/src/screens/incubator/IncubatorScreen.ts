@@ -381,8 +381,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The data the overlays show is the time's, not the step's (2026-10-28:
   // the overlay list is the world's, an overlay is off only where its data
   // is not made yet): the history's from its start on, the old stone age's
-  // before it and where there is no history.
-  const historyShown = (): boolean => people !== null && historyTime !== null && peopleTime >= historyTime.start
+  // before it and where there is no history. A history is shown only over
+  // its own old stone age: from the origin the old stone age is shown for.
+  const historyShown = (): boolean => people !== null && historyTime !== null && peopleTime >= historyTime.start && people.origin === stone?.people.origin
   // True once the screen is built: the step's layers are below.
   let built = false
   const stepBar = createStepBar(root, {
