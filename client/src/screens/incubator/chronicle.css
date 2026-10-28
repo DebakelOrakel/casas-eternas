@@ -157,8 +157,9 @@
 
 .chronicle__stats {
   display: grid;
-  /* People, villages, camps, centres. */
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* People, villages, camps, centres; the people's count, up to eight
+     digits, half as wide again as the rest. */
+  grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 12px 18px;
   border-bottom: 1px solid var(--dc-line);
