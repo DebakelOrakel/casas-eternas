@@ -26,13 +26,11 @@ export type IncubatorRequest =
   | ({ type: 'cells'; seed: number; spacingKm?: number } & CellInput)
   | { type: 'flora' }
   | { type: 'fauna' }
-  // The origin a history takes when none is given.
-  | { type: 'origin' }
   // The world's cold over the span (from its seed alone).
   | { type: 'climate'; seed: number }
   | { type: 'simulate'; origin: number; rain: { width: number; height: number; variability: Float32Array; enso: Float32Array; ensoStrength: number } | null }
   | { type: 'frame'; index: number }
-  // The old stone age from `origin` (-1: the one a history takes).
+  // The old stone age from `origin` (-1: the worker's choice).
   | { type: 'peopling'; origin: number }
   // The history run or restored last, packed, for its artifact; and a
   // packed one taken in a run's place.
@@ -44,7 +42,6 @@ export type IncubatorAnswer =
   | { type: 'cells'; count: number; owners: Int32Array; u: Float32Array; v: Float32Array; land: Uint8Array; landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; iceKm: Float32Array; seaDepthM: Float32Array; ms: number }
   | { type: 'flora'; plants: PlantLayer[]; trees: TreeLayer[]; ms: number }
   | { type: 'fauna'; animals: AnimalLayer[]; ms: number }
-  | { type: 'origin'; origin: number; ms: number }
   // The cold every `stepYears` from the departure; the ice's reach and the
   // sea's drop at a cold of 1.
   | { type: 'climate'; cold: Float32Array; stepYears: number; iceReachKm: number; seaDropM: number; ms: number }
@@ -128,10 +125,6 @@ async function answer(ask: IncubatorRequest): Promise<void> {
     const shares = e.faunaShares()
     const animals = ANIMALS.map((a, k): AnimalLayer => ({ id: a.id, uses: a.uses, ...layer(codes, shares, k) }))
     worker.postMessage({ type: 'fauna', animals, ms: ms() } satisfies IncubatorAnswer, animals.map((l) => l.codes.buffer))
-    return
-  }
-  if (ask.type === 'origin') {
-    worker.postMessage({ type: 'origin', origin: e.originOf(), ms: ms() } satisfies IncubatorAnswer)
     return
   }
   if (ask.type === 'peopling') {

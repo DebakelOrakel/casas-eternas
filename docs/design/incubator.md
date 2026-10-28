@@ -161,15 +161,18 @@ Step 1, the old stone age, and step 2, the history:
   derived from the origin in well under a second. Its overlays: the spread by age,
   the groups, the density; its routes and crossings, which are the routes
   in every step.
-- **Step 2, the history**, runs in the worker on "Start history" (on
-  Morvane some 3 s) and is played back: kept states every 2 500 years from
+- **One origin** for both steps, set in step 1 only. A new origin drops
+  the history; step 2 makes the one from it when its step is shown.
+- **Step 2, the history**, comes from the server where it is saved for the
+  origin, else runs in the worker (on Morvane some 3 s), and is played
+  back: kept states every 2 500 years from
   its start and at its end, the people's count every 500 years, the log.
   The map mixes the kept states before and after the time shown. Its
   overlays: the spread, the lifeways or the density, the villages, the
   camps, the hamlets, the trade and its sources, the centres.
 - **H1**: saved, a job runs the history natively on the server and keeps
   it as the artifact H1 ([DEC-0048](../decisions/incubator-history-engine.md));
-  a world opens with the history saved last.
+  a world opens with the history saved last and its origin.
 
 ## Text
 
