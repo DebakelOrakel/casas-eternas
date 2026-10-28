@@ -324,10 +324,11 @@ pub(crate) const VOYAGE_KM: f64 = 3000.0;
 /// of copper of COPPER_RICH or more finds it and hammers it (the copper
 /// lies in the mountains, the fields do not: it is fetched, as obsidian
 /// was), at COPPER_RATE a
-/// CLIMATE_YEARS and COPPER_SPACING_KM from where it was found before; a
-/// village that has known it SMELT_AFTER years and stood
-/// SMELT_VILLAGE_YEARS smelts it, at SMELT_RATE, as far from the smelting
-/// before. Both are passed on to the people around at COPPER_KM_A, as the
+/// CLIMATE_YEARS and COPPER_SPACING_KM from where it was found before on
+/// its landmass (2026-10-28: over the sea before, which step 2 does not
+/// cross, as the farming's centres); a village that has known it
+/// SMELT_AFTER years and stood SMELT_VILLAGE_YEARS smelts it, at
+/// SMELT_RATE, as far from the smelting before on its landmass. Both are passed on to the people around at COPPER_KM_A, as the
 /// fields are, the smelting only to who knows the copper. The copper
 /// changes no food: on the earth it was an ornament first, then a sign of
 /// rank.
@@ -1975,11 +1976,12 @@ pub fn simulate(
                 village_to.push(f64::INFINITY);
                 town.push(0.0);
             }
-            // The copper, found and smelted.
+            // The copper, found and smelted; far only from the finds on
+            // its landmass, as the centres (far_centre).
             let far = |found: &[usize], cell: usize| {
-                found
-                    .iter()
-                    .all(|&c| km_between(h, cell, c) >= COPPER_SPACING_KM)
+                found.iter().all(|&c| {
+                    h.landmass[c] != h.landmass[cell] || km_between(h, cell, c) >= COPPER_SPACING_KM
+                })
             };
             for v in 0..village_to.len() {
                 if village_to[v] < f64::INFINITY || villages[2 * v + 1] as u8 != FARMERS {

@@ -305,6 +305,9 @@ Building since 2026-10-27:
   as fast (it carried as little as the poorest land: empty). On Morvane
   the five coasts that go under move 1 459 to 1 998 people each (58 to
   168 before); step 1 reaches 95.4 % of the land, as before.
+- 2026-10-28: the copper's finds and smeltings keep others away on their
+  own landmass only, as the centres; on Morvane nothing changes, the
+  small torus test world's history does.
 
 Open:
 
