@@ -352,7 +352,14 @@ pub(crate) const VOYAGE_KM: f64 = 3000.0;
 /// fields are, the smelting only to who knows the copper. The copper
 /// changes no food: on the earth it was an ornament first, then a sign of
 /// rank.
-pub(crate) const COPPER_RICH: f64 = 0.6;
+// 0.5 (2026-10-29; 0.6 before): with the copper of the extinct arcs and
+// of every active one (DEC-0053) the generator's copper comes down from
+// the mountains: copper of 0.5 or more on 8.2 / 3.7 / 3.6 % of the land
+// of Morvane, Thalassor and Zephyra (0.6 or more 5.4 / 2.5 / 2.6 %; before
+// 1.6 / 1.1 / 1.0 %), on 2.0 / 0.6 / 0.6 % of the arable land of 0.3 or
+// more. The lower threshold reads the halos' flanks, where the copper is
+// near the fields; the numbers below are of before.
+pub(crate) const COPPER_RICH: f64 = 0.5;
 pub(crate) const COPPER_DAYS: f64 = 20.0;
 // 500 (2026-10-29; 1 000 before), one climate step: the copper minerals
 // were known before the farming (malachite beads from −900 on the earth's

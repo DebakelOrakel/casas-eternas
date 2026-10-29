@@ -1,5 +1,5 @@
 //! `tectonics/volcanoes.ts`: the volcanoes a world shows, from its terrain
-//! features.
+//! features; and the volcanoes the ecology reads (`ecology_volcanoes`).
 
 use super::terrain_features::TerrainFeature;
 
@@ -8,6 +8,9 @@ pub enum VolcanoKind {
     Hotspot,
     Flood,
     Arc,
+    /// An arc no longer fed (`epochs_since_deposit` ≥ ARC_ACTIVE_EPOCHS):
+    /// only the ecology's list has it, for the copper (DEC-0053).
+    ExtinctArc,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -19,6 +22,12 @@ pub struct Volcano {
 }
 
 const ARC_MARKER_CELL: f64 = 60.0;
+
+/// An arc feature fed within this many epochs is active.
+const ARC_ACTIVE_EPOCHS: f64 = 8.0;
+
+/// An active arc carries a volcano from this relative thickness on.
+const ARC_ACTIVE_THICKNESS: f64 = 3.0;
 
 /// Hotspots and flood basalts, all; active volcanic arcs, the tallest per
 /// cell, in the order their cells were first met.
@@ -38,8 +47,8 @@ pub fn collect_volcanoes(features: &[TerrainFeature]) -> Vec<Volcano> {
         } else if f.plate_b == -2 {
             out.push(volcano(VolcanoKind::Flood));
         } else if f.volcanic == Some(true)
-            && f.epochs_since_deposit < 8.0
-            && f.thickness.abs() > 3.0
+            && f.epochs_since_deposit < ARC_ACTIVE_EPOCHS
+            && f.thickness.abs() > ARC_ACTIVE_THICKNESS
         {
             let key = (f.y / ARC_MARKER_CELL).floor() * 100000.0 + (f.x / ARC_MARKER_CELL).floor();
             // `+ 0`: a Map key, where −0 and +0 are one.
@@ -68,4 +77,39 @@ pub fn collect_volcanoes(features: &[TerrainFeature]) -> Vec<Volcano> {
         });
     }
     out
+}
+
+/// The volcanoes the ecology reads (DEC-0053, 2026-10-29): hotspots and
+/// flood basalts as `collect_volcanoes` has them; EVERY active arc feature
+/// above ARC_ACTIVE_THICKNESS, not the map's tallest per ARC_MARKER_CELL
+/// (a display rule: it kept 108 of 163 active thick arcs on Morvane, 89 of
+/// 188 on Thalassor, 126 of 209 on Zephyra); and the extinct arcs, of any
+/// thickness, as `ExtinctArc` (949, 532 and 164 on these worlds: an arc's
+/// porphyry copper stays where the arc was, its volcanoes do not). In the
+/// features' order.
+pub fn ecology_volcanoes(features: &[TerrainFeature]) -> Vec<Volcano> {
+    features
+        .iter()
+        .filter_map(|f| {
+            let kind = if f.plate_b == -1 {
+                VolcanoKind::Hotspot
+            } else if f.plate_b == -2 {
+                VolcanoKind::Flood
+            } else if f.volcanic != Some(true) {
+                return None;
+            } else if f.epochs_since_deposit >= ARC_ACTIVE_EPOCHS {
+                VolcanoKind::ExtinctArc
+            } else if f.thickness.abs() > ARC_ACTIVE_THICKNESS {
+                VolcanoKind::Arc
+            } else {
+                return None;
+            };
+            Some(Volcano {
+                x: f.x,
+                y: f.y,
+                thickness: f.thickness.abs(),
+                kind,
+            })
+        })
+        .collect()
 }

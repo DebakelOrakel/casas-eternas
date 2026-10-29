@@ -114,7 +114,8 @@ export interface LevelLand {
   cratonAge: Float32Array
   // [x, y, …] in world raster cells.
   oases: Float64Array
-  // [x, y, thickness, kind, …]: kind 0 hotspot, 1 flood basalt, 2 arc.
+  // [x, y, thickness, kind, …]: kind 0 hotspot, 1 flood basalt, 2 arc, 3
+  // extinct arc — the ecology's list, not the map's (DEC-0053).
   volcanoes: Float64Array
   orogenPoints: Float64Array
   maxDischarge: number

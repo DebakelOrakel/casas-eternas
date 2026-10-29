@@ -246,7 +246,15 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // (docs/decisions/seasons-and-ice.md): its form and its constants; and the
 // volcanoes' build and the mesh in the open ocean
 // (docs/decisions/volcanic-islands.md).
-export const AMPLIFICATION_ALGO_VERSION = 14
+//
+// v15 (2026-10-29): the ecology level 1 carries — the arable's crop
+// response, season and leaching (docs/decisions/arable-crops.md) and the
+// copper of the extinct arcs and of every active one
+// (docs/decisions/copper-arcs.md). The worlds do not change (the ecology
+// is a function on load, worldPipeline.ts SAME_WORLDS_AS); level 1's
+// ecology fields do. The ecology's tuning is in no hashed constant (no
+// run reads it, worldTuning.ts), hence the bump.
+export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the
 // caller rather than imported here, so this module has no opinion about

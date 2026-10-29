@@ -3,6 +3,10 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-29
+- **changed** Ecology: arable land follows what crops need over one growing season, so the temperate and wet lands farm about twice as much and the wet tropics less. `resource.arable`
+- **changed** Ecology: copper also lies at extinct volcanic arcs and at every active one, so it is often found near the farmland. `resource.copper`
+
 ## 2026-10-28
 - **removed** Migration: the step is gone, and Finishing, marked F, reads computed once level 1 is there. `generator.finishing.refine`
 

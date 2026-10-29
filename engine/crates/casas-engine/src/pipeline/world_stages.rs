@@ -50,7 +50,7 @@ use crate::surface::sediment_basins::{SedimentBasin, SedimentBasinInputs, find_s
 use crate::surface::surface_tune_params::SURFACE_TUNING;
 use crate::tectonics::plate_simulation_types::PlateSimulation;
 use crate::tectonics::terrain_features::{FeatureKind, TerrainFeature};
-use crate::tectonics::volcanoes::{Volcano, collect_volcanoes};
+use crate::tectonics::volcanoes::{Volcano, ecology_volcanoes};
 
 use super::coupled_epoch::CoupledTerrain;
 
@@ -778,7 +778,7 @@ pub fn ecology_inputs_of(
     orogen_points.extend(sim.sutures.iter().map(|s| (s.x, s.y)));
     EcologyWorldInputs {
         lake_depth: om.map(|o| liquid_lake_depth(&o.lakes)),
-        volcanoes: collect_volcanoes(&sim.features),
+        volcanoes: ecology_volcanoes(&sim.features),
         orogen_points,
         oases: hydrology.map_or_else(Vec::new, |(_, o)| o.iter().map(|s| (s.x, s.y)).collect()),
         craton_age: land_bilinear_at_nodes(

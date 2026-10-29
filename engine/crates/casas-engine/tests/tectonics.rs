@@ -386,6 +386,8 @@ fn scenario(name: &str, d: Domain, seed: u32) {
             VolcanoKind::Hotspot => 0.0,
             VolcanoKind::Flood => 1.0,
             VolcanoKind::Arc => 2.0,
+            // The ecology's list alone has it (ecology_volcanoes).
+            VolcanoKind::ExtinctArc => 3.0,
         });
     }
     assert_eq!(

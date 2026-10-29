@@ -669,7 +669,8 @@ pub struct LevelLand<'a> {
 
 /// `LevelLand` as the artifact holds it: the per-node fields cut to the
 /// mesh's `count` nodes, the points as `[x, y, …]`, the volcanoes as
-/// `[x, y, thickness, kind, …]` (kind 0 hotspot, 1 flood, 2 arc).
+/// `[x, y, thickness, kind, …]` (kind 0 hotspot, 1 flood, 2 arc, 3 extinct
+/// arc; DEC-0053).
 fn level_land(l: &LevelLand<'_>, count: usize) -> Value {
     let cut_u8 = |v: &[u8]| Value::U8s(v[..count].to_vec());
     let cut_f32 = |v: &[f32]| Value::F32s(v[..count].to_vec());
@@ -682,6 +683,7 @@ fn level_land(l: &LevelLand<'_>, count: usize) -> Value {
                 VolcanoKind::Hotspot => 0.0,
                 VolcanoKind::Flood => 1.0,
                 VolcanoKind::Arc => 2.0,
+                VolcanoKind::ExtinctArc => 3.0,
             };
             [v.x, v.y, v.thickness, kind]
         })

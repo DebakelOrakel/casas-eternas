@@ -9,7 +9,7 @@ use crate::climate::climate_field::{CLIMATE_RES_X, CLIMATE_RES_Y};
 use crate::climate::climate_points::{PointClimate, PointMonths};
 use crate::core::det_math::{det_exp, det_pow};
 use crate::core::domain::{Domain, DomainGrid};
-use crate::core::interpolation::{clamp01, smoothstep};
+use crate::core::interpolation::{clamp01, smoothstep, smoothstep_between};
 use crate::core::js;
 use crate::elevation::elevation_scale::{SEA_LEVEL, meters_to_elevation};
 use crate::elevation::globe_noise::globe_octave_on;
@@ -126,6 +126,33 @@ fn productivity(temp_c: f64, precip_mm: f64) -> f64 {
     let npp_temp = 1.0 / (1.0 + det_exp(1.315 - 0.119 * temp_c));
     let npp_precip = 1.0 - det_exp(-0.000664 * js::max(0.0, precip_mm));
     js::min(npp_temp, npp_precip)
+}
+
+/// A crop's growth in a month (0..1, DEC-0052): the arable's own response,
+/// not the wild land's `productivity`. Warmth on a steeper logistic;
+/// water against the crop's need at that warmth (the rain the
+/// month brings and the water on the fields, `precip_mm`, both as rates
+/// a year).
+fn crop_growth(temp_c: f64, precip_mm: f64) -> f64 {
+    let t = &ECOLOGY_TUNING;
+    let warmth = 1.0 / (1.0 + det_exp(t.crop_temp_mid - t.crop_temp_rate * temp_c));
+    let need = t.crop_need_mm + t.crop_need_per_c_mm * js::max(0.0, temp_c);
+    let water = smoothstep_between(
+        t.crop_need_dry * need,
+        t.crop_need_full * need,
+        js::max(0.0, precip_mm),
+    );
+    js::min(warmth, water)
+}
+
+/// What the wet tropics leach from the soil (DEC-0052): 1 off them, toward
+/// 1 − `leach_w` where the year is warm and its rain heavy.
+fn leaching(year_temp_c: f64, year_precip_mm: f64) -> f64 {
+    let t = &ECOLOGY_TUNING;
+    if year_temp_c < t.leach_warm_c {
+        return 1.0;
+    }
+    1.0 - t.leach_w * smoothstep_between(t.leach_from_mm, t.leach_full_mm, year_precip_mm)
 }
 
 fn sea_mixing(temp_c: f64) -> f64 {
@@ -356,6 +383,10 @@ pub fn prepare_ecology(
     let mut k_access = k_arable_factor.clone();
     let mut k_freshwater = k_arable_factor.clone();
     let mc = month_count as f64;
+    // A climate step's share of the year in months: 1 for the refined
+    // climate's twelve, 12 for the annual climate as one step. `x * 1.0`
+    // keeps the bits.
+    let months_a_step = 12.0 / mc;
     for v in 0..n {
         if land[v] == 0 {
             continue;
@@ -386,19 +417,24 @@ pub fn prepare_ecology(
                 ),
             };
             if tc >= t.arable_frost_c || months.is_none() {
-                growing += productivity(tc, p + t.arable_irrigation_mm * field_water) / mc;
+                growing +=
+                    crop_growth(tc, p + t.arable_irrigation_mm * field_water) * months_a_step;
             }
             npp += productivity(tc, p) / mc;
             arid += arid_warm(tc, p) / mc;
         }
+        // One harvest a year: the season's growth, full at
+        // ARABLE_SEASON_MONTHS good months (DEC-0052).
+        let growing = js::min(1.0, growing / t.arable_season_months);
         let year_t = climate.temperature[v] as f64;
         let year_p = js::max(0.0, climate.precipitation[v] as f64);
+        let leached = leaching(year_t, year_p);
 
         let risk = climate
             .rain_variability
             .as_ref()
             .map_or(0.0, |r| t.arable_risk_w * r[v] as f64 * (1.0 - field_water));
-        arable[v] = (growing * flat * js::max(0.0, 1.0 - risk)) as f32;
+        arable[v] = (growing * flat * js::max(0.0, 1.0 - risk) * leached) as f32;
         let edge_factor = 1.0 + t.ecotone_bonus * clamp01(edges[v] as f64 / t.ecotone_full_share);
         let salt_coast = t.salt_interior_w
             + (t.salt_coast_w - t.salt_interior_w)
@@ -429,7 +465,7 @@ pub fn prepare_ecology(
         };
         salt[v] = clamp01(js::max(flat_salt, arid * salt_coast)) as f32;
         if keep_months {
-            k_arable_factor[v] = (flat * js::max(0.0, 1.0 - risk)) as f32;
+            k_arable_factor[v] = (flat * js::max(0.0, 1.0 - risk) * leached) as f32;
             k_field_water[v] = field_water as f32;
             k_edge_factor[v] = edge_factor as f32;
             k_npp_year[v] = npp as f32;
@@ -459,13 +495,23 @@ pub fn prepare_ecology(
     }
 
     let seed = inputs.warp_seed as i32;
-    let all: Vec<(f64, f64)> = inputs.volcanoes.iter().map(|p| (p.x, p.y)).collect();
-    let arc: Vec<(f64, f64)> = inputs
+    let of_kind = |kind: VolcanoKind| -> Vec<(f64, f64)> {
+        inputs
+            .volcanoes
+            .iter()
+            .filter(|p| p.kind == kind)
+            .map(|p| (p.x, p.y))
+            .collect()
+    };
+    // The live volcanoes: obsidian is fresh glass, the province young soil.
+    let all: Vec<(f64, f64)> = inputs
         .volcanoes
         .iter()
-        .filter(|p| p.kind == VolcanoKind::Arc)
+        .filter(|p| p.kind != VolcanoKind::ExtinctArc)
         .map(|p| (p.x, p.y))
         .collect();
+    let arc = of_kind(VolcanoKind::Arc);
+    let extinct_arc = of_kind(VolcanoKind::ExtinctArc);
     let obsidian = gaussian_halos(
         &geo,
         mesh,
@@ -478,15 +524,28 @@ pub fn prepare_ecology(
             tool_stone[v] = js::max(obsidian[v] as f64, t.flint_base * flatness[v] as f64) as f32;
         }
     }
-    let copper = mask_to_land(
-        gaussian_halos(
-            &geo,
-            mesh,
-            &thin_points(&arc, t.copper_keep, seed ^ 0xc0bb_e401u32 as i32),
-            t.copper_radius_m,
-        ),
-        land,
+    // The copper of the active arcs, and the weaker copper of the extinct
+    // ones, by a lottery of their own (DEC-0053).
+    let mut copper = gaussian_halos(
+        &geo,
+        mesh,
+        &thin_points(&arc, t.copper_keep, seed ^ 0xc0bb_e401u32 as i32),
+        t.copper_radius_m,
     );
+    let extinct_copper = gaussian_halos(
+        &geo,
+        mesh,
+        &thin_points(
+            &extinct_arc,
+            t.copper_extinct_keep,
+            seed ^ 0xf055_1101u32 as i32,
+        ),
+        t.copper_extinct_radius_m,
+    );
+    for (c, &e) in copper.iter_mut().zip(&extinct_copper) {
+        *c = js::max(*c as f64, t.copper_extinct_w * e as f64) as f32;
+    }
+    let copper = mask_to_land(copper, land);
     let mut iron = vec![0f32; n];
     let iron_noise = NoiseSampler::new(
         &domain,
@@ -650,9 +709,11 @@ pub fn ecology_month(
         let tc = s.months.temperature[m + v] as f64;
         let p = js::max(0.0, s.months.precipitation[m + v] as f64);
         let value = match field {
+            // The month's crop growth, not a twelfth of the year: the
+            // year is the season's sum, capped (DEC-0052).
             EcologyField::Arable => {
                 (if tc >= t.arable_frost_c {
-                    productivity(tc, p + t.arable_irrigation_mm * s.field_water[v] as f64)
+                    crop_growth(tc, p + t.arable_irrigation_mm * s.field_water[v] as f64)
                 } else {
                     0.0
                 }) * s.arable_factor[v] as f64

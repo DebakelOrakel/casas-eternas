@@ -16,7 +16,7 @@
   "resource.toolStone.label": "Tool-stone",
   "resource.toolStone.help": "Hard, knappable stone for tools.",
   "resource.copper.label": "Copper",
-  "resource.copper.help": "Copper ore, tied to the geology of arcs and sutures.",
+  "resource.copper.help": "Copper ore from volcanic arcs, active and extinct.",
   "resource.tin.label": "Tin",
   "resource.tin.help": "Tin ore from collision belts — scarce and prized for bronze.",
   "resource.iron.label": "Iron",

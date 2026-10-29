@@ -1,7 +1,7 @@
 # Hashes of client/src/generator/ecology/ecologyField.ts, for crates/casas-engine/tests/ecology.rs.
 # Written by engine/scripts/ecologyFixture.mjs; do not edit.
-tuning d7612a35
-torus_refined 0876a9a1
-torus_plain 4a21a0df
-sphere_refined e0f3f263
-sphere_plain c3e4bc31
+tuning 26f58784
+torus_refined 718dc326
+torus_plain 5b829b91
+sphere_refined 8da01bda
+sphere_plain 5f1a5911

@@ -206,10 +206,12 @@ console.log('\n— run history —')
     PL.recordedPipeline(legacyYaml(['54ee802771966159'])))
   // A pipeline that makes the same worlds as a later one reads as that one:
   // v11, whose code moved into the engine with no byte changed (v12), and
-  // v12, whose worlds v13 makes. v14 makes other worlds (DEC-0049).
+  // v12, whose worlds v13 makes. v14 makes other worlds (DEC-0049); v15
+  // makes v14's, with other ecology fields at level 1 (DEC-0052, DEC-0053).
   check('a world v11 made is v13\'s', PL.recordedPipeline('status:\n  pipeline: v11-1b1f7f4a8b14250e') === V13, PL.recordedPipeline('status:\n  pipeline: v11-1b1f7f4a8b14250e'))
   check('a world v12 made is v13\'s', PL.recordedPipeline('status:\n  pipeline: v12-53fe6efa9b110bf0') === V13, PL.recordedPipeline('status:\n  pipeline: v12-53fe6efa9b110bf0'))
-  check('the current pipeline is not v13', PL.WORLD_PIPELINE !== V13 && PL.WORLD_PIPELINE.startsWith('v14-'), PL.WORLD_PIPELINE)
+  check('the current pipeline is not v13', PL.WORLD_PIPELINE !== V13 && PL.WORLD_PIPELINE.startsWith('v15-'), PL.WORLD_PIPELINE)
+  check('a world v14 made is the current pipeline\'s', PL.recordedPipeline('status:\n  pipeline: v14-cc39679442f889d2') === PL.WORLD_PIPELINE, PL.recordedPipeline('status:\n  pipeline: v14-cc39679442f889d2'))
   const renamed = { ...record, name: 'Other' }
   check('a rename reads as a change, by name', WR.recordDiff(record, renamed).length === 1 && WR.recordDiff(record, renamed)[0].startsWith('name:'))
   const legacy = WR.recordFromYaml(yaml.replace(/  uid: .*\n/, '').replace(/  name: .*\n/, ''), { archeanEpochs: 0, epoch: 0 }, () => 'derived-uid')

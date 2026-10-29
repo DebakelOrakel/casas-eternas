@@ -16,7 +16,7 @@
   "resource.toolStone.label": "Werkstein",
   "resource.toolStone.help": "Harter, schlagbarer Stein für Werkzeuge.",
   "resource.copper.label": "Kupfer",
-  "resource.copper.help": "Kupfererz, gebunden an die Geologie von Inselbögen und Suturen.",
+  "resource.copper.help": "Kupfererz aus Vulkanbögen, tätigen und erloschenen.",
   "resource.tin.label": "Zinn",
   "resource.tin.help": "Zinnerz aus Kollisionsgürteln — selten und für Bronze begehrt.",
   "resource.iron.label": "Eisen",

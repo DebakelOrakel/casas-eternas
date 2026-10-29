@@ -2,11 +2,11 @@ import type { TerrainFeature } from './terrainFeatures'
 
 // The volcanoes a world currently shows, distilled from its terrain features.
 //
-// Lives here rather than inside the worker because it is not worker-only knowledge:
-// the Ecology layer reads this list for copper (arcs), obsidian and the volcanic
-// province, and the golden harness has to build the very same list or it tests the
-// ecology against inputs the program never produces. It did exactly that for a while —
-// passing an empty array — so every volcano-derived resource was silently untested.
+// The map's markers (the volcano overlay), not the ecology's: the ecology reads
+// its own list in the engine (tectonics/volcanoes.rs ecology_volcanoes, DEC-0053,
+// 2026-10-29) — every active arc, not one per ARC_MARKER_CELL, and the extinct arcs
+// for the copper. Until then it read this one, and the marker grid, a display rule,
+// thinned the copper's arcs.
 export interface Volcano {
   x: number
   y: number

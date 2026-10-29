@@ -1,7 +1,8 @@
 //! The module test of the ecology (ecology/ecology_field) against the
 //! TypeScript engine (docs/decisions/rust-engine.md, fork 5). The fixture
-//! is written by `engine/scripts/ecologyFixture.mjs`; the scenarios below
-//! are that script's, step for step.
+//! was written by `engine/scripts/ecologyFixture.mjs`, and is recorded
+//! from this engine since DEC-0052 and DEC-0053 (`fixture`); the scenarios
+//! below are that script's, step for step, and the extinct arcs.
 
 use casas_engine::climate::climate_points::{PointClimate, PointMonths};
 use casas_engine::core::det_math::{det_cos, det_sin};
@@ -16,6 +17,9 @@ use casas_engine::mesh::mesh_build::{FieldSampler, MESH_Z, build_mesh};
 use casas_engine::mesh::mesh_raster::rasterise_node_field;
 use casas_engine::tectonics::volcanoes::{Volcano, VolcanoKind};
 
+mod fixture;
+
+const FILE: &str = "ecology.txt";
 const FIXTURE: &str = include_str!("fixtures/ecology.txt");
 
 struct Hash(u32);
@@ -43,7 +47,7 @@ impl Hash {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(name))
             .unwrap_or_else(|| panic!("no {name} in the fixture"));
-        assert_eq!(format!("{name} {:08x}", self.0), want);
+        fixture::check(FILE, &format!("{name} {:08x}", self.0), want, name);
     }
 }
 
@@ -174,6 +178,16 @@ fn run(name: &str, domain: Domain) {
         if k % 9 == 0 {
             oases.push(((x + 50.0) % domain.width, y));
         }
+    }
+    // The extinct arcs (DEC-0053), after the scenario's.
+    for k in 0..40 {
+        let kf = k as f64;
+        volcanoes.push(Volcano {
+            x: (kf * 157.1 + 80.0) % domain.width,
+            y: (kf * 73.9 + 11.0) % domain.height,
+            thickness: (k % 4) as f64,
+            kind: VolcanoKind::ExtinctArc,
+        });
     }
     let zero = vec![0f32; n];
     let climate = |refined: bool| PointClimate {

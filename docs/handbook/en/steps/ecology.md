@@ -28,8 +28,9 @@ The map always shows one resource; you pick it in the left column.
 
 ### Arable land {#resource.arable}
 
-Soil and climate fit for farming: months without frost, flat land, water
-on the fields and rain one can rely on.
+Soil and climate fit for farming: a growing season warm and wet enough
+for crops, flat land, water on the fields and rain one can rely on. Heavy
+rain in the hot tropics washes the soil out.
 
 ### Fish {#resource.fish}
 
@@ -62,7 +63,8 @@ scattered across flat land.
 
 ### Copper {#resource.copper}
 
-Copper ore, bound to the volcanoes of island arcs.
+Copper ore, bound to volcanic arcs: richest at active ones, weaker at
+arcs that are extinct.
 
 ### Tin {#resource.tin}
 

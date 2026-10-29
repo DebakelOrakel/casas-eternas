@@ -1,6 +1,8 @@
 //! `ecology/ecologyTuneParams.ts`: the ecology layer's tuning — the
 //! weights, reaches, radii and keep-fractions, and the two biome tables.
-//! The TypeScript file explains each value and how it was measured.
+//! The TypeScript file explains each value and how it was measured, up to
+//! 2026-10-22; the values added since are explained here (the TypeScript
+//! object no longer has them: nothing runs it).
 
 use crate::climate::biomes::biome;
 use crate::elevation::elevation_scale::SLOPE_RECALIBRATION;
@@ -83,6 +85,17 @@ pub struct EcologyTuning {
     pub arable_frost_c: f64,
     pub arable_irrigation_mm: f64,
     pub arable_risk_w: f64,
+    pub arable_season_months: f64,
+    pub crop_temp_mid: f64,
+    pub crop_temp_rate: f64,
+    pub crop_need_mm: f64,
+    pub crop_need_per_c_mm: f64,
+    pub crop_need_dry: f64,
+    pub crop_need_full: f64,
+    pub leach_warm_c: f64,
+    pub leach_w: f64,
+    pub leach_from_mm: f64,
+    pub leach_full_mm: f64,
     pub oasis_w: f64,
     pub well_depth_m: f64,
     pub well_w: f64,
@@ -94,10 +107,13 @@ pub struct EcologyTuning {
     pub ecotone_full_share: f64,
     pub ecotone_counted_on_m: f64,
     pub copper_radius_m: f64,
+    pub copper_extinct_radius_m: f64,
+    pub copper_extinct_w: f64,
     pub tin_radius_m: f64,
     pub obsidian_radius_m: f64,
     pub flint_base: f64,
     pub copper_keep: f64,
+    pub copper_extinct_keep: f64,
     pub silver_keep: f64,
     pub obsidian_keep: f64,
     pub tin_keep: f64,
@@ -158,6 +174,43 @@ pub const ECOLOGY_TUNING: EcologyTuning = EcologyTuning {
     arable_frost_c: 5.0,
     arable_irrigation_mm: 1000.0,
     arable_risk_w: 1.0,
+    // THE CROPS (DEC-0052, 2026-10-29). The arable had the wild land's
+    // Miami productivity and the mean of the twelve months: a crop field
+    // gives one harvest, and on the three worlds of 2026-10-29 (Morvane,
+    // Thalassor, Zephyra, level 1) only 10.8 / 15.8 / 5.4 % of the land had
+    // 0.3 or more (Earth some 25–30 % of the land is fit to farm; from
+    // memory, GAEZ-like). The year is the sum of the months' growth over
+    // `arable_season_months` (7: a season, full at seven good months; 6
+    // gave 29.6 / 32.3 / 17.5 % and the dry steppes BSh 51 % on Morvane).
+    arable_season_months: 7.0,
+    // The crop's warmth: a logistic steeper than the wild land's (1.315,
+    // 0.119): half at 9.2 °C, 0.90 at 18 °C, 0.98 at 25 °C (the wild
+    // land's half at 11 °C, 0.70 at 18 °C, 0.84 at 25 °C): a warm month is
+    // a full month for a crop.
+    crop_temp_mid: 2.3,
+    crop_temp_rate: 0.25,
+    // The crop's water: the month's rain and the water on the fields
+    // against the crop's need, `crop_need_mm` + `crop_need_per_c_mm` × T
+    // (mm/yr, a rate as the months' rain), from `crop_need_dry` × need
+    // (nothing) to `crop_need_full` × need (full), a smoothstep. The wild
+    // land's 1 − e^(−0.000664 P) gave a desert's 150 mm 0.1 and a crop 0.1
+    // there too; the precipitation constant made larger instead (0.0012
+    // to 0.002, variants of 2026-10-29) made 14–23 % of Morvane's hot
+    // desert BWh rain-fed farmland of 0.3 or more (0.3 % before).
+    // 0.4 / 1.2 gave 30.5 / 33.4 / 17.9 %, BSh 60 % on Morvane.
+    crop_need_mm: 150.0,
+    crop_need_per_c_mm: 30.0,
+    crop_need_dry: 0.5,
+    crop_need_full: 1.4,
+    // The wet tropics' leaching: where the year is `leach_warm_c` or
+    // warmer, the arable × (1 − `leach_w` × smoothstep(`leach_from_mm`,
+    // `leach_full_mm`, the year's rain)) — Af's oxisols, poor once
+    // cleared. It takes the Af land with 0.3 or more from 63 / 80 / 71 % to
+    // 48 / 72 / 60 % (the crops' variant of 0.4 / 1.2, a season of 6).
+    leach_warm_c: 18.0,
+    leach_w: 0.6,
+    leach_from_mm: 1500.0,
+    leach_full_mm: 2500.0,
     oasis_w: 1.0,
     well_depth_m: 30.0,
     well_w: 1.0,
@@ -169,10 +222,28 @@ pub const ECOLOGY_TUNING: EcologyTuning = EcologyTuning {
     ecotone_full_share: 0.1,
     ecotone_counted_on_m: 7800.0,
     copper_radius_m: 159744.0,
+    // THE EXTINCT ARCS' COPPER (DEC-0053, 2026-10-29): an arc's porphyry
+    // copper stays when the arc is no longer fed. A halo of σ
+    // `copper_extinct_radius_m` about each extinct arc the lottery keeps
+    // (`copper_extinct_keep`, a salt of its own), × `copper_extinct_w`;
+    // the copper is the larger of it and the active arcs'. Weaker and
+    // tighter than an active arc's (eroded, partly buried). Swept on the
+    // three worlds of 2026-10-29 (0.7/0.33/110 km, 0.8/0.4/120 km,
+    // 0.8/0.5/100 km; the extinct arcs through the map's marker grid):
+    // this, "moderate", brought Morvane's copper ≥ 0.6 within 300 km of 9
+    // of its 19 arable clusters (1 before), the stronger two 12, at 22–24 %
+    // of the land with copper ≥ 0.05 against 18.6 %. Built without the
+    // grid (all 949 extinct arcs on Morvane): 27.8 / 14.6 / 5.4 % of the
+    // land at 0.05 / 0.3 / 0.6, 21 of the new arable's 26 clusters within
+    // 300 km of 0.6 (Thalassor 14.0 / 6.8 / 2.5 %, 2 of 12; Zephyra 13.3 /
+    // 6.2 / 2.6 %, 9 of 26). A keep of 0.15 gives the grid's cover back.
+    copper_extinct_radius_m: 110000.0,
+    copper_extinct_w: 0.7,
     tin_radius_m: 151757.0,
     obsidian_radius_m: 119808.0,
     flint_base: 0.15,
     copper_keep: 0.33,
+    copper_extinct_keep: 0.33,
     silver_keep: 0.25,
     obsidian_keep: 0.25,
     tin_keep: 0.5,
@@ -236,6 +307,17 @@ pub fn ecology_constants() -> Vec<(&'static str, f64)> {
         ("arableFrostC", t.arable_frost_c),
         ("arableIrrigationMm", t.arable_irrigation_mm),
         ("arableRiskW", t.arable_risk_w),
+        ("arableSeasonMonths", t.arable_season_months),
+        ("cropTempMid", t.crop_temp_mid),
+        ("cropTempRate", t.crop_temp_rate),
+        ("cropNeedMm", t.crop_need_mm),
+        ("cropNeedPerCMm", t.crop_need_per_c_mm),
+        ("cropNeedDry", t.crop_need_dry),
+        ("cropNeedFull", t.crop_need_full),
+        ("leachWarmC", t.leach_warm_c),
+        ("leachW", t.leach_w),
+        ("leachFromMm", t.leach_from_mm),
+        ("leachFullMm", t.leach_full_mm),
         ("oasisW", t.oasis_w),
         ("wellDepthM", t.well_depth_m),
         ("wellW", t.well_w),
@@ -247,10 +329,13 @@ pub fn ecology_constants() -> Vec<(&'static str, f64)> {
         ("ecotoneFullShare", t.ecotone_full_share),
         ("ecotoneCountedOnM", t.ecotone_counted_on_m),
         ("copperRadiusM", t.copper_radius_m),
+        ("copperExtinctRadiusM", t.copper_extinct_radius_m),
+        ("copperExtinctW", t.copper_extinct_w),
         ("tinRadiusM", t.tin_radius_m),
         ("obsidianRadiusM", t.obsidian_radius_m),
         ("flintBase", t.flint_base),
         ("copperKeep", t.copper_keep),
+        ("copperExtinctKeep", t.copper_extinct_keep),
         ("silverKeep", t.silver_keep),
         ("obsidianKeep", t.obsidian_keep),
         ("tinKeep", t.tin_keep),

@@ -29,8 +29,10 @@ Die Karte zeigt immer eine Ressource; du wählst sie in der linken Spalte.
 
 ### Ackerland {#resource.arable}
 
-Boden und Klima, die sich zum Ackerbau eignen: frostfreie Monate, flaches
-Land, Wasser auf den Feldern und Regen, auf den man sich verlassen kann.
+Boden und Klima, die sich zum Ackerbau eignen: eine Wachstumszeit, warm
+und feucht genug für Feldfrüchte, flaches Land, Wasser auf den Feldern und
+Regen, auf den man sich verlassen kann. Starker Regen in den heißen Tropen
+wäscht den Boden aus.
 
 ### Fisch {#resource.fish}
 
@@ -63,7 +65,8 @@ Feuerstein verstreut im flachen Land.
 
 ### Kupfer {#resource.copper}
 
-Kupfererz, gebunden an die Vulkane der Inselbögen.
+Kupfererz, gebunden an Vulkanbögen: am reichsten an tätigen, schwächer
+an erloschenen.
 
 ### Zinn {#resource.tin}
 
