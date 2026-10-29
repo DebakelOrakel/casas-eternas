@@ -18,7 +18,7 @@ summary.de: Das Ackerland las die Produktivität des wilden Landes (das
 area: generator
 stage: built
 createdAt: 2026-10-29
-concepts: [resource.arable, resource.carryingCapacity]
+concepts: [resource.carryingCapacity]
 related: [DEC-0008, DEC-0030, DES-0032]
 ---
 
