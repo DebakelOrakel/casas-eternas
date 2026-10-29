@@ -17,9 +17,11 @@ import { traceFlowLines } from './flowLines'
 // pressure with its isobars, and the wind's and the currents' marks — from
 // a save's refinement (world.refined(), per cell of the climate's field
 // mesh), as the year's mean where the save holds months. Written for the
-// incubator after the generator's painters (GeneratorScreen paintUpwelling,
-// paintWeather, paintSalinity, drawPressure, drawWindCalm, windMarks,
-// currentMarks), apart from either screen, as climateLayers.ts.
+// incubator after the generator's painters, apart from either screen, as
+// climateLayers.ts. The generator paints its sea, weather and pressure
+// through them since 2026-10-29; its wind's calm and its marks are still
+// its own (they read the static climate's wind too, and the calm is
+// smoothed there).
 //
 // The cells are charted once (chartField) on the climate's chart; a wash
 // reads it bilinearly, from the sea's texels only for a sea wash and from
@@ -73,6 +75,14 @@ function referenceSpeed(e: ArrayLike<number>, s: ArrayLike<number>): number {
   return m[Math.floor(m.length * 0.95)] || 1
 }
 
+// The upwelling at which the wash is full: the 98th percentile of the
+// rising cells, not the strongest — a few coast cells peak at seven times
+// the usual (Astrakan) and would leave everything else pale. 0: none rises.
+export function upwellingPeakOf(upwelling: ArrayLike<number>): number {
+  const rising = Array.from(upwelling).filter((v) => v > 0).sort((a, b) => a - b)
+  return rising.length > 0 ? rising[Math.floor(0.98 * (rising.length - 1))] : 0
+}
+
 // The refinement charted; null where it does not fit the domain's mesh.
 export function chartRefined(domain: Domain, refined: RefinedClimate): RefinedCharts | null {
   const cm = climateMesh(domain)
@@ -82,7 +92,6 @@ export function chartRefined(domain: Domain, refined: RefinedClimate): RefinedCh
   const rain = chart(yearMean(refined.precipitation, months, cells).map((v) => (v < 0 ? OCEAN_PRECIP : v)))
   const sea = Uint8Array.from(rain, (v) => (v === OCEAN_PRECIP ? 1 : 0))
   const upwelling = chart(refined.upwelling)
-  const rising = Array.from(refined.upwelling).filter((v) => v > 0).sort((a, b) => a - b)
   const weather = {
     fog: chart(refined.fog),
     foehn: chart(refined.foehn),
@@ -100,9 +109,7 @@ export function chartRefined(domain: Domain, refined: RefinedClimate): RefinedCh
     sea,
     pressure: chart(yearMean(refined.pressure, months, cells)),
     upwelling,
-    // The 98th percentile of the rising cells, not the strongest: a few
-    // coast cells peak at seven times the usual (the generator's, Astrakan).
-    upwellingPeak: rising.length > 0 ? rising[Math.floor(0.98 * (rising.length - 1))] : 0,
+    upwellingPeak: upwellingPeakOf(refined.upwelling),
     salinity: chart(refined.salinity),
     deepWater: chart(refined.deepWater),
     weather,
@@ -115,9 +122,15 @@ export function chartRefined(domain: Domain, refined: RefinedClimate): RefinedCh
   }
 }
 
+// What a wash reads of the charts: the generator hands its own chart
+// raster (the worker's), the incubator chartRefined's.
+export type MaskedCharts = Pick<RefinedCharts, 'width' | 'height' | 'sea' | 'domain'>
+export type WeatherCharts = MaskedCharts & Pick<RefinedCharts, 'weather'>
+export type SeaCharts = MaskedCharts & Pick<RefinedCharts, 'upwelling' | 'upwellingPeak' | 'salinity' | 'deepWater'>
+
 // Each target texel's value from the chart, bilinear over the chart's sea
 // (`sea` true) or land texels only; null where none of the four is.
-function washMasked(target: WashTarget, charts: RefinedCharts, sea: boolean, keep: (t: number) => boolean, paint: (tIndex: number, read: (field: Float32Array) => number) => void): void {
+function washMasked(target: WashTarget, charts: MaskedCharts, sea: boolean, keep: (t: number) => boolean, paint: (tIndex: number, read: (field: Float32Array) => number) => void): void {
   const { width: W, height: H } = charts
   const sphere = charts.domain.kind === 'sphere'
   const row = (y: number): number => (sphere ? Math.max(0, Math.min(H - 1, y)) : ((y % H) + H) % H)
@@ -157,8 +170,8 @@ function washMasked(target: WashTarget, charts: RefinedCharts, sea: boolean, kee
 }
 
 // A weather phenomenon's colour at full strength (`full`, a share of the
-// year, or the world's strongest at 1), or for the see-saw's dry side
-// (`signed`): the generator's WEATHER_STYLE.
+// year, or the world's strongest at 1 — a blizzard a third of the year is
+// as bad as they come), or for the see-saw's dry side (`signed`).
 const WEATHER_STYLE: Record<WeatherLayer, { rgb: Rgb; full: number; signed?: Rgb }> = {
   fog: { rgb: [120, 140, 170], full: 0.5 },
   foehn: { rgb: [215, 110, 40], full: 0.5 },
@@ -172,7 +185,7 @@ const WEATHER_STYLE: Record<WeatherLayer, { rgb: Rgb; full: number; signed?: Rgb
 }
 
 // The phenomenon on the land, `land(t)` the target's.
-export function paintWeather(target: WashTarget, charts: RefinedCharts, layer: WeatherLayer, land: (t: number) => boolean): void {
+export function paintWeather(target: WashTarget, charts: WeatherCharts, layer: WeatherLayer, land: (t: number) => boolean): void {
   const style = WEATHER_STYLE[layer]
   const field = charts.weather[layer]
   washMasked(target, charts, false, land, (tIndex, read) => {
@@ -186,7 +199,7 @@ export function paintWeather(target: WashTarget, charts: RefinedCharts, layer: W
 // The sea's layers on the sea, `sea(t)` the target's: the upwelling, teal,
 // stronger where more cold water comes up; the salt, with the sinking water
 // laid over it in violet.
-export function paintSea(target: WashTarget, charts: RefinedCharts, layer: SeaLayer, sea: (t: number) => boolean): void {
+export function paintSea(target: WashTarget, charts: SeaCharts, layer: SeaLayer, sea: (t: number) => boolean): void {
   if (layer === 'upwelling') {
     if (charts.upwellingPeak <= 0) return
     washMasked(target, charts, true, sea, (tIndex, read) => {
@@ -206,15 +219,17 @@ export function paintSea(target: WashTarget, charts: RefinedCharts, layer: SeaLa
 
 // The pressure: a wash, blue for the lows and amber for the highs, stronger
 // the further from 1013 hPa, and isobars every 4 hPa, the 1012 and the
-// 1020 line heavier — the weather map's convention. Drawn once a target
-// size onto a canvas, then laid on the target.
-export interface PressurePicture {
-  width: number
-  height: number
-  rgba: Uint8ClampedArray
+// 1020 line heavier — the weather map's convention. The wash (one texel a
+// chart texel) and the isobars are made once a field (pressureDrawing),
+// then drawn at a size onto a canvas (drawPressure): the generator's map
+// directly, the incubator's through a picture laid on its target.
+export interface PressureDrawing {
+  resX: number
+  resY: number
+  wash: HTMLCanvasElement
+  isobars: Isoline[]
 }
-export function pressurePicture(charts: RefinedCharts, width: number, height: number): PressurePicture {
-  const { width: W, height: H, pressure } = charts
+export function pressureDrawing(pressure: Float32Array, W: number, H: number): PressureDrawing {
   const wash = document.createElement('canvas')
   wash.width = W
   wash.height = H
@@ -230,17 +245,30 @@ export function pressurePicture(charts: RefinedCharts, width: number, height: nu
   wc.putImageData(img, 0, 0)
   const levels: number[] = []
   for (let p = 980; p <= 1048; p += 4) levels.push(p)
-  const isobars: Isoline[] = traceIsolines(pressure, W, H, levels)
+  return { resX: W, resY: H, wash, isobars: traceIsolines(pressure, W, H, levels) }
+}
+export function drawPressure(c: CanvasRenderingContext2D, drawing: PressureDrawing, width: number, height: number): void {
+  c.save()
+  c.imageSmoothingEnabled = true
+  c.drawImage(drawing.wash, 0, 0, width, height)
+  c.strokeStyle = 'rgba(40, 45, 60, 0.6)'
+  // The lines' widths at the generator's map width (2048); as wide on a
+  // wider one.
+  const scale = width / 2048
+  drawIsolines(c, drawing.isobars, { resX: drawing.resX, resY: drawing.resY, width, height, lineWidth: scale, emphasis: (level) => level === 1012 || level === 1020, emphasisWidth: 2 * scale })
+  c.restore()
+}
+export interface PressurePicture {
+  width: number
+  height: number
+  rgba: Uint8ClampedArray
+}
+export function pressurePicture(charts: RefinedCharts, width: number, height: number): PressurePicture {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
   const c = canvas.getContext('2d')!
-  c.imageSmoothingEnabled = true
-  c.drawImage(wash, 0, 0, width, height)
-  c.strokeStyle = 'rgba(40, 45, 60, 0.6)'
-  // The generator's lines at its map's width; as wide on this one.
-  const scale = width / 2048
-  drawIsolines(c, isobars, { resX: W, resY: H, width, height, lineWidth: scale, emphasis: (level) => level === 1012 || level === 1020, emphasisWidth: 2 * scale })
+  drawPressure(c, pressureDrawing(charts.pressure, charts.width, charts.height), width, height)
   return { width, height, rgba: c.getImageData(0, 0, width, height).data }
 }
 export function paintPressure(target: WashTarget, picture: PressurePicture): void {

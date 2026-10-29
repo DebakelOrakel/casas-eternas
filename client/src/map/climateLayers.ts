@@ -11,10 +11,9 @@ import type { LegendSpec } from '../ui/legend/LegendPanel'
 // temperature, the precipitation, the temperature's span, the monsoon, the
 // water balance, the Köppen classes, the biomes — as washes over an RGBA
 // target, with their legends. Written for the incubator after the
-// generator's painters (GeneratorScreen paintTemperature … paintBiomes,
-// their colours and alphas), apart from either screen so that the
-// generator can take them over: a wash knows its field and its target, not
-// whose they are.
+// generator's painters, apart from either screen: a wash knows its field
+// and its target, not whose they are. Both screens paint through them
+// since 2026-10-29 (TEG-28), when the generator's own painters went.
 //
 // A field on its own raster (the climate's chart) is read at the texel
 // under each target texel, the nearest; a class (Köppen, biome) comes per
@@ -29,6 +28,21 @@ export interface WashTarget {
   height: number
   // Lay `rgb` at `alpha` over target texel `t`.
   blend(t: number, rgb: Rgb, alpha: number): void
+}
+
+// An opaque RGBA raster of width × height as a target (the generator's
+// map): `rgb` laid over at `alpha`, the alpha byte left as it is.
+export function pixelTarget(data: Uint8ClampedArray, width: number, height: number): WashTarget {
+  return {
+    width,
+    height,
+    blend: (t, rgb, alpha) => {
+      const p = 4 * t
+      data[p] = data[p] * (1 - alpha) + rgb[0] * alpha
+      data[p + 1] = data[p + 1] * (1 - alpha) + rgb[1] * alpha
+      data[p + 2] = data[p + 2] * (1 - alpha) + rgb[2] * alpha
+    },
+  }
 }
 
 export type ClimateWash = 'temperature' | 'precipitation' | 'seasonality' | 'monsoon' | 'waterBalance' | 'koppen' | 'biomes'

@@ -48,14 +48,12 @@ import { createLegendPanel, type LegendSpec } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
 import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
-import { KOPPEN_CODES, koppenCode, koppenColor, koppenLabelKey } from '../../generator/climate/koppen'
-import { temperatureColor, precipitationColor, amplitudeColor, monsoonColor, pressureColor, upwellingColor, salinityColor, DEEP_WATER_RGB, temperatureLegendStops, precipitationLegendStops, amplitudeLegendStops, monsoonLegendStops, pressureLegendStops, upwellingLegendStops, salinityLegendStops } from '../../generator/climate/climateColors'
+import { koppenLabelKey } from '../../generator/climate/koppen'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
 import { shiftedYNorm, topSummerCos } from '../../generator/climate/climateField'
 import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
-import { biomeColor, biomeLabelKey, biomeLegend, Biome } from '../../generator/climate/biomes'
-import { evaporationPotential } from '../../generator/surface/hydrology'
+import { biomeLabelKey, Biome } from '../../generator/climate/biomes'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
 import { ELEVATION_ENCODING, decodeLayer } from '../../world/save/worldLayers'
@@ -112,7 +110,9 @@ import { PLANET_INPUTS } from '../../generator/planet/planetInputParams'
 import { traceFlowLines } from '../../map/flowLines'
 import { flowLineMarks, globeVectorMarks, type VectorMark, type VectorReader } from '../../map/vectorMarks'
 import { climateMesh } from '../../generator/climate/climateMesh'
-import { traceIsolines, drawIsolines, type Isoline } from '../../map/isolines'
+import { climateWashLegend, paintClimateWash, pixelTarget, type ClimateClasses, type ClimateFields, type ClimateWash, type WashTarget } from '../../map/climateLayers'
+import { cratonAgeLegend, hotspotLegend, mantleLegend, mantleTintScale, paintCratonAge, paintMantle, volcanoLegend } from '../../map/geologyLayers'
+import { drawPressure, paintSea, paintWeather, pressureDrawing, pressureLegend, seaLegend, SEA_LAYERS, upwellingPeakOf, WEATHER_LAYERS, weatherLegend, type PressureDrawing, type SeaCharts, type SeaLayer, type WeatherCharts, type WeatherLayer } from '../../map/refinedLayers'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
 
@@ -169,75 +169,11 @@ const BREAKUP_COLOR = '235, 140, 30'
 // putting that window inside half a minute.
 const EPOCH_INTERVAL_MS = 180
 
-// The mantle tint saturates at this multiple of the field's own p90(|value|),
-// rather than at a fixed number.
-//
-// It used to divide by a hardcoded 1.0. That happens to be well calibrated for the
-// TECTONIC phase — measured p90(|v|) climbs to 0.97 by epoch 100 over two seeds, so
-// the ramp there very nearly uses its full range. It is wrong for the Archean, whose
-// field the engine's `sustain_mantle_vigour` renormalises to a fixed RMS: p90 is 0.61, and the bulk
-// of the map is far below that. The measured median tint alpha in the Archean is
-// 0.06 out of a possible 0.55, falling from 0.16 by epoch 25 — a 6% wash in which
-// the field's real motion (correlation 0.9 per 25 epochs) is simply not visible.
-//
-// The reason the two phases differ is structural, not a tuning accident. The field
-// is zero-mean, and once continents cover roughly a quarter of the surface that
-// quarter carries nearly all of the variance (they insulate; the ocean cools), so
-// the remaining three quarters sit just barely below zero. The Archean's fixed-RMS
-// renormalisation is set by those few strong cells, which pushes everything else
-// down: p50 falls from 0.18 at epoch 100 to ~0.11 by epoch 300, where the tectonic
-// phase holds p50 near 0.33.
-//
-// Normalising by the field's own p90 makes the ramp mean the same thing in both
-// phases — "the strongest tenth of the map is fully saturated" — and removes the
-// magic number. Deliberately the ONLY difference from the old ramp: an Archean-only
-// gamma was tried on top, to lift the mid-tones there (p90 holds around 0.53-0.65
-// while p50 falls to ~0.11, so the distribution grows peakier over time and the
-// median tint sat at 0.09). It was dropped again once the vigour knob started
-// steering the field visibly — the extra contrast was compensating for a control
-// that did nothing, and both phases reading the same is worth more than the lift.
-const MANTLE_TINT_PERCENTILE = 0.9
-// Floor, so a nearly flat field is not amplified into noise: dividing by a p90 near
-// zero would paint numerical dust at full opacity.
-const MANTLE_TINT_FLOOR = 0.25
-// Craton-age ramp: pale sand for crust that formed just now, deep russet for cores
-// as old as the world. Warm and sequential on purpose — this is one quantity going
-// one direction, so a diverging or rainbow scale would invent a midpoint that has no
-// meaning. The dark end reads as "ancient shield", which is roughly how these are
-// drawn on real geological maps.
-const CRATON_AGE_STOPS: readonly (readonly [share: number, rgb: readonly [number, number, number]])[] = [
-  [0.0, [238, 219, 176]],
-  [0.5, [186, 122, 74]],
-  [1.0, [104, 40, 30]],
-]
-const CRATON_AGE_ALPHA = 0.8
-
-function cratonAgeColor(age: number): readonly [number, number, number] {
-  const a = age <= 0 ? 0 : age >= 1 ? 1 : age
-  for (let i = 1; i < CRATON_AGE_STOPS.length; i++) {
-    const [hi, hiRgb] = CRATON_AGE_STOPS[i]
-    if (a > hi && i < CRATON_AGE_STOPS.length - 1) continue
-    const [lo, loRgb] = CRATON_AGE_STOPS[i - 1]
-    const t = hi === lo ? 0 : (a - lo) / (hi - lo)
-    return [loRgb[0] + (hiRgb[0] - loRgb[0]) * t, loRgb[1] + (hiRgb[1] - loRgb[1]) * t, loRgb[2] + (hiRgb[2] - loRgb[2]) * t]
-  }
-  return CRATON_AGE_STOPS[0][1]
-}
-
-// Legend reads as a share of the world's history rather than an absolute age: the
-// field is normalised against the current epoch, so "1" means "here since the
-// beginning" and would be a different number of years at every moment you look.
-const cratonAgeLegendStops = CRATON_AGE_STOPS.map(([share, rgb]) => ({
-  value: Math.round(share * 100),
-  rgb: [rgb[0], rgb[1], rgb[2]] as [number, number, number],
-}))
-
-// Signed field value scaled so ±1 is full saturation. Precomputed per field rather
-// than per pixel: paintMantle runs over the full 2048×1024 map on every overlay
-// repaint, and this is constant across each coarse mantle cell.
+// The mantle's field scaled to ±1 for its tint (map/geologyLayers.ts,
+// mantleTintScale, which says why a p90): per field, not per pixel — the
+// coarse field is constant over a cell, and the probe reads it too.
 function mantleTintNorm(field: Float32Array): Float32Array {
-  const magnitudes = Float32Array.from(field, Math.abs).sort()
-  const scale = Math.max(MANTLE_TINT_FLOOR, magnitudes[Math.floor(magnitudes.length * MANTLE_TINT_PERCENTILE)])
+  const scale = mantleTintScale(field)
   return Float32Array.from(field, (v) => Math.max(-1, Math.min(1, v / scale)))
 }
 
@@ -1352,26 +1288,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     }
   }
 
+  // The washes are map/'s (climateLayers, geologyLayers, refinedLayers,
+  // 2026-10-29), the incubator's too; here they get the screen's rasters.
+  const mapTarget = (data: Uint8ClampedArray): WashTarget => pixelTarget(data, MAP_WIDTH, MAP_HEIGHT)
+
   // Mantle buoyancy tint: hot upwelling → red, cold downwelling → blue, strength
   // ∝ |value| (near-zero stays transparent). Coarse field sampled up to full res.
-  function paintMantle(data: Uint8ClampedArray): void {
-    if (!mantleNorm) return
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(mantleResY - 1, Math.floor((y / MAP_HEIGHT) * mantleResY))
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const gx = Math.min(mantleResX - 1, Math.floor((x / MAP_WIDTH) * mantleResX))
-        const v = mantleNorm[gy * mantleResX + gx]
-        const a = (v < 0 ? -v : v) * 0.55
-        if (a < 0.01) continue
-        const r = v >= 0 ? 225 : 55
-        const g = v >= 0 ? 85 : 110
-        const b = v >= 0 ? 55 : 210
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - a) + r * a
-        data[p + 1] = data[p + 1] * (1 - a) + g * a
-        data[p + 2] = data[p + 2] * (1 - a) + b * a
-      }
-    }
+  function washMantle(data: Uint8ClampedArray): void {
+    if (mantleNorm) paintMantle(mapTarget(data), { width: mantleResX, height: mantleResY, field: mantleNorm })
   }
 
   // Crust age: fresh crust pale, ancient cratonic cores deep russet. Ocean is left
@@ -1380,32 +1304,22 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // craton grows by welding younger crust onto an old core and that history is
   // otherwise invisible in the coastline.
   //
-  // Blended over the base at full strength rather than as a wash: unlike the mantle
-  // field, which is a cause acting everywhere, this is a property OF the land, and a
-  // faint version of it would be unreadable against the terrain colouring.
-  function paintCratonAge(data: Uint8ClampedArray): void {
-    if (!lastCratonAge || !lastRelief) return
-    for (let y = 0; y < MAP_HEIGHT; y++) {
+  // Masked to the coastline the renderer actually drew, not to the crust field's
+  // own reach. computeCratonOldnessField reports an age wherever ANY blob kernel
+  // touches — that is the full blob radius — but land only begins where the
+  // SUMMED metaball field clears sea level, which for a lone blob is 0.458 of its
+  // radius. Painting the field directly therefore covered about five times the
+  // area of the island under it, and the overlay visibly overhung the coast.
+  function washCratonAge(data: Uint8ClampedArray): void {
+    const age = lastCratonAge
+    const relief = lastRelief
+    if (!age || !relief) return
+    paintCratonAge(mapTarget(data), (t) => {
+      const y = Math.floor(t / MAP_WIDTH)
       const gy = Math.min(mantleResY - 1, Math.floor((y / MAP_HEIGHT) * mantleResY))
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const i = y * MAP_WIDTH + x
-        // Masked to the coastline the renderer actually drew, not to the crust field's
-        // own reach. computeCratonOldnessField reports an age wherever ANY blob kernel
-        // touches — that is the full blob radius — but land only begins where the
-        // SUMMED metaball field clears sea level, which for a lone blob is 0.458 of its
-        // radius. Painting the field directly therefore covered about five times the
-        // area of the island under it, and the overlay visibly overhung the coast.
-        if (!(lastRelief[i] & 128)) continue
-        const gx = Math.min(mantleResX - 1, Math.floor((x / MAP_WIDTH) * mantleResX))
-        const age = lastCratonAge[gy * mantleResX + gx]
-        if (age < 0) continue // no crust here at all
-        const [r, g, b] = cratonAgeColor(age)
-        const p = i * 4
-        data[p] = data[p] * (1 - CRATON_AGE_ALPHA) + r * CRATON_AGE_ALPHA
-        data[p + 1] = data[p + 1] * (1 - CRATON_AGE_ALPHA) + g * CRATON_AGE_ALPHA
-        data[p + 2] = data[p + 2] * (1 - CRATON_AGE_ALPHA) + b * CRATON_AGE_ALPHA
-      }
-    }
+      const gx = Math.min(mantleResX - 1, Math.floor(((t - y * MAP_WIDTH) / MAP_WIDTH) * mantleResX))
+      return age[gy * mantleResX + gx]
+    }, (t) => (relief[t] & 128) !== 0)
   }
 
   // The mantle-driver markers — the volcanic PRODUCTS (red cones = hotspot
@@ -1416,36 +1330,31 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // whatever drifts over it, and they do not exist in the same phases — the
   // Archean has neither, while the mantle field is that phase's main content.
 
-  // Temperature heatmap tint (climate) — a pixel layer blended over the terrain
-  // so both show. Samples the coarse climate grid (nearest cell) per map pixel.
-  // No-op until climate is computed. Drawn before boundaries/names so those
-  // stay legible on top.
-  // Climatic water balance: rainfall minus potential evaporation, the map of
-  // where the land gains water and where it loses it. Diverging ramp — arid
-  // rust below zero, paper-white at balance, deep blue-green surplus. Coarse
-  // climate grid, land only (ocean keeps the base map).
-  function paintWaterBalance(data: Uint8ClampedArray): void {
-    if (!lastTemperature || !lastPrecipitation) return
-    const alpha = 0.55
-    const clampAbs = 1500
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
-        const i = gy * climateResX + gx
-        const p0 = lastPrecipitation[i]
-        if (p0 === OCEAN_PRECIP) continue
-        const balance = Math.max(-clampAbs, Math.min(clampAbs, p0 - evaporationPotential(lastTemperature[i])))
-        const t2 = balance / clampAbs // -1..1
-        const r = t2 < 0 ? 245 + (170 - 245) * -t2 : 245 + (30 - 245) * t2
-        const g = t2 < 0 ? 243 + (60 - 243) * -t2 : 243 + (110 - 243) * t2
-        const b = t2 < 0 ? 238 + (40 - 238) * -t2 : 238 + (150 - 238) * t2
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - alpha) + r * alpha
-        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-      }
+  // The climate's washes (map/climateLayers.ts) on the climate grid, the
+  // nearest cell per map pixel: the shown month's temperature and rain,
+  // the year's water balance (rain less potential evaporation), the
+  // seasonality and the monsoon. The land's fields keep the grid's own coast
+  // (its rain's sea mark), not the map's; the classes are per map pixel,
+  // Köppen on the relief's land (DEC-0036 phase 7: each land pixel its
+  // triangle's heaviest land node's).
+  function washClimate(data: Uint8ClampedArray, wash: ClimateWash): void {
+    const year = wash === 'waterBalance'
+    const fields: ClimateFields = {
+      width: climateResX,
+      height: climateResY,
+      temperature: year ? lastTemperature : displayTemperature(),
+      precipitation: year ? lastPrecipitation : displayPrecipitation(),
+      seasonality: lastSeasonality,
+      monsoon: lastMonsoonIndex,
     }
+    const koppen = displayKoppen()
+    const biomes = lastBiomes
+    const relief = lastRelief
+    const classes: ClimateClasses = {
+      koppen: (t) => (koppen && koppen.length === MAP_WIDTH * MAP_HEIGHT ? koppen[t] : 0),
+      biome: (t) => (biomes ? biomes[t] : Biome.Ocean),
+    }
+    paintClimateWash(mapTarget(data), wash, fields, classes, wash === 'koppen' ? (t) => relief !== null && (relief[t] & 128) !== 0 : undefined)
   }
 
   // Watersheds: each labelled catchment in its own colour, golden-angle hue
@@ -1465,23 +1374,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       data[p] = data[p] * (1 - alpha) + (r1 + m) * 255 * alpha
       data[p + 1] = data[p + 1] * (1 - alpha) + (g1 + m) * 255 * alpha
       data[p + 2] = data[p + 2] * (1 - alpha) + (b1 + m) * 255 * alpha
-    }
-  }
-
-  function paintTemperature(data: Uint8ClampedArray): void {
-    const field = displayTemperature()
-    if (!field) return
-    const alpha = 0.55
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
-        const [r, g, b] = temperatureColor(field[gy * climateResX + gx])
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - alpha) + r * alpha
-        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-      }
     }
   }
 
@@ -1513,49 +1405,6 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const alpha = fadeZero ? baseAlpha * Math.min(1, v / fadeIn) : baseAlpha
         if (alpha === 0) continue
         const [r, g, b] = ecologyFieldColor(selectedEcologyField, v)
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - alpha) + r * alpha
-        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-      }
-    }
-  }
-
-  // Precipitation heatmap tint (climate), land only — ocean cells carry the
-  // OCEAN_PRECIP sentinel and are left as terrain. No-op until computed.
-  function paintPrecipitation(data: Uint8ClampedArray): void {
-    const field = displayPrecipitation()
-    if (!field) return
-    const alpha = 0.6
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
-        const mm = field[gy * climateResX + gx]
-        if (mm === OCEAN_PRECIP) continue
-        const [r, g, b] = precipitationColor(mm)
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - alpha) + r * alpha
-        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-      }
-    }
-  }
-
-  // Monsoon / precipitation-seasonality index (0 even → 1 strongly wet-dry), land only
-  // (ocean = OCEAN_PRECIP sentinel, left as terrain). No-op until computed.
-  function paintMonsoon(data: Uint8ClampedArray): void {
-    if (!lastMonsoonIndex) return
-    const alpha = 0.6
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
-        const idx = lastMonsoonIndex[gy * climateResX + gx]
-        if (idx === OCEAN_PRECIP) continue
-        // The strength, not the phase — the ramp runs 0..1 and a signed field
-        // would fold its two halves onto one colour (climate/monsoon.ts).
-        const [r, g, b] = monsoonColor(Math.abs(idx))
         const p = (y * MAP_WIDTH + x) * 4
         data[p] = data[p] * (1 - alpha) + r * alpha
         data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
@@ -1627,284 +1476,71 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })
     return flowLineMarks(lines, { width: MAP_WIDTH, height: MAP_HEIGHT, length: WIND_LENGTH, gap: WIND_GAP, closeLoops: false, minPoints: 3, speedCap: Infinity })
   }
-  // Upwelling (the refinement's): a teal wash on the sea, stronger where more
-  // cold water comes up. Scaled to the 98th percentile of the rising cells,
-  // not to the strongest: a few coast cells peak at seven times the usual
-  // (Astrakan), and would leave everything else pale. Downwelling is left
-  // out: it has nothing to show a player.
+  // The refinement's sea and weather washes (map/refinedLayers.ts), on the
+  // climate grid the worker charted it on: read bilinearly from the sea
+  // cells only for the sea's (the grid's land test is the static
+  // climate's rain mark), from the land cells for the weather's, and
+  // painted on the relief's sea or land pixels only — nearest cells drew
+  // each 62 km cell as a block, and the coasts as stairs. The upwelling is
+  // scaled to its peak (upwellingPeakOf); downwelling is left out: it has
+  // nothing to show a player.
   let upwellingScale: { source: Float32Array; peak: number } | null = null
   const upwellingPeak = (): number => {
     const field = lastRefined?.upwelling
     if (!field) return 0
-    if (upwellingScale?.source !== field) {
-      const rising = Array.from(field).filter((v) => v > 0).sort((a, b) => a - b)
-      upwellingScale = { source: field, peak: rising.length > 0 ? rising[Math.floor(0.98 * (rising.length - 1))] : 0 }
-    }
+    if (upwellingScale?.source !== field) upwellingScale = { source: field, peak: upwellingPeakOf(field) }
     return upwellingScale.peak
   }
-  // Sampled bilinearly from the sea cells only (the climate grid's land test
-  // is the precipitation's ocean mark), and painted on sea pixels only (the
-  // relief's): nearest cells drew each 62 km cell as a block, and the coasts
-  // as stairs.
-  function paintUpwelling(data: Uint8ClampedArray): void {
-    const field = lastRefined?.upwelling
-    const precipitation = lastPrecipitation
-    if (!field || !precipitation || !lastRelief) return
-    const peak = upwellingPeak()
-    if (peak <= 0) return
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
-      const y0 = Math.floor(fy)
-      const ty = fy - y0
-      const r0 = climateRow(y0) * climateResX
-      const r1 = climateRow(y0 + 1) * climateResX
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        if (lastRelief[y * MAP_WIDTH + x] & 128) continue // land
-        const fx = (x + 0.5) / MAP_WIDTH * climateResX - 0.5
-        const x0 = Math.floor(fx)
-        const tx = fx - x0
-        const c0 = wrapValue(x0, climateResX)
-        const c1 = wrapValue(x0 + 1, climateResX)
-        let sum = 0
-        let weight = 0
-        for (const [i, w] of [[r0 + c0, (1 - tx) * (1 - ty)], [r0 + c1, tx * (1 - ty)], [r1 + c0, (1 - tx) * ty], [r1 + c1, tx * ty]]) {
-          if (precipitation[i] !== OCEAN_PRECIP) continue
-          sum += field[i] * w
-          weight += w
-        }
-        if (weight <= 0) continue
-        const v = sum / weight
-        if (v <= 0) continue
-        const k = Math.min(1, v / peak)
-        const [r, g, b] = upwellingColor(k)
-        const alpha = 0.25 + 0.5 * k
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - alpha) + r * alpha
-        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-      }
-    }
-  }
-
-  // The weather phenomena (the refinement's): the picked one's share of the
-  // year on the land, blended over the land cells and painted on land
-  // pixels, as the upwelling is on the sea. Full colour at half the year.
-  type WeatherId = 'fog' | 'foehn' | 'rainVariability' | 'enso' | 'cyclone' | 'tornado' | 'blizzard' | 'dust' | 'thunder'
-  const WEATHER_IDS: readonly WeatherId[] = ['fog', 'foehn', 'rainVariability', 'enso', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder']
-  // The picked phenomenon's field, and how it is drawn: a share with its
-  // colour at full strength (`full`), or the see-saw's signed mark, brown
-  // for drier and blue for wetter.
-  const weatherField = (id: WeatherId): Float32Array | null => {
+  // The picked phenomenon's field.
+  const weatherField = (id: WeatherLayer): Float32Array | null => {
     if (!lastRefined) return null
     if (id === 'enso') return lastRefined.reliability.ensoPattern
     if (id === 'rainVariability') return lastRefined.reliability.rainVariability
     if (id === 'fog' || id === 'foehn') return lastRefined[id]
     return lastRefined.storms[id]
   }
-  const WEATHER_STYLE: Record<WeatherId, { rgb: [number, number, number]; full: number; signed?: [number, number, number] }> = {
-    fog: { rgb: [120, 140, 170], full: 0.5 },
-    foehn: { rgb: [215, 110, 40], full: 0.5 },
-    rainVariability: { rgb: [170, 60, 120], full: 0.5 },
-    enso: { rgb: [40, 110, 200], full: 1, signed: [165, 110, 45] },
-    // The storms relative to the world's strongest are full at 1; a
-    // blizzard a third of the year is as bad as they come.
-    cyclone: { rgb: [120, 45, 160], full: 1 },
-    tornado: { rgb: [200, 55, 55], full: 1 },
-    blizzard: { rgb: [70, 130, 200], full: 0.3 },
-    dust: { rgb: [190, 150, 80], full: 1 },
-    thunder: { rgb: [230, 180, 30], full: 1 },
-  }
-  function paintWeather(data: Uint8ClampedArray, id: WeatherId): void {
-    const field = weatherField(id)
+  // Made once per refinement and climate grid.
+  let refinedWash: { refined: RefinedClimateChart; precipitation: Float32Array; charts: SeaCharts & WeatherCharts } | null = null
+  function refinedWashCharts(): (SeaCharts & WeatherCharts) | null {
+    const refined = lastRefined
     const precipitation = lastPrecipitation
-    if (!field || !precipitation || !lastRelief) return
-    const style = WEATHER_STYLE[id]
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
-      const y0 = Math.floor(fy)
-      const ty = fy - y0
-      const r0 = climateRow(y0) * climateResX
-      const r1 = climateRow(y0 + 1) * climateResX
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        if (!(lastRelief[y * MAP_WIDTH + x] & 128)) continue // sea
-        const fx = (x + 0.5) / MAP_WIDTH * climateResX - 0.5
-        const x0 = Math.floor(fx)
-        const tx = fx - x0
-        const c0 = wrapValue(x0, climateResX)
-        const c1 = wrapValue(x0 + 1, climateResX)
-        let sum = 0
-        let weight = 0
-        for (const [i, w] of [[r0 + c0, (1 - tx) * (1 - ty)], [r0 + c1, tx * (1 - ty)], [r1 + c0, (1 - tx) * ty], [r1 + c1, tx * ty]]) {
-          if (precipitation[i] === OCEAN_PRECIP) continue
-          sum += field[i] * w
-          weight += w
-        }
-        if (weight <= 0) continue
-        const v = sum / weight
-        const k = Math.min(1, Math.abs(v) / style.full)
-        if (k <= 0.02) continue
-        const [r, g, b] = v < 0 && style.signed ? style.signed : style.rgb
-        const alpha = 0.7 * k
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - alpha) + r * alpha
-        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-      }
+    if (!refined || !precipitation) return null
+    if (refinedWash?.refined !== refined || refinedWash.precipitation !== precipitation) {
+      const weather = {} as Record<WeatherLayer, Float32Array>
+      for (const id of WEATHER_LAYERS) weather[id] = weatherField(id)!
+      refinedWash = { refined, precipitation, charts: {
+        width: climateResX,
+        height: climateResY,
+        sea: Uint8Array.from(precipitation, (v) => (v === OCEAN_PRECIP ? 1 : 0)),
+        domain: domainOfKind(previewShape(), MAP_WIDTH, MAP_HEIGHT),
+        upwelling: refined.upwelling,
+        upwellingPeak: upwellingPeak(),
+        salinity: refined.salinity,
+        deepWater: refined.deepWater,
+        weather,
+      } }
     }
+    return refinedWash.charts
+  }
+  function washSea(data: Uint8ClampedArray, layer: SeaLayer): void {
+    const charts = refinedWashCharts()
+    const relief = lastRelief
+    if (charts && relief) paintSea(mapTarget(data), charts, layer, (t) => (relief[t] & 128) === 0)
+  }
+  function washWeather(data: Uint8ClampedArray, id: WeatherLayer): void {
+    const charts = refinedWashCharts()
+    const relief = lastRelief
+    if (charts && relief) paintWeather(mapTarget(data), charts, id, (t) => (relief[t] & 128) !== 0)
   }
 
-  // The sea's salt (the refinement's): a wash on the sea, blended over the
-  // sea cells and painted on sea pixels like the upwelling, with the sinking
-  // water laid over it in violet, stronger where more of it sinks.
-  function paintSalinity(data: Uint8ClampedArray): void {
-    const salt = lastRefined?.salinity
-    const sink = lastRefined?.deepWater
-    const precipitation = lastPrecipitation
-    if (!salt || !sink || !precipitation || !lastRelief) return
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const fy = (y + 0.5) / MAP_HEIGHT * climateResY - 0.5
-      const y0 = Math.floor(fy)
-      const ty = fy - y0
-      const r0 = climateRow(y0) * climateResX
-      const r1 = climateRow(y0 + 1) * climateResX
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        if (lastRelief[y * MAP_WIDTH + x] & 128) continue // land
-        const fx = (x + 0.5) / MAP_WIDTH * climateResX - 0.5
-        const x0 = Math.floor(fx)
-        const tx = fx - x0
-        const c0 = wrapValue(x0, climateResX)
-        const c1 = wrapValue(x0 + 1, climateResX)
-        let s = 0
-        let d = 0
-        let weight = 0
-        for (const [i, w] of [[r0 + c0, (1 - tx) * (1 - ty)], [r0 + c1, tx * (1 - ty)], [r1 + c0, (1 - tx) * ty], [r1 + c1, tx * ty]]) {
-          if (precipitation[i] !== OCEAN_PRECIP) continue
-          s += salt[i] * w
-          d += sink[i] * w
-          weight += w
-        }
-        if (weight <= 0) continue
-        const [r, g, b] = salinityColor(s / weight)
-        const p = (y * MAP_WIDTH + x) * 4
-        const alpha = 0.6
-        let pr = data[p] * (1 - alpha) + r * alpha
-        let pg = data[p + 1] * (1 - alpha) + g * alpha
-        let pb = data[p + 2] * (1 - alpha) + b * alpha
-        const sinkAlpha = 0.8 * Math.min(1, d / weight)
-        if (sinkAlpha > 0.05) {
-          pr = pr * (1 - sinkAlpha) + DEEP_WATER_RGB[0] * sinkAlpha
-          pg = pg * (1 - sinkAlpha) + DEEP_WATER_RGB[1] * sinkAlpha
-          pb = pb * (1 - sinkAlpha) + DEEP_WATER_RGB[2] * sinkAlpha
-        }
-        data[p] = pr
-        data[p + 1] = pg
-        data[p + 2] = pb
-      }
-    }
-  }
-
-  // Sea-level pressure of the shown month (the refinement's): a wash, blue
-  // for the lows and amber for the highs, and isobars every 4 hPa with the
-  // 1012 and the 1020 line heavier — the weather map's convention. The wash
-  // and the isobars are made once per field.
-  let pressureDrawing: { field: Float32Array; wash: HTMLCanvasElement; isobars: Isoline[] } | null = null
-  function drawPressure(c: CanvasRenderingContext2D): void {
+  // Sea-level pressure of the shown month (the refinement's,
+  // map/refinedLayers.ts): the wash and the isobars made once per field.
+  let pressureShown: { field: Float32Array; drawing: PressureDrawing } | null = null
+  function drawPressureMap(c: CanvasRenderingContext2D): void {
     const field = refinedMonth()?.pressure
     if (!field) return
-    if (pressureDrawing?.field !== field) {
-      const wash = document.createElement('canvas')
-      wash.width = climateResX
-      wash.height = climateResY
-      const wc = wash.getContext('2d')!
-      const img = wc.createImageData(climateResX, climateResY)
-      for (let i = 0; i < climateResX * climateResY; i++) {
-        const [r, g, b] = pressureColor(field[i])
-        img.data[i * 4] = r
-        img.data[i * 4 + 1] = g
-        img.data[i * 4 + 2] = b
-        // Stronger the further from the standard pressure, so the land
-        // stays readable where nothing is going on.
-        img.data[i * 4 + 3] = Math.round(255 * (0.2 + 0.4 * Math.min(1, Math.abs(field[i] - 1013) / 12)))
-      }
-      wc.putImageData(img, 0, 0)
-      const levels: number[] = []
-      for (let p = 980; p <= 1048; p += 4) levels.push(p)
-      pressureDrawing = { field, wash, isobars: traceIsolines(field, climateResX, climateResY, levels) }
-    }
-    c.save()
-    c.imageSmoothingEnabled = true
-    c.drawImage(pressureDrawing.wash, 0, 0, MAP_WIDTH, MAP_HEIGHT)
-    c.strokeStyle = 'rgba(40, 45, 60, 0.6)'
-    drawIsolines(c, pressureDrawing.isobars, {
-      resX: climateResX, resY: climateResY, width: MAP_WIDTH, height: MAP_HEIGHT,
-      lineWidth: 1, emphasis: (level) => level === 1012 || level === 1020, emphasisWidth: 2,
-    })
-    c.restore()
-  }
-
-
-  // Seasonality tint (climate): the annual temperature amplitude everywhere —
-  // stable teal near coasts/equator, extreme purple in continental interiors at
-  // high latitude. No-op until computed.
-  function paintSeasonality(data: Uint8ClampedArray): void {
-    if (!lastSeasonality) return
-    const alpha = 0.6
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      const gy = Math.min(climateResY - 1, Math.floor((y / MAP_HEIGHT) * climateResY))
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const gx = Math.min(climateResX - 1, Math.floor((x / MAP_WIDTH) * climateResX))
-        const amp = lastSeasonality[gy * climateResX + gx]
-        if (amp === OCEAN_AMPLITUDE) continue
-        const [r, g, b] = amplitudeColor(amp)
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - alpha) + r * alpha
-        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-      }
-    }
-  }
-
-  // Biome tint (climate payoff): the Whittaker class per land cell, opaque so it
-  // reads as a map rather than a wash. Ocean cells are skipped (the base ocean
-  // shows through). No-op until computed.
-  // `lastBiomes` shares the map raster (see the worker's climateData message), so
-  // this is a straight per-pixel read — no climate-grid sampling, and no 8x8
-  // blocks. The other climate overlays around it still sample their coarse grid.
-  // Köppen classes: per pixel of the map (the nodes' classes, DEC-0036
-  // phase 7, each land pixel its triangle's heaviest land node's) on its
-  // land pixels (the relief's land bit keeps the coast the map's).
-  function paintKoppen(data: Uint8ClampedArray): void {
-    const field = displayKoppen()
-    if (!field || !lastRelief || field.length !== MAP_WIDTH * MAP_HEIGHT) return
-    const alpha = 0.7
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        if (!(lastRelief[y * MAP_WIDTH + x] & 128)) continue
-        const id = field[y * MAP_WIDTH + x]
-        if (id === 0) continue
-        const [r, g, b] = koppenColor(id)
-        const p = (y * MAP_WIDTH + x) * 4
-        data[p] = data[p] * (1 - alpha) + r * alpha
-        data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-        data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-      }
-    }
-  }
-  // A class as the legend and the readout say it: its code, then its name.
-  const koppenName = (id: number): string => `${t(koppenLabelKey(id) as TKey)} (${koppenCode(id)})`
-
-  function paintBiomes(data: Uint8ClampedArray): void {
-    if (!lastBiomes) return
-    const alpha = 0.85
-    for (let i = 0; i < MAP_WIDTH * MAP_HEIGHT; i++) {
-      const id = lastBiomes[i]
-      if (id === Biome.Ocean) continue
-      const [r, g, b] = biomeColor(id)
-      const p = i * 4
-      data[p] = data[p] * (1 - alpha) + r * alpha
-      data[p + 1] = data[p + 1] * (1 - alpha) + g * alpha
-      data[p + 2] = data[p + 2] * (1 - alpha) + b * alpha
-    }
+    if (pressureShown?.field !== field) pressureShown = { field, drawing: pressureDrawing(field, climateResX, climateResY) }
+    drawPressure(c, pressureShown.drawing, MAP_WIDTH, MAP_HEIGHT)
   }
 
   // A climate-grid row for a row index that may lie past the grid's edge:
@@ -2133,37 +1769,31 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   overlay.setLayers([
     // Muted terrain wash first (bottom-most tint, over the relief base).
     { id: 'terrain', enabled: false, paintPixels: paintTerrain },
-    { id: 'temperature', enabled: false, paintPixels: paintTemperature },
-    { id: 'precipitation', enabled: false, paintPixels: paintPrecipitation },
-    { id: 'monsoon', enabled: false, paintPixels: paintMonsoon },
-    { id: 'seasonality', enabled: false, paintPixels: paintSeasonality },
-    { id: 'koppen', enabled: false, paintPixels: paintKoppen },
-    { id: 'biomes', enabled: false, paintPixels: paintBiomes },
+    ...(['temperature', 'precipitation', 'monsoon', 'seasonality', 'koppen', 'biomes'] as const).map((id) => ({ id, enabled: false, paintPixels: (data: Uint8ClampedArray) => washClimate(data, id) })),
     { id: 'ecology', enabled: false, paintPixels: paintEcology },
     // Mantle: field tint (paintPixels) + hotspot plume markers (paint) in one layer.
-    { id: 'mantle', enabled: false, paintPixels: paintMantle },
+    { id: 'mantle', enabled: false, paintPixels: washMantle },
     // Symbols only (syncSymbols): the layers hold their switch, not paint.
     { id: 'volcanoes', enabled: false },
     { id: 'hotspots', enabled: false },
     // After 'mantle', so on land the crust's own age wins over the tint of the
     // mantle beneath it — the mantle field is the cause and covers the whole map,
     // this is the result and covers only the crust.
-    { id: 'cratonAge', enabled: false, paintPixels: paintCratonAge },
+    { id: 'cratonAge', enabled: false, paintPixels: washCratonAge },
     { id: 'boundaries', enabled: false, paintPixels: paintBoundaryMask },
     // The equator is always drawn, like the events — a property of the map,
     // not a user toggle (decided 2026-09-26 on the picture check).
     // Not on the globe: it draws its equator and polar circles as bands of
     // its own (map/sphereView.ts).
     { id: 'equator', enabled: true, paint: (c) => { if (worldShape !== 'sphere') paintWrapped(c, drawEquator) } },
-    { id: 'upwelling', enabled: false, paintPixels: paintUpwelling },
-    { id: 'salinity', enabled: false, paintPixels: paintSalinity },
-    ...WEATHER_IDS.map((id) => ({ id, enabled: false, paintPixels: (data: Uint8ClampedArray) => paintWeather(data, id) })),
-    { id: 'pressure', enabled: false, paint: drawPressure },
+    ...SEA_LAYERS.map((id) => ({ id, enabled: false, paintPixels: (data: Uint8ClampedArray) => washSea(data, id) })),
+    ...WEATHER_LAYERS.map((id) => ({ id, enabled: false, paintPixels: (data: Uint8ClampedArray) => washWeather(data, id) })),
+    { id: 'pressure', enabled: false, paint: drawPressureMap },
     // The wind's calm wash (paint); its streaks are symbols (syncSymbols).
     { id: 'wind', enabled: false, paint: drawWindCalm },
     // Symbols only (syncSymbols).
     { id: 'currents', enabled: false },
-    { id: 'waterBalance', enabled: false, paintPixels: paintWaterBalance },
+    { id: 'waterBalance', enabled: false, paintPixels: (data) => washClimate(data, 'waterBalance') },
     { id: 'watersheds', enabled: false, paintPixels: paintWatersheds },
     // Events are always on — a persistent notification-coupled marker layer,
     // not a user toggle; its markers are symbols (syncSymbols).
@@ -2392,23 +2022,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // layer in the climate step's weather group): a share of the year or of
   // the world's strongest from pale to the phenomenon's colour, and the ENSO
   // see-saw's signed mark with its period in the title.
-  function weatherReadouts(): Record<WeatherId, OverlayReadout> {
-    const pale: [number, number, number] = [236, 236, 230]
-    const entry = (id: WeatherId): OverlayReadout => ({
+  function weatherReadouts(): Record<WeatherLayer, OverlayReadout> {
+    const entry = (id: WeatherLayer): OverlayReadout => ({
       available: () => lastRefined !== null,
-      legend: () => {
-        const style = WEATHER_STYLE[id]
-        if (id === 'enso') {
-          const period = lastRefined?.reliability.ensoPeriodYears ?? 0
-          const title = period > 0 ? `${t('overlay.enso.label')} · ${t('overlay.enso.period', { v: period.toFixed(1) })}` : t('overlay.enso.label')
-          return { type: 'gradient', title, unit: t('overlay.enso.legend.unit'), stops: [
-            { value: -100, rgb: style.signed! }, { value: 0, rgb: pale }, { value: 100, rgb: style.rgb },
-          ] }
-        }
-        return { type: 'gradient', title: t(`overlay.${id}.label` as TKey), unit: t('common.unit.percent'), stops: [
-          { value: 0, rgb: pale }, { value: style.full * 100, rgb: style.rgb },
-        ] }
-      },
+      legend: () => weatherLegend(id, lastRefined?.reliability.ensoPeriodYears ?? 0),
       probe: (cell) => {
         const v = weatherField(id)?.[cell.i] ?? 0
         if (!cell.land || Math.abs(v) <= 0.005) return []
@@ -2442,10 +2059,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     names: { available: () => archeanFinalised && lastRaftLabels.length > 0, legend: null, probe: null },
     mantle: {
       available: () => lastMantle !== null,
-      legend: () => ({ type: 'swatches', title: t('overlay.mantle.legend.title'), items: [
-        { label: t('overlay.mantle.legend.upwelling'), rgb: [225, 85, 55] },
-        { label: t('overlay.mantle.legend.downwelling'), rgb: [55, 110, 210] },
-      ] }),
+      legend: mantleLegend,
       probe: (cell) => {
         if (!lastMantle || mantleResX <= 0) return []
         // The buoyancy field has no unit a reader could check — what it says is
@@ -2463,25 +2077,19 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // there, because the Archean has neither. Three layers, three honest legends.
     volcanoes: {
       available: () => lastVolcanoes.length > 0,
-      legend: () => ({ type: 'swatches', title: t('overlay.volcanoes.legend.title'), items: [
-        { label: t('overlay.volcanoes.legend.hotspot'), rgb: [220, 55, 30], shape: 'cone' },
-        { label: t('overlay.volcanoes.legend.arc'), rgb: [235, 120, 30], shape: 'cone' },
-        { label: t('overlay.volcanoes.legend.flood'), rgb: [120, 25, 20], shape: 'cone' },
-      ] }),
+      legend: volcanoLegend,
       probe: null,
     },
     hotspots: {
       available: () => lastHotspots.length > 0,
-      legend: () => ({ type: 'swatches', title: t('overlay.hotspots.legend.title'), items: [
-        { label: t('overlay.hotspots.legend.plume'), rgb: [255, 140, 0], shape: 'ring' },
-      ] }),
+      legend: hotspotLegend,
       probe: null,
     },
     // Available as soon as any crust exists, which in the Archean is within a few
     // epochs of the first upwelling standing still long enough.
     cratonAge: {
       available: () => lastCratonAge !== null && lastCratonAge.some((v) => v >= 0),
-      legend: () => ({ type: 'gradient', title: t('overlay.cratonAge.label'), unit: t('overlay.cratonAge.legend.unit'), stops: cratonAgeLegendStops }),
+      legend: cratonAgeLegend,
       probe: (cell) => {
         const age = cratonAgeAt(cell)
         return age === null ? [] : [{ label: t('readout.row.crustAge'), value: t('readout.crustAge', { v: String(Math.round(age * 100)) }) }]
@@ -2489,7 +2097,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     temperature: {
       available: () => lastTemperature !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.temperature.label'), unit: t('common.unit.celsius'), stops: temperatureLegendStops }),
+      legend: () => climateWashLegend('temperature'),
       // The year's span and, in brackets, the value the map shows (the
       // year's mean, or the month's): one row for what used to be the
       // temperature and the seasonal swing apart (2026-09-29).
@@ -2509,7 +2117,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     seasonality: {
       available: () => lastSeasonality !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.seasonality.label'), unit: t('common.unit.celsius'), stops: amplitudeLegendStops }),
+      legend: () => climateWashLegend('seasonality'),
       // No row: the temperature row gives the year's span wherever the swing
       // is known (temperatureYear builds the year from it).
       probe: null,
@@ -2517,9 +2125,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     ...weatherReadouts(),
     salinity: {
       available: () => lastRefined !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.salinity.label'), unit: t('common.unit.psu'), stops: salinityLegendStops, items: [
-        { label: t('overlay.salinity.legend.deepWater'), rgb: DEEP_WATER_RGB },
-      ] }),
+      legend: () => seaLegend('salinity'),
       probe: (cell) => {
         if (!lastRefined || cell.land) return []
         const rows = [{ label: t('readout.row.salinity'), value: formatValue(lastRefined.salinity[cell.i].toFixed(1), 'common.unit.psu') }]
@@ -2530,7 +2136,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     upwelling: {
       available: () => lastRefined !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.upwelling.label'), unit: t('common.unit.percent'), stops: upwellingLegendStops }),
+      legend: () => seaLegend('upwelling'),
       probe: (cell) => {
         const field = lastRefined?.upwelling
         if (!field || cell.land || field[cell.i] <= 0) return []
@@ -2540,7 +2146,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     pressure: {
       available: () => lastRefined !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.pressure.label'), unit: t('common.unit.hectopascal'), stops: pressureLegendStops }),
+      legend: pressureLegend,
       probe: (cell) => {
         const field = refinedMonth()?.pressure
         return field ? [{ label: t('readout.row.pressure'), value: formatValue(Math.round(field[cell.i]), 'common.unit.hectopascal') }] : []
@@ -2579,7 +2185,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     precipitation: {
       available: () => lastPrecipitation !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.precipitation.label'), unit: t('common.unit.millimetresPerYear'), stops: precipitationLegendStops }),
+      legend: () => climateWashLegend('precipitation'),
       probe: (cell) => {
         const field = displayPrecipitation()
         return field && field[cell.i] !== OCEAN_PRECIP
@@ -2593,7 +2199,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     monsoon: {
       available: () => lastMonsoonIndex !== null,
-      legend: () => ({ type: 'gradient', title: t('overlay.monsoon.legend.title'), unit: '', stops: monsoonLegendStops }),
+      legend: () => climateWashLegend('monsoon'),
       // The magnitude. The sign is the phase, and the chart draws that far
       // better than a minus sign in front of a number would.
       probe: (cell) => lastMonsoonIndex && lastMonsoonIndex[cell.i] !== OCEAN_PRECIP
@@ -2604,11 +2210,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     // (A to E), not all thirty-one.
     koppen: {
       available: () => displayKoppen() !== null,
-      legend: () => {
-        const present = new Set(displayKoppen() ?? [])
-        const ids = KOPPEN_CODES.map((_, id) => id).filter((id) => id > 0 && present.has(id))
-        return { type: 'swatches', title: t('overlay.koppen.label'), items: ids.map((id) => ({ label: koppenName(id), rgb: koppenColor(id) })) }
-      },
+      legend: () => climateWashLegend('koppen', new Set(displayKoppen() ?? [])),
       probe: null,
       // The name alone: the code is the legend's, beside its swatch.
       highlight: (cell) => {
@@ -2618,7 +2220,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     biomes: {
       available: () => lastBiomes !== null,
-      legend: () => ({ type: 'swatches', title: t('overlay.biomes.label'), items: biomeLegend().map((b) => ({ label: t(b.labelKey as TKey), rgb: b.rgb })) }),
+      legend: () => climateWashLegend('biomes'),
       probe: null,
       highlight: (cell) => lastBiomes && cell.land ? t(biomeLabelKey(lastBiomes[cell.fine]) as TKey) : null,
     },
@@ -2656,10 +2258,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     waterBalance: {
       available: () => lastTemperature !== null && lastPrecipitation !== null,
-      legend: () => ({ type: 'swatches', title: t('overlay.waterBalance.label'), items: [
-        { label: t('overlay.waterBalance.legend.humid'), rgb: [30, 110, 150] },
-        { label: t('overlay.waterBalance.legend.arid'), rgb: [170, 60, 40] },
-      ] }),
+      legend: () => climateWashLegend('waterBalance'),
       probe: (cell) => lastPrecipitationEffective && lastPrecipitationEffective[cell.fine] !== OCEAN_PRECIP
         ? [{ label: t('readout.row.effectivePrecip'), value: formatValue(String(Math.round(lastPrecipitationEffective[cell.fine])), 'common.unit.millimetresPerYear') }]
         : [],

@@ -8,12 +8,18 @@ import type { Rgb, WashTarget } from './climateLayers'
 // THE GEOLOGY'S WASHES AND LEGENDS (2026-10-26): the cratons' age and the
 // mantle's buoyancy as washes over an RGBA target, and the legends of the
 // volcanoes and the plumes (their marks are mapSymbols.ts'). Written for
-// the incubator after the generator's (GeneratorScreen paintCratonAge,
-// paintMantle, CRATON_AGE_STOPS, mantleTintNorm, overlayReadout), apart
-// from either screen, as climateLayers.ts.
+// the incubator after the generator's, apart from either screen, as
+// climateLayers.ts; both screens paint through them since 2026-10-29.
 
 // The craton-age ramp: pale sand for crust formed just now, deep russet
 // for cores as old as the world, the age a share of the world's history.
+// Warm and sequential on purpose — this is one quantity going one
+// direction, so a diverging or rainbow scale would invent a midpoint that
+// has no meaning. The dark end reads as "ancient shield", which is roughly
+// how these are drawn on real geological maps. Blended at full strength
+// rather than as a wash: unlike the mantle field, which is a cause acting
+// everywhere, this is a property OF the land, and a faint version of it
+// would be unreadable against the terrain colouring.
 const CRATON_AGE_STOPS: readonly (readonly [share: number, rgb: Rgb])[] = [
   [0.0, [238, 219, 176]],
   [0.5, [186, 122, 74]],
@@ -42,6 +48,10 @@ export function paintCratonAge(target: WashTarget, ageAt: (t: number) => number,
   }
 }
 
+// The legend reads as a share of the world's history rather than an
+// absolute age: the field is normalised against the current epoch, so
+// "100" means "here since the beginning" and would be a different number
+// of years at every moment you look.
 export function cratonAgeLegend(): LegendSpec {
   return {
     type: 'gradient',
@@ -51,14 +61,47 @@ export function cratonAgeLegend(): LegendSpec {
   }
 }
 
-// The mantle's buoyancy on a raster of MANTLE_RASTER_X × _Y (the field is
-// coarse; at the incubator's overlay, 4096 × 2048, it took 1.6 s), scaled so that
-// ±1 is full: by its MANTLE_TINT_PERCENTILE magnitude, MANTLE_TINT_FLOOR
-// at least, so a nearly flat field is not amplified into noise (the
-// generator's mantleTintNorm). Null where the field does not fit the
-// domain's mantle mesh.
+// The mantle tint saturates at this multiple of the field's own p90(|value|),
+// rather than at a fixed number.
+//
+// It used to divide by a hardcoded 1.0. That happens to be well calibrated for the
+// TECTONIC phase — measured p90(|v|) climbs to 0.97 by epoch 100 over two seeds, so
+// the ramp there very nearly uses its full range. It is wrong for the Archean, whose
+// field the engine's `sustain_mantle_vigour` renormalises to a fixed RMS: p90 is 0.61, and the bulk
+// of the map is far below that. The measured median tint alpha in the Archean is
+// 0.06 out of a possible 0.55, falling from 0.16 by epoch 25 — a 6% wash in which
+// the field's real motion (correlation 0.9 per 25 epochs) is simply not visible.
+//
+// The reason the two phases differ is structural, not a tuning accident. The field
+// is zero-mean, and once continents cover roughly a quarter of the surface that
+// quarter carries nearly all of the variance (they insulate; the ocean cools), so
+// the remaining three quarters sit just barely below zero. The Archean's fixed-RMS
+// renormalisation is set by those few strong cells, which pushes everything else
+// down: p50 falls from 0.18 at epoch 100 to ~0.11 by epoch 300, where the tectonic
+// phase holds p50 near 0.33.
+//
+// Normalising by the field's own p90 makes the ramp mean the same thing in both
+// phases — "the strongest tenth of the map is fully saturated" — and removes the
+// magic number. Deliberately the ONLY difference from the old ramp: an Archean-only
+// gamma was tried on top, to lift the mid-tones there (p90 holds around 0.53-0.65
+// while p50 falls to ~0.11, so the distribution grows peakier over time and the
+// median tint sat at 0.09). It was dropped again once the vigour knob started
+// steering the field visibly — the extra contrast was compensating for a control
+// that did nothing, and both phases reading the same is worth more than the lift.
 const MANTLE_TINT_PERCENTILE = 0.9
+// Floor, so a nearly flat field is not amplified into noise: dividing by a p90 near
+// zero would paint numerical dust at full opacity.
 const MANTLE_TINT_FLOOR = 0.25
+// The scale of the tint, ±1 full.
+export function mantleTintScale(values: ArrayLike<number>): number {
+  const magnitudes = Float64Array.from(values, Math.abs).sort()
+  return Math.max(MANTLE_TINT_FLOOR, magnitudes[Math.floor(magnitudes.length * MANTLE_TINT_PERCENTILE)])
+}
+
+// The mantle's buoyancy on a raster of MANTLE_RASTER_X × _Y (the field is
+// coarse; at the incubator's overlay, 4096 × 2048, it took 1.6 s), scaled
+// by mantleTintScale. Null where the field does not fit the domain's
+// mantle mesh.
 const MANTLE_RASTER_X = 1024
 const MANTLE_RASTER_Y = 512
 export interface MantleRaster {
@@ -69,8 +112,7 @@ export interface MantleRaster {
 export function mantleRaster(domain: Domain, values: Float64Array): MantleRaster | null {
   const { mesh } = mantleMesh(domain)
   if (mesh.count !== values.length) return null
-  const magnitudes = Float64Array.from(values, Math.abs).sort()
-  const scale = Math.max(MANTLE_TINT_FLOOR, magnitudes[Math.floor(magnitudes.length * MANTLE_TINT_PERCENTILE)])
+  const scale = mantleTintScale(values)
   const field = rasteriseField(mesh, values, MANTLE_RASTER_X, MANTLE_RASTER_Y)
   for (let i = 0; i < field.length; i++) field[i] = Math.max(-1, Math.min(1, field[i] / scale))
   return { width: MANTLE_RASTER_X, height: MANTLE_RASTER_Y, field }
