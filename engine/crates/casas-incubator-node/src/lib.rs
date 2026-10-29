@@ -71,7 +71,7 @@ struct DebugTraits {
     people: Vec<Vec<f32>>,
     // The replacements and splits. THE TREE is in the pack since v3
     // (pack.rs; its DEBUG reads went, 2026-10-29).
-    counts: [u32; 3],
+    counts: [u32; 2],
 }
 
 fn codes_of(layers: &[Layer]) -> Vec<u8> {
@@ -364,7 +364,7 @@ impl Incubator {
             times,
             traits: result.trait_frames,
             people,
-            counts: [result.replaced, result.herd_replaced, result.splits],
+            counts: [result.replaced, result.splits],
         });
         Ok(Uint8Array::new(packed))
     }
@@ -427,8 +427,8 @@ impl Incubator {
         Ok(Int32Array::new(label))
     }
 
-    /// DEBUG: the cells whose traits the fields replaced, the herds', and
-    /// the branches' splits (peoples.rs).
+    /// DEBUG: the cells whose traits the fields replaced, and the
+    /// branches' splits (peoples.rs).
     #[napi]
     pub fn debug_people_counts(&self) -> Uint32Array {
         Uint32Array::new(

@@ -488,10 +488,9 @@ pub struct SimulationResult {
     /// their ids that last and their measures at each kept state (`kept`,
     /// aligned). Packed since v3 (pack.rs). Its events in `log`.
     pub tree: Tree,
-    /// The cells whose traits the fields replaced, the herds'; the
-    /// branches' splits (peoples.rs).
+    /// The cells whose traits the fields replaced; the branches' splits
+    /// (peoples.rs).
     pub replaced: u32,
-    pub herd_replaced: u32,
     pub splits: u32,
 }
 
@@ -1343,6 +1342,8 @@ pub fn simulate(
         -1
     };
 
+    // The ways' days (travel.rs).
+    let way_days = travel_days(h);
     let mut sim = Sim {
         h,
         input,
@@ -1376,7 +1377,7 @@ pub fn simulate(
         lived: Vec::new(),
         landmass_reached: vec![0u8; h.landmasses],
         log: Vec::new(),
-        traits: Traits::seed(h, input.peopling, input.seed),
+        traits: Traits::seed(h, input.peopling, input.seed, &way_days),
     };
     let mut extinctions: Vec<Extinction> = Vec::new();
     // Herds a farming centre tames HERD_LAG after its fields.
@@ -1388,8 +1389,6 @@ pub fn simulate(
     let mut village_from: Vec<f64> = Vec::new();
     let mut village_to: Vec<f64> = Vec::new();
     let mut village_at = vec![-1i32; n];
-    // The ways' days (travel.rs).
-    let way_days = travel_days(h);
     // Each cell's days from copper rich enough to find, to COPPER_DAYS.
     let mut copper_days = vec![f32::INFINITY; n];
     {
@@ -2597,23 +2596,19 @@ pub fn simulate(
                         {
                             // THE REPLACEMENT (peoples.rs): the fields
                             // that come from a farmer cell to a cell
-                            // without them, the herds from a herder cell
-                            // to a cell without fields or herds, make it
-                            // pending; `decide` decides it later.
-                            let had = if plant {
-                                sim.farm_at[u] < f32::INFINITY
-                            } else {
-                                sim.farm_at[u] < f32::INFINITY || sim.herd_at[u] < f32::INFINITY
-                            };
+                            // without them make it pending; `decide`
+                            // decides it later. The herds make no cell
+                            // pending (2026-10-29: their rings, peoples.rs
+                            // REPLACE_SHARE).
+                            let had = sim.farm_at[u] < f32::INFINITY;
                             sim.take(d, u, t + STEP_YEARS);
                             sim.grows(u);
-                            let now = if plant {
-                                sim.farm_at[u] < f32::INFINITY && sim.farm_at[i] < f32::INFINITY
-                            } else {
-                                sim.herd_at[u] < f32::INFINITY && sim.herd_at[i] < f32::INFINITY
-                            };
-                            if !had && now {
-                                sim.traits.came(u, i, &sim.people, !plant);
+                            if plant
+                                && !had
+                                && sim.farm_at[u] < f32::INFINITY
+                                && sim.farm_at[i] < f32::INFINITY
+                            {
+                                sim.traits.came(u, i, &sim.people);
                             }
                         }
                     }
@@ -2630,9 +2625,9 @@ pub fn simulate(
             still.extend_from_slice(&front[added..]);
             *front = still;
         }
-        // THE REPLACEMENT decided where the farmers (the herders) have
-        // grown in a pending cell (peoples.rs `decide`).
-        sim.traits.decide(&sim.people);
+        // THE REPLACEMENT decided where the farmers have grown in a
+        // pending cell (peoples.rs `decide`).
+        sim.traits.decide(h, &sim.people, &sim.farm_at);
         // 2c. The copper and its smelting, passed on.
         for smelted in [false, true] {
             let front = std::mem::take(if smelted {
@@ -2795,7 +2790,6 @@ pub fn simulate(
         start: t0,
         end,
         replaced: sim.traits.replaced,
-        herd_replaced: sim.traits.herd_replaced,
         splits: sim.traits.splits,
         traits: sim.traits.values,
         trait_frames,

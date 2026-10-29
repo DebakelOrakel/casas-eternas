@@ -24,7 +24,10 @@ use serde_json::{Map, Value, json};
 /// kept states (its ids, births and ends other), and its events in the
 /// log (peoples.rs `Tree::tell`); the other arrays the same bytes. A
 /// reader that does not know the new kinds of the log passes over them.
-pub const INCUBATOR_ALGO_VERSION: u32 = 4;
+/// v5 (2026-10-29): the peoples without the stripes (peoples.rs
+/// `compact`, `Traits::kin_of`; the herds replace no traits); the other
+/// arrays the same bytes.
+pub const INCUBATOR_ALGO_VERSION: u32 = 5;
 
 // The constants of a module as (name, value) pairs.
 macro_rules! table {
@@ -83,8 +86,8 @@ pub fn constants() -> Value {
             TOWN_GROWTH_A, CITY_PEOPLE,
         )),
         "peoples": object(table!(peoples:
-            TRAITS, BRANCH_SHARE, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
-            CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, HERD_REPLACE_SHARE, SPLIT_KM2,
+            TRAITS, BRANCH_SHARE, BRANCH_ROUNDS, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
+            CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, SPLIT_KM2,
             PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, TOLD_LIVES_YEARS, FARMERS_TOLD,
         )),
         "settle": object(table!(settle:

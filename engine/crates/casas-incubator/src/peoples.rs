@@ -10,8 +10,9 @@
 //!
 //! - THE SEED, at step 2's start: each group of step 1 (peopling.rs) a
 //!   random vector. Its finer branches (BRANCH_SHARE) take their parent
-//!   branch's vector and a step of BRANCH_STEP: kin, not alike. Each cell
-//!   reached takes its branch's vector.
+//!   branch's vector and a step of BRANCH_STEP: kin, not alike. The
+//!   branches made compact (`compact`); each cell reached takes its
+//!   branch's vector.
 //! - THE SPLIT, every CLIMATE_YEARS before the drift: a branch's joined
 //!   part of more than SPLIT_KM2 parts in two branches (`split`).
 //! - THE DRIFT, every CLIMATE_YEARS: by branch, not by cell; each trait of
@@ -28,12 +29,12 @@
 //!   cell without them from a farmer cell make it pending; once its
 //!   people when they came (the foragers) are REPLACE_SHARE or fewer of
 //!   its people now (the farmers grown in it), it takes the traits and the
-//!   branch of the cell the fields came from; while they are more, the
-//!   foragers keep theirs (in Europe the farmers who came replaced most of
-//!   the hunters, as the genes show). The herds the same,
-//!   HERD_REPLACE_SHARE. The copper, and the fields or herds that come to
-//!   a cell that has them, carry no traits; nor do people who move into a
-//!   lived cell (the famines, the rising sea): they meet by contact.
+//!   branch of the heart of the farmer people around it (`kin_of`); while
+//!   they are more, the foragers keep theirs (in Europe the farmers who
+//!   came replaced most of the hunters, as the genes show). The herds, the
+//!   copper, and the fields that come to a cell that has them carry no
+//!   traits; nor do people who move into a lived cell (the famines, the
+//!   rising sea): they meet by contact.
 //! - THE PEOPLES (`peoples_of`): the lived cells joined by neighbour edges
 //!   whose trait distance is under PEOPLE_DISTANCE, a union-find.
 //! - THE TREE (`Tree`): the peoples every CLIMATE_YEARS, with ids that
@@ -43,11 +44,12 @@
 //!   merges, ends and turns to farming, into the history's log.
 //!
 //! Measured on Morvane (v14), Thalassor and Zephyra (origin 783 702) on
-//! 2026-10-29, the peoples of 1 000 people and 10 000 km² or more at the
-//! history's end: 165, 189 and 171 (5.9, 9.6 and 7.9 a million km² of land
-//! reached; the earth's new stone age some 3 to 10 archaeological cultures
-//! a million km²), the largest 5.3, 3.1 and 4.0 % of the land lived in;
-//! in peoples of fewer than 10 cells 0.5, 0.5 and 0.2 % of the lived cells.
+//! 2026-10-29 (v5, without the stripes), the peoples of 1 000 people and
+//! 10 000 km² or more at the history's end: 153, 189 and 170 (5.9, 9.6 and
+//! 7.9 a million km² of land reached; the earth's new stone age some 3 to
+//! 10 archaeological cultures a million km²), the largest 2.8, 3.2 and
+//! 4.2 % of the land lived in; in peoples of fewer than 10 cells 0.5, 0.5
+//! and 0.2 % of the lived cells.
 //! Tried before, on Morvane:
 //! - Drift by cell: the cells' noise averages out over a large people, so
 //!   nothing parts (45 peoples at a distance of 0.02, 19 at 0.03).
@@ -79,6 +81,14 @@ pub const LANGUAGE: usize = 0;
 /// groups). On Morvane 192 branches; at 0.002, 246 peoples at the end,
 /// at 0.005, 119. The count of the peoples hangs on it most.
 pub const BRANCH_SHARE: f64 = 0.003;
+/// THE SEED's branches made compact (`compact`) in this many rounds
+/// (2026-10-29). A branch of step 1's tree is a subtree of a search by
+/// the days: a wedge, or a band of parallel straight sides along the way
+/// the front went, some 20 to 40 cells across and 100 or more long (the
+/// overlay Völker's fans and stripes without the replacement). At 1 the
+/// peoples at the end are polygons of the branches' hearts; at 3 more
+/// alike in size (a honeycomb). See `REPLACE_SHARE` for the measures.
+pub const BRANCH_ROUNDS: usize = 1;
 /// A branch's step from its parent branch at the seed, a normal's spread
 /// a trait: kin peoples begin near (some 0.04 apart, under
 /// PEOPLE_DISTANCE half the time), and part as they drift.
@@ -130,15 +140,38 @@ pub const PEOPLE_DISTANCE: f64 = 0.03;
 /// cells replaced, a median of 25 years, the peoples 167, 154, 191, 173.
 /// The fields spread mostly inside the people that began them (the arable
 /// land is short): the peoples hardly change.
+///
+/// THE STRIPES (2026-10-29): the overlay Völker showed bands of peoples,
+/// some of a cell to a few cells across, straight and parallel. Three
+/// causes, each seen in the peoples (`peoples_of`) at the end, by the
+/// cells' branches, traits and times replaced:
+/// - The front's rays: a front of fields passes on cell by cell (most
+///   steps at a chance of 1), and each cell took its source's traits and
+///   branch: each people where the front left became a ray along the mesh
+///   as far as the front went (Morvane's north of the middle continent).
+///   Taking the source's people's heart alone changed nothing (the ray's
+///   cells are its own people); the people of the most farmers around the
+///   cell, its heart, ends them (`kin_of`).
+/// - The seed's wedges: step 1's branches are subtrees of a search, wedges
+///   and bands with straight sides, with and without the replacement
+///   (Morvane's west, Thalassor's north): `compact`, BRANCH_ROUNDS.
+/// - The herds' rings: the herds replaced where the foragers were few when
+///   they came, and the foragers rise and fall with the climate: on
+///   Thalassor's north the share replaced by 500 years of coming 7, 34, 8,
+///   33, 10, 55, 17, 49 % (F0's median 0.038, 0.029, … a km²): rings of
+///   herder peoples round the herds' hearths, a few cells across. The herds
+///   replace no traits now (HERD_REPLACE_SHARE 0.1 went; 8 979, 9 878 and
+///   7 676 cells replaced on the three worlds before).
+///
+/// The peoples at the end on Morvane, Thalassor and Zephyra (783 702),
+/// before → each fix in this order → all: 167 → 163 → 153 → 153, 191 →
+/// 192 → 191 → 189, 173 → 170 → 171 → 170; the largest 3.0 → 2.8, 3.1 →
+/// 3.2, 4.0 → 4.2 %. A people's border edges over a disc's of the same
+/// cells (2 √(π cells)), its median and p90: 2.39 and 3.61 → 2.22 and
+/// 2.63, 2.64 and 3.90 → 2.28 and 2.93, 2.84 and 4.28 → 2.34 and 2.75;
+/// over 3 (bands): 38 → 7, 62 → 16, 71 → 12. The fields replaced the same
+/// (23 584, 29 268, 16 883).
 pub const REPLACE_SHARE: f64 = 0.1;
-/// The same for the herds that come to a cell without fields or herds
-/// from a herder cell. The herders (1.5 a km²) are not many more than the
-/// foragers (0.1 to 0.3): decided at the coming (part 2) 557 of Morvane's
-/// 92 424 comings replaced; decided later 8 979 (864 of another branch, a
-/// median of 175 years after, p90 300), 83 343 still pending at the end.
-/// On the other worlds 7 294, 9 878, 7 676. The rule is the fields', for
-/// one rule.
-pub const HERD_REPLACE_SHARE: f64 = 0.1;
 /// THE SPLIT (part 2): a branch's joined lived cells of more than this
 /// many km² part in two branches. By km², not by days across: the target
 /// is the people's share of the land. Without it Morvane's origin 473 575
@@ -196,17 +229,18 @@ pub struct Traits {
     pub ident: Vec<i32>,
     // THE SPLIT's days from a cell, Infinity where not searched.
     dist: Vec<f64>,
-    /// The cells whose traits the fields replaced, the herds'; the splits.
+    /// The cells whose traits the fields replaced; the splits.
     pub replaced: u32,
-    pub herd_replaced: u32,
     pub splits: u32,
     // THE REPLACEMENT's pending cells, in the order they became pending;
     // each cell's source, -1 where not pending; its people when the fields
-    // or herds came (F0), a km²; 1 where the herds came.
+    // came (F0), a km².
     pending: Vec<usize>,
     source: Vec<i32>,
     foragers: Vec<f32>,
-    by_herds: Vec<u8>,
+    // Each people's heart (`Tree`'s `hearts`) at the last tree step, by
+    // its id; -1 where none.
+    heart: Vec<i32>,
 }
 
 // A normal draw (Box–Muller, as THE DROUGHTS draw theirs).
@@ -232,7 +266,7 @@ fn reflect(mut x: f64) -> f64 {
 
 impl Traits {
     /// The seed at step 2's start (THE SEED).
-    pub fn seed(h: &Habitat, start: &Peopling, seed: f64) -> Traits {
+    pub fn seed(h: &Habitat, start: &Peopling, seed: f64, days: &[f32]) -> Traits {
         let n = h.count;
         let mut random = Mulberry32::new(js::to_uint32(seed) ^ 0x7ea1);
         let groups: Vec<f64> = (0..start.groups * TRAITS).map(|_| random.next()).collect();
@@ -269,6 +303,7 @@ impl Traits {
                 }
             }
         }
+        let branch = compact(h, days, branch, branches);
         let mut values = vec![0f32; n * TRAITS];
         for i in 0..n {
             if branch[i] >= 0 {
@@ -288,12 +323,11 @@ impl Traits {
             ident: vec![-1; n],
             dist: vec![f64::INFINITY; n],
             replaced: 0,
-            herd_replaced: 0,
             splits: 0,
             pending: Vec::new(),
             source: vec![-1; n],
             foragers: vec![0.0; n],
-            by_herds: vec![0; n],
+            heart: Vec::new(),
         }
     }
 
@@ -310,24 +344,21 @@ impl Traits {
         self.source[cell] = -1;
     }
 
-    /// THE REPLACEMENT, its first half: the fields (`herds` false) or the
-    /// herds came to lived `cell` from `kin`. The cell is pending: it
-    /// keeps kin as its source and its people now (the foragers, F0) until
-    /// `decide`. The fields that come to a cell pending from the herds
-    /// take the herds' place: their source, the people then.
-    pub fn came(&mut self, cell: usize, kin: usize, people: &[f32], herds: bool) {
+    /// THE REPLACEMENT, its first half: the fields came to lived `cell`
+    /// from `kin`. The cell is pending: it keeps kin as its source and its
+    /// people now (the foragers, F0) until `decide`.
+    pub fn came(&mut self, cell: usize, kin: usize, people: &[f32]) {
         if self.source[cell] < 0 {
             self.pending.push(cell);
         }
         self.source[cell] = kin as i32;
         self.foragers[cell] = people[cell];
-        self.by_herds[cell] = herds as u8;
     }
 
     /// THE REPLACEMENT, its second half, every step: a pending cell whose
-    /// F0 is REPLACE_SHARE (HERD_REPLACE_SHARE) or less of its people now
-    /// (the farmers grown in it) takes the traits, branch and people of
-    /// its source as the source is now, and is no longer pending. A
+    /// F0 is REPLACE_SHARE or less of its people now (the farmers grown in
+    /// it) takes the traits, branch and people of `kin_of` as they are
+    /// now, and is no longer pending. A
     /// pending cell left empty, or whose source is empty now (a famine,
     /// the sea), is no longer pending and keeps its own traits: no
     /// search for other farmers (on the three worlds no source was empty,
@@ -335,7 +366,7 @@ impl Traits {
     /// source replaced in the same pass gives its new traits on; a source
     /// still pending gives its own (its foragers are still many: the
     /// farmers who came took their ways).
-    pub fn decide(&mut self, people: &[f32]) {
+    pub fn decide(&mut self, h: &Habitat, people: &[f32], farm_at: &[f32]) {
         let mut kept = 0;
         for k in 0..self.pending.len() {
             let cell = self.pending[k];
@@ -344,20 +375,11 @@ impl Traits {
             let done = if s < 0 || people[cell] <= 0.0 || people[s as usize] <= 0.0 {
                 true
             } else {
-                let herds = self.by_herds[cell] != 0;
-                let share = if herds {
-                    HERD_REPLACE_SHARE
-                } else {
-                    REPLACE_SHARE
-                };
-                let replace = self.foragers[cell] as f64 <= share * people[cell] as f64;
+                let replace = self.foragers[cell] as f64 <= REPLACE_SHARE * people[cell] as f64;
                 if replace {
-                    self.inherit(cell, s as usize);
-                    if herds {
-                        self.herd_replaced += 1;
-                    } else {
-                        self.replaced += 1;
-                    }
+                    let kin = self.kin_of(h, cell, s as usize, people, farm_at);
+                    self.inherit(cell, kin);
+                    self.replaced += 1;
                 }
                 replace
             };
@@ -369,6 +391,47 @@ impl Traits {
             }
         }
         self.pending.truncate(kept);
+    }
+
+    // The cell whose traits a replaced `cell` takes (2026-10-29): the
+    // heart (`Tree`'s `hearts`) of the people (`ident`) with the most
+    // people among the cell's lived neighbours with the fields and not
+    // pending (of equals the lower id); where none, of its source `s`'s
+    // people. Where the heart is not lived in, that neighbour (or `s`).
+    // Not `s` itself: a front of fields that passes on cell by cell gives
+    // each cell's people on to the cells beyond it, so that each people
+    // where the front left becomes a ray of cells one to a few cells
+    // across, straight along the mesh, as far as the front went (the
+    // overlay Völker's stripes); a cell's border traits would part the
+    // rays again, as the drift and TRAIT_LIKE keep them apart.
+    fn kin_of(&self, h: &Habitat, cell: usize, s: usize, people: &[f32], farm_at: &[f32]) -> usize {
+        let mut by: Vec<(i32, f64, usize)> = Vec::new();
+        for e in h.edges(cell) {
+            let u = h.nbr[e] as usize;
+            if people[u] <= 0.0 || farm_at[u] == f32::INFINITY || self.source[u] >= 0 {
+                continue;
+            }
+            let w = people[u] as f64 * h.area_km2[u] as f64;
+            match by.iter_mut().find(|b| b.0 == self.ident[u]) {
+                Some(b) => b.1 += w,
+                None => by.push((self.ident[u], w, u)),
+            }
+        }
+        let mut best = (self.ident[s], 0.0, s);
+        for &b in &by {
+            if b.1 > best.1 || (b.1 == best.1 && b.0 < best.0) {
+                best = b;
+            }
+        }
+        let (p, _, near) = best;
+        if p < 0 || p as usize >= self.heart.len() {
+            return near;
+        }
+        let c = self.heart[p as usize];
+        if c < 0 || people[c as usize] <= 0.0 {
+            return near;
+        }
+        c as usize
     }
 
     /// Every CLIMATE_YEARS: the split, the drift, then the contact, on the
@@ -593,6 +656,49 @@ impl Traits {
             self.dist[i] = f64::INFINITY;
         }
     }
+}
+
+// THE SEED's branches made compact (2026-10-29): BRANCH_ROUNDS times,
+// each branch's heart (`hearts`, the cell the most steps from its
+// border), then each cell of a branch to the branch of the heart nearest
+// by the ways' days (a search from all hearts at once; of equals the
+// first found). A cell no way joins to a heart keeps its branch.
+fn compact(h: &Habitat, days: &[f32], mut branch: Vec<i32>, branches: usize) -> Vec<i32> {
+    let n = h.count;
+    let zero = vec![0f64; n];
+    let mut dist = vec![f64::INFINITY; n];
+    for _ in 0..BRANCH_ROUNDS {
+        let heart = hearts(h, &branch, branches, &zero);
+        let mut next = branch.clone();
+        dist.fill(f64::INFINITY);
+        let mut heap = MinHeap::new(1024);
+        for &c in &heart {
+            if c >= 0 {
+                dist[c as usize] = 0.0;
+                heap.push(0.0, c);
+            }
+        }
+        while !heap.is_empty() {
+            heap.pop();
+            let i = heap.popped_index as usize;
+            let d = heap.popped_key;
+            if d > dist[i] {
+                continue;
+            }
+            for e in h.edges(i) {
+                let u = h.nbr[e] as usize;
+                let nd = d + days[e] as f64;
+                if branch[u] < 0 || nd >= dist[u] {
+                    continue;
+                }
+                dist[u] = nd;
+                next[u] = next[i];
+                heap.push(nd, u as i32);
+            }
+        }
+        branch = next;
+    }
+    branch
 }
 
 // The cell of `cells` farthest by `dist`; the first of equals.
@@ -944,6 +1050,12 @@ impl Tree {
                     centre: m.centre,
                 });
             }
+        }
+        // Each people's heart, for THE REPLACEMENT (`Traits::kin_of`).
+        traits.heart.clear();
+        traits.heart.resize(self.peoples.len(), -1);
+        for q in 0..count {
+            traits.heart[ids[q] as usize] = now[q].centre;
         }
         self.tell(&before, old, &ids, &now, t, log);
         let mut out = Vec::new();
@@ -1406,12 +1518,11 @@ mod tests {
             ident: vec![-1; n],
             dist: vec![f64::INFINITY; n],
             replaced: 0,
-            herd_replaced: 0,
             splits: 0,
             pending: Vec::new(),
             source: vec![-1; n],
             foragers: vec![0.0; n],
-            by_herds: vec![0; n],
+            heart: Vec::new(),
         }
     }
 
@@ -1612,31 +1723,66 @@ mod tests {
 
     // The fields come to cells 1 and 3 from farmer cells 0 and 2 (0.1 a
     // km² of foragers in each): cell 1 is decided once its people grew to
-    // ten times its foragers or more, with its source's traits as they are
-    // then; cell 3's source is left empty, and it keeps its own.
+    // ten times its foragers or more, with the traits of its one farmer
+    // neighbour lived in (0) as they are then; cell 3's source is left
+    // empty, and it keeps its own.
     #[test]
     fn the_replacement_is_decided_once_the_farmers_grew() {
+        let h = row(4, 10_000.0);
         let mut traits = traits_of(&[0.0, 0.5, 0.2, 0.7]);
         traits.branch = vec![0, 1, 2, 3];
         traits.ident = vec![10, 11, 12, 13];
+        let farm_at = [0.0f32, f32::INFINITY, 0.0, f32::INFINITY];
         let mut people = [15.0f32, 0.1, 15.0, 0.1];
-        traits.came(1, 0, &people, false);
-        traits.came(3, 2, &people, false);
-        traits.decide(&people);
+        traits.came(1, 0, &people);
+        traits.came(3, 2, &people);
+        traits.decide(&h, &people, &farm_at);
         assert_eq!(traits.pending, vec![1, 3]);
         people[1] = 0.5;
-        traits.decide(&people);
+        traits.decide(&h, &people, &farm_at);
         assert_eq!(traits.replaced, 0);
         set(&mut traits, 0, 0.3);
         people[1] = 1.5;
         people[2] = 0.0;
-        traits.decide(&people);
+        traits.decide(&h, &people, &farm_at);
         assert_eq!(traits.replaced, 1);
         assert_eq!(traits.values[TRAITS], 0.3);
         assert_eq!((traits.branch[1], traits.ident[1]), (0, 10));
         assert_eq!((traits.branch[3], traits.values[3 * TRAITS]), (3, 0.7));
         assert!(traits.pending.is_empty());
         assert_eq!(traits.source, vec![-1; 4]);
+    }
+
+    // Cell 2 is replaced from its source 1 (people 11, 1 a km²); its other
+    // farmer neighbour 3 (people 13) has more people: it takes the traits
+    // and branch of people 13's heart, cell 4, and its id.
+    #[test]
+    fn the_replacement_takes_the_heart_of_the_most_farmers_around() {
+        let h = row(5, 10_000.0);
+        let mut traits = traits_of(&[0.1, 0.2, 0.5, 0.3, 0.4]);
+        traits.branch = vec![0, 1, 2, 3, 4];
+        traits.ident = vec![11, 11, 12, 13, 13];
+        traits.heart = vec![-1; 14];
+        traits.heart[11] = 0;
+        traits.heart[13] = 4;
+        let farm_at = [0.0f32, 0.0, f32::INFINITY, 0.0, 0.0];
+        let mut people = [1.0f32, 1.0, 0.1, 5.0, 5.0];
+        traits.came(2, 1, &people);
+        people[2] = 2.0;
+        traits.decide(&h, &people, &farm_at);
+        assert_eq!(traits.replaced, 1);
+        assert_eq!(traits.values[2 * TRAITS], 0.4);
+        assert_eq!((traits.branch[2], traits.ident[2]), (4, 13));
+    }
+
+    // A branch of five cells in a row beside one of a cell: its far cells
+    // go to the other's heart, the nearer by the days.
+    #[test]
+    fn the_seed_makes_its_branches_compact() {
+        let h = row(6, 10_000.0);
+        let days = vec![1.0f32; h.nbr.len()];
+        let branch = compact(&h, &days, vec![0, 0, 0, 0, 0, 1], 2);
+        assert_eq!(branch, vec![0, 0, 0, 1, 1, 1]);
     }
 
     #[test]

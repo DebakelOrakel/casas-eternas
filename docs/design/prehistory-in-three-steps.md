@@ -390,6 +390,28 @@ Building since 2026-10-27:
   splits mostly in the first fifth of the history (28, 21, 27), the turns
   to farming in its second to fourth. The other arrays keep their bytes;
   the history takes 1.4, 0.6 and 1.9 s more (6.6, 3.2 and 8.5 s).
+- 2026-10-29: the peoples without the stripes (the incubator's v5;
+  `casas-incubator` peoples.rs). The overlay Völker showed straight,
+  parallel bands of peoples, some one to a few cells across. Three
+  causes, each seen in the cells' branches, traits and times replaced:
+  (1) the fields pass on cell by cell at a chance of 1 where the land
+  suits, and each cell took the traits of the one cell they came from:
+  each people where the front left became a ray along the mesh; a
+  replaced cell now takes the heart of the people with the most farmers
+  among its neighbours. (2) Step 1's branches are subtrees of a search:
+  wedges and bands with straight sides, without the replacement too; the
+  seed makes them compact (each cell to the branch whose heart is nearest
+  by the ways' days, one round). (3) The herds replaced where the
+  foragers were few when they came, and the foragers rise and fall with
+  the climate: rings of herder peoples (on Thalassor's north 7, 34, 8,
+  33, 10, 55, 17, 49 % replaced by 500 years of coming); the herds now
+  replace no traits. The history stays the same bits but the peoples and
+  their events. The peoples at the end: Morvane 153 (167 before),
+  Thalassor 189 (191), Zephyra (origin 783 702) 170 (173); the largest
+  2.8, 3.2, 4.2 % (3.0, 3.1, 4.0). The peoples with a border over three
+  times a disc's of their cells: 7, 16, 12 (38, 62, 71). The chronicle:
+  Morvane 39 splits, 7 merges, 26 turns to farming (33, 5, 27);
+  Thalassor 25, 2, 25 (28, 1, 30); Zephyra 52, 12, 10 (30, 2, 11).
 
 Open:
 
