@@ -3598,6 +3598,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     worldPipeline = WORLD_PIPELINE
     tectonicsRunRestored = false
     genesisTallied = 0
+    // The Archean's own count and the gate to plate tectonics, as its reset
+    // clears them. The new world's first genesisStatus sets them again, but
+    // only after its render: until then the step bar showed the last
+    // world's Archean as done and could open plate tectonics.
+    lastArcheanEpochs = 0
+    archeanStabilised = 0
     forgetOverlays()
     // A new world: the previous world's terrain is not the shores' ground
     // any more. Off every view until this world's first elevationField
