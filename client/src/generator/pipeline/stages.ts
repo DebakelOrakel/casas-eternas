@@ -29,8 +29,8 @@ import { ECOLOGY_INPUTS } from '../ecology/ecologyInputParams'
 // `genesis` rather than `archean` because that is what the two user-facing
 // surfaces already say: the panel is Genesis and every save on disk carries
 // `spec.genesis.*`. The module is `archean/` (the era) and the messages are
-// `archeanInit`/`archeanStart` (the implementation) — three names for one stage,
-// which step 3d is where it gets resolved, not here.
+// `archeanInit`/`archeanStart` (the implementation) — three names for one stage;
+// step 3d named the messages `genesis*` since.
 export type StageId = 'planet' | 'genesis' | 'tectonics' | 'erosion' | 'climate' | 'hydrology' | 'ecology' | 'finishing'
 
 // How a stage occupies time, which decides what controlling it looks like. This

@@ -99,7 +99,7 @@ export function drawContinentLabel(ctx: CanvasRenderingContext2D, placement: Con
   // further 180°: the map texture is displayed with a net 180° flip (a vertical mirror —
   // same one the volcano cones compensate with +y — combined with the horizontal mirror
   // the scale(−1, 1) below already cancels), so text laid out "upright" in buffer space
-  // comes out upside down on screen. See docs / the [[project_worldgen_canvas_flip]] note.
+  // comes out upside down on screen. See client/src/generator/CLAUDE.md (the overlay canvas is mirrored).
   const readable = ((placement.angle + Math.PI / 2) % Math.PI + Math.PI) % Math.PI - Math.PI / 2
   const angle = readable + Math.PI
   const fit = fitContinentLabel(ctx, placement)
