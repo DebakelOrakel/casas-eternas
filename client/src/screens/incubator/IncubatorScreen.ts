@@ -991,7 +991,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           const farmers = e.kind === 'peopleFarmers'
           place({
             time: e.at,
-            icon: farmers ? '/icons/wheat.png' : '/icons/dwarf.png',
+            icon: farmers ? '/icons/wheat.png' : '/icons/group.png',
             rgb: farmers ? LIFEWAY_COLOURS[LIFEWAY.farmers] : PEOPLES_RGB,
             title:
               e.kind === 'peopleSplit' ? t('incubator.chronicle.event.peopleSplit', { a })
