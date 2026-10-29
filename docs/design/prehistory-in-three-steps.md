@@ -176,8 +176,8 @@ people give. Nothing of step 1 is kept again but its log.
 - **The sea**: no open sea until ships fit for trade. Boats go along
   the coast and to land in sight, 100 km of open water at most (Cyprus,
   some 70 km off and seen from the coast, was settled at +1 000).
-- **The copper**: a farmers' village that stood 1 000 years within 20
-  days of a deposit finds it and hammers it; one that knew it 3 000 years
+- **The copper**: a farmers' village that stood 500 years within 20
+  days of a deposit finds it and hammers it; one that knew it 2 500 years
   smelts it. Both pass on by contact. It feeds no one: it is rank.
 - **The towns**: a farmers' village draws a share of the people within a
   day of it, more with the copper, more with the smelting.
@@ -475,11 +475,49 @@ Building since 2026-10-27:
   the belt, as before: the drying moves the belt's foragers and herders
   to its rivers, but the belt holds no centre, so it makes none in a
   river valley.
+- 2026-10-29 (v6 still): step 2's times toward the earth's, the tuning
+  alone; step 1 keeps its bits. With the rain, six origins on each world
+  (Zephyra from 783 702 and five cells of its largest landmass), the
+  median before → after; the farming from step 2's start, the rest from
+  the first farming. The first farming: Morvane +5 500 → +1 000,
+  Thalassor +3 500 → +1 500, Zephyra +5 500 → +1 500 (500 to 6 000; the
+  earth's 0 to 1 500). It waited on the stable climate alone (the
+  knowledge and the settled years were met from +1 500): the curve is the
+  sea's, and the warmth came before the sea (the Holocene began with the
+  sea near −60 m); stable now under 0.5 for 1 000 years (0.15 for 2 000),
+  at +500 on all three, and the first farming waits on its chance. The
+  copper: +19 500 → +18 500, +4 500 → +4 000, +11 000 → +11 500 (the
+  earth's +1 400 … +2 100). It waits on the way to it: the first centres
+  are 1 100 to 3 900 km from rich copper, the generator's copper lies in
+  the mountains alone, and the fields' front (1 km a year, as the
+  earth's) brings a farmers' village within 20 days 3 500 to 22 000 years
+  after the first farming; 32 days changed nothing. A village needs 500
+  years, not 1 000 (the copper minerals were known before the farming).
+  The smelting: +23 500 → +21 500, +8 000 → +7 000, +14 000 → +14 500,
+  3 000 years after the copper on each world (3 500; the earth's 2 600 …
+  3 300): it smelts 2 500 years after it knew the copper (3 000). The
+  city: Morvane +34 500 → +34 500 (one origin of six none, as before),
+  Thalassor +12 500 → +12 500, Zephyra none (the earth's +6 000 …
+  +6 500). It waits on a hinterland of 22 200 people within a day of a
+  village that smelts: at Morvane's one such seat (27 600 people) the
+  city comes when the smelting reaches it; on Zephyra the densest
+  hinterland is 18 800 people (20.5 a km² at its seat, arable 0.32), its
+  town at most 8 500. The land farmed, the people and the big peoples
+  hardly move: 6.7 to 7.4, 9.0, 4.7 % farmed; 8.0 to 8.5, 7.7 to 8.2
+  (2 000 years shorter: its city earlier), 5.3 M people; 144 to 168, 170
+  to 194, 159 to 187 big peoples. The herding now comes with the farming
+  (median −500 … +500 after it; +1 000 … +4 500 before). The smoke torus's
+  history is 4 000 years (7 000), and no merge of it holds 5 000 years
+  to be told.
 
 Open:
 
-1. Step 2's times against the earth's (the copper, the smelting, the city
-   after the farming).
+1. Step 2's times against the earth's (2026-10-29, Status): the farming
+   and the smelting's interval fit; the copper waits on the generator's
+   copper, in the mountains alone, far from the arable land; the city on
+   the farmers' density, so its own tuning (TOWN_GROWTH_A, CITY_PEOPLE,
+   the shares) waits for the generator's arable land (some 7 % of the
+   land farmed against the earth's some 25 %).
 2. The peoples' splits in the chronicle: few once they must hold 5 000
    years and not come in step 2's first 5 000 years (1, 1, 6 on the
    three worlds); a lower share of the land lived in to tell

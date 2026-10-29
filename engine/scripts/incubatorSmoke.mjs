@@ -288,11 +288,16 @@ for (const kind of ['torus', 'sphere']) {
 // events of each kind (peoples.rs Tree::tell). Not 'peopleSplit' since
 // the incubator's v6 (2026-10-29): no split is told in step 2's first
 // EARLY_SPLIT_YEARS, nor one that did not hold TOLD_LIVES_YEARS; the
-// torus's history is 7 000 years, and the sphere's splits after its first
+// torus's history is 4 000 years (7 000 then), and the sphere's splits after its first
 // 5 000 years all join again in 500 to 4 000 years (a part of people 55
 // of 13 000 km² parts and joins every 1 000 to 1 500 years to the end).
-// The told split is peoples.rs `a_split_is_told_once_it_held`'s.
-const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleMerged', 'peopleGone', 'peopleFarmers']
+// The told split is peoples.rs `a_split_is_told_once_it_held`'s. Not
+// 'peopleMerged' since step 2's times toward the earth's (2026-10-29,
+// climate_history.rs THE STABLE WARMTH): the torus's first farming came
+// at +1 500, its city at +4 000, its history 4 000 years (7 000 before),
+// so no merge holds TOLD_LIVES_YEARS; the sphere's tells none. The told
+// merge is peoples.rs `the_tree_keeps_ids_and_records_splits_and_merges`'s.
+const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleGone', 'peopleFarmers']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')

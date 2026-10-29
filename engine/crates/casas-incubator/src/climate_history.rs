@@ -62,8 +62,25 @@ use std::f64::consts::PI;
 
 pub const SEA_DROP_M: f64 = 120.0;
 pub(crate) const STADIALS: usize = 4;
-pub(crate) const STABLE_COLD: f64 = 0.15;
-pub(crate) const STABLE_YEARS: f64 = 2000.0;
+// THE STABLE WARMTH (2026-10-29, step 2's times against the earth's,
+// docs/design/prehistory-in-three-steps.md). The curve is the sea's and
+// the ice's: on the earth the warmth came before the sea. The Holocene
+// began 11 700 years ago with the sea near −60 m, the farming some 150
+// years later with it near −50 m, step 2's start (from memory, not
+// verified; DES-0035 has the farming's date). So the warmth is stable
+// when the curve is under 0.5 (the sea above −60 m) and was so 1 000 years
+// before: two climate steps, as the cosine melt is no step as the
+// Younger Dryas's end was. 0.15 and 2 000 until then (the sea above
+// −18 m): stable at +4 500, +3 500 and +4 500 after step 2's start on
+// Morvane, Thalassor and Zephyra, and the first farming at once after it
+// (the knowledge and the settled years were met from +1 500), at +3 500
+// to +8 000. Now stable at +500 on all three; the first farming waits on
+// FARM_RATE's chance (simulation.rs), a median of +1 000, +1 500, +1 500
+// over six origins each (500 … 6 000). At 0.5 and 500 the first farming
+// fell on step 2's first step on two of the worlds: the start, not the
+// climate, would set it.
+pub(crate) const STABLE_COLD: f64 = 0.5;
+pub(crate) const STABLE_YEARS: f64 = 1000.0;
 pub const ICE_REACH_KM: f64 = 400.0;
 // THE COLD SPELLS. The 8.2 ka event lasted 160.5 ± 5.5 years, some −1 °C
 // and −20 % rain in parts of Europe (Thomas et al. 2007, Morrill et al.

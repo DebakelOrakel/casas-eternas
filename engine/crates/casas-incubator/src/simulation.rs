@@ -354,11 +354,40 @@ pub(crate) const VOYAGE_KM: f64 = 3000.0;
 /// rank.
 pub(crate) const COPPER_RICH: f64 = 0.6;
 pub(crate) const COPPER_DAYS: f64 = 20.0;
-pub(crate) const COPPER_VILLAGE_YEARS: f64 = 1000.0;
+// 500 (2026-10-29; 1 000 before), one climate step: the copper minerals
+// were known before the farming (malachite beads from −900 on the earth's
+// timeline, DES-0035), so what the farmers needed was the copper in
+// reach, not a long-settled village (Çayönü's native copper lay some 20 km
+// from it; from memory, not verified). What binds the copper is the way
+// to it: the first farming centres are 1 100 to 3 900 km from copper of
+// COPPER_RICH (any copper over 0.05 is at most 250 km nearer) on Morvane,
+// Thalassor and Zephyra, and the fields' front (FARM_KM_A, the earth's
+// some 1 km a year) brings the first farmers' village within COPPER_DAYS
+// 3 500 to 22 000 years after the first farming (on Morvane from some
+// origins the copper's landmass is lived in from +15 000 only). At 32
+// days (the obsidian's reach, settle.rs) the copper came no earlier: the
+// front passes from some 70 to 20 days in one climate step at the
+// mountains' foot. The village's years were the rest, the find at the
+// first climate step they allowed. The copper after the first farming,
+// the median over six origins each: Morvane +18 500 (+19 500 before),
+// Thalassor +4 000 (+4 500), Zephyra +11 500 (+11 000; the copper itself
+// 4 000 years earlier, as the first farming); the earth's +1 400 …
+// +2 100. The generator's copper lies in the mountains alone (1.0 to
+// 1.6 % of the land at COPPER_RICH, 0 to 0.1 % of the arable land of 0.3
+// or more); on the earth it lay at the first farmers' door.
+pub(crate) const COPPER_VILLAGE_YEARS: f64 = 500.0;
 pub(crate) const COPPER_RATE: f64 = 0.3;
 pub(crate) const COPPER_SPACING_KM: f64 = 1500.0;
 pub(crate) const COPPER_KM_A: f64 = 1.0;
-pub(crate) const SMELT_AFTER: f64 = 3000.0;
+// 2 500 (2026-10-29; 3 000 before): the earth smelts some 2 600 to 3 300
+// years after it hammered (Belovode +4 700 against +1 400 … +2 100,
+// DES-0035). The smelting comes once the first villages that knew the
+// copper have known it SMELT_AFTER years, at SMELT_RATE, and their copper
+// spreads at COPPER_KM_A; SMELT_VILLAGE_YEARS does not bind (the finders
+// stood 3 000 years or more by then). At 3 000 the smelting came 3 000 to 4 500
+// years after the copper, a median of 3 500 over six origins on each of
+// the three worlds; at 2 500 a median of 3 000 on each.
+pub(crate) const SMELT_AFTER: f64 = 2500.0;
 pub(crate) const SMELT_VILLAGE_YEARS: f64 = 2000.0;
 pub(crate) const SMELT_RATE: f64 = 0.1;
 /// The towns: a farmers' village draws to itself a share of the people

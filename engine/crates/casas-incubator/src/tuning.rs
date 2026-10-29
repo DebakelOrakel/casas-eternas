@@ -32,7 +32,9 @@ use serde_json::{Map, Value, json};
 /// EARLY_SPLIT_YEARS; splits, merges and peoples gone told from
 /// SPLIT_TOLD_SHARE, the turns to farming from FARMERS_TOLD_SHARE; the
 /// arrays and the other events the same bytes; the land drying
-/// (simulation.rs THE LAND DRYING, 2026-10-29), its event in the log.
+/// (simulation.rs THE LAND DRYING, 2026-10-29), its event in the log;
+/// step 2's times toward the earth's (2026-10-29: STABLE_COLD,
+/// STABLE_YEARS, COPPER_VILLAGE_YEARS, SMELT_AFTER), the tuning alone.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
