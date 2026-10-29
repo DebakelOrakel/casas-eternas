@@ -257,6 +257,11 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // a tile's bake keeps its parent's level (docs/decisions/tile-jobs.md,
 // 2026-10-29; no more crest on the tile borders) — its constants are
 // tile constants, so the tiles' versions moved and the worlds' did not.
+// And, unreleased: an epoch whose land holds a node coarser than twice
+// the land's widest spacing remeshes (DES-0027 entry 19, 2026-10-29,
+// HISTORY_DEFAULTS.remeshCoarseLand) — the worlds change: a recipe
+// replays to other terrain, so v15 no longer makes v14's worlds
+// (worldPipeline.ts SAME_WORLDS_AS).
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the

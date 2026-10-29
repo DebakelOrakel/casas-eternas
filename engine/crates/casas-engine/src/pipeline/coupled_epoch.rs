@@ -139,6 +139,9 @@ pub struct HistoryDefaults {
     pub uplift_scale: f64,
     pub climate_every: f64,
     pub remesh_every: f64,
+    /// An epoch between those remeshes too when its land holds a node
+    /// coarser than this × the land's widest spacing (`has_coarse_land`).
+    pub remesh_coarse_land: f64,
     pub render_every: f64,
     pub routing_every: u32,
     /// The epochs whose mean sea level the margin profile stands on
@@ -152,12 +155,42 @@ pub const HISTORY_DEFAULTS: HistoryDefaults = HistoryDefaults {
     uplift_scale: 1.0,
     climate_every: 3.0,
     remesh_every: 3.0,
+    remesh_coarse_land: 2.0,
     render_every: 3.0,
     routing_every: 1,
     sea_mean_epochs: 5,
 };
 
 const CLIMATE_HISTORY_CAP: usize = 512;
+
+/// COARSE LAND REMESHES THE EPOCH (TEG-66, DES-0027 entry 19, 2026-10-29).
+/// A remesh every `remesh_every`-th epoch is not enough where the sea turns
+/// to land: the coarsening thins the deep ocean to the ocean's spacing
+/// (160 km at budget 4) ahead of a raft's leading edge, and the moved
+/// baseline lifts those nodes above the sea in the next epoch. Until the
+/// next remesh they erode as land at the ocean's spacing. So an epoch
+/// whose land holds a node coarser than `remesh_coarse_land` × the land's
+/// widest spacing (`max_spacing_m` × budget, 62.4 km at budget 4) remeshes
+/// too. Measured on three worlds at full size (2048 × 1024, budget 4,
+/// 81–101 epochs; the spheres m15 and Thalassor, the torus Zephyra), before
+/// → after: in the epochs without a remesh, the coarse land's share of
+/// the land's cut at most 32 / 20 / 36 % (median 0.12 / 0.14 / 0.58 %) →
+/// 0, in every epoch at most 0.16 %; one node's cut in an epoch up to 4.4
+/// km → under 1 km; a remesh in 66 / 54 /
+/// 68 epochs of 101 / 81 / 100 (was 33 / 27 / 33); the replay 240 → 262,
+/// 156 → 171, 171 → 194 s (+9 to +14 %); the land 26.0 → 25.9, 24.6 →
+/// 24.6, 22.5 → 22.6 %; its mean height 748 → 754, 649 → 647, 1201 → 1238
+/// m; the lakes 1.9 → 1.8, 5.1 → 4.0, 5.7 → 5.8 % of the land.
+fn has_coarse_land(mesh: &mut PeriodicTriangulation, state: &MeshState, budget: f64) -> bool {
+    let unit_m = mesh.domain.metres_per_unit;
+    let limit_m = HISTORY_DEFAULTS.remesh_coarse_land * MESH_TUNING.max_spacing_m * budget;
+    // A regular hexagonal cell of spacing s has the area (√3 / 2) s².
+    let limit_area = limit_m * limit_m * (3f64.sqrt() / 2.0) / (unit_m * unit_m);
+    let z = state.get(MESH_Z);
+    (0..mesh.vertex_slots())
+        .any(|v| mesh.v_alive[v] != 0 && z[v] > 0.0 && mesh.voronoi_area(v) > limit_area)
+}
+
 const LAKE_MATCH_M: f64 = 46_800.0;
 const LAKE_MATCH_LEVEL_M: f64 = 300.0;
 
@@ -660,12 +693,11 @@ pub fn step_coupled_epoch(
         state.get_mut(MESH_Z)[v] = (solid1[v] - sea + h) as f32;
     }
     let remesh_every = js::max(1.0, options.remesh_every.unwrap_or(1.0));
-    let remesh_due = sim.epoch % remesh_every == 0.0;
+    let budget = options.budget.unwrap_or(1.0);
+    let remesh_due = sim.epoch % remesh_every == 0.0 || has_coarse_land(&mut mesh1, &state, budget);
     let (mut removed, mut inserted) = (0, 0);
     if remesh_due {
-        let mut target = DensityTarget {
-            budget: options.budget.unwrap_or(1.0),
-        };
+        let mut target = DensityTarget { budget };
         removed = coarsen(&mut mesh1, &mut state, &mut target, 4).removed;
         let shared = &mut sim.meshes.shared;
         let mantle_mesh = &mut sim.meshes.mantle;

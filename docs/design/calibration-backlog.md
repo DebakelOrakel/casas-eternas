@@ -105,6 +105,17 @@ procedure.
 14. **Earth's relief run on the sphere** is 1.5 °C cold at its places, and
     its Köppen group shares are 13 points off (11 before 8b-2). Found in
     8b-2.
+    *Instrument back 2026-10-29 (TEG-105):* `node
+    engine/scripts/earthClimate.mjs [shape=torus]`, on the engine's native
+    build (it was the TypeScript one, removed 2026-10-21). Baseline at
+    ef0db233, sphere: places 18/47 class, 35/47 group; January 4.0 °C,
+    July 3.8 °C off (bias of the mean −1.5 °C, of the swing +0.9); rain
+    ×1.74; groups A 19 / B 24 / C 15 / D 22 / E 19 % of the land (Beck
+    23 / 27 / 13 / 22 / 15), 14 points off; per cell 37 % right class,
+    70 % right group. Torus: 17/47, 33/47; 4.1 / 3.7 °C; ×1.86; 16 points.
+    The upslope rain runs at its world rate now (the TypeScript instrument
+    ran it at 1/2.5): at 1/2.5 the sphere reads ×1.72 and 13 points, as
+    above. Still open: the bias holds.
 
 ## Small points
 
@@ -124,9 +135,26 @@ procedure.
     once the uplift lifts them above the old flood level. The routing every
     iteration (8c) mostly removes the stale level; what remains is not
     checked. 1 h.
-19. **Coarse sea nodes become land** before the next remesh
+19. ~~**Coarse sea nodes become land** before the next remesh
     (`remeshEvery` 3); up to 95 000 km², cut 2.2 km in one epoch. Not a lake
-    cause (8c). 1–2 h.
+    cause (8c). 1–2 h.~~
+    Done 2026-10-29 (TEG-66): the coarsening thins the deep ocean to its
+    160 km ahead of a raft's leading edge, and the moved baseline lifts
+    those nodes above the sea in the next epoch. An epoch whose land holds
+    a node coarser than twice the land's widest spacing (62.4 km at budget
+    4, `HISTORY_DEFAULTS.remeshCoarseLand`) remeshes now
+    (pipeline/coupled_epoch.rs `has_coarse_land`). Three worlds at full
+    size (spheres m15 and Thalassor, torus Zephyra; 101 / 81 / 100
+    epochs), before → after: in the epochs without a remesh the coarse
+    land took at most 32 / 20 / 36 % of the land's cut in an epoch
+    (median 0.12 / 0.14 / 0.58 %), now 0 (at most 0.16 % in any epoch);
+    one node's cut in an epoch up to 4.4 km, now under 1 km. Remeshes in
+    66 / 54 / 68 epochs (was 33 / 27 / 33); the replay +9 / +9 / +14 %
+    (240 → 262, 156 → 171, 171 → 194 s). The land 26.0 → 25.9, 24.6 →
+    24.6, 22.5 → 22.6 %; its mean height 748 → 754, 649 → 647, 1201 →
+    1238 m; the lakes 1.9 → 1.8, 5.1 → 4.0, 5.7 → 5.8 % of the land (the
+    last epoch; the lakes move a point from epoch to epoch). A seed makes
+    a slightly different world (pipeline v15, no longer v14's worlds).
 20. **Replays of old saves differ**: the collapse constants of 8b-3 are in
     no artifact key. 0.5 h.
 21. ~~**The sample world's u16 encoding** clips summits above 9 km in a baked
@@ -258,8 +286,9 @@ procedure.
 
 ## Status
 
-2026-10-29: building — the list is worked one entry at a time (8, 16, 22,
-24, 30 and 31 done, 25 for the relief; see the entries below), the rest stays open.
+2026-10-29: building — the list is worked one entry at a time (8, 16, 19,
+22, 24, 30 and 31 done, 25 for the relief; 14 has its instrument back;
+see the entries below), the rest stays open.
 
 2026-10-14: IDEA — the list, recorded when phase 8 was cut short. Take an
 entry up when a world shows it; record its result in the doc of the

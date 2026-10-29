@@ -138,6 +138,9 @@ tuned again.
   level 1 carries the ecology's fields; the worlds do not change (the
   ecology is a function on load), so a world v14 made is v15's
   (`worldPipeline.ts` SAME_WORLDS_AS), and its level 1 is baked again.
+  No longer since 2026-10-29: v15 also remeshes an epoch with coarse land
+  ([DES-0027](../design/calibration-backlog.md) entry 19), so its worlds
+  differ from v14's, and a world v14 made is made again.
 - The ecology's fixtures (`ecology.txt`) and the world stages'
   (`worldStages.txt`) are recorded from the engine (rust-engine.md,
   fork 7c).

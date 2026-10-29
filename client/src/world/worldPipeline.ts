@@ -34,15 +34,13 @@ const PIPELINE_OF_CODE: Readonly<Record<string, string>> = {
 // v11 made is v12's to refine. v12 and v13 make the same worlds; v13
 // derives level 1's waters from the save's climate (docs/decisions/
 // level-waters.md), so their levels differ, each under its own version.
-// v14 and v15 make the same worlds; v15 gives level 1 other ecology
-// fields (docs/decisions/arable-crops.md, copper-arcs.md), so a world v14
-// made is v15's to refine, and its level 1 is baked again.
+// v15 makes other worlds than v14: an epoch with coarse land remeshes
+// (DES-0027 entry 19, 2026-10-29), besides level 1's other ecology fields.
 // Not a migration: a statement of equality of the worlds. Each entry
 // names the current pipeline, not the next one: the lookup is one step.
 const SAME_WORLDS_AS: Readonly<Record<string, string>> = {
   'v11-1b1f7f4a8b14250e': 'v13-53fe6efa9b110bf0',
   'v12-53fe6efa9b110bf0': 'v13-53fe6efa9b110bf0',
-  'v14-cc39679442f889d2': 'v15-cc39679442f889d2',
 }
 
 // The pipeline a world.yaml records: `status.pipeline`, or for a world

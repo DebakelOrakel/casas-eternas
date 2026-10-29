@@ -4,6 +4,7 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 (The legacy sphere generator is out of scope and not tracked here.)
 
 ## 2026-10-29
+- **fixed** Tectonics: land rising from the deep sea no longer erodes in coarse patches for a few epochs, so a seed makes a slightly different world. `generator.step.tectonics`
 - **fixed** Refinement: refined tiles no longer show a raised line along their borders; levels 2 and 3 are refined again. `generator.finishing.refine`
 - **changed** Ecology: arable land follows what crops need over one growing season, so the temperate and wet lands farm about twice as much and the wet tropics less. `resource.arable`
 - **changed** Ecology: copper also lies at extinct volcanic arcs and at every active one, so it is often found near the farmland. `resource.copper`
