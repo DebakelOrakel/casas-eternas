@@ -509,15 +509,64 @@ Building since 2026-10-27:
   (median −500 … +500 after it; +1 000 … +4 500 before). The smoke torus's
   history is 4 000 years (7 000), and no merge of it holds 5 000 years
   to be told.
+- 2026-10-29 (v6 still): step 2's times on the generator's v15 ecology
+  (DEC-0052, DEC-0053: arable land of 0.3 or more on 26.9, 31.2 and
+  15.3 % of the land of Morvane, Thalassor and Zephyra, 10.7, 15.6 and
+  5.3 before; copper near the fields), the tuning alone. Measured on L1
+  stores with the new ecology on the old mesh, with the rain, the six
+  origins of the last line on each world; the median from the first
+  farming, v14 → v15 with the tuning before → after. The first farming
+  from step 2's start: Morvane +1 000 → +1 000, Thalassor +1 500 → +500,
+  Zephyra +1 500 → +1 000. The copper: +18 500 → +3 500 → +2 500,
+  +4 000 → +1 500 → +1 500, +11 500 → +8 000 → +8 000 (the earth's
+  +1 400 … +2 100). It waits on the way to the copper: COPPER_DAYS 32 (20),
+  the obsidian's reach, brings Morvane's finds 500 to 1 000 years
+  earlier; Zephyra's fields fill 3.2 M km² by +6 500 with no rich copper
+  within 32 days. The smelting: +21 500 → +6 500 → +5 500, +7 000 →
+  +4 500 → +4 500, +14 500 → +10 500 (2 of 6 before the city) → +11 000
+  (the earth's some +4 500), 3 000 after the copper. The city: +34 500 →
+  +9 500 → +9 500, +12 500 → +6 500 → +6 000, none → +11 500 → +13 500
+  (the earth's +6 000 … +6 500); from step 2's start 10 500, 6 500 and
+  14 500. The farmers are denser (FARM_GAIN × the arable land: the farmed
+  cells' p90 17 a km², 4.6 before), the largest hinterlands 46 000 to
+  50 000 people on Morvane, 25 000 to 33 000 on Thalassor, 79 000 to
+  86 000 on Zephyra (some 22 000 before): a town of Zephyra's densest
+  farmland was a city without the copper, and Zephyra had its city before
+  the smelting from 4 of 6 origins. TOWN_SHARE 0.1 (0.15) and SMELT_SHARE
+  0.25 (0.2), a smelting town's 0.45 as before: the city after the
+  smelting from 18 of 18 origins, Thalassor's 1 500 years after it, as on
+  the earth. Morvane's city waits on the smelting at a dense seat: the
+  copper is found where the hinterlands are 1 400 to 4 700 people, and
+  the smelting reaches one of 22 000 or more 3 000 to 5 000 years later;
+  the fronts pass a cell a step at most (some 0.4 km a year at 10 km and
+  25 years, below FARM_KM_A and COPPER_KM_A: COPPER_KM_A 2 changed
+  nothing). The land farmed 6.8, 9.0, 4.7 → 10.7, 7.6, 10.1 % (the
+  histories 10 500, 6 500 and 14 500 years long, 35 500, 14 000 and
+  46 500 before); the people at the end 8.1, 7.7, 5.3 → 23.7, 6.3,
+  24.0 M; the big peoples 159, 176, 169 → 145, 163, 172; 3, 2, 2 farming
+  centres. The chronicle (the own origin, Zephyra 783 702, with the rain;
+  splits / merges / turns to farming): Morvane 3 / 0 / 39, Zephyra 11 / 3
+  / 28; drowned 5, 10, 10, drying 3, 2, 1, cold spells 2, 0 (Thalassor's
+  history ends before them), 2. The peoples' stripes are back (border over
+  three times a disc's: Morvane 23, Zephyra 23; v14 4 and 12), the same
+  before and after the tuning: the replacement's rays along a wide front
+  of fields (`kin_of`), none without the replacement. Step 1 reaches the
+  same share of the land from each origin (Morvane 95.4 %), 4 to 12 % more
+  foragers, the landings within 130 years; Thalassor's own origin is
+  another (996 766, a landmass of 3.7 M km²: 14.8 % of the land reached,
+  72.0 % from 149 889 before), and from it step 2 has no copper in reach
+  and no city in the span, 95 big peoples at the end.
 
 Open:
 
-1. Step 2's times against the earth's (2026-10-29, Status): the farming
-   and the smelting's interval fit; the copper waits on the generator's
-   copper, in the mountains alone, far from the arable land; the city on
-   the farmers' density, so its own tuning (TOWN_GROWTH_A, CITY_PEOPLE,
-   the shares) waits for the generator's arable land (some 7 % of the
-   land farmed against the earth's some 25 %).
+1. Step 2's times against the earth's (2026-10-29, Status, v15
+   ecology): the farming, the smelting's interval and Thalassor fit; the
+   copper on Zephyra waits on the way from its fields to its copper
+   (+8 000), the city on Morvane and Zephyra on the smelting's way to a
+   dense seat (+9 500, +13 500). The fronts of the fields and the copper
+   pass a cell a step at most, some 0.4 km a year, below FARM_KM_A and
+   COPPER_KM_A (1 km a year): a fix changes all of step 2's times.
+   TOWN_GROWTH_A 0.001 would bring the cities 500 to 1 000 years earlier.
 2. The peoples' splits in the chronicle: few once they must hold 5 000
    years and not come in step 2's first 5 000 years (1, 1, 6 on the
    three worlds); a lower share of the land lived in to tell
@@ -529,3 +578,10 @@ Open:
    the engine's ecology with the shelf down to −120 m as land, in today's
    climate, kept with level 1; it replaces the coast's values the shelf
    takes now.
+6. The peoples' stripes on the v15 ecology (2026-10-29, Status): the
+   replacement's rays are back where the fields cross wide arable land
+   (Morvane's middle continent, north); `kin_of` takes the people of the
+   most farmers around a cell, and on a straight front that is the ray
+   behind it.
+7. Thalassor's own origin on the v15 ecology (996 766) is on a landmass
+   of 3.7 M km²: step 1 reaches 14.8 % of the land, step 2 has no city.

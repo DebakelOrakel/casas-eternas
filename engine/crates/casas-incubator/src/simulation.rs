@@ -360,7 +360,18 @@ pub(crate) const VOYAGE_KM: f64 = 3000.0;
 // more. The lower threshold reads the halos' flanks, where the copper is
 // near the fields; the numbers below are of before.
 pub(crate) const COPPER_RICH: f64 = 0.5;
-pub(crate) const COPPER_DAYS: f64 = 20.0;
+// 32 (2026-10-29; 20 before), the obsidian's reach (settle.rs MAX_DAYS):
+// the copper is fetched as the obsidian was. With the generator's v15
+// ecology (DEC-0052, DEC-0053) the copper is near the fields, and the
+// first farmers' village within 32 days comes 500 to 1 000 years before
+// the first within 20 (Morvane from origin 736 179: at +2 500 after the
+// first farming, not +3 500). The copper after the first farming, the
+// median over six origins each: Morvane +3 500 → +2 500, Thalassor
+// +1 500 (the same: its first centres are at the copper), Zephyra +8 000
+// (the same: its fields fill 3.2 M km² by +6 500 with no copper of
+// COPPER_RICH within 32 days; the copper waits on a second farmed region).
+// With v14's ecology 32 days changed nothing (below).
+pub(crate) const COPPER_DAYS: f64 = 32.0;
 // 500 (2026-10-29; 1 000 before), one climate step: the copper minerals
 // were known before the farming (malachite beads from −900 on the earth's
 // timeline, DES-0035), so what the farmers needed was the copper in
@@ -407,10 +418,31 @@ pub(crate) const SMELT_RATE: f64 = 0.1;
 /// large village, had some hundreds to a few thousand, Uruk perhaps
 /// 40 000: docs/design/earth-prehistory-sources.md), at the CLIMATE_YEARS
 /// it grows to it; at SPAN_YEARS if none does.
+///
+/// TOWN_SHARE 0.1 and SMELT_SHARE 0.25 (2026-10-29; 0.15 and 0.2 before;
+/// a smelting town draws 0.45 of its hinterland, as before): with the
+/// generator's v15 ecology the farmers are denser (FARM_GAIN × the arable
+/// land; on 7 to 20 % of the land arable is 0.5 or more, 0.4 to 2.5 %
+/// before). The farmed cells' people at +6 500 to +14 000: median 1.7 to
+/// 2.7 a km², p90 17 (v14 at +24 000: 1.4 and 4.6). The largest
+/// hinterlands are 46 000 to 50 000 people on Morvane, 25 000 to 33 000 on
+/// Thalassor, 79 000 to 86 000 on Zephyra (v14 some 22 000). At 0.15 a
+/// town of Zephyra's densest farmland was a city without the copper
+/// (0.15 × 86 000 = 12 800), and Zephyra had its city before the
+/// smelting from 4 of 6 origins. On the earth the first cities (Uruk)
+/// came after the smelting (DES-0035). Now 0 of 18. The city after the
+/// first farming, the median over six origins each: Morvane +9 500 (the
+/// same), Thalassor +6 500 → +6 000 (1 500 years after the smelting, as
+/// on the earth), Zephyra +11 500 → +13 500 (2 500 after its smelting).
+/// The city waits on the smelting at a dense seat: Morvane's copper is
+/// found where the hinterlands are 1 400 to 4 700 people, and the smelting
+/// reaches a seat of 22 000 or more 3 000 to 5 000 years later. At
+/// TOWN_GROWTH_A 0.001 the city came 500 to 1 000 years earlier on each
+/// world, Thalassor's 500 years after its smelting.
 pub(crate) const CITY_DAYS: f64 = 1.0;
-pub(crate) const TOWN_SHARE: f64 = 0.15;
+pub(crate) const TOWN_SHARE: f64 = 0.1;
 pub(crate) const COPPER_SHARE: f64 = 0.1;
-pub(crate) const SMELT_SHARE: f64 = 0.2;
+pub(crate) const SMELT_SHARE: f64 = 0.25;
 pub(crate) const TOWN_GROWTH_A: f64 = 0.0005;
 pub(crate) const CITY_PEOPLE: f64 = 10_000.0;
 

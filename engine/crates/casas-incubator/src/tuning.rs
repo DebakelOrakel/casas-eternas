@@ -36,7 +36,8 @@ use serde_json::{Map, Value, json};
 /// step 2's times toward the earth's (2026-10-29: STABLE_COLD,
 /// STABLE_YEARS, COPPER_VILLAGE_YEARS, SMELT_AFTER), the tuning alone;
 /// COPPER_RICH 0.5 for the generator's new copper (DEC-0053, 2026-10-29),
-/// the tuning alone.
+/// the tuning alone; step 2's times on the generator's v15 ecology
+/// (2026-10-29: COPPER_DAYS, TOWN_SHARE, SMELT_SHARE), the tuning alone.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
