@@ -190,6 +190,14 @@ constants in simulation.rs.
   farming keep theirs. The peoples are the clusters of alike, joined
   cells. A language is, for now, a slow trait among them; their names
   come later ([DES-0033](./naming-languages.md)).
+  Some 100 to 300 peoples on a world as Morvane (the earth's new stone
+  age: some 3 to 10 archaeological cultures a million km²).
+- **No rank in step 2 (2026-10-29).** Step 2 gives each people what rank
+  grows from — its surplus (the farmers' share, the arable land, the
+  density), its largest town, its copper, its exchange — and step 3
+  derives the rank from them, with the land's circumscription, at its
+  start ([DES-0034](./polities-from-the-land.md)). Step 2 stays the
+  tribes'; the power is step 3's.
 - **The exchange, not the trade.** The far exchange of the new stone age
   went from village to village ("down the line"): no traders, no fixed
   routes, no dependency; goods of rank (obsidian, shells, copper), less

@@ -100,6 +100,10 @@ That is the history step 3 tells.
 
 ## What step 2 must give
 
+Not the rank (decided 2026-10-29): step 3 derives a people's rank at its
+start from what step 2 gives, so that its rule can change without step 2
+being run again.
+
 The peoples with their lifeways; grain or tubers per region; the towns
 and the villages; the copper and the ways to it. Drivers 3, 4 and 6 come
 from the world itself.
