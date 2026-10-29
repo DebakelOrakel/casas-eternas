@@ -125,8 +125,15 @@ procedure.
     cause (8c). 1–2 h.
 20. **Replays of old saves differ**: the collapse constants of 8b-3 are in
     no artifact key. 0.5 h.
-21. **The sample world's u16 encoding** clips summits above 9 km in a baked
-    preview. 0.5 h.
+21. ~~**The sample world's u16 encoding** clips summits above 9 km in a baked
+    preview~~. 0.5 h.
+    Done 2026-10-29: `worldLayers.ELEVATION_ENCODING` spans −2..2 (±18 km,
+    a step of 0.27 m), was −1..1 (±9 km, 0.14 m), so a summit above 9 km
+    and a trench below −9 km (the field has neither bound) keep their
+    height. The two sample files were transcoded from the old range (their
+    heights lie within 1.7 km / 5.6 km and −5.2 / −5.5 km, so nothing was
+    clipped in them; worst change 0.14 m); the screen and
+    `scripts/sampleWorld.mjs` read the one constant.
 22. ~~**Golden's `erosion.deltaCells` counts the sea-level change**~~: it counts
     sea cells that rose over the last epoch, so a sea that falls by 0.7 m
     puts nearly the whole ocean in (90–124 k against 1.35–1.44 M cells,

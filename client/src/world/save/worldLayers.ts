@@ -15,9 +15,12 @@ export type Dtype = 'u8' | 'u16' | 'f32'
 
 // The Planet step's sample world (client/public/sample, written by
 // scripts/sampleWorld.mjs, read by the screen): elevation as u16 over
-// −1..1. An ENCODING, not a world field: the save's quantiser, not its field
-// registry.
-export const ELEVATION_ENCODING: Encoding = { dtype: 'u16', scale: 2 / 65535, offset: -1 }
+// −2..2 (±18 km, a step of 0.27 m). An ENCODING, not a world field: the
+// save's quantiser, not its field registry. Until 2026-10-29 the range was
+// −1..1, which clipped a summit above 9 km and a trench below −9 km
+// (elevationScale.ts: the field has no ceiling and no floor since DEC-0036
+// phase 8b-3 / 8e; DES-0027 #21).
+export const ELEVATION_ENCODING: Encoding = { dtype: 'u16', scale: 4 / 65535, offset: -2 }
 
 // A raster's ON-DISK ENCODING, on top of what the field already is.
 // `value = raw * scale + offset`.
