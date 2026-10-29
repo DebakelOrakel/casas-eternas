@@ -186,8 +186,12 @@ constants in simulation.rs.
   drift slowly; neighbours with much contact (people, few days between
   them) grow alike, mountains, deserts and the sea part them. The
   innovations (the farming, the copper) are traits that spread by
-  contact; farmers who spread carry their traits, foragers who take the
-  farming keep theirs. The peoples are the clusters of alike, joined
+  contact; farmers who spread carry their traits. Foragers who take the
+  farming keep theirs where they are about as many as the farmers who
+  come; where they are far fewer, the farmers' traits replace theirs
+  (2026-10-29: in Europe the farmers who came replaced most of the
+  hunters, as the genes show). The farming and the copper pass over the
+  peoples' borders and carry no traits. The peoples are the clusters of alike, joined
   cells. A language is, for now, a slow trait among them; their names
   come later ([DES-0033](./naming-languages.md)).
   Some 100 to 300 peoples on a world as Morvane (the earth's new stone
