@@ -5,6 +5,8 @@
 //! `engine/scripts/tilesFixture.mjs`; the scenarios below are that
 //! script's, step for step.
 
+mod fixture;
+
 use std::collections::HashMap;
 
 use casas_engine::climate::climate_mesh::{ClimateMesh, climate_cell_m};
@@ -109,7 +111,7 @@ impl Hash {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(name))
             .unwrap_or_else(|| panic!("no {name} in the fixture"));
-        assert_eq!(format!("{name} {:08x}", self.0), want);
+        fixture::check("tiles.txt", &format!("{name} {:08x}", self.0), want, name);
     }
 }
 

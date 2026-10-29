@@ -73,6 +73,11 @@ pub const CLEAR_FRACTION: f64 = 0.8;
 pub const EDGE_SALT_ROW: i64 = 101;
 pub const EDGE_SALT_COL: i64 = 102;
 pub const LEVEL_SALT: i64 = 64;
+/// The bake keeps the parent's level (pipeline/mesh_tile_bake.rs,
+/// `keep_parent_level`; TEG-31): the bins a side of the grid the bake's
+/// mean change is taken on, and the 3 × 3 passes that spread it.
+pub const PARENT_LEVEL_BINS: usize = 96;
+pub const PARENT_LEVEL_PASSES: usize = 2;
 
 fn max_side(spec: &TileSpec) -> f64 {
     16_777_216.0 * spec.quantum
@@ -107,6 +112,8 @@ pub fn tile_constants(spec: &TileSpec) -> Vec<(String, f64)> {
         ("tileInflowModel".into(), 1.0),
         ("tileLatticeNodes".into(), 1.0),
         ("tilePatchRounded".into(), 1.0),
+        ("tileParentLevelBins".into(), PARENT_LEVEL_BINS as f64),
+        ("tileParentLevelPasses".into(), PARENT_LEVEL_PASSES as f64),
     ]);
     out
 }

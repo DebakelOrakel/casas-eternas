@@ -19,7 +19,7 @@ summary.de: Wie die oberste Ebene der Detail-Leiter läuft — Level 1 bleibt di
 area: generator
 stage: built
 createdAt: 2026-09-29
-updatedAt: 2026-10-04
+updatedAt: 2026-10-29
 concepts: [generator.concept.detail-levels, generator.concept.jobs]
 related: [DEC-0032, DES-0022]
 ---
@@ -151,6 +151,30 @@ Where the ladder may go next — level 1 as a replayed history, more tile
 levels, a coordinator for the tiles: [design/tile-coordinator.md](../design/tile-coordinator.md).
 
 ## Status
+
+2026-10-29: THE RIDGES ON THE TILE BORDERS (TEG-31). The pinned edge row
+left a ridge on every border: the bake's erosion lowers a tile's land as
+a whole, and the edge stays at the parent's height. Measured on the
+mountains of a 1024 × 512 world (seed "seams", 200 Archean + 40 tectonic
+epochs, 3 × 3 level-2 tiles and the 25 level-3 tiles on them, 12 rounds):
+the land inside lowered by 24 m on the mean at level 2 and 5 m at level
+3; the edge stood over the land within 0.15 cells of it (per 0.5-cell
+segment of a shared border) by 18 m on the mean at level 2, 48 m at the
+90th percentile and 108 m at the 99th — the ~50 m lines the incubator
+showed — and by 3 m (p90 10 m) at level 3. The heights on the border
+were always the same in both tiles; the border was a crest, not a step.
+Now the bake keeps the parent's level (the engine's
+`pipeline/mesh_tile_bake.rs`, `keep_parent_level`): the smooth part of
+its change — the mean change on the land inside in a grid of 96 bins a
+side, spread by two 3 × 3 passes — is taken out of the land inside, so
+the tile keeps the relief its erosion cut about the parent's surface, the
+level the edge holds. After it, the same tiles: −3 m on the mean at
+level 2 (p90 12 m, p99 51 m), 0.2 m at level 3 (p90 1.9 m); the mean
+change far inside 0 m; land pits +1.5 %. A tile stays a function of its
+parent, its id and the seed. The two numbers are tile constants
+(`tileParentLevelBins`, `tileParentLevelPasses`), so both levels' tile
+pipelines moved and every world bakes its tiles again; the worlds and
+level 1 do not change.
 
 2026-10-04, later: a tile's erosion routes afresh every four rounds and
 waits for it (erosionEnginePool.ts, PipelineOptions.synchronous) — before,

@@ -253,7 +253,10 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // (docs/decisions/copper-arcs.md). The worlds do not change (the ecology
 // is a function on load, worldPipeline.ts SAME_WORLDS_AS); level 1's
 // ecology fields do. The ecology's tuning is in no hashed constant (no
-// run reads it, worldTuning.ts), hence the bump.
+// run reads it, worldTuning.ts), hence the bump. Also in v15, unreleased:
+// a tile's bake keeps its parent's level (docs/decisions/tile-jobs.md,
+// 2026-10-29; no more crest on the tile borders) — its constants are
+// tile constants, so the tiles' versions moved and the worlds' did not.
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the

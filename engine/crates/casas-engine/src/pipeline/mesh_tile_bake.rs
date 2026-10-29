@@ -17,8 +17,8 @@ use crate::mesh::mesh_erosion::{
 };
 use crate::mesh::mesh_hydrology::mesh_areas;
 use crate::mesh::mesh_tile::{
-    SiteKind, TILE_ROLE_EDGE, TILE_ROLE_HALO, TileId, TileMesh, TileOptions, TileParent, point_key,
-    tile_corner, tile_spec,
+    PARENT_LEVEL_BINS, PARENT_LEVEL_PASSES, SiteKind, TILE_ROLE_EDGE, TILE_ROLE_HALO, TileId,
+    TileMesh, TileOptions, TileParent, point_key, tile_corner, tile_spec,
 };
 use crate::mesh::mesh_tile_cube::{cube_frame_of, cube_to_frame};
 use crate::mesh::tile_layout::build_tile_mesh_on_world;
@@ -284,6 +284,8 @@ pub fn bake_mesh_tile(
             frozen: Some(&frozen),
         },
     );
+    let mut z = result.z;
+    keep_parent_level(&tile, &mut z);
     // The outflow: the drainage of the inside nodes that flow onto the edge.
     let mut outflow = vec![0f32; slots];
     let target = &result.routing.flow_target;
@@ -302,7 +304,7 @@ pub fn bake_mesh_tile(
     }
     Ok(BakedTile {
         tile,
-        z: result.z,
+        z,
         routing: result.routing,
         inflows,
         inflow_discharge,
@@ -311,6 +313,114 @@ pub fn bake_mesh_tile(
         outflow,
         eroded_flux_m3: result.eroded_flux_m3,
     })
+}
+
+/// THE PARENT'S LEVEL (TEG-31, 2026-10-29). The bake's erosion lowers a
+/// tile's land as a whole, and the pinned edge row stays at the parent's
+/// height: a ridge on every tile border. Measured on the mountains of a
+/// 1024 × 512 world (seed "seams", 3 × 3 level-2 tiles and the 25 level-3
+/// tiles on them): the land inside lowered by 24 m on the mean at level 2,
+/// 5 m at level 3, and the edge stood over the land within 0.15 cells of
+/// it by 18 m on the mean at level 2 (90th percentile of 0.5-cell
+/// segments 48 m, 99th 108 m), 3 m at level 3 (p90 10 m).
+///
+/// The smooth part of the bake's change is taken out of the land inside:
+/// its mean in a grid of `PARENT_LEVEL_BINS` bins a side across the inside
+/// nodes' extent (1.3 km at level 2, 650 m at level 3), spread by
+/// `PARENT_LEVEL_PASSES` passes of a 3 × 3 sum, read bilinearly at each
+/// node. The tile keeps the valleys and ridges its erosion cut, about the
+/// parent's surface — the level the edge holds. After it: the edge over
+/// the land beside it −3 m on the mean at level 2 (p90 12 m, p99 51 m),
+/// 0.2 m at level 3 (p90 1.9 m); the pits on the land inside +1.5 %. With
+/// 32 bins the land next to the edge stood 6 m over it (the bins were
+/// wider than the pin's reach into the tile). The edge row and the halo do
+/// not move, a land node does not go under the sea, the routing is the
+/// bake's.
+fn keep_parent_level(tile: &TileMesh, z: &mut [f32]) {
+    let mesh = &tile.mesh;
+    let slots = mesh.vertex_slots();
+    let land = |v: usize| {
+        mesh.v_alive[v] != 0
+            && tile.role[v] != TILE_ROLE_EDGE
+            && tile.role[v] != TILE_ROLE_HALO
+            && tile.z[v] as f64 > SEA_LEVEL
+    };
+    let (mut x0, mut y0, mut x1, mut y1) = (
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for v in 0..slots {
+        if mesh.v_alive[v] == 0 || tile.role[v] == TILE_ROLE_HALO {
+            continue;
+        }
+        x0 = x0.min(mesh.vx[v]);
+        y0 = y0.min(mesh.vy[v]);
+        x1 = x1.max(mesh.vx[v]);
+        y1 = y1.max(mesh.vy[v]);
+    }
+    if !(x1 > x0 && y1 > y0) {
+        return;
+    }
+    let n = PARENT_LEVEL_BINS;
+    let (bw, bh) = ((x1 - x0) / n as f64, (y1 - y0) / n as f64);
+    let bin = |c: f64, lo: f64, w: f64| (((c - lo) / w) as usize).min(n - 1);
+    let mut sum = vec![0f64; n * n];
+    let mut count = vec![0f64; n * n];
+    for v in 0..slots {
+        if !land(v) {
+            continue;
+        }
+        let b = bin(mesh.vy[v], y0, bh) * n + bin(mesh.vx[v], x0, bw);
+        sum[b] += z[v] as f64 - tile.z[v] as f64;
+        count[b] += 1.0;
+    }
+    for _ in 0..PARENT_LEVEL_PASSES {
+        let (mut s2, mut c2) = (vec![0f64; n * n], vec![0f64; n * n]);
+        for j in 0..n {
+            for i in 0..n {
+                for dj in j.saturating_sub(1)..(j + 2).min(n) {
+                    for di in i.saturating_sub(1)..(i + 2).min(n) {
+                        s2[j * n + i] += sum[dj * n + di];
+                        c2[j * n + i] += count[dj * n + di];
+                    }
+                }
+            }
+        }
+        sum = s2;
+        count = c2;
+    }
+    for v in 0..slots {
+        if !land(v) {
+            continue;
+        }
+        // Bilinear between the bins' centres, over the bins that hold land.
+        let fx = ((mesh.vx[v] - x0) / bw - 0.5).clamp(0.0, (n - 1) as f64);
+        let fy = ((mesh.vy[v] - y0) / bh - 0.5).clamp(0.0, (n - 1) as f64);
+        let (i, j) = ((fx as usize).min(n - 2), (fy as usize).min(n - 2));
+        let (tx, ty) = (fx - i as f64, fy - j as f64);
+        let (mut acc, mut weight) = (0.0, 0.0);
+        for (di, dj, w) in [
+            (0, 0, (1.0 - tx) * (1.0 - ty)),
+            (1, 0, tx * (1.0 - ty)),
+            (0, 1, (1.0 - tx) * ty),
+            (1, 1, tx * ty),
+        ] {
+            let b = (j + dj) * n + i + di;
+            if count[b] > 0.0 && w > 0.0 {
+                acc += w * sum[b] / count[b];
+                weight += w;
+            }
+        }
+        if weight == 0.0 {
+            continue;
+        }
+        let kept = (z[v] as f64 - acc / weight) as f32;
+        if kept as f64 > SEA_LEVEL || z[v] as f64 <= SEA_LEVEL {
+            z[v] = kept;
+        }
+    }
 }
 
 struct Crossing {
