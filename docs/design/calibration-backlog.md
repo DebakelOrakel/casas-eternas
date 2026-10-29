@@ -93,7 +93,11 @@ procedure.
     (Earth 20–30). The ice depends on it since 8b-2 (summer melt).
 12. **The torus is cold**: mean 5.4 °C, ice 35–38 % of land, because about a
     third of its land lies above 60°. It may be a property of the shape
-    rather than a fault.
+    rather than a fault. **Accepted as the shape's (2026-10-29):** the
+    torus maps its rows linearly to latitude (DEC-0035), so every band of
+    latitude has the same area and a third of the land lies past 60°; each
+    band is as warm as the sphere's (Zephyra: 4.0 °C, reweighted to the
+    sphere's band areas 12.5 °C). Not a fault of the climate.
 13. **A rainless 8.5 km range (sphere calibration seed, 28°)**: all eight
     highest peaks get less than 0.5 mm/yr, so no ice at any height. A dry
     belt is plausible, a rainless high range is suspicious — the orographic
