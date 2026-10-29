@@ -206,9 +206,12 @@ constants in simulation.rs.
   people splits (both parts so large), merges into another, vanishes
   (dies out or falls under big for good), turns to farming (its farmers'
   share by people over a half, once). Not the peoples of step 2's start:
-  they are just there. Two peoples whose border is near the distance
-  that parts them part and join again; a split, a merge, a people gone is
-  told of a people that lived 5 000 years.
+  they are just there, and so are their splits in step 2's first 5 000
+  years (kin branches that part as they drift). Two peoples whose border
+  is near the distance that parts them part and join again; a split or a
+  merge is told when it held 5 000 years (the two peoples' hearts apart,
+  or in one people, at each step since), a people gone of a people that
+  lived 5 000 years.
 - **No rank in step 2 (2026-10-29).** Step 2 gives each people what rank
   grows from — its surplus (the farmers' share, the arable land, the
   density), its largest town, its copper, its exchange — and step 3
@@ -412,13 +415,39 @@ Building since 2026-10-27:
   times a disc's of their cells: 7, 16, 12 (38, 62, 71). The chronicle:
   Morvane 39 splits, 7 merges, 26 turns to farming (33, 5, 27);
   Thalassor 25, 2, 25 (28, 1, 30); Zephyra 52, 12, 10 (30, 2, 11).
+- 2026-10-29: the chronicle's splits and merges once they held (the
+  incubator's v6; `casas-incubator` peoples.rs `Tree::tell`). Zephyra's
+  52 splits and 12 merges were mostly flaps: parts at their border's
+  distance join and part again, and the ids swap (the larger overlap
+  keeps the id), so that the guard of the lives held for the new id. In
+  the history as the job runs it (with the rain's variability; 51 splits,
+  10 merges): two parts of 186 000 and 192 000 km² told as 4 splits and 3
+  merges from 57 500 to 78 000; of the 61 told 37 of a part told before
+  (the same km² within 2 %); all 10 merges parted again 500 to 2 000
+  years after. A split or a merge is told now when it held 5 000
+  years by the two peoples' hearts, not when its id lived 5 000 years;
+  not a split that undoes a join of the last 5 000 years, nor one of a
+  part whose split is still kept back. That alone: Morvane 22 splits, 1
+  merge (39, 7 before); Thalassor 19, 1 (25, 2); Zephyra 27, 0 (52, 12).
+  Of these splits 21, 18 and 21 in step 2's first 4 500 years, then none
+  until 13 000, 7 000 and 5 000 years: no split is told in step 2's first
+  5 000 years. All: Morvane 1 split, 1 merge, 0 gone, 26 turns to
+  farming; Thalassor 1, 1, 0, 25; Zephyra 6, 0, 0, 10. The splits by
+  fifth of the history 0 0 1 0 0, 0 0 1 0 0, 3 3 0 0 0 (before 31 4 2 1
+  1, 20 3 2 0 0, 42 8 2 0 0), the merges 0 0 1 0 0, 0 0 1 0 0, none
+  (before 0 3 1 3 0, 0 0 2 0 0, 5 6 1 0 0). The peoples, their ids and
+  all other arrays and events keep their bytes. The incubator's smoke worlds tell no split
+  now (the torus's history is 7 000 years; the sphere's later splits all
+  join again).
 
 Open:
 
 1. Step 2's times against the earth's (the copper, the smelting, the city
    after the farming).
-2. The peoples' splits in the chronicle are most in step 2's first
-   fifth: step 2's start's peoples are kin and part as they drift.
+2. The peoples' splits in the chronicle: few once they must hold 5 000
+   years and not come in step 2's first 5 000 years (1, 1, 6 on the
+   three worlds); a lower share of the land lived in to tell
+   (SPLIT_TOLD_SHARE) would tell more (2026-10-29).
 3. The far trade: where which goods came from, for step 3 (above, the
    exchange).
 4. Step 1's sea-level curve: drawn from the world's seed, or a control.

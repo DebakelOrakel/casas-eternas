@@ -41,7 +41,9 @@
 //!   last, their splits and merges; the ids and the measures packed at the
 //!   kept states alone.
 //! - THE CHRONICLE (part 4, `Tree::tell`): the big peoples' splits,
-//!   merges, ends and turns to farming, into the history's log.
+//!   merges, ends and turns to farming, into the history's log; a split
+//!   or a merge once it held TOLD_LIVES_YEARS by its hearts (THE HOLD,
+//!   v6), no split in step 2's first EARLY_SPLIT_YEARS.
 //!
 //! Measured on Morvane (v14), Thalassor and Zephyra (origin 783 702) on
 //! 2026-10-29 (v5, without the stripes), the peoples of 1 000 people and
@@ -203,10 +205,20 @@ pub const SPLIT_TOLD_SHARE: f64 = 0.005;
 /// a part of 220 000 km² of one of Zephyra's peoples split and merged
 /// again 8 times, 500 to 1 500 years apart; at 3 000 years some still
 /// part, join and part again 4 000 years apart (merges 8, 4, 6); at 5 000
-/// 4, 1, 2; at 8 000 the same splits but 1 to 4. Most splits are in the
-/// history's first fifth (28, 21, 27 of 34, 29, 30): step 2's start's
-/// peoples are kin branches near PEOPLE_DISTANCE, and part as they drift.
+/// 4, 1, 2; at 8 000 the same splits but 1 to 4. Since v6 (2026-10-29)
+/// the time a split or a merge held, by its hearts (`Tree::tell`, THE
+/// HOLD), not by its ids.
 pub const TOLD_LIVES_YEARS: f64 = 5000.0;
+/// No split is told in this many years from step 2's start (`Tree::tell`;
+/// 2026-10-29): step 2's start's peoples are kin branches near
+/// PEOPLE_DISTANCE, and part as they drift; they are just there, as the
+/// peoples of the first step. Most splits were in the history's first
+/// fifth (v5 on Morvane, Thalassor and Zephyra from origin 783 702: 31, 20
+/// and 42 of 39, 25 and 52). With THE HOLD, the splits by the years from
+/// step 2's start: 21, 18 and 21 at 500 to 4 500 years, then 1 (13 000),
+/// 1 (7 000) and 6 (5 000 to 17 500). At 3 000: 9, 3, 9 splits told; at
+/// 5 000: 1, 1, 6.
+pub const EARLY_SPLIT_YEARS: f64 = 5000.0;
 /// A big people turns to farming when its farmers' share (by people)
 /// goes from under this to this or more: once a people.
 pub const FARMERS_TOLD: f64 = 0.5;
@@ -897,12 +909,36 @@ pub struct Tree {
     alive: Vec<u32>,
     // By people id, the chronicle's (`tell`).
     watch: Vec<Watch>,
-    // The last step's time (-Infinity before the first) and its km² lived
-    // in.
+    // The first step's time (step 2's start), the last step's (-Infinity
+    // before the first) and its km² lived in.
+    first_t: f64,
     last_t: f64,
     last_lived: f64,
-    // The splits kept back (`tell`), by the new people's id.
-    splits: Vec<(u32, LogEvent)>,
+    // The splits and merges kept back (`tell`).
+    held: Vec<Held>,
+    // The joins of the last TOLD_LIVES_YEARS (`tell`).
+    joins: Vec<Join>,
+}
+
+// A people ended into another (`Tree::tell`) at `at`: the other's id
+// then, the hearts of both (the ended one's at its last step).
+struct Join {
+    at: f64,
+    into: i32,
+    a: i32,
+    b: i32,
+}
+
+// A split or a merge kept back (`Tree::tell`) until it held
+// TOLD_LIVES_YEARS: its event; the two hearts (the cells), the parts' at
+// a split, the merged people's and the other's at a merge; whether they
+// are apart (a split) or one (a merge).
+struct Held {
+    event: LogEvent,
+    since: f64,
+    a: i32,
+    b: i32,
+    apart: bool,
 }
 
 impl Default for Tree {
@@ -918,9 +954,11 @@ impl Tree {
             ids: Vec::new(),
             alive: Vec::new(),
             watch: Vec::new(),
+            first_t: f64::NEG_INFINITY,
             last_t: f64::NEG_INFINITY,
             last_lived: 0.0,
-            splits: Vec::new(),
+            held: Vec::new(),
+            joins: Vec::new(),
         }
     }
 
@@ -1057,13 +1095,17 @@ impl Tree {
         for q in 0..count {
             traits.heart[ids[q] as usize] = now[q].centre;
         }
-        self.tell(&before, old, &ids, &now, t, log);
+        let of_cell: Vec<i32> = cluster
+            .iter()
+            .map(|&q| if q < 0 { -1 } else { ids[q as usize] })
+            .collect();
+        self.tell(&before, old, &ids, &now, &of_cell, t, log);
         let mut out = Vec::new();
         for i in 0..n {
             if people[i] == 0 {
                 continue;
             }
-            let id = ids[cluster[i] as usize];
+            let id = of_cell[i];
             traits.ident[i] = id;
             assert!((0..65535).contains(&id), "a people id over u16");
             out.push(id as u16);
@@ -1076,17 +1118,19 @@ impl Tree {
 
     // THE CHRONICLE (part 4): the events of the big peoples at step `t`,
     // from the last step's peoples alive (`before`, the peoples numbered
-    // from `old` on new), the clusters' ids and measures now. None at the
-    // first step: step 2's start's peoples are just there. A people is
-    // TOLD at a step where it is big (`big`) and has SPLIT_TOLD_SHARE of
-    // the km² lived in then or more (the many small peoples at the
-    // borders and on the islands are not the chronicle's).
-    // - A split: a new people whose parent lives on, both told now. Kept
-    //   back until the new one lived TOLD_LIVES_YEARS, then written with
-    //   its time and measure at its birth, at its heart then; dropped where
-    //   it ended before.
+    // from `old` on new), the clusters' ids and measures now, each cell's
+    // people now (`of_cell`, -1 where no one lives). None at the first
+    // step: step 2's start's peoples are just there. A people is TOLD at
+    // a step where it is big (`big`) and has SPLIT_TOLD_SHARE of the km²
+    // lived in then or more (the many small peoples at the borders and on
+    // the islands are not the chronicle's).
+    // - A split: a new people whose parent lives on, both told now, after
+    //   EARLY_SPLIT_YEARS from step 2's start. Kept back (`Held`) until it
+    //   held TOLD_LIVES_YEARS, then written with its time and measure at
+    //   its birth, at its heart then.
     // - A merge: a people ended into another, told at the last step, which
-    //   lived TOLD_LIVES_YEARS. Its measure then, at its heart then.
+    //   lived TOLD_LIVES_YEARS. Its measure then, at its heart then. Kept
+    //   back as a split until it held TOLD_LIVES_YEARS.
     // - A people gone: one told at a step once, which lived
     //   TOLD_LIVES_YEARS, and which died out (none of its cells lived in)
     //   or is alive at the history's end but not big (`finish`); told at
@@ -1102,16 +1146,50 @@ impl Tree {
     // PEOPLE_DISTANCE part and join again and again, each time a new id
     // (on Zephyra a part of 220 000 km² of one people 8 times in 15 000
     // years, 500 to 1 500 years apart each time).
+    // THE HOLD (v6, 2026-10-29): a split or a merge is told where it held
+    // TOLD_LIVES_YEARS by its two hearts, not by its ids: at each step
+    // since, the hearts of the two parts at the split in two peoples, the
+    // merged one's and the other's (both at the last step: the union's
+    // heart may lie in the part that joined) in one; a heart no one lives
+    // in breaks nothing. And a split is not told where it undoes a join
+    // of the last TOLD_LIVES_YEARS (`Join`: the two hearts of the join in
+    // the two parts now), or where its part's heart is the heart of a
+    // split kept back (the same part again, from the people it joined
+    // since). A join back into the people a part parted from less than
+    // TOLD_LIVES_YEARS before is not a join: that split was not told, and
+    // the part's split for good is told once.
+    // Why: until v5 a split held while its new id lived, and a merge was
+    // told at once. The ids swap where parts join and part again (the
+    // larger overlap by people keeps the id), so that the guard of the
+    // lives held for the new id, and a flap was told each time. On
+    // Zephyra (origin 783 702, v5, with the rain's variability as the job
+    // has it) two parts of 186 000 and 192 000 km² (hearts in cells
+    // 753 302 and 695 842) parted and joined from 57 500 to 78 000, told
+    // as 4 splits (501 > 695, 900 > 907, 907 > 918, 126 > 960) and 3
+    // merges (501 into 695, 695 into 881, 907 into 126); a part
+    // of 138 000 km² (heart in 929 285) as 3 splits (from 187, 163, 898)
+    // and 2 merges in 15 500 years. Of the 61 splits and merges told, 37
+    // of a part of the same km² (within 2 %) as one told before; all 10
+    // merges parted again 500 to 2 000 years after. With THE HOLD alone
+    // (no EARLY_SPLIT_YEARS; without the rain's variability, as DES-0032
+    // counts) Morvane 39 splits and 7 merges → 22 and 1, Thalassor 25, 2
+    // → 19, 1, Zephyra 52, 12 → 27, 0; the peoples, their ids and the
+    // tree the same.
+    #[allow(clippy::too_many_arguments)]
     fn tell(
         &mut self,
         before: &[u32],
         old: usize,
         ids: &[i32],
         now: &[Measure],
+        of_cell: &[i32],
         t: f64,
         log: &mut Vec<LogEvent>,
     ) {
         let first = self.last_t == f64::NEG_INFINITY;
+        if first {
+            self.first_t = t;
+        }
         self.watch.resize(self.peoples.len(), Watch::default());
         let lived: f64 = now.iter().map(|m| m.km2).sum();
         let told = |m: &Measure, lived: f64| big(m) && m.km2 >= SPLIT_TOLD_SHARE * lived;
@@ -1120,19 +1198,27 @@ impl Tree {
         for (q, &id) in ids.iter().enumerate() {
             at[id as usize] = q as i32;
         }
+        let of = |c: i32| if c < 0 { -1 } else { of_cell[c as usize] };
+        self.joins.retain(|j| t - j.at < TOLD_LIVES_YEARS);
         if !first {
+            let early = t - self.first_t < EARLY_SPLIT_YEARS;
             for (q, &id) in ids.iter().enumerate() {
                 let m = &now[q];
                 let id = id as usize;
                 if id >= old {
                     let p = self.peoples[id].parent;
-                    if p < 0 || at[p as usize] < 0 {
+                    if early || p < 0 || at[p as usize] < 0 {
                         continue;
                     }
-                    if told(m, lived) && told(&now[at[p as usize] as usize], lived) {
-                        self.splits.push((
-                            id as u32,
-                            LogEvent::PeopleSplit {
+                    let mp = &now[at[p as usize] as usize];
+                    let undoes = self.joins.iter().any(|j| {
+                        let (x, y) = (of(j.a), of(j.b));
+                        j.into == p && ((x, y) == (id as i32, p) || (x, y) == (p, id as i32))
+                    });
+                    let again = self.held.iter().any(|h| h.apart && of(h.a) == id as i32);
+                    if !undoes && !again && told(m, lived) && told(mp, lived) {
+                        self.held.push(Held {
+                            event: LogEvent::PeopleSplit {
                                 at: t,
                                 cell: m.centre as f64,
                                 people: p as f64,
@@ -1140,7 +1226,11 @@ impl Tree {
                                 count: m.people,
                                 km2: m.km2,
                             },
-                        ));
+                            since: t,
+                            a: m.centre,
+                            b: mp.centre,
+                            apart: true,
+                        });
                     }
                 } else if !self.watch[id].farmed
                     && told(m, lived)
@@ -1160,20 +1250,50 @@ impl Tree {
             }
             for &p in before {
                 let p = p as usize;
-                if at[p] >= 0 || t - self.peoples[p].born < TOLD_LIVES_YEARS {
+                if at[p] >= 0 {
                     continue;
                 }
                 let w = self.watch[p];
                 let into = self.peoples[p].merged_into;
+                let lived_long = t - self.peoples[p].born >= TOLD_LIVES_YEARS;
+                // The other's heart before the join: the union's now may
+                // lie in the part that joined.
+                let other = if into < 0 {
+                    -1
+                } else if (into as usize) < old {
+                    self.watch[into as usize].last.centre
+                } else {
+                    now[at[into as usize] as usize].centre
+                };
+                let kin = into >= 0
+                    && (self.peoples[p].parent == into
+                        || self.peoples[into as usize].parent == p as i32);
+                if into >= 0 && (lived_long || !kin) {
+                    self.joins.push(Join {
+                        at: t,
+                        into,
+                        a: w.last.centre,
+                        b: other,
+                    });
+                }
+                if !lived_long {
+                    continue;
+                }
                 if into >= 0 {
                     if told(&w.last, self.last_lived) {
-                        log.push(LogEvent::PeopleMerged {
-                            at: t,
-                            cell: w.last.centre as f64,
-                            people: p as f64,
-                            into: into as f64,
-                            count: w.last.people,
-                            km2: w.last.km2,
+                        self.held.push(Held {
+                            event: LogEvent::PeopleMerged {
+                                at: t,
+                                cell: w.last.centre as f64,
+                                people: p as f64,
+                                into: into as f64,
+                                count: w.last.people,
+                                km2: w.last.km2,
+                            },
+                            since: t,
+                            a: w.last.centre,
+                            b: other,
+                            apart: false,
                         });
                     }
                 } else if w.told {
@@ -1181,18 +1301,17 @@ impl Tree {
                 }
             }
         }
-        // The splits kept back: written once the new people lived
-        // TOLD_LIVES_YEARS, dropped where it ended before.
-        let peoples = &self.peoples;
-        self.splits.retain(|(id, e)| {
-            let p = &peoples[*id as usize];
-            if p.ended < f64::INFINITY {
+        // The splits and merges kept back: dropped where their hearts no
+        // longer hold, written once they held TOLD_LIVES_YEARS.
+        self.held.retain(|h| {
+            let (x, y) = (of(h.a), of(h.b));
+            if x >= 0 && y >= 0 && (x != y) != h.apart {
                 return false;
             }
-            if t - p.born < TOLD_LIVES_YEARS {
+            if t - h.since < TOLD_LIVES_YEARS {
                 return true;
             }
-            log.push(e.clone());
+            log.push(h.event.clone());
             false
         });
         for (q, &id) in ids.iter().enumerate() {
@@ -1214,8 +1333,8 @@ impl Tree {
     }
 
     /// At the history's end, after its last step: the peoples gone (`tell`)
-    /// that are alive but not big since a big step. The splits still kept
-    /// back are not told: their peoples did not live TOLD_LIVES_YEARS.
+    /// that are alive but not big since a big step. The splits and merges
+    /// still kept back are not told: they did not hold TOLD_LIVES_YEARS.
     pub fn finish(&mut self, log: &mut Vec<LogEvent>) {
         for &p in &self.alive {
             let w = &self.watch[p as usize];
@@ -1534,7 +1653,7 @@ mod tests {
     // parts in two, the smaller part a new people; it goes into the
     // other, at a step not kept, and the last turns to farming; then it
     // dies out. The chronicle tells each (none at the first step), the
-    // split once the new people lived TOLD_LIVES_YEARS.
+    // split and the merge once they held TOLD_LIVES_YEARS.
     #[test]
     fn the_tree_keeps_ids_and_records_splits_and_merges() {
         let h = row(6, 10_000.0);
@@ -1597,6 +1716,8 @@ mod tests {
         // The steps at 10 000 and 11 000 not kept.
         assert_eq!(tree.peoples[0].frames.len(), 3);
         assert_eq!(tree.ids.len(), 3);
+        // The merge held TOLD_LIVES_YEARS.
+        step(&mut tree, &mut traits, &people, &fields, 16_000.0, false);
         tree.finish(&mut log);
         let told: Vec<(&str, f64, f64, f64, f64)> = log
             .iter()
@@ -1633,10 +1754,55 @@ mod tests {
             vec![
                 ("split", 5000.0, 3.0, 1.0, 2.0),
                 ("farmers", 11_000.0, 5.0, 1.0, 1.0),
-                ("merged", 11_000.0, 3.0, 2.0, 0.0),
                 ("gone", 15_000.0, 5.0, 1.0, -1.0),
+                ("merged", 11_000.0, 3.0, 2.0, 0.0),
             ]
         );
+    }
+
+    // One people of six cells; cells 4 and 5 part and join again: in
+    // EARLY_SPLIT_YEARS, then for less than TOLD_LIVES_YEARS, then for
+    // good. The chronicle tells the last split alone.
+    #[test]
+    fn a_split_is_told_once_it_held() {
+        let h = row(6, 10_000.0);
+        let mut traits = traits_of(&[0.0; 6]);
+        let people = vec![1000u16; 6];
+        let mut tree = Tree::new();
+        let mut log = Vec::new();
+        for (t, x) in [
+            (0.0, 0.0),
+            (1000.0, 0.9),
+            (2000.0, 0.0),
+            (5000.0, 0.9),
+            (6000.0, 0.0),
+            (7000.0, 0.9),
+            (12_000.0, 0.9),
+        ] {
+            set(&mut traits, 4, x);
+            set(&mut traits, 5, x);
+            tree.frame(
+                &h,
+                &mut traits,
+                &people,
+                &[0; 6],
+                &[0; 6],
+                t,
+                false,
+                &mut log,
+            );
+        }
+        tree.finish(&mut log);
+        assert_eq!(tree.peoples.len(), 4);
+        assert!(matches!(
+            log[..],
+            [LogEvent::PeopleSplit {
+                at: 7000.0,
+                people: 0.0,
+                new: 3.0,
+                ..
+            }]
+        ));
     }
 
     // A big people that falls under big for good is gone at the first step

@@ -27,7 +27,10 @@ use serde_json::{Map, Value, json};
 /// v5 (2026-10-29): the peoples without the stripes (peoples.rs
 /// `compact`, `Traits::kin_of`; the herds replace no traits); the other
 /// arrays the same bytes.
-pub const INCUBATOR_ALGO_VERSION: u32 = 5;
+/// v6 (2026-10-29): the chronicle's splits and merges once they held
+/// (peoples.rs `Tree::tell`, THE HOLD), no split in step 2's first
+/// EARLY_SPLIT_YEARS; the arrays and the other events the same bytes.
+pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
 macro_rules! table {
@@ -88,7 +91,7 @@ pub fn constants() -> Value {
         "peoples": object(table!(peoples:
             TRAITS, BRANCH_SHARE, BRANCH_ROUNDS, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
             CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, SPLIT_KM2,
-            PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, TOLD_LIVES_YEARS, FARMERS_TOLD,
+            PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, TOLD_LIVES_YEARS, EARLY_SPLIT_YEARS, FARMERS_TOLD,
         )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,

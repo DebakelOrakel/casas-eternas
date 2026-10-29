@@ -283,8 +283,14 @@ for (const kind of ['torus', 'sphere']) {
 // DROWNED_TOLD_KM2 of these small worlds' shelves in a CLIMATE_YEARS.
 // THE PEOPLES (2026-10-29): two big ones alive at the end on a world, a
 // people parted from another, one merged into another; the chronicle's
-// events of each kind (peoples.rs Tree::tell).
-const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleGone', 'peopleFarmers']
+// events of each kind (peoples.rs Tree::tell). Not 'peopleSplit' since
+// the incubator's v6 (2026-10-29): no split is told in step 2's first
+// EARLY_SPLIT_YEARS, nor one that did not hold TOLD_LIVES_YEARS; the
+// torus's history is 7 000 years, and the sphere's splits after its first
+// 5 000 years all join again in 500 to 4 000 years (a part of people 55
+// of 13 000 km² parts and joins every 1 000 to 1 500 years to the end).
+// The told split is peoples.rs `a_split_is_told_once_it_held`'s.
+const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleMerged', 'peopleGone', 'peopleFarmers']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')
