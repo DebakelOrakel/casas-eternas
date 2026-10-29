@@ -230,11 +230,6 @@ impl World {
     }
 
     #[napi]
-    pub fn migration_inputs(&mut self) -> napi::Result<Tree> {
-        self.0.migration_inputs().map(Tree).map_err(era)
-    }
-
-    #[napi]
     pub fn climate_payload(&mut self) -> napi::Result<Tree> {
         self.0.climate_payload().map(Tree).map_err(era)
     }

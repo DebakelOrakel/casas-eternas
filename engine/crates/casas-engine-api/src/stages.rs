@@ -4,11 +4,7 @@
 //! call gives the body of the message the runtime posts.
 
 use casas_engine::climate::biomes::biome;
-use casas_engine::climate::climate_chart::{ChartTerrain, chart_land, chart_land_field};
-use casas_engine::climate::climate_field::{CLIMATE_RES_X, CLIMATE_RES_Y};
-use casas_engine::climate::climate_mesh::ClimateTerrain;
 use casas_engine::climate::climate_points::{ClimateCells, climate_cell_values, mean_land_runoff};
-use casas_engine::climate::precipitation::OCEAN_PRECIP;
 use casas_engine::climate::refinement::refinement_fits;
 use casas_engine::climate::weather::WeatherParams;
 use casas_engine::climate::wind::CellVectors;
@@ -23,9 +19,9 @@ use casas_engine::mesh::mesh_raster::TriangleRaster;
 use casas_engine::mesh::periodic_delaunay::PeriodicTriangulation;
 use casas_engine::pipeline::coupled_epoch::CoupledTerrain;
 use casas_engine::pipeline::world_stages::{
-    ClimateChain, HydrologyClimate, LandClimate, MeshHydrology, MeshTerrainRef, chart_max_of_nodes,
-    climate_chain, ecology_inputs_of, hydrology_features, hydrology_threshold, id_raster,
-    land_climate_of, pixel_land_of, refined_climate_of, route_hydrology, triangles_of,
+    ClimateChain, HydrologyClimate, LandClimate, MeshHydrology, MeshTerrainRef, climate_chain,
+    ecology_inputs_of, hydrology_features, hydrology_threshold, id_raster, land_climate_of,
+    pixel_land_of, refined_climate_of, route_hydrology, triangles_of,
 };
 use casas_engine::surface::coast_graph::CoastGraph;
 use casas_engine::surface::erosion_engine::DEFAULT_SOLVER_PARAMS;
@@ -87,12 +83,10 @@ impl Stages {
     }
 }
 
-/// The climate the step shows (the runtime's `ClimateResult`; of its
-/// terrain, the chart's land, which the migration reads).
+/// The climate the step shows (the runtime's `ClimateResult`).
 struct Climate {
     params: WeatherParams,
     cells: ClimateCells,
-    chart_land: Vec<u8>,
     mesh_temperature: Vec<f64>,
     mesh_wind: CellVectors,
     refined: bool,
@@ -243,7 +237,6 @@ fn chain_data(
 fn climate_of(chain: ClimateChain, params: WeatherParams, land: LandClimate) -> Climate {
     Climate {
         params,
-        chart_land: chart_land_of(&chain.terrain),
         cells: chain.cells,
         mesh_temperature: chain.weather.temperature,
         mesh_wind: chain.weather.wind,
@@ -251,12 +244,6 @@ fn climate_of(chain: ClimateChain, params: WeatherParams, land: LandClimate) -> 
         land,
         current: true,
     }
-}
-
-/// The land of a climate's terrain on its chart (the runtime's
-/// `chartLand(climate.terrain)`).
-fn chart_land_of(terrain: &ClimateTerrain) -> Vec<u8> {
-    chart_land(&ChartTerrain::of(terrain), CLIMATE_RES_X, CLIMATE_RES_Y)
 }
 
 /// The terrain the land fields are read on, routed (the runtime's
@@ -369,7 +356,6 @@ impl World {
         );
         stages.climate = Some(Climate {
             params: climate.params,
-            chart_land: chart_land_of(&step.terrain),
             cells: step.cells,
             mesh_temperature: step.mesh_temperature,
             mesh_wind: step.mesh_wind,
@@ -824,13 +810,10 @@ impl World {
         ))
     }
 
-    /// The climate's cells as the save holds them (the runtime's
-    /// `climatePayload`, `ClimateCellValues`), or null before the climate
-    /// ran.
     /// A stage's reset (the runtime's `handleResetStage` for a stage
     /// without state of its own): its result dropped, and every result
     /// that reads it (`downstreamOf`). `stage` one of "climate",
-    /// "hydrology", "ecology", "migration".
+    /// "hydrology", "ecology".
     pub fn drop_stage(&mut self, stage: &str) -> Result<(), EraError> {
         let s = &mut self.stages;
         match stage {
@@ -844,45 +827,14 @@ impl World {
                 s.ecology = None;
             }
             "ecology" => s.ecology = None,
-            "migration" => {}
             _ => return Err(wrong("no such stage to drop")),
         }
         Ok(())
     }
 
-    /// What the migration reads of the stages (the runtime's
-    /// `handleMigrationRun`): `{ precipitation, discharge, maxDischarge }`,
-    /// the climate's land rain on its chart and the hydrology's discharge
-    /// as each chart cell's largest over its nodes (null before the
-    /// hydrology, or once its mesh has gone).
-    pub fn migration_inputs(&mut self) -> Result<Value, EraError> {
-        let (sim, coupled, stages) = self.staged()?;
-        let climate = stages
-            .climate
-            .as_ref()
-            .ok_or_else(|| wrong("the world has no climate yet"))?;
-        let cells = &climate.cells;
-        let precipitation = chart_land_field(
-            &mut sim.meshes.shared,
-            &cells.cm,
-            &cells.precipitation,
-            &|i| cells.precipitation[i] as f64 != OCEAN_PRECIP,
-            OCEAN_PRECIP,
-            &climate.chart_land,
-            CLIMATE_RES_X,
-            CLIMATE_RES_Y,
-        );
-        let hydrology = stages.hydrology.as_ref();
-        let discharge = hydrology
-            .filter(|h| h.current)
-            .map(|h| chart_max_of_nodes(&coupled.mesh, &h.on_mesh.discharge, &coupled.z));
-        Ok(ObjBuilder::new()
-            .put("precipitation", Value::F32s(precipitation))
-            .put("discharge", discharge.map_or(Value::Null, Value::F32s))
-            .num("maxDischarge", hydrology.map_or(0.0, |h| h.max_discharge))
-            .build())
-    }
-
+    /// The climate's cells as the save holds them (the runtime's
+    /// `climatePayload`, `ClimateCellValues`), or null before the climate
+    /// ran.
     pub fn climate_payload(&mut self) -> Result<Value, EraError> {
         let Some(c) = &self.stages.climate else {
             return Ok(Value::Null);

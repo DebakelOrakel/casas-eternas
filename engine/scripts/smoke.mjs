@@ -4,9 +4,8 @@
 // Archean grown, rendered, saved and restored; the hand-over; coupled
 // epochs (one shape under another planet) and their renders; the climate
 // step, the hydrology with the climate v2, the refinement and the
-// hydrology on it, the ecology on both, with its months, and what the
-// migration reads of them; the tectonic save; a world restored from it,
-// its climate with the saved refinement, its hydrology, its ecology, a
+// hydrology on it, the ecology on both, with its months; the tectonic
+// save; a world restored from it, its climate with the saved refinement, its hydrology, its ecology, a
 // stage's reset and its next epoch; the planet preview's climate; the
 // replay at level 0 and the world it ends on. Then, native only, level 1
 // by replay with its checkpoints and resumed from one, the tile plan on it
@@ -139,15 +138,12 @@ for (const shape of ['torus', 'sphere']) {
 
   // The climate step, its refinement, the hydrology, the ecology.
   agree(`${shape}: the climate`, worlds, (w) => w.climate(weather))
-  agree(`${shape}: the migration's inputs on the climate`, worlds, (w) => w.migrationInputs())
   const planet = weather.planet ?? null
   agree(`${shape}: the hydrology with the v2`, worlds, (w) => w.hydrology(planet))
-  agree(`${shape}: the migration's inputs on the hydrology`, worlds, (w) => w.migrationInputs())
   agreeEcology(`${shape}: the ecology on the annual climate`, worlds)
   const refinement = agree(`${shape}: the refinement`, worlds, (w) => w.refineClimate(null))
   const routed = agree(`${shape}: the hydrology`, worlds, (w) => w.hydrology(planet))
   agree(`${shape}: the hydrology again`, worlds, (w) => w.hydrology(planet))
-  agree(`${shape}: the migration's inputs on the refinement`, worlds, (w) => w.migrationInputs())
   const months = agreeEcology(`${shape}: the ecology on the refinement`, worlds)
   const water = `${routed.riverGraph.reaches.length} reaches, ${routed.waterBodies.length} water bodies, ${routed.coast.reaches.length} coast reaches, ${routed.sedimentBasins.length} sediment basins`
   readSide(shape, worlds.native, rendered, routed)

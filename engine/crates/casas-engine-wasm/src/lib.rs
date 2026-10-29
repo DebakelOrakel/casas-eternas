@@ -214,11 +214,6 @@ impl World {
         self.0.drop_stage(stage).map_err(era)
     }
 
-    #[wasm_bindgen(js_name = migrationInputs)]
-    pub fn migration_inputs(&mut self) -> Result<JsValue, JsError> {
-        self.0.migration_inputs().map(to_js).map_err(era)
-    }
-
     #[wasm_bindgen(js_name = climatePayload)]
     pub fn climate_payload(&mut self) -> Result<JsValue, JsError> {
         self.0.climate_payload().map(to_js).map_err(era)

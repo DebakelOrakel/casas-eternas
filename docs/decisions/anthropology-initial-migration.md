@@ -20,7 +20,7 @@ area: generator
 stage: superseded
 supersededBy: DES-0032
 createdAt: 2026-07-26
-updatedAt: 2026-10-28
+updatedAt: 2026-10-29
 related: [DEC-0007]
 ---
 
@@ -189,5 +189,5 @@ like Ecology.
 
 SUPERSEDED 2026-10-28 by the incubator (DES-0031, DES-0032). The proto was
 built (all 5 themes decided, Phases 1–3: worker core, panel + drag origins,
-ribbon arrow-tree), then removed from the generator. The Rust engine still
-exports `migration_inputs`; the client does not call it.
+ribbon arrow-tree), then removed from the generator. The Rust engine's
+`migration_inputs` was removed on 2026-10-29.

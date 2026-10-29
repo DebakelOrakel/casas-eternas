@@ -18,7 +18,7 @@ summary.de: Der Generator bekommt eine zweite Engine in Rust, nur wegen der
 area: generator
 stage: building
 createdAt: 2026-10-19
-updatedAt: 2026-10-28
+updatedAt: 2026-10-29
 related: [DES-0001, DES-0006, DEC-0039, DEC-0032, DEC-0043]
 ---
 
@@ -895,9 +895,8 @@ BUILDING since 2026-10-20:
   with its walk), the lattice for the save, the Archean's controls, a
   stage's reset (`dropStage`) and what the migration reads
   (`migrationInputs`; the migration stays TypeScript). (2026-10-28: the
-  client's migration is removed and does not call `migrationInputs` now.
-  The frozen engine keeps `migration_inputs`, unused; the smoke test
-  still compares it, native against WASM.) The smoke test
+  client's migration is removed. `migrationInputs` was removed
+  2026-10-29, with its comparison in the smoke test.) The smoke test
   checks each against TypeScript. The client's build needs `make engine`,
   and the image builds the WASM in its engine stage. Checked: a session
   through the runtime before the switch (a worktree of HEAD) and after it
