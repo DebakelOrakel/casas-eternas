@@ -164,6 +164,15 @@ people give. Nothing of step 1 is kept again but its log.
   years after step 2's start, each 160 years, as the 8.2 ka event: the
   land carries a little less and the rain of the droughts is a fifth
   less. Told in the chronicle.
+- **The land drying**: the dry climates (Köppen BW, BS) between 10° and
+  35° are a class wetter from step 2's start (a desert carries and grazes
+  as a steppe, a steppe carries as a savanna), and dry once, from 4 000
+  to 6 000 years after it (from the seed): abrupt at the belt's poleward
+  edge, 2 000 years later and over 2 000 years at its equatorward edge,
+  as the green Sahara's end. A cell with a river stays wet. A drying
+  cell sends the people it carries no more to the neighbours, as the
+  rising sea; the first large loss of each landmass is told in the
+  chronicle.
 - **The sea**: no open sea until ships fit for trade. Boats go along
   the coast and to land in sight, 100 km of open water at most (Cyprus,
   some 70 km off and seen from the coast, was settled at +1 000).
@@ -234,7 +243,7 @@ constants in simulation.rs.
   there, told in the chronicle — built 2026-10-28; (3) the land drying,
   as the green Sahara's end, a wetter early Holocene in the subtropics
   that fades toward today — looked at again with the towns, as a cause of
-  centres in river valleys. Not built.
+  centres in river valleys. Built 2026-10-29 (Status).
 
 ### The climate in step 2
 
@@ -243,7 +252,9 @@ What step 2 needs is the ice age's end:
 - **The sea rises** from −50 m to today's level: coasts go under, their
   people move to the neighbours, a large loss is told in the chronicle.
 - **The land dries.** On the earth the green Sahara ends near +6 000,
-  and people move into the river valleys. A cause of centres. Not built.
+  and people move into the river valleys. A cause of centres. Built
+  2026-10-29 (`casas-incubator` climate_history.rs, simulation.rs THE
+  LAND DRYING).
 - **Single events**, such as the 8.2 ka cold event: one or two cold
   spells of 160 years, more drought and some cold, so hunger and people
   leaving.
@@ -445,6 +456,25 @@ Building since 2026-10-27:
   Morvane 3 / 1 / 26, Thalassor 8 / 6 / 25, Zephyra 21 / 1 / 10. A lower
   share adds few splits (most later ones are flaps the hold drops) and
   many turns to farming, hence the two shares.
+- 2026-10-29 (v6 still): the land drying (`casas-incubator`
+  climate_history.rs and simulation.rs THE LAND DRYING). Step 1 keeps
+  its bits. With the rain, against before: the dry belt is 9.9 M km² on
+  Morvane, 3.9 M on Thalassor, 7.5 M on Zephyra (origin 783 702), 3 % of
+  it with a river; 8.7 M, 3.5 M and 7.0 M km² dry again from +5 000 to
+  +10 000, 171 000, 24 000 and 126 000 people move away; the chronicle
+  tells 3, 2 and 1 (at 250 000 km² in 500 years, once a landmass; at
+  each such step 9, 13 and 8). The people at step 2's start 18, 5 and
+  25 % more (the belt's 1.8, 1.8 and 2.2 times). In the belt the share
+  of the people near a river at +10 000: 20.1 % (8.5 before), 14.3 (8.5),
+  14.6 (10.1). The milestones hardly move: Morvane the herding 500 years
+  earlier, the copper, the smelting and the city 500 later (+24 500);
+  Thalassor the same; Zephyra the smelting at +18 500 (+22 500), no city
+  in the span as before; the land farmed the same (7.4, 9.0, 4.7 %), the
+  people at the end −1.9, +0.8 and +1.6 %. The farmers' villages near a
+  river 40.0, 22.2 and 42.7 % (38.8, 21.9, 41.6), and no large town in
+  the belt, as before: the drying moves the belt's foragers and herders
+  to its rivers, but the belt holds no centre, so it makes none in a
+  river valley.
 
 Open:
 

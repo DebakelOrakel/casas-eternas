@@ -281,6 +281,8 @@ for (const kind of ['torus', 'sphere']) {
 // city; since the rising sea and the cold spells (2026-10-28) the worlds
 // reach both again, by chance. Not 'drowned': the sea takes less than
 // DROWNED_TOLD_KM2 of these small worlds' shelves in a CLIMATE_YEARS.
+// Not 'drying' (2026-10-29): no landmass of these small worlds loses
+// DRYING_TOLD_KM2 of its dry belt in a CLIMATE_YEARS.
 // THE PEOPLES (2026-10-29): two big ones alive at the end on a world, a
 // people parted from another, one merged into another; the chronicle's
 // events of each kind (peoples.rs Tree::tell). Not 'peopleSplit' since

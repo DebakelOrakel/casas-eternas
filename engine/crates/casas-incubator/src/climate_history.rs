@@ -41,6 +41,18 @@
 //! the sea's, not the ice's, not the stability's: 160 years move no ice
 //! sheet), and the rain of the droughts COLD_SPELL_DRY less
 //! (simulation.rs THE DROUGHTS).
+//!
+//! THE LAND DRYING (2026-10-29, as the African Humid Period's end;
+//! docs/design/earth-prehistory-sources.md): the dry classes (Köppen B:
+//! the deserts BW, the steppes BS) between DRYING_LAT_FROM and
+//! DRYING_LAT_TO of latitude are a class wetter from step 2's start: the
+//! desert carries and grazes about as a steppe, the steppe carries about
+//! as a savanna (`humid_gain`). Their wetness (`wetness`) falls from 1 to
+//! 0 once: at the belt's poleward edge from `drying_start` (drawn from the
+//! seed, DRYING_FROM to DRYING_TO after step 2's start) within
+//! DRYING_FAST_YEARS; toward its equatorward edge later (DRYING_LAG_YEARS
+//! more) and slower (DRYING_SLOW_YEARS). simulation.rs THE LAND DRYING
+//! applies it, the rivers' cells excepted.
 
 use casas_engine::climate::koppen::KOPPEN_CODES;
 use casas_engine::core::det_math::{det_cos, det_pow, det_sin};
@@ -73,6 +85,36 @@ pub(crate) const COLD_SPELL_COLD: f64 = 0.1;
 pub(crate) const COLD_SPELL_DRY: f64 = -0.2;
 pub(crate) const COLD_SPELL_FROM: f64 = 2000.0;
 pub(crate) const COLD_SPELL_TO: f64 = 10_000.0;
+// THE LAND DRYING. The belt: the subtropics' dry climates, 10° to 35°
+// (the Sahara's humid period reached some 15° to 30° N; DES-0035 [44]–
+// [47]). The start: the green Sahara ends near +6 000 on the earth's
+// timeline (5.5 ka BP off Mauritania, ~20° N; the drying of the Eastern
+// Sahara from c. 5 300 BC, +4 300): here 4 000 to 6 000 years after step
+// 2's start. Abrupt at 20° N, near 2 000 years later at 6.5° N (Shanahan
+// et al. 2015), the Sahara emptied over some 2 000 years from north to
+// south (Kuper and Kröpelin 2006): so 200 years at the poleward edge, 2 000
+// at the equatorward edge, which begins 2 000 years after it. The climate
+// moves every CLIMATE_YEARS (500): the poleward edge dries in one of its
+// steps, the equatorward edge in four or five.
+// The gains, in the ecology's units (the carrying capacity's field, the
+// pasture 0 … 1), from the classes' means in the belt on three worlds
+// (2026-10-29; Morvane, Thalassor, Zephyra): the carrying capacity of BW
+// 0.14 – 0.26, of BS 0.44 – 0.55, of Aw 0.56 – 0.73; the pasture of BW
+// 0.15 – 0.35, of BS 0.56 – 0.74, of Aw 0.52 – 0.60. A desert gains what
+// lifts it to a steppe (+0.3, +0.4); a steppe gains carrying capacity to a
+// savanna's (+0.15) and no pasture: the generator's savanna has less
+// pasture than its steppe.
+pub(crate) const DRYING_LAT_FROM: f64 = 10.0;
+pub(crate) const DRYING_LAT_TO: f64 = 35.0;
+pub(crate) const DRYING_FROM: f64 = 4000.0;
+pub(crate) const DRYING_TO: f64 = 6000.0;
+pub(crate) const DRYING_LAG_YEARS: f64 = 2000.0;
+pub(crate) const DRYING_FAST_YEARS: f64 = 200.0;
+pub(crate) const DRYING_SLOW_YEARS: f64 = 2000.0;
+pub(crate) const HUMID_DESERT_CARRYING: f64 = 0.3;
+pub(crate) const HUMID_DESERT_PASTURE: f64 = 0.4;
+pub(crate) const HUMID_STEPPE_CARRYING: f64 = 0.15;
+pub(crate) const HUMID_STEPPE_PASTURE: f64 = 0.0;
 
 struct Swing {
     period: f64,
@@ -179,6 +221,45 @@ pub fn spell_cold(starts: &[f64], t: f64) -> f64 {
     }
 }
 
+/// The land drying's start after `t0` (step 2's start), years: at the
+/// dry belt's poleward edge (THE LAND DRYING), drawn from the seed.
+pub fn drying_start(seed: f64, t0: f64) -> f64 {
+    let mut random = Mulberry32::new(js::to_uint32(seed) ^ 0xd2e5_a11d);
+    t0 + DRYING_FROM + (DRYING_TO - DRYING_FROM) * random.next()
+}
+
+/// What the humid period adds to a class in the dry belt (`lat_deg`, its
+/// latitude, degrees): (carrying capacity, pasture) in the ecology's
+/// units; None for a class or a latitude it does not touch.
+pub fn humid_gain(koppen: u8, lat_deg: f64) -> Option<(f64, f64)> {
+    if !(DRYING_LAT_FROM..=DRYING_LAT_TO).contains(&lat_deg) {
+        return None;
+    }
+    let code = KOPPEN_CODES.get(koppen as usize)?.as_bytes();
+    match code {
+        [b'B', b'W', ..] => Some((HUMID_DESERT_CARRYING, HUMID_DESERT_PASTURE)),
+        [b'B', b'S', ..] => Some((HUMID_STEPPE_CARRYING, HUMID_STEPPE_PASTURE)),
+        _ => None,
+    }
+}
+
+/// The humid period's wetness at `t` at latitude `lat_deg` in the dry
+/// belt, 1 … 0: from `start` (`drying_start`) at the poleward edge within
+/// DRYING_FAST_YEARS; at the equatorward edge DRYING_LAG_YEARS later and
+/// within DRYING_SLOW_YEARS; linear between.
+pub fn wetness(start: f64, lat_deg: f64, t: f64) -> f64 {
+    let f = js::max(
+        0.0,
+        js::min(
+            1.0,
+            (DRYING_LAT_TO - lat_deg) / (DRYING_LAT_TO - DRYING_LAT_FROM),
+        ),
+    );
+    let from = start + DRYING_LAG_YEARS * f;
+    let years = DRYING_FAST_YEARS + (DRYING_SLOW_YEARS - DRYING_FAST_YEARS) * f;
+    js::max(0.0, js::min(1.0, 1.0 - (t - from) / years))
+}
+
 /// A Köppen class's main group letter, '\0' for none.
 fn group(koppen: u8) -> u8 {
     KOPPEN_CODES
@@ -233,5 +314,42 @@ mod tests {
             assert_eq!(spell_cold(&starts, t0), 0.0);
             assert_eq!(spell_cold(&starts, starts[0]), COLD_SPELL_COLD);
         }
+    }
+
+    #[test]
+    fn the_land_dries_from_the_pole_side_after_step_2s_start() {
+        use casas_engine::climate::koppen::koppen_id;
+        let t0 = 55_000.0;
+        for seed in 0..200 {
+            let s = drying_start(seed as f64, t0);
+            assert!(s >= t0 + DRYING_FROM && s < t0 + DRYING_TO);
+            assert_eq!(s, drying_start(seed as f64, t0));
+        }
+        let s = t0 + 5000.0;
+        // Wet at step 2's start, dry at the end, falling in time.
+        for lat in [10.0, 20.0, 35.0] {
+            assert_eq!(wetness(s, lat, t0), 1.0);
+            assert_eq!(
+                wetness(s, lat, s + DRYING_LAG_YEARS + DRYING_SLOW_YEARS),
+                0.0
+            );
+            let mut was = 1.0;
+            for k in 0..100 {
+                let w = wetness(s, lat, s + 50.0 * k as f64);
+                assert!(w <= was);
+                was = w;
+            }
+        }
+        // Abrupt at the poleward edge, later and slower toward the equator.
+        assert_eq!(wetness(s, 35.0, s + DRYING_FAST_YEARS), 0.0);
+        assert_eq!(wetness(s, 10.0, s + DRYING_LAG_YEARS), 1.0);
+        assert!(wetness(s, 20.0, s + 1000.0) > wetness(s, 30.0, s + 1000.0));
+        // The belt and its classes.
+        assert!(humid_gain(koppen_id("BWh"), 20.0).is_some());
+        assert!(humid_gain(koppen_id("BSk"), 34.0).is_some());
+        assert!(humid_gain(koppen_id("BWh"), 40.0).is_none());
+        assert!(humid_gain(koppen_id("BWh"), 5.0).is_none());
+        assert!(humid_gain(koppen_id("Aw"), 20.0).is_none());
+        assert!(humid_gain(0, 20.0).is_none());
     }
 }

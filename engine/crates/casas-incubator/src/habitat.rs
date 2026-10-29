@@ -28,6 +28,7 @@
 //! every read of one `as f64` (docs/decisions/incubator-history-engine.md, the way there 2).
 
 use casas_engine::climate::biomes::biome;
+use casas_engine::climate::climate_field::{latitude_of_norm, shifted_norm};
 use casas_engine::core::det_math::{det_acos, det_cos, det_hypot, det_sin};
 use casas_engine::core::domain::Domain;
 use casas_engine::core::js;
@@ -447,6 +448,15 @@ pub fn km_between(h: &Habitat, a: usize, b: usize) -> f64 {
     du = js::min(du, 1.0 - du);
     dv = js::min(dv, 1.0 - dv);
     det_hypot(du * h.width_km, dv * h.height_km)
+}
+
+/// A cell's latitude, degrees from the equator (0 … 90), as the climate
+/// has it (climate_field.rs `latitude_of_norm`): on the globe from its
+/// row; on the torus from its row about the thermal equator, which sits
+/// at the map's middle since 2026-09-26 (world/runParams.ts
+/// equatorOffset 0), so in the same way.
+pub fn latitude_deg(h: &Habitat, i: usize) -> f64 {
+    latitude_of_norm(shifted_norm(h.v[i] as f64, 0.0)) * 90.0
 }
 
 /// A trapezoid [a, b, c, d]: 0 below a, up to 1 at b, 1 to c, down to 0 at

@@ -104,6 +104,17 @@ pub enum LogEvent {
         km2: f64,
         people: f64,
     },
+    /// The cells of a landmass that lost the last of the humid period's
+    /// gain in one CLIMATE_YEARS came to `km2` (simulation.rs THE LAND
+    /// DRYING), `people` moved away from its drying cells; at its cell of
+    /// the most people moved.
+    Drying {
+        at: f64,
+        cell: f64,
+        landmass: f64,
+        km2: f64,
+        people: f64,
+    },
     /// A cold spell begins (climate_history.rs THE COLD SPELLS), `years`
     /// long.
     ColdSpell {
@@ -169,6 +180,7 @@ impl LogEvent {
             | LogEvent::Copper { at, .. }
             | LogEvent::City { at, .. }
             | LogEvent::Drowned { at, .. }
+            | LogEvent::Drying { at, .. }
             | LogEvent::ColdSpell { at, .. }
             | LogEvent::PeopleSplit { at, .. }
             | LogEvent::PeopleMerged { at, .. }
@@ -381,6 +393,25 @@ impl LogEvent {
                 people,
             } => {
                 kind(j, "drowned");
+                j.key("at")
+                    .number(*at)
+                    .key("cell")
+                    .number(*cell)
+                    .key("landmass")
+                    .number(*landmass)
+                    .key("km2")
+                    .number(*km2)
+                    .key("people")
+                    .number(*people);
+            }
+            LogEvent::Drying {
+                at,
+                cell,
+                landmass,
+                km2,
+                people,
+            } => {
+                kind(j, "drying");
                 j.key("at")
                     .number(*at)
                     .key("cell")

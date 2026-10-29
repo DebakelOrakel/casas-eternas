@@ -87,6 +87,8 @@
   "incubator.chronicle.drownedDetail": "{landmass} · {area} km² of land · {people} move away",
   "incubator.chronicle.event.coldSpell": "Cold spell",
   "incubator.chronicle.coldSpellDetail": "{years} years colder and drier",
+  "incubator.chronicle.event.drying": "The land dries out",
+  "incubator.chronicle.dryingDetail": "{landmass} · {area} km² turn to desert · {people} move away",
   "incubator.chronicle.event.peopleSplit": "People {a} splits",
   "incubator.chronicle.peopleSplitDetail": "People {b} arises · {people} people · {area} km²",
   "incubator.chronicle.event.peopleMerged": "People {a} merges into people {b}",

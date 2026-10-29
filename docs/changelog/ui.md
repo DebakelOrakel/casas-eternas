@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-29
+- **new** Incubator: the subtropics' deserts and steppes are wetter at the New Stone Age's start and dry out later, and the chronicle tells it. `incubator.chronicle.event.drying`
 - **changed** Incubator: the overlay of step 1's branches is called Lineages. `incubator.peopling.groups`
 - **new** Incubator: the Peoples overlay shows the peoples of the New Stone Age at the time shown, related peoples in alike colours. `incubator.people.peoples`
 - **new** Incubator: the chronicle tells when a large people splits, merges into another, vanishes or turns to farming. `incubator.chronicle.event.peopleSplit`

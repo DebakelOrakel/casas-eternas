@@ -897,9 +897,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The copper's and the first city's colours.
   const COPPER_RGB = [184, 115, 51] as const
   const CITY_RGB = [120, 70, 150] as const
-  // The rising sea's and the cold spells' colours.
+  // The rising sea's, the cold spells' and the land drying's colours.
   const DROWNED_RGB = [40, 90, 150] as const
   const COLD_RGB = [90, 130, 170] as const
+  const DRYING_RGB = [190, 150, 80] as const
   // The peoples' splits, merges and ends (peoples.rs Tree::tell).
   const PEOPLES_RGB = [150, 80, 60] as const
   function sayChronicle(): void {
@@ -974,6 +975,14 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             rgb: DROWNED_RGB,
             title: t('incubator.chronicle.event.drowned'),
             detail: t('incubator.chronicle.drownedDetail', { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()) }),
+          }, e.cell)
+        } else if (e.kind === 'drying') {
+          place({
+            time: e.at,
+            icon: '/icons/dust.png',
+            rgb: DRYING_RGB,
+            title: t('incubator.chronicle.event.drying'),
+            detail: t('incubator.chronicle.dryingDetail', { landmass: landmassName(e.landmass), area: Math.round(e.km2).toLocaleString(getLocale()), people: Math.round(e.people).toLocaleString(getLocale()) }),
           }, e.cell)
         } else if (e.kind === 'coldSpell') {
           // No place: the whole world's.

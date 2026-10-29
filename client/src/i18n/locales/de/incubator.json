@@ -87,6 +87,8 @@
   "incubator.chronicle.drownedDetail": "{landmass} · {area} km² Land · {people} weichen aus",
   "incubator.chronicle.event.coldSpell": "Kälteeinbruch",
   "incubator.chronicle.coldSpellDetail": "{years} Jahre kälter und trockener",
+  "incubator.chronicle.event.drying": "Das Land trocknet aus",
+  "incubator.chronicle.dryingDetail": "{landmass} · {area} km² werden Wüste · {people} weichen aus",
   "incubator.chronicle.event.peopleSplit": "Volk {a} spaltet sich",
   "incubator.chronicle.peopleSplitDetail": "Volk {b} entsteht · {people} Menschen · {area} km²",
   "incubator.chronicle.event.peopleMerged": "Volk {a} geht in Volk {b} auf",

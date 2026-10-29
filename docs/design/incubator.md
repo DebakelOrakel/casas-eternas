@@ -95,7 +95,8 @@ the steps before it.
   extinctions on large landmasses, the first village, the first trade
   route, the large famines (30 % of their square's people and 10 000 or
   more), the people over 100 000, 1 M and 10 M, the copper hammered and
-  smelted, the first city; of the big peoples of step 2 (DES-0032) their
+  smelted, the first city; a coast the rising sea takes, a cold spell,
+  the land drying on a landmass (DES-0032); of the big peoples of step 2 (DES-0032) their
   splits, merges, ends and turns to farming, each people by its id from 1
   as the overlay Völker's probe names it. The event at the time shown is "now", the ones
   after it "later"; a click goes to its time and turns or pans the view to

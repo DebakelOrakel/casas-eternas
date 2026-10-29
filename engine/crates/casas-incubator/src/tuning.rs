@@ -31,7 +31,8 @@ use serde_json::{Map, Value, json};
 /// (peoples.rs `Tree::tell`, THE HOLD), no split in step 2's first
 /// EARLY_SPLIT_YEARS; splits, merges and peoples gone told from
 /// SPLIT_TOLD_SHARE, the turns to farming from FARMERS_TOLD_SHARE; the
-/// arrays and the other events the same bytes.
+/// arrays and the other events the same bytes; the land drying
+/// (simulation.rs THE LAND DRYING, 2026-10-29), its event in the log.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -68,7 +69,9 @@ pub fn constants() -> Value {
     }));
     json!({
         "climate": object(table!(climate_history: SEA_DROP_M, STADIALS, STABLE_COLD, STABLE_YEARS, ICE_REACH_KM,
-            COLD_SPELLS_MOST, COLD_SPELL_YEARS, COLD_SPELL_COLD, COLD_SPELL_DRY, COLD_SPELL_FROM, COLD_SPELL_TO)),
+            COLD_SPELLS_MOST, COLD_SPELL_YEARS, COLD_SPELL_COLD, COLD_SPELL_DRY, COLD_SPELL_FROM, COLD_SPELL_TO,
+            DRYING_LAT_FROM, DRYING_LAT_TO, DRYING_FROM, DRYING_TO, DRYING_LAG_YEARS, DRYING_FAST_YEARS, DRYING_SLOW_YEARS,
+            HUMID_DESERT_CARRYING, HUMID_DESERT_PASTURE, HUMID_STEPPE_CARRYING, HUMID_STEPPE_PASTURE)),
         "habitat": object(table!(habitat: CELL_SPACING_KM)),
         "niche": object(table!(niche: SUITABLE, BARRIER, SPREAD_KM, ORIGIN_AREA_KM2, OFF_COVER, BIG_RIVER)),
         "travel": object(table!(travel: WALK_HOURS, RIVER_BOAT_SIZE, RIVER_DOWN_KM_DAY, RIVER_UP_KM_DAY, COAST_DEPTH_M, COAST_KM_DAY, LANDING_DAYS)),
@@ -76,7 +79,7 @@ pub fn constants() -> Value {
         "simulation": object(table!(simulation:
             SPAN_YEARS, KEEP_YEARS, POPULATION_STEP, STEP_YEARS, PEOPLE_FRAME_STEP, CAME_STEP, SETTLE_AFTER, FISH_RICH,
             SUB_STEPS, FORAGER_DENSITY, CARRYING_FULL, GROWTH_A, SEED_SHARE, SEED_PEOPLE, FULL_SHARE,
-            SPEED_MIN_KM_A, SPEED_MAX_KM_A, SLOPE_DRAG, CORRIDOR, SHELF_M, CLIMATE_YEARS, DROWNED_TOLD_KM2, GAME_STEPS,
+            SPEED_MIN_KM_A, SPEED_MAX_KM_A, SLOPE_DRAG, CORRIDOR, SHELF_M, CLIMATE_YEARS, DROWNED_TOLD_KM2, DRYING_TOLD_KM2, GAME_STEPS,
             SMALL_REGROW_A, BIG_REGROW_A, HUNT_A, BIG_HUNT_A, HOME_WARY, PLANT_FOOD, SMALL_FOOD, BIG_FOOD,
             EXTINCT_BELOW, FOOD_MOVED, CAPACITY_MOVED, FISH_GAIN, CAMP_YEARS, CAMP_DAYS_MOST, CAMP_MOVE,
             VILLAGE_DAYS_MOST, DRY_SQUARE_KM, DRY_SCALE, STORE_STEPS, DRY_KEEP, DRY_BELOW, ENSO_CHANCE,

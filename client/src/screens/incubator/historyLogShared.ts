@@ -40,6 +40,11 @@ export type LogEvent =
   // THE RISING SEA), `people` moved away from it; at its cell of the most
   // people.
   | { kind: 'drowned'; at: number; cell: number; landmass: number; km2: number; people: number }
+  // The cells of a landmass that lost the last of the humid period's gain
+  // in 500 years came to `km2` (simulation.rs THE LAND DRYING), once a
+  // landmass; `people` moved away from its drying cells; at its cell of
+  // the most people moved.
+  | { kind: 'drying'; at: number; cell: number; landmass: number; km2: number; people: number }
   // A cold spell begins (climate_history.rs THE COLD SPELLS), `years` long.
   | { kind: 'coldSpell'; at: number; years: number }
   // THE PEOPLES' CHRONICLE (peoples.rs Tree::tell, 2026-10-29), of the big

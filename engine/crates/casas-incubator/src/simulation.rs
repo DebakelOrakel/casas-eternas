@@ -15,7 +15,8 @@
 //!    cell that carries nothing any more is left, its people go to the
 //!    neighbours (THE RISING SEA); one that carries again may be settled
 //!    again. A cold spell (climate_history.rs THE COLD SPELLS) moves what
-//!    the land carries at its start and its end too.
+//!    the land carries at its start and its end too. The dry belt is
+//!    wetter from step 2's start and dries once (THE LAND DRYING).
 //! 1. GROWTH: each cell's people toward what the land carries (its carrying
 //!    capacity, CARRYING_FULL at FORAGER_DENSITY a km², to twice), by
 //!    GROWTH_A a year, logistic.
@@ -46,9 +47,9 @@
 
 use crate::climate_history::{
     COLD_SPELL_DRY, COLD_SPELL_YEARS, ClimateHistory, ICE_REACH_KM, cold_share, cold_spells,
-    ice_may_cover, spell_cold,
+    drying_start, humid_gain, ice_may_cover, spell_cold, wetness,
 };
-use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between};
+use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between, latitude_deg};
 use crate::log::{LogEvent, POPULATION_MARKS};
 use crate::peoples::{Traits, Tree};
 use crate::peopling::Peopling;
@@ -135,6 +136,24 @@ pub(crate) const CLIMATE_YEARS: f64 = 500.0;
 // people move from each (58 to 168 when it carried what the poorest land
 // does).
 pub(crate) const DROWNED_TOLD_KM2: f64 = 50_000.0;
+// THE LAND DRYING (2026-10-29; climate_history.rs THE LAND DRYING): a
+// cell of the dry belt carries from step 2's start what its ecology
+// carries with `humid_gain` added (`wet_base`, by `ground_of`'s rule), and
+// its pasture is as much more (`Sim::eco`); both fade with its `wetness`,
+// every CLIMATE_YEARS. A cell with a river (`near_river`) keeps the humid
+// value: the valleys stay green, as the Nile's. Where a cell's wetness
+// fell, its people over what it carries now go to its neighbours as THE
+// RISING SEA's (`Sim::send_away`); the rest die. Where the cells of a
+// landmass that lost the last of their humid gain in one CLIMATE_YEARS
+// come to DRYING_TOLD_KM2 or more, the log tells it (`Drying`), once a
+// landmass, with the people who moved away from the landmass's drying
+// cells in it, at its cell of the most people moved: the abrupt end at
+// the belt's poleward edge, as the green Sahara's at 20° N. Each
+// CLIMATE_YEARS of the drying took some 250 000 to 930 000 km² of a large
+// landmass on the three worlds (2026-10-29), over 8 to 13 steps: told at
+// each, the chronicle had 9, 13 and 8 of them. Once a landmass at 250 000
+// it has 1 to 3 a world.
+pub(crate) const DRYING_TOLD_KM2: f64 = 250_000.0;
 // THE GAME (2026-10-26), every GAME_STEPS steps on the cells people live in
 // or have hunted: the small game and the big game, a share each of what the
 // land holds without people. Each grows back toward it (SMALL_REGROW_A,
@@ -813,6 +832,10 @@ struct Sim<'h, 'a> {
     smelt_front: Vec<usize>,
     // The cells the fishers live in (THE FISHERS).
     fishing: Vec<u8>,
+    // THE LAND DRYING: each cell's wetness now (0 outside the dry belt) and
+    // the pasture it adds at wetness 1.
+    wet: Vec<f32>,
+    humid_pasture: Vec<f32>,
     dry_square: Vec<i32>,
     square_rain: Vec<f32>,
     // How much of a famine's shortfall a cell's neighbours make up, 0 … 1
@@ -840,8 +863,14 @@ struct Sim<'h, 'a> {
 }
 
 impl Sim<'_, '_> {
+    // The habitat's field; the pasture with the humid period's (THE LAND
+    // DRYING).
     fn eco(&self, field: usize, i: usize) -> f64 {
-        self.h.eco(field, i)
+        let e = self.h.eco(field, i);
+        if field == PASTURE && self.wet[i] > 0.0 {
+            return js::min(1.0, e + self.wet[i] as f64 * self.humid_pasture[i] as f64);
+        }
+        e
     }
 
     // The rain's share this step where a famine is (THE DROUGHTS), else 1.
@@ -904,6 +933,38 @@ impl Sim<'_, '_> {
         } else {
             c >= 1 && self.eco(PASTURE, cell) >= HERD_PASTURE
         }
+    }
+
+    // THE RISING SEA's and THE LAND DRYING's move: `had` people of cell `i`
+    // go to its neighbours that carry, evenly, each up to FLIGHT_CROWD
+    // times what it carries; the rest die. The people moved.
+    fn send_away(&mut self, i: usize, had: f64, t: f64) -> f64 {
+        let h = self.h;
+        let to: Vec<usize> = h
+            .edges(i)
+            .map(|e| h.nbr[e] as usize)
+            .filter(|&u| self.capacity[u] > 0.0)
+            .collect();
+        let mut moved = 0.0;
+        for &u in &to {
+            let room = js::max(
+                0.0,
+                (FLIGHT_CROWD * self.carried(u) - self.people[u] as f64) * h.area_km2[u] as f64,
+            );
+            let came = js::min(had / to.len() as f64, room);
+            if came <= 0.0 {
+                continue;
+            }
+            moved += came;
+            let density = came / h.area_km2[u] as f64;
+            if self.people[u] == 0.0 {
+                self.settle(u, t, density, i as i32, i);
+            } else {
+                self.people[u] = (self.people[u] as f64 + density) as f32;
+                self.grows(u);
+            }
+        }
+        moved
     }
 
     fn grows(&mut self, cell: usize) {
@@ -1221,22 +1282,68 @@ pub fn simulate(
         coast,
     } = ground_of(h, input.carrying);
     let ice_km = ice_distance(h);
+    // THE LAND DRYING: the dry belt's cells (`humid`; 2 where a river keeps
+    // them wet), what they carry at wetness 1, where its drying begins.
+    let mut humid = vec![0u8; n];
+    let mut humid_lat = vec![0f32; n];
+    let mut wet_base = base.clone();
+    let mut humid_pasture = vec![0f32; n];
+    for i in 0..n {
+        if land[i] == 0 || base[i] <= 0.0 {
+            continue;
+        }
+        let lat = latitude_deg(h, i);
+        let Some((carrying, pasture)) = humid_gain(h.koppen[i], lat) else {
+            continue;
+        };
+        humid[i] = if h.near_river[i] != 0 { 2 } else { 1 };
+        humid_lat[i] = lat as f32;
+        let k = js::min(2.0, (input.carrying[i] as f64 + carrying) / CARRYING_FULL);
+        wet_base[i] = js::max(base[i] as f64, FORAGER_DENSITY * js::max(0.05, k)) as f32;
+        humid_pasture[i] = pasture as f32;
+    }
+    let dry_from = drying_start(input.seed, input.peopling.span);
     // A cell whose carrying moved by CAPACITY_MOVED of it or more is marked
     // (`moved_now`), to grow or shrink again.
     let mut moved_now = vec![0u8; n];
     // `t` the climate's (a CLIMATE_YEARS), `spell` the cold a spell adds
-    // now; the shelf cells the sea covers that were dry into `drowned`.
+    // now; the shelf cells the sea covers that were dry into `drowned`;
+    // each cell's wetness into `wet` (THE LAND DRYING), the cells whose
+    // wetness fell into `drying`, those of them it fell to 0 in into
+    // `dried`.
     let update_climate = |t: f64,
                           spell: f64,
                           capacity: &mut [f32],
                           moved_now: &mut [u8],
-                          drowned: &mut Vec<usize>| {
+                          drowned: &mut Vec<usize>,
+                          wet: &mut [f32],
+                          drying: &mut Vec<usize>,
+                          dried: &mut Vec<usize>| {
         let cold = climate.cold(t);
         let drop = climate.sea_drop_m(t);
         drowned.clear();
+        drying.clear();
+        dried.clear();
         for i in 0..n {
             if base[i] <= 0.0 {
                 continue;
+            }
+            let mut base_now = base[i] as f64;
+            if humid[i] != 0 {
+                let w = if humid[i] == 2 {
+                    1.0
+                } else {
+                    wetness(dry_from, humid_lat[i] as f64, t)
+                };
+                let was = wet[i] as f64;
+                wet[i] = w as f32;
+                if (wet[i] as f64) < was {
+                    drying.push(i);
+                    if wet[i] <= 0.0 {
+                        dried.push(i);
+                    }
+                }
+                base_now += wet[i] as f64 * (wet_base[i] as f64 - base_now);
             }
             let was = capacity[i] as f64;
             let now = if shelf[i] != 0 {
@@ -1246,7 +1353,7 @@ pub fn simulate(
                     0.0
                 }
             } else {
-                base[i] as f64 * cold_share(h.koppen[i], ice_km[i] as f64, cold, spell)
+                base_now * cold_share(h.koppen[i], ice_km[i] as f64, cold, spell)
             };
             capacity[i] = now as f32;
             if shelf[i] != 0 && was > 0.0 && now <= 0.0 {
@@ -1262,6 +1369,10 @@ pub fn simulate(
         .map(|&c| if c < 0 { -1 } else { h.landmass[c as usize] })
         .collect();
     let mut drowned: Vec<usize> = Vec::new();
+    let mut drying: Vec<usize> = Vec::new();
+    let mut dried: Vec<usize> = Vec::new();
+    // The landmasses whose drying the log told (THE LAND DRYING).
+    let mut dry_told = vec![0u8; h.landmasses];
     let habitable = |i: usize| land[i] == 1 && base[i] > 0.0;
     let (region, regions) = regions_of(h, &habitable);
     let crossings = crossings_of(h, REACH_END, &habitable, &region);
@@ -1365,6 +1476,9 @@ pub fn simulate(
         copper_front: Vec::new(),
         smelt_front: Vec::new(),
         fishing: vec![0u8; n],
+        // 0 until the climate's first step (t0) sets it.
+        wet: vec![0f32; n],
+        humid_pasture,
         dry_square: vec![-1i32; n],
         square_rain: Vec::new(),
         fed: vec![0f32; n],
@@ -1551,6 +1665,9 @@ pub fn simulate(
                 &mut sim.capacity,
                 &mut moved_now,
                 &mut drowned,
+                &mut sim.wet,
+                &mut drying,
+                &mut dried,
             );
             for i in 0..n {
                 if start.arrival[i] == f32::INFINITY {
@@ -1646,7 +1763,16 @@ pub fn simulate(
             }
             if t % CLIMATE_YEARS != 0.0 {
                 let last = (t / CLIMATE_YEARS).floor() * CLIMATE_YEARS;
-                update_climate(last, spell, &mut sim.capacity, &mut moved_now, &mut drowned);
+                update_climate(
+                    last,
+                    spell,
+                    &mut sim.capacity,
+                    &mut moved_now,
+                    &mut drowned,
+                    &mut sim.wet,
+                    &mut drying,
+                    &mut dried,
+                );
             }
             for k in 0..sim.lived.len() {
                 let i = sim.lived[k];
@@ -1659,7 +1785,16 @@ pub fn simulate(
         //    people of a cell that carries nothing now leave it for its
         //    neighbours (THE RISING SEA).
         if t > 0.0 && t % CLIMATE_YEARS == 0.0 {
-            update_climate(t, spell, &mut sim.capacity, &mut moved_now, &mut drowned);
+            update_climate(
+                t,
+                spell,
+                &mut sim.capacity,
+                &mut moved_now,
+                &mut drowned,
+                &mut sim.wet,
+                &mut drying,
+                &mut dried,
+            );
             let mut still = Vec::new();
             let mut leaving = Vec::new();
             for k in 0..sim.lived.len() {
@@ -1699,31 +1834,7 @@ pub fn simulate(
             for &i in &leaving {
                 let had = sim.people[i] as f64 * h.area_km2[i] as f64;
                 sim.people[i] = 0.0;
-                let to: Vec<usize> = h
-                    .edges(i)
-                    .map(|e| h.nbr[e] as usize)
-                    .filter(|&u| sim.capacity[u] > 0.0)
-                    .collect();
-                let mut moved = 0.0;
-                for &u in &to {
-                    let room = js::max(
-                        0.0,
-                        (FLIGHT_CROWD * sim.carried(u) - sim.people[u] as f64)
-                            * h.area_km2[u] as f64,
-                    );
-                    let came = js::min(had / to.len() as f64, room);
-                    if came <= 0.0 {
-                        continue;
-                    }
-                    moved += came;
-                    let density = came / h.area_km2[u] as f64;
-                    if sim.people[u] == 0.0 {
-                        sim.settle(u, t, density, i as i32, i);
-                    } else {
-                        sim.people[u] = (sim.people[u] as f64 + density) as f32;
-                        sim.grows(u);
-                    }
-                }
+                let moved = sim.send_away(i, had, t);
                 // The sea's (a shelf cell), not the ice's.
                 if shelf[i] == 0 {
                     continue;
@@ -1740,6 +1851,54 @@ pub fn simulate(
             for &(m, km2, people, cell, _) in &sea_took {
                 if km2 >= DROWNED_TOLD_KM2 {
                     sim.log.push(LogEvent::Drowned {
+                        at: t,
+                        cell: cell as f64,
+                        landmass: m as f64,
+                        km2,
+                        people,
+                    });
+                }
+            }
+            // THE LAND DRYING: the people over what a drying cell carries
+            // now leave it, all cells first brought to what they carry;
+            // each landmass's cells dried for good, in the order of its
+            // first: [landmass, km², the people who moved, its cell of the
+            // most people moved, their number].
+            let mut dry_took: Vec<(i32, f64, f64, i32, f64)> = Vec::new();
+            let mut dry_at: HashMap<i32, usize> = HashMap::new();
+            for &i in &dried {
+                let m = h.landmass[i];
+                let k = *dry_at.entry(m).or_insert_with(|| {
+                    dry_took.push((m, 0.0, 0.0, i as i32, -1.0));
+                    dry_took.len() - 1
+                });
+                dry_took[k].1 += h.area_km2[i] as f64;
+            }
+            let mut surplus: Vec<(usize, f64)> = Vec::new();
+            for &i in &drying {
+                let over = sim.people[i] as f64 - sim.carried(i);
+                if sim.people[i] > 0.0 && over > 0.0 {
+                    sim.people[i] = (sim.people[i] as f64 - over) as f32;
+                    surplus.push((i, over * h.area_km2[i] as f64));
+                }
+            }
+            for &(i, had) in &surplus {
+                let moved = sim.send_away(i, had, t);
+                let m = h.landmass[i];
+                let k = *dry_at.entry(m).or_insert_with(|| {
+                    dry_took.push((m, 0.0, 0.0, i as i32, -1.0));
+                    dry_took.len() - 1
+                });
+                dry_took[k].2 += moved;
+                if moved > dry_took[k].4 {
+                    dry_took[k].3 = i as i32;
+                    dry_took[k].4 = moved;
+                }
+            }
+            for &(m, km2, people, cell, _) in &dry_took {
+                if km2 >= DRYING_TOLD_KM2 && dry_told[m as usize] == 0 {
+                    dry_told[m as usize] = 1;
+                    sim.log.push(LogEvent::Drying {
                         at: t,
                         cell: cell as f64,
                         landmass: m as f64,
