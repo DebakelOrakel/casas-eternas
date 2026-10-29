@@ -12,7 +12,7 @@ use casas_incubator::history::{
 };
 use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
-use casas_incubator::peoples::{TRAITS, Tree, peoples_of};
+use casas_incubator::peoples::{TRAITS, peoples_of};
 use casas_incubator::peopling::{Peopling, people};
 use casas_incubator::settle::settle_history;
 use casas_incubator::simulation::{
@@ -69,8 +69,8 @@ struct DebugTraits {
     times: Vec<f64>,
     traits: Vec<Vec<u16>>,
     people: Vec<Vec<f32>>,
-    // THE TREE (peoples.rs Tree), and the replacements and splits.
-    tree: Tree,
+    // The replacements and splits. THE TREE is in the pack since v3
+    // (pack.rs; its DEBUG reads went, 2026-10-29).
     counts: [u32; 3],
 }
 
@@ -364,7 +364,6 @@ impl Incubator {
             times,
             traits: result.trait_frames,
             people,
-            tree: result.tree,
             counts: [result.replaced, result.herd_replaced, result.splits],
         });
         Ok(Uint8Array::new(packed))
@@ -426,63 +425,6 @@ impl Incubator {
             distance,
         );
         Ok(Int32Array::new(label))
-    }
-
-    /// DEBUG: THE TREE's people id of each cell at kept state `frame`
-    /// (peoples.rs Tree), -1 where no one lives.
-    #[napi]
-    pub fn debug_people_ids(&self, frame: u32) -> napi::Result<Int32Array> {
-        let d = self
-            .debug_traits
-            .as_ref()
-            .ok_or_else(|| error("no debug_simulate_traits yet".into()))?;
-        let ids = d
-            .tree
-            .ids
-            .get(frame as usize)
-            .ok_or_else(|| error(format!("no frame {frame}")))?;
-        let people = &d.people[frame as usize];
-        let mut out = vec![-1i32; people.len()];
-        let mut k = 0;
-        for (i, &p) in people.iter().enumerate() {
-            if p > 0.0 {
-                out[i] = ids[k] as i32;
-                k += 1;
-            }
-        }
-        Ok(Int32Array::new(out))
-    }
-
-    /// DEBUG: THE TREE's peoples, flat: for each by its id `parent,
-    /// group, born, ended (Infinity while it lives), mergedInto, frames`,
-    /// then `frames` × `frame, people, km2, farmers, centre`.
-    #[napi]
-    pub fn debug_people_tree(&self) -> napi::Result<Float64Array> {
-        let d = self
-            .debug_traits
-            .as_ref()
-            .ok_or_else(|| error("no debug_simulate_traits yet".into()))?;
-        let mut out = Vec::new();
-        for p in &d.tree.peoples {
-            out.extend_from_slice(&[
-                p.parent as f64,
-                p.group as f64,
-                p.born,
-                p.ended,
-                p.merged_into as f64,
-                p.frames.len() as f64,
-            ]);
-            for f in &p.frames {
-                out.extend_from_slice(&[
-                    f.frame as f64,
-                    f.people as f64,
-                    f.km2 as f64,
-                    f.farmers as f64,
-                    f.centre as f64,
-                ]);
-            }
-        }
-        Ok(Float64Array::new(out))
     }
 
     /// DEBUG: the cells whose traits the fields replaced, the herds', and

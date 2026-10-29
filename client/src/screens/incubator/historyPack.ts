@@ -17,6 +17,10 @@ import type { LogEvent } from './historyLogShared'
 // elsewhere the people are none and the game whole, at every state. Whole,
 // they were 301 MB on Morvane, and Safari took minutes to store them; now
 // 168 MB.
+//
+// THE PEOPLES (since the incubator's v3, 2026-10-29; the crate's
+// peoples.rs Tree and pack.rs): each kept state's people ids, and the
+// peoples' tree (PeoplesTree).
 
 type Typed = Float32Array | Int32Array | Uint8Array | Uint16Array
 const TYPES = { f32: Float32Array, i32: Int32Array, u8: Uint8Array, u16: Uint16Array } as const
@@ -46,6 +50,41 @@ export interface SimFrame {
   big: Uint8Array[]
 }
 
+// THE PEOPLES' TREE (pack.rs): by people id its parent (-1 for one of step
+// 2's start), step 1's group, the years it was first seen and first not
+// seen (Infinity while it lives), the people most of it went into (-1 where
+// it died out), 1 where it is big (not only an isolated small band: the
+// chronicle tells these alone). Then by (people, kept state it is seen at),
+// CSR from `frameStart` (one more than the peoples): the state, its people,
+// its km², its farmers' share in 255ths, its heart's cell. `ids`: each kept
+// state's id of each cell its `people` is over 0 at, in the cells' order.
+export interface PeoplesTree {
+  parent: Int32Array
+  group: Int32Array
+  born: Float32Array
+  ended: Float32Array
+  mergedInto: Int32Array
+  big: Uint8Array
+  frameStart: Int32Array
+  frame: Uint16Array
+  people: Float32Array
+  km2: Float32Array
+  farmers: Uint8Array
+  centre: Int32Array
+  ids: Uint16Array[]
+}
+
+// A people id where a cell has none (a kept state's ids made whole).
+export const NO_PEOPLE = 65535
+
+// The ids of a kept state on every cell: NO_PEOPLE where `people` is 0.
+export function peopleIdsOf(ids: Uint16Array, people: ArrayLike<number>): Uint16Array {
+  const out = new Uint16Array(people.length).fill(NO_PEOPLE)
+  let k = 0
+  for (let i = 0; i < people.length; i++) if (people[i] > 0) out[i] = ids[k++]
+  return out
+}
+
 // What a packed history holds.
 export interface PackedHistory {
   people: PeopleResult
@@ -71,6 +110,7 @@ export interface PackedHistory {
     villages?: { villages: Int32Array; villageFrom: Float32Array; villageTo: Float32Array; villageTown: Float32Array }
     population?: Float32Array
   }
+  peoples: PeoplesTree
 }
 
 interface Plain {
@@ -136,6 +176,21 @@ export function unpackHistory(buffer: ArrayBuffer): PackedHistory | null {
         domestications: plain.domestications.map((d, k) => ({ ...d, came: get(`came${k}`) })),
         villages: arrays.has('villages') ? { villages: get('villages'), villageFrom: get('villageFrom'), villageTo: get('villageTo'), villageTown: get('villageTown') } : undefined,
         population: arrays.has('population') ? get('population') : undefined,
+      },
+      peoples: {
+        parent: get('peopleParent'),
+        group: get('peopleGroup'),
+        born: get('peopleBorn'),
+        ended: get('peopleEnded'),
+        mergedInto: get('peopleMergedInto'),
+        big: get('peopleBig'),
+        frameStart: get('peopleFrameStart'),
+        frame: get('peopleFrame'),
+        people: get('peoplePeople'),
+        km2: get('peopleKm2'),
+        farmers: get('peopleFarmers'),
+        centre: get('peopleCentre'),
+        ids: Array.from({ length: plain.frames }, (_, k) => get<Uint16Array>(`peopleIds${k}`)),
       },
     }
   } catch {

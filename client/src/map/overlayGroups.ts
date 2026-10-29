@@ -136,6 +136,7 @@ export const OVERLAY_GROUPS: readonly OverlayGroup[] = [
       none('settlement'),
       { id: 'settle:spread', helpBase: 'incubator.people.spread', icon: '/icons/human.png' },
       { id: 'settle:groups', helpBase: 'incubator.peopling.groups', icon: '/icons/group.png' },
+      { id: 'settle:peoples', helpBase: 'incubator.people.peoples', icon: '/icons/dwarf.png' },
       { id: 'settle:lifeway', helpBase: 'incubator.people.lifeway', icon: '/icons/pastures.png' },
       { id: 'settle:density', helpBase: 'incubator.people.density', icon: '/icons/population.png' },
     ],

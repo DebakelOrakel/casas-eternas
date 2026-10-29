@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-29
+- **new** Incubator: the Peoples overlay shows the peoples of the New Stone Age at the time shown, related peoples in alike colours. `incubator.people.peoples`
+
 ## 2026-10-28
 - **new** Incubator: the chronicle tells of coasts the rising sea takes and of cold spells, and large villages draw more of the far trade. `incubator.chronicle.event.drowned`
 - **removed** Incubator: the New Stone Age has no buttons to reset the origin or to save the history on the server any more. `incubator.step.newStoneAge`

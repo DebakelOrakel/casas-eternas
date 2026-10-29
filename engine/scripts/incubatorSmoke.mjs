@@ -4,7 +4,8 @@
 // and a sphere (its raster 256 wide, the globe an eighth of the map's
 // 2 048: at 8 km some 40 000 cells), with continents and islands, ice, the
 // climates' belts, rivers, the ecology's fields, the rain's reliability:
-// the habitat, the flora, the fauna, the history (its packed bytes) and its
+// the habitat, the flora, the fauna, the history (its packed bytes), its
+// peoples (their arrays in the pack, since the incubator's v3) and its
 // settlement, hashed, must be the reference's. The reference was recorded
 // while the TypeScript the crate was ported from still stood beside it and
 // gave the same bits (2026-10-27; and on Morvane, the whole H1 alike); it
@@ -208,6 +209,15 @@ for (const kind of ['torus', 'sphere']) {
     fail(`${kind} history: its pack does not read`)
     continue
   }
+  // THE PEOPLES (the pack's since v3): their arrays alone, so a change to
+  // them is named apart from the rest of the history's.
+  const peoplesHash = (h) => hashOf(...Object.entries(h.peoples).flatMap(([name, a]) => (name === 'ids' ? a : [a])))
+  hashes[`${kind} peoples`] = peoplesHash(history)
+  const tree = history.peoples
+  const alive = [...tree.ended].filter((e, id) => e === Infinity && tree.big[id]).length
+  if (tree.parent.some((p) => p >= 0)) seen.add('people split')
+  if (tree.mergedInto.some((m) => m >= 0)) seen.add('people merged')
+  if (alive >= 2) seen.add('peoples')
   const v = history.lifeways.villages
   t0 = performance.now()
   const settledPack = rs.settleHistory(history.people.arrival, history.lifeways.farmAt, history.lifeways.herdAt, v.villages, v.villageFrom, v.villageTo, v.villageTown, history.end)
@@ -233,7 +243,7 @@ for (const kind of ['torus', 'sphere']) {
     }
   }
   const count = (k) => history.log.filter((e) => e.kind === k).length
-  console.log(`incubator: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
+  console.log(`incubator: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions, ${tree.parent.length} peoples (${alive} big ones alive at the end) (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
   // The native build on the same world.
   t0 = performance.now()
   const nat = wasmCells(world.cells, native)
@@ -247,11 +257,12 @@ for (const kind of ['torus', 'sphere']) {
     flora: hashOf(nat.floraCodes(), nat.floraShares()),
     fauna: hashOf(nat.faunaCodes(), nat.faunaShares()),
     history: hashOf(natPack),
+    peoples: peoplesHash(unpackHistory(natPack.buffer.slice(natPack.byteOffset, natPack.byteOffset + natPack.byteLength))),
     settlement: hashOf(natSettled),
   }
   for (const [part, h] of Object.entries(natHashes)) if (h !== hashes[`${kind} ${part}`]) fail(`${kind} ${part}: the native build differs from the WASM's`)
   console.log(`incubator: ${kind} — the native build in ${Math.round(natMs)} ms`)
-  if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'settlement']) {
+  if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'peoples', 'settlement']) {
     const key = `${kind} ${part}`
     if (golden[key] !== hashes[key]) fail(`${key}: not the reference's (${hashes[key].slice(0, 12)} against ${String(golden[key]).slice(0, 12)})`)
   }
@@ -270,7 +281,9 @@ for (const kind of ['torus', 'sphere']) {
 // city; since the rising sea and the cold spells (2026-10-28) the worlds
 // reach both again, by chance. Not 'drowned': the sea takes less than
 // DROWNED_TOLD_KM2 of these small worlds' shelves in a CLIMATE_YEARS.
-const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell']
+// THE PEOPLES (2026-10-29): two big ones alive at the end on a world, a
+// people parted from another, one merged into another.
+const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')

@@ -4,7 +4,7 @@ import { ANIMALS } from './animals'
 import type { AnimalLayer, CellInput, PeopleResult, PlantLayer, SettleResult, TreeLayer } from './cellsShared'
 import { incubatorOf } from './historyInput'
 import type { LogEvent } from './historyLogShared'
-import { unpackHistory, unpackSettled, type PackedHistory } from './historyPack'
+import { peopleIdsOf, unpackHistory, unpackSettled, type PackedHistory, type PeoplesTree } from './historyPack'
 import { PEOPLE_FRAME_STEP } from './peopleShared'
 import { PLANTS } from './plants'
 import { TREES } from './trees'
@@ -45,17 +45,21 @@ export type IncubatorAnswer =
   // The cold every `stepYears` from the departure; the ice's reach and the
   // sea's drop at a cold of 1.
   | { type: 'climate'; cold: Float32Array; stepYears: number; iceReachKm: number; seaDropM: number; ms: number }
-  // The history's spread, and its start and end (historyPack.ts).
-  | ({ type: 'people'; start: number; end: number; ms: number } & PeopleResult)
+  // The history's spread, its start and end, and its peoples' tree without
+  // the kept states' ids, which come with the states (historyPack.ts).
+  | ({ type: 'people'; start: number; end: number; peoples: PeoplesWithoutIds; ms: number } & PeopleResult)
   // The old stone age (casas-incubator peopling.rs): its spread as a
   // history's, `flow` left 0; each cell's group and their number; the
   // foragers a km² each reached cell carries in today's climate; its log,
   // the departure and the landings after open sea; its span, years.
   | ({ type: 'peopling'; group: Int32Array; groups: number; density: Float32Array; log: LogEvent[]; span: number; ms: number } & PeopleResult)
   | ({ type: 'settle'; ms: number } & SettleResult)
-  | { type: 'frame'; index: number; people: Float32Array | null; small: Uint8Array | null; big: { id: string; cells: Int32Array; share: Uint8Array }[]; ms: number }
+  // `peoples`: each cell's people id (historyPack.ts NO_PEOPLE for none).
+  | { type: 'frame'; index: number; people: Float32Array | null; small: Uint8Array | null; peoples: Uint16Array | null; big: { id: string; cells: Int32Array; share: Uint8Array }[]; ms: number }
   | { type: 'pack'; bytes: ArrayBuffer | null; ms: number }
   | { type: 'failed'; message: string }
+
+export type PeoplesWithoutIds = Omit<PeoplesTree, 'ids'>
 
 // The cold curve's step (casas-incubator STEP_YEARS).
 const COLD_STEP_YEARS = 25
@@ -73,7 +77,9 @@ let historyBytes: Uint8Array | null = null
 function peopleAnswer(h: PackedHistory, ms: number): void {
   const p = h.people
   const out = { ...p, arrival: p.arrival.slice(), land: p.land.slice(), from: p.from.slice(), flow: p.flow.slice(), crossings: p.crossings.slice(), crossingWays: p.crossingWays.slice() }
-  worker.postMessage({ type: 'people', start: h.start, end: h.end, ms, ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer])
+  const { ids: _ids, ...tree } = h.peoples
+  const peoples = Object.fromEntries(Object.entries(tree).map(([k, a]) => [k, a.slice()])) as unknown as PeoplesWithoutIds
+  worker.postMessage({ type: 'people', start: h.start, end: h.end, peoples, ms, ...out } satisfies IncubatorAnswer, [out.arrival.buffer, out.land.buffer, out.from.buffer, out.flow.buffer, out.crossings.buffer, out.crossingWays.buffer, ...Object.values(peoples).map((a) => a.buffer as ArrayBuffer)])
 }
 
 // A history's bytes taken: read, kept.
@@ -179,8 +185,10 @@ async function answer(ask: IncubatorRequest): Promise<void> {
     const frame = history?.kept[ask.index]
     const peopleNow = frame ? Float32Array.from(frame.people, (p) => p * PEOPLE_FRAME_STEP) : null
     const small = frame ? frame.small.slice() : null
+    const ids = history?.peoples.ids[ask.index]
+    const peoples = frame && ids ? peopleIdsOf(ids, frame.people) : null
     const big = frame && history ? history.species.map((sp, k) => ({ id: sp.id, cells: sp.cells.slice(), share: frame.big[k].slice() })) : []
-    worker.postMessage({ type: 'frame', index: ask.index, people: peopleNow, small, big, ms: ms() } satisfies IncubatorAnswer, [...(peopleNow ? [peopleNow.buffer] : []), ...(small ? [small.buffer] : []), ...big.flatMap((b) => [b.cells.buffer, b.share.buffer])])
+    worker.postMessage({ type: 'frame', index: ask.index, people: peopleNow, small, peoples, big, ms: ms() } satisfies IncubatorAnswer, [...(peopleNow ? [peopleNow.buffer] : []), ...(small ? [small.buffer] : []), ...(peoples ? [peoples.buffer] : []), ...big.flatMap((b) => [b.cells.buffer, b.share.buffer])])
     return
   }
   // The settlement (`settle`): the crate's of the history, with the

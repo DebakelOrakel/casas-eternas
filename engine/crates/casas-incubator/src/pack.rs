@@ -15,6 +15,25 @@
 //! elsewhere the people are none and the game whole, at every state. Whole,
 //! they were 301 MB on Morvane, and Safari took minutes to store them; now
 //! 168 MB.
+//!
+//! THE PEOPLES (since v3, 2026-10-29; peoples.rs Tree), after the arrays
+//! above, which keep their bytes:
+//! - `peopleIds{k}` u16, kept state k's people id of each cell of
+//!   `reached` whose `people{k}` is over 0, in `reached`'s order (a cell with
+//!   no people has no entry).
+//! - By people id: `peopleParent` i32 (-1 for one of step 2's start),
+//!   `peopleGroup` i32 (step 1's group), `peopleBorn` f32 and
+//!   `peopleEnded` f32 (years; Infinity while it lives),
+//!   `peopleMergedInto` i32 (-1 where it died out), `peopleBig` u8 (1
+//!   where it had PEOPLE_LEAST people and PEOPLE_LEAST_KM2 at one kept
+//!   state or more; 0 for an isolated small band, an island's, which the
+//!   tree keeps as a people of its own: the chronicle tells the big ones
+//!   alone).
+//! - By (people, kept state it is seen at), as CSR: `peopleFrameStart`
+//!   i32, one more than the peoples, the start of each one's rows; then
+//!   `peopleFrame` u16 (the kept state), `peoplePeople` f32,
+//!   `peopleKm2` f32, `peopleFarmers` u8 (the share in 255ths),
+//!   `peopleCentre` i32 (its heart's cell).
 
 use crate::log::Json;
 use crate::simulation::SimulationResult;
@@ -25,6 +44,7 @@ pub enum Array<'a> {
     I32(&'a [i32]),
     U8(&'a [u8]),
     U16(&'a [u16]),
+    F32Owned(Vec<f32>),
     I32Owned(Vec<i32>),
     U8Owned(Vec<u8>),
     U16Owned(Vec<u16>),
@@ -33,7 +53,7 @@ pub enum Array<'a> {
 impl Array<'_> {
     fn type_name(&self) -> &'static str {
         match self {
-            Array::F32(_) => "f32",
+            Array::F32(_) | Array::F32Owned(_) => "f32",
             Array::I32(_) | Array::I32Owned(_) => "i32",
             Array::U8(_) | Array::U8Owned(_) => "u8",
             Array::U16(_) | Array::U16Owned(_) => "u16",
@@ -46,6 +66,7 @@ impl Array<'_> {
             Array::I32(a) => a.len(),
             Array::U8(a) => a.len(),
             Array::U16(a) => a.len(),
+            Array::F32Owned(a) => a.len(),
             Array::I32Owned(a) => a.len(),
             Array::U8Owned(a) => a.len(),
             Array::U16Owned(a) => a.len(),
@@ -58,6 +79,9 @@ impl Array<'_> {
                 .iter()
                 .for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
             Array::I32(a) => a
+                .iter()
+                .for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
+            Array::F32Owned(a) => a
                 .iter()
                 .for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
             Array::I32Owned(a) => a
@@ -77,7 +101,7 @@ impl Array<'_> {
     fn byte_len(&self) -> usize {
         self.len()
             * match self {
-                Array::F32(_) | Array::I32(_) | Array::I32Owned(_) => 4,
+                Array::F32(_) | Array::F32Owned(_) | Array::I32(_) | Array::I32Owned(_) => 4,
                 Array::U16(_) | Array::U16Owned(_) => 2,
                 Array::U8(_) | Array::U8Owned(_) => 1,
             }
@@ -194,6 +218,7 @@ pub fn pack_history(r: &SimulationResult) -> Vec<u8> {
             ));
         }
     }
+    push_peoples(r, &reached, &mut arrays);
     pack(
         |j| {
             j.open_object();
@@ -254,6 +279,90 @@ pub fn pack_history(r: &SimulationResult) -> Vec<u8> {
         },
         &arrays,
     )
+}
+
+// THE PEOPLES' arrays (see the module's head), after the others.
+fn push_peoples<'a>(
+    r: &'a SimulationResult,
+    reached: &[i32],
+    arrays: &mut Vec<(String, Array<'a>)>,
+) {
+    let tree = &r.tree;
+    assert_eq!(
+        tree.ids.len(),
+        r.kept.len(),
+        "the tree's states are the kept states"
+    );
+    for (k, ids) in tree.ids.iter().enumerate() {
+        let lived = reached
+            .iter()
+            .filter(|&&c| r.kept[k].people[c as usize] > 0)
+            .count();
+        assert_eq!(
+            ids.len(),
+            lived,
+            "a kept state's ids are its reached cells with people"
+        );
+        arrays.push((format!("peopleIds{k}"), Array::U16(ids)));
+    }
+    let p = &tree.peoples;
+    let mut start = Vec::with_capacity(p.len() + 1);
+    start.push(0i32);
+    for q in p {
+        start.push(start[start.len() - 1] + q.frames.len() as i32);
+    }
+    let frames = || p.iter().flat_map(|q| q.frames.iter());
+    arrays.extend([
+        (
+            "peopleParent".into(),
+            Array::I32Owned(p.iter().map(|q| q.parent).collect()),
+        ),
+        (
+            "peopleGroup".into(),
+            Array::I32Owned(p.iter().map(|q| q.group).collect()),
+        ),
+        (
+            "peopleBorn".into(),
+            Array::F32Owned(p.iter().map(|q| q.born as f32).collect()),
+        ),
+        (
+            "peopleEnded".into(),
+            Array::F32Owned(p.iter().map(|q| q.ended as f32).collect()),
+        ),
+        (
+            "peopleMergedInto".into(),
+            Array::I32Owned(p.iter().map(|q| q.merged_into).collect()),
+        ),
+        (
+            "peopleBig".into(),
+            Array::U8Owned(p.iter().map(|q| q.big() as u8).collect()),
+        ),
+        ("peopleFrameStart".into(), Array::I32Owned(start)),
+        (
+            "peopleFrame".into(),
+            Array::U16Owned(frames().map(|f| f.frame as u16).collect()),
+        ),
+        (
+            "peoplePeople".into(),
+            Array::F32Owned(frames().map(|f| f.people).collect()),
+        ),
+        (
+            "peopleKm2".into(),
+            Array::F32Owned(frames().map(|f| f.km2).collect()),
+        ),
+        (
+            "peopleFarmers".into(),
+            Array::U8Owned(
+                frames()
+                    .map(|f| (f.farmers as f64 * 255.0 + 0.5) as u8)
+                    .collect(),
+            ),
+        ),
+        (
+            "peopleCentre".into(),
+            Array::I32Owned(frames().map(|f| f.centre).collect()),
+        ),
+    ]);
 }
 
 /// A history's settlement packed (settle.rs settle_history), for the

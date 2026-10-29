@@ -172,6 +172,46 @@ export function paintGroups(o: OverlayRaster, people: PeopleResult, group: Int32
   }
 }
 
+// THE PEOPLES (2026-10-29; casas-incubator peoples.rs, historyPack.ts
+// PeoplesTree): a colour per people id, 3 bytes each. Related peoples have
+// alike colours: the hue from step 1's group the people came from (its
+// parent's, so a people's descent keeps it), the golden angle apart from
+// group to group; each people's own a step of hue (±PEOPLE_HUE_STEP), a
+// saturation and a lightness, from its id (the golden ratio's and the
+// plastic number's fractions, spread and repeatable), so the neighbours of
+// one group are told apart. A people of no group takes a hue of its id.
+const PEOPLE_HUE_STEP = 15
+export function peopleColours(group: Int32Array): Uint8Array {
+  const out = new Uint8Array(3 * group.length)
+  for (let id = 0; id < group.length; id++) {
+    const a = (id * 0.618034) % 1
+    const b = (id * 0.754878) % 1
+    const base = group[id] >= 0 ? group[id] * 137.508 : id * 137.508
+    const hue = (((base + (2 * a - 1) * PEOPLE_HUE_STEP) % 360) + 360) % 360
+    out.set(hsl(hue, 0.45 + 0.45 * b, 0.34 + 0.32 * a), 3 * id)
+  }
+  return out
+}
+
+// HSL (hue in degrees, the rest 0 … 1) as RGB, 0 … 255.
+function hsl(h: number, s: number, l: number): [number, number, number] {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]
+  return [Math.round(255 * (r + m)), Math.round(255 * (g + m)), Math.round(255 * (b + m))]
+}
+
+// The peoples of a kept state (`ids`, each cell's; `none` where it has no
+// people) onto the overlay, each in its colour (`peopleColours`).
+export function paintPeoples(o: OverlayRaster, ids: Uint16Array, colours: Uint8Array, none: number): void {
+  for (let k = 0; k < o.owners.length; k++) {
+    const id = ids[o.owners[k]]
+    if (id === none || 3 * id >= colours.length) continue
+    put(o, 4 * k, colours[3 * id], colours[3 * id + 1], colours[3 * id + 2], 0.75)
+  }
+}
+
 // THE SETTLEMENT (settle.ts, a proof of concept): the lifeways and the
 // density, onto the overlay; the villages, the trade and the sources are
 // marks (incubatorSymbols.ts).

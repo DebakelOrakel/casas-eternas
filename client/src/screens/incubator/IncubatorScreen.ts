@@ -61,12 +61,13 @@ import type { LogEvent } from './historyLogShared'
 import { CAME_STEP, clearedAt, clearedOf, densityAt, extinctAt, GOODS, LIFEWAY, pressure, sharesAt, type SettleTimes } from './settleShared'
 import { ANIMALS } from './animals'
 import { campPictures, campSymbols, cellPoint, centrePictures, hamletPictures, hamletSymbols, isCampWay, crossingPictures, crossingSymbols, originPictures, routePictures, routeSymbols, sourcePictures, tradePictures, tradeSymbols, villagePictures, villageSymbols, type LineGeometry } from './incubatorSymbols'
-import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintGroups, paintLifeways, paintPeople, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
+import { clearOverlay, OVERLAY_DIVISOR, paintDensity, paintGroup, paintGroups, paintLifeways, paintPeople, paintPeoples, peopleColours, putTexel, washTarget, DENSITY_STOPS, GOOD_COLOURS, LIFEWAY_COLOURS, TRADE_COLOUR, PEOPLE_AGE_STOPS, PEOPLE_ROUTE, PLANT_PALETTE, PLANT_SUITS, type OverlayRaster } from './incubatorOverlay'
 import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
 import type { ChartPoint } from '../../map/worldView'
-import type { IncubatorAnswer, IncubatorRequest } from './incubatorWorker'
+import type { IncubatorAnswer, IncubatorRequest, PeoplesWithoutIds } from './incubatorWorker'
+import { NO_PEOPLE } from './historyPack'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
 import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from './historyInput'
 import { createLegendPanel } from '../../ui/legend/LegendPanel'
@@ -248,7 +249,7 @@ function createIncubatorClient(): { ask(request: IncubatorRequest): Promise<Incu
 // The lifeways' names (settleShared.ts LIFEWAY).
 const LIFEWAY_KEYS: Record<number, TKey> = { 1: 'incubator.lifeway.foragers', 2: 'incubator.lifeway.fishers', 3: 'incubator.lifeway.herders', 4: 'incubator.lifeway.farmers' }
 
-type Settlement = 'spread' | 'groups' | 'lifeway' | 'density'
+type Settlement = 'spread' | 'groups' | 'peoples' | 'lifeway' | 'density'
 
 export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen => {
   // THE SCENES. Before a world is shown, an empty white page; then the
@@ -487,6 +488,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The history's time (historyPack.ts): from the old stone age's end to
   // its first city.
   let historyTime: { start: number; end: number } | null = null
+  // THE PEOPLES (2026-10-29): the history's peoples' tree (historyPack.ts
+  // PeoplesTree; each kept state's ids come with the state, HistoryFrame
+  // `peoples`) and a colour per people (incubatorOverlay.ts peopleColours).
+  let peoples: { tree: PeoplesWithoutIds; colours: Uint8Array } | null = null
   // The chronicle's range: from the departure to the step's end — the old
   // stone age's in its step, the history's after it (2026-10-28: one
   // chronicle, each step's built on the one before).
@@ -645,7 +650,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       case 'sea': return (SEA_LAYERS as readonly string[]).includes(id) && refinedCharts !== null
       case 'weather': return (WEATHER_LAYERS as readonly string[]).includes(id) && refinedCharts !== null
       case 'resources': return ecology?.fields[id.slice(resourceLayerId('' as EcologyFieldId).length) as EcologyFieldId] !== undefined
-      case 'settlement': return id === 'settle:spread' ? stone !== null || people !== null : id === 'settle:groups' ? stone !== null : id === 'settle:density' ? stone !== null || settled !== null : settled !== null
+      case 'settlement': return id === 'settle:spread' ? stone !== null || people !== null : id === 'settle:groups' ? stone !== null : id === 'settle:peoples' ? peoples !== null && historyShown() : id === 'settle:density' ? stone !== null || settled !== null : settled !== null
       default: return charts !== null
     }
   }
@@ -1409,9 +1414,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE HISTORY'S PLAYBACK (DES-0032): the kept state at the time shown —
   // the people a km², KEEP_YEARS apart — asked of the worker as the time
   // comes to it, the last few kept; null before a history.
-  // A frame: the people a km², the small game's share and each big game
-  // species' share (in 255ths, per cell; 255 where the species is not).
-  type HistoryFrame = { people: Float32Array; small: Uint8Array; big: Map<string, Uint8Array> }
+  // A frame: its index, the people a km², the small game's share and each
+  // big game species' share (in 255ths, per cell; 255 where the species is
+  // not), each cell's people id (NO_PEOPLE for none).
+  type HistoryFrame = { index: number; people: Float32Array; small: Uint8Array; peoples: Uint16Array | null; big: Map<string, Uint8Array> }
   let historyFrames: Map<number, HistoryFrame> | null = null
   const framesAsked = new Set<number>()
   const FRAMES_KEPT = 6
@@ -1473,7 +1479,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           b.cells.forEach((cell, k) => (full[cell] = b.share[k]))
           big.set(b.id, full)
         }
-        frames.set(index, { people: answer.people, small: answer.small, big })
+        frames.set(index, { index, people: answer.people, small: answer.small, peoples: answer.peoples, big })
         animalsAtTime.clear()
         settledAtTime = null
         treesAtTime = null
@@ -1518,6 +1524,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     if (!done || !overlay || done.origin !== peopleOrigin) return false
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
     historyTime = { start: done.start, end: done.end }
+    peoples = { tree: done.peoples, colours: peopleColours(done.peoples.group) }
     showTimeRange()
     historyFrames = new Map()
     framesAsked.clear()
@@ -1580,6 +1587,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function dropHistory(): void {
     people = null
     historyTime = null
+    peoples = null
     settled = null
     historyFrames = null
     framesAsked.clear()
@@ -1829,6 +1837,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const spread = spreadShown()
         if (spread && settlementShown === 'spread') paintPeople(o, spread.people, peopleTime, livingNow())
         if (stone && settlementShown === 'groups') paintGroups(o, stone.people, stone.group, peopleTime)
+        const ids = peoples && settlementShown === 'peoples' ? frameNow()?.peoples : null
+        if (ids) paintPeoples(o, ids, peoples!.colours, NO_PEOPLE)
         const density = !historyShown() && stone && settlementShown === 'density' ? stoneDensityNow() : null
         if (density) paintDensity(o, density)
       },
@@ -1850,7 +1860,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
           ? { type: 'gradient', title: t('incubator.chronicle.year', { year: '…' }), unit: '', stops: PEOPLE_AGE_STOPS.map((s) => ({ value: s.value, rgb: [...s.rgb] as [number, number, number] })), items: routes }
           : { type: 'swatches', title: t('incubator.chronicle.people'), items: routes }]
       },
-      probe: (cell) => (stone && settlementShown === 'groups' && stone.group[cell] >= 0 && stone.people.arrival[cell] <= peopleTime ? [{ label: t('incubator.peopling.groups.label'), value: String(stone.group[cell] + 1) }] : []),
+      probe: (cell) => {
+        if (settlementShown === 'peoples') return peoplesProbe(cell)
+        return stone && settlementShown === 'groups' && stone.group[cell] >= 0 && stone.people.arrival[cell] <= peopleTime ? [{ label: t('incubator.peopling.groups.label'), value: String(stone.group[cell] + 1) }] : []
+      },
     },
     {
       // TRIAL: the end state, drawn over the spread.
@@ -1890,6 +1903,24 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
   ]
   const activeTrials = (): TrialLayer[] => TRIALS.filter((l) => l.on())
+  // The people of a cell at the kept state shown: its id (from 1, as the
+  // groups'), its people, its farmers' share.
+  function peoplesProbe(cell: number): ProbeRow[] {
+    const frame = peoples ? frameNow() : null
+    const id = frame?.peoples?.[cell] ?? NO_PEOPLE
+    if (!peoples || !frame || id === NO_PEOPLE) return []
+    const tree = peoples.tree
+    for (let r = tree.frameStart[id]; r < tree.frameStart[id + 1]; r++) {
+      if (tree.frame[r] !== frame.index) continue
+      const value = t('incubator.people.peoplesDetail', {
+        id: String(id + 1),
+        people: Math.round(tree.people[r]).toLocaleString(getLocale()),
+        farmers: formatValue(String(Math.round((100 * tree.farmers[r]) / 255)), 'common.unit.percent'),
+      })
+      return [{ label: t('incubator.people.peoples.label'), value }]
+    }
+    return []
+  }
 
   // THE MARKS (incubatorSymbols.ts) of the people step: the sources, the
   // trade, the villages, the routes, the crossings, the farming's and the
@@ -2214,6 +2245,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     animals = null
     people = null
     historyTime = null
+    peoples = null
     settled = null
     peopleOrigin = -1
     stone = null

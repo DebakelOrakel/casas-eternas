@@ -199,8 +199,8 @@ constants in simulation.rs.
   age: some 3 to 10 archaeological cultures a million km²).
   Built 2026-10-29 (`casas-incubator` peoples.rs): the traits, the
   farmers' replacement, the split of large peoples, the peoples' lasting
-  ids and their tree. Not built: their storage in H1, the overlay, the
-  chronicle's events.
+  ids and their tree; their storage in H1 and the overlay (Völker).
+  Not built: the chronicle's events.
 - **No rank in step 2 (2026-10-29).** Step 2 gives each people what rank
   grows from — its surplus (the farmers' share, the arable land, the
   density), its largest town, its copper, its exchange — and step 3
@@ -266,7 +266,7 @@ Each step reads only what the one before gives:
 | Step | Reads | Gives |
 |---|---|---|
 | 1 | L1, the origin | per cell: arrival time, predecessor, group, foragers; its span; log |
-| 2 | step 1's result | H1: kept states, lifeways, villages, copper, towns, its start and end; the peoples (not built); log |
+| 2 | step 1's result | H1: kept states, lifeways, villages, copper, towns, its start and end; the peoples (ids per kept state, their tree); log |
 | 3 | H1 | the game's state; log |
 
 With these fixed, each step can be rebuilt alone.
@@ -360,12 +360,23 @@ Building since 2026-10-27:
   (557). The peoples at the end: Morvane 167, from origin 473 575 155,
   Thalassor 192, Zephyra 173; the largest as before. The fields spread
   mostly inside the people that began them: the peoples hardly change.
+- 2026-10-29: the peoples in H1 (the incubator's v3; `casas-incubator`
+  pack.rs): each kept state's people id of each cell lived in, and the
+  tree (by people: parent, group, born, ended, merged into, big; by
+  people and kept state: people, km², farmers, heart). A people is big
+  with 1 000 people and 10 000 km² at one kept state or more; the small
+  isolated bands stay in the tree, flagged, for the chronicle to leave
+  out. The other arrays keep their bytes. On Morvane (its own origin, no
+  rain) 11.2 MB more on 149.5 MB: the ids 10.7 MB, the tree 0.4 MB;
+  2 094 peoples, 220 big. The incubator's overlay Völker paints the
+  peoples at the time shown, the hue by step 1's group, each people a
+  step of hue, saturation and lightness of its own.
 
 Open:
 
 1. Step 2's times against the earth's (the copper, the smelting, the city
    after the farming).
-2. The peoples (above) and how they are stored per cell.
+2. The peoples (above): the chronicle's events of them.
 3. The far trade: where which goods came from, for step 3 (above, the
    exchange).
 4. Step 1's sea-level curve: drawn from the world's seed, or a control.

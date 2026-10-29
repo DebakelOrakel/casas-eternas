@@ -680,6 +680,18 @@ pub struct People {
     pub frames: Vec<PeopleFrame>,
 }
 
+impl People {
+    /// Of PEOPLE_LEAST people and PEOPLE_LEAST_KM2 or more at one kept
+    /// state or more: not only an isolated small band (an island's, which
+    /// `fold_small` keeps). The chronicle tells these alone (pack.rs
+    /// `peopleBig`).
+    pub fn big(&self) -> bool {
+        self.frames
+            .iter()
+            .any(|f| f.people as f64 >= PEOPLE_LEAST && f.km2 as f64 >= PEOPLE_LEAST_KM2)
+    }
+}
+
 /// THE TREE (part 2): the peoples at each kept state, each with an id
 /// that lasts. At a kept state the peoples are clustered (`peoples_of`,
 /// PEOPLE_DISTANCE) over the cells the state holds people in, and a
@@ -701,7 +713,7 @@ pub struct Tree {
     /// Each kept state's people id of each cell the state holds people in
     /// (`frame` people over 0), in the cells' order; u16: some 650 to
     /// 1 350 ids in a whole history on the three worlds, 8 to 10 MB of
-    /// ids on Morvane and Zephyra.
+    /// ids on Morvane and Zephyra. Packed (pack.rs `peopleIds{k}`).
     pub ids: Vec<Vec<u16>>,
     // The peoples alive at the last kept state.
     alive: Vec<u32>,

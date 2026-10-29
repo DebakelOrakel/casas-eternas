@@ -18,7 +18,9 @@ use serde_json::{Map, Value, json};
 /// v2 (2026-10-28): the history begins where step 1 of the prehistory
 /// (peopling.rs) ends, has the copper and the towns, and ends at its
 /// first city; its time and its end in the packed form.
-pub const INCUBATOR_ALGO_VERSION: u32 = 2;
+/// v3 (2026-10-29): the peoples (peoples.rs Tree) in the packed form; the
+/// other arrays the same bytes.
+pub const INCUBATOR_ALGO_VERSION: u32 = 3;
 
 // The constants of a module as (name, value) pairs.
 macro_rules! table {

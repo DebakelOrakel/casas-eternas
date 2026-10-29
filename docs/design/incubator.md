@@ -169,8 +169,10 @@ Step 1, the old stone age, and step 2, the history:
   back: kept states every 2 500 years from
   its start and at its end, the people's count every 500 years, the log.
   The map mixes the kept states before and after the time shown. Its
-  overlays: the spread, the lifeways or the density, the villages, the
-  camps, the hamlets, the trade and its sources, the centres.
+  overlays: the spread, the peoples (since 2026-10-29, from H1: each in
+  a colour, related ones alike), the lifeways or the density, the
+  villages, the camps, the hamlets, the trade and its sources, the
+  centres.
 - **H1**: a job runs the history natively on the server and keeps it as
   the artifact H1 ([DEC-0048](../decisions/incubator-history-engine.md));
   a world opens with the history saved last and its origin. The screen

@@ -479,13 +479,13 @@ pub struct SimulationResult {
     pub start: f64,
     pub end: f64,
     /// THE PEOPLES (peoples.rs): each cell's traits at the end, TRAITS a
-    /// cell. Not packed yet.
+    /// cell. Not packed: the peoples they give are (`tree`).
     pub traits: Vec<f32>,
     /// With `keep_traits`: the traits at each kept state (`kept`, aligned),
     /// in 65535ths; else empty. Not packed.
     pub trait_frames: Vec<Vec<u16>>,
     /// THE TREE (peoples.rs): the peoples at each kept state (`kept`,
-    /// aligned) and their ids that last. Not packed yet.
+    /// aligned) and their ids that last. Packed since v3 (pack.rs).
     pub tree: Tree,
     /// The cells whose traits the fields replaced, the herds'; the
     /// branches' splits (peoples.rs).
