@@ -556,17 +556,50 @@ Building since 2026-10-27:
   another (996 766, a landmass of 3.7 M km²: 14.8 % of the land reached,
   72.0 % from 149 889 before), and from it step 2 has no copper in reach
   and no city in the span, 95 big peoples at the end.
+- 2026-10-29 (v6 still): the fronts at their km a year (simulation.rs
+  THE FRONTS' TIMES). A front cell passed on by a chance of km_a × 25
+  years over the km, 1 at most, and a cell reached passed on from the
+  next step only: one cell a step, 0.3 to 0.45 km a year for the fields,
+  the herds, the copper and the smelting on the three worlds' 10 km
+  cells (FARM_KM_A and COPPER_KM_A 1, HERD_KM_A 2). Now each front cell
+  keeps when it took what it passes on, a hop takes its km over the km a
+  year (times the barrier where the land does not suit), and a step's
+  hops come in their times' order: the fields 0.9 to 1.0, the herds 1.8
+  to 2.0 (1.0 or less where the land that suits them is thin), the copper
+  and the smelting 1.0 km a year (the earliest arrival over 50-km bands
+  of mesh distance from the first centre or find, six origins a world).
+  Deterministic: no draw for a hop. The same origins and harness as the
+  line before; the median from the first farming, before → after. The
+  first farming from step 2's start the same (1 000, 500, 1 000). The
+  copper: Morvane +2 500 → +2 500, Thalassor +1 500 → +2 500, Zephyra
+  +8 000 → +11 000; the smelting +5 500 → +5 000, +4 500 → +5 500,
+  +11 000 → +14 000 (3 000 after the copper as before); the city +9 500
+  → +6 000, +6 000 → +7 000, +13 500 → +14 000, after the smelting from
+  18 of 18 origins (Zephyra's in its climate step). The faster fields
+  fill a region before its own centre comes: a second centre comes later
+  (Thalassor's, on the copper's landmass, at +2 000, +1 000 before; its
+  six origins are two histories), and Zephyra's copper waits on its
+  first centre's fields, 3 700 km from the find, across some 400 km of
+  thin arable land the fields cross from +3 400 to +7 700. Morvane's
+  city no longer waits on the smelting's way to a dense seat. The land
+  farmed 10.7, 7.6, 10.1 → 10.7, 10.1, 9.8 %; the people 23.7, 6.3, 24.0
+  → 33.5, 9.8, 23.5 M; the big peoples 145, 163, 172 → 139, 162, 168.
+  No retuning: COPPER_VILLAGE_YEARS 0 (500) brought the copper and the
+  smelting 500 years earlier and Zephyra's city before the smelting from
+  2 of 6 origins. The stripes (border over three times a disc's, the own
+  origin, Zephyra 783 702, without the rain): Morvane 17 → 25, Thalassor
+  11 → 7, Zephyra 24 → 31; of them farmed more than half 11 → 8, 8 → 3,
+  14 → 18.
 
 Open:
 
 1. Step 2's times against the earth's (2026-10-29, Status, v15
-   ecology): the farming, the smelting's interval and Thalassor fit; the
-   copper on Zephyra waits on the way from its fields to its copper
-   (+8 000), the city on Morvane and Zephyra on the smelting's way to a
-   dense seat (+9 500, +13 500). The fronts of the fields and the copper
-   pass a cell a step at most, some 0.4 km a year, below FARM_KM_A and
-   COPPER_KM_A (1 km a year): a fix changes all of step 2's times.
-   TOWN_GROWTH_A 0.001 would bring the cities 500 to 1 000 years earlier.
+   ecology, the fronts at their km a year): the farming, the smelting's
+   interval and Morvane fit; Thalassor's copper, smelting and city are
+   one climate step late (+2 500, +5 500, +7 000: its second centre at
+   +2 000); the copper on Zephyra waits on the way from its fields to
+   its copper (+11 000), its city on the smelting (+14 000). TOWN_GROWTH_A
+   0.001 would bring the cities 500 to 1 000 years earlier.
 2. The peoples' splits in the chronicle: few once they must hold 5 000
    years and not come in step 2's first 5 000 years (1, 1, 6 on the
    three worlds); a lower share of the land lived in to tell
@@ -582,6 +615,8 @@ Open:
    replacement's rays are back where the fields cross wide arable land
    (Morvane's middle continent, north); `kin_of` takes the people of the
    most farmers around a cell, and on a straight front that is the ray
-   behind it.
+   behind it. The fronts at their km a year (2026-10-29) changed their
+   count by world, not their cause (Morvane 17 → 25, Thalassor 11 → 7,
+   Zephyra 24 → 31).
 7. Thalassor's own origin on the v15 ecology (996 766) is on a landmass
    of 3.7 M km²: step 1 reaches 14.8 % of the land, step 2 has no city.

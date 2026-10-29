@@ -37,7 +37,10 @@ use serde_json::{Map, Value, json};
 /// STABLE_YEARS, COPPER_VILLAGE_YEARS, SMELT_AFTER), the tuning alone;
 /// COPPER_RICH 0.5 for the generator's new copper (DEC-0053, 2026-10-29),
 /// the tuning alone; step 2's times on the generator's v15 ecology
-/// (2026-10-29: COPPER_DAYS, TOWN_SHARE, SMELT_SHARE), the tuning alone.
+/// (2026-10-29: COPPER_DAYS, TOWN_SHARE, SMELT_SHARE), the tuning alone;
+/// the fronts of the fields, the herds, the copper and the smelting at
+/// their km a year (simulation.rs THE FRONTS' TIMES, 2026-10-29: one cell
+/// a step before).
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.

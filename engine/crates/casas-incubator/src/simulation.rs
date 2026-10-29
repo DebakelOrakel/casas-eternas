@@ -277,6 +277,22 @@ pub(crate) const VILLAGE_LEAVE: f64 = 0.5;
 // a km²). HERD_RATE was 0.2: the first herding centre came before the
 // first fields on Morvane. A cell keeps its domesticates as bits, MAX_TAMED
 // of them at most.
+// THE FRONTS' TIMES (2026-10-29): a front cell keeps when it took what it
+// passes on; a hop to a neighbour takes its km over FARM_KM_A (HERD_KM_A,
+// COPPER_KM_A), times the barrier where the neighbour does not suit, and
+// comes at that time or at the step's start, whichever is later (a
+// neighbour lived in since). The hops of a step come in their times'
+// order, so that a cell reached in a step passes on in it: as many hops
+// as the km allow, the speed the same for any step and cell. Before, a
+// hop came by a chance of km_a × STEP_YEARS over the km, 1 at most, and a
+// cell reached passed on from the next step only: one cell a step, some
+// 0.4 km a year on the three worlds' 10 km cells for the fields, the
+// herds and the copper alike (2.0 and 1.0 km a year meant), and over the
+// land that did not suit only some 2 times slower, not 5 or 3. Now the
+// fields 0.9 to 1.0, the herds 1.8 to 2.0 (1.0 or less where the land
+// that suits them is thin), the copper and the smelting 1.0 km a year
+// (the earliest farmAt and the like over 50-km bands of mesh distance
+// from the first centre or find, six origins on each world).
 pub(crate) const SETTLED_YEARS: f64 = 5000.0;
 pub(crate) const FARM_RATE: f64 = 0.3;
 pub(crate) const HERD_RATE: f64 = 0.1;
@@ -891,13 +907,15 @@ struct Sim<'h, 'a> {
     tamed_bits: Vec<u32>,
     centres: Vec<f64>,
     tamed: Vec<Tamed>,
-    // The cells that may pass the fields or the herds on.
-    farm_front: Vec<usize>,
-    herd_front: Vec<usize>,
+    // The cells that may pass the fields or the herds on: (cell, the
+    // domesticate, when the cell took it); the copper's and the smelting's:
+    // (cell, when it knew it). THE FRONTS' TIMES (2026-10-29).
+    farm_front: Vec<(usize, usize, f64)>,
+    herd_front: Vec<(usize, usize, f64)>,
     copper_at: Vec<f32>,
     smelt_at: Vec<f32>,
-    copper_front: Vec<usize>,
-    smelt_front: Vec<usize>,
+    copper_front: Vec<(usize, f64)>,
+    smelt_front: Vec<(usize, f64)>,
     // The cells the fishers live in (THE FISHERS).
     fishing: Vec<u8>,
     // THE LAND DRYING: each cell's wetness now (0 outside the dry belt) and
@@ -1054,9 +1072,9 @@ impl Sim<'_, '_> {
         // first passed none it took later on.
         let plant = self.tamed[d].plant;
         if plant {
-            self.farm_front.push(cell);
+            self.farm_front.push((cell, d, t));
         } else {
-            self.herd_front.push(cell);
+            self.herd_front.push((cell, d, t));
         }
         if !self.suits(d, cell) {
             return;
@@ -1142,10 +1160,10 @@ impl Sim<'_, '_> {
     fn knows(&mut self, smelted: bool, cell: usize, t: f64) {
         if smelted {
             self.smelt_at[cell] = t as f32;
-            self.smelt_front.push(cell);
+            self.smelt_front.push((cell, t));
         } else {
             self.copper_at[cell] = t as f32;
-            self.copper_front.push(cell);
+            self.copper_front.push((cell, t));
         }
     }
 
@@ -2781,112 +2799,140 @@ pub fn simulate(
             sim.front = still_front;
         }
         // 2b. The fields and the herds, passed on to the lived-in
-        //     neighbours they suit; a front cell with nothing left to pass
-        //     leaves.
+        //     neighbours they suit, in the order they come (THE FRONTS'
+        //     TIMES); a front cell with nothing left to pass leaves.
+        let step_end = t + STEP_YEARS;
         for plant in [true, false] {
-            let front = if plant {
-                &sim.farm_front
+            let front = std::mem::take(if plant {
+                &mut sim.farm_front
             } else {
-                &sim.herd_front
-            };
+                &mut sim.herd_front
+            });
             if front.is_empty() {
                 continue;
             }
-            let added = front.len();
-            let list: Vec<usize> = front[..added].to_vec();
             let km_a = if plant { FARM_KM_A } else { HERD_KM_A };
+            let barrier = if plant { FARM_BARRIER } else { HERD_BARRIER };
+            // A hop's (to, domesticate, from), by its time in the heap.
+            let mut hops: Vec<(usize, usize, usize)> = Vec::new();
+            let mut heap = MinHeap::new(front.len());
             let mut still = Vec::new();
-            for &i in &list {
+            for &(i, d, at) in &front {
                 let mut left = false;
                 for e in h.edges(i) {
                     let u = h.nbr[e] as usize;
-                    if sim.people[u] == 0.0 {
+                    if sim.people[u] == 0.0 || sim.tamed_bits[u] & (1 << d) != 0 {
                         continue;
                     }
-                    for d in 0..sim.tamed.len() {
-                        if sim.tamed_bits[i] & (1 << d) == 0
-                            || sim.tamed_bits[u] & (1 << d) != 0
-                            || sim.tamed[d].plant != plant
-                        {
-                            continue;
-                        }
-                        left = true;
-                        let barrier = if sim.suits(d, u) {
-                            1.0
-                        } else if plant {
-                            FARM_BARRIER
-                        } else {
-                            HERD_BARRIER
-                        };
-                        if sim.random.next()
-                            < js::min(1.0, (km_a * STEP_YEARS) / (h.dist_km[e] as f64 * barrier))
-                        {
-                            // THE REPLACEMENT (peoples.rs): the fields
-                            // that come from a farmer cell to a cell
-                            // without them make it pending; `decide`
-                            // decides it later. The herds make no cell
-                            // pending (2026-10-29: their rings, peoples.rs
-                            // REPLACE_SHARE).
-                            let had = sim.farm_at[u] < f32::INFINITY;
-                            sim.take(d, u, t + STEP_YEARS);
-                            sim.grows(u);
-                            if plant
-                                && !had
-                                && sim.farm_at[u] < f32::INFINITY
-                                && sim.farm_at[i] < f32::INFINITY
-                            {
-                                sim.traits.came(u, i, &sim.people);
-                            }
-                        }
+                    left = true;
+                    let slow = if sim.suits(d, u) { 1.0 } else { barrier };
+                    let when = js::max(t, at + h.dist_km[e] as f64 * slow / km_a);
+                    if when <= step_end {
+                        heap.push(when, hops.len() as i32);
+                        hops.push((u, d, i));
                     }
                 }
                 if left {
-                    still.push(i);
+                    still.push((i, d, at));
                 }
             }
+            while !heap.is_empty() {
+                heap.pop();
+                let at = heap.popped_key;
+                let (u, d, i) = hops[heap.popped_index as usize];
+                if sim.tamed_bits[u] & (1 << d) != 0 {
+                    continue;
+                }
+                // THE REPLACEMENT (peoples.rs): the fields that come from
+                // a farmer cell to a cell without them make it pending;
+                // `decide` decides it later. The herds make no cell
+                // pending (2026-10-29: their rings, peoples.rs
+                // REPLACE_SHARE).
+                let had = sim.farm_at[u] < f32::INFINITY;
+                sim.take(d, u, at);
+                sim.grows(u);
+                if plant && !had && sim.farm_at[u] < f32::INFINITY && sim.farm_at[i] < f32::INFINITY
+                {
+                    sim.traits.came(u, i, &sim.people);
+                }
+                for e in h.edges(u) {
+                    let v = h.nbr[e] as usize;
+                    if sim.people[v] == 0.0 || sim.tamed_bits[v] & (1 << d) != 0 {
+                        continue;
+                    }
+                    let slow = if sim.suits(d, v) { 1.0 } else { barrier };
+                    let when = at + h.dist_km[e] as f64 * slow / km_a;
+                    if when <= step_end {
+                        heap.push(when, hops.len() as i32);
+                        hops.push((v, d, u));
+                    }
+                }
+            }
+            // The cells that took one this step, pushed by `take`, follow.
             let front = if plant {
                 &mut sim.farm_front
             } else {
                 &mut sim.herd_front
             };
-            still.extend_from_slice(&front[added..]);
+            still.append(front);
             *front = still;
         }
         // THE REPLACEMENT decided where the farmers have grown in a
         // pending cell (peoples.rs `decide`).
         sim.traits.decide(h, &sim.people, &sim.farm_at);
-        // 2c. The copper and its smelting, passed on.
+        // 2c. The copper and its smelting, passed on in the order they
+        //     come (THE FRONTS' TIMES).
         for smelted in [false, true] {
             let front = std::mem::take(if smelted {
                 &mut sim.smelt_front
             } else {
                 &mut sim.copper_front
             });
+            // Whether `u` may know it: lived in, not knowing it, and for
+            // the smelting knowing the copper.
+            let open = |sim: &Sim, u: usize| {
+                let known = if smelted {
+                    sim.smelt_at[u]
+                } else {
+                    sim.copper_at[u]
+                };
+                sim.people[u] != 0.0
+                    && known == f32::INFINITY
+                    && (!smelted || sim.copper_at[u] < f32::INFINITY)
+            };
+            let mut heap = MinHeap::new(front.len());
             let mut still = Vec::new();
-            for &i in &front {
+            for &(i, at) in &front {
                 let mut left = false;
                 for e in h.edges(i) {
                     let u = h.nbr[e] as usize;
-                    let known = if smelted {
-                        sim.smelt_at[u]
-                    } else {
-                        sim.copper_at[u]
-                    };
-                    if sim.people[u] == 0.0
-                        || known < f32::INFINITY
-                        || (smelted && sim.copper_at[u] == f32::INFINITY)
-                    {
+                    if !open(&sim, u) {
                         continue;
                     }
                     left = true;
-                    if sim.random.next()
-                        < js::min(1.0, (COPPER_KM_A * STEP_YEARS) / h.dist_km[e] as f64)
-                    {
-                        sim.knows(smelted, u, t + STEP_YEARS);
+                    let when = js::max(t, at + h.dist_km[e] as f64 / COPPER_KM_A);
+                    if when <= step_end {
+                        heap.push(when, u as i32);
                     }
                 }
                 if left {
-                    still.push(i);
+                    still.push((i, at));
+                }
+            }
+            while !heap.is_empty() {
+                heap.pop();
+                let at = heap.popped_key;
+                let u = heap.popped_index as usize;
+                if !open(&sim, u) {
+                    continue;
+                }
+                sim.knows(smelted, u, at);
+                for e in h.edges(u) {
+                    let v = h.nbr[e] as usize;
+                    let when = at + h.dist_km[e] as f64 / COPPER_KM_A;
+                    if when <= step_end && open(&sim, v) {
+                        heap.push(when, v as i32);
+                    }
                 }
             }
             let front = if smelted {
