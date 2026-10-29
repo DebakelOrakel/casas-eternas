@@ -2851,9 +2851,12 @@ pub fn simulate(
                 let had = sim.farm_at[u] < f32::INFINITY;
                 sim.take(d, u, at);
                 sim.grows(u);
-                if plant && !had && sim.farm_at[u] < f32::INFINITY && sim.farm_at[i] < f32::INFINITY
-                {
-                    sim.traits.came(u, i, &sim.people);
+                if plant && !had && sim.farm_at[u] < f32::INFINITY {
+                    sim.traits.fielded(h, u, &sim.people);
+                    if sim.farm_at[i] < f32::INFINITY {
+                        let centre = sim.tamed[d].cell;
+                        sim.traits.came(u, i, centre, &sim.people);
+                    }
                 }
                 for e in h.edges(u) {
                     let v = h.nbr[e] as usize;

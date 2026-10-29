@@ -590,6 +590,34 @@ Building since 2026-10-27:
   origin, Zephyra 783 702, without the rain): Morvane 17 → 25, Thalassor
   11 → 7, Zephyra 24 → 31; of them farmed more than half 11 → 8, 8 → 3,
   14 → 18.
+- 2026-10-29 (v6 still): the peoples without the stripes again
+  (`casas-incubator` peoples.rs THE STRIPES AGAIN, FIELDS_AROUND). Two
+  causes, seen in the cells' peoples, branches and times replaced: (1)
+  on a wide front of fields the farmers who decided before a cell are
+  the few behind it, its neighbours to the sides pending as it is, and
+  the people of the most farmers among its neighbours was the ray
+  behind it; (2) where the fields are a strip (a valley, a coastal
+  plain, the arable land's fringe) the strip took one people along its
+  length, through the foragers' peoples, with a mosaic edge. Now a
+  replaced cell takes the nearest heart of a farmer people on its
+  landmass (where none, its fields' centre): the farmer peoples part
+  the land they take as the seed's branches do, and grow as blobs that
+  split (THE SPLIT) into compact daughters. And it is replaced only
+  where the fields are on 0.85 of the lived km² within 40 km of it: in
+  a strip the foragers keep their traits. Either alone did not do (the
+  centre's people alone grew as a ring around its daughters). Without
+  the rain, Morvane, Thalassor from 149 889 and from its own origin,
+  Zephyra from 783 702: the peoples with a border over three times a
+  disc's 25 → 19, 41 → 10, 7 → 4, 31 → 12 (of them farmed more than
+  half 8 → 12, 15 → 4, 3 → 3, 18 → 8); with the rain, by the tree's ids
+  (Thalassor from 149 889) 21 → 15, 23 → 7, 30 → 12. The fields replaced
+  52 913 → 38 031, 37 429 → 27 103, 7 714 → 4 687, 38 547 → 30 661; the
+  big peoples 164 → 171, 178 → 169, 89 → 100, 169 → 178; the largest
+  5.9 → 3.3, 3.8 → 3.2, 9.7 → 6.0, 2.9 → 4.1 % of the land lived in. The
+  chronicle with the rain (splits / merges / gone / turns to farming):
+  Morvane 0/0/0/20 → 0/0/0/32, Thalassor 0/0/2/21 → 0/0/1/26, Zephyra
+  23/1/0/17 → 15/0/0/22. All other arrays and events keep their bytes;
+  Morvane's history 2.6 → 3.0 s.
 
 Open:
 
@@ -611,12 +639,11 @@ Open:
    the engine's ecology with the shelf down to −120 m as land, in today's
    climate, kept with level 1; it replaces the coast's values the shelf
    takes now.
-6. The peoples' stripes on the v15 ecology (2026-10-29, Status): the
-   replacement's rays are back where the fields cross wide arable land
-   (Morvane's middle continent, north); `kin_of` takes the people of the
-   most farmers around a cell, and on a straight front that is the ray
-   behind it. The fronts at their km a year (2026-10-29) changed their
-   count by world, not their cause (Morvane 17 → 25, Thalassor 11 → 7,
-   Zephyra 24 → 31).
+6. The peoples' stripes on the v15 ecology: the rays are gone
+   (2026-10-29, Status). What is left are farmer peoples the shape of
+   their farmland (Morvane's north coastal plain: one people some
+   1 000 km by 150 km) and forager peoples with farmers' enclaves or
+   left between two farmed regions; the measure (border over three
+   times a disc's) counts the enclaves' borders too.
 7. Thalassor's own origin on the v15 ecology (996 766) is on a landmass
    of 3.7 M km²: step 1 reaches 14.8 % of the land, step 2 has no city.

@@ -40,7 +40,9 @@ use serde_json::{Map, Value, json};
 /// (2026-10-29: COPPER_DAYS, TOWN_SHARE, SMELT_SHARE), the tuning alone;
 /// the fronts of the fields, the herds, the copper and the smelting at
 /// their km a year (simulation.rs THE FRONTS' TIMES, 2026-10-29: one cell
-/// a step before).
+/// a step before); the peoples without the stripes again (peoples.rs
+/// `Traits::decide`, `kin_of`, 2026-10-29: the nearest farmer heart, and
+/// the fields around), the other arrays and events the same bytes.
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.
@@ -103,7 +105,7 @@ pub fn constants() -> Value {
         )),
         "peoples": object(table!(peoples:
             TRAITS, BRANCH_SHARE, BRANCH_ROUNDS, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
-            CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, SPLIT_KM2,
+            CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, FIELDS_AROUND, FIELDS_AROUND_KM, SPLIT_KM2,
             PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, FARMERS_TOLD_SHARE, TOLD_LIVES_YEARS, EARLY_SPLIT_YEARS, FARMERS_TOLD,
         )),
         "settle": object(table!(settle:
