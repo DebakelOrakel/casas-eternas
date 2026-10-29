@@ -3043,6 +3043,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // the console, as a worker's uncaught error does; the stage shows no
   // result, as before it ran.
   function handleStageFailed(message: WorkerStageFailedMessage): void {
+    if (message.restore) {
+      restoreFailed(message.error)
+      return
+    }
     console.error(`[generator] the ${message.stage} stage failed in the worker: ${message.error}`)
     // Said, not only logged: a chain that waited on it goes on below, and
     // without a word the step would just stay empty. The stage by the name
@@ -3065,6 +3069,25 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       updateProgress()
     }
     handleStageDeclined({ type: 'stageDeclined', stage: message.stage })
+  }
+
+  // A load's restore failed in the worker (TEG-89): the restore threw, its
+  // first render did, or the worker itself failed while it ran. No render of
+  // the opened world comes, so nothing else ends the load. It ends failed at
+  // its restore step, the reason to the console; the world list opens
+  // behind the panel. The map still shows the world before the open, under
+  // the opened one's name and controls — nothing to go on with.
+  function restoreFailed(reason: string): void {
+    console.error(`[generator] the world could not be restored: ${reason}`)
+    if (restoredFromSave) loadFailed()
+  }
+  // The load ends failed at its restore: what the read began is past.
+  function loadFailed(): void {
+    restoredFromSave = false
+    markCleanOnNextRender = false
+    restoredRefinement = null
+    loadPanel.fail('restore')
+    openWorldChooser()
   }
 
   function clearStage(id: StageId): void {
@@ -3354,9 +3377,24 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     })
   }
 
-  worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
-    const message = event.data
+  // The worker failed outright (its script did not load, or an error no
+  // handler caught): a restore it held is answered by nothing else.
+  worker.addEventListener('error', (event) => {
+    if (restoredFromSave) restoreFailed(event.message || 'the worker failed')
+  })
 
+  // A load's first render the screen cannot take ends the load as a
+  // restore that failed (TEG-89); the error goes on to the console.
+  worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
+    try {
+      handleWorkerMessage(event.data)
+    } catch (error) {
+      if (event.data.type === 'rendered' && restoredFromSave) restoreFailed(String(error))
+      throw error
+    }
+  }
+
+  function handleWorkerMessage(message: WorkerOutboundMessage): void {
     if (message.type === 'elevationField') {
       // Canonical surfaces shared between the displaced map plane and the
       // draped river ribbons, so they agree everywhere by construction (see
@@ -4272,7 +4310,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     },
     // Same path a picked file takes — `loadWorldFromZip` closes the chooser
     // once the archive has actually turned out to be a world.
-    onOpenArchive: (archive, kept) => { void loadWorldFromZip(new File([archive], 'world.zip'), kept) },
+    onOpenArchive: (archive, kept) => openWorldFromZip(new File([archive], 'world.zip'), kept),
     onOpening: (kept) => openLoad(kept),
     onOpenFailed: () => loadPanel.fail('fetch'),
     onPickFile: () => pickLocalWorldFile(),
@@ -4577,7 +4615,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     input.accept = '.zip'
     input.addEventListener('change', () => {
       const file = input.files?.[0]
-      if (file) void loadWorldFromZip(file)
+      if (file) openWorldFromZip(file)
     })
     input.click()
   }
@@ -4609,6 +4647,16 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       }
     }
     postToWorker({ type: 'serializeWorld' })
+  }
+
+  // loadWorldFromZip, whose exceptions end the load too (TEG-89). The read
+  // catches its own; one past it is the restore's preparation, and the
+  // world before the open is let go of by then.
+  function openWorldFromZip(file: File, kept?: OpenedCopy): void {
+    loadWorldFromZip(file, kept).catch((error: unknown) => {
+      console.error('[generator] the world could not be opened', error)
+      loadFailed()
+    })
   }
 
   // Load flow: unzip → set the UI from the recipe/status → restore the sim in

@@ -2146,6 +2146,20 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Set on dispose, so a level that arrives after leaving is dropped.
   let disposed = false
 
+  // showLevel, whose exceptions end the load too: a store that does not
+  // answer, an engine that does not load, a view not built. The step that
+  // ran fails, the reason to the console; the list stays up behind the
+  // panel (TEG-89).
+  async function openLevel(archive: Blob, uid: string): Promise<boolean> {
+    try {
+      return await showLevel(archive, uid)
+    } catch (error) {
+      console.error('[incubator] the world could not be opened', error)
+      loadPanel.failRunning()
+      return false
+    }
+  }
+
   // Read the world's level 1, paint it and show it. The level of the save's
   // own terrain when the server holds it, else any level of the world.
   async function showLevel(archive: Blob, uid: string): Promise<boolean> {
@@ -2325,7 +2339,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     onOpenFailed: () => loadPanel.fail('fetch'),
     onOpenArchive: (archive, kept) => {
       void (async () => {
-        if (!(await showLevel(archive, kept.uid))) return
+        if (!(await openLevel(archive, kept.uid))) return
         if (held) held = { ...held, name: kept.name, seed: kept.seed }
         titleBar.setWorldShown(true)
         stepBar.setWorld({ name: kept.name || undefined, seed: kept.seed })
@@ -2422,7 +2436,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       const archive = await fetchWorld(worldParam)
       if (!archive) loadPanel.fail('fetch')
       if (!archive || disposed) return
-      if (!(await showLevel(archive, worldParam))) return
+      if (!(await openLevel(archive, worldParam))) return
       worldChooser.close()
       setFurniture(true)
       root.dataset.ready = '1'

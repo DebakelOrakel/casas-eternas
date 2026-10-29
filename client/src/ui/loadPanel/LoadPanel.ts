@@ -49,6 +49,9 @@ export interface LoadPanel {
   progress(id: string, fraction: number): void
   // The step failed: the head says so, `detail` says why.
   fail(id: string, detail?: string): void
+  // The running step failed: for a failure the screen did not see coming
+  // (an exception), which cannot say which step it was in.
+  failRunning(detail?: string): void
   close(): void
   relabel(): void
   dispose(): void
@@ -191,6 +194,17 @@ export function createLoadPanel(host: HTMLElement): LoadPanel {
 
   const rowOf = (id: string): Row | undefined => rows.find((row) => row.id === id)
 
+  function fail(id: string, detail?: string): void {
+    const row = rowOf(id)
+    if (!request) return
+    if (row) row.state = 'failed'
+    failed = true
+    error.textContent = detail ?? ''
+    error.hidden = !detail
+    render()
+    queueMicrotask(() => back.focus())
+  }
+
   return {
     open(next) {
       request = next
@@ -223,15 +237,9 @@ export function createLoadPanel(host: HTMLElement): LoadPanel {
       row.fraction = Math.min(1, Math.max(0, fraction))
       render()
     },
-    fail(id, detail) {
-      const row = rowOf(id)
-      if (!request) return
-      if (row) row.state = 'failed'
-      failed = true
-      error.textContent = detail ?? ''
-      error.hidden = !detail
-      render()
-      queueMicrotask(() => back.focus())
+    fail,
+    failRunning(detail) {
+      fail(rows.find((row) => row.state === 'running')?.id ?? '', detail)
     },
     close,
     relabel: render,

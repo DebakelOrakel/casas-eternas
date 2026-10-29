@@ -479,10 +479,18 @@ export interface WorkerStageDeclinedMessage {
 // forever (found 2026-10-11, a sphere save's load requesting the ecology
 // before step 4 ran on the sphere). `error` is the exception's text, for
 // the console; the stage's state in the worker is as it was before the run.
+//
+// `restore`: the failure is a load's restore (`restoreWorld`), not a run of
+// the stage — the stage is the era the world was to be restored in
+// ('genesis' for an Archean save, 'tectonics' for a plate one). The restore
+// threw, or its first render did, and no render of the loaded world comes:
+// the screen ends the load with it (TEG-89). Without the mark it could not
+// tell this from a step of the history that threw.
 export interface WorkerStageFailedMessage {
   type: 'stageFailed'
   stage: StageId
   error: string
+  restore?: true
 }
 
 // The computed climate as the screen paints it: the climate's chart

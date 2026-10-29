@@ -208,9 +208,10 @@ function decline(stage: StageId, needs?: StageId): true {
 
 // A stage's compute threw: said to the screen (WorkerStageFailedMessage),
 // which releases what waits for it, and logged here with its stack.
-function fail(stage: StageId, error: unknown): void {
-  console.error(`[generator] the ${stage} stage failed`, error)
-  const message: WorkerStageFailedMessage = { type: 'stageFailed', stage, error: error instanceof Error ? error.message : String(error) }
+// `restore`: it was a load's restore that failed (WorkerStageFailedMessage).
+function fail(stage: StageId, error: unknown, restore = false): void {
+  console.error(`[generator] the ${stage} stage ${restore ? 'could not be restored' : 'failed'}`, error)
+  const message: WorkerStageFailedMessage = { type: 'stageFailed', stage, error: error instanceof Error ? error.message : String(error), ...(restore ? { restore: true as const } : {}) }
   emit(message)
 }
 
@@ -973,7 +974,26 @@ function savedOf(payload: FieldPayload | undefined): SavedField | undefined {
   return payload ? { values: new Float64Array(payload.values), cells: payload.cells, spacingM: payload.spacingM } : undefined
 }
 
+// A load's restore, and its first render: the screen's load waits for that
+// render. Whatever throws on the way — the engine refusing the save, the
+// render after it — is said (fail, `restore`), or the load waits forever
+// (TEG-89).
 function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): void {
+  const stage = restoreStage(message)
+  let rendered: Promise<void>
+  try {
+    rendered = restoreWorld(message)
+  } catch (error) {
+    fail(stage, error, true)
+    return
+  }
+  rendered.catch((error: unknown) => fail(stage, error, true))
+}
+// The era a save is restored in, which names its failure.
+const restoreStage = (message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): StageId => message.archean ? 'genesis' : 'tectonics'
+
+// The world from the save, and its first render (the promise).
+function restoreWorld(message: Extract<WorkerInboundMessage, { type: 'restoreWorld' }>): Promise<void> {
   stopTicking()
   worldGeneration += 1
   dropHandover()
@@ -1001,8 +1021,7 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
     routed = false
     // The raster is the Archean's render of its state, as in the session
     // (the save carries none since DEC-0036's save step).
-    void renderArcheanAndPost()
-    return
+    return renderArcheanAndPost()
   }
   // A restored TECTONIC world replaces whatever world was held, an Archean
   // too: a session that had run a Genesis before loading once kept it, and
@@ -1029,7 +1048,7 @@ function handleRestoreWorld(message: Extract<WorkerInboundMessage, { type: 'rest
   replaceWorld(theEngine().World.restorePlates(shape, message.snapshot, savedOf(requireOceanAge(message.oceanAge)), savedOf(message.mantle) ?? null, lattice, mesh), 'plates')
   routed = mesh !== null
   // The terrain's rasterisation, rendered — no re-erosion.
-  void renderTerrain()
+  return renderTerrain()
 }
 
 
@@ -1292,6 +1311,19 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
 // the ecology and its month).
 const COMPUTE_STAGE: Partial<Record<WorkerInboundMessage['type'], StageId>> = {
   climateRun: 'climate', climateRefine: 'climate', hydrologyRun: 'hydrology', ecologyRun: 'ecology', ecologyMonth: 'ecology',
+}
+
+// A message the pipeline could not take at all — its engine did not load
+// (generatorWorker.ts) — answered as its handler's failure would be: what
+// waits for the answer is released. Other messages have no one waiting.
+export function dispatchFailed(message: WorkerInboundMessage, error: unknown): void {
+  if (message.type === 'restoreWorld') {
+    fail(restoreStage(message), error, true)
+    return
+  }
+  const stage = COMPUTE_STAGE[message.type]
+  if (stage) fail(stage, error)
+  else console.error(`[generator] ${message.type} not taken`, error)
 }
 
 export function dispatch(message: WorkerInboundMessage): void {

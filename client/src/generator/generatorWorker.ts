@@ -1,5 +1,5 @@
 import type { WorkerInboundMessage } from './pipeline/messages'
-import { dispatch, setEmitter, setEngine } from './pipeline/runtime'
+import { dispatch, dispatchFailed, setEmitter, setEngine } from './pipeline/runtime'
 import { loadWasmEngine } from './pipeline/engineWasm'
 
 // The generator runs off the main thread: stepping an epoch and rendering the
@@ -22,9 +22,11 @@ setEmitter((message, transfer) => {
 })
 
 // The engine loads once, at the worker's start; the messages that arrive
-// before it is there wait for it, in their order.
+// before it is there wait for it, in their order. An engine that does not
+// load answers each message as its failure (dispatchFailed): the screen
+// waits for some of them (a load's restore, a stage's compute).
 const ready = loadWasmEngine().then(setEngine)
 
 self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
-  void ready.then(() => dispatch(event.data))
+  void ready.then(() => dispatch(event.data), (error: unknown) => dispatchFailed(event.data, error))
 }

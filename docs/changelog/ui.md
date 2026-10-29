@@ -4,6 +4,7 @@ Controls, overlays, rendering, save/load, notifications. See [README](./README.m
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
 ## 2026-10-29
+- **fixed** Generator and incubator: a world that cannot be restored ends its load as failed, with the world list behind it, instead of loading for ever. `common.loading.failed`
 - **changed** Generator: the land's overlays follow the drawn coast, and the wind's calm belts are drawn smooth in the generator and the incubator.
 - **new** Incubator: the subtropics' deserts and steppes are wetter at the New Stone Age's start and dry out later, and the chronicle tells it. `incubator.chronicle.event.drying`
 - **changed** Incubator: the overlay of step 1's branches is called Lineages. `incubator.peopling.groups`
