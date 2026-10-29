@@ -1,8 +1,12 @@
-//! `ecology/ecologyField.ts`: the ecology layer — the finished climate and
-//! terrain turned into resource and suitability fields per node of the
-//! terrain mesh, the carrying capacity through its two knobs, a field's
-//! months, and the fields' rasters for the chart. A function, not a
-//! simulation; the TypeScript file explains each rule.
+//! The ecology layer — the finished climate and terrain turned into
+//! resource and suitability fields per node of the terrain mesh, the
+//! carrying capacity through its two knobs, a field's months, and the
+//! fields' rasters for the chart. A function, not a simulation
+//! (docs/decisions/ecology.md, ecology-as-function.md); the values and how
+//! they were measured are in ecology_tune_params.rs. The client keeps only
+//! the vocabulary (`ecology/ecologyField.ts`: the field ids, the fine
+//! codec, `EcologyParams`); its TypeScript copy of the rules was removed
+//! 2026-10-29.
 
 use crate::climate::biomes::biome;
 use crate::climate::climate_field::{CLIMATE_RES_X, CLIMATE_RES_Y};
@@ -122,6 +126,10 @@ pub struct EcologyInputs<'a> {
     pub warp_seed: u32,
 }
 
+/// Terrestrial net primary productivity, Miami-model style (0..1):
+/// limited by whichever of temperature and precipitation is scarcer
+/// (Liebig's law of the minimum). The ecological backbone of wild game and
+/// pasture (the arable has its own response since DEC-0052, `crop_growth`).
 fn productivity(temp_c: f64, precip_mm: f64) -> f64 {
     let npp_temp = 1.0 / (1.0 + det_exp(1.315 - 0.119 * temp_c));
     let npp_precip = 1.0 - det_exp(-0.000664 * js::max(0.0, precip_mm));
@@ -155,6 +163,10 @@ fn leaching(year_temp_c: f64, year_precip_mm: f64) -> f64 {
     1.0 - t.leach_w * smoothstep_between(t.leach_from_mm, t.leach_full_mm, year_precip_mm)
 }
 
+/// How well a sea at this temperature (°C) mixes its nutrients up, 0..1:
+/// in full from `fish_mix_full_c` down to `fish_mix_ice_c` (cool seas turn
+/// over in winter), gone at `fish_mix_warm_c` (a warm sea stays layered)
+/// and `fish_mix_ice_span_c` below the sea ice.
 fn sea_mixing(temp_c: f64) -> f64 {
     let t = &ECOLOGY_TUNING;
     if temp_c < t.fish_mix_ice_c {
@@ -163,6 +175,8 @@ fn sea_mixing(temp_c: f64) -> f64 {
     clamp01((t.fish_mix_warm_c - temp_c) / (t.fish_mix_warm_c - t.fish_mix_full_c))
 }
 
+/// Warm dryness for salt, 0..1: the precipitation's lack against
+/// `salt_arid_precip` × the warmth (full at 25 °C).
 fn arid_warm(temp_c: f64, precip_mm: f64) -> f64 {
     clamp01(1.0 - precip_mm / ECOLOGY_TUNING.salt_arid_precip) * clamp01(temp_c / 25.0)
 }
@@ -182,34 +196,53 @@ pub struct EcologyRaw {
     pub silver: Vec<f32>,
 }
 
-/// What a month's fields need.
+/// What a month's fields need: per node the parts that do not change with
+/// the month, and the climate's months to read the rest from.
 pub struct EcologySeasons {
     pub months: PointMonths,
+    /// Arable: flatness × the harvest's reliability, and the water on the
+    /// fields.
     pub arable_factor: Vec<f32>,
     pub field_water: Vec<f32>,
+    /// Game: the edge bonus; pasture: the year's grazing and the year's
+    /// mean productivity it is set against.
     pub edge_factor: Vec<f32>,
     pub pasture_year: Vec<f32>,
     pub npp_year: Vec<f32>,
+    /// Salt: the coast's weight and the salt flats.
     pub salt_coast: Vec<f32>,
     pub salt_flat: Option<Vec<u8>>,
+    /// Fish: a sea node's richness without its winter mixing, the land's
+    /// reach to the sea and its fresh water.
     pub sea_rich_static: Vec<f32>,
     pub access: Vec<f32>,
     pub freshwater: Vec<f32>,
 }
 
-/// The physics of the ecology, every field before the sliders
-/// (`EcologyBase` in TypeScript). The mesh is the caller's.
+/// The physics of the ecology, every field before the sliders: the
+/// expensive part, which depends on the world alone. The caller keeps it
+/// while only the sliders move (`apply_ecology`). The mesh is the caller's.
 pub struct EcologyBase {
     pub geo: MeshGeometry,
     pub slots: usize,
     pub land: Vec<u8>,
+    /// 1 on the alive nodes that are not land: the fish's sea.
     pub sea: Vec<u8>,
     pub raw: EcologyRaw,
+    /// Gems' two parts, the orogen belt and the aridity (the copper they
+    /// weather from is scaled by the slider).
     pub gem_belt: Vec<f32>,
     pub aridity: Vec<f32>,
+    /// Tin's belt points, thinned (its radius is a slider: tin_rarity).
     pub tin_points: Vec<(f64, f64)>,
+    /// The province layer's deviation per land node (volcanic soil +
+    /// noise), before its mean is taken off.
     pub province_deviation: Vec<f32>,
+    /// What a month's fields need (`ecology_month`); None for a climate
+    /// without months (not refined).
     pub seasonal: Option<EcologySeasons>,
+    /// The pixels' triangles for the fields' rasters, made on the first
+    /// call (`ecology_fine`).
     pub raster: Option<TriangleRaster>,
 }
 
@@ -660,7 +693,17 @@ pub fn prepare_ecology(
 }
 
 /// One month (1..12) of a seasonal field, with its abundance slider; None
-/// when the climate has no months or the field is not seasonal.
+/// when the climate has no months or the field is not seasonal. Each is
+/// what the land gives in that month on the field's own scale:
+/// - arable: the month's crop growth (none below the frost) × flatness ×
+///   reliability; the year is the season's sum (DEC-0052), not the
+///   months' mean;
+/// - game: the month's productivity × the edge bonus;
+/// - pasture: the year's grazing × the month's productivity against the
+///   year's;
+/// - salt: a salt flat in full, else the month's warm dryness × the coast;
+/// - fish: the sea's richness with the month's mixing (on the sea and
+///   within the land's reach), plus the fresh water.
 pub fn ecology_month(
     eco: &EcologyBase,
     mesh: &PeriodicTriangulation,

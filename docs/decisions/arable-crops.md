@@ -141,8 +141,10 @@ tuned again.
 - The ecology's fixtures (`ecology.txt`) and the world stages'
   (`worldStages.txt`) are recorded from the engine (rust-engine.md,
   fork 7c).
-- The TypeScript `ecologyField.ts` / `ecologyTuneParams.ts` still have the
-  Miami arable: nothing runs them since 2026-10-22.
+- The TypeScript `ecologyField.ts` / `ecologyTuneParams.ts` had the Miami
+  arable, and nothing ran them since 2026-10-22: the rules and the tuning
+  were removed 2026-10-29, their explanations moved to the engine's
+  ecology_field.rs and ecology_tune_params.rs.
 
 ## Status
 

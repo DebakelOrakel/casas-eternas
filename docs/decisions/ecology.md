@@ -259,7 +259,9 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      unreliable rain costs harvest unless a river waters the fields. A
      climate that was not refined gives the annual means and no risk.
      Measured on Earth: farmland against non-farmland ×1.9 → ×2.75. See
-     prepareEcology and the arable constants in ecologyTuneParams.ts.
+     prepareEcology and the arable constants in ecologyTuneParams.ts
+     (since 2026-10-29: the engine's `prepare_ecology` and
+     ecology_tune_params.rs).
      **Salt reworked 2026-09-29:** warm and dry counts per month (salt
      works need a dry season, not a dry year), and a terminal basin's salt
      flat (hydrology) is salt in full. Tried and dropped: the sea's salinity
@@ -301,7 +303,8 @@ Phase 0 (recon) done — see the recon result under Theme 3. Then:
      coast reaches the sea in full. A climate that was not refined has no
      upwelling, and its fish lose that term. Measured on Earth: rich fishing
      coasts against poor ones ×1.2 → ×2.3. See prepareEcology and the fish
-     constants in ecologyTuneParams.ts.
+     constants in ecologyTuneParams.ts (since 2026-10-29: the engine's
+     ecology_tune_params.rs).
    - **2c — material** ✅ BUILT 2026-07-26 (pending visual check): timber (biome),
      salt (arid coasts/interior; + small carrying-cap preservation bonus — the
      one sanctioned material→subsistence bleed), tool-stone (obsidian from

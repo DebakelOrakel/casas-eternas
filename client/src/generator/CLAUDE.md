@@ -90,7 +90,8 @@ surface/    the shapes a save holds (hydrology: the water bodies and their level
 climate/    the climate's field mesh and chart (climateMesh, climateField, climateChart),
             the climate at a point (climatePoints), the biomes and Köppen classes, the
             refinement's types, colours and tuning
-ecology/    the ecology's fields, colours, controls and tuning
+ecology/    the ecology's field ids and fine codec, colours and controls (the rules and
+            their tuning are the engine's: ecology_field.rs, ecology_tune_params.rs)
 render/     the picture: the relief's shade, the elevation image, the continent names
 ```
 
@@ -234,7 +235,7 @@ The tuning that makes a world is the engine's (`climate_tune_params.rs`,
 `tectonics_tune_params.rs` …), and the pipeline versions hash it as the
 engine gives it (`pipeline/engineConstants.ts`, `world/worldTuning.ts`,
 `world/meshArtifacts.ts` MESH_BAKE_CONSTANTS). The `xyTuneParams.ts`
-objects left here (climate, elevation, ecology, surface) serve
+objects left here (climate, elevation, surface) serve
 the read side and the screen; they are not hashed. Each controllable stage
 declares its sliders in an `xyInputParams.ts` (min/max/step/default/unit/i18n
 key), and `world/save/worldSpec.ts` turns those declarations into the
