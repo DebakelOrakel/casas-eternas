@@ -112,7 +112,7 @@ import { flowLineMarks, globeVectorMarks, type VectorMark, type VectorReader } f
 import { climateMesh } from '../../generator/climate/climateMesh'
 import { climateWashLegend, paintClimateWash, pixelTarget, type ClimateClasses, type ClimateFields, type ClimateWash, type WashTarget } from '../../map/climateLayers'
 import { cratonAgeLegend, hotspotLegend, mantleLegend, mantleTintScale, paintCratonAge, paintMantle, volcanoLegend } from '../../map/geologyLayers'
-import { drawPressure, paintSea, paintWeather, pressureDrawing, pressureLegend, seaLegend, SEA_LAYERS, upwellingPeakOf, WEATHER_LAYERS, weatherLegend, type PressureDrawing, type SeaCharts, type SeaLayer, type WeatherCharts, type WeatherLayer } from '../../map/refinedLayers'
+import { drawPressure, paintSea, paintWeather, paintWindCalm, pressureDrawing, pressureLegend, seaLegend, SEA_LAYERS, upwellingPeakOf, WEATHER_LAYERS, weatherLegend, windField, type PressureDrawing, type SeaCharts, type SeaLayer, type WeatherCharts, type WeatherLayer, type WindField, WIND_CALM } from '../../map/refinedLayers'
 import './generator.css'
 import '../../ui/chrome/chrome.css'
 
@@ -1289,8 +1289,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   }
 
   // The washes are map/'s (climateLayers, geologyLayers, refinedLayers,
-  // 2026-10-29), the incubator's too; here they get the screen's rasters.
+  // 2026-10-29), the incubator's too; here they get the screen's rasters,
+  // and its land: the relief's, the terrain the map draws.
   const mapTarget = (data: Uint8ClampedArray): WashTarget => pixelTarget(data, MAP_WIDTH, MAP_HEIGHT)
+  const onMapLand = (relief: Uint8Array) => (t: number): boolean => (relief[t] & 128) !== 0
 
   // Mantle buoyancy tint: hot upwelling → red, cold downwelling → blue, strength
   // ∝ |value| (near-zero stays transparent). Coarse field sampled up to full res.
@@ -1333,10 +1335,10 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The climate's washes (map/climateLayers.ts) on the climate grid, the
   // nearest cell per map pixel: the shown month's temperature and rain,
   // the year's water balance (rain less potential evaporation), the
-  // seasonality and the monsoon. The land's fields keep the grid's own coast
-  // (its rain's sea mark), not the map's; the classes are per map pixel,
-  // Köppen on the relief's land (DEC-0036 phase 7: each land pixel its
-  // triangle's heaviest land node's).
+  // seasonality and the monsoon. The land's washes on the relief's land,
+  // the map's coast (a land pixel over the grid's sea the nearest land
+  // cell's); the classes are per map pixel (DEC-0036 phase 7: each land
+  // pixel its triangle's heaviest land node's).
   function washClimate(data: Uint8ClampedArray, wash: ClimateWash): void {
     const year = wash === 'waterBalance'
     const fields: ClimateFields = {
@@ -1350,11 +1352,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const koppen = displayKoppen()
     const biomes = lastBiomes
     const relief = lastRelief
+    if (!relief) return
     const classes: ClimateClasses = {
       koppen: (t) => (koppen && koppen.length === MAP_WIDTH * MAP_HEIGHT ? koppen[t] : 0),
       biome: (t) => (biomes ? biomes[t] : Biome.Ocean),
     }
-    paintClimateWash(mapTarget(data), wash, fields, classes, wash === 'koppen' ? (t) => relief !== null && (relief[t] & 128) !== 0 : undefined)
+    paintClimateWash(mapTarget(data), wash, fields, classes, onMapLand(relief))
   }
 
   // Watersheds: each labelled catchment in its own colour, golden-angle hue
@@ -1422,38 +1425,31 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // a glance. Replaced the grid of arrows on 2026-09-28. Since 2026-10-11
   // the streaks are symbols the world view places (syncSymbols, windMarks);
   // the calm wash alone is painted here. No-op until climate is computed.
-  let windCalm: { field: Float32Array; calm: HTMLCanvasElement } | null = null
-  // Under this fraction of the reference speed the air counts as calm.
-  const WIND_CALM = 0.2
+  // The calm wash is map/refinedLayers.ts' (paintWindCalm), of the shown
+  // wind's field mesh (windOf); painted once per wind onto a picture of
+  // the map's size, not per composite: every overlay toggle composites.
+  let windCalm: { wind: WindField; calm: HTMLCanvasElement } | null = null
   function drawWindCalm(c: CanvasRenderingContext2D): void {
     const field = displayWind()
-    if (!field) return
-    // Made once per field, not per composite: every overlay toggle
-    // composites.
-    if (windCalm?.field !== field) {
-      const ref = vectorReferenceSpeed(field)
-      // The calm wash on the climate grid, one pixel per cell; drawn scaled
-      // up with smoothing, so the belts have soft edges instead of steps.
+    const wind = field ? windOf(field) : null
+    if (!wind) return
+    if (windCalm?.wind !== wind) {
       const calm = document.createElement('canvas')
-      calm.width = climateResX
-      calm.height = climateResY
+      calm.width = MAP_WIDTH
+      calm.height = MAP_HEIGHT
       const cc = calm.getContext('2d')!
-      const img = cc.createImageData(climateResX, climateResY)
-      for (let i = 0; i < climateResX * climateResY; i++) {
-        const s = Math.hypot(field[i * 2], field[i * 2 + 1]) / ref
-        const k = Math.max(0, 1 - s / WIND_CALM)
-        img.data[i * 4] = 255
-        img.data[i * 4 + 1] = 255
-        img.data[i * 4 + 2] = 255
-        img.data[i * 4 + 3] = Math.round(255 * 0.35 * k)
-      }
+      const img = cc.createImageData(MAP_WIDTH, MAP_HEIGHT)
+      // Each pixel blended once: white at the calm's alpha.
+      paintWindCalm({ width: MAP_WIDTH, height: MAP_HEIGHT, blend: (t, rgb, alpha) => {
+        img.data[4 * t] = rgb[0]
+        img.data[4 * t + 1] = rgb[1]
+        img.data[4 * t + 2] = rgb[2]
+        img.data[4 * t + 3] = Math.round(255 * alpha)
+      } }, wind)
       cc.putImageData(img, 0, 0)
-      windCalm = { field, calm }
+      windCalm = { wind, calm }
     }
-    c.save()
-    c.imageSmoothingEnabled = true
-    c.drawImage(windCalm.calm, 0, 0, MAP_WIDTH, MAP_HEIGHT)
-    c.restore()
+    c.drawImage(windCalm.calm, 0, 0)
   }
   // Where the streaks lie, by the world's shape. The torus: one streak per
   // piece of the flow lines, as the painted streaks were cut. The sphere:
@@ -1463,7 +1459,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // lines' pieces stand closer across the flow and further along it.
   const WIND_GLOBE_SPACING = 26
   function windMarks(field: Float32Array): VectorMark[] {
-    const ref = vectorReferenceSpeed(field)
+    // The calm's reference (map/refinedLayers.ts windField), the wash's.
+    const ref = windOf(field)?.reference ?? 1
     const mesh = meshVectorReader(field)
     if (!mesh) return []
     if (worldShape === 'sphere') {
@@ -1477,13 +1474,14 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     return flowLineMarks(lines, { width: MAP_WIDTH, height: MAP_HEIGHT, length: WIND_LENGTH, gap: WIND_GAP, closeLoops: false, minPoints: 3, speedCap: Infinity })
   }
   // The refinement's sea and weather washes (map/refinedLayers.ts), on the
-  // climate grid the worker charted it on: read bilinearly from the sea
-  // cells only for the sea's (the grid's land test is the static
-  // climate's rain mark), from the land cells for the weather's, and
-  // painted on the relief's sea or land pixels only — nearest cells drew
-  // each 62 km cell as a block, and the coasts as stairs. The upwelling is
-  // scaled to its peak (upwellingPeakOf); downwelling is left out: it has
-  // nothing to show a player.
+  // climate grid the worker charted it on, painted on the relief's sea or
+  // land pixels — the map's coast. The values are read bilinearly from the
+  // grid's sea cells for the sea's, from its land cells for the weather's
+  // (the grid's side is the static climate's rain mark: which cells hold
+  // the side's values, not where a wash paints), the nearest such cell's
+  // where none of the four is. The upwelling is scaled to its peak
+  // (upwellingPeakOf); downwelling is left out: it has nothing to show a
+  // player.
   let upwellingScale: { source: Float32Array; peak: number } | null = null
   const upwellingPeak = (): number => {
     const field = lastRefined?.upwelling
@@ -1525,12 +1523,15 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   function washSea(data: Uint8ClampedArray, layer: SeaLayer): void {
     const charts = refinedWashCharts()
     const relief = lastRelief
-    if (charts && relief) paintSea(mapTarget(data), charts, layer, (t) => (relief[t] & 128) === 0)
+    if (charts && relief) {
+      const land = onMapLand(relief)
+      paintSea(mapTarget(data), charts, layer, (t) => !land(t))
+    }
   }
   function washWeather(data: Uint8ClampedArray, id: WeatherLayer): void {
     const charts = refinedWashCharts()
     const relief = lastRelief
-    if (charts && relief) paintWeather(mapTarget(data), charts, id, (t) => (relief[t] & 128) !== 0)
+    if (charts && relief) paintWeather(mapTarget(data), charts, id, onMapLand(relief))
   }
 
   // Sea-level pressure of the shown month (the refinement's,
@@ -1561,6 +1562,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const vectorMeshOf = new WeakMap<Float32Array, { shape: 'torus' | 'sphere'; cells: number; e: ArrayLike<number>; s: ArrayLike<number> }>()
   function keepVectorMesh(raster: Float32Array, shape: 'torus' | 'sphere', payload: { cells: number; e: ArrayBuffer; s: ArrayBuffer }): void {
     vectorMeshOf.set(raster, { shape, cells: payload.cells, e: new Float64Array(payload.e), s: new Float64Array(payload.s) })
+  }
+  // The wind of a raster as map/refinedLayers.ts takes it (its cells and
+  // its reference speed), made once per raster; null without its mesh.
+  const windFieldOf = new WeakMap<Float32Array, WindField>()
+  function windOf(field: Float32Array): WindField | null {
+    const known = windFieldOf.get(field)
+    if (known) return known
+    const wind = vectorMeshOf.get(field)
+    if (!wind) return null
+    const domain = domainOfKind(wind.shape, MAP_WIDTH, MAP_HEIGHT)
+    if (climateMesh(domain).mesh.count !== wind.cells) return null
+    const made = windField(domain, wind.e, wind.s)
+    windFieldOf.set(field, made)
+    return made
   }
   function meshVectorReader(field: Float32Array): { atPoint: VectorReader; atPixel: (x: number, y: number) => [number, number] } | null {
     const wind = vectorMeshOf.get(field)

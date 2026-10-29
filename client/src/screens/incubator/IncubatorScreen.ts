@@ -1811,7 +1811,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       on: () => flowOn['temperature'] || flowOn['pressure'],
       paint: (o) => {
         const target = washTarget(o)
-        if (flowOn['temperature']) paintClimateWash(target, 'temperature', climateFields, null)
+        if (flowOn['temperature']) paintClimateWash(target, 'temperature', climateFields, null, onLevelLand)
         if (flowOn['pressure'] && refinedCharts) {
           if (!pressureShown || pressureShown.width !== o.width) pressureShown = pressurePicture(refinedCharts, o.width, o.height)
           paintPressure(target, pressureShown)
@@ -1848,7 +1848,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       paint: (o) => {
         if (!refinedCharts || !probe || probe.nodes.length !== o.width * o.height) return
         const target = washTarget(o)
-        if (flowOn['wind']) paintWindCalm(target, refinedCharts)
+        if (flowOn['wind']) paintWindCalm(target, refinedCharts.wind)
         if (seaShown) paintSea(target, refinedCharts, seaShown, (t) => !onLevelLand(t))
         if (weatherShown) paintWeather(target, refinedCharts, weatherShown, onLevelLand)
       },

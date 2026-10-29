@@ -15,11 +15,15 @@ import type { LegendSpec } from '../ui/legend/LegendPanel'
 // and its target, not whose they are. Both screens paint through them
 // since 2026-10-29 (TEG-28), when the generator's own painters went.
 //
-// A field on its own raster (the climate's chart) is read at the texel
-// under each target texel, the nearest; a class (Köppen, biome) comes per
-// target texel from the caller. `keep(t)`: whether target texel `t` is
-// washed at all — the land, for the land's washes, so that the coast is
-// the target's own and not the coarse field's.
+// WHERE a wash paints, the screen decides; WHAT it paints there, the
+// field (decided 2026-10-29, TEG-102). A land wash takes the screen's land
+// (`land(t)`, at the target's own resolution: the generator's drawn
+// terrain, the incubator's level 1) and computes none of its own. A field
+// on its own raster (the climate's chart) is read at the texel under each
+// target texel, the nearest; a land texel whose texel of the field is the
+// field's sea (OCEAN_PRECIP, OCEAN_AMPLITUDE) takes the nearest land texel
+// of the field (nearestCellOf). A class (Köppen, biome) comes per target
+// texel from the caller. The temperature covers land and sea, unmasked.
 
 export type Rgb = readonly [number, number, number]
 
@@ -51,46 +55,68 @@ export const CLIMATE_WASHES: readonly ClimateWash[] = ['temperature', 'precipita
 // The generator's alphas.
 const ALPHA: Record<ClimateWash, number> = { temperature: 0.55, precipitation: 0.6, seasonality: 0.6, monsoon: 0.6, waterBalance: 0.55, koppen: 0.7, biomes: 0.85 }
 
-// A field of W × H, its values to a colour, or null to leave the texel.
-// A kept texel (the target's land) whose texel of the field has no colour
-// (the field's sea, coarser than the target's coast) takes the nearest
-// that has one within FILL_RING texels of the field: without it the
-// target's coast went unwashed, on Morvane level 1's 12 % of its land
-// under a climate chart of 256 × 128 (2026-10-26).
-const FILL_RING = 2
-export function washField(target: WashTarget, field: Float32Array, width: number, height: number, colour: (value: number, i: number) => Rgb | null, alpha: number, keep?: (t: number) => boolean): void {
-  // Per texel of the field, its colour or the nearest's for a kept texel;
-  // made once a texel of the field.
-  const own: (Rgb | null)[] = new Array(width * height)
-  for (let i = 0; i < own.length; i++) own[i] = colour(field[i], i)
-  const filled: (Rgb | null | undefined)[] = new Array(width * height)
-  const fill = (gx: number, gy: number): Rgb | null => {
+// The nearest cell of a width × height field that `has`, to cell (gx,
+// gy): Euclidean in cells, the columns wrapped, the rows held at the
+// field's edge; -1 where no cell has. First the square of half-width 2 (the
+// ring the incubator's fill read until 2026-10-29), then wider, until no
+// cell outside the square can be nearer; made once a cell. Without a bound:
+// a ring of 2 left Morvane's small islands unwashed where the field's land
+// lies further.
+export function nearestCellOf(width: number, height: number, has: (i: number) => boolean): (gx: number, gy: number) => number {
+  const nearest = new Int32Array(width * height).fill(-2)
+  let none: boolean | null = null
+  const maxR = Math.max(Math.ceil(width / 2), height)
+  return (gx, gy) => {
     const i = gy * width + gx
-    if (filled[i] !== undefined) return filled[i]!
-    let best: Rgb | null = null
+    if (nearest[i] !== -2) return nearest[i]
+    if (none === null) {
+      none = true
+      for (let j = 0; j < width * height && none; j++) if (has(j)) none = false
+    }
+    let best = -1
     let bestD = Infinity
-    for (let dy = -FILL_RING; dy <= FILL_RING; dy++) {
-      const y = gy + dy
-      if (y < 0 || y >= height) continue
-      for (let dx = -FILL_RING; dx <= FILL_RING; dx++) {
-        const c = own[y * width + (((gx + dx) % width) + width) % width]
-        const d = dx * dx + dy * dy
-        if (c && d < bestD) {
-          best = c
-          bestD = d
+    for (let r = 2; r <= maxR && !none; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        const y = gy + dy
+        if (y < 0 || y >= height) continue
+        for (let dx = -r; dx <= r; dx++) {
+          const j = y * width + (((gx + dx) % width) + width) % width
+          const d = dx * dx + dy * dy
+          if (d < bestD && has(j)) {
+            best = j
+            bestD = d
+          }
         }
       }
+      if (best >= 0 && bestD < (r + 1) * (r + 1)) break
     }
-    filled[i] = best
+    nearest[i] = best
     return best
   }
+}
+
+// A field of W × H, its values to a colour, or null to leave the texel.
+// With `land`: only the screen's land is washed, and a land texel whose
+// texel of the field has no colour (the field's sea, coarser than the
+// screen's coast) takes the nearest that has one (nearestCellOf) —
+// without it the coast went unwashed, on Morvane level 1's 12 % of its
+// land under a climate chart of 256 × 128 (2026-10-26).
+export function washField(target: WashTarget, field: Float32Array, width: number, height: number, colour: (value: number, i: number) => Rgb | null, alpha: number, land?: (t: number) => boolean): void {
+  // Per texel of the field, its colour; made once a texel of the field.
+  const own: (Rgb | null)[] = new Array(width * height)
+  for (let i = 0; i < own.length; i++) own[i] = colour(field[i], i)
+  const nearest = nearestCellOf(width, height, (i) => own[i] !== null)
   for (let y = 0; y < target.height; y++) {
     const gy = Math.min(height - 1, Math.floor((y / target.height) * height))
     for (let x = 0; x < target.width; x++) {
       const tIndex = y * target.width + x
-      if (keep && !keep(tIndex)) continue
+      if (land && !land(tIndex)) continue
       const gx = Math.min(width - 1, Math.floor((x / target.width) * width))
-      const rgb = own[gy * width + gx] ?? (keep ? fill(gx, gy) : null)
+      let rgb = own[gy * width + gx]
+      if (!rgb && land) {
+        const j = nearest(gx, gy)
+        rgb = j >= 0 ? own[j] : null
+      }
       if (rgb) target.blend(tIndex, rgb, alpha)
     }
   }
@@ -132,13 +158,14 @@ export function climateWashAvailable(wash: ClimateWash, fields: ClimateFields | 
   return fields[wash] !== null
 }
 
-// The wash onto the target; nothing where its data is missing.
-export function paintClimateWash(target: WashTarget, wash: ClimateWash, fields: ClimateFields | null, classes: ClimateClasses | null, keep?: (t: number) => boolean): void {
+// The wash onto the target, the land's on the screen's land (`land`; the
+// temperature's on every texel); nothing where its data is missing.
+export function paintClimateWash(target: WashTarget, wash: ClimateWash, fields: ClimateFields | null, classes: ClimateClasses | null, land: (t: number) => boolean): void {
   const alpha = ALPHA[wash]
   if (wash === 'koppen' || wash === 'biomes') {
     if (!classes) return
     for (let tIndex = 0; tIndex < target.width * target.height; tIndex++) {
-      if (keep && !keep(tIndex)) continue
+      if (!land(tIndex)) continue
       if (wash === 'koppen') {
         const id = classes.koppen(tIndex)
         if (id > 0) target.blend(tIndex, koppenColor(id), alpha)
@@ -152,13 +179,13 @@ export function paintClimateWash(target: WashTarget, wash: ClimateWash, fields: 
   if (!fields) return
   const { width, height } = fields
   if (wash === 'temperature' && fields.temperature) washField(target, fields.temperature, width, height, (v) => temperatureColor(v), alpha)
-  if (wash === 'precipitation' && fields.precipitation) washField(target, fields.precipitation, width, height, (v) => (v === OCEAN_PRECIP ? null : precipitationColor(v)), alpha, keep)
-  if (wash === 'seasonality' && fields.seasonality) washField(target, fields.seasonality, width, height, (v) => (v === OCEAN_AMPLITUDE ? null : amplitudeColor(v)), alpha, keep)
+  if (wash === 'precipitation' && fields.precipitation) washField(target, fields.precipitation, width, height, (v) => (v === OCEAN_PRECIP ? null : precipitationColor(v)), alpha, land)
+  if (wash === 'seasonality' && fields.seasonality) washField(target, fields.seasonality, width, height, (v) => (v === OCEAN_AMPLITUDE ? null : amplitudeColor(v)), alpha, land)
   // The strength, not the phase: the ramp runs 0 … 1 (climate/monsoon.ts).
-  if (wash === 'monsoon' && fields.monsoon) washField(target, fields.monsoon, width, height, (v) => (v === OCEAN_PRECIP ? null : monsoonColor(Math.abs(v))), alpha, keep)
+  if (wash === 'monsoon' && fields.monsoon) washField(target, fields.monsoon, width, height, (v) => (v === OCEAN_PRECIP ? null : monsoonColor(Math.abs(v))), alpha, land)
   if (wash === 'waterBalance' && fields.temperature && fields.precipitation) {
     const temperature = fields.temperature
-    washField(target, fields.precipitation, width, height, (v, i) => waterBalanceColor(v, temperature[i]), alpha, keep)
+    washField(target, fields.precipitation, width, height, (v, i) => waterBalanceColor(v, temperature[i]), alpha, land)
   }
 }
 

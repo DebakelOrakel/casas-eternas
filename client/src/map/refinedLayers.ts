@@ -7,7 +7,7 @@ import { REFINED_STORMS, type RefinedClimate } from '../generator/climate/refine
 import type { Domain } from '../generator/core/domain'
 import { t, type TKey } from '../i18n/i18n'
 import type { LegendSpec } from '../ui/legend/LegendPanel'
-import type { Rgb, WashTarget } from './climateLayers'
+import { nearestCellOf, type Rgb, type WashTarget } from './climateLayers'
 import { drawIsolines, traceIsolines, type Isoline } from './isolines'
 import { flowLineMarks, globeVectorMarks, type VectorMark, type VectorReader } from './vectorMarks'
 import { traceFlowLines } from './flowLines'
@@ -18,15 +18,16 @@ import { traceFlowLines } from './flowLines'
 // a save's refinement (world.refined(), per cell of the climate's field
 // mesh), as the year's mean where the save holds months. Written for the
 // incubator after the generator's painters, apart from either screen, as
-// climateLayers.ts. The generator paints its sea, weather and pressure
-// through them since 2026-10-29; its wind's calm and its marks are still
-// its own (they read the static climate's wind too, and the calm is
-// smoothed there).
+// climateLayers.ts. The generator paints its sea, weather, pressure and
+// wind's calm through them since 2026-10-29; its marks are still its own.
 //
-// The cells are charted once (chartField) on the climate's chart; a wash
-// reads it bilinearly, from the sea's texels only for a sea wash and from
-// the land's for a land wash (the chart's land: its rain is not
-// OCEAN_PRECIP), and paints the target's sea or land only (`keep`).
+// As climateLayers.ts: WHERE a wash paints, the screen decides (its sea or
+// its land, `sea(t)` / `land(t)`); WHAT, the field. The cells are charted
+// once (chartField) on the climate's chart; a wash reads it bilinearly,
+// from the chart's sea texels only for a sea wash and from its land texels
+// for a land wash — the refinement holds 0 on the other side, which a
+// blend across the coast would mix in — and a texel with none of the four
+// on its side takes the nearest chart texel that is (nearestCellOf).
 
 export type WeatherLayer = 'fog' | 'foehn' | 'rainVariability' | 'enso' | 'cyclone' | 'tornado' | 'blizzard' | 'dust' | 'thunder'
 export const WEATHER_LAYERS: readonly WeatherLayer[] = ['fog', 'foehn', 'rainVariability', 'enso', 'cyclone', 'tornado', 'blizzard', 'dust', 'thunder']
@@ -37,7 +38,8 @@ export const SEA_LAYERS: readonly SeaLayer[] = ['upwelling', 'salinity']
 export interface RefinedCharts {
   width: number
   height: number
-  // 1 where the chart is sea.
+  // 1 where the chart's texel is the climate's sea: which texels a sea
+  // wash reads its values from, a land wash not. Never where a wash paints.
   sea: Uint8Array
   pressure: Float32Array
   upwelling: Float32Array
@@ -46,8 +48,8 @@ export interface RefinedCharts {
   deepWater: Float32Array
   weather: Record<WeatherLayer, Float32Array>
   currentAnomaly: Float32Array
-  // Per cell of the field mesh, east and south; the year's mean wind.
-  wind: { e: Float64Array; s: Float64Array; reference: number }
+  // The year's mean wind.
+  wind: WindField
   currents: { e: Float64Array; s: Float64Array; reference: number }
   // The ENSO's period, years (0: none), and its strength, 0 … 1.
   ensoPeriodYears: number
@@ -62,8 +64,8 @@ function yearMean(field: Float32Array, months: number, cells: number): Float64Ar
   return mean
 }
 
-// The speed a mark draws at full weight: the 95th percentile of the
-// magnitudes, as the generator's vectorReferenceSpeed.
+// The speed a mark draws at full weight, and the calm's measure: the 95th
+// percentile of the magnitudes of the field mesh's cells.
 function referenceSpeed(e: ArrayLike<number>, s: ArrayLike<number>): number {
   const m: number[] = []
   for (let i = 0; i < e.length; i++) {
@@ -114,7 +116,7 @@ export function chartRefined(domain: Domain, refined: RefinedClimate): RefinedCh
     deepWater: chart(refined.deepWater),
     weather,
     currentAnomaly: chart(refined.currentAnomaly),
-    wind: { e: windE, s: windS, reference: referenceSpeed(windE, windS) },
+    wind: windField(domain, windE, windS),
     currents: { e: currentE, s: currentS, reference: referenceSpeed(currentE, currentS) },
     ensoPeriodYears: refined.reliability.ensoPeriodYears,
     ensoStrength: refined.reliability.ensoStrength,
@@ -128,20 +130,40 @@ export type MaskedCharts = Pick<RefinedCharts, 'width' | 'height' | 'sea' | 'dom
 export type WeatherCharts = MaskedCharts & Pick<RefinedCharts, 'weather'>
 export type SeaCharts = MaskedCharts & Pick<RefinedCharts, 'upwelling' | 'upwellingPeak' | 'salinity' | 'deepWater'>
 
-// Each target texel's value from the chart, bilinear over the chart's sea
-// (`sea` true) or land texels only; null where none of the four is.
+// Each target texel `keep` admits, its value from the chart: bilinear over
+// the chart's sea (`sea` true) or land texels of the four, else the
+// nearest such texel's; nothing where the chart has none.
+const nearestOnSide = new WeakMap<Uint8Array, Map<boolean, (gx: number, gy: number) => number>>()
 function washMasked(target: WashTarget, charts: MaskedCharts, sea: boolean, keep: (t: number) => boolean, paint: (tIndex: number, read: (field: Float32Array) => number) => void): void {
   const { width: W, height: H } = charts
   const sphere = charts.domain.kind === 'sphere'
   const row = (y: number): number => (sphere ? Math.max(0, Math.min(H - 1, y)) : ((y % H) + H) % H)
+  let sides = nearestOnSide.get(charts.sea)
+  if (!sides) nearestOnSide.set(charts.sea, (sides = new Map()))
+  let nearest = sides.get(sea)
+  if (!nearest) sides.set(sea, (nearest = nearestCellOf(W, H, (i) => (charts.sea[i] === 1) === sea)))
   const at: number[] = [0, 0, 0, 0]
   const weight: number[] = [0, 0, 0, 0]
+  let only = -1
+  const blend = (field: Float32Array): number => {
+    let v = 0
+    let total = 0
+    for (let k = 0; k < 4; k++) {
+      if (weight[k] > 0) {
+        v += field[at[k]] * weight[k]
+        total += weight[k]
+      }
+    }
+    return v / total
+  }
+  const single = (field: Float32Array): number => field[only]
   for (let y = 0; y < target.height; y++) {
     const fy = ((y + 0.5) / target.height) * H - 0.5
     const y0 = Math.floor(fy)
     const ty = fy - y0
     const r0 = row(y0) * W
     const r1 = row(y0 + 1) * W
+    const gy = Math.min(H - 1, Math.floor(((y + 0.5) / target.height) * H))
     for (let x = 0; x < target.width; x++) {
       const tIndex = y * target.width + x
       if (!keep(tIndex)) continue
@@ -159,12 +181,12 @@ function washMasked(target: WashTarget, charts: MaskedCharts, sea: boolean, keep
         if ((charts.sea[at[k]] === 1) !== sea) weight[k] = 0
         total += weight[k]
       }
-      if (total <= 0) continue
-      paint(tIndex, (field) => {
-        let v = 0
-        for (let k = 0; k < 4; k++) if (weight[k] > 0) v += field[at[k]] * weight[k]
-        return v / total
-      })
+      if (total > 0) {
+        paint(tIndex, blend)
+        continue
+      }
+      only = nearest(Math.min(W - 1, Math.floor(((x + 0.5) / target.width) * W)), gy)
+      if (only >= 0) paint(tIndex, single)
     }
   }
 }
@@ -280,33 +302,76 @@ export function paintPressure(target: WashTarget, picture: PressurePicture): voi
   }
 }
 
+// A wind on the climate's field mesh, per cell east and south, and the
+// speed its calm is measured against (referenceSpeed): the refinement's
+// or the static climate's — the screen's choice.
+export interface WindField {
+  domain: Domain
+  e: ArrayLike<number>
+  s: ArrayLike<number>
+  reference: number
+}
+export function windField(domain: Domain, e: ArrayLike<number>, s: ArrayLike<number>): WindField {
+  return { domain, e, s, reference: referenceSpeed(e, s) }
+}
+
 // The wind's calm belts, lightened: under WIND_CALM of the reference speed
-// the air counts as calm (the generator's drawWindCalm).
-const WIND_CALM = 0.2
-export function paintWindCalm(target: WashTarget, charts: RefinedCharts): void {
-  const { domain } = charts
+// the air counts as calm. The calm per chart texel, sampled at its centre
+// on the field mesh and made once a wind; read bilinearly at each target
+// texel, so that the belts have soft edges, not the chart's steps.
+//
+// The reference is the 95th percentile over the field mesh's cells, not
+// over the chart's texels (the generator's until 2026-10-29): the cells
+// are the field itself, the same on either shape, where the sphere's chart
+// repeats the few cells of its polar rows across its width. The cells'
+// is 2.4 % higher on Morvane and Thalassor, 0.04 % lower on Zephyra
+// (2026-10-29); the calm's legend names no speed.
+export const WIND_CALM = 0.2
+const calmCharts = new WeakMap<WindField, Float32Array>()
+function calmChart(wind: WindField): Float32Array {
+  let calm = calmCharts.get(wind)
+  if (calm) return calm
+  const { domain } = wind
   const { sampler } = climateMesh(domain)
   const v = { x: 0, y: 0 }
-  // Read a cell of the chart at a time, not a texel: the calm is coarse.
-  const { width: W, height: H } = charts
-  const calm = new Float32Array(W * H)
+  const W = CLIMATE_RES_X
+  const H = CLIMATE_RES_Y
+  calm = new Float32Array(W * H)
   for (let gy = 0; gy < H; gy++) {
     for (let gx = 0; gx < W; gx++) {
-      sampler.sampleVector(charts.wind.e, charts.wind.s, domain.wrapX(((gx + 0.5) / W) * domain.width), domain.wrapY(((gy + 0.5) / H) * domain.height), -1, v)
-      calm[gy * W + gx] = Math.max(0, 1 - Math.hypot(v.x, v.y) / charts.wind.reference / WIND_CALM)
+      sampler.sampleVector(wind.e, wind.s, domain.wrapX(((gx + 0.5) / W) * domain.width), domain.wrapY(((gy + 0.5) / H) * domain.height), -1, v)
+      calm[gy * W + gx] = Math.max(0, 1 - Math.hypot(v.x, v.y) / wind.reference / WIND_CALM)
     }
   }
+  calmCharts.set(wind, calm)
+  return calm
+}
+export function paintWindCalm(target: WashTarget, wind: WindField): void {
+  const calm = calmChart(wind)
+  const W = CLIMATE_RES_X
+  const H = CLIMATE_RES_Y
+  const sphere = wind.domain.kind === 'sphere'
+  const row = (y: number): number => (sphere ? Math.max(0, Math.min(H - 1, y)) : ((y % H) + H) % H)
   for (let y = 0; y < target.height; y++) {
-    const gy = Math.min(H - 1, Math.floor((y / target.height) * H))
+    const fy = ((y + 0.5) / target.height) * H - 0.5
+    const y0 = Math.floor(fy)
+    const ty = fy - y0
+    const r0 = row(y0) * W
+    const r1 = row(y0 + 1) * W
     for (let x = 0; x < target.width; x++) {
-      const k = calm[gy * W + Math.min(W - 1, Math.floor((x / target.width) * W))]
+      const fx = ((x + 0.5) / target.width) * W - 0.5
+      const x0 = Math.floor(fx)
+      const tx = fx - x0
+      const c0 = ((x0 % W) + W) % W
+      const c1 = (((x0 + 1) % W) + W) % W
+      const k = (calm[r0 + c0] * (1 - tx) + calm[r0 + c1] * tx) * (1 - ty) + (calm[r1 + c0] * (1 - tx) + calm[r1 + c1] * tx) * ty
       if (k > 0) target.blend(y * target.width + x, [255, 255, 255], 0.35 * k)
     }
   }
 }
 
 // A reader of a field mesh's vectors at a chart point or a world texel.
-function vectorReader(domain: Domain, e: Float64Array, s: Float64Array): { atPoint: VectorReader; atPixel: (x: number, y: number) => [number, number] } {
+function vectorReader(domain: Domain, e: ArrayLike<number>, s: ArrayLike<number>): { atPoint: VectorReader; atPixel: (x: number, y: number) => [number, number] } {
   const { sampler } = climateMesh(domain)
   const v = { x: 0, y: 0 }
   const read = (x: number, y: number): void => sampler.sampleVector(e, s, domain.wrapX(x), domain.wrapY(y), -1, v)
