@@ -14,9 +14,10 @@ summary.de: Ideenskizze: den Mantel und das Klima — heute Raster in der 2:1-Ka
   Kugel. Grösser als die vorerst gewählte Polbehandlung; für einen späteren
   Wurf aufbewahrt.
 area: generator
-stage: idea
+stage: superseded
 createdAt: 2026-10-10
-updatedAt: 2026-10-11
+updatedAt: 2026-10-29
+supersededBy: DEC-0036
 related: [DEC-0036, DEC-0035, DES-0017, DEC-0029]
 ---
 
@@ -92,6 +93,9 @@ at sea, and the climate wants the same resolution everywhere.
   on its raster for a while?
 
 ## Status
+
+2026-10-29: superseded by [fields-on-meshes.md](../decisions/fields-on-meshes.md)
+(DEC-0036), which is built (2026-10-12).
 
 2026-10-11: DECIDED as [fields-on-meshes.md](../decisions/fields-on-meshes.md)
 (DEC-0036), wider than sketched here: every simulated field leaves the

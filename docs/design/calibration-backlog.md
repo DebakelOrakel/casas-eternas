@@ -11,9 +11,9 @@ summary.de: Die Punkte, die die Kalibrierung von DEC-0036 (Phase 8) gemessen,
   hat den gemessenen Stand, den Erdbezug, die vermutete Ursache und eine
   Schätzung. Sie werden einzeln aufgenommen, wenn eine Welt das Problem zeigt.
 area: generator
-stage: idea
+stage: building
 createdAt: 2026-10-14
-updatedAt: 2026-10-15
+updatedAt: 2026-10-29
 related: [DEC-0036, DEC-0035, DEC-0029, DEC-0003, DEC-0004, DEC-0006, DES-0016, DES-0019, DES-0020]
 ---
 
@@ -246,6 +246,9 @@ procedure.
     2026-10-27 (6 worlds, epoch 40). Not estimated.
 
 ## Status
+
+2026-10-29: building — the list is worked one entry at a time (8, 16, 22,
+24, 30 and 31 done, 25 for the relief; see the entries below), the rest stays open.
 
 2026-10-14: IDEA — the list, recorded when phase 8 was cut short. Take an
 entry up when a world shows it; record its result in the doc of the

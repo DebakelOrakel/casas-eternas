@@ -14,7 +14,7 @@ summary.de: Die Laufzeit-Pipeline des Generators — ihr Zustand ist schon nach 
 area: generator
 stage: built
 createdAt: 2026-08-09
-updatedAt: 2026-10-28
+updatedAt: 2026-10-29
 related: [DES-0007]
 ---
 
@@ -507,6 +507,12 @@ split `ui/serverIndicator` already makes.
   recorded inputs end up
 
 ## Status
+
+2026-10-29: of the open questions, 1 is answered by step 3d (the stage
+and its messages are `genesis`, the module stays `archean/`), 2 by
+`generator/pipeline/stages.ts` (the table lives with the pipeline), and
+3 by the micro-tile inspector's removal (2026-08-09). Question 4 stands:
+`restoreWorld` still writes the chain's state directly.
 
 implemented — all five steps built 2026-08-09.
 2026-10-28: the migration stage is removed from the chain (DEC-0010 is

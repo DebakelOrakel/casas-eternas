@@ -18,9 +18,9 @@ summary.de: Ein adaptives Netz für das Gelände, von der Tektonik bis zum Nahbe
   22.09.2026 im Gespräch vereinbart und am selben Tag in DEC-0029
   entschieden.
 area: generator
-stage: building
+stage: built
 createdAt: 2026-09-22
-updatedAt: 2026-10-04
+updatedAt: 2026-10-29
 concepts: [generator.concept.detail-levels, generator.concept.erosion]
 related: [DEC-0029, DES-0019, DES-0020]
 ---
@@ -442,6 +442,11 @@ the same form:
 - Peytavie et al. 2019, "Procedural Riverscapes".
 
 ## Status
+
+2026-10-29: built — the direction of DEC-0029 is built through its step 6
+(ADAPTIVE_MESH_PLAN.md, phases 0 to 7). What each phase left open on
+purpose is listed in the plan; the glacial and the coast processes go on
+in glacial.md (DES-0020) and coast.md (DES-0019).
 
 2026-10-04: building — the direction is decided in DEC-0029 and largely built since (ADAPTIVE_MESH_PLAN.md, phases 0 to 7); "nothing built" below is the state of 2026-09-22.
 

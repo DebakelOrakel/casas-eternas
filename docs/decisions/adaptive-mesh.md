@@ -16,9 +16,9 @@ summary.de: Die offenen Punkte der Richtung zum adaptiven Netz (DES-0018), am 22
   Domain-Objekt für die Topologie und die Bauordnung mit der Ozeanmaske
   zuerst.
 area: generator
-stage: building
+stage: built
 createdAt: 2026-09-22
-updatedAt: 2026-10-13
+updatedAt: 2026-10-29
 concepts: [generator.concept.detail-levels, generator.concept.erosion]
 related: [DES-0018, DES-0019, DES-0020]
 ---
@@ -445,6 +445,11 @@ replaces the patch" in
   a second domain.
 
 ## Status
+
+2026-10-29: built — every step of the build order exists (ADAPTIVE_MESH_PLAN.md,
+phases 0 to 7; the tiles since tile-jobs.md, DEC-0031). What a phase left
+open on purpose is listed in the plan; the glacial and the coast processes
+go on in design/glacial.md (DES-0020) and design/coast.md (DES-0019).
 
 2026-10-04: building — phases 0 to 7 of ADAPTIVE_MESH_PLAN.md are built; open points stay in the plan and below.
 

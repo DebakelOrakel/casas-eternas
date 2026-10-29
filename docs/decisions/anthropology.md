@@ -13,9 +13,10 @@ summary.de: PROTOTYP — die menschliche Ebene der Weltgenerierung nach der Öko
   erzeugt Siedlungen samt Kontakt- und Handelsgraph als Startzustand des
   Spiels. Die Richtung (Ausbreitung) ist entschieden, der Rest folgt später.
 area: generator
-stage: idea
+stage: superseded
 createdAt: 2026-07-26
-updatedAt: 2026-10-28
+updatedAt: 2026-10-29
+supersededBy: DES-0032
 related: [DEC-0008, DEC-0010]
 ---
 
@@ -127,6 +128,10 @@ genuine link between the two panels; see the same note in `ecology.md`.
 - Panel naming: "Anthropology" vs "Peoples" vs "Settlement" (UI is English).
 
 ## Status
+
+2026-10-29: superseded by the incubator's prehistory in three steps
+([prehistory-in-three-steps.md](../design/prehistory-in-three-steps.md),
+DES-0032), as DEC-0010 is.
 
 proto / brainstorming — comes AFTER the Ecology panel is built.
 2026-10-28: the generator's migration step (DEC-0010) is removed. The human

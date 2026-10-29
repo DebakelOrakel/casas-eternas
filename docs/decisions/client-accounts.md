@@ -18,9 +18,9 @@ summary.de: Die Konto-Panels aus dem Design kommen in den Client. Ein Profil, in
   Selbstregistrierung. Avatare liegen bei der Identität, im Speicher des
   Auth-Moduls.
 area: platform
-stage: building
+stage: built
 createdAt: 2026-10-04
-updatedAt: 2026-10-04
+updatedAt: 2026-10-29
 related: [DEC-0023, DEC-0022, DEC-0019, DES-0011, DES-0012, DES-0013]
 ---
 
@@ -180,6 +180,10 @@ reset <name>` for a reset code. Every new catalog key of the panels is
 proposed before it is added.
 
 ## Status
+
+2026-10-29: built — every fork and every step of the build order exists
+since 2026-10-04 (the entry below). The "Open:" lines of the older
+entries are history.
 
 2026-10-04, last: blocking BUILT (fork 7) on the session generation —
 `PUT /v1/auth/users/{name}/blocked`, refused on oneself over the network;

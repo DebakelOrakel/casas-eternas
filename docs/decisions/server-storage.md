@@ -26,7 +26,7 @@ summary.de: Der Server führt zwei Stores mit zwei verschiedenen Schlüsseln —
 area: platform
 stage: built
 createdAt: 2026-08-08
-updatedAt: 2026-10-16
+updatedAt: 2026-10-29
 related: [DES-0006, DES-0014]
 ---
 
@@ -648,6 +648,9 @@ TLS (`global.tls.cert`, `global.tls.key`) stays, for a machine with no
 proxy in front.
 
 ## Status
+
+2026-10-29: the artifact key without the world uid is built
+(artifacts-by-content.md, DEC-0039, 2026-10-16).
 
 decided — architecture and the forks below. BUILT 2026-08-08: the CLI
 surface and module skeleton, world.yaml's metadata.uid, the WORLD STORE

@@ -18,7 +18,7 @@ summary.de: Ein Eismodell für die gekoppelte Geländegeschichte — Massenbilan
 area: generator
 stage: building
 createdAt: 2026-09-22
-updatedAt: 2026-10-13
+updatedAt: 2026-10-29
 concepts: [generator.concept.erosion, generator.concept.history-climate]
 related: [DES-0018, DEC-0029]
 ---
@@ -151,6 +151,13 @@ appear from the 4K/8K bake at one to two kilometres.
   the coast process shares the eustasy with this one.
 
 ## Status
+
+2026-10-29: the process is built since 2026-09-23 (ADAPTIVE_MESH_PLAN.md,
+phase 6a: the cut by sliding, the till at the termini, the ice as a load
+and as the sea level), the buzzsaw since 2026-10-13 (below); "erosion by
+ice and till are open" in the 2026-10-04 entry was wrong. Open, as the
+plan lists them: the U profile as a gate, the ice flux in the density
+rule, cirques as graph features.
 
 2026-10-13: the buzzsaw is BUILT (DEC-0036 phase 8d,
 decisions/fields-on-meshes.md, Status): the glaciers inside a node lower

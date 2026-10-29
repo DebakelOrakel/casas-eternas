@@ -11,7 +11,7 @@ summary.de: Eine Manifest-Konvention (apiVersion/kind/metadata/spec/status) für
 area: platform
 stage: idea
 createdAt: 2026-08-15
-updatedAt: 2026-10-12
+updatedAt: 2026-10-29
 related: [DEC-0009, DEC-0017]
 ---
 
@@ -293,6 +293,12 @@ the "derived, full-res" class is a set of views now, not of files.
   would make `status.erosionRun` part of what identifies the terrain.
 
 ## Status
+
+2026-10-29: still a proposal. Part 2's `AmplifiedTerrain` kind and part 3
+(the `WorldLayers` artifact) are void: the raster bake is removed
+(2026-09-29), and since DEC-0036's save step (2026-10-12) the save holds no
+raster layer. The first point under Open is answered too: a pipeline
+version exists (engine-releases.md, DEC-0045).
 
 proposal — nothing built; the WorldLayers kind needs a pipeline version that
 does not exist yet (see Open)

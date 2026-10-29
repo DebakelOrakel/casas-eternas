@@ -25,7 +25,7 @@ summary.de: Wie der Server konfiguriert wird, entschieden, als die Zahl der Flag
 area: platform
 stage: built
 createdAt: 2026-08-12
-updatedAt: 2026-10-16
+updatedAt: 2026-10-29
 related: [DES-0013]
 ---
 
@@ -165,6 +165,11 @@ of 2026-08-12 was.
   startup. Validation lands with the bake decoupling.
 
 ## Status
+
+2026-10-29: the `services:` check against /v1/capabilities landed on
+2026-08-12 with the bake decoupling (`checkPeer` in cmd/start.go; since
+2026-10-18 a peer that does not answer yet is asked again in the
+background).
 
 decided and BUILT 2026-08-12 — tree, loader, one-vocabulary flags, env
 replacer, strict unmarshal, smoke-tested end to end. The `services:` map

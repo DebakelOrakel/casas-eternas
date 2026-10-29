@@ -15,10 +15,11 @@ summary.de: Könnte der Torus-Generator auch eine Kugel rechnen, mit einer Codeb
   Generators). Die Nähte sind in DEC-0035 entschieden; die Analyse des
   Substrats unten ist älter als das adaptive Netz.
 area: generator
-stage: idea
+stage: superseded
 createdAt: 2026-09-20
 related: [DEC-0015, DEC-0035]
-updatedAt: 2026-10-28
+updatedAt: 2026-10-29
+supersededBy: DEC-0035
 ---
 
 The torus was chosen over the sphere before any rationale was written
@@ -189,6 +190,11 @@ Order of magnitude: 1.5–2.5k new lines plus the mechanical threading.
   adaptive mesh, candidate C's sibling
 
 ## Status
+
+2026-10-29: superseded by [two-shapes.md](../decisions/two-shapes.md)
+(DEC-0035). The sphere runs in the generator since 2026-10-10, on the
+field mesh and the adaptive mesh (DEC-0036) rather than on a substrate
+chosen here; this analysis is history.
 
 2026-10-09: the sphere's first step built (`client/src/map/sphereView.ts`:
 an ocean globe with its axis at the obliquity and an atmosphere around

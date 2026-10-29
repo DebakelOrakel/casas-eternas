@@ -24,8 +24,9 @@ summary.de: Der Weltenspeicher und der Artefaktspeicher bekommen eine
   angefragt, und bestätigen danach; ein Bucket je Speicher, ein
   IAM-Benutzer je Installation.
 area: platform
-stage: building
+stage: built
 createdAt: 2026-10-16
+updatedAt: 2026-10-29
 related: [DES-0029, DES-0028, DEC-0017, DEC-0021]
 ---
 
@@ -217,6 +218,11 @@ version.
 4. The world store.
 
 ## Status
+
+2026-10-29: built — steps 2 to 4 of the order landed on 2026-10-16 (the
+entries below; "Steps 2–4 are open" in the first one is history), and
+the relay's encryption on 2026-10-18, behind the Ingress at `/relay` with
+TLS from the router (detail-ladder.md, "A worker outside the cluster").
 
 2026-10-16: BUILDING — step 1 is built: the unions on `world` and
 `artifacts` with a required `type` (flags `--world.storage.type`,

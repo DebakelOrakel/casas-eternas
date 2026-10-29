@@ -15,9 +15,9 @@ summary.de: Das Welt-Save wird zu einem selbstbeschreibenden, ABFRAGBAREN Datens
   Rezept (neu erzeugen) und Schnappschuss (fortsetzen) bleiben daneben, für
   andere Abnehmer.
 area: platform
-stage: building
+stage: built
 createdAt: 2026-07-26
-updatedAt: 2026-10-12
+updatedAt: 2026-10-29
 related: [DEC-0005, DEC-0033, DES-0014]
 ---
 
@@ -367,5 +367,10 @@ values, no raster (world/identity.ts). A save that holds a former raster,
 or a tectonic save without its mesh, is refused.
 
 ## Status
+
+2026-10-29: built — phase 1 and the addenda: `world/query.ts` answers every
+field from the save, with no simulation. Phase 2 (the anthropology's
+layers) is void: the anthropology is superseded by the incubator
+(DES-0032), which keeps its history as artifacts, not in the save.
 
 Phase 1 BUILT (2026-07-26) — main-thread bake from caches; see status note at end
