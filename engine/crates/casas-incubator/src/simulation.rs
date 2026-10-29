@@ -2579,7 +2579,8 @@ pub fn simulate(
                             // THE REPLACEMENT (peoples.rs): the fields
                             // that come from a farmer cell to a cell
                             // without them, the herds from a herder cell
-                            // to a cell without fields or herds.
+                            // to a cell without fields or herds, make it
+                            // pending; `decide` decides it later.
                             let had = if plant {
                                 sim.farm_at[u] < f32::INFINITY
                             } else {
@@ -2593,7 +2594,7 @@ pub fn simulate(
                                 sim.herd_at[u] < f32::INFINITY && sim.herd_at[i] < f32::INFINITY
                             };
                             if !had && now {
-                                sim.traits.replace(h, u, i, &sim.people, !plant);
+                                sim.traits.came(u, i, &sim.people, !plant);
                             }
                         }
                     }
@@ -2610,6 +2611,9 @@ pub fn simulate(
             still.extend_from_slice(&front[added..]);
             *front = still;
         }
+        // THE REPLACEMENT decided where the farmers (the herders) have
+        // grown in a pending cell (peoples.rs `decide`).
+        sim.traits.decide(&sim.people);
         // 2c. The copper and its smelting, passed on.
         for smelted in [false, true] {
             let front = std::mem::take(if smelted {

@@ -187,10 +187,11 @@ constants in simulation.rs.
   them) grow alike, mountains, deserts and the sea part them. The
   innovations (the farming, the copper) are traits that spread by
   contact; farmers who spread carry their traits. Foragers who take the
-  farming keep theirs where they are about as many as the farmers who
-  come; where they are far fewer, the farmers' traits replace theirs
-  (2026-10-29: in Europe the farmers who came replaced most of the
-  hunters, as the genes show). The farming and the copper pass over the
+  farming keep theirs where they stay about as many as the farmers; where
+  they are far fewer, the farmers' traits replace theirs (2026-10-29: in
+  Europe the farmers who came replaced most of the hunters, as the genes
+  show). It is decided once the farmers have grown in the cell, not when
+  the fields come. The farming and the copper pass over the
   peoples' borders and carry no traits. The peoples are the clusters of alike, joined
   cells. A language is, for now, a slow trait among them; their names
   come later ([DES-0033](./naming-languages.md)).
@@ -349,6 +350,16 @@ Building since 2026-10-27:
   them, and the peoples hardly change (11 mainly farmers by km², as
   before). The ids: 7.8 MB on Morvane (u16, the cells lived in); the
   history 10 to 16 % slower (5.3 s instead of 4.8 s).
+- 2026-10-29: the replacement is decided later. The fields that come to
+  a cell make it pending, with its people then (the foragers) and the
+  cell they came from; once the foragers are a tenth or less of its
+  people (the farmers grown in it), it takes that cell's traits as they
+  are then. The herds the same. The history stays the same bits. On
+  Morvane 23 584 cells replaced (9 815 before), 10 851 of another branch
+  (788), a median of 50 years after the fields came; the herds 8 979
+  (557). The peoples at the end: Morvane 167, from origin 473 575 155,
+  Thalassor 192, Zephyra 173; the largest as before. The fields spread
+  mostly inside the people that began them: the peoples hardly change.
 
 Open:
 

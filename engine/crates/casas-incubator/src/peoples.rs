@@ -24,11 +24,13 @@
 //!   lived cells (`contact`).
 //! - THE SETTLERS: a cell settled empty takes the traits and the branch of
 //!   the cell its settlers came from.
-//! - THE REPLACEMENT (`replace`): the fields that come to a lived cell
-//!   without them from a farmer cell bring the farmers' traits and branch
-//!   where the cell's people are REPLACE_SHARE or fewer of the source's;
-//!   else the foragers keep theirs (in Europe the farmers who came
-//!   replaced most of the hunters, as the genes show). The herds the same,
+//! - THE REPLACEMENT (`came`, `decide`): the fields that come to a lived
+//!   cell without them from a farmer cell make it pending; once its
+//!   people when they came (the foragers) are REPLACE_SHARE or fewer of
+//!   its people now (the farmers grown in it), it takes the traits and the
+//!   branch of the cell the fields came from; while they are more, the
+//!   foragers keep theirs (in Europe the farmers who came replaced most of
+//!   the hunters, as the genes show). The herds the same,
 //!   HERD_REPLACE_SHARE. The copper, and the fields or herds that come to
 //!   a cell that has them, carry no traits; nor do people who move into a
 //!   lived cell (the famines, the rising sea): they meet by contact.
@@ -103,24 +105,35 @@ pub const TRAIT_LIKE: f64 = 0.05;
 /// 163 at 0.1, 144 at 0.15; at step 2's start 117, 55 and 45 (kin
 /// branches near).
 pub const PEOPLE_DISTANCE: f64 = 0.03;
-/// THE REPLACEMENT (part 2): the fields that come to a lived cell
-/// without them from a farmer cell bring the farmers' traits and branch
-/// where the cell's people are this share or less of the source cell's
-/// people. On Morvane (v14) 24 909 such comings: 9 815 at 0.1 or less
-/// (replaced), 13 289 at 0.1 to 0.3 (the front's farmers have not grown
-/// yet: GROWTH_A takes some 500 years from 0.1 to 15 a km²). Of the 9 815,
-/// 788 of another branch: the fields spread mostly inside the people that
-/// began them (the arable land is short), so the peoples hardly change —
-/// at the end 165 (165 without), the peoples mainly farmers by km² 11
-/// (11), by people 52 (52). At 0.3: 23 122 replaced, 12 by km². Thalassor
-/// 16 504 (5 078 of another branch), 192 peoples (190 without), 29 mainly
-/// farmers by km² (28); Zephyra 6 865 (874), 169 (171), 12 (14).
+/// THE REPLACEMENT (part 2; decided later since 2026-10-29): the fields
+/// that come to a lived cell without them from a farmer cell make it
+/// pending (`came`); it takes the farmers' traits and branch once its
+/// people when they came (F0, the foragers) are this share or less of its
+/// people now, the farmers grown in it (`decide`). At their coming F0 is
+/// the people now: the rule never holds then, and no case is decided at
+/// the coming. Part 2 decided at the coming against the source cell's
+/// people: on Morvane (v14) of 24 909 comings 9 815 replaced (788 of
+/// another branch), as the front's farmers had not grown yet. Decided
+/// later (Morvane, Morvane from origin 473 575, Thalassor, Zephyra from
+/// 783 702): 23 584, 23 620, 29 268 and 16 883 replaced (10 851, 14 139,
+/// 17 676 and 9 336 of another branch), 1 325, 1 294, 1 366 and 690 still
+/// pending at the end (dense foragers: the coasts, the fish); the cell's
+/// farmers grow fast from 0.1 to 1 a km², so it is decided a median 25
+/// to 50 years after the coming, p90 50. The peoples at the end 167, 155,
+/// 192 and 173 (166, 153, 192 and 169 before), the largest the same (3.0,
+/// 3.4, 3.1, 4.0 %); mainly farmers by km² 13, 23, 19 and 14 (11, 27, 29,
+/// 12), by people 54, 57, 85, 35 (52, 57, 90, 34). At 0.2: all but some 30
+/// cells replaced, a median of 25 years, the peoples 167, 154, 191, 173.
+/// The fields spread mostly inside the people that began them (the arable
+/// land is short): the peoples hardly change.
 pub const REPLACE_SHARE: f64 = 0.1;
 /// The same for the herds that come to a cell without fields or herds
 /// from a herder cell. The herders (1.5 a km²) are not many more than the
-/// foragers (0.1) at the front: on Morvane of 92 424 comings 557 at 0.1 or
-/// less, 80 696 at 0.3 to 1. The rule is the fields', for one rule; it
-/// replaces next to nothing.
+/// foragers (0.1 to 0.3): decided at the coming (part 2) 557 of Morvane's
+/// 92 424 comings replaced; decided later 8 979 (864 of another branch, a
+/// median of 175 years after, p90 300), 83 343 still pending at the end.
+/// On the other worlds 7 294, 9 878, 7 676. The rule is the fields', for
+/// one rule.
 pub const HERD_REPLACE_SHARE: f64 = 0.1;
 /// THE SPLIT (part 2): a branch's joined lived cells of more than this
 /// many km² part in two branches. By km², not by days across: the target
@@ -159,6 +172,13 @@ pub struct Traits {
     pub replaced: u32,
     pub herd_replaced: u32,
     pub splits: u32,
+    // THE REPLACEMENT's pending cells, in the order they became pending;
+    // each cell's source, -1 where not pending; its people when the fields
+    // or herds came (F0), a km²; 1 where the herds came.
+    pending: Vec<usize>,
+    source: Vec<i32>,
+    foragers: Vec<f32>,
+    by_herds: Vec<u8>,
 }
 
 // A normal draw (Box–Muller, as THE DROUGHTS draw theirs).
@@ -242,11 +262,15 @@ impl Traits {
             replaced: 0,
             herd_replaced: 0,
             splits: 0,
+            pending: Vec::new(),
+            source: vec![-1; n],
+            foragers: vec![0.0; n],
+            by_herds: vec![0; n],
         }
     }
 
     /// A cell settled empty takes the traits and the branch of `kin`, the
-    /// cell its settlers came from.
+    /// cell its settlers came from; a pending cell (`came`) is no longer.
     pub fn inherit(&mut self, cell: usize, kin: usize) {
         if cell == kin {
             return;
@@ -255,37 +279,68 @@ impl Traits {
             .copy_within(kin * TRAITS..(kin + 1) * TRAITS, cell * TRAITS);
         self.branch[cell] = self.branch[kin];
         self.ident[cell] = self.ident[kin];
+        self.source[cell] = -1;
     }
 
-    /// THE REPLACEMENT: the fields (`herds` false) or the herds came to
-    /// lived `cell` from `kin`. Where its people are `share` or less of
-    /// kin's, it takes kin's traits, branch and people; else it keeps its
-    /// own. True where replaced.
-    pub fn replace(
-        &mut self,
-        h: &Habitat,
-        cell: usize,
-        kin: usize,
-        people: &[f32],
-        herds: bool,
-    ) -> bool {
-        let share = if herds {
-            HERD_REPLACE_SHARE
-        } else {
-            REPLACE_SHARE
-        };
-        let own = people[cell] as f64 * h.area_km2[cell] as f64;
-        let came = people[kin] as f64 * h.area_km2[kin] as f64;
-        if own > share * came {
-            return false;
+    /// THE REPLACEMENT, its first half: the fields (`herds` false) or the
+    /// herds came to lived `cell` from `kin`. The cell is pending: it
+    /// keeps kin as its source and its people now (the foragers, F0) until
+    /// `decide`. The fields that come to a cell pending from the herds
+    /// take the herds' place: their source, the people then.
+    pub fn came(&mut self, cell: usize, kin: usize, people: &[f32], herds: bool) {
+        if self.source[cell] < 0 {
+            self.pending.push(cell);
         }
-        self.inherit(cell, kin);
-        if herds {
-            self.herd_replaced += 1;
-        } else {
-            self.replaced += 1;
+        self.source[cell] = kin as i32;
+        self.foragers[cell] = people[cell];
+        self.by_herds[cell] = herds as u8;
+    }
+
+    /// THE REPLACEMENT, its second half, every step: a pending cell whose
+    /// F0 is REPLACE_SHARE (HERD_REPLACE_SHARE) or less of its people now
+    /// (the farmers grown in it) takes the traits, branch and people of
+    /// its source as the source is now, and is no longer pending. A
+    /// pending cell left empty, or whose source is empty now (a famine,
+    /// the sea), is no longer pending and keeps its own traits: no
+    /// search for other farmers (on the three worlds no source was empty,
+    /// 2026-10-29). The cells in the order they became pending, so that a
+    /// source replaced in the same pass gives its new traits on; a source
+    /// still pending gives its own (its foragers are still many: the
+    /// farmers who came took their ways).
+    pub fn decide(&mut self, people: &[f32]) {
+        let mut kept = 0;
+        for k in 0..self.pending.len() {
+            let cell = self.pending[k];
+            let s = self.source[cell];
+            // -1: settled again since (`inherit`).
+            let done = if s < 0 || people[cell] <= 0.0 || people[s as usize] <= 0.0 {
+                true
+            } else {
+                let herds = self.by_herds[cell] != 0;
+                let share = if herds {
+                    HERD_REPLACE_SHARE
+                } else {
+                    REPLACE_SHARE
+                };
+                let replace = self.foragers[cell] as f64 <= share * people[cell] as f64;
+                if replace {
+                    self.inherit(cell, s as usize);
+                    if herds {
+                        self.herd_replaced += 1;
+                    } else {
+                        self.replaced += 1;
+                    }
+                }
+                replace
+            };
+            if done {
+                self.source[cell] = -1;
+            } else {
+                self.pending[kept] = cell;
+                kept += 1;
+            }
         }
-        true
+        self.pending.truncate(kept);
     }
 
     /// Every CLIMATE_YEARS: the split, the drift, then the contact, on the
@@ -1068,6 +1123,10 @@ mod tests {
             replaced: 0,
             herd_replaced: 0,
             splits: 0,
+            pending: Vec::new(),
+            source: vec![-1; n],
+            foragers: vec![0.0; n],
+            by_herds: vec![0; n],
         }
     }
 
@@ -1158,6 +1217,35 @@ mod tests {
         // Each part of 2 000 000 km² parts again, the next time.
         traits.split(&h, &lived, &people, &days);
         assert_eq!(traits.splits, 3);
+    }
+
+    // The fields come to cells 1 and 3 from farmer cells 0 and 2 (0.1 a
+    // km² of foragers in each): cell 1 is decided once its people grew to
+    // ten times its foragers or more, with its source's traits as they are
+    // then; cell 3's source is left empty, and it keeps its own.
+    #[test]
+    fn the_replacement_is_decided_once_the_farmers_grew() {
+        let mut traits = traits_of(&[0.0, 0.5, 0.2, 0.7]);
+        traits.branch = vec![0, 1, 2, 3];
+        traits.ident = vec![10, 11, 12, 13];
+        let mut people = [15.0f32, 0.1, 15.0, 0.1];
+        traits.came(1, 0, &people, false);
+        traits.came(3, 2, &people, false);
+        traits.decide(&people);
+        assert_eq!(traits.pending, vec![1, 3]);
+        people[1] = 0.5;
+        traits.decide(&people);
+        assert_eq!(traits.replaced, 0);
+        set(&mut traits, 0, 0.3);
+        people[1] = 1.5;
+        people[2] = 0.0;
+        traits.decide(&people);
+        assert_eq!(traits.replaced, 1);
+        assert_eq!(traits.values[TRAITS], 0.3);
+        assert_eq!((traits.branch[1], traits.ident[1]), (0, 10));
+        assert_eq!((traits.branch[3], traits.values[3 * TRAITS]), (3, 0.7));
+        assert!(traits.pending.is_empty());
+        assert_eq!(traits.source, vec![-1; 4]);
     }
 
     #[test]
