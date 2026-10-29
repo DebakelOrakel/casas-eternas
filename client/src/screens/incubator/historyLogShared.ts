@@ -42,6 +42,18 @@ export type LogEvent =
   | { kind: 'drowned'; at: number; cell: number; landmass: number; km2: number; people: number }
   // A cold spell begins (climate_history.rs THE COLD SPELLS), `years` long.
   | { kind: 'coldSpell'; at: number; years: number }
+  // THE PEOPLES' CHRONICLE (peoples.rs Tree::tell, 2026-10-29), of the big
+  // peoples: `people` a people's id (historyPack.ts PeoplesTree, from 0;
+  // the player sees it from 1), `count` its people, `km2` its area, `cell`
+  // its heart. People `new` parted from `people` (`new`'s measure).
+  | { kind: 'peopleSplit'; at: number; cell: number; people: number; new: number; count: number; km2: number }
+  // People `people` went into `into` (its measure before).
+  | { kind: 'peopleMerged'; at: number; cell: number; people: number; into: number; count: number; km2: number }
+  // People `people` died out or fell under big for good (its last big
+  // measure).
+  | { kind: 'peopleGone'; at: number; cell: number; people: number; count: number; km2: number }
+  // People `people`'s farmers' share (by people) went to 0.5 or more.
+  | { kind: 'peopleFarmers'; at: number; cell: number; people: number; count: number; km2: number; farmers: number }
 
 // The people's marks the log notes.
 export const POPULATION_MARKS = [100_000, 1_000_000, 10_000_000]

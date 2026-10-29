@@ -21,16 +21,18 @@
 //! - `peopleIds{k}` u16, kept state k's people id of each cell of
 //!   `reached` whose `people{k}` is over 0, in `reached`'s order (a cell with
 //!   no people has no entry).
-//! - By people id: `peopleParent` i32 (-1 for one of step 2's start),
-//!   `peopleGroup` i32 (step 1's group), `peopleBorn` f32 and
-//!   `peopleEnded` f32 (years; Infinity while it lives),
-//!   `peopleMergedInto` i32 (-1 where it died out), `peopleBig` u8 (1
-//!   where it had PEOPLE_LEAST people and PEOPLE_LEAST_KM2 at one kept
-//!   state or more; 0 for an isolated small band, an island's, which the
+//! - By people id (every people of the tree, which steps every
+//!   CLIMATE_YEARS since 2026-10-29): `peopleParent` i32 (-1 for one of
+//!   step 2's start), `peopleGroup` i32 (step 1's group), `peopleBorn` f32
+//!   and `peopleEnded` f32 (years, of the tree's steps; Infinity while it
+//!   lives), `peopleMergedInto` i32 (-1 where it died out), `peopleBig` u8
+//!   (1 where it had PEOPLE_LEAST people and PEOPLE_LEAST_KM2 at one tree
+//!   step or more; 0 for an isolated small band, an island's, which the
 //!   tree keeps as a people of its own: the chronicle tells the big ones
 //!   alone).
 //! - By (people, kept state it is seen at), as CSR: `peopleFrameStart`
-//!   i32, one more than the peoples, the start of each one's rows; then
+//!   i32, one more than the peoples, the start of each one's rows (none
+//!   for a people born and ended between two kept states); then
 //!   `peopleFrame` u16 (the kept state), `peoplePeople` f32,
 //!   `peopleKm2` f32, `peopleFarmers` u8 (the share in 255ths),
 //!   `peopleCentre` i32 (its heart's cell).
@@ -335,7 +337,7 @@ fn push_peoples<'a>(
         ),
         (
             "peopleBig".into(),
-            Array::U8Owned(p.iter().map(|q| q.big() as u8).collect()),
+            Array::U8Owned(p.iter().map(|q| q.big as u8).collect()),
         ),
         ("peopleFrameStart".into(), Array::I32Owned(start)),
         (

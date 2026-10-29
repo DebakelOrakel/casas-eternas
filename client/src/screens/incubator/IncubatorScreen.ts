@@ -900,6 +900,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The rising sea's and the cold spells' colours.
   const DROWNED_RGB = [40, 90, 150] as const
   const COLD_RGB = [90, 130, 170] as const
+  // The peoples' splits, merges and ends (peoples.rs Tree::tell).
+  const PEOPLES_RGB = [150, 80, 60] as const
   function sayChronicle(): void {
     eventPlaces.clear()
     const events: ChronicleEvent[] = []
@@ -982,6 +984,22 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
             title: t('incubator.chronicle.event.coldSpell'),
             detail: t('incubator.chronicle.coldSpellDetail', { years: Math.round(e.years).toLocaleString(getLocale()) }),
           })
+        } else if (e.kind === 'peopleSplit' || e.kind === 'peopleMerged' || e.kind === 'peopleGone' || e.kind === 'peopleFarmers') {
+          // The peoples by their ids from 1, as the overlay's probe.
+          const a = String(e.people + 1)
+          const measure = { people: Math.round(e.count).toLocaleString(getLocale()), area: Math.round(e.km2).toLocaleString(getLocale()) }
+          const farmers = e.kind === 'peopleFarmers'
+          place({
+            time: e.at,
+            icon: farmers ? '/icons/wheat.png' : '/icons/dwarf.png',
+            rgb: farmers ? LIFEWAY_COLOURS[LIFEWAY.farmers] : PEOPLES_RGB,
+            title:
+              e.kind === 'peopleSplit' ? t('incubator.chronicle.event.peopleSplit', { a })
+              : e.kind === 'peopleMerged' ? t('incubator.chronicle.event.peopleMerged', { a, b: String(e.into + 1) })
+              : e.kind === 'peopleGone' ? t('incubator.chronicle.event.peopleGone', { a })
+              : t('incubator.chronicle.event.peopleFarmers', { a }),
+            detail: e.kind === 'peopleSplit' ? t('incubator.chronicle.peopleSplitDetail', { b: String(e.new + 1), ...measure }) : t('incubator.chronicle.peopleDetail', measure),
+          }, e.cell)
         } else if (e.kind === 'extinct') {
           if (facts.landmassKm2[e.landmass] < EVENT_LEAST_KM2) continue
           const spec = ANIMALS.find((a) => a.id === e.id)

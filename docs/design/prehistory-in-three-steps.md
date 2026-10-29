@@ -199,8 +199,16 @@ constants in simulation.rs.
   age: some 3 to 10 archaeological cultures a million km²).
   Built 2026-10-29 (`casas-incubator` peoples.rs): the traits, the
   farmers' replacement, the split of large peoples, the peoples' lasting
-  ids and their tree; their storage in H1 and the overlay (Völker).
-  Not built: the chronicle's events.
+  ids and their tree; their storage in H1 and the overlay (Völker); the
+  chronicle's events (2026-10-29, Status).
+- **The peoples in the chronicle (2026-10-29).** Of the big peoples
+  alone, and of a people of a share of the land lived in (0.5 %): a
+  people splits (both parts so large), merges into another, vanishes
+  (dies out or falls under big for good), turns to farming (its farmers'
+  share by people over a half, once). Not the peoples of step 2's start:
+  they are just there. Two peoples whose border is near the distance
+  that parts them part and join again; a split, a merge, a people gone is
+  told of a people that lived 5 000 years.
 - **No rank in step 2 (2026-10-29).** Step 2 gives each people what rank
   grows from — its surplus (the farmers' share, the arable land, the
   density), its largest town, its copper, its exchange — and step 3
@@ -371,12 +379,24 @@ Building since 2026-10-27:
   2 094 peoples, 220 big. The incubator's overlay Völker paints the
   peoples at the time shown, the hue by step 1's group, each people a
   step of hue, saturation and lightness of its own.
+- 2026-10-29: the peoples in the chronicle (the incubator's v4;
+  `casas-incubator` peoples.rs `Tree::tell`). The tree steps every 500
+  years, not every 2 500; H1 keeps its ids and measures at the kept states
+  as before. Splits, merges, peoples gone and turns to farming in the log,
+  of the big peoples of 0.5 % of the km² lived in or more (some 28 M km²
+  on the three worlds), a split, a merge or an end of a people that lived
+  5 000 years. Morvane 34 splits, 4 merges, 0 gone, 27 turns to farming;
+  Thalassor 29, 1, 0, 27; Zephyra (origin 783 702) 30, 2, 0, 13. The
+  splits mostly in the first fifth of the history (28, 21, 27), the turns
+  to farming in its second to fourth. The other arrays keep their bytes;
+  the history takes 1.4, 0.6 and 1.9 s more (6.6, 3.2 and 8.5 s).
 
 Open:
 
 1. Step 2's times against the earth's (the copper, the smelting, the city
    after the farming).
-2. The peoples (above): the chronicle's events of them.
+2. The peoples' splits in the chronicle are most in step 2's first
+   fifth: step 2's start's peoples are kin and part as they drift.
 3. The far trade: where which goods came from, for step 3 (above, the
    exchange).
 4. Step 1's sea-level curve: drawn from the world's seed, or a control.

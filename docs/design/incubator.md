@@ -17,7 +17,7 @@ summary.de: Der Inkubator zeigt Level 1 einer Welt und lässt darauf wachsen,
 area: mechanics
 stage: building
 createdAt: 2026-10-26
-updatedAt: 2026-10-28
+updatedAt: 2026-10-29
 related: [DEC-0046, DEC-0047, DEC-0048, DES-0023]
 ---
 
@@ -95,7 +95,9 @@ the steps before it.
   extinctions on large landmasses, the first village, the first trade
   route, the large famines (30 % of their square's people and 10 000 or
   more), the people over 100 000, 1 M and 10 M, the copper hammered and
-  smelted, the first city. The event at the time shown is "now", the ones
+  smelted, the first city; of the big peoples of step 2 (DES-0032) their
+  splits, merges, ends and turns to farming, each people by its id from 1
+  as the overlay Völker's probe names it. The event at the time shown is "now", the ones
   after it "later"; a click goes to its time and turns or pans the view to
   its cell (`WorldView.lookAt`).
 - **The epochs**: the Palaeolithic, the Neolithic from the first farming

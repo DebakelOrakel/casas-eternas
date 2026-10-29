@@ -282,8 +282,9 @@ for (const kind of ['torus', 'sphere']) {
 // reach both again, by chance. Not 'drowned': the sea takes less than
 // DROWNED_TOLD_KM2 of these small worlds' shelves in a CLIMATE_YEARS.
 // THE PEOPLES (2026-10-29): two big ones alive at the end on a world, a
-// people parted from another, one merged into another.
-const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged']
+// people parted from another, one merged into another; the chronicle's
+// events of each kind (peoples.rs Tree::tell).
+const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleGone', 'peopleFarmers']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')

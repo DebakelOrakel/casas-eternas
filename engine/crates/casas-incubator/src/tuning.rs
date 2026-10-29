@@ -20,7 +20,11 @@ use serde_json::{Map, Value, json};
 /// first city; its time and its end in the packed form.
 /// v3 (2026-10-29): the peoples (peoples.rs Tree) in the packed form; the
 /// other arrays the same bytes.
-pub const INCUBATOR_ALGO_VERSION: u32 = 3;
+/// v4 (2026-10-29): the peoples' tree every CLIMATE_YEARS, not only at the
+/// kept states (its ids, births and ends other), and its events in the
+/// log (peoples.rs `Tree::tell`); the other arrays the same bytes. A
+/// reader that does not know the new kinds of the log passes over them.
+pub const INCUBATOR_ALGO_VERSION: u32 = 4;
 
 // The constants of a module as (name, value) pairs.
 macro_rules! table {
@@ -81,7 +85,7 @@ pub fn constants() -> Value {
         "peoples": object(table!(peoples:
             TRAITS, BRANCH_SHARE, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
             CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, HERD_REPLACE_SHARE, SPLIT_KM2,
-            PEOPLE_LEAST, PEOPLE_LEAST_KM2,
+            PEOPLE_LEAST, PEOPLE_LEAST_KM2, SPLIT_TOLD_SHARE, TOLD_LIVES_YEARS, FARMERS_TOLD,
         )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,

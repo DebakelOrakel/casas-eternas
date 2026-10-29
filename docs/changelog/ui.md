@@ -5,6 +5,7 @@ format. (The legacy sphere and mars screens are out of scope and not tracked her
 
 ## 2026-10-29
 - **new** Incubator: the Peoples overlay shows the peoples of the New Stone Age at the time shown, related peoples in alike colours. `incubator.people.peoples`
+- **new** Incubator: the chronicle tells when a large people splits, merges into another, vanishes or turns to farming. `incubator.chronicle.event.peopleSplit`
 
 ## 2026-10-28
 - **new** Incubator: the chronicle tells of coasts the rising sea takes and of cold spells, and large villages draw more of the far trade. `incubator.chronicle.event.drowned`

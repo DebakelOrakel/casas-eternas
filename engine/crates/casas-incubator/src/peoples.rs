@@ -1,6 +1,6 @@
 //! THE PEOPLES, parts 1 and 2 (2026-10-29; docs/design/prehistory-in-
 //! three-steps.md, step 2): cultural traits per cell, the peoples they
-//! give, and the peoples' tree over the kept states.
+//! give, the peoples' tree over the history, and its events.
 //!
 //! Each cell carries TRAITS traits in [0, 1]. They mean nothing: they are
 //! identity only. Trait LANGUAGE is the language: it drifts less and is
@@ -36,8 +36,11 @@
 //!   lived cell (the famines, the rising sea): they meet by contact.
 //! - THE PEOPLES (`peoples_of`): the lived cells joined by neighbour edges
 //!   whose trait distance is under PEOPLE_DISTANCE, a union-find.
-//! - THE TREE (`Tree`): the peoples at each kept state, with ids that
-//!   last, their splits and merges.
+//! - THE TREE (`Tree`): the peoples every CLIMATE_YEARS, with ids that
+//!   last, their splits and merges; the ids and the measures packed at the
+//!   kept states alone.
+//! - THE CHRONICLE (part 4, `Tree::tell`): the big peoples' splits,
+//!   merges, ends and turns to farming, into the history's log.
 //!
 //! Measured on Morvane (v14), Thalassor and Zephyra (origin 783 702) on
 //! 2026-10-29, the peoples of 1 000 people and 10 000 km² or more at the
@@ -58,6 +61,7 @@
 //!   5 000 years; some 45, the groups and the landmasses.
 
 use crate::habitat::Habitat;
+use crate::log::LogEvent;
 use crate::peopling::{Peopling, branches_of};
 use crate::simulation::PEOPLE_FRAME_STEP;
 use casas_engine::core::det_math::{det_cos, det_exp, det_log};
@@ -149,6 +153,30 @@ pub const SPLIT_KM2: f64 = 1.0e6;
 /// or more; a smaller set of joined alike cells beside one is part of it.
 pub const PEOPLE_LEAST: f64 = 1000.0;
 pub const PEOPLE_LEAST_KM2: f64 = 10_000.0;
+/// THE CHRONICLE (part 4, 2026-10-29; `Tree::tell`): a people is told at
+/// a step where it is big and has this share of the km² lived in or more:
+/// a split when both parts are, a merge when the people gone was. On
+/// Morvane, Thalassor and Zephyra (origin 783 702) some 28 M km² lived in
+/// (the cells with people, whole): this 140 000 km², some 25 to 40
+/// peoples at a time. The events of the three histories (splits, merges,
+/// gone, turns to farming): at 0.01 15, 14 and 7; at 0.005 34/4/0/27,
+/// 29/1/0/27, 30/2/0/13; at 0.003 53, 64, 76 splits; at 0.002 65, 85, 97
+/// (TOLD_LIVES_YEARS 3 000 for these but 0.005). Without the share, 66,
+/// 87 and 65 events, 34 to 76 of them turns to farming of peoples of
+/// 10 000 to 100 000 km².
+pub const SPLIT_TOLD_SHARE: f64 = 0.005;
+/// A split, a merge or a people gone is told of a people that lived this
+/// long, years (its split kept back until then): no flapping. Without it
+/// a part of 220 000 km² of one of Zephyra's peoples split and merged
+/// again 8 times, 500 to 1 500 years apart; at 3 000 years some still
+/// part, join and part again 4 000 years apart (merges 8, 4, 6); at 5 000
+/// 4, 1, 2; at 8 000 the same splits but 1 to 4. Most splits are in the
+/// history's first fifth (28, 21, 27 of 34, 29, 30): step 2's start's
+/// peoples are kin branches near PEOPLE_DISTANCE, and part as they drift.
+pub const TOLD_LIVES_YEARS: f64 = 5000.0;
+/// A big people turns to farming when its farmers' share (by people)
+/// goes from under this to this or more: once a people.
+pub const FARMERS_TOLD: f64 = 0.5;
 
 /// The traits of all cells and what moves them.
 pub struct Traits {
@@ -163,7 +191,7 @@ pub struct Traits {
     // The pass a cell drifted in last.
     stamp: Vec<u32>,
     pass: u32,
-    /// Each cell's people of the tree (`Tree`) at the last kept state, or
+    /// Each cell's people of the tree (`Tree`) at the last tree step, or
     /// its settlers' people; -1 before the first.
     pub ident: Vec<i32>,
     // THE SPLIT's days from a cell, Infinity where not searched.
@@ -661,7 +689,7 @@ pub struct PeopleFrame {
     pub centre: i32,
 }
 
-/// A people of the tree, from the kept state it was first seen at.
+/// A people of the tree, from the tree step it was first seen at.
 #[derive(Clone, Debug, PartialEq)]
 pub struct People {
     /// The people it parted from; -1 for one of step 2's start.
@@ -669,37 +697,80 @@ pub struct People {
     /// Step 1's group (peopling.rs) its first people came from, by their
     /// most people: its descent.
     pub group: i32,
-    /// The time of the kept state it was first seen at, years.
+    /// The time of the tree step it was first seen at, years.
     pub born: f64,
-    /// The time of the kept state it was first not seen at; Infinity
+    /// The time of the tree step it was first not seen at; Infinity
     /// while it lives.
     pub ended: f64,
     /// The people most of its people went into where it ended; -1 where
     /// it died out.
     pub merged_into: i32,
+    /// Of PEOPLE_LEAST people and PEOPLE_LEAST_KM2 or more at one tree
+    /// step or more (`big`): not only an isolated small band (an
+    /// island's, which `fold_small` keeps). The chronicle tells these
+    /// alone (pack.rs `peopleBig`).
+    pub big: bool,
+    /// Its measures at the kept states it is seen at. A people born and
+    /// ended between two kept states has none.
     pub frames: Vec<PeopleFrame>,
 }
 
-impl People {
-    /// Of PEOPLE_LEAST people and PEOPLE_LEAST_KM2 or more at one kept
-    /// state or more: not only an isolated small band (an island's, which
-    /// `fold_small` keeps). The chronicle tells these alone (pack.rs
-    /// `peopleBig`).
-    pub fn big(&self) -> bool {
-        self.frames
-            .iter()
-            .any(|f| f.people as f64 >= PEOPLE_LEAST && f.km2 as f64 >= PEOPLE_LEAST_KM2)
+// A people's measure at a tree step.
+#[derive(Clone, Copy, Debug, Default)]
+struct Measure {
+    people: f64,
+    km2: f64,
+    farmers: f64,
+    centre: i32,
+}
+
+// Of PEOPLE_LEAST people and PEOPLE_LEAST_KM2 or more.
+fn big(m: &Measure) -> bool {
+    m.people >= PEOPLE_LEAST && m.km2 >= PEOPLE_LEAST_KM2
+}
+
+// What the chronicle (`Tree::tell`) keeps of a people between the steps:
+// its measure at the last step; at the last step it was big and that
+// step's time (-Infinity before); the first step's time it was not big
+// after it (Infinity while big); whether it was told at a step once, and
+// turned to farming.
+#[derive(Clone, Copy, Debug)]
+struct Watch {
+    last: Measure,
+    big_last: Measure,
+    big_at: f64,
+    fell_at: f64,
+    told: bool,
+    farmed: bool,
+}
+
+impl Default for Watch {
+    fn default() -> Self {
+        Watch {
+            last: Measure::default(),
+            big_last: Measure::default(),
+            big_at: f64::NEG_INFINITY,
+            fell_at: f64::INFINITY,
+            told: false,
+            farmed: false,
+        }
     }
 }
 
-/// THE TREE (part 2): the peoples at each kept state, each with an id
-/// that lasts. At a kept state the peoples are clustered (`peoples_of`,
-/// PEOPLE_DISTANCE) over the cells the state holds people in, and a
+/// THE TREE (part 2): the peoples at each tree step, each with an id
+/// that lasts. Since part 4 (2026-10-29) a step every CLIMATE_YEARS
+/// (simulation.rs), not only at the kept states (KEEP_YEARS): the
+/// chronicle tells the splits and merges as they happen, and a match over
+/// 500 years follows a people better than one over 2 500. The ids and
+/// the measures (`ids`, `People::frames`) are kept at the kept states
+/// alone: H1 holds them there. At a step the peoples are clustered
+/// (`peoples_of`, PEOPLE_DISTANCE) over the cells the state holds people
+/// in (its people in PEOPLE_FRAME_STEP a km², as a kept state's), and a
 /// cluster under PEOPLE_LEAST people or PEOPLE_LEAST_KM2 is part of the
 /// larger neighbour it shares the most edges with (`fold_small`: the
 /// borders' small sets of cells between two peoples, which come and go);
 /// one with no larger neighbour (an island's band) is a people.
-/// Each cluster is matched with the last state's peoples by their
+/// Each cluster is matched with the last step's peoples by their
 /// overlap: each cell's people a km² × km² goes to the pair of its last
 /// people (`Traits::ident`, which settlers carry) and its cluster now.
 /// The pairs by overlap, the largest first, match a last people and a
@@ -712,11 +783,20 @@ pub struct Tree {
     pub peoples: Vec<People>,
     /// Each kept state's people id of each cell the state holds people in
     /// (`frame` people over 0), in the cells' order; u16: some 650 to
-    /// 1 350 ids in a whole history on the three worlds, 8 to 10 MB of
-    /// ids on Morvane and Zephyra. Packed (pack.rs `peopleIds{k}`).
+    /// 1 350 ids in a whole history on the three worlds at a step every
+    /// KEEP_YEARS, 8 to 10 MB of ids on Morvane and Zephyra. Packed
+    /// (pack.rs `peopleIds{k}`).
     pub ids: Vec<Vec<u16>>,
-    // The peoples alive at the last kept state.
+    // The peoples alive at the last step.
     alive: Vec<u32>,
+    // By people id, the chronicle's (`tell`).
+    watch: Vec<Watch>,
+    // The last step's time (-Infinity before the first) and its km² lived
+    // in.
+    last_t: f64,
+    last_lived: f64,
+    // The splits kept back (`tell`), by the new people's id.
+    splits: Vec<(u32, LogEvent)>,
 }
 
 impl Default for Tree {
@@ -731,13 +811,20 @@ impl Tree {
             peoples: Vec::new(),
             ids: Vec::new(),
             alive: Vec::new(),
+            watch: Vec::new(),
+            last_t: f64::NEG_INFINITY,
+            last_lived: 0.0,
+            splits: Vec::new(),
         }
     }
 
-    /// The peoples at a kept state: `people` the state's (in
+    /// The peoples at a tree step: `people` the state's (in
     /// PEOPLE_FRAME_STEP a km²), `fields` 1 where a cell has the fields
-    /// by now, `group` each cell's step-1 group, `t` the state's time.
-    /// Sets `traits.ident`. The state's ids, as in `ids`.
+    /// by now, `group` each cell's step-1 group, `t` the state's time;
+    /// `keep` at a kept state, whose ids and measures are kept. Sets
+    /// `traits.ident`; the chronicle's events into `log` (`tell`). The
+    /// state's ids, as in `ids`.
+    #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
         h: &Habitat,
@@ -746,6 +833,8 @@ impl Tree {
         fields: &[u8],
         group: &[i32],
         t: f64,
+        keep: bool,
+        log: &mut Vec<LogEvent>,
     ) -> Vec<u16> {
         let n = h.count;
         let frame = self.ids.len() as u32;
@@ -778,6 +867,8 @@ impl Tree {
                 _ => overlap.push((p, q, w)),
             }
         }
+        let before = self.alive.clone();
+        let old = self.peoples.len();
         let ids = match_overlap(&mut self.peoples, &mut self.alive, &overlap, count, t);
         // A new people's descent: its parent's, or at step 2's start the
         // group of most of its people.
@@ -828,19 +919,33 @@ impl Tree {
                 s.2 += weight[i];
             }
         }
+        let now: Vec<Measure> = (0..count)
+            .map(|q| {
+                let (pp, km2, farm) = sum[q];
+                Measure {
+                    people: pp,
+                    km2,
+                    farmers: if pp > 0.0 { farm / pp } else { 0.0 },
+                    centre: centre[q],
+                }
+            })
+            .collect();
         for q in 0..count {
-            if ids[q] < 0 {
-                continue;
+            let m = &now[q];
+            if big(m) {
+                self.peoples[ids[q] as usize].big = true;
             }
-            let (pp, km2, farm) = sum[q];
-            self.peoples[ids[q] as usize].frames.push(PeopleFrame {
-                frame,
-                people: pp as f32,
-                km2: km2 as f32,
-                farmers: if pp > 0.0 { (farm / pp) as f32 } else { 0.0 },
-                centre: centre[q],
-            });
+            if keep {
+                self.peoples[ids[q] as usize].frames.push(PeopleFrame {
+                    frame,
+                    people: m.people as f32,
+                    km2: m.km2 as f32,
+                    farmers: m.farmers as f32,
+                    centre: m.centre,
+                });
+            }
         }
+        self.tell(&before, old, &ids, &now, t, log);
         let mut out = Vec::new();
         for i in 0..n {
             if people[i] == 0 {
@@ -851,8 +956,175 @@ impl Tree {
             assert!((0..65535).contains(&id), "a people id over u16");
             out.push(id as u16);
         }
-        self.ids.push(out.clone());
+        if keep {
+            self.ids.push(out.clone());
+        }
         out
+    }
+
+    // THE CHRONICLE (part 4): the events of the big peoples at step `t`,
+    // from the last step's peoples alive (`before`, the peoples numbered
+    // from `old` on new), the clusters' ids and measures now. None at the
+    // first step: step 2's start's peoples are just there. A people is
+    // TOLD at a step where it is big (`big`) and has SPLIT_TOLD_SHARE of
+    // the km² lived in then or more (the many small peoples at the
+    // borders and on the islands are not the chronicle's).
+    // - A split: a new people whose parent lives on, both told now. Kept
+    //   back until the new one lived TOLD_LIVES_YEARS, then written with
+    //   its time and measure at its birth, at its heart then; dropped where
+    //   it ended before.
+    // - A merge: a people ended into another, told at the last step, which
+    //   lived TOLD_LIVES_YEARS. Its measure then, at its heart then.
+    // - A people gone: one told at a step once, which lived
+    //   TOLD_LIVES_YEARS, and which died out (none of its cells lived in)
+    //   or is alive at the history's end but not big (`finish`); told at
+    //   the first step it was not big after its last big one, with that
+    //   big one's measure. One that falls under big and comes back is told
+    //   nothing, one that falls for good once. One that merged is not
+    //   gone.
+    // - A turn to farming: a people told now whose farmers' share (by
+    //   people) went from under FARMERS_TOLD at the last step to it or more
+    //   now; once a people, and not for one born a farmer people (no last
+    //   step).
+    // The guard of the lives: two peoples at their border's distance about
+    // PEOPLE_DISTANCE part and join again and again, each time a new id
+    // (on Zephyra a part of 220 000 km² of one people 8 times in 15 000
+    // years, 500 to 1 500 years apart each time).
+    fn tell(
+        &mut self,
+        before: &[u32],
+        old: usize,
+        ids: &[i32],
+        now: &[Measure],
+        t: f64,
+        log: &mut Vec<LogEvent>,
+    ) {
+        let first = self.last_t == f64::NEG_INFINITY;
+        self.watch.resize(self.peoples.len(), Watch::default());
+        let lived: f64 = now.iter().map(|m| m.km2).sum();
+        let told = |m: &Measure, lived: f64| big(m) && m.km2 >= SPLIT_TOLD_SHARE * lived;
+        // Each people's cluster now, -1 where it is not alive.
+        let mut at = vec![-1i32; self.peoples.len()];
+        for (q, &id) in ids.iter().enumerate() {
+            at[id as usize] = q as i32;
+        }
+        if !first {
+            for (q, &id) in ids.iter().enumerate() {
+                let m = &now[q];
+                let id = id as usize;
+                if id >= old {
+                    let p = self.peoples[id].parent;
+                    if p < 0 || at[p as usize] < 0 {
+                        continue;
+                    }
+                    if told(m, lived) && told(&now[at[p as usize] as usize], lived) {
+                        self.splits.push((
+                            id as u32,
+                            LogEvent::PeopleSplit {
+                                at: t,
+                                cell: m.centre as f64,
+                                people: p as f64,
+                                new: id as f64,
+                                count: m.people,
+                                km2: m.km2,
+                            },
+                        ));
+                    }
+                } else if !self.watch[id].farmed
+                    && told(m, lived)
+                    && self.watch[id].last.farmers < FARMERS_TOLD
+                    && m.farmers >= FARMERS_TOLD
+                {
+                    self.watch[id].farmed = true;
+                    log.push(LogEvent::PeopleFarmers {
+                        at: t,
+                        cell: m.centre as f64,
+                        people: id as f64,
+                        count: m.people,
+                        km2: m.km2,
+                        farmers: m.farmers,
+                    });
+                }
+            }
+            for &p in before {
+                let p = p as usize;
+                if at[p] >= 0 || t - self.peoples[p].born < TOLD_LIVES_YEARS {
+                    continue;
+                }
+                let w = self.watch[p];
+                let into = self.peoples[p].merged_into;
+                if into >= 0 {
+                    if told(&w.last, self.last_lived) {
+                        log.push(LogEvent::PeopleMerged {
+                            at: t,
+                            cell: w.last.centre as f64,
+                            people: p as f64,
+                            into: into as f64,
+                            count: w.last.people,
+                            km2: w.last.km2,
+                        });
+                    }
+                } else if w.told {
+                    log.push(gone(p, &w, js::min(t, w.fell_at)));
+                }
+            }
+        }
+        // The splits kept back: written once the new people lived
+        // TOLD_LIVES_YEARS, dropped where it ended before.
+        let peoples = &self.peoples;
+        self.splits.retain(|(id, e)| {
+            let p = &peoples[*id as usize];
+            if p.ended < f64::INFINITY {
+                return false;
+            }
+            if t - p.born < TOLD_LIVES_YEARS {
+                return true;
+            }
+            log.push(e.clone());
+            false
+        });
+        for (q, &id) in ids.iter().enumerate() {
+            let w = &mut self.watch[id as usize];
+            w.last = now[q];
+            if told(&now[q], lived) {
+                w.told = true;
+            }
+            if big(&now[q]) {
+                w.big_last = now[q];
+                w.big_at = t;
+                w.fell_at = f64::INFINITY;
+            } else if w.big_at > f64::NEG_INFINITY && w.fell_at == f64::INFINITY {
+                w.fell_at = t;
+            }
+        }
+        self.last_t = t;
+        self.last_lived = lived;
+    }
+
+    /// At the history's end, after its last step: the peoples gone (`tell`)
+    /// that are alive but not big since a big step. The splits still kept
+    /// back are not told: their peoples did not live TOLD_LIVES_YEARS.
+    pub fn finish(&mut self, log: &mut Vec<LogEvent>) {
+        for &p in &self.alive {
+            let w = &self.watch[p as usize];
+            if w.told
+                && w.fell_at < f64::INFINITY
+                && w.fell_at - self.peoples[p as usize].born >= TOLD_LIVES_YEARS
+            {
+                log.push(gone(p as usize, w, w.fell_at));
+            }
+        }
+    }
+}
+
+// A people gone at `at`, with its last big measure.
+fn gone(p: usize, w: &Watch, at: f64) -> LogEvent {
+    LogEvent::PeopleGone {
+        at,
+        cell: w.big_last.centre as f64,
+        people: p as f64,
+        count: w.big_last.people,
+        km2: w.big_last.km2,
     }
 }
 
@@ -981,6 +1253,7 @@ fn match_overlap(
             born: t,
             ended: f64::INFINITY,
             merged_into: -1,
+            big: false,
             frames: Vec::new(),
         });
     }
@@ -1148,17 +1421,28 @@ mod tests {
 
     // Six cells of 10 000 people and 10 000 km² each: two peoples; one
     // parts in two, the smaller part a new people; it goes into the
-    // other; the last dies out.
+    // other, at a step not kept, and the last turns to farming; then it
+    // dies out. The chronicle tells each (none at the first step), the
+    // split once the new people lived TOLD_LIVES_YEARS.
     #[test]
     fn the_tree_keeps_ids_and_records_splits_and_merges() {
         let h = row(6, 10_000.0);
         let mut traits = traits_of(&[0.0, 0.0, 0.0, 0.5, 0.5, 0.5]);
         let mut people = vec![1000u16; 6];
-        let fields = [1u8, 1, 1, 0, 0, 0];
+        let mut fields = [1u8, 1, 1, 0, 0, 0];
         let group = [3, 3, 3, 7, 7, 7];
         let mut tree = Tree::new();
+        let mut log = Vec::new();
+        let mut step = |tree: &mut Tree,
+                        traits: &mut Traits,
+                        people: &[u16],
+                        fields: &[u8],
+                        t: f64,
+                        keep: bool| {
+            tree.frame(&h, traits, people, fields, &group, t, keep, &mut log)
+        };
         assert_eq!(
-            tree.frame(&h, &mut traits, &people, &fields, &group, 0.0),
+            step(&mut tree, &mut traits, &people, &fields, 0.0, true),
             vec![0, 0, 0, 1, 1, 1]
         );
         assert_eq!(tree.peoples[0].group, 3);
@@ -1170,32 +1454,117 @@ mod tests {
         set(&mut traits, 4, 0.9);
         set(&mut traits, 5, 0.9);
         assert_eq!(
-            tree.frame(&h, &mut traits, &people, &fields, &group, 10.0),
+            step(&mut tree, &mut traits, &people, &fields, 5000.0, true),
             vec![0, 0, 0, 2, 1, 1]
         );
         assert_eq!(tree.peoples[2].parent, 1);
         assert_eq!(tree.peoples[2].group, 7);
-        assert_eq!(tree.peoples[2].born, 10.0);
-        // 3 grows alike with 0 … 2: it goes into people 0.
+        assert_eq!(tree.peoples[2].born, 5000.0);
+        step(&mut tree, &mut traits, &people, &fields, 10_000.0, false);
+        // 3 grows alike with 0 … 2: it goes into people 0. The fields come
+        // to 4 and 5.
         set(&mut traits, 3, 0.0);
+        fields[4] = 1;
+        fields[5] = 1;
         assert_eq!(
-            tree.frame(&h, &mut traits, &people, &fields, &group, 20.0),
+            step(&mut tree, &mut traits, &people, &fields, 11_000.0, false),
             vec![0, 0, 0, 0, 1, 1]
         );
-        assert_eq!(tree.peoples[2].ended, 20.0);
+        assert_eq!(tree.peoples[2].ended, 11_000.0);
         assert_eq!(tree.peoples[2].merged_into, 0);
         // 4 and 5 left empty: people 1 died out.
         people[4] = 0;
         people[5] = 0;
         assert_eq!(
-            tree.frame(&h, &mut traits, &people, &fields, &group, 30.0),
+            step(&mut tree, &mut traits, &people, &fields, 15_000.0, true),
             vec![0, 0, 0, 0]
         );
-        assert_eq!(tree.peoples[1].ended, 30.0);
+        assert_eq!(tree.peoples[1].ended, 15_000.0);
         assert_eq!(tree.peoples[1].merged_into, -1);
         assert_eq!(tree.peoples.len(), 3);
         assert!(tree.peoples[0].ended.is_infinite());
-        assert_eq!(tree.peoples[0].frames.len(), 4);
+        // The steps at 10 000 and 11 000 not kept.
+        assert_eq!(tree.peoples[0].frames.len(), 3);
+        assert_eq!(tree.ids.len(), 3);
+        tree.finish(&mut log);
+        let told: Vec<(&str, f64, f64, f64, f64)> = log
+            .iter()
+            .map(|e| match *e {
+                LogEvent::PeopleSplit {
+                    at,
+                    cell,
+                    people,
+                    new,
+                    ..
+                } => ("split", at, cell, people, new),
+                LogEvent::PeopleMerged {
+                    at,
+                    cell,
+                    people,
+                    into,
+                    ..
+                } => ("merged", at, cell, people, into),
+                LogEvent::PeopleGone {
+                    at, cell, people, ..
+                } => ("gone", at, cell, people, -1.0),
+                LogEvent::PeopleFarmers {
+                    at,
+                    cell,
+                    people,
+                    farmers,
+                    ..
+                } => ("farmers", at, cell, people, farmers),
+                _ => ("other", 0.0, 0.0, 0.0, 0.0),
+            })
+            .collect();
+        assert_eq!(
+            told,
+            vec![
+                ("split", 5000.0, 3.0, 1.0, 2.0),
+                ("farmers", 11_000.0, 5.0, 1.0, 1.0),
+                ("merged", 11_000.0, 3.0, 2.0, 0.0),
+                ("gone", 15_000.0, 5.0, 1.0, -1.0),
+            ]
+        );
+    }
+
+    // A big people that falls under big for good is gone at the first step
+    // it was small after its last big one; one that comes back is not.
+    #[test]
+    fn a_people_small_for_good_is_gone() {
+        let h = row(2, 10_000.0);
+        let mut traits = traits_of(&[0.0, 0.0]);
+        let mut tree = Tree::new();
+        let mut log = Vec::new();
+        for (people, t) in [
+            (1000, 0.0),
+            (10, 10_000.0),
+            (1000, 20_000.0),
+            (10, 30_000.0),
+            (10, 40_000.0),
+        ] {
+            tree.frame(
+                &h,
+                &mut traits,
+                &[people; 2],
+                &[0; 2],
+                &[0; 2],
+                t,
+                true,
+                &mut log,
+            );
+        }
+        assert!(log.is_empty());
+        tree.finish(&mut log);
+        assert!(matches!(
+            log[..],
+            [LogEvent::PeopleGone {
+                at: 30_000.0,
+                people: 0.0,
+                count: 20_000.0,
+                ..
+            }]
+        ));
     }
 
     // A set of few people between two peoples is part of the one it shares
@@ -1207,7 +1576,17 @@ mod tests {
         // Cell 2: 10 people; cell 5 empty, so cell 6 is alone.
         let people = [1000u16, 1000, 1, 1000, 1000, 0, 1];
         let mut tree = Tree::new();
-        let ids = tree.frame(&h, &mut traits, &people, &[0; 7], &[0; 7], 0.0);
+        let mut log = Vec::new();
+        let ids = tree.frame(
+            &h,
+            &mut traits,
+            &people,
+            &[0; 7],
+            &[0; 7],
+            0.0,
+            true,
+            &mut log,
+        );
         // Cell 2 touches both by one edge: the first.
         assert_eq!(ids, vec![0, 0, 0, 1, 1, 2]);
         assert_eq!(tree.peoples.len(), 3);

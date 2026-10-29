@@ -484,8 +484,9 @@ pub struct SimulationResult {
     /// With `keep_traits`: the traits at each kept state (`kept`, aligned),
     /// in 65535ths; else empty. Not packed.
     pub trait_frames: Vec<Vec<u16>>,
-    /// THE TREE (peoples.rs): the peoples at each kept state (`kept`,
-    /// aligned) and their ids that last. Packed since v3 (pack.rs).
+    /// THE TREE (peoples.rs): the peoples every CLIMATE_YEARS (since v4),
+    /// their ids that last and their measures at each kept state (`kept`,
+    /// aligned). Packed since v3 (pack.rs). Its events in `log`.
     pub tree: Tree,
     /// The cells whose traits the fields replaced, the herds'; the
     /// branches' splits (peoples.rs).
@@ -1029,8 +1030,9 @@ impl Sim<'_, '_> {
             .collect()
     }
 
-    // THE TREE's peoples (peoples.rs) at a kept state of `people`, at `t`.
-    fn tree_frame(&mut self, tree: &mut Tree, people: &[u16], t: f64) {
+    // THE TREE's peoples (peoples.rs) at a step of `people`, at `t`; `keep`
+    // at a kept state. The chronicle's events into the log.
+    fn tree_frame(&mut self, tree: &mut Tree, people: &[u16], t: f64, keep: bool) {
         let fields: Vec<u8> = self
             .farm_at
             .iter()
@@ -1043,14 +1045,28 @@ impl Sim<'_, '_> {
             &fields,
             &self.input.peopling.group,
             t,
+            keep,
+            &mut self.log,
         );
+    }
+
+    // The people a km² in PEOPLE_FRAME_STEP steps, as a kept state holds
+    // them (`frame`).
+    fn people_frame(&self) -> Vec<u16> {
+        self.people
+            .iter()
+            .map(|&x| {
+                let p = x as f64 / PEOPLE_FRAME_STEP;
+                if p > 65535.0 { 65535 } else { (p + 0.5) as u16 }
+            })
+            .collect()
     }
 
     // The state kept every KEEP_YEARS.
     fn frame(&self) -> SimFrame {
         let n = self.h.count;
         let mut frame = SimFrame {
-            people: vec![0u16; n],
+            people: self.people_frame(),
             small: vec![0u8; n],
             big: self
                 .species
@@ -1059,8 +1075,6 @@ impl Sim<'_, '_> {
                 .collect(),
         };
         for i in 0..n {
-            let p = self.people[i] as f64 / PEOPLE_FRAME_STEP;
-            frame.people[i] = if p > 65535.0 { 65535 } else { (p + 0.5) as u16 };
             frame.small[i] = (self.small[i] as f64 * 255.0 + 0.5) as u8;
         }
         for (k, sp) in self.species.iter().enumerate() {
@@ -1572,7 +1586,12 @@ pub fn simulate(
             if input.keep_traits {
                 trait_frames.push(sim.trait_frame());
             }
-            sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, t);
+            sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, t, true);
+        } else if (t - t0) % CLIMATE_YEARS == 0.0 {
+            // THE TREE every CLIMATE_YEARS (peoples.rs, part 4), its ids
+            // not kept.
+            let people = sim.people_frame();
+            sim.tree_frame(&mut tree, &people, t, false);
         }
         if (t - t0) % POPULATION_STEP == 0.0 {
             let mut sum = 0.0;
@@ -2732,8 +2751,9 @@ pub fn simulate(
         if input.keep_traits {
             trait_frames.push(sim.trait_frame());
         }
-        sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, end);
+        sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, end, true);
     }
+    tree.finish(&mut sim.log);
     population.truncate(((end - t0) / POPULATION_STEP) as usize + 1);
     SimulationResult {
         arrival: sim.arrival,

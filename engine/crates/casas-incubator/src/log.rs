@@ -110,6 +110,45 @@ pub enum LogEvent {
         at: f64,
         years: f64,
     },
+    /// THE PEOPLES' CHRONICLE (peoples.rs `Tree::tell`, since 2026-10-29),
+    /// for the big peoples; `people` a people's id (pack.rs), `count` its
+    /// people. People `new` parted from `people`; `new`'s measure, at its
+    /// heart.
+    PeopleSplit {
+        at: f64,
+        cell: f64,
+        people: f64,
+        new: f64,
+        count: f64,
+        km2: f64,
+    },
+    /// People `people` went into `into`; its measure before.
+    PeopleMerged {
+        at: f64,
+        cell: f64,
+        people: f64,
+        into: f64,
+        count: f64,
+        km2: f64,
+    },
+    /// People `people` died out or fell under big for good; its last big
+    /// measure.
+    PeopleGone {
+        at: f64,
+        cell: f64,
+        people: f64,
+        count: f64,
+        km2: f64,
+    },
+    /// People `people`'s farmers' share went to FARMERS_TOLD or more.
+    PeopleFarmers {
+        at: f64,
+        cell: f64,
+        people: f64,
+        count: f64,
+        km2: f64,
+        farmers: f64,
+    },
 }
 
 impl LogEvent {
@@ -130,7 +169,11 @@ impl LogEvent {
             | LogEvent::Copper { at, .. }
             | LogEvent::City { at, .. }
             | LogEvent::Drowned { at, .. }
-            | LogEvent::ColdSpell { at, .. } => *at,
+            | LogEvent::ColdSpell { at, .. }
+            | LogEvent::PeopleSplit { at, .. }
+            | LogEvent::PeopleMerged { at, .. }
+            | LogEvent::PeopleGone { at, .. }
+            | LogEvent::PeopleFarmers { at, .. } => *at,
         }
     }
 
@@ -352,6 +395,79 @@ impl LogEvent {
             LogEvent::ColdSpell { at, years } => {
                 kind(j, "coldSpell");
                 j.key("at").number(*at).key("years").number(*years);
+            }
+            LogEvent::PeopleSplit {
+                at,
+                cell,
+                people,
+                new,
+                count,
+                km2,
+            } => {
+                kind(j, "peopleSplit");
+                j.key("at").number(*at).key("cell").number(*cell);
+                j.key("people")
+                    .number(*people)
+                    .key("new")
+                    .number(*new)
+                    .key("count")
+                    .number(*count)
+                    .key("km2")
+                    .number(*km2);
+            }
+            LogEvent::PeopleMerged {
+                at,
+                cell,
+                people,
+                into,
+                count,
+                km2,
+            } => {
+                kind(j, "peopleMerged");
+                j.key("at").number(*at).key("cell").number(*cell);
+                j.key("people")
+                    .number(*people)
+                    .key("into")
+                    .number(*into)
+                    .key("count")
+                    .number(*count)
+                    .key("km2")
+                    .number(*km2);
+            }
+            LogEvent::PeopleGone {
+                at,
+                cell,
+                people,
+                count,
+                km2,
+            } => {
+                kind(j, "peopleGone");
+                j.key("at").number(*at).key("cell").number(*cell);
+                j.key("people")
+                    .number(*people)
+                    .key("count")
+                    .number(*count)
+                    .key("km2")
+                    .number(*km2);
+            }
+            LogEvent::PeopleFarmers {
+                at,
+                cell,
+                people,
+                count,
+                km2,
+                farmers,
+            } => {
+                kind(j, "peopleFarmers");
+                j.key("at").number(*at).key("cell").number(*cell);
+                j.key("people")
+                    .number(*people)
+                    .key("count")
+                    .number(*count)
+                    .key("km2")
+                    .number(*km2)
+                    .key("farmers")
+                    .number(*farmers);
             }
         }
         j.close_object();
