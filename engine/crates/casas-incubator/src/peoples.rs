@@ -198,8 +198,15 @@ pub const PEOPLE_LEAST_KM2: f64 = 10_000.0;
 /// 29/1/0/27, 30/2/0/13; at 0.003 53, 64, 76 splits; at 0.002 65, 85, 97
 /// (TOLD_LIVES_YEARS 3 000 for these but 0.005). Without the share, 66,
 /// 87 and 65 events, 34 to 76 of them turns to farming of peoples of
-/// 10 000 to 100 000 km².
-pub const SPLIT_TOLD_SHARE: f64 = 0.005;
+/// 10 000 to 100 000 km². 0.001 since 2026-10-29, with the hold (v6):
+/// the user wanted a few more; without rain (splits/merges) Morvane 3/1,
+/// Thalassor 8/6, Zephyra 21/1 (1/1, 1/1, 6/0 at 0.005); 0.0005 gave
+/// 6/1, 12/7, 26/1. The turns to farming keep FARMERS_TOLD_SHARE.
+pub const SPLIT_TOLD_SHARE: f64 = 0.001;
+/// A people's turn to farming is told where it has this share of the km²
+/// lived in (2026-10-29): at SPLIT_TOLD_SHARE 0.001 they were 45, 73 and
+/// 27 on the three worlds (26, 25 and 10 at this).
+pub const FARMERS_TOLD_SHARE: f64 = 0.005;
 /// A split, a merge or a people gone is told of a people that lived this
 /// long, years (its split kept back until then): no flapping. Without it
 /// a part of 220 000 km² of one of Zephyra's peoples split and merged
@@ -1193,6 +1200,7 @@ impl Tree {
         self.watch.resize(self.peoples.len(), Watch::default());
         let lived: f64 = now.iter().map(|m| m.km2).sum();
         let told = |m: &Measure, lived: f64| big(m) && m.km2 >= SPLIT_TOLD_SHARE * lived;
+        let told_farmers = |m: &Measure, lived: f64| big(m) && m.km2 >= FARMERS_TOLD_SHARE * lived;
         // Each people's cluster now, -1 where it is not alive.
         let mut at = vec![-1i32; self.peoples.len()];
         for (q, &id) in ids.iter().enumerate() {
@@ -1233,7 +1241,7 @@ impl Tree {
                         });
                     }
                 } else if !self.watch[id].farmed
-                    && told(m, lived)
+                    && told_farmers(m, lived)
                     && self.watch[id].last.farmers < FARMERS_TOLD
                     && m.farmers >= FARMERS_TOLD
                 {

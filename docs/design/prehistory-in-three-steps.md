@@ -439,6 +439,12 @@ Building since 2026-10-27:
   all other arrays and events keep their bytes. The incubator's smoke worlds tell no split
   now (the torus's history is 7 000 years; the sphere's later splits all
   join again).
+- 2026-10-29 (v6 still): splits, merges and peoples gone are told from 0.1 %
+  of the land lived in, the turns to farming from 0.5 % as before: the
+  user wanted a few more. Without rain (splits / merges / farming):
+  Morvane 3 / 1 / 26, Thalassor 8 / 6 / 25, Zephyra 21 / 1 / 10. A lower
+  share adds few splits (most later ones are flaps the hold drops) and
+  many turns to farming, hence the two shares.
 
 Open:
 
