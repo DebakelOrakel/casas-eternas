@@ -7,12 +7,17 @@ use casas_incubator::chart::{ChartPass, PeriodicTriangulation, chart_pass, level
 use casas_incubator::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M};
 use casas_incubator::flora::{Layer, grow_flora, populate};
 use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
-use casas_incubator::history::{RainChart, carrying_of, origin_of, run_history};
+use casas_incubator::history::{
+    RainChart, carrying_of, origin_of, run_history, run_history_keeping,
+};
 use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
+use casas_incubator::peoples::{TRAITS, peoples_of};
 use casas_incubator::peopling::{Peopling, people};
 use casas_incubator::settle::settle_history;
-use casas_incubator::simulation::{SPAN_YEARS, STEP_YEARS, ice_distance};
+use casas_incubator::simulation::{
+    KEEP_YEARS, PEOPLE_FRAME_STEP, SPAN_YEARS, STEP_YEARS, ice_distance,
+};
 use napi::bindgen_prelude::{Float32Array, Float64Array, Int32Array, Uint8Array, Uint32Array};
 use napi_derive::napi;
 
@@ -55,6 +60,15 @@ pub struct Incubator {
     flora: Vec<Layer>,
     fauna: Vec<Layer>,
     peopling: Option<Peopling>,
+    debug_traits: Option<DebugTraits>,
+}
+
+// DEBUG (THE PEOPLES' measure, 2026-10-29): the traits and the people at
+// each kept state of the last `debug_simulate_traits`.
+struct DebugTraits {
+    times: Vec<f64>,
+    traits: Vec<Vec<u16>>,
+    people: Vec<Vec<f32>>,
 }
 
 fn codes_of(layers: &[Layer]) -> Vec<u8> {
@@ -130,6 +144,7 @@ impl Incubator {
             flora: Vec::new(),
             fauna: Vec::new(),
             peopling: None,
+            debug_traits: None,
         }
     }
 
@@ -289,6 +304,123 @@ impl Incubator {
             None,
         );
         Ok(Uint8Array::new(pack_history(&result)))
+    }
+
+    /// DEBUG: `simulate`, keeping the traits and the people at each kept
+    /// state for `debug_peoples`. Not used by the job worker.
+    #[napi]
+    #[allow(clippy::too_many_arguments)]
+    pub fn debug_simulate_traits(
+        &mut self,
+        origin: i32,
+        seed: f64,
+        rain_width: u32,
+        rain_height: u32,
+        variability: Option<Float32Array>,
+        enso: Option<Float32Array>,
+        enso_strength: f64,
+    ) -> napi::Result<Uint8Array> {
+        let rain = match (&variability, &enso) {
+            (Some(v), Some(e)) => Some(RainChart {
+                width: rain_width as usize,
+                height: rain_height as usize,
+                variability: v,
+                enso: e,
+                enso_strength,
+            }),
+            _ => None,
+        };
+        let result = run_history_keeping(
+            &self.habitat,
+            &self.flora,
+            &self.fauna,
+            origin,
+            seed,
+            rain.as_ref(),
+            None,
+            true,
+        );
+        let mut times: Vec<f64> = (0..result.kept.len())
+            .map(|k| result.start + k as f64 * KEEP_YEARS)
+            .collect();
+        if let Some(last) = times.last_mut() {
+            *last = last.min(result.end);
+        }
+        let people = result
+            .kept
+            .iter()
+            .map(|f| {
+                f.people
+                    .iter()
+                    .map(|&p| (p as f64 * PEOPLE_FRAME_STEP) as f32)
+                    .collect()
+            })
+            .collect();
+        let packed = pack_history(&result);
+        self.debug_traits = Some(DebugTraits {
+            times,
+            traits: result.trait_frames,
+            people,
+        });
+        Ok(Uint8Array::new(packed))
+    }
+
+    /// DEBUG: the kept states' times of `debug_simulate_traits`.
+    #[napi]
+    pub fn debug_trait_times(&self) -> Float64Array {
+        Float64Array::new(
+            self.debug_traits
+                .as_ref()
+                .map(|d| d.times.clone())
+                .unwrap_or_default(),
+        )
+    }
+
+    /// DEBUG: the traits (TRAITS a cell, 0 … 1) and the people a km² at
+    /// kept state `frame`.
+    #[napi]
+    pub fn debug_traits(&self, frame: u32) -> napi::Result<Float32Array> {
+        let d = self
+            .debug_traits
+            .as_ref()
+            .ok_or_else(|| error("no debug_simulate_traits yet".into()))?;
+        let f = d
+            .traits
+            .get(frame as usize)
+            .ok_or_else(|| error(format!("no frame {frame}")))?;
+        Ok(Float32Array::new(
+            f.iter().map(|&x| x as f32 / 65535.0).collect(),
+        ))
+    }
+
+    #[napi]
+    pub fn debug_people(&self, frame: u32) -> napi::Result<Float32Array> {
+        let d = self
+            .debug_traits
+            .as_ref()
+            .ok_or_else(|| error("no debug_simulate_traits yet".into()))?;
+        let f = d
+            .people
+            .get(frame as usize)
+            .ok_or_else(|| error(format!("no frame {frame}")))?;
+        Ok(Float32Array::new(f.clone()))
+    }
+
+    /// DEBUG: the peoples at kept state `frame` (peoples.rs peoples_of):
+    /// each cell's, -1 where no one lives.
+    #[napi]
+    pub fn debug_peoples(&self, frame: u32, distance: f64) -> napi::Result<Int32Array> {
+        let values: Vec<f32> = self.debug_traits(frame)?.to_vec();
+        let people: Vec<f32> = self.debug_people(frame)?.to_vec();
+        debug_assert_eq!(values.len(), people.len() * TRAITS);
+        let (label, _) = peoples_of(
+            &self.habitat.nbr_start,
+            &self.habitat.nbr,
+            &values,
+            &people,
+            distance,
+        );
+        Ok(Int32Array::new(label))
     }
 
     /// Step 1 of the prehistory (peopling.rs) from the given origins, kept

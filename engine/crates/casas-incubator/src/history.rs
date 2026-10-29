@@ -85,6 +85,22 @@ pub fn run_history(
     rain: Option<&RainChart>,
     on_progress: Option<&mut dyn FnMut(f64)>,
 ) -> SimulationResult {
+    run_history_keeping(h, flora, fauna, origin, seed, rain, on_progress, false)
+}
+
+/// The history, and with `keep_traits` the traits at each kept state
+/// (SimulationResult `trait_frames`), for a measure of the peoples.
+#[allow(clippy::too_many_arguments)]
+pub fn run_history_keeping(
+    h: &Habitat,
+    flora: &[Grown],
+    fauna: &[Grown],
+    origin: i32,
+    seed: f64,
+    rain: Option<&RainChart>,
+    on_progress: Option<&mut dyn FnMut(f64)>,
+    keep_traits: bool,
+) -> SimulationResult {
     let c = catalog();
     let carrying = carrying_of(h);
     let origin = if origin >= 0 && h.land[origin as usize] != 0 {
@@ -134,6 +150,7 @@ pub fn run_history(
         crops,
         herds,
         rain: rain.map(|r| rain_of_cells(h, r)),
+        keep_traits,
     };
     simulate(h, &input, on_progress)
 }

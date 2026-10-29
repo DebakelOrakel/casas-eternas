@@ -275,7 +275,7 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
             heap.push(at, u as i32);
         }
     }
-    let (group, groups) = groups_of(h, &arrival, &from, &afloat);
+    let (group, groups) = branches_of(h, &arrival, &from, &afloat, GROUP_SHARE);
     let density = (0..n)
         .map(|i| {
             if arrival[i] < f64::INFINITY {
@@ -298,10 +298,17 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
     }
 }
 
-// The groups: a cell heads one where its branch holds GROUP_SHARE of the
-// land cells reached or more, and its parent has another such branch or
-// it landed from a boat; every other cell is its parent's.
-fn groups_of(h: &Habitat, arrival: &[f64], from: &[i32], afloat: &[u8]) -> (Vec<i32>, usize) {
+// The groups: a cell heads one where its branch holds `share` of the land
+// cells reached or more (GROUP_SHARE for the groups), and its parent has
+// another such branch or it landed from a boat; every other cell is its
+// parent's. The peoples (peoples.rs) take finer branches of the same tree.
+pub(crate) fn branches_of(
+    h: &Habitat,
+    arrival: &[f64],
+    from: &[i32],
+    afloat: &[u8],
+    share: f64,
+) -> (Vec<i32>, usize) {
     let n = h.count;
     let mut order: Vec<usize> = (0..n).filter(|&i| arrival[i] < f64::INFINITY).collect();
     order.sort_by(|&a, &b| arrival[a].total_cmp(&arrival[b]).then(a.cmp(&b)));
@@ -314,7 +321,7 @@ fn groups_of(h: &Habitat, arrival: &[f64], from: &[i32], afloat: &[u8]) -> (Vec<
         }
     }
     let reached = order.iter().filter(|&&i| h.land[i] != 0).count();
-    let least = ((GROUP_SHARE * reached as f64).ceil() as u32).max(1);
+    let least = ((share * reached as f64).ceil() as u32).max(1);
     let mut large = vec![0u8; n];
     for &i in &order {
         if from[i] >= 0 && beyond[i] >= least {

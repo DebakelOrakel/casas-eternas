@@ -16,6 +16,7 @@ pub mod history;
 pub mod log;
 pub mod niche;
 pub mod pack;
+pub mod peoples;
 pub mod peopling;
 pub mod settle;
 pub mod simulation;

@@ -50,6 +50,7 @@ use crate::climate_history::{
 };
 use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between};
 use crate::log::{LogEvent, POPULATION_MARKS};
+use crate::peoples::Traits;
 use crate::peopling::Peopling;
 use crate::travel::{reset, travel_days, within_days};
 use casas_engine::climate::biomes::biome;
@@ -406,6 +407,9 @@ pub struct SimulationInput<'a> {
     pub herds: Vec<Layer<'a>>,
     /// None without the save's refinement: no droughts.
     pub rain: Option<Rain>,
+    /// Keep the traits (peoples.rs) with each kept state, for a measure;
+    /// the history does not need them.
+    pub keep_traits: bool,
 }
 
 /// A kept state: the people a km² in
@@ -474,6 +478,12 @@ pub struct SimulationResult {
     /// POPULATION_STEP from the start.
     pub start: f64,
     pub end: f64,
+    /// THE PEOPLES (peoples.rs): each cell's traits at the end, TRAITS a
+    /// cell. Not packed yet.
+    pub traits: Vec<f32>,
+    /// With `keep_traits`: the traits at each kept state (`kept`, aligned),
+    /// in 65535ths; else empty. Not packed.
+    pub trait_frames: Vec<Vec<u16>>,
 }
 
 /// Each cell's distance from today's glaciers over the cold climates, km
@@ -817,6 +827,8 @@ struct Sim<'h, 'a> {
     // landmasses people reached, for a crossing's `first`.
     landmass_reached: Vec<u8>,
     log: Vec<LogEvent>,
+    // THE PEOPLES (peoples.rs): they feed back into nothing here.
+    traits: Traits,
 }
 
 impl Sim<'_, '_> {
@@ -972,9 +984,11 @@ impl Sim<'_, '_> {
     }
 
     // A cell is settled once it has people; one left (the ice, the sea over
-    // the shelf) may be settled again. Its arrival is the first.
-    fn settle(&mut self, cell: usize, t: f64, density: f64, parent: i32) {
+    // the shelf) may be settled again. Its arrival is the first. It takes
+    // the traits of `kin`, the cell its settlers came from.
+    fn settle(&mut self, cell: usize, t: f64, density: f64, parent: i32, kin: usize) {
         self.people[cell] = density as f32;
+        self.traits.inherit(cell, kin);
         if self.arrival[cell] == f32::INFINITY {
             self.arrival[cell] = t as f32;
             self.from[cell] = parent;
@@ -996,6 +1010,15 @@ impl Sim<'_, '_> {
             self.copper_at[cell] = t as f32;
             self.copper_front.push(cell);
         }
+    }
+
+    // The traits in 65535ths, for a kept state (`keep_traits`).
+    fn trait_frame(&self) -> Vec<u16> {
+        self.traits
+            .values
+            .iter()
+            .map(|&x| (x as f64 * 65535.0 + 0.5) as u16)
+            .collect()
     }
 
     // The state kept every KEEP_YEARS.
@@ -1314,6 +1337,7 @@ pub fn simulate(
         lived: Vec::new(),
         landmass_reached: vec![0u8; h.landmasses],
         log: Vec::new(),
+        traits: Traits::seed(h, input.peopling, input.seed),
     };
     let mut extinctions: Vec<Extinction> = Vec::new();
     // Herds a farming centre tames HERD_LAG after its fields.
@@ -1369,6 +1393,7 @@ pub fn simulate(
     let mut made: Vec<f64> = Vec::new();
     let mut ways: Vec<i32> = Vec::new();
     let mut kept: Vec<SimFrame> = Vec::new();
+    let mut trait_frames: Vec<Vec<u16>> = Vec::new();
 
     // Step 1's end, where the history begins, and its log.
     let start = input.peopling;
@@ -1518,6 +1543,9 @@ pub fn simulate(
         }
         if (t - t0) % KEEP_YEARS == 0.0 {
             kept.push(sim.frame());
+            if input.keep_traits {
+                trait_frames.push(sim.trait_frame());
+            }
         }
         if (t - t0) % POPULATION_STEP == 0.0 {
             let mut sum = 0.0;
@@ -1645,7 +1673,7 @@ pub fn simulate(
                     moved += came;
                     let density = came / h.area_km2[u] as f64;
                     if sim.people[u] == 0.0 {
-                        sim.settle(u, t, density, i as i32);
+                        sim.settle(u, t, density, i as i32, i);
                     } else {
                         sim.people[u] = (sim.people[u] as f64 + density) as f32;
                         sim.grows(u);
@@ -1677,6 +1705,9 @@ pub fn simulate(
             }
             let still = sim.lived.clone();
             sim.front = still;
+            // THE PEOPLES: the traits' drift and contact (peoples.rs).
+            sim.traits
+                .climate_step(h, &sim.lived, &sim.people, &way_days);
             // The big game's extinctions: a species under EXTINCT_BELOW of
             // its own on a landmass.
             for sp in sim.species.iter_mut() {
@@ -2381,7 +2412,8 @@ pub fn simulate(
                         }
                         let density = (rooms[k] * fled) / room / h.area_km2[u] as f64;
                         if sim.people[u] == 0.0 {
-                            sim.settle(u, t, density, most);
+                            // `most` is a cell: the people fled have some.
+                            sim.settle(u, t, density, most, most as usize);
                         } else {
                             sim.people[u] = (sim.people[u] as f64 + density) as f32;
                             sim.grows(u);
@@ -2465,7 +2497,7 @@ pub fn simulate(
                     let chance = js::min(1.0, (speed[u] as f64 * sub_years) / h.dist_km[e] as f64);
                     if sim.random.next() < chance {
                         let density = sim.capacity[u] as f64 * SEED_PEOPLE;
-                        sim.settle(u, at, density, i as i32);
+                        sim.settle(u, at, density, i as i32, i);
                     }
                 }
                 if open_left {
@@ -2626,7 +2658,7 @@ pub fn simulate(
                         first,
                     });
                     let density = sim.capacity[c.to] as f64 * SEED_PEOPLE;
-                    sim.settle(c.to, t + STEP_YEARS, density, parent);
+                    sim.settle(c.to, t + STEP_YEARS, density, parent, c.from);
                     let to = region[c.to] as usize;
                     knowledge[to] =
                         js::max(knowledge[to] as f64, KNOW_CARRIED * knowledge[g] as f64) as f32;
@@ -2649,6 +2681,9 @@ pub fn simulate(
     }
     if (end - t0) % KEEP_YEARS != 0.0 {
         kept.push(sim.frame());
+        if input.keep_traits {
+            trait_frames.push(sim.trait_frame());
+        }
     }
     population.truncate(((end - t0) / POPULATION_STEP) as usize + 1);
     SimulationResult {
@@ -2690,5 +2725,7 @@ pub fn simulate(
         smelt_at: sim.smelt_at,
         start: t0,
         end,
+        traits: sim.traits.values,
+        trait_frames,
     }
 }

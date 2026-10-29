@@ -8,7 +8,7 @@
 //! INCUBATOR_ALGO_VERSION by hand. `make engine` writes both to
 //! `dist/incubator/` (constants.json, version.json).
 
-use crate::{climate_history, habitat, log, niche, peopling, settle, simulation, travel};
+use crate::{climate_history, habitat, log, niche, peoples, peopling, settle, simulation, travel};
 use serde_json::{Map, Value, json};
 
 /// Raised by hand on a change to the code that changes what a run gives,
@@ -37,7 +37,7 @@ fn object(pairs: Vec<(&str, f64)>) -> Value {
 }
 
 /// The tuning by module, and the catalog: `{ climate, habitat, niche,
-/// travel, peopling, simulation, settle, log, catalog }`.
+/// travel, peopling, simulation, peoples, settle, log, catalog }`.
 pub fn constants() -> Value {
     let catalog: Value =
         serde_json::from_str(include_str!("../data/catalog.json")).expect("data/catalog.json");
@@ -75,6 +75,10 @@ pub fn constants() -> Value {
             COPPER_RICH, COPPER_DAYS, COPPER_VILLAGE_YEARS, COPPER_RATE, COPPER_SPACING_KM, COPPER_KM_A,
             SMELT_AFTER, SMELT_VILLAGE_YEARS, SMELT_RATE, CITY_DAYS, TOWN_SHARE, COPPER_SHARE, SMELT_SHARE,
             TOWN_GROWTH_A, CITY_PEOPLE,
+        )),
+        "peoples": object(table!(peoples:
+            TRAITS, BRANCH_SHARE, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
+            CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE,
         )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,
@@ -177,6 +181,7 @@ mod tests {
         "FARMERS",
         "GOODS",
         "POPULATION_MARKS",
+        "LANGUAGE",
         "INCUBATOR_ALGO_VERSION",
     ];
 
@@ -191,6 +196,7 @@ mod tests {
             ("travel", include_str!("travel.rs")),
             ("peopling", include_str!("peopling.rs")),
             ("simulation", include_str!("simulation.rs")),
+            ("peoples", include_str!("peoples.rs")),
             ("settle", include_str!("settle.rs")),
             ("log", include_str!("log.rs")),
             ("flora", include_str!("flora.rs")),

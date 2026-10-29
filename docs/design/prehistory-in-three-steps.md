@@ -20,7 +20,7 @@ summary.de: Der Inkubator machte zwei Dinge in einer Simulation: die
 area: mechanics
 stage: building
 createdAt: 2026-10-27
-updatedAt: 2026-10-28
+updatedAt: 2026-10-29
 related: [DES-0031, DES-0027, DES-0023, DEC-0048, DES-0035]
 ---
 
@@ -316,6 +316,17 @@ Building since 2026-10-27:
 - 2026-10-28: the copper's finds and smeltings keep others away on their
   own landmass only, as the centres; on Morvane nothing changes, the
   small torus test world's history does.
+- 2026-10-29: the peoples, part 1 (`casas-incubator` peoples.rs): 8
+  traits a cell, one the language, seeded from step 1's groups and their
+  finer branches (0.3 % of the land), drifting by branch, pulled by the
+  neighbours by people, ways' days and likeness; settlers carry theirs.
+  The history stays the same bits. Peoples of 1 000 people and
+  10 000 km² or more at the end: Morvane 165 (5.9 a million km² reached),
+  Thalassor 189 (9.6), Zephyra 171 (7.9); the largest 5.3, 3.1, 4.0 % of
+  the land lived in; 0.2 to 0.5 % of the lived cells in peoples under 10
+  cells. On Morvane 117 at step 2's start, 155 at +5 000, 163 at
+  +15 000: kin branches part as they drift, then the borders hold. The
+  count hangs on the branches' share, not on the contact.
 
 Open:
 
