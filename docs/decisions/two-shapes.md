@@ -23,7 +23,7 @@ summary.de: Wie Torus und Kugel einen Generator und einen Screen teilen, ohne si
 area: generator
 stage: decided
 createdAt: 2026-10-09
-updatedAt: 2026-10-28
+updatedAt: 2026-10-29
 related: [DES-0017, DEC-0029, DEC-0015, DEC-0024, DES-0025]
 ---
 
@@ -217,6 +217,23 @@ flat map's scene and fine relief, the tile sampler, the incubator).
 - Whether the flat map gets a camera reset like the globe's.
 
 ## Status
+
+2026-10-29: THE COMPACTION AT A POLE — fixed since 2026-10-12, confirmed
+(TEG-32). The "not fixed" in the 2026-10-12 entry below is out of date:
+the same day the engine's `crust/raft_lifecycle.rs` got
+`compact_raft_on_globe` (fields-on-meshes.md, phase 8 "Two bugs, fixed").
+On the globe the raft's centre is its blobs' mean direction, and each
+blob takes its offset to the centre in its OWN frame and moves along the
+great circle by `rate` of its excess. Measured on a ring of 12 blobs
+(rate 0.5, compact radius 20 units): with the offset taken in the
+centre's frame, as before, 5 of 12 blobs moved away from the centre when
+the centre stood 1.8° and 3.5° from the pole, 1 of 12 at 4.2°; the
+error was 1.1 steps on the mean and 2 steps at most (the move reversed).
+At 17.6° the error was 0.4 steps, at 70° 0.04. Now every blob moves
+toward the centre. The effect on the sphere's worlds was measured with
+the fix (land after 40 Archean epochs 28.0 → 26.2 %, plates 13.5 → 12).
+Regression test: `engine/crates/casas-engine/tests/compaction.rs`
+(fails on the old formula). No world output changes now.
 
 2026-10-28: the generator's migration step is removed (DEC-0010 is
 superseded; the incubator spreads the people now). The entries below that
