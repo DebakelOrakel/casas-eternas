@@ -78,7 +78,8 @@ pub fn constants() -> Value {
         )),
         "peoples": object(table!(peoples:
             TRAITS, BRANCH_SHARE, BRANCH_STEP, TRAIT_DRIFT, LANGUAGE_DRIFT, TRAIT_CONTACT, LANGUAGE_CONTACT,
-            CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE,
+            CONTACT_DAYS, TRAIT_LIKE, PEOPLE_DISTANCE, REPLACE_SHARE, HERD_REPLACE_SHARE, SPLIT_KM2,
+            PEOPLE_LEAST, PEOPLE_LEAST_KM2,
         )),
         "settle": object(table!(settle:
             CARRYING_FULL, DENSITY_TAU, FORAGER_WEIGHT, LINKS, LINK_DAYS, SOURCE_RICH, SOURCE_DAYS,

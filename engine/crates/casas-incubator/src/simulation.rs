@@ -50,7 +50,7 @@ use crate::climate_history::{
 };
 use crate::habitat::{ARABLE, COPPER, FISH, Habitat, PASTURE, km_between};
 use crate::log::{LogEvent, POPULATION_MARKS};
-use crate::peoples::Traits;
+use crate::peoples::{Traits, Tree};
 use crate::peopling::Peopling;
 use crate::travel::{reset, travel_days, within_days};
 use casas_engine::climate::biomes::biome;
@@ -484,6 +484,14 @@ pub struct SimulationResult {
     /// With `keep_traits`: the traits at each kept state (`kept`, aligned),
     /// in 65535ths; else empty. Not packed.
     pub trait_frames: Vec<Vec<u16>>,
+    /// THE TREE (peoples.rs): the peoples at each kept state (`kept`,
+    /// aligned) and their ids that last. Not packed yet.
+    pub tree: Tree,
+    /// The cells whose traits the fields replaced, the herds'; the
+    /// branches' splits (peoples.rs).
+    pub replaced: u32,
+    pub herd_replaced: u32,
+    pub splits: u32,
 }
 
 /// Each cell's distance from today's glaciers over the cold climates, km
@@ -1021,6 +1029,23 @@ impl Sim<'_, '_> {
             .collect()
     }
 
+    // THE TREE's peoples (peoples.rs) at a kept state of `people`, at `t`.
+    fn tree_frame(&mut self, tree: &mut Tree, people: &[u16], t: f64) {
+        let fields: Vec<u8> = self
+            .farm_at
+            .iter()
+            .map(|&at| (at as f64 <= t) as u8)
+            .collect();
+        tree.frame(
+            self.h,
+            &mut self.traits,
+            people,
+            &fields,
+            &self.input.peopling.group,
+            t,
+        );
+    }
+
     // The state kept every KEEP_YEARS.
     fn frame(&self) -> SimFrame {
         let n = self.h.count;
@@ -1394,6 +1419,7 @@ pub fn simulate(
     let mut ways: Vec<i32> = Vec::new();
     let mut kept: Vec<SimFrame> = Vec::new();
     let mut trait_frames: Vec<Vec<u16>> = Vec::new();
+    let mut tree = Tree::new();
 
     // Step 1's end, where the history begins, and its log.
     let start = input.peopling;
@@ -1546,6 +1572,7 @@ pub fn simulate(
             if input.keep_traits {
                 trait_frames.push(sim.trait_frame());
             }
+            sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, t);
         }
         if (t - t0) % POPULATION_STEP == 0.0 {
             let mut sum = 0.0;
@@ -2549,8 +2576,25 @@ pub fn simulate(
                         if sim.random.next()
                             < js::min(1.0, (km_a * STEP_YEARS) / (h.dist_km[e] as f64 * barrier))
                         {
+                            // THE REPLACEMENT (peoples.rs): the fields
+                            // that come from a farmer cell to a cell
+                            // without them, the herds from a herder cell
+                            // to a cell without fields or herds.
+                            let had = if plant {
+                                sim.farm_at[u] < f32::INFINITY
+                            } else {
+                                sim.farm_at[u] < f32::INFINITY || sim.herd_at[u] < f32::INFINITY
+                            };
                             sim.take(d, u, t + STEP_YEARS);
                             sim.grows(u);
+                            let now = if plant {
+                                sim.farm_at[u] < f32::INFINITY && sim.farm_at[i] < f32::INFINITY
+                            } else {
+                                sim.herd_at[u] < f32::INFINITY && sim.herd_at[i] < f32::INFINITY
+                            };
+                            if !had && now {
+                                sim.traits.replace(h, u, i, &sim.people, !plant);
+                            }
                         }
                     }
                 }
@@ -2684,6 +2728,7 @@ pub fn simulate(
         if input.keep_traits {
             trait_frames.push(sim.trait_frame());
         }
+        sim.tree_frame(&mut tree, &kept[kept.len() - 1].people, end);
     }
     population.truncate(((end - t0) / POPULATION_STEP) as usize + 1);
     SimulationResult {
@@ -2725,7 +2770,11 @@ pub fn simulate(
         smelt_at: sim.smelt_at,
         start: t0,
         end,
+        replaced: sim.traits.replaced,
+        herd_replaced: sim.traits.herd_replaced,
+        splits: sim.traits.splits,
         traits: sim.traits.values,
         trait_frames,
+        tree,
     }
 }

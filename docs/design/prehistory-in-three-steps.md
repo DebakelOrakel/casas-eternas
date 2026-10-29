@@ -196,6 +196,10 @@ constants in simulation.rs.
   come later ([DES-0033](./naming-languages.md)).
   Some 100 to 300 peoples on a world as Morvane (the earth's new stone
   age: some 3 to 10 archaeological cultures a million km²).
+  Built 2026-10-29 (`casas-incubator` peoples.rs): the traits, the
+  farmers' replacement, the split of large peoples, the peoples' lasting
+  ids and their tree. Not built: their storage in H1, the overlay, the
+  chronicle's events.
 - **No rank in step 2 (2026-10-29).** Step 2 gives each people what rank
   grows from — its surplus (the farmers' share, the arable land, the
   density), its largest town, its copper, its exchange — and step 3
@@ -331,6 +335,20 @@ Building since 2026-10-27:
   cells. On Morvane 117 at step 2's start, 155 at +5 000, 163 at
   +15 000: kin branches part as they drift, then the borders hold. The
   count hangs on the branches' share, not on the contact.
+- 2026-10-29: the peoples, part 2. The fields that come from a farmer
+  cell to a cell whose people are a tenth of the farmers' or fewer bring
+  the farmers' traits (the herds the same; they replace next to
+  nothing). A branch's joined part over 1 M km² parts in two at its
+  middle by the ways' days. At each kept state the peoples get ids that
+  last (by the overlap of their people with the last state's), with
+  their splits, merges and descent. The history stays the same bits.
+  Peoples at the end: Morvane 166 (largest 3.0 %), Morvane from origin
+  473 575 153 (3.4 %; 35 % before the split), Thalassor 192 (3.1 %),
+  Zephyra 169 (4.0 %). On Morvane 9 815 cells replaced, only 788 of
+  another branch: the fields spread mostly inside the people that began
+  them, and the peoples hardly change (11 mainly farmers by km², as
+  before). The ids: 7.8 MB on Morvane (u16, the cells lived in); the
+  history 10 to 16 % slower (5.3 s instead of 4.8 s).
 
 Open:
 
