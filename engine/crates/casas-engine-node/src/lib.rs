@@ -372,6 +372,40 @@ impl Preview {
             .map(Tree)
             .map_err(era)
     }
+
+    /// The refined climate at points of a raster's relief, for the
+    /// measurement scripts (engine/scripts/earthClimate.mjs); native only.
+    #[napi(
+        ts_args_type = "shape: string, width: number, height: number, elevation: Float32Array, params: unknown, x: Float64Array, y: Float64Array, heights: Float32Array, land: Uint8Array"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    pub fn refined_climate_at(
+        &mut self,
+        shape: String,
+        width: u32,
+        height: u32,
+        elevation: Tree,
+        params: Tree,
+        x: Tree,
+        y: Tree,
+        heights: Tree,
+        land: Tree,
+    ) -> napi::Result<Tree> {
+        self.0
+            .refined_climate_at(
+                shape_of(&shape)?,
+                width,
+                height,
+                &elevation.0,
+                &params.0,
+                &x.0,
+                &y.0,
+                &heights.0,
+                &land.0,
+            )
+            .map(Tree)
+            .map_err(era)
+    }
 }
 
 /// The tile levels' plan from level 1's artifact and the world's save,

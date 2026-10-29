@@ -1,0 +1,32 @@
+value	code	name	R	G	B
+0	-	ocean/nodata			
+1	Af	Tropical rainforest	0	0	255
+2	Am	Tropical monsoon	0	120	255
+3	Aw	Tropical savanna	70	170	250
+4	BWh	Hot desert	255	0	0
+5	BWk	Cold desert	255	150	150
+6	BSh	Hot semi-arid	245	165	0
+7	BSk	Cold semi-arid	255	220	100
+8	Csa	Hot-summer Mediterranean	255	255	0
+9	Csb	Warm-summer Mediterranean	200	200	0
+10	Csc	Cold-summer Mediterranean	150	150	0
+11	Cwa	Monsoon-influenced humid subtropical	150	255	150
+12	Cwb	Subtropical highland	100	200	100
+13	Cwc	Cold subtropical highland	50	150	50
+14	Cfa	Humid subtropical	200	255	80
+15	Cfb	Temperate oceanic	100	255	80
+16	Cfc	Subpolar oceanic	50	200	0
+17	Dsa	Hot-summer continental Mediterranean	255	0	255
+18	Dsb	Warm-summer continental Mediterranean	200	0	200
+19	Dsc	Cold-summer continental Mediterranean	150	50	150
+20	Dsd	Very-cold continental Mediterranean	150	100	150
+21	Dwa	Hot-summer monsoon continental	170	175	255
+22	Dwb	Warm-summer monsoon continental	90	120	220
+23	Dwc	Subarctic monsoon	75	80	180
+24	Dwd	Extreme subarctic monsoon	50	0	135
+25	Dfa	Hot-summer humid continental	0	255	255
+26	Dfb	Warm-summer humid continental	55	200	255
+27	Dfc	Subarctic	0	125	125
+28	Dfd	Extreme subarctic	0	70	95
+29	ET	Tundra	178	178	178
+30	EF	Ice cap	102	102	102

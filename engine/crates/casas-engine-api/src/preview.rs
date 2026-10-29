@@ -10,7 +10,7 @@ use casas_engine::climate::climate_mesh::climate_cell_m;
 use casas_engine::climate::climate_points::{ClimatePoints, Heights, climate_at_points};
 use casas_engine::fields::field_mesh::{SharedFieldMesh, shared_field_mesh};
 use casas_engine::mesh::mesh_raster::{TriangleRaster, rasterise_node_part, triangle_raster};
-use casas_engine::pipeline::world_stages::{climate_chain, pixel_land_of};
+use casas_engine::pipeline::world_stages::{climate_chain, pixel_land_of, refined_climate_of};
 
 use crate::forms::{self, ClimateData};
 use crate::{EraError, Shape, Value, domain_of, read, wrong};
@@ -121,5 +121,82 @@ impl Preview {
             koppen,
             biomes,
         ))
+    }
+
+    /// The refined climate at given points of a raster's relief: a
+    /// measurement, not a world's stage (engine/scripts/earthClimate.mjs
+    /// runs it on Earth's relief, 2026-10-29). The cheap climate on
+    /// `elevation` (as `climate` makes it), its refinement (as a world's
+    /// is made, `refined_climate_of`, no restored state), then the
+    /// climate at the points (`x`, `y` in raster units, `heights` in
+    /// elevation units, `land` 1 or 0) and their classes.
+    /// `{ koppen, T, mT, mP }`: the Köppen–Geiger class per point, the
+    /// annual mean temperature, and the twelve months' temperature and
+    /// rain, month-major (`m × count + point`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn refined_climate_at(
+        &mut self,
+        shape: Shape,
+        width: u32,
+        height: u32,
+        elevation: &Value,
+        params: &Value,
+        x: &Value,
+        y: &Value,
+        heights: &Value,
+        land: &Value,
+    ) -> Result<Value, EraError> {
+        let elevation = read::f32s(elevation, "the relief")?;
+        if elevation.len() != width as usize * height as usize {
+            return Err(wrong("the relief is not of its size"));
+        }
+        let params = read::weather(params)?;
+        let x = read::f64s(x, "the points' x")?;
+        let y = read::f64s(y, "the points' y")?;
+        let heights = read::f32s(heights, "the points' heights")?;
+        let land = read::u8s(land, "the points' land")?.to_vec();
+        if y.len() != x.len() || heights.len() != x.len() || land.len() != x.len() {
+            return Err(wrong("the points' fields differ in length"));
+        }
+        let sh = &mut self
+            .samples
+            .entry((shape, width, height))
+            .or_insert_with(|| {
+                let domain = domain_of(shape, width as f64, height as f64);
+                Sample {
+                    shared: shared_field_mesh(&domain, climate_cell_m(&domain)),
+                    triangles: None,
+                }
+            })
+            .shared;
+        let chain = climate_chain(sh, elevation, &params, None);
+        let (temperature, wind) = (
+            chain.weather.temperature.clone(),
+            chain.weather.wind.clone(),
+        );
+        drop(chain);
+        let refined = refined_climate_of(sh, elevation, &params, &temperature, &wind, None);
+        let points = ClimatePoints {
+            count: x.len(),
+            x: &x,
+            y: &y,
+            height: Heights::F32(heights),
+            land,
+            dry: None,
+            alive: None,
+        };
+        let at = climate_at_points(sh, &refined.cells, &points, false);
+        let domain = sh.mesh.domain.clone();
+        let classes = classify_points(&at, &points, &domain, None);
+        let months = at
+            .months
+            .as_ref()
+            .ok_or_else(|| wrong("the refined climate has no months"))?;
+        Ok(crate::value::ObjBuilder::new()
+            .put("koppen", Value::U8s(classes.koppen))
+            .put("T", Value::F32s(at.temperature.clone()))
+            .put("mT", Value::F32s(months.temperature.clone()))
+            .put("mP", Value::F32s(months.precipitation.clone()))
+            .build())
     }
 }

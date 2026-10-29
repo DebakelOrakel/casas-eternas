@@ -16,7 +16,7 @@ summary.de: Der Klimaschritt verfeinert das heutige Klima auf der fertigen Geogr
 area: generator
 stage: building
 createdAt: 2026-09-28
-updatedAt: 2026-09-28
+updatedAt: 2026-10-29
 concepts: [generator.concept.climate-classes, generator.concept.pressure-and-wind, generator.concept.ocean-currents, generator.concept.seasons, generator.concept.weather-phenomena, generator.concept.history-climate]
 related: [DEC-0004]
 ---
@@ -341,15 +341,20 @@ physics.
 
 ## Calibration on Earth
 
-`node client/scripts/earthClimate.mjs [key=value …]` runs the climate on
-Earth's relief (client/scripts/fixtures/earth-heightmap.png) and compares
-47 places (Köppen class, January and July, annual rain) and the land's
-Köppen group shares; since the Beck et al. map for 1991–2020 came in
-(client/scripts/fixtures/earth-koppen.tif, 0.5°), also every land cell
+`node engine/scripts/earthClimate.mjs [shape=sphere|torus]` runs the
+climate on Earth's relief (engine/scripts/fixtures/earth-heightmap.png) and
+compares 47 places (Köppen class, January and July, annual rain) and the
+land's Köppen group shares; since the Beck et al. map for 1991–2020 came in
+(engine/scripts/fixtures/earth-koppen.tif, 0.5°), also every land cell
 against it — the share with the right class and group, and where each real
 group ends up. The temperature error is also
 given as a bias of the mean and of the swing, so the annual mean (the cheap
 model, step 0) and the year's cycle (the energy balance) can be told apart.
+Until 2026-10-21 it was `client/scripts/earthClimate.mjs` on the
+TypeScript climate, with `key=value` to try a constant and the upslope
+rain at 1/2.5 of its rate; since 2026-10-29 (TEG-105) it runs on the
+engine's native build, with neither (its header has the difference and the
+baseline, DES-0027 entry 14 the baseline too).
 
 2026-09-29, in order:
 
