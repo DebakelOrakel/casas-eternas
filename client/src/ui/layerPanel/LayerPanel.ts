@@ -16,9 +16,12 @@ import './layerPanel.css'
 // its layers are on, in the accent; with none on, how many have their
 // data, in grey. The panel's head counts what is on and offers "all off"
 // and the defaults. A group starts folded unless it says
-// it starts open; the viewer's folding is kept, by the group's title, while
-// the panel lives. A row's mark is its icon. The legend
-// stays the screen's own box (ui/legend); no keyboard shortcuts.
+// it starts open; the viewer's folding is kept, by the group's title, in
+// the browser (2026-10-30, TEG-107: a viewer's convenience, as the title
+// bar's panel switches; one state for every screen, as the overlay list is
+// one; without storage a group starts as it says). A row's mark is its
+// icon. The legend stays the screen's own box (ui/legend); no keyboard
+// shortcuts.
 //
 // THE FAVOURITES (2026-10-28): a group at the top without a heading, set by
 // the screen (setFavourites). Its rows are LINKS to rows of the groups: the
@@ -102,6 +105,7 @@ export function createLayerPanel(host: HTMLElement, options: {
   let favouriteIds: readonly string[] = []
   let favourites: Row[] = []
   const folded = new Map<string, boolean>()
+  const foldedKeyOf = (titleKey: TKey): string => `layerPanel.${titleKey}.folded`
   let lastState: ((id: string) => LayerState) | null = null
 
   // The favourites' section, first in the body: no heading, only rows.
@@ -177,9 +181,23 @@ export function createLayerPanel(host: HTMLElement, options: {
       list.append(made.element)
       group.rows.push(made)
     }
+    if (!folded.has(titleKey)) {
+      try {
+        const kept = localStorage.getItem(foldedKeyOf(titleKey))
+        if (kept !== null) folded.set(titleKey, kept === '1')
+      } catch {
+        // No storage: as the group starts.
+      }
+    }
     const isFolded = (): boolean => folded.get(titleKey) ?? !open
     heading.addEventListener('click', () => {
-      folded.set(titleKey, !isFolded())
+      const nowFolded = !isFolded()
+      folded.set(titleKey, nowFolded)
+      try {
+        localStorage.setItem(foldedKeyOf(titleKey), nowFolded ? '1' : '0')
+      } catch {
+        // Not kept: it stays so until the page closes.
+      }
       section.classList.toggle('layer-panel__group--folded', isFolded())
     })
     section.classList.toggle('layer-panel__group--folded', isFolded())
