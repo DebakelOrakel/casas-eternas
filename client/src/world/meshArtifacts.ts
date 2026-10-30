@@ -17,9 +17,10 @@ import type { WorldEngine } from './query'
 // stage naming the level (`L1`). Flat file names: the fs store lists one
 // level (BUG_BOUNTY 40).
 //
-// The pipeline version carries MESH_TUNING — the density rule is part of
-// what a level IS (decision 2) — and the level's budget and rounds: two
-// levels that differ in either are different artifacts.
+// The pipeline version carries the engine's mesh tuning (MESH_TUNING,
+// mesh_density.rs) — the density rule is part of what a level IS (decision
+// 2) — and the level's budget and rounds: two levels that differ in either
+// are different artifacts.
 
 export const MESH_LEVEL_FILES = {
   nodes: 'meshNodes.f32',

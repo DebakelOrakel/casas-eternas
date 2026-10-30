@@ -4,7 +4,7 @@ import { loadWasmEngine } from './pipeline/engineWasm'
 
 // The generator runs off the main thread: stepping an epoch and rendering the
 // full 2048x1024 raster (a per-pixel query against every plate and every terrain
-// feature — see elevationField.ts) is heavy enough that doing it synchronously
+// feature — see the engine's elevation_field.rs) is heavy enough that doing it synchronously
 // stalls camera panning and input for the duration of every tick.
 //
 // This file is only the transport. All of the pipeline lives in pipeline/runtime.ts

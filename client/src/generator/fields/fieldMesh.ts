@@ -15,7 +15,7 @@ import { hintGrid } from '../mesh/meshSampler'
 // hexagons, the areas within × 1.5), on the torus the hexagonal lattice
 // (hexLattice). The
 // triangulation stays for locate and barycentric interpolation; the cells
-// carry the finite volumes (fields/fieldOperators.ts).
+// carry the finite volumes (the engine's fields/field_operators.rs).
 //
 // Everything a later stage asks of the geometry is computed once, here, in
 // Float64 and in METRES:
@@ -30,7 +30,7 @@ import { hintGrid } from '../mesh/meshSampler'
 //            direction × arc), metres;
 //   turn     the parallel transport of a vector from j's frame into i's,
 //            a rotation (cos, sin) — the identity on the torus;
-//   gradient the least-squares weights per edge (fieldOperators.gradient).
+//   gradient the least-squares weights per edge (the engine's field_operators.rs).
 //
 // THE FRAME of a cell is the Domain's: east (+x) and SOUTH (+y, the
 // chart's row direction), the frame `delta`, `advance` and `transport`
@@ -498,67 +498,5 @@ export function rasteriseField(fm: FieldMesh, field: ArrayLike<number>, resX: nu
       result[py * resX + px] = bary[0] * field[tri.tris[3 * t]] + bary[1] * field[tri.tris[3 * t + 1]] + bary[2] * field[tri.tris[3 * t + 2]]
     }
   }
-  return result
-}
-
-// The cell of the field mesh that owns each raster cell of a resX × resY
-// chart raster: the Voronoi cell its centre lies in (FieldSampler.
-// nearestCell). A locate per raster cell, so a reader that reduces one
-// raster several ways (a mean and a maximum) finds the owners once.
-export function rasterOwners(sampler: FieldSampler, resX: number, resY: number): Int32Array {
-  const { domain } = sampler.mesh
-  const owners = new Int32Array(resX * resY)
-  const sx = domain.width / resX
-  const sy = domain.height / resY
-  for (let py = 0; py < resY; py++) {
-    const y = (py + 0.5) * sy
-    for (let px = 0; px < resX; px++) owners[py * resX + px] = sampler.nearestCell((px + 0.5) * sx, y)
-  }
-  return owners
-}
-
-// A chart raster onto the field mesh as the AREA-WEIGHTED mean of the
-// raster cells whose centres lie in each Voronoi cell (each raster cell
-// weighs its true area, DomainGrid.cellArea). For a raster FINER than the
-// mesh — the 2048 elevation onto the climate's mesh, anything extensive or
-// whose mean must be kept: Σ area · value over the mesh equals the
-// raster's to the assignment of the straddling raster cells. A mesh cell
-// that no raster centre falls in (a raster coarser than the mesh) takes
-// the centre sample instead. `owners`: rasterOwners of the same raster
-// size, when the caller has them (the same bits either way).
-export function fieldFromRasterAreaWeighted(fm: FieldMesh, sampler: FieldSampler, raster: Float32Array, resX: number, resY: number, out?: Float64Array, owners?: Int32Array): Float64Array {
-  const result = out ?? new Float64Array(fm.count)
-  const weight = new Float64Array(fm.count)
-  const sum = new Float64Array(fm.count)
-  const grid = fm.domain.grid(resX, resY)
-  const sx = fm.domain.width / resX
-  const sy = fm.domain.height / resY
-  for (let py = 0; py < resY; py++) {
-    const w = grid.cellArea(py)
-    const y = (py + 0.5) * sy
-    for (let px = 0; px < resX; px++) {
-      const i = owners ? owners[py * resX + px] : sampler.nearestCell((px + 0.5) * sx, y)
-      sum[i] += w * raster[py * resX + px]
-      weight[i] += w
-    }
-  }
-  for (let i = 0; i < fm.count; i++) {
-    result[i] = weight[i] > 0 ? sum[i] / weight[i] : grid.sampleBilinearAt(raster, fm.x[i], fm.y[i])
-  }
-  return result
-}
-
-// The MAXIMUM of the raster cells whose centres lie in each Voronoi cell
-// (`owners`, rasterOwners) — the highest ground a cell holds, where a mean
-// would flatten a range into its valleys. A mesh cell no raster centre
-// falls in takes the centre sample.
-export function fieldMaxFromRaster(fm: FieldMesh, raster: Float32Array, resX: number, resY: number, owners: Int32Array): Float64Array {
-  const result = new Float64Array(fm.count).fill(-Infinity)
-  for (let p = 0; p < owners.length; p++) {
-    const i = owners[p]
-    if (raster[p] > result[i]) result[i] = raster[p]
-  }
-  const grid = fm.domain.grid(resX, resY)
-  for (let i = 0; i < fm.count; i++) if (result[i] === -Infinity) result[i] = grid.sampleBilinearAt(raster, fm.x[i], fm.y[i])
   return result
 }

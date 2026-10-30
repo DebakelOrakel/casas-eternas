@@ -4,7 +4,7 @@
 // lake layer: the level is a replay at a finer budget and its terrain
 // differs from the save's raster by 380 m RMS — lakes of the save lay on
 // hillsides of the level, in blocks (2026-10-03). The hydrology's own
-// `waterLevelField` recovers every body's extent by flooding from its
+// The engine's `water_level_field` recovers every body's extent by flooding from its
 // seed and allocates a mask per body: at 6 600 bodies on 2048 × 1024
 // that hung the page for minutes; this floods with one mask for all.
 //
@@ -52,7 +52,7 @@ export const SUNKEN = -2
 export interface WaterLevels {
   // Per cell: the level and the body's floor (elevation units), the body
   // (−1 the sea, SUNKEN dry land under the sea's level) and the surface
-  // kind as hydrology.waterLevelField gives it (0 sea, 1 lake).
+  // kind as the engine's `water_level_field` gives it (0 sea, 1 lake).
   level: Float32Array
   floor: Float32Array
   // Per cell: DAM_MARGIN in the cells around a body's pour point, 0 elsewhere.

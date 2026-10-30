@@ -11,7 +11,7 @@ import type { Domain } from '../core/domain'
 // Only the nearest-plate ID now — earlier versions also tracked second-
 // nearest for a plate-distance baseline blend, but the baseline no longer
 // keys off plate distance at all (it's raft membership + ocean age; see
-// elevationField.ts's computeRaftBaseline), so that bookkeeping is gone.
+// the engine's elevation_field.rs), so that bookkeeping is gone.
 export function rasterizeVoronoiPlates(seeds: PlateSeed[], domain: Domain): Uint16Array {
   const { width, height } = domain
   const cellIds = new Uint16Array(width * height)

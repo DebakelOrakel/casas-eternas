@@ -1,9 +1,6 @@
-import { CLIMATE_RES_Y, latitudeAt, latitudeOfNorm, shiftedNorm } from './climateField'
-import { CLIMATE_TUNING } from './climateTuneParams'
-import { ELEVATION_METERS, SEA_LEVEL } from '../elevation/elevationScale'
-import type { ClimateTerrain } from './climateMesh'
+import { CLIMATE_RES_Y, latitudeAt } from './climateField'
+import { CLIMATE_TUNING } from '../pipeline/engineConstants'
 import type { Domain } from '../core/domain'
-import { smoothGaussian } from '../fields/fieldOperators'
 import { DEFAULT_PLANET_FORCING, obliquityContrast, solarTemperatureOffsetC, type PlanetForcing } from '../planet/planetForcing'
 import { detCos } from '../core/detMath'
 
@@ -62,33 +59,4 @@ export function seaLevelTemperatureBand(offsetC: number, contrast: number, plane
   const offset = offsetC + solarTemperatureOffsetC(planet.solarConstant)
   for (let gy = 0; gy < CLIMATE_RES_Y; gy++) band[gy] = baseTemperatureAtLatitude(latitudeAt(gy, 0), contrast, planet, kind) + offset
   return band
-}
-
-// The air temperature per cell of the climate's field mesh (climateMesh.ts,
-// DEC-0036 phase 3), °C: the latitude's base at the cell's centre, the
-// lapse of the ground under it, the mass elevation effect on land.
-export function computeTemperature(terrain: ClimateTerrain, offsetC = 0, contrast = 1, equatorOffset = 0, planet: PlanetForcing = DEFAULT_PLANET_FORCING): Float64Array {
-  const { cm, z, dry, land } = terrain
-  const n = cm.mesh.count
-  const temperature = new Float64Array(n)
-  const offset = offsetC + solarTemperatureOffsetC(planet.solarConstant)
-  // The mass elevation effect: a broad high surface heats the air on it,
-  // which is warmer than the free air at its height — Tibet, the Altiplano,
-  // Mexico's and East Africa's plateaus. The land's height around a cell,
-  // km, smoothed by a Gaussian of `tempPlateauSigmaM` (the sea counts as 0,
-  // so a lone peak or a coastal range gains little), times
-  // `tempPlateauCPerKm`, on land.
-  const plateauKm = new Float64Array(n)
-  for (let i = 0; i < n; i++) {
-    const base = baseTemperatureAtLatitude(latitudeOfNorm(shiftedNorm(cm.yNorm[i], equatorOffset)), contrast, planet, cm.mesh.domain.kind)
-    const e = z[i]
-    const value = base - CLIMATE_TUNING.lapseCPerElevation * (dry[i] ? e - SEA_LEVEL : Math.max(0, e - SEA_LEVEL))
-    temperature[i] = value + offset
-    if (land[i]) plateauKm[i] = Math.max(0, (e - SEA_LEVEL) * ELEVATION_METERS / 1000)
-  }
-  if (CLIMATE_TUNING.tempPlateauCPerKm > 0) {
-    smoothGaussian(cm.mesh, plateauKm, CLIMATE_TUNING.tempPlateauSigmaM, plateauKm)
-    for (let i = 0; i < n; i++) if (land[i]) temperature[i] += CLIMATE_TUNING.tempPlateauCPerKm * plateauKm[i]
-  }
-  return temperature
 }

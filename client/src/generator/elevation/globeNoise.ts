@@ -2,8 +2,8 @@ import { smoothstep } from '../core/interpolation'
 import { CALIBRATION_METRES_AROUND, type Domain, type GlobeFrame } from '../core/domain'
 
 // THE COORDINATE NOISE ON THE SPHERE (DEC-0035, fork 1): the 3D analogue of
-// the periodic 2D value noise in ridgedNoise.ts, domainWarp.ts and
-// hypsometry.ts. A sphere world samples its noise at the point's position
+// the periodic 2D value noise in ridgedNoise.ts (and the engine's
+// domain_warp.rs and hypsometry.rs). A sphere world samples its noise at the point's position
 // on the globe (Domain.noise, a GlobeNoise), not at its chart coordinates:
 // in the chart the 2D lattice is stretched east-west by 1 / cos φ toward a
 // pole, and at a pole every x names the same point but met a different

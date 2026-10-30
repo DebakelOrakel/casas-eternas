@@ -1,12 +1,12 @@
 import type { Domain } from '../core/domain'
-import { rasteriseField, sharedFieldMesh, type FieldMesh, type FieldSampler, type SavedField } from '../fields/fieldMesh'
+import { sharedFieldMesh, type FieldMesh, type FieldSampler, type SavedField } from '../fields/fieldMesh'
 import { departures, type Departures } from '../fields/fieldOperators'
 
 // Ocean-floor age as a coarse full-surface field (Phase 3, see
 // docs/decisions/continental-crust-rafts.md). Oceanic crust deepens as it ages
 // away from the ridge that formed it (the real √age depth law), so the ocean
-// baseline follows GDH1's age-depth curve (elevationField.ts, the gdh1*
-// entries of ELEVATION_TUNING). This is a
+// baseline follows GDH1's age-depth curve (the engine's elevation_field.rs,
+// the gdh1* entries of elevation_tune_params.rs). This is a
 // deliberate, bounded exception to the "no full-surface accumulator" stance:
 // it's only the ocean-age scalar, which is smooth and large-scale, so a coarse
 // field is plenty. The field is carried with plate motion each epoch; the
@@ -18,7 +18,7 @@ import { departures, type Departures } from '../fields/fieldOperators'
 // fieldMesh.ts — Goldberg cells on the sphere, hexagons on the torus), in
 // epochs. One code for both shapes: no pole rows, no disc boxes. The
 // 256 × 128 chart raster it had until 2026-10-11 survives only as the
-// render's lookup (oceanAgeRaster); readers per point go through the
+// engine render's lookup; readers per point go through the
 // sampler (the engine's `ocean_age_at`), the save holds the mesh's own values.
 
 // The spacing as a raster's: the domain's width over OCEAN_AGE_RES_X — a
@@ -81,13 +81,6 @@ export function oceanAgeMesh(domain: Domain): OceanAgeMesh {
 
 export function createOceanAgeField(initialAge: number, domain: Domain): Float64Array {
   return new Float64Array(oceanAgeMesh(domain).mesh.count).fill(initialAge)
-}
-
-// The field on a resX × resY chart raster, cell centres (the DomainGrid's
-// convention, read with grid.sampleBilinearAt): the render's lookup, where
-// a locate per pixel is too dear (elevationField.computeRaftBaseline).
-export function oceanAgeRaster(age: ArrayLike<number>, domain: Domain, resX: number, resY: number): Float32Array {
-  return rasteriseField(oceanAgeMesh(domain).mesh, age, resX, resY)
 }
 
 // THE FIELD AS A SAVE HOLDS IT (DEC-0036 phase 2): the mesh's own values,

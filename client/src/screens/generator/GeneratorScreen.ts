@@ -52,7 +52,7 @@ import { koppenLabelKey } from '../../generator/climate/koppen'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
 import { shiftedYNorm, topSummerCos } from '../../generator/climate/climateField'
-import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
+import { CLIMATE_TUNING } from '../../generator/pipeline/engineConstants'
 import { biomeLabelKey, Biome } from '../../generator/climate/biomes'
 import { ECOLOGY_FIELD_META, ecologyFieldColor } from '../../generator/ecology/ecologyColors'
 import { ECOLOGY_OCEAN, decodeFineValue, isSeasonalEcologyField, type EcologyFieldId } from '../../generator/ecology/ecologyField'
@@ -2177,7 +2177,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
         const v = wind[cell.i * 2 + 1]
         // The raw magnitude is a relative one, so it goes out through the m/s
         // anchor rather than as itself (CLIMATE_TUNING.windSpeedMsPerUnit). The
-        // band pattern tapers to zero at each cell edge (climate/wind.ts), so a
+        // band pattern tapers to zero at each cell edge (the engine's climate/wind.rs), so a
         // calm belt reads 0.0 m/s and loses its arrow, which is the truth.
         const speed = Math.hypot(u, v) * CLIMATE_TUNING.windSpeedMsPerUnit
         return [{ label: t('readout.row.wind'), value: formatValue(speed.toFixed(1), 'common.unit.metresPerSecond'), bearing: bearing(u, v) ?? undefined }]

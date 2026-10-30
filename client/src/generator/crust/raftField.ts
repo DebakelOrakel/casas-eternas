@@ -1,17 +1,15 @@
 import type { Raft } from './raftTypes'
-import { globeFrame, type CellBox, type Domain, type DomainGrid } from '../core/domain'
+import type { CellBox, Domain } from '../core/domain'
 import { worldEpochMa } from '../core/worldTime'
 
 // Continental crust modeled as persistent "rafts" that ride on the kinematic
 // plates, decoupled from them — see docs/decisions/continental-crust-rafts.md. A
 // raft is a set of soft metaball blobs whose union is one continent's outline.
 //
-// This module answers only ONE question, at any point on the torus: how
-// continental is the crust here? Everything downstream — elevation's margin
-// profile, mantle insulation, plate typing, the ocean-age sink — is a consumer of
-// that single query. Keeping it apart from the lifecycle operations matters
-// because the query is called millions of times per render while the lifecycle
-// runs a handful of times per epoch.
+// The query "how continental is the crust here" (the summed metaball field)
+// and everything it feeds are the engine's (crust/raft_field.rs). What is left
+// here is what the screen draws from the rafts: the craton age and the
+// Archean's progress.
 
 // Metaball kernel: (1 - (d/r)²)² inside the blob, 0 outside. Smooth, finite
 // support (so a query only sums nearby blobs), peaks at 1 at the center.
@@ -20,159 +18,6 @@ function blobKernel(distSq: number, radius: number): number {
   if (distSq >= r2) return 0
   const s = 1 - distSq / r2
   return s * s
-}
-
-// The raw summed metaball field at a world point — 0 far from any crust, 1 at a
-// lone blob's centre, higher where blobs overlap. Sums every blob's kernel
-// (toroidally wrapped); brute-force over blobs for now, like the feature query
-// was before bucketing — add a spatial index later if it shows up in a profile.
-//
-// Exposed separately from the membership (the engine's raft_membership)
-// because elevation needs the field itself, not the thresholded membership:
-// the margin profile (elevationScale.ts) runs its own, wider band over this
-// same field so a continental shelf has room to exist. Thresholding first
-// would throw away exactly the range it needs.
-export function raftField(x: number, y: number, rafts: Raft[], domain: Domain): number {
-  let field = 0
-  for (const raft of rafts) {
-    for (const blob of raft.blobs) {
-      field += blobKernel(domain.distanceSq(x, y, blob.x, blob.y), blob.radius)
-    }
-  }
-  return field
-}
-
-// A BUCKET INDEX over the blobs, for a sweep that asks raftField (or the
-// nearest raft) at every node of the mesh: built once per sweep, it hands
-// a point only the blobs whose reach covers its bucket instead of every
-// blob of every raft (2026-10-02: the brute-force scans were 12–14 % of an
-// epoch). The SAME bits as the scans: a blob left out is one whose kernel
-// is exactly 0 there (adding 0 changes nothing), and the blobs of a bucket
-// keep the scans' order — raft by raft, blob by blob — so the sum adds in
-// the same order and the nearest search breaks ties the same way.
-//
-// Valid only while the rafts do not change: build it right before the
-// sweep, never keep it across a step that moves, grows or merges rafts.
-export interface BlobIndex {
-  rafts: Raft[]
-  domain: Domain
-  // The bucket lattice, INDEX_NX × INDEX_NY over the domain.
-  grid: DomainGrid
-  start: Int32Array
-  items: Int32Array
-  bx: Float64Array
-  by: Float64Array
-  br: Float64Array
-  braft: Int32Array
-  // On the sphere, each blob's place on the globe (Domain.noise.frame's
-  // position, domain units) for the chord test below; null on the torus.
-  bp: Float64Array | null
-}
-
-// THE CHORD TEST (the sphere): a great-circle distance is never shorter
-// than the chord between its two points, so a blob whose chord from the
-// point is at least its reach adds an exact 0 (raftFieldIndexed) or cannot
-// be the nearest (the engine's nearest_raft_indexed) — skipped without the
-// distance, whose arc (an atan2 per blob) was a tenth of a sphere epoch (profiled
-// 2026-10-15). The margin keeps the test far outside the rounding of
-// either length: a blob near the boundary is measured as before, so the
-// sums and the nearest are the scans' bits.
-const CHORD_MARGIN = 1 + 1e-9
-
-const INDEX_NX = 32
-const INDEX_NY = 16
-
-// `reach` in radii: a blob is filed wherever a point within reach × its
-// radius can lie (1 for raftField; the nearest search's own reach for it).
-export function buildBlobIndex(rafts: Raft[], domain: Domain, reach = 1): BlobIndex {
-  let total = 0
-  for (const raft of rafts) total += raft.blobs.length
-  const bx = new Float64Array(total)
-  const by = new Float64Array(total)
-  const br = new Float64Array(total)
-  const braft = new Int32Array(total)
-  let g = 0
-  for (let r = 0; r < rafts.length; r++) {
-    for (const blob of rafts[r].blobs) {
-      bx[g] = blob.x
-      by[g] = blob.y
-      br[g] = blob.radius
-      braft[g] = r
-      g++
-    }
-  }
-  let bp: Float64Array | null = null
-  if (domain.noise.kind === 'globe') {
-    bp = new Float64Array(total * 3)
-    const frame = globeFrame()
-    for (let k = 0; k < total; k++) {
-      domain.noise.frame(bx[k], by[k], frame)
-      bp[3 * k] = frame.px
-      bp[3 * k + 1] = frame.py
-      bp[3 * k + 2] = frame.pz
-    }
-  }
-  const nx = INDEX_NX
-  const ny = INDEX_NY
-  const grid = domain.grid(nx, ny)
-  const buckets: number[][] = Array.from({ length: nx * ny }, () => [])
-  // Each blob is filed in every bucket its reach can touch, as the grid
-  // measures a disc (DomainGrid.discBox: on the sphere the cap's rows and
-  // its widest longitude span, all of a row near a pole). A margin far above
-  // the distance's rounding: the filing must cover every point the kernel
-  // could reach. Filing a blob in a bucket more is harmless (its kernel
-  // adds an exact 0 there); filing it in one less is not.
-  const box: CellBox = { x0: 0, x1: 0, y0: 0, y1: 0 }
-  for (let k = 0; k < total; k++) {
-    const extent = br[k] * reach
-    const e = extent * (1 + 1e-9) + 1e-6
-    if (!(e < Infinity)) {
-      box.x0 = 0
-      box.x1 = nx - 1
-      box.y0 = 0
-      box.y1 = ny - 1
-    } else {
-      grid.discBox(bx[k], by[k], e, box)
-    }
-    for (let j = box.y0; j <= box.y1; j++) for (let i = box.x0; i <= box.x1; i++) buckets[grid.index(i, j)].push(k)
-  }
-  const start = new Int32Array(nx * ny + 1)
-  for (let b = 0; b < nx * ny; b++) start[b + 1] = start[b] + buckets[b].length
-  const items = new Int32Array(start[nx * ny])
-  for (let b = 0; b < nx * ny; b++) items.set(buckets[b], start[b])
-  return { rafts, domain, grid, start, items, bx, by, br, braft, bp }
-}
-
-const queryFrame = globeFrame()
-
-// The squared chord from the point last given to queryFrame to blob g.
-function chordSq(bp: Float64Array, g: number): number {
-  const dx = bp[3 * g] - queryFrame.px
-  const dy = bp[3 * g + 1] - queryFrame.py
-  const dz = bp[3 * g + 2] - queryFrame.pz
-  return dx * dx + dy * dy + dz * dz
-}
-
-// raftField through the index: the same value, bit for bit.
-export function raftFieldIndexed(x: number, y: number, index: BlobIndex): number {
-  if (!(Math.abs(x) < Infinity && Math.abs(y) < Infinity)) return raftField(x, y, index.rafts, index.domain)
-  const b = index.grid.cellAt(x, y)
-  const { items, bx, by, br, bp, domain } = index
-  let field = 0
-  if (bp && domain.noise.kind === 'globe') {
-    domain.noise.frame(x, y, queryFrame)
-    for (let k = index.start[b]; k < index.start[b + 1]; k++) {
-      const g = items[k]
-      if (chordSq(bp, g) >= br[g] * br[g] * CHORD_MARGIN) continue
-      field += blobKernel(domain.distanceSq(x, y, bx[g], by[g]), br[g])
-    }
-    return field
-  }
-  for (let k = index.start[b]; k < index.start[b + 1]; k++) {
-    const g = items[k]
-    field += blobKernel(domain.distanceSq(x, y, bx[g], by[g]), br[g])
-  }
-  return field
 }
 
 // A coarse (resX×resY) field of continental crust "oldness" 0..1 — 1 where the
@@ -233,54 +78,6 @@ export function computeCratonOldnessField(rafts: Raft[], currentEpoch: number, a
     out[i] = weight[i] === 0 ? -1 : nowMa <= 0 ? 1 : Math.max(0, Math.min(1, 1 - ageWeighted[i] / weight[i] / nowMa))
   }
   return out
-}
-
-// Coarse "which raft owns this point" field — the index (into `rafts`) of
-// whichever raft's blob contributes the MOST to the summed metaball field
-// there, or -1 where no raft reaches at all (open ocean, or a volcanic
-// island/ridge/hotspot-chain feature sitting on crust no raft claims — the
-// raft model never says those points are continental). Grouping land by this
-// is what lets applyMountainRedistribution (elevationField.ts) normalize each
-// continent against its OWN achieved peak instead of the whole world's — a
-// single exceptional summit anywhere used to flatten every other range's
-// relative prominence too, since they all shared one normalization reference.
-//
-// Scatter over each blob's own reach (same pattern as
-// computeCratonOldnessField below), not a per-cell scan over every raft's
-// every blob — cost proportional to how much crust exists, not to
-// resX*resY*raftCount. "Most contribution" (not just "any contribution") is
-// what makes this well-defined at a border where two continents' fields both
-// reach the same cell: whichever's blob is closer/bigger there wins that
-// cell, which is the same tie-break spirit as the membership's own summed
-// field, just tracked per-raft instead of pooled.
-export function computeOwnerField(rafts: Raft[], resX: number, resY: number, domain: Domain): Int32Array {
-  const best = new Float32Array(resX * resY)
-  const owner = new Int32Array(resX * resY).fill(-1)
-  const cellW = domain.width / resX
-  const cellH = domain.height / resY
-  const grid = domain.grid(resX, resY)
-  const box: CellBox = { x0: 0, x1: 0, y0: 0, y1: 0 }
-  rafts.forEach((raft, raftIndex) => {
-    for (const blob of raft.blobs) {
-      grid.discBox(blob.x, blob.y, blob.radius, box)
-      for (let gy = box.y0; gy <= box.y1; gy++) {
-        const wy = (gy + 0.5) * cellH
-        for (let gx = box.x0; gx <= box.x1; gx++) {
-          const wx = (gx + 0.5) * cellW
-          const v = blobKernel(domain.distanceSq(wx, wy, blob.x, blob.y), blob.radius)
-          const i = grid.index(gx, gy)
-          if (v <= best[i]) continue
-          best[i] = v
-          owner[i] = raftIndex
-        }
-      }
-    }
-  })
-  return owner
-}
-
-export function sampleOwnerField(owner: Int32Array, grid: DomainGrid, x: number, y: number): number {
-  return owner[grid.cellAt(x, y)]
 }
 
 // Fraction of crust blobs that have passed the stabilisation age and can no longer

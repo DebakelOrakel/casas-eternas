@@ -2,7 +2,7 @@ import { domainOfKind, type Domain } from '../core/domain'
 import { sampleWorldElevation } from '../planet/sampleWorld'
 import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulationTypes'
 import { renderSimulationImage } from '../render/elevationMapImage'
-import type { ElevationRenderer, RenderableWorld, RenderSimulationOptions } from '../render/elevationMapImage'
+import type { RenderableWorld, RenderSimulationOptions } from '../render/elevationMapImage'
 import { downstreamOf } from './stages'
 import type { StageId } from './stages'
 import { releaseWorld, type ClimateBody, type ClimateParams, type Engine, type EnginePreview, type EngineWorld } from './engine'
@@ -122,12 +122,12 @@ function dropHandover(): void {
 // The last render's raw elevation on the world raster: what the stages
 // need before they run, and what the screen's physical raster reads.
 let lastRawElevations: Float32Array | null = null
-// The DISPLAY-space elevations of the last render (redistributed values the
-// map colors were computed from, with their grid size) — retained for the
+// The DISPLAY-space elevations of the last render (the values the map
+// colors were computed from, with their grid size) — retained for the
 // screen's 'requestElevationField' so its 3D relief displacement matches the
 // 2D picture exactly: a snow-capped pixel is also the tallest point in 3D.
-// The physical field (lastRawElevations) would disagree with the map wherever
-// applyMountainRedistribution reshaped it. See SimulationRenderResult.
+// The physical field (lastRawElevations) lacks the display's fine detail
+// texture. See SimulationRenderResult.
 let lastDisplayElevations: { data: Float32Array; width: number; height: number } | null = null
 // The terrain mesh has a routing: an epoch ran on it, it came from a save
 // or a replay, or a stage routed it. Until then the screen gets no mesh with
@@ -220,12 +220,6 @@ function fail(stage: StageId, error: unknown, restore = false): void {
 // GeneratorScreen's event overlay). The worker just relays events; it does
 // not track or bake any highlight state.
 
-// The picture's elevation is the engine's (`render`), so the image render
-// never asks a pool for one: every render here passes it precomputed.
-const NO_POOL: ElevationRenderer = {
-  renderElevations: () => Promise.reject(new Error('the engine renders the elevation')),
-}
-
 // Renders are async (the image's render yields). A render in flight reads the
 // world's snapshot across its awaits, and a step must not move the world
 // under it: the step loop takes this flag for a step and its render, and a
@@ -253,10 +247,9 @@ let renderDryBasin: Uint8Array | null = null
 let renderSaltFlat: Uint8Array | null = null
 
 // What the picture's overlays read of the plates (RenderableWorld) from the
-// world's snapshot. The elevation is the engine's, so the fields it would
-// have been computed from (the ocean age, the mantle) are not needed.
+// world's snapshot. The elevation is the engine's.
 function renderableOf(snapshot: PlateSimulationSnapshot, domain: Domain): RenderableWorld {
-  return { width: snapshot.width, height: snapshot.height, domain, seeds: snapshot.seeds, rafts: snapshot.rafts, features: snapshot.features, oceanAge: null, warpSeed: snapshot.warpSeed, mantle: new Float64Array(0) }
+  return { width: snapshot.width, height: snapshot.height, domain, seeds: snapshot.seeds, rafts: snapshot.rafts, warpSeed: snapshot.warpSeed }
 }
 
 // The terrain as the engine rasterises it, rendered and posted: what the
@@ -275,12 +268,10 @@ async function renderTerrain(intermediate = false): Promise<void> {
 async function renderAndPost(elevations: Float32Array, mantle: Float32Array, snapshot: PlateSimulationSnapshot, intermediate: boolean, skipInvalidation: boolean): Promise<void> {
   const gen = worldGeneration
   const domain = domainFor(archeanShape, snapshot.width, snapshot.height)
-  renderOptions.precomputedElevations = elevations
-  renderOptions.elevationScale = 1
   renderOptions.dryBasin = renderDryBasin ?? undefined
   renderOptions.saltFlat = renderSaltFlat ?? undefined
 
-  const result = await renderSimulationImage(renderableOf(snapshot, domain), NO_POOL, renderOptions)
+  const result = await renderSimulationImage(renderableOf(snapshot, domain), elevations, renderOptions)
   // A newer init/restore replaced the world while this render was in flight —
   // discard it before it clobbers lastRawElevations or posts a stale frame.
   if (gen !== worldGeneration) return
@@ -339,13 +330,11 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   const { snapshot, mantle: field } = world.archeanSave()
   const { elevations, mantle } = world.render(elevationScale)
   const domain = domainFor(archeanShape, snapshot.width, snapshot.height)
-  renderOptions.precomputedElevations = elevations
-  renderOptions.elevationScale = 1
   const result = await renderSimulationImage(
     // No seeds, so no plate Voronoi: the Archean has no plates. The genesis
     // step offers no plate outlines (steps.ts).
-    { width: snapshot.width, height: snapshot.height, domain, seeds: [], rafts: snapshot.rafts, features: [], oceanAge: null, warpSeed: snapshot.warpSeed, mantle: field.values },
-    NO_POOL,
+    { width: snapshot.width, height: snapshot.height, domain, seeds: [], rafts: snapshot.rafts, warpSeed: snapshot.warpSeed },
+    elevations,
     renderOptions,
   )
   if (gen !== worldGeneration || era !== 'archean') return
@@ -1269,9 +1258,8 @@ async function handlePlanetPreview(message: Extract<WorkerInboundMessage, { type
     const domain = domainOfKind(shape, width, height)
     const elevation = previewElevation(domain)
     const rendered = await renderSimulationImage(
-      { width, height, domain, seeds: [], rafts: [], features: [], oceanAge: null, warpSeed: 0, mantle: new Float64Array(0) },
-      NO_POOL,
-      { precomputedElevations: elevation },
+      { width, height, domain, seeds: [], rafts: [], warpSeed: 0 },
+      elevation,
     )
     sampleWorld = { width, height, shape, elevation, buffer: rendered.buffer, relief: rendered.relief }
   }

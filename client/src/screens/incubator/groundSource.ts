@@ -58,7 +58,7 @@ export interface GroundSourceOptions {
     precipitation: GridField | null
     lakeDepth: GridField | null
     // The water level and the body's floor per world cell and the
-    // surface kind there (hydrology.waterLevelField: 0 the sea, 1 a
+    // surface kind there (the engine's `water_level_field`: 0 the sea, 1 a
     // lake, 2 ice), on the world raster.
     waterLevel: GridField | null
     waterFloor: GridField | null
@@ -87,7 +87,7 @@ export interface RasterGroundSource extends GroundSource {
 // A level's typical node spacing, cells (~2 km, ~500 m, ~150 m), for
 // the painter's softening of the facets.
 const NODE_SPACING_CELLS: Record<number, number> = { 0: 1, 1: 0.28, 2: 0.07, 3: 0.02 }
-// The climate's lapse (climate/climateTuneParams lapseCPerKm), per metre.
+// The climate's lapse (the engine's climate_tune_params.rs lapseCPerKm), per metre.
 const LAPSE_C_PER_M = 6.5 / 1000
 
 const wrap = (v: number, n: number): number => ((v % n) + n) % n

@@ -60,17 +60,16 @@ pipeline/   messages (the worker contract), runtime (the stage state, the step l
             engineConstants (the numbers the pipeline versions come from, the engine's),
             replayPlan (a world's runs as the engine's Replay takes them), stages (the
             pipeline as data)
-core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, interpolation,
+core/       mapConfig, toroidal, rng, field (the shared samplers), interpolation,
             domain (the topology: periodicity, distance and latitude), detMath (exp, log,
             sin, cos … the same bits in every JS engine), worldTime, inputParams
 mesh/       the terrain mesh's read side: periodicDelaunay (the triangulation on a
-            domain), lattice, hilbert, meshDensity (MESH_TUNING),
+            domain), lattice, hilbert,
             meshSerial (the save's form: Hilbert numbering, varint connectivity, the
             canonical rebuild), meshSampler (point location over a hint grid — what map/
             reads the mesh through), meshRaster (node fields on a grid;
             rasteriseNodePart for the part of the nodes that holds a field),
-            meshHydrology (the water fields on the raster from the mesh),
-            meshNeighbourhood (a node's neighbourhood in metres); the fine levels'
+            meshHydrology (the water fields on the raster from the mesh); the fine levels'
             tiles: meshTile (the torus), meshTileCube and cubeAtlas (the sphere),
             tileLayout (by the world's shape), tileSampler (a tile's surface as a lookup)
 fields/     fieldMesh (the field mesh: geometry, sampler, chart rasters in and out,
@@ -80,16 +79,15 @@ mantle/     the mantle's field mesh and its saved values
 archean/    the Archean's controls, its snapshot types, the coastline-warp seed
 tectonics/  the controls, the plates' types and motion, the snapshot and event types
             (plateSimulationTypes), oceanAge, terrainFeatures, volcanoes, plumes
-crust/      the rafts' types and fields (raftField: the owner field, the craton age)
-elevation/  elevationScale (what a height MEANS), elevationField, elevationTuneParams,
-            domainWarp, ridgedNoise, globeNoise, hypsometry, dynamicTopography,
+crust/      the rafts' types and fields (raftField: the craton age)
+elevation/  elevationScale (what a height MEANS), ridgedNoise, globeNoise,
             elevationColor
 surface/    the shapes a save holds (hydrology: the water bodies and their levels;
             riverGraph: the feature graph; coastGraph, coastal, surfaceTypes),
-            surfaceTuneParams, erosionForcingFields (the erosion controls' type)
+            erosionForcingFields (the erosion controls' type)
 climate/    the climate's field mesh and chart (climateMesh, climateField, climateChart),
             the climate at a point (climatePoints), the biomes and Köppen classes, the
-            refinement's types, colours and tuning
+            refinement's types, colours
 ecology/    the ecology's field ids and fine codec, colours and controls (the rules and
             their tuning are the engine's: ecology_field.rs, ecology_tune_params.rs)
 render/     the picture: the relief's shade, the elevation image, the continent names
@@ -234,9 +232,10 @@ again on the engine when it starts again.
 The tuning that makes a world is the engine's (`climate_tune_params.rs`,
 `tectonics_tune_params.rs` …), and the pipeline versions hash it as the
 engine gives it (`pipeline/engineConstants.ts`, `world/worldTuning.ts`,
-`world/meshArtifacts.ts` MESH_BAKE_CONSTANTS). The `xyTuneParams.ts`
-objects left here (climate, elevation, surface) serve
-the read side and the screen; they are not hashed. Each controllable stage
+`world/meshArtifacts.ts` MESH_BAKE_CONSTANTS). The client keeps no copy of
+it: the few keys the read side and the screen read come from the engine's
+constants as well (`pipeline/engineConstants.ts` CLIMATE_TUNING,
+SURFACE_TUNING, typed for those keys). Each controllable stage
 declares its sliders in an `xyInputParams.ts` (min/max/step/default/unit/i18n
 key), and `world/save/worldSpec.ts` turns those declarations into the
 save's recipe. The reasoning is in `docs/design/architecture-unification.md`.

@@ -24,7 +24,7 @@ type Rgb = [number, number, number]
 // The shallow-water band is the one that changes most in character. It used to
 // span -0.05..0 of a scale where the coast dropped ~0.8 units in a few pixels,
 // so it was a couple of pixels wide and the coastline read as a hard line. With
-// a real shelf (elevationScale.marginProfile) the -140..0 m band is tens of
+// a real shelf (the margin profile, elevationScale.ts) the -140..0 m band is tens of
 // kilometres wide, and this is what actually paints it.
 const stop = (meters: number, color: Rgb): { elevation: number; color: Rgb } => ({ elevation: metersToElevation(meters), color })
 

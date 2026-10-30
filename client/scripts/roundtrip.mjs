@@ -39,7 +39,6 @@ const M = {
   key: await L('/src/world/identity.ts'),
   memory: await L('/src/storage/MemoryArtifactStore.ts'),
   bake: await L('/src/world/meshArtifacts.ts'),
-  hydro: await L('/src/generator/surface/hydrology.ts'),
   domain: await L('/src/generator/core/domain.ts'),
   history: await L('/src/world/save/worldHistory.ts'),
   refined: await L('/src/world/save/refinedFields.ts'),
@@ -505,32 +504,6 @@ await refused('a save with the coast over raster cells (before DEC-0036 phase 7b
   let fine = true
   try { writer.refuseFormerRasters(zip) } catch { fine = false }
   check('the screen\'s refusal refuses the same, and opens the current form', threw && fine)
-}
-
-// The lake layer derives from the list and the terrain: a bowl in a synthetic
-// raster, one body at its spill, and lakeDepthFromBodies must find exactly the
-// bowl — wet below the level, dry at the pour point, nothing beyond it.
-{
-  const bw = 12, bh = 6
-  const bowl = new Float32Array(bw * bh).fill(0.3)
-  const inBowl = (x, y) => x >= 3 && x <= 6 && y >= 2 && y <= 3
-  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) if (inBowl(x, y)) bowl[y * bw + x] = 0.1 + 0.02 * (x - 3)
-  bowl[2 * bw + 7] = 0.2 // the pour point: at the spill, not below it
-  bowl[2 * bw + 8] = 0.05 // the valley beyond it, lower than the lake
-  const body = { id: 0, kind: 'lake', level: 0.2, spill: 0.2, floor: 0.1, seedX: 3.5, seedY: 2.5, outletX: 6.5, outletY: 2.5, cells: 8, frozen: false }
-  const bowlGrid = M.domain.torusDomain(bw, bh).grid(bw, bh)
-  const depth = M.hydro.lakeDepthFromBodies([body], bowl, bowlGrid)
-  let wet = 0, leaked = false
-  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
-    const d = depth[y * bw + x]
-    if (d > 0) wet++
-    if (d > 0 && !inBowl(x, y)) leaked = true
-  }
-  check('the derived lake fills its bowl and stops at the pour point', wet === 8 && !leaked, `${wet} wet, leaked ${leaked}`)
-  check('the derived depth is level minus terrain', Math.abs(depth[2 * bw + 3] - 0.1) < 1e-6)
-  const field = M.hydro.waterLevelField([body], bowl, bowlGrid)
-  const near = (a, b) => Math.abs(a - b) < 1e-6
-  check('the level field carries the level onto the rim', near(field.level[2 * bw + 7], 0.2) && near(field.level[1 * bw + 3], 0.2) && field.level[0] === 0 && field.level[2 * bw + 8] === 0)
 }
 
 // The climate step's refinement (DEC-0036 phase 5): its values per cell of

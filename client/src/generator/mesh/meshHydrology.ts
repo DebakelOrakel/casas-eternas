@@ -1,6 +1,6 @@
 import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { SEA_WATER_LEVEL, SURFACE_ICE, SURFACE_LAKE, SURFACE_SEA, type WaterBody } from '../surface/hydrology'
-import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
+import { SURFACE_TUNING } from '../pipeline/engineConstants'
 import type { PeriodicTriangulation } from './periodicDelaunay'
 
 // THE WATER FIELDS ON THE RASTER, FROM THE MESH: what the cell-walking
@@ -14,7 +14,7 @@ import type { PeriodicTriangulation } from './periodicDelaunay'
 // extends over every cell a basin node is nearest to, wet or dry — the
 // shore is drawn as its iso-line, so the level must reach past the water.
 //
-// NOT recovered from the body list on the raster (basinCellsBelow): the
+// NOT recovered from the body list on the raster (the engine's `basin_cells_below`): the
 // rasterised terrain interpolates between nodes, and between a basin's
 // rim nodes and a lower node beyond its pour point it dips under the
 // spill — a flood from the seed then leaks into the next valley. Measured

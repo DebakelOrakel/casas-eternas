@@ -125,7 +125,7 @@ export interface ToroidalMapView {
   // texture's own sea stands (a map that shows another world's picture).
   setWaterElevation(data: Float32Array | null, width: number, height: number): void
   // The per-cell level and surface kind from the hydrology
-  // (hydrology.waterLevelField), or null for "the sea everywhere".
+  // (mesh/meshHydrology.waterFieldsFromMesh), or null for "the sea everywhere".
   // `coast` is the coast type per cell (surface/coastGraph.ts) for the
   // shore's own drawing; optional.
   setWaterLevels(level: Float32Array | null, surface: Uint8Array | null, coast?: Uint8Array | null): void

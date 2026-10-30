@@ -12,7 +12,7 @@ export interface TerrainFeature {
   x: number
   y: number
   // Signed relative crustal thickness change from baseline, driving
-  // elevation via isostasy (elevationField.ts): positive means the crust
+  // elevation via isostasy (the engine's elevation_field.rs): positive means the crust
   // has thickened (mountains, arcs, ridges), negative means it's thinned
   // (rift valleys stretching/sinking) — see boundaryClassification's
   // elevationSign for which boundary characters deposit which sign. This

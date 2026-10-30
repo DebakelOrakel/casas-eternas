@@ -1,6 +1,5 @@
 import { SEA_LEVEL } from '../elevation/elevationScale'
-import { SURFACE_TUNING } from './surfaceTuneParams'
-import type { DomainGrid } from '../core/domain'
+import { SURFACE_TUNING } from '../pipeline/engineConstants'
 
 // The hydrology's discharge unit is mm/yr summed over contributing cells;
 // × cell area × 1e-3 m/mm ÷ seconds-per-year gives m³/s, and a nominal
@@ -46,7 +45,7 @@ export interface WaterBody {
   level: number
   // The pour point's ELEVATION — the lowest cell on the basin's rim, where
   // it overflows — and the deepest cell's. The extent is everything below
-  // the pour point around the seed (basinCellsBelow). Not the flood's fill
+  // the pour point around the seed (the engine's `basin_cells_below`). Not the flood's fill
   // level: that sits an epsilon chain above the pour cell, and a recovery
   // against it would run through the pour cell into the valley beyond.
   spill: number
@@ -70,99 +69,13 @@ export interface WaterBody {
 // The sea's level: what every cell outside a basin is drawn against.
 export const SEA_WATER_LEVEL = SEA_LEVEL
 
-// The cells of one basin on a terrain: the 4-connected region below its
-// spill around its seed. The pour point itself sits AT the spill and is not
-// below it, so the region stops there and does not leak into the valley
-// beyond — the same set the flood marked (filled > elevation), recovered
-// from the list and the terrain alone, which is what lets a save consumer
-// (or the map, at draw time) derive the depth raster and the shore without
-// a drainage network. Returns cell indices.
-// `grid`: the elevation raster's grid over the domain.
-export function basinCellsBelow(elevation: Float32Array, grid: DomainGrid, body: WaterBody): Int32Array {
-  const { resX: width, resY: height } = grid
-  const seed = Math.floor(body.seedY) * width + Math.floor(body.seedX)
-  if (!(elevation[seed] < body.spill)) return Int32Array.of(seed)
-  const seen = new Uint8Array(width * height)
-  const queue: number[] = [seed]
-  seen[seed] = 1
-  for (let head = 0; head < queue.length; head++) {
-    const c = queue[head]
-    const cx = c % width
-    const cy = (c - cx) / width
-    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-      const nb = grid.neighbour(cx, cy, dx, dy)
-      if (seen[nb] || !(elevation[nb] < body.spill)) continue
-      seen[nb] = 1
-      queue.push(nb)
-    }
-  }
-  return Int32Array.from(queue)
-}
-
-// The level every cell's shore is drawn against, plus what surface stands
-// there (SURFACE_SEA / SURFACE_LAKE / SURFACE_ICE): a basin's level over its
-// whole extent AND its one-cell rim, the sea's elsewhere. The rim matters because a shore is found where the terrain,
-// interpolated between cell centres, crosses the level — so the cell on the
-// dry side of every shore must carry the same level as the wet side, or a
-// dry basin floor would grow a false sea sliver along its rim and a lake a
-// gap along its beach. Only rim cells AT OR ABOVE the level take it: a rim
-// cell below it is the valley just past the pour point, which would read as
-// a wet patch. A rim cell that is itself ocean keeps the sea; a rim cell
-// between two basins keeps the first written (basins come in list order).
-// Derived, never stored: the save carries the list.
+// What surface stands at a cell: the sea, a lake, a frozen lake. The codes
+// of the water fields on the raster (mesh/meshHydrology.waterFieldsFromMesh,
+// the engine's `water_level_field`) and of the map's water plugin. Derived,
+// never stored: the save carries the list.
 export const SURFACE_SEA = 0
 export const SURFACE_LAKE = 1
 export const SURFACE_ICE = 2
-
-export function waterLevelField(bodies: readonly WaterBody[], elevation: Float32Array, grid: DomainGrid): { level: Float32Array; body: Int32Array; surface: Uint8Array } {
-  const width = grid.resX
-  const n = width * grid.resY
-  const level = new Float32Array(n).fill(SEA_WATER_LEVEL)
-  const body = new Int32Array(n).fill(-1)
-  const surface = new Uint8Array(n).fill(SURFACE_SEA)
-  const rim: number[] = []
-  for (const b of bodies) {
-    const cells = basinCellsBelow(elevation, grid, b)
-    const kind = b.frozen ? SURFACE_ICE : SURFACE_LAKE
-    for (const c of cells) {
-      level[c] = b.level
-      body[c] = b.id
-      surface[c] = kind
-    }
-    rim.length = 0
-    for (const c of cells) {
-      const cx = c % width
-      const cy = (c - cx) / width
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nb = grid.neighbour(cx, cy, dx, dy)
-          if (body[nb] === -1 && elevation[nb] > SEA_LEVEL && elevation[nb] >= b.level) rim.push(nb)
-        }
-      }
-    }
-    for (const c of rim) {
-      if (body[c] !== -1) continue
-      level[c] = b.level
-      body[c] = b.id
-      surface[c] = kind
-    }
-  }
-  return { level, body, surface }
-}
-
-// The depth raster from the list: level minus terrain over each basin's
-// extent, zero elsewhere — what the save's `lakeDepth` layer IS, so a reader
-// can check the layer against the list, or rebuild it on a finer terrain.
-export function lakeDepthFromBodies(bodies: readonly WaterBody[], elevation: Float32Array, grid: DomainGrid): Float32Array {
-  const depth = new Float32Array(grid.resX * grid.resY)
-  for (const b of bodies) {
-    if (b.kind === 'dry') continue
-    for (const c of basinCellsBelow(elevation, grid, b)) {
-      if (elevation[c] <= b.level) depth[c] = b.level - elevation[c]
-    }
-  }
-  return depth
-}
 
 // Width relative to the world's biggest river (√ of flow — Hack's-law-ish), so a
 // river's drawn width depends only on its own discharge, NOT on the current

@@ -21,7 +21,6 @@
 // An explicit metre anchor removes the ambiguity: a height is a height, the
 // reference points below are checkable against the real Earth, and the
 // translation hack disappears.
-import { smoothstep } from '../core/interpolation'
 
 export const ELEVATION_METERS = 9000
 
@@ -59,19 +58,19 @@ export function isLandAt(elevation: number, dryLand = false): boolean {
 //
 // The reference heights the rest of the pipeline builds on. Earth values, so
 // they can be checked rather than argued about:
-//   - LAND_BASE is modal lowland, not mean land elevation (840 m). Continental
-//     crust with no tectonic uplift on it should read as a coastal plain; mean
-//     land elevation already includes the mountains that uplift adds on top.
+//   - LAND_BASE (360 m) is modal lowland, not mean land elevation (840 m).
+//     Continental crust with no tectonic uplift on it should read as a coastal
+//     plain; mean land elevation already includes the mountains that uplift
+//     adds on top.
 //   - RIDGE_CREST / ABYSSAL_FLOOR bracket the ocean floor's age-depth curve
-//     (see elevationField.ts): fresh crust at a spreading ridge, and the depth
-//     old crust asymptotes to once it has finished subsiding.
-//   - SHELF_BREAK / SLOPE_FOOT shape the continental margin (see marginProfile
-//     below), and are the reason a coastline no longer sits on a cliff.
-export const LAND_BASE = metersToElevation(360) // +0.040  continental interior
-export const COASTAL_PLAIN = metersToElevation(60) // +0.007  inner edge of the coastal plain
+//     (the engine's elevation_field.rs): fresh crust at a spreading ridge, and
+//     the depth old crust asymptotes to once it has finished subsiding.
+//   - SHELF_BREAK / SLOPE_FOOT (−3000 m) shape the continental margin (see the
+//     margin profile below), and are the reason a coastline no longer sits on
+//     a cliff.
+// The engine holds all of them (elevation_scale.rs); the ones below are the
+// ones the client reads (the colour ramp, the sample world).
 export const SHELF_BREAK = metersToElevation(-140) // -0.016  outer edge of the shelf
-export const INNER_SHELF = metersToElevation(-60) // -0.007  the shelf's middle
-export const SLOPE_FOOT = metersToElevation(-3000) // -0.333  base of the continental slope
 export const RIDGE_CREST = metersToElevation(-2600) // -0.289  mid-ocean ridge crest
 export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided old basin
 
@@ -82,8 +81,9 @@ export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided 
 // how much land a world has is the Archean's land share target now
 // (archean/archeanLand.ts).
 
-// The continental margin's shape, as a curve from open ocean (t = 0) to
-// continental interior (t = 1).
+// THE CONTINENTAL MARGIN'S PROFILE — the engine computes it
+// (elevation_scale.rs: margin_profile, margin_parameter); this is its
+// reasoning. A curve from open ocean (t = 0) to continental interior (t = 1).
 //
 // This replaced a straight lerp from the ocean baseline to the land baseline
 // across the raft membership band, and it is what actually fixes the steep
@@ -109,8 +109,8 @@ export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided 
 //   t = 0.00   abyssal floor (age-dependent, supplied by the caller)
 //   t = 0.15   SLOPE_FOOT      foot of the continental slope
 //   t = 0.45   SHELF_BREAK     outer shelf edge — the slope's top
-//   t = 0.80   COASTAL_PLAIN   inner edge of the coastal plain
-//   t = 1.00   LAND_BASE       continental interior
+//   t = 0.80   COASTAL_PLAIN   inner edge of the coastal plain (+60 m)
+//   t = 1.00   LAND_BASE       continental interior (+360 m)
 //
 // Note what is NOT in that list: sea level. Putting a control point AT 0 was the
 // first attempt and it overshot the goal badly — smoothstep has zero derivative
@@ -138,76 +138,23 @@ export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided 
 // smoothstep is steepest, as the paragraph above wants it), so the Archean's
 // land and the shoreline field do not move. The shelf is twice as wide in t;
 // at the hand-over the worlds' shelf was 5.7 % of the ocean against 2.7 %.
-// The rust engine holds the profile (casas-engine elevation_scale.rs); this
-// copy is its reasoning.
-// The margin parameter at the foot of the continental slope — the first
-// stop below; the trench's depression (elevationField.slabDepressionAt)
-// ends here, seaward of the overriding plate's slope.
-export const SLOPE_FOOT_T = 0.1
-const MARGIN_STOPS: readonly (readonly [t: number, elevation: number])[] = [
-  [SLOPE_FOOT_T, SLOPE_FOOT],
-  [0.25, SHELF_BREAK],
-  [0.55, INNER_SHELF],
-  [0.7957197562366026, COASTAL_PLAIN],
-  [1.0, LAND_BASE],
-]
-
-// Smoothstep so the segment joins have no slope discontinuity — a piecewise
-// LINEAR profile puts a visible crease at every control point, and the shelf
-// break is precisely where a crease would read as the artifact this is meant to
-// remove.
-
-// Elevation at margin parameter `t` (0 = open ocean, 1 = continental interior).
-// `abyssalFloor` is passed in rather than read from the constant above because
-// the deep end is age-dependent (see elevationField.oceanFloorAtAge): young
-// crust near a ridge sits ~3 km shallower than a fully subsided basin, and the
-// margin has to meet whatever floor is actually there.
-export function marginProfile(t: number, abyssalFloor: number): number {
-  if (t <= 0) return abyssalFloor
-  if (t >= 1) return LAND_BASE
-  let fromT = 0
-  let fromE = abyssalFloor
-  for (const [stopT, stopE] of MARGIN_STOPS) {
-    if (t <= stopT) return fromE + (stopE - fromE) * smoothstep((t - fromT) / (stopT - fromT))
-    fromT = stopT
-    fromE = stopE
-  }
-  return LAND_BASE
-}
-
-// The margin parameter is its own smoothstep over the raw metaball field, with a
-// far WIDER band than the engine's raft FIELD_LO/FIELD_HI membership threshold (0.35 to
-// 0.65). Deliberately decoupled: membership answers "is this continental crust"
-// — which drives plate typing, accretion, mantle insulation and rift eligibility
-// — while this answers "what height is the crust here", and the two questions
-// want different bands. A margin needs physical width to hold a shelf and a
-// slope; reusing the narrow membership band compressed the entire ocean-to-
-// continent transition into ~150 km, which is most of why it read as a wall.
-// HI = 1.0 is the field value at a lone blob's centre, so a continent (always
-// several overlapping blobs) sits comfortably at full interior height.
-export const MARGIN_FIELD_LO = 0.08
-export const MARGIN_FIELD_HI = 1.0
-
-// How much gentler land slopes became under the recalibration, measured rather
-// than derived: identical seed and epoch count, land-cell elevation differences
-// over a 4 px step, before vs after. Interior land (coastal cells excluded, so
-// this isn't just the new shelf showing up) went from median 0.0083 / p90 0.0586
-// to 0.0031 / p90 0.0331 — a factor of ~2.
+// Each stop joins the next by a smoothstep, so the segment joins have no
+// slope discontinuity — a piecewise LINEAR profile puts a visible crease at
+// every control point, and the shelf break is precisely where a crease would
+// read as the artifact this is meant to remove. The deep end is the ocean
+// floor's age-dependent depth: young crust near a ridge sits ~3 km
+// shallower than a fully subsided basin, and the margin meets whatever
+// floor is there.
 //
-// The cause is not the metre anchor, which is a pure offset and cancels in a
-// difference. It's the margin profile: continental interior used to be a FLAT
-// plateau at 0.35 ending in a cliff, and is now a gentle ramp from the coast up
-// to LAND_BASE, spread across hundreds of kilometres.
-//
-// Every constant that reads an elevation DIFFERENCE was tuned against the old
-// distribution, so each is scaled by this to preserve the behaviour it was tuned
-// for. They are eye-tuned visual/gameplay knobs, not physical quantities — the
-// honest move is to keep them where they were, not to re-guess them. Applied in
-// erosion (talusSlope), precipitation (orographic lift), ecology (flatness)
-// and the hillshade.
-export const SLOPE_RECALIBRATION = 2
-
-export function marginParameter(field: number): number {
-  const t = Math.max(0, Math.min(1, (field - MARGIN_FIELD_LO) / (MARGIN_FIELD_HI - MARGIN_FIELD_LO)))
-  return smoothstep(t)
-}
+// The margin parameter t is its own smoothstep over the raw metaball field
+// (the rafts' blobs), with a far WIDER band (0.08 to 1.0) than the engine's
+// raft FIELD_LO/FIELD_HI membership threshold (0.35 to 0.65). Deliberately
+// decoupled: membership answers "is this continental crust" — which drives
+// plate typing, accretion, mantle insulation and rift eligibility — while
+// this answers "what height is the crust here", and the two questions want
+// different bands. A margin needs physical width to hold a shelf and a
+// slope; reusing the narrow membership band compressed the entire
+// ocean-to-continent transition into ~150 km, which is most of why it read
+// as a wall. 1.0 is the field value at a lone blob's centre, so a continent
+// (always several overlapping blobs) sits comfortably at full interior
+// height.

@@ -7,7 +7,7 @@ import { SURFACE_LAKE, SURFACE_SEA } from '../generator/surface/hydrology'
 // terrain (ADAPTIVE_MESH_PLAN.md phase 1, decision 9 of adaptive-mesh.md):
 // for every fragment the terrain height is interpolated between the four
 // nearest cell centres and compared with the level the cell's water stands
-// at — the sea's, or a basin's from hydrology.waterLevelField — so the shore
+// at — the sea's, or a basin's from mesh/meshHydrology.waterFieldsFromMesh — so the shore
 // falls where the terrain crosses the level, not on the cell edge. The
 // staircase the texture's per-cell colour used to show at zoom is gone; what
 // remains per cell is the LEVEL, which is piecewise constant by nature.
@@ -109,7 +109,7 @@ export class WaterField {
     this.upload()
   }
 
-  // The per-cell level and surface kind (hydrology.waterLevelField), or null
+  // The per-cell level and surface kind (mesh/meshHydrology.waterFieldsFromMesh), or null
   // for "the sea everywhere". Must match the elevation raster's shape.
   //
   // `coast` is the coast type per cell (surface/coastGraph.ts): the shore

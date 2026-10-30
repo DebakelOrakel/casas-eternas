@@ -2,7 +2,7 @@ import { smoothstep } from '../core/interpolation'
 import { wrapValue } from '../core/field'
 import { globeFrame, type Domain } from '../core/domain'
 import { globeOctaveOn } from './globeNoise'
-// Periodic ridged multifractal, used by elevationField.ts to give
+// Periodic ridged multifractal, used by the engine's elevation_field.rs to give
 // tectonically-uplifted terrain fine ridge-and-valley structure that the
 // smooth distance-field uplift alone can't produce (docs/vision.md Phase 3
 // explicitly asks for "ridged fractal noise to make realistic ridges and
@@ -12,7 +12,7 @@ import { globeOctaveOn } from './globeNoise'
 // Must tile exactly at the map's own wrap period in both axes — this is a
 // torus, and a non-periodic noise field would leave a seam at the wrap
 // edge. A sphere world samples the same octaves on a 3D lattice instead
-// (the engine's `ridged_multifractal_on`, globeNoise.ts). Same periodic-value-noise construction as domainWarp.ts, but kept
+// (the engine's `ridged_multifractal_on`, globeNoise.ts). Same periodic-value-noise construction as the engine's domain_warp.rs, but kept
 // separate and independently tuned: domainWarp perturbs query points at
 // continent scale, this shapes relief at range scale, and folding both
 // into one parameterized helper would read worse than a second small copy

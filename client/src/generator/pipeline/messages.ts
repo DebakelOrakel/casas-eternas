@@ -127,11 +127,11 @@ export interface WorkerPlanetPreviewDataMessage {
 // with a WorkerClimateDataMessage.
 export interface WorkerClimateRunMessage {
   type: 'climateRun'
-  // Global temperature offset in °C (greenhouse) — see computeTemperature.
+  // Global temperature offset in °C (greenhouse) — see the engine's climate/temperature.rs.
   temperatureOffset: number
-  // Equator↔pole spread multiplier (1 = default) — see computeTemperature.
+  // Equator↔pole spread multiplier (1 = default) — see the engine's climate/temperature.rs.
   temperatureContrast: number
-  // Global precipitation multiplier (1 = default) — see computePrecipitation.
+  // Global precipitation multiplier (1 = default) — see the engine's climate/precipitation.rs.
   humidity: number
   // Latitudinal shift of the whole zonal climate band (equator + poles), as a
   // fraction of map height (0 = default; +ve moves the equator toward the bottom).
@@ -517,7 +517,7 @@ export interface WorkerClimateDataMessage {
   // Temperature in °C, Float32, resX*resY row-major.
   temperature: ArrayBuffer
   // Prevailing wind, Float32 interleaved [u0,v0,…], resX*resY cells
-  // (u = eastward, v = toward the bottom/"south"). See climate/wind.ts.
+  // (u = eastward, v = toward the bottom/"south"). See the engine's climate/wind.rs.
   wind: ArrayBuffer
   // The same wind on the climate's field mesh (DEC-0036 phase 3): Float64
   // east and south per cell, each in its cell's frame, with the mesh's cell
@@ -527,17 +527,17 @@ export interface WorkerClimateDataMessage {
   // year's mean of its months' winds (phase 5).
   windMesh: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
   // Ocean surface currents, Float32 interleaved [u0,v0,…], normalized to max 1,
-  // zero on land. See climate/oceanCurrents.ts.
+  // zero on land. See the engine's climate/ocean_currents.rs.
   currents: ArrayBuffer
   // The same currents on the climate's field mesh (DEC-0036 phase 4), as
   // `windMesh` carries the wind; on the refinement's climate its currents
   // (phase 5).
   currentsMesh: { cells: number; spacingM: number; e: ArrayBuffer; s: ArrayBuffer }
   // The SST anomaly the currents make, °C, Float32 resX*resY, 0 on land:
-  // positive = warm current, negative = cold (applyOceanSST).
+  // positive = warm current, negative = cold (the engine's ocean_currents.rs).
   currentAnomaly: ArrayBuffer
   // Annual precipitation mm/yr, Float32, resX*resY row-major; land only (ocean
-  // cells carry OCEAN_PRECIP). See climate/precipitation.ts.
+  // cells carry OCEAN_PRECIP). See the engine's climate/precipitation.rs.
   precipitation: ArrayBuffer
   // Annual temperature amplitude °C (summer−winter range), Float32. See
   // climate/seasonality.ts.
@@ -581,10 +581,10 @@ export interface WorkerClimateRefinedMessage {
   // the world raster (Uint8, full-res, 0 on the sea).
   koppen: ArrayBuffer
   // Weather phenomena, each a share of the year per cell (Float32,
-  // climate/phenomena.ts): coastal fog, föhn.
+  // climate/phenomena.rs): coastal fog, föhn.
   fog: ArrayBuffer
   foehn: ArrayBuffer
-  // The rain's reliability (climate/reliability.ts): its year-to-year
+  // The rain's reliability (climate/reliability.rs): its year-to-year
   // coefficient of variation and the ENSO see-saw's mark (−1 drier … +1
   // wetter in the warm phase), Float32 per cell, 0 on the sea; the see-saw's
   // period in years and strength (0..1), 0 where the world has none.
@@ -592,11 +592,11 @@ export interface WorkerClimateRefinedMessage {
   ensoPattern: ArrayBuffer
   ensoPeriodYears: number
   ensoStrength: number
-  // The storms (climate/storms.ts), Float32 0..1 per cell: cyclone tracks,
+  // The storms (climate/storms.rs), Float32 0..1 per cell: cyclone tracks,
   // tornado readiness, dust and thunder relative to the world's strongest,
   // blizzards as the share of the year.
   // The sea's salt (psu, 0 on land) and where its surface water sinks
-  // (0..1), Float32 per cell (climate/salinity.ts).
+  // (0..1), Float32 per cell (climate/salinity.rs).
   salinity: ArrayBuffer
   deepWater: ArrayBuffer
   cyclone: ArrayBuffer

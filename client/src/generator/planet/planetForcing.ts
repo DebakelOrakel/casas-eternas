@@ -55,12 +55,3 @@ export function obliquityContrast(obliquityDeg: number): number {
 export function solarTemperatureOffsetC(solarConstant: number): number {
   return 255 * (detPow(Math.max(0.01, solarConstant), 0.25) - 1)
 }
-
-// Where the Hadley cell ends, as a fraction of the equator-to-pole span:
-// Held & Hou (1980) put its extent at 1/Ω, so it scales with the rotation
-// period from a third of the way at 24 h; clamped so the three cells of
-// wind.ts keep a band each.
-export function hadleyEdge(rotationHours: number): number {
-  const edge = (1 / 3) * (rotationHours / PLANET_INPUTS.rotation.default)
-  return Math.min(0.9, Math.max(0.1, edge))
-}

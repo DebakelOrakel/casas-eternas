@@ -1,29 +1,15 @@
 import { elevationToColor } from '../elevation/elevationColor'
-import { applyMountainRedistribution, computeRaftBaseline } from '../elevation/elevationField'
 import type { PlateSimulation } from '../tectonics/plateSimulationTypes'
-import type { TerrainFeature } from '../tectonics/terrainFeatures'
 import type { Domain, DomainGrid } from '../core/domain'
 import { rasterizeVoronoiPlates } from './voronoiRaster'
 import type { ContinentLabelPlacement } from './continentLabelRenderer'
 import { computeRaftLabelPlacements } from './raftLabelLayout'
-import { computeOwnerField } from '../crust/raftField'
-import { MANTLE_RES_X, MANTLE_RES_Y, mantleMesh } from '../mantle/mantleField'
-import { dynamicTopographyField } from '../elevation/dynamicTopography'
 import { applyErosionDetailTexture } from './erosionDetailTexture'
 import { reliefShadeAt } from './reliefShade'
 
-// Whether to apply the mountain-accentuating gamma redistribution curve
-// (applyMountainRedistribution) before coloring. Temporarily false
-// (2026-07-23) to evaluate the raw new tectonic terrain — the redistribution
-// reshapes elevations against the map's own peak and can mask what the
-// ridge/trench/ridged-multifractal changes actually produce.
-const ACCENTUATE_MOUNTAINS = false
-
 // Whether to add erosionDetailTexture.ts's slope-conditioned fine noise
-// (2026-08-06, new — not yet eye-verified against a running world). Default
-// off for the same reason ACCENTUATE_MOUNTAINS is: flip on to evaluate, keep
-// off while the constants above it are still starting values rather than
-// tuned ones.
+// (2026-08-06, new — not yet eye-verified against a running world). Flip
+// off to evaluate the terrain without it.
 const APPLY_EROSION_DETAIL_TEXTURE = true
 
 // Event highlights (merge/rift/subduction markers) used to be baked into
@@ -56,39 +42,18 @@ export interface SimulationRenderResult {
   // rift, and an oceanic plate can push well above zero at an island
   // arc/hotspot — actual rendered elevation is what should count as land.
   landFraction: number
-  // Elevation exactly as the field query (or precomputedElevations, if
-  // that path was taken) produced it, *before* applyMountainRedistribution's
-  // cosmetic reshaping — the physically meaningful values a later erosion
-  // pass (erosionPassV2.ts) needs to act on, not the display-squashed ones.
+  // The elevation exactly as the caller gave it (the engine's render),
+  // *before* the display's fine detail texture — the physically meaningful
+  // values, not the display ones.
   rawElevations: Float32Array
-  // The redistributed values actually used for elevationToColor — what a
-  // debug 3D heightmap preview (see GeneratorScreen.ts) should displace
-  // by, so the relief it shows matches what the 2D color map is already
-  // showing (a white "snow-capped" pixel should also be the tallest
-  // point in 3D) rather than the pre-redistribution physical field.
+  // The values actually used for elevationToColor (with the fine detail
+  // texture) — what a debug 3D heightmap preview (see GeneratorScreen.ts)
+  // should displace by, so the relief it shows matches what the 2D color
+  // map shows.
   elevations: Float32Array
 }
 
 export interface RenderSimulationOptions {
-  // Skip the elevation field query (baseline blend + pool.renderElevations
-  // — together the ~88%+~15% of a normal render's cost) and use this
-  // array instead, e.g. the output of an erosion pass (erosionPassV2.ts) run
-  // against a previous render's own rawElevations. Everything downstream
-  // — redistribution, coloring, and the overlay-source passes — runs
-  // exactly as it would on a freshly-queried field, since none of it
-  // knows or cares where the elevation values came from.
-  precomputedElevations?: Float32Array
-  // Downscale factor for the expensive elevation-field query only (baseline
-  // blend + pool.renderElevations): the field is sampled on a grid of
-  // width/scale x height/scale and bilinearly upscaled back to full
-  // resolution before coloring, so a live preview can render several times
-  // faster at a slightly softer elevation shading. Must divide the map
-  // dimensions evenly. Defaults to 1 (full resolution — no downscale, no
-  // upscale). The boundary mask and labels stay full resolution
-  // regardless, so plate outlines and overlays remain crisp. Ignored when
-  // precomputedElevations is supplied (that array is already the final
-  // full-res field).
-  elevationScale?: number
   // Terminal-basin truth from the hydrology (the engine's LakeFields, dry_basin/salt_flat):
   // dry sub-sea basin floor renders as LAND — salt-crust colour inside the
   // evaporite band, pale basin rock above it — shaded by the same hillshade
@@ -129,68 +94,25 @@ function touchesLand(elevations: Float32Array, grid: DomainGrid, cols: Int32Arra
   return false
 }
 
-// Renders the simulation's current state into an RGBA buffer: elevation
-// (from the stateless distance-field query) determines every pixel's
-// color, except pixels right on a plate boundary — those stay a dark
-// outline on top (see showBoundaries).
-//
-// Bilinear upscale of a low-res elevation grid back to full resolution,
-// wrapping toroidally at both seams (the map wraps in both axes, so the
-// last row/column interpolate against the first, not a clamped edge). Used
-// to expand a downscaled live-preview elevation field (see
-// RenderSimulationOptions.elevationScale) to the full raster the coloring
-// pass and everything downstream expect.
-// Async, and takes a render pool, because the actual per-pixel elevation
-// query — profiled at ~88% of total render time — is farmed out across
-// a pool of nested workers (see elevationRenderPool.ts) rather than
-// computed inline here. Everything else in this function (Voronoi
-// rasterization, baseline blending, redistribution, coloring, boundary
-// lines, labels) stays single-threaded — combined, profiling
-// showed it's under 15% of total cost, not worth distributing too.
 // What the renderer actually reads. Narrower than PlateSimulation on purpose: the
-// Archean has no plates, no features and no ocean-age field, and should not have to
-// fabricate a PlateSimulation just to be drawn. Empty arrays for the plate-shaped
-// fields are a truthful description of that phase, not a placeholder.
-// What renderSimulationImage actually demands: one call that fills an elevation
-// grid. Named separately from the class because the pool is a browser thing (it
-// spawns nested workers and reads navigator.hardwareConcurrency) while the
-// demand is not — which is what lets the pipeline be driven headlessly with
-// something else supplied here. See docs/design/generator-pipeline.md.
-export interface ElevationRenderer {
-  renderElevations(
-    renderWidth: number,
-    renderHeight: number,
-    worldWidth: number,
-    worldHeight: number,
-    blendedBaselines: Float32Array,
-    features: TerrainFeature[],
-    warpSeed: number,
-    // The world's shape (Domain.kind): a Domain does not cross a worker
-    // boundary, its name does.
-    shape: Domain['kind'],
-  ): Promise<Float32Array>
-}
-
+// Archean has no plates, and should not have to fabricate a PlateSimulation just
+// to be drawn. An empty `seeds` is a truthful description of that phase, not a
+// placeholder.
 export interface RenderableWorld {
   width: number
   height: number
   domain: Domain
   seeds: PlateSimulation['seeds']
   rafts: PlateSimulation['rafts']
-  features: PlateSimulation['features']
-  // The ocean-floor age per cell of its field mesh (tectonics/oceanAge.ts);
-  // null where there is none yet (the Archean: nothing creates or destroys
-  // seafloor), which reads as freshly formed crust everywhere.
-  oceanAge: Float64Array | null
   warpSeed: number
-  // The mantle buoyancy field (mantle/mantleField.ts, per cell of its field
-  // mesh) — the dynamic-topography term reads it as it stands; both eras
-  // have one.
-  mantle: Float64Array
 }
 
-export async function renderSimulationImage(sim: RenderableWorld, pool: ElevationRenderer, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
-  const { precomputedElevations } = options
+// Renders the simulation's current state into an RGBA buffer: `rendered`
+// (the engine's render, width × height) determines every pixel's color; the
+// plate boundaries, the relief and the labels come with it as separate
+// layers. Async because the pipeline awaits it between a step and the next
+// (pipeline/runtime.ts).
+export async function renderSimulationImage(sim: RenderableWorld, rendered: Float32Array, options: RenderSimulationOptions = {}): Promise<SimulationRenderResult> {
   const { width, height } = sim
   const grid = sim.domain.grid(width, height)
   // The Archean phase runs with no plates at all — plate tectonics has not started
@@ -202,53 +124,13 @@ export async function renderSimulationImage(sim: RenderableWorld, pool: Elevatio
   const cellIds = hasPlates ? rasterizeVoronoiPlates(sim.seeds, sim.domain) : new Uint16Array(width * height)
   const buffer = new Uint8Array(width * height * 4)
 
-  let elevations: Float32Array
-  if (precomputedElevations) {
-    // Copied rather than used directly — applyMountainRedistribution
-    // below mutates in place, and precomputedElevations may be a caller-
-    // retained array (e.g. the worker's own cached "last raw elevations"
-    // it plans to erode again from later) that shouldn't be silently
-    // reshaped as a side effect of rendering it once.
-    elevations = precomputedElevations.slice()
-  } else {
-    // The elevation field query runs on a (possibly coarser) render grid;
-    // everything else stays at full world resolution. scale 1 == no
-    // downscale/upscale, identical to before.
-    const scale = Math.max(1, Math.floor(options.elevationScale ?? 1))
-    const renderWidth = Math.floor(width / scale)
-    const renderHeight = Math.floor(height / scale)
-    const blendedBaselines = computeRaftBaseline(sim.rafts, sim.oceanAge, renderWidth, renderHeight, sim.domain, sim.warpSeed)
-    // Dynamic topography (elevation/dynamicTopography.ts): the mantle's
-    // anomaly as a height term on the deck, evaluated from the field as it
-    // stands now — instantaneous, never crustal.
-    const dynamic = dynamicTopographyField(sim.mantle, mantleMesh(sim.domain).sampler, renderWidth, renderHeight)
-    for (let i = 0; i < blendedBaselines.length; i++) blendedBaselines[i] += dynamic[i]
-    const rendered = await pool.renderElevations(renderWidth, renderHeight, width, height, blendedBaselines, sim.features, sim.warpSeed, sim.domain.kind)
-    elevations = scale === 1 ? rendered : sim.domain.grid(renderWidth, renderHeight).upscale(rendered, width, height)
-  }
-  // Captured before redistribution reshapes elevations in place — see
-  // SimulationRenderResult.rawElevations.
+  // Copied rather than used directly — the fine detail texture below
+  // mutates in place, and the caller may keep the array.
+  const elevations = rendered.slice()
   const rawElevations = elevations.slice()
-  // Normalizes against this map's own actual highest point — has to
-  // happen after every pixel's raw elevation is known (i.e. after the
-  // pool has finished, not per-pixel/per-slice as each one is computed)
-  // — see applyMountainRedistribution's own comment for why.
-  // Temporarily gated off (2026-07-23) while evaluating the new tectonic
-  // ridge/trench/ridged-multifractal terrain by eye — flip back to true to
-  // restore the mountain-accentuating gamma curve. Now normalizes PER
-  // CONTINENT rather than against the whole world's max — see
-  // applyMountainRedistribution's own comment (2026-08-06 mountain-realism
-  // review) — via a coarse "which raft owns this point" field computed at
-  // the same MANTLE_RES grid every other raft-derived field already uses.
-  if (ACCENTUATE_MOUNTAINS) {
-    const ownerField = computeOwnerField(sim.rafts, MANTLE_RES_X, MANTLE_RES_Y, sim.domain)
-    applyMountainRedistribution(elevations, sim.domain, ownerField, MANTLE_RES_X, MANTLE_RES_Y)
-  }
 
   // Slope-conditioned fine detail — see erosionDetailTexture.ts. Reads slope
-  // from rawElevations (pre-redistribution, physically meaningful) but paints
-  // onto `elevations` (the display copy), so the two effects stay
-  // independent of each other's reshaping.
+  // from rawElevations (physically meaningful) but paints onto `elevations`.
   if (APPLY_EROSION_DETAIL_TEXTURE) applyErosionDetailTexture(elevations, rawElevations, grid, sim.warpSeed)
 
   // Base color raster + the boundary mask, in one pass. The mask marks a

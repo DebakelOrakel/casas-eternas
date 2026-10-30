@@ -1,6 +1,6 @@
 import type { Domain } from '../core/domain'
 import { SEA_LEVEL } from '../elevation/elevationScale'
-import { CLIMATE_TUNING } from './climateTuneParams'
+import { CLIMATE_TUNING } from '../pipeline/engineConstants'
 import { climateMesh, type ClimateMesh } from './climateMesh'
 
 // THE CLIMATE AT A POINT (DEC-0036 phase 7, docs/decisions/fields-on-
@@ -15,7 +15,7 @@ import { climateMesh, type ClimateMesh } from './climateMesh'
 // (`ClimateCells`, Float32 — the values the save holds, world/save/
 // climateFields.ts, so a bake samples what the generator sampled): the
 // air temperature REDUCED TO SEA LEVEL (the lapse of the ground under the
-// cell's centre taken off, by the rule computeTemperature applied: a dry
+// cell's centre taken off, by the rule the engine's temperature.rs applies: a dry
 // floor unclamped, everything else clamped at the sea), so a point takes
 // its own lapse back and a summit's cold does not bleed into the valley
 // beside it; the rain, the seasonal range and the signed monsoon index
@@ -54,13 +54,13 @@ export interface ClimateCells {
   // not refined.
   upwelling: Float32Array | null
   rainVariability: Float32Array | null
-  // The year's wind, east and south in each cell's own frame (wind.ts's
-  // units).
+  // The year's wind, east and south in each cell's own frame (the engine's
+  // wind.rs's units).
   windE: Float32Array
   windS: Float32Array
 }
 
-// The lapse a height carries, °C (computeTemperature's rule).
+// The lapse a height carries, °C (the engine's temperature.rs's rule).
 export function lapseAt(height: number, dry: boolean): number {
   return CLIMATE_TUNING.lapseCPerElevation * (dry ? height - SEA_LEVEL : Math.max(0, height - SEA_LEVEL))
 }

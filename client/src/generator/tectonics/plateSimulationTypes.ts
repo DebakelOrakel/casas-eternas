@@ -65,7 +65,7 @@ export interface PlateSimulation {
   // the Archean existed, when a world was built straight from plate seeds.
   archeanEpochs: number
   random: SeededRandom
-  // Seeds the coastline/contour domain-warp noise (domainWarp.ts) —
+  // Seeds the coastline/contour domain-warp noise (the engine's domain_warp.rs) —
   // derived from the same world seed string but kept independent of
   // `random` above, since that generator's output sequence is order-
   // sensitive (every plate-generation call consumes from it) and warp

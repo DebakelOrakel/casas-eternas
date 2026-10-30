@@ -8,7 +8,7 @@ import type { SedimentBasin } from '../../generator/surface/surfaceTypes'
 import type { PlateSimulationSnapshot } from '../../generator/tectonics/plateSimulationTypes'
 import { refinedEntries, refinedFromEntries } from './refinedFields'
 import { climateEntries, LAND_FILES, type SavedClimate, type SavedLandFields } from './climateFields'
-import { CLIMATE_TUNING } from '../../generator/climate/climateTuneParams'
+import { CLIMATE_TUNING } from '../../generator/pipeline/engineConstants'
 
 // THE SAVE'S WRITER: a world's parts in, the .zip's bytes out — its files,
 // its quantised "query layers" (docs/decisions/queryable-world-save.md) and

@@ -39,7 +39,7 @@ import { type Domain } from '../core/domain'
 // existing periodic triangulation, not a planar one. Its wrap-around
 // triangles lie in the halo, which is computed and not kept.
 //
-// The density rule is the one of meshDensity.ts at the level's budget, evaluated
+// The density rule is the one of the engine's mesh_density.rs at the level's budget, evaluated
 // on the PARENT surface (its nodes' relief and discharge, interpolated at
 // the point) and not on the tile's own synthesis: the rule refined the
 // synthesis roughness when level 1 read its own heights (tile-jobs.md,
