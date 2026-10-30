@@ -10,10 +10,6 @@
 // edges, then ease). Forcing every caller through the three-argument version
 // would just make the common case noisier.
 
-export function clamp01(t: number): number {
-  return t < 0 ? 0 : t > 1 ? 1 : t
-}
-
 // The classic 3t² − 2t³ ease. Zero derivative at both ends, which is what makes
 // it seamless where cells or segments meet — and, as the margin profile (elevationScale.ts)
 // found out the hard way, also what makes it a poor choice for a control point

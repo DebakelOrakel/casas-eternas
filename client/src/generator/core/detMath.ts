@@ -416,11 +416,6 @@ export function detAsin(x: number): number {
   return detAtan2(x, Math.sqrt((1 - x) * (1 + x)))
 }
 
-export function detAcos(x: number): number {
-  if (x > 1 || x < -1) return NaN
-  return detAtan2(Math.sqrt((1 - x) * (1 + x)), x)
-}
-
 // --- derived ------------------------------------------------------------------
 
 // x^y. Integer exponents by repeated squaring (exact for 0, ±1 and 2, the
