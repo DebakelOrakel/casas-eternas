@@ -180,17 +180,12 @@ pub struct ClimateTuning {
     pub currents_inland_decay_m: f64,
     pub currents_coastal_lee_share: f64,
     pub alpine_treeline_elevation: f64,
-    pub tundra_max_c: f64,
-    pub boreal_max_c: f64,
-    pub temperate_max_c: f64,
     pub boreal_min_precip_mm: f64,
-    pub temperate_desert_max_precip_mm: f64,
     pub temperate_grassland_max_precip_mm: f64,
     pub temperate_forest_max_precip_mm: f64,
     pub temperate_open_canopy_amplitude_c: f64,
     pub temperate_open_canopy_season: f64,
     pub temperate_woodland_season: f64,
-    pub hot_desert_max_precip_mm: f64,
     pub savanna_max_precip_mm: f64,
 }
 
@@ -905,22 +900,10 @@ pub const CLIMATE_TUNING: ClimateTuning = ClimateTuning {
     // of climate tuning in the repo invisible to every grouping — including the
     // one this file exists to be. Naming them changes nothing and makes them
     // findable, comparable and hashable.
-    //
-    // One value appears twice (250 mm, once per temperature band) and stays
-    // SEPARATE — asked and answered 2026-08-09: the agreement is coincidence,
-    // not a shared threshold. Each 250 marks the desert edge of its own band;
-    // they are different statements that happen to land on one number. Sharing
-    // a constant would couple them, so moving the tropical desert edge would
-    // drag the temperate one along with it.
 
-    // Temperature band edges (°C), coldest first.
-    tundra_max_c: 0.0,
-    boreal_max_c: 7.0,
-    temperate_max_c: 20.0,
     // In the cold band, dryness gives tundra rather than boreal forest.
     boreal_min_precip_mm: 200.0,
     // Temperate / subtropical precipitation edges (mm/yr).
-    temperate_desert_max_precip_mm: 250.0,
     temperate_grassland_max_precip_mm: 600.0,
     temperate_forest_max_precip_mm: 1500.0,
     // Strong precipitation seasonality opens the canopy: a marginal forest with a
@@ -928,11 +911,9 @@ pub const CLIMATE_TUNING: ClimateTuning = ClimateTuning {
     temperate_open_canopy_amplitude_c: 20.0,
     temperate_open_canopy_season: 0.3,
     temperate_woodland_season: 0.4,
-    // Hot band (T >= temperate_max_c). The rainforest/savanna split is driven by
-    // SEASONALITY rather than the annual total: evergreen rainforest needs rain
-    // most of the year, while a strong wet-dry rhythm gives savanna even when the
-    // total is high.
-    hot_desert_max_precip_mm: 250.0,
+    // Hot band. The rainforest/savanna split is driven by SEASONALITY rather
+    // than the annual total: evergreen rainforest needs rain most of the year,
+    // while a strong wet-dry rhythm gives savanna even when the total is high.
     // Köppen Aw/As: savanna below this annual rain, tropical dry forest above
     // (the wet end of Aw). Not the Whittaker bound of 600 mm: Köppen already
     // calls anything under ~780 mm at 25 °C dry (B), so every Aw cell passed

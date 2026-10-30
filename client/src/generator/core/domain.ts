@@ -18,9 +18,7 @@ import { MAP_WIDTH, SPHERE_EQUATOR_METERS, TORUS_METERS_PER_CELL } from './mapCo
 // the triangulation code never sees a period. On the sphere the same
 // triangulation takes its predicates from the nodes' unit vectors on the
 // globe (mesh/periodicDelaunay.ts, step 4d4) — the topology code is one,
-// only the geometry is the shape's. The neighbour search over a point set lives
-// beside the mesh (`mesh/pointBuckets.ts`) because it needs the domain's
-// extent, not its topology.
+// only the geometry is the shape's.
 //
 // Two implementations: `torusDomain` and `sphereDomain` (DEC-0035,
 // docs/decisions/two-shapes.md). Both keep their points in one 2:1 chart;

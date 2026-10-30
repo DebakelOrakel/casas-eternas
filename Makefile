@@ -78,7 +78,7 @@ lint:
 	# its samples to the 3D lattice (elevation/globeNoise.ts, not excepted).
 	@! grep -rnwE 'wrapValue|sampleBilinearGrid|sampleBilinearWorld|sampleNearestWorld|upscaleBilinearToroidal' \
 		client/src/generator --include='*.ts' --exclude-dir=core \
-		--exclude=ridgedNoise.ts --exclude=domainWarp.ts --exclude=hypsometry.ts \
+		--exclude=ridgedNoise.ts \
 		| grep -vE ':[0-9]+:[[:space:]]*(//|\*)' \
 		|| (echo "wrap a raster through its DomainGrid (core/domain.ts) in client/src/generator, not core/field.ts" >&2; exit 1)
 	# What a metre is belongs to the world's shape (DEC-0035, fork 6): code
