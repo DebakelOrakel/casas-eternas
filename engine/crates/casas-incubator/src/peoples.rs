@@ -1746,6 +1746,7 @@ mod tests {
             landmasses: 1,
             landmass_km2: vec![km2 as f64 * n as f64],
             ecology: [(); 8].map(|_| None),
+            shelf_carrying: None,
             nbr_start,
             nbr,
             dist_km: vec![10.0; e],

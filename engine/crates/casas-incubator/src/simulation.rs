@@ -60,6 +60,7 @@ use casas_engine::core::det_math::{det_cos, det_exp, det_log};
 use casas_engine::core::js;
 use casas_engine::core::min_heap::MinHeap;
 use casas_engine::core::rng::Mulberry32;
+use casas_engine::ecology::ecology_tune_params::ECOLOGY_TUNING;
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::{LN_10, PI};
 
@@ -119,7 +120,9 @@ pub(crate) const SPEED_MIN_KM_A: f64 = 0.05;
 pub(crate) const SPEED_MAX_KM_A: f64 = 0.5;
 pub(crate) const SLOPE_DRAG: f64 = 10.0;
 pub(crate) const CORRIDOR: f64 = 2.0;
-pub(crate) const SHELF_M: f64 = 120.0;
+// The shelf the sea lays dry, the generator's dry shelf (its ecology on
+// level 1, TEG-13).
+pub(crate) const SHELF_M: f64 = ECOLOGY_TUNING.shelf_depth_m;
 // The climate moves the cells' carrying and the sea every CLIMATE_YEARS.
 pub(crate) const CLIMATE_YEARS: f64 = 500.0;
 // THE RISING SEA (2026-10-28): the people of a cell that carries nothing
@@ -135,7 +138,9 @@ pub(crate) const CLIMATE_YEARS: f64 = 500.0;
 // each); at 50 000 the chronicle tells 5 of them. Since a dry shelf
 // carries what its coast carries (`ground_of`, 2026-10-28), 1 459 to 1 998
 // people move from each (58 to 168 when it carried what the poorest land
-// does).
+// does). Since it carries its own ecology (TEG-13, 2026-10-30), the people
+// all its events move on Morvane some 4 800 over six origins (5 100 as
+// its coast's).
 pub(crate) const DROWNED_TOLD_KM2: f64 = 50_000.0;
 // THE LAND DRYING (2026-10-29; climate_history.rs THE LAND DRYING): a
 // cell of the dry belt carries from step 2's start what its ecology
@@ -1304,14 +1309,15 @@ pub(crate) struct Ground {
 /// the speed of their front over it (km a year), and whether it is a shelf
 /// the sea can leave dry; 0 for ice and for the sea below SHELF_M.
 ///
-/// A dry shelf carries what its coast carries, and is crossed as fast
-/// (2026-10-28). The level holds no land fields under the sea, so the
-/// shelf carried as little as the poorest land (FORAGER_DENSITY × 0.05)
-/// and was crossed at the slowest: empty, while the earth's dry shelves
-/// (Doggerland, Sundaland, Beringia) were lowlands of rivers, marshes and
-/// coasts, lived in. A shelf no land touches keeps the old values. To be
-/// replaced by the level's own fields for a dry shelf (the ecology with
-/// the shelf as land), with the next generator round.
+/// A dry shelf carries what level 1's ecology gives it with the shelf as
+/// land (`Habitat::shelf_carrying`, TEG-13, 2026-10-30), in today's
+/// climate: the earth's dry shelves (Doggerland, Sundaland, Beringia) were
+/// lowlands of rivers, marshes and coasts, lived in. It is flat, and the
+/// coast of its time: its front's speed has no slope's drag and the
+/// coast's corridor. A level without the shelf's ecology gives it the
+/// carrying a level without an ecology gives the land (`carrying_of`).
+/// Before, the shelf carried what its coast carries (2026-10-28), and as
+/// little as the poorest land before that.
 pub(crate) fn ground_of(h: &Habitat, carrying: &[f32]) -> Ground {
     let n = h.count;
     let land = &h.land;
@@ -1319,37 +1325,31 @@ pub(crate) fn ground_of(h: &Habitat, carrying: &[f32]) -> Ground {
     let mut speed = vec![0f32; n];
     let mut shelf = vec![0u8; n];
     for i in 0..n {
-        if land[i] == 0 {
+        let on_shelf = land[i] == 0;
+        let carried = if on_shelf {
             if h.sea_depth_m[i] as f64 > SHELF_M {
                 continue;
             }
-            // Walked while dry, carrying as little as the poorest land,
-            // crossed at the slowest.
             shelf[i] = 1;
-            base[i] = (FORAGER_DENSITY * 0.05) as f32;
-            speed[i] = (SPEED_MIN_KM_A * CORRIDOR) as f32;
-            continue;
-        }
-        if h.biome[i] == biome::ICE || h.biome[i] == biome::GLACIER {
-            continue;
-        }
-        let k = js::min(2.0, carrying[i] as f64 / CARRYING_FULL);
+            h.shelf_carrying.as_ref().map_or(0.4, |s| s[i] as f64)
+        } else {
+            if h.biome[i] == biome::ICE || h.biome[i] == biome::GLACIER {
+                continue;
+            }
+            carrying[i] as f64
+        };
+        let k = js::min(2.0, carried / CARRYING_FULL);
         base[i] = (FORAGER_DENSITY * js::max(0.05, k)) as f32;
         let mut v = SPEED_MIN_KM_A + (SPEED_MAX_KM_A - SPEED_MIN_KM_A) * js::min(1.0, k);
-        v /= 1.0 + h.slope[i] as f64 * SLOPE_DRAG;
-        if h.near_river[i] != 0 || h.near_sea[i] != 0 {
+        if !on_shelf {
+            v /= 1.0 + h.slope[i] as f64 * SLOPE_DRAG;
+        }
+        if on_shelf || h.near_river[i] != 0 || h.near_sea[i] != 0 {
             v *= CORRIDOR;
         }
         speed[i] = v as f32;
     }
     let coast = shelf_coast_of(h, &shelf);
-    for i in 0..n {
-        let c = coast[i];
-        if shelf[i] != 0 && c >= 0 && base[c as usize] > 0.0 {
-            base[i] = base[c as usize];
-            speed[i] = speed[c as usize];
-        }
-    }
     Ground {
         base,
         speed,

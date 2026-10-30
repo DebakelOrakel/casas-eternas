@@ -293,6 +293,13 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // faster (volcanoBuildMPerMyr 1500 → 2250), so mature arcs rise above
 // the sea as chains of islands. The worlds change again: a recipe
 // replays to other terrain.
+// And, unreleased: the ecology level 1 carries again (2026-10-30) — the
+// flood silt raises the arable land on the floodplains of the large
+// rivers that are not ephemeral, in a desert too (TEG-108,
+// docs/decisions/arable-crops.md), and level 1 holds the ecology of the
+// dry shelf to 120 m below the sea (TEG-13, shelfEcology.json and
+// shelfEco.<id>.u8), which the incubator reads. The worlds do not change;
+// level 1 does.
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the

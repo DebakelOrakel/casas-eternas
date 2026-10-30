@@ -5,6 +5,7 @@ settlement, the exchange and the chronicle. See [README](./README.md) for the fo
 The incubator's controls and layout are in [ui.md](./ui.md).
 
 ## 2026-10-30
+- **changed** Old Stone Age: a shelf the low sea lays dry feeds the people as its own land would, not as the coast beside it. `incubator.step.oldStoneAge`
 - **new** Old Stone Age: two sliders set the reach of boats over the sea and the lowest sea level. `incubator.people.reach`
 
 ## 2026-10-29

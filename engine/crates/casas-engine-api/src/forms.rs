@@ -684,6 +684,10 @@ pub struct LevelLand<'a> {
     /// The ecology's fields by id, a byte a node as the screen's fine
     /// fields are coded (`encode_fine_field`); empty before an ecology run.
     pub ecology: &'a [(&'static str, Vec<u8>)],
+    /// The same fields with the dry shelf as land (`shelf_ecology`, TEG-13):
+    /// a byte a node, ECOLOGY_FINE_OCEAN off the shelf; empty before an
+    /// ecology run.
+    pub shelf_ecology: &'a [(&'static str, Vec<u8>)],
 }
 
 /// `LevelLand` as the artifact holds it: the per-node fields cut to the
@@ -725,6 +729,15 @@ fn level_land(l: &LevelLand<'_>, count: usize) -> Value {
             "ecology",
             Value::Obj(
                 l.ecology
+                    .iter()
+                    .map(|(id, codes)| (Cow::Borrowed(*id), Value::U8s(codes[..count].to_vec())))
+                    .collect(),
+            ),
+        )
+        .put(
+            "shelfEcology",
+            Value::Obj(
+                l.shelf_ecology
                     .iter()
                     .map(|(id, codes)| (Cow::Borrowed(*id), Value::U8s(codes[..count].to_vec())))
                     .collect(),

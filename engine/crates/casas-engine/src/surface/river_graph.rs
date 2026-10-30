@@ -140,6 +140,30 @@ pub fn classify_regime(discharge: f64, loss: f64, dry: f64) -> RiverRegime {
     RiverRegime::Perennial
 }
 
+/// No river of the graph through a node (`river_regime_at_nodes`).
+pub const NO_RIVER: u8 = u8::MAX;
+
+/// The regime code of the graph's river through each node of its
+/// substrate, `slots` long; NO_RIVER elsewhere. Where two reaches share a
+/// node (a junction), the one with more water: perennial before
+/// intermittent before ephemeral.
+pub fn river_regime_at_nodes(graph: &RiverGraph, slots: usize) -> Vec<u8> {
+    let mut out = vec![NO_RIVER; slots];
+    for r in graph
+        .reaches
+        .iter()
+        .filter(|r| r.kind == RiverReachKind::River)
+    {
+        let code = r.regime.code();
+        for &c in &graph.cells[r.cell_start..r.cell_start + r.cell_count] {
+            if c >= 0 && (c as usize) < slots && code < out[c as usize] {
+                out[c as usize] = code;
+            }
+        }
+    }
+    out
+}
+
 fn river_width(discharge: f64, max_discharge: f64) -> f64 {
     let scale = if max_discharge > 0.0 {
         max_discharge

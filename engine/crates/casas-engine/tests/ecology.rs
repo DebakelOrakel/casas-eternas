@@ -15,6 +15,8 @@ use casas_engine::ecology::ecology_field::{
 use casas_engine::ecology::ecology_tune_params::ecology_constants;
 use casas_engine::mesh::mesh_build::{FieldSampler, MESH_Z, build_mesh};
 use casas_engine::mesh::mesh_raster::rasterise_node_field;
+use casas_engine::surface::hydrology::{RIVER_REGIME_EPHEMERAL, RIVER_REGIME_PERENNIAL};
+use casas_engine::surface::river_graph::NO_RIVER;
 use casas_engine::tectonics::volcanoes::{Volcano, VolcanoKind};
 
 mod fixture;
@@ -227,6 +229,15 @@ fn run(name: &str, domain: Domain) {
             tin_rarity: Some(0.6),
         },
     ];
+    // The river graph's regimes: a river where water flows, a wadi on
+    // every fifth of its nodes.
+    let river_regime: Vec<u8> = (0..n)
+        .map(|v| match (discharge[v] > 0.0, v % 5 == 0) {
+            (false, _) => NO_RIVER,
+            (true, true) => RIVER_REGIME_EPHEMERAL,
+            (true, false) => RIVER_REGIME_PERENNIAL,
+        })
+        .collect();
     let grid = domain.grid(512, 256);
     let el = rasterise_node_field(&mut mesh, &z, 512, 256);
     let pixel_land: Vec<u8> = el.iter().map(|&e| u8::from(e > 0.0)).collect();
@@ -242,6 +253,7 @@ fn run(name: &str, domain: Domain) {
                 biomes: &biomes,
                 discharge: refined.then_some(&discharge[..]),
                 max_discharge: if refined { max_discharge } else { 0.0 },
+                river_regime: refined.then_some(&river_regime[..]),
                 lake_depth: refined.then_some(&lake_depth[..]),
                 salt_flat: refined.then_some(&salt_flat[..]),
                 water_table: refined.then_some(&water_table[..]),
@@ -271,6 +283,12 @@ fn run(name: &str, domain: Domain) {
         h.add_all(&eco.gem_belt);
         h.add_all(&eco.aridity);
         h.add_all(&eco.province_deviation);
+        h.add_all(&eco.flood_silt);
+        // The flood silt (TEG-108) is there with the rivers' regimes, and
+        // not without them.
+        let silted = eco.flood_silt.iter().filter(|&&s| s > 0.0).count();
+        assert!(eco.flood_silt.iter().all(|&s| (0.0..=1.0).contains(&s)));
+        assert_eq!(silted > 0, refined, "flood silt on {silted} nodes");
         for &(x, y) in &eco.tin_points {
             h.add(x);
             h.add(y);

@@ -639,6 +639,30 @@ Building since 2026-10-27:
   without the goods, the peoples and the settlement are the reference's).
   The smoke test's worlds: the torus 13 sources, 232 shares, H1 +0.12 %;
   the sphere 22 sources, 1 768 shares, +0.44 %.
+- 2026-10-30 (v6 still): the dry shelf's own ecology and the flood silt
+  (TEG-13, TEG-108). Level 1 holds the ecology's fields of the shelf down
+  to 120 m, computed with the shelf as land in today's climate
+  ([DEC-0049](../decisions/shelf-and-sea.md), Status); a dry shelf cell
+  carries what that gives it (`ground_of`), not its coast's. And the
+  generator's arable land has the flood silt of the large rivers
+  ([DEC-0052](../decisions/arable-crops.md), the flood silt). Measured on
+  L1 stores of the three worlds with the new ecology on their mesh, with
+  the rain, the six origins of each world; medians, before → after. The
+  shelf's carrying capacity at the mean 0.50, 0.57, 0.42 (the land's
+  0.40, 0.39, 0.28: lowlands at a warm coast, with fish); with it alone
+  the people at the end 33.7 → 35.0 M, 9.8 → 10.9 M, 23.5 → 23.4 M, the
+  people the rising sea moves (all its events) 5 100 → 4 800, 22 700 →
+  21 900, 23 200 → 20 300. With both: farming centres in the dry belt
+  (cells of Köppen B) over the six origins 7 → 10 on Morvane, 0 → 5 on
+  Thalassor, 0 → 0 on Zephyra; all of them in the steppes (BS), none in
+  the deserts (BW): a floodplain some kilometres wide is diluted in a
+  cell of 10 km, whose arable land is the mean over its land, and a centre
+  needs CENTRE_ARABLE 0.5. The cells of B with arable land of 0.5 or more
+  1.70 → 2.22, 1.22 → 1.40, 1.04 → 1.13 % of the belt. The history's
+  length 7 000 → 6 750, 7 500 → 9 500, 15 000 → 16 500 years; the people
+  at the end 33.7 → 33.1 M, 9.8 → 13.3 M, 23.5 → 23.7 M; the land farmed
+  10.7 → 10.8, 10.1 → 11.1, 9.9 → 9.9 %. The smoke test's sphere tells no
+  merge with seed 29 now; seed 5 reaches all.
 
 Open:
 
@@ -662,10 +686,7 @@ Open:
    step 3 (above, the exchange; Status).
 4. Step 1's sea-level curve: drawn from the world's seed; its depth is a
    control since 2026-10-30 (Step 1), its shape is not.
-5. The dry shelf's own land fields (planned for v15, 2026-10-30):
-   the engine's ecology with the shelf down to −120 m as land, in today's
-   climate, kept with level 1; it replaces the coast's values the shelf
-   takes now.
+5. Done 2026-10-30: the dry shelf's own land fields (Status; TEG-13).
 6. The peoples' stripes on the v15 ecology: the rays are gone
    (2026-10-29, Status). What is left are farmer peoples the shape of
    their farmland (Morvane's north coastal plain: one people some
@@ -674,3 +695,9 @@ Open:
    times a disc's) counts the enclaves' borders too.
 7. Thalassor's own origin on the v15 ecology (996 766) is on a landmass
    of 3.7 M km²: step 1 reaches 14.8 % of the land, step 2 has no city.
+8. No farming centre in the deserts (BW) since the flood silt either
+   (2026-10-30, Status): the floodplain is narrower than a cell, and a
+   cell's arable land is the mean over its land. To decide: a centre
+   reads the best of a cell's land, a cell's arable land is its land's
+   best share, or the threshold stays and the deserts' rivers have
+   villages but no centre.

@@ -352,14 +352,15 @@ impl Gather {
     }
 }
 
-/// A value per admitted node from its neighbourhood (`reduce(member,
-/// weight)`), gathered one node at a time; 0 where a slot is not admitted.
+/// A value per admitted node from its neighbourhood (`reduce(centre,
+/// member, weight)`), gathered one node at a time; 0 where a slot is not
+/// admitted.
 fn reduce_within(
     geo: &MeshStar,
     mesh: &PeriodicTriangulation,
     radius_m: f64,
     centre: Option<&[u8]>,
-    reduce: impl Fn(&[u32], &[f32]) -> f32 + Sync,
+    reduce: impl Fn(usize, &[u32], &[f32]) -> f32 + Sync,
 ) -> Vec<f32> {
     let slots = mesh.vertex_slots();
     let mut out = vec![0f32; slots];
@@ -370,7 +371,7 @@ fn reduce_within(
                 continue;
             }
             g.gather(geo, mesh, radius_m, i);
-            *o = reduce(&g.member, &g.weight);
+            *o = reduce(i, &g.member, &g.weight);
         }
     };
     #[cfg(feature = "parallel")]
@@ -402,7 +403,7 @@ pub fn max_within<T: Copy + Into<f64> + Sync>(
     centre: Option<&[u8]>,
     field: &[T],
 ) -> Vec<f32> {
-    reduce_within(geo, mesh, radius_m, centre, |member, _| {
+    reduce_within(geo, mesh, radius_m, centre, |_, member, _| {
         let mut m = f64::NEG_INFINITY;
         for &j in member {
             let v: f64 = field[j as usize].into();
@@ -427,7 +428,7 @@ pub fn mean_within<T: Copy + Into<f64> + Sync>(
     centre: Option<&[u8]>,
     field: &[T],
 ) -> Vec<f32> {
-    reduce_within(geo, mesh, radius_m, centre, |member, weight| {
+    reduce_within(geo, mesh, radius_m, centre, |_, member, weight| {
         let mut sum = 0.0;
         let mut total = 0.0;
         for (&j, &w) in member.iter().zip(weight) {
@@ -441,6 +442,29 @@ pub fn mean_within<T: Copy + Into<f64> + Sync>(
         } else {
             0.0
         }
+    })
+}
+
+/// The largest `score(centre, member)` over each neighbourhood of
+/// `radius_m` about the admitted nodes, 0 at least; 0 where a slot is not
+/// admitted. For a value that depends on the pair, as a node's height over
+/// a river near it.
+pub fn max_pair_within(
+    geo: &MeshStar,
+    mesh: &PeriodicTriangulation,
+    radius_m: f64,
+    centre: Option<&[u8]>,
+    score: impl Fn(usize, usize) -> f64 + Sync,
+) -> Vec<f32> {
+    reduce_within(geo, mesh, radius_m, centre, |i, member, _| {
+        let mut m = 0.0;
+        for &j in member {
+            let v = score(i, j as usize);
+            if v > m {
+                m = v;
+            }
+        }
+        m as f32
     })
 }
 

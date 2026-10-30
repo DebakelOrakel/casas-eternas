@@ -31,6 +31,9 @@ export interface CellInput {
   z: Float32Array
   lakeDepth: Float32Array
   ecology: Partial<Record<EcologyFieldId, Uint8Array>>
+  // The carrying capacity with the dry shelf as land, its fine code a node
+  // (ECOLOGY_FINE_OCEAN off the shelf); null where the level has none.
+  shelfCarrying: Uint8Array | null
   // The level's rivers, in the world raster's texels.
   rivers: Pick<RiverPolylines, 'points' | 'lengths' | 'regimes'> | null
 }

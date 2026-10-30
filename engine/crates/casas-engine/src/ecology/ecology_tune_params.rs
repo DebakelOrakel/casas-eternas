@@ -102,6 +102,12 @@ pub struct EcologyTuning {
     pub leach_w: f64,
     pub leach_from_mm: f64,
     pub leach_full_mm: f64,
+    pub flood_q_min_m3s: f64,
+    pub flood_q_full_m3s: f64,
+    pub flood_reach_m: f64,
+    pub flood_rise_full_m: f64,
+    pub flood_rise_m: f64,
+    pub shelf_depth_m: f64,
     pub oasis_w: f64,
     pub well_depth_m: f64,
     pub well_w: f64,
@@ -285,6 +291,35 @@ pub const ECOLOGY_TUNING: EcologyTuning = EcologyTuning {
     leach_w: 0.6,
     leach_from_mm: 1500.0,
     leach_full_mm: 2500.0,
+    // THE FLOOD SILT (TEG-108, 2026-10-30). A large river floods once a
+    // year: the rain season or the snow melt of its upper catchment. The
+    // flood soaks its floodplain and leaves fresh silt on it, so the
+    // floodplain gives a harvest each year without rain and without fallow,
+    // also in a desert: the Nile (some 2 800 m³/s before its dams, a flood
+    // some 7 m above the low water at Aswan), the Indus (some 6 600 m³/s),
+    // the Tigris and the Euphrates (some 1 000 and 800 m³/s), the Amu Darya
+    // (some 1 400 m³/s). The silt (0..1) is the share of a node's land
+    // the flood reaches. On that share the crop has its water for the
+    // season (only the warmth and the frost limit it), no harvest is lost
+    // to the rain's variability, and the silt cancels the tropics'
+    // leaching (a várzea is fertile, the terra firme beside it is not).
+    // The rest of the node is arable as before.
+    // The source: a node of the river graph that is not ephemeral (a wadi
+    // has no flood to rely on), its discharge from `flood_q_min_m3s` (no
+    // silt) to `flood_q_full_m3s` (full), a smoothstep. The floodplain:
+    // the land within `flood_reach_m` of such a node, full up to
+    // `flood_rise_full_m` above it, none from `flood_rise_m`, a smoothstep;
+    // land below the river (a backswamp, a delta) is full.
+    flood_q_min_m3s: 100.0,
+    flood_q_full_m3s: 1000.0,
+    flood_reach_m: 15000.0,
+    flood_rise_full_m: 3.0,
+    flood_rise_m: 10.0,
+    // THE DRY SHELF (TEG-13, DES-0032 open point 5): the sea floor down to
+    // `shelf_depth_m` below the sea is dry land at a glacial maximum (the
+    // last one some 120 m; the incubator's SHELF_M). Level 1 holds the
+    // ecology of this shelf as land (`dry_shelf`).
+    shelf_depth_m: 120.0,
     // Water in dry land (`prepare_ecology`): an oasis waters its cell's
     // fields as a big river does (`oasis_w`); a herd drinks where the water
     // table lies within `well_depth_m` (a hand-dug well), the cell's share
@@ -486,6 +521,12 @@ pub fn ecology_constants() -> Vec<(&'static str, f64)> {
         ("leachW", t.leach_w),
         ("leachFromMm", t.leach_from_mm),
         ("leachFullMm", t.leach_full_mm),
+        ("floodQMinM3s", t.flood_q_min_m3s),
+        ("floodQFullM3s", t.flood_q_full_m3s),
+        ("floodReachM", t.flood_reach_m),
+        ("floodRiseFullM", t.flood_rise_full_m),
+        ("floodRiseM", t.flood_rise_m),
+        ("shelfDepthM", t.shelf_depth_m),
         ("oasisW", t.oasis_w),
         ("wellDepthM", t.well_depth_m),
         ("wellW", t.well_w),

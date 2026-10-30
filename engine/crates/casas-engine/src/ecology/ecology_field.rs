@@ -15,14 +15,18 @@ use crate::core::det_math::{det_exp, det_pow};
 use crate::core::domain::{Domain, DomainGrid};
 use crate::core::interpolation::{clamp01, smoothstep, smoothstep_between};
 use crate::core::js;
-use crate::elevation::elevation_scale::{SEA_LEVEL, meters_to_elevation};
+use crate::elevation::elevation_scale::{
+    ELEVATION_METERS, SEA_LEVEL, elevation_to_meters, meters_to_elevation,
+};
 use crate::elevation::globe_noise::globe_octave_on;
 use crate::mesh::mesh_neighbourhood::{
-    MeshGeometry, boundary_density, discs_around, gaussian_halos, max_within, mean_within,
-    mesh_geometry, slope_of,
+    MeshGeometry, boundary_density, discs_around, gaussian_halos, max_pair_within, max_within,
+    mean_within, mesh_geometry, slope_of,
 };
 use crate::mesh::mesh_raster::{TriangleRaster, rasterise_node_part, triangle_raster};
 use crate::mesh::periodic_delaunay::PeriodicTriangulation;
+use crate::surface::hydrology::{RIVER_REGIME_EPHEMERAL, discharge_to_m3s};
+use crate::surface::river_graph::NO_RIVER;
 use crate::tectonics::volcanoes::{Volcano, VolcanoKind};
 
 use super::ecology_tune_params::{ECOLOGY_TUNING, pasture_by_biome, timber_by_biome};
@@ -116,6 +120,10 @@ pub struct EcologyInputs<'a> {
     pub biomes: &'a [u8],
     pub discharge: Option<&'a [f32]>,
     pub max_discharge: f64,
+    /// The regime code of the river graph's river through each node
+    /// (`river_regime_at_nodes`, NO_RIVER elsewhere): the flood silt's
+    /// rivers. None: no flood silt.
+    pub river_regime: Option<&'a [u8]>,
     pub lake_depth: Option<&'a [f32]>,
     pub salt_flat: Option<&'a [u8]>,
     pub water_table: Option<&'a [f32]>,
@@ -143,7 +151,7 @@ fn productivity(temp_c: f64, precip_mm: f64) -> f64 {
 /// a year).
 fn crop_growth(temp_c: f64, precip_mm: f64) -> f64 {
     let t = &ECOLOGY_TUNING;
-    let warmth = 1.0 / (1.0 + det_exp(t.crop_temp_mid - t.crop_temp_rate * temp_c));
+    let warmth = crop_warmth(temp_c);
     let need = t.crop_need_mm + t.crop_need_per_c_mm * js::max(0.0, temp_c);
     let water = smoothstep_between(
         t.crop_need_dry * need,
@@ -151,6 +159,70 @@ fn crop_growth(temp_c: f64, precip_mm: f64) -> f64 {
         js::max(0.0, precip_mm),
     );
     js::min(warmth, water)
+}
+
+/// The dry shelf (TEG-13): 1 on the sea floor down to `shelf_depth_m`
+/// below the sea, a glacial maximum's dry land. The depth is taken as the
+/// incubator takes a cell's (its sea depth, metres, a Float32), so that the
+/// two find the same nodes.
+pub fn dry_shelf(z: &[f32], land: &[u8], alive: &[u8]) -> Vec<u8> {
+    let depth = ECOLOGY_TUNING.shelf_depth_m;
+    (0..land.len())
+        .map(|v| {
+            let sea_depth_m = (-(z[v] as f64) * ELEVATION_METERS) as f32 as f64;
+            u8::from(alive[v] != 0 && land[v] == 0 && sea_depth_m <= depth)
+        })
+        .collect()
+}
+
+/// The flood silt per node, 0..1 (TEG-108; ecology_tune_params.rs, THE
+/// FLOOD SILT): the land within `flood_reach_m` of a river that floods,
+/// by the river's discharge and the land's height above it; the most of
+/// any such river. 0 without the river graph's regimes.
+fn flood_silt(
+    geo: &MeshGeometry,
+    mesh: &PeriodicTriangulation,
+    inputs: &EcologyInputs<'_>,
+) -> Vec<f32> {
+    let t = &ECOLOGY_TUNING;
+    let n = mesh.vertex_slots();
+    let (Some(discharge), Some(regime)) = (inputs.discharge, inputs.river_regime) else {
+        return vec![0f32; n];
+    };
+    let (z, land) = (inputs.z, inputs.land);
+    let unit = discharge_to_m3s(1.0, mesh.domain.metres_per_unit);
+    let mut flood = vec![0f32; n];
+    let mut any = false;
+    for v in 0..n {
+        if land[v] == 0
+            || regime[v] == NO_RIVER
+            || regime[v] == RIVER_REGIME_EPHEMERAL
+            || inputs.lake_depth.is_some_and(|d| d[v] > 0.0)
+        {
+            continue;
+        }
+        let q = js::max(0.0, discharge[v] as f64) * unit;
+        flood[v] = smoothstep_between(t.flood_q_min_m3s, t.flood_q_full_m3s, q) as f32;
+        any |= flood[v] > 0.0;
+    }
+    if !any {
+        return vec![0f32; n];
+    }
+    max_pair_within(&geo.cells, mesh, t.flood_reach_m, Some(land), |i, j| {
+        let f = flood[j] as f64;
+        if f <= 0.0 {
+            return 0.0;
+        }
+        let rise = elevation_to_meters(z[i] as f64 - z[j] as f64);
+        f * (1.0 - smoothstep_between(t.flood_rise_full_m, t.flood_rise_m, rise))
+    })
+}
+
+/// A crop's warmth in a month (0..1, DEC-0052): its growth where water is
+/// not short (`crop_growth`).
+fn crop_warmth(temp_c: f64) -> f64 {
+    let t = &ECOLOGY_TUNING;
+    1.0 / (1.0 + det_exp(t.crop_temp_mid - t.crop_temp_rate * temp_c))
 }
 
 /// What the wet tropics leach from the soil (DEC-0052): 1 off them, toward
@@ -200,9 +272,11 @@ pub struct EcologyRaw {
 /// the month, and the climate's months to read the rest from.
 pub struct EcologySeasons {
     pub months: PointMonths,
-    /// Arable: flatness × the harvest's reliability, and the water on the
-    /// fields.
+    /// Arable: flatness × the harvest's reliability × the share the flood
+    /// does not reach, and the water on the fields; flatness × the flood
+    /// silt, the share the flood waters (TEG-108).
     pub arable_factor: Vec<f32>,
+    pub flood_factor: Vec<f32>,
     pub field_water: Vec<f32>,
     /// Game: the edge bonus; pasture: the year's grazing and the year's
     /// mean productivity it is set against.
@@ -238,6 +312,8 @@ pub struct EcologyBase {
     /// The province layer's deviation per land node (volcanic soil +
     /// noise), before its mean is taken off.
     pub province_deviation: Vec<f32>,
+    /// The flood silt per node (`flood_silt`), 0..1.
+    pub flood_silt: Vec<f32>,
     /// What a month's fields need (`ecology_month`); None for a climate
     /// without months (not refined).
     pub seasonal: Option<EcologySeasons>,
@@ -382,6 +458,7 @@ pub fn prepare_ecology(
         }
     }
     let oasis = discs_around(&geo, mesh, inputs.oases, t.water_reach_m);
+    let silt = flood_silt(&geo, mesh, inputs);
 
     // Game's edges.
     let differs = |a: usize, b: usize| land[b] == 1 && biome_at[a] != biome_at[b];
@@ -410,6 +487,7 @@ pub fn prepare_ecology(
     let keep_months = months.is_some();
     let mut k_arable_factor = vec![0f32; if keep_months { n } else { 0 }];
     let mut k_field_water = k_arable_factor.clone();
+    let mut k_flood_factor = k_arable_factor.clone();
     let mut k_edge_factor = k_arable_factor.clone();
     let mut k_npp_year = k_arable_factor.clone();
     let mut k_salt_coast = k_arable_factor.clone();
@@ -437,7 +515,7 @@ pub fn prepare_ecology(
             1.0
         };
 
-        let (mut growing, mut npp, mut arid) = (0.0, 0.0, 0.0);
+        let (mut growing, mut flooded, mut npp, mut arid) = (0.0, 0.0, 0.0, 0.0);
         for m in 0..month_count {
             let (tc, p) = match months {
                 Some(ms) => (
@@ -452,6 +530,7 @@ pub fn prepare_ecology(
             if tc >= t.arable_frost_c || months.is_none() {
                 growing +=
                     crop_growth(tc, p + t.arable_irrigation_mm * field_water) * months_a_step;
+                flooded += crop_warmth(tc) * months_a_step;
             }
             npp += productivity(tc, p) / mc;
             arid += arid_warm(tc, p) / mc;
@@ -467,7 +546,18 @@ pub fn prepare_ecology(
             .rain_variability
             .as_ref()
             .map_or(0.0, |r| t.arable_risk_w * r[v] as f64 * (1.0 - field_water));
-        arable[v] = (growing * flat * js::max(0.0, 1.0 - risk) * leached) as f32;
+        // The flood silt's share of the land (TEG-108): the flood waters
+        // it for the season, so only the warmth limits the crop, and its
+        // silt brings back what the rain leaches; no harvest is lost to the
+        // rain's variability.
+        let silted = silt[v] as f64;
+        arable[v] = if silted > 0.0 {
+            let flooded = js::min(1.0, flooded / t.arable_season_months);
+            flat * ((1.0 - silted) * growing * js::max(0.0, 1.0 - risk) * leached
+                + silted * flooded)
+        } else {
+            growing * flat * js::max(0.0, 1.0 - risk) * leached
+        } as f32;
         let edge_factor = 1.0 + t.ecotone_bonus * clamp01(edges[v] as f64 / t.ecotone_full_share);
         let salt_coast = t.salt_interior_w
             + (t.salt_coast_w - t.salt_interior_w)
@@ -498,7 +588,9 @@ pub fn prepare_ecology(
         };
         salt[v] = clamp01(js::max(flat_salt, arid * salt_coast)) as f32;
         if keep_months {
-            k_arable_factor[v] = (flat * js::max(0.0, 1.0 - risk) * leached) as f32;
+            k_arable_factor[v] =
+                (flat * js::max(0.0, 1.0 - risk) * leached * (1.0 - silted)) as f32;
+            k_flood_factor[v] = (flat * silted) as f32;
             k_field_water[v] = field_water as f32;
             k_edge_factor[v] = edge_factor as f32;
             k_npp_year[v] = npp as f32;
@@ -655,6 +747,7 @@ pub fn prepare_ecology(
     let seasonal = months.map(|ms| EcologySeasons {
         months: ms.clone(),
         arable_factor: k_arable_factor,
+        flood_factor: k_flood_factor,
         field_water: k_field_water,
         edge_factor: k_edge_factor,
         pasture_year: pasture.clone(),
@@ -687,6 +780,7 @@ pub fn prepare_ecology(
         aridity,
         tin_points,
         province_deviation,
+        flood_silt: silt,
         seasonal,
         raster: None,
     }
@@ -755,11 +849,13 @@ pub fn ecology_month(
             // The month's crop growth, not a twelfth of the year: the
             // year is the season's sum, capped (DEC-0052).
             EcologyField::Arable => {
-                (if tc >= t.arable_frost_c {
+                if tc >= t.arable_frost_c {
                     crop_growth(tc, p + t.arable_irrigation_mm * s.field_water[v] as f64)
+                        * s.arable_factor[v] as f64
+                        + crop_warmth(tc) * s.flood_factor[v] as f64
                 } else {
                     0.0
-                }) * s.arable_factor[v] as f64
+                }
             }
             EcologyField::Game => productivity(tc, p) * s.edge_factor[v] as f64,
             EcologyField::Pasture => {

@@ -149,6 +149,54 @@ tuned again.
   were removed 2026-10-29, their explanations moved to the engine's
   ecology_field.rs and ecology_tune_params.rs.
 
+## The flood silt (TEG-108, 2026-10-30)
+
+The arable land had no flood. A big river's water reached the fields
+within `water_reach_m` (8 km) as `river_near`, but scaled by the square
+root of its share of the world's largest discharge: the Nile, some
+2 800 m³/s against the Amazon's 200 000, gave its valley some 130 mm a
+year, and the hot desert stayed dry on its rivers. On Morvane the nodes of
+BWh with 1 000 m³/s or more had arable 0.13 at the mean; the incubator's
+people went to the rivers of the dry belt, but no farming centre came.
+
+On Earth a large river floods once a year (the rain season or the snow
+melt of its upper catchment), soaks its floodplain and leaves fresh silt
+on it: one harvest a year without rain and without fallow — the Nile, the
+Indus, the Tigris and the Euphrates, the Amu Darya.
+
+The rule (`ecology_field.rs flood_silt`, the tuning's THE FLOOD SILT):
+
+- the source: a node of the river graph that is not ephemeral, its
+  discharge from 100 m³/s (no silt) to 1 000 m³/s (full), a smoothstep;
+- the floodplain: the land within 15 km of such a node, full up to 3 m
+  above it, none from 10 m, a smoothstep; land below it is full; the most
+  of any source;
+- the silt (0..1) is the share of the node's land the flood reaches. On
+  that share the crop has its water for the season (only the warmth and
+  the frost limit it), no harvest is lost to the rain's variability, and
+  the silt cancels the leaching. The rest is arable as before; the months
+  (`ecology_month`) are the same mix.
+
+First tried: the silt as field water (`arable_irrigation_mm` × silt) and
+less leaching. A share of the water is far below a crop's need in a
+desert: Morvane's BWh with 0.3 or more 0.7 → 1.6 % only.
+
+The worlds (level 1 of the same three, the ecology computed again on its
+mesh under the save's refined climate):
+
+| | silt > 0, % of the land | silt ≥ 0.5 | land with arable ≥ 0.3 | BWh ≥ 0.3 / ≥ 0.5, % of the class |
+|---|---|---|---|---|
+| Morvane | 3.2 | 0.9 | 26.9 → 27.3 | 0.7 / 0.3 → 3.0 / 1.5 |
+| Thalassor | 3.6 | 0.9 | 31.2 → 31.3 | 0.9 / 0.9 → 1.2 / 1.1 |
+| Zephyra | 2.1 | 0.3 | 15.3 → 15.4 | 0.8 / 0.7 → 0.9 / 0.7 |
+
+BWk, BSh and BSk gain 0.1 to 0.6 points; the humid classes 0 to 0.8 (Af
+the most: the várzea). The carrying capacity's land mean moves by 0.002 at
+most. Earth farms some 2–4 % of its hot deserts, on their rivers and
+oases; Zephyra's dry-belt rivers are small (none of 3 000 m³/s), so its
+deserts gain little. The silt needs the river graph: without it (a world
+before its hydrology) there is none.
+
 ## Status
 
-Built 2026-10-29.
+Built 2026-10-29. The flood silt 2026-10-30 (TEG-108).

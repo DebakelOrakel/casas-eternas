@@ -21,7 +21,7 @@ use casas_engine::pipeline::coupled_epoch::CoupledTerrain;
 use casas_engine::pipeline::world_stages::{
     ClimateChain, HydrologyClimate, LandClimate, MeshHydrology, MeshTerrainRef, climate_chain,
     ecology_inputs_of, hydrology_features, hydrology_threshold, id_raster, land_climate_of,
-    pixel_land_of, refined_climate_of, route_hydrology, triangles_of,
+    pixel_land_of, refined_climate_of, route_hydrology, shelf_ecology, triangles_of,
 };
 use casas_engine::surface::coast_graph::CoastGraph;
 use casas_engine::surface::erosion_engine::DEFAULT_SOLVER_PARAMS;
@@ -641,6 +641,7 @@ impl World {
                 &coupled.mesh,
                 om,
                 hydrology.as_ref().map(|h| (h.max_discharge, &h.oases[..])),
+                hydrology.as_ref().and_then(|h| h.graph.as_ref()),
             );
             let mut base = prepare_ecology(&mut coupled.mesh, &world.inputs(&coupled.z, land, om));
             triangles_of(tri, &mut coupled.mesh, width, height);
@@ -754,14 +755,22 @@ impl World {
     /// worker's level 1, the world from its replay's end): the terrain
     /// mesh, its heights and the hydrology's waters, and `land`, what the
     /// ecology reads of the land per node and, after an ecology run, its
-    /// fields per node (`forms::LevelLand`, docs/decisions/level-waters.md).
-    /// Needs the hydrology.
+    /// fields per node (`forms::LevelLand`, docs/decisions/level-waters.md),
+    /// and the dry shelf's (`shelf_ecology`). Needs the hydrology.
     pub fn level_artifact(&mut self, level: u32) -> Result<Value, EraError> {
         let (sim, coupled, stages) = self.staged()?;
         let h = stages
             .hydrology
             .as_ref()
             .ok_or_else(|| wrong("the world has no hydrology yet"))?;
+        let om = &h.on_mesh;
+        let eco = ecology_inputs_of(
+            sim,
+            &coupled.mesh,
+            Some(om),
+            Some((h.max_discharge, &h.oases[..])),
+            h.graph.as_ref(),
+        );
         // The ecology's fields per node under the last run's sliders, as
         // the screen's fine fields are coded; none before an ecology run.
         let ecology: Vec<(&'static str, Vec<u8>)> = match stages.ecology.as_ref() {
@@ -776,17 +785,35 @@ impl World {
                 .collect(),
             _ => Vec::new(),
         };
-        let om = &h.on_mesh;
+        // The dry shelf's fields under the same sliders, in the climate
+        // the ecology read.
+        let shelf: Vec<(&'static str, Vec<u8>)> =
+            match (stages.ecology.as_ref(), stages.climate.as_ref()) {
+                (
+                    Some(Ecology {
+                        params: Some(params),
+                        ..
+                    }),
+                    Some(climate),
+                ) => shelf_ecology(
+                    &mut sim.meshes.shared,
+                    &climate.cells,
+                    &mut coupled.mesh,
+                    &coupled.z,
+                    om,
+                    &eco,
+                    params,
+                )
+                .iter()
+                .enumerate()
+                .map(|(k, f)| (ECOLOGY_FIELD_IDS[k], encode_fine_field(f)))
+                .collect(),
+                _ => Vec::new(),
+            };
         let rivers = h
             .graph
             .as_ref()
             .map(|g| river_polylines_from_graph(g, h.max_discharge, Some(&sim.domain)));
-        let eco = ecology_inputs_of(
-            sim,
-            &coupled.mesh,
-            Some(om),
-            Some((h.max_discharge, &h.oases[..])),
-        );
         let lake_depth = eco.lake_depth.as_deref().unwrap_or(&om.lakes.depth);
         let land = forms::LevelLand {
             land: &om.land.land,
@@ -803,6 +830,7 @@ impl World {
             orogen_points: &eco.orogen_points,
             max_discharge: h.max_discharge,
             ecology: &ecology,
+            shelf_ecology: &shelf,
         };
         Ok(forms::mesh_level_artifact(
             level,

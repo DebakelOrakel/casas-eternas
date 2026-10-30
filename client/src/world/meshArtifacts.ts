@@ -124,6 +124,11 @@ export interface LevelLand {
   // generator's fine fields are coded (ecologyField.decodeFineValue); none
   // in a level made without an ecology run.
   ecology: Partial<Record<EcologyFieldId, Uint8Array>>
+  // The same fields with the dry shelf as land (TEG-13: the sea floor to
+  // the glacial maximum's depth, in today's climate), a byte a node,
+  // ECOLOGY_FINE_OCEAN off the shelf; none in a level made without an
+  // ecology run.
+  shelfEcology: Partial<Record<EcologyFieldId, Uint8Array>>
 }
 
 interface MeshLevelMeta {

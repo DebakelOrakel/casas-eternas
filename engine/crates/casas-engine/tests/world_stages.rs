@@ -21,6 +21,7 @@ use casas_engine::pipeline::world_stages::{
     HydrologyClimate, HydrologyFeatures, LandClimate, MeshHydrology, MeshTerrainRef,
     chart_max_of_nodes, climate_chain, collect_orogens, ecology_inputs_of, hydrology_features,
     hydrology_threshold, land_climate_of, pixel_land_of, refined_climate_of, route_hydrology,
+    shelf_ecology,
 };
 use casas_engine::surface::erosion_forcing_fields::ErosionControls;
 use casas_engine::surface::hydrology::max_discharge_over_land;
@@ -290,7 +291,13 @@ fn run(name: &str, d: Domain, seed: u32) {
     hh.line(&format!("{name}_features"));
 
     // The ecology.
-    let world = ecology_inputs_of(&sim, &coupled.mesh, Some(&om), Some((max_q, &ft.oases)));
+    let world = ecology_inputs_of(
+        &sim,
+        &coupled.mesh,
+        Some(&om),
+        Some((max_q, &ft.oases)),
+        Some(&ft.graph),
+    );
     let mut eco = {
         let z = coupled.z.clone();
         prepare_ecology(&mut coupled.mesh, &world.inputs(&z, &om.land, Some(&om)))
@@ -323,6 +330,25 @@ fn run(name: &str, d: Domain, seed: u32) {
     );
     hh.add_all(rasters.fields[cc].as_ref().unwrap());
     hh.add_all(rasters.fine[cc].as_ref().unwrap());
+    hh.add_all(&eco.flood_silt);
+    // The dry shelf's ecology (TEG-13).
+    let z = coupled.z.clone();
+    for f in shelf_ecology(
+        &mut sim.meshes.shared,
+        &v2_chain.cells,
+        &mut coupled.mesh,
+        &z,
+        &om,
+        &world,
+        &EcologyParams {
+            carrying_capacity: 100.0,
+            concentration: 0.0,
+            province_strength: 0.5,
+            ..Default::default()
+        },
+    ) {
+        hh.add_all(&f);
+    }
     hh.line(&format!("{name}_ecology"));
 
     // The refinement and the hydrology on it.

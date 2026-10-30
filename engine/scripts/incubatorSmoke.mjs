@@ -68,6 +68,9 @@ function synthWorld(kind) {
   const z = new Float32Array(count)
   const lakeDepth = new Float32Array(count)
   const ecology = Object.fromEntries(CELL_ECOLOGY.map((id) => [id, new Uint8Array(count)]))
+  // The carrying capacity with the dry shelf as land (the level's
+  // shelfEcology, TEG-13): to 120 m below the sea, the land's by latitude.
+  const shelfCarrying = new Uint8Array(count).fill(ECOLOGY_FINE_OCEAN)
   const fine = (v) => Math.max(0, Math.min(254, Math.round(v / ECOLOGY_FINE_STEP)))
   // Three continents, a chain of islands between two of them, a polar
   // land; the distance wraps across.
@@ -92,6 +95,7 @@ function synthWorld(kind) {
       if (zz <= 0) {
         biome[k] = Biome.Ocean
         for (const id of CELL_ECOLOGY) ecology[id][k] = ECOLOGY_FINE_OCEAN
+        if (-zz * 9000 <= 120) shelfCarrying[k] = fine(a > 72 ? 0 : a > 62 ? 0.3 : a > 50 ? 0.6 : a > 16 ? 1 : 1.5)
         continue
       }
       land[k] = 1
@@ -146,14 +150,17 @@ function synthWorld(kind) {
     enso[ry * rw + rx] = Math.abs(0.5 - y) < 0.2 ? Math.sin(6.283 * x) : 0
   }
   return {
-    cells: { kind, spacingKm: kind === 'torus' ? 10 : 8, width, height, nodes, nodeW, nodeH, land, biome, koppen: kop, z, lakeDepth, ecology, rivers: { points: Float32Array.from(points), lengths: Uint32Array.from(lengths), regimes: Uint8Array.from(regimes) } },
+    cells: { kind, spacingKm: kind === 'torus' ? 10 : 8, width, height, nodes, nodeW, nodeH, land, biome, koppen: kop, z, lakeDepth, ecology, shelfCarrying, rivers: { points: Float32Array.from(points), lengths: Uint32Array.from(lengths), regimes: Uint8Array.from(regimes) } },
     rain: { width: rw, height: rh, variability, enso, ensoStrength: 0.8 },
     // The sphere's seed gives a herding centre, a told split and a told
     // merge (`reaches`). Of the seeds 1 to 30 on the sphere, 14 gave a
     // herding centre, 11 a told split, 4 a told merge, and only 29 gave
     // all three; 12345 gave none of the three (2026-10-30, TEG-99). Its
     // history costs about the same as 12345's (both run 100 000 years).
-    seed: kind === 'sphere' ? 29 : 12345,
+    // Since the dry shelf carries its own ecology (TEG-13, 2026-10-30),
+    // seed 29 tells no merge; of the seeds 1 to 12 only 5 and 6 reach all
+    // three.
+    seed: kind === 'sphere' ? 5 : 12345,
   }
 }
 
@@ -172,7 +179,7 @@ function wasmCells(c, build = wasm) {
     ecology.set(p, at)
     at += p.length
   }
-  return new build.Incubator(c.kind === 'sphere', c.spacingKm, c.width, c.height, c.nodes, c.nodeW, c.nodeH, c.land, c.biome, c.koppen, c.z, c.lakeDepth, ecology, present, c.rivers.points, c.rivers.lengths, c.rivers.regimes)
+  return new build.Incubator(c.kind === 'sphere', c.spacingKm, c.width, c.height, c.nodes, c.nodeW, c.nodeH, c.land, c.biome, c.koppen, c.z, c.lakeDepth, ecology, present, c.rivers.points, c.rivers.lengths, c.rivers.regimes, c.shelfCarrying)
 }
 
 const GOLDEN = new URL('incubatorSmoke.golden.json', import.meta.url)
@@ -369,9 +376,9 @@ for (const kind of ['torus', 'sphere']) {
 // earth's (2026-10-29): no split is told in step 2's first
 // EARLY_SPLIT_YEARS, and no split or merge is told that did not hold
 // TOLD_LIVES_YEARS. With seed 12345 neither world told one, and only the
-// torus reached a herding centre ('centre 3'); the sphere's seed 29 tells
-// one of each and reaches a herding centre, so the three are in again
-// (2026-10-30, TEG-99). Also in peoples.rs
+// torus reached a herding centre ('centre 3'); the sphere's seed 29 told
+// one of each and reached a herding centre, so the three were in again
+// (2026-10-30, TEG-99); seed 5 since the dry shelf's ecology (TEG-13). Also in peoples.rs
 // `a_split_is_told_once_it_held` and
 // `the_tree_keeps_ids_and_records_splits_and_merges`.
 const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleGone', 'peopleFarmers', 'goods']

@@ -3,10 +3,10 @@
 torus_climate fe032d04
 torus_route 76cbad66
 torus_features e59a96e9
-torus_ecology 3f75418a
+torus_ecology f4606af4
 torus_refined 5ddab1ca
 sphere_climate 603a1751
 sphere_route 45f57d30
 sphere_features 97720833
-sphere_ecology 7cd564a4
+sphere_ecology 41a0b790
 sphere_refined 8428faa0

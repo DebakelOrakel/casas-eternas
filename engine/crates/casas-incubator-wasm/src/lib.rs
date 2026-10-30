@@ -99,7 +99,8 @@ fn shares_of(layers: &[Layer]) -> Vec<f64> {
 impl Incubator {
     /// The habitat (habitat.rs build_cells). `ecology`: CELL_ECOLOGY's
     /// fields' fine codes, one after the other, those whose bit is set in
-    /// `ecology_present`; the rivers' three arrays, or none.
+    /// `ecology_present`; the rivers' three arrays, or none; the carrying
+    /// capacity with the dry shelf as land, or none.
     #[wasm_bindgen(constructor)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -120,6 +121,7 @@ impl Incubator {
         river_points: Option<Vec<f32>>,
         river_lengths: Option<Vec<u32>>,
         river_regimes: Option<Vec<u8>>,
+        shelf_carrying: Option<Vec<u8>>,
     ) -> Incubator {
         let nodes_count = land.len();
         let mut fields: [Option<&[u8]>; 8] = [None; 8];
@@ -148,6 +150,7 @@ impl Incubator {
             z,
             lake_depth,
             ecology: fields,
+            shelf_carrying: shelf_carrying.as_deref(),
             rivers,
         };
         let (habitat, owners) = build_cells(&input);

@@ -120,6 +120,7 @@ impl Incubator {
         river_points: Option<Float32Array>,
         river_lengths: Option<Uint32Array>,
         river_regimes: Option<Uint8Array>,
+        shelf_carrying: Option<Uint8Array>,
     ) -> Self {
         let nodes_count = land.len();
         let mut fields: [Option<&[u8]>; 8] = [None; 8];
@@ -148,6 +149,7 @@ impl Incubator {
             z: &z,
             lake_depth: &lake_depth,
             ecology: fields,
+            shelf_carrying: shelf_carrying.as_deref(),
             rivers,
         };
         let (habitat, owners) = build_cells(&input);

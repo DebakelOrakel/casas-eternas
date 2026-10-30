@@ -25,7 +25,9 @@ use crate::climate::wind::CellVectors;
 use crate::core::domain::{Domain, DomainGrid};
 use crate::core::world_time::{world_age_ma, world_epoch};
 use crate::crust::raft_field::compute_craton_oldness_field;
-use crate::ecology::ecology_field::EcologyInputs;
+use crate::ecology::ecology_field::{
+    ECOLOGY_OCEAN, EcologyInputs, EcologyParams, apply_ecology, dry_shelf, prepare_ecology,
+};
 use crate::elevation::elevation_scale::SEA_LEVEL;
 use crate::fields::field_mesh::SharedFieldMesh;
 use crate::mesh::mesh_erosion::MeshRouting;
@@ -46,7 +48,9 @@ use crate::surface::hydrology::{
     mark_subglacial, riparian_precipitation_on, watersheds_on,
 };
 use crate::surface::river_course::{RiverCourseOptions, compute_river_courses};
-use crate::surface::river_graph::{RiverGraph, RiverGraphInputs, build_river_graph};
+use crate::surface::river_graph::{
+    RiverGraph, RiverGraphInputs, build_river_graph, river_regime_at_nodes,
+};
 use crate::surface::sediment_basins::{SedimentBasin, SedimentBasinInputs, find_sediment_basins};
 use crate::surface::surface_tune_params::SURFACE_TUNING;
 use crate::tectonics::plate_simulation_types::PlateSimulation;
@@ -760,6 +764,9 @@ pub struct EcologyWorldInputs {
     pub craton_age: Vec<f32>,
     pub warp_seed: u32,
     pub max_discharge: f64,
+    /// The river graph's regime per node (`river_regime_at_nodes`), for
+    /// the flood silt; None without the graph.
+    pub river_regime: Option<Vec<u8>>,
 }
 
 pub fn ecology_inputs_of(
@@ -767,6 +774,7 @@ pub fn ecology_inputs_of(
     mesh: &PeriodicTriangulation,
     om: Option<&MeshHydrology>,
     hydrology: Option<(f64, &[SpringFeature])>,
+    graph: Option<&RiverGraph>,
 ) -> EcologyWorldInputs {
     let craton = compute_craton_oldness_field(
         &sim.rafts,
@@ -790,6 +798,7 @@ pub fn ecology_inputs_of(
         ),
         warp_seed: sim.warp_seed as u32,
         max_discharge: hydrology.map_or(0.0, |(m, _)| m),
+        river_regime: graph.map(|g| river_regime_at_nodes(g, mesh.vertex_slots())),
     }
 }
 
@@ -811,6 +820,7 @@ impl EcologyWorldInputs {
                 .unwrap_or(&land.biome),
             discharge: om.map(|o| &o.discharge[..]),
             max_discharge: self.max_discharge,
+            river_regime: self.river_regime.as_deref(),
             lake_depth: self.lake_depth.as_deref(),
             salt_flat: om.map(|o| &o.lakes.salt_flat[..]),
             water_table: om.and_then(|o| o.water_table.as_deref()),
@@ -821,6 +831,55 @@ impl EcologyWorldInputs {
             warp_seed: self.warp_seed,
         }
     }
+}
+
+/// THE DRY SHELF'S ECOLOGY (TEG-13, DES-0032 open point 5): the ecology's
+/// fields with the shelf (`dry_shelf`) as land, in today's climate, on the
+/// shelf alone (ECOLOGY_OCEAN elsewhere). The incubator reads them where a
+/// glacial sea lays the shelf dry. The land's rivers, lakes, wells and
+/// features stay as they are; the shelf has none of its own. Its climate
+/// is the land's beside it (`climate_at_points` reads a dry node as land),
+/// its biome the class of that climate. A run of its own, so the coast's
+/// sea, the carrying capacity's scale and the province's mean are the
+/// shelf-and-land's: the land's fields stay those of the ecology step.
+pub fn shelf_ecology(
+    sh: &mut SharedFieldMesh,
+    cells: &ClimateCells,
+    mesh: &mut PeriodicTriangulation,
+    z: &[f32],
+    om: &MeshHydrology,
+    world: &EcologyWorldInputs,
+    params: &EcologyParams,
+) -> Vec<Vec<f32>> {
+    let n = mesh.vertex_slots();
+    let land = &om.land.land;
+    let shelf = dry_shelf(z, land, &mesh.v_alive[..n]);
+    let dry: Vec<u8> = (0..n)
+        .map(|v| u8::from(shelf[v] != 0 || om.lakes.dry_basin[v] == 1))
+        .collect();
+    let lc = land_climate_of(sh, cells, mesh, z, Some(&dry));
+    let land_biome = om.ecology_biome.as_deref().unwrap_or(&om.land.biome);
+    let biomes: Vec<u8> = (0..n)
+        .map(|v| {
+            if land[v] != 0 {
+                land_biome[v]
+            } else {
+                lc.biome[v]
+            }
+        })
+        .collect();
+    let mut inputs = world.inputs(z, &lc, Some(om));
+    inputs.biomes = &biomes;
+    let base = prepare_ecology(mesh, &inputs);
+    let mut fields = apply_ecology(&base, mesh, params);
+    for f in &mut fields {
+        for v in 0..n {
+            if shelf[v] == 0 {
+                f[v] = ECOLOGY_OCEAN;
+            }
+        }
+    }
+    fields
 }
 
 /// The hydrology's channel criterion.

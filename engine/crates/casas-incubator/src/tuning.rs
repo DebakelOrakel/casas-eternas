@@ -47,7 +47,9 @@ use serde_json::{Map, Value, json};
 /// arrays after the peoples, the other arrays the same bytes; step 1's
 /// controls, the reach over sea and the lowest sea level (peopling.rs
 /// `Controls`, 2026-10-30), part of H1's input: their defaults give the
-/// same bytes.
+/// same bytes; a dry shelf carries what level 1's ecology gives it with
+/// the shelf as land, not what its coast carries (simulation.rs
+/// `ground_of`, TEG-13, 2026-10-30).
 pub const INCUBATOR_ALGO_VERSION: u32 = 6;
 
 // The constants of a module as (name, value) pairs.

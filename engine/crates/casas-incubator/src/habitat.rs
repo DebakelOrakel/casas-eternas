@@ -82,6 +82,10 @@ pub struct CellInput<'a> {
     /// CELL_ECOLOGY's fields as their fine codes; None for one the level
     /// does not hold.
     pub ecology: [Option<&'a [u8]>; 8],
+    /// The carrying capacity with the dry shelf as land (the level's
+    /// `shelfEcology`, TEG-13), its fine code a node, ECOLOGY_FINE_OCEAN
+    /// off the shelf; None for a level that does not hold it.
+    pub shelf_carrying: Option<&'a [u8]>,
     /// The rivers in the world raster's texels: [x, y, width] a point, the
     /// points a river, each river's regime.
     pub rivers: Option<(&'a [f32], &'a [u32], &'a [u8])>,
@@ -117,6 +121,10 @@ pub struct Habitat {
     pub landmass_km2: Vec<f64>,
     /// CELL_ECOLOGY's fields, each the mean over the cell's land.
     pub ecology: [Option<Vec<f32>>; 8],
+    /// A sea cell's carrying capacity with the dry shelf as land, the mean
+    /// over its shelf texels (0 for a cell without one; 0 on the land);
+    /// None where the level does not hold it.
+    pub shelf_carrying: Option<Vec<f32>>,
     // The neighbours, CSR: cell i's are nbr[nbr_start[i] .. nbr_start[i +
     // 1]), dist_km[e] the way to each.
     pub nbr_start: Vec<u32>,
@@ -173,6 +181,8 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
     let mut lake = vec![0u8; n];
     let mut any_land_node = vec![-1i32; n];
     let mut sums: Vec<Vec<f64>> = (0..CELL_ECOLOGY.len()).map(|_| vec![0.0; n]).collect();
+    let mut shelf_sum = vec![0f64; n];
+    let mut shelf_texels = vec![0i32; n];
     // The texels of each cell, their land and their sums.
     for t in 0..owners.len() {
         let c = owners[t] as usize;
@@ -192,6 +202,12 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
             }
         } else {
             z_sea[c] = js::max(z_sea[c], input.z[v] as f64);
+            if let Some(codes) = input.shelf_carrying
+                && codes[v] != ECOLOGY_FINE_OCEAN
+            {
+                shelf_sum[c] += decode_fine_value(codes[v]);
+                shelf_texels[c] += 1;
+            }
         }
         if input.lake_depth[v] > 0.0 {
             lake[c] = 1;
@@ -225,6 +241,7 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
             ecology[k] = Some(vec![0f32; n]);
         }
     }
+    let mut shelf_carrying = input.shelf_carrying.map(|_| vec![0f32; n]);
     let mut land_count = 0;
     for c in 0..n {
         area_km2[c] = (fm.area[c] / 1e6) as f32;
@@ -270,6 +287,11 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
                 input.z[centre] as f64
             };
             sea_depth_m[c] = (-z * ELEVATION_METERS) as f32;
+            if let Some(m) = shelf_carrying.as_mut()
+                && shelf_texels[c] > 0
+            {
+                m[c] = (shelf_sum[c] / shelf_texels[c] as f64) as f32;
+            }
         }
     }
 
@@ -418,6 +440,7 @@ pub fn build_cells(input: &CellInput) -> (Habitat, Vec<i32>) {
         landmasses,
         landmass_km2: areas,
         ecology,
+        shelf_carrying,
         nbr_start,
         nbr,
         dist_km,

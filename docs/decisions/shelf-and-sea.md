@@ -152,3 +152,9 @@ The ice covers 20–34 % of the torus's land and 15–20 % of the sphere's
 ## Status
 
 Built 2026-10-27.
+
+2026-10-30: level 1 holds the ecology's fields of the shelf down to
+120 m below the sea, computed with the shelf as land in today's climate
+(`world_stages.rs shelf_ecology`, `shelfEcology.json`, TEG-13). The
+incubator reads them where a glacial sea lays the shelf dry
+([DES-0032](../design/prehistory-in-three-steps.md), open point 5).

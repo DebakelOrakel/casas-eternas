@@ -11,6 +11,8 @@
 use std::borrow::Cow;
 use std::fmt::Write as _;
 
+use casas_engine::ecology::ecology_field::{ECOLOGY_FINE_OCEAN, dry_shelf};
+
 use crate::value::{ObjBuilder, Value};
 use crate::{EraError, wrong};
 
@@ -47,6 +49,25 @@ pub const LEVEL_OROGEN_POINTS: &str = "orogenPoints.f64";
 pub const LEVEL_ECOLOGY: &str = "ecology.json";
 fn level_ecology_file(id: &str) -> String {
     format!("eco.{id}.u8")
+}
+// The dry shelf's ecology (`forms::LevelLand::shelf_ecology`, TEG-13):
+// their ids in `shelfEcology.json`, each a byte a shelf node in
+// `shelfEco.<id>.u8`, the shelf's nodes (`dry_shelf` of the level's heights
+// and land) in their order. The shelf is some 6–8 % of level 1's nodes.
+pub const LEVEL_SHELF_ECOLOGY: &str = "shelfEcology.json";
+fn level_shelf_ecology_file(id: &str) -> String {
+    format!("shelfEco.{id}.u8")
+}
+
+/// The dry shelf's nodes of a level, in their order.
+fn shelf_nodes(z: &[f32], land: &[u8]) -> Vec<usize> {
+    let alive = vec![1u8; land.len()];
+    dry_shelf(z, land, &alive)
+        .iter()
+        .enumerate()
+        .filter(|&(_, &s)| s != 0)
+        .map(|(v, _)| v)
+        .collect()
 }
 
 /// The land fields' 16-bit codes (docs/decisions/level-waters.md, fork
@@ -406,7 +427,7 @@ pub fn level_files(artifact: &Value) -> Result<Value, EraError> {
             );
     }
     if let Some(land) = given(artifact, "land") {
-        files = level_land_files(files, land)?;
+        files = level_land_files(files, land, field(artifact, "z", what)?)?;
     }
     Ok(files.build())
 }
@@ -414,7 +435,7 @@ pub fn level_files(artifact: &Value) -> Result<Value, EraError> {
 /// The land fields' files (`forms::LevelLand`): the bytes as they are,
 /// the measures in their 16-bit codes (`land_codes`), the points as
 /// doubles, the maximum discharge in `land.json`.
-fn level_land_files(files: ObjBuilder, land: &Value) -> Result<ObjBuilder, EraError> {
+fn level_land_files(files: ObjBuilder, land: &Value, z: &Value) -> Result<ObjBuilder, EraError> {
     let what = "the level's land";
     let u8s = |k: &str| -> Result<Vec<u8>, EraError> {
         match field(land, k, what)? {
@@ -475,6 +496,26 @@ fn level_land_files(files: ObjBuilder, land: &Value) -> Result<ObjBuilder, EraEr
         files = files.put(LEVEL_ECOLOGY, Value::U8s(js_json(&ids).into_bytes()));
         for (id, codes) in fields {
             files = files.put_owned(level_ecology_file(id), Value::U8s(bytes(codes)?));
+        }
+    }
+    if let Some(Value::Obj(fields)) = given(land, "shelfEcology")
+        && !fields.is_empty()
+    {
+        let Value::F32s(z) = z else {
+            return Err(wrong("the level's heights are not Float32s"));
+        };
+        let shelf = shelf_nodes(z, &u8s("land")?);
+        let ids = Value::List(
+            fields
+                .iter()
+                .map(|(id, _)| Value::Str(id.to_string()))
+                .collect(),
+        );
+        files = files.put(LEVEL_SHELF_ECOLOGY, Value::U8s(js_json(&ids).into_bytes()));
+        for (id, codes) in fields {
+            let codes = bytes(codes)?;
+            let on_shelf: Vec<u8> = shelf.iter().map(|&v| codes[v]).collect();
+            files = files.put_owned(level_shelf_ecology_file(id), Value::U8s(on_shelf));
         }
     }
     if let Some(table) = given(land, "waterTable") {
@@ -827,7 +868,44 @@ fn level_land_of(files: &Value, meta: &Value) -> Result<Value, EraError> {
         .put("orogenPoints", doubles(LEVEL_OROGEN_POINTS)?)
         .num("maxDischarge", *max_discharge)
         .put("ecology", level_ecology_of(files)?)
+        .put("shelfEcology", level_shelf_ecology_of(files)?)
         .build())
+}
+
+/// The dry shelf's fields from their files, a byte a node of the level,
+/// ECOLOGY_FINE_OCEAN off the shelf; none without `shelfEcology.json`.
+fn level_shelf_ecology_of(files: &Value) -> Result<Value, EraError> {
+    let Some(list) = optional_file(files, LEVEL_SHELF_ECOLOGY) else {
+        return Ok(Value::Obj(Vec::new()));
+    };
+    let Value::List(ids) = json_of(list, LEVEL_SHELF_ECOLOGY)? else {
+        return Err(EraError(format!("{LEVEL_SHELF_ECOLOGY} is not a list")));
+    };
+    let z = f32s_of(file(files, LEVEL_Z)?, LEVEL_Z)?;
+    let shelf = shelf_nodes(&z, file(files, LEVEL_LAND_MASK)?);
+    let mut fields = Vec::new();
+    for id in ids {
+        let Value::Str(id) = id else {
+            return Err(EraError(format!(
+                "{LEVEL_SHELF_ECOLOGY} names a field by no string"
+            )));
+        };
+        let name = level_shelf_ecology_file(&id);
+        let on_shelf = file(files, &name)?;
+        if on_shelf.len() != shelf.len() {
+            return Err(EraError(format!(
+                "{name} holds {} nodes, the shelf {}",
+                on_shelf.len(),
+                shelf.len()
+            )));
+        }
+        let mut codes = vec![ECOLOGY_FINE_OCEAN; z.len()];
+        for (&v, &c) in shelf.iter().zip(on_shelf) {
+            codes[v] = c;
+        }
+        fields.push((Cow::Owned(id), Value::U8s(codes)));
+    }
+    Ok(Value::Obj(fields))
 }
 
 /// The ecology's fields from their files, the bytes as they are; none
