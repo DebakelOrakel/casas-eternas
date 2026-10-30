@@ -240,7 +240,7 @@ const CENTROIDAL_OVERRELAX = 1.8
 // the relaxation's 300 steps take tens of seconds and no longer even out
 // the cells (2026-10-26, 10 km on a 20 000 km globe: 43 s and areas 40 to
 // 104 km², against 2.4 s and 50 to 105 km² unrelaxed). The incubator's
-// cells (screens/incubator/cells.ts).
+// cells (casas-incubator/habitat.rs).
 export function geodesicLattice(domain: Domain, spacing: number): PeriodicTriangulation {
   return latticeOnGlobe(domain, geodesicPoints(domain, spacing))
 }

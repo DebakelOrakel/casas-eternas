@@ -1,9 +1,9 @@
-//! `climate/climatePoints.ts`: the climate at a point — the climate's cells
-//! as its readers need them (the temperature reduced to sea level, the land
-//! fields with their sea marks, the months, the wind), and their values at
-//! any point set, linearly in the climate mesh's triangle, a land field over
-//! the land corners only. The TypeScript file explains the island rule and
-//! the monsoon's sign.
+//! The climate at a point — the climate's cells as its readers need them
+//! (the temperature reduced to sea level, the land fields with their sea
+//! marks, the months, the wind), and their values at any point set,
+//! linearly in the climate mesh's triangle, a land field over the land
+//! corners only. `client/src/generator/climate/climatePoints.ts` explains
+//! the island rule and the monsoon's sign.
 
 use crate::core::js;
 use crate::elevation::elevation_scale::SEA_LEVEL;

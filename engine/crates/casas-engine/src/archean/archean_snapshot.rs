@@ -1,4 +1,4 @@
-//! `archean/archeanSnapshot.ts`: saving a world still in the Archean.
+//! Saving a world still in the Archean.
 
 use crate::core::domain::Domain;
 use crate::core::js::{to_int32, to_uint32};

@@ -1,11 +1,10 @@
-//! `pipeline/worldStages.ts`: what a stage of the generator computes, as
-//! functions of their inputs — the climate chain, the climate at the
-//! terrain's nodes, the climate step's refinement, the hydrology's route
-//! and its features, the ecology's inputs. The runtime holds the state and
-//! posts; the TypeScript port
-//! (`client/src/generator/pipeline/worldStages.ts`, git history) explains
-//! each step. Not ported: the refinement's progress callback, which the
-//! boundary to TypeScript adds.
+//! What a stage of the generator computes, as functions of their inputs —
+//! the climate chain, the climate at the terrain's nodes, the climate
+//! step's refinement, the hydrology's route and its features, the
+//! ecology's inputs. The runtime holds the state and posts; the TypeScript
+//! port (`client/src/generator/pipeline/worldStages.ts`, git history)
+//! explains each step. Not ported: the refinement's progress callback,
+//! which the boundary to TypeScript adds.
 
 use crate::climate::biomes::{biome, classify_points};
 use crate::climate::climate_chart::{

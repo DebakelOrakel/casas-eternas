@@ -1,5 +1,5 @@
-//! `archean/archeanState.ts`: the Archean world: rafts on the mantle, no
-//! plates, no ocean age, no features.
+//! The Archean world: rafts on the mantle, no plates, no ocean age, no
+//! features.
 
 use crate::core::domain::Domain;
 use crate::core::rng::{Mulberry32, hash_seed_string};

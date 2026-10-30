@@ -1,5 +1,5 @@
-//! `core/field.ts`: the torus's one wrap and the raster samplers the grids
-//! are built on. Outside `core` a raster is read through its
+//! The torus's one wrap and the raster samplers the grids are built on.
+//! Outside `core` a raster is read through its
 //! [`DomainGrid`](super::domain::DomainGrid), as in TypeScript.
 
 use super::js;

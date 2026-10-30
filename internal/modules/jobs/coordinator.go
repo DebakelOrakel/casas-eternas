@@ -93,8 +93,8 @@ type taskDoneReport struct {
 	Error  string  `json:"error,omitempty"`
 	Result *Result `json:"result,omitempty"`
 	// For the level task of a refine plan: the tile levels' tasks, planned
-	// from level 1's drainage by the worker (client/src/generator/pipeline/
-	// tilePlan.ts). The coordinator wires them and knows no hydrology.
+	// from level 1's drainage by the worker (the engine's
+	// pipeline/tile_plan.rs). The coordinator wires them and knows no hydrology.
 	Tasks []plannedTask `json:"tasks,omitempty"`
 	// With them, each tile level's pipeline version, by level: with the
 	// result's worldId, the key a planned tile is stored under — what the

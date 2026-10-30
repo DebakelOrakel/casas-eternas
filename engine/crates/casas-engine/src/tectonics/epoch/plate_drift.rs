@@ -1,7 +1,6 @@
-//! `tectonics/epoch/plateDrift.ts`, phase 1: every plate advanced and all
-//! that rides on it (rafts, sutures, features, the ocean age), the crust
-//! recycled, the features decayed, the plumes moved and the hotspots'
-//! volcanoes deposited.
+//! Phase 1: every plate advanced and all that rides on it (rafts,
+//! sutures, features, the ocean age), the crust recycled, the features
+//! decayed, the plumes moved and the hotspots' volcanoes deposited.
 
 use crate::core::det_math::{det_hypot, det_pow};
 use crate::core::world_time::{TECTONIC_MA_PER_EPOCH, world_age_ma, world_epoch_ma};

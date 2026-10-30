@@ -1,7 +1,7 @@
-//! `surface/flowSubstrate.ts`: what the hydrology reads of the thing water
-//! flows over — elements with a receiver each, the flood's filled height
-//! and pop order, a position, an area and the neighbours. Its one instance
-//! is the mesh's (mesh/mesh_hydrology.rs). Positions are world units.
+//! What the hydrology reads of the thing water flows over — elements with
+//! a receiver each, the flood's filled height and pop order, a position,
+//! an area and the neighbours. Its one instance is the mesh's
+//! (mesh/mesh_hydrology.rs). Positions are world units.
 
 use crate::core::domain::Domain;
 

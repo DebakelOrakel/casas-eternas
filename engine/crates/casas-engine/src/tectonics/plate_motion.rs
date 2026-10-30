@@ -1,10 +1,10 @@
-//! `tectonics/plateMotion.ts`: a plate's rigid motion. On the torus a drift
-//! plus a spin about the plate's own centroid, on the sphere one rotation
-//! about an Euler pole; the velocity at a point, a point moved forward and
-//! back, a motion fitted to the mantle flow, relaxed toward one, or made to
-//! move with a velocity at a point. Velocities are domain units per Ma,
-//! turns radians per Ma (DEC-0036 phase 8f). The reasoning is in the
-//! TypeScript file.
+//! A plate's rigid motion. On the torus a drift plus a spin about the
+//! plate's own centroid, on the sphere one rotation about an Euler pole;
+//! the velocity at a point, a point moved forward and back, a motion fitted
+//! to the mantle flow, relaxed toward one, or made to move with a velocity
+//! at a point. Velocities are domain units per Ma, turns radians per Ma
+//! (DEC-0036 phase 8f). The reasoning is in
+//! `client/src/generator/tectonics/plateMotion.ts`.
 
 use crate::core::det_math::{det_acos, det_cos, det_sin};
 use crate::core::domain::{Domain, Vec2};

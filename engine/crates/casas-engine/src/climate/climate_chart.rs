@@ -1,9 +1,9 @@
-//! `climate/climateChart.ts`: the climate's field-mesh fields on the
-//! CLIMATE_RES_X × CLIMATE_RES_Y chart raster, for the screen and a save's
-//! readers. No stage reads it. A land field keeps its sea mark on the
-//! chart's sea pixels and mixes only the land corners on its land pixels;
-//! a sea field is 0 on the chart's land; a vector is each pixel's in its
-//! own frame. The TypeScript file explains the conventions.
+//! The climate's field-mesh fields on the CLIMATE_RES_X × CLIMATE_RES_Y
+//! chart raster, for the screen and a save's readers. No stage reads it. A
+//! land field keeps its sea mark on the chart's sea pixels and mixes only
+//! the land corners on its land pixels; a sea field is 0 on the chart's
+//! land; a vector is each pixel's in its own frame.
+//! `client/src/generator/climate/climateChart.ts` explains the conventions.
 
 use crate::core::domain::Domain;
 use crate::core::js;

@@ -1,5 +1,6 @@
-//! `tectonics/plateSimulationTypes.ts`: the simulation's data and its event
-//! vocabulary. The reasoning behind each field is in the TypeScript file.
+//! The simulation's data and its event vocabulary. The reasoning behind
+//! each field is in
+//! `client/src/generator/tectonics/plateSimulationTypes.ts`.
 
 use crate::core::domain::Domain;
 use crate::core::rng::Mulberry32;

@@ -1,8 +1,8 @@
-//! `mantle/mantleField.ts`: a coarse, evolving mantle buoyancy field under
-//! the whole surface, the cause the plates ride on, on its field mesh
-//! (DEC-0036 phase 1). Continents insulate, ocean cools, diffusion and decay
-//! bound it; the surface flow is the gradient of its Poisson potential. The
-//! reasoning is in the TypeScript file.
+//! A coarse, evolving mantle buoyancy field under the whole surface, the
+//! cause the plates ride on, on its field mesh (DEC-0036 phase 1).
+//! Continents insulate, ocean cools, diffusion and decay bound it; the
+//! surface flow is the gradient of its Poisson potential. The reasoning is
+//! in `client/src/generator/mantle/mantleField.ts`.
 //!
 //! The TypeScript code keeps one mesh per domain in a module cache and
 //! looks it up from the domain; here the caller holds the [`MantleMesh`]

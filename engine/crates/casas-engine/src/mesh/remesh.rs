@@ -1,9 +1,9 @@
-//! `mesh/remesh.ts`: REMESHING with hysteresis (decision 8 of
+//! REMESHING with hysteresis (decision 8 of
 //! docs/decisions/adaptive-mesh.md). Nodes go in where an edge is longer
 //! than `insert_ratio` times the target and out where a node's spacing is
 //! below `remove_ratio` times it; candidates in Hilbert order, the jitter
 //! from a generator seeded per round. The reasoning is in the TypeScript
-//! file.
+//! port (`client/src/generator/mesh/remesh.ts`, git history).
 
 use crate::core::det_math::sq;
 use crate::core::js;

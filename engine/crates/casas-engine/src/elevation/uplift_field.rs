@@ -1,8 +1,8 @@
-//! `elevation/upliftField.ts`: U(x), the tectonic uplift-rate field the
-//! erosion solver is forced by — the features' capsules weighted by their
-//! boundary's shortening rate, as mm/yr of crustal thickening. The
-//! TypeScript port (`client/src/generator/elevation/upliftField.ts`, git
-//! history) explains the scale and its history.
+//! U(x), the tectonic uplift-rate field the erosion solver is forced by —
+//! the features' capsules weighted by their boundary's shortening rate,
+//! as mm/yr of crustal thickening. The TypeScript port
+//! (`client/src/generator/elevation/upliftField.ts`, git history)
+//! explains the scale and its history.
 
 use crate::core::domain::Domain;
 use crate::core::js;

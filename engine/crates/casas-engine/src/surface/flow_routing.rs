@@ -1,5 +1,5 @@
-//! `surface/flowRouting.ts`: the raster engine's routing vocabulary — the
-//! D8 slot order and the world ocean as the largest water component.
+//! The raster engine's routing vocabulary — the D8 slot order and the
+//! world ocean as the largest water component.
 
 use crate::core::domain::DomainGrid;
 

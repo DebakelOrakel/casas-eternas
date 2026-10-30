@@ -1,7 +1,7 @@
-//! `mesh/lattice.ts`: the bootstrap of a domain's mesh at one spacing, the
-//! torus's hex lattice or the sphere's geodesic one, and the field mesh's
-//! centroidal geodesic lattice (DEC-0036 phase 3). The reasoning is in the
-//! TypeScript file.
+//! The bootstrap of a domain's mesh at one spacing, the torus's hex lattice
+//! or the sphere's geodesic one, and the field mesh's centroidal geodesic
+//! lattice (DEC-0036 phase 3). The reasoning is in
+//! `client/src/generator/mesh/lattice.ts`.
 
 use crate::core::det_math::{det_cos, det_sin};
 use crate::core::domain::Domain;

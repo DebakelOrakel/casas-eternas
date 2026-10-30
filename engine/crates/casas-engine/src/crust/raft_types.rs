@@ -1,4 +1,4 @@
-//! `crust/raftTypes.ts`: what a raft is, and what its lifecycle reports.
+//! What a raft is, and what its lifecycle reports.
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RaftBlob {

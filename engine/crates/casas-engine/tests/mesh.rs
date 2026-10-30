@@ -411,11 +411,12 @@ fn read<T: Copy + Default>(dir: &str, name: &str) -> Vec<T> {
         .collect()
 }
 
-/// A real epoch's column mean height (pipeline/coupledEpoch.ts
-/// `columnMeanHeight`): the 10 km neighbourhoods of the rising nodes of a
-/// level-1 history at epoch 12 (3.7 M slots, 202 M members) and the mean
-/// height over them, dumped from the TypeScript engine. Not in the
-/// repository: `CASAS_ENGINE_NB_DUMP=<dir> cargo test --release -- --ignored`.
+/// A real epoch's column mean height (`columnMeanHeight` of the TypeScript
+/// port `client/src/generator/pipeline/coupledEpoch.ts`, git history): the
+/// 10 km neighbourhoods of the rising nodes of a level-1 history at epoch
+/// 12 (3.7 M slots, 202 M members) and the mean height over them, dumped
+/// from the TypeScript engine. Not in the repository:
+/// `CASAS_ENGINE_NB_DUMP=<dir> cargo test --release -- --ignored`.
 #[test]
 #[ignore]
 fn a_dumped_column_mean_height_gives_the_typescript_values() {

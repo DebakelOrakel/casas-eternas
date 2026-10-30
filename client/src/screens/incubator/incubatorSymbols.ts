@@ -26,7 +26,8 @@ function picture(km: number, draw: (c: CanvasRenderingContext2D) => void): Symbo
 
 const rgb = (c: readonly [number, number, number]): string => `rgb(${c[0]},${c[1]},${c[2]})`
 
-// A cell's centre as a chart point (the habitat's centres, cells.ts).
+// A cell's centre as a chart point (the habitat's centres,
+// casas-incubator/habitat.rs).
 export const cellPoint = (cell: number, u: Float32Array, v: Float32Array): WorldSymbol['at'] => ({ u: u[cell], v: v[cell] })
 
 // THE VILLAGES: a dot in its lifeway's colour on a dark rim, three sizes by
@@ -54,8 +55,8 @@ export function villageSymbols(villages: Int32Array, density: Float32Array, u: F
 }
 
 // THE CAMPS (2026-10-26): the foragers' and the herders' meeting places
-// (simulation.ts, THE CAMPS), kept in the villages' lists: a tent, a
-// triangle in the lifeway's colour on a dark rim. Picture 0 the
+// (casas-incubator/simulation.rs, THE CAMPS), kept in the villages' lists: a
+// tent, a triangle in the lifeway's colour on a dark rim. Picture 0 the
 // foragers', 1 the herders'.
 export const isCampWay = (way: number): boolean => way === LIFEWAY.foragers || way === LIFEWAY.herders
 const CAMP_KM = 16
@@ -369,8 +370,9 @@ export function routeSymbols(lines: readonly RouteLine[], t: number, arrival: Fl
   return [...symbols, ...heads]
 }
 
-// THE TRADE: the links between villages that carry goods (settle.ts),
-// wider the more, in TRADE_WIDTHS_KM classes; one picture a class.
+// THE TRADE: the links between villages that carry goods
+// (casas-incubator/settle.rs), wider the more, in TRADE_WIDTHS_KM classes;
+// one picture a class.
 const TRADE_WIDTHS_KM = [4, 8, 14]
 export const tradePictures = (colour: readonly [number, number, number]): SymbolPicture[] => TRADE_WIDTHS_KM.flatMap((w) => linePictures(lineStyle(w, false), colour))
 export function tradeSymbols(villages: Int32Array, links: Float32Array, u: Float32Array, v: Float32Array, g: LineGeometry): WorldSymbol[] {
@@ -386,10 +388,10 @@ export function tradeSymbols(villages: Int32Array, links: Float32Array, u: Float
   return symbols
 }
 
-// THE CROSSINGS (2026-10-26): the year people first landed on a landmass
-// over the sea (people.ts, crossings), as text at the middle of the way,
-// upright; the way itself is the routes', blue there. One picture a year,
-// in the order given.
+// THE CROSSINGS (2026-10-26): the year people first landed on a landmass over
+// the sea (casas-incubator/peopling.rs, crossings), as text at the middle of
+// the way, upright; the way itself is the routes', blue there. One picture a
+// year, in the order given.
 // 70 km at first (2026-10-26): too small to read.
 const CROSSING_TEXT_KM = 250
 const CROSSING_RGB: readonly [number, number, number] = [40, 90, 150]

@@ -1,11 +1,12 @@
-//! `pipeline/coupledEpoch.ts`: the coupled epoch — erosion inside every
-//! tectonic epoch, on the mesh, whose nodes move with their plates. Per
-//! epoch: plate membership, the tectonic step, the motion, the rebuild and
-//! the remesh, the baseline swap, the epoch's climate, the ice, the cover,
-//! the forcing with the folds and the force balances, the erosion and the
-//! column's ledger, the coast, the flexure, the sea level, the routing on
-//! the terrain as the epoch leaves it and the lakes' ages. The TypeScript
-//! file explains every step and its measurements.
+//! The coupled epoch — erosion inside every tectonic epoch, on the mesh,
+//! whose nodes move with their plates. Per epoch: plate membership, the
+//! tectonic step, the motion, the rebuild and the remesh, the baseline
+//! swap, the epoch's climate, the ice, the cover, the forcing with the
+//! folds and the force balances, the erosion and the column's ledger, the
+//! coast, the flexure, the sea level, the routing on the terrain as the
+//! epoch leaves it and the lakes' ages. The TypeScript port
+//! (`client/src/generator/pipeline/coupledEpoch.ts`, git history) explains
+//! every step and its measurements.
 //!
 //! Not ported: the phases' timing (a clock is not portable to the WASM
 //! build), the pool's worker factory (`leaf_workers` names the TypeScript

@@ -181,7 +181,8 @@ export function paintClimateWash(target: WashTarget, wash: ClimateWash, fields: 
   if (wash === 'temperature' && fields.temperature) washField(target, fields.temperature, width, height, (v) => temperatureColor(v), alpha)
   if (wash === 'precipitation' && fields.precipitation) washField(target, fields.precipitation, width, height, (v) => (v === OCEAN_PRECIP ? null : precipitationColor(v)), alpha, land)
   if (wash === 'seasonality' && fields.seasonality) washField(target, fields.seasonality, width, height, (v) => (v === OCEAN_AMPLITUDE ? null : amplitudeColor(v)), alpha, land)
-  // The strength, not the phase: the ramp runs 0 … 1 (climate/monsoon.ts).
+  // The strength, not the phase: the ramp runs 0 … 1 (the engine's
+  // climate/monsoon.rs).
   if (wash === 'monsoon' && fields.monsoon) washField(target, fields.monsoon, width, height, (v) => (v === OCEAN_PRECIP ? null : monsoonColor(Math.abs(v))), alpha, land)
   if (wash === 'waterBalance' && fields.temperature && fields.precipitation) {
     const temperature = fields.temperature

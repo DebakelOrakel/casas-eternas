@@ -1,7 +1,6 @@
-//! `tectonics/epoch/raftEvents.ts`, phase 4: the raft lifecycle. Collisions
-//! suture, a sustained continental rift tears a continent and opens a
-//! ridge plate in the gap, and a raft left as separate clusters comes
-//! apart.
+//! Phase 4: the raft lifecycle. Collisions suture, a sustained continental
+//! rift tears a continent and opens a ridge plate in the gap, and a raft
+//! left as separate clusters comes apart.
 
 use crate::core::det_math::sq;
 use crate::core::world_time::world_epoch;

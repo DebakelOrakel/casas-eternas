@@ -162,11 +162,11 @@ async function quiet(p, ms = 250) {
 }
 
 // The land share the Archean aims at, for every world this file grows: the
-// screen's 34 % (archean/archeanLand.ts) climbs to its aim by epoch 160, and
-// a harness world runs tens of epochs; its checks were written against the
-// mostly-land world the unthrottled nucleation made of it (rivers long
-// enough to have courses, coasts with every type). An aim of 85 % gives the
-// hydrology's world its land in twenty epochs.
+// screen's 34 % (the engine's archean/archean_land.rs) climbs to its aim by
+// epoch 160, and a harness world runs tens of epochs; its checks were written
+// against the mostly-land world the unthrottled nucleation made of it (rivers
+// long enough to have courses, coasts with every type). An aim of 85 % gives
+// the hydrology's world its land in twenty epochs.
 const ARCHEAN_INIT = { type: 'genesisInit', seed: 'harness', width: W, height: H, renderOptions: {}, epochIntervalMs: 10, mantleDiffusion: 2, landShare: 0.85 }
 
 // A world the way the program makes one: an Archean run, then the hand-over.
@@ -596,8 +596,8 @@ test('a sphere world runs its history through the runtime', async () => {
   // And it goes on: an epoch on the loaded world runs on the sphere and
   // renders a sane globe. Not the saved one's bytes: a restore runs its
   // climate on its first epoch, an unbroken run only every climateEvery-th
-  // (coupledEpoch.ts, TerrainState.weather) — the two agree only when the
-  // next epoch is a climate epoch anyway.
+  // (the engine's pipeline/coupled_epoch.rs, CoupledTerrain.weather) — the
+  // two agree only when the next epoch is a climate epoch anyway.
   const loadedEpoch = q.last('rendered').epoch
   await runOneEpoch(q)
   const next = q.last('rendered')

@@ -46,15 +46,15 @@ export function isLandAt(elevation: number, dryLand = false): boolean {
   return elevation > SEA_LEVEL || dryLand
 }
 
-// Why 9000 m and not, say, 6000: the field was clamped to ±1, so the anchor
-// set what fits. At 9000 m Everest (8848 m) lands at 0.98 — the clamp was
-// spent almost exactly on the tallest thing that can exist. Since DEC-0036
-// phase 8b-3 there is no ceiling: a height above 1 is a height (the save
-// holds the mesh's z as float32), and the plate's flexure and the erosion
-// bound it; the anchor is only the unit. Since phase 8e there is no floor
-// in the history either: a trench on old floor stands 10–11 km deep
-// (tectonics/trench.ts; the Marianas, 10.9 km, are −1.21). The synthesis
-// (the engine's `compute_elevation`) keeps −1 under its trench deck.
+// Why 9000 m and not, say, 6000: the field was clamped to ±1, so the anchor set
+// what fits. At 9000 m Everest (8848 m) lands at 0.98 — the clamp was spent
+// almost exactly on the tallest thing that can exist. Since DEC-0036 phase 8b-3
+// there is no ceiling: a height above 1 is a height (the save holds the mesh's
+// z as float32), and the plate's flexure and the erosion bound it; the anchor
+// is only the unit. Since phase 8e there is no floor in the history either: a
+// trench on old floor stands 10–11 km deep (the engine's tectonics/trench.rs;
+// the Marianas, 10.9 km, are −1.21). The synthesis (the engine's
+// `compute_elevation`) keeps −1 under its trench deck.
 //
 // The reference heights the rest of the pipeline builds on. Earth values, so
 // they can be checked rather than argued about:
@@ -79,7 +79,7 @@ export const ABYSSAL_FLOOR = metersToElevation(-5700) // -0.633  fully subsided 
 // shift of the solid surface against the sea of up to ±600 m; it moved the
 // land by ±1.5 points only (DEC-0036 phase 8a) and went in phase 8b-1 —
 // how much land a world has is the Archean's land share target now
-// (archean/archeanLand.ts).
+// (the engine's archean/archean_land.rs).
 
 // THE CONTINENTAL MARGIN'S PROFILE — the engine computes it
 // (elevation_scale.rs: margin_profile, margin_parameter); this is its

@@ -1,7 +1,7 @@
-//! `surface/glacial.ts`: ice as a process — the epoch's ice on the terrain
-//! mesh at its steady state (the balance-flux inversion, Glen's law), the
-//! cut it does (sliding and the buzzsaw above the ELA) and the till it
-//! leaves at the termini. The TypeScript port
+//! Ice as a process — the epoch's ice on the terrain mesh at its steady
+//! state (the balance-flux inversion, Glen's law), the cut it does
+//! (sliding and the buzzsaw above the ELA) and the till it leaves at the
+//! termini. The TypeScript port
 //! (`client/src/generator/surface/glacial.ts`, git history) explains each
 //! part. Not ported: `iceInvariants`, a check of the raster harnesses.
 //!

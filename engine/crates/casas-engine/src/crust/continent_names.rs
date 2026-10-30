@@ -1,5 +1,4 @@
-//! `crust/continentNames.ts`: the curated pool of continent names, plain
-//! data.
+//! The curated pool of continent names, plain data.
 
 pub const CONTINENT_NAME_POOL: [&str; 59] = [
     "Vaeloria",

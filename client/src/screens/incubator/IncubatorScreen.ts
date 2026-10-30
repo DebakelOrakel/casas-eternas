@@ -427,7 +427,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // temperature's and the pressure's washes, the wind's and the currents'
   // marks.
   const flowOn: Record<string, boolean> = { 'temperature': false, 'pressure': false, 'wind': false, 'currents': false, 'iceAge': false }
-  // The world's climate history (climateHistory.ts), for the ice's overlay.
+  // The world's climate history (casas-incubator/climate_history.rs), for
+  // the ice's overlay.
   // The world's cold over the span (casas-incubator, from its seed): at a
   // time, and the ice's reach and the sea's drop then.
   let iceHistory: { cold(t: number): number; iceReachKm: number; seaDropM(t: number): number } | null = null
@@ -448,8 +449,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The animals of animals.ts, and the use shown (the animals' group).
   let animals: AnimalLayer[] | null = null
   let animalShown: AnimalUse | null = null
-  // The people's spread (people.ts), the time shown (years from the
-  // departure), its two layers, and the origin set by a click (-1: chosen).
+  // The people's spread (casas-incubator/peopling.rs), the time shown (years
+  // from the departure), its two layers, and the origin set by a click (-1:
+  // chosen).
   let people: PeopleResult | null = null
   // THE ROUTES' WIDTHS at the time shown, km a cell: as the migration
   // arrows the generator had, the square root of the land reached beyond a cell
@@ -540,11 +542,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The chronicle's log: the old stone age's in its step; after it the
   // history's, which holds the old stone age's before its own.
   const logShown = (): LogEvent[] => (onOldStoneAge() ? stone?.log ?? [] : settled?.log ?? stone?.log ?? [])
-  // The people's end state (settle.ts), a proof of concept.
+  // The people's end state (casas-incubator/settle.rs), a proof of concept.
   let settled: SettleResult | null = null
-  // What the chronicle tells of the cells (cells.ts): each one's landmass
-  // and area, the landmasses' areas, and their rank by it (1 the largest),
-  // which names them.
+  // What the chronicle tells of the cells (casas-incubator/habitat.rs): each
+  // one's landmass and area, the landmasses' areas, and their rank by it (1 the
+  // largest), which names them.
   let cellFacts: { landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; rank: Int32Array; iceKm: Float32Array; seaDepthM: Float32Array; land: Uint8Array } | null = null
   // The composite last uploaded (showCharts), and the charts' version: a
   // new world's charts are a new composite.
@@ -767,17 +769,17 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // before people came; where people live by then, under their pressure by
   // the lifeway and the density of that time (settleShared.ts); a big game
   // gone from a cell of a landmass it dies out on once its time came there
-  // (settle.ts, extinctAt). Made per
+  // (casas-incubator/simulation.rs, the extinctions). Made per
   // animal for the time and kept for it.
   const animalsAtTime = new Map<string, { time: number; codes: Uint8Array; reached: number }>()
   function animalAtTime(animal: AnimalLayer): { codes: Uint8Array; reached: number } {
     if (!settled || !people || !historyShown()) return animal
     const kept = animalsAtTime.get(animal.id)
     if (kept && kept.time === peopleTime) return kept
-    // THE HISTORY'S GAME (simulation.ts): with a simulated history the
-    // animals are its state at the time shown — the big game by its
-    // species' share, the hunted ones by the small game's, the rest as the
-    // fauna placed them; a species gone from a landmass by then, gone.
+    // THE HISTORY'S GAME (casas-incubator/simulation.rs): with a simulated
+    // history the animals are its state at the time shown — the big game by
+    // its species' share, the hunted ones by the small game's, the rest as
+    // the fauna placed them; a species gone from a landmass by then, gone.
     // The shares mixed between the kept states before and after the time
     // (frameAfter), as the people (2026-10-26).
     const frame = frameNow()
@@ -883,10 +885,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     settledAtTime = { time: peopleTime, lifeway, shares, density, cleared, villages: Int32Array.from(villages), links: Float32Array.from(links) }
     return settledAtTime
   }
-  // THE DOMESTICATES AT THE TIME SHOWN (2026-10-26): per crop and herd
-  // animal, the cells where people sow or keep it by then — where its wave
-  // came by then (settle.ts, the domesticates; one a centre that tamed it).
-  // Made for the time and kept for it.
+  // THE DOMESTICATES AT THE TIME SHOWN (2026-10-26): per crop and herd animal,
+  // the cells where people sow or keep it by then — where its wave came by then
+  // (casas-incubator/simulation.rs, the domesticates; one a centre that tamed
+  // it). Made for the time and kept for it.
   let keptAtTime: { time: number; crops: Map<string, Uint8Array>; herds: Map<string, Uint8Array> } | null = null
   function keptNow(): { crops: Map<string, Uint8Array>; herds: Map<string, Uint8Array> } | null {
     if (!settled || !historyShown()) return null
@@ -1431,9 +1433,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // dropped.
   const progressPill = createProgressPill(root)
   const incubator = createIncubatorClient()
-  // The cells of the world shown (cells.ts): the texel each shows of the
-  // overlay, their centres; null before they are made or without level
-  // 1's land fields.
+  // The cells of the world shown (casas-incubator/habitat.rs): the texel each
+  // shows of the overlay, their centres; null before they are made or without
+  // level 1's land fields.
   let cellsInput: Extract<IncubatorRequest, { type: 'cells' }> | null = null
   // A step's work in the worker under the pill; the world it was asked for
   // still shown, or nothing.
@@ -1850,9 +1852,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       probe: () => [],
     },
     {
-      // THE ICE AND THE SEA at the time shown (climateHistory.ts): the ice
-      // grown past today's glaciers, white; the shelf the low sea lays dry,
-      // sand. As the history's simulation has them.
+      // THE ICE AND THE SEA at the time shown
+      // (casas-incubator/climate_history.rs): the ice grown past today's
+      // glaciers, white; the shelf the low sea lays dry, sand. As the history's
+      // simulation has them.
       on: () => flowOn['iceAge'] && cellFacts !== null && iceHistory !== null,
       paint: (o) => {
         if (!cellFacts || !iceHistory) return
@@ -2026,9 +2029,9 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The geology and the view its marks were made for.
   let geologyMarked: { geology: Geology | null; view: WorldView } | null = null
   let namesMarked: { geology: Geology | null; view: WorldView } | null = null
-  // The crossings drawn: those the chronicle tells (EVENT_LEAST_KM2), each
-  // its way over the open water (people.ts, crossingWays) and when they
-  // landed; and the people and the view their pictures were made for.
+  // The crossings drawn: those the chronicle tells (EVENT_LEAST_KM2), each its
+  // way over the open water (casas-incubator/simulation.rs, crossing_ways) and
+  // when they landed; and the people and the view their pictures were made for.
   let crossingWays: { people: PeopleResult; view: WorldView; ways: { path: number[]; time: number }[] } | null = null
   function crossingsOf(p: PeopleResult, log: readonly LogEvent[]): { path: number[]; time: number }[] {
     const ways: { path: number[]; time: number }[] = []

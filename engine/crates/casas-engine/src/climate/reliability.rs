@@ -1,8 +1,7 @@
-//! `climate/reliability.ts`: the rain's year-to-year spread and an
-//! ENSO-like see-saw of the equatorial basins, derived from the
-//! refinement's year. The TypeScript port
-//! (`client/src/generator/climate/reliability.ts`, git history) explains
-//! both.
+//! The rain's year-to-year spread and an ENSO-like see-saw of the
+//! equatorial basins, derived from the refinement's year. The TypeScript
+//! port (`client/src/generator/climate/reliability.ts`, git history)
+//! explains both.
 
 use crate::core::det_math::{det_exp, det_hypot, sq};
 use crate::core::js;

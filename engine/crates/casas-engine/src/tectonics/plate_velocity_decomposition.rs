@@ -1,5 +1,5 @@
-//! `tectonics/plateVelocityDecomposition.ts`: the relative plate velocity at
-//! a boundary point split into its normal and tangential parts.
+//! The relative plate velocity at a boundary point split into its normal and
+//! tangential parts.
 
 use crate::core::domain::Domain;
 

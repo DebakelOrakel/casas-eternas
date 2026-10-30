@@ -268,11 +268,11 @@ export interface WorkerRestoreWorldMessage {
   // the trajectory it was saved on.
   lattice?: { accumulated: ArrayBuffer; lockedEpochs: ArrayBuffer; lastClassCode: ArrayBuffer }
 }
-// Make the world held again from its runs (pipeline/replayRuns.ts), in
-// place of the one restored: a world loaded from a save made by other code,
-// made again with this code and the same values. The runs are the screen's
-// parameters, as it sends its own; progress arrives as replayProgress, the
-// end as replayDone and then the render.
+// Make the world held again from its runs (the engine's
+// pipeline/replay_runs.rs), in place of the one restored: a world loaded from a
+// save made by other code, made again with this code and the same values. The
+// runs are the screen's parameters, as it sends its own; progress arrives as
+// replayProgress, the end as replayDone and then the render.
 export interface WorkerReplayRunsMessage {
   type: 'replayRuns'
   plan: ReplayPlan
@@ -319,7 +319,7 @@ export interface WorkerGenesisInitMessage {
   // DEFAULT_INITIAL_SMOOTHING (mantle/mantle_field.rs).
   mantleDiffusion?: number
   // The land share the Archean makes crust toward, a fraction of the
-  // world's area (ArcheanParams.landShare, archean/archeanLand.ts).
+  // world's area (ArcheanParams.landShare, the engine's archean/archean_land.rs).
   landShare?: number
 }
 // The Archean's levers as they stand when a run starts (2026-09-29): a run
@@ -544,7 +544,7 @@ export interface WorkerClimateDataMessage {
   // climate/seasonality.ts.
   seasonalAmplitude: ArrayBuffer
   // Monsoon / precipitation-seasonality index (Float32, 0..1; OCEAN_PRECIP on ocean).
-  // See climate/monsoon.ts.
+  // See the engine's climate/monsoon.rs.
   monsoonIndex: ArrayBuffer
   // The Köppen–Geiger class per pixel of the world raster (Uint8, full-res
   // like `biomes`, climate/koppen.ts ids, 0 on the sea), from the annual
@@ -628,7 +628,8 @@ export interface WorkerClimateRefineProgressMessage {
 }
 
 // Rivers/lakes result for the hydrology overlay. Phase 1: river segments only
-// (lakes + riparian biome feedback come in later phases). See generator/hydrology.ts.
+// (lakes + riparian biome feedback come in later phases). See
+// surface/hydrology.ts.
 export interface WorkerHydrologyDataMessage {
   type: 'hydrologyData'
   // Connected river polylines for the scene-space ribbon overlay: `riverPoints`
@@ -686,11 +687,11 @@ export interface WorkerHydrologyDataMessage {
   // Re-route only; empty / null mean "unchanged".
   coastType: ArrayBuffer
   coast: { reaches: CoastReach[]; nodes: ArrayBuffer } | null
-  // The erosion pass's deposits as features with provenance
-  // (surface/sedimentBasins.ts). Re-route only; null means "unchanged".
+  // The erosion pass's deposits as features with provenance (the engine's
+  // surface/sediment_basins.rs). Re-route only; null means "unchanged".
   sedimentBasins: SedimentBasin[] | null
-  // Ice thickness in metres (Float32, full-res, surface/glacial.ts on the
-  // mesh, rasterised); the level/surface fields above already carry the
+  // Ice thickness in metres (Float32, full-res, the engine's surface/glacial.rs
+  // on the mesh, rasterised); the level/surface fields above already carry the
   // glaciers for the drawing. Re-route only; empty means "unchanged". (The
   // water table is the save's, per node — WorkerWorldDataMessage.land; the
   // springs ride in the river graph's json.)

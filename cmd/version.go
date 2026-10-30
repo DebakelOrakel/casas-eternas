@@ -40,15 +40,15 @@ const bakerVersionTimeout = 5 * time.Second
 
 // VersionCmd reports what this binary IS.
 //
-// Five lines, and the third and fourth are the reason it exists. The build string
-// and the Go runtime are the ordinary things a version command says. The
+// Five lines, and the third and fourth are the reason it exists. The build
+// string and the Go runtime are the ordinary things a version command says. The
 // PIPELINE version is the one this project actually needs: it is the key
 // artifacts are addressed by, a baker built from a different commit than the
 // client writes bytes under a key nobody looks for, and the resulting failure
 // is silent — bakes succeed, artifacts appear, and the map never changes. That
-// has happened once already (see client/scripts/bake.ts). This makes an
-// image's pipeline something you read off it in a second rather than infer
-// from a cache that never hits.
+// has happened once already (see client/scripts/bake.ts in the git history).
+// This makes an image's pipeline something you read off it in a second rather
+// than infer from a cache that never hits.
 //
 // The INCUBATOR version is the same kind of key for the incubator's
 // histories (H1, docs/decisions/incubator-history-engine.md): their tasks

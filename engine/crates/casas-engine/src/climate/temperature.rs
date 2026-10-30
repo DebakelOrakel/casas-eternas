@@ -1,6 +1,6 @@
-//! `climate/temperature.ts`: the base air temperature per cell of the
-//! climate's field mesh — the latitude's profile (area-neutral contrast and
-//! tilt), the lapse, the mass elevation effect on land.
+//! The base air temperature per cell of the climate's field mesh — the
+//! latitude's profile (area-neutral contrast and tilt), the lapse, the mass
+//! elevation effect on land.
 //!
 //! The pivot is AREA-NEUTRAL (DEC-0036 phase 8b-2): a contrast or a tilt
 //! changes the gradient and keeps the world's area-weighted mean. It was

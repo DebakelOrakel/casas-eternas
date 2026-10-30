@@ -1,8 +1,7 @@
-//! `climate/precipitation.ts`: annual precipitation per land cell of the
-//! climate's field mesh — moisture evaporated over the sea, advected
-//! downwind, rained out (more on windward slopes), shaped by the zonal
-//! bands; with the refinement's sea, its anomaly and its ocean highs when
-//! given. The TypeScript port
+//! Annual precipitation per land cell of the climate's field mesh —
+//! moisture evaporated over the sea, advected downwind, rained out (more
+//! on windward slopes), shaped by the zonal bands; with the refinement's
+//! sea, its anomaly and its ocean highs when given. The TypeScript port
 //! (`client/src/generator/climate/precipitation.ts`, git history) explains
 //! each term.
 

@@ -1,7 +1,7 @@
-//! `climate/biomes.ts`: the biome set, the biome of a Köppen class, and the
-//! Köppen class and biome of every land point of a climate sampled there.
-//! Ids are stable: saves store them. Not ported, because they are
-//! presentation: the colours, the label keys and the legend.
+//! The biome set, the biome of a Köppen class, and the Köppen class and
+//! biome of every land point of a climate sampled there. Ids are stable:
+//! saves store them. Not ported, because they are presentation: the
+//! colours, the label keys and the legend.
 
 use crate::core::domain::Domain;
 use crate::core::js;

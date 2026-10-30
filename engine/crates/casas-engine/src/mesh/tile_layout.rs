@@ -1,6 +1,6 @@
-//! `mesh/tileLayout.ts`: the tiles by the world's shape — the torus's
-//! square tiles (mesh_tile.rs) or the sphere's cube tiles
-//! (mesh_tile_cube.rs), chosen by the world's Domain.
+//! The tiles by the world's shape — the torus's square tiles
+//! (mesh_tile.rs) or the sphere's cube tiles (mesh_tile_cube.rs),
+//! chosen by the world's Domain.
 
 use crate::core::domain::Domain;
 

@@ -1,6 +1,5 @@
-//! `tectonics/tectonicsTuneParams.ts`: the tectonics' tuning in one object.
-//! The reasoning and the measurements behind each value are in the
-//! TypeScript port
+//! The tectonics' tuning in one object. The reasoning and the measurements
+//! behind each value are in the TypeScript port
 //! (`client/src/generator/tectonics/tectonicsTuneParams.ts`, git history);
 //! this port keeps the values and their order.
 

@@ -1,7 +1,7 @@
-//! `climate/weather.ts` with the defaults of `climateInputParams.ts`: the
-//! meteorology of one terrain — temperature, wind, the currents and the sea
-//! surface they make, the seasonality and the seasonal rain — per cell of
-//! the climate's field mesh.
+//! The meteorology of one terrain — temperature, wind, the currents and
+//! the sea surface they make, the seasonality and the seasonal rain — per
+//! cell of the climate's field mesh, with the defaults of
+//! `climateInputParams.ts`.
 
 use crate::fields::field_mesh::SharedFieldMesh;
 use crate::planet::planet_forcing::{DEFAULT_PLANET_FORCING, PlanetForcing, hadley_edge};

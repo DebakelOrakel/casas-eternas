@@ -1,7 +1,7 @@
-//! `elevation/elevationScale.ts`: what a height means. Elevation is signed
-//! with 0 at sea level and 1.0 = ELEVATION_METERS; the reference heights,
-//! the continental margin's profile and the shoreline's raft field. The
-//! reasoning and the measurements are in the TypeScript file.
+//! What a height means. Elevation is signed with 0 at sea level and 1.0 =
+//! ELEVATION_METERS; the reference heights, the continental margin's
+//! profile and the shoreline's raft field. The reasoning and the
+//! measurements are in `client/src/generator/elevation/elevationScale.ts`.
 
 use std::sync::OnceLock;
 

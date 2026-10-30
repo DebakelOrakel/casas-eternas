@@ -1,7 +1,7 @@
-//! `mesh/meshRaster.ts`: node fields sampled on a regular grid, linearly
-//! within each triangle (cell px holds the field at world x = px), a field
-//! one part of the nodes holds rasterised without a blend with the other
-//! part, and two coarse rasters read at the nodes. The TypeScript file
+//! Node fields sampled on a regular grid, linearly within each triangle
+//! (cell px holds the field at world x = px), a field one part of the nodes
+//! holds rasterised without a blend with the other part, and two coarse
+//! rasters read at the nodes. `client/src/generator/mesh/meshRaster.ts`
 //! explains the convention.
 
 use crate::core::domain::DomainGrid;

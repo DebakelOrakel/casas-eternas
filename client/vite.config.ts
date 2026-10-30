@@ -97,7 +97,8 @@ const handbook = (): Plugin => {
 // `make engine` writes it. It is outside the client; the dev server serves
 // it all the same, as a module the client imports.
 const ENGINE_WASM = fileURLToPath(new URL('../engine/dist/wasm', import.meta.url))
-// And its constants for the pipeline versions (world/engineConstants.ts).
+// And its constants for the pipeline versions
+// (generator/pipeline/engineConstants.ts).
 const ENGINE_CONSTANTS = fileURLToPath(new URL('../engine/dist/constants.json', import.meta.url))
 // The incubator (docs/decisions/incubator-history-engine.md): its
 // crate's data, the catalogs the client reads too.

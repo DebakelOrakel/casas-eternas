@@ -1,8 +1,8 @@
-//! `mesh/meshTileCube.ts`: a fine level's tile on the sphere — the cube
-//! atlas's tile as a TileSite, its frame the tile's gnomonic plane, its
-//! edge row from each side's canonical end, its placement a jittered grid
-//! in face angles; the patchwork parent on the sphere. The TypeScript file
-//! explains each rule.
+//! A fine level's tile on the sphere — the cube atlas's tile as a TileSite,
+//! its frame the tile's gnomonic plane, its edge row from each side's
+//! canonical end, its placement a jittered grid in face angles; the
+//! patchwork parent on the sphere.
+//! `client/src/generator/mesh/meshTileCube.ts` explains each rule.
 
 use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::{PI, SQRT_2};

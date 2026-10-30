@@ -1,8 +1,8 @@
 //! The module test of the raft field and the mantle against the TypeScript
-//! engine's `crust/raftField.ts` and `mantle/mantleField.ts`: the same
-//! scenarios give the same bits (docs/decisions/rust-engine.md, fork 5).
-//! The fixture is written by `engine/scripts/mantleFixture.mjs`; the
-//! scenarios below are that script's, step for step.
+//! engine's `crust/raftField.ts` (git history) and `mantle/mantleField.ts`:
+//! the same scenarios give the same bits (docs/decisions/rust-engine.md,
+//! fork 5). The fixture is written by `engine/scripts/mantleFixture.mjs`;
+//! the scenarios below are that script's, step for step.
 
 #![allow(clippy::needless_range_loop)]
 

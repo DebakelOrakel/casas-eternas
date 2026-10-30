@@ -1,6 +1,6 @@
-//! `crust/raftField.ts`: how continental is the crust at a point. A raft is
-//! a set of soft metaball blobs; the summed field and its threshold band,
-//! the bucket index over the blobs, and the coarse fields made from them
+//! How continental is the crust at a point. A raft is a set of soft
+//! metaball blobs; the summed field and its threshold band, the bucket
+//! index over the blobs, and the coarse fields made from them
 //! (docs/decisions/continental-crust-rafts.md). The TypeScript file went on
 //! 2026-10-30; the display reads the craton age and the stabilised share
 //! from the engine's render.

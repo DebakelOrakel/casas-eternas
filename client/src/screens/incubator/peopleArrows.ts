@@ -4,7 +4,7 @@ import type { PeopleResult } from './cellsShared'
 // drawn as its rough directions (IncubatorScreen's people step).
 //
 // THE TREE (2026-10-26, after the migration arrows the generator had):
-// the routes' tree (people.ts, `from`
+// the routes' tree (cellsShared.ts PeopleResult, `from`
 // and `flow`) cut at ROUTE_SHARE of all the land reached (0.005 at
 // first, too dense with the wider spread; 0.03 while a history's tree, as
 // settled, reached the origin from a seventh of its land), split into

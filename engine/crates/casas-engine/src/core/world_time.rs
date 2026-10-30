@@ -1,5 +1,5 @@
-//! `core/worldTime.ts`: how long an epoch represents, per era, and the
-//! continuous epoch axis every crust-age stamp lies on.
+//! How long an epoch represents, per era, and the continuous epoch
+//! axis every crust-age stamp lies on.
 
 pub const ARCHEAN_MA_PER_EPOCH: f64 = 5.0;
 pub const TECTONIC_MA_PER_EPOCH: f64 = 1.0;

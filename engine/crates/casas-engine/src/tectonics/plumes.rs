@@ -1,7 +1,7 @@
-//! `tectonics/plumes.ts`: mantle plumes as persistent upwellings of the
-//! mantle field, which creep toward the upwelling they sit on, retire when
-//! it dies and appear where a strong one has none. The reasoning is in the
-//! TypeScript file.
+//! Mantle plumes as persistent upwellings of the mantle field, which creep
+//! toward the upwelling they sit on, retire when it dies and appear where a
+//! strong one has none. The reasoning is in
+//! `client/src/generator/tectonics/plumes.ts`.
 
 use crate::core::det_math::{det_hypot, sq};
 use crate::core::domain::Domain;

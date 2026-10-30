@@ -1,4 +1,4 @@
-//! `crust/raftNames.ts`: naming continents, which are rafts.
+//! Naming continents, which are rafts.
 
 use super::continent_names::CONTINENT_NAME_POOL;
 use super::raft_types::Raft;

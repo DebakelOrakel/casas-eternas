@@ -5,17 +5,17 @@ import type { KoppenCode } from '../../generator/climate/koppen'
 // (casas-incubator habitat.rs trapezoid).
 export type Trapezoid = readonly [number, number, number, number]
 
-// THE INCUBATOR'S PLANTS (2026-10-25, a trial): what people eat or use of
-// the wild plants just before the bronze age, each a NICHE over the fields
-// the save holds (habitat.ts). Archetypes, named after the real species
-// they stand for; their names are `plant.<id>` (i18n/locales/*/plant.json).
-// Only food and fibre for people: what the animals eat is the forage of
-// fauna.ts.
+// THE INCUBATOR'S PLANTS (2026-10-25, a trial): what people eat or use of the
+// wild plants just before the bronze age, each a NICHE over the fields the
+// save holds (casas-incubator/habitat.rs). Archetypes, named after the real
+// species they stand for; their names are `plant.<id>`
+// (i18n/locales/*/plant.json). Only food and fibre for people: what the
+// animals eat is the forage of casas-incubator/flora.rs.
 //
 // The aim: every land cell where gathering can feed people has a source of
 // starch, of fat or protein and of fruit within the range of a plant
-// (flora.ts measures it). The tundra and the desert keep their gaps:
-// there people live from animals, or at an oasis.
+// (casas-incubator/flora.rs measures it). The tundra and the desert keep
+// their gaps: there people live from animals, or at an oasis.
 //
 // A niche is the plant's weight for the cell's Köppen–Geiger class (the
 // generator derives the classes from the twelve months, and the biomes

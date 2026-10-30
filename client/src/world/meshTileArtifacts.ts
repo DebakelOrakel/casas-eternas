@@ -59,9 +59,10 @@ function tilePipelineConstants(level: number, rounds: number): Record<string, nu
     ...MESH_BAKE_CONSTANTS,
     parentBudget: engineLevelBudget(level - 1),
     rounds,
-    // The erosion's routing cadence in a tile: fresh every routingEvery
-    // rounds, waited for (meshTileBake.ts). Before 2026-10-04 the pool's
-    // overlapped cadence, which kept a tile's starting routing throughout.
+    // The erosion's routing cadence in a tile: fresh every routingEvery rounds,
+    // waited for (the engine's pipeline/mesh_tile_bake.rs). Before 2026-10-04
+    // the pool's overlapped cadence, which kept a tile's starting routing
+    // throughout.
     tileRoutingSynchronous: 1,
   }
 }

@@ -1,8 +1,8 @@
-//! `mesh/meshSampler.ts`: sampling the mesh at a point — a hint grid of
-//! triangles (a second one over a dense region), the triangulation's walk
-//! from the hint, heights and fields linear in the triangle, the nearest
-//! corner, and vertex normals in metres. The TypeScript file explains the
-//! frames the normals are carried in.
+//! Sampling the mesh at a point — a hint grid of triangles (a second one
+//! over a dense region), the triangulation's walk from the hint, heights
+//! and fields linear in the triangle, the nearest corner, and vertex
+//! normals in metres. `client/src/generator/mesh/meshSampler.ts` explains
+//! the frames the normals are carried in.
 
 use crate::core::det_math::det_hypot3;
 use crate::core::js;

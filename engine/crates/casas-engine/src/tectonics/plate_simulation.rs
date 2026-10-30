@@ -1,6 +1,5 @@
-//! `tectonics/plateSimulation.ts`: persisting a world and running an epoch
-//! of it. The epoch's six phases are in `epoch/`; `step_epoch` is their
-//! order.
+//! Persisting a world and running an epoch of it. The epoch's six phases
+//! are in `epoch/`; `step_epoch` is their order.
 
 use crate::core::domain::Domain;
 use crate::core::js::{to_int32, to_uint32};

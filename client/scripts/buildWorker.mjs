@@ -34,7 +34,8 @@ const bundle = (entry, out, extra = []) => {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 bundle('scripts/jobWorker.ts', outfile)
-// The engine's constants for the pipeline versions (world/engineConstants.ts).
+// The engine's constants for the pipeline versions
+// (generator/pipeline/engineConstants.ts).
 bundle('scripts/workerPipeline.ts', join(outdir, 'pipeline.mjs'), ['--alias:casas-engine-constants=../engine/dist/constants.json'])
 bundle('scripts/incubatorPipeline.ts', join(outdir, 'incubator.mjs'), ['--alias:casas-engine-constants=../engine/dist/constants.json', '--alias:casas-incubator-wasm=../engine/dist/incubator'])
 for (const name of ['casas-engine.node', 'casas-incubator.node']) {

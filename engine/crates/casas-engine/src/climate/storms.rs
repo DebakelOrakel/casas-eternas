@@ -1,8 +1,7 @@
-//! `climate/storms.ts`: cyclones, tornadoes, blizzards, dust and thunder of
-//! the refinement's months — derived fields, each 0..1 per cell of the
-//! climate's field mesh; the tracks step along great circles. The
-//! TypeScript port (`client/src/generator/climate/storms.ts`, git history)
-//! explains each.
+//! Cyclones, tornadoes, blizzards, dust and thunder of the refinement's
+//! months — derived fields, each 0..1 per cell of the climate's field mesh;
+//! the tracks step along great circles. The TypeScript port
+//! (`client/src/generator/climate/storms.ts`, git history) explains each.
 
 use crate::core::det_math::det_hypot;
 use crate::core::js;

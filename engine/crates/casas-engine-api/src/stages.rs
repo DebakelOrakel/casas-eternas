@@ -1,5 +1,5 @@
-//! The world stages through the boundary (`pipeline/worldStages.ts` as
-//! the runtime's handlers call it): what a stage keeps between calls is
+//! The world stages through the boundary (`pipeline/world_stages` as the
+//! runtime's handlers call it): what a stage keeps between calls is
 //! the world's, as the runtime's module state is the worker's, and each
 //! call gives the body of the message the runtime posts.
 

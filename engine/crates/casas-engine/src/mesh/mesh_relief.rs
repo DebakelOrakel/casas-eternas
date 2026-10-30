@@ -1,7 +1,7 @@
-//! `mesh/meshRelief.ts`: slope and curvature of a height field at a node,
-//! from its star. Slope is the steepest descent over the neighbours (rise
-//! over run); curvature the mean second difference along the incident
-//! edges, 2·Σ(z_j − z_i)/ℓ² over the degree.
+//! Slope and curvature of a height field at a node, from its star. Slope
+//! is the steepest descent over the neighbours (rise over run); curvature
+//! the mean second difference along the incident edges, 2·Σ(z_j − z_i)/ℓ²
+//! over the degree.
 
 use super::periodic_delaunay::PeriodicTriangulation;
 

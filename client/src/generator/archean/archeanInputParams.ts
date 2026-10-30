@@ -4,10 +4,10 @@ import type { InputParam } from '../core/inputParams'
 //
 // Neither is used raw. `mantleVigour` becomes the per-epoch mantle diffusion
 // (world/runParams.mantleDiffusionFromVigour) and `landShare` the Archean's
-// land target, a fraction (world/runParams.landShareFromControl; the
-// controller is archean/archeanLand.ts). The mappings stay functions there
-// rather than a `toModel` here — but the RANGE is a property of the control
-// and belongs in this file.
+// land target, a fraction (world/runParams.landShareFromControl; the controller
+// is the engine's archean/archean_land.rs). The mappings stay functions there
+// rather than a `toModel` here — but the RANGE is a property of the control and
+// belongs in this file.
 //
 // `landShare` replaced the water control (a sea-level offset of ±600 m) in
 // DEC-0036 phase 8b-1: the water moved the land by ±1.5 points, while the

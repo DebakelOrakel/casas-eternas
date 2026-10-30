@@ -43,7 +43,7 @@ const CopiedFromAnnotation = "casas-eternas/copied-from"
 
 // readYAMLValue reads one dotted path out of world.yaml.
 //
-// A deliberate mirror of the client's worldSave/recipeYaml.ts, down to the
+// A deliberate mirror of the client's world/save/recipeYaml.ts, down to the
 // indentation tracking, rather than a YAML dependency: the file is written by
 // our own client in a known shape, and the two readers agreeing matters more
 // than generality. Matching the LEAF name anywhere would be the tempting

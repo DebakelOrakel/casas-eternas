@@ -1,8 +1,7 @@
-//! `screens/incubator/historyLogShared.ts`: the history's log, each event as
-//! the simulation writes it; and the JSON the packed history's header holds,
-//! written as JavaScript's `JSON.stringify` writes it — the keys in their
-//! order, the numbers as JavaScript prints them — so the bytes are the
-//! client's.
+//! The history's log, each event as the simulation writes it; and the JSON
+//! the packed history's header holds, written as JavaScript's
+//! `JSON.stringify` writes it — the keys in their order, the numbers as
+//! JavaScript prints them — so the bytes are the client's.
 
 /// The people's marks the log notes.
 pub const POPULATION_MARKS: [f64; 3] = [100_000.0, 1_000_000.0, 10_000_000.0];

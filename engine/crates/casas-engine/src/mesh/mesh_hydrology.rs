@@ -1,9 +1,8 @@
-//! `mesh/meshHydrology.ts`: the mesh as the flow substrate, its nodes'
-//! areas, the routing of a terrain without eroding it, and the water
-//! fields on a raster from the mesh's lakes. The TypeScript file explains
-//! why the raster takes each cell's nearest node's body. Not ported,
-//! because it changes the time and nothing else: the reuse of an engine
-//! index.
+//! The mesh as the flow substrate, its nodes' areas, the routing of a
+//! terrain without eroding it, and the water fields on a raster from the
+//! mesh's lakes. `client/src/generator/mesh/meshHydrology.ts` explains why
+//! the raster takes each cell's nearest node's body. Not ported, because it
+//! changes the time and nothing else: the reuse of an engine index.
 
 use crate::core::domain::Domain;
 use crate::elevation::elevation_scale::{SEA_LEVEL, meters_to_elevation};

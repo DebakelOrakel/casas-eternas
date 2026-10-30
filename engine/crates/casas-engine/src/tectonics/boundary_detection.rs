@@ -1,5 +1,5 @@
-//! `tectonics/boundaryDetection.ts`: the lattice points whose two nearest
-//! plate seeds are about equally near.
+//! The lattice points whose two nearest plate seeds are about equally
+//! near.
 
 use crate::core::domain::Domain;
 use crate::core::js;

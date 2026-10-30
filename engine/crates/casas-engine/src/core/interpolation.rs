@@ -1,4 +1,4 @@
-//! `core/interpolation.ts`: the shared easing.
+//! The shared easing.
 
 use super::js;
 

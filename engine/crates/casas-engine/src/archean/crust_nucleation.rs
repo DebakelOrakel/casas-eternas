@@ -1,5 +1,5 @@
-//! `archean/crustNucleation.ts`: where new continental crust appears in
-//! the Archean: over hot, persistent upwellings that are still ocean.
+//! Where new continental crust appears in the Archean: over hot,
+//! persistent upwellings that are still ocean.
 
 use crate::core::domain::Domain;
 use crate::crust::raft_field::raft_field;

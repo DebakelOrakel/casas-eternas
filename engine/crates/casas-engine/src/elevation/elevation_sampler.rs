@@ -1,8 +1,8 @@
-//! `elevation/elevationSampler.ts`: the synthesis at a point — the
-//! pre-erosion terrain as a function of (x, y), the form the adaptive mesh
-//! is built from: the raft baseline with the warp, the dynamic topography,
-//! the deck's isostasy when given, and the elevation over the feature
-//! buckets with the ridged and the fine noise at the warped point.
+//! The synthesis at a point — the pre-erosion terrain as a function of (x,
+//! y), the form the adaptive mesh is built from: the raft baseline with
+//! the warp, the dynamic topography, the deck's isostasy when given, and
+//! the elevation over the feature buckets with the ridged and the fine
+//! noise at the warped point.
 //!
 //! The ocean age and the deflection are read on the world's shared field
 //! mesh, the dynamic topography on the mantle's; both sample through the

@@ -1,6 +1,6 @@
-//! `climate/wind.ts`: the prevailing surface wind as the three-cell
-//! pattern per hemisphere, per cell of the climate's field mesh, east and
-//! south in each cell's frame (1 = 8 m/s).
+//! The prevailing surface wind as the three-cell pattern per hemisphere,
+//! per cell of the climate's field mesh, east and south in each cell's
+//! frame (1 = 8 m/s).
 
 use crate::core::det_math::det_sin;
 use crate::fields::field_mesh::FieldMesh;

@@ -1,10 +1,9 @@
-//! `tectonics/trench.ts`: THE TRENCH (DEC-0036 phase 8e), the floor the slab
-//! holds down where an oceanic plate subducts, as a term under the
-//! tectonic baseline: on the boundary of the nearest two plates where they
-//! converge as a subduction or an island arc, its relief a multiple of the
-//! floor's own subsidence, fading to nothing at the slope's foot. The
-//! reasoning is in the TypeScript port
-//! (`client/src/generator/tectonics/trench.ts`, git history).
+//! THE TRENCH (DEC-0036 phase 8e), the floor the slab holds down where an
+//! oceanic plate subducts, as a term under the tectonic baseline: on the
+//! boundary of the nearest two plates where they converge as a subduction or
+//! an island arc, its relief a multiple of the floor's own subsidence,
+//! fading to nothing at the slope's foot. The reasoning is in the TypeScript
+//! port (`client/src/generator/tectonics/trench.ts`, git history).
 //!
 //! The TypeScript function reads the plate simulation; this one takes the
 //! parts of it the term is a function of.

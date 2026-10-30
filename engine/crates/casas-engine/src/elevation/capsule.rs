@@ -1,5 +1,5 @@
-//! `elevation/capsule.ts`: THE CAPSULE FALLOFF, the one footprint a terrain
-//! feature has: an oriented segment, a smoothstep across it, rounded caps.
+//! THE CAPSULE FALLOFF, the one footprint a terrain feature has: an
+//! oriented segment, a smoothstep across it, rounded caps.
 
 pub fn capsule_weight(
     off_x: f64,

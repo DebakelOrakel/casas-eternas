@@ -1,8 +1,8 @@
-//! `surface/riverGraph.ts`: the feature graph — rivers as reaches between
-//! nodes over the flow substrate, their Strahler order and regime, the
-//! ribbons the map draws from them, and the graph's invariants. The
-//! TypeScript file explains each rule. Not ported: the graph's serialised
-//! form, which is the world layer's.
+//! The feature graph — rivers as reaches between nodes over the flow
+//! substrate, their Strahler order and regime, the ribbons the map draws
+//! from them, and the graph's invariants.
+//! `client/src/generator/surface/riverGraph.ts` explains each rule. Not
+//! ported: the graph's serialised form, which is the world layer's.
 
 use crate::core::det_math::det_hypot;
 use crate::core::domain::Domain;

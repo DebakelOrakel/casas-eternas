@@ -1,9 +1,8 @@
-//! `climate/refinement.ts`: the climate step's refinement — the climate the
-//! history left computed again with more physics on the final geography:
-//! the year's cycle, the months' pressure and wind, the ocean with its
-//! highs, upwelling, salt and overturning, the months' rain, fog and föhn,
-//! the rain's reliability and the storms. One call, in its load-bearing
-//! order; the TypeScript port
+//! The climate step's refinement — the climate the history left computed
+//! again with more physics on the final geography: the year's cycle, the
+//! months' pressure and wind, the ocean with its highs, upwelling, salt and
+//! overturning, the months' rain, fog and föhn, the rain's reliability and
+//! the storms. One call, in its load-bearing order; the TypeScript port
 //! (`client/src/generator/climate/refinement.ts`, git history) explains
 //! each step. Not ported: the progress callback.
 

@@ -1,7 +1,7 @@
-//! `elevation/ridgedNoise.ts`: the periodic ridged multifractal that
-//! textures uplifted terrain, the plains' fine detail noise, and their
-//! samplers on the globe. The octave tables and the measured means are
-//! explained in the TypeScript file.
+//! The periodic ridged multifractal that textures uplifted terrain, the
+//! plains' fine detail noise, and their samplers on the globe. The octave
+//! tables and the measured means are explained in
+//! `client/src/generator/elevation/ridgedNoise.ts`.
 //!
 //! The lattice hash sums its products in doubles before the cut to 32
 //! bits, as JavaScript does; `seed * 2246822519` is past 2^53 and rounds.

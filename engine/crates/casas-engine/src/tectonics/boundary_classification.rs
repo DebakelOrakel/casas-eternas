@@ -1,5 +1,4 @@
-//! `tectonics/boundaryClassification.ts`: a boundary point's character from
-//! the plate types and the motion class.
+//! A boundary point's character from the plate types and the motion class.
 
 use super::plate_types::PlateType;
 use super::plate_velocity_decomposition::BoundaryMotionClass;

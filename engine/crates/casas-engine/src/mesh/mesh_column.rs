@@ -1,6 +1,6 @@
-//! `mesh/meshColumn.ts`: the sediment column per node (phase 5.2) — the
-//! deposits as epoch-indexed layers over the bedrock, six extensive values
-//! a layer, cut from the top. The TypeScript port
+//! The sediment column per node (phase 5.2) — the deposits as
+//! epoch-indexed layers over the bedrock, six extensive values a layer,
+//! cut from the top. The TypeScript port
 //! (`client/src/generator/mesh/meshColumn.ts`, git history) explains the
 //! layout.
 

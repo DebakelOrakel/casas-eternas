@@ -1,6 +1,6 @@
-//! `climate/phenomena.ts`: coastal fog and föhn from the refinement's
-//! months, winds and sea, each a share of the year per land cell, and each
-//! changing the months it happens in.
+//! Coastal fog and föhn from the refinement's months, winds and sea, each
+//! a share of the year per land cell, and each changing the months it
+//! happens in.
 
 use crate::core::det_math::det_hypot;
 use crate::core::js;

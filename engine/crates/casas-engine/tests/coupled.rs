@@ -1,11 +1,11 @@
 //! The module test of the coupled epoch (pipeline/coupled_epoch) against
-//! the TypeScript engine's `pipeline/coupledEpoch.ts`: from the synthetic
-//! simulation after 12 tectonic epochs, the terrain from the synthesis and
-//! 4 coupled epochs at the history's settings, on both shapes, bit for bit
-//! (docs/decisions/rust-engine.md, fork 5). The fixture was written by
-//! `engine/scripts/coupledFixture.mjs`, and is recorded from this engine
-//! since DEC-0049 (`fixture`). A failure names the first epoch that
-//! differs.
+//! the TypeScript port (`client/src/generator/pipeline/coupledEpoch.ts`,
+//! git history): from the synthetic simulation after 12 tectonic epochs,
+//! the terrain from the synthesis and 4 coupled epochs at the history's
+//! settings, on both shapes, bit for bit (docs/decisions/rust-engine.md,
+//! fork 5). The fixture was written by `engine/scripts/coupledFixture.mjs`,
+//! and is recorded from this engine since DEC-0049 (`fixture`). A failure
+//! names the first epoch that differs.
 
 use casas_engine::core::domain::Domain;
 use casas_engine::pipeline::coupled_epoch::{

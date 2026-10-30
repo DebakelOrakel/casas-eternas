@@ -1,8 +1,8 @@
-//! `archean/archeanLand.ts`: THE LAND SHARE LEVER (DEC-0036 phase 8b-1).
-//! The Archean makes crust until its land reaches the aim and then only
-//! what holds it; the land measured on the mantle's cells, the baseline
-//! plus the dynamic topography. The measurements are in the TypeScript
-//! file.
+//! THE LAND SHARE LEVER (DEC-0036 phase 8b-1). The Archean makes crust
+//! until its land reaches the aim and then only what holds it; the land
+//! measured on the mantle's cells, the baseline plus the dynamic
+//! topography. The measurements are in the TypeScript port
+//! (`client/src/generator/archean/archeanLand.ts`, git history).
 
 use crate::core::domain::domain_area;
 use crate::core::js;

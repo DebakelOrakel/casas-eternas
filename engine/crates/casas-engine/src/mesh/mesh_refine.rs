@@ -1,7 +1,7 @@
-//! `mesh/meshRefine.ts`: one rung of the ladder — a parent mesh refined to
-//! a finer budget under the same density rule, every parent kept, every
-//! new node given the parent surface's height there plus the level's
-//! synthesis (seed roughness and ridging). The TypeScript port
+//! One rung of the ladder — a parent mesh refined to a finer budget under
+//! the same density rule, every parent kept, every new node given the
+//! parent surface's height there plus the level's synthesis (seed
+//! roughness and ridging). The TypeScript port
 //! (`client/src/generator/mesh/meshRefine.ts`, git history) explains why
 //! the parent surface is sampled from a copy.
 

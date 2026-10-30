@@ -213,8 +213,8 @@ impl Incubator {
         ]
     }
 
-    /// A habitat array by its TypeScript name (habitat.ts), as floats;
-    /// `eco:<id>` for an ecology field.
+    /// A habitat array by its TypeScript name (`areaKm2`, `seaDepthM`), as
+    /// floats; `eco:<id>` for an ecology field.
     pub fn floats(&self, name: &str) -> Result<Vec<f32>, JsError> {
         let h = &self.habitat;
         Ok(match name {

@@ -1,8 +1,8 @@
-//! `mesh/meshTile.ts`: a tile of a fine level — the tile's nodes and
-//! their triangulation with the heights before erosion, as a function of
-//! the parent level, the tile's id and the seed. The seam rule (the edge
-//! line, the clear strip, the jittered row, the placement by position) is
-//! explained in the TypeScript file. The torus's site is here; the
+//! A tile of a fine level — the tile's nodes and their triangulation with
+//! the heights before erosion, as a function of the parent level, the
+//! tile's id and the seed. The seam rule (the edge line, the clear strip,
+//! the jittered row, the placement by position) is explained in
+//! `client/src/generator/mesh/meshTile.ts`. The torus's site is here; the
 //! sphere's is mesh/mesh_tile_cube.rs.
 
 use std::cell::OnceCell;

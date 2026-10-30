@@ -14,17 +14,17 @@ import type { RiverCourse } from './surfaceTypes'
 // catchment is recorded, which is the divide as data: the cells of the
 // world that drain to that mouth.
 //
-// Derived from a FLOW SUBSTRATE (flowSubstrate.ts) — the mesh's (phase 4.3;
-// the raster's until DEC-0036 phase 7b) — deterministically. A reach's
-// `cells` are that substrate's element ids (mesh vertex ids; a graph read
-// back from an older artifact may still be a raster's), and
-// every consumer that needs a place reads `cellX`/`cellY`, the elements'
-// texel positions carried beside them, never the id as a raster index.
-// The river ribbons the generator draws are DERIVED from it
-// (the engine's `river_polylines_from_graph`) rather than traced from the D8 receivers a
-// second time; where the graph agrees with the old tracing the picture is
-// the same, and where the old tracing broke a line at an arbitrary trunk
-// it now follows the main stem.
+// Derived from a FLOW SUBSTRATE (the engine's surface/flow_substrate.rs) — the
+// mesh's (phase 4.3; the raster's until DEC-0036 phase 7b) — deterministically.
+// A reach's `cells` are that substrate's element ids (mesh vertex ids; a graph
+// read back from an older artifact may still be a raster's), and every consumer
+// that needs a place reads `cellX`/`cellY`, the elements' texel positions
+// carried beside them, never the id as a raster index. The river ribbons the
+// generator draws are DERIVED from it (the engine's
+// `river_polylines_from_graph`) rather than traced from the D8 receivers a
+// second time; where the graph agrees with the old tracing the picture is the
+// same, and where the old tracing broke a line at an arbitrary trunk it now
+// follows the main stem.
 //
 // One deliberate carry-over: a river still runs THROUGH a lake as a reach
 // of kind 'lake' from the inlet to the outlet, so the picture keeps the
@@ -80,9 +80,9 @@ export interface RiverReach {
   // Strahler order.
   order: number
   // Flow regime from climate alone (F6; SURFACE_TUNING.regimeAridBelow and
-  // regimeDrySeasonBelow): perennial when the caller had no regime inputs.
-  // The hydrogeology (phase 5a, surface/hydrogeology.ts) re-judges it with
-  // the ground's baseflow and sets the two below.
+  // regimeDrySeasonBelow): perennial when the caller had no regime inputs. The
+  // hydrogeology (phase 5a, the engine's surface/hydrogeology.rs) re-judges it
+  // with the ground's baseflow and sets the two below.
   regime: RiverRegime
   // The dry-season flow the regime was judged on once the hydrogeology ran
   // (quick runoff plus baseflow, the discharge's unit); 0 before.
@@ -107,10 +107,11 @@ export interface RiverGraph {
   cellY: Float32Array
   // The standing-water bodies the inlets and outlets refer to (phase 1).
   bodies: WaterBody[]
-  // The course of every reach wide enough to show one (phase 3,
-  // riverCourse.ts), in reach order; absent until computed.
+  // The course of every reach wide enough to show one (phase 3, the
+  // engine's surface/river_course.rs), in reach order; absent until computed.
   courses?: RiverCourse[]
-  // The springs (phase 5a, surface/hydrogeology.ts); absent until computed.
+  // The springs (phase 5a, the engine's surface/hydrogeology.rs); absent until
+  // computed.
   springs?: SpringFeature[]
 }
 

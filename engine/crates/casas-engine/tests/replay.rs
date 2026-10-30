@@ -1,10 +1,10 @@
 //! The module test of the replay (pipeline/replay_runs) against the
-//! TypeScript engine's `pipeline/replayRuns.ts`: a plan of two Archean
-//! runs, the hand-over, a tectonics run and a restored one, on both shapes,
-//! its checkpoints, and the world resumed from a checkpoint
-//! (docs/decisions/rust-engine.md, fork 5). The fixture was written by
-//! `engine/scripts/replayFixture.mjs`, and is recorded from this engine
-//! since DEC-0049 (`fixture`).
+//! TypeScript port (`client/src/generator/pipeline/replayRuns.ts`, git
+//! history): a plan of two Archean runs, the hand-over, a tectonics run and
+//! a restored one, on both shapes, its checkpoints, and the world resumed
+//! from a checkpoint (docs/decisions/rust-engine.md, fork 5). The fixture
+//! was written by `engine/scripts/replayFixture.mjs`, and is recorded from
+//! this engine since DEC-0049 (`fixture`).
 
 use casas_engine::climate::weather::{WeatherParams, default_weather_params};
 use casas_engine::pipeline::coupled_epoch::CoupledTerrain;

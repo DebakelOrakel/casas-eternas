@@ -1,8 +1,8 @@
-//! `fields/fieldMesh.ts`: THE FIELD MESH (DEC-0036,
-//! docs/decisions/fields-on-meshes.md): a uniform mesh over a domain at one
-//! spacing in metres for the coarse global fields, its geometry in metres
-//! (centres, areas, walls, offsets, turns, gradient weights), its sampler,
-//! and its rasters. The reasoning is in the TypeScript file.
+//! THE FIELD MESH (DEC-0036, docs/decisions/fields-on-meshes.md): a uniform
+//! mesh over a domain at one spacing in metres for the coarse global
+//! fields, its geometry in metres (centres, areas, walls, offsets, turns,
+//! gradient weights), its sampler, and its rasters. The reasoning is in
+//! `client/src/generator/fields/fieldMesh.ts`.
 //!
 //! Not ported: the per-domain cache of shared meshes, which changes the
 //! time and nothing else.

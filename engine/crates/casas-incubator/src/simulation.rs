@@ -488,9 +488,9 @@ pub struct BigGame<'a> {
     pub vulnerability: f64,
 }
 
-/// The rain's reliability per cell (the save's, generator/climate/
-/// reliability.ts): the annual rain's coefficient of variation, the ENSO
-/// see-saw's mark (−1 drier in its warm phase … +1), the see-saw's
+/// The rain's reliability per cell (the save's, casas-engine's
+/// climate/reliability.rs): the annual rain's coefficient of variation, the
+/// ENSO see-saw's mark (−1 drier in its warm phase … +1), the see-saw's
 /// strength (0 … 1).
 pub struct Rain {
     pub variability: Vec<f32>,

@@ -1237,7 +1237,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // reads, and the reach list with its mesh nodes the save carries.
   let lastCoastType: Uint8Array | null = null
   let lastCoast: { reaches: CoastReach[]; nodes: Int32Array } | null = null
-  // The erosion pass's deposits as features (surface/sedimentBasins.ts).
+  // The erosion pass's deposits as features (the engine's
+  // surface/sediment_basins.rs).
   let lastSedimentBasins: SedimentBasin[] | null = null
   // Precipitation INCLUDING the riparian bonus — what the biomes were actually
   // classified from — per pixel of the map (the water balance's readout).
@@ -2696,12 +2697,12 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // Twelve months of rainfall, and the whole year is now the model's own. The
   // heights follow from the two numbers the worker ships, because the monsoon
   // index is (precipN − precipS) / (precipN + precipS + floor) and the annual
-  // field is their mean (climate/monsoon.ts). The PHASE follows from that index's
-  // SIGN, which is why the hemisphere does not appear here: a positive index
-  // means the rain falls while the top hemisphere is in summer, wherever the cell
-  // lies. Until the index was signed this had to assume the wet season was the
-  // local summer — right for the tropics, half a year wrong for a Mediterranean
-  // winter-rain climate.
+  // field is their mean (the engine's climate/monsoon.rs). The PHASE follows
+  // from that index's SIGN, which is why the hemisphere does not appear here: a
+  // positive index means the rain falls while the top hemisphere is in summer,
+  // wherever the cell lies. Until the index was signed this had to assume the
+  // wet season was the local summer — right for the tropics, half a year wrong
+  // for a Mediterranean winter-rain climate.
   function precipitationYear(cell: ProbeCell): number[] | null {
     // The refinement's own months, each rate turned into the month's share.
     if (lastRefined) {

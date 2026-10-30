@@ -1,5 +1,5 @@
-//! `tectonics/volcanoes.ts`: the volcanoes a world shows, from its terrain
-//! features; and the volcanoes the ecology reads (`ecology_volcanoes`).
+//! The volcanoes a world shows, from its terrain features; and the
+//! volcanoes the ecology reads (`ecology_volcanoes`).
 
 use super::terrain_features::TerrainFeature;
 

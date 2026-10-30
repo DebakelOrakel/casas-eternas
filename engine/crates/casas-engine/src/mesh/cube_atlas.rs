@@ -1,7 +1,7 @@
-//! `mesh/cubeAtlas.ts`: a fine level's tiles on the sphere — the six faces
-//! of a turned cube, each split into n × n tiles on an equiangular grid,
-//! with exact shared corners. Geometry only, on unit vectors. The
-//! TypeScript file explains the exactness rules.
+//! A fine level's tiles on the sphere — the six faces of a turned cube,
+//! each split into n × n tiles on an equiangular grid, with exact shared
+//! corners. Geometry only, on unit vectors.
+//! `client/src/generator/mesh/cubeAtlas.ts` explains the exactness rules.
 
 use std::f64::consts::PI;
 

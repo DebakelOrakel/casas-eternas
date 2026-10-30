@@ -1,7 +1,7 @@
-//! `climate/energyBalance.ts`: the year's temperature cycle around the
-//! annual mean, from a linear energy balance solved per annual harmonic on
-//! the climate's field mesh (BiCGSTAB with a two-level preconditioner), and
-//! the daily-mean insolation. The TypeScript port
+//! The year's temperature cycle around the annual mean, from a linear
+//! energy balance solved per annual harmonic on the climate's field mesh
+//! (BiCGSTAB with a two-level preconditioner), and the daily-mean
+//! insolation. The TypeScript port
 //! (`client/src/generator/climate/energyBalance.ts`, git history) explains
 //! the equation.
 

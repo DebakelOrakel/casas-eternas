@@ -1,6 +1,5 @@
-//! `core/minHeap.ts`: the binary min-heap of the priority flood and the
-//! Dijkstras. Both sifts move a hole; the pop order, ties included, is the
-//! TypeScript heap's.
+//! The binary min-heap of the priority flood and the Dijkstras. Both sifts
+//! move a hole; the pop order, ties included, is the TypeScript heap's.
 
 pub struct MinHeap {
     keys: Vec<f64>,

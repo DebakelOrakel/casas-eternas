@@ -213,8 +213,8 @@ async function answer(ask: IncubatorRequest): Promise<void> {
     domestications: l.domestications.map((d) => ({ ...d, came: d.came.slice() })),
     villages: v.villages.slice(), villageFrom: v.villageFrom.slice(), villageTo: v.villageTo.slice(),
     extinctions: history.extinctions,
-    // The history's log with the first trade, in time (settle.ts
-    // logWithTrade's order, a stable sort).
+    // The history's log with the first trade, in time (a stable
+    // sort).
     log: [...history.log, ...(settled.trade ? [settled.trade] : [])].sort((x, y) => x.at - y.at),
     landmass: e.ints('landmass'),
   }

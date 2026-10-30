@@ -1,9 +1,9 @@
-//! `mesh/meshNeighbourhood.ts`: NEIGHBOURHOODS IN METRES ON A TERRAIN MESH
-//! (DEC-0036 phase 7). A neighbourhood is the cells the disc of radius r
-//! about a node reaches, each cell the disc of its own area, weighed by the
-//! lens the two discs share; gathered by a walk over the triangulation. The
-//! reasoning is in the TypeScript port
-//! (`client/src/generator/mesh/meshNeighbourhood.ts`, git history).
+//! NEIGHBOURHOODS IN METRES ON A TERRAIN MESH (DEC-0036 phase 7). A
+//! neighbourhood is the cells the disc of radius r about a node reaches,
+//! each cell the disc of its own area, weighed by the lens the two discs
+//! share; gathered by a walk over the triangulation. The reasoning is in
+//! the TypeScript port (`client/src/generator/mesh/meshNeighbourhood.ts`,
+//! git history).
 //!
 //! The tables do not hold the mesh: a function that reads it takes it, and
 //! one that locates a point takes it mutably, because the walk moves the

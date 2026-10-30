@@ -1,9 +1,9 @@
-//! `fields/fieldOperators.ts`: THE OPERATORS ON A FIELD MESH (DEC-0036):
-//! diffusion, gradient, divergence, semi-Lagrangian transport, the elliptic
-//! and the general solvers, sparse matrices with ILU(0) and a two-level
-//! preconditioner. One code for both shapes; the shape is in the mesh's
-//! geometry. Fields are f64 per cell. The reasoning is in the TypeScript
-//! file.
+//! THE OPERATORS ON A FIELD MESH (DEC-0036): diffusion, gradient,
+//! divergence, semi-Lagrangian transport, the elliptic and the general
+//! solvers, sparse matrices with ILU(0) and a two-level preconditioner. One
+//! code for both shapes; the shape is in the mesh's geometry. Fields are
+//! f64 per cell. The reasoning is in
+//! `client/src/generator/fields/fieldOperators.ts`.
 //!
 //! Not ported, because they change the time and nothing else: the per-mesh
 //! caches of the convex diffusion limit and of the east wall normals.

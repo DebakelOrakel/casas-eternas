@@ -1,7 +1,7 @@
-//! `tectonics/epoch/mantleCoupling.ts`, phase 0: the mantle drives the
-//! plates. The seeds move toward their footprints' centres, the field
-//! evolves under the crust, its flow is fitted, the fit is dragged by each
-//! plate's keel, and each plate's motion relaxes toward it.
+//! Phase 0: the mantle drives the plates. The seeds move toward their
+//! footprints' centres, the field evolves under the crust, its flow is
+//! fitted, the fit is dragged by each plate's keel, and each plate's
+//! motion relaxes toward it.
 
 use crate::crust::raft_field::{build_blob_index, compute_membership_at};
 use crate::crust::raft_lifecycle::{

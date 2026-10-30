@@ -180,7 +180,6 @@ pub struct ClimateTuning {
     pub currents_inland_decay_m: f64,
     pub currents_coastal_lee_share: f64,
     pub alpine_treeline_elevation: f64,
-    pub ice_max_c: f64,
     pub tundra_max_c: f64,
     pub boreal_max_c: f64,
     pub temperate_max_c: f64,
@@ -192,9 +191,7 @@ pub struct ClimateTuning {
     pub temperate_open_canopy_season: f64,
     pub temperate_woodland_season: f64,
     pub hot_desert_max_precip_mm: f64,
-    pub hot_savanna_max_precip_mm: f64,
     pub savanna_max_precip_mm: f64,
-    pub tropical_savanna_season: f64,
 }
 
 pub const CLIMATE_TUNING: ClimateTuning = ClimateTuning {
@@ -909,15 +906,14 @@ pub const CLIMATE_TUNING: ClimateTuning = ClimateTuning {
     // one this file exists to be. Naming them changes nothing and makes them
     // findable, comparable and hashable.
     //
-    // Two values appear twice (250 and 600 mm, once per temperature band) and stay
-    // SEPARATE — asked and answered 2026-08-09: the agreement is coincidence, not
-    // a shared threshold. The temperate 600 splits grassland from woodland, the hot
-    // 600 marks the savanna edge; they are different statements that happen to land
-    // on one number. Sharing a constant would couple them, so moving the tropical
-    // desert edge would drag the temperate one along with it.
+    // One value appears twice (250 mm, once per temperature band) and stays
+    // SEPARATE — asked and answered 2026-08-09: the agreement is coincidence,
+    // not a shared threshold. Each 250 marks the desert edge of its own band;
+    // they are different statements that happen to land on one number. Sharing
+    // a constant would couple them, so moving the tropical desert edge would
+    // drag the temperate one along with it.
 
     // Temperature band edges (°C), coldest first.
-    ice_max_c: -10.0,
     tundra_max_c: 0.0,
     boreal_max_c: 7.0,
     temperate_max_c: 20.0,
@@ -937,12 +933,10 @@ pub const CLIMATE_TUNING: ClimateTuning = ClimateTuning {
     // most of the year, while a strong wet-dry rhythm gives savanna even when the
     // total is high.
     hot_desert_max_precip_mm: 250.0,
-    hot_savanna_max_precip_mm: 600.0,
     // Köppen Aw/As: savanna below this annual rain, tropical dry forest above
-    // (the wet end of Aw). Not hot_savanna_max_precip_mm: that is a Whittaker
-    // bound, and Köppen already calls anything under ~780 mm at 25 °C dry (B),
-    // so every Aw cell passed 600 and the savanna was gone (Astrakan 0.2 %).
-    // Real savannas reach 1300–1500 mm.
+    // (the wet end of Aw). Not the Whittaker bound of 600 mm: Köppen already
+    // calls anything under ~780 mm at 25 °C dry (B), so every Aw cell passed
+    // 600 and the savanna was gone (Astrakan 0.2 %). Real savannas reach
+    // 1300–1500 mm.
     savanna_max_precip_mm: 1400.0,
-    tropical_savanna_season: 0.45,
 };

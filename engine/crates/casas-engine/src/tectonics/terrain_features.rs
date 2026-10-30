@@ -1,7 +1,7 @@
-//! `tectonics/terrainFeatures.ts`: a mountain range (or arc, ridge) or a
-//! trench as an oriented feature that rides its plate; found or made where
-//! a boundary deposits, carried with the plates every epoch. The reasoning
-//! behind each field is in the TypeScript file.
+//! A mountain range (or arc, ridge) or a trench as an oriented feature that
+//! rides its plate; found or made where a boundary deposits, carried with
+//! the plates every epoch. The reasoning behind each field is in
+//! `client/src/generator/tectonics/terrainFeatures.ts`.
 
 use crate::core::domain::Domain;
 

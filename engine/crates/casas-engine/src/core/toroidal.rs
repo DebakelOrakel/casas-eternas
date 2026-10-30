@@ -1,5 +1,5 @@
-//! `core/toroidal.ts`: the torus domain's own arithmetic. Only the domain
-//! reads it (DEC-0035, fork 1).
+//! The torus domain's own arithmetic. Only the domain reads it (DEC-0035,
+//! fork 1).
 
 use super::det_math::{det_cos, det_sin};
 use super::field::wrap_value;

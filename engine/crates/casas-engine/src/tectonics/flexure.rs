@@ -1,4 +1,4 @@
-//! `tectonics/flexure.ts`: FLEXURAL ISOSTASY on the shared field mesh
+//! FLEXURAL ISOSTASY on the shared field mesh
 //! (ADAPTIVE_MESH_PLAN.md phase 5.3, DEC-0036 phase 6): the plate equation
 //! ∇²(D ∇²w) + ρm g w = −ρc g h, discretised as K diag(R / A) K w + A w =
 //! −(ρc / ρm) A h and solved by conjugate gradients, matrix-free. The

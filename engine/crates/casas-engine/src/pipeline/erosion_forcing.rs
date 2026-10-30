@@ -1,7 +1,6 @@
-//! `pipeline/erosionForcing.ts`: the erosion forcing's coarse fields from
-//! the tectonic state. Not ported: `assembleErosionForcing`, the raster
-//! solver's assembly with the climate as water, which only the measuring
-//! scripts run.
+//! The erosion forcing's coarse fields from the tectonic state. Not
+//! ported: `assembleErosionForcing`, the raster solver's assembly with
+//! the climate as water, which only the measuring scripts run.
 
 use crate::climate::climate_field::{CLIMATE_RES_X, CLIMATE_RES_Y};
 use crate::core::domain::Domain;

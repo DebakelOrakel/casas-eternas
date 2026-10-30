@@ -24,11 +24,13 @@ export type LogEvent =
   // villages, by when it was founded.
   | { kind: 'village'; at: number; cell: number; village: number; lifeway: number }
   | { kind: 'villageLeft'; at: number; cell: number; village: number }
-  // A camp of the foragers or the herders made or left (simulation.ts):
-  // in the settlement's villages too, `village` its index there.
+  // A camp of the foragers or the herders made or left
+  // (casas-incubator/simulation.rs): in the settlement's villages too,
+  // `village` its index there.
   | { kind: 'camp'; at: number; cell: number; village: number; lifeway: number }
   | { kind: 'campLeft'; at: number; cell: number; village: number }
-  // The first link that carried goods (settle.ts), between two villages.
+  // The first link that carried goods (casas-incubator/settle.rs), between
+  // two villages.
   | { kind: 'trade'; at: number; cell: number; a: number; b: number }
   // The people over a mark, and the villages and the centres then.
   | { kind: 'population'; at: number; cell: number; count: number; villages: number; centres: number }

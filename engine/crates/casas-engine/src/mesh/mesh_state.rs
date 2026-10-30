@@ -1,6 +1,6 @@
-//! `mesh/meshState.ts`: PER-NODE STATE that survives remeshing (decision 8
-//! of docs/decisions/adaptive-mesh.md). Named Float32 fields by vertex id;
-//! an intensive field interpolates on insertion and is gone on removal, an
+//! PER-NODE STATE that survives remeshing (decision 8 of
+//! docs/decisions/adaptive-mesh.md). Named Float32 fields by vertex id; an
+//! intensive field interpolates on insertion and is gone on removal, an
 //! extensive one (an amount per area) is merged into the neighbours on
 //! removal. A stacked field holds `depth` values per node, node-major.
 //!

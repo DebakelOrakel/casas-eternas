@@ -1,7 +1,7 @@
-//! `surface/coastGraph.ts`: the coast as a feature — the shoreline cut
-//! into reaches with exposure, relief, hardness and river supply, and a
-//! coast type per node and reach from them. The TypeScript file explains
-//! each attribute and rule.
+//! The coast as a feature — the shoreline cut into reaches with exposure,
+//! relief, hardness and river supply, and a coast type per node and reach
+//! from them. `client/src/generator/surface/coastGraph.ts` explains each
+//! attribute and rule.
 
 use std::collections::{HashMap, HashSet};
 

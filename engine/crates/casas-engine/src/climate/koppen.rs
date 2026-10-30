@@ -1,8 +1,8 @@
-//! `climate/koppen.ts`: the Köppen–Geiger class of a place from its twelve
-//! months (Peel, Finlayson and McMahon 2007), and twelve months synthesized
-//! from the annual figures. Ids are stable: the save stores them; 0 is no
-//! class (the sea). Not ported, because they are presentation: the
-//! colours and the label keys.
+//! The Köppen–Geiger class of a place from its twelve months (Peel,
+//! Finlayson and McMahon 2007), and twelve months synthesized from the
+//! annual figures. Ids are stable: the save stores them; 0 is no class (the
+//! sea). Not ported, because they are presentation: the colours and the
+//! label keys.
 
 use super::climate_field::top_summer_cos;
 

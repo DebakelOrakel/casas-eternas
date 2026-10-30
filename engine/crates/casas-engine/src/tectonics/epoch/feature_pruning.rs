@@ -1,5 +1,4 @@
-//! `tectonics/epoch/featurePruning.ts`, phase 6: the features both long
-//! inactive and decayed to nothing go.
+//! Phase 6: the features both long inactive and decayed to nothing go.
 
 use crate::tectonics::plate_simulation_types::PlateSimulation;
 use crate::tectonics::tectonics_tune_params::TECTONICS_TUNING as T;

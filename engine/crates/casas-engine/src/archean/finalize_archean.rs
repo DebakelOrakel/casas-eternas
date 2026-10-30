@@ -1,7 +1,7 @@
-//! `archean/finalizeArchean.ts`: plate tectonics begins. A plate seed at
-//! each prominent extremum of the mantle, the continents named by their
-//! land, the plumes from the field. The reasoning is in the TypeScript
-//! file.
+//! Plate tectonics begins. A plate seed at each prominent extremum of
+//! the mantle, the continents named by their land, the plumes from the
+//! field. The reasoning is in the TypeScript port
+//! (`client/src/generator/archean/finalizeArchean.ts`, git history).
 
 use crate::core::det_math::sq;
 use crate::core::domain::{Domain, domain_area};

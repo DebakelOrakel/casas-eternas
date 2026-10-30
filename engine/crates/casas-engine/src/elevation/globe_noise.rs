@@ -1,6 +1,6 @@
-//! `elevation/globeNoise.ts`: THE COORDINATE NOISE ON THE SPHERE, value
-//! noise on a 3D lattice turned against the globe, sampled at a point's
-//! place on it. Integer arithmetic as `Math.imul` does it.
+//! THE COORDINATE NOISE ON THE SPHERE, value noise on a 3D lattice
+//! turned against the globe, sampled at a point's place on it. Integer
+//! arithmetic as `Math.imul` does it.
 
 use std::sync::OnceLock;
 

@@ -9,13 +9,11 @@ import type { SeededRandom } from '../core/rng'
 import type { Domain } from '../core/domain'
 
 // The simulation's data shapes and its event vocabulary, held apart from the code
-// that operates on them. This is what lets the per-epoch phases live in epoch/
-// without a cycle: a phase needs to know what a PlateSimulation IS, while
-// plateSimulation.ts needs to CALL the phases. With the types in the middle both
-// point inward and nothing points back.
-//
-// plateSimulation.ts re-exports all of this, so nothing outside tectonics/ had to
-// change its imports.
+// that operated on them. This let the per-epoch phases live in epoch/ without a
+// cycle: a phase needed to know what a PlateSimulation IS, while
+// plateSimulation.ts needed to CALL the phases (the TypeScript port,
+// `client/src/generator/tectonics/plateSimulation.ts`, git history). The engine
+// has them now (tectonics/plate_simulation.rs).
 
 export interface PlateSimulation {
   width: number
@@ -44,11 +42,11 @@ export interface PlateSimulation {
   // rift/merge events change seeds.length over time.
   initialPlateCount: number
   seeds: PlateSeed[]
-  // Continental crust as persistent metaball rafts, decoupled from the
-  // plates (see rafts.ts / docs/decisions/continental-crust-rafts.md). Rafts
-  // are the source of truth for land now; `types` below is a compatibility
-  // shim derived from them so the existing classification/event/rift-merge
-  // code keeps working.
+  // Continental crust as persistent metaball rafts, decoupled from the plates
+  // (see crust/raftTypes.ts / docs/decisions/continental-crust-rafts.md). Rafts
+  // are the source of truth for land now; `types` below is a compatibility shim
+  // derived from them so the existing classification/event/rift-merge code
+  // keeps working.
   rafts: Raft[]
   // Derived from rafts each epoch (a plate is continental if a raft covers
   // its seed) — a bridge for the crust-type-consuming code, not an
@@ -111,7 +109,7 @@ export interface PlateSimulation {
   // the world's life (unlike terrain features, which get pruned). The Ecology
   // layer reads these as the provenance for tin / lode gold / metamorphic gems —
   // deep-time orogens that the pruned mountain features no longer record. See
-  // rafts.ts Suture and docs/decisions/ecology.md P1.
+  // crust/raftTypes.ts Suture and docs/decisions/ecology.md P1.
   sutures: Suture[]
 }
 

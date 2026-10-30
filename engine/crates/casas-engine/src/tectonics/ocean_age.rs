@@ -1,8 +1,8 @@
-//! `tectonics/oceanAge.ts`: ocean-floor age, epochs, per cell of a field
-//! mesh at the domain's width / 256 (DEC-0036 phase 2); carried with the
-//! plates each epoch by an exact semi-Lagrangian departure, zeroed under
-//! continents, half an epoch where the plates opened new crust. The
-//! reasoning is in the TypeScript file.
+//! Ocean-floor age, epochs, per cell of a field mesh at the domain's width
+//! / 256 (DEC-0036 phase 2); carried with the plates each epoch by an exact
+//! semi-Lagrangian departure, zeroed under continents, half an epoch where
+//! the plates opened new crust. The reasoning is in
+//! `client/src/generator/tectonics/oceanAge.ts`.
 //!
 //! The mesh is the shared one ([`SharedFieldMesh`]), which the caller holds
 //! and hands in; [`OceanAge`] holds the stage's own scratch.

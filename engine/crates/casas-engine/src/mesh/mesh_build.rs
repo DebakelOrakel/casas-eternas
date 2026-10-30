@@ -1,8 +1,8 @@
-//! `mesh/meshBuild.ts`: BUILDING A MESH from point-evaluable fields (the
-//! bootstrap lattice at the ocean spacing, refinement under the density
-//! rule, one coarsen), the density rule as a target over the mesh's own
-//! state, and the triangulation of a given point set (the coupled loop's
-//! rebuild). The reasoning is in the TypeScript port
+//! BUILDING A MESH from point-evaluable fields (the bootstrap lattice at
+//! the ocean spacing, refinement under the density rule, one coarsen),
+//! the density rule as a target over the mesh's own state, and the
+//! triangulation of a given point set (the coupled loop's rebuild). The
+//! reasoning is in the TypeScript port
 //! (`client/src/generator/mesh/meshBuild.ts`, git history).
 
 use crate::core::domain::Domain;

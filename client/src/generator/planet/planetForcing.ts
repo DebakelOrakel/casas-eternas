@@ -15,9 +15,9 @@ export interface PlanetForcing {
   // Fraction of Earth's solar constant.
   solarConstant: number
   rotationHours: number
-  // THE LAND-PLANTS MOMENT (phase 5.5, the Planet stage's schedule): the
-  // world age in Myr from which vegetation covers the land (surface/
-  // cover.ts). Zero — from the start — until the schedule is a control.
+  // THE LAND-PLANTS MOMENT (phase 5.5, the Planet stage's schedule): the world
+  // age in Myr from which vegetation covers the land (the engine's
+  // surface/cover.rs). Zero — from the start — until the schedule is a control.
   landPlantsFromMa: number
 }
 

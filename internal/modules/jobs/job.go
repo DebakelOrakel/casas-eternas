@@ -79,9 +79,9 @@ const (
 // Request is what a caller asks for.
 type Request struct {
 	WorldUID string `json:"worldUid"`
-	// The level to bake: 1 is the mesh's level 1 (the save's mesh refined to
-	// twice the density; client/src/pipeline/meshBakeStage.ts), 2 one tile of
-	// the top level, named by a tile scope (meshTileBake.ts). The raster
+	// The level to bake: 1 is the mesh's level 1 (the save's mesh refined to twice
+	// the density; the engine's pipeline/mesh_bake_stage.rs), 2 one tile of the
+	// top level, named by a tile scope (pipeline/mesh_tile_bake.rs). The raster
 	// amplification's factors 2/4/8 went on 2026-09-29.
 	Stage int `json:"stage"`
 	// Erosion rounds; zero means the module's default rather than "no erosion",

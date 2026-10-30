@@ -1,6 +1,6 @@
-//! `mantle/mantleTuneParams.ts`. The reasoning behind each value is in the
-//! TypeScript port (`client/src/generator/mantle/mantleTuneParams.ts`, git
-//! history).
+//! The mantle's tuning in one object. The reasoning behind each value is
+//! in the TypeScript port
+//! (`client/src/generator/mantle/mantleTuneParams.ts`, git history).
 
 use serde::Serialize;
 #[derive(Serialize)]

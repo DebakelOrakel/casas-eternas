@@ -37,7 +37,7 @@ export interface ChroniclePanel {
   // The people over the range, evenly spaced from its start; null, none.
   setCurve(values: Float32Array | null): void
   // The climate's cold over the range, 0 … 1, evenly spaced from its start
-  // (climateHistory.ts); null, none.
+  // (casas-incubator/climate_history.rs); null, none.
   setCold(values: Float32Array | null): void
   // The epochs, each from its year on to the next's, their names said; the
   // first from 0 or before the range.

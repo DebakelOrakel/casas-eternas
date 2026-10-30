@@ -5,7 +5,7 @@ declare module 'virtual:handbook' {
 }
 
 // The engine's constants for the pipeline versions (`make engine` writes
-// engine/dist/constants.json; world/engineConstants.ts).
+// engine/dist/constants.json; generator/pipeline/engineConstants.ts).
 declare module 'casas-engine-constants' {
   const constants: {
     // The history's tuning by group, nested as the objects are.
@@ -49,7 +49,7 @@ declare module 'casas-incubator-data/catalog.json' {
     animals: readonly import('../screens/incubator/animals').AnimalSpec[]
     // The herbivores' share of a biome's production, by the biome's name.
     edibleShare: Record<string, number>
-    // The big game and how vulnerable each is (settle.ts MEGAFAUNA); the
+    // The big game and how vulnerable each is (the catalog's megafauna); the
     // herd animals the herders keep (incubatorWorker.ts).
     megafauna: Record<string, number>
     herdAnimals: readonly string[]

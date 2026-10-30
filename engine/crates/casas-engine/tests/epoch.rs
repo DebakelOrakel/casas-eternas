@@ -1,11 +1,11 @@
-//! The module test of the tectonic epoch against the TypeScript engine's
-//! `tectonics/plateSimulation.ts`: from one synthetic snapshot, the whole
-//! simulation after each of 120 epochs, on both shapes, bit for bit
-//! (docs/decisions/rust-engine.md, fork 5). The fixture is written by
-//! `engine/scripts/epochFixture.mjs`; the snapshot is syntheticSim.mjs's
-//! (synthetic_sim/), the hash below the script's. A failure names the
-//! first epoch that differs; a change to the model that is meant records
-//! the lines it moves (`fixture`, CASAS_RECORD=1).
+//! The module test of the tectonic epoch against the TypeScript port
+//! (`client/src/generator/tectonics/plateSimulation.ts`, git history): from
+//! one synthetic snapshot, the whole simulation after each of 120 epochs,
+//! on both shapes, bit for bit (docs/decisions/rust-engine.md, fork 5). The
+//! fixture is written by `engine/scripts/epochFixture.mjs`; the snapshot is
+//! syntheticSim.mjs's (synthetic_sim/), the hash below the script's. A
+//! failure names the first epoch that differs; a change to the model that
+//! is meant records the lines it moves (`fixture`, CASAS_RECORD=1).
 
 use casas_engine::core::domain::Domain;
 use casas_engine::tectonics::plate_simulation::step_epoch;

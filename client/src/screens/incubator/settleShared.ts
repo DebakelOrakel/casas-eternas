@@ -1,5 +1,5 @@
 import { detExp } from '../../generator/core/detMath'
-// What the settlement (settle.ts) and the screen share, out
+// What the settlement (casas-incubator/settle.rs) and the screen share, out
 // of the worker for the reason peopleShared.ts gives: the lifeways' shares
 // and the density of a cell at a time, from its times (SettleTimes). The worker
 // places the villages by them, the screen draws them as the time plays.
@@ -13,14 +13,14 @@ export const GOODS = ['toolStone', 'salt', 'copper'] as const
 export const DENSITY: Record<number, number> = { 1: 0.1, 2: 1, 3: 1.5, 4: 15 }
 export const CARRYING_FULL = 0.8
 // The fishers settle this long after people came; the herders keep their
-// herds from the herding's wave on (settle.ts); a lifeway's density
-// grows to its own with the time constant DENSITY_TAU.
+// herds from the herding's wave on (casas-incubator/settle.rs); a lifeway's
+// density grows to its own with the time constant DENSITY_TAU.
 export const SETTLE_AFTER = 3000
 export const DENSITY_TAU = 3000
 
-// A cell's times and what it allows, the worker's (settle.ts).
+// A cell's times and what it allows, the worker's (casas-incubator/settle.rs).
 export interface SettleTimes {
-  // When people came (people.ts), Infinity for never.
+  // When people came (casas-incubator/peopling.rs), Infinity for never.
   arrival: Float32Array
   // When the farmers came, Infinity for never.
   farmAt: Float32Array
@@ -112,7 +112,8 @@ export function clearedAt(s: SettleTimes, i: number, t: number, shares: Float32A
 }
 
 // The same for a cell of `density` people a km² as a history counts them
-// (simulation.ts): its density shared out by the lifeways' shares.
+// (casas-incubator/simulation.rs): its density shared out by the lifeways'
+// shares.
 export function clearedOf(shares: Float32Array, density: number): number {
   let ha = 0
   for (const way of [LIFEWAY.herders, LIFEWAY.farmers]) ha += shares[way] * density * CLEAR_HA[way]
@@ -137,10 +138,11 @@ export function pressure(role: string, hunted: boolean, shares: Float32Array, de
   return f
 }
 
-// THE BIG GAME'S LOSS, cell by cell (2026-10-26): where a species dies out
-// on a landmass (settle.ts), it goes from a cell EXTINCT_AFTER to
-// EXTINCT_AFTER + EXTINCT_SPREAD years after people came there, the cell's
-// own share of that drawn from its index; Infinity where they never came.
+// THE BIG GAME'S LOSS, cell by cell (2026-10-26): where a species dies out on
+// a landmass (casas-incubator/simulation.rs), it goes from a cell
+// EXTINCT_AFTER to EXTINCT_AFTER + EXTINCT_SPREAD years after people came
+// there, the cell's own share of that drawn from its index; Infinity where
+// they never came.
 export const EXTINCT_AFTER = 1000
 export const EXTINCT_SPREAD = 1000
 
@@ -151,11 +153,11 @@ export function extinctAt(arrival: number, cell: number): number {
   return arrival + EXTINCT_AFTER + EXTINCT_SPREAD * ((x >>> 0) / 4294967296)
 }
 
-// When a domesticate's wave came to a cell (settle.ts), in CAME_STEP years;
-// CAME_NEVER where it never did.
+// When a domesticate's wave came to a cell (casas-incubator/simulation.rs), in
+// CAME_STEP years; CAME_NEVER where it never did.
 export const CAME_STEP = 10
 export const CAME_NEVER = 0xffff
 
-// A plant's or a tree's code from which its niche suits a cell (niche.ts:
-// SUITABLE 0.3, the niche coded 2 … 255).
+// A plant's or a tree's code from which its niche suits a cell
+// (casas-incubator/niche.rs: SUITABLE 0.3, the niche coded 2 … 255).
 export const PLANT_SUITS_CODE = 2 + Math.round(253 * 0.3)

@@ -1,4 +1,4 @@
-//! `core/rng.ts`: the seeded generators.
+//! The seeded generators.
 
 /// FNV-1a over a seed string's UTF-16 code units, as `hashSeedString`.
 pub fn hash_seed_string(seed: &str) -> u32 {

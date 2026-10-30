@@ -1,9 +1,8 @@
-//! `surface/amplify.ts`: the synthesis of a finer level — seed roughness
-//! for the erosion to bite into, ridging scaled by the parent's relief —
-//! and AMPLIFY_CONSTANTS, everything whose value changes a level bake, for
-//! its cache key. The TypeScript port
-//! (`client/src/generator/surface/amplify.ts`, git history) holds the
-//! measurements behind each constant.
+//! The synthesis of a finer level — seed roughness for the erosion to bite
+//! into, ridging scaled by the parent's relief — and AMPLIFY_CONSTANTS,
+//! everything whose value changes a level bake, for its cache key. The
+//! TypeScript port (`client/src/generator/surface/amplify.ts`, git
+//! history) holds the measurements behind each constant.
 
 use crate::core::domain::{Domain, DomainGrid};
 use crate::core::js;

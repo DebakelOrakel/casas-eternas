@@ -1,6 +1,5 @@
-//! `tectonics/boundaryLattice.ts`: the fixed grid of sample points boundary
-//! detection runs against every epoch; on the sphere a row keeps the
-//! columns its length can hold.
+//! The fixed grid of sample points boundary detection runs against every
+//! epoch; on the sphere a row keeps the columns its length can hold.
 
 use crate::core::domain::Domain;
 use crate::core::js;

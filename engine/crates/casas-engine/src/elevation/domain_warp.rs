@@ -1,6 +1,6 @@
-//! `elevation/domainWarp.ts`: the query point displaced before the
-//! elevation field is sampled, so every contour ripples. A chart offset on
-//! the torus, a tangent offset along the globe on the sphere.
+//! The query point displaced before the elevation field is sampled, so
+//! every contour ripples. A chart offset on the torus, a tangent offset
+//! along the globe on the sphere.
 
 use crate::core::domain::{Domain, GlobeFrame, Vec2};
 use crate::core::field::wrap_value;

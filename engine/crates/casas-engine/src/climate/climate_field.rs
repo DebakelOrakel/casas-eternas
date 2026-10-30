@@ -1,5 +1,5 @@
-//! `climate/climateField.ts`: the climate's chart size, the calendar and
-//! the latitude a cell's row position reads. The TypeScript file explains
+//! The climate's chart size, the calendar and the latitude a cell's row
+//! position reads. `client/src/generator/climate/climateField.ts` explains
 //! the calendar's direction and the belts' shift.
 
 use crate::core::det_math::det_cos;
@@ -39,8 +39,9 @@ pub fn latitude_of_norm(shifted: f64) -> f64 {
     (shifted - 0.5).abs() * 2.0
 }
 
-/// Where a row sits in the zonal bands when they follow the season (see the
-/// TypeScript file); `sphere` ends the shift at the pole.
+/// Where a row sits in the zonal bands when they follow the season (see
+/// `client/src/generator/climate/climateField.ts`); `sphere` ends the shift
+/// at the pole.
 pub fn belt_y_norm(true_norm: f64, belt_shift: f64, sphere: bool) -> f64 {
     if belt_shift == 0.0 {
         return true_norm;

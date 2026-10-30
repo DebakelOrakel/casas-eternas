@@ -27,7 +27,7 @@ import (
 // 2026-10-16 (docs/decisions/object-storage.md, DEC-0038, step 3):
 //
 //	{artifactUid}/meta.json
-//	{artifactUid}/<the stage's files, named by the client — world/artifacts.ts>
+//	{artifactUid}/<the stage's files, named by the client>
 //	{artifactUid}/<one directory level of them, e.g. family-1/elevation.u16>
 //
 // These are object keys in a blob.Bucket: files under a directory (Dir, the

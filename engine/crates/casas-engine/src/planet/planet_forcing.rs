@@ -1,6 +1,7 @@
-//! `planet/planetForcing.ts` with the defaults of `planetInputParams.ts`:
-//! the astronomical controls as the factors the climate chain multiplies
-//! in, each 1 at Earth's values. The TypeScript files explain each.
+//! The astronomical controls as the factors the climate chain multiplies
+//! in, each 1 at Earth's values, with the defaults of
+//! `planetInputParams.ts`. `client/src/generator/planet/planetForcing.ts`
+//! and `planetInputParams.ts` explain each.
 
 use crate::core::det_math::{det_cos, det_pow, det_sin, sq};
 use crate::core::js;

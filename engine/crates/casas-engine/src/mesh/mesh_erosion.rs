@@ -1,11 +1,10 @@
-//! `mesh/meshErosion.ts`: EROSION ON THE MESH, the engine's graph index
-//! built from the triangulation (ADAPTIVE_MESH_PLAN.md phase 4.2). A node's
-//! neighbours are its Delaunay star, a reach the edge's length, the facet
-//! over it the dual Voronoi edge in the cotangent form, a node's area its
-//! Voronoi cell; the frozen deep ocean and the shelf band as on the raster.
-//! The reasoning is in the TypeScript port
-//! (`client/src/generator/mesh/meshErosion.ts`, git history). The run
-//! itself (`runMeshErosion`) comes with the engine.
+//! EROSION ON THE MESH, the engine's graph index built from the
+//! triangulation (ADAPTIVE_MESH_PLAN.md phase 4.2). A node's neighbours are
+//! its Delaunay star, a reach the edge's length, the facet over it the dual
+//! Voronoi edge in the cotangent form, a node's area its Voronoi cell; the
+//! frozen deep ocean and the shelf band as on the raster. The reasoning is
+//! in the TypeScript port (`client/src/generator/mesh/meshErosion.ts`, git
+//! history). The run itself (`runMeshErosion`) comes with the engine.
 //!
 //! Not ported, because they change the time and nothing else: the reuse of
 //! an unchanged index and the per-mesh cache of the cotangents.

@@ -1,23 +1,23 @@
-// A feature is a mountain *range* (or arc/ridge), or a *trench* — the
-// paired negative depression on the subducting side of a subduction/
-// island arc (see plateSimulation.ts's trench deposit). Both are oriented
-// ridge features; the distinction keeps a trench from ever merging into
-// its own arc's range feature in the engine's `find_or_create_feature_index`
-// (same plate pair, only offset apart), and lets the engine's
-// `compute_elevation` give a trench a
-// narrower, deeper cross-section than a broad range.
+// A feature is a mountain *range* (or arc/ridge), or a *trench* — the paired
+// negative depression on the subducting side of a subduction/island arc (see
+// the engine's tectonics/epoch/boundary_pass.rs). Both are oriented ridge
+// features; the distinction keeps a trench from ever merging into its own arc's
+// range feature in the engine's `find_or_create_feature_index` (same plate
+// pair, only offset apart), and lets the engine's `compute_elevation` give a
+// trench a narrower, deeper cross-section than a broad range.
 export type FeatureKind = 'range' | 'trench'
 
 export interface TerrainFeature {
   x: number
   y: number
-  // Signed relative crustal thickness change from baseline, driving
-  // elevation via isostasy (the engine's elevation_field.rs): positive means the crust
-  // has thickened (mountains, arcs, ridges), negative means it's thinned
-  // (rift valleys stretching/sinking) — see boundaryClassification's
-  // elevationSign for which boundary characters deposit which sign. This
-  // is the rendering-relevant accumulator, separate from the lattice's
-  // own signed rift/merge trigger state in plateSimulation.ts.
+  // Signed relative crustal thickness change from baseline, driving elevation
+  // via isostasy (the engine's elevation_field.rs): positive means the crust
+  // has thickened (mountains, arcs, ridges), negative means it's thinned (rift
+  // valleys stretching/sinking) — see boundaryClassification's elevationSign
+  // for which boundary characters deposit which sign. This is the
+  // rendering-relevant accumulator, separate from the lattice's own signed
+  // rift/merge trigger state in the TypeScript port
+  // (`client/src/generator/tectonics/plateSimulation.ts`, git history).
   thickness: number
   // Unit vector along the boundary curve at this feature's location (the
   // ridge's own long axis) — perpendicular to the seed-to-seed normal at
@@ -57,15 +57,15 @@ export interface TerrainFeature {
   // to pull the two sides' deposits apart (45px within 40 epochs),
   // fragmenting one ridge into two separately-drifting mounds.
   movesWithPlate: number | 'both'
-  // Whether this feature rides on oceanic crust and should subside as it
-  // ages away from its boundary — island arcs, mid-ocean ridges, and
-  // trenches (all oceanic), as opposed to continental fold mountains and
-  // subduction-arc ranges, which persist. Set from the boundary character
-  // at creation (see plateSimulation.ts). Drives the extra age-depth decay
-  // that keeps drifted oceanic features from cluttering the ocean: real
-  // oceanic crust cools and sinks as it moves off the ridge, so an old,
-  // drifted mid-ocean-ridge/arc feature should fade, while a continental
-  // range stays put.
+  // Whether this feature rides on oceanic crust and should subside as it ages
+  // away from its boundary — island arcs, mid-ocean ridges, and trenches (all
+  // oceanic), as opposed to continental fold mountains and subduction-arc
+  // ranges, which persist. Set from the boundary character at creation (see the
+  // engine's tectonics/epoch/boundary_pass.rs). Drives the extra age-depth decay
+  // that keeps drifted oceanic features from cluttering the ocean: real oceanic
+  // crust cools and sinks as it moves off the ridge, so an old, drifted
+  // mid-ocean-ridge/arc feature should fade, while a continental range stays
+  // put.
   subsides: boolean
   // Epochs since this feature last received a deposit — reset to 0 in
   // the engine's `step_epoch` whenever it's touched, incremented
@@ -82,10 +82,11 @@ export interface TerrainFeature {
   // convergent) or island arc (oceanic-oceanic convergent), the two boundary
   // characters that build a chain of volcanoes (Andes, Cascades, Aleutians), as
   // opposed to (non-volcanic) continental fold mountains or a mid-ocean ridge. Set
-  // from the boundary character at deposit time in plateSimulation.ts. A pure render
-  // hint: the screen flags these with volcano markers, distinct from the hotspot
-  // (plateB = -1) and flood-basalt (plateB = -2) volcanoes. Optional so old
-  // deserialized features (which lack it) simply read as non-volcanic.
+  // from the boundary character at deposit time in the engine's
+  // tectonics/epoch/boundary_pass.rs. A pure render hint: the screen flags these
+  // with volcano markers, distinct from the hotspot (plateB = -1) and flood-basalt
+  // (plateB = -2) volcanoes. Optional so old deserialized features (which lack it)
+  // simply read as non-volcanic.
   volcanic?: boolean
   // The boundary's shortening rate at this feature, km/Myr, signed like the
   // thickness (negative: a rift's extension, a trench's share): the

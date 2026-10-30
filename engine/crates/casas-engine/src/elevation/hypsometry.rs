@@ -1,5 +1,5 @@
-//! `elevation/hypsometry.ts`: relief across the continental interior, the
-//! distribution of heights the margin profile does not have.
+//! Relief across the continental interior, the distribution of heights
+//! the margin profile does not have.
 
 use crate::core::domain::Domain;
 use crate::core::field::wrap_value;

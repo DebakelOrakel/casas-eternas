@@ -1,8 +1,8 @@
-//! `pipeline/replayRuns.ts`: a world's runs made again — the Archean's
-//! steps, the hand-over and the coupled epochs as direct calls from run
-//! parameters, the one loop the screen, a loaded world and the level-1 job
-//! make the same world with; and the state between two epochs as a
-//! snapshot, restored as a load restores it.
+//! A world's runs made again — the Archean's steps, the hand-over and the
+//! coupled epochs as direct calls from run parameters, the one loop the
+//! screen, a loaded world and the level-1 job make the same world with;
+//! and the state between two epochs as a snapshot, restored as a load
+//! restores it.
 //!
 //! The world's field meshes are handed from the state a restore replaces
 //! to the restored one: TypeScript keeps them per domain for the process,

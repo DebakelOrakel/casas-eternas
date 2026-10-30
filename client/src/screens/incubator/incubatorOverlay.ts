@@ -16,8 +16,8 @@ export interface OverlayRaster {
   data: Uint8ClampedArray
   width: number
   height: number
-  // The habitat's cell each texel shows (cells.ts), and the cells' centres
-  // on the chart as fractions.
+  // The habitat's cell each texel shows (casas-incubator/habitat.rs), and the
+  // cells' centres on the chart as fractions.
   owners: Int32Array
   count: number
   u: Float32Array
@@ -48,8 +48,8 @@ export const PLANT_PALETTE: readonly (readonly [number, number, number])[] = [
   [230, 190, 255], [255, 216, 177], [255, 250, 200], [128, 128, 128],
 ]
 
-// A layer's code from which its niche suits a cell (niche.ts: SUITABLE
-// 0.3, the niche coded 2 … 255).
+// A layer's code from which its niche suits a cell (casas-incubator/niche.rs:
+// SUITABLE 0.3, the niche coded 2 … 255).
 export const PLANT_SUITS = PLANT_SUITS_CODE
 
 // A cell holds at most this many of a group in its stripes, the ones that
@@ -57,9 +57,10 @@ export const PLANT_SUITS = PLANT_SUITS_CODE
 // diagonal (a trial, 2026-10-25).
 const STRIPES_MAX = 3
 const STRIPE_TEXELS = 3
-// What people keep (a crop sown, a herd kept; settle.ts, the domesticates)
-// is hatched across the stripes, a line every HATCH_TEXELS texels, its
-// colour HATCH_SHADE as bright; outside its niche it counts as KEPT_CODE.
+// What people keep (a crop sown, a herd kept; casas-incubator/simulation.rs,
+// the domesticates) is hatched across the stripes, a line every HATCH_TEXELS
+// texels, its colour HATCH_SHADE as bright; outside its niche it counts as
+// KEPT_CODE.
 const HATCH_TEXELS = 4
 const HATCH_SHADE = 0.45
 const KEPT_CODE = 200
@@ -212,9 +213,9 @@ export function paintPeoples(o: OverlayRaster, ids: Uint16Array, colours: Uint8A
   }
 }
 
-// THE SETTLEMENT (settle.ts, a proof of concept): the lifeways and the
-// density, onto the overlay; the villages, the trade and the sources are
-// marks (incubatorSymbols.ts).
+// THE SETTLEMENT (casas-incubator/settle.rs, a proof of concept): the
+// lifeways and the density, onto the overlay; the villages, the trade and the
+// sources are marks (incubatorSymbols.ts).
 export const LIFEWAY_COLOURS: Record<number, readonly [number, number, number]> = {
   1: [150, 140, 110],
   2: [40, 120, 190],

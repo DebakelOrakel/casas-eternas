@@ -33,7 +33,7 @@ import { metersToElevation } from '../elevation/elevationScale'
 // top of what they produce, conditioned on the RESULT's own local slope so it
 // reads as consistent with the terrain rather than a uniform noise blanket.
 //
-// Mutates a DISPLAY COPY only — never rawElevations (erosion.ts's own
+// Mutates a DISPLAY COPY only — never rawElevations (the erosion's own
 // physically authoritative field, or anything saved/queried by climate,
 // ecology, hydrology, or the server). See elevationMapImage.ts's own
 // SimulationRenderResult.elevations vs .rawElevations split, which already
@@ -46,7 +46,7 @@ import { metersToElevation } from '../elevation/elevationScale'
 // zero tectonic or fluvial history behind them.
 const DETAIL_FLOOR_M = 4
 // How much local slope (elevation units per pixel — the same dimensionless
-// "rise over one ~7.8 km cell" quantity erosion.ts's own talus/stream-power
+// "rise over one ~7.8 km cell" quantity the erosion's own talus/stream-power
 // code uses) adds on top of the floor. Sized so an already-steep mountain
 // flank — which the uplift-gated ridged noise upstream already textures
 // heavily — gets pushed toward the cap rather than doubled: this is meant to
@@ -60,13 +60,12 @@ const DETAIL_SLOPE_GAIN = metersToElevation(DETAIL_SLOPE_GAIN_M)
 const DETAIL_CAP = metersToElevation(DETAIL_CAP_M)
 
 // NOTE on calibration: unlike almost every other tuning constant in this
-// pipeline, these three were NOT calibrated against a measured distribution
-// (no headless dump-and-diff pass, no percentile sweep) — this was written
-// without a way to eyeball the running app. Treat DETAIL_FLOOR_M /
-// DETAIL_SLOPE_GAIN_M / DETAIL_CAP_M as a starting point for the same
-// by-eye tuning pass every other visual constant in this file's neighbors
-// (ridgedNoise.ts, elevationField.ts) already went through, not as a
-// finished number.
+// pipeline, these three were NOT calibrated against a measured distribution (no
+// headless dump-and-diff pass, no percentile sweep) — this was written without
+// a way to eyeball the running app. Treat DETAIL_FLOOR_M / DETAIL_SLOPE_GAIN_M
+// / DETAIL_CAP_M as a starting point for the same by-eye tuning pass every
+// other visual constant in this file's neighbors (ridgedNoise.ts, the engine's
+// elevation_field.rs) already went through, not as a finished number.
 
 // `display` is the copy to paint onto (elevationMapImage.ts's `elevations`,
 // AFTER redistribution if that ran — order doesn't matter much here since
@@ -101,12 +100,13 @@ export function applyErosionDetailTexture(display: Float32Array, reference: Floa
       const slope = Math.hypot(dzdx, dzdy)
       // Amplitude additionally capped by the cell's own height above sea level,
       // so display-only texture can never flip a land pixel's sign: a delta
-      // plain sits at just ~0.5-4 m graded freeboard (DELTA_FREEBOARD_NEAR/FAR,
-      // erosion.ts), and the plain ±2 m floor amplitude was pushing single
-      // pixels below zero there — ocean-colored speckle across every delta.
-      // Capping at the smaller of reference/display height keeps the worst dip
-      // at half the cell's height (noise spans ±0.5), always above water, and
-      // fades the texture smoothly toward every coastline instead of clipping.
+      // plain sits at just ~0.5-4 m graded freeboard (DELTA_FREEBOARD_NEAR/FAR
+      // of client/src/worldgen/surface/erosion.ts, git history), and the plain
+      // ±2 m floor amplitude was pushing single pixels below zero there —
+      // ocean-colored speckle across every delta. Capping at the smaller of
+      // reference/display height keeps the worst dip at half the cell's height
+      // (noise spans ±0.5), always above water, and fades the texture smoothly
+      // toward every coastline instead of clipping.
       const headroom = Math.min(e, display[i] > 0 ? display[i] : e)
       const amplitude = Math.min(DETAIL_CAP, DETAIL_FLOOR + DETAIL_SLOPE_GAIN * slope, headroom)
       display[i] += fineDetailNoiseOn(noiseDomain, x, y, noiseSeed) * amplitude

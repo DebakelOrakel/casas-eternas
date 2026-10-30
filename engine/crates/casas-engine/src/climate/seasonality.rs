@@ -1,5 +1,5 @@
-//! `climate/seasonality.ts`: the annual temperature amplitude per land cell
-//! of the climate's field mesh, from latitude and continentality.
+//! The annual temperature amplitude per land cell of the climate's field
+//! mesh, from latitude and continentality.
 
 use crate::core::det_math::det_sin;
 use crate::core::js;

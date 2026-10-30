@@ -1,5 +1,5 @@
 //! A world's runs made again through the boundary (`world/replay.ts` over
-//! `pipeline/replayRuns.ts`, as the job worker calls them for level 1):
+//! `pipeline/replay_runs`, as the job worker calls them for level 1):
 //! the replay one epoch at a time, so that TypeScript reports, writes the
 //! checkpoints and stops between two, and the level's waters on its end.
 

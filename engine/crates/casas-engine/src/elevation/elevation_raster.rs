@@ -1,9 +1,11 @@
 //! The raw elevation raster of a render that has no terrain mesh yet (the
 //! Archean): `render/elevationMapImage.ts` `renderSimulationImage` up to
-//! its `rawElevations`, with the per-pixel loop of
-//! `render/elevationRenderWorker.ts` and `dynamicTopographyField` of
-//! `elevation/dynamicTopography.ts`. The colours, the shade and the
-//! redistribution stay TypeScript; they read this raster.
+//! its `rawElevations`, with the per-pixel loop of the render worker and
+//! `dynamicTopographyField` (the TypeScript ports
+//! `client/src/generator/render/elevationRenderWorker.ts` and
+//! `client/src/generator/elevation/dynamicTopography.ts`, git history). The
+//! colours, the shade and the redistribution stay TypeScript; they read
+//! this raster.
 //!
 //! The render worker keeps the warped point, the ridge and the fine noise
 //! of each pixel in Float32 arrays, so the port rounds them to f32 before

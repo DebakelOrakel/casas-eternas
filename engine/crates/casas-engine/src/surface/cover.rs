@@ -1,6 +1,6 @@
-//! `surface/cover.ts`: how much of the ground the vegetation holds, per
-//! node from its biome — one value for the erodibility, the critical slope
-//! and the river banks; zero before the land plants.
+//! How much of the ground the vegetation holds, per node from its biome —
+//! one value for the erodibility, the critical slope and the river banks;
+//! zero before the land plants.
 
 use crate::climate::biomes::biome;
 use serde::Serialize;

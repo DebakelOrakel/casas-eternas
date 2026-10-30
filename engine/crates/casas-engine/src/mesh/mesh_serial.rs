@@ -1,7 +1,7 @@
-//! `mesh/meshSerial.ts`: the mesh as bytes — f32 node positions and, per
-//! node, its neighbours counter-clockwise as zigzag varint deltas, in
-//! Hilbert numbering — and the canonical form (`compact_mesh`) a session's
-//! mesh takes after every epoch. The TypeScript file explains why the
+//! The mesh as bytes — f32 node positions and, per node, its neighbours
+//! counter-clockwise as zigzag varint deltas, in Hilbert numbering — and
+//! the canonical form (`compact_mesh`) a session's mesh takes after every
+//! epoch. `client/src/generator/mesh/meshSerial.ts` explains why the
 //! connectivity is stored.
 
 use crate::core::domain::Domain;

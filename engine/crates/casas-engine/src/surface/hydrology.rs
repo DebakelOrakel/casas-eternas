@@ -1,11 +1,11 @@
-//! `surface/hydrology.ts`: rivers and lakes on the eroded terrain over the
-//! flow substrate — the single-flow discharge with the terminal basins'
-//! water balance, the lakes and terminal seas as water bodies, the flow
-//! regime's climate inputs, the channel criterion, the watersheds and the
-//! riparian moisture; and the water bodies read back on a raster. The
-//! TypeScript port (`client/src/generator/surface/hydrology.ts`, git
-//! history) explains each rule. The river polylines' type is the river
-//! graph's (surface/river_graph.rs).
+//! Rivers and lakes on the eroded terrain over the flow substrate — the
+//! single-flow discharge with the terminal basins' water balance, the
+//! lakes and terminal seas as water bodies, the flow regime's climate
+//! inputs, the channel criterion, the watersheds and the riparian
+//! moisture; and the water bodies read back on a raster. The TypeScript
+//! port (`client/src/generator/surface/hydrology.ts`, git history)
+//! explains each rule. The river polylines' type is the river graph's
+//! (surface/river_graph.rs).
 
 use crate::climate::precipitation::OCEAN_PRECIP;
 use crate::core::det_math::{det_exp, det_log, det_pow};

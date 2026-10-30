@@ -1,5 +1,5 @@
-//! `tectonics/epoch/plateChurn.ts`, phase 5: the epoch's continent-scale
-//! changes as events, then at most one plate rift and one plate merge.
+//! Phase 5: the epoch's continent-scale changes as events, then at most
+//! one plate rift and one plate merge.
 
 use crate::core::det_math::det_hypot;
 use crate::crust::raft_names::pick_unused_raft_name;

@@ -1,6 +1,6 @@
-//! `mesh/hilbert.ts`: the Hilbert curve index, the mesh's insertion order
-//! (decision 8 of docs/decisions/adaptive-mesh.md). A total order on
-//! positions, and consecutive points are neighbours.
+//! The Hilbert curve index, the mesh's insertion order (decision 8 of
+//! docs/decisions/adaptive-mesh.md). A total order on positions, and
+//! consecutive points are neighbours.
 
 use crate::core::js;
 
