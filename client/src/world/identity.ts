@@ -269,6 +269,12 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // and the history's trench read the crust beside a boundary, not the crust
 // under a plate's seed. The worlds change again: a recipe replays to other
 // terrain.
+// And, unreleased: the heights (DES-0027 entries 18, 9 and 26, 2026-10-30)
+// — a node under a lake cuts nothing, a basin below the sea that the
+// ocean does not reach fills to its own spill level, and the interior
+// push and the plateau's balance are lower (TECTONICS_TUNING
+// intraplateShortening, collapseHeightM). The worlds change again: a
+// recipe replays to other terrain.
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the

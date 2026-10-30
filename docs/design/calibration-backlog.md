@@ -13,7 +13,7 @@ summary.de: Die Punkte, die die Kalibrierung von DEC-0036 (Phase 8) gemessen,
 area: generator
 stage: building
 createdAt: 2026-10-14
-updatedAt: 2026-10-29
+updatedAt: 2026-10-30
 related: [DEC-0036, DEC-0035, DEC-0029, DEC-0003, DEC-0004, DEC-0006, DES-0016, DES-0019, DES-0020]
 ---
 
@@ -111,9 +111,21 @@ procedure.
    about 3–4× shorter than Earth's at scale, smooth at 8–31 km nodes. Deep
    ocean nodes are 160 km apart at budget 4, so a 100 km trench shows as a
    chain of beads on the map.
-9. **Enclosed sub-sea basins** take the sea level, not their own level, as
+9. ~~**Enclosed sub-sea basins** take the sea level, not their own level, as
    the cap for deposits (already listed in DES-0016). The still-water
-   variant of 8c gave mixed results.
+   variant of 8c gave mixed results.~~
+   Done 2026-10-30 (TEG-57): a node below the sea that the world ocean
+   does not reach (not a seed of the flood, which seeds only the largest
+   sub-sea component) fills to its own spill level plus the freeboard, as
+   a lake does (surface/erosion_engine.rs `sediment_cell`). 12 seeds per
+   shape (torus / sphere), 2048 × 1024, archean 200, epochs 1–100, before
+   → after: the deposit the sea's cap refused there 3.6 / 3.2 M km³ (23 /
+   23 % of what such basins took) → 0; the sub-sea bodies of the hydrology
+   at epoch 100 74 / 59 → 65 / 46 (with entry 18; 51 / 35 with entry 26),
+   their area 836 / 602 → 1045 / 426 thousand km². Measured on Zephyra
+   before: a cut-off ocean basin of 416 thousand km², floor −4331 m,
+   spill +367 m. Left, as a note: such a basin is a lake to the hydrology
+   but sea to the climate.
 
 ## Climate
 
@@ -163,10 +175,23 @@ procedure.
     count of such worlds.
 17. **The ice's sliding cut keeps its 800 m per epoch cap**, which also
     bounds troughs and fjords. Found in 8d. 1–2 h.
-18. **Lake floors cut inside an epoch**: the engine cuts lake-floor nodes
+18. ~~**Lake floors cut inside an epoch**: the engine cuts lake-floor nodes
     once the uplift lifts them above the old flood level. The routing every
     iteration (8c) mostly removes the stale level; what remains is not
-    checked. 1 h.
+    checked. 1 h.~~
+    Done 2026-10-30 (TEG-65): the stream power never read the lake. A node
+    whose flood level stands above the z it was routed on (by the
+    hydrology's FLOOD_EPS) cuts nothing now (surface/erosion_engine.rs
+    `fluvial_cell`; the single solver keeps the routed z as the pipelined
+    one does). Not `filled > z`: the routing is one iteration old, and a
+    node that the last iteration cut or lowered stands below its own
+    level without being a lake. 12 seeds per shape (torus / sphere), 2048
+    × 1024, archean 200, epochs 1–100, before → after (with entry 9): the
+    cut on lake floors deeper than 1 m 3.4 / 2.8 % of all fluvial cut (up
+    to 3.5 / 4.4 km on one node in an iteration) → 0; the land at epoch
+    100 31.7 / 28.4 → 32.0 / 28.7 %, the lakes 5.9 / 4.0 → 6.4 / 4.0 % of
+    it, the mean land height 763 / 719 → 794 / 748 m at epoch 40, 1210 /
+    854 → 1300 / 926 m at epoch 100.
 19. ~~**Coarse sea nodes become land** before the next remesh
     (`remeshEvery` 3); up to 95 000 km², cut 2.2 km in one epoch. Not a lake
     cause (8c). 1–2 h.~~
@@ -274,6 +299,31 @@ procedure.
     measured. A larger intraplate share would lift the sphere and push the
     torus's land above 2000 m past Earth's (0.4: 772 / 634 m, 6.5 / 4.8 %,
     6 seeds). Found in 8g-2. 2–4 h.
+    *2026-10-30 (TEG-71): the shapes level at epoch 40, the torus's
+    climb is left.* After entries 2, 4 and 27 the sphere stood lower only
+    a little, and both shapes rose all history long. 12 seeds per shape
+    (torus / sphere), 2048 × 1024, archean 200, the mean land height at
+    epochs 40 / 60 / 100: 763 / 926 / 1210 and 719 / 790 / 854 m before
+    this round, 794 / 998 / 1300 and 748 / 836 / 926 m with entries 18 and
+    9. Target: 700–850 m on both shapes (Earth ~840), held from epoch 40
+    to 100. The interior push `intraplateShortening` 0.3 → 0.2 and the
+    plateau's balance `collapseHeightM` 4000 → 2500 m (the broad
+    highlands at 2–3 km grew each epoch): 694 / 834 / 1020 and 679 / 722 /
+    770 m; the land above 2000 m 5.2 / 8.0 / 12.9 and 4.7 / 6.2 / 7.7 %
+    (was 9.2 / 14.0 / 24.5 and 5.8 / 9.1 / 11.8), above 4500 m 0.16 /
+    0.21 / 0.19 and 0.28 / 0.32 / 0.19 % (was 0.6–1.2; Earth ~0.4); the
+    land 31.4 / 31.1 / 31.5 and 29.1 / 29.1 / 28.5 %. Single knobs on 6
+    seeds per shape, epoch 40 → 100: `uplift_scale` 0.8 814 → 1150 / 675
+    → 790, `collapseHeightM` 3000 832 → 1160 / 691 → 803, 2500 799 → 1090
+    / 678 → 764, 2000 with 0.15 696 → 903 / 629 → 695;
+    `intraplateShortening` 0.15 771 → 1099 / 675 → 795, 0.6 1037 → 1540
+    / 766 → 941. No uplift constant holds the torus: its land under ice
+    grows (with 0.15: 26 → 33 % of the land from epoch 10 to 100, the
+    land above 2000 m under ice 0.4 → 11 %; the sphere 7 → 9 and 0.2 →
+    4 %), where
+    the fluvial cut is 0 and the ice's cut is capped (entries 12 and 17).
+    The climb is theirs. Above 4500 m the land is now below Earth's
+    (entry 1).
 27. ~~**The events still read the plates' derived type.**~~ The plate merge,
     the oceanic plate's consumption, the accretion at a subduction arc and
     the history's trench (tectonics/trench.ts) take a plate's type from
@@ -336,9 +386,12 @@ procedure.
 
 ## Status
 
-2026-10-29: building — the list is worked one entry at a time (2, 4, 8,
-16, 19, 22, 24, 27, 30 and 31 done, 25 for the relief; 14 has its
-instrument back; see the entries below), the rest stays open.
+2026-10-30: building — the list is worked one entry at a time (2, 4, 8,
+9, 16, 18, 19, 22, 24, 27, 30 and 31 done, 25 for the relief, 26 at
+epoch 40; 14 has its instrument back; see the entries below), the rest
+stays open.
+
+2026-10-29: building — entries 2, 4, 19 and 27 done.
 
 2026-10-14: IDEA — the list, recorded when phase 8 was cut short. Take an
 entry up when a world shows it; record its result in the doc of the

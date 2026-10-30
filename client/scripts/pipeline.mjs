@@ -1039,8 +1039,14 @@ test('a sphere world runs the ecology step through the runtime: finite, pole-han
   for (let x = 0; x < FX; x++) if (!fineSea[x]) polarLand++
   check(`the ecology's fields are one value at the pole, land and sea apart (${poles.length} fields, ${polarLand} of the pole's ${FX} pixels land)`, spread.length === 0 && months.length === 2 && months.every((m) => m.data.byteLength === FX * FY), spread.map(([k, v]) => `${k} ${v}`).join(', '))
 
-  // The seam: the step across x = 0 / W no larger than the steps in a row,
-  // on average over the land (the fields jump where the land does).
+  // The seam: the step across x = 0 / W no larger than the steps in a row
+  // beside it, on average over the land (the fields jump where the land
+  // does). Beside it: the columns within SEAM_NEAR of the seam, not the
+  // whole row — since 2026-10-30 (DES-0027 entries 18, 9 and 26) the
+  // harness's sphere has land across the seam (117 pairs) where the land
+  // is rough: against the whole world its step read 4.2 against 1.8 codes,
+  // but it was 6th of the 109 columns with 50 pairs, below columns 2–7.
+  const SEAM_NEAR = 8
   const seamOf = (field) => {
     let seam = 0
     let seamN = 0
@@ -1052,7 +1058,7 @@ test('a sphere world runs the ecology step through the runtime: finite, pole-han
         const b = y * FX + ((x + 1) % FX)
         if (fineSea[a] || fineSea[b]) continue
         const d = Math.abs(field[a] - field[b])
-        if (x === FX - 1) { seam += d; seamN++ } else { inner += d; innerN++ }
+        if (x === FX - 1) { seam += d; seamN++ } else if (x < SEAM_NEAR || x >= FX - 1 - SEAM_NEAR) { inner += d; innerN++ }
       }
     }
     return { seam: seam / Math.max(1, seamN), inner: inner / Math.max(1, innerN), seamN }

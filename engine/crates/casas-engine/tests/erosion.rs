@@ -2,7 +2,10 @@
 //! mesh/mesh_erosion's run) against the TypeScript engine: the same
 //! scenarios give the same bits (docs/decisions/rust-engine.md, fork 5).
 //! The fixture is written by `engine/scripts/erosionFixture.mjs`; the
-//! scenarios below are that script's, step for step.
+//! scenarios below are that script's, step for step. A change to the
+//! model records the lines it moves (`fixture`, CASAS_RECORD=1).
+
+mod fixture;
 
 use casas_engine::core::det_math::{det_cos, det_sin};
 use casas_engine::core::domain::Domain;
@@ -47,7 +50,12 @@ fn expected(name: &str) -> String {
 }
 
 fn check(name: &str, h: &Hash) {
-    assert_eq!(format!("{name} {:08x}", h.0), expected(name));
+    fixture::check(
+        "erosion.txt",
+        &format!("{name} {:08x}", h.0),
+        &expected(name),
+        name,
+    );
 }
 
 fn height_at(x: f64, y: f64) -> f64 {

@@ -204,7 +204,7 @@ pub fn lake_depth_from_bodies(
 }
 
 /// A filled node's fill above its ground, below which it is not flooded.
-const FLOOD_EPS: f64 = 1e-5;
+pub(crate) const FLOOD_EPS: f64 = 1e-5;
 
 /// The lakes over the substrate; `temperature` °C per element.
 pub fn compute_lakes_on<S: FlowSubstrate>(

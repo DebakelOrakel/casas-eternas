@@ -34,6 +34,7 @@ use super::erosion_engine_state::{
     FLAG_HAS_STATUS_MASK, Routing, Terrain, TerrainView, build_engine_index, expand_active,
     gather_active,
 };
+use super::hydrology::FLOOD_EPS;
 use std::ops::Range;
 
 /// One iteration in years (the TypeScript constant explains the anchor).
@@ -942,6 +943,12 @@ fn fluvial_cell(
     if old <= 0.0 {
         return 0.0;
     }
+    // A node under a lake cuts nothing: still water has no stream power
+    // (TEG-65; DES-0027 entry 18, 2026-10-30). The lake is the routing's,
+    // its fill over the z it was routed on, as the hydrology reads it.
+    if r.filled[cell] as f64 > r.z_snapshot[cell] as f64 + FLOOD_EPS {
+        return 0.0;
+    }
     let target = r.flow_target[cell];
     if target < 0 {
         return 0.0;
@@ -1130,6 +1137,14 @@ fn sediment_cell(
         } else {
             f64::INFINITY
         }
+    } else if r.seed_mask[cell] == 0 {
+        // A basin below the sea that the world ocean does not reach fills
+        // to its own spill level, as a lake does (TEG-57; DES-0027 entry 9,
+        // 2026-10-30).
+        js::min(
+            donor_min - 1e-5,
+            js::max(freeboard, r.filled[cell] as f64 + freeboard),
+        )
     } else {
         js::min(donor_min - 1e-5, freeboard)
     };
@@ -1549,15 +1564,15 @@ impl ErosionSolver {
         expand_active(&self.index, &self.terrain.z, frozen_from)
     }
 
-    /// Recompute the whole routing state from the current z.
+    /// Recompute the whole routing state from the current z, kept as the
+    /// routing's snapshot (the fluvial walk reads the lakes from it).
     pub fn refresh_routing(&mut self) {
-        self.popped_count = refresh_routing_on(
-            &self.index,
-            &self.terrain.z,
-            &self.terrain,
-            &mut self.routing,
-            &mut self.scratch,
-        );
+        let r = &mut self.routing;
+        r.z_snapshot.copy_from_slice(&self.terrain.z);
+        let snapshot = std::mem::take(&mut r.z_snapshot);
+        self.popped_count =
+            refresh_routing_on(&self.index, &snapshot, &self.terrain, r, &mut self.scratch);
+        r.z_snapshot = snapshot;
     }
 
     /// One physics iteration on the current routing; returns the residual,

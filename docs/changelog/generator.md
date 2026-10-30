@@ -3,6 +3,11 @@
 Simulation layers of the flat-torus world generator. See [README](./README.md) for the format.
 (The legacy sphere generator is out of scope and not tracked here.)
 
+## 2026-10-30
+- **fixed** Tectonics: lake floors no longer erode under the water, so a seed makes a different world. `generator.step.tectonics`
+- **fixed** Tectonics: basins below the sea that the ocean does not reach fill up with sediment like lakes, so a seed makes a different world. `generator.step.tectonics`
+- **changed** Tectonics: the land stands at about the same height on flat and sphere worlds and rises less over a long history, so a seed makes a different world. `generator.step.tectonics`
+
 ## 2026-10-29
 - **fixed** Tectonics: plates no longer crowd into one region and freeze over a long history, so about a dozen plates stay spread over the world, and a seed makes a different world. `generator.step.tectonics`
 - **changed** Tectonics: continents move at about 20 km per million years and the open oceans at 50 to 80, as on Earth, so a seed makes a different world. `generator.step.tectonics`

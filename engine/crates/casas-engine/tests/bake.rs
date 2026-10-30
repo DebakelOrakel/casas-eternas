@@ -1,7 +1,11 @@
 //! The module test of the level bake (pipeline/mesh_bake_stage) against
 //! the TypeScript engine (docs/decisions/rust-engine.md, fork 5). The
 //! fixture is written by `engine/scripts/bakeFixture.mjs`; the scenarios
-//! below are that script's, step for step.
+//! below are that script's, step for step. A change to the model records
+//! the lines it moves (`fixture`, CASAS_RECORD=1).
+
+mod fixture;
+use fixture::check;
 
 use casas_engine::climate::climate_mesh::{ClimateMesh, climate_cell_m};
 use casas_engine::climate::climate_points::ClimateCellValues;
@@ -134,7 +138,7 @@ impl Hash {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(name))
             .unwrap_or_else(|| panic!("no {name} in the fixture"));
-        assert_eq!(format!("{name} {:08x}", self.0), want);
+        check("bake.txt", &format!("{name} {:08x}", self.0), want, name);
     }
 }
 

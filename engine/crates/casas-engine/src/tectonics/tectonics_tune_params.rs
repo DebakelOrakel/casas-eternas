@@ -96,7 +96,14 @@ pub const TECTONICS_TUNING: TectonicsTuning = TectonicsTuning {
     orogen_crust_m: 40_000.0,
     shortening_half_life_ma: 2.0,
     crust_side_m: 156_000.0,
-    intraplate_shortening: 0.3,
+    // 0.3 → 0.2 with `collapse_height_m` (TEG-71; DES-0027 entry 26,
+    // 2026-10-30). Target: a mean land height of 700–850 m on both shapes
+    // (Earth ~840 m), held from epoch 40 to 100. Before, the land rose all
+    // history long; the interior push lifts broad land that the erosion
+    // reaches slowly. 6 seeds per shape, epochs 40 / 100 (torus / sphere):
+    // 0.3 → 0.15 lowered the mean land height 883 → 771 / 711 → 675 and
+    // 1300 → 1099 / 860 → 795 m; 0.6 raised it.
+    intraplate_shortening: 0.2,
     coast_search_m: 936_000.0,
     lock_epochs_required: 40.0,
     rift_accumulator_threshold: -40.0,
@@ -171,7 +178,13 @@ pub const TECTONICS_TUNING: TectonicsTuning = TectonicsTuning {
     flexure_youngs_modulus_gpa: 70.0,
     flexure_poisson: 0.25,
     flexure_deflection_scale: 1.0,
-    collapse_height_m: 4000.0,
+    // The plateau's balance 4000 → 2500 m with `intraplate_shortening`
+    // (TEG-71; DES-0027 entry 26, 2026-10-30): the broad highlands stood at
+    // 2–3 km and grew each epoch. 6 seeds per shape, epochs 40 / 100 (torus
+    // / sphere): 3000 m lowered the mean land height 883 → 832 / 711 → 691
+    // and 1300 → 1160 / 860 → 803 m, 2500 m to 799 / 678 and 1090 / 764 m.
+    // The 12-seed result of both is in DES-0027 entry 26.
+    collapse_height_m: 2500.0,
     collapse_smoothing_m: 150_000.0,
     wedge_radius_m: 10_000.0,
     wedge_height_m: 9500.0,
