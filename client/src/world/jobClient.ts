@@ -1,6 +1,6 @@
 import { apiBase } from '../server/worldClient'
 import { WORLD_PIPELINE } from './worldPipeline'
-import { INCUBATOR_VERSION } from './historyArtifacts'
+import { INCUBATOR_VERSION, PEOPLING_DEFAULTS, type PeoplingInput } from './historyArtifacts'
 import type { PipelineVersions } from './levels'
 import { getServerStatus } from '../server/serverStatus'
 import { authFetch, hasSession } from '../server/session'
@@ -49,7 +49,7 @@ export interface BakeJob {
   // The order that produced the job, as the server records it. What lets a
   // screen recognise a job as being about ITS world and stage when somebody
   // else placed the order.
-  request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number; id?: number }; plan?: JobPlan; pipeline?: string; level?: string }
+  request?: { worldUid: string; stage: number; scope?: { kind: string; x?: number; y?: number; id?: number; reach?: number; seaLow?: number }; plan?: JobPlan; pipeline?: string; level?: string }
   queuedAt?: string
   startedAt?: string
   // What the caller may do with the job, as the server states it:
@@ -211,14 +211,14 @@ export async function canCommissionBakes(): Promise<boolean> {
 
 // The artifact stage a job produces, as the server names it (the jobs
 // module's StageName): `L1`, or `L2:x,y` for a tile, `H1:cell` for a
-// history; `L1–L2` for a refine
+// history (`:r<km>`, `:s<m>` after it with step 1's controls); `L1–L2` for a refine
 // plan up to level 2, which produces both.
 export function jobStageName(job: BakeJob): string {
   const request = job.request
   if (!request) return '?'
   if (request.plan === 'refine') return request.stage > 1 ? `L1–L${request.stage}` : 'L1'
   const scope = request.scope
-  if (scope?.kind === 'history') return `H1:${scope.id ?? 0}`
+  if (scope?.kind === 'history') return `H1:${scope.id ?? 0}${scope.reach ? `:r${scope.reach}` : ''}${scope.seaLow ? `:s${scope.seaLow}` : ''}`
   if (scope?.kind === 'tile') return `L${request.stage}:${scope.x ?? 0},${scope.y ?? 0}`
   return `L${request.stage}`
 }
@@ -243,11 +243,14 @@ export async function commissionBake(
   return orderJob({ worldUid, stage, erosionRounds, pipeline, ...(tile ? { scope: { kind: 'tile', x: tile.x, y: tile.y } } : {}), ...(plan ? { plan } : {}) })
 }
 
-// The incubator's history of the world from `origin` on the level 1 of the
-// pipeline `level` (world/historyArtifacts.ts): its job, on the route of
-// this client's history version (internal/modules/jobs, ScopeHistory).
-export function commissionHistory(worldUid: string, origin: number, level: string): Promise<CommissionOutcome> {
-  return orderJob({ worldUid, stage: 1, scope: { kind: 'history', id: origin }, level, pipeline: INCUBATOR_VERSION })
+// The incubator's history of the world from step 1's `input` on the level 1
+// of the pipeline `level` (world/historyArtifacts.ts): its job, on the route
+// of this client's history version (internal/modules/jobs, ScopeHistory).
+// A control at its default is left out, as the stage leaves it out.
+export function commissionHistory(worldUid: string, input: PeoplingInput, level: string): Promise<CommissionOutcome> {
+  const reach = input.reachKm !== PEOPLING_DEFAULTS.reachKm ? { reach: input.reachKm } : {}
+  const seaLow = input.seaLowM !== PEOPLING_DEFAULTS.seaLowM ? { seaLow: input.seaLowM } : {}
+  return orderJob({ worldUid, stage: 1, scope: { kind: 'history', id: input.origin, ...reach, ...seaLow }, level, pipeline: INCUBATOR_VERSION })
 }
 
 // POST /v1/jobs with `body`, its answer as an outcome.

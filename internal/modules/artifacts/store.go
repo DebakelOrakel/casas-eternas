@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -263,16 +264,14 @@ func StageLevel(stage string) (level int, tile bool, ok bool) {
 }
 
 // StageHistory reads whether a stage names a history: `H1:<cell>`, the
-// incubator's history from that origin (the client's
+// incubator's history from that origin, and `H1:<cell>:r<km>:s<m>` with
+// step 1's controls, each only where not the default (the client's
 // world/historyArtifacts.ts parseHistoryStage).
 func StageHistory(stage string) bool {
-	cell, ok := strings.CutPrefix(stage, "H1:")
-	if !ok {
-		return false
-	}
-	n, err := strconv.Atoi(cell)
-	return err == nil && n >= 0
+	return historyStage.MatchString(stage)
 }
+
+var historyStage = regexp.MustCompile(`^H1:\d+(:r\d+)?(:s\d+)?$`)
 
 // ListedArtifact is one entry of the listing — flat, the client groups.
 type ListedArtifact struct {

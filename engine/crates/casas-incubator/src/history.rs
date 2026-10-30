@@ -8,7 +8,7 @@
 use crate::catalog::catalog;
 use crate::flora::Layer as Grown;
 use crate::habitat::{CARRYING, Habitat};
-use crate::peopling::people;
+use crate::peopling::{Controls, people};
 use crate::simulation::{BigGame, Layer, Rain, SimulationInput, SimulationResult, simulate};
 use casas_engine::climate::biomes::biome;
 use casas_engine::climate::koppen::KOPPEN_CODES;
@@ -75,17 +75,30 @@ pub fn origin_of(h: &Habitat, carrying: &[f32]) -> i32 {
 }
 
 /// The history: `flora` the plants then the trees, `fauna` the animals, in
-/// the catalog's order (flora.rs); `origin` a cell, or -1 to choose it.
+/// the catalog's order (flora.rs); `origin` a cell, or -1 to choose it;
+/// `controls` step 1's (peopling.rs).
+#[allow(clippy::too_many_arguments)]
 pub fn run_history(
     h: &Habitat,
     flora: &[Grown],
     fauna: &[Grown],
     origin: i32,
+    controls: Controls,
     seed: f64,
     rain: Option<&RainChart>,
     on_progress: Option<&mut dyn FnMut(f64)>,
 ) -> SimulationResult {
-    run_history_keeping(h, flora, fauna, origin, seed, rain, on_progress, false)
+    run_history_keeping(
+        h,
+        flora,
+        fauna,
+        origin,
+        controls,
+        seed,
+        rain,
+        on_progress,
+        false,
+    )
 }
 
 /// The history, and with `keep_traits` the traits at each kept state
@@ -96,6 +109,7 @@ pub fn run_history_keeping(
     flora: &[Grown],
     fauna: &[Grown],
     origin: i32,
+    controls: Controls,
     seed: f64,
     rain: Option<&RainChart>,
     on_progress: Option<&mut dyn FnMut(f64)>,
@@ -140,7 +154,7 @@ pub fn run_history_keeping(
             })
         })
         .collect();
-    let peopling = people(h, &carrying, &[origin as usize], seed);
+    let peopling = people(h, &carrying, &[origin as usize], seed, controls);
     let input = SimulationInput {
         carrying: &carrying,
         origin,

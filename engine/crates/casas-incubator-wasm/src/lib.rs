@@ -11,7 +11,7 @@ use casas_incubator::habitat::{CELL_ECOLOGY, CellInput, Habitat, build_cells};
 use casas_incubator::history::{RainChart, carrying_of, origin_of, run_history};
 use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
-use casas_incubator::peopling::{Peopling, people};
+use casas_incubator::peopling::{Controls, Peopling, people};
 use casas_incubator::settle::settle_history;
 use casas_incubator::simulation::{SPAN_YEARS, STEP_YEARS, SimulationResult, ice_distance};
 use wasm_bindgen::prelude::*;
@@ -42,6 +42,15 @@ pub fn ice_reach_km() -> f64 {
 #[wasm_bindgen(js_name = seaDropM)]
 pub fn sea_drop_m() -> f64 {
     SEA_DROP_M
+}
+
+// Step 1's controls, each its default where not given.
+fn controls_of(reach_km: Option<f64>, sea_low_m: Option<f64>) -> Controls {
+    let d = Controls::default();
+    Controls {
+        reach_km: reach_km.unwrap_or(d.reach_km),
+        sea_low_m: sea_low_m.unwrap_or(d.sea_low_m),
+    }
 }
 
 #[wasm_bindgen]
@@ -258,8 +267,9 @@ impl Incubator {
     /// The history (history.rs run_history) from `origin` (-1: chosen), on
     /// the flora and the fauna grown, the rain's reliability charted
     /// `rain_width` × `rain_height` (none: no droughts); `progress` called
-    /// with the share done. Kept; its packed bytes (pack.rs, the H1
-    /// artifact's).
+    /// with the share done; step 1's controls (peopling.rs `Controls`),
+    /// each its default where not given. Kept; its packed bytes (pack.rs,
+    /// the H1 artifact's).
     #[allow(clippy::too_many_arguments)]
     pub fn simulate(
         &mut self,
@@ -271,6 +281,8 @@ impl Incubator {
         enso: Option<Vec<f32>>,
         enso_strength: f64,
         progress: Option<js_sys::Function>,
+        reach_km: Option<f64>,
+        sea_low_m: Option<f64>,
     ) -> Result<Vec<u8>, JsError> {
         if self.flora.is_empty() || self.fauna.is_empty() {
             return Err(JsError::new(
@@ -298,6 +310,7 @@ impl Incubator {
             plants_and_trees,
             animals,
             origin,
+            controls_of(reach_km, sea_low_m),
             seed,
             rain.as_ref(),
             Some(&mut report),
@@ -307,11 +320,24 @@ impl Incubator {
         Ok(bytes)
     }
 
-    /// Step 1 of the prehistory (peopling.rs) from `origins`, kept for the
+    /// Step 1 of the prehistory (peopling.rs) from `origins`, with its
+    /// controls (each its default where not given), kept for the
     /// `peopling*` reads; its span, years.
-    pub fn people(&mut self, origins: &[i32], seed: f64) -> f64 {
+    pub fn people(
+        &mut self,
+        origins: &[i32],
+        seed: f64,
+        reach_km: Option<f64>,
+        sea_low_m: Option<f64>,
+    ) -> f64 {
         let origins: Vec<usize> = origins.iter().map(|&o| o as usize).collect();
-        let p = people(&self.habitat, &carrying_of(&self.habitat), &origins, seed);
+        let p = people(
+            &self.habitat,
+            &carrying_of(&self.habitat),
+            &origins,
+            seed,
+            controls_of(reach_km, sea_low_m),
+        );
         let span = p.span;
         self.peopling = Some(p);
         span

@@ -20,7 +20,7 @@ import { createRequire } from 'node:module'
 import { domainOfKind } from '../src/generator/core/domain'
 import { openWorld } from '../src/world/query'
 import { meshLevelStage, readMeshLevelArtifact } from '../src/world/meshArtifacts'
-import { INCUBATOR_VERSION, historyKey, readHistoryArtifact, writeHistoryArtifact } from '../src/world/historyArtifacts'
+import { INCUBATOR_VERSION, historyKey, peoplingInput, readHistoryArtifact, writeHistoryArtifact } from '../src/world/historyArtifacts'
 import { artifactKey } from '../src/storage/ArtifactStore'
 import { cellInputOf, chartOf, CHART_HEIGHT, CHART_WIDTH, incubatorOf, rainOf, type ChartBuild, type HistoryChart, type HistoryIncubator, type IncubatorBuild } from '../src/screens/incubator/historyInput'
 import { loadNativeEngine, type NativeEngine } from './engineNative'
@@ -33,7 +33,7 @@ export const version: PipelineVersion = { pipelineVersion: INCUBATOR_VERSION, ti
 
 // The incubator's native build (casas-incubator-node).
 interface NativeIncubator extends HistoryIncubator {
-  simulate(origin: number, seed: number, rainWidth: number, rainHeight: number, variability: Float32Array | undefined, enso: Float32Array | undefined, ensoStrength: number): Uint8Array
+  simulate(origin: number, seed: number, rainWidth: number, rainHeight: number, variability: Float32Array | undefined, enso: Float32Array | undefined, ensoStrength: number, reachKm: number, seaLowM: number): Uint8Array
 }
 interface NativeIncubatorBuild {
   version(): string
@@ -66,7 +66,9 @@ export async function runTask(task: PipelineTask, io: PipelineIO): Promise<TaskO
   if (!world) throw new Error('not a readable world archive')
   const worldId = await world.worldId()
   const store = io.store(world.recipe.worldUid)
-  const key = historyKey(worldId, asked.level, asked.origin)
+  // Step 1's input: a control left out is its default, passed as given.
+  const input = peoplingInput(asked.origin, { ...(asked.reach ? { reachKm: asked.reach } : {}), ...(asked.seaLow ? { seaLowM: asked.seaLow } : {}) })
+  const key = historyKey(worldId, asked.level, input)
   const result = (nodes: number, durationMs: number): TaskOutcome['result'] => ({ worldId, pipelineVersion: key.pipelineVersion, stage: key.stage, width: world.width, height: world.height, nodes, durationMs })
   clock.lap('world')
   if (task.reuse && (await readHistoryArtifact(store, key))) return { result: result(0, 0), laps: clock.times }
@@ -89,7 +91,7 @@ export async function runTask(task: PipelineTask, io: PipelineIO): Promise<TaskO
   io.progress('history', 0)
   incubator.growFlora(seed)
   incubator.populate(seed)
-  const bytes = incubator.simulate(asked.origin, seed, rain?.width ?? 0, rain?.height ?? 0, rain?.variability, rain?.enso, rain?.ensoStrength ?? 0)
+  const bytes = incubator.simulate(asked.origin, seed, rain?.width ?? 0, rain?.height ?? 0, rain?.variability, rain?.enso, rain?.ensoStrength ?? 0, input.reachKm, input.seaLowM)
   clock.lap('history')
   const durationMs = Date.now() - started
   io.progress('store', 0)

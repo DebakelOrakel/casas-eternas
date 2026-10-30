@@ -1,4 +1,4 @@
-import initHistory, { coldCurve, iceReachKm, Incubator, seaDropM } from 'casas-incubator-wasm/casas-incubator.js'
+import initHistory, { coldCurve, iceReachKm, Incubator } from 'casas-incubator-wasm/casas-incubator.js'
 import historyWasmUrl from 'casas-incubator-wasm/casas-incubator_bg.wasm?url'
 import { ANIMALS } from './animals'
 import type { AnimalLayer, CellInput, PeopleResult, PlantLayer, SettleResult, TreeLayer } from './cellsShared'
@@ -6,6 +6,7 @@ import { incubatorOf } from './historyInput'
 import type { LogEvent } from './historyLogShared'
 import { peopleIdsOf, unpackHistory, unpackSettled, type PackedHistory, type PeoplesTree } from './historyPack'
 import { PEOPLE_FRAME_STEP } from './peopleShared'
+import type { PeoplingInput } from '../../world/historyArtifacts'
 import { PLANTS } from './plants'
 import { TREES } from './trees'
 
@@ -22,16 +23,19 @@ import { TREES } from './trees'
 
 // `rain`: the rain's reliability charted (map/refinedLayers.ts, the
 // variability and the ENSO mark; null without the save's refinement).
+// `controls`: step 1's (casas-incubator peopling.rs Controls), always
+// given, so that the screen's input is the one the crate runs.
+export type PeoplingControls = Omit<PeoplingInput, 'origin'>
 export type IncubatorRequest =
   | ({ type: 'cells'; seed: number; spacingKm?: number } & CellInput)
   | { type: 'flora' }
   | { type: 'fauna' }
   // The world's cold over the span (from its seed alone).
   | { type: 'climate'; seed: number }
-  | { type: 'simulate'; origin: number; rain: { width: number; height: number; variability: Float32Array; enso: Float32Array; ensoStrength: number } | null }
+  | { type: 'simulate'; origin: number; controls: PeoplingControls; rain: { width: number; height: number; variability: Float32Array; enso: Float32Array; ensoStrength: number } | null }
   | { type: 'frame'; index: number }
   // The old stone age from `origin` (-1: the worker's choice).
-  | { type: 'peopling'; origin: number }
+  | { type: 'peopling'; origin: number; controls: PeoplingControls }
   // The history run or restored last, packed, for its artifact; and a
   // packed one taken in a run's place.
   | { type: 'pack' }
@@ -42,9 +46,9 @@ export type IncubatorAnswer =
   | { type: 'cells'; count: number; owners: Int32Array; u: Float32Array; v: Float32Array; land: Uint8Array; landmass: Int32Array; landmassKm2: Float64Array; areaKm2: Float32Array; iceKm: Float32Array; seaDepthM: Float32Array; ms: number }
   | { type: 'flora'; plants: PlantLayer[]; trees: TreeLayer[]; ms: number }
   | { type: 'fauna'; animals: AnimalLayer[]; ms: number }
-  // The cold every `stepYears` from the departure; the ice's reach and the
-  // sea's drop at a cold of 1.
-  | { type: 'climate'; cold: Float32Array; stepYears: number; iceReachKm: number; seaDropM: number; ms: number }
+  // The cold every `stepYears` from the departure; the ice's reach at a
+  // cold of 1 (the sea's drop then is step 1's control).
+  | { type: 'climate'; cold: Float32Array; stepYears: number; iceReachKm: number; ms: number }
   // The history's spread, its start and end, and its peoples' tree without
   // the kept states' ids, which come with the states (historyPack.ts).
   | ({ type: 'people'; start: number; end: number; peoples: PeoplesWithoutIds; ms: number } & PeopleResult)
@@ -97,7 +101,7 @@ async function answer(ask: IncubatorRequest): Promise<void> {
   ready ??= initHistory({ module_or_path: historyWasmUrl })
   await ready
   if (ask.type === 'climate') {
-    worker.postMessage({ type: 'climate', cold: coldCurve(ask.seed), stepYears: COLD_STEP_YEARS, iceReachKm: iceReachKm(), seaDropM: seaDropM(), ms: ms() } satisfies IncubatorAnswer)
+    worker.postMessage({ type: 'climate', cold: coldCurve(ask.seed), stepYears: COLD_STEP_YEARS, iceReachKm: iceReachKm(), ms: ms() } satisfies IncubatorAnswer)
     return
   }
   if (ask.type === 'cells') {
@@ -135,7 +139,7 @@ async function answer(ask: IncubatorRequest): Promise<void> {
   }
   if (ask.type === 'peopling') {
     const origin = ask.origin >= 0 ? ask.origin : e.originOf()
-    const span = e.people(Int32Array.of(origin), seed)
+    const span = e.people(Int32Array.of(origin), seed, ask.controls.reachKm, ask.controls.seaLowM)
     const arrival = e.peoplingFloats('arrival')
     const from = e.peoplingInts('from')
     const group = e.peoplingInts('group')
@@ -167,7 +171,7 @@ async function answer(ask: IncubatorRequest): Promise<void> {
   }
   if (ask.type === 'simulate') {
     const rain = ask.rain
-    const bytes = e.simulate(ask.origin, seed, rain?.width ?? 0, rain?.height ?? 0, rain?.variability, rain?.enso, rain?.ensoStrength ?? 0, undefined)
+    const bytes = e.simulate(ask.origin, seed, rain?.width ?? 0, rain?.height ?? 0, rain?.variability, rain?.enso, rain?.ensoStrength ?? 0, undefined, ask.controls.reachKm, ask.controls.seaLowM)
     peopleAnswer(adopt(bytes), ms())
     return
   }

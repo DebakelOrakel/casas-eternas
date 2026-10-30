@@ -111,8 +111,15 @@ origins:
 - The people per cell follow from the carrying capacity: foragers at
   their density.
 
-Controls: the origin (a click on the globe). The reach over the sea and
-the lowest sea level as controls are not built.
+Controls: the origin (a click on the globe). Since 2026-10-30 also two
+sliders in the step's column: the reach over the sea at the step's end
+(100 to 1 000 km, default 450; it grows from 30 km), and the lowest sea
+level, the sea's drop at the coldest (60 to 150 m, default 120). The sea
+curve keeps its shape, only its depth changes, and step 2 continues the
+same curve. A change makes step 1 again, as a new origin does. The
+controls are part of H1's input and of its key (`H1:<cell>:r<km>:s<m>`, a
+default left out, so a history at the defaults keeps its key;
+`casas-incubator` peopling.rs `Controls`).
 
 Land that the graph does not reach stays empty. That is a property of
 the world and a part of the game (a frontier, an island found late), not
@@ -653,7 +660,8 @@ Open:
    (SPLIT_TOLD_SHARE) would tell more (2026-10-29).
 3. Done 2026-10-30: the far trade's sources of the goods in H1, for
    step 3 (above, the exchange; Status).
-4. Step 1's sea-level curve: drawn from the world's seed, or a control.
+4. Step 1's sea-level curve: drawn from the world's seed; its depth is a
+   control since 2026-10-30 (Step 1), its shape is not.
 5. The dry shelf's own land fields (planned for v15, 2026-10-30):
    the engine's ecology with the shelf down to −120 m as land, in today's
    climate, kept with level 1; it replaces the coast's values the shelf

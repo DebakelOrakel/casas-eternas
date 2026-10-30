@@ -62,6 +62,14 @@ declare module 'casas-incubator-wasm/version.json' {
   export default version
 }
 
+// The incubator's tuning by module (casas-incubator tuning.rs `constants`;
+// `make engine` writes it beside version.json). Typed for what the client
+// reads: step 1's controls' defaults.
+declare module 'casas-incubator-wasm/constants.json' {
+  const constants: { peopling: { REACH_END_KM: number }; climate: { SEA_DROP_M: number } }
+  export default constants
+}
+
 // The incubator's WASM build (`make engine` writes it to
 // engine/dist/incubator; vite.config.ts's alias `casas-incubator-wasm` names that
 // directory), as wasm-bindgen types it (its casas-incubator.d.ts).
@@ -90,9 +98,9 @@ declare module 'casas-incubator-wasm/casas-incubator.js' {
     floraShares(): Float64Array
     faunaCodes(): Uint8Array
     faunaShares(): Float64Array
-    simulate(origin: number, seed: number, rainWidth: number, rainHeight: number, variability: Float32Array | undefined, enso: Float32Array | undefined, ensoStrength: number, progress: ((share: number) => void) | undefined): Uint8Array
+    simulate(origin: number, seed: number, rainWidth: number, rainHeight: number, variability: Float32Array | undefined, enso: Float32Array | undefined, ensoStrength: number, progress: ((share: number) => void) | undefined, reachKm?: number, seaLowM?: number): Uint8Array
     settleHistory(arrival: Float32Array, farmAt: Float32Array, herdAt: Float32Array, villages: Int32Array, villageFrom: Float32Array, villageTo: Float32Array, villageTown: Float32Array, end: number): Uint8Array
-    people(origins: Int32Array, seed: number): number
+    people(origins: Int32Array, seed: number, reachKm?: number, seaLowM?: number): number
     peoplingFloats(name: string): Float32Array
     peoplingInts(name: string): Int32Array
     peoplingAfloat(): Uint8Array

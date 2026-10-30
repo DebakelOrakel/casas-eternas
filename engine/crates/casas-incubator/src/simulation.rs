@@ -1365,7 +1365,7 @@ pub fn simulate(
 ) -> SimulationResult {
     let n = h.count;
     let land = &h.land;
-    let climate = ClimateHistory::of(input.seed, SPAN_YEARS);
+    let climate = ClimateHistory::of(input.seed, SPAN_YEARS).with_sea_low(input.peopling.sea_low_m);
     let Ground {
         base,
         speed,

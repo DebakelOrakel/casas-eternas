@@ -71,11 +71,14 @@ type Spec struct {
 	JobID string `json:"jobId,omitempty"`
 }
 
-// HistoryRef is a history's origin and the pipeline of its level 1, as
-// the worker reads them.
+// HistoryRef is a history's origin, the pipeline of its level 1 and step
+// 1's controls (Scope's Reach and SeaLow, left out at the default), as the
+// worker reads them.
 type HistoryRef struct {
 	Origin int    `json:"origin"`
 	Level  string `json:"level"`
+	Reach  int    `json:"reach,omitempty"`
+	SeaLow int    `json:"seaLow,omitempty"`
 }
 
 // TileRef is a tile's column and row, as the worker reads them.

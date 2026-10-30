@@ -13,7 +13,7 @@ use casas_incubator::history::{
 use casas_incubator::log::LogEvent;
 use casas_incubator::pack::{pack_history, pack_settled};
 use casas_incubator::peoples::{TRAITS, peoples_of};
-use casas_incubator::peopling::{Peopling, people};
+use casas_incubator::peopling::{Controls, Peopling, people};
 use casas_incubator::settle::settle_history;
 use casas_incubator::simulation::{
     KEEP_YEARS, PEOPLE_FRAME_STEP, SPAN_YEARS, STEP_YEARS, ice_distance,
@@ -51,6 +51,16 @@ pub fn sea_drop_m() -> f64 {
 
 fn error(message: String) -> napi::Error {
     napi::Error::from_reason(message)
+}
+
+// Step 1's controls (peopling.rs `Controls`), each its default where not
+// given, as the WASM build's.
+fn controls_of(reach_km: Option<f64>, sea_low_m: Option<f64>) -> Controls {
+    let d = Controls::default();
+    Controls {
+        reach_km: reach_km.unwrap_or(d.reach_km),
+        sea_low_m: sea_low_m.unwrap_or(d.sea_low_m),
+    }
 }
 
 #[napi]
@@ -269,7 +279,7 @@ impl Incubator {
     }
 
     /// The history, packed (the H1 artifact's bytes), as the WASM build's
-    /// `simulate` gives it; no progress here.
+    /// `simulate` gives it, with step 1's controls; no progress here.
     #[napi]
     #[allow(clippy::too_many_arguments)]
     pub fn simulate(
@@ -281,6 +291,8 @@ impl Incubator {
         variability: Option<Float32Array>,
         enso: Option<Float32Array>,
         enso_strength: f64,
+        reach_km: Option<f64>,
+        sea_low_m: Option<f64>,
     ) -> napi::Result<Uint8Array> {
         if self.flora.is_empty() || self.fauna.is_empty() {
             return Err(error(
@@ -302,6 +314,7 @@ impl Incubator {
             &self.flora,
             &self.fauna,
             origin,
+            controls_of(reach_km, sea_low_m),
             seed,
             rain.as_ref(),
             None,
@@ -338,6 +351,7 @@ impl Incubator {
             &self.flora,
             &self.fauna,
             origin,
+            Controls::default(),
             seed,
             rain.as_ref(),
             None,
@@ -439,12 +453,24 @@ impl Incubator {
         )
     }
 
-    /// Step 1 of the prehistory (peopling.rs) from the given origins, kept
-    /// for the `peopling_*` reads; its span in years.
+    /// Step 1 of the prehistory (peopling.rs) from the given origins, with
+    /// its controls, kept for the `peopling_*` reads; its span in years.
     #[napi]
-    pub fn people(&mut self, origins: Int32Array, seed: f64) -> f64 {
+    pub fn people(
+        &mut self,
+        origins: Int32Array,
+        seed: f64,
+        reach_km: Option<f64>,
+        sea_low_m: Option<f64>,
+    ) -> f64 {
         let origins: Vec<usize> = origins.iter().map(|&o| o as usize).collect();
-        let p = people(&self.habitat, &carrying_of(&self.habitat), &origins, seed);
+        let p = people(
+            &self.habitat,
+            &carrying_of(&self.habitat),
+            &origins,
+            seed,
+            controls_of(reach_km, sea_low_m),
+        );
         let span = p.span;
         self.peopling = Some(p);
         span

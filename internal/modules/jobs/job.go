@@ -56,6 +56,13 @@ type Scope struct {
 	// world, so the upper bound is the worker's to check.
 	X int `json:"x,omitempty"`
 	Y int `json:"y,omitempty"`
+	// Step 1's controls, once Kind is ScopeHistory (casas-incubator
+	// peopling.rs Controls): the reach over sea at step 1's end, km, and
+	// the lowest sea level, m. 0 is the incubator's default; the client
+	// leaves a default out, so a history at the defaults keeps the stage
+	// `H1:<cell>`. The range is the client's control's.
+	Reach  int `json:"reach,omitempty"`
+	SeaLow int `json:"seaLow,omitempty"`
 }
 
 type State string
@@ -209,6 +216,9 @@ func (r Request) Validate() error {
 		if r.Scope.ID < 0 {
 			return fmt.Errorf("the origin's cell must not be negative")
 		}
+		if r.Scope.Reach < 0 || r.Scope.SeaLow < 0 {
+			return fmt.Errorf("reach and seaLow must not be negative")
+		}
 		if !pipelinePattern.MatchString(r.Level) {
 			return fmt.Errorf("level is required for a history: the pipeline of its level 1")
 		}
@@ -224,11 +234,19 @@ func (r Request) Validate() error {
 var pipelinePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // StageName is the artifact stage a request produces: `L1` for a level,
-// `L2:x,y` for a tile, `H1:cell` for a history — the client's
+// `L2:x,y` for a tile, `H1:cell` for a history (`H1:cell:r<km>:s<m>` with
+// controls other than the defaults, each only where given) — the client's
 // meshLevelStage, meshTileStage and historyStage.
 func (r Request) StageName() string {
 	if r.Scope.Kind == ScopeHistory {
-		return fmt.Sprintf("H1:%d", r.Scope.ID)
+		name := fmt.Sprintf("H1:%d", r.Scope.ID)
+		if r.Scope.Reach > 0 {
+			name += fmt.Sprintf(":r%d", r.Scope.Reach)
+		}
+		if r.Scope.SeaLow > 0 {
+			name += fmt.Sprintf(":s%d", r.Scope.SeaLow)
+		}
+		return name
 	}
 	if r.Scope.Kind == ScopeTile {
 		return fmt.Sprintf("L%d:%d,%d", r.Stage, r.Scope.X, r.Scope.Y)

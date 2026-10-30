@@ -41,6 +41,7 @@ const { Biome } = await L('/src/generator/climate/biomes.ts')
 const { KOPPEN_CODES } = await L('/src/generator/climate/koppen.ts')
 const { ECOLOGY_FINE_OCEAN, ECOLOGY_FINE_STEP } = await L('/src/generator/ecology/ecologyField.ts')
 const { unpackHistory, unpackSettled } = await L('/src/screens/incubator/historyPack.ts')
+const { historyStage, parseHistoryStage, peoplingInput, PEOPLING_DEFAULTS } = await L('/src/world/historyArtifacts.ts')
 await server.close()
 
 let failed = false
@@ -208,6 +209,35 @@ function goodsApart(pack) {
   const of = Object.fromEntries(goods.map((a) => [a.name, bytes.subarray(data + a.offset, data + a.offset + a.length * size[a.type])]))
   return { history, goods: of, bytes: bytes.length, before: history.length }
 }
+// STEP 1'S CONTROLS (2026-10-30, DES-0032): the defaults given are the
+// defaults left out (the history's bits above are the defaults'); another
+// reach over sea or another lowest sea level reaches another share of the
+// land, and names another H1 (the default's stage unchanged).
+function peoplingControls(kind, rs, seed) {
+  const origin = rs.originOf()
+  const land = rs.bytes('land')
+  const reached = (...controls) => {
+    rs.people(Int32Array.of(origin), seed, ...controls)
+    const arrival = rs.peoplingFloats('arrival')
+    let on = 0
+    let all = 0
+    for (let i = 0; i < arrival.length; i++) {
+      if (!land[i]) continue
+      all++
+      if (arrival[i] < Infinity) on++
+    }
+    return on / all
+  }
+  const share = reached()
+  if (reached(PEOPLING_DEFAULTS.reachKm, PEOPLING_DEFAULTS.seaLowM) !== share) fail(`${kind} controls: the defaults given are not the defaults left out`)
+  const shares = { 'reach 100 km': reached(100, undefined), 'reach 1000 km': reached(1000, undefined), 'sea low 60 m': reached(undefined, 60), 'sea low 150 m': reached(undefined, 150) }
+  console.log(`incubator: ${kind} — step 1 reached ${(100 * share).toFixed(1)} % of the land at the defaults; ${Object.entries(shares).map(([k, v]) => `${k} ${(100 * v).toFixed(1)} %`).join(', ')}`)
+  if (shares['reach 100 km'] >= shares['reach 1000 km']) fail(`${kind} controls: the reach over sea changes nothing`)
+  if (shares['sea low 60 m'] === shares['sea low 150 m']) fail(`${kind} controls: the lowest sea level changes nothing`)
+  const stages = [peoplingInput(origin), peoplingInput(origin, { reachKm: 600 }), peoplingInput(origin, { seaLowM: 90 }), peoplingInput(origin, { reachKm: 600, seaLowM: 90 })].map(historyStage)
+  if (stages[0] !== `H1:${origin}` || new Set(stages).size !== stages.length) fail(`${kind} controls: the H1 stages ${stages.join(' ')}`)
+  for (const stage of stages) if (historyStage(parseHistoryStage(stage)) !== stage) fail(`${kind} controls: ${stage} does not read back`)
+}
 for (const kind of ['torus', 'sphere']) {
   const world = synthWorld(kind)
   let t0 = performance.now()
@@ -228,6 +258,7 @@ for (const kind of ['torus', 'sphere']) {
   const growMs = performance.now() - t0
   hashes[`${kind} flora`] = hashOf(rs.floraCodes(), rs.floraShares())
   hashes[`${kind} fauna`] = hashOf(rs.faunaCodes(), rs.faunaShares())
+  peoplingControls(kind, rs, world.seed)
   const r = world.rain
   t0 = performance.now()
   const pack = rs.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength, undefined)
@@ -304,6 +335,14 @@ for (const kind of ['torus', 'sphere']) {
   }
   for (const [part, h] of Object.entries(natHashes)) if (h !== hashes[`${kind} ${part}`]) fail(`${kind} ${part}: the native build differs from the WASM's`)
   console.log(`incubator: ${kind} — the native build in ${Math.round(natMs)} ms`)
+  // Step 1's controls reach the history in both builds alike (the job's
+  // and the browser's), and change it.
+  if (kind === 'torus') {
+    const wasmOther = hashOf(rs.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength, undefined, 600, 90))
+    const natOther = hashOf(nat.simulate(-1, world.seed, r.width, r.height, r.variability, r.enso, r.ensoStrength, 600, 90))
+    if (wasmOther !== natOther) fail(`${kind} controls: the native build's history differs from the WASM's`)
+    if (wasmOther === hashOf(pack)) fail(`${kind} controls: the history does not change with them`)
+  }
   if (golden) for (const part of ['habitat', 'flora', 'fauna', 'history', 'peoples', 'settlement', 'goods']) {
     const key = `${kind} ${part}`
     if (golden[key] !== hashes[key]) fail(`${key}: not the reference's (${hashes[key].slice(0, 12)} against ${String(golden[key]).slice(0, 12)})`)

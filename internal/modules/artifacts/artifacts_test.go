@@ -516,6 +516,7 @@ func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
 	mint("odd", "v6")
 	mint("H1:5", "v6+h1-x")
 	mint("H1:9", "v6+h1-x")
+	mint("H1:9:r600:s90", "v6+h1-x")
 
 	levels := func() map[string]int {
 		t.Helper()
@@ -537,7 +538,7 @@ func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
 		return out
 	}
 	got := levels()
-	want := map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v6": 2, "L3 true v7": 1, "H1 v6+h1-x": 2}
+	want := map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v6": 2, "L3 true v7": 1, "H1 v6+h1-x": 3}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("levels %v, want %v", got, want)
 	}
@@ -545,7 +546,7 @@ func TestLevelsAreSummedAndRemovedWhole(t *testing.T) {
 		t.Fatalf("delete level = %d", code)
 	}
 	got = levels()
-	want = map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v7": 1, "H1 v6+h1-x": 2}
+	want = map[string]int{"L1 false v6": 1, "L2 true v6": 1, "L3 true v7": 1, "H1 v6+h1-x": 3}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("after delete %v, want %v", got, want)
 	}

@@ -6,7 +6,7 @@ import { listServerArtifactLevels, removeServerHistories, removeServerLevel, rem
 import { listWorlds } from '../../server/worldClient'
 import { listBrowserWorlds } from '../../world/browserWorlds'
 import { currentPipelineVersion, parseStage, type PipelineVersions } from '../../world/levels'
-import { historyStage, isCurrentHistory, parseHistoryStage } from '../../world/historyArtifacts'
+import { historyStage, isCurrentHistory, parseHistoryStage, peoplingInput } from '../../world/historyArtifacts'
 import { WORLD_PIPELINE, sameWorldsPipeline } from '../../world/worldPipeline'
 import { commissionBake, pipelineVersionsOf, type CommissionOutcome } from '../../world/jobClient'
 import { AMPLIFY_EROSION_ROUNDS } from '../../world/bakeSettings'
@@ -119,7 +119,7 @@ function shortPipeline(version: string): string {
 // row's terrain (their releases').
 function staleOf(row: Pick<LevelRow, 'worldId' | 'pipelineVersion' | 'level' | 'tiles' | 'history'>, world: { worldId: string | null } | null, held: Set<string>, versions: PipelineVersions[]): Pick<LevelRow, 'stale' | 'older'> {
   if (row.history) {
-    if (!isCurrentHistory({ stage: historyStage(0), pipelineVersion: row.pipelineVersion })) return { stale: 'otherCode', older: false }
+    if (!isCurrentHistory({ stage: historyStage(peoplingInput(0)), pipelineVersion: row.pipelineVersion })) return { stale: 'otherCode', older: false }
     return { stale: world?.worldId && held.has(row.worldId) && row.worldId !== world.worldId ? 'otherTerrain' : null, older: false }
   }
   const stage = row.tiles > 0 ? `L${row.level}:0,0` : `L${row.level}`

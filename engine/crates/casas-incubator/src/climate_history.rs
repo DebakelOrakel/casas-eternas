@@ -17,7 +17,10 @@
 //!
 //! WHAT FOLLOWS:
 //! - the sea stands SEA_DROP_M lower at cold 1 (the earth's −120 m), in
-//!   proportion: the shelf to that depth is land;
+//!   proportion: the shelf to that depth is land. SEA_DROP_M is the
+//!   default; step 1's control, the lowest sea level (2026-10-30,
+//!   peopling.rs `Controls`), sets another depth (`with_sea_low`). The
+//!   curve's shape does not change, only its depth in metres;
 //! - the ice grows out of today's glaciers over the cold climates (Köppen D
 //!   and E), ICE_REACH_KM far at cold 1, in proportion (simulation.rs
 //!   `ice_distance`): the ice sheets grew from their cores. 800 km at
@@ -147,6 +150,8 @@ pub struct ClimateHistory {
     pub deglaciation: f64,
     start: f64,
     swings: Vec<Swing>,
+    // The sea's drop at cold 1, m (SEA_DROP_M unless `with_sea_low`).
+    sea_low_m: f64,
 }
 
 impl ClimateHistory {
@@ -174,7 +179,14 @@ impl ClimateHistory {
             deglaciation,
             start,
             swings,
+            sea_low_m: SEA_DROP_M,
         }
+    }
+
+    /// The same curve with the sea `m` metres lower at cold 1.
+    pub fn with_sea_low(mut self, m: f64) -> Self {
+        self.sea_low_m = m;
+        self
     }
 
     /// The cold at `t`, 0 … 1.
@@ -198,7 +210,7 @@ impl ClimateHistory {
 
     /// The sea's drop below today's at `t`, metres (≥ 0).
     pub fn sea_drop_m(&self, t: f64) -> f64 {
-        SEA_DROP_M * self.cold(t)
+        self.sea_low_m * self.cold(t)
     }
 
     /// Whether the climate has been warm and calm for STABLE_YEARS by `t`.

@@ -532,7 +532,7 @@ func (m *Module) buildSpec(ctx context.Context, id string, request Request) (Spe
 		spec.Tile = &TileRef{X: request.Scope.X, Y: request.Scope.Y}
 	}
 	if request.Scope.Kind == ScopeHistory {
-		spec.History = &HistoryRef{Origin: request.Scope.ID, Level: request.Level}
+		spec.History = &HistoryRef{Origin: request.Scope.ID, Level: request.Level, Reach: request.Scope.Reach, SeaLow: request.Scope.SeaLow}
 	}
 	if m.cfg.WorldZip != nil {
 		zip, ok := m.cfg.WorldZip(ctx, request.WorldUID)

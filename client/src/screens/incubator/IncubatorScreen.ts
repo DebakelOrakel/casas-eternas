@@ -15,7 +15,7 @@ import { fetchWorld, listWorlds } from '../../server/worldClient'
 import { peekServerStatus } from '../../server/serverStatus'
 import { artifactKey } from '../../storage/ArtifactStore'
 import { getArtifactStore, getServerArtifactStore } from '../../storage/artifactStoreProvider'
-import { historyKey, historyOrigins, readHistoryArtifact } from '../../world/historyArtifacts'
+import { historyInputs, historyKey, PEOPLING_DEFAULTS, peoplingInput, readHistoryArtifact, samePeopling, type PeoplingInput } from '../../world/historyArtifacts'
 import { meshLevelStage, readMeshLevelArtifact } from '../../world/meshArtifacts'
 import { isCurrentArtifact } from '../../world/levels'
 import { sameWorldsPipeline } from '../../world/worldPipeline'
@@ -66,7 +66,7 @@ import type { LegendItem, LegendSpec } from '../../ui/legend/LegendPanel'
 import type { ProbeRow } from '../../ui/mapProbe/probeCard'
 import type { World } from '../../world/query'
 import type { ChartPoint } from '../../map/worldView'
-import type { IncubatorAnswer, IncubatorRequest, PeoplesWithoutIds } from './incubatorWorker'
+import type { IncubatorAnswer, IncubatorRequest, PeoplesWithoutIds, PeoplingControls } from './incubatorWorker'
 import { NO_PEOPLE } from './historyPack'
 import { createChroniclePanel, type ChronicleEvent } from './chroniclePanel'
 import { cellInputOf, CHART_HEIGHT, CHART_WIDTH, rainOf, type HistoryRain } from './historyInput'
@@ -330,7 +330,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // is not made yet): the history's from its start on, the old stone age's
   // before it and where there is no history. A history is shown only over
   // its own old stone age: from the origin the old stone age is shown for.
-  const historyShown = (): boolean => people !== null && historyTime !== null && peopleTime >= historyTime.start && people.origin === stone?.people.origin
+  const historyShown = (): boolean => people !== null && historyTime !== null && peopleTime >= historyTime.start && peopleInput !== null && stone !== null && samePeopling(peopleInput, stone.input)
   // True once the screen is built: the step's layers are below.
   let built = false
   const stepBar = createStepBar(root, {
@@ -343,6 +343,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const wasStone = onOldStoneAge()
     stepIndex = index
     sidebar.setStep(STEPS[index])
+    if (built) showPeoplingControls()
     // The step's favourites; the layers on stay as they are.
     overlayList.setFavourites(FAVOURITES[STEPS[index]])
     updateSteps()
@@ -480,11 +481,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // stone age's step; the history is the one from it. -1: the worker's
   // choice, until the old stone age answers.
   let peopleOrigin = -1
+  // STEP 1'S CONTROLS (2026-10-30, DES-0032): the reach over sea at its
+  // end and the lowest sea level, set in the old stone age's step. With
+  // the origin they are its input (world/historyArtifacts.ts
+  // PeoplingInput), and so the history's and H1's.
+  let peoplingControls: PeoplingControls = { ...PEOPLING_DEFAULTS }
+  // The input of the history run or restored (people), null without one.
+  let peopleInput: PeoplingInput | null = null
   // THE OLD STONE AGE (casas-incubator peopling.rs): its spread in a
   // history's form, with its routes, their order and their way over the
   // sea, as a history's are made (growPeople); each cell's group; its log;
-  // and the origin set by a click in its step (-1: chosen).
-  let stone: { people: PeopleResult; routes: RouteLine[]; order: Int32Array; sea: Uint8Array; group: Int32Array; groups: number; density: Float32Array; log: LogEvent[]; span: number } | null = null
+  // and its input, the origin set by a click in its step and the controls.
+  let stone: { input: PeoplingInput; people: PeopleResult; routes: RouteLine[]; order: Int32Array; sea: Uint8Array; group: Int32Array; groups: number; density: Float32Array; log: LogEvent[]; span: number } | null = null
   // The history's time (historyPack.ts): from the old stone age's end to
   // its first city.
   let historyTime: { start: number; end: number } | null = null
@@ -712,7 +720,49 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   const plantInfo = document.createElement('section')
   plantInfo.className = 'gen-overlays'
   plantInfo.append(plantStatus)
-  sidebar.body.append(plantInfo)
+
+  // STEP 1'S CONTROLS in the old stone age's step (peoplingControls): a
+  // slider each, as the generator's column has them. A change, at the
+  // slider's release, makes the old stone age again (controlsAt). Disabled
+  // until an old stone age is made: before it a change would make nothing.
+  const PEOPLING_SLIDERS = [
+    { key: 'reachKm', i18n: 'incubator.people.reach', unit: 'common.unit.kilometres', min: 100, max: 1000, step: 10 },
+    { key: 'seaLowM', i18n: 'incubator.people.seaLow', unit: 'common.unit.metres', min: 60, max: 150, step: 5 },
+  ] as const
+  const peoplingPanel = document.createElement('section')
+  peoplingPanel.className = 'gen-params'
+  const peoplingSliders = PEOPLING_SLIDERS.map((c) => {
+    const field = document.createElement('div')
+    field.className = 'gen-param'
+    field.dataset.help = c.i18n
+    field.innerHTML = `<div class="gen-param__head">
+        <span class="gen-param__label" data-t="${c.i18n}.label">${t(`${c.i18n}.label`)}</span>
+        <span class="gen-param__value"><span data-value></span><span data-t="${c.unit}">${t(c.unit)}</span></span>
+      </div>
+      <input type="range" class="gen-param__range" min="${c.min}" max="${c.max}" step="${c.step}" aria-label="${t(`${c.i18n}.label`)}" data-t-aria="${c.i18n}.label" />`
+    const input = field.querySelector('input')!
+    const value = field.querySelector<HTMLElement>('[data-value]')!
+    input.addEventListener('input', () => (value.textContent = input.value))
+    input.addEventListener('change', () => void controlsAt({ ...peoplingControls, [c.key]: Number(input.value) }))
+    peoplingPanel.append(field)
+    return { key: c.key, input, value }
+  })
+  // The sliders set to `controls`, and the controls taken.
+  function setPeoplingControls(controls: PeoplingControls): void {
+    peoplingControls = controls
+    for (const s of peoplingSliders) {
+      s.input.value = String(controls[s.key])
+      s.value.textContent = String(controls[s.key])
+    }
+  }
+  // Shown in the old stone age's step; usable once its old stone age is made.
+  function showPeoplingControls(): void {
+    peoplingPanel.hidden = !onOldStoneAge()
+    for (const s of peoplingSliders) s.input.disabled = stone === null
+  }
+  setPeoplingControls(peoplingControls)
+  showPeoplingControls()
+  sidebar.body.append(peoplingPanel, plantInfo)
 
   // THE ANIMALS AT THE TIME SHOWN (2026-10-26): as the fauna placed them
   // before people came; where people live by then, under their pressure by
@@ -1539,16 +1589,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // THE PEOPLE (casas-incubator, DES-0032): the history from the origin
   // the old stone age's (peopleOrigin), run — shown
   // only — or, `restore`, the server's
-  // H1 of it taken in a run's place. The rules' preview, shown before a history until
+  // H1 of it (and its input) taken in a run's place. The rules' preview, shown before a history until
   // 2026-10-27, went with the port (DEC-0048): a run is quick enough.
   // `loadStep`: the load panel's row (work). False where it failed.
-  async function growPeople(restore?: ArrayBuffer, loadStep?: string): Promise<boolean> {
+  async function growPeople(restore?: { bytes: ArrayBuffer; input: PeoplingInput }, loadStep?: string): Promise<boolean> {
     if (!overlay) return false
     const started = performance.now()
+    const controls = peoplingControls
     const done = restore
-      ? await work(t('incubator.progress.loadHistory'), { type: 'restore', bytes: restore }, 'people', loadStep)
-      : await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, rain: await historyRain }, 'people', loadStep)
-    if (!done || !overlay || done.origin !== peopleOrigin) return false
+      ? await work(t('incubator.progress.loadHistory'), { type: 'restore', bytes: restore.bytes }, 'people', loadStep)
+      : await work(t('incubator.action.runHistory.label'), { type: 'simulate', origin: peopleOrigin, controls, rain: await historyRain }, 'people', loadStep)
+    if (!done || !overlay || done.origin !== peopleOrigin || (!restore && controls !== peoplingControls)) return false
+    peopleInput = restore ? restore.input : peoplingInput(done.origin, controls)
     people = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
     historyTime = { start: done.start, end: done.end }
     peoples = { tree: done.peoples, colours: peopleColours(done.peoples.group) }
@@ -1578,28 +1630,30 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // scripts/incubatorPipeline.ts) — the same bits, the same key. A world
   // shown with a history on the server for its origin loads it.
   //
-  // The origins of the server's histories of the world shown, on its
+  // The inputs of the server's histories of the world shown, on its
   // level, the one saved last first; none without a server.
-  async function serverHistories(): Promise<number[]> {
+  async function serverHistories(): Promise<PeoplingInput[]> {
     const at = held
     if (!at?.worldId || !at.level) return []
     const listed = await listServerArtifacts()
-    return listed ? historyOrigins(getServerArtifactStore(), listed.artifacts, at.worldId, at.level).catch(() => []) : []
+    return listed ? historyInputs(getServerArtifactStore(), listed.artifacts, at.worldId, at.level).catch(() => []) : []
   }
-  // As a world opens: the history saved last on the server, its origin the
-  // origin (2026-10-26: a history kept for an origin clicked was not
-  // found, the rules' chosen one asked for); else the worker's origin, and
-  // the history only once the new stone age's step is shown.
+  // As a world opens: the history saved last on the server, its input the
+  // input (2026-10-26: a history kept for an origin clicked was not
+  // found, the rules' chosen one asked for); else the worker's origin at
+  // the controls' defaults, and the history only once the new stone age's
+  // step is shown.
   async function openPeople(): Promise<void> {
     const world = shownWorld
-    const [origin] = await serverHistories()
+    const [saved] = await serverHistories()
     if (shownWorld !== world) return
-    const bytes = origin !== undefined ? await readSaved(origin) : null
+    const bytes = saved !== undefined ? await readSaved(saved) : null
     if (shownWorld !== world) return
-    peopleOrigin = bytes ? origin! : -1
+    peopleOrigin = bytes ? saved!.origin : -1
+    setPeoplingControls(bytes ? { reachKm: saved!.reachKm, seaLowM: saved!.seaLowM } : { ...PEOPLING_DEFAULTS })
     await stoneFor(peopleOrigin)
     if (shownWorld !== world) return
-    if (!(bytes && (await growPeople(bytes)))) await historyForStone()
+    if (!(bytes && (await growPeople({ bytes, input: saved! })))) await historyForStone()
   }
   // A new origin (-1: the worker's choice): the old stone age from it, the
   // history of the one before dropped; the new one's made where its step
@@ -1611,8 +1665,18 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     await stoneFor(cell)
     if (shownWorld === world) await historyForStone()
   }
+  // New controls: the old stone age from the same origin made again, the
+  // history of the one before dropped, as a new origin does.
+  async function controlsAt(controls: PeoplingControls): Promise<void> {
+    const world = shownWorld
+    peoplingControls = controls
+    dropHistory()
+    await stoneFor(peopleOrigin)
+    if (shownWorld === world) await historyForStone()
+  }
   function dropHistory(): void {
     people = null
+    peopleInput = null
     historyTime = null
     peoples = null
     settled = null
@@ -1631,12 +1695,12 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // The history of the old stone age shown, in the new stone age's step:
   // the server's, else run.
   async function historyForStone(): Promise<void> {
-    if (!onNewStoneAge() || !stone || people?.origin === stone.people.origin) return
+    if (!onNewStoneAge() || !stone || (peopleInput && samePeopling(peopleInput, stone.input))) return
     const world = shownWorld
-    const at = stone.people.origin
+    const at = stone.input
     const bytes = await readSaved(at)
-    if (shownWorld !== world || stone?.people.origin !== at) return
-    if (bytes && (await growPeople(bytes))) return
+    if (shownWorld !== world || stone?.input !== at) return
+    if (bytes && (await growPeople({ bytes, input: at }))) return
     await growPeople()
   }
   // The old stone age from `origin` (-1: the worker's choice), its routes
@@ -1645,15 +1709,17 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function stoneFor(origin: number): Promise<void> {
     const world = shownWorld
     const started = performance.now()
-    const done = await incubator.ask({ type: 'peopling', origin })
-    if (shownWorld !== world || done?.type !== 'peopling' || (peopleOrigin >= 0 && done.origin !== peopleOrigin)) return
+    const controls = peoplingControls
+    const done = await incubator.ask({ type: 'peopling', origin, controls })
+    if (shownWorld !== world || done?.type !== 'peopling' || (peopleOrigin >= 0 && done.origin !== peopleOrigin) || controls !== peoplingControls) return
     peopleOrigin = done.origin
     const p: PeopleResult = { arrival: done.arrival, land: done.land, from: done.from, flow: done.flow, origin: done.origin, crossings: done.crossings, crossingWays: done.crossingWays }
     const order = routeOrder(p)
     p.flow = Float32Array.from(flowAt(p, order, Infinity, (cell) => p.land[cell]))
     const sea = new Uint8Array(p.arrival.length)
     for (const cell of p.crossingWays) if (cell >= 0 && !p.land[cell]) sea[cell] = 1
-    stone = { people: p, routes: [], order, sea, group: done.group, groups: done.groups, density: done.density, log: done.log, span: done.span }
+    stone = { input: peoplingInput(done.origin, controls), people: p, routes: [], order, sea, group: done.group, groups: done.groups, density: done.density, log: done.log, span: done.span }
+    showPeoplingControls()
     showTimeRange()
     stoneDensity = null
     stone.routes = routesOf(p, [...toldCrossings(done.log, p.origin)].map((n) => p.crossings[4 * n + 1]))
@@ -1663,13 +1729,13 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     sayChronicle()
     console.info(`[incubator] old stone age from cell ${p.origin}: ${done.groups} groups, ${done.log.length - 1} landings, span ${Math.round(done.span)} a, ${Math.round(performance.now() - started)} ms`)
   }
-  // The server's history from `origin`, under the pill; null where it has
-  // none. Read past this machine's cache, which would keep it too.
-  async function readSaved(origin: number): Promise<ArrayBuffer | null> {
+  // The server's history from step 1's `input`, under the pill; null where
+  // it has none. Read past this machine's cache, which would keep it too.
+  async function readSaved(input: PeoplingInput): Promise<ArrayBuffer | null> {
     const at = held
     if (!at?.worldId || !at.level) return null
     const store = getServerArtifactStore()
-    const key = historyKey(at.worldId, at.level, origin)
+    const key = historyKey(at.worldId, at.level, input)
     if (!(await store.resolve(key, false).catch(() => null))) return null
     const label = t('incubator.progress.loadHistory')
     progressPill.show({ label, sub: null, fraction: null, aria: t('generator.progress.ariaRunning', { step: label }) })
@@ -1683,13 +1749,15 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   async function loadColdCurve(world: World): Promise<void> {
     const answer = await incubator.ask({ type: 'climate', seed: world.recipe.detailSeed })
     if (shownWorld !== world || answer?.type !== 'climate') return
-    const { cold: curve, stepYears, iceReachKm, seaDropM } = answer
+    const { cold: curve, stepYears, iceReachKm } = answer
     const cold = (t: number): number => {
       const x = Math.max(0, Math.min(curve.length - 1, t / stepYears))
       const k = Math.floor(x)
       return curve[k] + (curve[Math.min(curve.length - 1, k + 1)] - curve[k]) * (x - k)
     }
-    iceHistory = { cold, iceReachKm, seaDropM: (t) => seaDropM * cold(t) }
+    // The sea's drop at cold 1: the old stone age's control, the one it was
+    // made with (the history shown runs on the same).
+    iceHistory = { cold, iceReachKm, seaDropM: (t) => (stone?.input.seaLowM ?? peoplingControls.seaLowM) * cold(t) }
     showTimeRange()
     showPlants()
   }
@@ -2288,8 +2356,10 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     historyTime = null
     peoples = null
     settled = null
+    peopleInput = null
     peopleOrigin = -1
     stone = null
+    showPeoplingControls()
     cellFacts = null
     chronicle.stop()
     showTimeRange()

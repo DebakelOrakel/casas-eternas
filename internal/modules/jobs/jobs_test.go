@@ -355,6 +355,30 @@ func TestAHistoryReachesTheWorkerWithItsOrigin(t *testing.T) {
 	}
 }
 
+// Step 1's controls reach the worker and name another H1 stage; a
+// default left out keeps the stage without it.
+func TestAHistorysControlsReachTheWorkerAndItsStage(t *testing.T) {
+	m, runner, worlds := newTestModule(t, config.AuthNone)
+	writeWorld(t, worlds, testUID)
+	recorder := post(m, testUID, `{"stage":1,"scope":{"kind":"history","id":42,"reach":600,"seaLow":90},"level":"v0-level"}`, "")
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("history request = %d, want 202: %s", recorder.Code, recorder.Body.String())
+	}
+	spec := runner.awaitSpec(t)
+	if spec.History == nil || spec.History.Reach != 600 || spec.History.SeaLow != 90 {
+		t.Errorf("spec = %+v, history %+v", spec, spec.History)
+	}
+	if name := (Request{Stage: 1, Scope: Scope{Kind: ScopeHistory, ID: 42, SeaLow: 90}}).StageName(); name != "H1:42:s90" {
+		t.Errorf("stage name = %s, want H1:42:s90", name)
+	}
+	if name := (Request{Stage: 1, Scope: Scope{Kind: ScopeHistory, ID: 42, Reach: 600, SeaLow: 90}}).StageName(); name != "H1:42:r600:s90" {
+		t.Errorf("stage name = %s, want H1:42:r600:s90", name)
+	}
+	if err := (Request{WorldUID: testUID, Stage: 1, Scope: Scope{Kind: ScopeHistory, ID: 42, Reach: -1}, Level: "v0-level", Pipeline: "v1-x"}).Validate(); err == nil {
+		t.Error("a negative reach was accepted")
+	}
+}
+
 func TestProgressAndResultReachTheJobRecord(t *testing.T) {
 	m, runner, worlds := newTestModule(t, config.AuthNone)
 	writeWorld(t, worlds, testUID)

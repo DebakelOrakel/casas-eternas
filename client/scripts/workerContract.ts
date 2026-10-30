@@ -44,8 +44,9 @@ export interface PipelineTask {
   // `history`: the history from an origin on level 1 (incubatorPipeline.ts).
   stage: number
   tile?: { x: number; y: number }
-  // For a history: its origin's cell and the pipeline of its level 1.
-  history?: { origin: number; level: string }
+  // For a history: its origin's cell, the pipeline of its level 1 and step
+  // 1's controls, each left out at its default (km, m).
+  history?: { origin: number; level: string; reach?: number; seaLow?: number }
   // For a tile: the tiles of its level upstream of it, whose outflow it
   // reads.
   upstream?: { x: number; y: number }[]

@@ -11,7 +11,14 @@
 //! is closed now is taken when it opens, so the front waits on its edge.
 //! Over water people go by boat, as far over open sea (km out of sight of
 //! any dry ground) as the time's reach, which grows from REACH_START_KM to
-//! REACH_END_KM over the span; a crossing beyond the reach waits for it.
+//! the reach at the span's end over the span; a crossing beyond the reach
+//! waits for it.
+//!
+//! THE CONTROLS (2026-10-30, DES-0032): the reach at the span's end
+//! (REACH_END_KM unless set) and the sea's drop at cold 1, the lowest sea
+//! level (climate_history.rs SEA_DROP_M unless set). They are part of
+//! step 1's input with the origins, and so of H1's: step 2 continues the
+//! same sea curve (`Peopling::sea_low_m`).
 //! A landing after open sea costs time by how near the reach it went:
 //! crossings at the limit of what boats can do are made rarely. A voyage
 //! along a coast has no limit but its time: a limit on the way since the
@@ -28,13 +35,14 @@
 //!
 //! Step 2 starts from it, so it is part of H1 and of the tuning.
 
-use crate::climate_history::{ClimateHistory, ICE_REACH_KM, ice_may_cover};
+use crate::climate_history::{ClimateHistory, ICE_REACH_KM, SEA_DROP_M, ice_may_cover};
 use crate::habitat::Habitat;
 use crate::log::LogEvent;
 use crate::simulation::{CLIMATE_YEARS, Ground, SPAN_YEARS, ground_of, ice_distance};
 use casas_engine::core::min_heap::MinHeap;
 
-/// The boats' reach over open sea at the span's start and end, km.
+/// The boats' reach over open sea at the span's start and end, km. The
+/// end is the default of its control (`Controls`).
 pub const REACH_START_KM: f64 = 30.0;
 pub const REACH_END_KM: f64 = 450.0;
 /// The front's speed over water, km a year: a coast is followed by boat
@@ -49,6 +57,23 @@ pub const GROUP_SHARE: f64 = 0.02;
 /// The span ends when the melting brings the sea up to this many metres
 /// below today's: on the earth some 40 to 60 m when the farming began.
 pub const END_SEA_DROP_M: f64 = 50.0;
+
+/// Step 1's controls (THE CONTROLS): the boats' reach over open sea at
+/// the span's end, km; the sea's drop at cold 1, m.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Controls {
+    pub reach_km: f64,
+    pub sea_low_m: f64,
+}
+
+impl Default for Controls {
+    fn default() -> Self {
+        Controls {
+            reach_km: REACH_END_KM,
+            sea_low_m: SEA_DROP_M,
+        }
+    }
+}
 
 pub struct Peopling {
     /// The years from the span's start; Infinity where not reached.
@@ -68,6 +93,9 @@ pub struct Peopling {
     pub density: Vec<f32>,
     /// The span: from the start to where step 2 begins (span_of), years.
     pub span: f64,
+    /// The sea's drop at cold 1 the span ran on, m (`Controls`): step 2
+    /// continues the same curve.
+    pub sea_low_m: f64,
     /// The first landing on each landmass after open sea.
     pub log: Vec<LogEvent>,
 }
@@ -95,24 +123,32 @@ pub fn span_of(history: &ClimateHistory) -> f64 {
     k as f64 * CLIMATE_YEARS
 }
 
-fn reach_km(t: f64, span: f64) -> f64 {
-    REACH_START_KM + (REACH_END_KM - REACH_START_KM) * (t / span).clamp(0.0, 1.0)
+// The reach at `t`, from REACH_START_KM to `end` over the span.
+fn reach_km(t: f64, span: f64, end: f64) -> f64 {
+    REACH_START_KM + (end - REACH_START_KM) * (t / span).clamp(0.0, 1.0)
 }
 
-// The time the reach is `km`; Infinity beyond the span's.
-fn reach_at(km: f64, span: f64) -> f64 {
+// The time the reach is `km`; Infinity beyond the span's (`end`).
+fn reach_at(km: f64, span: f64, end: f64) -> f64 {
     if km <= REACH_START_KM {
         return 0.0;
     }
-    if km > REACH_END_KM {
+    if km > end {
         return f64::INFINITY;
     }
-    span * (km - REACH_START_KM) / (REACH_END_KM - REACH_START_KM)
+    span * (km - REACH_START_KM) / (end - REACH_START_KM)
 }
 
-pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Peopling {
+pub fn people(
+    h: &Habitat,
+    carrying: &[f32],
+    origins: &[usize],
+    seed: f64,
+    controls: Controls,
+) -> Peopling {
     let n = h.count;
-    let history = ClimateHistory::of(seed, SPAN_YEARS);
+    let reach_end = controls.reach_km;
+    let history = ClimateHistory::of(seed, SPAN_YEARS).with_sea_low(controls.sea_low_m);
     let span = span_of(&history);
     let samples = (span / CLIMATE_YEARS) as usize + 1;
     let climate = Climate {
@@ -215,7 +251,7 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
             }
             let km = h.dist_km[e] as f64;
             let walk = km / speed[u].max(1e-6) as f64;
-            let landing = CROSSING_YEARS * longest[i] as f64 / reach_km(t, span);
+            let landing = CROSSING_YEARS * longest[i] as f64 / reach_km(t, span, reach_end);
             let (at, float) = if dry_at(u, k) {
                 // Walked, or landed.
                 (t + walk + landing, None)
@@ -235,7 +271,7 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
                     stretch[i] as f64 + km
                 };
                 let most = open.max(longest[i] as f64);
-                let ready = t.max(reach_at(most, span));
+                let ready = t.max(reach_at(most, span, reach_end));
                 let at = ready + km / SEA_KM_A;
                 let walk_later = if shelf[u] != 0 {
                     dry_from(u, t).map(|o| o + walk + landing)
@@ -294,6 +330,7 @@ pub fn people(h: &Habitat, carrying: &[f32], origins: &[usize], seed: f64) -> Pe
         afloat,
         density,
         span,
+        sea_low_m: controls.sea_low_m,
         log,
     }
 }

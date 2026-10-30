@@ -119,6 +119,9 @@ the subject names it, and a worker serves one pipeline's module.
   module's `releaseTags`). The order names the scope `history`, the origin
   as its id, and the pipeline of the level 1 it runs on (`level`):
   `{"worldUid": "…", "stage": 1, "scope": {"kind": "history", "id": 678764}, "level": "v13-…", "pipeline": "v1-7744e9f7c599f615"}`.
+  Step 1's controls (2026-10-30, DES-0032) go in the scope too, `reach`
+  (km) and `seaLow` (m), each left out at its default; the stage is then
+  `H1:<cell>:r<km>:s<m>`.
   The version has a pipeline's form, so the server says which pipelines
   are the incubator's (`GET /v1/jobs/pipelines`, `incubators`: those of
   open history jobs), and a file of a pipeline comes from `engine-<version>`,

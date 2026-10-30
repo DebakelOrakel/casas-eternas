@@ -3,6 +3,9 @@
 Controls, overlays, rendering, save/load, notifications. See [README](./README.md) for the
 format. (The legacy sphere and mars screens are out of scope and not tracked here.)
 
+## 2026-10-30
+- **new** Incubator: two sliders in the Old Stone Age set the reach of boats over the sea and the lowest sea level. `incubator.people.reach`
+
 ## 2026-10-29
 - **fixed** Generator and incubator: a world that cannot be restored ends its load as failed, with the world list behind it, instead of loading for ever. `common.loading.failed`
 - **changed** Generator: the land's overlays follow the drawn coast, and the wind's calm belts are drawn smooth in the generator and the incubator.

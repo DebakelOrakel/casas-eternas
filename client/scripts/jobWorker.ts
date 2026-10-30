@@ -66,8 +66,9 @@ interface Job {
   // be in the artifact store — the tile is built on it.
   tile?: { x: number; y: number }
   // For a history (stage 1, the incubator's module, incubatorPipeline.ts): its
-  // origin's cell and the pipeline of its level 1.
-  history?: { origin: number; level: string }
+  // origin's cell, the pipeline of its level 1 and step 1's controls (each
+  // left out at its default).
+  history?: { origin: number; level: string; reach?: number; seaLow?: number }
   // For a tile: the tiles of its level upstream of it, whose outflow it
   // reads (the refine plan's flow edges, Spec.Upstream).
   upstream?: { x: number; y: number }[]
@@ -730,7 +731,7 @@ async function serve(config: ServeConfig): Promise<void> {
     }
     const taskId = job.taskId ?? ''
     current = { msg, jobId: job.jobId ?? '' }
-    doing = { jobId: job.jobId ?? '', taskId, stage: job.history ? `H1:${job.history.origin}` : job.tile ? `L${job.stage}:${job.tile.x},${job.tile.y}` : `L${job.stage}`, phase: '', percent: 0 }
+    doing = { jobId: job.jobId ?? '', taskId, stage: job.history ? `H1:${job.history.origin}${job.history.reach ? `:r${job.history.reach}` : ''}${job.history.seaLow ? `:s${job.history.seaLow}` : ''}` : job.tile ? `L${job.stage}:${job.tile.x},${job.tile.y}` : `L${job.stage}`, phase: '', percent: 0 }
     announce()
     const heartbeat = setInterval(() => msg.working(), TASK_HEARTBEAT_MS)
     // A task that reaches its stores over HTTP carries a token; keep it fresh.
