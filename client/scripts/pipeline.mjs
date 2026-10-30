@@ -922,10 +922,9 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   p.dispatch({ type: 'serializeWorld' })
   await until(() => p.count('worldData') > before, { label: 'the serialized sphere world' })
   const z = f32(p.last('worldData').mesh.z)
-  const RG = await server.ssrLoadModule('/src/generator/surface/riverGraph.ts')
   const parsed = JSON.parse(h.riverGraph.json)
   const graph = { ...parsed, cells: new Int32Array(h.riverGraph.cells) }
-  const broken = Object.entries(RG.riverGraphInvariants(graph, z)).filter(([, c]) => c > 0)
+  const broken = riverGraphBroken(h.riverGraph, z)
   const mouths = graph.nodes.filter((node) => node.kind === 'mouth').length
   const uphill = graph.reaches.filter((rc) => rc.kind === 'river' && rc.dropM < -1).length
   check(`the river graph holds its invariants on the sphere: acyclic, discharge monotone, every mouth in water (${graph.reaches.length} reaches, ${mouths} mouths)`,
@@ -951,17 +950,13 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
     badBodies.length === 0 && lakeDepth.every((d) => d >= 0) && wet < 0.15 * land)
 
   // The coast's invariants on the sphere's terrain mesh (DEC-0036 phase
-  // 7b: its nodes are the saved mesh's vertex ids; the type per node from
-  // the reaches' walk), the ice on land only.
-  const CG = await server.ssrLoadModule('/src/generator/surface/coastGraph.ts')
-  const MSerial = await server.ssrLoadModule('/src/generator/mesh/meshSerial.ts')
+  // 7b: its nodes are the saved mesh's vertex ids; the engine takes the
+  // type per node from the reaches' walk), the ice on land only.
   const saved = p.last('worldData').mesh
-  const sphereMesh = MSerial.decodeMesh(world, { count: saved.count, nodes: new Float32Array(saved.nodes), connectivity: new Uint8Array(saved.connectivity) })
+  const sphereMesh = { count: saved.count, nodes: new Float32Array(saved.nodes), connectivity: new Uint8Array(saved.connectivity) }
   const coastNodes = new Int32Array(h.coast.nodes)
-  const coastType = new Uint8Array(sphereMesh.vertexSlots)
-  for (const r of h.coast.reaches) for (let k = 0; k < r.nodeCount; k++) coastType[coastNodes[r.nodeStart + k]] = CG.COAST_TYPE_CODE[r.type]
-  const coast = { reaches: h.coast.reaches, nodes: coastNodes, type: coastType }
-  const coastBroken = Object.entries(CG.coastGraphInvariants(coast, sphereMesh, z)).filter(([, c]) => c > 0)
+  const coast = { reaches: h.coast.reaches, nodes: coastNodes }
+  const coastBroken = coastGraphBroken(world, sphereMesh, z, coast)
   const shorePixels = new Uint8Array(h.coastType).reduce((n, t) => n + (t > 0 ? 1 : 0), 0)
   check(`the coast holds its invariants on the sphere's mesh (${coast.reaches.length} reaches, ${coastNodes.length} nodes, ${shorePixels} typed shore pixels)`, coastBroken.length === 0 && coast.reaches.length > 0 && shorePixels > 0, coastBroken.map(([k, c]) => `${k}:${c}`).join(' '))
   const ice = f32(h.iceThickness)
@@ -975,6 +970,28 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
   const badBasins = basins.filter((b) => !(Number.isFinite(b.x) && Number.isFinite(b.y) && b.x >= 0 && b.x < W2 && b.y >= 0 && b.y <= H2 && Number.isFinite(b.cratonAge) && b.areaKm2 >= 243.36 - 1e-6 && b.areaKm2 < globeKm2 && b.volumeKm3 > 0))
   check(`the sediment basins are finite and on the globe (${basins.length} basins)`, badBasins.length === 0, JSON.stringify(badBasins[0] ?? ''))
 })
+
+// The graphs' invariants, the engine's (surface/river_graph.rs,
+// surface/coast_graph.rs): [check, violations] for each check that fails.
+// A graph the engine cannot read fails as one violation of `readable`.
+function brokenOf(counts) {
+  try {
+    return Object.entries(counts()).filter(([, c]) => c > 0)
+  } catch (e) {
+    return [[`readable (${e.message})`, 1]]
+  }
+}
+// A river graph as the hydrology message carries it (`riverGraphParts`
+// less the positions), the elevation per cell of the graph.
+function riverGraphBroken(parts, elevation) {
+  const typed = { json: parts.json, cells: new Int32Array(parts.cells), coursePoints: new Float32Array(parts.coursePoints) }
+  return brokenOf(() => WASM.riverGraphInvariants(typed, elevation))
+}
+// A coast graph `{ reaches, nodes }` on the saved mesh `{ count, nodes,
+// connectivity }` of the domain, its heights per node.
+function coastGraphBroken(domain, mesh, z, coast) {
+  return brokenOf(() => WASM.coastGraphInvariants(domain.kind, domain.width, domain.height, mesh, z, coast))
+}
 
 // The picture's step: the engine's RIVER_CHART_STEP (surface/river_graph.rs).
 const RIVER_CHART_STEP_HARNESS = 2

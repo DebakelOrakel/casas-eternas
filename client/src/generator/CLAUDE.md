@@ -64,9 +64,8 @@ core/       mapConfig, toroidal, rng, field (the shared samplers), interpolation
             domain (the topology: periodicity, distance and latitude), detMath (exp, log,
             sin, cos … the same bits in every JS engine), worldTime, inputParams
 mesh/       the terrain mesh's read side: periodicDelaunay (the triangulation on a
-            domain), lattice, hilbert,
-            meshSerial (the save's form: Hilbert numbering, varint connectivity, the
-            canonical rebuild), meshSampler (point location over a hint grid — what map/
+            domain), lattice, meshSerial (the save's form, decoded: Hilbert numbering,
+            varint connectivity; the engine writes it), meshSampler (point location over a hint grid — what map/
             reads the mesh through), meshRaster (node fields on a grid;
             rasteriseNodePart for the part of the nodes that holds a field),
             meshHydrology (the water fields on the raster from the mesh); the fine levels'
@@ -84,7 +83,7 @@ crust/      the rafts' types (the craton age comes with the engine's render)
 elevation/  elevationScale (what a height MEANS), ridgedNoise, globeNoise,
             elevationColor
 surface/    the shapes a save holds (hydrology: the water bodies and their levels;
-            riverGraph: the feature graph; coastGraph, coastal, surfaceTypes),
+            riverGraph: the feature graph; coastGraph, surfaceTypes),
             erosionForcingFields (the erosion controls' type)
 climate/    the climate's field mesh and chart (climateMesh, climateField, climateChart),
             the climate at a point (climatePoints), the biomes and Köppen classes, the

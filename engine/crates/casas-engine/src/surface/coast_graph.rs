@@ -23,7 +23,8 @@ pub enum CoastType {
 }
 
 impl CoastType {
-    /// The type as the per-node field carries it (`COAST_TYPE_CODE`).
+    /// The type as the per-node field and the shader's raster carry it,
+    /// one byte each (0 = not on the coast).
     pub fn code(self) -> u8 {
         match self {
             CoastType::Rocky => 1,

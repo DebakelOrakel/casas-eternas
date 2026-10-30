@@ -62,7 +62,7 @@ export class WaterField {
   private elevation: Float32Array | null = null
   private level: Float32Array | null = null
   private surface: Uint8Array | null = null
-  // The coast type per cell (coastGraph.COAST_TYPE_CODE), or null.
+  // The coast type per cell (the engine's `CoastType::code`), or null.
   private coast: Uint8Array | null = null
   private packed: Float32Array | null = null
   private readonly scene: Scene

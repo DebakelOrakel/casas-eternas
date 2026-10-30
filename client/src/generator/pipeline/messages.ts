@@ -680,7 +680,7 @@ export interface WorkerHydrologyDataMessage {
   // Int32 bytes. Re-route only; null means "unchanged".
   riverGraph: { json: string; cells: ArrayBuffer; coursePoints: ArrayBuffer } | null
   // The coast (surface/coastGraph.ts): the type per pixel (Uint8, full-res,
-  // COAST_TYPE_CODE, 0 off the drawn coastline — the shore nodes' types on
+  // the engine's `CoastType::code`, 0 off the drawn coastline — the shore nodes' types on
   // the raster's shore pixels) the shore drawing reads, and the reach list
   // with its nodes (Int32, the mesh's vertex ids in its saved numbering).
   // Re-route only; empty / null mean "unchanged".

@@ -1,15 +1,12 @@
-import type { PeriodicTriangulation } from '../mesh/periodicDelaunay'
-import { findShore } from './coastal'
-
 // THE COAST AS A FEATURE (ADAPTIVE_MESH_PLAN.md F5, docs/design/coast.md
 // "Forerunner"): the shoreline cut into REACHES with attributes like a
 // river's, and a coast TYPE per reach from them — a classification with no
-// process behind it. The coast process (surface/coastal.ts, phase 7) runs on
+// process behind it. The coast process (the engine's surface/coastal.rs, phase 7) runs on
 // the same line in the history; this is the picture after the stop.
 //
 // On the terrain mesh since DEC-0036 phase 7b (it walked the 2048 raster
 // before): a coast node is a land node with a sea node among its
-// neighbours (coastal.findShore — the line the history's waves and drift
+// neighbours (the engine's coastal.rs `find_shore` — the line the history's waves and drift
 // work on), and reaches are walks from coast node to coast node along the
 // mesh's edges, cut at river mouths and every `coastReachM` metres. Per
 // node:
@@ -41,10 +38,6 @@ import { findShore } from './coastal'
 // hard rest. A reach takes the type most of its nodes have.
 export type CoastType = 'rocky' | 'cliff' | 'beach' | 'marsh' | 'delta'
 
-// The type as the per-node field and the shader's raster carry it, one
-// byte each (0 = not on the coast).
-export const COAST_TYPE_CODE: Record<CoastType, number> = { rocky: 1, cliff: 2, beach: 3, marsh: 4, delta: 5 }
-
 export interface CoastReach {
   id: number
   // The reach's coast nodes in walk order (CoastGraph.nodes).
@@ -60,40 +53,4 @@ export interface CoastReach {
   type: CoastType
   // The river reach that ends on this coast reach, -1 for none.
   mouthReach: number
-}
-
-export interface CoastGraph {
-  reaches: CoastReach[]
-  // The coast nodes of every reach, concatenated in reach order: vertex ids
-  // of the mesh the graph was built on.
-  nodes: Int32Array
-  // The type per vertex slot (COAST_TYPE_CODE), 0 off the coast.
-  type: Uint8Array
-}
-
-// The invariants of a coast graph, as riverGraphInvariants: check name →
-// violations. Every listed node a land node with a sea neighbour and a
-// type, listed once, and each reach a walk along the mesh's edges.
-export function coastGraphInvariants(coast: CoastGraph, mesh: PeriodicTriangulation, z: Float32Array): Record<string, number> {
-  const out: Record<string, number> = { nodesOnCoast: 0, nodesOnce: 0, typeKnown: 0, reachesContiguous: 0 }
-  const { isShore } = findShore(mesh, z)
-  const seen = new Uint8Array(mesh.vertexSlots)
-  const star = new Int32Array(256)
-  for (const r of coast.reaches) {
-    if (!(r.type in COAST_TYPE_CODE)) out.typeKnown++
-    for (let k = 0; k < r.nodeCount; k++) {
-      const v = coast.nodes[r.nodeStart + k]
-      if (!isShore[v] || coast.type[v] === 0) out.nodesOnCoast++
-      if (seen[v]) out.nodesOnce++
-      seen[v] = 1
-      if (k > 0) {
-        const a = coast.nodes[r.nodeStart + k - 1]
-        const n = mesh.neighbours(a, star)
-        let adjacent = false
-        for (let i = 0; i < n; i++) if (star[i] === v) adjacent = true
-        if (!adjacent) out.reachesContiguous++
-      }
-    }
-  }
-  return out
 }

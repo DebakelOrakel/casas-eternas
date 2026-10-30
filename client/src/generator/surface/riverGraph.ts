@@ -1,6 +1,4 @@
 import type { SpringFeature } from './surfaceTypes'
-import { SEA_LEVEL } from '../elevation/elevationScale'
-import { RIVER_REGIME_CODE } from './hydrology'
 import type { WaterBody } from './hydrology'
 import type { RiverCourse } from './surfaceTypes'
 
@@ -130,59 +128,4 @@ export interface SerializedRiverGraph {
   // (a raster graph's positions follow from its cells and are not
   // written, so the artifact layout of the raster bake is unchanged).
   positions?: Float32Array
-}
-
-// The invariants every graph must hold — the harness layer of phase 2.
-// Each entry is a check name and the number of violations; a consumer
-// asserts they are all zero.
-export function riverGraphInvariants(graph: RiverGraph, elevation: Float32Array): Record<string, number> {
-  const { nodes, reaches, cells, bodies } = graph
-  const out: Record<string, number> = { acyclic: 0, dischargeMonotone: 0, mouthsInWater: 0, reachesTerminate: 0, bodiesKnown: 0, cellsContiguous: 0, regimeKnown: 0 }
-  for (const r of reaches) if (!(r.regime in RIVER_REGIME_CODE)) out.regimeKnown++
-  const outOf = new Map<number, number[]>()
-  for (const r of reaches) {
-    const list = outOf.get(r.from)
-    if (list) list.push(r.id)
-    else outOf.set(r.from, [r.id])
-  }
-  // Acyclic: following any reach's `to` node onward returns to no reach twice.
-  for (const r of reaches) {
-    const seen = new Set<number>([r.id])
-    let cur = r
-    let steps = 0
-    for (;;) {
-      const next = outOf.get(cur.to)
-      if (!next || next.length === 0) break
-      const n2 = reaches[next[0]]
-      if (seen.has(n2.id)) { out.acyclic++; break }
-      seen.add(n2.id)
-      cur = n2
-      if (++steps > reaches.length) { out.reachesTerminate++; break }
-    }
-  }
-  // Discharge monotone: what leaves a reach is at least what entered it,
-  // and what enters the downstream reach is at least what any tributary
-  // brought.
-  for (const r of reaches) {
-    if (r.dischargeOut + 1e-6 < r.dischargeIn) out.dischargeMonotone++
-    const next = outOf.get(r.to)
-    if (next && next.length > 0 && reaches[next[0]].dischargeIn + 1e-6 < r.dischargeOut) out.dischargeMonotone++
-  }
-  // Every mouth and inlet sits in water (sea level or a body's wet cell).
-  for (const node of nodes) {
-    if (node.kind === 'mouth' && node.body === -1 && elevation[node.cell] > SEA_LEVEL) {
-      // A land sink is a mouth into the terrain — allowed only when no
-      // reach leaves it (the flood found no way out).
-      if ((outOf.get(node.id) ?? []).length > 0) out.mouthsInWater++
-    }
-    if ((node.kind === 'inlet' || node.kind === 'outlet') && (node.body < 0 || node.body >= bodies.length)) out.bodiesKnown++
-  }
-  // Cell runs are contiguous and cover the reach.
-  let expected = 0
-  for (const r of reaches) {
-    if (r.cellStart !== expected || r.cellCount < 2) out.cellsContiguous++
-    expected = r.cellStart + r.cellCount
-  }
-  if (expected !== cells.length) out.cellsContiguous++
-  return out
 }

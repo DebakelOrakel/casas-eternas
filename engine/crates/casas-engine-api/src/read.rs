@@ -13,6 +13,7 @@ use casas_engine::crust::raft_types::{Raft, RaftBlob, Suture};
 use casas_engine::fields::field_mesh::SavedField;
 use casas_engine::mesh::mesh_tile::TileId;
 use casas_engine::planet::planet_forcing::PlanetForcing;
+use casas_engine::surface::coast_graph::{CoastGraph, CoastReach, CoastType};
 use casas_engine::surface::hydrogeology::SpringFeature;
 use casas_engine::surface::hydrology::{WaterBody, WaterKind};
 use casas_engine::surface::river_course::{RiverCourse, RiverPattern};
@@ -570,6 +571,57 @@ pub fn river_graph(v: &Value) -> ReadResult<RiverGraph> {
             .opt_list("springs")?
             .map(|s| each(s, spring))
             .transpose()?,
+    })
+}
+
+fn coast_reach(v: &Value) -> ReadResult<CoastReach> {
+    let f = Fields::of(v, "a coast reach")?;
+    Ok(CoastReach {
+        id: f.num("id")? as usize,
+        node_start: f.num("nodeStart")? as usize,
+        node_count: f.num("nodeCount")? as usize,
+        length_km: f.num("lengthKm")?,
+        exposure: f.num("exposure")?,
+        relief_m: f.num("reliefM")?,
+        hardness: f.num("hardness")?,
+        supply: f.num("supply")?,
+        coast_type: match str_of(&f, "type")? {
+            "rocky" => CoastType::Rocky,
+            "cliff" => CoastType::Cliff,
+            "beach" => CoastType::Beach,
+            "marsh" => CoastType::Marsh,
+            "delta" => CoastType::Delta,
+            k => return Err(format!("no coast type {k}")),
+        },
+        mouth_reach: f.num("mouthReach")? as i32,
+    })
+}
+
+/// `CoastGraph` as the save holds it (`layers/coast.json`): `{ reaches,
+/// nodes }`. The type per vertex slot is not saved: it comes from the
+/// reaches' walk, over `slots` vertex slots.
+pub fn coast_graph(v: &Value, slots: usize) -> ReadResult<CoastGraph> {
+    let f = Fields::of(v, "a coast graph")?;
+    let reaches = each(f.list("reaches")?, coast_reach)?;
+    let nodes = match f.need("nodes")? {
+        Value::I32s(a) => a.clone(),
+        _ => return Err("the coast graph's nodes are not an Int32Array".into()),
+    };
+    let mut coast_type = vec![0u8; slots];
+    for r in &reaches {
+        for k in 0..r.node_count {
+            let v = *nodes
+                .get(r.node_start + k)
+                .ok_or("a coast reach runs past the coast's nodes")?;
+            *coast_type
+                .get_mut(v as usize)
+                .ok_or("a coast node is not a vertex of the mesh")? = r.coast_type.code();
+        }
+    }
+    Ok(CoastGraph {
+        reaches,
+        nodes,
+        coast_type,
     })
 }
 

@@ -94,6 +94,52 @@ pub fn tile_of_files(files: Tree) -> napi::Result<Tree> {
         .map_err(era)
 }
 
+/// The bootstrap mesh of a domain in canonical form, `{ count, nodes,
+/// connectivity }` (`casas_engine_api::bootstrap_mesh`).
+#[napi(ts_args_type = "shape: string, width: number, height: number, spacing: number")]
+pub fn bootstrap_mesh(shape: String, width: f64, height: f64, spacing: f64) -> napi::Result<Tree> {
+    Ok(Tree(casas_engine_api::bootstrap_mesh(
+        shape_of(&shape)?,
+        width,
+        height,
+        spacing,
+    )))
+}
+
+/// The invariants of a river graph, `{ check: violations }`
+/// (`casas_engine_api::river_graph_invariants`).
+#[napi(ts_args_type = "parts: unknown, elevation: Float32Array")]
+pub fn river_graph_invariants(parts: Tree, elevation: Tree) -> napi::Result<Tree> {
+    casas_engine_api::river_graph_invariants(&parts.0, &elevation.0)
+        .map(Tree)
+        .map_err(era)
+}
+
+/// The invariants of a coast graph, `{ check: violations }`
+/// (`casas_engine_api::coast_graph_invariants`).
+#[napi(
+    ts_args_type = "shape: string, width: number, height: number, mesh: unknown, z: Float32Array, coast: unknown"
+)]
+pub fn coast_graph_invariants(
+    shape: String,
+    width: f64,
+    height: f64,
+    mesh: Tree,
+    z: Tree,
+    coast: Tree,
+) -> napi::Result<Tree> {
+    casas_engine_api::coast_graph_invariants(
+        shape_of(&shape)?,
+        width,
+        height,
+        &mesh.0,
+        &z.0,
+        &coast.0,
+    )
+    .map(Tree)
+    .map_err(era)
+}
+
 fn era(e: EraError) -> napi::Error {
     napi::Error::from_reason(e.0)
 }

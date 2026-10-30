@@ -408,7 +408,6 @@ check(`all ${Object.keys(M.bake.MESH_BAKE_CONSTANTS).length} listed constants mo
 console.log('\n— zip reader —')
 const W = 16, H = 8
 const MM = {
-  lattice: await L('/src/generator/mesh/lattice.ts'),
   serial: await L('/src/generator/mesh/meshSerial.ts'),
   raster: await L('/src/generator/mesh/meshRaster.ts'),
   hydro: await L('/src/generator/mesh/meshHydrology.ts'),
@@ -416,9 +415,10 @@ const MM = {
 const writer = await L('/src/world/save/worldArchive.ts')
 const zipDomain = M.domain.torusDomain(W, H)
 // A canonical mesh (Hilbert-numbered, as the session's after every epoch),
-// its heights a bowl in a slope.
-const zipMesh = MM.serial.compactMesh(MM.lattice.hexLattice(zipDomain, 2)).mesh
-const zipSerial = MM.serial.encodeMesh(zipMesh, Int32Array.from({ length: zipMesh.aliveVertices }, (_, i) => i))
+// the engine's codec bytes (DEC-0044, fork 7b), its heights a bowl in a
+// slope.
+const zipSerial = ENGINE.bootstrapMesh(zipDomain.kind, W, H, 2)
+const zipMesh = MM.serial.decodeMesh(zipDomain, zipSerial)
 const zipCount = zipSerial.count
 const meshZ = Float32Array.from({ length: zipCount }, (_, i) => 0.3 * Math.cos(zipMesh.vx[i] * 0.4) - 0.2 + 0.02 * zipMesh.vy[i])
 // Two bodies: a lake over the lowest nodes, a dry basin over a few others.

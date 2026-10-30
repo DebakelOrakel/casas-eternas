@@ -30,7 +30,9 @@ pub const HILBERT_ORDER: u32 = 16;
 /// The same index four bits a step: for each of the four states (the
 /// complement and the swap the loop applies to the bits still to come)
 /// and each 4-bit chunk of x and y, what the loop adds to d and the state
-/// it leaves. Made by the loop's own steps, as in `hilbert.ts`.
+/// it leaves. Made by the loop's own steps, so the tables cannot disagree
+/// with the loop (2026-10-02: the index a bit at a time was 3 % of an
+/// epoch).
 const fn chunk_tables() -> ([u8; 1024], [u8; 1024]) {
     let mut table_d = [0u8; 1024];
     let mut table_state = [0u8; 1024];

@@ -94,6 +94,55 @@ pub fn tile_of_files(files: &JsValue) -> Result<JsValue, JsError> {
         .map_err(era)
 }
 
+/// The bootstrap mesh of a domain in canonical form, `{ count, nodes,
+/// connectivity }` (`casas_engine_api::bootstrap_mesh`).
+#[wasm_bindgen(js_name = bootstrapMesh)]
+pub fn bootstrap_mesh(
+    shape: &str,
+    width: f64,
+    height: f64,
+    spacing: f64,
+) -> Result<JsValue, JsError> {
+    Ok(to_js(casas_engine_api::bootstrap_mesh(
+        shape_of(shape)?,
+        width,
+        height,
+        spacing,
+    )))
+}
+
+/// The invariants of a river graph, `{ check: violations }`
+/// (`casas_engine_api::river_graph_invariants`).
+#[wasm_bindgen(js_name = riverGraphInvariants)]
+pub fn river_graph_invariants(parts: &JsValue, elevation: &JsValue) -> Result<JsValue, JsError> {
+    casas_engine_api::river_graph_invariants(&from_js(parts)?, &from_js(elevation)?)
+        .map(to_js)
+        .map_err(era)
+}
+
+/// The invariants of a coast graph, `{ check: violations }`
+/// (`casas_engine_api::coast_graph_invariants`).
+#[wasm_bindgen(js_name = coastGraphInvariants)]
+pub fn coast_graph_invariants(
+    shape: &str,
+    width: f64,
+    height: f64,
+    mesh: &JsValue,
+    z: &JsValue,
+    coast: &JsValue,
+) -> Result<JsValue, JsError> {
+    casas_engine_api::coast_graph_invariants(
+        shape_of(shape)?,
+        width,
+        height,
+        &from_js(mesh)?,
+        &from_js(z)?,
+        &from_js(coast)?,
+    )
+    .map(to_js)
+    .map_err(era)
+}
+
 fn era(e: EraError) -> JsError {
     JsError::new(&e.0)
 }

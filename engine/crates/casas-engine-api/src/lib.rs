@@ -27,8 +27,10 @@ use casas_engine::elevation::elevation_raster::{RasterSources, elevation_raster}
 use casas_engine::mantle::mantle_field::{
     MANTLE_RES_X, MANTLE_RES_Y, rasterise_mantle, saved_mantle,
 };
+use casas_engine::mesh::lattice::bootstrap_lattice;
 use casas_engine::mesh::mesh_hydrology::mesh_routing;
 use casas_engine::mesh::mesh_raster::rasterise_node_field;
+use casas_engine::mesh::mesh_serial::{SerializedMesh, compact_mesh, decode_mesh, encode_mesh};
 use casas_engine::pipeline::coupled_epoch::{
     CoupledEpochOptions, CoupledTerrain, HISTORY_DEFAULTS, SavedTerrain, create_coupled_terrain,
     decode_coupled_terrain, step_coupled_epoch,
@@ -99,6 +101,104 @@ pub fn sea_level_temperature_band(
             &planet,
             shape == Shape::Sphere,
         ),
+    ))
+}
+
+/// The bootstrap mesh of a domain at one spacing (`bootstrap_lattice`) in
+/// its canonical form (`compact_mesh`), as the save's codec holds it:
+/// `{ count, nodes, connectivity }`. A small mesh for a check of the save
+/// format (the client's harness:roundtrip).
+pub fn bootstrap_mesh(shape: Shape, width: f64, height: f64, spacing: f64) -> Value {
+    let domain = domain_of(shape, width, height);
+    let (mesh, _) = compact_mesh(&bootstrap_lattice(&domain, spacing));
+    let order: Vec<i32> = (0..mesh.alive_vertices as i32).collect();
+    let serial = encode_mesh(&mesh, &order);
+    value::ObjBuilder::new()
+        .num("count", serial.count as f64)
+        .put("nodes", Value::F32s(serial.nodes))
+        .put("connectivity", Value::U8s(serial.connectivity))
+        .build()
+}
+
+/// The check names and their violation counts, in the engine's order.
+fn invariant_counts(checks: Vec<(&'static str, usize)>) -> Value {
+    checks
+        .into_iter()
+        .fold(value::ObjBuilder::new(), |out, (name, n)| {
+            out.num(name, n as f64)
+        })
+        .build()
+}
+
+/// The invariants of a river graph on the mesh (`river_graph_invariants`),
+/// `{ check: violations }`: the graph as a level and a save keep it
+/// (`formats::river_graph_parts`, its `json` as a string; `positions` may
+/// be absent, the checks do not read them), `elevation` per cell of the
+/// graph. For the harnesses.
+pub fn river_graph_invariants(parts: &Value, elevation: &Value) -> Result<Value, EraError> {
+    let f = read::Fields::of(parts, "the river graph's parts")?;
+    let need = |k: &str| {
+        f.get(k)
+            .ok_or_else(|| wrong(&format!("the river graph's parts have no {k}")))
+    };
+    let Value::Str(json) = need("json")? else {
+        return Err(wrong("the river graph's JSON is not a string"));
+    };
+    let Value::I32s(cells) = need("cells")? else {
+        return Err(wrong("the river graph's cells are not an Int32Array"));
+    };
+    let positions = match f.get("positions") {
+        Some(p) => read::f32s(p, "the river graph's positions")?.to_vec(),
+        None => vec![0.0; cells.len() * 2],
+    };
+    let graph = formats::river_graph_of_parts(
+        &formats::parse_json(json)?,
+        cells.clone(),
+        read::f32s(need("coursePoints")?, "the river graph's course points")?,
+        &positions,
+    )?;
+    let graph = read::river_graph(&graph)?;
+    let elevation = read::f32s(elevation, "the elevation")?;
+    if graph.nodes.iter().any(|n| n.cell >= elevation.len()) {
+        return Err(wrong("a river node's cell is outside the elevation"));
+    }
+    Ok(invariant_counts(
+        casas_engine::surface::river_graph::river_graph_invariants(&graph, elevation),
+    ))
+}
+
+/// The invariants of a coast graph (`coast_graph_invariants`), `{ check:
+/// violations }`: the mesh as the save's codec holds it (`{ count, nodes,
+/// connectivity }`) on the world's domain, its heights per node, and the
+/// coast as the save holds it (`{ reaches, nodes }`). For the harnesses.
+pub fn coast_graph_invariants(
+    shape: Shape,
+    width: f64,
+    height: f64,
+    mesh: &Value,
+    z: &Value,
+    coast: &Value,
+) -> Result<Value, EraError> {
+    let m = read::Fields::of(mesh, "the mesh")?;
+    let need = |k: &str| {
+        m.get(k)
+            .ok_or_else(|| wrong(&format!("the mesh has no {k}")))
+    };
+    let mesh = decode_mesh(
+        &domain_of(shape, width, height),
+        &SerializedMesh {
+            count: m.num("count")? as usize,
+            nodes: read::f32s(need("nodes")?, "the mesh's nodes")?.to_vec(),
+            connectivity: read::u8s(need("connectivity")?, "the mesh's connectivity")?.to_vec(),
+        },
+    )?;
+    let coast = read::coast_graph(coast, mesh.vertex_slots())?;
+    let z = read::f32s(z, "the heights")?;
+    if z.len() < mesh.vertex_slots() {
+        return Err(wrong("the heights are fewer than the mesh's nodes"));
+    }
+    Ok(invariant_counts(
+        casas_engine::surface::coast_graph::coast_graph_invariants(&coast, &mesh, z),
     ))
 }
 
