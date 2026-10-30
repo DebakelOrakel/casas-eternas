@@ -19,29 +19,23 @@ import { detAsin, detAtan2, detCos, detSin, sq } from '../core/detMath'
 // same frame. Every predicate (orientation, in-circle, circumcentre) is
 // then the planar one. This is sound as long as every triangle is small
 // against the period — the one-sheeted-cover condition of periodic
-// triangulations — which `MAX_EDGE_FRACTION` keeps (`remove` refuses a
-// removal that would breach it, and the bootstrap lattice starts far
-// below it).
+// triangulations — which `MAX_EDGE_FRACTION` states (the engine's
+// mesh/periodic_delaunay.rs keeps it when it builds; `validate` checks it).
 //
-// Operations, all incremental and deterministic:
-//   insert(x, y)  point location by a straight walk from a hint, then a
-//                 1→3 (or 2→4 on an edge) split and Lawson legalisation;
-//   remove(v)     clip ears off the link polygon by flips down to degree
-//                 three, merge, legalise the hole (Devillers' scheme);
-//   legalise      Lawson flips over a stack of halfedges.
-// Determinism is by construction: single-threaded, no hashing of
-// positions, the free lists are plain stacks — the same operations in the
-// same order give the same arrays byte for byte, which the mesh harness
-// checks. Insertion ORDER is the caller's (Hilbert, see hilbert.ts).
+// THE READ SIDE. The engine builds the meshes (insertion, removal); this
+// port only holds one built from a triangle list (`buildFromTriangles`: a
+// saved mesh, a lattice) and reads it — the walk (`locate`), the
+// barycentric weights, the stars, the circumcentres and the Voronoi areas.
+// The one operation that changes a mesh is `legaliseAll`, the Lawson flips
+// that make a lattice Delaunay (lattice.ts).
 //
-// Positions are stored ROUNDED TO FLOAT32 (`Math.fround` on every insert):
-// the save carries them as f32 (mesh/meshSerial.ts), and a mesh that
-// continues in the session must be the mesh a reload rebuilds, bit for
-// bit — so the session never holds a position the save cannot.
+// Positions are stored ROUNDED TO FLOAT32 (`Math.fround` in
+// `buildFromTriangles`): the save carries them as f32 (mesh/meshSerial.ts),
+// and a mesh read here must be the mesh the engine holds, bit for bit.
 //
 // THE SPHERE (DEC-0035, step 4d4) shares everything above but the
-// geometry. The halfedges, the splits, the flips, the ear clipping of a
-// removal, the Lawson stack and the walk are one code; only what a
+// geometry. The halfedges, the flips, the Lawson stack and the walk are
+// one code; only what a
 // predicate, an area or a circumcentre computes differs, and each of those
 // methods takes its globe path first (`globe`, from domain.kind). On the
 // sphere a node keeps its chart position (x, y) — the address the save and
@@ -79,23 +73,17 @@ import { detAsin, detAtan2, detCos, detSin, sq } from '../core/detMath'
 // Robustness: predicates are plain doubles. A configuration too close to
 // degenerate may leave a locally non-Delaunay edge (the in-circle test has
 // a relative tolerance so two rounding-equal circles cannot flip back and
-// forth), never an invalid triangulation: splits and flips keep every
-// triangle counter-clockwise by construction, and a flip is applied only
-// when both resulting triangles are strictly so.
+// forth), never an invalid triangulation: a flip is applied only when both
+// resulting triangles are strictly counter-clockwise.
 
-// Edges longer than this fraction of the shorter period are refused — the
+// Edges longer than this fraction of the shorter period breach the
 // one-sheeted-cover margin (the strict bound is 1/2; the quarter leaves
-// room for the flips a removal legalises with).
-export const MAX_EDGE_FRACTION = 0.25
+// room for the flips a removal legalises with). `validate` checks it.
+const MAX_EDGE_FRACTION = 0.25
 
 // In-circle tolerance, relative to the fourth power of the local scale:
 // a determinant below it counts as co-circular and does not flip.
 const INCIRCLE_EPS = 1e-12
-
-// Orientation tolerance for "on the edge", relative to the squared edge
-// length: a point this close to an edge splits the edge (2→4) rather than
-// producing a sliver.
-const ON_EDGE_EPS = 1e-10
 
 // Orientation margin for a flip's new triangles, relative to the squared
 // local scale: below it a triangle counts as degenerate and the flip is
@@ -154,8 +142,7 @@ function queryUnitsFor(toLon: number, toColat: number): QueryUnits {
 export class PeriodicTriangulation {
   readonly domain: Domain
   // Vertices. `vx`/`vy` in domain coordinates, wrapped. `vEdge` is one
-  // outgoing halfedge (-1 when dead), kept current by every operation that
-  // creates a triangle. Slots are reused through `freeVertices`.
+  // outgoing halfedge (-1 when dead), kept current by every flip.
   vx: Float64Array
   vy: Float64Array
   vEdge: Int32Array
@@ -164,20 +151,16 @@ export class PeriodicTriangulation {
   // test `vAlive`.
   vertexSlots = 0
   aliveVertices = 0
-  private freeVertices: number[] = []
   // Triangles. Three vertex ids per triangle, one twin per halfedge.
   tris: Int32Array
   twin: Int32Array
   tAlive: Uint8Array
   triSlots = 0
   aliveTriangles = 0
-  private freeTris: number[] = []
-  // The last triangle touched, the default walk start (Hilbert order makes
+  // The last triangle located, the default walk start (Hilbert order makes
   // it a neighbour of the next query).
   lastTri = 0
-  // Counters the harness reads: how far walks go, how many flips happen.
-  walkSteps = 0
-  flips = 0
+  // legalise's halfedges still to check.
   private stack: number[] = []
   // The sphere's geometry (see the header): true on a sphere domain. `vu`
   // holds each slot's unit vector (x, y, z interleaved) there, and is empty
@@ -188,20 +171,12 @@ export class PeriodicTriangulation {
   private readonly toColat: number
   // The globe's radius in domain units, W / 2π.
   private readonly radius: number
-  // Walks on the globe that gave up and scanned every triangle instead —
-  // the harness reads it; 0 is expected.
-  walkFallbacks = 0
-  // The geometry's version: it goes up with every change of a triangle,
-  // a twin, a vertex's edge or a vertex (setTriangle, pair, freeTriangle,
-  // newVertex, remove). A value derived from the mesh and stamped with it
-  // is still the mesh's while the version is the same — the Voronoi areas
-  // below, the engine index's cotangents (the engine's mesh/mesh_erosion.rs). Code that
-  // writes the arrays directly (buildFromTriangles) does so before anything
-  // is derived.
+  // The geometry's version: it goes up with every change of a triangle or
+  // a twin (setTriangle, pair: a flip). A value derived from the mesh and
+  // stamped with it is still the mesh's while the version is the same —
+  // the Voronoi areas below. Code that writes the arrays directly
+  // (buildFromTriangles) does so before anything is derived.
   private version = 0
-  get geometryVersion(): number {
-    return this.version
-  }
 
   constructor(domain: Domain, vertexCapacity = 1024) {
     this.domain = domain
@@ -219,37 +194,6 @@ export class PeriodicTriangulation {
     this.tris = new Int32Array(tc * 3).fill(-1)
     this.twin = new Int32Array(tc * 3).fill(-1)
     this.tAlive = new Uint8Array(tc)
-  }
-
-  // An independent copy in the same state: the same slots, free lists,
-  // capacities, walk start and counters, so every later operation on the
-  // copy does what it would have done on the original. The engine's
-  // `triangulate_points` starts each epoch from such a copy (the lattice
-  // built once). The derived caches start empty.
-  clone(): PeriodicTriangulation {
-    const copy = new PeriodicTriangulation(this.domain, 4)
-    copy.vx = this.vx.slice()
-    copy.vy = this.vy.slice()
-    copy.vEdge = this.vEdge.slice()
-    copy.vAlive = this.vAlive.slice()
-    copy.vertexSlots = this.vertexSlots
-    copy.aliveVertices = this.aliveVertices
-    copy.freeVertices = this.freeVertices.slice()
-    copy.tris = this.tris.slice()
-    copy.twin = this.twin.slice()
-    copy.tAlive = this.tAlive.slice()
-    copy.triSlots = this.triSlots
-    copy.aliveTriangles = this.aliveTriangles
-    copy.freeTris = this.freeTris.slice()
-    copy.lastTri = this.lastTri
-    copy.walkSteps = this.walkSteps
-    copy.flips = this.flips
-    copy.stack = this.stack.slice()
-    copy.vu = this.vu.slice()
-    copy.walkFallbacks = this.walkFallbacks
-    copy.onEdge = this.onEdge
-    copy.atVertex = this.atVertex
-    return copy
   }
 
   // ---------------------------------------------------------------- frames
@@ -304,11 +248,7 @@ export class PeriodicTriangulation {
     return this.twin[prev(e)]
   }
 
-  // Origin and destination of a halfedge.
-  from(e: number): number {
-    return this.tris[e]
-  }
-
+  // Destination of a halfedge.
   to(e: number): number {
     return this.tris[next(e)]
   }
@@ -387,9 +327,7 @@ export class PeriodicTriangulation {
   // index twice) on a mesh that does not change between them; the area
   // sums the star from vEdge[v], which every change that moves it also
   // versions, so a kept area is the bits a new computation gives (profiled
-  // 2026-10-15: 5 % of a torus epoch). A mesh being built by insertion and
-  // removal changes between most of its area queries and keeps none: the
-  // tables would only be garbage.
+  // 2026-10-15: 5 % of a torus epoch).
   private keepsAreas = false
   private areaVersion = new Float64Array(0)
   private areaValue = new Float64Array(0)
@@ -456,7 +394,7 @@ export class PeriodicTriangulation {
 
   // Barycentric weights of (x, y) in triangle t, clamped to the simplex,
   // into out[0..2] — the linear interpolation within a triangle that the
-  // remesh, the rasteriser and the sampler use. The torus: in the
+  // rasteriser, the water fields and the sampler use. The torus: in the
   // triangle's unwrapped frame. The globe: the weights of the point where
   // the ray from the centre through (x, y) meets the flat triangle, the
   // three determinants det[p, b, c], det[a, p, c], det[a, b, p] — exact,
@@ -529,19 +467,6 @@ export class PeriodicTriangulation {
     out[0] = units.u[3 * k]
     out[1] = units.u[3 * k + 1]
     out[2] = units.u[3 * k + 2]
-  }
-
-  // The chart point a vertex is stored at, from any (x, y): the point
-  // brought into the chart, rounded to float32 (the save's precision, as
-  // on the torus), the longitude wrapped once more in case it rounded up
-  // to the width. Into `this.cp`.
-  private readonly cp = { x: 0, y: 0 }
-
-  private chartPoint(x: number, y: number): void {
-    const p = this.cp
-    this.domain.wrapPoint(x, y, p)
-    p.x = this.domain.wrapX(Math.fround(p.x))
-    p.y = Math.fround(p.y)
   }
 
   // The orientation of three unit vectors, chart-positive: −det[a, b, c],
@@ -713,8 +638,8 @@ export class PeriodicTriangulation {
   // orientation and nothing carried (one sheet). A visibility walk on a
   // Delaunay triangulation of the sphere moves into the hemisphere of the
   // query at every step; should one ever circle, it gives up after the
-  // torus's step bound and scans every triangle (`walkFallbacks`), which is
-  // slow and still deterministic.
+  // torus's step bound and scans every triangle, which is slow and still
+  // deterministic.
   private readonly q = new Float64Array(3)
 
   private locateOnGlobe(x: number, y: number, hint: number): number {
@@ -737,16 +662,11 @@ export class PeriodicTriangulation {
       if (o1 < worst) { worst = o1; cross = 1 }
       if (o2 < worst) { worst = o2; cross = 2 }
       if (cross < 0) {
-        this.classifyOnGlobe(t, o0, o1, o2)
-        this.walkSteps += steps
         this.lastTri = t
         return t
       }
       t = this.triangleOf(this.twin[3 * t + cross])
-      if (++steps > maxSteps) {
-        this.walkFallbacks++
-        return this.scanOnGlobe()
-      }
+      if (++steps > maxSteps) return this.scanOnGlobe()
     }
   }
 
@@ -757,9 +677,6 @@ export class PeriodicTriangulation {
     const u = this.vu
     let best = -1
     let bestMin = -Infinity
-    let b0 = 0
-    let b1 = 0
-    let b2 = 0
     for (let t = 0; t < this.triSlots; t++) {
       if (!this.tAlive[t]) continue
       const a = 3 * this.tris[3 * t]
@@ -772,33 +689,11 @@ export class PeriodicTriangulation {
       if (m > bestMin) {
         bestMin = m
         best = t
-        b0 = o0
-        b1 = o1
-        b2 = o2
       }
     }
     if (best < 0) throw new Error('PeriodicTriangulation: no triangles')
-    this.classifyOnGlobe(best, b0, b1, b2)
     this.lastTri = best
     return best
-  }
-
-  // classify's rule with the squared chords as the edge scale.
-  private classifyOnGlobe(t: number, o0: number, o1: number, o2: number): void {
-    this.onEdge = -1
-    this.atVertex = -1
-    const a = this.tris[3 * t]
-    const b = this.tris[3 * t + 1]
-    const c = this.tris[3 * t + 2]
-    const e0 = o0 <= ON_EDGE_EPS * this.chordSq(a, b)
-    const e1 = o1 <= ON_EDGE_EPS * this.chordSq(b, c)
-    const e2 = o2 <= ON_EDGE_EPS * this.chordSq(c, a)
-    if (e0 && e2) this.atVertex = 0
-    else if (e0 && e1) this.atVertex = 1
-    else if (e1 && e2) this.atVertex = 2
-    else if (e0) this.onEdge = 0
-    else if (e1) this.onEdge = 1
-    else if (e2) this.onEdge = 2
   }
 
   // ------------------------------------------------------------ predicates
@@ -828,12 +723,6 @@ export class PeriodicTriangulation {
   // -------------------------------------------------------------- location
 
   // The triangle containing (x, y), by a straight walk from `hint`.
-  // Returns the triangle; `onEdge` (0..2 or -1) tells whether the point
-  // lies on that edge of it, `atVertex` (0..2 or -1) whether it coincides
-  // with a corner.
-  onEdge = -1
-  atVertex = -1
-
   locate(x: number, y: number, hint = this.lastTri): number {
     if (this.globe) return this.locateOnGlobe(x, y, hint)
     let t = this.tAlive[hint] ? hint : this.anyAliveTriangle()
@@ -870,8 +759,6 @@ export class PeriodicTriangulation {
       if (o1 < worst) { worst = o1; cross = 1 }
       if (o2 < worst) { worst = o2; cross = 2 }
       if (cross < 0) {
-        this.classify(f, px, py, o0, o1, o2)
-        this.walkSteps += steps
         this.lastTri = t
         return t
       }
@@ -890,54 +777,12 @@ export class PeriodicTriangulation {
     }
   }
 
-  private classify(f: Float64Array, px: number, py: number, o0: number, o1: number, o2: number): void {
-    this.onEdge = -1
-    this.atVertex = -1
-    const l0 = sq(f[2] - f[0]) + sq(f[3] - f[1])
-    const l1 = sq(f[4] - f[2]) + sq(f[5] - f[3])
-    const l2 = sq(f[0] - f[4]) + sq(f[1] - f[5])
-    const e0 = o0 <= ON_EDGE_EPS * l0
-    const e1 = o1 <= ON_EDGE_EPS * l1
-    const e2 = o2 <= ON_EDGE_EPS * l2
-    if (e0 && e2) this.atVertex = 0
-    else if (e0 && e1) this.atVertex = 1
-    else if (e1 && e2) this.atVertex = 2
-    else if (e0) this.onEdge = 0
-    else if (e1) this.onEdge = 1
-    else if (e2) this.onEdge = 2
-    void px
-    void py
-  }
-
   private anyAliveTriangle(): number {
     for (let t = 0; t < this.triSlots; t++) if (this.tAlive[t]) return t
     throw new Error('PeriodicTriangulation: no triangles')
   }
 
-  // -------------------------------------------------------------- capacity
-
-  private ensureVertexCapacity(count: number): void {
-    if (count <= this.vx.length) return
-    let cap = this.vx.length
-    while (cap < count) cap *= 2
-    const vx = new Float64Array(cap)
-    vx.set(this.vx)
-    const vy = new Float64Array(cap)
-    vy.set(this.vy)
-    const vEdge = new Int32Array(cap).fill(-1)
-    vEdge.set(this.vEdge)
-    const vAlive = new Uint8Array(cap)
-    vAlive.set(this.vAlive)
-    this.vx = vx
-    this.vy = vy
-    this.vEdge = vEdge
-    this.vAlive = vAlive
-    if (this.globe) {
-      const vu = new Float64Array(cap * 3)
-      vu.set(this.vu)
-      this.vu = vu
-    }
-  }
+  // ----------------------------------------------------- the globe's cache
 
   // Sizes the globe's unit-vector cache to the vertex arrays and fills
   // slots 0..count − 1 from their chart positions (buildFromTriangles).
@@ -951,63 +796,7 @@ export class PeriodicTriangulation {
     for (let v = 0; v < count; v++) this.unitOf(this.vx[v], this.vy[v], this.vu, 3 * v)
   }
 
-  private ensureTriCapacity(count: number): void {
-    if (count * 3 <= this.tris.length) return
-    let cap = this.tris.length / 3
-    while (cap < count) cap *= 2
-    const tris = new Int32Array(cap * 3).fill(-1)
-    tris.set(this.tris)
-    const twin = new Int32Array(cap * 3).fill(-1)
-    twin.set(this.twin)
-    const tAlive = new Uint8Array(cap)
-    tAlive.set(this.tAlive)
-    this.tris = tris
-    this.twin = twin
-    this.tAlive = tAlive
-  }
-
-  private newVertex(x: number, y: number): number {
-    let v: number
-    if (this.freeVertices.length > 0) v = this.freeVertices.pop() as number
-    else {
-      this.ensureVertexCapacity(this.vertexSlots + 1)
-      v = this.vertexSlots++
-    }
-    if (this.globe) {
-      this.chartPoint(x, y)
-      this.vx[v] = this.cp.x
-      this.vy[v] = this.cp.y
-      this.unitOf(this.cp.x, this.cp.y, this.vu, 3 * v)
-    } else {
-      this.vx[v] = this.domain.wrapX(Math.fround(this.domain.wrapX(x)))
-      this.vy[v] = this.domain.wrapY(Math.fround(this.domain.wrapY(y)))
-    }
-    this.vAlive[v] = 1
-    this.aliveVertices++
-    this.version++
-    return v
-  }
-
-  private newTriangle(): number {
-    let t: number
-    if (this.freeTris.length > 0) t = this.freeTris.pop() as number
-    else {
-      this.ensureTriCapacity(this.triSlots + 1)
-      t = this.triSlots++
-    }
-    this.tAlive[t] = 1
-    this.aliveTriangles++
-    return t
-  }
-
-  private freeTriangle(t: number): void {
-    this.version++
-    this.tAlive[t] = 0
-    this.aliveTriangles--
-    this.tris[3 * t] = this.tris[3 * t + 1] = this.tris[3 * t + 2] = -1
-    this.twin[3 * t] = this.twin[3 * t + 1] = this.twin[3 * t + 2] = -1
-    this.freeTris.push(t)
-  }
+  // ---------------------------------------------------------- legalisation
 
   private setTriangle(t: number, a: number, b: number, c: number): void {
     this.version++
@@ -1024,79 +813,6 @@ export class PeriodicTriangulation {
     this.version++
     this.twin[e1] = e2
     this.twin[e2] = e1
-  }
-
-  // ------------------------------------------------------------- insertion
-
-  // Inserts a point and returns its vertex id. A point coinciding with an
-  // existing vertex returns that vertex and inserts nothing.
-  insert(x: number, y: number, hint = this.lastTri): number {
-    // On the globe the point is located where it will be stored (its
-    // float32 chart position), so the triangle it splits is the one that
-    // holds its stored self.
-    if (this.globe) {
-      this.chartPoint(x, y)
-      x = this.cp.x
-      y = this.cp.y
-    }
-    const t = this.locate(x, y, hint)
-    if (this.atVertex >= 0) return this.tris[3 * t + this.atVertex]
-    const p = this.newVertex(x, y)
-    if (this.onEdge >= 0) this.splitEdge(3 * t + this.onEdge, p)
-    else this.splitTriangle(t, p)
-    this.legalise()
-    this.lastTri = this.triangleOf(this.vEdge[p])
-    return p
-  }
-
-  private splitTriangle(t: number, p: number): void {
-    const a = this.tris[3 * t]
-    const b = this.tris[3 * t + 1]
-    const c = this.tris[3 * t + 2]
-    const tab = this.twin[3 * t]
-    const tbc = this.twin[3 * t + 1]
-    const tca = this.twin[3 * t + 2]
-    const t1 = this.newTriangle()
-    const t2 = this.newTriangle()
-    this.setTriangle(t, a, b, p)
-    this.setTriangle(t1, b, c, p)
-    this.setTriangle(t2, c, a, p)
-    this.pair(3 * t, tab)
-    this.pair(3 * t1, tbc)
-    this.pair(3 * t2, tca)
-    this.pair(3 * t + 1, 3 * t1 + 2)
-    this.pair(3 * t1 + 1, 3 * t2 + 2)
-    this.pair(3 * t2 + 1, 3 * t + 2)
-    this.stack.push(3 * t, 3 * t1, 3 * t2)
-  }
-
-  private splitEdge(e: number, p: number): void {
-    const t = this.triangleOf(e)
-    const e2 = this.twin[e]
-    const t2 = this.triangleOf(e2)
-    const a = this.tris[e]
-    const b = this.to(e)
-    const c = this.apex(e)
-    const d = this.apex(e2)
-    const tca = this.twin[prev(e)]
-    const tbc = this.twin[next(e)]
-    const tdb = this.twin[prev(e2)]
-    const tad = this.twin[next(e2)]
-    const t3 = this.newTriangle()
-    const t4 = this.newTriangle()
-    this.setTriangle(t, a, p, c)
-    this.setTriangle(t2, b, p, d)
-    this.setTriangle(t3, p, b, c)
-    this.setTriangle(t4, p, a, d)
-    this.pair(3 * t + 2, tca)
-    this.pair(3 * t2 + 2, tdb)
-    this.pair(3 * t3 + 1, tbc)
-    this.pair(3 * t4 + 1, tad)
-    this.pair(3 * t, 3 * t4)
-    this.pair(3 * t + 1, 3 * t3 + 2)
-    this.pair(3 * t3, 3 * t2)
-    this.pair(3 * t2 + 1, 3 * t4 + 2)
-    this.stack.push(3 * t + 2, 3 * t2 + 2, 3 * t3 + 1, 3 * t4 + 1)
   }
 
   // Flips halfedge e (a→b, apex p; twin b→a, apex d) into p–d. The two
@@ -1120,7 +836,6 @@ export class PeriodicTriangulation {
     this.pair(3 * t2, tdb)
     this.pair(3 * t2 + 1, tbp)
     this.pair(3 * t + 1, 3 * t2 + 2)
-    this.flips++
   }
 
   // Lawson legalisation over the stack: pop a halfedge, flip it when the
@@ -1154,8 +869,8 @@ export class PeriodicTriangulation {
       const dy = ay + d.y
       if (!PeriodicTriangulation.inCircle(ax, ay, bx, by, px, py, dx, dy)) continue
       // Both triangles of the flip must be strictly counter-clockwise, by
-      // a margin: a sliver flipped into existence is a sliver the next
-      // removal trips over.
+      // a margin: a sliver flipped into existence is a sliver the engine's
+      // next removal trips over.
       const scale = sq(dx - ax) + sq(dy - ay) + sq(px - ax) + sq(py - ay)
       if (PeriodicTriangulation.orient(ax, ay, dx, dy, px, py) <= ORIENT_EPS * scale) continue
       if (PeriodicTriangulation.orient(dx, dy, bx, by, px, py) <= ORIENT_EPS * scale) continue
@@ -1194,171 +909,6 @@ export class PeriodicTriangulation {
       this.stack.push(3 * t, 3 * t + 1, 3 * t + 2)
     }
     this.legalise()
-  }
-
-  // --------------------------------------------------------------- removal
-
-  private readonly star = new Int32Array(64)
-
-  // Removes vertex v. Returns false, and changes nothing, when the removal
-  // would leave an edge longer than the one-sheet margin or the mesh has
-  // too few vertices to stay a triangulation.
-  remove(v: number): boolean {
-    if (!this.vAlive[v] || this.aliveVertices <= 4) return false
-    const maxLenSq = sq(Math.min(this.domain.width, this.domain.height) * MAX_EDGE_FRACTION)
-    // Refuse when any two link vertices are further apart than the margin:
-    // every edge the hole's triangulation can contain joins two of them.
-    let n = this.outgoing(v, this.star)
-    // On the globe a pair whose chord bounds its arc well inside the margin
-    // (arc ≤ R · chord · π / 2) is not measured: the arc's atan2 per pair
-    // was a twentieth of a sphere epoch (profiled 2026-10-15). A pair near
-    // the margin is measured as before, so the answer is the same.
-    const chordBelow = this.globe ? maxLenSq / (sq(this.radius * Math.PI / 2) * (1 + 1e-9)) : -1
-    for (let i = 0; i < n; i++) {
-      const a = this.to(this.star[i])
-      for (let j = i + 1; j < n; j++) {
-        const b = this.to(this.star[j])
-        if (this.globe && this.chordSq(a, b) < chordBelow) continue
-        if (this.domain.distanceSq(this.vx[a], this.vy[a], this.vx[b], this.vy[b]) > maxLenSq) return false
-      }
-    }
-    const touched: number[] = []
-    // Clip ears off the link polygon until three vertices remain. An ear
-    // is a link vertex u, convex between its neighbours r and l, whose
-    // triangle (r, u, l) holds no other link vertex; the flip of v→u into
-    // r–l cuts it off. The triangle (v, r, l) the flip leaves on v's side
-    // may be inverted — the polygon that remains around v need not be
-    // star-shaped from v any more — and that is fine: nothing reads its
-    // geometry, and it is consumed by the merge at the end. (A flip-only
-    // scheme that also required (v, r, l) to be proper got stuck on a
-    // node at the centre of a rectangle, where every such triangle is
-    // degenerate — the hex lattice produces exactly that.) Among the ears
-    // the one whose circumcircle holds no other link vertex is preferred
-    // (Devillers' rule), so the hole comes out nearly Delaunay and the
-    // final legalisation is short.
-    while (n > 3) {
-      let chosen = -1
-      let fallback = -1
-      for (let i = 0; i < n && chosen < 0; i++) {
-        if (!this.isEar(i, n)) continue
-        if (fallback < 0) fallback = i
-        if (this.earIsDelaunay(this.star[i], n)) chosen = i
-      }
-      if (chosen < 0) chosen = fallback
-      if (chosen < 0) throw new Error('PeriodicTriangulation.remove: the link polygon has no ear')
-      const e = this.star[chosen]
-      const t2 = this.triangleOf(this.twin[e])
-      this.flip(e)
-      touched.push(this.triangleOf(e), t2)
-      n = this.outgoing(v, this.star)
-    }
-    // Merge the three triangles of the star into one.
-    const e0 = this.star[0]
-    const e1 = this.star[1]
-    const e2 = this.star[2]
-    const t0 = this.triangleOf(e0)
-    const t1 = this.triangleOf(e1)
-    const t2 = this.triangleOf(e2)
-    // Around v counter-clockwise: e0 = v→u0 in (v, u0, u1), e1 = v→u1 in
-    // (v, u1, u2), e2 = v→u2 in (v, u2, u0). The hole (u0, u1, u2) is CCW.
-    const u0 = this.to(e0)
-    const u1 = this.to(e1)
-    const u2 = this.to(e2)
-    const t01 = this.twin[next(e0)]
-    const t12 = this.twin[next(e1)]
-    const t20 = this.twin[next(e2)]
-    this.freeTriangle(t1)
-    this.freeTriangle(t2)
-    this.setTriangle(t0, u0, u1, u2)
-    this.pair(3 * t0, t01)
-    this.pair(3 * t0 + 1, t12)
-    this.pair(3 * t0 + 2, t20)
-    this.vAlive[v] = 0
-    this.vEdge[v] = -1
-    this.version++
-    this.aliveVertices--
-    this.freeVertices.push(v)
-    this.stack.push(3 * t0, 3 * t0 + 1, 3 * t0 + 2)
-    for (const t of touched) if (this.tAlive[t]) this.stack.push(3 * t, 3 * t + 1, 3 * t + 2)
-    this.legalise()
-    this.lastTri = t0
-    return true
-  }
-
-  // Whether link vertex i (of n, counter-clockwise) is an ear of the link
-  // polygon: strictly convex between its neighbours, and its triangle
-  // empty of the other link vertices.
-  private isEar(i: number, n: number): boolean {
-    const u = this.to(this.star[i])
-    const r = this.to(this.star[(i + n - 1) % n])
-    const l = this.to(this.star[(i + 1) % n])
-    if (this.globe) {
-      if (this.orientIds(r, u, l) <= this.orientMarginIds(r, u, l)) return false
-      for (let j = 0; j < n; j++) {
-        const w = this.to(this.star[j])
-        if (w === u || w === r || w === l) continue
-        if (this.orientIds(r, u, w) >= 0 && this.orientIds(u, l, w) >= 0 && this.orientIds(l, r, w) >= 0) return false
-      }
-      return true
-    }
-    const rx = this.vx[r]
-    const ry = this.vy[r]
-    const d = this.d
-    this.domain.delta(this.vx[u], this.vy[u], rx, ry, d)
-    const ux = rx + d.x
-    const uy = ry + d.y
-    this.domain.delta(this.vx[l], this.vy[l], rx, ry, d)
-    const lx = rx + d.x
-    const ly = ry + d.y
-    const area = PeriodicTriangulation.orient(rx, ry, ux, uy, lx, ly)
-    const scale = sq(ux - rx) + sq(uy - ry) + sq(lx - rx) + sq(ly - ry)
-    if (area <= ORIENT_EPS * scale) return false
-    for (let j = 0; j < n; j++) {
-      const w = this.to(this.star[j])
-      if (w === u || w === r || w === l) continue
-      this.domain.delta(this.vx[w], this.vy[w], rx, ry, d)
-      const wx = rx + d.x
-      const wy = ry + d.y
-      if (PeriodicTriangulation.orient(rx, ry, ux, uy, wx, wy) >= 0
-        && PeriodicTriangulation.orient(ux, uy, lx, ly, wx, wy) >= 0
-        && PeriodicTriangulation.orient(lx, ly, rx, ry, wx, wy) >= 0) return false
-    }
-    return true
-  }
-
-  // Whether the triangle a flip of star edge e would create outside v
-  // (right apex, neighbour, left apex) has none of the other link vertices
-  // in its circumcircle.
-  private earIsDelaunay(e: number, n: number): boolean {
-    const u = this.to(e)
-    const l = this.apex(e)
-    const r = this.apex(this.twin[e])
-    if (this.globe) {
-      for (let i = 0; i < n; i++) {
-        const w = this.to(this.star[i])
-        if (w === u || w === l || w === r) continue
-        if (this.inCircleIds(r, u, l, w)) return false
-      }
-      return true
-    }
-    const rx = this.vx[r]
-    const ry = this.vy[r]
-    const d = this.d
-    this.domain.delta(this.vx[u], this.vy[u], rx, ry, d)
-    const ux = rx + d.x
-    const uy = ry + d.y
-    this.domain.delta(this.vx[l], this.vy[l], rx, ry, d)
-    const lx = rx + d.x
-    const ly = ry + d.y
-    for (let i = 0; i < n; i++) {
-      const w = this.to(this.star[i])
-      if (w === u || w === l || w === r) continue
-      this.domain.delta(this.vx[w], this.vy[w], rx, ry, d)
-      const wx = rx + d.x
-      const wy = ry + d.y
-      if (PeriodicTriangulation.inCircle(rx, ry, ux, uy, lx, ly, wx, wy)) return false
-    }
-    return true
   }
 
   // The orientation of triangle t as stored, chart-positive: the planar
@@ -1466,8 +1016,10 @@ export function buildFromTriangles(domain: Domain, xs: ArrayLike<number>, ys: Ar
     mesh.vAlive[v] = 1
   }
   if (mesh.globe) {
-    // The sphere's chart point, as insert stores it (a wrapY alone would not
-    // turn the longitude of a point past a pole).
+    // The sphere's chart point: the point brought into the chart, rounded
+    // to float32, the longitude wrapped once more in case it rounded up to
+    // the width (a wrapY alone would not turn the longitude of a point
+    // past a pole).
     const p = { x: 0, y: 0 }
     for (let v = 0; v < count; v++) {
       domain.wrapPoint(xs[v], ys[v], p)
@@ -1477,8 +1029,8 @@ export function buildFromTriangles(domain: Domain, xs: ArrayLike<number>, ys: Ar
     mesh.fillUnitVectors(count)
   }
   const triCount = (triangles.length / 3) | 0
-  // Reach into the capacity path through a throwaway growth: triSlots is
-  // set explicitly below.
+  // The triangle arrays sized for the list: triSlots is set explicitly
+  // below.
   const cap = mesh.tris.length / 3
   if (cap < triCount) {
     let c = cap

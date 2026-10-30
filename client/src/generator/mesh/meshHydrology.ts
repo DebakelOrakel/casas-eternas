@@ -2,7 +2,6 @@ import { metersToElevation, SEA_LEVEL } from '../elevation/elevationScale'
 import { SEA_WATER_LEVEL, SURFACE_ICE, SURFACE_LAKE, SURFACE_SEA, type WaterBody } from '../surface/hydrology'
 import { SURFACE_TUNING } from '../surface/surfaceTuneParams'
 import type { PeriodicTriangulation } from './periodicDelaunay'
-import { barycentric } from './remesh'
 
 // THE WATER FIELDS ON THE RASTER, FROM THE MESH: what the cell-walking
 // consumers (the climate refinement's dry-floor override, the riparian
@@ -53,7 +52,7 @@ export function waterFieldsFromMesh(mesh: PeriodicTriangulation, nodeBody: Int32
       const t = mesh.locate(x, y, hint)
       hint = t
       if (px === 0) rowStart = t
-      barycentric(mesh, t, x, y, bary)
+      mesh.barycentric(t, x, y, bary)
       let corner = 0
       if (bary[1] > bary[corner]) corner = 1
       if (bary[2] > bary[corner]) corner = 2

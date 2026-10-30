@@ -1,6 +1,5 @@
 import { ELEVATION_METERS } from '../elevation/elevationScale'
 import type { PeriodicTriangulation } from './periodicDelaunay'
-import { barycentric } from './remesh'
 import { detHypot } from '../core/detMath'
 
 // SAMPLING THE MESH AT A POINT (decision 7 of docs/decisions/adaptive-mesh.md:
@@ -174,7 +173,7 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array, 
   }
   const sampleAt = (field: ArrayLike<number>, x: number, y: number): number => {
     const t = triangleAt(x, y)
-    barycentric(mesh, t, x, y, bary)
+    mesh.barycentric(t, x, y, bary)
     return bary[0] * field[mesh.tris[3 * t]] + bary[1] * field[mesh.tris[3 * t + 1]] + bary[2] * field[mesh.tris[3 * t + 2]]
   }
   return {
@@ -184,7 +183,7 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array, 
     sampleAt,
     nearestNodeAt(x, y) {
       const t = triangleAt(x, y)
-      barycentric(mesh, t, x, y, bary)
+      mesh.barycentric(t, x, y, bary)
       let corner = 0
       if (bary[1] > bary[corner]) corner = 1
       if (bary[2] > bary[corner]) corner = 2
@@ -192,7 +191,7 @@ export function createMeshSampler(mesh: PeriodicTriangulation, z: Float32Array, 
     },
     normalAt(x, y, out) {
       const t = triangleAt(x, y)
-      barycentric(mesh, t, x, y, bary)
+      mesh.barycentric(t, x, y, bary)
       let nx = 0
       let ny = 0
       let nz = 0

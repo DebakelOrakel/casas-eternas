@@ -1,5 +1,4 @@
 import type { PeriodicTriangulation } from './periodicDelaunay'
-import { barycentric } from './remesh'
 
 // RASTERISING A NODE FIELD: the mesh sampled on a regular grid, linearly
 // within each triangle. The harness compares the mesh engine to the raster
@@ -34,7 +33,7 @@ export function rasteriseNodeField(mesh: PeriodicTriangulation, field: ArrayLike
       const t = mesh.locate(x, y, hint)
       hint = t
       if (px === 0) rowStart = t
-      barycentric(mesh, t, x, y, bary)
+      mesh.barycentric(t, x, y, bary)
       const a = mesh.tris[3 * t]
       const b = mesh.tris[3 * t + 1]
       const c = mesh.tris[3 * t + 2]
@@ -76,7 +75,7 @@ export function triangleRaster(mesh: PeriodicTriangulation, width: number, heigh
       const t = mesh.locate(x, y, hint)
       hint = t
       if (px === 0) rowStart = t
-      barycentric(mesh, t, x, y, bary)
+      mesh.barycentric(t, x, y, bary)
       const p = py * width + px
       tri[p] = t
       w0[p] = bary[0]

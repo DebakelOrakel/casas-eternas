@@ -64,7 +64,7 @@ core/       mapConfig, toroidal, rng, field (the shared samplers), minHeap, inte
             domain (the topology: periodicity, distance and latitude), detMath (exp, log,
             sin, cos … the same bits in every JS engine), worldTime, inputParams
 mesh/       the terrain mesh's read side: periodicDelaunay (the triangulation on a
-            domain), lattice, hilbert, meshDensity (MESH_TUNING), meshState, remesh,
+            domain), lattice, hilbert, meshDensity (MESH_TUNING),
             meshSerial (the save's form: Hilbert numbering, varint connectivity, the
             canonical rebuild), meshSampler (point location over a hint grid — what map/
             reads the mesh through), meshRaster (node fields on a grid;
