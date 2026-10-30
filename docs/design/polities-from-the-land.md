@@ -16,7 +16,7 @@ summary.de: Schritt 3 der Vorgeschichte, die Bronzezeit, simuliert
   man fortgeht, wie das Land verbunden ist, beweglicher Reichtum, Engpässe,
   Druck — geben einem Gemeinwesen seine Eigenschaften, und die Form ist die
   Klasse dieser Eigenschaften, wie eine Köppen-Klasse die eines Klimas.
-area: mechanics
+area: incubator
 stage: idea
 createdAt: 2026-10-28
 related: [DES-0032, DES-0033]

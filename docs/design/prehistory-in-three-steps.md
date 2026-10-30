@@ -17,7 +17,7 @@ summary.de: Der Inkubator machte zwei Dinge in einer Simulation: die
   die Sprachen beim Spielstart. Schritt 3, die Bronzezeit, ist nicht der
   Inkubator: Es sind die Regeln des Spiels, ohne Spieler gerechnet. Eine
   Chronik liest alle drei.
-area: mechanics
+area: incubator
 stage: building
 createdAt: 2026-10-27
 updatedAt: 2026-10-29

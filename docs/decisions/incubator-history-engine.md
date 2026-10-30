@@ -17,7 +17,7 @@ summary.de: Die Geschichte des Inkubators wird simuliert, nicht auf Abruf
   Releases. Sie läuft als WASM im Browser, der sie nur zeigt; gespeichert,
   rechnet ein Job sie nativ auf dem Server und legt H1 dort ab, auf einer
   Route der eigenen Version des Inkubators.
-area: platform
+area: incubator
 stage: built
 createdAt: 2026-10-26
 related: [DEC-0044, DEC-0045, DEC-0039, DEC-0047]

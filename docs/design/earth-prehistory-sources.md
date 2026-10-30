@@ -13,7 +13,7 @@ summary.de: Die Zeitleiste in DES-0032 entstand aus dem Gedächtnis. Diese
   Ackerbaus (9 600 v. Chr.) und ergänzt belegte Zahlen zum
   jungsteinzeitlichen Tausch über Entfernungen, zum 8.2-ka-Ereignis und
   zum Ende der grünen Sahara.
-area: mechanics
+area: incubator
 stage: built
 createdAt: 2026-10-28
 related: [DES-0032]

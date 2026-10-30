@@ -45,7 +45,7 @@ title.en: The detail ladder
 title.de: Die Detail-Leiter
 summary.en: One or two sentences — enough to decide whether to open the doc.
 summary.de: The same in German.
-area: generator             # generator | ui | mechanics | concepts | platform — the changelog's vocabulary
+area: generator             # generator | incubator | ui | mechanics | concepts | platform — the changelog's vocabulary
 stage: decided              # idea | decided | building | built | superseded
 createdAt: 2026-10-01       # never changed
 updatedAt: 2026-10-03       # when the doc last said something new; omit it and createdAt stands

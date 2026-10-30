@@ -14,7 +14,7 @@ summary.de: Dörfer, Völker, Flüsse und Berge brauchen viele Namen, und die
   und einer Grammatik der Namen; Tochtersprachen entstehen aus der
   Elternsprache durch Lautwandel, so haben verwandte Völker verwandte Namen.
   Nur die Sprachen werden gehalten; jeder Name wird abgeleitet.
-area: mechanics
+area: incubator
 stage: idea
 createdAt: 2026-10-28
 related: [DES-0032]

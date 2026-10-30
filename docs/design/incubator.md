@@ -14,7 +14,7 @@ summary.de: Der Inkubator zeigt Level 1 einer Welt und lässt darauf wachsen,
   Graph, die Jungsteinzeit als Simulation, die bei der ersten Stadt endet.
   Alles auf einem Zellnetz von 10 km, gerechnet vom Crate casas-incubator;
   eine Chronik und eine Overlay-Liste über alle Schritte.
-area: mechanics
+area: incubator
 stage: building
 createdAt: 2026-10-26
 updatedAt: 2026-10-29

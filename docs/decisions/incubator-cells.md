@@ -14,7 +14,7 @@ summary.de: Der Inkubator rechnet auf dem Feldnetz des Generators mit 10 km,
   Ausbreitung keine achteckigen Fronten hat und die Pole Zellen haben. Das
   Netz entsteht im einen Worker des Inkubators in Sekunden; eine Zuordnung
   von Texeln zu Zellen dient dem Zeichnen.
-area: mechanics
+area: incubator
 stage: built
 createdAt: 2026-10-26
 related: [DEC-0046]

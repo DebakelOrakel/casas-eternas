@@ -9,6 +9,7 @@ capability. It answers "*when* did this arrive", grouped by area. See the decisi
 | File | Covers |
 |---|---|
 | [generator.md](./generator.md) | Simulation layers: tectonics, crust, erosion, climate, hydrology, volcanism, ecology, elevation |
+| [incubator.md](./incubator.md) | The prehistory: the old and the new stone age, the peoples, the settlement, the exchange, the chronicle |
 | [ui.md](./ui.md) | Controls, overlays, rendering, save/load, notifications |
 | [mechanics.md](./mechanics.md) | Game mechanics — empty for now, grows from the game screen on |
 | [concepts.md](./concepts.md) | Setting & world concepts (species, factions) |
@@ -33,7 +34,8 @@ doc anchors (see [localization.md](../decisions/localization.md)).
 
 The **label** is the pipeline concept or panel the entry belongs to — `Genesis`, `Tectonics`,
 `Crust`, `Volcanism`, `Erosion`, `Climate`, `Biomes`, `Hydrology`, `Ecology`, `Migration`,
-`Elevation`, `Topology` (generator); `Overlays`, `Rendering`, `Save/Load`, `Notifications`,
+`Elevation`, `Topology` (generator); `Old Stone Age`, `New Stone Age`, `Peoples`,
+`Chronicle`, `History` (incubator); `Overlays`, `Rendering`, `Save/Load`, `Notifications`,
 `Layout`, `Title screen` (ui); `Workers`, `Deploy`, `Performance`, `Structure`, `Build`
 (platform). Omit it only when an entry belongs to no single one.
 

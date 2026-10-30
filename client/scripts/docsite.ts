@@ -35,10 +35,11 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DOCS = join(REPO, 'docs')
 const OUT = join(REPO, 'client', 'docs-dist')
 
-// The five areas — deliberately the changelog's vocabulary, so one nav spine
+// The six areas — deliberately the changelog's vocabulary, so one nav spine
 // carries timeline and documents alike.
 const AREAS = [
   { id: 'generator', label: 'Generator' },
+  { id: 'incubator', label: 'Incubator' },
   { id: 'ui', label: 'UI' },
   { id: 'mechanics', label: 'Mechanics' },
   { id: 'concepts', label: 'Concepts' },
