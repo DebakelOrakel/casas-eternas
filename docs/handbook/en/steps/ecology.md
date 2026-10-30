@@ -26,11 +26,7 @@ The map always shows one resource; you pick it in the left column.
 
 ## Resources {#resources}
 
-### Arable land {#resource.arable}
-
-Soil and climate fit for farming: a growing season warm and wet enough
-for crops, flat land, water on the fields and rain one can rely on. Heavy
-rain in the hot tropics washes the soil out.
+{{concept arable}}
 
 ### Fish {#resource.fish}
 
@@ -61,10 +57,7 @@ dry basins.
 Hard stone that can be knapped into tools: obsidian near volcanoes, flint
 scattered across flat land.
 
-### Copper {#resource.copper}
-
-Copper ore, bound to volcanic arcs: richest at active ones, weaker at
-arcs that are extinct.
+{{concept copper}}
 
 ### Tin {#resource.tin}
 

@@ -17,6 +17,7 @@ summary.de: Das Kupfer stand nur an den tätigen Vulkanbögen, und nur an
 area: generator
 stage: built
 createdAt: 2026-10-29
+concepts: [resource.copper]
 related: [DEC-0008, DEC-0030, DEC-0052, DES-0032]
 ---
 

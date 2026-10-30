@@ -27,12 +27,7 @@ Die Karte zeigt immer eine Ressource; du wählst sie in der linken Spalte.
 
 ## Ressourcen {#resources}
 
-### Ackerland {#resource.arable}
-
-Boden und Klima, die sich zum Ackerbau eignen: eine Wachstumszeit, warm
-und feucht genug für Feldfrüchte, flaches Land, Wasser auf den Feldern und
-Regen, auf den man sich verlassen kann. Starker Regen in den heißen Tropen
-wäscht den Boden aus.
+{{concept arable}}
 
 ### Fisch {#resource.fish}
 
@@ -63,10 +58,7 @@ Salzpfannen trockener Becken.
 Harter, schlagbarer Stein für Werkzeuge: Obsidian bei Vulkanen,
 Feuerstein verstreut im flachen Land.
 
-### Kupfer {#resource.copper}
-
-Kupfererz, gebunden an Vulkanbögen: am reichsten an tätigen, schwächer
-an erloschenen.
+{{concept copper}}
 
 ### Zinn {#resource.tin}
 
