@@ -28,7 +28,7 @@ use casas_engine::tectonics::plate_simulation_types::{
 };
 use casas_engine::tectonics::plumes::Plume;
 use casas_engine::tectonics::terrain_features::{FeatureKind, MovesWith, TerrainFeature};
-use casas_engine::tectonics::volcanoes::{Volcano, VolcanoKind};
+use casas_engine::tectonics::volcanoes::{Volcano, VolcanoKind, VolcanoSetting};
 
 use crate::value::{ObjBuilder, Value};
 
@@ -685,6 +685,8 @@ pub struct LevelLand<'a> {
     pub craton_age: &'a [f32],
     pub oases: &'a [(f64, f64)],
     pub volcanoes: &'a [Volcano],
+    /// The volcanoes' settings, in their order (TEG-21).
+    pub volcano_settings: &'a [VolcanoSetting],
     pub orogen_points: &'a [(f64, f64)],
     pub max_discharge: f64,
     /// The ecology's fields by id, a byte a node as the screen's fine
@@ -745,8 +747,9 @@ fn level_temperature(l: &LevelLand<'_>, count: usize) -> LevelTemperature {
 
 /// `LevelLand` as the artifact holds it: the per-node fields cut to the
 /// mesh's `count` nodes, the points as `[x, y, …]`, the volcanoes as
-/// `[x, y, thickness, kind, …]` (kind 0 hotspot, 1 flood, 2 arc, 3 extinct
-/// arc; DEC-0053).
+/// `[x, y, thickness, kind, continental, active, …]` (kind 0 hotspot, 1
+/// flood, 2 arc, 3 extinct arc, DEC-0053; continental and active 1 or 0,
+/// `VolcanoSetting`, TEG-21).
 fn level_land(l: &LevelLand<'_>, count: usize) -> Value {
     let temperature = level_temperature(l, count);
     let cut_u8 = |v: &[u8]| Value::U8s(v[..count].to_vec());
@@ -755,14 +758,23 @@ fn level_land(l: &LevelLand<'_>, count: usize) -> Value {
     let volcanoes = l
         .volcanoes
         .iter()
-        .flat_map(|v| {
+        .zip(l.volcano_settings)
+        .flat_map(|(v, s)| {
             let kind = match v.kind {
                 VolcanoKind::Hotspot => 0.0,
                 VolcanoKind::Flood => 1.0,
                 VolcanoKind::Arc => 2.0,
                 VolcanoKind::ExtinctArc => 3.0,
             };
-            [v.x, v.y, v.thickness, kind]
+            let flag = |b: bool| if b { 1.0 } else { 0.0 };
+            [
+                v.x,
+                v.y,
+                v.thickness,
+                kind,
+                flag(s.continental),
+                flag(s.active),
+            ]
         })
         .collect();
     ObjBuilder::new()

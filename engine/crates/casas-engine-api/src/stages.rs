@@ -834,6 +834,7 @@ impl World {
             craton_age: &eco.craton_age,
             oases: &eco.oases,
             volcanoes: &eco.volcanoes,
+            volcano_settings: &eco.volcano_settings,
             orogen_points: &eco.orogen_points,
             max_discharge: h.max_discharge,
             ecology: &ecology,

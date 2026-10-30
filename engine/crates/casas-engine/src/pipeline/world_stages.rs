@@ -55,7 +55,9 @@ use crate::surface::sediment_basins::{SedimentBasin, SedimentBasinInputs, find_s
 use crate::surface::surface_tune_params::SURFACE_TUNING;
 use crate::tectonics::plate_simulation_types::PlateSimulation;
 use crate::tectonics::terrain_features::{FeatureKind, TerrainFeature};
-use crate::tectonics::volcanoes::{Volcano, ecology_volcanoes};
+use crate::tectonics::volcanoes::{
+    Volcano, VolcanoSetting, ecology_volcano_settings, ecology_volcanoes,
+};
 
 use super::coupled_epoch::CoupledTerrain;
 
@@ -759,6 +761,9 @@ pub fn liquid_lake_depth(lakes: &LakeFields) -> Vec<f32> {
 pub struct EcologyWorldInputs {
     pub lake_depth: Option<Vec<f32>>,
     pub volcanoes: Vec<Volcano>,
+    /// The volcanoes' settings, in their order: level 1 keeps them, the
+    /// ecology does not read them.
+    pub volcano_settings: Vec<VolcanoSetting>,
     pub orogen_points: Vec<(f64, f64)>,
     pub oases: Vec<(f64, f64)>,
     pub craton_age: Vec<f32>,
@@ -789,6 +794,7 @@ pub fn ecology_inputs_of(
     EcologyWorldInputs {
         lake_depth: om.map(|o| liquid_lake_depth(&o.lakes)),
         volcanoes: ecology_volcanoes(&sim.features),
+        volcano_settings: ecology_volcano_settings(&sim.features, &sim.rafts, &sim.domain),
         orogen_points,
         oases: hydrology.map_or_else(Vec::new, |(_, o)| o.iter().map(|s| (s.x, s.y)).collect()),
         craton_age: land_bilinear_at_nodes(

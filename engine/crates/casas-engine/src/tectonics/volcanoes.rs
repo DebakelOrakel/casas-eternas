@@ -1,6 +1,12 @@
-//! The volcanoes a world shows, from its terrain features; and the
-//! volcanoes the ecology reads (`ecology_volcanoes`).
+//! The volcanoes a world shows, from its terrain features; the volcanoes
+//! the ecology reads (`ecology_volcanoes`); and their settings, which
+//! level 1 keeps for the eruptions (`ecology_volcano_settings`).
 
+use crate::core::domain::Domain;
+use crate::crust::raft_field::raft_field;
+use crate::crust::raft_types::Raft;
+
+use super::tectonics_tune_params::TECTONICS_TUNING;
 use super::terrain_features::TerrainFeature;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,28 +99,71 @@ pub fn collect_volcanoes(features: &[TerrainFeature]) -> Vec<Volcano> {
 /// porphyry copper stays where the arc was, its volcanoes do not). In the
 /// features' order.
 pub fn ecology_volcanoes(features: &[TerrainFeature]) -> Vec<Volcano> {
-    features
-        .iter()
-        .filter_map(|f| {
-            let kind = if f.plate_b == -1 {
-                VolcanoKind::Hotspot
-            } else if f.plate_b == -2 {
-                VolcanoKind::Flood
-            } else if f.volcanic != Some(true) {
-                return None;
-            } else if f.epochs_since_deposit >= ARC_ACTIVE_EPOCHS {
-                VolcanoKind::ExtinctArc
-            } else if f.thickness.abs() > ARC_ACTIVE_THICKNESS {
-                VolcanoKind::Arc
-            } else {
-                return None;
-            };
-            Some(Volcano {
-                x: f.x,
-                y: f.y,
-                thickness: f.thickness.abs(),
-                kind,
-            })
+    ecology_features(features)
+        .map(|(f, kind)| Volcano {
+            x: f.x,
+            y: f.y,
+            thickness: f.thickness.abs(),
+            kind,
+        })
+        .collect()
+}
+
+fn ecology_features(
+    features: &[TerrainFeature],
+) -> impl Iterator<Item = (&TerrainFeature, VolcanoKind)> {
+    features.iter().filter_map(|f| {
+        let kind = if f.plate_b == -1 {
+            VolcanoKind::Hotspot
+        } else if f.plate_b == -2 {
+            VolcanoKind::Flood
+        } else if f.volcanic != Some(true) {
+            return None;
+        } else if f.epochs_since_deposit >= ARC_ACTIVE_EPOCHS {
+            VolcanoKind::ExtinctArc
+        } else if f.thickness.abs() > ARC_ACTIVE_THICKNESS {
+            VolcanoKind::Arc
+        } else {
+            return None;
+        };
+        Some((f, kind))
+    })
+}
+
+/// What an eruption reads of a volcano (TEG-21): the crust it stands on
+/// and whether it erupts now. Level 1 keeps it, for the incubator's
+/// eruptions; the engine does not read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VolcanoSetting {
+    /// On continental crust. An arc: a subduction arc under a continent's
+    /// edge, not an island arc (the boundary's character: an island arc's
+    /// feature subsides). A hotspot or a flood basalt: inside the rafts,
+    /// the metaball field over 0.5 (as the flexure reads the crust).
+    pub continental: bool,
+    /// Fed now. An arc: fed within ARC_ACTIVE_EPOCHS (`Arc`, not
+    /// `ExtinctArc`). A hotspot or a flood basalt: fed within the plume's
+    /// interval (`hotspot_epoch_interval`), as the build reads a hotspot
+    /// (volcanic_build.rs).
+    pub active: bool,
+}
+
+/// The settings of `ecology_volcanoes(features)`, in its order.
+pub fn ecology_volcano_settings(
+    features: &[TerrainFeature],
+    rafts: &[Raft],
+    domain: &Domain,
+) -> Vec<VolcanoSetting> {
+    let interval = TECTONICS_TUNING.hotspot_epoch_interval;
+    ecology_features(features)
+        .map(|(f, kind)| match kind {
+            VolcanoKind::Arc | VolcanoKind::ExtinctArc => VolcanoSetting {
+                continental: !f.subsides,
+                active: kind == VolcanoKind::Arc,
+            },
+            VolcanoKind::Hotspot | VolcanoKind::Flood => VolcanoSetting {
+                continental: raft_field(f.x, f.y, rafts, domain) > 0.5,
+                active: f.epochs_since_deposit < interval,
+            },
         })
         .collect()
 }

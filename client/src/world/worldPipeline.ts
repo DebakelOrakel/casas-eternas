@@ -42,7 +42,8 @@ const PIPELINE_OF_CODE: Readonly<Record<string, string>> = {
 // ice cuts by its basal stress and below the sea (entry 17, the same
 // day) and the island arcs rise above the sea (entry 5, the same day),
 // besides level 1's other ecology fields (since 2026-10-30 with the flood
-// silt and the dry shelf's ecology) and its temperature per node.
+// silt and the dry shelf's ecology), its temperature per node and its
+// volcanoes' crust and activity (TEG-21, the same day).
 // Not a migration: a statement of equality of the worlds. Each entry
 // names the current pipeline, not the next one: the lookup is one step.
 const SAME_WORLDS_AS: Readonly<Record<string, string>> = {

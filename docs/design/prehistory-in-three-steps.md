@@ -703,3 +703,9 @@ Open:
    land's best share reaches FARM_ARABLE, not its mean, so that the fields
    reach a desert's floodplain; the carrying capacity keeps the mean.
    With TEG-10.
+9. The large eruptions (incubator v6, TEG-21): an eruption as Toba or
+   Santorini, an event in step 2's chronicle, with ash, cold years and
+   people who leave. Level 1 holds what it reads since 2026-10-30: per
+   volcano its place, size, kind, crust and whether it is active
+   ([DEC-0051](../decisions/volcanic-islands.md), Status, with the
+   explosivity rule proposed from the earth's VEI scale). Not built.

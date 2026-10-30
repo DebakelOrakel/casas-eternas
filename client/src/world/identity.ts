@@ -306,6 +306,10 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // And, unreleased: the mesh of a flat world locates a new node at the
 // float32 position it stores (TEG-115, 2026-10-30). Flat worlds change
 // a little; sphere worlds stay the same.
+// And, unreleased: level 1's volcanoes (TEG-21, 2026-10-30) — each holds
+// its crust (continental or oceanic) and whether it is active, for the
+// incubator's eruptions (docs/decisions/volcanic-islands.md, Status). The
+// worlds do not change; level 1's volcanoes.f64 does.
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the

@@ -129,3 +129,28 @@ stopped near −3000 m: they stood on the trench, and the flexure takes
 some 0.8 of the load on young ocean. The large arc islands (Honshu, Java)
 stay open: arc crust as rafts that grow and accrete (TEG-111,
 [DEC-0003](./continental-crust-rafts.md)) is decided for pipeline v16.
+
+2026-10-30 (TEG-21): level 1 keeps what an eruption reads, so that the
+incubator's eruptions (incubator v6,
+[DES-0032](../design/prehistory-in-three-steps.md)) need no new bake of
+level 1. Each volcano of `volcanoes.f64` (the ecology's list, DEC-0053)
+is `[x, y, thickness, kind, continental, active]`, two numbers more than
+before (`VolcanoSetting`, `tectonics/volcanoes.rs`). Continental: an
+arc that does not subside (a subduction arc under a continent's edge,
+not an island arc), or a hotspot or flood basalt where the rafts' field
+is over 0.5. Active: an arc fed within 8 epochs, a hotspot or flood
+basalt fed within the plume's interval. These are facts of the
+simulation, not an explosivity class: the class is the incubator's rule
+and can change without a new bake. The rule proposed, from the earth's
+VEI scale: an active continental arc can have the largest explosive
+eruptions and calderas (VEI 6–8: Toba, Santorini, Pinatubo); an active
+island arc VEI 4–7 (Krakatoa, Tambora); an active continental hotspot
+VEI 8 calderas (Yellowstone); an oceanic hotspot is effusive, with lava
+floods and gas rather than ash (Hawaii, Laki); an inactive volcano has
+no eruption. The thickness is the size; the larger, the larger the
+eruption can be.
+Measured on Morvane (v15, level 1): 1098 volcanoes, 52 704 bytes (35 136
+before). Active: 38 continental arcs, 180 island arcs, 2 continental and
+4 oceanic hotspots, 1 flood basalt; inactive: 822 extinct arcs, 47
+hotspots, 4 flood basalts. The flood basalts stand at a rift's edge, on
+oceanic crust by the rafts' field.
