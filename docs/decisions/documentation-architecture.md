@@ -138,21 +138,22 @@ becomes one more collection entry — one line of loader config.)
 
 Starlight convention, adopted now without Starlight: **one directory per language, identical
 filenames = translations of each other.** A missing `de/` file falls back to `en/` — the same
-mechanic as the catalog fallback in [localization.md](./localization.md). Directory levels
-mirror the four i18n areas (`common`, `world`, `worldgen`, `game`); `game/` arrives with game
-mechanics.
+mechanic as the catalog fallback in [localization.md](./localization.md). Below the
+language, one directory per KIND of page (addendum 4 below; the first plan had one directory per
+i18n area, `world/` and `worldgen/`, and no page of it was written):
 
 ```
 docs/handbook/en/
-  index.md                     anchor: common
-  world/biomes.md              anchor: world.biome
-  world/resources.md           anchor: world.resource
-  world/species.md             anchor: world.species
-  worldgen/tectonics.md        anchor: worldgen.panel.tectonics
-  worldgen/erosion.md          anchor: worldgen.panel.erosion
-  …
+  overview/engine.md           anchor: generator.overview.engine
+  overview/worlds.md           anchor: generator.overview.worlds
+  steps/world.md               anchor: generator.step.world
+  steps/tectonics.md           anchor: generator.step.tectonics
+  …                            one page per generator step
+  concepts/erosion.md          anchor: generator.concept.erosion
+  concepts/carrying-capacity.md  anchor: resource.carryingCapacity
+  …                            one page per concept
 docs/handbook/de/
-  index.md                     (rest follows later → falls back to EN)
+  (the same paths; a missing page falls back to EN)
 ```
 
 Each page is created with a real 1–3-sentence intro (pulled from the existing decision docs
@@ -199,7 +200,7 @@ anchor:   world.resource           →  manual page for the same concept
 
 A tooltip can later gain a "learn more" that lands in the docs with no second mapping table,
 and a player note attaches to the *entity*, not the page — so it surfaces everywhere the term
-appears. Rules, recorded in `docs/handbook/ANCHORS.md`:
+appears. Rules, recorded in [`docs/handbook/README.md`](../handbook/README.md):
 
 - First segment is always one of the four areas.
 - One concept, one anchor — even where it appears in several places in the UI.
