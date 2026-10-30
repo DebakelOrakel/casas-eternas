@@ -18,7 +18,7 @@ summary.de: Ein Eismodell für die gekoppelte Geländegeschichte — Massenbilan
 area: generator
 stage: building
 createdAt: 2026-09-22
-updatedAt: 2026-10-29
+updatedAt: 2026-10-30
 concepts: [generator.concept.erosion, generator.concept.history-climate]
 related: [DES-0018, DEC-0029]
 ---
@@ -74,7 +74,8 @@ thickness times slope. The forms fall out of that rule:
   equals its uplift. A colder world, with a lower ELA, has lower ranges.
 - **Fjords** need no rule: a trough that reaches the coast and goes
   below sea level is one as soon as the eustasy of decision 13 brings
-  the sea back.
+  the sea back. The ice stays grounded below the sea while it does not
+  float, so the trough is cut on below the sea (built 2026-10-30).
 
 ## Sediment
 
@@ -151,6 +152,22 @@ appear from the 4K/8K bake at one to two kilometres.
   the coast process shares the eustasy with this one.
 
 ## Status
+
+2026-10-30: built (DES-0027 entry 17, TEG-64) — the sliding cut goes
+with the basal shear stress ρ g h S up to the yield stress, 100 kPa,
+where it is 1 mm/yr; the cap of 800 m an epoch is gone. And the ice is
+grounded on the sea floor where it does not float (thicker than 1028 /
+917 times the water's depth): a sea node takes the ice the land sends
+it and calves what floats, so a trough below the sea is cut on. That
+is the first step of the fjords; the tidewater rate (10–100 mm/yr on
+Earth) is not modelled, the bound holds there too. On 12 histories per
+shape (2048 × 1024, epochs 1–100, torus / sphere): the glacial cut 105 /
+48 → 430 / 135 M km³, the deepest trough below the sea at epoch 100 715
+/ 673 → 1170 / 1110 m, the land a lake holds 5.5 / 3.2 → 8.7 / 4.5 %
+(the overdeepenings). The numbers are in
+[calibration-backlog.md](./calibration-backlog.md), entry 17. Still open:
+the U profile as a gate, the ice flux in the density rule, cirques as
+graph features, a thermal regime (cold-based ice slides less).
 
 2026-10-29: the process is built since 2026-09-23 (ADAPTIVE_MESH_PLAN.md,
 phase 6a: the cut by sliding, the till at the termini, the ice as a load

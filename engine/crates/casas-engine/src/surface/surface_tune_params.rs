@@ -71,9 +71,18 @@ pub struct SurfaceTuning {
     pub ice_max_thickness_m: f64,
     pub ice_flow_rounds: f64,
     pub ice_min_thickness_m: f64,
-    pub glacial_erosion_per_sliding: f64,
     pub ice_surface_max_slope: f64,
-    pub glacial_erosion_max_m: f64,
+    /// The sliding cut's bound (surface/glacial.rs `glacial_erosion_on_mesh`,
+    /// DES-0027 entry 17, 2026-10-30): the basal shear stress ρ g h S
+    /// that ice holds at most, Pa — above it the ice deforms (Nye's
+    /// plastic ice, 50–150 kPa under glaciers) — and the cut at it, mm/yr.
+    /// The cut goes with the stress below it, as with Hallet's sliding.
+    /// Earth's glaciers cut 0.01–1 mm/yr, its tidewater glaciers 10–100.
+    /// Until 2026-10-30 the cut was 2e-5 per year per metre of h S, capped
+    /// at 800 m an epoch: the raw law reached 13–30 km an epoch (p90) and
+    /// the cap took 56–74 % of its volume.
+    pub glacial_yield_stress_pa: f64,
+    pub glacial_erosion_at_yield_mm_per_yr: f64,
     pub glacial_buzzsaw_per_balance: f64,
     pub glacial_till_coarse: f64,
     pub glacial_till_max_m: f64,
@@ -149,9 +158,9 @@ pub const SURFACE_TUNING: SurfaceTuning = SurfaceTuning {
     ice_max_thickness_m: 4000.0,
     ice_flow_rounds: 12.0,
     ice_min_thickness_m: 5.0,
-    glacial_erosion_per_sliding: 2.0e-5,
     ice_surface_max_slope: 0.03,
-    glacial_erosion_max_m: 800.0,
+    glacial_yield_stress_pa: 100_000.0,
+    glacial_erosion_at_yield_mm_per_yr: 1.0,
     glacial_buzzsaw_per_balance: 6.7e-7,
     glacial_till_coarse: 0.5,
     glacial_till_max_m: 100.0,

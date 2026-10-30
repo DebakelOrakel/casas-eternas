@@ -62,7 +62,9 @@ use crate::surface::erosion_forcing_fields::{
     CoarseForcingInputs, ErosionControls, assemble_node_forcing, erosion_litho_seed,
     scale_engine_params_for_dt, upsample_at,
 };
-use crate::surface::glacial::{MeshIceInputs, compute_ice_on_mesh, glacial_erosion_on_mesh};
+use crate::surface::glacial::{
+    ICE_DENSITY, MeshIceInputs, compute_ice_on_mesh, glacial_erosion_on_mesh,
+};
 use crate::surface::hydrology::{WaterKind, accumulate_discharge_on, compute_lakes_on};
 use crate::surface::shelf_fill::fill_shelf;
 use crate::surface::surface_tune_params::SURFACE_TUNING;
@@ -106,8 +108,6 @@ pub struct CoupledTerrain {
     pub ice: Vec<f32>,
 }
 
-/// The ice's density, kg/m³.
-const ICE_DENSITY: f64 = 917.0;
 const MESH_ICE: &str = "ice";
 
 /// The ice's part of an epoch's load change at a node, metres of rock.

@@ -129,3 +129,12 @@ torus's ice still grows after epoch 40 (+3.8 points by epoch 100, +3.9
 before), and its land still rises (mean height 1018 m at epoch 100,
 1020 before). The fit of the static range to the refinement's was not
 made again.
+
+2026-10-30: the ice is grounded on a sea floor where it does not float,
+and its cut has the yield stress as its bound (DES-0027 entry 17,
+DES-0020). The seasons it reads are unchanged. On 12 histories per
+shape the land under ice at epoch 40 / 100 20.3 / 24.1 → 20.1 / 24.3 %
+(torus), 6.4 / 6.1 → 5.6 / 5.5 % (sphere); the torus's ice still grows
+after epoch 40. The sea the ice holds at the last epoch of three real
+worlds: −25.9 → −23.0 m (Zephyra, torus), −14.5 → −7.5 m and −1.6 →
+−0.6 m (two spheres).

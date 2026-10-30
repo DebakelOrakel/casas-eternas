@@ -281,6 +281,12 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // (ebmTropicDamping), and a basin under an ice sheet is flagged
 // subglacial, not counted as a lake. The pole and the rain reach the
 // epochs: the worlds change again, a recipe replays to other terrain.
+// And, unreleased: the ice (DES-0027 entry 17, 2026-10-30) — the sliding
+// cut goes with the basal shear stress up to the yield stress
+// (SURFACE_TUNING glacialYieldStressPa, glacialErosionAtYieldMmPerYr; no
+// cap of 800 m an epoch), and the ice stays grounded on a sea floor where
+// it does not float, so a trough below the sea is cut on. The worlds
+// change again: a recipe replays to other terrain.
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the

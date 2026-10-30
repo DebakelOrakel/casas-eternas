@@ -3,6 +3,11 @@
 //! cut it does (sliding and the buzzsaw above the ELA) and the till it
 //! leaves at the termini. The TypeScript file explains each part. Not
 //! ported: `iceInvariants`, a check of the raster harnesses.
+//!
+//! Since 2026-10-30 (DES-0027 entry 17) two parts are the engine's only:
+//! the ice stays grounded on a sea floor where it is thick enough not to
+//! float, and the sliding cut has the basal shear stress as its bound
+//! (`glacial_erosion_on_mesh`). The TypeScript file does not know them.
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,6 +19,14 @@ use crate::elevation::elevation_scale::{ELEVATION_METERS, SEA_LEVEL, elevation_t
 use crate::mesh::periodic_delaunay::PeriodicTriangulation;
 
 use super::surface_tune_params::SURFACE_TUNING;
+
+/// The ice's density, kg/m³.
+pub const ICE_DENSITY: f64 = 917.0;
+/// The sea water's density, kg/m³: ice on a sea floor floats when it is
+/// thinner than this over `ICE_DENSITY` times the water's depth.
+const SEA_WATER_DENSITY: f64 = 1028.0;
+/// The weight of a metre of ice, Pa (ρ g).
+const ICE_WEIGHT_PA_PER_M: f64 = ICE_DENSITY * 9.81;
 
 /// The epoch's ice per vertex slot (`MeshIceResult` in TypeScript, which
 /// explains each field), with its ledger in m³/yr.
@@ -93,7 +106,17 @@ pub fn compute_ice_on_mesh(
     let mut receiver = vec![-1i32; slots];
     let mut slope = vec![0f32; slots];
     let mut iceable = 0;
-    let mut land: Vec<usize> = Vec::new();
+    // The bed the ice can cover: the land, and the sea floor no deeper than
+    // the thickest ice stays grounded on. A sea node makes no ice of its
+    // own (its balance is the melt at sea level, if any): the ice reaches
+    // it from the land, and it holds the ice only while the ice does not
+    // float (`afloat`). So a trough the ice cut below the sea stays under
+    // the ice, and the ice cuts on (DES-0027 entry 17, 2026-10-30).
+    let flotation = SEA_WATER_DENSITY / ICE_DENSITY;
+    let max_depth_m = t.ice_max_thickness_m / flotation;
+    let mut sea = vec![0u8; slots];
+    let mut afloat = vec![0u8; slots];
+    let mut bed: Vec<usize> = Vec::new();
     for v in 0..slots {
         if mesh.v_alive[v] == 0 {
             continue;
@@ -106,15 +129,21 @@ pub fn compute_ice_on_mesh(
         let tsl = input.sea_level_temperature[v] as f64;
         ela_m[v] = equilibrium_line(tsl, p, half_range) as f32;
         if z[v] as f64 <= SEA_LEVEL {
+            if -elevation_to_meters(z[v] as f64 - SEA_LEVEL) <= max_depth_m {
+                sea[v] = 1;
+                bed.push(v);
+                balance[v] =
+                    js::min(0.0, balance_at(SEA_LEVEL, tsl, SEA_LEVEL, p, half_range)) as f32;
+            }
             continue;
         }
-        land.push(v);
+        bed.push(v);
         balance[v] = balance_at(z[v] as f64, tsl, SEA_LEVEL, p, half_range) as f32;
         if balance[v] > 0.0 {
             iceable += 1;
         }
     }
-    let mut order: Vec<i32> = land.iter().map(|&v| v as i32).collect();
+    let mut order: Vec<i32> = bed.iter().map(|&v| v as i32).collect();
     if iceable == 0 {
         return MeshIceResult {
             thickness,
@@ -129,17 +158,17 @@ pub fn compute_ice_on_mesh(
         };
     }
     let mut area_of = vec![0.0; slots];
-    for &v in &land {
+    for &v in &bed {
         area_of[v] = mesh.voronoi_area(v);
     }
     let mut surface = vec![0f32; slots];
     let mut flux = vec![0.0; slots];
     let gamma = t.ice_flow_gamma;
-    let mut star_start = vec![0usize; land.len() + 1];
+    let mut star_start = vec![0usize; bed.len() + 1];
     let mut star_to: Vec<usize> = Vec::new();
     let mut star_length: Vec<f64> = Vec::new();
     let mut out: Vec<u32> = Vec::new();
-    for (i, &v) in land.iter().enumerate() {
+    for (i, &v) in bed.iter().enumerate() {
         mesh.outgoing(v, &mut out);
         for &e in &out {
             star_to.push(mesh.to(e as usize));
@@ -147,14 +176,14 @@ pub fn compute_ice_on_mesh(
         }
         star_start[i + 1] = star_to.len();
     }
-    let mut land_index = vec![-1i32; slots];
-    for (i, &v) in land.iter().enumerate() {
-        land_index[v] = i as i32;
+    let mut bed_index = vec![-1i32; slots];
+    for (i, &v) in bed.iter().enumerate() {
+        bed_index[v] = i as i32;
     }
     let mut surface_before = vec![0f32; slots];
-    let mut stale = vec![0u8; land.len()];
+    let mut stale = vec![0u8; bed.len()];
     let descend = |i: usize, surface: &[f32], receiver: &mut [i32], slope: &mut [f32]| {
-        let v = land[i];
+        let v = bed[i];
         let mut best: i32 = -1;
         let mut best_drop = 0.0;
         for k in star_start[i]..star_start[i + 1] {
@@ -171,31 +200,37 @@ pub fn compute_ice_on_mesh(
     let (mut mass_in, mut mass_melt, mut mass_out) = (0.0, 0.0, 0.0);
     for round in 0..t.ice_flow_rounds as usize {
         for v in 0..slots {
-            surface[v] = if mesh.v_alive[v] != 0 {
-                (elevation_to_meters(z[v] as f64 - SEA_LEVEL) + thickness[v] as f64) as f32
-            } else {
+            surface[v] = if mesh.v_alive[v] == 0 {
                 0.0
+            } else if z[v] as f64 <= SEA_LEVEL {
+                // Grounded ice, or the water.
+                js::max(
+                    0.0,
+                    elevation_to_meters(z[v] as f64 - SEA_LEVEL) + thickness[v] as f64,
+                ) as f32
+            } else {
+                (elevation_to_meters(z[v] as f64 - SEA_LEVEL) + thickness[v] as f64) as f32
             };
         }
         if round == 0 {
-            for i in 0..land.len() {
+            for i in 0..bed.len() {
                 descend(i, &surface, &mut receiver, &mut slope);
             }
         } else {
             stale.fill(0);
-            for (i, &v) in land.iter().enumerate() {
+            for (i, &v) in bed.iter().enumerate() {
                 if surface[v] == surface_before[v] {
                     continue;
                 }
                 stale[i] = 1;
                 for k in star_start[i]..star_start[i + 1] {
-                    let j = land_index[star_to[k]];
+                    let j = bed_index[star_to[k]];
                     if j >= 0 {
                         stale[j as usize] = 1;
                     }
                 }
             }
-            for i in 0..land.len() {
+            for i in 0..bed.len() {
                 if stale[i] != 0 {
                     descend(i, &surface, &mut receiver, &mut slope);
                 }
@@ -203,8 +238,8 @@ pub fn compute_ice_on_mesh(
         }
         surface_before.copy_from_slice(&surface);
         // The comparator sort's order: stable, highest surface first (every
-        // land surface is positive and finite, where TypeScript's radix
-        // sort gives the same).
+        // surface is finite; a land surface is positive, where TypeScript's
+        // radix sort gives the same, and a sea node's is 0 or more).
         order.sort_by(|&a, &b| surface[b as usize].total_cmp(&surface[a as usize]));
         flux.fill(0.0);
         mass_in = 0.0;
@@ -224,14 +259,15 @@ pub fn compute_ice_on_mesh(
             flux[v] = if q > 0.0 { q } else { 0.0 };
             let r = receiver[v];
             if q > 0.0 {
-                if r >= 0 && z[r as usize] as f64 > SEA_LEVEL {
+                // Ice that floats calves where it floats.
+                if afloat[v] == 0 && r >= 0 && bed_index[r as usize] >= 0 {
                     flux[r as usize] += q;
                 } else {
                     mass_out += q;
                 }
             }
         }
-        for &v in &land {
+        for &v in &bed {
             let q = flux[v];
             let mut h = 0.0;
             if q > 0.0 {
@@ -242,6 +278,13 @@ pub fn compute_ice_on_mesh(
                     h = t.ice_max_thickness_m;
                 }
             }
+            if sea[v] != 0 {
+                let floats = h < flotation * -elevation_to_meters(z[v] as f64 - SEA_LEVEL);
+                afloat[v] = floats as u8;
+                if floats {
+                    h = 0.0;
+                }
+            }
             thickness[v] = (0.5 * thickness[v] as f64 + 0.5 * h) as f32;
         }
         for &v in &order {
@@ -250,7 +293,7 @@ pub fn compute_ice_on_mesh(
                 continue;
             }
             let sv = elevation_to_meters(z[v] as f64 - SEA_LEVEL) + thickness[v] as f64;
-            let j = land_index[v] as usize;
+            let j = bed_index[v] as usize;
             for k in star_start[j]..star_start[j + 1] {
                 let u = star_to[k];
                 if z[u] as f64 <= SEA_LEVEL {
@@ -265,9 +308,12 @@ pub fn compute_ice_on_mesh(
             }
         }
     }
-    for h in thickness.iter_mut() {
-        if (*h as f64) < t.ice_min_thickness_m {
-            *h = 0.0;
+    for v in 0..slots {
+        let h = thickness[v] as f64;
+        if h < t.ice_min_thickness_m
+            || (sea[v] != 0 && h < flotation * -elevation_to_meters(z[v] as f64 - SEA_LEVEL))
+        {
+            thickness[v] = 0.0;
         }
     }
     MeshIceResult {
@@ -308,6 +354,12 @@ pub fn glacial_erosion_on_mesh(
     let mut termini: Vec<(usize, f64)> = Vec::new();
     let mut terminus_at: HashMap<usize, usize> = HashMap::new();
     let (mut cut_m3, mut till_m3) = (0.0, 0.0);
+    // The sliding cut goes with the basal shear stress ρ g h S (Hallet's
+    // rule, with the sliding as the stress), up to the yield stress: ice
+    // does not hold a larger one, it deforms. At the yield stress the bed
+    // lowers by `glacial_erosion_at_yield_mm_per_yr`.
+    let rate_m = t.glacial_erosion_at_yield_mm_per_yr * 1e-3 * epoch_years;
+    let yield_pa = t.glacial_yield_stress_pa;
     for &v in &ice.order {
         let v = v as usize;
         let h = ice.thickness[v] as f64;
@@ -315,11 +367,8 @@ pub fn glacial_erosion_on_mesh(
             continue;
         }
         let z_m = elevation_to_meters(z[v] as f64 - SEA_LEVEL);
-        let sliding = h * js::max(t.ice_min_slope, ice.slope[v] as f64);
-        let mut cut = t.glacial_erosion_per_sliding * sliding * epoch_years;
-        if cut > t.glacial_erosion_max_m {
-            cut = t.glacial_erosion_max_m;
-        }
+        let stress = ICE_WEIGHT_PA_PER_M * h * js::max(t.ice_min_slope, ice.slope[v] as f64);
+        let mut cut = rate_m * js::min(1.0, stress / yield_pa);
         let above_line_m = z_m - ice.ela_m[v] as f64;
         let b = ice.balance[v] as f64;
         if above_line_m > 0.0 && b > 0.0 {

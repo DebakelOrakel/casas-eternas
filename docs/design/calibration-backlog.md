@@ -218,8 +218,45 @@ procedure.
     Done 2026-10-15: such a world records `peakOverElaM` as NaN and
     `peakNeverIce` 1; the summary prints the median over the rest and the
     count of such worlds.
-17. **The ice's sliding cut keeps its 800 m per epoch cap**, which also
-    bounds troughs and fjords. Found in 8d. 1–2 h.
+17. ~~**The ice's sliding cut keeps its 800 m per epoch cap**, which also
+    bounds troughs and fjords. Found in 8d. 1–2 h.~~
+    Done 2026-10-30 (TEG-64): the cut goes with the basal shear stress
+    ρ g h S up to the yield stress, 100 kPa (Nye's, as the buzzsaw's),
+    where it is 1 mm/yr (surface/glacial.rs `glacial_erosion_on_mesh`,
+    SURFACE_TUNING `glacial_yield_stress_pa`,
+    `glacial_erosion_at_yield_mm_per_yr`); no cap of 800 m an epoch. And
+    the ice stays grounded on a sea floor where it is at least 1028 / 917
+    times the water's depth (`compute_ice_on_mesh`): a sea node takes the
+    ice the land sends it, makes none of its own, and calves what floats.
+    A trough below the sea is cut on; that is the first step of DES-0020's
+    fjords. 12 seeds per shape (torus / sphere), 2048 × 1024, archean
+    200, epochs 1–100, before → after: the bound binds at 6.7 / 14.0 % of
+    the ice nodes' epochs (the cap) → 35.8 / 43.8 % (the yield stress);
+    the glacial cut 105 / 48 → 430 / 135 M km³ (about 0.1 → 0.5 mm/yr
+    under the ice; Earth 0.01–1, tidewater 10–100); the cut below the sea
+    2.3 / 1.4 → 31 / 7.4 M km³ (14 / 3.6 with the yield stress but no
+    grounded ice, 6 seeds). The fjords at epoch 100 (the nodes the ice
+    cut that lie below the sea): 2630 / 1310 → 13 500 / 3600 nodes in 808
+    / 350 → 1820 / 608 groups, the deepest 715 / 673 → 1170 / 1110 m, the
+    median 154 / 162 → 217 / 224 m. At epochs 40 / 60 / 100: the mean
+    land height 700 / 836 / 1020 → 696 / 824 / 1000 m (torus), 686 / 721
+    / 770 → 682 / 706 / 752 m (sphere); above 2000 m 5.1 / 7.7 / 12.5 →
+    4.8 / 7.5 / 11.7 % and 4.6 / 6.0 / 7.6 → 4.4 / 5.4 / 6.8 %; above
+    4500 m 0.15 / 0.23 / 0.19 → 0.05 / 0.11 / 0.14 % and 0.29 / 0.32 /
+    0.15 → 0.13 / 0.14 / 0.05 % (Earth ~0.4); the land 31.4 / 31.1 / 31.4
+    → 31.1 / 31.1 / 31.6 % and 29.1 / 29.1 / 28.6 → 29.3 / 29.2 / 28.6 %;
+    the land under ice 20.3 / 22.1 / 24.1 → 20.1 / 22.3 / 24.3 % and 6.4 /
+    7.1 / 6.1 → 5.6 / 6.3 / 5.5 %; the lakes 8.1 / 7.6 / 5.5 → 10.9 / 9.9
+    / 8.7 % and 4.3 / 4.3 / 3.2 → 5.1 / 6.1 / 4.5 % of the land (the
+    overdeepenings hold water). A yield stress of 150 kPa (0.67 mm/yr per
+    100 kPa, 6 seeds) cuts 299 / 74 M km³ at the same heights (995 / 724
+    m at epoch 100 against 990 / 729).
+    **The climb from epoch 40 to 100 is not the ice's.** Four times the
+    glacial cut lowers the torus's land at epoch 100 by 20 m; the land
+    above 2000 m that is not under ice grows as well (torus 3.4 → 5.9 %
+    of the land from epoch 40 to 100 before, 3.5 → 6.7 % after). Entry
+    26's last sentence was wrong: the climb is the uplift's and the
+    flexure's, and it is open there. The uplift is not retuned here.
 18. ~~**Lake floors cut inside an epoch**: the engine cuts lake-floor nodes
     once the uplift lifts them above the old flood level. The routing every
     iteration (8c) mostly removes the stale level; what remains is not
@@ -369,6 +406,10 @@ procedure.
     the fluvial cut is 0 and the ice's cut is capped (entries 12 and 17).
     The climb is theirs. Above 4500 m the land is now below Earth's
     (entry 1).
+    *2026-10-30 (entry 17): the climb is not the ice's.* Without the cap
+    the ice cuts four times as much, and the torus's land at epoch 100
+    stands 20 m lower (1000 m); the land above 2000 m outside the ice
+    grows from epoch 40 to 100 as well. Open: the uplift and the flexure.
 27. ~~**The events still read the plates' derived type.**~~ The plate merge,
     the oceanic plate's consumption, the accretion at a subduction arc and
     the history's trench (tectonics/trench.ts) take a plate's type from
@@ -430,6 +471,9 @@ procedure.
     2026-10-27 (6 worlds, epoch 40). Not estimated.
 
 ## Status
+
+2026-10-30: entry 17 done (TEG-64); the torus's climb after epoch 40
+stays open (entry 26).
 
 2026-10-30: entries 10, 13 (the coastal upslope rain), 14 and 15 done
 (TEG-58, TEG-61, TEG-62, TEG-63).

@@ -2,7 +2,8 @@
 //! surface/cover, surface/glacial, surface/coastal) against the TypeScript
 //! engine (docs/decisions/rust-engine.md, fork 5). The fixture is written
 //! by `engine/scripts/surfaceFixture.mjs`; the scenarios below are that
-//! script's, step for step.
+//! script's, step for step. A change to the model records the lines it
+//! moves (`fixture`, CASAS_RECORD=1).
 
 use casas_engine::core::det_math::{det_cos, det_sin};
 use casas_engine::core::domain::Domain;
@@ -14,6 +15,9 @@ use casas_engine::mesh::mesh_column::{
 use casas_engine::surface::coastal::{CoastalInputs, compute_coastal, find_shore};
 use casas_engine::surface::cover::cover_field;
 use casas_engine::surface::glacial::{MeshIceInputs, compute_ice_on_mesh, glacial_erosion_on_mesh};
+
+mod fixture;
+use fixture::check;
 
 const FIXTURE: &str = include_str!("fixtures/surface.txt");
 
@@ -42,7 +46,7 @@ impl Hash {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(name))
             .unwrap_or_else(|| panic!("no {name} in the fixture"));
-        assert_eq!(format!("{name} {:08x}", self.0), want);
+        check("surface.txt", &format!("{name} {:08x}", self.0), want, name);
     }
 }
 
