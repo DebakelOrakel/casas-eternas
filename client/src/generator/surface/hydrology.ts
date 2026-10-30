@@ -61,6 +61,10 @@ export interface WaterBody {
   cells: number
   // Frozen through: a glacier surface, see the engine's `LakeFields.frozen`.
   frozen: boolean
+  // Under an ice sheet: a basin, not a lake; the lake once the ice goes
+  // (the engine's `mark_subglacial`, DES-0027 entry 15). Absent in a save
+  // made before 2026-10-30.
+  subglacial?: boolean
 }
 
 // The sea's level: what every cell outside a basin is drawn against.

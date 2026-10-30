@@ -113,9 +113,16 @@ export function computePrecipitation(terrain: ClimateTerrain, temperature: Array
       continue
     }
     // Orographic: land-elevation RISE along the wind (windward slope) → more
-    // rain. Only counted between two LAND points — the ocean→coast step is a
-    // huge elevation jump but not a mountain, and must not wring out the
-    // incoming moisture right at the shoreline (that left interiors bone-dry).
+    // rain. A point on the sea counts at the sea's level — the ocean→coast
+    // step is a huge elevation jump but not a mountain, and must not wring
+    // out the incoming moisture right at the shoreline (that left interiors
+    // bone-dry). Until 2026-10-30 (DES-0027 entry 13) a cell with any
+    // upwind point on the sea had no upslope at all, so a range that rises
+    // from the coast into the wind got no orographic rain. With the sea
+    // read at its level: the land's rain +5 / +4 / +4 % on three worlds at
+    // full size (m15, Thalassor, Zephyra), on Earth's relief the places'
+    // rain ×1.73 → ×1.68 (sphere). The highest ground was not rainless
+    // before either (m15 above 4000 m: none under 50 mm/yr).
     // The rise is read across this cell, from `precipOrogHalfSpanM` upwind
     // of its centre to as far downwind (each the mean of three points across
     // the wind, the outer two that far to either side), on the fine raster,
@@ -133,7 +140,6 @@ export function computePrecipitation(terrain: ClimateTerrain, temperature: Array
       const ay = (v / speed) * half
       let up = 0
       let down = 0
-      let upLand = true
       for (const k of [-0.5, 0, 0.5]) {
         const px = -ay * k * 2
         const py = ax * k * 2
@@ -141,14 +147,12 @@ export function computePrecipitation(terrain: ClimateTerrain, temperature: Array
         // sphere along the globe from the cell's centre.
         domain.displace(mesh.x[i], mesh.y[i], -ax, -ay, point)
         domain.advance(point.x, point.y, px, py, point)
-        const eUp = terrain.elevationAt(point.x, point.y)
-        if (eUp <= SEA_LEVEL) upLand = false
-        up += eUp / 3
+        up += Math.max(terrain.elevationAt(point.x, point.y), SEA_LEVEL) / 3
         domain.displace(mesh.x[i], mesh.y[i], ax, ay, point)
         domain.advance(point.x, point.y, px, py, point)
-        down += terrain.elevationAt(point.x, point.y) / 3
+        down += Math.max(terrain.elevationAt(point.x, point.y), SEA_LEVEL) / 3
       }
-      if (upLand) upslope = Math.max(0, down - up) * speed * lever
+      upslope = Math.max(0, down - up) * speed * lever
     }
     rainFrac[i] = Math.min(CLIMATE_TUNING.precipRainoutMax, CLIMATE_TUNING.precipBaseRainout + CLIMATE_TUNING.precipOrographicRate * upslope)
   }

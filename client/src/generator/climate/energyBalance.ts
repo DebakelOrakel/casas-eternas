@@ -1,4 +1,4 @@
-import { shiftedNorm } from './climateField'
+import { latitudeOfNorm, shiftedNorm } from './climateField'
 import { CLIMATE_TUNING } from './climateTuneParams'
 import type { ClimateTerrain } from './climateMesh'
 import type { CellVectors } from './wind'
@@ -163,7 +163,32 @@ export function seasonalCycle(terrain: ClimateTerrain, annualTemperature: ArrayL
       for (let i = 0; i < n; i++) cycle[m * n + i] += x[2 * i] * c - x[2 * i + 1] * s
     }
   }
+  dampTropicalLand(cycle, terrain, equatorOffset, months)
   return { cycle, solves }
+}
+
+// THE TROPICS' WEAK TEMPERATURE GRADIENT (DES-0027 entry 10, 2026-10-30).
+// In the tropics the Coriolis force is weak, and the air evens out its
+// temperature over thousands of kilometres within days: a tropical land's
+// year follows the sea around it more closely than a linear balance with
+// a local damping lets it. Without it the land's winters at 10–20° came
+// out too cold (the annual range's median 10–12 °C, Earth's 5–9) and a
+// highland margin fell under 18 °C in its coldest month: Cwa. So the
+// land's departure is damped by `ebmTropicDamping` up to
+// `ebmTropicFullDeg` from the equator, less toward `ebmTropicNoneDeg` (a
+// smoothstep), and not past it. The sea keeps its cycle.
+function dampTropicalLand(cycle: Float64Array, terrain: ClimateTerrain, equatorOffset: number, months: number): void {
+  const { cm, land } = terrain
+  const n = land.length
+  const T = CLIMATE_TUNING
+  const span = T.ebmTropicNoneDeg - T.ebmTropicFullDeg
+  for (let i = 0; i < n; i++) {
+    if (land[i] === 0) continue
+    const phi = latitudeOfNorm(shiftedNorm(cm.yNorm[i], equatorOffset)) * 90
+    const s = Math.min(Math.max((phi - T.ebmTropicFullDeg) / span, 0), 1)
+    const keep = 1 - T.ebmTropicDamping * (1 - s * s * (3 - 2 * s))
+    for (let m = 0; m < months; m++) cycle[m * n + i] *= keep
+  }
 }
 
 // Daily-mean insolation, W/m², at a latitude (radians, + north) and a time

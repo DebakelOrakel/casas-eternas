@@ -20,6 +20,7 @@ summary.de: Die Geschichte baut ihr Eis im statischen Klima, dessen
 area: generator
 stage: built
 createdAt: 2026-10-27
+updatedAt: 2026-10-30
 related: [DES-0027, DEC-0049]
 ---
 
@@ -118,3 +119,13 @@ gives 29 % of it an ice-cap climate (EF).
 ## Status
 
 Built 2026-10-27.
+
+2026-10-30: the pole of the static profile −33 → −28 °C (DES-0027
+entries 10 and 14, climateTuneParams.ts `tempPoleC`). The ice reads the
+warmer profile: on 12 histories per shape (2048 × 1024, archean 200,
+epochs 1–100) the land under ice at epoch 40 25.3 → 20.3 % on the torus,
+9.2 → 6.4 % on the sphere; at epoch 100 29.3 → 24.1 and 8.4 → 6.1 %. The
+torus's ice still grows after epoch 40 (+3.8 points by epoch 100, +3.9
+before), and its land still rises (mean height 1018 m at epoch 100,
+1020 before). The fit of the static range to the refinement's was not
+made again.

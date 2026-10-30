@@ -16,7 +16,7 @@ summary.de: Der Klimaschritt verfeinert das heutige Klima auf der fertigen Geogr
 area: generator
 stage: building
 createdAt: 2026-09-28
-updatedAt: 2026-10-29
+updatedAt: 2026-10-30
 concepts: [generator.concept.climate-classes, generator.concept.pressure-and-wind, generator.concept.ocean-currents, generator.concept.seasons, generator.concept.weather-phenomena, generator.concept.history-climate]
 related: [DEC-0004]
 ---
@@ -625,6 +625,32 @@ and highlands are too wet (Alice Springs, Riyadh, Nairobi, Bogotá,
 Brasília), from the upslope rainout of air that has not dried on its way
 in. The dry subtropical summers are some 10 °C too cool (Madrid, Riyadh,
 Tehran), which is the annual mean of step 0, not the cycle.
+
+**The tropics' cycle, the pole and the coastal slopes** (2026-10-30,
+DES-0027 entries 10, 13 and 14; on the engine, sphere):
+
+| Change | Class | Group | Places class | Jan / Jul error | Bias mean / swing | Rain | Groups off |
+|---|---|---|---|---|---|---|---|
+| Start | 37 % | 70 % | 18/47 | 4.0 / 3.8 °C | −1.5 / +0.9 °C | ×1.74 | 14 |
+| Tropical land's cycle damped 0.4 (weak temperature gradient) | 38 % | 71 % | 18/47 | 3.6 / 3.6 °C | −1.4 / 0.0 °C | ×1.74 | 9 |
+| Pole −33 → −28 °C | 35 % | 73 % | 18/47 | 3.3 / 3.4 °C | −0.4 / −0.2 °C | ×1.73 | 4 |
+| Upslope rain from the sea's level (also the epochs) | 35 % | 73 % | 18/47 | 3.3 / 3.4 °C | −0.4 / −0.2 °C | ×1.68 | 4 |
+
+The first row is the energy balance's: in the tropics the air evens out
+its temperature over thousands of kilometres (the weak temperature
+gradient), so a tropical land's year follows the sea's more closely than
+a local damping lets it. The land's departure is damped by 0.4 up to 15°
+from the equator, and less toward 30° (`ebmTropicDamping`,
+energyBalance.ts). It ends most of the Cwa on the worlds' tropical
+highlands (DES-0027 entry 10). The second is step 0's profile: 70–80°
+came out 5 °C too cold and 18 % of Beck's D land came out E; the pole
+also warms 40–60° by 1.5–2 °C past ERA5 (climateTuneParams.ts has the
+zonal means) — the price of a profile in one cosine. The third reads a
+point on the sea at the sea's level for the upslope instead of dropping
+the upslope beside every coast (precipitation.ts). The torus: 16 → 12 →
+4 → 4 points off, rain ×1.86 → ×1.81. With the pole the cells with the
+right class fall 37 → 35 % while the right group rises 71 → 73 %; why
+was not looked into.
 
 ## Forks decided 2026-09-28
 

@@ -24,8 +24,8 @@ use casas_engine::surface::hydrology::{
     CANONICAL_RIVER_DENSITY, ClimateMonths, LakeFields, WaterBody, WaterKind,
     accumulate_discharge_on, accumulate_regime_inputs_on, build_channel_mask_on,
     channel_reference_slope_on, channel_threshold, compute_lakes_on, density_to_critical_area,
-    discharge_to_m3s, evaporation_potential, lake_depth_from_bodies, max_discharge_over_land,
-    riparian_precipitation_on, water_level_field, watersheds_on,
+    discharge_to_m3s, evaporation_potential, lake_depth_from_bodies, mark_subglacial,
+    max_discharge_over_land, riparian_precipitation_on, water_level_field, watersheds_on,
 };
 use casas_engine::surface::surface_tune_params::SURFACE_TUNING;
 
@@ -361,4 +361,42 @@ fn the_torus_hydrology_gives_the_typescript_fields() {
 #[test]
 fn the_sphere_hydrology_gives_the_typescript_fields() {
     run("sphere", Domain::sphere(2048.0, 1024.0));
+}
+
+/// A body more than half under ice is subglacial (DES-0027 entry 15); the
+/// ice on its dry rim and on another body's nodes does not count.
+#[test]
+fn a_body_mostly_under_ice_is_subglacial() {
+    let body = |id: usize| WaterBody {
+        id,
+        kind: WaterKind::Lake,
+        level: 0.1,
+        spill: 0.1,
+        floor: 0.0,
+        seed_x: 0.0,
+        seed_y: 0.0,
+        outlet_x: 0.0,
+        outlet_y: 0.0,
+        cells: 1.0,
+        frozen: false,
+        subglacial: false,
+    };
+    // Body 0 on nodes 0–3 (node 3 dry), body 1 on nodes 4–7.
+    let mut lakes = LakeFields {
+        depth: vec![0.1, 0.1, 0.1, 0.0, 0.1, 0.1, 0.1, 0.1],
+        salt_flat: vec![0; 8],
+        dry_basin: vec![0; 8],
+        frozen: vec![0; 8],
+        bodies: vec![body(0), body(1)],
+        level: vec![0.1; 8],
+        body: vec![0, 0, 0, 0, 1, 1, 1, 1],
+    };
+    let area = vec![1.0f32, 1.0, 2.0, 9.0, 1.0, 1.0, 1.0, 1.0];
+    let thin = (SURFACE_TUNING.ice_min_thickness_m * 0.5) as f32;
+    // Body 0: 3 of its 4 wet area under ice, its dry node too. Body 1: half
+    // its area, and one node's ice too thin.
+    let ice = vec![0.0, 100.0, 100.0, 100.0, 100.0, 100.0, thin, 0.0];
+    mark_subglacial(&mut lakes, &ice, &area);
+    assert!(lakes.bodies[0].subglacial);
+    assert!(!lakes.bodies[1].subglacial);
 }

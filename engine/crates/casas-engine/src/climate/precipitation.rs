@@ -116,25 +116,18 @@ pub fn compute_precipitation(
             let ax = (u / speed) * half;
             let ay = (v / speed) * half;
             let (mut up, mut down) = (0.0, 0.0);
-            let mut up_land = true;
             let (x, y) = (sh.mesh.x[i], sh.mesh.y[i]);
             for k in [-0.5, 0.0, 0.5] {
                 let px = -ay * k * 2.0;
                 let py = ax * k * 2.0;
                 let p = domain.displace(x, y, -ax, -ay);
                 let p = domain.advance(p.x, p.y, px, py);
-                let e_up = terrain.elevation_at(p.x, p.y);
-                if e_up <= SEA_LEVEL {
-                    up_land = false;
-                }
-                up += e_up / 3.0;
+                up += js::max(terrain.elevation_at(p.x, p.y), SEA_LEVEL) / 3.0;
                 let p = domain.displace(x, y, ax, ay);
                 let p = domain.advance(p.x, p.y, px, py);
-                down += terrain.elevation_at(p.x, p.y) / 3.0;
+                down += js::max(terrain.elevation_at(p.x, p.y), SEA_LEVEL) / 3.0;
             }
-            if up_land {
-                upslope = js::max(0.0, down - up) * speed * lever;
-            }
+            upslope = js::max(0.0, down - up) * speed * lever;
         }
         rain_frac[i] = js::min(
             t.precip_rainout_max,

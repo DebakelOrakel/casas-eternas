@@ -420,6 +420,7 @@ pub fn water_body(b: &WaterBody) -> Value {
         .num("outletY", b.outlet_y)
         .num("cells", b.cells)
         .put("frozen", Value::Bool(b.frozen))
+        .put("subglacial", Value::Bool(b.subglacial))
         .build()
 }
 

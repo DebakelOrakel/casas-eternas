@@ -1,13 +1,13 @@
 # Hashes of client/src/generator/climate/refinement.ts and its parts, for crates/casas-engine/tests/refinement.rs.
 # Written by the TypeScript engine, recorded from this one since DEC-0050 (tests/fixture/); do not edit.
 insolation b9b7a2a2
-torus_refined_default 1e0ae5b9
-torus_points_default 3a94cc7c
-torus_refined_moved 4c1d4246
-torus_points_moved 84c090f5
-torus_chart 1be989b4
-sphere_refined_default 901c669c
-sphere_points_default 57bbf334
-sphere_refined_moved 71e19e10
-sphere_points_moved ab7b3c2c
-sphere_chart 525c97ca
+torus_refined_default 83edf822
+torus_points_default 98f8052d
+torus_refined_moved e9752a9f
+torus_points_moved 73269e03
+torus_chart 4a00b612
+sphere_refined_default 82e96bdb
+sphere_points_default 75b4266e
+sphere_refined_moved 78624b8c
+sphere_points_moved b0ff2c83
+sphere_chart c0aee941

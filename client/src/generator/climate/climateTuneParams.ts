@@ -65,8 +65,25 @@ export const CLIMATE_TUNING = {
   // band lies within 1.6 °C of ERA5. The places' annual mean bias +0.1 →
   // −1.5 °C (the places are coasts and lowlands, where the zonal mean is
   // a cold interior's and a sea's too).
+  // The pole −33 → −28 (DES-0027 entries 10 and 14, 2026-10-30), with the
+  // tropics' damping (`ebmTropicDamping`): on Earth's relief on the sphere
+  // (engine/scripts/earthClimate.mjs) 70–80° came out −21.0 °C (ERA5
+  // −16) and 18 % of the land Beck calls D came out E. At −28, damping
+  // in place: the groups 9 → 4 points off (E 19 → 15 %, Beck 15; D 22 →
+  // 24, Beck 22), the places' bias −1.4 → −0.4 °C, January and July 3.6 /
+  // 3.6 → 3.3 / 3.4 °C off; the zonal means 70–80° −21.0 → −17.3, 80–90°
+  // −30.2 → −25.8 (−27), but 40–50° 9.3 → 10.8 (8.5) and 50–60° 1.3 → 3.4
+  // (1.5). The torus alike: 12 → 4 points off. The pole feeds the
+  // history's ice and so its sea level and erosion (DEC-0049, DEC-0050):
+  // on 12 histories per shape (2048 × 1024, archean 200, epochs 1–100,
+  // with the coastal upslope rain of precipitation.ts) the land under ice
+  // at epoch 40 25.3 → 20.3 % on the torus, 9.2 → 6.4 % on the sphere,
+  // at epoch 100 29.3 → 24.1 and 8.4 → 6.1 %; the torus's ice still grows
+  // after epoch 40 (+3.9 → +3.8 points by epoch 100), and its land rises
+  // as before (mean height 695 → 701 m at epoch 40, 1020 → 1018 at 100);
+  // the land's share within 0.2 points.
   tempEquatorC: 28,
-  tempPoleC: -33,
+  tempPoleC: -28,
   // The mass elevation effect (temperature.ts): °C per km of the land's
   // height smoothed by a Gaussian of this σ, metres. At 2 the Tibetan
   // plateau's warmest month 0 → 7 °C (some 8–10 on Earth at 4500 m), the
@@ -363,6 +380,26 @@ export const CLIMATE_TUNING = {
   // at 8 (above), 100 (swing −0.5 °C against 150's −1.1).
   ebmDiffusionWPerK: 40 * 62_400 * 62_400,
   ebmCarryPerWindM: 100 * 62_400,
+  // The tropics' weak temperature gradient (energyBalance.ts
+  // dampTropicalLand): the share of the land's departure taken out at the
+  // equator, the latitude up to which all of it is taken out, and the one
+  // past which none is (°, a smoothstep between). Measured 2026-10-30
+  // (DES-0027 entry 10). On Earth's relief on the sphere: the groups 14 →
+  // 9 points off (A 19 → 23 %, Beck 23; C 15 → 12, Beck 13), January and
+  // July 4.0 / 3.8 → 3.6 / 3.6 °C off, the places' swing +0.9 → 0.0 °C;
+  // the torus 16 → 12 points. On three worlds at full size (2048 × 1024,
+  // spheres m15 and Thalassor, torus Zephyra; the nodes of level 0): Cwa
+  // 7.1 / 8.4 / 4.7 → 3.8 / 7.3 / 3.8 % of the land (Earth 1.5–2), Aw 6.6
+  // / 6.7 / 2.0 → 8.6 / 8.3 / 3.4; the savanna +2.3 / +4.9 / +2.2 points,
+  // the temperate forest −1.3 / −7.4 / −0.6. What Cwa is left lies at
+  // 20–35° (Thalassor: 92 % of it, coldest month 11 °C, range 17 °C): the
+  // monsoon's subtropical winter, which the damping does not reach. With
+  // the pole at −28, 0.3 / 0.4 / 0.5 put Earth's groups 5 / 4 / 5 points
+  // off and the places' swing +0.1 / −0.2 / −0.4 °C: past 0.4 the land's
+  // years come out narrower than Earth's.
+  ebmTropicDamping: 0.4,
+  ebmTropicFullDeg: 15,
+  ebmTropicNoneDeg: 30,
 
   // --- from phenomena.ts (the climate step's weather phenomena) ---
   // Not measured yet (2026-09-28); orders of magnitude.

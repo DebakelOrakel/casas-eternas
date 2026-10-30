@@ -7,6 +7,10 @@ Simulation layers of the flat-torus world generator. See [README](./README.md) f
 - **fixed** Tectonics: lake floors no longer erode under the water, so a seed makes a different world. `generator.step.tectonics`
 - **fixed** Tectonics: basins below the sea that the ocean does not reach fill up with sediment like lakes, so a seed makes a different world. `generator.step.tectonics`
 - **changed** Tectonics: the land stands at about the same height on flat and sphere worlds and rises less over a long history, so a seed makes a different world. `generator.step.tectonics`
+- **changed** Climate: tropical land has milder winters, so less of it is subtropical highland climate and more is savanna. `generator.step.climate`
+- **changed** Climate: the polar regions are warmer, closer to Earth, so a seed makes a different world. `generator.step.climate`
+- **fixed** Climate: mountain slopes that rise straight from the sea get their rain on the windward side, so a seed makes a different world. `generator.step.climate`
+- **fixed** Hydrology: basins under an ice sheet are marked as subglacial basins and no longer count as lakes. `generator.step.climate`
 
 ## 2026-10-29
 - **fixed** Tectonics: plates no longer crowd into one region and freeze over a long history, so about a dozen plates stay spread over the world, and a seed makes a different world. `generator.step.tectonics`

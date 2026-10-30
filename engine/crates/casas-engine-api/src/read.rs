@@ -440,6 +440,8 @@ pub fn water_body(v: &Value) -> ReadResult<WaterBody> {
         outlet_y: f.num("outletY")?,
         cells: f.num("cells")?,
         frozen: f.bool("frozen")?,
+        // A save made before the flag (2026-10-30) has no subglacial basin.
+        subglacial: f.opt_bool("subglacial")?.unwrap_or(false),
     })
 }
 

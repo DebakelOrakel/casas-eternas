@@ -945,8 +945,9 @@ test('a sphere world runs the climate step through the runtime: finite, pole-han
     if (elevation[i] > 0) land++
     if (lakeDepth[i] > 0) wet++
   }
-  const badBodies = bodies.filter((b) => !(Number.isFinite(b.level) && b.level >= b.floor - 1e-6 && b.cells > 0))
-  check(`the lakes are plausible on the sphere (${bodies.length} bodies, ${wet} wet cells, ${(100 * wet / Math.max(1, land)).toFixed(1)} % of the land)`,
+  const badBodies = bodies.filter((b) => !(Number.isFinite(b.level) && b.level >= b.floor - 1e-6 && b.cells > 0 && typeof b.subglacial === 'boolean'))
+  const subglacial = bodies.filter((b) => b.subglacial).length
+  check(`the lakes are plausible on the sphere (${bodies.length} bodies, ${subglacial} under ice, ${wet} wet cells, ${(100 * wet / Math.max(1, land)).toFixed(1)} % of the land)`,
     badBodies.length === 0 && lakeDepth.every((d) => d >= 0) && wet < 0.15 * land)
 
   // The coast's invariants on the sphere's terrain mesh (DEC-0036 phase

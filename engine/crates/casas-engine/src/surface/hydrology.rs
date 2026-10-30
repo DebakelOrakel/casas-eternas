@@ -71,6 +71,8 @@ pub struct WaterBody {
     pub outlet_y: f64,
     pub cells: f64,
     pub frozen: bool,
+    /// Under an ice sheet (`mark_subglacial`): a basin, not a lake.
+    pub subglacial: bool,
 }
 
 /// The lakes per element (`LakeFields` in TypeScript).
@@ -296,6 +298,7 @@ pub fn compute_lakes_on<S: FlowSubstrate>(
                 outlet_y: sub.y(pour_cell),
                 cells: region_area,
                 frozen: is_frozen,
+                subglacial: false,
             });
             for &c in &region {
                 body[c] = id as i32;
@@ -371,6 +374,32 @@ pub fn compute_lakes_on<S: FlowSubstrate>(
         bodies,
         level,
         body,
+    }
+}
+
+/// SUBGLACIAL BASINS (DES-0027 entry 15, TEG-63, 2026-10-30). The flood
+/// fills every closed basin, also one under an ice sheet: on the torus
+/// 3.7–7.2 points of the land were such basins, counted as lakes. The
+/// user's decision (option C): a body whose wet area lies more than half
+/// under ice at least `ice_min_thickness_m` thick is a subglacial basin. It
+/// stays in the table with its level and extent, flagged, and counts as
+/// no lake; where the ice goes (the incubator's deglaciation), it is the
+/// proglacial lake. `ice` per element (m), `area` its area.
+pub fn mark_subglacial(lakes: &mut LakeFields, ice: &[f32], area: &[f32]) {
+    let mut wet = vec![0.0f64; lakes.bodies.len()];
+    let mut iced = vec![0.0f64; lakes.bodies.len()];
+    for c in 0..lakes.body.len() {
+        let b = lakes.body[c];
+        if b < 0 || lakes.depth[c] <= 0.0 {
+            continue;
+        }
+        wet[b as usize] += area[c] as f64;
+        if ice[c] as f64 >= SURFACE_TUNING.ice_min_thickness_m {
+            iced[b as usize] += area[c] as f64;
+        }
+    }
+    for (k, body) in lakes.bodies.iter_mut().enumerate() {
+        body.subglacial = iced[k] > 0.5 * wet[k];
     }
 }
 

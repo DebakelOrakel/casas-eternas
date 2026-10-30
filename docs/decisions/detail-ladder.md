@@ -17,7 +17,7 @@ summary.de: Die Detail-Leiter nach den ersten Kachel-Jobs — fünf Ebenen, im A
 area: generator
 stage: building
 createdAt: 2026-10-01
-updatedAt: 2026-10-04
+updatedAt: 2026-10-30
 concepts: [generator.concept.detail-levels, generator.concept.jobs, generator.concept.same-world]
 related: [DEC-0031, DES-0022, DEC-0033]
 ---
@@ -551,8 +551,12 @@ Each step ends with its measurement; the next starts on its result.
    from the last epoch's climate (meshBakeStage.levelHydrology).
    `levelBudget` is the ladder now (4, 1, 1/4, 1/16). The pipeline harness
    checks the replay against the runtime across a load and a resume. Open:
-   the waters use the history's coarse climate, not the climate step's
-   refinement; the time at 2048 × 1024 is still to be measured.
+   the time at 2048 × 1024 is still to be measured. (The waters used the
+   history's coarse climate until DEC-0046, 2026-10-25: they read the
+   save's refinement now, at each node of level 1, interpolated from the
+   climate's field mesh and lapsed to the node's height. Checked again
+   2026-10-30, TEG-110. Finer than that is step 6, the rain downscaled
+   onto the level's own terrain, not built.)
 5. **L2 tiles at 1/4, 16 × 16**, from L1; today's tile job moves to L3
    with L2 as its parent; staggered grids; inflow at every edge node, then
    in flow order through the graph.

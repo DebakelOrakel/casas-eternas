@@ -275,6 +275,12 @@ export function deriveWorldId(inputs: BakeInputs): string {
 // push and the plateau's balance are lower (TECTONICS_TUNING
 // intraplateShortening, collapseHeightM). The worlds change again: a
 // recipe replays to other terrain.
+// And, unreleased: the climate (DES-0027 entries 10, 13, 14 and 15,
+// 2026-10-30) — the pole is warmer (CLIMATE_TUNING tempPoleC), a slope
+// beside the sea gets its upslope rain, the tropical land's year is damped
+// (ebmTropicDamping), and a basin under an ice sheet is flagged
+// subglacial, not counted as a lake. The pole and the rain reach the
+// epochs: the worlds change again, a recipe replays to other terrain.
 export const AMPLIFICATION_ALGO_VERSION = 15
 
 // The constants the bake's output actually depends on. Passed in by the

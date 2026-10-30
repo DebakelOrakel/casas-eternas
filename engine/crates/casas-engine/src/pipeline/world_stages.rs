@@ -42,7 +42,7 @@ use crate::surface::hydrogeology::{HydrogeologyInputs, SpringFeature, compute_hy
 use crate::surface::hydrology::{
     CANONICAL_RIVER_DENSITY, ClimateMonths, LakeFields, accumulate_discharge_on,
     accumulate_regime_inputs_on, channel_threshold, compute_lakes_on, density_to_critical_area,
-    riparian_precipitation_on, watersheds_on,
+    mark_subglacial, riparian_precipitation_on, watersheds_on,
 };
 use crate::surface::river_course::{RiverCourseOptions, compute_river_courses};
 use crate::surface::river_graph::{RiverGraph, RiverGraphInputs, build_river_graph};
@@ -694,6 +694,7 @@ pub fn hydrology_features(
         )
         .thickness
     };
+    mark_subglacial(&mut om.lakes, &node_ice, areas);
     let mut ice = rasterise_node_field(mesh, &node_ice, width, height);
     for c in 0..ice.len() {
         if elevation[c] <= 0.0 || (ice[c] as f64) < SURFACE_TUNING.ice_min_thickness_m {

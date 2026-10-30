@@ -14,7 +14,7 @@ use crate::fields::field_operators::{
 };
 use crate::planet::planet_forcing::PlanetForcing;
 
-use super::climate_field::shifted_norm;
+use super::climate_field::{latitude_of_norm, shifted_norm};
 use super::climate_mesh::ClimateTerrain;
 use super::climate_tune_params::CLIMATE_TUNING;
 use super::wind::CellVectors;
@@ -155,7 +155,36 @@ pub fn seasonal_cycle(
             }
         }
     }
+    damp_tropical_land(&mut cycle, terrain, equator_offset, months);
     SeasonalCycle { cycle, solves }
+}
+
+/// The tropics' weak temperature gradient: the land's departure damped by
+/// `ebm_tropic_damping` up to `ebm_tropic_full_deg` from the equator, and
+/// less toward `ebm_tropic_none_deg` (a smoothstep), past which the land
+/// keeps its cycle. The climate step's TypeScript file explains the
+/// constants (`ebmTropicDamping`).
+fn damp_tropical_land(
+    cycle: &mut [f64],
+    terrain: &ClimateTerrain,
+    equator_offset: f64,
+    months: usize,
+) {
+    let t = &CLIMATE_TUNING;
+    let land = &terrain.land;
+    let n = land.len();
+    let span = t.ebm_tropic_none_deg - t.ebm_tropic_full_deg;
+    for i in 0..n {
+        if land[i] == 0 {
+            continue;
+        }
+        let phi = latitude_of_norm(shifted_norm(terrain.cm.y_norm[i], equator_offset)) * 90.0;
+        let s = js::min(js::max((phi - t.ebm_tropic_full_deg) / span, 0.0), 1.0);
+        let keep = 1.0 - t.ebm_tropic_damping * (1.0 - s * s * (3.0 - 2.0 * s));
+        for m in 0..months {
+            cycle[m * n + i] *= keep;
+        }
+    }
 }
 
 /// Daily-mean insolation, W/m², at a latitude (radians, + north) and a time

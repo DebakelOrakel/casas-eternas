@@ -129,10 +129,23 @@ procedure.
 
 ## Climate
 
-10. **Too much Cwa.** About 10 % of all land below 30° is Cwa, mean height
+10. ~~**Too much Cwa.** About 10 % of all land below 30° is Cwa, mean height
     780 m: on highland tropical margins the coldest month falls under
     18 °C. The temperature gradient does not move it. Found in 8b-2. Together
-    with 11–13: 4–6 h.
+    with 11–13: 4–6 h.~~
+    Done 2026-10-30 (TEG-58): the energy balance had no tropical land–sea
+    coupling, so the land's winters at 10–20° came out too cold (the
+    annual range's median 10–12 °C, Earth 5–9). The land's departure is
+    damped now by 0.4 up to 15° from the equator, less toward 30°
+    (climate/energyBalance.ts `dampTropicalLand`, `ebmTropicDamping`;
+    refinement only). Three worlds at full size (spheres m15 and
+    Thalassor, torus Zephyra; nodes of level 0, the HEAD terrain), before
+    → after: Cwa 7.1 / 8.4 / 4.7 → 3.8 / 7.3 / 3.8 % of the land, Aw 6.6 /
+    6.7 / 2.0 → 8.6 / 8.3 / 3.4; the savanna +2.3 / +4.9 / +2.2 points,
+    the temperate forest −1.3 / −7.4 / −0.6. Thalassor's Cwa left lies
+    at 20–35° with a coldest month of 11 °C: the monsoon's subtropical
+    winter, not the tropical highland. Earth on the sphere: groups 14 → 9
+    points off.
 11. **The history's cheap seasonal range is small**: ~14 °C on polar coasts
     (Earth 20–30). The ice depends on it since 8b-2 (summer melt).
 12. **The torus is cold**: mean 5.4 °C, ice 35–38 % of land, because about a
@@ -146,6 +159,16 @@ procedure.
     highest peaks get less than 0.5 mm/yr, so no ice at any height. A dry
     belt is plausible, a rainless high range is suspicious — the orographic
     rain may miss it. Found in 8d.
+    *Checked 2026-10-30 (TEG-61):* not reproduced on the terrain of
+    today. On m15 and Thalassor (spheres, full size) no node above 4000 m
+    gets less than 50 mm/yr (m15's highest, 4.9 km at 31°: 250–330 mm);
+    on Zephyra (torus) 12 % of the land above 4000 m does, a dry belt.
+    Found on the way, and fixed: the upslope rain was dropped for a cell
+    with any upwind point on the sea, so a range rising from the coast
+    into the wind got none (climate/precipitation.ts; the epochs too). A
+    point on the sea counts at the sea's level now. The land's rain +5 /
+    +4 / +4 % on the three worlds; m15's highest nodes +20–30 %; Earth's
+    places ×1.73 → ×1.68.
 14. **Earth's relief run on the sphere** is 1.5 °C cold at its places, and
     its Köppen group shares are 13 points off (11 before 8b-2). Found in
     8b-2.
@@ -160,13 +183,35 @@ procedure.
     The upslope rain runs at its world rate now (the TypeScript instrument
     ran it at 1/2.5): at 1/2.5 the sphere reads ×1.72 and 13 points, as
     above. Still open: the bias holds.
+    *Done 2026-10-30 (TEG-62):* two causes. The tropical winters (entry
+    10) and the pole of step 0's profile: 70–80° came out 5 °C too cold,
+    18 % of Beck's D land came out E. With entry 10's damping, the pole
+    −33 → −28 °C and entry 13's rain, sphere: places 18/47 class, 36/47
+    group; January / July 3.3 / 3.4 °C off (bias of the mean −0.4, of the
+    swing −0.2); rain ×1.68; groups A 23 / B 25 / C 13 / D 24 / E 15, 4
+    points off; per cell 35 % right class, 73 % right group. Torus:
+    15/47, 34/47; 3.4 / 3.3 °C; ×1.81; 4 points. The price: 40–60° 1.5–2
+    °C warmer than ERA5 (climate-refinement.md). The pole feeds the
+    history's ice: land under ice at epoch 100 29.3 → 24.1 % (torus),
+    8.4 → 6.1 % (sphere), 12 histories per shape (seasons-and-ice.md).
 
 ## Small points
 
-15. **Do basins under an ice sheet count as lakes?** `computeLakesOn` does
+15. ~~**Do basins under an ice sheet count as lakes?** `computeLakesOn` does
     not know the ice; on the torus 3.7–7.2 points of land are frozen basins
     under ice sheets. A decision for the user, then a small change to the
-    metric. Found in 8c. 1 h.
+    metric. Found in 8c. 1 h.~~
+    Done 2026-10-30 (TEG-63), the user's option C: a water body whose wet
+    area lies more than half under ice of at least `iceMinThicknessM` is
+    a subglacial basin (surface/hydrology.rs `mark_subglacial`, in the
+    hydrology stage, so the save's waters and level 1's). It stays in
+    `waterBodies.json` with `subglacial: true` and counts as no lake. On
+    the three worlds 0.4 / 0.1 / 2.4 % of the land (Zephyra: all its
+    basins under ice). Not changed: the epochs' lakes (their ages), the
+    tiles' bodies (no ice there), the depth per node (the ecology and
+    the incubator still read the basin as water). The incubator's side —
+    the basin as the proglacial lake once its ice is gone — is not
+    built.
 16. ~~**`peakOverElaM` reads −11 km**~~ on worlds whose peak never holds ice
     (the "never" value enters the median); the alpine metric of 8d works
     around it. 0.5 h.
@@ -385,6 +430,9 @@ procedure.
     2026-10-27 (6 worlds, epoch 40). Not estimated.
 
 ## Status
+
+2026-10-30: entries 10, 13 (the coastal upslope rain), 14 and 15 done
+(TEG-58, TEG-61, TEG-62, TEG-63).
 
 2026-10-30: building — the list is worked one entry at a time (2, 4, 8,
 9, 16, 18, 19, 22, 24, 27, 30 and 31 done, 25 for the relief, 26 at
