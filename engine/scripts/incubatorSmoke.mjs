@@ -146,7 +146,12 @@ function synthWorld(kind) {
   return {
     cells: { kind, spacingKm: kind === 'torus' ? 10 : 8, width, height, nodes, nodeW, nodeH, land, biome, koppen: kop, z, lakeDepth, ecology, rivers: { points: Float32Array.from(points), lengths: Uint32Array.from(lengths), regimes: Uint8Array.from(regimes) } },
     rain: { width: rw, height: rh, variability, enso, ensoStrength: 0.8 },
-    seed: 12345,
+    // The sphere's seed gives a herding centre, a told split and a told
+    // merge (`reaches`). Of the seeds 1 to 30 on the sphere, 14 gave a
+    // herding centre, 11 a told split, 4 a told merge, and only 29 gave
+    // all three; 12345 gave none of the three (2026-10-30, TEG-99). Its
+    // history costs about the same as 12345's (both run 100 000 years).
+    seed: kind === 'sphere' ? 29 : 12345,
   }
 }
 
@@ -243,7 +248,7 @@ for (const kind of ['torus', 'sphere']) {
     }
   }
   const count = (k) => history.log.filter((e) => e.kind === k).length
-  console.log(`incubator: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres, ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions, ${tree.parent.length} peoples (${alive} big ones alive at the end) (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
+  console.log(`incubator: ${kind} — ${rs.count()} cells, ${landCount} on land, ${landmasses} landmasses; ${count('crossing')} crossings, ${count('centre')} centres (${history.log.filter((e) => e.kind === 'centre' && e.lifeway === 3).length} herding), ${count('village')} villages, ${count('camp')} camps, ${count('famine')} famines, ${count('extinct')} extinctions, ${tree.parent.length} peoples (${alive} big ones alive at the end, ${count('peopleSplit')} splits and ${count('peopleMerged')} merges told) (cells ${Math.round(cellsMs)} ms, flora and fauna ${Math.round(growMs)} ms, history ${Math.round(runMs)} ms, settlement ${Math.round(settleMs)} ms)`)
   // The native build on the same world.
   t0 = performance.now()
   const nat = wasmCells(world.cells, native)
@@ -275,29 +280,25 @@ for (const kind of ['torus', 'sphere']) {
 // again): since the history begins where step 1 of the prehistory ends,
 // after the cold, no village is left and the ice only gives land back
 // (2026-10-28); they come back with step 2's rising sea and drying land.
-// Not 'city' and not 'centre 3' (a herding centre): the torus's herding
-// centre came on land step 2 reached over more than 100 km of open sea,
-// which it crosses no more (REACH_END, 2026-10-28), and no town grew to a
-// city; since the rising sea and the cold spells (2026-10-28) the worlds
-// reach both again, by chance. Not 'drowned': the sea takes less than
+// Not 'city': no town grew to a city after REACH_END (2026-10-28); since
+// the rising sea and the cold spells (2026-10-28) the worlds reach it
+// again, by chance. Not 'drowned': the sea takes less than
 // DROWNED_TOLD_KM2 of these small worlds' shelves in a CLIMATE_YEARS.
 // Not 'drying' (2026-10-29): no landmass of these small worlds loses
 // DRYING_TOLD_KM2 of its dry belt in a CLIMATE_YEARS.
 // THE PEOPLES (2026-10-29): two big ones alive at the end on a world, a
 // people parted from another, one merged into another; the chronicle's
-// events of each kind (peoples.rs Tree::tell). Not 'peopleSplit' since
-// the incubator's v6 (2026-10-29): no split is told in step 2's first
-// EARLY_SPLIT_YEARS, nor one that did not hold TOLD_LIVES_YEARS; the
-// torus's history is 4 000 years (7 000 then), and the sphere's splits after its first
-// 5 000 years all join again in 500 to 4 000 years (a part of people 55
-// of 13 000 km² parts and joins every 1 000 to 1 500 years to the end).
-// The told split is peoples.rs `a_split_is_told_once_it_held`'s. Not
-// 'peopleMerged' since step 2's times toward the earth's (2026-10-29,
-// climate_history.rs THE STABLE WARMTH): the torus's first farming came
-// at +1 500, its city at +4 000, its history 4 000 years (7 000 before),
-// so no merge holds TOLD_LIVES_YEARS; the sphere's tells none. The told
-// merge is peoples.rs `the_tree_keeps_ids_and_records_splits_and_merges`'s.
-const reaches = ['departure', 'trade', 'crossing', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleGone', 'peopleFarmers']
+// events of each kind (peoples.rs Tree::tell). A told split and a told
+// merge are rare since the incubator's v6 and step 2's times toward the
+// earth's (2026-10-29): no split is told in step 2's first
+// EARLY_SPLIT_YEARS, and no split or merge is told that did not hold
+// TOLD_LIVES_YEARS. With seed 12345 neither world told one, and only the
+// torus reached a herding centre ('centre 3'); the sphere's seed 29 tells
+// one of each and reaches a herding centre, so the three are in again
+// (2026-10-30, TEG-99). Also in peoples.rs
+// `a_split_is_told_once_it_held` and
+// `the_tree_keeps_ids_and_records_splits_and_merges`.
+const reaches = ['departure', 'trade', 'crossing', 'centre 3', 'centre 4', 'domesticated', 'extinct', 'famine', 'village', 'camp', 'campLeft', 'population', 'copper', 'coldSpell', 'peoples', 'people split', 'people merged', 'peopleSplit', 'peopleMerged', 'peopleGone', 'peopleFarmers']
 for (const r of reaches) if (!seen.has(r)) fail(`the worlds no longer reach ${r}: the check would pass on less than it claims`)
 if (!golden && !failed) {
   await writeFile(GOLDEN, JSON.stringify(hashes, null, 2) + '\n')
