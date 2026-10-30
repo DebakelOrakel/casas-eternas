@@ -181,15 +181,27 @@ jobs:
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
-        # The notes tell the versions of pipeline.json, for a reader.
+        # The notes: the highlights, then the versions of pipeline.json —
+        # L0 the save's (`status.pipeline`) and L1 the whole level 1's are
+        # the one `pipelineVersion` (world/levels.ts); Ln the tiles of
+        # level n.
         run: |
+          # The highlights: the annotated tag's message, without a
+          # signature (a lightweight tag gives none, and the notes start
+          # with the table).
+          obj=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.type + " " + .object.sha')
+          if [ "${obj%% *}" = tag ]; then
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/${obj#* }" --jq .message \
+              | sed '/^-----BEGIN /,$d' > highlights.md
+          else
+            : > highlights.md
+          fi
           {
-            echo "The engine at $GITHUB_SHA."
-            echo
-            echo "| Stage | Pipeline version |"
+            if [ -s highlights.md ]; then cat highlights.md; echo; fi
+            echo "| Stage | Version |"
             echo "|---|---|"
-            jq -r '"| world (`status.pipeline`) | `\(.pipelineVersion)` |",
-              (.tilePipelineVersions | to_entries[] | "| tiles of level \(.key) | `\(.value)` |")' out/pipeline.json
+            jq -r '"| L0 | `\(.pipelineVersion)` |", "| L1 | `\(.pipelineVersion)` |",
+              (.tilePipelineVersions | to_entries[] | "| L\(.key) | `\(.value)` |")' out/pipeline.json
           } > notes.md
           gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --notes-file notes.md

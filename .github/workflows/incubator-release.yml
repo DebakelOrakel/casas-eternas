@@ -153,7 +153,23 @@ jobs:
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
+        # The notes: the highlights, then the incubator's version (H1).
         run: |
-          echo "The incubator at $GITHUB_SHA, version \`$(jq -r .pipelineVersion out/pipeline.json)\`." > notes.md
+          # The highlights: the annotated tag's message, without a
+          # signature (a lightweight tag gives none, and the notes start
+          # with the table).
+          obj=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.type + " " + .object.sha')
+          if [ "${obj%% *}" = tag ]; then
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/${obj#* }" --jq .message \
+              | sed '/^-----BEGIN /,$d' > highlights.md
+          else
+            : > highlights.md
+          fi
+          {
+            if [ -s highlights.md ]; then cat highlights.md; echo; fi
+            echo "| Stage | Version |"
+            echo "|---|---|"
+            jq -r '"| H1 | `\(.pipelineVersion)` |"' out/pipeline.json
+          } > notes.md
           gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --notes-file notes.md
