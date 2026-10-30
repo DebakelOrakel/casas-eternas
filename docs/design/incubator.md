@@ -189,4 +189,6 @@ removed again do not.
 
 ## Status
 
-Building, 2026-10-28. Nothing is calibrated.
+Building, 2026-10-28. Step 2 is calibrated against the earth's timeline
+(2026-10-29); the steps' own status and what is open are in
+[DES-0032](./prehistory-in-three-steps.md).

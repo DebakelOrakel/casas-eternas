@@ -69,4 +69,5 @@ i18n and are the same in every language of the interface.
 
 ## Status
 
-Idea, 2026-10-28. Nothing built; after the peoples of step 2.
+Idea, 2026-10-28. Nothing built. The peoples of step 2 it waits on are
+built (2026-10-29).

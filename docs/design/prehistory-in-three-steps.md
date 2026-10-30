@@ -627,7 +627,12 @@ Open:
    one climate step late (+2 500, +5 500, +7 000: its second centre at
    +2 000); the copper on Zephyra waits on the way from its fields to
    its copper (+11 000), its city on the smelting (+14 000). TOWN_GROWTH_A
-   0.001 would bring the cities 500 to 1 000 years earlier.
+   0.001 would bring the cities 500 to 1 000 years earlier. To tune again
+   when the generator's height and climate rounds of v15 are in
+   (2026-10-30): the threshold of a farming centre (CENTRE_ARABLE 0.5:
+   13 to 20 % of the land has arable land of 0.5 or more on the v15
+   ecology, 1 % before), the times of the copper and the city, Zephyra's
+   city, the number of peoples.
 2. The peoples' splits in the chronicle: few once they must hold 5 000
    years and not come in step 2's first 5 000 years (1, 1, 6 on the
    three worlds); a lower share of the land lived in to tell
@@ -635,7 +640,7 @@ Open:
 3. The far trade: where which goods came from, for step 3 (above, the
    exchange).
 4. Step 1's sea-level curve: drawn from the world's seed, or a control.
-5. The dry shelf's own land fields (idea, with the next generator round):
+5. The dry shelf's own land fields (planned for v15, 2026-10-30):
    the engine's ecology with the shelf down to −120 m as land, in today's
    climate, kept with level 1; it replaces the coast's values the shelf
    takes now.
