@@ -7,7 +7,6 @@ import { createFlatWorldView } from '../../map/flatWorldView'
 import { createCameraTools } from '../../map/cameraTools'
 import { createMapScales } from '../../map/mapScales'
 import { createGlobeWorldView, type GlobeWorldView } from '../../map/sphereView'
-import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
 import { weatherParamsFrom } from '../../world/runParams'
 import type { WorldSymbol, WorldView } from '../../map/worldView'
 import { listServerArtifacts, type ServerArtifact } from '../../server/artifactsClient'
@@ -35,7 +34,6 @@ import { createLayerPanel } from '../../ui/layerPanel/LayerPanel'
 import type { LayerState } from '../../ui/layerPanel/layerTypes'
 import { ANIMAL_USES, OVERLAY_GROUPS, OVERLAY_PANEL_TEXTS, PLANT_USES, favouritesToTurnOn, WOOD_USES, animalLayerId, isNoneLayer, overlayGroupOf, plantLayerId, resourceLayerId, woodLayerId, type AnimalUse, type OverlayGroupId, type PlantUse, type WoodUse } from '../../map/overlayGroups'
 import { CURRENT_GAP, CURRENT_LENGTH, currentPictures, currentSymbols, hotspotSymbols, nameSymbols, volcanoSymbols, WIND_GAP, WIND_LENGTH, windPictures, windSymbols, type ChartSize, type VolcanoMark } from '../generator/mapSymbols'
-import { collectVolcanoes } from '../../generator/tectonics/volcanoes'
 import { Biome } from '../../generator/climate/biomes'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { CLIMATE_WASHES, climateWashAvailable, climateWashLegend, paintClimateWash, type ClimateClasses, type ClimateFields, type ClimateWash } from '../../map/climateLayers'
@@ -572,10 +570,11 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     showCharts()
     const snapshot = await world.snapshot().catch(() => null)
     if (shownWorld !== world || !snapshot) return
+    const engine = await loadWasmEngine()
     const mantle = await world.meshField('mantle')
     if (shownWorld !== world) return
     geology = {
-      volcanoes: collectVolcanoes(snapshot.features),
+      volcanoes: engine.volcanoesOfSnapshot(snapshot),
       hotspots: snapshot.hotspots.map((h) => ({ x: h.x, y: h.y })),
       names: computeRaftLabelPlacements(snapshot.rafts, domain),
       mantle: mantle ? mantleRaster(domain, new Float64Array(mantle.values)) : null,
@@ -2279,6 +2278,8 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
       detailSeed: world.recipe.detailSeed,
     })
     if (!painted) loadPanel.fail('paint')
+    // The engine's WASM build, for the temperature band (loaded with the world).
+    const engine = await loadWasmEngine()
     if (!painted || disposed) return false
     step(`chart painted (${Object.entries(painted.ms).map(([k, v]) => `${k} ${v}`).join(', ')})`)
 
@@ -2293,7 +2294,7 @@ export const createIncubatorScreen: ScreenFactory = (ctx: ScreenContext): Screen
     const values = world.recipe.values
     const params = values ? weatherParamsFrom((path) => values[path]) : null
     band = params
-      ? { values: seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, kind), key: uid }
+      ? { values: engine.seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, kind), key: uid }
       : null
     if (kind === 'sphere') {
       globe = createGlobeWorldView({ engine: ctx.engine, canvas: ctx.canvas, textureWidth: CHART_WIDTH, textureHeight: CHART_HEIGHT, metresRound: domain.metresAround, deepestMetresPerPixel })

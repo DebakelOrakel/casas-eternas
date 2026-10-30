@@ -37,6 +37,7 @@ import { dischargeToM3s } from '../../generator/surface/hydrology'
 import type { WorkerOutboundMessage, WorkerReplayDoneMessage, WorkerReplayProgressMessage, WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerHydrologyDataMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerInboundMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage, MeshPayload, FieldPayload } from '../../generator/pipeline/messages'
 import { STAGES, downstreamOf, stage } from '../../generator/pipeline/stages'
 import { loadWasmEngine } from '../../generator/pipeline/engineWasm'
+import type { Engine } from '../../generator/pipeline/engine'
 import type { StageId } from '../../generator/pipeline/stages'
 import type { ContinentLabelPlacement } from '../../generator/render/continentLabelRenderer'
 import { elevationToMeters } from '../../generator/elevation/elevationScale'
@@ -47,7 +48,6 @@ import { MapOverlayCompositor } from '../../ui/mapOverlay/MapOverlayCompositor'
 import { createLegendPanel, type LegendSpec } from '../../ui/legend/LegendPanel'
 import { createProgressPill } from '../../ui/progressPill/ProgressPill'
 import { buildPaperBase, buildUnshadedPaperBase } from '../../map/paperBase'
-import { seaLevelTemperatureBand } from '../../generator/climate/temperature'
 import { koppenLabelKey } from '../../generator/climate/koppen'
 import { OCEAN_PRECIP } from '../../generator/climate/precipitation'
 import { OCEAN_AMPLITUDE } from '../../generator/climate/seasonality'
@@ -1018,7 +1018,8 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // lastMantle scaled to ±1 for the tint ramp, recomputed per field (mantleTintNorm).
   let mantleNorm: Float32Array | null = null
   // Crust age on the mantle grid: -1 over ocean, else 0 (formed now) to 1 (formed
-  // at epoch 0). Drives the "Craton age" overlay — see computeCratonOldnessField.
+  // at epoch 0). Drives the "Craton age" overlay — see the engine's
+  // compute_craton_oldness_field (crust/raft_field.rs), which its render calls.
   let lastCratonAge: Float32Array | null = null
   let lastHotspots: { x: number; y: number }[] = []
   let lastVolcanoes: VolcanoMark[] = []
@@ -1307,7 +1308,7 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // otherwise invisible in the coastline.
   //
   // Masked to the coastline the renderer actually drew, not to the crust field's
-  // own reach. computeCratonOldnessField reports an age wherever ANY blob kernel
+  // own reach. The craton age field reports an age wherever ANY blob kernel
   // touches — that is the full blob radius — but land only begins where the
   // SUMMED metaball field clears sea level, which for a lone blob is 0.458 of its
   // radius. Painting the field directly therefore covered about five times the
@@ -2518,12 +2519,20 @@ export const createGeneratorScreen: ScreenFactory = (ctx: ScreenContext): Screen
   // function; updateOverlays may run before.
   let mapScales: MapScales | null = null
   // The temperature scale's band: the sea-level band the climate's own
-  // function gives (climate/temperature.ts), with the greenhouse, the
-  // contrast and the planet's forcing as they stand.
-  const temperatureBand = (): { values: Float32Array; key: string } => {
+  // function gives (the engine's climate/temperature.rs), with the
+  // greenhouse, the contrast and the planet's forcing as they stand. The
+  // engine's WASM build in this thread, loaded once; no band until it is.
+  let bandEngine: Engine | null = null
+  void loadWasmEngine().then((e) => {
+    bandEngine = e
+    mapScales?.redraw()
+  })
+  const temperatureBand = (): { values: Float32Array; key: string } | null => {
+    if (!bandEngine) return null
     const params = weatherParams()
+    const shape = worldShape === 'sphere' ? 'sphere' : 'torus'
     return {
-      values: seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, worldShape === 'sphere' ? 'sphere' : 'torus'),
+      values: bandEngine.seaLevelTemperatureBand(params.temperatureOffset, params.temperatureContrast, params.planet, shape),
       key: `${tempBandInput.value},${contrastInput.value},${obliquityInput.value},${worldShape}`,
     }
   }

@@ -393,8 +393,9 @@ export interface WorkerRenderedMessage {
   mantleResX: number
   mantleResY: number
   // Coarse crust-age field (Float32, mantleResX*mantleResY; -1 = ocean, else 0..1
-  // with 1 = formed at epoch 0) for the "Craton age" overlay. See
-  // computeCratonOldnessField, which the Ecology layer also reads for iron.
+  // with 1 = formed at epoch 0) for the "Craton age" overlay. The engine's render
+  // gives it (crust/raft_field.rs compute_craton_oldness_field, which the Ecology
+  // layer also reads for iron).
   //
   // Deliberately on the MANTLE grid rather than the finer climate one: this is the
   // Archean's per-epoch layer, and the crust it describes is made of blobs 70 world
@@ -418,7 +419,7 @@ export interface WorkerRenderedMessage {
   // Volcanic features for distinct markers: hotspot cones (plateB = -1), flood-basalt
   // provinces (plateB = -2), and volcanic arcs (the `volcanic` range features — Andes/
   // island-arc chains). `kind` picks the marker style; `thickness` sizes it. See
-  // tectonics/volcanoes.ts (collectVolcanoes).
+  // the engine's tectonics/volcanoes.rs (collect_volcanoes), which its render calls.
   volcanoes: Volcano[]
   width: number
   height: number

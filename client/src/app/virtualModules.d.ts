@@ -27,6 +27,8 @@ declare module 'casas-engine-wasm/casas-engine.js' {
   export default init
   export const version: import('../generator/pipeline/engine').Engine['version']
   export const forcingOfSnapshot: import('../generator/pipeline/engine').Engine['forcingOfSnapshot']
+  export const volcanoesOfSnapshot: import('../generator/pipeline/engine').Engine['volcanoesOfSnapshot']
+  export const seaLevelTemperatureBand: import('../generator/pipeline/engine').Engine['seaLevelTemperatureBand']
   export const levelFiles: import('../generator/pipeline/engine').Engine['levelFiles']
   export const tileFiles: import('../generator/pipeline/engine').Engine['tileFiles']
   export const riverGraphParts: import('../generator/pipeline/engine').Engine['riverGraphParts']

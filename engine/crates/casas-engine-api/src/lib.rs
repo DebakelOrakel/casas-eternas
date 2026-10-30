@@ -21,9 +21,12 @@ use casas_engine::archean::archean_state::{ArcheanSimulation, create_archean_sim
 use casas_engine::archean::archean_step::{ArcheanParams, archean_step, default_archean_params};
 use casas_engine::archean::finalize_archean::finalize_archean;
 use casas_engine::core::domain::Domain;
-use casas_engine::core::world_time::TECTONIC_MA_PER_EPOCH;
+use casas_engine::core::world_time::{TECTONIC_MA_PER_EPOCH, world_epoch};
+use casas_engine::crust::raft_field::{compute_craton_oldness_field, stabilised_fraction};
 use casas_engine::elevation::elevation_raster::{RasterSources, elevation_raster};
-use casas_engine::mantle::mantle_field::{rasterise_mantle, saved_mantle};
+use casas_engine::mantle::mantle_field::{
+    MANTLE_RES_X, MANTLE_RES_Y, rasterise_mantle, saved_mantle,
+};
 use casas_engine::mesh::mesh_hydrology::mesh_routing;
 use casas_engine::mesh::mesh_raster::rasterise_node_field;
 use casas_engine::pipeline::coupled_epoch::{
@@ -32,11 +35,13 @@ use casas_engine::pipeline::coupled_epoch::{
 };
 use casas_engine::surface::erosion_engine::DEFAULT_SOLVER_PARAMS;
 use casas_engine::surface::erosion_forcing_fields::ErosionControls;
-use casas_engine::tectonics::ocean_age::saved_ocean_age;
+use casas_engine::tectonics::ocean_age::{create_ocean_age_field, saved_ocean_age};
 use casas_engine::tectonics::plate_simulation::{
     deserialize_plate_simulation, serialize_plate_simulation,
 };
 use casas_engine::tectonics::plate_simulation_types::{PlateSimulation, world_meshes};
+use casas_engine::tectonics::plumes::find_plume_sites;
+use casas_engine::tectonics::volcanoes::collect_volcanoes;
 
 pub use value::Value;
 
@@ -58,6 +63,43 @@ pub fn forcing_of_snapshot(shape: Shape, snapshot: &Value) -> Result<Value, EraE
         .put("uplift", Value::F32s(f.uplift))
         .put("hardness", Value::F32s(f.hardness))
         .build())
+}
+
+/// The volcanoes the map marks of a save's snapshot: hotspots, flood
+/// basalts and the active arcs, thinned (`collect_volcanoes`) — for a
+/// reader of a save (the incubator), as `World::render` gives them of a
+/// live world. Display only.
+pub fn volcanoes_of_snapshot(snapshot: &Value) -> Result<Value, EraError> {
+    let snap = read::snapshot(snapshot)?;
+    Ok(Value::List(
+        collect_volcanoes(&snap.features)
+            .iter()
+            .map(forms::volcano)
+            .collect(),
+    ))
+}
+
+/// The sea-level temperature per row of the climate's chart, °C, the
+/// offset included (`sea_level_temperature_band`): the band of the map's
+/// temperature scale. `planet` none is the default planet. Display only.
+pub fn sea_level_temperature_band(
+    offset_c: f64,
+    contrast: f64,
+    planet: Option<&Value>,
+    shape: Shape,
+) -> Result<Value, EraError> {
+    let planet = match planet {
+        Some(p) => read::planet(p)?,
+        None => casas_engine::planet::planet_forcing::DEFAULT_PLANET_FORCING,
+    };
+    Ok(Value::F32s(
+        casas_engine::climate::temperature::sea_level_temperature_band(
+            offset_c,
+            contrast,
+            &planet,
+            shape == Shape::Sphere,
+        ),
+    ))
 }
 
 /// The seed of a world's fine detail field (the world layer's
@@ -112,6 +154,28 @@ enum Era {
     },
     /// Between two eras, for the hand-over's move only.
     Moving,
+}
+
+/// A render's extras after the hand-over (`World::render`, and the
+/// hydrology's render): the craton age on the mantle's chart raster and the
+/// volcanoes the map marks.
+pub(crate) fn plates_extras(sim: &PlateSimulation) -> Vec<(&'static str, Value)> {
+    let craton_age = compute_craton_oldness_field(
+        &sim.rafts,
+        world_epoch(sim.archean_epochs, sim.epoch),
+        sim.archean_epochs,
+        MANTLE_RES_X,
+        MANTLE_RES_Y,
+        &sim.domain,
+    );
+    let volcanoes = collect_volcanoes(&sim.features);
+    vec![
+        ("cratonAge", Value::F32s(craton_age)),
+        (
+            "volcanoes",
+            Value::List(volcanoes.iter().map(forms::volcano).collect()),
+        ),
+    ]
 }
 
 pub(crate) fn domain_of(shape: Shape, width: f64, height: f64) -> Domain {
@@ -273,8 +337,16 @@ impl World {
     }
 
     /// The field meshes' values as the save holds them: the mantle's and
-    /// the ocean age's (`SavedField`).
+    /// the ocean age's (`SavedField`). In the Archean, the ocean age is the
+    /// field the hand-over starts from: 0 in each cell.
     pub fn saved_fields(&mut self) -> Result<(Value, Value), EraError> {
+        if let Era::Archean(a) = &self.era {
+            let m = &a.meshes;
+            let mantle = saved_mantle(&m.mantle, &a.mantle);
+            let ocean =
+                saved_ocean_age(&m.ocean, &m.shared, &create_ocean_age_field(0.0, &m.shared));
+            return Ok((forms::saved_field(&mantle), forms::saved_field(&ocean)));
+        }
         let (sim, _) = self.plates()?;
         let mantle = saved_mantle(&sim.meshes.mantle, &sim.mantle);
         let ocean = saved_ocean_age(&sim.meshes.ocean, &sim.meshes.shared, &sim.ocean_age);
@@ -317,13 +389,21 @@ impl World {
     }
 
     /// A render's rasters (the runtime's `renderArcheanAndPost` and
-    /// `renderTerrain`), `{ elevations, mantle }`: the raw elevation on the
-    /// world raster — the synthesis in the Archean, on a grid `scale`
-    /// times coarser for the live preview; the terrain mesh's heights
-    /// after the hand-over — then the mantle on its chart raster. Both
-    /// move the meshes' walks, so the order is the render's.
+    /// `renderTerrain`), `{ elevations, mantle, cratonAge, … }`: the raw
+    /// elevation on the world raster — the synthesis in the Archean, on a
+    /// grid `scale` times coarser for the live preview; the terrain mesh's
+    /// heights after the hand-over — then the mantle on its chart raster.
+    /// Both move the meshes' walks, so the order is the render's.
+    ///
+    /// The display's extras come with it (nothing of them is saved): the
+    /// craton age on the mantle's chart raster (`compute_craton_oldness_field`,
+    /// 0..1, −1 off the crust); in the Archean the plume sites
+    /// (`hotspots`, `find_plume_sites`) and the stabilised share of the
+    /// crust (`stabilisedFraction`); after the hand-over the volcanoes the
+    /// map marks (`volcanoes`, `collect_volcanoes`).
     pub fn render(&mut self, scale: u32) -> Result<Value, EraError> {
-        let (elevations, mantle) = match &mut self.era {
+        let stabilisation_epochs = self.archean_params.stabilisation_epochs;
+        let (elevations, mantle, extras) = match &mut self.era {
             Era::Archean(a) => {
                 let sources = RasterSources {
                     domain: &a.domain,
@@ -334,10 +414,29 @@ impl World {
                 };
                 let elevations =
                     elevation_raster(&sources, None, &mut a.meshes.mantle, scale as usize);
-                (
-                    elevations,
-                    rasterise_mantle(&mut a.meshes.mantle, &a.mantle),
-                )
+                let mantle = rasterise_mantle(&mut a.meshes.mantle, &a.mantle);
+                // In the Archean, its own epoch is the era's length.
+                let craton_age = compute_craton_oldness_field(
+                    &a.rafts,
+                    a.epoch,
+                    a.epoch,
+                    MANTLE_RES_X,
+                    MANTLE_RES_Y,
+                    &a.domain,
+                );
+                let hotspots = find_plume_sites(&a.mantle, &a.meshes.mantle, &a.domain, 0.0, &[]);
+                let extras = vec![
+                    ("cratonAge", Value::F32s(craton_age)),
+                    (
+                        "hotspots",
+                        Value::List(hotspots.iter().map(forms::plume).collect()),
+                    ),
+                    (
+                        "stabilisedFraction",
+                        Value::Num(stabilised_fraction(&a.rafts, a.epoch, stabilisation_epochs)),
+                    ),
+                ];
+                (elevations, mantle, extras)
             }
             Era::Plates { sim, coupled } => {
                 let elevations = rasterise_node_field(
@@ -346,18 +445,19 @@ impl World {
                     sim.width as usize,
                     sim.height as usize,
                 );
-                (
-                    elevations,
-                    rasterise_mantle(&mut sim.meshes.mantle, &sim.mantle),
-                )
+                let mantle = rasterise_mantle(&mut sim.meshes.mantle, &sim.mantle);
+                (elevations, mantle, plates_extras(sim))
             }
             Era::Moving => return Err(wrong("the world is between its eras")),
         };
         self.stages.rendered(elevations.clone());
-        Ok(value::ObjBuilder::new()
+        let mut out = value::ObjBuilder::new()
             .put("elevations", Value::F32s(elevations))
-            .put("mantle", Value::F32s(mantle))
-            .build())
+            .put("mantle", Value::F32s(mantle));
+        for (key, v) in extras {
+            out = out.put(key, v);
+        }
+        Ok(out.build())
     }
 
     /// The Archean as the save holds it: `{ snapshot, mantle, streak }`

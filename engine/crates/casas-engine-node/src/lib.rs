@@ -24,6 +24,35 @@ pub fn forcing_of_snapshot(shape: String, snapshot: Tree) -> napi::Result<Tree> 
         .map_err(era)
 }
 
+/// The volcanoes the map marks of a save's snapshot
+/// (`casas_engine_api::volcanoes_of_snapshot`).
+#[napi(ts_args_type = "snapshot: unknown")]
+pub fn volcanoes_of_snapshot(snapshot: Tree) -> napi::Result<Tree> {
+    casas_engine_api::volcanoes_of_snapshot(&snapshot.0)
+        .map(Tree)
+        .map_err(era)
+}
+
+/// The sea-level temperature per row of the climate's chart, °C
+/// (`casas_engine_api::sea_level_temperature_band`); `planet` null or
+/// undefined is the default planet.
+#[napi(ts_args_type = "offsetC: number, contrast: number, planet: unknown, shape: string")]
+pub fn sea_level_temperature_band(
+    offset_c: f64,
+    contrast: f64,
+    planet: Tree,
+    shape: String,
+) -> napi::Result<Tree> {
+    casas_engine_api::sea_level_temperature_band(
+        offset_c,
+        contrast,
+        given(&planet.0),
+        shape_of(&shape)?,
+    )
+    .map(Tree)
+    .map_err(era)
+}
+
 /// A level's files, `{ name: bytes }` (`casas_engine_api::formats`).
 #[napi(ts_args_type = "artifact: unknown")]
 pub fn level_files(artifact: Tree) -> napi::Result<Tree> {

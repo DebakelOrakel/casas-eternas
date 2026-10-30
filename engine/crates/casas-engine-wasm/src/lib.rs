@@ -23,6 +23,36 @@ pub fn forcing_of_snapshot(shape: &str, snapshot: &JsValue) -> Result<JsValue, J
         .map_err(era)
 }
 
+/// The volcanoes the map marks of a save's snapshot
+/// (`casas_engine_api::volcanoes_of_snapshot`).
+#[wasm_bindgen(js_name = volcanoesOfSnapshot)]
+pub fn volcanoes_of_snapshot(snapshot: &JsValue) -> Result<JsValue, JsError> {
+    casas_engine_api::volcanoes_of_snapshot(&from_js(snapshot)?)
+        .map(to_js)
+        .map_err(era)
+}
+
+/// The sea-level temperature per row of the climate's chart, °C
+/// (`casas_engine_api::sea_level_temperature_band`); `planet` null or
+/// undefined is the default planet.
+#[wasm_bindgen(js_name = seaLevelTemperatureBand)]
+pub fn sea_level_temperature_band(
+    offset_c: f64,
+    contrast: f64,
+    planet: &JsValue,
+    shape: &str,
+) -> Result<JsValue, JsError> {
+    let planet = from_js(planet)?;
+    casas_engine_api::sea_level_temperature_band(
+        offset_c,
+        contrast,
+        given(&planet),
+        shape_of(shape)?,
+    )
+    .map(to_js)
+    .map_err(era)
+}
+
 /// A level's files, `{ name: bytes }` (`casas_engine_api::formats`).
 #[wasm_bindgen(js_name = levelFiles)]
 pub fn level_files(artifact: &JsValue) -> Result<JsValue, JsError> {

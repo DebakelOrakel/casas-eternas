@@ -16,7 +16,7 @@
 // marine when most of its area lies under the sea. Its PROVENANCE is the
 // rock of the catchments that feed it: every river reach whose mouth or
 // last node lies in the basin contributes its catchment, and over those
-// nodes the craton oldness (crust/raftField, 1 = ancient core) and the
+// nodes the craton oldness (the engine's crust/raft_field.rs, 1 = ancient core) and the
 // erodibility K are averaged — old hard crust shedding into a basin is
 // what makes placer gold and banded iron plausible there. Basins no river
 // reaches (marine wedges off a cliff coast, deposits of hillslope creep)

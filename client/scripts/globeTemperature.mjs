@@ -21,6 +21,7 @@
 //  4. No arc with the tilt on (no outline), and with the camera on the
 //     axis (the limb at one latitude). A slow zoom in and out switches the
 //     arc once each way, the way back at a smaller globe (the hysteresis).
+import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 const CLIENT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
@@ -30,7 +31,14 @@ const B = await server.ssrLoadModule('@babylonjs/core')
 const V = await server.ssrLoadModule('/src/map/sphereView.ts')
 const S = await server.ssrLoadModule('/src/map/globeScaleArc.ts')
 const T = await server.ssrLoadModule('/src/map/globeTemperatureArc.ts')
-const TEMP = await server.ssrLoadModule('/src/generator/climate/temperature.ts')
+// The band is the engine's (climate/temperature.rs), from its WASM build
+// in engine/dist (`make engine`).
+const dist = new URL('../../engine/dist/wasm/', import.meta.url)
+const WASM = await import(new URL('casas-engine.js', dist).href)
+await WASM.default({ module_or_path: await readFile(new URL('casas-engine_bg.wasm', dist)) })
+// As the TypeScript band took it until 2026-10-30: no planet the default
+// one, the torus's pivot.
+const TEMP = { seaLevelTemperatureBand: (offset, contrast, planet) => WASM.seaLevelTemperatureBand(offset, contrast, planet, 'torus') }
 const P = await server.ssrLoadModule('/src/generator/planet/planetForcing.ts')
 const D = await server.ssrLoadModule('/src/generator/core/domain.ts')
 B.Logger.LogLevels = B.Logger.ErrorLogLevel * 0

@@ -1,7 +1,3 @@
-import type { Domain } from '../core/domain'
-import { mantleMesh } from '../mantle/mantleField'
-import { sq } from '../core/detMath'
-
 // Mantle plumes, derived from the mantle field rather than scattered at random.
 //
 // **A plume is a persistent upwelling.** That is the same definition the Archean
@@ -39,24 +35,9 @@ import { sq } from '../core/detMath'
 //    large provinces) rather than being uniformly spread. Field-derived plumes
 //    inherit the field's own spatial organisation; uniformly random points cannot.
 
-// Mantle value a cell must reach to host a plume. Above the Archean's nucleation
-// threshold (0.70): a plume should mark a genuinely strong upwelling, not merely one
-// hot enough to make crust.
-const PLUME_THRESHOLD = 0.85
-// Upper bound only. The count is otherwise emergent from how many strong upwellings
-// the mantle actually organises itself into — the same way the plate count comes from
-// the convection cells. Capped because vigorous convection can offer a great many.
-const PLUME_MAX_COUNT = 8
-// Two plumes closer than this, metres, are one upwelling found twice. A
-// fraction of the chart's height until DEC-0036 phase 8f (0.14 × 1024
-// cells of the torus's 7.8 km; on the sphere's 10 000 km from pole to pole
-// it was 25 % longer).
-const PLUME_MIN_SEPARATION_M = 1_118_208
-
-// The strongest upwellings, strongest first, thinned so each is a distinct one.
-// Kin to finalizeArchean's convectionCellSeeds, which does the same sweep for plate
-// seeds — but that one wants extrema of BOTH signs at a different prominence, so they
-// are deliberately separate rather than one function with flags.
+// The sites, their motion and their retirement are the engine's
+// (tectonics/plumes.rs, with its thresholds); the screen gets them with the
+// snapshot after the hand-over and with the engine's render in the Archean.
 export interface Plume {
   x: number
   y: number
@@ -66,36 +47,4 @@ export interface Plume {
   // track of which is which loses the feature.
   id: number
   birthEpoch: number
-}
-
-// Ids continue from whatever is already there, so no counter has to be carried in the
-// simulation state (and none has to be serialised).
-//
-// A site is a cell of the mantle's field mesh no neighbour of which is higher
-// (its Voronoi neighbours, DEC-0036), at the cell's centre.
-export function findPlumeSites(mantle: Float64Array, domain: Domain, epoch = 0, exclude: Plume[] = []): Plume[] {
-  const { mesh } = mantleMesh(domain)
-  let nextId = exclude.reduce((m, p) => Math.max(m, p.id), -1) + 1
-  const candidates: { x: number; y: number; strength: number }[] = []
-  for (let i = 0; i < mesh.count; i++) {
-    const v = mantle[i]
-    if (v < PLUME_THRESHOLD) continue
-    let isMax = true
-    for (let e = mesh.nbrStart[i]; e < mesh.nbrStart[i + 1]; e++) {
-      if (mantle[mesh.nbr[e]] > v) { isMax = false; break }
-    }
-    if (!isMax) continue
-    candidates.push({ x: mesh.x[i], y: mesh.y[i], strength: v })
-  }
-  candidates.sort((a, b) => b.strength - a.strength)
-  const minSepSq = sq(PLUME_MIN_SEPARATION_M / domain.metresPerUnit)
-  const chosen: { x: number; y: number }[] = exclude.map((p) => ({ x: p.x, y: p.y }))
-  const fresh: Plume[] = []
-  for (const c of candidates) {
-    if (chosen.length >= PLUME_MAX_COUNT) break
-    if (chosen.some((s) => domain.distanceSq(s.x, s.y, c.x, c.y) < minSepSq)) continue
-    chosen.push({ x: c.x, y: c.y })
-    fresh.push({ x: c.x, y: c.y, id: nextId++, birthEpoch: epoch })
-  }
-  return fresh
 }

@@ -27,6 +27,8 @@ import type { CoastReach } from '../surface/coastGraph'
 import type { SedimentBasin } from '../surface/surfaceTypes'
 import type { EcologyParams } from '../ecology/ecologyField'
 import type { ReplayPlan } from './replayPlan'
+import type { Plume } from '../tectonics/plumes'
+import type { Volcano } from '../tectonics/volcanoes'
 
 // The climate's controls (the climate panel's and the planet's).
 export interface ClimateParams {
@@ -84,10 +86,18 @@ export interface LatticeState {
 }
 
 // A render's rasters: the raw elevation on the world raster (or the live
-// preview's coarser grid) and the mantle on its chart raster.
+// preview's coarser grid) and the mantle on its chart raster. With them the
+// display's extras, which nothing saves: the craton age on the mantle's
+// chart raster (0..1, -1 off the crust); in the Archean the plume sites
+// and the stabilised share of the crust; after the hand-over the
+// volcanoes the map marks.
 export interface EngineRender {
   elevations: Float32Array
   mantle: Float32Array
+  cratonAge: Float32Array
+  hotspots?: Plume[]
+  stabilisedFraction?: number
+  volcanoes?: Volcano[]
 }
 
 // A vector field on the climate's field mesh (`windMesh`, `currentsMesh`).
@@ -142,7 +152,8 @@ export interface HydrologyBody {
   sedimentBasins: SedimentBasin[] | null
   iceThickness: Float32Array
   climate: ClimateBody | null
-  render: { mantle: Float32Array; dryBasin: Uint8Array; saltFlat: Uint8Array } | null
+  // The render after the route, with the display's extras (`EngineRender`).
+  render: { mantle: Float32Array; dryBasin: Uint8Array; saltFlat: Uint8Array; cratonAge: Float32Array; volcanoes: Volcano[] } | null
 }
 
 // `WorkerEcologyDataMessage` less its type.
@@ -179,7 +190,8 @@ export interface EngineWorld {
   finalize(): void
   epoch(controls: EpochControls): SimEvent[]
   snapshot(): PlateSimulationSnapshot
-  // The mantle's and the ocean age's saved values, in this order.
+  // The mantle's and the ocean age's saved values, in this order; in the
+  // Archean, the ocean age the hand-over starts from (0 in each cell).
   savedFields(): [SavedField, SavedField]
   lattice(): LatticeState
   // The erosion's coarse forcing on the climate's chart, as a reader of
@@ -234,6 +246,13 @@ export interface Engine {
   // what the world layer reads out of a save, as `EngineWorld.forcing`
   // gives it of a live world.
   forcingOfSnapshot(shape: Shape, snapshot: PlateSimulationSnapshot): { uplift: Float32Array; hardness: Float32Array }
+  // The volcanoes the map marks of a save's snapshot, as
+  // `EngineWorld.render` gives them of a live world. Display only.
+  volcanoesOfSnapshot(snapshot: PlateSimulationSnapshot): Volcano[]
+  // The sea-level temperature per row of the climate's chart, °C, the
+  // offset included: the band of the map's temperature scale. No planet
+  // is the default planet. Display only.
+  seaLevelTemperatureBand(offsetC: number, contrast: number, planet: PlanetForcing | undefined, shape: Shape): Float32Array
   // The formats of what the engine's results become on a disk (DEC-0044,
   // fork 7b): a level's and a tile's files, `{ name: bytes }` — the
   // artifacts as the world layer types them (world/meshArtifacts.ts,

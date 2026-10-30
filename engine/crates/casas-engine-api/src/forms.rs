@@ -109,12 +109,30 @@ fn feature(f: &TerrainFeature) -> Value {
     }
 }
 
-fn plume(p: &Plume) -> Value {
+pub fn plume(p: &Plume) -> Value {
     ObjBuilder::new()
         .num("x", p.x)
         .num("y", p.y)
         .num("id", p.id as f64)
         .num("birthEpoch", p.birth_epoch)
+        .build()
+}
+
+/// A volcano the map marks (`Volcano` of tectonics/volcanoes.ts until
+/// 2026-10-30): `{ x, y, thickness, kind }`, the kind `hotspot`, `flood` or
+/// `arc`.
+pub fn volcano(v: &Volcano) -> Value {
+    let kind = match v.kind {
+        VolcanoKind::Hotspot => "hotspot",
+        VolcanoKind::Flood => "flood",
+        VolcanoKind::Arc => "arc",
+        VolcanoKind::ExtinctArc => "extinctArc",
+    };
+    ObjBuilder::new()
+        .num("x", v.x)
+        .num("y", v.y)
+        .num("thickness", v.thickness)
+        .put("kind", Value::Str(kind.to_string()))
         .build()
 }
 

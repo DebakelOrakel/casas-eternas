@@ -1,7 +1,14 @@
 //! `climate/temperature.ts`: the base air temperature per cell of the
 //! climate's field mesh — the latitude's profile (area-neutral contrast and
-//! tilt), the lapse, the mass elevation effect on land. The TypeScript file
-//! explains the pivot.
+//! tilt), the lapse, the mass elevation effect on land.
+//!
+//! The pivot is AREA-NEUTRAL (DEC-0036 phase 8b-2): a contrast or a tilt
+//! changes the gradient and keeps the world's area-weighted mean. It was
+//! cos φ = ½, the latitude 60°, while the sphere's mean of cos φ is π/4:
+//! contrast 60 / 140 % moved the sphere's mean temperature by −6 / +6 °C
+//! and obliquity 10 / 35° by +4 / −5 °C (phase 8a) — a greenhouse, not a
+//! contrast. The tilt's gradient is the annual insolation's
+//! (`obliquity_contrast`), whose global mean the tilt does not change.
 
 use crate::core::det_math::det_cos;
 use crate::core::domain::Domain;
@@ -20,7 +27,10 @@ use super::climate_tune_params::CLIMATE_TUNING;
 use std::f64::consts::PI;
 
 /// The latitudinal base at a latitude (0 equator … 1 pole), °C, before the
-/// global offset.
+/// global offset: the pole's temperature plus the span times the profile's
+/// shape, cos φ, the contrast and the tilt scaling the shape's departure
+/// from its area mean (`profile_pivot`). Contrast 0 is a uniform world at
+/// that mean, 1 the original span.
 pub fn base_temperature_at_latitude(
     lat: f64,
     contrast: f64,
@@ -34,13 +44,17 @@ pub fn base_temperature_at_latitude(
     t.temp_pole_c + span * pivot + gradient * span * (det_cos((lat * PI) / 2.0) - pivot)
 }
 
-/// The area mean of cos φ over a shape's latitudes: π/4 on the sphere, 2/π
-/// on the torus.
+/// The area mean of cos φ over a shape's latitudes: on the sphere, where a
+/// latitude's area goes as cos φ, ∫cos²φ / ∫cos φ = π/4; on the torus,
+/// whose rows all hold one area, ∫cos φ dφ / (π/2) = 2/π.
 pub fn profile_pivot(sphere: bool) -> f64 {
     if sphere { PI / 4.0 } else { 2.0 / PI }
 }
 
-/// The sea-level temperature per climate chart row, °C, offset included.
+/// The sea-level temperature per climate chart row, °C, offset included:
+/// the band a flat sea has at each latitude, nothing of the terrain — what
+/// the map's temperature scale shows (`seaLevelTemperatureBand` of the
+/// bindings).
 pub fn sea_level_temperature_band(
     offset_c: f64,
     contrast: f64,

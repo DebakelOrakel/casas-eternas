@@ -1,6 +1,7 @@
 import { domainOfKind, type Domain } from '../core/domain'
 import { sampleWorldElevation } from '../planet/sampleWorld'
 import type { SimEvent, PlateSimulationSnapshot } from '../tectonics/plateSimulationTypes'
+import type { Volcano } from '../tectonics/volcanoes'
 import { renderSimulationImage } from '../render/elevationMapImage'
 import type { RenderableWorld, RenderSimulationOptions } from '../render/elevationMapImage'
 import { downstreamOf } from './stages'
@@ -10,16 +11,11 @@ import { ENGINE_CONSTANTS } from './engineConstants'
 import { TECTONICS_INPUTS } from '../tectonics/tectonicsInputParams'
 
 import type { ClimatePayload, FieldPayload, LandPayload, MeshPayload } from './messages'
-import { findPlumeSites } from '../tectonics/plumes'
-import { stabilisedFraction } from '../crust/raftField'
-import { worldAgeMa, worldEpoch } from '../core/worldTime'
-import { createOceanAgeField, savedOceanAge } from '../tectonics/oceanAge'
+import { worldAgeMa } from '../core/worldTime'
 import type { SavedField } from '../fields/fieldMesh'
 import { MANTLE_RES_X, MANTLE_RES_Y } from '../mantle/mantleField'
 import { defaultWeatherParams, type WeatherParams } from '../climate/weather'
 import { CLIMATE_RES_X, CLIMATE_RES_Y, sampleElevationAtCell } from '../climate/climateField'
-import { collectVolcanoes } from '../tectonics/volcanoes'
-import { computeCratonOldnessField } from '../crust/raftField'
 import type { WorkerStageDeclinedMessage, WorkerStageFailedMessage, WorkerGenesisStatusMessage, WorkerClimateDataMessage, WorkerClimateRefinedMessage, WorkerEcologyDataMessage, WorkerEcologyMonthDataMessage, WorkerElevationFieldMessage, WorkerHydrologyDataMessage, WorkerInboundMessage, WorkerRenderedMessage, WorkerWorldDataMessage, WorkerPlanetPreviewDataMessage } from './messages'
 
 // The generator pipeline: it holds the live state of every stage — archean,
@@ -51,9 +47,9 @@ export function setEmitter(next: Emit): void {
 }
 
 // The engine's settings this module reads (engineConstants.ts): how often
-// the history draws, the Archean's controls' defaults and its stabilisation.
+// the history draws, the Archean's controls' defaults.
 const HISTORY = ENGINE_CONSTANTS.tuning.history as { renderEvery: number }
-const ARCHEAN = ENGINE_CONSTANTS.tuning.archean as { diffusion: number; landShare: number; stabilisationEpochs: number }
+const ARCHEAN = ENGINE_CONSTANTS.tuning.archean as { diffusion: number; landShare: number }
 
 // The engine: its WASM build in the browser (generatorWorker.ts), the same
 // build loaded from engine/dist in a test.
@@ -256,16 +252,17 @@ function renderableOf(snapshot: PlateSimulationSnapshot, domain: Domain): Render
 // stages and the screen read, and the map's texture.
 async function renderTerrain(intermediate = false): Promise<void> {
   if (!world || era !== 'plates') return
-  const { elevations, mantle } = world.render(1)
-  await renderAndPost(elevations, mantle, world.snapshot(), intermediate, false)
+  const { elevations, mantle, cratonAge, volcanoes } = world.render(1)
+  await renderAndPost(elevations, { mantle, cratonAge, volcanoes: volcanoes ?? [] }, world.snapshot(), intermediate, false)
 }
 
-// The plates' picture from a raster and the mantle's chart raster, posted.
+// The plates' picture from a raster, posted with what the engine's render
+// gave beside it: the mantle's chart raster, the craton age, the volcanoes.
 // intermediate marks a redraw while the history runs — see
 // WorkerRenderedMessage.intermediate for why the client needs to know.
 // skipInvalidation: a render of the hydrology just computed (its dry
 // floors), which must not drop it.
-async function renderAndPost(elevations: Float32Array, mantle: Float32Array, snapshot: PlateSimulationSnapshot, intermediate: boolean, skipInvalidation: boolean): Promise<void> {
+async function renderAndPost(elevations: Float32Array, render: { mantle: Float32Array; cratonAge: Float32Array; volcanoes: Volcano[] }, snapshot: PlateSimulationSnapshot, intermediate: boolean, skipInvalidation: boolean): Promise<void> {
   const gen = worldGeneration
   const domain = domainFor(archeanShape, snapshot.width, snapshot.height)
   renderOptions.dryBasin = renderDryBasin ?? undefined
@@ -286,22 +283,21 @@ async function renderAndPost(elevations: Float32Array, mantle: Float32Array, sna
   }
   const eventsToSend = pendingEvents
   pendingEvents = []
-  const archeanEpochs = snapshot.archeanEpochs ?? 0
 
   const message: WorkerRenderedMessage = {
     type: 'rendered',
     buffer: result.buffer.buffer as ArrayBuffer,
     relief: result.relief.buffer as ArrayBuffer,
     // The field on its chart raster (a fresh array, so transferable).
-    mantle: mantle.buffer as ArrayBuffer,
+    mantle: render.mantle.buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    cratonAge: computeCratonOldnessField(snapshot.rafts, worldEpoch(archeanEpochs, snapshot.epoch), archeanEpochs, MANTLE_RES_X, MANTLE_RES_Y, domain).buffer as ArrayBuffer,
+    cratonAge: render.cratonAge.buffer as ArrayBuffer,
     elevation: coarseElevation(result.elevations, snapshot.width, snapshot.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
     hotspots: snapshot.hotspots,
-    volcanoes: collectVolcanoes(snapshot.features),
+    volcanoes: render.volcanoes,
     width: snapshot.width,
     height: snapshot.height,
     landFraction: result.landFraction,
@@ -315,7 +311,7 @@ async function renderAndPost(elevations: Float32Array, mantle: Float32Array, sna
   // Transfers the underlying ArrayBuffers instead of copying them — safe
   // because the image render and the engine allocate fresh arrays every
   // call, so there's no reference to any now-neutered buffer left to reuse.
-  emit(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
+  emit(message, [message.buffer, message.relief, message.mantle, message.cratonAge, message.elevation, message.boundaryMask])
 }
 
 // Renders the Archean world and posts its status. The image render reads
@@ -327,8 +323,8 @@ let lastGenesisStatus: WorkerGenesisStatusMessage | null = null
 async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
   if (!world || era !== 'archean') return
   const gen = worldGeneration
-  const { snapshot, mantle: field } = world.archeanSave()
-  const { elevations, mantle } = world.render(elevationScale)
+  const { snapshot } = world.archeanSave()
+  const { elevations, mantle, cratonAge, hotspots, stabilisedFraction } = world.render(elevationScale)
   const domain = domainFor(archeanShape, snapshot.width, snapshot.height)
   const result = await renderSimulationImage(
     // No seeds, so no plate Voronoi: the Archean has no plates. The genesis
@@ -349,14 +345,14 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     mantle: mantle.buffer as ArrayBuffer,
     mantleResX: MANTLE_RES_X,
     mantleResY: MANTLE_RES_Y,
-    cratonAge: computeCratonOldnessField(snapshot.rafts, snapshot.epoch, snapshot.epoch, MANTLE_RES_X, MANTLE_RES_Y, domain).buffer as ArrayBuffer,
+    cratonAge: cratonAge.buffer as ArrayBuffer,
     elevation: coarseElevation(result.elevations, snapshot.width, snapshot.height).buffer as ArrayBuffer,
     elevationResX: CLIMATE_RES_X,
     elevationResY: CLIMATE_RES_Y,
     // The Archean has plumes too — the same persistent upwellings crustNucleation
-    // reads to decide where crust appears. Showing them costs nothing new: the phase
-    // already computes them, and seeing WHERE crust is about to form is the point.
-    hotspots: findPlumeSites(field.values, domain),
+    // reads to decide where crust appears. The engine's render finds them on the
+    // mantle field; seeing WHERE crust is about to form is the point.
+    hotspots: hotspots ?? [],
     volcanoes: [],
     width: snapshot.width,
     height: snapshot.height,
@@ -369,14 +365,14 @@ async function renderArcheanAndPost(elevationScale = 1): Promise<void> {
     plateCount: 0,
     events: [],
   }
-  emit(message, [message.buffer, message.relief, message.mantle, message.elevation, message.boundaryMask])
+  emit(message, [message.buffer, message.relief, message.mantle, message.cratonAge, message.elevation, message.boundaryMask])
 
   const status: WorkerGenesisStatusMessage = lastGenesisStatus = {
     type: 'genesisStatus',
     epoch: snapshot.epoch,
     worldAgeMa: worldAgeMa(snapshot.epoch, 0),
     crustFraction: result.landFraction,
-    stabilisedFraction: stabilisedFraction(snapshot.rafts, snapshot.epoch, ARCHEAN.stabilisationEpochs),
+    stabilisedFraction: stabilisedFraction ?? 0,
     cratonCount: snapshot.rafts.length,
   }
   emit(status)
@@ -720,7 +716,7 @@ function handleHydrologyRun(): void {
       // render shows the hydrology we JUST computed.
       renderDryBasin = body.render.dryBasin
       renderSaltFlat = body.render.saltFlat
-      await renderAndPost(lastRawElevations!, body.render.mantle, current.snapshot(), false, true)
+      await renderAndPost(lastRawElevations!, body.render, current.snapshot(), false, true)
       if (stale()) return
     }
     // The save's form of the graph is the engine's (DEC-0044, fork 7b).
@@ -826,7 +822,6 @@ function handleSerializeWorld(): void {
   if (world && era === 'archean' && lastRawElevations) {
     const save = world.archeanSave()
     const mantle = fieldPayload(save.mantle)
-    const domain = domainFor(archeanShape, save.snapshot.width, save.snapshot.height)
     const message: WorkerWorldDataMessage = {
       type: 'worldData',
       archean: { snapshot: save.snapshot, mantle, streak: save.streak.buffer as ArrayBuffer },
@@ -840,7 +835,7 @@ function handleSerializeWorld(): void {
       latticeAccumulated: new Float32Array(0).buffer as ArrayBuffer,
       latticeLockedEpochs: new Int16Array(0).buffer as ArrayBuffer,
       latticeLastClassCode: new Int8Array(0).buffer as ArrayBuffer,
-      oceanAge: fieldPayload(savedOceanAge(createOceanAgeField(0, domain), domain)),
+      oceanAge: fieldPayload(world.savedFields()[1]),
     }
     emit(message, [message.archean!.mantle.values, message.archean!.streak])
     return

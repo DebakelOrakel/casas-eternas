@@ -1,7 +1,9 @@
 //! `crust/raftField.ts`: how continental is the crust at a point. A raft is
 //! a set of soft metaball blobs; the summed field and its threshold band,
-//! the bucket index over the blobs, and the coarse fields made from them.
-//! The reasoning is in the TypeScript file.
+//! the bucket index over the blobs, and the coarse fields made from them
+//! (docs/decisions/continental-crust-rafts.md). The TypeScript file went on
+//! 2026-10-30; the display reads the craton age and the stabilised share
+//! from the engine's render.
 
 use crate::core::domain::{Domain, DomainGrid};
 use crate::core::interpolation::smoothstep_between;
@@ -251,8 +253,21 @@ pub fn compute_membership_at(rafts: &[Raft], xs: &[f64], ys: &[f64], domain: &Do
         .collect()
 }
 
-/// A coarse field of continental crust oldness 0..1 (−1 off the crust),
-/// by scattering each blob over the cells it can reach.
+/// A coarse field of continental crust oldness 0..1 (−1 off the crust):
+/// 1 where the crust formed at epoch 0 (the old cratonic cores), lower
+/// toward margins accreted later. The metaball-weighted mean birth AGE per
+/// cell, normalised against the world's age, both in Ma (`world_epoch_ma`):
+/// the stamps lie on the continuous epoch axis, on which an Archean epoch
+/// is five tectonic ones (DEC-0036 phase 8b-2). `archean_epochs` is the
+/// Archean's length; in the Archean itself, its current epoch. The
+/// ecology's iron reads it, and the craton-age overlay.
+///
+/// Each blob is scattered over the cells it can reach, not each cell asked
+/// about each blob. The kernel is exactly 0 at and past the radius, so the
+/// field is the same to the last bit; the work goes with the crust that
+/// exists, not with cells × blobs (about 40 000 kernel evaluations in
+/// place of 5 million at 256 × 128 with 156 blobs). The accumulators are
+/// f64: f32 partial sums moved ~10 % of the cells by up to 9e-8.
 pub fn compute_craton_oldness_field(
     rafts: &[Raft],
     current_epoch: f64,
@@ -356,7 +371,16 @@ pub fn derive_plate_types(seeds: &[PlateSeed], rafts: &[Raft], domain: &Domain) 
         .collect()
 }
 
-/// The area-weighted fraction of crust blobs past the stabilisation age.
+/// The area-weighted fraction of crust blobs past the stabilisation age:
+/// the Archean's progress gauge. Over 600 epochs it was the one quantity
+/// that reads the phase cleanly — 6 % at epoch 50, 54 % at 200, 58 % at
+/// 300, 91 % at 600, monotone. Several separate cratons hold until about
+/// 60 %; past about 85 % the world only accumulates land.
+///
+/// By area (Σ radius²), not by count (2026-08-06): `consolidate_raft_blobs`
+/// merges stabilised blobs into fewer, larger ones, so a count deflates as
+/// the phase matures (61–63 % at epoch 300 against 81–88 % without the
+/// merge, for the same stable crust).
 pub fn stabilised_fraction(rafts: &[Raft], epoch: f64, stabilisation_epochs: f64) -> f64 {
     let (mut total, mut stable) = (0.0, 0.0);
     for raft in rafts {

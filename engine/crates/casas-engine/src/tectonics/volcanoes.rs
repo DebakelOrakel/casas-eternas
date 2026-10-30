@@ -21,6 +21,10 @@ pub struct Volcano {
     pub kind: VolcanoKind,
 }
 
+/// World-cell size for thinning the arcs' markers: a long subduction zone
+/// has one range feature every ~312 km (MERGE_RADIUS_M), so hundreds
+/// accumulate. One cone (the tallest) per cell of this size keeps the arc a
+/// dotted chain. Hotspots and flood basalts are few and never thinned.
 const ARC_MARKER_CELL: f64 = 60.0;
 
 /// An arc feature fed within this many epochs is active; it builds its

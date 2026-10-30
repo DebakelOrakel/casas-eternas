@@ -9,9 +9,18 @@ use crate::core::js;
 use crate::core::world_time::TECTONIC_MA_PER_EPOCH;
 use crate::mantle::mantle_field::MantleMesh;
 
+/// Mantle value a cell must reach to host a plume. Above the Archean's
+/// nucleation threshold (0.70): a plume marks a strong upwelling, not only
+/// one hot enough to make crust.
 const PLUME_THRESHOLD: f64 = 0.85;
 const PLUME_RETIRE_THRESHOLD: f64 = 0.55;
+/// An upper bound only. The count comes from how many strong upwellings
+/// the mantle makes, as the plate count comes from the convection cells.
 const PLUME_MAX_COUNT: usize = 8;
+/// Two plumes closer than this, metres, are one upwelling found twice. A
+/// fraction of the chart's height until DEC-0036 phase 8f (0.14 × 1024
+/// cells of the torus's 7.8 km; on the sphere's 10 000 km from pole to
+/// pole it was 25 % longer).
 const PLUME_MIN_SEPARATION_M: f64 = 1_118_208.0;
 const PLUME_MAX_SPEED_KM_PER_MYR: f64 = 23.4;
 

@@ -10,7 +10,7 @@ import './scaleBar.css'
 // the map shows in that row; the arc gives each of its points the
 // sea-level temperature of the latitude of the LIMB point (the globe's
 // visible edge) at the same screen angle round the outline's centre. The
-// same band (climate/temperature.ts seaLevelTemperatureBand, one value per
+// same band (the engine's seaLevelTemperatureBand, climate/temperature.rs, one value per
 // climate row, the row from the chart's v as the strip finds it) and the
 // same colour ramp (climateColors.ts temperatureColor).
 //

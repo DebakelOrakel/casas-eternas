@@ -78,8 +78,9 @@ planet/     the Planet stage's controls, their forcing, the sample world
 mantle/     the mantle's field mesh and its saved values
 archean/    the Archean's controls, its snapshot types, the coastline-warp seed
 tectonics/  the controls, the plates' types and motion, the snapshot and event types
-            (plateSimulationTypes), oceanAge, terrainFeatures, volcanoes, plumes
-crust/      the rafts' types and fields (raftField: the craton age)
+            (plateSimulationTypes), oceanAge (a save's fit), terrainFeatures, the
+            volcanoes' and the plumes' types
+crust/      the rafts' types (the craton age comes with the engine's render)
 elevation/  elevationScale (what a height MEANS), ridgedNoise, globeNoise,
             elevationColor
 surface/    the shapes a save holds (hydrology: the water bodies and their levels;

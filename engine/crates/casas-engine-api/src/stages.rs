@@ -378,8 +378,9 @@ impl World {
     /// floors, the features. A pass after reuses the route. The body of
     /// its `hydrologyData`, with the river graph as `RiverGraph` (the world
     /// layer serializes it), and `climate` (the v2's `climateData`, or
-    /// null) and `render` (`{ mantle, dryBasin, saltFlat }`: the render
-    /// the runtime posts after the route, or null).
+    /// null) and `render` (`{ mantle, dryBasin, saltFlat, cratonAge,
+    /// volcanoes }`: the render the runtime posts after the route, or
+    /// null).
     pub fn hydrology(&mut self, planet: Option<&Value>) -> Result<Value, EraError> {
         let planet = planet.map(read::planet).transpose()?;
         let (sim, coupled, stages) = self.staged()?;
@@ -443,15 +444,19 @@ impl World {
             // The render after the route (`renderAndPost` over the
             // terrain with the dry floors): of the engine's, the mantle's
             // raster, which moves its mesh's walk.
+            // With it the display's extras, as `World::render` gives them.
             let lakes = &on_mesh.raster;
-            render = ObjBuilder::new()
+            let mut b = ObjBuilder::new()
                 .put(
                     "mantle",
                     Value::F32s(rasterise_mantle(&mut sim.meshes.mantle, &sim.mantle)),
                 )
                 .put("dryBasin", Value::U8s(lakes.dry_basin.clone()))
-                .put("saltFlat", Value::U8s(lakes.salt_flat.clone()))
-                .build();
+                .put("saltFlat", Value::U8s(lakes.salt_flat.clone()));
+            for (key, v) in crate::plates_extras(sim) {
+                b = b.put(key, v);
+            }
+            render = b.build();
             let cells = &climate.as_ref().unwrap().cells;
             // The render gave the runtime a new raster and the climate
             // may be the v2's: the ecology's key no longer holds.
